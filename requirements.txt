@@ -1,0 +1,2 @@
+PySide6
+pywin32; platform_system == "Windows"
