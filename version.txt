@@ -18,7 +18,7 @@ VSVersionInfo(
           [
             StringStruct('FileDescription', 'Swiss Army Knife (S.A.K.) Utility – All-in-one desktop companion for: backups, & file organization'),
                StringStruct('FileVersion', '0.8.0.0'),
-            StringStruct('ProductName', 'Your Product Name'),
+            StringStruct('ProductName', '(S.A.K.) Utility'),
                StringStruct('ProductVersion', '0.8.0.0'),
           ]
         )
