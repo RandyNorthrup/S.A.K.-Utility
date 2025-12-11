@@ -14,7 +14,7 @@
 S.A.K. Utility is a **Windows-only** desktop application designed for **PC technicians** who need to migrate systems, backup user profiles, and manage files during PC repairs, upgrades, and replacements. Built with modern C++23 and Qt6, it provides professional-grade tools through an intuitive tabbed interface.
 
 **Target Users**: PC technicians, computer repair shops, IT support specialists  
-**Version**: 0.5.1  
+**Version**: 0.5.2  
 **Release Date**: December 11, 2025  
 **Platform**: Windows 10/11 x64 only  
 **Build Size**: 1.33 MB executable

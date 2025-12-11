@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.28 FATAL_ERROR)
 
 # Project definition
 project(SAK_Utility
-    VERSION 0.5.0
+    VERSION 0.5.2
     DESCRIPTION "Swiss Army Knife Utility - PC technician's toolkit for Windows migration and maintenance"
     LANGUAGES CXX
 )
