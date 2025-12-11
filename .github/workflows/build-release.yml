@@ -117,8 +117,35 @@ jobs:
           Copy-Item $dll.FullName "SAK-Utility-v0.5.1/"
         }
         
+        # Copy other DLLs (OpenGL, D3D)
+        $otherDlls = @("opengl32sw.dll", "D3Dcompiler_47.dll")
+        foreach ($dllName in $otherDlls) {
+          if (Test-Path $dllName) {
+            Copy-Item $dllName "SAK-Utility-v0.5.1/"
+          }
+        }
+        
+        # Copy vcpkg DLLs (zlib, bzip2, liblzma)
+        $vcpkgBinPath = "C:\vcpkg\installed\x64-windows\bin"
+        if (Test-Path $vcpkgBinPath) {
+          $vcpkgDlls = @("zlib1.dll", "bz2.dll", "lzma.dll")
+          foreach ($dllName in $vcpkgDlls) {
+            $dllPath = Join-Path $vcpkgBinPath $dllName
+            if (Test-Path $dllPath) {
+              Copy-Item $dllPath "SAK-Utility-v0.5.1/"
+              Write-Host "Copied vcpkg DLL: $dllName"
+            } else {
+              Write-Warning "vcpkg DLL not found: $dllName"
+            }
+          }
+        }
+        
         # Copy MSVC runtime DLLs if present
         $msvcDlls = Get-ChildItem -Filter "vcruntime*.dll" -ErrorAction SilentlyContinue
+        foreach ($dll in $msvcDlls) {
+          Copy-Item $dll.FullName "SAK-Utility-v0.5.1/"
+        }
+        $msvcDlls = Get-ChildItem -Filter "msvcp*.dll" -ErrorAction SilentlyContinue
         foreach ($dll in $msvcDlls) {
           Copy-Item $dll.FullName "SAK-Utility-v0.5.1/"
         }
@@ -138,8 +165,13 @@ jobs:
         # Create portable.ini for portable mode
         New-Item -ItemType File -Path "SAK-Utility-v0.5.1/portable.ini" -Force
         
-        # Create ZIP archive
-        Compress-Archive -Path "SAK-Utility-v0.5.1" -DestinationPath "SAK-Utility-v0.5.1-Windows-x64.zip" -Force
+        # List contents for verification
+        Write-Host ""
+        Write-Host "Package contents:"
+        Get-ChildItem -Path "SAK-Utility-v0.5.1" -Recurse -File | Select-Object FullName, @{Name="SizeMB";Expression={[math]::Round($_.Length/1MB, 2)}}
+        
+        # Create ZIP archive with contents directly (not nested in folder)
+        Compress-Archive -Path "SAK-Utility-v0.5.1\*" -DestinationPath "SAK-Utility-v0.5.1-Windows-x64.zip" -Force
     
     - name: Upload Build Artifact
       uses: actions/upload-artifact@v4
@@ -152,7 +184,7 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: sak_utility.exe
-        path: build/Release/sak_utility.exe
+        path: build/Release/SAK-Utility-v0.5.1/sak_utility.exe
         retention-days: 30
     
     - name: Create Release
