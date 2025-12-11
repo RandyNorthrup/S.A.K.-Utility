@@ -177,15 +177,8 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: SAK-Utility-Windows-x64
-        path: build/Release/SAK-Utility-v0.5.1-Windows-x64.zip
+        path: build/Release/SAK-Utility-v0.5.1/*
         retention-days: 90
-    
-    - name: Upload Executable Only
-      uses: actions/upload-artifact@v4
-      with:
-        name: sak_utility.exe
-        path: build/Release/SAK-Utility-v0.5.1/sak_utility.exe
-        retention-days: 30
     
     - name: Create Release
       if: startsWith(github.ref, 'refs/tags/v')
