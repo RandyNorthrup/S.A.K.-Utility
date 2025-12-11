@@ -14,7 +14,7 @@
 S.A.K. Utility is a **Windows-only** desktop application designed for **PC technicians** who need to migrate systems, backup user profiles, and manage files during PC repairs, upgrades, and replacements. Built with modern C++23 and Qt6, it provides professional-grade tools through an intuitive tabbed interface.
 
 **Target Users**: PC technicians, computer repair shops, IT support specialists  
-**Version**: 0.5.4  
+**Version**: 0.5.5  
 **Release Date**: December 11, 2025  
 **Platform**: Windows 10/11 x64 only  
 **Package Size**: ~21.5 MB (includes Qt runtime, vcpkg libraries, embedded Chocolatey)
@@ -27,29 +27,247 @@ S.A.K. Utility is a **Windows-only** desktop application designed for **PC techn
 Automate software installation on new or refreshed Windows systems using embedded Chocolatey.
 
 **Capabilities:**
-- Scan installed applications (Windows Registry + filesystem detection)
-- Automatic Chocolatey package matching with confidence scoring
-- Interactive selection with version locking
-- Batch installation with real-time progress tracking
-- Export/import migration plans (JSON, CSV, HTML formats)
-- **No external dependencies** - Chocolatey is fully embedded
-
-**Use Case:** Migrate from old PC to new PC by scanning apps on the old machine, exporting a migration plan, then importing and installing on the new machine.
-
+- **Application Scanning**: Windows Registry + AppX packages via PowerShell `Get-AppxPackage`
+  - Registry sources: `HKLM\Software\...\Uninstall` (32-bit and 64-bit), `HKCU\Software\...\Uninstall`
+  - Detects: App name, version, publisher, install location
+- **Intelligent Package Matching**: 3-tier matching system
+  - **Exact Match**: 42 pre-defined common app mappings (e.g., "7-Zip" → `7zip`, "Google Chrome" → `googlechrome`)
+  - **Fuzzy Match**: Levenshtein distance + Jaro-Winkler similarity algorithms
+  - **Chocolatey Search API**: Real-time package availability verification
+- **Confidence Scoring**: High/Medium/Low/Manual/Unknown ratings for match quality
+- **Version Locking**: Pin specific app versions for reproducible deployments
 ### 2. User Profile Backup & Restore
-Comprehensive Windows user profile backup with intelligent 6-page wizards and enterprise-grade encryption.
+Comprehensive Windows user profile backup with intelligent **6-page wizards** and enterprise-grade encryption.
 
-**Backup Wizard:**
-- Automatic Windows user detection via NetUserEnum API
-- Selective folder backup (Documents, Desktop, Pictures, Videos, Music, Downloads, AppData)
-- Per-user customization dialogs for granular control
-- Smart file filtering (skip temp files, caches, registry hives)
-- **Compression support**: 4 levels (None, Fast, Balanced, Maximum) using PowerShell Compress-Archive
-- **AES-256-CBC encryption**: Enterprise-grade encryption with PBKDF2 key derivation (100,000 iterations)
-- Multi-threaded backup with SHA256 verification
-- Backup manifest generation with metadata
-- Password protection with confirmation validation
+#### **User Profile Backup Wizard - 6 Pages**
 
+**Page 1: Welcome & Instructions**
+- Introduction to backup process, safety warnings, documentation links
+
+**Page 2: Scan & Select Users**
+- **Windows User Detection**: Uses `NetUserEnum` API to enumerate all local users
+- **Displayed Info**: Username, SID (Security Identifier), Profile Path (`C:\Users\Username`), Estimated Size, Current User indicator
+- **Actions**: Scan Users, Select All, Select None, real-time progress bar
+- **Summary**: X users selected, Y GB total
+
+**Page 3: Customize Per-User Data**
+- **Per-User Customization Dialog**: `per_user_customization_dialog.cpp/h`
+- **11 Folder Types Supported**:
+  - Documents, Desktop, Pictures, Videos, Music, Downloads
+  - AppData\Roaming, AppData\Local
+  - Favorites, Start Menu, Custom paths
+- **Folder Options**: Enable/disable each folder, include patterns (`["*"]` or specific files), exclude patterns, calculated size and file count per folder
+
+**Page 4: Smart Filter Configuration**
+- **Size Limits** (Optional): Max single file size (2 GB default), Max folder size (50 GB warning threshold)
+- **Dangerous Files Excluded**: `NTUSER.DAT`, `UsrClass.dat`, `NTUSER.DAT.LOG*`, `*.lock`, `hiberfil.sys`, `pagefile.sys`
+- **Excluded Folders**: `AppData\Local\Temp`, browser caches (`INetCache`, `Temporary Internet Files`)
+- **Pattern Exclusions**: `*.tmp`, `*.temp`, `*.cache`, `thumbs.db`, `desktop.ini`
+- **Actions**: Reset to Defaults, View Dangerous Files List
+- **Implementation**: `smart_file_filter.cpp` - OWASP-compliant path validation
+
+**Page 5: Backup Settings**
+- **Compression**: 4 levels (None, Fast, Balanced, Maximum) using PowerShell `Compress-Archive` → ZIP format
+- **Encryption**: AES-256-CBC via Windows BCrypt API (FIPS 140-2 compliant)
+  - **Key Derivation**: PBKDF2 with 100,000 iterations
+  - **Salt**: 32 bytes (random per backup)
+  - **IV**: 16 bytes (random per backup)
+  - **Format**: `[Salt(32)][IV(16)][EncryptedData]`
+  - Password confirmation with strength validation
+- **Verification**: SHA256 checksum for integrity (stored in manifest file)
+- **Destination**: Browse for backup location, automatic manifest generation
+
+**Page 6: Execution & Progress**
+- **Progress Tracking**: Overall progress bar (%), current file progress, current operation label, speed (MB/s), elapsed time
+### 3. Directory Organizer
+Automatically organize messy directories by file extension with intelligent categorization.
+
+**Features:**
+- **Extension-Based Sorting**: Moves files into category folders
+- **6 Default Categories**:
+  - **Images**: `.jpg`, `.jpeg`, `.png`, `.gif`, `.bmp`, `.svg`
+  - **Documents**: `.pdf`, `.doc`, `.docx`, `.txt`, `.odt`
+  - **Videos**: `.mp4`, `.avi`, `.mkv`, `.mov`, `.wmv`
+  - **Audio**: `.mp3`, `.wav`, `.flac`, `.m4a`, `.ogg`
+  - **Archives**: `.zip`, `.rar`, `.7z`, `.tar`, `.gz`
+  - **Executables**: `.exe`, `.msi`, `.bat`, `.sh`
+- **Customization**: Add/remove categories, custom extension mappings
+- **Collision Handling**: Rename (add suffix), Skip (leave existing), Overwrite (replace)
+- **Recursive Processing**: Scan subdirectories option
+- **Preview Mode**: Dry run before committing changes
+- **Detailed Logging**: Action-by-action report
+
+**Technical Components:**
+- `organizer_panel.cpp/h` - GUI panel
+- `organizer_worker.cpp/h` - Background thread for file operationsource machine, backup date, users in backup, total size, encryption status
+
+**Page 2: User Mapping**
+- **Auto-Detect Destination Users**: Scans local users via `NetUserEnum` API
+- **3 Merge Modes**:
+  - **ReplaceDestination**: Overwrite destination user's files
+  - **MergeIntoDestination**: Combine files with conflict resolution
+  - **CreateNewUser**: Create new user profile
+- **Mapping Table**: Source Username → Destination Username (dropdown), Source/Dest SID, Merge Mode dropdown
+- **Actions**: Auto-Map (matches by username), Manual mapping per row
+
+**Page 3: Merge Configuration**
+### 6. Image Flasher
+Create bootable USB drives with **4-page wizard**, supporting multiple image formats and streaming decompression.
+
+#### **4-Page Wizard Interface**
+
+**Page 1: Select Image**
+- **Image Sources**:
+  - Local file: ISO, IMG, WIC, ZIP, GZIP (.gz), BZIP2 (.bz2), XZ (.xz), DMG (read-only), DSK
+  - Download Windows ISO: Opens `windows_iso_download_dialog.cpp`
+- **Image Info Display**: Path, Size, Format, Compression type (if applicable)
+
+**Page 2: Select Target Drives**
+- **Drive List**: Name, Size, Bus Type (USB, SATA, NVMe, SD), Mount Points
+- **Multi-Select**: Flash to multiple drives simultaneously (parallel writing)
+- **System Drive Protection**: System/boot drives grayed out, cannot select
+- **Safety Options**: "Show All Drives" checkbox (includes non-removable when enabled)
+- **Summary**: "X drives selected"
+
+**Page 3: Flash Progress**
+- **Overall Progress Bar**: 0-100%
+- **State Label**: "Validating → Unmounting → Decompressing → Flashing → Verifying"
+- **Details**: "Writing to \\.\PhysicalDrive1 (SanDisk Ultra)"
+- **Speed**: Current write speed (MB/s)
+- **Per-Drive Status**: Active drives count, failed drives count, completed drives count
+- **Cancel Button**: Graceful abort with cleanup
+
+**Page 4: Completion**
+- **Success Message**: "Successfully flashed X drives"
+- **Failed Drives List**: Error details for each failure
+- **Verification Results**: SHA-512 checksums (if verification enabled)
+- **Actions**: "Flash Another" (restart wizard), "Done" (close panel)
+
+#### **Supported Image Formats**
+
+| Format | Extension | Description | Decompression |
+|--------|-----------|-------------|---------------|
+| ISO | `.iso` | ISO 9660 CD/DVD image | None (direct write) |
+| IMG | `.img` | Raw disk image | None (direct write) |
+| WIC | `.wic` | Windows Imaging Format | None (direct write) |
+| ZIP | `.zip` | ZIP archive containing image | Built-in Qt |
+| GZIP | `.gz` | GZIP compressed | zlib (streaming) |
+| BZIP2 | `.bz2` | BZIP2 compressed | libbz2 (streaming) |
+| XZ | `.xz` | XZ/LZMA compressed | liblzma (streaming) |
+| DMG | `.dmg` | Apple Disk Image | Read-only support |
+| DSK | `.dsk` | Generic disk image | None (direct write) |
+
+#### **Windows ISO Downloader**
+### 4. Duplicate File Finder
+Find and manage duplicate files using cryptographic hashing.
+
+**Capabilities:**
+- **MD5-Based Detection**: True byte-level duplicate detection (not just filename matching)
+- **Streaming Hashing**: Memory-efficient for large files (1 MB chunks via `file_hash.cpp`)
+- **Multi-Threaded Scanning**: Parallel hashing for large directories using QtConcurrent
+- **Minimum Size Filter**: Skip tiny files (configurable threshold in KB)
+- **Recursive Scanning**: Option to scan subdirectories
+- **3 Actions**: Delete duplicates (keeps one copy), Move to folder, Report only (export list)
+### 5. License Key Scanner
+Attempt to locate software license keys stored in Windows Registry (best-effort tool).
+
+**Features:**
+- **Registry Scanning**: Searches `HKLM` and `HKCU` with pattern matching (keywords: "key", "serial", "license", "product", "activation")
+- **Filesystem Scanning**: Detects license files (`.lic`, `.key`, `.license`, `.reg`)
+- **Multi-Threaded**: Parallel registry traversal for performance
+- **UAC Elevation**: Automatic elevation prompt when registry access requires admin
+- **Export**: Save findings to CSV/TXT file
+- **Additional Paths**: Add custom directories to scan
+
+**Scan Options:**
+- Scan Registry (HKLM, HKCU)
+- Scan Filesystem (Program Files, ProgramData, etc.)
+- Scan system licenses (Windows activation, Office)
+- Custom paths (line edit)
+
+**Limitations:**
+- **Only finds registry-stored keys** - Many modern apps use:
+  - Cloud-based licensing (keys stored on vendor servers)
+  - Hardware tokens or dongles
+  - Encrypted credential storage (Windows Credential Manager, KeyChain)
+- **Cannot decrypt protected keys** - Encrypted keys cannot be recovered
+- **False Positives**: May find unrelated registry values
+- **Best-effort basis only** - No guarantees
+
+**Technical Components:**
+- `license_scanner_panel.cpp/h` - GUI panel with result table
+- `license_scanner_worker.cpp/h` - Background registry/filesystem scanning thread
+- `elevation_manager.cpp/h` - UAC integration for admin accesses, `QueryDosDevice` API, `GetDriveType`, `DeviceIoControl` for geometry
+- **Drive Information Collected**:
+  - Device path (`\\.\PhysicalDrive1`)
+  - Name, Size (bytes), Block Size (512 or 4096)
+  - System drive flag, Removable flag, Read-only flag
+  - Bus type (USB, SATA, NVMe, SD)
+  - Mount points (e.g., `["E:\", "F:\"]`), Volume label
+- **Continuous Monitoring**: `DriveScanner` runs in background thread, emits `drivesUpdated` signal on drive insertion/removal
+
+**Safety Features**:
+- **System Drive Protection**: Prevents selecting boot drive (grayed out in UI)
+- **Write-Protection Detection**: Warns if drive is read-only
+- **Size Validation**: Ensures target drive is large enough for image
+- **Confirmation Dialog**: Shows all drives that will be erased, requires explicit confirmation
+
+#### **Flash Operation Workflow**
+
+**Flash Coordinator** (`flash_coordinator.cpp` - 249 lines):
+
+**5 Flash States**:
+1. **Validating**: Check image file exists, validate drives, verify size compatibility
+2. **Unmounting**: Unmount all volumes on target drives (`drive_unmounter.cpp`)
+3. **Decompressing**: Stream decompress (if needed) - **NO TEMPORARY FILES** (key feature)
+4. **Flashing**: Parallel writes to multiple drives
+   - **Buffer**: 64 MB per buffer
+   - **Pipeline**: 16 buffers for read-ahead (1 GB total pipeline)
+   - **Parallelism**: Writes to all selected drives simultaneously
+5. **Verifying**: SHA-512 checksum per drive (optional, can be disabled in settings)
+
+**Progress Tracking**:
+- State enum, Percentage (0-100), Bytes written (total across all drives)
+- Total bytes, Speed (MB/s), Active/failed/completed drive counts
+
+**Streaming Decompression** (NO TEMP FILES):
+- **Key Feature**: Decompresses on-the-fly without creating temporary files
+- **Libraries**: zlib (gzip), libbz2 (bzip2), liblzma (xz)
+- **Buffer Management**: 64 MB chunks, 16-buffer pipeline for continuous streaming
+- **Memory-Efficient**: Only buffers in RAM, never writes full decompressed file to disk
+- **Implementation**: `streaming_decompressor.cpp/h` (base), `gzip_decompressor.cpp`, `bzip2_decompressor.cpp`, `xz_decompressor.cpp`
+
+**Use Case:** Create bootable Windows installation USB drives for PC repairs and fresh installations, flash Raspberry Pi images, create Linux live USBs.
+
+## Recent Changes (v0.5.5)
+
+### Documentation Overhaul
+- ✅ **Comprehensive README rewrite** with accurate feature descriptions from codebase scan
+- ✅ **User Profile Wizards**: Documented all 6 pages (Backup) + 6 pages (Restore) with detailed workflows
+- ✅ **Image Flasher**: Added 4-page wizard breakdown, 9 supported formats, streaming decompression details
+- ✅ **Application Migration**: Documented 42 pre-defined mappings, fuzzy matching algorithms (Levenshtein + Jaro-Winkler)
+- ✅ **Technical Architecture**: Added backend systems (logging, encryption, threading, input validation)
+- ✅ **Corrected Inaccuracies**: SHA-512 verification (was incorrectly stated as SHA-256), 5 main tabs (was stated as 4)
+
+### Build & Packaging Improvements (from v0.5.4)
+- ✅ Added all Chocolatey binaries to repository (22 executables/DLLs, 67 MB)
+- ✅ Fixed compression DLL packaging (`liblzma.dll` instead of incorrect `lzma.dll`)
+- ✅ Implemented build caching for vcpkg and CMake (7+ min → 2-4 min builds)
+- ✅ Automated GUI test skipping in CI environment
+- ✅ Fixed package directory structure (proper cleanup prevents errors)
+
+### Security & Verification
+- ✅ Added SHA256 hash generation for all releases
+- ✅ Included `SHA256SUMS.txt` in release assets
+- ✅ Added Windows Defender guidance in documentation
+- ✅ Transparent automated builds via GitHub Actions
+**Technical Architecture:**
+- **Encryption**: Windows BCrypt API (FIPS 140-2 compliant) - `encryption.cpp` (339 lines)
+- **Hashing**: `QCryptographicHash` for SHA256 integrity verification - `file_hash.cpp`
+- **User Scanning**: `windows_user_scanner.cpp` - NetUserEnum API wrapper
+- **Orchestration**: `user_data_manager.cpp` - Coordinates backup/restore operations
+- **Threading**: `user_profile_backup_worker.cpp/h` (multi-threaded), `user_profile_restore_worker.cpp/h`
+- **Validation**: `input_validator.cpp` (345 lines) - OWASP-compliant path traversal prevention
 **Restore Wizard:**
 - User mapping and conflict resolution
 - Merge mode configuration (skip, overwrite, rename)
@@ -112,18 +330,56 @@ Create bootable USB drives from Windows ISO files with automatic decompression.
 
 **Use Case:** Create bootable Windows installation USB drives for PC repairs and fresh installations.
 
-**Technical Details:**
-- Integrates with Microsoft's Windows ISO download API
-- Multi-threaded decompression for performance
-- Buffered writing with cancellation support
-- Drive locking during write operations to prevent corruption
+### GUI Architecture
 
----
+**Main Window** (`main_window.cpp` - 180 lines):
+- **5 Main Tabs**:
+  1. **Backup** - Launch point for User Profile Backup/Restore wizards
+  2. **Directory Organizer** - File organization by extension
+  3. **Duplicate Finder** - MD5-based duplicate detection
+  4. **License Scanner** - Registry key extraction
+  5. **App Migration** - Application installation automation
+- **Menu Bar**:
+  - **File**: Exit
+  - **Edit**: Undo, Redo, Settings
+  - **Help**: About
+- **Status Bar**: Hidden (individual panels have their own status displays)
 
-## What's Included
+**Wizards**:
+- **User Profile Backup Wizard**: 6 pages (`user_profile_backup_wizard.cpp` - 1090+ lines)
+  - Page 1: Welcome & Instructions
+  - Page 2: Scan & Select Users
+  - Page 3: Customize Per-User Data
+  - Page 4: Smart Filter Configuration
+  - Page 5: Backup Settings (Compression, Encryption, Verification)
+  - Page 6: Execution & Progress
+- **User Profile Restore Wizard**: 6 pages (`user_profile_restore_wizard.cpp` - 1081 lines)
+  - Page 1: Welcome & Select Backup
+  - Page 2: User Mapping (Source → Destination)
+  - Page 3: Merge Configuration (Conflict Resolution)
+  - Page 4: Folder Selection
+### Technology Stack
 
-The S.A.K. Utility package is a **fully self-contained portable application** with:
-
+| Component | Version | Purpose |
+|-----------|---------|---------|
+| **C++ Standard** | C++23 | Modern language features (`std::expected`, `std::stop_token`, `std::format`, `std::source_location`) |
+| **GUI Framework** | Qt 6.5.3 | Cross-platform GUI library (Windows-only deployment) |
+| **Build System** | CMake 3.28+ | Project configuration and build orchestration |
+| **Compiler** | MSVC 19.44+ | Visual Studio 2022 toolchain with strict C++23 compliance |
+| **Threading** | QtConcurrent + `std::stop_token` | Background task management with modern cancellation |
+| **Cryptography** | Windows BCrypt API (FIPS 140-2) + QCryptographicHash | AES-256-CBC encryption, MD5/SHA256/SHA512 hashing |
+| **Compression** | vcpkg (zlib, bzip2, liblzma) | gzip, bzip2, xz/lzma streaming decompression (no temp files) |
+| **Package Manager** | Chocolatey (embedded 67 MB) | Fully embedded in `tools/chocolatey/` - no system install |
+| **Windows APIs** | NetUserEnum, BCrypt, advapi32, DeviceIoControl | User enumeration, encryption, registry, drive access |
+| **Error Handling** | `std::expected<T, error_code>` | Modern C++23 error propagation (100+ error codes) |
+| **Input Validation** | OWASP-compliant (`input_validator.cpp`) | Path traversal prevention, injection attack prevention |
+| **Logging** | Async file logging (`logger.cpp` - 286 lines) | Thread-safe, structured ISO 8601 timestamps, auto-rotation |
+| **CI/CD** | GitHub Actions | Automated builds, vcpkg/CMake caching (2-4 min builds), release creation |er_settings_dialog.cpp/h`)
+- **Windows ISO Download Dialog**: Language, architecture selection (`windows_iso_download_dialog.cpp` - 228 lines)
+- **Per-User Customization Dialog**: Folder selection per user (`per_user_customization_dialog.cpp/h`)
+- **Progress Dialog**: Generic progress display (`progress_dialog.cpp/h`)
+- **About Dialog**: Credits, version, system info (`about_dialog.cpp/h`)
+- **Log Viewer**: Detailed logging display (`log_viewer.cpp/h`)
 ### Core Application
 - `sak_utility.exe` - Main application (1.33 MB)
 - `portable.ini` - Enables portable mode (0 bytes, just presence matters)
@@ -272,8 +528,74 @@ S.A.K. Utility supports **true portable operation**:
 **Portable Features:**
 - No registry access when `portable.ini` is detected
 - Dynamic path resolution using `%SystemDrive%` and `%ProgramData%` environment variables
-- Settings stored in local INI file (QSettings with IniFormat)
+- Settings stored in local INI file (`QSettings` with `IniFormat`)
 - Copy entire folder to USB drive or network location - it just works
+- Chocolatey cache stays in `tools/chocolatey/lib/` (portable packages)
+
+---
+
+## Backend Systems & Infrastructure
+
+### **Logging System** (`logger.cpp` - 286 lines)
+
+**Features:**
+- **Thread-Safe**: Mutex protection for multi-threaded writes
+- **Structured Output**: ISO 8601 timestamps (`2025-12-11T14:32:15.123Z`)
+- **5 Severity Levels**: Debug, Info, Warning, Error, Critical
+- **Automatic Log Rotation**: When log file exceeds size threshold
+- **Async File Writing**: Non-blocking I/O for performance
+- **Console Output**: Configurable (enabled in debug builds)
+
+**Log Location**: `%LOCALAPPDATA%\SAK\Utility\logs\sak_utility.log`
+
+### **Encryption System** (`encryption.cpp` - 339 lines)
+
+**Algorithm**: AES-256-CBC (FIPS 140-2 compliant via Windows BCrypt API)
+
+**Key Derivation**: PBKDF2 with SHA-256
+- **Iterations**: 100,000 (OWASP recommended minimum)
+- **Key Size**: 32 bytes (256 bits)
+- **IV Size**: 16 bytes (128 bits - AES block size)
+- **Salt Size**: 32 bytes (random per encryption)
+
+**Format**: `[Salt(32)][IV(16)][EncryptedData]`
+
+**Security Features:**
+- Random salt per encryption (prevents rainbow tables)
+- Random IV per encryption (prevents pattern analysis)
+- PBKDF2 key stretching (slows brute-force attacks)
+- Windows BCrypt API (FIPS 140-2 certified)
+
+### **File Hashing** (`file_hash.cpp/h`)
+
+**Algorithms Supported:**
+- **MD5**: Fast, less secure (used for duplicate detection)
+- **SHA256**: Slower, more secure (used for integrity verification)
+- **SHA512**: Slowest, most secure (used for Image Flasher verification)
+
+**Features:**
+- **Chunked Reading**: 1 MB default (memory-efficient for large files)
+- **Progress Callback**: Updates UI during long operations
+- **Cancellation**: Via `std::atomic<bool>` flag
+- **Qt Integration**: Uses `QCryptographicHash` (no external dependencies)
+
+### **Error Handling** (`error_handling.cpp/h` - 259 lines)
+
+**Modern C++23 Pattern**: `std::expected<T, error_code>`
+
+**Error Categories (100+ error codes)**:
+- File system errors (1-99), I/O errors (100-199), Hash/verification errors (200-299)
+- Configuration errors (300-399), Platform errors (400-499), Threading errors (500-599)
+- Memory errors (600-699), Scanner/organizer errors (700-799), Network errors (800-899)
+- Security/validation errors (850-899), Generic errors (900-999)
+
+### **Keep Awake System** (`keep_awake.cpp/h`)
+
+**Purpose**: Prevent system sleep during long operations (backup, restore, flash)
+
+**Implementation**: `SetThreadExecutionState` Windows API with RAII guard pattern
+
+**Status**: Backend exists, **no GUI checkbox yet** (planned for v0.6)
 
 ---
 
@@ -466,7 +788,7 @@ cmake --build build --config Release
 
 ## Testing
 
-12 test executables are built and located in `build/Release/Release/`:
+**11 test executables** are built and located in `build/Release/Release/`:
 
 | Test | Size | Purpose |
 |------|------|---------|
@@ -481,7 +803,23 @@ cmake --build build --config Release
 | `test_migration_report.exe` | 166 KB | Report generation (JSON/CSV/HTML) |
 | `test_app_migration_worker.exe` | 167 KB | Background installation worker |
 | `test_app_migration_panel.exe` | 330.5 KB | Application migration panel GUI |
-| `sak_utility.exe` | 1.13 MB | Main application |
+
+**Total**: 11 test executables + 1 main application (`sak_utility.exe` - 1.13 MB)
+
+**Test Coverage:**
+- **Core Logic**: Unit tests for scanner, matcher, report generator
+- **Integration**: Scanner + Chocolatey, Worker + Manager
+- **GUI**: Wizard page flows, panel interactions
+- **Real Operations**: Actual Chocolatey package installation
+
+**CI/CD** (GitHub Actions):
+- Automated builds on push/PR to main branch
+- **vcpkg caching**: `installed/`, `packages/`, `buildtrees/` directories
+- **CMake caching**: `build/` directory (excludes artifacts)
+- **Build time**: 2-4 minutes (down from 7+ minutes without caching)
+- **GUI test skipping**: 3 tests skipped in CI environment (test_app_migration_panel, test_backup_wizard, test_restore_wizard)
+- **Automatic release creation**: On `v*` tags (e.g., `v0.5.5`)
+- **SHA256 hash generation**: For exe and ZIP in `SHA256SUMS.txt`
 
 **Note**: CTest integration is pending. Tests must be run manually from `build/Release/Release/` directory.
 

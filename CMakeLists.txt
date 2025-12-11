@@ -1,13 +1,11 @@
 cmake_minimum_required(VERSION 3.28 FATAL_ERROR)
 
 # Project definition
-project(SAK_Utility
-    VERSION 0.5.4
+project(SAK_Utility 
+    VERSION 0.5.5
     DESCRIPTION "Swiss Army Knife Utility - PC technician's toolkit for Windows migration and maintenance"
     LANGUAGES CXX
-)
-
-# C++23 Standard - Strict compliance required
+)# C++23 Standard - Strict compliance required
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
