@@ -113,7 +113,16 @@ jobs:
     - name: Package Application
       working-directory: build/Release
       run: |
-        # Create release directory
+        # Clean and create release directory
+        if (Test-Path "SAK-Utility-v0.5.4") {
+          Remove-Item -Recurse -Force "SAK-Utility-v0.5.4"
+        }
+        if (Test-Path "SAK-Utility-v0.5.4-Windows-x64.zip") {
+          Remove-Item -Force "SAK-Utility-v0.5.4-Windows-x64.zip"
+        }
+        if (Test-Path "SHA256SUMS.txt") {
+          Remove-Item -Force "SHA256SUMS.txt"
+        }
         New-Item -ItemType Directory -Force -Path "SAK-Utility-v0.5.4"
         
         # Copy executable
