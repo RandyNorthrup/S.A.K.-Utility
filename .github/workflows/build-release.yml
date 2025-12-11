@@ -114,10 +114,10 @@ jobs:
       working-directory: build/Release
       run: |
         # Create release directory
-        New-Item -ItemType Directory -Force -Path "SAK-Utility-v0.5.3"
+        New-Item -ItemType Directory -Force -Path "SAK-Utility-v0.5.4"
         
         # Copy executable
-        Copy-Item "sak_utility.exe" "SAK-Utility-v0.5.3/"
+        Copy-Item "sak_utility.exe" "SAK-Utility-v0.5.4/"
         
         # Copy Qt DLLs and dependencies (already deployed by CMake)
         $qtDirs = @(
@@ -129,21 +129,21 @@ jobs:
         )
         foreach ($dir in $qtDirs) {
           if (Test-Path $dir) {
-            Copy-Item -Recurse $dir "SAK-Utility-v0.5.3/"
+            Copy-Item -Recurse $dir "SAK-Utility-v0.5.4/"
           }
         }
         
         # Copy Qt runtime DLLs
         $qtDlls = Get-ChildItem -Filter "Qt6*.dll"
         foreach ($dll in $qtDlls) {
-          Copy-Item $dll.FullName "SAK-Utility-v0.5.3/"
+          Copy-Item $dll.FullName "SAK-Utility-v0.5.4/"
         }
         
         # Copy other DLLs (OpenGL, D3D)
         $otherDlls = @("opengl32sw.dll", "D3Dcompiler_47.dll")
         foreach ($dllName in $otherDlls) {
           if (Test-Path $dllName) {
-            Copy-Item $dllName "SAK-Utility-v0.5.3/"
+            Copy-Item $dllName "SAK-Utility-v0.5.4/"
           }
         }
         
@@ -154,7 +154,7 @@ jobs:
           foreach ($dllName in $vcpkgDlls) {
             $dllPath = Join-Path $vcpkgBinPath $dllName
             if (Test-Path $dllPath) {
-              Copy-Item $dllPath "SAK-Utility-v0.5.3/"
+              Copy-Item $dllPath "SAK-Utility-v0.5.4/"
               Write-Host "Copied vcpkg DLL: $dllName"
             } else {
               Write-Warning "vcpkg DLL not found: $dllName"
@@ -165,19 +165,19 @@ jobs:
         # Copy MSVC runtime DLLs if present
         $msvcDlls = Get-ChildItem -Filter "vcruntime*.dll" -ErrorAction SilentlyContinue
         foreach ($dll in $msvcDlls) {
-          Copy-Item $dll.FullName "SAK-Utility-v0.5.3/"
+          Copy-Item $dll.FullName "SAK-Utility-v0.5.4/"
         }
         $msvcDlls = Get-ChildItem -Filter "msvcp*.dll" -ErrorAction SilentlyContinue
         foreach ($dll in $msvcDlls) {
-          Copy-Item $dll.FullName "SAK-Utility-v0.5.3/"
+          Copy-Item $dll.FullName "SAK-Utility-v0.5.4/"
         }
         
         # Copy tools directory if exists
         if (Test-Path "../../tools") {
-          Copy-Item -Recurse "../../tools" "SAK-Utility-v0.5.3/"
+          Copy-Item -Recurse "../../tools" "SAK-Utility-v0.5.4/"
           
           # Ensure Chocolatey directories exist (some are gitignored)
-          $chocoPath = "SAK-Utility-v0.5.3/tools/chocolatey"
+          $chocoPath = "SAK-Utility-v0.5.4/tools/chocolatey"
           if (Test-Path $chocoPath) {
             # Create required directories if they don't exist
             New-Item -ItemType Directory -Force -Path "$chocoPath/lib" | Out-Null
@@ -188,28 +188,28 @@ jobs:
         }
         
         # Copy documentation
-        Copy-Item "../../Readme.md" "SAK-Utility-v0.5.3/"
-        Copy-Item "../../LICENSE" "SAK-Utility-v0.5.3/"
+        Copy-Item "../../Readme.md" "SAK-Utility-v0.5.4/"
+        Copy-Item "../../LICENSE" "SAK-Utility-v0.5.4/"
         if (Test-Path "../../CONTRIBUTING.md") {
-          Copy-Item "../../CONTRIBUTING.md" "SAK-Utility-v0.5.3/"
+          Copy-Item "../../CONTRIBUTING.md" "SAK-Utility-v0.5.4/"
         }
         
         # Create portable.ini for portable mode
-        New-Item -ItemType File -Path "SAK-Utility-v0.5.3/portable.ini" -Force
+        New-Item -ItemType File -Path "SAK-Utility-v0.5.4/portable.ini" -Force
         
         # List contents for verification
         Write-Host ""
         Write-Host "Package contents:"
-        Get-ChildItem -Path "SAK-Utility-v0.5.3" -Recurse -File | Select-Object FullName, @{Name="SizeMB";Expression={[math]::Round($_.Length/1MB, 2)}}
+        Get-ChildItem -Path "SAK-Utility-v0.5.4" -Recurse -File | Select-Object FullName, @{Name="SizeMB";Expression={[math]::Round($_.Length/1MB, 2)}}
         
         # Create ZIP archive with contents directly (not nested in folder)
-        Compress-Archive -Path "SAK-Utility-v0.5.3\*" -DestinationPath "SAK-Utility-v0.5.3-Windows-x64.zip" -Force
+        Compress-Archive -Path "SAK-Utility-v0.5.4\*" -DestinationPath "SAK-Utility-v0.5.4-Windows-x64.zip" -Force
     
     - name: Upload ZIP artifact
       uses: actions/upload-artifact@v4
       with:
         name: SAK-Utility-Windows-x64
-        path: build/Release/SAK-Utility-v0.5.3/*
+        path: build/Release/SAK-Utility-v0.5.4/*
         retention-days: 90
     
     - name: Create Release
@@ -217,13 +217,13 @@ jobs:
       uses: softprops/action-gh-release@v1
       with:
         files: |
-          build/Release/SAK-Utility-v0.5.3-Windows-x64.zip
+          build/Release/SAK-Utility-v0.5.4-Windows-x64.zip
         body: |
-          # S.A.K. Utility v0.5.3
+          # S.A.K. Utility v0.5.4
           
           **Windows System Administration Kit - Swiss Army Knife Utility**
           
-          ## New in v0.5.3
+          ## New in v0.5.4
           - ⚡ **Build Performance** - Added caching for vcpkg and CMake (3-5x faster CI builds)
           - 📦 **Improved Packaging** - Fixed artifact structure and included compression DLLs
           - 🧪 **CI Improvements** - Automated GUI test skipping in CI environment
@@ -243,7 +243,7 @@ jobs:
           - 🗝️ License Key Scanner
           
           ## Installation
-          1. Download `SAK-Utility-v0.5.3-Windows-x64.zip`
+          1. Download `SAK-Utility-v0.5.4-Windows-x64.zip`
           2. Extract to your preferred location
           3. Run `sak_utility.exe`
           4. `portable.ini` is included for portable operation
@@ -277,7 +277,7 @@ jobs:
       run: |
         echo "### Build Information" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
-        echo "- **Version**: 0.5.3" >> $GITHUB_STEP_SUMMARY
+        echo "- **Version**: 0.5.4" >> $GITHUB_STEP_SUMMARY
         echo "- **Commit**: ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
         echo "- **Branch**: ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
         echo "- **Qt Version**: ${{ env.QT_VERSION }}" >> $GITHUB_STEP_SUMMARY
