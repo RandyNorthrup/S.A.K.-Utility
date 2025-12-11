@@ -14,10 +14,10 @@
 S.A.K. Utility is a **Windows-only** desktop application designed for **PC technicians** who need to migrate systems, backup user profiles, and manage files during PC repairs, upgrades, and replacements. Built with modern C++23 and Qt6, it provides professional-grade tools through an intuitive tabbed interface.
 
 **Target Users**: PC technicians, computer repair shops, IT support specialists  
-**Version**: 0.5  
-**Release Date**: December 10, 2025  
+**Version**: 0.5.1  
+**Release Date**: December 11, 2025  
 **Platform**: Windows 10/11 x64 only  
-**Build Size**: 1.13 MB executable
+**Build Size**: 1.33 MB executable
 
 ---
 
@@ -37,24 +37,30 @@ Automate software installation on new or refreshed Windows systems using embedde
 **Use Case:** Migrate from old PC to new PC by scanning apps on the old machine, exporting a migration plan, then importing and installing on the new machine.
 
 ### 2. User Profile Backup & Restore
-Comprehensive Windows user profile backup with intelligent 6-page wizards.
+Comprehensive Windows user profile backup with intelligent 6-page wizards and enterprise-grade encryption.
 
 **Backup Wizard:**
 - Automatic Windows user detection via NetUserEnum API
 - Selective folder backup (Documents, Desktop, Pictures, Videos, Music, Downloads, AppData)
 - Per-user customization dialogs for granular control
 - Smart file filtering (skip temp files, caches, registry hives)
+- **Compression support**: 4 levels (None, Fast, Balanced, Maximum) using PowerShell Compress-Archive
+- **AES-256-CBC encryption**: Enterprise-grade encryption with PBKDF2 key derivation (100,000 iterations)
 - Multi-threaded backup with SHA256 verification
 - Backup manifest generation with metadata
+- Password protection with confirmation validation
 
 **Restore Wizard:**
 - User mapping and conflict resolution
 - Merge mode configuration (skip, overwrite, rename)
 - Permission settings preservation
+- **Automatic decryption**: Supports encrypted backups with password
 - Real-time progress tracking with detailed logging
 
 **Technical Details:**
 - Uses `QCryptographicHash` for SHA256 integrity verification
+- AES-256-CBC encryption via Windows BCrypt API (FIPS 140-2 compliant)
+- 32-byte salt + 16-byte IV per encryption for maximum security
 - Supports registry hive backup (NTUSER.DAT, UsrClass.dat)
 - Handles Windows ACL preservation (Access Control Lists)
 - Multi-threaded file operations for performance
@@ -93,6 +99,25 @@ Attempt to locate software license keys stored in Windows Registry.
 - Cannot decrypt protected keys
 - Best-effort basis only
 
+### 6. Image Flasher
+Create bootable USB drives from Windows ISO files with automatic decompression.
+
+**Capabilities:**
+- Windows ISO downloader with language and edition selection
+- Automatic drive detection with safety checks (prevents system drive selection)
+- Streaming decompression support: gzip (.gz), bzip2 (.bz2), xz/lzma (.xz)
+- Direct write to USB drives with progress tracking
+- Verification after write (optional)
+- Safe by default: System drives cannot be selected
+
+**Use Case:** Create bootable Windows installation USB drives for PC repairs and fresh installations.
+
+**Technical Details:**
+- Integrates with Microsoft's Windows ISO download API
+- Multi-threaded decompression for performance
+- Buffered writing with cancellation support
+- Drive locking during write operations to prevent corruption
+
 ---
 
 ## Technical Architecture
@@ -104,9 +129,9 @@ Attempt to locate software license keys stored in Windows Registry.
 | **C++ Standard** | C++23 | Modern language features, strict compliance |
 | **GUI Framework** | Qt 6.5.3 | Cross-platform GUI library (Windows-only deployment) |
 | **Build System** | CMake 3.28+ | Project configuration and build orchestration |
-| **Compiler** | MSVC 19.50+ | Visual Studio 2022 toolchain |
+| **Compiler** | MSVC 19.44+ | Visual Studio 2022 toolchain |
 | **Threading** | QtConcurrent | Background task management |
-| **Cryptography** | QCryptographicHash | MD5/SHA256 hashing (no OpenSSL dependency) |
+| **Cryptography** | Windows BCrypt + QCryptographicHash | AES-256-CBC encryption, MD5/SHA256 hashing |
 | **Package Manager** | Chocolatey | Embedded in `tools/chocolatey/` directory |
 
 ### Code Structure
@@ -114,7 +139,7 @@ Attempt to locate software license keys stored in Windows Registry.
 ```
 S.A.K.-Utility/
 ├── src/
-│   ├── core/                          # Business logic (22 files)
+│   ├── core/                          # Business logic (35+ files)
 │   │   ├── app_scanner.cpp             # Windows app detection (Registry + filesystem)
 │   │   ├── chocolatey_manager.cpp      # Embedded Chocolatey integration
 │   │   ├── package_matcher.cpp         # Fuzzy app-to-package matching
@@ -124,26 +149,40 @@ S.A.K.-Utility/
 │   │   ├── permission_manager.cpp      # Windows ACL handling
 │   │   ├── smart_file_filter.cpp       # Intelligent file exclusion rules
 │   │   ├── migration_report.cpp        # Report generation (JSON/CSV/HTML)
+│   │   ├── encryption.cpp              # AES-256-CBC encryption (339 lines)
+│   │   ├── drive_scanner.cpp           # USB drive detection and safety checks
+│   │   ├── windows_iso_downloader.cpp  # Windows ISO download API
+│   │   ├── image_writer.cpp            # Buffered USB writing
+│   │   ├── flash_coordinator.cpp       # Flash operation orchestration
+│   │   ├── streaming_decompressor.cpp  # Base decompression interface
+│   │   ├── gzip_decompressor.cpp       # gzip decompression
+│   │   ├── bzip2_decompressor.cpp      # bzip2 decompression
+│   │   ├── xz_decompressor.cpp         # xz/lzma decompression
 │   │   ├── keep_awake.cpp              # Prevent system sleep (no GUI)
 │   │   └── logger.cpp                  # Async file logging
 │   │
-│   ├── gui/                            # Qt interface (18 files)
-│   │   ├── main_window.cpp             # 5-tab main window
+│   ├── gui/                            # Qt interface (21+ files)
+│   │   ├── main_window.cpp             # 6-tab main window
 │   │   ├── backup_panel.cpp            # Launch point for profile wizards
-│   │   ├── user_profile_backup_wizard.cpp    # 6-page backup wizard (1016 lines)
+│   │   ├── user_profile_backup_wizard.cpp    # 6-page backup wizard (1090+ lines)
 │   │   ├── user_profile_restore_wizard.cpp   # 6-page restore wizard (1081 lines)
 │   │   ├── app_migration_panel.cpp     # Application migration GUI (921 lines)
+│   │   ├── image_flasher_panel.cpp     # Image flasher GUI (600+ lines)
+│   │   ├── windows_iso_download_dialog.cpp   # Windows ISO downloader dialog
 │   │   ├── organizer_panel.cpp         # Directory organizer GUI
 │   │   ├── duplicate_finder_panel.cpp  # Duplicate finder GUI
 │   │   ├── license_scanner_panel.cpp   # License scanner GUI
 │   │   ├── settings_dialog.cpp         # Multi-tab settings
 │   │   └── about_dialog.cpp            # About/credits/system info
 │   │
+│   ├── threading/                      # Background workers
+│   │   └── flash_worker.cpp            # Threaded USB flash operations
+│   │
 │   └── main.cpp                        # Entry point, logger initialization
 │
-├── include/sak/                        # Public headers (38 files)
+├── include/sak/                        # Public headers (50+ files)
 ├── tests/                              # Unit tests (11 test programs)
-├── tools/chocolatey/                   # Embedded Chocolatey binaries
+├── tools/chocolatey/                   # Embedded Chocolatey binaries (67 MB)
 ├── resources/                          # Icons and Qt resources
 └── CMakeLists.txt                      # Build configuration
 ```
