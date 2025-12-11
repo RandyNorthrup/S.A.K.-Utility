@@ -150,14 +150,25 @@ jobs:
         # Copy vcpkg DLLs (zlib, bzip2, liblzma)
         $vcpkgBinPath = "C:\vcpkg\installed\x64-windows\bin"
         if (Test-Path $vcpkgBinPath) {
-          $vcpkgDlls = @("zlib1.dll", "bz2.dll", "lzma.dll")
-          foreach ($dllName in $vcpkgDlls) {
-            $dllPath = Join-Path $vcpkgBinPath $dllName
-            if (Test-Path $dllPath) {
-              Copy-Item $dllPath "SAK-Utility-v0.5.2/"
-              Write-Host "Copied vcpkg DLL: $dllName"
-            } else {
-              Write-Warning "vcpkg DLL not found: $dllName"
+          # Map of expected DLL names with alternatives
+          $vcpkgDlls = @(
+            @("zlib1.dll"),
+            @("bz2.dll", "libbz2.dll"),
+            @("lzma.dll", "liblzma.dll", "lzma-5.dll")
+          )
+          foreach ($dllNames in $vcpkgDlls) {
+            $copied = $false
+            foreach ($dllName in $dllNames) {
+              $dllPath = Join-Path $vcpkgBinPath $dllName
+              if (Test-Path $dllPath) {
+                Copy-Item $dllPath "SAK-Utility-v0.5.2/"
+                Write-Host "Copied vcpkg DLL: $dllName"
+                $copied = $true
+                break
+              }
+            }
+            if (-not $copied) {
+              Write-Warning "vcpkg DLL not found: $($dllNames -join ' or ')"
             }
           }
         }
