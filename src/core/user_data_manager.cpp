@@ -1,4 +1,5 @@
 #include "sak/user_data_manager.h"
+#include "sak/encryption.h"
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -368,15 +369,27 @@ bool UserDataManager::compareChecksums(const QString& file1, const QString& file
 
 bool UserDataManager::createArchive(const QStringList& source_paths,
                                     const QString& archive_path,
-                                    const BackupConfig& /*config*/)
+                                    const BackupConfig& config)
 {
+    // Map compression level to PowerShell CompressionLevel
+    QString compressionLevel;
+    if (config.compression_level == 0) {
+        compressionLevel = "NoCompression";
+    } else if (config.compression_level <= 3) {
+        compressionLevel = "Fastest";
+    } else if (config.compression_level <= 6) {
+        compressionLevel = "Optimal";
+    } else {
+        compressionLevel = "Optimal"; // PowerShell doesn't have higher levels
+    }
+    
     // Use PowerShell's Compress-Archive for Windows
     QStringList args;
     args << "-NoProfile" << "-Command";
     
     QString sources = source_paths.join("','");
-    QString command = QString("Compress-Archive -Path '%1' -DestinationPath '%2' -CompressionLevel Optimal -Force")
-                        .arg(sources, archive_path);
+    QString command = QString("Compress-Archive -Path '%1' -DestinationPath '%2' -CompressionLevel %3 -Force")
+                        .arg(sources, archive_path, compressionLevel);
     
     args << command;
     
@@ -392,19 +405,82 @@ bool UserDataManager::createArchive(const QStringList& source_paths,
         return false;
     }
     
-    return process.exitCode() == 0 && QFile::exists(archive_path);
+    if (process.exitCode() != 0 || !QFile::exists(archive_path)) {
+        return false;
+    }
+    
+    // Encrypt archive if requested
+    if (config.encrypt && !config.password.isEmpty()) {
+        // Read original archive
+        QFile archive(archive_path);
+        if (!archive.open(QIODevice::ReadOnly)) {
+            return false;
+        }
+        QByteArray data = archive.readAll();
+        archive.close();
+        
+        // Encrypt data
+        auto encrypted = sak::encrypt_data(data, config.password);
+        if (!encrypted) {
+            qWarning() << "[UserDataManager] Encryption failed:" << static_cast<int>(encrypted.error());
+            QFile::remove(archive_path);
+            return false;
+        }
+        
+        // Write encrypted data
+        if (!archive.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+            qWarning() << "[UserDataManager] Failed to write encrypted file";
+            return false;
+        }
+        archive.write(*encrypted);
+        archive.close();
+    }
+    
+    return true;
 }
 
 bool UserDataManager::extractArchive(const QString& archive_path,
                                      const QString& destination,
-                                     const RestoreConfig& /*config*/)
+                                     const RestoreConfig& config)
 {
+    QString file_to_extract = archive_path;
+    QString temp_decrypted;
+    
+    // Decrypt if password provided
+    if (!config.password.isEmpty()) {
+        // Read encrypted archive
+        QFile archive(archive_path);
+        if (!archive.open(QIODevice::ReadOnly)) {
+            return false;
+        }
+        QByteArray encrypted_data = archive.readAll();
+        archive.close();
+        
+        // Decrypt data
+        auto decrypted = sak::decrypt_data(encrypted_data, config.password);
+        if (!decrypted) {
+            qWarning() << "[UserDataManager] Decryption failed:" << static_cast<int>(decrypted.error());
+            return false;
+        }
+        
+        // Write decrypted data to temp file
+        temp_decrypted = archive_path + ".decrypted";
+        QFile temp(temp_decrypted);
+        if (!temp.open(QIODevice::WriteOnly)) {
+            return false;
+        }
+        temp.write(*decrypted);
+        temp.close();
+        
+        file_to_extract = temp_decrypted;
+    }
+    
     // Use PowerShell's Expand-Archive for Windows
     QStringList args;
     args << "-NoProfile" << "-Command";
     
     QString command = QString("Expand-Archive -Path '%1' -DestinationPath '%2' -Force")
-                        .arg(archive_path, destination);
+                        .arg(file_to_extract, destination);
     
     args << command;
     
@@ -412,12 +488,19 @@ bool UserDataManager::extractArchive(const QString& archive_path,
     process.start("powershell.exe", args);
     
     if (!process.waitForStarted()) {
+        if (!temp_decrypted.isEmpty()) QFile::remove(temp_decrypted);
         return false;
     }
     
     if (!process.waitForFinished(300000)) { // 5 minute timeout
         process.kill();
+        if (!temp_decrypted.isEmpty()) QFile::remove(temp_decrypted);
         return false;
+    }
+    
+    // Clean up temporary decrypted file
+    if (!temp_decrypted.isEmpty()) {
+        QFile::remove(temp_decrypted);
     }
     
     return process.exitCode() == 0;

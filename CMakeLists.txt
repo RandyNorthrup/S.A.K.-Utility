@@ -146,10 +146,16 @@ find_package(Qt6 6.5 REQUIRED COMPONENTS
     Core
     Widgets
     Concurrent
+    Network
 )
 
 # Threads - Standard library threading
 find_package(Threads REQUIRED)
+
+# Compression libraries for image decompression
+find_package(ZLIB REQUIRED)
+find_package(BZip2 REQUIRED)
+find_package(LibLZMA REQUIRED)
 
 # Platform-specific libraries
 if(PLATFORM_WINDOWS)
@@ -198,6 +204,7 @@ set(CORE_SOURCES
     src/core/config_manager.cpp
     src/core/input_validator.cpp
     src/core/secure_memory.cpp
+    src/core/encryption.cpp
     src/core/keep_awake.cpp
     src/core/elevation_manager.cpp
     src/core/app_scanner.cpp
@@ -212,8 +219,32 @@ set(CORE_SOURCES
     src/core/permission_manager.cpp
     src/core/user_profile_backup_worker.cpp
     src/core/user_profile_restore_worker.cpp
+    src/core/drive_scanner.cpp
+    src/core/image_source.cpp
+    src/core/flash_coordinator.cpp
+    src/core/windows_iso_downloader.cpp
+    src/core/drive_unmounter.cpp
+    src/core/drive_lock.cpp
+    src/core/image_writer.cpp
+    src/core/streaming_decompressor.cpp
+    src/core/gzip_decompressor.cpp
+    src/core/bzip2_decompressor.cpp
+    src/core/xz_decompressor.cpp
+    src/core/decompressor_factory.cpp
     include/sak/config_manager.h
     include/sak/app_scanner.h
+    include/sak/drive_scanner.h
+    include/sak/image_source.h
+    include/sak/flash_coordinator.h
+    include/sak/windows_iso_downloader.h
+    include/sak/drive_unmounter.h
+    include/sak/drive_lock.h
+    include/sak/image_writer.h
+    include/sak/streaming_decompressor.h
+    include/sak/gzip_decompressor.h
+    include/sak/bzip2_decompressor.h
+    include/sak/xz_decompressor.h
+    include/sak/decompressor_factory.h
     include/sak/chocolatey_manager.h
     include/sak/package_matcher.h
     include/sak/migration_report.h
@@ -258,11 +289,13 @@ set(THREADING_SOURCES
     src/threading/organizer_worker.cpp
     src/threading/duplicate_finder_worker.cpp
     src/threading/license_scanner_worker.cpp
+    src/threading/flash_worker.cpp
     include/sak/worker_base.h
     include/sak/backup_worker.h
     include/sak/organizer_worker.h
     include/sak/duplicate_finder_worker.h
     include/sak/license_scanner_worker.h
+    include/sak/flash_worker.h
 )
 
 # Feature modules (Phase 4)
@@ -318,6 +351,12 @@ set(GUI_SOURCES
     include/sak/user_profile_backup_wizard.h
     src/gui/user_profile_restore_wizard.cpp
     include/sak/user_profile_restore_wizard.h
+    src/gui/image_flasher_panel.cpp
+    include/sak/image_flasher_panel.h
+    src/gui/windows_iso_download_dialog.cpp
+    include/sak/windows_iso_download_dialog.h
+    src/gui/image_flasher_settings_dialog.cpp
+    include/sak/image_flasher_settings_dialog.h
 )
 
 # Main entry point
@@ -357,7 +396,11 @@ target_link_libraries(sak_utility PRIVATE
     Qt6::Core
     Qt6::Widgets
     Qt6::Concurrent
+    Qt6::Network
     Threads::Threads
+    ZLIB::ZLIB
+    BZip2::BZip2
+    LibLZMA::LibLZMA
     ${PLATFORM_LIBS}
 )
 
@@ -691,12 +734,14 @@ add_executable(test_user_data_manager
     src/core/migration_report.cpp
     src/core/app_migration_worker.cpp
     src/core/user_data_manager.cpp
+    src/core/encryption.cpp
     include/sak/app_scanner.h
     include/sak/chocolatey_manager.h
     include/sak/package_matcher.h
     include/sak/migration_report.h
     include/sak/app_migration_worker.h
     include/sak/user_data_manager.h
+    include/sak/encryption.h
 )
 
 set_target_properties(test_user_data_manager PROPERTIES
@@ -721,9 +766,11 @@ target_include_directories(test_user_data_manager PRIVATE
 add_executable(test_backup_wizard
     tests/test_backup_wizard.cpp
     src/core/user_data_manager.cpp
+    src/core/encryption.cpp
     src/gui/backup_wizard.cpp
     include/sak/backup_wizard.h
     include/sak/user_data_manager.h
+    include/sak/encryption.h
 )
 
 set_target_properties(test_backup_wizard PROPERTIES
@@ -749,9 +796,11 @@ target_include_directories(test_backup_wizard PRIVATE
 add_executable(test_restore_wizard
     tests/test_restore_wizard.cpp
     src/core/user_data_manager.cpp
+    src/core/encryption.cpp
     src/gui/restore_wizard.cpp
     include/sak/restore_wizard.h
     include/sak/user_data_manager.h
+    include/sak/encryption.h
 )
 
 set_target_properties(test_restore_wizard PROPERTIES
@@ -783,6 +832,7 @@ add_executable(test_app_migration_panel
     src/core/migration_report.cpp
     src/core/app_migration_worker.cpp
     src/core/user_data_manager.cpp
+    src/core/encryption.cpp
     src/gui/backup_wizard.cpp
     src/gui/restore_wizard.cpp
     include/sak/app_migration_panel.h

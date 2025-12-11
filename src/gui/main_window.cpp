@@ -5,6 +5,7 @@
 #include "sak/duplicate_finder_panel.h"
 #include "sak/license_scanner_panel.h"
 #include "sak/app_migration_panel.h"
+#include "sak/image_flasher_panel.h"
 #include "gui/settings_dialog.h"
 #include "gui/undo_manager.h"
 
@@ -135,6 +136,10 @@ void MainWindow::create_panels()
     // Create App Migration panel
     m_app_migration_panel = std::make_unique<AppMigrationPanel>(this);
     m_tab_widget->addTab(m_app_migration_panel.get(), "App Migration");
+    
+    // Create Image Flasher panel
+    m_image_flasher_panel = std::make_unique<ImageFlasherPanel>(this);
+    m_tab_widget->addTab(m_image_flasher_panel.get(), "Image Flasher");
     
     // Connect panel signals to main window status bar
     connect(m_backup_panel.get(), &BackupPanel::status_message,

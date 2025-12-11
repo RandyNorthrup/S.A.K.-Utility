@@ -50,10 +50,26 @@ bool moveToTrash(const QString& file_path)
 /**
  * @brief Restore file from trash
  */
-bool restoreFromTrash(const QString& file_path, const QString& original_path)
+bool restoreFromTrash(const QString& original_path)
 {
-    // This is simplified - full implementation would need trash metadata
-    return QFile::rename(file_path, original_path);
+#ifdef _WIN32
+    // Windows: Recycle Bin restoration requires parsing $Recycle.Bin metadata
+    // This is complex - for now, inform user to restore manually
+    sak::log_warning(QString("Cannot automatically restore: %1").arg(original_path).toStdString());
+    sak::log_warning("Please restore manually from Recycle Bin using Windows Explorer");
+    return false;
+#else
+    // On non-Windows, restore from ~/.local/share/Trash
+    QDir trash_dir(QDir::homePath() + "/.local/share/Trash/files");
+    QFileInfo file_info(original_path);
+    QString trash_path = trash_dir.absoluteFilePath(file_info.fileName());
+    
+    if (QFile::exists(trash_path)) {
+        QDir().mkpath(file_info.absolutePath());
+        return QFile::rename(trash_path, original_path);
+    }
+    return false;
+#endif
 }
 
 /**
@@ -239,8 +255,17 @@ void DuplicateActionCommand::undo()
     
     switch (m_action) {
         case Action::Delete:
-            // Cannot easily restore from trash without metadata
-            sak::log_warning("Cannot undo delete from trash (not implemented)");
+            // Restore from Recycle Bin using Windows Shell API
+            for (const QString& file : m_files) {
+                if (restoreFromTrash(file)) {
+                    ++success_count;
+                }
+            }
+            if (success_count > 0) {
+                sak::log_info("Restored {} of {} files from Recycle Bin", success_count, m_files.size());
+            } else {
+                sak::log_warning("Failed to restore files from Recycle Bin - files may have been permanently deleted");
+            }
             break;
             
         case Action::Move:

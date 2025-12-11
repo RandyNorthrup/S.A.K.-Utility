@@ -56,6 +56,21 @@ public:
      * @brief Get the smart filter configuration
      */
     SmartFilter getSmartFilter() const { return m_smartFilter; }
+    
+    /**
+     * @brief Get compression level (0-9: 0=none, 3=fast, 6=balanced, 9=max)
+     */
+    int getCompressionLevel() const;
+    
+    /**
+     * @brief Check if encryption is enabled
+     */
+    bool isEncryptionEnabled() const;
+    
+    /**
+     * @brief Get encryption password
+     */
+    QString getEncryptionPassword() const;
 
 private:
     BackupManifest m_manifest;
@@ -202,6 +217,7 @@ private:
     QComboBox* m_compressionCombo{nullptr};
     QCheckBox* m_encryptionCheck{nullptr};
     QLineEdit* m_passwordEdit{nullptr};
+    QLineEdit* m_passwordConfirmEdit{nullptr};
     QComboBox* m_permissionModeCombo{nullptr};
     QCheckBox* m_verifyCheck{nullptr};
     QLabel* m_summaryLabel{nullptr};

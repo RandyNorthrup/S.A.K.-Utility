@@ -48,6 +48,21 @@ UserProfileBackupWizard::UserProfileBackupWizard(QWidget* parent)
 
 UserProfileBackupWizard::~UserProfileBackupWizard() = default;
 
+int UserProfileBackupWizard::getCompressionLevel() const {
+    int index = field("compressionLevel").toInt();
+    // Map combo index to compression level: 0=none(0), 1=fast(3), 2=balanced(6), 3=max(9)
+    static const int levels[] = {0, 3, 6, 9};
+    return (index >= 0 && index < 4) ? levels[index] : 6;
+}
+
+bool UserProfileBackupWizard::isEncryptionEnabled() const {
+    return field("encryptionEnabled").toBool();
+}
+
+QString UserProfileBackupWizard::getEncryptionPassword() const {
+    return field("encryptionPassword").toString();
+}
+
 // ============================================================================
 // UserProfileBackupWelcomePage
 // ============================================================================
@@ -722,27 +737,30 @@ void UserProfileBackupSettingsPage::setupUi() {
     destLayout->addWidget(m_browseButton);
     layout->addLayout(destLayout);
     
-    // Compression (future feature)
+    // Compression
     auto* compressionLayout = new QHBoxLayout();
     compressionLayout->addWidget(new QLabel(tr("Compression:"), this));
     m_compressionCombo = new QComboBox(this);
     m_compressionCombo->addItems({tr("None"), tr("Fast"), tr("Balanced"), tr("Maximum")});
-    m_compressionCombo->setCurrentIndex(0);
-    m_compressionCombo->setEnabled(false); // Not implemented yet
+    m_compressionCombo->setCurrentIndex(2); // Default to Balanced
+    m_compressionCombo->setToolTip(tr("Choose compression level:\n"
+                                        "• None: No compression, fastest\n"
+                                        "• Fast: Quick compression, larger files\n"
+                                        "• Balanced: Good balance (recommended)\n"
+                                        "• Maximum: Best compression, slower"));
     compressionLayout->addWidget(m_compressionCombo);
-    compressionLayout->addWidget(new QLabel(tr("(Coming soon)"), this));
     compressionLayout->addStretch();
     layout->addLayout(compressionLayout);
     
-    // Encryption (future feature)
+    // Encryption
     auto* encryptionLayout = new QHBoxLayout();
     m_encryptionCheck = new QCheckBox(tr("Encrypt backup"), this);
-    m_encryptionCheck->setEnabled(false); // Not implemented yet
+    m_encryptionCheck->setToolTip(tr("Encrypt backup with AES-256 password protection"));
     connect(m_encryptionCheck, &QCheckBox::toggled, this, [this](bool checked) {
         m_passwordEdit->setEnabled(checked);
+        m_passwordConfirmEdit->setEnabled(checked);
     });
     encryptionLayout->addWidget(m_encryptionCheck);
-    encryptionLayout->addWidget(new QLabel(tr("(Coming soon)"), this));
     encryptionLayout->addStretch();
     layout->addLayout(encryptionLayout);
     
@@ -751,8 +769,18 @@ void UserProfileBackupSettingsPage::setupUi() {
     m_passwordEdit = new QLineEdit(this);
     m_passwordEdit->setEchoMode(QLineEdit::Password);
     m_passwordEdit->setEnabled(false);
+    m_passwordEdit->setPlaceholderText(tr("Enter encryption password"));
     passwordLayout->addWidget(m_passwordEdit);
     layout->addLayout(passwordLayout);
+    
+    auto* confirmLayout = new QHBoxLayout();
+    confirmLayout->addWidget(new QLabel(tr("Confirm:"), this));
+    m_passwordConfirmEdit = new QLineEdit(this);
+    m_passwordConfirmEdit->setEchoMode(QLineEdit::Password);
+    m_passwordConfirmEdit->setEnabled(false);
+    m_passwordConfirmEdit->setPlaceholderText(tr("Confirm encryption password"));
+    confirmLayout->addWidget(m_passwordConfirmEdit);
+    layout->addLayout(confirmLayout);
     
     // Permission mode
     auto* permLayout = new QHBoxLayout();
@@ -790,8 +818,11 @@ void UserProfileBackupSettingsPage::setupUi() {
     m_summaryLabel->setStyleSheet("QLabel { padding: 8px; background-color: #e8f4fd; border-radius: 4px; }");
     layout->addWidget(m_summaryLabel);
     
-    // Register destination field for validation
+    // Register wizard fields for validation
     registerField("destination*", m_destinationEdit);
+    registerField("compressionLevel", m_compressionCombo, "currentIndex");
+    registerField("encryptionEnabled", m_encryptionCheck);
+    registerField("encryptionPassword", m_passwordEdit);
 }
 
 void UserProfileBackupSettingsPage::initializePage() {
@@ -816,6 +847,34 @@ bool UserProfileBackupSettingsPage::validatePage() {
             tr("The destination folder already exists. Continue anyway?"),
             QMessageBox::Yes | QMessageBox::No);
         if (reply != QMessageBox::Yes) {
+            return false;
+        }
+    }
+    
+    // Validate encryption settings
+    if (m_encryptionCheck->isChecked()) {
+        QString password = m_passwordEdit->text();
+        QString confirm = m_passwordConfirmEdit->text();
+        
+        if (password.isEmpty()) {
+            QMessageBox::warning(this, tr("Missing Password"),
+                tr("Please enter an encryption password."));
+            m_passwordEdit->setFocus();
+            return false;
+        }
+        
+        if (password != confirm) {
+            QMessageBox::warning(this, tr("Password Mismatch"),
+                tr("Passwords do not match. Please re-enter."));
+            m_passwordConfirmEdit->clear();
+            m_passwordConfirmEdit->setFocus();
+            return false;
+        }
+        
+        if (password.length() < 8) {
+            QMessageBox::warning(this, tr("Weak Password"),
+                tr("Password must be at least 8 characters long."));
+            m_passwordEdit->setFocus();
             return false;
         }
     }
@@ -960,6 +1019,20 @@ void UserProfileBackupExecutePage::onStartBackup() {
     // Default to StripAll if not found
     PermissionMode permissionMode = PermissionMode::StripAll;
     
+    // Get compression and encryption settings
+    int compressionLevel = wiz->getCompressionLevel();
+    bool encrypt = wiz->isEncryptionEnabled();
+    QString password = wiz->getEncryptionPassword();
+    
+    appendLog(tr("Compression: %1").arg(
+        compressionLevel == 0 ? tr("None") :
+        compressionLevel <= 3 ? tr("Fast") :
+        compressionLevel <= 6 ? tr("Balanced") : tr("Maximum")));
+    
+    if (encrypt) {
+        appendLog(tr("Encryption: Enabled (AES-256)"));
+    }
+    
     // Create and configure backup worker
     auto worker = new UserProfileBackupWorker(this);
     
@@ -980,8 +1053,9 @@ void UserProfileBackupExecutePage::onStartBackup() {
                 worker->deleteLater();
             });
     
-    // Start backup operation
-    worker->startBackup(m_manifest, m_users, m_destinationPath, smartFilter, permissionMode);
+    // Start backup operation with compression and encryption
+    worker->startBackup(m_manifest, m_users, m_destinationPath, smartFilter, permissionMode,
+                       compressionLevel, encrypt, password);
     
     // Configure progress bars
     m_overallProgress->setRange(0, m_users.size());

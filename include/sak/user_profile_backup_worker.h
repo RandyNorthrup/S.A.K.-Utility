@@ -29,12 +29,18 @@ public:
      * @param destinationPath Where to save the backup
      * @param smartFilter Filter rules for excluding files
      * @param permissionMode How to handle file permissions
+     * @param compressionLevel Compression level (0-9: 0=none, 3=fast, 6=balanced, 9=max)
+     * @param encrypt Whether to encrypt the backup
+     * @param password Encryption password (if encrypt=true)
      */
     void startBackup(const BackupManifest& manifest,
                      const QVector<UserProfile>& users,
                      const QString& destinationPath,
                      const SmartFilter& smartFilter,
-                     PermissionMode permissionMode);
+                     PermissionMode permissionMode,
+                     int compressionLevel = 6,
+                     bool encrypt = false,
+                     const QString& password = QString());
     
     /**
      * @brief Cancel the backup operation
@@ -121,6 +127,9 @@ private:
     QString m_destinationPath;
     SmartFilter m_smartFilter;
     PermissionMode m_permissionMode;
+    int m_compressionLevel{6};
+    bool m_encrypt{false};
+    QString m_password;
     
     // Progress tracking
     std::atomic<bool> m_cancelled{false};

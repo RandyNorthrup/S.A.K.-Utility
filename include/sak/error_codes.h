@@ -32,10 +32,12 @@ enum class error_code {
     // I/O errors (100-199)
     read_error = 100,
     write_error = 101,
+    file_write_error = 101,  // Alias for compatibility
     seek_error = 102,
     truncate_error = 103,
     flush_error = 104,
     lock_error = 105,
+    invalid_argument = 106,
     
     // Hash/verification errors (200-299)
     hash_calculation_failed = 200,
@@ -92,6 +94,9 @@ enum class error_code {
     insufficient_memory = 855,
     resource_limit_reached = 856,
     filesystem_error = 857,
+    crypto_error = 858,
+    decrypt_failed = 859,
+    invalid_format = 860,
     
     // Generic errors (900-999)
     unknown_error = 900,

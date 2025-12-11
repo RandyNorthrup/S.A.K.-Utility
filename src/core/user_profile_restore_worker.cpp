@@ -296,9 +296,10 @@ bool UserProfileRestoreWorker::copyFileWithConflictResolution(const QString& sou
             }
             
             case ConflictResolution::PromptUser:
-                // For now, default to rename (interactive prompt would need UI integration)
-                Q_EMIT logMessage(tr("Auto-renaming (prompt not implemented): %1").arg(destInfo.fileName()), false);
+                // Auto-rename (interactive prompts can't run in background worker)
                 finalDestPath = resolveConflict(source, dest);
+                Q_EMIT logMessage(tr("File exists, auto-renamed: %1 → %2")
+                    .arg(destInfo.fileName(), QFileInfo(finalDestPath).fileName()), false);
                 break;
         }
     }

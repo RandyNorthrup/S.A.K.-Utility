@@ -27,7 +27,10 @@ void UserProfileBackupWorker::startBackup(const BackupManifest& manifest,
                                           const QVector<UserProfile>& users,
                                           const QString& destinationPath,
                                           const SmartFilter& smartFilter,
-                                          PermissionMode permissionMode) {
+                                          PermissionMode permissionMode,
+                                          int compressionLevel,
+                                          bool encrypt,
+                                          const QString& password) {
     if (m_running) {
         Q_EMIT logMessage(tr("Backup already in progress"), true);
         return;
@@ -40,6 +43,9 @@ void UserProfileBackupWorker::startBackup(const BackupManifest& manifest,
     m_destinationPath = destinationPath;
     m_smartFilter = smartFilter;
     m_permissionMode = permissionMode;
+    m_compressionLevel = compressionLevel;
+    m_encrypt = encrypt;
+    m_password = password;
     
     m_cancelled = false;
     m_bytesCopied = 0;

@@ -14,6 +14,7 @@ class BackupPanel;
 class OrganizerPanel;
 class DuplicateFinderPanel;
 class LicenseScannerPanel;
+class ImageFlasherPanel;
 
 namespace sak {
     class AppMigrationPanel;
@@ -166,6 +167,7 @@ private:
     std::unique_ptr<DuplicateFinderPanel> m_duplicate_finder_panel;
     std::unique_ptr<LicenseScannerPanel> m_license_scanner_panel;
     std::unique_ptr<sak::AppMigrationPanel> m_app_migration_panel;
+    std::unique_ptr<ImageFlasherPanel> m_image_flasher_panel;
 
     // Status bar components
     QLabel* m_status_label{nullptr};

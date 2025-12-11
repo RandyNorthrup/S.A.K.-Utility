@@ -59,6 +59,8 @@ public:
             "*.log", "*.tmp", "cache/*", "temp/*"
         };
         int compression_level = 6;         // 0-9 (0=none, 9=max)
+        bool encrypt = false;              // Enable AES-256 encryption
+        QString password;                  // Encryption password
     };
 
     /**
@@ -69,6 +71,7 @@ public:
         bool create_backup = true;         // Backup existing data
         bool overwrite_existing = false;   // Overwrite without prompt
         bool restore_timestamps = true;    // Preserve file dates
+        QString password;                  // Decryption password (if encrypted)
     };
 
     /**
