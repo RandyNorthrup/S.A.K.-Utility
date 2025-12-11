@@ -98,6 +98,9 @@ bld/
 *.dylib
 *.dll
 
+# EXCEPTION: Keep embedded Chocolatey DLLs and tools
+!tools/chocolatey/**/*.dll
+
 # Compiled Static libraries
 *.a
 *.lib
@@ -111,6 +114,9 @@ bld/
 *.i*86
 *.x86_64
 *.hex
+
+# EXCEPTION: Keep embedded Chocolatey executable
+!tools/chocolatey/choco.exe
 
 # Linker files
 *.ilk
