@@ -41,10 +41,32 @@ jobs:
       with:
         vs-version: '17'
     
+    - name: Cache vcpkg
+      uses: actions/cache@v4
+      with:
+        path: |
+          C:/vcpkg/installed
+          C:/vcpkg/packages
+          C:/vcpkg/buildtrees
+        key: ${{ runner.os }}-vcpkg-${{ hashFiles('**/CMakeLists.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-vcpkg-
+    
     - name: Install vcpkg dependencies
       run: |
         vcpkg install zlib:x64-windows bzip2:x64-windows liblzma:x64-windows
         vcpkg integrate install
+    
+    - name: Cache CMake build
+      uses: actions/cache@v4
+      with:
+        path: |
+          build
+          !build/Release/SAK-Utility-v0.5.1
+          !build/Release/*.zip
+        key: ${{ runner.os }}-cmake-${{ hashFiles('**/CMakeLists.txt', 'src/**', 'include/**') }}
+        restore-keys: |
+          ${{ runner.os }}-cmake-
     
     - name: Configure CMake
       run: |
