@@ -69,10 +69,10 @@ jobs:
       working-directory: build/Release
       run: |
         # Create release directory
-        New-Item -ItemType Directory -Force -Path "SAK-Utility-v0.5.0"
+        New-Item -ItemType Directory -Force -Path "SAK-Utility-v0.5.1"
         
         # Copy executable
-        Copy-Item "sak_utility.exe" "SAK-Utility-v0.5.0/"
+        Copy-Item "sak_utility.exe" "SAK-Utility-v0.5.1/"
         
         # Copy Qt DLLs and dependencies (already deployed by CMake)
         $qtDirs = @(
@@ -84,45 +84,45 @@ jobs:
         )
         foreach ($dir in $qtDirs) {
           if (Test-Path $dir) {
-            Copy-Item -Recurse $dir "SAK-Utility-v0.5.0/"
+            Copy-Item -Recurse $dir "SAK-Utility-v0.5.1/"
           }
         }
         
         # Copy Qt runtime DLLs
         $qtDlls = Get-ChildItem -Filter "Qt6*.dll"
         foreach ($dll in $qtDlls) {
-          Copy-Item $dll.FullName "SAK-Utility-v0.5.0/"
+          Copy-Item $dll.FullName "SAK-Utility-v0.5.1/"
         }
         
         # Copy MSVC runtime DLLs if present
         $msvcDlls = Get-ChildItem -Filter "vcruntime*.dll" -ErrorAction SilentlyContinue
         foreach ($dll in $msvcDlls) {
-          Copy-Item $dll.FullName "SAK-Utility-v0.5.0/"
+          Copy-Item $dll.FullName "SAK-Utility-v0.5.1/"
         }
         
         # Copy tools directory if exists
         if (Test-Path "../../tools") {
-          Copy-Item -Recurse "../../tools" "SAK-Utility-v0.5.0/"
+          Copy-Item -Recurse "../../tools" "SAK-Utility-v0.5.1/"
         }
         
         # Copy documentation
-        Copy-Item "../../Readme.md" "SAK-Utility-v0.5.0/"
-        Copy-Item "../../LICENSE" "SAK-Utility-v0.5.0/"
+        Copy-Item "../../Readme.md" "SAK-Utility-v0.5.1/"
+        Copy-Item "../../LICENSE" "SAK-Utility-v0.5.1/"
         if (Test-Path "../../CONTRIBUTING.md") {
-          Copy-Item "../../CONTRIBUTING.md" "SAK-Utility-v0.5.0/"
+          Copy-Item "../../CONTRIBUTING.md" "SAK-Utility-v0.5.1/"
         }
         
         # Create portable.ini for portable mode
-        New-Item -ItemType File -Path "SAK-Utility-v0.5.0/portable.ini" -Force
+        New-Item -ItemType File -Path "SAK-Utility-v0.5.1/portable.ini" -Force
         
         # Create ZIP archive
-        Compress-Archive -Path "SAK-Utility-v0.5.0" -DestinationPath "SAK-Utility-v0.5.0-Windows-x64.zip" -Force
+        Compress-Archive -Path "SAK-Utility-v0.5.1" -DestinationPath "SAK-Utility-v0.5.1-Windows-x64.zip" -Force
     
     - name: Upload Build Artifact
       uses: actions/upload-artifact@v4
       with:
         name: SAK-Utility-Windows-x64
-        path: build/Release/SAK-Utility-v0.5.0-Windows-x64.zip
+        path: build/Release/SAK-Utility-v0.5.1-Windows-x64.zip
         retention-days: 90
     
     - name: Upload Executable Only
@@ -137,21 +137,28 @@ jobs:
       uses: softprops/action-gh-release@v1
       with:
         files: |
-          build/Release/SAK-Utility-v0.5.0-Windows-x64.zip
+          build/Release/SAK-Utility-v0.5.1-Windows-x64.zip
         body: |
-          # S.A.K. Utility v0.5.0
+          # S.A.K. Utility v0.5.1
           
-          **Windows System Administration Kit**
+          **Windows System Administration Kit - Swiss Army Knife Utility**
           
-          ## Features
+          ## New in v0.5.1
+          - 🔐 **AES-256-CBC Encryption** for user profile backups (PBKDF2, 100k iterations)
+          - 📦 **Compression Support** with 4 levels (None, Fast, Balanced, Maximum)
+          - 💿 **Image Flasher** with Windows ISO downloader and USB drive safety checks
+          - ⚡ **Streaming Decompression** for gzip, bzip2, and xz formats
+          
+          ## Core Features
           - 🚀 Application Migration with embedded Chocolatey
-          - 💾 User Profile Backup & Restore wizards
+          - 💾 User Profile Backup & Restore wizards with encryption
+          - 💿 Image Flasher with Windows ISO downloader
           - 📂 Directory Organizer
           - 🔍 Duplicate File Finder
           - 🗝️ License Key Scanner
           
           ## Installation
-          1. Download `SAK-Utility-v0.5.0-Windows-x64.zip`
+          1. Download `SAK-Utility-v0.5.1-Windows-x64.zip`
           2. Extract to your preferred location
           3. Run `sak_utility.exe`
           4. `portable.ini` is included for portable operation
@@ -185,7 +192,7 @@ jobs:
       run: |
         echo "### Build Information" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
-        echo "- **Version**: 0.5.0" >> $GITHUB_STEP_SUMMARY
+        echo "- **Version**: 0.5.1" >> $GITHUB_STEP_SUMMARY
         echo "- **Commit**: ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
         echo "- **Branch**: ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
         echo "- **Qt Version**: ${{ env.QT_VERSION }}" >> $GITHUB_STEP_SUMMARY
