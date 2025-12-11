@@ -226,7 +226,35 @@ S.A.K. Utility supports **true portable operation**:
 3. Run `sak_utility.exe`
 4. **(Optional)** Create `portable.ini` for portable mode
 
-**Note**: Windows SmartScreen may show a warning for unsigned executables. Click "More info" → "Run anyway".
+### Windows Defender / SmartScreen Warnings
+
+**Why does this happen?**
+- The application is not code-signed (signing certificates cost $300+/year)
+- Windows Defender may flag new executables without established reputation
+- This is a **false positive** - the source code is fully open and auditable
+
+**Solutions:**
+
+1. **Add Windows Defender Exclusion (Recommended):**
+   ```powershell
+   # Run as Administrator
+   Add-MpPreference -ExclusionPath "C:\Tools\SAK-Utility"
+   ```
+   Or manually: Windows Security → Virus & threat protection → Manage settings → Exclusions → Add folder
+
+2. **SmartScreen Warning:**
+   - Click "More info" → "Run anyway"
+   - The warning will disappear as the app builds reputation
+
+3. **Verify Download Integrity:**
+   - Check SHA256 hash matches the release notes
+   - All releases are built automatically via GitHub Actions (transparent build process)
+
+**Why trust this software?**
+- ✅ **100% Open Source** - All code is public and auditable on GitHub
+- ✅ **Automated Builds** - Built via GitHub Actions, no manual tampering
+- ✅ **Active Development** - Regular updates and community contributions
+- ✅ **No Telemetry** - Zero data collection, fully offline capable
 
 ### Option 2: Build from Source
 

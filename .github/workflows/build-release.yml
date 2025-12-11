@@ -204,6 +204,21 @@ jobs:
         
         # Create ZIP archive with contents directly (not nested in folder)
         Compress-Archive -Path "SAK-Utility-v0.5.4\*" -DestinationPath "SAK-Utility-v0.5.4-Windows-x64.zip" -Force
+        
+        # Generate SHA256 hash for verification
+        Write-Host ""
+        Write-Host "=== FILE VERIFICATION ==="
+        $exeHash = (Get-FileHash "SAK-Utility-v0.5.4\sak_utility.exe" -Algorithm SHA256).Hash
+        $zipHash = (Get-FileHash "SAK-Utility-v0.5.4-Windows-x64.zip" -Algorithm SHA256).Hash
+        Write-Host "SHA256 (sak_utility.exe): $exeHash"
+        Write-Host "SHA256 (ZIP): $zipHash"
+        
+        # Save hashes to file for release notes
+        @"
+        SHA256 Checksums:
+        - sak_utility.exe: $exeHash
+        - SAK-Utility-v0.5.4-Windows-x64.zip: $zipHash
+        "@ | Out-File "SAK-Utility-v0.5.4\SHA256SUMS.txt" -Encoding UTF8
     
     - name: Upload ZIP artifact
       uses: actions/upload-artifact@v4
@@ -247,6 +262,22 @@ jobs:
           2. Extract to your preferred location
           3. Run `sak_utility.exe`
           4. `portable.ini` is included for portable operation
+          
+          ### Windows Defender / SmartScreen Warning
+          
+          **This is a false positive.** The executable is not code-signed due to certificate costs ($300+/year).
+          
+          **Solutions:**
+          - **Add exclusion**: `Add-MpPreference -ExclusionPath "C:\path\to\SAK-Utility"` (run as admin)
+          - **SmartScreen**: Click "More info" → "Run anyway"
+          - **Verify integrity**: Check SHA256 hash in SHA256SUMS.txt
+          
+          **Why trust this?**
+          - ✅ 100% open source - all code is public and auditable
+          - ✅ Built automatically via GitHub Actions - no manual tampering
+          - ✅ No telemetry or data collection
+          
+          You can also submit the executable to Microsoft as a false positive: https://www.microsoft.com/en-us/wdsi/filesubmission
           
           ## Requirements
           - Windows 10/11 x64
