@@ -1,0 +1,314 @@
+# ============================================================================
+# .vsignore - Visual Studio File Explorer Ignore Patterns
+# S.A.K. Utility C++ Project
+# ============================================================================
+# This file tells Visual Studio which files/folders to hide from Solution Explorer
+# Syntax: gitignore-style patterns (one per line)
+# ============================================================================
+
+# ============================================================================
+# Build Output Directories
+# ============================================================================
+
+# Primary build directories
+build/
+cmake-build-*/
+out/
+bin/
+obj/
+
+# Configuration-specific outputs
+Debug/
+Release/
+RelWithDebInfo/
+MinSizeRel/
+x64/
+x86/
+Win32/
+ARM64/
+
+# Old build directories
+build_old_*/
+*_old/
+
+# ============================================================================
+# CMake Generated Files
+# ============================================================================
+
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+compile_commands.json
+CTestTestfile.cmake
+install_manifest.txt
+*.cmake
+!CMakeLists.txt
+
+# ============================================================================
+# Visual Studio Generated Files
+# ============================================================================
+
+# Solution and project files (keep main ones visible)
+*.sln
+*.vcxproj
+*.vcxproj.filters
+*.vcxproj.user
+
+# User-specific files
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# Visual Studio cache/options
+.vs/
+
+# Build results
+*.ilk
+*.pdb
+*.idb
+*.obj
+*.tlog
+*.log
+*.iobj
+*.ipdb
+
+# MSBuild logs
+*.binlog
+
+# ============================================================================
+# Qt MOC/UIC/RCC Generated Files
+# ============================================================================
+
+moc_*.cpp
+moc_*.h
+qrc_*.cpp
+ui_*.h
+*.moc
+
+# Qt compiled resources
+*.qm
+
+# Qt Creator files
+*.pro.user
+*.pro.user.*
+.qmake.stash
+*.autosave
+
+# ============================================================================
+# Compiled Binaries
+# ============================================================================
+
+# Executables
+*.exe
+*.dll
+*.lib
+*.a
+*.so
+*.dylib
+
+# ============================================================================
+# Test Output
+# ============================================================================
+
+Testing/
+test_results/
+test_reports/
+migration_report.*
+
+# Coverage
+coverage/
+*.gcda
+*.gcno
+*.gcov
+*.lcov
+
+# ============================================================================
+# Documentation Generated
+# ============================================================================
+
+docs/html/
+docs/latex/
+docs/xml/
+docs/_build/
+
+# Keep documentation source and archives visible
+# !docs/*.md
+# !docs/archive/
+
+# ============================================================================
+# Logs & Temporary Files
+# ============================================================================
+
+*.log
+*.tmp
+*.temp
+*.bak
+*.swp
+*.swo
+*~
+*.old
+_logs/
+cpp_logs_old/
+
+# ============================================================================
+# Python Archive (Collapsed in Explorer)
+# ============================================================================
+
+# Hide Python archive contents but keep directory visible
+python_archive/__pycache__/
+python_archive/**/*.pyc
+python_archive/**/*.pyo
+python_archive/**/*.pyd
+python_archive/.venv/
+python_archive/venv/
+python_archive/dist/
+python_archive/build/
+python_archive/.pytest_cache/
+python_archive/.mypy_cache/
+
+# ============================================================================
+# Tools & Embedded Dependencies
+# ============================================================================
+
+# Hide Chocolatey lib but keep main structure
+tools/chocolatey/lib/
+tools/chocolatey/.chocolatey/
+tools/chocolatey/**/*.nupkg
+
+# ============================================================================
+# Node Modules (if any)
+# ============================================================================
+
+node_modules/
+package-lock.json
+yarn.lock
+
+# ============================================================================
+# IDE Cache & Settings
+# ============================================================================
+
+.vscode/settings.json
+.vscode/launch.json
+.vscode/tasks.json
+.vscode/*.log
+
+.idea/
+*.iml
+
+# ============================================================================
+# Operating System Files
+# ============================================================================
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Linux
+.directory
+.Trash-*
+
+# ============================================================================
+# Version Control
+# ============================================================================
+
+.git/
+.gitattributes
+# Keep .gitignore visible for editing
+
+# ============================================================================
+# Package Files
+# ============================================================================
+
+*.zip
+*.tar.gz
+*.tar.bz2
+*.7z
+*.rar
+
+# ============================================================================
+# Database & Data Files
+# ============================================================================
+
+*.db
+*.sqlite
+*.sqlite3
+
+# ============================================================================
+# Security Files
+# ============================================================================
+
+*.key
+*.pem
+*.p12
+*.pfx
+secrets/
+.env
+.env.local
+
+# ============================================================================
+# Large Binary Files
+# ============================================================================
+
+*.bin
+*.dat
+*.data
+
+# ============================================================================
+# Cache Directories
+# ============================================================================
+
+.cache/
+cache/
+
+# ============================================================================
+# Profiling & Debug
+# ============================================================================
+
+*.dSYM/
+*.prof
+*.gprof
+callgrind.out.*
+perf.data*
+*.dmp
+*.stackdump
+
+# ============================================================================
+# Keep These Visible (Important Files)
+# ============================================================================
+
+# Explicitly show these in Solution Explorer
+!CMakeLists.txt
+!package_mappings.json
+!.gitignore
+!README.md
+!CHANGELOG.md
+!CONTRIBUTING.md
+!LICENSE
+!BUILD.md
+!QUICKSTART.md
+!PROJECT_STATUS.md
+!SECURITY.md
+
+# Show main directories (but their ignored contents will be hidden)
+!src/
+!include/
+!tests/
+!resources/
+!docs/
+!cmake/
+!scripts/
+
+# ============================================================================
+# End of .vsignore
+# ============================================================================

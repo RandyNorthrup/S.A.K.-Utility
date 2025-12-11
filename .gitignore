@@ -1,207 +1,417 @@
-# Byte-compiled / optimized / DLL files
-__pycache__/
-*.py[codz]
-*$py.class
+# ============================================================================
+# S.A.K. Utility .gitignore
+# C++ Project with Qt6, CMake, and Visual Studio
+# ============================================================================
 
-# C extensions
-*.so
+# ============================================================================
+# Build Output & Artifacts
+# ============================================================================
 
-# Distribution / packaging
-.Python
+# Build directories
 build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-share/python-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
-MANIFEST
+cmake-build-*/
+out/
+bin/
+obj/
+Debug/
+Release/
+RelWithDebInfo/
+MinSizeRel/
+x64/
+Win32/
+ARM64/
 
-# PyInstaller
-#  Usually these files are written by a python script from a template
-#  before PyInstaller builds the exe, so as to inject date/other infos into it.
-*.manifest
-*.spec
+# Old/backup builds
+build_old_*/
+*_old/
+*.bak
 
-# Installer logs
-pip-log.txt
-pip-delete-this-directory.txt
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+compile_commands.json
+CTestTestfile.cmake
+install_manifest.txt
+*.cmake
 
-# Unit test / coverage reports
-htmlcov/
-.tox/
-.nox/
-.coverage
-.coverage.*
-.cache
-nosetests.xml
-coverage.xml
-*.cover
-*.py.cover
-.hypothesis/
-.pytest_cache/
-cover/
+# ============================================================================
+# Visual Studio / MSBuild
+# ============================================================================
 
-# Translations
-*.mo
-*.pot
+# User-specific files
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+*.vcxproj.user
 
-# Django stuff:
-*.log
-local_settings.py
-db.sqlite3
-db.sqlite3-journal
+# Visual Studio cache/options directory
+.vs/
+.vscode/settings.json
+.vscode/tasks.json
+.vscode/launch.json
+.vscode/*.log
 
-# Flask stuff:
-instance/
-.webassets-cache
+# Build results
+[Dd]ebug/
+[Dd]ebugPublic/
+[Rr]elease/
+[Rr]eleases/
+x64/
+x86/
+[Ww][Ii][Nn]32/
+[Aa][Rr][Mm]/
+[Aa][Rr][Mm]64/
+bld/
+[Bb]in/
+[Oo]bj/
+[Ll]og/
+[Ll]ogs/
 
-# Scrapy stuff:
-.scrapy
+# MSBuild Binary and Structured Log
+*.binlog
 
-# Sphinx documentation
+# NuGet Packages
+*.nupkg
+*.snupkg
+**/packages/*
+
+# ============================================================================
+# C++ Compiled Files
+# ============================================================================
+
+# Compiled Object files
+*.o
+*.obj
+*.ko
+*.elf
+*.lo
+*.slo
+
+# Precompiled Headers
+*.gch
+*.pch
+
+# Compiled Dynamic libraries
+*.so
+*.dylib
+*.dll
+
+# Compiled Static libraries
+*.a
+*.lib
+*.lai
+*.la
+
+# Executables
+*.exe
+*.out
+*.app
+*.i*86
+*.x86_64
+*.hex
+
+# Linker files
+*.ilk
+*.map
+*.exp
+*.pdb
+*.idb
+
+# ============================================================================
+# Qt Framework
+# ============================================================================
+
+# Qt MOC/UIC/RCC generated files
+moc_*.cpp
+moc_*.h
+qrc_*.cpp
+ui_*.h
+*.moc
+
+# Qt Compiled translations
+*.qm
+
+# Qt Project files (if auto-generated)
+*.pro.user
+*.pro.user.*
+.qmake.stash
+*.autosave
+
+# Qt Creator
+*.qbs.user
+*.qbs.user.*
+CMakeLists.txt.user*
+
+# ============================================================================
+# Testing & Coverage
+# ============================================================================
+
+# Test output
+Testing/
+test_results/
+test_reports/
+*.gcda
+*.gcno
+*.gcov
+coverage/
+*.lcov
+
+# Test data
+*.testlog
+
+# ============================================================================
+# Documentation
+# ============================================================================
+
+# Generated docs
+docs/html/
+docs/latex/
+docs/xml/
 docs/_build/
+Doxyfile.bak
 
-# PyBuilder
-.pybuilder/
-target/
+# Archive (keep in repo but ignore changes)
+# docs/archive/
 
-# Jupyter Notebook
-.ipynb_checkpoints
+# ============================================================================
+# Profiling & Debugging
+# ============================================================================
 
-# IPython
-profile_default/
-ipython_config.py
+# Debugger files
+*.dSYM/
+*.ipa
 
-# pyenv
-#   For a library or package, you might want to ignore these files since the code is
-#   intended to run in multiple environments; otherwise, check them in:
-# .python-version
+# Profiling
+*.prof
+*.gprof
+callgrind.out.*
+perf.data*
+*.trace
 
-# pipenv
-#   According to pypa/pipenv#598, it is recommended to include Pipfile.lock in version control.
-#   However, in case of collaboration, if having platform-specific dependencies or dependencies
-#   having no cross-platform support, pipenv may install dependencies that don't work, or not
-#   install all needed dependencies.
-#Pipfile.lock
+# Sanitizer output
+*.san
 
-# UV
-#   Similar to Pipfile.lock, it is generally recommended to include uv.lock in version control.
-#   This is especially recommended for binary packages to ensure reproducibility, and is more
-#   commonly ignored for libraries.
-#uv.lock
+# ============================================================================
+# Package & Distribution Files
+# ============================================================================
 
-# poetry
-#   Similar to Pipfile.lock, it is generally recommended to include poetry.lock in version control.
-#   This is especially recommended for binary packages to ensure reproducibility, and is more
-#   commonly ignored for libraries.
-#   https://python-poetry.org/docs/basic-usage/#commit-your-poetrylock-file-to-version-control
-#poetry.lock
-#poetry.toml
+*.zip
+*.tar.gz
+*.tar.bz2
+*.7z
+*.rar
+*.dmg
+*.msi
+*.rpm
+*.deb
+*.pkg
 
-# pdm
-#   Similar to Pipfile.lock, it is generally recommended to include pdm.lock in version control.
-#   pdm recommends including project-wide configuration in pdm.toml, but excluding .pdm-python.
-#   https://pdm-project.org/en/latest/usage/project/#working-with-version-control
-#pdm.lock
-#pdm.toml
-.pdm-python
-.pdm-build/
+# ============================================================================
+# Logs & Temporary Files
+# ============================================================================
 
-# pixi
-#   Similar to Pipfile.lock, it is generally recommended to include pixi.lock in version control.
-#pixi.lock
-#   Pixi creates a virtual environment in the .pixi directory, just like venv module creates one
-#   in the .venv directory. It is recommended not to include this directory in version control.
-.pixi
+# Logs
+*.log
+*.tlog
+_logs/
+cpp_logs_old/
+*.log.*
 
-# PEP 582; used by e.g. github.com/David-OConnor/pyflow and github.com/pdm-project/pdm
-__pypackages__/
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*.swp
+*.swo
+*~
+*.old
+~*
 
-# Celery stuff
-celerybeat-schedule
-celerybeat.pid
+# Crash dumps
+*.dmp
+*.stackdump
 
-# SageMath parsed files
-*.sage.py
+# ============================================================================
+# Operating System Files
+# ============================================================================
 
-# Environments
-.env
-.envrc
-.venv
-env/
-venv/
-ENV/
-env.bak/
-venv.bak/
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+.AppleDB
+.AppleDesktop
+*.xcodeproj
+*.xcworkspace
 
-# Spyder project settings
-.spyderproject
-.spyproject
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+*.stackdump
+[Dd]esktop.ini
+$RECYCLE.BIN/
+*.cab
+*.msix
+*.msm
+*.msp
+*.lnk
 
-# Rope project settings
-.ropeproject
+# Linux
+*~
+.directory
+.Trash-*
+.nfs*
 
-# mkdocs documentation
-/site
-
-# mypy
-.mypy_cache/
-.dmypy.json
-dmypy.json
-
-# Pyre type checker
-.pyre/
-
-# pytype static type analyzer
-.pytype/
-
-# Cython debug symbols
-cython_debug/
-
-# PyCharm
-#  JetBrains specific template is maintained in a separate JetBrains.gitignore that can
-#  be found at https://github.com/github/gitignore/blob/main/Global/JetBrains.gitignore
-#  and can be added to the global gitignore or merged into this file.  For a more nuclear
-#  option (not recommended) you can uncomment the following to ignore the entire idea folder.
-#.idea/
-
-# Abstra
-# Abstra is an AI-powered process automation framework.
-# Ignore directories containing user credentials, local state, and settings.
-# Learn more at https://abstra.io/docs
-.abstra/
+# ============================================================================
+# IDE & Editor Files
+# ============================================================================
 
 # Visual Studio Code
-#  Visual Studio Code specific template is maintained in a separate VisualStudioCode.gitignore 
-#  that can be found at https://github.com/github/gitignore/blob/main/Global/VisualStudioCode.gitignore
-#  and can be added to the global gitignore or merged into this file. However, if you prefer, 
-#  you could uncomment the following to ignore the entire vscode folder
-# .vscode/
+.vscode/*
+!.vscode/c_cpp_properties.json
+!.vscode/extensions.json
 
-# Ruff stuff:
-.ruff_cache/
+# JetBrains IDEs
+.idea/
+*.iml
+*.ipr
+*.iws
+cmake-build-*/
 
-# PyPI configuration file
-.pypirc
+# Vim
+[._]*.s[a-v][a-z]
+[._]*.sw[a-p]
+[._]s[a-rt-v][a-z]
+[._]ss[a-gi-z]
+[._]sw[a-p]
 
-# Cursor
-#  Cursor is an AI-powered code editor. `.cursorignore` specifies files/directories to
-#  exclude from AI features like autocomplete and code analysis. Recommended for sensitive data
-#  refer to https://docs.cursor.com/context/ignore-files
-.cursorignore
-.cursorindexingignore
+# Emacs
+\#*\#
+/.emacs.desktop
+/.emacs.desktop.lock
+*.elc
+auto-save-list
+tramp
 
-# Marimo
-marimo/_static/
-marimo/_lsp/
-__marimo__/
+# Sublime Text
+*.sublime-workspace
+*.sublime-project
+
+# ============================================================================
+# Python (Legacy - in python_archive/)
+# ============================================================================
+
+# Keep python_archive/ but ignore Python artifacts inside it
+python_archive/**/__pycache__/
+python_archive/**/*.py[cod]
+python_archive/**/*.so
+python_archive/**/.venv/
+python_archive/**/venv/
+python_archive/**/.pytest_cache/
+python_archive/**/.mypy_cache/
+python_archive/**/dist/
+python_archive/**/build/
+python_archive/**/*.egg-info/
+
+# ============================================================================
+# Project Specific
+# ============================================================================
+
+# Report outputs (generated files)
+*.csv
+*.html
+*.json
+!package_mappings.json
+!compile_commands.json
+
+# User data (if any)
+user_data/
+backup/
+
+# Chocolatey packages (embedded tools are kept)
+tools/chocolatey/lib/
+tools/chocolatey/.chocolatey/
+
+# Local configuration
+local_config.json
+*.local
+
+# Database files (if any)
+*.db
+*.sqlite
+*.sqlite3
+
+# ============================================================================
+# Security & Sensitive Data
+# ============================================================================
+
+# Secrets
+*.key
+*.pem
+*.p12
+*.pfx
+secrets/
+.env
+.env.local
+
+# ============================================================================
+# Performance & Large Files
+# ============================================================================
+
+# Large binary assets (keep in LFS or external storage)
+*.bin
+*.dat
+*.data
+
+# Cache directories
+.cache/
+cache/
+
+# ============================================================================
+# Miscellaneous
+# ============================================================================
+
+# Backup files from editors
+*_backup
+*.orig
+*.rej
+
+# Patch files
+*.patch
+*.diff
+
+# Lock files
+*.lock
+!CMakeLists.txt
+
+# Node modules (if any JS tooling)
+node_modules/
+
+# System files
+*.pid
+*.seed
+*.pid.lock
+
+# ============================================================================
+# Keep These Files (Explicitly Track)
+# ============================================================================
+
+# Important: Keep these in version control
+!.gitignore
+!.gitattributes
+!CMakeLists.txt
+!package_mappings.json
+!resources/icon.ico
+!resources/sak_utility.rc

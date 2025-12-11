@@ -1,0 +1,173 @@
+{
+    "count": 42,
+    "mappings": [
+        {
+            "app_name": "7-Zip",
+            "choco_package": "7zip"
+        },
+        {
+            "app_name": "Adobe Acrobat",
+            "choco_package": "adobereader"
+        },
+        {
+            "app_name": "AnyDesk",
+            "choco_package": "anydesk"
+        },
+        {
+            "app_name": "Atom",
+            "choco_package": "atom"
+        },
+        {
+            "app_name": "Audacity",
+            "choco_package": "audacity"
+        },
+        {
+            "app_name": "Brave",
+            "choco_package": "brave"
+        },
+        {
+            "app_name": "CMake",
+            "choco_package": "cmake"
+        },
+        {
+            "app_name": "Discord",
+            "choco_package": "discord"
+        },
+        {
+            "app_name": "Docker Desktop",
+            "choco_package": "docker-desktop"
+        },
+        {
+            "app_name": "FileZilla",
+            "choco_package": "filezilla"
+        },
+        {
+            "app_name": "GIMP",
+            "choco_package": "gimp"
+        },
+        {
+            "app_name": "Git",
+            "choco_package": "git"
+        },
+        {
+            "app_name": "GitHub Desktop",
+            "choco_package": "github-desktop"
+        },
+        {
+            "app_name": "GitKraken",
+            "choco_package": "gitkraken"
+        },
+        {
+            "app_name": "Google Chrome",
+            "choco_package": "googlechrome"
+        },
+        {
+            "app_name": "Inkscape",
+            "choco_package": "inkscape"
+        },
+        {
+            "app_name": "Java",
+            "choco_package": "javaruntime"
+        },
+        {
+            "app_name": "Microsoft Edge",
+            "choco_package": "microsoft-edge"
+        },
+        {
+            "app_name": "Microsoft Teams",
+            "choco_package": "microsoft-teams"
+        },
+        {
+            "app_name": "Mozilla Firefox",
+            "choco_package": "firefox"
+        },
+        {
+            "app_name": "Node.js",
+            "choco_package": "nodejs"
+        },
+        {
+            "app_name": "Notepad++",
+            "choco_package": "notepadplusplus"
+        },
+        {
+            "app_name": "OBS Studio",
+            "choco_package": "obs-studio"
+        },
+        {
+            "app_name": "Opera",
+            "choco_package": "opera"
+        },
+        {
+            "app_name": "PuTTY",
+            "choco_package": "putty"
+        },
+        {
+            "app_name": "Python",
+            "choco_package": "python"
+        },
+        {
+            "app_name": "Skype",
+            "choco_package": "skype"
+        },
+        {
+            "app_name": "Slack",
+            "choco_package": "slack"
+        },
+        {
+            "app_name": "Spotify",
+            "choco_package": "spotify"
+        },
+        {
+            "app_name": "Steam",
+            "choco_package": "steam"
+        },
+        {
+            "app_name": "Sublime Text",
+            "choco_package": "sublimetext3"
+        },
+        {
+            "app_name": "TeamViewer",
+            "choco_package": "teamviewer"
+        },
+        {
+            "app_name": "VLC media player",
+            "choco_package": "vlc"
+        },
+        {
+            "app_name": "VirtualBox",
+            "choco_package": "virtualbox"
+        },
+        {
+            "app_name": "Visual Studio Code",
+            "choco_package": "vscode"
+        },
+        {
+            "app_name": "WinRAR",
+            "choco_package": "winrar"
+        },
+        {
+            "app_name": "WinSCP",
+            "choco_package": "winscp"
+        },
+        {
+            "app_name": "WinZip",
+            "choco_package": "winzip"
+        },
+        {
+            "app_name": "Wireshark",
+            "choco_package": "wireshark"
+        },
+        {
+            "app_name": "Zoom",
+            "choco_package": "zoom"
+        },
+        {
+            "app_name": "iTunes",
+            "choco_package": "itunes"
+        },
+        {
+            "app_name": "qBittorrent",
+            "choco_package": "qbittorrent"
+        }
+    ]
+}
