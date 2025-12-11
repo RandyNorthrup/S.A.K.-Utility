@@ -175,6 +175,16 @@ jobs:
         # Copy tools directory if exists
         if (Test-Path "../../tools") {
           Copy-Item -Recurse "../../tools" "SAK-Utility-v0.5.3/"
+          
+          # Ensure Chocolatey directories exist (some are gitignored)
+          $chocoPath = "SAK-Utility-v0.5.3/tools/chocolatey"
+          if (Test-Path $chocoPath) {
+            # Create required directories if they don't exist
+            New-Item -ItemType Directory -Force -Path "$chocoPath/lib" | Out-Null
+            New-Item -ItemType Directory -Force -Path "$chocoPath/.chocolatey" | Out-Null
+            New-Item -ItemType Directory -Force -Path "$chocoPath/logs" | Out-Null
+            Write-Host "✓ Created Chocolatey directory structure"
+          }
         }
         
         # Copy documentation
