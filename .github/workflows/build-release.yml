@@ -218,7 +218,7 @@ jobs:
         SHA256 Checksums:
         - sak_utility.exe: $exeHash
         - SAK-Utility-v0.5.4-Windows-x64.zip: $zipHash
-        "@ | Out-File "SAK-Utility-v0.5.4\SHA256SUMS.txt" -Encoding UTF8
+        "@ | Out-File "SHA256SUMS.txt" -Encoding UTF8
     
     - name: Upload ZIP artifact
       uses: actions/upload-artifact@v4
@@ -233,6 +233,7 @@ jobs:
       with:
         files: |
           build/Release/SAK-Utility-v0.5.4-Windows-x64.zip
+          build/Release/SHA256SUMS.txt
         body: |
           # S.A.K. Utility v0.5.4
           
