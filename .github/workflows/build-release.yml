@@ -20,6 +20,8 @@ jobs:
   build-windows:
     name: Build Windows Release
     runs-on: windows-latest
+    permissions:
+      contents: write
     
     steps:
     - name: Checkout code
