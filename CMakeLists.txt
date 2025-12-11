@@ -735,6 +735,7 @@ add_executable(test_user_data_manager
     src/core/app_migration_worker.cpp
     src/core/user_data_manager.cpp
     src/core/encryption.cpp
+    src/core/logger.cpp
     include/sak/app_scanner.h
     include/sak/chocolatey_manager.h
     include/sak/package_matcher.h
@@ -742,6 +743,7 @@ add_executable(test_user_data_manager
     include/sak/app_migration_worker.h
     include/sak/user_data_manager.h
     include/sak/encryption.h
+    include/sak/logger.h
 )
 
 set_target_properties(test_user_data_manager PROPERTIES
@@ -767,10 +769,12 @@ add_executable(test_backup_wizard
     tests/test_backup_wizard.cpp
     src/core/user_data_manager.cpp
     src/core/encryption.cpp
+    src/core/logger.cpp
     src/gui/backup_wizard.cpp
     include/sak/backup_wizard.h
     include/sak/user_data_manager.h
     include/sak/encryption.h
+    include/sak/logger.h
 )
 
 set_target_properties(test_backup_wizard PROPERTIES
@@ -797,10 +801,12 @@ add_executable(test_restore_wizard
     tests/test_restore_wizard.cpp
     src/core/user_data_manager.cpp
     src/core/encryption.cpp
+    src/core/logger.cpp
     src/gui/restore_wizard.cpp
     include/sak/restore_wizard.h
     include/sak/user_data_manager.h
     include/sak/encryption.h
+    include/sak/logger.h
 )
 
 set_target_properties(test_restore_wizard PROPERTIES
@@ -833,6 +839,7 @@ add_executable(test_app_migration_panel
     src/core/app_migration_worker.cpp
     src/core/user_data_manager.cpp
     src/core/encryption.cpp
+    src/core/logger.cpp
     src/gui/backup_wizard.cpp
     src/gui/restore_wizard.cpp
     include/sak/app_migration_panel.h
