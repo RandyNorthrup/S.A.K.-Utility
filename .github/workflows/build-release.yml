@@ -41,11 +41,17 @@ jobs:
       with:
         vs-version: '17'
     
+    - name: Install vcpkg dependencies
+      run: |
+        vcpkg install zlib:x64-windows bzip2:x64-windows liblzma:x64-windows
+        vcpkg integrate install
+    
     - name: Configure CMake
       run: |
         cmake -B build -G "Visual Studio 17 2022" -A x64 `
           -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} `
-          -DCMAKE_PREFIX_PATH="${{ env.Qt6_DIR }}"
+          -DCMAKE_PREFIX_PATH="${{ env.Qt6_DIR }}" `
+          -DCMAKE_TOOLCHAIN_FILE="C:/vcpkg/scripts/buildsystems/vcpkg.cmake"
     
     - name: Build
       run: cmake --build build --config ${{ env.BUILD_TYPE }} --parallel
