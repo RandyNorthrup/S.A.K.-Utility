@@ -59,13 +59,31 @@ jobs:
     - name: Run Tests
       working-directory: build/Release/Release
       run: |
-        # Run each test executable
-        $tests = Get-ChildItem -Filter "test_*.exe"
+        # Skip GUI tests in CI (they require user interaction)
+        $guiTests = @(
+          "test_app_migration_panel.exe",
+          "test_backup_wizard.exe", 
+          "test_restore_wizard.exe"
+        )
+        
+        # Run non-GUI tests only
+        $tests = Get-ChildItem -Filter "test_*.exe" | Where-Object { 
+          $guiTests -notcontains $_.Name 
+        }
+        
         foreach ($test in $tests) {
           Write-Host "Running $($test.Name)..."
           & ".\$($test.Name)"
           if ($LASTEXITCODE -ne 0) {
             Write-Warning "Test $($test.Name) failed with exit code $LASTEXITCODE"
+          }
+        }
+        
+        Write-Host ""
+        Write-Host "Skipped GUI tests (require user interaction):"
+        foreach ($guiTest in $guiTests) {
+          if (Test-Path $guiTest) {
+            Write-Host "  - $guiTest"
           }
         }
       continue-on-error: true
