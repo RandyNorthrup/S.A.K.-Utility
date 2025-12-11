@@ -14,10 +14,10 @@
 S.A.K. Utility is a **Windows-only** desktop application designed for **PC technicians** who need to migrate systems, backup user profiles, and manage files during PC repairs, upgrades, and replacements. Built with modern C++23 and Qt6, it provides professional-grade tools through an intuitive tabbed interface.
 
 **Target Users**: PC technicians, computer repair shops, IT support specialists  
-**Version**: 0.5.2  
+**Version**: 0.5.4  
 **Release Date**: December 11, 2025  
 **Platform**: Windows 10/11 x64 only  
-**Build Size**: 1.33 MB executable
+**Package Size**: ~21.5 MB (includes Qt runtime, vcpkg libraries, embedded Chocolatey)
 
 ---
 
@@ -120,6 +120,64 @@ Create bootable USB drives from Windows ISO files with automatic decompression.
 
 ---
 
+## What's Included
+
+The S.A.K. Utility package is a **fully self-contained portable application** with:
+
+### Core Application
+- `sak_utility.exe` - Main application (1.33 MB)
+- `portable.ini` - Enables portable mode (0 bytes, just presence matters)
+
+### Qt 6.5.3 Runtime
+- Qt6Core.dll, Qt6Gui.dll, Qt6Widgets.dll, Qt6Network.dll
+- Platform plugins: `platforms/qwindows.dll`
+- Style plugins: `styles/qwindowsvistastyle.dll`
+- Image format plugins: `imageformats/` (PNG, JPEG, etc.)
+- TLS plugins for HTTPS support
+
+### Compression Libraries (vcpkg)
+- `zlib1.dll` - gzip compression/decompression
+- `bz2.dll` - bzip2 compression/decompression  
+- `liblzma.dll` - xz/lzma compression/decompression
+
+### Embedded Chocolatey (67 MB)
+- `tools/chocolatey/choco.exe` - Main Chocolatey executable
+- `tools/chocolatey/bin/` - Helper tools (7z.exe, wget.exe, shimgen.exe, checksum.exe)
+- `tools/chocolatey/helpers/` - PowerShell modules
+- `tools/chocolatey/lib/` - Package cache (initially empty)
+- **No system installation required** - completely self-contained
+
+### Documentation
+- `README.md` - Full documentation
+- `LICENSE` - GPL v2 license
+- `CONTRIBUTING.md` - Contribution guidelines (if present)
+
+**Total Package Size**: ~21.5 MB compressed, ~95 MB extracted
+
+---
+
+## Recent Changes (v0.5.4)
+
+### Build & Packaging Improvements
+- ✅ Added all Chocolatey binaries to repository (22 executables/DLLs)
+- ✅ Fixed compression DLL packaging (`liblzma.dll` instead of incorrect `lzma.dll`)
+- ✅ Implemented build caching for vcpkg and CMake (7+ min → 2-4 min builds)
+- ✅ Automated GUI test skipping in CI environment
+- ✅ Fixed package directory structure (proper cleanup prevents errors)
+
+### Security & Verification
+- ✅ Added SHA256 hash generation for all releases
+- ✅ Included `SHA256SUMS.txt` in release assets
+- ✅ Added Windows Defender guidance in documentation
+- ✅ Transparent automated builds via GitHub Actions
+
+### Developer Experience
+- ✅ GitHub Actions workflow with proper permissions
+- ✅ Automatic release creation on version tags
+- ✅ Comprehensive error handling in build pipeline
+
+---
+
 ## Technical Architecture
 
 ### Technology Stack
@@ -129,10 +187,12 @@ Create bootable USB drives from Windows ISO files with automatic decompression.
 | **C++ Standard** | C++23 | Modern language features, strict compliance |
 | **GUI Framework** | Qt 6.5.3 | Cross-platform GUI library (Windows-only deployment) |
 | **Build System** | CMake 3.28+ | Project configuration and build orchestration |
-| **Compiler** | MSVC 19.44+ | Visual Studio 2022 toolchain |
+| **Compiler** | MSVC 19.44+ | Visual Studio 2022 toolchain (MSVC 2022) |
 | **Threading** | QtConcurrent | Background task management |
 | **Cryptography** | Windows BCrypt + QCryptographicHash | AES-256-CBC encryption, MD5/SHA256 hashing |
-| **Package Manager** | Chocolatey | Embedded in `tools/chocolatey/` directory |
+| **Compression** | vcpkg (zlib, bzip2, liblzma) | gzip, bzip2, xz/lzma decompression support |
+| **Package Manager** | Chocolatey (embedded) | Fully embedded in `tools/chocolatey/` - no system install |
+| **CI/CD** | GitHub Actions | Automated builds, caching, release creation |
 
 ### Code Structure
 
