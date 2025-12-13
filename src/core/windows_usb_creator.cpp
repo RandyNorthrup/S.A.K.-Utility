@@ -348,7 +348,6 @@ bool WindowsUSBCreator::copyISOContents(const QString& sourcePath, const QString
     sak::log_info(QString("Copying files from %1 to %2").arg(sourcePath, destPath).toStdString());
     
     QDir sourceDir(sourcePath);
-    QDir destDir(destPath);
     
     if (!sourceDir.exists()) {
         m_lastError = QString("Source path does not exist: %1").arg(sourcePath);
