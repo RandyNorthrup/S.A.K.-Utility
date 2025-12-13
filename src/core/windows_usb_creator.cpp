@@ -96,81 +96,41 @@ QString WindowsUSBCreator::lastError() const {
 }
 
 bool WindowsUSBCreator::formatDriveNTFS(const QString& driveLetter) {
-    // Use Windows format command via diskpart for reliability
+    // Use PowerShell Format-Volume for proper USB formatting (Microsoft recommended approach)
     QString cleanDriveLetter = driveLetter;
     cleanDriveLetter.remove(":");
     cleanDriveLetter.remove("\\");
     
     sak::log_info(QString("Formatting %1: as NTFS").arg(cleanDriveLetter).toStdString());
+    Q_EMIT statusChanged("Formatting drive as NTFS...");
     
-    // First, get the disk number for this drive letter
-    QProcess getDisk;
-    getDisk.start("powershell", QStringList() << "-NoProfile" << "-Command"
-        << QString("(Get-Partition -DriveLetter %1).DiskNumber").arg(cleanDriveLetter));
+    // Use PowerShell Format-Volume (official Microsoft method for Windows USB creation)
+    QProcess format;
+    format.start("powershell", QStringList() << "-NoProfile" << "-Command"
+        << QString("Format-Volume -DriveLetter %1 -FileSystem NTFS -NewFileSystemLabel 'Windows USB' -Confirm:$false -Force").arg(cleanDriveLetter));
     
-    if (!getDisk.waitForFinished(10000)) {
-        m_lastError = "Failed to get disk number for drive";
+    if (!format.waitForStarted()) {
+        m_lastError = "Failed to start PowerShell format";
         sak::log_error(m_lastError.toStdString());
         return false;
     }
     
-    QString diskNumberStr = getDisk.readAllStandardOutput().trimmed();
-    bool ok;
-    int diskNumber = diskNumberStr.toInt(&ok);
-    
-    if (!ok || diskNumber < 0) {
-        m_lastError = QString("Invalid disk number: %1").arg(diskNumberStr);
+    // Wait for completion (format can take a while for large drives)
+    if (!format.waitForFinished(300000)) { // 5 minutes timeout
+        m_lastError = "Format timed out";
         sak::log_error(m_lastError.toStdString());
+        format.kill();
         return false;
     }
     
-    sak::log_info(QString("Drive %1: is on disk %2").arg(cleanDriveLetter).arg(diskNumber).toStdString());
+    int exitCode = format.exitCode();
+    QString output = format.readAllStandardOutput();
+    QString errors = format.readAllStandardError();
     
-    // Create diskpart script
-    QTemporaryFile scriptFile;
-    if (!scriptFile.open()) {
-        m_lastError = "Failed to create diskpart script";
-        sak::log_error(m_lastError.toStdString());
-        return false;
-    }
-    
-    // Write diskpart commands - select disk, clean, create partition, format
-    QTextStream script(&scriptFile);
-    script << QString("select disk %1\n").arg(diskNumber);
-    script << "clean\n";
-    script << "create partition primary\n";
-    script << "format fs=ntfs quick label=\"Windows USB\"\n";
-    script << QString("assign letter=%1\n").arg(cleanDriveLetter);
-    script << "active\n";
-    script.flush();
-    scriptFile.close();
-    
-    // Run diskpart
-    QProcess diskpart;
-    diskpart.start("diskpart", QStringList() << "/s" << scriptFile.fileName());
-    
-    if (!diskpart.waitForStarted()) {
-        m_lastError = "Failed to start diskpart";
-        sak::log_error(m_lastError.toStdString());
-        return false;
-    }
-    
-    // Wait for completion (format can take a while)
-    if (!diskpart.waitForFinished(300000)) { // 5 minutes timeout
-        m_lastError = "Diskpart timed out";
-        sak::log_error(m_lastError.toStdString());
-        diskpart.kill();
-        return false;
-    }
-    
-    int exitCode = diskpart.exitCode();
-    QString output = diskpart.readAllStandardOutput();
-    QString errors = diskpart.readAllStandardError();
-    
-    sak::log_info(QString("Diskpart output: %1").arg(output).toStdString());
+    sak::log_info(QString("Format output: %1").arg(output).toStdString());
     
     if (exitCode != 0) {
-        m_lastError = QString("Diskpart failed with exit code %1: %2").arg(exitCode).arg(errors);
+        m_lastError = QString("Format failed with exit code %1: %2").arg(exitCode).arg(errors);
         sak::log_error(m_lastError.toStdString());
         return false;
     }
