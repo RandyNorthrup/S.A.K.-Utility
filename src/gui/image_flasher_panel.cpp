@@ -545,6 +545,7 @@ void ImageFlasherPanel::showConfirmationDialog() {
     
     if (reply == QMessageBox::Yes) {
         m_isFlashing = true;
+        m_flashButton->setEnabled(false); // Disable flash button during operation
         m_stackedWidget->setCurrentWidget(m_flashProgressPage);
         
         if (isWindowsISO) {

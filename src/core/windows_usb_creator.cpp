@@ -6,6 +6,8 @@
 #include <QProcess>
 #include <QDir>
 #include <QFileInfo>
+#include <QTextStream>
+#include <QTemporaryFile>
 #include <windows.h>
 #include <winioctl.h>
 #include <filesystem>
@@ -101,6 +103,29 @@ bool WindowsUSBCreator::formatDriveNTFS(const QString& driveLetter) {
     
     sak::log_info(QString("Formatting %1: as NTFS").arg(cleanDriveLetter).toStdString());
     
+    // First, get the disk number for this drive letter
+    QProcess getDisk;
+    getDisk.start("powershell", QStringList() << "-NoProfile" << "-Command"
+        << QString("(Get-Partition -DriveLetter %1).DiskNumber").arg(cleanDriveLetter));
+    
+    if (!getDisk.waitForFinished(10000)) {
+        m_lastError = "Failed to get disk number for drive";
+        sak::log_error(m_lastError.toStdString());
+        return false;
+    }
+    
+    QString diskNumberStr = getDisk.readAllStandardOutput().trimmed();
+    bool ok;
+    int diskNumber = diskNumberStr.toInt(&ok);
+    
+    if (!ok || diskNumber < 0) {
+        m_lastError = QString("Invalid disk number: %1").arg(diskNumberStr);
+        sak::log_error(m_lastError.toStdString());
+        return false;
+    }
+    
+    sak::log_info(QString("Drive %1: is on disk %2").arg(cleanDriveLetter).arg(diskNumber).toStdString());
+    
     // Create diskpart script
     QTemporaryFile scriptFile;
     if (!scriptFile.open()) {
@@ -109,14 +134,13 @@ bool WindowsUSBCreator::formatDriveNTFS(const QString& driveLetter) {
         return false;
     }
     
-    // Write diskpart commands
+    // Write diskpart commands - select disk, clean, create partition, format
     QTextStream script(&scriptFile);
-    script << "list volume\n";
-    script << QString("select volume %1\n").arg(cleanDriveLetter);
+    script << QString("select disk %1\n").arg(diskNumber);
     script << "clean\n";
     script << "create partition primary\n";
     script << "format fs=ntfs quick label=\"Windows USB\"\n";
-    script << "assign\n";
+    script << QString("assign letter=%1\n").arg(cleanDriveLetter);
     script << "active\n";
     script.flush();
     scriptFile.close();
