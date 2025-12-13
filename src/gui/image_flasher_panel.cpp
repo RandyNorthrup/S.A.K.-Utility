@@ -617,11 +617,37 @@ void ImageFlasherPanel::createWindowsUSB() {
     });
     
     // Extract drive letter from device path (e.g., "\\.\PhysicalDrive1" -> find volume letter)
-    // For now, use first selected drive
-    QString driveLetter = m_selectedDrives.first();
+    QString devicePath = m_selectedDrives.first();
+    QString driveLetter;
     
-    // TODO: Map PhysicalDrive# to volume letter
-    // For now, assume user selected a volume or we need to query it
+    // Extract disk number from PhysicalDrive path
+    QRegularExpression regex(R"(PhysicalDrive(\d+))");
+    QRegularExpressionMatch match = regex.match(devicePath);
+    
+    if (match.hasMatch()) {
+        QString diskNumber = match.captured(1);
+        
+        // Query for existing drive letter on this disk
+        QProcess process;
+        QString cmd = QString("(Get-Partition -DiskNumber %1 | Get-Volume | Where-Object {$_.DriveLetter -ne $null} | Select-Object -First 1).DriveLetter").arg(diskNumber);
+        process.start("powershell", QStringList() << "-NoProfile" << "-Command" << cmd);
+        process.waitForFinished(5000);
+        
+        driveLetter = QString(process.readAllStandardOutput()).trimmed();
+        
+        if (driveLetter.isEmpty()) {
+            // No existing drive letter - the format operation will assign one
+            // Use a default letter for now (will be reassigned during format)
+            driveLetter = "E";
+            sak::log_info(QString("No drive letter found for disk %1, will assign during format").arg(diskNumber).toStdString());
+        } else {
+            sak::log_info(QString("Found drive letter %1 for disk %2").arg(driveLetter, diskNumber).toStdString());
+        }
+    } else {
+        // Fallback if path format is unexpected
+        driveLetter = "E";
+        sak::log_warning(QString("Could not parse disk number from %1, using default E:").arg(devicePath).toStdString());
+    }
     
     // Start the creation process
     creator->createBootableUSB(m_selectedImagePath, driveLetter);
