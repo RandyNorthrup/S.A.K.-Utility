@@ -466,19 +466,57 @@ bool WindowsUSBCreator::copyISOContents(const QString& sourcePath, const QString
         return false;
     }
     
+    // Always verify that files were actually copied
+    QDir checkDest(destPath);
+    QStringList destFiles = checkDest.entryList(QDir::AllEntries | QDir::NoDotAndDotDot);
+    int destFileCount = destFiles.count();
+    
+    sak::log_info(QString("Destination now contains %1 items").arg(destFileCount).toStdString());
+    
+    if (destFileCount == 0) {
+        m_lastError = QString("No files were copied - destination is empty (robocopy exit code: %1)").arg(exitCode);
+        sak::log_error(m_lastError.toStdString());
+        sak::log_error(QString("Source had %1 items but destination has 0").arg(entries.count()).toStdString());
+        return false;
+    }
+    
+    // Exit code 0 means no files were copied, but if destination has files, they may have already existed
     if (exitCode == 0) {
-        sak::log_warning("Robocopy exit code 0 - no files were copied. Source may be empty or files already exist.");
-        // Check if destination actually has files
-        QDir checkDest(destPath);
-        QStringList destFiles = checkDest.entryList(QDir::AllEntries | QDir::NoDotAndDotDot);
-        if (destFiles.isEmpty()) {
-            m_lastError = "No files were copied - destination is empty";
-            sak::log_error(m_lastError.toStdString());
-            return false;
+        sak::log_warning(QString("Robocopy exit code 0 - no new files copied, but destination has %1 items").arg(destFileCount).toStdString());
+    } else {
+        sak::log_info(QString("Robocopy completed successfully - exit code %1, destination has %2 items").arg(exitCode).arg(destFileCount).toStdString());
+    }
+    
+    // Verify critical Windows boot files exist
+    QStringList criticalFiles = {
+        "setup.exe",
+        "sources/boot.wim",
+        "sources/install.wim",
+        "bootmgr"
+    };
+    
+    QString cleanDest = destPath;
+    if (!cleanDest.endsWith("/") && !cleanDest.endsWith("\\")) {
+        cleanDest += "/";
+    }
+    
+    bool hasCriticalFiles = false;
+    for (const QString& file : criticalFiles) {
+        QString fullPath = cleanDest + file;
+        fullPath.replace("\\", "/");
+        if (QFile::exists(fullPath)) {
+            sak::log_info(QString("Verified: %1 exists").arg(file).toStdString());
+            hasCriticalFiles = true;
+        } else {
+            sak::log_warning(QString("Missing: %1").arg(file).toStdString());
         }
     }
     
-    sak::log_info(QString("Robocopy completed successfully (exit code %1)").arg(exitCode).toStdString());
+    if (!hasCriticalFiles) {
+        m_lastError = "Windows installation files not found on destination - copy may have failed";
+        sak::log_error(m_lastError.toStdString());
+        return false;
+    }
     
     // Set the volume label from ISO
     if (!m_volumeLabel.isEmpty()) {
