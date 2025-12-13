@@ -364,6 +364,12 @@ bool WindowsUSBCreator::copyISOContents(const QString& sourcePath, const QString
         return false;
     }
     
+    // Count files in destination BEFORE copying
+    QDir preCheckDest(destPath);
+    QStringList preFiles = preCheckDest.entryList(QDir::Files | QDir::Dirs | QDir::NoDotAndDotDot);
+    int preFileCount = preFiles.count();
+    sak::log_info(QString("Destination contains %1 items BEFORE copy").arg(preFileCount).toStdString());
+    
     // Use robocopy for reliable copying (Microsoft's recommended method)
     // This is the official way to create Windows bootable USB per Microsoft docs
     
@@ -477,7 +483,19 @@ bool WindowsUSBCreator::copyISOContents(const QString& sourcePath, const QString
     QStringList destFiles = checkDest.entryList(QDir::AllEntries | QDir::NoDotAndDotDot);
     int destFileCount = destFiles.count();
     
-    sak::log_info(QString("Destination now contains %1 items").arg(destFileCount).toStdString());
+    sak::log_info(QString("Destination now contains %1 items AFTER copy").arg(destFileCount).toStdString());
+    sak::log_info(QString("File count change: %1 before -> %2 after (delta: +%3)")
+        .arg(preFileCount)
+        .arg(destFileCount)
+        .arg(destFileCount - preFileCount)
+        .toStdString());
+    
+    if (destFileCount == preFileCount) {
+        m_lastError = QString("No new files were copied - file count unchanged at %1 (robocopy exit code: %2)").arg(destFileCount).arg(exitCode);
+        sak::log_error(m_lastError.toStdString());
+        sak::log_error(QString("Source had %1 items but destination gained 0 new files").arg(entries.count()).toStdString());
+        return false;
+    }
     
     if (destFileCount == 0) {
         m_lastError = QString("No files were copied - destination is empty (robocopy exit code: %1)").arg(exitCode);
@@ -488,9 +506,15 @@ bool WindowsUSBCreator::copyISOContents(const QString& sourcePath, const QString
     
     // Exit code 0 means no files were copied, but if destination has files, they may have already existed
     if (exitCode == 0) {
-        sak::log_warning(QString("Robocopy exit code 0 - no new files copied, but destination has %1 items").arg(destFileCount).toStdString());
+        sak::log_error(QString("CRITICAL: Robocopy exit code 0 - NO FILES WERE COPIED!").toStdString());
+        sak::log_error(QString("This means robocopy did not copy anything. Check paths and permissions.").toStdString());
+        m_lastError = "Robocopy failed to copy any files (exit code 0)";
+        return false;
     } else {
-        sak::log_info(QString("Robocopy completed successfully - exit code %1, destination has %2 items").arg(exitCode).arg(destFileCount).toStdString());
+        sak::log_info(QString("Robocopy completed - exit code %1, destination gained %2 new items")
+            .arg(exitCode)
+            .arg(destFileCount - preFileCount)
+            .toStdString());
     }
     
     // Verify critical Windows boot files exist
