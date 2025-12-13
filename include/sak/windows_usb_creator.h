@@ -107,6 +107,13 @@ private:
      */
     bool makeBootable(const QString& driveLetter, const QString& isoMountPoint);
     
+    /**
+     * @brief Verify that the bootable flag is set on the partition
+     * @param driveLetter Drive letter to verify
+     * @return true if bootable flag is confirmed
+     */
+    bool verifyBootableFlag(const QString& driveLetter);
+    
     bool m_cancelled;
     QString m_lastError;
 };

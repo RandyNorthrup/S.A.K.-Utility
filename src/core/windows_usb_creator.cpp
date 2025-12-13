@@ -69,7 +69,13 @@ bool WindowsUSBCreator::createBootableUSB(const QString& isoPath, const QString&
         return false;
     }
     
-    // Step 5: Dismount ISO
+    // Step 5: Verify bootable flag is set
+    Q_EMIT statusChanged("Verifying bootable flag...");
+    if (!verifyBootableFlag(driveLetter)) {
+        sak::log_warning("Could not verify bootable flag - drive may still work for UEFI boot");
+    }
+    
+    // Step 6: Dismount ISO
     dismountISO(mountPoint);
     
     Q_EMIT statusChanged("Completed successfully!");
