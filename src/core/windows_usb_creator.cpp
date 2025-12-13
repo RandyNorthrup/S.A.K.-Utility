@@ -484,6 +484,17 @@ bool WindowsUSBCreator::copyISOContents(const QString& sourcePath, const QString
     int destFileCount = destFiles.count();
     
     sak::log_info(QString("Destination now contains %1 items AFTER copy").arg(destFileCount).toStdString());
+    
+    // Log what's actually in the destination
+    if (destFileCount <= 20) {
+        sak::log_info("Destination contents:");
+        for (const QString& file : destFiles) {
+            sak::log_info(QString("  - %1").arg(file).toStdString());
+        }
+    } else {
+        sak::log_info(QString("Destination has %1 items (too many to list individually)").arg(destFileCount).toStdString());
+    }
+    
     sak::log_info(QString("File count change: %1 before -> %2 after (delta: +%3)")
         .arg(preFileCount)
         .arg(destFileCount)
@@ -550,19 +561,27 @@ bool WindowsUSBCreator::copyISOContents(const QString& sourcePath, const QString
         .arg(missingFiles.count())
         .toStdString());
     
-    // Require at least setup.exe and one of the boot files
-    if (missingFiles.contains("setup.exe")) {
-        m_lastError = "Critical file missing: setup.exe - Windows installation failed to copy";
+    // CRITICAL: setup.exe MUST exist - this is non-negotiable
+    QString setupPath = verifyPath + "setup.exe";
+    setupPath.replace("\\", "/");
+    if (!QFile::exists(setupPath)) {
+        m_lastError = "CRITICAL FAILURE: setup.exe not found on destination - NO FILES WERE COPIED";
         sak::log_error(m_lastError.toStdString());
+        sak::log_error(QString("Checked path: %1").arg(setupPath).toStdString());
+        sak::log_error("The copy operation failed completely. Check robocopy output above for errors.").toStdString());
         return false;
     }
     
-    if (foundFiles.isEmpty()) {
-        m_lastError = QString("No Windows installation files found on destination. Missing: %1")
+    // Verify at least 2 critical files exist
+    if (foundFiles.count() < 2) {
+        m_lastError = QString("Insufficient Windows files copied. Found only: %1. Missing: %2")
+            .arg(foundFiles.join(", "))
             .arg(missingFiles.join(", "));
         sak::log_error(m_lastError.toStdString());
         return false;
     }
+    
+    sak::log_info(QString("File verification PASSED: %1 critical files found").arg(foundFiles.count()).toStdString());
     
     // Set the volume label from ISO
     if (!m_volumeLabel.isEmpty()) {
