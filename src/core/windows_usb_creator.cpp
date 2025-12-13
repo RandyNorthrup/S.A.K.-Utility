@@ -31,11 +31,13 @@ bool WindowsUSBCreator::createBootableUSB(const QString& isoPath, const QString&
     // Step 1: Format drive as NTFS
     Q_EMIT statusChanged("Formatting drive as NTFS...");
     if (!formatDriveNTFS(driveLetter)) {
+        Q_EMIT failed(m_lastError);
         return false;
     }
     
     if (m_cancelled) {
         m_lastError = "Operation cancelled";
+        Q_EMIT failed(m_lastError);
         return false;
     }
     
@@ -43,12 +45,14 @@ bool WindowsUSBCreator::createBootableUSB(const QString& isoPath, const QString&
     Q_EMIT statusChanged("Mounting ISO...");
     QString mountPoint = mountISO(isoPath);
     if (mountPoint.isEmpty()) {
+        Q_EMIT failed(m_lastError);
         return false;
     }
     
     if (m_cancelled) {
         dismountISO(mountPoint);
         m_lastError = "Operation cancelled";
+        Q_EMIT failed(m_lastError);
         return false;
     }
     
@@ -56,12 +60,14 @@ bool WindowsUSBCreator::createBootableUSB(const QString& isoPath, const QString&
     Q_EMIT statusChanged("Copying Windows installation files...");
     if (!copyISOContents(mountPoint, driveLetter)) {
         dismountISO(mountPoint);
+        Q_EMIT failed(m_lastError);
         return false;
     }
     
     if (m_cancelled) {
         dismountISO(mountPoint);
         m_lastError = "Operation cancelled";
+        Q_EMIT failed(m_lastError);
         return false;
     }
     
@@ -69,6 +75,7 @@ bool WindowsUSBCreator::createBootableUSB(const QString& isoPath, const QString&
     Q_EMIT statusChanged("Making drive bootable...");
     if (!makeBootable(driveLetter, mountPoint)) {
         dismountISO(mountPoint);
+        Q_EMIT failed(m_lastError);
         return false;
     }
     
@@ -82,6 +89,7 @@ bool WindowsUSBCreator::createBootableUSB(const QString& isoPath, const QString&
     dismountISO(mountPoint);
     
     Q_EMIT statusChanged("Completed successfully!");
+    Q_EMIT completed();
     sak::log_info("Windows bootable USB created successfully");
     
     return true;
