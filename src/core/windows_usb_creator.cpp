@@ -96,8 +96,8 @@ QString WindowsUSBCreator::lastError() const {
 }
 
 bool WindowsUSBCreator::formatDriveNTFS(const QString& driveLetter) {
-    // Use diskpart to properly format USB drive (Microsoft official method)
-    // This creates partition, marks it active, and formats it in one operation
+    // Use the official Microsoft method: diskpart clean, then format command
+    // Based on Windows Server USB creation documentation and Rufus implementation
     QString cleanDriveLetter = driveLetter;
     cleanDriveLetter.remove(":");
     cleanDriveLetter.remove("\\");
@@ -105,7 +105,7 @@ bool WindowsUSBCreator::formatDriveNTFS(const QString& driveLetter) {
     sak::log_info(QString("Formatting %1: as NTFS").arg(cleanDriveLetter).toStdString());
     Q_EMIT statusChanged("Preparing USB drive...");
     
-    // First, get the disk number for this drive letter using PowerShell
+    // Get the disk number for this drive letter
     QProcess getDisk;
     QString getDiskCmd = QString("(Get-Partition -DriveLetter %1).DiskNumber").arg(cleanDriveLetter);
     getDisk.start("powershell", QStringList() << "-NoProfile" << "-Command" << getDiskCmd);
@@ -124,20 +124,17 @@ bool WindowsUSBCreator::formatDriveNTFS(const QString& driveLetter) {
     }
     
     sak::log_info(QString("Drive %1: is on disk %2").arg(cleanDriveLetter, diskNumber).toStdString());
-    Q_EMIT statusChanged("Formatting drive as NTFS...");
+    Q_EMIT statusChanged("Cleaning and partitioning drive...");
     
-    // Create diskpart script for proper USB formatting (clean, create partition, active, format)
-    // This is the official Microsoft method per KB 954457 and Windows Server documentation
+    // Step 1: Clean the disk and create MBR partition using diskpart
     QString diskpartScript = QString(
         "select disk %1\n"
         "clean\n"
         "create partition primary\n"
         "select partition 1\n"
         "active\n"
-        "format fs=ntfs quick label=\"Windows USB\"\n"
-        "assign letter=%2\n"
         "exit\n"
-    ).arg(diskNumber, cleanDriveLetter);
+    ).arg(diskNumber);
     
     QTemporaryFile scriptFile;
     if (!scriptFile.open()) {
@@ -151,7 +148,6 @@ bool WindowsUSBCreator::formatDriveNTFS(const QString& driveLetter) {
     
     sak::log_info(QString("Running diskpart script:\n%1").arg(diskpartScript).toStdString());
     
-    // Execute diskpart with script
     QProcess diskpart;
     diskpart.start("diskpart", QStringList() << "/s" << scriptFile.fileName());
     
@@ -161,29 +157,85 @@ bool WindowsUSBCreator::formatDriveNTFS(const QString& driveLetter) {
         return false;
     }
     
-    // Wait for completion (diskpart should be quick with quick format)
-    if (!diskpart.waitForFinished(60000)) { // 1 minute timeout
+    if (!diskpart.waitForFinished(30000)) {
         m_lastError = "Diskpart timed out";
         sak::log_error(m_lastError.toStdString());
         diskpart.kill();
         return false;
     }
     
-    int exitCode = diskpart.exitCode();
     QString output = diskpart.readAllStandardOutput();
-    QString errors = diskpart.readAllStandardError();
-    
     sak::log_info(QString("Diskpart output:\n%1").arg(output).toStdString());
     
-    if (exitCode != 0) {
-        m_lastError = QString("Diskpart failed with exit code %1: %2").arg(exitCode).arg(errors);
+    if (diskpart.exitCode() != 0) {
+        m_lastError = QString("Diskpart failed with exit code %1").arg(diskpart.exitCode());
         sak::log_error(m_lastError.toStdString());
         return false;
     }
     
-    // Check for errors in output (diskpart returns 0 even on some failures)
-    if (output.contains("error", Qt::CaseInsensitive) || output.contains("failed", Qt::CaseInsensitive)) {
-        m_lastError = QString("Diskpart reported errors: %1").arg(output);
+    // Step 2: Wait for the partition to be recognized by Windows
+    sak::log_info("Waiting for partition to be recognized...");
+    QThread::sleep(2);
+    
+    // Step 3: Format the partition using PowerShell
+    Q_EMIT statusChanged("Formatting drive as NTFS...");
+    sak::log_info("Formatting partition with NTFS...");
+    
+    // Get the new partition's drive letter (it may have changed)
+    QProcess getNewLetter;
+    QString getLetterCmd = QString("(Get-Partition -DiskNumber %1 -PartitionNumber 1 | Get-Volume).DriveLetter").arg(diskNumber);
+    getNewLetter.start("powershell", QStringList() << "-NoProfile" << "-Command" << getLetterCmd);
+    
+    if (getNewLetter.waitForFinished(10000)) {
+        QString newLetter = QString(getNewLetter.readAllStandardOutput()).trimmed();
+        if (!newLetter.isEmpty()) {
+            cleanDriveLetter = newLetter;
+            sak::log_info(QString("Partition has drive letter: %1").arg(cleanDriveLetter).toStdString());
+        }
+    }
+    
+    // If no drive letter, assign the original one
+    if (cleanDriveLetter.isEmpty() || cleanDriveLetter.length() != 1) {
+        cleanDriveLetter = driveLetter;
+        cleanDriveLetter.remove(":");
+        cleanDriveLetter.remove("\\");
+        
+        QProcess assignLetter;
+        QString assignCmd = QString("Get-Partition -DiskNumber %1 -PartitionNumber 1 | Set-Partition -NewDriveLetter %2")
+            .arg(diskNumber, cleanDriveLetter);
+        assignLetter.start("powershell", QStringList() << "-NoProfile" << "-Command" << assignCmd);
+        assignLetter.waitForFinished(10000);
+        
+        sak::log_info(QString("Assigned drive letter: %1").arg(cleanDriveLetter).toStdString());
+        QThread::sleep(1);
+    }
+    
+    // Format using Format-Volume
+    QProcess format;
+    QString formatCmd = QString("Format-Volume -DriveLetter %1 -FileSystem NTFS -NewFileSystemLabel 'Windows USB' -Confirm:$false -Force")
+        .arg(cleanDriveLetter);
+    format.start("powershell", QStringList() << "-NoProfile" << "-Command" << formatCmd);
+    
+    if (!format.waitForStarted()) {
+        m_lastError = "Failed to start format";
+        sak::log_error(m_lastError.toStdString());
+        return false;
+    }
+    
+    if (!format.waitForFinished(120000)) { // 2 minutes
+        m_lastError = "Format timed out";
+        sak::log_error(m_lastError.toStdString());
+        format.kill();
+        return false;
+    }
+    
+    QString formatOutput = format.readAllStandardOutput();
+    QString formatErrors = format.readAllStandardError();
+    
+    sak::log_info(QString("Format output: %1").arg(formatOutput).toStdString());
+    
+    if (format.exitCode() != 0) {
+        m_lastError = QString("Format failed with exit code %1: %2").arg(format.exitCode()).arg(formatErrors);
         sak::log_error(m_lastError.toStdString());
         return false;
     }
