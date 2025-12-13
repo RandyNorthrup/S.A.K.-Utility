@@ -116,4 +116,5 @@ private:
     
     bool m_cancelled;
     QString m_lastError;
+    QString m_volumeLabel;  // Volume label extracted from ISO
 };

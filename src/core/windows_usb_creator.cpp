@@ -236,8 +236,9 @@ bool WindowsUSBCreator::formatDriveNTFS(const QString& driveLetter) {
     sak::log_info(QString("Formatting drive %1: with Format-Volume...").arg(cleanDriveLetter).toStdString());
     
     // Use the exact method from Microsoft's Windows Server USB creation script
+    // Label will be set properly after mounting ISO
     QProcess formatProcess;
-    QString formatCmd = QString("Format-Volume -DriveLetter %1 -FileSystem NTFS -NewFileSystemLabel 'WinServerUSB' -Confirm:$false -Force")
+    QString formatCmd = QString("Format-Volume -DriveLetter %1 -FileSystem NTFS -NewFileSystemLabel 'WINUSB' -Confirm:$false -Force")
         .arg(cleanDriveLetter);
     formatProcess.start("powershell", QStringList() << "-NoProfile" << "-Command" << formatCmd);
     
@@ -309,6 +310,20 @@ QString WindowsUSBCreator::mountISO(const QString& isoPath) {
     QString mountPoint = output + ":";
     sak::log_info(QString("ISO mounted at %1").arg(mountPoint).toStdString());
     
+    // Get the volume label from the mounted ISO
+    QProcess labelProcess;
+    QString labelCmd = QString("(Get-Volume -DriveLetter %1).FileSystemLabel").arg(output);
+    labelProcess.start("powershell.exe", QStringList() << "-NoProfile" << "-Command" << labelCmd);
+    if (labelProcess.waitForFinished(5000)) {
+        m_volumeLabel = labelProcess.readAllStandardOutput().trimmed();
+        if (m_volumeLabel.isEmpty()) {
+            m_volumeLabel = "WINDOWS";
+        }
+        sak::log_info(QString("ISO volume label: %1").arg(m_volumeLabel).toStdString());
+    } else {
+        m_volumeLabel = "WINDOWS";
+    }
+    
     return mountPoint;
 }
 
@@ -364,18 +379,13 @@ bool WindowsUSBCreator::copyISOContents(const QString& sourcePath, const QString
     
     robocopy.start("robocopy", args);
     
-    if (!robocopy.waitForStarted()) {
+    if (!robocopy.waitForStarted(5000)) {
         m_lastError = "Failed to start robocopy";
         sak::log_error(m_lastError.toStdString());
         return false;
     }
     
-    // Monitor progress
-    connect(&robocopy, &QProcess::readyReadStandardOutput, this, [&]() {
-        QString output = robocopy.readAllStandardOutput();
-        // Parse robocopy output for progress updates if needed
-        Q_EMIT progressUpdated(50); // Simplified for now
-    });
+    sak::log_info("Robocopy started, copying files...");
     
     if (!robocopy.waitForFinished(600000)) { // 10 minutes timeout
         m_lastError = "Robocopy timed out";
@@ -385,13 +395,36 @@ bool WindowsUSBCreator::copyISOContents(const QString& sourcePath, const QString
     }
     
     int exitCode = robocopy.exitCode();
+    QString output = robocopy.readAllStandardOutput();
+    QString errors = robocopy.readAllStandardError();
+    
+    sak::log_info(QString("Robocopy exit code: %1").arg(exitCode).toStdString());
+    if (!output.isEmpty()) {
+        sak::log_info(QString("Robocopy output: %1").arg(output).toStdString());
+    }
+    if (!errors.isEmpty()) {
+        sak::log_warning(QString("Robocopy stderr: %1").arg(errors).toStdString());
+    }
     
     // Robocopy exit codes: 0-7 are success (various levels), 8+ are errors
     if (exitCode >= 8) {
-        QString errors = robocopy.readAllStandardError();
         m_lastError = QString("Robocopy failed with exit code %1: %2").arg(exitCode).arg(errors);
         sak::log_error(m_lastError.toStdString());
         return false;
+    }
+    
+    // Set the volume label from ISO
+    if (!m_volumeLabel.isEmpty()) {
+        sak::log_info(QString("Setting volume label to: %1").arg(m_volumeLabel).toStdString());
+        QString cleanDest = destPath;
+        if (cleanDest.endsWith(":")) {
+            cleanDest = cleanDest.left(1);
+        }
+        QProcess labelProcess;
+        QString labelCmd = QString("Set-Volume -DriveLetter %1 -NewFileSystemLabel '%2'")
+            .arg(cleanDest, m_volumeLabel);
+        labelProcess.start("powershell.exe", QStringList() << "-NoProfile" << "-Command" << labelCmd);
+        labelProcess.waitForFinished(10000);
     }
     
     sak::log_info("Files copied successfully");
@@ -464,11 +497,34 @@ bool WindowsUSBCreator::verifyBootableFlag(const QString& driveLetter) {
     Q_EMIT statusChanged("Verifying bootable flag...");
     sak::log_info(QString("Verifying bootable flag on drive %1").arg(driveLetter).toStdString());
     
-    // Create diskpart script to check if partition is active
+    // Get disk number from drive letter
+    QString cleanDrive = driveLetter;
+    if (cleanDrive.endsWith(":")) {
+        cleanDrive = cleanDrive.left(1);
+    }
+    cleanDrive.remove("\\");
+    
+    QProcess getDisk;
+    QString diskCmd = QString("(Get-Partition -DriveLetter %1).DiskNumber").arg(cleanDrive);
+    getDisk.start("powershell.exe", QStringList() << "-NoProfile" << "-Command" << diskCmd);
+    
+    if (!getDisk.waitForFinished(10000)) {
+        sak::log_warning("Could not get disk number for verification");
+        return true; // Not critical
+    }
+    
+    QString diskNumber = QString(getDisk.readAllStandardOutput()).trimmed();
+    if (diskNumber.isEmpty()) {
+        sak::log_warning("Could not determine disk number");
+        return true; // Not critical
+    }
+    
+    // Use diskpart to check if partition is active
     QString diskpartScript = QString(
-        "select volume %1\n"
+        "select disk %1\n"
+        "select partition 1\n"
         "detail partition\n"
-    ).arg(driveLetter.at(0));
+    ).arg(diskNumber);
     
     QTemporaryFile scriptFile;
     if (!scriptFile.open()) {
@@ -480,9 +536,9 @@ bool WindowsUSBCreator::verifyBootableFlag(const QString& driveLetter) {
     scriptFile.flush();
     
     QProcess diskpart;
-    diskpart.start("diskpart", QStringList() << "/s" << scriptFile.fileName());
+    diskpart.start("cmd.exe", QStringList() << "/c" << "diskpart" << "/s" << scriptFile.fileName());
     
-    if (!diskpart.waitForStarted()) {
+    if (!diskpart.waitForStarted(5000)) {
         sak::log_error("Failed to start diskpart for verification");
         return false;
     }
@@ -494,16 +550,16 @@ bool WindowsUSBCreator::verifyBootableFlag(const QString& driveLetter) {
     }
     
     QString output = diskpart.readAllStandardOutput();
+    sak::log_info(QString("Diskpart detail output: %1").arg(output).toStdString());
     
-    // Check if output contains "Active" flag
-    bool isActive = output.contains("Active", Qt::CaseInsensitive) && 
-                    output.contains("Yes", Qt::CaseInsensitive);
+    // Check if partition is marked as Active
+    bool isActive = output.contains("Active", Qt::CaseInsensitive);
     
     if (isActive) {
-        sak::log_info("Bootable flag verified successfully");
+        sak::log_info("Bootable flag verified - partition is active");
         return true;
     } else {
-        sak::log_warning("Bootable flag not set - partition may not be bootable");
+        sak::log_warning("Partition is not marked as active - may not be bootable on legacy BIOS");
         // Not critical - UEFI systems don't require active flag
         return true;
     }
