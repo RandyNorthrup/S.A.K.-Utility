@@ -16,6 +16,8 @@
 #include <QMessageBox>
 #include <QFileInfo>
 #include <QGroupBox>
+#include <QProcess>
+#include <QRegularExpression>
 
 ImageFlasherPanel::ImageFlasherPanel(QWidget* parent)
     : QWidget(parent)
