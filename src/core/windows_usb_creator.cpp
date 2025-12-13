@@ -176,38 +176,62 @@ bool WindowsUSBCreator::formatDriveNTFS(const QString& driveLetter) {
     
     // Step 2: Wait for the partition to be recognized by Windows
     sak::log_info("Waiting for partition to be recognized...");
-    QThread::msleep(3000);  // Increased wait time
+    QThread::msleep(5000);  // Wait longer for Windows to recognize the partition
     
-    // Step 3: Format and assign drive letter using diskpart
-    Q_EMIT statusChanged("Formatting drive as NTFS...");
-    sak::log_info("Formatting partition with NTFS...");
+    // Step 3: Assign drive letter using diskpart
+    Q_EMIT statusChanged("Assigning drive letter...");
+    sak::log_info("Assigning drive letter...");
     
-    // Format using diskpart (more reliable than Format-Volume after clean)
-    QString formatScript = QString(
+    QString assignScript = QString(
         "select disk %1\n"
         "select partition 1\n"
-        "format fs=ntfs quick label=\"Windows USB\"\n"
         "assign letter=%2\n"
         "exit\n"
     ).arg(diskNumber, cleanDriveLetter);
     
-    QTemporaryFile formatScriptFile;
-    if (!formatScriptFile.open()) {
-        m_lastError = "Failed to create format script";
+    QTemporaryFile assignScriptFile;
+    if (!assignScriptFile.open()) {
+        m_lastError = "Failed to create assign script";
         sak::log_error(m_lastError.toStdString());
         return false;
     }
     
-    formatScriptFile.write(formatScript.toLocal8Bit());
-    formatScriptFile.flush();
+    assignScriptFile.write(assignScript.toLocal8Bit());
+    assignScriptFile.flush();
     
-    sak::log_info(QString("Running format script:\n%1").arg(formatScript).toStdString());
+    sak::log_info(QString("Running assign script:\n%1").arg(assignScript).toStdString());
+    
+    QProcess assignProcess;
+    assignProcess.start("diskpart", QStringList() << "/s" << assignScriptFile.fileName());
+    
+    if (!assignProcess.waitForStarted() || !assignProcess.waitForFinished(30000)) {
+        m_lastError = "Failed to assign drive letter";
+        sak::log_error(m_lastError.toStdString());
+        return false;
+    }
+    
+    QString assignOutput = assignProcess.readAllStandardOutput();
+    sak::log_info(QString("Assign output:\n%1").arg(assignOutput).toStdString());
+    
+    // Wait for drive letter to be available
+    QThread::msleep(2000);
+    
+    // Step 4: Format using native Windows format.com utility
+    Q_EMIT statusChanged("Formatting drive as NTFS...");
+    sak::log_info("Formatting with format.com...");
     
     QProcess formatProcess;
-    formatProcess.start("diskpart", QStringList() << "/s" << formatScriptFile.fileName());
+    // format.com X: /FS:NTFS /Q /V:"Windows USB" /Y
+    // /FS:NTFS = filesystem, /Q = quick format, /V = volume label, /Y = suppress confirmation
+    formatProcess.start("format", QStringList() 
+        << QString("%1:").arg(cleanDriveLetter)
+        << "/FS:NTFS"
+        << "/Q"
+        << "/V:Windows USB"
+        << "/Y");
     
     if (!formatProcess.waitForStarted()) {
-        m_lastError = "Failed to start format";
+        m_lastError = "Failed to start format.com";
         sak::log_error(m_lastError.toStdString());
         return false;
     }
@@ -224,7 +248,7 @@ bool WindowsUSBCreator::formatDriveNTFS(const QString& driveLetter) {
     
     sak::log_info(QString("Format output:\n%1").arg(formatOutput).toStdString());
     if (!formatErrors.isEmpty()) {
-        sak::log_error(QString("Format errors:\n%1").arg(formatErrors).toStdString());
+        sak::log_warning(QString("Format stderr:\n%1").arg(formatErrors).toStdString());
     }
     
     if (formatProcess.exitCode() != 0) {
