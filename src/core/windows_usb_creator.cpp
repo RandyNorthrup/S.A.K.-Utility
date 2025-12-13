@@ -176,7 +176,7 @@ bool WindowsUSBCreator::formatDriveNTFS(const QString& driveLetter) {
     
     // Step 2: Wait for the partition to be recognized by Windows
     sak::log_info("Waiting for partition to be recognized...");
-    QThread::sleep(2);
+    QThread::msleep(2000);
     
     // Step 3: Format the partition using PowerShell
     Q_EMIT statusChanged("Formatting drive as NTFS...");
@@ -208,7 +208,7 @@ bool WindowsUSBCreator::formatDriveNTFS(const QString& driveLetter) {
         assignLetter.waitForFinished(10000);
         
         sak::log_info(QString("Assigned drive letter: %1").arg(cleanDriveLetter).toStdString());
-        QThread::sleep(1);
+        QThread::msleep(1000);
     }
     
     // Format using Format-Volume
