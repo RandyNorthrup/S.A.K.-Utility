@@ -157,11 +157,13 @@ bool WindowsUSBCreator::formatDriveNTFS(const QString& driveLetter) {
     
     sak::log_info(QString("Running diskpart script:\n%1").arg(diskpartScript).toStdString());
     
+    // Diskpart requires Administrator privileges
+    // Use cmd.exe to run diskpart (QProcess doesn't elevate on its own)
     QProcess diskpart;
-    diskpart.start("diskpart", QStringList() << "/s" << scriptFile.fileName());
+    diskpart.start("cmd.exe", QStringList() << "/c" << "diskpart" << "/s" << scriptFile.fileName());
     
-    if (!diskpart.waitForStarted()) {
-        m_lastError = "Failed to start diskpart";
+    if (!diskpart.waitForStarted(5000)) {
+        m_lastError = "Failed to start diskpart - ensure application is running as Administrator";
         sak::log_error(m_lastError.toStdString());
         return false;
     }
@@ -174,10 +176,14 @@ bool WindowsUSBCreator::formatDriveNTFS(const QString& driveLetter) {
     }
     
     QString output = diskpart.readAllStandardOutput();
+    QString errors = diskpart.readAllStandardError();
     sak::log_info(QString("Diskpart output:\n%1").arg(output).toStdString());
+    if (!errors.isEmpty()) {
+        sak::log_error(QString("Diskpart errors:\n%1").arg(errors).toStdString());
+    }
     
     if (diskpart.exitCode() != 0) {
-        m_lastError = QString("Diskpart failed with exit code %1").arg(diskpart.exitCode());
+        m_lastError = QString("Diskpart failed with exit code %1. Ensure you are running as Administrator.").arg(diskpart.exitCode());
         sak::log_error(m_lastError.toStdString());
         return false;
     }
