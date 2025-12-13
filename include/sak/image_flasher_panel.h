@@ -121,6 +121,8 @@ private:
     void showConfirmationDialog();
     
     bool isSystemDrive(const QString& devicePath) const;
+    bool isWindowsInstallISO(const QString& isoPath) const;
+    void createWindowsUSB();
     QString formatFileSize(qint64 bytes) const;
     QString formatSpeed(double mbps) const;
 

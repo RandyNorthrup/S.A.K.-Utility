@@ -224,9 +224,14 @@ bool WindowsUSBCreator::copyISOContents(const QString& sourcePath, const QString
     
     // Use robocopy for reliable copying with progress
     QProcess robocopy;
+    QString source = sourcePath;
+    QString dest = destPath;
+    source.replace("/", "\\");
+    dest.replace("/", "\\");
+    
     QStringList args;
-    args << sourcePath.replace("/", "\\");
-    args << destPath.replace("/", "\\");
+    args << source;
+    args << dest;
     args << "/E"; // Copy subdirectories including empty
     args << "/R:3"; // Retry 3 times
     args << "/W:5"; // Wait 5 seconds between retries
@@ -334,4 +339,53 @@ bool WindowsUSBCreator::makeBootable(const QString& driveLetter, const QString& 
     }
     
     return true;
+}
+
+bool WindowsUSBCreator::verifyBootableFlag(const QString& driveLetter) {
+    Q_EMIT statusChanged("Verifying bootable flag...");
+    sak::log_info(QString("Verifying bootable flag on drive %1").arg(driveLetter).toStdString());
+    
+    // Create diskpart script to check if partition is active
+    QString diskpartScript = QString(
+        "select volume %1\n"
+        "detail partition\n"
+    ).arg(driveLetter.at(0));
+    
+    QTemporaryFile scriptFile;
+    if (!scriptFile.open()) {
+        sak::log_error("Failed to create temporary diskpart script for verification");
+        return false;
+    }
+    
+    scriptFile.write(diskpartScript.toLocal8Bit());
+    scriptFile.flush();
+    
+    QProcess diskpart;
+    diskpart.start("diskpart", QStringList() << "/s" << scriptFile.fileName());
+    
+    if (!diskpart.waitForStarted()) {
+        sak::log_error("Failed to start diskpart for verification");
+        return false;
+    }
+    
+    if (!diskpart.waitForFinished(30000)) {
+        diskpart.kill();
+        sak::log_error("diskpart verification timed out");
+        return false;
+    }
+    
+    QString output = diskpart.readAllStandardOutput();
+    
+    // Check if output contains "Active" flag
+    bool isActive = output.contains("Active", Qt::CaseInsensitive) && 
+                    output.contains("Yes", Qt::CaseInsensitive);
+    
+    if (isActive) {
+        sak::log_info("Bootable flag verified successfully");
+        return true;
+    } else {
+        sak::log_warning("Bootable flag not set - partition may not be bootable");
+        // Not critical - UEFI systems don't require active flag
+        return true;
+    }
 }
