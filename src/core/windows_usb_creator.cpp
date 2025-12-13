@@ -174,85 +174,84 @@ bool WindowsUSBCreator::formatDriveNTFS(const QString& driveLetter) {
         return false;
     }
     
-    // Step 2: Wait for the partition to be recognized by Windows
-    sak::log_info("Waiting for partition to be recognized...");
-    QThread::msleep(5000);  // Wait longer for Windows to recognize the partition
+    // Step 2: Wait for the partition to be recognized and assigned a drive letter
+    sak::log_info("Waiting for Windows to assign drive letter...");
+    Q_EMIT statusChanged("Waiting for drive letter...");
+    QThread::msleep(5000);
     
-    // Step 3: Assign drive letter using diskpart
-    Q_EMIT statusChanged("Assigning drive letter...");
-    sak::log_info("Assigning drive letter...");
+    // Check if Windows auto-assigned a drive letter to the new partition
+    QProcess checkLetter;
+    QString checkCmd = QString("(Get-Partition -DiskNumber %1 -PartitionNumber 1 | Get-Volume).DriveLetter").arg(diskNumber);
+    checkLetter.start("powershell", QStringList() << "-NoProfile" << "-Command" << checkCmd);
     
-    QString assignScript = QString(
-        "select disk %1\n"
-        "select partition 1\n"
-        "assign letter=%2\n"
-        "exit\n"
-    ).arg(diskNumber, cleanDriveLetter);
-    
-    QTemporaryFile assignScriptFile;
-    if (!assignScriptFile.open()) {
-        m_lastError = "Failed to create assign script";
-        sak::log_error(m_lastError.toStdString());
-        return false;
+    QString autoAssignedLetter;
+    if (checkLetter.waitForFinished(10000)) {
+        autoAssignedLetter = QString(checkLetter.readAllStandardOutput()).trimmed();
+        if (!autoAssignedLetter.isEmpty()) {
+            sak::log_info(QString("Windows auto-assigned drive letter: %1").arg(autoAssignedLetter).toStdString());
+            cleanDriveLetter = autoAssignedLetter;
+        }
     }
     
-    assignScriptFile.write(assignScript.toLocal8Bit());
-    assignScriptFile.flush();
-    
-    sak::log_info(QString("Running assign script:\n%1").arg(assignScript).toStdString());
-    
-    QProcess assignProcess;
-    assignProcess.start("diskpart", QStringList() << "/s" << assignScriptFile.fileName());
-    
-    if (!assignProcess.waitForStarted() || !assignProcess.waitForFinished(30000)) {
-        m_lastError = "Failed to assign drive letter";
-        sak::log_error(m_lastError.toStdString());
-        return false;
+    // If no drive letter was assigned, assign the desired one
+    if (cleanDriveLetter.isEmpty() || autoAssignedLetter.isEmpty()) {
+        sak::log_info(QString("Assigning drive letter: %1").arg(cleanDriveLetter).toStdString());
+        Q_EMIT statusChanged("Assigning drive letter...");
+        
+        QProcess assignLetter;
+        QString assignCmd = QString("Get-Partition -DiskNumber %1 -PartitionNumber 1 | Set-Partition -NewDriveLetter %2")
+            .arg(diskNumber, cleanDriveLetter);
+        assignLetter.start("powershell", QStringList() << "-NoProfile" << "-Command" << assignCmd);
+        assignLetter.waitForFinished(10000);
+        
+        QString assignOutput = QString(assignLetter.readAllStandardOutput()).trimmed();
+        QString assignErrors = QString(assignLetter.readAllStandardError()).trimmed();
+        
+        if (!assignOutput.isEmpty()) {
+            sak::log_info(QString("Assign output: %1").arg(assignOutput).toStdString());
+        }
+        if (!assignErrors.isEmpty()) {
+            sak::log_warning(QString("Assign warnings: %1").arg(assignErrors).toStdString());
+        }
+        
+        QThread::msleep(2000);
     }
     
-    QString assignOutput = assignProcess.readAllStandardOutput();
-    sak::log_info(QString("Assign output:\n%1").arg(assignOutput).toStdString());
-    
-    // Wait for drive letter to be available
-    QThread::msleep(2000);
-    
-    // Step 4: Format using native Windows format.com utility
+    // Step 3: Format using PowerShell Format-Volume (Microsoft's official method)
     Q_EMIT statusChanged("Formatting drive as NTFS...");
-    sak::log_info("Formatting with format.com...");
+    sak::log_info(QString("Formatting drive %1: with Format-Volume...").arg(cleanDriveLetter).toStdString());
     
+    // Use the exact method from Microsoft's Windows Server USB creation script
     QProcess formatProcess;
-    // format.com X: /FS:NTFS /Q /V:"Windows USB" /Y
-    // /FS:NTFS = filesystem, /Q = quick format, /V = volume label, /Y = suppress confirmation
-    formatProcess.start("format", QStringList() 
-        << QString("%1:").arg(cleanDriveLetter)
-        << "/FS:NTFS"
-        << "/Q"
-        << "/V:Windows USB"
-        << "/Y");
+    QString formatCmd = QString("Format-Volume -DriveLetter %1 -FileSystem NTFS -NewFileSystemLabel 'WinServerUSB' -Confirm:$false -Force")
+        .arg(cleanDriveLetter);
+    formatProcess.start("powershell", QStringList() << "-NoProfile" << "-Command" << formatCmd);
     
     if (!formatProcess.waitForStarted()) {
-        m_lastError = "Failed to start format.com";
+        m_lastError = "Failed to start Format-Volume";
         sak::log_error(m_lastError.toStdString());
         return false;
     }
     
     if (!formatProcess.waitForFinished(120000)) { // 2 minutes
-        m_lastError = "Format timed out";
+        m_lastError = "Format-Volume timed out";
         sak::log_error(m_lastError.toStdString());
         formatProcess.kill();
         return false;
     }
     
-    QString formatOutput = formatProcess.readAllStandardOutput();
-    QString formatErrors = formatProcess.readAllStandardError();
+    QString formatOutput = QString(formatProcess.readAllStandardOutput()).trimmed();
+    QString formatErrors = QString(formatProcess.readAllStandardError()).trimmed();
     
-    sak::log_info(QString("Format output:\n%1").arg(formatOutput).toStdString());
+    if (!formatOutput.isEmpty()) {
+        sak::log_info(QString("Format-Volume output:\n%1").arg(formatOutput).toStdString());
+    }
     if (!formatErrors.isEmpty()) {
-        sak::log_warning(QString("Format stderr:\n%1").arg(formatErrors).toStdString());
+        sak::log_warning(QString("Format-Volume stderr:\n%1").arg(formatErrors).toStdString());
     }
     
     if (formatProcess.exitCode() != 0) {
-        m_lastError = QString("Format failed with exit code %1").arg(formatProcess.exitCode());
+        m_lastError = QString("Format-Volume failed with exit code %1").arg(formatProcess.exitCode());
         sak::log_error(m_lastError.toStdString());
         return false;
     }
