@@ -471,8 +471,8 @@ void ImageFlasherPanel::updateNavigationButtons() {
             break;
     }
     
-    // Flash button: only visible and enabled on drive selection page
-    m_flashButton->setVisible(currentIndex == 1);
+    // Flash button: only visible and enabled on drive selection page when not flashing
+    m_flashButton->setVisible(currentIndex == 1 && !m_isFlashing);
     m_flashButton->setEnabled(!m_selectedDrives.isEmpty() && !m_isFlashing);
     
     // Cancel button: only visible during flashing
