@@ -221,6 +221,7 @@ set(CORE_SOURCES
     src/core/image_source.cpp
     src/core/flash_coordinator.cpp
     src/core/windows_iso_downloader.cpp
+    src/core/windows_usb_creator.cpp
     src/core/drive_unmounter.cpp
     src/core/drive_lock.cpp
     src/core/image_writer.cpp
@@ -235,6 +236,7 @@ set(CORE_SOURCES
     include/sak/image_source.h
     include/sak/flash_coordinator.h
     include/sak/windows_iso_downloader.h
+    include/sak/windows_usb_creator.h
     include/sak/drive_unmounter.h
     include/sak/drive_lock.h
     include/sak/image_writer.h

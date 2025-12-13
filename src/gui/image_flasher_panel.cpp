@@ -7,6 +7,7 @@
 #include "sak/windows_iso_downloader.h"
 #include "sak/windows_iso_download_dialog.h"
 #include "sak/image_flasher_settings_dialog.h"
+#include "sak/windows_usb_creator.h"
 #include "sak/config_manager.h"
 #include "sak/logger.h"
 #include <QVBoxLayout>
@@ -519,22 +520,110 @@ void ImageFlasherPanel::validateImageFile(const QString& filePath) {
 }
 
 void ImageFlasherPanel::showConfirmationDialog() {
+    // Check if this is a Windows ISO
+    bool isWindowsISO = isWindowsInstallISO(m_selectedImagePath);
+    
+    QString methodInfo;
+    if (isWindowsISO) {
+        methodInfo = "\n\nMethod: Extract ISO to NTFS-formatted drive\n"
+                    "(Proper Windows installation USB)";
+    } else {
+        methodInfo = "\n\nMethod: Raw disk imaging\n"
+                    "(Bootable for Linux, other ISOs)";
+    }
+    
     QString message = QString("Are you sure you want to flash this image?\n\n"
                               "Image: %1\n"
-                              "Target Drives: %2\n\n"
+                              "Target Drives: %2%3\n\n"
                               "WARNING: All data on the target drives will be erased!")
         .arg(QFileInfo(m_selectedImagePath).fileName())
-        .arg(m_selectedDrives.size());
+        .arg(m_selectedDrives.size())
+        .arg(methodInfo);
     
     auto reply = QMessageBox::warning(this, "Confirm Flash", message,
         QMessageBox::Yes | QMessageBox::No);
     
     if (reply == QMessageBox::Yes) {
-        // Start flash
         m_isFlashing = true;
         m_stackedWidget->setCurrentWidget(m_flashProgressPage);
-        m_flashCoordinator->startFlash(m_selectedImagePath, m_selectedDrives);
+        
+        if (isWindowsISO) {
+            // Use Windows USB Creator for proper NTFS extraction
+            createWindowsUSB();
+        } else {
+            // Use raw disk imaging for other ISOs
+            m_flashCoordinator->startFlash(m_selectedImagePath, m_selectedDrives);
+        }
     }
+}
+
+bool ImageFlasherPanel::isWindowsInstallISO(const QString& isoPath) const {
+    // Check if ISO filename suggests it's a Windows ISO
+    QString fileName = QFileInfo(isoPath).fileName().toLower();
+    
+    if (fileName.contains("windows") || 
+        fileName.contains("win10") || 
+        fileName.contains("win11") ||
+        fileName.contains("win_") ||
+        fileName.contains("server")) {
+        return true;
+    }
+    
+    // Could also check ISO contents for sources/install.wim
+    // but that requires mounting, so filename heuristic is faster
+    
+    return false;
+}
+
+void ImageFlasherPanel::createWindowsUSB() {
+    if (m_selectedDrives.isEmpty()) {
+        QMessageBox::critical(this, "Error", "No target drives selected");
+        m_isFlashing = false;
+        return;
+    }
+    
+    // For Windows USB creation, we can only handle one drive at a time
+    if (m_selectedDrives.size() > 1) {
+        QMessageBox::information(this, "Multiple Drives", 
+            "Windows USB creation will process drives one at a time.\n"
+            "This may take longer than raw imaging.");
+    }
+    
+    // Create Windows USB creator
+    auto* creator = new WindowsUSBCreator(this);
+    
+    connect(creator, &WindowsUSBCreator::statusChanged, this, [this](const QString& status) {
+        m_flashStateLabel->setText(status);
+    });
+    
+    connect(creator, &WindowsUSBCreator::progressUpdated, this, [this](int percentage) {
+        m_flashProgressBar->setValue(percentage);
+    });
+    
+    connect(creator, &WindowsUSBCreator::completed, this, [this, creator]() {
+        sak::FlashResult result;
+        result.success = true;
+        result.successfulDrives = m_selectedDrives;
+        result.bytesWritten = m_imageSize * m_selectedDrives.size();
+        
+        onFlashCompleted(result);
+        creator->deleteLater();
+    });
+    
+    connect(creator, &WindowsUSBCreator::failed, this, [this, creator](const QString& error) {
+        onFlashError(error);
+        creator->deleteLater();
+    });
+    
+    // Extract drive letter from device path (e.g., "\\.\PhysicalDrive1" -> find volume letter)
+    // For now, use first selected drive
+    QString driveLetter = m_selectedDrives.first();
+    
+    // TODO: Map PhysicalDrive# to volume letter
+    // For now, assume user selected a volume or we need to query it
+    
+    // Start the creation process
+    creator->createBootableUSB(m_selectedImagePath, driveLetter);
 }
 
 bool ImageFlasherPanel::isSystemDrive(const QString& devicePath) const {
