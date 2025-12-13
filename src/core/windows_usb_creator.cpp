@@ -8,6 +8,7 @@
 #include <QFileInfo>
 #include <QTextStream>
 #include <QTemporaryFile>
+#include <QThread>
 #include <windows.h>
 #include <winioctl.h>
 #include <filesystem>
