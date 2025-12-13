@@ -102,12 +102,12 @@ bool WindowsUSBCreator::formatDriveNTFS(const QString& driveLetter) {
     cleanDriveLetter.remove("\\");
     
     sak::log_info(QString("Formatting %1: as NTFS").arg(cleanDriveLetter).toStdString());
-    Q_EMIT statusChanged("Formatting drive as NTFS...");
+    Q_EMIT statusChanged("Quick formatting drive as NTFS...");
     
-    // Use PowerShell Format-Volume (official Microsoft method for Windows USB creation)
+    // Use PowerShell Format-Volume with quick format (official Microsoft method for Windows USB creation)
     QProcess format;
     format.start("powershell", QStringList() << "-NoProfile" << "-Command"
-        << QString("Format-Volume -DriveLetter %1 -FileSystem NTFS -NewFileSystemLabel 'Windows USB' -Confirm:$false -Force").arg(cleanDriveLetter));
+        << QString("Format-Volume -DriveLetter %1 -FileSystem NTFS -NewFileSystemLabel 'Windows USB' -Confirm:$false -Force -Full:$false").arg(cleanDriveLetter));
     
     if (!format.waitForStarted()) {
         m_lastError = "Failed to start PowerShell format";
