@@ -356,12 +356,30 @@ bool WindowsUSBCreator::copyISOContents(const QString& sourcePath, const QString
         return false;
     }
     
-    // Use robocopy for reliable copying with progress
+    // Verify source has files
+    QStringList entries = sourceDir.entryList(QDir::AllEntries | QDir::NoDotAndDotDot);
+    sak::log_info(QString("Source directory contains %1 items").arg(entries.count()).toStdString());
+    if (entries.isEmpty()) {
+        m_lastError = QString("Source directory is empty: %1").arg(sourcePath);
+        sak::log_error(m_lastError.toStdString());
+        return false;
+    }
+    
+    // Use robocopy for reliable copying (Microsoft's recommended method)
+    // This is the official way to create Windows bootable USB per Microsoft docs
     QProcess robocopy;
     QString source = sourcePath;
     QString dest = destPath;
-    source.replace("/", "\\");
-    dest.replace("/", "\\");
+    
+    // Ensure paths end with backslash for robocopy
+    if (!source.endsWith("\\") && !source.endsWith(":")) {
+        source += "\\";
+    }
+    if (!dest.endsWith("\\") && !dest.endsWith(":")) {
+        dest += "\\";
+    }
+    
+    sak::log_info(QString("Robocopy command: robocopy \"%1\" \"%2\" /E").arg(source, dest).toStdString());
     
     QStringList args;
     args << source;
@@ -369,13 +387,7 @@ bool WindowsUSBCreator::copyISOContents(const QString& sourcePath, const QString
     args << "/E"; // Copy subdirectories including empty
     args << "/R:3"; // Retry 3 times
     args << "/W:5"; // Wait 5 seconds between retries
-    args << "/NFL"; // No file list
-    args << "/NDL"; // No directory list
-    args << "/NJH"; // No job header
-    args << "/NJS"; // No job summary
-    args << "/NC"; // No class
-    args << "/NS"; // No size
-    args << "/NP"; // No progress percentage
+    args << "/V"; // Verbose output for debugging
     
     robocopy.start("robocopy", args);
     
