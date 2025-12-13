@@ -367,29 +367,51 @@ bool WindowsUSBCreator::copyISOContents(const QString& sourcePath, const QString
     
     // Use robocopy for reliable copying (Microsoft's recommended method)
     // This is the official way to create Windows bootable USB per Microsoft docs
-    QProcess robocopy;
+    
+    // Normalize paths - robocopy needs proper format
     QString source = sourcePath;
     QString dest = destPath;
     
-    // Ensure paths end with backslash for robocopy
-    if (!source.endsWith("\\") && !source.endsWith(":")) {
+    // Remove any trailing slashes/colons and add backslash
+    source = source.trimmed();
+    dest = dest.trimmed();
+    
+    // Ensure source and dest are properly formatted
+    if (source.endsWith(":")) {
+        source += "\\";
+    } else if (!source.endsWith("\\")) {
         source += "\\";
     }
-    if (!dest.endsWith("\\") && !dest.endsWith(":")) {
+    
+    if (dest.endsWith(":")) {
+        dest += "\\";
+    } else if (!dest.endsWith("\\")) {
         dest += "\\";
     }
     
-    sak::log_info(QString("Robocopy command: robocopy \"%1\" \"%2\" /E").arg(source, dest).toStdString());
+    sak::log_info(QString("Source path: '%1'").arg(source).toStdString());
+    sak::log_info(QString("Destination path: '%1'").arg(dest).toStdString());
     
+    // Verify destination is writable
+    QDir destDir(dest);
+    if (!destDir.exists()) {
+        m_lastError = QString("Destination directory does not exist or is not accessible: %1").arg(dest);
+        sak::log_error(m_lastError.toStdString());
+        return false;
+    }
+    
+    QProcess robocopy;
     QStringList args;
     args << source;
     args << dest;
     args << "/E"; // Copy subdirectories including empty
     args << "/R:3"; // Retry 3 times
     args << "/W:5"; // Wait 5 seconds between retries
-    args << "/V"; // Verbose output for debugging
+    args << "/NP"; // No progress - less output clutter
     
-    robocopy.start("robocopy", args);
+    sak::log_info(QString("Starting robocopy: robocopy.exe %1").arg(args.join(" ")).toStdString());
+    
+    robocopy.start("robocopy.exe", args);
     
     if (!robocopy.waitForStarted(5000)) {
         m_lastError = "Failed to start robocopy";
@@ -410,20 +432,54 @@ bool WindowsUSBCreator::copyISOContents(const QString& sourcePath, const QString
     QString output = robocopy.readAllStandardOutput();
     QString errors = robocopy.readAllStandardError();
     
-    sak::log_info(QString("Robocopy exit code: %1").arg(exitCode).toStdString());
+    sak::log_info(QString("Robocopy completed with exit code: %1").arg(exitCode).toStdString());
+    
+    // Log full output for debugging
     if (!output.isEmpty()) {
-        sak::log_info(QString("Robocopy output: %1").arg(output).toStdString());
+        // Split output into lines for better readability
+        QStringList lines = output.split('\n', Qt::SkipEmptyParts);
+        sak::log_info(QString("Robocopy output (%1 lines):").arg(lines.count()).toStdString());
+        for (const QString& line : lines) {
+            QString trimmed = line.trimmed();
+            if (!trimmed.isEmpty()) {
+                sak::log_info(QString("  %1").arg(trimmed).toStdString());
+            }
+        }
     }
+    
     if (!errors.isEmpty()) {
         sak::log_warning(QString("Robocopy stderr: %1").arg(errors).toStdString());
     }
     
-    // Robocopy exit codes: 0-7 are success (various levels), 8+ are errors
+    // Robocopy exit codes: 
+    // 0 = No files copied (no changes needed)
+    // 1 = Files copied successfully
+    // 2 = Extra files or directories detected
+    // 3 = Files copied and extras detected
+    // 4 = Mismatches exist
+    // 5 = Files copied and mismatches exist
+    // 6 = Extras and mismatches exist
+    // 7 = Files copied, extras and mismatches exist
+    // 8+ = Errors occurred
     if (exitCode >= 8) {
         m_lastError = QString("Robocopy failed with exit code %1: %2").arg(exitCode).arg(errors);
         sak::log_error(m_lastError.toStdString());
         return false;
     }
+    
+    if (exitCode == 0) {
+        sak::log_warning("Robocopy exit code 0 - no files were copied. Source may be empty or files already exist.");
+        // Check if destination actually has files
+        QDir checkDest(destPath);
+        QStringList destFiles = checkDest.entryList(QDir::AllEntries | QDir::NoDotAndDotDot);
+        if (destFiles.isEmpty()) {
+            m_lastError = "No files were copied - destination is empty";
+            sak::log_error(m_lastError.toStdString());
+            return false;
+        }
+    }
+    
+    sak::log_info(QString("Robocopy completed successfully (exit code %1)").arg(exitCode).toStdString());
     
     // Set the volume label from ISO
     if (!m_volumeLabel.isEmpty()) {
