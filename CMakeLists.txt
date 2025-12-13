@@ -432,11 +432,12 @@ if(PLATFORM_WINDOWS)
         set_target_properties(sak_utility PROPERTIES WIN32_EXECUTABLE TRUE)
     endif()
     
-    # Embed application manifest for Administrator privileges
-    # Required for disk partitioning operations (diskpart, Format-Volume)
-    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/sak_utility.exe.manifest")
-        target_sources(sak_utility PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/sak_utility.exe.manifest")
-        set_property(TARGET sak_utility PROPERTY VS_DPI_AWARE "PerMonitor")
+    # Request Administrator privileges for disk operations (diskpart, Format-Volume)
+    # This modifies the default Qt manifest to require elevation
+    if(MSVC)
+        set_target_properties(sak_utility PROPERTIES
+            LINK_FLAGS "/MANIFESTUAC:\"level='requireAdministrator' uiAccess='false'\""
+        )
     endif()
     
     # Copy icon to resources
