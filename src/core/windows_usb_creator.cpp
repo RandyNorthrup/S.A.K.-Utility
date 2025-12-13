@@ -406,7 +406,8 @@ bool WindowsUSBCreator::copyISOContents(const QString& sourcePath, const QString
     args << "/E"; // Copy subdirectories including empty
     args << "/R:3"; // Retry 3 times
     args << "/W:5"; // Wait 5 seconds between retries
-    args << "/NP"; // No progress - less output clutter
+    args << "/ETA"; // Show estimated time
+    args << "/BYTES"; // Show file sizes in bytes
     
     sak::log_info(QString("Starting robocopy: robocopy.exe %1").arg(args.join(" ")).toStdString());
     
@@ -418,14 +419,19 @@ bool WindowsUSBCreator::copyISOContents(const QString& sourcePath, const QString
         return false;
     }
     
-    sak::log_info("Robocopy started, copying files...");
+    sak::log_info("Robocopy process started, waiting for completion...");
+    Q_EMIT statusChanged("Copying files... (this may take several minutes)");
     
+    // Wait for robocopy to finish - can take a long time for large ISOs
     if (!robocopy.waitForFinished(600000)) { // 10 minutes timeout
-        m_lastError = "Robocopy timed out";
+        m_lastError = "Robocopy timed out after 10 minutes";
         sak::log_error(m_lastError.toStdString());
         robocopy.kill();
         return false;
     }
+    
+    QProcess::ProcessState state = robocopy.state();
+    sak::log_info(QString("Robocopy process state after waitForFinished: %1").arg(state).toStdString());
     
     int exitCode = robocopy.exitCode();
     QString output = robocopy.readAllStandardOutput();
@@ -500,20 +506,36 @@ bool WindowsUSBCreator::copyISOContents(const QString& sourcePath, const QString
         verifyPath += "/";
     }
     
-    bool hasCriticalFiles = false;
+    QStringList missingFiles;
+    QStringList foundFiles;
+    
     for (const QString& file : criticalFiles) {
         QString fullPath = verifyPath + file;
         fullPath.replace("\\", "/");
         if (QFile::exists(fullPath)) {
-            sak::log_info(QString("Verified: %1 exists").arg(file).toStdString());
-            hasCriticalFiles = true;
+            sak::log_info(QString("✓ Found: %1").arg(file).toStdString());
+            foundFiles << file;
         } else {
-            sak::log_warning(QString("Missing: %1").arg(file).toStdString());
+            sak::log_error(QString("✗ MISSING: %1").arg(file).toStdString());
+            missingFiles << file;
         }
     }
     
-    if (!hasCriticalFiles) {
-        m_lastError = "Windows installation files not found on destination - copy may have failed";
+    sak::log_info(QString("File verification: %1 found, %2 missing")
+        .arg(foundFiles.count())
+        .arg(missingFiles.count())
+        .toStdString());
+    
+    // Require at least setup.exe and one of the boot files
+    if (missingFiles.contains("setup.exe")) {
+        m_lastError = "Critical file missing: setup.exe - Windows installation failed to copy";
+        sak::log_error(m_lastError.toStdString());
+        return false;
+    }
+    
+    if (foundFiles.isEmpty()) {
+        m_lastError = QString("No Windows installation files found on destination. Missing: %1")
+            .arg(missingFiles.join(", "));
         sak::log_error(m_lastError.toStdString());
         return false;
     }
