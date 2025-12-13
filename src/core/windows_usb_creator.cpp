@@ -495,14 +495,14 @@ bool WindowsUSBCreator::copyISOContents(const QString& sourcePath, const QString
         "bootmgr"
     };
     
-    QString cleanDest = destPath;
-    if (!cleanDest.endsWith("/") && !cleanDest.endsWith("\\")) {
-        cleanDest += "/";
+    QString verifyPath = destPath;
+    if (!verifyPath.endsWith("/") && !verifyPath.endsWith("\\")) {
+        verifyPath += "/";
     }
     
     bool hasCriticalFiles = false;
     for (const QString& file : criticalFiles) {
-        QString fullPath = cleanDest + file;
+        QString fullPath = verifyPath + file;
         fullPath.replace("\\", "/");
         if (QFile::exists(fullPath)) {
             sak::log_info(QString("Verified: %1 exists").arg(file).toStdString());
