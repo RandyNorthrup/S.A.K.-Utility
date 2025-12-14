@@ -3,7 +3,6 @@
 
 #include "sak/drive_scanner.h"
 #include "sak/logger.h"
-#include <QDebug>
 #include <QDir>
 #include <dbt.h>
 #include <setupapi.h>

@@ -39,6 +39,7 @@ void SettingsDialog::setupUI() {
     createOrganizerTab();
     createDuplicateFinderTab();
     createLicenseScannerTab();
+    createImageFlasherTab();
     createAdvancedTab();
 
     mainLayout->addWidget(m_tabWidget);
@@ -211,6 +212,94 @@ void SettingsDialog::createLicenseScannerTab() {
     connect(m_licenseScanFilesystem, &QCheckBox::stateChanged, this, &SettingsDialog::onSettingChanged);
 }
 
+void SettingsDialog::createImageFlasherTab() {
+    auto* widget = new QWidget();
+    auto* layout = new QVBoxLayout(widget);
+
+    // Validation Settings Group
+    auto* validationGroup = new QGroupBox(tr("Validation Settings"));
+    auto* validationLayout = new QFormLayout();
+
+    m_imageFlasherValidationMode = new QComboBox();
+    m_imageFlasherValidationMode->addItem(tr("Full Verification"), "full");
+    m_imageFlasherValidationMode->addItem(tr("Quick Check"), "quick");
+    m_imageFlasherValidationMode->addItem(tr("No Verification"), "none");
+    m_imageFlasherValidationMode->setToolTip(tr("Choose verification method after writing"));
+    validationLayout->addRow(tr("Verification Mode:"), m_imageFlasherValidationMode);
+
+    validationGroup->setLayout(validationLayout);
+    layout->addWidget(validationGroup);
+
+    // Performance Settings Group
+    auto* perfGroup = new QGroupBox(tr("Performance Settings"));
+    auto* perfLayout = new QFormLayout();
+
+    m_imageFlasherBufferSize = new QSpinBox();
+    m_imageFlasherBufferSize->setRange(16, 1024);
+    m_imageFlasherBufferSize->setSuffix(tr(" MB"));
+    m_imageFlasherBufferSize->setToolTip(tr("Buffer size for reading/writing (higher = faster but more memory)"));
+    perfLayout->addRow(tr("Buffer Size:"), m_imageFlasherBufferSize);
+
+    m_imageFlasherMaxConcurrentWrites = new QSpinBox();
+    m_imageFlasherMaxConcurrentWrites->setRange(1, 32);
+    m_imageFlasherMaxConcurrentWrites->setToolTip(tr("Maximum number of simultaneous writes"));
+    perfLayout->addRow(tr("Max Concurrent Writes:"), m_imageFlasherMaxConcurrentWrites);
+
+    perfGroup->setLayout(perfLayout);
+    layout->addWidget(perfGroup);
+
+    // Safety Settings Group
+    auto* safetyGroup = new QGroupBox(tr("Safety Settings"));
+    auto* safetyLayout = new QVBoxLayout();
+
+    m_imageFlasherShowSystemDriveWarning = new QCheckBox(tr("Warn when system drive selected"));
+    safetyLayout->addWidget(m_imageFlasherShowSystemDriveWarning);
+
+    m_imageFlasherShowLargeDriveWarning = new QCheckBox(tr("Warn when large drive selected"));
+    safetyLayout->addWidget(m_imageFlasherShowLargeDriveWarning);
+
+    auto* thresholdLayout = new QHBoxLayout();
+    thresholdLayout->addWidget(new QLabel(tr("Large drive threshold:")));
+    m_imageFlasherLargeDriveThreshold = new QSpinBox();
+    m_imageFlasherLargeDriveThreshold->setRange(32, 10000);
+    m_imageFlasherLargeDriveThreshold->setSuffix(tr(" GB"));
+    m_imageFlasherLargeDriveThreshold->setToolTip(tr("Drives larger than this will trigger warning"));
+    thresholdLayout->addWidget(m_imageFlasherLargeDriveThreshold);
+    thresholdLayout->addStretch();
+    safetyLayout->addLayout(thresholdLayout);
+
+    safetyGroup->setLayout(safetyLayout);
+    layout->addWidget(safetyGroup);
+
+    // Behavior Settings Group
+    auto* behaviorGroup = new QGroupBox(tr("Behavior Settings"));
+    auto* behaviorLayout = new QVBoxLayout();
+
+    m_imageFlasherUnmountOnCompletion = new QCheckBox(tr("Auto-unmount on completion"));
+    m_imageFlasherUnmountOnCompletion->setToolTip(tr("Automatically unmount drives after successful flash"));
+    behaviorLayout->addWidget(m_imageFlasherUnmountOnCompletion);
+
+    m_imageFlasherEnableNotifications = new QCheckBox(tr("Enable desktop notifications"));
+    m_imageFlasherEnableNotifications->setToolTip(tr("Show system notifications when flash completes"));
+    behaviorLayout->addWidget(m_imageFlasherEnableNotifications);
+
+    behaviorGroup->setLayout(behaviorLayout);
+    layout->addWidget(behaviorGroup);
+
+    layout->addStretch();
+    m_tabWidget->addTab(widget, tr("Image Flasher"));
+
+    // Connect change signals
+    connect(m_imageFlasherValidationMode, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &SettingsDialog::onSettingChanged);
+    connect(m_imageFlasherBufferSize, QOverload<int>::of(&QSpinBox::valueChanged), this, &SettingsDialog::onSettingChanged);
+    connect(m_imageFlasherUnmountOnCompletion, &QCheckBox::stateChanged, this, &SettingsDialog::onSettingChanged);
+    connect(m_imageFlasherShowSystemDriveWarning, &QCheckBox::stateChanged, this, &SettingsDialog::onSettingChanged);
+    connect(m_imageFlasherShowLargeDriveWarning, &QCheckBox::stateChanged, this, &SettingsDialog::onSettingChanged);
+    connect(m_imageFlasherLargeDriveThreshold, QOverload<int>::of(&QSpinBox::valueChanged), this, &SettingsDialog::onSettingChanged);
+    connect(m_imageFlasherMaxConcurrentWrites, QOverload<int>::of(&QSpinBox::valueChanged), this, &SettingsDialog::onSettingChanged);
+    connect(m_imageFlasherEnableNotifications, &QCheckBox::stateChanged, this, &SettingsDialog::onSettingChanged);
+}
+
 void SettingsDialog::createAdvancedTab() {
     auto* widget = new QWidget();
     auto* layout = new QVBoxLayout(widget);
@@ -261,6 +350,23 @@ void SettingsDialog::loadSettings() {
     m_licenseScanRegistry->setChecked(config.getLicenseScanRegistry());
     m_licenseScanFilesystem->setChecked(config.getLicenseScanFilesystem());
 
+    // Image Flasher
+    QString validationMode = config.getImageFlasherValidationMode();
+    if (validationMode == "full") {
+        m_imageFlasherValidationMode->setCurrentIndex(0);
+    } else if (validationMode == "quick") {
+        m_imageFlasherValidationMode->setCurrentIndex(1);
+    } else {
+        m_imageFlasherValidationMode->setCurrentIndex(2); // none
+    }
+    m_imageFlasherBufferSize->setValue(config.getImageFlasherBufferSize());
+    m_imageFlasherUnmountOnCompletion->setChecked(config.getImageFlasherUnmountOnCompletion());
+    m_imageFlasherShowSystemDriveWarning->setChecked(config.getImageFlasherShowSystemDriveWarning());
+    m_imageFlasherShowLargeDriveWarning->setChecked(config.getImageFlasherShowLargeDriveWarning());
+    m_imageFlasherLargeDriveThreshold->setValue(config.getImageFlasherLargeDriveThreshold());
+    m_imageFlasherMaxConcurrentWrites->setValue(config.getImageFlasherMaxConcurrentWrites());
+    m_imageFlasherEnableNotifications->setChecked(config.getImageFlasherEnableNotifications());
+
     m_settingsModified = false;
     m_applyButton->setEnabled(false);
 }
@@ -294,6 +400,23 @@ void SettingsDialog::saveSettings() {
     // License Scanner
     config.setLicenseScanRegistry(m_licenseScanRegistry->isChecked());
     config.setLicenseScanFilesystem(m_licenseScanFilesystem->isChecked());
+
+    // Image Flasher
+    QString validationMode;
+    switch (m_imageFlasherValidationMode->currentIndex()) {
+        case 0: validationMode = "full"; break;
+        case 1: validationMode = "quick"; break;
+        case 2: validationMode = "none"; break;
+        default: validationMode = "full"; break;
+    }
+    config.setImageFlasherValidationMode(validationMode);
+    config.setImageFlasherBufferSize(m_imageFlasherBufferSize->value());
+    config.setImageFlasherUnmountOnCompletion(m_imageFlasherUnmountOnCompletion->isChecked());
+    config.setImageFlasherShowSystemDriveWarning(m_imageFlasherShowSystemDriveWarning->isChecked());
+    config.setImageFlasherShowLargeDriveWarning(m_imageFlasherShowLargeDriveWarning->isChecked());
+    config.setImageFlasherLargeDriveThreshold(m_imageFlasherLargeDriveThreshold->value());
+    config.setImageFlasherMaxConcurrentWrites(m_imageFlasherMaxConcurrentWrites->value());
+    config.setImageFlasherEnableNotifications(m_imageFlasherEnableNotifications->isChecked());
 
     // Sync to disk
     config.sync();

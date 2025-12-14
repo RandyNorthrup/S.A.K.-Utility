@@ -116,22 +116,31 @@ option(ENABLE_UBSAN "Enable Undefined Behavior Sanitizer" ON)
 option(ENABLE_TSAN "Enable Thread Sanitizer" OFF)  # Mutually exclusive with ASAN
 
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-    if(ENABLE_ASAN AND NOT ENABLE_TSAN)
-        add_compile_options(-fsanitize=address -fno-omit-frame-pointer)
-        add_link_options(-fsanitize=address)
-        message(STATUS "Address Sanitizer: ENABLED")
-    endif()
-    
-    if(ENABLE_UBSAN)
-        add_compile_options(-fsanitize=undefined -fno-omit-frame-pointer)
-        add_link_options(-fsanitize=undefined)
-        message(STATUS "Undefined Behavior Sanitizer: ENABLED")
-    endif()
-    
-    if(ENABLE_TSAN)
-        add_compile_options(-fsanitize=thread -fno-omit-frame-pointer)
-        add_link_options(-fsanitize=thread)
-        message(STATUS "Thread Sanitizer: ENABLED")
+    if(MSVC)
+        # MSVC Address Sanitizer
+        if(ENABLE_ASAN AND NOT ENABLE_TSAN)
+            add_compile_options(/fsanitize=address)
+            message(STATUS "Address Sanitizer: ENABLED (MSVC)")
+        endif()
+    elseif(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+        # GCC/Clang Sanitizers
+        if(ENABLE_ASAN AND NOT ENABLE_TSAN)
+            add_compile_options(-fsanitize=address -fno-omit-frame-pointer)
+            add_link_options(-fsanitize=address)
+            message(STATUS "Address Sanitizer: ENABLED")
+        endif()
+        
+        if(ENABLE_UBSAN)
+            add_compile_options(-fsanitize=undefined -fno-omit-frame-pointer)
+            add_link_options(-fsanitize=undefined)
+            message(STATUS "Undefined Behavior Sanitizer: ENABLED")
+        endif()
+        
+        if(ENABLE_TSAN)
+            add_compile_options(-fsanitize=thread -fno-omit-frame-pointer)
+            add_link_options(-fsanitize=thread)
+            message(STATUS "Thread Sanitizer: ENABLED")
+        endif()
     endif()
 endif()
 

@@ -3,10 +3,10 @@
 #include "sak/migration_report.h"
 #include "sak/app_scanner.h"
 #include "sak/package_matcher.h"
-#include <QDebug>
 #include <QThread>
 #include <QMetaObject>
 #include <QTimer>
+#include <QDebug>
 
 namespace sak {
 
@@ -54,7 +54,10 @@ int AppMigrationWorker::startMigration(std::shared_ptr<MigrationReport> report, 
     m_jobQueue.clear();
     
     const auto& entries = m_report->getEntries();
-    for (size_t i = 0; i < entries.size(); ++i) {
+    const size_t entry_count = entries.size();
+    m_jobs.reserve(entry_count / 2);  // Estimate based on selected entries
+    
+    for (size_t i = 0; i < entry_count; ++i) {
         const auto& entry = entries[i];
         
         // Only queue selected entries with matches
@@ -72,8 +75,6 @@ int AppMigrationWorker::startMigration(std::shared_ptr<MigrationReport> report, 
     }
     
     int totalJobs = m_jobs.size();
-    qDebug() << "[AppMigrationWorker] Starting migration with" << totalJobs << "jobs,"
-             << m_maxConcurrent << "max concurrent";
     
     Q_EMIT migrationStarted(totalJobs);
     
@@ -97,7 +98,6 @@ void AppMigrationWorker::pause() {
     }
     
     m_paused = true;
-    qDebug() << "[AppMigrationWorker] Migration paused";
     Q_EMIT migrationPaused();
 }
 
@@ -109,7 +109,6 @@ void AppMigrationWorker::resume() {
     }
     
     m_paused = false;
-    qDebug() << "[AppMigrationWorker] Migration resumed";
     
     // Wake up worker thread
     m_waitCondition.wakeAll();
@@ -138,8 +137,6 @@ void AppMigrationWorker::cancel() {
         
         Q_EMIT jobStatusChanged(m_jobs[jobIndex].entryIndex, m_jobs[jobIndex]);
     }
-    
-    qDebug() << "[AppMigrationWorker] Migration cancelled";
     
     // Wake up worker thread
     m_waitCondition.wakeAll();
@@ -211,10 +208,6 @@ void AppMigrationWorker::processQueue() {
                 m_mutex.unlock();
                 
                 auto stats = getStats();
-                qDebug() << "[AppMigrationWorker] Migration completed:"
-                         << "Success:" << stats.success
-                         << "Failed:" << stats.failed
-                         << "Cancelled:" << stats.cancelled;
                 Q_EMIT migrationCompleted(stats);
                 break;
             }
@@ -241,8 +234,6 @@ void AppMigrationWorker::processQueue() {
         // Handle retry logic
         if (!success && shouldRetry(job)) {
             int delay = getRetryDelay(job.retryCount);
-            qDebug() << "[AppMigrationWorker] Retrying" << job.packageId
-                     << "in" << delay << "ms (attempt" << (job.retryCount + 1) << ")";
             
             m_mutex.unlock();
             QThread::msleep(delay);
@@ -257,8 +248,6 @@ void AppMigrationWorker::processQueue() {
 }
 
 bool AppMigrationWorker::installPackage(MigrationJob& job) {
-    qDebug() << "[AppMigrationWorker] Installing" << job.packageId;
-    
     // Update status to installing
     job.status = MigrationStatus::Installing;
     job.startTime = QDateTime::currentDateTime();
@@ -283,7 +272,6 @@ bool AppMigrationWorker::installPackage(MigrationJob& job) {
     if (success) {
         job.status = MigrationStatus::Success;
         Q_EMIT jobProgress(job.entryIndex, "Successfully installed " + job.packageId);
-        qDebug() << "[AppMigrationWorker] Success:" << job.packageId;
     } else {
         job.status = MigrationStatus::Failed;
         job.errorMessage = result.error_message.isEmpty() ? "Installation failed" : result.error_message;

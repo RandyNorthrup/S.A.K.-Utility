@@ -82,8 +82,6 @@ void PackageMatcher::initializeCommonMappings() {
     // Download managers
     m_exact_mappings["qBittorrent"] = "qbittorrent";
     m_exact_mappings["Steam"] = "steam";
-    
-    qDebug() << "[PackageMatcher] Initialized with" << m_exact_mappings.size() << "common mappings";
 }
 
 std::optional<PackageMatcher::MatchResult> PackageMatcher::findMatch(
@@ -91,8 +89,6 @@ std::optional<PackageMatcher::MatchResult> PackageMatcher::findMatch(
     ChocolateyManager* choco_mgr,
     const MatchConfig& config)
 {
-    qDebug() << "[PackageMatcher] Finding match for:" << app.name;
-    
     QString normalized_name = normalizeAppName(app.name);
     QString base_name = extractBaseAppName(app.name);
     
@@ -103,9 +99,6 @@ std::optional<PackageMatcher::MatchResult> PackageMatcher::findMatch(
             // Verify availability if requested
             if (config.verify_availability && choco_mgr) {
                 exact->available = choco_mgr->isPackageAvailable(exact->choco_package);
-                if (!exact->available) {
-                    qDebug() << "[PackageMatcher] Exact match found but not available:" << exact->choco_package;
-                }
             }
             if (!config.verify_availability || exact->available) {
                 m_exact_match_count++;
@@ -132,7 +125,6 @@ std::optional<PackageMatcher::MatchResult> PackageMatcher::findMatch(
         }
     }
     
-    qDebug() << "[PackageMatcher] No match found for:" << app.name;
     return std::nullopt;
 }
 
@@ -142,9 +134,8 @@ std::vector<PackageMatcher::MatchResult> PackageMatcher::findMatches(
     const MatchConfig& config)
 {
     std::vector<MatchResult> results;
-    results.reserve(apps.size());
-    
-    qDebug() << "[PackageMatcher] Finding matches for" << apps.size() << "applications";
+    const size_t app_count = apps.size();
+    results.reserve(app_count);
     
     for (const auto& app : apps) {
         auto match = findMatch(app, choco_mgr, config);
@@ -153,7 +144,6 @@ std::vector<PackageMatcher::MatchResult> PackageMatcher::findMatches(
         }
     }
     
-    qDebug() << "[PackageMatcher] Found" << results.size() << "matches out of" << apps.size() << "apps";
     return results;
 }
 
@@ -162,13 +152,15 @@ std::vector<PackageMatcher::MatchResult> PackageMatcher::findMatchesParallel(
     ChocolateyManager* choco_mgr,
     const MatchConfig& config)
 {
-    qDebug() << "[PackageMatcher] Parallel matching for" << apps.size() << "applications with" << config.thread_count << "threads";
-    
     // Phase 1: Quick exact matches (no API calls needed)
     std::vector<std::pair<int, MatchResult>> exact_results;
     std::vector<std::pair<int, AppScanner::AppInfo>> fuzzy_candidates;
     
-    for (size_t i = 0; i < apps.size(); ++i) {
+    const size_t app_count = apps.size();
+    exact_results.reserve(app_count / 2);  // Estimate 50% exact matches
+    fuzzy_candidates.reserve(app_count / 2);
+    
+    for (size_t i = 0; i < app_count; ++i) {
         QString base_name = extractBaseAppName(apps[i].name);
         auto exact = exactMatch(base_name);
         if (exact.has_value() && exact->confidence >= config.min_confidence) {
@@ -179,9 +171,6 @@ std::vector<PackageMatcher::MatchResult> PackageMatcher::findMatchesParallel(
             fuzzy_candidates.push_back({static_cast<int>(i), apps[i]});
         }
     }
-    
-    qDebug() << "[PackageMatcher] Found" << exact_results.size() << "exact matches, processing" 
-             << fuzzy_candidates.size() << "candidates in parallel";
     
     // Phase 2: Parallel fuzzy/search matching for remaining apps
     QThreadPool pool;
@@ -244,8 +233,6 @@ std::vector<PackageMatcher::MatchResult> PackageMatcher::findMatchesParallel(
         }
     }
     
-    qDebug() << "[PackageMatcher] Parallel processing complete. Found" << final_results.size() 
-             << "matches out of" << apps.size() << "apps";
     return final_results;
 }
 
@@ -559,7 +546,6 @@ double PackageMatcher::jaroWinklerSimilarity(const QString& s1, const QString& s
 void PackageMatcher::addMapping(const QString& app_name, const QString& choco_package) {
     QString normalized = normalizeAppName(app_name);
     m_exact_mappings[normalized] = choco_package;
-    qDebug() << "[PackageMatcher] Added mapping:" << normalized << "->" << choco_package;
 }
 
 void PackageMatcher::removeMapping(const QString& app_name) {
@@ -611,7 +597,6 @@ void PackageMatcher::exportMappings(const QString& file_path) const {
     if (file.open(QIODevice::WriteOnly)) {
         file.write(QJsonDocument(root).toJson(QJsonDocument::Indented));
         file.close();
-        qDebug() << "[PackageMatcher] Exported" << m_exact_mappings.size() << "mappings to" << file_path;
     }
 }
 
@@ -639,14 +624,11 @@ void PackageMatcher::importMappings(const QString& file_path) {
             m_exact_mappings[app_name] = choco_package;
         }
     }
-    
-    qDebug() << "[PackageMatcher] Imported" << mappings.size() << "mappings from" << file_path;
 }
 
 void PackageMatcher::clearCache() {
     QMutexLocker locker(&m_cache_mutex);
     m_search_cache.clear();
-    qDebug() << "[PackageMatcher] Cache cleared";
 }
 
 QString PackageMatcher::getCachedSearch(const QString& keyword) const {

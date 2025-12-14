@@ -39,15 +39,16 @@ auto DuplicateFinderWorker::execute() -> std::expected<void, sak::error_code>
     } else {
         sak::log_info("Using sequential hash calculation");
         std::vector<std::pair<std::filesystem::path, std::string>> hashed_files;
-        hashed_files.reserve(files.size());
+        const size_t file_count = files.size();
+        hashed_files.reserve(file_count);
 
-        for (size_t i = 0; i < files.size(); ++i) {
+        for (size_t i = 0; i < file_count; ++i) {
             if (check_stop()) {
                 return std::unexpected(sak::error_code::operation_cancelled);
             }
 
             const auto& file = files[i];
-            Q_EMIT scan_progress(static_cast<int>(i + 1), static_cast<int>(files.size()),
+            Q_EMIT scan_progress(static_cast<int>(i + 1), static_cast<int>(file_count),
                                QString::fromStdString(file.string()));
 
             auto hash_result = calculate_file_hash(file);
@@ -111,6 +112,7 @@ auto DuplicateFinderWorker::scan_directories()
     -> std::expected<std::vector<std::filesystem::path>, sak::error_code>
 {
     std::vector<std::filesystem::path> files;
+    files.reserve(1000);  // Pre-allocate for better performance
 
     for (const auto& dir_str : m_config.scan_directories) {
         if (check_stop()) {

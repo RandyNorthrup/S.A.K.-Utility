@@ -277,14 +277,6 @@ bool PermissionManager::getSecurityInfo(const QString& path, PSECURITY_DESCRIPTO
     
     return result == ERROR_SUCCESS;
 }
-
-bool PermissionManager::setSecurityInfo(const QString& path, PSECURITY_DESCRIPTOR pSD) {
-    (void)path;  // Unused
-    (void)pSD;   // Unused
-    // This would set the complete security descriptor
-    // For now, we use more targeted functions like SetNamedSecurityInfo
-    return false;
-}
 #endif
 
 } // namespace sak

@@ -106,9 +106,6 @@ private Q_SLOTS:
     void onFlashError(const QString& error);
     void onCancelClicked();
 
-    // Settings
-    void onSettingsClicked();
-
 private:
     void setupUI();
     void createImageSelectionPage();
@@ -161,7 +158,6 @@ private:
     QPushButton* m_backButton;
     QPushButton* m_nextButton;
     QPushButton* m_flashButton;
-    QPushButton* m_settingsButton;
     
     // Core components
     std::unique_ptr<DriveScanner> m_driveScanner;

@@ -18,9 +18,9 @@ class UserDataManager;
 }
 
 /**
- * @brief Windows User Profile Backup Panel
+ * @brief Windows User Migration Panel
  * 
- * Provides comprehensive user profile backup and restore functionality:
+ * Provides comprehensive user profile migration and restore functionality:
  * - User-friendly backup wizard with automatic profile scanning
  * - Intelligent folder selection (Documents, Desktop, Pictures, etc.)
  * - Permission handling and elevation when needed

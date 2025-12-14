@@ -85,7 +85,6 @@ public:
 private:
 #ifdef Q_OS_WIN
     bool getSecurityInfo(const QString& path, PSECURITY_DESCRIPTOR* pSD);
-    bool setSecurityInfo(const QString& path, PSECURITY_DESCRIPTOR pSD);
     bool enablePrivilege(const wchar_t* privilegeName);
 #endif
     

@@ -31,8 +31,6 @@ std::vector<AppScanner::AppInfo> AppScanner::scanAll() {
     auto choco_apps = scanChocolatey();
     all_apps.insert(all_apps.end(), choco_apps.begin(), choco_apps.end());
     
-    qDebug() << "AppScanner: Found" << all_apps.size() << "total applications";
-    
     return all_apps;
 }
 
@@ -50,8 +48,6 @@ std::vector<AppScanner::AppInfo> AppScanner::scanRegistry() {
     // Scan HKEY_CURRENT_USER (user-specific apps)
     auto hkcu_apps = scanRegistryHive(HKEY_CURRENT_USER, QString::fromWCharArray(REGISTRY_UNINSTALL_HKCU));
     apps.insert(apps.end(), hkcu_apps.begin(), hkcu_apps.end());
-    
-    qDebug() << "AppScanner: Found" << apps.size() << "applications from registry";
     
     return apps;
 }
@@ -102,7 +98,6 @@ std::vector<AppScanner::AppInfo> AppScanner::scanRegistryHive(void* hive, const 
                     !app.name.contains("(KB") &&
                     !app.publisher.contains("Microsoft Corporation") || app.name.contains("Visual Studio")) {
                     
-                    qDebug() << "  Found:" << app.name << "v" << app.version;
                     apps.push_back(app);
                 }
             }
@@ -162,9 +157,6 @@ std::vector<AppScanner::AppInfo> AppScanner::scanAppX() {
     
     // Parse JSON output (simplified for now - full implementation would use QJsonDocument)
     // For now, just log that we found AppX packages
-    if (!output.isEmpty()) {
-        qDebug() << "AppScanner: AppX packages found (parsing not yet implemented)";
-    }
     
     return apps;
 }
@@ -179,16 +171,12 @@ std::vector<AppScanner::AppInfo> AppScanner::scanChocolatey() {
     
     process.start();
     if (!process.waitForFinished(10000)) {
-        qDebug() << "AppScanner: Chocolatey not available or timeout";
         return apps;
     }
     
     QString output = QString::fromUtf8(process.readAllStandardOutput());
     
     // Parse choco list output (simplified)
-    if (!output.isEmpty()) {
-        qDebug() << "AppScanner: Chocolatey packages found (parsing not yet implemented)";
-    }
     
     return apps;
 }

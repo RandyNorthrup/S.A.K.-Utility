@@ -106,6 +106,31 @@ public:
     [[nodiscard]] bool getLicenseScanFilesystem() const;
     void setLicenseScanFilesystem(bool scan);
 
+    // Image Flasher settings
+    [[nodiscard]] QString getImageFlasherValidationMode() const;
+    void setImageFlasherValidationMode(const QString& mode);
+
+    [[nodiscard]] int getImageFlasherBufferSize() const;
+    void setImageFlasherBufferSize(int size);
+
+    [[nodiscard]] bool getImageFlasherUnmountOnCompletion() const;
+    void setImageFlasherUnmountOnCompletion(bool unmount);
+
+    [[nodiscard]] bool getImageFlasherShowSystemDriveWarning() const;
+    void setImageFlasherShowSystemDriveWarning(bool show);
+
+    [[nodiscard]] bool getImageFlasherShowLargeDriveWarning() const;
+    void setImageFlasherShowLargeDriveWarning(bool show);
+
+    [[nodiscard]] int getImageFlasherLargeDriveThreshold() const;
+    void setImageFlasherLargeDriveThreshold(int threshold);
+
+    [[nodiscard]] int getImageFlasherMaxConcurrentWrites() const;
+    void setImageFlasherMaxConcurrentWrites(int max);
+
+    [[nodiscard]] bool getImageFlasherEnableNotifications() const;
+    void setImageFlasherEnableNotifications(bool enable);
+
     // UI settings
     [[nodiscard]] bool getRestoreWindowGeometry() const;
     void setRestoreWindowGeometry(bool restore);

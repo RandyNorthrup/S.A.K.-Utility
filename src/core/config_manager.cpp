@@ -50,6 +50,30 @@ void ConfigManager::initializeDefaults()
     if (!contains("license/scan_filesystem")) {
         setValue("license/scan_filesystem", true);
     }
+    if (!contains("image_flasher/validation_mode")) {
+        setValue("image_flasher/validation_mode", "full");
+    }
+    if (!contains("image_flasher/buffer_size")) {
+        setValue("image_flasher/buffer_size", 4096);
+    }
+    if (!contains("image_flasher/unmount_on_completion")) {
+        setValue("image_flasher/unmount_on_completion", true);
+    }
+    if (!contains("image_flasher/show_system_drive_warning")) {
+        setValue("image_flasher/show_system_drive_warning", true);
+    }
+    if (!contains("image_flasher/show_large_drive_warning")) {
+        setValue("image_flasher/show_large_drive_warning", true);
+    }
+    if (!contains("image_flasher/large_drive_threshold")) {
+        setValue("image_flasher/large_drive_threshold", 128);
+    }
+    if (!contains("image_flasher/max_concurrent_writes")) {
+        setValue("image_flasher/max_concurrent_writes", 1);
+    }
+    if (!contains("image_flasher/enable_notifications")) {
+        setValue("image_flasher/enable_notifications", true);
+    }
     if (!contains("ui/restore_window_geometry")) {
         setValue("ui/restore_window_geometry", true);
     }
@@ -176,6 +200,87 @@ bool ConfigManager::getLicenseScanFilesystem() const
 void ConfigManager::setLicenseScanFilesystem(bool scan)
 {
     setValue("license/scan_filesystem", scan);
+}
+
+// Image Flasher settings
+QString ConfigManager::getImageFlasherValidationMode() const
+{
+    return getValue("image_flasher/validation_mode", "full").toString();
+}
+
+void ConfigManager::setImageFlasherValidationMode(const QString& mode)
+{
+    setValue("image_flasher/validation_mode", mode);
+}
+
+int ConfigManager::getImageFlasherBufferSize() const
+{
+    return getValue("image_flasher/buffer_size", 4096).toInt();
+}
+
+void ConfigManager::setImageFlasherBufferSize(int size)
+{
+    setValue("image_flasher/buffer_size", size);
+}
+
+bool ConfigManager::getImageFlasherUnmountOnCompletion() const
+{
+    return getValue("image_flasher/unmount_on_completion", true).toBool();
+}
+
+void ConfigManager::setImageFlasherUnmountOnCompletion(bool unmount)
+{
+    setValue("image_flasher/unmount_on_completion", unmount);
+}
+
+bool ConfigManager::getImageFlasherShowSystemDriveWarning() const
+{
+    return getValue("image_flasher/show_system_drive_warning", true).toBool();
+}
+
+void ConfigManager::setImageFlasherShowSystemDriveWarning(bool show)
+{
+    setValue("image_flasher/show_system_drive_warning", show);
+}
+
+bool ConfigManager::getImageFlasherShowLargeDriveWarning() const
+{
+    return getValue("image_flasher/show_large_drive_warning", true).toBool();
+}
+
+void ConfigManager::setImageFlasherShowLargeDriveWarning(bool show)
+{
+    setValue("image_flasher/show_large_drive_warning", show);
+}
+
+int ConfigManager::getImageFlasherLargeDriveThreshold() const
+{
+    return getValue("image_flasher/large_drive_threshold", 128).toInt();
+}
+
+void ConfigManager::setImageFlasherLargeDriveThreshold(int threshold)
+{
+    setValue("image_flasher/large_drive_threshold", threshold);
+}
+
+int ConfigManager::getImageFlasherMaxConcurrentWrites() const
+{
+    return getValue("image_flasher/max_concurrent_writes", 1).toInt();
+}
+
+void ConfigManager::setImageFlasherMaxConcurrentWrites(int max)
+{
+    setValue("image_flasher/max_concurrent_writes", max);
+}
+
+bool ConfigManager::getImageFlasherEnableNotifications() const
+{
+    return getValue("image_flasher/enable_notifications", true).toBool();
+}
+
+void ConfigManager::setImageFlasherEnableNotifications(bool enable)
+{
+    setValue("image_flasher/enable_notifications", enable);
 }
 
 // UI settings

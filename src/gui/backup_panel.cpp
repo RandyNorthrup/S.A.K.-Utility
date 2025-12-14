@@ -18,8 +18,8 @@ BackupPanel::BackupPanel(QWidget* parent)
     setupUi();
     setupConnections();
     
-    appendLog("User Profile Backup Panel initialized");
-    appendLog("Click 'Backup User Profiles...' to start the backup wizard");
+    appendLog("User Migration Panel initialized");
+    appendLog("Click 'Backup User Profiles...' to start the migration wizard");
 }
 
 BackupPanel::~BackupPanel() = default;

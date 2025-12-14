@@ -716,7 +716,8 @@ void AppMigrationPanel::onFilterChanged(const QString& text)
 {
     QString filter = text.toLower();
     
-    for (int i = 0; i < m_tableModel->rowCount(); ++i) {
+    const int row_count = m_tableModel->rowCount();
+    for (int i = 0; i < row_count; ++i) {
         bool visible = true;
         
         if (!filter.isEmpty()) {

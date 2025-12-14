@@ -117,9 +117,9 @@ void MainWindow::create_status_bar()
 
 void MainWindow::create_panels()
 {
-    // Create Backup panel
+    // Create User Migration panel
     m_backup_panel = std::make_unique<BackupPanel>(this);
-    m_tab_widget->addTab(m_backup_panel.get(), "Backup");
+    m_tab_widget->addTab(m_backup_panel.get(), "User Migration");
     
     // Create Organizer panel
     m_organizer_panel = std::make_unique<OrganizerPanel>(this);
@@ -144,7 +144,7 @@ void MainWindow::create_panels()
     // Connect panel signals to main window status bar
     connect(m_backup_panel.get(), &BackupPanel::status_message,
             this, [this](const QString& msg) { update_status(msg, 5000); });
-    // Backup panel has its own progress bar, no progress_updated signal needed
+    // User Migration panel has its own progress bar, no progress_updated signal needed
     
     connect(m_app_migration_panel.get(), &AppMigrationPanel::status_message,
             this, [this](const QString& msg) { update_status(msg, 5000); });
@@ -189,7 +189,7 @@ void MainWindow::on_about_clicked()
         "<p>Built with Qt 6.5.3 and C++23</p>"
         "<p>Features:</p>"
         "<ul>"
-        "<li>User Profile Backup & Restore</li>"
+        "<li>User Profile Migration & Restore</li>"
         "<li>Application Migration</li>"
         "<li>Directory Organization</li>"
         "<li>Duplicate File Detection</li>"

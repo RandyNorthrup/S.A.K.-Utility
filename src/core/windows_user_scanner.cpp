@@ -71,8 +71,10 @@ bool WindowsUserScanner::enumerateWindowsUsers(QVector<UserProfile>& profiles) {
         // Get SID
         profile.sid = getUserSID(profile.username);
         
-        // Check if current user
-        profile.is_current_user = (profile.username.toLower() == currentUser.toLower());
+        // Check if current user - cache toLower() to avoid redundant calls
+        const QString currentUserLower = currentUser.toLower();
+        const QString usernameLower = profile.username.toLower();
+        profile.is_current_user = (usernameLower == currentUserLower);
         
         // Quick size estimate
         profile.total_size_estimated = estimateProfileSize(profile.profile_path);

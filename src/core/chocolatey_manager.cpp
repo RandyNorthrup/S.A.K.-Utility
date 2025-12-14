@@ -2,9 +2,9 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
-#include <QDebug>
 #include <QThread>
 #include <QRegularExpression>
+#include <QDebug>
 
 namespace sak {
 
@@ -25,8 +25,6 @@ ChocolateyManager::~ChocolateyManager() {
 }
 
 bool ChocolateyManager::initialize(const QString& choco_portable_path) {
-    qDebug() << "[ChocolateyManager] Initializing with path:" << choco_portable_path;
-    
     m_choco_dir = choco_portable_path;
     
     // Look for choco.exe in common locations within portable directory
@@ -48,8 +46,6 @@ bool ChocolateyManager::initialize(const QString& choco_portable_path) {
         return false;
     }
     
-    qDebug() << "[ChocolateyManager] Found choco.exe at:" << m_choco_path;
-    
     // Verify Chocolatey works
     QString version = getChocoVersion();
     if (version.isEmpty()) {
@@ -58,7 +54,6 @@ bool ChocolateyManager::initialize(const QString& choco_portable_path) {
     }
     
     m_initialized = true;
-    qDebug() << "[ChocolateyManager] Initialized successfully. Version:" << version;
     
     return true;
 }
@@ -127,9 +122,6 @@ ChocolateyManager::Result ChocolateyManager::installPackage(const InstallConfig&
     // Add version if locked
     if (config.version_locked && !config.version.isEmpty()) {
         args << "--version" << config.version;
-        qDebug() << "[ChocolateyManager] Installing" << config.package_name << "version" << config.version;
-    } else {
-        qDebug() << "[ChocolateyManager] Installing" << config.package_name << "(latest)";
     }
     
     // Add auto-confirm
@@ -154,7 +146,6 @@ ChocolateyManager::Result ChocolateyManager::installPackage(const InstallConfig&
     if (result.success) {
         QString installed_version = config.version_locked ? config.version : "latest";
         Q_EMIT installSuccess(config.package_name, installed_version);
-        qDebug() << "[ChocolateyManager] Successfully installed" << config.package_name;
     } else {
         Q_EMIT installFailed(config.package_name, result.error_message);
         qWarning() << "[ChocolateyManager] Failed to install" << config.package_name << ":" << result.error_message;
@@ -314,8 +305,6 @@ ChocolateyManager::Result ChocolateyManager::installWithRetry(
     for (int attempt = 1; attempt <= max_attempts; ++attempt) {
         if (attempt > 1) {
             Q_EMIT installRetrying(config.package_name, attempt, max_attempts);
-            qDebug() << "[ChocolateyManager] Retry attempt" << attempt << "of" << max_attempts 
-                     << "for" << config.package_name;
             
             // Wait before retry
             QThread::sleep(delay_seconds);
@@ -363,8 +352,6 @@ ChocolateyManager::Result ChocolateyManager::executeChoco(const QStringList& arg
     
     // Build command
     QString program = m_choco_path;
-    
-    qDebug() << "[ChocolateyManager] Executing:" << program << args.join(" ");
     
     // Start process
     process.start(program, args);

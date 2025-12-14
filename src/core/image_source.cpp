@@ -9,7 +9,6 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QCryptographicHash>
-#include <QDebug>
 
 // ============================================================================
 // ImageSource Base Class

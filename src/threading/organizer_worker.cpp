@@ -28,9 +28,10 @@ auto OrganizerWorker::execute() -> std::expected<void, sak::error_code>
 
     // Plan moves for all files
     m_planned_operations.clear();
-    m_planned_operations.reserve(files.size());
+    const size_t file_count = files.size();
+    m_planned_operations.reserve(file_count);
 
-    for (size_t i = 0; i < files.size(); ++i) {
+    for (size_t i = 0; i < file_count; ++i) {
         if (check_stop()) {
             return std::unexpected(sak::error_code::operation_cancelled);
         }
@@ -58,7 +59,8 @@ auto OrganizerWorker::execute() -> std::expected<void, sak::error_code>
     }
 
     // Execute moves
-    for (size_t i = 0; i < m_planned_operations.size(); ++i) {
+    const size_t op_count = m_planned_operations.size();
+    for (size_t i = 0; i < op_count; ++i) {
         if (check_stop()) {
             return std::unexpected(sak::error_code::operation_cancelled);
         }
@@ -96,6 +98,9 @@ auto OrganizerWorker::scan_directory()
 
     try {
         // Only scan immediate files, not subdirectories
+        // Reserve capacity to reduce allocations
+        files.reserve(256);  // Reasonable default, will grow if needed
+        
         for (const auto& entry : std::filesystem::directory_iterator(target_path)) {
             if (check_stop()) {
                 return std::unexpected(sak::error_code::operation_cancelled);

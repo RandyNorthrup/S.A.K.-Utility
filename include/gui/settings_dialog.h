@@ -48,6 +48,7 @@ private:
     void createOrganizerTab();
     void createDuplicateFinderTab();
     void createLicenseScannerTab();
+    void createImageFlasherTab();
     void createAdvancedTab();
     
     void loadSettings();
@@ -80,6 +81,16 @@ private:
     // License Scanner Tab
     QCheckBox* m_licenseScanRegistry{nullptr};
     QCheckBox* m_licenseScanFilesystem{nullptr};
+
+    // Image Flasher Tab
+    QComboBox* m_imageFlasherValidationMode{nullptr};
+    QSpinBox* m_imageFlasherBufferSize{nullptr};
+    QCheckBox* m_imageFlasherUnmountOnCompletion{nullptr};
+    QCheckBox* m_imageFlasherShowSystemDriveWarning{nullptr};
+    QCheckBox* m_imageFlasherShowLargeDriveWarning{nullptr};
+    QSpinBox* m_imageFlasherLargeDriveThreshold{nullptr};
+    QSpinBox* m_imageFlasherMaxConcurrentWrites{nullptr};
+    QCheckBox* m_imageFlasherEnableNotifications{nullptr};
 
     bool m_settingsModified{false};
 };

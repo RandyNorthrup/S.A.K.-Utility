@@ -8,8 +8,8 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
-#include <QProcess>
 #include <QDebug>
+#include <QProcess>
 #include <optional>
 
 namespace sak {
@@ -24,7 +24,6 @@ std::optional<UserDataManager::BackupEntry> UserDataManager::backupAppData(const
                                      const QString& backup_dir,
                                      const BackupConfig& config)
 {
-    qDebug() << "[UserDataManager] Starting backup for" << app_name;
     Q_EMIT operationStarted(app_name, "backup");
     
     // Validate inputs
@@ -97,10 +96,6 @@ std::optional<UserDataManager::BackupEntry> UserDataManager::backupAppData(const
         qWarning() << "[UserDataManager] Failed to write metadata";
     }
     
-    qDebug() << "[UserDataManager] Backup completed:"
-             << "Size:" << entry.compressed_size << "bytes"
-             << "Compression:" << QString::number(100.0 * entry.compressed_size / entry.total_size, 'f', 1) << "%";
-    
     Q_EMIT operationCompleted(app_name, true, "Backup completed successfully");
     return entry;
 }
@@ -134,8 +129,6 @@ bool UserDataManager::restoreAppData(const QString& backup_path,
                                      const QString& restore_dir,
                                      const RestoreConfig& config)
 {
-    qDebug() << "[UserDataManager] Starting restore from" << backup_path;
-    
     // Read metadata
     auto entry_opt = readMetadata(backup_path + ".json");
     if (!entry_opt.has_value()) {
@@ -177,7 +170,6 @@ bool UserDataManager::restoreAppData(const QString& backup_path,
         }
     }
     
-    qDebug() << "[UserDataManager] Restore completed";
     Q_EMIT operationCompleted(entry.app_name, true, "Restore completed successfully");
     return true;
 }

@@ -13,7 +13,7 @@ FlashCoordinator::FlashCoordinator(QObject* parent)
     : QObject(parent)
     , m_state(sak::FlashState::Idle)
     , m_verificationEnabled(true)
-    , m_bufferSize(64 * 1024 * 1024) // 64MB
+    , m_bufferSize(256 * 1024 * 1024) // 256MB for better performance
     , m_bufferCount(16)
     , m_isCancelled(false)
 {
@@ -319,8 +319,8 @@ bool FlashCoordinator::unmountVolumes(const QStringList& targetDrives) {
         bool ok = false;
         int driveNumber = driveNumStr.toInt(&ok);
         
-        if (!ok) {
-            sak::log_error(QString("Invalid device path format: %1").arg(devicePath).toStdString());
+        if (!ok || driveNumber < 0 || driveNumber > 99) {
+            sak::log_error(QString("Invalid device path format or drive number out of range: %1").arg(devicePath).toStdString());
             Q_EMIT flashError(QString("Invalid device path format: %1").arg(devicePath));
             return false;
         }
@@ -359,8 +359,21 @@ void FlashCoordinator::cleanupWorkers() {
     // Wait for all workers to finish
     for (auto& worker : m_workers) {
         if (worker->isRunning()) {
+            sak::log_info("Requesting worker thread to stop...");
             worker->request_stop();
-            worker->wait(5000); // Wait up to 5 seconds
+            
+            if (!worker->wait(5000)) {
+                // Worker didn't stop gracefully, force termination
+                sak::log_error("Worker thread did not stop gracefully, forcing termination");
+                worker->terminate();
+                
+                // Wait briefly for terminate to complete
+                if (!worker->wait(2000)) {
+                    sak::log_error("Worker thread did not terminate, resources may leak");
+                }
+            } else {
+                sak::log_info("Worker thread stopped gracefully");
+            }
         }
     }
     

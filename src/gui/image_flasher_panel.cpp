@@ -10,6 +10,7 @@
 #include "sak/windows_usb_creator.h"
 #include "sak/config_manager.h"
 #include "sak/logger.h"
+#include <QCoreApplication>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QFileDialog>
@@ -87,11 +88,6 @@ void ImageFlasherPanel::setupUI() {
     
     // Navigation buttons
     auto* buttonLayout = new QHBoxLayout();
-    
-    m_settingsButton = new QPushButton("Settings", this);
-    buttonLayout->addWidget(m_settingsButton);
-    connect(m_settingsButton, &QPushButton::clicked,
-            this, &ImageFlasherPanel::onSettingsClicked);
     
     buttonLayout->addStretch();
     
@@ -437,17 +433,6 @@ void ImageFlasherPanel::onCancelClicked() {
     }
 }
 
-void ImageFlasherPanel::onSettingsClicked() {
-    auto& configManager = sak::ConfigManager::instance();
-    auto* dialog = new ImageFlasherSettingsDialog(&configManager, this);
-    
-    if (dialog->exec() == QDialog::Accepted) {
-        sak::log_info("Image Flasher settings updated");
-    }
-    
-    dialog->deleteLater();
-}
-
 void ImageFlasherPanel::updateNavigationButtons() {
     int currentIndex = m_stackedWidget->currentIndex();
     
@@ -546,8 +531,13 @@ void ImageFlasherPanel::showConfirmationDialog() {
         QMessageBox::Yes | QMessageBox::No);
     
     if (reply == QMessageBox::Yes) {
+        // Disable UI immediately upon confirmation
         m_isFlashing = true;
-        m_flashButton->setEnabled(false); // Disable flash button during operation
+        m_flashButton->setEnabled(false);
+        m_flashButton->setVisible(false);
+        updateNavigationButtons(); // Update all navigation state
+        
+        // Switch to progress page
         m_stackedWidget->setCurrentWidget(m_flashProgressPage);
         
         if (isWindowsISO) {
@@ -555,7 +545,11 @@ void ImageFlasherPanel::showConfirmationDialog() {
             createWindowsUSB();
         } else {
             // Use raw disk imaging for other ISOs
-            m_flashCoordinator->startFlash(m_selectedImagePath, m_selectedDrives);
+            if (!m_flashCoordinator->startFlash(m_selectedImagePath, m_selectedDrives)) {
+                m_isFlashing = false;
+                onFlashError("Failed to start flash operation - flash coordinator returned error");
+                return;
+            }
         }
     }
 }
@@ -592,18 +586,28 @@ void ImageFlasherPanel::createWindowsUSB() {
             "This may take longer than raw imaging.");
     }
     
+    // Initialize progress display
+    m_flashStateLabel->setText("Initializing...");
+    m_flashProgressBar->setValue(0);
+    
+    // Force UI update before starting blocking operation
+    QCoreApplication::processEvents();
+    
     // Create Windows USB creator
     auto* creator = new WindowsUSBCreator(this);
     
     connect(creator, &WindowsUSBCreator::statusChanged, this, [this](const QString& status) {
         m_flashStateLabel->setText(status);
+        QCoreApplication::processEvents(); // Force UI update
     });
     
     connect(creator, &WindowsUSBCreator::progressUpdated, this, [this](int percentage) {
         m_flashProgressBar->setValue(percentage);
+        QCoreApplication::processEvents(); // Force UI update
     });
     
     connect(creator, &WindowsUSBCreator::completed, this, [this, creator]() {
+        m_isFlashing = false;
         sak::FlashResult result;
         result.success = true;
         result.successfulDrives = m_selectedDrives;
@@ -614,45 +618,38 @@ void ImageFlasherPanel::createWindowsUSB() {
     });
     
     connect(creator, &WindowsUSBCreator::failed, this, [this, creator](const QString& error) {
+        m_isFlashing = false;
+        m_flashButton->setEnabled(true);
+        m_flashButton->setVisible(true);
+        updateNavigationButtons();
         onFlashError(error);
         creator->deleteLater();
     });
     
-    // Extract drive letter from device path (e.g., "\\.\PhysicalDrive1" -> find volume letter)
+    // Extract disk number (hardware ID) from device path
     QString devicePath = m_selectedDrives.first();
-    QString driveLetter;
+    QString diskNumber;
     
-    // Extract disk number from PhysicalDrive path
+    // Extract disk number from PhysicalDrive path (e.g., "\\.\PhysicalDrive1" -> "1")
     QRegularExpression regex(R"(PhysicalDrive(\d+))");
     QRegularExpressionMatch match = regex.match(devicePath);
     
     if (match.hasMatch()) {
-        QString diskNumber = match.captured(1);
-        
-        // Query for existing drive letter on this disk
-        QProcess process;
-        QString cmd = QString("(Get-Partition -DiskNumber %1 | Get-Volume | Where-Object {$_.DriveLetter -ne $null} | Select-Object -First 1).DriveLetter").arg(diskNumber);
-        process.start("powershell", QStringList() << "-NoProfile" << "-Command" << cmd);
-        process.waitForFinished(5000);
-        
-        driveLetter = QString(process.readAllStandardOutput()).trimmed();
-        
-        if (driveLetter.isEmpty()) {
-            // No existing drive letter - the format operation will assign one
-            // Use a default letter for now (will be reassigned during format)
-            driveLetter = "E";
-            sak::log_info(QString("No drive letter found for disk %1, will assign during format").arg(diskNumber).toStdString());
-        } else {
-            sak::log_info(QString("Found drive letter %1 for disk %2").arg(driveLetter, diskNumber).toStdString());
-        }
+        diskNumber = match.captured(1);
+        sak::log_info(QString("Using disk number %1 (PhysicalDrive%1)").arg(diskNumber).toStdString());
     } else {
-        // Fallback if path format is unexpected
-        driveLetter = "E";
-        sak::log_warning(QString("Could not parse disk number from %1, using default E:").arg(devicePath).toStdString());
+        // Could not parse disk number - fail immediately
+        m_isFlashing = false;
+        m_flashButton->setEnabled(true);
+        m_flashButton->setVisible(true);
+        updateNavigationButtons();
+        onFlashError(QString("Could not identify disk number from %1").arg(devicePath));
+        creator->deleteLater();
+        return;
     }
     
-    // Start the creation process
-    creator->createBootableUSB(m_selectedImagePath, driveLetter);
+    // Start the creation process with disk number (hardware ID)
+    creator->createBootableUSB(m_selectedImagePath, diskNumber);
 }
 
 bool ImageFlasherPanel::isSystemDrive(const QString& devicePath) const {

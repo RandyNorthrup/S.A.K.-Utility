@@ -98,10 +98,6 @@ void MigrationReport::generateReport(
     m_metadata.selected_apps = getSelectedCount();
     m_metadata.match_rate = getMatchRate();
     m_metadata.created_at = QDateTime::currentDateTime();
-    
-    qDebug() << "[MigrationReport] Generated report with" << m_entries.size() << "entries";
-    qDebug() << "[MigrationReport] Matched:" << m_metadata.matched_apps 
-             << "(" << QString::number(m_metadata.match_rate * 100, 'f', 1) << "%)";
 }
 
 void MigrationReport::addEntry(const MigrationEntry& entry) {
@@ -222,7 +218,6 @@ bool MigrationReport::exportToJson(const QString& file_path) const {
     out << QJsonDocument(root).toJson(QJsonDocument::Indented);
     file.close();
     
-    qDebug() << "[MigrationReport] Exported to JSON:" << file_path;
     return true;
 }
 
@@ -260,7 +255,6 @@ bool MigrationReport::exportToCsv(const QString& file_path) const {
     }
     
     file.close();
-    qDebug() << "[MigrationReport] Exported to CSV:" << file_path;
     return true;
 }
 
@@ -275,7 +269,6 @@ bool MigrationReport::exportToHtml(const QString& file_path) const {
     out << formatHtmlReport();
     file.close();
     
-    qDebug() << "[MigrationReport] Exported to HTML:" << file_path;
     return true;
 }
 
@@ -347,8 +340,6 @@ bool MigrationReport::importFromJson(const QString& file_path) {
         }
     }
     
-    qDebug() << "[MigrationReport] Imported from JSON:" << file_path;
-    qDebug() << "[MigrationReport] Loaded" << m_entries.size() << "entries";
     return true;
 }
 

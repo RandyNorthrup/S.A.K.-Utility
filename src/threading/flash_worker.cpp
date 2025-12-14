@@ -232,18 +232,36 @@ bool FlashWorker::writeImage() {
             break;
         }
         
-        // Pad to sector size if needed
-        if (bytesRead % 512 != 0) {
-            qint64 paddedSize = ((bytesRead / 512) + 1) * 512;
-            buffer.resize(paddedSize);
-            // Zero out padding
-            for (qint64 i = bytesRead; i < paddedSize; ++i) {
-                buffer[i] = 0;
-            }
-            bytesRead = paddedSize;
+    // Pad to sector size if needed
+    if (bytesRead % 512 != 0) {
+        qint64 paddedSize = ((bytesRead / 512) + 1) * 512;
+        
+        // Validate padded size is reasonable
+        if (paddedSize > buffer.capacity() * 2 || paddedSize < 0) {
+            sak::log_error(QString("Invalid padded size calculated: %1").arg(paddedSize).toStdString());
+            return false;
         }
         
-        DWORD bytesWrittenThisTime = 0;
+        try {
+            buffer.resize(paddedSize);
+        } catch (const std::bad_alloc&) {
+            sak::log_error("Failed to allocate padding buffer - out of memory");
+            return false;
+        }
+        
+        // Verify resize succeeded
+        if (buffer.size() != paddedSize) {
+            sak::log_error(QString("Buffer resize failed: expected %1, got %2")
+                .arg(paddedSize).arg(buffer.size()).toStdString());
+            return false;
+        }
+        
+        // Zero out padding
+        for (qint64 i = bytesRead; i < paddedSize; ++i) {
+            buffer[i] = 0;
+        }
+        bytesRead = paddedSize;
+    }        DWORD bytesWrittenThisTime = 0;
         if (!WriteFile(
             m_deviceHandle,
             buffer.data(),
