@@ -754,6 +754,432 @@ test_network_transfer_integration.cpp  # End-to-end transfer
 
 ---
 
+### Phase 3.1: Multi-PC Deployment - Orchestration (Week 18-19)
+
+**Goals**:
+- Central orchestrator for multi-PC migrations
+- Destination PC registry and health monitoring
+- Deployment queue management
+
+**Tasks**:
+1. Create `MigrationOrchestrator` class for deployment coordination
+2. Create `DeploymentManager` for queue and batch processing
+3. Create `DestinationRegistry` for tracking available destination PCs
+4. Implement health monitoring (CPU, RAM, disk space, network status)
+5. Implement readiness checks (minimum free space, admin rights, services running)
+6. Add "Orchestrator Mode" to NetworkTransferPanel UI
+7. Implement multi-PC discovery (broadcast to all destinations)
+8. Create registration protocol (destinations register with orchestrator)
+9. Write unit tests for orchestration logic
+
+**Acceptance Criteria**:
+- ✅ Orchestrator discovers 10+ destination PCs on network
+- ✅ Health monitoring shows real-time status of all PCs
+- ✅ Destinations auto-register with orchestrator
+- ✅ Readiness checks prevent migrations to unprepared PCs
+
+---
+
+### Phase 3.2: Multi-PC Deployment - Mapping Engine (Week 20-21)
+
+**Goals**:
+- Flexible user/app to PC mapping
+- Support 1:N, N:N, and custom mappings
+- Template system for reusable configurations
+
+**Tasks**:
+1. Create `MappingEngine` class for deployment configuration
+2. Implement **1-to-Many** mapping (one user profile → multiple destination PCs)
+   - Use case: Standard user template deployed to 50 new workstations
+3. Implement **Many-to-Many** mapping (multiple users → multiple destination PCs)
+   - Use case: Migrate entire department (20 users → 20 PCs)
+4. Implement **Custom Mapping** (User 1 → PC 1, User 2 → PC 2, etc.)
+   - Use case: Office rollout with specific seat assignments
+5. Implement **App-Only Deployment** (app list → multiple destination PCs)
+   - Use case: Deploy Chocolatey app list to all lab PCs
+6. Create deployment templates (save/load JSON configuration)
+7. Add mapping UI with drag-drop interface
+8. Add validation (check disk space, prevent duplicate assignments)
+9. Write integration tests for all mapping types
+
+**Acceptance Criteria**:
+- ✅ 1:N mapping works (1 profile → 10 PCs)
+- ✅ N:N mapping works (5 users → 5 PCs with custom assignment)
+- ✅ App-only deployment works (Chocolatey list → 20 PCs)
+- ✅ Templates save/load correctly
+- ✅ UI provides clear visual mapping
+
+---
+
+### Phase 3.3: Multi-PC Deployment - Parallel Transfers (Week 22-23)
+
+**Goals**:
+- Simultaneous transfers to multiple destinations
+- Load balancing and bandwidth management
+- Priority queue for critical migrations
+
+**Tasks**:
+1. Create `ParallelTransferManager` for multi-threaded transfers
+2. Implement per-destination transfer threads (QThread per destination)
+3. Implement load balancing (distribute bandwidth across destinations)
+4. Add priority queue (critical migrations get more bandwidth)
+5. Implement transfer throttling per destination
+6. Add pause/resume for individual destinations
+7. Implement retry logic with exponential backoff
+8. Add failure recovery (continue other transfers if one fails)
+9. Optimize for network saturation (prevent bottlenecks)
+10. Write stress tests (10+ simultaneous 10GB transfers)
+
+**Acceptance Criteria**:
+- ✅ 10+ simultaneous transfers work without crashing
+- ✅ Load balancing distributes bandwidth fairly
+- ✅ Individual destination failures don't stop other transfers
+- ✅ Total throughput > 80% of network capacity (Gigabit LAN = 800+ Mbps)
+
+---
+
+### Phase 3.4: Multi-PC Deployment - Monitoring & UI (Week 24-25)
+
+**Goals**:
+- Deployment dashboard with real-time progress
+- Per-PC status monitoring
+- Detailed logs and error reporting
+
+**Tasks**:
+1. Create deployment dashboard UI with grid view of all destinations
+2. Add per-PC progress bars (files transferred, apps installed)
+3. Add overall deployment progress (X of N PCs complete)
+4. Implement real-time log viewer (all destinations in single view)
+5. Add color-coded status indicators (green=success, yellow=in-progress, red=error)
+6. Implement deployment summary report (CSV/PDF export)
+7. Add estimated completion time for deployment
+8. Implement deployment history (save past deployments)
+9. Add deployment pause/resume/cancel controls
+10. Write user documentation for multi-PC deployment
+11. Create video tutorials for common scenarios
+
+**Acceptance Criteria**:
+- ✅ Dashboard shows real-time status of all destinations
+- ✅ Progress updates every second
+- ✅ Error messages clearly identify failed PCs
+- ✅ Summary report includes all deployment details
+- ✅ User documentation complete with screenshots
+
+---
+
+## 🔧 Phase 3: Multi-PC Deployment Technical Details
+
+### Orchestration Protocol
+
+**Destination Registration** (destination → orchestrator):
+```json
+{
+  "message_type": "DESTINATION_REGISTER",
+  "destination_info": {
+    "hostname": "WORKSTATION-01",
+    "ip_address": "192.168.1.101",
+    "os": "Windows 11 Pro",
+    "cpu_cores": 8,
+    "ram_gb": 16,
+    "free_disk_gb": 450,
+    "network_speed_mbps": 1000,
+    "sak_version": "0.9.0",
+    "status": "ready"
+  }
+}
+```
+
+**Health Check Request** (orchestrator → destination):
+```json
+{
+  "message_type": "HEALTH_CHECK",
+  "timestamp": 1734134400
+}
+```
+
+**Health Check Response** (destination → orchestrator):
+```json
+{
+  "message_type": "HEALTH_CHECK_RESPONSE",
+  "status": "ready",
+  "health_metrics": {
+    "cpu_usage_percent": 15,
+    "ram_usage_percent": 45,
+    "free_disk_gb": 450,
+    "network_latency_ms": 2,
+    "sak_service_running": true,
+    "admin_rights": true
+  }
+}
+```
+
+**Deployment Assignment** (orchestrator → destination):
+```json
+{
+  "message_type": "DEPLOYMENT_ASSIGN",
+  "deployment_id": "deploy-uuid-123",
+  "assignment": {
+    "type": "user_profile",
+    "source_user": "john.doe",
+    "profile_size_gb": 12.5,
+    "include_apps": true,
+    "app_list": ["googlechrome", "firefox", "7zip"],
+    "priority": "normal"
+  }
+}
+```
+
+**Transfer Start Command** (orchestrator → source):
+```json
+{
+  "message_type": "START_TRANSFER",
+  "deployment_id": "deploy-uuid-123",
+  "source_user": "john.doe",
+  "destinations": [
+    {"hostname": "WORKSTATION-01", "ip": "192.168.1.101"},
+    {"hostname": "WORKSTATION-02", "ip": "192.168.1.102"}
+  ],
+  "bandwidth_limit_mbps": 100
+}
+```
+
+**Progress Update** (destination → orchestrator):
+```json
+{
+  "message_type": "PROGRESS_UPDATE",
+  "deployment_id": "deploy-uuid-123",
+  "stage": "user_profile_transfer",
+  "progress_percent": 65,
+  "bytes_transferred": 8388608000,
+  "bytes_total": 13421772800,
+  "files_transferred": 8234,
+  "files_total": 12456,
+  "current_file": "C:\\Users\\john.doe\\Documents\\report.docx",
+  "transfer_speed_mbps": 85.2,
+  "eta_seconds": 45
+}
+```
+
+**Deployment Complete** (destination → orchestrator):
+```json
+{
+  "message_type": "DEPLOYMENT_COMPLETE",
+  "deployment_id": "deploy-uuid-123",
+  "status": "success",
+  "summary": {
+    "total_bytes": 13421772800,
+    "total_files": 12456,
+    "duration_seconds": 287,
+    "apps_installed": 3,
+    "errors": []
+  }
+}
+```
+
+---
+
+### Mapping Engine Architecture
+
+```cpp
+class MappingEngine : public QObject {
+    Q_OBJECT
+public:
+    enum MappingType {
+        OneToMany,      // 1 source → N destinations
+        ManyToMany,     // N sources → N destinations (1:1 paired)
+        CustomMapping   // Custom rules (User1→PC1, User2→PC2, etc.)
+    };
+    
+    struct SourceProfile {
+        QString username;
+        QString sourcePCHostname;
+        QString sourcePCIP;
+        qint64 profileSizeBytes;
+        QStringList appList;
+    };
+    
+    struct DestinationPC {
+        QString hostname;
+        QString ip;
+        qint64 freeDiskBytes;
+        QString status;  // "ready", "busy", "offline"
+    };
+    
+    struct DeploymentMapping {
+        QString deploymentId;
+        MappingType type;
+        QVector<SourceProfile> sources;
+        QVector<DestinationPC> destinations;
+        QMap<QString, QString> customRules;  // sourceUsername → destinationHostname
+    };
+    
+    explicit MappingEngine(QObject* parent = nullptr);
+    
+    // Create deployment mappings
+    DeploymentMapping createOneToMany(const SourceProfile& source, 
+                                     const QVector<DestinationPC>& destinations);
+    
+    DeploymentMapping createManyToMany(const QVector<SourceProfile>& sources,
+                                      const QVector<DestinationPC>& destinations);
+    
+    DeploymentMapping createCustomMapping(const QVector<SourceProfile>& sources,
+                                         const QVector<DestinationPC>& destinations,
+                                         const QMap<QString, QString>& rules);
+    
+    // Validation
+    bool validateMapping(const DeploymentMapping& mapping, QString& errorMessage);
+    bool checkDiskSpace(const DeploymentMapping& mapping);
+    bool checkDestinationReadiness(const QVector<DestinationPC>& destinations);
+    
+    // Templates
+    bool saveTemplate(const DeploymentMapping& mapping, const QString& filePath);
+    DeploymentMapping loadTemplate(const QString& filePath);
+    
+Q_SIGNALS:
+    void validationError(QString message);
+    void mappingReady(DeploymentMapping mapping);
+};
+```
+
+---
+
+### Parallel Transfer Manager
+
+```cpp
+class ParallelTransferManager : public QObject {
+    Q_OBJECT
+public:
+    struct TransferJob {
+        QString jobId;
+        SourceProfile source;
+        DestinationPC destination;
+        qint64 bytesTransferred;
+        qint64 totalBytes;
+        double speedMbps;
+        QString status;  // "queued", "transferring", "complete", "failed"
+        int retryCount;
+    };
+    
+    explicit ParallelTransferManager(QObject* parent = nullptr);
+    
+    void startDeployment(const DeploymentMapping& mapping);
+    void pauseDeployment();
+    void resumeDeployment();
+    void cancelDeployment();
+    
+    void pauseJob(const QString& jobId);
+    void resumeJob(const QString& jobId);
+    void retryJob(const QString& jobId);
+    
+    QVector<TransferJob> getActiveJobs() const;
+    TransferJob getJobStatus(const QString& jobId) const;
+    
+    // Configuration
+    void setMaxConcurrentTransfers(int count);  // Default: 10
+    void setGlobalBandwidthLimit(int mbps);     // 0 = unlimited
+    void setPerJobBandwidthLimit(int mbps);     // 0 = unlimited
+    
+Q_SIGNALS:
+    void deploymentStarted(QString deploymentId);
+    void deploymentProgress(int completedJobs, int totalJobs);
+    void deploymentComplete(QString deploymentId, bool success);
+    
+    void jobStarted(QString jobId);
+    void jobProgress(QString jobId, qint64 bytes, qint64 total);
+    void jobComplete(QString jobId, bool success);
+    void jobFailed(QString jobId, QString error);
+    
+private:
+    void processQueue();
+    void balanceBandwidth();
+    void handleJobFailure(const QString& jobId, const QString& error);
+    
+    QVector<TransferJob> m_queue;
+    QVector<TransferJob> m_activeJobs;
+    QMap<QString, NetworkTransferWorker*> m_workers;
+    int m_maxConcurrentTransfers;
+    int m_globalBandwidthLimit;
+};
+```
+
+---
+
+### Deployment Dashboard UI Example
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│ Network Transfer Panel - DEPLOYMENT MODE                               │
+├─────────────────────────────────────────────────────────────────────────┤
+│  ┌────────────────── 📊 DEPLOYMENT OVERVIEW ────────────────────────┐  │
+│  │  Deployment: Office Rollout 2026                                 │  │
+│  │  Type: Many-to-Many (20 users → 20 PCs)                          │  │
+│  │  Status: 🟢 In Progress                                          │  │
+│  │  Progress: ████████████████░░░░  80% (16 of 20 complete)        │  │
+│  │  Overall Speed: 425 MB/s  |  ETA: 4 minutes                     │  │
+│  │  ✅ Success: 16  |  🟡 In Progress: 3  |  ❌ Failed: 1          │  │
+│  └───────────────────────────────────────────────────────────────────┘  │
+│                                                                         │
+│  ┌───────────────── 💻 DESTINATION STATUS GRID ─────────────────────┐  │
+│  │  ┌─────────┬─────────┬─────────┬─────────┬─────────┐            │  │
+│  │  │ PC-01   │ PC-02   │ PC-03   │ PC-04   │ PC-05   │            │  │
+│  │  │ ✅ 100% │ ✅ 100% │ 🟡 65%  │ ✅ 100% │ ✅ 100% │            │  │
+│  │  │ john.d  │ jane.s  │ bob.m   │ alice.w │ tom.j   │            │  │
+│  │  ├─────────┼─────────┼─────────┼─────────┼─────────┤            │  │
+│  │  │ PC-06   │ PC-07   │ PC-08   │ PC-09   │ PC-10   │            │  │
+│  │  │ ✅ 100% │ ✅ 100% │ ❌ FAIL │ 🟡 45%  │ ✅ 100% │            │  │
+│  │  └─────────┴─────────┴─────────┴─────────┴─────────┘            │  │
+│  │  Click any PC for detailed status...                             │  │
+│  └───────────────────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 🎯 Phase 3 Use Case Examples
+
+### Use Case 1: Office Rollout (1:1 Mapped Migration)
+**Scenario**: Company replaces 20 workstations, each user gets specific PC
+
+**Workflow**:
+1. Technician launches SAK on orchestrator PC
+2. Discovers 20 old PCs (sources) and 20 new PCs (destinations)
+3. Creates mapping: User1@OldPC1 → NewPC1, User2@OldPC2 → NewPC2, etc.
+4. Starts deployment - all 20 transfers run simultaneously
+5. Dashboard shows real-time grid with per-PC progress
+6. Completed PCs marked green, failed PCs marked red for retry
+
+**Result**: 20 users migrated in < 30 minutes with parallel transfers
+
+---
+
+### Use Case 2: Standard Build Deployment (1:Many)
+**Scenario**: Deploy standard user template to 50 new lab PCs
+
+**Workflow**:
+1. Create "Lab Standard" profile with essential apps
+2. Discover 50 new lab PCs on network
+3. Create 1:N mapping (Lab Standard → all 50 PCs)
+4. Start deployment - orchestrator sends same data to all PCs
+5. Load balancing prevents network saturation
+
+**Result**: 50 identically configured PCs in < 1 hour
+
+---
+
+### Use Case 3: App-Only Mass Deployment
+**Scenario**: Deploy new security software to 100+ company PCs
+
+**Workflow**:
+1. Create Chocolatey package list: ["crowdstrike", "duo-desktop"]
+2. Discover all company PCs (100+)
+3. Create app-only deployment (no profile transfer)
+4. Each PC receives app list and installs via Chocolatey
+5. Real-time installation logs in dashboard
+
+**Result**: 100+ PCs receive security software in < 2 hours
+
+---
+
 ## 📋 Configuration & Settings
 
 ### ConfigManager Extensions
