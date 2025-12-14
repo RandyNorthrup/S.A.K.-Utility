@@ -239,6 +239,8 @@ set(CORE_SOURCES
     src/core/bzip2_decompressor.cpp
     src/core/xz_decompressor.cpp
     src/core/decompressor_factory.cpp
+    src/core/quick_action.cpp
+    src/core/quick_action_controller.cpp
     include/sak/config_manager.h
     include/sak/app_scanner.h
     include/sak/drive_scanner.h
@@ -366,6 +368,20 @@ set(GUI_SOURCES
     include/sak/windows_iso_download_dialog.h
     src/gui/image_flasher_settings_dialog.cpp
     include/sak/image_flasher_settings_dialog.h
+    src/gui/quick_actions_panel.cpp
+    include/sak/quick_actions_panel.h
+    include/sak/quick_action.h
+    include/sak/quick_action_controller.h
+)
+
+# Quick Actions
+set(QUICK_ACTIONS_SOURCES
+    src/actions/disk_cleanup_action.cpp
+    src/actions/quickbooks_backup_action.cpp
+    src/actions/clear_browser_cache_action.cpp
+    include/sak/actions/disk_cleanup_action.h
+    include/sak/actions/quickbooks_backup_action.h
+    include/sak/actions/clear_browser_cache_action.h
 )
 
 # Main entry point
@@ -383,6 +399,7 @@ set(ALL_SOURCES
     ${THREADING_SOURCES}
     ${FEATURE_SOURCES}
     ${GUI_SOURCES}
+    ${QUICK_ACTIONS_SOURCES}
     ${MAIN_SOURCE}
     ${RESOURCE_FILES}
 )

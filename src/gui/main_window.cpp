@@ -6,6 +6,7 @@
 #include "sak/license_scanner_panel.h"
 #include "sak/app_migration_panel.h"
 #include "sak/image_flasher_panel.h"
+#include "sak/quick_actions_panel.h"
 #include "gui/settings_dialog.h"
 #include "gui/undo_manager.h"
 
@@ -117,6 +118,10 @@ void MainWindow::create_status_bar()
 
 void MainWindow::create_panels()
 {
+    // Create Quick Actions panel (first tab)
+    m_quick_actions_panel = std::make_unique<sak::QuickActionsPanel>(this);
+    m_tab_widget->addTab(m_quick_actions_panel.get(), "Quick Actions");
+    
     // Create User Migration panel
     m_backup_panel = std::make_unique<BackupPanel>(this);
     m_tab_widget->addTab(m_backup_panel.get(), "User Migration");
@@ -142,6 +147,11 @@ void MainWindow::create_panels()
     m_tab_widget->addTab(m_image_flasher_panel.get(), "Image Flasher");
     
     // Connect panel signals to main window status bar
+    connect(m_quick_actions_panel.get(), &sak::QuickActionsPanel::status_message,
+            this, [this](const QString& msg) { update_status(msg, 5000); });
+    connect(m_quick_actions_panel.get(), &sak::QuickActionsPanel::progress_update,
+            this, &MainWindow::update_progress);
+    
     connect(m_backup_panel.get(), &BackupPanel::status_message,
             this, [this](const QString& msg) { update_status(msg, 5000); });
     // User Migration panel has its own progress bar, no progress_updated signal needed
