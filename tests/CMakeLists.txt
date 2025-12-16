@@ -99,6 +99,9 @@ set(ACTION_TESTS
     test_clear_print_spooler_action
     test_fix_audio_issues_action
     test_reset_network_action
+    test_verify_system_files_action
+    test_repair_windows_store_action
+    test_backup_desktop_wallpaper_action
 )
 
 # ============================================================================
