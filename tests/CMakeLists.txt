@@ -96,6 +96,9 @@ set(ACTION_TESTS
     test_clear_windows_update_cache_action
     test_rebuild_icon_cache_action
     test_disable_visual_effects_action
+    test_clear_print_spooler_action
+    test_fix_audio_issues_action
+    test_reset_network_action
 )
 
 # ============================================================================
