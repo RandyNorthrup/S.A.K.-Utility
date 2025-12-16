@@ -235,7 +235,9 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: SAK-Utility-Windows-x64
-        path: build/Release/SAK-Utility-v0.5.5/*
+        path: |
+          build/Release/SAK-Utility-v0.5.5-Windows-x64.zip
+          build/Release/SHA256SUMS.txt
         retention-days: 90
     
     - name: Create Release
