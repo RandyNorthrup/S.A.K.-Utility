@@ -1,7 +1,13 @@
 cmake_minimum_required(VERSION 3.28 FATAL_ERROR)
 
-# Load persistent build configuration (vcpkg, Qt, static runtime)
-include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/SAK_BuildConfig.cmake)
+# Load persistent build configuration (vcpkg, Qt, static runtime) - optional for CI
+set(SAK_BUILD_CONFIG "${CMAKE_CURRENT_SOURCE_DIR}/cmake/SAK_BuildConfig.cmake")
+if(EXISTS "${SAK_BUILD_CONFIG}")
+    include("${SAK_BUILD_CONFIG}")
+    message(STATUS "Loaded build configuration from ${SAK_BUILD_CONFIG}")
+else()
+    message(STATUS "No build configuration found - using environment/command-line settings")
+endif()
 
 # Project definition
 project(SAK_Utility 
