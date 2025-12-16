@@ -80,6 +80,9 @@ endforeach()
 set(ACTION_TESTS
     test_disk_cleanup_action
     test_backup_browser_data_action
+    test_clear_browser_cache_action
+    test_check_disk_health_action
+    test_optimize_power_settings_action
 )
 
 # ============================================================================
