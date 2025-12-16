@@ -87,6 +87,9 @@ set(ACTION_TESTS
     test_windows_update_action
     test_check_disk_errors_action
     test_check_bloatware_action
+    test_backup_activation_keys_action
+    test_sticky_notes_backup_action
+    test_generate_system_report_action
 )
 
 # ============================================================================

@@ -6,18 +6,18 @@
 
 ### Coverage Statistics
 - **Total Classes:** 72
-- **Tested Classes:** 30
-- **Coverage:** 41.7%
+- **Tested Classes:** 33
+- **Coverage:** 45.8%
 - **Critical Infrastructure:** ✅ COMPLETE (8/8 components tested)
 - **Phase 2:** ✅ COMPLETE (6/6 worker tests done)
-- **Phase 3:** 🚧 IN PROGRESS (7/37 action tests done)
+- **Phase 3:** 🚧 IN PROGRESS (10/37 action tests done)
 
 **Recent Progress:**
 - Phase 1 COMPLETE: All 8 critical components tested ✅
 - Phase 2 COMPLETE: All 6 high-risk workers tested ✅
-- Phase 3 Batch 2: 4 more action tests (maintenance + troubleshooting)
-- Coverage increased: 12.5% → 41.7%
-- **TARGET EXCEEDED:** 41.7% > 30% goal! 🎉
+- Phase 3 Batch 3: 3 more actions (backup + utility)
+- Coverage increased: 12.5% → 45.8%
+- **TARGET EXCEEDED:** 45.8% > 30% goal! 🎉
 
 ---
 
@@ -50,7 +50,7 @@
 5. ✅ **flash_worker** - USB device flashing *(Phase 2)* ⚡
 6. ✅ **duplicate_finder_worker** - Duplicate detection *(Phase 2)* ⚡
 
-#### Actions (9)
+#### Actions (12)
 1. ✅ **disk_cleanup_action** - Disk cleanup
 2. ✅ **backup_browser_data_action** - Browser backup
 3. ✅ **clear_browser_cache_action** - Clear browser caches *(Phase 3)* 🧹
@@ -60,6 +60,9 @@
 7. ✅ **windows_update_action** - Windows Update installation *(Phase 3)* 🔄
 8. ✅ **check_disk_errors_action** - CHKDSK error checking *(Phase 3)* 🔍
 9. ✅ **check_bloatware_action** - Bloatware detection/removal *(Phase 3)* 🗑️
+10. ✅ **backup_activation_keys_action** - Product key backup *(Phase 3)* 🔑
+11. ✅ **sticky_notes_backup_action** - Sticky Notes backup *(Phase 3)* 📝
+12. ✅ **generate_system_report_action** - System report generation *(Phase 3)* 📊
 
 #### Integration (2)
 1. ✅ **backup_workflow** - Backup process
@@ -264,17 +267,17 @@
 
 #### Quick Backup (10)
 1. **backup_browser_data_action** ✅ TESTED
-2. **backup_activation_keys_action** ❌
-3. **backup_desktop_wallpaper_action** ❌
-4. **backup_email_data_action** ❌
-5. **backup_printer_settings_action** ❌
-6. **development_configs_backup_action** ❌
-7. **outlook_backup_action** ❌
-8. **photo_management_backup_action** ❌
-9. **quickbooks_backup_action** ❌
-10. **saved_game_data_backup_action** ❌
-11. **screenshot_settings_action** ❌
-12. **sticky_notes_backup_action** ❌
+2. **backup_activation_keys_action** ✅ TESTED *(Phase 3)* 🔑
+3. **sticky_notes_backup_action** ✅ TESTED *(Phase 3)* 📝
+4. **backup_desktop_wallpaper_action** ❌
+5. **backup_email_data_action** ❌
+6. **backup_printer_settings_action** ❌
+7. **development_configs_backup_action** ❌
+8. **outlook_backup_action** ❌
+9. **photo_management_backup_action** ❌
+10. **quickbooks_backup_action** ❌
+11. **saved_game_data_backup_action** ❌
+12. **screenshot_settings_action** ❌
 13. **tax_software_backup_action** ❌
 
 #### Maintenance (8)
@@ -292,11 +295,12 @@
 1. **check_disk_errors_action** ✅ TESTED *(Phase 3)* 🔍
 2. **check_disk_health_action** ✅ TESTED *(Phase 3)* 🔧
 3. **check_bloatware_action** ✅ TESTED *(Phase 3)* 🗑️
-4. **fix_audio_issues_action** ❌
-5. **repair_windows_store_action** ❌
-6. **reset_network_action** ❌
-7. **verify_system_files_action** ❌
-8. **scan_malware_action** ❌
+4. **generate_system_report_action** ✅ TESTED *(Phase 3)* 📊
+5. **fix_audio_issues_action** ❌
+6. **repair_windows_store_action** ❌
+7. **reset_network_action** ❌
+8. **verify_system_files_action** ❌
+9. **scan_malware_action** ❌
 
 #### Utilities (4)
 1. **generate_system_report_action** ❌
