@@ -6,22 +6,35 @@
 
 ### Coverage Statistics
 - **Total Classes:** 72
-- **Tested Classes:** 9
-- **Coverage:** 12.5%
-- **Critical Gaps:** High-priority components missing tests
+- **Tested Classes:** 15
+- **Coverage:** 20.8%
+- **Critical Gaps:** 2 high-priority components remaining (input_validator, secure_memory)
+
+**Recent Progress (Phase 1):**
+- Added 6 critical component tests
+- Raised coverage from 12.5% → 20.8%
+- All primary migration system components now tested
 
 ---
 
 ## Current Test Coverage
 
-### ✅ Tested Components (9/72)
+### ✅ Tested Components (15/72)
 
-#### Core Utilities (5)
+#### Core Utilities (8)
 1. ✅ **path_utils** - Path manipulation and validation
 2. ✅ **logger** - Logging system
 3. ✅ **config_manager** - Configuration management
 4. ✅ **file_scanner** - File system scanning
 5. ✅ **encryption** - Encryption and security
+6. ✅ **app_scanner** - Application detection *(NEW - Phase 1)*
+7. ✅ **chocolatey_manager** - Package manager integration *(NEW - Phase 1)*
+8. ✅ **package_matcher** - App-to-package matching *(NEW - Phase 1)*
+
+#### Migration System (3)
+1. ✅ **migration_report** - Report export/import *(NEW - Phase 1)*
+2. ✅ **file_hash** - File checksum calculation *(NEW - Phase 1)*
+3. ✅ **user_data_manager** - User data backup/restore *(NEW - Phase 1)*
 
 #### Actions (2)
 1. ✅ **disk_cleanup_action** - Disk cleanup
@@ -35,72 +48,9 @@
 
 ## Critical Coverage Gaps (HIGH PRIORITY)
 
-### Core Infrastructure (8 untested)
+### Core Infrastructure (2 untested - DOWN FROM 8!)
 
-#### 1. **app_scanner** 🔴 CRITICAL
-- **Purpose:** Scans installed Windows applications
-- **Risk:** Core migration functionality
-- **Dependencies:** Registry access, AppX packages
-- **Test Needs:**
-  - Registry application detection
-  - AppX/MSIX package detection
-  - Version extraction
-  - Install location parsing
-  - Edge cases (corrupted registry entries)
-
-#### 2. **chocolatey_manager** 🔴 CRITICAL
-- **Purpose:** Manages portable Chocolatey integration
-- **Risk:** Core package installation
-- **Dependencies:** Embedded choco.exe
-- **Test Needs:**
-  - Chocolatey initialization
-  - Package search and availability
-  - Version locking
-  - Install/uninstall operations (mocked)
-  - Error handling (missing choco.exe)
-
-#### 3. **package_matcher** 🔴 CRITICAL
-- **Purpose:** Matches installed apps to Chocolatey packages
-- **Risk:** Migration accuracy
-- **Dependencies:** app_scanner, chocolatey_manager
-- **Test Needs:**
-  - Exact name matching
-  - Fuzzy matching algorithm
-  - Confidence scoring
-  - Custom mappings (package_mappings.json)
-  - Performance with large app lists
-
-#### 4. **migration_report** 🔴 CRITICAL
-- **Purpose:** Export/import migration data
-- **Risk:** Data persistence
-- **Test Needs:**
-  - JSON export/import
-  - CSV export
-  - HTML report generation
-  - Data integrity after round-trip
-  - Large dataset handling
-
-#### 5. **user_data_manager** 🟡 HIGH
-- **Purpose:** Backup/restore user profile data
-- **Risk:** Data loss prevention
-- **Test Needs:**
-  - Common app data location discovery
-  - Selective backup
-  - Incremental backup
-  - Restore with conflict resolution
-  - Permission handling
-
-#### 6. **file_hash** 🟡 HIGH
-- **Purpose:** Calculate file checksums (SHA256, MD5)
-- **Risk:** Data verification
-- **Test Needs:**
-  - SHA256 calculation
-  - MD5 calculation
-  - Large file handling (>1GB)
-  - Concurrent hashing
-  - Memory efficiency
-
-#### 7. **input_validator** 🟡 HIGH
+#### 1. **input_validator** 🔴 CRITICAL
 - **Purpose:** Sanitize and validate user inputs
 - **Risk:** Security vulnerabilities
 - **Test Needs:**
@@ -110,11 +60,22 @@
   - Buffer overflow protection
   - Unicode handling
 
-#### 8. **secure_memory** 🟡 HIGH
+#### 2. **secure_memory** 🔴 CRITICAL
 - **Purpose:** Secure memory management for sensitive data
 - **Risk:** Memory leaks, security
 - **Test Needs:**
   - Memory wiping on destruction
+  - Secure allocation/deallocation
+  - Protection against memory dumps
+  - Performance impact measurement
+
+**Completed in Phase 1:**
+- ✅ app_scanner - Application detection (11 tests, 240 lines)
+- ✅ chocolatey_manager - Package manager integration (11 tests, 200 lines)
+- ✅ package_matcher - App-to-package matching (10 tests, 300 lines)
+- ✅ migration_report - Report export/import (17 tests, 360 lines)
+- ✅ file_hash - File checksum calculation (18 tests, 380 lines)
+- ✅ user_data_manager - User data backup/restore (24 tests, 520 lines)
   - secure_buffer RAII
   - secure_string operations
   - constant-time comparison
@@ -356,27 +317,32 @@
 
 ---
 
-## Recommended Testing Priorities
+## 📊 Testing Priorities - Updated Progress
 
-### Phase 1: Critical Infrastructure (Week 1)
-1. **app_scanner** - Foundation for migration
-2. **chocolatey_manager** - Package management
-3. **package_matcher** - Matching algorithm
-4. **migration_report** - Data persistence
-5. **file_hash** - Data verification
+### ✅ Phase 1: Critical Infrastructure (COMPLETED!)
+**Status:** 6/6 completed | **Coverage:** 12.5% → 20.8%
 
-**Estimated Effort:** 3-4 days
+1. ✅ **app_scanner** - Application detection (11 tests, 240 lines)
+2. ✅ **chocolatey_manager** - Package manager (11 tests, 200 lines)
+3. ✅ **package_matcher** - Matching algorithm (10 tests, 300 lines)
+4. ✅ **migration_report** - Report export/import (17 tests, 360 lines)
+5. ✅ **file_hash** - Checksum calculation (18 tests, 380 lines)
+6. ✅ **user_data_manager** - User data backup/restore (24 tests, 520 lines)
 
-### Phase 2: High-Risk Workers (Week 2)
-1. **app_migration_worker** - Migration execution
-2. **backup_worker** - Backup execution
-3. **user_data_manager** - User data operations
-4. **user_profile_backup_worker** - Profile backup
-5. **flash_worker** - USB flashing
+**Actual Effort:** 2 days | **Test Lines Added:** ~2,000
 
-**Estimated Effort:** 3-4 days
+### 🎯 Phase 2: Remaining Critical + High-Risk Workers (Week 2-3)
+1. **input_validator** - Security validation
+2. **secure_memory** - Secure memory operations
+3. **app_migration_worker** - Migration execution
+4. **backup_worker** - Backup execution
+5. **user_profile_backup_worker** - Profile backup
+6. **flash_worker** - USB flashing
 
-### Phase 3: Security & Validation (Week 3)
+**Target:** 25/72 tested (35%)
+**Estimated Effort:** 4-5 days
+
+### Phase 3: Security & Validation (Week 3-4)
 1. **input_validator** - Security validation
 2. **secure_memory** - Secure memory operations
 3. **elevation_manager** - Privilege management
