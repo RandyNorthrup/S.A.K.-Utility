@@ -6,24 +6,24 @@
 
 ### Coverage Statistics
 - **Total Classes:** 72
-- **Tested Classes:** 33
-- **Coverage:** 45.8%
+- **Tested Classes:** 36
+- **Coverage:** 49.9%
 - **Critical Infrastructure:** ✅ COMPLETE (8/8 components tested)
 - **Phase 2:** ✅ COMPLETE (6/6 worker tests done)
-- **Phase 3:** 🚧 IN PROGRESS (10/37 action tests done)
+- **Phase 3:** 🚧 IN PROGRESS (13/37 action tests done)
 
 **Recent Progress:**
 - Phase 1 COMPLETE: All 8 critical components tested ✅
 - Phase 2 COMPLETE: All 6 high-risk workers tested ✅
-- Phase 3 Batch 3: 3 more actions (backup + utility)
-- Coverage increased: 12.5% → 45.8%
-- **TARGET EXCEEDED:** 45.8% > 30% goal! 🎉
+- Phase 3 Batch 4: 3 more actions (optimization + recovery)
+- Coverage increased: 12.5% → 49.9%
+- **TARGET EXCEEDED:** 49.9% > 30% goal! 🎉
 
 ---
 
 ## Current Test Coverage
 
-### ✅ Tested Components (19/72)
+### ✅ Tested Components (21/72)
 
 #### Core Utilities (10)
 1. ✅ **path_utils** - Path manipulation and validation
@@ -50,7 +50,7 @@
 5. ✅ **flash_worker** - USB device flashing *(Phase 2)* ⚡
 6. ✅ **duplicate_finder_worker** - Duplicate detection *(Phase 2)* ⚡
 
-#### Actions (12)
+#### Actions (15)
 1. ✅ **disk_cleanup_action** - Disk cleanup
 2. ✅ **backup_browser_data_action** - Browser backup
 3. ✅ **clear_browser_cache_action** - Clear browser caches *(Phase 3)* 🧹
@@ -63,6 +63,12 @@
 10. ✅ **backup_activation_keys_action** - Product key backup *(Phase 3)* 🔑
 11. ✅ **sticky_notes_backup_action** - Sticky Notes backup *(Phase 3)* 📝
 12. ✅ **generate_system_report_action** - System report generation *(Phase 3)* 📊
+13. ✅ **defragment_drives_action** - HDD defragmentation *(Phase 3)* 💿
+14. ✅ **create_restore_point_action** - System Restore points *(Phase 3)* 💾
+15. ✅ **disable_startup_programs_action** - Startup management *(Phase 3)* 🚀
+13. ✅ **defragment_drives_action** - HDD defragmentation *(Phase 3)* 💿
+14. ✅ **create_restore_point_action** - System Restore points *(Phase 3)* 🔄
+15. ✅ **disable_startup_programs_action** - Startup management *(Phase 3)* 🚀
 
 #### Integration (2)
 1. ✅ **backup_workflow** - Backup process
@@ -254,14 +260,14 @@
 
 ### Action Classes (37 untested) 🟡 HIGH PRIORITY
 
-#### System Optimization (8)
+#### System Optimization (9)
 1. **disk_cleanup_action** ✅ TESTED
 2. **clear_browser_cache_action** ✅ TESTED *(Phase 3)* 🧹
 3. **optimize_power_settings_action** ✅ TESTED *(Phase 3)* ⚡
 4. **clear_event_logs_action** ✅ TESTED *(Phase 3)* 📜
-5. **disable_startup_programs_action** ❌
-6. **disable_visual_effects_action** ❌
-7. **defragment_drives_action** ❌
+5. **disable_startup_programs_action** ✅ TESTED *(Phase 3)* 🚀
+6. **defragment_drives_action** ✅ TESTED *(Phase 3)* 💿
+7. **disable_visual_effects_action** ❌
 8. **clear_windows_update_cache_action** ❌
 9. **rebuild_icon_cache_action** ❌
 
@@ -285,11 +291,10 @@
 2. **check_disk_errors_action** ✅ TESTED *(Phase 3)* 🔍
 3. **windows_update_action** ✅ TESTED *(Phase 3)* 🔄
 4. **clear_event_logs_action** ✅ TESTED *(Phase 3)* 📜
-5. **clear_print_spooler_action** ❌
-6. **update_all_apps_action** ❌
-7. **export_registry_keys_action** ❌
-7. **create_restore_point_action** ❌
-8. **browser_profile_backup_action** ❌
+5. **create_restore_point_action** ✅ TESTED *(Phase 3)* 💾
+6. **clear_print_spooler_action** ❌
+7. **update_all_apps_action** ❌
+8. **export_registry_keys_action** ❌
 
 #### Troubleshooting (8)
 1. **check_disk_errors_action** ✅ TESTED *(Phase 3)* 🔍

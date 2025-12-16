@@ -90,6 +90,9 @@ set(ACTION_TESTS
     test_backup_activation_keys_action
     test_sticky_notes_backup_action
     test_generate_system_report_action
+    test_defragment_drives_action
+    test_create_restore_point_action
+    test_disable_startup_programs_action
 )
 
 # ============================================================================
