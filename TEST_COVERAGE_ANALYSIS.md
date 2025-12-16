@@ -6,18 +6,18 @@
 
 ### Coverage Statistics
 - **Total Classes:** 72
-- **Tested Classes:** 26
-- **Coverage:** 36.1%
+- **Tested Classes:** 30
+- **Coverage:** 41.7%
 - **Critical Infrastructure:** ✅ COMPLETE (8/8 components tested)
 - **Phase 2:** ✅ COMPLETE (6/6 worker tests done)
-- **Phase 3:** 🚧 IN PROGRESS (3/37 action tests done)
+- **Phase 3:** 🚧 IN PROGRESS (7/37 action tests done)
 
 **Recent Progress:**
 - Phase 1 COMPLETE: All 8 critical components tested ✅
 - Phase 2 COMPLETE: All 6 high-risk workers tested ✅
-- Phase 3 Started: System optimization & troubleshooting actions
-- Coverage increased: 12.5% → 36.1%
-- **TARGET EXCEEDED:** 36.1% > 30% goal! 🎉
+- Phase 3 Batch 2: 4 more action tests (maintenance + troubleshooting)
+- Coverage increased: 12.5% → 41.7%
+- **TARGET EXCEEDED:** 41.7% > 30% goal! 🎉
 
 ---
 
@@ -50,12 +50,16 @@
 5. ✅ **flash_worker** - USB device flashing *(Phase 2)* ⚡
 6. ✅ **duplicate_finder_worker** - Duplicate detection *(Phase 2)* ⚡
 
-#### Actions (5)
+#### Actions (9)
 1. ✅ **disk_cleanup_action** - Disk cleanup
 2. ✅ **backup_browser_data_action** - Browser backup
 3. ✅ **clear_browser_cache_action** - Clear browser caches *(Phase 3)* 🧹
 4. ✅ **check_disk_health_action** - S.M.A.R.T. disk health *(Phase 3)* 🔧
 5. ✅ **optimize_power_settings_action** - Power plan optimization *(Phase 3)* ⚡
+6. ✅ **clear_event_logs_action** - Archive and clear event logs *(Phase 3)* 📜
+7. ✅ **windows_update_action** - Windows Update installation *(Phase 3)* 🔄
+8. ✅ **check_disk_errors_action** - CHKDSK error checking *(Phase 3)* 🔍
+9. ✅ **check_bloatware_action** - Bloatware detection/removal *(Phase 3)* 🗑️
 
 #### Integration (2)
 1. ✅ **backup_workflow** - Backup process
@@ -247,15 +251,16 @@
 
 ### Action Classes (37 untested) 🟡 HIGH PRIORITY
 
-#### System Optimization (7)
+#### System Optimization (8)
 1. **disk_cleanup_action** ✅ TESTED
 2. **clear_browser_cache_action** ✅ TESTED *(Phase 3)* 🧹
 3. **optimize_power_settings_action** ✅ TESTED *(Phase 3)* ⚡
-4. **disable_startup_programs_action** ❌
-5. **disable_visual_effects_action** ❌
-6. **defragment_drives_action** ❌
-7. **clear_windows_update_cache_action** ❌
-8. **rebuild_icon_cache_action** ❌
+4. **clear_event_logs_action** ✅ TESTED *(Phase 3)* 📜
+5. **disable_startup_programs_action** ❌
+6. **disable_visual_effects_action** ❌
+7. **defragment_drives_action** ❌
+8. **clear_windows_update_cache_action** ❌
+9. **rebuild_icon_cache_action** ❌
 
 #### Quick Backup (10)
 1. **backup_browser_data_action** ✅ TESTED
@@ -274,24 +279,24 @@
 
 #### Maintenance (8)
 1. **check_disk_health_action** ✅ TESTED *(Phase 3)* 🔧
-2. **clear_browser_cache_action** ✅ TESTED *(Phase 3)* 🧹
-3. **clear_event_logs_action** ❌
-4. **clear_print_spooler_action** ❌
-5. **windows_update_action** ❌
+2. **check_disk_errors_action** ✅ TESTED *(Phase 3)* 🔍
+3. **windows_update_action** ✅ TESTED *(Phase 3)* 🔄
+4. **clear_event_logs_action** ✅ TESTED *(Phase 3)* 📜
+5. **clear_print_spooler_action** ❌
 6. **update_all_apps_action** ❌
 7. **export_registry_keys_action** ❌
 7. **create_restore_point_action** ❌
 8. **browser_profile_backup_action** ❌
 
 #### Troubleshooting (8)
-1. **check_disk_errors_action** ❌
-2. **check_disk_health_action** ❌
-3. **fix_audio_issues_action** ❌
-4. **repair_windows_store_action** ❌
-5. **reset_network_action** ❌
-6. **verify_system_files_action** ❌
-7. **scan_malware_action** ❌
-8. **check_bloatware_action** ❌
+1. **check_disk_errors_action** ✅ TESTED *(Phase 3)* 🔍
+2. **check_disk_health_action** ✅ TESTED *(Phase 3)* 🔧
+3. **check_bloatware_action** ✅ TESTED *(Phase 3)* 🗑️
+4. **fix_audio_issues_action** ❌
+5. **repair_windows_store_action** ❌
+6. **reset_network_action** ❌
+7. **verify_system_files_action** ❌
+8. **scan_malware_action** ❌
 
 #### Utilities (4)
 1. **generate_system_report_action** ❌

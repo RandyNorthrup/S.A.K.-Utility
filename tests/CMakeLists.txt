@@ -83,6 +83,10 @@ set(ACTION_TESTS
     test_clear_browser_cache_action
     test_check_disk_health_action
     test_optimize_power_settings_action
+    test_clear_event_logs_action
+    test_windows_update_action
+    test_check_disk_errors_action
+    test_check_bloatware_action
 )
 
 # ============================================================================
