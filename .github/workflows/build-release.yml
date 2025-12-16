@@ -116,19 +116,19 @@ jobs:
       working-directory: build/Release
       run: |
         # Clean and create release directory
-        if (Test-Path "SAK-Utility-v0.5.5") {
-          Remove-Item -Recurse -Force "SAK-Utility-v0.5.5"
+        if (Test-Path "SAK-Utility-v0.5.6") {
+          Remove-Item -Recurse -Force "SAK-Utility-v0.5.6"
         }
-        if (Test-Path "SAK-Utility-v0.5.5-Windows-x64.zip") {
-          Remove-Item -Force "SAK-Utility-v0.5.5-Windows-x64.zip"
+        if (Test-Path "SAK-Utility-v0.5.6-Windows-x64.zip") {
+          Remove-Item -Force "SAK-Utility-v0.5.6-Windows-x64.zip"
         }
         if (Test-Path "SHA256SUMS.txt") {
           Remove-Item -Force "SHA256SUMS.txt"
         }
-        New-Item -ItemType Directory -Force -Path "SAK-Utility-v0.5.5"
+        New-Item -ItemType Directory -Force -Path "SAK-Utility-v0.5.6"
         
         # Copy executable
-        Copy-Item "sak_utility.exe" "SAK-Utility-v0.5.5/"
+        Copy-Item "sak_utility.exe" "SAK-Utility-v0.5.6/"
         
         # Copy Qt DLLs and dependencies (already deployed by CMake)
         $qtDirs = @(
@@ -140,21 +140,21 @@ jobs:
         )
         foreach ($dir in $qtDirs) {
           if (Test-Path $dir) {
-            Copy-Item -Recurse $dir "SAK-Utility-v0.5.5/"
+            Copy-Item -Recurse $dir "SAK-Utility-v0.5.6/"
           }
         }
         
         # Copy Qt runtime DLLs
         $qtDlls = Get-ChildItem -Filter "Qt6*.dll"
         foreach ($dll in $qtDlls) {
-          Copy-Item $dll.FullName "SAK-Utility-v0.5.5/"
+          Copy-Item $dll.FullName "SAK-Utility-v0.5.6/"
         }
         
         # Copy other DLLs (OpenGL, D3D)
         $otherDlls = @("opengl32sw.dll", "D3Dcompiler_47.dll")
         foreach ($dllName in $otherDlls) {
           if (Test-Path $dllName) {
-            Copy-Item $dllName "SAK-Utility-v0.5.5/"
+            Copy-Item $dllName "SAK-Utility-v0.5.6/"
           }
         }
         
@@ -165,7 +165,7 @@ jobs:
           foreach ($dllName in $vcpkgDlls) {
             $dllPath = Join-Path $vcpkgBinPath $dllName
             if (Test-Path $dllPath) {
-              Copy-Item $dllPath "SAK-Utility-v0.5.5/"
+              Copy-Item $dllPath "SAK-Utility-v0.5.6/"
               Write-Host "Copied vcpkg DLL: $dllName"
             } else {
               Write-Warning "vcpkg DLL not found: $dllName"
@@ -176,19 +176,19 @@ jobs:
         # Copy MSVC runtime DLLs if present
         $msvcDlls = Get-ChildItem -Filter "vcruntime*.dll" -ErrorAction SilentlyContinue
         foreach ($dll in $msvcDlls) {
-          Copy-Item $dll.FullName "SAK-Utility-v0.5.5/"
+          Copy-Item $dll.FullName "SAK-Utility-v0.5.6/"
         }
         $msvcDlls = Get-ChildItem -Filter "msvcp*.dll" -ErrorAction SilentlyContinue
         foreach ($dll in $msvcDlls) {
-          Copy-Item $dll.FullName "SAK-Utility-v0.5.5/"
+          Copy-Item $dll.FullName "SAK-Utility-v0.5.6/"
         }
         
         # Copy tools directory if exists
         if (Test-Path "../../tools") {
-          Copy-Item -Recurse "../../tools" "SAK-Utility-v0.5.5/"
+          Copy-Item -Recurse "../../tools" "SAK-Utility-v0.5.6/"
           
           # Ensure Chocolatey directories exist (some are gitignored)
-          $chocoPath = "SAK-Utility-v0.5.5/tools/chocolatey"
+          $chocoPath = "SAK-Utility-v0.5.6/tools/chocolatey"
           if (Test-Path $chocoPath) {
             # Create required directories if they don't exist
             New-Item -ItemType Directory -Force -Path "$chocoPath/lib" | Out-Null
@@ -199,28 +199,28 @@ jobs:
         }
         
         # Copy documentation
-        Copy-Item "../../Readme.md" "SAK-Utility-v0.5.5/"
-        Copy-Item "../../LICENSE" "SAK-Utility-v0.5.5/"
+        Copy-Item "../../Readme.md" "SAK-Utility-v0.5.6/"
+        Copy-Item "../../LICENSE" "SAK-Utility-v0.5.6/"
         if (Test-Path "../../CONTRIBUTING.md") {
-          Copy-Item "../../CONTRIBUTING.md" "SAK-Utility-v0.5.5/"
+          Copy-Item "../../CONTRIBUTING.md" "SAK-Utility-v0.5.6/"
         }
         
         # Create portable.ini for portable mode
-        New-Item -ItemType File -Path "SAK-Utility-v0.5.5/portable.ini" -Force
+        New-Item -ItemType File -Path "SAK-Utility-v0.5.6/portable.ini" -Force
         
         # List contents for verification
         Write-Host ""
         Write-Host "Package contents:"
-        Get-ChildItem -Path "SAK-Utility-v0.5.5" -Recurse -File | Select-Object FullName, @{Name="SizeMB";Expression={[math]::Round($_.Length/1MB, 2)}}
+        Get-ChildItem -Path "SAK-Utility-v0.5.6" -Recurse -File | Select-Object FullName, @{Name="SizeMB";Expression={[math]::Round($_.Length/1MB, 2)}}
         
         # Create ZIP archive with contents directly (not nested in folder)
-        Compress-Archive -Path "SAK-Utility-v0.5.5\*" -DestinationPath "SAK-Utility-v0.5.5-Windows-x64.zip" -Force
+        Compress-Archive -Path "SAK-Utility-v0.5.6\*" -DestinationPath "SAK-Utility-v0.5.6-Windows-x64.zip" -Force
         
         # Generate SHA256 hash for verification
         Write-Host ""
         Write-Host "=== FILE VERIFICATION ==="
-        $exeHash = (Get-FileHash "SAK-Utility-v0.5.5\sak_utility.exe" -Algorithm SHA256).Hash
-        $zipHash = (Get-FileHash "SAK-Utility-v0.5.5-Windows-x64.zip" -Algorithm SHA256).Hash
+        $exeHash = (Get-FileHash "SAK-Utility-v0.5.6\sak_utility.exe" -Algorithm SHA256).Hash
+        $zipHash = (Get-FileHash "SAK-Utility-v0.5.6-Windows-x64.zip" -Algorithm SHA256).Hash
         Write-Host "SHA256 (sak_utility.exe): $exeHash"
         Write-Host "SHA256 (ZIP): $zipHash"
         
@@ -228,14 +228,14 @@ jobs:
         @"
         SHA256 Checksums:
         - sak_utility.exe: $exeHash
-        - SAK-Utility-v0.5.5-Windows-x64.zip: $zipHash
+        - SAK-Utility-v0.5.6-Windows-x64.zip: $zipHash
         "@ | Out-File "SHA256SUMS.txt" -Encoding UTF8
     
     - name: Upload ZIP artifact
       uses: actions/upload-artifact@v4
       with:
         name: SAK-Utility-Windows-x64
-        path: build/Release/SAK-Utility-v0.5.5/*
+        path: build/Release/SAK-Utility-v0.5.6/*
         retention-days: 90
     
     - name: Create Release
@@ -243,14 +243,14 @@ jobs:
       uses: softprops/action-gh-release@v1
       with:
         files: |
-          build/Release/SAK-Utility-v0.5.5-Windows-x64.zip
+          build/Release/SAK-Utility-v0.5.6-Windows-x64.zip
           build/Release/SHA256SUMS.txt
         body: |
-          # S.A.K. Utility v0.5.5
+          # S.A.K. Utility v0.5.6
           
           **Windows System Administration Kit - Swiss Army Knife Utility**
           
-          ## New in v0.5.5
+          ## New in v0.5.6
           - ⚡ **Build Performance** - Added caching for vcpkg and CMake (3-5x faster CI builds)
           - 📦 **Improved Packaging** - Fixed artifact structure and included compression DLLs
           - 🧪 **CI Improvements** - Automated GUI test skipping in CI environment
@@ -270,7 +270,7 @@ jobs:
           - 🗝️ License Key Scanner
           
           ## Installation
-          1. Download `SAK-Utility-v0.5.5-Windows-x64.zip`
+          1. Download `SAK-Utility-v0.5.6-Windows-x64.zip`
           2. Extract to your preferred location
           3. Run `sak_utility.exe`
           4. `portable.ini` is included for portable operation
@@ -320,7 +320,7 @@ jobs:
       run: |
         echo "### Build Information" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
-        echo "- **Version**: 0.5.5" >> $GITHUB_STEP_SUMMARY
+        echo "- **Version**: 0.5.6" >> $GITHUB_STEP_SUMMARY
         echo "- **Commit**: ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
         echo "- **Branch**: ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
         echo "- **Qt Version**: ${{ env.QT_VERSION }}" >> $GITHUB_STEP_SUMMARY

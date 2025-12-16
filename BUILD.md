@@ -356,7 +356,7 @@ Copy-Item -Path "build\Release\styles" -Destination "dist\styles" -Recurse
 Copy-Item -Path "portable.ini" -Destination "dist\"
 
 # Create ZIP
-Compress-Archive -Path "dist\*" -DestinationPath "SAK_Utility_v0.5.5_Portable.zip"
+Compress-Archive -Path "dist\*" -DestinationPath "SAK_Utility_v0.5.6_Portable.zip"
 ```
 
 ### Testing on Fresh PC
@@ -504,7 +504,7 @@ Static linking increases executable size but eliminates 5+ separate DLL files.
 
 ## Version Information
 
-- **Project Version**: 0.5.5
+- **Project Version**: 0.5.6
 - **CMake Minimum**: 3.28
 - **C++ Standard**: C++23
 - **Build System**: CMake + Visual Studio 2022
