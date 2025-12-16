@@ -23,6 +23,12 @@ set(UNIT_TESTS
     test_config_manager
     test_file_scanner
     test_encryption
+    test_app_scanner
+    test_chocolatey_manager
+    test_package_matcher
+    test_migration_report
+    test_file_hash
+    test_user_data_manager
 )
 
 foreach(test_name ${UNIT_TESTS})
