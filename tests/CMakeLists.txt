@@ -91,6 +91,8 @@ set(WORKER_TESTS
     test_backup_worker
     test_user_profile_backup_worker
     test_user_profile_restore_worker
+    test_flash_worker
+    test_duplicate_finder_worker
 )
 
 foreach(test_name ${WORKER_TESTS})
