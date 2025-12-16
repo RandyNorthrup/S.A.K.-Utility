@@ -214,6 +214,9 @@ perf.data*
 *.deb
 *.pkg
 
+# vcpkg installed packages (regenerated from vcpkg.json)
+vcpkg_installed/
+
 # ============================================================================
 # Logs & Temporary Files
 # ============================================================================
@@ -353,6 +356,9 @@ tools/chocolatey/.chocolatey/
 # Local configuration
 local_config.json
 *.local
+
+# Local build configuration (contains machine-specific paths)
+cmake/SAK_BuildConfig.cmake
 
 # Database files (if any)
 *.db

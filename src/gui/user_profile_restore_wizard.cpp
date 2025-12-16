@@ -7,6 +7,8 @@
 #include <QFileInfo>
 #include <QDir>
 #include <QMessageBox>
+#include <QFileDialog>
+#include <QStandardPaths>
 #include <QTimer>
 #include <QScrollBar>
 
@@ -1040,14 +1042,27 @@ void UserProfileRestoreExecutePage::onRestoreComplete(bool success, const QStrin
 }
 
 void UserProfileRestoreExecutePage::onViewLog() {
-    // Open full log in message box (temporary solution)
     QMessageBox msgBox(this);
     msgBox.setWindowTitle(tr("Restore Log"));
     msgBox.setText(tr("Complete restore operation log:"));
     msgBox.setDetailedText(m_logText->toPlainText());
     msgBox.setIcon(m_restoreSuccess ? QMessageBox::Information : QMessageBox::Warning);
-    msgBox.setStandardButtons(QMessageBox::Ok);
-    msgBox.exec();
+    msgBox.setStandardButtons(QMessageBox::Ok | QMessageBox::Save);
+    
+    int ret = msgBox.exec();
+    if (ret == QMessageBox::Save) {
+        QString fileName = QFileDialog::getSaveFileName(this, tr("Save Log"), 
+            QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation) + "/restore_log.txt",
+            tr("Text Files (*.txt);;All Files (*.*)"));
+        if (!fileName.isEmpty()) {
+            QFile file(fileName);
+            if (file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+                QTextStream out(&file);
+                out << m_logText->toPlainText();
+                file.close();
+            }
+        }
+    }
 }
 
 bool UserProfileRestoreExecutePage::isComplete() const {

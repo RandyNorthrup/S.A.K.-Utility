@@ -1,4 +1,3 @@
-#pragma once
 
 #include "sak/worker_base.h"
 #include "sak/file_hash.h"

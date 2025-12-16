@@ -6,7 +6,6 @@
 #include <QStringList>
 #include <QMap>
 #include <vector>
-#include <expected>
 
 namespace sak {
 
@@ -85,6 +84,7 @@ public:
     bool isPackageInstalled(const QString& package_name);
     QString getInstalledVersion(const QString& package_name);
     bool isPackageAvailable(const QString& package_name);
+    QStringList getOutdatedPackages();
     
     // Retry logic
     Result installWithRetry(const InstallConfig& config, int max_attempts, int delay_seconds);

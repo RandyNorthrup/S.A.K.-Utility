@@ -135,6 +135,11 @@ private Q_SLOTS:
     void onSettingChanged();
 
     /**
+     * @brief Show settings dialog
+     */
+    void showSettingsDialog();
+
+    /**
      * @brief Refresh all action scans
      */
     void refreshAllScans();

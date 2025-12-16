@@ -1,4 +1,5 @@
 #include "sak/chocolatey_manager.h"
+#include "sak/logger.h"
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -293,6 +294,28 @@ bool ChocolateyManager::isPackageAvailable(const QString& package_name) {
     }
     
     return false;
+}
+
+QStringList ChocolateyManager::getOutdatedPackages() {
+    QStringList outdated;
+    
+    if (!m_initialized) {
+        sak::log_warning("ChocolateyManager not initialized");
+        return outdated;
+    }
+    
+    auto result = executeChoco({"outdated", "-r"}, 30000);
+    if (result.success) {
+        QStringList lines = result.output.split('\n', Qt::SkipEmptyParts);
+        for (const QString& line : lines) {
+            QStringList parts = line.split('|');
+            if (parts.size() >= 3) {
+                outdated.append(parts[0]); // Package name
+            }
+        }
+    }
+    
+    return outdated;
 }
 
 ChocolateyManager::Result ChocolateyManager::installWithRetry(

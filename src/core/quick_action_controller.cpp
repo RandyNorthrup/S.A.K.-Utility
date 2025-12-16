@@ -165,11 +165,11 @@ void QuickActionController::scanAction(const QString& action_name) {
         return;
     }
 
-    // Check admin requirements
+    // Check admin requirements - but allow scan to proceed
+    // Scan can determine if action is applicable regardless of admin status
+    // Admin check will happen again before execution
     if (action->requiresAdmin() && !hasAdminPrivileges()) {
-        Q_EMIT actionError(action, "This action requires administrator privileges");
-        logOperation(action, "Scan failed: Admin privileges required");
-        return;
+        logOperation(action, "Note: Action requires admin privileges for execution");
     }
 
     // Check if already scanning
@@ -185,12 +185,6 @@ void QuickActionController::executeAction(const QString& action_name, bool requi
     QuickAction* action = getAction(action_name);
     if (!action) {
         Q_EMIT logMessage(QString("Action not found: %1").arg(action_name));
-        return;
-    }
-
-    // Check if scan completed
-    if (!action->lastScanResult().applicable) {
-        Q_EMIT actionError(action, "Action scan did not complete successfully");
         return;
     }
 
@@ -219,6 +213,9 @@ void QuickActionController::executeAction(const QString& action_name, bool requi
 }
 
 void QuickActionController::scanAllActions() {
+    // Scan all registered actions
+    // Note: Some actions may not be applicable on current system
+    // Errors are logged but don't prevent other scans
     for (const auto& action : m_actions) {
         scanAction(action->name());
     }

@@ -9,11 +9,6 @@
 #include <QProcess>
 #include <QDateTime>
 
-#ifdef _WIN32
-#include <windows.h>
-#include <tlhelp32.h>
-#endif
-
 namespace sak {
 
 ClearBrowserCacheAction::ClearBrowserCacheAction()
@@ -21,61 +16,12 @@ ClearBrowserCacheAction::ClearBrowserCacheAction()
 }
 
 void ClearBrowserCacheAction::scan() {
-    setStatus(ActionStatus::Scanning);
-    m_caches.clear();
-    m_total_bytes = 0;
-    m_total_files = 0;
-
-    detectBrowsers();
-
-    scanChrome();
-    scanFirefox();
-    scanEdge();
-    scanInternetExplorer();
-
-    // Build summary
-    QString summary;
-    if (!m_caches.empty()) {
-        QStringList browser_names;
-        for (const auto& cache : m_caches) {
-            browser_names.append(cache.browser_name);
-        }
-        summary = QString("Found cache in %1 browsers: %2")
-                     .arg(m_caches.size())
-                     .arg(browser_names.join(", "));
-    } else {
-        summary = "No browser caches found";
-    }
-
-    QString warning;
-    bool has_running = false;
-    for (const auto& cache : m_caches) {
-        if (cache.is_running) {
-            has_running = true;
-            break;
-        }
-    }
-
-    if (has_running) {
-        warning = "Some browsers are running. Close all browsers before clearing cache.";
-    }
-
-    // Estimate duration (5MB per second)
-    qint64 estimated_ms = (m_total_bytes / (5 * 1024 * 1024)) * 1000;
-    if (estimated_ms < 1000) {
-        estimated_ms = 1000;
-    }
-
-    ScanResult result;
-    result.applicable = !m_caches.empty();
-    result.summary = summary;
-    result.bytes_affected = m_total_bytes;
-    result.files_count = m_total_files;
-    result.estimated_duration_ms = estimated_ms;
-    result.warning = warning;
-
-    setScanResult(result);
+    // Scan is no longer used - actions execute immediately
     setStatus(ActionStatus::Ready);
+    ScanResult result;
+    result.applicable = true;
+    result.summary = "Ready to clear browser caches";
+    setScanResult(result);
     Q_EMIT scanComplete(result);
 }
 
@@ -85,239 +31,260 @@ void ClearBrowserCacheAction::execute() {
     }
 
     setStatus(ActionStatus::Running);
-
-    qint64 total_deleted = 0;
-    int progress = 0;
-    const int total_caches = static_cast<int>(m_caches.size());
     QDateTime start_time = QDateTime::currentDateTime();
-
-    for (const auto& cache : m_caches) {
-        if (isCancelled()) {
-            setStatus(ActionStatus::Cancelled);
-            ExecutionResult result;
-            result.success = false;
-            result.message = "Cache clearing cancelled by user";
-            result.bytes_processed = total_deleted;
-            result.duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
-            setExecutionResult(result);
-            Q_EMIT executionComplete(result);
-            return;
-        }
-
-        QString prog_msg = QString("Clearing %1...").arg(cache.browser_name);
-        Q_EMIT executionProgress(prog_msg, (progress * 100) / total_caches);
-        progress++;
-
-        // Skip if browser is running
-        if (cache.is_running) {
-            continue;
-        }
-
-        qint64 deleted = deleteCacheDirectory(cache.cache_path);
-        total_deleted += deleted;
+    
+    Q_EMIT executionProgress("╔════════════════════════════════════════════════════════════════╗", 0);
+    Q_EMIT executionProgress("║          BROWSER CACHE CLEARING - ENTERPRISE MODE             ║", 0);
+    Q_EMIT executionProgress("╠════════════════════════════════════════════════════════════════╣", 0);
+    
+    // Comprehensive PowerShell script for enterprise-grade cache clearing
+    QString ps_script = QString(
+        "$ErrorActionPreference = 'SilentlyContinue'\n"
+        "$results = @()\n"
+        "$totalBefore = 0\n"
+        "$totalAfter = 0\n"
+        "$clearedBrowsers = @()\n"
+        "$blockedBrowsers = @()\n"
+        "\n"
+        "# Helper function to calculate directory size\n"
+        "function Get-DirectorySize {\n"
+        "    param([string]$Path)\n"
+        "    if (Test-Path $Path) {\n"
+        "        $size = (Get-ChildItem -Path $Path -Recurse -File -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum).Sum\n"
+        "        if ($null -eq $size) { return 0 }\n"
+        "        return $size\n"
+        "    }\n"
+        "    return 0\n"
+        "}\n"
+        "\n"
+        "# Helper function to format bytes\n"
+        "function Format-Bytes {\n"
+        "    param([long]$Bytes)\n"
+        "    if ($Bytes -ge 1GB) { return '{0:N2} GB' -f ($Bytes / 1GB) }\n"
+        "    if ($Bytes -ge 1MB) { return '{0:N2} MB' -f ($Bytes / 1MB) }\n"
+        "    if ($Bytes -ge 1KB) { return '{0:N2} KB' -f ($Bytes / 1KB) }\n"
+        "    return '{0} bytes' -f $Bytes\n"
+        "}\n"
+        "\n"
+        "# Browser configurations (Chromium-based and Firefox)\n"
+        "$browsers = @(\n"
+        "    @{Name='Chrome'; Process='chrome'; Paths=@(\"$env:LOCALAPPDATA\\Google\\Chrome\\User Data\\Default\\Cache\", \"$env:LOCALAPPDATA\\Google\\Chrome\\User Data\\Default\\Code Cache\")},\n"
+        "    @{Name='Edge'; Process='msedge'; Paths=@(\"$env:LOCALAPPDATA\\Microsoft\\Edge\\User Data\\Default\\Cache\", \"$env:LOCALAPPDATA\\Microsoft\\Edge\\User Data\\Default\\Code Cache\")},\n"
+        "    @{Name='Brave'; Process='brave'; Paths=@(\"$env:LOCALAPPDATA\\BraveSoftware\\Brave-Browser\\User Data\\Default\\Cache\", \"$env:LOCALAPPDATA\\BraveSoftware\\Brave-Browser\\User Data\\Default\\Code Cache\")},\n"
+        "    @{Name='Opera'; Process='opera'; Paths=@(\"$env:APPDATA\\Opera Software\\Opera Stable\\Cache\", \"$env:APPDATA\\Opera Software\\Opera Stable\\Code Cache\")},\n"
+        "    @{Name='Vivaldi'; Process='vivaldi'; Paths=@(\"$env:LOCALAPPDATA\\Vivaldi\\User Data\\Default\\Cache\", \"$env:LOCALAPPDATA\\Vivaldi\\User Data\\Default\\Code Cache\")}\n"
+        ")\n"
+        "\n"
+        "foreach ($browser in $browsers) {\n"
+        "    $running = Get-Process -Name $browser.Process -ErrorAction SilentlyContinue\n"
+        "    $browserSizeBefore = 0\n"
+        "    $browserSizeAfter = 0\n"
+        "    \n"
+        "    if ($running) {\n"
+        "        $blockedBrowsers += $browser.Name\n"
+        "        continue\n"
+        "    }\n"
+        "    \n"
+        "    $foundCache = $false\n"
+        "    foreach ($path in $browser.Paths) {\n"
+        "        if (Test-Path $path) {\n"
+        "            $foundCache = $true\n"
+        "            $sizeBefore = Get-DirectorySize -Path $path\n"
+        "            $browserSizeBefore += $sizeBefore\n"
+        "            \n"
+        "            Remove-Item -Path \"$path\\*\" -Recurse -Force -ErrorAction SilentlyContinue\n"
+        "            Start-Sleep -Milliseconds 100\n"
+        "            \n"
+        "            $sizeAfter = Get-DirectorySize -Path $path\n"
+        "            $browserSizeAfter += $sizeAfter\n"
+        "        }\n"
+        "    }\n"
+        "    \n"
+        "    if ($foundCache) {\n"
+        "        $cleared = $browserSizeBefore - $browserSizeAfter\n"
+        "        $totalBefore += $browserSizeBefore\n"
+        "        $totalAfter += $browserSizeAfter\n"
+        "        $clearedBrowsers += $browser.Name\n"
+        "        $results += \"$($browser.Name): Cleared $(Format-Bytes $cleared)\"\n"
+        "    }\n"
+        "}\n"
+        "\n"
+        "# Firefox special handling (profiles-based)\n"
+        "$ffProfilesPath = \"$env:APPDATA\\Mozilla\\Firefox\\Profiles\"\n"
+        "if (Test-Path $ffProfilesPath) {\n"
+        "    $ffRunning = Get-Process -Name 'firefox' -ErrorAction SilentlyContinue\n"
+        "    if ($ffRunning) {\n"
+        "        $blockedBrowsers += 'Firefox'\n"
+        "    } else {\n"
+        "        $ffSizeBefore = 0\n"
+        "        $ffSizeAfter = 0\n"
+        "        $profiles = Get-ChildItem -Path $ffProfilesPath -Directory\n"
+        "        foreach ($profile in $profiles) {\n"
+        "            $cachePath = Join-Path $profile.FullName 'cache2'\n"
+        "            if (Test-Path $cachePath) {\n"
+        "                $sizeBefore = Get-DirectorySize -Path $cachePath\n"
+        "                $ffSizeBefore += $sizeBefore\n"
+        "                \n"
+        "                Remove-Item -Path \"$cachePath\\*\" -Recurse -Force -ErrorAction SilentlyContinue\n"
+        "                Start-Sleep -Milliseconds 100\n"
+        "                \n"
+        "                $sizeAfter = Get-DirectorySize -Path $cachePath\n"
+        "                $ffSizeAfter += $sizeAfter\n"
+        "            }\n"
+        "        }\n"
+        "        if ($ffSizeBefore -gt 0) {\n"
+        "            $cleared = $ffSizeBefore - $ffSizeAfter\n"
+        "            $totalBefore += $ffSizeBefore\n"
+        "            $totalAfter += $ffSizeAfter\n"
+        "            $clearedBrowsers += 'Firefox'\n"
+        "            $results += \"Firefox: Cleared $(Format-Bytes $cleared) across $($profiles.Count) profile(s)\"\n"
+        "        }\n"
+        "    }\n"
+        "}\n"
+        "\n"
+        "# Output results\n"
+        "Write-Output \"CLEARED:$($clearedBrowsers.Count)\"\n"
+        "Write-Output \"BLOCKED:$($blockedBrowsers.Count)\"\n"
+        "Write-Output \"TOTAL_BEFORE:$totalBefore\"\n"
+        "Write-Output \"TOTAL_CLEARED:$($totalBefore - $totalAfter)\"\n"
+        "if ($clearedBrowsers.Count -gt 0) {\n"
+        "    Write-Output \"BROWSERS:$($clearedBrowsers -join ',')\"\n"
+        "}\n"
+        "if ($blockedBrowsers.Count -gt 0) {\n"
+        "    Write-Output \"BLOCKED_LIST:$($blockedBrowsers -join ',')\"\n"
+        "}\n"
+        "foreach ($result in $results) {\n"
+        "    Write-Output \"DETAIL:$result\"\n"
+        "}\n"
+    );
+    
+    Q_EMIT executionProgress("║ Detecting browser processes and cache locations...           ║", 20);
+    
+    QProcess ps;
+    ps.start("powershell.exe", QStringList() << "-NoProfile" << "-ExecutionPolicy" << "Bypass" << "-Command" << ps_script);
+    
+    Q_EMIT executionProgress("║ Calculating cache sizes before clearing...                   ║", 40);
+    
+    bool finished = ps.waitForFinished(180000); // 3 minute timeout for size calculation
+    
+    if (!finished || isCancelled()) {
+        ps.kill();
+        ExecutionResult result;
+        result.success = false;
+        result.message = isCancelled() ? "Cache clearing cancelled" : "Operation timed out after 3 minutes";
+        result.duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
+        setExecutionResult(result);
+        setStatus(ActionStatus::Failed);
+        Q_EMIT executionComplete(result);
+        return;
     }
-
+    
+    Q_EMIT executionProgress("║ Processing results and generating report...                   ║", 80);
+    
+    QString output = ps.readAllStandardOutput();
+    
     qint64 duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
-
+    
+    // Parse structured output
+    QStringList lines = output.split('\n', Qt::SkipEmptyParts);
+    int cleared_count = 0;
+    int blocked_count = 0;
+    qint64 size_before = 0;
+    qint64 size_cleared = 0;
+    QStringList cleared_browsers;
+    QStringList blocked_browsers;
+    QStringList details;
+    
+    for (const QString& line : lines) {
+        QString trimmed = line.trimmed();
+        if (trimmed.startsWith("CLEARED:")) {
+            cleared_count = trimmed.mid(8).toInt();
+        } else if (trimmed.startsWith("BLOCKED:")) {
+            blocked_count = trimmed.mid(8).toInt();
+        } else if (trimmed.startsWith("TOTAL_BEFORE:")) {
+            size_before = trimmed.mid(13).toLongLong();
+        } else if (trimmed.startsWith("TOTAL_CLEARED:")) {
+            size_cleared = trimmed.mid(14).toLongLong();
+        } else if (trimmed.startsWith("BROWSERS:")) {
+            cleared_browsers = trimmed.mid(9).split(',', Qt::SkipEmptyParts);
+        } else if (trimmed.startsWith("BLOCKED_LIST:")) {
+            blocked_browsers = trimmed.mid(13).split(',', Qt::SkipEmptyParts);
+        } else if (trimmed.startsWith("DETAIL:")) {
+            details.append(trimmed.mid(7));
+        }
+    }
+    
+    Q_EMIT executionProgress("╠════════════════════════════════════════════════════════════════╣", 90);
+    
     ExecutionResult result;
-    result.success = total_deleted > 0;
-    result.message = QString("Cleared cache from %1 browsers").arg(m_caches.size());
-    result.bytes_processed = total_deleted;
     result.duration_ms = duration_ms;
-    result.files_processed = m_caches.size();
-    result.log = QString("Deleted %1 bytes from %2 browser caches in %3ms")
-                    .arg(total_deleted)
-                    .arg(m_caches.size())
-                    .arg(duration_ms);
-
-    setExecutionResult(result);
-    setStatus(result.success ? ActionStatus::Success : ActionStatus::Failed);
-    Q_EMIT executionComplete(result);
-}
-
-void ClearBrowserCacheAction::detectBrowsers() {
-    // Detection happens in scan methods
-}
-
-void ClearBrowserCacheAction::scanChrome() {
-    QString local_app_data = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation);
-    QString cache_path = local_app_data + "/Google/Chrome/User Data/Default/Cache";
     
-    QDir cache_dir(cache_path);
-    if (!cache_dir.exists()) {
-        return;
-    }
-
-    BrowserCache cache;
-    cache.browser = BrowserType::Chrome;
-    cache.browser_name = "Google Chrome";
-    cache.cache_path = cache_path;
-    cache.size = calculateCacheSize(cache_path, cache.file_count);
-    cache.is_running = isBrowserRunning("chrome.exe");
-
-    if (cache.size > 0) {
-        m_caches.push_back(cache);
-        m_total_bytes += cache.size;
-        m_total_files += cache.file_count;
-    }
-}
-
-void ClearBrowserCacheAction::scanFirefox() {
-    QString local_app_data = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation);
-    QString profiles_path = local_app_data + "/Mozilla/Firefox/Profiles";
+    QString message;
+    QString log_output = "╔════════════════════════════════════════════════════════════════╗\n";
+    log_output += "║          BROWSER CACHE CLEARING - RESULTS                     ║\n";
+    log_output += "╠════════════════════════════════════════════════════════════════╣\n";
     
-    QDir profiles_dir(profiles_path);
-    if (!profiles_dir.exists()) {
-        return;
-    }
-
-    // Scan all profiles
-    QStringList profiles = profiles_dir.entryList(QDir::Dirs | QDir::NoDotAndDotDot);
-    for (const QString& profile : profiles) {
-        QString cache_path = profiles_path + "/" + profile + "/cache2";
+    if (cleared_count > 0) {
+        result.success = true;
         
-        QDir cache_dir(cache_path);
-        if (!cache_dir.exists()) {
-            continue;
-        }
-
-        BrowserCache cache;
-        cache.browser = BrowserType::Firefox;
-        cache.browser_name = "Mozilla Firefox";
-        cache.cache_path = cache_path;
-        cache.size = calculateCacheSize(cache_path, cache.file_count);
-        cache.is_running = isBrowserRunning("firefox.exe");
-
-        if (cache.size > 0) {
-            m_caches.push_back(cache);
-            m_total_bytes += cache.size;
-            m_total_files += cache.file_count;
-        }
-    }
-}
-
-void ClearBrowserCacheAction::scanEdge() {
-    QString local_app_data = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation);
-    QString cache_path = local_app_data + "/Microsoft/Edge/User Data/Default/Cache";
-    
-    QDir cache_dir(cache_path);
-    if (!cache_dir.exists()) {
-        return;
-    }
-
-    BrowserCache cache;
-    cache.browser = BrowserType::Edge;
-    cache.browser_name = "Microsoft Edge";
-    cache.cache_path = cache_path;
-    cache.size = calculateCacheSize(cache_path, cache.file_count);
-    cache.is_running = isBrowserRunning("msedge.exe");
-
-    if (cache.size > 0) {
-        m_caches.push_back(cache);
-        m_total_bytes += cache.size;
-        m_total_files += cache.file_count;
-    }
-}
-
-void ClearBrowserCacheAction::scanInternetExplorer() {
-    QString local_app_data = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation);
-    QString cache_path = local_app_data + "/Microsoft/Windows/INetCache";
-    
-    QDir cache_dir(cache_path);
-    if (!cache_dir.exists()) {
-        return;
-    }
-
-    BrowserCache cache;
-    cache.browser = BrowserType::InternetExplorer;
-    cache.browser_name = "Internet Explorer";
-    cache.cache_path = cache_path;
-    cache.size = calculateCacheSize(cache_path, cache.file_count);
-    cache.is_running = isBrowserRunning("iexplore.exe");
-
-    if (cache.size > 0) {
-        m_caches.push_back(cache);
-        m_total_bytes += cache.size;
-        m_total_files += cache.file_count;
-    }
-}
-
-bool ClearBrowserCacheAction::isBrowserRunning(const QString& process_name) const {
-#ifdef _WIN32
-    HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-    if (snapshot == INVALID_HANDLE_VALUE) {
-        return false;
-    }
-
-    PROCESSENTRY32W entry;
-    entry.dwSize = sizeof(entry);
-
-    bool found = false;
-    if (Process32FirstW(snapshot, &entry)) {
-        do {
-            QString exe_name = QString::fromWCharArray(entry.szExeFile);
-            if (exe_name.compare(process_name, Qt::CaseInsensitive) == 0) {
-                found = true;
-                break;
-            }
-        } while (Process32NextW(snapshot, &entry));
-    }
-
-    CloseHandle(snapshot);
-    return found;
-#else
-    Q_UNUSED(process_name)
-    return false;
-#endif
-}
-
-qint64 ClearBrowserCacheAction::calculateCacheSize(const QString& cache_path, int& file_count) {
-    qint64 total_size = 0;
-    file_count = 0;
-
-    QDirIterator it(cache_path, QDir::Files, QDirIterator::Subdirectories);
-    while (it.hasNext()) {
-        if (isCancelled()) {
-            break;
-        }
-
-        it.next();
-        QFileInfo file_info = it.fileInfo();
-        total_size += file_info.size();
-        file_count++;
-    }
-
-    return total_size;
-}
-
-qint64 ClearBrowserCacheAction::deleteCacheDirectory(const QString& cache_path) {
-    qint64 total_deleted = 0;
-
-    QDir dir(cache_path);
-    if (!dir.exists()) {
-        return 0;
-    }
-
-    QFileInfoList entries = dir.entryInfoList(QDir::Files | QDir::Dirs | QDir::NoDotAndDotDot);
-    
-    for (const QFileInfo& entry : entries) {
-        if (isCancelled()) {
-            break;
-        }
-
-        if (entry.isDir()) {
-            total_deleted += deleteCacheDirectory(entry.absoluteFilePath());
-            QDir subdir(entry.absoluteFilePath());
-            subdir.removeRecursively();
+        // Format size for display
+        QString size_str;
+        if (size_cleared >= 1073741824LL) { // 1GB
+            size_str = QString::number(size_cleared / 1073741824.0, 'f', 2) + " GB";
+        } else if (size_cleared >= 1048576LL) { // 1MB
+            size_str = QString::number(size_cleared / 1048576.0, 'f', 2) + " MB";
+        } else if (size_cleared >= 1024LL) { // 1KB
+            size_str = QString::number(size_cleared / 1024.0, 'f', 2) + " KB";
         } else {
-            qint64 file_size = entry.size();
-            if (QFile::remove(entry.absoluteFilePath())) {
-                total_deleted += file_size;
-            }
+            size_str = QString::number(size_cleared) + " bytes";
         }
+        
+        message = QString("Successfully cleared %1 browser(s)").arg(cleared_count);
+        log_output += QString("║ Total Cleared: %1\n").arg(size_str).leftJustified(66) + "║\n";
+        log_output += QString("║ Browsers Processed: %1/%2\n").arg(cleared_count).arg(cleared_count + blocked_count).leftJustified(66) + "║\n";
+        log_output += "╠════════════════════════════════════════════════════════════════╣\n";
+        
+        for (const QString& detail : details) {
+            log_output += QString("║ %1\n").arg(detail).leftJustified(66) + "║\n";
+        }
+        
+        if (blocked_count > 0) {
+            log_output += "╠════════════════════════════════════════════════════════════════╣\n";
+            log_output += QString("║ Skipped (%1 running): %2\n").arg(blocked_count).arg(blocked_browsers.join(", ")).leftJustified(66) + "║\n";
+        }
+        
+        log_output += "╠════════════════════════════════════════════════════════════════╣\n";
+        log_output += QString("║ Completed in: %1 seconds\n").arg(duration_ms / 1000.0, 0, 'f', 2).leftJustified(66) + "║\n";
+        log_output += "╚════════════════════════════════════════════════════════════════╝\n";
+        
+        result.message = message;
+        result.log = log_output;
+        setStatus(ActionStatus::Success);
+    } else {
+        result.success = false;
+        
+        if (blocked_count > 0) {
+            message = QString("All %1 detected browser(s) are currently running").arg(blocked_count);
+            log_output += QString("║ Cannot clear cache - browsers running:                       ║\n");
+            log_output += QString("║ %1\n").arg(blocked_browsers.join(", ")).leftJustified(66) + "║\n";
+            log_output += "╠════════════════════════════════════════════════════════════════╣\n";
+            log_output += QString("║ Action Required: Close all browsers and retry                ║\n");
+        } else {
+            message = "No browser caches found on this system";
+            log_output += QString("║ No cache directories detected                                  ║\n");
+            log_output += "╠════════════════════════════════════════════════════════════════╣\n";
+            log_output += QString("║ Checked browsers: Chrome, Edge, Firefox, Brave, Opera, Vivaldi ║\n");
+        }
+        
+        log_output += "╚════════════════════════════════════════════════════════════════╝\n";
+        
+        result.message = message;
+        result.log = log_output;
+        setStatus(ActionStatus::Failed);
     }
-
-    return total_deleted;
+    
+    setExecutionResult(result);
+    Q_EMIT executionComplete(result);
 }
 
 } // namespace sak

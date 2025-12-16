@@ -1,5 +1,8 @@
 cmake_minimum_required(VERSION 3.28 FATAL_ERROR)
 
+# Load persistent build configuration (vcpkg, Qt, static runtime)
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/SAK_BuildConfig.cmake)
+
 # Project definition
 project(SAK_Utility 
     VERSION 0.5.5
@@ -40,6 +43,9 @@ endif()
 
 # MSVC Compiler Flags
 if(MSVC)
+    # Static Runtime Linking - Embed MSVC runtime (fixes MSVCP140.DLL, VCRUNTIME140.DLL, VCRUNTIME140_1.DLL errors)
+    # NOTE: CMAKE_MSVC_RUNTIME_LIBRARY is now set in cmake/SAK_BuildConfig.cmake
+    
     # Warning Level 4, Warnings as Errors, Strict Conformance
     add_compile_options(
         /W4                 # Warning level 4
@@ -53,6 +59,7 @@ if(MSVC)
         /utf-8              # UTF-8 source and execution charset
         /external:anglebrackets  # Treat <> includes as external
         /external:W0        # Disable warnings for external headers
+        /MT$<$<CONFIG:Debug>:d>  # Static runtime: /MT (Release) or /MTd (Debug)
     )
     
     # Release optimizations
@@ -207,13 +214,13 @@ set(CORE_SOURCES
     src/core/file_hash.cpp
     src/core/file_scanner.cpp
     src/core/path_utils.cpp
-    src/core/platform_interface.cpp
     src/core/config_manager.cpp
     src/core/input_validator.cpp
     src/core/secure_memory.cpp
     src/core/encryption.cpp
     src/core/keep_awake.cpp
     src/core/elevation_manager.cpp
+    src/core/bundled_tools_manager.cpp
     src/core/app_scanner.cpp
     src/core/chocolatey_manager.cpp
     src/core/package_matcher.cpp
@@ -241,6 +248,17 @@ set(CORE_SOURCES
     src/core/decompressor_factory.cpp
     src/core/quick_action.cpp
     src/core/quick_action_controller.cpp
+    include/sak/logger.h
+    include/sak/file_hash.h
+    include/sak/file_scanner.h
+    include/sak/path_utils.h
+    include/sak/input_validator.h
+    include/sak/secure_memory.h
+    include/sak/encryption.h
+    include/sak/keep_awake.h
+    include/sak/elevation_manager.h
+    include/sak/bundled_tools_manager.h
+    include/sak/error_codes.h
     include/sak/config_manager.h
     include/sak/app_scanner.h
     include/sak/drive_scanner.h
@@ -370,18 +388,105 @@ set(GUI_SOURCES
     include/sak/image_flasher_settings_dialog.h
     src/gui/quick_actions_panel.cpp
     include/sak/quick_actions_panel.h
+    src/core/quick_action.cpp
     include/sak/quick_action.h
+    src/core/quick_action_controller.cpp
     include/sak/quick_action_controller.h
 )
 
 # Quick Actions
 set(QUICK_ACTIONS_SOURCES
+    # Factory
+    src/actions/action_factory.cpp
+    include/sak/actions/action_factory.h
+    
+    # System Optimization (8 actions)
     src/actions/disk_cleanup_action.cpp
-    src/actions/quickbooks_backup_action.cpp
     src/actions/clear_browser_cache_action.cpp
+    src/actions/defragment_drives_action.cpp
+    src/actions/clear_windows_update_cache_action.cpp
+    src/actions/disable_startup_programs_action.cpp
+    src/actions/clear_event_logs_action.cpp
+    src/actions/optimize_power_settings_action.cpp
+    src/actions/disable_visual_effects_action.cpp
+    
+    # Quick Backups (8 actions)
+    src/actions/quickbooks_backup_action.cpp
+    src/actions/browser_profile_backup_action.cpp
+    src/actions/outlook_backup_action.cpp
+    src/actions/sticky_notes_backup_action.cpp
+    src/actions/saved_game_data_backup_action.cpp
+    src/actions/tax_software_backup_action.cpp
+    src/actions/photo_management_backup_action.cpp
+    src/actions/development_configs_backup_action.cpp
+    
+    # Maintenance (8 actions)
+    src/actions/check_disk_health_action.cpp
+    src/actions/update_all_apps_action.cpp
+    src/actions/windows_update_action.cpp
+    src/actions/verify_system_files_action.cpp
+    src/actions/check_disk_errors_action.cpp
+    src/actions/rebuild_icon_cache_action.cpp
+    src/actions/reset_network_action.cpp
+    src/actions/clear_print_spooler_action.cpp
+    
+    # Troubleshooting (6 actions)
+    src/actions/generate_system_report_action.cpp
+    src/actions/check_bloatware_action.cpp
+    src/actions/test_network_speed_action.cpp
+    src/actions/scan_malware_action.cpp
+    src/actions/repair_windows_store_action.cpp
+    src/actions/fix_audio_issues_action.cpp
+    
+    # Emergency Recovery (8 actions)
+    src/actions/backup_browser_data_action.cpp
+    src/actions/backup_email_data_action.cpp
+    src/actions/create_restore_point_action.cpp
+    src/actions/export_registry_keys_action.cpp
+    src/actions/backup_activation_keys_action.cpp
+    src/actions/screenshot_settings_action.cpp
+    src/actions/backup_desktop_wallpaper_action.cpp
+    src/actions/backup_printer_settings_action.cpp
+    
+    # Headers for all actions
     include/sak/actions/disk_cleanup_action.h
-    include/sak/actions/quickbooks_backup_action.h
     include/sak/actions/clear_browser_cache_action.h
+    include/sak/actions/defragment_drives_action.h
+    include/sak/actions/clear_windows_update_cache_action.h
+    include/sak/actions/disable_startup_programs_action.h
+    include/sak/actions/clear_event_logs_action.h
+    include/sak/actions/optimize_power_settings_action.h
+    include/sak/actions/disable_visual_effects_action.h
+    include/sak/actions/quickbooks_backup_action.h
+    include/sak/actions/browser_profile_backup_action.h
+    include/sak/actions/outlook_backup_action.h
+    include/sak/actions/sticky_notes_backup_action.h
+    include/sak/actions/saved_game_data_backup_action.h
+    include/sak/actions/tax_software_backup_action.h
+    include/sak/actions/photo_management_backup_action.h
+    include/sak/actions/development_configs_backup_action.h
+    include/sak/actions/check_disk_health_action.h
+    include/sak/actions/update_all_apps_action.h
+    include/sak/actions/windows_update_action.h
+    include/sak/actions/verify_system_files_action.h
+    include/sak/actions/check_disk_errors_action.h
+    include/sak/actions/rebuild_icon_cache_action.h
+    include/sak/actions/reset_network_action.h
+    include/sak/actions/clear_print_spooler_action.h
+    include/sak/actions/generate_system_report_action.h
+    include/sak/actions/check_bloatware_action.h
+    include/sak/actions/test_network_speed_action.h
+    include/sak/actions/scan_malware_action.h
+    include/sak/actions/repair_windows_store_action.h
+    include/sak/actions/fix_audio_issues_action.h
+    include/sak/actions/backup_browser_data_action.h
+    include/sak/actions/backup_email_data_action.h
+    include/sak/actions/create_restore_point_action.h
+    include/sak/actions/export_registry_keys_action.h
+    include/sak/actions/backup_activation_keys_action.h
+    include/sak/actions/screenshot_settings_action.h
+    include/sak/actions/backup_desktop_wallpaper_action.h
+    include/sak/actions/backup_printer_settings_action.h
 )
 
 # Main entry point
@@ -525,9 +630,49 @@ if(PLATFORM_WINDOWS)
     find_program(WINDEPLOYQT windeployqt HINTS "${Qt6_DIR}/../../../bin")
     if(WINDEPLOYQT)
         add_custom_command(TARGET sak_utility POST_BUILD
-            COMMAND ${WINDEPLOYQT} $<TARGET_FILE:sak_utility>
+            COMMAND ${WINDEPLOYQT} --release --no-translations $<TARGET_FILE:sak_utility>
             COMMENT "Running windeployqt..."
         )
+    endif()
+    
+    # Bundle MSVC runtime DLLs (required by Qt DLLs)
+    # Find and copy the runtime DLLs to the output directory
+    set(CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS_SKIP TRUE)
+    include(InstallRequiredSystemLibraries)
+    
+    if(CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS)
+        foreach(lib ${CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS})
+            add_custom_command(TARGET sak_utility POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${lib}"
+                    "$<TARGET_FILE_DIR:sak_utility>"
+                COMMENT "Bundling ${lib}..."
+            )
+        endforeach()
+    else()
+        # Fallback: manually locate MSVC runtime DLLs
+        set(MSVC_REDIST_DIR "C:/Program Files/Microsoft Visual Studio/2022/Preview/VC/Redist/MSVC")
+        file(GLOB MSVC_VERSIONS "${MSVC_REDIST_DIR}/*")
+        list(SORT MSVC_VERSIONS)
+        list(REVERSE MSVC_VERSIONS)
+        list(GET MSVC_VERSIONS 0 LATEST_MSVC)
+        
+        set(MSVC_DLLS
+            "${LATEST_MSVC}/x64/Microsoft.VC143.CRT/msvcp140.dll"
+            "${LATEST_MSVC}/x64/Microsoft.VC143.CRT/vcruntime140.dll"
+            "${LATEST_MSVC}/x64/Microsoft.VC143.CRT/vcruntime140_1.dll"
+        )
+        
+        foreach(dll ${MSVC_DLLS})
+            if(EXISTS "${dll}")
+                add_custom_command(TARGET sak_utility POST_BUILD
+                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                        "${dll}"
+                        "$<TARGET_FILE_DIR:sak_utility>"
+                    COMMENT "Bundling $(notdir ${dll})..."
+                )
+            endif()
+        endforeach()
     endif()
 elseif(PLATFORM_MACOS)
     # Use macdeployqt

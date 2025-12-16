@@ -3,9 +3,7 @@
 
 #include "sak/quick_actions_panel.h"
 #include "sak/quick_action_controller.h"
-#include "sak/actions/disk_cleanup_action.h"
-#include "sak/actions/quickbooks_backup_action.h"
-#include "sak/actions/clear_browser_cache_action.h"
+#include "sak/actions/action_factory.h"
 
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -19,6 +17,8 @@
 #include <QProgressBar>
 #include <QTextEdit>
 #include <QFileDialog>
+#include <QDialog>
+#include <QDialogButtonBox>
 #include <QMessageBox>
 #include <QSettings>
 #include <QDateTime>
@@ -49,8 +49,8 @@ QuickActionsPanel::QuickActionsPanel(QWidget* parent)
     connect(m_controller, &QuickActionController::logMessage,
             this, &QuickActionsPanel::appendLog, Qt::QueuedConnection);
 
-    // Auto-scan on startup
-    QTimer::singleShot(500, this, &QuickActionsPanel::refreshAllScans);
+    // Note: Scans only triggered by user clicking Refresh or individual action buttons
+    // Not all actions apply to every PC, so no auto-scan on startup
 }
 
 QuickActionsPanel::~QuickActionsPanel() {
@@ -102,7 +102,13 @@ void QuickActionsPanel::setupUi() {
     settings_layout->addWidget(m_backup_location_edit, 0, 1);
     settings_layout->addWidget(browse_button, 0, 2);
 
-    // Checkboxes
+    // Settings button
+    auto* settings_button = new QPushButton("Settings...");
+    settings_button->setMaximumWidth(100);
+    connect(settings_button, &QPushButton::clicked, this, &QuickActionsPanel::showSettingsDialog);
+    settings_layout->addWidget(settings_button, 1, 2);
+
+    // Initialize checkboxes (hidden in main UI)
     m_confirm_checkbox = new QCheckBox("Confirm before executing actions");
     m_confirm_checkbox->setChecked(true);
     m_notifications_checkbox = new QCheckBox("Show completion notifications");
@@ -111,11 +117,6 @@ void QuickActionsPanel::setupUi() {
     m_logging_checkbox->setChecked(true);
     m_compression_checkbox = new QCheckBox("Compress backups (saves space)");
     m_compression_checkbox->setChecked(true);
-
-    settings_layout->addWidget(m_confirm_checkbox, 1, 0, 1, 3);
-    settings_layout->addWidget(m_notifications_checkbox, 2, 0, 1, 3);
-    settings_layout->addWidget(m_logging_checkbox, 3, 0, 1, 3);
-    settings_layout->addWidget(m_compression_checkbox, 4, 0, 1, 3);
 
     main_layout->addWidget(settings_group);
 
@@ -181,15 +182,11 @@ void QuickActionsPanel::setupUi() {
         }
     });
 
-    auto* refresh_button = new QPushButton("Refresh All Scans");
-    connect(refresh_button, &QPushButton::clicked, this, &QuickActionsPanel::refreshAllScans);
-
     action_buttons_layout->addWidget(m_open_folder_button);
     action_buttons_layout->addWidget(m_view_log_button);
     action_buttons_layout->addStretch();
-    action_buttons_layout->addWidget(refresh_button);
 
-    status_layout->addLayout(action_buttons_layout);
+    status_layout->addWidget(status_group);
 
     main_layout->addWidget(status_group);
 
@@ -202,17 +199,17 @@ void QuickActionsPanel::setupUi() {
 }
 
 void QuickActionsPanel::createActions() {
-    // Register all actions with the controller
+    QString backup_location = m_backup_location_edit->text();
+    if (backup_location.isEmpty()) {
+        backup_location = "C:/SAK_Backups";
+    }
     
-    // System Optimization
-    m_controller->registerAction(std::make_unique<DiskCleanupAction>());
-    m_controller->registerAction(std::make_unique<ClearBrowserCacheAction>());
+    // Create all actions using factory
+    auto actions = ActionFactory::createAllActions(backup_location);
+    for (auto& action : actions) {
+        m_controller->registerAction(std::move(action));
+    }
     
-    // Quick Backups
-    m_controller->registerAction(std::make_unique<QuickBooksBackupAction>(
-        m_backup_location_edit->text()));
-    
-    // Create category sections after registering actions
     createCategorySections();
 }
 
@@ -305,6 +302,10 @@ QPushButton* QuickActionsPanel::createActionButton(QuickAction* action) {
     auto* button = new QPushButton();
     button->setMinimumHeight(60);
     button->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    
+    // Set initial text
+    QString text = QString("%1\n%2").arg(action->name(), action->description());
+    button->setText(text);
     button->setStyleSheet(
         "QPushButton {"
         "  text-align: left;"
@@ -341,8 +342,36 @@ void QuickActionsPanel::updateActionButton(QuickAction* action) {
         return;
     }
 
-    QString text = QString("<b>%1</b><br><span style='font-size:10px; color:#666;'>%2</span>")
-                      .arg(action->name(), action->description());
+    // Build button text with status indicator and scan results
+    QString status_icon;
+    switch (action->status()) {
+        case QuickAction::ActionStatus::Idle:
+            status_icon = "[Idle]";
+            break;
+        case QuickAction::ActionStatus::Scanning:
+            status_icon = "[Scanning...]";
+            break;
+        case QuickAction::ActionStatus::Ready:
+            status_icon = action->lastScanResult().applicable ? "[Ready]" : "[N/A]";
+            break;
+        case QuickAction::ActionStatus::Running:
+            status_icon = "[Running]";
+            button->setEnabled(false);
+            break;
+        case QuickAction::ActionStatus::Success:
+            status_icon = "[Success]";
+            break;
+        case QuickAction::ActionStatus::Failed:
+            status_icon = "[Failed]";
+            break;
+        case QuickAction::ActionStatus::Cancelled:
+            status_icon = "[Cancelled]";
+            break;
+    }
+
+    // Build button text
+    QString text = QString("%1 %2\n%3")
+                      .arg(status_icon, action->name(), action->description());
 
     // Add scan result if available
     if (action->status() == QuickAction::ActionStatus::Ready) {
@@ -351,42 +380,15 @@ void QuickActionsPanel::updateActionButton(QuickAction* action) {
             QString size_text = formatBytes(scan_result.bytes_affected);
             qint64 est_seconds = scan_result.estimated_duration_ms / 1000;
             QString time_text = formatDuration(est_seconds);
-            text += QString("<br><span style='font-size:9px; color:#0078d4;'>%1 • %2 estimated</span>")
+            text += QString("\n%1 • %2 estimated")
                        .arg(size_text, time_text);
         } else {
-            text += "<br><span style='font-size:9px; color:#999;'>Not applicable</span>";
+            text += "\nNot applicable";
             button->setEnabled(false);
         }
     }
 
-    // Status indicator
-    QString status_icon;
-    switch (action->status()) {
-        case QuickAction::ActionStatus::Idle:
-            status_icon = "⚪";
-            break;
-        case QuickAction::ActionStatus::Scanning:
-            status_icon = "🔍";
-            break;
-        case QuickAction::ActionStatus::Ready:
-            status_icon = action->lastScanResult().applicable ? "✅" : "❌";
-            break;
-        case QuickAction::ActionStatus::Running:
-            status_icon = "⏳";
-            button->setEnabled(false);
-            break;
-        case QuickAction::ActionStatus::Success:
-            status_icon = "✔️";
-            break;
-        case QuickAction::ActionStatus::Failed:
-            status_icon = "❌";
-            break;
-        case QuickAction::ActionStatus::Cancelled:
-            status_icon = "⚠️";
-            break;
-    }
-
-    button->setText(status_icon + " " + text);
+    button->setText(text);
 }
 
 void QuickActionsPanel::onActionClicked(QuickAction* action) {
@@ -396,22 +398,10 @@ void QuickActionsPanel::onActionClicked(QuickAction* action) {
 
     // Check if confirmation needed
     if (m_confirm_checkbox->isChecked()) {
-        const auto& scan_result = action->lastScanResult();
-        QString warning_text;
-        if (!scan_result.warning.isEmpty()) {
-            warning_text = QString("\n\nWarning: %1").arg(scan_result.warning);
-        }
-
         QMessageBox confirm_box(this);
         confirm_box.setWindowTitle("Confirm Action");
         confirm_box.setText(QString("Execute %1?").arg(action->name()));
-        confirm_box.setInformativeText(
-            QString("%1\n\nThis will affect approximately %2 in %3 files.%4")
-                .arg(action->description())
-                .arg(formatBytes(scan_result.bytes_affected))
-                .arg(scan_result.files_count)
-                .arg(warning_text)
-        );
+        confirm_box.setInformativeText(action->description());
         confirm_box.setStandardButtons(QMessageBox::Yes | QMessageBox::No);
         confirm_box.setDefaultButton(QMessageBox::No);
         confirm_box.setIcon(QMessageBox::Question);
@@ -613,6 +603,40 @@ void QuickActionsPanel::onViewLog() {
 
 void QuickActionsPanel::onSettingChanged() {
     saveSettings();
+}
+
+void QuickActionsPanel::showSettingsDialog() {
+    QDialog dialog(this);
+    dialog.setWindowTitle("Quick Actions Settings");
+    dialog.setMinimumWidth(400);
+    
+    auto* layout = new QVBoxLayout(&dialog);
+    
+    auto* group = new QGroupBox("Preferences");
+    auto* group_layout = new QVBoxLayout(group);
+    
+    // Temporarily add checkboxes to dialog
+    group_layout->addWidget(m_confirm_checkbox);
+    group_layout->addWidget(m_notifications_checkbox);
+    group_layout->addWidget(m_logging_checkbox);
+    group_layout->addWidget(m_compression_checkbox);
+    
+    layout->addWidget(group);
+    layout->addStretch();
+    
+    // Buttons
+    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
+    connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    layout->addWidget(buttons);
+    
+    dialog.exec();
+    
+    // Hide checkboxes after dialog closes
+    for (auto* checkbox : {m_confirm_checkbox, m_notifications_checkbox, m_logging_checkbox, m_compression_checkbox}) {
+        checkbox->setParent(this);
+        checkbox->hide();
+    }
 }
 
 } // namespace sak
