@@ -29,6 +29,8 @@ set(UNIT_TESTS
     test_migration_report
     test_file_hash
     test_user_data_manager
+    test_input_validator
+    test_secure_memory
 )
 
 foreach(test_name ${UNIT_TESTS})
