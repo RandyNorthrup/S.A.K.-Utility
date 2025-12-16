@@ -93,6 +93,9 @@ set(ACTION_TESTS
     test_defragment_drives_action
     test_create_restore_point_action
     test_disable_startup_programs_action
+    test_clear_windows_update_cache_action
+    test_rebuild_icon_cache_action
+    test_disable_visual_effects_action
 )
 
 # ============================================================================
