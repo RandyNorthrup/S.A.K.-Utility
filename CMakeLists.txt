@@ -767,7 +767,9 @@ target_include_directories(test_app_scanner PRIVATE
 add_executable(test_chocolatey_manager
     tests/test_chocolatey_manager.cpp
     src/core/chocolatey_manager.cpp
+    src/core/logger.cpp
     include/sak/chocolatey_manager.h
+    include/sak/logger.h
 )
 
 set_target_properties(test_chocolatey_manager PROPERTIES
@@ -787,7 +789,9 @@ target_include_directories(test_chocolatey_manager PRIVATE
 add_executable(test_choco_install
     tests/test_choco_install.cpp
     src/core/chocolatey_manager.cpp
+    src/core/logger.cpp
     include/sak/chocolatey_manager.h
+    include/sak/logger.h
 )
 
 set_target_properties(test_choco_install PROPERTIES
@@ -808,8 +812,10 @@ add_executable(test_integration_phase1_2
     tests/test_integration_phase1_2.cpp
     src/core/app_scanner.cpp
     src/core/chocolatey_manager.cpp
+    src/core/logger.cpp
     include/sak/app_scanner.h
     include/sak/chocolatey_manager.h
+    include/sak/logger.h
 )
 
 set_target_properties(test_integration_phase1_2 PROPERTIES
@@ -831,9 +837,11 @@ add_executable(test_package_matcher
     src/core/app_scanner.cpp
     src/core/chocolatey_manager.cpp
     src/core/package_matcher.cpp
+    src/core/logger.cpp
     include/sak/app_scanner.h
     include/sak/chocolatey_manager.h
     include/sak/package_matcher.h
+    include/sak/logger.h
 )
 
 set_target_properties(test_package_matcher PROPERTIES
@@ -853,6 +861,7 @@ target_include_directories(test_package_matcher PRIVATE
 # Test executable: test_migration_report
 add_executable(test_migration_report
     tests/test_migration_report.cpp
+    src/core/logger.cpp
     src/core/app_scanner.cpp
     src/core/chocolatey_manager.cpp
     src/core/package_matcher.cpp
@@ -886,11 +895,13 @@ add_executable(test_app_migration_worker
     src/core/package_matcher.cpp
     src/core/migration_report.cpp
     src/core/app_migration_worker.cpp
+    src/core/logger.cpp
     include/sak/app_scanner.h
     include/sak/chocolatey_manager.h
     include/sak/package_matcher.h
     include/sak/migration_report.h
     include/sak/app_migration_worker.h
+    include/sak/logger.h
 )
 
 set_target_properties(test_app_migration_worker PROPERTIES
