@@ -82,6 +82,53 @@ set(ACTION_TESTS
     test_backup_browser_data_action
 )
 
+# ============================================================================
+# Unit Tests - Worker Classes
+# ============================================================================
+
+set(WORKER_TESTS
+    test_app_migration_worker
+    test_backup_worker
+)
+
+foreach(test_name ${WORKER_TESTS})
+    file(GLOB test_sources 
+        "${CMAKE_CURRENT_SOURCE_DIR}/unit/${test_name}.cpp"
+    )
+    
+    string(REPLACE "test_" "" worker_name "${test_name}")
+    file(GLOB impl_sources
+        "${CMAKE_CURRENT_SOURCE_DIR}/../src/workers/${worker_name}.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../include/sak/workers/${worker_name}.h"
+    )
+    
+    if(test_sources)
+        add_executable(${test_name} ${test_sources} ${impl_sources})
+        
+        set_target_properties(${test_name} PROPERTIES
+            AUTOMOC ON
+            RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+        )
+        
+        target_link_libraries(${test_name} PRIVATE
+            Qt6::Core
+            Qt6::Test
+            Qt6::Concurrent
+            ${PLATFORM_LIBS}
+        )
+        
+        target_include_directories(${test_name} PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/../include
+        )
+        
+        add_test(NAME ${test_name} 
+                 COMMAND ${test_name}
+                 WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+        
+        message(STATUS "Added worker test: ${test_name}")
+    endif()
+endforeach()
+
 foreach(test_name ${ACTION_TESTS})
     file(GLOB test_sources 
         "${CMAKE_CURRENT_SOURCE_DIR}/unit/actions/${test_name}.cpp"
