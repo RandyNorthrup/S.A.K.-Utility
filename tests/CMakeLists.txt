@@ -89,6 +89,8 @@ set(ACTION_TESTS
 set(WORKER_TESTS
     test_app_migration_worker
     test_backup_worker
+    test_user_profile_backup_worker
+    test_user_profile_restore_worker
 )
 
 foreach(test_name ${WORKER_TESTS})
