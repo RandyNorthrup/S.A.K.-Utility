@@ -133,6 +133,9 @@ set(UTILITY_TESTS
     test_windows_user_scanner
     test_permission_manager
     test_elevation_manager
+    test_drive_lock
+    test_keep_awake
+    test_bundled_tools_manager
 )
 
 # ============================================================================
