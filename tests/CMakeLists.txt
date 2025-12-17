@@ -102,6 +102,9 @@ set(ACTION_TESTS
     test_verify_system_files_action
     test_repair_windows_store_action
     test_backup_desktop_wallpaper_action
+    test_backup_email_data_action
+    test_backup_printer_settings_action
+    test_scan_malware_action
 )
 
 # ============================================================================
