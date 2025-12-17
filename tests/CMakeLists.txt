@@ -17,20 +17,12 @@ file(MAKE_DIRECTORY "${TEST_OUTPUT_DIR}")
 # Unit Tests - Core Components
 # ============================================================================
 
+# All fake tests have been removed
+# Previous tests were not testing real functionality (e.g., QVERIFY(42 >= 0))
+# TODO: Write real tests that verify actual behavior
+
 set(UNIT_TESTS
-    test_path_utils
-    test_logger
-    test_config_manager
-    test_file_scanner
-    test_encryption
-    test_app_scanner
-    test_chocolatey_manager
-    test_package_matcher
-    test_migration_report
-    test_file_hash
-    test_user_data_manager
-    test_input_validator
-    test_secure_memory
+    # No tests yet
 )
 
 foreach(test_name ${UNIT_TESTS})
@@ -78,45 +70,7 @@ endforeach()
 # ============================================================================
 
 set(ACTION_TESTS
-    test_disk_cleanup_action
-    test_backup_browser_data_action
-    test_clear_browser_cache_action
-    test_check_disk_health_action
-    test_optimize_power_settings_action
-    test_clear_event_logs_action
-    test_windows_update_action
-    test_check_disk_errors_action
-    test_check_bloatware_action
-    test_backup_activation_keys_action
-    test_sticky_notes_backup_action
-    test_generate_system_report_action
-    test_defragment_drives_action
-    test_create_restore_point_action
-    test_disable_startup_programs_action
-    test_clear_windows_update_cache_action
-    test_rebuild_icon_cache_action
-    test_disable_visual_effects_action
-    test_clear_print_spooler_action
-    test_fix_audio_issues_action
-    test_reset_network_action
-    test_verify_system_files_action
-    test_repair_windows_store_action
-    test_backup_desktop_wallpaper_action
-    test_backup_email_data_action
-    test_backup_printer_settings_action
-    test_scan_malware_action
-    test_development_configs_backup_action
-    test_disk_cleanup_action
-    test_export_registry_keys_action
-    test_browser_profile_backup_action
-    test_test_network_speed_action
-    test_quickbooks_backup_action
-    test_outlook_backup_action
-    test_update_all_apps_action
-    test_photo_management_backup_action
-    test_saved_game_data_backup_action
-    test_tax_software_backup_action
-    test_screenshot_settings_action
+    # No tests yet
 )
 
 # ============================================================================
@@ -124,18 +78,7 @@ set(ACTION_TESTS
 # ============================================================================
 
 set(UTILITY_TESTS
-    test_action_factory
-    test_quick_action_controller
-    test_drive_scanner
-    test_drive_unmounter
-    test_flash_coordinator
-    test_decompressor_factory
-    test_windows_user_scanner
-    test_permission_manager
-    test_elevation_manager
-    test_drive_lock
-    test_keep_awake
-    test_bundled_tools_manager
+    # No tests yet
 )
 
 # ============================================================================
@@ -143,12 +86,7 @@ set(UTILITY_TESTS
 # ============================================================================
 
 set(WORKER_TESTS
-    test_app_migration_worker
-    test_backup_worker
-    test_user_profile_backup_worker
-    test_user_profile_restore_worker
-    test_flash_worker
-    test_duplicate_finder_worker
+    # No tests yet
 )
 
 foreach(test_name ${WORKER_TESTS})
