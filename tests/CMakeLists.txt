@@ -120,6 +120,16 @@ set(ACTION_TESTS
 )
 
 # ============================================================================
+# Unit Tests - Utilities and Device Operations
+# ============================================================================
+
+set(UTILITY_TESTS
+    test_action_factory
+    test_quick_action_controller
+    test_drive_scanner
+)
+
+# ============================================================================
 # Unit Tests - Worker Classes
 # ============================================================================
 
@@ -210,6 +220,70 @@ foreach(test_name ${ACTION_TESTS})
                  WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
         
         message(STATUS "Added action test: ${test_name}")
+    endif()
+endforeach()
+
+foreach(test_name ${UTILITY_TESTS})
+    file(GLOB test_sources 
+        "${CMAKE_CURRENT_SOURCE_DIR}/unit/${test_name}.cpp"
+    )
+    
+    string(REPLACE "test_" "" util_name "${test_name}")
+    
+    # Build source file list based on utility type
+    set(impl_sources "")
+    
+    if(util_name STREQUAL "action_factory")
+        file(GLOB impl_sources
+            "${CMAKE_CURRENT_SOURCE_DIR}/../src/actions/action_factory.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/../include/sak/actions/action_factory.h"
+            "${CMAKE_CURRENT_SOURCE_DIR}/../src/actions/*.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/../include/sak/actions/*.h"
+        )
+    elseif(util_name STREQUAL "quick_action_controller")
+        file(GLOB impl_sources
+            "${CMAKE_CURRENT_SOURCE_DIR}/../src/quick_action_controller.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/../include/sak/quick_action_controller.h"
+            "${CMAKE_CURRENT_SOURCE_DIR}/../src/actions/action_factory.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/../src/actions/*.cpp"
+        )
+    elseif(util_name STREQUAL "drive_scanner")
+        file(GLOB impl_sources
+            "${CMAKE_CURRENT_SOURCE_DIR}/../src/drive_scanner.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/../include/sak/drive_scanner.h"
+        )
+    endif()
+    
+    # Add common dependencies
+    list(APPEND impl_sources
+        "${CMAKE_CURRENT_SOURCE_DIR}/../src/core/logger.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../include/sak/logger.h"
+    )
+    
+    if(test_sources)
+        add_executable(${test_name} ${test_sources} ${impl_sources})
+        
+        set_target_properties(${test_name} PROPERTIES
+            AUTOMOC ON
+            RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+        )
+        
+        target_link_libraries(${test_name} PRIVATE
+            Qt6::Core
+            Qt6::Test
+            Qt6::Concurrent
+            ${PLATFORM_LIBS}
+        )
+        
+        target_include_directories(${test_name} PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/../include
+        )
+        
+        add_test(NAME ${test_name} 
+                 COMMAND ${test_name}
+                 WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+        
+        message(STATUS "Added utility test: ${test_name}")
     endif()
 endforeach()
 
