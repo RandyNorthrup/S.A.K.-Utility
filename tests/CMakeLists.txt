@@ -108,6 +108,9 @@ set(ACTION_TESTS
     test_development_configs_backup_action
     test_disk_cleanup_action
     test_export_registry_keys_action
+    test_browser_profile_backup_action
+    test_test_network_speed_action
+    test_quickbooks_backup_action
 )
 
 # ============================================================================
