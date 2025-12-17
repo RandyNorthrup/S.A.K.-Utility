@@ -111,6 +111,9 @@ set(ACTION_TESTS
     test_browser_profile_backup_action
     test_test_network_speed_action
     test_quickbooks_backup_action
+    test_outlook_backup_action
+    test_update_all_apps_action
+    test_photo_management_backup_action
 )
 
 # ============================================================================
