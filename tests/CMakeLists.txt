@@ -105,6 +105,9 @@ set(ACTION_TESTS
     test_backup_email_data_action
     test_backup_printer_settings_action
     test_scan_malware_action
+    test_development_configs_backup_action
+    test_disk_cleanup_action
+    test_export_registry_keys_action
 )
 
 # ============================================================================
