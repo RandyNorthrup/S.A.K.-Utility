@@ -130,6 +130,9 @@ set(UTILITY_TESTS
     test_drive_unmounter
     test_flash_coordinator
     test_decompressor_factory
+    test_windows_user_scanner
+    test_permission_manager
+    test_elevation_manager
 )
 
 # ============================================================================
