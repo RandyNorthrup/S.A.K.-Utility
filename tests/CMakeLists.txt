@@ -114,6 +114,9 @@ set(ACTION_TESTS
     test_outlook_backup_action
     test_update_all_apps_action
     test_photo_management_backup_action
+    test_saved_game_data_backup_action
+    test_tax_software_backup_action
+    test_screenshot_settings_action
 )
 
 # ============================================================================
