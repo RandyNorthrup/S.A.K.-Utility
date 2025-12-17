@@ -127,6 +127,9 @@ set(UTILITY_TESTS
     test_action_factory
     test_quick_action_controller
     test_drive_scanner
+    test_drive_unmounter
+    test_flash_coordinator
+    test_decompressor_factory
 )
 
 # ============================================================================
