@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 #include "sak/actions/check_disk_health_action.h"
+#include "sak/process_runner.h"
 #include <QProcess>
 #include <QRegularExpression>
 #include <QStorageInfo>
@@ -53,15 +54,15 @@ QVector<CheckDiskHealthAction::DriveHealth> CheckDiskHealthAction::querySmartSta
         "}\n"
     );
     
-    QProcess proc;
-    proc.start("powershell.exe", QStringList() << "-Command" << ps_cmd);
-    
-    if (!proc.waitForFinished(15000)) {
+    ProcessResult proc = runPowerShell(ps_cmd, 15000);
+    if (proc.timed_out) {
         Q_EMIT executionProgress("Timeout querying disks", 50);
         return disks;
     }
-    
-    QString output = proc.readAllStandardOutput();
+    if (!proc.std_err.trimmed().isEmpty()) {
+        Q_EMIT logMessage("Disk SMART query warning: " + proc.std_err.trimmed());
+    }
+    QString output = proc.std_out;
     QStringList lines = output.split('\n', Qt::SkipEmptyParts);
     
     DriveHealth current_disk;
@@ -133,25 +134,60 @@ QVector<CheckDiskHealthAction::DriveHealth> CheckDiskHealthAction::querySmartSta
 }
 
 bool CheckDiskHealthAction::isDriveSSD(const QString& drive) {
-    QProcess proc;
     QString ps_cmd = QString("Get-PhysicalDisk | Where-Object {$_.DeviceID -eq %1} | Select-Object -ExpandProperty MediaType").arg(drive);
-    proc.start("powershell.exe", QStringList() << "-Command" << ps_cmd);
-    
-    if (!proc.waitForFinished(5000)) {
+    ProcessResult proc = runPowerShell(ps_cmd, 5000);
+    if (proc.timed_out) {
         return false;
     }
-    
-    QString output = proc.readAllStandardOutput().trimmed();
+    if (!proc.std_err.trimmed().isEmpty()) {
+        Q_EMIT logMessage("Disk media type warning: " + proc.std_err.trimmed());
+    }
+    QString output = proc.std_out.trimmed();
     return output.contains("SSD", Qt::CaseInsensitive) || output.contains("NVMe", Qt::CaseInsensitive);
 }
 
 void CheckDiskHealthAction::scan() {
-    // Scan is no longer used - actions execute immediately
-    setStatus(ActionStatus::Ready);
+    setStatus(ActionStatus::Scanning);
+
+    Q_EMIT scanProgress("Checking physical disk health...");
+
+    QString ps_cmd =
+        "try { "
+        "  $disks = Get-PhysicalDisk; "
+        "  $total = $disks.Count; "
+        "  $warn = ($disks | Where-Object {$_.HealthStatus -ne 'Healthy'}).Count; "
+        "  Write-Output \"TOTAL:$total\"; "
+        "  Write-Output \"WARN:$warn\"; "
+        "} catch { Write-Output \"TOTAL:0\"; Write-Output \"WARN:0\" }";
+    ProcessResult proc = runPowerShell(ps_cmd, 8000);
+    if (!proc.std_err.trimmed().isEmpty()) {
+        Q_EMIT logMessage("Disk health scan warning: " + proc.std_err.trimmed());
+    }
+    QString output = proc.std_out;
+    QStringList lines = output.split('\n', Qt::SkipEmptyParts);
+    int total = 0;
+    int warn = 0;
+    for (const auto& line : lines) {
+        QString trimmed = line.trimmed();
+        if (trimmed.startsWith("TOTAL:")) {
+            total = trimmed.mid(6).toInt();
+        } else if (trimmed.startsWith("WARN:")) {
+            warn = trimmed.mid(5).toInt();
+        }
+    }
+
     ScanResult result;
-    result.applicable = true;
-    result.summary = "Ready to check disk health";
+    result.applicable = total > 0;
+    result.summary = total > 0
+        ? QString("Disks detected: %1, warnings: %2").arg(total).arg(warn)
+        : "No physical disks detected";
+    result.details = "Run full scan to view SMART and reliability counters";
+    if (warn > 0) {
+        result.warning = "One or more disks report warnings or unhealthy status";
+    }
+
     setScanResult(result);
+    setStatus(ActionStatus::Ready);
     Q_EMIT scanComplete(result);
 }
 

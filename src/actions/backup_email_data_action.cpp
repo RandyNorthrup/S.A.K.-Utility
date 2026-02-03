@@ -100,9 +100,9 @@ void BackupEmailDataAction::scan() {
     //
     // Note: Installation detection verifies email client executables before scanning data files.
     
-    setStatus(ActionStatus::Ready);
+    setStatus(ActionStatus::Scanning);
     
-    Q_EMIT executionProgress("Scanning for email applications...", 10);
+    Q_EMIT scanProgress("Scanning for email applications...");
     
     // Check for Outlook and Thunderbird installations
     bool outlook_found = QFile::exists("C:/Program Files/Microsoft Office/root/Office16/OUTLOOK.EXE") ||
@@ -129,6 +129,12 @@ void BackupEmailDataAction::scan() {
 
 void BackupEmailDataAction::execute() {
     if (isCancelled()) {
+        ExecutionResult result;
+        result.success = false;
+        result.message = "Email data backup cancelled";
+        setExecutionResult(result);
+        setStatus(ActionStatus::Cancelled);
+        Q_EMIT executionComplete(result);
         return;
     }
 
@@ -181,6 +187,16 @@ void BackupEmailDataAction::execute() {
     
     setStatus(ActionStatus::Running);
     QDateTime start_time = QDateTime::currentDateTime();
+
+    auto finish_cancelled = [this, &start_time]() {
+        ExecutionResult result;
+        result.success = false;
+        result.message = "Email data backup cancelled";
+        result.duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
+        setExecutionResult(result);
+        setStatus(ActionStatus::Cancelled);
+        Q_EMIT executionComplete(result);
+    };
     
     Q_EMIT executionProgress("Scanning for email data...", 10);
     
@@ -210,6 +226,10 @@ void BackupEmailDataAction::execute() {
                 QDirIterator it(path, QStringList() << "*.pst" << "*.ost" << "*.mbox", 
                               QDir::Files, QDirIterator::Subdirectories);
                 while (it.hasNext()) {
+                    if (isCancelled()) {
+                        finish_cancelled();
+                        return;
+                    }
                     it.next();
                     total_size += it.fileInfo().size();
                     total_files++;
@@ -244,7 +264,7 @@ void BackupEmailDataAction::execute() {
             
             while (it.hasNext()) {
                 if (isCancelled()) {
-                    setStatus(ActionStatus::Cancelled);
+                    finish_cancelled();
                     return;
                 }
                 

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 #include "sak/actions/rebuild_icon_cache_action.h"
+#include "sak/process_runner.h"
 #include <QProcess>
 #include <QThread>
 #include <QDir>
@@ -78,21 +79,21 @@ bool RebuildIconCacheAction::stopExplorer() {
     Q_EMIT executionProgress("Stopping Windows Explorer (Stop-Process)...", 20);
     
     QString ps_cmd = "Stop-Process -Name explorer -Force -ErrorAction SilentlyContinue";
-    
-    QProcess proc;
-    proc.start("powershell.exe", QStringList() << "-NoProfile" << "-Command" << ps_cmd);
-    proc.waitForFinished(5000);
+    ProcessResult proc = runPowerShell(ps_cmd, 5000);
+    if (!proc.std_err.trimmed().isEmpty()) {
+        Q_EMIT logMessage("Stop Explorer warning: " + proc.std_err.trimmed());
+    }
     
     // Give Explorer time to fully stop
     QThread::msleep(2000);
     
     // Verify Explorer is stopped
     QString check_cmd = "(Get-Process -Name explorer -ErrorAction SilentlyContinue | Measure-Object).Count";
-    QProcess check_proc;
-    check_proc.start("powershell.exe", QStringList() << "-NoProfile" << "-Command" << check_cmd);
-    check_proc.waitForFinished(3000);
-    
-    int count = check_proc.readAllStandardOutput().trimmed().toInt();
+    ProcessResult check_proc = runPowerShell(check_cmd, 3000);
+    if (!check_proc.std_err.trimmed().isEmpty()) {
+        Q_EMIT logMessage("Explorer check warning: " + check_proc.std_err.trimmed());
+    }
+    int count = check_proc.std_out.trimmed().toInt();
     return count == 0;
 }
 
@@ -110,7 +111,10 @@ int RebuildIconCacheAction::deleteCacheFiles(const QVector<CacheFileInfo>& files
             } else {
                 // Try PowerShell Remove-Item if QFile fails
                 QString ps_cmd = QString("Remove-Item -Path '%1' -Force -ErrorAction SilentlyContinue").arg(info.file_name);
-                QProcess::execute("powershell.exe", QStringList() << "-NoProfile" << "-Command" << ps_cmd);
+                ProcessResult proc = runPowerShell(ps_cmd, 5000);
+                if (!proc.std_err.trimmed().isEmpty()) {
+                    Q_EMIT logMessage("Cache delete warning for " + info.file_name + ": " + proc.std_err.trimmed());
+                }
                 
                 if (!QFile::exists(info.file_name)) {
                     deleted_count++;
@@ -127,21 +131,21 @@ bool RebuildIconCacheAction::startExplorer() {
     Q_EMIT executionProgress("Starting Windows Explorer...", 70);
     
     QString ps_cmd = "Start-Process explorer.exe";
-    
-    QProcess proc;
-    proc.start("powershell.exe", QStringList() << "-NoProfile" << "-Command" << ps_cmd);
-    proc.waitForFinished(5000);
+    ProcessResult proc = runPowerShell(ps_cmd, 5000);
+    if (!proc.std_err.trimmed().isEmpty()) {
+        Q_EMIT logMessage("Start Explorer warning: " + proc.std_err.trimmed());
+    }
     
     // Give Explorer time to start
     QThread::msleep(2000);
     
     // Verify Explorer is running
     QString check_cmd = "(Get-Process -Name explorer -ErrorAction SilentlyContinue | Measure-Object).Count";
-    QProcess check_proc;
-    check_proc.start("powershell.exe", QStringList() << "-NoProfile" << "-Command" << check_cmd);
-    check_proc.waitForFinished(3000);
-    
-    int count = check_proc.readAllStandardOutput().trimmed().toInt();
+    ProcessResult check_proc = runPowerShell(check_cmd, 3000);
+    if (!check_proc.std_err.trimmed().isEmpty()) {
+        Q_EMIT logMessage("Explorer check warning: " + check_proc.std_err.trimmed());
+    }
+    int count = check_proc.std_out.trimmed().toInt();
     return count > 0;
 }
 
@@ -160,18 +164,33 @@ bool RebuildIconCacheAction::refreshIconCache() {
                     "'@\n"
                     "[Shell32]::SHChangeNotify(0x8000000, 0, [IntPtr]::Zero, [IntPtr]::Zero)";
     
-    QProcess::execute("powershell.exe", QStringList() << "-NoProfile" << "-Command" << ps_cmd);
-    
-    return true;
+    ProcessResult proc = runPowerShell(ps_cmd, 5000);
+    if (!proc.std_err.trimmed().isEmpty()) {
+        Q_EMIT logMessage("Icon cache refresh warning: " + proc.std_err.trimmed());
+    }
+    return !proc.timed_out && proc.exit_code == 0;
 }
 
 void RebuildIconCacheAction::scan() {
-    // Scan is no longer used - actions execute immediately
-    setStatus(ActionStatus::Ready);
+    setStatus(ActionStatus::Scanning);
+
+    QVector<CacheFileInfo> cache_files = enumerateCacheFiles();
+    qint64 total_size = 0;
+    for (const CacheFileInfo& info : cache_files) {
+        total_size += info.size_bytes;
+    }
+
     ScanResult result;
-    result.applicable = true;
-    result.summary = "Ready to rebuild icon cache";
+    result.applicable = !cache_files.isEmpty();
+    result.files_count = cache_files.size();
+    result.bytes_affected = total_size;
+    result.summary = result.applicable
+        ? QString("Cache files: %1 (%2 KB)").arg(cache_files.size()).arg(total_size / 1024)
+        : "No icon cache files found";
+    result.details = "Rebuild will restart Explorer and refresh icon cache";
+
     setScanResult(result);
+    setStatus(ActionStatus::Ready);
     Q_EMIT scanComplete(result);
 }
 

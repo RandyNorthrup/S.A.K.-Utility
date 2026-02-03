@@ -354,7 +354,7 @@ void RestoreConfigurePage::setupUI()
         this
     );
     m_warningLabel->setWordWrap(true);
-    m_warningLabel->setStyleSheet("QLabel { color: #FF6B00; padding: 8px; background-color: #FFF3E0; border-radius: 4px; }");
+    m_warningLabel->setStyleSheet("QLabel { color: #b45309; padding: 10px; background-color: #fef3c7; border-radius: 10px; }");
     layout->addWidget(m_warningLabel, row, 0, 1, 3);
     
     layout->setRowStretch(row + 1, 1);

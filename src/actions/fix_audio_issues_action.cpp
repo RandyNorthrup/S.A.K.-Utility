@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 #include "sak/actions/fix_audio_issues_action.h"
+#include "sak/process_runner.h"
 #include <QProcess>
 #include <QThread>
 #include <QTextStream>
@@ -21,11 +22,11 @@ FixAudioIssuesAction::AudioServiceStatus FixAudioIssuesAction::checkAudioService
     
     QString ps_cmd = QString("Get-Service -Name %1 | Select-Object Status | Format-List").arg(service_name);
     
-    QProcess proc;
-    proc.start("powershell.exe", QStringList() << "-NoProfile" << "-Command" << ps_cmd);
-    proc.waitForFinished(5000);
-    
-    QString output = proc.readAllStandardOutput();
+    ProcessResult proc = runPowerShell(ps_cmd, 5000);
+    if (!proc.std_err.trimmed().isEmpty()) {
+        Q_EMIT logMessage("Audio service check warning: " + proc.std_err.trimmed());
+    }
+    QString output = proc.std_out;
     
     // Parse output
     QStringList lines = output.split('\n');
@@ -45,15 +46,18 @@ bool FixAudioIssuesAction::restartAudioService() {
     
     // Stop-Service with proper error handling
     QString stop_cmd = "Stop-Service -Name Audiosrv -Force -ErrorAction SilentlyContinue; Start-Sleep -Seconds 2";
-    QProcess::execute("powershell.exe", QStringList() << "-NoProfile" << "-Command" << stop_cmd);
+    ProcessResult stop_proc = runPowerShell(stop_cmd, 10000);
+    if (!stop_proc.std_err.trimmed().isEmpty()) {
+        Q_EMIT logMessage("AudioSrv stop warning: " + stop_proc.std_err.trimmed());
+    }
     
     // Start-Service with verification
     QString start_cmd = "Start-Service -Name Audiosrv; Get-Service -Name Audiosrv | Select-Object Status";
-    QProcess proc;
-    proc.start("powershell.exe", QStringList() << "-NoProfile" << "-Command" << start_cmd);
-    proc.waitForFinished(10000);
-    
-    QString output = proc.readAllStandardOutput();
+    ProcessResult proc = runPowerShell(start_cmd, 10000);
+    if (!proc.std_err.trimmed().isEmpty()) {
+        Q_EMIT logMessage("AudioSrv start warning: " + proc.std_err.trimmed());
+    }
+    QString output = proc.std_out;
     return output.contains("Running", Qt::CaseInsensitive);
 }
 
@@ -62,14 +66,17 @@ bool FixAudioIssuesAction::restartAudioEndpointBuilder() {
     Q_EMIT executionProgress("Restarting Audio Endpoint Builder...", 35);
     
     QString stop_cmd = "Stop-Service -Name AudioEndpointBuilder -Force -ErrorAction SilentlyContinue; Start-Sleep -Seconds 2";
-    QProcess::execute("powershell.exe", QStringList() << "-NoProfile" << "-Command" << stop_cmd);
+    ProcessResult stop_proc = runPowerShell(stop_cmd, 10000);
+    if (!stop_proc.std_err.trimmed().isEmpty()) {
+        Q_EMIT logMessage("AudioEndpointBuilder stop warning: " + stop_proc.std_err.trimmed());
+    }
     
     QString start_cmd = "Start-Service -Name AudioEndpointBuilder; Get-Service -Name AudioEndpointBuilder | Select-Object Status";
-    QProcess proc;
-    proc.start("powershell.exe", QStringList() << "-NoProfile" << "-Command" << start_cmd);
-    proc.waitForFinished(10000);
-    
-    QString output = proc.readAllStandardOutput();
+    ProcessResult proc = runPowerShell(start_cmd, 10000);
+    if (!proc.std_err.trimmed().isEmpty()) {
+        Q_EMIT logMessage("AudioEndpointBuilder start warning: " + proc.std_err.trimmed());
+    }
+    QString output = proc.std_out;
     return output.contains("Running", Qt::CaseInsensitive);
 }
 
@@ -79,11 +86,11 @@ int FixAudioIssuesAction::resetAudioDevices() {
     
     // Get count of audio devices
     QString count_cmd = "((Get-PnpDevice -Class 'AudioEndpoint','MEDIA' | Where-Object {$_.Status -ne 'Unknown'}) | Measure-Object).Count";
-    QProcess count_proc;
-    count_proc.start("powershell.exe", QStringList() << "-NoProfile" << "-Command" << count_cmd);
-    count_proc.waitForFinished(5000);
-    
-    int device_count = count_proc.readAllStandardOutput().trimmed().toInt();
+    ProcessResult count_proc = runPowerShell(count_cmd, 5000);
+    if (!count_proc.std_err.trimmed().isEmpty()) {
+        Q_EMIT logMessage("Audio device count warning: " + count_proc.std_err.trimmed());
+    }
+    int device_count = count_proc.std_out.trimmed().toInt();
     
     // Disable and re-enable audio devices
     QString reset_cmd = "$devices = Get-PnpDevice -Class 'AudioEndpoint','MEDIA' | Where-Object {$_.Status -ne 'Unknown'}; "
@@ -91,7 +98,10 @@ int FixAudioIssuesAction::resetAudioDevices() {
                        "Start-Sleep -Seconds 3; "
                        "$devices | Enable-PnpDevice -Confirm:$false -ErrorAction SilentlyContinue";
     
-    QProcess::execute("powershell.exe", QStringList() << "-NoProfile" << "-Command" << reset_cmd);
+    ProcessResult reset_proc = runPowerShell(reset_cmd, 20000);
+    if (!reset_proc.std_err.trimmed().isEmpty()) {
+        Q_EMIT logMessage("Audio device reset warning: " + reset_proc.std_err.trimmed());
+    }
     
     return device_count;
 }
@@ -102,20 +112,32 @@ QString FixAudioIssuesAction::checkUSBAudioDevices() {
     
     QString ps_cmd = "Get-PnpDevice -Class 'USB' | Where-Object {$_.FriendlyName -like '*Audio*'} | Select-Object Status,FriendlyName,InstanceId | Format-Table -AutoSize | Out-String -Width 200";
     
-    QProcess proc;
-    proc.start("powershell.exe", QStringList() << "-NoProfile" << "-Command" << ps_cmd);
-    proc.waitForFinished(5000);
-    
-    return proc.readAllStandardOutput();
+    ProcessResult proc = runPowerShell(ps_cmd, 5000);
+    if (!proc.std_err.trimmed().isEmpty()) {
+        Q_EMIT logMessage("USB audio check warning: " + proc.std_err.trimmed());
+    }
+    return proc.std_out;
 }
 
 void FixAudioIssuesAction::scan() {
-    // Scan is no longer used - actions execute immediately
-    setStatus(ActionStatus::Ready);
+    setStatus(ActionStatus::Scanning);
+
+    AudioServiceStatus audiosrv = checkAudioService("Audiosrv");
+    AudioServiceStatus endpoint = checkAudioService("AudioEndpointBuilder");
+
     ScanResult result;
     result.applicable = true;
-    result.summary = "Ready to fix audio issues";
+    result.summary = QString("Audio services: %1/%2 running")
+        .arg(audiosrv.is_running ? "AudioSrv" : "AudioSrv stopped")
+        .arg(endpoint.is_running ? "Endpoint" : "Endpoint stopped");
+    result.details = "Repair will restart services and reset audio devices";
+
+    if (!audiosrv.is_running || !endpoint.is_running) {
+        result.warning = "One or more audio services are stopped";
+    }
+
     setScanResult(result);
+    setStatus(ActionStatus::Ready);
     Q_EMIT scanComplete(result);
 }
 

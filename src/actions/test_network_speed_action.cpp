@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 #include "sak/actions/test_network_speed_action.h"
+#include "sak/process_runner.h"
 #include <QProcess>
 #include <QRegularExpression>
 
@@ -22,11 +23,11 @@ void TestNetworkSpeedAction::checkConnectivity() {
                              "Write-Output \"REMOTE_ADDR:$($_.RemoteAddress)\" "
                              "}");
     
-    QProcess proc;
-    proc.start("powershell.exe", QStringList() << "-NoProfile" << "-Command" << ps_cmd);
-    proc.waitForFinished(10000);
-    
-    QString output = proc.readAllStandardOutput();
+    ProcessResult proc = runPowerShell(ps_cmd, 10000);
+    if (!proc.std_err.trimmed().isEmpty()) {
+        Q_EMIT logMessage("Connectivity test warning: " + proc.std_err.trimmed());
+    }
+    QString output = proc.std_out;
     QStringList lines = output.split('\n');
     
     for (const QString& line : lines) {
@@ -83,11 +84,11 @@ void TestNetworkSpeedAction::testDownloadSpeed() {
         "}"
     ).arg(test_urls[0], test_urls[1], test_urls[2]);
     
-    QProcess proc;
-    proc.start("powershell.exe", QStringList() << "-NoProfile" << "-Command" << ps_cmd);
-    proc.waitForFinished(120000); // 2 minutes for 3 server tests
-    
-    QString output = proc.readAllStandardOutput();
+    ProcessResult proc = runPowerShell(ps_cmd, 120000);
+    if (!proc.std_err.trimmed().isEmpty()) {
+        Q_EMIT logMessage("Download speed test warning: " + proc.std_err.trimmed());
+    }
+    QString output = proc.std_out;
     QStringList lines = output.split('\n');
     
     QVector<double> speeds;
@@ -139,11 +140,11 @@ void TestNetworkSpeedAction::testUploadSpeed() {
         "}"
     );
     
-    QProcess proc;
-    proc.start("powershell.exe", QStringList() << "-NoProfile" << "-Command" << ps_cmd);
-    proc.waitForFinished(45000);
-    
-    QString output = proc.readAllStandardOutput();
+    ProcessResult proc = runPowerShell(ps_cmd, 45000);
+    if (!proc.std_err.trimmed().isEmpty()) {
+        Q_EMIT logMessage("Upload speed test warning: " + proc.std_err.trimmed());
+    }
+    QString output = proc.std_out;
     QStringList lines = output.split('\n');
     
     for (const QString& line : lines) {
@@ -190,11 +191,11 @@ void TestNetworkSpeedAction::testLatencyAndJitter() {
         "}"
     );
     
-    QProcess proc;
-    proc.start("powershell.exe", QStringList() << "-NoProfile" << "-Command" << ps_cmd);
-    proc.waitForFinished(15000);
-    
-    QString output = proc.readAllStandardOutput();
+    ProcessResult proc = runPowerShell(ps_cmd, 15000);
+    if (!proc.std_err.trimmed().isEmpty()) {
+        Q_EMIT logMessage("Latency/jitter test warning: " + proc.std_err.trimmed());
+    }
+    QString output = proc.std_out;
     QStringList lines = output.split('\n');
     
     for (const QString& line : lines) {
@@ -233,11 +234,11 @@ void TestNetworkSpeedAction::getPublicIPInfo() {
         "}"
     );
     
-    QProcess proc;
-    proc.start("powershell.exe", QStringList() << "-NoProfile" << "-Command" << ps_cmd);
-    proc.waitForFinished(15000);
-    
-    QString output = proc.readAllStandardOutput();
+    ProcessResult proc = runPowerShell(ps_cmd, 15000);
+    if (!proc.std_err.trimmed().isEmpty()) {
+        Q_EMIT logMessage("Public IP lookup warning: " + proc.std_err.trimmed());
+    }
+    QString output = proc.std_out;
     QStringList lines = output.split('\n');
     
     for (const QString& line : lines) {
@@ -260,12 +261,22 @@ void TestNetworkSpeedAction::getPublicIPInfo() {
 }
 
 void TestNetworkSpeedAction::scan() {
-    // Scan is no longer used - actions execute immediately
-    setStatus(ActionStatus::Ready);
+    setStatus(ActionStatus::Scanning);
+
+    checkConnectivity();
+
     ScanResult result;
-    result.applicable = true;
-    result.summary = "Ready to test network speed";
+    result.applicable = m_has_internet;
+    result.summary = m_has_internet
+        ? "Internet connectivity detected"
+        : "No internet connectivity";
+    result.details = "Speed test requires internet access";
+    if (!m_has_internet) {
+        result.warning = "Network speed test cannot run without connectivity";
+    }
+
     setScanResult(result);
+    setStatus(ActionStatus::Ready);
     Q_EMIT scanComplete(result);
 }
 

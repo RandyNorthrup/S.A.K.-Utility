@@ -34,8 +34,8 @@ QuickActionsPanel::QuickActionsPanel(QWidget* parent)
     : QWidget(parent)
     , m_controller(new QuickActionController(this)) {
     setupUi();
-    createActions();
     loadSettings();
+    createActions();
 
     // Connect controller signals
     connect(m_controller, &QuickActionController::actionScanComplete,
@@ -67,24 +67,25 @@ void QuickActionsPanel::setupUi() {
     main_layout->addWidget(header_label);
 
     auto* subtitle = new QLabel("One-click technician tools for common maintenance tasks");
-    subtitle->setStyleSheet("color: #666; margin-bottom: 10px;");
+    subtitle->setStyleSheet("color: #64748b; margin-bottom: 10px;");
     main_layout->addWidget(subtitle);
 
     // Settings section
     auto* settings_group = new QGroupBox("Settings");
     settings_group->setStyleSheet(
         "QGroupBox {"
-        "  font-weight: bold;"
-        "  border: 2px solid #ddd;"
-        "  border-radius: 5px;"
-        "  margin-top: 10px;"
-        "  padding-top: 10px;"
+        "  font-weight: 600;"
+        "  border: 1px solid #cbd5e1;"
+        "  border-radius: 12px;"
+        "  margin-top: 18px;"
+        "  padding: 18px 10px 10px 10px;"
+        "  background-color: rgba(255, 255, 255, 0.92);"
         "}"
         "QGroupBox::title {"
         "  subcontrol-origin: margin;"
         "  subcontrol-position: top left;"
-        "  padding: 0 5px;"
-        "  color: #333;"
+        "  padding: 0 8px;"
+        "  color: #334155;"
         "}"
     );
     
@@ -186,7 +187,7 @@ void QuickActionsPanel::setupUi() {
     action_buttons_layout->addWidget(m_view_log_button);
     action_buttons_layout->addStretch();
 
-    status_layout->addWidget(status_group);
+    status_layout->addLayout(action_buttons_layout);
 
     main_layout->addWidget(status_group);
 
@@ -203,6 +204,8 @@ void QuickActionsPanel::createActions() {
     if (backup_location.isEmpty()) {
         backup_location = "C:/SAK_Backups";
     }
+
+    m_controller->setBackupLocation(backup_location);
     
     // Create all actions using factory
     auto actions = ActionFactory::createAllActions(backup_location);
@@ -243,18 +246,18 @@ void QuickActionsPanel::createCategorySections() {
         auto* group_box = new QGroupBox(cat_info.title);
         group_box->setStyleSheet(
             "QGroupBox {"
-            "  font-weight: bold;"
-            "  border: 2px solid #ddd;"
-            "  border-radius: 5px;"
-            "  margin-top: 10px;"
-            "  padding: 15px;"
-            "  background-color: #f9f9f9;"
+            "  font-weight: 600;"
+            "  border: 1px solid #cbd5e1;"
+            "  border-radius: 12px;"
+            "  margin-top: 18px;"
+            "  padding: 18px 10px 10px 10px;"
+            "  background-color: rgba(255, 255, 255, 0.9);"
             "}"
             "QGroupBox::title {"
             "  subcontrol-origin: margin;"
             "  subcontrol-position: top left;"
-            "  padding: 0 5px;"
-            "  color: #333;"
+            "  padding: 0 8px;"
+            "  color: #334155;"
             "}"
         );
 
@@ -262,7 +265,7 @@ void QuickActionsPanel::createCategorySections() {
         
         // Description
         auto* desc_label = new QLabel(cat_info.description);
-        desc_label->setStyleSheet("color: #666; font-weight: normal; font-size: 11px;");
+        desc_label->setStyleSheet("color: #64748b; font-weight: 400; font-size: 11px;");
         cat_layout->addWidget(desc_label);
 
         // Action buttons grid
@@ -309,22 +312,23 @@ QPushButton* QuickActionsPanel::createActionButton(QuickAction* action) {
     button->setStyleSheet(
         "QPushButton {"
         "  text-align: left;"
-        "  padding: 10px;"
-        "  border: 2px solid #ccc;"
-        "  border-radius: 5px;"
-        "  background-color: white;"
-        "  font-weight: normal;"
+        "  padding: 12px;"
+        "  border: 1px solid #cbd5e1;"
+        "  border-radius: 12px;"
+        "  background-color: rgba(255, 255, 255, 0.96);"
+        "  font-weight: 500;"
+        "  color: #1e293b;"
         "}"
         "QPushButton:hover {"
-        "  border-color: #0078d4;"
-        "  background-color: #f0f8ff;"
+        "  border-color: #3b82f6;"
+        "  background-color: #e0f2fe;"
         "}"
         "QPushButton:pressed {"
-        "  background-color: #e0e0e0;"
+        "  background-color: #dbeafe;"
         "}"
         "QPushButton:disabled {"
-        "  background-color: #f5f5f5;"
-        "  color: #999;"
+        "  background-color: #e2e8f0;"
+        "  color: #94a3b8;"
         "}"
     );
 
@@ -341,6 +345,8 @@ void QuickActionsPanel::updateActionButton(QuickAction* action) {
     if (!button) {
         return;
     }
+
+    button->setEnabled(true);
 
     // Build button text with status indicator and scan results
     QString status_icon;
@@ -505,6 +511,7 @@ void QuickActionsPanel::onBrowseBackupLocation() {
     if (!dir.isEmpty()) {
         m_backup_location_edit->setText(dir);
         m_backup_location = dir;
+        m_controller->setBackupLocation(m_backup_location);
         saveSettings();
     }
 }
@@ -519,6 +526,7 @@ void QuickActionsPanel::loadSettings() {
     
     m_backup_location = settings.value("backup_location", "C:\\SAK_Backups").toString();
     m_backup_location_edit->setText(m_backup_location);
+    m_controller->setBackupLocation(m_backup_location);
     
     m_confirm_before_execute = settings.value("confirm_before_execute", true).toBool();
     m_confirm_checkbox->setChecked(m_confirm_before_execute);
@@ -528,6 +536,7 @@ void QuickActionsPanel::loadSettings() {
     
     m_enable_logging = settings.value("enable_logging", true).toBool();
     m_logging_checkbox->setChecked(m_enable_logging);
+    m_controller->setLoggingEnabled(m_enable_logging);
     
     m_compress_backups = settings.value("compress_backups", true).toBool();
     m_compression_checkbox->setChecked(m_compress_backups);
@@ -547,6 +556,9 @@ void QuickActionsPanel::saveSettings() {
     settings.setValue("show_notifications", m_show_notifications);
     settings.setValue("enable_logging", m_enable_logging);
     settings.setValue("compress_backups", m_compress_backups);
+
+    m_controller->setLoggingEnabled(m_enable_logging);
+    m_controller->setBackupLocation(m_backup_location);
 }
 
 void QuickActionsPanel::appendLog(const QString& message) {

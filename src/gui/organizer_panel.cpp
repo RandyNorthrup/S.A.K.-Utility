@@ -10,6 +10,8 @@
 #include <QMessageBox>
 #include <QHeaderView>
 #include <QDateTime>
+#include <QScrollArea>
+#include <QFrame>
 
 OrganizerPanel::OrganizerPanel(QWidget* parent)
     : QWidget(parent)
@@ -36,9 +38,20 @@ OrganizerPanel::~OrganizerPanel()
 
 void OrganizerPanel::setup_ui()
 {
-    auto* main_layout = new QVBoxLayout(this);
-    main_layout->setContentsMargins(10, 10, 10, 10);
-    main_layout->setSpacing(10);
+    auto* root_layout = new QVBoxLayout(this);
+    root_layout->setContentsMargins(0, 0, 0, 0);
+
+    auto* scroll_area = new QScrollArea(this);
+    scroll_area->setWidgetResizable(true);
+    scroll_area->setFrameShape(QFrame::NoFrame);
+
+    auto* content_widget = new QWidget(scroll_area);
+    auto* main_layout = new QVBoxLayout(content_widget);
+    main_layout->setContentsMargins(16, 16, 16, 16);
+    main_layout->setSpacing(12);
+
+    scroll_area->setWidget(content_widget);
+    root_layout->addWidget(scroll_area);
 
     // Target directory group
     auto* path_group = new QGroupBox("Target Directory", this);
@@ -60,7 +73,9 @@ void OrganizerPanel::setup_ui()
     m_category_table = new QTableWidget(this);
     m_category_table->setColumnCount(2);
     m_category_table->setHorizontalHeaderLabels({"Category", "Extensions (comma-separated)"});
-    m_category_table->horizontalHeader()->setStretchLastSection(true);
+    m_category_table->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
+    m_category_table->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Stretch);
+    m_category_table->setAlternatingRowColors(true);
     m_category_table->setMinimumHeight(200);
     category_layout->addWidget(m_category_table);
     
@@ -100,7 +115,7 @@ void OrganizerPanel::setup_ui()
     progress_layout->addWidget(m_progress_bar);
     
     m_status_label = new QLabel("Ready", this);
-    m_status_label->setStyleSheet("font-weight: bold;");
+    m_status_label->setStyleSheet("font-weight: 600; color: #1e293b;");
     progress_layout->addWidget(m_status_label);
     
     main_layout->addWidget(progress_group);
@@ -135,6 +150,8 @@ void OrganizerPanel::setup_ui()
     log_layout->addWidget(m_log_viewer);
     
     main_layout->addWidget(log_group);
+
+    main_layout->addStretch(1);
 
     // Connect signals
     connect(m_browse_button, &QPushButton::clicked, this, &OrganizerPanel::on_browse_clicked);

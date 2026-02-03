@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: MIT
 
 #include "sak/quick_action_controller.h"
+#include "sak/elevation_manager.h"
+#include "sak/quick_action_result_io.h"
 
 #include <QDateTime>
 #include <QFile>
@@ -9,6 +11,7 @@
 #include <QStandardPaths>
 #include <QDir>
 #include <QCoreApplication>
+#include <QUuid>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -46,6 +49,14 @@ QuickActionController::~QuickActionController() {
 
     delete m_scan_thread;
     delete m_execution_thread;
+}
+
+void QuickActionController::setLoggingEnabled(bool enabled) {
+    m_logging_enabled = enabled;
+}
+
+void QuickActionController::setBackupLocation(const QString& backup_location) {
+    m_backup_location = backup_location;
 }
 
 QString QuickActionController::registerAction(std::unique_ptr<QuickAction> action) {
@@ -174,7 +185,8 @@ void QuickActionController::scanAction(const QString& action_name) {
 
     // Check if already scanning
     if (m_current_scan_action) {
-        Q_EMIT actionError(action, "Another scan is already in progress");
+        m_scan_queue.enqueue(action_name);
+        Q_EMIT logMessage(QString("Scan queued: %1").arg(action_name));
         return;
     }
 
@@ -190,12 +202,78 @@ void QuickActionController::executeAction(const QString& action_name, bool requi
 
     // Check admin requirements
     if (action->requiresAdmin() && !hasAdminPrivileges()) {
-        QString reason = QString("Execute %1").arg(action->name());
-        if (!requestAdminElevation(reason)) {
-            Q_EMIT actionError(action, "Administrator privileges required but not granted");
-            logOperation(action, "Execution failed: Admin privileges denied");
+        // Check if already executing
+        if (m_current_execution_action) {
+            // Queue for later
+            m_action_queue.enqueue(action_name);
+            Q_EMIT logMessage(QString("Action queued: %1").arg(action_name));
             return;
         }
+
+        m_current_execution_action = action;
+        Q_EMIT actionExecutionStarted(action);
+        action->updateStatus(QuickAction::ActionStatus::Running);
+        Q_EMIT actionExecutionProgress(action, "Requesting administrator approval...", 5);
+        logOperation(action, "Requesting administrator elevation");
+
+        QString temp_dir = QStandardPaths::writableLocation(QStandardPaths::TempLocation);
+        QDir().mkpath(temp_dir);
+        QString safe_name = action->name();
+        safe_name.replace(' ', '_');
+        QString result_file = QDir(temp_dir).filePath(
+            QString("sak_quick_action_%1_%2.json")
+                .arg(safe_name, QUuid::createUuid().toString(QUuid::Id128)));
+
+        QString backup_location = m_backup_location.isEmpty() ? "C:/SAK_Backups" : m_backup_location;
+
+        QStringList args;
+        args << "--run-quick-action" << action->name();
+        args << "--backup-location" << backup_location;
+        args << "--result-file" << result_file;
+
+        QString arg_string;
+        for (const auto& arg : args) {
+            if (!arg_string.isEmpty()) {
+                arg_string += ' ';
+            }
+            QString escaped = arg;
+            escaped.replace('"', "\\\"");
+            if (escaped.contains(' ')) {
+                arg_string += QString("\"%1\"").arg(escaped);
+            } else {
+                arg_string += escaped;
+            }
+        }
+
+        const QString exe_path = QCoreApplication::applicationFilePath();
+        auto elevation_result = ElevationManager::execute_elevated(
+            exe_path.toStdString(),
+            arg_string.toStdString(),
+            true);
+
+        QuickAction::ExecutionResult result;
+        QuickAction::ActionStatus status = QuickAction::ActionStatus::Failed;
+
+        if (!elevation_result) {
+            result.success = false;
+            result.message = "Administrator privileges required but not granted";
+            result.log = "Elevation request failed or was cancelled";
+            status = QuickAction::ActionStatus::Failed;
+        } else {
+            QString error_message;
+            if (!readExecutionResultFile(result_file, &result, &status, &error_message)) {
+                result.success = false;
+                result.message = "Failed to read elevated action result";
+                result.log = error_message;
+                status = QuickAction::ActionStatus::Failed;
+            }
+        }
+
+        QFile::remove(result_file);
+
+        action->applyExecutionResult(result, status);
+        onExecutionComplete();
+        return;
     }
 
     // Check if already executing
@@ -213,11 +291,15 @@ void QuickActionController::executeAction(const QString& action_name, bool requi
 }
 
 void QuickActionController::scanAllActions() {
-    // Scan all registered actions
-    // Note: Some actions may not be applicable on current system
-    // Errors are logged but don't prevent other scans
+    // Queue all registered actions for sequential scan
+    m_scan_queue.clear();
     for (const auto& action : m_actions) {
-        scanAction(action->name());
+        m_scan_queue.enqueue(action->name());
+    }
+
+    if (!m_current_scan_action && !m_scan_queue.isEmpty()) {
+        QString next_action = m_scan_queue.dequeue();
+        scanAction(next_action);
     }
 }
 
@@ -249,6 +331,12 @@ void QuickActionController::onScanComplete() {
         m_scan_thread->wait();
         m_scan_thread->deleteLater();
         m_scan_thread = nullptr;
+    }
+
+    // Process scan queue
+    if (!m_scan_queue.isEmpty()) {
+        QString next_action = m_scan_queue.dequeue();
+        scanAction(next_action);
     }
 }
 
@@ -307,6 +395,12 @@ void QuickActionController::startScanWorker(QuickAction* action) {
         Q_UNUSED(result);
         onScanComplete();
     });
+    connect(m_scan_thread, &QThread::finished, action, [action]() {
+        auto* app_thread = QCoreApplication::instance()->thread();
+        if (action->thread() != app_thread) {
+            action->moveToThread(app_thread);
+        }
+    });
     connect(m_scan_thread, &QThread::started, action, &QuickAction::scan);
 
     m_scan_thread->start();
@@ -325,6 +419,12 @@ void QuickActionController::startExecutionWorker(QuickAction* action) {
     connect(action, &QuickAction::executionComplete, this, [this](const QuickAction::ExecutionResult& result) {
         Q_UNUSED(result);
         onExecutionComplete();
+    });
+    connect(m_execution_thread, &QThread::finished, action, [action]() {
+        auto* app_thread = QCoreApplication::instance()->thread();
+        if (action->thread() != app_thread) {
+            action->moveToThread(app_thread);
+        }
     });
     connect(m_execution_thread, &QThread::started, action, &QuickAction::execute);
 

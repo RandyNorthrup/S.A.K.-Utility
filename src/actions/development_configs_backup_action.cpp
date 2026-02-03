@@ -176,17 +176,18 @@ void DevelopmentConfigsBackupAction::scan() {
             result.warning = "Includes SSH keys - ensure backup location is secure!";
         }
         
-        setStatus(ActionStatus::Ready);
     } else {
         result.summary = "No development configs found";
-        setStatus(ActionStatus::Idle);
     }
     
+    setScanResult(result);
+    setStatus(ActionStatus::Ready);
     Q_EMIT scanComplete(result);
 }
 
 void DevelopmentConfigsBackupAction::execute() {
     setStatus(ActionStatus::Running);
+    QDateTime start_time = QDateTime::currentDateTime();
     
     QDir backup_dir(m_backup_location + "/DevConfigs");
     backup_dir.mkpath(".");
@@ -195,7 +196,22 @@ void DevelopmentConfigsBackupAction::execute() {
     qint64 bytes_copied = 0;
     
     for (const DevConfig& cfg : m_configs) {
-        QString dest = backup_dir.filePath(cfg.name);
+        if (isCancelled()) {
+            ExecutionResult result;
+            result.success = false;
+            result.message = "Development config backup cancelled";
+            result.duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
+            setExecutionResult(result);
+            setStatus(ActionStatus::Cancelled);
+            Q_EMIT executionComplete(result);
+            return;
+        }
+
+        QString safe_dir = cfg.path;
+        safe_dir.replace(':', '_');
+        safe_dir.replace('\\', '_');
+        safe_dir.replace('/', '_');
+        QString dest = backup_dir.filePath(cfg.name + "/" + safe_dir);
         QDir().mkpath(QFileInfo(dest).absolutePath());
         
         QFileInfo src_info(cfg.path);
@@ -225,12 +241,17 @@ void DevelopmentConfigsBackupAction::execute() {
     }
     
     ExecutionResult result;
+    result.success = processed > 0;
+    result.duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
     result.files_processed = processed;
     result.bytes_processed = bytes_copied;
-    result.message = QString("Backed up %1 dev config(s)").arg(processed);
+    result.message = processed > 0
+        ? QString("Backed up %1 dev config(s)").arg(processed)
+        : "No development configs were backed up";
     result.output_path = backup_dir.absolutePath();
     
-    setStatus(ActionStatus::Success);
+    setExecutionResult(result);
+    setStatus(processed > 0 ? ActionStatus::Success : ActionStatus::Failed);
     Q_EMIT executionComplete(result);
 }
 

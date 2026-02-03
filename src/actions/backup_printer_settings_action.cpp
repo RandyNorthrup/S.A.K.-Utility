@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: MIT
 
 #include "sak/actions/backup_printer_settings_action.h"
+#include "sak/process_runner.h"
 #include <QFile>
 #include <QDir>
-#include <QProcess>
 #include <QDateTime>
 
 namespace sak {
@@ -17,35 +17,30 @@ BackupPrinterSettingsAction::BackupPrinterSettingsAction(const QString& backup_l
 
 int BackupPrinterSettingsAction::countInstalledPrinters() {
     // Count installed printers via PowerShell
-    QProcess proc;
-    proc.start("powershell.exe", QStringList() 
-        << "-NoProfile" 
-        << "-Command" 
-        << "Get-Printer | Measure-Object | Select-Object -ExpandProperty Count");
-    proc.waitForFinished(5000);
-    
-    QString output = QString::fromUtf8(proc.readAllStandardOutput()).trimmed();
+    ProcessResult proc = runPowerShell("Get-Printer | Measure-Object | Select-Object -ExpandProperty Count", 5000);
+    if (!proc.std_err.trimmed().isEmpty()) {
+        Q_EMIT logMessage("Printer scan warning: " + proc.std_err.trimmed());
+    }
+    QString output = proc.std_out.trimmed();
     return output.toInt();
 }
 
 bool BackupPrinterSettingsAction::exportPrinterRegistry(const QString& dest_file) {
     // Export printer registry settings
     // HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Print\Printers
-    QProcess proc;
-    proc.start("reg.exe", QStringList() 
+    ProcessResult proc = runProcess("reg.exe", QStringList()
         << "export"
         << "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Print\\Printers"
         << dest_file
-        << "/y");
-    proc.waitForFinished(10000);
-    
-    return proc.exitCode() == 0 && QFile::exists(dest_file);
+        << "/y",
+        10000);
+    return !proc.timed_out && proc.exit_code == 0 && QFile::exists(dest_file);
 }
 
 void BackupPrinterSettingsAction::scan() {
     setStatus(ActionStatus::Scanning);
     
-    Q_EMIT executionProgress("Scanning for installed printers...", 10);
+    Q_EMIT scanProgress("Scanning for installed printers...");
     
     m_printers_found = countInstalledPrinters();
     
@@ -59,13 +54,34 @@ void BackupPrinterSettingsAction::scan() {
 
 void BackupPrinterSettingsAction::execute() {
     if (isCancelled()) {
+        ExecutionResult result;
+        result.success = false;
+        result.message = "Printer settings backup cancelled";
+        setExecutionResult(result);
+        setStatus(ActionStatus::Cancelled);
+        Q_EMIT executionComplete(result);
         return;
     }
 
     setStatus(ActionStatus::Running);
     QDateTime start_time = QDateTime::currentDateTime();
+
+    auto finish_cancelled = [this, &start_time]() {
+        ExecutionResult result;
+        result.success = false;
+        result.message = "Printer settings backup cancelled";
+        result.duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
+        setExecutionResult(result);
+        setStatus(ActionStatus::Cancelled);
+        Q_EMIT executionComplete(result);
+    };
     
     Q_EMIT executionProgress("Backing up printer settings...", 30);
+
+    if (isCancelled()) {
+        finish_cancelled();
+        return;
+    }
     
     QDir backup_dir(m_backup_location);
     if (!backup_dir.exists()) {

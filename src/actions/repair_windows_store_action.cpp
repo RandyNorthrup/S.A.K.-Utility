@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 #include "sak/actions/repair_windows_store_action.h"
+#include "sak/process_runner.h"
 #include <QProcess>
 #include <QThread>
 #include <QTextStream>
@@ -19,11 +20,11 @@ RepairWindowsStoreAction::StorePackageInfo RepairWindowsStoreAction::checkStoreP
     
     QString ps_cmd = "Get-AppxPackage *WindowsStore* | Select-Object Name,Version,Publisher,Status | Format-List";
     
-    QProcess proc;
-    proc.start("powershell.exe", QStringList() << "-NoProfile" << "-Command" << ps_cmd);
-    proc.waitForFinished(10000);
-    
-    QString output = proc.readAllStandardOutput();
+    ProcessResult proc = runPowerShell(ps_cmd, 10000);
+    QString output = proc.std_out;
+    if (!proc.std_err.trimmed().isEmpty()) {
+        Q_EMIT logMessage("Store package check warning: " + proc.std_err.trimmed());
+    }
     
     // Parse output
     QStringList lines = output.split('\n');
@@ -48,16 +49,21 @@ bool RepairWindowsStoreAction::resetWindowsStoreCache() {
     Q_EMIT executionProgress("Clearing Windows Store cache (WSReset)...", 15);
     
     // WSReset clears the Store cache and resets the app
-    QProcess proc;
-    proc.start("WSReset.exe", QStringList());
+    ProcessResult proc = runProcess("WSReset.exe", QStringList(), 20000);
+    if (!proc.std_err.trimmed().isEmpty()) {
+        Q_EMIT logMessage("WSReset warning: " + proc.std_err.trimmed());
+    }
     
     // WSReset runs silently, give it time to complete
     QThread::msleep(8000);
     
     // Terminate WSReset window if it's still open
-    QProcess::execute("taskkill", QStringList() << "/F" << "/IM" << "WinStore.App.exe" << "/T");
-    
-    return true;
+    ProcessResult kill_proc = runProcess("taskkill", QStringList() << "/F" << "/IM" << "WinStore.App.exe" << "/T", 10000);
+    if (!kill_proc.std_err.trimmed().isEmpty()) {
+        Q_EMIT logMessage("Store taskkill warning: " + kill_proc.std_err.trimmed());
+    }
+
+    return !proc.timed_out && proc.exit_status != QProcess::CrashExit;
 }
 
 // ENTERPRISE-GRADE: Reset-AppxPackage cmdlet (modern approach)
@@ -66,11 +72,11 @@ bool RepairWindowsStoreAction::resetStorePackage() {
     
     QString ps_cmd = "Reset-AppxPackage -Name Microsoft.WindowsStore_* -ErrorAction SilentlyContinue";
     
-    QProcess proc;
-    proc.start("powershell.exe", QStringList() << "-NoProfile" << "-Command" << ps_cmd);
-    proc.waitForFinished(30000);
-    
-    return proc.exitCode() == 0;
+    ProcessResult proc = runPowerShell(ps_cmd, 30000);
+    if (!proc.std_err.trimmed().isEmpty()) {
+        Q_EMIT logMessage("Store package reset warning: " + proc.std_err.trimmed());
+    }
+    return !proc.timed_out && proc.exit_code == 0 && proc.exit_status != QProcess::CrashExit;
 }
 
 // ENTERPRISE-GRADE: Re-register Store using Add-AppxPackage
@@ -83,11 +89,11 @@ bool RepairWindowsStoreAction::reregisterWindowsStore() {
                     "  Add-AppxPackage -DisableDevelopmentMode -Register \"$($store.InstallLocation)\\AppXManifest.xml\" -ErrorAction SilentlyContinue "
                     "}";
     
-    QProcess proc;
-    proc.start("powershell.exe", QStringList() << "-NoProfile" << "-Command" << ps_cmd);
-    proc.waitForFinished(45000);
-    
-    return proc.exitCode() == 0;
+    ProcessResult proc = runPowerShell(ps_cmd, 45000);
+    if (!proc.std_err.trimmed().isEmpty()) {
+        Q_EMIT logMessage("Store re-registration warning: " + proc.std_err.trimmed());
+    }
+    return !proc.timed_out && proc.exit_code == 0 && proc.exit_status != QProcess::CrashExit;
 }
 
 // ENTERPRISE-GRADE: Restart related services
@@ -102,11 +108,11 @@ bool RepairWindowsStoreAction::resetStoreServices() {
                     "  Start-Service -Name $svc -ErrorAction SilentlyContinue "
                     "}";
     
-    QProcess proc;
-    proc.start("powershell.exe", QStringList() << "-NoProfile" << "-Command" << ps_cmd);
-    proc.waitForFinished(30000);
-    
-    return proc.exitCode() == 0;
+    ProcessResult proc = runPowerShell(ps_cmd, 30000);
+    if (!proc.std_err.trimmed().isEmpty()) {
+        Q_EMIT logMessage("Store services reset warning: " + proc.std_err.trimmed());
+    }
+    return !proc.timed_out && proc.exit_code == 0 && proc.exit_status != QProcess::CrashExit;
 }
 
 // ENTERPRISE-GRADE: Check event logs for Store errors
@@ -114,25 +120,46 @@ int RepairWindowsStoreAction::checkStoreEventLogs() {
     QString ps_cmd = "(Get-WinEvent -LogName 'Microsoft-Windows-AppXDeploymentServer/Operational' -MaxEvents 10 -ErrorAction SilentlyContinue | "
                     "Where-Object {$_.LevelDisplayName -eq 'Error'} | Measure-Object).Count";
     
-    QProcess proc;
-    proc.start("powershell.exe", QStringList() << "-NoProfile" << "-Command" << ps_cmd);
-    proc.waitForFinished(5000);
-    
-    return proc.readAllStandardOutput().trimmed().toInt();
+    ProcessResult proc = runPowerShell(ps_cmd, 5000);
+    if (!proc.std_err.trimmed().isEmpty()) {
+        Q_EMIT logMessage("Store event log query warning: " + proc.std_err.trimmed());
+    }
+    return proc.std_out.trimmed().toInt();
 }
 
 void RepairWindowsStoreAction::scan() {
-    // Scan is no longer used - actions execute immediately
-    setStatus(ActionStatus::Ready);
+    setStatus(ActionStatus::Scanning);
+
+    Q_EMIT scanProgress("Checking Windows Store package...");
+
+    StorePackageInfo info = checkStorePackage();
+    int error_count = checkStoreEventLogs();
+
     ScanResult result;
-    result.applicable = true;
-    result.summary = "Ready to repair Windows Store";
+    result.applicable = info.is_registered;
+    result.summary = info.is_registered
+        ? QString("Store version: %1, errors: %2").arg(info.version).arg(error_count)
+        : "Windows Store package not registered";
+    result.details = info.is_registered
+        ? "Repair will reset cache, re-register Store, and restart services"
+        : "Run repair to attempt re-registration";
+    if (error_count > 0) {
+        result.warning = QString("Detected %1 recent Store deployment errors").arg(error_count);
+    }
+
     setScanResult(result);
+    setStatus(ActionStatus::Ready);
     Q_EMIT scanComplete(result);
 }
 
 void RepairWindowsStoreAction::execute() {
     if (isCancelled()) {
+        ExecutionResult result;
+        result.success = false;
+        result.message = "Windows Store repair cancelled";
+        setExecutionResult(result);
+        setStatus(ActionStatus::Cancelled);
+        Q_EMIT executionComplete(result);
         return;
     }
 
@@ -140,10 +167,25 @@ void RepairWindowsStoreAction::execute() {
     QDateTime start_time = QDateTime::currentDateTime();
     
     Q_EMIT executionProgress("Diagnosing Windows Store...", 5);
+
+    auto finish_cancelled = [this, &start_time]() {
+        ExecutionResult result;
+        result.success = false;
+        result.message = "Windows Store repair cancelled";
+        result.duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
+        setExecutionResult(result);
+        setStatus(ActionStatus::Cancelled);
+        Q_EMIT executionComplete(result);
+    };
     
     // PHASE 1: Check Store package status
     StorePackageInfo before_info = checkStorePackage();
     int error_count = checkStoreEventLogs();
+
+    if (isCancelled()) {
+        finish_cancelled();
+        return;
+    }
     
     QString report = "╔════════════════════════════════════════════════════════════════╗\n";
     report += "║           WINDOWS STORE DIAGNOSTIC REPORT                    ║\n";
@@ -174,6 +216,11 @@ void RepairWindowsStoreAction::execute() {
     
     // PHASE 5: Restart services
     bool services_restarted = resetStoreServices();
+
+    if (isCancelled()) {
+        finish_cancelled();
+        return;
+    }
     report += QString("║ Services:    %1\n").arg(services_restarted ? "SUCCESS" : "FAILED").leftJustified(67, ' ') + "║\n";
     
     report += "╠════════════════════════════════════════════════════════════════╣\n";
@@ -181,6 +228,7 @@ void RepairWindowsStoreAction::execute() {
     // Check Store status after repair
     Q_EMIT executionProgress("Verifying Store registration...", 90);
     StorePackageInfo after_info = checkStorePackage();
+    int post_error_count = checkStoreEventLogs();
     
     if (after_info.is_registered) {
         report += "║ Final Status: REGISTERED                          ║\n";
@@ -188,6 +236,7 @@ void RepairWindowsStoreAction::execute() {
     } else {
         report += "║ Final Status: REGISTRATION FAILED                 ║\n";
     }
+    report += QString("║ Event Errors (post): %1\n").arg(post_error_count).leftJustified(67, ' ') + "║\n";
     
     report += "╚════════════════════════════════════════════════════════════════╝\n";
     
@@ -198,7 +247,7 @@ void RepairWindowsStoreAction::execute() {
     ExecutionResult result;
     result.duration_ms = duration_ms;
     
-    bool overall_success = cache_reset && reregistered && services_restarted && after_info.is_registered;
+    bool overall_success = cache_reset && package_reset && reregistered && services_restarted && after_info.is_registered;
     
     if (overall_success) {
         result.success = true;

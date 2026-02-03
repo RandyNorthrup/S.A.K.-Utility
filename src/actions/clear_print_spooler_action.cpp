@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 #include "sak/actions/clear_print_spooler_action.h"
-#include <QProcess>
+#include "sak/process_runner.h"
 #include <QThread>
 #include <QDir>
 #include <QDirIterator>
@@ -27,7 +27,10 @@ int ClearPrintSpoolerAction::countSpoolFiles() {
 
 void ClearPrintSpoolerAction::stopSpooler() {
     Q_EMIT executionProgress("Stopping print spooler service...", 20);
-    QProcess::execute("net", QStringList() << "stop" << "spooler");
+    ProcessResult proc = runProcess("net", QStringList() << "stop" << "spooler", 15000);
+    if (proc.timed_out || proc.exit_code != 0) {
+        Q_EMIT logMessage("Stop spooler warning: " + proc.std_err.trimmed());
+    }
     QThread::msleep(2000);
 }
 
@@ -46,16 +49,27 @@ void ClearPrintSpoolerAction::clearSpoolFolder() {
 
 void ClearPrintSpoolerAction::startSpooler() {
     Q_EMIT executionProgress("Starting print spooler service...", 80);
-    QProcess::execute("net", QStringList() << "start" << "spooler");
+    ProcessResult proc = runProcess("net", QStringList() << "start" << "spooler", 15000);
+    if (proc.timed_out || proc.exit_code != 0) {
+        Q_EMIT logMessage("Start spooler warning: " + proc.std_err.trimmed());
+    }
 }
 
 void ClearPrintSpoolerAction::scan() {
-    // Scan is no longer used - actions execute immediately
-    setStatus(ActionStatus::Ready);
+    setStatus(ActionStatus::Scanning);
+
+    int files = countSpoolFiles();
+
     ScanResult result;
-    result.applicable = true;
-    result.summary = "Ready to clear print spooler";
+    result.applicable = files > 0;
+    result.files_count = files;
+    result.summary = files > 0
+        ? QString("Spool files queued: %1").arg(files)
+        : "No spool files detected";
+    result.details = "Clearing spooler will restart Print Spooler service";
+
     setScanResult(result);
+    setStatus(ActionStatus::Ready);
     Q_EMIT scanComplete(result);
 }
 
@@ -178,15 +192,11 @@ void ClearPrintSpoolerAction::execute() {
     
     Q_EMIT executionProgress("║ Checking Print Spooler service status...                     ║", 20);
     
-    QProcess ps;
-    ps.start("powershell.exe", QStringList() << "-NoProfile" << "-ExecutionPolicy" << "Bypass" << "-Command" << ps_script);
-    
+    ProcessResult ps = runPowerShell(ps_script, 60000);
+
     Q_EMIT executionProgress("║ Stopping service with Stop-Service...                        ║", 40);
-    
-    bool finished = ps.waitForFinished(60000); // 1 minute timeout
-    
-    if (!finished || isCancelled()) {
-        ps.kill();
+
+    if (ps.timed_out || isCancelled()) {
         ExecutionResult result;
         result.success = false;
         result.message = isCancelled() ? "Spooler clearing cancelled" : "Operation timed out";
@@ -199,7 +209,10 @@ void ClearPrintSpoolerAction::execute() {
     
     Q_EMIT executionProgress("║ Clearing spool files and restarting...                       ║", 60);
     
-    QString output = ps.readAllStandardOutput();
+    if (!ps.std_err.trimmed().isEmpty()) {
+        Q_EMIT logMessage("Spooler clear warning: " + ps.std_err.trimmed());
+    }
+    QString output = ps.std_out;
     qint64 duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
     
     // Parse results

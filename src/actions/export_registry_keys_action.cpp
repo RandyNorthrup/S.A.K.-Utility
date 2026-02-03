@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 #include "sak/actions/export_registry_keys_action.h"
+#include "sak/process_runner.h"
 #include <QProcess>
 #include <QDir>
 #include <QDateTime>
@@ -17,12 +18,11 @@ ExportRegistryKeysAction::ExportRegistryKeysAction(const QString& backup_locatio
 
 void ExportRegistryKeysAction::exportKey(const QString& key_path, const QString& filename) {
     QString output_file = m_backup_location + "/Registry/" + filename;
-    
-    QProcess proc;
     QString cmd = QString("reg export \"%1\" \"%2\" /y").arg(key_path, output_file);
-    
-    proc.start("cmd.exe", QStringList() << "/c" << cmd);
-    proc.waitForFinished(10000);
+    ProcessResult proc = runProcess("cmd.exe", QStringList() << "/c" << cmd, 10000);
+    if (proc.timed_out || proc.exit_code != 0) {
+        Q_EMIT logMessage("Registry export warning: " + proc.std_err.trimmed());
+    }
     
     if (QFile::exists(output_file)) {
         m_keys_exported++;
@@ -31,12 +31,15 @@ void ExportRegistryKeysAction::exportKey(const QString& key_path, const QString&
 }
 
 void ExportRegistryKeysAction::scan() {
-    // Scan is no longer used - actions execute immediately
-    setStatus(ActionStatus::Ready);
+    setStatus(ActionStatus::Scanning);
+
     ScanResult result;
     result.applicable = true;
-    result.summary = "Ready to export registry keys";
+    result.summary = "Registry backup will export critical hives";
+    result.details = "Exports HKLM/HKCU hives and creates a manifest";
+
     setScanResult(result);
+    setStatus(ActionStatus::Ready);
     Q_EMIT scanComplete(result);
 }
 
@@ -119,37 +122,14 @@ void ExportRegistryKeysAction::execute() {
         "Write-Output \"MANIFEST:$manifestPath\""
     ).arg(backup_path, timestamp);
     
-    QProcess ps;
-    ps.start("powershell.exe", QStringList() << "-NoProfile" << "-ExecutionPolicy" << "Bypass" << "-Command" << ps_script);
-    
-    // Monitor progress
-    QString accumulated_output;
+    ProcessResult ps = runPowerShell(ps_script, 60000);
+    if (!ps.std_err.trimmed().isEmpty()) {
+        Q_EMIT logMessage("Registry export warning: " + ps.std_err.trimmed());
+    }
+
+    QString accumulated_output = ps.std_out;
     int keys_exported = 0;
     qint64 total_size = 0;
-    
-    while (ps.state() == QProcess::Running) {
-        if (ps.waitForReadyRead(5000)) {
-            QString chunk = ps.readAllStandardOutput();
-            accumulated_output += chunk;
-            
-            // Count successful exports
-            int success_count = chunk.count("SUCCESS:", Qt::CaseInsensitive);
-            if (success_count > 0) {
-                keys_exported += success_count;
-                int progress = 10 + (keys_exported * 80 / 8); // 8 total keys
-                Q_EMIT executionProgress(QString("Exported %1 key(s)...").arg(keys_exported), progress);
-            }
-        }
-        
-        if (isCancelled()) {
-            ps.kill();
-            setStatus(ActionStatus::Cancelled);
-            return;
-        }
-    }
-    
-    ps.waitForFinished(60000);
-    accumulated_output += ps.readAll();
     
     // Parse results
     QRegularExpression totalKeysRe("TOTAL_KEYS:(\\d+)");

@@ -87,6 +87,18 @@ public:
      */
     static bool requestAdminElevation(const QString& reason);
 
+    /**
+     * @brief Set backup location for elevated runs
+     * @param backup_location Backup path
+     */
+    void setBackupLocation(const QString& backup_location);
+
+    /**
+     * @brief Enable or disable controller logging
+     * @param enabled True to enable logging
+     */
+    void setLoggingEnabled(bool enabled);
+
 Q_SIGNALS:
     /**
      * @brief Emitted when action scan starts
@@ -210,9 +222,15 @@ private:
     // Action queue
     QQueue<QString> m_action_queue;
 
+    // Scan queue
+    QQueue<QString> m_scan_queue;
+
     // Logging
     bool m_logging_enabled{true};
     QString m_log_file_path;
+
+    // Backup location
+    QString m_backup_location;
 };
 
 } // namespace sak

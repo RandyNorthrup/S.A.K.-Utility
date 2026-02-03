@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 #include "sak/actions/screenshot_settings_action.h"
+#include "sak/process_runner.h"
 #include <QProcess>
 #include <QThread>
 #include <QDir>
@@ -40,12 +41,15 @@ void ScreenshotSettingsAction::openSettingsAndCapture(const QString& uri, const 
 }
 
 void ScreenshotSettingsAction::scan() {
-    // Scan is no longer used - actions execute immediately
-    setStatus(ActionStatus::Ready);
+    setStatus(ActionStatus::Scanning);
+
     ScanResult result;
     result.applicable = true;
-    result.summary = "Ready to screenshot Windows settings";
+    result.summary = "Settings screenshots will open and capture key pages";
+    result.details = "Requires interactive desktop session";
+
     setScanResult(result);
+    setStatus(ActionStatus::Ready);
     Q_EMIT scanComplete(result);
 }
 
@@ -96,8 +100,17 @@ void ScreenshotSettingsAction::execute() {
     int processed = 0;
     for (auto it = settings_pages.begin(); it != settings_pages.end(); ++it) {
         if (isCancelled()) {
-            QProcess::execute("taskkill", QStringList() << "/IM" << "SystemSettings.exe" << "/F");
+            ProcessResult kill_proc = runProcess("taskkill", QStringList() << "/IM" << "SystemSettings.exe" << "/F", 10000);
+            if (kill_proc.timed_out || kill_proc.exit_code != 0) {
+                Q_EMIT logMessage("Settings close warning: " + kill_proc.std_err.trimmed());
+            }
+            ExecutionResult result;
+            result.success = false;
+            result.message = "Settings screenshots cancelled";
+            result.duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
+            setExecutionResult(result);
             setStatus(ActionStatus::Cancelled);
+            Q_EMIT executionComplete(result);
             return;
         }
         
@@ -152,7 +165,10 @@ void ScreenshotSettingsAction::execute() {
             }
             
             // Close Settings window for next iteration
-            QProcess::execute("taskkill", QStringList() << "/IM" << "SystemSettings.exe" << "/F");
+            ProcessResult close_proc = runProcess("taskkill", QStringList() << "/IM" << "SystemSettings.exe" << "/F", 10000);
+            if (close_proc.timed_out || close_proc.exit_code != 0) {
+                Q_EMIT logMessage("Settings close warning: " + close_proc.std_err.trimmed());
+            }
             QThread::msleep(500);
         }
         

@@ -107,9 +107,9 @@ void BackupBrowserDataAction::scan() {
     //
     // Note: These checks verify browser executables exist before scanning user data.
     
-    setStatus(ActionStatus::Ready);
+    setStatus(ActionStatus::Scanning);
     
-    Q_EMIT executionProgress("Detecting installed browsers...", 10);
+    Q_EMIT scanProgress("Detecting installed browsers...");
     
     QStringList browser_checks = {
         "C:/Program Files/Google/Chrome/Application/chrome.exe",
@@ -123,8 +123,10 @@ void BackupBrowserDataAction::scan() {
     }
     
     ScanResult result;
-    result.applicable = true;
-    result.summary = QString("Found %1 browser(s) installed - ready to backup data").arg(browsers_found);
+    result.applicable = browsers_found > 0;
+    result.summary = browsers_found > 0
+        ? QString("Found %1 browser(s) installed - ready to backup data").arg(browsers_found)
+        : "No supported browsers detected";
     setScanResult(result);
     setStatus(ActionStatus::Ready);
     Q_EMIT scanComplete(result);
@@ -157,11 +159,27 @@ void BackupBrowserDataAction::execute() {
     // - VDI: FSLogix containers recommended for profile management
     
     if (isCancelled()) {
+        ExecutionResult result;
+        result.success = false;
+        result.message = "Browser data backup cancelled";
+        setExecutionResult(result);
+        setStatus(ActionStatus::Cancelled);
+        Q_EMIT executionComplete(result);
         return;
     }
 
     setStatus(ActionStatus::Running);
     QDateTime start_time = QDateTime::currentDateTime();
+
+    auto finish_cancelled = [this, &start_time]() {
+        ExecutionResult result;
+        result.success = false;
+        result.message = "Browser data backup cancelled";
+        result.duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
+        setExecutionResult(result);
+        setStatus(ActionStatus::Cancelled);
+        Q_EMIT executionComplete(result);
+    };
     
     Q_EMIT executionProgress("Scanning user profiles...", 10);
     
@@ -191,6 +209,10 @@ void BackupBrowserDataAction::execute() {
             if (dir.exists()) {
                 QDirIterator it(path, QDir::Files, QDirIterator::Subdirectories);
                 while (it.hasNext()) {
+                    if (isCancelled()) {
+                        finish_cancelled();
+                        return;
+                    }
                     it.next();
                     
                     // Only count important browser data
@@ -245,7 +267,7 @@ void BackupBrowserDataAction::execute() {
             QDirIterator it(source, QDir::Files, QDirIterator::Subdirectories);
             while (it.hasNext()) {
                 if (isCancelled()) {
-                    setStatus(ActionStatus::Cancelled);
+                    finish_cancelled();
                     return;
                 }
                 

@@ -47,6 +47,8 @@
 #include <QDropEvent>
 #include <QDragEnterEvent>
 #include <QDataStream>
+#include <QScrollArea>
+#include <QFrame>
 #include <filesystem>
 #include <QStandardPaths>
 #include <QSet>
@@ -140,6 +142,14 @@ void NetworkTransferPanel::setupUi() {
 
     m_modeStack = new QStackedWidget(this);
 
+    auto wrapScrollable = [this](QWidget* widget) {
+        auto* scroll = new QScrollArea(this);
+        scroll->setWidgetResizable(true);
+        scroll->setFrameShape(QFrame::NoFrame);
+        scroll->setWidget(widget);
+        return scroll;
+    };
+
     // Source UI
     auto* sourceWidget = new QWidget(this);
     auto* sourceLayout = new QVBoxLayout(sourceWidget);
@@ -200,40 +210,38 @@ void NetworkTransferPanel::setupUi() {
     sourceLayout->addWidget(peerGroup);
 
     auto* securityGroup = new QGroupBox(tr("Security & Transfer"), sourceWidget);
-    auto* securityLayout = new QHBoxLayout(securityGroup);
+    auto* securityLayout = new QGridLayout(securityGroup);
 
     m_encryptCheck = new QCheckBox(tr("Encrypt (AES-256-GCM)"), this);
     m_compressCheck = new QCheckBox(tr("Compress"), this);
     m_resumeCheck = new QCheckBox(tr("Resume"), this);
-    securityLayout->addWidget(m_encryptCheck);
-    securityLayout->addWidget(m_compressCheck);
-    securityLayout->addWidget(m_resumeCheck);
+    securityLayout->addWidget(m_encryptCheck, 0, 0);
+    securityLayout->addWidget(m_compressCheck, 0, 1);
+    securityLayout->addWidget(m_resumeCheck, 0, 2);
 
-    securityLayout->addWidget(new QLabel(tr("Chunk (KB):"), this));
+    securityLayout->addWidget(new QLabel(tr("Chunk (KB):"), this), 1, 0);
     m_chunkSizeSpin = new QSpinBox(this);
     m_chunkSizeSpin->setRange(16, 4096);
-    securityLayout->addWidget(m_chunkSizeSpin);
+    securityLayout->addWidget(m_chunkSizeSpin, 1, 1);
 
-    securityLayout->addWidget(new QLabel(tr("Bandwidth (KB/s):"), this));
+    securityLayout->addWidget(new QLabel(tr("Bandwidth (KB/s):"), this), 1, 2);
     m_bandwidthSpin = new QSpinBox(this);
     m_bandwidthSpin->setRange(0, 1024 * 1024);
     m_bandwidthSpin->setToolTip(tr("0 = unlimited"));
-    securityLayout->addWidget(m_bandwidthSpin);
+    securityLayout->addWidget(m_bandwidthSpin, 1, 3);
 
-    securityLayout->addWidget(new QLabel(tr("Permissions:"), this));
+    securityLayout->addWidget(new QLabel(tr("Permissions:"), this), 2, 0);
     m_permissionModeCombo = new QComboBox(this);
     m_permissionModeCombo->addItem(tr("Strip All"), static_cast<int>(PermissionMode::StripAll));
     m_permissionModeCombo->addItem(tr("Preserve Original"), static_cast<int>(PermissionMode::PreserveOriginal));
     m_permissionModeCombo->addItem(tr("Assign to Destination"), static_cast<int>(PermissionMode::AssignToDestination));
     m_permissionModeCombo->addItem(tr("Hybrid"), static_cast<int>(PermissionMode::Hybrid));
-    securityLayout->addWidget(m_permissionModeCombo);
+    securityLayout->addWidget(m_permissionModeCombo, 2, 1, 1, 2);
 
-    securityLayout->addStretch();
-
-    securityLayout->addWidget(new QLabel(tr("Passphrase:"), this));
+    securityLayout->addWidget(new QLabel(tr("Passphrase:"), this), 2, 3);
     m_passphraseEdit = new QLineEdit(this);
     m_passphraseEdit->setEchoMode(QLineEdit::Password);
-    securityLayout->addWidget(m_passphraseEdit);
+    securityLayout->addWidget(m_passphraseEdit, 2, 4);
 
     securityGroup->setLayout(securityLayout);
     sourceLayout->addWidget(securityGroup);
@@ -271,21 +279,21 @@ void NetworkTransferPanel::setupUi() {
     destInfoLayout->addWidget(m_startDestinationButton);
 
     auto* orchestratorGroup = new QGroupBox(tr("Orchestrator Connection"), destWidget);
-    auto* orchestratorConnectionLayout = new QHBoxLayout(orchestratorGroup);
-    orchestratorConnectionLayout->addWidget(new QLabel(tr("Host:"), this));
+    auto* orchestratorConnectionLayout = new QGridLayout(orchestratorGroup);
+    orchestratorConnectionLayout->addWidget(new QLabel(tr("Host:"), this), 0, 0);
     m_orchestratorHostEdit = new QLineEdit(this);
     m_orchestratorHostEdit->setPlaceholderText(tr("192.168.1.10"));
-    orchestratorConnectionLayout->addWidget(m_orchestratorHostEdit);
-    orchestratorConnectionLayout->addWidget(new QLabel(tr("Port:"), this));
+    orchestratorConnectionLayout->addWidget(m_orchestratorHostEdit, 0, 1);
+    orchestratorConnectionLayout->addWidget(new QLabel(tr("Port:"), this), 0, 2);
     m_orchestratorPortSpin = new QSpinBox(this);
     m_orchestratorPortSpin->setRange(1024, 65535);
     m_orchestratorPortSpin->setValue(54322);
-    orchestratorConnectionLayout->addWidget(m_orchestratorPortSpin);
+    orchestratorConnectionLayout->addWidget(m_orchestratorPortSpin, 0, 3);
     m_autoApproveOrchestratorCheck = new QCheckBox(tr("Auto-approve assignments"), this);
     m_autoApproveOrchestratorCheck->setChecked(true);
-    orchestratorConnectionLayout->addWidget(m_autoApproveOrchestratorCheck);
+    orchestratorConnectionLayout->addWidget(m_autoApproveOrchestratorCheck, 1, 0, 1, 3);
     m_connectOrchestratorButton = new QPushButton(tr("Connect"), this);
-    orchestratorConnectionLayout->addWidget(m_connectOrchestratorButton);
+    orchestratorConnectionLayout->addWidget(m_connectOrchestratorButton, 1, 3);
     orchestratorGroup->setLayout(orchestratorConnectionLayout);
     destInfoLayout->addWidget(orchestratorGroup);
 
@@ -539,13 +547,13 @@ void NetworkTransferPanel::setupUi() {
     auto* legendGroup = new QGroupBox(tr("Status Legend"), orchestratorWidget);
     auto* legendLayout = new QHBoxLayout(legendGroup);
     auto* okLabel = new QLabel(tr("Success"), this);
-    okLabel->setStyleSheet("QLabel { background-color: #388E3C; color: white; padding: 4px 8px; border-radius: 4px; }");
+        okLabel->setStyleSheet("QLabel { background-color: #16a34a; color: white; padding: 6px 10px; border-radius: 10px; }");
     auto* warnLabel = new QLabel(tr("In Progress"), this);
-    warnLabel->setStyleSheet("QLabel { background-color: #F57C00; color: white; padding: 4px 8px; border-radius: 4px; }");
+        warnLabel->setStyleSheet("QLabel { background-color: #f59e0b; color: #1e293b; padding: 6px 10px; border-radius: 10px; }");
     auto* errLabel = new QLabel(tr("Error"), this);
-    errLabel->setStyleSheet("QLabel { background-color: #C62828; color: white; padding: 4px 8px; border-radius: 4px; }");
+        errLabel->setStyleSheet("QLabel { background-color: #dc2626; color: white; padding: 6px 10px; border-radius: 10px; }");
     auto* idleLabel = new QLabel(tr("Idle"), this);
-    idleLabel->setStyleSheet("QLabel { background-color: #616161; color: white; padding: 4px 8px; border-radius: 4px; }");
+        idleLabel->setStyleSheet("QLabel { background-color: #64748b; color: white; padding: 6px 10px; border-radius: 10px; }");
     legendLayout->addWidget(okLabel);
     legendLayout->addWidget(warnLabel);
     legendLayout->addWidget(errLabel);
@@ -556,9 +564,9 @@ void NetworkTransferPanel::setupUi() {
 
     orchestratorWidget->setLayout(orchestratorLayout);
 
-    m_modeStack->addWidget(sourceWidget);
-    m_modeStack->addWidget(destWidget);
-    m_modeStack->addWidget(orchestratorWidget);
+    m_modeStack->addWidget(wrapScrollable(sourceWidget));
+    m_modeStack->addWidget(wrapScrollable(destWidget));
+    m_modeStack->addWidget(wrapScrollable(orchestratorWidget));
 
     mainLayout->addWidget(m_modeStack, 1);
 

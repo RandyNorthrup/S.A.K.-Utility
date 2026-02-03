@@ -23,7 +23,7 @@
 - ✅ **Open Source** - Fully auditable, transparent automated builds
 
 **Target Users**: PC technicians, computer repair shops, IT support specialists, system administrators  
-**Version**: 0.5.0  
+**Version**: 0.5.6  
 **Platform**: Windows 10/11 (x64 only)  
 **Package Size**: ~21.5 MB compressed | ~95 MB extracted
 

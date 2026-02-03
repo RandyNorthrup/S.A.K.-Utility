@@ -78,6 +78,7 @@
 #include <QFile>
 #include <QDir>
 #include <QDateTime>
+#include "sak/process_runner.h"
 #include <QProcess>
 #include <QStandardPaths>
 
@@ -92,13 +93,12 @@ BackupActivationKeysAction::BackupActivationKeysAction(const QString& backup_loc
 void BackupActivationKeysAction::scan() {
     setStatus(ActionStatus::Scanning);
     
-    Q_EMIT executionProgress("Scanning for activation keys...", 10);
+    Q_EMIT scanProgress("Scanning for activation keys...");
     
     // Check Windows license status using slmgr.vbs (Software License Manager)
     // Reference: https://learn.microsoft.com/windows-server/get-started/activation-slmgr-vbs-options
-    QProcess check_proc;
-    check_proc.start("powershell.exe", QStringList() << "-NoProfile" << "-Command"
-        << "try { "
+    ProcessResult check_proc = runPowerShell(
+        "try { "
            // Use slmgr.vbs to check license status
            "$output = cscript //NoLogo C:\\Windows\\System32\\slmgr.vbs /dli; "
            "if ($output -match 'License Status: Licensed') { Write-Output 'WINDOWS_LICENSED' } "
@@ -115,10 +115,12 @@ void BackupActivationKeysAction::scan() {
            "foreach ($path in $officePaths) { if (Test-Path $path) { $officeFound = $true; break } }; "
            "if ($officeFound) { Write-Output 'OFFICE_FOUND' } "
            "else { Write-Output 'OFFICE_NOT_FOUND' } "
-        "} catch { Write-Output 'ERROR' }");
-    check_proc.waitForFinished(15000);
-    
-    QString output = QString::fromUtf8(check_proc.readAllStandardOutput()).trimmed();
+        "} catch { Write-Output 'ERROR' }",
+        15000);
+    if (!check_proc.std_err.trimmed().isEmpty()) {
+        Q_EMIT logMessage("Activation scan warning: " + check_proc.std_err.trimmed());
+    }
+    QString output = check_proc.std_out.trimmed();
     
     ScanResult result;
     result.applicable = true;
@@ -152,11 +154,27 @@ void BackupActivationKeysAction::scan() {
 
 void BackupActivationKeysAction::execute() {
     if (isCancelled()) {
+        ExecutionResult result;
+        result.success = false;
+        result.message = "Activation key backup cancelled";
+        setExecutionResult(result);
+        setStatus(ActionStatus::Cancelled);
+        Q_EMIT executionComplete(result);
         return;
     }
 
     setStatus(ActionStatus::Running);
     QDateTime start_time = QDateTime::currentDateTime();
+
+    auto finish_cancelled = [this, &start_time]() {
+        ExecutionResult result;
+        result.success = false;
+        result.message = "Activation key backup cancelled";
+        result.duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
+        setExecutionResult(result);
+        setStatus(ActionStatus::Cancelled);
+        Q_EMIT executionComplete(result);
+    };
     
     QString report = "";
     report += "╔══════════════════════════════════════════════════════════════════════╗\n";
@@ -173,12 +191,16 @@ void BackupActivationKeysAction::execute() {
     // /dlv = Display detailed License information for the current license
     // Reference: https://learn.microsoft.com/windows-server/get-started/activation-slmgr-vbs-options
     // Reference: https://learn.microsoft.com/office/volume-license-activation/tools-to-manage-volume-activation-of-office
-    QProcess win_license_proc;
-    win_license_proc.start("powershell.exe", QStringList() << "-NoProfile" << "-Command"
-        << "cscript //NoLogo C:\\Windows\\System32\\slmgr.vbs /dlv");
-    win_license_proc.waitForFinished(15000);
-    
-    QString win_license_output = QString::fromUtf8(win_license_proc.readAllStandardOutput()).trimmed();
+    ProcessResult win_license_proc = runPowerShell("cscript //NoLogo C:\\Windows\\System32\\slmgr.vbs /dlv", 15000);
+    if (!win_license_proc.std_err.trimmed().isEmpty()) {
+        Q_EMIT logMessage("Windows license query warning: " + win_license_proc.std_err.trimmed());
+    }
+    QString win_license_output = win_license_proc.std_out.trimmed();
+
+    if (isCancelled()) {
+        finish_cancelled();
+        return;
+    }
     
     QString win_name = "";
     QString win_description = "";
@@ -236,18 +258,24 @@ void BackupActivationKeysAction::execute() {
     // Uses the ACPI_SLIC table / MSDM (Microsoft Software Description Table)
     // Reference: https://learn.microsoft.com/windows-hardware/manufacture/desktop/oa3-staging-master-image-w-default-key
     // The OA3xOriginalProductKey property retrieves the firmware-injected DPK (Digital Product Key)
-    QProcess oem_key_proc;
-    oem_key_proc.start("powershell.exe", QStringList() << "-NoProfile" << "-Command"
-        << "try { "
+    ProcessResult oem_key_proc = runPowerShell(
+        "try { "
            "$key = (Get-CimInstance -ClassName SoftwareLicensingService).OA3xOriginalProductKey; "
            "if ($key) { Write-Output \"OEM_KEY:$key\" } "
            "else { Write-Output 'OEM_KEY:NOT_FOUND' } "
         "} catch { "
            "Write-Output 'OEM_KEY:ERROR' "
-        "}");
-    oem_key_proc.waitForFinished(10000);
-    
-    QString oem_output = QString::fromUtf8(oem_key_proc.readAllStandardOutput()).trimmed();
+        "}",
+        10000);
+    if (!oem_key_proc.std_err.trimmed().isEmpty()) {
+        Q_EMIT logMessage("OEM key query warning: " + oem_key_proc.std_err.trimmed());
+    }
+    QString oem_output = oem_key_proc.std_out.trimmed();
+
+    if (isCancelled()) {
+        finish_cancelled();
+        return;
+    }
     
     if (oem_output.contains("OEM_KEY:") && !oem_output.contains("NOT_FOUND") && !oem_output.contains("ERROR")) {
         QString oem_key = oem_output.split("OEM_KEY:").last().trimmed();
@@ -298,12 +326,12 @@ void BackupActivationKeysAction::execute() {
         report += QString("║   OSPP.VBS Location: %1").arg(ospp_path.left(47).leftJustified(47)) + QString("║\n");
         report += "║                                                                      ║\n";
         
-        QProcess office_proc;
         QString ospp_cmd = QString("cscript //NoLogo \"%1\" /dstatus").arg(ospp_path);
-        office_proc.start("powershell.exe", QStringList() << "-NoProfile" << "-Command" << ospp_cmd);
-        office_proc.waitForFinished(20000);
-        
-        QString office_output = QString::fromUtf8(office_proc.readAllStandardOutput()).trimmed();
+        ProcessResult office_proc = runPowerShell(ospp_cmd, 20000);
+        if (!office_proc.std_err.trimmed().isEmpty()) {
+            Q_EMIT logMessage("Office license query warning: " + office_proc.std_err.trimmed());
+        }
+        QString office_output = office_proc.std_out.trimmed();
         
         // Parse office output for LICENSE NAME, LAST 5 CHARACTERS, and LICENSE STATUS
         // ospp.vbs output format:

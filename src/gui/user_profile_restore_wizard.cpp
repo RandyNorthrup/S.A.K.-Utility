@@ -80,7 +80,7 @@ void UserProfileRestoreWelcomePage::setupUi() {
     // Manifest info
     m_manifestInfoLabel = new QLabel(this);
     m_manifestInfoLabel->setWordWrap(true);
-    m_manifestInfoLabel->setStyleSheet("QLabel { background-color: #f0f0f0; padding: 10px; border-radius: 4px; }");
+    m_manifestInfoLabel->setStyleSheet("QLabel { background-color: #f8fafc; padding: 12px; border-radius: 10px; }");
     m_manifestInfoLabel->hide();
     layout->addWidget(m_manifestInfoLabel);
     
@@ -213,7 +213,7 @@ void UserProfileRestoreUserMappingPage::setupUi() {
     
     // Summary
     m_summaryLabel = new QLabel(this);
-    m_summaryLabel->setStyleSheet("QLabel { background-color: #e3f2fd; padding: 8px; border-radius: 4px; }");
+    m_summaryLabel->setStyleSheet("QLabel { background-color: #e0f2fe; padding: 10px; border-radius: 10px; }");
     layout->addWidget(m_summaryLabel);
     
     // Connections
@@ -431,7 +431,7 @@ void UserProfileRestoreMergeConfigPage::setupUi() {
     
     // Summary
     m_summaryLabel = new QLabel(this);
-    m_summaryLabel->setStyleSheet("QLabel { background-color: #e3f2fd; padding: 8px; border-radius: 4px; }");
+    m_summaryLabel->setStyleSheet("QLabel { background-color: #e0f2fe; padding: 10px; border-radius: 10px; }");
     layout->addWidget(m_summaryLabel);
     
     // Connections
@@ -584,7 +584,7 @@ void UserProfileRestoreFolderSelectionPage::setupUi() {
     
     // Summary
     m_summaryLabel = new QLabel(this);
-    m_summaryLabel->setStyleSheet("QLabel { background-color: #e3f2fd; padding: 8px; border-radius: 4px; }");
+    m_summaryLabel->setStyleSheet("QLabel { background-color: #e0f2fe; padding: 10px; border-radius: 10px; }");
     layout->addWidget(m_summaryLabel);
     
     // Connections
@@ -777,7 +777,7 @@ void UserProfileRestorePermissionSettingsPage::setupUi() {
     
     // Summary
     m_summaryLabel = new QLabel(this);
-    m_summaryLabel->setStyleSheet("QLabel { background-color: #fff3cd; padding: 10px; border-radius: 4px; }");
+    m_summaryLabel->setStyleSheet("QLabel { background-color: #fef3c7; padding: 12px; border-radius: 10px; }");
     m_summaryLabel->setWordWrap(true);
     layout->addWidget(m_summaryLabel);
     
@@ -866,7 +866,7 @@ void UserProfileRestoreExecutePage::setupUi() {
     
     // Status
     m_statusLabel = new QLabel(tr("Ready to restore..."), this);
-    m_statusLabel->setStyleSheet("QLabel { font-weight: bold; font-size: 11pt; }");
+    m_statusLabel->setStyleSheet("QLabel { font-weight: 600; font-size: 11pt; color: #1e293b; }");
     layout->addWidget(m_statusLabel);
     
     // Overall progress

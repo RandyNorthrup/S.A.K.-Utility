@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 #include "sak/actions/clear_windows_update_cache_action.h"
-#include <QProcess>
+#include "sak/process_runner.h"
 #include <QDir>
 #include <QDirIterator>
 #include <QThread>
@@ -16,15 +16,15 @@ ClearWindowsUpdateCacheAction::ClearWindowsUpdateCacheAction(QObject* parent)
 
 bool ClearWindowsUpdateCacheAction::stopWindowsUpdateService() {
     Q_EMIT executionProgress("Stopping Windows Update service...", 20);
-    int result = QProcess::execute("net", QStringList() << "stop" << "wuauserv");
+    ProcessResult result = runProcess("net", QStringList() << "stop" << "wuauserv", 15000);
     QThread::msleep(2000);
-    return (result == 0);
+    return !result.timed_out && result.exit_code == 0;
 }
 
 bool ClearWindowsUpdateCacheAction::startWindowsUpdateService() {
     Q_EMIT executionProgress("Starting Windows Update service...", 80);
-    int result = QProcess::execute("net", QStringList() << "start" << "wuauserv");
-    return (result == 0);
+    ProcessResult result = runProcess("net", QStringList() << "start" << "wuauserv", 15000);
+    return !result.timed_out && result.exit_code == 0;
 }
 
 qint64 ClearWindowsUpdateCacheAction::calculateDirectorySize(const QString& path, int& file_count) {
@@ -42,11 +42,39 @@ qint64 ClearWindowsUpdateCacheAction::calculateDirectorySize(const QString& path
 }
 
 void ClearWindowsUpdateCacheAction::scan() {
-    setStatus(ActionStatus::Ready);
+    setStatus(ActionStatus::Scanning);
+
+    Q_EMIT scanProgress("Calculating Windows Update cache size...");
+
+    QStringList paths = {
+        "C:/Windows/SoftwareDistribution/Download",
+        "C:/Windows/SoftwareDistribution/DataStore",
+        "C:/Windows/System32/catroot2"
+    };
+
+    qint64 total_size = 0;
+    int total_files = 0;
+
+    for (const QString& path : paths) {
+        if (isCancelled()) {
+            return;
+        }
+        int count = 0;
+        total_size += calculateDirectorySize(path, count);
+        total_files += count;
+    }
+
     ScanResult result;
-    result.applicable = true;
-    result.summary = "Ready to clear Windows Update cache";
+    result.applicable = total_size > 0;
+    result.bytes_affected = total_size;
+    result.files_count = total_files;
+    result.summary = total_size > 0
+        ? QString("Cache size: %1 MB").arg(total_size / (1024.0 * 1024.0), 0, 'f', 1)
+        : "Windows Update cache is already minimal";
+    result.details = "Clearing cache stops update services briefly";
+
     setScanResult(result);
+    setStatus(ActionStatus::Ready);
     Q_EMIT scanComplete(result);
 }
 
@@ -209,19 +237,16 @@ void ClearWindowsUpdateCacheAction::execute() {
     
     Q_EMIT executionProgress("║ Checking Windows Update service status...                    ║", 20);
     
-    QProcess ps;
-    ps.start("powershell.exe", QStringList() << "-NoProfile" << "-ExecutionPolicy" << "Bypass" << "-Command" << ps_script);
-    
     Q_EMIT executionProgress("║ Stopping wuauserv, bits, and cryptsvc services...           ║", 40);
     
-    bool finished = ps.waitForFinished(120000); // 2 minute timeout
+    ProcessResult ps_result = runPowerShell(ps_script, 120000);
     
-    if (!finished || isCancelled()) {
-        ps.kill();
+    if (ps_result.timed_out || isCancelled()) {
         ExecutionResult result;
         result.success = false;
         result.message = isCancelled() ? "Cache clearing cancelled" : "Operation timed out";
         result.duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
+        result.log = ps_result.std_err;
         setExecutionResult(result);
         setStatus(ActionStatus::Failed);
         Q_EMIT executionComplete(result);
@@ -230,7 +255,7 @@ void ClearWindowsUpdateCacheAction::execute() {
     
     Q_EMIT executionProgress("║ Clearing SoftwareDistribution and catroot2...                ║", 60);
     
-    QString output = ps.readAllStandardOutput();
+    QString output = ps_result.std_out;
     qint64 duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
     
     // Parse results
@@ -238,6 +263,9 @@ void ClearWindowsUpdateCacheAction::execute() {
     qint64 total_before = 0, total_cleared = 0;
     int paths_cleared = 0, services_stopped = 0, services_started = 0;
     QStringList service_details, path_details, errors;
+    if (!ps_result.std_err.trimmed().isEmpty()) {
+        errors.append(ps_result.std_err.trimmed());
+    }
     
     for (const QString& line : lines) {
         QString trimmed = line.trimmed();

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 #include "sak/actions/verify_system_files_action.h"
+#include "sak/process_runner.h"
 #include <QProcess>
 #include <QRegularExpression>
 
@@ -23,33 +24,15 @@ void VerifySystemFilesAction::runSFC() {
         "if (Test-Path $cbsLog) { Write-Output \"CBS_LOG_PATH:$cbsLog\" }; "
         "Remove-Item 'sfc_output.txt' -ErrorAction SilentlyContinue";
     
-    QProcess proc;
-    proc.start("powershell.exe", QStringList() << "-NoProfile" << "-ExecutionPolicy" << "Bypass" << "-Command" << ps_script);
-    
-    // SFC can take 10-30 minutes, monitor with timeout
-    QString accumulated_output;
-    while (proc.state() == QProcess::Running) {
-        if (proc.waitForReadyRead(5000)) {
-            QString chunk = proc.readAllStandardOutput();
-            accumulated_output += chunk;
-            
-            if (chunk.contains("Verification", Qt::CaseInsensitive)) {
-                QRegularExpression re("(\\d+)%");
-                QRegularExpressionMatch match = re.match(chunk);
-                if (match.hasMatch()) {
-                    int progress = match.captured(1).toInt();
-                    Q_EMIT executionProgress(QString("SFC scanning... %1%").arg(progress), 10 + (progress / 4));
-                }
-            }
-        }
-        
-        if (isCancelled()) {
-            proc.kill();
-            return;
-        }
+    Q_EMIT executionProgress("SFC scanning...", 25);
+    ProcessResult proc = runPowerShell(ps_script, 1800000, true, true, [this]() { return isCancelled(); });
+    if (!proc.std_err.trimmed().isEmpty()) {
+        Q_EMIT logMessage("SFC warning: " + proc.std_err.trimmed());
     }
-    
-    accumulated_output += proc.readAll();
+    if (proc.cancelled) {
+        return;
+    }
+    QString accumulated_output = proc.std_out;
     
     // Extract CBS.log path
     QRegularExpression cbsLogRe("CBS_LOG_PATH:(.+)");
@@ -75,13 +58,14 @@ void VerifySystemFilesAction::runDISM() {
         "DISM.exe /Online /Cleanup-Image /CheckHealth; "
         "$LASTEXITCODE";
     
-    QProcess checkProc;
-    checkProc.start("powershell.exe", QStringList() << "-Command" << checkHealthScript);
-    checkProc.waitForFinished(120000); // 2 minute timeout for CheckHealth
+    ProcessResult checkProc = runPowerShell(checkHealthScript, 120000);
+    if (!checkProc.std_err.trimmed().isEmpty()) {
+        Q_EMIT logMessage("DISM CheckHealth warning: " + checkProc.std_err.trimmed());
+    }
     
     if (isCancelled()) return;
     
-    QString checkOutput = checkProc.readAllStandardOutput();
+    QString checkOutput = checkProc.std_out;
     bool corruption_detected = checkOutput.contains("corruption", Qt::CaseInsensitive);
     
     Q_EMIT executionProgress("DISM: Scanning component store...", 50);
@@ -89,13 +73,14 @@ void VerifySystemFilesAction::runDISM() {
     // Step 2: ScanHealth - Thorough scan for corruption
     QString scanHealthScript = "DISM.exe /Online /Cleanup-Image /ScanHealth";
     
-    QProcess scanProc;
-    scanProc.start("powershell.exe", QStringList() << "-Command" << scanHealthScript);
-    scanProc.waitForFinished(600000); // 10 minute timeout for ScanHealth
+    ProcessResult scanProc = runPowerShell(scanHealthScript, 600000);
+    if (!scanProc.std_err.trimmed().isEmpty()) {
+        Q_EMIT logMessage("DISM ScanHealth warning: " + scanProc.std_err.trimmed());
+    }
     
     if (isCancelled()) return;
     
-    QString scanOutput = scanProc.readAllStandardOutput();
+    QString scanOutput = scanProc.std_out;
     bool repair_needed = scanOutput.contains("repairable", Qt::CaseInsensitive) || 
                         scanOutput.contains("corruption", Qt::CaseInsensitive);
     
@@ -106,31 +91,15 @@ void VerifySystemFilesAction::runDISM() {
         // /LimitAccess prevents Windows Update usage (offline mode)
         QString restoreHealthScript = "DISM.exe /Online /Cleanup-Image /RestoreHealth /LimitAccess";
         
-        QProcess restoreProc;
-        restoreProc.start("powershell.exe", QStringList() << "-Command" << restoreHealthScript);
-        
-        // RestoreHealth can take 15-30 minutes
-        while (restoreProc.state() == QProcess::Running) {
-            if (restoreProc.waitForReadyRead(10000)) {
-                QString chunk = restoreProc.readAllStandardOutput();
-                
-                // Parse progress percentage
-                QRegularExpression re("(\\d+\\.\\d+)%");
-                QRegularExpressionMatch match = re.match(chunk);
-                if (match.hasMatch()) {
-                    double progress = match.captured(1).toDouble();
-                    Q_EMIT executionProgress(QString("DISM restoring... %1%").arg(progress, 0, 'f', 1), 
-                                           65 + static_cast<int>(progress / 4));
-                }
-            }
-            
-            if (isCancelled()) {
-                restoreProc.kill();
-                return;
-            }
+        Q_EMIT executionProgress("DISM restoring...", 75);
+        ProcessResult restoreProc = runPowerShell(restoreHealthScript, 1800000, true, true, [this]() { return isCancelled(); });
+        if (!restoreProc.std_err.trimmed().isEmpty()) {
+            Q_EMIT logMessage("DISM RestoreHealth warning: " + restoreProc.std_err.trimmed());
         }
-        
-        QString restoreOutput = restoreProc.readAllStandardOutput();
+        if (restoreProc.cancelled) {
+            return;
+        }
+        QString restoreOutput = restoreProc.std_out;
         
         if (restoreOutput.contains("successfully", Qt::CaseInsensitive)) {
             m_dism_successful = true;
@@ -162,7 +131,27 @@ void VerifySystemFilesAction::execute() {
     m_dism_repaired_issues = false;
     
     runSFC();
+    if (isCancelled()) {
+        ExecutionResult result;
+        result.success = false;
+        result.message = "System file verification cancelled";
+        result.duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
+        setExecutionResult(result);
+        setStatus(ActionStatus::Cancelled);
+        Q_EMIT executionComplete(result);
+        return;
+    }
     runDISM();
+    if (isCancelled()) {
+        ExecutionResult result;
+        result.success = false;
+        result.message = "System file verification cancelled";
+        result.duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
+        setExecutionResult(result);
+        setStatus(ActionStatus::Cancelled);
+        Q_EMIT executionComplete(result);
+        return;
+    }
     
     QString message;
     if (m_sfc_found_issues) {
@@ -182,9 +171,17 @@ void VerifySystemFilesAction::execute() {
     }
     
     ExecutionResult result;
+    result.success = m_dism_successful && (!m_sfc_found_issues || m_sfc_repaired);
     result.message = message;
-    
-    setStatus(ActionStatus::Success);
+    result.duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
+    result.log = QString("SFC issues: %1, repaired: %2\nDISM repaired issues: %3\nCBS log: %4")
+        .arg(m_sfc_found_issues ? "YES" : "NO")
+        .arg(m_sfc_repaired ? "YES" : "NO")
+        .arg(m_dism_repaired_issues ? "YES" : "NO")
+        .arg(m_cbs_log_path.isEmpty() ? "N/A" : m_cbs_log_path);
+
+    setExecutionResult(result);
+    setStatus(result.success ? ActionStatus::Success : ActionStatus::Failed);
     Q_EMIT executionComplete(result);
 }
 

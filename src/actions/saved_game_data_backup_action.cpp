@@ -160,17 +160,18 @@ void SavedGameDataBackupAction::scan() {
         result.summary = QString("Found %1 game save location(s) - %2 MB")
             .arg(m_save_locations.count())
             .arg(m_total_size / (1024 * 1024));
-        setStatus(ActionStatus::Ready);
     } else {
         result.summary = "No game save data found";
-        setStatus(ActionStatus::Idle);
     }
     
+    setScanResult(result);
+    setStatus(ActionStatus::Ready);
     Q_EMIT scanComplete(result);
 }
 
 void SavedGameDataBackupAction::execute() {
     setStatus(ActionStatus::Running);
+    QDateTime start_time = QDateTime::currentDateTime();
     
     QDir backup_dir(m_backup_location + "/GameSaves");
     backup_dir.mkpath(".");
@@ -179,7 +180,22 @@ void SavedGameDataBackupAction::execute() {
     qint64 bytes_copied = 0;
     
     for (const GameSaveLocation& loc : m_save_locations) {
-        QString dest = backup_dir.filePath(loc.platform);
+        if (isCancelled()) {
+            ExecutionResult result;
+            result.success = false;
+            result.message = "Game save backup cancelled";
+            result.duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
+            setExecutionResult(result);
+            setStatus(ActionStatus::Cancelled);
+            Q_EMIT executionComplete(result);
+            return;
+        }
+
+        QString safe_dir = loc.path;
+        safe_dir.replace(':', '_');
+        safe_dir.replace('\\', '_');
+        safe_dir.replace('/', '_');
+        QString dest = backup_dir.filePath(loc.platform + "/" + safe_dir);
         QDir().mkpath(dest);
         
         Q_EMIT executionProgress(QString("Backing up %1...").arg(loc.platform), 
@@ -204,12 +220,17 @@ void SavedGameDataBackupAction::execute() {
     }
     
     ExecutionResult result;
+    result.success = processed > 0;
+    result.duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
     result.files_processed = processed;
     result.bytes_processed = bytes_copied;
-    result.message = QString("Backed up game saves from %1 location(s)").arg(processed);
+    result.message = processed > 0
+        ? QString("Backed up game saves from %1 location(s)").arg(processed)
+        : "No game save locations were backed up";
     result.output_path = backup_dir.absolutePath();
     
-    setStatus(ActionStatus::Success);
+    setExecutionResult(result);
+    setStatus(processed > 0 ? ActionStatus::Success : ActionStatus::Failed);
     Q_EMIT executionComplete(result);
 }
 

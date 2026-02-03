@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 #include "sak/actions/optimize_power_settings_action.h"
-#include <QProcess>
+#include "sak/process_runner.h"
 #include <QRegularExpression>
 #include <QTextStream>
 
@@ -17,11 +17,11 @@ OptimizePowerSettingsAction::OptimizePowerSettingsAction(QObject* parent)
 QVector<OptimizePowerSettingsAction::PowerPlan> OptimizePowerSettingsAction::enumeratePowerPlans() {
     QVector<PowerPlan> plans;
     
-    QProcess proc;
-    proc.start("powercfg", QStringList() << "-LIST");
-    proc.waitForFinished(5000);
-    
-    QString output = proc.readAllStandardOutput();
+    ProcessResult proc = runProcess("powercfg", QStringList() << "-LIST", 5000);
+    if (!proc.std_err.trimmed().isEmpty()) {
+        Q_EMIT logMessage("Power plan list warning: " + proc.std_err.trimmed());
+    }
+    QString output = proc.std_out;
     
     // Parse output: "Power Scheme GUID: {guid} (Plan Name) *"
     QRegularExpression plan_regex(R"(Power Scheme GUID:\s*([0-9a-f\-]+)\s*\(([^\)]+)\)(\s*\*)?)", 
@@ -46,11 +46,11 @@ OptimizePowerSettingsAction::PowerPlan OptimizePowerSettingsAction::queryPowerPl
     plan.guid = guid;
     plan.is_active = false;
     
-    QProcess proc;
-    proc.start("powercfg", QStringList() << "-QUERY" << guid);
-    proc.waitForFinished(10000);
-    
-    QString output = proc.readAllStandardOutput();
+    ProcessResult proc = runProcess("powercfg", QStringList() << "-QUERY" << guid, 10000);
+    if (!proc.std_err.trimmed().isEmpty()) {
+        Q_EMIT logMessage("Power plan query warning: " + proc.std_err.trimmed());
+    }
+    QString output = proc.std_out;
     
     // Parse plan name from output  
     QRegularExpression regex(R"(Power Scheme GUID:\s*[0-9a-f\-]+\s*\(([^\)]+)\))");
@@ -66,22 +66,22 @@ OptimizePowerSettingsAction::PowerPlan OptimizePowerSettingsAction::queryPowerPl
 bool OptimizePowerSettingsAction::setPowerPlan(const QString& guid) {
     Q_EMIT executionProgress("Activating power plan...", 60);
     
-    QProcess proc;
-    proc.start("powercfg", QStringList() << "-SETACTIVE" << guid);
-    proc.waitForFinished(5000);
-    
-    return proc.exitCode() == 0;
+    ProcessResult proc = runProcess("powercfg", QStringList() << "-SETACTIVE" << guid, 5000);
+    if (!proc.std_err.trimmed().isEmpty()) {
+        Q_EMIT logMessage("Power plan activate warning: " + proc.std_err.trimmed());
+    }
+    return !proc.timed_out && proc.exit_code == 0;
 }
 
 // ENTERPRISE-GRADE: Get active power plan using powercfg -GETACTIVESCHEME
 OptimizePowerSettingsAction::PowerPlan OptimizePowerSettingsAction::getActivePowerPlan() {
     PowerPlan active_plan;
     
-    QProcess proc;
-    proc.start("powercfg", QStringList() << "-GETACTIVESCHEME");
-    proc.waitForFinished(5000);
-    
-    QString output = proc.readAllStandardOutput();
+    ProcessResult proc = runProcess("powercfg", QStringList() << "-GETACTIVESCHEME", 5000);
+    if (!proc.std_err.trimmed().isEmpty()) {
+        Q_EMIT logMessage("Power plan active query warning: " + proc.std_err.trimmed());
+    }
+    QString output = proc.std_out;
     
     // Parse: "Power Scheme GUID: {guid} (Plan Name)"
     QRegularExpression regex(R"(Power Scheme GUID:\s*([0-9a-f\-]+)\s*\(([^\)]+)\))");
@@ -121,12 +121,19 @@ QString OptimizePowerSettingsAction::getStandardPowerPlanGuid(const QString& pla
 }
 
 void OptimizePowerSettingsAction::scan() {
-    // Scan is no longer used - actions execute immediately
-    setStatus(ActionStatus::Ready);
+    setStatus(ActionStatus::Scanning);
+
+    PowerPlan current_plan = getActivePowerPlan();
+
     ScanResult result;
     result.applicable = true;
-    result.summary = "Ready to optimize power settings";
+    result.summary = current_plan.name.isEmpty()
+        ? "Power plan detected"
+        : QString("Active plan: %1").arg(current_plan.name);
+    result.details = "Optimization will switch to High Performance if available";
+
     setScanResult(result);
+    setStatus(ActionStatus::Ready);
     Q_EMIT scanComplete(result);
 }
 

@@ -33,7 +33,7 @@ void PerUserCustomizationDialog::setupUi() {
     headerLayout->addWidget(m_usernameLabel);
     
     m_profilePathLabel = new QLabel(QString("Profile Path: %1").arg(m_profile.profile_path));
-    m_profilePathLabel->setStyleSheet("color: #666;");
+    m_profilePathLabel->setStyleSheet("color: #64748b;");
     headerLayout->addWidget(m_profilePathLabel);
     
     mainLayout->addLayout(headerLayout);
@@ -126,14 +126,14 @@ void PerUserCustomizationDialog::setupUi() {
         "It contains machine-specific files that can corrupt profiles."
     );
     warningLabel->setWordWrap(true);
-    warningLabel->setStyleSheet("color: #d9534f; padding: 5px; background-color: #fef5f5; border-radius: 3px;");
+    warningLabel->setStyleSheet("color: #b91c1c; padding: 8px; background-color: #fee2e2; border-radius: 10px;");
     appDataLayout->addWidget(warningLabel);
     
     mainLayout->addWidget(m_appDataGroup);
     
     // Summary
     m_summaryLabel = new QLabel();
-    m_summaryLabel->setStyleSheet("padding: 8px; background-color: #e3f2fd; border-radius: 3px;");
+    m_summaryLabel->setStyleSheet("padding: 10px; background-color: #e0f2fe; border-radius: 10px;");
     mainLayout->addWidget(m_summaryLabel);
     
     // Separator

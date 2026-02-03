@@ -2,9 +2,28 @@
 // SPDX-License-Identifier: MIT
 
 #include "sak/actions/windows_update_action.h"
+#include "sak/process_runner.h"
 #include <QProcess>
 
 namespace sak {
+
+namespace {
+int queryPendingUpdateCount() {
+    QString ps_cmd =
+        "try { "
+        "  $session = New-Object -ComObject Microsoft.Update.Session; "
+        "  $searcher = $session.CreateUpdateSearcher(); "
+        "  $result = $searcher.Search('IsInstalled=0 and IsHidden=0'); "
+        "  Write-Output $result.Updates.Count; "
+        "} catch { Write-Output -1 }";
+
+    ProcessResult proc = runPowerShell(ps_cmd, 15000);
+    if (proc.timed_out || proc.exit_code != 0) {
+        return -1;
+    }
+    return proc.std_out.trimmed().toInt();
+}
+}
 
 WindowsUpdateAction::WindowsUpdateAction(QObject* parent)
     : QuickAction(parent)
@@ -12,30 +31,32 @@ WindowsUpdateAction::WindowsUpdateAction(QObject* parent)
 }
 
 bool WindowsUpdateAction::isPSWindowsUpdateInstalled() {
-    QProcess proc;
     QString ps_cmd = "Get-Module -ListAvailable -Name PSWindowsUpdate";
-    proc.start("powershell.exe", QStringList() << "-Command" << ps_cmd);
-    proc.waitForFinished(5000);
-    
-    QString output = proc.readAllStandardOutput();
-    return output.contains("PSWindowsUpdate", Qt::CaseInsensitive);
+    ProcessResult proc = runPowerShell(ps_cmd, 5000);
+    if (!proc.std_err.trimmed().isEmpty()) {
+        Q_EMIT logMessage("PSWindowsUpdate check warning: " + proc.std_err.trimmed());
+    }
+    return proc.std_out.contains("PSWindowsUpdate", Qt::CaseInsensitive);
 }
 
 bool WindowsUpdateAction::installPSWindowsUpdateModule() {
     Q_EMIT executionProgress("Installing PSWindowsUpdate module...", 10);
     
     QString ps_cmd = "Install-Module -Name PSWindowsUpdate -Force -Confirm:$false";
-    QProcess::execute("powershell.exe", QStringList() << "-Command" << ps_cmd);
-    return true;
+    ProcessResult proc = runPowerShell(ps_cmd, 120000);
+    if (!proc.std_err.trimmed().isEmpty()) {
+        Q_EMIT logMessage("PSWindowsUpdate install warning: " + proc.std_err.trimmed());
+    }
+    return !proc.timed_out && proc.exit_code == 0;
 }
 
 void WindowsUpdateAction::checkForUpdates() {
-    QProcess proc;
     QString ps_cmd = "Get-WindowsUpdate -MicrosoftUpdate";
-    proc.start("powershell.exe", QStringList() << "-Command" << ps_cmd);
-    proc.waitForFinished(30000);
-    
-    QString output = proc.readAllStandardOutput();
+    ProcessResult proc = runPowerShell(ps_cmd, 30000);
+    if (!proc.std_err.trimmed().isEmpty()) {
+        Q_EMIT logMessage("Windows Update list warning: " + proc.std_err.trimmed());
+    }
+    QString output = proc.std_out;
     QStringList lines = output.split('\n', Qt::SkipEmptyParts);
     
     m_available_updates = lines.count() - 2; // Subtract header lines
@@ -45,32 +66,58 @@ void WindowsUpdateAction::installUpdates() {
     Q_EMIT executionProgress("Installing Windows Updates...", 30);
     
     QString ps_cmd = "Install-WindowsUpdate -MicrosoftUpdate -AcceptAll -AutoReboot";
-    
-    QProcess proc;
-    proc.start("powershell.exe", QStringList() << "-Command" << ps_cmd);
-    
-    // Windows Update can take a long time
-    while (proc.state() == QProcess::Running) {
-        proc.waitForReadyRead(10000);
-        QString output = proc.readAll();
-        
-        if (output.contains("Downloading", Qt::CaseInsensitive)) {
-            Q_EMIT executionProgress("Downloading updates...", 50);
-        } else if (output.contains("Installing", Qt::CaseInsensitive)) {
-            Q_EMIT executionProgress("Installing updates...", 70);
-        }
+    ProcessResult proc = runPowerShell(ps_cmd, 1800000);
+    if (!proc.std_err.trimmed().isEmpty()) {
+        Q_EMIT logMessage("Windows Update install warning: " + proc.std_err.trimmed());
     }
-    
-    proc.waitForFinished();
+    if (proc.std_out.contains("Downloading", Qt::CaseInsensitive)) {
+        Q_EMIT executionProgress("Downloading updates...", 50);
+    }
+    if (proc.std_out.contains("Installing", Qt::CaseInsensitive)) {
+        Q_EMIT executionProgress("Installing updates...", 70);
+    }
 }
 
 void WindowsUpdateAction::scan() {
-    // Scan is no longer used - actions execute immediately
-    setStatus(ActionStatus::Ready);
+    setStatus(ActionStatus::Scanning);
+
+    Q_EMIT scanProgress("Checking Windows Update availability...");
+
+    QString ps_cmd =
+        "try { "
+        "  $session = New-Object -ComObject Microsoft.Update.Session; "
+        "  $searcher = $session.CreateUpdateSearcher(); "
+        "  $result = $searcher.Search('IsInstalled=0 and IsHidden=0'); "
+        "  Write-Output \"COUNT:$($result.Updates.Count)\"; "
+        "} catch { Write-Output \"COUNT:-1\" }";
+
+    ProcessResult proc = runPowerShell(ps_cmd, 15000);
+    if (!proc.std_err.trimmed().isEmpty()) {
+        Q_EMIT logMessage("Windows Update scan warning: " + proc.std_err.trimmed());
+    }
+    QString output = proc.std_out.trimmed();
+    int count = -1;
+    if (output.contains("COUNT:")) {
+        count = output.mid(output.indexOf("COUNT:") + 6).trimmed().toInt();
+    }
+
     ScanResult result;
-    result.applicable = true;
-    result.summary = "Ready to check for Windows Updates";
+    if (count >= 0) {
+        result.applicable = true;
+        result.files_count = count;
+        result.summary = count > 0
+            ? QString("Updates available: %1").arg(count)
+            : "Windows is up to date";
+        result.details = "Run update to download and install available patches";
+    } else {
+        result.applicable = false;
+        result.summary = "Windows Update check failed";
+        result.details = "Requires Windows Update service access and admin rights";
+        result.warning = "Unable to query update service";
+    }
+
     setScanResult(result);
+    setStatus(ActionStatus::Ready);
     Q_EMIT scanComplete(result);
 }
 
@@ -170,51 +217,25 @@ void WindowsUpdateAction::execute() {
         "\n"
         "exit 0";
     
-    QProcess ps;
-    ps.start("powershell.exe", QStringList() << "-NoProfile" << "-ExecutionPolicy" << "Bypass" << "-Command" << ps_script);
-    
-    // Monitor progress with periodic output checks
-    QString accumulated_output;
-    int last_progress = 5;
-    
-    while (ps.state() == QProcess::Running) {
-        if (ps.waitForReadyRead(10000)) {
-            QString chunk = ps.readAllStandardOutput();
-            accumulated_output += chunk;
-            
-            if (chunk.contains("Scan initiated", Qt::CaseInsensitive)) {
-                Q_EMIT executionProgress("Scanning for updates...", 20);
-                last_progress = 20;
-            } else if (chunk.contains("Found", Qt::CaseInsensitive) && chunk.contains("update", Qt::CaseInsensitive)) {
-                Q_EMIT executionProgress("Updates found, preparing download...", 35);
-                last_progress = 35;
-            } else if (chunk.contains("Download initiated", Qt::CaseInsensitive)) {
-                Q_EMIT executionProgress("Downloading updates...", 50);
-                last_progress = 50;
-            } else if (chunk.contains("Installation initiated", Qt::CaseInsensitive)) {
-                Q_EMIT executionProgress("Installing updates...", 70);
-                last_progress = 70;
-            }
-        }
-        
-        if (isCancelled()) {
-            ps.kill();
-            ExecutionResult result;
-            result.success = false;
-            result.message = "Windows Update cancelled";
-            result.duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
-            setExecutionResult(result);
-            setStatus(ActionStatus::Failed);
-            Q_EMIT executionComplete(result);
-            return;
-        }
+    Q_EMIT executionProgress("Scanning for updates...", 20);
+    Q_EMIT executionProgress("Preparing download...", 35);
+    Q_EMIT executionProgress("Downloading updates...", 50);
+    Q_EMIT executionProgress("Installing updates...", 70);
+
+    ProcessResult ps = runPowerShell(ps_script, 1800000, true, true, [this]() { return isCancelled(); });
+
+    if (ps.cancelled) {
+        ExecutionResult result;
+        result.success = false;
+        result.message = "Windows Update cancelled";
+        result.duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
+        setExecutionResult(result);
+        setStatus(ActionStatus::Cancelled);
+        Q_EMIT executionComplete(result);
+        return;
     }
-    
-    // Wait for completion with 30 minute timeout
-    bool finished = ps.waitForFinished(1800000);
-    
-    if (!finished) {
-        ps.kill();
+
+    if (ps.timed_out) {
         ExecutionResult result;
         result.success = false;
         result.message = "Operation timed out after 30 minutes";
@@ -224,12 +245,16 @@ void WindowsUpdateAction::execute() {
         Q_EMIT executionComplete(result);
         return;
     }
-    
+
+    if (!ps.std_err.trimmed().isEmpty()) {
+        Q_EMIT logMessage("Windows Update execution warning: " + ps.std_err.trimmed());
+    }
+
     Q_EMIT executionProgress("Finalizing...", 95);
-    
-    accumulated_output += ps.readAll();
-    QString errors = ps.readAllStandardError();
-    int exit_code = ps.exitCode();
+
+    QString accumulated_output = ps.std_out;
+    QString errors = ps.std_err;
+    int exit_code = ps.exit_code;
     
     qint64 duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
     
@@ -244,10 +269,21 @@ void WindowsUpdateAction::execute() {
     } else if (exit_code == 0) {
         result.success = true;
         bool reboot_required = accumulated_output.contains("REBOOT_REQUIRED", Qt::CaseInsensitive);
-        result.message = reboot_required ? 
-            "Updates installed successfully - REBOOT REQUIRED" : 
+        result.message = reboot_required ?
+            "Updates installed successfully - REBOOT REQUIRED" :
             "Updates installed successfully";
         result.log = accumulated_output;
+
+        int remaining = queryPendingUpdateCount();
+        if (remaining >= 0) {
+            result.log += QString("\nVerification: %1 update(s) remaining").arg(remaining);
+            if (remaining > 0 && !reboot_required) {
+                result.message += " (some updates still pending)";
+            }
+        } else {
+            result.log += "\nVerification: Unable to query remaining updates";
+        }
+
         setStatus(ActionStatus::Success);
     } else {
         result.success = false;

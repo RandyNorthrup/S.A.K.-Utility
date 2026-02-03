@@ -85,13 +85,13 @@
 
 #include "sak/actions/quickbooks_backup_action.h"
 #include "sak/windows_user_scanner.h"
+#include "sak/process_runner.h"
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
 #include <QDirIterator>
 #include <QStandardPaths>
 #include <QDateTime>
-#include <QProcess>
 
 namespace sak {
 
@@ -101,17 +101,54 @@ QuickBooksBackupAction::QuickBooksBackupAction(const QString& backup_location)
 }
 
 void QuickBooksBackupAction::scan() {
-    // Scan is no longer used - actions execute immediately
-    setStatus(ActionStatus::Ready);
+    setStatus(ActionStatus::Scanning);
+    m_found_files.clear();
+    m_total_bytes = 0;
+
+    Q_EMIT scanProgress("Scanning for QuickBooks data files...");
+    scanCommonLocations();
+
     ScanResult result;
-    result.applicable = true;
-    result.summary = "Ready to backup QuickBooks data";
+    result.applicable = !m_found_files.empty();
+    result.bytes_affected = m_total_bytes;
+    result.files_count = static_cast<qint64>(m_found_files.size());
+    result.estimated_duration_ms = std::max<qint64>(5000, m_total_bytes / (1024 * 10));
+
+    if (result.applicable) {
+        double mb = m_total_bytes / (1024.0 * 1024.0);
+        result.summary = QString("Found %1 files (%2 MB)")
+            .arg(result.files_count)
+            .arg(mb, 0, 'f', 1);
+
+        int open_files = 0;
+        for (const auto& file : m_found_files) {
+            if (file.is_open) {
+                open_files++;
+            }
+        }
+
+        if (open_files > 0) {
+            result.warning = QString("%1 file(s) appear to be in use. Close QuickBooks before backup.")
+                .arg(open_files);
+        }
+    } else {
+        result.summary = "No QuickBooks files found";
+        result.details = "Check default QuickBooks locations or map network drives.";
+    }
+
     setScanResult(result);
+    setStatus(ActionStatus::Ready);
     Q_EMIT scanComplete(result);
 }
 
 void QuickBooksBackupAction::execute() {
     if (isCancelled()) {
+        ExecutionResult result;
+        result.success = false;
+        result.message = "QuickBooks backup cancelled";
+        setExecutionResult(result);
+        setStatus(ActionStatus::Cancelled);
+        Q_EMIT executionComplete(result);
         return;
     }
 
@@ -121,17 +158,14 @@ void QuickBooksBackupAction::execute() {
     Q_EMIT executionProgress("Checking if QuickBooks is running...", 5);
     
     // Check if QuickBooks is running
-    QProcess proc;
-    proc.start("tasklist", QStringList() << "/FI" << "IMAGENAME eq QBW32.EXE");
-    proc.waitForFinished(3000);
-    QString output = proc.readAllStandardOutput();
+    ProcessResult proc = runProcess("tasklist", QStringList() << "/FI" << "IMAGENAME eq QBW32.EXE", 3000);
+    QString output = proc.std_out;
     bool qb_running = output.contains("QBW32.EXE", Qt::CaseInsensitive);
     
     if (!qb_running) {
         // Also check for 64-bit version
-        proc.start("tasklist", QStringList() << "/FI" << "IMAGENAME eq QBW64.EXE");
-        proc.waitForFinished(3000);
-        output = proc.readAllStandardOutput();
+        proc = runProcess("tasklist", QStringList() << "/FI" << "IMAGENAME eq QBW64.EXE", 3000);
+        output = proc.std_out;
         qb_running = output.contains("QBW64.EXE", Qt::CaseInsensitive);
     }
     
@@ -148,56 +182,12 @@ void QuickBooksBackupAction::execute() {
     }
     
     Q_EMIT executionProgress("Scanning for QuickBooks files...", 15);
-    
-    // Scan ALL user profiles for QuickBooks data
-    WindowsUserScanner scanner;
-    QVector<UserProfile> users = scanner.scanUsers();
-    
-    QStringList search_paths;
-    for (const UserProfile& user : users) {
-        search_paths << user.profile_path + "/Documents/Intuit/QuickBooks";
-        search_paths << user.profile_path + "/Documents";
-    }
-    
-    // Also check public documents
-    search_paths << QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation) + "/Intuit/QuickBooks";
-    search_paths << "C:/ProgramData/Intuit/QuickBooks";
-    
-    struct QBFile {
-        QString path;
-        QString filename;
-        QString type;
-        qint64 size;
-    };
-    
-    QVector<QBFile> found_files;
-    qint64 total_size = 0;
-    
-    QStringList filters;
-    filters << "*.qbw" << "*.qbb" << "*.qbm" << "*.qbx";
-    
-    for (const QString& path : search_paths) {
-        QDir dir(path);
-        if (!dir.exists()) continue;
-        
-        QDirIterator it(dir.absolutePath(), filters, QDir::Files, QDirIterator::Subdirectories);
-        while (it.hasNext()) {
-            it.next();
-            
-            QBFile file;
-            file.path = it.filePath();
-            file.filename = it.fileName();
-            file.size = it.fileInfo().size();
-            
-            QString ext = it.fileName().right(3).toUpper();
-            file.type = ext;
-            
-            found_files.append(file);
-            total_size += file.size;
-        }
-    }
-    
-    if (found_files.isEmpty()) {
+
+    m_found_files.clear();
+    m_total_bytes = 0;
+    scanCommonLocations();
+
+    if (m_found_files.empty()) {
         ExecutionResult result;
         result.duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
         result.success = false;
@@ -215,24 +205,46 @@ void QuickBooksBackupAction::execute() {
     backup_dir.mkpath(".");
     
     int files_copied = 0;
+    int files_skipped_open = 0;
     qint64 bytes_copied = 0;
+    QStringList copied_files;
     
-    for (int i = 0; i < found_files.count(); ++i) {
+    for (size_t i = 0; i < m_found_files.size(); ++i) {
         if (isCancelled()) {
+            ExecutionResult result;
+            result.success = false;
+            result.message = "QuickBooks backup cancelled";
+            result.duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
+            setExecutionResult(result);
             setStatus(ActionStatus::Cancelled);
+            Q_EMIT executionComplete(result);
             return;
         }
-        
-        const QBFile& file = found_files[i];
-        
-        int progress = 30 + ((i * 60) / found_files.count());
+
+        const auto& file = m_found_files[i];
+
+        int progress = 30 + static_cast<int>((i * 60) / m_found_files.size());
         Q_EMIT executionProgress(QString("Backing up %1...").arg(file.filename), progress);
-        
-        QString dest_path = backup_dir.filePath(file.filename);
-        
-        if (QFile::copy(file.path, dest_path)) {
+
+        if (file.is_open) {
+            files_skipped_open++;
+            continue;
+        }
+
+        QString source_dir = QFileInfo(file.path).absolutePath();
+        QString safe_dir = source_dir;
+        safe_dir.replace(':', '_');
+        safe_dir.replace('\\', '_');
+        safe_dir.replace('/', '_');
+
+        QDir target_dir(backup_dir.filePath(safe_dir));
+        target_dir.mkpath(".");
+        QString dest_path = target_dir.filePath(file.filename);
+
+        if (copyFileWithProgress(file.path, dest_path)) {
             files_copied++;
             bytes_copied += file.size;
+            copied_files << dest_path;
         }
     }
     
@@ -252,7 +264,14 @@ void QuickBooksBackupAction::execute() {
         result.message = QString("Backed up %1 QuickBooks file(s) - %2 MB")
             .arg(files_copied)
             .arg(mb, 0, 'f', 2);
-        result.log = QString("Saved to: %1").arg(backup_dir.absolutePath());
+        result.log = QString("Saved to: %1\nFiles:\n%2")
+            .arg(backup_dir.absolutePath())
+            .arg(copied_files.join("\n"));
+
+        if (files_skipped_open > 0) {
+            result.log += QString("\n\nSkipped %1 file(s) currently in use")
+                .arg(files_skipped_open);
+        }
         setStatus(ActionStatus::Success);
     } else {
         result.success = false;
@@ -280,6 +299,17 @@ void QuickBooksBackupAction::scanCommonLocations() {
     search_paths.append("C:\\QuickBooks");
     search_paths.append("C:\\QB");
 
+    // Scan all user profiles
+    WindowsUserScanner scanner;
+    QVector<UserProfile> users = scanner.scanUsers();
+    for (const UserProfile& user : users) {
+        search_paths << user.profile_path + "/Documents/Intuit/QuickBooks";
+        search_paths << user.profile_path + "/Documents";
+    }
+
+    // ProgramData
+    search_paths.append("C:/ProgramData/Intuit/QuickBooks");
+
     for (const QString& path : search_paths) {
         scanDirectory(path);
     }
@@ -292,7 +322,8 @@ void QuickBooksBackupAction::scanDirectory(const QString& dir_path) {
     }
 
     QStringList filters;
-    filters << "*.qbw" << "*.QBW" << "*.qbb" << "*.QBB" 
+        filters << "*.qbw" << "*.QBW" << "*.qbb" << "*.QBB" 
+            << "*.qbm" << "*.QBM" << "*.qbx" << "*.QBX"
             << "*.tlg" << "*.TLG" << "*.nd" << "*.ND";
 
     QDirIterator it(dir_path, filters, QDir::Files, QDirIterator::Subdirectories);
@@ -380,6 +411,8 @@ QString QuickBooksBackupAction::getFileTypeDescription(const QString& extension)
     
     if (ext == "QBW") return "Company File";
     if (ext == "QBB") return "Backup File";
+    if (ext == "QBM") return "Portable File";
+    if (ext == "QBX") return "Accountant Copy";
     if (ext == "TLG") return "Transaction Log";
     if (ext == "ND") return "Network Data";
     

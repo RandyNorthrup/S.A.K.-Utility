@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: MIT
 
 #include "sak/actions/disable_visual_effects_action.h"
+#include "sak/process_runner.h"
 #include <QSettings>
-#include <QProcess>
 #include <QJsonDocument>
 #include <QJsonArray>
 #include <QJsonObject>
@@ -41,19 +41,28 @@ bool DisableVisualEffectsAction::disableVisualEffects() {
     advanced.setValue("MinAnimate", "0");
     
     // Notify system of changes
-    QProcess::execute("rundll32.exe", 
-        QStringList() << "user32.dll,UpdatePerUserSystemParameters" << "1" << "True");
+    ProcessResult proc = runProcess("rundll32.exe", QStringList() << "user32.dll,UpdatePerUserSystemParameters" << "1" << "True", 5000);
+    if (proc.timed_out || proc.exit_code != 0) {
+        Q_EMIT logMessage("Visual effects notify warning: " + proc.std_err.trimmed());
+    }
     
     return true;
 }
 
 void DisableVisualEffectsAction::scan() {
-    // Scan is no longer used - actions execute immediately
-    setStatus(ActionStatus::Ready);
+    setStatus(ActionStatus::Scanning);
+
+    bool enabled = areVisualEffectsEnabled();
+
     ScanResult result;
-    result.applicable = true;
-    result.summary = "Ready to optimize visual effects";
+    result.applicable = enabled;
+    result.summary = enabled
+        ? "Visual effects are enabled"
+        : "Visual effects already optimized for performance";
+    result.details = "Optimization sets Best Performance and disables animations";
+
     setScanResult(result);
+    setStatus(ActionStatus::Ready);
     Q_EMIT scanComplete(result);
 }
 
@@ -78,10 +87,8 @@ void DisableVisualEffectsAction::execute() {
     report += "║ Phase 1: Current Settings Analysis                                  ║\n";
     report += "╠══════════════════════════════════════════════════════════════════════╣\n";
     
-    QProcess ps_check;
-    ps_check.setProgram("powershell.exe");
-    ps_check.setArguments(QStringList() << "-NoProfile" << "-ExecutionPolicy" << "Bypass" << "-Command"
-        << R"(
+    ProcessResult ps_check = runPowerShell(
+        R"(
             $settings = @{
                 VisualFXSetting = (Get-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects' -Name 'VisualFXSetting' -ErrorAction SilentlyContinue).VisualFXSetting
                 TaskbarAnimations = (Get-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced' -Name 'TaskbarAnimations' -ErrorAction SilentlyContinue).TaskbarAnimations
@@ -94,11 +101,12 @@ void DisableVisualEffectsAction::execute() {
                 FontSmoothing = (Get-ItemProperty -Path 'HKCU:\Control Panel\Desktop' -Name 'FontSmoothing' -ErrorAction SilentlyContinue).FontSmoothing
             }
             $settings | ConvertTo-Json
-        )");
-    
-    ps_check.start();
-    ps_check.waitForFinished(10000);
-    QString check_output = QString::fromUtf8(ps_check.readAllStandardOutput()).trimmed();
+        )",
+        10000);
+        if (!ps_check.std_err.trimmed().isEmpty()) {
+            Q_EMIT logMessage("Visual effects check warning: " + ps_check.std_err.trimmed());
+        }
+        QString check_output = ps_check.std_out.trimmed();
     
     // Parse current settings
     QJsonDocument check_doc = QJsonDocument::fromJson(check_output.toUtf8());
@@ -124,10 +132,8 @@ void DisableVisualEffectsAction::execute() {
     report += "║ Phase 2: Applying Best Performance Settings                         ║\n";
     report += "╠══════════════════════════════════════════════════════════════════════╣\n";
     
-    QProcess ps_apply;
-    ps_apply.setProgram("powershell.exe");
-    ps_apply.setArguments(QStringList() << "-NoProfile" << "-ExecutionPolicy" << "Bypass" << "-Command"
-        << R"(
+        ProcessResult ps_apply = runPowerShell(
+            R"(
             $changes = 0
             $total = 0
             
@@ -220,11 +226,12 @@ void DisableVisualEffectsAction::execute() {
             
             Write-Output "CHANGES:$changes"
             Write-Output "TOTAL:$total"
-        )");
-    
-    ps_apply.start();
-    ps_apply.waitForFinished(15000);
-    QString apply_output = QString::fromUtf8(ps_apply.readAllStandardOutput()).trimmed();
+            )",
+            10000);
+        if (!ps_apply.std_err.trimmed().isEmpty()) {
+            Q_EMIT logMessage("Visual effects apply warning: " + ps_apply.std_err.trimmed());
+        }
+        QString apply_output = ps_apply.std_out.trimmed();
     
     // Parse changes count
     for (const QString& line : apply_output.split('\n')) {
@@ -244,8 +251,12 @@ void DisableVisualEffectsAction::execute() {
     report += "║ Phase 3: System Notification                                        ║\n";
     report += "╠══════════════════════════════════════════════════════════════════════╣\n";
     
-    bool notification_success = QProcess::execute("rundll32.exe",
-        QStringList() << "user32.dll,UpdatePerUserSystemParameters" << "1" << "True") == 0;
+    ProcessResult notify_proc = runProcess("rundll32.exe",
+        QStringList() << "user32.dll,UpdatePerUserSystemParameters" << "1" << "True", 5000);
+    if (notify_proc.timed_out || notify_proc.exit_code != 0) {
+        Q_EMIT logMessage("Visual effects notify warning: " + notify_proc.std_err.trimmed());
+    }
+    bool notification_success = notify_proc.exit_code == 0 && !notify_proc.timed_out;
     
     report += QString("║ System Notification: %1").arg(notification_success ? "✓ Success" : "✗ Failed").leftJustified(73, ' ') + "║\n";
     report += "╠══════════════════════════════════════════════════════════════════════╣\n";

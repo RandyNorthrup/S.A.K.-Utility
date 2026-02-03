@@ -37,16 +37,16 @@ void AboutDialog::setup_ui()
     
     m_icon_label = new QLabel(this);
     m_icon_label->setFixedSize(64, 64);
-    m_icon_label->setStyleSheet("QLabel { background-color: #4A90E2; border-radius: 8px; }");
+    m_icon_label->setStyleSheet("QLabel { background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #3b82f6, stop:1 #2563eb); border-radius: 12px; }");
     header_layout->addWidget(m_icon_label);
     
     auto* title_layout = new QVBoxLayout();
     m_title_label = new QLabel("<b>S.A.K. Utility</b>", this);
-    m_title_label->setStyleSheet("font-size: 18pt;");
+    m_title_label->setStyleSheet("font-size: 18pt; font-weight: 700; color: #0f172a;");
     title_layout->addWidget(m_title_label);
     
     m_version_label = new QLabel(get_version_info(), this);
-    m_version_label->setStyleSheet("font-size: 10pt; color: #666;");
+    m_version_label->setStyleSheet("font-size: 10pt; color: #64748b;");
     title_layout->addWidget(m_version_label);
     
     header_layout->addLayout(title_layout);

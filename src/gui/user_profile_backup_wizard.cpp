@@ -195,7 +195,7 @@ void UserProfileBackupSelectUsersPage::setupUi() {
     
     // Summary
     m_summaryLabel = new QLabel(this);
-    m_summaryLabel->setStyleSheet("QLabel { padding: 8px; background-color: #e8f4fd; border-radius: 4px; }");
+    m_summaryLabel->setStyleSheet("QLabel { padding: 10px; background-color: #e0f2fe; border-radius: 10px; }");
     layout->addWidget(m_summaryLabel);
     updateSummary();
 }
@@ -393,7 +393,7 @@ void UserProfileBackupCustomizeDataPage::setupUi() {
     
     // Summary
     m_summaryLabel = new QLabel(this);
-    m_summaryLabel->setStyleSheet("QLabel { padding: 8px; background-color: #e8f4fd; border-radius: 4px; }");
+    m_summaryLabel->setStyleSheet("QLabel { padding: 10px; background-color: #e0f2fe; border-radius: 10px; }");
     layout->addWidget(m_summaryLabel);
 }
 
@@ -614,7 +614,7 @@ void UserProfileBackupSmartFiltersPage::setupUi() {
     
     // Summary
     m_summaryLabel = new QLabel(this);
-    m_summaryLabel->setStyleSheet("QLabel { padding: 8px; background-color: #e8f4fd; border-radius: 4px; }");
+    m_summaryLabel->setStyleSheet("QLabel { padding: 10px; background-color: #e0f2fe; border-radius: 10px; }");
     layout->addWidget(m_summaryLabel);
 }
 
@@ -803,7 +803,7 @@ void UserProfileBackupSettingsPage::setupUi() {
         "<b>Assign Standard:</b> Sets full control for destination user."
     ), this);
     permExplainLabel->setWordWrap(true);
-    permExplainLabel->setStyleSheet("QLabel { padding: 4px; color: #555; }");
+    permExplainLabel->setStyleSheet("QLabel { padding: 6px; color: #64748b; }");
     layout->addWidget(permExplainLabel);
     
     // Verification
@@ -815,7 +815,7 @@ void UserProfileBackupSettingsPage::setupUi() {
     
     // Summary
     m_summaryLabel = new QLabel(this);
-    m_summaryLabel->setStyleSheet("QLabel { padding: 8px; background-color: #e8f4fd; border-radius: 4px; }");
+    m_summaryLabel->setStyleSheet("QLabel { padding: 10px; background-color: #e0f2fe; border-radius: 10px; }");
     layout->addWidget(m_summaryLabel);
     
     // Register wizard fields for validation
@@ -951,7 +951,7 @@ void UserProfileBackupExecutePage::setupUi() {
     
     // Status label
     m_statusLabel = new QLabel(tr("Ready to start backup"), this);
-    m_statusLabel->setStyleSheet("QLabel { font-weight: bold; }");
+    m_statusLabel->setStyleSheet("QLabel { font-weight: 600; color: #1e293b; }");
     layout->addWidget(m_statusLabel);
     
     // Current user being backed up

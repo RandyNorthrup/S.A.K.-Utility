@@ -3,9 +3,11 @@
 
 #include "sak/actions/update_all_apps_action.h"
 #include "sak/chocolatey_manager.h"
+#include "sak/process_runner.h"
 #include <QJsonDocument>
 #include <QJsonArray>
 #include <QJsonObject>
+#include <QProcess>
 
 namespace sak {
 
@@ -16,17 +18,68 @@ UpdateAllAppsAction::UpdateAllAppsAction(QObject* parent)
 }
 
 void UpdateAllAppsAction::scan() {
-    // Scan is no longer used - actions execute immediately
-    setStatus(ActionStatus::Ready);
+    setStatus(ActionStatus::Scanning);
+
+    bool winget_installed = (system("where winget > nul 2>&1") == 0);
+    bool choco_installed = (system("where choco > nul 2>&1") == 0);
+
+    int winget_available = 0;
+    int choco_available = 0;
+
+    if (winget_installed) {
+        ProcessResult ps_list = runPowerShell(
+            "winget list --upgrade-available --accept-source-agreements | Select-String -Pattern '^' | Measure-Object -Line | Select-Object -ExpandProperty Lines",
+            15000);
+        if (!ps_list.std_err.trimmed().isEmpty()) {
+            Q_EMIT logMessage("Winget list warning: " + ps_list.std_err.trimmed());
+        }
+        QString count_output = ps_list.std_out.trimmed();
+        winget_available = count_output.toInt();
+        if (winget_available > 3) {
+            winget_available -= 3; // Header lines
+        } else {
+            winget_available = 0;
+        }
+    }
+
+    if (choco_installed) {
+        QProcess choco_list;
+        choco_list.setProgram("choco");
+        choco_list.setArguments(QStringList() << "outdated" << "-r");
+        choco_list.start();
+        choco_list.waitForFinished(15000);
+        const QString output = QString::fromUtf8(choco_list.readAllStandardOutput());
+        choco_available = output.split('\n', Qt::SkipEmptyParts).count();
+    }
+
     ScanResult result;
-    result.applicable = true;
-    result.summary = "Ready to update applications";
+    result.applicable = winget_installed || choco_installed;
+    result.files_count = winget_available + choco_available;
+    result.estimated_duration_ms = 0;
+
+    if (result.applicable) {
+        result.summary = QString("Updates available: %1").arg(result.files_count);
+        result.details = QString("WinGet: %1, Chocolatey: %2")
+            .arg(winget_available)
+            .arg(choco_available);
+    } else {
+        result.summary = "No package managers detected";
+        result.details = "Install WinGet or Chocolatey to manage updates";
+    }
+
     setScanResult(result);
+    setStatus(ActionStatus::Ready);
     Q_EMIT scanComplete(result);
 }
 
 void UpdateAllAppsAction::execute() {
     if (isCancelled()) {
+        ExecutionResult result;
+        result.success = false;
+        result.message = "Application update cancelled";
+        setExecutionResult(result);
+        setStatus(ActionStatus::Cancelled);
+        Q_EMIT executionComplete(result);
         return;
     }
 
@@ -45,6 +98,16 @@ void UpdateAllAppsAction::execute() {
     report += "╠══════════════════════════════════════════════════════════════════════╣\n";
     
     Q_EMIT executionProgress("Checking for winget availability...", 5);
+
+    auto finish_cancelled = [this, &start_time]() {
+        ExecutionResult result;
+        result.success = false;
+        result.message = "Application update cancelled";
+        result.duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
+        setExecutionResult(result);
+        setStatus(ActionStatus::Cancelled);
+        Q_EMIT executionComplete(result);
+    };
     
     // Phase 1: Check winget availability
     bool winget_installed = (system("where winget > nul 2>&1") == 0);
@@ -56,13 +119,13 @@ void UpdateAllAppsAction::execute() {
         Q_EMIT executionProgress("Listing winget upgrades available...", 15);
         
         // Get list of upgradeable packages
-        QProcess ps_list;
-        ps_list.setProgram("powershell.exe");
-        ps_list.setArguments(QStringList() << "-NoProfile" << "-ExecutionPolicy" << "Bypass" << "-Command"
-            << "winget list --upgrade-available --accept-source-agreements | Select-String -Pattern '^' | Measure-Object -Line | Select-Object -ExpandProperty Lines");
-        ps_list.start();
-        ps_list.waitForFinished(20000);
-        QString count_output = QString::fromUtf8(ps_list.readAllStandardOutput()).trimmed();
+        ProcessResult ps_list = runPowerShell(
+            "winget list --upgrade-available --accept-source-agreements | Select-String -Pattern '^' | Measure-Object -Line | Select-Object -ExpandProperty Lines",
+            20000);
+        if (!ps_list.std_err.trimmed().isEmpty()) {
+            Q_EMIT logMessage("Winget list warning: " + ps_list.std_err.trimmed());
+        }
+        QString count_output = ps_list.std_out.trimmed();
         winget_available = count_output.toInt();
         
         if (winget_available > 3) {  // Header lines are ~3
@@ -70,21 +133,36 @@ void UpdateAllAppsAction::execute() {
             report += QString("║ Upgrades Available: %1").arg(winget_available).leftJustified(73, ' ') + "║\n";
             
             Q_EMIT executionProgress("Upgrading winget packages...", 30);
+
+            if (isCancelled()) {
+                finish_cancelled();
+                return;
+            }
             
             // Upgrade all packages
-            QProcess ps_upgrade;
-            ps_upgrade.setProgram("powershell.exe");
-            ps_upgrade.setArguments(QStringList() << "-NoProfile" << "-ExecutionPolicy" << "Bypass" << "-Command"
-                << "winget upgrade --all --include-unknown --silent --accept-package-agreements --accept-source-agreements 2>&1 | Out-String");
-            ps_upgrade.start();
-            ps_upgrade.waitForFinished(300000);  // 5 minutes max
-            QString upgrade_output = QString::fromUtf8(ps_upgrade.readAllStandardOutput()).trimmed();
+            ProcessResult ps_upgrade = runPowerShell(
+                "winget upgrade --all --include-unknown --silent --accept-package-agreements --accept-source-agreements 2>&1 | Out-String",
+                300000);
+            if (!ps_upgrade.std_err.trimmed().isEmpty()) {
+                Q_EMIT logMessage("Winget upgrade warning: " + ps_upgrade.std_err.trimmed());
+            }
+            QString upgrade_output = ps_upgrade.std_out.trimmed();
+            QString upgrade_errors = ps_upgrade.std_err.trimmed();
             
             // Count successful upgrades
             winget_updated = upgrade_output.count("Successfully installed", Qt::CaseInsensitive);
             total_updated += winget_updated;
             
             report += QString("║ Successfully Updated: %1").arg(winget_updated).leftJustified(73, ' ') + "║\n";
+
+            if (!upgrade_errors.isEmpty()) {
+                report += "║ Winget Errors:                                                  ║\n";
+                const QStringList error_lines = upgrade_errors.split('\n', Qt::SkipEmptyParts);
+                const int max_lines = std::min(5, static_cast<int>(error_lines.size()));
+                for (int i = 0; i < max_lines; ++i) {
+                    report += QString("║  • %1").arg(error_lines[i].left(67)).leftJustified(73, ' ') + "║\n";
+                }
+            }
         } else {
             report += "║ No WinGet upgrades available                                         ║\n";
         }
@@ -95,18 +173,23 @@ void UpdateAllAppsAction::execute() {
     }
     
     Q_EMIT executionProgress("Checking Microsoft Store updates...", 50);
+
+    if (isCancelled()) {
+        finish_cancelled();
+        return;
+    }
     
     // Phase 2: Microsoft Store updates
     report += "║ Phase 2: Microsoft Store App Updates                                ║\n";
     report += "╠══════════════════════════════════════════════════════════════════════╣\n";
     
-    QProcess ps_store;
-    ps_store.setProgram("powershell.exe");
-    ps_store.setArguments(QStringList() << "-NoProfile" << "-ExecutionPolicy" << "Bypass" << "-Command"
-        << "try { $namespaceName = 'root\\cimv2\\mdm\\dmmap'; $className = 'MDM_EnterpriseModernAppManagement_AppManagement01'; $wmiObj = Get-CimInstance -Namespace $namespaceName -ClassName $className; $result = $wmiObj | Invoke-CimMethod -MethodName UpdateScanMethod; Write-Output 'STORE_UPDATE_TRIGGERED:YES' } catch { Write-Output 'STORE_UPDATE_TRIGGERED:NO'; Write-Output \"ERROR:$($_.Exception.Message)\" }");
-    ps_store.start();
-    ps_store.waitForFinished(30000);
-    QString store_output = QString::fromUtf8(ps_store.readAllStandardOutput()).trimmed();
+    ProcessResult ps_store = runPowerShell(
+        "try { $namespaceName = 'root\\cimv2\\mdm\\dmmap'; $className = 'MDM_EnterpriseModernAppManagement_AppManagement01'; $wmiObj = Get-CimInstance -Namespace $namespaceName -ClassName $className; $result = $wmiObj | Invoke-CimMethod -MethodName UpdateScanMethod; Write-Output 'STORE_UPDATE_TRIGGERED:YES' } catch { Write-Output 'STORE_UPDATE_TRIGGERED:NO'; Write-Output \"ERROR:$($_.Exception.Message)\" }",
+        30000);
+    if (!ps_store.std_err.trimmed().isEmpty()) {
+        Q_EMIT logMessage("Store update trigger warning: " + ps_store.std_err.trimmed());
+    }
+    QString store_output = ps_store.std_out.trimmed();
     
     if (store_output.contains("STORE_UPDATE_TRIGGERED:YES")) {
         report += "║ Store update check triggered successfully                           ║\n";
@@ -118,6 +201,11 @@ void UpdateAllAppsAction::execute() {
     report += "╠══════════════════════════════════════════════════════════════════════╣\n";
     
     Q_EMIT executionProgress("Checking Chocolatey updates...", 70);
+
+    if (isCancelled()) {
+        finish_cancelled();
+        return;
+    }
     
     // Phase 3: Chocolatey (if available)
     bool choco_installed = (system("where choco > nul 2>&1") == 0);
@@ -142,6 +230,11 @@ void UpdateAllAppsAction::execute() {
                     choco_updated++;
                     total_updated++;
                 }
+            }
+
+            if (isCancelled()) {
+                finish_cancelled();
+                return;
             }
             
             report += QString("║ Successfully Updated: %1").arg(choco_updated).leftJustified(73, ' ') + "║\n";

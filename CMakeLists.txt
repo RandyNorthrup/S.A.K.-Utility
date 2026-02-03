@@ -438,10 +438,18 @@ set(GUI_SOURCES
     include/sak/quick_actions_panel.h
     src/gui/network_transfer_panel.cpp
     include/sak/network_transfer_panel.h
+    src/gui/windows11_theme.cpp
+    include/gui/windows11_theme.h
+    src/gui/splash_screen.cpp
+    include/gui/splash_screen.h
     src/core/quick_action.cpp
     include/sak/quick_action.h
     src/core/quick_action_controller.cpp
     include/sak/quick_action_controller.h
+    src/core/quick_action_result_io.cpp
+    include/sak/quick_action_result_io.h
+    src/core/process_runner.cpp
+    include/sak/process_runner.h
 )
 
 # Quick Actions
@@ -606,6 +614,24 @@ add_custom_command(TARGET sak_utility POST_BUILD
         $<TARGET_FILE_DIR:sak_utility>/tools
     COMMENT "Copying embedded Chocolatey tools to output directory"
 )
+
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/resources/sak_splash.png")
+    add_custom_command(TARGET sak_utility POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_CURRENT_SOURCE_DIR}/resources/sak_splash.png"
+            "$<TARGET_FILE_DIR:sak_utility>/sak_splash.png"
+        COMMENT "Copying splash image to output directory"
+    )
+endif()
+
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/resources/icon.ico")
+    add_custom_command(TARGET sak_utility POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_CURRENT_SOURCE_DIR}/resources/icon.ico"
+            "$<TARGET_FILE_DIR:sak_utility>/icon.ico"
+        COMMENT "Copying icon to output directory"
+    )
+endif()
 
 # Compile definitions
 target_compile_definitions(sak_utility PRIVATE

@@ -3,10 +3,10 @@
 
 #include "sak/actions/backup_desktop_wallpaper_action.h"
 #include "sak/windows_user_scanner.h"
+#include "sak/process_runner.h"
 #include <QFile>
 #include <QFileInfo>
 #include <QDir>
-#include <QProcess>
 
 namespace sak {
 
@@ -32,21 +32,19 @@ bool BackupDesktopWallpaperAction::backupRegistrySettings(const QString& dest_fo
     // HKEY_CURRENT_USER\Software\Microsoft\Internet Explorer\Desktop\General\WallpaperSource
     QString reg_file = dest_folder + "/wallpaper_registry.reg";
     
-    QProcess proc;
-    proc.start("reg.exe", QStringList() 
+    ProcessResult proc = runProcess("reg.exe", QStringList()
         << "export"
         << "HKEY_CURRENT_USER\\Control Panel\\Desktop"
         << reg_file
-        << "/y");
-    proc.waitForFinished(5000);
-    
-    return proc.exitCode() == 0;
+        << "/y",
+        5000);
+    return !proc.timed_out && proc.exit_code == 0;
 }
 
 void BackupDesktopWallpaperAction::scan() {
     setStatus(ActionStatus::Scanning);
     
-    Q_EMIT executionProgress("Scanning for desktop wallpapers...", 10);
+    Q_EMIT scanProgress("Scanning for desktop wallpapers...");
     
     WindowsUserScanner scanner;
     m_user_profiles = scanner.scanUsers();
@@ -69,11 +67,27 @@ void BackupDesktopWallpaperAction::scan() {
 
 void BackupDesktopWallpaperAction::execute() {
     if (isCancelled()) {
+        ExecutionResult result;
+        result.success = false;
+        result.message = "Wallpaper backup cancelled";
+        setExecutionResult(result);
+        setStatus(ActionStatus::Cancelled);
+        Q_EMIT executionComplete(result);
         return;
     }
 
     setStatus(ActionStatus::Running);
     QDateTime start_time = QDateTime::currentDateTime();
+
+    auto finish_cancelled = [this, &start_time]() {
+        ExecutionResult result;
+        result.success = false;
+        result.message = "Wallpaper backup cancelled";
+        result.duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
+        setExecutionResult(result);
+        setStatus(ActionStatus::Cancelled);
+        Q_EMIT executionComplete(result);
+    };
     
     Q_EMIT executionProgress("Backing up desktop wallpapers...", 20);
     
@@ -91,7 +105,8 @@ void BackupDesktopWallpaperAction::execute() {
     
     for (const UserProfile& user : m_user_profiles) {
         if (isCancelled()) {
-            break;
+            finish_cancelled();
+            return;
         }
         
         QString wallpaper_path = findTranscodedWallpaper(user.profile_path);

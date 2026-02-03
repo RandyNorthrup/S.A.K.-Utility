@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 #include "sak/actions/defragment_drives_action.h"
+#include "sak/process_runner.h"
 #include <QProcess>
 #include <QStorageInfo>
 #include <QRegularExpression>
@@ -14,25 +15,20 @@ DefragmentDrivesAction::DefragmentDrivesAction(QObject* parent)
 }
 
 bool DefragmentDrivesAction::isDriveSSD(const QString& drive_letter) {
-    QProcess proc;
     QString cmd = QString("Get-PhysicalDisk | Where-Object {$_.DeviceID -eq (Get-Partition -DriveLetter %1).DiskNumber} | Select-Object -ExpandProperty MediaType")
                      .arg(drive_letter.left(1));
-    
-    proc.start("powershell.exe", QStringList() << "-NoProfile" << "-Command" << cmd);
-    proc.waitForFinished(5000);
-    
-    QString output = proc.readAllStandardOutput().trimmed();
+    ProcessResult proc = runPowerShell(cmd, 5000);
+    if (!proc.std_err.trimmed().isEmpty()) {
+        Q_EMIT logMessage("Drive media type warning: " + proc.std_err.trimmed());
+    }
+    QString output = proc.std_out.trimmed();
     return output.contains("SSD", Qt::CaseInsensitive);
 }
 
 int DefragmentDrivesAction::analyzeFragmentation(const QString& drive_letter) {
-    QProcess proc;
     QString cmd = QString("defrag %1: /A").arg(drive_letter);
-    
-    proc.start("cmd.exe", QStringList() << "/c" << cmd);
-    proc.waitForFinished(30000);
-    
-    QString output = proc.readAllStandardOutput();
+    ProcessResult proc = runProcess("cmd.exe", QStringList() << "/c" << cmd, 30000);
+    QString output = proc.std_out;
     
     // Parse fragmentation percentage from output
     QRegularExpression re("(\\d+)%.*fragmented");
@@ -45,17 +41,44 @@ int DefragmentDrivesAction::analyzeFragmentation(const QString& drive_letter) {
 }
 
 void DefragmentDrivesAction::scan() {
-    setStatus(ActionStatus::Ready);
+    setStatus(ActionStatus::Scanning);
+
+    Q_EMIT scanProgress("Enumerating fixed drives...");
+
+    int fixed_drives = 0;
+    for (const QStorageInfo& storage : QStorageInfo::mountedVolumes()) {
+        if (storage.isValid() && storage.isReady() && !storage.isReadOnly()) {
+            if (!storage.rootPath().isEmpty() && storage.rootPath().length() >= 2) {
+                fixed_drives++;
+            }
+        }
+    }
+
     ScanResult result;
-    result.applicable = true;
-    result.summary = "Ready to defragment drives";
+    result.applicable = fixed_drives > 0;
+    result.summary = fixed_drives > 0
+        ? QString("Fixed drives detected: %1").arg(fixed_drives)
+        : "No fixed drives detected";
+    result.details = "Optimization uses Optimize-Volume (defrag/TRIM based on media type)";
+
     setScanResult(result);
+    setStatus(ActionStatus::Ready);
     Q_EMIT scanComplete(result);
 }
 
 void DefragmentDrivesAction::execute() {
     setStatus(ActionStatus::Running);
     QDateTime start_time = QDateTime::currentDateTime();
+
+    auto finish_cancelled = [this, &start_time]() {
+        ExecutionResult result;
+        result.success = false;
+        result.message = "Drive optimization cancelled";
+        result.duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
+        setExecutionResult(result);
+        setStatus(ActionStatus::Cancelled);
+        Q_EMIT executionComplete(result);
+    };
     
     Q_EMIT executionProgress("Analyzing drives for optimization...", 5);
     
@@ -123,65 +146,42 @@ void DefragmentDrivesAction::execute() {
         "Write-Output \"TOTAL_SKIPPED:$skipped\"; \n"
         "Write-Output 'COMPLETE'";
     
-    QProcess ps;
-    ps.start("powershell.exe", QStringList() << "-NoProfile" << "-ExecutionPolicy" << "Bypass" << "-Command" << ps_script);
-    
-    // Monitor progress
-    QString accumulated_output;
+    Q_EMIT executionProgress("Optimizing drives...", 15);
+
+    ProcessResult ps_result = runPowerShell(ps_script, 3600000);
+    if (ps_result.timed_out || isCancelled()) {
+        finish_cancelled();
+        return;
+    }
+
+    QString accumulated_output = ps_result.std_out;
+
     int optimized = 0;
     int total_drives = 0;
     QStringList drive_types;
-    
-    while (ps.state() == QProcess::Running) {
-        if (ps.waitForReadyRead(10000)) {
-            QString chunk = ps.readAllStandardOutput();
-            accumulated_output += chunk;
-            
-            // Track drive being optimized
-            if (chunk.contains("OPTIMIZING:", Qt::CaseInsensitive)) {
-                QRegularExpression re("OPTIMIZING:([A-Z])");
-                QRegularExpressionMatch match = re.match(chunk);
-                if (match.hasMatch()) {
-                    QString letter = match.captured(1);
-                    total_drives++;
-                    int progress = 10 + (total_drives * 80 / qMax(1, total_drives));
-                    Q_EMIT executionProgress(QString("Optimizing drive %1:...").arg(letter), progress);
-                }
-            }
-            
-            // Track drive type
-            if (chunk.contains("DRIVE_TYPE:", Qt::CaseInsensitive)) {
-                QRegularExpression re("DRIVE_TYPE:([A-Z])=(.+)");
-                QRegularExpressionMatch match = re.match(chunk);
-                if (match.hasMatch()) {
-                    QString letter = match.captured(1);
-                    QString type = match.captured(2).trimmed();
-                    drive_types.append(QString("%1: = %2").arg(letter, type));
-                }
-            }
-            
-            // Count successes
-            if (chunk.contains("SUCCESS:", Qt::CaseInsensitive)) {
-                optimized++;
-            }
-        }
-        
-        if (isCancelled()) {
-            ps.kill();
-            setStatus(ActionStatus::Cancelled);
-            return;
-        }
+
+    QRegularExpression optRe("OPTIMIZING:([A-Z])");
+    auto optIt = optRe.globalMatch(accumulated_output);
+    while (optIt.hasNext()) {
+        optIt.next();
+        total_drives++;
     }
-    
-    ps.waitForFinished(3600000); // 1 hour timeout for large drives
-    accumulated_output += ps.readAll();
+
+    QRegularExpression typeRe("DRIVE_TYPE:([A-Z])=(.+)");
+    auto typeIt = typeRe.globalMatch(accumulated_output);
+    while (typeIt.hasNext()) {
+        auto match = typeIt.next();
+        drive_types.append(QString("%1: = %2").arg(match.captured(1), match.captured(2).trimmed()));
+    }
+
+    optimized = accumulated_output.count("SUCCESS:", Qt::CaseInsensitive);
     
     if (accumulated_output.contains("NO_DRIVES_FOUND")) {
         ExecutionResult result;
         result.success = true;
         result.message = "No fixed NTFS drives found to optimize";
         result.duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
-        result.log = accumulated_output;
+        result.log = accumulated_output + (ps_result.std_err.isEmpty() ? "" : "\nErrors:\n" + ps_result.std_err);
         setExecutionResult(result);
         setStatus(ActionStatus::Success);
         Q_EMIT executionComplete(result);
@@ -222,6 +222,9 @@ void DefragmentDrivesAction::execute() {
     result.log = QString("Drive Types:\n%1\n\nOptimization Details:\n%2")
                     .arg(drive_info)
                     .arg(accumulated_output);
+    if (!ps_result.std_err.trimmed().isEmpty()) {
+        result.log += "\nErrors:\n" + ps_result.std_err.trimmed();
+    }
     
     setExecutionResult(result);
     setStatus(ActionStatus::Success);

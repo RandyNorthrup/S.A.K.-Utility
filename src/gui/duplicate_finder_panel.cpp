@@ -86,11 +86,11 @@ void DuplicateFinderPanel::setup_ui()
     progress_layout->addWidget(m_progress_bar);
     
     m_status_label = new QLabel("Ready", this);
-    m_status_label->setStyleSheet("font-weight: bold;");
+    m_status_label->setStyleSheet("font-weight: 600; color: #1e293b;");
     progress_layout->addWidget(m_status_label);
     
     m_results_label = new QLabel("", this);
-    m_results_label->setStyleSheet("color: #006400;");
+    m_results_label->setStyleSheet("color: #16a34a; font-weight: 600;");
     progress_layout->addWidget(m_results_label);
     
     main_layout->addWidget(progress_group);

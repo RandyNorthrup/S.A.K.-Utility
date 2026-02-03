@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 #include "sak/actions/check_disk_errors_action.h"
+#include "sak/process_runner.h"
 #include <QProcess>
 #include <QStorageInfo>
 
@@ -13,12 +14,27 @@ CheckDiskErrorsAction::CheckDiskErrorsAction(QObject* parent)
 }
 
 void CheckDiskErrorsAction::scan() {
-    // Scan is no longer used - actions execute immediately
-    setStatus(ActionStatus::Ready);
+    setStatus(ActionStatus::Scanning);
+
+    QVector<QChar> drives;
+    for (const QStorageInfo& storage : QStorageInfo::mountedVolumes()) {
+        if (storage.isValid() && !storage.isReadOnly() && storage.rootPath().length() >= 2) {
+            QChar drive = storage.rootPath().at(0);
+            if (drive.isLetter()) {
+                drives.append(drive);
+            }
+        }
+    }
+
     ScanResult result;
-    result.applicable = true;
-    result.summary = "Ready to schedule disk error check";
+    result.applicable = !drives.isEmpty();
+    result.summary = result.applicable
+        ? QString("Drives detected: %1").arg(drives.count())
+        : "No writable drives detected";
+    result.details = "Full scan will schedule repair if corruption is detected";
+
     setScanResult(result);
+    setStatus(ActionStatus::Ready);
     Q_EMIT scanComplete(result);
 }
 
@@ -104,15 +120,15 @@ void CheckDiskErrorsAction::execute() {
             "Write-Output '===SCAN_END==='\\n"
         ).arg(drive);
         
-        QProcess proc;
-        proc.start("powershell.exe", QStringList() << "-Command" << ps_cmd);
-        
-        if (!proc.waitForFinished(30000)) {
+        ProcessResult proc = runPowerShell(ps_cmd, 30000);
+        if (proc.timed_out) {
             report += QString("Drive %1: - TIMEOUT (scan took too long)\n\n").arg(drive);
             continue;
         }
-        
-        QString output = proc.readAllStandardOutput();
+        if (!proc.std_err.trimmed().isEmpty()) {
+            Q_EMIT logMessage("Disk scan warning for drive " + QString(drive) + ": " + proc.std_err.trimmed());
+        }
+        QString output = proc.std_out;
         QStringList lines = output.split('\n', Qt::SkipEmptyParts);
         
         bool parsing = false;

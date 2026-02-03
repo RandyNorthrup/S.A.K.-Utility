@@ -16,9 +16,9 @@ BrowserProfileBackupAction::BrowserProfileBackupAction(const QString& backup_loc
 }
 
 void BrowserProfileBackupAction::scan() {
-    setStatus(ActionStatus::Ready);
+    setStatus(ActionStatus::Scanning);
     
-    Q_EMIT executionProgress("Detecting browser profiles...", 10);
+    Q_EMIT scanProgress("Detecting browser profiles...");
     
     // Quick scan for browser profile directories
     QString user_profile = QDir::homePath();
@@ -43,11 +43,27 @@ void BrowserProfileBackupAction::scan() {
 
 void BrowserProfileBackupAction::execute() {
     if (isCancelled()) {
+        ExecutionResult result;
+        result.success = false;
+        result.message = "Browser profile backup cancelled";
+        setExecutionResult(result);
+        setStatus(ActionStatus::Cancelled);
+        Q_EMIT executionComplete(result);
         return;
     }
 
     setStatus(ActionStatus::Running);
     QDateTime start_time = QDateTime::currentDateTime();
+
+    auto finish_cancelled = [this, &start_time]() {
+        ExecutionResult result;
+        result.success = false;
+        result.message = "Browser profile backup cancelled";
+        result.duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
+        setExecutionResult(result);
+        setStatus(ActionStatus::Cancelled);
+        Q_EMIT executionComplete(result);
+    };
     
     Q_EMIT executionProgress("Scanning for browser profiles...", 10);
     
@@ -66,13 +82,25 @@ void BrowserProfileBackupAction::execute() {
     
     // Scan each user's profile for browser data
     for (const UserProfile& user : users) {
+        if (isCancelled()) {
+            finish_cancelled();
+            return;
+        }
         for (const QString& rel_path : browser_rel_paths) {
+            if (isCancelled()) {
+                finish_cancelled();
+                return;
+            }
             QString full_path = user.profile_path + "/" + rel_path;
             QDir dir(full_path);
             if (dir.exists()) {
                 profile_count++;
                 QDirIterator it(full_path, QDir::Files, QDirIterator::Subdirectories);
                 while (it.hasNext()) {
+                    if (isCancelled()) {
+                        finish_cancelled();
+                        return;
+                    }
                     it.next();
                     total_size += it.fileInfo().size();
                 }

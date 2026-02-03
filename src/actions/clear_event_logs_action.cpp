@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 #include "sak/actions/clear_event_logs_action.h"
+#include "sak/process_runner.h"
 #include <QProcess>
 #include <QDir>
 #include <QDateTime>
@@ -20,37 +21,74 @@ bool ClearEventLogsAction::backupEventLog(const QString& log_name) {
     
     QDir().mkpath("C:/SAK_Backups/EventLogs");
     
-    QProcess proc;
     QString cmd = QString("wevtutil epl %1 \"%2\"").arg(log_name, backup_path);
-    proc.start("cmd.exe", QStringList() << "/c" << cmd);
-    if (!proc.waitForFinished(10000)) {
+    ProcessResult proc = runProcess("cmd.exe", QStringList() << "/c" << cmd, 10000);
+    if (proc.timed_out) {
         return false;
     }
-    return proc.exitCode() == 0;
+    return proc.exit_code == 0;
 }
 
 bool ClearEventLogsAction::clearEventLog(const QString& log_name) {
-    QProcess proc;
     QString cmd = QString("wevtutil cl %1").arg(log_name);
-    proc.start("cmd.exe", QStringList() << "/c" << cmd);
-    if (!proc.waitForFinished(5000)) {
+    ProcessResult proc = runProcess("cmd.exe", QStringList() << "/c" << cmd, 5000);
+    if (proc.timed_out) {
         return false;
     }
-    return proc.exitCode() == 0;
+    return proc.exit_code == 0;
 }
 
 void ClearEventLogsAction::scan() {
-    // Scan is no longer used - actions execute immediately
-    setStatus(ActionStatus::Ready);
+    setStatus(ActionStatus::Scanning);
+
+    Q_EMIT scanProgress("Enumerating event logs...");
+
+    QString ps_cmd =
+        "try { "
+        "  $logs = Get-EventLog -List | Where-Object { $_.Entries.Count -gt 0 }; "
+        "  $totalLogs = $logs.Count; "
+        "  $totalEntries = ($logs | Measure-Object -Property Entries.Count -Sum).Sum; "
+        "  Write-Output \"LOGS:$totalLogs\"; "
+        "  Write-Output \"ENTRIES:$totalEntries\"; "
+        "} catch { Write-Output \"LOGS:0\"; Write-Output \"ENTRIES:0\" }";
+    ProcessResult proc = runPowerShell(ps_cmd, 8000);
+    if (!proc.std_err.trimmed().isEmpty()) {
+        Q_EMIT logMessage("Event log scan warning: " + proc.std_err.trimmed());
+    }
+    QString output = proc.std_out;
+    QStringList lines = output.split('\n', Qt::SkipEmptyParts);
+    int total_logs = 0;
+    qint64 total_entries = 0;
+    for (const auto& line : lines) {
+        QString trimmed = line.trimmed();
+        if (trimmed.startsWith("LOGS:")) {
+            total_logs = trimmed.mid(5).toInt();
+        } else if (trimmed.startsWith("ENTRIES:")) {
+            total_entries = trimmed.mid(8).toLongLong();
+        }
+    }
+
     ScanResult result;
-    result.applicable = true;
-    result.summary = "Ready to clear event logs";
+    result.applicable = total_logs > 0;
+    result.files_count = total_logs;
+    result.summary = total_logs > 0
+        ? QString("Event logs: %1, entries: %2").arg(total_logs).arg(total_entries)
+        : "No event log entries detected";
+    result.details = "Full run will backup and clear all event logs";
+
     setScanResult(result);
+    setStatus(ActionStatus::Ready);
     Q_EMIT scanComplete(result);
 }
 
 void ClearEventLogsAction::execute() {
     if (isCancelled()) {
+        ExecutionResult result;
+        result.success = false;
+        result.message = "Event log clearing cancelled";
+        setExecutionResult(result);
+        setStatus(ActionStatus::Cancelled);
+        Q_EMIT executionComplete(result);
         return;
     }
 
@@ -124,16 +162,12 @@ void ClearEventLogsAction::execute() {
     
     Q_EMIT executionProgress("║ Enumerating all event logs with Get-EventLog...              ║", 20);
     
-    QProcess ps;
-    ps.start("powershell.exe", QStringList() << "-NoProfile" << "-ExecutionPolicy" << "Bypass" << "-Command" << ps_script);
-    
+    ProcessResult ps = runPowerShell(ps_script, 300000);
+
     Q_EMIT executionProgress("║ Backing up logs with wevtutil...                             ║", 40);
     Q_EMIT executionProgress("║ Clearing event log entries...                                ║", 60);
-    
-    bool finished = ps.waitForFinished(300000); // 5 minute timeout for large logs
-    
-    if (!finished || isCancelled()) {
-        ps.kill();
+
+    if (ps.timed_out || isCancelled()) {
         ExecutionResult result;
         result.success = false;
         result.message = isCancelled() ? "Event log clearing cancelled" : "Operation timed out after 5 minutes";
@@ -146,7 +180,10 @@ void ClearEventLogsAction::execute() {
     
     Q_EMIT executionProgress("║ Processing results and generating report...                   ║", 80);
     
-    QString output = ps.readAllStandardOutput();
+    if (!ps.std_err.trimmed().isEmpty()) {
+        Q_EMIT logMessage("Event log clear warning: " + ps.std_err.trimmed());
+    }
+    QString output = ps.std_out;
     
     qint64 duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
     

@@ -46,7 +46,7 @@ void ImageFlasherSettingsDialog::setupUI() {
         verificationGroup
     );
     validationNote->setWordWrap(true);
-    validationNote->setStyleSheet("color: #666; font-size: 9pt;");
+    validationNote->setStyleSheet("color: #64748b; font-size: 9pt;");
     verificationLayout->addWidget(validationNote, 1, 0, 1, 2);
     
     mainLayout->addWidget(verificationGroup);
@@ -73,7 +73,7 @@ void ImageFlasherSettingsDialog::setupUI() {
         performanceGroup
     );
     performanceNote->setWordWrap(true);
-    performanceNote->setStyleSheet("color: #666; font-size: 9pt;");
+    performanceNote->setStyleSheet("color: #64748b; font-size: 9pt;");
     performanceLayout->addWidget(performanceNote, 2, 0, 1, 2);
     
     mainLayout->addWidget(performanceGroup);

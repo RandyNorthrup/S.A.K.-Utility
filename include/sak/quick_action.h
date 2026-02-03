@@ -146,6 +146,22 @@ public:
      */
     const ExecutionResult& lastExecutionResult() const { return m_execution_result; }
 
+    /**
+     * @brief Update status from controller
+     * @param status New status
+     */
+    void updateStatus(ActionStatus status) { setStatus(status); }
+
+    /**
+     * @brief Apply execution result from controller
+     * @param result Execution result
+     * @param status Final status
+     */
+    void applyExecutionResult(const ExecutionResult& result, ActionStatus status) {
+        setExecutionResult(result);
+        setStatus(status);
+    }
+
 Q_SIGNALS:
     /**
      * @brief Emitted when status changes
@@ -183,6 +199,12 @@ Q_SIGNALS:
      * @param error_message Error description
      */
     void errorOccurred(const QString& error_message);
+
+    /**
+     * @brief Emitted for log output
+     * @param message Log message
+     */
+    void logMessage(const QString& message);
 
 public Q_SLOTS:
     /**

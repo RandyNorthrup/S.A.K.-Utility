@@ -38,7 +38,7 @@ void BackupPanel::setupUi()
         "Comprehensive backup and restore wizards for Windows user profiles."
     );
     descLabel->setWordWrap(true);
-    descLabel->setStyleSheet("color: #666; margin-bottom: 5px;");
+    descLabel->setStyleSheet("color: #64748b; margin-bottom: 5px;");
     mainLayout->addWidget(descLabel);
 
     // Action buttons in a card-style layout
@@ -49,7 +49,7 @@ void BackupPanel::setupUi()
     
     // Backup section
     auto* backupCard = new QWidget();
-    backupCard->setStyleSheet("QWidget { background-color: #f8f9fa; border: 1px solid #dee2e6; border-radius: 4px; padding: 10px; }");
+    backupCard->setStyleSheet("QWidget { background-color: rgba(255, 255, 255, 0.96); border: 1px solid #cbd5e1; border-radius: 12px; padding: 12px; }");
     auto* backupLayout = new QVBoxLayout(backupCard);
     backupLayout->setSpacing(8);
     backupLayout->setContentsMargins(10, 10, 10, 10);
@@ -61,7 +61,7 @@ void BackupPanel::setupUi()
         "Scan and select users, choose folders, configure filters, and create backup packages."
     );
     backupDesc->setWordWrap(true);
-    backupDesc->setStyleSheet("color: #555; font-size: 9pt;");
+    backupDesc->setStyleSheet("color: #475569; font-size: 9pt;");
     backupLayout->addWidget(backupDesc);
     
     m_backupButton = new QPushButton("Start Backup Wizard...");
@@ -73,7 +73,7 @@ void BackupPanel::setupUi()
     
     // Restore section
     auto* restoreCard = new QWidget();
-    restoreCard->setStyleSheet("QWidget { background-color: #f8f9fa; border: 1px solid #dee2e6; border-radius: 4px; padding: 10px; }");
+    restoreCard->setStyleSheet("QWidget { background-color: rgba(255, 255, 255, 0.96); border: 1px solid #cbd5e1; border-radius: 12px; padding: 12px; }");
     auto* restoreLayout = new QVBoxLayout(restoreCard);
     restoreLayout->setSpacing(8);
     restoreLayout->setContentsMargins(10, 10, 10, 10);
@@ -85,7 +85,7 @@ void BackupPanel::setupUi()
         "Select backup, map users, configure merge options, and restore data with permissions."
     );
     restoreDesc->setWordWrap(true);
-    restoreDesc->setStyleSheet("color: #555; font-size: 9pt;");
+    restoreDesc->setStyleSheet("color: #475569; font-size: 9pt;");
     restoreLayout->addWidget(restoreDesc);
     
     m_restoreButton = new QPushButton("Start Restore Wizard...");
@@ -99,7 +99,7 @@ void BackupPanel::setupUi()
     
     // Status
     m_statusLabel = new QLabel("Ready");
-    m_statusLabel->setStyleSheet("padding: 6px; background-color: #e9ecef; border-radius: 4px; font-weight: bold;");
+    m_statusLabel->setStyleSheet("padding: 8px; background-color: #e2e8f0; border-radius: 10px; font-weight: 600; color: #1e293b;");
     mainLayout->addWidget(m_statusLabel);
 
     // Log viewer

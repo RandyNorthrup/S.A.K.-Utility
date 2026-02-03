@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 #include "sak/actions/generate_system_report_action.h"
-#include <QProcess>
+#include "sak/process_runner.h"
 #include <QDir>
 #include <QDateTime>
 #include <QSysInfo>
@@ -37,17 +37,26 @@ void GenerateSystemReportAction::generateHTML() {
 }
 
 void GenerateSystemReportAction::scan() {
-    // Scan is no longer used - actions execute immediately
-    setStatus(ActionStatus::Ready);
+    setStatus(ActionStatus::Scanning);
+
     ScanResult result;
     result.applicable = true;
-    result.summary = "Ready to generate system report";
+    result.summary = "System report will gather OS, hardware, storage, and drivers";
+    result.details = "Output saved to reports folder";
+
     setScanResult(result);
+    setStatus(ActionStatus::Ready);
     Q_EMIT scanComplete(result);
 }
 
 void GenerateSystemReportAction::execute() {
     if (isCancelled()) {
+        ExecutionResult result;
+        result.success = false;
+        result.message = "System report generation cancelled";
+        setExecutionResult(result);
+        setStatus(ActionStatus::Cancelled);
+        Q_EMIT executionComplete(result);
         return;
     }
 
@@ -58,6 +67,16 @@ void GenerateSystemReportAction::execute() {
     QString timestamp = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss");
     
     Q_EMIT executionProgress("Gathering comprehensive system information...", 5);
+
+    auto finish_cancelled = [this, &start_time]() {
+        ExecutionResult result;
+        result.success = false;
+        result.message = "System report generation cancelled";
+        result.duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
+        setExecutionResult(result);
+        setStatus(ActionStatus::Cancelled);
+        Q_EMIT executionComplete(result);
+    };
     
     report += "╔" + QString("═").repeated(78) + "╗\n";
     report += "║" + QString(" COMPREHENSIVE SYSTEM DIAGNOSTIC REPORT").leftJustified(78) + "║\n";
@@ -67,7 +86,6 @@ void GenerateSystemReportAction::execute() {
     // Get comprehensive computer info (100+ properties)
     Q_EMIT executionProgress("Collecting OS and hardware information...", 15);
     
-    QProcess proc_info;
     QString ps_cmd_info = 
         "$info = Get-ComputerInfo\n"
         "\n"
@@ -142,18 +160,24 @@ void GenerateSystemReportAction::execute() {
         "Write-Output \"Registered Owner: $($info.WindowsRegisteredOwner)\"\n"
         "Write-Output \"Registered Organization: $($info.WindowsRegisteredOrganization)\"";
     
-    proc_info.start("powershell.exe", QStringList() << "-Command" << ps_cmd_info);
-    
-    if (proc_info.waitForFinished(15000)) {
-        report += proc_info.readAllStandardOutput() + "\n";
+    ProcessResult proc_info = runPowerShell(ps_cmd_info, 15000);
+    if (!proc_info.std_err.trimmed().isEmpty()) {
+        Q_EMIT logMessage("System report OS warning: " + proc_info.std_err.trimmed());
+    }
+    if (!proc_info.timed_out) {
+        report += proc_info.std_out + "\n";
     } else {
         report += "=== OPERATING SYSTEM ===\nTimeout gathering system info\n\n";
+    }
+
+    if (isCancelled()) {
+        finish_cancelled();
+        return;
     }
     
     // Get detailed storage information
     Q_EMIT executionProgress("Collecting storage information...", 40);
     
-    QProcess proc_storage;
     QString ps_cmd_storage = 
         "Write-Output \"=== STORAGE DEVICES ===\"\n"
         "$disks = Get-PhysicalDisk\n"
@@ -179,16 +203,22 @@ void GenerateSystemReportAction::execute() {
         "}\n"
         "Write-Output \"\"";
     
-    proc_storage.start("powershell.exe", QStringList() << "-Command" << ps_cmd_storage);
-    
-    if (proc_storage.waitForFinished(10000)) {
-        report += proc_storage.readAllStandardOutput() + "\n";
+    ProcessResult proc_storage = runPowerShell(ps_cmd_storage, 10000);
+    if (!proc_storage.std_err.trimmed().isEmpty()) {
+        Q_EMIT logMessage("System report storage warning: " + proc_storage.std_err.trimmed());
+    }
+    if (!proc_storage.timed_out) {
+        report += proc_storage.std_out + "\n";
+    }
+
+    if (isCancelled()) {
+        finish_cancelled();
+        return;
     }
     
     // Get network adapter details
     Q_EMIT executionProgress("Collecting network configuration...", 60);
     
-    QProcess proc_network;
     QString ps_cmd_network = 
         "Write-Output \"=== NETWORK ADAPTERS ===\"\n"
         "$adapters = Get-NetAdapter | Where-Object {$_.Status -eq 'Up'}\n"
@@ -210,10 +240,17 @@ void GenerateSystemReportAction::execute() {
         "}\n"
         "Write-Output \"\"";
     
-    proc_network.start("powershell.exe", QStringList() << "-Command" << ps_cmd_network);
-    
-    if (proc_network.waitForFinished(10000)) {
-        report += proc_network.readAllStandardOutput() + "\n";
+    ProcessResult proc_network = runPowerShell(ps_cmd_network, 10000);
+    if (!proc_network.std_err.trimmed().isEmpty()) {
+        Q_EMIT logMessage("System report network warning: " + proc_network.std_err.trimmed());
+    }
+    if (!proc_network.timed_out) {
+        report += proc_network.std_out + "\n";
+    }
+
+    if (isCancelled()) {
+        finish_cancelled();
+        return;
     }
     
     // Get Qt system info
@@ -231,6 +268,10 @@ void GenerateSystemReportAction::execute() {
     // Get volume information
     report += "=== VOLUME INFORMATION ===\n\n";
     for (const QStorageInfo& storage : QStorageInfo::mountedVolumes()) {
+        if (isCancelled()) {
+            finish_cancelled();
+            return;
+        }
         if (!storage.isValid() || !storage.isReady()) continue;
         
         report += QString("Volume: %1\n").arg(storage.rootPath());
@@ -244,6 +285,11 @@ void GenerateSystemReportAction::execute() {
     }
     
     Q_EMIT executionProgress("Saving report...", 95);
+
+    if (isCancelled()) {
+        finish_cancelled();
+        return;
+    }
     
     // Save to file
     QDir output_dir(m_output_location);

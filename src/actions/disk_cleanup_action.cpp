@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 #include "sak/actions/disk_cleanup_action.h"
+#include "sak/process_runner.h"
 
 #include <QDir>
 #include <QFile>
@@ -18,17 +19,74 @@ DiskCleanupAction::DiskCleanupAction()
 }
 
 void DiskCleanupAction::scan() {
-    // Scan is no longer used - actions execute immediately
-    setStatus(ActionStatus::Ready);
+    setStatus(ActionStatus::Scanning);
+    m_targets.clear();
+    m_total_bytes = 0;
+    m_total_files = 0;
+
+    Q_EMIT scanProgress("Scanning Windows temp files...");
+    scanWindowsTemp();
+    if (isCancelled()) {
+        return;
+    }
+
+    Q_EMIT scanProgress("Scanning user temp files...");
+    scanUserTemp();
+    if (isCancelled()) {
+        return;
+    }
+
+    Q_EMIT scanProgress("Scanning browser caches...");
+    scanBrowserCaches();
+    if (isCancelled()) {
+        return;
+    }
+
+    Q_EMIT scanProgress("Scanning recycle bin...");
+    scanRecycleBin();
+    if (isCancelled()) {
+        return;
+    }
+
+    Q_EMIT scanProgress("Scanning Windows Update cache...");
+    scanWindowsUpdate();
+    if (isCancelled()) {
+        return;
+    }
+
+    Q_EMIT scanProgress("Scanning thumbnail cache...");
+    scanThumbnailCache();
+
     ScanResult result;
-    result.applicable = true;
-    result.summary = "Ready to clean temporary files";
+    result.applicable = m_total_bytes > 0;
+    result.bytes_affected = m_total_bytes;
+    result.files_count = m_total_files;
+    result.estimated_duration_ms = std::max<qint64>(5000, m_total_files * 5);
+
+    if (result.applicable) {
+        double mb = m_total_bytes / (1024.0 * 1024.0);
+        result.summary = QString("Potential cleanup: %1 MB").arg(mb, 0, 'f', 1);
+        result.details = QString("Targets: %1, Files: %2")
+            .arg(m_targets.size())
+            .arg(m_total_files);
+    } else {
+        result.summary = "No cleanup targets found";
+        result.details = "System appears clean";
+    }
+
     setScanResult(result);
+    setStatus(ActionStatus::Ready);
     Q_EMIT scanComplete(result);
 }
 
 void DiskCleanupAction::execute() {
     if (isCancelled()) {
+        ExecutionResult result;
+        result.success = false;
+        result.message = "Disk cleanup cancelled";
+        setExecutionResult(result);
+        setStatus(ActionStatus::Cancelled);
+        Q_EMIT executionComplete(result);
         return;
     }
 
@@ -84,16 +142,27 @@ void DiskCleanupAction::execute() {
         "}"
     ).arg(PROFILE_ID);
     
-    QProcess::execute("powershell.exe", QStringList() << "-ExecutionPolicy" << "Bypass" << "-Command" << ps_config);
+    ProcessResult config_result = runPowerShell(ps_config, 300000);
+    if (config_result.timed_out || config_result.exit_code != 0) {
+        ExecutionResult result;
+        result.success = false;
+        result.message = "Failed to configure Disk Cleanup";
+        result.duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
+        result.log = config_result.std_err.isEmpty() ? "Disk Cleanup configuration failed" : config_result.std_err.trimmed();
+        setExecutionResult(result);
+        setStatus(ActionStatus::Failed);
+        Q_EMIT executionComplete(result);
+        return;
+    }
     
     Q_EMIT executionProgress("Running comprehensive Disk Cleanup...", 15);
     
     // Get all drives for cleanup
-    QProcess drives_proc;
-    drives_proc.start("powershell.exe", QStringList() << "-Command" 
-        << "Get-Volume | Where-Object {$_.DriveLetter -and $_.FileSystem -eq 'NTFS'} | Select-Object -ExpandProperty DriveLetter");
-    drives_proc.waitForFinished(5000);
-    QString drives_output = drives_proc.readAllStandardOutput();
+    ProcessResult drives_proc = runPowerShell(
+        "Get-Volume | Where-Object {$_.DriveLetter -and $_.FileSystem -eq 'NTFS'} | Select-Object -ExpandProperty DriveLetter",
+        120000);
+    QString drives_output = drives_proc.std_out;
+    QString drives_error = drives_proc.std_err;
     QStringList drives = drives_output.split('\n', Qt::SkipEmptyParts);
     
     int drives_processed = 0;
@@ -118,23 +187,23 @@ void DiskCleanupAction::execute() {
         Q_EMIT executionProgress(QString("Cleaning drive %1:...").arg(drive_letter), progress);
         
         // Get free space before
-        QProcess space_before;
-        space_before.start("powershell.exe", QStringList() << "-Command" 
-            << QString("(Get-Volume -DriveLetter %1).SizeRemaining").arg(drive_letter));
-        space_before.waitForFinished(5000);
-        qint64 free_before = space_before.readAllStandardOutput().trimmed().toLongLong();
+        ProcessResult space_before = runPowerShell(
+            QString("(Get-Volume -DriveLetter %1).SizeRemaining").arg(drive_letter),
+            5000);
+        qint64 free_before = space_before.std_out.trimmed().toLongLong();
         
         // Run cleanup on this drive
-        QProcess cleanmgr;
-        cleanmgr.start("cleanmgr.exe", QStringList() << "/d" << drive_letter << sagerun_arg);
-        cleanmgr.waitForFinished(300000); // 5 minute timeout per drive
+        ProcessResult cleanmgr = runProcess("cleanmgr.exe", QStringList() << "/d" << drive_letter << sagerun_arg, 300000);
+        if (cleanmgr.timed_out || cleanmgr.exit_code != 0) {
+            // Continue but record error
+            Q_EMIT executionProgress(QString("Cleanup warning on %1:").arg(drive_letter), progress);
+        }
         
         // Get free space after
-        QProcess space_after;
-        space_after.start("powershell.exe", QStringList() << "-Command" 
-            << QString("(Get-Volume -DriveLetter %1).SizeRemaining").arg(drive_letter));
-        space_after.waitForFinished(5000);
-        qint64 free_after = space_after.readAllStandardOutput().trimmed().toLongLong();
+        ProcessResult space_after = runPowerShell(
+            QString("(Get-Volume -DriveLetter %1).SizeRemaining").arg(drive_letter),
+            5000);
+        qint64 free_after = space_after.std_out.trimmed().toLongLong();
         
         total_freed += (free_after - free_before);
         drives_processed++;
@@ -164,6 +233,9 @@ void DiskCleanupAction::execute() {
         
         result.log = QString("Completed in %1 seconds\nProfile: Comprehensive Windows cleanup\nDrives processed: %2")
             .arg(duration_ms / 1000).arg(drives_processed);
+        if (!drives_error.trimmed().isEmpty()) {
+            result.log += QString("\nDrive enumeration errors:\n%1").arg(drives_error.trimmed());
+        }
         setStatus(ActionStatus::Success);
     } else {
         result.success = false;

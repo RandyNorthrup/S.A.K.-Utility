@@ -73,7 +73,7 @@ void ImageFlasherPanel::setupUI() {
     mainLayout->addWidget(titleLabel);
     
     auto* subtitleLabel = new QLabel("Flash disk images to USB drives and SD cards", this);
-    subtitleLabel->setStyleSheet("color: gray;");
+    subtitleLabel->setStyleSheet("color: #64748b;");
     mainLayout->addWidget(subtitleLabel);
     
     mainLayout->addSpacing(20);
@@ -116,8 +116,10 @@ void ImageFlasherPanel::setupUI() {
     m_flashButton = new QPushButton("Flash!", this);
     m_flashButton->setEnabled(false);
     m_flashButton->setStyleSheet(
-        "QPushButton { background-color: #0078d4; color: white; font-weight: bold; padding: 8px 20px; }"
-        "QPushButton:disabled { background-color: #cccccc; color: #666666; }");
+        "QPushButton { background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #3b82f6, stop:1 #2563eb); color: white; font-weight: 600; padding: 8px 20px; border-radius: 12px; }"
+        "QPushButton:hover { background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #4f8efc, stop:1 #3b82f6); }"
+        "QPushButton:pressed { background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #2563eb, stop:1 #1d4ed8); }"
+        "QPushButton:disabled { background-color: #cbd5e1; color: #64748b; }");
     buttonLayout->addWidget(m_flashButton);
     connect(m_flashButton, &QPushButton::clicked,
             this, &ImageFlasherPanel::onFlashClicked);
@@ -399,10 +401,10 @@ void ImageFlasherPanel::onFlashStateChanged(sak::FlashState newState, const QStr
 void ImageFlasherPanel::onFlashCompleted(const sak::FlashResult& result) {
     if (result.success) {
         m_completionMessageLabel->setText("✓ Flash Completed Successfully!");
-        m_completionMessageLabel->setStyleSheet("color: green;");
+        m_completionMessageLabel->setStyleSheet("color: #16a34a;");
     } else {
         m_completionMessageLabel->setText("✗ Flash Completed with Errors");
-        m_completionMessageLabel->setStyleSheet("color: red;");
+        m_completionMessageLabel->setStyleSheet("color: #dc2626;");
     }
     
     QString details = QString("Successful: %1\nFailed: %2")

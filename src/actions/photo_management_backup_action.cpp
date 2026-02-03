@@ -121,17 +121,18 @@ void PhotoManagementBackupAction::scan() {
         result.summary = QString("Found %1 photo software item(s) - %2 MB")
             .arg(m_photo_data.count())
             .arg(m_total_size / (1024 * 1024));
-        setStatus(ActionStatus::Ready);
     } else {
         result.summary = "No photo management software data found";
-        setStatus(ActionStatus::Idle);
     }
     
+    setScanResult(result);
+    setStatus(ActionStatus::Ready);
     Q_EMIT scanComplete(result);
 }
 
 void PhotoManagementBackupAction::execute() {
     setStatus(ActionStatus::Running);
+    QDateTime start_time = QDateTime::currentDateTime();
     
     QDir backup_dir(m_backup_location + "/PhotoSoftware");
     backup_dir.mkpath(".");
@@ -140,13 +141,39 @@ void PhotoManagementBackupAction::execute() {
     qint64 bytes_copied = 0;
     
     for (const PhotoSoftwareData& data : m_photo_data) {
-        QString dest_path = backup_dir.filePath(data.software_name + "/" + data.data_type);
+        if (isCancelled()) {
+            ExecutionResult result;
+            result.success = false;
+            result.message = "Photo software backup cancelled";
+            result.duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
+            setExecutionResult(result);
+            setStatus(ActionStatus::Cancelled);
+            Q_EMIT executionComplete(result);
+            return;
+        }
+
+        QString safe_dir = data.path;
+        safe_dir.replace(':', '_');
+        safe_dir.replace('\\', '_');
+        safe_dir.replace('/', '_');
+        QString dest_path = backup_dir.filePath(data.software_name + "/" + data.data_type + "/" + safe_dir);
         QDir().mkpath(dest_path);
         
         QFileInfo src_info(data.path);
         
         if (src_info.isFile()) {
             QString dest_file = dest_path + "/" + src_info.fileName();
+            if (QFile::exists(dest_file)) {
+                QString base = src_info.completeBaseName();
+                QString ext = src_info.suffix();
+                int suffix = 1;
+                QString candidate;
+                do {
+                    candidate = dest_path + "/" + QString("%1_%2.%3").arg(base).arg(suffix).arg(ext);
+                    suffix++;
+                } while (QFile::exists(candidate));
+                dest_file = candidate;
+            }
             if (QFile::copy(data.path, dest_file)) {
                 processed++;
                 bytes_copied += data.size;
@@ -172,12 +199,17 @@ void PhotoManagementBackupAction::execute() {
     }
     
     ExecutionResult result;
+    result.success = processed > 0;
+    result.duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
     result.files_processed = processed;
     result.bytes_processed = bytes_copied;
-    result.message = QString("Backed up %1 photo software item(s)").arg(processed);
+    result.message = processed > 0
+        ? QString("Backed up %1 photo software item(s)").arg(processed)
+        : "No photo software data was backed up";
     result.output_path = backup_dir.absolutePath();
     
-    setStatus(ActionStatus::Success);
+    setExecutionResult(result);
+    setStatus(processed > 0 ? ActionStatus::Success : ActionStatus::Failed);
     Q_EMIT executionComplete(result);
 }
 

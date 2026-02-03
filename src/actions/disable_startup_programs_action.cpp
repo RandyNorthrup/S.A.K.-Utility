@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 #include "sak/actions/disable_startup_programs_action.h"
+#include "sak/process_runner.h"
 #include <QSettings>
 #include <QDir>
 #include <QProcess>
@@ -60,11 +61,11 @@ void DisableStartupProgramsAction::scanStartupFolder() {
 }
 
 void DisableStartupProgramsAction::scanTaskScheduler() {
-    QProcess proc;
-    proc.start("schtasks", QStringList() << "/Query" << "/FO" << "CSV");
-    proc.waitForFinished(5000);
-    
-    QString output = proc.readAllStandardOutput();
+    ProcessResult proc = runProcess("schtasks", QStringList() << "/Query" << "/FO" << "CSV", 5000);
+    if (!proc.std_err.trimmed().isEmpty()) {
+        Q_EMIT logMessage("Scheduled task scan warning: " + proc.std_err.trimmed());
+    }
+    QString output = proc.std_out;
     QStringList lines = output.split('\n');
     
     for (const QString& line : lines) {
@@ -85,12 +86,23 @@ void DisableStartupProgramsAction::scanTaskScheduler() {
 }
 
 void DisableStartupProgramsAction::scan() {
-    // Scan is no longer used - actions execute immediately
-    setStatus(ActionStatus::Ready);
+    setStatus(ActionStatus::Scanning);
+
+    m_startup_items.clear();
+    scanRegistryStartup();
+    scanStartupFolder();
+    scanTaskScheduler();
+
     ScanResult result;
-    result.applicable = true;
-    result.summary = "Ready to manage startup programs";
+    result.applicable = !m_startup_items.isEmpty();
+    result.files_count = m_startup_items.size();
+    result.summary = result.applicable
+        ? QString("Startup items found: %1").arg(m_startup_items.size())
+        : "No startup items detected";
+    result.details = "Run analysis to review and disable non-essential items";
+
     setScanResult(result);
+    setStatus(ActionStatus::Ready);
     Q_EMIT scanComplete(result);
 }
 
@@ -107,11 +119,11 @@ void DisableStartupProgramsAction::execute() {
     // Phase 1: Get comprehensive startup items using Win32_StartupCommand
     QString startup_scan_cmd = R"(Get-CimInstance Win32_StartupCommand | Select-Object Name, Command, Location, User | ConvertTo-Json)";
     
-    QProcess startup_proc;
-    startup_proc.start("powershell.exe", QStringList() << "-NoProfile" << "-Command" << startup_scan_cmd);
-    startup_proc.waitForFinished(15000);
-    
-    QString startup_output = startup_proc.readAllStandardOutput();
+    ProcessResult startup_proc = runPowerShell(startup_scan_cmd, 15000);
+    if (!startup_proc.std_err.trimmed().isEmpty()) {
+        Q_EMIT logMessage("Startup program scan warning: " + startup_proc.std_err.trimmed());
+    }
+    QString startup_output = startup_proc.std_out;
     int startup_count = 0;
     
     // Count startup items
@@ -127,11 +139,11 @@ void DisableStartupProgramsAction::execute() {
     // Phase 2: Get scheduled tasks that run at startup
     QString task_scan_cmd = R"(Get-ScheduledTask | Where-Object {$_.Triggers.CimClass.CimClassName -match 'MSFT_TaskLogonTrigger|MSFT_TaskBootTrigger'} | Select-Object TaskName, State, TaskPath | ConvertTo-Json)";
     
-    QProcess task_proc;
-    task_proc.start("powershell.exe", QStringList() << "-NoProfile" << "-Command" << task_scan_cmd);
-    task_proc.waitForFinished(15000);
-    
-    QString task_output = task_proc.readAllStandardOutput();
+    ProcessResult task_proc = runPowerShell(task_scan_cmd, 15000);
+    if (!task_proc.std_err.trimmed().isEmpty()) {
+        Q_EMIT logMessage("Startup task scan warning: " + task_proc.std_err.trimmed());
+    }
+    QString task_output = task_proc.std_out;
     int task_count = 0;
     
     if (task_output.contains("[") || task_output.contains("{")) {

@@ -2,11 +2,11 @@
 // SPDX-License-Identifier: MIT
 
 #include "sak/actions/clear_browser_cache_action.h"
+#include "sak/process_runner.h"
 
 #include <QDir>
 #include <QDirIterator>
 #include <QStandardPaths>
-#include <QProcess>
 #include <QDateTime>
 
 namespace sak {
@@ -16,17 +16,105 @@ ClearBrowserCacheAction::ClearBrowserCacheAction()
 }
 
 void ClearBrowserCacheAction::scan() {
-    // Scan is no longer used - actions execute immediately
-    setStatus(ActionStatus::Ready);
+    setStatus(ActionStatus::Scanning);
+
+    auto dirSize = [this](const QString& path, qint64& files) -> qint64 {
+        qint64 total = 0;
+        QDir dir(path);
+        if (!dir.exists()) {
+            return 0;
+        }
+
+        QDirIterator it(path, QDir::Files | QDir::Hidden | QDir::System, QDirIterator::Subdirectories);
+        while (it.hasNext()) {
+            if (isCancelled()) {
+                break;
+            }
+            it.next();
+            total += it.fileInfo().size();
+            files++;
+        }
+        return total;
+    };
+
+    struct CachePath {
+        QString name;
+        QString path;
+    };
+
+    QVector<CachePath> cache_paths = {
+        {"Chrome", QStandardPaths::writableLocation(QStandardPaths::GenericCacheLocation) + "/Google/Chrome/User Data/Default/Cache"},
+        {"Chrome Code Cache", QStandardPaths::writableLocation(QStandardPaths::GenericCacheLocation) + "/Google/Chrome/User Data/Default/Code Cache"},
+        {"Edge", QStandardPaths::writableLocation(QStandardPaths::GenericCacheLocation) + "/Microsoft/Edge/User Data/Default/Cache"},
+        {"Edge Code Cache", QStandardPaths::writableLocation(QStandardPaths::GenericCacheLocation) + "/Microsoft/Edge/User Data/Default/Code Cache"},
+        {"Brave", QStandardPaths::writableLocation(QStandardPaths::GenericCacheLocation) + "/BraveSoftware/Brave-Browser/User Data/Default/Cache"},
+        {"Brave Code Cache", QStandardPaths::writableLocation(QStandardPaths::GenericCacheLocation) + "/BraveSoftware/Brave-Browser/User Data/Default/Code Cache"},
+        {"Vivaldi", QStandardPaths::writableLocation(QStandardPaths::GenericCacheLocation) + "/Vivaldi/User Data/Default/Cache"},
+        {"Vivaldi Code Cache", QStandardPaths::writableLocation(QStandardPaths::GenericCacheLocation) + "/Vivaldi/User Data/Default/Code Cache"},
+        {"Opera", QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/Opera Software/Opera Stable/Cache"},
+        {"Opera Code Cache", QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/Opera Software/Opera Stable/Code Cache"}
+    };
+
+    qint64 total_bytes = 0;
+    qint64 total_files = 0;
+    int locations = 0;
+
+    Q_EMIT scanProgress("Scanning browser cache locations...");
+
+    for (const auto& cache : cache_paths) {
+        qint64 files = 0;
+        qint64 bytes = dirSize(cache.path, files);
+        if (bytes > 0) {
+            total_bytes += bytes;
+            total_files += files;
+            locations++;
+        }
+    }
+
+    // Firefox profiles
+    QString ff_profiles_path = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/Mozilla/Firefox/Profiles";
+    QDir profiles_dir(ff_profiles_path);
+    if (profiles_dir.exists()) {
+        const auto profiles = profiles_dir.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot);
+        for (const auto& profile : profiles) {
+            qint64 files = 0;
+            qint64 bytes = dirSize(profile.absoluteFilePath() + "/cache2", files);
+            if (bytes > 0) {
+                total_bytes += bytes;
+                total_files += files;
+                locations++;
+            }
+        }
+    }
+
     ScanResult result;
-    result.applicable = true;
-    result.summary = "Ready to clear browser caches";
+    result.applicable = total_bytes > 0;
+    result.bytes_affected = total_bytes;
+    result.files_count = total_files;
+    result.estimated_duration_ms = std::max<qint64>(3000, total_files * 3);
+
+    if (result.applicable) {
+        double mb = total_bytes / (1024.0 * 1024.0);
+        result.summary = QString("Cache size: %1 MB").arg(mb, 0, 'f', 1);
+        result.details = QString("Locations: %1").arg(locations);
+    } else {
+        result.summary = "No browser caches found";
+        result.details = "Caches are already minimal or browsers not installed";
+    }
+
     setScanResult(result);
+    setStatus(ActionStatus::Ready);
     Q_EMIT scanComplete(result);
 }
 
 void ClearBrowserCacheAction::execute() {
     if (isCancelled()) {
+        ExecutionResult result;
+        result.success = false;
+        result.message = "Browser cache clearing cancelled";
+        setExecutionResult(result);
+        setStatus(ActionStatus::Cancelled);
+        Q_EMIT executionComplete(result);
         return;
     }
 
@@ -160,15 +248,11 @@ void ClearBrowserCacheAction::execute() {
     
     Q_EMIT executionProgress("║ Detecting browser processes and cache locations...           ║", 20);
     
-    QProcess ps;
-    ps.start("powershell.exe", QStringList() << "-NoProfile" << "-ExecutionPolicy" << "Bypass" << "-Command" << ps_script);
-    
+    ProcessResult ps = runPowerShell(ps_script, 180000);
+
     Q_EMIT executionProgress("║ Calculating cache sizes before clearing...                   ║", 40);
-    
-    bool finished = ps.waitForFinished(180000); // 3 minute timeout for size calculation
-    
-    if (!finished || isCancelled()) {
-        ps.kill();
+
+    if (ps.timed_out || isCancelled()) {
         ExecutionResult result;
         result.success = false;
         result.message = isCancelled() ? "Cache clearing cancelled" : "Operation timed out after 3 minutes";
@@ -178,10 +262,12 @@ void ClearBrowserCacheAction::execute() {
         Q_EMIT executionComplete(result);
         return;
     }
+
+    QString stderr_output = ps.std_err;
     
     Q_EMIT executionProgress("║ Processing results and generating report...                   ║", 80);
     
-    QString output = ps.readAllStandardOutput();
+    QString output = ps.std_out;
     
     qint64 duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
     
@@ -251,6 +337,16 @@ void ClearBrowserCacheAction::execute() {
         if (blocked_count > 0) {
             log_output += "╠════════════════════════════════════════════════════════════════╣\n";
             log_output += QString("║ Skipped (%1 running): %2\n").arg(blocked_count).arg(blocked_browsers.join(", ")).leftJustified(66) + "║\n";
+        }
+
+        if (!stderr_output.trimmed().isEmpty()) {
+            log_output += "╠════════════════════════════════════════════════════════════════╣\n";
+            log_output += "║ Warnings:                                                       ║\n";
+            const QStringList warn_lines = stderr_output.split('\n', Qt::SkipEmptyParts);
+            const int warn_max = std::min(3, static_cast<int>(warn_lines.size()));
+            for (int i = 0; i < warn_max; ++i) {
+                log_output += QString("║ %1\n").arg(warn_lines[i].left(66)).leftJustified(66) + "║\n";
+            }
         }
         
         log_output += "╠════════════════════════════════════════════════════════════════╣\n";

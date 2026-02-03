@@ -34,8 +34,8 @@ QString StickyNotesBackupAction::findStickyNotesDatabase() {
 
 void StickyNotesBackupAction::scan() {
     setStatus(ActionStatus::Ready);
-    
-    Q_EMIT executionProgress("Checking for Sticky Notes...", 10);
+
+    Q_EMIT scanProgress("Checking for Sticky Notes...");
     
     // Check for Sticky Notes database
     QString local_app = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation);

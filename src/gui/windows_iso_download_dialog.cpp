@@ -92,7 +92,7 @@ void WindowsISODownloadDialog::setupUI() {
         this
     );
     infoLabel->setWordWrap(true);
-    infoLabel->setStyleSheet("color: #666; font-size: 10pt; padding: 5px;");
+    infoLabel->setStyleSheet("color: #64748b; font-size: 10pt; padding: 6px;");
     mainLayout->addWidget(infoLabel);
     
     // Buttons
