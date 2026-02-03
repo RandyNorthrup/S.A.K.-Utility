@@ -69,6 +69,21 @@ public:
      * @return Owner SID or empty string
      */
     QString getOwner(const QString& path);
+
+    /**
+     * @brief Get full security descriptor in SDDL format
+     * @param path File or folder path
+     * @return SDDL string or empty if failed
+     */
+    QString getSecurityDescriptorSddl(const QString& path);
+
+    /**
+     * @brief Apply security descriptor from SDDL
+     * @param path File or folder path
+     * @param sddl SDDL string
+     * @return true if applied
+     */
+    bool setSecurityDescriptorSddl(const QString& path, const QString& sddl);
     
     /**
      * @brief Check if running with administrator privileges

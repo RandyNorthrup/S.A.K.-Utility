@@ -31,6 +31,9 @@ endif()
 # Module path for custom CMake modules
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
+# Suppress optional Vulkan header discovery (not required for this app)
+set(CMAKE_DISABLE_FIND_PACKAGE_WrapVulkanHeaders TRUE)
+
 # Platform detection
 if(WIN32)
     set(PLATFORM_WINDOWS TRUE)
@@ -239,6 +242,27 @@ set(CORE_SOURCES
     src/core/permission_manager.cpp
     src/core/user_profile_backup_worker.cpp
     src/core/user_profile_restore_worker.cpp
+    src/core/network_transfer_types.cpp
+    src/core/network_transfer_protocol.cpp
+    src/core/network_transfer_security.cpp
+    src/core/peer_discovery_service.cpp
+    src/core/network_connection_manager.cpp
+    src/core/network_transfer_worker.cpp
+    src/core/network_transfer_controller.cpp
+    src/core/network_transfer_report.cpp
+    src/core/orchestration_types.cpp
+    src/core/destination_registry.cpp
+    src/core/deployment_manager.cpp
+    src/core/migration_orchestrator.cpp
+    src/core/mapping_engine.cpp
+    src/core/parallel_transfer_manager.cpp
+    src/core/deployment_history.cpp
+    src/core/deployment_summary_report.cpp
+    src/core/assignment_queue_store.cpp
+    src/core/orchestration_protocol.cpp
+    src/core/orchestration_server.cpp
+    src/core/orchestration_client.cpp
+    src/core/orchestration_discovery_service.cpp
     src/core/drive_scanner.cpp
     src/core/image_source.cpp
     src/core/flash_coordinator.cpp
@@ -292,6 +316,28 @@ set(CORE_SOURCES
     include/sak/user_profile_backup_worker.h
     include/sak/user_profile_restore_worker.h
     include/sak/user_profile_restore_wizard.h
+    include/sak/network_transfer_types.h
+    include/sak/network_transfer_protocol.h
+    include/sak/network_transfer_security.h
+    include/sak/peer_discovery_service.h
+    include/sak/network_connection_manager.h
+    include/sak/network_transfer_worker.h
+    include/sak/network_transfer_controller.h
+    include/sak/network_transfer_report.h
+    include/sak/orchestration_types.h
+    include/sak/destination_registry.h
+    include/sak/deployment_manager.h
+    include/sak/migration_orchestrator.h
+    include/sak/mapping_engine.h
+    include/sak/parallel_transfer_manager.h
+    include/sak/deployment_history.h
+    include/sak/deployment_summary_report.h
+    include/sak/assignment_queue_store.h
+    include/sak/orchestration_protocol.h
+    include/sak/orchestration_server.h
+    include/sak/orchestration_server_interface.h
+    include/sak/orchestration_client.h
+    include/sak/orchestration_discovery_service.h
 )
 
 # Platform abstraction
@@ -323,13 +369,11 @@ set(THREADING_SOURCES
     src/threading/backup_worker.cpp
     src/threading/organizer_worker.cpp
     src/threading/duplicate_finder_worker.cpp
-    src/threading/license_scanner_worker.cpp
     src/threading/flash_worker.cpp
     include/sak/worker_base.h
     include/sak/backup_worker.h
     include/sak/organizer_worker.h
     include/sak/duplicate_finder_worker.h
-    include/sak/license_scanner_worker.h
     include/sak/flash_worker.h
 )
 
@@ -354,7 +398,6 @@ set(GUI_SOURCES
     src/gui/backup_panel.cpp
     src/gui/organizer_panel.cpp
     src/gui/duplicate_finder_panel.cpp
-    src/gui/license_scanner_panel.cpp
     src/gui/progress_dialog.cpp
     src/gui/about_dialog.cpp
     src/gui/log_viewer.cpp
@@ -366,7 +409,6 @@ set(GUI_SOURCES
     include/sak/backup_panel.h
     include/sak/organizer_panel.h
     include/sak/duplicate_finder_panel.h
-    include/sak/license_scanner_panel.h
     include/sak/progress_dialog.h
     include/sak/about_dialog.h
     include/sak/log_viewer.h
@@ -394,6 +436,8 @@ set(GUI_SOURCES
     include/sak/image_flasher_settings_dialog.h
     src/gui/quick_actions_panel.cpp
     include/sak/quick_actions_panel.h
+    src/gui/network_transfer_panel.cpp
+    include/sak/network_transfer_panel.h
     src/core/quick_action.cpp
     include/sak/quick_action.h
     src/core/quick_action_controller.cpp
@@ -541,6 +585,14 @@ target_link_libraries(sak_utility PRIVATE
     ${PLATFORM_LIBS}
 )
 
+# Suppress MSVCRT defaultlib conflicts when linking static runtime with Qt libs
+if(MSVC)
+    target_link_options(sak_utility PRIVATE
+        /NODEFAULTLIB:MSVCRT
+        /NODEFAULTLIB:MSVCRTD
+    )
+endif()
+
 # Include directories
 target_include_directories(sak_utility PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
@@ -636,7 +688,7 @@ if(PLATFORM_WINDOWS)
     find_program(WINDEPLOYQT windeployqt HINTS "${Qt6_DIR}/../../../bin")
     if(WINDEPLOYQT)
         add_custom_command(TARGET sak_utility POST_BUILD
-            COMMAND ${WINDEPLOYQT} --release --no-translations $<TARGET_FILE:sak_utility>
+            COMMAND ${WINDEPLOYQT} --release --no-translations --no-compiler-runtime $<TARGET_FILE:sak_utility>
             COMMENT "Running windeployqt..."
         )
     endif()

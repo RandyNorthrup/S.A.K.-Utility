@@ -218,6 +218,101 @@ QString PermissionManager::getOwner(const QString& path) {
 #endif
 }
 
+QString PermissionManager::getSecurityDescriptorSddl(const QString& path) {
+#ifdef Q_OS_WIN
+    PSECURITY_DESCRIPTOR pSD = nullptr;
+    DWORD result = GetNamedSecurityInfoW(
+        (LPWSTR)path.toStdWString().c_str(),
+        SE_FILE_OBJECT,
+        OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
+        nullptr,
+        nullptr,
+        nullptr,
+        nullptr,
+        &pSD
+    );
+
+    if (result != ERROR_SUCCESS) {
+        m_lastError = QString("Failed to get security descriptor: %1").arg(result);
+        return QString();
+    }
+
+    LPWSTR sddlString = nullptr;
+    if (!ConvertSecurityDescriptorToStringSecurityDescriptorW(
+            pSD,
+            SDDL_REVISION_1,
+            OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
+            &sddlString,
+            nullptr)) {
+        m_lastError = QString("Failed to convert security descriptor: %1").arg(GetLastError());
+        LocalFree(pSD);
+        return QString();
+    }
+
+    QString sddl = QString::fromWCharArray(sddlString);
+    LocalFree(sddlString);
+    LocalFree(pSD);
+    return sddl;
+#else
+    m_lastError = "Permission management only supported on Windows";
+    return QString();
+#endif
+}
+
+bool PermissionManager::setSecurityDescriptorSddl(const QString& path, const QString& sddl) {
+#ifdef Q_OS_WIN
+    if (sddl.isEmpty()) {
+        m_lastError = "Empty SDDL";
+        return false;
+    }
+
+    PSECURITY_DESCRIPTOR pSD = nullptr;
+    if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(
+            (LPWSTR)sddl.toStdWString().c_str(),
+            SDDL_REVISION_1,
+            &pSD,
+            nullptr)) {
+        m_lastError = QString("Failed to parse SDDL: %1").arg(GetLastError());
+        return false;
+    }
+
+    PACL pDacl = nullptr;
+    BOOL daclPresent = FALSE;
+    BOOL daclDefaulted = FALSE;
+    if (!GetSecurityDescriptorDacl(pSD, &daclPresent, &pDacl, &daclDefaulted)) {
+        LocalFree(pSD);
+        m_lastError = "Failed to read DACL from SDDL";
+        return false;
+    }
+
+    PSID pOwner = nullptr;
+    BOOL ownerDefaulted = FALSE;
+    GetSecurityDescriptorOwner(pSD, &pOwner, &ownerDefaulted);
+
+    DWORD result = SetNamedSecurityInfoW(
+        (LPWSTR)path.toStdWString().c_str(),
+        SE_FILE_OBJECT,
+        OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+        pOwner,
+        nullptr,
+        pDacl,
+        nullptr
+    );
+
+    LocalFree(pSD);
+
+    if (result != ERROR_SUCCESS) {
+        m_lastError = QString("Failed to apply SDDL: %1").arg(result);
+        return false;
+    }
+
+    return true;
+#else
+    m_lastError = "Permission management only supported on Windows";
+    return false;
+#endif
+}
+
 bool PermissionManager::isRunningAsAdmin() {
 #ifdef Q_OS_WIN
     BOOL isAdmin = FALSE;

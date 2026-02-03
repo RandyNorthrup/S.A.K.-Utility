@@ -72,7 +72,27 @@ Migrate a user from Windows 10 to Windows 11 - scan old PC, export app list, imp
 
 ---
 
-### 2. 📦 User Profile Backup & Restore
+### 2. 🌐 Network Transfer (LAN)
+
+Secure, encrypted PC‑to‑PC transfers over the local network for **user profile data**.
+
+**Key Capabilities:**
+- **Peer discovery** via UDP broadcast
+- **Encrypted streaming** (AES‑256‑GCM) with resume support
+- **Manifest validation** + checksum verification
+- **Transfer reports** saved as JSON
+
+**Orchestrator Mode (Multi‑PC Deployment):**
+- Centralized orchestration server for 1:N and N:N deployments
+- Destination registry with health and readiness checks
+- Mapping engine with templates (save/load)
+- Parallel transfers with per‑job controls
+- Deployment dashboard with progress, ETA, and summary export
+
+See [docs/NETWORK_TRANSFER.md](docs/NETWORK_TRANSFER.md) for setup details, logs, and troubleshooting.
+
+---
+### 3. 📦 User Profile Backup & Restore
 
 Enterprise-grade user profile management with **6-page wizards** and military-grade encryption.
 
@@ -318,32 +338,7 @@ Find and manage duplicate files using cryptographic hashing.
 ### 5. License Key Scanner
 Attempt to locate software license keys stored in Windows Registry (best-effort tool).
 
-**Features:**
-- **Registry Scanning**: Searches `HKLM` and `HKCU` with pattern matching (keywords: "key", "serial", "license", "product", "activation")
-- **Filesystem Scanning**: Detects license files (`.lic`, `.key`, `.license`, `.reg`)
-- **Multi-Threaded**: Parallel registry traversal for performance
-- **UAC Elevation**: Automatic elevation prompt when registry access requires admin
-- **Export**: Save findings to CSV/TXT file
-- **Additional Paths**: Add custom directories to scan
-
-**Scan Options:**
-- Scan Registry (HKLM, HKCU)
-- Scan Filesystem (Program Files, ProgramData, etc.)
-- Scan system licenses (Windows activation, Office)
-- Custom paths (line edit)
-
-**Limitations:**
-- **Only finds registry-stored keys** - Many modern apps use:
-  - Cloud-based licensing (keys stored on vendor servers)
-  - Hardware tokens or dongles
-  - Encrypted credential storage (Windows Credential Manager, KeyChain)
-- **Cannot decrypt protected keys** - Encrypted keys cannot be recovered
-- **False Positives**: May find unrelated registry values
-- **Best-effort basis only** - No guarantees
-
 **Technical Components:**
-- `license_scanner_panel.cpp/h` - GUI panel with result table
-- `license_scanner_worker.cpp/h` - Background registry/filesystem scanning thread
 - `elevation_manager.cpp/h` - UAC integration for admin accesses, `QueryDosDevice` API, `GetDriveType`, `DeviceIoControl` for geometry
 - **Drive Information Collected**:
   - Device path (`\\.\PhysicalDrive1`)
@@ -732,7 +727,6 @@ Get-Content -Path "$env:LOCALAPPDATA\SAK\Utility\logs\sak_utility.log" -Tail 50 
 - **Backup** - Thread count, MD5 verification, default location
 - **Organizer** - Preview mode, default categories
 - **Duplicate Finder** - Minimum file size, keep strategy
-- **License Scanner** - Registry/filesystem scan options
 - **Image Flasher** - Validation mode, buffer size, notifications
 
 ---
@@ -789,18 +783,12 @@ cmake --build build --config Release --parallel
 
 **Why Windows-Only?**
 - Chocolatey is Windows-exclusive
-- Windows Registry scanning (License Scanner, App Scanner)
+- Windows Registry scanning (App Scanner)
 - NetUserEnum API for user detection
 - Windows ACL/permissions handling
 - NTFS filesystem features
 
 ### Feature Limitations
-
-**License Scanner:**
-- ❌ Only finds registry-stored keys
-- ❌ Cannot decrypt encrypted keys
-- ❌ Many modern apps use cloud licensing or hardware tokens
-- ✅ Best-effort basis only
 
 **User Profile Backup:**
 - ❌ Not a full system image backup

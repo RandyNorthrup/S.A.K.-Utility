@@ -38,7 +38,6 @@ void SettingsDialog::setupUI() {
     createBackupTab();
     createOrganizerTab();
     createDuplicateFinderTab();
-    createLicenseScannerTab();
     createImageFlasherTab();
     createAdvancedTab();
 
@@ -185,33 +184,6 @@ void SettingsDialog::createDuplicateFinderTab() {
     connect(m_duplicateKeepStrategy, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &SettingsDialog::onSettingChanged);
 }
 
-void SettingsDialog::createLicenseScannerTab() {
-    auto* widget = new QWidget();
-    auto* layout = new QVBoxLayout(widget);
-
-    // License Scanner Settings Group
-    auto* licenseGroup = new QGroupBox(tr("License Scanner Settings"));
-    auto* licenseLayout = new QFormLayout();
-
-    m_licenseScanRegistry = new QCheckBox(tr("Scan Windows Registry for licenses"));
-    m_licenseScanRegistry->setToolTip(tr("Search registry keys for software license information"));
-    licenseLayout->addRow(tr("Scan Registry:"), m_licenseScanRegistry);
-
-    m_licenseScanFilesystem = new QCheckBox(tr("Scan filesystem for license files"));
-    m_licenseScanFilesystem->setToolTip(tr("Search common locations for license key files"));
-    licenseLayout->addRow(tr("Scan Filesystem:"), m_licenseScanFilesystem);
-
-    licenseGroup->setLayout(licenseLayout);
-    layout->addWidget(licenseGroup);
-
-    layout->addStretch();
-    m_tabWidget->addTab(widget, tr("License Scanner"));
-
-    // Connect change signals
-    connect(m_licenseScanRegistry, &QCheckBox::stateChanged, this, &SettingsDialog::onSettingChanged);
-    connect(m_licenseScanFilesystem, &QCheckBox::stateChanged, this, &SettingsDialog::onSettingChanged);
-}
-
 void SettingsDialog::createImageFlasherTab() {
     auto* widget = new QWidget();
     auto* layout = new QVBoxLayout(widget);
@@ -304,20 +276,68 @@ void SettingsDialog::createAdvancedTab() {
     auto* widget = new QWidget();
     auto* layout = new QVBoxLayout(widget);
 
-    auto* infoLabel = new QLabel(tr(
-        "<b>Advanced Settings</b><br><br>"
-        "Advanced configuration options will be added here in future versions.<br>"
-        "This may include:<br>"
-        "- Custom file type associations<br>"
-        "- Performance tuning<br>"
-        "- Logging levels<br>"
-        "- Network settings"
-    ));
-    infoLabel->setWordWrap(true);
-    layout->addWidget(infoLabel);
+    // Network Transfer Settings
+    auto* networkGroup = new QGroupBox(tr("Network Transfer"));
+    auto* networkLayout = new QFormLayout();
+
+    m_networkTransferEnabled = new QCheckBox(tr("Enable Network Transfer"));
+    networkLayout->addRow(tr("Enabled:"), m_networkTransferEnabled);
+
+    m_networkTransferAutoDiscovery = new QCheckBox(tr("Enable auto discovery"));
+    networkLayout->addRow(tr("Auto Discovery:"), m_networkTransferAutoDiscovery);
+
+    m_networkTransferEncryption = new QCheckBox(tr("Encrypt data in transit (AES-256-GCM)"));
+    networkLayout->addRow(tr("Encryption:"), m_networkTransferEncryption);
+
+    m_networkTransferCompression = new QCheckBox(tr("Enable compression"));
+    networkLayout->addRow(tr("Compression:"), m_networkTransferCompression);
+
+    m_networkTransferResume = new QCheckBox(tr("Enable resume capability"));
+    networkLayout->addRow(tr("Resume:"), m_networkTransferResume);
+
+    m_networkTransferDiscoveryPort = new QSpinBox();
+    m_networkTransferDiscoveryPort->setRange(1024, 65535);
+    networkLayout->addRow(tr("Discovery Port:"), m_networkTransferDiscoveryPort);
+
+    m_networkTransferControlPort = new QSpinBox();
+    m_networkTransferControlPort->setRange(1024, 65535);
+    networkLayout->addRow(tr("Control Port:"), m_networkTransferControlPort);
+
+    m_networkTransferDataPort = new QSpinBox();
+    m_networkTransferDataPort->setRange(1024, 65535);
+    networkLayout->addRow(tr("Data Port:"), m_networkTransferDataPort);
+
+    m_networkTransferChunkSize = new QSpinBox();
+    m_networkTransferChunkSize->setRange(16, 1024 * 4);
+    m_networkTransferChunkSize->setSuffix(tr(" KB"));
+    networkLayout->addRow(tr("Chunk Size:"), m_networkTransferChunkSize);
+
+    m_networkTransferMaxBandwidth = new QSpinBox();
+    m_networkTransferMaxBandwidth->setRange(0, 1024 * 1024);
+    m_networkTransferMaxBandwidth->setSuffix(tr(" KB/s (0 = unlimited)"));
+    networkLayout->addRow(tr("Max Bandwidth:"), m_networkTransferMaxBandwidth);
+
+    m_networkTransferRelayServer = new QLineEdit();
+    m_networkTransferRelayServer->setPlaceholderText(tr("https://relay.example.com"));
+    networkLayout->addRow(tr("Relay Server:"), m_networkTransferRelayServer);
+
+    networkGroup->setLayout(networkLayout);
+    layout->addWidget(networkGroup);
 
     layout->addStretch();
     m_tabWidget->addTab(widget, tr("Advanced"));
+
+    connect(m_networkTransferEnabled, &QCheckBox::stateChanged, this, &SettingsDialog::onSettingChanged);
+    connect(m_networkTransferAutoDiscovery, &QCheckBox::stateChanged, this, &SettingsDialog::onSettingChanged);
+    connect(m_networkTransferEncryption, &QCheckBox::stateChanged, this, &SettingsDialog::onSettingChanged);
+    connect(m_networkTransferCompression, &QCheckBox::stateChanged, this, &SettingsDialog::onSettingChanged);
+    connect(m_networkTransferResume, &QCheckBox::stateChanged, this, &SettingsDialog::onSettingChanged);
+    connect(m_networkTransferDiscoveryPort, QOverload<int>::of(&QSpinBox::valueChanged), this, &SettingsDialog::onSettingChanged);
+    connect(m_networkTransferControlPort, QOverload<int>::of(&QSpinBox::valueChanged), this, &SettingsDialog::onSettingChanged);
+    connect(m_networkTransferDataPort, QOverload<int>::of(&QSpinBox::valueChanged), this, &SettingsDialog::onSettingChanged);
+    connect(m_networkTransferChunkSize, QOverload<int>::of(&QSpinBox::valueChanged), this, &SettingsDialog::onSettingChanged);
+    connect(m_networkTransferMaxBandwidth, QOverload<int>::of(&QSpinBox::valueChanged), this, &SettingsDialog::onSettingChanged);
+    connect(m_networkTransferRelayServer, &QLineEdit::textChanged, this, &SettingsDialog::onSettingChanged);
 }
 
 void SettingsDialog::loadSettings() {
@@ -346,10 +366,6 @@ void SettingsDialog::loadSettings() {
         m_duplicateKeepStrategy->setCurrentIndex(2); // first
     }
 
-    // License Scanner
-    m_licenseScanRegistry->setChecked(config.getLicenseScanRegistry());
-    m_licenseScanFilesystem->setChecked(config.getLicenseScanFilesystem());
-
     // Image Flasher
     QString validationMode = config.getImageFlasherValidationMode();
     if (validationMode == "full") {
@@ -366,6 +382,21 @@ void SettingsDialog::loadSettings() {
     m_imageFlasherLargeDriveThreshold->setValue(config.getImageFlasherLargeDriveThreshold());
     m_imageFlasherMaxConcurrentWrites->setValue(config.getImageFlasherMaxConcurrentWrites());
     m_imageFlasherEnableNotifications->setChecked(config.getImageFlasherEnableNotifications());
+
+    // Network Transfer
+    if (m_networkTransferEnabled) {
+        m_networkTransferEnabled->setChecked(config.getNetworkTransferEnabled());
+        m_networkTransferAutoDiscovery->setChecked(config.getNetworkTransferAutoDiscoveryEnabled());
+        m_networkTransferEncryption->setChecked(config.getNetworkTransferEncryptionEnabled());
+        m_networkTransferCompression->setChecked(config.getNetworkTransferCompressionEnabled());
+        m_networkTransferResume->setChecked(config.getNetworkTransferResumeEnabled());
+        m_networkTransferDiscoveryPort->setValue(config.getNetworkTransferDiscoveryPort());
+        m_networkTransferControlPort->setValue(config.getNetworkTransferControlPort());
+        m_networkTransferDataPort->setValue(config.getNetworkTransferDataPort());
+        m_networkTransferChunkSize->setValue(config.getNetworkTransferChunkSize() / 1024);
+        m_networkTransferMaxBandwidth->setValue(config.getNetworkTransferMaxBandwidth());
+        m_networkTransferRelayServer->setText(config.getNetworkTransferRelayServer());
+    }
 
     m_settingsModified = false;
     m_applyButton->setEnabled(false);
@@ -397,10 +428,6 @@ void SettingsDialog::saveSettings() {
     }
     config.setDuplicateKeepStrategy(strategy);
 
-    // License Scanner
-    config.setLicenseScanRegistry(m_licenseScanRegistry->isChecked());
-    config.setLicenseScanFilesystem(m_licenseScanFilesystem->isChecked());
-
     // Image Flasher
     QString validationMode;
     switch (m_imageFlasherValidationMode->currentIndex()) {
@@ -417,6 +444,21 @@ void SettingsDialog::saveSettings() {
     config.setImageFlasherLargeDriveThreshold(m_imageFlasherLargeDriveThreshold->value());
     config.setImageFlasherMaxConcurrentWrites(m_imageFlasherMaxConcurrentWrites->value());
     config.setImageFlasherEnableNotifications(m_imageFlasherEnableNotifications->isChecked());
+
+    // Network Transfer
+    if (m_networkTransferEnabled) {
+        config.setNetworkTransferEnabled(m_networkTransferEnabled->isChecked());
+        config.setNetworkTransferAutoDiscoveryEnabled(m_networkTransferAutoDiscovery->isChecked());
+        config.setNetworkTransferEncryptionEnabled(m_networkTransferEncryption->isChecked());
+        config.setNetworkTransferCompressionEnabled(m_networkTransferCompression->isChecked());
+        config.setNetworkTransferResumeEnabled(m_networkTransferResume->isChecked());
+        config.setNetworkTransferDiscoveryPort(m_networkTransferDiscoveryPort->value());
+        config.setNetworkTransferControlPort(m_networkTransferControlPort->value());
+        config.setNetworkTransferDataPort(m_networkTransferDataPort->value());
+        config.setNetworkTransferChunkSize(m_networkTransferChunkSize->value() * 1024);
+        config.setNetworkTransferMaxBandwidth(m_networkTransferMaxBandwidth->value());
+        config.setNetworkTransferRelayServer(m_networkTransferRelayServer->text());
+    }
 
     // Sync to disk
     config.sync();
@@ -448,6 +490,14 @@ bool SettingsDialog::validateSettings() {
                            tr("Minimum file size cannot be negative."));
         m_tabWidget->setCurrentIndex(3); // Switch to Duplicate Finder tab
         m_duplicateMinFileSize->setFocus();
+        return false;
+    }
+
+    if (m_networkTransferControlPort && m_networkTransferControlPort->value() == m_networkTransferDataPort->value()) {
+        QMessageBox::warning(this, tr("Invalid Setting"),
+                           tr("Control port and data port must be different."));
+        m_tabWidget->setCurrentIndex(m_tabWidget->count() - 1);
+        m_networkTransferControlPort->setFocus();
         return false;
     }
 

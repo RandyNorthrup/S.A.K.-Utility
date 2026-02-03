@@ -2,8 +2,10 @@
 
 **Version**: 1.0  
 **Date**: December 13, 2025  
-**Status**: Planning Phase  
+**Status**: ⏳ Planned (Queued Behind Network Transfer)  
 **Target Release**: v1.0.0
+
+**Decision (Feb 1, 2026):** Network Transfer is the next implementation focus. WinPE Bootable plan is scrapped/archived.
 
 ---
 

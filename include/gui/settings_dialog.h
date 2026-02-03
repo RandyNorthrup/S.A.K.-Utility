@@ -47,7 +47,6 @@ private:
     void createBackupTab();
     void createOrganizerTab();
     void createDuplicateFinderTab();
-    void createLicenseScannerTab();
     void createImageFlasherTab();
     void createAdvancedTab();
     
@@ -78,9 +77,6 @@ private:
     QSpinBox* m_duplicateMinFileSize{nullptr};
     QComboBox* m_duplicateKeepStrategy{nullptr};
 
-    // License Scanner Tab
-    QCheckBox* m_licenseScanRegistry{nullptr};
-    QCheckBox* m_licenseScanFilesystem{nullptr};
 
     // Image Flasher Tab
     QComboBox* m_imageFlasherValidationMode{nullptr};
@@ -91,6 +87,19 @@ private:
     QSpinBox* m_imageFlasherLargeDriveThreshold{nullptr};
     QSpinBox* m_imageFlasherMaxConcurrentWrites{nullptr};
     QCheckBox* m_imageFlasherEnableNotifications{nullptr};
+
+    // Network Transfer (Advanced Tab)
+    QCheckBox* m_networkTransferEnabled{nullptr};
+    QCheckBox* m_networkTransferAutoDiscovery{nullptr};
+    QCheckBox* m_networkTransferEncryption{nullptr};
+    QCheckBox* m_networkTransferCompression{nullptr};
+    QCheckBox* m_networkTransferResume{nullptr};
+    QSpinBox* m_networkTransferDiscoveryPort{nullptr};
+    QSpinBox* m_networkTransferControlPort{nullptr};
+    QSpinBox* m_networkTransferDataPort{nullptr};
+    QSpinBox* m_networkTransferChunkSize{nullptr};
+    QSpinBox* m_networkTransferMaxBandwidth{nullptr};
+    QLineEdit* m_networkTransferRelayServer{nullptr};
 
     bool m_settingsModified{false};
 };

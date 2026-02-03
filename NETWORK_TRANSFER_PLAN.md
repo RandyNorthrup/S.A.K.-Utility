@@ -2,14 +2,16 @@
 
 **Version**: 2.0  
 **Date**: December 13, 2025  
-**Status**: Planning Phase  
-**Target Release**: v0.7.0 (Phase 1), v0.8.0 (Phase 2), v0.9.0 (Phase 3)
+**Status**: ✅ Active Priority (Implementation Start)  
+**Target Release**: v0.7.0 (Phase 1), v0.9.0 (Phase 3)
+
+**Decision (Feb 1, 2026):** Network Transfer is the next implementation focus.
 
 ---
 
 ## 🎯 Executive Summary
 
-The Network Transfer Panel will enable direct PC-to-PC migration of user profiles and applications over local networks (Phase 1), the internet (Phase 2), and **multi-PC deployments** (Phase 3). This feature eliminates the need for intermediate storage devices and enables real-time migration workflows ranging from simple 1-to-1 transfers to complex many-to-many deployments for PC technicians and IT administrators.
+The Network Transfer Panel will enable direct PC-to-PC migration of user profile data over local networks (Phase 1), and **multi-PC deployments** (Phase 3). This feature eliminates the need for intermediate storage devices and enables real-time migration workflows ranging from simple 1-to-1 transfers to complex many-to-many deployments for PC technicians and IT administrators.
 
 ### Key Objectives
 - ✅ **Direct PC-to-PC transfer** - No intermediate storage required
@@ -18,7 +20,7 @@ The Network Transfer Panel will enable direct PC-to-PC migration of user profile
 - ✅ **Encrypted transmission** - AES-256-GCM for data in transit
 - ✅ **Resume capability** - Handle network interruptions gracefully
 - ✅ **Bandwidth control** - QoS and throttling options
-- ✅ **Firewall-friendly** - UPnP and manual port forwarding support
+- ✅ **Firewall-friendly** - Clear LAN firewall guidance and diagnostics
 - ✅ **PXE-style orchestration** - Centralized deployment management
 
 ---
@@ -33,7 +35,6 @@ The Network Transfer Panel will enable direct PC-to-PC migration of user profile
 - Automatic peer discovery via UDP broadcast
 - Manual IP/port connection option
 - User profile data transfer (Documents, Desktop, Pictures, etc.)
-- Application list transfer and remote Chocolatey installation
 - AES-256-GCM encryption for data in transit
 - Resume capability for interrupted transfers
 - Real-time progress monitoring on both PCs
@@ -43,22 +44,6 @@ The Network Transfer Panel will enable direct PC-to-PC migration of user profile
 - **Control**: TCP on port 54322 (JSON messages)
 - **Data**: TCP streaming on port 54323 (encrypted)
 
-### Phase 2: Internet Transfer (v0.8.0 - Q3 2026)
-**Goal**: Enable transfers over the internet via NAT traversal
-
-**Features**:
-- STUN/TURN server support for NAT traversal
-- Hole punching for direct P2P connections
-- Relay server fallback when direct connection fails
-- Connection code pairing (6-digit codes)
-- End-to-end encryption (independent of transport)
-- Compression for bandwidth optimization
-
-**Protocols**:
-- **WebRTC DataChannels** - NAT traversal + encryption
-- **QUIC** (alternative) - Modern UDP-based transport
-- **Relay Server** - Hosted fallback for difficult NATs
-
 ### Phase 3: Multi-PC Deployment (v0.9.0 - Q4 2026)
 **Goal**: Enable simultaneous migration to multiple PCs (PXE-style orchestration)
 
@@ -66,7 +51,6 @@ The Network Transfer Panel will enable direct PC-to-PC migration of user profile
 - **1-to-Many**: Migrate one user profile to multiple destination PCs
 - **Many-to-Many**: Migrate multiple users to multiple destination PCs
 - **Mapped Deployment**: User 1 → PC 1, User 2 → PC 2, User N → PC N
-- **App Deployment**: Deploy same app list to 10+ PCs simultaneously
 - **Orchestration Server**: Central coordinator for multi-PC migrations
 - **Batch Processing**: Queue migrations, prioritize transfers
 - **Load Balancing**: Distribute bandwidth across destinations
@@ -76,7 +60,7 @@ The Network Transfer Panel will enable direct PC-to-PC migration of user profile
 **Use Cases**:
 1. **Office Rollout**: Migrate 20 users to 20 new PCs (1:1 mapping)
 2. **Standard Build**: Deploy same user template to 50 PCs
-3. **Lab Setup**: Deploy standard apps to all lab workstations
+3. **Lab Setup**: Deploy a standard user template to all lab workstations
 4. **Disaster Recovery**: Restore multiple users from backup to new hardware
 
 **Protocols**:
@@ -107,10 +91,10 @@ NetworkTransferPanel (QWidget)
 │  ├─ QTcpServer - Listens for incoming connections (Destination mode)
 │  ├─ QTcpSocket - Connects to remote peer (Source mode)
 │  ├─ Handshake: Version check, capabilities exchange
-│  └─ Authentication: Shared secret, certificate pinning (Phase 2)
+│  └─ Authentication: Shared secret
 │
 ├─ NetworkTransferWorker (QThread)
-│  ├─ Sends: User profiles, app lists, metadata
+│  ├─ Sends: User profiles, metadata
 │  ├─ Receives: Transfer requests, acknowledgments
 │  ├─ Encryption: AES-256-GCM per chunk (64 KB chunks)
 │  ├─ Progress: Real-time bytes sent/received, ETA
@@ -122,10 +106,9 @@ NetworkTransferPanel (QWidget)
 │  └─ Versioning: Protocol v1.0 with backward compatibility
 │
 ├─ TransferSecurityManager (QObject)
-│  ├─ Key Exchange: ECDH (Elliptic Curve Diffie-Hellman)
 │  ├─ Encryption: AES-256-GCM with authenticated encryption
 │  ├─ Integrity: SHA-256 checksums per file
-│  └─ Authentication: TLS 1.3 for control channel (Phase 2)
+│  └─ Authentication: Shared secret
 │
 └─ MigrationOrchestrator (QObject) [PHASE 3]
    ├─ DeploymentManager - Manages multi-PC migrations
@@ -138,7 +121,7 @@ NetworkTransferPanel (QWidget)
    │  ├─ Health monitoring (CPU, RAM, disk, network)
    │  └─ Readiness checks (free space, permissions)
    │
-   ├─ MappingEngine - User/App to PC assignment
+  ├─ MappingEngine - User to PC assignment
    │  ├─ 1:N mapping (one source to many destinations)
    │  ├─ N:N mapping (multiple sources to multiple destinations)
    │  └─ Custom rules (User1→PC1, User2→PC2, etc.)
@@ -170,7 +153,7 @@ NetworkTransferPanel (QWidget)
     "ip_address": "192.168.1.100",
     "tcp_port": 54322,
     "mode": "destination",
-    "capabilities": ["user_profiles", "app_migration", "resume"]
+    "capabilities": ["user_profiles", "resume"]
   }
 }
 ```
@@ -196,16 +179,15 @@ NetworkTransferPanel (QWidget)
   "message_type": "HELLO",
   "peer_id": "uuid-1234-5678-90ab-cdef",
   "hostname": "SOURCE-PC",
-  "capabilities": ["user_profiles", "app_migration", "resume", "compression"]
+  "capabilities": ["user_profiles", "resume", "compression"]
 }
 ```
 
-**Phase 2: Authentication** (Phase 1: Optional, Phase 2: Mandatory)
+**Authentication** (optional)
 ```json
 {
   "message_type": "AUTH_CHALLENGE",
-  "challenge": "base64_encoded_random_bytes",
-  "public_key": "base64_encoded_ecdh_public_key"
+  "nonce": "base64_encoded_random_bytes"
 }
 ```
 
@@ -222,14 +204,6 @@ NetworkTransferPanel (QWidget)
         "total_files": 15234,
         "total_bytes": 5368709120,
         "checksum": "sha256_hash"
-      }
-    ],
-    "applications": [
-      {
-        "name": "Google Chrome",
-        "version": "120.0.6099.130",
-        "choco_package": "googlechrome",
-        "version_locked": true
       }
     ]
   }
@@ -281,55 +255,11 @@ NetworkTransferPanel (QWidget)
 
 #### Encryption Layers
 
-**Phase 1 (Local Network)**:
+**Local Network**:
 - **Transport**: TCP (plaintext acceptable on trusted LANs)
 - **Data Encryption**: AES-256-GCM per 64KB chunk
 - **Key Exchange**: Pre-shared secret (user enters matching code)
 - **Integrity**: SHA-256 per file
-
-**Phase 2 (Internet)**:
-- **Transport**: TLS 1.3 for control channel
-- **Data Encryption**: AES-256-GCM (same as Phase 1)
-- **Key Exchange**: ECDH (Elliptic Curve Diffie-Hellman)
-- **Integrity**: SHA-256 per file + HMAC per chunk
-- **Authentication**: Certificate pinning or connection codes
-
-#### Connection Code System (Phase 2)
-
-**Generation**:
-```
-Connection Code = 6-digit numeric code (000000-999999)
-├─ Generated on destination PC
-├─ Valid for 10 minutes
-├─ Single-use (expires after successful connection)
-└─ Stored on relay server with peer ID
-
-User enters code on source PC
-├─ Code sent to relay server
-├─ Server returns peer connection info (IP, port, public key)
-└─ Direct P2P connection established via hole punching
-```
-
-**Relay Server API** (Phase 2):
-```
-POST /api/v1/register
-{
-  "code": "123456",
-  "peer_id": "uuid",
-  "public_key": "base64_ecdh_key",
-  "external_ip": "1.2.3.4",
-  "external_port": 54323
-}
-
-GET /api/v1/lookup?code=123456
-{
-  "peer_id": "uuid",
-  "public_key": "base64_ecdh_key",
-  "external_ip": "1.2.3.4",
-  "external_port": 54323,
-  "expires_at": 1734134400
-}
-```
 
 ---
 
@@ -340,14 +270,12 @@ GET /api/v1/lookup?code=123456
 ```
 1. User clicks "Start as Source"
    ├─ Scan local user profiles (UserProfileBackupWizard logic)
-   ├─ Scan installed apps (AppScanner logic)
    ├─ Build transfer manifest
-   └─ Display summary (users, apps, total size)
+  └─ Display summary (users, total size)
 
 2. User selects data to transfer
    ├─ Check/uncheck users
    ├─ Customize folders per user
-   ├─ Select apps to install on destination
    └─ Apply smart filters
 
 3. Discovery phase
@@ -383,7 +311,7 @@ GET /api/v1/lookup?code=123456
    ├─ Start UDP broadcast announcements
    ├─ Start TCP listener on port 54322
    ├─ Display waiting screen with IP address
-   └─ Show connection code (Phase 2)
+  └─ Display connection details
 
 2. Connection accepted
    ├─ Incoming connection detected
@@ -392,8 +320,8 @@ GET /api/v1/lookup?code=123456
    └─ (Optional) Verify shared secret
 
 3. Manifest review
-   ├─ Receive transfer manifest from source
-   ├─ Display summary (users, apps, size)
+  ├─ Receive transfer manifest from source
+  ├─ Display summary (users, size)
    ├─ User approves or rejects transfer
    └─ Send approval to source
 
@@ -404,13 +332,7 @@ GET /api/v1/lookup?code=123456
    ├─ Update progress bar
    └─ Handle resume on disconnect
 
-5. Application installation
-   ├─ Parse app list from manifest
-   ├─ Install via ChocolateyManager
-   ├─ Monitor installation progress
-   └─ Report failures
-
-6. Completion
+5. Completion
    ├─ Verify all files received (SHA-256)
    ├─ Restore ACLs on user folders
    ├─ Display completion summary
@@ -443,11 +365,6 @@ GET /api/v1/lookup?code=123456
 │  │  │ ☑ Sarah (3.8 GB)                               │  ││
 │  │  │ ☐ Admin (120 MB)                               │  ││
 │  │  │                                                 │  ││
-│  │  │ Applications:                                   │  ││
-│  │  │ ☑ Google Chrome 120.0.6099.130                 │  ││
-│  │  │ ☑ Microsoft Office 2021                        │  ││
-│  │  │ ☑ Adobe Acrobat Reader DC                      │  ││
-│  │  │                                                 │  ││
 │  │  │ Total Size: 9.4 GB                             │  ││
 │  │  └─────────────────────────────────────────────────┘  ││
 │  │                                                         ││
@@ -479,7 +396,6 @@ GET /api/v1/lookup?code=123456
 │  │  │  IP Address: 192.168.1.105                      │  ││
 │  │  │  Port:       54322                              │  ││
 │  │  │                                                 │  ││
-│  │  │  Connection Code: [123 456] 🔄 ◀─── Phase 2     │  ││
 │  │  └─────────────────────────────────────────────────┘  ││
 │  │                                                         ││
 │  │  Encryption: ☑ Enable  Secret: [●●●●●●●●] (optional)  ││
@@ -633,31 +549,7 @@ test_network_transfer_integration.cpp  # End-to-end transfer
 
 ---
 
-### Phase 1.4: App Migration Integration (Week 7-8)
-
-**Goals**:
-- Transfer app lists
-- Remote Chocolatey installation
-- Version locking
-
-**Tasks**:
-1. Integrate with `AppScanner` for source app detection
-2. Integrate with `PackageMatcher` for Chocolatey matching
-3. Serialize app list to JSON (name, version, choco_package)
-4. Implement remote installation trigger on destination
-5. Stream installation logs back to source PC
-6. Handle failures and retry logic
-7. Write app migration integration test
-
-**Acceptance Criteria**:
-- ✅ Apps transferred to destination as Chocolatey install list
-- ✅ Destination installs apps via ChocolateyManager
-- ✅ Source PC sees real-time installation progress
-- ✅ Version locking respected
-
----
-
-### Phase 1.5: Polish & Testing (Week 9-10)
+### Phase 1.4: Polish & Testing (Week 7-8)
 
 **Goals**:
 - Error handling
@@ -682,78 +574,6 @@ test_network_transfer_integration.cpp  # End-to-end transfer
 
 ---
 
-### Phase 2.1: Internet Transfer - NAT Traversal (Week 11-13)
-
-**Goals**:
-- STUN/TURN support
-- Connection code system
-- Relay server
-
-**Tasks**:
-1. Research and select WebRTC library (QtWebChannel or native WebRTC)
-2. Implement STUN client for external IP discovery
-3. Implement TURN client for relay fallback
-4. Create relay server (Node.js + Express + WebSocket)
-5. Implement connection code generation (6-digit codes)
-6. Implement hole punching for direct P2P
-7. Add connection code UI to NetworkTransferPanel
-8. Deploy relay server to cloud (AWS/Azure/DigitalOcean)
-
-**Acceptance Criteria**:
-- ✅ Connection codes work for pairing
-- ✅ Direct P2P connection established when possible
-- ✅ Relay fallback works when NAT is too strict
-- ✅ Connection time < 10 seconds
-
----
-
-### Phase 2.2: Internet Transfer - Security (Week 14-15)
-
-**Goals**:
-- ECDH key exchange
-- TLS 1.3 for control channel
-- End-to-end encryption
-
-**Tasks**:
-1. Implement ECDH key exchange (use Qt's QSslKey or OpenSSL)
-2. Replace TCP with TLS 1.3 sockets (QSslSocket)
-3. Implement certificate pinning or connection code verification
-4. Add HMAC per chunk for integrity
-5. Implement replay attack prevention (nonce sequence)
-6. Security audit of protocol
-7. Penetration testing
-
-**Acceptance Criteria**:
-- ✅ ECDH key exchange successful
-- ✅ TLS 1.3 established for control channel
-- ✅ No plaintext data on network
-- ✅ Security audit passes
-
----
-
-### Phase 2.3: Internet Transfer - Optimization (Week 16-17)
-
-**Goals**:
-- Compression
-- Adaptive bitrate
-- Performance tuning
-
-**Tasks**:
-1. Add gzip/zstd compression option (reuse existing decompressors)
-2. Implement adaptive chunk size based on network speed
-3. Implement congestion control (monitor packet loss, RTT)
-4. Add multi-stream support (parallel file transfers)
-5. Optimize for high-latency networks (100ms+ RTT)
-6. Benchmark against FTP/SFTP/rsync
-7. Performance tuning
-
-**Acceptance Criteria**:
-- ✅ Compression reduces transfer time by 30%+ for text files
-- ✅ Adaptive bitrate maintains stable transfer
-- ✅ Performance competitive with rsync
-
----
-
 ### Phase 3.1: Multi-PC Deployment - Orchestration (Week 18-19)
 
 **Goals**:
@@ -762,15 +582,15 @@ test_network_transfer_integration.cpp  # End-to-end transfer
 - Deployment queue management
 
 **Tasks**:
-1. Create `MigrationOrchestrator` class for deployment coordination
-2. Create `DeploymentManager` for queue and batch processing
-3. Create `DestinationRegistry` for tracking available destination PCs
-4. Implement health monitoring (CPU, RAM, disk space, network status)
-5. Implement readiness checks (minimum free space, admin rights, services running)
-6. Add "Orchestrator Mode" to NetworkTransferPanel UI
-7. Implement multi-PC discovery (broadcast to all destinations)
-8. Create registration protocol (destinations register with orchestrator)
-9. Write unit tests for orchestration logic
+1. ✅ Create `MigrationOrchestrator` class for deployment coordination
+2. ✅ Create `DeploymentManager` for queue and batch processing
+3. ✅ Create `DestinationRegistry` for tracking available destination PCs
+4. ✅ Implement health monitoring (CPU, RAM, disk space, network status)
+5. ✅ Implement readiness checks (minimum free space, admin rights, services running)
+6. ✅ Add "Orchestrator Mode" to NetworkTransferPanel UI
+7. ✅ Implement multi-PC discovery (broadcast to all destinations)
+8. ✅ Create registration protocol (destinations register with orchestrator)
+9. ✅ Write unit tests for orchestration logic
 
 **Acceptance Criteria**:
 - ✅ Orchestrator discovers 10+ destination PCs on network
@@ -783,29 +603,26 @@ test_network_transfer_integration.cpp  # End-to-end transfer
 ### Phase 3.2: Multi-PC Deployment - Mapping Engine (Week 20-21)
 
 **Goals**:
-- Flexible user/app to PC mapping
+- Flexible user to PC mapping
 - Support 1:N, N:N, and custom mappings
 - Template system for reusable configurations
 
 **Tasks**:
-1. Create `MappingEngine` class for deployment configuration
-2. Implement **1-to-Many** mapping (one user profile → multiple destination PCs)
+1. ✅ Create `MappingEngine` class for deployment configuration
+2. ✅ Implement **1-to-Many** mapping (one user profile → multiple destination PCs)
    - Use case: Standard user template deployed to 50 new workstations
-3. Implement **Many-to-Many** mapping (multiple users → multiple destination PCs)
+3. ✅ Implement **Many-to-Many** mapping (multiple users → multiple destination PCs)
    - Use case: Migrate entire department (20 users → 20 PCs)
-4. Implement **Custom Mapping** (User 1 → PC 1, User 2 → PC 2, etc.)
+4. ✅ Implement **Custom Mapping** (User 1 → PC 1, User 2 → PC 2, etc.)
    - Use case: Office rollout with specific seat assignments
-5. Implement **App-Only Deployment** (app list → multiple destination PCs)
-   - Use case: Deploy Chocolatey app list to all lab PCs
-6. Create deployment templates (save/load JSON configuration)
-7. Add mapping UI with drag-drop interface
-8. Add validation (check disk space, prevent duplicate assignments)
-9. Write integration tests for all mapping types
+5. ✅ Create deployment templates (save/load JSON configuration)
+6. ✅ Add mapping UI with drag-drop interface
+7. ✅ Add validation (check disk space, prevent duplicate assignments)
+8. ⚠️ Write integration tests for all mapping types (unit tests complete)
 
 **Acceptance Criteria**:
 - ✅ 1:N mapping works (1 profile → 10 PCs)
 - ✅ N:N mapping works (5 users → 5 PCs with custom assignment)
-- ✅ App-only deployment works (Chocolatey list → 20 PCs)
 - ✅ Templates save/load correctly
 - ✅ UI provides clear visual mapping
 
@@ -819,16 +636,16 @@ test_network_transfer_integration.cpp  # End-to-end transfer
 - Priority queue for critical migrations
 
 **Tasks**:
-1. Create `ParallelTransferManager` for multi-threaded transfers
-2. Implement per-destination transfer threads (QThread per destination)
-3. Implement load balancing (distribute bandwidth across destinations)
-4. Add priority queue (critical migrations get more bandwidth)
-5. Implement transfer throttling per destination
-6. Add pause/resume for individual destinations
-7. Implement retry logic with exponential backoff
-8. Add failure recovery (continue other transfers if one fails)
-9. Optimize for network saturation (prevent bottlenecks)
-10. Write stress tests (10+ simultaneous 10GB transfers)
+1. ✅ Create `ParallelTransferManager` for multi-threaded transfers
+2. ✅ Implement per-destination transfer threads (QThread per destination)
+3. ✅ Implement load balancing (distribute bandwidth across destinations)
+4. ✅ Add priority queue (critical migrations get more bandwidth)
+5. ✅ Implement transfer throttling per destination
+6. ✅ Add pause/resume for individual destinations
+7. ✅ Implement retry logic with exponential backoff
+8. ✅ Add failure recovery (continue other transfers if one fails)
+9. ✅ Optimize for network saturation (prevent bottlenecks)
+10. ✅ Write stress tests (10+ simultaneous transfers, simulated)
 
 **Acceptance Criteria**:
 - ✅ 10+ simultaneous transfers work without crashing
@@ -846,17 +663,17 @@ test_network_transfer_integration.cpp  # End-to-end transfer
 - Detailed logs and error reporting
 
 **Tasks**:
-1. Create deployment dashboard UI with grid view of all destinations
-2. Add per-PC progress bars (files transferred, apps installed)
-3. Add overall deployment progress (X of N PCs complete)
-4. Implement real-time log viewer (all destinations in single view)
-5. Add color-coded status indicators (green=success, yellow=in-progress, red=error)
-6. Implement deployment summary report (CSV/PDF export)
-7. Add estimated completion time for deployment
-8. Implement deployment history (save past deployments)
-9. Add deployment pause/resume/cancel controls
-10. Write user documentation for multi-PC deployment
-11. Create video tutorials for common scenarios
+1. ✅ Create deployment dashboard UI with grid view of all destinations (table-based dashboard)
+2. ✅ Add per-PC progress bars (files transferred)
+3. ✅ Add overall deployment progress (X of N PCs complete)
+4. ✅ Implement real-time log viewer (all destinations in single view)
+5. ✅ Add color-coded status indicators (green=success, yellow=in-progress, red=error)
+6. ✅ Implement deployment summary report (CSV/PDF export)
+7. ✅ Add estimated completion time for deployment
+8. ✅ Implement deployment history (save past deployments)
+9. ✅ Add deployment pause/resume/cancel controls
+10. ⚠️ Write user documentation for multi-PC deployment
+11. ⚠️ Create video tutorials for common scenarios
 
 **Acceptance Criteria**:
 - ✅ Dashboard shows real-time status of all destinations
@@ -919,12 +736,11 @@ test_network_transfer_integration.cpp  # End-to-end transfer
   "message_type": "DEPLOYMENT_ASSIGN",
   "deployment_id": "deploy-uuid-123",
   "assignment": {
-    "type": "user_profile",
+    "job_id": "job-uuid-456",
     "source_user": "john.doe",
-    "profile_size_gb": 12.5,
-    "include_apps": true,
-    "app_list": ["googlechrome", "firefox", "7zip"],
-    "priority": "normal"
+    "profile_size_bytes": 13421772800,
+    "priority": "normal",
+    "max_bandwidth_kbps": 20480
   }
 }
 ```
@@ -970,7 +786,6 @@ test_network_transfer_integration.cpp  # End-to-end transfer
     "total_bytes": 13421772800,
     "total_files": 12456,
     "duration_seconds": 287,
-    "apps_installed": 3,
     "errors": []
   }
 }
@@ -995,7 +810,6 @@ public:
         QString sourcePCHostname;
         QString sourcePCIP;
         qint64 profileSizeBytes;
-        QStringList appList;
     };
     
     struct DestinationPC {
@@ -1156,27 +970,13 @@ private:
 **Scenario**: Deploy standard user template to 50 new lab PCs
 
 **Workflow**:
-1. Create "Lab Standard" profile with essential apps
+1. Create "Lab Standard" profile with required folders and settings
 2. Discover 50 new lab PCs on network
 3. Create 1:N mapping (Lab Standard → all 50 PCs)
 4. Start deployment - orchestrator sends same data to all PCs
 5. Load balancing prevents network saturation
 
 **Result**: 50 identically configured PCs in < 1 hour
-
----
-
-### Use Case 3: App-Only Mass Deployment
-**Scenario**: Deploy new security software to 100+ company PCs
-
-**Workflow**:
-1. Create Chocolatey package list: ["crowdstrike", "duo-desktop"]
-2. Discover all company PCs (100+)
-3. Create app-only deployment (no profile transfer)
-4. Each PC receives app list and installs via Chocolatey
-5. Real-time installation logs in dashboard
-
-**Result**: 100+ PCs receive security software in < 2 hours
 
 ---
 
@@ -1208,9 +1008,6 @@ void setNetworkTransferChunkSize(int size);
 
 bool getNetworkTransferCompressionEnabled() const;
 void setNetworkTransferCompressionEnabled(bool enabled);
-
-QString getNetworkTransferRelayServer() const; // Phase 2
-void setNetworkTransferRelayServer(const QString& server);
 ```
 
 **Default Values**:
@@ -1221,8 +1018,7 @@ network_transfer/encryption_enabled = true
 network_transfer/max_bandwidth = 0 (unlimited)
 network_transfer/auto_discovery = true
 network_transfer/chunk_size = 65536
-network_transfer/compression_enabled = false (Phase 2)
-network_transfer/relay_server = "relay.sak-utility.io:8443" (Phase 2)
+network_transfer/compression_enabled = false
 ```
 
 ---
@@ -1251,13 +1047,12 @@ network_transfer/relay_server = "relay.sak-utility.io:8443" (Phase 2)
 
 **test_transfer_security.cpp**:
 - AES-256-GCM encryption/decryption
-- ECDH key exchange (Phase 2)
 - SHA-256 checksums
 - Nonce sequence validation
 
 ### Integration Tests
 
-**test_network_transfer_integration.cpp**:
+**test_network_transfer_workflow.cpp**:
 - Full transfer flow (source → destination)
 - Large file transfer (1 GB+)
 - Many small files (10k+ files)
@@ -1279,9 +1074,8 @@ network_transfer/relay_server = "relay.sak-utility.io:8443" (Phase 2)
    - Test resume on signal drop
 
 3. **Firewall Testing**:
-   - Enable Windows Firewall on destination
-   - Verify automatic firewall prompt
-   - Test manual port forwarding
+  - Enable Windows Firewall on destination
+  - Verify automatic firewall prompt
 
 4. **Large Transfer**:
    - Transfer 50+ GB user profile
@@ -1299,25 +1093,15 @@ network_transfer/relay_server = "relay.sak-utility.io:8443" (Phase 2)
 
 ### Threat Model
 
-**Threats on Local Network** (Phase 1):
+**Threats on Local Network**:
 - ❌ **Eavesdropping**: Attacker sniffs network traffic
   - **Mitigation**: AES-256-GCM encryption per chunk
   
 - ❌ **Man-in-the-Middle**: Attacker impersonates peer
-  - **Mitigation**: Pre-shared secret, optional certificate pinning
+  - **Mitigation**: Pre-shared secret
   
 - ❌ **Replay Attacks**: Attacker replays captured packets
   - **Mitigation**: Nonce sequence numbers, timestamp validation
-
-**Threats on Internet** (Phase 2):
-- ❌ **NAT Traversal Attacks**: Attacker hijacks STUN/TURN session
-  - **Mitigation**: ECDH key exchange, connection code verification
-  
-- ❌ **Relay Server Compromise**: Relay server logs/modifies data
-  - **Mitigation**: End-to-end encryption (independent of relay)
-  
-- ❌ **Connection Code Guessing**: Attacker brute-forces codes
-  - **Mitigation**: 6-digit codes (1M combinations), 10-minute expiry, rate limiting
 
 ### Best Practices
 
@@ -1326,7 +1110,7 @@ network_transfer/relay_server = "relay.sak-utility.io:8443" (Phase 2)
 3. **Firewall Guidance**: Detect firewall blocks, offer guidance
 4. **Log Security Events**: Log handshake failures, auth failures
 5. **Rate Limiting**: Prevent connection spam, DoS attempts
-6. **Secure Defaults**: Use TLS 1.3, disable older protocols
+6. **Secure Defaults**: Use strong defaults and disable insecure options
 
 ---
 
@@ -1334,19 +1118,17 @@ network_transfer/relay_server = "relay.sak-utility.io:8443" (Phase 2)
 
 ### Performance Targets
 
-| Metric | Phase 1 (LAN) | Phase 2 (Internet) |
-|--------|---------------|---------------------|
-| Connection Time | < 5 seconds | < 10 seconds |
-| Transfer Speed (Gigabit LAN) | > 100 MB/s | N/A |
-| Transfer Speed (100 Mbps Internet) | N/A | > 10 MB/s |
-| Memory Usage | < 200 MB | < 300 MB |
-| CPU Usage | < 30% (1 core) | < 50% (1 core) |
-| Resume Time After Disconnect | < 3 seconds | < 10 seconds |
+| Metric | LAN |
+|--------|-----|
+| Connection Time | < 5 seconds |
+| Transfer Speed (Gigabit LAN) | > 100 MB/s |
+| Memory Usage | < 200 MB |
+| CPU Usage | < 30% (1 core) |
+| Resume Time After Disconnect | < 3 seconds |
 
 ### Reliability Targets
 
 - ✅ **99% Success Rate** on local network
-- ✅ **95% Success Rate** on internet (NAT traversal)
 - ✅ **Zero Data Loss** with checksums
 - ✅ **Zero Crashes** on network errors
 
@@ -1361,18 +1143,7 @@ Already in project:
 - ✅ `Qt6::Network` - QTcpServer, QTcpSocket, QUdpSocket
 - ✅ `Qt6::Widgets` - QWidget, QTableView, etc.
 
-New additions needed:
-- ⚠️ `Qt6::WebSockets` (Phase 2) - For relay server communication
-- ⚠️ `OpenSSL` (Phase 2) - For ECDH, TLS 1.3 (Qt provides QSslSocket)
-
-### External Libraries (Phase 2)
-
-Consider:
-- **libnice** - ICE/STUN/TURN implementation (LGPL)
-- **libsrtp** - Secure RTP for encryption (BSD-3-Clause)
-- **WebRTC Native** - Full WebRTC stack (BSD-3-Clause)
-
-**Recommendation**: Start with Qt's built-in networking, add WebRTC in Phase 2 if needed.
+New additions needed: none.
 
 ---
 
@@ -1384,7 +1155,6 @@ Consider:
    - How to enable discovery
    - How to connect two PCs
    - Firewall configuration
-   - Port forwarding (if needed)
 
 2. **Troubleshooting Guide**:
    - "Connection timed out" → Check firewall
@@ -1422,7 +1192,6 @@ Consider:
 
 | Risk | Impact | Probability | Mitigation |
 |------|--------|-------------|------------|
-| **NAT traversal failure** | High | Medium | Relay server fallback, clear error messages |
 | **Performance on slow networks** | Medium | High | Compression, adaptive bitrate, resume |
 | **Memory exhaustion (large files)** | High | Low | Streaming with fixed buffer size (64 KB chunks) |
 | **Firewall blocking** | High | Medium | Auto-detect, guide user to configure firewall |
@@ -1432,7 +1201,7 @@ Consider:
 
 | Risk | Impact | Probability | Mitigation |
 |------|--------|-------------|------------|
-| **Scope creep** | Medium | High | Strict phase boundaries, defer Phase 2 features |
+| **Scope creep** | Medium | High | Strict phase boundaries, defer non-LAN features |
 | **Compatibility issues (Qt versions)** | Low | Medium | Target Qt 6.5.3+, test on multiple versions |
 | **Third-party library issues** | Medium | Low | Minimize external dependencies, use Qt where possible |
 
@@ -1447,20 +1216,9 @@ Consider:
 | 1-2  | 1.1 Foundation | Discovery, TCP connection | Working handshake |
 | 3-4  | 1.2 Data Transfer | File streaming, encryption | File transfer works |
 | 5-6  | 1.3 User Profile Integration | ACLs, smart filters | Profile transfer works |
-| 7-8  | 1.4 App Migration Integration | Chocolatey remote install | App migration works |
-| 9-10 | 1.5 Polish & Testing | Error handling, docs | Ready for release |
+| 7-8  | 1.4 Polish & Testing | Error handling, docs | Ready for release |
 
 **Target Release**: v0.7.0 (Q2 2026)
-
-### Phase 2: Internet Transfer (7 weeks)
-
-| Week | Phase | Tasks | Deliverables |
-|------|-------|-------|--------------|
-| 11-13 | 2.1 NAT Traversal | STUN/TURN, relay server | Internet connection works |
-| 14-15 | 2.2 Security | ECDH, TLS 1.3 | Secure internet transfer |
-| 16-17 | 2.3 Optimization | Compression, adaptive bitrate | Performance optimized |
-
-**Target Release**: v0.8.0 (Q3 2026)
 
 ### Phase 3: Multi-PC Deployment (8 weeks)
 
@@ -1508,24 +1266,18 @@ Before starting implementation:
 - [QTcpServer](https://doc.qt.io/qt-6/qtcpserver.html)
 - [QTcpSocket](https://doc.qt.io/qt-6/qtcpsocket.html)
 - [QUdpSocket](https://doc.qt.io/qt-6/qudpsocket.html)
-- [QSslSocket](https://doc.qt.io/qt-6/qsslsocket.html) (Phase 2)
 
 ### Protocols
 
 - [JSON-RPC 2.0](https://www.jsonrpc.org/specification) - Control message format
-- [STUN RFC 5389](https://tools.ietf.org/html/rfc5389) - NAT traversal (Phase 2)
-- [TURN RFC 5766](https://tools.ietf.org/html/rfc5766) - Relay protocol (Phase 2)
-- [ICE RFC 5245](https://tools.ietf.org/html/rfc5245) - Connection establishment (Phase 2)
 
 ### Security
 
 - [AES-GCM](https://en.wikipedia.org/wiki/Galois/Counter_Mode) - Authenticated encryption
-- [ECDH](https://en.wikipedia.org/wiki/Elliptic-curve_Diffie%E2%80%93Hellman) - Key exchange (Phase 2)
-- [TLS 1.3](https://tools.ietf.org/html/rfc8446) - Transport security (Phase 2)
 
 ---
 
-## 💡 Future Enhancements (Post-v0.8)
+## 💡 Future Enhancements (Post-v0.9)
 
 ### v0.9 - Advanced Features
 - Multi-stream transfers (parallel files)

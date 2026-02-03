@@ -74,6 +74,39 @@ void ConfigManager::initializeDefaults()
     if (!contains("image_flasher/enable_notifications")) {
         setValue("image_flasher/enable_notifications", true);
     }
+    if (!contains("network_transfer/enabled")) {
+        setValue("network_transfer/enabled", true);
+    }
+    if (!contains("network_transfer/discovery_port")) {
+        setValue("network_transfer/discovery_port", 54321);
+    }
+    if (!contains("network_transfer/control_port")) {
+        setValue("network_transfer/control_port", 54322);
+    }
+    if (!contains("network_transfer/data_port")) {
+        setValue("network_transfer/data_port", 54323);
+    }
+    if (!contains("network_transfer/encryption")) {
+        setValue("network_transfer/encryption", true);
+    }
+    if (!contains("network_transfer/compression")) {
+        setValue("network_transfer/compression", true);
+    }
+    if (!contains("network_transfer/resume")) {
+        setValue("network_transfer/resume", true);
+    }
+    if (!contains("network_transfer/max_bandwidth")) {
+        setValue("network_transfer/max_bandwidth", 0);
+    }
+    if (!contains("network_transfer/auto_discovery")) {
+        setValue("network_transfer/auto_discovery", true);
+    }
+    if (!contains("network_transfer/chunk_size")) {
+        setValue("network_transfer/chunk_size", 65536);
+    }
+    if (!contains("network_transfer/relay_server")) {
+        setValue("network_transfer/relay_server", QString());
+    }
     if (!contains("ui/restore_window_geometry")) {
         setValue("ui/restore_window_geometry", true);
     }
@@ -181,27 +214,6 @@ void ConfigManager::setDuplicateKeepStrategy(const QString& strategy)
     setValue("duplicate/keep_strategy", strategy);
 }
 
-// License scanner settings
-bool ConfigManager::getLicenseScanRegistry() const
-{
-    return getValue("license/scan_registry", true).toBool();
-}
-
-void ConfigManager::setLicenseScanRegistry(bool scan)
-{
-    setValue("license/scan_registry", scan);
-}
-
-bool ConfigManager::getLicenseScanFilesystem() const
-{
-    return getValue("license/scan_filesystem", true).toBool();
-}
-
-void ConfigManager::setLicenseScanFilesystem(bool scan)
-{
-    setValue("license/scan_filesystem", scan);
-}
-
 // Image Flasher settings
 QString ConfigManager::getImageFlasherValidationMode() const
 {
@@ -281,6 +293,116 @@ bool ConfigManager::getImageFlasherEnableNotifications() const
 void ConfigManager::setImageFlasherEnableNotifications(bool enable)
 {
     setValue("image_flasher/enable_notifications", enable);
+}
+
+bool ConfigManager::getNetworkTransferEnabled() const
+{
+    return getValue("network_transfer/enabled", true).toBool();
+}
+
+void ConfigManager::setNetworkTransferEnabled(bool enabled)
+{
+    setValue("network_transfer/enabled", enabled);
+}
+
+int ConfigManager::getNetworkTransferDiscoveryPort() const
+{
+    return getValue("network_transfer/discovery_port", 54321).toInt();
+}
+
+void ConfigManager::setNetworkTransferDiscoveryPort(int port)
+{
+    setValue("network_transfer/discovery_port", port);
+}
+
+int ConfigManager::getNetworkTransferControlPort() const
+{
+    return getValue("network_transfer/control_port", 54322).toInt();
+}
+
+void ConfigManager::setNetworkTransferControlPort(int port)
+{
+    setValue("network_transfer/control_port", port);
+}
+
+int ConfigManager::getNetworkTransferDataPort() const
+{
+    return getValue("network_transfer/data_port", 54323).toInt();
+}
+
+void ConfigManager::setNetworkTransferDataPort(int port)
+{
+    setValue("network_transfer/data_port", port);
+}
+
+bool ConfigManager::getNetworkTransferEncryptionEnabled() const
+{
+    return getValue("network_transfer/encryption", true).toBool();
+}
+
+void ConfigManager::setNetworkTransferEncryptionEnabled(bool enabled)
+{
+    setValue("network_transfer/encryption", enabled);
+}
+
+bool ConfigManager::getNetworkTransferCompressionEnabled() const
+{
+    return getValue("network_transfer/compression", true).toBool();
+}
+
+void ConfigManager::setNetworkTransferCompressionEnabled(bool enabled)
+{
+    setValue("network_transfer/compression", enabled);
+}
+
+bool ConfigManager::getNetworkTransferResumeEnabled() const
+{
+    return getValue("network_transfer/resume", true).toBool();
+}
+
+void ConfigManager::setNetworkTransferResumeEnabled(bool enabled)
+{
+    setValue("network_transfer/resume", enabled);
+}
+
+int ConfigManager::getNetworkTransferMaxBandwidth() const
+{
+    return getValue("network_transfer/max_bandwidth", 0).toInt();
+}
+
+void ConfigManager::setNetworkTransferMaxBandwidth(int bandwidth)
+{
+    setValue("network_transfer/max_bandwidth", bandwidth);
+}
+
+bool ConfigManager::getNetworkTransferAutoDiscoveryEnabled() const
+{
+    return getValue("network_transfer/auto_discovery", true).toBool();
+}
+
+void ConfigManager::setNetworkTransferAutoDiscoveryEnabled(bool enabled)
+{
+    setValue("network_transfer/auto_discovery", enabled);
+}
+
+int ConfigManager::getNetworkTransferChunkSize() const
+{
+    return getValue("network_transfer/chunk_size", 65536).toInt();
+}
+
+void ConfigManager::setNetworkTransferChunkSize(int size)
+{
+    setValue("network_transfer/chunk_size", size);
+}
+
+QString ConfigManager::getNetworkTransferRelayServer() const
+{
+    return getValue("network_transfer/relay_server", QString()).toString();
+}
+
+void ConfigManager::setNetworkTransferRelayServer(const QString& server)
+{
+    setValue("network_transfer/relay_server", server);
 }
 
 // UI settings

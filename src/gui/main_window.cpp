@@ -3,10 +3,11 @@
 #include "sak/backup_panel.h"
 #include "sak/organizer_panel.h"
 #include "sak/duplicate_finder_panel.h"
-#include "sak/license_scanner_panel.h"
 #include "sak/app_migration_panel.h"
 #include "sak/image_flasher_panel.h"
 #include "sak/quick_actions_panel.h"
+#include "sak/network_transfer_panel.h"
+#include "sak/config_manager.h"
 #include "gui/settings_dialog.h"
 #include "gui/undo_manager.h"
 
@@ -134,13 +135,15 @@ void MainWindow::create_panels()
     m_duplicate_finder_panel = std::make_unique<DuplicateFinderPanel>(this);
     m_tab_widget->addTab(m_duplicate_finder_panel.get(), "Duplicate Finder");
     
-    // Create License Scanner panel
-    m_license_scanner_panel = std::make_unique<LicenseScannerPanel>(this);
-    m_tab_widget->addTab(m_license_scanner_panel.get(), "License Scanner");
-    
     // Create App Migration panel
     m_app_migration_panel = std::make_unique<AppMigrationPanel>(this);
     m_tab_widget->addTab(m_app_migration_panel.get(), "App Migration");
+
+    // Create Network Transfer panel
+    if (sak::ConfigManager::instance().getNetworkTransferEnabled()) {
+        m_network_transfer_panel = std::make_unique<sak::NetworkTransferPanel>(this);
+        m_tab_widget->addTab(m_network_transfer_panel.get(), "Network Transfer");
+    }
     
     // Create Image Flasher panel
     m_image_flasher_panel = std::make_unique<ImageFlasherPanel>(this);
@@ -160,6 +163,13 @@ void MainWindow::create_panels()
             this, [this](const QString& msg) { update_status(msg, 5000); });
     connect(m_app_migration_panel.get(), &AppMigrationPanel::progress_updated,
             this, &MainWindow::update_progress);
+
+            if (m_network_transfer_panel) {
+            connect(m_network_transfer_panel.get(), &sak::NetworkTransferPanel::status_message,
+                this, [this](const QString& msg) { update_status(msg, 5000); });
+            connect(m_network_transfer_panel.get(), &sak::NetworkTransferPanel::progress_update,
+                this, &MainWindow::update_progress);
+            }
     
     // Logger will be wired in Phase 3
 }

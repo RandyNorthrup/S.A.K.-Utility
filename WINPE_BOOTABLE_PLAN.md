@@ -2,8 +2,10 @@
 
 **Version**: 1.0  
 **Date**: December 13, 2025  
-**Status**: Planning Phase  
-**Target Release**: v0.9.0
+**Status**: ❌ Scrapped / Archived  
+**Target Release**: N/A
+
+**Decision (Feb 1, 2026):** This plan is no longer in scope and has been archived. PXE Boot Panel is the active focus.
 
 ---
 

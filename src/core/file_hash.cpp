@@ -5,6 +5,7 @@
 #include "sak/logger.h"
 #include <QCryptographicHash>
 #include <QFile>
+#include <QByteArrayView>
 #include <algorithm>
 #include <array>
 #include <fstream>
@@ -191,7 +192,8 @@ auto file_hasher::calculate_md5(
     
     try {
         QCryptographicHash hash(QCryptographicHash::Md5);
-        hash.addData(reinterpret_cast<const char*>(data.data()), data.size());
+        hash.addData(QByteArrayView(reinterpret_cast<const char*>(data.data()),
+                        static_cast<qsizetype>(data.size())));
         QByteArray result = hash.result();
         return result.toHex().toStdString();
         
@@ -205,7 +207,8 @@ auto file_hasher::calculate_sha256(
     
     try {
         QCryptographicHash hash(QCryptographicHash::Sha256);
-        hash.addData(reinterpret_cast<const char*>(data.data()), data.size());
+        hash.addData(QByteArrayView(reinterpret_cast<const char*>(data.data()),
+                        static_cast<qsizetype>(data.size())));
         QByteArray result = hash.result();
         return result.toHex().toStdString();
         

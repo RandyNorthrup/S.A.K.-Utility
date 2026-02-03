@@ -84,6 +84,9 @@ enum class error_code {
     network_unavailable = 800,
     connection_failed = 801,
     transfer_failed = 802,
+    network_timeout = 803,
+    protocol_error = 804,
+    authentication_failed = 805,
     
     // Security/validation errors (850-899)
     validation_failed = 850,
@@ -182,6 +185,9 @@ enum class error_code {
         case error_code::network_unavailable: return "Network unavailable";
         case error_code::connection_failed: return "Connection failed";
         case error_code::transfer_failed: return "Transfer failed";
+        case error_code::network_timeout: return "Network timeout";
+        case error_code::protocol_error: return "Protocol error";
+        case error_code::authentication_failed: return "Authentication failed";
         
         // Security/validation errors
         case error_code::validation_failed: return "Validation failed";

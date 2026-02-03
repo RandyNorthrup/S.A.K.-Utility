@@ -19,6 +19,7 @@ class ImageFlasherPanel;
 namespace sak {
     class AppMigrationPanel;
     class QuickActionsPanel;
+    class NetworkTransferPanel;
 }
 
 /**
@@ -166,10 +167,10 @@ private:
     std::unique_ptr<BackupPanel> m_backup_panel;
     std::unique_ptr<OrganizerPanel> m_organizer_panel;
     std::unique_ptr<DuplicateFinderPanel> m_duplicate_finder_panel;
-    std::unique_ptr<LicenseScannerPanel> m_license_scanner_panel;
     std::unique_ptr<sak::AppMigrationPanel> m_app_migration_panel;
     std::unique_ptr<ImageFlasherPanel> m_image_flasher_panel;
     std::unique_ptr<sak::QuickActionsPanel> m_quick_actions_panel;
+    std::unique_ptr<sak::NetworkTransferPanel> m_network_transfer_panel;
 
     // Status bar components
     QLabel* m_status_label{nullptr};
