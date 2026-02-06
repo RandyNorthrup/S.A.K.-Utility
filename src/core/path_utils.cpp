@@ -83,13 +83,25 @@ auto path_utils::is_safe_path(
         // Check if normalized path starts with base directory
         auto path_str = norm_path.string();
         auto base_str = norm_base.string();
+
+        auto normalize_for_compare = [](std::string value) {
+            std::replace(value.begin(), value.end(), '\\', '/');
+#ifdef _WIN32
+            std::transform(value.begin(), value.end(), value.begin(),
+                           [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+#endif
+            return value;
+        };
+
+        path_str = normalize_for_compare(std::move(path_str));
+        base_str = normalize_for_compare(std::move(base_str));
         
         // Ensure both end with separator for proper comparison
-        if (!base_str.empty() && base_str.back() != std::filesystem::path::preferred_separator) {
-            base_str += std::filesystem::path::preferred_separator;
+        if (!base_str.empty() && base_str.back() != '/') {
+            base_str += '/';
         }
         
-        return path_str.starts_with(base_str) || path_str == norm_base.string();
+        return path_str.starts_with(base_str) || path_str == normalize_for_compare(norm_base.string());
         
     } catch (...) {
         return std::unexpected(error_code::unknown_error);

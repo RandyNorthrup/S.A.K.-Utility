@@ -2,11 +2,31 @@
 #include "sak/smart_file_filter.h"
 #include "sak/permission_manager.h"
 #include "sak/windows_user_scanner.h"
+#include "sak/path_utils.h"
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
 
 namespace sak {
+
+namespace {
+bool buildSafePath(const QString& basePath, const QString& relativePath, QString& outPath) {
+    QString combined = QDir(basePath).filePath(relativePath);
+    auto nativeCombined = QDir::toNativeSeparators(combined);
+    auto nativeBase = QDir::toNativeSeparators(basePath);
+
+    std::filesystem::path destPath = nativeCombined.toStdString();
+    std::filesystem::path base = nativeBase.toStdString();
+
+    auto safe = path_utils::is_safe_path(destPath, base);
+    if (!safe || !(*safe)) {
+        return false;
+    }
+
+    outPath = combined;
+    return true;
+}
+}
 
 UserProfileRestoreWorker::UserProfileRestoreWorker(QObject* parent)
     : QThread(parent)
@@ -127,23 +147,34 @@ bool UserProfileRestoreWorker::restoreUser(const UserMapping& mapping) {
         return false;
     }
     
-    QString sourcePath = m_backupPath + "/" + mapping.source_username;
+    QString sourcePath;
+    if (!buildSafePath(m_backupPath, mapping.source_username, sourcePath)) {
+        Q_EMIT logMessage(tr("Invalid source path for user: %1").arg(mapping.source_username), true);
+        return false;
+    }
     QString destProfilePath;
     QString systemDrive = QString::fromLocal8Bit(qgetenv("SystemDrive"));
     if (systemDrive.isEmpty()) systemDrive = "C:";
     
     // Determine destination path based on merge mode
     switch (mapping.mode) {
-        case MergeMode::CreateNewUser:
+        case MergeMode::CreateNewUser: {
             // For new user, create profile path
-            destProfilePath = systemDrive + "/Users/" + mapping.source_username;
+            const QString destUsername = mapping.destination_username.isEmpty()
+                ? mapping.source_username
+                : mapping.destination_username;
+            QString baseProfileRoot = systemDrive + "/Users";
+            if (!buildSafePath(baseProfileRoot, destUsername, destProfilePath)) {
+                Q_EMIT logMessage(tr("Invalid destination username: %1").arg(destUsername), true);
+                return false;
+            }
             if (!QDir().mkpath(destProfilePath)) {
                 Q_EMIT logMessage(tr("Failed to create profile directory: %1").arg(destProfilePath), true);
                 return false;
             }
             Q_EMIT logMessage(tr("Created new profile: %1").arg(destProfilePath), false);
             break;
-            
+        }
         case MergeMode::ReplaceDestination:
         case MergeMode::MergeIntoDestination:
             // Use existing destination user's profile
@@ -151,10 +182,13 @@ bool UserProfileRestoreWorker::restoreUser(const UserMapping& mapping) {
                 Q_EMIT logMessage(tr("Destination username not specified"), true);
                 return false;
             }
-            
-            // Find destination profile path (would need WindowsUserScanner here)
-            destProfilePath = systemDrive + "/Users/" + mapping.destination_username;
-            
+
+            destProfilePath = WindowsUserScanner::getProfilePath(mapping.destination_username);
+            if (destProfilePath.isEmpty()) {
+                Q_EMIT logMessage(tr("Failed to resolve destination profile path: %1")
+                                      .arg(mapping.destination_username), true);
+                return false;
+            }
             if (!QDir(destProfilePath).exists()) {
                 Q_EMIT logMessage(tr("Destination profile does not exist: %1").arg(destProfilePath), true);
                 return false;
@@ -168,8 +202,16 @@ bool UserProfileRestoreWorker::restoreUser(const UserMapping& mapping) {
         
         Q_EMIT statusUpdate(mapping.source_username, tr("Restoring: %1").arg(folder.display_name));
         
-        QString folderSourcePath = sourcePath + "/" + folder.relative_path;
-        QString folderDestPath = destProfilePath + "/" + folder.relative_path;
+        QString folderSourcePath;
+        QString folderDestPath;
+        if (!buildSafePath(sourcePath, folder.relative_path, folderSourcePath)) {
+            Q_EMIT logMessage(tr("Invalid source folder path: %1").arg(folder.relative_path), true);
+            continue;
+        }
+        if (!buildSafePath(destProfilePath, folder.relative_path, folderDestPath)) {
+            Q_EMIT logMessage(tr("Invalid destination folder path: %1").arg(folder.relative_path), true);
+            continue;
+        }
         
         if (!restoreFolder(folder, folderSourcePath, folderDestPath)) {
             Q_EMIT logMessage(tr("Warning: Failed to restore folder: %1").arg(folder.display_name), true);

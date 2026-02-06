@@ -50,6 +50,7 @@ public:
         // Migration control
         bool selected;           // User wants to migrate this app
         bool version_lock;       // Install specific version (if available)
+        QString locked_version;  // Version to install when locked
         QString notes;           // User notes
         
         // Execution status

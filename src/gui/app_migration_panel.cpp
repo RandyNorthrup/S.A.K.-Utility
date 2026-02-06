@@ -21,6 +21,10 @@
 #include <QCheckBox>
 #include <QApplication>
 #include <QStyle>
+#include <QThread>
+#include <QtConcurrent>
+#include <atomic>
+#include <memory>
 
 using sak::AppScanner;
 using sak::AppMigrationPanel;
@@ -28,6 +32,8 @@ using sak::ChocolateyManager;
 using sak::PackageMatcher;
 using sak::MigrationReport;
 using sak::AppMigrationWorker;
+using sak::MigrationJob;
+using sak::MigrationStatus;
 using sak::UserDataManager;
 using sak::BackupWizard;
 using sak::RestoreWizard;
@@ -41,6 +47,7 @@ enum Column {
     ColPackage,
     ColConfidence,
     ColVersionLock,
+    ColLockedVersion,
     ColStatus,
     ColProgress,
     ColCount  // Total number of columns
@@ -69,7 +76,11 @@ AppMigrationPanel::AppMigrationPanel(QWidget* parent)
     }
 }
 
-AppMigrationPanel::~AppMigrationPanel() = default;
+AppMigrationPanel::~AppMigrationPanel() {
+    if (m_worker && m_worker->isRunning()) {
+        m_worker->cancel();
+    }
+}
 
 void AppMigrationPanel::setupUI()
 {
@@ -87,17 +98,22 @@ void AppMigrationPanel::setupUI()
     
     m_filterEdit = new QLineEdit(this);
     m_filterEdit->setPlaceholderText("Search by name, publisher, or package...");
+    m_filterEdit->setToolTip("Filter applications by name, publisher, or package name");
     filterLayout->addWidget(m_filterEdit);
     
     filterLayout->addWidget(new QLabel("Confidence:", this));
     m_confidenceFilter = new QComboBox(this);
     m_confidenceFilter->addItems(QStringList() << "All" << "High" << "Medium" << "Low" << "None");
+    m_confidenceFilter->setToolTip("Filter applications by match confidence level");
     filterLayout->addWidget(m_confidenceFilter);
     
     // Selection buttons
     m_selectAllButton = new QPushButton("Select All", this);
+    m_selectAllButton->setToolTip("Select all applications in the table");
     m_selectNoneButton = new QPushButton("Select None", this);
+    m_selectNoneButton->setToolTip("Deselect all applications");
     m_selectMatchedButton = new QPushButton("Select Matched", this);
+    m_selectMatchedButton->setToolTip("Select only applications with matched Chocolatey packages");
     filterLayout->addWidget(m_selectAllButton);
     filterLayout->addWidget(m_selectNoneButton);
     filterLayout->addWidget(m_selectMatchedButton);
@@ -113,6 +129,7 @@ void AppMigrationPanel::setupUI()
     m_logTextEdit = new QTextEdit(this);
     m_logTextEdit->setReadOnly(true);
     m_logTextEdit->setMaximumHeight(120);
+    m_logTextEdit->setToolTip("Displays operation logs and status messages");
     mainLayout->addWidget(m_logTextEdit);
     
     // Status bar
@@ -190,12 +207,13 @@ void AppMigrationPanel::setupToolbar()
 void AppMigrationPanel::setupTable()
 {
     m_tableView = new QTableView(this);
+    m_tableView->setToolTip("Application migration table - shows scanned apps and their Chocolatey package matches");
     m_tableModel = new QStandardItemModel(0, ColCount, this);
     
     // Set headers
     m_tableModel->setHorizontalHeaderLabels(QStringList()
         << "✓" << "Application" << "Version" << "Publisher"
-        << "Choco Package" << "Match" << "Lock Ver" << "Status" << "Progress");
+        << "Choco Package" << "Match" << "Lock" << "Locked Version" << "Status" << "Progress");
     
     m_tableView->setModel(m_tableModel);
     m_tableView->setSelectionBehavior(QAbstractItemView::SelectRows);
@@ -213,6 +231,7 @@ void AppMigrationPanel::setupTable()
     m_tableView->setColumnWidth(ColPackage, 150);
     m_tableView->setColumnWidth(ColConfidence, 80);
     m_tableView->setColumnWidth(ColVersionLock, 80);
+    m_tableView->setColumnWidth(ColLockedVersion, 110);
     m_tableView->setColumnWidth(ColStatus, 100);
     m_tableView->setColumnWidth(ColProgress, 100);
 }
@@ -273,6 +292,79 @@ void AppMigrationPanel::setupConnections()
                     updateStatusSummary();
                 }
             });
+
+    connect(m_worker.get(), &AppMigrationWorker::migrationStarted, this, [this](int totalJobs) {
+        m_progressBar->setVisible(true);
+        m_progressBar->setRange(0, totalJobs);
+        m_progressBar->setValue(0);
+        m_statusLabel->setText("Installing...");
+        m_logTextEdit->append(QString("Migration started: %1 job(s)").arg(totalJobs));
+    });
+
+    connect(m_worker.get(), &AppMigrationWorker::jobProgress, this,
+            [this](int entryIndex, const QString& message) {
+                Q_UNUSED(entryIndex);
+                m_logTextEdit->append(message);
+            });
+
+    connect(m_worker.get(), &AppMigrationWorker::jobStatusChanged, this,
+            [this](int entryIndex, const MigrationJob& job) {
+                if (entryIndex < 0 || entryIndex >= m_entries.size()) {
+                    return;
+                }
+
+                auto& entry = m_entries[entryIndex];
+                switch (job.status) {
+                    case MigrationStatus::Queued:
+                        entry.status = "Queued";
+                        entry.progress = 0;
+                        break;
+                    case MigrationStatus::Installing:
+                        entry.status = "Installing";
+                        entry.progress = 50;
+                        break;
+                    case MigrationStatus::Success:
+                        entry.status = "Installed";
+                        entry.progress = 100;
+                        break;
+                    case MigrationStatus::Failed:
+                        entry.status = "Failed";
+                        entry.error_message = job.errorMessage;
+                        entry.progress = 0;
+                        break;
+                    case MigrationStatus::Skipped:
+                        entry.status = "Skipped";
+                        entry.progress = 0;
+                        break;
+                    case MigrationStatus::Cancelled:
+                        entry.status = "Cancelled";
+                        entry.progress = 0;
+                        break;
+                    default:
+                        break;
+                }
+
+                updateEntry(entryIndex);
+
+                auto stats = m_worker->getStats();
+                int completed = stats.success + stats.failed + stats.skipped + stats.cancelled;
+                m_progressBar->setValue(completed);
+            });
+
+    connect(m_worker.get(), &AppMigrationWorker::migrationCompleted, this,
+            [this](const AppMigrationWorker::Stats& stats) {
+                m_logTextEdit->append(QString("Installation complete: %1 succeeded, %2 failed, %3 skipped")
+                    .arg(stats.success)
+                    .arg(stats.failed)
+                    .arg(stats.skipped));
+
+                m_statusLabel->setText("Installation complete");
+                m_progressBar->setVisible(false);
+                m_restoreButton->setEnabled(stats.success > 0);
+                enableControls(true);
+                m_installInProgress = false;
+                m_activeReport.reset();
+            });
 }
 
 // ============================================================================
@@ -281,9 +373,9 @@ void AppMigrationPanel::setupConnections()
 
 void AppMigrationPanel::onScanApps()
 {
-    if (m_operationInProgress) {
-        QMessageBox::warning(this, "Operation In Progress",
-            "Please wait for the current operation to complete.");
+    if (m_scanInProgress) {
+        QMessageBox::warning(this, "Scan In Progress",
+            "Please wait for the current scan to complete.");
         return;
     }
     
@@ -293,7 +385,7 @@ void AppMigrationPanel::onScanApps()
     m_progressBar->setRange(0, 0);  // Indeterminate
     
     enableControls(false);
-    m_operationInProgress = true;
+    m_scanInProgress = true;
     
     // Scan in background
     QApplication::setOverrideCursor(Qt::WaitCursor);
@@ -314,10 +406,22 @@ void AppMigrationPanel::onScanApps()
         entry.choco_package = "";
         entry.choco_available = false;
         entry.match_confidence = "None";
+        entry.match_score = 0.0;
+        entry.match_type = "none";
+        entry.available_version.clear();
         entry.status = "Scanned";
         entry.progress = 0;
         
         m_entries.append(entry);
+    }
+    
+    // Reset filters to show all results BEFORE updating table
+    // Block signals to prevent filter handlers from running on stale table data
+    {
+        QSignalBlocker filterBlocker(m_filterEdit);
+        QSignalBlocker comboBlocker(m_confidenceFilter);
+        m_filterEdit->clear();
+        m_confidenceFilter->setCurrentIndex(0);  // Set to "All"
     }
     
     updateTableFromEntries();
@@ -330,82 +434,113 @@ void AppMigrationPanel::onScanApps()
     m_reportButton->setEnabled(!m_entries.isEmpty());
     
     enableControls(true);
-    m_operationInProgress = false;
+    m_scanInProgress = false;
     
     updateStatusSummary();
 }
 
 void AppMigrationPanel::onMatchPackages()
 {
-    if (m_operationInProgress || m_entries.isEmpty()) return;
+    if (m_matchingInProgress || m_entries.isEmpty()) {
+        if (m_matchingInProgress) {
+            QMessageBox::information(this, "Matching In Progress",
+                "Matching is already running. You can continue using the app.");
+        }
+        return;
+    }
     
-    m_logTextEdit->append("=== Matching Applications to Chocolatey Packages ===");
+    m_logTextEdit->append(QString("=== Matching Applications to Chocolatey Packages (Parallel, %1 cores) ===")
+                              .arg(QThread::idealThreadCount()));
     m_statusLabel->setText("Matching...");
     m_progressBar->setVisible(true);
     m_progressBar->setRange(0, m_entries.size());
     m_progressBar->setValue(0);
     
-    enableControls(false);
-    m_operationInProgress = true;
+    m_matchingInProgress = true;
+    m_matchButton->setEnabled(false);
     
-    QApplication::setOverrideCursor(Qt::WaitCursor);
+    // Shared state for thread-safe updates
+    auto processed = std::make_shared<std::atomic<int>>(0);
+    auto matched = std::make_shared<std::atomic<int>>(0);
+    auto available = std::make_shared<std::atomic<int>>(0);
     
-    int matched = 0;
-    for (int i = 0; i < m_entries.size(); ++i) {
-        auto& entry = m_entries[i];
-        
-        // Match package - create AppInfo for matching
-        AppScanner::AppInfo appInfo;
-        appInfo.name = entry.app_name;
-        appInfo.version = entry.version;
-        appInfo.publisher = entry.publisher;
-        appInfo.install_location = entry.install_location;
-        
-        auto match_result = m_matcher->findMatch(appInfo, m_chocoManager.get());
-        
-        if (match_result.has_value()) {
-            entry.choco_package = match_result->choco_package;
-            entry.choco_available = match_result->available;
+    auto matcher = m_matcher;
+    auto chocoManager = m_chocoManager;
+    const int totalEntries = m_entries.size();
+    
+    // Process with parallel filter
+    m_matchingFuture = QtConcurrent::run([this, matcher, chocoManager, processed, matched, available, totalEntries]() {
+        // Process entries in parallel batches
+        QtConcurrent::blockingMap(m_entries, [matcher, chocoManager, processed, matched, available, this, totalEntries](MigrationEntry& entry) {
+            // Match package - create AppInfo for matching
+            AppScanner::AppInfo appInfo;
+            appInfo.name = entry.app_name;
+            appInfo.version = entry.version;
+            appInfo.publisher = entry.publisher;
+            appInfo.install_location = entry.install_location;
             
-            // Map confidence score to text
-            if (match_result->confidence >= 0.9) {
-                entry.match_confidence = "High";
-            } else if (match_result->confidence >= 0.7) {
-                entry.match_confidence = "Medium";
+            auto match_result = matcher->findMatch(appInfo, chocoManager.get());
+            
+            if (match_result.has_value()) {
+                entry.choco_package = match_result->choco_package;
+                entry.choco_available = match_result->available;
+                entry.match_score = match_result->confidence;
+                entry.match_type = match_result->match_type;
+                entry.available_version = match_result->version;
+                
+                // Map confidence score to text
+                if (match_result->confidence >= 0.9) {
+                    entry.match_confidence = "High";
+                } else if (match_result->confidence >= 0.7) {
+                    entry.match_confidence = "Medium";
+                } else {
+                    entry.match_confidence = "Low";
+                }
+                
+                entry.status = entry.choco_available ? "Matched" : "Matched (Unavailable)";
+                (*matched)++;
+                if (entry.choco_available) {
+                    (*available)++;
+                }
             } else {
-                entry.match_confidence = "Low";
+                entry.match_confidence = "None";
+                entry.match_score = 0.0;
+                entry.match_type = "none";
+                entry.available_version.clear();
+                entry.status = "No Match";
             }
             
-            entry.status = "Matched";
-            matched++;
-        } else {
-            entry.match_confidence = "None";
-            entry.status = "No Match";
-        }
+            // Update progress periodically
+            int current = ++(*processed);
+            if (current % 5 == 0 || current == totalEntries) {
+                QMetaObject::invokeMethod(this, [this, current]() {
+                    m_progressBar->setValue(current);
+                }, Qt::QueuedConnection);
+            }
+        });
         
-        m_progressBar->setValue(i + 1);
-        updateEntry(i);
-        
-        QApplication::processEvents();
-    }
-    
-    QApplication::restoreOverrideCursor();
-    
-    m_logTextEdit->append(QString("Matching complete: %1/%2 applications matched (%.1f%%)")
-                                 .arg(matched)
-                                 .arg(m_entries.size())
-                                 .arg(matched * 100.0 / m_entries.size()));
-    
-    m_statusLabel->setText("Matching complete");
-    m_progressBar->setVisible(false);
-    
-    m_backupButton->setEnabled(matched > 0);
-    m_installButton->setEnabled(matched > 0);
-    
-    enableControls(true);
-    m_operationInProgress = false;
-    
-    updateStatusSummary();
+        // Completion callback on main thread
+        QMetaObject::invokeMethod(this, [this, matched, available, totalEntries]() {
+            updateTableFromEntries();
+            
+            m_logTextEdit->append(QString("Matching complete: %1/%2 applications matched (%3%), %4 available")
+                                         .arg(matched->load())
+                                         .arg(totalEntries)
+                                         .arg(QString::number(matched->load() * 100.0 / totalEntries, 'f', 1))
+                                         .arg(available->load()));
+            
+            m_statusLabel->setText("Matching complete");
+            m_progressBar->setVisible(false);
+            
+            m_backupButton->setEnabled(available->load() > 0);
+            m_installButton->setEnabled(available->load() > 0);
+            
+            m_matchButton->setEnabled(true);
+            m_matchingInProgress = false;
+            
+            updateStatusSummary();
+        }, Qt::QueuedConnection);
+    });
 }
 
 void AppMigrationPanel::onBackupData()
@@ -417,6 +552,18 @@ void AppMigrationPanel::onBackupData()
 
 void AppMigrationPanel::onInstallPackages()
 {
+    if (!m_chocoManager->isInitialized()) {
+        QMessageBox::warning(this, "Chocolatey Not Available",
+            "Chocolatey is not initialized. Package installation is unavailable.");
+        return;
+    }
+
+    if (m_worker->isRunning()) {
+        QMessageBox::information(this, "Installation In Progress",
+            "An installation operation is already running.");
+        return;
+    }
+
     auto selected = getSelectedEntries();
     if (selected.isEmpty()) {
         QMessageBox::information(this, "No Selection",
@@ -445,87 +592,44 @@ void AppMigrationPanel::onInstallPackages()
         QMessageBox::Yes | QMessageBox::No);
     
     if (reply != QMessageBox::Yes) return;
-    
+
     m_logTextEdit->append(QString("=== Installing %1 Packages ===").arg(toInstall.size()));
     m_statusLabel->setText("Installing...");
     m_progressBar->setVisible(true);
     m_progressBar->setRange(0, toInstall.size());
     m_progressBar->setValue(0);
-    
+
     enableControls(false);
-    m_operationInProgress = true;
-    
-    // Install packages synchronously (in a real implementation, use worker thread)
-    int installed = 0;
-    int failed = 0;
-    
-    for (int i = 0; i < toInstall.size(); ++i) {
-        const auto& entry = toInstall[i];
-        
-        m_logTextEdit->append(QString("[%1/%2] Installing %3...")
-                                     .arg(i + 1)
-                                     .arg(toInstall.size())
-                                     .arg(entry.choco_package));
-        
-        // Find entry in main list to update status
-        for (int j = 0; j < m_entries.size(); ++j) {
-            if (m_entries[j].app_name == entry.app_name) {
-                m_entries[j].status = "Installing";
-                m_entries[j].progress = 50;
-                updateEntry(j);
-                break;
-            }
-        }
-        
-        QApplication::processEvents();
-        
-        // Install with version lock if enabled
-        ChocolateyManager::InstallConfig config;
-        config.package_name = entry.choco_package;
-        if (entry.version_locked && !entry.locked_version.isEmpty()) {
-            config.version = entry.locked_version;
-        }
-        config.auto_confirm = true;
-        config.timeout_seconds = 300;
-        
-        auto result = m_chocoManager->installPackage(config);
-        
-        // Update entry status
-        for (int j = 0; j < m_entries.size(); ++j) {
-            if (m_entries[j].app_name == entry.app_name) {
-                if (result.success) {
-                    m_entries[j].status = "Installed";
-                    m_entries[j].progress = 100;
-                    installed++;
-                    m_logTextEdit->append(QString("  SUCCESS: %1").arg(entry.choco_package));
-                } else {
-                    m_entries[j].status = "Failed";
-                    m_entries[j].error_message = result.error_message;
-                    failed++;
-                    m_logTextEdit->append(QString("  FAILED: %1 - %2")
-                                                 .arg(entry.choco_package)
-                                                 .arg(result.error_message));
-                }
-                updateEntry(j);
-                break;
-            }
-        }
-        
-        m_progressBar->setValue(i + 1);
-        QApplication::processEvents();
+    m_installInProgress = true;
+
+    auto report = std::make_shared<MigrationReport>();
+    for (const auto& entry : m_entries) {
+        MigrationReport::MigrationEntry reportEntry;
+        reportEntry.app_name = entry.app_name;
+        reportEntry.app_version = entry.version;
+        reportEntry.app_publisher = entry.publisher;
+        reportEntry.install_location = entry.install_location;
+        reportEntry.choco_package = entry.choco_package;
+        reportEntry.confidence = entry.match_score;
+        reportEntry.match_type = entry.match_type;
+        reportEntry.available = entry.choco_available;
+        reportEntry.available_version = entry.available_version;
+        reportEntry.selected = entry.selected;
+        reportEntry.version_lock = entry.version_locked;
+        reportEntry.status = entry.status;
+        report->addEntry(reportEntry);
     }
-    
-    m_logTextEdit->append(QString("Installation complete: %1 succeeded, %2 failed")
-                                 .arg(installed)
-                                 .arg(failed));
-    
-    m_statusLabel->setText("Installation complete");
-    m_progressBar->setVisible(false);
-    
-    m_restoreButton->setEnabled(true);
-    
-    enableControls(true);
-    m_operationInProgress = false;
+
+    m_activeReport = report;
+    const int queued = m_worker->startMigration(m_activeReport, 2);
+    if (queued == 0) {
+        m_logTextEdit->append("No packages queued for installation.");
+        m_statusLabel->setText("Ready");
+        m_progressBar->setVisible(false);
+        enableControls(true);
+        m_installInProgress = false;
+        m_activeReport.reset();
+    }
 }
 
 void AppMigrationPanel::onRestoreData()
@@ -559,11 +663,13 @@ void AppMigrationPanel::onGenerateReport()
         reportEntry.app_publisher = entry.publisher;
         reportEntry.install_location = entry.install_location;
         reportEntry.choco_package = entry.choco_package;
-        reportEntry.confidence = entry.match_confidence == "High" ? 0.9 : 
-                                 entry.match_confidence == "Medium" ? 0.6 : 0.3;
-        reportEntry.match_type = entry.match_confidence;
+        reportEntry.confidence = entry.match_score;
+        reportEntry.match_type = entry.match_type;
+        reportEntry.available = entry.choco_available;
+        reportEntry.available_version = entry.available_version;
         reportEntry.selected = entry.selected;
         reportEntry.version_lock = entry.version_locked;
+        reportEntry.locked_version = entry.locked_version;
         reportEntry.status = entry.status;
         report.addEntry(reportEntry);
     }
@@ -598,7 +704,7 @@ void AppMigrationPanel::onLoadReport()
         this,
         "Load Migration Report",
         QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation),
-        "JSON Files (*.json);;CSV Files (*.csv);;All Files (*)"
+        "JSON Files (*.json);;All Files (*)"
     );
     
     if (fileName.isEmpty()) return;
@@ -633,12 +739,33 @@ void AppMigrationPanel::onLoadReport()
         entry.publisher = reportEntry.app_publisher;
         entry.install_location = reportEntry.install_location;
         entry.choco_package = reportEntry.choco_package;
-        entry.match_confidence = reportEntry.confidence > 0.8 ? "High" :
-                                reportEntry.confidence > 0.5 ? "Medium" : "Low";
+        entry.match_score = reportEntry.confidence;
+        entry.match_type = reportEntry.match_type;
+        entry.choco_available = reportEntry.available;
+        entry.available_version = reportEntry.available_version;
+        entry.match_confidence = reportEntry.confidence >= 0.9 ? "High" :
+                                reportEntry.confidence >= 0.7 ? "Medium" :
+                                reportEntry.confidence > 0.0 ? "Low" : "None";
         entry.selected = reportEntry.selected;
         entry.version_locked = reportEntry.version_lock;
+        entry.locked_version = reportEntry.locked_version;
         entry.status = reportEntry.status;
         m_entries.push_back(entry);
+    }
+
+    if (m_chocoManager->isInitialized()) {
+        for (auto& entry : m_entries) {
+            if (entry.choco_package.isEmpty()) {
+                entry.choco_available = false;
+                continue;
+            }
+            entry.choco_available = m_chocoManager->isPackageAvailable(entry.choco_package);
+            if (!entry.choco_available) {
+                entry.status = "Matched (Unavailable)";
+            }
+        }
+    } else {
+        m_logTextEdit->append("Chocolatey not initialized. Availability not rechecked.");
     }
     
     // Update UI
@@ -721,9 +848,17 @@ void AppMigrationPanel::onFilterChanged(const QString& text)
         bool visible = true;
         
         if (!filter.isEmpty()) {
-            QString name = m_tableModel->item(i, ColName)->text().toLower();
-            QString publisher = m_tableModel->item(i, ColPublisher)->text().toLower();
-            QString package = m_tableModel->item(i, ColPackage)->text().toLower();
+            auto* nameItem = m_tableModel->item(i, ColName);
+            auto* publisherItem = m_tableModel->item(i, ColPublisher);
+            auto* packageItem = m_tableModel->item(i, ColPackage);
+
+            if (!nameItem || !publisherItem || !packageItem) {
+                continue;
+            }
+
+            QString name = nameItem->text().toLower();
+            QString publisher = publisherItem->text().toLower();
+            QString package = packageItem->text().toLower();
             
             visible = name.contains(filter) || publisher.contains(filter) || package.contains(filter);
         }
@@ -740,7 +875,11 @@ void AppMigrationPanel::onConfidenceFilterChanged(int index)
         bool visible = true;
         
         if (filter != "All") {
-            QString confidence = m_tableModel->item(i, ColConfidence)->text();
+            auto* confidenceItem = m_tableModel->item(i, ColConfidence);
+            if (!confidenceItem) {
+                continue;
+            }
+            QString confidence = confidenceItem->text();
             visible = (filter == confidence);
         }
         
@@ -754,11 +893,23 @@ void AppMigrationPanel::onConfidenceFilterChanged(int index)
 
 void AppMigrationPanel::updateTableFromEntries()
 {
-    m_tableModel->setRowCount(0);
-    
-    for (const auto& entry : m_entries) {
-        int row = m_tableModel->rowCount();
-        m_tableModel->insertRow(row);
+    const bool wasSortingEnabled = m_tableView->isSortingEnabled();
+    if (wasSortingEnabled) {
+        m_tableView->setSortingEnabled(false);
+    }
+
+    // Scope the signal blocker to only block during population
+    {
+        QSignalBlocker blocker(m_tableModel);
+        
+        // Clear existing data
+        m_tableModel->setRowCount(0);
+        
+        // Set new row count
+        m_tableModel->setRowCount(m_entries.size());
+
+    for (int row = 0; row < m_entries.size(); ++row) {
+        const auto& entry = m_entries[row];
         
         // Checkbox
         auto* checkItem = new QStandardItem();
@@ -795,6 +946,16 @@ void AppMigrationPanel::updateTableFromEntries()
         lockItem->setCheckState(entry.version_locked ? Qt::Checked : Qt::Unchecked);
         lockItem->setEditable(false);
         m_tableModel->setItem(row, ColVersionLock, lockItem);
+
+        // Locked version (editable when lock is enabled)
+        auto* lockedItem = new QStandardItem(entry.locked_version);
+        auto flags = lockedItem->flags();
+        if (entry.version_locked) {
+            lockedItem->setFlags(flags | Qt::ItemIsEditable);
+        } else {
+            lockedItem->setFlags(flags & ~Qt::ItemIsEditable);
+        }
+        m_tableModel->setItem(row, ColLockedVersion, lockedItem);
         
         // Status
         m_tableModel->setItem(row, ColStatus, new QStandardItem(entry.status));
@@ -802,6 +963,30 @@ void AppMigrationPanel::updateTableFromEntries()
         // Progress
         m_tableModel->setItem(row, ColProgress, new QStandardItem(QString::number(entry.progress) + "%"));
     }
+    } // End signal blocker scope - signals now unblocked
+
+    for (int i = 0; i < m_tableModel->rowCount(); ++i) {
+        m_tableView->setRowHidden(i, false);
+    }
+
+    if (wasSortingEnabled) {
+        m_tableView->setSortingEnabled(true);
+    }
+
+    const QString textFilter = m_filterEdit->text();
+    const int confidenceIndex = m_confidenceFilter->currentIndex();
+    
+    if (!textFilter.isEmpty()) {
+        onFilterChanged(textFilter);
+    }
+    if (confidenceIndex > 0) {
+        onConfidenceFilterChanged(confidenceIndex);
+    }
+    
+    // Force the view to update - signals are now unblocked so this should work
+    m_tableView->viewport()->update();
+    m_tableView->reset();
+    m_tableView->scrollToTop();
 }
 
 void AppMigrationPanel::updateEntry(int row)
@@ -812,11 +997,42 @@ void AppMigrationPanel::updateEntry(int row)
     
     // Update table row
     if (row < m_tableModel->rowCount()) {
-        m_tableModel->item(row, ColPackage)->setText(entry.choco_package);
-        m_tableModel->item(row, ColConfidence)->setText(entry.match_confidence);
-        m_tableModel->item(row, ColVersionLock)->setCheckState(entry.version_locked ? Qt::Checked : Qt::Unchecked);
-        m_tableModel->item(row, ColStatus)->setText(entry.status);
-        m_tableModel->item(row, ColProgress)->setText(QString::number(entry.progress) + "%");
+        if (auto* packageItem = m_tableModel->item(row, ColPackage)) {
+            packageItem->setText(entry.choco_package);
+        }
+        auto* confItem = m_tableModel->item(row, ColConfidence);
+        if (!confItem) {
+            return;
+        }
+        confItem->setText(entry.match_confidence);
+        if (entry.match_confidence == "High") {
+            confItem->setForeground(Qt::darkGreen);
+        } else if (entry.match_confidence == "Medium") {
+            confItem->setForeground(QColor(255, 140, 0));
+        } else if (entry.match_confidence == "Low") {
+            confItem->setForeground(QColor(200, 100, 0));
+        } else {
+            confItem->setForeground(QBrush());
+        }
+        if (auto* lockItem = m_tableModel->item(row, ColVersionLock)) {
+            lockItem->setCheckState(entry.version_locked ? Qt::Checked : Qt::Unchecked);
+        }
+        auto* lockedItem = m_tableModel->item(row, ColLockedVersion);
+        if (lockedItem) {
+            lockedItem->setText(entry.locked_version);
+            auto flags = lockedItem->flags();
+            if (entry.version_locked) {
+                lockedItem->setFlags(flags | Qt::ItemIsEditable);
+            } else {
+                lockedItem->setFlags(flags & ~Qt::ItemIsEditable);
+            }
+        }
+        if (auto* statusItem = m_tableModel->item(row, ColStatus)) {
+            statusItem->setText(entry.status);
+        }
+        if (auto* progressItem = m_tableModel->item(row, ColProgress)) {
+            progressItem->setText(QString::number(entry.progress) + "%");
+        }
     }
 }
 
@@ -828,11 +1044,28 @@ void AppMigrationPanel::clearTable()
 
 void AppMigrationPanel::enableControls(bool enabled)
 {
-    m_scanButton->setEnabled(enabled);
-    m_matchButton->setEnabled(enabled && !m_entries.isEmpty());
-    m_backupButton->setEnabled(enabled && !m_entries.isEmpty());
-    m_installButton->setEnabled(enabled && !m_entries.isEmpty());
+    int availableCount = 0;
+    for (const auto& entry : m_entries) {
+        if (entry.choco_available) {
+            availableCount++;
+        }
+    }
+
+    // Scan button - disabled during scan
+    m_scanButton->setEnabled(enabled && !m_scanInProgress);
+    
+    // Match button - disabled during matching or if no entries
+    m_matchButton->setEnabled(enabled && !m_matchingInProgress && !m_entries.isEmpty());
+    
+    // Install/backup operations - disabled during install or if nothing available
+    bool canInstall = enabled && !m_installInProgress && availableCount > 0;
+    m_backupButton->setEnabled(canInstall);
+    m_installButton->setEnabled(canInstall);
+    
+    // Restore can run independently
     m_restoreButton->setEnabled(enabled);
+    
+    // Report operations - can run even during matching
     m_reportButton->setEnabled(enabled && !m_entries.isEmpty());
     m_loadButton->setEnabled(enabled);
     m_refreshButton->setEnabled(enabled);
@@ -902,13 +1135,29 @@ void AppMigrationPanel::onVersionLockToggled(int) {}
 void AppMigrationPanel::onTableItemChanged(QStandardItem* item)
 {
     if (!item) return;
-    
+
+    if (item->column() == ColSelect) {
+        int row = item->row();
+        if (row >= 0 && row < m_entries.size()) {
+            m_entries[row].selected = (item->checkState() == Qt::Checked);
+        }
+        return;
+    }
+
     // Check if this is the version lock column
     if (item->column() == ColVersionLock) {
         int row = item->row();
         if (row >= 0 && row < m_entries.size()) {
             // Update the entry's version_locked state
             m_entries[row].version_locked = (item->checkState() == Qt::Checked);
+
+            if (m_entries[row].version_locked && m_entries[row].locked_version.isEmpty()) {
+                m_entries[row].locked_version = !m_entries[row].version.isEmpty()
+                    ? m_entries[row].version
+                    : m_entries[row].available_version;
+            }
+
+            updateEntry(row);
             
             // Log the change
             QString lockStatus = m_entries[row].version_locked ? "locked" : "unlocked";
@@ -916,6 +1165,15 @@ void AppMigrationPanel::onTableItemChanged(QStandardItem* item)
                 .arg(lockStatus)
                 .arg(m_entries[row].app_name));
         }
+        return;
+    }
+
+    if (item->column() == ColLockedVersion) {
+        int row = item->row();
+        if (row >= 0 && row < m_entries.size()) {
+            m_entries[row].locked_version = item->text().trimmed();
+        }
+        return;
     }
 }
 

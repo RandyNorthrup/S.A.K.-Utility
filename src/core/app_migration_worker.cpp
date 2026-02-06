@@ -7,6 +7,7 @@
 #include <QMetaObject>
 #include <QTimer>
 #include <QDebug>
+#include <QtConcurrent>
 
 namespace sak {
 
@@ -27,11 +28,6 @@ AppMigrationWorker::AppMigrationWorker(std::shared_ptr<ChocolateyManager> chocoM
 }
 
 AppMigrationWorker::~AppMigrationWorker() {
-    if (m_workerThread) {
-        m_workerThread->quit();
-        m_workerThread->wait();
-        delete m_workerThread;
-    }
 }
 
 int AppMigrationWorker::startMigration(std::shared_ptr<MigrationReport> report, int maxConcurrent) {
@@ -61,16 +57,21 @@ int AppMigrationWorker::startMigration(std::shared_ptr<MigrationReport> report, 
         const auto& entry = entries[i];
         
         // Only queue selected entries with matches
-        if (entry.selected && !entry.choco_package.isEmpty()) {
+        if (entry.selected && !entry.choco_package.isEmpty() && entry.available) {
             MigrationJob job;
             job.entryIndex = static_cast<int>(i);
             job.appName = entry.app_name;
             job.packageId = entry.choco_package;
-            job.version = QString();  // Use latest version
+            if (entry.version_lock && !entry.locked_version.isEmpty()) {
+                job.version = entry.locked_version;
+            } else {
+                job.version = QString();  // Use latest version
+            }
             job.status = MigrationStatus::Queued;
             
             m_jobs.append(job);
             m_jobQueue.enqueue(m_jobs.size() - 1);
+            Q_EMIT jobStatusChanged(job.entryIndex, job);
         }
     }
     
@@ -78,14 +79,10 @@ int AppMigrationWorker::startMigration(std::shared_ptr<MigrationReport> report, 
     
     Q_EMIT migrationStarted(totalJobs);
     
-    // Start worker thread
-    if (!m_workerThread) {
-        m_workerThread = new QThread(this);
-        m_workerThread->start();
-    }
-    
     // Process queue in background
-    QMetaObject::invokeMethod(this, "processQueue", Qt::QueuedConnection);
+    m_processFuture = QtConcurrent::run([this]() {
+        processQueue();
+    });
     
     return totalJobs;
 }

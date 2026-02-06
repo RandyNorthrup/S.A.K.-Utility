@@ -100,7 +100,7 @@ bool saveResumeInfo(const QString& resumePath, const QString& fileId,
     return true;
 }
 
-QVector<QPair<int, int>> loadResumeInfo(const QString& resumePath, int& totalChunks) {
+QVector<QPair<int, int>> loadResumeInfo(const QString& resumePath, QString& fileId, int& totalChunks) {
     QVector<QPair<int, int>> ranges;
     QFile file(resumePath);
     if (!file.open(QIODevice::ReadOnly)) {
@@ -112,6 +112,7 @@ QVector<QPair<int, int>> loadResumeInfo(const QString& resumePath, int& totalChu
         return ranges;
     }
     auto obj = doc.object();
+    fileId = obj.value("file_id").toString();
     totalChunks = obj.value("total_chunks").toInt(totalChunks);
     auto arr = obj.value("ranges").toArray();
     for (const auto& range : arr) {
@@ -618,7 +619,12 @@ bool NetworkTransferWorker::handleReceiver(QTcpSocket* socket, const DataOptions
 
             QDir destDir = QFileInfo(destinationPath).absoluteDir();
             if (!destDir.exists()) {
-                destDir.mkpath(".");
+                if (!destDir.mkpath(".")) {
+                    log_error("NetworkTransferWorker receiver failed to create destination directory {}",
+                              destDir.path().toStdString());
+                    Q_EMIT errorOccurred(tr("Failed to create destination directory"));
+                    return false;
+                }
             }
 
             QString tempPath = destinationPath + ".partial";
@@ -631,7 +637,16 @@ bool NetworkTransferWorker::handleReceiver(QTcpSocket* socket, const DataOptions
 
             if (options.resume_enabled) {
                 resumePath = destinationPath + ".resume.json";
-                currentRanges = loadResumeInfo(resumePath, totalChunks);
+                QString resumeFileId;
+                int resumeTotalChunks = totalChunks;
+                currentRanges = loadResumeInfo(resumePath, resumeFileId, resumeTotalChunks);
+                if (!resumeFileId.isEmpty() && resumeFileId != currentFileId) {
+                    currentRanges.clear();
+                    QFile::remove(resumePath);
+                } else if (resumeTotalChunks > 0 && resumeTotalChunks != totalChunks) {
+                    currentRanges.clear();
+                    QFile::remove(resumePath);
+                }
                 if (currentRanges.isEmpty()) {
                     qint64 existing = currentFile.size();
                     int completedChunks = static_cast<int>(existing / chunkSize);

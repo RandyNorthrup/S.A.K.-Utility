@@ -83,6 +83,7 @@ void MigrationReport::generateReport(
         // Migration control (default: auto-select high confidence matches)
         entry.selected = (entry.confidence >= 0.8);
         entry.version_lock = false;
+        entry.locked_version.clear();
         entry.notes = "";
         
         // Execution status
@@ -195,6 +196,7 @@ bool MigrationReport::exportToJson(const QString& file_path) const {
         
         e["selected"] = entry.selected;
         e["version_lock"] = entry.version_lock;
+        e["locked_version"] = entry.locked_version;
         e["notes"] = entry.notes;
         
         e["status"] = entry.status;
@@ -233,7 +235,7 @@ bool MigrationReport::exportToCsv(const QString& file_path) const {
     // Header
     out << "App Name,Version,Publisher,Install Location,Install Date,"
         << "Chocolatey Package,Confidence,Match Type,Available,Available Version,"
-        << "Selected,Version Lock,Notes,Status,Error Message\n";
+        << "Selected,Version Lock,Locked Version,Notes,Status,Error Message\n";
     
     // Entries
     for (const auto& entry : m_entries) {
@@ -249,6 +251,7 @@ bool MigrationReport::exportToCsv(const QString& file_path) const {
             << escapeCsvField(entry.available_version) << ","
             << (entry.selected ? "Yes" : "No") << ","
             << (entry.version_lock ? "Yes" : "No") << ","
+            << escapeCsvField(entry.locked_version) << ","
             << escapeCsvField(entry.notes) << ","
             << entry.status << ","
             << escapeCsvField(entry.error_message) << "\n";
@@ -328,6 +331,7 @@ bool MigrationReport::importFromJson(const QString& file_path) {
             
             entry.selected = e["selected"].toBool();
             entry.version_lock = e["version_lock"].toBool();
+            entry.locked_version = e["locked_version"].toString();
             entry.notes = e["notes"].toString();
             
             entry.status = e["status"].toString();

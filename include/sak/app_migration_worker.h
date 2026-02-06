@@ -6,6 +6,7 @@
 #include <QMutex>
 #include <QWaitCondition>
 #include <QQueue>
+#include <QFuture>
 #include <QDateTime>
 #include <memory>
 
@@ -208,9 +209,9 @@ private:
     std::shared_ptr<ChocolateyManager> m_chocoManager;
     std::shared_ptr<MigrationReport> m_report;
     
-    QThread* m_workerThread = nullptr;
     QVector<MigrationJob> m_jobs;
     QQueue<int> m_jobQueue;              ///< Indices of pending jobs
+    QFuture<void> m_processFuture;
     
     mutable QMutex m_mutex;              ///< Protects job data
     QWaitCondition m_waitCondition;      ///< For pause/resume

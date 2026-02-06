@@ -13,6 +13,8 @@
 #include <QLineEdit>
 #include <QTextEdit>
 #include <QStandardItemModel>
+#include <QThread>
+#include <QFuture>
 #include <memory>
 
 // Forward declarations
@@ -61,6 +63,9 @@ public:
         QString choco_package;
         bool choco_available{false};
         QString match_confidence;  // High/Medium/Low/Manual
+        double match_score{0.0};
+        QString match_type;         // exact/fuzzy/search/manual/none
+        QString available_version;
         bool version_locked{false};
         QString locked_version;
         QString status;  // Pending/Installing/Installed/Failed/Skipped
@@ -194,6 +199,7 @@ private:
     
     // Data
     QVector<MigrationEntry> m_entries;
+    std::shared_ptr<MigrationReport> m_activeReport;
     
     // Backend components
     std::shared_ptr<sak::AppScanner> m_scanner;
@@ -203,8 +209,13 @@ private:
     std::shared_ptr<sak::AppMigrationWorker> m_worker;
     std::shared_ptr<sak::UserDataManager> m_dataManager;
     
+    // Async operations
+    QFuture<void> m_matchingFuture;
+    std::atomic<bool> m_matchingInProgress{false};
+    
     // State
-    bool m_operationInProgress{false};
+    bool m_scanInProgress{false};
+    bool m_installInProgress{false};
     QString m_currentOperation;
 }; // class AppMigrationPanel
 

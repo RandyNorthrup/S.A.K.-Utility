@@ -45,14 +45,14 @@ public:
      * @brief Match configuration
      */
     struct MatchConfig {
-        bool use_exact_mappings;        // Use common app mappings (default: true)
-        bool use_fuzzy_matching;        // Use fuzzy string matching (default: true)
-        bool use_choco_search;          // Query Chocolatey search API (default: true)
-        double min_confidence;          // Minimum confidence to return (default: 0.5)
-        int max_search_results;         // Max results from Chocolatey search (default: 5)
-        bool verify_availability;       // Verify package exists in Chocolatey (default: true)
-        int thread_count;               // Number of parallel threads (default: 8)
-        bool use_cache;                 // Cache search results (default: true)
+        bool use_exact_mappings{true};  // Use common app mappings
+        bool use_fuzzy_matching{true};  // Use fuzzy string matching
+        bool use_choco_search{true};    // Query Chocolatey search API
+        double min_confidence{0.5};     // Minimum confidence to return
+        int max_search_results{5};      // Max results from Chocolatey search
+        bool verify_availability{true}; // Verify package exists in Chocolatey
+        int thread_count{8};            // Number of parallel threads
+        bool use_cache{true};           // Cache search results
     };
 
     // Matching operations

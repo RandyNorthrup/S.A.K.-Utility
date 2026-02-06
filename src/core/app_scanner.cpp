@@ -1,6 +1,9 @@
 #include "sak/app_scanner.h"
 #include <QProcess>
 #include <QDebug>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QJsonArray>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -96,8 +99,7 @@ std::vector<AppScanner::AppInfo> AppScanner::scanRegistryHive(void* hive, const 
                 if (!app.name.startsWith("KB") &&  // Windows updates
                     !app.name.startsWith("Security Update") &&
                     !app.name.contains("(KB") &&
-                    !app.publisher.contains("Microsoft Corporation") || app.name.contains("Visual Studio")) {
-                    
+                    (!app.publisher.contains("Microsoft Corporation") || app.name.contains("Visual Studio"))) {
                     apps.push_back(app);
                 }
             }
@@ -154,10 +156,38 @@ std::vector<AppScanner::AppInfo> AppScanner::scanAppX() {
     }
     
     QString output = QString::fromUtf8(process.readAllStandardOutput());
-    
-    // Parse JSON output (simplified for now - full implementation would use QJsonDocument)
-    // For now, just log that we found AppX packages
-    
+
+    QJsonParseError error{};
+    QJsonDocument doc = QJsonDocument::fromJson(output.toUtf8(), &error);
+    if (error.error != QJsonParseError::NoError) {
+        qWarning() << "AppScanner: Failed to parse AppX JSON" << error.errorString();
+        return apps;
+    }
+
+    QJsonArray packages;
+    if (doc.isArray()) {
+        packages = doc.array();
+    } else if (doc.isObject()) {
+        packages.append(doc.object());
+    }
+
+    for (const auto& value : packages) {
+        if (!value.isObject()) {
+            continue;
+        }
+        QJsonObject obj = value.toObject();
+        AppInfo app;
+        app.source = AppInfo::Source::AppX;
+        app.name = obj.value("Name").toString();
+        app.version = obj.value("Version").toString();
+        app.publisher = obj.value("Publisher").toString();
+        app.install_location = obj.value("InstallLocation").toString();
+
+        if (!app.name.isEmpty()) {
+            apps.push_back(app);
+        }
+    }
+
     return apps;
 }
 
@@ -167,7 +197,7 @@ std::vector<AppScanner::AppInfo> AppScanner::scanChocolatey() {
     // Check if chocolatey is installed
     QProcess process;
     process.setProgram("choco");
-    process.setArguments({"list", "--local-only"});
+    process.setArguments({"list", "--local-only", "--limit-output"});
     
     process.start();
     if (!process.waitForFinished(10000)) {
@@ -175,9 +205,26 @@ std::vector<AppScanner::AppInfo> AppScanner::scanChocolatey() {
     }
     
     QString output = QString::fromUtf8(process.readAllStandardOutput());
-    
-    // Parse choco list output (simplified)
-    
+
+    QStringList lines = output.split('\n', Qt::SkipEmptyParts);
+    for (const auto& line : lines) {
+        if (line.trimmed().isEmpty() || line.startsWith("Chocolatey")) {
+            continue;
+        }
+
+        QStringList parts = line.split('|');
+        if (parts.size() >= 2) {
+            AppInfo app;
+            app.source = AppInfo::Source::Chocolatey;
+            app.name = parts[0].trimmed();
+            app.version = parts[1].trimmed();
+            app.publisher = "Chocolatey";
+            app.choco_package = app.name;
+            app.choco_available = true;
+            apps.push_back(app);
+        }
+    }
+
     return apps;
 }
 
