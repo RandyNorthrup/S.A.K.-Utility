@@ -30,7 +30,7 @@ LinuxDistroCatalog::LinuxDistroCatalog(QObject* parent)
     , m_networkManager(new QNetworkAccessManager(this))
 {
     populateCatalog();
-    sak::log_info("LinuxDistroCatalog initialized with " +
+    sak::logInfo("LinuxDistroCatalog initialized with " +
                   std::to_string(m_distros.size()) + " distributions");
 }
 
@@ -415,7 +415,7 @@ void LinuxDistroCatalog::checkLatestVersion(const QString& distroId)
     connect(reply, &QNetworkReply::finished,
             this, &LinuxDistroCatalog::onGitHubReleaseReply);
 
-    sak::log_info("Checking latest version for " + distroId.toStdString() +
+    sak::logInfo("Checking latest version for " + distroId.toStdString() +
                   " via GitHub API");
 }
 
@@ -431,7 +431,7 @@ void LinuxDistroCatalog::onGitHubReleaseReply()
 
     if (reply->error() != QNetworkReply::NoError) {
         QString error = QString("GitHub API error: %1").arg(reply->errorString());
-        sak::log_warning(error.toStdString());
+        sak::logWarning(error.toStdString());
         Q_EMIT versionCheckFailed(distroId, error);
         return;
     }
@@ -442,7 +442,7 @@ void LinuxDistroCatalog::onGitHubReleaseReply()
 
     if (parseError.error != QJsonParseError::NoError) {
         QString error = "Failed to parse GitHub API response: " + parseError.errorString();
-        sak::log_warning(error.toStdString());
+        sak::logWarning(error.toStdString());
         Q_EMIT versionCheckFailed(distroId, error);
         return;
     }
@@ -491,7 +491,7 @@ void LinuxDistroCatalog::parseGitHubRelease(const QString& distroId,
     }
 
     if (matchedUrl.isEmpty()) {
-        sak::log_warning("No matching asset found for " + distroId.toStdString() +
+        sak::logWarning("No matching asset found for " + distroId.toStdString() +
                         " with pattern: " + distro.githubAssetPattern.toStdString());
         Q_EMIT versionCheckFailed(distroId,
             "No matching ISO asset found in latest GitHub release");
@@ -520,7 +520,7 @@ void LinuxDistroCatalog::parseGitHubRelease(const QString& distroId,
     }
 
     bool changed = (oldVersion != distro.version);
-    sak::log_info("Version check for " + distroId.toStdString() + ": " +
+    sak::logInfo("Version check for " + distroId.toStdString() + ": " +
                   tagName.toStdString() +
                   (changed ? " (UPDATED)" : " (unchanged)") +
                   " asset: " + matchedName.toStdString());

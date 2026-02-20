@@ -28,16 +28,16 @@ public:
     AboutDialog& operator=(AboutDialog&&) = delete;
 
 private:
-    void setup_ui();
-    void setup_about_tab();
-    void setup_license_tab();
-    void setup_credits_tab();
-    void setup_system_tab();
+    void setupUi();
+    void setupAboutTab();
+    void setupLicenseTab();
+    void setupCreditsTab();
+    void setupSystemTab();
     
-    QString get_version_info() const;
-    QString get_license_text() const;
-    QString get_credits_text() const;
-    QString get_system_info() const;
+    QString getVersionInfo() const;
+    QString getLicenseText() const;
+    QString getCreditsText() const;
+    QString getSystemInfo() const;
     
     QTabWidget* m_tab_widget;
     QLabel* m_icon_label;

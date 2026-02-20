@@ -25,18 +25,18 @@ struct EncryptionParams {
 /// @param params Encryption parameters
 /// @return Encrypted data (salt + IV + ciphertext) or error code
 /// @note Format: [32 bytes salt][16 bytes IV][encrypted data]
-[[nodiscard]] auto encrypt_data(
+[[nodiscard]] auto encryptData(
     const QByteArray& data,
     const QString& password,
     const EncryptionParams& params = EncryptionParams{}
 ) -> std::expected<QByteArray, error_code>;
 
 /// @brief Decrypt data using AES-256-CBC with password
-/// @param encrypted_data Encrypted data from encrypt_data
+/// @param encrypted_data Encrypted data from encryptData
 /// @param password User password for decryption
 /// @param params Encryption parameters
 /// @return Decrypted data or error code
-[[nodiscard]] auto decrypt_data(
+[[nodiscard]] auto decryptData(
     const QByteArray& encrypted_data,
     const QString& password,
     const EncryptionParams& params = EncryptionParams{}
@@ -47,7 +47,7 @@ struct EncryptionParams {
 /// @param password Encryption password
 /// @param params Encryption parameters
 /// @return Success or error code
-[[nodiscard]] auto encrypt_file(
+[[nodiscard]] auto encryptFile(
     const QString& file_path,
     const QString& password,
     const EncryptionParams& params = EncryptionParams{}
@@ -58,7 +58,7 @@ struct EncryptionParams {
 /// @param password Decryption password
 /// @param params Encryption parameters
 /// @return Success or error code
-[[nodiscard]] auto decrypt_file(
+[[nodiscard]] auto decryptFile(
     const QString& file_path,
     const QString& password,
     const EncryptionParams& params = EncryptionParams{}

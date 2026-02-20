@@ -22,7 +22,7 @@ ConfigManager::ConfigManager(QObject* parent)
         "Utility"
     ))
 {
-    log_info("ConfigManager initialized: {}", m_settings->fileName().toStdString());
+    logInfo("ConfigManager initialized: {}", m_settings->fileName().toStdString());
     initializeDefaults();
 }
 
@@ -130,14 +130,14 @@ void ConfigManager::remove(const QString& key)
 void ConfigManager::clear()
 {
     m_settings->clear();
-    log_info("All settings cleared");
+    logInfo("All settings cleared");
 }
 
 void ConfigManager::resetToDefaults()
 {
     clear();
     initializeDefaults();
-    log_info("Settings reset to defaults");
+    logInfo("Settings reset to defaults");
 }
 
 void ConfigManager::sync()

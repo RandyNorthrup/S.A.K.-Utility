@@ -26,14 +26,14 @@ public:
     /// @brief Make a path absolute
     /// @param path Path to make absolute
     /// @return Expected containing absolute path or error code
-    [[nodiscard]] static auto make_absolute(
+    [[nodiscard]] static auto makeAbsolute(
         const std::filesystem::path& path) -> std::expected<std::filesystem::path, error_code>;
     
     /// @brief Make a path relative to a base path
     /// @param path Path to make relative
     /// @param base Base path
     /// @return Expected containing relative path or error code
-    [[nodiscard]] static auto make_relative(
+    [[nodiscard]] static auto makeRelative(
         const std::filesystem::path& path,
         const std::filesystem::path& base) -> std::expected<std::filesystem::path, error_code>;
     
@@ -41,52 +41,52 @@ public:
     /// @param path Path to check
     /// @param base_dir Base directory
     /// @return Expected containing true if safe, false if potentially dangerous, or error code
-    [[nodiscard]] static auto is_safe_path(
+    [[nodiscard]] static auto isSafePath(
         const std::filesystem::path& path,
         const std::filesystem::path& base_dir) -> std::expected<bool, error_code>;
     
     /// @brief Get file extension in lowercase
     /// @param path Path to extract extension from
     /// @return Lowercase extension (including dot) or empty string if no extension
-    [[nodiscard]] static std::string get_extension_lowercase(
+    [[nodiscard]] static std::string getExtensionLowercase(
         const std::filesystem::path& path) noexcept;
     
     /// @brief Check if path matches any of the given patterns (wildcards supported)
     /// @param path Path to check
     /// @param patterns List of patterns (e.g., "*.txt", "test_*")
     /// @return True if path matches any pattern
-    [[nodiscard]] static bool matches_pattern(
+    [[nodiscard]] static bool matchesPattern(
         const std::filesystem::path& path,
         const std::vector<std::string>& patterns) noexcept;
     
     /// @brief Get safe filename (remove/replace invalid characters)
     /// @param filename Original filename
     /// @return Safe filename suitable for the current OS
-    [[nodiscard]] static std::string get_safe_filename(
+    [[nodiscard]] static std::string getSafeFilename(
         std::string_view filename) noexcept;
     
     /// @brief Calculate total size of directory (recursive)
     /// @param dir_path Directory path
     /// @return Expected containing total size in bytes or error code
-    [[nodiscard]] static auto get_directory_size(
+    [[nodiscard]] static auto getDirectorySize(
         const std::filesystem::path& dir_path) -> std::expected<std::uintmax_t, error_code>;
     
     /// @brief Get available disk space at path
     /// @param path Path to check
     /// @return Expected containing available bytes or error code
-    [[nodiscard]] static auto get_available_space(
+    [[nodiscard]] static auto getAvailableSpace(
         const std::filesystem::path& path) -> std::expected<std::uintmax_t, error_code>;
     
     /// @brief Create directory structure (like mkdir -p)
     /// @param dir_path Directory path to create
     /// @return Expected containing void or error code
-    [[nodiscard]] static auto create_directories(
+    [[nodiscard]] static auto createDirectories(
         const std::filesystem::path& dir_path) -> std::expected<void, error_code>;
     
     /// @brief Remove file or directory (recursive if directory)
     /// @param path Path to remove
     /// @return Expected containing number of removed items or error code
-    [[nodiscard]] static auto remove_all(
+    [[nodiscard]] static auto removeAll(
         const std::filesystem::path& path) -> std::expected<std::uintmax_t, error_code>;
     
     /// @brief Copy file or directory (recursive if directory)
@@ -110,42 +110,42 @@ public:
     /// @brief Check if path exists and is accessible
     /// @param path Path to check
     /// @return Expected containing true if exists and accessible, false otherwise, or error code
-    [[nodiscard]] static auto exists_and_accessible(
+    [[nodiscard]] static auto existsAndAccessible(
         const std::filesystem::path& path) -> std::expected<bool, error_code>;
     
     /// @brief Get file/directory creation time
     /// @param path Path to query
     /// @return Expected containing file time or error code
-    [[nodiscard]] static auto get_creation_time(
+    [[nodiscard]] static auto getCreationTime(
         const std::filesystem::path& path) -> std::expected<std::filesystem::file_time_type, error_code>;
     
     /// @brief Get file/directory last write time
     /// @param path Path to query
     /// @return Expected containing file time or error code
-    [[nodiscard]] static auto get_last_write_time(
+    [[nodiscard]] static auto getLastWriteTime(
         const std::filesystem::path& path) -> std::expected<std::filesystem::file_time_type, error_code>;
     
     /// @brief Get temporary directory path
     /// @return Expected containing temp directory path or error code
-    [[nodiscard]] static auto get_temp_directory() -> std::expected<std::filesystem::path, error_code>;
+    [[nodiscard]] static auto getTempDirectory() -> std::expected<std::filesystem::path, error_code>;
     
     /// @brief Create unique temporary directory
     /// @param prefix Directory name prefix
     /// @return Expected containing unique temp directory path or error code
-    [[nodiscard]] static auto create_temp_directory(
+    [[nodiscard]] static auto createTempDirectory(
         std::string_view prefix = "sak_temp") -> std::expected<std::filesystem::path, error_code>;
     
 private:
     /// @brief Check if character is valid in filename for current OS
     /// @param c Character to check
     /// @return True if valid
-    [[nodiscard]] static bool is_valid_filename_char(char c) noexcept;
+    [[nodiscard]] static bool isValidFilenameChar(char c) noexcept;
     
     /// @brief Simple wildcard matching (*, ?)
     /// @param str String to match
     /// @param pattern Pattern with wildcards
     /// @return True if matches
-    [[nodiscard]] static bool wildcard_match(
+    [[nodiscard]] static bool wildcardMatch(
         std::string_view str,
         std::string_view pattern) noexcept;
 };

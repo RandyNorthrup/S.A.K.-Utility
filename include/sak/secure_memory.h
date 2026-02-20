@@ -240,7 +240,7 @@ private:
 /// @param size Size of memory region
 /// @return RAII guard that will wipe memory on destruction
 template<typename T>
-[[nodiscard]] auto make_secure_guard(T* ptr, std::size_t size) {
+[[nodiscard]] auto makeSecureGuard(T* ptr, std::size_t size) {
     return secure_memory_guard<T>(ptr, size);
 }
 
@@ -249,7 +249,7 @@ template<typename T>
 /// @param data Span to guard
 /// @return RAII guard that will wipe memory on destruction
 template<typename T>
-[[nodiscard]] auto make_secure_guard(std::span<T> data) {
+[[nodiscard]] auto makeSecureGuard(std::span<T> data) {
     return secure_memory_guard<T>(data);
 }
 
@@ -258,7 +258,7 @@ template<typename T>
 /// @param b Second buffer
 /// @return True if buffers are equal
 template<typename T>
-[[nodiscard]] bool secure_compare(std::span<const T> a, std::span<const T> b) noexcept {
+[[nodiscard]] bool secureCompare(std::span<const T> a, std::span<const T> b) noexcept {
     if (a.size() != b.size()) {
         return false;
     }
@@ -280,7 +280,7 @@ template<typename T>
 /// @param a First string
 /// @param b Second string
 /// @return True if strings are equal
-[[nodiscard]] inline bool secure_compare(
+[[nodiscard]] inline bool secureCompare(
     std::string_view a,
     std::string_view b) noexcept {
     
@@ -300,15 +300,15 @@ template<typename T>
 /// @param buffer Buffer to fill with random bytes
 /// @param size Number of bytes to generate
 /// @return True if successful
-[[nodiscard]] bool generate_secure_random(void* buffer, std::size_t size) noexcept;
+[[nodiscard]] bool generateSecureRandom(void* buffer, std::size_t size) noexcept;
 
 /// @brief Generate cryptographically secure random bytes into span
 /// @tparam T Element type
 /// @param data Span to fill with random bytes
 /// @return True if successful
 template<typename T>
-[[nodiscard]] bool generate_secure_random(std::span<T> data) noexcept {
-    return generate_secure_random(data.data(), data.size_bytes());
+[[nodiscard]] bool generateSecureRandom(std::span<T> data) noexcept {
+    return generateSecureRandom(data.data(), data.size_bytes());
 }
 
 /// @brief Lock memory to prevent swapping (platform-specific)
@@ -316,13 +316,13 @@ template<typename T>
 /// @param size Size of memory region
 /// @return True if successful (may fail on some platforms)
 /// @note Requires elevated privileges on some platforms
-[[nodiscard]] bool lock_memory(void* ptr, std::size_t size) noexcept;
+[[nodiscard]] bool lockMemory(void* ptr, std::size_t size) noexcept;
 
 /// @brief Unlock previously locked memory
 /// @param ptr Pointer to memory
 /// @param size Size of memory region
 /// @return True if successful
-[[nodiscard]] bool unlock_memory(void* ptr, std::size_t size) noexcept;
+[[nodiscard]] bool unlockMemory(void* ptr, std::size_t size) noexcept;
 
 /// @brief RAII wrapper for locked memory
 class locked_memory {
@@ -333,7 +333,7 @@ public:
     locked_memory(void* ptr, std::size_t size) noexcept
         : m_ptr(ptr)
         , m_size(size)
-        , m_locked(lock_memory(ptr, size)) {}
+        , m_locked(lockMemory(ptr, size)) {}
     
     // No copy or move
     locked_memory(const locked_memory&) = delete;
@@ -345,12 +345,12 @@ public:
     ~locked_memory() {
         if (m_locked && m_ptr) {
             // Explicitly ignore return value as we're in destructor
-            (void)unlock_memory(m_ptr, m_size);
+            (void)unlockMemory(m_ptr, m_size);
         }
     }
     
     /// @brief Check if memory was successfully locked
-    [[nodiscard]] bool is_locked() const noexcept {
+    [[nodiscard]] bool isLocked() const noexcept {
         return m_locked;
     }
 

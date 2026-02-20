@@ -32,7 +32,7 @@ private:
     struct PowerPlan {
         QString guid;
         QString name;
-        bool is_active;
+        bool isActive;
     };
     
     QVector<PowerPlan> enumeratePowerPlans();

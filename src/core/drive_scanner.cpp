@@ -35,7 +35,7 @@ DriveScanner::~DriveScanner() {
 }
 
 void DriveScanner::start() {
-    sak::log_info("Starting drive scanner");
+    sak::logInfo("Starting drive scanner");
     
     // Initial scan
     scanDrives();
@@ -48,7 +48,7 @@ void DriveScanner::start() {
 }
 
 void DriveScanner::stop() {
-    sak::log_info("Stopping drive scanner");
+    sak::logInfo("Stopping drive scanner");
     
     m_refreshTimer->stop();
     unregisterDeviceNotification();
@@ -120,7 +120,7 @@ void DriveScanner::scanDrives() {
             }
         }
         if (!found) {
-            sak::log_info(QString("Drive detached: %1").arg(oldDrive.devicePath).toStdString());
+            sak::logInfo(QString("Drive detached: %1").arg(oldDrive.devicePath).toStdString());
             Q_EMIT driveDetached(oldDrive.devicePath);
             hasChanges = true;
         }
@@ -136,7 +136,7 @@ void DriveScanner::scanDrives() {
             }
         }
         if (!found) {
-            sak::log_info(QString("Drive attached: %1 (%2)").arg(newDrive.devicePath, newDrive.name).toStdString());
+            sak::logInfo(QString("Drive attached: %1 (%2)").arg(newDrive.devicePath, newDrive.name).toStdString());
             Q_EMIT driveAttached(newDrive);
             hasChanges = true;
         }
@@ -507,7 +507,7 @@ void DriveScanner::registerDeviceNotification() {
     wc.lpszClassName = className;
     
     if (!RegisterClassExW(&wc) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) {
-        sak::log_error("Failed to register window class");
+        sak::logError("Failed to register window class");
         return;
     }
     
@@ -523,7 +523,7 @@ void DriveScanner::registerDeviceNotification() {
     );
     
     if (!m_notificationWindow) {
-        sak::log_error("Failed to create notification window");
+        sak::logError("Failed to create notification window");
         return;
     }
     
@@ -538,11 +538,11 @@ void DriveScanner::registerDeviceNotification() {
     );
     
     if (!m_deviceNotify) {
-        sak::log_error("Failed to register device notification");
+        sak::logError("Failed to register device notification");
         DestroyWindow(m_notificationWindow);
         m_notificationWindow = nullptr;
     } else {
-        sak::log_debug("DriveScanner", "Device notification registered successfully");
+        sak::logDebug("DriveScanner", "Device notification registered successfully");
     }
 }
 

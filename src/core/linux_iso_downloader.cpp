@@ -58,7 +58,7 @@ LinuxISODownloader::LinuxISODownloader(QObject* parent)
     connect(m_catalog.get(), &LinuxDistroCatalog::versionCheckFailed,
             this, &LinuxISODownloader::onVersionCheckFailed);
 
-    sak::log_info("LinuxISODownloader initialized");
+    sak::logInfo("LinuxISODownloader initialized");
 }
 
 LinuxISODownloader::~LinuxISODownloader()
@@ -88,7 +88,7 @@ void LinuxISODownloader::startDownload(const QString& distroId,
         return;
     }
 
-    sak::log_info("Starting Linux ISO download: " + distro.name.toStdString() +
+    sak::logInfo("Starting Linux ISO download: " + distro.name.toStdString() +
                   " " + distro.version.toStdString());
 
     // For GitHub-hosted distros, check latest version first
@@ -141,7 +141,7 @@ void LinuxISODownloader::onVersionCheckCompleted(
         return;
     }
 
-    sak::log_info("Resolved download URL: " + m_downloadUrl.toStdString());
+    sak::logInfo("Resolved download URL: " + m_downloadUrl.toStdString());
     startAria2cDownload(m_downloadUrl, m_savePath, m_expectedFileName);
 }
 
@@ -152,7 +152,7 @@ void LinuxISODownloader::onVersionCheckFailed(const QString& distroId,
 
     // Fall back to hardcoded version
     auto distro = m_catalog->distroById(distroId);
-    sak::log_warning("Version check failed for " + distroId.toStdString() +
+    sak::logWarning("Version check failed for " + distroId.toStdString() +
                     ": " + error.toStdString() + " — using hardcoded version");
 
     Q_EMIT statusMessage("Version check failed — using known version " + distro.version);
@@ -256,7 +256,7 @@ void LinuxISODownloader::startAria2cDownload(const QString& url,
          << "--enable-color=false"
          << "--console-log-level=notice";
 
-    sak::log_info("Starting aria2c: " + aria2Path.toStdString() +
+    sak::logInfo("Starting aria2c: " + aria2Path.toStdString() +
                   " → " + savePath.toStdString());
 
     m_aria2cProcess->start(aria2Path, args);
@@ -280,7 +280,7 @@ void LinuxISODownloader::onAria2cFinished(int exitCode,
     if (m_aria2cProcess) {
         QString output = QString::fromUtf8(m_aria2cProcess->readAllStandardOutput());
         if (!output.trimmed().isEmpty()) {
-            sak::log_info("aria2c final output: " + output.trimmed().toStdString());
+            sak::logInfo("aria2c final output: " + output.trimmed().toStdString());
         }
     }
 
@@ -311,7 +311,7 @@ void LinuxISODownloader::onAria2cFinished(int exitCode,
         default: errorMsg = QString("aria2c exited with code %1").arg(exitCode); break;
         }
 
-        sak::log_error("aria2c failed: " + errorMsg.toStdString());
+        sak::logError("aria2c failed: " + errorMsg.toStdString());
         setPhase(Phase::Failed, errorMsg);
         Q_EMIT downloadError(errorMsg);
         return;
@@ -326,7 +326,7 @@ void LinuxISODownloader::onAria2cFinished(int exitCode,
         return;
     }
 
-    sak::log_info("Download complete: " + m_savePath.toStdString() +
+    sak::logInfo("Download complete: " + m_savePath.toStdString() +
                   " (" + std::to_string(downloadedFile.size() / (1024 * 1024)) + " MB)");
 
     // Proceed to checksum verification if available
@@ -399,7 +399,7 @@ void LinuxISODownloader::onProgressPollTimer()
         // Log significant messages
         if (line.contains("ERROR", Qt::CaseInsensitive) ||
             line.contains("WARNING", Qt::CaseInsensitive)) {
-            sak::log_warning("aria2c: " + line.toStdString());
+            sak::logWarning("aria2c: " + line.toStdString());
         }
     }
 }
@@ -426,7 +426,7 @@ void LinuxISODownloader::verifyChecksum()
         nam->deleteLater();
 
         if (reply->error() != QNetworkReply::NoError) {
-            sak::log_warning("Checksum fetch failed: " + reply->errorString().toStdString());
+            sak::logWarning("Checksum fetch failed: " + reply->errorString().toStdString());
             // Don't fail the download — just skip verification
             Q_EMIT statusMessage("Checksum verification skipped (could not fetch checksum file)");
 
@@ -470,7 +470,7 @@ void LinuxISODownloader::verifyChecksum()
         }
 
         if (expectedHash.isEmpty()) {
-            sak::log_warning("Could not find matching hash in checksum file for: " +
+            sak::logWarning("Could not find matching hash in checksum file for: " +
                            expectedFileName.toStdString());
             Q_EMIT statusMessage("Checksum verification skipped (no matching entry found)");
 
@@ -523,7 +523,7 @@ void LinuxISODownloader::onChecksumVerified(bool match,
     QFileInfo fileInfo(m_savePath);
 
     if (actual.isEmpty()) {
-        sak::log_warning("Failed to compute checksum for: " + m_savePath.toStdString());
+        sak::logWarning("Failed to compute checksum for: " + m_savePath.toStdString());
         Q_EMIT statusMessage("Checksum verification skipped (file read error)");
         setPhase(Phase::Completed, "Download complete");
         Q_EMIT downloadComplete(m_savePath, fileInfo.size());
@@ -531,12 +531,12 @@ void LinuxISODownloader::onChecksumVerified(bool match,
     }
 
     if (match) {
-        sak::log_info("Checksum verified: " + actual.toStdString());
+        sak::logInfo("Checksum verified: " + actual.toStdString());
         Q_EMIT statusMessage(m_checksumType.toUpper() + " checksum verified successfully");
         setPhase(Phase::Completed, "Download complete — checksum verified");
         Q_EMIT downloadComplete(m_savePath, fileInfo.size());
     } else {
-        sak::log_error("Checksum mismatch! Expected: " + expected.toStdString() +
+        sak::logError("Checksum mismatch! Expected: " + expected.toStdString() +
                       " Actual: " + actual.toStdString());
         setPhase(Phase::Failed, "Checksum verification failed");
 
@@ -600,7 +600,7 @@ QString LinuxISODownloader::findAria2c() const
             return it.next();
     }
 
-    sak::log_error("aria2c.exe not found in bundled tools");
+    sak::logError("aria2c.exe not found in bundled tools");
     return {};
 }
 
@@ -610,12 +610,12 @@ void LinuxISODownloader::cleanupPartialFiles()
     QString aria2ControlFile = m_savePath + ".aria2";
     if (QFile::exists(aria2ControlFile)) {
         QFile::remove(aria2ControlFile);
-        sak::log_info("Removed aria2 control file: " + aria2ControlFile.toStdString());
+        sak::logInfo("Removed aria2 control file: " + aria2ControlFile.toStdString());
     }
 
     // Remove partial download
     if (QFile::exists(m_savePath)) {
         QFile::remove(m_savePath);
-        sak::log_info("Removed partial download: " + m_savePath.toStdString());
+        sak::logInfo("Removed partial download: " + m_savePath.toStdString());
     }
 }

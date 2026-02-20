@@ -60,15 +60,15 @@ public:
     
     /// @brief Set minimum log level
     /// @param level Minimum level to log
-    void set_level(log_level level) noexcept;
+    void setLevel(log_level level) noexcept;
     
     /// @brief Get current minimum log level
     /// @return Current log level
-    [[nodiscard]] log_level get_level() const noexcept;
+    [[nodiscard]] log_level getLevel() const noexcept;
     
     /// @brief Enable/disable console output
     /// @param enable True to enable console output
-    void set_console_output(bool enable) noexcept;
+    void setConsoleOutput(bool enable) noexcept;
     
     /// @brief Log a message (no arguments)
     /// @param level Severity level
@@ -97,11 +97,11 @@ public:
     
     /// @brief Get current log file path
     /// @return Path to current log file
-    [[nodiscard]] std::filesystem::path get_log_file() const noexcept;
+    [[nodiscard]] std::filesystem::path getLogFile() const noexcept;
     
     /// @brief Check if logger is initialized
     /// @return True if initialized
-    [[nodiscard]] bool is_initialized() const noexcept;
+    [[nodiscard]] bool isInitialized() const noexcept;
     
     // Prevent copying and moving
     logger(const logger&) = delete;
@@ -117,7 +117,7 @@ private:
     /// @param level Severity level
     /// @param message Formatted message
     /// @param loc Source location
-    void log_internal(
+    void logInternal(
         log_level level,
         std::string_view message,
         const std::source_location& loc) noexcept;
@@ -125,19 +125,19 @@ private:
     /// @brief Create log directory if it doesn't exist
     /// @param dir Directory path
     /// @return Expected containing success or error code
-    [[nodiscard]] auto ensure_log_directory(
+    [[nodiscard]] auto ensureLogDirectory(
         const std::filesystem::path& dir) -> std::expected<void, error_code>;
     
     /// @brief Generate timestamp string
     /// @return Current timestamp in ISO 8601 format
-    [[nodiscard]] std::string get_timestamp() const noexcept;
+    [[nodiscard]] std::string getTimestamp() const noexcept;
     
     /// @brief Check if log rotation is needed
     /// @return True if rotation needed
-    [[nodiscard]] bool needs_rotation() const noexcept;
+    [[nodiscard]] bool needsRotation() const noexcept;
     
     /// @brief Perform log rotation
-    void rotate_log() noexcept;
+    void rotateLog() noexcept;
     
     mutable std::mutex m_mutex;                    ///< Mutex for thread safety
     std::ofstream m_file_stream;                   ///< Output file stream
@@ -155,7 +155,7 @@ private:
 
 /// @brief Log a debug message
 /// @param format Format string (no arguments)
-inline void log_debug(
+inline void logDebug(
     std::string_view format,
     const std::source_location& loc = std::source_location::current()) noexcept {
     logger::instance().log(log_level::debug, format, loc);
@@ -167,7 +167,7 @@ inline void log_debug(
 /// @param arg1 First format argument (enables overload resolution)
 /// @param args Remaining format arguments
 template<typename T, typename... Args>
-void log_debug(
+void logDebug(
     std::string_view format,
     const T& arg1,
     const Args&... args) noexcept {
@@ -176,7 +176,7 @@ void log_debug(
 
 /// @brief Log an info message
 /// @param format Format string (no arguments)
-inline void log_info(
+inline void logInfo(
     std::string_view format,
     const std::source_location& loc = std::source_location::current()) noexcept {
     logger::instance().log(log_level::info, format, loc);
@@ -188,7 +188,7 @@ inline void log_info(
 /// @param arg1 First format argument (enables overload resolution)
 /// @param args Remaining format arguments
 template<typename T, typename... Args>
-void log_info(
+void logInfo(
     std::string_view format,
     const T& arg1,
     const Args&... args) noexcept {
@@ -197,7 +197,7 @@ void log_info(
 
 /// @brief Log a warning message
 /// @param format Format string (no arguments)
-inline void log_warning(
+inline void logWarning(
     std::string_view format,
     const std::source_location& loc = std::source_location::current()) noexcept {
     logger::instance().log(log_level::warning, format, loc);
@@ -209,7 +209,7 @@ inline void log_warning(
 /// @param arg1 First format argument (enables overload resolution)
 /// @param args Remaining format arguments
 template<typename T, typename... Args>
-void log_warning(
+void logWarning(
     std::string_view format,
     const T& arg1,
     const Args&... args) noexcept {
@@ -218,7 +218,7 @@ void log_warning(
 
 /// @brief Log an error message
 /// @param format Format string (no arguments)
-inline void log_error(
+inline void logError(
     std::string_view format,
     const std::source_location& loc = std::source_location::current()) noexcept {
     logger::instance().log(log_level::error, format, loc);
@@ -230,7 +230,7 @@ inline void log_error(
 /// @param arg1 First format argument (enables overload resolution)
 /// @param args Remaining format arguments
 template<typename T, typename... Args>
-void log_error(
+void logError(
     std::string_view format,
     const T& arg1,
     const Args&... args) noexcept {
@@ -239,7 +239,7 @@ void log_error(
 
 /// @brief Log a critical message
 /// @param format Format string (no arguments)
-inline void log_critical(
+inline void logCritical(
     std::string_view format,
     const std::source_location& loc = std::source_location::current()) noexcept {
     logger::instance().log(log_level::critical, format, loc);
@@ -251,7 +251,7 @@ inline void log_critical(
 /// @param arg1 First format argument (enables overload resolution)
 /// @param args Remaining format arguments
 template<typename T, typename... Args>
-void log_critical(
+void logCritical(
     std::string_view format,
     const T& arg1,
     const Args&... args) noexcept {
@@ -273,7 +273,7 @@ void logger::log(
     
     try {
         auto message = std::vformat(format, std::make_format_args(arg1, args...));
-        log_internal(level, message, std::source_location::current());
+        logInternal(level, message, std::source_location::current());
     } catch (...) {
         // Never throw from logger - best effort only
     }

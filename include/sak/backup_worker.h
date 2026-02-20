@@ -51,14 +51,14 @@ Q_SIGNALS:
      * @param bytes_processed Bytes processed
      * @param total_bytes Total bytes to process
      */
-    void file_progress(int files_processed, int total_files,
+    void fileProgress(int files_processed, int total_files,
                       qint64 bytes_processed, qint64 total_bytes);
 
     /**
      * @brief Emitted periodically with current speed
      * @param mb_per_second Current copy speed in MB/s
      */
-    void speed_update(double mb_per_second);
+    void speedUpdate(double mb_per_second);
 
 protected:
     /**
@@ -72,13 +72,13 @@ private:
      * @brief Scan source directory and build file list
      * @return Expected containing total files and bytes
      */
-    auto scan_source() -> std::expected<std::pair<int, qint64>, sak::error_code>;
+    auto scanSource() -> std::expected<std::pair<int, qint64>, sak::error_code>;
 
     /**
      * @brief Copy files from source to destination
      * @return Expected containing success or error code
      */
-    auto copy_files() -> std::expected<void, sak::error_code>;
+    auto copyFiles() -> std::expected<void, sak::error_code>;
 
     /**
      * @brief Copy single file with progress
@@ -86,7 +86,7 @@ private:
      * @param destination Destination file path
      * @return Expected containing success or error code
      */
-    auto copy_file(const std::filesystem::path& source,
+    auto copyFile(const std::filesystem::path& source,
                    const std::filesystem::path& destination)
         -> std::expected<void, sak::error_code>;
 
@@ -96,14 +96,14 @@ private:
      * @param destination Destination file path
      * @return Expected containing true if match, false if mismatch, or error
      */
-    auto verify_file(const std::filesystem::path& source,
+    auto verifyFile(const std::filesystem::path& source,
                      const std::filesystem::path& destination)
         -> std::expected<bool, sak::error_code>;
 
     /**
      * @brief Update speed calculation
      */
-    void update_speed();
+    void updateSpeed();
 
     Config m_config;
     std::vector<std::filesystem::path> m_files_to_copy;

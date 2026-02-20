@@ -15,7 +15,7 @@
 
 namespace sak {
 
-bool ElevationManager::is_elevated() noexcept
+bool ElevationManager::isElevated() noexcept
 {
     BOOL is_admin = FALSE;
     PSID administrators_group = nullptr;
@@ -36,7 +36,7 @@ bool ElevationManager::is_elevated() noexcept
     return is_admin == TRUE;
 }
 
-bool ElevationManager::can_elevate() noexcept
+bool ElevationManager::canElevate() noexcept
 {
     // On Windows Vista+, UAC is available
     OSVERSIONINFOEX osvi;
@@ -50,9 +50,9 @@ bool ElevationManager::can_elevate() noexcept
     return VerifyVersionInfo(&osvi, VER_MAJORVERSION, condition_mask) != FALSE;
 }
 
-bool ElevationManager::is_user_admin() noexcept
+bool ElevationManager::isUserAdmin() noexcept
 {
-    return is_elevated();
+    return isElevated();
 }
 
 auto ElevationManager::get_executable_path()
@@ -63,7 +63,7 @@ auto ElevationManager::get_executable_path()
     
     if (result == 0 || result == MAX_PATH) {
         DWORD error = GetLastError();
-        sak::log_error("Failed to get executable path: error {}", error);
+        sak::logError("Failed to get executable path: error {}", error);
         return std::unexpected(sak::error_code::execution_failed);
     }
 
@@ -108,11 +108,11 @@ std::string ElevationManager::get_command_line_args()
     return args;
 }
 
-auto ElevationManager::restart_elevated(bool wait_for_exit)
+auto ElevationManager::restartElevated(bool wait_for_exit)
     -> std::expected<void, sak::error_code>
 {
-    if (is_elevated()) {
-        sak::log_info("Already running with administrator privileges");
+    if (isElevated()) {
+        sak::logInfo("Already running with administrator privileges");
         return {};
     }
 
@@ -123,12 +123,12 @@ auto ElevationManager::restart_elevated(bool wait_for_exit)
 
     std::string args = get_command_line_args();
     
-    sak::log_info("Restarting with elevation: {} {}", exe_path_result.value(), args);
+    sak::logInfo("Restarting with elevation: {} {}", exe_path_result.value(), args);
 
-    return execute_elevated(exe_path_result.value(), args, wait_for_exit);
+    return executeElevated(exe_path_result.value(), args, wait_for_exit);
 }
 
-auto ElevationManager::execute_elevated(
+auto ElevationManager::executeElevated(
     const std::string& executable,
     const std::string& arguments,
     bool wait_for_exit)
@@ -145,26 +145,26 @@ auto ElevationManager::execute_elevated(
         DWORD error = GetLastError();
         
         if (error == ERROR_CANCELLED) {
-            sak::log_info("User cancelled elevation request");
+            sak::logInfo("User cancelled elevation request");
             return std::unexpected(sak::error_code::operation_cancelled);
         }
         
-        sak::log_error("Failed to execute with elevation: {}", 
-                      get_elevation_error_message(error));
+        sak::logError("Failed to execute with elevation: {}", 
+                      getElevationErrorMessage(error));
         return std::unexpected(sak::error_code::elevation_failed);
     }
 
-    sak::log_info("Successfully launched elevated process");
+    sak::logInfo("Successfully launched elevated process");
 
     if (wait_for_exit && sei.hProcess) {
-        sak::log_info("Waiting for elevated process to complete...");
+        sak::logInfo("Waiting for elevated process to complete...");
         WaitForSingleObject(sei.hProcess, INFINITE);
         
         DWORD exit_code = 0;
         GetExitCodeProcess(sei.hProcess, &exit_code);
         CloseHandle(sei.hProcess);
         
-        sak::log_info("Elevated process exited with code {}", exit_code);
+        sak::logInfo("Elevated process exited with code {}", exit_code);
     } else if (sei.hProcess) {
         CloseHandle(sei.hProcess);
     }
@@ -172,7 +172,7 @@ auto ElevationManager::execute_elevated(
     return {};
 }
 
-std::string ElevationManager::get_elevation_error_message(unsigned long error_code)
+std::string ElevationManager::getElevationErrorMessage(unsigned long error_code)
 {
     char* message_buffer = nullptr;
     

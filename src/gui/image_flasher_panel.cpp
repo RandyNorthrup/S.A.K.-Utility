@@ -53,7 +53,7 @@ ImageFlasherPanel::ImageFlasherPanel(QWidget* parent)
     // Start drive scanner
     m_driveScanner->start();
     
-    sak::log_info("Image Flasher Panel initialized");
+    sak::logInfo("Image Flasher Panel initialized");
 }
 
 ImageFlasherPanel::~ImageFlasherPanel() {
@@ -371,7 +371,7 @@ void ImageFlasherPanel::onImageSelected(const QString& imagePath) {
     m_nextButton->setEnabled(true);
     updateNavigationButtons();
     
-    sak::log_info(QString("Image selected: %1").arg(imagePath).toStdString());
+    sak::logInfo(QString("Image selected: %1").arg(imagePath).toStdString());
 }
 
 void ImageFlasherPanel::onWindowsISODownloaded(const QString& isoPath) {
@@ -440,7 +440,7 @@ void ImageFlasherPanel::onFlashProgress(const sak::FlashProgress& progress) {
 void ImageFlasherPanel::onFlashStateChanged(sak::FlashState newState, const QString& message) {
     (void)newState;
     m_flashStateLabel->setText(message);
-    sak::log_info(QString("Flash state: %1").arg(message).toStdString());
+    sak::logInfo(QString("Flash state: %1").arg(message).toStdString());
 }
 
 void ImageFlasherPanel::onFlashCompleted(const sak::FlashResult& result) {
@@ -575,7 +575,7 @@ void ImageFlasherPanel::validateImageFile(const QString& filePath) {
     }
     
     // File is valid
-    sak::log_info(QString("Image file validated: %1").arg(filePath).toStdString());
+    sak::logInfo(QString("Image file validated: %1").arg(filePath).toStdString());
 }
 
 void ImageFlasherPanel::showConfirmationDialog() {
@@ -742,7 +742,7 @@ void ImageFlasherPanel::createWindowsUSB() {
     
     if (match.hasMatch()) {
         diskNumber = match.captured(1);
-        sak::log_info(QString("Using disk number %1 (PhysicalDrive%1)").arg(diskNumber).toStdString());
+        sak::logInfo(QString("Using disk number %1 (PhysicalDrive%1)").arg(diskNumber).toStdString());
     } else {
         // Could not parse disk number - fail immediately
         m_isFlashing = false;

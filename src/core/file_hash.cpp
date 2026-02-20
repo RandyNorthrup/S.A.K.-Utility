@@ -20,53 +20,53 @@ file_hasher::file_hasher(hash_algorithm algorithm, std::size_t chunk_size) noexc
     , m_chunk_size(chunk_size) {
 }
 
-auto file_hasher::calculate_hash(
+auto file_hasher::calculateHash(
     const std::filesystem::path& file_path,
     hash_progress_callback progress,
     std::stop_token stop_token) const -> std::expected<std::string, error_code> {
     
     // Validate file exists
     if (!std::filesystem::exists(file_path)) {
-        log_error("File not found: {}", file_path.string());
+        logError("File not found: {}", file_path.string());
         return std::unexpected(error_code::file_not_found);
     }
     
     // Validate it's a regular file
     if (!std::filesystem::is_regular_file(file_path)) {
-        log_error("Path is not a regular file: {}", file_path.string());
+        logError("Path is not a regular file: {}", file_path.string());
         return std::unexpected(error_code::invalid_path);
     }
     
     // Delegate to algorithm-specific implementation
     switch (m_algorithm) {
         case hash_algorithm::md5:
-            return calculate_md5(file_path, progress, stop_token);
+            return calculateMd5(file_path, progress, stop_token);
         case hash_algorithm::sha256:
-            return calculate_sha256(file_path, progress, stop_token);
+            return calculateSha256(file_path, progress, stop_token);
         default:
             return std::unexpected(error_code::internal_error);
     }
 }
 
-auto file_hasher::calculate_hash(
+auto file_hasher::calculateHash(
     std::span<const std::byte> data) const -> std::expected<std::string, error_code> {
     
     switch (m_algorithm) {
         case hash_algorithm::md5:
-            return calculate_md5(data);
+            return calculateMd5(data);
         case hash_algorithm::sha256:
-            return calculate_sha256(data);
+            return calculateSha256(data);
         default:
             return std::unexpected(error_code::internal_error);
     }
 }
 
-auto file_hasher::verify_hash(
+auto file_hasher::verifyHash(
     const std::filesystem::path& file_path,
     std::string_view expected_hash,
     std::stop_token stop_token) const -> std::expected<bool, error_code> {
     
-    auto calculated = calculate_hash(file_path, nullptr, stop_token);
+    auto calculated = calculateHash(file_path, nullptr, stop_token);
     if (!calculated) {
         return std::unexpected(calculated.error());
     }
@@ -83,7 +83,7 @@ auto file_hasher::verify_hash(
     return lower_expected == lower_calculated;
 }
 
-auto file_hasher::calculate_md5(
+auto file_hasher::calculateMd5(
     const std::filesystem::path& file_path,
     hash_progress_callback& progress,
     std::stop_token stop_token) const -> std::expected<std::string, error_code> {
@@ -92,7 +92,7 @@ auto file_hasher::calculate_md5(
         // Open file with Qt
         QFile file(QString::fromStdString(file_path.string()));
         if (!file.open(QIODevice::ReadOnly)) {
-            log_error("Failed to open file: {}", file_path.string());
+            logError("Failed to open file: {}", file_path.string());
             return std::unexpected(error_code::read_error);
         }
         
@@ -127,15 +127,15 @@ auto file_hasher::calculate_md5(
         return result.toHex().toStdString();
         
     } catch (const std::exception& e) {
-        log_error("Exception calculating MD5: {}", e.what());
+        logError("Exception calculating MD5: {}", e.what());
         return std::unexpected(error_code::hash_calculation_failed);
     } catch (...) {
-        log_error("Unknown exception calculating MD5");
+        logError("Unknown exception calculating MD5");
         return std::unexpected(error_code::unknown_error);
     }
 }
 
-auto file_hasher::calculate_sha256(
+auto file_hasher::calculateSha256(
     const std::filesystem::path& file_path,
     hash_progress_callback& progress,
     std::stop_token stop_token) const -> std::expected<std::string, error_code> {
@@ -144,7 +144,7 @@ auto file_hasher::calculate_sha256(
         // Open file with Qt
         QFile file(QString::fromStdString(file_path.string()));
         if (!file.open(QIODevice::ReadOnly)) {
-            log_error("Failed to open file: {}", file_path.string());
+            logError("Failed to open file: {}", file_path.string());
             return std::unexpected(error_code::read_error);
         }
         
@@ -179,15 +179,15 @@ auto file_hasher::calculate_sha256(
         return result.toHex().toStdString();
         
     } catch (const std::exception& e) {
-        log_error("Exception calculating SHA-256: {}", e.what());
+        logError("Exception calculating SHA-256: {}", e.what());
         return std::unexpected(error_code::hash_calculation_failed);
     } catch (...) {
-        log_error("Unknown exception calculating SHA-256");
+        logError("Unknown exception calculating SHA-256");
         return std::unexpected(error_code::unknown_error);
     }
 }
 
-auto file_hasher::calculate_md5(
+auto file_hasher::calculateMd5(
     std::span<const std::byte> data) const -> std::expected<std::string, error_code> {
     
     try {
@@ -202,7 +202,7 @@ auto file_hasher::calculate_md5(
     }
 }
 
-auto file_hasher::calculate_sha256(
+auto file_hasher::calculateSha256(
     std::span<const std::byte> data) const -> std::expected<std::string, error_code> {
     
     try {

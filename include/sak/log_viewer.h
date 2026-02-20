@@ -68,18 +68,18 @@ public:
     [[nodiscard]] bool autoScroll() const noexcept { return m_auto_scroll; }
 
 public Q_SLOTS:
-    void on_clear_clicked();
-    void on_save_clicked();
-    void on_filter_changed(int index);
-    void on_search_text_changed(const QString& text);
-    void on_auto_scroll_toggled(bool checked);
+    void onClearClicked();
+    void onSaveClicked();
+    void onFilterChanged(int index);
+    void onSearchTextChanged(const QString& text);
+    void onAutoScrollToggled(bool checked);
 
 private:
-    void setup_ui();
-    void apply_filters();
-    QString format_log_message(const QString& message, LogLevel level) const;
-    QString get_level_color(LogLevel level) const;
-    QString get_level_text(LogLevel level) const;
+    void setupUi();
+    void applyFilters();
+    QString formatLogMessage(const QString& message, LogLevel level) const;
+    QString getLevelColor(LogLevel level) const;
+    QString getLevelText(LogLevel level) const;
 
     QTextBrowser* m_text_browser;
     QPushButton* m_clear_button;

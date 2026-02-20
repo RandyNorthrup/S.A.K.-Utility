@@ -101,13 +101,13 @@ Q_SIGNALS:
     void cancelled();
 
 private Q_SLOTS:
-    void on_cancel_clicked();
-    void update_time_displays();
+    void onCancelClicked();
+    void updateTimeDisplays();
 
 private:
-    void setup_ui();
-    void update_eta(int current, int maximum);
-    QString format_duration(std::chrono::seconds duration) const;
+    void setupUi();
+    void updateEta(int current, int maximum);
+    QString formatDuration(std::chrono::seconds duration) const;
 
     QLabel* m_title_label;
     QLabel* m_status_label;

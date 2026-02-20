@@ -39,7 +39,7 @@ bool XzDecompressor::open(const QString& filePath) {
     m_decompressedBytesProduced = 0;
     m_eof = false;
 
-    sak::log_info(QString("Opened xz file: %1").arg(filePath).toStdString());
+    sak::logInfo(QString("Opened xz file: %1").arg(filePath).toStdString());
     return true;
 }
 
@@ -93,7 +93,7 @@ qint64 XzDecompressor::read(char* data, qint64 maxSize) {
             break;
         } else if (ret != LZMA_OK) {
             m_lastError = QString("Decompression error: lzma error code %1").arg(static_cast<int>(ret));
-            sak::log_error(m_lastError.toStdString());
+            sak::logError(m_lastError.toStdString());
             return -1;
         }
     }
@@ -137,7 +137,7 @@ bool XzDecompressor::initLzmaStream() {
     
     if (ret != LZMA_OK) {
         m_lastError = QString("Failed to initialize lzma: error code %1").arg(static_cast<int>(ret));
-        sak::log_error(m_lastError.toStdString());
+        sak::logError(m_lastError.toStdString());
         return false;
     }
 
@@ -153,7 +153,7 @@ bool XzDecompressor::fillInputBuffer() {
     
     if (bytesRead < 0) {
         m_lastError = QString("File read error: %1").arg(m_file.errorString());
-        sak::log_error(m_lastError.toStdString());
+        sak::logError(m_lastError.toStdString());
         return false;
     }
 

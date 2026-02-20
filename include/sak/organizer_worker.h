@@ -105,14 +105,14 @@ Q_SIGNALS:
      * @param total_files Total number of files
      * @param current_file_path Path of current file
      */
-    void file_progress(int current_file, int total_files, const QString& current_file_path);
+    void fileProgress(int current_file, int total_files, const QString& current_file_path);
 
     /**
      * @brief Emitted in preview mode with summary of planned operations
      * @param summary Text summary of planned operations
      * @param operation_count Number of operations planned
      */
-    void preview_results(const QString& summary, int operation_count);
+    void previewResults(const QString& summary, int operation_count);
 
 protected:
     /**
@@ -126,14 +126,14 @@ private:
      * @brief Scan directory and collect files to organize
      * @return File list or error
      */
-    auto scan_directory() -> std::expected<std::vector<std::filesystem::path>, sak::error_code>;
+    auto scanDirectory() -> std::expected<std::vector<std::filesystem::path>, sak::error_code>;
 
     /**
      * @brief Categorize file by extension
      * @param file_path File to categorize
      * @return Category name or empty if no match
      */
-    auto categorize_file(const std::filesystem::path& file_path) -> QString;
+    auto categorizeFile(const std::filesystem::path& file_path) -> QString;
 
     /**
      * @brief Plan move operation for a file
@@ -141,40 +141,40 @@ private:
      * @param category Target category
      * @return Move operation details
      */
-    auto plan_move(const std::filesystem::path& file_path, const QString& category) -> MoveOperation;
+    auto planMove(const std::filesystem::path& file_path, const QString& category) -> MoveOperation;
 
     /**
      * @brief Execute a single file move
      * @param operation Move operation to execute
      * @return Success or error code
      */
-    auto execute_move(const MoveOperation& operation) -> std::expected<void, sak::error_code>;
+    auto executeMove(const MoveOperation& operation) -> std::expected<void, sak::error_code>;
 
     /**
      * @brief Handle file collision based on strategy
      * @param operation Move operation with collision
      * @return Modified destination path
      */
-    auto handle_collision(const MoveOperation& operation) -> std::filesystem::path;
+    auto handleCollision(const MoveOperation& operation) -> std::filesystem::path;
 
     /**
      * @brief Generate preview summary text
      * @return Summary string
      */
-    auto generate_preview_summary() -> QString;
+    auto generatePreviewSummary() -> QString;
 
     /**
      * @brief Log operation for undo capability
      * @param operation Move operation to log
      */
-    void log_for_undo(const MoveOperation& operation);
+    void logForUndo(const MoveOperation& operation);
 
     /**
      * @brief Verify file can be restored to original location
      * @param entry Undo entry to verify
      * @return True if file can be restored
      */
-    bool can_restore(const UndoEntry& entry);
+    bool canRestore(const UndoEntry& entry);
 
     Config m_config;
     std::vector<MoveOperation> m_planned_operations;

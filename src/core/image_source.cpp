@@ -47,13 +47,13 @@ bool FileImageSource::open() {
     
     auto file = std::make_unique<QFile>(m_filePath);
     if (!file->open(QIODevice::ReadOnly)) {
-        sak::log_error(QString("Failed to open file: %1").arg(m_filePath).toStdString());
+        sak::logError(QString("Failed to open file: %1").arg(m_filePath).toStdString());
         Q_EMIT readError(QString("Failed to open file: %1").arg(file->errorString()));
         return false;
     }
     
     m_device = std::move(file);
-    sak::log_info(QString("Opened image: %1 (%2 bytes)")
+    sak::logInfo(QString("Opened image: %1 (%2 bytes)")
         .arg(m_metadata.name)
         .arg(m_metadata.size).toStdString());
     
@@ -78,7 +78,7 @@ qint64 FileImageSource::read(char* data, qint64 maxSize) {
     
     qint64 bytesRead = m_device->read(data, maxSize);
     if (bytesRead < 0) {
-        sak::log_error(QString("Read error: %1").arg(
+        sak::logError(QString("Read error: %1").arg(
             static_cast<QFile*>(m_device.get())->errorString()).toStdString());
         Q_EMIT readError("Read error");
     }
@@ -136,7 +136,7 @@ QString FileImageSource::calculateChecksum() {
     while (!atEnd()) {
         qint64 bytesRead = read(buffer.data(), bufferSize);
         if (bytesRead < 0) {
-            sak::log_error("Error reading file for checksum");
+            sak::logError("Error reading file for checksum");
             return QString();
         }
         
@@ -153,7 +153,7 @@ QString FileImageSource::calculateChecksum() {
     QString checksum = hash.result().toHex();
     m_metadata.checksum = checksum;
     
-    sak::log_info(QString("Calculated checksum: %1").arg(checksum).toStdString());
+    sak::logInfo(QString("Calculated checksum: %1").arg(checksum).toStdString());
     return checksum;
 }
 
@@ -209,7 +209,7 @@ CompressedImageSource::~CompressedImageSource() {
 
 bool CompressedImageSource::open() {
     if (m_decompressor) {
-        sak::log_warning("CompressedImageSource already open");
+        sak::logWarning("CompressedImageSource already open");
         return true;
     }
     
@@ -217,7 +217,7 @@ bool CompressedImageSource::open() {
     m_decompressor = sak::DecompressorFactory::create(m_filePath);
     if (!m_decompressor) {
         QString error = QString("Unsupported or undetected compression format: %1").arg(m_filePath);
-        sak::log_error(error.toStdString());
+        sak::logError(error.toStdString());
         Q_EMIT readError(error);
         return false;
     }
@@ -225,7 +225,7 @@ bool CompressedImageSource::open() {
     // Open the decompressor
     if (!m_decompressor->open(m_filePath)) {
         QString error = QString("Failed to open compressed file: %1").arg(m_filePath);
-        sak::log_error(error.toStdString());
+        sak::logError(error.toStdString());
         Q_EMIT readError(error);
         m_decompressor.reset();
         return false;
@@ -243,7 +243,7 @@ bool CompressedImageSource::open() {
                 }
             });
     
-    sak::log_info(QString("Opened compressed image: %1 (format: %2)")
+    sak::logInfo(QString("Opened compressed image: %1 (format: %2)")
                   .arg(m_filePath)
                   .arg(m_decompressor->formatName())
                   .toStdString());
@@ -265,7 +265,7 @@ bool CompressedImageSource::isOpen() const {
 
 qint64 CompressedImageSource::read(char* data, qint64 maxSize) {
     if (!isOpen()) {
-        sak::log_error("Cannot read from closed CompressedImageSource");
+        sak::logError("Cannot read from closed CompressedImageSource");
         return -1;
     }
     
@@ -289,7 +289,7 @@ bool CompressedImageSource::seek(qint64 pos) {
     // Seeking in compressed streams is not supported
     // Would require decompressing from beginning to reach position
     Q_UNUSED(pos);
-    sak::log_warning("Seek not supported for compressed streams");
+    sak::logWarning("Seek not supported for compressed streams");
     return false;
 }
 
@@ -306,7 +306,7 @@ sak::ImageMetadata CompressedImageSource::metadata() const {
 
 QString CompressedImageSource::calculateChecksum() {
     if (!isOpen()) {
-        sak::log_error("Cannot calculate checksum on closed CompressedImageSource");
+        sak::logError("Cannot calculate checksum on closed CompressedImageSource");
         return QString();
     }
     
@@ -319,7 +319,7 @@ QString CompressedImageSource::calculateChecksum() {
     // Close and reopen to reset decompression stream
     close();
     if (!open()) {
-        sak::log_error("Failed to reopen CompressedImageSource for checksum calculation");
+        sak::logError("Failed to reopen CompressedImageSource for checksum calculation");
         return QString();
     }
     
@@ -331,7 +331,7 @@ QString CompressedImageSource::calculateChecksum() {
     while (!atEnd()) {
         qint64 bytesRead = read(buffer.data(), bufferSize);
         if (bytesRead < 0) {
-            sak::log_error("Error reading data during checksum calculation");
+            sak::logError("Error reading data during checksum calculation");
             return QString();
         }
         if (bytesRead > 0) {
@@ -344,7 +344,7 @@ QString CompressedImageSource::calculateChecksum() {
     open();
     
     // Cannot restore position for compressed streams, user must re-read from start
-    sak::log_warning("Checksum calculation reset decompression stream to beginning");
+    sak::logWarning("Checksum calculation reset decompression stream to beginning");
     
     return QString::fromLatin1(hash.result().toHex());
 }

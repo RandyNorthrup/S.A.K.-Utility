@@ -669,12 +669,12 @@ void NetworkTransferPanel::setupConnections() {
             this, &NetworkTransferPanel::onConnectionStateChanged);
     connect(m_controller, &NetworkTransferController::statusMessage, this, [this](const QString& msg) {
         m_logText->append(msg);
-        Q_EMIT status_message(msg, 5000);
+        Q_EMIT statusMessage(msg, 5000);
     });
     connect(m_controller, &NetworkTransferController::errorMessage, this, [this](const QString& msg) {
         m_logText->append(tr("ERROR: %1").arg(msg));
         m_transferErrors.append(msg);
-        Q_EMIT status_message(msg, 5000);
+        Q_EMIT statusMessage(msg, 5000);
     });
 
         if (m_orchestrator && m_orchestrator->registry()) {
@@ -694,7 +694,7 @@ void NetworkTransferPanel::setupConnections() {
             this, &NetworkTransferPanel::onAggregateProgress);
         connect(m_orchestrator, &MigrationOrchestrator::orchestratorStatus, this, [this](const QString& msg) {
             m_logText->append(msg);
-            Q_EMIT status_message(msg, 5000);
+            Q_EMIT statusMessage(msg, 5000);
         });
         }
         if (m_parallelManager) {
@@ -1753,7 +1753,7 @@ void NetworkTransferPanel::onManifestReceived(const TransferManifest& manifest) 
         return;
     }
 
-    auto available = path_utils::get_available_space(std::filesystem::path(destinationBase().toStdString()));
+    auto available = path_utils::getAvailableSpace(std::filesystem::path(destinationBase().toStdString()));
     if (!available) {
         m_manifestText->append(tr("\nWARNING: Unable to determine available disk space."));
         m_controller->approveTransfer(false);
@@ -1785,7 +1785,7 @@ void NetworkTransferPanel::onTransferProgress(qint64 bytes, qint64 total) {
     if (total > 0) {
         const int percent = static_cast<int>((bytes * 100) / total);
         m_overallProgress->setValue(percent);
-        Q_EMIT progress_update(percent, 100);
+        Q_EMIT progressUpdate(percent, 100);
     }
 }
 
@@ -1945,7 +1945,7 @@ QVector<TransferFileEntry> NetworkTransferPanel::buildFileList() {
                 options.exclude_patterns.push_back(exclude.toStdString());
             }
 
-            auto result = scanner.scan_and_collect(folderPath.toStdString(), options);
+            auto result = scanner.scanAndCollect(folderPath.toStdString(), options);
             if (!result) {
                 continue;
             }
@@ -1964,7 +1964,7 @@ QVector<TransferFileEntry> NetworkTransferPanel::buildFileList() {
                 TransferFileEntry entry;
                 entry.file_id = QUuid::createUuid().toString(QUuid::WithoutBraces);
                 entry.absolute_path = QString::fromStdString(fsPath.string());
-                auto rel = path_utils::make_relative(fsPath, std::filesystem::path(user.profile_path.toStdString()));
+                auto rel = path_utils::makeRelative(fsPath, std::filesystem::path(user.profile_path.toStdString()));
                 if (!rel) {
                     continue;
                 }
@@ -1974,7 +1974,7 @@ QVector<TransferFileEntry> NetworkTransferPanel::buildFileList() {
                 if (selectedPermMode == PermissionMode::PreserveOriginal) {
                     entry.acl_sddl = permissionManager.getSecurityDescriptorSddl(entry.absolute_path);
                 }
-                auto hashResult = hasher.calculate_hash(fsPath);
+                auto hashResult = hasher.calculateHash(fsPath);
                 if (hashResult) {
                     entry.checksum_sha256 = QString::fromStdString(*hashResult);
                 }
@@ -2013,7 +2013,7 @@ QVector<TransferFileEntry> NetworkTransferPanel::buildFileListForUsers(const QVe
                 options.exclude_patterns.push_back(exclude.toStdString());
             }
 
-            auto result = scanner.scan_and_collect(folderPath.toStdString(), options);
+            auto result = scanner.scanAndCollect(folderPath.toStdString(), options);
             if (!result) {
                 continue;
             }
@@ -2032,7 +2032,7 @@ QVector<TransferFileEntry> NetworkTransferPanel::buildFileListForUsers(const QVe
                 TransferFileEntry entry;
                 entry.file_id = QUuid::createUuid().toString(QUuid::WithoutBraces);
                 entry.absolute_path = QString::fromStdString(fsPath.string());
-                auto rel = path_utils::make_relative(fsPath, std::filesystem::path(user.profile_path.toStdString()));
+                auto rel = path_utils::makeRelative(fsPath, std::filesystem::path(user.profile_path.toStdString()));
                 if (!rel) {
                     continue;
                 }
@@ -2042,7 +2042,7 @@ QVector<TransferFileEntry> NetworkTransferPanel::buildFileListForUsers(const QVe
                 if (selectedPermMode == PermissionMode::PreserveOriginal) {
                     entry.acl_sddl = permissionManager.getSecurityDescriptorSddl(entry.absolute_path);
                 }
-                auto hashResult = hasher.calculate_hash(fsPath);
+                auto hashResult = hasher.calculateHash(fsPath);
                 if (hashResult) {
                     entry.checksum_sha256 = QString::fromStdString(*hashResult);
                 }

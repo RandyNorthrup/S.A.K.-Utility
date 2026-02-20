@@ -31,7 +31,7 @@ void PeerDiscoveryService::start() {
     }
 
     if (!m_socket->bind(QHostAddress::AnyIPv4, m_port, QUdpSocket::ShareAddress | QUdpSocket::ReuseAddressHint)) {
-        log_error("PeerDiscoveryService bind failed on port {}: {}", m_port, m_socket->errorString().toStdString());
+        logError("PeerDiscoveryService bind failed on port {}: {}", m_port, m_socket->errorString().toStdString());
         Q_EMIT discoveryError(tr("Failed to bind discovery port %1").arg(m_port));
         return;
     }
@@ -39,7 +39,7 @@ void PeerDiscoveryService::start() {
     m_running = true;
     m_broadcastTimer->start();
     sendAnnouncement();
-    log_info("PeerDiscoveryService started on port {}", m_port);
+    logInfo("PeerDiscoveryService started on port {}", m_port);
 }
 
 void PeerDiscoveryService::stop() {
@@ -50,7 +50,7 @@ void PeerDiscoveryService::stop() {
     m_running = false;
     m_broadcastTimer->stop();
     m_socket->close();
-    log_info("PeerDiscoveryService stopped");
+    logInfo("PeerDiscoveryService stopped");
 }
 
 bool PeerDiscoveryService::isRunning() const {
@@ -85,7 +85,7 @@ void PeerDiscoveryService::sendAnnouncement() {
     }
 
     if (!sentAny) {
-        log_warning("PeerDiscoveryService announcement skipped: no broadcast interfaces available");
+        logWarning("PeerDiscoveryService announcement skipped: no broadcast interfaces available");
     }
 }
 
@@ -100,7 +100,7 @@ void PeerDiscoveryService::onReadyRead() {
         QJsonParseError error{};
         const auto doc = QJsonDocument::fromJson(datagram, &error);
         if (error.error != QJsonParseError::NoError || !doc.isObject()) {
-            log_warning("PeerDiscoveryService received invalid discovery packet");
+            logWarning("PeerDiscoveryService received invalid discovery packet");
             continue;
         }
 
@@ -121,7 +121,7 @@ void PeerDiscoveryService::onReadyRead() {
             peer.last_seen = QDateTime::currentDateTime();
             Q_EMIT peerDiscovered(peer);
         } else {
-            log_warning("PeerDiscoveryService received unknown message type");
+            logWarning("PeerDiscoveryService received unknown message type");
         }
     }
 }

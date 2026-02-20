@@ -22,10 +22,10 @@ AboutDialog::AboutDialog(QWidget* parent)
     setWindowTitle("About S.A.K. Utility");
     setModal(true);
     setMinimumSize(600, 500);
-    setup_ui();
+    setupUi();
 }
 
-void AboutDialog::setup_ui()
+void AboutDialog::setupUi()
 {
     auto* main_layout = new QVBoxLayout(this);
     main_layout->setSpacing(12);
@@ -44,7 +44,7 @@ void AboutDialog::setup_ui()
     m_title_label->setStyleSheet("font-size: 18pt; font-weight: 700; color: #0f172a;");
     title_layout->addWidget(m_title_label);
     
-    m_version_label = new QLabel(get_version_info(), this);
+    m_version_label = new QLabel(getVersionInfo(), this);
     m_version_label->setStyleSheet("font-size: 10pt; color: #64748b;");
     title_layout->addWidget(m_version_label);
     
@@ -55,10 +55,10 @@ void AboutDialog::setup_ui()
 
     // Tab widget
     m_tab_widget = new QTabWidget(this);
-    setup_about_tab();
-    setup_license_tab();
-    setup_credits_tab();
-    setup_system_tab();
+    setupAboutTab();
+    setupLicenseTab();
+    setupCreditsTab();
+    setupSystemTab();
     main_layout->addWidget(m_tab_widget);
 
     // Close button
@@ -72,7 +72,7 @@ void AboutDialog::setup_ui()
     main_layout->addLayout(button_layout);
 }
 
-void AboutDialog::setup_about_tab()
+void AboutDialog::setupAboutTab()
 {
     auto* about_widget = new QWidget(this);
     auto* about_layout = new QVBoxLayout(about_widget);
@@ -100,35 +100,35 @@ void AboutDialog::setup_about_tab()
     m_tab_widget->addTab(about_widget, "About");
 }
 
-void AboutDialog::setup_license_tab()
+void AboutDialog::setupLicenseTab()
 {
     m_license_browser = new QTextBrowser(this);
     m_license_browser->setOpenExternalLinks(true);
-    m_license_browser->setHtml(get_license_text());
+    m_license_browser->setHtml(getLicenseText());
     m_tab_widget->addTab(m_license_browser, "License");
 }
 
-void AboutDialog::setup_credits_tab()
+void AboutDialog::setupCreditsTab()
 {
     m_credits_browser = new QTextBrowser(this);
     m_credits_browser->setOpenExternalLinks(true);
-    m_credits_browser->setHtml(get_credits_text());
+    m_credits_browser->setHtml(getCreditsText());
     m_tab_widget->addTab(m_credits_browser, "Credits");
 }
 
-void AboutDialog::setup_system_tab()
+void AboutDialog::setupSystemTab()
 {
     m_system_browser = new QTextBrowser(this);
-    m_system_browser->setPlainText(get_system_info());
+    m_system_browser->setPlainText(getSystemInfo());
     m_tab_widget->addTab(m_system_browser, "System");
 }
 
-QString AboutDialog::get_version_info() const
+QString AboutDialog::getVersionInfo() const
 {
     return QString("Version %1 - %2").arg(sak::get_version(), sak::get_build_date());
 }
 
-QString AboutDialog::get_license_text() const
+QString AboutDialog::getLicenseText() const
 {
     return R"(
 <h3>GNU General Public License v2.0</h3>
@@ -152,7 +152,7 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 )";
 }
 
-QString AboutDialog::get_credits_text() const
+QString AboutDialog::getCreditsText() const
 {
     return R"(
 <h3>Development</h3>
@@ -177,7 +177,7 @@ QString AboutDialog::get_credits_text() const
 )";
 }
 
-QString AboutDialog::get_system_info() const
+QString AboutDialog::getSystemInfo() const
 {
     QString info;
     

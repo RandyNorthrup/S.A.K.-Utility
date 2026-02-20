@@ -94,19 +94,19 @@ int main(int argc, char* argv[]) {
             return 1;
         }
         
-        sak::log_info("===========================================");
-        sak::log_info("SAK Utility Starting");
-        sak::log_info("Version: {}", sak::get_version());
-        sak::log_info("C++ Standard: C++{}", __cplusplus);
+        sak::logInfo("===========================================");
+        sak::logInfo("SAK Utility Starting");
+        sak::logInfo("Version: {}", sak::get_version());
+        sak::logInfo("C++ Standard: C++{}", __cplusplus);
 #ifdef SAK_PLATFORM_WINDOWS
-        sak::log_info("Platform: Windows");
+        sak::logInfo("Platform: Windows");
 #elif defined(SAK_PLATFORM_MACOS)
-        sak::log_info("Platform: macOS");
+        sak::logInfo("Platform: macOS");
 #elif defined(SAK_PLATFORM_LINUX)
-        sak::log_info("Platform: Linux");
+        sak::logInfo("Platform: Linux");
 #endif
-        sak::log_info("Qt Version: {}", QT_VERSION_STR);
-        sak::log_info("===========================================");
+        sak::logInfo("Qt Version: {}", QT_VERSION_STR);
+        sak::logInfo("===========================================");
 
         // Headless quick action runner (elevated mode)
         QString action_to_run;
@@ -125,13 +125,13 @@ int main(int argc, char* argv[]) {
         }
 
         if (!action_to_run.isEmpty()) {
-            sak::log_info("Running elevated quick action: {}", action_to_run.toStdString());
+            sak::logInfo("Running elevated quick action: {}", action_to_run.toStdString());
 
             sak::QuickActionController controller;
             controller.setBackupLocation(backup_location);
 
             QObject::connect(&controller, &sak::QuickActionController::logMessage, [](const QString& message) {
-                sak::log_info("{}", message.toStdString());
+                sak::logInfo("{}", message.toStdString());
             });
 
             auto actions = sak::ActionFactory::createAllActions(backup_location);
@@ -148,7 +148,7 @@ int main(int argc, char* argv[]) {
                 if (!result_file.isEmpty()) {
                     QString error_message;
                     if (!sak::writeExecutionResultFile(result_file, result, sak::QuickAction::ActionStatus::Failed, &error_message)) {
-                        sak::log_warning("Failed to write result file: {}", error_message.toStdString());
+                        sak::logWarning("Failed to write result file: {}", error_message.toStdString());
                     }
                 }
                 return 1;
@@ -167,7 +167,7 @@ int main(int argc, char* argv[]) {
                             action->lastExecutionResult(),
                             action->status(),
                             &error_message)) {
-                        sak::log_warning("Failed to write result file: {}", error_message.toStdString());
+                        sak::logWarning("Failed to write result file: {}", error_message.toStdString());
                     }
                 }
 
@@ -191,7 +191,7 @@ int main(int argc, char* argv[]) {
         }
 
         // Create and show main window
-        sak::log_info("Creating main window...");
+        sak::logInfo("Creating main window...");
         MainWindow main_window;
         main_window.show();
 
@@ -199,12 +199,12 @@ int main(int argc, char* argv[]) {
             splash->finish();
         }
         
-        sak::log_info("Main window displayed - application ready");
+        sak::logInfo("Main window displayed - application ready");
         
         // Enter Qt event loop
         int result = app.exec();
         
-        sak::log_info("Application shutting down with exit code: {}", result);
+        sak::logInfo("Application shutting down with exit code: {}", result);
         logger.flush();
         
         return result;

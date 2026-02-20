@@ -24,12 +24,12 @@ auto file_scanner::scan(
     
     // Validate root path
     if (!std::filesystem::exists(root_path)) {
-        log_error("Scan root path does not exist: {}", root_path.string());
+        logError("Scan root path does not exist: {}", root_path.string());
         return std::unexpected(error_code::file_not_found);
     }
     
     if (!std::filesystem::is_directory(root_path)) {
-        log_error("Scan root path is not a directory: {}", root_path.string());
+        logError("Scan root path is not a directory: {}", root_path.string());
         return std::unexpected(error_code::not_a_directory);
     }
     
@@ -39,27 +39,27 @@ auto file_scanner::scan(
     
     scan_statistics stats;
     
-    log_info("Starting directory scan: {}", root_path.string());
+    logInfo("Starting directory scan: {}", root_path.string());
     
     // Start recursive scan
-    auto result = scan_directory_recursive(root_path, options, stats, 0, stop_token);
+    auto result = scanDirectoryRecursive(root_path, options, stats, 0, stop_token);
     
     if (!result) {
         return std::unexpected(result.error());
     }
     
     if (stop_token.stop_requested()) {
-        log_warning("Directory scan cancelled");
+        logWarning("Directory scan cancelled");
         return std::unexpected(error_code::operation_cancelled);
     }
     
-    log_info("Directory scan complete: {} files, {} dirs, {} errors",
+    logInfo("Directory scan complete: {} files, {} dirs, {} errors",
              stats.files_found, stats.directories_found, stats.errors_encountered);
     
     return stats;
 }
 
-auto file_scanner::scan_and_collect(
+auto file_scanner::scanAndCollect(
     const std::filesystem::path& root_path,
     const scan_options& options,
     std::stop_token stop_token) -> std::expected<std::vector<std::filesystem::path>, error_code> {
@@ -91,7 +91,7 @@ auto file_scanner::scan_and_collect(
     return collected_paths;
 }
 
-auto file_scanner::list_files(
+auto file_scanner::listFiles(
     const std::filesystem::path& root_path,
     bool recursive) -> std::expected<std::vector<std::filesystem::path>, error_code> {
     
@@ -100,10 +100,10 @@ auto file_scanner::list_files(
     options.type_filter = file_type_filter::files_only;
     
     file_scanner scanner;
-    return scanner.scan_and_collect(root_path, options);
+    return scanner.scanAndCollect(root_path, options);
 }
 
-auto file_scanner::find_files(
+auto file_scanner::findFiles(
     const std::filesystem::path& root_path,
     const std::vector<std::string>& patterns,
     bool recursive) -> std::expected<std::vector<std::filesystem::path>, error_code> {
@@ -114,10 +114,10 @@ auto file_scanner::find_files(
     options.include_patterns = patterns;
     
     file_scanner scanner;
-    return scanner.scan_and_collect(root_path, options);
+    return scanner.scanAndCollect(root_path, options);
 }
 
-bool file_scanner::should_process_entry(
+bool file_scanner::shouldProcessEntry(
     const std::filesystem::directory_entry& entry,
     const scan_options& options,
     std::size_t current_depth) const noexcept {
@@ -131,7 +131,7 @@ bool file_scanner::should_process_entry(
         }
         
         // Check hidden files
-        if (options.skip_hidden && is_hidden(path)) {
+        if (options.skip_hidden && isHidden(path)) {
             return false;
         }
         
@@ -164,14 +164,14 @@ bool file_scanner::should_process_entry(
         if (is_file) {
             // Check exclude patterns
             if (!options.exclude_patterns.empty()) {
-                if (path_utils::matches_pattern(path, options.exclude_patterns)) {
+                if (path_utils::matchesPattern(path, options.exclude_patterns)) {
                     return false;
                 }
             }
             
             // Check include patterns (if specified, must match at least one)
             if (!options.include_patterns.empty()) {
-                if (!path_utils::matches_pattern(path, options.include_patterns)) {
+                if (!path_utils::matchesPattern(path, options.include_patterns)) {
                     return false;
                 }
             }
@@ -200,7 +200,7 @@ bool file_scanner::should_process_entry(
     }
 }
 
-bool file_scanner::is_hidden(const std::filesystem::path& path) noexcept {
+bool file_scanner::isHidden(const std::filesystem::path& path) noexcept {
     try {
         auto filename = path.filename().string();
         
@@ -224,7 +224,7 @@ bool file_scanner::is_hidden(const std::filesystem::path& path) noexcept {
     }
 }
 
-auto file_scanner::scan_directory_recursive(
+auto file_scanner::scanDirectoryRecursive(
     const std::filesystem::path& current_path,
     const scan_options& options,
     scan_statistics& stats,
@@ -248,7 +248,7 @@ auto file_scanner::scan_directory_recursive(
         std::filesystem::directory_iterator dir_it(current_path, dir_options, ec);
         
         if (ec) {
-            log_warning("Failed to open directory: {} - {}", current_path.string(), ec.message());
+            logWarning("Failed to open directory: {} - {}", current_path.string(), ec.message());
             stats.errors_encountered++;
             return {}; // Continue with other directories
         }
@@ -261,7 +261,7 @@ auto file_scanner::scan_directory_recursive(
             
             try {
                 // Check if entry should be processed
-                if (!should_process_entry(entry, options, current_depth)) {
+                if (!shouldProcessEntry(entry, options, current_depth)) {
                     stats.skipped_by_filter++;
                     continue;
                 }
@@ -305,7 +305,7 @@ auto file_scanner::scan_directory_recursive(
                 
                 // Recurse into subdirectories
                 if (is_dir && options.recursive) {
-                    auto recurse_result = scan_directory_recursive(
+                    auto recurse_result = scanDirectoryRecursive(
                         entry.path(),
                         options,
                         stats,
@@ -323,11 +323,11 @@ auto file_scanner::scan_directory_recursive(
                 }
                 
             } catch (const std::filesystem::filesystem_error& e) {
-                log_warning("Error processing entry: {} - {}", entry.path().string(), e.what());
+                logWarning("Error processing entry: {} - {}", entry.path().string(), e.what());
                 stats.errors_encountered++;
                 // Continue with next entry
             } catch (const std::exception& e) {
-                log_warning("Unexpected error processing entry: {}", e.what());
+                logWarning("Unexpected error processing entry: {}", e.what());
                 stats.errors_encountered++;
                 // Continue with next entry
             }
@@ -336,10 +336,10 @@ auto file_scanner::scan_directory_recursive(
         return {};
         
     } catch (const std::filesystem::filesystem_error& e) {
-        log_error("Filesystem error during scan: {}", e.what());
+        logError("Filesystem error during scan: {}", e.what());
         return std::unexpected(error_code::read_error);
     } catch (const std::exception& e) {
-        log_error("Unexpected error during scan: {}", e.what());
+        logError("Unexpected error during scan: {}", e.what());
         return std::unexpected(error_code::unknown_error);
     }
 }

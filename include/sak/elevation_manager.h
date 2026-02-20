@@ -22,13 +22,13 @@ public:
      * @brief Check if current process is running as administrator
      * @return True if running with admin privileges
      */
-    [[nodiscard]] static bool is_elevated() noexcept;
+    [[nodiscard]] static bool isElevated() noexcept;
 
     /**
      * @brief Check if current process can elevate
      * @return True if UAC elevation is available
      */
-    [[nodiscard]] static bool can_elevate() noexcept;
+    [[nodiscard]] static bool canElevate() noexcept;
 
     /**
      * @brief Restart current process with administrator privileges
@@ -37,7 +37,7 @@ public:
      * 
      * @note This will terminate the current process if successful
      */
-    static auto restart_elevated(bool wait_for_exit = false)
+    static auto restartElevated(bool wait_for_exit = false)
         -> std::expected<void, sak::error_code>;
 
     /**
@@ -47,7 +47,7 @@ public:
      * @param wait_for_exit If true, wait for process to complete
      * @return Success or error code
      */
-    static auto execute_elevated(
+    static auto executeElevated(
         const std::string& executable,
         const std::string& arguments = "",
         bool wait_for_exit = true)
@@ -58,14 +58,14 @@ public:
      * @param error_code Windows error code
      * @return Human-readable error message
      */
-    [[nodiscard]] static std::string get_elevation_error_message(unsigned long error_code);
+    [[nodiscard]] static std::string getElevationErrorMessage(unsigned long error_code);
 
 private:
     /**
      * @brief Check if user is in administrators group
      * @return True if user is admin
      */
-    [[nodiscard]] static bool is_user_admin() noexcept;
+    [[nodiscard]] static bool isUserAdmin() noexcept;
 
     /**
      * @brief Get current executable path

@@ -134,7 +134,7 @@ void BackupPanel::onBackupSelected()
         if (result == QDialog::Accepted) {
             appendLog("=== User Profile Backup Wizard Completed ===");
             m_statusLabel->setText("Backup completed via wizard");
-            Q_EMIT status_message("User profile backup completed", 5000);
+            Q_EMIT statusMessage("User profile backup completed", 5000);
         } else {
             appendLog("User profile backup wizard cancelled");
             m_statusLabel->setText("Ready");
@@ -161,7 +161,7 @@ void BackupPanel::onRestoreBackup()
             appendLog("=== User Profile Restore Wizard Completed ===");
             appendLog(QString("Restored from: %1").arg(wizard->backupPath()));
             m_statusLabel->setText("Restore completed via wizard");
-            Q_EMIT status_message("User profile restore completed", 5000);
+            Q_EMIT statusMessage("User profile restore completed", 5000);
         } else {
             appendLog("User profile restore wizard cancelled");
             m_statusLabel->setText("Ready");

@@ -33,7 +33,7 @@ QVector<OptimizePowerSettingsAction::PowerPlan> OptimizePowerSettingsAction::enu
         PowerPlan plan;
         plan.guid = match.captured(1);
         plan.name = match.captured(2).trimmed();
-        plan.is_active = !match.captured(3).isEmpty(); // * indicates active
+        plan.isActive = !match.captured(3).isEmpty(); // * indicates active
         plans.append(plan);
     }
     
@@ -44,7 +44,7 @@ QVector<OptimizePowerSettingsAction::PowerPlan> OptimizePowerSettingsAction::enu
 OptimizePowerSettingsAction::PowerPlan OptimizePowerSettingsAction::queryPowerPlan(const QString& guid) {
     PowerPlan plan;
     plan.guid = guid;
-    plan.is_active = false;
+    plan.isActive = false;
     
     ProcessResult proc = runProcess("powercfg", QStringList() << "-QUERY" << guid, 10000);
     if (!proc.std_err.trimmed().isEmpty()) {
@@ -90,7 +90,7 @@ OptimizePowerSettingsAction::PowerPlan OptimizePowerSettingsAction::getActivePow
     if (match.hasMatch()) {
         active_plan.guid = match.captured(1);
         active_plan.name = match.captured(2).trimmed();
-        active_plan.is_active = true;
+        active_plan.isActive = true;
     }
     
     return active_plan;
@@ -165,7 +165,7 @@ void OptimizePowerSettingsAction::execute() {
     // List all plans
     for (const PowerPlan& plan : all_plans) {
         QString plan_line = QString("║   %1 %2\n")
-                               .arg(plan.is_active ? "[ACTIVE]" : "        ")
+                               .arg(plan.isActive ? "[ACTIVE]" : "        ")
                                .arg(plan.name);
         report += plan_line.leftJustified(67, ' ') + "║\n";
     }

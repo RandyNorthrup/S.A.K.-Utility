@@ -66,14 +66,14 @@ Q_SIGNALS:
      * @param message Status message
      * @param timeout_ms Timeout in milliseconds (0 = permanent)
      */
-    void status_message(const QString& message, int timeout_ms);
+    void statusMessage(const QString& message, int timeout_ms);
 
     /**
      * @brief Progress update for main window
      * @param current Current progress value
      * @param maximum Maximum progress value
      */
-    void progress_update(int current, int maximum);
+    void progressUpdate(int current, int maximum);
 
 private Q_SLOTS:
     /**

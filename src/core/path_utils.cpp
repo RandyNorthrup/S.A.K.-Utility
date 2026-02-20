@@ -23,14 +23,14 @@ auto path_utils::normalize(
         auto normalized = std::filesystem::weakly_canonical(path);
         return normalized;
     } catch (const std::filesystem::filesystem_error& e) {
-        log_error("Failed to normalize path: {}", e.what());
+        logError("Failed to normalize path: {}", e.what());
         return std::unexpected(error_code::invalid_path);
     } catch (...) {
         return std::unexpected(error_code::unknown_error);
     }
 }
 
-auto path_utils::make_absolute(
+auto path_utils::makeAbsolute(
     const std::filesystem::path& path) -> std::expected<std::filesystem::path, error_code> {
     
     try {
@@ -39,14 +39,14 @@ auto path_utils::make_absolute(
         }
         return std::filesystem::absolute(path);
     } catch (const std::filesystem::filesystem_error& e) {
-        log_error("Failed to make path absolute: {}", e.what());
+        logError("Failed to make path absolute: {}", e.what());
         return std::unexpected(error_code::invalid_path);
     } catch (...) {
         return std::unexpected(error_code::unknown_error);
     }
 }
 
-auto path_utils::make_relative(
+auto path_utils::makeRelative(
     const std::filesystem::path& path,
     const std::filesystem::path& base) -> std::expected<std::filesystem::path, error_code> {
     
@@ -57,14 +57,14 @@ auto path_utils::make_relative(
         }
         return rel;
     } catch (const std::filesystem::filesystem_error& e) {
-        log_error("Failed to make path relative: {}", e.what());
+        logError("Failed to make path relative: {}", e.what());
         return std::unexpected(error_code::invalid_path);
     } catch (...) {
         return std::unexpected(error_code::unknown_error);
     }
 }
 
-auto path_utils::is_safe_path(
+auto path_utils::isSafePath(
     const std::filesystem::path& path,
     const std::filesystem::path& base_dir) -> std::expected<bool, error_code> {
     
@@ -108,7 +108,7 @@ auto path_utils::is_safe_path(
     }
 }
 
-std::string path_utils::get_extension_lowercase(
+std::string path_utils::getExtensionLowercase(
     const std::filesystem::path& path) noexcept {
     
     try {
@@ -121,7 +121,7 @@ std::string path_utils::get_extension_lowercase(
     }
 }
 
-bool path_utils::matches_pattern(
+bool path_utils::matchesPattern(
     const std::filesystem::path& path,
     const std::vector<std::string>& patterns) noexcept {
     
@@ -129,7 +129,7 @@ bool path_utils::matches_pattern(
         auto filename = path.filename().string();
         
         for (const auto& pattern : patterns) {
-            if (wildcard_match(filename, pattern)) {
+            if (wildcardMatch(filename, pattern)) {
                 return true;
             }
         }
@@ -140,12 +140,12 @@ bool path_utils::matches_pattern(
     }
 }
 
-std::string path_utils::get_safe_filename(std::string_view filename) noexcept {
+std::string path_utils::getSafeFilename(std::string_view filename) noexcept {
     std::string safe;
     safe.reserve(filename.size());
     
     for (char c : filename) {
-        if (is_valid_filename_char(c)) {
+        if (isValidFilenameChar(c)) {
             safe.push_back(c);
         } else {
             safe.push_back('_');
@@ -168,7 +168,7 @@ std::string path_utils::get_safe_filename(std::string_view filename) noexcept {
     return safe;
 }
 
-auto path_utils::get_directory_size(
+auto path_utils::getDirectorySize(
     const std::filesystem::path& dir_path) -> std::expected<std::uintmax_t, error_code> {
     
     try {
@@ -197,28 +197,28 @@ auto path_utils::get_directory_size(
         return total_size;
         
     } catch (const std::filesystem::filesystem_error& e) {
-        log_error("Failed to calculate directory size: {}", e.what());
+        logError("Failed to calculate directory size: {}", e.what());
         return std::unexpected(error_code::read_error);
     } catch (...) {
         return std::unexpected(error_code::unknown_error);
     }
 }
 
-auto path_utils::get_available_space(
+auto path_utils::getAvailableSpace(
     const std::filesystem::path& path) -> std::expected<std::uintmax_t, error_code> {
     
     try {
         auto space_info = std::filesystem::space(path);
         return space_info.available;
     } catch (const std::filesystem::filesystem_error& e) {
-        log_error("Failed to get available space: {}", e.what());
+        logError("Failed to get available space: {}", e.what());
         return std::unexpected(error_code::read_error);
     } catch (...) {
         return std::unexpected(error_code::unknown_error);
     }
 }
 
-auto path_utils::create_directories(
+auto path_utils::createDirectories(
     const std::filesystem::path& dir_path) -> std::expected<void, error_code> {
     
     try {
@@ -226,20 +226,20 @@ auto path_utils::create_directories(
         std::filesystem::create_directories(dir_path, ec);
         
         if (ec) {
-            log_error("Failed to create directories: {}", ec.message());
+            logError("Failed to create directories: {}", ec.message());
             return std::unexpected(error_code::write_error);
         }
         
         return {};
     } catch (const std::filesystem::filesystem_error& e) {
-        log_error("Failed to create directories: {}", e.what());
+        logError("Failed to create directories: {}", e.what());
         return std::unexpected(error_code::write_error);
     } catch (...) {
         return std::unexpected(error_code::unknown_error);
     }
 }
 
-auto path_utils::remove_all(
+auto path_utils::removeAll(
     const std::filesystem::path& path) -> std::expected<std::uintmax_t, error_code> {
     
     try {
@@ -247,13 +247,13 @@ auto path_utils::remove_all(
         auto removed = std::filesystem::remove_all(path, ec);
         
         if (ec) {
-            log_error("Failed to remove path: {}", ec.message());
+            logError("Failed to remove path: {}", ec.message());
             return std::unexpected(error_code::write_error);
         }
         
         return removed;
     } catch (const std::filesystem::filesystem_error& e) {
-        log_error("Failed to remove path: {}", e.what());
+        logError("Failed to remove path: {}", e.what());
         return std::unexpected(error_code::write_error);
     } catch (...) {
         return std::unexpected(error_code::unknown_error);
@@ -275,13 +275,13 @@ auto path_utils::copy(
         std::filesystem::copy(source, destination, options, ec);
         
         if (ec) {
-            log_error("Failed to copy: {}", ec.message());
+            logError("Failed to copy: {}", ec.message());
             return std::unexpected(error_code::write_error);
         }
         
         return {};
     } catch (const std::filesystem::filesystem_error& e) {
-        log_error("Failed to copy: {}", e.what());
+        logError("Failed to copy: {}", e.what());
         return std::unexpected(error_code::write_error);
     } catch (...) {
         return std::unexpected(error_code::unknown_error);
@@ -297,20 +297,20 @@ auto path_utils::move(
         std::filesystem::rename(source, destination, ec);
         
         if (ec) {
-            log_error("Failed to move: {}", ec.message());
+            logError("Failed to move: {}", ec.message());
             return std::unexpected(error_code::write_error);
         }
         
         return {};
     } catch (const std::filesystem::filesystem_error& e) {
-        log_error("Failed to move: {}", e.what());
+        logError("Failed to move: {}", e.what());
         return std::unexpected(error_code::write_error);
     } catch (...) {
         return std::unexpected(error_code::unknown_error);
     }
 }
 
-auto path_utils::exists_and_accessible(
+auto path_utils::existsAndAccessible(
     const std::filesystem::path& path) -> std::expected<bool, error_code> {
     
     try {
@@ -327,20 +327,20 @@ auto path_utils::exists_and_accessible(
     }
 }
 
-auto path_utils::get_creation_time(
+auto path_utils::getCreationTime(
     const std::filesystem::path& path) -> std::expected<std::filesystem::file_time_type, error_code> {
     
     try {
         // Note: C++20 doesn't have creation time in std::filesystem
         // Using last_write_time as fallback
         // Platform-specific implementation would be needed for true creation time
-        return get_last_write_time(path);
+        return getLastWriteTime(path);
     } catch (...) {
         return std::unexpected(error_code::unknown_error);
     }
 }
 
-auto path_utils::get_last_write_time(
+auto path_utils::getLastWriteTime(
     const std::filesystem::path& path) -> std::expected<std::filesystem::file_time_type, error_code> {
     
     try {
@@ -348,43 +348,43 @@ auto path_utils::get_last_write_time(
         auto time = std::filesystem::last_write_time(path, ec);
         
         if (ec) {
-            log_error("Failed to get last write time: {}", ec.message());
+            logError("Failed to get last write time: {}", ec.message());
             return std::unexpected(error_code::read_error);
         }
         
         return time;
     } catch (const std::filesystem::filesystem_error& e) {
-        log_error("Failed to get last write time: {}", e.what());
+        logError("Failed to get last write time: {}", e.what());
         return std::unexpected(error_code::read_error);
     } catch (...) {
         return std::unexpected(error_code::unknown_error);
     }
 }
 
-auto path_utils::get_temp_directory() -> std::expected<std::filesystem::path, error_code> {
+auto path_utils::getTempDirectory() -> std::expected<std::filesystem::path, error_code> {
     try {
         std::error_code ec;
         auto temp_dir = std::filesystem::temp_directory_path(ec);
         
         if (ec) {
-            log_error("Failed to get temp directory: {}", ec.message());
+            logError("Failed to get temp directory: {}", ec.message());
             return std::unexpected(error_code::read_error);
         }
         
         return temp_dir;
     } catch (const std::filesystem::filesystem_error& e) {
-        log_error("Failed to get temp directory: {}", e.what());
+        logError("Failed to get temp directory: {}", e.what());
         return std::unexpected(error_code::read_error);
     } catch (...) {
         return std::unexpected(error_code::unknown_error);
     }
 }
 
-auto path_utils::create_temp_directory(
+auto path_utils::createTempDirectory(
     std::string_view prefix) -> std::expected<std::filesystem::path, error_code> {
     
     try {
-        auto temp_dir_result = get_temp_directory();
+        auto temp_dir_result = getTempDirectory();
         if (!temp_dir_result) {
             return std::unexpected(temp_dir_result.error());
         }
@@ -404,18 +404,18 @@ auto path_utils::create_temp_directory(
             }
         }
         
-        log_error("Failed to create unique temp directory after 100 attempts");
+        logError("Failed to create unique temp directory after 100 attempts");
         return std::unexpected(error_code::write_error);
         
     } catch (const std::filesystem::filesystem_error& e) {
-        log_error("Failed to create temp directory: {}", e.what());
+        logError("Failed to create temp directory: {}", e.what());
         return std::unexpected(error_code::write_error);
     } catch (...) {
         return std::unexpected(error_code::unknown_error);
     }
 }
 
-bool path_utils::is_valid_filename_char(char c) noexcept {
+bool path_utils::isValidFilenameChar(char c) noexcept {
 #ifdef _WIN32
     // Windows invalid characters: < > : " / \ | ? *
     // Also control characters (0-31)
@@ -434,7 +434,7 @@ bool path_utils::is_valid_filename_char(char c) noexcept {
 #endif
 }
 
-bool path_utils::wildcard_match(
+bool path_utils::wildcardMatch(
     std::string_view str,
     std::string_view pattern) noexcept {
     

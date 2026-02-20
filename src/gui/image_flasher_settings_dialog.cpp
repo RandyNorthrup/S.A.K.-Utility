@@ -319,10 +319,10 @@ void ImageFlasherSettingsDialog::onClearDownloadCaches()
         QDir dir(dirPath);
         if (dir.removeRecursively()) {
             removedCount++;
-            sak::log_info("Cleared download cache: " + dirPath.toStdString());
+            sak::logInfo("Cleared download cache: " + dirPath.toStdString());
         } else {
             failedCount++;
-            sak::log_warning("Failed to remove cache directory: " + dirPath.toStdString());
+            sak::logWarning("Failed to remove cache directory: " + dirPath.toStdString());
         }
     }
 

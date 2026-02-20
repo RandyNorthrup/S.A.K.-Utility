@@ -44,7 +44,7 @@ QuickActionController::~QuickActionController() {
         if (thread->isRunning()) {
             thread->quit();
             if (!thread->wait(10000)) {
-                sak::log_error("QuickAction thread did not stop within 10s");
+                sak::logError("QuickAction thread did not stop within 10s");
             }
         }
         thread->deleteLater();
@@ -250,7 +250,7 @@ void QuickActionController::executeAction(const QString& action_name, bool requi
         }
 
         const QString exe_path = QCoreApplication::applicationFilePath();
-        auto elevation_result = ElevationManager::execute_elevated(
+        auto elevation_result = ElevationManager::executeElevated(
             exe_path.toStdString(),
             arg_string.toStdString(),
             true);

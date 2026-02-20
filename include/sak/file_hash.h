@@ -44,7 +44,7 @@ public:
     /// @param progress Optional progress callback
     /// @param stop_token Optional cancellation token
     /// @return Expected containing hash string or error code
-    [[nodiscard]] auto calculate_hash(
+    [[nodiscard]] auto calculateHash(
         const std::filesystem::path& file_path,
         hash_progress_callback progress = nullptr,
         std::stop_token stop_token = {}) const -> std::expected<std::string, error_code>;
@@ -52,7 +52,7 @@ public:
     /// @brief Calculate hash of a buffer
     /// @param data Data to hash
     /// @return Expected containing hash string or error code
-    [[nodiscard]] auto calculate_hash(
+    [[nodiscard]] auto calculateHash(
         std::span<const std::byte> data) const -> std::expected<std::string, error_code>;
     
     /// @brief Verify file hash matches expected value
@@ -60,20 +60,20 @@ public:
     /// @param expected_hash Expected hash value
     /// @param stop_token Optional cancellation token
     /// @return Expected containing true if match, false if mismatch, or error code
-    [[nodiscard]] auto verify_hash(
+    [[nodiscard]] auto verifyHash(
         const std::filesystem::path& file_path,
         std::string_view expected_hash,
         std::stop_token stop_token = {}) const -> std::expected<bool, error_code>;
     
     /// @brief Get current hash algorithm
     /// @return Current algorithm
-    [[nodiscard]] hash_algorithm get_algorithm() const noexcept {
+    [[nodiscard]] hash_algorithm getAlgorithm() const noexcept {
         return m_algorithm;
     }
     
     /// @brief Get current chunk size
     /// @return Current chunk size in bytes
-    [[nodiscard]] std::size_t get_chunk_size() const noexcept {
+    [[nodiscard]] std::size_t getChunkSize() const noexcept {
         return m_chunk_size;
     }
 
@@ -86,7 +86,7 @@ private:
     /// @param progress Optional progress callback
     /// @param stop_token Optional cancellation token
     /// @return Expected containing hash string or error code
-    [[nodiscard]] auto calculate_md5(
+    [[nodiscard]] auto calculateMd5(
         const std::filesystem::path& file_path,
         hash_progress_callback& progress,
         std::stop_token stop_token) const -> std::expected<std::string, error_code>;
@@ -96,7 +96,7 @@ private:
     /// @param progress Optional progress callback
     /// @param stop_token Optional cancellation token
     /// @return Expected containing hash string or error code
-    [[nodiscard]] auto calculate_sha256(
+    [[nodiscard]] auto calculateSha256(
         const std::filesystem::path& file_path,
         hash_progress_callback& progress,
         std::stop_token stop_token) const -> std::expected<std::string, error_code>;
@@ -104,36 +104,36 @@ private:
     /// @brief Calculate MD5 hash of buffer
     /// @param data Data to hash
     /// @return Expected containing hash string or error code
-    [[nodiscard]] auto calculate_md5(
+    [[nodiscard]] auto calculateMd5(
         std::span<const std::byte> data) const -> std::expected<std::string, error_code>;
     
     /// @brief Calculate SHA-256 hash of buffer
     /// @param data Data to hash
     /// @return Expected containing hash string or error code
-    [[nodiscard]] auto calculate_sha256(
+    [[nodiscard]] auto calculateSha256(
         std::span<const std::byte> data) const -> std::expected<std::string, error_code>;
 };
 
 /// @brief Convenience function to calculate MD5 hash of a file
 /// @param file_path Path to file
 /// @return Expected containing hash string or error code
-[[nodiscard]] inline auto md5_file(
+[[nodiscard]] inline auto md5File(
     const std::filesystem::path& file_path) -> std::expected<std::string, error_code> {
-    return file_hasher(hash_algorithm::md5).calculate_hash(file_path);
+    return file_hasher(hash_algorithm::md5).calculateHash(file_path);
 }
 
 /// @brief Convenience function to calculate SHA-256 hash of a file
 /// @param file_path Path to file
 /// @return Expected containing hash string or error code
-[[nodiscard]] inline auto sha256_file(
+[[nodiscard]] inline auto sha256File(
     const std::filesystem::path& file_path) -> std::expected<std::string, error_code> {
-    return file_hasher(hash_algorithm::sha256).calculate_hash(file_path);
+    return file_hasher(hash_algorithm::sha256).calculateHash(file_path);
 }
 
 /// @brief Convert hash bytes to hex string
 /// @param hash_bytes Hash bytes
 /// @return Hex string representation
-[[nodiscard]] std::string hash_to_hex(std::span<const unsigned char> hash_bytes);
+[[nodiscard]] std::string hashToHex(std::span<const unsigned char> hash_bytes);
 
 } // namespace sak
 

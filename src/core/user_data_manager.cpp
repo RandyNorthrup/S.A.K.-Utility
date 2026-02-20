@@ -412,7 +412,7 @@ bool UserDataManager::createArchive(const QStringList& source_paths,
         archive.close();
         
         // Encrypt data
-        auto encrypted = sak::encrypt_data(data, config.password);
+        auto encrypted = sak::encryptData(data, config.password);
         if (!encrypted) {
             qWarning() << "[UserDataManager] Encryption failed:" << static_cast<int>(encrypted.error());
             QFile::remove(archive_path);
@@ -449,7 +449,7 @@ bool UserDataManager::extractArchive(const QString& archive_path,
         archive.close();
         
         // Decrypt data
-        auto decrypted = sak::decrypt_data(encrypted_data, config.password);
+        auto decrypted = sak::decryptData(encrypted_data, config.password);
         if (!decrypted) {
             qWarning() << "[UserDataManager] Decryption failed:" << static_cast<int>(decrypted.error());
             return false;

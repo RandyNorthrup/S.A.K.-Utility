@@ -158,7 +158,7 @@ void NetworkTransferController::startSource(const TransferManifest& manifest,
     m_authenticated = false;
     m_auth_required = m_settings.encryption_enabled;
 
-    log_info("NetworkTransferController startSource to {}:{} with {} files", peer.ip_address.toStdString(),
+    logInfo("NetworkTransferController startSource to {}:{} with {} files", peer.ip_address.toStdString(),
              m_settings.control_port, files.size());
 
     if (m_settings.encryption_enabled) {
@@ -193,7 +193,7 @@ void NetworkTransferController::startDestination(const QString& passphrase, cons
     m_authenticated = false;
     m_auth_required = m_settings.encryption_enabled;
 
-    log_info("NetworkTransferController startDestination on port {}", m_settings.control_port);
+    logInfo("NetworkTransferController startDestination on port {}", m_settings.control_port);
 
     TransferPeerInfo info;
     info.peer_id = QUuid::createUuid().toString(QUuid::WithoutBraces);
@@ -237,7 +237,7 @@ void NetworkTransferController::approveTransfer(bool approved) {
     }
 
     if (!approved) {
-        log_warning("NetworkTransferController transfer rejected by user");
+        logWarning("NetworkTransferController transfer rejected by user");
         auto message = TransferProtocol::makeMessage(TransferMessageType::TransferReject, {
             {"reason", "Rejected by user"}
         });
@@ -257,7 +257,7 @@ void NetworkTransferController::approveTransfer(bool approved) {
 
 void NetworkTransferController::stop() {
     if (m_mode != Mode::Idle) {
-        log_info("NetworkTransferController stop requested");
+        logInfo("NetworkTransferController stop requested");
     }
     if (m_discovery->isRunning()) {
         m_discovery->stop();
@@ -352,13 +352,13 @@ void NetworkTransferController::startDiscovery(const QString& mode) {
     m_discovery->setPeerInfo(info);
     m_discovery->setPort(m_settings.discovery_port);
     m_discovery->start();
-    log_info("NetworkTransferController discovery started in mode {}", mode.toStdString());
+    logInfo("NetworkTransferController discovery started in mode {}", mode.toStdString());
 }
 
 void NetworkTransferController::stopDiscovery() {
     if (m_discovery->isRunning()) {
         m_discovery->stop();
-        log_info("NetworkTransferController discovery stopped");
+        logInfo("NetworkTransferController discovery stopped");
     }
 }
 
@@ -383,7 +383,7 @@ NetworkTransferController::Mode NetworkTransferController::mode() const {
 void NetworkTransferController::onConnected() {
     Q_EMIT connectionStateChanged(true);
     m_heartbeatTimer->start();
-    log_info("NetworkTransferController control channel connected");
+    logInfo("NetworkTransferController control channel connected");
 
     QJsonObject helloPayload;
     helloPayload["peer_id"] = QUuid::createUuid().toString(QUuid::WithoutBraces);
@@ -408,7 +408,7 @@ void NetworkTransferController::onConnected() {
 void NetworkTransferController::onDisconnected() {
     Q_EMIT connectionStateChanged(false);
     m_heartbeatTimer->stop();
-    log_info("NetworkTransferController control channel disconnected");
+    logInfo("NetworkTransferController control channel disconnected");
 }
 
 void NetworkTransferController::onDataReceived(const QByteArray& data) {
@@ -416,7 +416,7 @@ void NetworkTransferController::onDataReceived(const QByteArray& data) {
     for (const auto& message : messages) {
         const auto type = TransferProtocol::parseType(message.value("message_type").toString());
         if (!type.has_value()) {
-            log_warning("NetworkTransferController received unknown message type");
+            logWarning("NetworkTransferController received unknown message type");
             continue;
         }
 
@@ -597,7 +597,7 @@ void NetworkTransferController::startWorkerReceiver() {
             {"data_port", static_cast<int>(m_settings.data_port)}
         });
         TransferProtocol::writeMessage(m_connection->socket(), message);
-        log_info("NetworkTransferController transfer approved, waiting for data channel");
+        logInfo("NetworkTransferController transfer approved, waiting for data channel");
         Q_EMIT statusMessage(tr("Transfer approved. Awaiting data connection..."));
         m_pendingApprove = false;
     });

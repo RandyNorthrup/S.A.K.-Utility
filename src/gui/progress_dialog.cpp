@@ -26,7 +26,7 @@ ProgressDialog::ProgressDialog(const QString& title, const QString& label_text, 
     setWindowTitle(title);
     setModal(true);
     setMinimumWidth(500);
-    setup_ui();
+    setupUi();
     
     if (!label_text.isEmpty()) {
         setLabelText(label_text);
@@ -34,7 +34,7 @@ ProgressDialog::ProgressDialog(const QString& title, const QString& label_text, 
 
     // Start timer for elapsed time updates
     m_timer = new QTimer(this);
-    connect(m_timer, &QTimer::timeout, this, &ProgressDialog::update_time_displays);
+    connect(m_timer, &QTimer::timeout, this, &ProgressDialog::updateTimeDisplays);
     m_timer->start(1000); // Update every second
 }
 
@@ -45,7 +45,7 @@ ProgressDialog::~ProgressDialog()
     }
 }
 
-void ProgressDialog::setup_ui()
+void ProgressDialog::setupUi()
 {
     auto* main_layout = new QVBoxLayout(this);
     main_layout->setSpacing(12);
@@ -93,7 +93,7 @@ void ProgressDialog::setup_ui()
     button_layout->addStretch();
     
     m_cancel_button = new QPushButton("Cancel", this);
-    connect(m_cancel_button, &QPushButton::clicked, this, &ProgressDialog::on_cancel_clicked);
+    connect(m_cancel_button, &QPushButton::clicked, this, &ProgressDialog::onCancelClicked);
     button_layout->addWidget(m_cancel_button);
     
     main_layout->addLayout(button_layout);
@@ -121,7 +121,7 @@ void ProgressDialog::setValue(int value)
     
     // Update ETA if in determinate mode
     if (m_progress_bar->maximum() > 0) {
-        update_eta(value, m_progress_bar->maximum());
+        updateEta(value, m_progress_bar->maximum());
     }
     
     m_last_value = value;
@@ -176,7 +176,7 @@ void ProgressDialog::reset()
     m_cancel_button->setEnabled(true);
 }
 
-void ProgressDialog::on_cancel_clicked()
+void ProgressDialog::onCancelClicked()
 {
     auto reply = QMessageBox::question(
         this,
@@ -195,7 +195,7 @@ void ProgressDialog::on_cancel_clicked()
     }
 }
 
-void ProgressDialog::update_time_displays()
+void ProgressDialog::updateTimeDisplays()
 {
     if (!m_show_elapsed_time && !m_show_eta) {
         return;
@@ -205,19 +205,19 @@ void ProgressDialog::update_time_displays()
     auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - m_start_time);
 
     if (m_show_elapsed_time) {
-        m_elapsed_label->setText(QString("Elapsed: %1").arg(format_duration(elapsed)));
+        m_elapsed_label->setText(QString("Elapsed: %1").arg(formatDuration(elapsed)));
     }
 
     if (m_show_eta && m_progress_bar->maximum() > 0) {
         if (m_estimated_remaining.count() > 0) {
-            m_eta_label->setText(QString("ETA: %1").arg(format_duration(m_estimated_remaining)));
+            m_eta_label->setText(QString("ETA: %1").arg(formatDuration(m_estimated_remaining)));
         } else {
             m_eta_label->setText("ETA: Calculating...");
         }
     }
 }
 
-void ProgressDialog::update_eta(int current, int maximum)
+void ProgressDialog::updateEta(int current, int maximum)
 {
     if (maximum <= 0 || current <= 0) {
         m_estimated_remaining = std::chrono::seconds(0);
@@ -246,7 +246,7 @@ void ProgressDialog::update_eta(int current, int maximum)
     }
 }
 
-QString ProgressDialog::format_duration(std::chrono::seconds duration) const
+QString ProgressDialog::formatDuration(std::chrono::seconds duration) const
 {
     auto hours = std::chrono::duration_cast<std::chrono::hours>(duration);
     duration -= hours;

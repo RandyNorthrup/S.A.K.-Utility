@@ -96,14 +96,14 @@ Q_SIGNALS:
      * @param message Status message
      * @param timeout_ms Timeout in milliseconds (0 = permanent)
      */
-    void status_message(const QString& message, int timeout_ms);
+    void statusMessage(const QString& message, int timeout_ms);
 
     /**
      * @brief Signal emitted when progress updates
      * @param current Current progress value
      * @param maximum Maximum progress value
      */
-    void progress_updated(int current, int maximum);
+    void progressUpdated(int current, int maximum);
 
 private Q_SLOTS:
     // Toolbar actions

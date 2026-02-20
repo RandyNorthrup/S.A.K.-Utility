@@ -14,19 +14,19 @@ DuplicateFinderWorker::DuplicateFinderWorker(const Config& config, QObject* pare
 
 auto DuplicateFinderWorker::execute() -> std::expected<void, sak::error_code>
 {
-    sak::log_info("Starting duplicate file scan");
+    sak::logInfo("Starting duplicate file scan");
 
     // Scan all directories
-    auto files_result = scan_directories();
+    auto files_result = scanDirectories();
     if (!files_result) {
         return std::unexpected(files_result.error());
     }
 
     const auto& files = files_result.value();
-    sak::log_info("Found {} files to analyze", files.size());
+    sak::logInfo("Found {} files to analyze", files.size());
 
     if (files.empty()) {
-        Q_EMIT results_ready("No files found to scan.", 0, 0);
+        Q_EMIT resultsReady("No files found to scan.", 0, 0);
         return {};
     }
 
@@ -34,28 +34,28 @@ auto DuplicateFinderWorker::execute() -> std::expected<void, sak::error_code>
     std::expected<std::vector<std::pair<std::filesystem::path, std::string>>, sak::error_code> hashed_result;
     
     if (m_config.parallel_hashing) {
-        sak::log_info("Using parallel hash calculation");
-        hashed_result = calculate_hashes_parallel(files);
+        sak::logInfo("Using parallel hash calculation");
+        hashed_result = calculateHashesParallel(files);
     } else {
-        sak::log_info("Using sequential hash calculation");
+        sak::logInfo("Using sequential hash calculation");
         std::vector<std::pair<std::filesystem::path, std::string>> hashed_files;
         const size_t file_count = files.size();
         hashed_files.reserve(file_count);
 
         for (size_t i = 0; i < file_count; ++i) {
-            if (check_stop()) {
+            if (checkStop()) {
                 return std::unexpected(sak::error_code::operation_cancelled);
             }
 
             const auto& file = files[i];
-            Q_EMIT scan_progress(static_cast<int>(i + 1), static_cast<int>(file_count),
+            Q_EMIT scanProgress(static_cast<int>(i + 1), static_cast<int>(file_count),
                                QString::fromStdString(file.string()));
 
-            auto hash_result = calculate_file_hash(file);
+            auto hash_result = calculateFileHash(file);
             if (hash_result) {
                 hashed_files.emplace_back(file, hash_result.value());
             } else {
-                sak::log_warning("Failed to hash file: {}", file.string());
+                sak::logWarning("Failed to hash file: {}", file.string());
             }
         }
         hashed_result = std::move(hashed_files);
@@ -66,10 +66,10 @@ auto DuplicateFinderWorker::execute() -> std::expected<void, sak::error_code>
     }
 
     const auto& hashed_files = hashed_result.value();
-    sak::log_info("Hashed {} files successfully", hashed_files.size());
+    sak::logInfo("Hashed {} files successfully", hashed_files.size());
 
     // Group files by hash
-    auto hash_groups = group_by_hash(hashed_files);
+    auto hash_groups = groupByHash(hashed_files);
 
     // Build duplicate groups
     std::vector<DuplicateGroup> duplicate_groups;
@@ -93,48 +93,48 @@ auto DuplicateFinderWorker::execute() -> std::expected<void, sak::error_code>
                 total_duplicates += static_cast<int>(paths.size() - 1);
                 total_wasted += group.wasted_space;
             } catch (const std::filesystem::filesystem_error& e) {
-                sak::log_warning("Failed to get file size: {}", e.what());
+                sak::logWarning("Failed to get file size: {}", e.what());
             }
         }
     }
 
-    sak::log_info("Found {} duplicate groups, {} duplicate files, {} bytes wasted",
+    sak::logInfo("Found {} duplicate groups, {} duplicate files, {} bytes wasted",
                   duplicate_groups.size(), total_duplicates, total_wasted);
 
     // Generate and emit results
-    QString summary = generate_summary(duplicate_groups);
-    Q_EMIT results_ready(summary, total_duplicates, total_wasted);
+    QString summary = generateSummary(duplicate_groups);
+    Q_EMIT resultsReady(summary, total_duplicates, total_wasted);
 
     return {};
 }
 
-auto DuplicateFinderWorker::scan_directories() 
+auto DuplicateFinderWorker::scanDirectories() 
     -> std::expected<std::vector<std::filesystem::path>, sak::error_code>
 {
     std::vector<std::filesystem::path> files;
     files.reserve(1000);  // Pre-allocate for better performance
 
-    for (const auto& dir_str : m_config.scan_directories) {
-        if (check_stop()) {
+    for (const auto& dir_str : m_config.scanDirectories) {
+        if (checkStop()) {
             return std::unexpected(sak::error_code::operation_cancelled);
         }
 
         std::filesystem::path dir_path(dir_str.toStdString());
 
         if (!std::filesystem::exists(dir_path)) {
-            sak::log_warning("Directory does not exist: {}", dir_path.string());
+            sak::logWarning("Directory does not exist: {}", dir_path.string());
             continue;
         }
 
         if (!std::filesystem::is_directory(dir_path)) {
-            sak::log_warning("Path is not a directory: {}", dir_path.string());
+            sak::logWarning("Path is not a directory: {}", dir_path.string());
             continue;
         }
 
         try {
             if (m_config.recursive_scan) {
                 for (const auto& entry : std::filesystem::recursive_directory_iterator(dir_path)) {
-                    if (check_stop()) {
+                    if (checkStop()) {
                         return std::unexpected(sak::error_code::operation_cancelled);
                     }
 
@@ -147,7 +147,7 @@ auto DuplicateFinderWorker::scan_directories()
                 }
             } else {
                 for (const auto& entry : std::filesystem::directory_iterator(dir_path)) {
-                    if (check_stop()) {
+                    if (checkStop()) {
                         return std::unexpected(sak::error_code::operation_cancelled);
                     }
 
@@ -160,7 +160,7 @@ auto DuplicateFinderWorker::scan_directories()
                 }
             }
         } catch (const std::filesystem::filesystem_error& e) {
-            sak::log_error("Error scanning directory {}: {}", dir_path.string(), e.what());
+            sak::logError("Error scanning directory {}: {}", dir_path.string(), e.what());
             return std::unexpected(sak::error_code::scan_failed);
         }
     }
@@ -168,17 +168,17 @@ auto DuplicateFinderWorker::scan_directories()
     return files;
 }
 
-auto DuplicateFinderWorker::calculate_file_hash(const std::filesystem::path& file_path)
+auto DuplicateFinderWorker::calculateFileHash(const std::filesystem::path& file_path)
     -> std::expected<std::string, sak::error_code>
 {
-    auto result = m_hasher.calculate_hash(file_path.string());
+    auto result = m_hasher.calculateHash(file_path.string());
     if (!result) {
         return std::unexpected(result.error());
     }
     return result.value();
 }
 
-auto DuplicateFinderWorker::group_by_hash(
+auto DuplicateFinderWorker::groupByHash(
     const std::vector<std::pair<std::filesystem::path, std::string>>& files)
     -> std::unordered_map<std::string, std::vector<std::filesystem::path>>
 {
@@ -191,7 +191,7 @@ auto DuplicateFinderWorker::group_by_hash(
     return groups;
 }
 
-auto DuplicateFinderWorker::generate_summary(const std::vector<DuplicateGroup>& groups) -> QString
+auto DuplicateFinderWorker::generateSummary(const std::vector<DuplicateGroup>& groups) -> QString
 {
     if (groups.empty()) {
         return "No duplicate files found.";
@@ -230,7 +230,7 @@ auto DuplicateFinderWorker::generate_summary(const std::vector<DuplicateGroup>& 
     return summary;
 }
 
-auto DuplicateFinderWorker::calculate_hashes_parallel(const std::vector<std::filesystem::path>& files)
+auto DuplicateFinderWorker::calculateHashesParallel(const std::vector<std::filesystem::path>& files)
     -> std::expected<std::vector<std::pair<std::filesystem::path, std::string>>, sak::error_code>
 {
     // Determine thread count
@@ -242,7 +242,7 @@ auto DuplicateFinderWorker::calculate_hashes_parallel(const std::vector<std::fil
         }
     }
 
-    sak::log_info("Using {} threads for parallel hashing", thread_count);
+    sak::logInfo("Using {} threads for parallel hashing", thread_count);
 
     // Set up thread pool
     QThreadPool pool;
@@ -259,7 +259,7 @@ auto DuplicateFinderWorker::calculate_hashes_parallel(const std::vector<std::fil
 
     // Lambda for hashing a single file
     auto hash_file = [this, &files, &results, &processed_count, &error_occurred, &results_mutex](int index) {
-        if (check_stop() || error_occurred.load()) {
+        if (checkStop() || error_occurred.load()) {
             return;
         }
 
@@ -267,20 +267,20 @@ auto DuplicateFinderWorker::calculate_hashes_parallel(const std::vector<std::fil
         
         // Create a file hasher for this thread
         sak::file_hasher hasher(sak::hash_algorithm::md5);
-        auto hash_result = hasher.calculate_hash(file);
+        auto hash_result = hasher.calculateHash(file);
 
         if (hash_result) {
             QMutexLocker locker(&results_mutex);
             results[static_cast<size_t>(index)] = std::make_pair(file, hash_result.value());
         } else {
-            sak::log_warning("Failed to hash file: {}", file.string());
+            sak::logWarning("Failed to hash file: {}", file.string());
             error_occurred.store(true);
         }
 
         // Update progress
         int current = ++processed_count;
         if (current % 10 == 0 || current == static_cast<int>(files.size())) {
-            Q_EMIT scan_progress(current, static_cast<int>(files.size()),
+            Q_EMIT scanProgress(current, static_cast<int>(files.size()),
                                QString::fromStdString(file.string()));
         }
     };
@@ -295,12 +295,12 @@ auto DuplicateFinderWorker::calculate_hashes_parallel(const std::vector<std::fil
     // Execute parallel map
     QtConcurrent::blockingMap(indices, hash_file);
 
-    if (check_stop()) {
+    if (checkStop()) {
         return std::unexpected(sak::error_code::operation_cancelled);
     }
 
     if (error_occurred.load()) {
-        sak::log_error("Errors occurred during parallel hashing");
+        sak::logError("Errors occurred during parallel hashing");
     }
 
     // Filter out empty results (failed hashes)
@@ -313,7 +313,7 @@ auto DuplicateFinderWorker::calculate_hashes_parallel(const std::vector<std::fil
         }
     }
 
-    sak::log_info("Parallel hashing complete: {}/{} files successful", 
+    sak::logInfo("Parallel hashing complete: {}/{} files successful", 
                   valid_results.size(), files.size());
 
     return valid_results;

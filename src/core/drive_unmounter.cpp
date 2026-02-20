@@ -30,19 +30,19 @@ DriveUnmounter::~DriveUnmounter() {
 }
 
 bool DriveUnmounter::unmountDrive(int driveNumber) {
-    sak::log_info(QString("Unmounting drive %1").arg(driveNumber).toStdString());
+    sak::logInfo(QString("Unmounting drive %1").arg(driveNumber).toStdString());
     Q_EMIT statusMessage(QString("Preparing drive %1...").arg(driveNumber));
 
     // Step 1: Get all volumes on this drive
     QStringList volumes = getVolumesOnDrive(driveNumber);
     if (volumes.isEmpty()) {
-        sak::log_info(QString("No volumes found on drive, proceeding").toStdString());
+        sak::logInfo(QString("No volumes found on drive, proceeding").toStdString());
         return true;
     }
 
     // Step 2: Prevent auto-mount
     if (!preventAutoMount(driveNumber)) {
-        sak::log_warning(QString("Failed to prevent auto-mount, continuing anyway").toStdString());
+        sak::logWarning(QString("Failed to prevent auto-mount, continuing anyway").toStdString());
     }
 
     // Step 3: Lock and dismount each volume
@@ -52,7 +52,7 @@ bool DriveUnmounter::unmountDrive(int driveNumber) {
 
         // Delete mount points first
         if (!deleteMountPoints(volumePath)) {
-            sak::log_warning(QString("Failed to delete mount points for %1")
+            sak::logWarning(QString("Failed to delete mount points for %1")
                 .arg(volumePath).toStdString());
         }
 
@@ -66,7 +66,7 @@ bool DriveUnmounter::unmountDrive(int driveNumber) {
         if (!locked) {
             m_lastError = QString("Failed to lock volume %1: %2")
                 .arg(volumePath).arg(m_lastError);
-            sak::log_error(m_lastError.toStdString());
+            sak::logError(m_lastError.toStdString());
             allSucceeded = false;
             continue;
         }
@@ -79,7 +79,7 @@ bool DriveUnmounter::unmountDrive(int driveNumber) {
         if (!dismounted) {
             m_lastError = QString("Failed to dismount volume %1: %2")
                 .arg(volumePath).arg(m_lastError);
-            sak::log_error(m_lastError.toStdString());
+            sak::logError(m_lastError.toStdString());
             CloseHandle(volumeHandle);
             allSucceeded = false;
             continue;
@@ -87,7 +87,7 @@ bool DriveUnmounter::unmountDrive(int driveNumber) {
 
         // Keep handle open until we're done with the drive
         m_lockedVolumes.insert(volumePath, volumeHandle);
-        sak::log_info(QString("Successfully unmounted %1").arg(volumePath).toStdString());
+        sak::logInfo(QString("Successfully unmounted %1").arg(volumePath).toStdString());
     }
 
     // Step 4: Close all remaining handles
@@ -95,10 +95,10 @@ bool DriveUnmounter::unmountDrive(int driveNumber) {
 
     if (allSucceeded) {
         Q_EMIT statusMessage("Drive prepared successfully");
-        sak::log_info(QString("Drive unmount completed successfully").toStdString());
+        sak::logInfo(QString("Drive unmount completed successfully").toStdString());
     } else {
         Q_EMIT statusMessage("Drive preparation completed with warnings");
-        sak::log_warning(QString("Drive unmount completed with some failures").toStdString());
+        sak::logWarning(QString("Drive unmount completed with some failures").toStdString());
     }
 
     return allSucceeded;
@@ -256,7 +256,7 @@ bool DriveUnmounter::deleteMountPoints(const QString& volumePath) {
 
         // Delete the mount point
         if (!DeleteVolumeMountPointW(fullPath)) {
-            sak::log_warning(QString("Failed to delete mount point: %1")
+            sak::logWarning(QString("Failed to delete mount point: %1")
                 .arg(QString::fromWCharArray(fullPath)).toStdString());
             allSucceeded = false;
         }
@@ -324,7 +324,7 @@ bool DriveUnmounter::retryWithBackoff(std::function<bool()> operation, int maxAt
         }
 
         if (attempt < maxAttempts) {
-            sak::log_info(QString("Retry attempt %1/%2, waiting %3ms")
+            sak::logInfo(QString("Retry attempt %1/%2, waiting %3ms")
                 .arg(attempt).arg(maxAttempts).arg(delay).toStdString());
             QThread::msleep(delay);
             delay *= 2; // Exponential backoff
@@ -390,7 +390,7 @@ bool DriveUnmounter::closeAllHandles(int driveNumber) {
     DWORD dwError = RmStartSession(&dwSession, 0, szSessionKey);
     
     if (dwError != ERROR_SUCCESS) {
-        sak::log_warning(QString("Failed to start Restart Manager session: %1").arg(dwError).toStdString());
+        sak::logWarning(QString("Failed to start Restart Manager session: %1").arg(dwError).toStdString());
         return true;
     }
     
@@ -455,13 +455,13 @@ bool DriveUnmounter::closeAllHandles(int driveNumber) {
             
             if (dwError == ERROR_SUCCESS || dwError == ERROR_MORE_DATA) {
                 if (nProcInfoNeeded > 0) {
-                    sak::log_info(QString("Found %1 processes with open handles").arg(nProcInfoNeeded).toStdString());
+                    sak::logInfo(QString("Found %1 processes with open handles").arg(nProcInfoNeeded).toStdString());
                     
                     dwError = RmShutdown(dwSession, RmForceShutdown, nullptr);
                     if (dwError == ERROR_SUCCESS) {
-                        sak::log_info("Successfully closed all file handles");
+                        sak::logInfo("Successfully closed all file handles");
                     } else {
-                        sak::log_warning(QString("Failed to close handles: %1").arg(dwError).toStdString());
+                        sak::logWarning(QString("Failed to close handles: %1").arg(dwError).toStdString());
                     }
                 }
             }

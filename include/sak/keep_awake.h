@@ -46,7 +46,7 @@ public:
      * @brief Check if keep awake is currently active
      * @return True if active
      */
-    [[nodiscard]] static bool is_active() noexcept;
+    [[nodiscard]] static bool isActive() noexcept;
 
 private:
     static inline bool s_is_active = false;
@@ -84,7 +84,7 @@ public:
      * @brief Check if guard successfully activated
      * @return True if active
      */
-    [[nodiscard]] bool is_active() const noexcept { return m_is_active; }
+    [[nodiscard]] bool isActive() const noexcept { return m_is_active; }
 
 private:
     bool m_is_active{false};

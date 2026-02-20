@@ -9,25 +9,25 @@ WorkerBase::WorkerBase(QObject* parent)
 WorkerBase::~WorkerBase()
 {
     if (isRunning()) {
-        request_stop();
+        requestStop();
         if (!wait(15000)) {
-            sak::log_error("Worker thread did not stop within 15s — potential resource leak");
+            sak::logError("Worker thread did not stop within 15s — potential resource leak");
         }
     }
 }
 
-void WorkerBase::request_stop() noexcept
+void WorkerBase::requestStop() noexcept
 {
     m_stop_requested.store(true, std::memory_order_release);
     requestInterruption();
 }
 
-bool WorkerBase::stop_requested() const noexcept
+bool WorkerBase::stopRequested() const noexcept
 {
     return m_stop_requested.load(std::memory_order_acquire);
 }
 
-bool WorkerBase::is_running() const noexcept
+bool WorkerBase::isExecuting() const noexcept
 {
     return m_is_running.load(std::memory_order_acquire);
 }
@@ -55,16 +55,16 @@ void WorkerBase::run()
     }
 }
 
-bool WorkerBase::check_stop()
+bool WorkerBase::checkStop()
 {
-    if (stop_requested()) {
-        sak::log_info("Worker cancellation requested");
+    if (stopRequested()) {
+        sak::logInfo("Worker cancellation requested");
         return true;
     }
     return false;
 }
 
-void WorkerBase::report_progress(int current, int total, const QString& message)
+void WorkerBase::reportProgress(int current, int total, const QString& message)
 {
     Q_EMIT progress(current, total, message);
 }

@@ -22,10 +22,10 @@ LogViewer::LogViewer(QWidget* parent)
     , m_current_filter(LogLevel::All)
     , m_auto_scroll(true)
 {
-    setup_ui();
+    setupUi();
 }
 
-void LogViewer::setup_ui()
+void LogViewer::setupUi()
 {
     auto* main_layout = new QVBoxLayout(this);
     main_layout->setSpacing(8);
@@ -43,7 +43,7 @@ void LogViewer::setup_ui()
     m_filter_combo->addItem("Error");
     m_filter_combo->setToolTip("Show only logs at or above the selected severity level");
     connect(m_filter_combo, QOverload<int>::of(&QComboBox::currentIndexChanged),
-            this, &LogViewer::on_filter_changed);
+            this, &LogViewer::onFilterChanged);
     toolbar_layout->addWidget(m_filter_combo);
 
     // Search box
@@ -51,26 +51,26 @@ void LogViewer::setup_ui()
     m_search_edit->setPlaceholderText("Search logs...");
     m_search_edit->setClearButtonEnabled(true);
     connect(m_search_edit, &QLineEdit::textChanged,
-            this, &LogViewer::on_search_text_changed);
+            this, &LogViewer::onSearchTextChanged);
     toolbar_layout->addWidget(m_search_edit);
 
     // Auto-scroll checkbox
     m_auto_scroll_checkbox = new QCheckBox("Auto-scroll", this);
     m_auto_scroll_checkbox->setChecked(true);
     connect(m_auto_scroll_checkbox, &QCheckBox::toggled,
-            this, &LogViewer::on_auto_scroll_toggled);
+            this, &LogViewer::onAutoScrollToggled);
     toolbar_layout->addWidget(m_auto_scroll_checkbox);
 
     // Clear button
     m_clear_button = new QPushButton("Clear", this);
     connect(m_clear_button, &QPushButton::clicked,
-            this, &LogViewer::on_clear_clicked);
+            this, &LogViewer::onClearClicked);
     toolbar_layout->addWidget(m_clear_button);
 
     // Save button
     m_save_button = new QPushButton("Save Log", this);
     connect(m_save_button, &QPushButton::clicked,
-            this, &LogViewer::on_save_clicked);
+            this, &LogViewer::onSaveClicked);
     toolbar_layout->addWidget(m_save_button);
 
     main_layout->addLayout(toolbar_layout);
@@ -85,7 +85,7 @@ void LogViewer::setup_ui()
 
 void LogViewer::appendLog(const QString& message, LogLevel level)
 {
-    QString formatted_msg = format_log_message(message, level);
+    QString formatted_msg = formatLogMessage(message, level);
     m_all_logs.append(formatted_msg);
     
     // Apply current filter
@@ -131,7 +131,7 @@ bool LogViewer::loadLogFile(const QString& file_path)
     
     file.close();
     
-    sak::log_info("Loaded log file: {}", file_path.toStdString());
+    sak::logInfo("Loaded log file: {}", file_path.toStdString());
     return true;
 }
 
@@ -147,7 +147,7 @@ void LogViewer::setAutoScroll(bool enabled)
     m_auto_scroll_checkbox->setChecked(enabled);
 }
 
-void LogViewer::on_clear_clicked()
+void LogViewer::onClearClicked()
 {
     auto reply = QMessageBox::question(
         this,
@@ -162,7 +162,7 @@ void LogViewer::on_clear_clicked()
     }
 }
 
-void LogViewer::on_save_clicked()
+void LogViewer::onSaveClicked()
 {
     QString file_path = QFileDialog::getSaveFileName(
         this,
@@ -186,29 +186,29 @@ void LogViewer::on_save_clicked()
     out << m_text_browser->toPlainText();
     file.close();
     
-    sak::log_info("Saved log file: {}", file_path.toStdString());
+    sak::logInfo("Saved log file: {}", file_path.toStdString());
     QMessageBox::information(this, "Save Complete",
                            QString("Log saved to: %1").arg(file_path));
 }
 
-void LogViewer::on_filter_changed(int index)
+void LogViewer::onFilterChanged(int index)
 {
     m_current_filter = static_cast<LogLevel>(index);
-    apply_filters();
+    applyFilters();
 }
 
-void LogViewer::on_search_text_changed(const QString& text)
+void LogViewer::onSearchTextChanged(const QString& text)
 {
     Q_UNUSED(text);
-    apply_filters();
+    applyFilters();
 }
 
-void LogViewer::on_auto_scroll_toggled(bool checked)
+void LogViewer::onAutoScrollToggled(bool checked)
 {
     m_auto_scroll = checked;
 }
 
-void LogViewer::apply_filters()
+void LogViewer::applyFilters()
 {
     m_text_browser->clear();
     
@@ -218,7 +218,7 @@ void LogViewer::apply_filters()
         // Apply level filter
         bool level_match = (m_current_filter == LogLevel::All);
         if (!level_match) {
-            QString level_text = get_level_text(m_current_filter);
+            QString level_text = getLevelText(m_current_filter);
             level_match = log.contains(level_text, Qt::CaseInsensitive);
         }
         
@@ -232,18 +232,18 @@ void LogViewer::apply_filters()
     }
 }
 
-QString LogViewer::format_log_message(const QString& message, LogLevel level) const
+QString LogViewer::formatLogMessage(const QString& message, LogLevel level) const
 {
     QString timestamp = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss");
-    QString level_text = get_level_text(level);
-    QString color = get_level_color(level);
+    QString level_text = getLevelText(level);
+    QString color = getLevelColor(level);
     
     return QString("<span style='color: gray;'>%1</span> "
                    "<span style='color: %2; font-weight: bold;'>[%3]</span> %4")
            .arg(timestamp, color, level_text, message);
 }
 
-QString LogViewer::get_level_color(LogLevel level) const
+QString LogViewer::getLevelColor(LogLevel level) const
 {
     switch (level) {
         case LogLevel::Info:    return "#4A90E2";
@@ -253,7 +253,7 @@ QString LogViewer::get_level_color(LogLevel level) const
     }
 }
 
-QString LogViewer::get_level_text(LogLevel level) const
+QString LogViewer::getLevelText(LogLevel level) const
 {
     switch (level) {
         case LogLevel::Info:    return "INFO";

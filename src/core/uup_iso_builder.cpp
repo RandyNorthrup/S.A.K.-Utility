@@ -66,7 +66,7 @@ void UupIsoBuilder::startBuild(const QList<UupDumpApi::FileInfo>& files,
         m_totalDownloadBytes += file.size;
     }
 
-    sak::log_info("Starting UUP ISO build: " + std::to_string(m_files.size()) +
+    sak::logInfo("Starting UUP ISO build: " + std::to_string(m_files.size()) +
                   " files, " + std::to_string(m_totalDownloadBytes / (1024 * 1024)) +
                   " MB total, edition=" + m_edition.toStdString() +
                   ", lang=" + m_lang.toStdString());
@@ -119,7 +119,7 @@ QString UupIsoBuilder::findAria2Path() const
             return it.next();
     }
 
-    sak::log_error("aria2c.exe not found in bundled tools");
+    sak::logError("aria2c.exe not found in bundled tools");
     return {};
 }
 
@@ -145,7 +145,7 @@ QString UupIsoBuilder::findConverterDir() const
         }
     }
 
-    sak::log_error("UUP converter (convert-UUP.cmd) not found in bundled tools");
+    sak::logError("UUP converter (convert-UUP.cmd) not found in bundled tools");
     return {};
 }
 
@@ -185,7 +185,7 @@ void UupIsoBuilder::executePreparation()
             "Run scripts/bundle_uup_tools.ps1 and rebuild the application.");
         return;
     }
-    sak::log_info("Found aria2c: " + aria2Path.toStdString());
+    sak::logInfo("Found aria2c: " + aria2Path.toStdString());
 
     QString converterDir = findConverterDir();
     if (converterDir.isEmpty()) {
@@ -195,7 +195,7 @@ void UupIsoBuilder::executePreparation()
             "Run scripts/bundle_uup_tools.ps1 and rebuild the application.");
         return;
     }
-    sak::log_info("Found converter: " + converterDir.toStdString());
+    sak::logInfo("Found converter: " + converterDir.toStdString());
 
     // ---- Create work directory (deterministic name for resume support) ----
     Q_EMIT progressUpdated(1, "Creating work directory...");
@@ -248,14 +248,14 @@ void UupIsoBuilder::executePreparation()
 
     if (existingFiles > 0) {
         double existingGB = existingBytes / (1024.0 * 1024.0 * 1024.0);
-        sak::log_info("Resuming download — found " + std::to_string(existingFiles) +
+        sak::logInfo("Resuming download — found " + std::to_string(existingFiles) +
                      " existing files (" + std::to_string(static_cast<int>(existingGB * 100) / 100) +
                      " GB) in work directory");
         Q_EMIT progressUpdated(1, QString("Resuming download \u2014 %1 files already present (%2 GB)")
             .arg(existingFiles).arg(existingGB, 0, 'f', 2));
     }
 
-    sak::log_info("Work directory created: " + m_workDir.toStdString());
+    sak::logInfo("Work directory created: " + m_workDir.toStdString());
 
     // ---- Generate aria2c input file ----
     Q_EMIT progressUpdated(2, "Generating download manifest...");
@@ -329,19 +329,19 @@ void UupIsoBuilder::executePreparation()
         if (QFile::copy(srcPath, destPath)) {
             copiedCount++;
         } else {
-            sak::log_warning("Failed to copy converter file: " + relativePath.toStdString());
+            sak::logWarning("Failed to copy converter file: " + relativePath.toStdString());
         }
     }
     if (skippedConverterFiles > 0) {
-        sak::log_info("Skipped " + std::to_string(skippedConverterFiles) +
+        sak::logInfo("Skipped " + std::to_string(skippedConverterFiles) +
                       " converter files already in work directory");
     }
-    sak::log_info("Copied " + std::to_string(copiedCount) + " converter files to work directory");
+    sak::logInfo("Copied " + std::to_string(copiedCount) + " converter files to work directory");
 
     if (m_cancelled) return;
 
     Q_EMIT progressUpdated(PHASE_PREPARE_WEIGHT, "Preparation complete");
-    sak::log_info("UUP build preparation complete");
+    sak::logInfo("UUP build preparation complete");
 
     // Proceed to download phase
     executeDownload();
@@ -394,7 +394,7 @@ bool UupIsoBuilder::generateAria2InputFile(const QString& outputPath)
 
     for (const auto& fileInfo : m_files) {
         if (fileInfo.url.isEmpty()) {
-            sak::log_warning("Skipping file with empty URL: " + fileInfo.fileName.toStdString());
+            sak::logWarning("Skipping file with empty URL: " + fileInfo.fileName.toStdString());
             continue;
         }
 
@@ -402,7 +402,7 @@ bool UupIsoBuilder::generateAria2InputFile(const QString& outputPath)
         if (isFileAlreadyDownloaded(fileInfo, downloadDir)) {
             skippedFiles++;
             skippedBytes += fileInfo.size;
-            sak::log_info("Already downloaded (verified): " + fileInfo.fileName.toStdString());
+            sak::logInfo("Already downloaded (verified): " + fileInfo.fileName.toStdString());
             continue;
         }
 
@@ -427,18 +427,18 @@ bool UupIsoBuilder::generateAria2InputFile(const QString& outputPath)
 
     if (skippedFiles > 0) {
         double skippedMB = skippedBytes / (1024.0 * 1024.0);
-        sak::log_info("Resume: skipped " + std::to_string(skippedFiles) +
+        sak::logInfo("Resume: skipped " + std::to_string(skippedFiles) +
                       " already-downloaded files (" + std::to_string(static_cast<int>(skippedMB)) + " MB)");
         Q_EMIT progressUpdated(2, QString("Skipped %1 already-downloaded files (%2 MB)")
             .arg(skippedFiles).arg(skippedMB, 0, 'f', 0));
     }
 
-    sak::log_info("Generated aria2c input file: " + std::to_string(validFiles) +
+    sak::logInfo("Generated aria2c input file: " + std::to_string(validFiles) +
                   " files to download, " + std::to_string(skippedFiles) + " already complete");
 
     // If all files are already downloaded, no need to run aria2c
     if (validFiles == 0 && skippedFiles > 0) {
-        sak::log_info("All files already downloaded — skipping aria2c");
+        sak::logInfo("All files already downloaded — skipping aria2c");
         return true;  // Still return true; caller should check if file has content
     }
 
@@ -459,7 +459,7 @@ void UupIsoBuilder::executeDownload()
 
     // If all files were already downloaded and verified, skip aria2c entirely
     if (m_allFilesAlreadyDownloaded) {
-        sak::log_info("All UUP files already present — skipping download phase");
+        sak::logInfo("All UUP files already present — skipping download phase");
         Q_EMIT progressUpdated(PHASE_PREPARE_WEIGHT + PHASE_DOWNLOAD_WEIGHT,
                                "All files already downloaded — proceeding to conversion");
         executeConversion();
@@ -514,7 +514,7 @@ void UupIsoBuilder::executeDownload()
          << "--enable-color=false"
          << "--console-log-level=notice";
 
-    sak::log_info("Starting aria2c download: " + aria2Path.toStdString());
+    sak::logInfo("Starting aria2c download: " + aria2Path.toStdString());
     m_aria2Process->start(aria2Path, args);
 
     if (!m_aria2Process->waitForStarted(10000)) {
@@ -571,7 +571,7 @@ void UupIsoBuilder::parseAria2Progress(const QString& line)
 
     // Log significant aria2c messages
     if (line.contains("Download complete:", Qt::CaseInsensitive)) {
-        sak::log_info("aria2c: " + line.toStdString());
+        sak::logInfo("aria2c: " + line.toStdString());
     }
 
     // Detect errors
@@ -579,7 +579,7 @@ void UupIsoBuilder::parseAria2Progress(const QString& line)
         (line.contains("error", Qt::CaseInsensitive) &&
          line.contains("code=", Qt::CaseInsensitive) &&
          !line.contains("code=0", Qt::CaseInsensitive))) {
-        sak::log_warning("aria2c: " + line.toStdString());
+        sak::logWarning("aria2c: " + line.toStdString());
     }
 }
 
@@ -659,7 +659,7 @@ void UupIsoBuilder::onAria2Finished(int exitCode, QProcess::ExitStatus exitStatu
     if (exitCode != 0) {
         // aria2c exit code 7 = "unfinished downloads" which may be recoverable
         if (exitCode == 7) {
-            sak::log_warning("aria2c: some downloads may be incomplete (exit code 7)");
+            sak::logWarning("aria2c: some downloads may be incomplete (exit code 7)");
         } else {
             m_phase = Phase::Failed;
             QString errorDetail;
@@ -693,7 +693,7 @@ void UupIsoBuilder::onAria2Finished(int exitCode, QProcess::ExitStatus exitStatu
     }
 
     m_downloadPercent = 100;
-    sak::log_info("UUP file download complete: " +
+    sak::logInfo("UUP file download complete: " +
                   std::to_string(fileCount) + " files");
 
     Q_EMIT progressUpdated(PHASE_PREPARE_WEIGHT + PHASE_DOWNLOAD_WEIGHT,
@@ -744,7 +744,7 @@ void UupIsoBuilder::executeConversion()
     QStringList args;
     args << "/c" << convertCmd << "wim" << "UUPs";
 
-    sak::log_info("Starting UUP→ISO conversion: cmd /c convert-UUP.cmd wim UUPs");
+    sak::logInfo("Starting UUP→ISO conversion: cmd /c convert-UUP.cmd wim UUPs");
     m_converterProcess->start("cmd.exe", args);
 
     if (!m_converterProcess->waitForStarted(10000)) {
@@ -776,7 +776,7 @@ void UupIsoBuilder::parseConverterProgress(const QString& line)
 {
     if (line.isEmpty()) return;
 
-    sak::log_debug("Converter: " + line.toStdString());
+    sak::logDebug("Converter: " + line.toStdString());
 
     // ---- Parse numeric progress percentages ----
     static const QRegularExpression percentPattern(R"((\d{1,3})\s*%)");
@@ -828,7 +828,7 @@ void UupIsoBuilder::parseConverterProgress(const QString& line)
     if (line.contains("error", Qt::CaseInsensitive) &&
         !line.contains("errorlevel", Qt::CaseInsensitive) &&
         !line.contains("if error", Qt::CaseInsensitive)) {
-        sak::log_warning("Converter: " + line.toStdString());
+        sak::logWarning("Converter: " + line.toStdString());
     }
 
     if (!detail.isEmpty()) {
@@ -865,7 +865,7 @@ void UupIsoBuilder::onConverterFinished(int exitCode,
         return;
     }
 
-    sak::log_info("UUP converter finished successfully");
+    sak::logInfo("UUP converter finished successfully");
     finalizeBuild();
 }
 
@@ -908,7 +908,7 @@ void UupIsoBuilder::finalizeBuild()
         }
     }
 
-    sak::log_info("Found generated ISO: " + sourceIso.toStdString() +
+    sak::logInfo("Found generated ISO: " + sourceIso.toStdString() +
                   " (" + std::to_string(largestSize / (1024 * 1024)) + " MB)");
 
     Q_EMIT progressUpdated(99, "Moving ISO to destination...");
@@ -920,7 +920,7 @@ void UupIsoBuilder::finalizeBuild()
     // Remove existing output file if present
     if (QFile::exists(m_outputIsoPath)) {
         if (!QFile::remove(m_outputIsoPath)) {
-            sak::log_warning("Failed to remove existing output file: " +
+            sak::logWarning("Failed to remove existing output file: " +
                           m_outputIsoPath.toStdString());
         }
     }
@@ -928,7 +928,7 @@ void UupIsoBuilder::finalizeBuild()
     // Try rename first (fast, same-volume), fall back to copy (cross-volume)
     bool moved = QFile::rename(sourceIso, m_outputIsoPath);
     if (!moved) {
-        sak::log_info("Cross-volume move detected, copying ISO file...");
+        sak::logInfo("Cross-volume move detected, copying ISO file...");
         Q_EMIT progressUpdated(99, "Copying ISO to destination (this may take a moment)...");
 
         if (!QFile::copy(sourceIso, m_outputIsoPath)) {
@@ -954,7 +954,7 @@ void UupIsoBuilder::finalizeBuild()
     Q_EMIT progressUpdated(100, "ISO build complete!");
     Q_EMIT buildCompleted(m_outputIsoPath, fileSize);
 
-    sak::log_info("UUP ISO build complete: " + m_outputIsoPath.toStdString() +
+    sak::logInfo("UUP ISO build complete: " + m_outputIsoPath.toStdString() +
                   " (" + std::to_string(fileSize / (1024 * 1024)) + " MB)");
 }
 
@@ -964,9 +964,9 @@ void UupIsoBuilder::cleanupWorkDir()
 
     QDir workDir(m_workDir);
     if (workDir.exists()) {
-        sak::log_info("Cleaning up work directory: " + m_workDir.toStdString());
+        sak::logInfo("Cleaning up work directory: " + m_workDir.toStdString());
         if (!workDir.removeRecursively()) {
-            sak::log_warning("Could not fully remove work directory "
+            sak::logWarning("Could not fully remove work directory "
                           "(files may be in use): " +
                           m_workDir.toStdString());
         }

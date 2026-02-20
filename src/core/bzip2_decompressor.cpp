@@ -39,7 +39,7 @@ bool Bzip2Decompressor::open(const QString& filePath) {
     m_decompressedBytesProduced = 0;
     m_eof = false;
 
-    sak::log_info(QString("Opened bzip2 file: %1").arg(filePath).toStdString());
+    sak::logInfo(QString("Opened bzip2 file: %1").arg(filePath).toStdString());
     return true;
 }
 
@@ -93,7 +93,7 @@ qint64 Bzip2Decompressor::read(char* data, qint64 maxSize) {
             break;
         } else if (ret != BZ_OK) {
             m_lastError = QString("Decompression error: bzip2 error code %1").arg(ret);
-            sak::log_error(m_lastError.toStdString());
+            sak::logError(m_lastError.toStdString());
             return -1;
         }
     }
@@ -132,7 +132,7 @@ bool Bzip2Decompressor::initBzip2Stream() {
     
     if (ret != BZ_OK) {
         m_lastError = QString("Failed to initialize bzip2: error code %1").arg(ret);
-        sak::log_error(m_lastError.toStdString());
+        sak::logError(m_lastError.toStdString());
         return false;
     }
 
@@ -148,7 +148,7 @@ bool Bzip2Decompressor::fillInputBuffer() {
     
     if (bytesRead < 0) {
         m_lastError = QString("File read error: %1").arg(m_file.errorString());
-        sak::log_error(m_lastError.toStdString());
+        sak::logError(m_lastError.toStdString());
         return false;
     }
 

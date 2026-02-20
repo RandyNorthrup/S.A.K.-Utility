@@ -32,7 +32,7 @@ private:
     struct AudioServiceStatus {
         QString service_name;
         QString status;
-        bool is_running;
+        bool isExecuting;
     };
     
     AudioServiceStatus checkAudioService(const QString& service_name);

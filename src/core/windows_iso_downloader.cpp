@@ -46,7 +46,7 @@ WindowsISODownloader::WindowsISODownloader(QObject* parent)
     connect(m_builder.get(), &UupIsoBuilder::buildError,
             this, &WindowsISODownloader::downloadError);
 
-    sak::log_info("WindowsISODownloader initialized (UUP dump backend)");
+    sak::logInfo("WindowsISODownloader initialized (UUP dump backend)");
 }
 
 WindowsISODownloader::~WindowsISODownloader()
@@ -109,7 +109,7 @@ void WindowsISODownloader::startDownload(const QString& updateId,
     m_downloadRequested = true;
 
     Q_EMIT statusMessage("Fetching download links from Microsoft...");
-    sak::log_info("Requesting UUP file links for build " +
+    sak::logInfo("Requesting UUP file links for build " +
                   updateId.toStdString() + " (" + lang.toStdString() +
                   ", " + edition.toStdString() + ")");
 
@@ -140,7 +140,7 @@ void WindowsISODownloader::onFilesFetched(const QString& updateName,
         totalBytes += file.size;
     }
 
-    sak::log_info("Starting UUP download: " + std::to_string(files.size()) +
+    sak::logInfo("Starting UUP download: " + std::to_string(files.size()) +
                   " files, " + std::to_string(totalBytes / (1024 * 1024)) + " MB");
 
     Q_EMIT downloadStarted(files.size(), totalBytes);

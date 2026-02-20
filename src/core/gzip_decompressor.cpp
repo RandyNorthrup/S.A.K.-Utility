@@ -39,7 +39,7 @@ bool GzipDecompressor::open(const QString& filePath) {
     m_decompressedBytesProduced = 0;
     m_eof = false;
 
-    sak::log_info(QString("Opened gzip file: %1").arg(filePath).toStdString());
+    sak::logInfo(QString("Opened gzip file: %1").arg(filePath).toStdString());
     return true;
 }
 
@@ -95,7 +95,7 @@ qint64 GzipDecompressor::read(char* data, qint64 maxSize) {
             m_lastError = QString("Decompression error: %1 (%2)")
                 .arg(m_zstream.msg ? m_zstream.msg : "unknown error")
                 .arg(ret);
-            sak::log_error(m_lastError.toStdString());
+            sak::logError(m_lastError.toStdString());
             return -1;
         }
     }
@@ -137,7 +137,7 @@ bool GzipDecompressor::initZlibStream() {
     if (ret != Z_OK) {
         m_lastError = QString("Failed to initialize zlib: %1")
             .arg(m_zstream.msg ? m_zstream.msg : "unknown error");
-        sak::log_error(m_lastError.toStdString());
+        sak::logError(m_lastError.toStdString());
         return false;
     }
 
@@ -153,7 +153,7 @@ bool GzipDecompressor::fillInputBuffer() {
     
     if (bytesRead < 0) {
         m_lastError = QString("File read error: %1").arg(m_file.errorString());
-        sak::log_error(m_lastError.toStdString());
+        sak::logError(m_lastError.toStdString());
         return false;
     }
 

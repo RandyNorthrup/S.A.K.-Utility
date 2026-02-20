@@ -14,22 +14,22 @@ DuplicateFinderPanel::DuplicateFinderPanel(QWidget* parent)
     : QWidget(parent)
     , m_worker(nullptr)
 {
-    setup_ui();
-    sak::log_info("DuplicateFinderPanel initialized");
+    setupUi();
+    sak::logInfo("DuplicateFinderPanel initialized");
 }
 
 DuplicateFinderPanel::~DuplicateFinderPanel()
 {
     if (m_worker) {
-        m_worker->request_stop();
+        m_worker->requestStop();
         if (!m_worker->wait(15000)) {
-            sak::log_error("DuplicateFinderWorker did not stop within 15s \u2014 potential resource leak");
+            sak::logError("DuplicateFinderWorker did not stop within 15s \u2014 potential resource leak");
         }
     }
-    sak::log_info("DuplicateFinderPanel destroyed");
+    sak::logInfo("DuplicateFinderPanel destroyed");
 }
 
-void DuplicateFinderPanel::setup_ui()
+void DuplicateFinderPanel::setupUi()
 {
     auto* main_layout = new QVBoxLayout(this);
     main_layout->setContentsMargins(10, 10, 10, 10);
@@ -120,13 +120,13 @@ void DuplicateFinderPanel::setup_ui()
     main_layout->addWidget(log_group);
 
     // Connect signals
-    connect(m_add_directory_button, &QPushButton::clicked, this, &DuplicateFinderPanel::on_add_directory_clicked);
-    connect(m_remove_directory_button, &QPushButton::clicked, this, &DuplicateFinderPanel::on_remove_directory_clicked);
-    connect(m_scan_button, &QPushButton::clicked, this, &DuplicateFinderPanel::on_scan_clicked);
-    connect(m_cancel_button, &QPushButton::clicked, this, &DuplicateFinderPanel::on_cancel_clicked);
+    connect(m_add_directory_button, &QPushButton::clicked, this, &DuplicateFinderPanel::onAddDirectoryClicked);
+    connect(m_remove_directory_button, &QPushButton::clicked, this, &DuplicateFinderPanel::onRemoveDirectoryClicked);
+    connect(m_scan_button, &QPushButton::clicked, this, &DuplicateFinderPanel::onScanClicked);
+    connect(m_cancel_button, &QPushButton::clicked, this, &DuplicateFinderPanel::onCancelClicked);
 }
 
-void DuplicateFinderPanel::on_add_directory_clicked()
+void DuplicateFinderPanel::onAddDirectoryClicked()
 {
     QString dir = QFileDialog::getExistingDirectory(
         this, "Select Directory to Scan",
@@ -135,11 +135,11 @@ void DuplicateFinderPanel::on_add_directory_clicked()
 
     if (!dir.isEmpty()) {
         m_directory_list->addItem(dir);
-        log_message(QString("Added directory: %1").arg(dir));
+        logMessage(QString("Added directory: %1").arg(dir));
     }
 }
 
-void DuplicateFinderPanel::on_remove_directory_clicked()
+void DuplicateFinderPanel::onRemoveDirectoryClicked()
 {
     auto selected = m_directory_list->selectedItems();
     if (selected.isEmpty()) {
@@ -152,7 +152,7 @@ void DuplicateFinderPanel::on_remove_directory_clicked()
     }
 }
 
-void DuplicateFinderPanel::on_scan_clicked()
+void DuplicateFinderPanel::onScanClicked()
 {
     if (m_directory_list->count() == 0) {
         QMessageBox::warning(this, "Validation Error", "Please add at least one directory to scan.");
@@ -165,7 +165,7 @@ void DuplicateFinderPanel::on_scan_clicked()
     // Build configuration
     DuplicateFinderWorker::Config config;
     for (int i = 0; i < m_directory_list->count(); ++i) {
-        config.scan_directories.push_back(m_directory_list->item(i)->text());
+        config.scanDirectories.push_back(m_directory_list->item(i)->text());
     }
     config.minimum_file_size = m_min_size_spinbox->value() * 1024; // Convert KB to bytes
     config.recursive_scan = m_recursive_checkbox->isChecked();
@@ -173,66 +173,66 @@ void DuplicateFinderPanel::on_scan_clicked()
     // Create and configure worker
     m_worker = std::make_unique<DuplicateFinderWorker>(config, this);
 
-    connect(m_worker.get(), &DuplicateFinderWorker::started, this, &DuplicateFinderPanel::on_worker_started);
-    connect(m_worker.get(), &DuplicateFinderWorker::finished, this, &DuplicateFinderPanel::on_worker_finished);
-    connect(m_worker.get(), &DuplicateFinderWorker::failed, this, &DuplicateFinderPanel::on_worker_failed);
-    connect(m_worker.get(), &DuplicateFinderWorker::cancelled, this, &DuplicateFinderPanel::on_worker_cancelled);
-    connect(m_worker.get(), &DuplicateFinderWorker::scan_progress, this, &DuplicateFinderPanel::on_scan_progress);
-    connect(m_worker.get(), &DuplicateFinderWorker::results_ready, this, &DuplicateFinderPanel::on_results_ready);
+    connect(m_worker.get(), &DuplicateFinderWorker::started, this, &DuplicateFinderPanel::onWorkerStarted);
+    connect(m_worker.get(), &DuplicateFinderWorker::finished, this, &DuplicateFinderPanel::onWorkerFinished);
+    connect(m_worker.get(), &DuplicateFinderWorker::failed, this, &DuplicateFinderPanel::onWorkerFailed);
+    connect(m_worker.get(), &DuplicateFinderWorker::cancelled, this, &DuplicateFinderPanel::onWorkerCancelled);
+    connect(m_worker.get(), &DuplicateFinderWorker::scanProgress, this, &DuplicateFinderPanel::onScanProgress);
+    connect(m_worker.get(), &DuplicateFinderWorker::resultsReady, this, &DuplicateFinderPanel::onResultsReady);
 
-    set_operation_running(true);
+    setOperationRunning(true);
     m_status_label->setText("Status: Starting scan...");
     m_results_label->clear();
     m_worker->start();
 
-    sak::log_info("Duplicate finder scan initiated");
+    sak::logInfo("Duplicate finder scan initiated");
 }
 
-void DuplicateFinderPanel::on_cancel_clicked()
+void DuplicateFinderPanel::onCancelClicked()
 {
     if (m_worker != nullptr) {
-        m_worker->request_stop();
-        log_message("Cancellation requested...");
+        m_worker->requestStop();
+        logMessage("Cancellation requested...");
         m_status_label->setText("Status: Cancelling...");
-        sak::log_info("Duplicate finder cancellation requested by user");
+        sak::logInfo("Duplicate finder cancellation requested by user");
     }
 }
 
-void DuplicateFinderPanel::on_worker_started()
+void DuplicateFinderPanel::onWorkerStarted()
 {
-    log_message("Duplicate file scan started");
+    logMessage("Duplicate file scan started");
     m_status_label->setText("Status: Scanning...");
-    Q_EMIT status_message("Duplicate scan in progress", 0);
+    Q_EMIT statusMessage("Duplicate scan in progress", 0);
 }
 
-void DuplicateFinderPanel::on_worker_finished()
+void DuplicateFinderPanel::onWorkerFinished()
 {
-    set_operation_running(false);
+    setOperationRunning(false);
     m_status_label->setText("Status: Scan complete");
-    log_message("Scan completed successfully");
-    sak::log_info("Duplicate finder scan completed successfully");
+    logMessage("Scan completed successfully");
+    sak::logInfo("Duplicate finder scan completed successfully");
 }
 
-void DuplicateFinderPanel::on_worker_failed(int error_code, const QString& error_message)
+void DuplicateFinderPanel::onWorkerFailed(int error_code, const QString& error_message)
 {
-    set_operation_running(false);
+    setOperationRunning(false);
     m_status_label->setText("Status: Failed");
     m_results_label->clear();
-    log_message(QString("Scan failed: Error %1: %2").arg(error_code).arg(error_message));
+    logMessage(QString("Scan failed: Error %1: %2").arg(error_code).arg(error_message));
     QMessageBox::warning(this, "Scan Failed", QString("Error %1: %2").arg(error_code).arg(error_message));
-    sak::log_error("Duplicate finder scan failed: {}", error_message.toStdString());
+    sak::logError("Duplicate finder scan failed: {}", error_message.toStdString());
 }
 
-void DuplicateFinderPanel::on_worker_cancelled()
+void DuplicateFinderPanel::onWorkerCancelled()
 {
-    set_operation_running(false);
-    log_message("Scan cancelled by user");
+    setOperationRunning(false);
+    logMessage("Scan cancelled by user");
     m_status_label->setText("Status: Cancelled");
     m_results_label->clear();
-    Q_EMIT status_message("Scan cancelled", 3000);
+    Q_EMIT statusMessage("Scan cancelled", 3000);
 }
 
-void DuplicateFinderPanel::on_scan_progress(int current, int total, const QString& path)
+void DuplicateFinderPanel::onScanProgress(int current, int total, const QString& path)
 {
     m_progress_bar->setMaximum(total);
     m_progress_bar->setValue(current);
@@ -241,19 +241,19 @@ void DuplicateFinderPanel::on_scan_progress(int current, int total, const QStrin
     m_status_label->setText(QString("Scanning: %1").arg(info.fileName()));
 }
 
-void DuplicateFinderPanel::on_results_ready(const QString& summary, int duplicate_count, qint64 wasted_space)
+void DuplicateFinderPanel::onResultsReady(const QString& summary, int duplicate_count, qint64 wasted_space)
 {
     QString results_text = QString("Found %1 duplicate files, %2 MB wasted space")
         .arg(duplicate_count)
         .arg(wasted_space / (1024.0 * 1024.0), 0, 'f', 2);
     
     m_results_label->setText(results_text);
-    log_message(results_text);
+    logMessage(results_text);
     
     QMessageBox::information(this, "Scan Results", summary);
 }
 
-void DuplicateFinderPanel::set_operation_running(bool running)
+void DuplicateFinderPanel::setOperationRunning(bool running)
 {
     m_operation_running = running;
     
@@ -267,7 +267,7 @@ void DuplicateFinderPanel::set_operation_running(bool running)
     m_cancel_button->setEnabled(running);
 }
 
-void DuplicateFinderPanel::log_message(const QString& message)
+void DuplicateFinderPanel::logMessage(const QString& message)
 {
     QString timestamp = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss");
     m_log_viewer->append(QString("[%1] %2").arg(timestamp, message));

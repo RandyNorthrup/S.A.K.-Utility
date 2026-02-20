@@ -27,7 +27,7 @@ auto logger::initialize(
     std::lock_guard lock(m_mutex);
     
     // Ensure log directory exists
-    if (auto result = ensure_log_directory(log_dir); !result) {
+    if (auto result = ensureLogDirectory(log_dir); !result) {
         return std::unexpected(result.error());
     }
     
@@ -49,20 +49,20 @@ auto logger::initialize(
     m_bytes_written.store(0, std::memory_order_relaxed);
     
     // Write initialization message
-    log_info("Logger initialized: {}", m_log_file.string());
+    logInfo("Logger initialized: {}", m_log_file.string());
     
     return {};
 }
 
-void logger::set_level(log_level level) noexcept {
+void logger::setLevel(log_level level) noexcept {
     m_min_level.store(level, std::memory_order_relaxed);
 }
 
-log_level logger::get_level() const noexcept {
+log_level logger::getLevel() const noexcept {
     return m_min_level.load(std::memory_order_relaxed);
 }
 
-void logger::set_console_output(bool enable) noexcept {
+void logger::setConsoleOutput(bool enable) noexcept {
     m_console_output.store(enable, std::memory_order_relaxed);
 }
 
@@ -73,21 +73,21 @@ void logger::flush() noexcept {
     }
 }
 
-std::filesystem::path logger::get_log_file() const noexcept {
+std::filesystem::path logger::getLogFile() const noexcept {
     std::lock_guard lock(m_mutex);
     return m_log_file;
 }
 
-bool logger::is_initialized() const noexcept {
+bool logger::isInitialized() const noexcept {
     return m_initialized.load(std::memory_order_acquire);
 }
 
-void logger::log_internal(
+void logger::logInternal(
     log_level level,
     std::string_view message,
     const std::source_location& loc) noexcept {
     
-    if (!is_initialized()) {
+    if (!isInitialized()) {
         // Fallback to console if not initialized
         if (m_console_output.load(std::memory_order_relaxed)) {
             std::println(std::cerr, "[{}] {}", to_string(level), message);
@@ -97,7 +97,7 @@ void logger::log_internal(
     
     try {
         // Format log entry
-        auto timestamp = get_timestamp();
+        auto timestamp = getTimestamp();
         auto level_str = to_string(level);
         auto filename = std::filesystem::path(loc.file_name()).filename().string();
         
@@ -115,8 +115,8 @@ void logger::log_internal(
             std::lock_guard lock(m_mutex);
             
             // Check if rotation is needed
-            if (needs_rotation()) {
-                rotate_log();
+            if (needsRotation()) {
+                rotateLog();
             }
             
             // Write to file
@@ -145,7 +145,7 @@ void logger::log_internal(
     }
 }
 
-auto logger::ensure_log_directory(
+auto logger::ensureLogDirectory(
     const std::filesystem::path& dir) -> std::expected<void, error_code> {
     
     try {
@@ -175,7 +175,7 @@ auto logger::ensure_log_directory(
     }
 }
 
-std::string logger::get_timestamp() const noexcept {
+std::string logger::getTimestamp() const noexcept {
     try {
         auto now = std::chrono::system_clock::now();
         return std::format("{:%Y-%m-%d %H:%M:%S}", now);
@@ -184,11 +184,11 @@ std::string logger::get_timestamp() const noexcept {
     }
 }
 
-bool logger::needs_rotation() const noexcept {
+bool logger::needsRotation() const noexcept {
     return m_bytes_written.load(std::memory_order_relaxed) >= MAX_LOG_SIZE;
 }
 
-void logger::rotate_log() noexcept {
+void logger::rotateLog() noexcept {
     try {
         // Close current file
         if (m_file_stream.is_open()) {
@@ -242,7 +242,7 @@ void logger::log(
     }
     
     // For no-args, just log the format string directly
-    log_internal(level, std::string(format), loc);
+    logInternal(level, std::string(format), loc);
 }
 
 } // namespace sak

@@ -21,7 +21,7 @@
 
 namespace sak {
 
-bool generate_secure_random(void* buffer, std::size_t size) noexcept {
+bool generateSecureRandom(void* buffer, std::size_t size) noexcept {
     if (buffer == nullptr || size == 0) {
         return false;
     }
@@ -90,7 +90,7 @@ bool generate_secure_random(void* buffer, std::size_t size) noexcept {
 #endif
 }
 
-bool lock_memory(void* ptr, std::size_t size) noexcept {
+bool lockMemory(void* ptr, std::size_t size) noexcept {
     if (ptr == nullptr || size == 0) {
         return false;
     }
@@ -105,7 +105,7 @@ bool lock_memory(void* ptr, std::size_t size) noexcept {
 #endif
 }
 
-bool unlock_memory(void* ptr, std::size_t size) noexcept {
+bool unlockMemory(void* ptr, std::size_t size) noexcept {
     if (ptr == nullptr || size == 0) {
         return false;
     }

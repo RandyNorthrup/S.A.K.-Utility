@@ -15,7 +15,7 @@ auto KeepAwake::start(PowerRequest request, const char* reason)
     -> std::expected<void, sak::error_code>
 {
     if (s_is_active) {
-        sak::log_info("KeepAwake already active");
+        sak::logInfo("KeepAwake already active");
         return {};
     }
 
@@ -33,12 +33,12 @@ auto KeepAwake::start(PowerRequest request, const char* reason)
     
     if (result == 0) {
         DWORD error = GetLastError();
-        sak::log_error("Failed to set thread execution state: error {}", error);
+        sak::logError("Failed to set thread execution state: error {}", error);
         return std::unexpected(sak::error_code::platform_not_supported);
     }
 
     s_is_active = true;
-    sak::log_info("KeepAwake started: {}", reason);
+    sak::logInfo("KeepAwake started: {}", reason);
     
     return {};
 }
@@ -53,17 +53,17 @@ auto KeepAwake::stop() -> std::expected<void, sak::error_code>
     
     if (result == 0) {
         DWORD error = GetLastError();
-        sak::log_error("Failed to clear thread execution state: error {}", error);
+        sak::logError("Failed to clear thread execution state: error {}", error);
         return std::unexpected(sak::error_code::platform_not_supported);
     }
 
     s_is_active = false;
-    sak::log_info("KeepAwake stopped");
+    sak::logInfo("KeepAwake stopped");
     
     return {};
 }
 
-bool KeepAwake::is_active() noexcept
+bool KeepAwake::isActive() noexcept
 {
     return s_is_active;
 }
@@ -78,7 +78,7 @@ KeepAwakeGuard::KeepAwakeGuard(KeepAwake::PowerRequest request, const char* reas
     m_is_active = result.has_value();
     
     if (!m_is_active) {
-        sak::log_warning("KeepAwakeGuard: Failed to activate keep awake");
+        sak::logWarning("KeepAwakeGuard: Failed to activate keep awake");
     }
 }
 
@@ -87,7 +87,7 @@ KeepAwakeGuard::~KeepAwakeGuard()
     if (m_is_active) {
         auto result = KeepAwake::stop();
         if (!result) {
-            sak::log_warning("KeepAwakeGuard: Failed to deactivate keep awake");
+            sak::logWarning("KeepAwakeGuard: Failed to deactivate keep awake");
         }
     }
 }

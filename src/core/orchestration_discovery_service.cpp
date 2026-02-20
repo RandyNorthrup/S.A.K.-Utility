@@ -43,7 +43,7 @@ void OrchestrationDiscoveryService::startAsOrchestrator() {
 
     if (!m_socket->bind(QHostAddress::AnyIPv4, m_port, QUdpSocket::ShareAddress | QUdpSocket::ReuseAddressHint)) {
         Q_EMIT discoveryError(tr("Failed to bind discovery port %1").arg(m_port));
-        log_error("OrchestrationDiscoveryService bind failed on port {}: {}", m_port,
+        logError("OrchestrationDiscoveryService bind failed on port {}: {}", m_port,
                   m_socket->errorString().toStdString());
         return;
     }
@@ -51,7 +51,7 @@ void OrchestrationDiscoveryService::startAsOrchestrator() {
     m_running = true;
     m_broadcastTimer->start();
     sendBroadcastDiscovery();
-    log_info("OrchestrationDiscoveryService started as orchestrator on port {}", m_port);
+    logInfo("OrchestrationDiscoveryService started as orchestrator on port {}", m_port);
 }
 
 void OrchestrationDiscoveryService::startAsDestination() {
@@ -62,7 +62,7 @@ void OrchestrationDiscoveryService::startAsDestination() {
 
     if (!m_socket->bind(QHostAddress::AnyIPv4, m_port, QUdpSocket::ShareAddress | QUdpSocket::ReuseAddressHint)) {
         Q_EMIT discoveryError(tr("Failed to bind discovery port %1").arg(m_port));
-        log_error("OrchestrationDiscoveryService bind failed on port {}: {}", m_port,
+        logError("OrchestrationDiscoveryService bind failed on port {}: {}", m_port,
                   m_socket->errorString().toStdString());
         return;
     }
@@ -70,7 +70,7 @@ void OrchestrationDiscoveryService::startAsDestination() {
     m_running = true;
     m_broadcastTimer->start();
     sendDestinationAnnounce(QHostAddress::Broadcast, m_port);
-    log_info("OrchestrationDiscoveryService started as destination on port {}", m_port);
+    logInfo("OrchestrationDiscoveryService started as destination on port {}", m_port);
 }
 
 void OrchestrationDiscoveryService::stop() {
@@ -81,7 +81,7 @@ void OrchestrationDiscoveryService::stop() {
     m_running = false;
     m_broadcastTimer->stop();
     m_socket->close();
-    log_info("OrchestrationDiscoveryService stopped");
+    logInfo("OrchestrationDiscoveryService stopped");
 }
 
 bool OrchestrationDiscoveryService::isRunning() const {
@@ -139,7 +139,7 @@ void OrchestrationDiscoveryService::sendBroadcastDiscovery() {
     }
 
     if (!sentAny) {
-        log_warning("OrchestrationDiscoveryService broadcast skipped: no broadcast interfaces");
+        logWarning("OrchestrationDiscoveryService broadcast skipped: no broadcast interfaces");
     }
 }
 

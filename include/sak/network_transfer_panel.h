@@ -45,8 +45,8 @@ public:
     ~NetworkTransferPanel() override;
 
 Q_SIGNALS:
-    void status_message(const QString& message, int timeout_ms);
-    void progress_update(int current, int maximum);
+    void statusMessage(const QString& message, int timeout_ms);
+    void progressUpdate(int current, int maximum);
 
 private Q_SLOTS:
     void onModeChanged(int index);

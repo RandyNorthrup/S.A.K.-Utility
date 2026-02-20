@@ -83,7 +83,7 @@ public:
     /// @param options Scan options
     /// @param stop_token Cancellation token
     /// @return Expected containing list of paths or error code
-    [[nodiscard]] auto scan_and_collect(
+    [[nodiscard]] auto scanAndCollect(
         const std::filesystem::path& root_path,
         const scan_options& options,
         std::stop_token stop_token = {}) -> std::expected<std::vector<std::filesystem::path>, error_code>;
@@ -92,7 +92,7 @@ public:
     /// @param root_path Root directory to scan
     /// @param recursive Whether to recurse into subdirectories
     /// @return Expected containing list of file paths or error code
-    [[nodiscard]] static auto list_files(
+    [[nodiscard]] static auto listFiles(
         const std::filesystem::path& root_path,
         bool recursive = true) -> std::expected<std::vector<std::filesystem::path>, error_code>;
     
@@ -101,7 +101,7 @@ public:
     /// @param patterns Filename patterns (e.g., "*.txt", "test_*")
     /// @param recursive Whether to recurse into subdirectories
     /// @return Expected containing list of matching paths or error code
-    [[nodiscard]] static auto find_files(
+    [[nodiscard]] static auto findFiles(
         const std::filesystem::path& root_path,
         const std::vector<std::string>& patterns,
         bool recursive = true) -> std::expected<std::vector<std::filesystem::path>, error_code>;
@@ -112,7 +112,7 @@ private:
     /// @param options Scan options
     /// @param current_depth Current recursion depth
     /// @return True if should process, false if should skip
-    [[nodiscard]] bool should_process_entry(
+    [[nodiscard]] bool shouldProcessEntry(
         const std::filesystem::directory_entry& entry,
         const scan_options& options,
         std::size_t current_depth) const noexcept;
@@ -120,7 +120,7 @@ private:
     /// @brief Check if path is hidden
     /// @param path Path to check
     /// @return True if hidden
-    [[nodiscard]] static bool is_hidden(const std::filesystem::path& path) noexcept;
+    [[nodiscard]] static bool isHidden(const std::filesystem::path& path) noexcept;
     
     /// @brief Recursive scan implementation
     /// @param current_path Current directory path
@@ -129,7 +129,7 @@ private:
     /// @param current_depth Current recursion depth
     /// @param stop_token Cancellation token
     /// @return Error code if error occurred, success otherwise
-    auto scan_directory_recursive(
+    auto scanDirectoryRecursive(
         const std::filesystem::path& current_path,
         const scan_options& options,
         scan_statistics& stats,

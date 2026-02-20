@@ -15,16 +15,16 @@ OrganizerWorker::OrganizerWorker(const Config& config, QObject* parent)
 
 auto OrganizerWorker::execute() -> std::expected<void, sak::error_code>
 {
-    sak::log_info("Starting directory organization: {}", m_config.target_directory.toStdString());
+    sak::logInfo("Starting directory organization: {}", m_config.target_directory.toStdString());
 
     // Scan directory for files
-    auto files_result = scan_directory();
+    auto files_result = scanDirectory();
     if (!files_result) {
         return std::unexpected(files_result.error());
     }
 
     const auto& files = files_result.value();
-    sak::log_info("Found {} files to organize", files.size());
+    sak::logInfo("Found {} files to organize", files.size());
 
     // Plan moves for all files
     m_planned_operations.clear();
@@ -32,67 +32,67 @@ auto OrganizerWorker::execute() -> std::expected<void, sak::error_code>
     m_planned_operations.reserve(file_count);
 
     for (size_t i = 0; i < file_count; ++i) {
-        if (check_stop()) {
+        if (checkStop()) {
             return std::unexpected(sak::error_code::operation_cancelled);
         }
 
         const auto& file = files[i];
-        auto category = categorize_file(file);
+        auto category = categorizeFile(file);
         
         if (!category.isEmpty()) {
-            auto operation = plan_move(file, category);
+            auto operation = planMove(file, category);
             m_planned_operations.push_back(operation);
         }
 
-        Q_EMIT file_progress(static_cast<int>(i + 1), static_cast<int>(files.size()), 
+        Q_EMIT fileProgress(static_cast<int>(i + 1), static_cast<int>(files.size()), 
                            QString::fromStdString(file.string()));
     }
 
-    sak::log_info("Planned {} move operations", m_planned_operations.size());
+    sak::logInfo("Planned {} move operations", m_planned_operations.size());
 
     // If preview mode, emit results and exit
     if (m_config.preview_mode) {
-        QString summary = generate_preview_summary();
-        Q_EMIT preview_results(summary, static_cast<int>(m_planned_operations.size()));
-        sak::log_info("Preview mode complete");
+        QString summary = generatePreviewSummary();
+        Q_EMIT previewResults(summary, static_cast<int>(m_planned_operations.size()));
+        sak::logInfo("Preview mode complete");
         return {};
     }
 
     // Execute moves
     const size_t op_count = m_planned_operations.size();
     for (size_t i = 0; i < op_count; ++i) {
-        if (check_stop()) {
+        if (checkStop()) {
             return std::unexpected(sak::error_code::operation_cancelled);
         }
 
         const auto& operation = m_planned_operations[i];
-        auto result = execute_move(operation);
+        auto result = executeMove(operation);
         if (!result) {
-            sak::log_error("Failed to move file: {}", operation.source.string());
+            sak::logError("Failed to move file: {}", operation.source.string());
             return result;
         }
 
-        Q_EMIT file_progress(static_cast<int>(i + 1), static_cast<int>(m_planned_operations.size()),
+        Q_EMIT fileProgress(static_cast<int>(i + 1), static_cast<int>(m_planned_operations.size()),
                            QString::fromStdString(operation.source.string()));
     }
 
-    sak::log_info("Directory organization complete");
+    sak::logInfo("Directory organization complete");
     return {};
 }
 
-auto OrganizerWorker::scan_directory() 
+auto OrganizerWorker::scanDirectory() 
     -> std::expected<std::vector<std::filesystem::path>, sak::error_code>
 {
     std::vector<std::filesystem::path> files;
     std::filesystem::path target_path(m_config.target_directory.toStdString());
 
     if (!std::filesystem::exists(target_path)) {
-        sak::log_error("Target directory does not exist: {}", target_path.string());
+        sak::logError("Target directory does not exist: {}", target_path.string());
         return std::unexpected(sak::error_code::file_not_found);
     }
 
     if (!std::filesystem::is_directory(target_path)) {
-        sak::log_error("Target path is not a directory: {}", target_path.string());
+        sak::logError("Target path is not a directory: {}", target_path.string());
         return std::unexpected(sak::error_code::invalid_path);
     }
 
@@ -102,7 +102,7 @@ auto OrganizerWorker::scan_directory()
         files.reserve(256);  // Reasonable default, will grow if needed
         
         for (const auto& entry : std::filesystem::directory_iterator(target_path)) {
-            if (check_stop()) {
+            if (checkStop()) {
                 return std::unexpected(sak::error_code::operation_cancelled);
             }
 
@@ -111,14 +111,14 @@ auto OrganizerWorker::scan_directory()
             }
         }
     } catch (const std::filesystem::filesystem_error& e) {
-        sak::log_error("Filesystem error during scan: {}", e.what());
+        sak::logError("Filesystem error during scan: {}", e.what());
         return std::unexpected(sak::error_code::scan_failed);
     }
 
     return files;
 }
 
-auto OrganizerWorker::categorize_file(const std::filesystem::path& file_path) -> QString
+auto OrganizerWorker::categorizeFile(const std::filesystem::path& file_path) -> QString
 {
     auto extension = file_path.extension().string();
     if (extension.empty()) {
@@ -145,7 +145,7 @@ auto OrganizerWorker::categorize_file(const std::filesystem::path& file_path) ->
     return QString();
 }
 
-auto OrganizerWorker::plan_move(const std::filesystem::path& file_path, const QString& category) 
+auto OrganizerWorker::planMove(const std::filesystem::path& file_path, const QString& category) 
     -> MoveOperation
 {
     MoveOperation op;
@@ -163,7 +163,7 @@ auto OrganizerWorker::plan_move(const std::filesystem::path& file_path, const QS
     return op;
 }
 
-auto OrganizerWorker::execute_move(const MoveOperation& operation) 
+auto OrganizerWorker::executeMove(const MoveOperation& operation) 
     -> std::expected<void, sak::error_code>
 {
     try {
@@ -172,29 +172,29 @@ auto OrganizerWorker::execute_move(const MoveOperation& operation)
             std::filesystem::path category_dir = operation.destination.parent_path();
             if (!std::filesystem::exists(category_dir)) {
                 std::filesystem::create_directories(category_dir);
-                sak::log_info("Created directory: {}", category_dir.string());
+                sak::logInfo("Created directory: {}", category_dir.string());
             }
         }
 
         // Handle collision
         std::filesystem::path final_dest = operation.destination;
         if (operation.would_overwrite) {
-            final_dest = handle_collision(operation);
+            final_dest = handleCollision(operation);
         }
 
         // Move file
         std::filesystem::rename(operation.source, final_dest);
-        sak::log_info("Moved: {} -> {}", operation.source.string(), final_dest.string());
+        sak::logInfo("Moved: {} -> {}", operation.source.string(), final_dest.string());
 
         return {};
 
     } catch (const std::filesystem::filesystem_error& e) {
-        sak::log_error("Failed to move file: {}", e.what());
+        sak::logError("Failed to move file: {}", e.what());
         return std::unexpected(sak::error_code::write_error);
     }
 }
 
-auto OrganizerWorker::handle_collision(const MoveOperation& operation) 
+auto OrganizerWorker::handleCollision(const MoveOperation& operation) 
     -> std::filesystem::path
 {
     if (m_config.collision_strategy == "skip") {
@@ -221,7 +221,7 @@ auto OrganizerWorker::handle_collision(const MoveOperation& operation)
     return dest;
 }
 
-auto OrganizerWorker::generate_preview_summary() -> QString
+auto OrganizerWorker::generatePreviewSummary() -> QString
 {
     QString summary;
     summary += "Preview Results:\n\n";
@@ -251,7 +251,7 @@ auto OrganizerWorker::generate_preview_summary() -> QString
     return summary;
 }
 
-void OrganizerWorker::log_for_undo(const MoveOperation& operation)
+void OrganizerWorker::logForUndo(const MoveOperation& operation)
 {
     if (!operation.was_executed) {
         return;
@@ -264,12 +264,12 @@ void OrganizerWorker::log_for_undo(const MoveOperation& operation)
     entry.can_undo = std::filesystem::exists(operation.destination);
 
     m_undo_history.push_back(entry);
-    sak::log_info("Logged undo entry: {} -> {}", 
+    sak::logInfo("Logged undo entry: {} -> {}", 
                  entry.original_source.string(), 
                  entry.current_location.string());
 }
 
-bool OrganizerWorker::can_restore(const UndoEntry& entry)
+bool OrganizerWorker::canRestore(const UndoEntry& entry)
 {
     // Check if file still exists at current location
     if (!std::filesystem::exists(entry.current_location)) {
@@ -293,20 +293,20 @@ bool OrganizerWorker::can_restore(const UndoEntry& entry)
 auto OrganizerWorker::undoLastOperation() -> std::expected<void, sak::error_code>
 {
     if (m_undo_history.empty()) {
-        sak::log_info("No operations to undo");
+        sak::logInfo("No operations to undo");
         return std::unexpected(sak::error_code::invalid_operation);
     }
 
     const auto& entry = m_undo_history.back();
     
-    if (!can_restore(entry)) {
-        sak::log_error("Cannot undo: file state changed");
+    if (!canRestore(entry)) {
+        sak::logError("Cannot undo: file state changed");
         return std::unexpected(sak::error_code::invalid_operation);
     }
 
     try {
         std::filesystem::rename(entry.current_location, entry.original_source);
-        sak::log_info("Undone: {} -> {}", 
+        sak::logInfo("Undone: {} -> {}", 
                      entry.current_location.string(), 
                      entry.original_source.string());
         
@@ -314,7 +314,7 @@ auto OrganizerWorker::undoLastOperation() -> std::expected<void, sak::error_code
         return {};
 
     } catch (const std::filesystem::filesystem_error& e) {
-        sak::log_error("Failed to undo operation: {}", e.what());
+        sak::logError("Failed to undo operation: {}", e.what());
         return std::unexpected(sak::error_code::write_error);
     }
 }
@@ -322,7 +322,7 @@ auto OrganizerWorker::undoLastOperation() -> std::expected<void, sak::error_code
 auto OrganizerWorker::undoAllOperations() -> std::expected<void, sak::error_code>
 {
     if (m_undo_history.empty()) {
-        sak::log_info("No operations to undo");
+        sak::logInfo("No operations to undo");
         return {};
     }
 
@@ -336,12 +336,12 @@ auto OrganizerWorker::undoAllOperations() -> std::expected<void, sak::error_code
             ++successful_undos;
         } else {
             ++failed_undos;
-            sak::log_error("Failed to undo operation, stopping undo process");
+            sak::logError("Failed to undo operation, stopping undo process");
             break;
         }
     }
 
-    sak::log_info("Undo complete: {} succeeded, {} failed", successful_undos, failed_undos);
+    sak::logInfo("Undo complete: {} succeeded, {} failed", successful_undos, failed_undos);
     
     if (failed_undos > 0) {
         return std::unexpected(sak::error_code::partial_failure);
@@ -353,7 +353,7 @@ auto OrganizerWorker::undoAllOperations() -> std::expected<void, sak::error_code
 auto OrganizerWorker::saveUndoLog(const QString& file_path) -> std::expected<void, sak::error_code>
 {
     if (m_undo_history.empty()) {
-        sak::log_info("No undo history to save");
+        sak::logInfo("No undo history to save");
         return {};
     }
 
@@ -375,14 +375,14 @@ auto OrganizerWorker::saveUndoLog(const QString& file_path) -> std::expected<voi
     QJsonDocument doc(root);
     QFile file(file_path);
     if (!file.open(QIODevice::WriteOnly)) {
-        sak::log_error("Failed to open undo log file for writing: {}", file_path.toStdString());
+        sak::logError("Failed to open undo log file for writing: {}", file_path.toStdString());
         return std::unexpected(sak::error_code::write_error);
     }
 
     file.write(doc.toJson());
     file.close();
 
-    sak::log_info("Saved undo log: {} entries to {}", m_undo_history.size(), file_path.toStdString());
+    sak::logInfo("Saved undo log: {} entries to {}", m_undo_history.size(), file_path.toStdString());
     return {};
 }
 
@@ -390,7 +390,7 @@ auto OrganizerWorker::loadUndoLog(const QString& file_path) -> std::expected<voi
 {
     QFile file(file_path);
     if (!file.open(QIODevice::ReadOnly)) {
-        sak::log_error("Failed to open undo log file for reading: {}", file_path.toStdString());
+        sak::logError("Failed to open undo log file for reading: {}", file_path.toStdString());
         return std::unexpected(sak::error_code::file_not_found);
     }
 
@@ -399,7 +399,7 @@ auto OrganizerWorker::loadUndoLog(const QString& file_path) -> std::expected<voi
 
     QJsonDocument doc = QJsonDocument::fromJson(data);
     if (!doc.isObject()) {
-        sak::log_error("Invalid undo log file format");
+        sak::logError("Invalid undo log file format");
         return std::unexpected(sak::error_code::parse_error);
     }
 
@@ -421,7 +421,7 @@ auto OrganizerWorker::loadUndoLog(const QString& file_path) -> std::expected<voi
         m_undo_history.push_back(entry);
     }
 
-    sak::log_info("Loaded undo log: {} entries from {}", m_undo_history.size(), file_path.toStdString());
+    sak::logInfo("Loaded undo log: {} entries from {}", m_undo_history.size(), file_path.toStdString());
     return {};
 }
 

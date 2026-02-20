@@ -30,25 +30,25 @@ public:
     DuplicateFinderPanel& operator=(DuplicateFinderPanel&&) = delete;
 
 Q_SIGNALS:
-    void status_message(const QString& message, int timeout_ms);
+    void statusMessage(const QString& message, int timeout_ms);
 
 private Q_SLOTS:
-    void on_add_directory_clicked();
-    void on_remove_directory_clicked();
-    void on_scan_clicked();
-    void on_cancel_clicked();
+    void onAddDirectoryClicked();
+    void onRemoveDirectoryClicked();
+    void onScanClicked();
+    void onCancelClicked();
     
-    void on_worker_started();
-    void on_worker_finished();
-    void on_worker_failed(int error_code, const QString& error_message);
-    void on_worker_cancelled();
-    void on_scan_progress(int current, int total, const QString& path);
-    void on_results_ready(const QString& summary, int duplicate_count, qint64 wasted_space);
+    void onWorkerStarted();
+    void onWorkerFinished();
+    void onWorkerFailed(int error_code, const QString& error_message);
+    void onWorkerCancelled();
+    void onScanProgress(int current, int total, const QString& path);
+    void onResultsReady(const QString& summary, int duplicate_count, qint64 wasted_space);
 
 private:
-    void setup_ui();
-    void set_operation_running(bool running);
-    void log_message(const QString& message);
+    void setupUi();
+    void setOperationRunning(bool running);
+    void logMessage(const QString& message);
 
     QListWidget* m_directory_list{nullptr};
     QPushButton* m_add_directory_button{nullptr};

@@ -27,7 +27,7 @@ namespace sak {
 // Path Validation
 // ============================================
 
-validation_result input_validator::validate_path(
+validation_result input_validator::validatePath(
     const std::filesystem::path& path,
     const path_validation_config& config) {
     
@@ -45,13 +45,13 @@ validation_result input_validator::validate_path(
     }
     
     // Check for suspicious patterns
-    if (contains_suspicious_patterns(path)) {
+    if (containsSuspiciousPatterns(path)) {
         return failure(error_code::invalid_path,
                       "Path contains suspicious patterns");
     }
     
     // Check for traversal sequences
-    if (contains_traversal_sequences(path)) {
+    if (containsTraversalSequences(path)) {
         return failure(error_code::path_traversal_attempt,
                       "Path contains directory traversal sequences");
     }
@@ -124,7 +124,7 @@ validation_result input_validator::validate_path(
     
     // Check base directory constraint
     if (!config.base_directory.empty()) {
-        auto within_base = validate_path_within_base(path, config.base_directory);
+        auto within_base = validatePathWithinBase(path, config.base_directory);
         if (!within_base) {
             return within_base;
         }
@@ -133,7 +133,7 @@ validation_result input_validator::validate_path(
     return success();
 }
 
-bool input_validator::contains_traversal_sequences(
+bool input_validator::containsTraversalSequences(
     const std::filesystem::path& path) noexcept {
     
     const auto path_str = path.string();
@@ -160,7 +160,7 @@ bool input_validator::contains_traversal_sequences(
     return false;
 }
 
-validation_result input_validator::validate_path_within_base(
+validation_result input_validator::validatePathWithinBase(
     const std::filesystem::path& path,
     const std::filesystem::path& base_dir) {
     
@@ -202,7 +202,7 @@ validation_result input_validator::validate_path_within_base(
     }
 }
 
-bool input_validator::contains_suspicious_patterns(
+bool input_validator::containsSuspiciousPatterns(
     const std::filesystem::path& path) noexcept {
     
     const auto path_str = path.string();
@@ -237,7 +237,7 @@ bool input_validator::contains_suspicious_patterns(
 // String Validation
 // ============================================
 
-validation_result input_validator::validate_string(
+validation_result input_validator::validateString(
     std::string_view str,
     const string_validation_config& config) {
     
@@ -253,13 +253,13 @@ validation_result input_validator::validate_string(
     }
     
     // Check for null bytes
-    if (!config.allow_null_bytes && contains_null_bytes(str)) {
+    if (!config.allow_null_bytes && containsNullBytes(str)) {
         return failure(error_code::validation_failed,
                       "String contains null bytes");
     }
     
     // Check for control characters
-    if (!config.allow_control_chars && contains_control_chars(str)) {
+    if (!config.allow_control_chars && containsControlChars(str)) {
         return failure(error_code::validation_failed,
                       "String contains control characters");
     }
@@ -283,7 +283,7 @@ validation_result input_validator::validate_string(
     }
     
     // Check UTF-8
-    if (config.require_utf8 && !is_valid_utf8(str)) {
+    if (config.require_utf8 && !isValidUtf8(str)) {
         return failure(error_code::validation_failed,
                       "String is not valid UTF-8");
     }
@@ -291,18 +291,18 @@ validation_result input_validator::validate_string(
     return success();
 }
 
-bool input_validator::contains_null_bytes(std::string_view str) noexcept {
+bool input_validator::containsNullBytes(std::string_view str) noexcept {
     return str.find('\0') != std::string_view::npos;
 }
 
-bool input_validator::contains_control_chars(std::string_view str) noexcept {
+bool input_validator::containsControlChars(std::string_view str) noexcept {
     return std::any_of(str.begin(), str.end(),
                       [](unsigned char c) {
                           return std::iscntrl(c) && c != '\n' && c != '\r' && c != '\t';
                       });
 }
 
-bool input_validator::is_valid_utf8(std::string_view str) noexcept {
+bool input_validator::isValidUtf8(std::string_view str) noexcept {
     std::size_t i = 0;
     
     while (i < str.length()) {
@@ -348,7 +348,7 @@ bool input_validator::is_valid_utf8(std::string_view str) noexcept {
     return true;
 }
 
-std::string input_validator::sanitize_string(
+std::string input_validator::sanitizeString(
     std::string_view str,
     bool allow_unicode) {
     
@@ -384,7 +384,7 @@ std::string input_validator::sanitize_string(
 // Buffer Validation
 // ============================================
 
-validation_result input_validator::validate_buffer_size(
+validation_result input_validator::validateBufferSize(
     std::size_t buffer_size,
     std::size_t max_size,
     std::size_t required_size) {
@@ -460,7 +460,7 @@ validation_result input_validator::validate_file_descriptor_limit() {
     
     // Warn if using more than 80% of limit
     if (current_count > (limit * 4 / 5)) {
-        log_warning("Approaching file descriptor limit: {}/{}", current_count, limit);
+        logWarning("Approaching file descriptor limit: {}/{}", current_count, limit);
         return failure(error_code::resource_limit_reached,
                       "Approaching file descriptor limit");
     }
@@ -484,7 +484,7 @@ validation_result input_validator::validate_thread_count(
     
     // Warn if requesting more than 2x hardware threads
     if (requested_threads > hardware_threads * 2) {
-        log_warning("Requested threads ({}) exceeds 2x hardware threads ({})",
+        logWarning("Requested threads ({}) exceeds 2x hardware threads ({})",
                    requested_threads, hardware_threads);
     }
     

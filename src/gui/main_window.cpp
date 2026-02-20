@@ -19,16 +19,16 @@ using sak::AppMigrationPanel;
 MainWindow::MainWindow(QWidget* parent)
     : QMainWindow(parent)
 {
-    setup_ui();
-    load_window_state();
+    setupUi();
+    loadWindowState();
 }
 
 MainWindow::~MainWindow()
 {
-    save_window_state();
+    saveWindowState();
 }
 
-void MainWindow::setup_ui()
+void MainWindow::setupUi()
 {
     setWindowTitle("S.A.K. Utility - Swiss Army Knife Utility");
     setMinimumSize(1024, 768);
@@ -40,22 +40,22 @@ void MainWindow::setup_ui()
     setCentralWidget(m_tab_widget);
     
     // Create UI elements
-    create_menu_bar();
-    create_toolbar();
-    create_status_bar();
-    create_panels();
+    createMenuBar();
+    createToolbar();
+    createStatusBar();
+    createPanels();
     
-    update_status("Ready", 0);
+    updateStatus("Ready", 0);
 }
 
-void MainWindow::create_menu_bar()
+void MainWindow::createMenuBar()
 {
     auto* file_menu = menuBar()->addMenu("&File");
     
     auto* exit_action = new QAction("E&xit", this);
     exit_action->setShortcut(QKeySequence::Quit);
     exit_action->setStatusTip("Exit the application");
-    connect(exit_action, &QAction::triggered, this, &MainWindow::on_exit_clicked);
+    connect(exit_action, &QAction::triggered, this, &MainWindow::onExitClicked);
     file_menu->addAction(exit_action);
     
     auto* edit_menu = menuBar()->addMenu("&Edit");
@@ -63,18 +63,18 @@ void MainWindow::create_menu_bar()
     auto* settings_action = new QAction("&Settings", this);
     settings_action->setShortcut(QKeySequence::Preferences);
     settings_action->setStatusTip("Open settings dialog");
-    connect(settings_action, &QAction::triggered, this, &MainWindow::on_settings_clicked);
+    connect(settings_action, &QAction::triggered, this, &MainWindow::onSettingsClicked);
     edit_menu->addAction(settings_action);
     
     auto* help_menu = menuBar()->addMenu("&Help");
     
     auto* about_action = new QAction("&About", this);
     about_action->setStatusTip("About S.A.K. Utility");
-    connect(about_action, &QAction::triggered, this, &MainWindow::on_about_clicked);
+    connect(about_action, &QAction::triggered, this, &MainWindow::onAboutClicked);
     help_menu->addAction(about_action);
 }
 
-void MainWindow::create_toolbar()
+void MainWindow::createToolbar()
 {
     auto* toolbar = addToolBar("Main Toolbar");
     toolbar->setMovable(false);
@@ -82,13 +82,13 @@ void MainWindow::create_toolbar()
     
 }
 
-void MainWindow::create_status_bar()
+void MainWindow::createStatusBar()
 {
     // Status bar disabled - panels have their own status bars
     statusBar()->hide();
 }
 
-void MainWindow::create_panels()
+void MainWindow::createPanels()
 {
     // Create Quick Actions panel (first tab)
     m_quick_actions_panel = std::make_unique<sak::QuickActionsPanel>(this);
@@ -121,30 +121,30 @@ void MainWindow::create_panels()
     m_tab_widget->addTab(m_image_flasher_panel.get(), "Image Flasher");
     
     // Connect panel signals to main window status bar
-    connect(m_quick_actions_panel.get(), &sak::QuickActionsPanel::status_message,
-            this, [this](const QString& msg) { update_status(msg, 5000); });
-    connect(m_quick_actions_panel.get(), &sak::QuickActionsPanel::progress_update,
-            this, &MainWindow::update_progress);
+    connect(m_quick_actions_panel.get(), &sak::QuickActionsPanel::statusMessage,
+            this, [this](const QString& msg) { updateStatus(msg, 5000); });
+    connect(m_quick_actions_panel.get(), &sak::QuickActionsPanel::progressUpdate,
+            this, &MainWindow::updateProgress);
     
-    connect(m_backup_panel.get(), &BackupPanel::status_message,
-            this, [this](const QString& msg) { update_status(msg, 5000); });
-    // User Migration panel has its own progress bar, no progress_updated signal needed
+    connect(m_backup_panel.get(), &BackupPanel::statusMessage,
+            this, [this](const QString& msg) { updateStatus(msg, 5000); });
+    // User Migration panel has its own progress bar, no progressUpdated signal needed
     
-    connect(m_app_migration_panel.get(), &AppMigrationPanel::status_message,
-            this, [this](const QString& msg) { update_status(msg, 5000); });
-    connect(m_app_migration_panel.get(), &AppMigrationPanel::progress_updated,
-            this, &MainWindow::update_progress);
+    connect(m_app_migration_panel.get(), &AppMigrationPanel::statusMessage,
+            this, [this](const QString& msg) { updateStatus(msg, 5000); });
+    connect(m_app_migration_panel.get(), &AppMigrationPanel::progressUpdated,
+            this, &MainWindow::updateProgress);
 
             if (m_network_transfer_panel) {
-            connect(m_network_transfer_panel.get(), &sak::NetworkTransferPanel::status_message,
-                this, [this](const QString& msg) { update_status(msg, 5000); });
-            connect(m_network_transfer_panel.get(), &sak::NetworkTransferPanel::progress_update,
-                this, &MainWindow::update_progress);
+            connect(m_network_transfer_panel.get(), &sak::NetworkTransferPanel::statusMessage,
+                this, [this](const QString& msg) { updateStatus(msg, 5000); });
+            connect(m_network_transfer_panel.get(), &sak::NetworkTransferPanel::progressUpdate,
+                this, &MainWindow::updateProgress);
             }
     
 }
 
-void MainWindow::update_status(const QString& message, int timeout_ms)
+void MainWindow::updateStatus(const QString& message, int timeout_ms)
 {
     if (m_status_label) {
         if (timeout_ms > 0) {
@@ -155,7 +155,7 @@ void MainWindow::update_status(const QString& message, int timeout_ms)
     }
 }
 
-void MainWindow::update_progress(int current, int maximum)
+void MainWindow::updateProgress(int current, int maximum)
 {
     if (m_progress_bar) {
         m_progress_bar->setMaximum(maximum);
@@ -163,14 +163,14 @@ void MainWindow::update_progress(int current, int maximum)
     }
 }
 
-void MainWindow::set_progress_visible(bool visible)
+void MainWindow::setProgressVisible(bool visible)
 {
     if (m_progress_bar) {
         m_progress_bar->setVisible(visible);
     }
 }
 
-void MainWindow::on_about_clicked()
+void MainWindow::onAboutClicked()
 {
     QMessageBox::about(this, "About S.A.K. Utility",
         QString("<h2>S.A.K. Utility v%1</h2>"
@@ -187,18 +187,18 @@ void MainWindow::on_about_clicked()
         "</ul>").arg(sak::get_version_short()));
 }
 
-void MainWindow::on_exit_clicked()
+void MainWindow::onExitClicked()
 {
     close();
 }
 
-void MainWindow::on_settings_clicked()
+void MainWindow::onSettingsClicked()
 {
     sak::SettingsDialog dialog(this);
     dialog.exec();
 }
 
-void MainWindow::load_window_state()
+void MainWindow::loadWindowState()
 {
     auto& config = sak::ConfigManager::instance();
     
@@ -211,7 +211,7 @@ void MainWindow::load_window_state()
     m_tab_widget->setCurrentIndex(0);
 }
 
-void MainWindow::save_window_state()
+void MainWindow::saveWindowState()
 {
     auto& config = sak::ConfigManager::instance();
     config.setWindowGeometry(saveGeometry());

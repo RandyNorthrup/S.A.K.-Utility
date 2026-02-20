@@ -18,7 +18,7 @@ bool buildSafePath(const QString& basePath, const QString& relativePath, QString
     std::filesystem::path destPath = nativeCombined.toStdString();
     std::filesystem::path base = nativeBase.toStdString();
 
-    auto safe = path_utils::is_safe_path(destPath, base);
+    auto safe = path_utils::isSafePath(destPath, base);
     if (!safe || !(*safe)) {
         return false;
     }

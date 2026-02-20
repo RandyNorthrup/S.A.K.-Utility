@@ -71,7 +71,7 @@ void DriveLock::unlock() {
         CloseHandle(m_handle);
         m_handle = INVALID_HANDLE_VALUE;
 
-        sak::log_info(QString("Released lock on %1").arg(m_path).toStdString());
+        sak::logInfo(QString("Released lock on %1").arg(m_path).toStdString());
     }
 }
 
@@ -79,7 +79,7 @@ void DriveLock::acquireLock(const QString& path, bool readOnly) {
     m_path = path;
     std::wstring wPath = path.toStdWString();
 
-    sak::log_info(QString("Acquiring lock on %1").arg(path).toStdString());
+    sak::logInfo(QString("Acquiring lock on %1").arg(path).toStdString());
 
     // Determine access flags
     DWORD accessFlags = readOnly ? GENERIC_READ : (GENERIC_READ | GENERIC_WRITE);
@@ -99,7 +99,7 @@ void DriveLock::acquireLock(const QString& path, bool readOnly) {
     if (m_handle == INVALID_HANDLE_VALUE) {
         DWORD error = GetLastError();
         m_lastError = QString("Failed to open %1: error %2").arg(path).arg(error);
-        sak::log_error(m_lastError.toStdString());
+        sak::logError(m_lastError.toStdString());
         return;
     }
 
@@ -117,7 +117,7 @@ void DriveLock::acquireLock(const QString& path, bool readOnly) {
     )) {
         DWORD error = GetLastError();
         m_lastError = QString("Failed to lock %1: error %2").arg(path).arg(error);
-        sak::log_warning(m_lastError.toStdString());
+        sak::logWarning(m_lastError.toStdString());
         
         // Lock failure is not fatal for physical drives - we can still write
         // but for volumes, we should fail
@@ -128,7 +128,7 @@ void DriveLock::acquireLock(const QString& path, bool readOnly) {
         }
     } else {
         m_isLocked = true;
-        sak::log_info(QString("Successfully locked %1").arg(path).toStdString());
+        sak::logInfo(QString("Successfully locked %1").arg(path).toStdString());
     }
 
     // For physical drives, try to bring drive offline to prevent auto-mount
@@ -149,12 +149,12 @@ void DriveLock::acquireLock(const QString& path, bool readOnly) {
             &bytesReturned,
             nullptr
         )) {
-            sak::log_info(QString("Drive set to offline mode").toStdString());
+            sak::logInfo(QString("Drive set to offline mode").toStdString());
         } else {
-            sak::log_warning(QString("Failed to set drive offline, continuing anyway").toStdString());
+            sak::logWarning(QString("Failed to set drive offline, continuing anyway").toStdString());
         }
     }
 
-    sak::log_info(QString("Lock acquired on %1 (handle: %2)")
+    sak::logInfo(QString("Lock acquired on %1 (handle: %2)")
         .arg(path).arg(reinterpret_cast<quintptr>(m_handle)).toStdString());
 }

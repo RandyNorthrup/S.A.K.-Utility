@@ -68,7 +68,7 @@ void NetworkTransferWorkflowTests::transferEncryptedFiles() {
     QVERIFY(writeFile(sourcePath, QByteArray("Hello Network Transfer")));
 
     file_hasher hasher(hash_algorithm::sha256);
-    auto hashResult = hasher.calculate_hash(std::filesystem::path(sourcePath.toStdString()));
+    auto hashResult = hasher.calculateHash(std::filesystem::path(sourcePath.toStdString()));
     QVERIFY(hashResult.has_value());
 
     TransferFileEntry entry;
@@ -176,7 +176,7 @@ void NetworkTransferWorkflowTests::transferMultipleFiles() {
         const QString sourcePath = QDir(sourceDir.path()).filePath(rel);
         QVERIFY(writeFile(sourcePath, QByteArray("data:") + rel.toUtf8()));
 
-        auto hashResult = hasher.calculate_hash(std::filesystem::path(sourcePath.toStdString()));
+        auto hashResult = hasher.calculateHash(std::filesystem::path(sourcePath.toStdString()));
         QVERIFY(hashResult.has_value());
 
         TransferFileEntry entry;
@@ -289,7 +289,7 @@ void NetworkTransferWorkflowTests::transferManySmallFiles() {
         const QString sourcePath = QDir(sourceDir.path()).filePath(rel);
         QVERIFY(writeFile(sourcePath, QByteArray("s") + rel.toUtf8()));
 
-        auto hashResult = hasher.calculate_hash(std::filesystem::path(sourcePath.toStdString()));
+        auto hashResult = hasher.calculateHash(std::filesystem::path(sourcePath.toStdString()));
         QVERIFY(hashResult.has_value());
 
         TransferFileEntry entry;
@@ -389,7 +389,7 @@ void NetworkTransferWorkflowTests::resumeInterruptedTransfer() {
     QVERIFY(writeFile(sourcePath, payload));
 
     file_hasher hasher(hash_algorithm::sha256);
-    auto hashResult = hasher.calculate_hash(std::filesystem::path(sourcePath.toStdString()));
+    auto hashResult = hasher.calculateHash(std::filesystem::path(sourcePath.toStdString()));
     QVERIFY(hashResult.has_value());
 
     TransferFileEntry entry;
@@ -513,7 +513,7 @@ void NetworkTransferWorkflowTests::throttledTransferRespectsLimit() {
     QVERIFY(writeFile(sourcePath, payload));
 
     file_hasher hasher(hash_algorithm::sha256);
-    auto hashResult = hasher.calculate_hash(std::filesystem::path(sourcePath.toStdString()));
+    auto hashResult = hasher.calculateHash(std::filesystem::path(sourcePath.toStdString()));
     QVERIFY(hashResult.has_value());
 
     TransferFileEntry entry;

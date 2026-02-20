@@ -15,11 +15,11 @@ std::unique_ptr<StreamingDecompressor> DecompressorFactory::create(const QString
     QString format = detectFormat(filePath);
     
     if (format.isEmpty()) {
-        sak::log_warning(QString("Unknown compression format: %1").arg(filePath).toStdString());
+        sak::logWarning(QString("Unknown compression format: %1").arg(filePath).toStdString());
         return nullptr;
     }
 
-    sak::log_info(QString("Creating %1 decompressor for %2")
+    sak::logInfo(QString("Creating %1 decompressor for %2")
         .arg(format).arg(filePath).toStdString());
 
     if (format == "gzip") {
@@ -30,7 +30,7 @@ std::unique_ptr<StreamingDecompressor> DecompressorFactory::create(const QString
         return std::make_unique<XzDecompressor>();
     }
 
-    sak::log_warning(QString("Unsupported compression format: %1").arg(format).toStdString());
+    sak::logWarning(QString("Unsupported compression format: %1").arg(format).toStdString());
     return nullptr;
 }
 

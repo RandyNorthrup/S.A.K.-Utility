@@ -16,18 +16,18 @@ void NetworkConnectionManager::startServer(quint16 port) {
     }
 
     if (!m_server->listen(QHostAddress::AnyIPv4, port)) {
-        log_error("NetworkConnectionManager listen failed on port {}: {}", port, m_server->errorString().toStdString());
+        logError("NetworkConnectionManager listen failed on port {}: {}", port, m_server->errorString().toStdString());
         Q_EMIT connectionError(tr("Failed to listen on port %1").arg(port));
         return;
     }
 
-    log_info("NetworkConnectionManager listening on port {}", port);
+    logInfo("NetworkConnectionManager listening on port {}", port);
 }
 
 void NetworkConnectionManager::stopServer() {
     if (m_server->isListening()) {
         m_server->close();
-        log_info("NetworkConnectionManager stopped server");
+        logInfo("NetworkConnectionManager stopped server");
     }
 }
 
@@ -46,7 +46,7 @@ void NetworkConnectionManager::connectToHost(const QHostAddress& host, quint16 p
         Q_EMIT connectionError(m_socket->errorString());
     });
 
-    log_info("NetworkConnectionManager connecting to {}:{}", host.toString().toStdString(), port);
+    logInfo("NetworkConnectionManager connecting to {}:{}", host.toString().toStdString(), port);
     m_socket->connectToHost(host, port);
 }
 
@@ -80,11 +80,11 @@ void NetworkConnectionManager::onNewConnection() {
     connect(m_socket, &QTcpSocket::disconnected, this, &NetworkConnectionManager::onSocketDisconnected);
     connect(m_socket, &QTcpSocket::errorOccurred, this, [this](QAbstractSocket::SocketError) {
         QString errorStr = m_socket ? m_socket->errorString() : QStringLiteral("unknown");
-        log_error("NetworkConnectionManager socket error: {}", errorStr.toStdString());
+        logError("NetworkConnectionManager socket error: {}", errorStr.toStdString());
         Q_EMIT connectionError(errorStr);
     });
 
-    log_info("NetworkConnectionManager accepted connection from {}:{}",
+    logInfo("NetworkConnectionManager accepted connection from {}:{}",
              m_socket->peerAddress().toString().toStdString(),
              m_socket->peerPort());
 
@@ -99,7 +99,7 @@ void NetworkConnectionManager::onSocketReadyRead() {
 }
 
 void NetworkConnectionManager::onSocketDisconnected() {
-    log_info("NetworkConnectionManager socket disconnected");
+    logInfo("NetworkConnectionManager socket disconnected");
     Q_EMIT disconnected();
 }
 

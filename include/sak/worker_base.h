@@ -40,19 +40,19 @@ public:
     /**
      * @brief Request cancellation of worker
      */
-    void request_stop() noexcept;
+    void requestStop() noexcept;
 
     /**
      * @brief Check if stop has been requested
      * @return True if cancellation requested
      */
-    [[nodiscard]] bool stop_requested() const noexcept;
+    [[nodiscard]] bool stopRequested() const noexcept;
 
     /**
      * @brief Check if worker is currently running
      * @return True if worker is executing
      */
-    [[nodiscard]] bool is_running() const noexcept;
+    [[nodiscard]] bool isExecuting() const noexcept;
 
 Q_SIGNALS:
     /**
@@ -89,7 +89,7 @@ protected:
     /**
      * @brief Main worker execution - override in derived classes
      * 
-     * This method runs in the worker thread. Use check_stop() to
+     * This method runs in the worker thread. Use checkStop() to
      * check for cancellation requests and emit progress() for updates.
      * 
      * @return Expected containing success or error code
@@ -100,7 +100,7 @@ protected:
      * @brief Check if stop requested and emit cancelled if true
      * @return True if stop requested
      */
-    [[nodiscard]] bool check_stop();
+    [[nodiscard]] bool checkStop();
 
     /**
      * @brief Report progress to UI thread
@@ -108,7 +108,7 @@ protected:
      * @param total Total progress value
      * @param message Status message
      */
-    void report_progress(int current, int total, const QString& message = {});
+    void reportProgress(int current, int total, const QString& message = {});
 
 private:
     /**

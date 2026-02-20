@@ -32,29 +32,29 @@ public:
     OrganizerPanel& operator=(OrganizerPanel&&) = delete;
 
 Q_SIGNALS:
-    void status_message(const QString& message, int timeout_ms);
+    void statusMessage(const QString& message, int timeout_ms);
 
 private Q_SLOTS:
-    void on_browse_clicked();
-    void on_preview_clicked();
-    void on_execute_clicked();
-    void on_cancel_clicked();
-    void on_add_category_clicked();
-    void on_remove_category_clicked();
+    void onBrowseClicked();
+    void onPreviewClicked();
+    void onExecuteClicked();
+    void onCancelClicked();
+    void onAddCategoryClicked();
+    void onRemoveCategoryClicked();
     
-    void on_worker_started();
-    void on_worker_finished();
-    void on_worker_failed(int error_code, const QString& error_message);
-    void on_worker_cancelled();
-    void on_file_progress(int current, int total, const QString& file_path);
-    void on_preview_results(const QString& summary, int operation_count);
+    void onWorkerStarted();
+    void onWorkerFinished();
+    void onWorkerFailed(int error_code, const QString& error_message);
+    void onWorkerCancelled();
+    void onFileProgress(int current, int total, const QString& file_path);
+    void onPreviewResults(const QString& summary, int operation_count);
 
 private:
-    void setup_ui();
-    void setup_default_categories();
-    QMap<QString, QStringList> get_category_mapping() const;
-    void set_operation_running(bool running);
-    void log_message(const QString& message);
+    void setupUi();
+    void setupDefaultCategories();
+    QMap<QString, QStringList> getCategoryMapping() const;
+    void setOperationRunning(bool running);
+    void logMessage(const QString& message);
 
     QLineEdit* m_target_path{nullptr};
     QPushButton* m_browse_button{nullptr};

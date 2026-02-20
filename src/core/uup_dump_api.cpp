@@ -29,7 +29,7 @@ UupDumpApi::UupDumpApi(QObject* parent)
     : QObject(parent)
     , m_networkManager(new QNetworkAccessManager(this))
 {
-    sak::log_info("UupDumpApi initialized");
+    sak::logInfo("UupDumpApi initialized");
 }
 
 UupDumpApi::~UupDumpApi() {
@@ -39,7 +39,7 @@ UupDumpApi::~UupDumpApi() {
 // ─── Public API Methods ─────────────────────────────────────────────────────
 
 void UupDumpApi::fetchAvailableBuilds(const QString& arch, ReleaseChannel channel) {
-    sak::log_info(QString("Fetching available builds for arch=%1, channel=%2")
+    sak::logInfo(QString("Fetching available builds for arch=%1, channel=%2")
         .arg(arch, channelToDisplayName(channel)).toStdString());
 
     // Use listid.php to search for builds matching architecture and channel
@@ -56,7 +56,7 @@ void UupDumpApi::fetchAvailableBuilds(const QString& arch, ReleaseChannel channe
 }
 
 void UupDumpApi::listLanguages(const QString& updateId) {
-    sak::log_info(QString("Fetching languages for build %1").arg(updateId).toStdString());
+    sak::logInfo(QString("Fetching languages for build %1").arg(updateId).toStdString());
 
     QMap<QString, QString> params;
     params["id"] = updateId;
@@ -68,7 +68,7 @@ void UupDumpApi::listLanguages(const QString& updateId) {
 }
 
 void UupDumpApi::listEditions(const QString& updateId, const QString& lang) {
-    sak::log_info(QString("Fetching editions for build %1, lang=%2")
+    sak::logInfo(QString("Fetching editions for build %1, lang=%2")
         .arg(updateId, lang).toStdString());
 
     QMap<QString, QString> params;
@@ -82,7 +82,7 @@ void UupDumpApi::listEditions(const QString& updateId, const QString& lang) {
 }
 
 void UupDumpApi::getFiles(const QString& updateId, const QString& lang, const QString& edition) {
-    sak::log_info(QString("Fetching download files for build %1, lang=%2, edition=%3")
+    sak::logInfo(QString("Fetching download files for build %1, lang=%2, edition=%3")
         .arg(updateId, lang, edition).toStdString());
 
     QMap<QString, QString> params;
@@ -151,7 +151,7 @@ void UupDumpApi::onBuildsFetchReply() {
 
     if (reply->error() != QNetworkReply::NoError) {
         QString errorMsg = QString("Network error fetching builds: %1").arg(reply->errorString());
-        sak::log_error(errorMsg.toStdString());
+        sak::logError(errorMsg.toStdString());
         Q_EMIT apiError(errorMsg);
         return;
     }
@@ -162,7 +162,7 @@ void UupDumpApi::onBuildsFetchReply() {
 
     if (parseError.error != QJsonParseError::NoError) {
         QString errorMsg = QString("JSON parse error: %1").arg(parseError.errorString());
-        sak::log_error(errorMsg.toStdString());
+        sak::logError(errorMsg.toStdString());
         Q_EMIT apiError(errorMsg);
         return;
     }
@@ -197,7 +197,7 @@ void UupDumpApi::onBuildsFetchReply() {
         return a.created > b.created;
     });
 
-    sak::log_info(QString("Fetched %1 available builds").arg(builds.size()).toStdString());
+    sak::logInfo(QString("Fetched %1 available builds").arg(builds.size()).toStdString());
     Q_EMIT buildsFetched(builds);
 }
 
@@ -210,7 +210,7 @@ void UupDumpApi::onLanguagesReply() {
 
     if (reply->error() != QNetworkReply::NoError) {
         QString errorMsg = QString("Network error fetching languages: %1").arg(reply->errorString());
-        sak::log_error(errorMsg.toStdString());
+        sak::logError(errorMsg.toStdString());
         Q_EMIT apiError(errorMsg);
         return;
     }
@@ -257,12 +257,12 @@ void UupDumpApi::onLanguagesReply() {
     });
 
     if (langCodes.isEmpty()) {
-        sak::log_warning("API returned empty language list");
+        sak::logWarning("API returned empty language list");
         Q_EMIT apiError("No languages available for this build.");
         return;
     }
 
-    sak::log_info(QString("Fetched %1 available languages").arg(langCodes.size()).toStdString());
+    sak::logInfo(QString("Fetched %1 available languages").arg(langCodes.size()).toStdString());
     Q_EMIT languagesFetched(langCodes, langNames);
 }
 
@@ -275,7 +275,7 @@ void UupDumpApi::onEditionsReply() {
 
     if (reply->error() != QNetworkReply::NoError) {
         QString errorMsg = QString("Network error fetching editions: %1").arg(reply->errorString());
-        sak::log_error(errorMsg.toStdString());
+        sak::logError(errorMsg.toStdString());
         Q_EMIT apiError(errorMsg);
         return;
     }
@@ -317,12 +317,12 @@ void UupDumpApi::onEditionsReply() {
     }
 
     if (editions.isEmpty()) {
-        sak::log_warning("API returned empty edition list");
+        sak::logWarning("API returned empty edition list");
         Q_EMIT apiError("No editions available for this build/language.");
         return;
     }
 
-    sak::log_info(QString("Fetched %1 available editions").arg(editions.size()).toStdString());
+    sak::logInfo(QString("Fetched %1 available editions").arg(editions.size()).toStdString());
     Q_EMIT editionsFetched(editions, editionNames);
 }
 
@@ -335,7 +335,7 @@ void UupDumpApi::onFilesReply() {
 
     if (reply->error() != QNetworkReply::NoError) {
         QString errorMsg = QString("Network error fetching files: %1").arg(reply->errorString());
-        sak::log_error(errorMsg.toStdString());
+        sak::logError(errorMsg.toStdString());
         Q_EMIT apiError(errorMsg);
         return;
     }
@@ -375,14 +375,14 @@ void UupDumpApi::onFilesReply() {
         // Sanitize filename — reject path traversal attempts
         if (info.fileName.contains("..") || info.fileName.contains('/') ||
             info.fileName.contains('\\')) {
-            sak::log_warning("Rejected unsafe filename from API: " + info.fileName.toStdString());
+            sak::logWarning("Rejected unsafe filename from API: " + info.fileName.toStdString());
             continue;
         }
 
         // Validate download URL scheme — only allow HTTPS
         QUrl downloadUrl(info.url);
         if (!downloadUrl.isValid() || downloadUrl.scheme().toLower() != "https") {
-            sak::log_warning("Rejected non-HTTPS download URL for: " + info.fileName.toStdString());
+            sak::logWarning("Rejected non-HTTPS download URL for: " + info.fileName.toStdString());
             continue;
         }
 
@@ -394,7 +394,7 @@ void UupDumpApi::onFilesReply() {
     }
 
     double totalSizeGB = totalSize / (1024.0 * 1024.0 * 1024.0);
-    sak::log_info(QString("Fetched %1 downloadable files (%.2f GB total)")
+    sak::logInfo(QString("Fetched %1 downloadable files (%.2f GB total)")
         .arg(files.size()).arg(totalSizeGB).toStdString());
 
     Q_EMIT filesFetched(updateName, files);
@@ -421,7 +421,7 @@ QNetworkReply* UupDumpApi::sendApiRequest(const QString& endpoint,
     sslConfig.setProtocol(QSsl::TlsV1_2OrLater);
     request.setSslConfiguration(sslConfig);
 
-    sak::log_info(QString("API request: %1").arg(url.toString()).toStdString());
+    sak::logInfo(QString("API request: %1").arg(url.toString()).toStdString());
 
     QNetworkReply* reply = m_networkManager->get(request);
     m_pendingReplies.append(reply);
@@ -432,7 +432,7 @@ bool UupDumpApi::checkApiError(const QJsonObject& response, const QString& conte
     if (response.contains("error")) {
         QString errorCode = response["error"].toString();
         QString errorMsg = QString("UUP dump API error while %1: %2").arg(context, errorCode);
-        sak::log_error(errorMsg.toStdString());
+        sak::logError(errorMsg.toStdString());
         Q_EMIT apiError(errorMsg);
         return true;
     }

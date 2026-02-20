@@ -54,7 +54,7 @@ Q_SIGNALS:
     /**
      * @brief Status message for main window status bar
      */
-    void status_message(const QString& message, int timeout_ms);
+    void statusMessage(const QString& message, int timeout_ms);
 
 private Q_SLOTS:
     // Main actions

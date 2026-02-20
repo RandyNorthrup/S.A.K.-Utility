@@ -35,7 +35,7 @@ private:
         bool has_errors;
         int errors_found;
         bool needs_reboot_to_fix;
-        QString status_message;
+        QString statusMessage;
     };
 
     QVector<DriveCheckResult> m_drive_results;

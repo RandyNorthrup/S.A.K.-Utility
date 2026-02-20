@@ -57,72 +57,72 @@ public Q_SLOTS:
      * @param message Status message to display
      * @param timeout_ms Timeout in milliseconds (0 = permanent)
      */
-    void update_status(const QString& message, int timeout_ms = 0);
+    void updateStatus(const QString& message, int timeout_ms = 0);
 
     /**
      * @brief Update progress bar
      * @param current Current progress value
      * @param maximum Maximum progress value
      */
-    void update_progress(int current, int maximum);
+    void updateProgress(int current, int maximum);
 
     /**
      * @brief Show/hide progress bar
      * @param visible True to show, false to hide
      */
-    void set_progress_visible(bool visible);
+    void setProgressVisible(bool visible);
 
 private Q_SLOTS:
     /**
      * @brief Handle About dialog
      */
-    void on_about_clicked();
+    void onAboutClicked();
 
     /**
      * @brief Handle Exit action
      */
-    void on_exit_clicked();
+    void onExitClicked();
 
     /**
      * @brief Handle Settings dialog
      */
-    void on_settings_clicked();
+    void onSettingsClicked();
 
 private:
     /**
      * @brief Initialize UI components
      */
-    void setup_ui();
+    void setupUi();
 
     /**
      * @brief Create menu bar
      */
-    void create_menu_bar();
+    void createMenuBar();
 
     /**
      * @brief Create toolbar
      */
-    void create_toolbar();
+    void createToolbar();
 
     /**
      * @brief Create status bar
      */
-    void create_status_bar();
+    void createStatusBar();
 
     /**
      * @brief Create feature panels
      */
-    void create_panels();
+    void createPanels();
 
     /**
      * @brief Load window state from settings
      */
-    void load_window_state();
+    void loadWindowState();
 
     /**
      * @brief Save window state to settings
      */
-    void save_window_state();
+    void saveWindowState();
 
 protected:
     /**

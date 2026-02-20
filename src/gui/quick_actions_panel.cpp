@@ -428,7 +428,7 @@ void QuickActionsPanel::onActionScanComplete(QuickAction* action) {
     
     if (m_logging_checkbox->isChecked()) {
         const auto& result = action->lastScanResult();
-        Q_EMIT status_message(
+        Q_EMIT statusMessage(
             QString("%1 scan complete: %2").arg(action->name(), result.summary),
             3000
         );
@@ -451,7 +451,7 @@ void QuickActionsPanel::onActionProgress(QuickAction* action, const QString& mes
     }
 
     updateActionButton(action);
-    Q_EMIT progress_update(progress, 100);
+    Q_EMIT progressUpdate(progress, 100);
 }
 
 void QuickActionsPanel::onActionComplete(QuickAction* action) {
@@ -476,7 +476,7 @@ void QuickActionsPanel::onActionComplete(QuickAction* action) {
     // Show notification
     if (m_notifications_checkbox->isChecked()) {
         QString title = result.success ? "Action Complete" : "Action Failed";
-        Q_EMIT status_message(
+        Q_EMIT statusMessage(
             QString("%1: %2").arg(action->name(), result.message),
             5000
         );
@@ -517,7 +517,7 @@ void QuickActionsPanel::onBrowseBackupLocation() {
 }
 
 void QuickActionsPanel::refreshAllScans() {
-    Q_EMIT status_message("Refreshing all action scans...", 2000);
+    Q_EMIT statusMessage("Refreshing all action scans...", 2000);
     m_controller->scanAllActions();
 }
 

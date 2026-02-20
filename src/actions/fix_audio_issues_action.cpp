@@ -18,7 +18,7 @@ FixAudioIssuesAction::FixAudioIssuesAction(QObject* parent)
 FixAudioIssuesAction::AudioServiceStatus FixAudioIssuesAction::checkAudioService(const QString& service_name) {
     AudioServiceStatus svc_status;
     svc_status.service_name = service_name;
-    svc_status.is_running = false;
+    svc_status.isExecuting = false;
     
     QString ps_cmd = QString("Get-Service -Name %1 | Select-Object Status | Format-List").arg(service_name);
     
@@ -33,7 +33,7 @@ FixAudioIssuesAction::AudioServiceStatus FixAudioIssuesAction::checkAudioService
     for (const QString& line : lines) {
         if (line.contains("Status", Qt::CaseInsensitive)) {
             svc_status.status = line.split(':').last().trimmed();
-            svc_status.is_running = svc_status.status.contains("Running", Qt::CaseInsensitive);
+            svc_status.isExecuting = svc_status.status.contains("Running", Qt::CaseInsensitive);
         }
     }
     
@@ -128,11 +128,11 @@ void FixAudioIssuesAction::scan() {
     ScanResult result;
     result.applicable = true;
     result.summary = QString("Audio services: %1/%2 running")
-        .arg(audiosrv.is_running ? "AudioSrv" : "AudioSrv stopped")
-        .arg(endpoint.is_running ? "Endpoint" : "Endpoint stopped");
+        .arg(audiosrv.isExecuting ? "AudioSrv" : "AudioSrv stopped")
+        .arg(endpoint.isExecuting ? "Endpoint" : "Endpoint stopped");
     result.details = "Repair will restart services and reset audio devices";
 
-    if (!audiosrv.is_running || !endpoint.is_running) {
+    if (!audiosrv.isExecuting || !endpoint.isExecuting) {
         result.warning = "One or more audio services are stopped";
     }
 
@@ -160,8 +160,8 @@ void FixAudioIssuesAction::execute() {
     report += "╠════════════════════════════════════════════════════════════════╣\n";
     
     // Service status before restart
-    report += QString("║ AudioSrv:             %1\n").arg(audiosrv.is_running ? "Running" : "STOPPED").leftJustified(67, ' ') + "║\n";
-    report += QString("║ AudioEndpointBuilder: %1\n").arg(endpoint_builder.is_running ? "Running" : "STOPPED").leftJustified(67, ' ') + "║\n";
+    report += QString("║ AudioSrv:             %1\n").arg(audiosrv.isExecuting ? "Running" : "STOPPED").leftJustified(67, ' ') + "║\n";
+    report += QString("║ AudioEndpointBuilder: %1\n").arg(endpoint_builder.isExecuting ? "Running" : "STOPPED").leftJustified(67, ' ') + "║\n";
     report += "╠════════════════════════════════════════════════════════════════╣\n";
     
     // PHASE 2: Restart audio services

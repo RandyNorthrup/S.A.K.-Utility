@@ -300,7 +300,7 @@ QStringList ChocolateyManager::getOutdatedPackages() {
     QStringList outdated;
     
     if (!m_initialized) {
-        sak::log_warning("ChocolateyManager not initialized");
+        sak::logWarning("ChocolateyManager not initialized");
         return outdated;
     }
     

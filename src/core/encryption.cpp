@@ -179,7 +179,7 @@ QByteArray aes_decrypt(const QByteArray& ciphertext, const QByteArray& key, cons
 
 } // anonymous namespace
 
-auto encrypt_data(
+auto encryptData(
     const QByteArray& data,
     const QString& password,
     const EncryptionParams& params
@@ -194,21 +194,21 @@ auto encrypt_data(
     QByteArray iv = generate_random_bytes(params.iv_size);
     
     if (salt.isEmpty() || iv.isEmpty()) {
-        log_error("Failed to generate random bytes for encryption");
+        logError("Failed to generate random bytes for encryption");
         return std::unexpected(error_code::crypto_error);
     }
     
     // Derive key from password
     QByteArray key = derive_key(password, salt, params.iterations, params.key_size);
     if (key.isEmpty()) {
-        log_error("Failed to derive encryption key");
+        logError("Failed to derive encryption key");
         return std::unexpected(error_code::crypto_error);
     }
     
     // Encrypt data
     QByteArray ciphertext = aes_encrypt(data, key, iv);
     if (ciphertext.isEmpty()) {
-        log_error("AES encryption failed");
+        logError("AES encryption failed");
         return std::unexpected(error_code::crypto_error);
     }
     
@@ -218,7 +218,7 @@ auto encrypt_data(
     result.append(iv);
     result.append(ciphertext);
     
-    log_debug("Encryption", std::format("Encrypted {} bytes to {} bytes", 
+    logDebug("Encryption", std::format("Encrypted {} bytes to {} bytes", 
                                          data.size(), result.size()));
     
     return result;
@@ -227,7 +227,7 @@ auto encrypt_data(
 #endif
 }
 
-auto decrypt_data(
+auto decryptData(
     const QByteArray& encrypted_data,
     const QString& password,
     const EncryptionParams& params
@@ -239,7 +239,7 @@ auto decrypt_data(
     
     int header_size = params.salt_size + params.iv_size;
     if (encrypted_data.size() < header_size) {
-        log_error("Encrypted data too small - corrupted or invalid");
+        logError("Encrypted data too small - corrupted or invalid");
         return std::unexpected(error_code::invalid_format);
     }
     
@@ -251,18 +251,18 @@ auto decrypt_data(
     // Derive key from password
     QByteArray key = derive_key(password, salt, params.iterations, params.key_size);
     if (key.isEmpty()) {
-        log_error("Failed to derive decryption key");
+        logError("Failed to derive decryption key");
         return std::unexpected(error_code::crypto_error);
     }
     
     // Decrypt data
     QByteArray plaintext = aes_decrypt(ciphertext, key, iv);
     if (plaintext.isEmpty()) {
-        log_error("AES decryption failed - wrong password or corrupted data");
+        logError("AES decryption failed - wrong password or corrupted data");
         return std::unexpected(error_code::decrypt_failed);
     }
     
-    log_debug("Decryption", std::format("Decrypted {} bytes to {} bytes",
+    logDebug("Decryption", std::format("Decrypted {} bytes to {} bytes",
                                          encrypted_data.size(), plaintext.size()));
     
     return plaintext;
@@ -271,21 +271,21 @@ auto decrypt_data(
 #endif
 }
 
-auto encrypt_file(
+auto encryptFile(
     const QString& file_path,
     const QString& password,
     const EncryptionParams& params
 ) -> std::expected<void, error_code> {
     QFile file(file_path);
     if (!file.open(QIODevice::ReadOnly)) {
-        log_error(std::format("Cannot open file for encryption: {}", file_path.toStdString()));
+        logError(std::format("Cannot open file for encryption: {}", file_path.toStdString()));
         return std::unexpected(error_code::file_not_found);
     }
     
     QByteArray data = file.readAll();
     file.close();
     
-    auto encrypted = encrypt_data(data, password, params);
+    auto encrypted = encryptData(data, password, params);
     if (!encrypted) {
         return std::unexpected(encrypted.error());
     }
@@ -294,12 +294,12 @@ auto encrypt_file(
     QString tempPath = file_path + ".tmp";
     QFile tempFile(tempPath);
     if (!tempFile.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-        log_error(std::format("Cannot create temp file for encryption: {}", tempPath.toStdString()));
+        logError(std::format("Cannot create temp file for encryption: {}", tempPath.toStdString()));
         return std::unexpected(error_code::file_write_error);
     }
     
     if (tempFile.write(*encrypted) != encrypted->size()) {
-        log_error(std::format("Incomplete write to temp file: {}", tempPath.toStdString()));
+        logError(std::format("Incomplete write to temp file: {}", tempPath.toStdString()));
         tempFile.close();
         QFile::remove(tempPath);
         return std::unexpected(error_code::file_write_error);
@@ -309,29 +309,29 @@ auto encrypt_file(
     // Atomically replace original with encrypted version
     QFile::remove(file_path);
     if (!QFile::rename(tempPath, file_path)) {
-        log_error(std::format("Cannot replace original file: {}", file_path.toStdString()));
+        logError(std::format("Cannot replace original file: {}", file_path.toStdString()));
         return std::unexpected(error_code::file_write_error);
     }
     
-    log_info(std::format("Encrypted file: {}", file_path.toStdString()));
+    logInfo(std::format("Encrypted file: {}", file_path.toStdString()));
     return {};
 }
 
-auto decrypt_file(
+auto decryptFile(
     const QString& file_path,
     const QString& password,
     const EncryptionParams& params
 ) -> std::expected<void, error_code> {
     QFile file(file_path);
     if (!file.open(QIODevice::ReadOnly)) {
-        log_error(std::format("Cannot open file for decryption: {}", file_path.toStdString()));
+        logError(std::format("Cannot open file for decryption: {}", file_path.toStdString()));
         return std::unexpected(error_code::file_not_found);
     }
     
     QByteArray encrypted_data = file.readAll();
     file.close();
     
-    auto decrypted = decrypt_data(encrypted_data, password, params);
+    auto decrypted = decryptData(encrypted_data, password, params);
     if (!decrypted) {
         return std::unexpected(decrypted.error());
     }
@@ -340,12 +340,12 @@ auto decrypt_file(
     QString tempPath = file_path + ".tmp";
     QFile tempFile(tempPath);
     if (!tempFile.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-        log_error(std::format("Cannot create temp file for decryption: {}", tempPath.toStdString()));
+        logError(std::format("Cannot create temp file for decryption: {}", tempPath.toStdString()));
         return std::unexpected(error_code::file_write_error);
     }
     
     if (tempFile.write(*decrypted) != decrypted->size()) {
-        log_error(std::format("Incomplete write to temp file: {}", tempPath.toStdString()));
+        logError(std::format("Incomplete write to temp file: {}", tempPath.toStdString()));
         tempFile.close();
         QFile::remove(tempPath);
         return std::unexpected(error_code::file_write_error);
@@ -355,11 +355,11 @@ auto decrypt_file(
     // Atomically replace original with decrypted version
     QFile::remove(file_path);
     if (!QFile::rename(tempPath, file_path)) {
-        log_error(std::format("Cannot replace original file: {}", file_path.toStdString()));
+        logError(std::format("Cannot replace original file: {}", file_path.toStdString()));
         return std::unexpected(error_code::file_write_error);
     }
     
-    log_info(std::format("Decrypted file: {}", file_path.toStdString()));
+    logInfo(std::format("Decrypted file: {}", file_path.toStdString()));
     return {};
 }
 

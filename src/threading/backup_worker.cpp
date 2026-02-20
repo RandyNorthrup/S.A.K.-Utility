@@ -12,42 +12,42 @@ BackupWorker::BackupWorker(const Config& config, QObject* parent)
 
 auto BackupWorker::execute() -> std::expected<void, sak::error_code>
 {
-    sak::log_info("Backup worker started");
-    sak::log_info("Source: {}", m_config.source_path.toStdString());
-    sak::log_info("Destination: {}", m_config.destination_path.toStdString());
+    sak::logInfo("Backup worker started");
+    sak::logInfo("Source: {}", m_config.source_path.toStdString());
+    sak::logInfo("Destination: {}", m_config.destination_path.toStdString());
     
     m_start_time = std::chrono::steady_clock::now();
     m_last_speed_update = m_start_time;
     
     // Scan source directory
-    report_progress(0, 100, "Scanning source directory...");
+    reportProgress(0, 100, "Scanning source directory...");
     
-    auto scan_result = scan_source();
+    auto scan_result = scanSource();
     if (!scan_result) {
         return std::unexpected(scan_result.error());
     }
     
     std::tie(m_total_files, m_total_bytes) = *scan_result;
     
-    sak::log_info("Found {} files ({} bytes)", m_total_files, m_total_bytes);
+    sak::logInfo("Found {} files ({} bytes)", m_total_files, m_total_bytes);
     
-    if (check_stop()) {
+    if (checkStop()) {
         return std::unexpected(sak::error_code::operation_cancelled);
     }
     
     // Copy files
-    report_progress(0, 100, "Copying files...");
+    reportProgress(0, 100, "Copying files...");
     
-    auto copy_result = copy_files();
+    auto copy_result = copyFiles();
     if (!copy_result) {
         return std::unexpected(copy_result.error());
     }
     
-    sak::log_info("Backup completed successfully");
+    sak::logInfo("Backup completed successfully");
     return {};
 }
 
-auto BackupWorker::scan_source() -> std::expected<std::pair<int, qint64>, sak::error_code>
+auto BackupWorker::scanSource() -> std::expected<std::pair<int, qint64>, sak::error_code>
 {
     m_files_to_copy.clear();
     int file_count = 0;
@@ -57,17 +57,17 @@ auto BackupWorker::scan_source() -> std::expected<std::pair<int, qint64>, sak::e
         std::filesystem::path source_path(m_config.source_path.toStdString());
         
         if (!std::filesystem::exists(source_path)) {
-            sak::log_error("Source path does not exist: {}", source_path.string());
+            sak::logError("Source path does not exist: {}", source_path.string());
             return std::unexpected(sak::error_code::file_not_found);
         }
         
         if (!std::filesystem::is_directory(source_path)) {
-            sak::log_error("Source path is not a directory: {}", source_path.string());
+            sak::logError("Source path is not a directory: {}", source_path.string());
             return std::unexpected(sak::error_code::invalid_path);
         }
         
         for (const auto& entry : std::filesystem::recursive_directory_iterator(source_path)) {
-            if (check_stop()) {
+            if (checkStop()) {
                 return std::unexpected(sak::error_code::operation_cancelled);
             }
             
@@ -78,7 +78,7 @@ auto BackupWorker::scan_source() -> std::expected<std::pair<int, qint64>, sak::e
                 
                 // Report scan progress every 100 files
                 if (file_count % 100 == 0) {
-                    report_progress(file_count, file_count + 1,
+                    reportProgress(file_count, file_count + 1,
                                   QString("Scanning... found %1 files").arg(file_count));
                 }
             }
@@ -87,15 +87,15 @@ auto BackupWorker::scan_source() -> std::expected<std::pair<int, qint64>, sak::e
         return std::make_pair(file_count, total_size);
         
     } catch (const std::filesystem::filesystem_error& e) {
-        sak::log_error("Filesystem error during scan: {}", e.what());
+        sak::logError("Filesystem error during scan: {}", e.what());
         return std::unexpected(sak::error_code::scan_failed);
     } catch (const std::exception& e) {
-        sak::log_error("Error during scan: {}", e.what());
+        sak::logError("Error during scan: {}", e.what());
         return std::unexpected(sak::error_code::unknown_error);
     }
 }
 
-auto BackupWorker::copy_files() -> std::expected<void, sak::error_code>
+auto BackupWorker::copyFiles() -> std::expected<void, sak::error_code>
 {
     std::filesystem::path source_root(m_config.source_path.toStdString());
     std::filesystem::path dest_root(m_config.destination_path.toStdString());
@@ -110,7 +110,7 @@ auto BackupWorker::copy_files() -> std::expected<void, sak::error_code>
         m_bytes_processed = 0;
         
         for (const auto& source_file : m_files_to_copy) {
-            if (check_stop()) {
+            if (checkStop()) {
                 return std::unexpected(sak::error_code::operation_cancelled);
             }
             
@@ -125,9 +125,9 @@ auto BackupWorker::copy_files() -> std::expected<void, sak::error_code>
             }
             
             // Copy file
-            auto copy_result = copy_file(source_file, dest_file);
+            auto copy_result = copyFile(source_file, dest_file);
             if (!copy_result) {
-                sak::log_error("Failed to copy {}: {}", 
+                sak::logError("Failed to copy {}: {}", 
                              source_file.string(),
                              sak::to_string(copy_result.error()));
                 return std::unexpected(copy_result.error());
@@ -135,12 +135,12 @@ auto BackupWorker::copy_files() -> std::expected<void, sak::error_code>
             
             // Verify if requested
             if (m_config.verify_md5) {
-                auto verify_result = verify_file(source_file, dest_file);
+                auto verify_result = verifyFile(source_file, dest_file);
                 if (!verify_result) {
                     return std::unexpected(verify_result.error());
                 }
                 if (!*verify_result) {
-                    sak::log_error("MD5 verification failed for {}", source_file.string());
+                    sak::logError("MD5 verification failed for {}", source_file.string());
                     return std::unexpected(sak::error_code::hash_mismatch);
                 }
             }
@@ -149,24 +149,24 @@ auto BackupWorker::copy_files() -> std::expected<void, sak::error_code>
             m_bytes_processed += std::filesystem::file_size(source_file);
             
             // Emit progress
-            Q_EMIT file_progress(m_files_processed, m_total_files,
+            Q_EMIT fileProgress(m_files_processed, m_total_files,
                                m_bytes_processed, m_total_bytes);
             
-            update_speed();
+            updateSpeed();
         }
         
         return {};
         
     } catch (const std::filesystem::filesystem_error& e) {
-        sak::log_error("Filesystem error during copy: {}", e.what());
+        sak::logError("Filesystem error during copy: {}", e.what());
         return std::unexpected(sak::error_code::backup_failed);
     } catch (const std::exception& e) {
-        sak::log_error("Error during copy: {}", e.what());
+        sak::logError("Error during copy: {}", e.what());
         return std::unexpected(sak::error_code::unknown_error);
     }
 }
 
-auto BackupWorker::copy_file(const std::filesystem::path& source,
+auto BackupWorker::copyFile(const std::filesystem::path& source,
                              const std::filesystem::path& destination)
     -> std::expected<void, sak::error_code>
 {
@@ -190,23 +190,23 @@ auto BackupWorker::copy_file(const std::filesystem::path& source,
         return {};
         
     } catch (const std::filesystem::filesystem_error& e) {
-        sak::log_error("Failed to copy file: {}", e.what());
+        sak::logError("Failed to copy file: {}", e.what());
         return std::unexpected(sak::error_code::write_error);
     }
 }
 
-auto BackupWorker::verify_file(const std::filesystem::path& source,
+auto BackupWorker::verifyFile(const std::filesystem::path& source,
                                const std::filesystem::path& destination)
     -> std::expected<bool, sak::error_code>
 {
     sak::file_hasher hasher(sak::hash_algorithm::md5);
     
-    auto source_hash = hasher.calculate_hash(source);
+    auto source_hash = hasher.calculateHash(source);
     if (!source_hash) {
         return std::unexpected(source_hash.error());
     }
     
-    auto dest_hash = hasher.calculate_hash(destination);
+    auto dest_hash = hasher.calculateHash(destination);
     if (!dest_hash) {
         return std::unexpected(dest_hash.error());
     }
@@ -214,7 +214,7 @@ auto BackupWorker::verify_file(const std::filesystem::path& source,
     return *source_hash == *dest_hash;
 }
 
-void BackupWorker::update_speed()
+void BackupWorker::updateSpeed()
 {
     auto now = std::chrono::steady_clock::now();
     auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -228,7 +228,7 @@ void BackupWorker::update_speed()
         if (total_elapsed > 0) {
             double mb_per_second = 
                 (m_bytes_processed / 1024.0 / 1024.0) / total_elapsed;
-            Q_EMIT speed_update(mb_per_second);
+            Q_EMIT speedUpdate(mb_per_second);
         }
         
         m_last_speed_update = now;
