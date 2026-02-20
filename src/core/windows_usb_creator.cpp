@@ -15,7 +15,6 @@
 
 WindowsUSBCreator::WindowsUSBCreator(QObject* parent)
     : QObject(parent)
-    , m_cancelled(false)
 {
 }
 
@@ -59,7 +58,6 @@ bool WindowsUSBCreator::createBootableUSB(const QString& isoPath, const QString&
     for (int i = 0; i < 30; ++i) {
         QThread::msleep(100);
         Q_EMIT progressUpdated(5 + (i * 5 / 30)); // 5% to 10%
-        QCoreApplication::processEvents();
         if (m_cancelled) break;
     }
     
@@ -305,7 +303,7 @@ bool WindowsUSBCreator::formatDriveNTFS(const QString& diskNumber) {
     // Ensure process fully terminated
     if (diskpart.state() == QProcess::Running) {
         sak::log_warning("Diskpart still running after waitForFinished, forcing termination");
-        diskpart.terminate();
+        diskpart.kill();
         diskpart.waitForFinished(2000);
     }
     
@@ -574,9 +572,6 @@ bool WindowsUSBCreator::copyISOContents(const QString& sourcePath, const QString
         } else {
             totalWaitedMs += checkIntervalMs;
         }
-        
-        // Allow UI updates
-        QCoreApplication::processEvents();
     }
     
     if (extract.state() == QProcess::Running) {
@@ -618,7 +613,6 @@ bool WindowsUSBCreator::copyISOContents(const QString& sourcePath, const QString
     // Wait a moment for filesystem to settle after extraction
     sak::log_info("Waiting for filesystem to settle after extraction...");
     QThread::msleep(2000);
-    QCoreApplication::processEvents();
     
     // Verify critical Windows files were extracted to the destination
     sak::log_info(QString("Verifying critical files exist at: %1").arg(cleanDest).toStdString());

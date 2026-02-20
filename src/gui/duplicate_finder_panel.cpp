@@ -20,13 +20,11 @@ DuplicateFinderPanel::DuplicateFinderPanel(QWidget* parent)
 
 DuplicateFinderPanel::~DuplicateFinderPanel()
 {
-    if (m_worker != nullptr) {
+    if (m_worker) {
         m_worker->request_stop();
         if (!m_worker->wait(15000)) {
-            sak::log_error("DuplicateFinderWorker did not stop within 15s — potential resource leak");
+            sak::log_error("DuplicateFinderWorker did not stop within 15s \u2014 potential resource leak");
         }
-        delete m_worker;
-        m_worker = nullptr;
     }
     sak::log_info("DuplicateFinderPanel destroyed");
 }
@@ -162,10 +160,7 @@ void DuplicateFinderPanel::on_scan_clicked()
     }
 
     // Clean up previous worker
-    if (m_worker != nullptr) {
-        delete m_worker;
-        m_worker = nullptr;
-    }
+    m_worker.reset();
 
     // Build configuration
     DuplicateFinderWorker::Config config;
@@ -176,14 +171,14 @@ void DuplicateFinderPanel::on_scan_clicked()
     config.recursive_scan = m_recursive_checkbox->isChecked();
 
     // Create and configure worker
-    m_worker = new DuplicateFinderWorker(config, this);
+    m_worker = std::make_unique<DuplicateFinderWorker>(config, this);
 
-    connect(m_worker, &DuplicateFinderWorker::started, this, &DuplicateFinderPanel::on_worker_started);
-    connect(m_worker, &DuplicateFinderWorker::finished, this, &DuplicateFinderPanel::on_worker_finished);
-    connect(m_worker, &DuplicateFinderWorker::failed, this, &DuplicateFinderPanel::on_worker_failed);
-    connect(m_worker, &DuplicateFinderWorker::cancelled, this, &DuplicateFinderPanel::on_worker_cancelled);
-    connect(m_worker, &DuplicateFinderWorker::scan_progress, this, &DuplicateFinderPanel::on_scan_progress);
-    connect(m_worker, &DuplicateFinderWorker::results_ready, this, &DuplicateFinderPanel::on_results_ready);
+    connect(m_worker.get(), &DuplicateFinderWorker::started, this, &DuplicateFinderPanel::on_worker_started);
+    connect(m_worker.get(), &DuplicateFinderWorker::finished, this, &DuplicateFinderPanel::on_worker_finished);
+    connect(m_worker.get(), &DuplicateFinderWorker::failed, this, &DuplicateFinderPanel::on_worker_failed);
+    connect(m_worker.get(), &DuplicateFinderWorker::cancelled, this, &DuplicateFinderPanel::on_worker_cancelled);
+    connect(m_worker.get(), &DuplicateFinderWorker::scan_progress, this, &DuplicateFinderPanel::on_scan_progress);
+    connect(m_worker.get(), &DuplicateFinderWorker::results_ready, this, &DuplicateFinderPanel::on_results_ready);
 
     set_operation_running(true);
     m_status_label->setText("Status: Starting scan...");

@@ -695,20 +695,17 @@ void ImageFlasherPanel::createWindowsUSB() {
     m_flashStateLabel->setText("Initializing...");
     m_flashProgressBar->setValue(0);
     
-    // Force UI update before starting blocking operation
-    QCoreApplication::processEvents();
-    
-    // Create Windows USB creator
-    auto* creator = new WindowsUSBCreator(this);
+    // Create Windows USB creator — no parent, will be moved to worker thread
+    auto* creator = new WindowsUSBCreator();
+    auto* thread = new QThread(this);
+    creator->moveToThread(thread);
     
     connect(creator, &WindowsUSBCreator::statusChanged, this, [this](const QString& status) {
         m_flashStateLabel->setText(status);
-        QCoreApplication::processEvents(); // Force UI update
     });
     
     connect(creator, &WindowsUSBCreator::progressUpdated, this, [this](int percentage) {
         m_flashProgressBar->setValue(percentage);
-        QCoreApplication::processEvents(); // Force UI update
     });
     
     connect(creator, &WindowsUSBCreator::completed, this, [this, creator]() {
@@ -719,17 +716,21 @@ void ImageFlasherPanel::createWindowsUSB() {
         result.bytesWritten = m_imageSize * m_selectedDrives.size();
         
         onFlashCompleted(result);
-        creator->deleteLater();
     });
     
-    connect(creator, &WindowsUSBCreator::failed, this, [this, creator](const QString& error) {
+    connect(creator, &WindowsUSBCreator::failed, this, [this](const QString& error) {
         m_isFlashing = false;
         m_flashButton->setEnabled(true);
         m_flashButton->setVisible(true);
         updateNavigationButtons();
         onFlashError(error);
-        creator->deleteLater();
     });
+    
+    // Clean up thread and creator when thread finishes
+    connect(creator, &WindowsUSBCreator::completed, thread, &QThread::quit);
+    connect(creator, &WindowsUSBCreator::failed, thread, &QThread::quit);
+    connect(thread, &QThread::finished, creator, &QObject::deleteLater);
+    connect(thread, &QThread::finished, thread, &QObject::deleteLater);
     
     // Extract disk number (hardware ID) from device path
     QString devicePath = m_selectedDrives.first();
@@ -750,11 +751,16 @@ void ImageFlasherPanel::createWindowsUSB() {
         updateNavigationButtons();
         onFlashError(QString("Could not identify disk number from %1").arg(devicePath));
         creator->deleteLater();
+        thread->deleteLater();
         return;
     }
     
-    // Start the creation process with disk number (hardware ID)
-    creator->createBootableUSB(m_selectedImagePath, diskNumber);
+    // Start the creation on the worker thread
+    QString isoPath = m_selectedImagePath;
+    connect(thread, &QThread::started, creator, [creator, isoPath, diskNumber]() {
+        creator->createBootableUSB(isoPath, diskNumber);
+    });
+    thread->start();
 }
 
 bool ImageFlasherPanel::isSystemDrive(const QString& devicePath) const {

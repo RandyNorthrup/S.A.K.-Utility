@@ -2,8 +2,7 @@
 /// @brief Error code definitions for SAK Utility
 /// @note Using std::expected pattern for type-safe error handling
 
-#ifndef SAK_ERROR_CODES_H
-#define SAK_ERROR_CODES_H
+#pragma once
 
 #include <string_view>
 #include <system_error>
@@ -261,4 +260,3 @@ public:
 
 } // namespace sak
 
-#endif // SAK_ERROR_CODES_H

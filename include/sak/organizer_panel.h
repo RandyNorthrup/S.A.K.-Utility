@@ -10,6 +10,7 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include <QMap>
+#include <memory>
 
 class OrganizerWorker;
 
@@ -74,6 +75,6 @@ private:
     
     QTextEdit* m_log_viewer{nullptr};
     
-    OrganizerWorker* m_worker{nullptr};
+    std::unique_ptr<OrganizerWorker> m_worker;
     bool m_operation_running{false};
 };

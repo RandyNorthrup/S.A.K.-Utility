@@ -1,5 +1,4 @@
-#ifndef SAK_APP_MIGRATION_WORKER_H
-#define SAK_APP_MIGRATION_WORKER_H
+#pragma once
 
 #include <QObject>
 #include <QThread>
@@ -228,4 +227,3 @@ private:
 
 } // namespace sak
 
-#endif // SAK_APP_MIGRATION_WORKER_H

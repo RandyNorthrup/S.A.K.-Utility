@@ -4,6 +4,7 @@
 #include "sak/quick_action_controller.h"
 #include "sak/elevation_manager.h"
 #include "sak/quick_action_result_io.h"
+#include "sak/logger.h"
 
 #include <QDateTime>
 #include <QFile>
@@ -37,18 +38,21 @@ QuickActionController::~QuickActionController() {
         m_current_execution_action->cancel();
     }
 
-    // Wait for threads
-    if (m_scan_thread && m_scan_thread->isRunning()) {
-        m_scan_thread->quit();
-        m_scan_thread->wait(5000);
-    }
-    if (m_execution_thread && m_execution_thread->isRunning()) {
-        m_execution_thread->quit();
-        m_execution_thread->wait(5000);
-    }
+    // Gracefully shut down threads — use deleteLater for safe cleanup
+    auto cleanupThread = [](QThread*& thread) {
+        if (!thread) return;
+        if (thread->isRunning()) {
+            thread->quit();
+            if (!thread->wait(10000)) {
+                sak::log_error("QuickAction thread did not stop within 10s");
+            }
+        }
+        thread->deleteLater();
+        thread = nullptr;
+    };
 
-    delete m_scan_thread;
-    delete m_execution_thread;
+    cleanupThread(m_scan_thread);
+    cleanupThread(m_execution_thread);
 }
 
 void QuickActionController::setLoggingEnabled(bool enabled) {

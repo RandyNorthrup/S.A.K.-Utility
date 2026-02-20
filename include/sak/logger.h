@@ -2,8 +2,7 @@
 /// @brief Thread-safe logging system with structured output
 /// @note Enterprise-grade logger with multiple severity levels and automatic rotation
 
-#ifndef SAK_LOGGER_H
-#define SAK_LOGGER_H
+#pragma once
 
 #include "error_codes.h"
 #include <atomic>
@@ -282,4 +281,3 @@ void logger::log(
 
 } // namespace sak
 
-#endif // SAK_LOGGER_H

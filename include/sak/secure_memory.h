@@ -1,10 +1,8 @@
 /// @file secure_memory.h
 /// @brief Secure memory handling utilities for sensitive data
 /// @details Provides RAII-based secure memory management following security best practices
-/// @note Part of security infrastructure (Phase 5)
 
-#ifndef SAK_SECURE_MEMORY_H
-#define SAK_SECURE_MEMORY_H
+#pragma once
 
 #include <cstddef>
 #include <cstring>
@@ -364,4 +362,3 @@ private:
 
 } // namespace sak
 
-#endif // SAK_SECURE_MEMORY_H

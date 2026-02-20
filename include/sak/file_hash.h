@@ -2,8 +2,7 @@
 /// @brief File hashing utilities with MD5 and SHA-256 support
 /// @note Thread-safe, memory-efficient chunked hashing
 
-#ifndef SAK_FILE_HASH_H
-#define SAK_FILE_HASH_H
+#pragma once
 
 #include "error_codes.h"
 #include <cstddef>
@@ -138,4 +137,3 @@ private:
 
 } // namespace sak
 
-#endif // SAK_FILE_HASH_H

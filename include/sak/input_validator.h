@@ -1,10 +1,8 @@
 /// @file input_validator.h
 /// @brief Input validation utilities for security-critical operations
 /// @details Comprehensive validation framework following OWASP guidelines
-/// @note Part of security infrastructure (Phase 5)
 
-#ifndef SAK_INPUT_VALIDATOR_H
-#define SAK_INPUT_VALIDATOR_H
+#pragma once
 
 #include "error_codes.h"
 #include <filesystem>
@@ -341,4 +339,3 @@ validation_result input_validator::validate_span(
 
 } // namespace sak
 
-#endif // SAK_INPUT_VALIDATOR_H

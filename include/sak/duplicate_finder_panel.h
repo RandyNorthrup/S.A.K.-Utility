@@ -8,6 +8,7 @@
 #include <QLabel>
 #include <QSpinBox>
 #include <QCheckBox>
+#include <memory>
 
 class DuplicateFinderWorker;
 
@@ -65,6 +66,6 @@ private:
     
     QTextEdit* m_log_viewer{nullptr};
     
-    DuplicateFinderWorker* m_worker{nullptr};
+    std::unique_ptr<DuplicateFinderWorker> m_worker;
     bool m_operation_running{false};
 };

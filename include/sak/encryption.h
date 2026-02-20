@@ -2,8 +2,7 @@
 /// @brief AES-256 encryption/decryption using Windows BCrypt API
 /// @note Enterprise-grade encryption with PBKDF2 key derivation
 
-#ifndef SAK_ENCRYPTION_H
-#define SAK_ENCRYPTION_H
+#pragma once
 
 #include "error_codes.h"
 #include <expected>
@@ -67,4 +66,3 @@ struct EncryptionParams {
 
 } // namespace sak
 
-#endif // SAK_ENCRYPTION_H

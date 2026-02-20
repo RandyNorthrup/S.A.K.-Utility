@@ -2,8 +2,7 @@
 /// @brief Path manipulation and validation utilities
 /// @details Provides cross-platform path operations with proper error handling
 
-#ifndef SAK_PATH_UTILS_H
-#define SAK_PATH_UTILS_H
+#pragma once
 
 #include "error_codes.h"
 #include <filesystem>
@@ -153,4 +152,3 @@ private:
 
 } // namespace sak
 
-#endif // SAK_PATH_UTILS_H

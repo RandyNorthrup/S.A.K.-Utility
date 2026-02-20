@@ -2,8 +2,7 @@
 /// @brief Recursive directory scanning with filtering
 /// @details Provides high-performance directory traversal with pattern matching and callbacks
 
-#ifndef SAK_FILE_SCANNER_H
-#define SAK_FILE_SCANNER_H
+#pragma once
 
 #include "error_codes.h"
 #include "path_utils.h"
@@ -143,4 +142,3 @@ private:
 
 } // namespace sak
 
-#endif // SAK_FILE_SCANNER_H

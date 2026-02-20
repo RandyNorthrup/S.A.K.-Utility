@@ -412,9 +412,7 @@ set(GUI_SOURCES
     include/gui/windows11_theme.h
     src/gui/splash_screen.cpp
     include/gui/splash_screen.h
-    src/core/quick_action.cpp
     include/sak/quick_action.h
-    src/core/quick_action_controller.cpp
     include/sak/quick_action_controller.h
     src/core/quick_action_result_io.cpp
     include/sak/quick_action_result_io.h

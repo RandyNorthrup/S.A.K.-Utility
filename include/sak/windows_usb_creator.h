@@ -5,6 +5,7 @@
 
 #include <QObject>
 #include <QString>
+#include <atomic>
 
 /**
  * @brief Creates bootable Windows USB drives from ISO files
@@ -127,7 +128,7 @@ private:
      */
     QString getDriveLetterFromDiskNumber();
     
-    bool m_cancelled;
+    std::atomic<bool> m_cancelled{false};
     QString m_lastError;
     QString m_volumeLabel;  // Volume label extracted from ISO
     QString m_diskNumber;   // Hardware disk number (e.g., "1" for PhysicalDrive1)

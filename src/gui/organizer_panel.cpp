@@ -24,13 +24,11 @@ OrganizerPanel::OrganizerPanel(QWidget* parent)
 
 OrganizerPanel::~OrganizerPanel()
 {
-    if (m_worker != nullptr) {
+    if (m_worker) {
         m_worker->request_stop();
         if (!m_worker->wait(15000)) {
-            sak::log_error("OrganizerWorker did not stop within 15s — potential resource leak");
+            sak::log_error("OrganizerWorker did not stop within 15s \u2014 potential resource leak");
         }
-        delete m_worker;
-        m_worker = nullptr;
     }
     sak::log_info("OrganizerPanel destroyed");
 }
@@ -214,10 +212,7 @@ void OrganizerPanel::on_execute_clicked()
     }
 
     // Clean up previous worker
-    if (m_worker != nullptr) {
-        delete m_worker;
-        m_worker = nullptr;
-    }
+    m_worker.reset();
 
     // Create worker configuration
     OrganizerWorker::Config config;
@@ -230,14 +225,14 @@ void OrganizerPanel::on_execute_clicked()
     config.collision_strategy = strategy;
 
     // Create and configure worker
-    m_worker = new OrganizerWorker(config, this);
+    m_worker = std::make_unique<OrganizerWorker>(config, this);
 
-    connect(m_worker, &OrganizerWorker::started, this, &OrganizerPanel::on_worker_started);
-    connect(m_worker, &OrganizerWorker::finished, this, &OrganizerPanel::on_worker_finished);
-    connect(m_worker, &OrganizerWorker::failed, this, &OrganizerPanel::on_worker_failed);
-    connect(m_worker, &OrganizerWorker::cancelled, this, &OrganizerPanel::on_worker_cancelled);
-    connect(m_worker, &OrganizerWorker::file_progress, this, &OrganizerPanel::on_file_progress);
-    connect(m_worker, &OrganizerWorker::preview_results, this, &OrganizerPanel::on_preview_results);
+    connect(m_worker.get(), &OrganizerWorker::started, this, &OrganizerPanel::on_worker_started);
+    connect(m_worker.get(), &OrganizerWorker::finished, this, &OrganizerPanel::on_worker_finished);
+    connect(m_worker.get(), &OrganizerWorker::failed, this, &OrganizerPanel::on_worker_failed);
+    connect(m_worker.get(), &OrganizerWorker::cancelled, this, &OrganizerPanel::on_worker_cancelled);
+    connect(m_worker.get(), &OrganizerWorker::file_progress, this, &OrganizerPanel::on_file_progress);
+    connect(m_worker.get(), &OrganizerWorker::preview_results, this, &OrganizerPanel::on_preview_results);
 
     set_operation_running(true);
     m_status_label->setText("Status: Starting...");
