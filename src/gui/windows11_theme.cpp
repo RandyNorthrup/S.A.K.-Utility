@@ -29,20 +29,13 @@ QString inferTooltip(QWidget* widget) {
         return {};
     }
 
-    if (!widget->accessibleName().isEmpty()) {
-        return widget->accessibleName();
-    }
-
-    if (auto* button = qobject_cast<QAbstractButton*>(widget)) {
-        return normalizeText(button->text());
-    }
-
-    if (auto* label = qobject_cast<QLabel*>(widget)) {
-        return normalizeText(label->text());
-    }
-
-    if (auto* group = qobject_cast<QGroupBox*>(widget)) {
-        return normalizeText(group->title());
+    // Don't auto-generate tooltips for buttons/labels/groups — their visible
+    // text IS the description.  Only set tooltips on these when the code
+    // explicitly provides one (handled elsewhere).
+    if (qobject_cast<QAbstractButton*>(widget) ||
+        qobject_cast<QLabel*>(widget) ||
+        qobject_cast<QGroupBox*>(widget)) {
+        return {};
     }
 
     if (auto* edit = qobject_cast<QLineEdit*>(widget)) {
@@ -55,7 +48,6 @@ QString inferTooltip(QWidget* widget) {
         if (!combo->placeholderText().isEmpty()) {
             return combo->placeholderText();
         }
-        return normalizeText(combo->currentText());
     }
 
     if (auto* text = qobject_cast<QTextEdit*>(widget)) {
@@ -64,27 +56,13 @@ QString inferTooltip(QWidget* widget) {
         }
     }
 
-    if (!widget->windowTitle().isEmpty()) {
-        return normalizeText(widget->windowTitle());
-    }
-
-    if (!widget->objectName().isEmpty()) {
-        return widget->objectName();
-    }
-
-    return widget->metaObject()->className();
+    return {};
 }
 
 void applyTabTooltips(QTabWidget* tabs) {
-    if (!tabs) {
-        return;
-    }
-
-    for (int i = 0; i < tabs->count(); ++i) {
-        if (tabs->tabToolTip(i).isEmpty()) {
-            tabs->setTabToolTip(i, normalizeText(tabs->tabText(i)));
-        }
-    }
+    // Tab labels are already visible — don't duplicate them as tooltips.
+    // Only set a tooltip if one is explicitly provided in the code.
+    Q_UNUSED(tabs);
 }
 
 void applyTooltips(QWidget* root) {
@@ -114,11 +92,12 @@ void applyTooltips(QWidget* root) {
             continue;
         }
 
-        if (!action->statusTip().isEmpty()) {
+        // Only use statusTip if it's meaningfully different from the text
+        if (!action->statusTip().isEmpty() &&
+            action->statusTip() != normalizeText(action->text())) {
             action->setToolTip(action->statusTip());
-        } else {
-            action->setToolTip(normalizeText(action->text()));
         }
+        // Otherwise leave tooltip empty — the menu text is self-describing
     }
 }
 

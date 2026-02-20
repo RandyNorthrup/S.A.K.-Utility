@@ -17,6 +17,7 @@
 class DriveScanner;
 class FlashCoordinator;
 class WindowsISODownloader;
+class LinuxISODownloader;
 
 namespace sak {
     struct FlashResult;
@@ -37,6 +38,7 @@ namespace sak {
  * - Parallel writing to multiple drives
  * - SHA-512 verification
  * - Download Windows 11 ISOs directly
+ * - Download Linux distribution ISOs
  * - Real-time progress tracking
  * - System drive protection
  * 
@@ -91,6 +93,7 @@ private Q_SLOTS:
     // Step 1: Image Selection
     void onSelectImageClicked();
     void onDownloadWindowsClicked();
+    void onDownloadLinuxClicked();
     void onImageSelected(const QString& imagePath);
     void onWindowsISODownloaded(const QString& isoPath);
 
@@ -130,6 +133,7 @@ private:
     QWidget* m_imageSelectionPage;
     QPushButton* m_selectImageButton;
     QPushButton* m_downloadWindowsButton;
+    QPushButton* m_downloadLinuxButton;
     QLabel* m_imagePathLabel;
     QLabel* m_imageSizeLabel;
     QLabel* m_imageFormatLabel;
@@ -163,6 +167,7 @@ private:
     std::unique_ptr<DriveScanner> m_driveScanner;
     std::unique_ptr<FlashCoordinator> m_flashCoordinator;
     std::unique_ptr<WindowsISODownloader> m_isoDownloader;
+    std::unique_ptr<LinuxISODownloader> m_linuxIsoDownloader;
     
     // State
     QString m_selectedImagePath;

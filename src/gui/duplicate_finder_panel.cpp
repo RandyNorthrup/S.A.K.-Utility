@@ -65,12 +65,12 @@ void DuplicateFinderPanel::setup_ui()
     m_min_size_spinbox->setMinimum(0);
     m_min_size_spinbox->setMaximum(1000000);
     m_min_size_spinbox->setValue(0);
-    m_min_size_spinbox->setToolTip("Ignore files smaller than this size");
+    m_min_size_spinbox->setToolTip("Skip tiny files to speed up scanning (0 = check all files)");
     options_layout->addWidget(m_min_size_spinbox);
     
     m_recursive_checkbox = new QCheckBox("Recursive Scan", this);
     m_recursive_checkbox->setChecked(true);
-    m_recursive_checkbox->setToolTip("Scan subdirectories");
+    m_recursive_checkbox->setToolTip("Include all nested subfolders, not just the top-level directory");
     options_layout->addWidget(m_recursive_checkbox);
     
     options_layout->addStretch();

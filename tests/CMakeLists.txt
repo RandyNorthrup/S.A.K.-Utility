@@ -37,6 +37,7 @@ set(UNIT_TESTS
     test_parallel_transfer_manager
     test_deployment_history
     test_assignment_queue_store
+    test_windows_iso_downloader
 )
 
 foreach(test_name ${UNIT_TESTS})
@@ -153,6 +154,23 @@ foreach(test_name ${UNIT_TESTS})
             "${CMAKE_CURRENT_SOURCE_DIR}/../include/sak/orchestration_types.h"
         )
     endif()
+
+    if(test_name STREQUAL "test_windows_iso_downloader")
+        list(APPEND impl_sources
+            "${CMAKE_CURRENT_SOURCE_DIR}/../src/core/uup_dump_api.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/../include/sak/uup_dump_api.h"
+            "${CMAKE_CURRENT_SOURCE_DIR}/../src/core/uup_iso_builder.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/../include/sak/uup_iso_builder.h"
+            "${CMAKE_CURRENT_SOURCE_DIR}/../src/core/windows_iso_downloader.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/../include/sak/windows_iso_downloader.h"
+            "${CMAKE_CURRENT_SOURCE_DIR}/../src/core/bundled_tools_manager.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/../include/sak/bundled_tools_manager.h"
+            "${CMAKE_CURRENT_SOURCE_DIR}/../src/core/logger.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/../include/sak/logger.h"
+        )
+    endif()
+
+
     
     if(test_sources)
         add_executable(${test_name} ${test_sources} ${impl_sources})
@@ -170,8 +188,14 @@ foreach(test_name ${UNIT_TESTS})
             OR test_name STREQUAL "test_orchestration_protocol"
             OR test_name STREQUAL "test_migration_orchestrator"
             OR test_name STREQUAL "test_transfer_protocol"
-            OR test_name STREQUAL "test_transfer_types")
+            OR test_name STREQUAL "test_transfer_types"
+            OR test_name STREQUAL "test_windows_iso_downloader")
             list(APPEND extra_unit_libs Qt6::Network)
+        endif()
+        
+        # ISO downloader needs Qt Widgets
+        if(test_name STREQUAL "test_windows_iso_downloader")
+            list(APPEND extra_unit_libs Qt6::Widgets)
         endif()
 
         target_link_libraries(${test_name} PRIVATE

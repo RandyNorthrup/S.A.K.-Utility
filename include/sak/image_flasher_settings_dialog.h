@@ -5,9 +5,10 @@
 
 #include <QDialog>
 #include <QCheckBox>
+#include <QLabel>
 #include <QSpinBox>
 #include <QComboBox>
-#include "config_manager.h"
+#include <QPushButton>
 
 /**
  * @brief Settings dialog for Image Flasher configuration
@@ -19,20 +20,19 @@ class ImageFlasherSettingsDialog : public QDialog {
     Q_OBJECT
 
 public:
-    explicit ImageFlasherSettingsDialog(sak::ConfigManager* config, QWidget* parent = nullptr);
+    explicit ImageFlasherSettingsDialog(QWidget* parent = nullptr);
     ~ImageFlasherSettingsDialog() override;
 
 private Q_SLOTS:
     void onAccept();
     void onResetDefaults();
+    void onClearDownloadCaches();
 
 private:
     void setupUI();
     void loadSettings();
     void saveSettings();
 
-    sak::ConfigManager* m_config;
-    
     // UI Components
     QComboBox* m_validationModeCombo;
     QSpinBox* m_bufferSizeSpin;
@@ -42,4 +42,13 @@ private:
     QSpinBox* m_largeDriveThresholdSpin;
     QSpinBox* m_maxConcurrentWritesSpin;
     QCheckBox* m_enableNotificationsCheck;
+
+    // Storage
+    QLabel* m_cacheInfoLabel;
+    QPushButton* m_clearCacheButton;
+
+    // Helpers
+    void updateCacheInfo();
+    static qint64 calculateCacheSize();
+    static QStringList findCacheDirectories();
 };

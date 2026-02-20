@@ -98,22 +98,18 @@ void AppMigrationPanel::setupUI()
     
     m_filterEdit = new QLineEdit(this);
     m_filterEdit->setPlaceholderText("Search by name, publisher, or package...");
-    m_filterEdit->setToolTip("Filter applications by name, publisher, or package name");
     filterLayout->addWidget(m_filterEdit);
     
     filterLayout->addWidget(new QLabel("Confidence:", this));
     m_confidenceFilter = new QComboBox(this);
     m_confidenceFilter->addItems(QStringList() << "All" << "High" << "Medium" << "Low" << "None");
-    m_confidenceFilter->setToolTip("Filter applications by match confidence level");
     filterLayout->addWidget(m_confidenceFilter);
     
     // Selection buttons
     m_selectAllButton = new QPushButton("Select All", this);
-    m_selectAllButton->setToolTip("Select all applications in the table");
     m_selectNoneButton = new QPushButton("Select None", this);
-    m_selectNoneButton->setToolTip("Deselect all applications");
     m_selectMatchedButton = new QPushButton("Select Matched", this);
-    m_selectMatchedButton->setToolTip("Select only applications with matched Chocolatey packages");
+    m_selectMatchedButton->setToolTip("Select only apps that have a matched Chocolatey package");
     filterLayout->addWidget(m_selectAllButton);
     filterLayout->addWidget(m_selectNoneButton);
     filterLayout->addWidget(m_selectMatchedButton);
@@ -129,7 +125,6 @@ void AppMigrationPanel::setupUI()
     m_logTextEdit = new QTextEdit(this);
     m_logTextEdit->setReadOnly(true);
     m_logTextEdit->setMaximumHeight(120);
-    m_logTextEdit->setToolTip("Displays operation logs and status messages");
     mainLayout->addWidget(m_logTextEdit);
     
     // Status bar
@@ -146,14 +141,14 @@ void AppMigrationPanel::setupToolbar()
     
     // Scan Apps
     m_scanButton = new QPushButton(QIcon::fromTheme("system-search"), "Scan Apps", this);
-    m_scanButton->setToolTip("Scan installed applications on this system");
+    m_scanButton->setToolTip("Detect all installed programs via Windows registry");
     m_toolbar->addWidget(m_scanButton);
     
     m_toolbar->addSeparator();
     
     // Match Packages
     m_matchButton = new QPushButton(QIcon::fromTheme("emblem-synchronizing"), "Match Packages", this);
-    m_matchButton->setToolTip("Match applications to Chocolatey packages");
+    m_matchButton->setToolTip("Find matching Chocolatey packages for each scanned app");
     m_matchButton->setEnabled(false);
     m_toolbar->addWidget(m_matchButton);
     
@@ -161,7 +156,7 @@ void AppMigrationPanel::setupToolbar()
     
     // Backup Data
     m_backupButton = new QPushButton(QIcon::fromTheme("document-save"), "Backup Data", this);
-    m_backupButton->setToolTip("Backup user data for selected applications");
+    m_backupButton->setToolTip("Save app settings and user data for selected apps before migration");
     m_backupButton->setEnabled(false);
     m_toolbar->addWidget(m_backupButton);
     
@@ -169,7 +164,7 @@ void AppMigrationPanel::setupToolbar()
     
     // Install Packages
     m_installButton = new QPushButton(QIcon::fromTheme("system-software-install"), "Install", this);
-    m_installButton->setToolTip("Install selected packages via Chocolatey");
+    m_installButton->setToolTip("Install selected packages on the target system via Chocolatey (requires admin)");
     m_installButton->setEnabled(false);
     m_toolbar->addWidget(m_installButton);
     
@@ -177,7 +172,7 @@ void AppMigrationPanel::setupToolbar()
     
     // Restore Data
     m_restoreButton = new QPushButton(QIcon::fromTheme("document-open"), "Restore Data", this);
-    m_restoreButton->setToolTip("Restore user data from backup");
+    m_restoreButton->setToolTip("Restore previously backed-up app settings and user data");
     m_restoreButton->setEnabled(false);
     m_toolbar->addWidget(m_restoreButton);
     
@@ -185,7 +180,7 @@ void AppMigrationPanel::setupToolbar()
     
     // Generate Report
     m_reportButton = new QPushButton(QIcon::fromTheme("document-export"), "Export Report", this);
-    m_reportButton->setToolTip("Generate migration report");
+    m_reportButton->setToolTip("Save a JSON migration report to share with the target machine");
     m_reportButton->setEnabled(false);
     m_toolbar->addWidget(m_reportButton);
     
@@ -193,21 +188,19 @@ void AppMigrationPanel::setupToolbar()
     
     // Load Report
     m_loadButton = new QPushButton(QIcon::fromTheme("document-import"), "Load Report", this);
-    m_loadButton->setToolTip("Load existing migration report");
+    m_loadButton->setToolTip("Import a migration report generated on another machine");
     m_toolbar->addWidget(m_loadButton);
     
     m_toolbar->addSeparator();
     
     // Refresh
     m_refreshButton = new QPushButton(QIcon::fromTheme("view-refresh"), "Refresh", this);
-    m_refreshButton->setToolTip("Refresh display");
     m_toolbar->addWidget(m_refreshButton);
 }
 
 void AppMigrationPanel::setupTable()
 {
     m_tableView = new QTableView(this);
-    m_tableView->setToolTip("Application migration table - shows scanned apps and their Chocolatey package matches");
     m_tableModel = new QStandardItemModel(0, ColCount, this);
     
     // Set headers

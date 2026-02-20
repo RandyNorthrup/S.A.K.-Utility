@@ -26,7 +26,6 @@ class QSpinBox;
 class QCheckBox;
 class QLabel;
 class QStackedWidget;
-class QComboBox;
 class QGroupBox;
 class QMimeData;
 

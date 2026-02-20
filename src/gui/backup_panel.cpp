@@ -66,7 +66,7 @@ void BackupPanel::setupUi()
     
     m_backupButton = new QPushButton("Start Backup Wizard...");
     m_backupButton->setMinimumHeight(32);
-    m_backupButton->setToolTip("Launch comprehensive backup wizard");
+    m_backupButton->setToolTip("Step-by-step wizard to select apps, configure options, and create backups");
     backupLayout->addWidget(m_backupButton);
     
     actionsLayout->addWidget(backupCard);
@@ -90,7 +90,7 @@ void BackupPanel::setupUi()
     
     m_restoreButton = new QPushButton("Start Restore Wizard...");
     m_restoreButton->setMinimumHeight(32);
-    m_restoreButton->setToolTip("Launch comprehensive restore wizard");
+    m_restoreButton->setToolTip("Step-by-step wizard to select backups, map users, and restore data");
     restoreLayout->addWidget(m_restoreButton);
     
     actionsLayout->addWidget(restoreCard);

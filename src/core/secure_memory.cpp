@@ -27,6 +27,11 @@ bool generate_secure_random(void* buffer, std::size_t size) noexcept {
     }
     
 #ifdef _WIN32
+    // Guard against size_t → ULONG truncation
+    if (size > static_cast<std::size_t>(MAXDWORD)) {
+        return false;
+    }
+    
     // Use BCryptGenRandom (modern Windows crypto API)
     NTSTATUS status = BCryptGenRandom(
         nullptr,  // Use default provider

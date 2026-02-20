@@ -135,13 +135,12 @@ void RestoreSelectBackupPage::setupUI()
     auto* buttonLayout = new QHBoxLayout();
     
     m_refreshButton = new QPushButton("Refresh", this);
-    m_refreshButton->setToolTip("Rescan backup directory");
     connect(m_refreshButton, &QPushButton::clicked,
             this, &RestoreSelectBackupPage::onRefreshList);
     buttonLayout->addWidget(m_refreshButton);
     
     m_verifyButton = new QPushButton("Verify Selected", this);
-    m_verifyButton->setToolTip("Verify integrity of selected backups");
+    m_verifyButton->setToolTip("Check SHA-256 checksums to confirm backup files aren't corrupted");
     m_verifyButton->setEnabled(false);
     connect(m_verifyButton, &QPushButton::clicked,
             this, &RestoreSelectBackupPage::onVerifyBackup);
@@ -314,7 +313,7 @@ void RestoreConfigurePage::setupUI()
     buttonLayout->addWidget(m_browseButton);
     
     m_originalButton = new QPushButton("Use Original", this);
-    m_originalButton->setToolTip("Restore to the original backup source location");
+    m_originalButton->setToolTip("Set destination to the same path the backup was originally created from");
     connect(m_originalButton, &QPushButton::clicked,
             this, &RestoreConfigurePage::onUseOriginalLocation);
     buttonLayout->addWidget(m_originalButton);
@@ -325,25 +324,25 @@ void RestoreConfigurePage::setupUI()
     row++;
     m_verifyCheckBox = new QCheckBox("Verify checksums before restore", this);
     m_verifyCheckBox->setChecked(true);
-    m_verifyCheckBox->setToolTip("Verify backup integrity before extracting");
+    m_verifyCheckBox->setToolTip("Checks backup integrity first — aborts if corruption is detected");
     layout->addWidget(m_verifyCheckBox, row, 0, 1, 3);
     
     row++;
     m_createBackupCheckBox = new QCheckBox("Backup existing data before overwriting", this);
     m_createBackupCheckBox->setChecked(true);
-    m_createBackupCheckBox->setToolTip("Create safety backup of existing files");
+    m_createBackupCheckBox->setToolTip("Saves a snapshot of current files so you can undo the restore if needed");
     layout->addWidget(m_createBackupCheckBox, row, 0, 1, 3);
     
     row++;
     m_overwriteCheckBox = new QCheckBox("Overwrite existing files", this);
     m_overwriteCheckBox->setChecked(false);
-    m_overwriteCheckBox->setToolTip("Replace existing files with backup versions");
+    m_overwriteCheckBox->setToolTip("When unchecked, existing files are skipped and only missing files are restored");
     layout->addWidget(m_overwriteCheckBox, row, 0, 1, 3);
     
     row++;
     m_timestampsCheckBox = new QCheckBox("Restore original timestamps", this);
     m_timestampsCheckBox->setChecked(true);
-    m_timestampsCheckBox->setToolTip("Preserve file modification times from backup");
+    m_timestampsCheckBox->setToolTip("Uses the original file dates instead of today's date");
     layout->addWidget(m_timestampsCheckBox, row, 0, 1, 3);
     
     // Warning

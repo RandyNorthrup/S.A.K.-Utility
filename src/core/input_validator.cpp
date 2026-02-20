@@ -179,9 +179,15 @@ validation_result input_validator::validate_path_within_base(
                           "Cannot canonicalize base directory");
         }
         
-        // Check if path starts with base
-        const auto path_str = canonical_path.string();
-        const auto base_str = canonical_base.string();
+        // Check if path starts with base (case-insensitive on Windows)
+        auto path_str = canonical_path.string();
+        auto base_str = canonical_base.string();
+        
+#ifdef _WIN32
+        // Windows filesystem is case-insensitive
+        std::transform(path_str.begin(), path_str.end(), path_str.begin(), ::tolower);
+        std::transform(base_str.begin(), base_str.end(), base_str.begin(), ::tolower);
+#endif
         
         if (path_str.find(base_str) != 0) {
             return failure(error_code::path_traversal_attempt,

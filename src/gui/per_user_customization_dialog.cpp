@@ -53,7 +53,7 @@ void PerUserCustomizationDialog::setupUi() {
     m_selectAllButton = new QPushButton("Select All");
     m_selectNoneButton = new QPushButton("Select None");
     m_selectRecommendedButton = new QPushButton("Select Recommended");
-    m_selectRecommendedButton->setToolTip("Documents, Desktop, Pictures, Downloads");
+    m_selectRecommendedButton->setToolTip("Selects Documents, Desktop, Pictures, and Downloads");
     
     selectionLayout->addWidget(m_selectAllButton);
     selectionLayout->addWidget(m_selectNoneButton);
@@ -108,7 +108,7 @@ void PerUserCustomizationDialog::setupUi() {
     auto* appDataLayout = new QVBoxLayout(m_appDataGroup);
     
     m_browserBookmarksCheck = new QCheckBox("Browser Bookmarks (Chrome, Edge, Firefox)");
-    m_browserBookmarksCheck->setToolTip("Safe to backup - bookmarks only, no cache");
+    m_browserBookmarksCheck->setToolTip("Backs up bookmarks only — no cache, cookies, or history");
     appDataLayout->addWidget(m_browserBookmarksCheck);
     
     m_emailSignaturesCheck = new QCheckBox("Email Signatures (Outlook)");
@@ -118,7 +118,7 @@ void PerUserCustomizationDialog::setupUi() {
     appDataLayout->addWidget(m_officeTemplatesCheck);
     
     m_vsCodeSettingsCheck = new QCheckBox("VS Code Settings");
-    m_vsCodeSettingsCheck->setToolTip("Settings.json and keybindings.json only");
+    m_vsCodeSettingsCheck->setToolTip("Includes settings.json, keybindings.json, and snippets (no extensions)");
     appDataLayout->addWidget(m_vsCodeSettingsCheck);
     
     auto* warningLabel = new QLabel(

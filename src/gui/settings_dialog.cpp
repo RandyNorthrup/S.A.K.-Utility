@@ -36,9 +36,7 @@ void SettingsDialog::setupUI() {
     m_tabWidget = new QTabWidget(this);
     createGeneralTab();
     createBackupTab();
-    createOrganizerTab();
     createDuplicateFinderTab();
-    createImageFlasherTab();
     createAdvancedTab();
 
     mainLayout->addWidget(m_tabWidget);
@@ -79,11 +77,23 @@ void SettingsDialog::createGeneralTab() {
     windowGroup->setLayout(windowLayout);
     layout->addWidget(windowGroup);
 
+    // Directory Organizer Group
+    auto* organizerGroup = new QGroupBox(tr("Directory Organizer"));
+    auto* organizerLayout = new QFormLayout();
+
+    m_organizerPreviewMode = new QCheckBox(tr("Enable preview mode (dry run) by default"));
+    m_organizerPreviewMode->setToolTip(tr("Shows a preview of file moves without actually changing anything on disk"));
+    organizerLayout->addRow(tr("Preview Mode:"), m_organizerPreviewMode);
+
+    organizerGroup->setLayout(organizerLayout);
+    layout->addWidget(organizerGroup);
+
     layout->addStretch();
     m_tabWidget->addTab(widget, tr("General"));
 
     // Connect change signals
     connect(m_restoreWindowGeometry, &QCheckBox::stateChanged, this, &SettingsDialog::onSettingChanged);
+    connect(m_organizerPreviewMode, &QCheckBox::stateChanged, this, &SettingsDialog::onSettingChanged);
 }
 
 void SettingsDialog::createBackupTab() {
@@ -96,7 +106,7 @@ void SettingsDialog::createBackupTab() {
 
     m_backupThreadCount = new QSpinBox();
     m_backupThreadCount->setRange(1, 16);
-    m_backupThreadCount->setToolTip(tr("Number of concurrent threads for backup operations"));
+    m_backupThreadCount->setToolTip(tr("Higher values speed up backup but use more CPU and disk I/O"));
     backupLayout->addRow(tr("Thread Count:"), m_backupThreadCount);
 
     m_backupVerifyMD5 = new QCheckBox(tr("Verify files using MD5 hash after backup"));
@@ -132,28 +142,6 @@ void SettingsDialog::createBackupTab() {
     connect(m_backupVerifyMD5, &QCheckBox::stateChanged, this, &SettingsDialog::onSettingChanged);
 }
 
-void SettingsDialog::createOrganizerTab() {
-    auto* widget = new QWidget();
-    auto* layout = new QVBoxLayout(widget);
-
-    // Organizer Settings Group
-    auto* organizerGroup = new QGroupBox(tr("Organizer Settings"));
-    auto* organizerLayout = new QFormLayout();
-
-    m_organizerPreviewMode = new QCheckBox(tr("Enable preview mode (dry run) by default"));
-    m_organizerPreviewMode->setToolTip(tr("When enabled, organizer will show what it would do without actually moving files"));
-    organizerLayout->addRow(tr("Preview Mode:"), m_organizerPreviewMode);
-
-    organizerGroup->setLayout(organizerLayout);
-    layout->addWidget(organizerGroup);
-
-    layout->addStretch();
-    m_tabWidget->addTab(widget, tr("Organizer"));
-
-    // Connect change signals
-    connect(m_organizerPreviewMode, &QCheckBox::stateChanged, this, &SettingsDialog::onSettingChanged);
-}
-
 void SettingsDialog::createDuplicateFinderTab() {
     auto* widget = new QWidget();
     auto* layout = new QVBoxLayout(widget);
@@ -165,12 +153,15 @@ void SettingsDialog::createDuplicateFinderTab() {
     m_duplicateMinFileSize = new QSpinBox();
     m_duplicateMinFileSize->setRange(0, 1024);
     m_duplicateMinFileSize->setSuffix(tr(" KB"));
-    m_duplicateMinFileSize->setToolTip(tr("Minimum file size to consider for duplicate detection (0 = all files)"));
+    m_duplicateMinFileSize->setToolTip(tr("Skip tiny files to reduce scan time (0 = scan everything)"));
     duplicateLayout->addRow(tr("Minimum File Size:"), m_duplicateMinFileSize);
 
     m_duplicateKeepStrategy = new QComboBox();
     m_duplicateKeepStrategy->addItems({tr("Oldest"), tr("Newest"), tr("First Found")});
-    m_duplicateKeepStrategy->setToolTip(tr("Strategy for selecting which duplicate to keep"));
+    m_duplicateKeepStrategy->setToolTip(tr("When deleting duplicates, which copy to keep:\n"
+                                           "\u2022 Oldest: keep the file with the earliest modification date\n"
+                                           "\u2022 Newest: keep the most recently modified copy\n"
+                                           "\u2022 First Found: keep the first one discovered during scan"));
     duplicateLayout->addRow(tr("Keep Strategy:"), m_duplicateKeepStrategy);
 
     duplicateGroup->setLayout(duplicateLayout);
@@ -182,94 +173,6 @@ void SettingsDialog::createDuplicateFinderTab() {
     // Connect change signals
     connect(m_duplicateMinFileSize, QOverload<int>::of(&QSpinBox::valueChanged), this, &SettingsDialog::onSettingChanged);
     connect(m_duplicateKeepStrategy, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &SettingsDialog::onSettingChanged);
-}
-
-void SettingsDialog::createImageFlasherTab() {
-    auto* widget = new QWidget();
-    auto* layout = new QVBoxLayout(widget);
-
-    // Validation Settings Group
-    auto* validationGroup = new QGroupBox(tr("Validation Settings"));
-    auto* validationLayout = new QFormLayout();
-
-    m_imageFlasherValidationMode = new QComboBox();
-    m_imageFlasherValidationMode->addItem(tr("Full Verification"), "full");
-    m_imageFlasherValidationMode->addItem(tr("Quick Check"), "quick");
-    m_imageFlasherValidationMode->addItem(tr("No Verification"), "none");
-    m_imageFlasherValidationMode->setToolTip(tr("Choose verification method after writing"));
-    validationLayout->addRow(tr("Verification Mode:"), m_imageFlasherValidationMode);
-
-    validationGroup->setLayout(validationLayout);
-    layout->addWidget(validationGroup);
-
-    // Performance Settings Group
-    auto* perfGroup = new QGroupBox(tr("Performance Settings"));
-    auto* perfLayout = new QFormLayout();
-
-    m_imageFlasherBufferSize = new QSpinBox();
-    m_imageFlasherBufferSize->setRange(16, 1024);
-    m_imageFlasherBufferSize->setSuffix(tr(" MB"));
-    m_imageFlasherBufferSize->setToolTip(tr("Buffer size for reading/writing (higher = faster but more memory)"));
-    perfLayout->addRow(tr("Buffer Size:"), m_imageFlasherBufferSize);
-
-    m_imageFlasherMaxConcurrentWrites = new QSpinBox();
-    m_imageFlasherMaxConcurrentWrites->setRange(1, 32);
-    m_imageFlasherMaxConcurrentWrites->setToolTip(tr("Maximum number of simultaneous writes"));
-    perfLayout->addRow(tr("Max Concurrent Writes:"), m_imageFlasherMaxConcurrentWrites);
-
-    perfGroup->setLayout(perfLayout);
-    layout->addWidget(perfGroup);
-
-    // Safety Settings Group
-    auto* safetyGroup = new QGroupBox(tr("Safety Settings"));
-    auto* safetyLayout = new QVBoxLayout();
-
-    m_imageFlasherShowSystemDriveWarning = new QCheckBox(tr("Warn when system drive selected"));
-    safetyLayout->addWidget(m_imageFlasherShowSystemDriveWarning);
-
-    m_imageFlasherShowLargeDriveWarning = new QCheckBox(tr("Warn when large drive selected"));
-    safetyLayout->addWidget(m_imageFlasherShowLargeDriveWarning);
-
-    auto* thresholdLayout = new QHBoxLayout();
-    thresholdLayout->addWidget(new QLabel(tr("Large drive threshold:")));
-    m_imageFlasherLargeDriveThreshold = new QSpinBox();
-    m_imageFlasherLargeDriveThreshold->setRange(32, 10000);
-    m_imageFlasherLargeDriveThreshold->setSuffix(tr(" GB"));
-    m_imageFlasherLargeDriveThreshold->setToolTip(tr("Drives larger than this will trigger warning"));
-    thresholdLayout->addWidget(m_imageFlasherLargeDriveThreshold);
-    thresholdLayout->addStretch();
-    safetyLayout->addLayout(thresholdLayout);
-
-    safetyGroup->setLayout(safetyLayout);
-    layout->addWidget(safetyGroup);
-
-    // Behavior Settings Group
-    auto* behaviorGroup = new QGroupBox(tr("Behavior Settings"));
-    auto* behaviorLayout = new QVBoxLayout();
-
-    m_imageFlasherUnmountOnCompletion = new QCheckBox(tr("Auto-unmount on completion"));
-    m_imageFlasherUnmountOnCompletion->setToolTip(tr("Automatically unmount drives after successful flash"));
-    behaviorLayout->addWidget(m_imageFlasherUnmountOnCompletion);
-
-    m_imageFlasherEnableNotifications = new QCheckBox(tr("Enable desktop notifications"));
-    m_imageFlasherEnableNotifications->setToolTip(tr("Show system notifications when flash completes"));
-    behaviorLayout->addWidget(m_imageFlasherEnableNotifications);
-
-    behaviorGroup->setLayout(behaviorLayout);
-    layout->addWidget(behaviorGroup);
-
-    layout->addStretch();
-    m_tabWidget->addTab(widget, tr("Image Flasher"));
-
-    // Connect change signals
-    connect(m_imageFlasherValidationMode, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &SettingsDialog::onSettingChanged);
-    connect(m_imageFlasherBufferSize, QOverload<int>::of(&QSpinBox::valueChanged), this, &SettingsDialog::onSettingChanged);
-    connect(m_imageFlasherUnmountOnCompletion, &QCheckBox::stateChanged, this, &SettingsDialog::onSettingChanged);
-    connect(m_imageFlasherShowSystemDriveWarning, &QCheckBox::stateChanged, this, &SettingsDialog::onSettingChanged);
-    connect(m_imageFlasherShowLargeDriveWarning, &QCheckBox::stateChanged, this, &SettingsDialog::onSettingChanged);
-    connect(m_imageFlasherLargeDriveThreshold, QOverload<int>::of(&QSpinBox::valueChanged), this, &SettingsDialog::onSettingChanged);
-    connect(m_imageFlasherMaxConcurrentWrites, QOverload<int>::of(&QSpinBox::valueChanged), this, &SettingsDialog::onSettingChanged);
-    connect(m_imageFlasherEnableNotifications, &QCheckBox::stateChanged, this, &SettingsDialog::onSettingChanged);
 }
 
 void SettingsDialog::createAdvancedTab() {
@@ -366,23 +269,6 @@ void SettingsDialog::loadSettings() {
         m_duplicateKeepStrategy->setCurrentIndex(2); // first
     }
 
-    // Image Flasher
-    QString validationMode = config.getImageFlasherValidationMode();
-    if (validationMode == "full") {
-        m_imageFlasherValidationMode->setCurrentIndex(0);
-    } else if (validationMode == "quick") {
-        m_imageFlasherValidationMode->setCurrentIndex(1);
-    } else {
-        m_imageFlasherValidationMode->setCurrentIndex(2); // none
-    }
-    m_imageFlasherBufferSize->setValue(config.getImageFlasherBufferSize());
-    m_imageFlasherUnmountOnCompletion->setChecked(config.getImageFlasherUnmountOnCompletion());
-    m_imageFlasherShowSystemDriveWarning->setChecked(config.getImageFlasherShowSystemDriveWarning());
-    m_imageFlasherShowLargeDriveWarning->setChecked(config.getImageFlasherShowLargeDriveWarning());
-    m_imageFlasherLargeDriveThreshold->setValue(config.getImageFlasherLargeDriveThreshold());
-    m_imageFlasherMaxConcurrentWrites->setValue(config.getImageFlasherMaxConcurrentWrites());
-    m_imageFlasherEnableNotifications->setChecked(config.getImageFlasherEnableNotifications());
-
     // Network Transfer
     if (m_networkTransferEnabled) {
         m_networkTransferEnabled->setChecked(config.getNetworkTransferEnabled());
@@ -428,23 +314,6 @@ void SettingsDialog::saveSettings() {
     }
     config.setDuplicateKeepStrategy(strategy);
 
-    // Image Flasher
-    QString validationMode;
-    switch (m_imageFlasherValidationMode->currentIndex()) {
-        case 0: validationMode = "full"; break;
-        case 1: validationMode = "quick"; break;
-        case 2: validationMode = "none"; break;
-        default: validationMode = "full"; break;
-    }
-    config.setImageFlasherValidationMode(validationMode);
-    config.setImageFlasherBufferSize(m_imageFlasherBufferSize->value());
-    config.setImageFlasherUnmountOnCompletion(m_imageFlasherUnmountOnCompletion->isChecked());
-    config.setImageFlasherShowSystemDriveWarning(m_imageFlasherShowSystemDriveWarning->isChecked());
-    config.setImageFlasherShowLargeDriveWarning(m_imageFlasherShowLargeDriveWarning->isChecked());
-    config.setImageFlasherLargeDriveThreshold(m_imageFlasherLargeDriveThreshold->value());
-    config.setImageFlasherMaxConcurrentWrites(m_imageFlasherMaxConcurrentWrites->value());
-    config.setImageFlasherEnableNotifications(m_imageFlasherEnableNotifications->isChecked());
-
     // Network Transfer
     if (m_networkTransferEnabled) {
         config.setNetworkTransferEnabled(m_networkTransferEnabled->isChecked());
@@ -488,7 +357,7 @@ bool SettingsDialog::validateSettings() {
     if (m_duplicateMinFileSize->value() < 0) {
         QMessageBox::warning(this, tr("Invalid Setting"), 
                            tr("Minimum file size cannot be negative."));
-        m_tabWidget->setCurrentIndex(3); // Switch to Duplicate Finder tab
+        m_tabWidget->setCurrentIndex(2); // Switch to Duplicate Finder tab
         m_duplicateMinFileSize->setFocus();
         return false;
     }

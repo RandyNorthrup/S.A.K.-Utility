@@ -41,7 +41,7 @@ void LogViewer::setup_ui()
     m_filter_combo->addItem("Info");
     m_filter_combo->addItem("Warning");
     m_filter_combo->addItem("Error");
-    m_filter_combo->setToolTip("Filter logs by level");
+    m_filter_combo->setToolTip("Show only logs at or above the selected severity level");
     connect(m_filter_combo, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, &LogViewer::on_filter_changed);
     toolbar_layout->addWidget(m_filter_combo);

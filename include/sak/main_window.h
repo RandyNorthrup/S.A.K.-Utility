@@ -13,7 +13,6 @@
 class BackupPanel;
 class OrganizerPanel;
 class DuplicateFinderPanel;
-class LicenseScannerPanel;
 class ImageFlasherPanel;
 
 namespace sak {
@@ -89,28 +88,6 @@ private Q_SLOTS:
      */
     void on_settings_clicked();
 
-    /**
-     * @brief Handle Undo action
-     */
-    void on_undo_clicked();
-
-    /**
-     * @brief Handle Redo action
-     */
-    void on_redo_clicked();
-
-    /**
-     * @brief Update undo/redo UI state
-     * @param can_undo True if undo is available
-     */
-    void on_undo_available(bool can_undo);
-
-    /**
-     * @brief Update undo/redo UI state
-     * @param can_redo True if redo is available
-     */
-    void on_redo_available(bool can_redo);
-
 private:
     /**
      * @brief Initialize UI components
@@ -131,11 +108,6 @@ private:
      * @brief Create status bar
      */
     void create_status_bar();
-
-    /**
-     * @brief Setup undo/redo actions
-     */
-    void setup_undo_redo();
 
     /**
      * @brief Create feature panels
@@ -175,8 +147,4 @@ private:
     // Status bar components
     QLabel* m_status_label{nullptr};
     QProgressBar* m_progress_bar{nullptr};
-
-    // Undo/redo actions
-    QAction* m_undo_action{nullptr};
-    QAction* m_redo_action{nullptr};
 };

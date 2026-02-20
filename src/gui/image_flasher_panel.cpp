@@ -6,6 +6,8 @@
 #include "sak/flash_coordinator.h"
 #include "sak/windows_iso_downloader.h"
 #include "sak/windows_iso_download_dialog.h"
+#include "sak/linux_iso_downloader.h"
+#include "sak/linux_iso_download_dialog.h"
 #include "sak/image_flasher_settings_dialog.h"
 #include "sak/windows_usb_creator.h"
 #include "sak/config_manager.h"
@@ -26,6 +28,7 @@ ImageFlasherPanel::ImageFlasherPanel(QWidget* parent)
     , m_driveScanner(std::make_unique<DriveScanner>(this))
     , m_flashCoordinator(std::make_unique<FlashCoordinator>(this))
     , m_isoDownloader(std::make_unique<WindowsISODownloader>(this))
+    , m_linuxIsoDownloader(std::make_unique<LinuxISODownloader>(this))
     , m_imageSize(0)
     , m_isFlashing(false)
     , m_currentPage(0)
@@ -96,10 +99,15 @@ void ImageFlasherPanel::setupUI() {
     buttonLayout->addWidget(m_backButton);
     connect(m_backButton, &QPushButton::clicked, this, [this]() {
         int currentIndex = m_stackedWidget->currentIndex();
-        if (currentIndex > 0) {
+        if (m_isFlashing) return; // Never navigate away during flash
+
+        if (currentIndex == 3) {
+            // From completion page, go back to image selection (skip progress page)
+            m_stackedWidget->setCurrentIndex(0);
+        } else if (currentIndex > 0) {
             m_stackedWidget->setCurrentIndex(currentIndex - 1);
-            updateNavigationButtons();
         }
+        updateNavigationButtons();
     });
     
     m_nextButton = new QPushButton("Next", this);
@@ -153,6 +161,13 @@ void ImageFlasherPanel::createImageSelectionPage() {
     groupLayout->addWidget(m_downloadWindowsButton);
     connect(m_downloadWindowsButton, &QPushButton::clicked,
             this, &ImageFlasherPanel::onDownloadWindowsClicked);
+    
+    // Download Linux button
+    m_downloadLinuxButton = new QPushButton("Download Linux ISO", groupBox);
+    m_downloadLinuxButton->setMinimumHeight(60);
+    groupLayout->addWidget(m_downloadLinuxButton);
+    connect(m_downloadLinuxButton, &QPushButton::clicked,
+            this, &ImageFlasherPanel::onDownloadLinuxClicked);
     
     groupLayout->addSpacing(20);
     
@@ -291,7 +306,40 @@ void ImageFlasherPanel::onDownloadWindowsClicked() {
     connect(dialog, &WindowsISODownloadDialog::downloadCompleted,
             this, [this](const QString& filePath) {
         onImageSelected(filePath);
-        m_stackedWidget->setCurrentIndex(1); // Move to drive selection page
+
+        auto reply = QMessageBox::question(this, "ISO Downloaded",
+            QString("Windows ISO downloaded successfully!\n\n%1\n\n"
+                    "Would you like to flash this image to a USB drive now?")
+                .arg(QFileInfo(filePath).fileName()),
+            QMessageBox::Yes | QMessageBox::No);
+
+        if (reply == QMessageBox::Yes) {
+            m_stackedWidget->setCurrentIndex(1);
+            updateNavigationButtons();
+        }
+    });
+    
+    dialog->exec();
+    dialog->deleteLater();
+}
+
+void ImageFlasherPanel::onDownloadLinuxClicked() {
+    auto* dialog = new LinuxISODownloadDialog(m_linuxIsoDownloader.get(), this);
+    
+    connect(dialog, &LinuxISODownloadDialog::downloadCompleted,
+            this, [this](const QString& filePath) {
+        onImageSelected(filePath);
+
+        auto reply = QMessageBox::question(this, "ISO Downloaded",
+            QString("Linux ISO downloaded successfully!\n\n%1\n\n"
+                    "Would you like to flash this image to a USB drive now?")
+                .arg(QFileInfo(filePath).fileName()),
+            QMessageBox::Yes | QMessageBox::No);
+
+        if (reply == QMessageBox::Yes) {
+            m_stackedWidget->setCurrentIndex(1);
+            updateNavigationButtons();
+        }
     });
     
     dialog->exec();
@@ -399,6 +447,8 @@ void ImageFlasherPanel::onFlashStateChanged(sak::FlashState newState, const QStr
 }
 
 void ImageFlasherPanel::onFlashCompleted(const sak::FlashResult& result) {
+    m_isFlashing = false;
+
     if (result.success) {
         m_completionMessageLabel->setText("✓ Flash Completed Successfully!");
         m_completionMessageLabel->setStyleSheet("color: #16a34a;");
@@ -413,24 +463,47 @@ void ImageFlasherPanel::onFlashCompleted(const sak::FlashResult& result) {
     m_completionDetailsLabel->setText(details);
     
     m_stackedWidget->setCurrentWidget(m_completionPage);
-    m_isFlashing = false;
+    updateNavigationButtons();
     
     Q_EMIT flashCompleted(result.totalDrives(), result.bytesWritten);
 }
 
 void ImageFlasherPanel::onFlashError(const QString& error) {
-    QMessageBox::critical(this, "Flash Error", error);
     m_isFlashing = false;
+
+    QMessageBox::critical(this, "Flash Error",
+        QString("The flash operation failed:\n\n%1\n\n"
+                "The target drive(s) may be in an unusable state. "
+                "You may need to reformat them before they can be used again.")
+            .arg(error));
+
+    // Return to drive selection so the user can see the state
+    m_stackedWidget->setCurrentIndex(1);
+    updateNavigationButtons();
+
     Q_EMIT flashFailed(error);
 }
 
 void ImageFlasherPanel::onCancelClicked() {
-    auto reply = QMessageBox::question(this, "Cancel Flash",
-        "Are you sure you want to cancel the flash operation?",
-        QMessageBox::Yes | QMessageBox::No);
+    auto reply = QMessageBox::warning(this, "Cancel Flash",
+        "Are you sure you want to cancel the flash operation?\n\n"
+        "WARNING: Cancelling mid-write may leave the target drive(s) in an \n"
+        "unusable state. You may need to reformat them before they can be used again.",
+        QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
     
     if (reply == QMessageBox::Yes) {
         m_flashCoordinator->cancel();
+        m_isFlashing = false;
+
+        m_flashStateLabel->setText("Flash cancelled by user");
+        m_flashProgressBar->setValue(0);
+        m_flashDetailsLabel->clear();
+        m_flashSpeedLabel->clear();
+
+        // Return to drive selection so the user can retry
+        m_stackedWidget->setCurrentIndex(1);
+        updateNavigationButtons();
+
         Q_EMIT flashCancelled();
     }
 }
@@ -438,25 +511,24 @@ void ImageFlasherPanel::onCancelClicked() {
 void ImageFlasherPanel::updateNavigationButtons() {
     int currentIndex = m_stackedWidget->currentIndex();
     
-    // Back button: enabled on pages after the first
-    m_backButton->setEnabled(currentIndex > 0 && !m_isFlashing);
+    // Back button: enabled on pages 1 (drive selection) and 3 (completion)
+    // Disabled during flashing (page 2) and on page 0 (nothing to go back to)
+    bool canGoBack = !m_isFlashing && (currentIndex == 1 || currentIndex == 3);
+    m_backButton->setEnabled(canGoBack);
+    m_backButton->setVisible(currentIndex != 2); // Hide entirely during flash
     
     // Next button: enabled based on page state
     switch (currentIndex) {
         case 0: // Image selection page
             m_nextButton->setEnabled(!m_selectedImagePath.isEmpty());
+            m_nextButton->setVisible(true);
             break;
-        case 1: // Drive selection page
-            m_nextButton->setEnabled(false); // Use Flash button instead
-            break;
+        case 1: // Drive selection page — use Flash button instead
         case 2: // Progress page
-            m_nextButton->setEnabled(false);
-            break;
         case 3: // Completion page
-            m_nextButton->setEnabled(false);
-            break;
         default:
             m_nextButton->setEnabled(false);
+            m_nextButton->setVisible(currentIndex == 0);
             break;
     }
     
@@ -464,8 +536,9 @@ void ImageFlasherPanel::updateNavigationButtons() {
     m_flashButton->setVisible(currentIndex == 1 && !m_isFlashing);
     m_flashButton->setEnabled(!m_selectedDrives.isEmpty() && !m_isFlashing);
     
-    // Cancel button: only visible during flashing
-    m_cancelButton->setVisible(currentIndex == 2 && m_isFlashing);
+    // Cancel button: visible during flashing
+    m_cancelButton->setVisible(currentIndex == 2);
+    m_cancelButton->setEnabled(m_isFlashing);
 }
 
 void ImageFlasherPanel::validateImageFile(const QString& filePath) {
@@ -511,26 +584,59 @@ void ImageFlasherPanel::validateImageFile(const QString& filePath) {
 void ImageFlasherPanel::showConfirmationDialog() {
     // Check if this is a Windows ISO
     bool isWindowsISO = isWindowsInstallISO(m_selectedImagePath);
+
+    // Build drive list for display
+    QStringList driveDetails;
+    bool hasSystemDrive = false;
+    for (const auto& drivePath : m_selectedDrives) {
+        QString label = drivePath;
+        // Find the display text from the list widget
+        for (int i = 0; i < m_driveListWidget->count(); ++i) {
+            auto* item = m_driveListWidget->item(i);
+            if (item->data(Qt::UserRole).toString() == drivePath) {
+                label = item->text();
+                break;
+            }
+        }
+        driveDetails << QString("  • %1").arg(label);
+        if (isSystemDrive(drivePath)) {
+            hasSystemDrive = true;
+        }
+    }
+
+    // Block system drive flashing with a hard error
+    if (hasSystemDrive) {
+        QMessageBox::critical(this, "Operation Blocked",
+            "One or more selected drives is your SYSTEM DRIVE.\n\n"
+            "Flashing to the system drive would destroy your Windows installation "
+            "and render this computer unbootable.\n\n"
+            "Please deselect the system drive and try again.");
+        return;
+    }
     
     QString methodInfo;
     if (isWindowsISO) {
-        methodInfo = "\n\nMethod: Extract ISO to NTFS-formatted drive\n"
+        methodInfo = "\nMethod: Extract ISO to NTFS-formatted drive\n"
                     "(Proper Windows installation USB)";
     } else {
-        methodInfo = "\n\nMethod: Raw disk imaging\n"
+        methodInfo = "\nMethod: Raw disk imaging\n"
                     "(Bootable for Linux, other ISOs)";
     }
     
-    QString message = QString("Are you sure you want to flash this image?\n\n"
-                              "Image: %1\n"
-                              "Target Drives: %2%3\n\n"
-                              "WARNING: All data on the target drives will be erased!")
+    QString message = QString(
+        "⚠  DESTRUCTIVE OPERATION  ⚠\n\n"
+        "Image: %1\n\n"
+        "Target Drive(s):\n%2\n"
+        "%3\n\n"
+        "ALL DATA on the target drive(s) will be PERMANENTLY ERASED.\n"
+        "This action CANNOT be undone.\n\n"
+        "Are you absolutely sure you want to continue?")
         .arg(QFileInfo(m_selectedImagePath).fileName())
-        .arg(m_selectedDrives.size())
+        .arg(driveDetails.join("\n"))
         .arg(methodInfo);
     
-    auto reply = QMessageBox::warning(this, "Confirm Flash", message,
-        QMessageBox::Yes | QMessageBox::No);
+    auto reply = QMessageBox::warning(this, "Confirm Flash — Data Loss Warning", message,
+        QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
     
     if (reply == QMessageBox::Yes) {
         // Disable UI immediately upon confirmation

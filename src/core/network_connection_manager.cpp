@@ -79,8 +79,9 @@ void NetworkConnectionManager::onNewConnection() {
     connect(m_socket, &QTcpSocket::readyRead, this, &NetworkConnectionManager::onSocketReadyRead);
     connect(m_socket, &QTcpSocket::disconnected, this, &NetworkConnectionManager::onSocketDisconnected);
     connect(m_socket, &QTcpSocket::errorOccurred, this, [this](QAbstractSocket::SocketError) {
-        log_error("NetworkConnectionManager socket error: {}", m_socket ? m_socket->errorString().toStdString() : std::string("unknown"));
-        Q_EMIT connectionError(m_socket->errorString());
+        QString errorStr = m_socket ? m_socket->errorString() : QStringLiteral("unknown");
+        log_error("NetworkConnectionManager socket error: {}", errorStr.toStdString());
+        Q_EMIT connectionError(errorStr);
     });
 
     log_info("NetworkConnectionManager accepted connection from {}:{}",

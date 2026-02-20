@@ -204,8 +204,8 @@ configure_file(
 
 # Include directories
 include_directories(
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_BINARY_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 
@@ -213,11 +213,7 @@ include_directories(
 # Source Files
 # ============================================================================
 
-# Core utility modules (will be C++23 modules)
-# Phase 1: Basic infrastructure (COMPLETE)
-# Phase 2: File operations (COMPLETE)
-# Phase 4: Configuration management (COMPLETE)
-# Phase 5: Input validation and security (COMPLETE)
+# Core utility modules
 set(CORE_SOURCES
     src/core/logger.cpp
     src/core/file_hash.cpp
@@ -266,7 +262,11 @@ set(CORE_SOURCES
     src/core/drive_scanner.cpp
     src/core/image_source.cpp
     src/core/flash_coordinator.cpp
+    src/core/uup_dump_api.cpp
+    src/core/uup_iso_builder.cpp
     src/core/windows_iso_downloader.cpp
+    src/core/linux_distro_catalog.cpp
+    src/core/linux_iso_downloader.cpp
     src/core/windows_usb_creator.cpp
     src/core/drive_unmounter.cpp
     src/core/drive_lock.cpp
@@ -294,7 +294,11 @@ set(CORE_SOURCES
     include/sak/drive_scanner.h
     include/sak/image_source.h
     include/sak/flash_coordinator.h
+    include/sak/uup_dump_api.h
+    include/sak/uup_iso_builder.h
     include/sak/windows_iso_downloader.h
+    include/sak/linux_distro_catalog.h
+    include/sak/linux_iso_downloader.h
     include/sak/windows_usb_creator.h
     include/sak/drive_unmounter.h
     include/sak/drive_lock.h
@@ -341,29 +345,10 @@ set(CORE_SOURCES
 )
 
 # Platform abstraction
-# Phase 2: Completed basic platform interface
 set(PLATFORM_SOURCES
-    # Phase 3+ files (not yet implemented):
-    # src/platform/permission_manager.cpp
 )
 
-# Phase 3+ files (not yet implemented):
-if(FALSE)
-if(PLATFORM_WINDOWS)
-    list(APPEND PLATFORM_SOURCES
-        src/platform/platform_windows.cpp
-        src/platform/registry_scanner.cpp
-        src/platform/keep_awake_windows.cpp
-    )
-elseif(PLATFORM_MACOS)
-    list(APPEND PLATFORM_SOURCES
-        src/platform/platform_macos.cpp
-        src/platform/plist_scanner.cpp
-    )
-endif()
-endif() # End Phase 3+ conditional
-
-# Threading infrastructure (Phase 3)
+# Threading infrastructure
 set(THREADING_SOURCES
     src/threading/worker_base.cpp
     src/threading/backup_worker.cpp
@@ -377,22 +362,11 @@ set(THREADING_SOURCES
     include/sak/flash_worker.h
 )
 
-# Feature modules (Phase 4)
+# Feature modules
 set(FEATURE_SOURCES
-    # src/features/backup_worker.cpp
-    # src/features/backup_config.cpp
-    # src/features/copy_operation.cpp
-    # src/features/directory_organizer.cpp
-    # src/features/file_classifier.cpp
-    # src/features/duplicate_finder.cpp
-    # src/features/duplicate_resolver.cpp
-    # src/features/duplicate_report.cpp
-    # src/features/license_scanner.cpp
-    # src/features/license_detector.cpp
-    # src/features/license_exporter.cpp
 )
 
-# GUI sources (Phase 2 Initial Implementation + Phase 4 Common Components)
+# GUI sources
 set(GUI_SOURCES
     src/gui/main_window.cpp
     src/gui/backup_panel.cpp
@@ -403,8 +377,6 @@ set(GUI_SOURCES
     src/gui/log_viewer.cpp
     src/gui/settings_dialog.cpp
     src/gui/file_list_widget.cpp
-    src/gui/undo_manager.cpp
-    src/gui/undo_commands.cpp
     include/sak/main_window.h
     include/sak/backup_panel.h
     include/sak/organizer_panel.h
@@ -414,8 +386,6 @@ set(GUI_SOURCES
     include/sak/log_viewer.h
     include/gui/settings_dialog.h
     include/gui/file_list_widget.h
-    include/gui/undo_manager.h
-    include/gui/undo_commands.h
     src/gui/backup_wizard.cpp
     src/gui/restore_wizard.cpp
     include/sak/backup_wizard.h
@@ -432,6 +402,8 @@ set(GUI_SOURCES
     include/sak/image_flasher_panel.h
     src/gui/windows_iso_download_dialog.cpp
     include/sak/windows_iso_download_dialog.h
+    src/gui/linux_iso_download_dialog.cpp
+    include/sak/linux_iso_download_dialog.h
     src/gui/image_flasher_settings_dialog.cpp
     include/sak/image_flasher_settings_dialog.h
     src/gui/quick_actions_panel.cpp

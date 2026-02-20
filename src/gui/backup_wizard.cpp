@@ -115,13 +115,12 @@ void BackupSelectAppsPage::setupUI()
     auto* buttonLayout = new QHBoxLayout();
     
     m_scanButton = new QPushButton("Scan Common Apps", this);
-    m_scanButton->setToolTip("Automatically detect common application data");
+    m_scanButton->setToolTip("Auto-detect installed apps like Chrome, Firefox, Outlook, VS Code, etc.");
     connect(m_scanButton, &QPushButton::clicked,
             this, &BackupSelectAppsPage::onScanCommonApps);
     buttonLayout->addWidget(m_scanButton);
     
     m_browseButton = new QPushButton("Add Custom Path...", this);
-    m_browseButton->setToolTip("Browse for additional directories to backup");
     connect(m_browseButton, &QPushButton::clicked,
             this, &BackupSelectAppsPage::onBrowseCustomPath);
     buttonLayout->addWidget(m_browseButton);
@@ -264,13 +263,13 @@ void BackupConfigurePage::setupUI()
     row++;
     m_compressCheckBox = new QCheckBox("Compress backups (ZIP format)", this);
     m_compressCheckBox->setChecked(true);
-    m_compressCheckBox->setToolTip("Create compressed ZIP archives to save space");
+    m_compressCheckBox->setToolTip("Reduces backup size by 40-70%% but takes longer to create");
     layout->addWidget(m_compressCheckBox, row, 0, 1, 3);
     
     row++;
     m_verifyCheckBox = new QCheckBox("Verify checksums after backup", this);
     m_verifyCheckBox->setChecked(true);
-    m_verifyCheckBox->setToolTip("Calculate SHA256 checksums for integrity verification");
+    m_verifyCheckBox->setToolTip("Generates SHA-256 hashes to detect corruption during restore");
     layout->addWidget(m_verifyCheckBox, row, 0, 1, 3);
     
     // Exclusions

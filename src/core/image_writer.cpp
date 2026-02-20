@@ -279,7 +279,13 @@ bool ImageWriter::writeBuffer(HANDLE driveHandle, const char* buffer, qint64 siz
         return false;
     }
 
-    // Write data
+    // Write data — guard against qint64 → DWORD truncation
+    if (size <= 0 || size > static_cast<qint64>(MAXDWORD)) {
+        m_lastError = QString("Write size out of DWORD range: %1").arg(size);
+        sak::log_error(m_lastError.toStdString());
+        return false;
+    }
+    
     DWORD bytesWritten = 0;
     if (!WriteFile(driveHandle, buffer, static_cast<DWORD>(size), &bytesWritten, nullptr)) {
         m_lastError = QString("WriteFile failed: error %1").arg(GetLastError());

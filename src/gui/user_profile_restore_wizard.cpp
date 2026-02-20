@@ -196,7 +196,7 @@ void UserProfileRestoreUserMappingPage::setupUi() {
     // Auto-map button
     auto* buttonLayout = new QHBoxLayout();
     m_autoMapButton = new QPushButton(tr("Auto-Map by Username"), this);
-    m_autoMapButton->setToolTip(tr("Automatically map users with matching usernames"));
+    m_autoMapButton->setToolTip(tr("Pairs each backup user to a local account with the same username"));
     buttonLayout->addWidget(m_autoMapButton);
     buttonLayout->addStretch(1);
     layout->addLayout(buttonLayout);

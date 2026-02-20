@@ -755,7 +755,7 @@ void UserProfileBackupSettingsPage::setupUi() {
     // Encryption
     auto* encryptionLayout = new QHBoxLayout();
     m_encryptionCheck = new QCheckBox(tr("Encrypt backup"), this);
-    m_encryptionCheck->setToolTip(tr("Encrypt backup with AES-256 password protection"));
+    m_encryptionCheck->setToolTip(tr("Protects the backup with AES-256 encryption — you'll need the password to restore"));
     connect(m_encryptionCheck, &QCheckBox::toggled, this, [this](bool checked) {
         m_passwordEdit->setEnabled(checked);
         m_passwordConfirmEdit->setEnabled(checked);

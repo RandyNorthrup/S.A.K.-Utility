@@ -290,13 +290,28 @@ auto encrypt_file(
         return std::unexpected(encrypted.error());
     }
     
-    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-        log_error(std::format("Cannot open file for writing encrypted data: {}", file_path.toStdString()));
+    // Write to temp file first for atomic replacement (prevents data loss on crash)
+    QString tempPath = file_path + ".tmp";
+    QFile tempFile(tempPath);
+    if (!tempFile.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        log_error(std::format("Cannot create temp file for encryption: {}", tempPath.toStdString()));
         return std::unexpected(error_code::file_write_error);
     }
     
-    file.write(*encrypted);
-    file.close();
+    if (tempFile.write(*encrypted) != encrypted->size()) {
+        log_error(std::format("Incomplete write to temp file: {}", tempPath.toStdString()));
+        tempFile.close();
+        QFile::remove(tempPath);
+        return std::unexpected(error_code::file_write_error);
+    }
+    tempFile.close();
+    
+    // Atomically replace original with encrypted version
+    QFile::remove(file_path);
+    if (!QFile::rename(tempPath, file_path)) {
+        log_error(std::format("Cannot replace original file: {}", file_path.toStdString()));
+        return std::unexpected(error_code::file_write_error);
+    }
     
     log_info(std::format("Encrypted file: {}", file_path.toStdString()));
     return {};
@@ -321,13 +336,28 @@ auto decrypt_file(
         return std::unexpected(decrypted.error());
     }
     
-    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-        log_error(std::format("Cannot open file for writing decrypted data: {}", file_path.toStdString()));
+    // Write to temp file first for atomic replacement (prevents data loss on crash)
+    QString tempPath = file_path + ".tmp";
+    QFile tempFile(tempPath);
+    if (!tempFile.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        log_error(std::format("Cannot create temp file for decryption: {}", tempPath.toStdString()));
         return std::unexpected(error_code::file_write_error);
     }
     
-    file.write(*decrypted);
-    file.close();
+    if (tempFile.write(*decrypted) != decrypted->size()) {
+        log_error(std::format("Incomplete write to temp file: {}", tempPath.toStdString()));
+        tempFile.close();
+        QFile::remove(tempPath);
+        return std::unexpected(error_code::file_write_error);
+    }
+    tempFile.close();
+    
+    // Atomically replace original with decrypted version
+    QFile::remove(file_path);
+    if (!QFile::rename(tempPath, file_path)) {
+        log_error(std::format("Cannot replace original file: {}", file_path.toStdString()));
+        return std::unexpected(error_code::file_write_error);
+    }
     
     log_info(std::format("Decrypted file: {}", file_path.toStdString()));
     return {};

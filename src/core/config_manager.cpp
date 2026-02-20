@@ -44,12 +44,6 @@ void ConfigManager::initializeDefaults()
     if (!contains("duplicate/keep_strategy")) {
         setValue("duplicate/keep_strategy", "oldest");
     }
-    if (!contains("license/scan_registry")) {
-        setValue("license/scan_registry", true);
-    }
-    if (!contains("license/scan_filesystem")) {
-        setValue("license/scan_filesystem", true);
-    }
     if (!contains("image_flasher/validation_mode")) {
         setValue("image_flasher/validation_mode", "full");
     }

@@ -49,8 +49,8 @@ void TestNetworkSpeedAction::testDownloadSpeed() {
     
     // Test with 3 different servers for reliability
     QStringList test_urls = {
-        "http://speedtest.tele2.net/10MB.zip",
-        "http://ipv4.download.thinkbroadband.com/10MB.zip",
+        "https://speedtest.tele2.net/10MB.zip",
+        "https://proof.ovh.net/files/10Mb.dat",
         "https://speed.hetzner.de/10MB.bin"
     };
     

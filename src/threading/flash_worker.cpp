@@ -261,7 +261,15 @@ bool FlashWorker::writeImage() {
             buffer[i] = 0;
         }
         bytesRead = paddedSize;
-    }        DWORD bytesWrittenThisTime = 0;
+    }
+    
+        // Guard against qint64 → DWORD truncation
+        if (bytesRead > static_cast<qint64>(MAXDWORD)) {
+            sak::log_error("Write size exceeds DWORD range");
+            return false;
+        }
+        
+        DWORD bytesWrittenThisTime = 0;
         if (!WriteFile(
             m_deviceHandle,
             buffer.data(),

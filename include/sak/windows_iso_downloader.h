@@ -3,56 +3,33 @@
 
 #pragma once
 
+#include "sak/uup_dump_api.h"
+#include "sak/uup_iso_builder.h"
+
 #include <QObject>
 #include <QString>
 #include <QStringList>
-#include <QDateTime>
-#include <QNetworkAccessManager>
-#include <QNetworkReply>
-#include <QFile>
-#include <QElapsedTimer>
 #include <QMap>
 #include <memory>
 
 /**
- * @brief Windows ISO Downloader - Downloads Windows 11 ISOs from Microsoft
- * 
- * Uses Microsoft Media Creation Tool API to download official Windows 11 ISOs
- * directly without requiring the Media Creation Tool executable.
- * 
- * Workflow:
- * 1. Fetch product page to get session ID
- * 2. Request available languages
- * 3. Request download URL for selected language and architecture
- * 4. Download ISO with progress tracking
- * 5. Verify file size and integrity
- * 
- * Features:
- * - Direct download from Microsoft servers
- * - Multiple language support
- * - x64 and ARM64 architecture support
- * - Resume capability (if connection drops)
- * - Progress tracking with speed calculation
- * - Automatic retry on network errors
- * 
- * Thread-Safety: All methods are thread-safe. Network operations are async.
- * 
- * Example:
- * @code
- * WindowsISODownloader downloader;
- * connect(&downloader, &WindowsISODownloader::downloadProgress,
- *         [](qint64 bytes, qint64 total, double speed) {
- *     qDebug() << "Progress:" << (bytes * 100 / total) << "%";
- * });
- * 
- * downloader.fetchProductPage();
- * // ... wait for productPageFetched signal
- * downloader.fetchAvailableLanguages();
- * // ... wait for languagesFetched signal
- * downloader.requestDownloadUrl("English", "x64");
- * // ... wait for downloadUrlReceived signal
- * downloader.downloadISO(url, "C:/Win11.iso");
- * @endcode
+ * @brief Windows ISO downloader using UUP dump
+ *
+ * High-level orchestrator that drives the full ISO acquisition workflow:
+ *   1. Browse available Windows builds from UUP dump
+ *   2. Select language, edition, and target path
+ *   3. Download UUP files from Microsoft CDN via aria2c
+ *   4. Convert UUP files to a bootable ISO via wimlib converter
+ *
+ * This class owns a UupDumpApi (network client) and a UupIsoBuilder
+ * (background download + conversion engine). It exposes a clean,
+ * step-by-step API that the download dialog drives.
+ *
+ * All bundled tools (aria2c, converter, wimlib) must be present at
+ * build time. Only actual Windows UUP files are fetched at runtime
+ * when the user initiates a download.
+ *
+ * Thread-Safety: Must be constructed on the GUI thread.
  */
 class WindowsISODownloader : public QObject {
     Q_OBJECT
@@ -61,167 +38,118 @@ public:
     explicit WindowsISODownloader(QObject* parent = nullptr);
     ~WindowsISODownloader() override;
 
-    // Disable copy and move
     WindowsISODownloader(const WindowsISODownloader&) = delete;
     WindowsISODownloader& operator=(const WindowsISODownloader&) = delete;
     WindowsISODownloader(WindowsISODownloader&&) = delete;
     WindowsISODownloader& operator=(WindowsISODownloader&&) = delete;
 
-    /**
-     * @brief Step 1: Fetch product page to get session ID
-     * Emits productPageFetched on success
-     */
-    void fetchProductPage();
+    // ---- Step 1: Fetch builds ----
 
     /**
-     * @brief Step 2: Fetch available languages
-     * Must be called after fetchProductPage succeeds
-     * Emits languagesFetched on success
+     * @brief Fetch available Windows builds for a given architecture and channel
+     * @param arch Architecture ("amd64" or "arm64")
+     * @param channel Release channel (Retail, Beta, Dev, etc.)
      */
-    void fetchAvailableLanguages();
+    void fetchBuilds(const QString& arch = "amd64",
+                     UupDumpApi::ReleaseChannel channel = UupDumpApi::ReleaseChannel::Retail);
+
+    // ---- Step 2: Select build and fetch languages ----
 
     /**
-     * @brief Step 3: Request download URL
-     * @param language Language name (from getAvailableLanguages())
-     * @param architecture "x64" or "ARM64"
-     * Emits downloadUrlReceived on success
+     * @brief Fetch available languages for a selected build
+     * @param updateId Build UUID from BuildInfo
      */
-    void requestDownloadUrl(const QString& language, const QString& architecture);
+    void fetchLanguages(const QString& updateId);
+
+    // ---- Step 3: Select language and fetch editions ----
 
     /**
-     * @brief Step 4: Download ISO file
-     * @param url Download URL (from downloadUrlReceived signal)
-     * @param savePath Local path to save ISO
+     * @brief Fetch available editions for a build + language combo
+     * @param updateId Build UUID
+     * @param lang Language code (e.g., "en-us")
      */
-    void downloadISO(const QString& url, const QString& savePath);
+    void fetchEditions(const QString& updateId, const QString& lang);
+
+    // ---- Step 4: Download and build ISO ----
 
     /**
-     * @brief Cancel ongoing operation
+     * @brief Start downloading UUP files and building the ISO
+     * @param updateId Build UUID
+     * @param lang Language code (e.g., "en-us")
+     * @param edition Edition code (e.g., "PROFESSIONAL")
+     * @param savePath Where to save the final .iso file
+     */
+    void startDownload(const QString& updateId,
+                       const QString& lang,
+                       const QString& edition,
+                       const QString& savePath);
+
+    /**
+     * @brief Cancel any in-progress operation (API call or ISO build)
      */
     void cancel();
 
     /**
-     * @brief Get available languages
-     * Valid after languagesFetched signal
-     * @return List of language names
+     * @brief Check if a download/build is currently running
      */
-    QStringList getAvailableLanguages() const;
+    bool isDownloading() const;
+
+    /**
+     * @brief Get the UUP dump API client (for direct access if needed)
+     */
+    UupDumpApi* api() { return m_api.get(); }
+
+    /**
+     * @brief Get the ISO builder (for direct access if needed)
+     */
+    UupIsoBuilder* builder() { return m_builder.get(); }
 
     /**
      * @brief Get available architectures
-     * @return List of architectures (typically ["x64", "ARM64"])
      */
-    QStringList getAvailableArchitectures() const;
+    static QStringList availableArchitectures();
 
     /**
-     * @brief Check if download URL has expired
-     * @param url URL to check
-     * @return true if URL is expired or will expire soon
+     * @brief Get available release channels
      */
-    bool isDownloadUrlExpired(const QString& url) const;
+    static QList<UupDumpApi::ReleaseChannel> availableChannels();
 
 Q_SIGNALS:
-    /**
-     * @brief Emitted when product page is fetched
-     * @param sessionId Session ID for subsequent requests
-     * @param productEditionId Product edition ID
-     */
-    void productPageFetched(const QString& sessionId, const QString& productEditionId);
+    // ---- Build browsing ----
+    void buildsFetched(const QList<UupDumpApi::BuildInfo>& builds);
 
-    /**
-     * @brief Emitted when languages are fetched
-     * @param languages List of available languages
-     */
-    void languagesFetched(const QStringList& languages);
+    // ---- Language/Edition selection ----
+    void languagesFetched(const QStringList& langCodes,
+                          const QMap<QString, QString>& langNames);
+    void editionsFetched(const QStringList& editions,
+                         const QMap<QString, QString>& editionNames);
 
-    /**
-     * @brief Emitted when download URL is received
-     * @param url Download URL (valid ~24 hours)
-     * @param expiresAt Expiration timestamp
-     */
-    void downloadUrlReceived(const QString& url, const QDateTime& expiresAt);
+    // ---- Download/Build progress ----
+    void filesFetched(const QString& updateName,
+                      const QList<UupDumpApi::FileInfo>& files);
+    void downloadStarted(int fileCount, qint64 totalBytes);
+    void phaseChanged(UupIsoBuilder::Phase phase, const QString& description);
+    void progressUpdated(int overallPercent, const QString& detail);
+    void speedUpdated(double downloadSpeedMBps);
 
-    /**
-     * @brief Emitted periodically during download
-     * @param bytesReceived Bytes downloaded so far
-     * @param bytesTotal Total bytes to download
-     * @param speedMBps Current download speed in MB/s
-     */
-    void downloadProgress(qint64 bytesReceived, qint64 bytesTotal, double speedMBps);
-
-    /**
-     * @brief Emitted when download completes
-     * @param filePath Path to downloaded ISO
-     * @param fileSize Size of downloaded file
-     */
-    void downloadComplete(const QString& filePath, qint64 fileSize);
-
-    /**
-     * @brief Emitted on error
-     * @param error Error message
-     */
+    // ---- Completion ----
+    void downloadComplete(const QString& isoPath, qint64 fileSize);
     void downloadError(const QString& error);
-
-    /**
-     * @brief Emitted with status messages
-     * @param message Status message for UI display
-     */
     void statusMessage(const QString& message);
 
 private Q_SLOTS:
-    void onProductPageFinished();
-    void onLanguagesFinished();
-    void onDownloadUrlFinished();
-    void onDownloadProgress(qint64 bytesReceived, qint64 bytesTotal);
-    void onDownloadFinished();
-    void onNetworkError(QNetworkReply::NetworkError error);
+    void onFilesFetched(const QString& updateName,
+                        const QList<UupDumpApi::FileInfo>& files);
+    void onApiError(const QString& error);
 
 private:
-    QString parseSessionId(const QString& html);
-    QString parseProductEditionId(const QString& html);
-    QStringList parseLanguages(const QString& html);
-    QString parseDownloadUrl(const QString& html);
-    QDateTime parseExpirationTime(const QString& url);
-    void calculateSpeed();
+    std::unique_ptr<UupDumpApi> m_api;
+    std::unique_ptr<UupIsoBuilder> m_builder;
 
-    QNetworkAccessManager* m_networkManager;
-    QNetworkReply* m_currentReply;
-    QFile* m_downloadFile;
-    
-    QString m_sessionId;
-    QString m_productEditionId;
-    QString m_skuId;
-    QString m_orgId;
-    QString m_profileId;
-    QStringList m_availableLanguages;
-    QMap<QString, QString> m_languageToSkuMap;
-    
-    QString m_downloadUrl;
-    QString m_savePath;
-    qint64 m_bytesReceived;
-    qint64 m_bytesTotal;
-    double m_speedMBps;
-    
-    QElapsedTimer m_downloadStartTime;
-    qint64 m_lastSpeedUpdate;
-    qint64 m_lastSpeedBytes;
-    
-    bool m_isCancelled;
-    
-    // Retry mechanism
-    int m_retryCount;
-    int m_maxRetries;
-    int m_retryDelayMs;
-    enum class RetryOperation { None, FetchProductPage, FetchLanguages, FetchDownloadUrl };
-    RetryOperation m_pendingRetry;
-    QString m_retryLanguage;
-    QString m_retryArchitecture;
-    
-    void scheduleRetry(RetryOperation operation, const QString& language = "", const QString& architecture = "");
-    void executeRetry();
-    
-    // API endpoints
-    static const QString PRODUCT_PAGE_URL;
-    static const QString API_BASE_URL;
-    static const QString USER_AGENT;
+    // Pending download parameters (stored between getFiles call and builder start)
+    QString m_pendingSavePath;
+    QString m_pendingEdition;
+    QString m_pendingLang;
+    QString m_pendingUpdateId;
+    bool m_downloadRequested = false;
 };

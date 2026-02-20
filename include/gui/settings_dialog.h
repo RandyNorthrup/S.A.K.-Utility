@@ -45,9 +45,7 @@ private:
     void setupUI();
     void createGeneralTab();
     void createBackupTab();
-    void createOrganizerTab();
     void createDuplicateFinderTab();
-    void createImageFlasherTab();
     void createAdvancedTab();
     
     void loadSettings();
@@ -62,31 +60,18 @@ private:
     QPushButton* m_applyButton{nullptr};
     QPushButton* m_resetButton{nullptr};
 
-    // General Tab
+    // General Tab (Window + Organizer settings)
     QCheckBox* m_restoreWindowGeometry{nullptr};
+    QCheckBox* m_organizerPreviewMode{nullptr};
 
     // Backup Tab
     QSpinBox* m_backupThreadCount{nullptr};
     QCheckBox* m_backupVerifyMD5{nullptr};
     QLineEdit* m_lastBackupLocation{nullptr};
 
-    // Organizer Tab
-    QCheckBox* m_organizerPreviewMode{nullptr};
-
     // Duplicate Finder Tab
     QSpinBox* m_duplicateMinFileSize{nullptr};
     QComboBox* m_duplicateKeepStrategy{nullptr};
-
-
-    // Image Flasher Tab
-    QComboBox* m_imageFlasherValidationMode{nullptr};
-    QSpinBox* m_imageFlasherBufferSize{nullptr};
-    QCheckBox* m_imageFlasherUnmountOnCompletion{nullptr};
-    QCheckBox* m_imageFlasherShowSystemDriveWarning{nullptr};
-    QCheckBox* m_imageFlasherShowLargeDriveWarning{nullptr};
-    QSpinBox* m_imageFlasherLargeDriveThreshold{nullptr};
-    QSpinBox* m_imageFlasherMaxConcurrentWrites{nullptr};
-    QCheckBox* m_imageFlasherEnableNotifications{nullptr};
 
     // Network Transfer (Advanced Tab)
     QCheckBox* m_networkTransferEnabled{nullptr};

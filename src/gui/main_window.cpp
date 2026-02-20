@@ -9,33 +9,25 @@
 #include "sak/network_transfer_panel.h"
 #include "sak/config_manager.h"
 #include "gui/settings_dialog.h"
-#include "gui/undo_manager.h"
 
 #include <QAction>
 #include <QApplication>
 #include <QCloseEvent>
-#include <QFile>
 #include <QMessageBox>
-#include <QSettings>
 #include <QVBoxLayout>
 
 using sak::AppMigrationPanel;
-
-// Note: Logger access will be added in Phase 3 with proper async integration
 
 MainWindow::MainWindow(QWidget* parent)
     : QMainWindow(parent)
 {
     setup_ui();
     load_window_state();
-    
-    // Logger will be wired in Phase 3
 }
 
 MainWindow::~MainWindow()
 {
     save_window_state();
-    // Logger will be wired in Phase 3
 }
 
 void MainWindow::setup_ui()
@@ -53,7 +45,6 @@ void MainWindow::setup_ui()
     create_menu_bar();
     create_toolbar();
     create_status_bar();
-    setup_undo_redo();
     create_panels();
     
     update_status("Ready", 0);
@@ -70,23 +61,6 @@ void MainWindow::create_menu_bar()
     file_menu->addAction(exit_action);
     
     auto* edit_menu = menuBar()->addMenu("&Edit");
-    
-    // Undo/Redo actions (will be set up in setup_undo_redo)
-    m_undo_action = new QAction("&Undo", this);
-    m_undo_action->setShortcut(QKeySequence::Undo);
-    m_undo_action->setStatusTip("Undo last operation");
-    m_undo_action->setEnabled(false);
-    connect(m_undo_action, &QAction::triggered, this, &MainWindow::on_undo_clicked);
-    edit_menu->addAction(m_undo_action);
-    
-    m_redo_action = new QAction("&Redo", this);
-    m_redo_action->setShortcut(QKeySequence::Redo);
-    m_redo_action->setStatusTip("Redo last operation");
-    m_redo_action->setEnabled(false);
-    connect(m_redo_action, &QAction::triggered, this, &MainWindow::on_redo_clicked);
-    edit_menu->addAction(m_redo_action);
-    
-    edit_menu->addSeparator();
     
     auto* settings_action = new QAction("&Settings", this);
     settings_action->setShortcut(QKeySequence::Preferences);
@@ -108,7 +82,6 @@ void MainWindow::create_toolbar()
     toolbar->setMovable(false);
     toolbar->setFloatable(false);
     
-    // Toolbar actions will be added when icons are available
 }
 
 void MainWindow::create_status_bar()
@@ -171,7 +144,6 @@ void MainWindow::create_panels()
                 this, &MainWindow::update_progress);
             }
     
-    // Logger will be wired in Phase 3
 }
 
 void MainWindow::update_status(const QString& message, int timeout_ms)
@@ -213,7 +185,7 @@ void MainWindow::on_about_clicked()
         "<li>Application Migration</li>"
         "<li>Directory Organization</li>"
         "<li>Duplicate File Detection</li>"
-        "<li>License Key Scanner</li>"
+        "<li>Image Flasher & ISO Downloads</li>"
         "</ul>").arg(sak::get_version_short()));
 }
 
@@ -228,118 +200,27 @@ void MainWindow::on_settings_clicked()
     dialog.exec();
 }
 
-void MainWindow::on_undo_clicked()
-{
-    sak::UndoManager::instance().undo();
-}
-
-void MainWindow::on_redo_clicked()
-{
-    sak::UndoManager::instance().redo();
-}
-
-void MainWindow::on_undo_available(bool can_undo)
-{
-    if (m_undo_action) {
-        m_undo_action->setEnabled(can_undo);
-        if (can_undo) {
-            QString text = sak::UndoManager::instance().undoText();
-            m_undo_action->setText(QString("&Undo %1").arg(text));
-            m_undo_action->setStatusTip(QString("Undo: %1").arg(text));
-        } else {
-            m_undo_action->setText("&Undo");
-            m_undo_action->setStatusTip("Nothing to undo");
-        }
-    }
-}
-
-void MainWindow::on_redo_available(bool can_redo)
-{
-    if (m_redo_action) {
-        m_redo_action->setEnabled(can_redo);
-        if (can_redo) {
-            QString text = sak::UndoManager::instance().redoText();
-            m_redo_action->setText(QString("&Redo %1").arg(text));
-            m_redo_action->setStatusTip(QString("Redo: %1").arg(text));
-        } else {
-            m_redo_action->setText("&Redo");
-            m_redo_action->setStatusTip("Nothing to redo");
-        }
-    }
-}
-
-void MainWindow::setup_undo_redo()
-{
-    auto& undo_manager = sak::UndoManager::instance();
-    
-    // Connect undo manager signals to UI updates
-    connect(&undo_manager, &sak::UndoManager::canUndoChanged,
-            this, &MainWindow::on_undo_available);
-    connect(&undo_manager, &sak::UndoManager::canRedoChanged,
-            this, &MainWindow::on_redo_available);
-    connect(&undo_manager, &sak::UndoManager::undoTextChanged,
-            this, [this](const QString&) { 
-                on_undo_available(sak::UndoManager::instance().canUndo()); 
-            });
-    connect(&undo_manager, &sak::UndoManager::redoTextChanged,
-            this, [this](const QString&) { 
-                on_redo_available(sak::UndoManager::instance().canRedo()); 
-            });
-    
-    // Initialize action states
-    on_undo_available(false);
-    on_redo_available(false);
-}
-
 void MainWindow::load_window_state()
 {
-    // Check for portable mode (portable.ini in app directory)
-    QString appDir = QCoreApplication::applicationDirPath();
-    QString portableMarker = appDir + "/portable.ini";
+    auto& config = sak::ConfigManager::instance();
     
-    std::unique_ptr<QSettings> settings;
-    if (QFile::exists(portableMarker)) {
-        settings = std::make_unique<QSettings>(appDir + "/settings.ini", QSettings::IniFormat);
-    } else {
-        settings = std::make_unique<QSettings>("SAK", "Utility");
+    if (config.getRestoreWindowGeometry()) {
+        restoreGeometry(config.getWindowGeometry());
+        restoreState(config.getWindowState());
     }
     
-    restoreGeometry(settings->value("window/geometry").toByteArray());
-    restoreState(settings->value("window/state").toByteArray());
-    
-    // Restore last active tab
-    int last_tab = settings->value("window/active_tab", 0).toInt();
-    if (last_tab >= 0 && last_tab < m_tab_widget->count()) {
-        m_tab_widget->setCurrentIndex(last_tab);
-    }
-    
-    // Logger will be wired in Phase 3
+    // Always start on Quick Actions tab (index 0)
+    m_tab_widget->setCurrentIndex(0);
 }
 
 void MainWindow::save_window_state()
 {
-    // Check for portable mode (portable.ini in app directory)
-    QString appDir = QCoreApplication::applicationDirPath();
-    QString portableMarker = appDir + "/portable.ini";
-    
-    std::unique_ptr<QSettings> settings;
-    if (QFile::exists(portableMarker)) {
-        settings = std::make_unique<QSettings>(appDir + "/settings.ini", QSettings::IniFormat);
-    } else {
-        settings = std::make_unique<QSettings>("SAK", "Utility");
-    }
-    
-    settings->setValue("window/geometry", saveGeometry());
-    settings->setValue("window/state", saveState());
-    settings->setValue("window/active_tab", m_tab_widget->currentIndex());
-    
-    // Logger will be wired in Phase 3
+    auto& config = sak::ConfigManager::instance();
+    config.setWindowGeometry(saveGeometry());
+    config.setWindowState(saveState());
 }
 
 void MainWindow::closeEvent(QCloseEvent* event)
 {
-    // Check if any operations are running
-    // In Phase 3, we'll add worker thread checks
-    
     event->accept();
 }
