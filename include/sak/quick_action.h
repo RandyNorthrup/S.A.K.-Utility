@@ -9,6 +9,7 @@
 #include <QDateTime>
 #include <memory>
 #include <expected>
+#include <atomic>
 
 namespace sak {
 
@@ -266,7 +267,7 @@ private:
     ActionStatus m_status{ActionStatus::Idle};
     ScanResult m_scan_result;
     ExecutionResult m_execution_result;
-    bool m_cancelled{false};
+    std::atomic<bool> m_cancelled{false};
 };
 
 } // namespace sak

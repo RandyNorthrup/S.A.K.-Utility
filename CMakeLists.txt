@@ -270,7 +270,6 @@ set(CORE_SOURCES
     src/core/windows_usb_creator.cpp
     src/core/drive_unmounter.cpp
     src/core/drive_lock.cpp
-    src/core/image_writer.cpp
     src/core/streaming_decompressor.cpp
     src/core/gzip_decompressor.cpp
     src/core/bzip2_decompressor.cpp
@@ -302,7 +301,6 @@ set(CORE_SOURCES
     include/sak/windows_usb_creator.h
     include/sak/drive_unmounter.h
     include/sak/drive_lock.h
-    include/sak/image_writer.h
     include/sak/streaming_decompressor.h
     include/sak/gzip_decompressor.h
     include/sak/bzip2_decompressor.h

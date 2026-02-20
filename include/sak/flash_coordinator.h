@@ -10,6 +10,7 @@
 #include <QStringList>
 #include <memory>
 #include <vector>
+#include <atomic>
 
 class FlashWorker;
 
@@ -241,7 +242,7 @@ private:
     bool m_verificationEnabled;
     qint64 m_bufferSize;
     int m_bufferCount;
-    bool m_isCancelled;
+    std::atomic<bool> m_isCancelled;
     
     QStringList m_targetDrives;
     QString m_sourceChecksum;

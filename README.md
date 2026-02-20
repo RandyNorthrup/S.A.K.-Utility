@@ -690,7 +690,7 @@ For non-Windows images (Linux, etc.):
 
 1. **Unmount Drive:** `DriveUnmounter` safely unmounts volume
 2. **Lock Drive:** `DriveLock` obtains exclusive access
-3. **Write Sectors:** `ImageWriter` writes raw bytes to disk
+3. **Write Sectors:** `FlashWorker` writes raw bytes to disk via worker threads
 4. **Decompress on-the-fly:** `StreamingDecompressor` handles compressed images (gzip, bzip2, xz)
 5. **Verify:** SHA-512 checksum validation (optional)
 
@@ -701,7 +701,7 @@ For non-Windows images (Linux, etc.):
   - `FlashCoordinator`: Orchestrates flash workflow
   - `WindowsISODownloader`: Downloads ISOs from Microsoft Media Creation Tool API
   - `WindowsUSBCreator`: Creates bootable Windows USB drives
-  - `ImageWriter`: Raw disk I/O via Windows API
+  - `FlashWorker`: Raw disk I/O via worker threads
   - `StreamingDecompressor`: On-the-fly decompression
   - `DriveUnmounter`: Safe volume unmounting
   - `DriveLock`: Exclusive drive access

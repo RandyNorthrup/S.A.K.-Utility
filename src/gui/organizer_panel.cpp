@@ -26,9 +26,8 @@ OrganizerPanel::~OrganizerPanel()
 {
     if (m_worker != nullptr) {
         m_worker->request_stop();
-        if (!m_worker->wait(5000)) {
-            sak::log_warning("OrganizerWorker did not finish in time, terminating");
-            m_worker->terminate();
+        if (!m_worker->wait(15000)) {
+            sak::log_error("OrganizerWorker did not stop within 15s — potential resource leak");
         }
         delete m_worker;
         m_worker = nullptr;

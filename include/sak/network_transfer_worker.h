@@ -97,7 +97,7 @@ private:
     QByteArray buildResumePayload(const QString& fileId, const QVector<QPair<int,int>>& ranges, int totalChunks) const;
     QVector<QPair<int,int>> parseResumePayload(const QByteArray& payload, int& totalChunks) const;
 
-    bool m_stopRequested{false};
+    std::atomic<bool> m_stopRequested{false};
     std::atomic<int> m_dynamicMaxBandwidthKbps{0};
 };
 
