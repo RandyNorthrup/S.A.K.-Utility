@@ -13,7 +13,6 @@
 #include <QLineEdit>
 #include <QTextEdit>
 #include <QStandardItemModel>
-#include <QThread>
 #include <QFuture>
 #include <memory>
 
@@ -24,7 +23,6 @@ namespace sak {
     class PackageMatcher;
     class MigrationReport;
     class AppMigrationWorker;
-    class UserDataManager;
     class BackupWizard;
     class RestoreWizard;
 
@@ -128,24 +126,7 @@ private Q_SLOTS:
     void onFilterChanged(const QString& text);
     void onConfidenceFilterChanged(int index);
     
-    // Worker progress callbacks
-    void onScanStarted();
-    void onScanProgress(int current, int total);
-    void onScanComplete(int apps_found);
-    
-    void onMatchStarted();
-    void onMatchProgress(int current, int total);
-    void onMatchComplete(int matched, int total);
-    
-    void onInstallStarted(const QString& package);
-    void onInstallProgress(int current, int total);
-    void onInstallComplete(const QString& package, bool success, const QString& message);
-    void onInstallError(const QString& package, const QString& error);
-    
     // Table interactions
-    void onCellChanged(const QModelIndex& index);
-    void onSelectionChanged();
-    void onVersionLockToggled(int row);
     void onTableItemChanged(QStandardItem* item);
     
 private:
@@ -205,9 +186,7 @@ private:
     std::shared_ptr<sak::AppScanner> m_scanner;
     std::shared_ptr<sak::ChocolateyManager> m_chocoManager;
     std::shared_ptr<sak::PackageMatcher> m_matcher;
-    std::shared_ptr<sak::MigrationReport> m_report;
     std::shared_ptr<sak::AppMigrationWorker> m_worker;
-    std::shared_ptr<sak::UserDataManager> m_dataManager;
     
     // Async operations
     QFuture<void> m_matchingFuture;
@@ -216,7 +195,6 @@ private:
     // State
     bool m_scanInProgress{false};
     bool m_installInProgress{false};
-    QString m_currentOperation;
 }; // class AppMigrationPanel
 
 } // namespace sak

@@ -9,7 +9,6 @@
 #include <QProgressBar>
 #include <QStackedWidget>
 #include <QListWidget>
-#include <QComboBox>
 #include <QCheckBox>
 #include <memory>
 

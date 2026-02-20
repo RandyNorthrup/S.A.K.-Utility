@@ -11,10 +11,8 @@
 #include "gui/settings_dialog.h"
 
 #include <QAction>
-#include <QApplication>
 #include <QCloseEvent>
 #include <QMessageBox>
-#include <QVBoxLayout>
 
 using sak::AppMigrationPanel;
 

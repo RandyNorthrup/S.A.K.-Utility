@@ -8,9 +8,7 @@
 #include "sak/windows_iso_download_dialog.h"
 #include "sak/linux_iso_downloader.h"
 #include "sak/linux_iso_download_dialog.h"
-#include "sak/image_flasher_settings_dialog.h"
 #include "sak/windows_usb_creator.h"
-#include "sak/config_manager.h"
 #include "sak/logger.h"
 #include <QCoreApplication>
 #include <QVBoxLayout>
@@ -19,7 +17,6 @@
 #include <QMessageBox>
 #include <QFileInfo>
 #include <QGroupBox>
-#include <QProcess>
 #include <QRegularExpression>
 
 ImageFlasherPanel::ImageFlasherPanel(QWidget* parent)

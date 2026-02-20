@@ -10,11 +10,8 @@ WorkerBase::~WorkerBase()
 {
     if (isRunning()) {
         request_stop();
-        wait(5000); // Wait up to 5 seconds
-        if (isRunning()) {
-            sak::log_warning("Worker thread did not stop gracefully, terminating");
-            terminate();
-            wait();
+        if (!wait(15000)) {
+            sak::log_error("Worker thread did not stop within 15s — potential resource leak");
         }
     }
 }
@@ -22,6 +19,7 @@ WorkerBase::~WorkerBase()
 void WorkerBase::request_stop() noexcept
 {
     m_stop_requested.store(true, std::memory_order_release);
+    requestInterruption();
 }
 
 bool WorkerBase::stop_requested() const noexcept

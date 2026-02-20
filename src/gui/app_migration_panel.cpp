@@ -34,7 +34,6 @@ using sak::MigrationReport;
 using sak::AppMigrationWorker;
 using sak::MigrationJob;
 using sak::MigrationStatus;
-using sak::UserDataManager;
 using sak::BackupWizard;
 using sak::RestoreWizard;
 
@@ -58,9 +57,7 @@ AppMigrationPanel::AppMigrationPanel(QWidget* parent)
     , m_scanner(std::make_shared<AppScanner>())
     , m_chocoManager(std::make_shared<ChocolateyManager>())
     , m_matcher(std::make_shared<PackageMatcher>())
-    , m_report(std::make_shared<MigrationReport>())
     , m_worker(std::make_shared<AppMigrationWorker>(m_chocoManager))
-    , m_dataManager(std::make_shared<UserDataManager>())
 {
     setupUI();
     setupConnections();
@@ -1109,21 +1106,6 @@ void AppMigrationPanel::setEntryStatus(int row, const QString& status, int progr
     m_entries[row].progress = progress;
     updateEntry(row);
 }
-
-// Placeholder slot implementations
-void AppMigrationPanel::onScanStarted() {}
-void AppMigrationPanel::onScanProgress(int, int) {}
-void AppMigrationPanel::onScanComplete(int) {}
-void AppMigrationPanel::onMatchStarted() {}
-void AppMigrationPanel::onMatchProgress(int, int) {}
-void AppMigrationPanel::onMatchComplete(int, int) {}
-void AppMigrationPanel::onInstallStarted(const QString&) {}
-void AppMigrationPanel::onInstallProgress(int, int) {}
-void AppMigrationPanel::onInstallComplete(const QString&, bool, const QString&) {}
-void AppMigrationPanel::onInstallError(const QString&, const QString&) {}
-void AppMigrationPanel::onCellChanged(const QModelIndex&) {}
-void AppMigrationPanel::onSelectionChanged() {}
-void AppMigrationPanel::onVersionLockToggled(int) {}
 
 void AppMigrationPanel::onTableItemChanged(QStandardItem* item)
 {

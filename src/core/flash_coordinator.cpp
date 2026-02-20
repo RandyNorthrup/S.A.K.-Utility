@@ -356,21 +356,14 @@ void FlashCoordinator::updateProgress() {
 }
 
 void FlashCoordinator::cleanupWorkers() {
-    // Wait for all workers to finish
+    // Wait for all workers to finish with cooperative stop
     for (auto& worker : m_workers) {
         if (worker->isRunning()) {
             sak::log_info("Requesting worker thread to stop...");
             worker->request_stop();
             
-            if (!worker->wait(5000)) {
-                // Worker didn't stop gracefully, force termination
-                sak::log_error("Worker thread did not stop gracefully, forcing termination");
-                worker->terminate();
-                
-                // Wait briefly for terminate to complete
-                if (!worker->wait(2000)) {
-                    sak::log_error("Worker thread did not terminate, resources may leak");
-                }
+            if (!worker->wait(15000)) {
+                sak::log_error("Worker thread did not stop within 15s — potential resource leak");
             } else {
                 sak::log_info("Worker thread stopped gracefully");
             }

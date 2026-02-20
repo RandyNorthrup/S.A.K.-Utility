@@ -3,7 +3,6 @@
 
 #include "sak/version.h"
 #include "sak/logger.h"
-#include "sak/file_hash.h"
 #include "sak/error_codes.h"
 #include "sak/main_window.h"
 #include "sak/quick_action_controller.h"

@@ -21,6 +21,7 @@ DriveScanner::DriveScanner(QObject* parent)
     , m_deviceNotify(nullptr)
     , m_isScanning(false)
 {
+    Q_ASSERT_X(s_instance == nullptr, "DriveScanner", "Only one DriveScanner instance is allowed");
     s_instance = this;
     
     // Refresh every 5 seconds as fallback

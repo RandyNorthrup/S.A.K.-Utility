@@ -5,7 +5,6 @@
 #include "sak/version.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
-#include <QApplication>
 #include <QSysInfo>
 #include <QString>
 
