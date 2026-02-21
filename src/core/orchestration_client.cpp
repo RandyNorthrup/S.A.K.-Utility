@@ -21,6 +21,10 @@ OrchestrationClient::OrchestrationClient(QObject* parent)
     connect(m_reconnectTimer, &QTimer::timeout, this, &OrchestrationClient::onReconnectTimeout);
 }
 
+void OrchestrationClient::setReconnectInterval(int ms) {
+    m_reconnectTimer->setInterval(qMax(100, ms));
+}
+
 void OrchestrationClient::connectToServer(const QHostAddress& host, quint16 port) {
     m_lastHost = host;
     m_lastPort = port;

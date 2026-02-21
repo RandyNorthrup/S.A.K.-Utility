@@ -132,8 +132,8 @@ void NetworkTransferWorkflowTests::transferEncryptedFiles() {
     QVERIFY(manifestSpy.wait(15000));
     destination.approveTransfer(true);
 
-    QVERIFY(destCompletedSpy.wait(30000));
-    QVERIFY(sourceCompletedSpy.wait(30000));
+    QTRY_VERIFY2_WITH_TIMEOUT(destCompletedSpy.count() >= 1, "Destination transfer should complete", 30000);
+    QTRY_VERIFY2_WITH_TIMEOUT(sourceCompletedSpy.count() >= 1, "Source transfer should complete", 30000);
 
     const auto destArgs = destCompletedSpy.takeFirst();
     QVERIFY(destArgs.at(0).toBool());
@@ -243,8 +243,8 @@ void NetworkTransferWorkflowTests::transferMultipleFiles() {
     QVERIFY(manifestSpy.wait(15000));
     destination.approveTransfer(true);
 
-    QVERIFY(destCompletedSpy.wait(60000));
-    QVERIFY(sourceCompletedSpy.wait(60000));
+    QTRY_VERIFY2_WITH_TIMEOUT(destCompletedSpy.count() >= 1, "Destination transfer should complete", 60000);
+    QTRY_VERIFY2_WITH_TIMEOUT(sourceCompletedSpy.count() >= 1, "Source transfer should complete", 60000);
 
     const auto destArgs = destCompletedSpy.takeFirst();
     QVERIFY(destArgs.at(0).toBool());
@@ -354,8 +354,8 @@ void NetworkTransferWorkflowTests::transferManySmallFiles() {
     QVERIFY(manifestSpy.wait(15000));
     destination.approveTransfer(true);
 
-    QVERIFY(destCompletedSpy.wait(60000));
-    QVERIFY(sourceCompletedSpy.wait(60000));
+    QTRY_VERIFY2_WITH_TIMEOUT(destCompletedSpy.count() >= 1, "Destination transfer should complete", 60000);
+    QTRY_VERIFY2_WITH_TIMEOUT(sourceCompletedSpy.count() >= 1, "Source transfer should complete", 60000);
 
     const auto destArgs = destCompletedSpy.takeFirst();
     QVERIFY(destArgs.at(0).toBool());
@@ -424,6 +424,7 @@ void NetworkTransferWorkflowTests::resumeInterruptedTransfer() {
     settings.resume_enabled = true;
     settings.auto_discovery_enabled = false;
     settings.chunk_size = 1024;
+    settings.max_bandwidth_kbps = 32; // Throttle to 32 KB/s so transfer can be interrupted
     settings.control_port = controlPort;
     settings.data_port = dataPort;
 
@@ -453,10 +454,10 @@ void NetworkTransferWorkflowTests::resumeInterruptedTransfer() {
     QVERIFY(manifestSpy.wait(15000));
     destination.approveTransfer(true);
 
-    QVERIFY(progressSpy.wait(15000));
-    QTest::qWait(2500);
-    destination.stop();
+    QTRY_VERIFY2_WITH_TIMEOUT(progressSpy.count() >= 1, "Should receive progress update", 15000);
+    QTest::qWait(3000); // Wait enough for resume timer (2s interval) to save state
     source.stop();
+    destination.stop();
 
     const QString partialPath = QDir(destDir.path()).filePath(relativePath + ".partial");
     const QString resumePath = QDir(destDir.path()).filePath(relativePath + ".resume.json");
@@ -464,6 +465,7 @@ void NetworkTransferWorkflowTests::resumeInterruptedTransfer() {
     QVERIFY(QFileInfo::exists(resumePath));
 
     NetworkTransferController destinationResume;
+    settings.max_bandwidth_kbps = 0; // No throttle for resume transfer
     destinationResume.configure(settings);
     QSignalSpy manifestSpy2(&destinationResume, &NetworkTransferController::manifestReceived);
     QSignalSpy destCompletedSpy2(&destinationResume, &NetworkTransferController::transferCompleted);
@@ -478,8 +480,8 @@ void NetworkTransferWorkflowTests::resumeInterruptedTransfer() {
     QVERIFY(manifestSpy2.wait(15000));
     destinationResume.approveTransfer(true);
 
-    QVERIFY(destCompletedSpy2.wait(60000));
-    QVERIFY(sourceCompletedSpy2.wait(60000));
+    QTRY_VERIFY2_WITH_TIMEOUT(destCompletedSpy2.count() >= 1, "Destination resume transfer should complete", 60000);
+    QTRY_VERIFY2_WITH_TIMEOUT(sourceCompletedSpy2.count() >= 1, "Source resume transfer should complete", 60000);
 
     const auto destArgs = destCompletedSpy2.takeFirst();
     QVERIFY(destArgs.at(0).toBool());
@@ -579,8 +581,8 @@ void NetworkTransferWorkflowTests::throttledTransferRespectsLimit() {
     QVERIFY(manifestSpy.wait(15000));
     destination.approveTransfer(true);
 
-    QVERIFY(destCompletedSpy.wait(60000));
-    QVERIFY(sourceCompletedSpy.wait(60000));
+    QTRY_VERIFY2_WITH_TIMEOUT(destCompletedSpy.count() >= 1, "Destination throttled transfer should complete", 60000);
+    QTRY_VERIFY2_WITH_TIMEOUT(sourceCompletedSpy.count() >= 1, "Source throttled transfer should complete", 60000);
 
     const auto destArgs = destCompletedSpy.takeFirst();
     QVERIFY(destArgs.at(0).toBool());

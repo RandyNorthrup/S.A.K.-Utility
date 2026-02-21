@@ -390,7 +390,7 @@ void NetworkTransferController::onConnected() {
     helloPayload["hostname"] = QHostInfo::localHostName();
     helloPayload["capabilities"] = QJsonArray{"user_profiles", "resume"};
     helloPayload["encryption"] = m_settings.encryption_enabled;
-    if (m_settings.encryption_enabled) {
+    if (m_settings.encryption_enabled && m_mode == Mode::Source) {
         helloPayload["salt"] = QString::fromUtf8(m_salt.toBase64());
     }
 
@@ -422,7 +422,7 @@ void NetworkTransferController::onDataReceived(const QByteArray& data) {
 
         switch (*type) {
             case TransferMessageType::Hello: {
-                if (message.contains("salt")) {
+                if (m_mode == Mode::Destination && message.contains("salt")) {
                     m_salt = QByteArray::fromBase64(message.value("salt").toString().toUtf8());
                 }
                 Q_EMIT statusMessage(tr("Handshake completed"));

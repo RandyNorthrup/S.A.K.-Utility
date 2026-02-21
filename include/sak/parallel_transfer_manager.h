@@ -93,6 +93,7 @@ private:
     void reset();
     void enqueueJob(const MappingEngine::SourceProfile& source, const DestinationPC& destination);
     void startNextJobs();
+    void deferredStartNextJobs();
     void updateDeploymentProgress();
     bool isDeploymentComplete() const;
     void updateRetryTimer();

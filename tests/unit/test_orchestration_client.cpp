@@ -78,6 +78,7 @@ void OrchestrationClientTests::autoReconnectsAfterDisconnect() {
     destination.hostname = "TEST-PC";
     client.setDestinationInfo(destination);
     client.setAutoReconnectEnabled(true);
+    client.setReconnectInterval(500);
     client.connectToServer(QHostAddress::LocalHost, server.serverPort());
 
     QVERIFY(server.waitForNewConnection(3000));
@@ -86,7 +87,9 @@ void OrchestrationClientTests::autoReconnectsAfterDisconnect() {
     socket->disconnectFromHost();
     socket->deleteLater();
 
-    QVERIFY(server.waitForNewConnection(6000));
+    // Process events so the client receives the disconnect and starts the reconnect timer
+    QSignalSpy newConnSpy(&server, &QTcpServer::newConnection);
+    QTRY_VERIFY2_WITH_TIMEOUT(newConnSpy.count() >= 1, "Client should auto-reconnect after disconnect", 5000);
 }
 
 void OrchestrationClientTests::receivesAssignmentControl() {

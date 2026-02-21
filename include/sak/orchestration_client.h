@@ -20,6 +20,7 @@ public:
     void connectToServer(const QHostAddress& host, quint16 port);
     void disconnectFromServer();
     void setAutoReconnectEnabled(bool enabled);
+    void setReconnectInterval(int ms);
     [[nodiscard]] bool isConnected() const;
 
     void setDestinationInfo(const DestinationPC& destination);

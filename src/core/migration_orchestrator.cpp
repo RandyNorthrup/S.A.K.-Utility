@@ -274,7 +274,6 @@ void MigrationOrchestrator::assignDeploymentToDestination(const QString& destina
         return;
     }
 
-    m_deploymentManager->enqueueForDestination(assignment, destination_id, required_free_bytes);
     if (m_activeDestinations.contains(destination_id)) {
         m_pendingAssignments[destination_id].enqueue(assignment);
         Q_EMIT orchestratorStatus(tr("Deployment queued for %1: %2")

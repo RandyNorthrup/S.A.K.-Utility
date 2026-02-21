@@ -277,8 +277,10 @@ QByteArray NetworkTransferWorker::readExact(QTcpSocket* socket, qint64 size) {
     data.reserve(static_cast<int>(size));
 
     while (data.size() < size && !m_stopRequested) {
-        if (!socket->waitForReadyRead(15000)) {
-            break;
+        if (socket->bytesAvailable() <= 0) {
+            if (!socket->waitForReadyRead(15000)) {
+                break;
+            }
         }
         data.append(socket->read(size - data.size()));
     }
