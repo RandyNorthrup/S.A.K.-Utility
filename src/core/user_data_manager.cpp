@@ -247,6 +247,13 @@ std::vector<UserDataManager::DataLocation> UserDataManager::getCommonDataLocatio
         {appdata_roaming + "/../Code/User"},
         "Settings, keybindings, extensions, snippets"
     });
+
+    // BitLocker Recovery Keys (sentinel path — handled specially by backup wizard)
+    locations.push_back({
+        "BitLocker Recovery Keys",
+        {"bitlocker://recovery-keys"},
+        "BitLocker recovery keys for all encrypted volumes"
+    });
     
     return locations;
 }

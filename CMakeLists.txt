@@ -11,7 +11,7 @@ endif()
 
 # Project definition
 project(SAK_Utility 
-    VERSION 0.5.6
+    VERSION 0.5.7
     DESCRIPTION "Swiss Army Knife Utility - PC technician's toolkit for Windows migration and maintenance"
     LANGUAGES CXX
 )# C++23 Standard - Strict compliance required
@@ -473,6 +473,7 @@ set(QUICK_ACTIONS_SOURCES
     src/actions/screenshot_settings_action.cpp
     src/actions/backup_desktop_wallpaper_action.cpp
     src/actions/backup_printer_settings_action.cpp
+    src/actions/backup_bitlocker_keys_action.cpp
     
     # Headers for all actions
     include/sak/actions/disk_cleanup_action.h
@@ -513,6 +514,7 @@ set(QUICK_ACTIONS_SOURCES
     include/sak/actions/screenshot_settings_action.h
     include/sak/actions/backup_desktop_wallpaper_action.h
     include/sak/actions/backup_printer_settings_action.h
+    include/sak/actions/backup_bitlocker_keys_action.h
 )
 
 # Main entry point

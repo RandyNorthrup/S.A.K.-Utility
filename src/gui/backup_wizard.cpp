@@ -3,6 +3,8 @@
 
 #include "sak/backup_wizard.h"
 #include "sak/user_data_manager.h"
+#include "sak/actions/backup_bitlocker_keys_action.h"
+#include "sak/process_runner.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QGridLayout>
@@ -149,6 +151,28 @@ void BackupSelectAppsPage::populateCommonApps()
     
     for (const auto& loc : locations) {
         for (const QString& path : loc.paths) {
+            // BitLocker sentinel — check via WMI instead of filesystem
+            if (path == "bitlocker://recovery-keys") {
+                // Quick check: are any BitLocker volumes present?
+                ProcessResult probe = runPowerShell(
+                    "(Get-WmiObject -Namespace 'Root\\CIMv2\\Security\\MicrosoftVolumeEncryption' "
+                    "-Class Win32_EncryptableVolume -ErrorAction SilentlyContinue | "
+                    "Where-Object { $_.ProtectionStatus -ne $null } | Measure-Object).Count",
+                    10000);
+                int volume_count = probe.std_out.trimmed().toInt();
+                if (volume_count > 0) {
+                    auto* item = new QListWidgetItem(
+                        QString("%1 (%2 encrypted volume%3)")
+                            .arg(loc.description)
+                            .arg(volume_count)
+                            .arg(volume_count != 1 ? "s" : "")
+                    );
+                    item->setData(Qt::UserRole, path);
+                    m_appListWidget->addItem(item);
+                }
+                continue;
+            }
+
             if (QFileInfo::exists(path)) {
                 auto* item = new QListWidgetItem(
                     QString("%1 (%2)").arg(loc.description, path)
@@ -443,6 +467,50 @@ void BackupProgressPage::startBackup()
     // Backup each selected app
     for (int i = 0; i < paths.size(); ++i) {
         QString appName = (i < apps.size()) ? apps[i] : QString("App%1").arg(i + 1);
+
+        // Handle BitLocker key backup via dedicated action
+        if (paths[i] == "bitlocker://recovery-keys") {
+            m_logTextEdit->append("[BitLocker Recovery Keys] Starting backup...");
+            auto bitlocker_action = std::make_unique<BackupBitlockerKeysAction>(backupDir);
+
+            connect(bitlocker_action.get(), &QuickAction::executionProgress,
+                    this, [this](const QString& msg, int progress) {
+                m_logTextEdit->append(QString("  %1").arg(msg));
+                if (m_totalBackups > 0) {
+                    int overall = (m_completedBackups * 100 + progress) / m_totalBackups;
+                    m_progressBar->setValue(qMin(overall, 100));
+                }
+            });
+
+            connect(bitlocker_action.get(), &QuickAction::logMessage,
+                    this, [this](const QString& msg) {
+                m_logTextEdit->append(QString("  %1").arg(msg));
+            });
+
+            // Run scan + execute synchronously (we're already on the UI thread
+            // via QTimer, and the action uses process_runner internally)
+            bitlocker_action->scan();
+            bitlocker_action->execute();
+
+            auto exec_result = bitlocker_action->lastExecutionResult();
+            m_completedBackups++;
+
+            if (exec_result.success) {
+                m_logTextEdit->append(QString("[BitLocker Recovery Keys] SUCCESS: %1").arg(exec_result.message));
+                if (!exec_result.output_path.isEmpty()) {
+                    m_logTextEdit->append(QString("  Saved to: %1").arg(exec_result.output_path));
+                }
+            } else {
+                m_logTextEdit->append(QString("[BitLocker Recovery Keys] FAILED: %1").arg(exec_result.message));
+            }
+
+            int overallPercent = (m_completedBackups * 100) / m_totalBackups;
+            m_progressBar->setValue(overallPercent);
+            m_statusLabel->setText(QString("Completed %1 of %2 backups")
+                                          .arg(m_completedBackups).arg(m_totalBackups));
+            continue;
+        }
+
         QStringList sourcePaths;
         sourcePaths << paths[i];
         

@@ -48,6 +48,9 @@
 #include "sak/actions/export_registry_keys_action.h"
 #include "sak/actions/backup_activation_keys_action.h"
 #include "sak/actions/screenshot_settings_action.h"
+#include "sak/actions/backup_desktop_wallpaper_action.h"
+#include "sak/actions/backup_printer_settings_action.h"
+#include "sak/actions/backup_bitlocker_keys_action.h"
 
 #include <memory>
 #include <vector>
@@ -87,7 +90,7 @@ std::vector<std::unique_ptr<QuickAction>> ActionFactory::createAllActions(const 
     actions.push_back(std::make_unique<ResetNetworkAction>());
     actions.push_back(std::make_unique<ClearPrintSpoolerAction>());
     
-    // Troubleshooting (7 actions)
+    // Troubleshooting (6 actions)
     actions.push_back(std::make_unique<GenerateSystemReportAction>(backup_location));
     actions.push_back(std::make_unique<CheckBloatwareAction>());
     actions.push_back(std::make_unique<TestNetworkSpeedAction>());
@@ -95,13 +98,16 @@ std::vector<std::unique_ptr<QuickAction>> ActionFactory::createAllActions(const 
     actions.push_back(std::make_unique<RepairWindowsStoreAction>());
     actions.push_back(std::make_unique<FixAudioIssuesAction>());
     
-    // Emergency Recovery (6 actions)
+    // Emergency Recovery (9 actions)
     actions.push_back(std::make_unique<BackupBrowserDataAction>(backup_location));
     actions.push_back(std::make_unique<BackupEmailDataAction>(backup_location));
     actions.push_back(std::make_unique<CreateRestorePointAction>());
     actions.push_back(std::make_unique<ExportRegistryKeysAction>(backup_location));
     actions.push_back(std::make_unique<BackupActivationKeysAction>(backup_location));
     actions.push_back(std::make_unique<ScreenshotSettingsAction>(backup_location));
+    actions.push_back(std::make_unique<BackupDesktopWallpaperAction>(backup_location));
+    actions.push_back(std::make_unique<BackupPrinterSettingsAction>(backup_location));
+    actions.push_back(std::make_unique<BackupBitlockerKeysAction>(backup_location));
     
     return actions;
 }

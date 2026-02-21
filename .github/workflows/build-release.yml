@@ -28,6 +28,15 @@ jobs:
       uses: actions/checkout@v4
       with:
         fetch-depth: 0
+
+    - name: Read version
+      id: version
+      shell: pwsh
+      run: |
+        $ver = (Get-Content VERSION -Raw).Trim()
+        Write-Host "Detected version: $ver"
+        "APP_VERSION=$ver" | Out-File -Append $env:GITHUB_ENV
+        "version=$ver" | Out-File -Append $env:GITHUB_OUTPUT
     
     - name: Install Qt
       uses: jurplel/install-qt-action@v4
@@ -64,8 +73,9 @@ jobs:
       with:
         path: |
           build
-          !build/Release/SAK-Utility-v0.5.1
+          !build/Release/SAK-Utility-*
           !build/Release/*.zip
+          !build/Release/SHA256SUMS.txt
         key: ${{ runner.os }}-cmake-${{ hashFiles('**/CMakeLists.txt', 'src/**', 'include/**') }}
         restore-keys: |
           ${{ runner.os }}-cmake-
@@ -80,6 +90,74 @@ jobs:
     - name: Build
       run: cmake --build build --config ${{ env.BUILD_TYPE }} --parallel
     
+    - name: Verify build output
+      working-directory: build/Release
+      shell: pwsh
+      run: |
+        Write-Host "=== Build Output Verification ==="
+        
+        # Executable must exist
+        if (!(Test-Path "sak_utility.exe")) {
+          Write-Error "FATAL: sak_utility.exe not found"
+          exit 1
+        }
+        Write-Host "OK  sak_utility.exe"
+        
+        # Splash screen must exist (copied by CMake POST_BUILD)
+        if (!(Test-Path "sak_splash.png")) {
+          Write-Error "FATAL: sak_splash.png not found — CMake POST_BUILD copy failed"
+          exit 1
+        }
+        Write-Host "OK  sak_splash.png"
+        
+        # Icon must exist
+        if (!(Test-Path "icon.ico")) {
+          Write-Warning "icon.ico not found (non-fatal, embedded in exe via .rc)"
+        } else {
+          Write-Host "OK  icon.ico"
+        }
+        
+        # Qt plugin directories (deployed by windeployqt POST_BUILD)
+        $requiredDirs = @("platforms", "styles", "imageformats", "iconengines", "tls")
+        foreach ($dir in $requiredDirs) {
+          if (!(Test-Path $dir)) {
+            Write-Error "FATAL: Qt plugin directory '$dir' not found — windeployqt may have failed"
+            exit 1
+          }
+          $count = (Get-ChildItem $dir -Filter "*.dll" | Measure-Object).Count
+          Write-Host "OK  $dir/ ($count plugins)"
+        }
+        
+        # Qt DLLs
+        $requiredDlls = @("Qt6Core.dll", "Qt6Gui.dll", "Qt6Widgets.dll", "Qt6Network.dll", "Qt6Concurrent.dll")
+        foreach ($dll in $requiredDlls) {
+          if (!(Test-Path $dll)) {
+            Write-Error "FATAL: $dll not found"
+            exit 1
+          }
+          Write-Host "OK  $dll"
+        }
+        
+        # MSVC runtime DLLs
+        $runtimeDlls = @("vcruntime140.dll", "vcruntime140_1.dll", "msvcp140.dll", "concrt140.dll")
+        foreach ($dll in $runtimeDlls) {
+          if (!(Test-Path $dll)) {
+            Write-Warning "$dll not found (may cause runtime failures)"
+          } else {
+            Write-Host "OK  $dll"
+          }
+        }
+        
+        # Tools directory
+        if (!(Test-Path "tools")) {
+          Write-Warning "tools/ directory not found"
+        } else {
+          Write-Host "OK  tools/"
+        }
+        
+        Write-Host ""
+        Write-Host "=== Verification complete ==="
+
     - name: Run Tests
       working-directory: build/Release/Release
       run: |
@@ -95,212 +173,259 @@ jobs:
           $guiTests -notcontains $_.Name 
         }
         
+        $passed = 0
+        $failed = 0
         foreach ($test in $tests) {
           Write-Host "Running $($test.Name)..."
           & ".\$($test.Name)"
           if ($LASTEXITCODE -ne 0) {
-            Write-Warning "Test $($test.Name) failed with exit code $LASTEXITCODE"
+            Write-Warning "FAIL: $($test.Name) (exit code $LASTEXITCODE)"
+            $failed++
+          } else {
+            $passed++
           }
         }
         
         Write-Host ""
-        Write-Host "Skipped GUI tests (require user interaction):"
-        foreach ($guiTest in $guiTests) {
-          if (Test-Path $guiTest) {
-            Write-Host "  - $guiTest"
-          }
+        Write-Host "=== Test Summary ==="
+        Write-Host "Passed: $passed"
+        Write-Host "Failed: $failed"
+        Write-Host "Skipped (GUI): $($guiTests.Count)"
+        
+        if ($failed -gt 0) {
+          Write-Warning "$failed test(s) failed"
         }
       continue-on-error: true
     
     - name: Package Application
       working-directory: build/Release
+      shell: pwsh
       run: |
-        # Clean and create release directory
-        if (Test-Path "SAK-Utility-v0.5.6") {
-          Remove-Item -Recurse -Force "SAK-Utility-v0.5.6"
-        }
-        if (Test-Path "SAK-Utility-v0.5.6-Windows-x64.zip") {
-          Remove-Item -Force "SAK-Utility-v0.5.6-Windows-x64.zip"
-        }
-        if (Test-Path "SHA256SUMS.txt") {
-          Remove-Item -Force "SHA256SUMS.txt"
-        }
-        New-Item -ItemType Directory -Force -Path "SAK-Utility-v0.5.6"
+        $version = $env:APP_VERSION
+        $pkgName = "SAK-Utility-v$version"
+        $zipName = "$pkgName-Windows-x64.zip"
         
-        # Copy executable
-        Copy-Item "sak_utility.exe" "SAK-Utility-v0.5.6/"
+        Write-Host "Packaging $pkgName ..."
         
-        # Copy Qt DLLs and dependencies (already deployed by CMake)
-        $qtDirs = @(
+        # Clean any previous packaging artifacts
+        if (Test-Path $pkgName) { Remove-Item -Recurse -Force $pkgName }
+        if (Test-Path $zipName) { Remove-Item -Force $zipName }
+        if (Test-Path "SHA256SUMS.txt") { Remove-Item -Force "SHA256SUMS.txt" }
+        New-Item -ItemType Directory -Force -Path $pkgName | Out-Null
+        
+        # ── Executable ──────────────────────────────────────────────
+        Copy-Item "sak_utility.exe" "$pkgName/"
+        
+        # ── Splash screen & icon (copied to build dir by CMake POST_BUILD) ──
+        if (Test-Path "sak_splash.png") {
+          Copy-Item "sak_splash.png" "$pkgName/"
+          Write-Host "  Bundled: sak_splash.png"
+        } else {
+          Write-Error "sak_splash.png missing — splash screen will not display!"
+        }
+        if (Test-Path "icon.ico") {
+          Copy-Item "icon.ico" "$pkgName/"
+          Write-Host "  Bundled: icon.ico"
+        }
+        
+        # ── Qt plugin directories (deployed by windeployqt POST_BUILD) ──
+        # Copy ALL plugin dirs that windeployqt placed here instead of
+        # maintaining a fragile hardcoded list.
+        $pluginDirs = @(
           "platforms",
           "styles",
           "imageformats",
+          "iconengines",
           "tls",
-          "translations"
+          "networkinformation",
+          "generic"
         )
-        foreach ($dir in $qtDirs) {
+        foreach ($dir in $pluginDirs) {
           if (Test-Path $dir) {
-            Copy-Item -Recurse $dir "SAK-Utility-v0.5.6/"
+            Copy-Item -Recurse $dir "$pkgName/"
+            $count = (Get-ChildItem "$dir" -Filter "*.dll" -Recurse | Measure-Object).Count
+            Write-Host "  Bundled: $dir/ ($count plugins)"
           }
         }
         
-        # Copy Qt runtime DLLs
-        $qtDlls = Get-ChildItem -Filter "Qt6*.dll"
+        # ── Qt runtime DLLs ─────────────────────────────────────────
+        $qtDlls = Get-ChildItem -Filter "Qt6*.dll" -ErrorAction SilentlyContinue
         foreach ($dll in $qtDlls) {
-          Copy-Item $dll.FullName "SAK-Utility-v0.5.6/"
+          # Skip debug DLLs (end with 'd.dll' before the extension pattern)
+          if ($dll.Name -match 'd\.dll$' -and $dll.Name -ne 'Qt6Widgets.dll') {
+            # More precise: check if non-d version exists
+            $releaseVersion = $dll.Name -replace 'd\.dll$', '.dll'
+            if (Test-Path $releaseVersion) {
+              Write-Host "  Skipped debug DLL: $($dll.Name)"
+              continue
+            }
+          }
+          Copy-Item $dll.FullName "$pkgName/"
         }
+        Write-Host "  Bundled: $($qtDlls.Count) Qt DLL(s)"
         
-        # Copy other DLLs (OpenGL, D3D)
-        $otherDlls = @("opengl32sw.dll", "D3Dcompiler_47.dll")
-        foreach ($dllName in $otherDlls) {
-          if (Test-Path $dllName) {
-            Copy-Item $dllName "SAK-Utility-v0.5.6/"
+        # ── OpenGL / D3D DLLs ────────────────────────────────────────
+        foreach ($dll in @("opengl32sw.dll", "D3Dcompiler_47.dll")) {
+          if (Test-Path $dll) {
+            Copy-Item $dll "$pkgName/"
+            Write-Host "  Bundled: $dll"
           }
         }
         
-        # Copy vcpkg DLLs (zlib, bzip2, liblzma)
-        $vcpkgBinPath = "C:\vcpkg\installed\x64-windows\bin"
-        if (Test-Path $vcpkgBinPath) {
-          $vcpkgDlls = @("zlib1.dll", "bz2.dll", "liblzma.dll")
-          foreach ($dllName in $vcpkgDlls) {
-            $dllPath = Join-Path $vcpkgBinPath $dllName
-            if (Test-Path $dllPath) {
-              Copy-Item $dllPath "SAK-Utility-v0.5.6/"
-              Write-Host "Copied vcpkg DLL: $dllName"
+        # ── MSVC runtime DLLs (vcruntime, msvcp, concrt) ────────────
+        $msvcPatterns = @("vcruntime*.dll", "msvcp*.dll", "concrt*.dll")
+        foreach ($pattern in $msvcPatterns) {
+          $dlls = Get-ChildItem -Filter $pattern -ErrorAction SilentlyContinue
+          foreach ($dll in $dlls) {
+            Copy-Item $dll.FullName "$pkgName/"
+            Write-Host "  Bundled: $($dll.Name)"
+          }
+        }
+        
+        # ── vcpkg DLLs (zlib, bzip2, liblzma) ───────────────────────
+        $vcpkgBin = "C:\vcpkg\installed\x64-windows\bin"
+        if (Test-Path $vcpkgBin) {
+          foreach ($dll in @("zlib1.dll", "bz2.dll", "liblzma.dll")) {
+            $path = Join-Path $vcpkgBin $dll
+            if (Test-Path $path) {
+              Copy-Item $path "$pkgName/"
+              Write-Host "  Bundled: $dll (vcpkg)"
             } else {
-              Write-Warning "vcpkg DLL not found: $dllName"
+              Write-Warning "vcpkg DLL not found: $dll"
             }
           }
         }
         
-        # Copy MSVC runtime DLLs if present
-        $msvcDlls = Get-ChildItem -Filter "vcruntime*.dll" -ErrorAction SilentlyContinue
-        foreach ($dll in $msvcDlls) {
-          Copy-Item $dll.FullName "SAK-Utility-v0.5.6/"
-        }
-        $msvcDlls = Get-ChildItem -Filter "msvcp*.dll" -ErrorAction SilentlyContinue
-        foreach ($dll in $msvcDlls) {
-          Copy-Item $dll.FullName "SAK-Utility-v0.5.6/"
-        }
-        
-        # Copy tools directory if exists
-        if (Test-Path "../../tools") {
-          Copy-Item -Recurse "../../tools" "SAK-Utility-v0.5.6/"
-          
-          # Ensure Chocolatey directories exist (some are gitignored)
-          $chocoPath = "SAK-Utility-v0.5.6/tools/chocolatey"
+        # ── Embedded tools (Chocolatey, UUP) ─────────────────────────
+        if (Test-Path "tools") {
+          Copy-Item -Recurse "tools" "$pkgName/"
+          # Ensure Chocolatey scaffolding directories exist
+          $chocoPath = "$pkgName/tools/chocolatey"
           if (Test-Path $chocoPath) {
-            # Create required directories if they don't exist
-            New-Item -ItemType Directory -Force -Path "$chocoPath/lib" | Out-Null
-            New-Item -ItemType Directory -Force -Path "$chocoPath/.chocolatey" | Out-Null
-            New-Item -ItemType Directory -Force -Path "$chocoPath/logs" | Out-Null
-            Write-Host "✓ Created Chocolatey directory structure"
+            foreach ($sub in @("lib", ".chocolatey", "logs")) {
+              New-Item -ItemType Directory -Force -Path "$chocoPath/$sub" | Out-Null
+            }
+            Write-Host "  Bundled: tools/chocolatey/ (with scaffolding)"
           }
         }
         
-        # Copy documentation
-        Copy-Item "../../Readme.md" "SAK-Utility-v0.5.6/"
-        Copy-Item "../../LICENSE" "SAK-Utility-v0.5.6/"
+        # ── Documentation & portable marker ──────────────────────────
+        Copy-Item "../../README.md" "$pkgName/"
+        Copy-Item "../../LICENSE" "$pkgName/"
         if (Test-Path "../../CONTRIBUTING.md") {
-          Copy-Item "../../CONTRIBUTING.md" "SAK-Utility-v0.5.6/"
+          Copy-Item "../../CONTRIBUTING.md" "$pkgName/"
         }
+        if (Test-Path "../../THIRD_PARTY_LICENSES.md") {
+          Copy-Item "../../THIRD_PARTY_LICENSES.md" "$pkgName/"
+        }
+        New-Item -ItemType File -Path "$pkgName/portable.ini" -Force | Out-Null
         
-        # Create portable.ini for portable mode
-        New-Item -ItemType File -Path "SAK-Utility-v0.5.6/portable.ini" -Force
-        
-        # List contents for verification
+        # ── Manifest: list everything we packaged ────────────────────
         Write-Host ""
-        Write-Host "Package contents:"
-        Get-ChildItem -Path "SAK-Utility-v0.5.6" -Recurse -File | Select-Object FullName, @{Name="SizeMB";Expression={[math]::Round($_.Length/1MB, 2)}}
-        
-        # Create ZIP archive with contents directly (not nested in folder)
-        Compress-Archive -Path "SAK-Utility-v0.5.6\*" -DestinationPath "SAK-Utility-v0.5.6-Windows-x64.zip" -Force
-        
-        # Generate SHA256 hash for verification
+        Write-Host "=== Package Contents ==="
+        $files = Get-ChildItem -Path $pkgName -Recurse -File
+        $totalSize = ($files | Measure-Object -Property Length -Sum).Sum
+        $files | Sort-Object FullName | ForEach-Object {
+          $rel = $_.FullName.Substring((Resolve-Path $pkgName).Path.Length + 1)
+          $sizeMB = [math]::Round($_.Length / 1MB, 2)
+          Write-Host "  $rel ($sizeMB MB)"
+        }
         Write-Host ""
-        Write-Host "=== FILE VERIFICATION ==="
-        $exeHash = (Get-FileHash "SAK-Utility-v0.5.6\sak_utility.exe" -Algorithm SHA256).Hash
-        $zipHash = (Get-FileHash "SAK-Utility-v0.5.6-Windows-x64.zip" -Algorithm SHA256).Hash
-        Write-Host "SHA256 (sak_utility.exe): $exeHash"
-        Write-Host "SHA256 (ZIP): $zipHash"
+        Write-Host "Total files: $($files.Count)"
+        Write-Host "Total size:  $([math]::Round($totalSize / 1MB, 1)) MB"
         
-        # Save hashes to file for release notes
+        # ── Create ZIP ───────────────────────────────────────────────
+        Compress-Archive -Path "$pkgName\*" -DestinationPath $zipName -Force
+        
+        # ── SHA256 checksums ─────────────────────────────────────────
+        $exeHash = (Get-FileHash "$pkgName\sak_utility.exe" -Algorithm SHA256).Hash
+        $zipHash = (Get-FileHash $zipName -Algorithm SHA256).Hash
+        Write-Host ""
+        Write-Host "=== SHA256 Checksums ==="
+        Write-Host "sak_utility.exe : $exeHash"
+        Write-Host "ZIP             : $zipHash"
+        
         @"
-        SHA256 Checksums:
-        - sak_utility.exe: $exeHash
-        - SAK-Utility-v0.5.6-Windows-x64.zip: $zipHash
+        SHA256 Checksums
+        ================
+        sak_utility.exe:  $exeHash
+        $($zipName):  $zipHash
         "@ | Out-File "SHA256SUMS.txt" -Encoding UTF8
+        
+        # ── Final sanity checks ──────────────────────────────────────
+        $critical = @("sak_utility.exe", "sak_splash.png", "Qt6Core.dll",
+                      "Qt6Widgets.dll", "platforms/qwindows.dll")
+        $missing = $critical | Where-Object { !(Test-Path "$pkgName/$_") }
+        if ($missing) {
+          Write-Error "FATAL: Critical files missing from package: $($missing -join ', ')"
+          exit 1
+        }
+        Write-Host ""
+        Write-Host "Package created successfully: $zipName"
     
     - name: Upload ZIP artifact
       uses: actions/upload-artifact@v4
       with:
         name: SAK-Utility-Windows-x64
-        path: build/Release/SAK-Utility-v0.5.6/*
+        path: build/Release/SAK-Utility-v${{ steps.version.outputs.version }}/*
         retention-days: 90
     
     - name: Create Release
       if: startsWith(github.ref, 'refs/tags/v')
-      uses: softprops/action-gh-release@v1
+      uses: softprops/action-gh-release@v2
       with:
         files: |
-          build/Release/SAK-Utility-v0.5.6-Windows-x64.zip
+          build/Release/SAK-Utility-v${{ steps.version.outputs.version }}-Windows-x64.zip
           build/Release/SHA256SUMS.txt
         body: |
-          # S.A.K. Utility v0.5.6
+          # S.A.K. Utility v${{ steps.version.outputs.version }}
           
-          **Windows System Administration Kit - Swiss Army Knife Utility**
+          **Windows System Administration Kit — Swiss Army Knife Utility**
           
-          ## New in v0.5.6
-          - ⚡ **Build Performance** - Added caching for vcpkg and CMake (3-5x faster CI builds)
-          - 📦 **Improved Packaging** - Fixed artifact structure and included compression DLLs
-          - 🧪 **CI Improvements** - Automated GUI test skipping in CI environment
-          
-          ## Features from v0.5.1
-          - 🔐 **AES-256-CBC Encryption** for user profile backups (PBKDF2, 100k iterations)
-          - 📦 **Compression Support** with 4 levels (None, Fast, Balanced, Maximum)
-          - 💿 **Image Flasher** with Windows ISO downloader and USB drive safety checks
-          - ⚡ **Streaming Decompression** for gzip, bzip2, and xz formats
+          ## Highlights
+          - 40+ Quick Actions for common admin tasks
+          - BitLocker recovery key backup
+          - Network peer-to-peer file transfer
+          - Windows & Linux ISO downloader with USB flasher
+          - Application migration with embedded Chocolatey
+          - User profile backup & restore with AES-256 encryption
+          - Streaming compression (gzip, bzip2, xz)
           
           ## Core Features
-          - 🚀 Application Migration with embedded Chocolatey
-          - 💾 User Profile Backup & Restore wizards with encryption
-          - 💿 Image Flasher with Windows ISO downloader
-          - 📂 Directory Organizer
-          - 🔍 Duplicate File Finder
-          - 🗝️ License Key Scanner
+          - Application Migration with embedded Chocolatey
+          - User Profile Backup & Restore wizards with encryption
+          - Image Flasher with ISO downloader
+          - Directory Organizer
+          - Duplicate File Finder
+          - License Key Scanner
+          - Quick Actions panel (40+ one-click admin tasks)
+          - Windows Maintenance tools
           
           ## Installation
-          1. Download `SAK-Utility-v0.5.6-Windows-x64.zip`
+          1. Download `SAK-Utility-v${{ steps.version.outputs.version }}-Windows-x64.zip`
           2. Extract to your preferred location
           3. Run `sak_utility.exe`
           4. `portable.ini` is included for portable operation
           
           ### Windows Defender / SmartScreen Warning
+          **This is a false positive.** The executable is not code-signed (certificate costs $300+/year).
           
-          **This is a false positive.** The executable is not code-signed due to certificate costs ($300+/year).
-          
-          **Solutions:**
           - **Add exclusion**: `Add-MpPreference -ExclusionPath "C:\path\to\SAK-Utility"` (run as admin)
           - **SmartScreen**: Click "More info" → "Run anyway"
           - **Verify integrity**: Check SHA256 hash in SHA256SUMS.txt
           
-          **Why trust this?**
-          - ✅ 100% open source - all code is public and auditable
-          - ✅ Built automatically via GitHub Actions - no manual tampering
-          - ✅ No telemetry or data collection
-          
-          You can also submit the executable to Microsoft as a false positive: https://www.microsoft.com/en-us/wdsi/filesubmission
+          100% open source, built via GitHub Actions, no telemetry.
           
           ## Requirements
           - Windows 10/11 x64
-          - Administrator privileges (for app migration and license scanning)
+          - Administrator privileges (for admin tasks, migration, etc.)
           
-          ## Notes
-          - Build: ${{ github.sha }}
-          - Built with: C++23, Qt 6.5.3, MSVC 2022
-          - All dependencies included (no separate installation required)
+          ## Build Info
+          - Commit: `${{ github.sha }}`
+          - Built with: C++23, Qt ${{ env.QT_VERSION }}, MSVC 2022
+          - All dependencies included
           
-          See [README.md](https://github.com/${{ github.repository }}/blob/main/Readme.md) for full documentation.
+          See [README](https://github.com/${{ github.repository }}/blob/main/README.md) for full documentation.
         draft: false
         prerelease: false
       env:
@@ -318,14 +443,15 @@ jobs:
     
     - name: Display Build Info
       run: |
+        VERSION=$(cat VERSION | tr -d '[:space:]')
         echo "### Build Information" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
-        echo "- **Version**: 0.5.6" >> $GITHUB_STEP_SUMMARY
+        echo "- **Version**: $VERSION" >> $GITHUB_STEP_SUMMARY
         echo "- **Commit**: ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
         echo "- **Branch**: ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
         echo "- **Qt Version**: ${{ env.QT_VERSION }}" >> $GITHUB_STEP_SUMMARY
         echo "- **CMake Version**: ${{ env.CMAKE_VERSION }}" >> $GITHUB_STEP_SUMMARY
         echo "- **Build Type**: ${{ env.BUILD_TYPE }}" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
-        echo "### Changes" >> $GITHUB_STEP_SUMMARY
-        git log --oneline -5 >> $GITHUB_STEP_SUMMARY
+        echo "### Recent Changes" >> $GITHUB_STEP_SUMMARY
+        git log --oneline -10 >> $GITHUB_STEP_SUMMARY
