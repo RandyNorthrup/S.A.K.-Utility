@@ -371,7 +371,6 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for coding standards, commit conventions,
 
 ## Roadmap
 
-- [ ] Portable mode (`portable.ini` for local settings storage)
 - [ ] PXE boot server for network imaging
 - [ ] WinPE bootable environment creation
 - [ ] Cloud backup integration (Azure, AWS S3, Google Cloud)
