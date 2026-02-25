@@ -142,13 +142,11 @@ void OrganizerPanel::setupUi()
     
     m_log_viewer = new QTextEdit(this);
     m_log_viewer->setReadOnly(true);
-    m_log_viewer->setMaximumHeight(150);
+    m_log_viewer->setMinimumHeight(80);
     m_log_viewer->setPlaceholderText("Operation log will appear here...");
     log_layout->addWidget(m_log_viewer);
     
-    main_layout->addWidget(log_group);
-
-    main_layout->addStretch(1);
+    main_layout->addWidget(log_group, 1); // Give log group stretch so it fills remaining space
 
     // Connect signals
     connect(m_browse_button, &QPushButton::clicked, this, &OrganizerPanel::onBrowseClicked);

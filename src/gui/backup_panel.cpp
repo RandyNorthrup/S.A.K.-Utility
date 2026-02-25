@@ -10,6 +10,8 @@
 #include <QMessageBox>
 #include <QDateTime>
 #include <QFont>
+#include <QScrollArea>
+#include <QFrame>
 
 BackupPanel::BackupPanel(QWidget* parent)
     : QWidget(parent)
@@ -26,9 +28,20 @@ BackupPanel::~BackupPanel() = default;
 
 void BackupPanel::setupUi()
 {
-    auto* mainLayout = new QVBoxLayout(this);
-    mainLayout->setContentsMargins(10, 10, 10, 10);
-    mainLayout->setSpacing(8);
+    auto* rootLayout = new QVBoxLayout(this);
+    rootLayout->setContentsMargins(0, 0, 0, 0);
+
+    auto* scrollArea = new QScrollArea(this);
+    scrollArea->setWidgetResizable(true);
+    scrollArea->setFrameShape(QFrame::NoFrame);
+
+    auto* contentWidget = new QWidget(scrollArea);
+    auto* mainLayout = new QVBoxLayout(contentWidget);
+    mainLayout->setContentsMargins(12, 12, 12, 12);
+    mainLayout->setSpacing(10);
+
+    scrollArea->setWidget(contentWidget);
+    rootLayout->addWidget(scrollArea);
 
     // Title and description
     auto* titleLabel = new QLabel("<h2>User Profile Backup & Restore</h2>");
@@ -44,56 +57,42 @@ void BackupPanel::setupUi()
     // Action buttons in a card-style layout
     auto* actionsGroup = new QGroupBox("Backup & Restore Wizards");
     auto* actionsLayout = new QVBoxLayout(actionsGroup);
-    actionsLayout->setSpacing(10);
-    actionsLayout->setContentsMargins(10, 15, 10, 10);
+    actionsLayout->setSpacing(12);
+    actionsLayout->setContentsMargins(12, 18, 12, 12);
     
     // Backup section
-    auto* backupCard = new QWidget();
-    backupCard->setStyleSheet("QWidget { background-color: rgba(255, 255, 255, 0.96); border: 1px solid #cbd5e1; border-radius: 12px; padding: 12px; }");
-    auto* backupLayout = new QVBoxLayout(backupCard);
-    backupLayout->setSpacing(8);
-    backupLayout->setContentsMargins(10, 10, 10, 10);
-    
     auto* backupTitle = new QLabel("<b>Backup User Profiles</b>");
-    backupLayout->addWidget(backupTitle);
+    actionsLayout->addWidget(backupTitle);
     
     auto* backupDesc = new QLabel(
         "Scan and select users, choose folders, configure filters, and create backup packages."
     );
     backupDesc->setWordWrap(true);
     backupDesc->setStyleSheet("color: #475569; font-size: 9pt;");
-    backupLayout->addWidget(backupDesc);
+    actionsLayout->addWidget(backupDesc);
     
     m_backupButton = new QPushButton("Start Backup Wizard...");
-    m_backupButton->setMinimumHeight(32);
+    m_backupButton->setMinimumHeight(40);
     m_backupButton->setToolTip("Step-by-step wizard to select apps, configure options, and create backups");
-    backupLayout->addWidget(m_backupButton);
+    actionsLayout->addWidget(m_backupButton);
     
-    actionsLayout->addWidget(backupCard);
+    actionsLayout->addSpacing(8);
     
     // Restore section
-    auto* restoreCard = new QWidget();
-    restoreCard->setStyleSheet("QWidget { background-color: rgba(255, 255, 255, 0.96); border: 1px solid #cbd5e1; border-radius: 12px; padding: 12px; }");
-    auto* restoreLayout = new QVBoxLayout(restoreCard);
-    restoreLayout->setSpacing(8);
-    restoreLayout->setContentsMargins(10, 10, 10, 10);
-    
     auto* restoreTitle = new QLabel("<b>Restore User Profiles</b>");
-    restoreLayout->addWidget(restoreTitle);
+    actionsLayout->addWidget(restoreTitle);
     
     auto* restoreDesc = new QLabel(
         "Select backup, map users, configure merge options, and restore data with permissions."
     );
     restoreDesc->setWordWrap(true);
     restoreDesc->setStyleSheet("color: #475569; font-size: 9pt;");
-    restoreLayout->addWidget(restoreDesc);
+    actionsLayout->addWidget(restoreDesc);
     
     m_restoreButton = new QPushButton("Start Restore Wizard...");
-    m_restoreButton->setMinimumHeight(32);
+    m_restoreButton->setMinimumHeight(40);
     m_restoreButton->setToolTip("Step-by-step wizard to select backups, map users, and restore data");
-    restoreLayout->addWidget(m_restoreButton);
-    
-    actionsLayout->addWidget(restoreCard);
+    actionsLayout->addWidget(m_restoreButton);
     
     mainLayout->addWidget(actionsGroup);
     
@@ -102,18 +101,15 @@ void BackupPanel::setupUi()
     m_statusLabel->setStyleSheet("padding: 8px; background-color: #e2e8f0; border-radius: 10px; font-weight: 600; color: #1e293b;");
     mainLayout->addWidget(m_statusLabel);
 
-    // Log viewer
-    auto* logGroup = new QGroupBox("Operation Log");
+    // Operation Log (standardized)
+    auto* logGroup = new QGroupBox("Log");
     auto* logLayout = new QVBoxLayout(logGroup);
-    logLayout->setContentsMargins(5, 10, 5, 5);
-    
     m_logTextEdit = new QTextEdit();
     m_logTextEdit->setReadOnly(true);
-    m_logTextEdit->setMinimumHeight(120);
-    m_logTextEdit->setFont(QFont("Consolas", 9));
+    m_logTextEdit->setMinimumHeight(80);
+    m_logTextEdit->setPlaceholderText("Operation log will appear here...");
     logLayout->addWidget(m_logTextEdit);
-    
-    mainLayout->addWidget(logGroup, 1); // Give log viewer stretch factor
+    mainLayout->addWidget(logGroup, 1);
 }
 
 void BackupPanel::setupConnections()

@@ -10,6 +10,9 @@
 #include <QFileDialog>
 #include <QPushButton>
 #include <QDialogButtonBox>
+#include <QScrollArea>
+#include <QFrame>
+#include <QSettings>
 
 namespace sak {
 
@@ -28,9 +31,12 @@ SettingsDialog::SettingsDialog(QWidget* parent)
 
 void SettingsDialog::setupUI() {
     setWindowTitle(tr("Settings"));
-    setMinimumSize(600, 500);
+    setMinimumSize(520, 420);
+    resize(640, 540);
+    setSizeGripEnabled(true);
 
     auto* mainLayout = new QVBoxLayout(this);
+    mainLayout->setContentsMargins(10, 10, 10, 10);
 
     // Create tab widget
     m_tabWidget = new QTabWidget(this);
@@ -134,12 +140,56 @@ void SettingsDialog::createBackupTab() {
     backupGroup->setLayout(backupLayout);
     layout->addWidget(backupGroup);
 
+    // Quick Actions Settings Group
+    auto* quickActionsGroup = new QGroupBox(tr("Quick Actions"));
+    auto* quickActionsLayout = new QFormLayout();
+
+    auto* qaLocationLayout = new QHBoxLayout();
+    m_quickActionsBackupLocation = new QLineEdit();
+    m_quickActionsBackupLocation->setPlaceholderText(tr("C:\\SAK_Backups"));
+    m_quickActionsBackupLocation->setToolTip(tr("Default location for Quick Actions backup operations"));
+    auto* qaBrowseButton = new QPushButton(tr("Browse..."));
+    connect(qaBrowseButton, &QPushButton::clicked, this, [this]() {
+        QString dir = QFileDialog::getExistingDirectory(
+            this,
+            tr("Select Quick Actions Backup Location"),
+            m_quickActionsBackupLocation->text()
+        );
+        if (!dir.isEmpty()) {
+            m_quickActionsBackupLocation->setText(dir);
+            onSettingChanged();
+        }
+    });
+    qaLocationLayout->addWidget(m_quickActionsBackupLocation);
+    qaLocationLayout->addWidget(qaBrowseButton);
+    quickActionsLayout->addRow(tr("Backup Location:"), qaLocationLayout);
+
+    m_quickActionsConfirm = new QCheckBox(tr("Confirm before executing actions"));
+    quickActionsLayout->addRow(QString(), m_quickActionsConfirm);
+
+    m_quickActionsNotifications = new QCheckBox(tr("Show completion notifications"));
+    quickActionsLayout->addRow(QString(), m_quickActionsNotifications);
+
+    m_quickActionsLogging = new QCheckBox(tr("Enable detailed logging"));
+    quickActionsLayout->addRow(QString(), m_quickActionsLogging);
+
+    m_quickActionsCompress = new QCheckBox(tr("Compress backups (saves space)"));
+    quickActionsLayout->addRow(QString(), m_quickActionsCompress);
+
+    quickActionsGroup->setLayout(quickActionsLayout);
+    layout->addWidget(quickActionsGroup);
+
     layout->addStretch();
     m_tabWidget->addTab(widget, tr("Backup"));
 
     // Connect change signals
     connect(m_backupThreadCount, QOverload<int>::of(&QSpinBox::valueChanged), this, &SettingsDialog::onSettingChanged);
     connect(m_backupVerifyMD5, &QCheckBox::stateChanged, this, &SettingsDialog::onSettingChanged);
+    connect(m_quickActionsBackupLocation, &QLineEdit::textChanged, this, &SettingsDialog::onSettingChanged);
+    connect(m_quickActionsConfirm, &QCheckBox::stateChanged, this, &SettingsDialog::onSettingChanged);
+    connect(m_quickActionsNotifications, &QCheckBox::stateChanged, this, &SettingsDialog::onSettingChanged);
+    connect(m_quickActionsLogging, &QCheckBox::stateChanged, this, &SettingsDialog::onSettingChanged);
+    connect(m_quickActionsCompress, &QCheckBox::stateChanged, this, &SettingsDialog::onSettingChanged);
 }
 
 void SettingsDialog::createDuplicateFinderTab() {
@@ -176,12 +226,19 @@ void SettingsDialog::createDuplicateFinderTab() {
 }
 
 void SettingsDialog::createAdvancedTab() {
+    // Use scroll area so dense network settings never get cut off
+    auto* scrollArea = new QScrollArea();
+    scrollArea->setWidgetResizable(true);
+    scrollArea->setFrameShape(QFrame::NoFrame);
+
     auto* widget = new QWidget();
     auto* layout = new QVBoxLayout(widget);
+    layout->setContentsMargins(4, 4, 4, 4);
 
     // Network Transfer Settings
     auto* networkGroup = new QGroupBox(tr("Network Transfer"));
     auto* networkLayout = new QFormLayout();
+    networkLayout->setFieldGrowthPolicy(QFormLayout::ExpandingFieldsGrow);
 
     m_networkTransferEnabled = new QCheckBox(tr("Enable Network Transfer"));
     networkLayout->addRow(tr("Enabled:"), m_networkTransferEnabled);
@@ -228,7 +285,9 @@ void SettingsDialog::createAdvancedTab() {
     layout->addWidget(networkGroup);
 
     layout->addStretch();
-    m_tabWidget->addTab(widget, tr("Advanced"));
+
+    scrollArea->setWidget(widget);
+    m_tabWidget->addTab(scrollArea, tr("Advanced"));
 
     connect(m_networkTransferEnabled, &QCheckBox::stateChanged, this, &SettingsDialog::onSettingChanged);
     connect(m_networkTransferAutoDiscovery, &QCheckBox::stateChanged, this, &SettingsDialog::onSettingChanged);
@@ -253,6 +312,16 @@ void SettingsDialog::loadSettings() {
     m_backupThreadCount->setValue(config.getBackupThreadCount());
     m_backupVerifyMD5->setChecked(config.getBackupVerifyMD5());
     m_lastBackupLocation->setText(config.getLastBackupLocation());
+
+    // Quick Actions
+    {
+        QSettings qaSettings("SAK", "QuickActions");
+        m_quickActionsBackupLocation->setText(qaSettings.value("backup_location", "C:\\SAK_Backups").toString());
+        m_quickActionsConfirm->setChecked(qaSettings.value("confirm_before_execute", true).toBool());
+        m_quickActionsNotifications->setChecked(qaSettings.value("show_notifications", true).toBool());
+        m_quickActionsLogging->setChecked(qaSettings.value("enable_logging", true).toBool());
+        m_quickActionsCompress->setChecked(qaSettings.value("compress_backups", true).toBool());
+    }
 
     // Organizer
     m_organizerPreviewMode->setChecked(config.getOrganizerPreviewMode());
@@ -298,6 +367,16 @@ void SettingsDialog::saveSettings() {
     config.setBackupThreadCount(m_backupThreadCount->value());
     config.setBackupVerifyMD5(m_backupVerifyMD5->isChecked());
     config.setLastBackupLocation(m_lastBackupLocation->text());
+
+    // Quick Actions
+    {
+        QSettings qaSettings("SAK", "QuickActions");
+        qaSettings.setValue("backup_location", m_quickActionsBackupLocation->text());
+        qaSettings.setValue("confirm_before_execute", m_quickActionsConfirm->isChecked());
+        qaSettings.setValue("show_notifications", m_quickActionsNotifications->isChecked());
+        qaSettings.setValue("enable_logging", m_quickActionsLogging->isChecked());
+        qaSettings.setValue("compress_backups", m_quickActionsCompress->isChecked());
+    }
 
     // Organizer
     config.setOrganizerPreviewMode(m_organizerPreviewMode->isChecked());

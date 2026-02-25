@@ -88,6 +88,11 @@ Q_SIGNALS:
      */
     void flashCancelled();
 
+    /**
+     * @brief Status message for the global status bar
+     */
+    void statusMessage(const QString& message, int timeout_ms);
+
 private Q_SLOTS:
     // Step 1: Image Selection
     void onSelectImageClicked();

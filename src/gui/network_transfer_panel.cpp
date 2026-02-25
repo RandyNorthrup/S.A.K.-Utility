@@ -392,17 +392,16 @@ void NetworkTransferPanel::setupUi() {
     auto* orchestratorDestLayout = new QVBoxLayout(orchestratorDestGroup);
     m_orchestratorDestTable = new QTableWidget(0, 9, this);
     m_orchestratorDestTable->setHorizontalHeaderLabels({"✓", tr("Host"), tr("IP"), tr("Status"), tr("Free Disk"), tr("CPU%"), tr("RAM%"), tr("Last Seen"), tr("Progress")});
+    m_orchestratorDestTable->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Fixed);
+    m_orchestratorDestTable->setColumnWidth(0, 30);
     m_orchestratorDestTable->horizontalHeader()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
     m_orchestratorDestTable->horizontalHeader()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
     m_orchestratorDestTable->horizontalHeader()->setSectionResizeMode(3, QHeaderView::ResizeToContents);
     m_orchestratorDestTable->horizontalHeader()->setSectionResizeMode(4, QHeaderView::ResizeToContents);
-    m_orchestratorDestTable->horizontalHeader()->setSectionResizeMode(7, QHeaderView::ResizeToContents);
-    m_orchestratorDestTable->horizontalHeader()->setSectionResizeMode(8, QHeaderView::ResizeToContents);
     m_orchestratorDestTable->horizontalHeader()->setSectionResizeMode(5, QHeaderView::ResizeToContents);
     m_orchestratorDestTable->horizontalHeader()->setSectionResizeMode(6, QHeaderView::ResizeToContents);
-    m_orchestratorDestTable->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
-    m_orchestratorDestTable->horizontalHeader()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
-    m_orchestratorDestTable->horizontalHeader()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
+    m_orchestratorDestTable->horizontalHeader()->setSectionResizeMode(7, QHeaderView::ResizeToContents);
+    m_orchestratorDestTable->horizontalHeader()->setSectionResizeMode(8, QHeaderView::Stretch);
     m_orchestratorDestTable->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_orchestratorDestTable->setSelectionMode(QAbstractItemView::SingleSelection);
     m_orchestratorDestTable->setAcceptDrops(true);
@@ -578,10 +577,15 @@ void NetworkTransferPanel::setupUi() {
     m_stopTransferButton = new QPushButton(tr("Stop Transfer"), this);
     mainLayout->addWidget(m_stopTransferButton);
 
+    // Operation Log (standardized)
+    auto* logGroup = new QGroupBox(tr("Log"));
+    auto* logLayout = new QVBoxLayout(logGroup);
     m_logText = new QTextEdit(this);
     m_logText->setReadOnly(true);
-    m_logText->setMaximumHeight(140);
-    mainLayout->addWidget(m_logText);
+    m_logText->setMinimumHeight(80);
+    m_logText->setPlaceholderText(tr("Operation log will appear here..."));
+    logLayout->addWidget(m_logText);
+    mainLayout->addWidget(logGroup, 1);
 }
 
 void NetworkTransferPanel::setupConnections() {

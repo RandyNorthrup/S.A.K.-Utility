@@ -69,6 +69,13 @@ private:
     QCheckBox* m_backupVerifyMD5{nullptr};
     QLineEdit* m_lastBackupLocation{nullptr};
 
+    // Quick Actions Settings (in Backup tab)
+    QLineEdit* m_quickActionsBackupLocation{nullptr};
+    QCheckBox* m_quickActionsConfirm{nullptr};
+    QCheckBox* m_quickActionsNotifications{nullptr};
+    QCheckBox* m_quickActionsLogging{nullptr};
+    QCheckBox* m_quickActionsCompress{nullptr};
+
     // Duplicate Finder Tab
     QSpinBox* m_duplicateMinFileSize{nullptr};
     QComboBox* m_duplicateKeepStrategy{nullptr};

@@ -31,17 +31,19 @@ MainWindow::~MainWindow()
 void MainWindow::setupUi()
 {
     setWindowTitle("S.A.K. Utility - Swiss Army Knife Utility");
-    setMinimumSize(1024, 768);
+    setMinimumSize(900, 600);
+    resize(1200, 800);
     
     // Create central tab widget
     m_tab_widget = new QTabWidget(this);
     m_tab_widget->setTabPosition(QTabWidget::North);
     m_tab_widget->setDocumentMode(true);
+    m_tab_widget->setUsesScrollButtons(true);  // Scroll tabs when window is narrow
+    m_tab_widget->setElideMode(Qt::ElideNone); // Don't truncate tab labels
     setCentralWidget(m_tab_widget);
     
     // Create UI elements
     createMenuBar();
-    createToolbar();
     createStatusBar();
     createPanels();
     
@@ -74,18 +76,22 @@ void MainWindow::createMenuBar()
     help_menu->addAction(about_action);
 }
 
-void MainWindow::createToolbar()
-{
-    auto* toolbar = addToolBar("Main Toolbar");
-    toolbar->setMovable(false);
-    toolbar->setFloatable(false);
-    
-}
+
 
 void MainWindow::createStatusBar()
 {
-    // Status bar disabled - panels have their own status bars
-    statusBar()->hide();
+    // Persistent status label
+    m_status_label = new QLabel("Ready", this);
+    m_status_label->setContentsMargins(6, 0, 6, 0);
+    statusBar()->addWidget(m_status_label, 1);
+    
+    // Progress bar (hidden by default)
+    m_progress_bar = new QProgressBar(this);
+    m_progress_bar->setMaximumWidth(250);
+    m_progress_bar->setMaximumHeight(18);
+    m_progress_bar->setTextVisible(true);
+    m_progress_bar->setVisible(false);
+    statusBar()->addPermanentWidget(m_progress_bar);
 }
 
 void MainWindow::createPanels()
@@ -122,25 +128,33 @@ void MainWindow::createPanels()
     
     // Connect panel signals to main window status bar
     connect(m_quick_actions_panel.get(), &sak::QuickActionsPanel::statusMessage,
-            this, [this](const QString& msg) { updateStatus(msg, 5000); });
+            this, [this](const QString& msg, int timeout) { updateStatus(msg, timeout); });
     connect(m_quick_actions_panel.get(), &sak::QuickActionsPanel::progressUpdate,
             this, &MainWindow::updateProgress);
     
     connect(m_backup_panel.get(), &BackupPanel::statusMessage,
             this, [this](const QString& msg) { updateStatus(msg, 5000); });
-    // User Migration panel has its own progress bar, no progressUpdated signal needed
+    
+    connect(m_organizer_panel.get(), &OrganizerPanel::statusMessage,
+            this, [this](const QString& msg) { updateStatus(msg, 5000); });
+    
+    connect(m_duplicate_finder_panel.get(), &DuplicateFinderPanel::statusMessage,
+            this, [this](const QString& msg) { updateStatus(msg, 5000); });
     
     connect(m_app_migration_panel.get(), &AppMigrationPanel::statusMessage,
-            this, [this](const QString& msg) { updateStatus(msg, 5000); });
+            this, [this](const QString& msg, int timeout) { updateStatus(msg, timeout > 0 ? timeout : 5000); });
     connect(m_app_migration_panel.get(), &AppMigrationPanel::progressUpdated,
             this, &MainWindow::updateProgress);
 
-            if (m_network_transfer_panel) {
-            connect(m_network_transfer_panel.get(), &sak::NetworkTransferPanel::statusMessage,
-                this, [this](const QString& msg) { updateStatus(msg, 5000); });
-            connect(m_network_transfer_panel.get(), &sak::NetworkTransferPanel::progressUpdate,
-                this, &MainWindow::updateProgress);
-            }
+    connect(m_image_flasher_panel.get(), &ImageFlasherPanel::statusMessage,
+            this, [this](const QString& msg) { updateStatus(msg, 5000); });
+
+    if (m_network_transfer_panel) {
+        connect(m_network_transfer_panel.get(), &sak::NetworkTransferPanel::statusMessage,
+            this, [this](const QString& msg) { updateStatus(msg, 5000); });
+        connect(m_network_transfer_panel.get(), &sak::NetworkTransferPanel::progressUpdate,
+            this, &MainWindow::updateProgress);
+    }
     
 }
 

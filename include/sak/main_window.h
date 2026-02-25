@@ -6,7 +6,6 @@
 #include <QProgressBar>
 #include <QLabel>
 #include <QMenuBar>
-#include <QToolBar>
 #include <memory>
 
 // Forward declarations for feature panels
@@ -98,11 +97,6 @@ private:
      * @brief Create menu bar
      */
     void createMenuBar();
-
-    /**
-     * @brief Create toolbar
-     */
-    void createToolbar();
 
     /**
      * @brief Create status bar

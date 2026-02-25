@@ -328,7 +328,7 @@ QString windows11ThemeStyleSheet() {
             border: 1px solid rgba(148, 163, 184, 0.55);
             border-radius: 12px;
             margin-top: 18px;
-            padding: 18px 10px 10px 10px;
+            padding: 26px 10px 10px 10px;
         }
 
         QGroupBox::title {

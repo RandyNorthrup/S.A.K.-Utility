@@ -59,8 +59,8 @@ QuickActionsPanel::~QuickActionsPanel() {
 
 void QuickActionsPanel::setupUi() {
     auto* main_layout = new QVBoxLayout(this);
-    main_layout->setContentsMargins(20, 20, 20, 20);
-    main_layout->setSpacing(15);
+    main_layout->setContentsMargins(12, 12, 12, 12);
+    main_layout->setSpacing(10);
 
     // Header
     auto* header_label = new QLabel("<h2>Quick Actions</h2>");
@@ -70,56 +70,21 @@ void QuickActionsPanel::setupUi() {
     subtitle->setStyleSheet("color: #64748b; margin-bottom: 10px;");
     main_layout->addWidget(subtitle);
 
-    // Settings section
-    auto* settings_group = new QGroupBox("Settings");
-    settings_group->setStyleSheet(
-        "QGroupBox {"
-        "  font-weight: 600;"
-        "  border: 1px solid #cbd5e1;"
-        "  border-radius: 12px;"
-        "  margin-top: 18px;"
-        "  padding: 18px 10px 10px 10px;"
-        "  background-color: rgba(255, 255, 255, 0.92);"
-        "}"
-        "QGroupBox::title {"
-        "  subcontrol-origin: margin;"
-        "  subcontrol-position: top left;"
-        "  padding: 0 8px;"
-        "  color: #334155;"
-        "}"
-    );
-    
-    auto* settings_layout = new QGridLayout(settings_group);
-    settings_layout->setSpacing(10);
-
-    // Backup location
-    auto* backup_label = new QLabel("Backup Location:");
+    // Initialize hidden settings widgets (managed via global Settings dialog)
     m_backup_location_edit = new QLineEdit();
-    m_backup_location_edit->setPlaceholderText("C:\\SAK_Backups");
-    auto* browse_button = new QPushButton("Browse...");
-    connect(browse_button, &QPushButton::clicked, this, &QuickActionsPanel::onBrowseBackupLocation);
-
-    settings_layout->addWidget(backup_label, 0, 0);
-    settings_layout->addWidget(m_backup_location_edit, 0, 1);
-    settings_layout->addWidget(browse_button, 0, 2);
-
-    // Settings button
-    auto* settings_button = new QPushButton("Settings...");
-    settings_button->setMaximumWidth(100);
-    connect(settings_button, &QPushButton::clicked, this, &QuickActionsPanel::showSettingsDialog);
-    settings_layout->addWidget(settings_button, 1, 2);
-
-    // Initialize checkboxes (hidden in main UI)
+    m_backup_location_edit->hide();
     m_confirm_checkbox = new QCheckBox("Confirm before executing actions");
     m_confirm_checkbox->setChecked(true);
+    m_confirm_checkbox->hide();
     m_notifications_checkbox = new QCheckBox("Show completion notifications");
     m_notifications_checkbox->setChecked(true);
+    m_notifications_checkbox->hide();
     m_logging_checkbox = new QCheckBox("Enable detailed logging");
     m_logging_checkbox->setChecked(true);
+    m_logging_checkbox->hide();
     m_compression_checkbox = new QCheckBox("Compress backups (saves space)");
     m_compression_checkbox->setChecked(true);
-
-    main_layout->addWidget(settings_group);
+    m_compression_checkbox->hide();
 
     // Actions section (scrollable)
     auto* scroll_area = new QScrollArea();
@@ -136,7 +101,6 @@ void QuickActionsPanel::setupUi() {
 
     // Status section
     auto* status_group = new QGroupBox("Status");
-    status_group->setStyleSheet(settings_group->styleSheet());
     auto* status_layout = new QVBoxLayout(status_group);
 
     // Progress bar
@@ -174,29 +138,22 @@ void QuickActionsPanel::setupUi() {
         }
     });
 
-    m_view_log_button = new QPushButton("View Log");
-    connect(m_view_log_button, &QPushButton::clicked, this, [this]() {
-        if (m_log_viewer->isVisible()) {
-            m_log_viewer->hide();
-        } else {
-            m_log_viewer->show();
-        }
-    });
-
     action_buttons_layout->addWidget(m_open_folder_button);
-    action_buttons_layout->addWidget(m_view_log_button);
     action_buttons_layout->addStretch();
 
     status_layout->addLayout(action_buttons_layout);
 
     main_layout->addWidget(status_group);
 
-    // Log viewer (hidden by default)
+    // Operation Log (standardized)
+    auto* log_group = new QGroupBox("Log");
+    auto* log_layout = new QVBoxLayout(log_group);
     m_log_viewer = new QTextEdit();
     m_log_viewer->setReadOnly(true);
-    m_log_viewer->setMaximumHeight(150);
-    m_log_viewer->hide();
-    main_layout->addWidget(m_log_viewer);
+    m_log_viewer->setMinimumHeight(80);
+    m_log_viewer->setPlaceholderText("Operation log will appear here...");
+    log_layout->addWidget(m_log_viewer);
+    main_layout->addWidget(log_group, 1);
 }
 
 void QuickActionsPanel::createActions() {
@@ -250,7 +207,7 @@ void QuickActionsPanel::createCategorySections() {
             "  border: 1px solid #cbd5e1;"
             "  border-radius: 12px;"
             "  margin-top: 18px;"
-            "  padding: 18px 10px 10px 10px;"
+            "  padding: 26px 10px 10px 10px;"
             "  background-color: rgba(255, 255, 255, 0.9);"
             "}"
             "QGroupBox::title {"
@@ -303,33 +260,16 @@ void QuickActionsPanel::createCategorySections() {
 
 QPushButton* QuickActionsPanel::createActionButton(QuickAction* action) {
     auto* button = new QPushButton();
-    button->setMinimumHeight(60);
-    button->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    button->setMinimumHeight(52);
+    button->setMinimumWidth(180);
+    button->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
     
     // Set initial text
     QString text = QString("%1\n%2").arg(action->name(), action->description());
     button->setText(text);
+    // Use app theme styling — only override alignment and padding
     button->setStyleSheet(
-        "QPushButton {"
-        "  text-align: left;"
-        "  padding: 12px;"
-        "  border: 1px solid #cbd5e1;"
-        "  border-radius: 12px;"
-        "  background-color: rgba(255, 255, 255, 0.96);"
-        "  font-weight: 500;"
-        "  color: #1e293b;"
-        "}"
-        "QPushButton:hover {"
-        "  border-color: #3b82f6;"
-        "  background-color: #e0f2fe;"
-        "}"
-        "QPushButton:pressed {"
-        "  background-color: #dbeafe;"
-        "}"
-        "QPushButton:disabled {"
-        "  background-color: #e2e8f0;"
-        "  color: #94a3b8;"
-        "}"
+        "QPushButton { text-align: left; padding: 10px 14px; }"
     );
 
     connect(button, &QPushButton::clicked, this, [this, action]() {
@@ -375,23 +315,25 @@ void QuickActionsPanel::updateActionButton(QuickAction* action) {
             break;
     }
 
-    // Build button text
-    QString text = QString("%1 %2\n%3")
-                      .arg(status_icon, action->name(), action->description());
+    // Build button text — use short format to avoid cutoff
+    QString text = QString("%1 %2")
+                      .arg(status_icon, action->name());
 
-    // Add scan result if available
+    // Add scan result or description as second line
     if (action->status() == QuickAction::ActionStatus::Ready) {
         const auto& scan_result = action->lastScanResult();
         if (scan_result.applicable) {
             QString size_text = formatBytes(scan_result.bytes_affected);
             qint64 est_seconds = scan_result.estimated_duration_ms / 1000;
             QString time_text = formatDuration(est_seconds);
-            text += QString("\n%1 • %2 estimated")
+            text += QString("\n%1 - %2 est.")
                        .arg(size_text, time_text);
         } else {
             text += "\nNot applicable";
             button->setEnabled(false);
         }
+    } else {
+        text += QString("\n%1").arg(action->description());
     }
 
     button->setText(text);
@@ -566,7 +508,8 @@ void QuickActionsPanel::appendLog(const QString& message) {
         return;
     }
 
-    m_log_viewer->append(message);
+    QString timestamp = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss");
+    m_log_viewer->append(QString("[%1] %2").arg(timestamp, message));
     
     // Auto-scroll to bottom
     auto* scrollbar = m_log_viewer->verticalScrollBar();
@@ -609,46 +552,17 @@ void QuickActionsPanel::onOpenBackupFolder() {
     }
 }
 
-void QuickActionsPanel::onViewLog() {
-    m_log_viewer->setVisible(!m_log_viewer->isVisible());
-}
-
 void QuickActionsPanel::onSettingChanged() {
     saveSettings();
 }
 
 void QuickActionsPanel::showSettingsDialog() {
-    QDialog dialog(this);
-    dialog.setWindowTitle("Quick Actions Settings");
-    dialog.setMinimumWidth(400);
-    
-    auto* layout = new QVBoxLayout(&dialog);
-    
-    auto* group = new QGroupBox("Preferences");
-    auto* group_layout = new QVBoxLayout(group);
-    
-    // Temporarily add checkboxes to dialog
-    group_layout->addWidget(m_confirm_checkbox);
-    group_layout->addWidget(m_notifications_checkbox);
-    group_layout->addWidget(m_logging_checkbox);
-    group_layout->addWidget(m_compression_checkbox);
-    
-    layout->addWidget(group);
-    layout->addStretch();
-    
-    // Buttons
-    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
-    connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
-    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
-    layout->addWidget(buttons);
-    
-    dialog.exec();
-    
-    // Hide checkboxes after dialog closes
-    for (auto* checkbox : {m_confirm_checkbox, m_notifications_checkbox, m_logging_checkbox, m_compression_checkbox}) {
-        checkbox->setParent(this);
-        checkbox->hide();
-    }
+    // Settings are now managed through the global Settings dialog
+    // No-op for backward compatibility
+}
+
+void QuickActionsPanel::onViewLog() {
+    // Log is now always visible — no toggle needed
 }
 
 } // namespace sak

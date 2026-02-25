@@ -9,6 +9,8 @@
 #include <QFileDialog>
 #include <QMessageBox>
 #include <QDateTime>
+#include <QScrollArea>
+#include <QFrame>
 
 DuplicateFinderPanel::DuplicateFinderPanel(QWidget* parent)
     : QWidget(parent)
@@ -31,9 +33,20 @@ DuplicateFinderPanel::~DuplicateFinderPanel()
 
 void DuplicateFinderPanel::setupUi()
 {
-    auto* main_layout = new QVBoxLayout(this);
-    main_layout->setContentsMargins(10, 10, 10, 10);
+    auto* root_layout = new QVBoxLayout(this);
+    root_layout->setContentsMargins(0, 0, 0, 0);
+
+    auto* scroll_area = new QScrollArea(this);
+    scroll_area->setWidgetResizable(true);
+    scroll_area->setFrameShape(QFrame::NoFrame);
+
+    auto* content_widget = new QWidget(scroll_area);
+    auto* main_layout = new QVBoxLayout(content_widget);
+    main_layout->setContentsMargins(12, 12, 12, 12);
     main_layout->setSpacing(10);
+
+    scroll_area->setWidget(content_widget);
+    root_layout->addWidget(scroll_area);
 
     // Scan directories group
     auto* dir_group = new QGroupBox("Scan Directories", this);
@@ -113,11 +126,11 @@ void DuplicateFinderPanel::setupUi()
     
     m_log_viewer = new QTextEdit(this);
     m_log_viewer->setReadOnly(true);
-    m_log_viewer->setMaximumHeight(150);
+    m_log_viewer->setMinimumHeight(80);
     m_log_viewer->setPlaceholderText("Operation log will appear here...");
     log_layout->addWidget(m_log_viewer);
     
-    main_layout->addWidget(log_group);
+    main_layout->addWidget(log_group, 1); // Give log stretch factor to fill space
 
     // Connect signals
     connect(m_add_directory_button, &QPushButton::clicked, this, &DuplicateFinderPanel::onAddDirectoryClicked);

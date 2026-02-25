@@ -62,7 +62,8 @@ ImageFlasherPanel::~ImageFlasherPanel() {
 
 void ImageFlasherPanel::setupUI() {
     auto* mainLayout = new QVBoxLayout(this);
-    mainLayout->setContentsMargins(20, 20, 20, 20);
+    mainLayout->setContentsMargins(12, 12, 12, 12);
+    mainLayout->setSpacing(8);
     
     // Title
     auto* titleLabel = new QLabel("Image Flasher", this);
@@ -76,7 +77,7 @@ void ImageFlasherPanel::setupUI() {
     subtitleLabel->setStyleSheet("color: #64748b;");
     mainLayout->addWidget(subtitleLabel);
     
-    mainLayout->addSpacing(20);
+    mainLayout->addSpacing(10);
     
     // Create pages
     createImageSelectionPage();
@@ -145,28 +146,33 @@ void ImageFlasherPanel::createImageSelectionPage() {
     
     // Select image button
     m_selectImageButton = new QPushButton("Select Image File", groupBox);
-    m_selectImageButton->setMinimumHeight(60);
+    m_selectImageButton->setMinimumHeight(48);
+    m_selectImageButton->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
     groupLayout->addWidget(m_selectImageButton);
     connect(m_selectImageButton, &QPushButton::clicked,
             this, &ImageFlasherPanel::onSelectImageClicked);
     
-    groupLayout->addSpacing(10);
+    groupLayout->addSpacing(6);
     
     // Download Windows button
     m_downloadWindowsButton = new QPushButton("Download Windows 11", groupBox);
-    m_downloadWindowsButton->setMinimumHeight(60);
+    m_downloadWindowsButton->setMinimumHeight(48);
+    m_downloadWindowsButton->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
     groupLayout->addWidget(m_downloadWindowsButton);
     connect(m_downloadWindowsButton, &QPushButton::clicked,
             this, &ImageFlasherPanel::onDownloadWindowsClicked);
     
+    groupLayout->addSpacing(6);
+    
     // Download Linux button
     m_downloadLinuxButton = new QPushButton("Download Linux ISO", groupBox);
-    m_downloadLinuxButton->setMinimumHeight(60);
+    m_downloadLinuxButton->setMinimumHeight(48);
+    m_downloadLinuxButton->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
     groupLayout->addWidget(m_downloadLinuxButton);
     connect(m_downloadLinuxButton, &QPushButton::clicked,
             this, &ImageFlasherPanel::onDownloadLinuxClicked);
     
-    groupLayout->addSpacing(20);
+    groupLayout->addSpacing(12);
     
     // Image info
     m_imagePathLabel = new QLabel("No image selected", groupBox);
@@ -371,6 +377,8 @@ void ImageFlasherPanel::onImageSelected(const QString& imagePath) {
     m_nextButton->setEnabled(true);
     updateNavigationButtons();
     
+    Q_EMIT statusMessage(QString("Image Flasher: %1 selected (%2)")
+        .arg(fileInfo.fileName(), formatFileSize(m_imageSize)), 5000);
     sak::logInfo(QString("Image selected: %1").arg(imagePath).toStdString());
 }
 
@@ -463,6 +471,10 @@ void ImageFlasherPanel::onFlashCompleted(const sak::FlashResult& result) {
     updateNavigationButtons();
     
     Q_EMIT flashCompleted(result.totalDrives(), result.bytesWritten);
+    Q_EMIT statusMessage(QString("Image Flasher: Flash %1 - %2 successful, %3 failed")
+        .arg(result.success ? "completed" : "completed with errors")
+        .arg(result.successfulDrives.size())
+        .arg(result.failedDrives.size()), 5000);
 }
 
 void ImageFlasherPanel::onFlashError(const QString& error) {
@@ -479,6 +491,7 @@ void ImageFlasherPanel::onFlashError(const QString& error) {
     updateNavigationButtons();
 
     Q_EMIT flashFailed(error);
+    Q_EMIT statusMessage("Image Flasher: Flash operation failed", 5000);
 }
 
 void ImageFlasherPanel::onCancelClicked() {
@@ -502,6 +515,7 @@ void ImageFlasherPanel::onCancelClicked() {
         updateNavigationButtons();
 
         Q_EMIT flashCancelled();
+        Q_EMIT statusMessage("Image Flasher: Flash cancelled", 5000);
     }
 }
 

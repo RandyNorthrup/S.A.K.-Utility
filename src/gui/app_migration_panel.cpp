@@ -19,6 +19,7 @@
 #include <QStandardPaths>
 #include <QDir>
 #include <QCheckBox>
+#include <QGroupBox>
 #include <QApplication>
 #include <QStyle>
 #include <QThread>
@@ -117,24 +118,24 @@ void AppMigrationPanel::setupUI()
     setupTable();
     mainLayout->addWidget(m_tableView, 1);  // Stretch factor 1
     
-    // Log
-    mainLayout->addWidget(new QLabel("Operation Log:", this));
+    // Operation Log (standardized)
+    auto* logGroup = new QGroupBox("Log");
+    auto* logLayout = new QVBoxLayout(logGroup);
     m_logTextEdit = new QTextEdit(this);
     m_logTextEdit->setReadOnly(true);
-    m_logTextEdit->setMaximumHeight(120);
-    mainLayout->addWidget(m_logTextEdit);
-    
-    // Status bar
-    auto* statusWidget = setupStatusBar();
-    mainLayout->addWidget(statusWidget);
+    m_logTextEdit->setMinimumHeight(80);
+    m_logTextEdit->setPlaceholderText("Operation log will appear here...");
+    logLayout->addWidget(m_logTextEdit);
+    mainLayout->addWidget(logGroup);
 }
 
 void AppMigrationPanel::setupToolbar()
 {
     m_toolbar = new QToolBar(this);
     m_toolbar->setMovable(false);
-    m_toolbar->setIconSize(QSize(24, 24));
+    m_toolbar->setIconSize(QSize(20, 20));
     m_toolbar->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    m_toolbar->setStyleSheet("QToolBar { background: transparent; border: none; }");
     
     // Scan Apps
     m_scanButton = new QPushButton(QIcon::fromTheme("system-search"), "Scan Apps", this);
@@ -212,42 +213,42 @@ void AppMigrationPanel::setupTable()
     m_tableView->setSortingEnabled(true);
     m_tableView->verticalHeader()->setVisible(false);
     
-    // Column widths
-    m_tableView->horizontalHeader()->setStretchLastSection(false);
-    m_tableView->setColumnWidth(ColSelect, 40);
-    m_tableView->setColumnWidth(ColName, 200);
-    m_tableView->setColumnWidth(ColVersion, 80);
-    m_tableView->setColumnWidth(ColPublisher, 150);
-    m_tableView->setColumnWidth(ColPackage, 150);
-    m_tableView->setColumnWidth(ColConfidence, 80);
-    m_tableView->setColumnWidth(ColVersionLock, 80);
-    m_tableView->setColumnWidth(ColLockedVersion, 110);
-    m_tableView->setColumnWidth(ColStatus, 100);
-    m_tableView->setColumnWidth(ColProgress, 100);
+    // Style checkbox indicators inside the table to match theme (remove organizer chevron)
+    m_tableView->setStyleSheet(
+        "QTableView::indicator { width: 16px; height: 16px; border: 1px solid #94a3b8; border-radius: 4px; background: #f8fafc; }"
+        "QTableView::indicator:checked { background: #3b82f6; border: 1px solid #2563eb; }"
+        "QTableView::indicator:unchecked { background: #f8fafc; border: 1px solid #94a3b8; }"
+    );
+    
+    // Column resize modes - use interactive+stretch for responsive layout
+    auto* header = m_tableView->horizontalHeader();
+    header->setStretchLastSection(false);
+    header->setSectionResizeMode(ColSelect, QHeaderView::Fixed);
+    header->setSectionResizeMode(ColName, QHeaderView::Stretch);
+    header->setSectionResizeMode(ColVersion, QHeaderView::ResizeToContents);
+    header->setSectionResizeMode(ColPublisher, QHeaderView::Interactive);
+    header->setSectionResizeMode(ColPackage, QHeaderView::Interactive);
+    header->setSectionResizeMode(ColConfidence, QHeaderView::ResizeToContents);
+    header->setSectionResizeMode(ColVersionLock, QHeaderView::ResizeToContents);
+    header->setSectionResizeMode(ColLockedVersion, QHeaderView::ResizeToContents);
+    header->setSectionResizeMode(ColStatus, QHeaderView::ResizeToContents);
+    header->setSectionResizeMode(ColProgress, QHeaderView::ResizeToContents);
+    m_tableView->setColumnWidth(ColSelect, 36);
+    m_tableView->setColumnWidth(ColPublisher, 140);
+    m_tableView->setColumnWidth(ColPackage, 140);
 }
 
 QWidget* AppMigrationPanel::setupStatusBar()
 {
-    auto* statusLayout = new QHBoxLayout();
-    statusLayout->setContentsMargins(0, 0, 0, 0);
-    
-    m_statusLabel = new QLabel("Ready", this);
-    statusLayout->addWidget(m_statusLabel);
-    
-    statusLayout->addStretch();
-    
-    m_summaryLabel = new QLabel("Applications: 0 | Matched: 0 | Selected: 0", this);
-    statusLayout->addWidget(m_summaryLabel);
-    
+    // Status bar is now handled by the global main window status bar
+    // Just initialize members for compatibility
+    m_statusLabel = new QLabel(this);
+    m_statusLabel->hide();
+    m_summaryLabel = new QLabel(this);
+    m_summaryLabel->hide();
     m_progressBar = new QProgressBar(this);
-    m_progressBar->setVisible(false);
-    m_progressBar->setMaximumWidth(200);
-    statusLayout->addWidget(m_progressBar);
-    
-    // Create a widget to hold the status layout
-    auto* statusWidget = new QWidget(this);
-    statusWidget->setLayout(statusLayout);
-    return statusWidget;
+    m_progressBar->hide();
+    return new QWidget(this); // unused
 }
 
 void AppMigrationPanel::setupConnections()
@@ -284,10 +285,8 @@ void AppMigrationPanel::setupConnections()
             });
 
     connect(m_worker.get(), &AppMigrationWorker::migrationStarted, this, [this](int totalJobs) {
-        m_progressBar->setVisible(true);
-        m_progressBar->setRange(0, totalJobs);
-        m_progressBar->setValue(0);
-        m_statusLabel->setText("Installing...");
+        Q_EMIT progressUpdated(0, totalJobs);
+        Q_EMIT statusMessage("App Migration: Installing...", 0);
         m_logTextEdit->append(QString("Migration started: %1 job(s)").arg(totalJobs));
     });
 
@@ -338,7 +337,7 @@ void AppMigrationPanel::setupConnections()
 
                 auto stats = m_worker->getStats();
                 int completed = stats.success + stats.failed + stats.skipped + stats.cancelled;
-                m_progressBar->setValue(completed);
+                Q_EMIT progressUpdated(completed, m_entries.size());
             });
 
     connect(m_worker.get(), &AppMigrationWorker::migrationCompleted, this,
@@ -348,8 +347,8 @@ void AppMigrationPanel::setupConnections()
                     .arg(stats.failed)
                     .arg(stats.skipped));
 
-                m_statusLabel->setText("Installation complete");
-                m_progressBar->setVisible(false);
+                Q_EMIT statusMessage(QString("App Migration: Installation complete - %1 succeeded, %2 failed")
+                    .arg(stats.success).arg(stats.failed), 5000);
                 m_restoreButton->setEnabled(stats.success > 0);
                 enableControls(true);
                 m_installInProgress = false;
@@ -370,9 +369,8 @@ void AppMigrationPanel::onScanApps()
     }
     
     m_logTextEdit->append("=== Scanning Installed Applications ===");
-    m_statusLabel->setText("Scanning...");
-    m_progressBar->setVisible(true);
-    m_progressBar->setRange(0, 0);  // Indeterminate
+    Q_EMIT statusMessage("App Migration: Scanning installed applications...", 0);
+    Q_EMIT progressUpdated(0, 0);  // Indeterminate
     
     enableControls(false);
     m_scanInProgress = true;
@@ -417,8 +415,7 @@ void AppMigrationPanel::onScanApps()
     updateTableFromEntries();
     
     m_logTextEdit->append(QString("Scan complete: Found %1 applications").arg(m_entries.size()));
-    m_statusLabel->setText("Scan complete");
-    m_progressBar->setVisible(false);
+    Q_EMIT statusMessage(QString("App Migration: Found %1 applications").arg(m_entries.size()), 5000);
     
     m_matchButton->setEnabled(!m_entries.isEmpty());
     m_reportButton->setEnabled(!m_entries.isEmpty());
@@ -441,10 +438,8 @@ void AppMigrationPanel::onMatchPackages()
     
     m_logTextEdit->append(QString("=== Matching Applications to Chocolatey Packages (Parallel, %1 cores) ===")
                               .arg(QThread::idealThreadCount()));
-    m_statusLabel->setText("Matching...");
-    m_progressBar->setVisible(true);
-    m_progressBar->setRange(0, m_entries.size());
-    m_progressBar->setValue(0);
+    Q_EMIT statusMessage("App Migration: Matching packages...", 0);
+    Q_EMIT progressUpdated(0, m_entries.size());
     
     m_matchingInProgress = true;
     m_matchButton->setEnabled(false);
@@ -504,7 +499,7 @@ void AppMigrationPanel::onMatchPackages()
             int current = ++(*processed);
             if (current % 5 == 0 || current == totalEntries) {
                 QMetaObject::invokeMethod(this, [this, current]() {
-                    m_progressBar->setValue(current);
+                    Q_EMIT progressUpdated(current, m_entries.size());
                 }, Qt::QueuedConnection);
             }
         });
@@ -519,8 +514,8 @@ void AppMigrationPanel::onMatchPackages()
                                          .arg(QString::number(matched->load() * 100.0 / totalEntries, 'f', 1))
                                          .arg(available->load()));
             
-            m_statusLabel->setText("Matching complete");
-            m_progressBar->setVisible(false);
+            Q_EMIT statusMessage(QString("App Migration: %1/%2 matched, %3 available")
+                .arg(matched->load()).arg(totalEntries).arg(available->load()), 5000);
             
             m_backupButton->setEnabled(available->load() > 0);
             m_installButton->setEnabled(available->load() > 0);
@@ -584,10 +579,8 @@ void AppMigrationPanel::onInstallPackages()
     if (reply != QMessageBox::Yes) return;
 
     m_logTextEdit->append(QString("=== Installing %1 Packages ===").arg(toInstall.size()));
-    m_statusLabel->setText("Installing...");
-    m_progressBar->setVisible(true);
-    m_progressBar->setRange(0, toInstall.size());
-    m_progressBar->setValue(0);
+    Q_EMIT statusMessage("App Migration: Installing packages...", 0);
+    Q_EMIT progressUpdated(0, toInstall.size());
 
     enableControls(false);
     m_installInProgress = true;
@@ -614,8 +607,7 @@ void AppMigrationPanel::onInstallPackages()
     const int queued = m_worker->startMigration(m_activeReport, 2);
     if (queued == 0) {
         m_logTextEdit->append("No packages queued for installation.");
-        m_statusLabel->setText("Ready");
-        m_progressBar->setVisible(false);
+        Q_EMIT statusMessage("App Migration: No packages to install", 3000);
         enableControls(true);
         m_installInProgress = false;
         m_activeReport.reset();
@@ -1078,10 +1070,10 @@ void AppMigrationPanel::updateStatusSummary()
         }
     }
     
-    m_summaryLabel->setText(QString("Applications: %1 | Matched: %2 | Selected: %3")
+    Q_EMIT statusMessage(QString("App Migration: %1 apps | %2 matched | %3 selected")
                                    .arg(total)
                                    .arg(matched)
-                                   .arg(selected));
+                                   .arg(selected), 0);
 }
 
 QVector<AppMigrationPanel::MigrationEntry> AppMigrationPanel::getSelectedEntries() const
