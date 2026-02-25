@@ -9,6 +9,7 @@
 [![Qt 6.5.3](https://img.shields.io/badge/Qt-6.5.3-41cd52.svg)](https://www.qt.io/)
 [![Windows 10/11](https://img.shields.io/badge/Windows-10%20%7C%2011-0078d4.svg)](https://www.microsoft.com/windows)
 [![Build](https://github.com/RandyNorthrup/S.A.K.-Utility/actions/workflows/build-release.yml/badge.svg)](https://github.com/RandyNorthrup/S.A.K.-Utility/actions)
+[![Version](https://img.shields.io/badge/Version-0.5.8-orange.svg)](VERSION)
 
 Migration · Maintenance · Recovery · Imaging · Deployment — one portable EXE.
 
@@ -20,12 +21,12 @@ Migration · Maintenance · Recovery · Imaging · Deployment — one portable E
 
 | | |
 |---|---|
-| **100 % Portable** | No installer. Drop on a USB stick and go. `portable.ini` enables local settings. |
+| **100 % Portable** | No installer. Drop on a USB stick and go. |
 | **39 Quick Actions** | One-click system optimization, backups, maintenance, troubleshooting, and recovery. |
 | **User Profile Backup & Restore** | 6-page wizards with smart filtering, AES-256 encryption, and NTFS permission handling. |
 | **Application Migration** | Scan installed apps, match to Chocolatey packages, bulk-install on a new PC. |
 | **Network Transfer** | Peer-to-peer LAN migration with AES-256-GCM, resume, and multi-PC orchestrator mode. |
-| **Image Flasher** | Flash ISOs/IMGs to USB. Download Windows ISOs directly from Microsoft. |
+| **Image Flasher** | Flash ISOs/IMGs to USB. Download Windows and Linux ISOs directly. |
 | **BitLocker Key Backup** | Export recovery keys from all encrypted volumes with restricted-permission files. |
 | **Modern UI** | Windows 11-style rounded corners, custom splash screen, and responsive layouts. |
 
@@ -43,6 +44,7 @@ Migration · Maintenance · Recovery · Imaging · Deployment — one portable E
   - [Image Flasher](#image-flasher)
   - [Directory Organizer](#directory-organizer)
   - [Duplicate Finder](#duplicate-finder)
+  - [Settings](#settings)
 - [Security](#security)
 - [Building from Source](#building-from-source)
 - [Configuration](#configuration)
@@ -180,10 +182,10 @@ Two 6-page wizards for comprehensive user-profile migration with smart filtering
 
 **Restore Wizard**
 1. Welcome
-2. Select backup manifest (`.json`)
-3. Map source users to destination users (auto-map or drag-and-drop)
-4. Merge options (skip / overwrite / rename, permission handling, checksums)
-5. Review & confirm
+2. User mapping (map source users to destination users — auto-map or manual)
+3. Merge options (skip / overwrite / rename, permission handling, checksums)
+4. Folder selection (choose which data categories to restore)
+5. Permission settings (NTFS permission handling and ownership configuration)
 6. Execution with progress, logging, and restore report
 
 ---
@@ -211,7 +213,7 @@ Secure peer-to-peer LAN transfer with three modes.
 | **Destination** | Listen for incoming transfers, approve/reject, receive + restore |
 | **Orchestrator** | Centralized multi-PC deployment — mapping strategies, concurrency, job queues |
 
-**Security:** AES-256-GCM per chunk (64 KB), PBKDF2 key derivation (100 k iterations), challenge/response authentication, SHA-256 integrity per file.
+**Security:** AES-256-GCM per chunk (64 KB), PBKDF2 key derivation (200 k iterations), challenge/response authentication, SHA-256 integrity per file.
 
 **Resume:** Checkpoint every 1 MB, partial-file tracking, integrity validation before resume.
 
@@ -222,9 +224,14 @@ Secure peer-to-peer LAN transfer with three modes.
 Create bootable USB drives from disk images.
 
 - **Formats:** ISO, IMG, WIC, ZIP, GZ, BZ2, XZ, DMG, DSK
-- **Windows ISO download** directly from Microsoft (multiple languages, x64/ARM64)
+- **Windows ISO download** directly from Microsoft via UUP Dump API (multiple editions, languages, x64/ARM64)
+- **Linux ISO download** with built-in distro catalog:
+  - Ubuntu Desktop, Ubuntu Server, Linux Mint Cinnamon
+  - Kali Linux
+  - SystemRescue, Clonezilla, GParted Live, ShredOS
+  - Ventoy (multi-boot USB creator)
 - **Windows USB Creator** — NTFS format, ISO extraction, `bootsect.exe` boot sector, UEFI structure, verification of critical files
-- **Generic writer** — Raw sector I/O with streaming decompression
+- **Generic writer** — Raw sector I/O with streaming decompression (bootable for Linux and other ISOs)
 - **Safety:** System-drive protection, multi-select for parallel flash
 
 ---
@@ -233,7 +240,8 @@ Create bootable USB drives from disk images.
 
 Organize files by extension into categorized subdirectories.
 
-- Default categories: Documents, Images, Videos, Audio, Archives, Code, Spreadsheets, Executables
+- Default categories: Images, Documents, Audio, Video, Archives, Code
+- Custom categories with user-defined extensions
 - Collision handling: rename, skip, or overwrite
 - Preview mode — see what would happen without moving anything
 
@@ -241,11 +249,24 @@ Organize files by extension into categorized subdirectories.
 
 ### Duplicate Finder
 
-SHA-256 hash-based duplicate detection with size pre-filtering.
+MD5 hash-based duplicate detection with minimum-size filtering.
 
 - Multi-directory recursive scan
 - Minimum-size filter to skip small files
 - Summary: duplicate count, wasted space
+
+---
+
+### Settings
+
+Global application settings accessible from the **Edit → Settings** menu (`Ctrl+,`):
+
+| Tab | Options |
+|---|---|
+| **General** | Theme, startup behavior, logging preferences |
+| **Backup** | Default backup location, Quick Actions backup settings (location, confirmations, notifications, logging, compression) |
+| **Duplicate Finder** | Default minimum file size, recursive scan defaults |
+| **Advanced** | Network Transfer toggle, experimental features |
 
 ---
 
@@ -254,8 +275,8 @@ SHA-256 hash-based duplicate detection with size pre-filtering.
 | Layer | Implementation |
 |---|---|
 | **File encryption** | AES-256-CBC via Windows BCrypt (PBKDF2, 100 k iterations, 32-byte salt) |
-| **Network encryption** | AES-256-GCM via Windows BCrypt (12-byte nonce, 16-byte GCM tag per chunk) |
-| **Secure memory** | `SecureString` / `SecureBuffer` — zero-fill on destruction, page locking |
+| **Network encryption** | AES-256-GCM via Windows BCrypt (PBKDF2, 200 k iterations, 12-byte nonce, 16-byte GCM tag per chunk) |
+| **Secure memory** | `SecureString` / `SecureBuffer` — zero-fill on destruction, page locking via `VirtualLock` |
 | **Input validation** | Path sanitization, IP/port validation, Chocolatey name format checks |
 | **Elevation** | UAC manifest (`requireAdministrator`), runtime privilege verification |
 
@@ -312,20 +333,13 @@ Full license texts: [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md)
 cmake --build build --config Release --target RUN_TESTS
 ```
 
-17 unit tests, 2 integration tests.
+17 unit tests covering network transfer, orchestration, security, encryption, and ISO download. 2 integration tests for MAC UA download and network transfer workflow.
 
 ---
 
 ## Configuration
 
-### Portable Mode
-
-Place an empty `portable.ini` next to `sak_utility.exe`. Settings and logs are stored alongside the executable.
-
-### Normal Mode
-
-Settings: `%APPDATA%\SAK_Utility\config.ini`
-Logs: `%APPDATA%\SAK_Utility\_logs\`
+Settings are stored at `%APPDATA%\SAK\Utility\` in INI format.
 
 ### Key Settings
 
@@ -357,6 +371,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for coding standards, commit conventions,
 
 ## Roadmap
 
+- [ ] Portable mode (`portable.ini` for local settings storage)
 - [ ] PXE boot server for network imaging
 - [ ] WinPE bootable environment creation
 - [ ] Cloud backup integration (Azure, AWS S3, Google Cloud)
