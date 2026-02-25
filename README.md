@@ -312,8 +312,6 @@ cmake --build build --config Release --parallel
 .\build\Release\sak_utility.exe
 ```
 
-See [BUILD.md](BUILD.md) for full build instructions, compiler flags, and verification steps.
-
 ### Dependencies
 
 | Library | License | Purpose |
@@ -414,4 +412,4 @@ Third-party dependency licenses are documented in [THIRD_PARTY_LICENSES.md](THIR
 
 - [Issues](https://github.com/RandyNorthrup/S.A.K.-Utility/issues)
 - [Discussions](https://github.com/RandyNorthrup/S.A.K.-Utility/discussions)
-- [Changelog](VERSION_MANAGEMENT.md)
+- [Releases](https://github.com/RandyNorthrup/S.A.K.-Utility/releases)
