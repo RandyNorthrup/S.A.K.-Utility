@@ -177,13 +177,13 @@ jobs:
 
     - name: Sign Executable
       if: github.event_name != 'pull_request'
-      uses: azure/trusted-signing-action@v0.5.1
+      uses: azure/artifact-signing-action@v1
       with:
         azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
         azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
         azure-client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
         endpoint: https://wus.codesigning.azure.net/
-        trusted-signing-account-name: scnetsolutions
+        signing-account-name: scnetsolutions
         certificate-profile-name: SAKUtility
         files-folder: build/Release
         files-folder-filter: exe
@@ -198,11 +198,14 @@ jobs:
         $sig = Get-AuthenticodeSignature "build/Release/sak_utility.exe"
         Write-Host "Signature status: $($sig.Status)"
         Write-Host "Signer: $($sig.SignerCertificate.Subject)"
+        Write-Host "Issuer: $($sig.SignerCertificate.Issuer)"
         Write-Host "Timestamp: $($sig.TimeStamperCertificate.Subject)"
         if ($sig.Status -ne 'Valid') {
-          Write-Warning "Code signing verification failed — signature status: $($sig.Status)"
-          Write-Warning "This may be expected for first-time setup. Check Azure Trusted Signing configuration."
+          Write-Error "Code signing verification FAILED -- signature status: $($sig.Status)"
+          Write-Error "Check Azure Trusted Signing secrets (AZURE_TENANT_ID, AZURE_CLIENT_ID, AZURE_CLIENT_SECRET) and account configuration."
+          exit 1
         }
+        Write-Host "Code signature verified successfully." -ForegroundColor Green
 
     - name: Run Tests
       working-directory: build/Release/Release

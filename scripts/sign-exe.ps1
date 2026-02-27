@@ -101,7 +101,7 @@ if (-not (Test-Path $dlibDll)) {
     New-Item -ItemType Directory -Force -Path $dlibDir | Out-Null
 
     $nugetUrl = "https://www.nuget.org/api/v2/package/Microsoft.Trusted.Signing.Client"
-    $nugetZip = Join-Path $dlibDir "Microsoft.Trusted.Signing.Client.nupkg"
+    $nugetZip = Join-Path $dlibDir "Microsoft.Trusted.Signing.Client.zip"
 
     Invoke-WebRequest -Uri $nugetUrl -OutFile $nugetZip
     Expand-Archive -Path $nugetZip -DestinationPath $dlibDir -Force
@@ -116,11 +116,13 @@ if (-not (Test-Path $dlibDll)) {
 
 # ── Create metadata JSON for Trusted Signing ────────────────────
 $metadataJson = Join-Path $dlibDir "metadata.json"
-@{
+$jsonContent = @{
     Endpoint               = $Endpoint
     CodeSigningAccountName = $AccountName
     CertificateProfileName = $ProfileName
-} | ConvertTo-Json | Set-Content $metadataJson -Encoding UTF8
+} | ConvertTo-Json
+# Write UTF-8 without BOM (required by Azure.CodeSigning.Dlib)
+[System.IO.File]::WriteAllText($metadataJson, $jsonContent, (New-Object System.Text.UTF8Encoding $false))
 Write-Host "Metadata: $metadataJson"
 
 # ── Sign ─────────────────────────────────────────────────────────
@@ -152,6 +154,6 @@ if ($sig.Status -eq 'Valid') {
     Write-Host ""
     Write-Host "Code signing completed successfully!" -ForegroundColor Green
 } else {
-    Write-Warning "Signature status is '$($sig.Status)' — check Trusted Signing configuration."
+    Write-Warning "Signature status is '$($sig.Status)' -- check Trusted Signing configuration."
     exit 1
 }
