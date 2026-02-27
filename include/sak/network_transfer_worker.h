@@ -1,16 +1,22 @@
+// Copyright (c) 2025 Randy Northrup. All rights reserved.
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 #pragma once
 
 #include <QObject>
 #include <QHostAddress>
+#include <QElapsedTimer>
 #include <QVector>
 #include <atomic>
 
 class QTcpSocket;
+class QFile;
 
 #include "sak/network_transfer_types.h"
 
 namespace sak {
 
+/// @brief Low-level worker for sending and receiving file data
 class NetworkTransferWorker : public QObject {
     Q_OBJECT
 
@@ -20,6 +26,7 @@ public:
         Receiver
     };
 
+    /// @brief Options controlling a data transfer session
     struct DataOptions {
         QString transfer_id;
         bool encryption_enabled{true};
@@ -59,6 +66,7 @@ Q_SIGNALS:
     void errorOccurred(const QString& message);
 
 private:
+    /// @brief Binary frame header for chunked data transfer
     struct FrameHeader {
         quint32 magic{0x53414B4E}; // SAKN
         quint8 version{1};
@@ -88,6 +96,47 @@ private:
 
     bool handleSender(QTcpSocket* socket, const QVector<TransferFileEntry>& files, const DataOptions& options);
     bool handleReceiver(QTcpSocket* socket, const DataOptions& options);
+
+    /// @brief Sends the JSON file header frame for a single file.
+    /// @return True if header was sent successfully.
+    bool sendFileHeader(QTcpSocket* socket, const TransferFileEntry& file, const DataOptions& options);
+
+    /// @brief Sends all data chunks for a single file with compression, encryption, and bandwidth throttling.
+    /// @return True if all chunks were sent successfully.
+    bool sendFileChunks(QTcpSocket* socket, QFile& source, const TransferFileEntry& file,
+                       const DataOptions& options, const QByteArray& key,
+                       const QVector<QPair<int, int>>& resumeRanges,
+                       qint64& bytesSent, qint64 totalBytes,
+                       QElapsedTimer& rateTimer, qint64& rateBytesSent);
+
+    /// @brief Waits for and validates a file ACK frame from the receiver.
+    /// @return True if ACK indicates success, false to retry or fail.
+    bool awaitFileAck(QTcpSocket* socket, const TransferFileEntry& file);
+
+    /// @brief State tracked across frames during a receive session
+    struct ReceiverState {
+        QByteArray key;
+        QFile* current_file = nullptr;
+        QString current_file_id;
+        QString current_relative_path;
+        QString current_checksum;
+        QString current_acl_sddl;
+        QString resume_path;
+        qint64 current_size{0};
+        int chunk_size{65536};
+        qint64 bytes_received{0};
+        qint64 overall_received{0};
+        int total_chunks{0};
+        QVector<QPair<int, int>> current_ranges;
+    };
+
+    bool processFileHeader(QTcpSocket* socket, const QByteArray& payload,
+                           const DataOptions& options, ReceiverState& state);
+    bool processDataChunk(QTcpSocket* socket, const FrameHeader& header,
+                          const QByteArray& payload, const DataOptions& options,
+                          ReceiverState& state);
+    bool processFileEnd(QTcpSocket* socket, const DataOptions& options,
+                        ReceiverState& state);
 
     QByteArray compressData(const QByteArray& data) const;
     QByteArray decompressData(const QByteArray& data) const;

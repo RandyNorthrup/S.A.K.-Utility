@@ -1,3 +1,6 @@
+// Copyright (c) 2025 Randy Northrup. All rights reserved.
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 /// @file path_utils.h
 /// @brief Path manipulation and validation utilities
 /// @details Provides cross-platform path operations with proper error handling
@@ -17,18 +20,6 @@ namespace sak {
 /// @details Thread-safe utilities for path manipulation, validation, and normalization
 class path_utils {
 public:
-    /// @brief Normalize a path (resolve .., ., remove redundant separators)
-    /// @param path Path to normalize
-    /// @return Expected containing normalized path or error code
-    [[nodiscard]] static auto normalize(
-        const std::filesystem::path& path) -> std::expected<std::filesystem::path, error_code>;
-    
-    /// @brief Make a path absolute
-    /// @param path Path to make absolute
-    /// @return Expected containing absolute path or error code
-    [[nodiscard]] static auto makeAbsolute(
-        const std::filesystem::path& path) -> std::expected<std::filesystem::path, error_code>;
-    
     /// @brief Make a path relative to a base path
     /// @param path Path to make relative
     /// @param base Base path
@@ -45,12 +36,6 @@ public:
         const std::filesystem::path& path,
         const std::filesystem::path& base_dir) -> std::expected<bool, error_code>;
     
-    /// @brief Get file extension in lowercase
-    /// @param path Path to extract extension from
-    /// @return Lowercase extension (including dot) or empty string if no extension
-    [[nodiscard]] static std::string getExtensionLowercase(
-        const std::filesystem::path& path) noexcept;
-    
     /// @brief Check if path matches any of the given patterns (wildcards supported)
     /// @param path Path to check
     /// @param patterns List of patterns (e.g., "*.txt", "test_*")
@@ -59,17 +44,17 @@ public:
         const std::filesystem::path& path,
         const std::vector<std::string>& patterns) noexcept;
     
-    /// @brief Get safe filename (remove/replace invalid characters)
-    /// @param filename Original filename
-    /// @return Safe filename suitable for the current OS
-    [[nodiscard]] static std::string getSafeFilename(
-        std::string_view filename) noexcept;
-    
-    /// @brief Calculate total size of directory (recursive)
+    /// @brief Result type for directory size + file count queries
+    struct DirectorySizeInfo {
+        std::uintmax_t total_bytes{0};
+        std::uintmax_t file_count{0};
+    };
+
+    /// @brief Calculate total size and file count of a directory (recursive)
     /// @param dir_path Directory path
-    /// @return Expected containing total size in bytes or error code
-    [[nodiscard]] static auto getDirectorySize(
-        const std::filesystem::path& dir_path) -> std::expected<std::uintmax_t, error_code>;
+    /// @return Expected containing size info or error code
+    [[nodiscard]] static auto getDirectorySizeAndCount(
+        const std::filesystem::path& dir_path) -> std::expected<DirectorySizeInfo, error_code>;
     
     /// @brief Get available disk space at path
     /// @param path Path to check
@@ -77,69 +62,13 @@ public:
     [[nodiscard]] static auto getAvailableSpace(
         const std::filesystem::path& path) -> std::expected<std::uintmax_t, error_code>;
     
-    /// @brief Create directory structure (like mkdir -p)
-    /// @param dir_path Directory path to create
-    /// @return Expected containing void or error code
-    [[nodiscard]] static auto createDirectories(
-        const std::filesystem::path& dir_path) -> std::expected<void, error_code>;
-    
-    /// @brief Remove file or directory (recursive if directory)
-    /// @param path Path to remove
-    /// @return Expected containing number of removed items or error code
-    [[nodiscard]] static auto removeAll(
-        const std::filesystem::path& path) -> std::expected<std::uintmax_t, error_code>;
-    
-    /// @brief Copy file or directory (recursive if directory)
-    /// @param source Source path
-    /// @param destination Destination path
-    /// @param overwrite Whether to overwrite existing files
-    /// @return Expected containing void or error code
-    [[nodiscard]] static auto copy(
-        const std::filesystem::path& source,
-        const std::filesystem::path& destination,
-        bool overwrite = false) -> std::expected<void, error_code>;
-    
-    /// @brief Move/rename file or directory
-    /// @param source Source path
-    /// @param destination Destination path
-    /// @return Expected containing void or error code
-    [[nodiscard]] static auto move(
-        const std::filesystem::path& source,
-        const std::filesystem::path& destination) -> std::expected<void, error_code>;
-    
-    /// @brief Check if path exists and is accessible
-    /// @param path Path to check
-    /// @return Expected containing true if exists and accessible, false otherwise, or error code
-    [[nodiscard]] static auto existsAndAccessible(
-        const std::filesystem::path& path) -> std::expected<bool, error_code>;
-    
-    /// @brief Get file/directory creation time
-    /// @param path Path to query
-    /// @return Expected containing file time or error code
-    [[nodiscard]] static auto getCreationTime(
-        const std::filesystem::path& path) -> std::expected<std::filesystem::file_time_type, error_code>;
-    
-    /// @brief Get file/directory last write time
-    /// @param path Path to query
-    /// @return Expected containing file time or error code
-    [[nodiscard]] static auto getLastWriteTime(
-        const std::filesystem::path& path) -> std::expected<std::filesystem::file_time_type, error_code>;
-    
-    /// @brief Get temporary directory path
-    /// @return Expected containing temp directory path or error code
-    [[nodiscard]] static auto getTempDirectory() -> std::expected<std::filesystem::path, error_code>;
-    
-    /// @brief Create unique temporary directory
-    /// @param prefix Directory name prefix
-    /// @return Expected containing unique temp directory path or error code
-    [[nodiscard]] static auto createTempDirectory(
-        std::string_view prefix = "sak_temp") -> std::expected<std::filesystem::path, error_code>;
-    
 private:
-    /// @brief Check if character is valid in filename for current OS
-    /// @param c Character to check
-    /// @return True if valid
-    [[nodiscard]] static bool isValidFilenameChar(char c) noexcept;
+    /// @brief Normalize a path (resolve .., ., remove redundant separators)
+    /// @param path Path to normalize
+    /// @return Expected containing normalized path or error code
+    /// @note Internal only — used by isSafePath()
+    [[nodiscard]] static auto normalize(
+        const std::filesystem::path& path) -> std::expected<std::filesystem::path, error_code>;
     
     /// @brief Simple wildcard matching (*, ?)
     /// @param str String to match

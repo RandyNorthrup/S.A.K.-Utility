@@ -1,5 +1,9 @@
+// Copyright (c) 2025 Randy Northrup. All rights reserved.
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 #include "gui/settings_dialog.h"
 #include "sak/config_manager.h"
+#include "sak/info_button.h"
 
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -9,9 +13,6 @@
 #include <QMessageBox>
 #include <QFileDialog>
 #include <QPushButton>
-#include <QDialogButtonBox>
-#include <QScrollArea>
-#include <QFrame>
 #include <QSettings>
 
 namespace sak {
@@ -40,10 +41,7 @@ void SettingsDialog::setupUI() {
 
     // Create tab widget
     m_tabWidget = new QTabWidget(this);
-    createGeneralTab();
     createBackupTab();
-    createDuplicateFinderTab();
-    createAdvancedTab();
 
     mainLayout->addWidget(m_tabWidget);
 
@@ -69,39 +67,6 @@ void SettingsDialog::setupUI() {
     mainLayout->addLayout(buttonLayout);
 }
 
-void SettingsDialog::createGeneralTab() {
-    auto* widget = new QWidget();
-    auto* layout = new QVBoxLayout(widget);
-
-    // Window Settings Group
-    auto* windowGroup = new QGroupBox(tr("Window Settings"));
-    auto* windowLayout = new QFormLayout();
-
-    m_restoreWindowGeometry = new QCheckBox(tr("Restore window size and position on startup"));
-    windowLayout->addRow(tr("Window Geometry:"), m_restoreWindowGeometry);
-
-    windowGroup->setLayout(windowLayout);
-    layout->addWidget(windowGroup);
-
-    // Directory Organizer Group
-    auto* organizerGroup = new QGroupBox(tr("Directory Organizer"));
-    auto* organizerLayout = new QFormLayout();
-
-    m_organizerPreviewMode = new QCheckBox(tr("Enable preview mode (dry run) by default"));
-    m_organizerPreviewMode->setToolTip(tr("Shows a preview of file moves without actually changing anything on disk"));
-    organizerLayout->addRow(tr("Preview Mode:"), m_organizerPreviewMode);
-
-    organizerGroup->setLayout(organizerLayout);
-    layout->addWidget(organizerGroup);
-
-    layout->addStretch();
-    m_tabWidget->addTab(widget, tr("General"));
-
-    // Connect change signals
-    connect(m_restoreWindowGeometry, &QCheckBox::stateChanged, this, &SettingsDialog::onSettingChanged);
-    connect(m_organizerPreviewMode, &QCheckBox::stateChanged, this, &SettingsDialog::onSettingChanged);
-}
-
 void SettingsDialog::createBackupTab() {
     auto* widget = new QWidget();
     auto* layout = new QVBoxLayout(widget);
@@ -112,11 +77,16 @@ void SettingsDialog::createBackupTab() {
 
     m_backupThreadCount = new QSpinBox();
     m_backupThreadCount->setRange(1, 16);
-    m_backupThreadCount->setToolTip(tr("Higher values speed up backup but use more CPU and disk I/O"));
-    backupLayout->addRow(tr("Thread Count:"), m_backupThreadCount);
+    backupLayout->addRow(
+        InfoButton::createInfoLabel(tr("Thread Count:"),
+            tr("Higher values speed up backup but use more CPU and disk I/O"), widget),
+        m_backupThreadCount);
 
     m_backupVerifyMD5 = new QCheckBox(tr("Verify files using MD5 hash after backup"));
-    backupLayout->addRow(tr("Verify MD5:"), m_backupVerifyMD5);
+    backupLayout->addRow(
+        InfoButton::createInfoLabel(tr("Verify MD5:"),
+            tr("Re-read each copied file and verify its MD5 checksum matches the original — slower but ensures integrity"), widget),
+        m_backupVerifyMD5);
 
     auto* locationLayout = new QHBoxLayout();
     m_lastBackupLocation = new QLineEdit();
@@ -135,7 +105,10 @@ void SettingsDialog::createBackupTab() {
     });
     locationLayout->addWidget(m_lastBackupLocation);
     locationLayout->addWidget(browseButton);
-    backupLayout->addRow(tr("Last Location:"), locationLayout);
+    backupLayout->addRow(
+        InfoButton::createInfoLabel(tr("Last Location:"),
+            tr("The most recently used backup destination folder"), widget),
+        locationLayout);
 
     backupGroup->setLayout(backupLayout);
     layout->addWidget(backupGroup);
@@ -147,7 +120,6 @@ void SettingsDialog::createBackupTab() {
     auto* qaLocationLayout = new QHBoxLayout();
     m_quickActionsBackupLocation = new QLineEdit();
     m_quickActionsBackupLocation->setPlaceholderText(tr("C:\\SAK_Backups"));
-    m_quickActionsBackupLocation->setToolTip(tr("Default location for Quick Actions backup operations"));
     auto* qaBrowseButton = new QPushButton(tr("Browse..."));
     connect(qaBrowseButton, &QPushButton::clicked, this, [this]() {
         QString dir = QFileDialog::getExistingDirectory(
@@ -162,19 +134,34 @@ void SettingsDialog::createBackupTab() {
     });
     qaLocationLayout->addWidget(m_quickActionsBackupLocation);
     qaLocationLayout->addWidget(qaBrowseButton);
-    quickActionsLayout->addRow(tr("Backup Location:"), qaLocationLayout);
+    quickActionsLayout->addRow(
+        InfoButton::createInfoLabel(tr("Backup Location:"),
+            tr("Default location for Quick Actions backup operations"), widget),
+        qaLocationLayout);
 
     m_quickActionsConfirm = new QCheckBox(tr("Confirm before executing actions"));
-    quickActionsLayout->addRow(QString(), m_quickActionsConfirm);
+    quickActionsLayout->addRow(
+        InfoButton::createInfoLabel(QString(),
+            tr("Show a confirmation dialog before each action runs to prevent accidental execution"), widget),
+        m_quickActionsConfirm);
 
     m_quickActionsNotifications = new QCheckBox(tr("Show completion notifications"));
-    quickActionsLayout->addRow(QString(), m_quickActionsNotifications);
+    quickActionsLayout->addRow(
+        InfoButton::createInfoLabel(QString(),
+            tr("Display a status bar notification when an action finishes or fails"), widget),
+        m_quickActionsNotifications);
 
     m_quickActionsLogging = new QCheckBox(tr("Enable detailed logging"));
-    quickActionsLayout->addRow(QString(), m_quickActionsLogging);
+    quickActionsLayout->addRow(
+        InfoButton::createInfoLabel(QString(),
+            tr("Write detailed progress and scan information to the log window"), widget),
+        m_quickActionsLogging);
 
     m_quickActionsCompress = new QCheckBox(tr("Compress backups (saves space)"));
-    quickActionsLayout->addRow(QString(), m_quickActionsCompress);
+    quickActionsLayout->addRow(
+        InfoButton::createInfoLabel(QString(),
+            tr("Use ZIP compression for backup output files — slower but uses less disk space"), widget),
+        m_quickActionsCompress);
 
     quickActionsGroup->setLayout(quickActionsLayout);
     layout->addWidget(quickActionsGroup);
@@ -192,121 +179,8 @@ void SettingsDialog::createBackupTab() {
     connect(m_quickActionsCompress, &QCheckBox::stateChanged, this, &SettingsDialog::onSettingChanged);
 }
 
-void SettingsDialog::createDuplicateFinderTab() {
-    auto* widget = new QWidget();
-    auto* layout = new QVBoxLayout(widget);
-
-    // Duplicate Finder Settings Group
-    auto* duplicateGroup = new QGroupBox(tr("Duplicate Finder Settings"));
-    auto* duplicateLayout = new QFormLayout();
-
-    m_duplicateMinFileSize = new QSpinBox();
-    m_duplicateMinFileSize->setRange(0, 1024);
-    m_duplicateMinFileSize->setSuffix(tr(" KB"));
-    m_duplicateMinFileSize->setToolTip(tr("Skip tiny files to reduce scan time (0 = scan everything)"));
-    duplicateLayout->addRow(tr("Minimum File Size:"), m_duplicateMinFileSize);
-
-    m_duplicateKeepStrategy = new QComboBox();
-    m_duplicateKeepStrategy->addItems({tr("Oldest"), tr("Newest"), tr("First Found")});
-    m_duplicateKeepStrategy->setToolTip(tr("When deleting duplicates, which copy to keep:\n"
-                                           "\u2022 Oldest: keep the file with the earliest modification date\n"
-                                           "\u2022 Newest: keep the most recently modified copy\n"
-                                           "\u2022 First Found: keep the first one discovered during scan"));
-    duplicateLayout->addRow(tr("Keep Strategy:"), m_duplicateKeepStrategy);
-
-    duplicateGroup->setLayout(duplicateLayout);
-    layout->addWidget(duplicateGroup);
-
-    layout->addStretch();
-    m_tabWidget->addTab(widget, tr("Duplicate Finder"));
-
-    // Connect change signals
-    connect(m_duplicateMinFileSize, QOverload<int>::of(&QSpinBox::valueChanged), this, &SettingsDialog::onSettingChanged);
-    connect(m_duplicateKeepStrategy, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &SettingsDialog::onSettingChanged);
-}
-
-void SettingsDialog::createAdvancedTab() {
-    // Use scroll area so dense network settings never get cut off
-    auto* scrollArea = new QScrollArea();
-    scrollArea->setWidgetResizable(true);
-    scrollArea->setFrameShape(QFrame::NoFrame);
-
-    auto* widget = new QWidget();
-    auto* layout = new QVBoxLayout(widget);
-    layout->setContentsMargins(4, 4, 4, 4);
-
-    // Network Transfer Settings
-    auto* networkGroup = new QGroupBox(tr("Network Transfer"));
-    auto* networkLayout = new QFormLayout();
-    networkLayout->setFieldGrowthPolicy(QFormLayout::ExpandingFieldsGrow);
-
-    m_networkTransferEnabled = new QCheckBox(tr("Enable Network Transfer"));
-    networkLayout->addRow(tr("Enabled:"), m_networkTransferEnabled);
-
-    m_networkTransferAutoDiscovery = new QCheckBox(tr("Enable auto discovery"));
-    networkLayout->addRow(tr("Auto Discovery:"), m_networkTransferAutoDiscovery);
-
-    m_networkTransferEncryption = new QCheckBox(tr("Encrypt data in transit (AES-256-GCM)"));
-    networkLayout->addRow(tr("Encryption:"), m_networkTransferEncryption);
-
-    m_networkTransferCompression = new QCheckBox(tr("Enable compression"));
-    networkLayout->addRow(tr("Compression:"), m_networkTransferCompression);
-
-    m_networkTransferResume = new QCheckBox(tr("Enable resume capability"));
-    networkLayout->addRow(tr("Resume:"), m_networkTransferResume);
-
-    m_networkTransferDiscoveryPort = new QSpinBox();
-    m_networkTransferDiscoveryPort->setRange(1024, 65535);
-    networkLayout->addRow(tr("Discovery Port:"), m_networkTransferDiscoveryPort);
-
-    m_networkTransferControlPort = new QSpinBox();
-    m_networkTransferControlPort->setRange(1024, 65535);
-    networkLayout->addRow(tr("Control Port:"), m_networkTransferControlPort);
-
-    m_networkTransferDataPort = new QSpinBox();
-    m_networkTransferDataPort->setRange(1024, 65535);
-    networkLayout->addRow(tr("Data Port:"), m_networkTransferDataPort);
-
-    m_networkTransferChunkSize = new QSpinBox();
-    m_networkTransferChunkSize->setRange(16, 1024 * 4);
-    m_networkTransferChunkSize->setSuffix(tr(" KB"));
-    networkLayout->addRow(tr("Chunk Size:"), m_networkTransferChunkSize);
-
-    m_networkTransferMaxBandwidth = new QSpinBox();
-    m_networkTransferMaxBandwidth->setRange(0, 1024 * 1024);
-    m_networkTransferMaxBandwidth->setSuffix(tr(" KB/s (0 = unlimited)"));
-    networkLayout->addRow(tr("Max Bandwidth:"), m_networkTransferMaxBandwidth);
-
-    m_networkTransferRelayServer = new QLineEdit();
-    m_networkTransferRelayServer->setPlaceholderText(tr("https://relay.example.com"));
-    networkLayout->addRow(tr("Relay Server:"), m_networkTransferRelayServer);
-
-    networkGroup->setLayout(networkLayout);
-    layout->addWidget(networkGroup);
-
-    layout->addStretch();
-
-    scrollArea->setWidget(widget);
-    m_tabWidget->addTab(scrollArea, tr("Advanced"));
-
-    connect(m_networkTransferEnabled, &QCheckBox::stateChanged, this, &SettingsDialog::onSettingChanged);
-    connect(m_networkTransferAutoDiscovery, &QCheckBox::stateChanged, this, &SettingsDialog::onSettingChanged);
-    connect(m_networkTransferEncryption, &QCheckBox::stateChanged, this, &SettingsDialog::onSettingChanged);
-    connect(m_networkTransferCompression, &QCheckBox::stateChanged, this, &SettingsDialog::onSettingChanged);
-    connect(m_networkTransferResume, &QCheckBox::stateChanged, this, &SettingsDialog::onSettingChanged);
-    connect(m_networkTransferDiscoveryPort, QOverload<int>::of(&QSpinBox::valueChanged), this, &SettingsDialog::onSettingChanged);
-    connect(m_networkTransferControlPort, QOverload<int>::of(&QSpinBox::valueChanged), this, &SettingsDialog::onSettingChanged);
-    connect(m_networkTransferDataPort, QOverload<int>::of(&QSpinBox::valueChanged), this, &SettingsDialog::onSettingChanged);
-    connect(m_networkTransferChunkSize, QOverload<int>::of(&QSpinBox::valueChanged), this, &SettingsDialog::onSettingChanged);
-    connect(m_networkTransferMaxBandwidth, QOverload<int>::of(&QSpinBox::valueChanged), this, &SettingsDialog::onSettingChanged);
-    connect(m_networkTransferRelayServer, &QLineEdit::textChanged, this, &SettingsDialog::onSettingChanged);
-}
-
 void SettingsDialog::loadSettings() {
     auto& config = ConfigManager::instance();
-
-    // General
-    m_restoreWindowGeometry->setChecked(config.getRestoreWindowGeometry());
 
     // Backup
     m_backupThreadCount->setValue(config.getBackupThreadCount());
@@ -323,45 +197,12 @@ void SettingsDialog::loadSettings() {
         m_quickActionsCompress->setChecked(qaSettings.value("compress_backups", true).toBool());
     }
 
-    // Organizer
-    m_organizerPreviewMode->setChecked(config.getOrganizerPreviewMode());
-
-    // Duplicate Finder
-    m_duplicateMinFileSize->setValue(static_cast<int>(config.getDuplicateMinimumFileSize() / 1024));
-    
-    QString strategy = config.getDuplicateKeepStrategy();
-    if (strategy == "oldest") {
-        m_duplicateKeepStrategy->setCurrentIndex(0);
-    } else if (strategy == "newest") {
-        m_duplicateKeepStrategy->setCurrentIndex(1);
-    } else {
-        m_duplicateKeepStrategy->setCurrentIndex(2); // first
-    }
-
-    // Network Transfer
-    if (m_networkTransferEnabled) {
-        m_networkTransferEnabled->setChecked(config.getNetworkTransferEnabled());
-        m_networkTransferAutoDiscovery->setChecked(config.getNetworkTransferAutoDiscoveryEnabled());
-        m_networkTransferEncryption->setChecked(config.getNetworkTransferEncryptionEnabled());
-        m_networkTransferCompression->setChecked(config.getNetworkTransferCompressionEnabled());
-        m_networkTransferResume->setChecked(config.getNetworkTransferResumeEnabled());
-        m_networkTransferDiscoveryPort->setValue(config.getNetworkTransferDiscoveryPort());
-        m_networkTransferControlPort->setValue(config.getNetworkTransferControlPort());
-        m_networkTransferDataPort->setValue(config.getNetworkTransferDataPort());
-        m_networkTransferChunkSize->setValue(config.getNetworkTransferChunkSize() / 1024);
-        m_networkTransferMaxBandwidth->setValue(config.getNetworkTransferMaxBandwidth());
-        m_networkTransferRelayServer->setText(config.getNetworkTransferRelayServer());
-    }
-
     m_settingsModified = false;
     m_applyButton->setEnabled(false);
 }
 
 void SettingsDialog::saveSettings() {
     auto& config = ConfigManager::instance();
-
-    // General
-    config.setRestoreWindowGeometry(m_restoreWindowGeometry->isChecked());
 
     // Backup
     config.setBackupThreadCount(m_backupThreadCount->value());
@@ -376,36 +217,6 @@ void SettingsDialog::saveSettings() {
         qaSettings.setValue("show_notifications", m_quickActionsNotifications->isChecked());
         qaSettings.setValue("enable_logging", m_quickActionsLogging->isChecked());
         qaSettings.setValue("compress_backups", m_quickActionsCompress->isChecked());
-    }
-
-    // Organizer
-    config.setOrganizerPreviewMode(m_organizerPreviewMode->isChecked());
-
-    // Duplicate Finder
-    config.setDuplicateMinimumFileSize(static_cast<qint64>(m_duplicateMinFileSize->value()) * 1024);
-    
-    QString strategy;
-    switch (m_duplicateKeepStrategy->currentIndex()) {
-        case 0: strategy = "oldest"; break;
-        case 1: strategy = "newest"; break;
-        case 2: strategy = "first"; break;
-        default: strategy = "first"; break;
-    }
-    config.setDuplicateKeepStrategy(strategy);
-
-    // Network Transfer
-    if (m_networkTransferEnabled) {
-        config.setNetworkTransferEnabled(m_networkTransferEnabled->isChecked());
-        config.setNetworkTransferAutoDiscoveryEnabled(m_networkTransferAutoDiscovery->isChecked());
-        config.setNetworkTransferEncryptionEnabled(m_networkTransferEncryption->isChecked());
-        config.setNetworkTransferCompressionEnabled(m_networkTransferCompression->isChecked());
-        config.setNetworkTransferResumeEnabled(m_networkTransferResume->isChecked());
-        config.setNetworkTransferDiscoveryPort(m_networkTransferDiscoveryPort->value());
-        config.setNetworkTransferControlPort(m_networkTransferControlPort->value());
-        config.setNetworkTransferDataPort(m_networkTransferDataPort->value());
-        config.setNetworkTransferChunkSize(m_networkTransferChunkSize->value() * 1024);
-        config.setNetworkTransferMaxBandwidth(m_networkTransferMaxBandwidth->value());
-        config.setNetworkTransferRelayServer(m_networkTransferRelayServer->text());
     }
 
     // Sync to disk
@@ -427,25 +238,8 @@ bool SettingsDialog::validateSettings() {
     if (m_backupThreadCount->value() < 1) {
         QMessageBox::warning(this, tr("Invalid Setting"), 
                            tr("Thread count must be at least 1."));
-        m_tabWidget->setCurrentIndex(1); // Switch to Backup tab
+        m_tabWidget->setCurrentIndex(0); // Switch to Backup tab
         m_backupThreadCount->setFocus();
-        return false;
-    }
-
-    // Validate minimum file size
-    if (m_duplicateMinFileSize->value() < 0) {
-        QMessageBox::warning(this, tr("Invalid Setting"), 
-                           tr("Minimum file size cannot be negative."));
-        m_tabWidget->setCurrentIndex(2); // Switch to Duplicate Finder tab
-        m_duplicateMinFileSize->setFocus();
-        return false;
-    }
-
-    if (m_networkTransferControlPort && m_networkTransferControlPort->value() == m_networkTransferDataPort->value()) {
-        QMessageBox::warning(this, tr("Invalid Setting"),
-                           tr("Control port and data port must be different."));
-        m_tabWidget->setCurrentIndex(m_tabWidget->count() - 1);
-        m_networkTransferControlPort->setFocus();
         return false;
     }
 

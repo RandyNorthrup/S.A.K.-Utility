@@ -1,3 +1,6 @@
+// Copyright (c) 2025 Randy Northrup. All rights reserved.
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 #pragma once
 
 #include <QQueue>
@@ -7,6 +10,7 @@
 
 namespace sak {
 
+/// @brief Persistent storage for deployment assignment queues
 class AssignmentQueueStore {
 public:
     explicit AssignmentQueueStore(const QString& filePath);

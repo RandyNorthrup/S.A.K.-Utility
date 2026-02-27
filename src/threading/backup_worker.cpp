@@ -1,4 +1,9 @@
+// Copyright (c) 2025 Randy Northrup. All rights reserved.
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 #include "sak/backup_worker.h"
+#include "sak/input_validator.h"
+#include "sak/keep_awake.h"
 #include "sak/logger.h"
 #include "sak/path_utils.h"
 #include <fstream>
@@ -12,9 +17,32 @@ BackupWorker::BackupWorker(const Config& config, QObject* parent)
 
 auto BackupWorker::execute() -> std::expected<void, sak::error_code>
 {
+    sak::KeepAwakeGuard keep_awake(sak::KeepAwake::PowerRequest::System, "Backup operation");
     sak::logInfo("Backup worker started");
     sak::logInfo("Source: {}", m_config.source_path.toStdString());
     sak::logInfo("Destination: {}", m_config.destination_path.toStdString());
+    
+    // Validate source path
+    sak::path_validation_config src_cfg;
+    src_cfg.must_exist = true;
+    src_cfg.must_be_directory = true;
+    src_cfg.check_read_permission = true;
+    auto src_result = sak::input_validator::validatePath(
+        std::filesystem::path(m_config.source_path.toStdString()), src_cfg);
+    if (!src_result) {
+        sak::logError("Source path validation failed: {}", src_result.error_message);
+        return std::unexpected(sak::error_code::invalid_path);
+    }
+    
+    // Validate destination path
+    sak::path_validation_config dst_cfg;
+    dst_cfg.check_write_permission = true;
+    auto dst_result = sak::input_validator::validatePath(
+        std::filesystem::path(m_config.destination_path.toStdString()), dst_cfg);
+    if (!dst_result) {
+        sak::logError("Destination path validation failed: {}", dst_result.error_message);
+        return std::unexpected(sak::error_code::invalid_path);
+    }
     
     m_start_time = std::chrono::steady_clock::now();
     m_last_speed_update = m_start_time;

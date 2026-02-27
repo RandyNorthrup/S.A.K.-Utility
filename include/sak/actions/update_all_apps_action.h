@@ -1,5 +1,5 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 #pragma once
 
@@ -36,6 +36,24 @@ private:
     int m_outdated_count{0};
     QVector<QString> m_outdated_packages;
     bool m_choco_installed{false};
+
+    /// @brief Aggregated results from all update phases
+    struct UpdateSummary {
+        int winget_available{0};
+        int winget_updated{0};
+        int store_updated{0};
+        int choco_updated{0};
+        int total_updated{0};
+        bool winget_installed{false};
+        bool choco_installed{false};
+        QString report;
+        QString structured_output;
+    };
+
+    bool runWingetUpdate(UpdateSummary& summary, const QDateTime& start_time);
+    bool runStoreUpdate(UpdateSummary& summary);
+    bool runChocoUpdate(UpdateSummary& summary, const QDateTime& start_time);
+    void buildUpdateReport(UpdateSummary& summary, qint64 duration_ms) const;
 };
 
 } // namespace sak

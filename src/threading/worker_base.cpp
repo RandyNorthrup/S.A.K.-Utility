@@ -1,5 +1,10 @@
+// Copyright (c) 2025 Randy Northrup. All rights reserved.
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 #include "sak/worker_base.h"
 #include "sak/logger.h"
+
+#include <stdexcept>
 
 WorkerBase::WorkerBase(QObject* parent)
     : QThread(parent)
@@ -11,7 +16,9 @@ WorkerBase::~WorkerBase()
     if (isRunning()) {
         requestStop();
         if (!wait(15000)) {
-            sak::logError("Worker thread did not stop within 15s — potential resource leak");
+            sak::logError("Worker thread did not stop within 15s — forcing termination");
+            terminate();
+            wait(5000);
         }
     }
 }
@@ -39,18 +46,34 @@ void WorkerBase::run()
     
     Q_EMIT started();
     
-    auto result = execute();
-    
-    m_is_running.store(false, std::memory_order_release);
-    
-    if (m_stop_requested.load(std::memory_order_acquire)) {
-        Q_EMIT cancelled();
-    } else if (result) {
-        Q_EMIT finished();
-    } else {
+    try {
+        auto result = execute();
+        
+        m_is_running.store(false, std::memory_order_release);
+        
+        if (m_stop_requested.load(std::memory_order_acquire)) {
+            Q_EMIT cancelled();
+        } else if (result) {
+            Q_EMIT finished();
+        } else {
+            Q_EMIT failed(
+                static_cast<int>(result.error()),
+                QString::fromStdString(std::string(sak::to_string(result.error())))
+            );
+        }
+    } catch (const std::exception& e) {
+        m_is_running.store(false, std::memory_order_release);
+        sak::logError("Worker thread threw exception: {}", e.what());
         Q_EMIT failed(
-            static_cast<int>(result.error()),
-            QString::fromStdString(std::string(sak::to_string(result.error())))
+            static_cast<int>(sak::error_code::internal_error),
+            QString("Unhandled exception: %1").arg(e.what())
+        );
+    } catch (...) {
+        m_is_running.store(false, std::memory_order_release);
+        sak::logError("Worker thread threw unknown exception");
+        Q_EMIT failed(
+            static_cast<int>(sak::error_code::internal_error),
+            QStringLiteral("Unhandled unknown exception")
         );
     }
 }

@@ -1,5 +1,5 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 #pragma once
 
@@ -29,6 +29,7 @@ public:
     void execute() override;
 
 private:
+    /// @brief Status and version information for the Windows Store package
     struct StorePackageInfo {
         QString name;
         QString version;

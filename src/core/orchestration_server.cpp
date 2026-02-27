@@ -1,3 +1,6 @@
+// Copyright (c) 2025 Randy Northrup. All rights reserved.
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 #include "sak/orchestration_server.h"
 
 #include <QTcpServer>

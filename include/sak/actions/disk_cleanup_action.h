@@ -1,5 +1,5 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 #pragma once
 
@@ -40,6 +40,7 @@ public:
     void execute() override;
 
 private:
+    /// @brief Represents a directory or cache targeted for cleanup with size and file count
     struct CleanupTarget {
         QString path;
         QString description;

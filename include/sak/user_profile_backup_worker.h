@@ -1,3 +1,6 @@
+// Copyright (c) 2025 Randy Northrup. All rights reserved.
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 #pragma once
 
 #include "sak/user_profile_types.h"
@@ -126,7 +129,7 @@ private:
     QVector<UserProfile> m_users;
     QString m_destinationPath;
     SmartFilter m_smartFilter;
-    PermissionMode m_permissionMode;
+    PermissionMode m_permissionMode{PermissionMode::StripAll};
     int m_compressionLevel{6};
     bool m_encrypt{false};
     QString m_password;

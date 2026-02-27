@@ -1,5 +1,5 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 /**
  * RESEARCH-BASED IMPLEMENTATION (3 Sources - December 15, 2025)
@@ -79,7 +79,6 @@
 #include <QDir>
 #include <QDateTime>
 #include "sak/process_runner.h"
-#include <QProcess>
 #include <QStandardPaths>
 
 namespace sak {
@@ -154,59 +153,129 @@ void BackupActivationKeysAction::scan() {
 
 void BackupActivationKeysAction::execute() {
     if (isCancelled()) {
-        ExecutionResult result;
-        result.success = false;
-        result.message = "Activation key backup cancelled";
-        setExecutionResult(result);
-        setStatus(ActionStatus::Cancelled);
-        Q_EMIT executionComplete(result);
+        emitCancelledResult("Activation key backup cancelled");
         return;
     }
 
     setStatus(ActionStatus::Running);
     QDateTime start_time = QDateTime::currentDateTime();
-
-    auto finish_cancelled = [this, &start_time]() {
-        ExecutionResult result;
-        result.success = false;
-        result.message = "Activation key backup cancelled";
-        result.duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
-        setExecutionResult(result);
-        setStatus(ActionStatus::Cancelled);
-        Q_EMIT executionComplete(result);
-    };
     
-    QString report = "";
+    QString report = buildReportHeader();
+    
+    Q_EMIT executionProgress("Retrieving Windows license information...", 20);
+    
+    QString win_partial_key;
+    QString win_license_status;
+    queryWindowsLicense(report, win_partial_key, win_license_status);
+
+    if (isCancelled()) {
+        emitCancelledResult("Activation key backup cancelled", start_time);
+        return;
+    }
+    
+    Q_EMIT executionProgress("Attempting OEM key extraction...", 40);
+    queryOemKey(report);
+
+    if (isCancelled()) {
+        emitCancelledResult("Activation key backup cancelled", start_time);
+        return;
+    }
+    
+    report += "╠══════════════════════════════════════════════════════════════════════╣\n";
+    
+    Q_EMIT executionProgress("Checking Microsoft Office licenses...", 60);
+    int office_licenses_found = queryOfficeLicenses(report);
+    
+    report += "╠══════════════════════════════════════════════════════════════════════╣\n";
+    
+    Q_EMIT executionProgress("Saving backup file...", 80);
+    
+    // Determine backup path
+    QString backup_path = m_backup_location;
+    if (backup_path.isEmpty()) {
+        backup_path = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation) + "/SAK_Backups";
+    }
+    
+    QDir backup_dir(backup_path + "/ActivationKeys");
+    backup_dir.mkpath(".");
+    
+    QString timestamp = QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss");
+    QString filepath = backup_dir.filePath(QString("ActivationKeys_%1.txt").arg(timestamp));
+    
+    int total_licenses = (win_partial_key.isEmpty() ? 0 : 1) + office_licenses_found;
+    
+    appendBackupNotes(report, total_licenses, filepath);
+    
+    bool save_success = saveReportFile(report, filepath, win_partial_key, win_license_status, office_licenses_found);
+    
+    // Build structured output for external processing
+    QString structured_output = "\n";
+    structured_output += QString("WINDOWS_LICENSE_FOUND:%1\n").arg(win_partial_key.isEmpty() ? "NO" : "YES");
+    if (!win_partial_key.isEmpty()) {
+        structured_output += QString("WINDOWS_PARTIAL_KEY:%1\n").arg(win_partial_key);
+        structured_output += QString("WINDOWS_STATUS:%1\n").arg(win_license_status);
+    }
+    structured_output += QString("OFFICE_LICENSES_FOUND:%1\n").arg(office_licenses_found);
+    structured_output += QString("TOTAL_LICENSES:%1\n").arg(total_licenses);
+    structured_output += QString("BACKUP_FILE:%1\n").arg(filepath);
+    structured_output += QString("BACKUP_SAVED:%1\n").arg(save_success ? "YES" : "NO");
+    
+    qint64 duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
+    
+    ExecutionResult result;
+    result.duration_ms = duration_ms;
+    result.files_processed = total_licenses;
+    result.output_path = filepath;
+    result.message = report + structured_output;
+    
+    if (save_success && total_licenses > 0) {
+        result.success = true;
+        result.log = QString("Backed up %1 license(s) - KEEP SECURE!").arg(total_licenses);
+        finishWithResult(result, ActionStatus::Success);
+    } else if (save_success) {
+        result.success = true;
+        result.log = "Backup file created but no activation keys detected";
+        finishWithResult(result, ActionStatus::Success);
+    } else {
+        result.success = false;
+        result.log = "Failed to save backup file";
+        finishWithResult(result, ActionStatus::Failed);
+    }
+}
+
+// ============================================================================
+// Private Helpers
+// ============================================================================
+
+QString BackupActivationKeysAction::buildReportHeader() const
+{
+    QString report;
     report += "╔══════════════════════════════════════════════════════════════════════╗\n";
     report += "║          PRODUCT ACTIVATION KEYS & LICENSE INFORMATION              ║\n";
     report += "╠══════════════════════════════════════════════════════════════════════╣\n";
     report += QString("║ Backup Date: %1").arg(QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss").leftJustified(53)) + QString("║\n");
     report += "║ ⚠ SENSITIVE INFORMATION - KEEP SECURE                               ║\n";
     report += "╠══════════════════════════════════════════════════════════════════════╣\n";
-    
-    Q_EMIT executionProgress("Retrieving Windows license information...", 20);
-    
+    return report;
+}
+
+void BackupActivationKeysAction::queryWindowsLicense(QString& report, QString& partial_key, QString& license_status)
+{
     // Phase 1: Get Windows license information using slmgr.vbs /dlv
     // slmgr.vbs (Software License Manager) is located in C:\Windows\System32\
     // /dlv = Display detailed License information for the current license
     // Reference: https://learn.microsoft.com/windows-server/get-started/activation-slmgr-vbs-options
-    // Reference: https://learn.microsoft.com/office/volume-license-activation/tools-to-manage-volume-activation-of-office
     ProcessResult win_license_proc = runPowerShell("cscript //NoLogo C:\\Windows\\System32\\slmgr.vbs /dlv", 15000);
     if (!win_license_proc.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("Windows license query warning: " + win_license_proc.std_err.trimmed());
     }
     QString win_license_output = win_license_proc.std_out.trimmed();
 
-    if (isCancelled()) {
-        finish_cancelled();
-        return;
-    }
-    
-    QString win_name = "";
-    QString win_description = "";
-    QString win_partial_key = "";
-    QString win_license_status = "";
-    QString win_activation_id = "";
+    QString win_name;
+    QString win_description;
+    QString win_activation_id;
+    partial_key.clear();
+    license_status.clear();
     
     // Parse slmgr.vbs /dlv output
     // Fields: Name (edition), Description (RETAIL/VOLUME/OEM), Partial Product Key (last 5 chars),
@@ -218,9 +287,9 @@ void BackupActivationKeysAction::execute() {
         } else if (line.contains("Description:") && !line.contains("remains")) {
             win_description = line.split("Description:").last().trimmed();
         } else if (line.contains("Partial Product Key:")) {
-            win_partial_key = line.split("Partial Product Key:").last().trimmed();
+            partial_key = line.split("Partial Product Key:").last().trimmed();
         } else if (line.contains("License Status:")) {
-            win_license_status = line.split("License Status:").last().trimmed();
+            license_status = line.split("License Status:").last().trimmed();
         } else if (line.contains("Activation ID:")) {
             win_activation_id = line.split("Activation ID:").last().trimmed();
         }
@@ -232,7 +301,6 @@ void BackupActivationKeysAction::execute() {
     }
     if (!win_description.isEmpty()) {
         report += QString("║   Description: %1").arg(win_description.left(57).leftJustified(57)) + QString("║\n");
-        // Identify license type from description
         if (win_description.contains("RETAIL", Qt::CaseInsensitive)) {
             report += "║   License Type: RETAIL (purchased from retail/online store)         ║\n";
         } else if (win_description.contains("OEM", Qt::CaseInsensitive)) {
@@ -241,23 +309,22 @@ void BackupActivationKeysAction::execute() {
             report += "║   License Type: VOLUME (enterprise/organizational license)          ║\n";
         }
     }
-    if (!win_partial_key.isEmpty()) {
-        report += QString("║   Partial Product Key: xxxxx-xxxxx-xxxxx-xxxxx-%1").arg(win_partial_key.leftJustified(12)) + QString("║\n");
+    if (!partial_key.isEmpty()) {
+        report += QString("║   Partial Product Key: xxxxx-xxxxx-xxxxx-xxxxx-%1").arg(partial_key.leftJustified(12)) + QString("║\n");
     }
-    if (!win_license_status.isEmpty()) {
-        report += QString("║   License Status: %1").arg(win_license_status.leftJustified(48)) + QString("║\n");
+    if (!license_status.isEmpty()) {
+        report += QString("║   License Status: %1").arg(license_status.leftJustified(48)) + QString("║\n");
     }
     if (!win_activation_id.isEmpty()) {
         report += QString("║   Activation ID: %1").arg(win_activation_id.left(49).leftJustified(49)) + QString("║\n");
     }
-    
-    Q_EMIT executionProgress("Attempting OEM key extraction...", 40);
-    
+}
+
+void BackupActivationKeysAction::queryOemKey(QString& report)
+{
     // Phase 2: Try to get OEM product key (OA3xOriginalProductKey)
     // OEM Activation 3.0 (OA3) stores the product key in the firmware (BIOS/UEFI)
-    // Uses the ACPI_SLIC table / MSDM (Microsoft Software Description Table)
     // Reference: https://learn.microsoft.com/windows-hardware/manufacture/desktop/oa3-staging-master-image-w-default-key
-    // The OA3xOriginalProductKey property retrieves the firmware-injected DPK (Digital Product Key)
     ProcessResult oem_key_proc = runPowerShell(
         "try { "
            "$key = (Get-CimInstance -ClassName SoftwareLicensingService).OA3xOriginalProductKey; "
@@ -271,11 +338,6 @@ void BackupActivationKeysAction::execute() {
         Q_EMIT logMessage("OEM key query warning: " + oem_key_proc.std_err.trimmed());
     }
     QString oem_output = oem_key_proc.std_out.trimmed();
-
-    if (isCancelled()) {
-        finish_cancelled();
-        return;
-    }
     
     if (oem_output.contains("OEM_KEY:") && !oem_output.contains("NOT_FOUND") && !oem_output.contains("ERROR")) {
         QString oem_key = oem_output.split("OEM_KEY:").last().trimmed();
@@ -288,31 +350,24 @@ void BackupActivationKeysAction::execute() {
         report += "║   • System may use RETAIL or VOLUME license (not OEM)               ║\n";
         report += "║   • Older OEM systems (pre-Windows 8) don't store key in BIOS       ║\n";
     }
-    
-    report += "╠══════════════════════════════════════════════════════════════════════╣\n";
-    
-    Q_EMIT executionProgress("Checking Microsoft Office licenses...", 60);
-    
+}
+
+int BackupActivationKeysAction::queryOfficeLicenses(QString& report)
+{
     // Phase 3: Check for Office installations and licenses using ospp.vbs
     // ospp.vbs (Office Software Protection Platform script) manages Office activation
-    // Located in: Program Files\Microsoft Office\root\Office16 (Click-to-Run)
-    //         or: Program Files\Microsoft Office\Office16 (MSI install)
-    // /dstatus = Display detailed status information for all installed Office licenses
     // Reference: https://learn.microsoft.com/office/volume-license-activation/tools-to-manage-volume-activation-of-office
-    // Note: ospp.vbs does NOT work for Microsoft 365 Apps (use vnextdiag.ps1 instead)
     report += "║ ▸ Microsoft Office License Information (via ospp.vbs /dstatus):     ║\n";
     
-    // Check common Office installation paths
-    // Office 2016/2019/2021 use Office16 folder; Office 2013 uses Office15
     QStringList office_paths = {
-        "C:/Program Files/Microsoft Office/root/Office16/OSPP.VBS",  // Office 2016/2019/2021 Click-to-Run (most common)
-        "C:/Program Files (x86)/Microsoft Office/Office16/OSPP.VBS", // Office 2016/2019/2021 MSI 32-bit
-        "C:/Program Files/Microsoft Office/Office16/OSPP.VBS",       // Office 2016/2019/2021 MSI 64-bit
-        "C:/Program Files/Microsoft Office/root/Office15/OSPP.VBS",  // Office 2013 Click-to-Run
-        "C:/Program Files (x86)/Microsoft Office/Office15/OSPP.VBS"  // Office 2013 MSI 32-bit
+        "C:/Program Files/Microsoft Office/root/Office16/OSPP.VBS",
+        "C:/Program Files (x86)/Microsoft Office/Office16/OSPP.VBS",
+        "C:/Program Files/Microsoft Office/Office16/OSPP.VBS",
+        "C:/Program Files/Microsoft Office/root/Office15/OSPP.VBS",
+        "C:/Program Files (x86)/Microsoft Office/Office15/OSPP.VBS"
     };
     
-    QString ospp_path = "";
+    QString ospp_path;
     for (const QString& path : office_paths) {
         if (QFile::exists(path)) {
             ospp_path = path;
@@ -334,21 +389,16 @@ void BackupActivationKeysAction::execute() {
         QString office_output = office_proc.std_out.trimmed();
         
         // Parse office output for LICENSE NAME, LAST 5 CHARACTERS, and LICENSE STATUS
-        // ospp.vbs output format:
-        //   LICENSE NAME: <product name>
-        //   Last 5 characters of installed product key: XXXXX
-        //   LICENSE STATUS: <Licensed/Unlicensed/etc>
         QStringList office_lines = office_output.split("\n");
-        QString current_product = "";
-        QString current_key = "";
-        QString current_status = "";
+        QString current_product;
+        QString current_key;
+        QString current_status;
         
         for (const QString& line : office_lines) {
             QString trimmed = line.trimmed();
             
             if (trimmed.startsWith("LICENSE NAME:")) {
                 if (!current_product.isEmpty() && !current_key.isEmpty()) {
-                    // Report previous product
                     report += QString("║   • %1").arg(current_product.left(64).leftJustified(64)) + QString("║\n");
                     report += QString("║     Key: xxxxx-xxxxx-xxxxx-xxxxx-%1").arg(current_key.leftJustified(28)) + QString("║\n");
                     if (!current_status.isEmpty()) {
@@ -358,8 +408,8 @@ void BackupActivationKeysAction::execute() {
                 }
                 
                 current_product = trimmed.split("LICENSE NAME:").last().trimmed();
-                current_key = "";
-                current_status = "";
+                current_key.clear();
+                current_status.clear();
                 
             } else if (trimmed.startsWith("Last 5 characters of installed product key:")) {
                 current_key = trimmed.split("Last 5 characters of installed product key:").last().trimmed();
@@ -391,24 +441,11 @@ void BackupActivationKeysAction::execute() {
         report += "║   • For Microsoft 365 Apps, use different detection method           ║\n";
     }
     
-    report += "╠══════════════════════════════════════════════════════════════════════╣\n";
-    
-    Q_EMIT executionProgress("Saving backup file...", 80);
-    
-    // Phase 4: Save backup file
-    QString backup_path = m_backup_location;
-    if (backup_path.isEmpty()) {
-        backup_path = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation) + "/SAK_Backups";
-    }
-    
-    QDir backup_dir(backup_path + "/ActivationKeys");
-    backup_dir.mkpath(".");
-    
-    QString timestamp = QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss");
-    QString filepath = backup_dir.filePath(QString("ActivationKeys_%1.txt").arg(timestamp));
-    
-    int total_licenses = (win_partial_key.isEmpty() ? 0 : 1) + office_licenses_found;
-    
+    return office_licenses_found;
+}
+
+void BackupActivationKeysAction::appendBackupNotes(QString& report, int total_licenses, const QString& filepath)
+{
     report += QString("║ Summary:                                                             ║\n");
     report += QString("║   Total Licenses Found: %1").arg(QString::number(total_licenses).leftJustified(46)) + QString("║\n");
     report += QString("║   Backup Location: %1").arg(filepath.left(49).leftJustified(49)) + QString("║\n");
@@ -451,54 +488,26 @@ void BackupActivationKeysAction::execute() {
     report += "║   • Do not share product keys publicly or with unauthorized persons ║\n";
     report += "║   • File permissions set to: Owner Read/Write Only                   ║\n";
     report += "╚══════════════════════════════════════════════════════════════════════╝\n";
+}
+
+bool BackupActivationKeysAction::saveReportFile(const QString& report, const QString& filepath,
+                                                const QString& partial_key, const QString& license_status,
+                                                int office_count)
+{
+    Q_UNUSED(partial_key)
+    Q_UNUSED(license_status)
+    Q_UNUSED(office_count)
     
     QFile file(filepath);
-    bool save_success = false;
-    if (file.open(QIODevice::WriteOnly | QIODevice::Text)) {
-        file.write(report.toUtf8());
-        file.close();
-        
-        // Set restrictive permissions (owner read/write only)
-        file.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner);
-        save_success = true;
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        return false;
     }
+    file.write(report.toUtf8());
+    file.close();
     
-    // Structured output for external processing
-    QString structured_output = "\n";
-    structured_output += QString("WINDOWS_LICENSE_FOUND:%1\n").arg(win_partial_key.isEmpty() ? "NO" : "YES");
-    if (!win_partial_key.isEmpty()) {
-        structured_output += QString("WINDOWS_PARTIAL_KEY:%1\n").arg(win_partial_key);
-        structured_output += QString("WINDOWS_STATUS:%1\n").arg(win_license_status);
-    }
-    structured_output += QString("OFFICE_LICENSES_FOUND:%1\n").arg(office_licenses_found);
-    structured_output += QString("TOTAL_LICENSES:%1\n").arg(total_licenses);
-    structured_output += QString("BACKUP_FILE:%1\n").arg(filepath);
-    structured_output += QString("BACKUP_SAVED:%1\n").arg(save_success ? "YES" : "NO");
-    
-    qint64 duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
-    
-    ExecutionResult result;
-    result.duration_ms = duration_ms;
-    result.files_processed = total_licenses;
-    result.output_path = filepath;
-    result.message = report + structured_output;
-    
-    if (save_success && total_licenses > 0) {
-        result.success = true;
-        result.log = QString("Backed up %1 license(s) - KEEP SECURE!").arg(total_licenses);
-        setStatus(ActionStatus::Success);
-    } else if (save_success) {
-        result.success = true;
-        result.log = "Backup file created but no activation keys detected";
-        setStatus(ActionStatus::Success);
-    } else {
-        result.success = false;
-        result.log = "Failed to save backup file";
-        setStatus(ActionStatus::Failed);
-    }
-    
-    setExecutionResult(result);
-    Q_EMIT executionComplete(result);
+    // Set restrictive permissions (owner read/write only)
+    file.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner);
+    return true;
 }
 
 } // namespace sak

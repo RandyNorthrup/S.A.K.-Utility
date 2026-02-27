@@ -1,3 +1,6 @@
+// Copyright (c) 2025 Randy Northrup. All rights reserved.
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 #pragma once
 
 #include <QObject>
@@ -34,10 +37,10 @@ public:
      * @brief Result structure for Chocolatey operations
      */
     struct Result {
-        bool success;
+        bool success{false};
         QString output;
         QString error_message;
-        int exit_code;
+        int exit_code{-1};
     };
 
     /**
@@ -48,8 +51,8 @@ public:
         QString version;
         QString title;
         QString description;
-        bool is_approved;
-        int download_count;
+        bool is_approved{false};
+        int download_count{0};
     };
 
     /**
@@ -58,11 +61,11 @@ public:
     struct InstallConfig {
         QString package_name;
         QString version;          // Empty = latest stable
-        bool version_locked;      // If true, install specific version
-        bool auto_confirm;        // -y flag
-        bool force;               // --force flag
-        bool allow_unofficial;    // Allow unofficial sources
-        int timeout_seconds;      // Command timeout (0 = no timeout)
+        bool version_locked{false};      // If true, install specific version
+        bool auto_confirm{true};        // -y flag
+        bool force{false};               // --force flag
+        bool allow_unofficial{false};    // Allow unofficial sources
+        int timeout_seconds{0};      // Command timeout (0 = no timeout)
         QStringList extra_args;   // Additional choco arguments
     };
 

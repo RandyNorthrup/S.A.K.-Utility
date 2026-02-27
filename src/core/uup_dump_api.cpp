@@ -1,5 +1,5 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 /**
  * @file uup_dump_api.cpp
@@ -144,7 +144,10 @@ QList<UupDumpApi::ReleaseChannel> UupDumpApi::allChannels() {
 
 void UupDumpApi::onBuildsFetchReply() {
     QNetworkReply* reply = qobject_cast<QNetworkReply*>(sender());
-    if (!reply) return;
+    if (!reply) {
+        sak::logError("onBuildsFetchReply: sender is not a QNetworkReply — signal/slot mismatch");
+        return;
+    }
 
     m_pendingReplies.removeOne(reply);
     reply->deleteLater();
@@ -203,7 +206,10 @@ void UupDumpApi::onBuildsFetchReply() {
 
 void UupDumpApi::onLanguagesReply() {
     QNetworkReply* reply = qobject_cast<QNetworkReply*>(sender());
-    if (!reply) return;
+    if (!reply) {
+        sak::logError("onLanguagesReply: sender is not a QNetworkReply — signal/slot mismatch");
+        return;
+    }
 
     m_pendingReplies.removeOne(reply);
     reply->deleteLater();
@@ -220,7 +226,9 @@ void UupDumpApi::onLanguagesReply() {
     QJsonDocument doc = QJsonDocument::fromJson(data, &parseError);
 
     if (parseError.error != QJsonParseError::NoError) {
-        Q_EMIT apiError(QString("JSON parse error: %1").arg(parseError.errorString()));
+        QString errorMsg = QString("JSON parse error in languages response: %1").arg(parseError.errorString());
+        sak::logError(errorMsg.toStdString());
+        Q_EMIT apiError(errorMsg);
         return;
     }
 
@@ -268,7 +276,10 @@ void UupDumpApi::onLanguagesReply() {
 
 void UupDumpApi::onEditionsReply() {
     QNetworkReply* reply = qobject_cast<QNetworkReply*>(sender());
-    if (!reply) return;
+    if (!reply) {
+        sak::logError("onEditionsReply: sender is not a QNetworkReply — signal/slot mismatch");
+        return;
+    }
 
     m_pendingReplies.removeOne(reply);
     reply->deleteLater();
@@ -285,7 +296,9 @@ void UupDumpApi::onEditionsReply() {
     QJsonDocument doc = QJsonDocument::fromJson(data, &parseError);
 
     if (parseError.error != QJsonParseError::NoError) {
-        Q_EMIT apiError(QString("JSON parse error: %1").arg(parseError.errorString()));
+        QString errorMsg = QString("JSON parse error in editions response: %1").arg(parseError.errorString());
+        sak::logError(errorMsg.toStdString());
+        Q_EMIT apiError(errorMsg);
         return;
     }
 
@@ -328,7 +341,10 @@ void UupDumpApi::onEditionsReply() {
 
 void UupDumpApi::onFilesReply() {
     QNetworkReply* reply = qobject_cast<QNetworkReply*>(sender());
-    if (!reply) return;
+    if (!reply) {
+        sak::logError("onFilesReply: sender is not a QNetworkReply — signal/slot mismatch");
+        return;
+    }
 
     m_pendingReplies.removeOne(reply);
     reply->deleteLater();
@@ -345,7 +361,9 @@ void UupDumpApi::onFilesReply() {
     QJsonDocument doc = QJsonDocument::fromJson(data, &parseError);
 
     if (parseError.error != QJsonParseError::NoError) {
-        Q_EMIT apiError(QString("JSON parse error: %1").arg(parseError.errorString()));
+        QString errorMsg = QString("JSON parse error in files response: %1").arg(parseError.errorString());
+        sak::logError(errorMsg.toStdString());
+        Q_EMIT apiError(errorMsg);
         return;
     }
 

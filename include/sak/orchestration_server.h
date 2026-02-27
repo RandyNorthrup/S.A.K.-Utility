@@ -1,3 +1,6 @@
+// Copyright (c) 2025 Randy Northrup. All rights reserved.
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 #pragma once
 
 #include <QObject>
@@ -12,6 +15,7 @@ class QTcpSocket;
 
 namespace sak {
 
+/// @brief TCP server managing destination PC connections
 class OrchestrationServer : public OrchestrationServerInterface {
     Q_OBJECT
 

@@ -1,3 +1,6 @@
+// Copyright (c) 2025 Randy Northrup. All rights reserved.
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 #pragma once
 
 #include "sak/app_scanner.h"
@@ -35,9 +38,9 @@ public:
     struct MatchResult {
         QString choco_package;      // Chocolatey package name
         QString matched_name;       // Name that was matched
-        double confidence;          // 0.0 - 1.0 (1.0 = perfect match)
+        double confidence{0.0};          // 0.0 - 1.0 (1.0 = perfect match)
         QString match_type;         // "exact", "fuzzy", "search", "manual"
-        bool available;             // Is package available in Chocolatey?
+        bool available{false};             // Is package available in Chocolatey?
         QString version;            // Latest available version
     };
 

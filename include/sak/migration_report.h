@@ -1,3 +1,6 @@
+// Copyright (c) 2025 Randy Northrup. All rights reserved.
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 #pragma once
 
 #include "sak/app_scanner.h"
@@ -42,14 +45,14 @@ public:
         
         // Match information
         QString choco_package;
-        double confidence;
+        double confidence{0.0};
         QString match_type;  // "exact", "fuzzy", "search", "manual", "none"
-        bool available;
+        bool available{false};
         QString available_version;
         
         // Migration control
-        bool selected;           // User wants to migrate this app
-        bool version_lock;       // Install specific version (if available)
+        bool selected{false};           // User wants to migrate this app
+        bool version_lock{false};       // Install specific version (if available)
         QString locked_version;  // Version to install when locked
         QString notes;           // User notes
         
@@ -68,10 +71,10 @@ public:
         QString source_os_version;
         QString created_by;
         QDateTime created_at;
-        int total_apps;
-        int matched_apps;
-        int selected_apps;
-        double match_rate;
+        int total_apps{0};
+        int matched_apps{0};
+        int selected_apps{0};
+        double match_rate{0.0};
         QString report_version;  // Format version for compatibility
     };
 

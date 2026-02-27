@@ -1,3 +1,6 @@
+// Copyright (c) 2025 Randy Northrup. All rights reserved.
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 /// @file file_hash.h
 /// @brief File hashing utilities with MD5 and SHA-256 support
 /// @note Thread-safe, memory-efficient chunked hashing

@@ -1,3 +1,6 @@
+// Copyright (c) 2025 Randy Northrup. All rights reserved.
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 #pragma once
 
 #include <QMainWindow>
@@ -6,6 +9,8 @@
 #include <QProgressBar>
 #include <QLabel>
 #include <QMenuBar>
+#include <QMap>
+#include <QStringList>
 #include <memory>
 
 // Forward declarations for feature panels
@@ -18,6 +23,9 @@ namespace sak {
     class AppMigrationPanel;
     class QuickActionsPanel;
     class NetworkTransferPanel;
+    class DiagnosticBenchmarkPanel;
+    class DetachableLogWindow;
+    class LogToggleSwitch;
 }
 
 /**
@@ -72,20 +80,9 @@ public Q_SLOTS:
     void setProgressVisible(bool visible);
 
 private Q_SLOTS:
-    /**
-     * @brief Handle About dialog
-     */
     void onAboutClicked();
-
-    /**
-     * @brief Handle Exit action
-     */
     void onExitClicked();
-
-    /**
-     * @brief Handle Settings dialog
-     */
-    void onSettingsClicked();
+    void onTabChanged(int index);
 
 private:
     /**
@@ -119,11 +116,9 @@ private:
     void saveWindowState();
 
 protected:
-    /**
-     * @brief Handle window close event
-     * @param event Close event
-     */
     void closeEvent(QCloseEvent* event) override;
+    void moveEvent(QMoveEvent* event) override;
+    void resizeEvent(QResizeEvent* event) override;
 
 private:
     // Central widget - tab container
@@ -137,8 +132,15 @@ private:
     std::unique_ptr<ImageFlasherPanel> m_image_flasher_panel;
     std::unique_ptr<sak::QuickActionsPanel> m_quick_actions_panel;
     std::unique_ptr<sak::NetworkTransferPanel> m_network_transfer_panel;
+    std::unique_ptr<sak::DiagnosticBenchmarkPanel> m_diagnostic_panel;
 
     // Status bar components
     QLabel* m_status_label{nullptr};
     QProgressBar* m_progress_bar{nullptr};
+
+    // Shared log window
+    sak::DetachableLogWindow* m_logWindow{nullptr};
+
+    // Per-panel log storage for tab-aware log switching
+    QMap<int, QStringList> m_panelLogs;
 };

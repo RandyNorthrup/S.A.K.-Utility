@@ -1,3 +1,6 @@
+// Copyright (c) 2025 Randy Northrup. All rights reserved.
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 #include <QtTest/QtTest>
 
 #include "sak/parallel_transfer_manager.h"
@@ -163,7 +166,7 @@ void ParallelTransferManagerTests::schedulesRetryBackoff() {
     startSpy.clear();
     manager.retryJob(retryJobId);
 
-    // Retry is delayed by backoff (base 50ms) — verify it eventually fires
+    // Retry is delayed by backoff (base 50ms) â€” verify it eventually fires
     QTRY_VERIFY2_WITH_TIMEOUT(startSpy.count() >= 1, "Expected retried job to start after backoff", 2000);
 }
 

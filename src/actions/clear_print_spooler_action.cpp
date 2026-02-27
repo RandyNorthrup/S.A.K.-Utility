@@ -1,5 +1,5 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "sak/actions/clear_print_spooler_action.h"
 #include "sak/process_runner.h"
@@ -74,19 +74,62 @@ void ClearPrintSpoolerAction::scan() {
 }
 
 void ClearPrintSpoolerAction::execute() {
-    if (isCancelled()) {
-        return;
-    }
-
+    if (isCancelled()) return;
     setStatus(ActionStatus::Running);
     QDateTime start_time = QDateTime::currentDateTime();
-    
+
     Q_EMIT executionProgress("╔════════════════════════════════════════════════════════════════╗", 0);
     Q_EMIT executionProgress("║     PRINT SPOOLER CLEARING - ENTERPRISE MODE                  ║", 0);
     Q_EMIT executionProgress("╠════════════════════════════════════════════════════════════════╣", 0);
-    
-    // Enterprise PowerShell script with Get-Service verification
-    QString ps_script = QString(
+
+    Q_EMIT executionProgress("║ Checking Print Spooler service status...                     ║", 20);
+    ProcessResult ps = runPowerShell(buildSpoolerScript(), 60000);
+    Q_EMIT executionProgress("║ Stopping service with Stop-Service...                        ║", 40);
+
+    if (ps.timed_out || isCancelled()) {
+        if (isCancelled()) {
+            emitCancelledResult("Spooler clearing cancelled", start_time);
+        } else {
+            emitFailedResult("Operation timed out", {}, start_time);
+        }
+        return;
+    }
+
+    Q_EMIT executionProgress("║ Clearing spool files and restarting...                       ║", 60);
+
+    if (!ps.std_err.trimmed().isEmpty()) {
+        Q_EMIT logMessage("Spooler clear warning: " + ps.std_err.trimmed());
+    }
+
+    SpoolerResult spooler = parseSpoolerOutput(ps.std_out);
+    qint64 duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
+
+    Q_EMIT executionProgress("╠════════════════════════════════════════════════════════════════╣", 80);
+
+    ExecutionResult result;
+    result.duration_ms = duration_ms;
+    result.files_processed = spooler.cleared;
+    result.bytes_processed = spooler.size_before;
+
+    if (spooler.start_success && spooler.stop_success) {
+        result.success = true;
+        result.message = spooler.files_before > 0
+            ? QString("Cleared %1 stuck print job(s)").arg(spooler.cleared)
+            : "Print spooler refreshed (no stuck jobs)";
+        result.log = buildSuccessLog(spooler, duration_ms);
+        finishWithResult(result, ActionStatus::Success);
+    } else {
+        result.success = false;
+        result.message = "Failed to manage Print Spooler service";
+        result.log = buildFailureLog(spooler, duration_ms);
+        finishWithResult(result, ActionStatus::Failed);
+    }
+}
+
+// ─── Private Helpers ────────────────────────────────────────────────────────────
+
+QString ClearPrintSpoolerAction::buildSpoolerScript() const {
+    return QString(
         "$ErrorActionPreference = 'Continue'\n"
         "$spoolPath = 'C:\\Windows\\System32\\spool\\PRINTERS'\n"
         "$results = @{}\n"
@@ -189,145 +232,96 @@ void ClearPrintSpoolerAction::execute() {
         "Write-Output \"FINAL_STATUS:$($results['FinalStatus'])\"\n"
         "Write-Output \"FILES_AFTER:$($results['FilesAfter'])\"\n"
     );
-    
-    Q_EMIT executionProgress("║ Checking Print Spooler service status...                     ║", 20);
-    
-    ProcessResult ps = runPowerShell(ps_script, 60000);
+}
 
-    Q_EMIT executionProgress("║ Stopping service with Stop-Service...                        ║", 40);
+ClearPrintSpoolerAction::SpoolerResult ClearPrintSpoolerAction::parseSpoolerOutput(const QString& output) const {
+    SpoolerResult spooler;
+    const QStringList lines = output.split('\n', Qt::SkipEmptyParts);
 
-    if (ps.timed_out || isCancelled()) {
-        ExecutionResult result;
-        result.success = false;
-        result.message = isCancelled() ? "Spooler clearing cancelled" : "Operation timed out";
-        result.duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
-        setExecutionResult(result);
-        setStatus(ActionStatus::Failed);
-        Q_EMIT executionComplete(result);
-        return;
-    }
-    
-    Q_EMIT executionProgress("║ Clearing spool files and restarting...                       ║", 60);
-    
-    if (!ps.std_err.trimmed().isEmpty()) {
-        Q_EMIT logMessage("Spooler clear warning: " + ps.std_err.trimmed());
-    }
-    QString output = ps.std_out;
-    qint64 duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
-    
-    // Parse results
-    QStringList lines = output.split('\n', Qt::SkipEmptyParts);
-    QString initial_status, final_status;
-    int files_before = 0, files_after = 0, cleared = 0;
-    qint64 size_before = 0;
-    bool stop_success = false, start_success = false;
-    QStringList errors;
-    
     for (const QString& line : lines) {
         QString trimmed = line.trimmed();
         if (trimmed.startsWith("INITIAL_STATUS:")) {
-            initial_status = trimmed.mid(15);
+            spooler.initial_status = trimmed.mid(15);
         } else if (trimmed.startsWith("FILES_BEFORE:")) {
-            files_before = trimmed.mid(13).toInt();
+            spooler.files_before = trimmed.mid(13).toInt();
         } else if (trimmed.startsWith("SIZE_BEFORE:")) {
-            size_before = trimmed.mid(12).toLongLong();
+            spooler.size_before = trimmed.mid(12).toLongLong();
         } else if (trimmed.startsWith("STOP_SUCCESS:")) {
-            stop_success = (trimmed.mid(13) == "True");
+            spooler.stop_success = (trimmed.mid(13) == "True");
         } else if (trimmed.startsWith("CLEARED:")) {
-            cleared = trimmed.mid(8).toInt();
+            spooler.cleared = trimmed.mid(8).toInt();
         } else if (trimmed.startsWith("START_SUCCESS:")) {
-            start_success = (trimmed.mid(14) == "True");
+            spooler.start_success = (trimmed.mid(14) == "True");
         } else if (trimmed.startsWith("FINAL_STATUS:")) {
-            final_status = trimmed.mid(13);
+            spooler.final_status = trimmed.mid(13);
         } else if (trimmed.startsWith("FILES_AFTER:")) {
-            files_after = trimmed.mid(12).toInt();
+            spooler.files_after = trimmed.mid(12).toInt();
         } else if (trimmed.contains("_ERROR:")) {
-            errors.append(trimmed);
+            spooler.errors.append(trimmed);
         }
     }
-    
-    Q_EMIT executionProgress("╠════════════════════════════════════════════════════════════════╣", 80);
-    
-    ExecutionResult result;
-    result.duration_ms = duration_ms;
-    result.files_processed = cleared;
-    result.bytes_processed = size_before;
-    
-    QString message;
-    QString log_output = "╔════════════════════════════════════════════════════════════════╗\n";
-    log_output += "║     PRINT SPOOLER CLEARING - RESULTS                          ║\n";
-    log_output += "╠════════════════════════════════════════════════════════════════╣\n";
-    
-    if (start_success && stop_success) {
-        result.success = true;
-        
-        QString size_str;
-        if (size_before >= 1048576LL) {
-            size_str = QString::number(size_before / 1048576.0, 'f', 2) + " MB";
-        } else if (size_before >= 1024LL) {
-            size_str = QString::number(size_before / 1024.0, 'f', 2) + " KB";
-        } else {
-            size_str = QString::number(size_before) + " bytes";
-        }
-        
-        if (files_before > 0) {
-            message = QString("Cleared %1 stuck print job(s)").arg(cleared);
-            log_output += QString("║ Print Jobs Cleared: %1\n").arg(cleared).leftJustified(66) + "║\n";
-            log_output += QString("║ Space Freed: %1\n").arg(size_str).leftJustified(66) + "║\n";
-        } else {
-            message = "Print spooler refreshed (no stuck jobs)";
-            log_output += QString("║ Status: No stuck jobs found                                    ║\n");
-        }
-        
-        log_output += "╠════════════════════════════════════════════════════════════════╣\n";
-        log_output += QString("║ Service Status: %1 → %2\n").arg(initial_status, final_status).leftJustified(66) + "║\n";
-        log_output += QString("║ Service Stopped: Successfully\n").leftJustified(66) + "║\n";
-        log_output += QString("║ Service Started: Successfully\n").leftJustified(66) + "║\n";
-        log_output += "╠════════════════════════════════════════════════════════════════╣\n";
-        log_output += QString("║ Completed in: %1 seconds\n").arg(duration_ms / 1000.0, 0, 'f', 2).leftJustified(66) + "║\n";
-        log_output += "╚════════════════════════════════════════════════════════════════╝\n";
-        
-        result.message = message;
-        result.log = log_output;
-        setStatus(ActionStatus::Success);
+
+    return spooler;
+}
+
+QString ClearPrintSpoolerAction::buildSuccessLog(const SpoolerResult& spooler, qint64 duration_ms) const {
+    QString log;
+    log += "╔════════════════════════════════════════════════════════════════╗\n";
+    log += "║     PRINT SPOOLER CLEARING - RESULTS                          ║\n";
+    log += "╠════════════════════════════════════════════════════════════════╣\n";
+
+    if (spooler.files_before > 0) {
+        log += QString("║ Print Jobs Cleared: %1\n").arg(spooler.cleared).leftJustified(66) + "║\n";
+        log += QString("║ Space Freed: %1\n").arg(formatFileSize(spooler.size_before)).leftJustified(66) + "║\n";
     } else {
-        result.success = false;
-        
-        message = "Failed to manage Print Spooler service";
-        log_output += QString("║ Status: Operation Failed                                       ║\n");
-        log_output += "╠════════════════════════════════════════════════════════════════╣\n";
-        
-        if (!stop_success) {
-            log_output += QString("║ Service Stop: FAILED\n").leftJustified(66) + "║\n";
-        } else {
-            log_output += QString("║ Service Stop: SUCCESS\n").leftJustified(66) + "║\n";
-        }
-        
-        if (!start_success) {
-            log_output += QString("║ Service Start: FAILED\n").leftJustified(66) + "║\n";
-        }
-        
-        log_output += QString("║ Final Service Status: %1\n").arg(final_status.isEmpty() ? "Unknown" : final_status).leftJustified(66) + "║\n";
-        
-        if (!errors.isEmpty()) {
-            log_output += "╠════════════════════════════════════════════════════════════════╣\n";
-            log_output += QString("║ ERRORS:                                                        ║\n");
-            for (const QString& error : errors) {
-                log_output += QString("║ %1\n").arg(error).leftJustified(66) + "║\n";
-            }
-        }
-        
-        log_output += "╠════════════════════════════════════════════════════════════════╣\n";
-        log_output += QString("║ Action Required: Run as Administrator or restart manually      ║\n");
-        log_output += "╚════════════════════════════════════════════════════════════════╝\n";
-        
-        result.message = message;
-        result.log = log_output;
-        setStatus(ActionStatus::Failed);
+        log += QString("║ Status: No stuck jobs found                                    ║\n");
     }
-    
-    setExecutionResult(result);
-    Q_EMIT executionComplete(result);
+
+    log += "╠════════════════════════════════════════════════════════════════╣\n";
+    log += QString("║ Service Status: %1 → %2\n").arg(spooler.initial_status, spooler.final_status).leftJustified(66) + "║\n";
+    log += QString("║ Service Stopped: Successfully\n").leftJustified(66) + "║\n";
+    log += QString("║ Service Started: Successfully\n").leftJustified(66) + "║\n";
+    log += "╠════════════════════════════════════════════════════════════════╣\n";
+    log += QString("║ Completed in: %1 seconds\n").arg(duration_ms / 1000.0, 0, 'f', 2).leftJustified(66) + "║\n";
+    log += "╚════════════════════════════════════════════════════════════════╝\n";
+
+    return log;
+}
+
+QString ClearPrintSpoolerAction::buildFailureLog(const SpoolerResult& spooler, qint64 duration_ms) const {
+    Q_UNUSED(duration_ms)
+    QString log;
+    log += "╔════════════════════════════════════════════════════════════════╗\n";
+    log += "║     PRINT SPOOLER CLEARING - RESULTS                          ║\n";
+    log += "╠════════════════════════════════════════════════════════════════╣\n";
+    log += QString("║ Status: Operation Failed                                       ║\n");
+    log += "╠════════════════════════════════════════════════════════════════╣\n";
+
+    if (!spooler.stop_success) {
+        log += QString("║ Service Stop: FAILED\n").leftJustified(66) + "║\n";
+    } else {
+        log += QString("║ Service Stop: SUCCESS\n").leftJustified(66) + "║\n";
+    }
+
+    if (!spooler.start_success) {
+        log += QString("║ Service Start: FAILED\n").leftJustified(66) + "║\n";
+    }
+
+    log += QString("║ Final Service Status: %1\n").arg(spooler.final_status.isEmpty() ? "Unknown" : spooler.final_status).leftJustified(66) + "║\n";
+
+    if (!spooler.errors.isEmpty()) {
+        log += "╠════════════════════════════════════════════════════════════════╣\n";
+        log += QString("║ ERRORS:                                                        ║\n");
+        for (const QString& error : spooler.errors) {
+            log += QString("║ %1\n").arg(error).leftJustified(66) + "║\n";
+        }
+    }
+
+    log += "╠════════════════════════════════════════════════════════════════╣\n";
+    log += QString("║ Action Required: Run as Administrator or restart manually      ║\n");
+    log += "╚════════════════════════════════════════════════════════════════╝\n";
+
+    return log;
 }
 
 } // namespace sak

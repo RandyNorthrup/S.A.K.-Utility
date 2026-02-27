@@ -1,9 +1,8 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "sak/actions/test_network_speed_action.h"
 #include "sak/process_runner.h"
-#include <QProcess>
 #include <QRegularExpression>
 
 namespace sak {
@@ -37,7 +36,9 @@ void TestNetworkSpeedAction::checkConnectivity() {
         if (line.contains("PING_RTT:")) {
             QString rtt = line.split(':').value(1).trimmed();
             if (!rtt.isEmpty()) {
-                m_latency = rtt.toInt();
+                bool ok = false;
+                int val = rtt.toInt(&ok);
+                if (ok) m_latency = val;
             }
         }
     }
@@ -96,17 +97,24 @@ void TestNetworkSpeedAction::testDownloadSpeed() {
     
     for (const QString& line : lines) {
         if (line.contains("SERVER_SPEED:")) {
-            double speed = line.split(':').value(1).trimmed().toDouble();
-            speeds.append(speed);
+            bool ok = false;
+            double speed = line.split(':').value(1).trimmed().toDouble(&ok);
+            if (ok) speeds.append(speed);
         }
         if (line.contains("AVG_DOWNLOAD_SPEED:")) {
-            m_download_speed = line.split(':').value(1).trimmed().toDouble();
+            bool ok = false;
+            double val = line.split(':').value(1).trimmed().toDouble(&ok);
+            if (ok) m_download_speed = val;
         }
         if (line.contains("MAX_DOWNLOAD_SPEED:")) {
-            m_max_download_speed = line.split(':').value(1).trimmed().toDouble();
+            bool ok = false;
+            double val = line.split(':').value(1).trimmed().toDouble(&ok);
+            if (ok) m_max_download_speed = val;
         }
         if (line.contains("TESTS_SUCCESSFUL:")) {
-            successful_tests = line.split(':').value(1).trimmed().toInt();
+            bool ok = false;
+            int val = line.split(':').value(1).trimmed().toInt(&ok);
+            if (ok) successful_tests = val;
         }
     }
     
@@ -149,7 +157,9 @@ void TestNetworkSpeedAction::testUploadSpeed() {
     
     for (const QString& line : lines) {
         if (line.contains("UPLOAD_SPEED:")) {
-            m_upload_speed = line.split(':').value(1).trimmed().toDouble();
+            bool ok = false;
+            double val = line.split(':').value(1).trimmed().toDouble(&ok);
+            if (ok) m_upload_speed = val;
         }
         if (line.contains("UPLOAD_SUCCESS:")) {
             m_upload_test_successful = line.contains("True", Qt::CaseInsensitive);
@@ -200,19 +210,29 @@ void TestNetworkSpeedAction::testLatencyAndJitter() {
     
     for (const QString& line : lines) {
         if (line.contains("AVG_LATENCY:")) {
-            m_latency = line.split(':').value(1).trimmed().toInt();
+            bool ok = false;
+            int val = line.split(':').value(1).trimmed().toInt(&ok);
+            if (ok) m_latency = val;
         }
         if (line.contains("MIN_LATENCY:")) {
-            m_min_latency = line.split(':').value(1).trimmed().toInt();
+            bool ok = false;
+            int val = line.split(':').value(1).trimmed().toInt(&ok);
+            if (ok) m_min_latency = val;
         }
         if (line.contains("MAX_LATENCY:")) {
-            m_max_latency = line.split(':').value(1).trimmed().toInt();
+            bool ok = false;
+            int val = line.split(':').value(1).trimmed().toInt(&ok);
+            if (ok) m_max_latency = val;
         }
         if (line.contains("JITTER:")) {
-            m_jitter = line.split(':').value(1).trimmed().toDouble();
+            bool ok = false;
+            double val = line.split(':').value(1).trimmed().toDouble(&ok);
+            if (ok) m_jitter = val;
         }
         if (line.contains("PACKET_LOSS:")) {
-            m_packet_loss = line.split(':').value(1).trimmed().toDouble();
+            bool ok = false;
+            double val = line.split(':').value(1).trimmed().toDouble(&ok);
+            if (ok) m_packet_loss = val;
         }
     }
 }
@@ -296,15 +316,11 @@ void TestNetworkSpeedAction::execute() {
     checkConnectivity();
     
     if (!m_has_internet) {
-        ExecutionResult result;
-        result.success = false;
-        result.message = "No internet connection detected";
-        result.log = "Cannot perform speed test without internet connectivity.\n"
-                     "Please check your network connection and try again.";
-        result.duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
-        setExecutionResult(result);
-        setStatus(ActionStatus::Failed);
-        Q_EMIT executionComplete(result);
+        emitFailedResult(
+            QStringLiteral("No internet connection detected"),
+            QStringLiteral("Cannot perform speed test without internet connectivity.\n"
+                           "Please check your network connection and try again."),
+            start_time);
         return;
     }
     
@@ -410,9 +426,7 @@ void TestNetworkSpeedAction::execute() {
     
     result.log = report;
     
-    setExecutionResult(result);
-    setStatus(result.success ? ActionStatus::Success : ActionStatus::Failed);
-    Q_EMIT executionComplete(result);
+    finishWithResult(result, result.success ? ActionStatus::Success : ActionStatus::Failed);
 }
 
 } // namespace sak

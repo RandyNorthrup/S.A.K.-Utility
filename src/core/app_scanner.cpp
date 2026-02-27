@@ -1,4 +1,8 @@
+// Copyright (c) 2025 Randy Northrup. All rights reserved.
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 #include "sak/app_scanner.h"
+#include "sak/logger.h"
 #include <QProcess>
 #include <QDebug>
 #include <QJsonDocument>
@@ -24,16 +28,20 @@ std::vector<AppScanner::AppInfo> AppScanner::scanAll() {
     
     // Scan registry (HKLM + HKCU)
     auto registry_apps = scanRegistry();
+    qDebug() << "AppScanner: Registry scan found" << registry_apps.size() << "apps";
     all_apps.insert(all_apps.end(), registry_apps.begin(), registry_apps.end());
     
     // Scan AppX packages
     auto appx_apps = scanAppX();
+    qDebug() << "AppScanner: AppX scan found" << appx_apps.size() << "apps";
     all_apps.insert(all_apps.end(), appx_apps.begin(), appx_apps.end());
     
     // Scan Chocolatey packages
     auto choco_apps = scanChocolatey();
+    qDebug() << "AppScanner: Chocolatey scan found" << choco_apps.size() << "apps";
     all_apps.insert(all_apps.end(), choco_apps.begin(), choco_apps.end());
     
+    qDebug() << "AppScanner: Total apps found:" << all_apps.size();
     return all_apps;
 }
 
@@ -95,11 +103,26 @@ std::vector<AppScanner::AppInfo> AppScanner::scanRegistryHive(void* hive, const 
             
             // Only add if we have a display name
             if (!app.name.isEmpty()) {
-                // Filter out Windows components and system apps
-                if (!app.name.startsWith("KB") &&  // Windows updates
-                    !app.name.startsWith("Security Update") &&
-                    !app.name.contains("(KB") &&
-                    (!app.publisher.contains("Microsoft Corporation") || app.name.contains("Visual Studio"))) {
+                // Filter out Windows system components, updates, and redistributables
+                // but keep user-facing Microsoft apps (Edge, Office, VS Code, etc.)
+                bool isSystemComponent = 
+                    app.name.startsWith("KB") ||
+                    app.name.startsWith("Security Update") ||
+                    app.name.startsWith("Update for") ||
+                    app.name.startsWith("Hotfix") ||
+                    app.name.contains("(KB") ||
+                    app.name.contains("Redistributable") ||
+                    app.name.contains("Microsoft .NET") ||
+                    app.name.contains("Windows SDK") ||
+                    app.name.contains("Windows Driver Kit") ||
+                    app.name.contains("Windows Assessment") ||
+                    app.name.contains("Microsoft Visual C++") ||
+                    app.name.startsWith("vs_") ||
+                    app.name.startsWith("Microsoft DCF") ||
+                    app.name.startsWith("Microsoft Help") ||
+                    app.name.startsWith("Microsoft SQL Server") && !app.name.contains("Management Studio");
+                
+                if (!isSystemComponent) {
                     apps.push_back(app);
                 }
             }
@@ -201,6 +224,8 @@ std::vector<AppScanner::AppInfo> AppScanner::scanChocolatey() {
     
     process.start();
     if (!process.waitForFinished(10000)) {
+        sak::logWarning("Chocolatey package scan timed out after 10s — choco may not be installed or is unresponsive");
+        process.kill();
         return apps;
     }
     

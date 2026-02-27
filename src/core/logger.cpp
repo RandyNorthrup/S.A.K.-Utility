@@ -1,9 +1,13 @@
+// Copyright (c) 2025 Randy Northrup. All rights reserved.
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 /// @file logger.cpp
 /// @brief Implementation of thread-safe logging system
 
 #include "sak/logger.h"
 #include <algorithm>
 #include <chrono>
+#include <cstdio>
 #include <iomanip>
 #include <iostream>
 #include <sstream>
@@ -140,8 +144,11 @@ void logger::logInternal(
             }
         }
         
+    } catch (const std::exception& e) {
+        // Logger itself cannot recurse — fall back to stderr
+        std::fprintf(stderr, "SAK Logger: logInternal failed: %s\n", e.what());
     } catch (...) {
-        // Silently ignore errors - never throw from logger
+        std::fprintf(stderr, "SAK Logger: logInternal failed with unknown exception\n");
     }
 }
 
@@ -171,6 +178,7 @@ auto logger::ensureLogDirectory(
     } catch (const std::filesystem::filesystem_error&) {
         return std::unexpected(error_code::permission_denied);
     } catch (...) {
+        std::fprintf(stderr, "SAK Logger: ensureLogDirectory failed with unknown exception\n");
         return std::unexpected(error_code::unknown_error);
     }
 }
@@ -180,6 +188,7 @@ std::string logger::getTimestamp() const noexcept {
         auto now = std::chrono::system_clock::now();
         return std::format("{:%Y-%m-%d %H:%M:%S}", now);
     } catch (...) {
+        std::fprintf(stderr, "SAK Logger: getTimestamp failed\n");
         return "TIMESTAMP_ERROR";
     }
 }
@@ -226,8 +235,11 @@ void logger::rotateLog() noexcept {
         m_file_stream.open(m_log_file, std::ios::out | std::ios::app);
         m_bytes_written.store(0, std::memory_order_relaxed);
         
+    } catch (const std::exception& e) {
+        // Logger cannot use logError (infinite recursion), fall back to stderr
+        std::fprintf(stderr, "SAK Logger: Log rotation failed: %s\n", e.what());
     } catch (...) {
-        // Best effort - if rotation fails, continue with current file
+        std::fprintf(stderr, "SAK Logger: Log rotation failed with unknown exception\n");
     }
 }
 

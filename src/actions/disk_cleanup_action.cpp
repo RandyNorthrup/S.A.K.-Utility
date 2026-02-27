@@ -1,16 +1,15 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "sak/actions/disk_cleanup_action.h"
+#include "sak/path_utils.h"
 #include "sak/process_runner.h"
 
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
-#include <QDirIterator>
 #include <QStandardPaths>
 #include <QDateTime>
-#include <QProcess>
 
 namespace sak {
 
@@ -81,12 +80,7 @@ void DiskCleanupAction::scan() {
 
 void DiskCleanupAction::execute() {
     if (isCancelled()) {
-        ExecutionResult result;
-        result.success = false;
-        result.message = "Disk cleanup cancelled";
-        setExecutionResult(result);
-        setStatus(ActionStatus::Cancelled);
-        Q_EMIT executionComplete(result);
+        emitCancelledResult(QStringLiteral("Disk cleanup cancelled"));
         return;
     }
 
@@ -149,9 +143,7 @@ void DiskCleanupAction::execute() {
         result.message = "Failed to configure Disk Cleanup";
         result.duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
         result.log = config_result.std_err.isEmpty() ? "Disk Cleanup configuration failed" : config_result.std_err.trimmed();
-        setExecutionResult(result);
-        setStatus(ActionStatus::Failed);
-        Q_EMIT executionComplete(result);
+        finishWithResult(result, ActionStatus::Failed);
         return;
     }
     
@@ -173,13 +165,7 @@ void DiskCleanupAction::execute() {
         if (drive_letter.isEmpty()) continue;
         
         if (isCancelled()) {
-            ExecutionResult result;
-            result.success = false;
-            result.message = "Cleanup cancelled by user";
-            result.duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
-            setExecutionResult(result);
-            setStatus(ActionStatus::Cancelled);
-            Q_EMIT executionComplete(result);
+            emitCancelledResult(QStringLiteral("Cleanup cancelled by user"), start_time);
             return;
         }
         
@@ -190,7 +176,8 @@ void DiskCleanupAction::execute() {
         ProcessResult space_before = runPowerShell(
             QString("(Get-Volume -DriveLetter %1).SizeRemaining").arg(drive_letter),
             5000);
-        qint64 free_before = space_before.std_out.trimmed().toLongLong();
+        bool ok_before = false;
+        qint64 free_before = space_before.std_out.trimmed().toLongLong(&ok_before);
         
         // Run cleanup on this drive
         ProcessResult cleanmgr = runProcess("cleanmgr.exe", QStringList() << "/d" << drive_letter << sagerun_arg, 300000);
@@ -203,9 +190,12 @@ void DiskCleanupAction::execute() {
         ProcessResult space_after = runPowerShell(
             QString("(Get-Volume -DriveLetter %1).SizeRemaining").arg(drive_letter),
             5000);
-        qint64 free_after = space_after.std_out.trimmed().toLongLong();
+        bool ok_after = false;
+        qint64 free_after = space_after.std_out.trimmed().toLongLong(&ok_after);
         
-        total_freed += (free_after - free_before);
+        if (ok_before && ok_after) {
+            total_freed += (free_after - free_before);
+        }
         drives_processed++;
     }
     
@@ -236,16 +226,13 @@ void DiskCleanupAction::execute() {
         if (!drives_error.trimmed().isEmpty()) {
             result.log += QString("\nDrive enumeration errors:\n%1").arg(drives_error.trimmed());
         }
-        setStatus(ActionStatus::Success);
     } else {
         result.success = false;
         result.message = "No drives were cleaned";
         result.log = "Failed to find any NTFS drives to clean";
-        setStatus(ActionStatus::Failed);
     }
     
-    setExecutionResult(result);
-    Q_EMIT executionComplete(result);
+    finishWithResult(result, result.success ? ActionStatus::Success : ActionStatus::Failed);
 }
 
 void DiskCleanupAction::scanWindowsTemp() {
@@ -391,22 +378,13 @@ void DiskCleanupAction::scanThumbnailCache() {
 }
 
 qint64 DiskCleanupAction::calculateDirectorySize(const QString& path, int& file_count) {
-    qint64 total_size = 0;
     file_count = 0;
-
-    QDirIterator it(path, QDir::Files | QDir::Hidden | QDir::System, QDirIterator::Subdirectories);
-    while (it.hasNext()) {
-        if (isCancelled()) {
-            break;
-        }
-
-        it.next();
-        QFileInfo file_info = it.fileInfo();
-        total_size += file_info.size();
-        file_count++;
+    auto result = path_utils::getDirectorySizeAndCount(path.toStdWString());
+    if (!result) {
+        return 0;
     }
-
-    return total_size;
+    file_count = static_cast<int>(result->file_count);
+    return static_cast<qint64>(result->total_bytes);
 }
 
 qint64 DiskCleanupAction::deleteDirectoryContents(const QString& path, int& deleted_count) {

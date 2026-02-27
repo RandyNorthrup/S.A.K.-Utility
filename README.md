@@ -4,12 +4,12 @@
 
 **Swiss Army Knife Utility** — A portable Windows toolkit for PC technicians, IT pros, and sysadmins.
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](LICENSE)
 [![C++23](https://img.shields.io/badge/C%2B%2B-23-blue.svg)](https://isocpp.org/)
 [![Qt 6.5.3](https://img.shields.io/badge/Qt-6.5.3-41cd52.svg)](https://www.qt.io/)
 [![Windows 10/11](https://img.shields.io/badge/Windows-10%20%7C%2011-0078d4.svg)](https://www.microsoft.com/windows)
 [![Build](https://github.com/RandyNorthrup/S.A.K.-Utility/actions/workflows/build-release.yml/badge.svg)](https://github.com/RandyNorthrup/S.A.K.-Utility/actions)
-[![Version](https://img.shields.io/badge/Version-0.5.8-orange.svg)](VERSION)
+[![Version](https://img.shields.io/badge/Version-0.6.0-orange.svg)](VERSION)
 
 Migration · Maintenance · Recovery · Imaging · Deployment — one portable EXE.
 
@@ -25,6 +25,7 @@ Migration · Maintenance · Recovery · Imaging · Deployment — one portable E
 | **39 Quick Actions** | One-click system optimization, backups, maintenance, troubleshooting, and recovery. |
 | **User Profile Backup & Restore** | 6-page wizards with smart filtering, AES-256 encryption, and NTFS permission handling. |
 | **Application Migration** | Scan installed apps, match to Chocolatey packages, bulk-install on a new PC. |
+| **Diagnostics & Benchmarking** | SMART disk health, CPU/disk/memory benchmarks, stress testing, thermal monitoring, HTML/JSON/CSV reports. |
 | **Network Transfer** | Peer-to-peer LAN migration with AES-256-GCM, resume, and multi-PC orchestrator mode. |
 | **Image Flasher** | Flash ISOs/IMGs to USB. Download Windows and Linux ISOs directly. |
 | **BitLocker Key Backup** | Export recovery keys from all encrypted volumes with restricted-permission files. |
@@ -41,6 +42,7 @@ Migration · Maintenance · Recovery · Imaging · Deployment — one portable E
   - [User Profile Backup & Restore](#user-profile-backup--restore)
   - [Application Migration](#application-migration)
   - [Network Transfer](#network-transfer)
+  - [Diagnostics & Benchmarking](#diagnostics--benchmarking)
   - [Image Flasher](#image-flasher)
   - [Directory Organizer](#directory-organizer)
   - [Duplicate Finder](#duplicate-finder)
@@ -75,9 +77,9 @@ Migration · Maintenance · Recovery · Imaging · Deployment — one portable E
 3. Run sak_utility.exe and accept the UAC prompt.
 ```
 
-> **SmartScreen / Defender note:** The EXE is not code-signed (certificate costs >`$`300/yr).
-> Click **More info -> Run anyway**, or add a Defender exclusion:
-> `Add-MpPreference -ExclusionPath "C:\path\to\SAK-Utility"`
+> **Code Signed:** Releases are digitally signed via [Azure Trusted Signing](https://learn.microsoft.com/en-us/azure/trusted-signing/).
+> Windows SmartScreen and Defender should recognize the signature automatically.
+> Right-click `sak_utility.exe` → Properties → Digital Signatures to verify.
 
 ---
 
@@ -219,6 +221,50 @@ Secure peer-to-peer LAN transfer with three modes.
 
 ---
 
+### Diagnostics & Benchmarking
+
+Comprehensive hardware diagnostics, performance benchmarking, and stability testing with bundled [smartmontools](https://www.smartmontools.org/) for SMART analysis.
+
+**Hardware Inventory**
+- CPU: model, cores, threads, base/max clock
+- Memory: total capacity, slot usage
+- Storage: model, capacity, interface (SATA/NVMe/USB), media type
+- GPU: model, VRAM, driver version
+- OS: name, build number
+
+**SMART Disk Health**
+- Queries all physical drives via bundled `smartctl.exe` (smartmontools 7.4)
+- Health status (Healthy / Warning / Critical / Failed)
+- Temperature, power-on hours, raw attributes
+- Attribute-level detail with threshold monitoring
+
+**Benchmarks**
+
+| Benchmark | Metrics |
+|---|---|
+| **CPU** | Single-thread & multi-thread scores, matrix multiply GFLOPS, ZLIB throughput (MB/s), prime computation |
+| **Disk** | Sequential read/write (MB/s), random 4K IOPS (read & write), queue-depth scoring |
+| **Memory** | Read/write bandwidth (GB/s), random-access latency (ns) |
+
+**Stress Testing**
+- Configurable duration (1–60 minutes)
+- CPU stress (all-core compute + floating-point)
+- Memory stress (pattern write/verify for ECC error detection)
+- Disk stress (sustained sequential I/O with direct writes)
+- Real-time thermal monitoring with auto-abort at configurable limit
+- Error-count abort thresholds
+
+**Full Suite Mode**
+- One-click sequential run: Hardware Scan → SMART Analysis → CPU Benchmark → Disk Benchmark → Memory Benchmark → Stress Test → Report Generation
+- Step-by-step progress with live status
+
+**Report Export**
+- **HTML** — Styled report with hardware summary, SMART health, benchmark scores, and stress test results
+- **JSON** — Machine-readable structured data for automation
+- **CSV** — RFC 4180 compliant, importable into Excel or data pipelines
+
+---
+
 ### Image Flasher
 
 Create bootable USB drives from disk images.
@@ -308,9 +354,32 @@ cmake -B build -G "Visual Studio 17 2022" -A x64 `
 # Build
 cmake --build build --config Release --parallel
 
+# Bundle smartmontools (required for SMART diagnostics)
+powershell -ExecutionPolicy Bypass -File scripts/bundle_smartmontools.ps1
+
 # Run
 .\build\Release\sak_utility.exe
 ```
+
+### Code Signing (Optional)
+
+Local builds can be signed via Azure Trusted Signing:
+
+```powershell
+# One-time: log in to Azure
+az login
+
+# Sign after building
+powershell -ExecutionPolicy Bypass -File scripts/sign-exe.ps1
+
+# Or enable automatic signing on every build:
+cmake -B build -G "Visual Studio 17 2022" -A x64 `
+  -DCMAKE_PREFIX_PATH="C:/Qt/6.5.3/msvc2019_64" `
+  -DSAK_CODE_SIGN=ON
+cmake --build build --config Release
+```
+
+Requires Azure CLI and access to the Azure Trusted Signing account. CI builds (GitHub Actions) are signed automatically.
 
 ### Dependencies
 
@@ -320,6 +389,7 @@ cmake --build build --config Release --parallel
 | [zlib](https://www.zlib.net/) | zlib License | gzip compression |
 | [bzip2](https://sourceware.org/bzip2/) | BSD-style | bzip2 compression |
 | [liblzma](https://tukaani.org/xz/) | 0BSD / Public Domain | xz/LZMA compression |
+| [smartmontools](https://www.smartmontools.org/) | GPLv2 | SMART disk health analysis (bundled `smartctl.exe`) |
 | [Chocolatey](https://chocolatey.org/) | Apache 2.0 | Embedded package manager |
 | Windows BCrypt | OS component | AES-256, PBKDF2, SHA-256 |
 
@@ -331,7 +401,7 @@ Full license texts: [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md)
 cmake --build build --config Release --target RUN_TESTS
 ```
 
-17 unit tests covering network transfer, orchestration, security, encryption, and ISO download. 2 integration tests for MAC UA download and network transfer workflow.
+41 unit tests covering network transfer, orchestration, diagnostics, security, encryption, configuration, and ISO download. 1 integration test for end-to-end network transfer workflow.
 
 ---
 
@@ -382,7 +452,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for coding standards, commit conventions,
 
 ## License
 
-This project is licensed under the **MIT License** — see [LICENSE](LICENSE) for the full text.
+This project is licensed under the **GNU Affero General Public License v3.0 (AGPL-3.0)** — see [LICENSE](LICENSE) for the full text.
 
 Third-party dependency licenses are documented in [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).
 
@@ -391,6 +461,7 @@ Third-party dependency licenses are documented in [THIRD_PARTY_LICENSES.md](THIR
 ## Acknowledgments
 
 - [**Qt**](https://www.qt.io/) — Cross-platform UI framework (LGPL v3)
+- [**smartmontools**](https://www.smartmontools.org/) — SMART disk diagnostics (GPLv2)
 - [**Chocolatey**](https://chocolatey.org/) — Windows package manager (Apache 2.0)
 - [**zlib**](https://www.zlib.net/) — Compression library (zlib License)
 - [**bzip2**](https://sourceware.org/bzip2/) — Compression library (BSD-style)

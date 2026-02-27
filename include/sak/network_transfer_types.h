@@ -1,3 +1,6 @@
+// Copyright (c) 2025 Randy Northrup. All rights reserved.
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 #pragma once
 
 #include <QString>
@@ -12,6 +15,7 @@
 
 namespace sak {
 
+/// @brief Discovery metadata for a network transfer peer
 struct TransferPeerInfo {
     QString peer_id;
     QString hostname;
@@ -28,6 +32,7 @@ struct TransferPeerInfo {
     static TransferPeerInfo fromJson(const QJsonObject& json);
 };
 
+/// @brief Metadata for a single file in a transfer manifest
 struct TransferFileEntry {
     QString file_id;
     QString absolute_path;   // source only, not serialized to destination
@@ -40,6 +45,7 @@ struct TransferFileEntry {
     static TransferFileEntry fromJson(const QJsonObject& json);
 };
 
+/// @brief Complete manifest describing files and users to transfer
 struct TransferManifest {
     QString protocol_version{"1.0"};
     QString transfer_id;
@@ -57,6 +63,7 @@ struct TransferManifest {
     static TransferManifest fromJson(const QJsonObject& json);
 };
 
+/// @brief Configuration options for network transfer sessions
 struct TransferSettings {
     bool encryption_enabled{true};
     bool compression_enabled{true};

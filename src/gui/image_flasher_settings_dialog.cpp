@@ -1,8 +1,9 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "sak/image_flasher_settings_dialog.h"
 #include "sak/config_manager.h"
+#include "sak/info_button.h"
 #include "sak/logger.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -36,7 +37,11 @@ void ImageFlasherSettingsDialog::setupUI() {
     auto* verificationGroup = new QGroupBox("Verification", this);
     auto* verificationLayout = new QGridLayout(verificationGroup);
     
-    verificationLayout->addWidget(new QLabel("Validation Mode:", verificationGroup), 0, 0);
+    auto* valLabelWidget = sak::InfoButton::createInfoLabel(
+        "Validation Mode:",
+        "Choose how to verify data after writing: Full reads every byte back, Quick samples random blocks, None skips verification",
+        verificationGroup);
+    verificationLayout->addWidget(valLabelWidget, 0, 0);
     m_validationModeCombo = new QComboBox(verificationGroup);
     m_validationModeCombo->addItem("Full Verification (Slowest, Most Reliable)", "full");
     m_validationModeCombo->addItem("Quick Check (Faster, Less Thorough)", "quick");
@@ -59,14 +64,22 @@ void ImageFlasherSettingsDialog::setupUI() {
     auto* performanceGroup = new QGroupBox("Performance", this);
     auto* performanceLayout = new QGridLayout(performanceGroup);
     
-    performanceLayout->addWidget(new QLabel("Buffer Size (MB):", performanceGroup), 0, 0);
+    auto* bufLabelWidget = sak::InfoButton::createInfoLabel(
+        "Buffer Size (MB):",
+        "Larger buffers improve throughput but use more RAM \u2014 64 MB is a good default for USB 3.0 drives",
+        performanceGroup);
+    performanceLayout->addWidget(bufLabelWidget, 0, 0);
     m_bufferSizeSpin = new QSpinBox(performanceGroup);
     m_bufferSizeSpin->setRange(1, 512);
     m_bufferSizeSpin->setSingleStep(16);
     m_bufferSizeSpin->setSuffix(" MB");
     performanceLayout->addWidget(m_bufferSizeSpin, 0, 1);
     
-    performanceLayout->addWidget(new QLabel("Max Concurrent Writes:", performanceGroup), 1, 0);
+    auto* concLabelWidget = sak::InfoButton::createInfoLabel(
+        "Max Concurrent Writes:",
+        "Number of USB drives that can be flashed simultaneously \u2014 each uses one thread",
+        performanceGroup);
+    performanceLayout->addWidget(concLabelWidget, 1, 0);
     m_maxConcurrentWritesSpin = new QSpinBox(performanceGroup);
     m_maxConcurrentWritesSpin->setRange(1, 16);
     performanceLayout->addWidget(m_maxConcurrentWritesSpin, 1, 1);
@@ -87,16 +100,27 @@ void ImageFlasherSettingsDialog::setupUI() {
     auto* safetyLayout = new QVBoxLayout(safetyGroup);
     
     m_showSystemDriveWarningCheck = new QCheckBox("Show system drive warning", safetyGroup);
-    m_showSystemDriveWarningCheck->setToolTip("Prevents accidentally overwriting your Windows installation drive (C:)");
-    safetyLayout->addWidget(m_showSystemDriveWarningCheck);
+    auto* sysRow = new QHBoxLayout();
+    sysRow->addWidget(m_showSystemDriveWarningCheck);
+    sysRow->addWidget(new sak::InfoButton(
+        "Prevents accidentally overwriting your Windows installation drive (C:)", safetyGroup));
+    sysRow->addStretch();
+    safetyLayout->addLayout(sysRow);
     
     m_showLargeDriveWarningCheck = new QCheckBox("Show large drive warning", safetyGroup);
-    m_showLargeDriveWarningCheck->setToolTip("Warns when a drive exceeds the threshold below — large drives are rarely USB sticks");
-    safetyLayout->addWidget(m_showLargeDriveWarningCheck);
+    auto* lgRow = new QHBoxLayout();
+    lgRow->addWidget(m_showLargeDriveWarningCheck);
+    lgRow->addWidget(new sak::InfoButton(
+        "Warns when a drive exceeds the threshold below \u2014 large drives are rarely USB sticks", safetyGroup));
+    lgRow->addStretch();
+    safetyLayout->addLayout(lgRow);
     
     auto* thresholdLayout = new QHBoxLayout();
     thresholdLayout->addSpacing(20);
-    thresholdLayout->addWidget(new QLabel("Large drive threshold:", safetyGroup));
+    thresholdLayout->addWidget(sak::InfoButton::createInfoLabel(
+        "Large drive threshold:",
+        "Drives exceeding this size trigger a warning \u2014 helps avoid accidentally flashing internal HDDs",
+        safetyGroup));
     m_largeDriveThresholdSpin = new QSpinBox(safetyGroup);
     m_largeDriveThresholdSpin->setRange(8, 2048);
     m_largeDriveThresholdSpin->setSingleStep(8);
@@ -112,12 +136,20 @@ void ImageFlasherSettingsDialog::setupUI() {
     auto* behaviorLayout = new QVBoxLayout(behaviorGroup);
     
     m_unmountOnCompletionCheck = new QCheckBox("Unmount drives on completion", behaviorGroup);
-    m_unmountOnCompletionCheck->setToolTip("Safely ejects the drive so you can remove it immediately after flashing");
-    behaviorLayout->addWidget(m_unmountOnCompletionCheck);
+    auto* unmRow = new QHBoxLayout();
+    unmRow->addWidget(m_unmountOnCompletionCheck);
+    unmRow->addWidget(new sak::InfoButton(
+        "Safely ejects the drive so you can remove it immediately after flashing", behaviorGroup));
+    unmRow->addStretch();
+    behaviorLayout->addLayout(unmRow);
     
     m_enableNotificationsCheck = new QCheckBox("Enable desktop notifications", behaviorGroup);
-    m_enableNotificationsCheck->setToolTip("Windows toast notification when a long-running flash finishes");
-    behaviorLayout->addWidget(m_enableNotificationsCheck);
+    auto* notRow = new QHBoxLayout();
+    notRow->addWidget(m_enableNotificationsCheck);
+    notRow->addWidget(new sak::InfoButton(
+        "Windows toast notification when a long-running flash finishes", behaviorGroup));
+    notRow->addStretch();
+    behaviorLayout->addLayout(notRow);
     
     mainLayout->addWidget(behaviorGroup);
     
@@ -129,16 +161,16 @@ void ImageFlasherSettingsDialog::setupUI() {
     m_cacheInfoLabel->setStyleSheet("color: #64748b; font-size: 9pt;");
     storageLayout->addWidget(m_cacheInfoLabel);
 
-    auto* cacheButtonLayout = new QHBoxLayout();
     m_clearCacheButton = new QPushButton("Clear Download Caches", storageGroup);
-    m_clearCacheButton->setToolTip(
+    auto* cacheInfoRow = new QHBoxLayout();
+    cacheInfoRow->addWidget(m_clearCacheButton);
+    cacheInfoRow->addWidget(new sak::InfoButton(
         "Removes all cached Windows UUP download files from the temp directory.\n"
-        "Use this to free disk space or force a fresh download.");
+        "Use this to free disk space or force a fresh download.", storageGroup));
+    cacheInfoRow->addStretch();
     connect(m_clearCacheButton, &QPushButton::clicked,
             this, &ImageFlasherSettingsDialog::onClearDownloadCaches);
-    cacheButtonLayout->addWidget(m_clearCacheButton);
-    cacheButtonLayout->addStretch();
-    storageLayout->addLayout(cacheButtonLayout);
+    storageLayout->addLayout(cacheInfoRow);
 
     mainLayout->addWidget(storageGroup);
 

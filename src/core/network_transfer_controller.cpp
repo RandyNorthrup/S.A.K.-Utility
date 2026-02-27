@@ -1,3 +1,6 @@
+// Copyright (c) 2025 Randy Northrup. All rights reserved.
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 #include "sak/network_transfer_controller.h"
 
 #include "sak/peer_discovery_service.h"
@@ -273,6 +276,12 @@ void NetworkTransferController::stop() {
     m_mode = Mode::Idle;
     m_pendingApprove = false;
     m_transferPaused = false;
+
+    // Securely clear passphrase from memory
+    if (!m_passphrase.isEmpty()) {
+        m_passphrase.fill(QChar(0));
+        m_passphrase.clear();
+    }
 }
 
 void NetworkTransferController::pauseTransfer() {

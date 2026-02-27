@@ -1,5 +1,5 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "sak/quick_action_controller.h"
 #include "sak/elevation_manager.h"
@@ -166,6 +166,8 @@ bool QuickActionController::requestAdminElevation(const QString& reason) {
         }
         return true;
     }
+    sak::logError("ShellExecuteExW failed for elevation request: GetLastError={}",
+                  static_cast<unsigned long>(GetLastError()));
     return false;
 #else
     Q_UNUSED(reason)

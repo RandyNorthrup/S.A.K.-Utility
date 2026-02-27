@@ -1,5 +1,5 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 #pragma once
 
@@ -50,6 +50,34 @@ public:
 
     void scan() override;
     void execute() override;
+
+private:
+    /// @brief Parsed output from the browser cache clearing PowerShell script.
+    struct BrowserCacheResult {
+        int cleared_count{0};
+        int blocked_count{0};
+        qint64 size_before{0};
+        qint64 size_cleared{0};
+        QStringList cleared_browsers;
+        QStringList blocked_browsers;
+        QStringList details;
+    };
+
+    /// @brief Builds the PowerShell script for enterprise browser cache clearing.
+    /// @return Complete PowerShell script string.
+    QString buildCacheClearingScript() const;
+
+    /// @brief Parses structured output from the cache clearing script.
+    /// @return Populated BrowserCacheResult.
+    BrowserCacheResult parseCacheOutput(const QString& output) const;
+
+    /// @brief Builds the box-drawing success log.
+    /// @return Formatted success log string.
+    QString buildSuccessLog(const BrowserCacheResult& parsed, const QString& stderr_output, qint64 duration_ms) const;
+
+    /// @brief Builds the box-drawing failure/blocked log.
+    /// @return Formatted failure log string.
+    QString buildFailureLog(const BrowserCacheResult& parsed) const;
 };
 
 } // namespace sak

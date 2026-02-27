@@ -1,5 +1,5 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "sak/about_dialog.h"
 #include "sak/version.h"
@@ -131,22 +131,22 @@ QString AboutDialog::getVersionInfo() const
 QString AboutDialog::getLicenseText() const
 {
     return R"(
-<h3>GNU General Public License v2.0</h3>
-<p>Copyright (C) 2025 Randy Northrup</p>
+<h3>GNU Affero General Public License v3.0</h3>
+<p>Copyright &copy; 2025 Randy Northrup</p>
 
-<p>This program is free software; you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation; either version 2 of the License, or
+<p>This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
 (at your option) any later version.</p>
 
 <p>This program is distributed in the hope that it will be useful,
 but WITHOUT ANY WARRANTY; without even the implied warranty of
 MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-GNU General Public License for more details.</p>
+GNU Affero General Public License for more details.</p>
 
-<p>You should have received a copy of the GNU General Public License along
-with this program; if not, write to the Free Software Foundation, Inc.,
-51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.</p>
+<p>You should have received a copy of the GNU Affero General Public License
+along with this program. If not, see
+<a href='https://www.gnu.org/licenses/'>https://www.gnu.org/licenses/</a>.</p>
 
 <p><b>Note:</b> This application uses Qt Framework (LGPL v3) and Chocolatey (Apache 2.0).</p>
 )";

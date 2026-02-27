@@ -1,3 +1,6 @@
+// Copyright (c) 2025 Randy Northrup. All rights reserved.
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 /// @file secure_memory.cpp
 /// @brief Implementation of secure memory handling utilities
 

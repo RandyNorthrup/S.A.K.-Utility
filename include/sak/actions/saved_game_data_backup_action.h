@@ -1,5 +1,5 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 #pragma once
 
@@ -31,6 +31,7 @@ public:
     void execute() override;
 
 private:
+    /// @brief Represents a discovered game save data location for a specific platform
     struct GameSaveLocation {
         QString platform; // Steam, Epic, GOG, Documents
         QString path;

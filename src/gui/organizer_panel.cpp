@@ -1,6 +1,11 @@
+// Copyright (c) 2025 Randy Northrup. All rights reserved.
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 #include "sak/organizer_panel.h"
 #include "sak/organizer_worker.h"
 #include "sak/logger.h"
+#include "sak/detachable_log_window.h"
+#include "sak/info_button.h"
 
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -12,6 +17,8 @@
 #include <QDateTime>
 #include <QScrollArea>
 #include <QFrame>
+#include <QDialog>
+#include <QFormLayout>
 
 OrganizerPanel::OrganizerPanel(QWidget* parent)
     : QWidget(parent)
@@ -86,39 +93,22 @@ void OrganizerPanel::setupUi()
     
     main_layout->addWidget(category_group);
 
-    // Options group
-    auto* options_group = new QGroupBox("Options", this);
-    auto* options_layout = new QHBoxLayout(options_group);
-    
-    options_layout->addWidget(new QLabel("Collision Strategy:", this));
+    // Options widgets (hidden — managed via Settings modal)
     m_collision_strategy = new QComboBox(this);
     m_collision_strategy->addItems({"Rename", "Skip", "Overwrite"});
-    options_layout->addWidget(m_collision_strategy);
-    
+    m_collision_strategy->setVisible(false);
+
     m_preview_mode_checkbox = new QCheckBox("Preview Mode (Dry Run)", this);
     m_preview_mode_checkbox->setChecked(true);
-    options_layout->addWidget(m_preview_mode_checkbox);
-    
-    options_layout->addStretch();
-    main_layout->addWidget(options_group);
-
-    // Progress group
-    auto* progress_group = new QGroupBox("Progress", this);
-    auto* progress_layout = new QVBoxLayout(progress_group);
-    
-    m_progress_bar = new QProgressBar(this);
-    m_progress_bar->setTextVisible(true);
-    m_progress_bar->setFormat("%v / %m (%p%)");
-    progress_layout->addWidget(m_progress_bar);
-    
-    m_status_label = new QLabel("Ready", this);
-    m_status_label->setStyleSheet("font-weight: 600; color: #1e293b;");
-    progress_layout->addWidget(m_status_label);
-    
-    main_layout->addWidget(progress_group);
+    m_preview_mode_checkbox->setVisible(false);
 
     // Control buttons
     auto* control_layout = new QHBoxLayout();
+
+    auto* settingsBtn = new QPushButton("Settings", this);
+    connect(settingsBtn, &QPushButton::clicked, this, &OrganizerPanel::onSettingsClicked);
+    control_layout->addWidget(settingsBtn);
+
     control_layout->addStretch();
     
     m_preview_button = new QPushButton("Preview", this);
@@ -134,19 +124,10 @@ void OrganizerPanel::setupUi()
     m_cancel_button->setEnabled(false);
     control_layout->addWidget(m_cancel_button);
     
-    main_layout->addLayout(control_layout);
+    m_logToggle = new sak::LogToggleSwitch(tr("Log"), this);
+    control_layout->insertWidget(1, m_logToggle);
 
-    // Log viewer
-    auto* log_group = new QGroupBox("Log", this);
-    auto* log_layout = new QVBoxLayout(log_group);
-    
-    m_log_viewer = new QTextEdit(this);
-    m_log_viewer->setReadOnly(true);
-    m_log_viewer->setMinimumHeight(80);
-    m_log_viewer->setPlaceholderText("Operation log will appear here...");
-    log_layout->addWidget(m_log_viewer);
-    
-    main_layout->addWidget(log_group, 1); // Give log group stretch so it fills remaining space
+    main_layout->addLayout(control_layout);
 
     // Connect signals
     connect(m_browse_button, &QPushButton::clicked, this, &OrganizerPanel::onBrowseClicked);
@@ -233,7 +214,7 @@ void OrganizerPanel::onExecuteClicked()
     connect(m_worker.get(), &OrganizerWorker::previewResults, this, &OrganizerPanel::onPreviewResults);
 
     setOperationRunning(true);
-    m_status_label->setText("Status: Starting...");
+    Q_EMIT statusMessage("Starting...", 0);
     m_worker->start();
 
     QString mode = config.preview_mode ? "Preview" : "Execute";
@@ -246,7 +227,7 @@ void OrganizerPanel::onCancelClicked()
     if (m_worker != nullptr) {
         m_worker->requestStop();
         logMessage("Cancellation requested...");
-        m_status_label->setText("Status: Cancelling...");
+        Q_EMIT statusMessage("Cancelling...", 0);
         sak::logInfo("Organization cancellation requested by user");
     }
 }
@@ -278,7 +259,6 @@ void OrganizerPanel::onWorkerStarted()
 {
     QString mode = m_preview_mode_checkbox->isChecked() ? "preview" : "organization";
     logMessage(QString("Starting %1...").arg(mode));
-    m_status_label->setText(QString("Status: Running %1...").arg(mode));
     Q_EMIT statusMessage(QString("%1 in progress").arg(mode), 0);
 }
 
@@ -286,7 +266,8 @@ void OrganizerPanel::onWorkerFinished()
 {
     setOperationRunning(false);
     QString mode = m_preview_mode_checkbox->isChecked() ? "Preview" : "Organization";
-    m_status_label->setText(QString("Status: %1 complete").arg(mode));
+    Q_EMIT statusMessage(QString("%1 complete").arg(mode), 5000);
+    Q_EMIT progressUpdate(100, 100);
     logMessage(QString("%1 completed successfully").arg(mode));
     QMessageBox::information(this, QString("%1 Complete").arg(mode), 
                             QString("%1 operation completed successfully").arg(mode));
@@ -296,7 +277,8 @@ void OrganizerPanel::onWorkerFinished()
 void OrganizerPanel::onWorkerFailed(int error_code, const QString& error_message)
 {
     setOperationRunning(false);
-    m_status_label->setText("Status: Failed");
+    Q_EMIT statusMessage("Organization failed", 5000);
+    Q_EMIT progressUpdate(0, 100);
     logMessage(QString("Organization failed: Error %1: %2").arg(error_code).arg(error_message));
     QMessageBox::warning(this, "Organization Failed", 
                         QString("Error %1: %2").arg(error_code).arg(error_message));
@@ -307,17 +289,16 @@ void OrganizerPanel::onWorkerCancelled()
 {
     setOperationRunning(false);
     logMessage("Organization cancelled by user");
-    m_status_label->setText("Status: Cancelled");
     Q_EMIT statusMessage("Organization cancelled", 3000);
+    Q_EMIT progressUpdate(0, 100);
 }
 
 void OrganizerPanel::onFileProgress(int current, int total, const QString& file_path)
 {
-    m_progress_bar->setMaximum(total);
-    m_progress_bar->setValue(current);
+    Q_EMIT progressUpdate(current, total);
     
     QString filename = QFileInfo(file_path).fileName();
-    m_status_label->setText(QString("Processing: %1").arg(filename));
+    Q_EMIT statusMessage(QString("Processing: %1").arg(filename), 0);
 }
 
 void OrganizerPanel::onPreviewResults(const QString& summary, int operation_count)
@@ -370,6 +351,46 @@ void OrganizerPanel::setOperationRunning(bool running)
 
 void OrganizerPanel::logMessage(const QString& message)
 {
-    QString timestamp = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss");
-    m_log_viewer->append(QString("[%1] %2").arg(timestamp, message));
+    Q_EMIT logOutput(message);
+}
+
+void OrganizerPanel::onSettingsClicked()
+{
+    QDialog dialog(this);
+    dialog.setWindowTitle(tr("Directory Organizer Settings"));
+    dialog.setMinimumWidth(380);
+
+    auto* layout = new QFormLayout(&dialog);
+
+    auto* collisionCombo = new QComboBox(&dialog);
+    collisionCombo->addItems({"Rename", "Skip", "Overwrite"});
+    collisionCombo->setCurrentIndex(m_collision_strategy->currentIndex());
+    layout->addRow(
+        sak::InfoButton::createInfoLabel(tr("Collision Strategy:"),
+            tr("How to handle files when a file with the same name already exists in the destination folder"), &dialog),
+        collisionCombo);
+
+    auto* previewCheck = new QCheckBox(tr("Preview Mode (Dry Run)"), &dialog);
+    previewCheck->setChecked(m_preview_mode_checkbox->isChecked());
+    auto* previewRow = new QHBoxLayout();
+    previewRow->addWidget(previewCheck);
+    previewRow->addWidget(new sak::InfoButton(
+        tr("When enabled, shows what would happen without actually moving any files"), &dialog));
+    previewRow->addStretch();
+    layout->addRow(previewRow);
+
+    auto* btnLayout = new QHBoxLayout();
+    btnLayout->addStretch();
+    auto* okBtn = new QPushButton(tr("OK"), &dialog);
+    auto* cancelBtn = new QPushButton(tr("Cancel"), &dialog);
+    connect(okBtn, &QPushButton::clicked, &dialog, &QDialog::accept);
+    connect(cancelBtn, &QPushButton::clicked, &dialog, &QDialog::reject);
+    btnLayout->addWidget(okBtn);
+    btnLayout->addWidget(cancelBtn);
+    layout->addRow(btnLayout);
+
+    if (dialog.exec() == QDialog::Accepted) {
+        m_collision_strategy->setCurrentIndex(collisionCombo->currentIndex());
+        m_preview_mode_checkbox->setChecked(previewCheck->isChecked());
+    }
 }

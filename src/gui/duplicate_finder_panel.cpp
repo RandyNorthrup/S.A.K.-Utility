@@ -1,6 +1,11 @@
+// Copyright (c) 2025 Randy Northrup. All rights reserved.
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 #include "sak/duplicate_finder_panel.h"
 #include "sak/duplicate_finder_worker.h"
 #include "sak/logger.h"
+#include "sak/detachable_log_window.h"
+#include "sak/info_button.h"
 
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -11,6 +16,8 @@
 #include <QDateTime>
 #include <QScrollArea>
 #include <QFrame>
+#include <QDialog>
+#include <QFormLayout>
 
 DuplicateFinderPanel::DuplicateFinderPanel(QWidget* parent)
     : QWidget(parent)
@@ -66,47 +73,26 @@ void DuplicateFinderPanel::setupUi()
     
     main_layout->addWidget(dir_group);
 
-    // Options group
-    auto* options_group = new QGroupBox("Scan Options", this);
-    auto* options_layout = new QHBoxLayout(options_group);
-    
-    options_layout->addWidget(new QLabel("Minimum Size (KB):", this));
+    // Options widgets (hidden — managed via Settings modal)
     m_min_size_spinbox = new QSpinBox(this);
     m_min_size_spinbox->setMinimum(0);
     m_min_size_spinbox->setMaximum(1000000);
     m_min_size_spinbox->setValue(0);
     m_min_size_spinbox->setToolTip("Skip tiny files to speed up scanning (0 = check all files)");
-    options_layout->addWidget(m_min_size_spinbox);
-    
+    m_min_size_spinbox->setVisible(false);
+
     m_recursive_checkbox = new QCheckBox("Recursive Scan", this);
     m_recursive_checkbox->setChecked(true);
     m_recursive_checkbox->setToolTip("Include all nested subfolders, not just the top-level directory");
-    options_layout->addWidget(m_recursive_checkbox);
-    
-    options_layout->addStretch();
-    main_layout->addWidget(options_group);
-
-    // Progress group
-    auto* progress_group = new QGroupBox("Progress", this);
-    auto* progress_layout = new QVBoxLayout(progress_group);
-    
-    m_progress_bar = new QProgressBar(this);
-    m_progress_bar->setTextVisible(true);
-    m_progress_bar->setFormat("%v / %m (%p%)");
-    progress_layout->addWidget(m_progress_bar);
-    
-    m_status_label = new QLabel("Ready", this);
-    m_status_label->setStyleSheet("font-weight: 600; color: #1e293b;");
-    progress_layout->addWidget(m_status_label);
-    
-    m_results_label = new QLabel("", this);
-    m_results_label->setStyleSheet("color: #16a34a; font-weight: 600;");
-    progress_layout->addWidget(m_results_label);
-    
-    main_layout->addWidget(progress_group);
+    m_recursive_checkbox->setVisible(false);
 
     // Control buttons
     auto* control_layout = new QHBoxLayout();
+
+    auto* settingsBtn = new QPushButton("Settings", this);
+    connect(settingsBtn, &QPushButton::clicked, this, &DuplicateFinderPanel::onSettingsClicked);
+    control_layout->addWidget(settingsBtn);
+
     control_layout->addStretch();
     
     m_scan_button = new QPushButton("Start Scan", this);
@@ -118,19 +104,10 @@ void DuplicateFinderPanel::setupUi()
     m_cancel_button->setEnabled(false);
     control_layout->addWidget(m_cancel_button);
     
-    main_layout->addLayout(control_layout);
+    m_logToggle = new sak::LogToggleSwitch(tr("Log"), this);
+    control_layout->insertWidget(1, m_logToggle);
 
-    // Log viewer
-    auto* log_group = new QGroupBox("Log", this);
-    auto* log_layout = new QVBoxLayout(log_group);
-    
-    m_log_viewer = new QTextEdit(this);
-    m_log_viewer->setReadOnly(true);
-    m_log_viewer->setMinimumHeight(80);
-    m_log_viewer->setPlaceholderText("Operation log will appear here...");
-    log_layout->addWidget(m_log_viewer);
-    
-    main_layout->addWidget(log_group, 1); // Give log stretch factor to fill space
+    main_layout->addLayout(control_layout);
 
     // Connect signals
     connect(m_add_directory_button, &QPushButton::clicked, this, &DuplicateFinderPanel::onAddDirectoryClicked);
@@ -194,8 +171,7 @@ void DuplicateFinderPanel::onScanClicked()
     connect(m_worker.get(), &DuplicateFinderWorker::resultsReady, this, &DuplicateFinderPanel::onResultsReady);
 
     setOperationRunning(true);
-    m_status_label->setText("Status: Starting scan...");
-    m_results_label->clear();
+    Q_EMIT statusMessage("Starting scan...", 0);
     m_worker->start();
 
     sak::logInfo("Duplicate finder scan initiated");
@@ -206,7 +182,7 @@ void DuplicateFinderPanel::onCancelClicked()
     if (m_worker != nullptr) {
         m_worker->requestStop();
         logMessage("Cancellation requested...");
-        m_status_label->setText("Status: Cancelling...");
+        Q_EMIT statusMessage("Cancelling...", 0);
         sak::logInfo("Duplicate finder cancellation requested by user");
     }
 }
@@ -214,14 +190,14 @@ void DuplicateFinderPanel::onCancelClicked()
 void DuplicateFinderPanel::onWorkerStarted()
 {
     logMessage("Duplicate file scan started");
-    m_status_label->setText("Status: Scanning...");
     Q_EMIT statusMessage("Duplicate scan in progress", 0);
 }
 
 void DuplicateFinderPanel::onWorkerFinished()
 {
     setOperationRunning(false);
-    m_status_label->setText("Status: Scan complete");
+    Q_EMIT statusMessage("Scan complete", 5000);
+    Q_EMIT progressUpdate(100, 100);
     logMessage("Scan completed successfully");
     sak::logInfo("Duplicate finder scan completed successfully");
 }
@@ -229,8 +205,8 @@ void DuplicateFinderPanel::onWorkerFinished()
 void DuplicateFinderPanel::onWorkerFailed(int error_code, const QString& error_message)
 {
     setOperationRunning(false);
-    m_status_label->setText("Status: Failed");
-    m_results_label->clear();
+    Q_EMIT statusMessage("Scan failed", 5000);
+    Q_EMIT progressUpdate(0, 100);
     logMessage(QString("Scan failed: Error %1: %2").arg(error_code).arg(error_message));
     QMessageBox::warning(this, "Scan Failed", QString("Error %1: %2").arg(error_code).arg(error_message));
     sak::logError("Duplicate finder scan failed: {}", error_message.toStdString());
@@ -240,18 +216,16 @@ void DuplicateFinderPanel::onWorkerCancelled()
 {
     setOperationRunning(false);
     logMessage("Scan cancelled by user");
-    m_status_label->setText("Status: Cancelled");
-    m_results_label->clear();
     Q_EMIT statusMessage("Scan cancelled", 3000);
+    Q_EMIT progressUpdate(0, 100);
 }
 
 void DuplicateFinderPanel::onScanProgress(int current, int total, const QString& path)
 {
-    m_progress_bar->setMaximum(total);
-    m_progress_bar->setValue(current);
+    Q_EMIT progressUpdate(current, total);
     
     QFileInfo info(path);
-    m_status_label->setText(QString("Scanning: %1").arg(info.fileName()));
+    Q_EMIT statusMessage(QString("Scanning: %1").arg(info.fileName()), 0);
 }
 
 void DuplicateFinderPanel::onResultsReady(const QString& summary, int duplicate_count, qint64 wasted_space)
@@ -260,7 +234,7 @@ void DuplicateFinderPanel::onResultsReady(const QString& summary, int duplicate_
         .arg(duplicate_count)
         .arg(wasted_space / (1024.0 * 1024.0), 0, 'f', 2);
     
-    m_results_label->setText(results_text);
+    Q_EMIT statusMessage(results_text, 10000);
     logMessage(results_text);
     
     QMessageBox::information(this, "Scan Results", summary);
@@ -282,7 +256,47 @@ void DuplicateFinderPanel::setOperationRunning(bool running)
 
 void DuplicateFinderPanel::logMessage(const QString& message)
 {
-    QString timestamp = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss");
-    m_log_viewer->append(QString("[%1] %2").arg(timestamp, message));
+    Q_EMIT logOutput(message);
+}
+
+void DuplicateFinderPanel::onSettingsClicked()
+{
+    QDialog dialog(this);
+    dialog.setWindowTitle(tr("Duplicate Finder Settings"));
+    dialog.setMinimumWidth(380);
+
+    auto* layout = new QFormLayout(&dialog);
+
+    auto* minSizeSpin = new QSpinBox(&dialog);
+    minSizeSpin->setMinimum(0);
+    minSizeSpin->setMaximum(1000000);
+    minSizeSpin->setValue(m_min_size_spinbox->value());
+    minSizeSpin->setSuffix(tr(" KB"));
+    layout->addRow(
+        sak::InfoButton::createInfoLabel(tr("Minimum File Size:"),
+            tr("Skip tiny files to speed up scanning (0 = check all files)"), &dialog),
+        minSizeSpin);
+
+    auto* recursiveCheck = new QCheckBox(tr("Include all nested subfolders"), &dialog);
+    recursiveCheck->setChecked(m_recursive_checkbox->isChecked());
+    layout->addRow(
+        sak::InfoButton::createInfoLabel(tr("Recursive Scan:"),
+            tr("Scan all subdirectories recursively, not just the top-level folder"), &dialog),
+        recursiveCheck);
+
+    auto* btnLayout = new QHBoxLayout();
+    btnLayout->addStretch();
+    auto* okBtn = new QPushButton(tr("OK"), &dialog);
+    auto* cancelBtn = new QPushButton(tr("Cancel"), &dialog);
+    connect(okBtn, &QPushButton::clicked, &dialog, &QDialog::accept);
+    connect(cancelBtn, &QPushButton::clicked, &dialog, &QDialog::reject);
+    btnLayout->addWidget(okBtn);
+    btnLayout->addWidget(cancelBtn);
+    layout->addRow(btnLayout);
+
+    if (dialog.exec() == QDialog::Accepted) {
+        m_min_size_spinbox->setValue(minSizeSpin->value());
+        m_recursive_checkbox->setChecked(recursiveCheck->isChecked());
+    }
 }
 

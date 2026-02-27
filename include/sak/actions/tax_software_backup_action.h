@@ -1,5 +1,5 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 #pragma once
 
@@ -31,6 +31,7 @@ public:
     void execute() override;
 
 private:
+    /// @brief Represents a discovered tax software data location with year and file count
     struct TaxDataLocation {
         QString software_name;
         QString path;

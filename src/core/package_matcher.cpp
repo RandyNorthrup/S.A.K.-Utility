@@ -1,4 +1,8 @@
+// Copyright (c) 2025 Randy Northrup. All rights reserved.
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 #include "sak/package_matcher.h"
+#include "sak/logger.h"
 #include <QRegularExpression>
 #include <QFile>
 #include <QJsonDocument>
@@ -610,7 +614,11 @@ void PackageMatcher::importMappings(const QString& file_path) {
     QJsonDocument doc = QJsonDocument::fromJson(file.readAll());
     file.close();
     
-    if (!doc.isObject()) return;
+    if (!doc.isObject()) {
+        sak::logWarning("Package mappings file is not a valid JSON object: {}",
+                        file_path.toStdString());
+        return;
+    }
     
     QJsonObject root = doc.object();
     QJsonArray mappings = root["mappings"].toArray();

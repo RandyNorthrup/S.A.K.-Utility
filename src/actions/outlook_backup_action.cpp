@@ -1,5 +1,5 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "sak/actions/outlook_backup_action.h"
 #include "sak/windows_user_scanner.h"
@@ -62,12 +62,7 @@ void OutlookBackupAction::scan() {
 
 void OutlookBackupAction::execute() {
     if (isCancelled()) {
-        ExecutionResult result;
-        result.success = false;
-        result.message = "Outlook backup cancelled";
-        setExecutionResult(result);
-        setStatus(ActionStatus::Cancelled);
-        Q_EMIT executionComplete(result);
+        emitCancelledResult("Outlook backup cancelled");
         return;
     }
 
@@ -82,14 +77,9 @@ void OutlookBackupAction::execute() {
     bool outlook_running = output.contains("OUTLOOK.EXE", Qt::CaseInsensitive);
     
     if (outlook_running) {
-        ExecutionResult result;
-        result.duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
-        result.success = false;
-        result.message = "Outlook is currently running";
-        result.log = "Please close Microsoft Outlook before backing up data files";
-        setStatus(ActionStatus::Failed);
-        setExecutionResult(result);
-        Q_EMIT executionComplete(result);
+        emitFailedResult("Outlook is currently running",
+                         "Please close Microsoft Outlook before backing up data files",
+                         start_time);
         return;
     }
     
@@ -136,14 +126,9 @@ void OutlookBackupAction::execute() {
     }
     
     if (found_files.isEmpty()) {
-        ExecutionResult result;
-        result.duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
-        result.success = false;
-        result.message = "No Outlook data files found";
-        result.log = "No PST or OST files detected in user profiles";
-        setStatus(ActionStatus::Failed);
-        setExecutionResult(result);
-        Q_EMIT executionComplete(result);
+        emitFailedResult("No Outlook data files found",
+                         "No PST or OST files detected in user profiles",
+                         start_time);
         return;
     }
     
@@ -157,13 +142,7 @@ void OutlookBackupAction::execute() {
     
     for (int i = 0; i < found_files.count(); ++i) {
         if (isCancelled()) {
-            ExecutionResult result;
-            result.success = false;
-            result.message = "Outlook backup cancelled";
-            result.duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
-            setExecutionResult(result);
-            setStatus(ActionStatus::Cancelled);
-            Q_EMIT executionComplete(result);
+            emitCancelledResult("Outlook backup cancelled", start_time);
             return;
         }
         
@@ -173,10 +152,7 @@ void OutlookBackupAction::execute() {
         Q_EMIT executionProgress(QString("Backing up %1...").arg(file.filename), progress);
         
         QString source_dir = QFileInfo(file.path).absolutePath();
-        QString safe_dir = source_dir;
-        safe_dir.replace(':', '_');
-        safe_dir.replace('\\', '_');
-        safe_dir.replace('/', '_');
+        QString safe_dir = sanitizePathForBackup(source_dir);
 
         QDir target_dir(backup_dir.filePath(safe_dir));
         target_dir.mkpath(".");
@@ -211,22 +187,17 @@ void OutlookBackupAction::execute() {
     
     if (files_copied > 0) {
         result.success = true;
-        double gb = bytes_copied / (1024.0 * 1024.0 * 1024.0);
-        result.message = QString("Backed up %1 Outlook file(s) - %2 GB")
+        result.message = QString("Backed up %1 Outlook file(s) - %2")
             .arg(files_copied)
-            .arg(gb, 0, 'f', 2);
+            .arg(formatFileSize(bytes_copied));
         result.log = QString("Saved to: %1").arg(backup_dir.absolutePath());
-        setStatus(ActionStatus::Success);
-        #include "sak/process_runner.h"
+        finishWithResult(result, ActionStatus::Success);
     } else {
         result.success = false;
         result.message = "Failed to backup Outlook files";
         result.log = "Could not copy any Outlook data files";
-        setStatus(ActionStatus::Failed);
+        finishWithResult(result, ActionStatus::Failed);
     }
-    
-    setExecutionResult(result);
-    Q_EMIT executionComplete(result);
 }
 
 bool OutlookBackupAction::isOutlookRunning() {

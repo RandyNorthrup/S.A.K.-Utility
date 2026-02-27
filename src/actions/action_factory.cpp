@@ -1,5 +1,5 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "sak/actions/action_factory.h"
 
@@ -24,7 +24,6 @@
 #include "sak/actions/development_configs_backup_action.h"
 
 // Maintenance Actions
-#include "sak/actions/check_disk_health_action.h"
 #include "sak/actions/update_all_apps_action.h"
 #include "sak/actions/windows_update_action.h"
 #include "sak/actions/verify_system_files_action.h"
@@ -80,8 +79,7 @@ std::vector<std::unique_ptr<QuickAction>> ActionFactory::createAllActions(const 
     actions.push_back(std::make_unique<PhotoManagementBackupAction>(backup_location));
     actions.push_back(std::make_unique<DevelopmentConfigsBackupAction>(backup_location));
     
-    // Maintenance (8 actions)
-    actions.push_back(std::make_unique<CheckDiskHealthAction>());
+    // Maintenance (7 actions — disk health/SMART is on the Diagnostics panel)
     actions.push_back(std::make_unique<UpdateAllAppsAction>());
     actions.push_back(std::make_unique<WindowsUpdateAction>());
     actions.push_back(std::make_unique<VerifySystemFilesAction>());

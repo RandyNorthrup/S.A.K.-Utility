@@ -1,12 +1,11 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 #pragma once
 
 #include <QWidget>
 #include <QPushButton>
 #include <QLabel>
-#include <QProgressBar>
 #include <QStackedWidget>
 #include <QListWidget>
 #include <QCheckBox>
@@ -22,6 +21,7 @@ namespace sak {
     struct FlashResult;
     struct FlashProgress;
     enum class FlashState;
+    class LogToggleSwitch;
 }
 
 /**
@@ -69,29 +69,16 @@ public:
      */
     bool loadImageFile(const QString& filePath);
 
+    /** @brief Access the log toggle switch for MainWindow connection */
+    sak::LogToggleSwitch* logToggle() const { return m_logToggle; }
+
 Q_SIGNALS:
-    /**
-     * @brief Emitted when flash operation completes successfully
-     * @param driveCount Number of drives flashed
-     * @param totalBytes Total bytes written
-     */
     void flashCompleted(int driveCount, qint64 totalBytes);
-
-    /**
-     * @brief Emitted when flash operation fails
-     * @param error Error message
-     */
     void flashFailed(const QString& error);
-
-    /**
-     * @brief Emitted when flash operation is cancelled
-     */
     void flashCancelled();
-
-    /**
-     * @brief Status message for the global status bar
-     */
     void statusMessage(const QString& message, int timeout_ms);
+    void progressUpdate(int current, int maximum);
+    void logOutput(const QString& message);
 
 private Q_SLOTS:
     // Step 1: Image Selection
@@ -150,7 +137,6 @@ private:
     
     // Step 3: Flash Progress
     QWidget* m_flashProgressPage;
-    QProgressBar* m_flashProgressBar;
     QLabel* m_flashStateLabel;
     QLabel* m_flashDetailsLabel;
     QLabel* m_flashSpeedLabel;
@@ -179,4 +165,5 @@ private:
     QStringList m_selectedDrives;
     bool m_isFlashing;
     int m_currentPage;
+    sak::LogToggleSwitch* m_logToggle{nullptr};
 };

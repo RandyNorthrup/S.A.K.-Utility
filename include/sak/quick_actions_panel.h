@@ -1,5 +1,5 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 #pragma once
 
@@ -8,7 +8,6 @@
 #include <QWidget>
 #include <QGroupBox>
 #include <QPushButton>
-#include <QProgressBar>
 #include <QLabel>
 #include <QTextEdit>
 #include <QLineEdit>
@@ -22,6 +21,8 @@
 namespace sak {
 
 class QuickActionController;
+class DetachableLogWindow;
+class LogToggleSwitch;
 
 /**
  * @brief Quick Actions Panel - One-click technician operations
@@ -60,20 +61,13 @@ public:
     QuickActionsPanel(QuickActionsPanel&&) = delete;
     QuickActionsPanel& operator=(QuickActionsPanel&&) = delete;
 
-Q_SIGNALS:
-    /**
-     * @brief Status message for main window status bar
-     * @param message Status message
-     * @param timeout_ms Timeout in milliseconds (0 = permanent)
-     */
-    void statusMessage(const QString& message, int timeout_ms);
+    /** @brief Access the log toggle switch for MainWindow connection */
+    LogToggleSwitch* logToggle() const { return m_logToggle; }
 
-    /**
-     * @brief Progress update for main window
-     * @param current Current progress value
-     * @param maximum Maximum progress value
-     */
+Q_SIGNALS:
+    void statusMessage(const QString& message, int timeout_ms);
     void progressUpdate(int current, int maximum);
+    void logOutput(const QString& message);
 
 private Q_SLOTS:
     /**
@@ -258,7 +252,6 @@ private:
     // UI Components - Status
     QVBoxLayout* m_actions_layout{nullptr};
     QLabel* m_action_label{nullptr};
-    QProgressBar* m_progress_bar{nullptr};
     QLabel* m_status_label{nullptr};
     QLabel* m_location_label{nullptr};
     QLabel* m_duration_label{nullptr};
@@ -267,7 +260,7 @@ private:
     QPushButton* m_view_log_button{nullptr};
 
     // UI Components - Log
-    QTextEdit* m_log_viewer{nullptr};
+    LogToggleSwitch* m_logToggle{nullptr};
 
     // State
     QString m_backup_location;

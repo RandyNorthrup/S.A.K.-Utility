@@ -1,9 +1,10 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 #pragma once
 
 #include "sak/quick_action.h"
+#include <QJsonObject>
 #include <QString>
 
 namespace sak {
@@ -35,6 +36,22 @@ private:
 
     bool areVisualEffectsEnabled();
     bool disableVisualEffects();
+
+    /// @brief Builds the PowerShell script to enumerate current visual effects settings.
+    /// @return PowerShell script that outputs JSON of current settings.
+    QString buildCheckSettingsScript() const;
+
+    /// @brief Builds the PowerShell script to apply Best Performance registry settings.
+    /// @return PowerShell script that outputs CHANGES and TOTAL counts.
+    QString buildApplySettingsScript() const;
+
+    /// @brief Builds the current settings analysis section of the report.
+    /// @return Report section with current settings values.
+    QString buildCurrentSettingsReport(const QJsonObject& current_settings) const;
+
+    /// @brief Builds the optimization summary section of the report.
+    /// @return Report section with summary, restart notice, and optimizations list.
+    QString buildSummaryReport(int settings_total, int settings_changed, const QString& fx_mode) const;
 };
 
 } // namespace sak

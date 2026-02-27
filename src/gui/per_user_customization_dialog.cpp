@@ -1,4 +1,8 @@
+// Copyright (c) 2025 Randy Northrup. All rights reserved.
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 #include "sak/per_user_customization_dialog.h"
+#include "sak/logger.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QHeaderView>
@@ -438,6 +442,7 @@ void PerUserCustomizationDialog::addDirectoryContents(const QDir& dir, QTreeWidg
         entries = dir.entryInfoList(QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Readable, QDir::Name | QDir::DirsFirst);
     } catch (...) {
         // Skip directories we can't read
+        sak::logWarning("Failed to list directory contents: {}", dir.absolutePath().toStdString());
         return;
     }
     
@@ -553,6 +558,7 @@ void PerUserCustomizationDialog::calculateDirectorySize(const QDir& dir, qint64&
     try {
         entries = dir.entryInfoList(QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Readable);
     } catch (...) {
+        sak::logWarning("Failed to enumerate directory for size calculation: {}", dir.absolutePath().toStdString());
         return;
     }
     

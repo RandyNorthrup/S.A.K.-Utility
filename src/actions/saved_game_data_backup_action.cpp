@@ -1,5 +1,5 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "sak/actions/saved_game_data_backup_action.h"
 #include "sak/windows_user_scanner.h"
@@ -181,20 +181,11 @@ void SavedGameDataBackupAction::execute() {
     
     for (const GameSaveLocation& loc : m_save_locations) {
         if (isCancelled()) {
-            ExecutionResult result;
-            result.success = false;
-            result.message = "Game save backup cancelled";
-            result.duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
-            setExecutionResult(result);
-            setStatus(ActionStatus::Cancelled);
-            Q_EMIT executionComplete(result);
+            emitCancelledResult("Game save backup cancelled", start_time);
             return;
         }
 
-        QString safe_dir = loc.path;
-        safe_dir.replace(':', '_');
-        safe_dir.replace('\\', '_');
-        safe_dir.replace('/', '_');
+        QString safe_dir = sanitizePathForBackup(loc.path);
         QString dest = backup_dir.filePath(loc.platform + "/" + safe_dir);
         QDir().mkpath(dest);
         
@@ -229,9 +220,7 @@ void SavedGameDataBackupAction::execute() {
         : "No game save locations were backed up";
     result.output_path = backup_dir.absolutePath();
     
-    setExecutionResult(result);
-    setStatus(processed > 0 ? ActionStatus::Success : ActionStatus::Failed);
-    Q_EMIT executionComplete(result);
+    finishWithResult(result, processed > 0 ? ActionStatus::Success : ActionStatus::Failed);
 }
 
 } // namespace sak

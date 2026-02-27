@@ -152,6 +152,22 @@ limitations under the License.
 
 ---
 
+## smartmontools
+
+**License:** GNU General Public License v2.0 (GPLv2)
+**Version:** 7.4
+**Website:** https://www.smartmontools.org/
+**Source:** https://github.com/smartmontools/smartmontools
+**Used for:** S.M.A.R.T. disk health analysis in the Diagnostic & Benchmarking panel
+
+smartctl.exe is bundled as a standalone executable in `tools/smartmontools/`.
+The full GPLv2 license text is included alongside the binary as `COPYING`.
+
+As required by GPLv2, the complete source code for smartmontools is available at:
+https://github.com/smartmontools/smartmontools/releases
+
+---
+
 ## vcpkg
 
 **License:** MIT

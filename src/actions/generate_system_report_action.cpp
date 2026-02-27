@@ -1,5 +1,5 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "sak/actions/generate_system_report_action.h"
 #include "sak/process_runner.h"
@@ -14,26 +14,6 @@ GenerateSystemReportAction::GenerateSystemReportAction(const QString& output_loc
     : QuickAction(parent)
     , m_output_location(output_location)
 {
-}
-
-void GenerateSystemReportAction::gatherSystemInfo() {
-    // Gathered via systeminfo command in execute()
-}
-
-void GenerateSystemReportAction::gatherInstalledPrograms() {
-    // Gathered via registry query in execute()
-}
-
-void GenerateSystemReportAction::gatherDriverInfo() {
-    // Gathered via driverquery in execute()
-}
-
-void GenerateSystemReportAction::gatherEventLogs() {
-    // Gathered via Get-EventLog in execute()
-}
-
-void GenerateSystemReportAction::generateHTML() {
-    // HTML generation happens in execute()
 }
 
 void GenerateSystemReportAction::scan() {
@@ -51,41 +31,97 @@ void GenerateSystemReportAction::scan() {
 
 void GenerateSystemReportAction::execute() {
     if (isCancelled()) {
-        ExecutionResult result;
-        result.success = false;
-        result.message = "System report generation cancelled";
-        setExecutionResult(result);
-        setStatus(ActionStatus::Cancelled);
-        Q_EMIT executionComplete(result);
+        emitCancelledResult(QStringLiteral("System report generation cancelled"));
         return;
     }
 
     setStatus(ActionStatus::Running);
     QDateTime start_time = QDateTime::currentDateTime();
     
-    QString report;
-    QString timestamp = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss");
-    
     Q_EMIT executionProgress("Gathering comprehensive system information...", 5);
 
-    auto finish_cancelled = [this, &start_time]() {
-        ExecutionResult result;
-        result.success = false;
-        result.message = "System report generation cancelled";
-        result.duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
-        setExecutionResult(result);
-        setStatus(ActionStatus::Cancelled);
-        Q_EMIT executionComplete(result);
-    };
+    // Phase 1: Report header
+    QString report = buildReportHeader();
     
-    report += "╔" + QString("═").repeated(78) + "╗\n";
-    report += "║" + QString(" COMPREHENSIVE SYSTEM DIAGNOSTIC REPORT").leftJustified(78) + "║\n";
-    report += "╚" + QString("═").repeated(78) + "╝\n\n";
-    report += QString("Generated: %1\n\n").arg(timestamp);
-    
-    // Get comprehensive computer info (100+ properties)
+    // Phase 2: OS and hardware
     Q_EMIT executionProgress("Collecting OS and hardware information...", 15);
+    report += gatherOsAndHardwareInfo();
+    if (isCancelled()) { emitCancelledResult(QStringLiteral("System report generation cancelled"), start_time); return; }
     
+    // Phase 3: Storage
+    Q_EMIT executionProgress("Collecting storage information...", 40);
+    report += gatherStorageInfo();
+    if (isCancelled()) { emitCancelledResult(QStringLiteral("System report generation cancelled"), start_time); return; }
+    
+    // Phase 4: Network
+    Q_EMIT executionProgress("Collecting network configuration...", 60);
+    report += gatherNetworkInfo();
+    if (isCancelled()) { emitCancelledResult(QStringLiteral("System report generation cancelled"), start_time); return; }
+    
+    // Phase 5: Qt/Volume info
+    Q_EMIT executionProgress("Adding supplemental system data...", 80);
+    report += gatherQtAndVolumeInfo();
+    if (isCancelled()) { emitCancelledResult(QStringLiteral("System report generation cancelled"), start_time); return; }
+    
+    // Phase 6: Save
+    Q_EMIT executionProgress("Saving report...", 95);
+    
+    QDir output_dir(m_output_location);
+    if (!output_dir.exists()) {
+        output_dir.mkpath(".");
+    }
+    
+    QString filename = QString("SystemReport_%1.txt")
+        .arg(QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss"));
+    QString filepath = output_dir.filePath(filename);
+    
+    report += QString("─").repeated(78) + "\n";
+    report += QString("Report completed in %1 seconds\n")
+        .arg(start_time.msecsTo(QDateTime::currentDateTime()) / 1000.0, 0, 'f', 1);
+    
+    bool save_success = saveReport(report, filepath);
+    
+    Q_EMIT executionProgress("Report complete", 100);
+    
+    qint64 duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
+    
+    ExecutionResult result;
+    result.duration_ms = duration_ms;
+    result.bytes_processed = report.size();
+    
+    if (save_success) {
+        result.success = true;
+        result.message = QString("Comprehensive system report generated: %1").arg(filename);
+        result.output_path = filepath;
+        result.log = QString("Report saved to: %1\nSize: %2 KB\nDuration: %3 seconds")
+            .arg(filepath)
+            .arg(report.size() / 1024.0, 0, 'f', 1)
+            .arg(duration_ms / 1000.0, 0, 'f', 1);
+    } else {
+        result.success = false;
+        result.message = "Failed to save system report";
+        result.log = QString("Could not write to: %1").arg(filepath);
+    }
+    
+    finishWithResult(result, save_success ? ActionStatus::Success : ActionStatus::Failed);
+}
+
+// ============================================================================
+// Private Helpers
+// ============================================================================
+
+QString GenerateSystemReportAction::buildReportHeader() const
+{
+    QString header;
+    header += "╔" + QString("═").repeated(78) + "╗\n";
+    header += "║" + QString(" COMPREHENSIVE SYSTEM DIAGNOSTIC REPORT").leftJustified(78) + "║\n";
+    header += "╚" + QString("═").repeated(78) + "╝\n\n";
+    header += QString("Generated: %1\n\n").arg(QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss"));
+    return header;
+}
+
+QString GenerateSystemReportAction::gatherOsAndHardwareInfo()
+{
     QString ps_cmd_info = 
         "$info = Get-ComputerInfo\n"
         "\n"
@@ -164,20 +200,15 @@ void GenerateSystemReportAction::execute() {
     if (!proc_info.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("System report OS warning: " + proc_info.std_err.trimmed());
     }
+    
     if (!proc_info.timed_out) {
-        report += proc_info.std_out + "\n";
-    } else {
-        report += "=== OPERATING SYSTEM ===\nTimeout gathering system info\n\n";
+        return proc_info.std_out + "\n";
     }
+    return "=== OPERATING SYSTEM ===\nTimeout gathering system info\n\n";
+}
 
-    if (isCancelled()) {
-        finish_cancelled();
-        return;
-    }
-    
-    // Get detailed storage information
-    Q_EMIT executionProgress("Collecting storage information...", 40);
-    
+QString GenerateSystemReportAction::gatherStorageInfo()
+{
     QString ps_cmd_storage = 
         "Write-Output \"=== STORAGE DEVICES ===\"\n"
         "$disks = Get-PhysicalDisk\n"
@@ -207,18 +238,15 @@ void GenerateSystemReportAction::execute() {
     if (!proc_storage.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("System report storage warning: " + proc_storage.std_err.trimmed());
     }
+    
     if (!proc_storage.timed_out) {
-        report += proc_storage.std_out + "\n";
+        return proc_storage.std_out + "\n";
     }
+    return QString();
+}
 
-    if (isCancelled()) {
-        finish_cancelled();
-        return;
-    }
-    
-    // Get network adapter details
-    Q_EMIT executionProgress("Collecting network configuration...", 60);
-    
+QString GenerateSystemReportAction::gatherNetworkInfo()
+{
     QString ps_cmd_network = 
         "Write-Output \"=== NETWORK ADAPTERS ===\"\n"
         "$adapters = Get-NetAdapter | Where-Object {$_.Status -eq 'Up'}\n"
@@ -244,101 +272,52 @@ void GenerateSystemReportAction::execute() {
     if (!proc_network.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("System report network warning: " + proc_network.std_err.trimmed());
     }
+    
     if (!proc_network.timed_out) {
-        report += proc_network.std_out + "\n";
+        return proc_network.std_out + "\n";
     }
+    return QString();
+}
 
-    if (isCancelled()) {
-        finish_cancelled();
-        return;
-    }
+QString GenerateSystemReportAction::gatherQtAndVolumeInfo() const
+{
+    QString section;
     
-    // Get Qt system info
-    Q_EMIT executionProgress("Adding supplemental system data...", 80);
+    section += "=== QT SYSTEM INFORMATION ===\n\n";
+    section += QString("Machine Host Name: %1\n").arg(QSysInfo::machineHostName());
+    section += QString("Pretty Product Name: %1\n").arg(QSysInfo::prettyProductName());
+    section += QString("Kernel Type: %1\n").arg(QSysInfo::kernelType());
+    section += QString("Kernel Version: %1\n").arg(QSysInfo::kernelVersion());
+    section += QString("CPU Architecture: %1\n").arg(QSysInfo::currentCpuArchitecture());
+    section += QString("Build CPU Architecture: %1\n").arg(QSysInfo::buildCpuArchitecture());
+    section += QString("Build ABI: %1\n\n").arg(QSysInfo::buildAbi());
     
-    report += "=== QT SYSTEM INFORMATION ===\n\n";
-    report += QString("Machine Host Name: %1\n").arg(QSysInfo::machineHostName());
-    report += QString("Pretty Product Name: %1\n").arg(QSysInfo::prettyProductName());
-    report += QString("Kernel Type: %1\n").arg(QSysInfo::kernelType());
-    report += QString("Kernel Version: %1\n").arg(QSysInfo::kernelVersion());
-    report += QString("CPU Architecture: %1\n").arg(QSysInfo::currentCpuArchitecture());
-    report += QString("Build CPU Architecture: %1\n").arg(QSysInfo::buildCpuArchitecture());
-    report += QString("Build ABI: %1\n\n").arg(QSysInfo::buildAbi());
-    
-    // Get volume information
-    report += "=== VOLUME INFORMATION ===\n\n";
+    section += "=== VOLUME INFORMATION ===\n\n";
     for (const QStorageInfo& storage : QStorageInfo::mountedVolumes()) {
-        if (isCancelled()) {
-            finish_cancelled();
-            return;
-        }
         if (!storage.isValid() || !storage.isReady()) continue;
         
-        report += QString("Volume: %1\n").arg(storage.rootPath());
-        report += QString("  Name: %1\n").arg(storage.name());
-        report += QString("  File System: %1\n").arg(QString::fromUtf8(storage.fileSystemType()));
-        report += QString("  Device: %1\n").arg(QString::fromUtf8(storage.device()));
-        report += QString("  Total: %1 GB\n").arg(storage.bytesTotal() / (1024.0 * 1024 * 1024), 0, 'f', 2);
-        report += QString("  Free: %1 GB\n").arg(storage.bytesFree() / (1024.0 * 1024 * 1024), 0, 'f', 2);
-        report += QString("  Available: %1 GB\n").arg(storage.bytesAvailable() / (1024.0 * 1024 * 1024), 0, 'f', 2);
-        report += QString("  Used: %1%%\n\n").arg(100.0 * (1.0 - (double)storage.bytesFree() / storage.bytesTotal()), 0, 'f', 1);
+        section += QString("Volume: %1\n").arg(storage.rootPath());
+        section += QString("  Name: %1\n").arg(storage.name());
+        section += QString("  File System: %1\n").arg(QString::fromUtf8(storage.fileSystemType()));
+        section += QString("  Device: %1\n").arg(QString::fromUtf8(storage.device()));
+        section += QString("  Total: %1 GB\n").arg(storage.bytesTotal() / (1024.0 * 1024 * 1024), 0, 'f', 2);
+        section += QString("  Free: %1 GB\n").arg(storage.bytesFree() / (1024.0 * 1024 * 1024), 0, 'f', 2);
+        section += QString("  Available: %1 GB\n").arg(storage.bytesAvailable() / (1024.0 * 1024 * 1024), 0, 'f', 2);
+        section += QString("  Used: %1%%\n\n").arg(100.0 * (1.0 - (double)storage.bytesFree() / storage.bytesTotal()), 0, 'f', 1);
     }
     
-    Q_EMIT executionProgress("Saving report...", 95);
+    return section;
+}
 
-    if (isCancelled()) {
-        finish_cancelled();
-        return;
-    }
-    
-    // Save to file
-    QDir output_dir(m_output_location);
-    if (!output_dir.exists()) {
-        output_dir.mkpath(".");
-    }
-    
-    QString filename = QString("SystemReport_%1.txt")
-        .arg(QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss"));
-    QString filepath = output_dir.filePath(filename);
-    
-    report += QString("─").repeated(78) + "\n";
-    report += QString("Report completed in %1 seconds\n")
-        .arg(start_time.msecsTo(QDateTime::currentDateTime()) / 1000.0, 0, 'f', 1);
-    
+bool GenerateSystemReportAction::saveReport(const QString& report, const QString& filepath)
+{
     QFile file(filepath);
-    bool save_success = false;
-    if (file.open(QIODevice::WriteOnly | QIODevice::Text)) {
-        file.write(report.toUtf8());
-        file.close();
-        save_success = true;
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        return false;
     }
-    
-    Q_EMIT executionProgress("Report complete", 100);
-    
-    qint64 duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
-    
-    ExecutionResult result;
-    result.duration_ms = duration_ms;
-    result.bytes_processed = report.size();
-    
-    if (save_success) {
-        result.success = true;
-        result.message = QString("Comprehensive system report generated: %1").arg(filename);
-        result.output_path = filepath;
-        result.log = QString("Report saved to: %1\nSize: %2 KB\nDuration: %3 seconds")
-            .arg(filepath)
-            .arg(report.size() / 1024.0, 0, 'f', 1)
-            .arg(duration_ms / 1000.0, 0, 'f', 1);
-        setStatus(ActionStatus::Success);
-    } else {
-        result.success = false;
-        result.message = "Failed to save system report";
-        result.log = QString("Could not write to: %1").arg(filepath);
-        setStatus(ActionStatus::Failed);
-    }
-    
-    setExecutionResult(result);
-    Q_EMIT executionComplete(result);
+    file.write(report.toUtf8());
+    file.close();
+    return true;
 }
 
 } // namespace sak

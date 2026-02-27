@@ -1,9 +1,8 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "sak/actions/fix_audio_issues_action.h"
 #include "sak/process_runner.h"
-#include <QProcess>
 #include <QThread>
 #include <QTextStream>
 
@@ -90,7 +89,9 @@ int FixAudioIssuesAction::resetAudioDevices() {
     if (!count_proc.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("Audio device count warning: " + count_proc.std_err.trimmed());
     }
-    int device_count = count_proc.std_out.trimmed().toInt();
+    bool ok = false;
+    int device_count = count_proc.std_out.trimmed().toInt(&ok);
+    if (!ok) device_count = 0;
     
     // Disable and re-enable audio devices
     QString reset_cmd = "$devices = Get-PnpDevice -Class 'AudioEndpoint','MEDIA' | Where-Object {$_.Status -ne 'Unknown'}; "
@@ -205,17 +206,14 @@ void FixAudioIssuesAction::execute() {
         result.log += "• Test audio playback in system settings\n";
         result.log += "• Reboot if issues persist\n";
         result.log += "• Check Device Manager for driver errors\n";
-        setStatus(ActionStatus::Success);
     } else {
         result.success = false;
         result.message = "Audio service restart encountered errors";
         result.log = report;
         result.log += "\nSome services failed to restart - administrative privileges may be required\n";
-        setStatus(ActionStatus::Failed);
     }
     
-    setExecutionResult(result);
-    Q_EMIT executionComplete(result);
+    finishWithResult(result, result.success ? ActionStatus::Success : ActionStatus::Failed);
 }
 
 } // namespace sak

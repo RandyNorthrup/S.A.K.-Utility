@@ -1,8 +1,12 @@
+// Copyright (c) 2025 Randy Northrup. All rights reserved.
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 #include "sak/user_profile_restore_worker.h"
 #include "sak/smart_file_filter.h"
 #include "sak/permission_manager.h"
 #include "sak/windows_user_scanner.h"
 #include "sak/path_utils.h"
+#include "sak/logger.h"
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -394,9 +398,21 @@ bool UserProfileRestoreWorker::applyPermissions(const QString& filePath,
                 // If no specific user, strip permissions
                 return m_permissionManager->stripPermissions(filePath);
             }
-            // Would need to implement setOwner() in PermissionManager
-            // For now, strip permissions as fallback
-            return m_permissionManager->stripPermissions(filePath);
+            // Look up user SID and apply ownership + standard permissions
+            {
+                QString userSID = WindowsUserScanner::getUserSID(destinationUser);
+                if (userSID.isEmpty()) {
+                    sak::logWarning("Could not resolve SID for user '{}', stripping permissions instead",
+                                    destinationUser.toStdString());
+                    return m_permissionManager->stripPermissions(filePath);
+                }
+                if (!m_permissionManager->takeOwnership(filePath, userSID)) {
+                    sak::logWarning("Failed to take ownership for '{}', stripping permissions",
+                                    filePath.toStdString());
+                    return m_permissionManager->stripPermissions(filePath);
+                }
+                return m_permissionManager->setStandardUserPermissions(filePath, userSID);
+            }
             
         case PermissionMode::Hybrid:
             // Try to preserve, fall back to strip on error

@@ -1,3 +1,6 @@
+// Copyright (c) 2025 Randy Northrup. All rights reserved.
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 /// @file secure_memory.h
 /// @brief Secure memory handling utilities for sensitive data
 /// @details Provides RAII-based secure memory management following security best practices
@@ -5,6 +8,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdio>
 #include <cstring>
 #include <memory>
 #include <string>
@@ -344,8 +348,12 @@ public:
     /// @brief Destructor - unlocks memory
     ~locked_memory() {
         if (m_locked && m_ptr) {
-            // Explicitly ignore return value as we're in destructor
-            (void)unlockMemory(m_ptr, m_size);
+            if (!unlockMemory(m_ptr, m_size)) {
+                // Memory unlock failure in destructor is non-recoverable but should
+                // be visible during development. Use fprintf to avoid header dependencies
+                // on logger or Windows headers.
+                (void)std::fprintf(stderr, "SAK: WARNING — VirtualUnlock failed in locked_memory destructor\n");
+            }
         }
     }
     

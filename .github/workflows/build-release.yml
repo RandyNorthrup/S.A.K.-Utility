@@ -22,6 +22,7 @@ jobs:
     runs-on: windows-latest
     permissions:
       contents: write
+      id-token: write
     
     steps:
     - name: Checkout code
@@ -80,6 +81,14 @@ jobs:
         restore-keys: |
           ${{ runner.os }}-cmake-
     
+    - name: Bundle smartmontools
+      shell: pwsh
+      run: |
+        # Download and extract smartctl.exe for SMART disk diagnostics.
+        # The script is idempotent — skips if smartctl.exe is already present
+        # (e.g. checked into the repo via the .gitignore exception).
+        powershell -ExecutionPolicy Bypass -File scripts/bundle_smartmontools.ps1
+
     - name: Configure CMake
       run: |
         cmake -B build -G "Visual Studio 17 2022" -A x64 `
@@ -155,8 +164,45 @@ jobs:
           Write-Host "OK  tools/"
         }
         
+        # smartctl.exe (bundled for SMART diagnostics)
+        if (!(Test-Path "tools/smartmontools/smartctl.exe")) {
+          Write-Warning "tools/smartmontools/smartctl.exe not found — SMART diagnostics unavailable"
+        } else {
+          $smartVer = & .\tools\smartmontools\smartctl.exe --version 2>&1 | Select-Object -First 1
+          Write-Host "OK  tools/smartmontools/smartctl.exe ($smartVer)"
+        }
+        
         Write-Host ""
         Write-Host "=== Verification complete ==="
+
+    - name: Sign Executable
+      if: github.event_name != 'pull_request'
+      uses: azure/trusted-signing-action@v0.5.1
+      with:
+        azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+        azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+        azure-client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+        endpoint: https://wus.codesigning.azure.net/
+        trusted-signing-account-name: scnetsolutions
+        certificate-profile-name: SAKUtility
+        files-folder: build/Release
+        files-folder-filter: exe
+        file-digest: SHA256
+        timestamp-rfc3161: http://timestamp.acs.microsoft.com
+        timestamp-digest: SHA256
+
+    - name: Verify Code Signature
+      if: github.event_name != 'pull_request'
+      shell: pwsh
+      run: |
+        $sig = Get-AuthenticodeSignature "build/Release/sak_utility.exe"
+        Write-Host "Signature status: $($sig.Status)"
+        Write-Host "Signer: $($sig.SignerCertificate.Subject)"
+        Write-Host "Timestamp: $($sig.TimeStamperCertificate.Subject)"
+        if ($sig.Status -ne 'Valid') {
+          Write-Warning "Code signing verification failed — signature status: $($sig.Status)"
+          Write-Warning "This may be expected for first-time setup. Check Azure Trusted Signing configuration."
+        }
 
     - name: Run Tests
       working-directory: build/Release/Release
@@ -384,6 +430,7 @@ jobs:
           
           ## Highlights
           - 40+ Quick Actions for common admin tasks
+          - Diagnostics & Benchmarking (CPU, disk, memory, stress tests, SMART health)
           - BitLocker recovery key backup
           - Network peer-to-peer file transfer
           - Windows & Linux ISO downloader with USB flasher
@@ -392,6 +439,7 @@ jobs:
           - Streaming compression (gzip, bzip2, xz)
           
           ## Core Features
+          - Diagnostics & Benchmarking with SMART analysis, stress testing, and report export
           - Application Migration with embedded Chocolatey
           - User Profile Backup & Restore wizards with encryption
           - Image Flasher with ISO downloader
@@ -407,12 +455,11 @@ jobs:
           3. Run `sak_utility.exe`
           4. `portable.ini` is included for portable operation
           
-          ### Windows Defender / SmartScreen Warning
-          **This is a false positive.** The executable is not code-signed (certificate costs $300+/year).
+          ### Code Signing
+          This release is digitally signed via Azure Trusted Signing.
+          Windows SmartScreen and Defender should recognize the signature automatically.
           
-          - **Add exclusion**: `Add-MpPreference -ExclusionPath "C:\path\to\SAK-Utility"` (run as admin)
-          - **SmartScreen**: Click "More info" → "Run anyway"
-          - **Verify integrity**: Check SHA256 hash in SHA256SUMS.txt
+          You can verify the signature by right-clicking `sak_utility.exe` → Properties → Digital Signatures.
           
           100% open source, built via GitHub Actions, no telemetry.
           

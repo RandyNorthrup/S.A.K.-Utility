@@ -1,3 +1,6 @@
+// Copyright (c) 2025 Randy Northrup. All rights reserved.
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 #include "sak/network_transfer_worker.h"
 
 #include "sak/network_transfer_security.h"
@@ -19,6 +22,7 @@
 #include <QDataStream>
 #include <QCryptographicHash>
 #include <QFileInfo>
+#include <QScopeGuard>
 
 #include <filesystem>
 #include <algorithm>
@@ -360,6 +364,13 @@ bool NetworkTransferWorker::handleSender(QTcpSocket* socket,
                                          const QVector<TransferFileEntry>& files,
                                          const DataOptions& options) {
     QByteArray key;
+    // Scope guard to securely wipe the derived key on all exit paths
+    auto keyGuard = qScopeGuard([&key]() {
+        if (!key.isEmpty()) {
+            SecureZeroMemory(key.data(), key.size());
+        }
+    });
+
     if (options.encryption_enabled) {
         auto keyResult = TransferSecurityManager::deriveKey(options.passphrase, options.salt);
         if (!keyResult) {
@@ -399,20 +410,7 @@ bool NetworkTransferWorker::handleSender(QTcpSocket* socket,
 
             Q_EMIT fileStarted(file.file_id, file.relative_path, file.size_bytes);
 
-            QJsonObject fileHeader;
-            fileHeader["file_id"] = file.file_id;
-            fileHeader["relative_path"] = file.relative_path;
-            fileHeader["size_bytes"] = static_cast<qint64>(file.size_bytes);
-            fileHeader["checksum_sha256"] = file.checksum_sha256;
-            fileHeader["chunk_size"] = options.chunk_size;
-            if (!file.acl_sddl.isEmpty()) {
-                fileHeader["acl_sddl"] = file.acl_sddl;
-            }
-
-            QByteArray headerPayload = QJsonDocument(fileHeader).toJson(QJsonDocument::Compact);
-            if (!sendFrame(socket, FrameFileHeader, 0, 0, headerPayload, headerPayload.size(), computeCrc32(headerPayload))) {
-                logError("NetworkTransferWorker sender failed to send file header");
-                Q_EMIT errorOccurred(tr("Failed to send file header"));
+            if (!sendFileHeader(socket, file, options)) {
                 return false;
             }
 
@@ -427,84 +425,10 @@ bool NetworkTransferWorker::handleSender(QTcpSocket* socket,
                 }
             }
 
-            auto isChunkSkipped = [&](int chunkId) {
-                for (const auto& range : resumeRanges) {
-                    if (chunkId >= range.first && chunkId <= range.second) {
-                        return true;
-                    }
-                }
+            if (!sendFileChunks(socket, source, file, options, key,
+                               resumeRanges, bytesSent, totalBytes,
+                               rateTimer, rateBytesSent)) {
                 return false;
-            };
-
-            int chunkId = 0;
-            while (!source.atEnd()) {
-                if (m_stopRequested) {
-                    return false;
-                }
-
-                QByteArray chunk = source.read(options.chunk_size);
-                if (chunk.isEmpty()) {
-                    break;
-                }
-
-                if (options.resume_enabled && isChunkSkipped(chunkId)) {
-                    bytesSent += chunk.size();
-                    Q_EMIT fileProgress(file.file_id, bytesSent, file.size_bytes);
-                    Q_EMIT overallProgress(bytesSent, totalBytes);
-                    chunkId++;
-                    continue;
-                }
-
-                QByteArray payload = chunk;
-                quint16 flags = 0;
-
-                if (options.compression_enabled) {
-                    payload = compressData(payload);
-                    flags |= kFlagCompressed;
-                }
-
-                if (options.encryption_enabled) {
-                    auto encrypted = TransferSecurityManager::encryptAesGcm(payload, key, options.transfer_id.toUtf8());
-                    if (!encrypted) {
-                        logError("NetworkTransferWorker sender encryption failed for file {}", file.relative_path.toStdString());
-                        Q_EMIT errorOccurred(tr("Encryption failed"));
-                        return false;
-                    }
-                    payload = packEncrypted(*encrypted);
-                    flags |= kFlagEncrypted;
-                }
-
-                const bool isLast = source.atEnd();
-                if (isLast) {
-                    flags |= kFlagLastChunk;
-                }
-
-                const quint32 crc = computeCrc32(chunk);
-                if (!sendFrame(socket, FrameDataChunk, flags, static_cast<quint32>(chunkId), payload, chunk.size(), crc)) {
-                    logError("NetworkTransferWorker sender failed to send data chunk");
-                    Q_EMIT errorOccurred(tr("Failed to send data chunk"));
-                    return false;
-                }
-
-                bytesSent += chunk.size();
-                Q_EMIT fileProgress(file.file_id, bytesSent, file.size_bytes);
-                Q_EMIT overallProgress(bytesSent, totalBytes);
-
-                const int maxBandwidthKbps = m_dynamicMaxBandwidthKbps.load(std::memory_order_relaxed);
-                if (maxBandwidthKbps > 0) {
-                    rateBytesSent += chunk.size();
-                    const qint64 expectedMs = (rateBytesSent * 1000) / (static_cast<qint64>(maxBandwidthKbps) * 1024);
-                    const qint64 elapsedMs = rateTimer.elapsed();
-                    if (expectedMs > elapsedMs) {
-                        QThread::msleep(static_cast<unsigned long>(expectedMs - elapsedMs));
-                    }
-                    if (elapsedMs >= 1000) {
-                        rateTimer.restart();
-                        rateBytesSent = 0;
-                    }
-                }
-
-                chunkId++;
             }
 
             if (!sendFrame(socket, FrameFileEnd, 0, 0, {}, 0, 0)) {
@@ -513,29 +437,8 @@ bool NetworkTransferWorker::handleSender(QTcpSocket* socket,
                 return false;
             }
 
-            FrameHeader ackHeader;
-            if (!readHeader(socket, ackHeader) || ackHeader.frame_type != FrameFileAck) {
-                logWarning("NetworkTransferWorker sender did not receive file ACK for {}", file.relative_path.toStdString());
-                Q_EMIT errorOccurred(tr("No file ACK received"));
-                continue;
-            }
-
-            QByteArray ackPayload = readExact(socket, ackHeader.payload_size);
-            QJsonParseError err{};
-            QJsonDocument ackDoc = QJsonDocument::fromJson(ackPayload, &err);
-            if (err.error != QJsonParseError::NoError || !ackDoc.isObject()) {
-                logWarning("NetworkTransferWorker sender received invalid file ACK for {}", file.relative_path.toStdString());
-                Q_EMIT errorOccurred(tr("Invalid file ACK"));
-                continue;
-            }
-
-            auto ackObj = ackDoc.object();
-            const QString status = ackObj.value("status").toString();
-            if (status == "ok") {
+            if (awaitFileAck(socket, file)) {
                 sent = true;
-            } else {
-                logWarning("NetworkTransferWorker sender file verification failed for {}, retrying", file.relative_path.toStdString());
-                Q_EMIT errorOccurred(tr("File verification failed, retrying..."));
             }
         }
 
@@ -551,8 +454,158 @@ bool NetworkTransferWorker::handleSender(QTcpSocket* socket,
     return sendFrame(socket, FrameTransferEnd, 0, 0, {}, 0, 0);
 }
 
+bool NetworkTransferWorker::sendFileHeader(QTcpSocket* socket,
+                                           const TransferFileEntry& file,
+                                           const DataOptions& options) {
+    QJsonObject fileHeader;
+    fileHeader["file_id"] = file.file_id;
+    fileHeader["relative_path"] = file.relative_path;
+    fileHeader["size_bytes"] = static_cast<qint64>(file.size_bytes);
+    fileHeader["checksum_sha256"] = file.checksum_sha256;
+    fileHeader["chunk_size"] = options.chunk_size;
+    if (!file.acl_sddl.isEmpty()) {
+        fileHeader["acl_sddl"] = file.acl_sddl;
+    }
+
+    QByteArray headerPayload = QJsonDocument(fileHeader).toJson(QJsonDocument::Compact);
+    if (!sendFrame(socket, FrameFileHeader, 0, 0, headerPayload, headerPayload.size(), computeCrc32(headerPayload))) {
+        logError("NetworkTransferWorker sender failed to send file header");
+        Q_EMIT errorOccurred(tr("Failed to send file header"));
+        return false;
+    }
+    return true;
+}
+
+bool NetworkTransferWorker::sendFileChunks(QTcpSocket* socket, QFile& source,
+                                           const TransferFileEntry& file,
+                                           const DataOptions& options,
+                                           const QByteArray& key,
+                                           const QVector<QPair<int, int>>& resumeRanges,
+                                           qint64& bytesSent, qint64 totalBytes,
+                                           QElapsedTimer& rateTimer, qint64& rateBytesSent) {
+    auto isChunkSkipped = [&](int chunkId) {
+        for (const auto& range : resumeRanges) {
+            if (chunkId >= range.first && chunkId <= range.second) {
+                return true;
+            }
+        }
+        return false;
+    };
+
+    int chunkId = 0;
+    while (!source.atEnd()) {
+        if (m_stopRequested) {
+            return false;
+        }
+
+        QByteArray chunk = source.read(options.chunk_size);
+        if (chunk.isEmpty()) {
+            break;
+        }
+
+        if (options.resume_enabled && isChunkSkipped(chunkId)) {
+            bytesSent += chunk.size();
+            Q_EMIT fileProgress(file.file_id, bytesSent, file.size_bytes);
+            Q_EMIT overallProgress(bytesSent, totalBytes);
+            chunkId++;
+            continue;
+        }
+
+        QByteArray payload = chunk;
+        quint16 flags = 0;
+
+        if (options.compression_enabled) {
+            payload = compressData(payload);
+            flags |= kFlagCompressed;
+        }
+
+        if (options.encryption_enabled) {
+            auto encrypted = TransferSecurityManager::encryptAesGcm(payload, key, options.transfer_id.toUtf8());
+            if (!encrypted) {
+                logError("NetworkTransferWorker sender encryption failed for file {}", file.relative_path.toStdString());
+                Q_EMIT errorOccurred(tr("Encryption failed"));
+                return false;
+            }
+            payload = packEncrypted(*encrypted);
+            flags |= kFlagEncrypted;
+        }
+
+        const bool isLast = source.atEnd();
+        if (isLast) {
+            flags |= kFlagLastChunk;
+        }
+
+        const quint32 crc = computeCrc32(chunk);
+        if (!sendFrame(socket, FrameDataChunk, flags, static_cast<quint32>(chunkId), payload, chunk.size(), crc)) {
+            logError("NetworkTransferWorker sender failed to send data chunk");
+            Q_EMIT errorOccurred(tr("Failed to send data chunk"));
+            return false;
+        }
+
+        bytesSent += chunk.size();
+        Q_EMIT fileProgress(file.file_id, bytesSent, file.size_bytes);
+        Q_EMIT overallProgress(bytesSent, totalBytes);
+
+        const int maxBandwidthKbps = m_dynamicMaxBandwidthKbps.load(std::memory_order_relaxed);
+        if (maxBandwidthKbps > 0) {
+            rateBytesSent += chunk.size();
+            const qint64 expectedMs = (rateBytesSent * 1000) / (static_cast<qint64>(maxBandwidthKbps) * 1024);
+            const qint64 elapsedMs = rateTimer.elapsed();
+            if (expectedMs > elapsedMs) {
+                QThread::msleep(static_cast<unsigned long>(expectedMs - elapsedMs));
+            }
+            if (elapsedMs >= 1000) {
+                rateTimer.restart();
+                rateBytesSent = 0;
+            }
+        }
+
+        chunkId++;
+    }
+
+    return true;
+}
+
+bool NetworkTransferWorker::awaitFileAck(QTcpSocket* socket, const TransferFileEntry& file) {
+    FrameHeader ackHeader;
+    if (!readHeader(socket, ackHeader) || ackHeader.frame_type != FrameFileAck) {
+        logWarning("NetworkTransferWorker sender did not receive file ACK for {}", file.relative_path.toStdString());
+        Q_EMIT errorOccurred(tr("No file ACK received"));
+        return false;
+    }
+
+    QByteArray ackPayload = readExact(socket, ackHeader.payload_size);
+    QJsonParseError err{};
+    QJsonDocument ackDoc = QJsonDocument::fromJson(ackPayload, &err);
+    if (err.error != QJsonParseError::NoError || !ackDoc.isObject()) {
+        logWarning("NetworkTransferWorker sender received invalid file ACK for {}", file.relative_path.toStdString());
+        Q_EMIT errorOccurred(tr("Invalid file ACK"));
+        return false;
+    }
+
+    auto ackObj = ackDoc.object();
+    const QString status = ackObj.value("status").toString();
+    if (status == "ok") {
+        return true;
+    }
+
+    logWarning("NetworkTransferWorker sender file verification failed for {}, retrying", file.relative_path.toStdString());
+    Q_EMIT errorOccurred(tr("File verification failed, retrying..."));
+    return false;
+}
+
 bool NetworkTransferWorker::handleReceiver(QTcpSocket* socket, const DataOptions& options) {
-    QByteArray key;
+    ReceiverState state;
+    state.chunk_size = options.chunk_size;
+    state.overall_received = 0;
+
+    // Scope guard to securely wipe the derived key on all exit paths
+    auto keyGuard = qScopeGuard([&state]() {
+        if (!state.key.isEmpty()) {
+            SecureZeroMemory(state.key.data(), state.key.size());
+        }
+    });
+
     if (options.encryption_enabled) {
         auto keyResult = TransferSecurityManager::deriveKey(options.passphrase, options.salt);
         if (!keyResult) {
@@ -560,22 +613,9 @@ bool NetworkTransferWorker::handleReceiver(QTcpSocket* socket, const DataOptions
             Q_EMIT errorOccurred(tr("Failed to derive encryption key"));
             return false;
         }
-        key = *keyResult;
+        state.key = *keyResult;
     }
 
-    QFile currentFile;
-    QString currentFileId;
-    QString currentRelativePath;
-    QString currentChecksum;
-    QString currentAclSddl;
-    qint64 currentSize = 0;
-    int chunkSize = options.chunk_size;
-    qint64 bytesReceived = 0;
-    qint64 totalBytes = options.total_bytes;
-    qint64 overallReceived = 0;
-    QVector<QPair<int, int>> currentRanges;
-    QString resumePath;
-    int totalChunks = 0;
     QElapsedTimer resumeTimer;
     resumeTimer.start();
 
@@ -590,195 +630,236 @@ bool NetworkTransferWorker::handleReceiver(QTcpSocket* socket, const DataOptions
             return false;
         }
 
-        if (header.frame_type == FrameFileHeader) {
-            QJsonParseError error{};
-            QJsonDocument doc = QJsonDocument::fromJson(payload, &error);
-            if (error.error != QJsonParseError::NoError || !doc.isObject()) {
-                logError("NetworkTransferWorker receiver invalid file header");
-                Q_EMIT errorOccurred(tr("Invalid file header"));
+        switch (static_cast<FrameType>(header.frame_type)) {
+        case FrameFileHeader:
+            if (!processFileHeader(socket, payload, options, state)) {
                 return false;
             }
-            auto obj = doc.object();
-            currentFileId = obj.value("file_id").toString();
-            currentRelativePath = obj.value("relative_path").toString();
-            currentSize = obj.value("size_bytes").toVariant().toLongLong();
-            currentChecksum = obj.value("checksum_sha256").toString();
-            chunkSize = obj.value("chunk_size").toInt(chunkSize);
-            currentAclSddl = obj.value("acl_sddl").toString();
-
-            totalChunks = static_cast<int>((currentSize + chunkSize - 1) / chunkSize);
-
-            const QString destinationPath = QDir(options.destination_base).filePath(currentRelativePath);
-            auto nativePath = QDir::toNativeSeparators(destinationPath);
-
-            std::filesystem::path destPath = nativePath.toStdString();
-            auto safe = path_utils::isSafePath(destPath, std::filesystem::path(options.destination_base.toStdString()));
-            if (!safe || !(*safe)) {
-                logError("NetworkTransferWorker receiver detected unsafe path: {}", destinationPath.toStdString());
-                Q_EMIT errorOccurred(tr("Unsafe path detected"));
-                return false;
-            }
-
-            QDir destDir = QFileInfo(destinationPath).absoluteDir();
-            if (!destDir.exists()) {
-                if (!destDir.mkpath(".")) {
-                    logError("NetworkTransferWorker receiver failed to create destination directory {}",
-                              destDir.path().toStdString());
-                    Q_EMIT errorOccurred(tr("Failed to create destination directory"));
-                    return false;
-                }
-            }
-
-            QString tempPath = destinationPath + ".partial";
-            currentFile.setFileName(tempPath);
-            if (!currentFile.open(QIODevice::ReadWrite)) {
-                logError("NetworkTransferWorker receiver failed to open destination file {}", destinationPath.toStdString());
-                Q_EMIT errorOccurred(tr("Failed to open destination file"));
-                return false;
-            }
-
-            if (options.resume_enabled) {
-                resumePath = destinationPath + ".resume.json";
-                QString resumeFileId;
-                int resumeTotalChunks = totalChunks;
-                currentRanges = loadResumeInfo(resumePath, resumeFileId, resumeTotalChunks);
-                if (!resumeFileId.isEmpty() && resumeFileId != currentFileId) {
-                    currentRanges.clear();
-                    QFile::remove(resumePath);
-                } else if (resumeTotalChunks > 0 && resumeTotalChunks != totalChunks) {
-                    currentRanges.clear();
-                    QFile::remove(resumePath);
-                }
-                if (currentRanges.isEmpty()) {
-                    qint64 existing = currentFile.size();
-                    int completedChunks = static_cast<int>(existing / chunkSize);
-                    if (completedChunks > 0) {
-                        currentRanges.append({0, completedChunks - 1});
-                    }
-                }
-
-                QByteArray resumePayload = buildResumePayload(currentFileId, currentRanges, totalChunks);
-                sendFrame(socket, FrameResumeInfo, 0, 0, resumePayload, resumePayload.size(), computeCrc32(resumePayload));
-            }
-
-            bytesReceived = 0;
-            Q_EMIT fileStarted(currentFileId, currentRelativePath, currentSize);
-            logInfo("NetworkTransferWorker receiver starting file {}", currentRelativePath.toStdString());
             continue;
-        }
 
-        if (header.frame_type == FrameDataChunk) {
-            QByteArray plainPayload = payload;
-
-            if (header.flags & kFlagEncrypted) {
-                EncryptedPayload encrypted = unpackEncrypted(payload);
-                auto decrypted = TransferSecurityManager::decryptAesGcm(encrypted, key, options.transfer_id.toUtf8());
-                if (!decrypted) {
-                    logError("NetworkTransferWorker receiver decryption failed for {}", currentRelativePath.toStdString());
-                    Q_EMIT errorOccurred(tr("Decryption failed"));
-                    return false;
-                }
-                plainPayload = *decrypted;
-            }
-
-            if (header.flags & kFlagCompressed) {
-                plainPayload = decompressData(plainPayload);
-            }
-
-            if (computeCrc32(plainPayload) != header.crc32) {
-                Q_EMIT errorOccurred(tr("CRC mismatch"));
+        case FrameDataChunk:
+            if (!processDataChunk(socket, header, payload, options, state)) {
                 return false;
             }
-
-            const qint64 offset = static_cast<qint64>(header.chunk_id) * chunkSize;
-            if (!currentFile.seek(offset)) {
-                Q_EMIT errorOccurred(tr("Failed to seek in destination file"));
-                return false;
+            if (options.resume_enabled && resumeTimer.elapsed() > 2000) {
+                saveResumeInfo(state.resume_path, state.current_file_id,
+                               state.current_ranges, state.total_chunks);
+                resumeTimer.restart();
             }
-
-            if (currentFile.write(plainPayload) != plainPayload.size()) {
-                Q_EMIT errorOccurred(tr("Failed to write data"));
-                return false;
-            }
-
-            if (options.resume_enabled) {
-                mergeChunkRange(currentRanges, static_cast<int>(header.chunk_id));
-                if (resumeTimer.elapsed() > 2000) {
-                    saveResumeInfo(resumePath, currentFileId, currentRanges, totalChunks);
-                    resumeTimer.restart();
-                }
-            }
-
-            bytesReceived += plainPayload.size();
-            overallReceived += plainPayload.size();
-            Q_EMIT fileProgress(currentFileId, bytesReceived, currentSize);
-            Q_EMIT overallProgress(overallReceived, totalBytes);
+            Q_EMIT fileProgress(state.current_file_id, state.bytes_received, state.current_size);
+            Q_EMIT overallProgress(state.overall_received, options.total_bytes);
             continue;
-        }
 
-        if (header.frame_type == FrameFileEnd) {
-            currentFile.flush();
-            currentFile.close();
-
-            QString finalPath = QDir(options.destination_base).filePath(currentRelativePath);
-            QString tempPath = finalPath + ".partial";
-
-            QJsonObject ackPayload;
-            ackPayload["file_id"] = currentFileId;
-
-            // Verify checksum
-            if (!currentChecksum.isEmpty()) {
-                file_hasher hasher(hash_algorithm::sha256);
-                auto hashResult = hasher.calculateHash(std::filesystem::path(tempPath.toStdString()));
-                if (!hashResult || QString::fromStdString(*hashResult) != currentChecksum) {
-                    Q_EMIT errorOccurred(tr("Checksum mismatch for %1").arg(finalPath));
-                    ackPayload["status"] = "retry";
-                    sendFrame(socket, FrameFileAck, 0, 0,
-                        QJsonDocument(ackPayload).toJson(QJsonDocument::Compact), 0, 0);
-                    QFile::remove(tempPath);
-                    continue;
-                }
+        case FrameFileEnd:
+            if (!processFileEnd(socket, options, state)) {
+                continue;  // retry signaled via ACK
             }
-
-            QFile::remove(finalPath);
-            if (!QFile::rename(tempPath, finalPath)) {
-                Q_EMIT errorOccurred(tr("Failed to finalize file"));
-                ackPayload["status"] = "retry";
-                sendFrame(socket, FrameFileAck, 0, 0,
-                    QJsonDocument(ackPayload).toJson(QJsonDocument::Compact), 0, 0);
-                continue;
-            }
-
-            PermissionManager perms;
-            if (!currentAclSddl.isEmpty()) {
-                perms.setSecurityDescriptorSddl(finalPath, currentAclSddl);
-            } else if (options.acl_overrides.contains(currentRelativePath)) {
-                perms.setSecurityDescriptorSddl(finalPath, options.acl_overrides.value(currentRelativePath));
-            } else if (options.permission_modes.contains(currentRelativePath.section('/', 0, 0))) {
-                const auto mode = options.permission_modes.value(currentRelativePath.section('/', 0, 0));
-                perms.applyPermissionStrategy(finalPath, mode);
-            } else {
-                perms.stripPermissions(finalPath);
-            }
-
-            ackPayload["status"] = "ok";
-            sendFrame(socket, FrameFileAck, 0, 0,
-                QJsonDocument(ackPayload).toJson(QJsonDocument::Compact), 0, 0);
-
-            if (options.resume_enabled && !resumePath.isEmpty()) {
-                QFile::remove(resumePath);
-            }
-
-            Q_EMIT fileCompleted(currentFileId, currentRelativePath);
             continue;
-        }
 
-        if (header.frame_type == FrameTransferEnd) {
+        case FrameTransferEnd:
             return true;
+
+        default:
+            continue;
         }
     }
 
     return !m_stopRequested;
+}
+
+// ─── Private Helpers ────────────────────────────────────────────────────────────
+
+bool NetworkTransferWorker::processFileHeader(QTcpSocket* socket,
+                                               const QByteArray& payload,
+                                               const DataOptions& options,
+                                               ReceiverState& state) {
+    QJsonParseError error{};
+    QJsonDocument doc = QJsonDocument::fromJson(payload, &error);
+    if (error.error != QJsonParseError::NoError || !doc.isObject()) {
+        logError("NetworkTransferWorker receiver invalid file header");
+        Q_EMIT errorOccurred(tr("Invalid file header"));
+        return false;
+    }
+
+    auto obj = doc.object();
+    state.current_file_id = obj.value("file_id").toString();
+    state.current_relative_path = obj.value("relative_path").toString();
+    state.current_size = obj.value("size_bytes").toVariant().toLongLong();
+    state.current_checksum = obj.value("checksum_sha256").toString();
+    state.chunk_size = obj.value("chunk_size").toInt(state.chunk_size);
+    if (state.chunk_size <= 0) {
+        logError("NetworkTransferWorker receiver invalid chunk_size: {}", state.chunk_size);
+        Q_EMIT errorOccurred(tr("Invalid chunk size in file header"));
+        return false;
+    }
+    state.current_acl_sddl = obj.value("acl_sddl").toString();
+    state.total_chunks = static_cast<int>((state.current_size + state.chunk_size - 1) / state.chunk_size);
+
+    const QString destinationPath = QDir(options.destination_base).filePath(state.current_relative_path);
+    auto nativePath = QDir::toNativeSeparators(destinationPath);
+
+    std::filesystem::path destPath = nativePath.toStdString();
+    auto safe = path_utils::isSafePath(destPath, std::filesystem::path(options.destination_base.toStdString()));
+    if (!safe || !(*safe)) {
+        logError("NetworkTransferWorker receiver detected unsafe path: {}", destinationPath.toStdString());
+        Q_EMIT errorOccurred(tr("Unsafe path detected"));
+        return false;
+    }
+
+    QDir destDir = QFileInfo(destinationPath).absoluteDir();
+    if (!destDir.exists()) {
+        if (!destDir.mkpath(".")) {
+            logError("NetworkTransferWorker receiver failed to create destination directory {}",
+                      destDir.path().toStdString());
+            Q_EMIT errorOccurred(tr("Failed to create destination directory"));
+            return false;
+        }
+    }
+
+    QString tempPath = destinationPath + ".partial";
+    state.current_file = new QFile(tempPath);
+    if (!state.current_file->open(QIODevice::ReadWrite)) {
+        logError("NetworkTransferWorker receiver failed to open destination file {}", destinationPath.toStdString());
+        Q_EMIT errorOccurred(tr("Failed to open destination file"));
+        return false;
+    }
+
+    if (options.resume_enabled) {
+        state.resume_path = destinationPath + ".resume.json";
+        QString resumeFileId;
+        int resumeTotalChunks = state.total_chunks;
+        state.current_ranges = loadResumeInfo(state.resume_path, resumeFileId, resumeTotalChunks);
+        if (!resumeFileId.isEmpty() && resumeFileId != state.current_file_id) {
+            state.current_ranges.clear();
+            QFile::remove(state.resume_path);
+        } else if (resumeTotalChunks > 0 && resumeTotalChunks != state.total_chunks) {
+            state.current_ranges.clear();
+            QFile::remove(state.resume_path);
+        }
+        if (state.current_ranges.isEmpty()) {
+            qint64 existing = state.current_file->size();
+            int completedChunks = static_cast<int>(existing / state.chunk_size);
+            if (completedChunks > 0) {
+                state.current_ranges.append({0, completedChunks - 1});
+            }
+        }
+
+        QByteArray resumePayload = buildResumePayload(state.current_file_id, state.current_ranges, state.total_chunks);
+        sendFrame(socket, FrameResumeInfo, 0, 0, resumePayload, resumePayload.size(), computeCrc32(resumePayload));
+    }
+
+    state.bytes_received = 0;
+    Q_EMIT fileStarted(state.current_file_id, state.current_relative_path, state.current_size);
+    logInfo("NetworkTransferWorker receiver starting file {}", state.current_relative_path.toStdString());
+    return true;
+}
+
+bool NetworkTransferWorker::processDataChunk(QTcpSocket* /*socket*/,
+                                              const FrameHeader& header,
+                                              const QByteArray& payload,
+                                              const DataOptions& options,
+                                              ReceiverState& state) {
+    QByteArray plainPayload = payload;
+
+    if (header.flags & kFlagEncrypted) {
+        EncryptedPayload encrypted = unpackEncrypted(payload);
+        auto decrypted = TransferSecurityManager::decryptAesGcm(encrypted, state.key, options.transfer_id.toUtf8());
+        if (!decrypted) {
+            logError("NetworkTransferWorker receiver decryption failed for {}", state.current_relative_path.toStdString());
+            Q_EMIT errorOccurred(tr("Decryption failed"));
+            return false;
+        }
+        plainPayload = *decrypted;
+    }
+
+    if (header.flags & kFlagCompressed) {
+        plainPayload = decompressData(plainPayload);
+    }
+
+    if (computeCrc32(plainPayload) != header.crc32) {
+        Q_EMIT errorOccurred(tr("CRC mismatch"));
+        return false;
+    }
+
+    const qint64 offset = static_cast<qint64>(header.chunk_id) * state.chunk_size;
+    if (!state.current_file->seek(offset)) {
+        Q_EMIT errorOccurred(tr("Failed to seek in destination file"));
+        return false;
+    }
+
+    if (state.current_file->write(plainPayload) != plainPayload.size()) {
+        Q_EMIT errorOccurred(tr("Failed to write data"));
+        return false;
+    }
+
+    if (options.resume_enabled) {
+        mergeChunkRange(state.current_ranges, static_cast<int>(header.chunk_id));
+    }
+
+    state.bytes_received += plainPayload.size();
+    state.overall_received += plainPayload.size();
+    return true;
+}
+
+bool NetworkTransferWorker::processFileEnd(QTcpSocket* socket,
+                                            const DataOptions& options,
+                                            ReceiverState& state) {
+    state.current_file->flush();
+    state.current_file->close();
+    delete state.current_file;
+    state.current_file = nullptr;
+
+    QString finalPath = QDir(options.destination_base).filePath(state.current_relative_path);
+    QString tempPath = finalPath + ".partial";
+
+    QJsonObject ackPayload;
+    ackPayload["file_id"] = state.current_file_id;
+
+    // Verify checksum
+    if (!state.current_checksum.isEmpty()) {
+        file_hasher hasher(hash_algorithm::sha256);
+        auto hashResult = hasher.calculateHash(std::filesystem::path(tempPath.toStdString()));
+        if (!hashResult || QString::fromStdString(*hashResult) != state.current_checksum) {
+            Q_EMIT errorOccurred(tr("Checksum mismatch for %1").arg(finalPath));
+            ackPayload["status"] = "retry";
+            sendFrame(socket, FrameFileAck, 0, 0,
+                QJsonDocument(ackPayload).toJson(QJsonDocument::Compact), 0, 0);
+            QFile::remove(tempPath);
+            return false;
+        }
+    }
+
+    QFile::remove(finalPath);
+    if (!QFile::rename(tempPath, finalPath)) {
+        Q_EMIT errorOccurred(tr("Failed to finalize file"));
+        ackPayload["status"] = "retry";
+        sendFrame(socket, FrameFileAck, 0, 0,
+            QJsonDocument(ackPayload).toJson(QJsonDocument::Compact), 0, 0);
+        return false;
+    }
+
+    PermissionManager perms;
+    if (!state.current_acl_sddl.isEmpty()) {
+        perms.setSecurityDescriptorSddl(finalPath, state.current_acl_sddl);
+    } else if (options.acl_overrides.contains(state.current_relative_path)) {
+        perms.setSecurityDescriptorSddl(finalPath, options.acl_overrides.value(state.current_relative_path));
+    } else if (options.permission_modes.contains(state.current_relative_path.section('/', 0, 0))) {
+        const auto mode = options.permission_modes.value(state.current_relative_path.section('/', 0, 0));
+        perms.applyPermissionStrategy(finalPath, mode);
+    } else {
+        perms.stripPermissions(finalPath);
+    }
+
+    ackPayload["status"] = "ok";
+    sendFrame(socket, FrameFileAck, 0, 0,
+        QJsonDocument(ackPayload).toJson(QJsonDocument::Compact), 0, 0);
+
+    if (options.resume_enabled && !state.resume_path.isEmpty()) {
+        QFile::remove(state.resume_path);
+    }
+
+    Q_EMIT fileCompleted(state.current_file_id, state.current_relative_path);
+    return true;
 }
 
 } // namespace sak

@@ -1,27 +1,17 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 #pragma once
 
 #include "sak/streaming_decompressor.h"
-#include <QFile>
 #include <bzlib.h>
 
 namespace sak {
 
-/**
- * @brief Bzip2 decompressor using libbz2
- * 
- * Handles .bz2 compressed files with streaming decompression.
- * Uses libbz2 library for actual decompression.
- * 
- * Features:
- * - Streaming decompression (no temp files)
- * - Progress tracking
- * - Memory-efficient processing
- * 
- * Thread-Safety: NOT thread-safe. Use one instance per thread.
- */
+/// @brief Bzip2 decompressor using libbz2
+///
+/// Library-specific hooks for libbz2. All common logic
+/// (open, close, read, progress) lives in StreamingDecompressor.
 class Bzip2Decompressor : public StreamingDecompressor {
     Q_OBJECT
 
@@ -29,39 +19,20 @@ public:
     explicit Bzip2Decompressor(QObject* parent = nullptr);
     ~Bzip2Decompressor() override;
 
-    bool open(const QString& filePath) override;
-    void close() override;
-    bool isOpen() const override;
-    qint64 read(char* data, qint64 maxSize) override;
-    bool atEnd() const override;
-    qint64 compressedBytesRead() const override;
-    qint64 decompressedBytesProduced() const override;
-    qint64 uncompressedSize() const override;
+    qint64 uncompressedSize() const override { return -1; }
     QString formatName() const override { return "bzip2"; }
 
+protected:
+    bool initStream() override;
+    void cleanupStream() override;
+    void setInputFromBuffer(size_t bytes) override;
+    void setOutput(char* data, size_t maxSize) override;
+    [[nodiscard]] size_t outputRemaining() const override;
+    [[nodiscard]] bool inputEmpty() const override;
+    StepResult decompressStep() override;
+
 private:
-    /**
-     * @brief Initialize bzip2 stream
-     * @return true if successful
-     */
-    bool initBzip2Stream();
-
-    /**
-     * @brief Read more compressed data from file
-     * @return true if data was read
-     */
-    bool fillInputBuffer();
-
-    QFile m_file;                      // Input file
-    bz_stream m_bzstream;              // bzip2 stream state
-    bool m_bzipInitialized;            // bzip2 initialized flag
-    bool m_eof;                        // End of file flag
-    
-    static constexpr int CHUNK_SIZE = 128 * 1024;  // 128KB input buffer
-    char m_inputBuffer[CHUNK_SIZE];                // Input buffer
-    
-    qint64 m_compressedBytesRead;      // Total compressed bytes read
-    qint64 m_decompressedBytesProduced; // Total decompressed bytes produced
+    bz_stream m_bzstream{};
 };
 
 } // namespace sak

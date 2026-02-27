@@ -1,5 +1,5 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 #pragma once
 
@@ -30,6 +30,7 @@ public:
     void execute() override;
 
 private:
+    /// @brief Result of a CHKDSK scan on a single drive
     struct DriveCheckResult {
         QString letter;
         bool has_errors;

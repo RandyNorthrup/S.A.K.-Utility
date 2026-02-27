@@ -1,3 +1,6 @@
+// Copyright (c) 2025 Randy Northrup. All rights reserved.
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 #include "sak/elevation_manager.h"
 
 #ifdef _WIN32
@@ -164,7 +167,11 @@ auto ElevationManager::executeElevated(
         GetExitCodeProcess(sei.hProcess, &exit_code);
         CloseHandle(sei.hProcess);
         
-        sak::logInfo("Elevated process exited with code {}", exit_code);
+        if (exit_code != 0) {
+            sak::logError("Elevated process failed with exit code {}", exit_code);
+            return std::unexpected(sak::error_code::execution_failed);
+        }
+        sak::logInfo("Elevated process completed successfully");
     } else if (sei.hProcess) {
         CloseHandle(sei.hProcess);
     }

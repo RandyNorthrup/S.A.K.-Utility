@@ -1,3 +1,6 @@
+// Copyright (c) 2025 Randy Northrup. All rights reserved.
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 /// @file file_scanner.cpp
 /// @brief Implementation of recursive directory scanner
 
@@ -195,7 +198,11 @@ bool file_scanner::shouldProcessEntry(
         
         return true;
         
+    } catch (const std::exception& e) {
+        logDebug("Exception in shouldProcessEntry(): {}", e.what());
+        return false;
     } catch (...) {
+        logDebug("Non-standard exception in shouldProcessEntry()");
         return false;
     }
 }
@@ -219,7 +226,11 @@ bool file_scanner::isHidden(const std::filesystem::path& path) noexcept {
         
         return false;
         
+    } catch (const std::exception& e) {
+        logDebug("Exception in isHidden(): {}", e.what());
+        return false;
     } catch (...) {
+        logDebug("Non-standard exception in isHidden()");
         return false;
     }
 }

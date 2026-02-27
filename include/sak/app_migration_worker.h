@@ -1,3 +1,6 @@
+// Copyright (c) 2025 Randy Northrup. All rights reserved.
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 #pragma once
 
 #include <QObject>
@@ -32,7 +35,7 @@ enum class MigrationStatus {
  * @brief Installation job for a single package
  */
 struct MigrationJob {
-    int entryIndex;                    ///< Index in MigrationReport entries
+    int entryIndex{-1};                    ///< Index in MigrationReport entries
     QString appName;                   ///< Application display name
     QString packageId;                 ///< Chocolatey package ID
     QString version;                   ///< Requested version (empty = latest)

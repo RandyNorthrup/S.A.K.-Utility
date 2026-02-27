@@ -1,3 +1,6 @@
+// Copyright (c) 2025 Randy Northrup. All rights reserved.
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 /// @file file_scanner.h
 /// @brief Recursive directory scanning with filtering
 /// @details Provides high-performance directory traversal with pattern matching and callbacks

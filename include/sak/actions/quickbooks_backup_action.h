@@ -1,5 +1,5 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 #pragma once
 
@@ -50,6 +50,7 @@ public:
     void setBackupLocation(const QString& location) { m_backup_location = location; }
 
 private:
+    /// @brief Represents a discovered QuickBooks data file (QBW, QBB, TLG, or ND)
     struct QuickBooksFile {
         QString path;
         QString filename;

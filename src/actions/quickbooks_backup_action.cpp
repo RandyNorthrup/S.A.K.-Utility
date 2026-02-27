@@ -1,5 +1,5 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 /**
  * RESEARCH-BASED IMPLEMENTATION (3 Sources - December 15, 2025)
@@ -143,12 +143,7 @@ void QuickBooksBackupAction::scan() {
 
 void QuickBooksBackupAction::execute() {
     if (isCancelled()) {
-        ExecutionResult result;
-        result.success = false;
-        result.message = "QuickBooks backup cancelled";
-        setExecutionResult(result);
-        setStatus(ActionStatus::Cancelled);
-        Q_EMIT executionComplete(result);
+        emitCancelledResult("QuickBooks backup cancelled");
         return;
     }
 
@@ -170,14 +165,9 @@ void QuickBooksBackupAction::execute() {
     }
     
     if (qb_running) {
-        ExecutionResult result;
-        result.duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
-        result.success = false;
-        result.message = "QuickBooks is currently running";
-        result.log = "Please close QuickBooks before backing up data files";
-        setStatus(ActionStatus::Failed);
-        setExecutionResult(result);
-        Q_EMIT executionComplete(result);
+        emitFailedResult("QuickBooks is currently running",
+                         "Please close QuickBooks before backing up data files",
+                         start_time);
         return;
     }
     
@@ -188,14 +178,9 @@ void QuickBooksBackupAction::execute() {
     scanCommonLocations();
 
     if (m_found_files.empty()) {
-        ExecutionResult result;
-        result.duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
-        result.success = false;
-        result.message = "No QuickBooks files found";
-        result.log = "No QBW, QBB, QBM, or QBX files detected";
-        setStatus(ActionStatus::Failed);
-        setExecutionResult(result);
-        Q_EMIT executionComplete(result);
+        emitFailedResult("No QuickBooks files found",
+                         "No QBW, QBB, QBM, or QBX files detected",
+                         start_time);
         return;
     }
     
@@ -211,13 +196,7 @@ void QuickBooksBackupAction::execute() {
     
     for (size_t i = 0; i < m_found_files.size(); ++i) {
         if (isCancelled()) {
-            ExecutionResult result;
-            result.success = false;
-            result.message = "QuickBooks backup cancelled";
-            result.duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
-            setExecutionResult(result);
-            setStatus(ActionStatus::Cancelled);
-            Q_EMIT executionComplete(result);
+            emitCancelledResult("QuickBooks backup cancelled", start_time);
             return;
         }
 
@@ -232,10 +211,7 @@ void QuickBooksBackupAction::execute() {
         }
 
         QString source_dir = QFileInfo(file.path).absolutePath();
-        QString safe_dir = source_dir;
-        safe_dir.replace(':', '_');
-        safe_dir.replace('\\', '_');
-        safe_dir.replace('/', '_');
+        QString safe_dir = sanitizePathForBackup(source_dir);
 
         QDir target_dir(backup_dir.filePath(safe_dir));
         target_dir.mkpath(".");
@@ -260,10 +236,9 @@ void QuickBooksBackupAction::execute() {
     
     if (files_copied > 0) {
         result.success = true;
-        double mb = bytes_copied / (1024.0 * 1024.0);
-        result.message = QString("Backed up %1 QuickBooks file(s) - %2 MB")
+        result.message = QString("Backed up %1 QuickBooks file(s) - %2")
             .arg(files_copied)
-            .arg(mb, 0, 'f', 2);
+            .arg(formatFileSize(bytes_copied));
         result.log = QString("Saved to: %1\nFiles:\n%2")
             .arg(backup_dir.absolutePath())
             .arg(copied_files.join("\n"));
@@ -272,16 +247,13 @@ void QuickBooksBackupAction::execute() {
             result.log += QString("\n\nSkipped %1 file(s) currently in use")
                 .arg(files_skipped_open);
         }
-        setStatus(ActionStatus::Success);
+        finishWithResult(result, ActionStatus::Success);
     } else {
         result.success = false;
         result.message = "Failed to backup QuickBooks files";
         result.log = "Could not copy any QuickBooks data files";
-        setStatus(ActionStatus::Failed);
+        finishWithResult(result, ActionStatus::Failed);
     }
-    
-    setExecutionResult(result);
-    Q_EMIT executionComplete(result);
 }
 
 void QuickBooksBackupAction::scanCommonLocations() {

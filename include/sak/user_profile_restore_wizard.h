@@ -1,3 +1,6 @@
+// Copyright (c) 2025 Randy Northrup. All rights reserved.
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 #pragma once
 
 #include "sak/user_profile_types.h"
@@ -6,6 +9,7 @@
 #include <QLabel>
 #include <QPushButton>
 #include <QTableWidget>
+#include <QTreeWidget>
 #include <QComboBox>
 #include <QCheckBox>
 #include <QLineEdit>
@@ -19,6 +23,16 @@ namespace sak {
 
 class WindowsUserScanner;
 class UserProfileRestoreWorker;
+class ChocolateyManager;
+
+struct RestoreAppInfo {
+    QString name;
+    QString version;
+    QString publisher;
+    QString choco_package;
+    QString category;
+    bool selected{true};
+};
 
 /**
  * @brief Page 1: Welcome and select backup file
@@ -124,7 +138,42 @@ private Q_SLOTS:
 };
 
 /**
- * @brief Page 5: Permission and conflict settings
+ * @brief Page 5: App Restore (install saved applications)
+ */
+class UserProfileRestoreAppRestorePage : public QWizardPage {
+    Q_OBJECT
+
+public:
+    explicit UserProfileRestoreAppRestorePage(QWidget* parent = nullptr);
+    void initializePage() override;
+    bool isComplete() const override;
+
+private Q_SLOTS:
+    void onSelectAll();
+    void onSelectNone();
+    void onItemChanged(QTreeWidgetItem* item, int column);
+    void onInstallApps();
+
+private:
+    void setupUi();
+    void loadApps();
+    void populateTree(const QVector<RestoreAppInfo>& apps);
+    void updateParentCheckState(QTreeWidgetItem* parent);
+
+    QTreeWidget* m_appTree{nullptr};
+    QPushButton* m_selectAllButton{nullptr};
+    QPushButton* m_selectNoneButton{nullptr};
+    QPushButton* m_installButton{nullptr};
+    QLabel* m_statusLabel{nullptr};
+    QLabel* m_summaryLabel{nullptr};
+    QProgressBar* m_progressBar{nullptr};
+    QVector<RestoreAppInfo> m_apps;
+    bool m_loaded{false};
+    bool m_installing{false};
+};
+
+/**
+ * @brief Page 6: Permission and conflict settings
  */
 class UserProfileRestorePermissionSettingsPage : public QWizardPage {
     Q_OBJECT
@@ -217,11 +266,15 @@ public:
     
     bool createBackup() const { return m_createBackup; }
     void setCreateBackup(bool backup) { m_createBackup = backup; }
+
+    QVector<RestoreAppInfo> restoreApps() const { return m_restoreApps; }
+    void setRestoreApps(const QVector<RestoreAppInfo>& apps) { m_restoreApps = apps; }
     
 private:
     QString m_backupPath;
     BackupManifest m_manifest;
     QVector<UserMapping> m_userMappings;
+    QVector<RestoreAppInfo> m_restoreApps;
     ConflictResolution m_conflictResolution;
     PermissionMode m_permissionMode;
     bool m_verifyFiles;

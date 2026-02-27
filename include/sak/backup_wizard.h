@@ -1,3 +1,6 @@
+// Copyright (c) 2025 Randy Northrup. All rights reserved.
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 #pragma once
 
 #include <QWizard>
@@ -53,6 +56,7 @@ private:
 // ============================================================================
 // Page 1: Welcome
 // ============================================================================
+/// @brief Welcome page introducing the backup wizard
 class BackupWelcomePage : public QWizardPage {
     Q_OBJECT
 
@@ -75,6 +79,7 @@ private:
 // ============================================================================
 // Page 2: Select Applications
 // ============================================================================
+/// @brief Wizard page for selecting applications to back up
 class BackupSelectAppsPage : public QWizardPage {
     Q_OBJECT
 
@@ -112,6 +117,7 @@ private:
 // ============================================================================
 // Page 3: Configure Backup
 // ============================================================================
+/// @brief Wizard page for configuring backup destination and options
 class BackupConfigurePage : public QWizardPage {
     Q_OBJECT
 
@@ -149,6 +155,7 @@ private:
 // ============================================================================
 // Page 4: Progress and Completion
 // ============================================================================
+/// @brief Wizard page displaying backup progress and results
 class BackupProgressPage : public QWizardPage {
     Q_OBJECT
 

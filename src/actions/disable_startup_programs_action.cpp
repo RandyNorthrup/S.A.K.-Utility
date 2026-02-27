@@ -1,5 +1,5 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "sak/actions/disable_startup_programs_action.h"
 #include "sak/process_runner.h"
@@ -297,9 +297,7 @@ void DisableStartupProgramsAction::execute() {
     result.message = QString("Found %1 startup item(s) - Task Manager opened").arg(total_items);
     result.log = structured_log + "\n" + report;
     
-    setExecutionResult(result);
-    setStatus(ActionStatus::Success);
-    Q_EMIT executionComplete(result);
+    finishWithResult(result, ActionStatus::Success);
 }
 
 } // namespace sak

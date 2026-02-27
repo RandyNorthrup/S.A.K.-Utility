@@ -1,9 +1,10 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "sak/flash_coordinator.h"
 #include "sak/flash_worker.h"
 #include "sak/drive_unmounter.h"
+#include "sak/input_validator.h"
 #include "sak/logger.h"
 #include <QThread>
 #include <windows.h>
@@ -48,6 +49,22 @@ bool FlashCoordinator::startFlash(const QString& imagePath, const QStringList& t
     
     sak::logInfo(QString("Starting flash: %1 to %2 drives")
         .arg(imagePath).arg(targetDrives.size()).toStdString());
+    
+    // Validate image path before proceeding
+    sak::path_validation_config img_cfg;
+    img_cfg.must_exist = true;
+    img_cfg.must_be_file = true;
+    img_cfg.check_read_permission = true;
+    auto path_result = sak::input_validator::validatePath(
+        std::filesystem::path(imagePath.toStdString()), img_cfg);
+    if (!path_result) {
+        sak::logError("Image path validation failed: {}", path_result.error_message);
+        m_state = sak::FlashState::Failed;
+        Q_EMIT stateChanged(m_state, "Invalid image path");
+        Q_EMIT flashError(QString::fromStdString(
+            "Image path validation failed: " + path_result.error_message));
+        return false;
+    }
     
     m_isCancelled = false;
     m_targetDrives = targetDrives;

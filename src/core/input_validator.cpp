@@ -1,3 +1,6 @@
+// Copyright (c) 2025 Randy Northrup. All rights reserved.
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 /// @file input_validator.cpp
 /// @brief Implementation of input validation utilities
 
@@ -547,6 +550,7 @@ std::size_t input_validator::get_file_descriptor_count_impl() {
             ++count;
         }
     } catch (...) {
+        logDebug("Failed to enumerate /proc/self/fd for file descriptor count");
         return 0;  // Cannot determine
     }
     return count;

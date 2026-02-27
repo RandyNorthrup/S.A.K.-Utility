@@ -1,3 +1,6 @@
+// Copyright (c) 2025 Randy Northrup. All rights reserved.
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 /// @file file_hash.cpp
 /// @brief Implementation of file hashing utilities
 
@@ -198,6 +201,7 @@ auto file_hasher::calculateMd5(
         return result.toHex().toStdString();
         
     } catch (...) {
+        logError("Unknown exception calculating in-memory MD5 hash");
         return std::unexpected(error_code::hash_calculation_failed);
     }
 }
@@ -213,6 +217,7 @@ auto file_hasher::calculateSha256(
         return result.toHex().toStdString();
         
     } catch (...) {
+        logError("Unknown exception calculating in-memory SHA-256 hash");
         return std::unexpected(error_code::hash_calculation_failed);
     }
 }

@@ -1,5 +1,5 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 #pragma once
 
@@ -32,11 +32,29 @@ private:
     QString m_output_location;
     QString m_report_path;
 
-    void gatherSystemInfo();
-    void gatherInstalledPrograms();
-    void gatherDriverInfo();
-    void gatherEventLogs();
-    void generateHTML();
+    /// @brief Builds the report header with box-drawing frame and timestamp.
+    /// @return Formatted report header string.
+    QString buildReportHeader() const;
+
+    /// @brief Gathers OS, hardware, CPU, memory, BIOS, network, and activation info via Get-ComputerInfo.
+    /// @return Report section text; may contain timeout fallback text.
+    QString gatherOsAndHardwareInfo();
+
+    /// @brief Gathers physical disk and SMART info via Get-PhysicalDisk.
+    /// @return Report section text.
+    QString gatherStorageInfo();
+
+    /// @brief Gathers active network adapters and IP configuration.
+    /// @return Report section text.
+    QString gatherNetworkInfo();
+
+    /// @brief Gathers Qt system info and mounted volume details.
+    /// @return Report section text.
+    QString gatherQtAndVolumeInfo() const;
+
+    /// @brief Saves the assembled report to disk with timing footer.
+    /// @return True on successful write.
+    bool saveReport(const QString& report, const QString& filepath);
 };
 
 } // namespace sak

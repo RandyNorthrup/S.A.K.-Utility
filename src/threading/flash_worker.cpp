@@ -1,7 +1,8 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "sak/flash_worker.h"
+#include "sak/keep_awake.h"
 #include "sak/logger.h"
 #include <QObject>
 #include <QElapsedTimer>
@@ -50,6 +51,7 @@ void FlashWorker::setBufferSize(qint64 sizeBytes) {
 }
 
 auto FlashWorker::execute() -> std::expected<void, sak::error_code> {
+    sak::KeepAwakeGuard keep_awake(sak::KeepAwake::PowerRequest::System, "Flashing disk image");
     sak::logInfo(QString("Starting flash to %1").arg(m_targetDevice).toStdString());
     
     QElapsedTimer timer;

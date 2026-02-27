@@ -1,5 +1,5 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 #pragma once
 
@@ -32,7 +32,14 @@ private:
     QString m_output_location;
     int m_screenshots_taken{0};
 
-    // Helper methods for enterprise screenshot functionality
+    /// @brief Result of capturing all settings pages
+    struct CaptureResult {
+        int screenshots_taken{0};
+        int failed_attempts{0};
+        QStringList captured_pages;
+        QStringList failed_pages;
+    };
+
     int detectMonitorCount();
     bool isProcessRunning(const QString& process_name);
     void openSettingsAndCapture(const QString& page, const QString& filename);
@@ -40,6 +47,12 @@ private:
     void openSettings(const QString& page);
     void captureScreen();
     void waitForWindow(int ms);
+
+    static QMap<QString, QString> buildSettingsPageMap();
+    bool captureSettingsPage(const QString& ms_uri, const QString& page_name,
+                             const QString& output_dir_path, const QString& timestamp);
+    void generateReport(const QString& output_dir_path, const QString& timestamp,
+                        int monitor_count, const CaptureResult& capture) const;
 };
 
 } // namespace sak

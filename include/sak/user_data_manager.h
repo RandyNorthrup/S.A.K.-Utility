@@ -1,3 +1,6 @@
+// Copyright (c) 2025 Randy Northrup. All rights reserved.
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 #pragma once
 
 #include <QObject>
@@ -41,10 +44,10 @@ public:
         QStringList source_paths;      // Source directories/files
         QString backup_path;           // Archive file path
         QDateTime backup_date;
-        qint64 total_size;             // Total bytes
-        qint64 compressed_size;        // Archive size
+        qint64 total_size{0};             // Total bytes
+        qint64 compressed_size{0};        // Archive size
         QString checksum;              // SHA256 of archive
-        bool encrypted;                // Future: encryption support
+        bool encrypted{false};                // Future: encryption support
         QStringList excluded_patterns; // Excluded files (*.log, *.tmp)
     };
 

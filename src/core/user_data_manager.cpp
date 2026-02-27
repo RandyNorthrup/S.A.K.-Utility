@@ -1,5 +1,9 @@
+// Copyright (c) 2025 Randy Northrup. All rights reserved.
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 #include "sak/user_data_manager.h"
 #include "sak/encryption.h"
+#include "sak/logger.h"
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -10,6 +14,7 @@
 #include <QJsonArray>
 #include <QDebug>
 #include <QProcess>
+#include <QTemporaryFile>
 #include <optional>
 
 namespace sak {
@@ -386,9 +391,15 @@ bool UserDataManager::createArchive(const QStringList& source_paths,
     QStringList args;
     args << "-NoProfile" << "-Command";
     
-    QString sources = source_paths.join("','");
+    // Escape single quotes in paths to prevent PowerShell injection
+    QStringList escaped_sources;
+    for (const auto& path : source_paths) {
+        escaped_sources << QString(path).replace("'", "''");
+    }
+    QString sources = escaped_sources.join("','" );
+    QString safe_archive = QString(archive_path).replace("'", "''");
     QString command = QString("Compress-Archive -Path '%1' -DestinationPath '%2' -CompressionLevel %3 -Force")
-                        .arg(sources, archive_path, compressionLevel);
+                        .arg(sources, safe_archive, compressionLevel);
     
     args << command;
     
@@ -396,15 +407,19 @@ bool UserDataManager::createArchive(const QStringList& source_paths,
     process.start("powershell.exe", args);
     
     if (!process.waitForStarted()) {
+        sak::logError("Failed to start PowerShell for archive compression");
         return false;
     }
     
     if (!process.waitForFinished(300000)) { // 5 minute timeout
+        sak::logError("Archive compression timed out after 5 minutes — killing process");
         process.kill();
         return false;
     }
     
     if (process.exitCode() != 0 || !QFile::exists(archive_path)) {
+        sak::logError("Archive compression failed: exit code {}, archive exists: {}",
+                      process.exitCode(), QFile::exists(archive_path));
         return false;
     }
     
@@ -462,12 +477,13 @@ bool UserDataManager::extractArchive(const QString& archive_path,
             return false;
         }
         
-        // Write decrypted data to temp file
-        temp_decrypted = archive_path + ".decrypted";
-        QFile temp(temp_decrypted);
-        if (!temp.open(QIODevice::WriteOnly)) {
+        // Write decrypted data to temp file with unpredictable name
+        QTemporaryFile temp;
+        temp.setAutoRemove(false);  // We manage removal ourselves
+        if (!temp.open()) {
             return false;
         }
+        temp_decrypted = temp.fileName();
         temp.write(*decrypted);
         temp.close();
         
@@ -478,8 +494,11 @@ bool UserDataManager::extractArchive(const QString& archive_path,
     QStringList args;
     args << "-NoProfile" << "-Command";
     
+    // Escape single quotes in paths to prevent PowerShell injection
+    QString safe_source = QString(file_to_extract).replace("'", "''");
+    QString safe_dest = QString(destination).replace("'", "''");
     QString command = QString("Expand-Archive -Path '%1' -DestinationPath '%2' -Force")
-                        .arg(file_to_extract, destination);
+                        .arg(safe_source, safe_dest);
     
     args << command;
     

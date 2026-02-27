@@ -1,5 +1,9 @@
+// Copyright (c) 2025 Randy Northrup. All rights reserved.
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 #include "sak/network_transfer_security.h"
 #include "sak/logger.h"
+#include "sak/secure_memory.h"
 
 #ifdef _WIN32
 #include <windows.h>
@@ -57,6 +61,9 @@ std::expected<QByteArray, error_code> TransferSecurityManager::deriveKey(
         0);
 
     BCryptCloseAlgorithmProvider(hAlg, 0);
+
+    // Securely wipe passphrase bytes from memory
+    sak::secure_wiper::wipe(pwd_bytes.data(), pwd_bytes.size());
 
     if (status != 0) {
         return std::unexpected(error_code::crypto_error);

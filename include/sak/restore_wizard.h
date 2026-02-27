@@ -1,3 +1,6 @@
+// Copyright (c) 2025 Randy Northrup. All rights reserved.
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 #pragma once
 
 #include <QWizard>
@@ -54,6 +57,7 @@ private:
 // ============================================================================
 // Page 1: Welcome
 // ============================================================================
+/// @brief Welcome page introducing the restore wizard workflow
 class RestoreWelcomePage : public QWizardPage {
     Q_OBJECT
 
@@ -76,6 +80,7 @@ private:
 // ============================================================================
 // Page 2: Select Backup
 // ============================================================================
+/// @brief Wizard page for browsing, selecting, and verifying backup archives to restore
 class RestoreSelectBackupPage : public QWizardPage {
     Q_OBJECT
 
@@ -115,6 +120,7 @@ private:
 // ============================================================================
 // Page 3: Configure Restore
 // ============================================================================
+/// @brief Wizard page for configuring restore options such as destination, checksums, and overwrite behavior
 class RestoreConfigurePage : public QWizardPage {
     Q_OBJECT
 
@@ -156,6 +162,7 @@ private:
 // ============================================================================
 // Page 4: Progress and Completion
 // ============================================================================
+/// @brief Wizard page that executes the restore operation and displays real-time progress
 class RestoreProgressPage : public QWizardPage {
     Q_OBJECT
 

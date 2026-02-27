@@ -1,3 +1,6 @@
+// Copyright (c) 2025 Randy Northrup. All rights reserved.
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 #pragma once
 
 #include <QWidget>
@@ -5,7 +8,6 @@
 #include <QLineEdit>
 #include <QTableWidget>
 #include <QTextEdit>
-#include <QProgressBar>
 #include <QLabel>
 #include <QCheckBox>
 #include <QComboBox>
@@ -13,6 +15,11 @@
 #include <memory>
 
 class OrganizerWorker;
+
+namespace sak {
+class DetachableLogWindow;
+class LogToggleSwitch;
+}
 
 /**
  * @brief Directory organizer feature panel
@@ -31,8 +38,13 @@ public:
     OrganizerPanel(OrganizerPanel&&) = delete;
     OrganizerPanel& operator=(OrganizerPanel&&) = delete;
 
+    /** @brief Access the log toggle switch for MainWindow connection */
+    sak::LogToggleSwitch* logToggle() const { return m_logToggle; }
+
 Q_SIGNALS:
     void statusMessage(const QString& message, int timeout_ms);
+    void progressUpdate(int current, int maximum);
+    void logOutput(const QString& message);
 
 private Q_SLOTS:
     void onBrowseClicked();
@@ -41,6 +53,7 @@ private Q_SLOTS:
     void onCancelClicked();
     void onAddCategoryClicked();
     void onRemoveCategoryClicked();
+    void onSettingsClicked();
     
     void onWorkerStarted();
     void onWorkerFinished();
@@ -66,14 +79,13 @@ private:
     QComboBox* m_collision_strategy{nullptr};
     QCheckBox* m_preview_mode_checkbox{nullptr};
     
-    QProgressBar* m_progress_bar{nullptr};
-    QLabel* m_status_label{nullptr};
+
     
     QPushButton* m_preview_button{nullptr};
     QPushButton* m_execute_button{nullptr};
     QPushButton* m_cancel_button{nullptr};
     
-    QTextEdit* m_log_viewer{nullptr};
+    sak::LogToggleSwitch* m_logToggle{nullptr};
     
     std::unique_ptr<OrganizerWorker> m_worker;
     bool m_operation_running{false};

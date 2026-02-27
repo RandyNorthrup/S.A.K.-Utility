@@ -11,7 +11,7 @@ endif()
 
 # Project definition
 project(SAK_Utility 
-    VERSION 0.5.8
+    VERSION 0.6.0
     DESCRIPTION "Swiss Army Knife Utility - PC technician's toolkit for Windows migration and maintenance"
     LANGUAGES CXX
 )# C++23 Standard - Strict compliance required
@@ -182,8 +182,8 @@ find_package(LibLZMA REQUIRED)
 
 # Platform-specific libraries
 if(PLATFORM_WINDOWS)
-    # Windows-specific: Registry access, etc.
-    set(PLATFORM_LIBS advapi32 shell32 user32)
+    # Windows-specific: Registry access, WMI, DXGI, performance counters
+    set(PLATFORM_LIBS advapi32 shell32 user32 dxgi pdh)
 elseif(PLATFORM_MACOS)
     # macOS-specific: CoreFoundation, IOKit
     find_library(COREFOUNDATION_LIBRARY CoreFoundation REQUIRED)
@@ -268,8 +268,8 @@ set(CORE_SOURCES
     src/core/linux_distro_catalog.cpp
     src/core/linux_iso_downloader.cpp
     src/core/windows_usb_creator.cpp
+    src/core/windows_usb_creator_extract.cpp
     src/core/drive_unmounter.cpp
-    src/core/drive_lock.cpp
     src/core/streaming_decompressor.cpp
     src/core/gzip_decompressor.cpp
     src/core/bzip2_decompressor.cpp
@@ -277,6 +277,15 @@ set(CORE_SOURCES
     src/core/decompressor_factory.cpp
     src/core/quick_action.cpp
     src/core/quick_action_controller.cpp
+    src/core/hardware_inventory_scanner.cpp
+    src/core/smart_disk_analyzer.cpp
+    src/core/cpu_benchmark_worker.cpp
+    src/core/disk_benchmark_worker.cpp
+    src/core/memory_benchmark_worker.cpp
+    src/core/stress_test_worker.cpp
+    src/core/thermal_monitor.cpp
+    src/core/diagnostic_report_generator.cpp
+    src/core/diagnostic_controller.cpp
     include/sak/logger.h
     include/sak/file_hash.h
     include/sak/file_scanner.h
@@ -300,7 +309,6 @@ set(CORE_SOURCES
     include/sak/linux_iso_downloader.h
     include/sak/windows_usb_creator.h
     include/sak/drive_unmounter.h
-    include/sak/drive_lock.h
     include/sak/streaming_decompressor.h
     include/sak/gzip_decompressor.h
     include/sak/bzip2_decompressor.h
@@ -340,10 +348,16 @@ set(CORE_SOURCES
     include/sak/orchestration_server_interface.h
     include/sak/orchestration_client.h
     include/sak/orchestration_discovery_service.h
-)
-
-# Platform abstraction
-set(PLATFORM_SOURCES
+    include/sak/diagnostic_types.h
+    include/sak/hardware_inventory_scanner.h
+    include/sak/smart_disk_analyzer.h
+    include/sak/cpu_benchmark_worker.h
+    include/sak/disk_benchmark_worker.h
+    include/sak/memory_benchmark_worker.h
+    include/sak/stress_test_worker.h
+    include/sak/thermal_monitor.h
+    include/sak/diagnostic_report_generator.h
+    include/sak/diagnostic_controller.h
 )
 
 # Threading infrastructure
@@ -360,41 +374,39 @@ set(THREADING_SOURCES
     include/sak/flash_worker.h
 )
 
-# Feature modules
-set(FEATURE_SOURCES
-)
-
 # GUI sources
 set(GUI_SOURCES
     src/gui/main_window.cpp
     src/gui/backup_panel.cpp
     src/gui/organizer_panel.cpp
     src/gui/duplicate_finder_panel.cpp
-    src/gui/progress_dialog.cpp
     src/gui/about_dialog.cpp
     src/gui/log_viewer.cpp
-    src/gui/settings_dialog.cpp
-    src/gui/file_list_widget.cpp
     include/sak/main_window.h
     include/sak/backup_panel.h
     include/sak/organizer_panel.h
     include/sak/duplicate_finder_panel.h
-    include/sak/progress_dialog.h
     include/sak/about_dialog.h
     include/sak/log_viewer.h
     include/gui/settings_dialog.h
-    include/gui/file_list_widget.h
+    src/gui/settings_dialog.cpp
     src/gui/backup_wizard.cpp
     src/gui/restore_wizard.cpp
     include/sak/backup_wizard.h
     include/sak/restore_wizard.h
     src/gui/app_migration_panel.cpp
+    src/gui/app_migration_panel_actions.cpp
+    src/gui/app_migration_panel_table.cpp
     include/sak/app_migration_panel.h
     src/gui/per_user_customization_dialog.cpp
     include/sak/per_user_customization_dialog.h
     src/gui/user_profile_backup_wizard.cpp
+    src/gui/user_profile_backup_wizard_pages.cpp
+    src/gui/user_profile_backup_wizard_execute.cpp
     include/sak/user_profile_backup_wizard.h
     src/gui/user_profile_restore_wizard.cpp
+    src/gui/user_profile_restore_wizard_pages.cpp
+    src/gui/user_profile_restore_wizard_execute.cpp
     include/sak/user_profile_restore_wizard.h
     src/gui/image_flasher_panel.cpp
     include/sak/image_flasher_panel.h
@@ -407,7 +419,11 @@ set(GUI_SOURCES
     src/gui/quick_actions_panel.cpp
     include/sak/quick_actions_panel.h
     src/gui/network_transfer_panel.cpp
+    src/gui/network_transfer_panel_transfer.cpp
+    src/gui/network_transfer_panel_orchestrator.cpp
     include/sak/network_transfer_panel.h
+    src/gui/detachable_log_window.cpp
+    include/sak/detachable_log_window.h
     src/gui/windows11_theme.cpp
     include/gui/windows11_theme.h
     src/gui/splash_screen.cpp
@@ -418,6 +434,11 @@ set(GUI_SOURCES
     include/sak/quick_action_result_io.h
     src/core/process_runner.cpp
     include/sak/process_runner.h
+    src/gui/diagnostic_benchmark_panel.cpp
+    src/gui/diagnostic_benchmark_panel_slots.cpp
+    include/sak/diagnostic_benchmark_panel.h
+    src/gui/info_button.cpp
+    include/sak/info_button.h
 )
 
 # Quick Actions
@@ -520,17 +541,25 @@ set(QUICK_ACTIONS_SOURCES
 # Main entry point
 set(MAIN_SOURCE src/main.cpp)
 
-# Windows resource file for icon
+# Windows resource file for icon and version info
 if(WIN32)
-    set(RESOURCE_FILES resources/sak_utility.rc)
+    configure_file(
+        "${CMAKE_CURRENT_SOURCE_DIR}/resources/sak_utility.manifest.in"
+        "${CMAKE_CURRENT_BINARY_DIR}/sak_utility.manifest"
+        @ONLY
+    )
+    configure_file(
+        "${CMAKE_CURRENT_SOURCE_DIR}/resources/sak_utility.rc.in"
+        "${CMAKE_CURRENT_BINARY_DIR}/sak_utility.rc"
+        @ONLY
+    )
+    set(RESOURCE_FILES "${CMAKE_CURRENT_BINARY_DIR}/sak_utility.rc")
 endif()
 
 # Combine all sources
 set(ALL_SOURCES
     ${CORE_SOURCES}
-    ${PLATFORM_SOURCES}
     ${THREADING_SOURCES}
-    ${FEATURE_SOURCES}
     ${GUI_SOURCES}
     ${QUICK_ACTIONS_SOURCES}
     ${MAIN_SOURCE}
@@ -577,12 +606,18 @@ target_include_directories(sak_utility PRIVATE
     ${CMAKE_CURRENT_BINARY_DIR}/include
 )
 
+# Check for bundled smartmontools (required for SMART diagnostics)
+if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/smartmontools/smartctl.exe")
+    message(WARNING "smartmontools not found! SMART disk diagnostics will be unavailable.\n"
+                    "Run 'powershell -File scripts/bundle_smartmontools.ps1' to bundle smartctl.exe.")
+endif()
+
 # Copy embedded tools directory to output
 add_custom_command(TARGET sak_utility POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         ${CMAKE_CURRENT_SOURCE_DIR}/tools
         $<TARGET_FILE_DIR:sak_utility>/tools
-    COMMENT "Copying embedded Chocolatey tools to output directory"
+    COMMENT "Copying bundled tools to output directory"
 )
 
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/resources/sak_splash.png")
@@ -617,11 +652,10 @@ if(PLATFORM_WINDOWS)
         set_target_properties(sak_utility PROPERTIES WIN32_EXECUTABLE TRUE)
     endif()
     
-    # Request Administrator privileges for disk operations (diskpart, Format-Volume)
-    # This modifies the default Qt manifest to require elevation
+    # Manifest is embedded via the RC file; suppress linker-generated manifest to avoid conflict
     if(MSVC)
         set_target_properties(sak_utility PROPERTIES
-            LINK_FLAGS "/MANIFESTUAC:\"level='requireAdministrator' uiAccess='false'\""
+            LINK_FLAGS "/MANIFEST:NO"
         )
     endif()
     
@@ -740,6 +774,34 @@ elseif(PLATFORM_MACOS)
 endif()
 
 # ============================================================================
+# Code Signing (Azure Trusted Signing)
+# ============================================================================
+
+option(SAK_CODE_SIGN "Sign the executable after build using Azure Trusted Signing" OFF)
+
+if(SAK_CODE_SIGN AND PLATFORM_WINDOWS)
+    find_program(POWERSHELL_EXE pwsh HINTS "$ENV{ProgramFiles}/PowerShell/7")
+    if(NOT POWERSHELL_EXE)
+        find_program(POWERSHELL_EXE powershell)
+    endif()
+    
+    set(SIGN_SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/scripts/sign-exe.ps1")
+    if(POWERSHELL_EXE AND EXISTS "${SIGN_SCRIPT}")
+        add_custom_command(TARGET sak_utility POST_BUILD
+            COMMAND ${POWERSHELL_EXE} -ExecutionPolicy Bypass -File "${SIGN_SCRIPT}"
+                -ExePath "$<TARGET_FILE:sak_utility>"
+            COMMENT "Signing sak_utility.exe via Azure Trusted Signing..."
+            VERBATIM
+        )
+        message(STATUS "Code Signing:      ENABLED (Azure Trusted Signing)")
+    else()
+        message(WARNING "Code signing enabled but PowerShell or sign-exe.ps1 not found")
+    endif()
+else()
+    message(STATUS "Code Signing:      OFF (enable with -DSAK_CODE_SIGN=ON)")
+endif()
+
+# ============================================================================
 # Static Analysis Integration
 # ============================================================================
 
@@ -768,31 +830,6 @@ if(ENABLE_CPPCHECK)
 endif()
 
 # ============================================================================
-# Documentation
-# ============================================================================
-
-option(BUILD_DOCUMENTATION "Build Doxygen documentation" OFF)
-
-if(BUILD_DOCUMENTATION)
-    find_package(Doxygen)
-    if(DOXYGEN_FOUND)
-        set(DOXYGEN_IN ${CMAKE_CURRENT_SOURCE_DIR}/docs/Doxyfile.in)
-        set(DOXYGEN_OUT ${CMAKE_CURRENT_BINARY_DIR}/Doxyfile)
-        
-        configure_file(${DOXYGEN_IN} ${DOXYGEN_OUT} @ONLY)
-        
-        add_custom_target(docs ALL
-            COMMAND ${DOXYGEN_EXECUTABLE} ${DOXYGEN_OUT}
-            WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
-            COMMENT "Generating API documentation with Doxygen"
-            VERBATIM
-        )
-    else()
-        message(WARNING "Doxygen not found, documentation will not be built")
-    endif()
-endif()
-
-# ============================================================================
 # Summary
 # ============================================================================
 
@@ -807,6 +844,5 @@ message(STATUS "Compiler:          ${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER
 message(STATUS "Platform:          ${CMAKE_SYSTEM_NAME}")
 message(STATUS "Qt Version:        ${Qt6_VERSION}")
 message(STATUS "Build Testing:     ${BUILD_TESTING}")
-message(STATUS "Build Docs:        ${BUILD_DOCUMENTATION}")
 message(STATUS "========================================")
 message(STATUS "")

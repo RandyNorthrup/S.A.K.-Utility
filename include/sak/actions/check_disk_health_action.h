@@ -1,5 +1,5 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 #pragma once
 
@@ -30,6 +30,7 @@ public:
     void execute() override;
 
 private:
+    /// @brief S.M.A.R.T. health status information for a single drive
     struct DriveHealth {
         QString letter;
         QString model;

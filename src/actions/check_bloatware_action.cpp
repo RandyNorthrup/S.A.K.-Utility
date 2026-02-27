@@ -1,9 +1,8 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "sak/actions/check_bloatware_action.h"
 #include "sak/process_runner.h"
-#include <QProcess>
 #include <QRegularExpression>
 #include <QJsonDocument>
 #include <QJsonArray>
@@ -329,9 +328,7 @@ void CheckBloatwareAction::execute() {
         : "No common bloatware detected";
     result.log = report + "\n" + structured_output;
     
-    setStatus(ActionStatus::Success);
-    setExecutionResult(result);
-    Q_EMIT executionComplete(result);
+    finishWithResult(result, ActionStatus::Success);
 }
 
 } // namespace sak

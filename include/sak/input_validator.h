@@ -1,3 +1,6 @@
+// Copyright (c) 2025 Randy Northrup. All rights reserved.
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 /// @file input_validator.h
 /// @brief Input validation utilities for security-critical operations
 /// @details Comprehensive validation framework following OWASP guidelines
@@ -51,8 +54,8 @@ struct string_validation_config {
 /// @brief Numeric validation configuration
 template<typename T>
 struct numeric_validation_config {
-    T min_value = std::numeric_limits<T>::min();
-    T max_value = std::numeric_limits<T>::max();
+    T min_value = (std::numeric_limits<T>::min)();
+    T max_value = (std::numeric_limits<T>::max)();
     bool check_overflow = true;
 };
 
@@ -267,14 +270,14 @@ template<typename T>
 std::expected<T, error_code> input_validator::safeAdd(T a, T b) {
     // Check for overflow
     if constexpr (std::is_unsigned_v<T>) {
-        if (a > std::numeric_limits<T>::max() - b) {
+        if (a > (std::numeric_limits<T>::max)() - b) {
             return std::unexpected(error_code::integer_overflow);
         }
     } else {
-        if (b > 0 && a > std::numeric_limits<T>::max() - b) {
+        if (b > 0 && a > (std::numeric_limits<T>::max)() - b) {
             return std::unexpected(error_code::integer_overflow);
         }
-        if (b < 0 && a < std::numeric_limits<T>::min() - b) {
+        if (b < 0 && a < (std::numeric_limits<T>::min)() - b) {
             return std::unexpected(error_code::integer_overflow);
         }
     }
@@ -289,22 +292,22 @@ std::expected<T, error_code> input_validator::safeMultiply(T a, T b) {
     }
     
     if constexpr (std::is_unsigned_v<T>) {
-        if (a > std::numeric_limits<T>::max() / b) {
+        if (a > (std::numeric_limits<T>::max)() / b) {
             return std::unexpected(error_code::integer_overflow);
         }
     } else {
         if (a > 0) {
-            if (b > 0 && a > std::numeric_limits<T>::max() / b) {
+            if (b > 0 && a > (std::numeric_limits<T>::max)() / b) {
                 return std::unexpected(error_code::integer_overflow);
             }
-            if (b < 0 && b < std::numeric_limits<T>::min() / a) {
+            if (b < 0 && b < (std::numeric_limits<T>::min)() / a) {
                 return std::unexpected(error_code::integer_overflow);
             }
         } else {
-            if (b > 0 && a < std::numeric_limits<T>::min() / b) {
+            if (b > 0 && a < (std::numeric_limits<T>::min)() / b) {
                 return std::unexpected(error_code::integer_overflow);
             }
-            if (b < 0 && a != 0 && b < std::numeric_limits<T>::max() / a) {
+            if (b < 0 && a != 0 && b < (std::numeric_limits<T>::max)() / a) {
                 return std::unexpected(error_code::integer_overflow);
             }
         }
@@ -316,8 +319,8 @@ template<typename To, typename From>
 std::expected<To, error_code> input_validator::safeCast(From value) {
     // Check if cast would overflow or underflow
     if constexpr (std::is_integral_v<To> && std::is_integral_v<From>) {
-        if (value < static_cast<From>(std::numeric_limits<To>::min()) ||
-            value > static_cast<From>(std::numeric_limits<To>::max())) {
+        if (value < static_cast<From>((std::numeric_limits<To>::min)()) ||
+            value > static_cast<From>((std::numeric_limits<To>::max)())) {
             return std::unexpected(error_code::integer_overflow);
         }
     }

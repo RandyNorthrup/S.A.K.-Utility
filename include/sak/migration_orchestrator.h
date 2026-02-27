@@ -1,3 +1,6 @@
+// Copyright (c) 2025 Randy Northrup. All rights reserved.
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 #pragma once
 
 #include <QObject>
@@ -14,6 +17,7 @@ namespace sak {
 
 class OrchestrationDiscoveryService;
 
+/// @brief Central orchestrator for multi-PC migration workflows
 class MigrationOrchestrator : public QObject {
     Q_OBJECT
 

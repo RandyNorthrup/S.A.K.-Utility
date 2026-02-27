@@ -1,5 +1,5 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 /**
  * RESEARCH-BASED IMPLEMENTATION (3 Sources - December 15, 2025)
@@ -159,27 +159,12 @@ void BackupBrowserDataAction::execute() {
     // - VDI: FSLogix containers recommended for profile management
     
     if (isCancelled()) {
-        ExecutionResult result;
-        result.success = false;
-        result.message = "Browser data backup cancelled";
-        setExecutionResult(result);
-        setStatus(ActionStatus::Cancelled);
-        Q_EMIT executionComplete(result);
+        emitCancelledResult("Browser data backup cancelled");
         return;
     }
 
     setStatus(ActionStatus::Running);
     QDateTime start_time = QDateTime::currentDateTime();
-
-    auto finish_cancelled = [this, &start_time]() {
-        ExecutionResult result;
-        result.success = false;
-        result.message = "Browser data backup cancelled";
-        result.duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
-        setExecutionResult(result);
-        setStatus(ActionStatus::Cancelled);
-        Q_EMIT executionComplete(result);
-    };
     
     Q_EMIT executionProgress("Scanning user profiles...", 10);
     
@@ -210,7 +195,7 @@ void BackupBrowserDataAction::execute() {
                 QDirIterator it(path, QDir::Files, QDirIterator::Subdirectories);
                 while (it.hasNext()) {
                     if (isCancelled()) {
-                        finish_cancelled();
+                        emitCancelledResult("Browser data backup cancelled", start_time);
                         return;
                     }
                     it.next();
@@ -267,7 +252,7 @@ void BackupBrowserDataAction::execute() {
             QDirIterator it(source, QDir::Files, QDirIterator::Subdirectories);
             while (it.hasNext()) {
                 if (isCancelled()) {
-                    finish_cancelled();
+                    emitCancelledResult("Browser data backup cancelled", start_time);
                     return;
                 }
                 
@@ -310,21 +295,17 @@ void BackupBrowserDataAction::execute() {
     
     if (files_copied > 0) {
         result.success = true;
-        double mb = bytes_copied / (1024.0 * 1024.0);
-        result.message = QString("Backed up %1 browser files (%2 MB)")
+        result.message = QString("Backed up %1 browser files (%2)")
             .arg(files_copied)
-            .arg(mb, 0, 'f', 2);
+            .arg(formatFileSize(bytes_copied));
         result.log = QString("Saved to: %1").arg(backup_root.absolutePath());
-        setStatus(ActionStatus::Success);
+        finishWithResult(result, ActionStatus::Success);
     } else {
         result.success = false;
         result.message = "No browser data found to backup";
         result.log = "No matching browser files detected";
-        setStatus(ActionStatus::Failed);
+        finishWithResult(result, ActionStatus::Failed);
     }
-    
-    setExecutionResult(result);
-    Q_EMIT executionComplete(result);
 }
 
 } // namespace sak

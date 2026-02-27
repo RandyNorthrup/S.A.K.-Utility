@@ -1,9 +1,8 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "sak/actions/check_disk_errors_action.h"
 #include "sak/process_runner.h"
-#include <QProcess>
 #include <QStorageInfo>
 
 namespace sak {
@@ -65,9 +64,7 @@ void CheckDiskErrorsAction::execute() {
         result.message = "No valid drives found for scanning";
         result.log = "Unable to detect any readable, writable volumes";
         result.duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
-        setExecutionResult(result);
-        setStatus(ActionStatus::Failed);
-        Q_EMIT executionComplete(result);
+        finishWithResult(result, ActionStatus::Failed);
         return;
     }
     
@@ -220,16 +217,13 @@ void CheckDiskErrorsAction::execute() {
         result.message = QString("Scanned %1 drive(s): %2 error(s), %3 repair(s) scheduled")
             .arg(drives_scanned).arg(errors_found).arg(errors_fixed);
         result.log = report;
-        setStatus((errors_found > 0) ? ActionStatus::Failed : ActionStatus::Success);
     } else {
         result.success = false;
         result.message = "Could not scan any drives";
         result.log = "No drives scanned or PowerShell Storage module unavailable (requires admin privileges)";
-        setStatus(ActionStatus::Failed);
     }
     
-    setExecutionResult(result);
-    Q_EMIT executionComplete(result);
+    finishWithResult(result, (drives_scanned > 0 && errors_found == 0) ? ActionStatus::Success : ActionStatus::Failed);
 }
 
 } // namespace sak

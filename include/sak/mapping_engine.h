@@ -1,3 +1,6 @@
+// Copyright (c) 2025 Randy Northrup. All rights reserved.
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 #pragma once
 
 #include <QObject>
@@ -10,6 +13,7 @@
 
 namespace sak {
 
+/// @brief Builds and validates source-to-destination deployment maps
 class MappingEngine : public QObject {
     Q_OBJECT
 
@@ -25,6 +29,7 @@ public:
         RoundRobin
     };
 
+    /// @brief Source user profile metadata for deployment mapping
     struct SourceProfile {
         QString username;
         QString source_hostname;
@@ -32,6 +37,7 @@ public:
         qint64 profile_size_bytes{0};
     };
 
+    /// @brief Complete mapping of sources to destinations for deployment
     struct DeploymentMapping {
         QString deployment_id;
         MappingType type{MappingType::OneToMany};

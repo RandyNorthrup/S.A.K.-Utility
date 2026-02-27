@@ -1,3 +1,6 @@
+// Copyright (c) 2025 Randy Northrup. All rights reserved.
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 #include "sak/windows_user_scanner.h"
 #include <QDir>
 #include <QDirIterator>
@@ -119,6 +122,9 @@ QString WindowsUserScanner::getUserSID(const QString& username) {
     
     if (sidSize > 0) {
         sid = (PSID)LocalAlloc(LPTR, sidSize);
+        if (!sid) {
+            return QString();
+        }
         domainSize = 256;
         
         if (LookupAccountNameW(nullptr, usernameW, sid, &sidSize, domain, &domainSize, &sidType)) {
@@ -149,11 +155,51 @@ QString WindowsUserScanner::getProfilePath(const QString& username) {
     }
     
 #ifdef Q_OS_WIN
-    // Try registry lookup
+    // Query registry for actual profile path using the user's SID
     QString sid = getUserSID(username);
     if (!sid.isEmpty()) {
-        // Query registry: HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\{SID}
-        // For now, fallback to standard path
+        QString regPath = QString("SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\ProfileList\\%1").arg(sid);
+        HKEY hKey = nullptr;
+        LONG result = RegOpenKeyExW(
+            HKEY_LOCAL_MACHINE,
+            reinterpret_cast<LPCWSTR>(regPath.utf16()),
+            0, KEY_READ, &hKey);
+        
+        if (result == ERROR_SUCCESS) {
+            wchar_t profileDir[MAX_PATH] = {};
+            DWORD bufferSize = sizeof(profileDir);
+            DWORD valueType = 0;
+            
+            result = RegQueryValueExW(
+                hKey,
+                L"ProfileImagePath",
+                nullptr,
+                &valueType,
+                reinterpret_cast<LPBYTE>(profileDir),
+                &bufferSize);
+            
+            RegCloseKey(hKey);
+            
+            if (result == ERROR_SUCCESS && (valueType == REG_SZ || valueType == REG_EXPAND_SZ)) {
+                QString registryPath;
+                if (valueType == REG_EXPAND_SZ) {
+                    // Expand environment variables (e.g., %SystemDrive%)
+                    wchar_t expandedPath[MAX_PATH] = {};
+                    DWORD expandedLen = ExpandEnvironmentStringsW(profileDir, expandedPath, MAX_PATH);
+                    if (expandedLen > 0 && expandedLen <= MAX_PATH) {
+                        registryPath = QString::fromWCharArray(expandedPath);
+                    } else {
+                        registryPath = QString::fromWCharArray(profileDir);
+                    }
+                } else {
+                    registryPath = QString::fromWCharArray(profileDir);
+                }
+                
+                if (QDir(registryPath).exists()) {
+                    return registryPath;
+                }
+            }
+        }
     }
 #endif
     

@@ -1,5 +1,5 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 #pragma once
 
@@ -156,6 +156,8 @@ Q_SIGNALS:
     void error(const QString& error);
 
 protected:
+    /// @brief Executes the flash operation on the worker thread
+    /// @return void on success, or sak::error_code on failure
     auto execute() -> std::expected<void, sak::error_code> override;
 
 private:

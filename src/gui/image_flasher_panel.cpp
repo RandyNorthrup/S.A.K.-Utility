@@ -1,5 +1,5 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "sak/image_flasher_panel.h"
 #include "sak/drive_scanner.h"
@@ -7,9 +7,11 @@
 #include "sak/windows_iso_downloader.h"
 #include "sak/windows_iso_download_dialog.h"
 #include "sak/linux_iso_downloader.h"
+#include "sak/detachable_log_window.h"
 #include "sak/linux_iso_download_dialog.h"
 #include "sak/windows_usb_creator.h"
 #include "sak/logger.h"
+#include "sak/image_flasher_settings_dialog.h"
 #include <QCoreApplication>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -65,13 +67,16 @@ void ImageFlasherPanel::setupUI() {
     mainLayout->setContentsMargins(12, 12, 12, 12);
     mainLayout->setSpacing(8);
     
-    // Title
+    // Title row with settings button
+    auto* titleRow = new QHBoxLayout();
     auto* titleLabel = new QLabel("Image Flasher", this);
     QFont titleFont = titleLabel->font();
     titleFont.setPointSize(16);
     titleFont.setBold(true);
     titleLabel->setFont(titleFont);
-    mainLayout->addWidget(titleLabel);
+    titleRow->addWidget(titleLabel);
+    titleRow->addStretch();
+    mainLayout->addLayout(titleRow);
     
     auto* subtitleLabel = new QLabel("Flash disk images to USB drives and SD cards", this);
     subtitleLabel->setStyleSheet("color: #64748b;");
@@ -89,6 +94,13 @@ void ImageFlasherPanel::setupUI() {
     
     // Navigation buttons
     auto* buttonLayout = new QHBoxLayout();
+    
+    auto* settingsButton = new QPushButton("Settings", this);
+    connect(settingsButton, &QPushButton::clicked, this, [this]() {
+        ImageFlasherSettingsDialog dialog(this);
+        dialog.exec();
+    });
+    buttonLayout->addWidget(settingsButton);
     
     buttonLayout->addStretch();
     
@@ -130,6 +142,9 @@ void ImageFlasherPanel::setupUI() {
     connect(m_flashButton, &QPushButton::clicked,
             this, &ImageFlasherPanel::onFlashClicked);
     
+    m_logToggle = new sak::LogToggleSwitch(tr("Log"), this);
+    buttonLayout->insertWidget(1, m_logToggle);
+
     mainLayout->addLayout(buttonLayout);
     
     // Show first page
@@ -143,16 +158,6 @@ void ImageFlasherPanel::createImageSelectionPage() {
     
     auto* groupBox = new QGroupBox("Step 1: Select Image", m_imageSelectionPage);
     auto* groupLayout = new QVBoxLayout(groupBox);
-    
-    // Select image button
-    m_selectImageButton = new QPushButton("Select Image File", groupBox);
-    m_selectImageButton->setMinimumHeight(48);
-    m_selectImageButton->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
-    groupLayout->addWidget(m_selectImageButton);
-    connect(m_selectImageButton, &QPushButton::clicked,
-            this, &ImageFlasherPanel::onSelectImageClicked);
-    
-    groupLayout->addSpacing(6);
     
     // Download Windows button
     m_downloadWindowsButton = new QPushButton("Download Windows 11", groupBox);
@@ -171,6 +176,16 @@ void ImageFlasherPanel::createImageSelectionPage() {
     groupLayout->addWidget(m_downloadLinuxButton);
     connect(m_downloadLinuxButton, &QPushButton::clicked,
             this, &ImageFlasherPanel::onDownloadLinuxClicked);
+    
+    groupLayout->addSpacing(6);
+    
+    // Select image button (at bottom of button stack)
+    m_selectImageButton = new QPushButton("Select Image File", groupBox);
+    m_selectImageButton->setMinimumHeight(48);
+    m_selectImageButton->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+    groupLayout->addWidget(m_selectImageButton);
+    connect(m_selectImageButton, &QPushButton::clicked,
+            this, &ImageFlasherPanel::onSelectImageClicked);
     
     groupLayout->addSpacing(12);
     
@@ -229,12 +244,6 @@ void ImageFlasherPanel::createFlashProgressPage() {
     stateFont.setBold(true);
     m_flashStateLabel->setFont(stateFont);
     groupLayout->addWidget(m_flashStateLabel);
-    
-    m_flashProgressBar = new QProgressBar(groupBox);
-    m_flashProgressBar->setMinimum(0);
-    m_flashProgressBar->setMaximum(100);
-    m_flashProgressBar->setValue(0);
-    groupLayout->addWidget(m_flashProgressBar);
     
     m_flashDetailsLabel = new QLabel("", groupBox);
     groupLayout->addWidget(m_flashDetailsLabel);
@@ -438,7 +447,7 @@ void ImageFlasherPanel::onFlashClicked() {
 }
 
 void ImageFlasherPanel::onFlashProgress(const sak::FlashProgress& progress) {
-    m_flashProgressBar->setValue(static_cast<int>(progress.percentage));
+    Q_EMIT progressUpdate(static_cast<int>(progress.percentage), 100);
     m_flashDetailsLabel->setText(QString("Written: %1 / %2")
         .arg(formatFileSize(progress.bytesWritten))
         .arg(formatFileSize(progress.totalBytes)));
@@ -506,7 +515,6 @@ void ImageFlasherPanel::onCancelClicked() {
         m_isFlashing = false;
 
         m_flashStateLabel->setText("Flash cancelled by user");
-        m_flashProgressBar->setValue(0);
         m_flashDetailsLabel->clear();
         m_flashSpeedLabel->clear();
 
@@ -707,7 +715,6 @@ void ImageFlasherPanel::createWindowsUSB() {
     
     // Initialize progress display
     m_flashStateLabel->setText("Initializing...");
-    m_flashProgressBar->setValue(0);
     
     // Create Windows USB creator — no parent, will be moved to worker thread
     auto* creator = new WindowsUSBCreator();
@@ -719,7 +726,7 @@ void ImageFlasherPanel::createWindowsUSB() {
     });
     
     connect(creator, &WindowsUSBCreator::progressUpdated, this, [this](int percentage) {
-        m_flashProgressBar->setValue(percentage);
+        Q_EMIT progressUpdate(percentage, 100);
     });
     
     connect(creator, &WindowsUSBCreator::completed, this, [this, creator]() {

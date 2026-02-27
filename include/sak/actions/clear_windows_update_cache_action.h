@@ -1,5 +1,5 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 #pragma once
 
@@ -32,6 +32,36 @@ public:
 private:
     qint64 m_cache_size{0};
     int m_file_count{0};
+
+    /// @brief Build the enterprise PowerShell script for cache cleanup.
+    /// @return Complete PS script string.
+    QString buildCacheCleanupScript() const;
+
+    /// Results parsed from the cache cleanup PS script output.
+    struct CacheCleanupResult {
+        qint64 total_before{0};
+        qint64 total_cleared{0};
+        int paths_cleared{0};
+        int services_stopped{0};
+        int services_started{0};
+        QStringList service_details;
+        QStringList path_details;
+        QStringList errors;
+    };
+
+    /// @brief Parse structured output from the cache cleanup script.
+    /// @param output Stdout from the PS script.
+    /// @param std_err Stderr from the PS script.
+    /// @return Parsed CacheCleanupResult.
+    CacheCleanupResult parseCacheCleanupOutput(const QString& output, const QString& std_err) const;
+
+    /// @brief Build the success log with box-drawing formatting.
+    /// @return Formatted log string.
+    QString buildSuccessLog(const CacheCleanupResult& parsed, qint64 duration_ms) const;
+
+    /// @brief Build the failure log with box-drawing formatting.
+    /// @return Formatted log string.
+    QString buildFailureLog(const CacheCleanupResult& parsed) const;
 
     bool stopWindowsUpdateService();
     bool startWindowsUpdateService();

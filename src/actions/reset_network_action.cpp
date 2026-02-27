@@ -1,9 +1,8 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "sak/actions/reset_network_action.h"
 #include "sak/process_runner.h"
-#include <QProcess>
 #include <QThread>
 #include <QDir>
 
@@ -127,18 +126,8 @@ void ResetNetworkAction::execute() {
     QString backupCmd = QString("netsh winsock show catalog > \"%1\"").arg(backupPath);
     runCommand("cmd.exe", QStringList() << "/C" << backupCmd, "Winsock backup");
     
-    auto finish_cancelled = [this, &start_time]() {
-        ExecutionResult result;
-        result.success = false;
-        result.message = "Network reset cancelled by user";
-        result.duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
-        setExecutionResult(result);
-        setStatus(ActionStatus::Cancelled);
-        Q_EMIT executionComplete(result);
-    };
-
     if (isCancelled()) {
-        finish_cancelled();
+        emitCancelledResult(QStringLiteral("Network reset cancelled by user"), start_time);
         return;
     }
     
@@ -147,7 +136,7 @@ void ResetNetworkAction::execute() {
     runCommand("ipconfig", QStringList() << "/flushdns", "DNS flush");
     
     if (isCancelled()) {
-        finish_cancelled();
+        emitCancelledResult(QStringLiteral("Network reset cancelled by user"), start_time);
         return;
     }
     
@@ -157,7 +146,7 @@ void ResetNetworkAction::execute() {
     m_requires_reboot = true;
     
     if (isCancelled()) {
-        finish_cancelled();
+        emitCancelledResult(QStringLiteral("Network reset cancelled by user"), start_time);
         return;
     }
     
@@ -167,7 +156,7 @@ void ResetNetworkAction::execute() {
     runCommand("netsh", QStringList() << "int" << "ipv6" << "reset", "IPv6 reset");
     
     if (isCancelled()) {
-        finish_cancelled();
+        emitCancelledResult(QStringLiteral("Network reset cancelled by user"), start_time);
         return;
     }
     
@@ -181,7 +170,7 @@ void ResetNetworkAction::execute() {
     runCommand("ipconfig", QStringList() << "/renew", "IP renew");
     
     if (isCancelled()) {
-        finish_cancelled();
+        emitCancelledResult(QStringLiteral("Network reset cancelled by user"), start_time);
         return;
     }
     
@@ -190,7 +179,7 @@ void ResetNetworkAction::execute() {
     runCommand("netsh", QStringList() << "advfirewall" << "reset", "Firewall reset");
     
     if (isCancelled()) {
-        finish_cancelled();
+        emitCancelledResult(QStringLiteral("Network reset cancelled by user"), start_time);
         return;
     }
     
@@ -213,7 +202,7 @@ void ResetNetworkAction::execute() {
     }
     
     if (isCancelled()) {
-        finish_cancelled();
+        emitCancelledResult(QStringLiteral("Network reset cancelled by user"), start_time);
         return;
     }
     
@@ -223,7 +212,7 @@ void ResetNetworkAction::execute() {
     runCommand("nbtstat", QStringList() << "-RR", "NetBIOS refresh");
     
     if (isCancelled()) {
-        finish_cancelled();
+        emitCancelledResult(QStringLiteral("Network reset cancelled by user"), start_time);
         return;
     }
     
@@ -263,9 +252,7 @@ void ResetNetworkAction::execute() {
         result.log += "\nErrors:\n" + errors.join("\n");
     }
     
-    setExecutionResult(result);
-    setStatus(result.success ? ActionStatus::Success : ActionStatus::Failed);
-    Q_EMIT executionComplete(result);
+    finishWithResult(result, result.success ? ActionStatus::Success : ActionStatus::Failed);
 }
 
 } // namespace sak

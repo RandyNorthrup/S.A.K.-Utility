@@ -1,5 +1,5 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 #pragma once
 
@@ -262,6 +262,59 @@ protected:
      * @brief Reset cancellation flag
      */
     void resetCancelled() { m_cancelled = false; }
+
+    // === Shared helpers to eliminate boilerplate across action subclasses ===
+
+    /**
+     * @brief Emit a cancelled result and return (pre-execution, no duration)
+     * @param message Cancellation message
+     */
+    void emitCancelledResult(const QString& message);
+
+    /**
+     * @brief Emit a cancelled result with duration tracking
+     * @param message Cancellation message
+     * @param start_time When execution started (for duration calculation)
+     */
+    void emitCancelledResult(const QString& message, const QDateTime& start_time);
+
+    /**
+     * @brief Emit a failed result and return
+     * @param message Failure message
+     * @param log Detailed log message
+     * @param start_time When execution started (for duration calculation)
+     */
+    void emitFailedResult(const QString& message, const QString& log, const QDateTime& start_time);
+
+    /**
+     * @brief Set result, status, and emit completion signal in one call
+     * @param result Execution result to store and emit
+     * @param status Final action status
+     */
+    void finishWithResult(const ExecutionResult& result, ActionStatus status);
+
+    /**
+     * @brief Format a byte count as a human-readable string
+     * @param bytes Number of bytes
+     * @return Formatted string (e.g., "2.34 GB", "512 KB")
+     */
+    static QString formatFileSize(qint64 bytes);
+
+    /**
+     * @brief Build a box-drawing formatted log string
+     * @param title Title for the box header (e.g., "BROWSER CACHE CLEARING - RESULTS")
+     * @param content_lines Lines of content to display inside the box
+     * @param duration_ms Optional duration to append in footer (-1 to omit)
+     * @return Formatted string with ╔═╗║╚═╝ box-drawing characters
+     */
+    static QString formatLogBox(const QString& title, const QStringList& content_lines, qint64 duration_ms = -1);
+
+    /**
+     * @brief Sanitize a filesystem path for use as a backup subdirectory name
+     * @param path Source filesystem path
+     * @return Path with ':', '\\', '/' replaced by '_'
+     */
+    static QString sanitizePathForBackup(const QString& path);
 
 private:
     ActionStatus m_status{ActionStatus::Idle};

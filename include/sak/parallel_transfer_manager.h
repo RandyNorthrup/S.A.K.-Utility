@@ -1,3 +1,6 @@
+// Copyright (c) 2025 Randy Northrup. All rights reserved.
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 #pragma once
 
 #include <QObject>
@@ -12,6 +15,7 @@
 
 namespace sak {
 
+/// @brief Manages concurrent multi-destination transfer jobs
 class ParallelTransferManager : public QObject {
     Q_OBJECT
 
@@ -23,6 +27,7 @@ public:
         Critical = 3
     };
 
+    /// @brief State and progress metadata for a single transfer job
     struct TransferJob {
         QString job_id;
         MappingEngine::SourceProfile source;

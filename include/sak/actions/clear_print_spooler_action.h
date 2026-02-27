@@ -1,5 +1,5 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 #pragma once
 
@@ -36,6 +36,24 @@ private:
     void clearSpoolFolder();
     void startSpooler();
     int countSpoolFiles();
+
+    /// @brief Parsed result from the spooler cleanup script
+    struct SpoolerResult {
+        QString initial_status;
+        QString final_status;
+        int files_before{0};
+        int files_after{0};
+        int cleared{0};
+        qint64 size_before{0};
+        bool stop_success{false};
+        bool start_success{false};
+        QStringList errors;
+    };
+
+    QString buildSpoolerScript() const;
+    SpoolerResult parseSpoolerOutput(const QString& output) const;
+    QString buildSuccessLog(const SpoolerResult& spooler, qint64 duration_ms) const;
+    QString buildFailureLog(const SpoolerResult& spooler, qint64 duration_ms) const;
 };
 
 } // namespace sak

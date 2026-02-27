@@ -1,5 +1,5 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 /**
  * RESEARCH-BASED IMPLEMENTATION (3 Sources - December 15, 2025)
@@ -129,12 +129,7 @@ void BackupEmailDataAction::scan() {
 
 void BackupEmailDataAction::execute() {
     if (isCancelled()) {
-        ExecutionResult result;
-        result.success = false;
-        result.message = "Email data backup cancelled";
-        setExecutionResult(result);
-        setStatus(ActionStatus::Cancelled);
-        Q_EMIT executionComplete(result);
+        emitCancelledResult("Email data backup cancelled");
         return;
     }
 
@@ -187,16 +182,6 @@ void BackupEmailDataAction::execute() {
     
     setStatus(ActionStatus::Running);
     QDateTime start_time = QDateTime::currentDateTime();
-
-    auto finish_cancelled = [this, &start_time]() {
-        ExecutionResult result;
-        result.success = false;
-        result.message = "Email data backup cancelled";
-        result.duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
-        setExecutionResult(result);
-        setStatus(ActionStatus::Cancelled);
-        Q_EMIT executionComplete(result);
-    };
     
     Q_EMIT executionProgress("Scanning for email data...", 10);
     
@@ -227,7 +212,7 @@ void BackupEmailDataAction::execute() {
                               QDir::Files, QDirIterator::Subdirectories);
                 while (it.hasNext()) {
                     if (isCancelled()) {
-                        finish_cancelled();
+                        emitCancelledResult("Email data backup cancelled", start_time);
                         return;
                     }
                     it.next();
@@ -264,7 +249,7 @@ void BackupEmailDataAction::execute() {
             
             while (it.hasNext()) {
                 if (isCancelled()) {
-                    finish_cancelled();
+                    emitCancelledResult("Email data backup cancelled", start_time);
                     return;
                 }
                 
@@ -299,21 +284,18 @@ void BackupEmailDataAction::execute() {
     
     if (files_copied > 0) {
         result.success = true;
-        result.message = QString("Backed up %1 email file(s) - %2 GB from %3 user(s)")
+        result.message = QString("Backed up %1 email file(s) - %2 from %3 user(s)")
             .arg(files_copied)
-            .arg(bytes_copied / (1024.0 * 1024 * 1024), 0, 'f', 2)
+            .arg(formatFileSize(bytes_copied))
             .arg(user_profiles.count());
         result.log = QString("Saved to: %1").arg(backup_root.absolutePath());
-        setStatus(ActionStatus::Success);
+        finishWithResult(result, ActionStatus::Success);
     } else {
         result.success = false;
         result.message = "No email data found to backup";
         result.log = "No PST, OST, or MBOX files detected";
-        setStatus(ActionStatus::Failed);
+        finishWithResult(result, ActionStatus::Failed);
     }
-    
-    setExecutionResult(result);
-    Q_EMIT executionComplete(result);
 }
 
 } // namespace sak

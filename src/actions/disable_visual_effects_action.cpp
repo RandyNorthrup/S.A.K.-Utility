@@ -1,5 +1,5 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "sak/actions/disable_visual_effects_action.h"
 #include "sak/process_runner.h"
@@ -73,43 +73,23 @@ void DisableVisualEffectsAction::execute() {
 
     setStatus(ActionStatus::Running);
     QDateTime start_time = QDateTime::currentDateTime();
-    QString report;
-    QString structured_output;
-    int settings_changed = 0;
-    int settings_total = 0;
     
     Q_EMIT executionProgress("Analyzing current visual effects settings...", 10);
     
-    // Phase 1: Enumerate current visual effects settings via PowerShell
+    // Phase 1: Enumerate current settings
+    QString report;
     report += "╔══════════════════════════════════════════════════════════════════════╗\n";
     report += "║                   VISUAL EFFECTS OPTIMIZATION                        ║\n";
     report += "╠══════════════════════════════════════════════════════════════════════╣\n";
     report += "║ Phase 1: Current Settings Analysis                                  ║\n";
     report += "╠══════════════════════════════════════════════════════════════════════╣\n";
     
-    ProcessResult ps_check = runPowerShell(
-        R"(
-            $settings = @{
-                VisualFXSetting = (Get-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects' -Name 'VisualFXSetting' -ErrorAction SilentlyContinue).VisualFXSetting
-                TaskbarAnimations = (Get-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced' -Name 'TaskbarAnimations' -ErrorAction SilentlyContinue).TaskbarAnimations
-                EnableAeroPeek = (Get-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\DWM' -Name 'EnableAeroPeek' -ErrorAction SilentlyContinue).EnableAeroPeek
-                AlwaysHibernateThumbnails = (Get-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\DWM' -Name 'AlwaysHibernateThumbnails' -ErrorAction SilentlyContinue).AlwaysHibernateThumbnails
-                MinAnimate = (Get-ItemProperty -Path 'HKCU:\Control Panel\Desktop\WindowMetrics' -Name 'MinAnimate' -ErrorAction SilentlyContinue).MinAnimate
-                ListviewAlphaSelect = (Get-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced' -Name 'ListviewAlphaSelect' -ErrorAction SilentlyContinue).ListviewAlphaSelect
-                ListviewShadow = (Get-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced' -Name 'ListviewShadow' -ErrorAction SilentlyContinue).ListviewShadow
-                DragFullWindows = (Get-ItemProperty -Path 'HKCU:\Control Panel\Desktop' -Name 'DragFullWindows' -ErrorAction SilentlyContinue).DragFullWindows
-                FontSmoothing = (Get-ItemProperty -Path 'HKCU:\Control Panel\Desktop' -Name 'FontSmoothing' -ErrorAction SilentlyContinue).FontSmoothing
-            }
-            $settings | ConvertTo-Json
-        )",
-        10000);
-        if (!ps_check.std_err.trimmed().isEmpty()) {
-            Q_EMIT logMessage("Visual effects check warning: " + ps_check.std_err.trimmed());
-        }
-        QString check_output = ps_check.std_out.trimmed();
+    ProcessResult ps_check = runPowerShell(buildCheckSettingsScript(), 10000);
+    if (!ps_check.std_err.trimmed().isEmpty()) {
+        Q_EMIT logMessage("Visual effects check warning: " + ps_check.std_err.trimmed());
+    }
     
-    // Parse current settings
-    QJsonDocument check_doc = QJsonDocument::fromJson(check_output.toUtf8());
+    QJsonDocument check_doc = QJsonDocument::fromJson(ps_check.std_out.trimmed().toUtf8());
     QJsonObject current_settings = check_doc.object();
     
     int visual_fx = current_settings["VisualFXSetting"].toInt(-1);
@@ -118,123 +98,22 @@ void DisableVisualEffectsAction::execute() {
                       (visual_fx == 2) ? "Best performance" :
                       (visual_fx == 3) ? "Custom" : "Unknown";
     
-    report += QString("║ Current Mode: %1").arg(fx_mode).leftJustified(73, ' ') + "║\n";
-    report += QString("║ VisualFXSetting: %1").arg(visual_fx).leftJustified(73, ' ') + "║\n";
-    report += QString("║ TaskbarAnimations: %1").arg(current_settings["TaskbarAnimations"].toInt(-1)).leftJustified(73, ' ') + "║\n";
-    report += QString("║ EnableAeroPeek: %1").arg(current_settings["EnableAeroPeek"].toInt(-1)).leftJustified(73, ' ') + "║\n";
-    report += QString("║ AlwaysHibernateThumbnails: %1").arg(current_settings["AlwaysHibernateThumbnails"].toInt(-1)).leftJustified(73, ' ') + "║\n";
-    report += QString("║ MinAnimate: %1").arg(current_settings["MinAnimate"].toString()).leftJustified(73, ' ') + "║\n";
-    report += "╠══════════════════════════════════════════════════════════════════════╣\n";
+    report += buildCurrentSettingsReport(current_settings);
     
     Q_EMIT executionProgress("Applying Best Performance settings...", 35);
     
-    // Phase 2: Apply comprehensive Best Performance settings via PowerShell
+    // Phase 2: Apply settings
     report += "║ Phase 2: Applying Best Performance Settings                         ║\n";
     report += "╠══════════════════════════════════════════════════════════════════════╣\n";
     
-        ProcessResult ps_apply = runPowerShell(
-            R"(
-            $changes = 0
-            $total = 0
-            
-            # VisualFXSetting: 2 = Best Performance
-            $total++
-            if ((Get-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects' -Name 'VisualFXSetting' -ErrorAction SilentlyContinue).VisualFXSetting -ne 2) {
-                Set-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects' -Name 'VisualFXSetting' -Value 2 -Type DWord -Force
-                $changes++
-            }
-            
-            # Disable taskbar animations
-            $total++
-            if ((Get-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced' -Name 'TaskbarAnimations' -ErrorAction SilentlyContinue).TaskbarAnimations -ne 0) {
-                Set-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced' -Name 'TaskbarAnimations' -Value 0 -Type DWord -Force
-                $changes++
-            }
-            
-            # Disable Aero Peek
-            $total++
-            if ((Get-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\DWM' -Name 'EnableAeroPeek' -ErrorAction SilentlyContinue).EnableAeroPeek -ne 0) {
-                Set-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\DWM' -Name 'EnableAeroPeek' -Value 0 -Type DWord -Force
-                $changes++
-            }
-            
-            # Disable thumbnail hibernation
-            $total++
-            if ((Get-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\DWM' -Name 'AlwaysHibernateThumbnails' -ErrorAction SilentlyContinue).AlwaysHibernateThumbnails -ne 0) {
-                Set-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\DWM' -Name 'AlwaysHibernateThumbnails' -Value 0 -Type DWord -Force
-                $changes++
-            }
-            
-            # Disable window minimize/maximize animations
-            $total++
-            if ((Get-ItemProperty -Path 'HKCU:\Control Panel\Desktop\WindowMetrics' -Name 'MinAnimate' -ErrorAction SilentlyContinue).MinAnimate -ne '0') {
-                Set-ItemProperty -Path 'HKCU:\Control Panel\Desktop\WindowMetrics' -Name 'MinAnimate' -Value '0' -Force
-                $changes++
-            }
-            
-            # Disable listview alpha select
-            $total++
-            if ((Get-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced' -Name 'ListviewAlphaSelect' -ErrorAction SilentlyContinue).ListviewAlphaSelect -ne 0) {
-                Set-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced' -Name 'ListviewAlphaSelect' -Value 0 -Type DWord -Force
-                $changes++
-            }
-            
-            # Disable listview shadow
-            $total++
-            if ((Get-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced' -Name 'ListviewShadow' -ErrorAction SilentlyContinue).ListviewShadow -ne 0) {
-                Set-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced' -Name 'ListviewShadow' -Value 0 -Type DWord -Force
-                $changes++
-            }
-            
-            # Disable full window dragging (0 = disabled)
-            $total++
-            if ((Get-ItemProperty -Path 'HKCU:\Control Panel\Desktop' -Name 'DragFullWindows' -ErrorAction SilentlyContinue).DragFullWindows -ne '0') {
-                Set-ItemProperty -Path 'HKCU:\Control Panel\Desktop' -Name 'DragFullWindows' -Value '0' -Force
-                $changes++
-            }
-            
-            # Enable font smoothing (2 = ClearType)
-            $total++
-            if ((Get-ItemProperty -Path 'HKCU:\Control Panel\Desktop' -Name 'FontSmoothing' -ErrorAction SilentlyContinue).FontSmoothing -ne '2') {
-                Set-ItemProperty -Path 'HKCU:\Control Panel\Desktop' -Name 'FontSmoothing' -Value '2' -Force
-                $changes++
-            }
-            
-            # UserPreferencesMask for advanced performance (hex: 9032078010000000)
-            # This controls: animations, shadow effects, menu show delay, etc.
-            $total++
-            $currentMask = (Get-ItemProperty -Path 'HKCU:\Control Panel\Desktop' -Name 'UserPreferencesMask' -ErrorAction SilentlyContinue).UserPreferencesMask
-            $targetMask = [byte[]]@(0x90, 0x32, 0x07, 0x80, 0x10, 0x00, 0x00, 0x00)
-            if ($null -eq $currentMask -or (Compare-Object $currentMask $targetMask)) {
-                Set-ItemProperty -Path 'HKCU:\Control Panel\Desktop' -Name 'UserPreferencesMask' -Value $targetMask -Type Binary -Force
-                $changes++
-            }
-            
-            # IconsOnly mode for performance
-            $total++
-            if ((Get-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced' -Name 'IconsOnly' -ErrorAction SilentlyContinue).IconsOnly -ne 1) {
-                Set-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced' -Name 'IconsOnly' -Value 1 -Type DWord -Force
-                $changes++
-            }
-            
-            # Disable ShowInfoTip for performance
-            $total++
-            if ((Get-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced' -Name 'ShowInfoTip' -ErrorAction SilentlyContinue).ShowInfoTip -ne 1) {
-                Set-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced' -Name 'ShowInfoTip' -Value 1 -Type DWord -Force
-                $changes++
-            }
-            
-            Write-Output "CHANGES:$changes"
-            Write-Output "TOTAL:$total"
-            )",
-            10000);
-        if (!ps_apply.std_err.trimmed().isEmpty()) {
-            Q_EMIT logMessage("Visual effects apply warning: " + ps_apply.std_err.trimmed());
-        }
-        QString apply_output = ps_apply.std_out.trimmed();
+    ProcessResult ps_apply = runPowerShell(buildApplySettingsScript(), 10000);
+    if (!ps_apply.std_err.trimmed().isEmpty()) {
+        Q_EMIT logMessage("Visual effects apply warning: " + ps_apply.std_err.trimmed());
+    }
     
-    // Parse changes count
-    for (const QString& line : apply_output.split('\n')) {
+    int settings_changed = 0;
+    int settings_total = 0;
+    for (const QString& line : ps_apply.std_out.trimmed().split('\n')) {
         if (line.startsWith("CHANGES:")) {
             settings_changed = line.mid(8).toInt();
         } else if (line.startsWith("TOTAL:")) {
@@ -247,7 +126,7 @@ void DisableVisualEffectsAction::execute() {
     
     Q_EMIT executionProgress("Notifying system of changes...", 70);
     
-    // Phase 3: Notify system of changes
+    // Phase 3: Notify system
     report += "║ Phase 3: System Notification                                        ║\n";
     report += "╠══════════════════════════════════════════════════════════════════════╣\n";
     
@@ -263,39 +142,11 @@ void DisableVisualEffectsAction::execute() {
     
     Q_EMIT executionProgress("Optimization complete", 100);
     
-    // Summary
-    report += "║ OPTIMIZATION SUMMARY                                                 ║\n";
-    report += "╠══════════════════════════════════════════════════════════════════════╣\n";
-    report += QString("║ Total Settings: %1").arg(settings_total).leftJustified(73, ' ') + "║\n";
-    report += QString("║ Settings Changed: %1").arg(settings_changed).leftJustified(73, ' ') + "║\n";
-    report += QString("║ Settings Already Optimized: %1").arg(settings_total - settings_changed).leftJustified(73, ' ') + "║\n";
-    report += "║                                                                      ║\n";
-    
-    if (settings_changed > 0) {
-        report += "║ ⚠ RESTART REQUIRED                                                   ║\n";
-        report += "║   Log off and log back in to apply all visual effects changes.      ║\n";
-        report += "║   Some changes may take effect immediately in new windows.          ║\n";
-    } else {
-        report += "║ ✓ All visual effects already optimized for Best Performance         ║\n";
-    }
-    
-    report += "║                                                                      ║\n";
-    report += "║ OPTIMIZATIONS APPLIED:                                               ║\n";
-    report += "║  • VisualFXSetting = Best Performance (2)                            ║\n";
-    report += "║  • TaskbarAnimations = Disabled                                      ║\n";
-    report += "║  • EnableAeroPeek = Disabled                                         ║\n";
-    report += "║  • AlwaysHibernateThumbnails = Disabled                              ║\n";
-    report += "║  • MinAnimate (window animations) = Disabled                         ║\n";
-    report += "║  • ListviewAlphaSelect = Disabled                                    ║\n";
-    report += "║  • ListviewShadow = Disabled                                         ║\n";
-    report += "║  • DragFullWindows = Disabled                                        ║\n";
-    report += "║  • FontSmoothing = ClearType (Enabled for readability)               ║\n";
-    report += "║  • UserPreferencesMask = Performance optimized                       ║\n";
-    report += "║  • IconsOnly = Enabled                                               ║\n";
-    report += "║  • ShowInfoTip = Enabled (minimal)                                   ║\n";
-    report += "╚══════════════════════════════════════════════════════════════════════╝\n";
+    // Phase 4: Summary
+    report += buildSummaryReport(settings_total, settings_changed, fx_mode);
     
     // Structured output
+    QString structured_output;
     structured_output += QString("SETTINGS_TOTAL:%1\n").arg(settings_total);
     structured_output += QString("SETTINGS_CHANGED:%1\n").arg(settings_changed);
     structured_output += QString("SETTINGS_OPTIMIZED:%1\n").arg(settings_total - settings_changed);
@@ -313,9 +164,172 @@ void DisableVisualEffectsAction::execute() {
         : "Visual effects already optimized for Best Performance";
     result.log = report + "\n" + structured_output;
     
-    setStatus(result.success ? ActionStatus::Success : ActionStatus::Failed);
-    setExecutionResult(result);
-    Q_EMIT executionComplete(result);
+    finishWithResult(result, result.success ? ActionStatus::Success : ActionStatus::Failed);
+}
+
+// ============================================================================
+// Private Helpers
+// ============================================================================
+
+QString DisableVisualEffectsAction::buildCheckSettingsScript() const
+{
+    return R"(
+            $settings = @{
+                VisualFXSetting = (Get-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects' -Name 'VisualFXSetting' -ErrorAction SilentlyContinue).VisualFXSetting
+                TaskbarAnimations = (Get-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced' -Name 'TaskbarAnimations' -ErrorAction SilentlyContinue).TaskbarAnimations
+                EnableAeroPeek = (Get-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\DWM' -Name 'EnableAeroPeek' -ErrorAction SilentlyContinue).EnableAeroPeek
+                AlwaysHibernateThumbnails = (Get-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\DWM' -Name 'AlwaysHibernateThumbnails' -ErrorAction SilentlyContinue).AlwaysHibernateThumbnails
+                MinAnimate = (Get-ItemProperty -Path 'HKCU:\Control Panel\Desktop\WindowMetrics' -Name 'MinAnimate' -ErrorAction SilentlyContinue).MinAnimate
+                ListviewAlphaSelect = (Get-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced' -Name 'ListviewAlphaSelect' -ErrorAction SilentlyContinue).ListviewAlphaSelect
+                ListviewShadow = (Get-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced' -Name 'ListviewShadow' -ErrorAction SilentlyContinue).ListviewShadow
+                DragFullWindows = (Get-ItemProperty -Path 'HKCU:\Control Panel\Desktop' -Name 'DragFullWindows' -ErrorAction SilentlyContinue).DragFullWindows
+                FontSmoothing = (Get-ItemProperty -Path 'HKCU:\Control Panel\Desktop' -Name 'FontSmoothing' -ErrorAction SilentlyContinue).FontSmoothing
+            }
+            $settings | ConvertTo-Json
+        )";
+}
+
+QString DisableVisualEffectsAction::buildApplySettingsScript() const
+{
+    return R"(
+            $changes = 0
+            $total = 0
+            
+            # VisualFXSetting: 2 = Best Performance
+            $total++
+            if ((Get-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects' -Name 'VisualFXSetting' -ErrorAction SilentlyContinue).VisualFXSetting -ne 2) {
+                Set-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects' -Name 'VisualFXSetting' -Value 2 -Type DWord -Force
+                $changes++
+            }
+            
+            $total++
+            if ((Get-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced' -Name 'TaskbarAnimations' -ErrorAction SilentlyContinue).TaskbarAnimations -ne 0) {
+                Set-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced' -Name 'TaskbarAnimations' -Value 0 -Type DWord -Force
+                $changes++
+            }
+            
+            $total++
+            if ((Get-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\DWM' -Name 'EnableAeroPeek' -ErrorAction SilentlyContinue).EnableAeroPeek -ne 0) {
+                Set-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\DWM' -Name 'EnableAeroPeek' -Value 0 -Type DWord -Force
+                $changes++
+            }
+            
+            $total++
+            if ((Get-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\DWM' -Name 'AlwaysHibernateThumbnails' -ErrorAction SilentlyContinue).AlwaysHibernateThumbnails -ne 0) {
+                Set-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\DWM' -Name 'AlwaysHibernateThumbnails' -Value 0 -Type DWord -Force
+                $changes++
+            }
+            
+            $total++
+            if ((Get-ItemProperty -Path 'HKCU:\Control Panel\Desktop\WindowMetrics' -Name 'MinAnimate' -ErrorAction SilentlyContinue).MinAnimate -ne '0') {
+                Set-ItemProperty -Path 'HKCU:\Control Panel\Desktop\WindowMetrics' -Name 'MinAnimate' -Value '0' -Force
+                $changes++
+            }
+            
+            $total++
+            if ((Get-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced' -Name 'ListviewAlphaSelect' -ErrorAction SilentlyContinue).ListviewAlphaSelect -ne 0) {
+                Set-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced' -Name 'ListviewAlphaSelect' -Value 0 -Type DWord -Force
+                $changes++
+            }
+            
+            $total++
+            if ((Get-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced' -Name 'ListviewShadow' -ErrorAction SilentlyContinue).ListviewShadow -ne 0) {
+                Set-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced' -Name 'ListviewShadow' -Value 0 -Type DWord -Force
+                $changes++
+            }
+            
+            $total++
+            if ((Get-ItemProperty -Path 'HKCU:\Control Panel\Desktop' -Name 'DragFullWindows' -ErrorAction SilentlyContinue).DragFullWindows -ne '0') {
+                Set-ItemProperty -Path 'HKCU:\Control Panel\Desktop' -Name 'DragFullWindows' -Value '0' -Force
+                $changes++
+            }
+            
+            $total++
+            if ((Get-ItemProperty -Path 'HKCU:\Control Panel\Desktop' -Name 'FontSmoothing' -ErrorAction SilentlyContinue).FontSmoothing -ne '2') {
+                Set-ItemProperty -Path 'HKCU:\Control Panel\Desktop' -Name 'FontSmoothing' -Value '2' -Force
+                $changes++
+            }
+            
+            $total++
+            $currentMask = (Get-ItemProperty -Path 'HKCU:\Control Panel\Desktop' -Name 'UserPreferencesMask' -ErrorAction SilentlyContinue).UserPreferencesMask
+            $targetMask = [byte[]]@(0x90, 0x32, 0x07, 0x80, 0x10, 0x00, 0x00, 0x00)
+            if ($null -eq $currentMask -or (Compare-Object $currentMask $targetMask)) {
+                Set-ItemProperty -Path 'HKCU:\Control Panel\Desktop' -Name 'UserPreferencesMask' -Value $targetMask -Type Binary -Force
+                $changes++
+            }
+            
+            $total++
+            if ((Get-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced' -Name 'IconsOnly' -ErrorAction SilentlyContinue).IconsOnly -ne 1) {
+                Set-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced' -Name 'IconsOnly' -Value 1 -Type DWord -Force
+                $changes++
+            }
+            
+            $total++
+            if ((Get-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced' -Name 'ShowInfoTip' -ErrorAction SilentlyContinue).ShowInfoTip -ne 1) {
+                Set-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced' -Name 'ShowInfoTip' -Value 1 -Type DWord -Force
+                $changes++
+            }
+            
+            Write-Output "CHANGES:$changes"
+            Write-Output "TOTAL:$total"
+            )";
+}
+
+QString DisableVisualEffectsAction::buildCurrentSettingsReport(const QJsonObject& current_settings) const
+{
+    int visual_fx = current_settings["VisualFXSetting"].toInt(-1);
+    QString fx_mode = (visual_fx == 0) ? "Let Windows choose" :
+                      (visual_fx == 1) ? "Best appearance" :
+                      (visual_fx == 2) ? "Best performance" :
+                      (visual_fx == 3) ? "Custom" : "Unknown";
+    
+    QString section;
+    section += QString("║ Current Mode: %1").arg(fx_mode).leftJustified(73, ' ') + "║\n";
+    section += QString("║ VisualFXSetting: %1").arg(visual_fx).leftJustified(73, ' ') + "║\n";
+    section += QString("║ TaskbarAnimations: %1").arg(current_settings["TaskbarAnimations"].toInt(-1)).leftJustified(73, ' ') + "║\n";
+    section += QString("║ EnableAeroPeek: %1").arg(current_settings["EnableAeroPeek"].toInt(-1)).leftJustified(73, ' ') + "║\n";
+    section += QString("║ AlwaysHibernateThumbnails: %1").arg(current_settings["AlwaysHibernateThumbnails"].toInt(-1)).leftJustified(73, ' ') + "║\n";
+    section += QString("║ MinAnimate: %1").arg(current_settings["MinAnimate"].toString()).leftJustified(73, ' ') + "║\n";
+    section += "╠══════════════════════════════════════════════════════════════════════╣\n";
+    return section;
+}
+
+QString DisableVisualEffectsAction::buildSummaryReport(int settings_total, int settings_changed, const QString& fx_mode) const
+{
+    Q_UNUSED(fx_mode)
+    
+    QString section;
+    section += "║ OPTIMIZATION SUMMARY                                                 ║\n";
+    section += "╠══════════════════════════════════════════════════════════════════════╣\n";
+    section += QString("║ Total Settings: %1").arg(settings_total).leftJustified(73, ' ') + "║\n";
+    section += QString("║ Settings Changed: %1").arg(settings_changed).leftJustified(73, ' ') + "║\n";
+    section += QString("║ Settings Already Optimized: %1").arg(settings_total - settings_changed).leftJustified(73, ' ') + "║\n";
+    section += "║                                                                      ║\n";
+    
+    if (settings_changed > 0) {
+        section += "║ ⚠ RESTART REQUIRED                                                   ║\n";
+        section += "║   Log off and log back in to apply all visual effects changes.      ║\n";
+        section += "║   Some changes may take effect immediately in new windows.          ║\n";
+    } else {
+        section += "║ ✓ All visual effects already optimized for Best Performance         ║\n";
+    }
+    
+    section += "║                                                                      ║\n";
+    section += "║ OPTIMIZATIONS APPLIED:                                               ║\n";
+    section += "║  • VisualFXSetting = Best Performance (2)                            ║\n";
+    section += "║  • TaskbarAnimations = Disabled                                      ║\n";
+    section += "║  • EnableAeroPeek = Disabled                                         ║\n";
+    section += "║  • AlwaysHibernateThumbnails = Disabled                              ║\n";
+    section += "║  • MinAnimate (window animations) = Disabled                         ║\n";
+    section += "║  • ListviewAlphaSelect = Disabled                                    ║\n";
+    section += "║  • ListviewShadow = Disabled                                         ║\n";
+    section += "║  • DragFullWindows = Disabled                                        ║\n";
+    section += "║  • FontSmoothing = ClearType (Enabled for readability)               ║\n";
+    section += "║  • UserPreferencesMask = Performance optimized                       ║\n";
+    section += "║  • IconsOnly = Enabled                                               ║\n";
+    section += "║  • ShowInfoTip = Enabled (minimal)                                   ║\n";
+    section += "╚══════════════════════════════════════════════════════════════════════╝\n";
+    return section;
 }
 
 } // namespace sak

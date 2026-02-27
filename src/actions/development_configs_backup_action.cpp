@@ -1,5 +1,5 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "sak/actions/development_configs_backup_action.h"
 #include "sak/windows_user_scanner.h"
@@ -197,20 +197,11 @@ void DevelopmentConfigsBackupAction::execute() {
     
     for (const DevConfig& cfg : m_configs) {
         if (isCancelled()) {
-            ExecutionResult result;
-            result.success = false;
-            result.message = "Development config backup cancelled";
-            result.duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
-            setExecutionResult(result);
-            setStatus(ActionStatus::Cancelled);
-            Q_EMIT executionComplete(result);
+            emitCancelledResult("Development config backup cancelled", start_time);
             return;
         }
 
-        QString safe_dir = cfg.path;
-        safe_dir.replace(':', '_');
-        safe_dir.replace('\\', '_');
-        safe_dir.replace('/', '_');
+        QString safe_dir = sanitizePathForBackup(cfg.path);
         QString dest = backup_dir.filePath(cfg.name + "/" + safe_dir);
         QDir().mkpath(QFileInfo(dest).absolutePath());
         
@@ -250,9 +241,7 @@ void DevelopmentConfigsBackupAction::execute() {
         : "No development configs were backed up";
     result.output_path = backup_dir.absolutePath();
     
-    setExecutionResult(result);
-    setStatus(processed > 0 ? ActionStatus::Success : ActionStatus::Failed);
-    Q_EMIT executionComplete(result);
+    finishWithResult(result, processed > 0 ? ActionStatus::Success : ActionStatus::Failed);
 }
 
 } // namespace sak

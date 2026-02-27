@@ -1,5 +1,5 @@
 // Copyright (c) 2026 Randy Northrup. All rights reserved.
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 #pragma once
 
@@ -9,6 +9,7 @@
 
 namespace sak {
 
+/// @brief Result of an external process execution including exit code, output, and status flags
 struct ProcessResult {
     int exit_code{0};
     int exit_status{0};

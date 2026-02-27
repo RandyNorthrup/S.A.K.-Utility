@@ -1,9 +1,8 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "sak/actions/verify_system_files_action.h"
 #include "sak/process_runner.h"
-#include <QProcess>
 #include <QRegularExpression>
 
 namespace sak {
@@ -132,24 +131,12 @@ void VerifySystemFilesAction::execute() {
     
     runSFC();
     if (isCancelled()) {
-        ExecutionResult result;
-        result.success = false;
-        result.message = "System file verification cancelled";
-        result.duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
-        setExecutionResult(result);
-        setStatus(ActionStatus::Cancelled);
-        Q_EMIT executionComplete(result);
+        emitCancelledResult(QStringLiteral("System file verification cancelled"), start_time);
         return;
     }
     runDISM();
     if (isCancelled()) {
-        ExecutionResult result;
-        result.success = false;
-        result.message = "System file verification cancelled";
-        result.duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
-        setExecutionResult(result);
-        setStatus(ActionStatus::Cancelled);
-        Q_EMIT executionComplete(result);
+        emitCancelledResult(QStringLiteral("System file verification cancelled"), start_time);
         return;
     }
     
@@ -180,9 +167,7 @@ void VerifySystemFilesAction::execute() {
         .arg(m_dism_repaired_issues ? "YES" : "NO")
         .arg(m_cbs_log_path.isEmpty() ? "N/A" : m_cbs_log_path);
 
-    setExecutionResult(result);
-    setStatus(result.success ? ActionStatus::Success : ActionStatus::Failed);
-    Q_EMIT executionComplete(result);
+    finishWithResult(result, result.success ? ActionStatus::Success : ActionStatus::Failed);
 }
 
 } // namespace sak

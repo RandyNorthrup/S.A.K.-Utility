@@ -1,5 +1,5 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "sak/actions/browser_profile_backup_action.h"
 #include "sak/windows_user_scanner.h"
@@ -43,27 +43,12 @@ void BrowserProfileBackupAction::scan() {
 
 void BrowserProfileBackupAction::execute() {
     if (isCancelled()) {
-        ExecutionResult result;
-        result.success = false;
-        result.message = "Browser profile backup cancelled";
-        setExecutionResult(result);
-        setStatus(ActionStatus::Cancelled);
-        Q_EMIT executionComplete(result);
+        emitCancelledResult("Browser profile backup cancelled");
         return;
     }
 
     setStatus(ActionStatus::Running);
     QDateTime start_time = QDateTime::currentDateTime();
-
-    auto finish_cancelled = [this, &start_time]() {
-        ExecutionResult result;
-        result.success = false;
-        result.message = "Browser profile backup cancelled";
-        result.duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
-        setExecutionResult(result);
-        setStatus(ActionStatus::Cancelled);
-        Q_EMIT executionComplete(result);
-    };
     
     Q_EMIT executionProgress("Scanning for browser profiles...", 10);
     
@@ -83,12 +68,12 @@ void BrowserProfileBackupAction::execute() {
     // Scan each user's profile for browser data
     for (const UserProfile& user : users) {
         if (isCancelled()) {
-            finish_cancelled();
+            emitCancelledResult("Browser profile backup cancelled", start_time);
             return;
         }
         for (const QString& rel_path : browser_rel_paths) {
             if (isCancelled()) {
-                finish_cancelled();
+                emitCancelledResult("Browser profile backup cancelled", start_time);
                 return;
             }
             QString full_path = user.profile_path + "/" + rel_path;
@@ -98,7 +83,7 @@ void BrowserProfileBackupAction::execute() {
                 QDirIterator it(full_path, QDir::Files, QDirIterator::Subdirectories);
                 while (it.hasNext()) {
                     if (isCancelled()) {
-                        finish_cancelled();
+                        emitCancelledResult("Browser profile backup cancelled", start_time);
                         return;
                     }
                     it.next();
@@ -125,17 +110,14 @@ void BrowserProfileBackupAction::execute() {
     if (profile_count > 0) {
         result.success = true;
         result.message = QString("Backed up %1 browser profile(s)").arg(profile_count);
-        result.log = QString("Completed in %1 seconds\n%2 MB backed up").arg(duration_ms / 1000).arg(total_size / (1024 * 1024));
-        setStatus(ActionStatus::Success);
+        result.log = QString("Completed in %1 seconds\n%2 backed up").arg(duration_ms / 1000).arg(formatFileSize(total_size));
+        finishWithResult(result, ActionStatus::Success);
     } else {
         result.success = false;
         result.message = "No browser profiles found";
         result.log = "No Chrome, Edge, or Firefox profiles detected on this system";
-        setStatus(ActionStatus::Failed);
+        finishWithResult(result, ActionStatus::Failed);
     }
-    
-    setExecutionResult(result);
-    Q_EMIT executionComplete(result);
 }
 
 } // namespace sak

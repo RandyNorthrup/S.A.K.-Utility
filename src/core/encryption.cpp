@@ -1,8 +1,12 @@
+// Copyright (c) 2025 Randy Northrup. All rights reserved.
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 /// @file encryption.cpp
 /// @brief AES-256 encryption implementation using Windows BCrypt API
 
 #include "sak/encryption.h"
 #include "sak/logger.h"
+#include "sak/secure_memory.h"
 #include <QFile>
 #include <QCryptographicHash>
 
@@ -23,10 +27,12 @@ QByteArray generate_random_bytes(int size) {
     BCRYPT_ALG_HANDLE hAlg = nullptr;
     
     if (BCryptOpenAlgorithmProvider(&hAlg, BCRYPT_RNG_ALGORITHM, nullptr, 0) != 0) {
+        sak::logError("BCrypt: Failed to open RNG algorithm provider");
         return {};
     }
     
     if (BCryptGenRandom(hAlg, reinterpret_cast<PUCHAR>(result.data()), size, 0) != 0) {
+        sak::logError("BCrypt: Failed to generate {} random bytes", size);
         BCryptCloseAlgorithmProvider(hAlg, 0);
         return {};
     }
@@ -40,6 +46,7 @@ QByteArray derive_key(const QString& password, const QByteArray& salt, int itera
     BCRYPT_ALG_HANDLE hAlg = nullptr;
     
     if (BCryptOpenAlgorithmProvider(&hAlg, BCRYPT_SHA256_ALGORITHM, nullptr, BCRYPT_ALG_HANDLE_HMAC_FLAG) != 0) {
+        sak::logError("BCrypt: Failed to open SHA-256 HMAC algorithm provider for key derivation");
         return {};
     }
     
@@ -58,9 +65,14 @@ QByteArray derive_key(const QString& password, const QByteArray& salt, int itera
     BCryptCloseAlgorithmProvider(hAlg, 0);
     
     if (status != 0) {
+        sak::logError("BCrypt: PBKDF2 key derivation failed (NTSTATUS 0x{:08X})",
+                      static_cast<unsigned long>(status));
+        sak::secure_wiper::wipe(pwd_bytes.data(), pwd_bytes.size());
+        sak::secure_wiper::wipe(derived_key.data(), derived_key.size());
         return {};
     }
     
+    sak::secure_wiper::wipe(pwd_bytes.data(), pwd_bytes.size());
     return derived_key;
 }
 
@@ -70,12 +82,14 @@ QByteArray aes_encrypt(const QByteArray& plaintext, const QByteArray& key, const
     BCRYPT_KEY_HANDLE hKey = nullptr;
     
     if (BCryptOpenAlgorithmProvider(&hAlg, BCRYPT_AES_ALGORITHM, nullptr, 0) != 0) {
+        sak::logError("BCrypt: Failed to open AES algorithm provider for encryption");
         return {};
     }
     
     if (BCryptSetProperty(hAlg, BCRYPT_CHAINING_MODE, 
                           reinterpret_cast<PUCHAR>(const_cast<wchar_t*>(BCRYPT_CHAIN_MODE_CBC)), 
                           sizeof(BCRYPT_CHAIN_MODE_CBC), 0) != 0) {
+        sak::logError("BCrypt: Failed to set CBC chaining mode for encryption");
         BCryptCloseAlgorithmProvider(hAlg, 0);
         return {};
     }
@@ -83,6 +97,7 @@ QByteArray aes_encrypt(const QByteArray& plaintext, const QByteArray& key, const
     if (BCryptGenerateSymmetricKey(hAlg, &hKey, nullptr, 0, 
                                     reinterpret_cast<PUCHAR>(const_cast<char*>(key.data())), 
                                     key.size(), 0) != 0) {
+        sak::logError("BCrypt: Failed to generate symmetric key for encryption");
         BCryptCloseAlgorithmProvider(hAlg, 0);
         return {};
     }
@@ -94,6 +109,7 @@ QByteArray aes_encrypt(const QByteArray& plaintext, const QByteArray& key, const
                       plaintext.size(), nullptr, 
                       reinterpret_cast<PUCHAR>(iv_copy.data()), iv_copy.size(),
                       nullptr, 0, &ciphertext_len, BCRYPT_BLOCK_PADDING) != 0) {
+        sak::logError("BCrypt: Failed to calculate encrypted output size ({} bytes input)", plaintext.size());
         BCryptDestroyKey(hKey);
         BCryptCloseAlgorithmProvider(hAlg, 0);
         return {};
@@ -107,6 +123,7 @@ QByteArray aes_encrypt(const QByteArray& plaintext, const QByteArray& key, const
                       reinterpret_cast<PUCHAR>(iv_copy.data()), iv_copy.size(),
                       reinterpret_cast<PUCHAR>(ciphertext.data()), ciphertext_len, 
                       &ciphertext_len, BCRYPT_BLOCK_PADDING) != 0) {
+        sak::logError("BCrypt: AES-256-CBC encryption failed ({} bytes input)", plaintext.size());
         BCryptDestroyKey(hKey);
         BCryptCloseAlgorithmProvider(hAlg, 0);
         return {};
@@ -126,12 +143,14 @@ QByteArray aes_decrypt(const QByteArray& ciphertext, const QByteArray& key, cons
     BCRYPT_KEY_HANDLE hKey = nullptr;
     
     if (BCryptOpenAlgorithmProvider(&hAlg, BCRYPT_AES_ALGORITHM, nullptr, 0) != 0) {
+        sak::logError("BCrypt: Failed to open AES algorithm provider for decryption");
         return {};
     }
     
     if (BCryptSetProperty(hAlg, BCRYPT_CHAINING_MODE,
                           reinterpret_cast<PUCHAR>(const_cast<wchar_t*>(BCRYPT_CHAIN_MODE_CBC)),
                           sizeof(BCRYPT_CHAIN_MODE_CBC), 0) != 0) {
+        sak::logError("BCrypt: Failed to set CBC chaining mode for decryption");
         BCryptCloseAlgorithmProvider(hAlg, 0);
         return {};
     }
@@ -139,6 +158,7 @@ QByteArray aes_decrypt(const QByteArray& ciphertext, const QByteArray& key, cons
     if (BCryptGenerateSymmetricKey(hAlg, &hKey, nullptr, 0,
                                     reinterpret_cast<PUCHAR>(const_cast<char*>(key.data())),
                                     key.size(), 0) != 0) {
+        sak::logError("BCrypt: Failed to generate symmetric key for decryption");
         BCryptCloseAlgorithmProvider(hAlg, 0);
         return {};
     }
@@ -150,6 +170,7 @@ QByteArray aes_decrypt(const QByteArray& ciphertext, const QByteArray& key, cons
                       ciphertext.size(), nullptr,
                       reinterpret_cast<PUCHAR>(iv_copy.data()), iv_copy.size(),
                       nullptr, 0, &plaintext_len, BCRYPT_BLOCK_PADDING) != 0) {
+        sak::logError("BCrypt: Failed to calculate decrypted output size ({} bytes input)", ciphertext.size());
         BCryptDestroyKey(hKey);
         BCryptCloseAlgorithmProvider(hAlg, 0);
         return {};
@@ -163,6 +184,7 @@ QByteArray aes_decrypt(const QByteArray& ciphertext, const QByteArray& key, cons
                       reinterpret_cast<PUCHAR>(iv_copy.data()), iv_copy.size(),
                       reinterpret_cast<PUCHAR>(plaintext.data()), plaintext_len,
                       &plaintext_len, BCRYPT_BLOCK_PADDING) != 0) {
+        sak::logError("BCrypt: AES-256-CBC decryption failed ({} bytes input)", ciphertext.size());
         BCryptDestroyKey(hKey);
         BCryptCloseAlgorithmProvider(hAlg, 0);
         return {};
@@ -207,6 +229,10 @@ auto encryptData(
     
     // Encrypt data
     QByteArray ciphertext = aes_encrypt(data, key, iv);
+    
+    // Securely wipe key material
+    secure_wiper::wipe(key.data(), key.size());
+    
     if (ciphertext.isEmpty()) {
         logError("AES encryption failed");
         return std::unexpected(error_code::crypto_error);
@@ -257,6 +283,10 @@ auto decryptData(
     
     // Decrypt data
     QByteArray plaintext = aes_decrypt(ciphertext, key, iv);
+    
+    // Securely wipe key material
+    secure_wiper::wipe(key.data(), key.size());
+    
     if (plaintext.isEmpty()) {
         logError("AES decryption failed - wrong password or corrupted data");
         return std::unexpected(error_code::decrypt_failed);
@@ -269,98 +299,6 @@ auto decryptData(
 #else
     return std::unexpected(error_code::not_implemented);
 #endif
-}
-
-auto encryptFile(
-    const QString& file_path,
-    const QString& password,
-    const EncryptionParams& params
-) -> std::expected<void, error_code> {
-    QFile file(file_path);
-    if (!file.open(QIODevice::ReadOnly)) {
-        logError(std::format("Cannot open file for encryption: {}", file_path.toStdString()));
-        return std::unexpected(error_code::file_not_found);
-    }
-    
-    QByteArray data = file.readAll();
-    file.close();
-    
-    auto encrypted = encryptData(data, password, params);
-    if (!encrypted) {
-        return std::unexpected(encrypted.error());
-    }
-    
-    // Write to temp file first for atomic replacement (prevents data loss on crash)
-    QString tempPath = file_path + ".tmp";
-    QFile tempFile(tempPath);
-    if (!tempFile.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-        logError(std::format("Cannot create temp file for encryption: {}", tempPath.toStdString()));
-        return std::unexpected(error_code::file_write_error);
-    }
-    
-    if (tempFile.write(*encrypted) != encrypted->size()) {
-        logError(std::format("Incomplete write to temp file: {}", tempPath.toStdString()));
-        tempFile.close();
-        QFile::remove(tempPath);
-        return std::unexpected(error_code::file_write_error);
-    }
-    tempFile.close();
-    
-    // Atomically replace original with encrypted version
-    QFile::remove(file_path);
-    if (!QFile::rename(tempPath, file_path)) {
-        logError(std::format("Cannot replace original file: {}", file_path.toStdString()));
-        return std::unexpected(error_code::file_write_error);
-    }
-    
-    logInfo(std::format("Encrypted file: {}", file_path.toStdString()));
-    return {};
-}
-
-auto decryptFile(
-    const QString& file_path,
-    const QString& password,
-    const EncryptionParams& params
-) -> std::expected<void, error_code> {
-    QFile file(file_path);
-    if (!file.open(QIODevice::ReadOnly)) {
-        logError(std::format("Cannot open file for decryption: {}", file_path.toStdString()));
-        return std::unexpected(error_code::file_not_found);
-    }
-    
-    QByteArray encrypted_data = file.readAll();
-    file.close();
-    
-    auto decrypted = decryptData(encrypted_data, password, params);
-    if (!decrypted) {
-        return std::unexpected(decrypted.error());
-    }
-    
-    // Write to temp file first for atomic replacement (prevents data loss on crash)
-    QString tempPath = file_path + ".tmp";
-    QFile tempFile(tempPath);
-    if (!tempFile.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-        logError(std::format("Cannot create temp file for decryption: {}", tempPath.toStdString()));
-        return std::unexpected(error_code::file_write_error);
-    }
-    
-    if (tempFile.write(*decrypted) != decrypted->size()) {
-        logError(std::format("Incomplete write to temp file: {}", tempPath.toStdString()));
-        tempFile.close();
-        QFile::remove(tempPath);
-        return std::unexpected(error_code::file_write_error);
-    }
-    tempFile.close();
-    
-    // Atomically replace original with decrypted version
-    QFile::remove(file_path);
-    if (!QFile::rename(tempPath, file_path)) {
-        logError(std::format("Cannot replace original file: {}", file_path.toStdString()));
-        return std::unexpected(error_code::file_write_error);
-    }
-    
-    logInfo(std::format("Decrypted file: {}", file_path.toStdString()));
-    return {};
 }
 
 } // namespace sak

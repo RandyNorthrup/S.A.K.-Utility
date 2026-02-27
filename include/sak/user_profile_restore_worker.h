@@ -1,3 +1,6 @@
+// Copyright (c) 2025 Randy Northrup. All rights reserved.
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 #pragma once
 
 #include "sak/user_profile_types.h"
@@ -116,9 +119,9 @@ private:
     QString m_backupPath;
     BackupManifest m_manifest;
     QVector<UserMapping> m_mappings;
-    ConflictResolution m_conflictMode;
-    PermissionMode m_permissionMode;
-    bool m_verify;
+    ConflictResolution m_conflictMode{ConflictResolution::SkipDuplicate};
+    PermissionMode m_permissionMode{PermissionMode::StripAll};
+    bool m_verify{false};
     
     // Progress tracking
     std::atomic<bool> m_cancelled{false};

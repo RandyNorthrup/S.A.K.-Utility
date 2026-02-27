@@ -1,3 +1,6 @@
+// Copyright (c) 2025 Randy Northrup. All rights reserved.
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 #pragma once
 
 #include "sak/user_profile_types.h"
@@ -7,6 +10,7 @@
 #include <QWizardPage>
 #include <QLabel>
 #include <QTableWidget>
+#include <QTreeWidget>
 #include <QPushButton>
 #include <QLineEdit>
 #include <QCheckBox>
@@ -21,15 +25,28 @@ namespace sak {
 class UserProfileBackupWorker;
 
 /**
+ * @brief Installed app entry for backup/restore
+ */
+struct InstalledAppInfo {
+    QString name;
+    QString version;
+    QString publisher;
+    QString choco_package;
+    QString category;
+    bool selected{true};
+};
+
+/**
  * @brief Wizard for backing up Windows user profiles
  * 
- * 6-Page Wizard:
+ * 7-Page Wizard:
  * 1. Welcome & Instructions
  * 2. Scan & Select Users
  * 3. Customize Per-User Data
- * 4. Smart Filter Configuration
- * 5. Backup Settings
- * 6. Execution & Progress
+ * 4. Installed Applications Selection
+ * 5. Smart Filter Configuration
+ * 6. Backup Settings
+ * 7. Execution & Progress
  */
 class UserProfileBackupWizard : public QWizard {
     Q_OBJECT
@@ -39,6 +56,7 @@ public:
         Page_Welcome = 0,
         Page_SelectUsers,
         Page_CustomizeData,
+        Page_InstalledApps,
         Page_SmartFilters,
         Page_BackupSettings,
         Page_Execute
@@ -72,10 +90,15 @@ public:
      */
     QString getEncryptionPassword() const;
 
+    /** @brief Get/set installed apps selected for backup */
+    QVector<InstalledAppInfo> installedApps() const { return m_installedApps; }
+    void setInstalledApps(const QVector<InstalledAppInfo>& apps) { m_installedApps = apps; }
+
 private:
     BackupManifest m_manifest;
     QVector<UserProfile> m_scannedUsers;
     SmartFilter m_smartFilter;
+    QVector<InstalledAppInfo> m_installedApps;
 };
 
 /**
@@ -262,6 +285,46 @@ private:
     
     bool m_started{false};
     bool m_completed{false};
+};
+
+/**
+ * @brief Page 4: Installed Applications Selection
+ * 
+ * Scans for installed applications and presents them in a hierarchical
+ * tree with categories and checkboxes. Selected apps are saved to the
+ * backup for potential restoration via Chocolatey.
+ */
+class UserProfileBackupInstalledAppsPage : public QWizardPage {
+    Q_OBJECT
+
+public:
+    explicit UserProfileBackupInstalledAppsPage(QWidget* parent = nullptr);
+
+    void initializePage() override;
+    void cleanupPage() override;
+    bool isComplete() const override;
+
+private Q_SLOTS:
+    void onScanApps();
+    void onSelectAll();
+    void onSelectNone();
+    void onItemChanged(QTreeWidgetItem* item, int column);
+
+private:
+    void setupUi();
+    void populateTree(const QVector<InstalledAppInfo>& apps);
+    void updateParentCheckState(QTreeWidgetItem* parent);
+    void updateNextButtonText();
+
+    QTreeWidget* m_appTree{nullptr};
+    QPushButton* m_scanButton{nullptr};
+    QPushButton* m_selectAllButton{nullptr};
+    QPushButton* m_selectNoneButton{nullptr};
+    QLabel* m_summaryLabel{nullptr};
+    QLabel* m_statusLabel{nullptr};
+    QProgressBar* m_scanProgress{nullptr};
+
+    bool m_scanned{false};
 };
 
 } // namespace sak

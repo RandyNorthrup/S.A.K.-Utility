@@ -1,5 +1,5 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "sak/drive_scanner.h"
 #include "sak/logger.h"
@@ -315,8 +315,7 @@ QString DriveScanner::getBusType(HANDLE hDrive) {
 }
 
 bool DriveScanner::isDriveRemovable(int driveNumber) {
-    // Query using WMI or DeviceIoControl
-    // For now, simple heuristic: USB and SD are removable
+    // Use IOCTL_STORAGE_QUERY_PROPERTY to check both RemovableMedia flag and BusType
     QString devicePath = QString("\\\\.\\PhysicalDrive%1").arg(driveNumber);
     HANDLE hDrive = CreateFileW(
         reinterpret_cast<LPCWSTR>(devicePath.utf16()),
@@ -332,10 +331,45 @@ bool DriveScanner::isDriveRemovable(int driveNumber) {
         return false;
     }
     
-    QString busType = getBusType(hDrive);
-    CloseHandle(hDrive);
+    STORAGE_PROPERTY_QUERY query = {};
+    query.PropertyId = StorageDeviceProperty;
+    query.QueryType = PropertyStandardQuery;
     
-    return busType == "USB" || busType == "SD" || busType == "MMC";
+    BYTE buffer[1024] = {};
+    DWORD bytesReturned = 0;
+    
+    bool removable = false;
+    
+    if (DeviceIoControl(
+        hDrive,
+        IOCTL_STORAGE_QUERY_PROPERTY,
+        &query, sizeof(query),
+        buffer, sizeof(buffer),
+        &bytesReturned,
+        nullptr))
+    {
+        auto* desc = reinterpret_cast<STORAGE_DEVICE_DESCRIPTOR*>(buffer);
+        
+        // Primary: use the RemovableMedia flag from the device descriptor
+        if (desc->RemovableMedia) {
+            removable = true;
+        }
+        
+        // Secondary: certain bus types are inherently removable
+        switch (desc->BusType) {
+            case BusTypeUsb:
+            case BusTypeSd:
+            case BusTypeMmc:
+            case BusType1394:  // FireWire
+                removable = true;
+                break;
+            default:
+                break;
+        }
+    }
+    
+    CloseHandle(hDrive);
+    return removable;
 }
 
 bool DriveScanner::isDriveReadOnly(HANDLE hDrive) {

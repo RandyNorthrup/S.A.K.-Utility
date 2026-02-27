@@ -1,5 +1,5 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "sak/actions/backup_printer_settings_action.h"
 #include "sak/process_runner.h"
@@ -54,32 +54,17 @@ void BackupPrinterSettingsAction::scan() {
 
 void BackupPrinterSettingsAction::execute() {
     if (isCancelled()) {
-        ExecutionResult result;
-        result.success = false;
-        result.message = "Printer settings backup cancelled";
-        setExecutionResult(result);
-        setStatus(ActionStatus::Cancelled);
-        Q_EMIT executionComplete(result);
+        emitCancelledResult("Printer settings backup cancelled");
         return;
     }
 
     setStatus(ActionStatus::Running);
     QDateTime start_time = QDateTime::currentDateTime();
-
-    auto finish_cancelled = [this, &start_time]() {
-        ExecutionResult result;
-        result.success = false;
-        result.message = "Printer settings backup cancelled";
-        result.duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
-        setExecutionResult(result);
-        setStatus(ActionStatus::Cancelled);
-        Q_EMIT executionComplete(result);
-    };
     
     Q_EMIT executionProgress("Backing up printer settings...", 30);
 
     if (isCancelled()) {
-        finish_cancelled();
+        emitCancelledResult("Printer settings backup cancelled", start_time);
         return;
     }
     
@@ -108,16 +93,13 @@ void BackupPrinterSettingsAction::execute() {
         result.log = QString("Registry exported to: %1\n"
                             "To restore: Double-click the .reg file or use 'reg import'")
                             .arg(reg_file);
-        setStatus(ActionStatus::Success);
+        finishWithResult(result, ActionStatus::Success);
     } else {
         result.success = false;
         result.message = "Failed to export printer registry";
         result.log = "Check administrator privileges - registry export requires elevated permissions";
-        setStatus(ActionStatus::Failed);
+        finishWithResult(result, ActionStatus::Failed);
     }
-    
-    setExecutionResult(result);
-    Q_EMIT executionComplete(result);
 }
 
 } // namespace sak

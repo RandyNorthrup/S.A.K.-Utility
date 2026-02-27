@@ -1,0 +1,103 @@
+// Copyright (c) 2025 Randy Northrup. All rights reserved.
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
+/// @file stress_test_worker.h
+/// @brief Extended stress testing worker for CPU, memory, and disk
+
+#pragma once
+
+#include "sak/diagnostic_types.h"
+#include "sak/worker_base.h"
+#include "sak/thermal_monitor.h"
+
+#include <QObject>
+
+#include <atomic>
+
+namespace sak {
+
+/// @brief Runs sustained stress tests on CPU, memory, and/or disk
+///
+/// Designed for burn-in testing and stability validation. Monitors
+/// temperature in real time and auto-aborts if thermal limits are exceeded.
+/// Memory stress includes pattern verification to detect ECC/memory errors.
+///
+/// Usage:
+/// @code
+///   StressTestWorker worker;
+///   StressTestConfig config;
+///   config.stress_cpu = true;
+///   config.duration_minutes = 10;
+///   worker.setConfig(config);
+///   connect(&worker, &StressTestWorker::stressTestComplete, ...);
+///   worker.start();
+/// @endcode
+class StressTestWorker : public WorkerBase {
+    Q_OBJECT
+
+public:
+    /// @brief Construct a StressTestWorker
+    /// @param parent Parent QObject
+    explicit StressTestWorker(QObject* parent = nullptr);
+    ~StressTestWorker() override = default;
+
+    // Non-copyable, non-movable
+    StressTestWorker(const StressTestWorker&) = delete;
+    StressTestWorker& operator=(const StressTestWorker&) = delete;
+    StressTestWorker(StressTestWorker&&) = delete;
+    StressTestWorker& operator=(StressTestWorker&&) = delete;
+
+    /// @brief Set the stress test configuration
+    /// @param config Test parameters
+    void setConfig(const StressTestConfig& config) { m_config = config; }
+
+    /// @brief Get the result from the last completed stress test
+    [[nodiscard]] const StressTestResult& result() const { return m_result; }
+
+Q_SIGNALS:
+    /// @brief Emitted when the stress test completes (or is aborted)
+    /// @param result Complete stress test results
+    void stressTestComplete(const sak::StressTestResult& result);
+
+    /// @brief Emitted periodically with live status
+    /// @param elapsed_seconds Seconds elapsed since start
+    /// @param cpu_temp Current CPU temperature (Â°C)
+    /// @param errors_so_far Errors detected so far
+    void stressTestStatus(int elapsed_seconds, double cpu_temp, int errors_so_far);
+
+protected:
+    /// @brief Execute the stress test
+    /// @return Success or error code
+    auto execute() -> std::expected<void, sak::error_code> override;
+
+private:
+    /// @brief CPU stress: sustained all-core compute load
+    void runCpuStress();
+
+    /// @brief Memory stress: pattern write/verify cycle
+    /// @return Number of pattern errors detected
+    int runMemoryStress();
+
+    /// @brief Disk stress: continuous sequential I/O
+    void runDiskStress();
+
+    StressTestConfig m_config;
+    StressTestResult m_result;
+
+    /// @brief Signals child stress threads to stop without marking the
+    ///        WorkerBase itself as cancelled (which would emit cancelled()
+    ///        instead of finished()).
+    std::atomic<bool> m_stop_children{false};
+
+    /// @brief Check if child threads should stop
+    [[nodiscard]] bool childrenShouldStop() const noexcept
+    {
+        return m_stop_children.load(std::memory_order_acquire) || stopRequested();
+    }
+
+    std::atomic<int> m_error_count{0};
+    std::atomic<double> m_current_temp{0.0};
+    std::atomic<double> m_max_temp{0.0};
+};
+
+} // namespace sak

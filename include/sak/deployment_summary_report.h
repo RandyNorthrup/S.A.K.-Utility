@@ -1,3 +1,6 @@
+// Copyright (c) 2025 Randy Northrup. All rights reserved.
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 #pragma once
 
 #include <QDateTime>
@@ -6,6 +9,7 @@
 
 namespace sak {
 
+/// @brief Summary of a single deployment job's outcome
 struct DeploymentJobSummary {
     QString job_id;
     QString source_user;
@@ -16,6 +20,7 @@ struct DeploymentJobSummary {
     QString error_message;
 };
 
+/// @brief Summary of a deployment destination's status and events
 struct DeploymentDestinationSummary {
     QString destination_id;
     QString hostname;
@@ -26,6 +31,7 @@ struct DeploymentDestinationSummary {
     QStringList status_events;
 };
 
+/// @brief Exports deployment summary reports in CSV and PDF formats
 class DeploymentSummaryReport {
 public:
     static bool exportCsv(const QString& filePath,

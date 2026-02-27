@@ -1,5 +1,5 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "sak/actions/repair_windows_store_action.h"
 #include "sak/process_runner.h"
@@ -124,7 +124,9 @@ int RepairWindowsStoreAction::checkStoreEventLogs() {
     if (!proc.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("Store event log query warning: " + proc.std_err.trimmed());
     }
-    return proc.std_out.trimmed().toInt();
+    bool ok = false;
+    int count = proc.std_out.trimmed().toInt(&ok);
+    return ok ? count : -1;
 }
 
 void RepairWindowsStoreAction::scan() {
@@ -154,12 +156,7 @@ void RepairWindowsStoreAction::scan() {
 
 void RepairWindowsStoreAction::execute() {
     if (isCancelled()) {
-        ExecutionResult result;
-        result.success = false;
-        result.message = "Windows Store repair cancelled";
-        setExecutionResult(result);
-        setStatus(ActionStatus::Cancelled);
-        Q_EMIT executionComplete(result);
+        emitCancelledResult(QStringLiteral("Windows Store repair cancelled"));
         return;
     }
 
@@ -167,23 +164,13 @@ void RepairWindowsStoreAction::execute() {
     QDateTime start_time = QDateTime::currentDateTime();
     
     Q_EMIT executionProgress("Diagnosing Windows Store...", 5);
-
-    auto finish_cancelled = [this, &start_time]() {
-        ExecutionResult result;
-        result.success = false;
-        result.message = "Windows Store repair cancelled";
-        result.duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
-        setExecutionResult(result);
-        setStatus(ActionStatus::Cancelled);
-        Q_EMIT executionComplete(result);
-    };
     
     // PHASE 1: Check Store package status
     StorePackageInfo before_info = checkStorePackage();
     int error_count = checkStoreEventLogs();
 
     if (isCancelled()) {
-        finish_cancelled();
+        emitCancelledResult(QStringLiteral("Windows Store repair cancelled"), start_time);
         return;
     }
     
@@ -218,7 +205,7 @@ void RepairWindowsStoreAction::execute() {
     bool services_restarted = resetStoreServices();
 
     if (isCancelled()) {
-        finish_cancelled();
+        emitCancelledResult(QStringLiteral("Windows Store repair cancelled"), start_time);
         return;
     }
     report += QString("║ Services:    %1\n").arg(services_restarted ? "SUCCESS" : "FAILED").leftJustified(67, ' ') + "║\n";
@@ -258,17 +245,14 @@ void RepairWindowsStoreAction::execute() {
         result.log += "• Try opening the Microsoft Store app\n";
         result.log += "• Sign in with your Microsoft account\n";
         result.log += "• Check for app updates\n";
-        setStatus(ActionStatus::Success);
     } else {
         result.success = false;
         result.message = "Windows Store repair completed with warnings";
         result.log = report;
         result.log += "\nSome repair steps failed - may require reboot or administrative privileges\n";
-        setStatus(ActionStatus::Failed);
     }
     
-    setExecutionResult(result);
-    Q_EMIT executionComplete(result);
+    finishWithResult(result, overall_success ? ActionStatus::Success : ActionStatus::Failed);
 }
 
 } // namespace sak

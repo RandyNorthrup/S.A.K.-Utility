@@ -1,5 +1,5 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "sak/actions/backup_desktop_wallpaper_action.h"
 #include "sak/windows_user_scanner.h"
@@ -67,27 +67,12 @@ void BackupDesktopWallpaperAction::scan() {
 
 void BackupDesktopWallpaperAction::execute() {
     if (isCancelled()) {
-        ExecutionResult result;
-        result.success = false;
-        result.message = "Wallpaper backup cancelled";
-        setExecutionResult(result);
-        setStatus(ActionStatus::Cancelled);
-        Q_EMIT executionComplete(result);
+        emitCancelledResult("Wallpaper backup cancelled");
         return;
     }
 
     setStatus(ActionStatus::Running);
     QDateTime start_time = QDateTime::currentDateTime();
-
-    auto finish_cancelled = [this, &start_time]() {
-        ExecutionResult result;
-        result.success = false;
-        result.message = "Wallpaper backup cancelled";
-        result.duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
-        setExecutionResult(result);
-        setStatus(ActionStatus::Cancelled);
-        Q_EMIT executionComplete(result);
-    };
     
     Q_EMIT executionProgress("Backing up desktop wallpapers...", 20);
     
@@ -105,7 +90,7 @@ void BackupDesktopWallpaperAction::execute() {
     
     for (const UserProfile& user : m_user_profiles) {
         if (isCancelled()) {
-            finish_cancelled();
+            emitCancelledResult("Wallpaper backup cancelled", start_time);
             return;
         }
         
@@ -140,16 +125,13 @@ void BackupDesktopWallpaperAction::execute() {
         result.bytes_processed = total_bytes;
         result.message = QString("Backed up %1 wallpaper(s)").arg(backed_up);
         result.log = QString("Saved to: %1").arg(wallpaper_folder);
-        setStatus(ActionStatus::Success);
+        finishWithResult(result, ActionStatus::Success);
     } else {
         result.success = false;
         result.message = "No wallpapers found to backup";
         result.log = "TranscodedWallpaper files not found in user profiles";
-        setStatus(ActionStatus::Failed);
+        finishWithResult(result, ActionStatus::Failed);
     }
-    
-    setExecutionResult(result);
-    Q_EMIT executionComplete(result);
 }
 
 } // namespace sak

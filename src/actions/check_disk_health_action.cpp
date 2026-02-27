@@ -1,9 +1,8 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "sak/actions/check_disk_health_action.h"
 #include "sak/process_runner.h"
-#include <QProcess>
 #include <QRegularExpression>
 #include <QStorageInfo>
 
@@ -261,16 +260,15 @@ void CheckDiskHealthAction::execute() {
         result.message = QString("%1 disk(s): %2 healthy, %3 warnings, %4 critical")
             .arg(disk_info.count()).arg(healthy_count).arg(warning_count).arg(critical_count);
         result.log = report;
-        setStatus((critical_count > 0 || warning_count > 0) ? ActionStatus::Failed : ActionStatus::Success);
     } else {
         result.success = false;
         result.message = "Could not query disk health - SMART data unavailable";
         result.log = "No physical disks found or PowerShell Storage module not available";
-        setStatus(ActionStatus::Failed);
     }
     
-    setExecutionResult(result);
-    Q_EMIT executionComplete(result);
+    const auto status = (!disk_info.isEmpty() && critical_count == 0 && warning_count == 0)
+        ? ActionStatus::Success : ActionStatus::Failed;
+    finishWithResult(result, status);
 }
 
 } // namespace sak

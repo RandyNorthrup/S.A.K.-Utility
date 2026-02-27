@@ -26,6 +26,12 @@ build_old_*/
 *_old/
 *.bak
 
+# Build logs and temp output files
+build_*.log
+build_*.txt
+aqtinstall.log
+test_results.log
+
 # CMake
 CMakeCache.txt
 CMakeFiles/
@@ -115,8 +121,9 @@ bld/
 *.x86_64
 *.hex
 
-# EXCEPTION: Keep embedded Chocolatey executable
+# EXCEPTION: Keep embedded tool executables
 !tools/chocolatey/choco.exe
+!tools/smartmontools/smartctl.exe
 
 # Linker files
 *.ilk

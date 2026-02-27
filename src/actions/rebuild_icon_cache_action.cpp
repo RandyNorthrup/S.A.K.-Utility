@@ -1,9 +1,8 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "sak/actions/rebuild_icon_cache_action.h"
 #include "sak/process_runner.h"
-#include <QProcess>
 #include <QThread>
 #include <QDir>
 #include <QStandardPaths>
@@ -93,7 +92,12 @@ bool RebuildIconCacheAction::stopExplorer() {
     if (!check_proc.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("Explorer check warning: " + check_proc.std_err.trimmed());
     }
-    int count = check_proc.std_out.trimmed().toInt();
+    bool ok = false;
+    int count = check_proc.std_out.trimmed().toInt(&ok);
+    if (!ok) {
+        Q_EMIT logMessage("Warning: Could not parse Explorer process count, assuming still running");
+        return false;
+    }
     return count == 0;
 }
 
@@ -278,23 +282,23 @@ void RebuildIconCacheAction::execute() {
         result.log += "• Icons will refresh automatically\n";
         result.log += "• Thumbnails will regenerate as needed\n";
         result.log += "• No reboot required\n";
-        setStatus(ActionStatus::Success);
     } else if (explorer_started) {
         result.success = true;
         result.message = QString("Icon cache rebuilt with warnings (%1 files)").arg(deleted_count);
         result.log = report;
         result.log += "\nExplorer restarted but some cache files may not have been deleted\n";
-        setStatus(ActionStatus::Failed);
     } else {
         result.success = false;
         result.message = "Failed to restart Windows Explorer";
         result.log = report;
         result.log += "\nCritical error: Explorer did not restart - manual intervention required\n";
-        setStatus(ActionStatus::Failed);
     }
     
-    setExecutionResult(result);
-    Q_EMIT executionComplete(result);
+    ActionStatus final_status = ActionStatus::Failed;
+    if (deleted_count > 0 && explorer_started) {
+        final_status = ActionStatus::Success;
+    }
+    finishWithResult(result, final_status);
 }
 
 } // namespace sak

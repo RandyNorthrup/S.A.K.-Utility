@@ -1,9 +1,8 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "sak/actions/windows_update_action.h"
 #include "sak/process_runner.h"
-#include <QProcess>
 
 namespace sak {
 
@@ -21,7 +20,9 @@ int queryPendingUpdateCount() {
     if (proc.timed_out || proc.exit_code != 0) {
         return -1;
     }
-    return proc.std_out.trimmed().toInt();
+    bool ok = false;
+    int count = proc.std_out.trimmed().toInt(&ok);
+    return ok ? count : -1;
 }
 }
 
@@ -98,7 +99,9 @@ void WindowsUpdateAction::scan() {
     QString output = proc.std_out.trimmed();
     int count = -1;
     if (output.contains("COUNT:")) {
-        count = output.mid(output.indexOf("COUNT:") + 6).trimmed().toInt();
+        bool ok = false;
+        count = output.mid(output.indexOf("COUNT:") + 6).trimmed().toInt(&ok);
+        if (!ok) count = -1;
     }
 
     ScanResult result;
@@ -225,24 +228,15 @@ void WindowsUpdateAction::execute() {
     ProcessResult ps = runPowerShell(ps_script, 1800000, true, true, [this]() { return isCancelled(); });
 
     if (ps.cancelled) {
-        ExecutionResult result;
-        result.success = false;
-        result.message = "Windows Update cancelled";
-        result.duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
-        setExecutionResult(result);
-        setStatus(ActionStatus::Cancelled);
-        Q_EMIT executionComplete(result);
+        emitCancelledResult(QStringLiteral("Windows Update cancelled"), start_time);
         return;
     }
 
     if (ps.timed_out) {
-        ExecutionResult result;
-        result.success = false;
-        result.message = "Operation timed out after 30 minutes";
-        result.duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
-        setExecutionResult(result);
-        setStatus(ActionStatus::Failed);
-        Q_EMIT executionComplete(result);
+        emitFailedResult(
+            QStringLiteral("Operation timed out after 30 minutes"),
+            QString(),
+            start_time);
         return;
     }
 
@@ -265,7 +259,6 @@ void WindowsUpdateAction::execute() {
         result.success = true;
         result.message = "Windows is up to date";
         result.log = accumulated_output;
-        setStatus(ActionStatus::Success);
     } else if (exit_code == 0) {
         result.success = true;
         bool reboot_required = accumulated_output.contains("REBOOT_REQUIRED", Qt::CaseInsensitive);
@@ -284,16 +277,13 @@ void WindowsUpdateAction::execute() {
             result.log += "\nVerification: Unable to query remaining updates";
         }
 
-        setStatus(ActionStatus::Success);
     } else {
         result.success = false;
         result.message = "Windows Update failed";
         result.log = QString("Exit code: %1\n%2\nErrors:\n%3").arg(exit_code).arg(accumulated_output).arg(errors);
-        setStatus(ActionStatus::Failed);
     }
     
-    setExecutionResult(result);
-    Q_EMIT executionComplete(result);
+    finishWithResult(result, result.success ? ActionStatus::Success : ActionStatus::Failed);
 }
 
 } // namespace sak

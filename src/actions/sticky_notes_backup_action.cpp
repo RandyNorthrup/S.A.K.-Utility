@@ -1,5 +1,5 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "sak/actions/sticky_notes_backup_action.h"
 #include "sak/windows_user_scanner.h"
@@ -55,6 +55,7 @@ void StickyNotesBackupAction::scan() {
 
 void StickyNotesBackupAction::execute() {
     if (isCancelled()) {
+        emitCancelledResult("Sticky Notes backup cancelled");
         return;
     }
 
@@ -67,14 +68,9 @@ void StickyNotesBackupAction::execute() {
     bool found = !sticky_notes_path.isEmpty();
     
     if (!found) {
-        ExecutionResult result;
-        result.success = false;
-        result.message = "No Sticky Notes database found";
-        result.log = "Sticky Notes may not be installed or never used on this system";
-        result.duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
-        setExecutionResult(result);
-        setStatus(ActionStatus::Failed);
-        Q_EMIT executionComplete(result);
+        emitFailedResult("No Sticky Notes database found",
+                        "Sticky Notes may not be installed or never used on this system",
+                        start_time);
         return;
     }
     
@@ -108,18 +104,15 @@ void StickyNotesBackupAction::execute() {
         result.success = true;
         result.files_processed = 1;
         result.bytes_processed = file_size;
-        result.message = QString("Backed up Sticky Notes database (%1 KB)").arg(file_size / 1024);
+        result.message = QString("Backed up Sticky Notes database (%1)").arg(formatFileSize(file_size));
         result.log = QString("Saved to: %1").arg(dest_path);
-        setStatus(ActionStatus::Success);
+        finishWithResult(result, ActionStatus::Success);
     } else {
         result.success = false;
         result.message = "Failed to copy Sticky Notes database";
         result.log = "File may be locked or insufficient permissions";
-        setStatus(ActionStatus::Failed);
+        finishWithResult(result, ActionStatus::Failed);
     }
-    
-    setExecutionResult(result);
-    Q_EMIT executionComplete(result);
 }
 
 } // namespace sak

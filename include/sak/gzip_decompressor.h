@@ -1,28 +1,17 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 #pragma once
 
 #include "sak/streaming_decompressor.h"
-#include <QFile>
 #include <zlib.h>
 
 namespace sak {
 
-/**
- * @brief Gzip decompressor using zlib
- * 
- * Handles .gz compressed files with streaming decompression.
- * Uses zlib library for actual decompression.
- * 
- * Features:
- * - Streaming decompression (no temp files)
- * - Supports both gzip and raw deflate formats
- * - Automatic format detection
- * - Progress tracking
- * 
- * Thread-Safety: NOT thread-safe. Use one instance per thread.
- */
+/// @brief Gzip decompressor using zlib
+///
+/// Library-specific hooks for zlib inflate. All common logic
+/// (open, close, read, progress) lives in StreamingDecompressor.
 class GzipDecompressor : public StreamingDecompressor {
     Q_OBJECT
 
@@ -30,39 +19,20 @@ public:
     explicit GzipDecompressor(QObject* parent = nullptr);
     ~GzipDecompressor() override;
 
-    bool open(const QString& filePath) override;
-    void close() override;
-    bool isOpen() const override;
-    qint64 read(char* data, qint64 maxSize) override;
-    bool atEnd() const override;
-    qint64 compressedBytesRead() const override;
-    qint64 decompressedBytesProduced() const override;
-    qint64 uncompressedSize() const override;
+    qint64 uncompressedSize() const override { return -1; }
     QString formatName() const override { return "gzip"; }
 
+protected:
+    bool initStream() override;
+    void cleanupStream() override;
+    void setInputFromBuffer(size_t bytes) override;
+    void setOutput(char* data, size_t maxSize) override;
+    [[nodiscard]] size_t outputRemaining() const override;
+    [[nodiscard]] bool inputEmpty() const override;
+    StepResult decompressStep() override;
+
 private:
-    /**
-     * @brief Initialize zlib stream
-     * @return true if successful
-     */
-    bool initZlibStream();
-
-    /**
-     * @brief Read more compressed data from file
-     * @return true if data was read
-     */
-    bool fillInputBuffer();
-
-    QFile m_file;                      // Input file
-    z_stream m_zstream;                // zlib stream state
-    bool m_zlibInitialized;            // zlib initialized flag
-    bool m_eof;                        // End of file flag
-    
-    static constexpr int CHUNK_SIZE = 128 * 1024;  // 128KB input buffer
-    unsigned char m_inputBuffer[CHUNK_SIZE];       // Input buffer
-    
-    qint64 m_compressedBytesRead;      // Total compressed bytes read
-    qint64 m_decompressedBytesProduced; // Total decompressed bytes produced
+    z_stream m_zstream{};
 };
 
 } // namespace sak

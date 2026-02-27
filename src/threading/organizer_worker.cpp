@@ -1,4 +1,8 @@
+// Copyright (c) 2025 Randy Northrup. All rights reserved.
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 #include "sak/organizer_worker.h"
+#include "sak/input_validator.h"
 #include "sak/logger.h"
 #include <QVector>
 #include <QFile>
@@ -16,6 +20,19 @@ OrganizerWorker::OrganizerWorker(const Config& config, QObject* parent)
 auto OrganizerWorker::execute() -> std::expected<void, sak::error_code>
 {
     sak::logInfo("Starting directory organization: {}", m_config.target_directory.toStdString());
+
+    // Validate target directory path
+    sak::path_validation_config dir_cfg;
+    dir_cfg.must_exist = true;
+    dir_cfg.must_be_directory = true;
+    dir_cfg.check_read_permission = true;
+    dir_cfg.check_write_permission = true;
+    auto dir_result = sak::input_validator::validatePath(
+        std::filesystem::path(m_config.target_directory.toStdString()), dir_cfg);
+    if (!dir_result) {
+        sak::logError("Target directory validation failed: {}", dir_result.error_message);
+        return std::unexpected(sak::error_code::invalid_path);
+    }
 
     // Scan directory for files
     auto files_result = scanDirectory();

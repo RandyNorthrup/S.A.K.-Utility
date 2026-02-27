@@ -1,7 +1,9 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "sak/quick_action.h"
+
+#include <QDateTime>
 
 namespace sak {
 
@@ -35,6 +37,100 @@ void QuickAction::cancel()
     if (m_status == ActionStatus::Scanning || m_status == ActionStatus::Running) {
         setStatus(ActionStatus::Cancelled);
     }
+}
+
+// === Shared helpers ===
+
+void QuickAction::emitCancelledResult(const QString& message)
+{
+    ExecutionResult result;
+    result.success = false;
+    result.message = message;
+    setExecutionResult(result);
+    setStatus(ActionStatus::Cancelled);
+    Q_EMIT executionComplete(result);
+}
+
+void QuickAction::emitCancelledResult(const QString& message, const QDateTime& start_time)
+{
+    ExecutionResult result;
+    result.success = false;
+    result.message = message;
+    result.duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
+    setExecutionResult(result);
+    setStatus(ActionStatus::Cancelled);
+    Q_EMIT executionComplete(result);
+}
+
+void QuickAction::emitFailedResult(const QString& message, const QString& log, const QDateTime& start_time)
+{
+    ExecutionResult result;
+    result.success = false;
+    result.message = message;
+    result.log = log;
+    result.duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
+    setExecutionResult(result);
+    setStatus(ActionStatus::Failed);
+    Q_EMIT executionComplete(result);
+}
+
+void QuickAction::finishWithResult(const ExecutionResult& result, ActionStatus status)
+{
+    setExecutionResult(result);
+    setStatus(status);
+    Q_EMIT executionComplete(result);
+}
+
+QString QuickAction::formatFileSize(qint64 bytes)
+{
+    if (bytes >= 1073741824LL) {
+        return QString::number(bytes / 1073741824.0, 'f', 2) + " GB";
+    }
+    if (bytes >= 1048576LL) {
+        return QString::number(bytes / 1048576.0, 'f', 2) + " MB";
+    }
+    if (bytes >= 1024LL) {
+        return QString::number(bytes / 1024.0, 'f', 2) + " KB";
+    }
+    return QString::number(bytes) + " bytes";
+}
+
+QString QuickAction::formatLogBox(const QString& title, const QStringList& content_lines, qint64 duration_ms)
+{
+    const QString top    = QStringLiteral("╔════════════════════════════════════════════════════════════════╗\n");
+    const QString sep    = QStringLiteral("╠════════════════════════════════════════════════════════════════╣\n");
+    const QString bottom = QStringLiteral("╚════════════════════════════════════════════════════════════════╝\n");
+
+    QString box = top;
+    box += QString("║ %1║\n").arg(title.leftJustified(65));
+    box += sep;
+
+    for (const QString& line : content_lines) {
+        if (line == "---") {
+            box += sep;
+        } else {
+            box += QString("║ %1║\n").arg(line.leftJustified(65));
+        }
+    }
+
+    if (duration_ms >= 0) {
+        box += sep;
+        box += QString("║ Completed in: %1 seconds%2║\n")
+            .arg(duration_ms / 1000.0, 0, 'f', 2)
+            .arg(QString(65 - 15 - QString::number(duration_ms / 1000.0, 'f', 2).length(), ' '));
+    }
+
+    box += bottom;
+    return box;
+}
+
+QString QuickAction::sanitizePathForBackup(const QString& path)
+{
+    QString safe = path;
+    safe.replace(':', '_');
+    safe.replace('\\', '_');
+    safe.replace('/', '_');
+    return safe;
 }
 
 } // namespace sak

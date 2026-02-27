@@ -1,5 +1,5 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "sak/actions/optimize_power_settings_action.h"
 #include "sak/process_runner.h"
@@ -245,7 +245,6 @@ void OptimizePowerSettingsAction::execute() {
         result.log += "• System already optimized for performance\n";
         result.log += "• Processor performance boost enabled\n";
         result.log += "• Minimal power management restrictions\n";
-        setStatus(ActionStatus::Success);
     } else if (success) {
         result.success = true;
         result.message = QString("Switched to High Performance (was: %1)").arg(current_plan.name);
@@ -256,18 +255,15 @@ void OptimizePowerSettingsAction::execute() {
         result.log += "• Sleep/hibernate settings unchanged\n";
         result.log += "• Display timeout settings unchanged\n";
         result.log += "• Use powercfg -QUERY for detailed settings\n";
-        setStatus(ActionStatus::Success);
     } else {
         result.success = false;
         result.message = "Failed to activate High Performance plan";
         result.log = report;
         result.log += "\nFailed to change power plan - administrative privileges may be required\n";
         result.log += "Try running as Administrator or use: powercfg -SETACTIVE " + high_perf_plan.guid + "\n";
-        setStatus(ActionStatus::Failed);
     }
     
-    setExecutionResult(result);
-    Q_EMIT executionComplete(result);
+    finishWithResult(result, result.success ? ActionStatus::Success : ActionStatus::Failed);
 }
 
 } // namespace sak

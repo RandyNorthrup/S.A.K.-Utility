@@ -1,5 +1,5 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "sak/actions/backup_bitlocker_keys_action.h"
 #include "sak/process_runner.h"
@@ -367,27 +367,12 @@ void BackupBitlockerKeysAction::scan()
 void BackupBitlockerKeysAction::execute()
 {
     if (isCancelled()) {
-        ExecutionResult result;
-        result.success = false;
-        result.message = "BitLocker key backup cancelled";
-        setExecutionResult(result);
-        setStatus(ActionStatus::Cancelled);
-        Q_EMIT executionComplete(result);
+        emitCancelledResult("BitLocker key backup cancelled");
         return;
     }
 
     setStatus(ActionStatus::Running);
     QDateTime start_time = QDateTime::currentDateTime();
-
-    auto finishCancelled = [this, &start_time]() {
-        ExecutionResult result;
-        result.success = false;
-        result.message = "BitLocker key backup cancelled";
-        result.duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
-        setExecutionResult(result);
-        setStatus(ActionStatus::Cancelled);
-        Q_EMIT executionComplete(result);
-    };
 
     // Step 1: Re-detect volumes if needed (in case scan was stale)
     Q_EMIT executionProgress("Detecting BitLocker volumes...", 5);
@@ -397,19 +382,14 @@ void BackupBitlockerKeysAction::execute()
     }
 
     if (m_volumes.isEmpty()) {
-        ExecutionResult result;
-        result.success = false;
-        result.message = "No BitLocker-encrypted volumes found";
-        result.log = "Ensure BitLocker is enabled on at least one volume and "
-                    "the application is running with administrator privileges.";
-        result.duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
-        setExecutionResult(result);
-        setStatus(ActionStatus::Failed);
-        Q_EMIT executionComplete(result);
+        emitFailedResult("No BitLocker-encrypted volumes found",
+                        "Ensure BitLocker is enabled on at least one volume and "
+                        "the application is running with administrator privileges.",
+                        start_time);
         return;
     }
 
-    if (isCancelled()) { finishCancelled(); return; }
+    if (isCancelled()) { emitCancelledResult("BitLocker key backup cancelled", start_time); return; }
 
     // Step 2: Retrieve key protectors for each volume
     Q_EMIT executionProgress("Retrieving recovery keys...", 15);
@@ -418,7 +398,7 @@ void BackupBitlockerKeysAction::execute()
     int total_recovery_passwords = 0;
 
     for (int i = 0; i < m_volumes.size(); ++i) {
-        if (isCancelled()) { finishCancelled(); return; }
+        if (isCancelled()) { emitCancelledResult("BitLocker key backup cancelled", start_time); return; }
 
         auto& vol = m_volumes[i];
         int progress = 15 + static_cast<int>((static_cast<double>(i) / m_volumes.size()) * 40);
@@ -446,19 +426,14 @@ void BackupBitlockerKeysAction::execute()
     }
 
     if (total_keys_found == 0) {
-        ExecutionResult result;
-        result.success = false;
-        result.message = "No key protectors found on any volume";
-        result.log = "BitLocker volumes were detected but no key protectors could be read.\n"
-                    "Ensure the application has administrator privileges.";
-        result.duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
-        setExecutionResult(result);
-        setStatus(ActionStatus::Failed);
-        Q_EMIT executionComplete(result);
+        emitFailedResult("No key protectors found on any volume",
+                        "BitLocker volumes were detected but no key protectors could be read.\n"
+                        "Ensure the application has administrator privileges.",
+                        start_time);
         return;
     }
 
-    if (isCancelled()) { finishCancelled(); return; }
+    if (isCancelled()) { emitCancelledResult("BitLocker key backup cancelled", start_time); return; }
 
     // Step 3: Create backup directory
     Q_EMIT executionProgress("Creating backup directory...", 60);
@@ -469,42 +444,31 @@ void BackupBitlockerKeysAction::execute()
 
     QDir backup_dir(backup_dir_path);
     if (!backup_dir.mkpath(".")) {
-        ExecutionResult result;
-        result.success = false;
-        result.message = "Failed to create backup directory";
-        result.log = "Could not create: " + backup_dir_path;
-        result.duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
-        setExecutionResult(result);
-        setStatus(ActionStatus::Failed);
-        Q_EMIT executionComplete(result);
+        emitFailedResult("Failed to create backup directory",
+                        "Could not create: " + backup_dir_path,
+                        start_time);
         return;
     }
 
-    if (isCancelled()) { finishCancelled(); return; }
+    if (isCancelled()) { emitCancelledResult("BitLocker key backup cancelled", start_time); return; }
 
     // Step 4: Write master recovery document
     Q_EMIT executionProgress("Writing recovery key document...", 70);
 
     bool doc_written = writeRecoveryDocument(backup_dir_path);
     if (!doc_written) {
-        ExecutionResult result;
-        result.success = false;
-        result.message = "Failed to write recovery key document";
-        result.duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
-        setExecutionResult(result);
-        setStatus(ActionStatus::Failed);
-        Q_EMIT executionComplete(result);
+        emitFailedResult("Failed to write recovery key document", QString(), start_time);
         return;
     }
 
-    if (isCancelled()) { finishCancelled(); return; }
+    if (isCancelled()) { emitCancelledResult("BitLocker key backup cancelled", start_time); return; }
 
     // Step 5: Write individual per-volume key files
     Q_EMIT executionProgress("Writing per-volume key files...", 80);
 
     int key_files_written = writePerVolumeKeyFiles(backup_dir_path);
 
-    if (isCancelled()) { finishCancelled(); return; }
+    if (isCancelled()) { emitCancelledResult("BitLocker key backup cancelled", start_time); return; }
 
     // Step 6: Write machine-readable JSON backup
     Q_EMIT executionProgress("Writing JSON backup...", 85);
@@ -551,9 +515,14 @@ void BackupBitlockerKeysAction::execute()
     if (json_file.open(QIODevice::WriteOnly | QIODevice::Text)) {
         json_file.write(QJsonDocument(json_backup).toJson(QJsonDocument::Indented));
         json_file.close();
+    } else {
+        logError("Failed to write BitLocker key backup JSON: {}", json_file.errorString().toStdString());
+        emitFailedResult("Failed to write BitLocker key backup file: " + json_file.errorString(),
+                         QString(), start_time);
+        return;
     }
 
-    if (isCancelled()) { finishCancelled(); return; }
+    if (isCancelled()) { emitCancelledResult("BitLocker key backup cancelled", start_time); return; }
 
     // Step 7: Restrict file permissions on backup directory
     Q_EMIT executionProgress("Securing backup files...", 90);
@@ -609,9 +578,7 @@ void BackupBitlockerKeysAction::execute()
     log_lines.append("Recovery keys can unlock BitLocker-encrypted volumes.");
     result.log = log_lines.join("\n");
 
-    setExecutionResult(result);
-    setStatus(ActionStatus::Success);
-    Q_EMIT executionComplete(result);
+    finishWithResult(result, ActionStatus::Success);
 }
 
 // ============================================================================

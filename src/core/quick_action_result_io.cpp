@@ -1,5 +1,5 @@
 // Copyright (c) 2026 Randy Northrup. All rights reserved.
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "sak/quick_action_result_io.h"
 

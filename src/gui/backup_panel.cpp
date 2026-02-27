@@ -1,7 +1,14 @@
+// Copyright (c) 2025 Randy Northrup. All rights reserved.
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 #include "sak/backup_panel.h"
 #include "sak/user_data_manager.h"
 #include "sak/user_profile_backup_wizard.h"
 #include "sak/user_profile_restore_wizard.h"
+#include "sak/detachable_log_window.h"
+#include "sak/info_button.h"
+
+#include "sak/config_manager.h"
 
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -12,6 +19,11 @@
 #include <QFont>
 #include <QScrollArea>
 #include <QFrame>
+#include <QDialog>
+#include <QDialogButtonBox>
+#include <QFormLayout>
+#include <QFileDialog>
+#include <QSpinBox>
 
 BackupPanel::BackupPanel(QWidget* parent)
     : QWidget(parent)
@@ -95,21 +107,20 @@ void BackupPanel::setupUi()
     actionsLayout->addWidget(m_restoreButton);
     
     mainLayout->addWidget(actionsGroup);
-    
-    // Status
-    m_statusLabel = new QLabel("Ready");
-    m_statusLabel->setStyleSheet("padding: 8px; background-color: #e2e8f0; border-radius: 10px; font-weight: 600; color: #1e293b;");
-    mainLayout->addWidget(m_statusLabel);
 
-    // Operation Log (standardized)
-    auto* logGroup = new QGroupBox("Log");
-    auto* logLayout = new QVBoxLayout(logGroup);
-    m_logTextEdit = new QTextEdit();
-    m_logTextEdit->setReadOnly(true);
-    m_logTextEdit->setMinimumHeight(80);
-    m_logTextEdit->setPlaceholderText("Operation log will appear here...");
-    logLayout->addWidget(m_logTextEdit);
-    mainLayout->addWidget(logGroup, 1);
+    mainLayout->addStretch();
+
+    // Bottom row: Settings + Log toggle (outside scroll area, pinned to bottom)
+    auto* bottomLayout = new QHBoxLayout();
+
+    auto* settingsBtn = new QPushButton(tr("Settings"), this);
+    connect(settingsBtn, &QPushButton::clicked, this, &BackupPanel::onSettingsClicked);
+    bottomLayout->addWidget(settingsBtn);
+
+    m_logToggle = new sak::LogToggleSwitch(tr("Log"), this);
+    bottomLayout->addWidget(m_logToggle);
+    bottomLayout->addStretch();
+    rootLayout->addLayout(bottomLayout);
 }
 
 void BackupPanel::setupConnections()
@@ -129,18 +140,17 @@ void BackupPanel::onBackupSelected()
     connect(wizard, &QDialog::finished, this, [this, wizard](int result) {
         if (result == QDialog::Accepted) {
             appendLog("=== User Profile Backup Wizard Completed ===");
-            m_statusLabel->setText("Backup completed via wizard");
             Q_EMIT statusMessage("User profile backup completed", 5000);
         } else {
             appendLog("User profile backup wizard cancelled");
-            m_statusLabel->setText("Ready");
+            Q_EMIT statusMessage("Backup wizard cancelled", 3000);
         }
         wizard->deleteLater();
     });
     
     // Show wizard
     appendLog("Launching backup wizard...");
-    m_statusLabel->setText("Backup wizard launched");
+    Q_EMIT statusMessage("Backup wizard launched", 3000);
     wizard->show();
     wizard->raise();
     wizard->activateWindow();
@@ -156,18 +166,17 @@ void BackupPanel::onRestoreBackup()
         if (result == QDialog::Accepted) {
             appendLog("=== User Profile Restore Wizard Completed ===");
             appendLog(QString("Restored from: %1").arg(wizard->backupPath()));
-            m_statusLabel->setText("Restore completed via wizard");
             Q_EMIT statusMessage("User profile restore completed", 5000);
         } else {
             appendLog("User profile restore wizard cancelled");
-            m_statusLabel->setText("Ready");
+            Q_EMIT statusMessage("Restore wizard cancelled", 3000);
         }
         wizard->deleteLater();
     });
     
     // Show wizard
     appendLog("Launching restore wizard...");
-    m_statusLabel->setText("Restore wizard launched");
+    Q_EMIT statusMessage("Restore wizard launched", 3000);
     wizard->show();
     wizard->raise();
     wizard->activateWindow();
@@ -175,6 +184,65 @@ void BackupPanel::onRestoreBackup()
 
 void BackupPanel::appendLog(const QString& message)
 {
-    QString timestamp = QDateTime::currentDateTime().toString("HH:mm:ss");
-    m_logTextEdit->append(QString("[%1] %2").arg(timestamp, message));
+    Q_EMIT logOutput(message);
+}
+
+void BackupPanel::onSettingsClicked()
+{
+    auto& config = sak::ConfigManager::instance();
+
+    QDialog dialog(this);
+    dialog.setWindowTitle(tr("User Migration Settings"));
+    dialog.setMinimumWidth(440);
+    auto* layout = new QVBoxLayout(&dialog);
+
+    auto* formLayout = new QFormLayout();
+
+    auto* threadSpin = new QSpinBox(&dialog);
+    threadSpin->setRange(1, 16);
+    threadSpin->setValue(config.getBackupThreadCount());
+    formLayout->addRow(
+        sak::InfoButton::createInfoLabel(tr("Thread Count:"),
+            tr("Number of parallel copy threads \u2014 higher values speed up backup but increase CPU and disk I/O load"), &dialog),
+        threadSpin);
+
+    auto* verifyCheck = new QCheckBox(tr("Verify files using MD5 hash after backup"), &dialog);
+    verifyCheck->setChecked(config.getBackupVerifyMD5());
+    formLayout->addRow(
+        sak::InfoButton::createInfoLabel(tr("Verify MD5:"),
+            tr("Re-read each copied file and verify its MD5 checksum matches the original \u2014 slower but ensures integrity"), &dialog),
+        verifyCheck);
+
+    auto* locRow = new QHBoxLayout();
+    auto* locEdit = new QLineEdit(config.getLastBackupLocation(), &dialog);
+    locEdit->setReadOnly(true);
+    auto* browseBtn = new QPushButton(tr("Browse..."), &dialog);
+    connect(browseBtn, &QPushButton::clicked, &dialog, [&locEdit, &dialog]() {
+        QString dir = QFileDialog::getExistingDirectory(&dialog, tr("Select Backup Location"), locEdit->text());
+        if (!dir.isEmpty()) locEdit->setText(dir);
+    });
+    locRow->addWidget(locEdit);
+    locRow->addWidget(browseBtn);
+    formLayout->addRow(
+        sak::InfoButton::createInfoLabel(tr("Backup Location:"),
+            tr("Choose the destination folder for backup files"), &dialog),
+        locRow);
+
+    layout->addLayout(formLayout);
+
+    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+    connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    layout->addWidget(buttons);
+
+    if (dialog.exec() == QDialog::Accepted) {
+        config.setBackupThreadCount(threadSpin->value());
+        config.setBackupVerifyMD5(verifyCheck->isChecked());
+        config.setLastBackupLocation(locEdit->text());
+        config.sync();
+        appendLog(QString("Settings updated: threads=%1, verify=%2, location=%3")
+                      .arg(threadSpin->value())
+                      .arg(verifyCheck->isChecked() ? "yes" : "no")
+                      .arg(locEdit->text()));
+    }
 }

@@ -1,3 +1,6 @@
+// Copyright (c) 2025 Randy Northrup. All rights reserved.
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 #pragma once
 
 #include <QString>
@@ -18,6 +21,7 @@ namespace sak {
  */
 class AppScanner {
 public:
+    /// @brief Information about a discovered installed application
     struct AppInfo {
         QString name;               // Application name
         QString version;            // Installed version

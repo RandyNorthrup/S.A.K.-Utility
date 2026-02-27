@@ -1,10 +1,12 @@
+// Copyright (c) 2025 Randy Northrup. All rights reserved.
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 #pragma once
 
 #include <QDialog>
 #include <QTabWidget>
 #include <QSpinBox>
 #include <QCheckBox>
-#include <QComboBox>
 #include <QLineEdit>
 #include <QPushButton>
 #include <memory>
@@ -43,10 +45,7 @@ private Q_SLOTS:
 
 private:
     void setupUI();
-    void createGeneralTab();
     void createBackupTab();
-    void createDuplicateFinderTab();
-    void createAdvancedTab();
     
     void loadSettings();
     void saveSettings();
@@ -60,10 +59,6 @@ private:
     QPushButton* m_applyButton{nullptr};
     QPushButton* m_resetButton{nullptr};
 
-    // General Tab (Window + Organizer settings)
-    QCheckBox* m_restoreWindowGeometry{nullptr};
-    QCheckBox* m_organizerPreviewMode{nullptr};
-
     // Backup Tab
     QSpinBox* m_backupThreadCount{nullptr};
     QCheckBox* m_backupVerifyMD5{nullptr};
@@ -75,23 +70,6 @@ private:
     QCheckBox* m_quickActionsNotifications{nullptr};
     QCheckBox* m_quickActionsLogging{nullptr};
     QCheckBox* m_quickActionsCompress{nullptr};
-
-    // Duplicate Finder Tab
-    QSpinBox* m_duplicateMinFileSize{nullptr};
-    QComboBox* m_duplicateKeepStrategy{nullptr};
-
-    // Network Transfer (Advanced Tab)
-    QCheckBox* m_networkTransferEnabled{nullptr};
-    QCheckBox* m_networkTransferAutoDiscovery{nullptr};
-    QCheckBox* m_networkTransferEncryption{nullptr};
-    QCheckBox* m_networkTransferCompression{nullptr};
-    QCheckBox* m_networkTransferResume{nullptr};
-    QSpinBox* m_networkTransferDiscoveryPort{nullptr};
-    QSpinBox* m_networkTransferControlPort{nullptr};
-    QSpinBox* m_networkTransferDataPort{nullptr};
-    QSpinBox* m_networkTransferChunkSize{nullptr};
-    QSpinBox* m_networkTransferMaxBandwidth{nullptr};
-    QLineEdit* m_networkTransferRelayServer{nullptr};
 
     bool m_settingsModified{false};
 };

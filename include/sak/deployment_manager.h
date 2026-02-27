@@ -1,3 +1,6 @@
+// Copyright (c) 2025 Randy Northrup. All rights reserved.
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 #pragma once
 
 #include <QObject>
@@ -9,6 +12,7 @@
 
 namespace sak {
 
+/// @brief Queue-based deployment assignment manager
 class DeploymentManager : public QObject {
     Q_OBJECT
 

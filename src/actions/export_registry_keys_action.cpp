@@ -1,9 +1,8 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "sak/actions/export_registry_keys_action.h"
 #include "sak/process_runner.h"
-#include <QProcess>
 #include <QDir>
 #include <QDateTime>
 #include <QRegularExpression>
@@ -172,16 +171,13 @@ void ExportRegistryKeysAction::execute() {
                         .arg(backup_dir.absolutePath())
                         .arg(manifest_path)
                         .arg(accumulated_output);
-        setStatus(ActionStatus::Success);
     } else {
         result.success = false;
         result.message = "Failed to export registry keys";
         result.log = QString("No registry keys were successfully exported\n\nOutput:\n%1").arg(accumulated_output);
-        setStatus(ActionStatus::Failed);
     }
     
-    setExecutionResult(result);
-    Q_EMIT executionComplete(result);
+    finishWithResult(result, result.success ? ActionStatus::Success : ActionStatus::Failed);
 }
 
 } // namespace sak

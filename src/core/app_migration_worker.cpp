@@ -1,3 +1,6 @@
+// Copyright (c) 2025 Randy Northrup. All rights reserved.
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 #include "sak/app_migration_worker.h"
 #include "sak/chocolatey_manager.h"
 #include "sak/migration_report.h"

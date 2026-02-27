@@ -1,5 +1,5 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 /**
  * RESEARCH-BASED IMPLEMENTATION (3 Sources - December 15, 2025)
@@ -244,22 +244,13 @@ void TaxSoftwareBackupAction::execute() {
     
     for (const TaxDataLocation& loc : m_tax_data) {
         if (isCancelled()) {
-            ExecutionResult result;
-            result.success = false;
-            result.message = "Tax data backup cancelled";
-            result.duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
-            setExecutionResult(result);
-            setStatus(ActionStatus::Cancelled);
-            Q_EMIT executionComplete(result);
+            emitCancelledResult("Tax data backup cancelled", start_time);
             return;
         }
 
         QString filename = QFileInfo(loc.path).fileName();
         QString source_dir = QFileInfo(loc.path).absolutePath();
-        QString safe_dir = source_dir;
-        safe_dir.replace(':', '_');
-        safe_dir.replace('\\', '_');
-        safe_dir.replace('/', '_');
+        QString safe_dir = sanitizePathForBackup(source_dir);
 
         QString dest = backup_dir.filePath(loc.software_name + "/" + safe_dir + "/" + filename);
         if (QFile::exists(dest)) {
@@ -295,9 +286,7 @@ void TaxSoftwareBackupAction::execute() {
         : "No tax files were backed up";
     result.output_path = backup_dir.absolutePath();
     
-    setExecutionResult(result);
-    setStatus(processed > 0 ? ActionStatus::Success : ActionStatus::Failed);
-    Q_EMIT executionComplete(result);
+    finishWithResult(result, processed > 0 ? ActionStatus::Success : ActionStatus::Failed);
 }
 
 } // namespace sak

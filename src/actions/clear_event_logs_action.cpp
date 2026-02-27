@@ -1,9 +1,8 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "sak/actions/clear_event_logs_action.h"
 #include "sak/process_runner.h"
-#include <QProcess>
 #include <QDir>
 #include <QDateTime>
 #include <QRegularExpression>
@@ -83,12 +82,7 @@ void ClearEventLogsAction::scan() {
 
 void ClearEventLogsAction::execute() {
     if (isCancelled()) {
-        ExecutionResult result;
-        result.success = false;
-        result.message = "Event log clearing cancelled";
-        setExecutionResult(result);
-        setStatus(ActionStatus::Cancelled);
-        Q_EMIT executionComplete(result);
+        emitCancelledResult("Event log clearing cancelled");
         return;
     }
 
@@ -168,13 +162,11 @@ void ClearEventLogsAction::execute() {
     Q_EMIT executionProgress("║ Clearing event log entries...                                ║", 60);
 
     if (ps.timed_out || isCancelled()) {
-        ExecutionResult result;
-        result.success = false;
-        result.message = isCancelled() ? "Event log clearing cancelled" : "Operation timed out after 5 minutes";
-        result.duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
-        setExecutionResult(result);
-        setStatus(ActionStatus::Failed);
-        Q_EMIT executionComplete(result);
+        if (isCancelled()) {
+            emitCancelledResult("Event log clearing cancelled", start_time);
+        } else {
+            emitFailedResult("Operation timed out after 5 minutes", {}, start_time);
+        }
         return;
     }
     
@@ -259,7 +251,7 @@ void ClearEventLogsAction::execute() {
         
         result.message = message;
         result.log = log_output;
-        setStatus(ActionStatus::Success);
+        finishWithResult(result, ActionStatus::Success);
     } else {
         result.success = false;
         
@@ -281,11 +273,8 @@ void ClearEventLogsAction::execute() {
         
         result.message = message;
         result.log = log_output;
-        setStatus(ActionStatus::Failed);
+        finishWithResult(result, ActionStatus::Failed);
     }
-    
-    setExecutionResult(result);
-    Q_EMIT executionComplete(result);
 }
 
 } // namespace sak

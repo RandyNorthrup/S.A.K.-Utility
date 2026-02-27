@@ -1,8 +1,10 @@
+// Copyright (c) 2025 Randy Northrup. All rights reserved.
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 #pragma once
 
 #include <QWidget>
 #include <QPushButton>
-#include <QProgressBar>
 #include <QLabel>
 #include <QCheckBox>
 #include <QTextEdit>
@@ -10,11 +12,13 @@
 #include <QStandardItemModel>
 #include <QLineEdit>
 #include <QComboBox>
+#include <QSpinBox>
 #include <memory>
 #include <vector>
 
 namespace sak {
 class UserDataManager;
+class LogToggleSwitch;
 }
 
 /**
@@ -50,16 +54,18 @@ public:
     BackupPanel(BackupPanel&&) = delete;
     BackupPanel& operator=(BackupPanel&&) = delete;
 
+    /** @brief Access the log toggle switch for MainWindow connection */
+    sak::LogToggleSwitch* logToggle() const { return m_logToggle; }
+
 Q_SIGNALS:
-    /**
-     * @brief Status message for main window status bar
-     */
     void statusMessage(const QString& message, int timeout_ms);
+    void logOutput(const QString& message);
 
 private Q_SLOTS:
     // Main actions
     void onBackupSelected();
     void onRestoreBackup();
+    void onSettingsClicked();
 
 private:
     void setupUi();
@@ -69,8 +75,7 @@ private:
     // UI Components
     QPushButton* m_backupButton{nullptr};
     QPushButton* m_restoreButton{nullptr};
-    QLabel* m_statusLabel{nullptr};
-    QTextEdit* m_logTextEdit{nullptr};
+    sak::LogToggleSwitch* m_logToggle{nullptr};
     
     // Data
     std::shared_ptr<sak::UserDataManager> m_dataManager;

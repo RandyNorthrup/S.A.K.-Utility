@@ -1,5 +1,5 @@
 # Copyright (c) 2025 Randy Northrup. All rights reserved.
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: AGPL-3.0-or-later
 #
 # bundle_uup_tools.ps1 - Downloads and bundles UUP dump converter tools
 #

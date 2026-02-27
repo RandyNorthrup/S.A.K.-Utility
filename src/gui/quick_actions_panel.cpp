@@ -1,9 +1,11 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "sak/quick_actions_panel.h"
 #include "sak/quick_action_controller.h"
 #include "sak/actions/action_factory.h"
+#include "sak/detachable_log_window.h"
+#include "sak/info_button.h"
 
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -70,9 +72,18 @@ void QuickActionsPanel::setupUi() {
     subtitle->setStyleSheet("color: #64748b; margin-bottom: 10px;");
     main_layout->addWidget(subtitle);
 
-    // Initialize hidden settings widgets (managed via global Settings dialog)
-    m_backup_location_edit = new QLineEdit();
-    m_backup_location_edit->hide();
+    // Backup Location row at the top
+    auto* backupLocRow = new QHBoxLayout();
+    backupLocRow->addWidget(new QLabel(tr("Backup Location:"), this));
+    m_backup_location_edit = new QLineEdit(this);
+    m_backup_location_edit->setPlaceholderText(tr("C:\\SAK_Backups"));
+    backupLocRow->addWidget(m_backup_location_edit, 1);
+    m_browse_button = new QPushButton(tr("Browse..."), this);
+    connect(m_browse_button, &QPushButton::clicked, this, &QuickActionsPanel::onBrowseBackupLocation);
+    backupLocRow->addWidget(m_browse_button);
+    main_layout->addLayout(backupLocRow);
+
+    // Initialize hidden settings checkboxes (managed via Settings modal)
     m_confirm_checkbox = new QCheckBox("Confirm before executing actions");
     m_confirm_checkbox->setChecked(true);
     m_confirm_checkbox->hide();
@@ -103,13 +114,6 @@ void QuickActionsPanel::setupUi() {
     auto* status_group = new QGroupBox("Status");
     auto* status_layout = new QVBoxLayout(status_group);
 
-    // Progress bar
-    m_progress_bar = new QProgressBar();
-    m_progress_bar->setRange(0, 100);
-    m_progress_bar->setValue(0);
-    m_progress_bar->setTextVisible(true);
-    status_layout->addWidget(m_progress_bar);
-
     // Status labels
     auto* labels_layout = new QGridLayout();
     labels_layout->setSpacing(5);
@@ -128,8 +132,15 @@ void QuickActionsPanel::setupUi() {
 
     status_layout->addLayout(labels_layout);
 
-    // Action buttons
-    auto* action_buttons_layout = new QHBoxLayout();
+    main_layout->addWidget(status_group);
+
+    // Bottom row: Settings + Open Output Folder + Log toggle + stretch
+    auto* bottomLayout = new QHBoxLayout();
+
+    auto* settingsBtn = new QPushButton(tr("Settings"), this);
+    connect(settingsBtn, &QPushButton::clicked, this, &QuickActionsPanel::showSettingsDialog);
+    bottomLayout->addWidget(settingsBtn);
+
     m_open_folder_button = new QPushButton("Open Output Folder");
     m_open_folder_button->setEnabled(false);
     connect(m_open_folder_button, &QPushButton::clicked, this, [this]() {
@@ -137,23 +148,13 @@ void QuickActionsPanel::setupUi() {
             QDesktopServices::openUrl(QUrl::fromLocalFile(m_last_output_path));
         }
     });
+    bottomLayout->addWidget(m_open_folder_button);
 
-    action_buttons_layout->addWidget(m_open_folder_button);
-    action_buttons_layout->addStretch();
+    m_logToggle = new LogToggleSwitch(tr("Log"), this);
+    bottomLayout->addWidget(m_logToggle);
+    bottomLayout->addStretch();
 
-    status_layout->addLayout(action_buttons_layout);
-
-    main_layout->addWidget(status_group);
-
-    // Operation Log (standardized)
-    auto* log_group = new QGroupBox("Log");
-    auto* log_layout = new QVBoxLayout(log_group);
-    m_log_viewer = new QTextEdit();
-    m_log_viewer->setReadOnly(true);
-    m_log_viewer->setMinimumHeight(80);
-    m_log_viewer->setPlaceholderText("Operation log will appear here...");
-    log_layout->addWidget(m_log_viewer);
-    main_layout->addWidget(log_group, 1);
+    main_layout->addLayout(bottomLayout);
 }
 
 void QuickActionsPanel::createActions() {
@@ -237,7 +238,7 @@ void QuickActionsPanel::createCategorySections() {
         // Populate with actions
         auto actions = m_controller->getActionsByCategory(cat_info.category);
         int row = 0, col = 0;
-        const int cols_per_row = 2;
+        const int cols_per_row = 4;
 
         for (auto* action : actions) {
             auto* button = createActionButton(action);
@@ -260,16 +261,16 @@ void QuickActionsPanel::createCategorySections() {
 
 QPushButton* QuickActionsPanel::createActionButton(QuickAction* action) {
     auto* button = new QPushButton();
-    button->setMinimumHeight(52);
-    button->setMinimumWidth(180);
+    button->setMinimumHeight(40);
+    button->setMinimumWidth(140);
     button->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
     
-    // Set initial text
-    QString text = QString("%1\n%2").arg(action->name(), action->description());
-    button->setText(text);
+    // Label only — description moved to tooltip
+    button->setText(action->name());
+    button->setToolTip(action->description());
     // Use app theme styling — only override alignment and padding
     button->setStyleSheet(
-        "QPushButton { text-align: left; padding: 10px 14px; }"
+        "QPushButton { text-align: left; padding: 8px 14px; }"
     );
 
     connect(button, &QPushButton::clicked, this, [this, action]() {
@@ -319,24 +320,23 @@ void QuickActionsPanel::updateActionButton(QuickAction* action) {
     QString text = QString("%1 %2")
                       .arg(status_icon, action->name());
 
-    // Add scan result or description as second line
+    // Build tooltip with scan details
+    QString tip = action->description();
     if (action->status() == QuickAction::ActionStatus::Ready) {
         const auto& scan_result = action->lastScanResult();
         if (scan_result.applicable) {
             QString size_text = formatBytes(scan_result.bytes_affected);
             qint64 est_seconds = scan_result.estimated_duration_ms / 1000;
             QString time_text = formatDuration(est_seconds);
-            text += QString("\n%1 - %2 est.")
-                       .arg(size_text, time_text);
+            tip += QString("\n%1 - %2 est.").arg(size_text, time_text);
         } else {
-            text += "\nNot applicable";
+            text += " (N/A)";
             button->setEnabled(false);
         }
-    } else {
-        text += QString("\n%1").arg(action->description());
     }
 
     button->setText(text);
+    button->setToolTip(tip);
 }
 
 void QuickActionsPanel::onActionClicked(QuickAction* action) {
@@ -384,8 +384,6 @@ void QuickActionsPanel::onActionProgress(QuickAction* action, const QString& mes
 
     m_action_label->setText(QString("Action: %1").arg(action->name()));
     m_status_label->setText(QString("Status: %1").arg(message));
-    m_progress_bar->setValue(progress);
-
     // Update duration
     if (m_last_action_time.isValid()) {
         qint64 elapsed = m_last_action_time.secsTo(QDateTime::currentDateTime());
@@ -403,7 +401,6 @@ void QuickActionsPanel::onActionComplete(QuickAction* action) {
 
     const auto& result = action->lastExecutionResult();
     
-    m_progress_bar->setValue(100);
     m_status_label->setText(QString("Status: %1").arg(result.message));
     m_bytes_label->setText(QString("Bytes: %1").arg(formatBytes(result.bytes_processed)));
     
@@ -426,7 +423,6 @@ void QuickActionsPanel::onActionComplete(QuickAction* action) {
 
     // Reset after delay
     QTimer::singleShot(3000, this, [this]() {
-        m_progress_bar->setValue(0);
         m_action_label->setText("Action: Ready");
         m_status_label->setText("Status: Idle");
         m_duration_label->setText("Duration: -");
@@ -437,7 +433,6 @@ void QuickActionsPanel::onActionError(QuickAction* action, const QString& error_
     QMessageBox::critical(this, "Action Error",
                          QString("%1 failed:\n\n%2").arg(action->name(), error_message));
     
-    m_progress_bar->setValue(0);
     m_status_label->setText(QString("Status: Error - %1").arg(error_message));
     updateActionButton(action);
 }
@@ -508,12 +503,7 @@ void QuickActionsPanel::appendLog(const QString& message) {
         return;
     }
 
-    QString timestamp = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss");
-    m_log_viewer->append(QString("[%1] %2").arg(timestamp, message));
-    
-    // Auto-scroll to bottom
-    auto* scrollbar = m_log_viewer->verticalScrollBar();
-    scrollbar->setValue(scrollbar->maximum());
+    Q_EMIT logOutput(message);
 }
 
 QString QuickActionsPanel::formatBytes(qint64 bytes) {
@@ -557,8 +547,59 @@ void QuickActionsPanel::onSettingChanged() {
 }
 
 void QuickActionsPanel::showSettingsDialog() {
-    // Settings are now managed through the global Settings dialog
-    // No-op for backward compatibility
+    QDialog dialog(this);
+    dialog.setWindowTitle(tr("Quick Actions Settings"));
+    dialog.setMinimumWidth(400);
+    auto* layout = new QVBoxLayout(&dialog);
+
+    auto* confirmCheck = new QCheckBox(tr("Confirm before executing actions"), &dialog);
+    confirmCheck->setChecked(m_confirm_checkbox->isChecked());
+    auto* confirmRow = new QHBoxLayout();
+    confirmRow->addWidget(confirmCheck);
+    confirmRow->addWidget(new sak::InfoButton(
+        tr("Show a confirmation dialog before each action runs to prevent accidental execution"), &dialog));
+    confirmRow->addStretch();
+    layout->addLayout(confirmRow);
+
+    auto* notifyCheck = new QCheckBox(tr("Show completion notifications"), &dialog);
+    notifyCheck->setChecked(m_notifications_checkbox->isChecked());
+    auto* notifyRow = new QHBoxLayout();
+    notifyRow->addWidget(notifyCheck);
+    notifyRow->addWidget(new sak::InfoButton(
+        tr("Display a status bar notification when an action finishes or fails"), &dialog));
+    notifyRow->addStretch();
+    layout->addLayout(notifyRow);
+
+    auto* loggingCheck = new QCheckBox(tr("Enable detailed logging"), &dialog);
+    loggingCheck->setChecked(m_logging_checkbox->isChecked());
+    auto* loggingRow = new QHBoxLayout();
+    loggingRow->addWidget(loggingCheck);
+    loggingRow->addWidget(new sak::InfoButton(
+        tr("Write detailed progress and scan information to the log window"), &dialog));
+    loggingRow->addStretch();
+    layout->addLayout(loggingRow);
+
+    auto* compressCheck = new QCheckBox(tr("Compress backups (saves space)"), &dialog);
+    compressCheck->setChecked(m_compression_checkbox->isChecked());
+    auto* compressRow = new QHBoxLayout();
+    compressRow->addWidget(compressCheck);
+    compressRow->addWidget(new sak::InfoButton(
+        tr("Use ZIP compression for backup output files — slower but uses less disk space"), &dialog));
+    compressRow->addStretch();
+    layout->addLayout(compressRow);
+
+    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+    connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    layout->addWidget(buttons);
+
+    if (dialog.exec() == QDialog::Accepted) {
+        m_confirm_checkbox->setChecked(confirmCheck->isChecked());
+        m_notifications_checkbox->setChecked(notifyCheck->isChecked());
+        m_logging_checkbox->setChecked(loggingCheck->isChecked());
+        m_compression_checkbox->setChecked(compressCheck->isChecked());
+        saveSettings();
+    }
 }
 
 void QuickActionsPanel::onViewLog() {

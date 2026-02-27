@@ -1,5 +1,5 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 #pragma once
 
@@ -30,6 +30,7 @@ public:
     void execute() override;
 
 private:
+    /// @brief Represents a single item of pre-installed bloatware detected on the system
     struct BloatwareItem {
         QString name;
         QString type; // UWP App, Win32 Program, Startup Item

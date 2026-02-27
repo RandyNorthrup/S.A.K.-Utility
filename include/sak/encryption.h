@@ -1,3 +1,6 @@
+// Copyright (c) 2025 Randy Northrup. All rights reserved.
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 /// @file encryption.h
 /// @brief AES-256 encryption/decryption using Windows BCrypt API
 /// @note Enterprise-grade encryption with PBKDF2 key derivation
@@ -41,28 +44,6 @@ struct EncryptionParams {
     const QString& password,
     const EncryptionParams& params = EncryptionParams{}
 ) -> std::expected<QByteArray, error_code>;
-
-/// @brief Encrypt file in-place
-/// @param file_path Path to file to encrypt
-/// @param password Encryption password
-/// @param params Encryption parameters
-/// @return Success or error code
-[[nodiscard]] auto encryptFile(
-    const QString& file_path,
-    const QString& password,
-    const EncryptionParams& params = EncryptionParams{}
-) -> std::expected<void, error_code>;
-
-/// @brief Decrypt file in-place
-/// @param file_path Path to encrypted file
-/// @param password Decryption password
-/// @param params Encryption parameters
-/// @return Success or error code
-[[nodiscard]] auto decryptFile(
-    const QString& file_path,
-    const QString& password,
-    const EncryptionParams& params = EncryptionParams{}
-) -> std::expected<void, error_code>;
 
 } // namespace sak
 

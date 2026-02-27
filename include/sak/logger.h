@@ -1,3 +1,6 @@
+// Copyright (c) 2025 Randy Northrup. All rights reserved.
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 /// @file logger.h
 /// @brief Thread-safe logging system with structured output
 /// @note Enterprise-grade logger with multiple severity levels and automatic rotation

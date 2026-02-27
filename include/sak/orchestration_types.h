@@ -1,3 +1,6 @@
+// Copyright (c) 2025 Randy Northrup. All rights reserved.
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 #pragma once
 
 #include <QString>
@@ -7,6 +10,7 @@
 
 namespace sak {
 
+/// @brief Health metrics reported by a destination PC
 struct DestinationHealth {
     int cpu_usage_percent{0};
     int ram_usage_percent{0};
@@ -19,6 +23,7 @@ struct DestinationHealth {
     static DestinationHealth fromJson(const QJsonObject& json);
 };
 
+/// @brief Registered destination PC with connection and health info
 struct DestinationPC {
     QString destination_id;
     QString hostname;
@@ -33,6 +38,7 @@ struct DestinationPC {
     static DestinationPC fromJson(const QJsonObject& json);
 };
 
+/// @brief Assignment of a user profile deployment to a destination
 struct DeploymentAssignment {
     QString deployment_id;
     QString job_id;
@@ -45,6 +51,7 @@ struct DeploymentAssignment {
     static DeploymentAssignment fromJson(const QJsonObject& json);
 };
 
+/// @brief Real-time progress update for an active deployment job
 struct DeploymentProgress {
     QString deployment_id;
     QString job_id;
@@ -62,6 +69,7 @@ struct DeploymentProgress {
     static DeploymentProgress fromJson(const QJsonObject& json);
 };
 
+/// @brief Final status report of a completed deployment job
 struct DeploymentCompletion {
     QString deployment_id;
     QString job_id;

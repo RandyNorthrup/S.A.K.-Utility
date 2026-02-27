@@ -1,3 +1,6 @@
+// Copyright (c) 2025 Randy Northrup. All rights reserved.
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 /// @file error_codes.h
 /// @brief Error code definitions for SAK Utility
 /// @note Using std::expected pattern for type-safe error handling
@@ -31,7 +34,6 @@ enum class error_code {
     // I/O errors (100-199)
     read_error = 100,
     write_error = 101,
-    file_write_error = 101,  // Alias for compatibility
     seek_error = 102,
     truncate_error = 103,
     flush_error = 104,
@@ -188,6 +190,9 @@ enum class error_code {
         case error_code::protocol_error: return "Protocol error";
         case error_code::authentication_failed: return "Authentication failed";
         
+        // I/O errors (continued)
+        case error_code::invalid_argument: return "Invalid argument";
+        
         // Security/validation errors
         case error_code::validation_failed: return "Validation failed";
         case error_code::path_traversal_attempt: return "Path traversal attempt detected";
@@ -197,66 +202,21 @@ enum class error_code {
         case error_code::insufficient_memory: return "Insufficient memory";
         case error_code::resource_limit_reached: return "Resource limit reached";
         case error_code::filesystem_error: return "Filesystem error";
+        case error_code::crypto_error: return "Cryptographic error";
+        case error_code::decrypt_failed: return "Decryption failed";
+        case error_code::invalid_format: return "Invalid format";
         
         // Generic errors
         case error_code::unknown_error: return "Unknown error";
         case error_code::not_implemented: return "Not implemented";
         case error_code::internal_error: return "Internal error";
         case error_code::assertion_failed: return "Assertion failed";
+        case error_code::invalid_operation: return "Invalid operation";
+        case error_code::partial_failure: return "Partial failure";
         
         default: return "Undefined error";
     }
 }
-
-/// @brief Exception base class for SAK Utility
-/// @note Only used for unrecoverable errors; prefer std::expected for expected failures
-class sak_exception : public std::exception {
-public:
-    explicit sak_exception(std::string_view message) noexcept
-        : m_message(message) {}
-    
-    [[nodiscard]] const char* what() const noexcept override {
-        return m_message.c_str();
-    }
-
-private:
-    std::string m_message;
-};
-
-/// @brief File system exception
-class file_system_exception : public sak_exception {
-public:
-    explicit file_system_exception(std::string_view message) noexcept
-        : sak_exception(message) {}
-};
-
-/// @brief Permission exception
-class permission_exception : public sak_exception {
-public:
-    explicit permission_exception(std::string_view message) noexcept
-        : sak_exception(message) {}
-};
-
-/// @brief Hash calculation exception
-class hash_calculation_exception : public sak_exception {
-public:
-    explicit hash_calculation_exception(std::string_view message) noexcept
-        : sak_exception(message) {}
-};
-
-/// @brief Configuration exception
-class configuration_exception : public sak_exception {
-public:
-    explicit configuration_exception(std::string_view message) noexcept
-        : sak_exception(message) {}
-};
-
-/// @brief Platform exception
-class platform_exception : public sak_exception {
-public:
-    explicit platform_exception(std::string_view message) noexcept
-        : sak_exception(message) {}
-};
 
 } // namespace sak
 

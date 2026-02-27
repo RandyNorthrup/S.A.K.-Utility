@@ -1,5 +1,5 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "sak/actions/photo_management_backup_action.h"
 #include "sak/windows_user_scanner.h"
@@ -142,20 +142,11 @@ void PhotoManagementBackupAction::execute() {
     
     for (const PhotoSoftwareData& data : m_photo_data) {
         if (isCancelled()) {
-            ExecutionResult result;
-            result.success = false;
-            result.message = "Photo software backup cancelled";
-            result.duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
-            setExecutionResult(result);
-            setStatus(ActionStatus::Cancelled);
-            Q_EMIT executionComplete(result);
+            emitCancelledResult("Photo software backup cancelled", start_time);
             return;
         }
 
-        QString safe_dir = data.path;
-        safe_dir.replace(':', '_');
-        safe_dir.replace('\\', '_');
-        safe_dir.replace('/', '_');
+        QString safe_dir = sanitizePathForBackup(data.path);
         QString dest_path = backup_dir.filePath(data.software_name + "/" + data.data_type + "/" + safe_dir);
         QDir().mkpath(dest_path);
         
@@ -208,9 +199,7 @@ void PhotoManagementBackupAction::execute() {
         : "No photo software data was backed up";
     result.output_path = backup_dir.absolutePath();
     
-    setExecutionResult(result);
-    setStatus(processed > 0 ? ActionStatus::Success : ActionStatus::Failed);
-    Q_EMIT executionComplete(result);
+    finishWithResult(result, processed > 0 ? ActionStatus::Success : ActionStatus::Failed);
 }
 
 } // namespace sak

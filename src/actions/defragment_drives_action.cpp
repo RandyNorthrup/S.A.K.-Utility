@@ -1,9 +1,8 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "sak/actions/defragment_drives_action.h"
 #include "sak/process_runner.h"
-#include <QProcess>
 #include <QStorageInfo>
 #include <QRegularExpression>
 
@@ -35,7 +34,9 @@ int DefragmentDrivesAction::analyzeFragmentation(const QString& drive_letter) {
     QRegularExpressionMatch match = re.match(output);
     
     if (match.hasMatch()) {
-        return match.captured(1).toInt();
+        bool ok = false;
+        int fragmentation = match.captured(1).toInt(&ok);
+        return ok ? fragmentation : 0;
     }
     return 0;
 }
@@ -69,16 +70,6 @@ void DefragmentDrivesAction::scan() {
 void DefragmentDrivesAction::execute() {
     setStatus(ActionStatus::Running);
     QDateTime start_time = QDateTime::currentDateTime();
-
-    auto finish_cancelled = [this, &start_time]() {
-        ExecutionResult result;
-        result.success = false;
-        result.message = "Drive optimization cancelled";
-        result.duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
-        setExecutionResult(result);
-        setStatus(ActionStatus::Cancelled);
-        Q_EMIT executionComplete(result);
-    };
     
     Q_EMIT executionProgress("Analyzing drives for optimization...", 5);
     
@@ -150,7 +141,7 @@ void DefragmentDrivesAction::execute() {
 
     ProcessResult ps_result = runPowerShell(ps_script, 3600000);
     if (ps_result.timed_out || isCancelled()) {
-        finish_cancelled();
+        emitCancelledResult(QStringLiteral("Drive optimization cancelled"), start_time);
         return;
     }
 
@@ -182,9 +173,7 @@ void DefragmentDrivesAction::execute() {
         result.message = "No fixed NTFS drives found to optimize";
         result.duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
         result.log = accumulated_output + (ps_result.std_err.isEmpty() ? "" : "\nErrors:\n" + ps_result.std_err);
-        setExecutionResult(result);
-        setStatus(ActionStatus::Success);
-        Q_EMIT executionComplete(result);
+        finishWithResult(result, ActionStatus::Success);
         return;
     }
     
@@ -226,9 +215,7 @@ void DefragmentDrivesAction::execute() {
         result.log += "\nErrors:\n" + ps_result.std_err.trimmed();
     }
     
-    setExecutionResult(result);
-    setStatus(ActionStatus::Success);
-    Q_EMIT executionComplete(result);
+    finishWithResult(result, ActionStatus::Success);
 }
 
 } // namespace sak

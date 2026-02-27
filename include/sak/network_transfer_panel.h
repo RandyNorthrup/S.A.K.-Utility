@@ -1,3 +1,6 @@
+// Copyright (c) 2025 Randy Northrup. All rights reserved.
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 #pragma once
 
 #include <QWidget>
@@ -19,7 +22,6 @@
 class QTableWidget;
 class QPushButton;
 class QTextEdit;
-class QProgressBar;
 class QComboBox;
 class QLineEdit;
 class QSpinBox;
@@ -36,7 +38,10 @@ class NetworkTransferController;
 class MigrationOrchestrator;
 class ParallelTransferManager;
 class MappingEngine;
+class DetachableLogWindow;
+class LogToggleSwitch;
 
+/// @brief UI panel for peer-to-peer network data transfers
 class NetworkTransferPanel : public QWidget {
     Q_OBJECT
 
@@ -44,9 +49,13 @@ public:
     explicit NetworkTransferPanel(QWidget* parent = nullptr);
     ~NetworkTransferPanel() override;
 
+    /** @brief Access the log toggle switch for MainWindow connection */
+    LogToggleSwitch* logToggle() const { return m_logToggle; }
+
 Q_SIGNALS:
     void statusMessage(const QString& message, int timeout_ms);
     void progressUpdate(int current, int maximum);
+    void logOutput(const QString& message);
 
 private Q_SLOTS:
     void onModeChanged(int index);
@@ -92,6 +101,8 @@ private Q_SLOTS:
     void onManifestReceived(const TransferManifest& manifest);
     void onTransferProgress(qint64 bytes, qint64 total);
     void onTransferCompleted(bool success, const QString& message);
+    void onSecuritySettings();
+    void onNetworkSettings();
 
 private:
     void setupUi();
@@ -113,6 +124,8 @@ private:
     void activateAssignment(const DeploymentAssignment& assignment);
     void persistAssignmentQueue() const;
     void onConnectionStateChanged(bool connected);
+    void updateTransferButton();
+    void updatePauseResumeButton();
     bool eventFilter(QObject* obj, QEvent* event) override;
     void upsertCustomRule(const QString& sourceUser, const QString& destinationId);
     QString destinationIdForRow(int row) const;
@@ -128,7 +141,8 @@ private:
     QPushButton* m_scanUsersButton{nullptr};
     QPushButton* m_customizeUserButton{nullptr};
     QPushButton* m_discoverPeersButton{nullptr};
-    QPushButton* m_startSourceButton{nullptr};
+    QPushButton* m_transferButton{nullptr};
+    QPushButton* m_pauseResumeButton{nullptr};
     QLineEdit* m_manualIpEdit{nullptr};
     QSpinBox* m_manualPortSpin{nullptr};
     QLineEdit* m_passphraseEdit{nullptr};
@@ -184,7 +198,6 @@ private:
     QPushButton* m_retryJobButton{nullptr};
     QPushButton* m_cancelJobButton{nullptr};
     QLabel* m_deploymentSummaryLabel{nullptr};
-    QProgressBar* m_deploymentProgressBar{nullptr};
     QLabel* m_deploymentEtaLabel{nullptr};
     QPushButton* m_exportHistoryButton{nullptr};
     QPushButton* m_exportSummaryCsvButton{nullptr};
@@ -193,9 +206,7 @@ private:
     QTableWidget* m_historyTable{nullptr};
 
     // Common progress/log
-    QProgressBar* m_overallProgress{nullptr};
-    QPushButton* m_stopTransferButton{nullptr};
-    QTextEdit* m_logText{nullptr};
+    LogToggleSwitch* m_logToggle{nullptr};
 
     QVector<UserProfile> m_users;
     QMap<QString, TransferPeerInfo> m_peers;
@@ -216,6 +227,8 @@ private:
     QDateTime m_transferStarted;
     QStringList m_transferErrors;
     bool m_isSourceTransfer{false};
+    bool m_sourceTransferActive{false};
+    bool m_sourceTransferPaused{false};
     bool m_orchestrationAssignmentPending{false};
     bool m_destinationTransferActive{false};
     bool m_manifestValidated{false};
