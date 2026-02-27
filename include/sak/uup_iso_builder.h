@@ -169,6 +169,9 @@ private:
     bool isFileAlreadyDownloaded(const UupDumpApi::FileInfo& fileInfo,
                                 const QString& downloadDir) const;
 
+    // Check if process is running with administrator privileges
+    static bool isRunningAsAdmin();
+
     // Progress parsing
     void parseAria2Progress(const QString& line);
     void parseConverterProgress(const QString& line);

@@ -24,6 +24,131 @@ https://code.qt.io/ or https://download.qt.io/archive/qt/6.5/6.5.3/.
 
 ---
 
+## aria2
+
+**License:** GNU General Public License v2.0 (GPLv2)
+**Version:** 1.37.0
+**Website:** https://aria2.github.io/
+**Source:** https://github.com/aria2/aria2
+**Used for:** Multi-connection download manager for UUP file retrieval
+**Bundled at:** `tools/uup/aria2c.exe`
+
+aria2 is free software; you can redistribute it and/or modify it under
+the terms of the GNU General Public License as published by the Free
+Software Foundation; either version 2 of the License, or (at your
+option) any later version.
+
+As required by GPLv2, the complete source code for aria2 is available at:
+https://github.com/aria2/aria2/releases
+
+---
+
+## wimlib
+
+**License:** GNU Lesser General Public License v3.0 (LGPL v3)
+**Website:** https://wimlib.net/
+**Source:** https://github.com/ebiggers/wimlib
+**Used for:** WIM image manipulation during UUP-to-ISO conversion
+**Bundled at:** `tools/uup/converter/bin/wimlib-imagex.exe`,
+`tools/uup/converter/bin/libwim-15.dll`
+
+```
+wimlib (software) Copyright 2012-2026 Eric Biggers
+```
+
+wimlib is free software; you can redistribute it and/or modify it under
+the terms of the GNU Lesser General Public License as published by the
+Free Software Foundation; either version 3 of the License, or (at your
+option) any later version.
+
+A copy of the LGPL v3 is available at
+https://www.gnu.org/licenses/lgpl-3.0.html.
+
+Source code is available at: https://wimlib.net/downloads/index.html
+
+---
+
+## 7-Zip
+
+**License:** GNU Lesser General Public License v2.1 (LGPL v2.1) + unRAR restriction
+**Website:** https://www.7-zip.org/
+**Source:** https://7-zip.org/download.html
+**Used for:** Archive extraction during UUP conversion
+**Bundled at:** `tools/uup/converter/bin/7z.exe`, `tools/uup/converter/bin/7z.dll`
+
+```
+Copyright (C) 1999-2024 Igor Pavlov
+```
+
+7-Zip is free software distributed under the GNU LGPL. The unRAR code
+is under a mixed license: GNU LGPL + unRAR restrictions. You can use
+7-Zip on any computer. You don't need to register or pay for 7-Zip.
+
+A copy of the LGPL v2.1 is available at
+https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html.
+
+Source code is available at: https://7-zip.org/download.html
+
+---
+
+## UUP Converter (uup-converter-wimlib)
+
+**Author:** [abbodi1406](https://github.com/abbodi1406)
+**Version:** v120z
+**Website:** https://uupdump.net/
+**Used for:** Converting UUP update files into bootable Windows ISOs
+**Bundled at:** `tools/uup/converter/`
+
+This package bundles the convert-UUP.cmd script and supporting tools.
+The converter ReadMe credits the following contributors:
+
+- [whatever127](https://github.com/uup-dump) — UUP dump
+- [Eric Biggers](https://wimlib.net) — wimlib (licensed separately above)
+- [Igor Pavlov](https://www.7-zip.org) — 7-Zip (licensed separately above)
+- [Melinda Bellemore](https://forums.mydigitallife.net/members/superbubble.250156/) — SxSExpand
+- [BetaWorld / Secant1006](https://github.com/Secant1006/PSFExtractor) — PSFExtractor
+- [Jeff Kluge](https://github.com/jeffkl/ManagedDism) — Managed DismApi Wrapper (MIT)
+- [erwan.l](http://reboot.pro/files/file/313-offlinereg/) — offlinereg
+- cdob — create AIO efisys.bin
+
+### Microsoft Tools
+
+The converter package bundles the following Microsoft utilities:
+`cabarc.exe`, `cdimage.exe`, `imagex.exe`, `bcdedit.exe`
+
+These are the intellectual property of Microsoft Corporation and are
+included as part of the UUP converter package. They originate from the
+Windows Assessment and Deployment Kit (Windows ADK).
+
+### ManagedDism (Microsoft.Dism.dll)
+
+**License:** MIT
+**Source:** https://github.com/jeffkl/ManagedDism
+
+```
+Copyright (c) Jeff Kluge
+
+Permission is hereby granted, free of charge, to any person obtaining a
+copy of this software and associated documentation files (the "Software"),
+to deal in the Software without restriction, including without limitation
+the rights to use, copy, modify, merge, publish, distribute, sublicense,
+and/or sell copies of the Software, and to permit persons to whom the
+Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+```
+
+---
+
 ## zlib
 
 **License:** zlib License (permissive)

@@ -15,6 +15,10 @@
 #include <QTextStream>
 #include <QFile>
 
+#ifdef Q_OS_WIN
+#include <windows.h>
+#endif
+
 // ============================================================================
 // Construction / Destruction
 // ============================================================================
@@ -285,21 +289,21 @@ void UupIsoBuilder::executePreparation()
     {
         QTextStream cfg(&configFile);
         cfg << "[convert-UUP]\n"
-            << "AutoStart  =1\n"
+            << "AutoStart  =1\n"   // 1 = create ISO with install.wim
             << "AddUpdates =1\n"
             << "Cleanup    =1\n"
             << "ResetBase  =0\n"
             << "NetFx3     =0\n"
-            << "StartVirt  =0\n"
-            << "wim2iso    =1\n"
-            << "wim2vhd    =0\n"
+            << "StartVirtual=0\n"
+            << "wim2esd    =0\n"
+            << "wim2swm    =0\n"
             << "SkipISO    =0\n"
             << "SkipWinRE  =0\n"
             << "ForceDism  =0\n"
             << "RefESD     =0\n"
             << "UpdtBootFiles=1\n"
-            << "LangsList  =" << m_lang << "\n"
-            << "EditionList=" << m_edition << "\n";
+            << "AutoExit   =1\n"   // Exit without waiting for keypress
+            << "SkipEdge   =0\n";
     }
     configFile.close();
 
@@ -511,7 +515,8 @@ void UupIsoBuilder::executeDownload()
          << "--timeout=60"
          << "--max-file-not-found=3"
          // ── Security ──
-         << "--check-certificate=true"
+         // Microsoft CDN serves HTTP-only; certificate check applies to HTTPS only
+         << "--check-certificate=false"
          // ── Output formatting ──
          << "--summary-interval=1"
          << "--human-readable=false"
@@ -719,6 +724,17 @@ void UupIsoBuilder::executeConversion()
     m_phaseTimer.start();
     m_conversionPercent = 0;
 
+    // The converter script requires administrator privileges (it uses DISM,
+    // registry operations, etc.). If we are not elevated, it will try to
+    // self-elevate via UAC which orphans our QProcess handle.
+    if (!isRunningAsAdmin()) {
+        m_phase = Phase::Failed;
+        Q_EMIT buildError(
+            "Administrator privileges are required for UUP \u2192 ISO conversion. "
+            "Please restart S.A.K. Utility as Administrator and try again.");
+        return;
+    }
+
     // Verify convert-UUP.cmd is in the work directory
     QString convertCmd = QDir(m_workDir).filePath("convert-UUP.cmd");
     if (!QFileInfo::exists(convertCmd)) {
@@ -744,11 +760,13 @@ void UupIsoBuilder::executeConversion()
     env.insert("UUP_AUTOMATIC", "1");
     m_converterProcess->setProcessEnvironment(env);
 
-    // Execute converter: cmd /c convert-UUP.cmd wim UUPs
+    // Execute converter: cmd /c convert-UUP.cmd
+    // The script auto-detects the UUPs/ subfolder as input.
+    // AutoStart=1 (in ConvertConfig.ini) selects install.wim output format.
     QStringList args;
-    args << "/c" << convertCmd << "wim" << "UUPs";
+    args << "/c" << convertCmd;
 
-    sak::logInfo("Starting UUP→ISO conversion: cmd /c convert-UUP.cmd wim UUPs");
+    sak::logInfo("Starting UUP to ISO conversion: cmd /c convert-UUP.cmd");
     m_converterProcess->start("cmd.exe", args);
 
     if (!m_converterProcess->waitForStarted(10000)) {
@@ -960,6 +978,26 @@ void UupIsoBuilder::finalizeBuild()
 
     sak::logInfo("UUP ISO build complete: " + m_outputIsoPath.toStdString() +
                   " (" + std::to_string(fileSize / (1024 * 1024)) + " MB)");
+}
+
+bool UupIsoBuilder::isRunningAsAdmin()
+{
+#ifdef Q_OS_WIN
+    BOOL isAdmin = FALSE;
+    PSID adminGroup = nullptr;
+    SID_IDENTIFIER_AUTHORITY ntAuthority = SECURITY_NT_AUTHORITY;
+
+    if (AllocateAndInitializeSid(&ntAuthority, 2,
+                                  SECURITY_BUILTIN_DOMAIN_RID,
+                                  DOMAIN_ALIAS_RID_ADMINS,
+                                  0, 0, 0, 0, 0, 0, &adminGroup)) {
+        CheckTokenMembership(nullptr, adminGroup, &isAdmin);
+        FreeSid(adminGroup);
+    }
+    return isAdmin != FALSE;
+#else
+    return geteuid() == 0;
+#endif
 }
 
 void UupIsoBuilder::cleanupWorkDir()

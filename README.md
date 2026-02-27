@@ -9,7 +9,7 @@
 [![Qt 6.5.3](https://img.shields.io/badge/Qt-6.5.3-41cd52.svg)](https://www.qt.io/)
 [![Windows 10/11](https://img.shields.io/badge/Windows-10%20%7C%2011-0078d4.svg)](https://www.microsoft.com/windows)
 [![Build](https://github.com/RandyNorthrup/S.A.K.-Utility/actions/workflows/build-release.yml/badge.svg)](https://github.com/RandyNorthrup/S.A.K.-Utility/actions)
-[![Version](https://img.shields.io/badge/Version-0.6.1-orange.svg)](VERSION)
+[![Version](https://img.shields.io/badge/Version-0.6.2-orange.svg)](VERSION)
 
 Migration · Maintenance · Recovery · Imaging · Deployment — one portable EXE.
 
@@ -17,7 +17,12 @@ Migration · Maintenance · Recovery · Imaging · Deployment — one portable E
 
 ---
 
-## What's New in v0.6.1
+## What's New in v0.6.2
+
+- **Fixed UUP-to-ISO conversion** — Corrected ConvertConfig.ini generation with valid option names, fixed converter invocation arguments, added admin-privilege check to prevent UAC re-elevation orphaning the process, and added `AutoExit=1` so the converter doesn't hang waiting for a keypress.
+- **License compliance** — Added complete license notices for all bundled tools (aria2, wimlib, 7-Zip, uup-converter-wimlib, ManagedDism, Microsoft ADK utilities) to THIRD_PARTY_LICENSES.md and README acknowledgments.
+
+### v0.6.1
 
 - **Fixed Windows ISO downloads** — Microsoft's UUP CDN serves HTTP-only URLs; the strict HTTPS-only validation was rejecting every download file. HTTP is now allowed for `*.microsoft.com` origins (files are SHA-1 integrity-verified).
 - **Fixed Linux ISO downloads** — Added proper User-Agent headers to aria2c and HTTP requests to resolve 403 errors from SourceForge/CDN mirrors. Updated SystemRescue and Clonezilla download URLs.
@@ -470,6 +475,10 @@ Third-party dependency licenses are documented in [THIRD_PARTY_LICENSES.md](THIR
 ## Acknowledgments
 
 - [**Qt**](https://www.qt.io/) — Cross-platform UI framework (LGPL v3)
+- [**aria2**](https://aria2.github.io/) — Multi-connection download manager (GPLv2)
+- [**wimlib**](https://wimlib.net/) — WIM image library by Eric Biggers (LGPL v3)
+- [**7-Zip**](https://www.7-zip.org/) — Archive tool by Igor Pavlov (LGPL v2.1)
+- [**uup-converter-wimlib**](https://github.com/abbodi1406) — UUP-to-ISO converter by abbodi1406
 - [**smartmontools**](https://www.smartmontools.org/) — SMART disk diagnostics (GPLv2)
 - [**Chocolatey**](https://chocolatey.org/) — Windows package manager (Apache 2.0)
 - [**zlib**](https://www.zlib.net/) — Compression library (zlib License)
@@ -477,7 +486,7 @@ Third-party dependency licenses are documented in [THIRD_PARTY_LICENSES.md](THIR
 - [**XZ Utils**](https://tukaani.org/xz/) — LZMA compression (0BSD / Public Domain)
 - [**vcpkg**](https://vcpkg.io/) — C++ dependency manager (MIT)
 - [**CMake**](https://cmake.org/) — Build system (BSD 3-Clause)
-- **Microsoft** — Windows BCrypt API, PowerShell, Windows SDK
+- **Microsoft** — Windows BCrypt API, PowerShell, Windows SDK, ADK tools (cdimage, imagex, bcdedit, cabarc)
 
 ---
 
