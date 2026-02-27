@@ -103,6 +103,7 @@ void LinuxISODownloader::startDownload(const QString& distroId,
         m_checksumType = distro.checksumType;
         m_expectedFileName = m_catalog->resolveFileName(distro);
         m_totalSize = distro.approximateSize;
+        m_sourceType = distro.sourceType;
 
         if (m_downloadUrl.isEmpty()) {
             Q_EMIT downloadError("Could not resolve download URL for " + distro.name);
@@ -133,6 +134,7 @@ void LinuxISODownloader::onVersionCheckCompleted(
     m_checksumType = distro.checksumType;
     m_expectedFileName = m_catalog->resolveFileName(distro);
     m_totalSize = distro.approximateSize;
+    m_sourceType = distro.sourceType;
 
     if (m_downloadUrl.isEmpty()) {
         setPhase(Phase::Failed, "Download URL not available");
@@ -163,6 +165,7 @@ void LinuxISODownloader::onVersionCheckFailed(const QString& distroId,
     m_checksumType = distro.checksumType;
     m_expectedFileName = m_catalog->resolveFileName(distro);
     m_totalSize = distro.approximateSize;
+    m_sourceType = distro.sourceType;
 
     if (m_downloadUrl.isEmpty()) {
         setPhase(Phase::Failed, "Download URL not available");
@@ -196,9 +199,12 @@ void LinuxISODownloader::startAria2cDownload(const QString& url,
     setPhase(Phase::Downloading, "Downloading ISO...");
     Q_EMIT statusMessage(QString("Downloading %1...").arg(fileName));
 
-    // Validate download URL scheme — only allow HTTPS
+    // Validate download URL scheme — only allow HTTPS for the initial request.
+    // Note: SourceForge redirects to HTTP mirrors at runtime but the initial
+    // URL we provide *must* be HTTPS.  aria2c handles the redirect chain.
     QUrl downloadUrl(url);
     if (!downloadUrl.isValid() || downloadUrl.scheme().toLower() != "https") {
+        setPhase(Phase::Failed, "Invalid download URL");
         Q_EMIT downloadError("Rejected non-HTTPS download URL: " + url);
         return;
     }
@@ -228,11 +234,47 @@ void LinuxISODownloader::startAria2cDownload(const QString& url,
     QStringList args;
     args << url
          << "--dir=" + outDir
-         << "--out=" + outFile
-         // ── Parallelism ──
-         << "--max-connection-per-server=16"
-         << "--split=16"
-         << "--min-split-size=1M"
+         << "--out=" + outFile;
+
+    // SourceForge URLs redirect through mirror selection and may serve
+    // from HTTP mirrors. Use single-connection mode to avoid mirror
+    // inconsistencies and allow HTTP redirects from the initial HTTPS URL.
+    const bool isSourceForge = url.contains("sourceforge.net",
+                                            Qt::CaseInsensitive);
+    if (isSourceForge) {
+        // ── SourceForge-specific settings ──
+        args << "--max-connection-per-server=1"
+             << "--split=1"
+             << "--min-split-size=20M"
+             << "--check-certificate=false"   // SF mirrors may have cert issues
+             << "--follow-metalink=mem"        // SF may serve metalink responses
+             << "--follow-torrent=false"
+             << "--max-tries=10"              // More retries for mirror selection
+             << "--retry-wait=5"
+             << "--connect-timeout=30"
+             << "--timeout=120"
+             << "--max-file-not-found=5"
+             << "--lowest-speed-limit=10K";   // Lenient speed limit for SF
+    } else {
+        // ── Standard multi-connection settings ──
+        args << "--max-connection-per-server=16"
+             << "--split=16"
+             << "--min-split-size=1M"
+             << "--check-certificate=true"
+             << "--lowest-speed-limit=50K"
+             << "--max-tries=5"
+             << "--retry-wait=3"
+             << "--connect-timeout=10"
+             << "--timeout=60"
+             << "--max-file-not-found=3";
+    }
+
+    // ── Common settings ──
+    args // ── User-Agent (critical: many CDNs/SourceForge block
+         //    aria2c's default UA string) ──
+         << "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/131.0.0.0 Safari/537.36"
          // ── Resumability ──
          << "--continue=true"
          << "--auto-file-renaming=false"
@@ -241,15 +283,6 @@ void LinuxISODownloader::startAria2cDownload(const QString& url,
          << "--file-allocation=none"
          << "--disk-cache=64M"
          << "--piece-length=1M"
-         // ── Stall & retry handling ──
-         << "--lowest-speed-limit=50K"
-         << "--max-tries=5"
-         << "--retry-wait=3"
-         << "--connect-timeout=10"
-         << "--timeout=60"
-         << "--max-file-not-found=3"
-         // ── TLS ──
-         << "--check-certificate=true"
          // ── Output formatting ──
          << "--summary-interval=1"
          << "--human-readable=false"
@@ -600,7 +633,30 @@ QString LinuxISODownloader::findAria2c() const
             return it.next();
     }
 
-    sak::logError("aria2c.exe not found in bundled tools");
+    // Secondary fallback: check alongside the executable
+    QString appDir = QCoreApplication::applicationDirPath();
+    QStringList searchPaths = {
+        appDir + "/tools/uup/aria2c.exe",
+        appDir + "/aria2c.exe",
+    };
+    for (const auto& p : searchPaths) {
+        if (QFileInfo::exists(p))
+            return p;
+    }
+
+    // Check PATH environment variable
+    QString pathEnv = qEnvironmentVariable("PATH");
+    QStringList pathDirs = pathEnv.split(';', Qt::SkipEmptyParts);
+    for (const auto& dir : pathDirs) {
+        QString candidate = QDir(dir).absoluteFilePath("aria2c.exe");
+        if (QFileInfo::exists(candidate)) {
+            sak::logInfo("Found aria2c on PATH: " + candidate.toStdString());
+            return candidate;
+        }
+    }
+
+    sak::logError("aria2c.exe not found in any known location. "
+                  "Run scripts/bundle_uup_tools.ps1 to install it.");
     return {};
 }
 

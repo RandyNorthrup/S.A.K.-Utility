@@ -144,10 +144,10 @@ void LinuxDistroCatalog::populateCatalog()
                                 "Includes filesystem tools (fsck, ntfsfix), network tools, "
                                 "partition editors, and data recovery utilities.",
         /*.category =*/         Category::SystemRecovery,
-        /*.sourceType =*/       SourceType::DirectURL,
-        /*.downloadUrl =*/      "https://fastly-cdn.system-rescue.org/systemrescue-{version}-amd64.iso",
-        /*.checksumUrl =*/      "https://fastly-cdn.system-rescue.org/systemrescue-{version}-amd64.iso.sha256",
-        /*.checksumType =*/     "sha256",
+        /*.sourceType =*/       SourceType::SourceForge,
+        /*.downloadUrl =*/      "https://sourceforge.net/projects/systemrescuecd/files/sysresccd-x86/{version}/systemrescue-{version}-amd64.iso/download",
+        /*.checksumUrl =*/      {},  // SourceForge provides checksums on download page
+        /*.checksumType =*/     {},
         /*.fileName =*/         "systemrescue-{version}-amd64.iso",
         /*.approximateSize =*/  static_cast<qint64>(1166LL * 1024 * 1024), // ~1166 MiB
         /*.homepage =*/         "https://www.system-rescue.org",
@@ -161,7 +161,7 @@ void LinuxDistroCatalog::populateCatalog()
     addDistro({
         /*.id =*/               "clonezilla",
         /*.name =*/             "Clonezilla Live",
-        /*.version =*/          "3.3.0-33",
+        /*.version =*/          "3.3.1-35",
         /*.versionLabel =*/     "Stable (Debian-based)",
         /*.description =*/      "Disk imaging and cloning tool. Clone entire drives or partitions "
                                 "for backup, migration, or mass deployment. Supports multicasting "

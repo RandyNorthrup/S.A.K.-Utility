@@ -161,4 +161,5 @@ private:
     QString m_expectedFileName;
     qint64 m_totalSize = 0;
     bool m_cancelled = false;
+    LinuxDistroCatalog::SourceType m_sourceType = LinuxDistroCatalog::SourceType::DirectURL;
 };

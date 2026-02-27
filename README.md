@@ -9,11 +9,20 @@
 [![Qt 6.5.3](https://img.shields.io/badge/Qt-6.5.3-41cd52.svg)](https://www.qt.io/)
 [![Windows 10/11](https://img.shields.io/badge/Windows-10%20%7C%2011-0078d4.svg)](https://www.microsoft.com/windows)
 [![Build](https://github.com/RandyNorthrup/S.A.K.-Utility/actions/workflows/build-release.yml/badge.svg)](https://github.com/RandyNorthrup/S.A.K.-Utility/actions)
-[![Version](https://img.shields.io/badge/Version-0.6.0-orange.svg)](VERSION)
+[![Version](https://img.shields.io/badge/Version-0.6.1-orange.svg)](VERSION)
 
 Migration · Maintenance · Recovery · Imaging · Deployment — one portable EXE.
 
 </div>
+
+---
+
+## What's New in v0.6.1
+
+- **Fixed Windows ISO downloads** — Microsoft's UUP CDN serves HTTP-only URLs; the strict HTTPS-only validation was rejecting every download file. HTTP is now allowed for `*.microsoft.com` origins (files are SHA-1 integrity-verified).
+- **Fixed Linux ISO downloads** — Added proper User-Agent headers to aria2c and HTTP requests to resolve 403 errors from SourceForge/CDN mirrors. Updated SystemRescue and Clonezilla download URLs.
+- **Bundled aria2c** — aria2c 1.37.0 is now included in local builds and CI so ISO downloads work out of the box.
+- **Expanded test suite** — 43 tests covering network transfer, orchestration, diagnostics, security, and ISO download pipelines.
 
 ---
 
@@ -401,7 +410,7 @@ Full license texts: [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md)
 cmake --build build --config Release --target RUN_TESTS
 ```
 
-41 unit tests covering network transfer, orchestration, diagnostics, security, encryption, configuration, and ISO download. 1 integration test for end-to-end network transfer workflow.
+43 tests covering network transfer, orchestration, diagnostics, security, encryption, configuration, and ISO download. Includes unit and integration tests.
 
 ---
 

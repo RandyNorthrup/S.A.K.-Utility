@@ -397,9 +397,23 @@ void UupDumpApi::onFilesReply() {
             continue;
         }
 
-        // Validate download URL scheme — only allow HTTPS
+        // Validate download URL scheme
+        // Microsoft's UUP CDN (tlu.dl.delivery.mp.microsoft.com) only serves
+        // HTTP — allow it since every file is integrity-verified via SHA-1.
+        // Reject non-HTTPS URLs from all other origins.
         QUrl downloadUrl(info.url);
-        if (!downloadUrl.isValid() || downloadUrl.scheme().toLower() != "https") {
+        if (!downloadUrl.isValid()) {
+            sak::logWarning("Rejected invalid download URL for: " + info.fileName.toStdString());
+            continue;
+        }
+
+        QString scheme = downloadUrl.scheme().toLower();
+        QString host = downloadUrl.host().toLower();
+        if (scheme == "http" && host.endsWith(".microsoft.com")) {
+            // Microsoft's UUP CDN does not support HTTPS — allow HTTP since
+            // every file is integrity-verified via SHA-1 checksums.
+            sak::logDebug("Allowing HTTP Microsoft CDN URL for: " + info.fileName.toStdString());
+        } else if (scheme != "https") {
             sak::logWarning("Rejected non-HTTPS download URL for: " + info.fileName.toStdString());
             continue;
         }
@@ -412,8 +426,8 @@ void UupDumpApi::onFilesReply() {
     }
 
     double totalSizeGB = totalSize / (1024.0 * 1024.0 * 1024.0);
-    sak::logInfo(QString("Fetched %1 downloadable files (%.2f GB total)")
-        .arg(files.size()).arg(totalSizeGB).toStdString());
+    sak::logInfo(QString("Fetched %1 downloadable files (%2 GB total)")
+        .arg(files.size()).arg(totalSizeGB, 0, 'f', 2).toStdString());
 
     Q_EMIT filesFetched(updateName, files);
 }
@@ -433,6 +447,7 @@ QNetworkReply* UupDumpApi::sendApiRequest(const QString& endpoint,
     QNetworkRequest request(url);
     request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
     request.setRawHeader("Accept", "application/json");
+    request.setRawHeader("User-Agent", "SAK-Utility/1.0");
 
     // Use TLS 1.2+
     QSslConfiguration sslConfig = QSslConfiguration::defaultConfiguration();

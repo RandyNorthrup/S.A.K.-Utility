@@ -11,7 +11,7 @@ endif()
 
 # Project definition
 project(SAK_Utility 
-    VERSION 0.6.0
+    VERSION 0.6.1
     DESCRIPTION "Swiss Army Knife Utility - PC technician's toolkit for Windows migration and maintenance"
     LANGUAGES CXX
 )# C++23 Standard - Strict compliance required
@@ -610,6 +610,11 @@ target_include_directories(sak_utility PRIVATE
 if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/smartmontools/smartctl.exe")
     message(WARNING "smartmontools not found! SMART disk diagnostics will be unavailable.\n"
                     "Run 'powershell -File scripts/bundle_smartmontools.ps1' to bundle smartctl.exe.")
+endif()
+
+if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/uup/aria2c.exe")
+    message(WARNING "aria2c not found! ISO downloads will be unavailable.\n"
+                    "Run 'powershell -File scripts/bundle_uup_tools.ps1' to bundle aria2c.exe.")
 endif()
 
 # Copy embedded tools directory to output

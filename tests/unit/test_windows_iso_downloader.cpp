@@ -31,8 +31,13 @@ private Q_SLOTS:
     // Channel display names
     void testChannelDisplayNames();
 
+    // UUP dump API file fetching (exercises URL validation)
+    void testGetFilesReturnsResults();
+    void testFileUrlsAreValid();
+
 private:
     WindowsISODownloader* downloader = nullptr;
+    UupDumpApi* api = nullptr;
 };
 
 void WindowsISODownloaderTests::initTestCase()
@@ -48,6 +53,7 @@ void WindowsISODownloaderTests::cleanupTestCase()
 void WindowsISODownloaderTests::init()
 {
     downloader = new WindowsISODownloader(this);
+    api = new UupDumpApi(this);
 }
 
 void WindowsISODownloaderTests::cleanup()
@@ -56,6 +62,11 @@ void WindowsISODownloaderTests::cleanup()
         downloader->cancel();
         delete downloader;
         downloader = nullptr;
+    }
+    if (api) {
+        api->cancelAll();
+        delete api;
+        api = nullptr;
     }
 }
 
@@ -137,6 +148,112 @@ void WindowsISODownloaderTests::testChannelDisplayNames()
                  qPrintable(QString("Empty name for channel %1")
                                 .arg(static_cast<int>(ch))));
     }
+}
+
+/**
+ * Test getFiles() returns non-empty file list.
+ * Verifies the URL validation logic accepts Microsoft CDN HTTP URLs.
+ */
+void WindowsISODownloaderTests::testGetFilesReturnsResults()
+{
+    // First fetch a build UUID from the API
+    QSignalSpy buildsSpy(api, &UupDumpApi::buildsFetched);
+    QSignalSpy buildErrorSpy(api, &UupDumpApi::apiError);
+
+    api->fetchAvailableBuilds("amd64", UupDumpApi::ReleaseChannel::Retail);
+
+    bool ok = buildsSpy.wait(15000) || buildErrorSpy.count() > 0;
+    if (buildErrorSpy.count() > 0 || !ok) {
+        QSKIP("UUP dump API unreachable - skipping network test");
+    }
+
+    auto builds = buildsSpy.at(0).at(0).value<QList<UupDumpApi::BuildInfo>>();
+    if (builds.isEmpty()) {
+        QSKIP("No builds returned - skipping");
+    }
+
+    // Now fetch files for the first build
+    QString uuid = builds.first().uuid;
+    QSignalSpy filesSpy(api, &UupDumpApi::filesFetched);
+    QSignalSpy fileErrorSpy(api, &UupDumpApi::apiError);
+
+    api->getFiles(uuid, "en-us", "PROFESSIONAL");
+
+    ok = filesSpy.wait(15000) || fileErrorSpy.count() > 0;
+    if (fileErrorSpy.count() > 0) {
+        qWarning() << "API error:" << fileErrorSpy.at(0).at(0).toString();
+        QSKIP("getFiles API call failed - skipping");
+    }
+
+    QVERIFY2(ok, "Timeout waiting for filesFetched signal");
+    QCOMPARE(filesSpy.count(), 1);
+
+    auto files = filesSpy.at(0).at(1).value<QList<UupDumpApi::FileInfo>>();
+    qInfo() << "Files fetched:" << files.size();
+    QVERIFY2(!files.isEmpty(),
+             "Expected non-empty file list (URL validation may be rejecting valid Microsoft CDN URLs)");
+}
+
+/**
+ * Test that file URLs from getFiles() are well-formed.
+ * Verifies filenames are safe (no path traversal) and URLs are valid.
+ */
+void WindowsISODownloaderTests::testFileUrlsAreValid()
+{
+    // First fetch a build UUID
+    QSignalSpy buildsSpy(api, &UupDumpApi::buildsFetched);
+    QSignalSpy buildErrorSpy(api, &UupDumpApi::apiError);
+
+    api->fetchAvailableBuilds("amd64", UupDumpApi::ReleaseChannel::Retail);
+
+    bool ok = buildsSpy.wait(15000) || buildErrorSpy.count() > 0;
+    if (buildErrorSpy.count() > 0 || !ok) {
+        QSKIP("UUP dump API unreachable - skipping network test");
+    }
+
+    auto builds = buildsSpy.at(0).at(0).value<QList<UupDumpApi::BuildInfo>>();
+    if (builds.isEmpty()) {
+        QSKIP("No builds returned - skipping");
+    }
+
+    QString uuid = builds.first().uuid;
+    QSignalSpy filesSpy(api, &UupDumpApi::filesFetched);
+    QSignalSpy fileErrorSpy(api, &UupDumpApi::apiError);
+
+    api->getFiles(uuid, "en-us", "PROFESSIONAL");
+
+    ok = filesSpy.wait(15000) || fileErrorSpy.count() > 0;
+    if (fileErrorSpy.count() > 0 || !ok) {
+        QSKIP("getFiles API call failed - skipping");
+    }
+
+    auto files = filesSpy.at(0).at(1).value<QList<UupDumpApi::FileInfo>>();
+    if (files.isEmpty()) {
+        QSKIP("No files returned - skipping");
+    }
+
+    for (const auto& f : files) {
+        // Filename must not contain path traversal
+        QVERIFY2(!f.fileName.contains(".."),
+                 qPrintable("Path traversal in filename: " + f.fileName));
+        QVERIFY2(!f.fileName.contains('/') && !f.fileName.contains('\\'),
+                 qPrintable("Directory separator in filename: " + f.fileName));
+
+        // URL must be valid
+        QUrl url(f.url);
+        QVERIFY2(url.isValid(), qPrintable("Invalid URL for: " + f.fileName));
+
+        // URL must be HTTP or HTTPS
+        QString scheme = url.scheme().toLower();
+        QVERIFY2(scheme == "http" || scheme == "https",
+                 qPrintable("Unexpected scheme " + scheme + " for: " + f.fileName));
+
+        // SHA-1 checksum must be present
+        QVERIFY2(!f.sha1.isEmpty(),
+                 qPrintable("Missing SHA-1 for: " + f.fileName));
+    }
+
+    qInfo() << "Validated" << files.size() << "file URLs successfully";
 }
 
 #include <QApplication>

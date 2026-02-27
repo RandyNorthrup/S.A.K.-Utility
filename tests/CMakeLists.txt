@@ -7,7 +7,7 @@ cmake_minimum_required(VERSION 3.28)
 enable_testing()
 
 # Find Qt Test module
-find_package(Qt6 REQUIRED COMPONENTS Test Network)
+find_package(Qt6 REQUIRED COMPONENTS Test Network Concurrent)
 
 # Test output directory
 set(TEST_OUTPUT_DIR "${CMAKE_BINARY_DIR}/test_results")
@@ -38,6 +38,7 @@ set(UNIT_TESTS
     test_deployment_history
     test_assignment_queue_store
     test_windows_iso_downloader
+    test_linux_iso_downloader
 )
 
 foreach(test_name ${UNIT_TESTS})
@@ -170,6 +171,19 @@ foreach(test_name ${UNIT_TESTS})
         )
     endif()
 
+    if(test_name STREQUAL "test_linux_iso_downloader")
+        list(APPEND impl_sources
+            "${CMAKE_CURRENT_SOURCE_DIR}/../src/core/linux_iso_downloader.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/../include/sak/linux_iso_downloader.h"
+            "${CMAKE_CURRENT_SOURCE_DIR}/../src/core/linux_distro_catalog.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/../include/sak/linux_distro_catalog.h"
+            "${CMAKE_CURRENT_SOURCE_DIR}/../src/core/bundled_tools_manager.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/../include/sak/bundled_tools_manager.h"
+            "${CMAKE_CURRENT_SOURCE_DIR}/../src/core/logger.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/../include/sak/logger.h"
+        )
+    endif()
+
 
     
     if(test_sources)
@@ -189,13 +203,19 @@ foreach(test_name ${UNIT_TESTS})
             OR test_name STREQUAL "test_migration_orchestrator"
             OR test_name STREQUAL "test_transfer_protocol"
             OR test_name STREQUAL "test_transfer_types"
-            OR test_name STREQUAL "test_windows_iso_downloader")
+            OR test_name STREQUAL "test_windows_iso_downloader"
+            OR test_name STREQUAL "test_linux_iso_downloader")
             list(APPEND extra_unit_libs Qt6::Network)
         endif()
         
         # ISO downloader needs Qt Widgets
         if(test_name STREQUAL "test_windows_iso_downloader")
             list(APPEND extra_unit_libs Qt6::Widgets)
+        endif()
+
+        # Linux ISO downloader needs Qt Concurrent for checksum verification
+        if(test_name STREQUAL "test_linux_iso_downloader")
+            list(APPEND extra_unit_libs Qt6::Concurrent)
         endif()
 
         target_link_libraries(${test_name} PRIVATE
