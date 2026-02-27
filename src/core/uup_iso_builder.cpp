@@ -760,13 +760,27 @@ void UupIsoBuilder::executeConversion()
     env.insert("UUP_AUTOMATIC", "1");
     m_converterProcess->setProcessEnvironment(env);
 
-    // Execute converter: cmd /c convert-UUP.cmd
+    // Execute converter: cmd /c convert-UUP.cmd -qedit -elevated
+    //
     // The script auto-detects the UUPs/ subfolder as input.
     // AutoStart=1 (in ConvertConfig.ini) selects install.wim output format.
+    //
+    // CRITICAL FLAGS:
+    //   -qedit    Prevents the script from re-launching itself through
+    //             PowerShell to disable QuickEdit mode. Without this flag
+    //             the original process exits immediately via exit /b and
+    //             a new detached cmd.exe runs the real conversion — our
+    //             QProcess handle would only see the instant exit, not the
+    //             actual conversion output or exit code.
+    //   -elevated Tells the script that elevation was already handled
+    //             externally. If the admin-privilege registry probe fails
+    //             for any reason, the script will error out cleanly instead
+    //             of attempting UAC self-elevation (which would also orphan
+    //             the QProcess handle).
     QStringList args;
-    args << "/c" << convertCmd;
+    args << "/c" << convertCmd << "-qedit" << "-elevated";
 
-    sak::logInfo("Starting UUP to ISO conversion: cmd /c convert-UUP.cmd");
+    sak::logInfo("Starting UUP to ISO conversion: cmd /c convert-UUP.cmd -qedit -elevated");
     m_converterProcess->start("cmd.exe", args);
 
     if (!m_converterProcess->waitForStarted(10000)) {
@@ -775,6 +789,10 @@ void UupIsoBuilder::executeConversion()
                          m_converterProcess->errorString());
         return;
     }
+
+    // Close stdin so that if the script ever falls to a `set /p` prompt
+    // (e.g. UUP folder detection failure), it gets EOF instead of hanging.
+    m_converterProcess->closeWriteChannel();
 
     // Resume progress polling to track ISO file creation
     m_progressPollTimer->start();

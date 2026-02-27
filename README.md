@@ -19,8 +19,9 @@ Migration · Maintenance · Recovery · Imaging · Deployment — one portable E
 
 ## What's New in v0.6.2
 
-- **Fixed UUP-to-ISO conversion** — Corrected ConvertConfig.ini generation with valid option names, fixed converter invocation arguments, added admin-privilege check to prevent UAC re-elevation orphaning the process, and added `AutoExit=1` so the converter doesn't hang waiting for a keypress.
+- **Fixed UUP-to-ISO conversion** — Root cause: `convert-UUP.cmd` re-launches itself through PowerShell to disable QuickEdit mode, which detaches from the tracked process and causes the app to report instant success with no ISO output. Fix passes `-qedit -elevated` flags to prevent both the QuickEdit re-launch and UAC self-elevation from orphaning the process. Also corrected ConvertConfig.ini option names, added admin-privilege check, closes stdin to prevent hanging, and sets `AutoExit=1`.
 - **License compliance** — Added complete license notices for all bundled tools (aria2, wimlib, 7-Zip, uup-converter-wimlib, ManagedDism, Microsoft ADK utilities) to THIRD_PARTY_LICENSES.md and README acknowledgments.
+- **New integration tests** — 5 tests verifying the converter process stays attached, reads config correctly, handles missing files, and exits cleanly on closed stdin.
 
 ### v0.6.1
 

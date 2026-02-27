@@ -924,6 +924,35 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/integration/test_network_transfer_workflo
     message(STATUS "Added integration test: test_network_transfer_workflow")
 endif()
 
+# Integration test: UUP Conversion Pipeline
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/integration/test_uup_conversion_pipeline.cpp")
+    add_executable(test_uup_conversion_pipeline
+        integration/test_uup_conversion_pipeline.cpp
+    )
+
+    set_target_properties(test_uup_conversion_pipeline PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+    )
+
+    target_link_libraries(test_uup_conversion_pipeline PRIVATE
+        Qt6::Core
+        Qt6::Test
+        Qt6::Widgets
+        ${PLATFORM_LIBS}
+    )
+
+    target_include_directories(test_uup_conversion_pipeline PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+
+    add_test(NAME test_uup_conversion_pipeline
+             COMMAND test_uup_conversion_pipeline
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+
+    message(STATUS "Added integration test: test_uup_conversion_pipeline")
+endif()
+
 # ============================================================================
 # Test Targets
 # ============================================================================
