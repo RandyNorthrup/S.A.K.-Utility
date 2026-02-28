@@ -14,7 +14,7 @@
 #include <memory>
 
 // Forward declarations for feature panels
-class BackupPanel;
+class UserMigrationPanel;
 class OrganizerPanel;
 class DuplicateFinderPanel;
 class ImageFlasherPanel;
@@ -26,6 +26,7 @@ namespace sak {
     class DiagnosticBenchmarkPanel;
     class DetachableLogWindow;
     class LogToggleSwitch;
+    class WifiManagerPanel;
 }
 
 /**
@@ -125,7 +126,7 @@ private:
     QTabWidget* m_tab_widget{nullptr};
 
     // Feature panels
-    std::unique_ptr<BackupPanel> m_backup_panel;
+    std::unique_ptr<UserMigrationPanel> m_user_migration_panel;
     std::unique_ptr<OrganizerPanel> m_organizer_panel;
     std::unique_ptr<DuplicateFinderPanel> m_duplicate_finder_panel;
     std::unique_ptr<sak::AppMigrationPanel> m_app_migration_panel;
@@ -133,6 +134,7 @@ private:
     std::unique_ptr<sak::QuickActionsPanel> m_quick_actions_panel;
     std::unique_ptr<sak::NetworkTransferPanel> m_network_transfer_panel;
     std::unique_ptr<sak::DiagnosticBenchmarkPanel> m_diagnostic_panel;
+    std::unique_ptr<sak::WifiManagerPanel> m_wifi_manager_panel;
 
     // Status bar components
     QLabel* m_status_label{nullptr};

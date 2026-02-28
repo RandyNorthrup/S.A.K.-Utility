@@ -200,6 +200,7 @@ void RebuildIconCacheAction::scan() {
 
 void RebuildIconCacheAction::execute() {
     if (isCancelled()) {
+        emitCancelledResult("Icon cache rebuild cancelled");
         return;
     }
 

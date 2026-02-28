@@ -1,7 +1,7 @@
-// Copyright (c) 2025 Randy Northrup. All rights reserved.
+﻿// Copyright (c) 2025 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-#include "sak/backup_panel.h"
+#include "sak/user_migration_panel.h"
 #include "sak/user_data_manager.h"
 #include "sak/user_profile_backup_wizard.h"
 #include "sak/user_profile_restore_wizard.h"
@@ -25,7 +25,7 @@
 #include <QFileDialog>
 #include <QSpinBox>
 
-BackupPanel::BackupPanel(QWidget* parent)
+UserMigrationPanel::UserMigrationPanel(QWidget* parent)
     : QWidget(parent)
     , m_dataManager(std::make_shared<sak::UserDataManager>())
 {
@@ -36,9 +36,9 @@ BackupPanel::BackupPanel(QWidget* parent)
     appendLog("Click 'Backup User Profiles...' to start the migration wizard");
 }
 
-BackupPanel::~BackupPanel() = default;
+UserMigrationPanel::~UserMigrationPanel() = default;
 
-void BackupPanel::setupUi()
+void UserMigrationPanel::setupUi()
 {
     auto* rootLayout = new QVBoxLayout(this);
     rootLayout->setContentsMargins(0, 0, 0, 0);
@@ -112,9 +112,10 @@ void BackupPanel::setupUi()
 
     // Bottom row: Settings + Log toggle (outside scroll area, pinned to bottom)
     auto* bottomLayout = new QHBoxLayout();
+    bottomLayout->setContentsMargins(12, 6, 12, 8);
 
     auto* settingsBtn = new QPushButton(tr("Settings"), this);
-    connect(settingsBtn, &QPushButton::clicked, this, &BackupPanel::onSettingsClicked);
+    connect(settingsBtn, &QPushButton::clicked, this, &UserMigrationPanel::onSettingsClicked);
     bottomLayout->addWidget(settingsBtn);
 
     m_logToggle = new sak::LogToggleSwitch(tr("Log"), this);
@@ -123,15 +124,15 @@ void BackupPanel::setupUi()
     rootLayout->addLayout(bottomLayout);
 }
 
-void BackupPanel::setupConnections()
+void UserMigrationPanel::setupConnections()
 {
     connect(m_backupButton, &QPushButton::clicked,
-            this, &BackupPanel::onBackupSelected);
+            this, &UserMigrationPanel::onBackupSelected);
     connect(m_restoreButton, &QPushButton::clicked,
-            this, &BackupPanel::onRestoreBackup);
+            this, &UserMigrationPanel::onRestoreBackup);
 }
 
-void BackupPanel::onBackupSelected()
+void UserMigrationPanel::onBackupSelected()
 {
     // Launch the comprehensive user profile backup wizard
     auto* wizard = new sak::UserProfileBackupWizard(this);
@@ -156,7 +157,7 @@ void BackupPanel::onBackupSelected()
     wizard->activateWindow();
 }
 
-void BackupPanel::onRestoreBackup()
+void UserMigrationPanel::onRestoreBackup()
 {
     // Launch the comprehensive user profile restore wizard
     auto* wizard = new sak::UserProfileRestoreWizard(this);
@@ -182,12 +183,12 @@ void BackupPanel::onRestoreBackup()
     wizard->activateWindow();
 }
 
-void BackupPanel::appendLog(const QString& message)
+void UserMigrationPanel::appendLog(const QString& message)
 {
     Q_EMIT logOutput(message);
 }
 
-void BackupPanel::onSettingsClicked()
+void UserMigrationPanel::onSettingsClicked()
 {
     auto& config = sak::ConfigManager::instance();
 

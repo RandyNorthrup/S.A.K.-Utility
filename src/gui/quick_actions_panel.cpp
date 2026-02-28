@@ -25,6 +25,7 @@
 #include <QSettings>
 #include <QDateTime>
 #include <QDesktopServices>
+#include <QFileInfo>
 #include <QUrl>
 #include <QTimer>
 #include <QToolButton>
@@ -145,7 +146,9 @@ void QuickActionsPanel::setupUi() {
     m_open_folder_button->setEnabled(false);
     connect(m_open_folder_button, &QPushButton::clicked, this, [this]() {
         if (!m_last_output_path.isEmpty()) {
-            QDesktopServices::openUrl(QUrl::fromLocalFile(m_last_output_path));
+            const QFileInfo fi(m_last_output_path);
+            const QString folder = fi.isDir() ? m_last_output_path : fi.absolutePath();
+            QDesktopServices::openUrl(QUrl::fromLocalFile(folder));
         }
     });
     bottomLayout->addWidget(m_open_folder_button);
@@ -538,7 +541,9 @@ void QuickActionsPanel::onBackupLocationChanged() {
 
 void QuickActionsPanel::onOpenBackupFolder() {
     if (!m_last_output_path.isEmpty()) {
-        QDesktopServices::openUrl(QUrl::fromLocalFile(m_last_output_path));
+        const QFileInfo fi(m_last_output_path);
+        const QString folder = fi.isDir() ? m_last_output_path : fi.absolutePath();
+        QDesktopServices::openUrl(QUrl::fromLocalFile(folder));
     }
 }
 

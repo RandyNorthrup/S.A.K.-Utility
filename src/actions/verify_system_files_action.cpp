@@ -112,15 +112,20 @@ void VerifySystemFilesAction::runDISM() {
 }
 
 void VerifySystemFilesAction::scan() {
-    setStatus(ActionStatus::Ready);
+    setStatus(ActionStatus::Scanning);
     ScanResult result;
     result.applicable = true;
     result.summary = "Ready to verify system files";
     setScanResult(result);
+    setStatus(ActionStatus::Ready);
     Q_EMIT scanComplete(result);
 }
 
 void VerifySystemFilesAction::execute() {
+    if (isCancelled()) {
+        emitCancelledResult("System file verification cancelled");
+        return;
+    }
     setStatus(ActionStatus::Running);
     QDateTime start_time = QDateTime::currentDateTime();
     

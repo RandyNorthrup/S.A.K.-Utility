@@ -20,6 +20,8 @@
 #include <QFileInfo>
 #include <QGroupBox>
 #include <QRegularExpression>
+#include <QDesktopServices>
+#include <QUrl>
 
 ImageFlasherPanel::ImageFlasherPanel(QWidget* parent)
     : QWidget(parent)
@@ -166,6 +168,20 @@ void ImageFlasherPanel::createImageSelectionPage() {
     groupLayout->addWidget(m_downloadWindowsButton);
     connect(m_downloadWindowsButton, &QPushButton::clicked,
             this, &ImageFlasherPanel::onDownloadWindowsClicked);
+
+    auto* microsoftDownloadDescription = new QLabel(
+        "Tip: Downloading directly from Microsoft is often faster than building an ISO from UUP files.",
+        groupBox);
+    microsoftDownloadDescription->setWordWrap(true);
+    microsoftDownloadDescription->setStyleSheet("color: #64748b;");
+    groupLayout->addWidget(microsoftDownloadDescription);
+
+    m_microsoftWindowsDownloadButton = new QPushButton("Open Microsoft Windows 11 ISO Download", groupBox);
+    m_microsoftWindowsDownloadButton->setMinimumHeight(48);
+    m_microsoftWindowsDownloadButton->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+    groupLayout->addWidget(m_microsoftWindowsDownloadButton);
+    connect(m_microsoftWindowsDownloadButton, &QPushButton::clicked,
+            this, &ImageFlasherPanel::onOpenMicrosoftWindowsDownloadClicked);
     
     groupLayout->addSpacing(6);
     
@@ -333,6 +349,16 @@ void ImageFlasherPanel::onDownloadWindowsClicked() {
     
     dialog->exec();
     dialog->deleteLater();
+}
+
+void ImageFlasherPanel::onOpenMicrosoftWindowsDownloadClicked()
+{
+    const QUrl microsoftWindowsIsoUrl("https://www.microsoft.com/software-download/windows11");
+    if (!QDesktopServices::openUrl(microsoftWindowsIsoUrl)) {
+        QMessageBox::warning(this,
+                             "Unable to Open Browser",
+                             "Could not open the Microsoft download page in your default browser.");
+    }
 }
 
 void ImageFlasherPanel::onDownloadLinuxClicked() {

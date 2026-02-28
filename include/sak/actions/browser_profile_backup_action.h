@@ -4,11 +4,7 @@
 #pragma once
 
 #include "sak/quick_action.h"
-#include "sak/user_data_manager.h"
-#include "sak/user_profile_types.h"
 #include <QString>
-#include <QVector>
-#include <memory>
 
 namespace sak {
 
@@ -35,10 +31,6 @@ public:
 
 private:
     QString m_backup_location;
-    std::unique_ptr<UserDataManager> m_data_manager;
-    QVector<UserProfile> m_user_profiles;  // All scanned users
-    qint64 m_total_size{0};
-    int m_profile_count{0};
 };
 
 } // namespace sak

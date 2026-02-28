@@ -156,20 +156,22 @@ void TaxSoftwareBackupAction::scanHRBlock() {
         QDir dir(hrblock_path);
         
         if (dir.exists()) {
-            QDirIterator it(hrblock_path, QDir::Files, QDirIterator::Subdirectories);
+            const QStringList hr_filters = {
+                "*.tax", "*.t17", "*.t18", "*.t19", "*.t20",
+                "*.t21", "*.t22", "*.t23", "*.t24", "*.t25"
+            };
+            QDirIterator it(hrblock_path, hr_filters, QDir::Files, QDirIterator::Subdirectories);
             
             while (it.hasNext()) {
                 it.next();
-                if (it.fileName().endsWith(".tax") || it.fileName().endsWith(".t20")) {
-                    TaxDataLocation loc;
-                    loc.software_name = "H&R Block";
-                    loc.path = it.filePath();
-                    loc.size = it.fileInfo().size();
-                    loc.file_count = 1;
-                    
-                    m_tax_data.append(loc);
-                    m_total_size += loc.size;
-                }
+                TaxDataLocation loc;
+                loc.software_name = "H&R Block";
+                loc.path = it.filePath();
+                loc.size = it.fileInfo().size();
+                loc.file_count = 1;
+                
+                m_tax_data.append(loc);
+                m_total_size += loc.size;
             }
         }
     }
@@ -233,6 +235,10 @@ void TaxSoftwareBackupAction::scan() {
 }
 
 void TaxSoftwareBackupAction::execute() {
+    if (isCancelled()) {
+        emitCancelledResult("Tax data backup cancelled");
+        return;
+    }
     setStatus(ActionStatus::Running);
     QDateTime start_time = QDateTime::currentDateTime();
     

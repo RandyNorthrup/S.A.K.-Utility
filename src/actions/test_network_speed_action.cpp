@@ -302,6 +302,7 @@ void TestNetworkSpeedAction::scan() {
 
 void TestNetworkSpeedAction::execute() {
     if (isCancelled()) {
+        emitCancelledResult("Network speed test cancelled");
         return;
     }
 

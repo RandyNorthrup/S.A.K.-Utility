@@ -1,9 +1,9 @@
-// Copyright (c) 2025 Randy Northrup. All rights reserved.
+﻿// Copyright (c) 2025 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "sak/main_window.h"
 #include "sak/version.h"
-#include "sak/backup_panel.h"
+#include "sak/user_migration_panel.h"
 #include "sak/organizer_panel.h"
 #include "sak/duplicate_finder_panel.h"
 #include "sak/app_migration_panel.h"
@@ -11,6 +11,7 @@
 #include "sak/quick_actions_panel.h"
 #include "sak/network_transfer_panel.h"
 #include "sak/diagnostic_benchmark_panel.h"
+#include "sak/wifi_manager_panel.h"
 #include "sak/detachable_log_window.h"
 #include "sak/config_manager.h"
 #include "sak/about_dialog.h"
@@ -75,7 +76,7 @@ void MainWindow::setupUi()
 
 void MainWindow::createMenuBar()
 {
-    // Menu bar removed — all items moved to panels/tabs
+    // Menu bar removed â€” all items moved to panels/tabs
     menuBar()->hide();
 }
 
@@ -104,8 +105,8 @@ void MainWindow::createPanels()
     m_tab_widget->addTab(m_quick_actions_panel.get(), "Quick Actions");
     
     // Create User Migration panel
-    m_backup_panel = std::make_unique<BackupPanel>(this);
-    m_tab_widget->addTab(m_backup_panel.get(), "User Migration");
+    m_user_migration_panel = std::make_unique<UserMigrationPanel>(this);
+    m_tab_widget->addTab(m_user_migration_panel.get(), "User Migration");
     
     // Create Organizer panel
     m_organizer_panel = std::make_unique<OrganizerPanel>(this);
@@ -133,6 +134,12 @@ void MainWindow::createPanels()
     m_diagnostic_panel = std::make_unique<sak::DiagnosticBenchmarkPanel>(this);
     m_tab_widget->addTab(m_diagnostic_panel.get(), "Diagnostics");
 
+    // Create WiFi Manager panel
+    m_wifi_manager_panel = std::make_unique<sak::WifiManagerPanel>(this);
+    m_tab_widget->addTab(m_wifi_manager_panel.get(), "WiFi Manager");
+    connect(m_wifi_manager_panel.get(), &sak::WifiManagerPanel::statusMessage,
+            this, &MainWindow::updateStatus);
+
 
 
     // Create About panel (embedded version of AboutDialog content)
@@ -142,7 +149,7 @@ void MainWindow::createPanels()
         aboutLayout->setSpacing(12);
         aboutLayout->setContentsMargins(16, 16, 16, 16);
 
-        // Header — use splash screen image as icon
+        // Header â€” use splash screen image as icon
         auto* headerLayout = new QHBoxLayout();
         auto* iconLabel = new QLabel(aboutPanel);
         iconLabel->setFixedSize(64, 64);
@@ -184,10 +191,10 @@ void MainWindow::createPanels()
         headerLayout->addStretch();
         aboutLayout->addLayout(headerLayout);
 
-        // Tabs inside about panel — all use QTextBrowser for uniform look
+        // Tabs inside about panel â€” all use QTextBrowser for uniform look
         auto* aboutTabs = new QTabWidget(aboutPanel);
 
-        // About tab (QTextBrowser with HTML — matches License tab style)
+        // About tab (QTextBrowser with HTML â€” matches License tab style)
         auto* descBrowser = new QTextBrowser(aboutPanel);
         descBrowser->setOpenExternalLinks(true);
         descBrowser->setHtml(
@@ -226,7 +233,7 @@ void MainWindow::createPanels()
     connect(m_quick_actions_panel.get(), &sak::QuickActionsPanel::progressUpdate,
             this, &MainWindow::updateProgress);
     
-    connect(m_backup_panel.get(), &BackupPanel::statusMessage,
+    connect(m_user_migration_panel.get(), &UserMigrationPanel::statusMessage,
             this, [this](const QString& msg) { updateStatus(msg, 5000); });
     
     connect(m_organizer_panel.get(), &OrganizerPanel::statusMessage,
@@ -283,7 +290,7 @@ void MainWindow::createPanels()
     };
 
     connectLog(m_quick_actions_panel.get());
-    connectLog(m_backup_panel.get());
+    connectLog(m_user_migration_panel.get());
     connectLog(m_organizer_panel.get());
     connectLog(m_duplicate_finder_panel.get());
     connectLog(m_app_migration_panel.get());
@@ -348,7 +355,7 @@ void MainWindow::setProgressVisible(bool visible)
 
 void MainWindow::onAboutClicked()
 {
-    // About is now a panel — no-op
+    // About is now a panel â€” no-op
 }
 
 void MainWindow::onTabChanged(int index)

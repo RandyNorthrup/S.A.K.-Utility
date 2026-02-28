@@ -44,6 +44,7 @@ void ExportRegistryKeysAction::scan() {
 
 void ExportRegistryKeysAction::execute() {
     if (isCancelled()) {
+        emitCancelledResult("Registry export cancelled");
         return;
     }
 

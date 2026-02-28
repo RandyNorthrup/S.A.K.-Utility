@@ -17,7 +17,7 @@
  */
 
 #include <QtTest/QtTest>
-#include <QSignalSpy>
+#include <QtTest/QSignalSpy>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>

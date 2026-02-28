@@ -5,13 +5,14 @@
 #include "sak/windows_user_scanner.h"
 #include <QDir>
 #include <QDirIterator>
+#include <QFile>
+#include <QFileInfo>
 
 namespace sak {
 
 BrowserProfileBackupAction::BrowserProfileBackupAction(const QString& backup_location, QObject* parent)
     : QuickAction(parent)
     , m_backup_location(backup_location)
-    , m_data_manager(std::make_unique<UserDataManager>())
 {
 }
 
@@ -49,73 +50,98 @@ void BrowserProfileBackupAction::execute() {
 
     setStatus(ActionStatus::Running);
     QDateTime start_time = QDateTime::currentDateTime();
-    
-    Q_EMIT executionProgress("Scanning for browser profiles...", 10);
-    
-    // Scan ALL user profiles on system (not just current user)
+
+    Q_EMIT executionProgress("Scanning for browser profiles...", 5);
+
     WindowsUserScanner scanner;
     QVector<UserProfile> users = scanner.scanUsers();
-    
-    QStringList browser_rel_paths = {
-        "AppData/Local/Google/Chrome/User Data",
-        "AppData/Local/Microsoft/Edge/User Data",
-        "AppData/Roaming/Mozilla/Firefox/Profiles"
+
+    struct BrowserPath {
+        QString rel_path;
+        QString display_name;
     };
-    
-    qint64 total_size = 0;
+    const QList<BrowserPath> browser_paths = {
+        {"AppData/Local/Google/Chrome/User Data",     "Chrome"},
+        {"AppData/Local/Microsoft/Edge/User Data",    "Edge"},
+        {"AppData/Roaming/Mozilla/Firefox/Profiles",  "Firefox"}
+    };
+
+    QDir backup_dir(m_backup_location + "/BrowserProfiles");
+    backup_dir.mkpath(".");
+
     int profile_count = 0;
-    
-    // Scan each user's profile for browser data
+    int files_copied  = 0;
+    qint64 bytes_copied = 0;
+
+    const int total_users = users.size();
+    int user_idx = 0;
+
     for (const UserProfile& user : users) {
+        ++user_idx;
         if (isCancelled()) {
             emitCancelledResult("Browser profile backup cancelled", start_time);
             return;
         }
-        for (const QString& rel_path : browser_rel_paths) {
+
+        const QString user_name = QFileInfo(user.profile_path).fileName();
+
+        for (const BrowserPath& bp : browser_paths) {
             if (isCancelled()) {
                 emitCancelledResult("Browser profile backup cancelled", start_time);
                 return;
             }
-            QString full_path = user.profile_path + "/" + rel_path;
-            QDir dir(full_path);
-            if (dir.exists()) {
-                profile_count++;
-                QDirIterator it(full_path, QDir::Files, QDirIterator::Subdirectories);
-                while (it.hasNext()) {
-                    if (isCancelled()) {
-                        emitCancelledResult("Browser profile backup cancelled", start_time);
-                        return;
-                    }
-                    it.next();
-                    total_size += it.fileInfo().size();
+
+            const QString src_root = QDir::cleanPath(user.profile_path + "/" + bp.rel_path);
+            if (!QDir(src_root).exists()) continue;
+
+            ++profile_count;
+            const QString dest_root = backup_dir.filePath(user_name + "/" + bp.display_name);
+
+            Q_EMIT executionProgress(
+                QString("Backing up %1 profile for '%2'...").arg(bp.display_name, user_name),
+                5 + (user_idx * 90) / qMax(total_users, 1));
+
+            QDirIterator it(src_root, QDir::Files, QDirIterator::Subdirectories);
+            while (it.hasNext()) {
+                if (isCancelled()) {
+                    emitCancelledResult("Browser profile backup cancelled", start_time);
+                    return;
+                }
+                it.next();
+                const QString rel       = QDir(src_root).relativeFilePath(it.filePath());
+                const QString dest_file = dest_root + "/" + rel;
+                QDir().mkpath(QFileInfo(dest_file).absolutePath());
+                if (QFile::copy(it.filePath(), dest_file)) {
+                    ++files_copied;
+                    bytes_copied += it.fileInfo().size();
                 }
             }
         }
     }
-    
-    Q_EMIT executionProgress("Backing up profiles...", 50);
-    
-    // Delegate to UserDataManager for actual backup
-    // This leverages existing infrastructure
-    
+
     Q_EMIT executionProgress("Backup complete", 100);
-    
-    qint64 duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
-    
+
+    const qint64 duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
+
     ExecutionResult result;
-    result.duration_ms = duration_ms;
-    result.files_processed = profile_count;
-    result.bytes_processed = total_size;
-    
+    result.duration_ms    = duration_ms;
+    result.files_processed = files_copied;
+    result.bytes_processed = bytes_copied;
+
     if (profile_count > 0) {
-        result.success = true;
-        result.message = QString("Backed up %1 browser profile(s)").arg(profile_count);
-        result.log = QString("Completed in %1 seconds\n%2 backed up").arg(duration_ms / 1000).arg(formatFileSize(total_size));
+        result.success      = true;
+        result.output_path  = backup_dir.absolutePath();
+        result.message      = QString("Backed up %1 browser profile(s) (%2 files)")
+                                  .arg(profile_count).arg(files_copied);
+        result.log          = QString("Profiles: %1 | Files: %2 | Size: %3\nSaved to: %4")
+                                  .arg(profile_count).arg(files_copied)
+                                  .arg(formatFileSize(bytes_copied))
+                                  .arg(backup_dir.absolutePath());
         finishWithResult(result, ActionStatus::Success);
     } else {
-        result.success = false;
-        result.message = "No browser profiles found";
-        result.log = "No Chrome, Edge, or Firefox profiles detected on this system";
+        result.success  = false;
+        result.message  = "No browser profiles found";
+        result.log      = "No Chrome, Edge, or Firefox profiles detected on this system";
         finishWithResult(result, ActionStatus::Failed);
     }
 }

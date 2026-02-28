@@ -33,7 +33,7 @@ QString StickyNotesBackupAction::findStickyNotesDatabase() {
 }
 
 void StickyNotesBackupAction::scan() {
-    setStatus(ActionStatus::Ready);
+    setStatus(ActionStatus::Scanning);
 
     Q_EMIT scanProgress("Checking for Sticky Notes...");
     
@@ -104,6 +104,7 @@ void StickyNotesBackupAction::execute() {
         result.success = true;
         result.files_processed = 1;
         result.bytes_processed = file_size;
+        result.output_path = backup_dir.absolutePath();
         result.message = QString("Backed up Sticky Notes database (%1)").arg(formatFileSize(file_size));
         result.log = QString("Saved to: %1").arg(dest_path);
         finishWithResult(result, ActionStatus::Success);

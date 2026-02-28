@@ -9,7 +9,7 @@
 [![Qt 6.5.3](https://img.shields.io/badge/Qt-6.5.3-41cd52.svg)](https://www.qt.io/)
 [![Windows 10/11](https://img.shields.io/badge/Windows-10%20%7C%2011-0078d4.svg)](https://www.microsoft.com/windows)
 [![Build](https://github.com/RandyNorthrup/S.A.K.-Utility/actions/workflows/build-release.yml/badge.svg)](https://github.com/RandyNorthrup/S.A.K.-Utility/actions)
-[![Version](https://img.shields.io/badge/Version-0.6.2-orange.svg)](VERSION)
+[![Version](https://img.shields.io/badge/Version-0.6.3-orange.svg)](VERSION)
 
 Migration · Maintenance · Recovery · Imaging · Deployment — one portable EXE.
 
@@ -17,7 +17,14 @@ Migration · Maintenance · Recovery · Imaging · Deployment — one portable E
 
 ---
 
-## What's New in v0.6.2
+## What's New in v0.6.3
+
+- **Code cleanup** — Removed legacy `BackupWorker`, `BackupWizard`, and `RestoreWizard` classes that had been superseded by the user-profile wizard suite.
+- **Renamed panels for clarity** — `BackupPanel` → `UserMigrationPanel` (`user_migration_panel.h/.cpp`); `WifiQrPanel` → `WifiManagerPanel` (`wifi_manager_panel.h/.cpp`). All internal member names and CMake source lists updated.
+- **Dead code pruned** — Removed unused member variables and stale includes from `browser_profile_backup_action.h` left over from a previous refactor.
+- **Accurate tech-stack docs** — `THIRD_PARTY_LICENSES.md` now includes the bundled `qrcodegen` library (MIT, Project Nayuki) and corrects the Qt module list (Gui, Svg). `README.md` quick-action counts corrected (36 total), Backup Known Networks action added, WiFi Manager feature section added.
+
+### v0.6.2
 
 - **Fixed UUP-to-ISO conversion** — Root cause: `convert-UUP.cmd` re-launches itself through PowerShell to disable QuickEdit mode, which detaches from the tracked process and causes the app to report instant success with no ISO output. Fix passes `-qedit -elevated` flags to prevent both the QuickEdit re-launch and UAC self-elevation from orphaning the process. Also corrected ConvertConfig.ini option names, added admin-privilege check, closes stdin to prevent hanging, and sets `AutoExit=1`.
 - **License compliance** — Added complete license notices for all bundled tools (aria2, wimlib, 7-Zip, uup-converter-wimlib, ManagedDism, Microsoft ADK utilities) to THIRD_PARTY_LICENSES.md and README acknowledgments.
@@ -37,7 +44,7 @@ Migration · Maintenance · Recovery · Imaging · Deployment — one portable E
 | | |
 |---|---|
 | **100 % Portable** | No installer. Drop on a USB stick and go. |
-| **39 Quick Actions** | One-click system optimization, backups, maintenance, troubleshooting, and recovery. |
+| **36 Quick Actions** | One-click system optimization, backups, maintenance, troubleshooting, and recovery. |
 | **User Profile Backup & Restore** | 6-page wizards with smart filtering, AES-256 encryption, and NTFS permission handling. |
 | **Application Migration** | Scan installed apps, match to Chocolatey packages, bulk-install on a new PC. |
 | **Diagnostics & Benchmarking** | SMART disk health, CPU/disk/memory benchmarks, stress testing, thermal monitoring, HTML/JSON/CSV reports. |
@@ -61,6 +68,7 @@ Migration · Maintenance · Recovery · Imaging · Deployment — one portable E
   - [Image Flasher](#image-flasher)
   - [Directory Organizer](#directory-organizer)
   - [Duplicate Finder](#duplicate-finder)
+  - [WiFi Manager](#wifi-manager)
   - [Settings](#settings)
 - [Security](#security)
 - [Building from Source](#building-from-source)
@@ -102,7 +110,7 @@ Migration · Maintenance · Recovery · Imaging · Deployment — one portable E
 
 ### Quick Actions
 
-**39 one-click operations** organized into five categories with real-time progress and detailed logging.
+**36 one-click operations** organized into five categories with real-time progress and detailed logging.
 
 <details>
 <summary><strong>System Optimization (8)</strong></summary>
@@ -121,7 +129,7 @@ Migration · Maintenance · Recovery · Imaging · Deployment — one portable E
 </details>
 
 <details>
-<summary><strong>Quick Backups (8)</strong></summary>
+<summary><strong>Quick Backups (9)</strong></summary>
 
 | Action | Description |
 |---|---|
@@ -133,15 +141,15 @@ Migration · Maintenance · Recovery · Imaging · Deployment — one portable E
 | Tax Software Backup | TurboTax, H&R Block, TaxAct data |
 | Photo Management Backup | Lightroom catalogs, Photoshop preferences |
 | Dev Configs Backup | VS Code settings, Git config, SSH keys, env vars |
+| Backup Known Networks | Saved WiFi profiles exported via `netsh wlan export` |
 
 </details>
 
 <details>
-<summary><strong>Maintenance (8)</strong></summary>
+<summary><strong>Maintenance (7)</strong></summary>
 
 | Action | Description |
 |---|---|
-| Check Disk Health | SMART data via `Get-PhysicalDisk` (temp, wear, errors) |
 | Update All Apps | Runs WinGet + Chocolatey updates with reporting |
 | Windows Update | Triggers via UsoClient |
 | Verify System Files | `sfc /scannow` + `DISM /RestoreHealth` |
@@ -167,15 +175,12 @@ Migration · Maintenance · Recovery · Imaging · Deployment — one portable E
 </details>
 
 <details>
-<summary><strong>Emergency Recovery (9)</strong></summary>
+<summary><strong>Emergency Recovery (6)</strong></summary>
 
 | Action | Description |
 |---|---|
-| Backup Browser Data | Emergency backup of all browser profiles for all users |
-| Backup Email Data | Outlook .PST, Thunderbird profiles, Windows Mail |
 | Create Restore Point | System Restore checkpoint via WMI |
 | Export Registry Keys | Critical registry hives (HKLM\Software, HKCU, etc.) |
-| Backup Activation Keys | Windows and Office product keys from registry |
 | Screenshot Settings | Captures screenshots of Windows Settings panels |
 | Backup Desktop Wallpaper | Saves current wallpaper and theme files |
 | Backup Printer Settings | Printer drivers, queues, and port configurations |
@@ -213,10 +218,10 @@ Scan installed apps, match them to Chocolatey packages, and bulk-install on a ne
 
 1. **Scan** — Queries HKLM/HKCU Uninstall registry keys; extracts name, version, publisher.
 2. **Match** — `PackageMatcher` with 42 curated mappings (high/medium/low/manual confidence).
-3. **Backup** — Optional data backup via `BackupWizard` (browser profiles, IDE settings, etc.).
+3. **Backup** — Optional data backup via `UserProfileBackupWizard` (browser profiles, IDE settings, etc.).
 4. **Export** — JSON migration report portable to the target machine.
 5. **Install** — Embedded Chocolatey with retry logic (3 attempts, exponential backoff).
-6. **Restore** — `RestoreWizard` maps source paths to target paths and restores data.
+6. **Restore** — `UserProfileRestoreWizard` maps source paths to target paths and restores data.
 
 ---
 
@@ -318,6 +323,20 @@ MD5 hash-based duplicate detection with minimum-size filtering.
 
 ---
 
+### WiFi Manager
+
+Generate and manage WiFi network QR codes and network configuration scripts.
+
+- Enter one or more networks (SSID, password, security type, hidden flag)
+- **QR code generation** via bundled qrcodegen library — scannable WIFI: URI payload
+- **Bulk network table** — save/load multiple networks as JSON
+- **Export** — Windows netsh `.cmd` script (per network or bulk), macOS `.mobileconfig` plist
+- **Scan networks** — detect nearby SSIDs and pre-fill the form
+- **Connect with phone** — display full-screen QR for easy mobile scanning
+- Error correction: HIGH (30%) for reliable scanning even with partial occlusion
+
+---
+
 ### Settings
 
 Global application settings accessible from the **Edit → Settings** menu (`Ctrl+,`):
@@ -400,10 +419,11 @@ Requires Azure CLI and access to the Azure Trusted Signing account. CI builds (G
 
 | Library | License | Purpose |
 |---|---|---|
-| [Qt 6.5.3](https://www.qt.io/) | LGPL v3 | UI framework (Core, Widgets, Concurrent, Network) |
+| [Qt 6.5.3](https://www.qt.io/) | LGPL v3 | UI framework (Core, Gui, Widgets, Concurrent, Network, Svg) |
 | [zlib](https://www.zlib.net/) | zlib License | gzip compression |
 | [bzip2](https://sourceware.org/bzip2/) | BSD-style | bzip2 compression |
 | [liblzma](https://tukaani.org/xz/) | 0BSD / Public Domain | xz/LZMA compression |
+| [qrcodegen](https://www.nayuki.io/page/qr-code-generator-library) | MIT | QR code generation (bundled source) |
 | [smartmontools](https://www.smartmontools.org/) | GPLv2 | SMART disk health analysis (bundled `smartctl.exe`) |
 | [Chocolatey](https://chocolatey.org/) | Apache 2.0 | Embedded package manager |
 | Windows BCrypt | OS component | AES-256, PBKDF2, SHA-256 |
@@ -416,7 +436,7 @@ Full license texts: [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md)
 cmake --build build --config Release --target RUN_TESTS
 ```
 
-43 tests covering network transfer, orchestration, diagnostics, security, encryption, configuration, and ISO download. Includes unit and integration tests.
+44 tests covering network transfer, orchestration, diagnostics, security, encryption, configuration, and ISO download. Includes 42 unit tests and 2 integration tests.
 
 ---
 
@@ -476,6 +496,7 @@ Third-party dependency licenses are documented in [THIRD_PARTY_LICENSES.md](THIR
 ## Acknowledgments
 
 - [**Qt**](https://www.qt.io/) — Cross-platform UI framework (LGPL v3)
+- [**qrcodegen**](https://www.nayuki.io/page/qr-code-generator-library) — QR code generator by Project Nayuki (MIT)
 - [**aria2**](https://aria2.github.io/) — Multi-connection download manager (GPLv2)
 - [**wimlib**](https://wimlib.net/) — WIM image library by Eric Biggers (LGPL v3)
 - [**7-Zip**](https://www.7-zip.org/) — Archive tool by Igor Pavlov (LGPL v2.1)

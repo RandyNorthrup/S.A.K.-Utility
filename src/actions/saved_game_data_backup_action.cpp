@@ -170,6 +170,10 @@ void SavedGameDataBackupAction::scan() {
 }
 
 void SavedGameDataBackupAction::execute() {
+    if (isCancelled()) {
+        emitCancelledResult("Game save backup cancelled");
+        return;
+    }
     setStatus(ActionStatus::Running);
     QDateTime start_time = QDateTime::currentDateTime();
     

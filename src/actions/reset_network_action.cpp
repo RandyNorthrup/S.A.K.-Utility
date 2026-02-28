@@ -94,6 +94,10 @@ void ResetNetworkAction::scan() {
 }
 
 void ResetNetworkAction::execute() {
+    if (isCancelled()) {
+        emitCancelledResult("Network reset cancelled");
+        return;
+    }
     setStatus(ActionStatus::Running);
     QDateTime start_time = QDateTime::currentDateTime();
     

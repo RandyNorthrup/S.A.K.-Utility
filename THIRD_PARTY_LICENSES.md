@@ -10,7 +10,7 @@ below.
 
 **License:** LGPL v3 (GNU Lesser General Public License, version 3)
 **Website:** https://www.qt.io/
-**Modules used:** Core, Widgets, Concurrent, Network
+**Modules used:** Core, Gui, Widgets, Concurrent, Network, Svg (runtime plugin)
 
 The Qt Toolkit is Copyright (C) 2023 The Qt Company Ltd and other
 contributors.
@@ -21,6 +21,38 @@ LGPL v3 is available at https://www.gnu.org/licenses/lgpl-3.0.html.
 
 You may obtain the complete corresponding Qt source code from
 https://code.qt.io/ or https://download.qt.io/archive/qt/6.5/6.5.3/.
+
+---
+
+## qrcodegen
+
+**License:** MIT
+**Version:** (bundled — Project Nayuki)
+**Website:** https://www.nayuki.io/page/qr-code-generator-library
+**Source:** https://github.com/nayuki/QR-Code-generator
+**Used for:** QR code generation for the WiFi Manager panel
+**Bundled at:** `src/third_party/qrcodegen/qrcodegen.cpp`, `src/third_party/qrcodegen/qrcodegen.hpp`
+
+```
+Copyright (c) Project Nayuki. (MIT License)
+https://www.nayuki.io/page/qr-code-generator-library
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+this software and associated documentation files (the "Software"), to deal in
+the Software without restriction, including without limitation the rights to
+use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software is furnished to do so,
+subject to the following conditions:
+- The above copyright notice and this permission notice shall be included in
+  all copies or substantial portions of the Software.
+- The Software is provided "as is", without warranty of any kind, express or
+  implied, including but not limited to the warranties of merchantability,
+  fitness for a particular purpose and noninfringement. In no event shall the
+  authors or copyright holders be liable for any claim, damages or other
+  liability, whether in an action of contract, tort or otherwise, arising from,
+  out of or in connection with the Software or the use or other dealings in
+  the Software.
+```
 
 ---
 

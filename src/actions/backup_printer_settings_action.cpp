@@ -89,6 +89,7 @@ void BackupPrinterSettingsAction::execute() {
         result.success = true;
         result.files_processed = 1;
         result.bytes_processed = info.size();
+        result.output_path = m_backup_location;
         result.message = QString("Backed up %1 printer configuration(s)").arg(m_printers_found);
         result.log = QString("Registry exported to: %1\n"
                             "To restore: Double-click the .reg file or use 'reg import'")

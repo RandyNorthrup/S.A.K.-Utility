@@ -108,6 +108,7 @@ void DisableStartupProgramsAction::scan() {
 
 void DisableStartupProgramsAction::execute() {
     if (isCancelled()) {
+        emitCancelledResult("Disable startup programs cancelled");
         return;
     }
 

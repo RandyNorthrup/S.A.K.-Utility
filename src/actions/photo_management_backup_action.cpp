@@ -131,6 +131,10 @@ void PhotoManagementBackupAction::scan() {
 }
 
 void PhotoManagementBackupAction::execute() {
+    if (isCancelled()) {
+        emitCancelledResult("Photo software backup cancelled");
+        return;
+    }
     setStatus(ActionStatus::Running);
     QDateTime start_time = QDateTime::currentDateTime();
     

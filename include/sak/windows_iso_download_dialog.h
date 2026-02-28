@@ -101,7 +101,8 @@ private:
     // ---- Progress ----
     QLabel* m_statusLabel;
     QLabel* m_phaseLabel;
-    QProgressBar* m_progressBar;
+    QProgressBar* m_downloadProgressBar;
+    QProgressBar* m_convertProgressBar;
     QLabel* m_speedLabel;
     QLabel* m_detailLabel;
 
@@ -117,4 +118,5 @@ private:
     QString m_selectedUpdateId;
     QString m_downloadedFilePath;
     bool m_isDownloading = false;
+    UupIsoBuilder::Phase m_currentPhase = UupIsoBuilder::Phase::Idle;
 };

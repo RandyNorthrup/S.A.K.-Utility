@@ -68,6 +68,7 @@ void DisableVisualEffectsAction::scan() {
 
 void DisableVisualEffectsAction::execute() {
     if (isCancelled()) {
+        emitCancelledResult("Visual effects change cancelled");
         return;
     }
 

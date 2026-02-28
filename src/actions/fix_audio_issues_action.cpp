@@ -144,6 +144,7 @@ void FixAudioIssuesAction::scan() {
 
 void FixAudioIssuesAction::execute() {
     if (isCancelled()) {
+        emitCancelledResult("Audio fix cancelled");
         return;
     }
 

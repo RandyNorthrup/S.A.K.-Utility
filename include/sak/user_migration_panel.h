@@ -1,4 +1,4 @@
-// Copyright (c) 2025 Randy Northrup. All rights reserved.
+﻿// Copyright (c) 2025 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 #pragma once
@@ -33,7 +33,7 @@ class LogToggleSwitch;
  * 
  * Similar to Application Migration panel but for user data.
  */
-class BackupPanel : public QWidget {
+class UserMigrationPanel : public QWidget {
     Q_OBJECT
 
 public:
@@ -41,18 +41,18 @@ public:
      * @brief Constructor
      * @param parent Parent widget
      */
-    explicit BackupPanel(QWidget* parent = nullptr);
+    explicit UserMigrationPanel(QWidget* parent = nullptr);
 
     /**
      * @brief Destructor
      */
-    ~BackupPanel() override;
+    ~UserMigrationPanel() override;
 
     // Disable copy and move
-    BackupPanel(const BackupPanel&) = delete;
-    BackupPanel& operator=(const BackupPanel&) = delete;
-    BackupPanel(BackupPanel&&) = delete;
-    BackupPanel& operator=(BackupPanel&&) = delete;
+    UserMigrationPanel(const UserMigrationPanel&) = delete;
+    UserMigrationPanel& operator=(const UserMigrationPanel&) = delete;
+    UserMigrationPanel(UserMigrationPanel&&) = delete;
+    UserMigrationPanel& operator=(UserMigrationPanel&&) = delete;
 
     /** @brief Access the log toggle switch for MainWindow connection */
     sak::LogToggleSwitch* logToggle() const { return m_logToggle; }

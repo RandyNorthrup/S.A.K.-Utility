@@ -11,7 +11,7 @@ endif()
 
 # Project definition
 project(SAK_Utility 
-    VERSION 0.6.2
+    VERSION 0.6.3
     DESCRIPTION "Swiss Army Knife Utility - PC technician's toolkit for Windows migration and maintenance"
     LANGUAGES CXX
 )# C++23 Standard - Strict compliance required
@@ -363,12 +363,10 @@ set(CORE_SOURCES
 # Threading infrastructure
 set(THREADING_SOURCES
     src/threading/worker_base.cpp
-    src/threading/backup_worker.cpp
     src/threading/organizer_worker.cpp
     src/threading/duplicate_finder_worker.cpp
     src/threading/flash_worker.cpp
     include/sak/worker_base.h
-    include/sak/backup_worker.h
     include/sak/organizer_worker.h
     include/sak/duplicate_finder_worker.h
     include/sak/flash_worker.h
@@ -377,23 +375,19 @@ set(THREADING_SOURCES
 # GUI sources
 set(GUI_SOURCES
     src/gui/main_window.cpp
-    src/gui/backup_panel.cpp
+    src/gui/user_migration_panel.cpp
     src/gui/organizer_panel.cpp
     src/gui/duplicate_finder_panel.cpp
     src/gui/about_dialog.cpp
     src/gui/log_viewer.cpp
     include/sak/main_window.h
-    include/sak/backup_panel.h
+    include/sak/user_migration_panel.h
     include/sak/organizer_panel.h
     include/sak/duplicate_finder_panel.h
     include/sak/about_dialog.h
     include/sak/log_viewer.h
     include/gui/settings_dialog.h
     src/gui/settings_dialog.cpp
-    src/gui/backup_wizard.cpp
-    src/gui/restore_wizard.cpp
-    include/sak/backup_wizard.h
-    include/sak/restore_wizard.h
     src/gui/app_migration_panel.cpp
     src/gui/app_migration_panel_actions.cpp
     src/gui/app_migration_panel_table.cpp
@@ -439,6 +433,10 @@ set(GUI_SOURCES
     include/sak/diagnostic_benchmark_panel.h
     src/gui/info_button.cpp
     include/sak/info_button.h
+    # WiFi Manager panel + bundled QR library
+    src/gui/wifi_manager_panel.cpp
+    include/sak/wifi_manager_panel.h
+    src/third_party/qrcodegen/qrcodegen.cpp
 )
 
 # Quick Actions
@@ -485,16 +483,14 @@ set(QUICK_ACTIONS_SOURCES
     src/actions/repair_windows_store_action.cpp
     src/actions/fix_audio_issues_action.cpp
     
-    # Emergency Recovery (8 actions)
-    src/actions/backup_browser_data_action.cpp
-    src/actions/backup_email_data_action.cpp
+    # Emergency Recovery (6 actions)
     src/actions/create_restore_point_action.cpp
     src/actions/export_registry_keys_action.cpp
-    src/actions/backup_activation_keys_action.cpp
     src/actions/screenshot_settings_action.cpp
     src/actions/backup_desktop_wallpaper_action.cpp
     src/actions/backup_printer_settings_action.cpp
     src/actions/backup_bitlocker_keys_action.cpp
+    src/actions/backup_known_networks_action.cpp
     
     # Headers for all actions
     include/sak/actions/disk_cleanup_action.h
@@ -527,15 +523,13 @@ set(QUICK_ACTIONS_SOURCES
     include/sak/actions/scan_malware_action.h
     include/sak/actions/repair_windows_store_action.h
     include/sak/actions/fix_audio_issues_action.h
-    include/sak/actions/backup_browser_data_action.h
-    include/sak/actions/backup_email_data_action.h
     include/sak/actions/create_restore_point_action.h
     include/sak/actions/export_registry_keys_action.h
-    include/sak/actions/backup_activation_keys_action.h
     include/sak/actions/screenshot_settings_action.h
     include/sak/actions/backup_desktop_wallpaper_action.h
     include/sak/actions/backup_printer_settings_action.h
     include/sak/actions/backup_bitlocker_keys_action.h
+    include/sak/actions/backup_known_networks_action.h
 )
 
 # Main entry point
@@ -555,6 +549,9 @@ if(WIN32)
     )
     set(RESOURCE_FILES "${CMAKE_CURRENT_BINARY_DIR}/sak_utility.rc")
 endif()
+
+# Qt icon resources (processed by AUTORCC)
+list(APPEND RESOURCE_FILES "${CMAKE_CURRENT_SOURCE_DIR}/resources/icons.qrc")
 
 # Combine all sources
 set(ALL_SOURCES
@@ -604,6 +601,7 @@ endif()
 target_include_directories(sak_utility PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_BINARY_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/third_party/qrcodegen
 )
 
 # Check for bundled smartmontools (required for SMART diagnostics)

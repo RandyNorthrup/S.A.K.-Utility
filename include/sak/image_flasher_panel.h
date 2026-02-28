@@ -84,6 +84,7 @@ private Q_SLOTS:
     // Step 1: Image Selection
     void onSelectImageClicked();
     void onDownloadWindowsClicked();
+    void onOpenMicrosoftWindowsDownloadClicked();
     void onDownloadLinuxClicked();
     void onImageSelected(const QString& imagePath);
     void onWindowsISODownloaded(const QString& isoPath);
@@ -124,6 +125,7 @@ private:
     QWidget* m_imageSelectionPage;
     QPushButton* m_selectImageButton;
     QPushButton* m_downloadWindowsButton;
+    QPushButton* m_microsoftWindowsDownloadButton;
     QPushButton* m_downloadLinuxButton;
     QLabel* m_imagePathLabel;
     QLabel* m_imageSizeLabel;

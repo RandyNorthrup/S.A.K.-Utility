@@ -139,6 +139,7 @@ void OptimizePowerSettingsAction::scan() {
 
 void OptimizePowerSettingsAction::execute() {
     if (isCancelled()) {
+        emitCancelledResult("Power settings optimization cancelled");
         return;
     }
 

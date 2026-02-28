@@ -159,6 +159,7 @@ void CheckBloatwareAction::scan() {
 
 void CheckBloatwareAction::execute() {
     if (isCancelled()) {
+        emitCancelledResult("Bloatware check cancelled");
         return;
     }
 

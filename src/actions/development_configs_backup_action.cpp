@@ -186,6 +186,10 @@ void DevelopmentConfigsBackupAction::scan() {
 }
 
 void DevelopmentConfigsBackupAction::execute() {
+    if (isCancelled()) {
+        emitCancelledResult("Development configs backup cancelled");
+        return;
+    }
     setStatus(ActionStatus::Running);
     QDateTime start_time = QDateTime::currentDateTime();
     
@@ -201,13 +205,11 @@ void DevelopmentConfigsBackupAction::execute() {
             return;
         }
 
-        QString safe_dir = sanitizePathForBackup(cfg.path);
-        QString dest = backup_dir.filePath(cfg.name + "/" + safe_dir);
-        QDir().mkpath(QFileInfo(dest).absolutePath());
-        
+        const QString dest = backup_dir.filePath(cfg.name);
         QFileInfo src_info(cfg.path);
         
         if (src_info.isFile()) {
+            QDir().mkpath(QFileInfo(dest).absolutePath());
             if (QFile::copy(cfg.path, dest)) {
                 processed++;
                 bytes_copied += cfg.size;
@@ -216,9 +218,8 @@ void DevelopmentConfigsBackupAction::execute() {
             QDirIterator it(cfg.path, QDir::Files, QDirIterator::Subdirectories);
             while (it.hasNext()) {
                 it.next();
-                QString rel = QDir(cfg.path).relativeFilePath(it.filePath());
-                QString dest_file = dest + "/" + rel;
-                
+                const QString rel = QDir(cfg.path).relativeFilePath(it.filePath());
+                const QString dest_file = dest + "/" + rel;
                 QDir().mkpath(QFileInfo(dest_file).absolutePath());
                 if (QFile::copy(it.filePath(), dest_file)) {
                     bytes_copied += it.fileInfo().size();

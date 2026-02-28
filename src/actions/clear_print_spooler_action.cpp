@@ -74,7 +74,10 @@ void ClearPrintSpoolerAction::scan() {
 }
 
 void ClearPrintSpoolerAction::execute() {
-    if (isCancelled()) return;
+    if (isCancelled()) {
+        emitCancelledResult("Print spooler clear cancelled");
+        return;
+    }
     setStatus(ActionStatus::Running);
     QDateTime start_time = QDateTime::currentDateTime();
 

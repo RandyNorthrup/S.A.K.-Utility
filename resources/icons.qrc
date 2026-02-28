@@ -1,0 +1,7 @@
+<!DOCTYPE RCC>
+<RCC version="1.0">
+    <qresource prefix="/icons">
+        <file>icons/eye_open.svg</file>
+        <file>icons/eye_closed.svg</file>
+    </qresource>
+</RCC>

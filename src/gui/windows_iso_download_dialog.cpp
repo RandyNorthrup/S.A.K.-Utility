@@ -13,6 +13,7 @@
 #include <QMessageBox>
 #include <QDir>
 #include <QDateTime>
+#include <algorithm>
 
 // ============================================================================
 // Construction
@@ -121,11 +122,23 @@ void WindowsISODownloadDialog::setupUI()
     m_phaseLabel->setStyleSheet("font-weight: bold;");
     progressLayout->addWidget(m_phaseLabel);
 
-    m_progressBar = new QProgressBar(progressGroup);
-    m_progressBar->setMinimum(0);
-    m_progressBar->setMaximum(100);
-    m_progressBar->setValue(0);
-    progressLayout->addWidget(m_progressBar);
+    auto* downloadProgressLabel = new QLabel("Download Phase", progressGroup);
+    progressLayout->addWidget(downloadProgressLabel);
+
+    m_downloadProgressBar = new QProgressBar(progressGroup);
+    m_downloadProgressBar->setMinimum(0);
+    m_downloadProgressBar->setMaximum(100);
+    m_downloadProgressBar->setValue(0);
+    progressLayout->addWidget(m_downloadProgressBar);
+
+    auto* convertProgressLabel = new QLabel("Convert && Build Phase", progressGroup);
+    progressLayout->addWidget(convertProgressLabel);
+
+    m_convertProgressBar = new QProgressBar(progressGroup);
+    m_convertProgressBar->setMinimum(0);
+    m_convertProgressBar->setMaximum(100);
+    m_convertProgressBar->setValue(0);
+    progressLayout->addWidget(m_convertProgressBar);
 
     auto* detailRow = new QHBoxLayout();
     m_detailLabel = new QLabel("", progressGroup);
@@ -379,10 +392,12 @@ void WindowsISODownloadDialog::onStartDownload()
     }
 
     m_isDownloading = true;
+    m_currentPhase = UupIsoBuilder::Phase::Idle;
     setInputsEnabled(false);
     m_startButton->setEnabled(false);
     m_cancelButton->setEnabled(true);
-    m_progressBar->setValue(0);
+    m_downloadProgressBar->setValue(0);
+    m_convertProgressBar->setValue(0);
 
     m_downloader->startDownload(m_selectedUpdateId, langCode, edition, savePath);
 }
@@ -394,6 +409,7 @@ void WindowsISODownloadDialog::onStartDownload()
 void WindowsISODownloadDialog::onPhaseChanged(UupIsoBuilder::Phase phase,
                                               const QString& description)
 {
+    m_currentPhase = phase;
     m_phaseLabel->setText(description);
 
     switch (phase) {
@@ -420,7 +436,40 @@ void WindowsISODownloadDialog::onPhaseChanged(UupIsoBuilder::Phase phase,
 void WindowsISODownloadDialog::onProgressUpdated(int overallPercent,
                                                  const QString& detail)
 {
-    m_progressBar->setValue(overallPercent);
+    constexpr int kPrepareWeight = 5;
+    constexpr int kDownloadWeight = 60;
+    constexpr int kConvertWeight = 35;
+
+    int downloadPercent = 0;
+    int convertPercent = 0;
+
+    if (overallPercent > kPrepareWeight) {
+        downloadPercent = static_cast<int>(
+            ((overallPercent - kPrepareWeight) * 100.0) / kDownloadWeight);
+    }
+    downloadPercent = std::clamp(downloadPercent, 0, 100);
+
+    if (overallPercent > (kPrepareWeight + kDownloadWeight)) {
+        convertPercent = static_cast<int>(
+            ((overallPercent - (kPrepareWeight + kDownloadWeight)) * 100.0) /
+            kConvertWeight);
+    }
+    convertPercent = std::clamp(convertPercent, 0, 100);
+
+    if (m_currentPhase == UupIsoBuilder::Phase::PreparingDownload) {
+        downloadPercent = 0;
+        convertPercent = 0;
+    } else if (m_currentPhase == UupIsoBuilder::Phase::DownloadingFiles) {
+        convertPercent = 0;
+    } else if (m_currentPhase == UupIsoBuilder::Phase::ConvertingToISO) {
+        downloadPercent = 100;
+    } else if (m_currentPhase == UupIsoBuilder::Phase::Completed) {
+        downloadPercent = 100;
+        convertPercent = 100;
+    }
+
+    m_downloadProgressBar->setValue(downloadPercent);
+    m_convertProgressBar->setValue(convertPercent);
     m_detailLabel->setText(detail);
 }
 
@@ -438,7 +487,8 @@ void WindowsISODownloadDialog::onDownloadComplete(const QString& isoPath,
     m_downloadedFilePath = isoPath;
     m_isDownloading = false;
 
-    m_progressBar->setValue(100);
+    m_downloadProgressBar->setValue(100);
+    m_convertProgressBar->setValue(100);
     double sizeGB = fileSize / (1024.0 * 1024.0 * 1024.0);
     m_statusLabel->setText(
         QString("ISO created successfully! (%1 GB)").arg(sizeGB, 0, 'f', 2));
@@ -467,10 +517,16 @@ void WindowsISODownloadDialog::onDownloadError(const QString& error)
     setInputsEnabled(true);
     updateStartButton();
 
+    QString guidance = "Please check the detailed converter output and try again.";
+    const QString lower = error.toLower();
+    if (lower.contains("download") || lower.contains("network") ||
+        lower.contains("aria2") || lower.contains("internet")) {
+        guidance = "Please check your internet connection and try again.";
+    }
+
     QMessageBox::critical(this, "Build Error",
-        QString("Failed to create Windows ISO:\n\n%1\n\n"
-                "Please check your internet connection and try again.")
-            .arg(error));
+        QString("Failed to create Windows ISO:\n\n%1\n\n%2")
+            .arg(error, guidance));
 }
 
 void WindowsISODownloadDialog::onStatusMessage(const QString& message)
@@ -497,6 +553,8 @@ void WindowsISODownloadDialog::onCancelDownload()
         m_phaseLabel->clear();
         m_speedLabel->clear();
         m_detailLabel->clear();
+        m_downloadProgressBar->setValue(0);
+        m_convertProgressBar->setValue(0);
         m_cancelButton->setEnabled(false);
         setInputsEnabled(true);
         updateStartButton();

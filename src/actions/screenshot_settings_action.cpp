@@ -55,7 +55,10 @@ void ScreenshotSettingsAction::scan() {
 }
 
 void ScreenshotSettingsAction::execute() {
-    if (isCancelled()) return;
+    if (isCancelled()) {
+        emitCancelledResult("Screenshot capture cancelled");
+        return;
+    }
     setStatus(ActionStatus::Running);
     QDateTime start_time = QDateTime::currentDateTime();
 

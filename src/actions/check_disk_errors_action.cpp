@@ -39,6 +39,7 @@ void CheckDiskErrorsAction::scan() {
 
 void CheckDiskErrorsAction::execute() {
     if (isCancelled()) {
+        emitCancelledResult("Disk error check cancelled");
         return;
     }
 
@@ -223,7 +224,7 @@ void CheckDiskErrorsAction::execute() {
         result.log = "No drives scanned or PowerShell Storage module unavailable (requires admin privileges)";
     }
     
-    finishWithResult(result, (drives_scanned > 0 && errors_found == 0) ? ActionStatus::Success : ActionStatus::Failed);
+    finishWithResult(result, drives_scanned > 0 ? ActionStatus::Success : ActionStatus::Failed);
 }
 
 } // namespace sak

@@ -161,6 +161,7 @@ private:
     QString findAria2Path() const;
     QString findConverterDir() const;
     QString find7zPath() const;
+    QString findUupMediaConverterPath() const;
 
     // aria2c input file generation
     bool generateAria2InputFile(const QString& outputPath);
@@ -195,6 +196,7 @@ private:
     std::unique_ptr<QProcess> m_aria2Process;
     std::unique_ptr<QProcess> m_converterProcess;
     QThread* m_workerThread = nullptr;
+    bool m_usingUupMediaConverter = false;
 
     // Progress tracking
     QElapsedTimer m_phaseTimer;
@@ -203,6 +205,7 @@ private:
     int m_conversionPercent = 0;
     double m_currentSpeedMBps = 0.0;
     qint64 m_downloadedBytes = 0;
+    QString m_converterOutputTail;
 
     // Phase weight in overall progress (must sum to 100)
     static constexpr int PHASE_PREPARE_WEIGHT = 5;

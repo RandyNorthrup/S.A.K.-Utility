@@ -22,6 +22,7 @@
 #include "sak/actions/tax_software_backup_action.h"
 #include "sak/actions/photo_management_backup_action.h"
 #include "sak/actions/development_configs_backup_action.h"
+#include "sak/actions/backup_known_networks_action.h"
 
 // Maintenance Actions
 #include "sak/actions/update_all_apps_action.h"
@@ -41,11 +42,8 @@
 #include "sak/actions/fix_audio_issues_action.h"
 
 // Emergency Recovery Actions
-#include "sak/actions/backup_browser_data_action.h"
-#include "sak/actions/backup_email_data_action.h"
 #include "sak/actions/create_restore_point_action.h"
 #include "sak/actions/export_registry_keys_action.h"
-#include "sak/actions/backup_activation_keys_action.h"
 #include "sak/actions/screenshot_settings_action.h"
 #include "sak/actions/backup_desktop_wallpaper_action.h"
 #include "sak/actions/backup_printer_settings_action.h"
@@ -69,7 +67,7 @@ std::vector<std::unique_ptr<QuickAction>> ActionFactory::createAllActions(const 
     actions.push_back(std::make_unique<OptimizePowerSettingsAction>());
     actions.push_back(std::make_unique<DisableVisualEffectsAction>());
     
-    // Quick Backups (8 actions)
+    // Quick Backups (9 actions)
     actions.push_back(std::make_unique<QuickBooksBackupAction>(backup_location));
     actions.push_back(std::make_unique<BrowserProfileBackupAction>(backup_location));
     actions.push_back(std::make_unique<OutlookBackupAction>(backup_location));
@@ -78,6 +76,7 @@ std::vector<std::unique_ptr<QuickAction>> ActionFactory::createAllActions(const 
     actions.push_back(std::make_unique<TaxSoftwareBackupAction>(backup_location));
     actions.push_back(std::make_unique<PhotoManagementBackupAction>(backup_location));
     actions.push_back(std::make_unique<DevelopmentConfigsBackupAction>(backup_location));
+    actions.push_back(std::make_unique<BackupKnownNetworksAction>(backup_location));
     
     // Maintenance (7 actions — disk health/SMART is on the Diagnostics panel)
     actions.push_back(std::make_unique<UpdateAllAppsAction>());
@@ -96,12 +95,9 @@ std::vector<std::unique_ptr<QuickAction>> ActionFactory::createAllActions(const 
     actions.push_back(std::make_unique<RepairWindowsStoreAction>());
     actions.push_back(std::make_unique<FixAudioIssuesAction>());
     
-    // Emergency Recovery (9 actions)
-    actions.push_back(std::make_unique<BackupBrowserDataAction>(backup_location));
-    actions.push_back(std::make_unique<BackupEmailDataAction>(backup_location));
+    // Emergency Recovery (6 actions)
     actions.push_back(std::make_unique<CreateRestorePointAction>());
     actions.push_back(std::make_unique<ExportRegistryKeysAction>(backup_location));
-    actions.push_back(std::make_unique<BackupActivationKeysAction>(backup_location));
     actions.push_back(std::make_unique<ScreenshotSettingsAction>(backup_location));
     actions.push_back(std::make_unique<BackupDesktopWallpaperAction>(backup_location));
     actions.push_back(std::make_unique<BackupPrinterSettingsAction>(backup_location));

@@ -125,6 +125,10 @@ void WindowsUpdateAction::scan() {
 }
 
 void WindowsUpdateAction::execute() {
+    if (isCancelled()) {
+        emitCancelledResult("Windows Update check cancelled");
+        return;
+    }
     setStatus(ActionStatus::Running);
     QDateTime start_time = QDateTime::currentDateTime();
     

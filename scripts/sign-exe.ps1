@@ -27,7 +27,6 @@ $AccountName      = "scnetsolutions"
 $ProfileName      = "SAKUtility"
 $Endpoint         = "https://wus.codesigning.azure.net/"
 $TimestampUrl     = "http://timestamp.acs.microsoft.com"
-$ResourceGroup    = "SAK"
 $SubscriptionId   = "781cdf6a-5b53-4e2b-9317-1b04c712466d"
 
 # ── Resolve exe path ────────────────────────────────────────────
@@ -48,7 +47,7 @@ if (-not $azCmd) {
 }
 
 # Verify login
-$account = az account show 2>&1
+$null = az account show 2>&1
 if ($LASTEXITCODE -ne 0) {
     Write-Host "Not logged in to Azure. Running 'az login'..."
     az login
