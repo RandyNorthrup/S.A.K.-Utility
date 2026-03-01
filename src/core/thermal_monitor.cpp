@@ -5,6 +5,7 @@
 /// @brief Real-time thermal sensor monitoring implementation
 
 #include "sak/thermal_monitor.h"
+#include "sak/layout_constants.h"
 #include "sak/logger.h"
 
 #include <QDateTime>
@@ -144,7 +145,7 @@ double ThermalMonitor::queryCpuTemperature()
         "| Select-Object -First 1 -ExpandProperty CurrentTemperature"
     });
 
-    if (!ps.waitForFinished(5000)) {
+    if (!ps.waitForFinished(sak::kTimeoutProcessShortMs)) {
         ps.kill();
         return -1.0;
     }
@@ -174,7 +175,7 @@ double ThermalMonitor::queryGpuTemperature()
         "--format=csv,noheader,nounits"
     });
 
-    if (nv.waitForFinished(3000) && nv.exitCode() == 0) {
+    if (nv.waitForFinished(sak::kTimeoutThermalQueryMs) && nv.exitCode() == 0) {
         const QString output = QString::fromUtf8(nv.readAllStandardOutput()).trimmed();
         bool ok = false;
         const double temp = output.split('\n').first().trimmed().toDouble(&ok);

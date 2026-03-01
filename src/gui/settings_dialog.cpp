@@ -4,6 +4,7 @@
 #include "sak/settings_dialog.h"
 #include "sak/config_manager.h"
 #include "sak/info_button.h"
+#include "sak/layout_constants.h"
 
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -32,8 +33,8 @@ SettingsDialog::SettingsDialog(QWidget* parent)
 
 void SettingsDialog::setupUi() {
     setWindowTitle(tr("Settings"));
-    setMinimumSize(520, 420);
-    resize(640, 540);
+    setMinimumSize(sak::kDialogWidthLarge, sak::kDialogHeightMedium);
+    resize(sak::kDialogWidthXLarge, sak::kDialogHeightLarge);
     setSizeGripEnabled(true);
 
     auto* mainLayout = new QVBoxLayout(this);

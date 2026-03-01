@@ -5,6 +5,7 @@
 #include "sak/windows_user_scanner.h"
 #include "sak/chocolatey_manager.h"
 #include "sak/style_constants.h"
+#include "sak/layout_constants.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QGridLayout>
@@ -483,7 +484,7 @@ void UserProfileRestoreFolderSelectionPage::loadFolderTable() {
                 m_folderTable->setItem(row, 2, folderItem);
                 
                 // Size
-                double sizeMB = folder.size_bytes / (1024.0 * 1024.0);
+                double sizeMB = folder.size_bytes / sak::kBytesPerMBf;
                 auto* sizeItem = new QTableWidgetItem(QString("%1 MB").arg(sizeMB, 0, 'f', 1));
                 sizeItem->setFlags(sizeItem->flags() & ~Qt::ItemIsEditable);
                 m_folderTable->setItem(row, 3, sizeItem);
@@ -529,13 +530,13 @@ void UserProfileRestoreFolderSelectionPage::updateSummary() {
             
             QString sizeText = m_folderTable->item(row, 3)->text();
             sizeText.remove(" MB");
-            totalSize += static_cast<qint64>(sizeText.toDouble() * 1024 * 1024);
+            totalSize += static_cast<qint64>(sizeText.toDouble() * sak::kBytesPerMB);
             
             totalFiles += m_folderTable->item(row, 4)->text().toInt();
         }
     }
     
-    double totalGB = totalSize / (1024.0 * 1024.0 * 1024.0);
+    double totalGB = totalSize / sak::kBytesPerGBf;
     
     m_summaryLabel->setText(
         tr("Selected: %1 of %2 folders | %3 files | %4 GB")

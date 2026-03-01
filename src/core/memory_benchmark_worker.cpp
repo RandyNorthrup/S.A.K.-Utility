@@ -7,6 +7,7 @@
 #include "sak/memory_benchmark_worker.h"
 #include "sak/aligned_buffer.h"
 #include "sak/logger.h"
+#include "sak/layout_constants.h"
 
 #include <QElapsedTimer>
 
@@ -118,7 +119,7 @@ double MemoryBenchmarkWorker::runReadBandwidth()
     VirtualBuffer buf(kBandwidthBufferSize);
     if (!buf.valid()) {
         logError("Failed to allocate {} MB for read bandwidth test",
-                 kBandwidthBufferSize / (1024 * 1024));
+                 kBandwidthBufferSize / sak::kBytesPerMB);
         return 0.0;
     }
 
@@ -313,10 +314,10 @@ void MemoryBenchmarkWorker::runAllocationStress()
 
     // Find max contiguous allocation
     size_t test_size = 1024ULL * 1024 * 1024; // Start at 1 GB
-    while (test_size >= 1024 * 1024) {
+    while (test_size >= sak::kBytesPerMB) {
         void* ptr = std::malloc(test_size);
         if (ptr) {
-            max_contiguous = test_size / (1024 * 1024);
+            max_contiguous = test_size / sak::kBytesPerMB;
             std::free(ptr);
             break;
         }

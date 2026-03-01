@@ -10,6 +10,7 @@
 #include "sak/network_transfer_security.h"
 #include "sak/orchestration_client.h"
 #include "sak/orchestration_discovery_service.h"
+#include "sak/layout_constants.h"
 #include "sak/logger.h"
 
 #include <QJsonObject>
@@ -62,7 +63,7 @@ NetworkTransferController::NetworkTransferController(QObject* parent)
         Q_EMIT errorMessage(msg);
     });
 
-    m_heartbeatTimer->setInterval(5000);
+    m_heartbeatTimer->setInterval(sak::kTimerHeartbeatMs);
     connect(m_heartbeatTimer, &QTimer::timeout, this, [this]() {
         if (m_connection->socket()) {
             TransferProtocol::writeMessage(m_connection->socket(),

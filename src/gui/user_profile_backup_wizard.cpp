@@ -3,6 +3,7 @@
 
 #include "sak/user_profile_backup_wizard.h"
 #include "sak/style_constants.h"
+#include "sak/layout_constants.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QHeaderView>
@@ -43,7 +44,7 @@ UserProfileBackupWizard::UserProfileBackupWizard(QWidget* parent)
     setStartId(Page_Welcome);
     
     // Resize to comfortable size
-    resize(700, 500);
+    resize(sak::kWizardWidth, sak::kWizardHeight);
 }
 
 UserProfileBackupWizard::~UserProfileBackupWizard() = default;
@@ -283,7 +284,7 @@ void UserProfileBackupSelectUsersPage::populateTable() {
         // Size estimate
         QString sizeText = tr("Calculating...");
         if (user.total_size_estimated > 0) {
-            double sizeGB = user.total_size_estimated / (1024.0 * 1024.0 * 1024.0);
+            double sizeGB = user.total_size_estimated / sak::kBytesPerGBf;
             sizeText = QString("%1 GB").arg(sizeGB, 0, 'f', 1);
         }
         auto* sizeItem = new QTableWidgetItem(sizeText);
@@ -332,7 +333,7 @@ void UserProfileBackupSelectUsersPage::updateSummary() {
         }
     }
     
-    double totalGB = totalSizeBytes / (1024.0 * 1024.0 * 1024.0);
+    double totalGB = totalSizeBytes / sak::kBytesPerGBf;
     
     if (selectedCount == 0) {
         m_summaryLabel->setText(tr("No users selected"));

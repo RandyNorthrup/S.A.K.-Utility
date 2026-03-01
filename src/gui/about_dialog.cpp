@@ -3,6 +3,7 @@
 
 #include "sak/about_dialog.h"
 #include "sak/style_constants.h"
+#include "sak/layout_constants.h"
 #include "sak/version.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -36,7 +37,7 @@ void AboutDialog::setupUi()
     auto* header_layout = new QHBoxLayout();
     
     m_icon_label = new QLabel(this);
-    m_icon_label->setFixedSize(64, 64);
+    m_icon_label->setFixedSize(sak::kIconSize, sak::kIconSize);
     m_icon_label->setAccessibleName(QStringLiteral("S.A.K. Utility application icon"));
     m_icon_label->setStyleSheet("QLabel { background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #3b82f6, stop:1 #2563eb); border-radius: 12px; }");
     header_layout->addWidget(m_icon_label);

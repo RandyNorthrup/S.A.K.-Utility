@@ -7,6 +7,7 @@
 #include "sak/actions/backup_bitlocker_keys_action.h"
 #include "sak/process_runner.h"
 #include "sak/logger.h"
+#include "sak/layout_constants.h"
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -188,7 +189,7 @@ try {
 
     Q_EMIT logMessage("Querying BitLocker volume encryption status...");
 
-    ProcessResult proc = runPowerShell(script, 30000);
+    ProcessResult proc = runPowerShell(script, sak::kTimeoutProcessLongMs);
 
     if (!proc.succeeded()) {
         QString error = proc.std_err.trimmed();
@@ -215,7 +216,7 @@ BackupBitlockerKeysAction::getKeyProtectors(const QString& drive_letter)
 
     const QString script = buildKeyProtectorScript(drive_letter);
 
-    ProcessResult proc = runPowerShell(script, 30000);
+    ProcessResult proc = runPowerShell(script, sak::kTimeoutProcessLongMs);
 
     if (!proc.succeeded()) {
         if (!proc.std_err.trimmed().isEmpty()) {
@@ -701,7 +702,7 @@ void BackupBitlockerKeysAction::writeRecoveryDocumentVolumes(QTextStream& out) c
         out << "  Lock Status:          " << vol.lock_status << "\n";
 
         if (vol.volume_size_bytes > 0) {
-            double size_gb = static_cast<double>(vol.volume_size_bytes) / (1024.0 * 1024.0 * 1024.0);
+            double size_gb = static_cast<double>(vol.volume_size_bytes) / sak::kBytesPerGBf;
             out << "  Volume Size:          " << QString::number(size_gb, 'f', 2) << " GB\n";
         }
 
@@ -887,7 +888,7 @@ try {
 }
 )PS").arg(QString(path).replace("'", "''"));
 
-    ProcessResult proc = runPowerShell(script, 15000);
+    ProcessResult proc = runPowerShell(script, sak::kTimeoutChocoListMs);
     return proc.succeeded() && proc.std_out.trimmed().contains("SUCCESS");
 }
 

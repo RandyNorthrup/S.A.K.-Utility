@@ -14,6 +14,7 @@ class QTcpSocket;
 class QFile;
 
 #include "sak/network_transfer_types.h"
+#include "sak/network_constants.h"
 
 namespace sak {
 
@@ -33,7 +34,7 @@ public:
         bool encryption_enabled{true};
         bool compression_enabled{true};
         bool resume_enabled{true};
-        int chunk_size{65536};
+        int chunk_size{static_cast<int>(sak::kBufferChunkDefault)};
         int max_bandwidth_kbps{0};
         QString passphrase;
         QByteArray salt;
@@ -127,7 +128,7 @@ private:
         QString current_acl_sddl;
         QString resume_path;
         qint64 current_size{0};
-        int chunk_size{65536};
+        int chunk_size{static_cast<int>(sak::kBufferChunkDefault)};
         qint64 bytes_received{0};
         qint64 overall_received{0};
         int total_chunks{0};

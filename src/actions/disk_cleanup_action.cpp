@@ -13,6 +13,7 @@
 #include <QFileInfo>
 #include <QStandardPaths>
 #include <QDateTime>
+#include "sak/layout_constants.h"
 #include "sak/logger.h"
 
 namespace sak {
@@ -67,7 +68,7 @@ void DiskCleanupAction::scan() {
     result.estimated_duration_ms = std::max<qint64>(5000, m_total_files * 5);
 
     if (result.applicable) {
-        double mb = m_total_bytes / (1024.0 * 1024.0);
+        double mb = m_total_bytes / sak::kBytesPerMBf;
         result.summary = QString("Potential cleanup: %1 MB").arg(mb, 0, 'f', 1);
         result.details = QString("Targets: %1, Files: %2")
             .arg(m_targets.size())
@@ -156,7 +157,7 @@ bool DiskCleanupAction::executeCalculateSpace(QStringList& drives, QString& driv
         "}"
     ).arg(PROFILE_ID);
 
-    ProcessResult config_result = runPowerShell(ps_config, 300000);
+    ProcessResult config_result = runPowerShell(ps_config, sak::kTimeoutArchiveMs);
     if (!config_result.succeeded()) {
         ExecutionResult result;
         result.success = false;
@@ -197,7 +198,7 @@ void DiskCleanupAction::executeCleanup(const QStringList& drives, const QString&
         qint64 free_before = space_before.std_out.trimmed().toLongLong(&ok_before);
 
         // Run cleanup on this drive
-        ProcessResult cleanmgr = runProcess("cleanmgr.exe", QStringList() << "/d" << drive_letter << sagerun_arg, 300000);
+        ProcessResult cleanmgr = runProcess("cleanmgr.exe", QStringList() << "/d" << drive_letter << sagerun_arg, sak::kTimeoutArchiveMs);
         if (!cleanmgr.succeeded()) {
             Q_EMIT executionProgress(QString("Cleanup warning on %1:").arg(drive_letter), progress);
         }
@@ -229,8 +230,8 @@ void DiskCleanupAction::executeBuildReport(int drives_processed, qint64 total_fr
 
     if (drives_processed > 0) {
         result.success = true;
-        double mb_freed = total_freed / (1024.0 * 1024.0);
-        double gb_freed = total_freed / (1024.0 * 1024.0 * 1024.0);
+        double mb_freed = total_freed / sak::kBytesPerMBf;
+        double gb_freed = total_freed / sak::kBytesPerGBf;
 
         if (gb_freed >= 1.0) {
             result.message = QString("Cleaned %1 drive(s), freed %2 GB")

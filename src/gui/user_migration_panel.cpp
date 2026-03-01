@@ -12,6 +12,7 @@
 #include "sak/info_button.h"
 #include "sak/style_constants.h"
 #include "sak/widget_helpers.h"
+#include "sak/layout_constants.h"
 
 #include "sak/config_manager.h"
 
@@ -105,7 +106,7 @@ QGroupBox* UserMigrationPanel::createWizardButtonsGroup()
     layout->addWidget(backupDesc);
 
     m_backupButton = new QPushButton("Start Backup Wizard...");
-    m_backupButton->setMinimumHeight(40);
+    m_backupButton->setMinimumHeight(sak::kButtonHeightStd);
     m_backupButton->setToolTip("Step-by-step wizard to select apps, configure options, and create backups");
     m_backupButton->setAccessibleName(QStringLiteral("Start Backup Wizard"));
     layout->addWidget(m_backupButton);
@@ -125,7 +126,7 @@ QGroupBox* UserMigrationPanel::createWizardButtonsGroup()
     layout->addWidget(restoreDesc);
 
     m_restoreButton = new QPushButton("Start Restore Wizard...");
-    m_restoreButton->setMinimumHeight(40);
+    m_restoreButton->setMinimumHeight(sak::kButtonHeightStd);
     m_restoreButton->setToolTip("Step-by-step wizard to select backups, map users, and restore data");
     m_restoreButton->setAccessibleName(QStringLiteral("Start Restore Wizard"));
     layout->addWidget(m_restoreButton);
@@ -150,17 +151,17 @@ void UserMigrationPanel::onBackupSelected()
     connect(wizard, &QDialog::finished, this, [this, wizard](int result) {
         if (result == QDialog::Accepted) {
             appendLog("=== User Profile Backup Wizard Completed ===");
-            Q_EMIT statusMessage("User profile backup completed", 5000);
+            Q_EMIT statusMessage("User profile backup completed", sak::kTimerStatusDefaultMs);
         } else {
             appendLog("User profile backup wizard cancelled");
-            Q_EMIT statusMessage("Backup wizard cancelled", 3000);
+            Q_EMIT statusMessage("Backup wizard cancelled", sak::kTimerStatusMessageMs);
         }
         wizard->deleteLater();
     });
     
     // Show wizard
     appendLog("Launching backup wizard...");
-    Q_EMIT statusMessage("Backup wizard launched", 3000);
+    Q_EMIT statusMessage("Backup wizard launched", sak::kTimerStatusMessageMs);
     wizard->show();
     wizard->raise();
     wizard->activateWindow();
@@ -176,17 +177,17 @@ void UserMigrationPanel::onRestoreBackup()
         if (result == QDialog::Accepted) {
             appendLog("=== User Profile Restore Wizard Completed ===");
             appendLog(QString("Restored from: %1").arg(wizard->backupPath()));
-            Q_EMIT statusMessage("User profile restore completed", 5000);
+            Q_EMIT statusMessage("User profile restore completed", sak::kTimerStatusDefaultMs);
         } else {
             appendLog("User profile restore wizard cancelled");
-            Q_EMIT statusMessage("Restore wizard cancelled", 3000);
+            Q_EMIT statusMessage("Restore wizard cancelled", sak::kTimerStatusMessageMs);
         }
         wizard->deleteLater();
     });
     
     // Show wizard
     appendLog("Launching restore wizard...");
-    Q_EMIT statusMessage("Restore wizard launched", 3000);
+    Q_EMIT statusMessage("Restore wizard launched", sak::kTimerStatusMessageMs);
     wizard->show();
     wizard->raise();
     wizard->activateWindow();

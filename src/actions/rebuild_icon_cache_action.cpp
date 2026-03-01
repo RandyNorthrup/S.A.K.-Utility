@@ -5,6 +5,7 @@
 /// @brief Implements Windows icon cache rebuild to fix display issues
 
 #include "sak/actions/rebuild_icon_cache_action.h"
+#include "sak/layout_constants.h"
 #include "sak/process_runner.h"
 #include <QThread>
 #include <QDir>
@@ -81,17 +82,17 @@ bool RebuildIconCacheAction::stopExplorer() {
     Q_EMIT executionProgress("Stopping Windows Explorer (Stop-Process)...", 20);
     
     QString ps_cmd = "Stop-Process -Name explorer -Force -ErrorAction SilentlyContinue";
-    ProcessResult proc = runPowerShell(ps_cmd, 5000);
+    ProcessResult proc = runPowerShell(ps_cmd, sak::kTimeoutProcessShortMs);
     if (!proc.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("Stop Explorer warning: " + proc.std_err.trimmed());
     }
     
     // Give Explorer time to fully stop
-    QThread::msleep(2000);
+    QThread::msleep(sak::kTimerServiceDelayMs);
     
     // Verify Explorer is stopped
     QString check_cmd = "(Get-Process -Name explorer -ErrorAction SilentlyContinue | Measure-Object).Count";
-    ProcessResult check_proc = runPowerShell(check_cmd, 3000);
+    ProcessResult check_proc = runPowerShell(check_cmd, sak::kTimeoutThermalQueryMs);
     if (!check_proc.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("Explorer check warning: " + check_proc.std_err.trimmed());
     }
@@ -118,7 +119,7 @@ int RebuildIconCacheAction::deleteCacheFiles(const QVector<CacheFileInfo>& files
             } else {
                 // Try PowerShell Remove-Item if QFile fails
                 QString ps_cmd = QString("Remove-Item -Path '%1' -Force -ErrorAction SilentlyContinue").arg(info.file_name);
-                ProcessResult proc = runPowerShell(ps_cmd, 5000);
+                ProcessResult proc = runPowerShell(ps_cmd, sak::kTimeoutProcessShortMs);
                 if (!proc.std_err.trimmed().isEmpty()) {
                     Q_EMIT logMessage("Cache delete warning for " + info.file_name + ": " + proc.std_err.trimmed());
                 }
@@ -138,17 +139,17 @@ bool RebuildIconCacheAction::startExplorer() {
     Q_EMIT executionProgress("Starting Windows Explorer...", 70);
     
     QString ps_cmd = "Start-Process explorer.exe";
-    ProcessResult proc = runPowerShell(ps_cmd, 5000);
+    ProcessResult proc = runPowerShell(ps_cmd, sak::kTimeoutProcessShortMs);
     if (!proc.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("Start Explorer warning: " + proc.std_err.trimmed());
     }
     
     // Give Explorer time to start
-    QThread::msleep(2000);
+    QThread::msleep(sak::kTimerServiceDelayMs);
     
     // Verify Explorer is running
     QString check_cmd = "(Get-Process -Name explorer -ErrorAction SilentlyContinue | Measure-Object).Count";
-    ProcessResult check_proc = runPowerShell(check_cmd, 3000);
+    ProcessResult check_proc = runPowerShell(check_cmd, sak::kTimeoutThermalQueryMs);
     if (!check_proc.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("Explorer check warning: " + check_proc.std_err.trimmed());
     }
@@ -171,7 +172,7 @@ bool RebuildIconCacheAction::refreshIconCache() {
                     "'@\n"
                     "[Shell32]::SHChangeNotify(0x8000000, 0, [IntPtr]::Zero, [IntPtr]::Zero)";
     
-    ProcessResult proc = runPowerShell(ps_cmd, 5000);
+    ProcessResult proc = runPowerShell(ps_cmd, sak::kTimeoutProcessShortMs);
     if (!proc.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("Icon cache refresh warning: " + proc.std_err.trimmed());
     }
@@ -192,7 +193,7 @@ void RebuildIconCacheAction::scan() {
     result.files_count = cache_files.size();
     result.bytes_affected = total_size;
     result.summary = result.applicable
-        ? QString("Cache files: %1 (%2 KB)").arg(cache_files.size()).arg(total_size / 1024)
+        ? QString("Cache files: %1 (%2 KB)").arg(cache_files.size()).arg(total_size / sak::kBytesPerKB)
         : "No icon cache files found";
     result.details = "Rebuild will restart Explorer and refresh icon cache";
 
@@ -261,7 +262,7 @@ QString RebuildIconCacheAction::buildIconCacheReportHeader(
     report += "\u2551           ICON & THUMBNAIL CACHE REBUILD REPORT              \u2551\n";
     report += "\u2560\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2563\n";
     report += QString("\u2551 Cache Files Found: %1\n").arg(cache_files.size()).leftJustified(67, ' ') + "\u2551\n";
-    report += QString("\u2551 Total Cache Size:  %1 KB\n").arg(total_size / 1024).leftJustified(67, ' ') + "\u2551\n";
+    report += QString("\u2551 Total Cache Size:  %1 KB\n").arg(total_size / sak::kBytesPerKB).leftJustified(67, ' ') + "\u2551\n";
     report += "\u2560\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2563\n";
     
     if (!cache_files.isEmpty()) {
@@ -270,7 +271,7 @@ QString RebuildIconCacheAction::buildIconCacheReportHeader(
             QFileInfo fi(info.file_name);
             QString file_line = QString("\u2551   \u2022 %1 (%2 KB)\n")
                                    .arg(fi.fileName())
-                                   .arg(info.size_bytes / 1024);
+                                   .arg(info.size_bytes / sak::kBytesPerKB);
             report += file_line.leftJustified(67, ' ') + "\u2551\n";
         }
         report += "\u2560\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2563\n";
@@ -295,7 +296,7 @@ void RebuildIconCacheAction::buildAndFinishIconCacheResult(
         result.success = true;
         result.message = QString("Icon cache rebuilt: %1 files deleted (%2 KB freed)")
                             .arg(deleted_count)
-                            .arg(total_size / 1024);
+                            .arg(total_size / sak::kBytesPerKB);
         result.log = report;
         result.log += QString("\nCompleted in %1 seconds\n").arg(duration_ms / 1000);
         result.log += "RECOMMENDATIONS:\n";

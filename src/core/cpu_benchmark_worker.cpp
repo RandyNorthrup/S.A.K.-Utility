@@ -6,6 +6,7 @@
 
 #include "sak/cpu_benchmark_worker.h"
 #include "sak/logger.h"
+#include "sak/layout_constants.h"
 
 #include <QtGlobal>
 #include <QElapsedTimer>
@@ -219,7 +220,7 @@ double CpuBenchmarkWorker::runMatrixMultiply(int size)
 double CpuBenchmarkWorker::runZlibCompression(int data_size_mb)
 {
     Q_ASSERT_X(data_size_mb > 0, "runZlibCompression", "data_size_mb must be positive");
-    const size_t data_size = static_cast<size_t>(data_size_mb) * 1024 * 1024;
+    const size_t data_size = static_cast<size_t>(data_size_mb) * sak::kBytesPerMB;
 
     // Generate compressible data (mixed patterns)
     std::vector<uint8_t> input(data_size);
@@ -265,7 +266,7 @@ double CpuBenchmarkWorker::runZlibCompression(int data_size_mb)
 double CpuBenchmarkWorker::runAesEncryption(int data_size_mb)
 {
     Q_ASSERT_X(data_size_mb > 0, "runAesEncryption", "data_size_mb must be positive");
-    const size_t data_size = static_cast<size_t>(data_size_mb) * 1024 * 1024;
+    const size_t data_size = static_cast<size_t>(data_size_mb) * sak::kBytesPerMB;
 
     // Generate random data
     std::vector<uint8_t> data(data_size);

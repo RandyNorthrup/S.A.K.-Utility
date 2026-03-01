@@ -5,6 +5,7 @@
 #include "sak/windows_iso_downloader.h"
 #include "sak/logger.h"
 #include "sak/style_constants.h"
+#include "sak/layout_constants.h"
 
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -28,7 +29,7 @@ WindowsISODownloadDialog::WindowsISODownloadDialog(WindowsISODownloader* downloa
 {
     setWindowTitle("Download Windows ISO");
     setModal(true);
-    resize(720, 620);
+    resize(sak::kIsoDialogWidthWin, sak::kIsoDialogHeightWin);
 
     setupUi();
     connectSignals();
@@ -83,7 +84,7 @@ void WindowsISODownloadDialog::setupUi_formSections(QVBoxLayout* mainLayout)
     auto* buildLayout = new QVBoxLayout(buildGroup);
 
     m_buildListWidget = new QListWidget(buildGroup);
-    m_buildListWidget->setMaximumHeight(160);
+    m_buildListWidget->setMaximumHeight(sak::kListAreaMaxH);
     m_buildListWidget->setEnabled(false);
     buildLayout->addWidget(m_buildListWidget);
 
@@ -512,7 +513,7 @@ void WindowsISODownloadDialog::onDownloadComplete(const QString& isoPath,
 
     m_downloadProgressBar->setValue(100);
     m_convertProgressBar->setValue(100);
-    double sizeGB = fileSize / (1024.0 * 1024.0 * 1024.0);
+    double sizeGB = fileSize / sak::kBytesPerGBf;
     m_statusLabel->setText(
         QString("ISO created successfully! (%1 GB)").arg(sizeGB, 0, 'f', 2));
     m_phaseLabel->setText("Complete!");

@@ -5,6 +5,7 @@
 /// @brief Implements automated Windows audio troubleshooting and repair
 
 #include "sak/actions/fix_audio_issues_action.h"
+#include "sak/layout_constants.h"
 #include "sak/process_runner.h"
 #include <QThread>
 #include <QTextStream>
@@ -24,7 +25,7 @@ FixAudioIssuesAction::AudioServiceStatus FixAudioIssuesAction::checkAudioService
     
     QString ps_cmd = QString("Get-Service -Name %1 | Select-Object Status | Format-List").arg(service_name);
     
-    ProcessResult proc = runPowerShell(ps_cmd, 5000);
+    ProcessResult proc = runPowerShell(ps_cmd, sak::kTimeoutProcessShortMs);
     if (!proc.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("Audio service check warning: " + proc.std_err.trimmed());
     }
@@ -48,14 +49,14 @@ bool FixAudioIssuesAction::restartAudioService() {
     
     // Stop-Service with proper error handling
     QString stop_cmd = "Stop-Service -Name Audiosrv -Force -ErrorAction SilentlyContinue; Start-Sleep -Seconds 2";
-    ProcessResult stop_proc = runPowerShell(stop_cmd, 10000);
+    ProcessResult stop_proc = runPowerShell(stop_cmd, sak::kTimeoutProcessMediumMs);
     if (!stop_proc.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("AudioSrv stop warning: " + stop_proc.std_err.trimmed());
     }
     
     // Start-Service with verification
     QString start_cmd = "Start-Service -Name Audiosrv; Get-Service -Name Audiosrv | Select-Object Status";
-    ProcessResult proc = runPowerShell(start_cmd, 10000);
+    ProcessResult proc = runPowerShell(start_cmd, sak::kTimeoutProcessMediumMs);
     if (!proc.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("AudioSrv start warning: " + proc.std_err.trimmed());
     }
@@ -68,13 +69,13 @@ bool FixAudioIssuesAction::restartAudioEndpointBuilder() {
     Q_EMIT executionProgress("Restarting Audio Endpoint Builder...", 35);
     
     QString stop_cmd = "Stop-Service -Name AudioEndpointBuilder -Force -ErrorAction SilentlyContinue; Start-Sleep -Seconds 2";
-    ProcessResult stop_proc = runPowerShell(stop_cmd, 10000);
+    ProcessResult stop_proc = runPowerShell(stop_cmd, sak::kTimeoutProcessMediumMs);
     if (!stop_proc.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("AudioEndpointBuilder stop warning: " + stop_proc.std_err.trimmed());
     }
     
     QString start_cmd = "Start-Service -Name AudioEndpointBuilder; Get-Service -Name AudioEndpointBuilder | Select-Object Status";
-    ProcessResult proc = runPowerShell(start_cmd, 10000);
+    ProcessResult proc = runPowerShell(start_cmd, sak::kTimeoutProcessMediumMs);
     if (!proc.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("AudioEndpointBuilder start warning: " + proc.std_err.trimmed());
     }
@@ -88,7 +89,7 @@ int FixAudioIssuesAction::resetAudioDevices() {
     
     // Get count of audio devices
     QString count_cmd = "((Get-PnpDevice -Class 'AudioEndpoint','MEDIA' | Where-Object {$_.Status -ne 'Unknown'}) | Measure-Object).Count";
-    ProcessResult count_proc = runPowerShell(count_cmd, 5000);
+    ProcessResult count_proc = runPowerShell(count_cmd, sak::kTimeoutProcessShortMs);
     if (!count_proc.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("Audio device count warning: " + count_proc.std_err.trimmed());
     }
@@ -102,7 +103,7 @@ int FixAudioIssuesAction::resetAudioDevices() {
                        "Start-Sleep -Seconds 3; "
                        "$devices | Enable-PnpDevice -Confirm:$false -ErrorAction SilentlyContinue";
     
-    ProcessResult reset_proc = runPowerShell(reset_cmd, 20000);
+    ProcessResult reset_proc = runPowerShell(reset_cmd, sak::kTimeoutProcessResetMs);
     if (!reset_proc.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("Audio device reset warning: " + reset_proc.std_err.trimmed());
     }
@@ -116,7 +117,7 @@ QString FixAudioIssuesAction::checkUSBAudioDevices() {
     
     QString ps_cmd = "Get-PnpDevice -Class 'USB' | Where-Object {$_.FriendlyName -like '*Audio*'} | Select-Object Status,FriendlyName,InstanceId | Format-Table -AutoSize | Out-String -Width 200";
     
-    ProcessResult proc = runPowerShell(ps_cmd, 5000);
+    ProcessResult proc = runPowerShell(ps_cmd, sak::kTimeoutProcessShortMs);
     if (!proc.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("USB audio check warning: " + proc.std_err.trimmed());
     }

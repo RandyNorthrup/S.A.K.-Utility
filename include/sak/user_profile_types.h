@@ -9,6 +9,8 @@
 #include <QVector>
 #include <QJsonObject>
 
+#include "sak/layout_constants.h"
+
 namespace sak {
 
 /**
@@ -122,8 +124,8 @@ struct SmartFilter {
     SmartFilter()
         : enable_file_size_limit(false)  // Optional by default
         , enable_folder_size_limit(false) // Optional by default
-        , max_single_file_size(2LL * 1024 * 1024 * 1024)  // 2 GB
-        , max_folder_size(50LL * 1024 * 1024 * 1024)      // 50 GB
+        , max_single_file_size(2 * sak::kBytesPerGB)  // 2 GB
+        , max_folder_size(50 * sak::kBytesPerGB)      // 50 GB
     {
         initializeDefaults();
     }

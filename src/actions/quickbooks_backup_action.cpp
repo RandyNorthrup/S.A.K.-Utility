@@ -93,6 +93,7 @@
 #include <QStandardPaths>
 #include <QDateTime>
 #include "sak/logger.h"
+#include "sak/layout_constants.h"
 
 namespace sak {
 
@@ -116,7 +117,7 @@ void QuickBooksBackupAction::scan() {
     result.estimated_duration_ms = std::max<qint64>(5000, m_total_bytes / (1024 * 10));
 
     if (result.applicable) {
-        double mb = m_total_bytes / (1024.0 * 1024.0);
+        double mb = m_total_bytes / sak::kBytesPerMBf;
         result.summary = QString("Found %1 files (%2 MB)")
             .arg(result.files_count)
             .arg(mb, 0, 'f', 1);
@@ -194,11 +195,11 @@ void QuickBooksBackupAction::execute() {
 }
 
 bool QuickBooksBackupAction::isQuickBooksRunning() {
-    ProcessResult proc = runProcess("tasklist", QStringList() << "/FI" << "IMAGENAME eq QBW32.EXE", 3000);
+    ProcessResult proc = runProcess("tasklist", QStringList() << "/FI" << "IMAGENAME eq QBW32.EXE", sak::kTimeoutThermalQueryMs);
     if (proc.std_out.contains("QBW32.EXE", Qt::CaseInsensitive)) {
         return true;
     }
-    proc = runProcess("tasklist", QStringList() << "/FI" << "IMAGENAME eq QBW64.EXE", 3000);
+    proc = runProcess("tasklist", QStringList() << "/FI" << "IMAGENAME eq QBW64.EXE", sak::kTimeoutThermalQueryMs);
     return proc.std_out.contains("QBW64.EXE", Qt::CaseInsensitive);
 }
 

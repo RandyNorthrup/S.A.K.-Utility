@@ -3,6 +3,7 @@
 
 #include "sak/info_button.h"
 #include "sak/style_constants.h"
+#include "sak/layout_constants.h"
 
 #include <QApplication>
 #include <QFrame>
@@ -63,7 +64,7 @@ InfoButton::InfoButton(const QString& infoText, QWidget* parent)
     setIconSize(QSize(16, 16));
     setCursor(Qt::PointingHandCursor);
     setAutoRaise(true);
-    setFixedSize(20, 20);
+    setFixedSize(sak::kInfoButtonSize, sak::kInfoButtonSize);
     setFocusPolicy(Qt::TabFocus);
     setAccessibleName(QStringLiteral("Info"));
     setAccessibleDescription(infoText);
@@ -110,7 +111,7 @@ void InfoButton::togglePopup()
 
     auto* label = new QLabel(m_infoText, popup);
     label->setWordWrap(true);
-    label->setMaximumWidth(280);
+    label->setMaximumWidth(sak::kTooltipMaxW);
     label->setStyleSheet(
         QString("QLabel {"
         "  color: %1;"

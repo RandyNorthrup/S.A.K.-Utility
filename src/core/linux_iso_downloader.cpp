@@ -16,6 +16,8 @@
 #include "sak/linux_iso_downloader.h"
 #include "sak/bundled_tools_manager.h"
 #include "sak/format_utils.h"
+#include "sak/layout_constants.h"
+#include "sak/network_constants.h"
 #include "sak/logger.h"
 
 #include <QCoreApplication>
@@ -43,7 +45,7 @@ LinuxISODownloader::LinuxISODownloader(QObject* parent)
     , m_catalog(std::make_unique<LinuxDistroCatalog>(this))
     , m_progressTimer(new QTimer(this))
 {
-    m_progressTimer->setInterval(1000); // 1-second progress polling
+    m_progressTimer->setInterval(sak::kTimerProgressPollMs); // 1-second progress polling
     connect(m_progressTimer, &QTimer::timeout,
             this, &LinuxISODownloader::onProgressPollTimer);
 
@@ -230,7 +232,7 @@ void LinuxISODownloader::startAria2cDownload(const QString& url,
 
     m_aria2cProcess->start(aria2Path, args);
 
-    if (!m_aria2cProcess->waitForStarted(10000)) {
+    if (!m_aria2cProcess->waitForStarted(sak::kTimeoutProcessMediumMs)) {
         setPhase(Phase::Failed, "Failed to start aria2c");
         Q_EMIT downloadError("Failed to start aria2c: " + m_aria2cProcess->errorString());
         return;
@@ -256,29 +258,29 @@ QStringList LinuxISODownloader::buildAria2cArguments(const QString& url,
                                             Qt::CaseInsensitive);
     if (isSourceForge) {
         // ── SourceForge-specific settings ──
-        args << "--max-connection-per-server=1"
-             << "--split=1"
+        args << "--max-connection-per-server=" + QString::number(sak::kAria2SingleConn)
+             << "--split=" + QString::number(sak::kAria2SingleSplit)
              << "--min-split-size=20M"
              << "--check-certificate=false"   // SF mirrors may have cert issues
              << "--follow-metalink=mem"        // SF may serve metalink responses
              << "--follow-torrent=false"
-             << "--max-tries=10"              // More retries for mirror selection
-             << "--retry-wait=5"
-             << "--connect-timeout=30"
-             << "--timeout=120"
+             << "--max-tries=" + QString::number(sak::kAria2MaxTriesHigh)              // More retries for mirror selection
+             << "--retry-wait=" + QString::number(sak::kAria2RetryWaitLongSec)
+             << "--connect-timeout=" + QString::number(sak::kAria2ConnectTimeoutLong)
+             << "--timeout=" + QString::number(sak::kAria2TimeoutLongSec)
              << "--max-file-not-found=5"
              << "--lowest-speed-limit=10K";   // Lenient speed limit for SF
     } else {
         // ── Standard multi-connection settings ──
-        args << "--max-connection-per-server=16"
-             << "--split=16"
+        args << "--max-connection-per-server=" + QString::number(sak::kAria2MaxConnsPerServer)
+             << "--split=" + QString::number(sak::kAria2Split)
              << "--min-split-size=1M"
              << "--check-certificate=true"
              << "--lowest-speed-limit=50K"
-             << "--max-tries=5"
-             << "--retry-wait=3"
-             << "--connect-timeout=10"
-             << "--timeout=60"
+             << "--max-tries=" + QString::number(sak::kAria2MaxTries)
+             << "--retry-wait=" + QString::number(sak::kAria2RetryWaitSec)
+             << "--connect-timeout=" + QString::number(sak::kAria2ConnectTimeoutSec)
+             << "--timeout=" + QString::number(sak::kAria2TimeoutSec)
              << "--max-file-not-found=3";
     }
 
@@ -361,7 +363,7 @@ void LinuxISODownloader::onAria2cFinished(int exitCode,
     }
 
     sak::logInfo("Download complete: " + m_savePath.toStdString() +
-                  " (" + std::to_string(downloadedFile.size() / (1024 * 1024)) + " MB)");
+                  " (" + std::to_string(downloadedFile.size() / sak::kBytesPerMB) + " MB)");
 
     // Proceed to checksum verification if available
     if (!m_checksumUrl.isEmpty() && !m_checksumType.isEmpty()) {
@@ -604,7 +606,7 @@ void LinuxISODownloader::cancel()
 
     if (m_aria2cProcess && m_aria2cProcess->state() != QProcess::NotRunning) {
         m_aria2cProcess->kill();
-        m_aria2cProcess->waitForFinished(5000);
+        m_aria2cProcess->waitForFinished(sak::kTimeoutProcessShortMs);
     }
 
     setPhase(Phase::Idle, "Cancelled");

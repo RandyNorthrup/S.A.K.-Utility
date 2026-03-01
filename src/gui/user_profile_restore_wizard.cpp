@@ -3,6 +3,7 @@
 
 #include "sak/user_profile_restore_wizard.h"
 #include "sak/style_constants.h"
+#include "sak/layout_constants.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QFileInfo>
@@ -148,7 +149,7 @@ void UserProfileRestoreWelcomePage::onBackupPathChanged() {
         manifest.created.toString("yyyy-MM-dd hh:mm:ss"),
         manifest.source_machine,
         QString::number(manifest.users.size()),
-        QString::number(manifest.total_backup_size_bytes / (1024.0 * 1024.0 * 1024.0), 'f', 2)
+        QString::number(manifest.total_backup_size_bytes / sak::kBytesPerGBf, 'f', 2)
     );
     
     m_manifestInfoLabel->setText(info);
@@ -189,7 +190,7 @@ UserProfileRestoreWizard::UserProfileRestoreWizard(QWidget* parent)
     addPage(new UserProfileRestorePermissionSettingsPage(this));
     addPage(new UserProfileRestoreExecutePage(this));
     
-    resize(900, 700);
+    resize(sak::kWizardLargeWidth, sak::kWizardLargeHeight);
 }
 
 } // namespace sak

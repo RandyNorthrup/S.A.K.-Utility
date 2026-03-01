@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "sak/orchestration_client.h"
+#include "sak/layout_constants.h"
 
 #include <QTcpSocket>
 #include <QJsonObject>
@@ -20,7 +21,7 @@ OrchestrationClient::OrchestrationClient(QObject* parent)
         Q_EMIT connectionError(m_socket->errorString());
     });
 
-    m_reconnectTimer->setInterval(5000);
+    m_reconnectTimer->setInterval(sak::kTimerHeartbeatMs);
     connect(m_reconnectTimer, &QTimer::timeout, this, &OrchestrationClient::onReconnectTimeout);
 }
 

@@ -4,6 +4,7 @@
 #include "sak/network_transfer_panel.h"
 #include "sak/format_utils.h"
 #include "sak/widget_helpers.h"
+#include "sak/network_constants.h"
 #include "sak/logger.h"
 
 #include "sak/windows_user_scanner.h"
@@ -19,6 +20,7 @@
 #include "sak/version.h"
 #include "sak/smart_file_filter.h"
 #include "sak/permission_manager.h"
+#include "sak/layout_constants.h"
 
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -329,7 +331,7 @@ void NetworkTransferPanel::onJobStartRequested(const QString& job_id,
     assignment.profile_size_bytes = source.profile_size_bytes;
     assignment.priority = "normal";
     if (m_perJobBandwidthSpin && m_perJobBandwidthSpin->value() > 0) {
-        assignment.max_bandwidth_kbps = m_perJobBandwidthSpin->value() * 1024;
+        assignment.max_bandwidth_kbps = m_perJobBandwidthSpin->value() * sak::kBytesPerKB;
     }
 
     m_destinationToJobId.insert(destination.destination_id, job_id);
@@ -645,7 +647,7 @@ void NetworkTransferPanel::onRecoverLastDeployment() {
 
     m_mappingTypeCombo->setCurrentIndex(config.getValue("orchestration/mapping_type", 0).toInt());
     m_mappingStrategyCombo->setCurrentIndex(config.getValue("orchestration/mapping_strategy", 0).toInt());
-    m_maxConcurrentSpin->setValue(config.getValue("orchestration/max_concurrent", 10).toInt());
+    m_maxConcurrentSpin->setValue(config.getValue("orchestration/max_concurrent", sak::kMaxConcurrentScrape).toInt());
     m_globalBandwidthSpin->setValue(config.getValue("orchestration/global_bandwidth", 0).toInt());
     m_perJobBandwidthSpin->setValue(config.getValue("orchestration/per_job_bandwidth", 0).toInt());
     m_useTemplateCheck->setChecked(config.getValue("orchestration/use_template", false).toBool());
@@ -785,7 +787,7 @@ void NetworkTransferPanel::refreshJobsTable() {
 
     if (m_deploymentEtaLabel) {
         if (remainingBytes > 0 && totalSpeedMbps > 0.0) {
-            const double bytesPerSecond = (totalSpeedMbps * 1024.0 * 1024.0) / 8.0;
+            const double bytesPerSecond = (totalSpeedMbps * sak::kBytesPerMBf) / 8.0;
             const qint64 etaSeconds = static_cast<qint64>(remainingBytes / bytesPerSecond);
             const QTime etaTime(0, 0, 0);
             m_deploymentEtaLabel->setText(tr("ETA: %1").arg(etaTime.addSecs(static_cast<int>(etaSeconds)).toString("hh:mm:ss")));

@@ -12,6 +12,7 @@
 #include <QUuid>
 
 #include "sak/user_profile_types.h"
+#include "sak/network_constants.h"
 
 namespace sak {
 
@@ -22,8 +23,8 @@ struct TransferPeerInfo {
     QString os;
     QString app_version;
     QString ip_address;
-    quint16 control_port{54322};
-    quint16 data_port{54323};
+    quint16 control_port{sak::kPortControl};
+    quint16 data_port{sak::kPortData};
     QString mode; // "source" or "destination"
     QStringList capabilities;
     QDateTime last_seen;
@@ -70,10 +71,10 @@ struct TransferSettings {
     bool resume_enabled{true};
     bool auto_discovery_enabled{true};
     int max_bandwidth_kbps{0};
-    int chunk_size{65536};
-    quint16 discovery_port{54321};
-    quint16 control_port{54322};
-    quint16 data_port{54323};
+    int chunk_size{static_cast<int>(sak::kBufferChunkDefault)};
+    quint16 discovery_port{sak::kPortDiscovery};
+    quint16 control_port{sak::kPortControl};
+    quint16 data_port{sak::kPortData};
     QString relay_server; // Phase 2
 };
 

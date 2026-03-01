@@ -6,6 +6,7 @@
 
 #include "sak/smart_disk_analyzer.h"
 #include "sak/bundled_tools_manager.h"
+#include "sak/layout_constants.h"
 #include "sak/logger.h"
 
 #include <QJsonArray>
@@ -146,7 +147,7 @@ bool SmartDiskAnalyzer::isSmartctlAvailable() const
 
     QProcess proc;
     proc.start(path, {"--version"});
-    return proc.waitForFinished(5000) && proc.exitCode() == 0;
+    return proc.waitForFinished(sak::kTimeoutSmartQueryMs) && proc.exitCode() == 0;
 }
 
 // ============================================================================

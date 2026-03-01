@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "sak/detachable_log_window.h"
+#include "sak/layout_constants.h"
 
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -26,8 +27,8 @@ DetachableLogWindow::DetachableLogWindow(const QString& title, QWidget* parent)
     : QWidget(parent, Qt::Tool)
 {
     setWindowTitle(title);
-    setMinimumSize(360, 200);
-    resize(420, 300);
+    setMinimumSize(sak::kDetachLogMinW, sak::kDetachLogMinH);
+    resize(sak::kDetachLogInitW, sak::kDetachLogInitH);
 
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(6, 6, 6, 6);
@@ -49,7 +50,7 @@ DetachableLogWindow::DetachableLogWindow(const QString& title, QWidget* parent)
 
     m_snapTimer = new QTimer(this);
     m_snapTimer->setSingleShot(true);
-    m_snapTimer->setInterval(50);
+    m_snapTimer->setInterval(sak::kTimerSnapMs);
     connect(m_snapTimer, &QTimer::timeout, this, &DetachableLogWindow::snapToMainWindow);
 }
 
@@ -160,7 +161,7 @@ LogToggleSwitch::LogToggleSwitch(const QString& label, QWidget* parent)
     : QWidget(parent)
     , m_label(label)
 {
-    setFixedSize(80, 28);
+    setFixedSize(sak::kSnapButtonW, sak::kSnapButtonH);
     setCursor(Qt::PointingHandCursor);
     setToolTip(tr("Toggle log window"));
 }

@@ -8,6 +8,8 @@
 #include "sak/format_utils.h"
 #include "sak/widget_helpers.h"
 #include "sak/style_constants.h"
+#include "sak/network_constants.h"
+#include "sak/layout_constants.h"
 
 #include "sak/windows_user_scanner.h"
 #include "sak/per_user_customization_dialog.h"
@@ -257,7 +259,7 @@ void NetworkTransferPanel::setupUi_securityWidgets() {
     m_chunkSizeSpin->setVisible(false);
 
     m_bandwidthSpin = new QSpinBox(this);
-    m_bandwidthSpin->setRange(0, 1024 * 1024);
+    m_bandwidthSpin->setRange(0, sak::kBytesPerMB);
     m_bandwidthSpin->setAccessibleName(QStringLiteral("Bandwidth Limit"));
     m_bandwidthSpin->setToolTip(tr("0 = unlimited"));
     m_bandwidthSpin->setVisible(false);
@@ -313,8 +315,8 @@ void NetworkTransferPanel::setupUi_destinationSection(QVBoxLayout* destLayout) {
     orchestratorConnectionLayout->addWidget(m_orchestratorHostEdit, 0, 1);
     orchestratorConnectionLayout->addWidget(new QLabel(tr("Port:"), this), 0, 2);
     m_orchestratorPortSpin = new QSpinBox(this);
-    m_orchestratorPortSpin->setRange(1024, 65535);
-    m_orchestratorPortSpin->setValue(54322);
+    m_orchestratorPortSpin->setRange(sak::kPortRangeMin, sak::kPortRangeMax);
+    m_orchestratorPortSpin->setValue(sak::kPortControl);
     m_orchestratorPortSpin->setAccessibleName(QStringLiteral("Orchestrator Port"));
     m_orchestratorPortSpin->setToolTip(QStringLiteral("Port number for the orchestrator server"));
     orchestratorConnectionLayout->addWidget(m_orchestratorPortSpin, 0, 3);
@@ -396,8 +398,8 @@ void NetworkTransferPanel::setupUi_orchestratorServer(QVBoxLayout* orchestratorL
     auto* orchestratorServerLayout = new QHBoxLayout(orchestratorServerGroup);
     orchestratorServerLayout->addWidget(new QLabel(tr("Listen Port:"), this));
     m_orchestratorListenPortSpin = new QSpinBox(this);
-    m_orchestratorListenPortSpin->setRange(1024, 65535);
-    m_orchestratorListenPortSpin->setValue(54322);
+    m_orchestratorListenPortSpin->setRange(sak::kPortRangeMin, sak::kPortRangeMax);
+    m_orchestratorListenPortSpin->setValue(sak::kPortControl);
     m_orchestratorListenPortSpin->setAccessibleName(QStringLiteral("Listen Port"));
     m_orchestratorListenPortSpin->setToolTip(QStringLiteral("Port the orchestrator server listens on"));
     orchestratorServerLayout->addWidget(m_orchestratorListenPortSpin);
@@ -441,7 +443,7 @@ void NetworkTransferPanel::setupUi_orchestratorDestinations(QVBoxLayout* orchest
     m_orchestratorDestTable = new QTableWidget(0, 9, this);
     m_orchestratorDestTable->setHorizontalHeaderLabels({"?", tr("Host"), tr("IP"), tr("Status"), tr("Free Disk"), tr("CPU%"), tr("RAM%"), tr("Last Seen"), tr("Progress")});
     m_orchestratorDestTable->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Fixed);
-    m_orchestratorDestTable->setColumnWidth(0, 30);
+    m_orchestratorDestTable->setColumnWidth(0, sak::kCheckboxColumnW);
     m_orchestratorDestTable->horizontalHeader()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
     m_orchestratorDestTable->horizontalHeader()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
     m_orchestratorDestTable->horizontalHeader()->setSectionResizeMode(3, QHeaderView::ResizeToContents);
@@ -485,7 +487,7 @@ void NetworkTransferPanel::setupUi_deploymentControls(QVBoxLayout* orchestratorL
     concurrencyRow->addWidget(new QLabel(tr("Max Concurrent:"), this));
     m_maxConcurrentSpin = new QSpinBox(this);
     m_maxConcurrentSpin->setRange(1, 100);
-    m_maxConcurrentSpin->setValue(10);
+    m_maxConcurrentSpin->setValue(sak::kMaxConcurrentScrape);
     m_maxConcurrentSpin->setAccessibleName(QStringLiteral("Max Concurrent Jobs"));
     m_maxConcurrentSpin->setToolTip(QStringLiteral("Maximum number of simultaneous transfer jobs"));
     concurrencyRow->addWidget(m_maxConcurrentSpin);
@@ -666,14 +668,14 @@ void NetworkTransferPanel::setupUi_bottomButtons(QVBoxLayout* mainLayout) {
     auto* transferBtnLayout = new QHBoxLayout();
 
     auto* netSettingsBtn = new QPushButton(tr("Settings"), this);
-    netSettingsBtn->setFixedSize(140, 36);
+    netSettingsBtn->setFixedSize(sak::kButtonWidthLarge, sak::kButtonHeightCompact);
     netSettingsBtn->setAccessibleName(QStringLiteral("Network Settings"));
     netSettingsBtn->setToolTip(QStringLiteral("Configure network transfer settings"));
     connect(netSettingsBtn, &QPushButton::clicked, this, &NetworkTransferPanel::onNetworkSettings);
     transferBtnLayout->addWidget(netSettingsBtn);
 
     auto* securitySettingsBtn = new QPushButton(tr("Security Settings"), this);
-    securitySettingsBtn->setFixedSize(160, 36);
+    securitySettingsBtn->setFixedSize(sak::kButtonWidthXLarge, sak::kButtonHeightCompact);
     securitySettingsBtn->setAccessibleName(QStringLiteral("Security Settings"));
     securitySettingsBtn->setToolTip(QStringLiteral("Configure encryption and security options"));
     connect(securitySettingsBtn, &QPushButton::clicked, this, &NetworkTransferPanel::onSecuritySettings);
@@ -685,14 +687,14 @@ void NetworkTransferPanel::setupUi_bottomButtons(QVBoxLayout* mainLayout) {
     transferBtnLayout->addStretch();
 
     m_pauseResumeButton = new QPushButton(tr("Pause"), this);
-    m_pauseResumeButton->setFixedSize(140, 36);
+    m_pauseResumeButton->setFixedSize(sak::kButtonWidthLarge, sak::kButtonHeightCompact);
     m_pauseResumeButton->setVisible(false);
     m_pauseResumeButton->setAccessibleName(QStringLiteral("Pause Transfer"));
     m_pauseResumeButton->setToolTip(QStringLiteral("Pause or resume the active transfer"));
     transferBtnLayout->addWidget(m_pauseResumeButton);
 
     m_transferButton = new QPushButton(tr("Start Transfer"), this);
-    m_transferButton->setFixedSize(140, 36);
+    m_transferButton->setFixedSize(sak::kButtonWidthLarge, sak::kButtonHeightCompact);
     m_transferButton->setAccessibleName(QStringLiteral("Start Transfer"));
     m_transferButton->setToolTip(QStringLiteral("Start the network file transfer"));
     m_transferButton->setStyleSheet(
@@ -835,7 +837,7 @@ void NetworkTransferPanel::setupConnections_orchestratorSignals() {
             this, &NetworkTransferPanel::onAggregateProgress);
         connect(m_orchestrator, &MigrationOrchestrator::orchestratorStatus, this, [this](const QString& msg) {
             Q_EMIT logOutput(msg);
-            Q_EMIT statusMessage(msg, 5000);
+            Q_EMIT statusMessage(msg, sak::kTimerStatusDefaultMs);
         });
     }
 }
@@ -847,12 +849,12 @@ void NetworkTransferPanel::setupConnections_controllerSignals() {
     connect(m_controller, &NetworkTransferController::transferCompleted, this, &NetworkTransferPanel::onTransferCompleted);
     connect(m_controller, &NetworkTransferController::statusMessage, this, [this](const QString& msg) {
         Q_EMIT logOutput(msg);
-        Q_EMIT statusMessage(msg, 5000);
+        Q_EMIT statusMessage(msg, sak::kTimerStatusDefaultMs);
     });
     connect(m_controller, &NetworkTransferController::errorMessage, this, [this](const QString& msg) {
         Q_EMIT logOutput(tr("ERROR: %1").arg(msg));
         m_transferErrors.append(msg);
-        Q_EMIT statusMessage(msg, 5000);
+        Q_EMIT statusMessage(msg, sak::kTimerStatusDefaultMs);
     });
 
     if (m_parallelManager) {
@@ -928,13 +930,13 @@ void NetworkTransferPanel::loadSettings() {
     m_encryptCheck->setChecked(m_settings.encryption_enabled);
     m_compressCheck->setChecked(m_settings.compression_enabled);
     m_resumeCheck->setChecked(m_settings.resume_enabled);
-    m_chunkSizeSpin->setValue(m_settings.chunk_size / 1024);
+    m_chunkSizeSpin->setValue(m_settings.chunk_size / sak::kBytesPerKB);
     m_bandwidthSpin->setValue(m_settings.max_bandwidth_kbps);
     m_permissionModeCombo->setCurrentIndex(0);
 
     m_mappingTypeCombo->setCurrentIndex(config.getValue("orchestration/mapping_type", 0).toInt());
     m_mappingStrategyCombo->setCurrentIndex(config.getValue("orchestration/mapping_strategy", 0).toInt());
-    m_maxConcurrentSpin->setValue(config.getValue("orchestration/max_concurrent", 10).toInt());
+    m_maxConcurrentSpin->setValue(config.getValue("orchestration/max_concurrent", sak::kMaxConcurrentScrape).toInt());
     m_globalBandwidthSpin->setValue(config.getValue("orchestration/global_bandwidth", 0).toInt());
     m_perJobBandwidthSpin->setValue(config.getValue("orchestration/per_job_bandwidth", 0).toInt());
     m_useTemplateCheck->setChecked(config.getValue("orchestration/use_template", false).toBool());
@@ -1057,7 +1059,7 @@ void NetworkTransferPanel::onModeChanged(int index) {
 void NetworkTransferPanel::onSecuritySettings() {
     QDialog dialog(this);
     dialog.setWindowTitle(tr("Security & Transfer Settings"));
-    dialog.setMinimumWidth(420);
+    dialog.setMinimumWidth(sak::kDialogWidthMedium);
 
     auto* layout = new QGridLayout(&dialog);
 
@@ -1113,7 +1115,7 @@ NetworkTransferPanel::buildSecurityDialogControls(QGridLayout* layout, QDialog* 
     layout->addWidget(sak::InfoButton::createInfoLabel(tr("Bandwidth (KB/s):"),
         tr("Maximum transfer speed in KB/s (0 = unlimited)"), dialog), 1, 2);
     ctl.bwSpin = new QSpinBox(dialog);
-    ctl.bwSpin->setRange(0, 1024 * 1024);
+    ctl.bwSpin->setRange(0, sak::kBytesPerMB);
     ctl.bwSpin->setValue(m_bandwidthSpin->value());
     layout->addWidget(ctl.bwSpin, 1, 3);
 
@@ -1259,7 +1261,7 @@ void NetworkTransferPanel::buildNetworkSettingsPorts(QFormLayout* layout, QDialo
 
     auto* maxBw = new QSpinBox(dialog);
     maxBw->setObjectName(QStringLiteral("ntMaxBw"));
-    maxBw->setRange(0, 1048576);
+    maxBw->setRange(0, sak::kBytesPerMB);
     maxBw->setSuffix(tr(" KB/s"));
     maxBw->setValue(config.getNetworkTransferMaxBandwidth());
     layout->addRow(

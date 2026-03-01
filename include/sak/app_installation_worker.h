@@ -16,6 +16,8 @@
 // Include full definitions needed for shared_ptr usage
 #include "sak/chocolatey_manager.h"
 #include "sak/migration_report.h"
+#include "sak/action_constants.h"
+#include "sak/network_constants.h"
 
 namespace sak {
 
@@ -77,7 +79,7 @@ public:
      * @param maxConcurrent Maximum concurrent installations (default: 2)
      * @return Number of jobs queued
      */
-    int startMigration(std::shared_ptr<MigrationReport> report, int maxConcurrent = 2);
+    int startMigration(std::shared_ptr<MigrationReport> report, int maxConcurrent = kMaxConcurrentTransfers);
 
     /**
      * @brief Pause migration
@@ -222,11 +224,8 @@ private:
     std::atomic<bool> m_running{false};
     std::atomic<bool> m_paused{false};
     std::atomic<bool> m_cancelled{false};
-    int m_maxConcurrent = 2;
+    int m_maxConcurrent = kMaxConcurrentTransfers;
     int m_activeJobs = 0;
-    
-    static const int MAX_RETRIES = 3;
-    static const int BASE_RETRY_DELAY_MS = 5000;  ///< 5 seconds
 };
 
 } // namespace sak

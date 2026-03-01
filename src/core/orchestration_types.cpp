@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "sak/orchestration_types.h"
+#include "sak/network_constants.h"
 
 namespace sak {
 
@@ -45,8 +46,8 @@ DestinationPC DestinationPC::fromJson(const QJsonObject& json) {
     pc.destination_id = json.value("destination_id").toString();
     pc.hostname = json.value("hostname").toString();
     pc.ip_address = json.value("ip_address").toString();
-    pc.control_port = static_cast<quint16>(json.value("control_port").toInt(54322));
-    pc.data_port = static_cast<quint16>(json.value("data_port").toInt(54323));
+    pc.control_port = static_cast<quint16>(json.value("control_port").toInt(sak::kPortControl));
+    pc.data_port = static_cast<quint16>(json.value("data_port").toInt(sak::kPortData));
     pc.status = json.value("status").toString("unknown");
     pc.last_seen = QDateTime::fromSecsSinceEpoch(json.value("last_seen").toVariant().toLongLong());
     if (json.contains("health") && json.value("health").isObject()) {

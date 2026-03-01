@@ -7,6 +7,7 @@
 #include "sak/windows_user_scanner.h"
 #include "sak/path_utils.h"
 #include "sak/logger.h"
+#include "sak/layout_constants.h"
 #include <QtGlobal>
 #include <QDir>
 #include <QFile>
@@ -130,7 +131,7 @@ void UserProfileRestoreWorker::run() {
         .arg(m_filesRestored)
         .arg(m_filesSkipped)
         .arg(m_filesErrored)
-        .arg(m_bytesRestored / (1024.0 * 1024.0), 0, 'f', 1);
+        .arg(m_bytesRestored / sak::kBytesPerMBf, 0, 'f', 1);
     
     Q_EMIT logMessage(tr("=== Restore Complete ==="), false);
     Q_EMIT logMessage(summary, false);
@@ -535,7 +536,7 @@ void UserProfileRestoreWorker::updateProgress(qint64 bytesAdded) {
     static qint64 lastByteCount = 0;
     
     if (m_filesRestored - lastFileCount >= 100 ||
-        m_bytesRestored - lastByteCount >= 100 * 1024 * 1024) {
+        m_bytesRestored - lastByteCount >= 100 * sak::kBytesPerMB) {
         
         Q_EMIT fileProgress(m_filesRestored, m_totalFilesToRestore);
         

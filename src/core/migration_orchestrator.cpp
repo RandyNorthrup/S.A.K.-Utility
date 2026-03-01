@@ -4,6 +4,7 @@
 #include "sak/migration_orchestrator.h"
 #include "sak/orchestration_server.h"
 #include "sak/orchestration_discovery_service.h"
+#include "sak/layout_constants.h"
 
 namespace sak {
 
@@ -23,7 +24,7 @@ MigrationOrchestrator::MigrationOrchestrator(QObject* parent)
             registerDestination(destination);
         });
 
-    m_healthPollTimer->setInterval(10000);
+    m_healthPollTimer->setInterval(sak::kTimerHealthPollMs);
     connect(m_healthPollTimer, &QTimer::timeout, this, [this]() {
         const auto items = m_registry->destinations();
         for (const auto& destination : items) {

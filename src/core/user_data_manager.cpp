@@ -3,6 +3,7 @@
 
 #include "sak/user_data_manager.h"
 #include "sak/encryption.h"
+#include "sak/layout_constants.h"
 #include "sak/logger.h"
 #include <QtGlobal>
 #include <QDir>
@@ -473,7 +474,7 @@ bool UserDataManager::createArchive(const QStringList& source_paths,
         return false;
     }
     
-    if (!process.waitForFinished(300000)) { // 5 minute timeout
+    if (!process.waitForFinished(sak::kTimeoutArchiveMs)) { // 5 minute timeout
         sak::logError("Archive compression timed out after 5 minutes — killing process");
         process.kill();
         return false;
@@ -575,7 +576,7 @@ bool UserDataManager::extractArchive(const QString& archive_path,
         return false;
     }
     
-    if (!process.waitForFinished(300000)) { // 5 minute timeout
+    if (!process.waitForFinished(sak::kTimeoutArchiveMs)) { // 5 minute timeout
         process.kill();
         if (!temp_decrypted.isEmpty()) QFile::remove(temp_decrypted);
         return false;

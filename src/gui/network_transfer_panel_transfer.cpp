@@ -18,6 +18,7 @@
 #include "sak/version.h"
 #include "sak/smart_file_filter.h"
 #include "sak/permission_manager.h"
+#include "sak/layout_constants.h"
 
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -148,7 +149,7 @@ void NetworkTransferPanel::onStartSource() {
     m_settings.encryption_enabled = m_encryptCheck->isChecked();
     m_settings.compression_enabled = m_compressCheck->isChecked();
     m_settings.resume_enabled = m_resumeCheck->isChecked();
-    m_settings.chunk_size = m_chunkSizeSpin->value() * 1024;
+    m_settings.chunk_size = m_chunkSizeSpin->value() * sak::kBytesPerKB;
     m_settings.max_bandwidth_kbps = m_bandwidthSpin->value();
 
     if (m_settings.encryption_enabled && m_passphraseEdit->text().isEmpty()) {
@@ -179,7 +180,7 @@ void NetworkTransferPanel::onStartDestination() {
     m_settings.encryption_enabled = m_encryptCheck->isChecked();
     m_settings.compression_enabled = m_compressCheck->isChecked();
     m_settings.resume_enabled = m_resumeCheck->isChecked();
-    m_settings.chunk_size = m_chunkSizeSpin->value() * 1024;
+    m_settings.chunk_size = m_chunkSizeSpin->value() * sak::kBytesPerKB;
     m_settings.max_bandwidth_kbps = m_bandwidthSpin->value();
 
     if (m_settings.encryption_enabled && m_destinationPassphraseEdit->text().isEmpty()) {

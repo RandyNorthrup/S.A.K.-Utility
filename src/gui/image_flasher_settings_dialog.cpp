@@ -6,6 +6,8 @@
 #include "sak/info_button.h"
 #include "sak/logger.h"
 #include "sak/style_constants.h"
+#include "sak/network_constants.h"
+#include "sak/layout_constants.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QGridLayout>
@@ -23,7 +25,7 @@ ImageFlasherSettingsDialog::ImageFlasherSettingsDialog(QWidget* parent)
 {
     setWindowTitle("Image Flasher Settings");
     setModal(true);
-    resize(500, 450);
+    resize(sak::kFlasherSettingsW, sak::kFlasherSettingsH);
     
     setupUi();
     loadSettings();
@@ -259,7 +261,7 @@ void ImageFlasherSettingsDialog::onAccept() {
 
 void ImageFlasherSettingsDialog::onResetDefaults() {
     m_validationModeCombo->setCurrentIndex(0); // Full
-    m_bufferSizeSpin->setValue(4096);
+    m_bufferSizeSpin->setValue(static_cast<int>(sak::kBufferAlignment));
     m_maxConcurrentWritesSpin->setValue(1);
     m_showSystemDriveWarningCheck->setChecked(true);
     m_showLargeDriveWarningCheck->setChecked(true);
@@ -314,12 +316,12 @@ void ImageFlasherSettingsDialog::updateCacheInfo()
         m_clearCacheButton->setEnabled(false);
     } else {
         QString sizeStr;
-        if (totalBytes < 1024 * 1024) {
-            sizeStr = QString("%1 KB").arg(totalBytes / 1024);
-        } else if (totalBytes < 1024LL * 1024 * 1024) {
-            sizeStr = QString("%1 MB").arg(totalBytes / (1024.0 * 1024.0), 0, 'f', 1);
+        if (totalBytes < sak::kBytesPerMB) {
+            sizeStr = QString("%1 KB").arg(totalBytes / sak::kBytesPerKB);
+        } else if (totalBytes < sak::kBytesPerGB) {
+            sizeStr = QString("%1 MB").arg(totalBytes / sak::kBytesPerMBf, 0, 'f', 1);
         } else {
-            sizeStr = QString("%1 GB").arg(totalBytes / (1024.0 * 1024.0 * 1024.0), 0, 'f', 2);
+            sizeStr = QString("%1 GB").arg(totalBytes / sak::kBytesPerGBf, 0, 'f', 2);
         }
         m_cacheInfoLabel->setText(QString("%1 cached download folder(s) using %2.")
             .arg(dirs.size()).arg(sizeStr));
@@ -338,10 +340,10 @@ void ImageFlasherSettingsDialog::onClearDownloadCaches()
 
     qint64 totalBytes = calculateCacheSize();
     QString sizeStr;
-    if (totalBytes < 1024LL * 1024 * 1024) {
-        sizeStr = QString("%1 MB").arg(totalBytes / (1024.0 * 1024.0), 0, 'f', 1);
+    if (totalBytes < sak::kBytesPerGB) {
+        sizeStr = QString("%1 MB").arg(totalBytes / sak::kBytesPerMBf, 0, 'f', 1);
     } else {
-        sizeStr = QString("%1 GB").arg(totalBytes / (1024.0 * 1024.0 * 1024.0), 0, 'f', 2);
+        sizeStr = QString("%1 GB").arg(totalBytes / sak::kBytesPerGBf, 0, 'f', 2);
     }
 
     auto reply = QMessageBox::question(this, "Clear Download Caches",

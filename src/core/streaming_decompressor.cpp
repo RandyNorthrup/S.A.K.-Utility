@@ -3,6 +3,7 @@
 
 #include "sak/streaming_decompressor.h"
 #include "sak/logger.h"
+#include "sak/layout_constants.h"
 
 namespace sak {
 
@@ -94,7 +95,7 @@ qint64 StreamingDecompressor::read(char* data, qint64 maxSize)
     m_decompressedBytesProduced += bytesProduced;
 
     // Emit progress every ~1 MB
-    if (m_decompressedBytesProduced % (1024 * 1024) < bytesProduced) {
+    if (m_decompressedBytesProduced % sak::kBytesPerMB < bytesProduced) {
         Q_EMIT progressUpdated(m_compressedBytesRead, m_decompressedBytesProduced);
     }
 

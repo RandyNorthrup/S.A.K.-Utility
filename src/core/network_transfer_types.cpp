@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "sak/network_transfer_types.h"
+#include "sak/network_constants.h"
 
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -35,8 +36,8 @@ TransferPeerInfo TransferPeerInfo::fromJson(const QJsonObject& json) {
     info.os = json.value("os").toString();
     info.app_version = json.value("app_version").toString();
     info.ip_address = json.value("ip_address").toString();
-    info.control_port = static_cast<quint16>(json.value("control_port").toInt(54322));
-    info.data_port = static_cast<quint16>(json.value("data_port").toInt(54323));
+    info.control_port = static_cast<quint16>(json.value("control_port").toInt(sak::kPortControl));
+    info.data_port = static_cast<quint16>(json.value("data_port").toInt(sak::kPortData));
     info.mode = json.value("mode").toString();
     auto caps = json.value("capabilities").toArray();
     for (const auto& cap : caps) {

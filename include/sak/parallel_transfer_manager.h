@@ -12,6 +12,8 @@
 #include <QVector>
 
 #include "sak/mapping_engine.h"
+#include "sak/action_constants.h"
+#include "sak/network_constants.h"
 
 namespace sak {
 
@@ -130,11 +132,11 @@ private:
     QMap<QString, QDateTime> m_retrySchedule;
     QTimer* m_retryTimer{nullptr};
 
-    int m_maxConcurrent{10};
+    int m_maxConcurrent{kMaxConcurrentScrape};
     int m_globalBandwidthLimitMbps{0};
     int m_perJobBandwidthLimitMbps{0};
-    int m_retryBaseMs{2000};
-    int m_retryMaxMs{60000};
+    int m_retryBaseMs{kRetryBackoffBaseMs};
+    int m_retryMaxMs{kRetryBackoffMaxMs};
     JobPriority m_defaultPriority{JobPriority::Normal};
 };
 

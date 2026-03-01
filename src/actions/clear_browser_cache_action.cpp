@@ -6,6 +6,7 @@
 
 #include "sak/actions/clear_browser_cache_action.h"
 #include "sak/process_runner.h"
+#include "sak/layout_constants.h"
 
 #include <QDir>
 #include <QDirIterator>
@@ -35,7 +36,7 @@ void ClearBrowserCacheAction::scan() {
     result.estimated_duration_ms = std::max<qint64>(3000, total_files * 3);
 
     if (result.applicable) {
-        double mb = total_bytes / (1024.0 * 1024.0);
+        double mb = total_bytes / sak::kBytesPerMBf;
         result.summary = QString("Cache size: %1 MB").arg(mb, 0, 'f', 1);
         result.details = QString("Locations: %1").arg(locations);
     } else {
@@ -129,7 +130,7 @@ void ClearBrowserCacheAction::execute() {
     
     Q_EMIT executionProgress("║ Detecting browser processes and cache locations...           ║", 20);
     
-    ProcessResult ps = runPowerShell(ps_script, 180000);
+    ProcessResult ps = runPowerShell(ps_script, sak::kTimeoutBrowserCacheMs);
 
     Q_EMIT executionProgress("║ Calculating cache sizes before clearing...                   ║", 40);
 

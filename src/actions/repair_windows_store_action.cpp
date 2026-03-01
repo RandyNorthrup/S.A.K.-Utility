@@ -5,6 +5,7 @@
 /// @brief Implements Microsoft Store repair and cache reset
 
 #include "sak/actions/repair_windows_store_action.h"
+#include "sak/layout_constants.h"
 #include "sak/process_runner.h"
 #include <QProcess>
 #include <QThread>
@@ -23,7 +24,7 @@ RepairWindowsStoreAction::StorePackageInfo RepairWindowsStoreAction::checkStoreP
     
     QString ps_cmd = "Get-AppxPackage *WindowsStore* | Select-Object Name,Version,Publisher,Status | Format-List";
     
-    ProcessResult proc = runPowerShell(ps_cmd, 10000);
+    ProcessResult proc = runPowerShell(ps_cmd, sak::kTimeoutProcessMediumMs);
     QString output = proc.std_out;
     if (!proc.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("Store package check warning: " + proc.std_err.trimmed());
@@ -52,16 +53,16 @@ bool RepairWindowsStoreAction::resetWindowsStoreCache() {
     Q_EMIT executionProgress("Clearing Windows Store cache (WSReset)...", 15);
     
     // WSReset clears the Store cache and resets the app
-    ProcessResult proc = runProcess("WSReset.exe", QStringList(), 20000);
+    ProcessResult proc = runProcess("WSReset.exe", QStringList(), sak::kTimeoutProcessResetMs);
     if (!proc.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("WSReset warning: " + proc.std_err.trimmed());
     }
     
     // WSReset runs silently, give it time to complete
-    QThread::msleep(8000);
+    QThread::msleep(sak::kTimerStoreRepairMs);
     
     // Terminate WSReset window if it's still open
-    ProcessResult kill_proc = runProcess("taskkill", QStringList() << "/F" << "/IM" << "WinStore.App.exe" << "/T", 10000);
+    ProcessResult kill_proc = runProcess("taskkill", QStringList() << "/F" << "/IM" << "WinStore.App.exe" << "/T", sak::kTimeoutProcessMediumMs);
     if (!kill_proc.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("Store taskkill warning: " + kill_proc.std_err.trimmed());
     }
@@ -75,7 +76,7 @@ bool RepairWindowsStoreAction::resetStorePackage() {
     
     QString ps_cmd = "Reset-AppxPackage -Name Microsoft.WindowsStore_* -ErrorAction SilentlyContinue";
     
-    ProcessResult proc = runPowerShell(ps_cmd, 30000);
+    ProcessResult proc = runPowerShell(ps_cmd, sak::kTimeoutProcessLongMs);
     if (!proc.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("Store package reset warning: " + proc.std_err.trimmed());
     }
@@ -92,7 +93,7 @@ bool RepairWindowsStoreAction::reregisterWindowsStore() {
                     "  Add-AppxPackage -DisableDevelopmentMode -Register \"$($store.InstallLocation)\\AppXManifest.xml\" -ErrorAction SilentlyContinue "
                     "}";
     
-    ProcessResult proc = runPowerShell(ps_cmd, 45000);
+    ProcessResult proc = runPowerShell(ps_cmd, sak::kTimeoutStoreReinstallMs);
     if (!proc.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("Store re-registration warning: " + proc.std_err.trimmed());
     }
@@ -111,7 +112,7 @@ bool RepairWindowsStoreAction::resetStoreServices() {
                     "  Start-Service -Name $svc -ErrorAction SilentlyContinue "
                     "}";
     
-    ProcessResult proc = runPowerShell(ps_cmd, 30000);
+    ProcessResult proc = runPowerShell(ps_cmd, sak::kTimeoutProcessLongMs);
     if (!proc.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("Store services reset warning: " + proc.std_err.trimmed());
     }
@@ -123,7 +124,7 @@ int RepairWindowsStoreAction::checkStoreEventLogs() {
     QString ps_cmd = "(Get-WinEvent -LogName 'Microsoft-Windows-AppXDeploymentServer/Operational' -MaxEvents 10 -ErrorAction SilentlyContinue | "
                     "Where-Object {$_.LevelDisplayName -eq 'Error'} | Measure-Object).Count";
     
-    ProcessResult proc = runPowerShell(ps_cmd, 5000);
+    ProcessResult proc = runPowerShell(ps_cmd, sak::kTimeoutProcessShortMs);
     if (!proc.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("Store event log query warning: " + proc.std_err.trimmed());
     }

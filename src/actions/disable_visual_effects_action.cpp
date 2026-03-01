@@ -5,6 +5,7 @@
 /// @brief Implements Windows visual effects optimization for performance
 
 #include "sak/actions/disable_visual_effects_action.h"
+#include "sak/layout_constants.h"
 #include "sak/process_runner.h"
 #include <QSettings>
 #include <QJsonDocument>
@@ -44,7 +45,7 @@ bool DisableVisualEffectsAction::disableVisualEffects() {
     advanced.setValue("MinAnimate", "0");
     
     // Notify system of changes
-    ProcessResult proc = runProcess("rundll32.exe", QStringList() << "user32.dll,UpdatePerUserSystemParameters" << "1" << "True", 5000);
+    ProcessResult proc = runProcess("rundll32.exe", QStringList() << "user32.dll,UpdatePerUserSystemParameters" << "1" << "True", sak::kTimeoutProcessShortMs);
     if (!proc.succeeded()) {
         Q_EMIT logMessage("Visual effects notify warning: " + proc.std_err.trimmed());
     }
@@ -88,7 +89,7 @@ void DisableVisualEffectsAction::execute() {
     report += "║ Phase 1: Current Settings Analysis                                  ║\n";
     report += "╠══════════════════════════════════════════════════════════════════════╣\n";
     
-    ProcessResult ps_check = runPowerShell(buildCheckSettingsScript(), 10000);
+    ProcessResult ps_check = runPowerShell(buildCheckSettingsScript(), sak::kTimeoutProcessMediumMs);
     if (!ps_check.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("Visual effects check warning: " + ps_check.std_err.trimmed());
     }
@@ -142,7 +143,7 @@ void DisableVisualEffectsAction::applyVisualEffectsSettings(
     report += "║ Phase 2: Applying Best Performance Settings                         ║\n";
     report += "╠══════════════════════════════════════════════════════════════════════╣\n";
 
-    ProcessResult ps_apply = runPowerShell(buildApplySettingsScript(), 10000);
+    ProcessResult ps_apply = runPowerShell(buildApplySettingsScript(), sak::kTimeoutProcessMediumMs);
     if (!ps_apply.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("Visual effects apply warning: " + ps_apply.std_err.trimmed());
     }

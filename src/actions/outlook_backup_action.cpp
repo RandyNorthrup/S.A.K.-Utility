@@ -12,6 +12,7 @@
 #include <QFile>
 #include <QDateTime>
 #include "sak/logger.h"
+#include "sak/layout_constants.h"
 
 namespace sak {
 
@@ -146,7 +147,7 @@ void OutlookBackupAction::execute() {
     setStatus(ActionStatus::Running);
     QDateTime start_time = QDateTime::currentDateTime();
     Q_EMIT executionProgress("Checking if Outlook is running...", 5);
-    ProcessResult proc = runProcess("tasklist", QStringList() << "/FI" << "IMAGENAME eq OUTLOOK.EXE", 3000);
+    ProcessResult proc = runProcess("tasklist", QStringList() << "/FI" << "IMAGENAME eq OUTLOOK.EXE", sak::kTimeoutThermalQueryMs);
     bool outlook_running = proc.std_out.contains("OUTLOOK.EXE", Qt::CaseInsensitive);
     if (outlook_running) {
         emitFailedResult("Outlook is currently running",
@@ -207,7 +208,7 @@ void OutlookBackupAction::execute() {
 }
 
 bool OutlookBackupAction::isOutlookRunning() {
-    ProcessResult proc = runProcess("tasklist", QStringList() << "/FI" << "IMAGENAME eq OUTLOOK.EXE", 3000);
+    ProcessResult proc = runProcess("tasklist", QStringList() << "/FI" << "IMAGENAME eq OUTLOOK.EXE", sak::kTimeoutThermalQueryMs);
     QString output = proc.std_out;
     return output.contains("OUTLOOK.EXE", Qt::CaseInsensitive);
 }

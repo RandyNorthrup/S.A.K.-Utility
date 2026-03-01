@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "sak/app_scanner.h"
+#include "sak/layout_constants.h"
 #include "sak/logger.h"
 #include <QProcess>
 #include <QJsonDocument>
@@ -169,7 +170,7 @@ std::vector<AppScanner::AppInfo> AppScanner::scanAppX() {
     });
     
     process.start();
-    if (!process.waitForFinished(30000)) {
+    if (!process.waitForFinished(sak::kTimeoutProcessLongMs)) {
         sak::logWarning("AppScanner: PowerShell timeout while scanning AppX packages");
         return apps;
     }
@@ -219,7 +220,7 @@ std::vector<AppScanner::AppInfo> AppScanner::scanChocolatey() {
     process.setArguments({"list", "--local-only", "--limit-output"});
     
     process.start();
-    if (!process.waitForFinished(10000)) {
+    if (!process.waitForFinished(sak::kTimeoutProcessMediumMs)) {
         sak::logWarning("Chocolatey package scan timed out after 10s — choco may not be installed or is unresponsive");
         process.kill();
         return apps;

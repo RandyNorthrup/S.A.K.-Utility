@@ -3,6 +3,7 @@
 
 #include "sak/peer_discovery_service.h"
 #include "sak/network_transfer_protocol.h"
+#include "sak/layout_constants.h"
 #include "sak/logger.h"
 
 #include <QJsonDocument>
@@ -15,7 +16,7 @@ PeerDiscoveryService::PeerDiscoveryService(QObject* parent)
     , m_socket(new QUdpSocket(this))
     , m_broadcastTimer(new QTimer(this))
 {
-    m_broadcastTimer->setInterval(2000);
+    m_broadcastTimer->setInterval(sak::kTimerBroadcastMs);
     connect(m_broadcastTimer, &QTimer::timeout, this, &PeerDiscoveryService::sendAnnouncement);
     connect(m_socket, &QUdpSocket::readyRead, this, &PeerDiscoveryService::onReadyRead);
 }

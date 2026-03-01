@@ -12,6 +12,7 @@
 
 #include "sak/windows_iso_downloader.h"
 #include "sak/logger.h"
+#include "sak/layout_constants.h"
 
 // ============================================================================
 // Construction / Destruction
@@ -141,12 +142,12 @@ void WindowsISODownloader::onFilesFetched(const QString& updateName,
     }
 
     sak::logInfo("Starting UUP download: " + std::to_string(files.size()) +
-                  " files, " + std::to_string(totalBytes / (1024 * 1024)) + " MB");
+                  " files, " + std::to_string(totalBytes / sak::kBytesPerMB) + " MB");
 
     Q_EMIT downloadStarted(files.size(), totalBytes);
     Q_EMIT statusMessage(QString("Downloading %1 files (%2 GB)...")
                              .arg(files.size())
-                             .arg(totalBytes / (1024.0 * 1024.0 * 1024.0), 0, 'f', 2));
+                             .arg(totalBytes / sak::kBytesPerGBf, 0, 'f', 2));
 
     m_builder->startBuild(files, m_pendingSavePath, m_pendingEdition, m_pendingLang, m_pendingUpdateId);
 }

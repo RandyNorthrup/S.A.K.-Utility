@@ -5,6 +5,7 @@
 /// @brief Implements network speed testing with download throughput measurement
 
 #include "sak/actions/test_network_speed_action.h"
+#include "sak/layout_constants.h"
 #include "sak/process_runner.h"
 #include <QRegularExpression>
 
@@ -274,7 +275,7 @@ void TestNetworkSpeedAction::getPublicIPInfo() {
         "}"
     );
     
-    ProcessResult proc = runPowerShell(ps_cmd, 15000);
+    ProcessResult proc = runPowerShell(ps_cmd, sak::kTimeoutChocoListMs);
     if (!proc.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("Public IP lookup warning: " + proc.std_err.trimmed());
     }

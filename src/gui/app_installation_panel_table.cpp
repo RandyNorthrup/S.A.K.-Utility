@@ -4,6 +4,7 @@
 #include "sak/app_installation_panel.h"
 #include "sak/chocolatey_manager.h"
 #include "sak/logger.h"
+#include "sak/layout_constants.h"
 
 #include <QApplication>
 #include <QFileDialog>
@@ -200,7 +201,7 @@ void AppInstallationPanel::updateResultsFromSearch(const QString& output)
 
     int count = static_cast<int>(packages.size());
     Q_EMIT logOutput(QString("Search returned %1 result(s)").arg(count));
-    Q_EMIT statusMessage(tr("Found %1 package(s)").arg(count), 3000);
+    Q_EMIT statusMessage(tr("Found %1 package(s)").arg(count), sak::kTimerStatusMessageMs);
 }
 
 // ============================================================================
@@ -357,5 +358,5 @@ void AppInstallationPanel::loadQueueFromFile()
         msg += QString(", %1 duplicate(s) skipped").arg(skipped);
     }
     Q_EMIT logOutput(msg + QString(" from %1").arg(filePath));
-    Q_EMIT statusMessage(msg, 3000);
+    Q_EMIT statusMessage(msg, sak::kTimerStatusMessageMs);
 }

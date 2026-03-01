@@ -10,6 +10,7 @@
 #include <atomic>
 
 #include "sak/orchestration_types.h"
+#include "sak/network_constants.h"
 
 namespace sak {
 
@@ -48,8 +49,8 @@ private:
     QUdpSocket* m_socket{nullptr};
     QTimer* m_broadcastTimer{nullptr};
     DestinationPC m_destinationInfo;
-    quint16 m_orchestratorPort{54322};
-    quint16 m_port{54321};
+    quint16 m_orchestratorPort{sak::kPortControl};
+    quint16 m_port{sak::kPortDiscovery};
     std::atomic<bool> m_running{false};
     bool m_roleOrchestrator{true};
 };

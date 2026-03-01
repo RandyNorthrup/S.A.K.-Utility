@@ -6,6 +6,7 @@
 
 #include "sak/actions/optimize_power_settings_action.h"
 #include "sak/process_runner.h"
+#include "sak/layout_constants.h"
 #include <QRegularExpression>
 #include <QTextStream>
 
@@ -20,7 +21,7 @@ OptimizePowerSettingsAction::OptimizePowerSettingsAction(QObject* parent)
 QVector<OptimizePowerSettingsAction::PowerPlan> OptimizePowerSettingsAction::enumeratePowerPlans() {
     QVector<PowerPlan> plans;
     
-    ProcessResult proc = runProcess("powercfg", QStringList() << "-LIST", 5000);
+    ProcessResult proc = runProcess("powercfg", QStringList() << "-LIST", sak::kTimeoutProcessShortMs);
     if (!proc.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("Power plan list warning: " + proc.std_err.trimmed());
     }
@@ -49,7 +50,7 @@ OptimizePowerSettingsAction::PowerPlan OptimizePowerSettingsAction::queryPowerPl
     plan.guid = guid;
     plan.isActive = false;
     
-    ProcessResult proc = runProcess("powercfg", QStringList() << "-QUERY" << guid, 10000);
+    ProcessResult proc = runProcess("powercfg", QStringList() << "-QUERY" << guid, sak::kTimeoutProcessMediumMs);
     if (!proc.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("Power plan query warning: " + proc.std_err.trimmed());
     }
@@ -69,7 +70,7 @@ OptimizePowerSettingsAction::PowerPlan OptimizePowerSettingsAction::queryPowerPl
 bool OptimizePowerSettingsAction::setPowerPlan(const QString& guid) {
     Q_EMIT executionProgress("Activating power plan...", 60);
     
-    ProcessResult proc = runProcess("powercfg", QStringList() << "-SETACTIVE" << guid, 5000);
+    ProcessResult proc = runProcess("powercfg", QStringList() << "-SETACTIVE" << guid, sak::kTimeoutProcessShortMs);
     if (!proc.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("Power plan activate warning: " + proc.std_err.trimmed());
     }
@@ -80,7 +81,7 @@ bool OptimizePowerSettingsAction::setPowerPlan(const QString& guid) {
 OptimizePowerSettingsAction::PowerPlan OptimizePowerSettingsAction::getActivePowerPlan() {
     PowerPlan active_plan;
     
-    ProcessResult proc = runProcess("powercfg", QStringList() << "-GETACTIVESCHEME", 5000);
+    ProcessResult proc = runProcess("powercfg", QStringList() << "-GETACTIVESCHEME", sak::kTimeoutProcessShortMs);
     if (!proc.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("Power plan active query warning: " + proc.std_err.trimmed());
     }

@@ -7,6 +7,7 @@
 #include "sak/stress_test_worker.h"
 #include "sak/keep_awake.h"
 #include "sak/logger.h"
+#include "sak/layout_constants.h"
 
 #include <QDateTime>
 #include <QDir>
@@ -275,10 +276,10 @@ int StressTestWorker::runMemoryStress()
     // Cap at available memory, minimum 64 MB, maximum 16 GB
     constexpr size_t kMaxAlloc = 16ULL * 1024 * 1024 * 1024;
     const size_t alloc_size = std::clamp(target_bytes,
-                                         size_t(64ULL * 1024 * 1024),
+                                         static_cast<size_t>(64 * sak::kBytesPerMB),
                                          kMaxAlloc);
 
-    logInfo("Memory stress: allocating {} MB", alloc_size / (1024 * 1024));
+    logInfo("Memory stress: allocating {} MB", alloc_size / sak::kBytesPerMB);
 
     auto* data = allocateStressMemory(alloc_size);
     if (!data) {
@@ -311,7 +312,7 @@ int StressTestWorker::runMemoryStress()
     freeStressMemory(data);
 
     logInfo("Memory stress: wrote {} GB, {} pattern errors",
-            total_bytes_written / (1024ULL * 1024 * 1024), total_errors);
+            total_bytes_written / static_cast<uint64_t>(sak::kBytesPerGB), total_errors);
     return total_errors;
 }
 
@@ -327,7 +328,7 @@ size_t StressTestWorker::determineTargetMemoryBytes(size_t fallback_bytes) const
     }
     logWarning("GlobalMemoryStatusEx failed (error {}), "
                "using {} MB fallback allocation",
-               GetLastError(), fallback_bytes / (1024 * 1024));
+               GetLastError(), fallback_bytes / sak::kBytesPerMB);
     return fallback_bytes;
 #else
     #if defined(_SC_AVPHYS_PAGES) && defined(_SC_PAGESIZE)
@@ -340,11 +341,11 @@ size_t StressTestWorker::determineTargetMemoryBytes(size_t fallback_bytes) const
                 (m_config.memory_usage_percent / 100.0));
         }
         logWarning("sysconf memory query failed, using {} MB fallback",
-                   fallback_bytes / (1024 * 1024));
+                   fallback_bytes / sak::kBytesPerMB);
     }
     #else
     logInfo("Platform memory detection unavailable, using {} MB fallback",
-            fallback_bytes / (1024 * 1024));
+            fallback_bytes / sak::kBytesPerMB);
     #endif
     return fallback_bytes;
 #endif
@@ -438,7 +439,7 @@ void StressTestWorker::runDiskStress()
     m_result.disk_errors = disk_errors;
 
     logInfo("Disk stress: wrote {} GB, {} errors",
-            total_bytes_written / (1024ULL * 1024 * 1024), disk_errors);
+            total_bytes_written / static_cast<uint64_t>(sak::kBytesPerGB), disk_errors);
 #endif
 }
 

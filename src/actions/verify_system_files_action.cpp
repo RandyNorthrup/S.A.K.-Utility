@@ -5,6 +5,7 @@
 /// @brief Implements Windows system file verification using SFC and DISM
 
 #include "sak/actions/verify_system_files_action.h"
+#include "sak/layout_constants.h"
 #include "sak/process_runner.h"
 #include <QRegularExpression>
 
@@ -28,7 +29,7 @@ void VerifySystemFilesAction::runSFC() {
         "Remove-Item $sfcOutput -ErrorAction SilentlyContinue";
     
     Q_EMIT executionProgress("SFC scanning...", 25);
-    ProcessResult proc = runPowerShell(ps_script, 1800000, true, true, [this]() { return isCancelled(); });
+    ProcessResult proc = runPowerShell(ps_script, sak::kTimeoutSystemRepairMs, true, true, [this]() { return isCancelled(); });
     if (!proc.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("SFC warning: " + proc.std_err.trimmed());
     }
@@ -61,7 +62,7 @@ void VerifySystemFilesAction::runDISM() {
         "DISM.exe /Online /Cleanup-Image /CheckHealth; "
         "$LASTEXITCODE";
     
-    ProcessResult checkProc = runPowerShell(checkHealthScript, 120000);
+    ProcessResult checkProc = runPowerShell(checkHealthScript, sak::kTimeoutDismCheckMs);
     if (!checkProc.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("DISM CheckHealth warning: " + checkProc.std_err.trimmed());
     }
@@ -76,7 +77,7 @@ void VerifySystemFilesAction::runDISM() {
     // Step 2: ScanHealth - Thorough scan for corruption
     QString scanHealthScript = "DISM.exe /Online /Cleanup-Image /ScanHealth";
     
-    ProcessResult scanProc = runPowerShell(scanHealthScript, 600000);
+    ProcessResult scanProc = runPowerShell(scanHealthScript, sak::kTimeoutDismScanMs);
     if (!scanProc.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("DISM ScanHealth warning: " + scanProc.std_err.trimmed());
     }
@@ -95,7 +96,7 @@ void VerifySystemFilesAction::runDISM() {
         QString restoreHealthScript = "DISM.exe /Online /Cleanup-Image /RestoreHealth /LimitAccess";
         
         Q_EMIT executionProgress("DISM restoring...", 75);
-        ProcessResult restoreProc = runPowerShell(restoreHealthScript, 1800000, true, true, [this]() { return isCancelled(); });
+        ProcessResult restoreProc = runPowerShell(restoreHealthScript, sak::kTimeoutSystemRepairMs, true, true, [this]() { return isCancelled(); });
         if (!restoreProc.std_err.trimmed().isEmpty()) {
             Q_EMIT logMessage("DISM RestoreHealth warning: " + restoreProc.std_err.trimmed());
         }

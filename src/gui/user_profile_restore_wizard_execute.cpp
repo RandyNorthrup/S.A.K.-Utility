@@ -4,6 +4,7 @@
 #include "sak/user_profile_restore_wizard.h"
 #include "sak/user_profile_restore_worker.h"
 #include "sak/style_constants.h"
+#include "sak/layout_constants.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QTimer>
@@ -61,7 +62,7 @@ void UserProfileRestoreExecutePage::setupUi() {
     layout->addWidget(logLabel);
     m_logText = new QTextEdit(this);
     m_logText->setReadOnly(true);
-    m_logText->setMaximumHeight(200);
+    m_logText->setMaximumHeight(sak::kLogAreaMaxH);
     layout->addWidget(m_logText);
     
     // Buttons
@@ -89,7 +90,7 @@ void UserProfileRestoreExecutePage::initializePage() {
     m_statusLabel->setText(tr("Preparing to restore..."));
     
     // Start restore after UI initializes
-    QTimer::singleShot(200, this, &UserProfileRestoreExecutePage::onStartRestore);
+    QTimer::singleShot(sak::kTimerDelayShortMs, this, &UserProfileRestoreExecutePage::onStartRestore);
 }
 
 void UserProfileRestoreExecutePage::onStartRestore() {
@@ -169,8 +170,8 @@ void UserProfileRestoreExecutePage::onOverallProgress(int current, int total, qi
         int percent = (current * 100) / total;
         m_overallProgressBar->setValue(percent);
         
-        double gbCopied = bytes / (1024.0 * 1024.0 * 1024.0);
-        double gbTotal = totalBytes / (1024.0 * 1024.0 * 1024.0);
+        double gbCopied = bytes / sak::kBytesPerGBf;
+        double gbTotal = totalBytes / sak::kBytesPerGBf;
         m_overallProgressBar->setFormat(QString("%1% - %2 / %3 GB").arg(percent).arg(gbCopied, 0, 'f', 2).arg(gbTotal, 0, 'f', 2));
     }
 }

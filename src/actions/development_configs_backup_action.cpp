@@ -10,6 +10,7 @@
 #include <QDirIterator>
 #include <QFile>
 #include "sak/logger.h"
+#include "sak/layout_constants.h"
 
 namespace sak {
 
@@ -174,7 +175,7 @@ void DevelopmentConfigsBackupAction::scan() {
     if (m_configs.count() > 0) {
         result.summary = QString("Found %1 dev config(s) - %2 KB")
             .arg(m_configs.count())
-            .arg(m_total_size / 1024);
+            .arg(m_total_size / sak::kBytesPerKB);
         
         if (m_found_sensitive_data) {
             result.warning = "Includes SSH keys - ensure backup location is secure!";

@@ -7,6 +7,7 @@
 #pragma once
 
 #include "sak/diagnostic_types.h"
+#include "sak/layout_constants.h"
 
 #include <QObject>
 #include <QTimer>
@@ -95,7 +96,7 @@ private:
     [[nodiscard]] double queryGpuTemperature();
 
     QTimer m_timer;
-    int m_interval_ms{2000};                  ///< Configured poll interval
+    int m_interval_ms{sak::kTimerBroadcastMs};                  ///< Configured poll interval
     QVector<ThermalReading> m_history;
 
     /// Warning thresholds (Celsius)

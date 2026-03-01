@@ -19,6 +19,7 @@
 #include "sak/config_manager.h"
 #include "sak/about_dialog.h"
 #include "sak/style_constants.h"
+#include "sak/layout_constants.h"
 
 #include <QAction>
 #include <QCloseEvent>
@@ -55,8 +56,8 @@ MainWindow::~MainWindow()
 void MainWindow::setupUi()
 {
     setWindowTitle("S.A.K. Utility - Swiss Army Knife Utility");
-    setMinimumSize(900, 600);
-    resize(1200, 800);
+    setMinimumSize(sak::kMainWindowMinW, sak::kMainWindowMinH);
+    resize(sak::kMainWindowInitW, sak::kMainWindowInitH);
 
     
     // Create central tab widget
@@ -97,8 +98,8 @@ void MainWindow::createStatusBar()
     
     // Progress bar (hidden by default)
     m_progress_bar = new QProgressBar(this);
-    m_progress_bar->setMaximumWidth(250);
-    m_progress_bar->setMaximumHeight(18);
+    m_progress_bar->setMaximumWidth(sak::kProgressBarMaxW);
+    m_progress_bar->setMaximumHeight(sak::kProgressBarMaxH);
     m_progress_bar->setTextVisible(true);
     m_progress_bar->setVisible(false);
     statusBar()->addPermanentWidget(m_progress_bar);
@@ -200,7 +201,7 @@ void MainWindow::createAboutPanel()
         // Header  --  use splash screen image as icon
         auto* headerLayout = new QHBoxLayout();
         auto* iconLabel = new QLabel(aboutPanel);
-        iconLabel->setFixedSize(64, 64);
+        iconLabel->setFixedSize(sak::kIconSize, sak::kIconSize);
         iconLabel->setAccessibleName(QStringLiteral("S.A.K. Utility application icon"));
         loadAboutPanelIcon(iconLabel);
         headerLayout->addWidget(iconLabel);
@@ -364,7 +365,7 @@ void MainWindow::updateProgress(int current, int maximum)
         // Auto-show when work starts, auto-hide when complete
         if (current >= maximum && maximum > 0) {
             // Hide after a brief delay so the user sees 100%
-            QTimer::singleShot(1500, this, [this]() {
+            QTimer::singleShot(sak::kTimerSplashMs, this, [this]() {
                 if (m_progress_bar &&
                     m_progress_bar->value() >= m_progress_bar->maximum()) {
                     m_progress_bar->setVisible(false);

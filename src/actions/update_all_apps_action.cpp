@@ -8,6 +8,7 @@
 #include "sak/chocolatey_manager.h"
 #include "sak/logger.h"
 #include "sak/process_runner.h"
+#include "sak/layout_constants.h"
 #include <QJsonDocument>
 #include <QJsonArray>
 #include <QJsonObject>
@@ -53,7 +54,7 @@ void UpdateAllAppsAction::scan() {
         choco_list.setProgram("choco");
         choco_list.setArguments(QStringList() << "outdated" << "-r");
         choco_list.start();
-        if (!choco_list.waitForFinished(15000)) {
+        if (!choco_list.waitForFinished(sak::kTimeoutChocoListMs)) {
             sak::logWarning("Chocolatey outdated check timed out after 15s");
             choco_list.kill();
         } else {

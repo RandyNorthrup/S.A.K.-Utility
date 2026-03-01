@@ -7,6 +7,7 @@
 #include "sak/flash_worker.h"
 #include "sak/keep_awake.h"
 #include "sak/logger.h"
+#include "sak/layout_constants.h"
 #include <QtGlobal>
 #include <QObject>
 #include <QElapsedTimer>
@@ -380,7 +381,7 @@ sak::ValidationResult FlashWorker::verifyFull() {
     // Calculate speed
     qint64 elapsed = timer.elapsed();
     if (elapsed > 0) {
-        result.verificationSpeed = (m_totalBytes / (1024.0 * 1024.0)) / (elapsed / 1000.0);
+        result.verificationSpeed = (m_totalBytes / sak::kBytesPerMBf) / (elapsed / 1000.0);
     }
     
     return result;
@@ -402,7 +403,7 @@ sak::ValidationResult FlashWorker::verifySample() {
     }
     
     sak::logInfo(QString("Verifying %1 sample blocks (%2 MB)")
-        .arg(numSamples).arg(sampleSize / (1024 * 1024)).toStdString());
+        .arg(numSamples).arg(sampleSize / sak::kBytesPerMB).toStdString());
     
     QElapsedTimer timer;
     timer.start();
@@ -434,7 +435,7 @@ sak::ValidationResult FlashWorker::verifySample() {
     // Calculate speed
     qint64 elapsed = timer.elapsed();
     if (elapsed > 0) {
-        result.verificationSpeed = (sampleSize / (1024.0 * 1024.0)) / (elapsed / 1000.0);
+        result.verificationSpeed = (sampleSize / sak::kBytesPerMBf) / (elapsed / 1000.0);
     }
     
     sak::logInfo(QString("Sample verification complete - %1/%2 blocks verified, %3 mismatches")
@@ -597,7 +598,7 @@ void FlashWorker::updateSpeed(qint64 bytesWritten) {
     
     if (timeDelta > 0) {
         double bytesPerMs = static_cast<double>(bytesDelta) / timeDelta;
-        m_speedMBps = (bytesPerMs * 1000.0) / (1024.0 * 1024.0);
+        m_speedMBps = (bytesPerMs * 1000.0) / sak::kBytesPerMBf;
     }
     
     m_lastSpeedUpdate = now;

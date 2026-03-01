@@ -6,6 +6,7 @@
 
 #include "sak/hardware_inventory_scanner.h"
 #include "sak/logger.h"
+#include "sak/layout_constants.h"
 
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -286,7 +287,7 @@ MemorySummary HardwareInventoryScanner::queryMemory()
     }
 
     logInfo("Memory: {} GB total, {}/{} slots used",
-            summary.total_bytes / (1024ULL * 1024 * 1024),
+            summary.total_bytes / static_cast<uint64_t>(sak::kBytesPerGB),
             summary.slots_used, summary.slots_total);
 
     return summary;

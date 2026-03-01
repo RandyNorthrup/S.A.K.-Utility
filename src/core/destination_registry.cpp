@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "sak/destination_registry.h"
+#include "sak/layout_constants.h"
 
 namespace sak {
 
@@ -9,7 +10,7 @@ DestinationRegistry::DestinationRegistry(QObject* parent)
     : QObject(parent)
     , m_pruneTimer(new QTimer(this))
 {
-    m_pruneTimer->setInterval(5000);
+    m_pruneTimer->setInterval(sak::kTimerRefreshMs);
     connect(m_pruneTimer, &QTimer::timeout, this, &DestinationRegistry::pruneStale);
     m_pruneTimer->start();
 }

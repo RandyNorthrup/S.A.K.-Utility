@@ -6,6 +6,7 @@
 
 #include "sak/config_manager.h"
 #include "sak/logger.h"
+#include "sak/network_constants.h"
 #include <QtGlobal>
 #include <QCoreApplication>
 
@@ -65,7 +66,7 @@ void ConfigManager::initializeFlasherDefaults()
         setValue("image_flasher/validation_mode", "full");
     }
     if (!contains("image_flasher/buffer_size")) {
-        setValue("image_flasher/buffer_size", 4096);
+        setValue("image_flasher/buffer_size", static_cast<int>(sak::kBufferAlignment));
     }
     if (!contains("image_flasher/unmount_on_completion")) {
         setValue("image_flasher/unmount_on_completion", true);
@@ -95,13 +96,13 @@ void ConfigManager::initializeNetworkDefaults()
     // Default ports for peer-to-peer network transfer (IANA ephemeral range).
     // Users can override via Settings → Network Transfer.
     if (!contains("network_transfer/discovery_port")) {
-        setValue("network_transfer/discovery_port", 54321);
+        setValue("network_transfer/discovery_port", sak::kPortDiscovery);
     }
     if (!contains("network_transfer/control_port")) {
-        setValue("network_transfer/control_port", 54322);
+        setValue("network_transfer/control_port", sak::kPortControl);
     }
     if (!contains("network_transfer/data_port")) {
-        setValue("network_transfer/data_port", 54323);
+        setValue("network_transfer/data_port", sak::kPortData);
     }
     if (!contains("network_transfer/encryption")) {
         setValue("network_transfer/encryption", true);
@@ -119,7 +120,7 @@ void ConfigManager::initializeNetworkDefaults()
         setValue("network_transfer/auto_discovery", true);
     }
     if (!contains("network_transfer/chunk_size")) {
-        setValue("network_transfer/chunk_size", 65536);
+        setValue("network_transfer/chunk_size", static_cast<int>(sak::kBufferChunkDefault));
     }
     if (!contains("network_transfer/relay_server")) {
         setValue("network_transfer/relay_server", QString());
@@ -256,7 +257,7 @@ void ConfigManager::setImageFlasherValidationMode(const QString& mode)
 
 int ConfigManager::getImageFlasherBufferSize() const
 {
-    return getValue("image_flasher/buffer_size", 4096).toInt();
+    return getValue("image_flasher/buffer_size", static_cast<int>(sak::kBufferAlignment)).toInt();
 }
 
 void ConfigManager::setImageFlasherBufferSize(int size)
@@ -339,36 +340,36 @@ void ConfigManager::setNetworkTransferEnabled(bool enabled)
 
 int ConfigManager::getNetworkTransferDiscoveryPort() const
 {
-    return getValue("network_transfer/discovery_port", 54321).toInt();
+    return getValue("network_transfer/discovery_port", sak::kPortDiscovery).toInt();
 }
 
 void ConfigManager::setNetworkTransferDiscoveryPort(int port)
 {
-    Q_ASSERT_X(port > 0 && port <= 65535, "setNetworkTransferDiscoveryPort",
+    Q_ASSERT_X(port > 0 && port <= sak::kPortRangeMax, "setNetworkTransferDiscoveryPort",
         "port must be in range [1, 65535]");
     setValue("network_transfer/discovery_port", port);
 }
 
 int ConfigManager::getNetworkTransferControlPort() const
 {
-    return getValue("network_transfer/control_port", 54322).toInt();
+    return getValue("network_transfer/control_port", sak::kPortControl).toInt();
 }
 
 void ConfigManager::setNetworkTransferControlPort(int port)
 {
-    Q_ASSERT_X(port > 0 && port <= 65535, "setNetworkTransferControlPort",
+    Q_ASSERT_X(port > 0 && port <= sak::kPortRangeMax, "setNetworkTransferControlPort",
         "port must be in range [1, 65535]");
     setValue("network_transfer/control_port", port);
 }
 
 int ConfigManager::getNetworkTransferDataPort() const
 {
-    return getValue("network_transfer/data_port", 54323).toInt();
+    return getValue("network_transfer/data_port", sak::kPortData).toInt();
 }
 
 void ConfigManager::setNetworkTransferDataPort(int port)
 {
-    Q_ASSERT_X(port > 0 && port <= 65535, "setNetworkTransferDataPort",
+    Q_ASSERT_X(port > 0 && port <= sak::kPortRangeMax, "setNetworkTransferDataPort",
         "port must be in range [1, 65535]");
     setValue("network_transfer/data_port", port);
 }
@@ -427,7 +428,7 @@ void ConfigManager::setNetworkTransferAutoDiscoveryEnabled(bool enabled)
 
 int ConfigManager::getNetworkTransferChunkSize() const
 {
-    return getValue("network_transfer/chunk_size", 65536).toInt();
+    return getValue("network_transfer/chunk_size", static_cast<int>(sak::kBufferChunkDefault)).toInt();
 }
 
 void ConfigManager::setNetworkTransferChunkSize(int size)

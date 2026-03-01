@@ -7,6 +7,7 @@
 #include "sak/diagnostic_report_generator.h"
 #include "sak/format_utils.h"
 #include "sak/logger.h"
+#include "sak/layout_constants.h"
 
 #include <QtGlobal>
 #include <QDir>
@@ -183,7 +184,7 @@ QJsonObject DiagnosticReportGenerator::serializeMemorySection() const
 {
     const auto& inv = m_data.inventory;
     QJsonObject mem;
-    mem["total_gb"] = static_cast<double>(inv.memory.total_bytes) / (1024.0 * 1024 * 1024);
+    mem["total_gb"] = static_cast<double>(inv.memory.total_bytes) / sak::kBytesPerGBf;
     mem["slots_used"]  = static_cast<int>(inv.memory.slots_used);
     mem["slots_total"] = static_cast<int>(inv.memory.slots_total);
 
@@ -192,7 +193,7 @@ QJsonObject DiagnosticReportGenerator::serializeMemorySection() const
         QJsonObject m;
         m["manufacturer"] = mod.manufacturer;
         m["part_number"]  = mod.part_number;
-        m["capacity_gb"]  = static_cast<double>(mod.capacity_bytes) / (1024.0 * 1024 * 1024);
+        m["capacity_gb"]  = static_cast<double>(mod.capacity_bytes) / sak::kBytesPerGBf;
         m["speed_mhz"]    = static_cast<int>(mod.speed_mhz);
         m["type"]         = mod.memory_type;
         m["form_factor"]  = mod.form_factor;
@@ -209,7 +210,7 @@ QJsonArray DiagnosticReportGenerator::serializeStorageSection() const
         QJsonObject d;
         d["model"]       = dev.model;
         d["serial"]      = dev.serial_number;
-        d["size_gb"]     = static_cast<double>(dev.size_bytes) / (1024.0 * 1024 * 1024);
+        d["size_gb"]     = static_cast<double>(dev.size_bytes) / sak::kBytesPerGBf;
         d["interface"]   = dev.interface_type;
         d["media_type"]  = dev.media_type;
         d["firmware"]    = dev.firmware_version;
@@ -225,7 +226,7 @@ QJsonArray DiagnosticReportGenerator::serializeGpuSection() const
         QJsonObject g;
         g["name"]           = gpu.name;
         g["manufacturer"]   = gpu.manufacturer;
-        g["vram_gb"]        = static_cast<double>(gpu.vram_bytes) / (1024.0 * 1024 * 1024);
+        g["vram_gb"]        = static_cast<double>(gpu.vram_bytes) / sak::kBytesPerGBf;
         g["driver_version"] = gpu.driver_version;
         gpu_arr.append(g);
     }
@@ -332,7 +333,7 @@ void DiagnosticReportGenerator::writeCsvHardwareSummary(QTextStream& out) const
 
     out << "Memory,Total (GB),"
         << QString::number(static_cast<double>(m_data.inventory.memory.total_bytes) /
-                           (1024.0 * 1024 * 1024), 'f', 1)
+                           sak::kBytesPerGBf, 'f', 1)
         << "\n";
     out << "Memory,Slots Used," << m_data.inventory.memory.slots_used << "\n";
     out << "Memory,Slots Total," << m_data.inventory.memory.slots_total << "\n";
@@ -340,7 +341,7 @@ void DiagnosticReportGenerator::writeCsvHardwareSummary(QTextStream& out) const
     for (const auto& dev : m_data.inventory.storage) {
         out << "Storage,Model," << csvEscape(dev.model) << "\n";
         out << "Storage,Size (GB),"
-            << QString::number(static_cast<double>(dev.size_bytes) / (1024.0 * 1024 * 1024), 'f', 1)
+            << QString::number(static_cast<double>(dev.size_bytes) / sak::kBytesPerGBf, 'f', 1)
             << "\n";
         out << "Storage,Interface," << csvEscape(dev.interface_type) << "\n";
         out << "Storage,Media Type," << csvEscape(dev.media_type) << "\n";
@@ -349,7 +350,7 @@ void DiagnosticReportGenerator::writeCsvHardwareSummary(QTextStream& out) const
     for (const auto& gpu : m_data.inventory.gpus) {
         out << "GPU,Name," << csvEscape(gpu.name) << "\n";
         out << "GPU,VRAM (GB),"
-            << QString::number(static_cast<double>(gpu.vram_bytes) / (1024.0 * 1024 * 1024), 'f', 1)
+            << QString::number(static_cast<double>(gpu.vram_bytes) / sak::kBytesPerGBf, 'f', 1)
             << "\n";
         out << "GPU,Driver," << csvEscape(gpu.driver_version) << "\n";
     }

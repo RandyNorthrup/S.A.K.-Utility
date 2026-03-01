@@ -8,6 +8,8 @@
 #include <QJsonObject>
 #include <QVector>
 
+#include "sak/network_constants.h"
+
 namespace sak {
 
 /// @brief Health metrics reported by a destination PC
@@ -28,8 +30,8 @@ struct DestinationPC {
     QString destination_id;
     QString hostname;
     QString ip_address;
-    quint16 control_port{54322};
-    quint16 data_port{54323};
+    quint16 control_port{sak::kPortControl};
+    quint16 data_port{sak::kPortData};
     QString status{"unknown"};
     QDateTime last_seen;
     DestinationHealth health;

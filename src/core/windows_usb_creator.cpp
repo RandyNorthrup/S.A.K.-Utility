@@ -6,6 +6,7 @@
 
 #include "sak/windows_usb_creator.h"
 #include "sak/logger.h"
+#include "sak/layout_constants.h"
 #include <QCoreApplication>
 #include <QMutexLocker>
 #include <QProcess>
@@ -128,7 +129,7 @@ QString WindowsUSBCreator::formatAndVerifyDrive(const QString& diskNumber) {
     
     // Wait with progress updates
     for (int i = 0; i < 30; ++i) {
-        QThread::msleep(100);
+        QThread::msleep(sak::kTimerPollingFastMs);
         Q_EMIT progressUpdated(5 + (i * 5 / 30)); // 5% to 10%
         if (m_cancelled) break;
     }
@@ -148,7 +149,7 @@ QString WindowsUSBCreator::formatAndVerifyDrive(const QString& diskNumber) {
     QProcess checkFS;
     QString checkCmd = QString("(Get-Volume -DriveLetter %1).FileSystem").arg(driveLetter);
     checkFS.start("powershell", QStringList() << "-NoProfile" << "-Command" << checkCmd);
-    if (checkFS.waitForFinished(5000)) {
+    if (checkFS.waitForFinished(sak::kTimeoutProcessShortMs)) {
         QString fs = QString(checkFS.readAllStandardOutput()).trimmed();
         if (fs != "NTFS") {
             m_lastError = QString("STEP 1 VERIFICATION FAILED: Drive is %1, expected NTFS").arg(fs);
@@ -262,7 +263,7 @@ bool WindowsUSBCreator::configureBootAndVerify(const QString& diskNumber, const 
     QProcess diskpart;
     diskpart.start("cmd.exe", QStringList() << "/c" << "diskpart" << "/s" << scriptFile.fileName());
     
-    if (!diskpart.waitForStarted(5000) || !diskpart.waitForFinished(30000)) {
+    if (!diskpart.waitForStarted(sak::kTimeoutProcessStartMs) || !diskpart.waitForFinished(sak::kTimeoutProcessLongMs)) {
         m_lastError = "STEP 4 FAILED: Diskpart failed to set active flag";
         sak::logError(m_lastError.toStdString());
         Q_EMIT failed(m_lastError);
@@ -322,13 +323,13 @@ bool WindowsUSBCreator::cleanAndPartitionDisk(const QString& diskNumber) {
     QProcess diskpart;
     diskpart.start("cmd.exe", QStringList() << "/c" << "diskpart" << "/s" << scriptFile.fileName());
     
-    if (!diskpart.waitForStarted(5000)) {
+    if (!diskpart.waitForStarted(sak::kTimeoutProcessStartMs)) {
         m_lastError = "Failed to start diskpart - ensure application is running as Administrator";
         sak::logError(m_lastError.toStdString());
         return false;
     }
     
-    if (!diskpart.waitForFinished(30000)) {
+    if (!diskpart.waitForFinished(sak::kTimeoutProcessLongMs)) {
         m_lastError = "Diskpart timed out";
         sak::logError(m_lastError.toStdString());
         diskpart.kill();
@@ -352,7 +353,7 @@ bool WindowsUSBCreator::cleanAndPartitionDisk(const QString& diskNumber) {
     if (diskpart.state() == QProcess::Running) {
         sak::logWarning("Diskpart still running after waitForFinished, forcing termination");
         diskpart.kill();
-        diskpart.waitForFinished(2000);
+        diskpart.waitForFinished(sak::kTimerServiceDelayMs);
     }
     
     return true;
@@ -361,7 +362,7 @@ bool WindowsUSBCreator::cleanAndPartitionDisk(const QString& diskNumber) {
 bool WindowsUSBCreator::formatPartitionNTFS(const QString& diskNumber) {
     sak::logInfo("Waiting for Windows to recognize partition...");
     Q_EMIT statusChanged("Formatting partition as NTFS...");
-    QThread::msleep(3000);
+    QThread::msleep(sak::kTimerStatusMessageMs);
     
     QString formatCmd = QString("format FS=NTFS QUICK label=\"BOOT\"");
     QString formatScript = QString(
@@ -386,13 +387,13 @@ bool WindowsUSBCreator::formatPartitionNTFS(const QString& diskNumber) {
     QProcess format;
     format.start("cmd.exe", QStringList() << "/c" << "diskpart" << "/s" << formatScriptFile.fileName());
     
-    if (!format.waitForStarted(5000)) {
+    if (!format.waitForStarted(sak::kTimeoutProcessStartMs)) {
         m_lastError = "Failed to start format";
         sak::logError(m_lastError.toStdString());
         return false;
     }
     
-    if (!format.waitForFinished(60000)) {
+    if (!format.waitForFinished(sak::kTimeoutProcessVeryLongMs)) {
         m_lastError = "Format timed out";
         sak::logError(m_lastError.toStdString());
         format.kill();
@@ -414,7 +415,7 @@ bool WindowsUSBCreator::formatPartitionNTFS(const QString& diskNumber) {
     
     // Wait for format to complete
     sak::logInfo("Waiting for format to settle...");
-    QThread::msleep(3000);
+    QThread::msleep(sak::kTimerStatusMessageMs);
     
     return true;
 }
@@ -462,7 +463,7 @@ QString WindowsUSBCreator::getDriveLetterFromDiskNumber() {
     QString cmd = QString("(Get-Partition -DiskNumber %1 | Get-Volume | Where-Object {$_.DriveLetter -ne $null} | Select-Object -First 1).DriveLetter").arg(m_diskNumber);
     getDrive.start("powershell", QStringList() << "-NoProfile" << "-Command" << cmd);
     
-    if (!getDrive.waitForFinished(10000)) {
+    if (!getDrive.waitForFinished(sak::kTimeoutProcessMediumMs)) {
         m_lastError = QString("Timeout querying drive letter for disk %1").arg(m_diskNumber);
         sak::logError(m_lastError.toStdString());
         return QString();

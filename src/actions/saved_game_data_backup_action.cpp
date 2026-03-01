@@ -9,6 +9,7 @@
 #include <QDir>
 #include <QDirIterator>
 #include "sak/logger.h"
+#include "sak/layout_constants.h"
 
 namespace sak {
 
@@ -158,12 +159,12 @@ void SavedGameDataBackupAction::scan() {
     result.applicable = (m_save_locations.count() > 0);
     result.bytes_affected = m_total_size;
     result.files_count = m_save_locations.count();
-    result.estimated_duration_ms = (m_total_size / (10 * 1024 * 1024)) * 1000;
+    result.estimated_duration_ms = (m_total_size / (10 * sak::kBytesPerMB)) * 1000;
     
     if (m_save_locations.count() > 0) {
         result.summary = QString("Found %1 game save location(s) - %2 MB")
             .arg(m_save_locations.count())
-            .arg(m_total_size / (1024 * 1024));
+            .arg(m_total_size / sak::kBytesPerMB);
     } else {
         result.summary = "No game save data found";
     }

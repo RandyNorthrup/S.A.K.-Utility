@@ -6,6 +6,7 @@
 
 #include "sak/actions/backup_printer_settings_action.h"
 #include "sak/process_runner.h"
+#include "sak/layout_constants.h"
 #include <QFile>
 #include <QDir>
 #include <QDateTime>
@@ -20,7 +21,7 @@ BackupPrinterSettingsAction::BackupPrinterSettingsAction(const QString& backup_l
 
 int BackupPrinterSettingsAction::countInstalledPrinters() {
     // Count installed printers via PowerShell
-    ProcessResult proc = runPowerShell("Get-Printer | Measure-Object | Select-Object -ExpandProperty Count", 5000);
+    ProcessResult proc = runPowerShell("Get-Printer | Measure-Object | Select-Object -ExpandProperty Count", sak::kTimeoutProcessShortMs);
     if (!proc.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("Printer scan warning: " + proc.std_err.trimmed());
     }

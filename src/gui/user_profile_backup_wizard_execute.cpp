@@ -4,6 +4,7 @@
 #include "sak/user_profile_backup_wizard.h"
 #include "sak/user_profile_backup_worker.h"
 #include "sak/style_constants.h"
+#include "sak/layout_constants.h"
 #include <QVBoxLayout>
 #include <QDateTime>
 #include <QJsonDocument>
@@ -60,7 +61,7 @@ void UserProfileBackupExecutePage::setupUi() {
     layout->addWidget(new QLabel(tr("Log:"), this));
     m_logEdit = new QTextEdit(this);
     m_logEdit->setReadOnly(true);
-    m_logEdit->setMaximumHeight(150);
+    m_logEdit->setMaximumHeight(sak::kLogAreaSmallMaxH);
     layout->addWidget(m_logEdit);
     
     // Start button

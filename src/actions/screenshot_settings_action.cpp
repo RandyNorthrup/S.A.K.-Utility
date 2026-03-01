@@ -5,6 +5,7 @@
 /// @brief Implements screenshot capture and display settings backup
 
 #include "sak/actions/screenshot_settings_action.h"
+#include "sak/layout_constants.h"
 #include "sak/logger.h"
 #include "sak/process_runner.h"
 #include <QProcess>
@@ -35,7 +36,7 @@ void ScreenshotSettingsAction::openSettingsAndCapture(const QString& uri, const 
     QProcess::startDetached("explorer.exe", QStringList() << QString("ms-settings:%1").arg(uri));
     
     // Wait for window to open
-    QThread::msleep(2000);
+    QThread::msleep(sak::kTimerServiceDelayMs);
     
     // Capture screenshot
     QString filepath = m_output_location + "/SettingsScreenshots/" + name + ".png";
@@ -80,7 +81,7 @@ void ScreenshotSettingsAction::execute() {
 
     for (auto it = settings_pages.begin(); it != settings_pages.end(); ++it) {
         if (isCancelled()) {
-            ProcessResult kill_proc = runProcess("taskkill", QStringList() << "/IM" << "SystemSettings.exe" << "/F", 10000);
+            ProcessResult kill_proc = runProcess("taskkill", QStringList() << "/IM" << "SystemSettings.exe" << "/F", sak::kTimeoutProcessMediumMs);
             if (!kill_proc.succeeded()) {
                 Q_EMIT logMessage("Settings close warning: " + kill_proc.std_err.trimmed());
             }
@@ -179,11 +180,11 @@ bool ScreenshotSettingsAction::captureSettingsPage(const QString& ms_uri,
         QThread::msleep(wait_time);
 
         if (!isProcessRunning("SystemSettings.exe")) {
-            ProcessResult close_proc = runProcess("taskkill", QStringList() << "/IM" << "SystemSettings.exe" << "/F", 10000);
+            ProcessResult close_proc = runProcess("taskkill", QStringList() << "/IM" << "SystemSettings.exe" << "/F", sak::kTimeoutProcessMediumMs);
             if (!close_proc.succeeded()) {
                 Q_EMIT logMessage("Settings close warning: " + close_proc.std_err.trimmed());
             }
-            QThread::msleep(500);
+            QThread::msleep(sak::kTimerRetryBaseMs);
             continue;
         }
 
@@ -210,11 +211,11 @@ bool ScreenshotSettingsAction::captureSettingsPage(const QString& ms_uri,
             }
         }
 
-        ProcessResult close_proc = runProcess("taskkill", QStringList() << "/IM" << "SystemSettings.exe" << "/F", 10000);
+        ProcessResult close_proc = runProcess("taskkill", QStringList() << "/IM" << "SystemSettings.exe" << "/F", sak::kTimeoutProcessMediumMs);
         if (!close_proc.succeeded()) {
             Q_EMIT logMessage("Settings close warning: " + close_proc.std_err.trimmed());
         }
-        QThread::msleep(500);
+        QThread::msleep(sak::kTimerRetryBaseMs);
 
         if (captured) return true;
     }
@@ -289,7 +290,7 @@ int ScreenshotSettingsAction::detectMonitorCount() {
 bool ScreenshotSettingsAction::isProcessRunning(const QString& process_name) {
     QProcess tasklist;
     tasklist.start("tasklist", QStringList() << "/FI" << QString("IMAGENAME eq %1").arg(process_name));
-    if (!tasklist.waitForFinished(2000)) {
+    if (!tasklist.waitForFinished(sak::kTimerServiceDelayMs)) {
         sak::logWarning("tasklist timed out checking for process: {}",
                         process_name.toStdString());
         tasklist.kill();

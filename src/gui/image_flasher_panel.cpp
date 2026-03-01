@@ -18,6 +18,7 @@
 #include "sak/image_flasher_settings_dialog.h"
 #include "sak/style_constants.h"
 #include "sak/widget_helpers.h"
+#include "sak/layout_constants.h"
 #include <QCoreApplication>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -209,7 +210,7 @@ void ImageFlasherPanel::createImageSelectionPage() {
 void ImageFlasherPanel::createDownloadButtons(QVBoxLayout* groupLayout, QGroupBox* groupBox) {
     // Download Windows button
     m_downloadWindowsButton = new QPushButton("Download Windows 11", groupBox);
-    m_downloadWindowsButton->setMinimumHeight(48);
+    m_downloadWindowsButton->setMinimumHeight(sak::kButtonHeightTall);
     m_downloadWindowsButton->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
     m_downloadWindowsButton->setAccessibleName(QStringLiteral("Download Windows ISO"));
     m_downloadWindowsButton->setToolTip(QStringLiteral("Download a Windows 11 ISO using UUP dump"));
@@ -225,7 +226,7 @@ void ImageFlasherPanel::createDownloadButtons(QVBoxLayout* groupLayout, QGroupBo
     groupLayout->addWidget(microsoftDownloadDescription);
 
     m_microsoftWindowsDownloadButton = new QPushButton("Open Microsoft Windows 11 ISO Download", groupBox);
-    m_microsoftWindowsDownloadButton->setMinimumHeight(48);
+    m_microsoftWindowsDownloadButton->setMinimumHeight(sak::kButtonHeightTall);
     m_microsoftWindowsDownloadButton->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
     m_microsoftWindowsDownloadButton->setAccessibleName(QStringLiteral("Microsoft ISO Download"));
     m_microsoftWindowsDownloadButton->setToolTip(QStringLiteral("Open the official Microsoft Windows 11 ISO download page"));
@@ -237,7 +238,7 @@ void ImageFlasherPanel::createDownloadButtons(QVBoxLayout* groupLayout, QGroupBo
     
     // Download Linux button
     m_downloadLinuxButton = new QPushButton("Download Linux ISO", groupBox);
-    m_downloadLinuxButton->setMinimumHeight(48);
+    m_downloadLinuxButton->setMinimumHeight(sak::kButtonHeightTall);
     m_downloadLinuxButton->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
     m_downloadLinuxButton->setAccessibleName(QStringLiteral("Download Linux ISO"));
     m_downloadLinuxButton->setToolTip(QStringLiteral("Download a Linux distribution ISO image"));
@@ -249,7 +250,7 @@ void ImageFlasherPanel::createDownloadButtons(QVBoxLayout* groupLayout, QGroupBo
     
     // Select image button (at bottom of button stack)
     m_selectImageButton = new QPushButton("Select Image File", groupBox);
-    m_selectImageButton->setMinimumHeight(48);
+    m_selectImageButton->setMinimumHeight(sak::kButtonHeightTall);
     m_selectImageButton->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
     m_selectImageButton->setAccessibleName(QStringLiteral("Browse ISO File"));
     m_selectImageButton->setToolTip(QStringLiteral("Browse for a local disk image file to flash"));
@@ -572,7 +573,7 @@ void ImageFlasherPanel::onFlashError(const QString& error) {
     updateNavigationButtons();
 
     Q_EMIT flashFailed(error);
-    Q_EMIT statusMessage("Image Flasher: Flash operation failed", 5000);
+    Q_EMIT statusMessage("Image Flasher: Flash operation failed", sak::kTimerStatusDefaultMs);
 }
 
 void ImageFlasherPanel::onCancelClicked() {
@@ -596,7 +597,7 @@ void ImageFlasherPanel::onCancelClicked() {
         updateNavigationButtons();
 
         Q_EMIT flashCancelled();
-        Q_EMIT statusMessage("Image Flasher: Flash cancelled", 5000);
+        Q_EMIT statusMessage("Image Flasher: Flash cancelled", sak::kTimerStatusDefaultMs);
     }
 }
 
@@ -888,7 +889,7 @@ QString ImageFlasherPanel::formatFileSize(qint64 bytes) const {
 }
 
 QString ImageFlasherPanel::formatSpeed(double mbps) const {
-    if (mbps < 1.0) return QString("%1 KB/s").arg(mbps * 1024.0, 0, 'f', 1);
+    if (mbps < 1.0) return QString("%1 KB/s").arg(mbps * sak::kBytesPerKBf, 0, 'f', 1);
     return QString("%1 MB/s").arg(mbps, 0, 'f', 1);
 }
 

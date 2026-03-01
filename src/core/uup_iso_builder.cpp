@@ -3,6 +3,8 @@
 
 #include "sak/uup_iso_builder.h"
 #include "sak/bundled_tools_manager.h"
+#include "sak/layout_constants.h"
+#include "sak/network_constants.h"
 #include "sak/logger.h"
 
 #include <QCoreApplication>
@@ -27,7 +29,7 @@ UupIsoBuilder::UupIsoBuilder(QObject* parent)
     : QObject(parent)
 {
     m_progressPollTimer = new QTimer(this);
-    m_progressPollTimer->setInterval(1000);
+    m_progressPollTimer->setInterval(sak::kTimerProgressPollMs);
     connect(m_progressPollTimer, &QTimer::timeout,
             this, &UupIsoBuilder::onProgressPollTimer);
 }
@@ -72,7 +74,7 @@ void UupIsoBuilder::startBuild(const QList<UupDumpApi::FileInfo>& files,
     }
 
     sak::logInfo("Starting UUP ISO build: " + std::to_string(m_files.size()) +
-                  " files, " + std::to_string(m_totalDownloadBytes / (1024 * 1024)) +
+                  " files, " + std::to_string(m_totalDownloadBytes / sak::kBytesPerMB) +
                   " MB total, edition=" + m_edition.toStdString() +
                   ", lang=" + m_lang.toStdString());
 
@@ -86,11 +88,11 @@ void UupIsoBuilder::cancel()
 
     if (m_aria2Process && m_aria2Process->state() != QProcess::NotRunning) {
         m_aria2Process->kill();
-        m_aria2Process->waitForFinished(5000);
+        m_aria2Process->waitForFinished(sak::kTimeoutProcessShortMs);
     }
     if (m_converterProcess && m_converterProcess->state() != QProcess::NotRunning) {
         m_converterProcess->kill();
-        m_converterProcess->waitForFinished(5000);
+        m_converterProcess->waitForFinished(sak::kTimeoutProcessShortMs);
     }
 
     if (m_phase != Phase::Idle && m_phase != Phase::Completed) {
@@ -301,7 +303,7 @@ void UupIsoBuilder::checkResumedDownloads()
     }
 
     if (existingFiles > 0) {
-        double existingGB = existingBytes / (1024.0 * 1024.0 * 1024.0);
+        double existingGB = existingBytes / sak::kBytesPerGBf;
         sak::logInfo("Resuming download — found " + std::to_string(existingFiles) +
                      " existing files (" + std::to_string(static_cast<int>(existingGB * 100) / 100) +
                      " GB) in work directory");
@@ -469,9 +471,9 @@ bool UupIsoBuilder::generateAria2InputFile(const QString& outputPath)
         }
 
         // Smaller files don't benefit from many connections; save slots for large files
-        if (fileInfo.size > 0 && fileInfo.size < 5 * 1024 * 1024) {
-            stream << "  split=1\n";
-            stream << "  max-connection-per-server=1\n";
+        if (fileInfo.size > 0 && fileInfo.size < 5 * sak::kBytesPerMB) {
+            stream << "  split=" << sak::kAria2SingleSplit << "\n";
+            stream << "  max-connection-per-server=" << sak::kAria2SingleConn << "\n";
         }
 
         stream << "\n";
@@ -481,7 +483,7 @@ bool UupIsoBuilder::generateAria2InputFile(const QString& outputPath)
     file.close();
 
     if (skippedFiles > 0) {
-        double skippedMB = skippedBytes / (1024.0 * 1024.0);
+        double skippedMB = skippedBytes / sak::kBytesPerMBf;
         sak::logInfo("Resume: skipped " + std::to_string(skippedFiles) +
                       " already-downloaded files (" + std::to_string(static_cast<int>(skippedMB)) + " MB)");
         Q_EMIT progressUpdated(2, QString("Skipped %1 already-downloaded files (%2 MB)")
@@ -540,7 +542,7 @@ void UupIsoBuilder::executeDownload()
     sak::logInfo("Starting aria2c download: " + aria2Path.toStdString());
     m_aria2Process->start(aria2Path, args);
 
-    if (!m_aria2Process->waitForStarted(10000)) {
+    if (!m_aria2Process->waitForStarted(sak::kTimeoutProcessMediumMs)) {
         m_phase = Phase::Failed;
         Q_EMIT buildError("Failed to start aria2c: " + m_aria2Process->errorString());
         return;
@@ -561,10 +563,10 @@ QStringList UupIsoBuilder::buildAria2Arguments(const QString& inputFile,
                        "AppleWebKit/537.36 (KHTML, like Gecko) "
                        "Chrome/131.0.0.0 Safari/537.36"),
         // ── Parallelism ──
-        "--max-connection-per-server=16",
-        "--split=16",
+        "--max-connection-per-server=" + QString::number(sak::kAria2MaxConnsPerServer),
+        "--split=" + QString::number(sak::kAria2Split),
         "--min-split-size=1M",
-        "--max-concurrent-downloads=10",
+        "--max-concurrent-downloads=" + QString::number(sak::kMaxConcurrentScrape),
         // ── Resumability & integrity ──
         "--continue=true",
         "--check-integrity=true",
@@ -578,10 +580,10 @@ QStringList UupIsoBuilder::buildAria2Arguments(const QString& inputFile,
         "--piece-length=1M",
         // ── Stall & retry handling ──
         "--lowest-speed-limit=50K",
-        "--max-tries=5",
-        "--retry-wait=3",
-        "--connect-timeout=10",
-        "--timeout=60",
+        "--max-tries=" + QString::number(sak::kAria2MaxTries),
+        "--retry-wait=" + QString::number(sak::kAria2RetryWaitSec),
+        "--connect-timeout=" + QString::number(sak::kAria2ConnectTimeoutSec),
+        "--timeout=" + QString::number(sak::kAria2TimeoutSec),
         "--max-file-not-found=3",
         // ── Security ──
         // Microsoft CDN serves HTTP-only; certificate check applies to HTTPS only
@@ -617,7 +619,7 @@ void UupIsoBuilder::parseAria2Progress(const QString& line)
     QRegularExpressionMatch speedMatch = speedPattern.match(line);
     if (speedMatch.hasMatch()) {
         qint64 bytesPerSec = speedMatch.captured(1).toLongLong();
-        m_currentSpeedMBps = bytesPerSec / (1024.0 * 1024.0);
+        m_currentSpeedMBps = bytesPerSec / sak::kBytesPerMBf;
         Q_EMIT speedUpdated(m_currentSpeedMBps);
     }
 
@@ -629,8 +631,8 @@ void UupIsoBuilder::parseAria2Progress(const QString& line)
         if (hrMatch.hasMatch()) {
             double val = hrMatch.captured(1).toDouble();
             QString unit = hrMatch.captured(2);
-            if (unit == "KiB") val /= 1024.0;
-            else if (unit == "GiB") val *= 1024.0;
+            if (unit == "KiB") val /= sak::kBytesPerKBf;
+            else if (unit == "GiB") val *= sak::kBytesPerKBf;
             m_currentSpeedMBps = val;
             Q_EMIT speedUpdated(m_currentSpeedMBps);
         }
@@ -678,15 +680,15 @@ void UupIsoBuilder::pollDownloadProgress()
     if (m_downloadPercent > 100) m_downloadPercent = 100;
 
     // Build progress detail string
-    double downloadedGB = totalDownloaded / (1024.0 * 1024.0 * 1024.0);
-    double totalGB = m_totalDownloadBytes / (1024.0 * 1024.0 * 1024.0);
+    double downloadedGB = totalDownloaded / sak::kBytesPerGBf;
+    double totalGB = m_totalDownloadBytes / sak::kBytesPerGBf;
     QString detail = QString("Downloaded %1 GB / %2 GB")
                          .arg(downloadedGB, 0, 'f', 2)
                          .arg(totalGB, 0, 'f', 2);
 
     if (m_currentSpeedMBps > 0.01) {
         double remainingMB =
-            (m_totalDownloadBytes - totalDownloaded) / (1024.0 * 1024.0);
+            (m_totalDownloadBytes - totalDownloaded) / sak::kBytesPerMBf;
         int etaSec = static_cast<int>(remainingMB / m_currentSpeedMBps);
         int etaMin = etaSec / 60;
         etaSec %= 60;
@@ -717,7 +719,7 @@ void UupIsoBuilder::pollConversionProgress()
     QFileInfo outputIso(m_outputIsoPath);
     if (outputIso.exists() && outputIso.size() > 0) {
         qint64 isoSize = outputIso.size();
-        double sizeGB = isoSize / (1024.0 * 1024.0 * 1024.0);
+        double sizeGB = isoSize / sak::kBytesPerGBf;
         int conversionProgress = m_conversionPercent;
         if (conversionProgress >= 100) {
             conversionProgress = 99;
@@ -950,7 +952,7 @@ void UupIsoBuilder::executeConversion()
                  "\" -l " + m_lang.toStdString());
     m_converterProcess->start(uupMediaConverter, args);
 
-    if (!m_converterProcess->waitForStarted(10000)) {
+    if (!m_converterProcess->waitForStarted(sak::kTimeoutProcessMediumMs)) {
         m_phase = Phase::Failed;
         Q_EMIT buildError("Failed to start converter: " +
                          m_converterProcess->errorString());
@@ -1156,7 +1158,7 @@ void UupIsoBuilder::onConverterFinished(int exitCode,
     Q_EMIT progressUpdated(100, "ISO build complete!");
     Q_EMIT buildCompleted(m_outputIsoPath, fileSize);
     sak::logInfo("UUP ISO build complete: " + m_outputIsoPath.toStdString() +
-                 " (" + std::to_string(fileSize / (1024 * 1024)) + " MB)");
+                 " (" + std::to_string(fileSize / sak::kBytesPerMB) + " MB)");
 }
 
 // ============================================================================
@@ -1188,7 +1190,7 @@ QString UupIsoBuilder::findLargestGeneratedIso() const
     }
 
     sak::logInfo("Found generated ISO: " + sourceIso.toStdString() +
-                  " (" + std::to_string(largestSize / (1024 * 1024)) + " MB)");
+                  " (" + std::to_string(largestSize / sak::kBytesPerMB) + " MB)");
     return sourceIso;
 }
 
@@ -1260,7 +1262,7 @@ void UupIsoBuilder::finalizeBuild()
     Q_EMIT buildCompleted(m_outputIsoPath, fileSize);
 
     sak::logInfo("UUP ISO build complete: " + m_outputIsoPath.toStdString() +
-                  " (" + std::to_string(fileSize / (1024 * 1024)) + " MB)");
+                  " (" + std::to_string(fileSize / sak::kBytesPerMB) + " MB)");
 }
 
 bool UupIsoBuilder::isRunningAsAdmin()

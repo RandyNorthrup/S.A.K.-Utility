@@ -6,6 +6,7 @@
 
 #include "sak/actions/clear_event_logs_action.h"
 #include "sak/process_runner.h"
+#include "sak/layout_constants.h"
 #include <QDir>
 #include <QDateTime>
 #include <QRegularExpression>
@@ -24,13 +25,13 @@ bool ClearEventLogsAction::backupEventLog(const QString& log_name) {
     QDir().mkpath("C:/SAK_Backups/EventLogs");
     
     QString cmd = QString("wevtutil epl %1 \"%2\"").arg(log_name, backup_path);
-    ProcessResult proc = runProcess("cmd.exe", QStringList() << "/c" << cmd, 10000);
+    ProcessResult proc = runProcess("cmd.exe", QStringList() << "/c" << cmd, sak::kTimeoutProcessMediumMs);
     return proc.succeeded();
 }
 
 bool ClearEventLogsAction::clearEventLog(const QString& log_name) {
     QString cmd = QString("wevtutil cl %1").arg(log_name);
-    ProcessResult proc = runProcess("cmd.exe", QStringList() << "/c" << cmd, 5000);
+    ProcessResult proc = runProcess("cmd.exe", QStringList() << "/c" << cmd, sak::kTimeoutProcessShortMs);
     return proc.succeeded();
 }
 
@@ -47,7 +48,7 @@ void ClearEventLogsAction::scan() {
         "  Write-Output \"LOGS:$totalLogs\"; "
         "  Write-Output \"ENTRIES:$totalEntries\"; "
         "} catch { Write-Output \"LOGS:0\"; Write-Output \"ENTRIES:0\" }";
-    ProcessResult proc = runPowerShell(ps_cmd, 8000);
+    ProcessResult proc = runPowerShell(ps_cmd, sak::kTimerNetshWaitMs);
     if (!proc.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("Event log scan warning: " + proc.std_err.trimmed());
     }
@@ -181,7 +182,7 @@ bool ClearEventLogsAction::executeClearLogs(const QDateTime& start_time,
 {
     Q_EMIT executionProgress("║ Enumerating all event logs with Get-EventLog...              ║", 20);
 
-    ProcessResult ps = runPowerShell(ps_script, 300000);
+    ProcessResult ps = runPowerShell(ps_script, sak::kTimeoutArchiveMs);
 
     Q_EMIT executionProgress("║ Backing up logs with wevtutil...                             ║", 40);
     Q_EMIT executionProgress("║ Clearing event log entries...                                ║", 60);

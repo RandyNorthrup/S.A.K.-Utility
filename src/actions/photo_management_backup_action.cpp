@@ -9,6 +9,7 @@
 #include <QDir>
 #include <QDirIterator>
 #include "sak/logger.h"
+#include "sak/layout_constants.h"
 
 namespace sak {
 
@@ -119,12 +120,12 @@ void PhotoManagementBackupAction::scan() {
     result.applicable = (m_photo_data.count() > 0);
     result.bytes_affected = m_total_size;
     result.files_count = m_photo_data.count();
-    result.estimated_duration_ms = (m_total_size / (20 * 1024 * 1024)) * 1000;
+    result.estimated_duration_ms = (m_total_size / (20 * sak::kBytesPerMB)) * 1000;
     
     if (m_photo_data.count() > 0) {
         result.summary = QString("Found %1 photo software item(s) - %2 MB")
             .arg(m_photo_data.count())
-            .arg(m_total_size / (1024 * 1024));
+            .arg(m_total_size / sak::kBytesPerMB);
     } else {
         result.summary = "No photo management software data found";
     }

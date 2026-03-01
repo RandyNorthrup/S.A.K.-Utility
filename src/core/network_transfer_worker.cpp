@@ -11,6 +11,7 @@
 #include "sak/path_utils.h"
 #include "sak/logger.h"
 #include "sak/permission_manager.h"
+#include "sak/layout_constants.h"
 
 #include <QtGlobal>
 #include <QTcpServer>
@@ -181,7 +182,7 @@ void NetworkTransferWorker::startSender(const QVector<TransferFileEntry>& files,
 
     QTcpSocket socket;
     socket.connectToHost(host, port);
-    if (!socket.waitForConnected(15000)) {
+    if (!socket.waitForConnected(sak::kTimeoutNetworkReadMs)) {
         logError("NetworkTransferWorker sender connection failed: {}", socket.errorString().toStdString());
         Q_EMIT errorOccurred(tr("Failed to connect to %1:%2").arg(host.toString()).arg(port));
         Q_EMIT transferCompleted(false, tr("Connection failed"));
@@ -290,7 +291,7 @@ QByteArray NetworkTransferWorker::readExact(QTcpSocket* socket, qint64 size) {
 
     while (static_cast<qint64>(data.size()) < size && !m_stopRequested) {
         if (socket->bytesAvailable() <= 0) {
-            if (!socket->waitForReadyRead(15000)) {
+            if (!socket->waitForReadyRead(sak::kTimeoutNetworkReadMs)) {
                 break;
             }
         }
@@ -562,7 +563,7 @@ bool NetworkTransferWorker::sendFileChunks(QTcpSocket* socket, QFile& source,
         const int maxBandwidthKbps = m_dynamicMaxBandwidthKbps.load(std::memory_order_relaxed);
         if (maxBandwidthKbps > 0) {
             rateBytesSent += chunk.size();
-            const qint64 expectedMs = (rateBytesSent * 1000) / (static_cast<qint64>(maxBandwidthKbps) * 1024);
+            const qint64 expectedMs = (rateBytesSent * 1000) / (static_cast<qint64>(maxBandwidthKbps) * sak::kBytesPerKB);
             const qint64 elapsedMs = rateTimer.elapsed();
             if (expectedMs > elapsedMs) {
                 QThread::msleep(static_cast<unsigned long>(expectedMs - elapsedMs));

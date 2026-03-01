@@ -11,6 +11,7 @@
 #include "sak/info_button.h"
 #include "sak/style_constants.h"
 #include "sak/widget_helpers.h"
+#include "sak/layout_constants.h"
 
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -77,7 +78,7 @@ void DuplicateFinderPanel::createDirectoryGroup(QVBoxLayout* layout)
     auto* dirLayout = new QVBoxLayout(dirGroup);
     
     m_directory_list = new QListWidget(this);
-    m_directory_list->setMinimumHeight(100);
+    m_directory_list->setMinimumHeight(sak::kListAreaMinH);
     m_directory_list->setAccessibleName(QStringLiteral("Scan Directories List"));
     dirLayout->addWidget(m_directory_list);
     
@@ -123,13 +124,13 @@ void DuplicateFinderPanel::createControlButtons(QVBoxLayout* layout)
     controlLayout->addStretch();
     
     m_scan_button = new QPushButton("Start Scan", this);
-    m_scan_button->setMinimumWidth(120);
+    m_scan_button->setMinimumWidth(sak::kButtonWidthMedium);
     m_scan_button->setStyleSheet(ui::kPrimaryButtonStyle);
     m_scan_button->setAccessibleName(QStringLiteral("Start Duplicate Scan"));
     controlLayout->addWidget(m_scan_button);
     
     m_cancel_button = new QPushButton("Cancel", this);
-    m_cancel_button->setMinimumWidth(120);
+    m_cancel_button->setMinimumWidth(sak::kButtonWidthMedium);
     m_cancel_button->setEnabled(false);
     m_cancel_button->setAccessibleName(QStringLiteral("Cancel Scan"));
     controlLayout->addWidget(m_cancel_button);
@@ -187,7 +188,7 @@ void DuplicateFinderPanel::onScanClicked()
     for (int i = 0; i < m_directory_list->count(); ++i) {
         config.scanDirectories.push_back(m_directory_list->item(i)->text());
     }
-    config.minimum_file_size = m_min_size_spinbox->value() * 1024; // Convert KB to bytes
+    config.minimum_file_size = m_min_size_spinbox->value() * sak::kBytesPerKB; // Convert KB to bytes
     config.recursive_scan = m_recursive_checkbox->isChecked();
 
     // Create and configure worker
@@ -226,7 +227,7 @@ void DuplicateFinderPanel::onWorkerStarted()
 void DuplicateFinderPanel::onWorkerFinished()
 {
     setOperationRunning(false);
-    Q_EMIT statusMessage("Scan complete", 5000);
+    Q_EMIT statusMessage("Scan complete", sak::kTimerStatusDefaultMs);
     Q_EMIT progressUpdate(100, 100);
     logMessage("Scan completed successfully");
     logInfo("Duplicate finder scan completed successfully");
@@ -235,7 +236,7 @@ void DuplicateFinderPanel::onWorkerFinished()
 void DuplicateFinderPanel::onWorkerFailed(int errorCode, const QString& errorMessage)
 {
     setOperationRunning(false);
-    Q_EMIT statusMessage("Scan failed", 5000);
+    Q_EMIT statusMessage("Scan failed", sak::kTimerStatusDefaultMs);
     Q_EMIT progressUpdate(0, 100);
     logMessage(QString("Scan failed: Error %1: %2").arg(errorCode).arg(errorMessage));
     QMessageBox::warning(this, "Scan Failed", QString("Error %1: %2").arg(errorCode).arg(errorMessage));
@@ -246,7 +247,7 @@ void DuplicateFinderPanel::onWorkerCancelled()
 {
     setOperationRunning(false);
     logMessage("Scan cancelled by user");
-    Q_EMIT statusMessage("Scan cancelled", 3000);
+    Q_EMIT statusMessage("Scan cancelled", sak::kTimerStatusMessageMs);
     Q_EMIT progressUpdate(0, 100);
 }
 
@@ -262,9 +263,9 @@ void DuplicateFinderPanel::onResultsReady(const QString& summary, int duplicateC
 {
     QString resultsText = QString("Found %1 duplicate files, %2 MB wasted space")
         .arg(duplicateCount)
-        .arg(wastedSpace / (1024.0 * 1024.0), 0, 'f', 2);
+        .arg(wastedSpace / sak::kBytesPerMBf, 0, 'f', 2);
     
-    Q_EMIT statusMessage(resultsText, 10000);
+    Q_EMIT statusMessage(resultsText, sak::kTimerHealthPollMs);
     logMessage(resultsText);
     
     QMessageBox::information(this, "Scan Results", summary);
@@ -293,7 +294,7 @@ void DuplicateFinderPanel::onSettingsClicked()
 {
     QDialog dialog(this);
     dialog.setWindowTitle(tr("Duplicate Finder Settings"));
-    dialog.setMinimumWidth(380);
+    dialog.setMinimumWidth(sak::kDialogWidthSmall);
 
     auto* layout = new QFormLayout(&dialog);
 

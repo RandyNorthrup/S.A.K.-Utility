@@ -6,6 +6,7 @@
 
 #include "sak/actions/check_disk_errors_action.h"
 #include "sak/process_runner.h"
+#include "sak/layout_constants.h"
 #include <QStorageInfo>
 
 namespace sak {
@@ -225,7 +226,7 @@ void CheckDiskErrorsAction::executeRunChkdsk(const QVector<QChar>& drives, QStri
 
         QString ps_cmd = buildRepairVolumeScript(drive);
 
-        ProcessResult proc = runPowerShell(ps_cmd, 30000);
+        ProcessResult proc = runPowerShell(ps_cmd, sak::kTimeoutProcessLongMs);
         if (proc.timed_out) {
             report += QString("Drive %1: - TIMEOUT (scan took too long)\n\n").arg(drive);
             continue;

@@ -5,6 +5,7 @@
 /// @brief Implements system information report generation
 
 #include "sak/actions/generate_system_report_action.h"
+#include "sak/layout_constants.h"
 #include "sak/process_runner.h"
 #include <QDir>
 #include <QDateTime>
@@ -106,7 +107,7 @@ void GenerateSystemReportAction::saveReportAndFinish(
         result.output_path = filepath;
         result.log = QString("Report saved to: %1\nSize: %2 KB\nDuration: %3 seconds")
             .arg(filepath)
-            .arg(report.size() / 1024.0, 0, 'f', 1)
+            .arg(report.size() / sak::kBytesPerKBf, 0, 'f', 1)
             .arg(duration_ms / 1000.0, 0, 'f', 1);
     } else {
         result.success = false;
@@ -217,7 +218,7 @@ QString GenerateSystemReportAction::gatherOsAndHardwareInfo()
 {
     QString ps_cmd_info = buildOsInfoScript() + buildHardwareInfoScript();
     
-    ProcessResult proc_info = runPowerShell(ps_cmd_info, 15000);
+    ProcessResult proc_info = runPowerShell(ps_cmd_info, sak::kTimeoutChocoListMs);
     if (!proc_info.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("System report OS warning: " + proc_info.std_err.trimmed());
     }
@@ -255,7 +256,7 @@ QString GenerateSystemReportAction::gatherStorageInfo()
         "}\n"
         "Write-Output \"\"";
     
-    ProcessResult proc_storage = runPowerShell(ps_cmd_storage, 10000);
+    ProcessResult proc_storage = runPowerShell(ps_cmd_storage, sak::kTimeoutProcessMediumMs);
     if (!proc_storage.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("System report storage warning: " + proc_storage.std_err.trimmed());
     }
@@ -289,7 +290,7 @@ QString GenerateSystemReportAction::gatherNetworkInfo()
         "}\n"
         "Write-Output \"\"";
     
-    ProcessResult proc_network = runPowerShell(ps_cmd_network, 10000);
+    ProcessResult proc_network = runPowerShell(ps_cmd_network, sak::kTimeoutProcessMediumMs);
     if (!proc_network.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("System report network warning: " + proc_network.std_err.trimmed());
     }
@@ -321,9 +322,9 @@ QString GenerateSystemReportAction::gatherQtAndVolumeInfo() const
         section += QString("  Name: %1\n").arg(storage.name());
         section += QString("  File System: %1\n").arg(QString::fromUtf8(storage.fileSystemType()));
         section += QString("  Device: %1\n").arg(QString::fromUtf8(storage.device()));
-        section += QString("  Total: %1 GB\n").arg(storage.bytesTotal() / (1024.0 * 1024 * 1024), 0, 'f', 2);
-        section += QString("  Free: %1 GB\n").arg(storage.bytesFree() / (1024.0 * 1024 * 1024), 0, 'f', 2);
-        section += QString("  Available: %1 GB\n").arg(storage.bytesAvailable() / (1024.0 * 1024 * 1024), 0, 'f', 2);
+        section += QString("  Total: %1 GB\n").arg(storage.bytesTotal() / sak::kBytesPerGBf, 0, 'f', 2);
+        section += QString("  Free: %1 GB\n").arg(storage.bytesFree() / sak::kBytesPerGBf, 0, 'f', 2);
+        section += QString("  Available: %1 GB\n").arg(storage.bytesAvailable() / sak::kBytesPerGBf, 0, 'f', 2);
         section += QString("  Used: %1%%\n\n").arg(100.0 * (1.0 - static_cast<double>(storage.bytesFree()) / storage.bytesTotal()), 0, 'f', 1);
     }
     

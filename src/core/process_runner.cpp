@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "sak/process_runner.h"
+#include "sak/layout_constants.h"
 
 #include <QProcess>
 #include <QElapsedTimer>
@@ -13,7 +14,7 @@ ProcessResult runProcess(const QString& program, const QStringList& args, int ti
     proc.start(program, args);
 
     // Ensure the process actually started before entering the wait loop.
-    if (!proc.waitForStarted(5000)) {
+    if (!proc.waitForStarted(sak::kTimeoutProcessStartMs)) {
         ProcessResult result;
         result.exit_code = -1;
         result.std_err = QStringLiteral("Failed to start process: %1").arg(proc.errorString()).toUtf8();

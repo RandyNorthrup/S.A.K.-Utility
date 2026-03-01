@@ -8,6 +8,7 @@
 #include "sak/logger.h"
 #include "sak/style_constants.h"
 #include "sak/widget_helpers.h"
+#include "sak/layout_constants.h"
 #include "qrcodegen.hpp"
 
 #include <QCheckBox>
@@ -472,11 +473,11 @@ void WifiManagerPanel::onAddToTableClicked()
 {
     const QString ssid = m_ssid_input->text().trimmed();
     if (ssid.isEmpty()) {
-        Q_EMIT statusMessage("SSID cannot be empty.", 3000);
+        Q_EMIT statusMessage("SSID cannot be empty.", sak::kTimerStatusMessageMs);
         return;
     }
     addRowToTable(configFromForm());
-    Q_EMIT statusMessage(QString("Added \"%1\" to table.").arg(ssid), 3000);
+    Q_EMIT statusMessage(QString("Added \"%1\" to table.").arg(ssid), sak::kTimerStatusMessageMs);
 }
 
 void WifiManagerPanel::onDeleteSelectedClicked()
@@ -493,7 +494,7 @@ void WifiManagerPanel::onDeleteSelectedClicked()
         m_network_table->removeRow(row);
 
     onSelectionChanged();
-    Q_EMIT statusMessage(QString("Deleted %1 row(s).").arg(rows.size()), 3000);
+    Q_EMIT statusMessage(QString("Deleted %1 row(s).").arg(rows.size()), sak::kTimerStatusMessageMs);
 }
 
 void WifiManagerPanel::onTableDoubleClicked(const QModelIndex& index)
@@ -582,7 +583,7 @@ QWidget* WifiManagerPanel::buildQrFormatPage(const QString& payload,
         .scaled(180, 180, Qt::KeepAspectRatio, Qt::SmoothTransformation);
     ctl.previewLabel = new QLabel(page);
     ctl.previewLabel->setPixmap(QPixmap::fromImage(previewImg));
-    ctl.previewLabel->setFixedSize(180, 180);
+    ctl.previewLabel->setFixedSize(sak::kQrImageSize, sak::kQrImageSize);
     ctl.previewLabel->setAlignment(Qt::AlignCenter);
     ctl.previewLabel->setStyleSheet("border: 1px solid #ccc; background: white;");
     ctl.previewLabel->setAccessibleName(QStringLiteral("QR code preview"));
@@ -671,7 +672,7 @@ void WifiManagerPanel::connectSingleQrWizard(
         [this, ctl, stack]() {
             if (!ctl.chkPng->isChecked() && !ctl.chkPdf->isChecked() &&
                 !ctl.chkJpg->isChecked() && !ctl.chkBmp->isChecked()) {
-                Q_EMIT statusMessage("Select at least one format.", 2000);
+                Q_EMIT statusMessage("Select at least one format.", sak::kTimerServiceDelayMs);
                 return;
             }
             stack->setCurrentIndex(1);
@@ -749,13 +750,13 @@ void WifiManagerPanel::showSingleQrWizard(const WifiConfig& cfg)
     const QString location = cfg.location;
 
     if (payload.isEmpty()) {
-        Q_EMIT statusMessage("Fill in at least the SSID first.", 3000);
+        Q_EMIT statusMessage("Fill in at least the SSID first.", sak::kTimerStatusMessageMs);
         return;
     }
 
     QDialog dlg(this);
     dlg.setWindowTitle("Generate QR Code");
-    dlg.setMinimumWidth(420);
+    dlg.setMinimumWidth(sak::kDialogWidthMedium);
 
     auto* mainLayout = new QVBoxLayout(&dlg);
     auto* stack      = new QStackedWidget(&dlg);
@@ -806,7 +807,7 @@ void WifiManagerPanel::executeBatchQrExport(
               .arg(saved).arg(baseDir).arg(failed)
         : QString("Batch QR: saved %1 network(s) to: %2")
               .arg(saved).arg(baseDir);
-    Q_EMIT statusMessage(msg, 7000);
+    Q_EMIT statusMessage(msg, sak::kTimerStatusExtendedMs);
 }
 
 void WifiManagerPanel::showBatchQrDialog(const QList<WifiConfig>& sources)
@@ -890,7 +891,7 @@ void WifiManagerPanel::onGenerateQrClicked()
     }();
 
     if (sources.isEmpty() || sources.first().ssid.isEmpty()) {
-        Q_EMIT statusMessage("Fill in at least the SSID first.", 3000);
+        Q_EMIT statusMessage("Fill in at least the SSID first.", sak::kTimerStatusMessageMs);
         return;
     }
 
@@ -909,7 +910,7 @@ void WifiManagerPanel::onExportWindowsScriptClicked()
     }();
 
     if (sources.isEmpty() || sources.first().ssid.isEmpty()) {
-        Q_EMIT statusMessage("Fill in at least the SSID first.", 3000);
+        Q_EMIT statusMessage("Fill in at least the SSID first.", sak::kTimerStatusMessageMs);
         return;
     }
 
@@ -932,7 +933,7 @@ void WifiManagerPanel::onExportWindowsScriptClicked()
         }
         QTextStream out(&file);
         out << script;
-        Q_EMIT statusMessage(QString("Saved Windows script: %1").arg(path), 5000);
+        Q_EMIT statusMessage(QString("Saved Windows script: %1").arg(path), sak::kTimerStatusDefaultMs);
     } else {
         // Multiple networks  --  ask for a folder, save one .cmd per network
         const QString outDir = QFileDialog::getExistingDirectory(
@@ -955,7 +956,7 @@ void WifiManagerPanel::onExportWindowsScriptClicked()
         const QString msg = failed > 0
             ? QString("Saved %1 script(s) to %2 (%3 failed).").arg(saved).arg(outDir).arg(failed)
             : QString("Saved %1 Windows script(s) to: %2").arg(saved).arg(outDir);
-        Q_EMIT statusMessage(msg, 6000);
+        Q_EMIT statusMessage(msg, sak::kTimerStatusLongMs);
     }
 }
 
@@ -968,7 +969,7 @@ void WifiManagerPanel::onExportMacosProfileClicked()
     }();
 
     if (sources.isEmpty() || sources.first().ssid.isEmpty()) {
-        Q_EMIT statusMessage("Fill in at least the SSID first.", 3000);
+        Q_EMIT statusMessage("Fill in at least the SSID first.", sak::kTimerStatusMessageMs);
         return;
     }
 
@@ -997,7 +998,7 @@ void WifiManagerPanel::onExportMacosProfileClicked()
     const QString label = (sources.size() == 1)
         ? QString("Saved macOS profile: %1").arg(path)
         : QString("Saved macOS profile with %1 networks: %2").arg(sources.size()).arg(path);
-    Q_EMIT statusMessage(label, 5000);
+    Q_EMIT statusMessage(label, sak::kTimerStatusDefaultMs);
 }
 
 void WifiManagerPanel::onSaveTableClicked()
@@ -1039,7 +1040,7 @@ void WifiManagerPanel::onSaveTableClicked()
             return;
         }
         f.write(doc.toJson());
-        Q_EMIT statusMessage(QString("Saved %1 checked network(s) to %2").arg(arr.size()).arg(path), 5000);
+        Q_EMIT statusMessage(QString("Saved %1 checked network(s) to %2").arg(arr.size()).arg(path), sak::kTimerStatusDefaultMs);
     } else {
         saveTableToJson(path);
     }
@@ -1067,7 +1068,7 @@ void WifiManagerPanel::onConnectWithPhoneClicked()
     }();
 
     if (sources.isEmpty() || sources.first().ssid.isEmpty()) {
-        Q_EMIT statusMessage("Fill in at least the SSID first.", 3000);
+        Q_EMIT statusMessage("Fill in at least the SSID first.", sak::kTimerStatusMessageMs);
         return;
     }
 
@@ -1185,13 +1186,13 @@ void WifiManagerPanel::showMultiNetworkQrDialog(const QList<WifiConfig>& sources
 void WifiManagerPanel::onScanNetworksClicked()
 {
 #ifndef Q_OS_WIN
-    Q_EMIT statusMessage("Scan Known Networks is only supported on Windows.", 4000);
+    Q_EMIT statusMessage("Scan Known Networks is only supported on Windows.", sak::kTimerStatusWarnMs);
     return;
 #else
     QStringList profileNames = scanWindowsProfileNames();
 
     if (profileNames.isEmpty()) {
-        Q_EMIT statusMessage("No known WiFi profiles found.", 3000);
+        Q_EMIT statusMessage("No known WiFi profiles found.", sak::kTimerStatusMessageMs);
         return;
     }
 
@@ -1202,7 +1203,7 @@ void WifiManagerPanel::onScanNetworksClicked()
         ++added;
     }
 
-    Q_EMIT statusMessage(QString("Added %1 known network(s) to table.").arg(added), 5000);
+    Q_EMIT statusMessage(QString("Added %1 known network(s) to table.").arg(added), sak::kTimerStatusDefaultMs);
 #endif
 }
 
@@ -1210,7 +1211,7 @@ QStringList WifiManagerPanel::scanWindowsProfileNames() const
 {
     QProcess proc;
     proc.start("netsh", QStringList{"wlan", "show", "profiles"});
-    if (!proc.waitForFinished(8000)) {
+    if (!proc.waitForFinished(sak::kTimerNetshWaitMs)) {
         return {};
     }
 
@@ -1236,7 +1237,7 @@ WifiManagerPanel::WifiConfig WifiManagerPanel::parseWindowsWifiProfile(const QSt
 {
     QProcess p2;
     p2.start("netsh", QStringList{"wlan", "show", "profile", "name=" + profileName, "key=clear"});
-    p2.waitForFinished(5000);
+    p2.waitForFinished(sak::kTimeoutProcessShortMs);
     const QString detail = QString::fromLocal8Bit(p2.readAllStandardOutput());
 
     QString password;
@@ -1331,7 +1332,7 @@ void WifiManagerPanel::onTableItemChanged(QTableWidgetItem* item)
 void WifiManagerPanel::onAddToWindowsClicked()
 {
 #ifndef Q_OS_WIN
-    Q_EMIT statusMessage("Add to Windows is only supported on Windows.", 4000);
+    Q_EMIT statusMessage("Add to Windows is only supported on Windows.", sak::kTimerStatusWarnMs);
     return;
 #else
     // Collect checked rows
@@ -1342,7 +1343,7 @@ void WifiManagerPanel::onAddToWindowsClicked()
             checkedRows.append(r);
     }
     if (checkedRows.isEmpty()) {
-        Q_EMIT statusMessage("Check at least one network row first.", 3000);
+        Q_EMIT statusMessage("Check at least one network row first.", sak::kTimerStatusMessageMs);
         return;
     }
 
@@ -1423,7 +1424,7 @@ bool WifiManagerPanel::installWlanProfile(const QString& xml, int row)
     proc.start("netsh", QStringList{"wlan", "add", "profile",
                                     "filename=" + tmpPath,
                                     "user=all"});
-    proc.waitForFinished(8000);
+    proc.waitForFinished(sak::kTimerNetshWaitMs);
     const int exitCode = proc.exitCode();
     QFile::remove(tmpPath);
     return exitCode == 0;
@@ -1734,7 +1735,7 @@ void WifiManagerPanel::addRowToTable(const WifiConfig& cfg)
         eyeBtn->setIcon(QIcon(":/icons/eye_open.svg"));
         eyeBtn->setIconSize(QSize(14, 14));
         eyeBtn->setCheckable(true);
-        eyeBtn->setFixedSize(22, 22);
+        eyeBtn->setFixedSize(sak::kEyeButtonSize, sak::kEyeButtonSize);
         eyeBtn->setToolTip("Show/hide password");
         eyeBtn->setAccessibleName(QStringLiteral("Toggle password visibility"));
         eyeBtn->setStyleSheet("QToolButton { border: none; background: transparent; }");
@@ -1849,7 +1850,7 @@ void WifiManagerPanel::saveTableToJson(const QString& path)
         return;
     }
     f.write(doc.toJson());
-    Q_EMIT statusMessage(QString("Saved %1 network(s) to %2").arg(arr.size()).arg(path), 5000);
+    Q_EMIT statusMessage(QString("Saved %1 network(s) to %2").arg(arr.size()).arg(path), sak::kTimerStatusDefaultMs);
 }
 
 void WifiManagerPanel::loadTableFromJson(const QString& path)

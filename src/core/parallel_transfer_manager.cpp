@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "sak/parallel_transfer_manager.h"
+#include "sak/layout_constants.h"
 
 #include <QUuid>
 #include <QTimer>
@@ -11,7 +12,7 @@ namespace sak {
 ParallelTransferManager::ParallelTransferManager(QObject* parent)
     : QObject(parent) {
     m_retryTimer = new QTimer(this);
-    m_retryTimer->setInterval(500);
+    m_retryTimer->setInterval(sak::kTimerRetryBaseMs);
     connect(m_retryTimer, &QTimer::timeout, this, [this]() {
         startNextJobs();
     });
@@ -405,7 +406,7 @@ void ParallelTransferManager::rebalanceBandwidth() {
         return;
     }
 
-    const int totalKbps = m_globalBandwidthLimitMbps * 1024;
+    const int totalKbps = m_globalBandwidthLimitMbps * sak::kBytesPerKB;
     const int perJobCapKbps = m_perJobBandwidthLimitMbps > 0
         ? m_perJobBandwidthLimitMbps * 1024
         : totalKbps;

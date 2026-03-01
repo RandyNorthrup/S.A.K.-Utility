@@ -108,6 +108,7 @@
 #include <QDirIterator>
 #include <QDateTime>
 #include "sak/logger.h"
+#include "sak/layout_constants.h"
 
 namespace sak {
 
@@ -222,7 +223,7 @@ void TaxSoftwareBackupAction::scan() {
     if (m_tax_data.count() > 0) {
         result.summary = QString("Found %1 tax file(s) - %2 MB")
             .arg(m_tax_data.count())
-            .arg(m_total_size / (1024 * 1024));
+            .arg(m_total_size / sak::kBytesPerMB);
         result.warning = "Tax files contain sensitive financial information";
     } else {
         result.summary = "No tax software data found";

@@ -14,6 +14,7 @@
 #include <QJsonDocument>
 #include <QJsonArray>
 #include <QJsonObject>
+#include "sak/layout_constants.h"
 #include "sak/logger.h"
 
 namespace sak {
@@ -65,7 +66,7 @@ void DisableStartupProgramsAction::scanStartupFolder() {
 }
 
 void DisableStartupProgramsAction::scanTaskScheduler() {
-    ProcessResult proc = runProcess("schtasks", QStringList() << "/Query" << "/FO" << "CSV", 5000);
+    ProcessResult proc = runProcess("schtasks", QStringList() << "/Query" << "/FO" << "CSV", sak::kTimeoutProcessShortMs);
     if (!proc.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("Scheduled task scan warning: " + proc.std_err.trimmed());
     }
@@ -144,7 +145,7 @@ bool DisableStartupProgramsAction::executeScanRegistry(const QDateTime& start_ti
 
     QString startup_scan_cmd = R"(Get-CimInstance Win32_StartupCommand | Select-Object Name, Command, Location, User | ConvertTo-Json)";
 
-    ProcessResult startup_proc = runPowerShell(startup_scan_cmd, 15000);
+    ProcessResult startup_proc = runPowerShell(startup_scan_cmd, sak::kTimeoutChocoListMs);
     if (!startup_proc.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("Startup program scan warning: " + startup_proc.std_err.trimmed());
     }
@@ -170,7 +171,7 @@ bool DisableStartupProgramsAction::executeScanTaskScheduler(const QDateTime& sta
 
     QString task_scan_cmd = R"(Get-ScheduledTask | Where-Object {$_.Triggers.CimClass.CimClassName -match 'MSFT_TaskLogonTrigger|MSFT_TaskBootTrigger'} | Select-Object TaskName, State, TaskPath | ConvertTo-Json)";
 
-    ProcessResult task_proc = runPowerShell(task_scan_cmd, 15000);
+    ProcessResult task_proc = runPowerShell(task_scan_cmd, sak::kTimeoutChocoListMs);
     if (!task_proc.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("Startup task scan warning: " + task_proc.std_err.trimmed());
     }

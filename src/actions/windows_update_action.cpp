@@ -5,6 +5,7 @@
 /// @brief Implements Windows Update checking and installation
 
 #include "sak/actions/windows_update_action.h"
+#include "sak/layout_constants.h"
 #include "sak/process_runner.h"
 
 namespace sak {
@@ -19,7 +20,7 @@ int queryPendingUpdateCount() {
         "  Write-Output $result.Updates.Count; "
         "} catch { Write-Output -1 }";
 
-    ProcessResult proc = runPowerShell(ps_cmd, 15000);
+    ProcessResult proc = runPowerShell(ps_cmd, sak::kTimeoutChocoListMs);
     if (!proc.succeeded()) {
         return -1;
     }
@@ -36,7 +37,7 @@ WindowsUpdateAction::WindowsUpdateAction(QObject* parent)
 
 bool WindowsUpdateAction::isPSWindowsUpdateInstalled() {
     QString ps_cmd = "Get-Module -ListAvailable -Name PSWindowsUpdate";
-    ProcessResult proc = runPowerShell(ps_cmd, 5000);
+    ProcessResult proc = runPowerShell(ps_cmd, sak::kTimeoutProcessShortMs);
     if (!proc.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("PSWindowsUpdate check warning: " + proc.std_err.trimmed());
     }
@@ -47,7 +48,7 @@ bool WindowsUpdateAction::installPSWindowsUpdateModule() {
     Q_EMIT executionProgress("Installing PSWindowsUpdate module...", 10);
     
     QString ps_cmd = "Install-Module -Name PSWindowsUpdate -Force -Confirm:$false";
-    ProcessResult proc = runPowerShell(ps_cmd, 120000);
+    ProcessResult proc = runPowerShell(ps_cmd, sak::kTimeoutDismCheckMs);
     if (!proc.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("PSWindowsUpdate install warning: " + proc.std_err.trimmed());
     }
@@ -56,7 +57,7 @@ bool WindowsUpdateAction::installPSWindowsUpdateModule() {
 
 void WindowsUpdateAction::checkForUpdates() {
     QString ps_cmd = "Get-WindowsUpdate -MicrosoftUpdate";
-    ProcessResult proc = runPowerShell(ps_cmd, 30000);
+    ProcessResult proc = runPowerShell(ps_cmd, sak::kTimeoutProcessLongMs);
     if (!proc.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("Windows Update list warning: " + proc.std_err.trimmed());
     }
@@ -70,7 +71,7 @@ void WindowsUpdateAction::installUpdates() {
     Q_EMIT executionProgress("Installing Windows Updates...", 30);
     
     QString ps_cmd = "Install-WindowsUpdate -MicrosoftUpdate -AcceptAll -AutoReboot";
-    ProcessResult proc = runPowerShell(ps_cmd, 1800000);
+    ProcessResult proc = runPowerShell(ps_cmd, sak::kTimeoutSystemRepairMs);
     if (!proc.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("Windows Update install warning: " + proc.std_err.trimmed());
     }
@@ -95,7 +96,7 @@ void WindowsUpdateAction::scan() {
         "  Write-Output \"COUNT:$($result.Updates.Count)\"; "
         "} catch { Write-Output \"COUNT:-1\" }";
 
-    ProcessResult proc = runPowerShell(ps_cmd, 15000);
+    ProcessResult proc = runPowerShell(ps_cmd, sak::kTimeoutChocoListMs);
     if (!proc.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("Windows Update scan warning: " + proc.std_err.trimmed());
     }
@@ -263,7 +264,7 @@ bool WindowsUpdateAction::executeSearchUpdates(const QDateTime& start_time,
     Q_EMIT executionProgress("Downloading updates...", 50);
     Q_EMIT executionProgress("Installing updates...", 70);
 
-    ProcessResult ps = runPowerShell(ps_script, 1800000, true, true, [this]() { return isCancelled(); });
+    ProcessResult ps = runPowerShell(ps_script, sak::kTimeoutSystemRepairMs, true, true, [this]() { return isCancelled(); });
 
     if (ps.cancelled) {
         emitCancelledResult(QStringLiteral("Windows Update cancelled"), start_time);

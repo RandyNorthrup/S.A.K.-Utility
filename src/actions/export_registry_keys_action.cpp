@@ -5,6 +5,7 @@
 /// @brief Implements Windows registry key export and backup
 
 #include "sak/actions/export_registry_keys_action.h"
+#include "sak/layout_constants.h"
 #include "sak/process_runner.h"
 #include <QDir>
 #include <QDateTime>
@@ -21,7 +22,7 @@ ExportRegistryKeysAction::ExportRegistryKeysAction(const QString& backup_locatio
 void ExportRegistryKeysAction::exportKey(const QString& key_path, const QString& filename) {
     QString output_file = m_backup_location + "/Registry/" + filename;
     QString cmd = QString("reg export \"%1\" \"%2\" /y").arg(key_path, output_file);
-    ProcessResult proc = runProcess("cmd.exe", QStringList() << "/c" << cmd, 10000);
+    ProcessResult proc = runProcess("cmd.exe", QStringList() << "/c" << cmd, sak::kTimeoutProcessMediumMs);
     if (!proc.succeeded()) {
         Q_EMIT logMessage("Registry export warning: " + proc.std_err.trimmed());
     }
@@ -127,7 +128,7 @@ void ExportRegistryKeysAction::finalizeRegistryExportResult(
 
     if (keys_exported > 0) {
         result.success = true;
-        double size_mb = total_size / (1024.0 * 1024.0);
+        double size_mb = total_size / sak::kBytesPerMBf;
         result.message = QString("Exported %1 registry hive(s) - %2 MB")
             .arg(keys_exported)
             .arg(size_mb, 0, 'f', 2);
@@ -163,7 +164,7 @@ void ExportRegistryKeysAction::execute() {
     
     QString ps_script = buildRegistryBackupScript(backup_path, timestamp);
     
-    ProcessResult ps = runPowerShell(ps_script, 60000);
+    ProcessResult ps = runPowerShell(ps_script, sak::kTimeoutProcessVeryLongMs);
     if (!ps.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("Registry export warning: " + ps.std_err.trimmed());
     }

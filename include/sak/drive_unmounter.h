@@ -10,6 +10,8 @@
 #include <windows.h>
 #include <functional>
 
+#include "sak/action_constants.h"
+
 /**
  * @brief Drive Unmounter - Windows-specific drive preparation
  * 
@@ -107,7 +109,7 @@ private:
      * @param maxAttempts Maximum retry attempts (default 5)
      * @return true if operation succeeded within retries
      */
-    bool retryWithBackoff(std::function<bool()> operation, int maxAttempts = 5);
+    bool retryWithBackoff(std::function<bool()> operation, int maxAttempts = sak::kRetryCountHigh);
 
     /**
      * @brief Lock and dismount a single volume with retry

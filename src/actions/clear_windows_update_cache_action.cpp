@@ -7,6 +7,7 @@
 #include "sak/actions/clear_windows_update_cache_action.h"
 #include "sak/path_utils.h"
 #include "sak/process_runner.h"
+#include "sak/layout_constants.h"
 #include <QDir>
 #include <QThread>
 
@@ -19,14 +20,14 @@ ClearWindowsUpdateCacheAction::ClearWindowsUpdateCacheAction(QObject* parent)
 
 bool ClearWindowsUpdateCacheAction::stopWindowsUpdateService() {
     Q_EMIT executionProgress("Stopping Windows Update service...", 20);
-    ProcessResult result = runProcess("net", QStringList() << "stop" << "wuauserv", 15000);
-    QThread::msleep(2000);
+    ProcessResult result = runProcess("net", QStringList() << "stop" << "wuauserv", sak::kTimeoutNetworkReadMs);
+    QThread::msleep(sak::kTimerServiceDelayMs);
     return result.succeeded();
 }
 
 bool ClearWindowsUpdateCacheAction::startWindowsUpdateService() {
     Q_EMIT executionProgress("Starting Windows Update service...", 80);
-    ProcessResult result = runProcess("net", QStringList() << "start" << "wuauserv", 15000);
+    ProcessResult result = runProcess("net", QStringList() << "start" << "wuauserv", sak::kTimeoutNetworkReadMs);
     return result.succeeded();
 }
 
@@ -68,7 +69,7 @@ void ClearWindowsUpdateCacheAction::scan() {
     result.bytes_affected = total_size;
     result.files_count = total_files;
     result.summary = total_size > 0
-        ? QString("Cache size: %1 MB").arg(total_size / (1024.0 * 1024.0), 0, 'f', 1)
+        ? QString("Cache size: %1 MB").arg(total_size / sak::kBytesPerMBf, 0, 'f', 1)
         : "Windows Update cache is already minimal";
     result.details = "Clearing cache stops update services briefly";
 
@@ -90,7 +91,7 @@ void ClearWindowsUpdateCacheAction::execute() {
     Q_EMIT executionProgress("║ Checking Windows Update service status...                    ║", 20);
     Q_EMIT executionProgress("║ Stopping wuauserv, bits, and cryptsvc services...           ║", 40);
     
-    ProcessResult ps_result = runPowerShell(ps_script, 120000);
+    ProcessResult ps_result = runPowerShell(ps_script, sak::kTimeoutDismCheckMs);
     
     if (ps_result.timed_out || isCancelled()) {
         if (isCancelled()) {

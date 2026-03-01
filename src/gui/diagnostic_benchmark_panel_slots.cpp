@@ -8,6 +8,7 @@
 #include "sak/diagnostic_controller.h"
 #include "sak/logger.h"
 #include "sak/style_constants.h"
+#include "sak/layout_constants.h"
 
 #include <QApplication>
 #include <QCheckBox>
@@ -71,7 +72,7 @@ void DiagnosticBenchmarkPanel::onCopyInventoryClicked()
 
     QApplication::clipboard()->setText(text);
     logMessage("Hardware inventory copied to clipboard");
-    Q_EMIT statusMessage("Hardware inventory copied to clipboard", 3000);
+    Q_EMIT statusMessage("Hardware inventory copied to clipboard", sak::kTimerStatusMessageMs);
 }
 
 void DiagnosticBenchmarkPanel::onHardwareScanComplete(
@@ -138,7 +139,7 @@ void DiagnosticBenchmarkPanel::onHardwareScanComplete(
     }
 
     logMessage("Hardware inventory scan complete");
-    Q_EMIT statusMessage("Hardware scan complete", 3000);
+    Q_EMIT statusMessage("Hardware scan complete", sak::kTimerStatusMessageMs);
 
     // Automatically trigger SMART analysis after hardware scan
     logMessage("Starting SMART disk analysis...");
@@ -216,7 +217,7 @@ void DiagnosticBenchmarkPanel::onSmartAnalysisComplete(
 
     logMessage(QString("SMART analysis complete: %1 drive(s) analyzed")
                    .arg(reports.size()));
-    Q_EMIT statusMessage("SMART analysis complete", 3000);
+    Q_EMIT statusMessage("SMART analysis complete", sak::kTimerStatusMessageMs);
 }
 
 // ============================================================================
@@ -262,7 +263,7 @@ void DiagnosticBenchmarkPanel::onCpuBenchmarkComplete(
     logMessage(QString("CPU benchmark complete — Score: %1 (ST) / %2 (MT)")
                    .arg(result.single_thread_score)
                    .arg(result.multi_thread_score));
-    Q_EMIT statusMessage("CPU benchmark complete", 3000);
+    Q_EMIT statusMessage("CPU benchmark complete", sak::kTimerStatusMessageMs);
 }
 
 // ============================================================================
@@ -273,7 +274,7 @@ void DiagnosticBenchmarkPanel::onRunDiskBenchmarkClicked()
 {
     if (m_disk_drive_combo->count() == 0) {
         logMessage("No drives available — run Hardware Scan first");
-        Q_EMIT statusMessage("No drives — run Hardware Scan first", 3000);
+        Q_EMIT statusMessage("No drives — run Hardware Scan first", sak::kTimerStatusMessageMs);
         return;
     }
 
@@ -323,7 +324,7 @@ void DiagnosticBenchmarkPanel::onDiskBenchmarkComplete(
 
     logMessage(QString("Disk benchmark complete — Score: %1")
                    .arg(result.overall_score));
-    Q_EMIT statusMessage("Disk benchmark complete", 3000);
+    Q_EMIT statusMessage("Disk benchmark complete", sak::kTimerStatusMessageMs);
 }
 
 // ============================================================================
@@ -361,7 +362,7 @@ void DiagnosticBenchmarkPanel::onMemoryBenchmarkComplete(
 
     logMessage(QString("Memory benchmark complete — Score: %1")
                    .arg(result.overall_score));
-    Q_EMIT statusMessage("Memory benchmark complete", 3000);
+    Q_EMIT statusMessage("Memory benchmark complete", sak::kTimerStatusMessageMs);
 }
 
 // ============================================================================
@@ -569,7 +570,7 @@ void DiagnosticBenchmarkPanel::onSuiteComplete()
     }
 
     logMessage("Full diagnostic suite complete");
-    Q_EMIT statusMessage("Diagnostic suite complete", 5000);
+    Q_EMIT statusMessage("Diagnostic suite complete", sak::kTimerStatusDefaultMs);
 }
 
 // ============================================================================
@@ -625,7 +626,7 @@ void DiagnosticBenchmarkPanel::onGenerateReportClicked()
 void DiagnosticBenchmarkPanel::onReportsGenerated(const QString& output_dir)
 {
     logMessage(QString("Reports generated in %1").arg(output_dir));
-    Q_EMIT statusMessage("Reports saved to " + output_dir, 5000);
+    Q_EMIT statusMessage("Reports saved to " + output_dir, sak::kTimerStatusDefaultMs);
 
     QMessageBox::information(this, "Reports Generated",
         QString("Diagnostic reports saved to:\n%1").arg(output_dir));
@@ -655,7 +656,7 @@ void DiagnosticBenchmarkPanel::onErrorOccurred(const QString& message)
     }
 
     logMessage(QString("ERROR: %1").arg(message));
-    Q_EMIT statusMessage("Error: " + message, 5000);
+    Q_EMIT statusMessage("Error: " + message, sak::kTimerStatusDefaultMs);
 }
 
 } // namespace sak

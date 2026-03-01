@@ -6,6 +6,7 @@
 #include "sak/app_scanner.h"
 #include "sak/logger.h"
 #include "sak/style_constants.h"
+#include "sak/layout_constants.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QGridLayout>
@@ -162,7 +163,7 @@ void UserProfileBackupCustomizeDataPage::updateSummary() {
         }
     }
     
-    double totalGB = totalSize / (1024.0 * 1024.0 * 1024.0);
+    double totalGB = totalSize / sak::kBytesPerGBf;
     m_summaryLabel->setText(tr("%1 user(s), %2 total folders | Estimated: %3 GB")
         .arg(totalUsers)
         .arg(totalFolders)
@@ -303,11 +304,11 @@ void UserProfileBackupSmartFiltersPage::loadFilterSettings() {
     m_enableFolderSizeLimitCheck->setChecked(m_filter.enable_folder_size_limit);
     
     // Load from m_filter (convert bytes to MB/GB for UI)
-    qint64 fileSizeMB = m_filter.max_single_file_size / (1024 * 1024);
+    qint64 fileSizeMB = m_filter.max_single_file_size / sak::kBytesPerMB;
     m_maxFileSizeSpinBox->setValue(static_cast<int>(fileSizeMB));
     m_maxFileSizeSpinBox->setEnabled(m_filter.enable_file_size_limit);
     
-    qint64 folderSizeGB = m_filter.max_folder_size / (1024 * 1024 * 1024);
+    qint64 folderSizeGB = m_filter.max_folder_size / sak::kBytesPerGB;
     m_maxFolderSizeSpinBox->setValue(static_cast<int>(folderSizeGB));
     m_maxFolderSizeSpinBox->setEnabled(m_filter.enable_folder_size_limit);
     
@@ -379,8 +380,8 @@ void UserProfileBackupSmartFiltersPage::updateSummary() {
     m_filter.enable_folder_size_limit = m_enableFolderSizeLimitCheck->isChecked();
     
     // Update filter from UI (convert MB/GB back to bytes)
-    m_filter.max_single_file_size = static_cast<qint64>(m_maxFileSizeSpinBox->value()) * 1024 * 1024;
-    m_filter.max_folder_size = static_cast<qint64>(m_maxFolderSizeSpinBox->value()) * 1024 * 1024 * 1024;
+    m_filter.max_single_file_size = static_cast<qint64>(m_maxFileSizeSpinBox->value()) * sak::kBytesPerMB;
+    m_filter.max_folder_size = static_cast<qint64>(m_maxFolderSizeSpinBox->value()) * sak::kBytesPerGB;
     
     // Count total exclusions
     int exclusionCount = m_filter.dangerous_files.size() + 

@@ -11,6 +11,7 @@
 #include "sak/info_button.h"
 #include "sak/style_constants.h"
 #include "sak/widget_helpers.h"
+#include "sak/layout_constants.h"
 
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -153,20 +154,20 @@ void OrganizerPanel::setupUi_controlsAndConnections(QVBoxLayout* mainLayout)
     controlLayout->addStretch();
     
     m_preview_button = new QPushButton("Preview", this);
-    m_preview_button->setMinimumWidth(100);
+    m_preview_button->setMinimumWidth(sak::kButtonWidthSmall);
     m_preview_button->setAccessibleName(QStringLiteral("Preview Organization"));
     m_preview_button->setToolTip(QStringLiteral("Preview file organization without making changes"));
     controlLayout->addWidget(m_preview_button);
     
     m_execute_button = new QPushButton("Execute", this);
-    m_execute_button->setMinimumWidth(100);
+    m_execute_button->setMinimumWidth(sak::kButtonWidthSmall);
     m_execute_button->setAccessibleName(QStringLiteral("Execute Organization"));
     m_execute_button->setToolTip(QStringLiteral("Organize files into category folders"));
     m_execute_button->setStyleSheet(ui::kPrimaryButtonStyle);
     controlLayout->addWidget(m_execute_button);
     
     m_cancel_button = new QPushButton("Cancel", this);
-    m_cancel_button->setMinimumWidth(100);
+    m_cancel_button->setMinimumWidth(sak::kButtonWidthSmall);
     m_cancel_button->setEnabled(false);
     m_cancel_button->setAccessibleName(QStringLiteral("Cancel Organization"));
     m_cancel_button->setToolTip(QStringLiteral("Cancel the current organization operation"));
@@ -314,7 +315,7 @@ void OrganizerPanel::onWorkerFinished()
 {
     setOperationRunning(false);
     QString mode = m_preview_mode_checkbox->isChecked() ? "Preview" : "Organization";
-    Q_EMIT statusMessage(QString("%1 complete").arg(mode), 5000);
+    Q_EMIT statusMessage(QString("%1 complete").arg(mode), sak::kTimerStatusDefaultMs);
     Q_EMIT progressUpdate(100, 100);
     logMessage(QString("%1 completed successfully").arg(mode));
     QMessageBox::information(this, QString("%1 Complete").arg(mode), 
@@ -325,7 +326,7 @@ void OrganizerPanel::onWorkerFinished()
 void OrganizerPanel::onWorkerFailed(int errorCode, const QString& errorMessage)
 {
     setOperationRunning(false);
-    Q_EMIT statusMessage("Organization failed", 5000);
+    Q_EMIT statusMessage("Organization failed", sak::kTimerStatusDefaultMs);
     Q_EMIT progressUpdate(0, 100);
     logMessage(QString("Organization failed: Error %1: %2").arg(errorCode).arg(errorMessage));
     QMessageBox::warning(this, "Organization Failed", 
@@ -337,7 +338,7 @@ void OrganizerPanel::onWorkerCancelled()
 {
     setOperationRunning(false);
     logMessage("Organization cancelled by user");
-    Q_EMIT statusMessage("Organization cancelled", 3000);
+    Q_EMIT statusMessage("Organization cancelled", sak::kTimerStatusMessageMs);
     Q_EMIT progressUpdate(0, 100);
 }
 
@@ -406,7 +407,7 @@ void OrganizerPanel::onSettingsClicked()
 {
     QDialog dialog(this);
     dialog.setWindowTitle(tr("Directory Organizer Settings"));
-    dialog.setMinimumWidth(380);
+    dialog.setMinimumWidth(sak::kDialogWidthSmall);
 
     auto* layout = new QFormLayout(&dialog);
 

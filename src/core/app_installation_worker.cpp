@@ -7,6 +7,7 @@
 #include "sak/migration_report.h"
 #include "sak/app_scanner.h"
 #include "sak/package_matcher.h"
+#include "sak/layout_constants.h"
 #include <QtGlobal>
 #include <QThread>
 #include <QMetaObject>
@@ -224,7 +225,7 @@ void AppInstallationWorker::processQueue() {
                 
                 // Wait for active jobs to finish
                 locker.unlock();
-                QThread::msleep(100);
+                QThread::msleep(sak::kTimerPollingFastMs);
                 continue;
             }
         }
@@ -313,13 +314,13 @@ void AppInstallationWorker::updateJobStatus(int index, MigrationStatus status, c
 
 bool AppInstallationWorker::shouldRetry(const MigrationJob& job) const {
     return job.status == MigrationStatus::Failed && 
-           job.retryCount < MAX_RETRIES &&
+           job.retryCount < kRetryCountDefault &&
            !m_cancelled;
 }
 
 int AppInstallationWorker::getRetryDelay(int retryCount) const {
     // Exponential backoff: 5s, 10s, 20s
-    return BASE_RETRY_DELAY_MS * (1 << retryCount);
+    return kRetryBackoffSlowMs * (1 << retryCount);
 }
 
 void AppInstallationWorker::onInstallStarted(const QString& packageId) {

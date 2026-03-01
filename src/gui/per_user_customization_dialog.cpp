@@ -4,6 +4,7 @@
 #include "sak/per_user_customization_dialog.h"
 #include "sak/logger.h"
 #include "sak/style_constants.h"
+#include "sak/layout_constants.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QHeaderView>
@@ -24,7 +25,7 @@ PerUserCustomizationDialog::PerUserCustomizationDialog(UserProfile& profile, QWi
     updateSummary();
     
     setWindowTitle(QString("Customize Backup for %1").arg(profile.username));
-    resize(900, 700);
+    resize(sak::kWizardLargeWidth, sak::kWizardLargeHeight);
 }
 
 void PerUserCustomizationDialog::setupUi() {
@@ -163,10 +164,10 @@ void PerUserCustomizationDialog::setupUi_dialogButtons(QVBoxLayout* mainLayout) 
     
     m_okButton = new QPushButton("OK");
     m_okButton->setDefault(true);
-    m_okButton->setMinimumWidth(100);
+    m_okButton->setMinimumWidth(sak::kButtonWidthSmall);
     
     m_cancelButton = new QPushButton("Cancel");
-    m_cancelButton->setMinimumWidth(100);
+    m_cancelButton->setMinimumWidth(sak::kButtonWidthSmall);
     
     buttonLayout->addWidget(m_okButton);
     buttonLayout->addWidget(m_cancelButton);
@@ -245,13 +246,13 @@ void PerUserCustomizationDialog::addFolderToTree(const FolderSelection& selectio
     // Column 2: Size
     QString sizeStr;
     if (totalSize > 0) {
-        double sizeMB = totalSize / (1024.0 * 1024.0);
-        if (sizeMB >= 1024) {
-            sizeStr = QString("%1 GB").arg(sizeMB / 1024.0, 0, 'f', 2);
+        double sizeMB = totalSize / sak::kBytesPerMBf;
+        if (sizeMB >= sak::kBytesPerKBf) {
+            sizeStr = QString("%1 GB").arg(sizeMB / sak::kBytesPerKBf, 0, 'f', 2);
         } else if (sizeMB >= 1) {
             sizeStr = QString("%1 MB").arg(sizeMB, 0, 'f', 1);
         } else {
-            sizeStr = QString("%1 KB").arg(totalSize / 1024.0, 0, 'f', 1);
+            sizeStr = QString("%1 KB").arg(totalSize / sak::kBytesPerKBf, 0, 'f', 1);
         }
     } else {
         sizeStr = "0 KB";
@@ -442,13 +443,13 @@ void PerUserCustomizationDialog::onCollapseAll() {
 }
 
 QString PerUserCustomizationDialog::formatFileSize(qint64 bytes) {
-    double sizeMB = bytes / (1024.0 * 1024.0);
-    if (sizeMB >= 1024) {
-        return QString("%1 GB").arg(sizeMB / 1024.0, 0, 'f', 2);
+    double sizeMB = bytes / sak::kBytesPerMBf;
+    if (sizeMB >= sak::kBytesPerKBf) {
+        return QString("%1 GB").arg(sizeMB / sak::kBytesPerKBf, 0, 'f', 2);
     } else if (sizeMB >= 1) {
         return QString("%1 MB").arg(sizeMB, 0, 'f', 1);
-    } else if (bytes >= 1024) {
-        return QString("%1 KB").arg(bytes / 1024.0, 0, 'f', 1);
+    } else if (bytes >= sak::kBytesPerKB) {
+        return QString("%1 KB").arg(bytes / sak::kBytesPerKBf, 0, 'f', 1);
     } else if (bytes > 0) {
         return QString("%1 bytes").arg(bytes);
     }
@@ -679,7 +680,7 @@ void PerUserCustomizationDialog::updateSummary() {
     }
     
     if (totalSize > 0) {
-        double sizeGB = totalSize / (1024.0 * 1024.0 * 1024.0);
+        double sizeGB = totalSize / sak::kBytesPerGBf;
         summary += QString(" | Estimated size: <b>%1 GB</b>").arg(sizeGB, 0, 'f', 2);
     }
     

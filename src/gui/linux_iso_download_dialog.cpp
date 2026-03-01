@@ -14,6 +14,7 @@
 #include "sak/format_utils.h"
 #include "sak/linux_iso_downloader.h"
 #include "sak/style_constants.h"
+#include "sak/layout_constants.h"
 
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -38,7 +39,7 @@ LinuxISODownloadDialog::LinuxISODownloadDialog(LinuxISODownloader* downloader,
 {
     setWindowTitle("Download Linux ISO");
     setModal(true);
-    resize(780, 680);
+    resize(sak::kIsoDialogWidthLin, sak::kIsoDialogHeightLin);
 
     setupUi();
     connectSignals();

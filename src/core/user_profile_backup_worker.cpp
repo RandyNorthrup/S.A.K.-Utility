@@ -11,6 +11,7 @@
 #include <QStorageInfo>
 #include <QJsonDocument>
 #include "sak/logger.h"
+#include "sak/layout_constants.h"
 
 namespace sak {
 
@@ -97,7 +98,7 @@ void UserProfileBackupWorker::run() {
     // Calculate total size for progress
     Q_EMIT logMessage(tr("Calculating total size..."), false);
     m_totalBytesToCopy = calculateTotalSize();
-    Q_EMIT logMessage(tr("Total estimated size: %1 GB").arg(m_totalBytesToCopy / (1024.0 * 1024.0 * 1024.0), 0, 'f', 2), false);
+    Q_EMIT logMessage(tr("Total estimated size: %1 GB").arg(m_totalBytesToCopy / sak::kBytesPerGBf, 0, 'f', 2), false);
     
     // Create backup directory structure
     if (!createBackupStructure()) {
@@ -155,7 +156,7 @@ void UserProfileBackupWorker::emitBackupSummary() {
         .arg(m_filesCopied)
         .arg(m_filesSkipped)
         .arg(m_filesErrored)
-        .arg(m_bytesCopied / (1024.0 * 1024.0), 0, 'f', 1);
+        .arg(m_bytesCopied / sak::kBytesPerMBf, 0, 'f', 1);
     
     Q_EMIT logMessage(tr("=== Backup Complete ==="), false);
     Q_EMIT logMessage(summary, false);
@@ -281,7 +282,7 @@ bool UserProfileBackupWorker::copyFileWithFiltering(const QString& sourcePath,
     
     // Check size limit
     if (m_fileFilter->exceedsSizeLimit(fileSize)) {
-        Q_EMIT logMessage(tr("Skipping large file: %1 (%2 MB)").arg(sourceInfo.fileName()).arg(fileSize / (1024.0 * 1024.0), 0, 'f', 1), true);
+        Q_EMIT logMessage(tr("Skipping large file: %1 (%2 MB)").arg(sourceInfo.fileName()).arg(fileSize / sak::kBytesPerMBf, 0, 'f', 1), true);
         m_filesSkipped++;
         return true;
     }
@@ -400,7 +401,7 @@ void UserProfileBackupWorker::updateProgress(qint64 bytesAdded) {
     static qint64 lastByteCount = 0;
     
     if (m_filesCopied - lastFileCount >= 100 || 
-        m_bytesCopied - lastByteCount >= 100 * 1024 * 1024) {
+        m_bytesCopied - lastByteCount >= 100 * sak::kBytesPerMB) {
         
         int totalUsers = 0;
         int currentUser = 0;
@@ -459,8 +460,8 @@ bool UserProfileBackupWorker::checkDiskSpace() {
     requiredBytes = requiredBytes * 1.1;
     
     if (availableBytes < requiredBytes) {
-        double availableGB = availableBytes / (1024.0 * 1024.0 * 1024.0);
-        double requiredGB = requiredBytes / (1024.0 * 1024.0 * 1024.0);
+        double availableGB = availableBytes / sak::kBytesPerGBf;
+        double requiredGB = requiredBytes / sak::kBytesPerGBf;
         
         Q_EMIT logMessage(tr("Insufficient disk space. Available: %1 GB, Required: %2 GB")
             .arg(availableGB, 0, 'f', 1)

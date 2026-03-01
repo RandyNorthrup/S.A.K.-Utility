@@ -15,6 +15,7 @@
 
 #include "sak/uup_dump_api.h"
 #include "sak/logger.h"
+#include "sak/layout_constants.h"
 
 #include <QNetworkRequest>
 #include <QUrlQuery>
@@ -389,7 +390,7 @@ void UupDumpApi::onFilesReply() {
         }
     }
 
-    double totalSizeGB = totalSize / (1024.0 * 1024.0 * 1024.0);
+    double totalSizeGB = totalSize / sak::kBytesPerGBf;
     sak::logInfo(QString("Fetched %1 downloadable files (%2 GB total)")
         .arg(files.size()).arg(totalSizeGB, 0, 'f', 2).toStdString());
 

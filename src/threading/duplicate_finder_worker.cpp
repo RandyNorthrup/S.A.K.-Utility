@@ -6,6 +6,7 @@
 
 #include "sak/duplicate_finder_worker.h"
 #include "sak/logger.h"
+#include "sak/layout_constants.h"
 #include <QtGlobal>
 #include <QFileInfo>
 #include <QThreadPool>
@@ -227,7 +228,7 @@ auto DuplicateFinderWorker::generateSummary(const std::vector<DuplicateGroup>& g
     }
 
     summary += QString("Total duplicate files: %1\n").arg(total_duplicates);
-    summary += QString("Total wasted space: %1 MB\n\n").arg(total_wasted / (1024.0 * 1024.0), 0, 'f', 2);
+    summary += QString("Total wasted space: %1 MB\n\n").arg(total_wasted / sak::kBytesPerMBf, 0, 'f', 2);
 
     summary += "Top duplicate groups:\n";
     int count = 0;
@@ -237,7 +238,7 @@ auto DuplicateFinderWorker::generateSummary(const std::vector<DuplicateGroup>& g
         summary += QString("\nGroup %1 (%2 files, %3 KB wasted):\n")
             .arg(count)
             .arg(group.file_paths.size())
-            .arg(group.wasted_space / 1024.0, 0, 'f', 1);
+            .arg(group.wasted_space / sak::kBytesPerKBf, 0, 'f', 1);
         
         for (const auto& path : group.file_paths) {
             QFileInfo info(path);

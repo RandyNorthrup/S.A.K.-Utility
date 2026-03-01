@@ -5,6 +5,7 @@
 /// @brief Implements drive defragmentation and optimization analysis
 
 #include "sak/actions/defragment_drives_action.h"
+#include "sak/layout_constants.h"
 #include "sak/process_runner.h"
 #include <QStorageInfo>
 #include <QRegularExpression>
@@ -19,7 +20,7 @@ DefragmentDrivesAction::DefragmentDrivesAction(QObject* parent)
 bool DefragmentDrivesAction::isDriveSSD(const QString& drive_letter) {
     QString cmd = QString("Get-PhysicalDisk | Where-Object {$_.DeviceID -eq (Get-Partition -DriveLetter %1).DiskNumber} | Select-Object -ExpandProperty MediaType")
                      .arg(drive_letter.left(1));
-    ProcessResult proc = runPowerShell(cmd, 5000);
+    ProcessResult proc = runPowerShell(cmd, sak::kTimeoutProcessShortMs);
     if (!proc.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("Drive media type warning: " + proc.std_err.trimmed());
     }
@@ -29,7 +30,7 @@ bool DefragmentDrivesAction::isDriveSSD(const QString& drive_letter) {
 
 int DefragmentDrivesAction::analyzeFragmentation(const QString& drive_letter) {
     QString cmd = QString("defrag %1: /A").arg(drive_letter);
-    ProcessResult proc = runProcess("cmd.exe", QStringList() << "/c" << cmd, 30000);
+    ProcessResult proc = runProcess("cmd.exe", QStringList() << "/c" << cmd, sak::kTimeoutProcessLongMs);
     QString output = proc.std_out;
     
     // Parse fragmentation percentage from output
@@ -148,7 +149,7 @@ QString DefragmentDrivesAction::executeEnumerateVolumes() const {
 void DefragmentDrivesAction::executeDefrag(const QString& ps_script, const QDateTime& start_time) {
     Q_EMIT executionProgress("Optimizing drives...", 15);
 
-    ProcessResult ps_result = runPowerShell(ps_script, 3600000);
+    ProcessResult ps_result = runPowerShell(ps_script, sak::kTimeoutDefragMs);
     if (ps_result.timed_out || isCancelled()) {
         emitCancelledResult(QStringLiteral("Drive optimization cancelled"), start_time);
         return;

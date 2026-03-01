@@ -72,6 +72,7 @@
 
 #include "sak/actions/create_restore_point_action.h"
 #include "sak/process_runner.h"
+#include "sak/layout_constants.h"
 #include <QDateTime>
 #include <QRegularExpression>
 
@@ -83,7 +84,7 @@ CreateRestorePointAction::CreateRestorePointAction(QObject* parent)
 }
 
 void CreateRestorePointAction::checkRestoreStatus() {
-    ProcessResult proc = runPowerShell("Get-ComputerRestorePoint | Select-Object -First 1 | Format-List", 5000);
+    ProcessResult proc = runPowerShell("Get-ComputerRestorePoint | Select-Object -First 1 | Format-List", sak::kTimeoutProcessShortMs);
     if (!proc.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("Restore point status warning: " + proc.std_err.trimmed());
     }
@@ -115,7 +116,7 @@ void CreateRestorePointAction::scan() {
             else { Write-Output 'UNKNOWN|0|Unknown' }
         }
     )PS";
-    ProcessResult check_proc = runPowerShell(status_script, 15000);
+    ProcessResult check_proc = runPowerShell(status_script, sak::kTimeoutChocoListMs);
     if (!check_proc.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("System Restore scan warning: " + check_proc.std_err.trimmed());
     }
@@ -153,7 +154,7 @@ void CreateRestorePointAction::createRestorePoint() {
     
     Q_EMIT executionProgress("Creating restore point...", 50);
     
-    ProcessResult proc = runPowerShell(ps_script, 60000);
+    ProcessResult proc = runPowerShell(ps_script, sak::kTimeoutProcessVeryLongMs);
     if (!proc.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("Restore point create warning: " + proc.std_err.trimmed());
     }
@@ -249,7 +250,7 @@ QString CreateRestorePointAction::queryRestorePointCount()
 std::pair<bool, QString> CreateRestorePointAction::createAndFormatResult(
     QString& error_msg, QString& error_code)
 {
-    ProcessResult create_proc = runPowerShell(buildCreateScript(), 90000);
+    ProcessResult create_proc = runPowerShell(buildCreateScript(), sak::kTimeoutRestorePointMs);
     if (!create_proc.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("Restore point creation warning: " + create_proc.std_err.trimmed());
     }

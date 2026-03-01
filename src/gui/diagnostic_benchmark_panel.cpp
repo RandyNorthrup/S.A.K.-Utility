@@ -11,6 +11,7 @@
 #include "sak/detachable_log_window.h"
 #include "sak/style_constants.h"
 #include "sak/widget_helpers.h"
+#include "sak/layout_constants.h"
 
 #include <QApplication>
 #include <QCheckBox>
@@ -144,13 +145,13 @@ QGroupBox* DiagnosticBenchmarkPanel::createHardwareSection()
     button_layout->addStretch();
 
     m_hw_rescan_button = new QPushButton("Scan Hardware", this);
-    m_hw_rescan_button->setMinimumWidth(140);
+    m_hw_rescan_button->setMinimumWidth(sak::kButtonWidthLarge);
     m_hw_rescan_button->setAccessibleName(QStringLiteral("Scan Hardware"));
     m_hw_rescan_button->setToolTip(QStringLiteral("Scan and display hardware information"));
     button_layout->addWidget(m_hw_rescan_button);
 
     m_hw_copy_button = new QPushButton("Copy to Clipboard", this);
-    m_hw_copy_button->setMinimumWidth(140);
+    m_hw_copy_button->setMinimumWidth(sak::kButtonWidthLarge);
     m_hw_copy_button->setAccessibleName(QStringLiteral("Copy Hardware Info"));
     m_hw_copy_button->setToolTip(QStringLiteral("Copy hardware inventory to the clipboard"));
     button_layout->addWidget(m_hw_copy_button);
@@ -183,7 +184,7 @@ QGroupBox* DiagnosticBenchmarkPanel::createSmartSection()
         0, QHeaderView::Stretch);
     m_smart_table->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_smart_table->setEditTriggers(QAbstractItemView::NoEditTriggers);
-    m_smart_table->setMaximumHeight(160);
+    m_smart_table->setMaximumHeight(sak::kListAreaMaxH);
     m_smart_table->verticalHeader()->setVisible(false);
     m_smart_table->setAccessibleName(QStringLiteral("SMART Health Table"));
     m_smart_table->setToolTip(QStringLiteral("S.M.A.R.T. health data for detected storage drives"));
@@ -199,7 +200,7 @@ QGroupBox* DiagnosticBenchmarkPanel::createSmartSection()
     auto* button_layout = new QHBoxLayout();
     button_layout->addStretch();
     m_smart_rescan_button = new QPushButton("Scan SMART", this);
-    m_smart_rescan_button->setMinimumWidth(140);
+    m_smart_rescan_button->setMinimumWidth(sak::kButtonWidthLarge);
     m_smart_rescan_button->setAccessibleName(QStringLiteral("Scan SMART Health"));
     m_smart_rescan_button->setToolTip(QStringLiteral("Scan storage drives for S.M.A.R.T. health data"));
     button_layout->addWidget(m_smart_rescan_button);
@@ -269,7 +270,7 @@ QGroupBox* DiagnosticBenchmarkPanel::createCpuBenchmarkGroup()
     auto* cpu_btn_layout = new QHBoxLayout();
     cpu_btn_layout->addStretch();
     m_cpu_benchmark_button = new QPushButton("Run CPU Benchmark", this);
-    m_cpu_benchmark_button->setMinimumWidth(160);
+    m_cpu_benchmark_button->setMinimumWidth(sak::kButtonWidthXLarge);
     m_cpu_benchmark_button->setAccessibleName(QStringLiteral("Run CPU Benchmark"));
     m_cpu_benchmark_button->setToolTip(QStringLiteral("Run a single and multi-threaded CPU performance test"));
     cpu_btn_layout->addWidget(m_cpu_benchmark_button);
@@ -310,7 +311,7 @@ QGroupBox* DiagnosticBenchmarkPanel::createDiskBenchmarkGroup()
     auto* disk_btn_layout = new QHBoxLayout();
     disk_btn_layout->addStretch();
     m_disk_benchmark_button = new QPushButton("Run Disk Benchmark", this);
-    m_disk_benchmark_button->setMinimumWidth(160);
+    m_disk_benchmark_button->setMinimumWidth(sak::kButtonWidthXLarge);
     m_disk_benchmark_button->setAccessibleName(QStringLiteral("Run Disk Benchmark"));
     m_disk_benchmark_button->setToolTip(QStringLiteral("Measure sequential and random I/O performance"));
     disk_btn_layout->addWidget(m_disk_benchmark_button);
@@ -338,7 +339,7 @@ QGroupBox* DiagnosticBenchmarkPanel::createMemoryBenchmarkGroup()
     auto* mem_btn_layout = new QHBoxLayout();
     mem_btn_layout->addStretch();
     m_mem_benchmark_button = new QPushButton("Run Memory Benchmark", this);
-    m_mem_benchmark_button->setMinimumWidth(160);
+    m_mem_benchmark_button->setMinimumWidth(sak::kButtonWidthXLarge);
     m_mem_benchmark_button->setAccessibleName(QStringLiteral("Run Memory Benchmark"));
     m_mem_benchmark_button->setToolTip(QStringLiteral("Measure memory bandwidth and latency"));
     mem_btn_layout->addWidget(m_mem_benchmark_button);
@@ -435,13 +436,13 @@ QHBoxLayout* DiagnosticBenchmarkPanel::createStressButtonRow()
     button_layout->addStretch();
 
     m_stress_start_button = new QPushButton("Start Stress Test", this);
-    m_stress_start_button->setMinimumWidth(140);
+    m_stress_start_button->setMinimumWidth(sak::kButtonWidthLarge);
     m_stress_start_button->setAccessibleName(QStringLiteral("Start Stress Test"));
     m_stress_start_button->setToolTip(QStringLiteral("Begin the hardware stress test"));
     button_layout->addWidget(m_stress_start_button);
 
     m_stress_stop_button = new QPushButton("Stop Stress Test", this);
-    m_stress_stop_button->setMinimumWidth(140);
+    m_stress_stop_button->setMinimumWidth(sak::kButtonWidthLarge);
     m_stress_stop_button->setEnabled(false);
     m_stress_stop_button->setAccessibleName(QStringLiteral("Stop Stress Test"));
     m_stress_stop_button->setToolTip(QStringLiteral("Stop the running stress test"));
@@ -530,21 +531,21 @@ QGroupBox* DiagnosticBenchmarkPanel::createSuiteSection()
     button_layout->addStretch();
 
     m_suite_run_button = new QPushButton("Run Full Suite", this);
-    m_suite_run_button->setMinimumWidth(140);
+    m_suite_run_button->setMinimumWidth(sak::kButtonWidthLarge);
     m_suite_run_button->setAccessibleName(QStringLiteral("Run Full Suite"));
     m_suite_run_button->setToolTip(QStringLiteral("Run the complete diagnostic and benchmark suite"));
     m_suite_run_button->setStyleSheet(sak::ui::kPrimaryButtonStyle);
     button_layout->addWidget(m_suite_run_button);
 
     m_suite_cancel_button = new QPushButton("Cancel Suite", this);
-    m_suite_cancel_button->setMinimumWidth(120);
+    m_suite_cancel_button->setMinimumWidth(sak::kButtonWidthMedium);
     m_suite_cancel_button->setEnabled(false);
     m_suite_cancel_button->setAccessibleName(QStringLiteral("Cancel Suite"));
     m_suite_cancel_button->setToolTip(QStringLiteral("Cancel the running diagnostic suite"));
     button_layout->addWidget(m_suite_cancel_button);
 
     m_suite_skip_button = new QPushButton("Skip Step", this);
-    m_suite_skip_button->setMinimumWidth(100);
+    m_suite_skip_button->setMinimumWidth(sak::kButtonWidthSmall);
     m_suite_skip_button->setEnabled(false);
     m_suite_skip_button->setAccessibleName(QStringLiteral("Skip Suite Step"));
     m_suite_skip_button->setToolTip(QStringLiteral("Skip the current step in the suite"));
@@ -614,19 +615,19 @@ void DiagnosticBenchmarkPanel::createReportExportButtons(QVBoxLayout* layout)
     export_layout->addStretch();
 
     m_report_html_button = new QPushButton("Generate HTML Report", this);
-    m_report_html_button->setMinimumWidth(160);
+    m_report_html_button->setMinimumWidth(sak::kButtonWidthXLarge);
     m_report_html_button->setAccessibleName(QStringLiteral("Generate HTML Report"));
     m_report_html_button->setToolTip(QStringLiteral("Generate a formatted HTML diagnostic report"));
     export_layout->addWidget(m_report_html_button);
 
     m_report_json_button = new QPushButton("Export JSON", this);
-    m_report_json_button->setMinimumWidth(120);
+    m_report_json_button->setMinimumWidth(sak::kButtonWidthMedium);
     m_report_json_button->setAccessibleName(QStringLiteral("Export JSON Report"));
     m_report_json_button->setToolTip(QStringLiteral("Export diagnostic data as a JSON file"));
     export_layout->addWidget(m_report_json_button);
 
     m_report_csv_button = new QPushButton("Export CSV", this);
-    m_report_csv_button->setMinimumWidth(120);
+    m_report_csv_button->setMinimumWidth(sak::kButtonWidthMedium);
     m_report_csv_button->setAccessibleName(QStringLiteral("Export CSV Report"));
     m_report_csv_button->setToolTip(QStringLiteral("Export diagnostic data as a CSV file"));
     export_layout->addWidget(m_report_csv_button);

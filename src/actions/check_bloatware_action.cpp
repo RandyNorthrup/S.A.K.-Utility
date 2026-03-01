@@ -6,6 +6,7 @@
 
 #include "sak/actions/check_bloatware_action.h"
 #include "sak/process_runner.h"
+#include "sak/layout_constants.h"
 #include <QRegularExpression>
 #include <QJsonDocument>
 #include <QJsonArray>
@@ -128,7 +129,7 @@ QVector<CheckBloatwareAction::BloatwareItem> CheckBloatwareAction::scanForBloatw
                 BloatwareItem item;
                 item.name = name.isEmpty() ? package_full : name;
                 item.type = source == "Provisioned" ? "Provisioned App" : "Installed Store App";
-                item.size = static_cast<qint64>(size_mb * 1024 * 1024);
+                item.size = static_cast<qint64>(size_mb * sak::kBytesPerMB);
                 item.removal_method = source == "Provisioned"
                     ? "PowerShell Remove-AppxProvisionedPackage"
                     : "PowerShell Remove-AppxPackage";
@@ -266,7 +267,7 @@ void CheckBloatwareAction::executeMatchBloatware(const QString& scan_output,
             if (name.contains(it.key(), Qt::CaseInsensitive) || package_full.contains(it.key(), Qt::CaseInsensitive)) {
                 bloatware_count++;
                 detected_bloatware.append(qMakePair(name.isEmpty() ? package_full : name, qMakePair(it.value().first, size_mb)));
-                total_size += static_cast<qint64>(size_mb * 1024 * 1024);
+                total_size += static_cast<qint64>(size_mb * sak::kBytesPerMB);
                 if (it.value().second) safe_to_remove++;
                 break;
             }
@@ -294,7 +295,7 @@ void CheckBloatwareAction::formatBloatwareMatchReport(
     report += QString("\u2551 Safe to Remove: %1").arg(safe_to_remove).leftJustified(73, ' ') + "\u2551\n";
     qint64 total_size = 0;
     for (const auto& item : detected) {
-        total_size += static_cast<qint64>(item.second.second * 1024 * 1024);
+        total_size += static_cast<qint64>(item.second.second * sak::kBytesPerMB);
     }
     report += QString("\u2551 Total Size: %1 MB").arg(QString::number(total_size / (1024.0 * 1024.0), 'f', 2)).leftJustified(73, ' ') + "\u2551\n";
     report += "\u2560\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2563\n";

@@ -6,6 +6,7 @@
 
 #include "sak/actions/clear_print_spooler_action.h"
 #include "sak/process_runner.h"
+#include "sak/layout_constants.h"
 #include <QThread>
 #include <QDir>
 #include <QDirIterator>
@@ -30,11 +31,11 @@ int ClearPrintSpoolerAction::countSpoolFiles() {
 
 void ClearPrintSpoolerAction::stopSpooler() {
     Q_EMIT executionProgress("Stopping print spooler service...", 20);
-    ProcessResult proc = runProcess("net", QStringList() << "stop" << "spooler", 15000);
+    ProcessResult proc = runProcess("net", QStringList() << "stop" << "spooler", sak::kTimeoutNetworkReadMs);
     if (!proc.succeeded()) {
         Q_EMIT logMessage("Stop spooler warning: " + proc.std_err.trimmed());
     }
-    QThread::msleep(2000);
+    QThread::msleep(sak::kTimerServiceDelayMs);
 }
 
 void ClearPrintSpoolerAction::clearSpoolFolder() {
@@ -52,7 +53,7 @@ void ClearPrintSpoolerAction::clearSpoolFolder() {
 
 void ClearPrintSpoolerAction::startSpooler() {
     Q_EMIT executionProgress("Starting print spooler service...", 80);
-    ProcessResult proc = runProcess("net", QStringList() << "start" << "spooler", 15000);
+    ProcessResult proc = runProcess("net", QStringList() << "start" << "spooler", sak::kTimeoutNetworkReadMs);
     if (!proc.succeeded()) {
         Q_EMIT logMessage("Start spooler warning: " + proc.std_err.trimmed());
     }
@@ -89,7 +90,7 @@ void ClearPrintSpoolerAction::execute() {
     Q_EMIT executionProgress("╠════════════════════════════════════════════════════════════════╣", 0);
 
     Q_EMIT executionProgress("║ Checking Print Spooler service status...                     ║", 20);
-    ProcessResult ps = runPowerShell(buildSpoolerScript(), 60000);
+    ProcessResult ps = runPowerShell(buildSpoolerScript(), sak::kTimeoutProcessVeryLongMs);
     Q_EMIT executionProgress("║ Stopping service with Stop-Service...                        ║", 40);
 
     if (ps.timed_out || isCancelled()) {

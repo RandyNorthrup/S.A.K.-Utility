@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "sak/drive_scanner.h"
+#include "sak/layout_constants.h"
 #include "sak/logger.h"
 #include <QtGlobal>
 #include <QDir>
@@ -26,7 +27,7 @@ DriveScanner::DriveScanner(QObject* parent)
     s_instance = this;
     
     // Refresh every 5 seconds as fallback
-    m_refreshTimer->setInterval(5000);
+    m_refreshTimer->setInterval(sak::kTimerRefreshMs);
     connect(m_refreshTimer, &QTimer::timeout, this, &DriveScanner::onRefreshTimer);
 }
 

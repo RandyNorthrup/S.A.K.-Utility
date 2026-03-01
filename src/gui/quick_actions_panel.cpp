@@ -12,6 +12,7 @@
 #include "sak/info_button.h"
 #include "sak/style_constants.h"
 #include "sak/widget_helpers.h"
+#include "sak/layout_constants.h"
 
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -291,8 +292,8 @@ void QuickActionsPanel::createSingleCategorySection(
 
 QPushButton* QuickActionsPanel::createActionButton(QuickAction* action) {
     auto* button = new QPushButton();
-    button->setMinimumHeight(40);
-    button->setMinimumWidth(140);
+    button->setMinimumHeight(sak::kButtonHeightStd);
+    button->setMinimumWidth(sak::kButtonWidthLarge);
     button->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
     
     // Label only — description moved to tooltip
@@ -447,12 +448,12 @@ void QuickActionsPanel::onActionComplete(QuickAction* action) {
         QString title = result.success ? "Action Complete" : "Action Failed";
         Q_EMIT statusMessage(
             QString("%1: %2").arg(action->name(), result.message),
-            5000
+            sak::kTimerStatusDefaultMs
         );
     }
 
     // Reset after delay
-    QTimer::singleShot(3000, this, [this]() {
+    QTimer::singleShot(sak::kTimerStatusMessageMs, this, [this]() {
         m_action_label->setText("Action: Ready");
         m_status_label->setText("Status: Idle");
         m_duration_label->setText("Duration: -");
@@ -484,7 +485,7 @@ void QuickActionsPanel::onBrowseBackupLocation() {
 }
 
 void QuickActionsPanel::refreshAllScans() {
-    Q_EMIT statusMessage("Refreshing all action scans...", 2000);
+    Q_EMIT statusMessage("Refreshing all action scans...", sak::kTimerServiceDelayMs);
     m_controller->scanAllActions();
 }
 

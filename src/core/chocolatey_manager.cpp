@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "sak/chocolatey_manager.h"
+#include "sak/action_constants.h"
+#include "sak/layout_constants.h"
 #include "sak/logger.h"
 #include <QDir>
 #include <QFile>
@@ -14,7 +16,7 @@ namespace sak {
 ChocolateyManager::ChocolateyManager(QObject* parent)
     : QObject(parent)
     , m_initialized(false)
-    , m_default_timeout_seconds(300)  // 5 minutes default
+    , m_default_timeout_seconds(kChocoTimeoutDefaultSec)
     , m_auto_confirm(true)
     , m_current_process(nullptr)
 {
@@ -23,7 +25,7 @@ ChocolateyManager::ChocolateyManager(QObject* parent)
 ChocolateyManager::~ChocolateyManager() {
     if (m_current_process && m_current_process->state() != QProcess::NotRunning) {
         m_current_process->kill();
-        m_current_process->waitForFinished(1000);
+        m_current_process->waitForFinished(sak::kTimeoutWifiProfileMs);
     }
 }
 
@@ -381,7 +383,7 @@ ChocolateyManager::Result ChocolateyManager::executeChoco(const QStringList& arg
     // Start process
     process.start(program, args);
     
-    if (!process.waitForStarted(5000)) {
+    if (!process.waitForStarted(sak::kTimeoutProcessStartMs)) {
         return {false, "", "Failed to start choco.exe", -1};
     }
     
@@ -395,7 +397,7 @@ ChocolateyManager::Result ChocolateyManager::executeChoco(const QStringList& arg
     
     if (!finished) {
         process.kill();
-        process.waitForFinished(1000);
+        process.waitForFinished(sak::kTimeoutWifiProfileMs);
         return {false, "", "Command timed out", -1};
     }
     
@@ -429,7 +431,7 @@ bool ChocolateyManager::parseExitCode(int exit_code) const {
     // 2 = nothing to do / no packages found
     // 1641/3010 = success with reboot required
     
-    return (exit_code == 0 || exit_code == 1641 || exit_code == 3010);
+    return (exit_code == kExitSuccess || exit_code == 1641 || exit_code == kExitRebootRequired);
 }
 
 QString ChocolateyManager::extractErrorMessage(const QString& output) const {
