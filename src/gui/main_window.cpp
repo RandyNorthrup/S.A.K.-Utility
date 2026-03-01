@@ -82,7 +82,7 @@ void MainWindow::setupUi()
 
 void MainWindow::createMenuBar()
 {
-    // Menu bar removed â€” all items moved to panels/tabs
+    // Menu bar removed  --  all items moved to panels/tabs
     menuBar()->hide();
 }
 
@@ -197,7 +197,7 @@ void MainWindow::createAboutPanel()
     aboutLayout->setSpacing(12);
     aboutLayout->setContentsMargins(16, 16, 16, 16);
 
-        // Header â€” use splash screen image as icon
+        // Header  --  use splash screen image as icon
         auto* headerLayout = new QHBoxLayout();
         auto* iconLabel = new QLabel(aboutPanel);
         iconLabel->setFixedSize(64, 64);
@@ -217,10 +217,10 @@ void MainWindow::createAboutPanel()
         headerLayout->addStretch();
         aboutLayout->addLayout(headerLayout);
 
-        // Tabs inside about panel â€” all use QTextBrowser for uniform look
+        // Tabs inside about panel  --  all use QTextBrowser for uniform look
         auto* aboutTabs = new QTabWidget(aboutPanel);
 
-        // About tab (QTextBrowser with HTML â€” matches License tab style)
+        // About tab (QTextBrowser with HTML  --  matches License tab style)
         auto* descBrowser = new QTextBrowser(aboutPanel);
         descBrowser->setOpenExternalLinks(true);
         descBrowser->setHtml(

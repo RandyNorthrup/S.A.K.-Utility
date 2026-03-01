@@ -125,7 +125,7 @@ QGroupBox* DiagnosticBenchmarkPanel::createHardwareSection()
         key_label->setStyleSheet("font-weight: 600;");
         row->addWidget(key_label);
 
-        value_label = new QLabel("�", this);
+        value_label = new QLabel("—", this);
         value_label->setWordWrap(true);
         row->addWidget(value_label, 1);
         layout->addLayout(row);
@@ -472,7 +472,7 @@ QGroupBox* DiagnosticBenchmarkPanel::createThermalSection()
         name_label->setStyleSheet("font-weight: 600;");
         row->addWidget(name_label);
 
-        label = new QLabel("��C", this);
+        label = new QLabel("0\u00B0C", this);
         label->setFixedWidth(60);
         row->addWidget(label);
 
@@ -480,7 +480,7 @@ QGroupBox* DiagnosticBenchmarkPanel::createThermalSection()
         bar->setRange(0, max_temp);
         bar->setValue(0);
         bar->setTextVisible(true);
-        bar->setFormat("%v / %m �C");
+        bar->setFormat("%v / %m \u00B0C");
         bar->setAccessibleName(name.chopped(1) + QStringLiteral(" Temperature"));
         bar->setAccessibleDescription(QStringLiteral("Current temperature reading in degrees Celsius"));
         bar->setToolTip(QStringLiteral("Current temperature for this component"));
@@ -505,7 +505,7 @@ QGroupBox* DiagnosticBenchmarkPanel::createSuiteSection()
     auto* group = new QGroupBox("Full Diagnostic Suite", this);
     auto* layout = new QVBoxLayout(group);
 
-    // Step labels � names stored in member array for safe reconstruction
+    // Step labels -- names stored in member array for safe reconstruction
     m_suite_step_names[0] = "Hardware Inventory";
     m_suite_step_names[1] = "SMART Disk Health";
     m_suite_step_names[2] = "CPU Benchmark";

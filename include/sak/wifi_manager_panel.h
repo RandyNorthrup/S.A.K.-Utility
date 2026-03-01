@@ -26,7 +26,7 @@ namespace sak {
 class LogToggleSwitch;
 
 /**
- * @brief WiFi Manager panel â€” generates scannable WiFi QR codes and network scripts
+ * @brief WiFi Manager panel  --  generates scannable WiFi QR codes and network scripts
  *
  * Allows entry of one or more WiFi networks and exports QR codes via a mini
  * wizard (PNG / PDF / JPG / BMP), plus Windows netsh scripts and macOS profiles.

@@ -53,7 +53,7 @@
 #include "sak/detachable_log_window.h"
 
 // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-// CheckHeaderView â€” column 0 renders a tri-state "select all" checkbox
+// CheckHeaderView  --  column 0 renders a tri-state "select all" checkbox
 // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 namespace {
 class CheckHeaderView : public QHeaderView {
@@ -100,7 +100,7 @@ protected:
                 painter->setPen(QPen(QColor(0x94, 0xa3, 0xb8), 1));
                 painter->drawRoundedRect(cbRect, 4, 4);
             } else {
-                // Checked or PartiallyChecked â€” blue fill
+                // Checked or PartiallyChecked  --  blue fill
                 painter->setBrush(QColor(0x3b, 0x82, 0xf6));
                 painter->setPen(QPen(QColor(0x25, 0x63, 0xeb), 1));
                 painter->drawRoundedRect(cbRect, 4, 4);
@@ -275,7 +275,7 @@ void WifiManagerPanel::setupFormGroup()
     m_hidden_checkbox->setAccessibleName(QStringLiteral("Hidden Network"));
     layout->addRow("", m_hidden_checkbox);
 
-    // Action buttons at the bottom of the form â€” side by side
+    // Action buttons at the bottom of the form  --  side by side
     m_connect_phone_btn = new QPushButton("Connect with Phone/Tablet", m_form_group);
     m_connect_phone_btn->setToolTip("Show a QR code of the current network for phone/tablet scanning");
     m_connect_phone_btn->setAccessibleName(QStringLiteral("Connect with Phone"));
@@ -914,7 +914,7 @@ void WifiManagerPanel::onExportWindowsScriptClicked()
     }
 
     if (sources.size() == 1) {
-        // Single network â€” original save-dialog behavior
+        // Single network  --  original save-dialog behavior
         const WifiConfig& cfg     = sources.first();
         const QString script      = buildWindowsScript(cfg.ssid, cfg.password, cfg.security, cfg.hidden);
         const QString defaultName = cfg.ssid + "_wifi_connect.cmd";
@@ -934,7 +934,7 @@ void WifiManagerPanel::onExportWindowsScriptClicked()
         out << script;
         Q_EMIT statusMessage(QString("Saved Windows script: %1").arg(path), 5000);
     } else {
-        // Multiple networks â€” ask for a folder, save one .cmd per network
+        // Multiple networks  --  ask for a folder, save one .cmd per network
         const QString outDir = QFileDialog::getExistingDirectory(
             this, "Select Output Folder for Windows Scripts",
             QStandardPaths::writableLocation(QStandardPaths::DesktopLocation));
@@ -1326,7 +1326,7 @@ void WifiManagerPanel::onTableItemChanged(QTableWidgetItem* item)
         onSelectionChanged();
 }
 
-// onSelectAllClicked and onSelectNoneClicked removed â€” replaced by CheckHeaderView
+// onSelectAllClicked and onSelectNoneClicked removed  --  replaced by CheckHeaderView
 
 void WifiManagerPanel::onAddToWindowsClicked()
 {
