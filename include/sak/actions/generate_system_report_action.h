@@ -40,6 +40,11 @@ private:
     /// @return Report section text; may contain timeout fallback text.
     QString gatherOsAndHardwareInfo();
 
+    /// @brief Builds the PowerShell script for OS and computer system info sections.
+    QString buildOsInfoScript() const;
+    /// @brief Builds the PowerShell script for hardware, BIOS, network, and activation sections.
+    QString buildHardwareInfoScript() const;
+
     /// @brief Gathers physical disk and SMART info via Get-PhysicalDisk.
     /// @return Report section text.
     QString gatherStorageInfo();
@@ -55,6 +60,9 @@ private:
     /// @brief Saves the assembled report to disk with timing footer.
     /// @return True on successful write.
     bool saveReport(const QString& report, const QString& filepath);
+
+    /// @brief Save the report file and emit the final ExecutionResult
+    void saveReportAndFinish(const QString& report, const QString& filepath, const QDateTime& start_time);
 };
 
 } // namespace sak

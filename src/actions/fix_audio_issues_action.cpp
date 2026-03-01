@@ -160,35 +160,20 @@ void FixAudioIssuesAction::execute() {
     AudioServiceStatus audiosrv = checkAudioService("Audiosrv");
     AudioServiceStatus endpoint_builder = checkAudioService("AudioEndpointBuilder");
     
-    QString report = "╔════════════════════════════════════════════════════════════════╗\n";
-    report += "║              AUDIO SYSTEM DIAGNOSTIC REPORT                   ║\n";
-    report += "╠════════════════════════════════════════════════════════════════╣\n";
-    
-    // Service status before restart
-    report += QString("║ AudioSrv:             %1\n").arg(audiosrv.isExecuting ? "Running" : "STOPPED").leftJustified(67, ' ') + "║\n";
-    report += QString("║ AudioEndpointBuilder: %1\n").arg(endpoint_builder.isExecuting ? "Running" : "STOPPED").leftJustified(67, ' ') + "║\n";
-    report += "╠════════════════════════════════════════════════════════════════╣\n";
-    
     // PHASE 2: Restart audio services
     Q_EMIT executionProgress("Restarting audio services...", 20);
     bool audiosrv_restarted = restartAudioService();
     bool endpoint_restarted = restartAudioEndpointBuilder();
     
-    report += QString("║ AudioSrv Restart:     %1\n").arg(audiosrv_restarted ? "SUCCESS" : "FAILED").leftJustified(67, ' ') + "║\n";
-    report += QString("║ Endpoint Restart:     %1\n").arg(endpoint_restarted ? "SUCCESS" : "FAILED").leftJustified(67, ' ') + "║\n";
-    report += "╠════════════════════════════════════════════════════════════════╣\n";
-    
     // PHASE 3: Reset audio devices
     int device_count = resetAudioDevices();
-    report += QString("║ Audio Devices Reset:  %1 devices\n").arg(device_count).leftJustified(67, ' ') + "║\n";
     
     // PHASE 4: Check USB audio
     QString usb_info = checkUSBAudioDevices();
-    if (!usb_info.trimmed().isEmpty()) {
-        report += "║ USB Audio Devices:    Detected                   ║\n";
-    }
     
-    report += "╚════════════════════════════════════════════════════════════════╝\n";
+    QString report = buildDiagnosticReport(audiosrv, endpoint_builder,
+                                           audiosrv_restarted, endpoint_restarted,
+                                           device_count, usb_info);
     
     Q_EMIT executionProgress("Audio diagnostics complete", 100);
     
@@ -218,6 +203,34 @@ void FixAudioIssuesAction::execute() {
     }
     
     finishWithResult(result, result.success ? ActionStatus::Success : ActionStatus::Failed);
+}
+
+QString FixAudioIssuesAction::buildDiagnosticReport(
+        const AudioServiceStatus& audiosrv,
+        const AudioServiceStatus& endpoint_builder,
+        bool audiosrv_restarted, bool endpoint_restarted,
+        int device_count, const QString& usb_info)
+{
+    QString report = "╔════════════════════════════════════════════════════════════════╗\n";
+    report += "║              AUDIO SYSTEM DIAGNOSTIC REPORT                   ║\n";
+    report += "╠════════════════════════════════════════════════════════════════╣\n";
+
+    report += QString("║ AudioSrv:             %1\n").arg(audiosrv.isExecuting ? "Running" : "STOPPED").leftJustified(67, ' ') + "║\n";
+    report += QString("║ AudioEndpointBuilder: %1\n").arg(endpoint_builder.isExecuting ? "Running" : "STOPPED").leftJustified(67, ' ') + "║\n";
+    report += "╠════════════════════════════════════════════════════════════════╣\n";
+
+    report += QString("║ AudioSrv Restart:     %1\n").arg(audiosrv_restarted ? "SUCCESS" : "FAILED").leftJustified(67, ' ') + "║\n";
+    report += QString("║ Endpoint Restart:     %1\n").arg(endpoint_restarted ? "SUCCESS" : "FAILED").leftJustified(67, ' ') + "║\n";
+    report += "╠════════════════════════════════════════════════════════════════╣\n";
+
+    report += QString("║ Audio Devices Reset:  %1 devices\n").arg(device_count).leftJustified(67, ' ') + "║\n";
+
+    if (!usb_info.trimmed().isEmpty()) {
+        report += "║ USB Audio Devices:    Detected                   ║\n";
+    }
+
+    report += "╚════════════════════════════════════════════════════════════════╝\n";
+    return report;
 }
 
 } // namespace sak

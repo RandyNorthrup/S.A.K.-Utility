@@ -16,6 +16,10 @@ class DriveScanner;
 class FlashCoordinator;
 class WindowsISODownloader;
 class LinuxISODownloader;
+class QVBoxLayout;
+class QGroupBox;
+class QThread;
+class WindowsUSBCreator;
 
 namespace sak {
     struct FlashResult;
@@ -117,8 +121,12 @@ private Q_SLOTS:
 private:
     /** @brief Build the panel layout and stacked-widget pages */
     void setupUi();
+    /** @brief Create and wire up navigation buttons (Back/Next/Flash/Settings) */
+    void setupNavigationButtons(QVBoxLayout* mainLayout);
     /** @brief Build the image-selection wizard page */
     void createImageSelectionPage();
+    /** @brief Create download/select buttons within the image selection group */
+    void createDownloadButtons(QVBoxLayout* groupLayout, QGroupBox* groupBox);
     /** @brief Build the drive-selection wizard page */
     void createDriveSelectionPage();
     /** @brief Build the flash-progress wizard page */
@@ -132,6 +140,10 @@ private:
     void validateImageFile(const QString& filePath);
     /** @brief Ask the user to confirm before destructive write */
     void showConfirmationDialog();
+    /** @brief Build a formatted list of selected drives and detect system drives */
+    QStringList buildDriveDetailsList(bool& hasSystemDrive) const;
+    /** @brief Build the destructive-operation confirmation message */
+    QString buildFlashConfirmationMessage(const QStringList& driveDetails, bool isWindowsISO) const;
 
     /** @brief Return true if the device path belongs to the OS drive */
     bool isSystemDrive(const QString& devicePath) const;
@@ -139,6 +151,10 @@ private:
     bool isWindowsInstallISO(const QString& isoPath) const;
     /** @brief Create a bootable Windows USB instead of raw flash */
     void createWindowsUSB();
+    /** @brief Wire signal/slot connections for the Windows USB creator worker */
+    void connectWindowsUSBCreatorSignals(WindowsUSBCreator* creator, QThread* thread);
+    /** @brief Parse disk number from PhysicalDrive device path; returns empty on failure */
+    QString parseDiskNumberFromDevicePath(const QString& devicePath);
     /** @brief Format a byte count as a human-readable string */
     QString formatFileSize(qint64 bytes) const;
     /** @brief Format a transfer speed in MB/s */

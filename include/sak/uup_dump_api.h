@@ -14,6 +14,8 @@
 #include <QJsonObject>
 #include <QJsonArray>
 
+#include <optional>
+
 /**
  * @brief REST API client for the UUP dump service (uupdump.net)
  *
@@ -184,6 +186,11 @@ private:
                                  const QMap<QString, QString>& params);
     bool checkApiError(const QJsonObject& response, const QString& context);
     QString buildSearchQuery(const QString& arch, ReleaseChannel channel) const;
+
+    /// @brief Parse and validate a single file entry from the API response
+    /// @return FileInfo if valid, std::nullopt if rejected
+    std::optional<FileInfo> parseAndValidateFileEntry(const QString& key,
+                                                     const QJsonObject& fileObj);
 
     QNetworkAccessManager* m_networkManager;
     QList<QNetworkReply*> m_pendingReplies;

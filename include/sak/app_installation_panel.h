@@ -19,6 +19,8 @@
 #include <memory>
 #include <atomic>
 
+class QVBoxLayout;
+
 namespace sak {
 
 class ChocolateyManager;
@@ -91,8 +93,20 @@ private Q_SLOTS:
 private:
     /** @brief Build the panel layout and child widgets */
     void setupUi();
+    /** @brief Build the search bar section */
+    void setupUi_searchBar(QVBoxLayout* layout);
+    /** @brief Build the package results table panel */
+    void setupUi_packageTable(QSplitter* splitter);
+    /** @brief Build the install queue section panel */
+    void setupUi_queueSection(QSplitter* splitter);
+    /** @brief Build the bottom bar with log toggle */
+    void setupUi_bottomBar(QVBoxLayout* layout);
     /** @brief Wire signals/slots between widgets and backend */
     void setupConnections();
+    /** @brief Connect search, category, queue, and install button signals */
+    void setupSearchAndQueueConnections();
+    /** @brief Connect worker progress and completion signals */
+    void setupWorkerConnections();
     /** @brief Parse Chocolatey search output into the results model */
     void updateResultsFromSearch(const QString& output);
     /** @brief Refresh the queue list widget from m_installQueue */

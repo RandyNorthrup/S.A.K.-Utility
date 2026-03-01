@@ -142,6 +142,12 @@ private:
     bool processFileEnd(QTcpSocket* socket, const DataOptions& options,
                         ReceiverState& state);
 
+    /// @brief Derive encryption key for the receiver from passphrase/salt
+    bool deriveReceiverKey(const DataOptions& options, ReceiverState& state);
+    /// @brief Emit progress signals and save resume info if needed
+    void emitReceiverProgress(const DataOptions& options, ReceiverState& state,
+                              QElapsedTimer& resumeTimer);
+
     QByteArray compressData(const QByteArray& data) const;
     QByteArray decompressData(const QByteArray& data) const;
 

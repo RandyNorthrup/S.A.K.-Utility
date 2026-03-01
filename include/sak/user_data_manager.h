@@ -153,12 +153,21 @@ private:
                       const QString& archive_path,
                       const BackupConfig& config);
 
+    /// @brief Map BackupConfig compression_level to PowerShell CompressionLevel name
+    static QString mapCompressionLevel(int level);
+    /// @brief Encrypt an existing archive file in-place using AES-256
+    bool encryptArchiveInPlace(const QString& archive_path, const BackupConfig& config);
+
     /**
      * @brief Extract zip archive
      */
     bool extractArchive(const QString& archive_path,
                        const QString& destination,
                        const RestoreConfig& config);
+
+    /// @brief Decrypt archive to a temporary file for extraction
+    /// @return Path to temporary decrypted file, or empty string on failure
+    QString decryptArchiveToTempFile(const QString& archive_path, const QString& password);
 
     /**
      * @brief Check if path matches exclusion patterns
@@ -191,6 +200,11 @@ private:
      * @brief Read backup metadata file
      */
     std::optional<BackupEntry> readMetadata(const QString& metadata_path) const;
+
+    /// @brief Build a BackupEntry from completed backup and write metadata
+    BackupEntry buildBackupResult(const QString& app_name, const QStringList& source_paths,
+                                  const QString& archive_path, qint64 total_size,
+                                  const BackupConfig& config);
 };
 
 } // namespace sak

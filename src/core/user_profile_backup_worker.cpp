@@ -107,6 +107,15 @@ void UserProfileBackupWorker::run() {
     }
     
     // Backup each user
+    backupAllUsers();
+    
+    // Save manifest and emit summary
+    emitBackupSummary();
+    
+    m_running = false;
+}
+
+void UserProfileBackupWorker::backupAllUsers() {
     int userIndex = 0;
     for (const auto& user : m_users) {
         if (m_cancelled) {
@@ -132,7 +141,9 @@ void UserProfileBackupWorker::run() {
         userIndex++;
         Q_EMIT overallProgress(userIndex, m_users.size(), m_bytesCopied, m_totalBytesToCopy);
     }
-    
+}
+
+void UserProfileBackupWorker::emitBackupSummary() {
     // Save manifest
     Q_EMIT logMessage(tr("Saving backup manifest..."), false);
     if (!saveManifest()) {
@@ -149,8 +160,6 @@ void UserProfileBackupWorker::run() {
     Q_EMIT logMessage(tr("=== Backup Complete ==="), false);
     Q_EMIT logMessage(summary, false);
     Q_EMIT backupComplete(true, summary, m_manifest);
-    
-    m_running = false;
 }
 
 bool UserProfileBackupWorker::backupUser(const UserProfile& user, const QString& userBackupPath) {

@@ -187,6 +187,13 @@ private Q_SLOTS:
 
 private:
     /**
+     * @brief Execute an action via admin elevation
+     * @param action Action to execute
+     * @param action_name Action identifier (for queueing)
+     */
+    void executeElevatedAction(QuickAction* action, const QString& action_name);
+
+    /**
      * @brief Start scan in worker thread
      * @param action Action to scan
      */

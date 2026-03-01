@@ -30,6 +30,62 @@ bool WindowsUSBCreator::createBootableUSB(const QString& isoPath, const QString&
     m_lastError.clear();
     m_diskNumber = diskNumber;
 
+    if (!validateUSBInputs(isoPath, diskNumber)) {
+        return false;
+    }
+
+    // ==================== STEP 1: FORMAT ====================
+    QString driveLetter = formatAndVerifyDrive(diskNumber);
+    if (driveLetter.isEmpty()) {
+        return false;
+    }
+
+    if (m_cancelled) {
+        m_lastError = "Operation cancelled";
+        Q_EMIT failed(m_lastError);
+        return false;
+    }
+
+    // ==================== STEP 2: EXTRACT ====================
+    if (!extractAndVerifyFiles(isoPath, driveLetter)) {
+        return false;
+    }
+
+    if (m_cancelled) {
+        m_lastError = "Operation cancelled";
+        Q_EMIT failed(m_lastError);
+        return false;
+    }
+
+    // ==================== STEPS 3-4: BOOT CONFIGURATION ====================
+    if (!configureBootAndVerify(diskNumber, driveLetter)) {
+        return false;
+    }
+
+    if (m_cancelled) {
+        m_lastError = "Operation cancelled";
+        Q_EMIT failed(m_lastError);
+        return false;
+    }
+
+    // ==================== STEP 5: FINAL VERIFICATION ====================
+    Q_EMIT statusChanged("Step 5/5: Running final comprehensive verification...");
+    sak::logInfo("STEP 5: Final comprehensive verification...");
+
+    if (!finalVerification(driveLetter)) {
+        sak::logError("STEP 5 VERIFICATION FAILED");
+        Q_EMIT failed(m_lastError);
+        return false;
+    }
+
+    // SUCCESS - finalVerification() emits completed() signal
+    sak::logInfo("========================================");
+    sak::logInfo("ALL STEPS COMPLETED AND VERIFIED");
+    sak::logInfo("========================================");
+    return true;
+}
+
+bool WindowsUSBCreator::validateUSBInputs(const QString& isoPath, const QString& diskNumber) {
     // Validate diskNumber is a pure integer to prevent command injection (BUG-09).
     static const QRegularExpression diskNumRegex(QStringLiteral("^\\d{1,3}$"));
     if (!diskNumRegex.match(diskNumber).hasMatch()) {
@@ -51,7 +107,10 @@ bool WindowsUSBCreator::createBootableUSB(const QString& isoPath, const QString&
         return false;
     }
     
-    // ==================== STEP 1: FORMAT ====================
+    return true;
+}
+
+QString WindowsUSBCreator::formatAndVerifyDrive(const QString& diskNumber) {
     Q_EMIT progressUpdated(0);
     Q_EMIT statusChanged("Step 1/5: Formatting drive as NTFS...");
     sak::logInfo("STEP 1: Formatting disk...");
@@ -59,7 +118,7 @@ bool WindowsUSBCreator::createBootableUSB(const QString& isoPath, const QString&
     if (!formatDriveNTFS(diskNumber)) {
         sak::logError("STEP 1 FAILED: Format failed");
         Q_EMIT failed(m_lastError);
-        return false;
+        return {};
     }
     
     // VERIFY Step 1: Wait for partition and get drive letter
@@ -79,7 +138,7 @@ bool WindowsUSBCreator::createBootableUSB(const QString& isoPath, const QString&
         m_lastError = QString("STEP 1 VERIFICATION FAILED: No drive letter found for disk %1 after format").arg(diskNumber);
         sak::logError(m_lastError.toStdString());
         Q_EMIT failed(m_lastError);
-        return false;
+        return {};
     }
     
     Q_EMIT progressUpdated(10);
@@ -95,7 +154,7 @@ bool WindowsUSBCreator::createBootableUSB(const QString& isoPath, const QString&
             m_lastError = QString("STEP 1 VERIFICATION FAILED: Drive is %1, expected NTFS").arg(fs);
             sak::logError(m_lastError.toStdString());
             Q_EMIT failed(m_lastError);
-            return false;
+            return {};
         }
         sak::logInfo(QString("✓ STEP 1 VERIFIED: Drive %1: formatted as NTFS").arg(driveLetter).toStdString());
     } else {
@@ -103,18 +162,16 @@ bool WindowsUSBCreator::createBootableUSB(const QString& isoPath, const QString&
         m_lastError = QString("STEP 1 VERIFICATION FAILED: Filesystem check timed out for drive %1").arg(driveLetter);
         sak::logError(m_lastError.toStdString());
         Q_EMIT failed(m_lastError);
-        return false;
+        return {};
     }
     
     Q_EMIT progressUpdated(13);
     Q_EMIT statusChanged("Format verified, preparing extraction...");
     
-    if (m_cancelled) {
-        m_lastError = "Operation cancelled";
-        Q_EMIT failed(m_lastError);
-        return false;
-    }
-    
+    return driveLetter;
+}
+
+bool WindowsUSBCreator::extractAndVerifyFiles(const QString& isoPath, const QString& driveLetter) {
     // ==================== STEP 2: EXTRACT ====================
     Q_EMIT statusChanged("Step 2/5: Extracting Windows installation files...");
     sak::logInfo("STEP 2: Extracting ISO contents...");
@@ -156,12 +213,10 @@ bool WindowsUSBCreator::createBootableUSB(const QString& isoPath, const QString&
     sak::logInfo("✓ STEP 2 VERIFIED: All critical files extracted");
     Q_EMIT progressUpdated(60);
     
-    if (m_cancelled) {
-        m_lastError = "Operation cancelled";
-        Q_EMIT failed(m_lastError);
-        return false;
-    }
-    
+    return true;
+}
+
+bool WindowsUSBCreator::configureBootAndVerify(const QString& diskNumber, const QString& driveLetter) {
     // ==================== STEP 3: MAKE BOOTABLE ====================
     Q_EMIT progressUpdated(62);
     Q_EMIT statusChanged("Step 3/5: Making drive bootable...");
@@ -228,26 +283,6 @@ bool WindowsUSBCreator::createBootableUSB(const QString& isoPath, const QString&
     sak::logInfo("✓ STEP 4 VERIFIED: Bootable flag is set (Active)");
     Q_EMIT progressUpdated(85);
     
-    if (m_cancelled) {
-        m_lastError = "Operation cancelled";
-        Q_EMIT failed(m_lastError);
-        return false;
-    }
-    
-    // ==================== STEP 5: FINAL VERIFICATION ====================
-    Q_EMIT statusChanged("Step 5/5: Running final comprehensive verification...");
-    sak::logInfo("STEP 5: Final comprehensive verification...");
-    
-    if (!finalVerification(driveLetter)) {
-        sak::logError("STEP 5 VERIFICATION FAILED");
-        Q_EMIT failed(m_lastError);
-        return false;
-    }
-    
-    // SUCCESS - finalVerification() emits completed() signal
-    sak::logInfo("========================================");
-    sak::logInfo("ALL STEPS COMPLETED AND VERIFIED");
-    sak::logInfo("========================================");
     return true;
 }
 
@@ -261,14 +296,7 @@ QString WindowsUSBCreator::lastError() const {
     return m_lastError;
 }
 
-bool WindowsUSBCreator::formatDriveNTFS(const QString& diskNumber) {
-    // Use the official Microsoft method: diskpart clean, then format command
-    // Based on Windows Server USB creation documentation and Rufus implementation
-    
-    sak::logInfo(QString("Formatting disk %1 as NTFS").arg(diskNumber).toStdString());
-    Q_EMIT statusChanged("Preparing USB drive...");
-    
-    // Step 1: Clean the disk and create MBR partition using diskpart
+bool WindowsUSBCreator::cleanAndPartitionDisk(const QString& diskNumber) {
     QString diskpartScript = QString(
         "select disk %1\n"
         "clean\n"
@@ -327,12 +355,14 @@ bool WindowsUSBCreator::formatDriveNTFS(const QString& diskNumber) {
         diskpart.waitForFinished(2000);
     }
     
-    // Step 2: Wait for partition and format with NTFS
+    return true;
+}
+
+bool WindowsUSBCreator::formatPartitionNTFS(const QString& diskNumber) {
     sak::logInfo("Waiting for Windows to recognize partition...");
     Q_EMIT statusChanged("Formatting partition as NTFS...");
     QThread::msleep(3000);
     
-    // Step 3: Format as NTFS using diskpart
     QString formatCmd = QString("format FS=NTFS QUICK label=\"BOOT\"");
     QString formatScript = QString(
         "select disk %1\n"
@@ -385,6 +415,26 @@ bool WindowsUSBCreator::formatDriveNTFS(const QString& diskNumber) {
     // Wait for format to complete
     sak::logInfo("Waiting for format to settle...");
     QThread::msleep(3000);
+    
+    return true;
+}
+
+bool WindowsUSBCreator::formatDriveNTFS(const QString& diskNumber) {
+    // Use the official Microsoft method: diskpart clean, then format command
+    // Based on Windows Server USB creation documentation and Rufus implementation
+    
+    sak::logInfo(QString("Formatting disk %1 as NTFS").arg(diskNumber).toStdString());
+    Q_EMIT statusChanged("Preparing USB drive...");
+    
+    // Step 1: Clean the disk and create MBR partition using diskpart
+    if (!cleanAndPartitionDisk(diskNumber)) {
+        return false;
+    }
+    
+    // Step 2: Wait for partition and format with NTFS
+    if (!formatPartitionNTFS(diskNumber)) {
+        return false;
+    }
     
     sak::logInfo(QString("Successfully formatted disk %1 as NTFS").arg(diskNumber).toStdString());
     return true;

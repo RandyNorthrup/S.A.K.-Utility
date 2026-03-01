@@ -79,7 +79,7 @@ auto FlashWorker::execute() -> std::expected<void, sak::error_code> {
     if (!openDevice()) {
         sak::logError(QString("Failed to open device: %1").arg(m_targetDevice).toStdString());
         Q_EMIT error("Failed to open target device");
-        m_imageSource->close();
+        cleanupFlashResources();
         return std::unexpected(sak::error_code::file_not_found);
     }
     
@@ -87,8 +87,7 @@ auto FlashWorker::execute() -> std::expected<void, sak::error_code> {
     if (!lockVolume() || !dismountVolume()) {
         sak::logError("Failed to prepare device for writing");
         Q_EMIT error("Failed to prepare device for writing");
-        closeDevice();
-        m_imageSource->close();
+        cleanupFlashResources();
         return std::unexpected(sak::error_code::operation_cancelled);
     }
     
@@ -96,9 +95,7 @@ auto FlashWorker::execute() -> std::expected<void, sak::error_code> {
     if (!writeImage()) {
         sak::logError("Failed to write image");
         Q_EMIT error("Failed to write image");
-        unlockVolume();
-        closeDevice();
-        m_imageSource->close();
+        cleanupFlashResources();
         return std::unexpected(sak::error_code::operation_cancelled);
     }
     
@@ -113,22 +110,24 @@ auto FlashWorker::execute() -> std::expected<void, sak::error_code> {
             sak::logError("Verification failed");
             Q_EMIT error(QString("Verification failed: %1").arg(
                 result.errors.isEmpty() ? "Checksum mismatch" : result.errors.first()));
-            unlockVolume();
-            closeDevice();
-            m_imageSource->close();
+            cleanupFlashResources();
             return std::unexpected(sak::error_code::operation_cancelled);
         }
     }
     
     // Cleanup
-    unlockVolume();
-    closeDevice();
-    m_imageSource->close();
+    cleanupFlashResources();
     
     qint64 elapsed = timer.elapsed();
     sak::logInfo(QString("Flash completed in %1 seconds").arg(elapsed / 1000.0).toStdString());
     
     return {};
+}
+
+void FlashWorker::cleanupFlashResources() {
+    unlockVolume();
+    closeDevice();
+    m_imageSource->close();
 }
 
 bool FlashWorker::openDevice() {
@@ -203,25 +202,68 @@ bool FlashWorker::dismountVolume() {
     return true;
 }
 
+bool FlashWorker::prepareSourceChecksum() {
+    if (!m_verificationEnabled || !m_sourceChecksum.isEmpty()) {
+        return true;
+    }
+    
+    sak::logInfo("Calculating source checksum");
+    m_sourceChecksum = m_imageSource->calculateChecksum();
+    if (m_sourceChecksum.isEmpty()) {
+        sak::logError("Failed to calculate source checksum");
+        return false;
+    }
+    sak::logInfo(QString("Source checksum: %1").arg(m_sourceChecksum).toStdString());
+    
+    // Reopen source after checksum calculation
+    m_imageSource->close();
+    if (!m_imageSource->open()) {
+        sak::logError("Failed to reopen image source");
+        return false;
+    }
+    return true;
+}
+
+bool FlashWorker::padBufferToSectorSize(QByteArray& buffer, qint64& bytesRead) {
+    if (bytesRead % 512 == 0) {
+        return true;
+    }
+    
+    qint64 paddedSize = ((bytesRead / 512) + 1) * 512;
+    
+    // Validate padded size is reasonable
+    if (paddedSize > buffer.capacity() * 2 || paddedSize < 0) {
+        sak::logError(QString("Invalid padded size calculated: %1").arg(paddedSize).toStdString());
+        return false;
+    }
+    
+    try {
+        buffer.resize(paddedSize);
+    } catch (const std::bad_alloc&) {
+        sak::logError("Failed to allocate padding buffer - out of memory");
+        return false;
+    }
+    
+    // Verify resize succeeded
+    if (buffer.size() != paddedSize) {
+        sak::logError(QString("Buffer resize failed: expected %1, got %2")
+            .arg(paddedSize).arg(buffer.size()).toStdString());
+        return false;
+    }
+    
+    // Zero out padding
+    for (qint64 i = bytesRead; i < paddedSize; ++i) {
+        buffer[i] = 0;
+    }
+    bytesRead = paddedSize;
+    return true;
+}
+
 bool FlashWorker::writeImage() {
     sak::logInfo("Writing image");
     
-    // Calculate source checksum if verification enabled
-    if (m_verificationEnabled && m_sourceChecksum.isEmpty()) {
-        sak::logInfo("Calculating source checksum");
-        m_sourceChecksum = m_imageSource->calculateChecksum();
-        if (m_sourceChecksum.isEmpty()) {
-            sak::logError("Failed to calculate source checksum");
-            return false;
-        }
-        sak::logInfo(QString("Source checksum: %1").arg(m_sourceChecksum).toStdString());
-        
-        // Reopen source after checksum calculation
-        m_imageSource->close();
-        if (!m_imageSource->open()) {
-            sak::logError("Failed to reopen image source");
-            return false;
-        }
+    if (!prepareSourceChecksum()) {
+        return false;
     }
     
     QByteArray buffer(m_bufferSize, 0);
@@ -243,37 +285,10 @@ bool FlashWorker::writeImage() {
             break;
         }
         
-    // Pad to sector size if needed
-    if (bytesRead % 512 != 0) {
-        qint64 paddedSize = ((bytesRead / 512) + 1) * 512;
-        
-        // Validate padded size is reasonable
-        if (paddedSize > buffer.capacity() * 2 || paddedSize < 0) {
-            sak::logError(QString("Invalid padded size calculated: %1").arg(paddedSize).toStdString());
+        if (!padBufferToSectorSize(buffer, bytesRead)) {
             return false;
         }
         
-        try {
-            buffer.resize(paddedSize);
-        } catch (const std::bad_alloc&) {
-            sak::logError("Failed to allocate padding buffer - out of memory");
-            return false;
-        }
-        
-        // Verify resize succeeded
-        if (buffer.size() != paddedSize) {
-            sak::logError(QString("Buffer resize failed: expected %1, got %2")
-                .arg(paddedSize).arg(buffer.size()).toStdString());
-            return false;
-        }
-        
-        // Zero out padding
-        for (qint64 i = bytesRead; i < paddedSize; ++i) {
-            buffer[i] = 0;
-        }
-        bytesRead = paddedSize;
-    }
-    
         // Guard against qint64 → DWORD truncation
         if (bytesRead > static_cast<qint64>(MAXDWORD)) {
             sak::logError("Write size exceeds DWORD range");
@@ -403,7 +418,6 @@ sak::ValidationResult FlashWorker::verifySample() {
         return result;
     }
     
-    int samplesVerified = 0;
     result.passed = true;
     
     // Guard against images smaller than one block — nothing to sample.
@@ -413,10 +427,30 @@ sak::ValidationResult FlashWorker::verifySample() {
         return result;
     }
     
+    int samplesVerified = verifySampleBlocks(
+        result, numSamples, blockSize, totalBlocks, sampleSize,
+        sourceBuffer, targetBuffer);
+    
+    // Calculate speed
+    qint64 elapsed = timer.elapsed();
+    if (elapsed > 0) {
+        result.verificationSpeed = (sampleSize / (1024.0 * 1024.0)) / (elapsed / 1000.0);
+    }
+    
+    sak::logInfo(QString("Sample verification complete - %1/%2 blocks verified, %3 mismatches")
+        .arg(samplesVerified).arg(numSamples).arg(result.corruptedBlocks).toStdString());
+    
+    return result;
+}
+
+int FlashWorker::verifySampleBlocks(
+    sak::ValidationResult& result, int numSamples,
+    qint64 blockSize, qint64 totalBlocks, qint64 sampleSize,
+    QByteArray& sourceBuffer, QByteArray& targetBuffer)
+{
+    int samplesVerified = 0;
+    
     for (int i = 0; i < numSamples && !stopRequested(); ++i) {
-        // Calculate random offset aligned to block boundary.
-        // bounded() takes an exclusive upper bound, so pass totalBlocks directly
-        // to produce indices in [0, totalBlocks - 1].
         qint64 blockIndex = QRandomGenerator::global()->bounded(totalBlocks);
         qint64 offset = blockIndex * blockSize;
         
@@ -428,7 +462,6 @@ sak::ValidationResult FlashWorker::verifySample() {
         
         qint64 bytesRead = m_imageSource->read(sourceBuffer.data(), blockSize);
         if (bytesRead != blockSize) {
-            // Might be at end of file
             if (bytesRead <= 0) {
                 continue;
             }
@@ -464,16 +497,7 @@ sak::ValidationResult FlashWorker::verifySample() {
         updateVerificationProgress(samplesVerified * blockSize, sampleSize);
     }
     
-    // Calculate speed
-    qint64 elapsed = timer.elapsed();
-    if (elapsed > 0) {
-        result.verificationSpeed = (sampleSize / (1024.0 * 1024.0)) / (elapsed / 1000.0);
-    }
-    
-    sak::logInfo(QString("Sample verification complete - %1/%2 blocks verified, %3 mismatches")
-        .arg(samplesVerified).arg(numSamples).arg(result.corruptedBlocks).toStdString());
-    
-    return result;
+    return samplesVerified;
 }
 
 QString FlashWorker::calculateChecksum(HANDLE handle, qint64 size) {

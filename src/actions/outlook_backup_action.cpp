@@ -64,97 +64,53 @@ void OutlookBackupAction::scan() {
     Q_EMIT scanComplete(result);
 }
 
-void OutlookBackupAction::execute() {
-    if (isCancelled()) {
-        emitCancelledResult("Outlook backup cancelled");
-        return;
-    }
-
-    setStatus(ActionStatus::Running);
-    QDateTime start_time = QDateTime::currentDateTime();
-    
-    Q_EMIT executionProgress("Checking if Outlook is running...", 5);
-    
-    // Check if Outlook is running
-    ProcessResult proc = runProcess("tasklist", QStringList() << "/FI" << "IMAGENAME eq OUTLOOK.EXE", 3000);
-    QString output = proc.std_out;
-    bool outlook_running = output.contains("OUTLOOK.EXE", Qt::CaseInsensitive);
-    
-    if (outlook_running) {
-        emitFailedResult("Outlook is currently running",
-                         "Please close Microsoft Outlook before backing up data files",
-                         start_time);
-        return;
-    }
-    
-    Q_EMIT executionProgress("Scanning for Outlook files...", 15);
-    
-    // Scan ALL user profiles for Outlook data
+void OutlookBackupAction::discoverOutlookFiles(QVector<OutlookFile>& found_files,
+                                                 qint64& total_size) {
     WindowsUserScanner scanner;
     QVector<UserProfile> users = scanner.scanUsers();
-    
+
     QStringList search_paths;
     for (const UserProfile& user : users) {
         search_paths << user.profile_path + "/AppData/Local/Microsoft/Outlook";
         search_paths << user.profile_path + "/Documents/Outlook Files";
     }
-    
-    struct OutlookFile {
-        QString path;
-        QString filename;
-        qint64 size;
-    };
-    
-    QVector<OutlookFile> found_files;
-    qint64 total_size = 0;
-    
+
     for (const QString& path : search_paths) {
         QDir dir(path);
         if (!dir.exists()) continue;
-        
+
         QStringList filters;
         filters << "*.pst" << "*.ost";
-        
+
         QDirIterator it(dir.absolutePath(), filters, QDir::Files, QDirIterator::Subdirectories);
         while (it.hasNext()) {
             it.next();
-            
+
             OutlookFile file;
             file.path = it.filePath();
             file.filename = it.fileName();
             file.size = it.fileInfo().size();
-            
+
             found_files.append(file);
             total_size += file.size;
         }
     }
-    
-    if (found_files.isEmpty()) {
-        emitFailedResult("No Outlook data files found",
-                         "No PST or OST files detected in user profiles",
-                         start_time);
-        return;
-    }
-    
-    Q_EMIT executionProgress("Preparing backup directory...", 30);
-    
-    QDir backup_dir(m_backup_location + "/OutlookBackup");
-    backup_dir.mkpath(".");
-    
-    int files_copied = 0;
-    qint64 bytes_copied = 0;
-    
+}
+
+bool OutlookBackupAction::copyOutlookFilesToBackup(const QVector<OutlookFile>& found_files,
+                                                     const QDir& backup_dir,
+                                                     int& files_copied,
+                                                     qint64& bytes_copied) {
     for (int i = 0; i < found_files.count(); ++i) {
         if (isCancelled()) {
-            emitCancelledResult("Outlook backup cancelled", start_time);
-            return;
+            return false;
         }
-        
+
         const OutlookFile& file = found_files[i];
-        
+
         int progress = 30 + ((i * 60) / found_files.count());
         Q_EMIT executionProgress(QString("Backing up %1...").arg(file.filename), progress);
-        
+
         QString source_dir = QFileInfo(file.path).absolutePath();
         QString safe_dir = sanitizePathForBackup(source_dir);
 
@@ -172,11 +128,57 @@ void OutlookBackupAction::execute() {
             } while (QFile::exists(candidate));
             dest_path = candidate;
         }
-        
+
         if (QFile::copy(file.path, dest_path)) {
             files_copied++;
             bytes_copied += file.size;
         }
+    }
+    return true;
+}
+
+void OutlookBackupAction::execute() {
+    if (isCancelled()) {
+        emitCancelledResult("Outlook backup cancelled");
+        return;
+    }
+
+    setStatus(ActionStatus::Running);
+    QDateTime start_time = QDateTime::currentDateTime();
+    Q_EMIT executionProgress("Checking if Outlook is running...", 5);
+    ProcessResult proc = runProcess("tasklist", QStringList() << "/FI" << "IMAGENAME eq OUTLOOK.EXE", 3000);
+    bool outlook_running = proc.std_out.contains("OUTLOOK.EXE", Qt::CaseInsensitive);
+    if (outlook_running) {
+        emitFailedResult("Outlook is currently running",
+                         "Please close Microsoft Outlook before backing up data files",
+                         start_time);
+        return;
+    }
+    
+    Q_EMIT executionProgress("Scanning for Outlook files...", 15);
+    
+    QVector<OutlookFile> found_files;
+    qint64 total_size = 0;
+    discoverOutlookFiles(found_files, total_size);
+    
+    if (found_files.isEmpty()) {
+        emitFailedResult("No Outlook data files found",
+                         "No PST or OST files detected in user profiles",
+                         start_time);
+        return;
+    }
+    
+    Q_EMIT executionProgress("Preparing backup directory...", 30);
+    
+    QDir backup_dir(m_backup_location + "/OutlookBackup");
+    backup_dir.mkpath(".");
+    
+    int files_copied = 0;
+    qint64 bytes_copied = 0;
+    
+    if (!copyOutlookFilesToBackup(found_files, backup_dir, files_copied, bytes_copied)) {
+        emitCancelledResult("Outlook backup cancelled", start_time);
+        return;
     }
     
     Q_EMIT executionProgress("Backup complete", 100);

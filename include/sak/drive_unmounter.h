@@ -110,6 +110,13 @@ private:
     bool retryWithBackoff(std::function<bool()> operation, int maxAttempts = 5);
 
     /**
+     * @brief Lock and dismount a single volume with retry
+     * @param volumePath Volume path to lock and dismount
+     * @return true if successful
+     */
+    bool lockAndDismountVolume(const QString& volumePath);
+
+    /**
      * @brief Get physical drive number for a volume
      * @param volumePath Volume path
      * @return Drive number, or -1 on failure
@@ -122,6 +129,21 @@ private:
      * @return true if successful
      */
     bool closeAllHandles(int driveNumber);
+
+    /**
+     * @brief Find all volume GUID paths belonging to a physical drive
+     * @param driveNumber Physical drive number
+     * @return List of volume GUID paths (without trailing backslash)
+     */
+    QStringList findVolumesForDrive(int driveNumber) const;
+
+    /**
+     * @brief Use Restart Manager to force-close open handles on volumes
+     * @param dwSession Active Restart Manager session handle
+     * @param mountPoints Volume GUID paths to process
+     */
+    void shutdownHandlesViaRestartManager(DWORD dwSession,
+                                          const QStringList& mountPoints);
 
     QString m_lastError;                     // Last error message
     QMap<QString, HANDLE> m_lockedVolumes;   // Volume path -> handle mapping

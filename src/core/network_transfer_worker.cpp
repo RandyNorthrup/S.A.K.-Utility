@@ -608,6 +608,32 @@ bool NetworkTransferWorker::awaitFileAck(QTcpSocket* socket, const TransferFileE
     return false;
 }
 
+bool NetworkTransferWorker::deriveReceiverKey(const DataOptions& options, ReceiverState& state) {
+    if (!options.encryption_enabled) {
+        return true;
+    }
+    auto keyResult = TransferSecurityManager::deriveKey(options.passphrase, options.salt);
+    if (!keyResult) {
+        logError("NetworkTransferWorker receiver failed to derive encryption key");
+        Q_EMIT errorOccurred(tr("Failed to derive encryption key"));
+        return false;
+    }
+    state.key = *keyResult;
+    return true;
+}
+
+void NetworkTransferWorker::emitReceiverProgress(
+    const DataOptions& options, ReceiverState& state, QElapsedTimer& resumeTimer)
+{
+    if (options.resume_enabled && resumeTimer.elapsed() > 2000) {
+        saveResumeInfo(state.resume_path, state.current_file_id,
+                       state.current_ranges, state.total_chunks);
+        resumeTimer.restart();
+    }
+    Q_EMIT fileProgress(state.current_file_id, state.bytes_received, state.current_size);
+    Q_EMIT overallProgress(state.overall_received, options.total_bytes);
+}
+
 bool NetworkTransferWorker::handleReceiver(QTcpSocket* socket, const DataOptions& options) {
     Q_ASSERT_X(socket != nullptr, "handleReceiver", "socket must not be null");
     ReceiverState state;
@@ -621,14 +647,8 @@ bool NetworkTransferWorker::handleReceiver(QTcpSocket* socket, const DataOptions
         }
     });
 
-    if (options.encryption_enabled) {
-        auto keyResult = TransferSecurityManager::deriveKey(options.passphrase, options.salt);
-        if (!keyResult) {
-            logError("NetworkTransferWorker receiver failed to derive encryption key");
-            Q_EMIT errorOccurred(tr("Failed to derive encryption key"));
-            return false;
-        }
-        state.key = *keyResult;
+    if (!deriveReceiverKey(options, state)) {
+        return false;
     }
 
     QElapsedTimer resumeTimer;
@@ -664,13 +684,7 @@ bool NetworkTransferWorker::handleReceiver(QTcpSocket* socket, const DataOptions
             if (!processDataChunk(socket, header, payload, options, state)) {
                 return false;
             }
-            if (options.resume_enabled && resumeTimer.elapsed() > 2000) {
-                saveResumeInfo(state.resume_path, state.current_file_id,
-                               state.current_ranges, state.total_chunks);
-                resumeTimer.restart();
-            }
-            Q_EMIT fileProgress(state.current_file_id, state.bytes_received, state.current_size);
-            Q_EMIT overallProgress(state.overall_received, options.total_bytes);
+            emitReceiverProgress(options, state, resumeTimer);
             continue;
 
         case FrameFileEnd:

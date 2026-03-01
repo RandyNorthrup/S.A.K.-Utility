@@ -85,149 +85,26 @@ bool DiagnosticReportGenerator::generateJson(const QString& output_path)
     Q_ASSERT_X(!output_path.isEmpty(), "generateJson", "output_path must not be empty");
     QJsonObject root;
 
-    // Metadata
-    QJsonObject meta;
-    meta["generated_at"] = m_data.report_timestamp.toString(Qt::ISODate);
-    meta["technician"]   = m_data.technician_name;
-    meta["ticket"]       = m_data.ticket_number;
-    meta["notes"]        = m_data.notes;
-    meta["overall_status"] = (m_data.overall_status == DiagnosticStatus::AllPassed)
-                                 ? "PASSED"
-                                 : (m_data.overall_status == DiagnosticStatus::Warnings)
-                                       ? "WARNINGS"
-                                       : "CRITICAL";
-    root["metadata"] = meta;
+    root["metadata"] = serializeMetadataSection();
 
     // Hardware inventory
     QJsonObject hw;
-    const auto& inv = m_data.inventory;
-
-    // CPU
-    QJsonObject cpu;
-    cpu["name"]         = inv.cpu.name;
-    cpu["manufacturer"] = inv.cpu.manufacturer;
-    cpu["cores"]        = static_cast<int>(inv.cpu.cores);
-    cpu["threads"]      = static_cast<int>(inv.cpu.threads);
-    cpu["base_clock_mhz"]  = static_cast<int>(inv.cpu.base_clock_mhz);
-    cpu["max_clock_mhz"]   = static_cast<int>(inv.cpu.max_clock_mhz);
-    cpu["l2_cache_kb"]     = static_cast<int>(inv.cpu.l2_cache_kb);
-    cpu["l3_cache_kb"]     = static_cast<int>(inv.cpu.l3_cache_kb);
-    cpu["architecture"]    = inv.cpu.architecture;
-    hw["cpu"] = cpu;
-
-    // Memory
-    QJsonObject mem;
-    mem["total_gb"] = static_cast<double>(inv.memory.total_bytes) / (1024.0 * 1024 * 1024);
-    mem["slots_used"]  = static_cast<int>(inv.memory.slots_used);
-    mem["slots_total"] = static_cast<int>(inv.memory.slots_total);
-
-    QJsonArray modules;
-    for (const auto& mod : inv.memory.modules) {
-        QJsonObject m;
-        m["manufacturer"] = mod.manufacturer;
-        m["part_number"]  = mod.part_number;
-        m["capacity_gb"]  = static_cast<double>(mod.capacity_bytes) / (1024.0 * 1024 * 1024);
-        m["speed_mhz"]    = static_cast<int>(mod.speed_mhz);
-        m["type"]         = mod.memory_type;
-        m["form_factor"]  = mod.form_factor;
-        modules.append(m);
-    }
-    mem["modules"] = modules;
-    hw["memory"] = mem;
-
-    // Storage
-    QJsonArray storage_arr;
-    for (const auto& dev : inv.storage) {
-        QJsonObject d;
-        d["model"]       = dev.model;
-        d["serial"]      = dev.serial_number;
-        d["size_gb"]     = static_cast<double>(dev.size_bytes) / (1024.0 * 1024 * 1024);
-        d["interface"]   = dev.interface_type;
-        d["media_type"]  = dev.media_type;
-        d["firmware"]    = dev.firmware_version;
-        storage_arr.append(d);
-    }
-    hw["storage"] = storage_arr;
-
-    // GPUs
-    QJsonArray gpu_arr;
-    for (const auto& gpu : inv.gpus) {
-        QJsonObject g;
-        g["name"]           = gpu.name;
-        g["manufacturer"]   = gpu.manufacturer;
-        g["vram_gb"]        = static_cast<double>(gpu.vram_bytes) / (1024.0 * 1024 * 1024);
-        g["driver_version"] = gpu.driver_version;
-        gpu_arr.append(g);
-    }
-    hw["gpus"] = gpu_arr;
+    hw["cpu"] = serializeCpuSection();
+    hw["memory"] = serializeMemorySection();
+    hw["storage"] = serializeStorageSection();
+    hw["gpus"] = serializeGpuSection();
 
     // OS
     QJsonObject os;
-    os["name"]         = inv.os_name;
-    os["version"]      = inv.os_version;
-    os["build"]        = inv.os_build;
-    os["architecture"] = inv.os_architecture;
+    os["name"]         = m_data.inventory.os_name;
+    os["version"]      = m_data.inventory.os_version;
+    os["build"]        = m_data.inventory.os_build;
+    os["architecture"] = m_data.inventory.os_architecture;
     hw["os"] = os;
 
     root["hardware"] = hw;
-
-    // SMART reports
-    QJsonArray smart_arr;
-    for (const auto& report : m_data.smart_reports) {
-        QJsonObject s;
-        s["device"]    = report.device_path;
-        s["model"]     = report.model;
-        s["serial"]    = report.serial_number;
-        s["status"]    = healthStatusText(report.overall_health);
-        s["temp_c"]    = report.temperature_celsius;
-        s["power_on_hours"] = static_cast<qint64>(report.power_on_hours);
-
-        QJsonArray warnings;
-        for (const auto& w : report.warnings) warnings.append(w);
-        s["warnings"] = warnings;
-
-        smart_arr.append(s);
-    }
-    root["smart"] = smart_arr;
-
-    // Benchmarks
-    QJsonObject benchmarks;
-    if (m_data.cpu_benchmark.has_value()) {
-        const auto& cb = m_data.cpu_benchmark.value();
-        QJsonObject cpu_bench;
-        cpu_bench["single_thread_score"] = cb.single_thread_score;
-        cpu_bench["multi_thread_score"]  = cb.multi_thread_score;
-        cpu_bench["thread_scaling"]      = cb.thread_scaling_efficiency;
-        cpu_bench["prime_sieve_ms"]      = cb.prime_sieve_time_ms;
-        cpu_bench["matrix_multiply_ms"]  = cb.matrix_multiply_time_ms;
-        cpu_bench["zlib_mbps"]           = cb.zlib_throughput_mbps;
-        cpu_bench["aes_mbps"]            = cb.aes_throughput_mbps;
-        benchmarks["cpu"] = cpu_bench;
-    }
-
-    if (m_data.disk_benchmark.has_value()) {
-        const auto& db = m_data.disk_benchmark.value();
-        QJsonObject disk_bench;
-        disk_bench["drive"]            = db.drive_path;
-        disk_bench["seq_read_mbps"]    = db.seq_read_mbps;
-        disk_bench["seq_write_mbps"]   = db.seq_write_mbps;
-        disk_bench["rand_4k_read_iops"]  = db.rand_4k_read_iops;
-        disk_bench["rand_4k_write_iops"] = db.rand_4k_write_iops;
-        disk_bench["score"]            = db.overall_score;
-        benchmarks["disk"] = disk_bench;
-    }
-
-    if (m_data.memory_benchmark.has_value()) {
-        const auto& mb = m_data.memory_benchmark.value();
-        QJsonObject mem_bench;
-        mem_bench["read_gbps"]     = mb.read_bandwidth_gbps;
-        mem_bench["write_gbps"]    = mb.write_bandwidth_gbps;
-        mem_bench["copy_gbps"]     = mb.copy_bandwidth_gbps;
-        mem_bench["latency_ns"]    = mb.random_latency_ns;
-        mem_bench["score"]         = mb.overall_score;
-        benchmarks["memory"] = mem_bench;
-    }
-    root["benchmarks"] = benchmarks;
+    root["smart"] = serializeSmartSection();
+    root["benchmarks"] = serializeBenchmarkSection();
 
     // Stress test
     if (m_data.stress_test.has_value()) {
@@ -267,6 +144,156 @@ bool DiagnosticReportGenerator::generateJson(const QString& output_path)
     return true;
 }
 
+// ============================================================================
+// JSON Section Serializers
+// ============================================================================
+
+QJsonObject DiagnosticReportGenerator::serializeMetadataSection() const
+{
+    QJsonObject meta;
+    meta["generated_at"] = m_data.report_timestamp.toString(Qt::ISODate);
+    meta["technician"]   = m_data.technician_name;
+    meta["ticket"]       = m_data.ticket_number;
+    meta["notes"]        = m_data.notes;
+    meta["overall_status"] = (m_data.overall_status == DiagnosticStatus::AllPassed)
+                                 ? "PASSED"
+                                 : (m_data.overall_status == DiagnosticStatus::Warnings)
+                                       ? "WARNINGS"
+                                       : "CRITICAL";
+    return meta;
+}
+
+QJsonObject DiagnosticReportGenerator::serializeCpuSection() const
+{
+    const auto& inv = m_data.inventory;
+    QJsonObject cpu;
+    cpu["name"]         = inv.cpu.name;
+    cpu["manufacturer"] = inv.cpu.manufacturer;
+    cpu["cores"]        = static_cast<int>(inv.cpu.cores);
+    cpu["threads"]      = static_cast<int>(inv.cpu.threads);
+    cpu["base_clock_mhz"]  = static_cast<int>(inv.cpu.base_clock_mhz);
+    cpu["max_clock_mhz"]   = static_cast<int>(inv.cpu.max_clock_mhz);
+    cpu["l2_cache_kb"]     = static_cast<int>(inv.cpu.l2_cache_kb);
+    cpu["l3_cache_kb"]     = static_cast<int>(inv.cpu.l3_cache_kb);
+    cpu["architecture"]    = inv.cpu.architecture;
+    return cpu;
+}
+
+QJsonObject DiagnosticReportGenerator::serializeMemorySection() const
+{
+    const auto& inv = m_data.inventory;
+    QJsonObject mem;
+    mem["total_gb"] = static_cast<double>(inv.memory.total_bytes) / (1024.0 * 1024 * 1024);
+    mem["slots_used"]  = static_cast<int>(inv.memory.slots_used);
+    mem["slots_total"] = static_cast<int>(inv.memory.slots_total);
+
+    QJsonArray modules;
+    for (const auto& mod : inv.memory.modules) {
+        QJsonObject m;
+        m["manufacturer"] = mod.manufacturer;
+        m["part_number"]  = mod.part_number;
+        m["capacity_gb"]  = static_cast<double>(mod.capacity_bytes) / (1024.0 * 1024 * 1024);
+        m["speed_mhz"]    = static_cast<int>(mod.speed_mhz);
+        m["type"]         = mod.memory_type;
+        m["form_factor"]  = mod.form_factor;
+        modules.append(m);
+    }
+    mem["modules"] = modules;
+    return mem;
+}
+
+QJsonArray DiagnosticReportGenerator::serializeStorageSection() const
+{
+    QJsonArray storage_arr;
+    for (const auto& dev : m_data.inventory.storage) {
+        QJsonObject d;
+        d["model"]       = dev.model;
+        d["serial"]      = dev.serial_number;
+        d["size_gb"]     = static_cast<double>(dev.size_bytes) / (1024.0 * 1024 * 1024);
+        d["interface"]   = dev.interface_type;
+        d["media_type"]  = dev.media_type;
+        d["firmware"]    = dev.firmware_version;
+        storage_arr.append(d);
+    }
+    return storage_arr;
+}
+
+QJsonArray DiagnosticReportGenerator::serializeGpuSection() const
+{
+    QJsonArray gpu_arr;
+    for (const auto& gpu : m_data.inventory.gpus) {
+        QJsonObject g;
+        g["name"]           = gpu.name;
+        g["manufacturer"]   = gpu.manufacturer;
+        g["vram_gb"]        = static_cast<double>(gpu.vram_bytes) / (1024.0 * 1024 * 1024);
+        g["driver_version"] = gpu.driver_version;
+        gpu_arr.append(g);
+    }
+    return gpu_arr;
+}
+
+QJsonArray DiagnosticReportGenerator::serializeSmartSection() const
+{
+    QJsonArray smart_arr;
+    for (const auto& report : m_data.smart_reports) {
+        QJsonObject s;
+        s["device"]    = report.device_path;
+        s["model"]     = report.model;
+        s["serial"]    = report.serial_number;
+        s["status"]    = healthStatusText(report.overall_health);
+        s["temp_c"]    = report.temperature_celsius;
+        s["power_on_hours"] = static_cast<qint64>(report.power_on_hours);
+
+        QJsonArray warnings;
+        for (const auto& w : report.warnings) warnings.append(w);
+        s["warnings"] = warnings;
+
+        smart_arr.append(s);
+    }
+    return smart_arr;
+}
+
+QJsonObject DiagnosticReportGenerator::serializeBenchmarkSection() const
+{
+    QJsonObject benchmarks;
+    if (m_data.cpu_benchmark.has_value()) {
+        const auto& cb = m_data.cpu_benchmark.value();
+        QJsonObject cpu_bench;
+        cpu_bench["single_thread_score"] = cb.single_thread_score;
+        cpu_bench["multi_thread_score"]  = cb.multi_thread_score;
+        cpu_bench["thread_scaling"]      = cb.thread_scaling_efficiency;
+        cpu_bench["prime_sieve_ms"]      = cb.prime_sieve_time_ms;
+        cpu_bench["matrix_multiply_ms"]  = cb.matrix_multiply_time_ms;
+        cpu_bench["zlib_mbps"]           = cb.zlib_throughput_mbps;
+        cpu_bench["aes_mbps"]            = cb.aes_throughput_mbps;
+        benchmarks["cpu"] = cpu_bench;
+    }
+
+    if (m_data.disk_benchmark.has_value()) {
+        const auto& db = m_data.disk_benchmark.value();
+        QJsonObject disk_bench;
+        disk_bench["drive"]            = db.drive_path;
+        disk_bench["seq_read_mbps"]    = db.seq_read_mbps;
+        disk_bench["seq_write_mbps"]   = db.seq_write_mbps;
+        disk_bench["rand_4k_read_iops"]  = db.rand_4k_read_iops;
+        disk_bench["rand_4k_write_iops"] = db.rand_4k_write_iops;
+        disk_bench["score"]            = db.overall_score;
+        benchmarks["disk"] = disk_bench;
+    }
+
+    if (m_data.memory_benchmark.has_value()) {
+        const auto& mb = m_data.memory_benchmark.value();
+        QJsonObject mem_bench;
+        mem_bench["read_gbps"]     = mb.read_bandwidth_gbps;
+        mem_bench["write_gbps"]    = mb.write_bandwidth_gbps;
+        mem_bench["copy_gbps"]     = mb.copy_bandwidth_gbps;
+        mem_bench["latency_ns"]    = mb.random_latency_ns;
+        mem_bench["score"]         = mb.overall_score;
+        benchmarks["memory"] = mem_bench;
+    }
+    return benchmarks;
+}
+
 bool DiagnosticReportGenerator::generateCsv(const QString& output_path)
 {
     Q_ASSERT_X(!output_path.isEmpty(), "generateCsv", "output_path must not be empty");
@@ -280,7 +307,22 @@ bool DiagnosticReportGenerator::generateCsv(const QString& output_path)
     QTextStream out(&file);
     out.setEncoding(QStringConverter::Utf8);
 
-    // Section: Hardware Summary
+    writeCsvHardwareSummary(out);
+    writeCsvSmartHealth(out);
+    writeCsvBenchmarks(out);
+
+    file.close();
+    logInfo("CSV report generated: {}", output_path.toStdString());
+    Q_EMIT reportGenerated("CSV", output_path);
+    return true;
+}
+
+// ============================================================================
+// CSV Section Writers (TigerStyle decomposition)
+// ============================================================================
+
+void DiagnosticReportGenerator::writeCsvHardwareSummary(QTextStream& out) const
+{
     out << "Section,Property,Value\n";
     out << "CPU,Name," << csvEscape(m_data.inventory.cpu.name) << "\n";
     out << "CPU,Cores," << m_data.inventory.cpu.cores << "\n";
@@ -314,8 +356,10 @@ bool DiagnosticReportGenerator::generateCsv(const QString& output_path)
 
     out << "OS,Name," << csvEscape(m_data.inventory.os_name) << "\n";
     out << "OS,Build," << csvEscape(m_data.inventory.os_build) << "\n";
+}
 
-    // Section: SMART Health
+void DiagnosticReportGenerator::writeCsvSmartHealth(QTextStream& out) const
+{
     out << "\nSMART Health\n";
     out << "Device,Model,Status,Temperature (C),Power-On Hours\n";
     for (const auto& report : m_data.smart_reports) {
@@ -325,8 +369,10 @@ bool DiagnosticReportGenerator::generateCsv(const QString& output_path)
             << report.temperature_celsius << ","
             << report.power_on_hours << "\n";
     }
+}
 
-    // Section: Benchmarks
+void DiagnosticReportGenerator::writeCsvBenchmarks(QTextStream& out) const
+{
     out << "\nBenchmark Results\n";
     if (m_data.cpu_benchmark.has_value()) {
         const auto& cb = m_data.cpu_benchmark.value();
@@ -352,7 +398,6 @@ bool DiagnosticReportGenerator::generateCsv(const QString& output_path)
         out << "Memory Benchmark,Score," << mb.overall_score << "\n";
     }
 
-    // Stress test
     if (m_data.stress_test.has_value()) {
         const auto& st = m_data.stress_test.value();
         out << "Stress Test,Passed," << (st.passed ? "Yes" : "No") << "\n";
@@ -360,11 +405,6 @@ bool DiagnosticReportGenerator::generateCsv(const QString& output_path)
         out << "Stress Test,Errors," << st.errors_detected << "\n";
         out << "Stress Test,Max CPU Temp (C)," << st.max_cpu_temp << "\n";
     }
-
-    file.close();
-    logInfo("CSV report generated: {}", output_path.toStdString());
-    Q_EMIT reportGenerated("CSV", output_path);
-    return true;
 }
 
 // ============================================================================

@@ -10,9 +10,12 @@
 #include "sak/worker_base.h"
 #include "sak/thermal_monitor.h"
 
+#include <QElapsedTimer>
 #include <QObject>
 
 #include <atomic>
+#include <future>
+#include <vector>
 
 namespace sak {
 
@@ -71,6 +74,12 @@ protected:
     auto execute() -> std::expected<void, sak::error_code> override;
 
 private:
+    /// @brief Launch CPU, memory, and disk stress threads based on config
+    void launchStressThreads(std::vector<std::future<void>>& futures);
+
+    /// @brief Monitor running stress test: report progress, check thermals and errors
+    void monitorStressLoop(int total_seconds);
+
     /// @brief CPU stress: sustained all-core compute load
     void runCpuStress();
 
@@ -80,6 +89,18 @@ private:
 
     /// @brief Disk stress: continuous sequential I/O
     void runDiskStress();
+
+    /// @brief Determine target memory allocation based on system available RAM
+    /// @param fallback_bytes Allocation to use if platform detection fails
+    /// @return Target bytes to allocate
+    [[nodiscard]] size_t determineTargetMemoryBytes(size_t fallback_bytes) const;
+
+    /// @brief Allocate memory for stress testing (platform-specific)
+    /// @return Pointer to allocated memory, or nullptr on failure
+    [[nodiscard]] static volatile uint64_t* allocateStressMemory(size_t alloc_size);
+
+    /// @brief Free memory previously allocated by allocateStressMemory
+    static void freeStressMemory(volatile uint64_t* data);
 
     StressTestConfig m_config;
     StressTestResult m_result;
@@ -98,6 +119,7 @@ private:
     std::atomic<int> m_error_count{0};
     std::atomic<double> m_current_temp{0.0};
     std::atomic<double> m_max_temp{0.0};
+    QElapsedTimer m_elapsed_timer;
 };
 
 } // namespace sak

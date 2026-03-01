@@ -195,8 +195,6 @@ void LinuxISODownloader::startAria2cDownload(const QString& url,
     Q_EMIT statusMessage(QString("Downloading %1...").arg(fileName));
 
     // Validate download URL scheme — only allow HTTPS for the initial request.
-    // Note: SourceForge redirects to HTTP mirrors at runtime but the initial
-    // URL we provide *must* be HTTPS.  aria2c handles the redirect chain.
     QUrl downloadUrl(url);
     if (!downloadUrl.isValid() || downloadUrl.scheme().toLower() != "https") {
         setPhase(Phase::Failed, "Invalid download URL");
@@ -212,7 +210,6 @@ void LinuxISODownloader::startAria2cDownload(const QString& url,
     // Create output directory if needed
     QDir().mkpath(outDir);
 
-    // Build aria2c arguments for single-file download
     // Clean up any previous QProcess to prevent leaks
     if (m_aria2cProcess) {
         m_aria2cProcess->disconnect();
@@ -226,6 +223,27 @@ void LinuxISODownloader::startAria2cDownload(const QString& url,
             QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
             this, &LinuxISODownloader::onAria2cFinished);
 
+    QStringList args = buildAria2cArguments(url, outDir, outFile);
+
+    sak::logInfo("Starting aria2c: " + aria2Path.toStdString() +
+                  " → " + savePath.toStdString());
+
+    m_aria2cProcess->start(aria2Path, args);
+
+    if (!m_aria2cProcess->waitForStarted(10000)) {
+        setPhase(Phase::Failed, "Failed to start aria2c");
+        Q_EMIT downloadError("Failed to start aria2c: " + m_aria2cProcess->errorString());
+        return;
+    }
+
+    // Start progress polling
+    m_progressTimer->start();
+}
+
+QStringList LinuxISODownloader::buildAria2cArguments(const QString& url,
+                                                      const QString& outDir,
+                                                      const QString& outFile) const
+{
     QStringList args;
     args << url
          << "--dir=" + outDir
@@ -284,19 +302,7 @@ void LinuxISODownloader::startAria2cDownload(const QString& url,
          << "--enable-color=false"
          << "--console-log-level=notice";
 
-    sak::logInfo("Starting aria2c: " + aria2Path.toStdString() +
-                  " → " + savePath.toStdString());
-
-    m_aria2cProcess->start(aria2Path, args);
-
-    if (!m_aria2cProcess->waitForStarted(10000)) {
-        setPhase(Phase::Failed, "Failed to start aria2c");
-        Q_EMIT downloadError("Failed to start aria2c: " + m_aria2cProcess->errorString());
-        return;
-    }
-
-    // Start progress polling
-    m_progressTimer->start();
+    return args;
 }
 
 void LinuxISODownloader::onAria2cFinished(int exitCode,
@@ -439,6 +445,98 @@ void LinuxISODownloader::onProgressPollTimer()
 // Checksum Verification
 // ============================================================================
 
+QString LinuxISODownloader::parseExpectedHash(const QString& checksumData, const QString& expectedFileName) const
+{
+    QStringList checksumLines = checksumData.split('\n', Qt::SkipEmptyParts);
+
+    for (const QString& line : checksumLines) {
+        QString trimmed = line.trimmed();
+        if (trimmed.isEmpty() || trimmed.startsWith('#')) continue;
+
+        // Split on whitespace (hash  filename OR hash *filename)
+        QStringList parts = trimmed.split(QRegularExpression("\\s+"),
+                                          Qt::SkipEmptyParts);
+        if (parts.size() >= 2) {
+            QString filename = parts.last();
+            // Remove leading * (binary mode indicator)
+            if (filename.startsWith('*')) {
+                filename = filename.mid(1);
+            }
+            if (filename == expectedFileName) {
+                return parts.first().toLower();
+            }
+        } else if (parts.size() == 1) {
+            // Single hash in file — assume it's for our file
+            return parts.first().toLower();
+        }
+    }
+
+    return {};
+}
+
+void LinuxISODownloader::onChecksumReplyFinished(QNetworkReply* reply, QNetworkAccessManager* nam)
+{
+    reply->deleteLater();
+    nam->deleteLater();
+
+    if (reply->error() != QNetworkReply::NoError) {
+        sak::logWarning("Checksum fetch failed: " + reply->errorString().toStdString());
+        Q_EMIT statusMessage("Checksum verification skipped (could not fetch checksum file)");
+
+        QFileInfo fileInfo(m_savePath);
+        setPhase(Phase::Completed, "Download complete (checksum fetch failed)");
+        Q_EMIT downloadComplete(m_savePath, fileInfo.size());
+        return;
+    }
+
+    QString checksumData = QString::fromUtf8(reply->readAll());
+    QString expectedFileName = QFileInfo(m_savePath).fileName();
+    QString expectedHash = parseExpectedHash(checksumData, expectedFileName);
+
+    if (expectedHash.isEmpty()) {
+        sak::logWarning("Could not find matching hash in checksum file for: " +
+                       expectedFileName.toStdString());
+        Q_EMIT statusMessage("Checksum verification skipped (no matching entry found)");
+
+        QFileInfo fileInfo(m_savePath);
+        setPhase(Phase::Completed, "Download complete");
+        Q_EMIT downloadComplete(m_savePath, fileInfo.size());
+        return;
+    }
+
+    // Compute hash in background thread
+    Q_EMIT statusMessage("Computing " + m_checksumType.toUpper() + " checksum...");
+    Q_EMIT progressUpdated(97, "Computing checksum...");
+
+    auto algorithm = (m_checksumType == "sha1")
+        ? QCryptographicHash::Sha1
+        : QCryptographicHash::Sha256;
+
+    auto* watcher = new QFutureWatcher<QString>(this);
+    connect(watcher, &QFutureWatcher<QString>::finished, this,
+            [this, watcher, expectedHash]() {
+        QString actualHash = watcher->result();
+        watcher->deleteLater();
+        onChecksumVerified(actualHash == expectedHash, expectedHash, actualHash);
+    });
+
+    auto future = QtConcurrent::run([this, algorithm]() -> QString {
+        QFile file(m_savePath);
+        if (!file.open(QIODevice::ReadOnly)) {
+            return QString();
+        }
+
+        QCryptographicHash hash(algorithm);
+        const qint64 bufferSize = 8 * 1024 * 1024; // 8 MB chunks
+        while (!file.atEnd()) {
+            hash.addData(file.read(bufferSize));
+        }
+        return hash.result().toHex().toLower();
+    });
+
+    watcher->setFuture(future);
+}
+
 void LinuxISODownloader::verifyChecksum()
 {
     setPhase(Phase::VerifyingChecksum, "Verifying checksum...");
@@ -453,97 +551,7 @@ void LinuxISODownloader::verifyChecksum()
 
     auto* reply = nam->get(request);
     connect(reply, &QNetworkReply::finished, this, [this, reply, nam]() {
-        reply->deleteLater();
-        nam->deleteLater();
-
-        if (reply->error() != QNetworkReply::NoError) {
-            sak::logWarning("Checksum fetch failed: " + reply->errorString().toStdString());
-            // Don't fail the download — just skip verification
-            Q_EMIT statusMessage("Checksum verification skipped (could not fetch checksum file)");
-
-            QFileInfo fileInfo(m_savePath);
-            setPhase(Phase::Completed, "Download complete (checksum fetch failed)");
-            Q_EMIT downloadComplete(m_savePath, fileInfo.size());
-            return;
-        }
-
-        QString checksumData = QString::fromUtf8(reply->readAll());
-        QString expectedFileName = QFileInfo(m_savePath).fileName();
-
-        // Parse checksum file — format is typically:
-        // <hash>  <filename>   (Ubuntu SHA256SUMS)
-        // <hash>  filename     (SystemRescue .sha256)
-        // <hash>               (single-file checksum)
-        QString expectedHash;
-        QStringList checksumLines = checksumData.split('\n', Qt::SkipEmptyParts);
-
-        for (const QString& line : checksumLines) {
-            QString trimmed = line.trimmed();
-            if (trimmed.isEmpty() || trimmed.startsWith('#')) continue;
-
-            // Split on whitespace (hash  filename OR hash *filename)
-            QStringList parts = trimmed.split(QRegularExpression("\\s+"),
-                                              Qt::SkipEmptyParts);
-            if (parts.size() >= 2) {
-                QString filename = parts.last();
-                // Remove leading * (binary mode indicator)
-                if (filename.startsWith('*')) {
-                    filename = filename.mid(1);
-                }
-                if (filename == expectedFileName) {
-                    expectedHash = parts.first().toLower();
-                    break;
-                }
-            } else if (parts.size() == 1) {
-                // Single hash in file — assume it's for our file
-                expectedHash = parts.first().toLower();
-            }
-        }
-
-        if (expectedHash.isEmpty()) {
-            sak::logWarning("Could not find matching hash in checksum file for: " +
-                           expectedFileName.toStdString());
-            Q_EMIT statusMessage("Checksum verification skipped (no matching entry found)");
-
-            QFileInfo fileInfo(m_savePath);
-            setPhase(Phase::Completed, "Download complete");
-            Q_EMIT downloadComplete(m_savePath, fileInfo.size());
-            return;
-        }
-
-        // Compute hash in background thread
-        Q_EMIT statusMessage("Computing " + m_checksumType.toUpper() + " checksum...");
-        Q_EMIT progressUpdated(97, "Computing checksum...");
-
-        auto algorithm = (m_checksumType == "sha1")
-            ? QCryptographicHash::Sha1
-            : QCryptographicHash::Sha256;
-
-        auto* watcher = new QFutureWatcher<QString>(this);
-        connect(watcher, &QFutureWatcher<QString>::finished, this,
-                [this, watcher, expectedHash]() {
-            QString actualHash = watcher->result();
-            watcher->deleteLater();
-
-            bool match = (actualHash == expectedHash);
-            onChecksumVerified(match, expectedHash, actualHash);
-        });
-
-        auto future = QtConcurrent::run([this, algorithm]() -> QString {
-            QFile file(m_savePath);
-            if (!file.open(QIODevice::ReadOnly)) {
-                return QString();
-            }
-
-            QCryptographicHash hash(algorithm);
-            const qint64 bufferSize = 8 * 1024 * 1024; // 8 MB chunks
-            while (!file.atEnd()) {
-                hash.addData(file.read(bufferSize));
-            }
-            return hash.result().toHex().toLower();
-        });
-
-        watcher->setFuture(future);
+        onChecksumReplyFinished(reply, nam);
     });
 }
 

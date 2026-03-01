@@ -16,6 +16,7 @@
 #include <QString>
 #include <QMap>
 
+class QVBoxLayout;
 class WindowsISODownloader;
 
 /**
@@ -74,6 +75,8 @@ private Q_SLOTS:
 
 private:
     void setupUi();
+    void setupUi_formSections(QVBoxLayout* mainLayout);
+    void setupUi_progressAndButtons(QVBoxLayout* mainLayout);
     void connectSignals();
     void updateStartButton();
     QString getDefaultSavePath();

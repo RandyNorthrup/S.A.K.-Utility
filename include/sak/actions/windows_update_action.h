@@ -4,6 +4,7 @@
 #pragma once
 
 #include "sak/quick_action.h"
+#include <QDateTime>
 #include <QString>
 
 namespace sak {
@@ -38,6 +39,15 @@ private:
     bool installPSWindowsUpdateModule();
     void checkForUpdates();
     void installUpdates();
+
+    // TigerStyle helpers for execute() decomposition
+    void executeInitSession(const QDateTime& start_time, QString& ps_script);
+    static QString buildUpdateScanScript();
+    static QString buildUpdateInstallScript();
+    bool executeSearchUpdates(const QDateTime& start_time, const QString& ps_script,
+                              QString& accumulated_output, QString& errors, int& exit_code);
+    void executeBuildReport(const QDateTime& start_time, const QString& accumulated_output,
+                            const QString& errors, int exit_code);
 };
 
 } // namespace sak

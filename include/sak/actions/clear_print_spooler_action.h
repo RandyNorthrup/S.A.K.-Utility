@@ -51,6 +51,10 @@ private:
     };
 
     QString buildSpoolerScript() const;
+    /// @brief Build the init, count, stop, and clear portion of the spooler script
+    QString buildSpoolerScriptPreamble() const;
+    /// @brief Build the restart and output portion of the spooler script
+    QString buildSpoolerScriptRestart() const;
     SpoolerResult parseSpoolerOutput(const QString& output) const;
     QString buildSuccessLog(const SpoolerResult& spooler, qint64 duration_ms) const;
     QString buildFailureLog(const SpoolerResult& spooler, qint64 duration_ms) const;

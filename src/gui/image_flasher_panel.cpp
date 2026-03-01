@@ -111,6 +111,14 @@ void ImageFlasherPanel::setupUi() {
     mainLayout->addWidget(m_stackedWidget);
     
     // Navigation buttons
+    setupNavigationButtons(mainLayout);
+    
+    // Show first page
+    m_stackedWidget->setCurrentIndex(0);
+    updateNavigationButtons();
+}
+
+void ImageFlasherPanel::setupNavigationButtons(QVBoxLayout* mainLayout) {
     auto* buttonLayout = new QHBoxLayout();
     
     auto* settingsButton = new QPushButton("Settings", this);
@@ -168,10 +176,6 @@ void ImageFlasherPanel::setupUi() {
     buttonLayout->insertWidget(1, m_logToggle);
 
     mainLayout->addLayout(buttonLayout);
-    
-    // Show first page
-    m_stackedWidget->setCurrentIndex(0);
-    updateNavigationButtons();
 }
 
 void ImageFlasherPanel::createImageSelectionPage() {
@@ -181,6 +185,28 @@ void ImageFlasherPanel::createImageSelectionPage() {
     auto* groupBox = new QGroupBox("Step 1: Select Image", m_imageSelectionPage);
     auto* groupLayout = new QVBoxLayout(groupBox);
     
+    createDownloadButtons(groupLayout, groupBox);
+    
+    groupLayout->addSpacing(12);
+    
+    // Image info
+    m_imagePathLabel = new QLabel("No image selected", groupBox);
+    m_imagePathLabel->setWordWrap(true);
+    groupLayout->addWidget(m_imagePathLabel);
+    
+    m_imageSizeLabel = new QLabel("", groupBox);
+    groupLayout->addWidget(m_imageSizeLabel);
+    
+    m_imageFormatLabel = new QLabel("", groupBox);
+    groupLayout->addWidget(m_imageFormatLabel);
+    
+    groupLayout->addStretch();
+    
+    layout->addWidget(groupBox);
+    m_stackedWidget->addWidget(m_imageSelectionPage);
+}
+
+void ImageFlasherPanel::createDownloadButtons(QVBoxLayout* groupLayout, QGroupBox* groupBox) {
     // Download Windows button
     m_downloadWindowsButton = new QPushButton("Download Windows 11", groupBox);
     m_downloadWindowsButton->setMinimumHeight(48);
@@ -230,24 +256,6 @@ void ImageFlasherPanel::createImageSelectionPage() {
     groupLayout->addWidget(m_selectImageButton);
     connect(m_selectImageButton, &QPushButton::clicked,
             this, &ImageFlasherPanel::onSelectImageClicked);
-    
-    groupLayout->addSpacing(12);
-    
-    // Image info
-    m_imagePathLabel = new QLabel("No image selected", groupBox);
-    m_imagePathLabel->setWordWrap(true);
-    groupLayout->addWidget(m_imagePathLabel);
-    
-    m_imageSizeLabel = new QLabel("", groupBox);
-    groupLayout->addWidget(m_imageSizeLabel);
-    
-    m_imageFormatLabel = new QLabel("", groupBox);
-    groupLayout->addWidget(m_imageFormatLabel);
-    
-    groupLayout->addStretch();
-    
-    layout->addWidget(groupBox);
-    m_stackedWidget->addWidget(m_imageSelectionPage);
 }
 
 void ImageFlasherPanel::createDriveSelectionPage() {
@@ -668,13 +676,9 @@ void ImageFlasherPanel::validateImageFile(const QString& filePath) {
     logInfo(QString("Image file validated: %1").arg(filePath).toStdString());
 }
 
-void ImageFlasherPanel::showConfirmationDialog() {
-    // Check if this is a Windows ISO
-    bool isWindowsISO = isWindowsInstallISO(m_selectedImagePath);
-
-    // Build drive list for display
+QStringList ImageFlasherPanel::buildDriveDetailsList(bool& hasSystemDrive) const {
     QStringList driveDetails;
-    bool hasSystemDrive = false;
+    hasSystemDrive = false;
     for (const auto& drivePath : m_selectedDrives) {
         QString label = drivePath;
         // Find the display text from the list widget
@@ -690,6 +694,39 @@ void ImageFlasherPanel::showConfirmationDialog() {
             hasSystemDrive = true;
         }
     }
+    return driveDetails;
+}
+
+QString ImageFlasherPanel::buildFlashConfirmationMessage(const QStringList& driveDetails, bool isWindowsISO) const {
+    QString methodInfo;
+    if (isWindowsISO) {
+        methodInfo = "\nMethod: Extract ISO to NTFS-formatted drive\n"
+                    "(Proper Windows installation USB)";
+    } else {
+        methodInfo = "\nMethod: Raw disk imaging\n"
+                    "(Bootable for Linux, other ISOs)";
+    }
+    
+    return QString(
+        "⚠  DESTRUCTIVE OPERATION  ⚠\n\n"
+        "Image: %1\n\n"
+        "Target Drive(s):\n%2\n"
+        "%3\n\n"
+        "ALL DATA on the target drive(s) will be PERMANENTLY ERASED.\n"
+        "This action CANNOT be undone.\n\n"
+        "Are you absolutely sure you want to continue?")
+        .arg(QFileInfo(m_selectedImagePath).fileName())
+        .arg(driveDetails.join("\n"))
+        .arg(methodInfo);
+}
+
+void ImageFlasherPanel::showConfirmationDialog() {
+    // Check if this is a Windows ISO
+    bool isWindowsISO = isWindowsInstallISO(m_selectedImagePath);
+
+    // Build drive list for display
+    bool hasSystemDrive = false;
+    QStringList driveDetails = buildDriveDetailsList(hasSystemDrive);
 
     // Block system drive flashing with a hard error
     if (hasSystemDrive) {
@@ -701,26 +738,7 @@ void ImageFlasherPanel::showConfirmationDialog() {
         return;
     }
     
-    QString methodInfo;
-    if (isWindowsISO) {
-        methodInfo = "\nMethod: Extract ISO to NTFS-formatted drive\n"
-                    "(Proper Windows installation USB)";
-    } else {
-        methodInfo = "\nMethod: Raw disk imaging\n"
-                    "(Bootable for Linux, other ISOs)";
-    }
-    
-    QString message = QString(
-        "⚠  DESTRUCTIVE OPERATION  ⚠\n\n"
-        "Image: %1\n\n"
-        "Target Drive(s):\n%2\n"
-        "%3\n\n"
-        "ALL DATA on the target drive(s) will be PERMANENTLY ERASED.\n"
-        "This action CANNOT be undone.\n\n"
-        "Are you absolutely sure you want to continue?")
-        .arg(QFileInfo(m_selectedImagePath).fileName())
-        .arg(driveDetails.join("\n"))
-        .arg(methodInfo);
+    QString message = buildFlashConfirmationMessage(driveDetails, isWindowsISO);
     
     auto reply = QMessageBox::warning(this, "Confirm Flash — Data Loss Warning", message,
         QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
@@ -767,28 +785,9 @@ bool ImageFlasherPanel::isWindowsInstallISO(const QString& isoPath) const {
     return false;
 }
 
-void ImageFlasherPanel::createWindowsUSB() {
-    if (m_selectedDrives.isEmpty()) {
-        QMessageBox::critical(this, "Error", "No target drives selected");
-        m_isFlashing = false;
-        return;
-    }
-    
-    // For Windows USB creation, we can only handle one drive at a time
-    if (m_selectedDrives.size() > 1) {
-        QMessageBox::information(this, "Multiple Drives", 
-            "Windows USB creation will process drives one at a time.\n"
-            "This may take longer than raw imaging.");
-    }
-    
-    // Initialize progress display
-    m_flashStateLabel->setText("Initializing...");
-    
-    // Create Windows USB creator — no parent, will be moved to worker thread
-    auto* creator = new WindowsUSBCreator();
-    auto* thread = new QThread(this);
-    creator->moveToThread(thread);
-    
+void ImageFlasherPanel::connectWindowsUSBCreatorSignals(
+    WindowsUSBCreator* creator, QThread* thread)
+{
     connect(creator, &WindowsUSBCreator::statusChanged, this, [this](const QString& status) {
         m_flashStateLabel->setText(status);
     });
@@ -820,19 +819,47 @@ void ImageFlasherPanel::createWindowsUSB() {
     connect(creator, &WindowsUSBCreator::failed, thread, &QThread::quit);
     connect(thread, &QThread::finished, creator, &QObject::deleteLater);
     connect(thread, &QThread::finished, thread, &QObject::deleteLater);
+}
+
+QString ImageFlasherPanel::parseDiskNumberFromDevicePath(const QString& devicePath) {
+    QRegularExpression regex(R"(PhysicalDrive(\d+))");
+    QRegularExpressionMatch match = regex.match(devicePath);
+    if (match.hasMatch()) {
+        logInfo(QString("Using disk number %1 (PhysicalDrive%1)").arg(match.captured(1)).toStdString());
+        return match.captured(1);
+    }
+    return {};
+}
+
+void ImageFlasherPanel::createWindowsUSB() {
+    if (m_selectedDrives.isEmpty()) {
+        QMessageBox::critical(this, "Error", "No target drives selected");
+        m_isFlashing = false;
+        return;
+    }
+    
+    // For Windows USB creation, we can only handle one drive at a time
+    if (m_selectedDrives.size() > 1) {
+        QMessageBox::information(this, "Multiple Drives", 
+            "Windows USB creation will process drives one at a time.\n"
+            "This may take longer than raw imaging.");
+    }
+    
+    // Initialize progress display
+    m_flashStateLabel->setText("Initializing...");
+    
+    // Create Windows USB creator — no parent, will be moved to worker thread
+    auto* creator = new WindowsUSBCreator();
+    auto* thread = new QThread(this);
+    creator->moveToThread(thread);
+    
+    connectWindowsUSBCreatorSignals(creator, thread);
     
     // Extract disk number (hardware ID) from device path
     QString devicePath = m_selectedDrives.first();
-    QString diskNumber;
+    QString diskNumber = parseDiskNumberFromDevicePath(devicePath);
     
-    // Extract disk number from PhysicalDrive path (e.g., "\\.\PhysicalDrive1" -> "1")
-    QRegularExpression regex(R"(PhysicalDrive(\d+))");
-    QRegularExpressionMatch match = regex.match(devicePath);
-    
-    if (match.hasMatch()) {
-        diskNumber = match.captured(1);
-        logInfo(QString("Using disk number %1 (PhysicalDrive%1)").arg(diskNumber).toStdString());
-    } else {
+    if (diskNumber.isEmpty()) {
         // Could not parse disk number - fail immediately
         m_isFlashing = false;
         m_flashButton->setEnabled(true);

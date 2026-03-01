@@ -82,6 +82,28 @@ auto DiskBenchmarkWorker::execute() -> std::expected<void, sak::error_code>
         return std::unexpected(sak::error_code::read_error);
     }
 
+    auto benchmark_result = runAllBenchmarks();
+    if (!benchmark_result) {
+        return benchmark_result;
+    }
+
+    // Cleanup and score
+    reportProgress(7, 8, "Calculating scores...");
+    cleanupTestFile();
+    calculateScore();
+
+    m_result.timestamp = QDateTime::currentDateTime();
+
+    logInfo("Disk benchmark complete — Seq R/W: {:.0f}/{:.0f} MB/s, 4K R/W: {:.0f}/{:.0f} IOPS",
+            m_result.seq_read_mbps, m_result.seq_write_mbps,
+            m_result.rand_4k_read_iops, m_result.rand_4k_write_iops);
+
+    Q_EMIT benchmarkComplete(m_result);
+    return {};
+}
+
+auto DiskBenchmarkWorker::runAllBenchmarks() -> std::expected<void, sak::error_code>
+{
     // Sequential tests
     reportProgress(1, 8, "Sequential read benchmark...");
     if (checkStop()) { cleanupTestFile(); return std::unexpected(sak::error_code::operation_cancelled); }
@@ -130,18 +152,6 @@ auto DiskBenchmarkWorker::execute() -> std::expected<void, sak::error_code>
                      &qd32_write_latencies);
     m_result.p99_write_latency_us = calculateP99(qd32_write_latencies);
 
-    // Cleanup and score
-    reportProgress(7, 8, "Calculating scores...");
-    cleanupTestFile();
-    calculateScore();
-
-    m_result.timestamp = QDateTime::currentDateTime();
-
-    logInfo("Disk benchmark complete — Seq R/W: {:.0f}/{:.0f} MB/s, 4K R/W: {:.0f}/{:.0f} IOPS",
-            m_result.seq_read_mbps, m_result.seq_write_mbps,
-            m_result.rand_4k_read_iops, m_result.rand_4k_write_iops);
-
-    Q_EMIT benchmarkComplete(m_result);
     return {};
 }
 
@@ -372,56 +382,19 @@ void DiskBenchmarkWorker::runRandom4KRead(
 
     const uint64_t file_size = m_config.test_file_size_mb * 1024ULL * 1024;
     const uint64_t max_offset = (file_size / kRandomBlockSize - 1) * kRandomBlockSize;
-
-    std::mt19937_64 rng(654);
-    std::uniform_int_distribution<uint64_t> offset_dist(0, max_offset / kRandomBlockSize);
-
     const int duration_ms = m_config.random_duration_sec * 1000;
+
     std::vector<double> latencies;
     latencies.reserve(100000);
-
-    QElapsedTimer total_timer;
-    total_timer.start();
-
     uint64_t total_ops = 0;
     uint64_t total_bytes = 0;
 
-    while (total_timer.elapsed() < duration_ms) {
-        if (stopRequested()) break;
-
-        for (int q = 0; q < queue_depth; ++q) {
-            const uint64_t offset = offset_dist(rng) * kRandomBlockSize;
-
-            LARGE_INTEGER li;
-            li.QuadPart = static_cast<LONGLONG>(offset);
-            if (!SetFilePointerEx(h, li, nullptr, FILE_BEGIN)) {
-                logWarning("Random 4K read: SetFilePointerEx failed at offset {} (error {})",
-                           offset, GetLastError());
-                continue;
-            }
-
-            QElapsedTimer op_timer;
-            op_timer.start();
-
-            DWORD bytes_read = 0;
-            if (!ReadFile(h, buf.data() + q * kRandomBlockSize,
-                    static_cast<DWORD>(kRandomBlockSize), &bytes_read, nullptr)) {
-                logWarning("Random 4K read: ReadFile failed at offset {} (error {})",
-                           offset, GetLastError());
-                continue;
-            }
-
-            const double lat_us = op_timer.nsecsElapsed() / 1000.0;
-            latencies.push_back(lat_us);
-
-            total_bytes += bytes_read;
-            ++total_ops;
-        }
-    }
+    const double elapsed_sec = runRandom4KReadLoop(
+        h, buf.data(), queue_depth, max_offset,
+        duration_ms, latencies, total_ops, total_bytes);
 
     CloseHandle(h);
 
-    const double elapsed_sec = total_timer.nsecsElapsed() / 1'000'000'000.0;
     iops = static_cast<double>(total_ops) / elapsed_sec;
     read_mbps = static_cast<double>(total_bytes) / (1024.0 * 1024.0) / elapsed_sec;
 
@@ -442,6 +415,108 @@ void DiskBenchmarkWorker::runRandom4KRead(
     (void)latencies_out;
 #endif
 }
+
+#ifdef SAK_PLATFORM_WINDOWS
+double DiskBenchmarkWorker::runRandom4KReadLoop(
+    void* file_handle, uint8_t* buf_data, int queue_depth,
+    uint64_t max_offset, int duration_ms,
+    std::vector<double>& latencies,
+    uint64_t& total_ops, uint64_t& total_bytes)
+{
+    HANDLE h = static_cast<HANDLE>(file_handle);
+    std::mt19937_64 rng(654);
+    std::uniform_int_distribution<uint64_t> offset_dist(0, max_offset / kRandomBlockSize);
+
+    QElapsedTimer total_timer;
+    total_timer.start();
+
+    while (total_timer.elapsed() < duration_ms) {
+        if (stopRequested()) break;
+
+        for (int q = 0; q < queue_depth; ++q) {
+            const uint64_t offset = offset_dist(rng) * kRandomBlockSize;
+
+            LARGE_INTEGER li;
+            li.QuadPart = static_cast<LONGLONG>(offset);
+            if (!SetFilePointerEx(h, li, nullptr, FILE_BEGIN)) {
+                logWarning("Random 4K read: SetFilePointerEx failed at offset {} (error {})",
+                           offset, GetLastError());
+                continue;
+            }
+
+            QElapsedTimer op_timer;
+            op_timer.start();
+
+            DWORD bytes_read = 0;
+            if (!ReadFile(h, buf_data + q * kRandomBlockSize,
+                    static_cast<DWORD>(kRandomBlockSize), &bytes_read, nullptr)) {
+                logWarning("Random 4K read: ReadFile failed at offset {} (error {})",
+                           offset, GetLastError());
+                continue;
+            }
+
+            const double lat_us = op_timer.nsecsElapsed() / 1000.0;
+            latencies.push_back(lat_us);
+
+            total_bytes += bytes_read;
+            ++total_ops;
+        }
+    }
+
+    return total_timer.nsecsElapsed() / 1'000'000'000.0;
+}
+#endif
+
+#ifdef SAK_PLATFORM_WINDOWS
+double DiskBenchmarkWorker::runRandom4KWriteLoop(
+    void* file_handle, const uint8_t* buf_data, int queue_depth,
+    uint64_t max_offset, int duration_ms,
+    std::vector<double>& latencies,
+    uint64_t& total_ops, uint64_t& total_bytes)
+{
+    HANDLE h = static_cast<HANDLE>(file_handle);
+    std::mt19937_64 rng(876);
+    std::uniform_int_distribution<uint64_t> offset_dist(0, max_offset / kRandomBlockSize);
+
+    QElapsedTimer total_timer;
+    total_timer.start();
+
+    while (total_timer.elapsed() < duration_ms) {
+        if (stopRequested()) break;
+
+        for (int q = 0; q < queue_depth; ++q) {
+            const uint64_t offset = offset_dist(rng) * kRandomBlockSize;
+
+            LARGE_INTEGER li;
+            li.QuadPart = static_cast<LONGLONG>(offset);
+            if (!SetFilePointerEx(h, li, nullptr, FILE_BEGIN)) {
+                logWarning("Random 4K write: SetFilePointerEx failed at offset {} (error {})",
+                           offset, GetLastError());
+                continue;
+            }
+
+            QElapsedTimer op_timer;
+            op_timer.start();
+
+            DWORD bytes_written = 0;
+            if (!WriteFile(h, buf_data + q * kRandomBlockSize,
+                     static_cast<DWORD>(kRandomBlockSize), &bytes_written, nullptr)) {
+                logWarning("Random 4K write: WriteFile failed at offset {} (error {})",
+                           offset, GetLastError());
+                continue;
+            }
+
+            const double lat_us = op_timer.nsecsElapsed() / 1000.0;
+            latencies.push_back(lat_us);
+
+            total_bytes += bytes_written;
+            ++total_ops;
+        }
+    }
+
+    return total_timer.nsecsElapsed() / 1'000'000'000.0;
+}
+#endif
 
 void DiskBenchmarkWorker::runRandom4KWrite(
     int queue_depth,
@@ -479,55 +554,16 @@ void DiskBenchmarkWorker::runRandom4KWrite(
     const uint64_t file_size = m_config.test_file_size_mb * 1024ULL * 1024;
     const uint64_t max_offset = (file_size / kRandomBlockSize - 1) * kRandomBlockSize;
 
-    std::mt19937_64 rng(876);
-    std::uniform_int_distribution<uint64_t> offset_dist(0, max_offset / kRandomBlockSize);
-
-    const int duration_ms = m_config.random_duration_sec * 1000;
     std::vector<double> latencies;
     latencies.reserve(100000);
-
-    QElapsedTimer total_timer;
-    total_timer.start();
-
     uint64_t total_ops = 0;
     uint64_t total_bytes = 0;
 
-    while (total_timer.elapsed() < duration_ms) {
-        if (stopRequested()) break;
-
-        for (int q = 0; q < queue_depth; ++q) {
-            const uint64_t offset = offset_dist(rng) * kRandomBlockSize;
-
-            LARGE_INTEGER li;
-            li.QuadPart = static_cast<LONGLONG>(offset);
-            if (!SetFilePointerEx(h, li, nullptr, FILE_BEGIN)) {
-                logWarning("Random 4K write: SetFilePointerEx failed at offset {} (error {})",
-                           offset, GetLastError());
-                continue;
-            }
-
-            QElapsedTimer op_timer;
-            op_timer.start();
-
-            DWORD bytes_written = 0;
-            if (!WriteFile(h, buf.data() + q * kRandomBlockSize,
-                     static_cast<DWORD>(kRandomBlockSize), &bytes_written, nullptr)) {
-                logWarning("Random 4K write: WriteFile failed at offset {} (error {})",
-                           offset, GetLastError());
-                continue;
-            }
-
-            const double lat_us = op_timer.nsecsElapsed() / 1000.0;
-            latencies.push_back(lat_us);
-
-            total_bytes += bytes_written;
-            ++total_ops;
-        }
-    }
+    const double elapsed_sec = runRandom4KWriteLoop(
+        h, buf.data(), queue_depth, max_offset,
+        m_config.random_duration_sec * 1000, latencies, total_ops, total_bytes);
 
     CloseHandle(h);
-
-    const double elapsed_sec = total_timer.nsecsElapsed() / 1'000'000'000.0;
     iops = static_cast<double>(total_ops) / elapsed_sec;
     write_mbps = static_cast<double>(total_bytes) / (1024.0 * 1024.0) / elapsed_sec;
 

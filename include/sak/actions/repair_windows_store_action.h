@@ -45,6 +45,12 @@ private:
     bool reregisterWindowsStore();
     bool resetStoreServices();
     int checkStoreEventLogs();
+
+    /// @brief Build the diagnostic report string from repair phase results
+    QString buildRepairReport(const StorePackageInfo& before_info, int error_count,
+                              bool cache_reset, bool package_reset,
+                              bool reregistered, bool services_restarted,
+                              const StorePackageInfo& after_info, int post_error_count);
 };
 
 } // namespace sak

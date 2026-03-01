@@ -7,8 +7,11 @@
 #include "sak/file_hash.h"
 #include <QString>
 #include <QMap>
+#include <QMutex>
 #include <QVector>
+#include <atomic>
 #include <filesystem>
+#include <functional>
 #include <unordered_map>
 #include <vector>
 
@@ -100,6 +103,18 @@ private:
     auto calculateHashesParallel(const std::vector<std::filesystem::path>& files)
         -> std::expected<std::vector<std::pair<std::filesystem::path, std::string>>, sak::error_code>;
 
+    /// @brief Create the per-file hashing task callable for parallel execution
+    std::function<void(int)> createHashTask(
+        const std::vector<std::filesystem::path>& files,
+        std::vector<std::pair<std::filesystem::path, std::string>>& results,
+        std::atomic<int>& processed_count,
+        std::atomic<bool>& error_occurred,
+        QMutex& results_mutex);
+
+    /// @brief Filter out empty/failed results from parallel hashing
+    static std::vector<std::pair<std::filesystem::path, std::string>> filterValidResults(
+        const std::vector<std::pair<std::filesystem::path, std::string>>& results);
+
     /**
      * @brief Group files by hash
      * @param files Files with their hashes
@@ -114,6 +129,16 @@ private:
      * @return Summary string
      */
     auto generateSummary(const std::vector<DuplicateGroup>& groups) -> QString;
+
+    /// @brief Hash all files (parallel or sequential based on config)
+    auto hashFiles(const std::vector<std::filesystem::path>& files)
+        -> std::expected<std::vector<std::pair<std::filesystem::path, std::string>>, sak::error_code>;
+
+    /// @brief Build duplicate groups from hash-grouped files
+    void buildDuplicateGroups(
+        const std::unordered_map<std::string, std::vector<std::filesystem::path>>& hash_groups,
+        std::vector<DuplicateGroup>& duplicate_groups,
+        int& total_duplicates, qint64& total_wasted);
 
     Config m_config;
     sak::file_hasher m_hasher;

@@ -11,6 +11,9 @@
 #include <QObject>
 #include <QString>
 
+class QJsonArray;
+class QJsonObject;
+
 namespace sak {
 
 /// @brief Generates professional diagnostic reports from collected data
@@ -106,6 +109,40 @@ private:
 
     /// @brief Format bytes as a human-readable string (e.g., "16.0 GB")
     [[nodiscard]] static QString formatBytes(uint64_t bytes);
+
+    // -- JSON section serializers (TigerStyle decomposition) --
+
+    /// @brief Serialize metadata section for JSON output
+    [[nodiscard]] QJsonObject serializeMetadataSection() const;
+
+    /// @brief Serialize CPU hardware data for JSON output
+    [[nodiscard]] QJsonObject serializeCpuSection() const;
+
+    /// @brief Serialize memory hardware data for JSON output
+    [[nodiscard]] QJsonObject serializeMemorySection() const;
+
+    /// @brief Serialize storage devices for JSON output
+    [[nodiscard]] QJsonArray serializeStorageSection() const;
+
+    /// @brief Serialize GPU data for JSON output
+    [[nodiscard]] QJsonArray serializeGpuSection() const;
+
+    /// @brief Serialize SMART health reports for JSON output
+    [[nodiscard]] QJsonArray serializeSmartSection() const;
+
+    /// @brief Serialize benchmark results for JSON output
+    [[nodiscard]] QJsonObject serializeBenchmarkSection() const;
+
+    // -- CSV section writers (TigerStyle decomposition) --
+
+    /// @brief Write hardware summary rows to CSV stream
+    void writeCsvHardwareSummary(QTextStream& out) const;
+
+    /// @brief Write SMART health rows to CSV stream
+    void writeCsvSmartHealth(QTextStream& out) const;
+
+    /// @brief Write benchmark and stress-test rows to CSV stream
+    void writeCsvBenchmarks(QTextStream& out) const;
 
     DiagnosticReportData m_data;
 };

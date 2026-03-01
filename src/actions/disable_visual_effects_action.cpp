@@ -105,18 +105,50 @@ void DisableVisualEffectsAction::execute() {
     report += buildCurrentSettingsReport(current_settings);
     
     Q_EMIT executionProgress("Applying Best Performance settings...", 35);
-    
+
     // Phase 2: Apply settings
+    int settings_changed = 0;
+    int settings_total = 0;
+    applyVisualEffectsSettings(report, settings_changed, settings_total);
+
+    Q_EMIT executionProgress("Notifying system of changes...", 70);
+
+    // Phase 3: Notify system
+    report += "║ Phase 3: System Notification                                        ║\n";
+    report += "╠══════════════════════════════════════════════════════════════════════╣\n";
+
+    ProcessResult notify_proc = runProcess("rundll32.exe",
+        QStringList() << "user32.dll,UpdatePerUserSystemParameters" << "1" << "True", 5000);
+    if (!notify_proc.succeeded()) {
+        Q_EMIT logMessage("Visual effects notify warning: " + notify_proc.std_err.trimmed());
+    }
+    bool notification_success = notify_proc.succeeded();
+
+    report += QString("║ System Notification: %1").arg(notification_success ? "✓ Success" : "✗ Failed").leftJustified(73, ' ') + "║\n";
+    report += "╠══════════════════════════════════════════════════════════════════════╣\n";
+
+    Q_EMIT executionProgress("Optimization complete", 100);
+
+    // Phase 4: Summary
+    report += buildSummaryReport(settings_total, settings_changed, fx_mode);
+
+    buildAndFinishVisualEffectsResult(report, settings_total, settings_changed,
+                                      notification_success, fx_mode, start_time);
+}
+
+void DisableVisualEffectsAction::applyVisualEffectsSettings(
+    QString& report, int& settings_changed, int& settings_total)
+{
     report += "║ Phase 2: Applying Best Performance Settings                         ║\n";
     report += "╠══════════════════════════════════════════════════════════════════════╣\n";
-    
+
     ProcessResult ps_apply = runPowerShell(buildApplySettingsScript(), 10000);
     if (!ps_apply.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("Visual effects apply warning: " + ps_apply.std_err.trimmed());
     }
-    
-    int settings_changed = 0;
-    int settings_total = 0;
+
+    settings_changed = 0;
+    settings_total = 0;
     for (const QString& line : ps_apply.std_out.trimmed().split('\n')) {
         if (line.startsWith("CHANGES:")) {
             settings_changed = line.mid(8).toInt();
@@ -124,32 +156,16 @@ void DisableVisualEffectsAction::execute() {
             settings_total = line.mid(6).toInt();
         }
     }
-    
+
     report += QString("║ Settings Modified: %1 / %2").arg(settings_changed).arg(settings_total).leftJustified(73, ' ') + "║\n";
     report += "╠══════════════════════════════════════════════════════════════════════╣\n";
-    
-    Q_EMIT executionProgress("Notifying system of changes...", 70);
-    
-    // Phase 3: Notify system
-    report += "║ Phase 3: System Notification                                        ║\n";
-    report += "╠══════════════════════════════════════════════════════════════════════╣\n";
-    
-    ProcessResult notify_proc = runProcess("rundll32.exe",
-        QStringList() << "user32.dll,UpdatePerUserSystemParameters" << "1" << "True", 5000);
-    if (!notify_proc.succeeded()) {
-        Q_EMIT logMessage("Visual effects notify warning: " + notify_proc.std_err.trimmed());
-    }
-    bool notification_success = notify_proc.succeeded();
-    
-    report += QString("║ System Notification: %1").arg(notification_success ? "✓ Success" : "✗ Failed").leftJustified(73, ' ') + "║\n";
-    report += "╠══════════════════════════════════════════════════════════════════════╣\n";
-    
-    Q_EMIT executionProgress("Optimization complete", 100);
-    
-    // Phase 4: Summary
-    report += buildSummaryReport(settings_total, settings_changed, fx_mode);
-    
-    // Structured output
+}
+
+void DisableVisualEffectsAction::buildAndFinishVisualEffectsResult(
+    const QString& report, int settings_total, int settings_changed,
+    bool notification_success, const QString& fx_mode,
+    const QDateTime& start_time)
+{
     QString structured_output;
     structured_output += QString("SETTINGS_TOTAL:%1\n").arg(settings_total);
     structured_output += QString("SETTINGS_CHANGED:%1\n").arg(settings_changed);
@@ -157,17 +173,17 @@ void DisableVisualEffectsAction::execute() {
     structured_output += QString("NOTIFICATION_SUCCESS:%1\n").arg(notification_success ? "YES" : "NO");
     structured_output += QString("RESTART_REQUIRED:%1\n").arg(settings_changed > 0 ? "YES" : "NO");
     structured_output += QString("VISUAL_FX_MODE:%1\n").arg(fx_mode);
-    
+
     qint64 duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
-    
+
     ExecutionResult result;
     result.duration_ms = duration_ms;
     result.success = (settings_total > 0);
-    result.message = settings_changed > 0 
+    result.message = settings_changed > 0
         ? QString("Visual effects optimized (%1 settings changed)").arg(settings_changed)
         : "Visual effects already optimized for Best Performance";
     result.log = report + "\n" + structured_output;
-    
+
     finishWithResult(result, result.success ? ActionStatus::Success : ActionStatus::Failed);
 }
 
@@ -193,12 +209,9 @@ QString DisableVisualEffectsAction::buildCheckSettingsScript() const
         )";
 }
 
-QString DisableVisualEffectsAction::buildApplySettingsScript() const
+QString DisableVisualEffectsAction::buildApplyScriptPerformanceChecks() const
 {
     return R"(
-            $changes = 0
-            $total = 0
-            
             # VisualFXSetting: 2 = Best Performance
             $total++
             if ((Get-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects' -Name 'VisualFXSetting' -ErrorAction SilentlyContinue).VisualFXSetting -ne 2) {
@@ -235,7 +248,12 @@ QString DisableVisualEffectsAction::buildApplySettingsScript() const
                 Set-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced' -Name 'ListviewAlphaSelect' -Value 0 -Type DWord -Force
                 $changes++
             }
-            
+            )";
+}
+
+QString DisableVisualEffectsAction::buildApplyScriptDesktopChecks() const
+{
+    return R"(
             $total++
             if ((Get-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced' -Name 'ListviewShadow' -ErrorAction SilentlyContinue).ListviewShadow -ne 0) {
                 Set-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced' -Name 'ListviewShadow' -Value 0 -Type DWord -Force
@@ -277,6 +295,13 @@ QString DisableVisualEffectsAction::buildApplySettingsScript() const
             Write-Output "CHANGES:$changes"
             Write-Output "TOTAL:$total"
             )";
+}
+
+QString DisableVisualEffectsAction::buildApplySettingsScript() const
+{
+    return "\n            $changes = 0\n            $total = 0\n"
+           + buildApplyScriptPerformanceChecks()
+           + buildApplyScriptDesktopChecks();
 }
 
 QString DisableVisualEffectsAction::buildCurrentSettingsReport(const QJsonObject& current_settings) const

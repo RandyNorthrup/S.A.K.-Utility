@@ -120,6 +120,12 @@ private:
         const scan_options& options,
         std::size_t current_depth) const noexcept;
     
+    /// @brief Check file-specific filters (patterns, size limits)
+    [[nodiscard]] bool shouldIncludeFile(
+        const std::filesystem::directory_entry& entry,
+        const std::filesystem::path& path,
+        const scan_options& options) const noexcept;
+    
     /// @brief Check if path is hidden
     /// @param path Path to check
     /// @return True if hidden
@@ -134,6 +140,14 @@ private:
     /// @return Error code if error occurred, success otherwise
     auto scanDirectoryRecursive(
         const std::filesystem::path& current_path,
+        const scan_options& options,
+        scan_statistics& stats,
+        std::size_t current_depth,
+        std::stop_token stop_token) -> std::expected<void, error_code>;
+    
+    /// @brief Process a single directory entry during recursive scan
+    auto processScannedEntry(
+        const std::filesystem::directory_entry& entry,
         const scan_options& options,
         scan_statistics& stats,
         std::size_t current_depth,

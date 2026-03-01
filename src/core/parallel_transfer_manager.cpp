@@ -410,15 +410,27 @@ void ParallelTransferManager::rebalanceBandwidth() {
         ? m_perJobBandwidthLimitMbps * 1024
         : totalKbps;
 
-    struct Allocation {
-        QString jobId;
-        int weight{1};
-        int cap{0};
-        int assigned{0};
-    };
+    auto allocations = buildInitialAllocations(totalKbps, perJobCapKbps);
 
-    QVector<Allocation> allocations;
-    allocations.reserve(activeCount);
+    int assignedTotal = 0;
+    for (const auto& alloc : allocations) {
+        assignedTotal += alloc.assigned;
+    }
+
+    int remaining = totalKbps - assignedTotal;
+    if (remaining > 0) {
+        distributeExcessBandwidth(allocations, remaining);
+    }
+
+    for (const auto& alloc : allocations) {
+        Q_EMIT jobBandwidthUpdateRequested(alloc.jobId, alloc.assigned);
+    }
+}
+
+QVector<ParallelTransferManager::BandwidthAllocation>
+ParallelTransferManager::buildInitialAllocations(int totalKbps, int perJobCapKbps) {
+    QVector<BandwidthAllocation> allocations;
+    allocations.reserve(m_activeJobs.size());
 
     int totalWeight = 0;
     for (const auto& jobId : m_activeJobs) {
@@ -429,61 +441,51 @@ void ParallelTransferManager::rebalanceBandwidth() {
     }
 
     if (totalWeight <= 0) {
-        totalWeight = activeCount;
+        totalWeight = static_cast<int>(m_activeJobs.size());
         for (auto& alloc : allocations) {
             alloc.weight = 1;
         }
     }
 
-    int assignedTotal = 0;
     for (auto& alloc : allocations) {
-        const int desired = qMax(1, static_cast<int>((static_cast<long long>(totalKbps) * alloc.weight) / totalWeight));
+        const int desired = qMax(1, static_cast<int>(
+            (static_cast<long long>(totalKbps) * alloc.weight) / totalWeight));
         alloc.assigned = qMin(alloc.cap, desired);
-        assignedTotal += alloc.assigned;
     }
 
-    int remaining = totalKbps - assignedTotal;
-    if (remaining > 0) {
-        int iterations = 0;
-        while (remaining > 0 && iterations < 1000) {
-            int weightSum = 0;
-            for (const auto& alloc : allocations) {
-                if (alloc.assigned < alloc.cap) {
-                    weightSum += alloc.weight;
-                }
-            }
+    return allocations;
+}
 
-            if (weightSum <= 0) {
-                break;
+void ParallelTransferManager::distributeExcessBandwidth(
+    QVector<BandwidthAllocation>& allocations, int remaining) {
+    int iterations = 0;
+    while (remaining > 0 && iterations < 1000) {
+        int weightSum = 0;
+        for (const auto& alloc : allocations) {
+            if (alloc.assigned < alloc.cap) {
+                weightSum += alloc.weight;
             }
-
-            bool progress = false;
-            for (auto& alloc : allocations) {
-                if (alloc.assigned >= alloc.cap) {
-                    continue;
-                }
-
-                const int slice = qMax(1, static_cast<int>((static_cast<long long>(remaining) * alloc.weight) / weightSum));
-                const int delta = qMin(slice, alloc.cap - alloc.assigned);
-                if (delta > 0) {
-                    alloc.assigned += delta;
-                    remaining -= delta;
-                    progress = true;
-                    if (remaining <= 0) {
-                        break;
-                    }
-                }
-            }
-
-            if (!progress) {
-                break;
-            }
-            ++iterations;
         }
-    }
 
-    for (const auto& alloc : allocations) {
-        Q_EMIT jobBandwidthUpdateRequested(alloc.jobId, alloc.assigned);
+        if (weightSum <= 0) break;
+
+        bool progress = false;
+        for (auto& alloc : allocations) {
+            if (alloc.assigned >= alloc.cap) continue;
+
+            const int slice = qMax(1, static_cast<int>(
+                (static_cast<long long>(remaining) * alloc.weight) / weightSum));
+            const int delta = qMin(slice, alloc.cap - alloc.assigned);
+            if (delta > 0) {
+                alloc.assigned += delta;
+                remaining -= delta;
+                progress = true;
+                if (remaining <= 0) break;
+            }
+        }
+
+        if (!progress) break;
+        ++iterations;
     }
 }
 

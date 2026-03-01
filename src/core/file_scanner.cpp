@@ -174,36 +174,8 @@ bool file_scanner::shouldProcessEntry(
         }
         
         // For files, check patterns and size filters
-        if (is_file) {
-            // Check exclude patterns
-            if (!options.exclude_patterns.empty()) {
-                if (path_utils::matchesPattern(path, options.exclude_patterns)) {
-                    return false;
-                }
-            }
-            
-            // Check include patterns (if specified, must match at least one)
-            if (!options.include_patterns.empty()) {
-                if (!path_utils::matchesPattern(path, options.include_patterns)) {
-                    return false;
-                }
-            }
-            
-            // Check file size
-            if (options.calculate_sizes) {
-                std::error_code ec;
-                auto size = entry.file_size(ec);
-                
-                if (!ec) {
-                    if (options.min_file_size > 0 && size < options.min_file_size) {
-                        return false;
-                    }
-                    
-                    if (options.max_file_size > 0 && size > options.max_file_size) {
-                        return false;
-                    }
-                }
-            }
+        if (is_file && !shouldIncludeFile(entry, path, options)) {
+            return false;
         }
         
         return true;
@@ -213,6 +185,51 @@ bool file_scanner::shouldProcessEntry(
         return false;
     } catch (...) {
         logDebug("Non-standard exception in shouldProcessEntry()");
+        return false;
+    }
+}
+
+bool file_scanner::shouldIncludeFile(
+    const std::filesystem::directory_entry& entry,
+    const std::filesystem::path& path,
+    const scan_options& options) const noexcept {
+    try {
+        // Check exclude patterns
+        if (!options.exclude_patterns.empty()) {
+            if (path_utils::matchesPattern(path, options.exclude_patterns)) {
+                return false;
+            }
+        }
+
+        // Check include patterns (if specified, must match at least one)
+        if (!options.include_patterns.empty()) {
+            if (!path_utils::matchesPattern(path, options.include_patterns)) {
+                return false;
+            }
+        }
+
+        // Check file size
+        if (options.calculate_sizes) {
+            std::error_code ec;
+            auto size = entry.file_size(ec);
+
+            if (!ec) {
+                if (options.min_file_size > 0 && size < options.min_file_size) {
+                    return false;
+                }
+
+                if (options.max_file_size > 0 && size > options.max_file_size) {
+                    return false;
+                }
+            }
+        }
+
+        return true;
+    } catch (const std::exception& e) {
+        logDebug("Exception in shouldIncludeFile(): {}", e.what());
+        return false;
+    } catch (...) {
+        logDebug("Non-standard exception in shouldIncludeFile()");
         return false;
     }
 }
@@ -245,6 +262,69 @@ bool file_scanner::isHidden(const std::filesystem::path& path) noexcept {
     }
 }
 
+auto file_scanner::processScannedEntry(
+    const std::filesystem::directory_entry& entry,
+    const scan_options& options,
+    scan_statistics& stats,
+    std::size_t current_depth,
+    std::stop_token stop_token) -> std::expected<void, error_code> {
+    
+    if (!shouldProcessEntry(entry, options, current_depth)) {
+        stats.skipped_by_filter++;
+        return {};
+    }
+    
+    bool is_dir = entry.is_directory();
+    bool is_file = entry.is_regular_file();
+    
+    // Update statistics
+    if (is_file) {
+        stats.files_found++;
+        
+        if (options.calculate_sizes) {
+            std::error_code size_ec;
+            auto size = entry.file_size(size_ec);
+            if (!size_ec) {
+                stats.total_size += size;
+                m_size_processed.fetch_add(size, std::memory_order_relaxed);
+            }
+        }
+        
+        m_files_processed.fetch_add(1, std::memory_order_relaxed);
+        
+        if (options.progress_callback) {
+            options.progress_callback(
+                m_files_processed.load(std::memory_order_relaxed),
+                m_size_processed.load(std::memory_order_relaxed)
+            );
+        }
+    } else if (is_dir) {
+        stats.directories_found++;
+    }
+    
+    // Call user callback
+    if (options.callback) {
+        if (!options.callback(entry.path(), is_dir)) {
+            return std::unexpected(error_code::operation_cancelled);
+        }
+    }
+    
+    // Recurse into subdirectories
+    if (is_dir && options.recursive) {
+        auto recurse_result = scanDirectoryRecursive(
+            entry.path(), options, stats, current_depth + 1, stop_token);
+        
+        if (!recurse_result) {
+            if (recurse_result.error() == error_code::operation_cancelled) {
+                return recurse_result;
+            }
+            stats.errors_encountered++;
+        }
+    }
+    
+    return {};
+}
+
 auto file_scanner::scanDirectoryRecursive(
     const std::filesystem::path& current_path,
     const scan_options& options,
@@ -253,15 +333,12 @@ auto file_scanner::scanDirectoryRecursive(
     std::stop_token stop_token) -> std::expected<void, error_code> {
     Q_ASSERT_X(!current_path.empty(), "scanDirectoryRecursive", "current_path must not be empty");
     
-    // Check for cancellation
     if (stop_token.stop_requested()) {
         return std::unexpected(error_code::operation_cancelled);
     }
     
     try {
-        // Choose directory iterator based on options
         auto dir_options = std::filesystem::directory_options::skip_permission_denied;
-        
         if (options.follow_symlinks) {
             dir_options |= std::filesystem::directory_options::follow_directory_symlink;
         }
@@ -276,82 +353,21 @@ auto file_scanner::scanDirectoryRecursive(
         }
         
         for (const auto& entry : dir_it) {
-            // Check cancellation
             if (stop_token.stop_requested()) {
                 return std::unexpected(error_code::operation_cancelled);
             }
             
             try {
-                // Check if entry should be processed
-                if (!shouldProcessEntry(entry, options, current_depth)) {
-                    stats.skipped_by_filter++;
-                    continue;
+                auto result = processScannedEntry(entry, options, stats, current_depth, stop_token);
+                if (!result) {
+                    return result;
                 }
-                
-                bool is_dir = entry.is_directory();
-                bool is_file = entry.is_regular_file();
-                
-                // Update statistics
-                if (is_file) {
-                    stats.files_found++;
-                    
-                    if (options.calculate_sizes) {
-                        std::error_code size_ec;
-                        auto size = entry.file_size(size_ec);
-                        if (!size_ec) {
-                            stats.total_size += size;
-                            m_size_processed.fetch_add(size, std::memory_order_relaxed);
-                        }
-                    }
-                    
-                    m_files_processed.fetch_add(1, std::memory_order_relaxed);
-                    
-                    // Call progress callback
-                    if (options.progress_callback) {
-                        options.progress_callback(
-                            m_files_processed.load(std::memory_order_relaxed),
-                            m_size_processed.load(std::memory_order_relaxed)
-                        );
-                    }
-                } else if (is_dir) {
-                    stats.directories_found++;
-                }
-                
-                // Call user callback
-                if (options.callback) {
-                    if (!options.callback(entry.path(), is_dir)) {
-                        // User requested stop
-                        return std::unexpected(error_code::operation_cancelled);
-                    }
-                }
-                
-                // Recurse into subdirectories
-                if (is_dir && options.recursive) {
-                    auto recurse_result = scanDirectoryRecursive(
-                        entry.path(),
-                        options,
-                        stats,
-                        current_depth + 1,
-                        stop_token
-                    );
-                    
-                    if (!recurse_result) {
-                        if (recurse_result.error() == error_code::operation_cancelled) {
-                            return recurse_result;
-                        }
-                        // For other errors, log and continue
-                        stats.errors_encountered++;
-                    }
-                }
-                
             } catch (const std::filesystem::filesystem_error& e) {
                 logWarning("Error processing entry: {} - {}", entry.path().string(), e.what());
                 stats.errors_encountered++;
-                // Continue with next entry
             } catch (const std::exception& e) {
                 logWarning("Unexpected error processing entry: {}", e.what());
                 stats.errors_encountered++;
-                // Continue with next entry
             }
         }
         

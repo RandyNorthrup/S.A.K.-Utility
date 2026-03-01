@@ -85,7 +85,20 @@ std::optional<UserDataManager::BackupEntry> UserDataManager::backupAppData(const
         }
     }
     
-    // Create backup entry
+    // Build and persist backup entry
+    BackupEntry entry = buildBackupResult(app_name, source_paths, archive_path, total_size, config);
+    entry.checksum = checksum;
+    
+    Q_EMIT operationCompleted(app_name, true, "Backup completed successfully");
+    return entry;
+}
+
+UserDataManager::BackupEntry UserDataManager::buildBackupResult(const QString& app_name,
+                                                                 const QStringList& source_paths,
+                                                                 const QString& archive_path,
+                                                                 qint64 total_size,
+                                                                 const BackupConfig& config)
+{
     BackupEntry entry;
     entry.app_name = app_name;
     entry.source_paths = source_paths;
@@ -93,7 +106,6 @@ std::optional<UserDataManager::BackupEntry> UserDataManager::backupAppData(const
     entry.backup_date = QDateTime::currentDateTime();
     entry.total_size = total_size;
     entry.compressed_size = config.compress ? QFileInfo(archive_path).size() : total_size;
-    entry.checksum = checksum;
     entry.encrypted = false;
     entry.excluded_patterns = config.exclude_patterns;
     
@@ -103,7 +115,6 @@ std::optional<UserDataManager::BackupEntry> UserDataManager::backupAppData(const
         sak::logWarning("[UserDataManager] Failed to write metadata");
     }
     
-    Q_EMIT operationCompleted(app_name, true, "Backup completed successfully");
     return entry;
 }
 
@@ -388,23 +399,55 @@ bool UserDataManager::compareChecksums(const QString& file1, const QString& file
     return generateChecksum(file1) == generateChecksum(file2);
 }
 
+QString UserDataManager::mapCompressionLevel(int level)
+{
+    if (level == 0) {
+        return QStringLiteral("NoCompression");
+    } else if (level <= 3) {
+        return QStringLiteral("Fastest");
+    } else {
+        return QStringLiteral("Optimal"); // PowerShell doesn't have higher levels
+    }
+}
+
+bool UserDataManager::encryptArchiveInPlace(const QString& archive_path,
+                                            const BackupConfig& config)
+{
+    // Read original archive
+    QFile archive(archive_path);
+    if (!archive.open(QIODevice::ReadOnly)) {
+        sak::logError("[UserDataManager] Failed to open archive for reading: {}", archive_path.toStdString());
+        return false;
+    }
+    QByteArray data = archive.readAll();
+    archive.close();
+    
+    // Encrypt data
+    auto encrypted = sak::encryptData(data, config.password);
+    if (!encrypted) {
+        sak::logWarning("[UserDataManager] Encryption failed: {}", static_cast<int>(encrypted.error()));
+        QFile::remove(archive_path);
+        return false;
+    }
+    
+    // Write encrypted data
+    if (!archive.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        sak::logWarning("[UserDataManager] Failed to write encrypted file");
+        return false;
+    }
+    archive.write(*encrypted);
+    archive.close();
+    return true;
+}
+
 bool UserDataManager::createArchive(const QStringList& source_paths,
                                     const QString& archive_path,
                                     const BackupConfig& config)
 {
     Q_ASSERT_X(!source_paths.isEmpty(), "createArchive", "source_paths must not be empty");
     Q_ASSERT_X(!archive_path.isEmpty(), "createArchive", "archive_path must not be empty");
-    // Map compression level to PowerShell CompressionLevel
-    QString compressionLevel;
-    if (config.compression_level == 0) {
-        compressionLevel = "NoCompression";
-    } else if (config.compression_level <= 3) {
-        compressionLevel = "Fastest";
-    } else if (config.compression_level <= 6) {
-        compressionLevel = "Optimal";
-    } else {
-        compressionLevel = "Optimal"; // PowerShell doesn't have higher levels
-    }
+
+    QString compressionLevel = mapCompressionLevel(config.compression_level);
     
     // Use PowerShell's Compress-Archive for Windows
     QStringList args;
@@ -444,33 +487,49 @@ bool UserDataManager::createArchive(const QStringList& source_paths,
     
     // Encrypt archive if requested
     if (config.encrypt && !config.password.isEmpty()) {
-        // Read original archive
-        QFile archive(archive_path);
-        if (!archive.open(QIODevice::ReadOnly)) {
-            sak::logError("[UserDataManager] Failed to open archive for reading: {}", archive_path.toStdString());
+        if (!encryptArchiveInPlace(archive_path, config)) {
             return false;
         }
-        QByteArray data = archive.readAll();
-        archive.close();
-        
-        // Encrypt data
-        auto encrypted = sak::encryptData(data, config.password);
-        if (!encrypted) {
-            sak::logWarning("[UserDataManager] Encryption failed: {}", static_cast<int>(encrypted.error()));
-            QFile::remove(archive_path);
-            return false;
-        }
-        
-        // Write encrypted data
-        if (!archive.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-            sak::logWarning("[UserDataManager] Failed to write encrypted file");
-            return false;
-        }
-        archive.write(*encrypted);
-        archive.close();
     }
     
     return true;
+}
+
+QString UserDataManager::decryptArchiveToTempFile(const QString& archive_path, const QString& password)
+{
+    // Read encrypted archive
+    QFile archive(archive_path);
+    if (!archive.open(QIODevice::ReadOnly)) {
+        sak::logError("[UserDataManager] Failed to open encrypted archive for reading: {}", archive_path.toStdString());
+        return {};
+    }
+    QByteArray encrypted_data = archive.readAll();
+    archive.close();
+    
+    // Decrypt data
+    auto decrypted = sak::decryptData(encrypted_data, password);
+    if (!decrypted) {
+        sak::logWarning("[UserDataManager] Decryption failed: {}", static_cast<int>(decrypted.error()));
+        return {};
+    }
+    
+    // QTemporaryFile gives us an OS-generated unique name, preventing
+    // adversaries from predicting the path and racing to read the
+    // plaintext (TOCTOU mitigation).
+    QTemporaryFile temp;
+    // AutoRemove is disabled because we must keep the file alive until
+    // PowerShell finishes reading it — cleanup is handled manually on
+    // every exit path in extractArchive().
+    temp.setAutoRemove(false);
+    if (!temp.open()) {
+        sak::logError("[UserDataManager] Failed to create temporary file for decryption");
+        return {};
+    }
+    QString temp_path = temp.fileName();
+    temp.write(*decrypted);
+    temp.close();
+    
+    return temp_path;
 }
 
 bool UserDataManager::extractArchive(const QString& archive_path,
@@ -484,38 +543,10 @@ bool UserDataManager::extractArchive(const QString& archive_path,
     
     // Decrypt if password provided
     if (!config.password.isEmpty()) {
-        // Read encrypted archive
-        QFile archive(archive_path);
-        if (!archive.open(QIODevice::ReadOnly)) {
-            sak::logError("[UserDataManager] Failed to open encrypted archive for reading: {}", archive_path.toStdString());
+        temp_decrypted = decryptArchiveToTempFile(archive_path, config.password);
+        if (temp_decrypted.isEmpty()) {
             return false;
         }
-        QByteArray encrypted_data = archive.readAll();
-        archive.close();
-        
-        // Decrypt data
-        auto decrypted = sak::decryptData(encrypted_data, config.password);
-        if (!decrypted) {
-            sak::logWarning("[UserDataManager] Decryption failed: {}", static_cast<int>(decrypted.error()));
-            return false;
-        }
-        
-        // QTemporaryFile gives us an OS-generated unique name, preventing
-        // adversaries from predicting the path and racing to read the
-        // plaintext (TOCTOU mitigation).
-        QTemporaryFile temp;
-        // AutoRemove is disabled because we must keep the file alive until
-        // PowerShell finishes reading it — cleanup is handled manually on
-        // every exit path below.
-        temp.setAutoRemove(false);
-        if (!temp.open()) {
-            sak::logError("[UserDataManager] Failed to create temporary file for decryption");
-            return false;
-        }
-        temp_decrypted = temp.fileName();
-        temp.write(*decrypted);
-        temp.close();
-        
         file_to_extract = temp_decrypted;
     }
     

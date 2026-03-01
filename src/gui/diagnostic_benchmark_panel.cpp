@@ -220,16 +220,31 @@ QGroupBox* DiagnosticBenchmarkPanel::createBenchmarkSection()
     auto* group = new QGroupBox("Benchmarks", this);
     auto* layout = new QVBoxLayout(group);
 
-    // ── CPU Benchmark ───────────────────────────────────────────
+    layout->addWidget(createCpuBenchmarkGroup());
+    layout->addWidget(createDiskBenchmarkGroup());
+    layout->addWidget(createMemoryBenchmarkGroup());
+
+    connect(m_cpu_benchmark_button, &QPushButton::clicked,
+            this, &DiagnosticBenchmarkPanel::onRunCpuBenchmarkClicked);
+    connect(m_disk_benchmark_button, &QPushButton::clicked,
+            this, &DiagnosticBenchmarkPanel::onRunDiskBenchmarkClicked);
+    connect(m_mem_benchmark_button, &QPushButton::clicked,
+            this, &DiagnosticBenchmarkPanel::onRunMemoryBenchmarkClicked);
+
+    return group;
+}
+
+QGroupBox* DiagnosticBenchmarkPanel::createCpuBenchmarkGroup()
+{
     auto* cpu_group = new QGroupBox("CPU Benchmark", this);
     auto* cpu_layout = new QVBoxLayout(cpu_group);
 
     auto* cpu_scores = new QHBoxLayout();
-    m_cpu_single_score_label = new QLabel("Single-Thread: �", this);
+    m_cpu_single_score_label = new QLabel("Single-Thread: \u2014", this);
     m_cpu_single_score_label->setStyleSheet("font-weight: 600;");
     cpu_scores->addWidget(m_cpu_single_score_label);
 
-    m_cpu_multi_score_label = new QLabel("Multi-Thread: �", this);
+    m_cpu_multi_score_label = new QLabel("Multi-Thread: \u2014", this);
     m_cpu_multi_score_label->setStyleSheet("font-weight: 600;");
     cpu_scores->addWidget(m_cpu_multi_score_label);
 
@@ -260,9 +275,11 @@ QGroupBox* DiagnosticBenchmarkPanel::createBenchmarkSection()
     cpu_btn_layout->addWidget(m_cpu_benchmark_button);
     cpu_layout->addLayout(cpu_btn_layout);
 
-    layout->addWidget(cpu_group);
+    return cpu_group;
+}
 
-    // ── Disk Benchmark ──────────────────────────────────────────
+QGroupBox* DiagnosticBenchmarkPanel::createDiskBenchmarkGroup()
+{
     auto* disk_group = new QGroupBox("Disk I/O Benchmark", this);
     auto* disk_layout = new QVBoxLayout(disk_group);
 
@@ -276,17 +293,17 @@ QGroupBox* DiagnosticBenchmarkPanel::createBenchmarkSection()
     drive_row->addStretch();
     disk_layout->addLayout(drive_row);
 
-    m_disk_seq_label = new QLabel("Sequential: �", this);
+    m_disk_seq_label = new QLabel("Sequential: \u2014", this);
     m_disk_seq_label->setStyleSheet("font-weight: 600;");
     disk_layout->addWidget(m_disk_seq_label);
 
-    m_disk_rand_label = new QLabel("Random 4K: �", this);
+    m_disk_rand_label = new QLabel("Random 4K: \u2014", this);
     disk_layout->addWidget(m_disk_rand_label);
 
-    m_disk_latency_label = new QLabel("Latency: �", this);
+    m_disk_latency_label = new QLabel("Latency: \u2014", this);
     disk_layout->addWidget(m_disk_latency_label);
 
-    m_disk_score_label = new QLabel("Score: �", this);
+    m_disk_score_label = new QLabel("Score: \u2014", this);
     m_disk_score_label->setStyleSheet("font-weight: 600; color: #2563eb;");
     disk_layout->addWidget(m_disk_score_label);
 
@@ -299,20 +316,22 @@ QGroupBox* DiagnosticBenchmarkPanel::createBenchmarkSection()
     disk_btn_layout->addWidget(m_disk_benchmark_button);
     disk_layout->addLayout(disk_btn_layout);
 
-    layout->addWidget(disk_group);
+    return disk_group;
+}
 
-    // ── Memory Benchmark ────────────────────────────────────────
+QGroupBox* DiagnosticBenchmarkPanel::createMemoryBenchmarkGroup()
+{
     auto* mem_group = new QGroupBox("Memory Benchmark", this);
     auto* mem_layout = new QVBoxLayout(mem_group);
 
-    m_mem_bandwidth_label = new QLabel("Bandwidth: �", this);
+    m_mem_bandwidth_label = new QLabel("Bandwidth: \u2014", this);
     m_mem_bandwidth_label->setStyleSheet("font-weight: 600;");
     mem_layout->addWidget(m_mem_bandwidth_label);
 
-    m_mem_latency_label = new QLabel("Random Latency: �", this);
+    m_mem_latency_label = new QLabel("Random Latency: \u2014", this);
     mem_layout->addWidget(m_mem_latency_label);
 
-    m_mem_score_label = new QLabel("Score: �", this);
+    m_mem_score_label = new QLabel("Score: \u2014", this);
     m_mem_score_label->setStyleSheet("font-weight: 600; color: #2563eb;");
     mem_layout->addWidget(m_mem_score_label);
 
@@ -325,18 +344,9 @@ QGroupBox* DiagnosticBenchmarkPanel::createBenchmarkSection()
     mem_btn_layout->addWidget(m_mem_benchmark_button);
     mem_layout->addLayout(mem_btn_layout);
 
-    layout->addWidget(mem_group);
-
-    // Connect buttons
-    connect(m_cpu_benchmark_button, &QPushButton::clicked,
-            this, &DiagnosticBenchmarkPanel::onRunCpuBenchmarkClicked);
-    connect(m_disk_benchmark_button, &QPushButton::clicked,
-            this, &DiagnosticBenchmarkPanel::onRunDiskBenchmarkClicked);
-    connect(m_mem_benchmark_button, &QPushButton::clicked,
-            this, &DiagnosticBenchmarkPanel::onRunMemoryBenchmarkClicked);
-
-    return group;
+    return mem_group;
 }
+
 
 // ============================================================================
 // Section: Stress Test
@@ -348,6 +358,35 @@ QGroupBox* DiagnosticBenchmarkPanel::createStressTestSection()
     auto* layout = new QVBoxLayout(group);
 
     // Configuration row
+    layout->addLayout(createStressConfigRow());
+
+    // Status
+    m_stress_status_label = new QLabel("Status: Not Running", this);
+    m_stress_status_label->setStyleSheet("font-weight: 600; color: #1e293b;");
+    layout->addWidget(m_stress_status_label);
+
+    // Live stats row
+    auto* stats_row = new QHBoxLayout();
+    m_stress_elapsed_label = new QLabel("", this);
+    stats_row->addWidget(m_stress_elapsed_label);
+
+    m_stress_temp_label = new QLabel("", this);
+    stats_row->addWidget(m_stress_temp_label);
+
+    m_stress_errors_label = new QLabel("", this);
+    stats_row->addWidget(m_stress_errors_label);
+
+    stats_row->addStretch();
+    layout->addLayout(stats_row);
+
+    // Buttons
+    layout->addLayout(createStressButtonRow());
+
+    return group;
+}
+
+QHBoxLayout* DiagnosticBenchmarkPanel::createStressConfigRow()
+{
     auto* config_row = new QHBoxLayout();
     config_row->addWidget(new QLabel("Components:", this));
 
@@ -378,7 +417,7 @@ QGroupBox* DiagnosticBenchmarkPanel::createStressTestSection()
     config_row->addWidget(m_stress_duration_spin);
 
     config_row->addSpacing(20);
-    config_row->addWidget(new QLabel("Thermal Limit (�C):", this));
+    config_row->addWidget(new QLabel(QString("Thermal Limit (%1C):").arg(QChar(0x00B0)), this));
     m_stress_thermal_limit_spin = new QSpinBox(this);
     m_stress_thermal_limit_spin->setRange(60, 110);
     m_stress_thermal_limit_spin->setValue(95);
@@ -387,28 +426,11 @@ QGroupBox* DiagnosticBenchmarkPanel::createStressTestSection()
     config_row->addWidget(m_stress_thermal_limit_spin);
 
     config_row->addStretch();
-    layout->addLayout(config_row);
+    return config_row;
+}
 
-    // Status
-    m_stress_status_label = new QLabel("Status: Not Running", this);
-    m_stress_status_label->setStyleSheet("font-weight: 600; color: #1e293b;");
-    layout->addWidget(m_stress_status_label);
-
-    // Live stats row
-    auto* stats_row = new QHBoxLayout();
-    m_stress_elapsed_label = new QLabel("", this);
-    stats_row->addWidget(m_stress_elapsed_label);
-
-    m_stress_temp_label = new QLabel("", this);
-    stats_row->addWidget(m_stress_temp_label);
-
-    m_stress_errors_label = new QLabel("", this);
-    stats_row->addWidget(m_stress_errors_label);
-
-    stats_row->addStretch();
-    layout->addLayout(stats_row);
-
-    // Buttons
+QHBoxLayout* DiagnosticBenchmarkPanel::createStressButtonRow()
+{
     auto* button_layout = new QHBoxLayout();
     button_layout->addStretch();
 
@@ -425,14 +447,12 @@ QGroupBox* DiagnosticBenchmarkPanel::createStressTestSection()
     m_stress_stop_button->setToolTip(QStringLiteral("Stop the running stress test"));
     button_layout->addWidget(m_stress_stop_button);
 
-    layout->addLayout(button_layout);
-
     connect(m_stress_start_button, &QPushButton::clicked,
             this, &DiagnosticBenchmarkPanel::onStartStressTestClicked);
     connect(m_stress_stop_button, &QPushButton::clicked,
             this, &DiagnosticBenchmarkPanel::onStopStressTestClicked);
 
-    return group;
+    return button_layout;
 }
 
 // ============================================================================
@@ -551,6 +571,14 @@ QGroupBox* DiagnosticBenchmarkPanel::createReportSection()
     auto* group = new QGroupBox("Report Generation", this);
     auto* layout = new QVBoxLayout(group);
 
+    createReportInfoFields(layout);
+    createReportExportButtons(layout);
+
+    return group;
+}
+
+void DiagnosticBenchmarkPanel::createReportInfoFields(QVBoxLayout* layout)
+{
     // Technician / Ticket row
     auto* info_row = new QHBoxLayout();
     info_row->addWidget(new QLabel("Technician:", this));
@@ -578,8 +606,10 @@ QGroupBox* DiagnosticBenchmarkPanel::createReportSection()
     m_report_notes_edit->setPlaceholderText("Additional notes for the report...");
     notes_row->addWidget(m_report_notes_edit);
     layout->addLayout(notes_row);
+}
 
-    // Export buttons
+void DiagnosticBenchmarkPanel::createReportExportButtons(QVBoxLayout* layout)
+{
     auto* export_layout = new QHBoxLayout();
     export_layout->addStretch();
 
@@ -629,8 +659,6 @@ QGroupBox* DiagnosticBenchmarkPanel::createReportSection()
                 "csv");
         }
     });
-
-    return group;
 }
 
 // ============================================================================

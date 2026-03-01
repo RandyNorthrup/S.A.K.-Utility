@@ -105,6 +105,20 @@ private:
     int priorityScore(JobPriority priority) const;
     void rebalanceBandwidth();
 
+    /// @brief Per-job bandwidth allocation entry used during rebalancing
+    struct BandwidthAllocation {
+        QString jobId;
+        int weight{1};
+        int cap{0};
+        int assigned{0};
+    };
+
+    /// @brief Build weighted initial bandwidth allocations for active jobs
+    QVector<BandwidthAllocation> buildInitialAllocations(int totalKbps, int perJobCapKbps);
+
+    /// @brief Distribute remaining bandwidth across under-capped jobs
+    void distributeExcessBandwidth(QVector<BandwidthAllocation>& allocations, int remaining);
+
     QString m_currentDeploymentId;
     bool m_deploymentPaused{false};
 

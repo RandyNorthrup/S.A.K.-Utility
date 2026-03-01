@@ -228,6 +228,10 @@ private Q_SLOTS:
     void onWorkerFailed(const QString& error);
 
 private:
+    bool validateImagePath(const QString& imagePath);
+    bool prepareImageSource(const QString& imagePath);
+    bool unmountAndFlash(const QString& imagePath, const QStringList& targetDrives);
+
     bool validateTargets(const QStringList& targetDrives);
     bool unmountVolumes(const QStringList& targetDrives);
     void updateProgress();

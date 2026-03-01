@@ -1000,19 +1000,7 @@ void UserProfileRestoreAppRestorePage::onSelectNone() {
 
 void UserProfileRestoreAppRestorePage::onInstallApps() {
     // Collect selected apps
-    QVector<RestoreAppInfo> selectedApps;
-    for (int c = 0; c < m_appTree->topLevelItemCount(); ++c) {
-        auto* category = m_appTree->topLevelItem(c);
-        for (int a = 0; a < category->childCount(); ++a) {
-            auto* appItem = category->child(a);
-            if ((appItem->flags() & Qt::ItemIsEnabled) && appItem->checkState(0) == Qt::Checked) {
-                RestoreAppInfo info;
-                info.name = appItem->text(0);
-                info.choco_package = appItem->text(2);
-                selectedApps.append(info);
-            }
-        }
-    }
+    QVector<RestoreAppInfo> selectedApps = collectSelectedApps();
 
     if (selectedApps.isEmpty()) {
         QMessageBox::information(this, tr("No Apps Selected"),
@@ -1032,7 +1020,41 @@ void UserProfileRestoreAppRestorePage::onInstallApps() {
     m_progressBar->setRange(0, selectedApps.size());
     m_progressBar->setValue(0);
 
-    // Initialize Chocolatey
+    // Initialize Chocolatey and install
+    auto [installed, failed] = installAppsSequentially(selectedApps);
+
+    // Done
+    m_installing = false;
+    m_installButton->setEnabled(true);
+    m_selectAllButton->setEnabled(true);
+    m_selectNoneButton->setEnabled(true);
+    m_appTree->setEnabled(true);
+    Q_EMIT completeChanged();
+
+    m_statusLabel->setText(tr("Installation complete: %1 succeeded, %2 failed")
+                                .arg(installed).arg(failed));
+    m_summaryLabel->setText(tr("App installation finished — %1 installed, %2 failed. Click Next to continue.")
+                                .arg(installed).arg(failed));
+}
+
+QVector<RestoreAppInfo> UserProfileRestoreAppRestorePage::collectSelectedApps() const {
+    QVector<RestoreAppInfo> selectedApps;
+    for (int c = 0; c < m_appTree->topLevelItemCount(); ++c) {
+        auto* category = m_appTree->topLevelItem(c);
+        for (int a = 0; a < category->childCount(); ++a) {
+            auto* appItem = category->child(a);
+            if ((appItem->flags() & Qt::ItemIsEnabled) && appItem->checkState(0) == Qt::Checked) {
+                RestoreAppInfo info;
+                info.name = appItem->text(0);
+                info.choco_package = appItem->text(2);
+                selectedApps.append(info);
+            }
+        }
+    }
+    return selectedApps;
+}
+
+QPair<int,int> UserProfileRestoreAppRestorePage::installAppsSequentially(const QVector<RestoreAppInfo>& apps) {
     auto chocoManager = std::make_shared<ChocolateyManager>();
     QString chocoPath = QApplication::applicationDirPath() + "/tools/chocolatey";
     chocoManager->initialize(chocoPath);
@@ -1040,12 +1062,12 @@ void UserProfileRestoreAppRestorePage::onInstallApps() {
     int installed = 0;
     int failed = 0;
 
-    for (int i = 0; i < selectedApps.size(); ++i) {
-        const auto& app = selectedApps[i];
+    for (int i = 0; i < apps.size(); ++i) {
+        const auto& app = apps[i];
         m_statusLabel->setText(tr("Installing %1 (%2/%3)...")
                                     .arg(app.name)
                                     .arg(i + 1)
-                                    .arg(selectedApps.size()));
+                                    .arg(apps.size()));
         QApplication::processEvents();
 
         ChocolateyManager::InstallConfig config;
@@ -1063,18 +1085,7 @@ void UserProfileRestoreAppRestorePage::onInstallApps() {
         QApplication::processEvents();
     }
 
-    // Done
-    m_installing = false;
-    m_installButton->setEnabled(true);
-    m_selectAllButton->setEnabled(true);
-    m_selectNoneButton->setEnabled(true);
-    m_appTree->setEnabled(true);
-    Q_EMIT completeChanged();
-
-    m_statusLabel->setText(tr("Installation complete: %1 succeeded, %2 failed")
-                                .arg(installed).arg(failed));
-    m_summaryLabel->setText(tr("App installation finished — %1 installed, %2 failed. Click Next to continue.")
-                                .arg(installed).arg(failed));
+    return {installed, failed};
 }
 
 } // namespace sak

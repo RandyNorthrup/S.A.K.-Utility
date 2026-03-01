@@ -4,8 +4,11 @@
 #pragma once
 
 #include "sak/quick_action.h"
+#include <QDateTime>
 #include <QString>
 #include <QVector>
+
+class QTextStream;
 
 namespace sak {
 
@@ -76,6 +79,9 @@ private:
      */
     QVector<VolumeInfo> detectEncryptedVolumes();
 
+    /// @brief Parse PowerShell JSON output into VolumeInfo vector
+    QVector<VolumeInfo> parseDetectedVolumes(const QString& output);
+
     /**
      * @brief Retrieve key protectors for a specific volume
      * @param drive_letter Drive letter (e.g., "C:")
@@ -83,12 +89,24 @@ private:
      */
     QVector<KeyProtectorInfo> getKeyProtectors(const QString& drive_letter);
 
+    /// @brief Build the PowerShell script to query key protectors for a volume.
+    QString buildKeyProtectorScript(const QString& drive_letter) const;
+    /// @brief Parse JSON response from key protector query into KeyProtectorInfo vector.
+    QVector<KeyProtectorInfo> parseKeyProtectorResponse(const QString& output);
+
     /**
      * @brief Write recovery keys to the master backup document
      * @param backup_dir Target directory for the backup
      * @return True if write succeeded
      */
     bool writeRecoveryDocument(const QString& backup_dir);
+
+    /// @brief Write the header section of the recovery document
+    void writeRecoveryDocumentHeader(QTextStream& out) const;
+    /// @brief Write per-volume key protector sections
+    void writeRecoveryDocumentVolumes(QTextStream& out) const;
+    /// @brief Write recovery instructions footer
+    void writeRecoveryDocumentFooter(QTextStream& out) const;
 
     /**
      * @brief Write individual per-volume key files
@@ -130,6 +148,17 @@ private:
      * @return Formatted timestamp (yyyyMMdd_HHmmss)
      */
     static QString backupTimestamp();
+
+    // TigerStyle helpers for execute() decomposition
+    bool executeDiscoverVolumes(const QDateTime& start_time);
+    bool executeExtractKeys(const QDateTime& start_time, int& total_keys_found,
+                            int& total_recovery_passwords);
+    bool executeSaveKeyFiles(const QDateTime& start_time, QString& backup_dir_path,
+                             int& key_files_written, bool& permissions_set);
+    void executeBuildReport(const QDateTime& start_time, int total_keys_found,
+                            int total_recovery_passwords, const QString& backup_dir_path,
+                            int key_files_written, bool permissions_set);
+    bool writeJsonBackup(const QString& backup_dir_path);
 };
 
 } // namespace sak

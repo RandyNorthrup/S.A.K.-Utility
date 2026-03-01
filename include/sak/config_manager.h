@@ -184,6 +184,10 @@ private:
     ~ConfigManager() override = default;
 
     void initializeDefaults();
+    void initializeBackupAndOrganizerDefaults();
+    void initializeFlasherDefaults();
+    void initializeNetworkDefaults();
+    void initializeUiDefaults();
 
     std::unique_ptr<QSettings> m_settings;
 };

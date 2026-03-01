@@ -66,7 +66,13 @@ void DuplicateFinderPanel::setupUi()
     sak::createPanelHeader(contentWidget, tr("Duplicate Finder"),
         tr("Scan directories for duplicate files using content-based hashing"), mainLayout);
 
-    // Scan directories group
+    createDirectoryGroup(mainLayout);
+    createOptionsWidgets();
+    createControlButtons(mainLayout);
+}
+
+void DuplicateFinderPanel::createDirectoryGroup(QVBoxLayout* layout)
+{
     auto* dirGroup = new QGroupBox("Scan Directories", this);
     auto* dirLayout = new QVBoxLayout(dirGroup);
     
@@ -85,9 +91,11 @@ void DuplicateFinderPanel::setupUi()
     buttonLayout->addStretch();
     dirLayout->addLayout(buttonLayout);
     
-    mainLayout->addWidget(dirGroup);
+    layout->addWidget(dirGroup);
+}
 
-    // Options widgets (hidden — managed via Settings modal)
+void DuplicateFinderPanel::createOptionsWidgets()
+{
     m_min_size_spinbox = new QSpinBox(this);
     m_min_size_spinbox->setMinimum(0);
     m_min_size_spinbox->setMaximum(1000000);
@@ -101,8 +109,10 @@ void DuplicateFinderPanel::setupUi()
     m_recursive_checkbox->setToolTip("Include all nested subfolders, not just the top-level directory");
     m_recursive_checkbox->setAccessibleName(QStringLiteral("Recursive Scan"));
     m_recursive_checkbox->setVisible(false);
+}
 
-    // Control buttons
+void DuplicateFinderPanel::createControlButtons(QVBoxLayout* layout)
+{
     auto* controlLayout = new QHBoxLayout();
 
     auto* settingsBtn = new QPushButton("Settings", this);
@@ -127,7 +137,7 @@ void DuplicateFinderPanel::setupUi()
     m_logToggle = new LogToggleSwitch(tr("Log"), this);
     controlLayout->insertWidget(1, m_logToggle);
 
-    mainLayout->addLayout(controlLayout);
+    layout->addLayout(controlLayout);
 
     // Connect signals
     connect(m_add_directory_button, &QPushButton::clicked, this, &DuplicateFinderPanel::onAddDirectoryClicked);

@@ -4,7 +4,9 @@
 #pragma once
 
 #include "sak/quick_action.h"
+#include <QDateTime>
 #include <QString>
+#include <QStringList>
 
 namespace sak {
 
@@ -36,6 +38,21 @@ private:
     void resetTCPIP();
     void releaseRenewIP();
     void resetFirewall();
+
+    /// @brief Execute DNS flush and Winsock backup phase
+    /// @return false if cancelled
+    bool executeFlushDns(QStringList& errors);
+
+    /// @brief Execute Winsock and TCP/IP reset phase
+    /// @return false if cancelled
+    bool executeResetWinsock(QStringList& errors);
+
+    /// @brief Execute IP renewal, firewall and adapter reset phase
+    /// @return false if cancelled
+    bool executeResetIpStack(QStringList& errors);
+
+    /// @brief Build and emit the final execution report
+    void executeBuildReport(const QStringList& errors, const QDateTime& start_time);
 };
 
 } // namespace sak

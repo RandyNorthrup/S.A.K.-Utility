@@ -15,6 +15,26 @@ MigrationOrchestrator::MigrationOrchestrator(QObject* parent)
     , m_discovery(new OrchestrationDiscoveryService(this))
     , m_healthPollTimer(new QTimer(this))
 {
+    connectRegistrySignals();
+    connectServerSignals();
+
+    connect(m_discovery, &OrchestrationDiscoveryService::destinationDiscovered, this,
+        [this](const DestinationPC& destination) {
+            registerDestination(destination);
+        });
+
+    m_healthPollTimer->setInterval(10000);
+    connect(m_healthPollTimer, &QTimer::timeout, this, [this]() {
+        const auto items = m_registry->destinations();
+        for (const auto& destination : items) {
+            if (!destination.destination_id.isEmpty()) {
+                m_server->sendHealthCheck(destination.destination_id);
+            }
+        }
+    });
+}
+
+void MigrationOrchestrator::connectRegistrySignals() {
     connect(m_registry, &DestinationRegistry::destinationRegistered, this, [this](const DestinationPC&) {
         tryAssignQueuedDeployments();
     });
@@ -42,7 +62,9 @@ MigrationOrchestrator::MigrationOrchestrator(QObject* parent)
                                                   QString* reason) {
         return canAssignDeployment(destination_id, required_free_bytes, reason);
     });
+}
 
+void MigrationOrchestrator::connectServerSignals() {
     connect(m_server, &OrchestrationServerInterface::destinationRegistered, this, &MigrationOrchestrator::registerDestination);
     connect(m_server, &OrchestrationServerInterface::healthUpdated, this, &MigrationOrchestrator::updateHealth);
     connect(m_server, &OrchestrationServerInterface::statusMessage, this, &MigrationOrchestrator::orchestratorStatus);
@@ -92,21 +114,6 @@ MigrationOrchestrator::MigrationOrchestrator(QObject* parent)
             handleAssignmentCompletion(completion.destination_id);
         }
         tryAssignQueuedDeployments();
-    });
-
-    connect(m_discovery, &OrchestrationDiscoveryService::destinationDiscovered, this,
-        [this](const DestinationPC& destination) {
-            registerDestination(destination);
-        });
-
-    m_healthPollTimer->setInterval(10000);
-    connect(m_healthPollTimer, &QTimer::timeout, this, [this]() {
-        const auto items = m_registry->destinations();
-        for (const auto& destination : items) {
-            if (!destination.destination_id.isEmpty()) {
-                m_server->sendHealthCheck(destination.destination_id);
-            }
-        }
     });
 }
 

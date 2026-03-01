@@ -33,7 +33,12 @@ ImageFlasherSettingsDialog::~ImageFlasherSettingsDialog() = default;
 
 void ImageFlasherSettingsDialog::setupUi() {
     auto* mainLayout = new QVBoxLayout(this);
-    
+    setupUi_generalSection(mainLayout);
+    setupUi_advancedSection(mainLayout);
+    setupUi_buttonBar(mainLayout);
+}
+
+void ImageFlasherSettingsDialog::setupUi_generalSection(QVBoxLayout* mainLayout) {
     // Verification group
     auto* verificationGroup = new QGroupBox("Verification", this);
     auto* verificationLayout = new QGridLayout(verificationGroup);
@@ -95,7 +100,9 @@ void ImageFlasherSettingsDialog::setupUi() {
     performanceLayout->addWidget(performanceNote, 2, 0, 1, 2);
     
     mainLayout->addWidget(performanceGroup);
-    
+}
+
+void ImageFlasherSettingsDialog::setupUi_advancedSection(QVBoxLayout* mainLayout) {
     // Safety group
     auto* safetyGroup = new QGroupBox("Safety", this);
     auto* safetyLayout = new QVBoxLayout(safetyGroup);
@@ -153,7 +160,9 @@ void ImageFlasherSettingsDialog::setupUi() {
     behaviorLayout->addLayout(notRow);
     
     mainLayout->addWidget(behaviorGroup);
-    
+}
+
+void ImageFlasherSettingsDialog::setupUi_buttonBar(QVBoxLayout* mainLayout) {
     // Storage group
     auto* storageGroup = new QGroupBox("Storage", this);
     auto* storageLayout = new QVBoxLayout(storageGroup);

@@ -4,9 +4,12 @@
 #pragma once
 
 #include <QObject>
+#include <QPair>
 #include <QString>
 #include <QMutex>
 #include <atomic>
+
+class QProcess;
 
 /**
  * @brief Creates bootable Windows USB drives from ISO files
@@ -78,12 +81,29 @@ Q_SIGNALS:
     void failed(const QString& error);
     
 private:
+    /// @brief Validate ISO and disk number inputs before USB creation
+    bool validateUSBInputs(const QString& isoPath, const QString& diskNumber);
+
+    /// @brief Format drive, wait for partition, and verify NTFS filesystem (Step 1)
+    QString formatAndVerifyDrive(const QString& diskNumber);
+
+    /// @brief Extract ISO contents and verify critical files (Step 2)
+    bool extractAndVerifyFiles(const QString& isoPath, const QString& driveLetter);
+
+    /// @brief Configure boot files and set bootable flag (Steps 3-4)
+    bool configureBootAndVerify(const QString& diskNumber, const QString& driveLetter);
+
     /**
      * @brief Format drive as NTFS using diskpart
      * @param diskNumber Disk number (hardware ID) to format
      * @return true if successful
      */
     bool formatDriveNTFS(const QString& diskNumber);
+
+    /// @brief Clean disk and create MBR partition using diskpart
+    bool cleanAndPartitionDisk(const QString& diskNumber);
+    /// @brief Format the partition as NTFS using diskpart
+    bool formatPartitionNTFS(const QString& diskNumber);
     
     /**
      * @brief Extract ISO contents directly to USB drive using 7z
@@ -92,6 +112,88 @@ private:
      * @return true if successful
      */
     bool copyISOContents(const QString& sourcePath, const QString& destPath);
+
+    /**
+     * @brief Extract volume label from ISO metadata using 7z
+     * @param sevenZipPath Path to 7z.exe
+     * @param sourcePath Path to ISO file
+     */
+    void copyISO_extractVolumeLabel(const QString& sevenZipPath, const QString& sourcePath);
+
+    /**
+     * @brief Normalize a drive letter destination path to "X:\\" format
+     * @param destPath Raw destination path input
+     * @param cleanDest [out] Normalized path (e.g., "E:\\")
+     * @return true if valid drive letter
+     */
+    bool copyISO_normalizeDestination(const QString& destPath, QString& cleanDest);
+
+    /**
+     * @brief Check that destination drive has sufficient disk space
+     * @param cleanDest Normalized destination path
+     * @param sourcePath Path to source ISO for size estimation
+     * @return true if enough space available
+     */
+    bool copyISO_checkDiskSpace(const QString& cleanDest, const QString& sourcePath);
+
+    /**
+     * @brief Run 7z extraction: start process, monitor progress, log result
+     * @param sevenZipPath Path to 7z.exe
+     * @param sourcePath Path to ISO file
+     * @param cleanDest Normalized destination path
+     * @return true if extraction succeeded
+     */
+    bool copyISO_runExtraction(const QString& sevenZipPath, const QString& sourcePath, const QString& cleanDest);
+
+    /**
+     * @brief Monitor a running 7z extraction process for progress and cancellation
+     * @param extract Running QProcess reference
+     * @return true if process finished normally (not timed out or cancelled)
+     */
+    bool copyISO_monitorExtraction(QProcess& extract);
+
+    /**
+     * @brief Parse 7z output and emit progress signals
+     * @param output Raw 7z stdout output string
+     * @param totalBytes [in/out] Total bytes reported by 7z
+     * @param processedBytes [in/out] Processed bytes reported by 7z
+     * @param lastProgressPercent [in/out] Last emitted progress percentage
+     */
+    void copyISO_parseExtractionProgress(const QString& output, qint64& totalBytes, qint64& processedBytes, int& lastProgressPercent);
+
+    /**
+     * @brief Log 7z extraction result and check exit code
+     * @param extract Finished QProcess reference
+     * @return true if exit code is 0
+     */
+    bool copyISO_logExtractionResult(QProcess& extract);
+
+    /**
+     * @brief Verify destination directory contents after extraction
+     * @param cleanDest Normalized destination path
+     * @return true if destination is valid and non-empty
+     */
+    bool copyISO_verifyDestination(const QString& cleanDest);
+
+    /**
+     * @brief Find setup.exe in destination (case-insensitive search)
+     * @param cleanDest Normalized destination path
+     * @return true if setup.exe found
+     */
+    bool copyISO_findSetupExe(const QString& cleanDest);
+
+    /**
+     * @brief Verify critical Windows boot files exist (boot.wim, bootmgr, install image)
+     * @param cleanDest Normalized destination path
+     * @return true if all critical files present
+     */
+    bool copyISO_verifyBootFiles(const QString& cleanDest);
+
+    /**
+     * @brief Set the volume label on the destination drive from ISO metadata
+     * @param cleanDest Normalized destination path
+     */
+    void copyISO_setVolumeLabel(const QString& cleanDest);
     
     /**
      * @brief Configure boot files using bcdboot (if available)
@@ -106,6 +208,9 @@ private:
      * @return true if bootable flag is confirmed
      */
     bool verifyBootableFlag(const QString& driveLetter);
+
+    /// @brief Run diskpart to check if the partition on the given disk is active/bootable
+    bool checkPartitionActive(const QString& diskNumber);
     
     /**
      * @brief Verify extraction integrity by comparing ISO contents with extracted files
@@ -115,13 +220,26 @@ private:
      * @return true if all critical files match in size and presence
      */
     bool verifyExtractionIntegrity(const QString& isoPath, const QString& destPath, const QString& sevenZipPath);
-    
+
+    /// @brief Parse ISO listing output and return critical Windows file paths with sizes
+    QList<QPair<QString, qint64>> parseIsoCriticalFiles(const QStringList& lines);
+
+    /// @brief Verify that critical files exist on disk with matching sizes
+    bool verifyCriticalFilesOnDisk(const QList<QPair<QString, qint64>>& criticalFiles,
+                                   const QString& destPath);
+
     /**
      * @brief Final comprehensive verification - ONLY path to success
      * @param driveLetter Drive letter to verify
      * @return true ONLY if ALL verifications pass
      */
     bool finalVerification(const QString& driveLetter);
+
+    /// @brief Verify critical boot files and install images exist on the drive
+    bool verifyBootAndInstallFiles(const QString& cleanDrive);
+
+    /// @brief Log final verification success details
+    void logFinalVerificationSuccess(int fileCount);
     
     /**
      * @brief Get current drive letter for the disk number

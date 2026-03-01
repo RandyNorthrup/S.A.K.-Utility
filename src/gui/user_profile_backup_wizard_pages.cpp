@@ -194,7 +194,16 @@ void UserProfileBackupSmartFiltersPage::setupUi() {
     instructionLabel->setWordWrap(true);
     layout->addWidget(instructionLabel);
     
-    // Filter settings grid
+    setupUi_filterSettings(layout);
+    setupUi_exclusionsAndControls(layout);
+    
+    // Summary
+    m_summaryLabel = new QLabel(this);
+    m_summaryLabel->setStyleSheet(QString("QLabel { padding: 10px; background-color: %1; border-radius: 10px; }").arg(sak::ui::kColorBgInfoPanel));
+    layout->addWidget(m_summaryLabel);
+}
+
+void UserProfileBackupSmartFiltersPage::setupUi_filterSettings(QVBoxLayout* layout) {
     auto* gridLayout = new QGridLayout();
     int row = 0;
     
@@ -233,7 +242,9 @@ void UserProfileBackupSmartFiltersPage::setupUi() {
     row++;
     
     layout->addLayout(gridLayout);
-    
+}
+
+void UserProfileBackupSmartFiltersPage::setupUi_exclusionsAndControls(QVBoxLayout* layout) {
     // Automatic exclusions
     auto* exclusionsGroup = new QWidget(this);
     auto* exclusionsLayout = new QVBoxLayout(exclusionsGroup);
@@ -259,7 +270,7 @@ void UserProfileBackupSmartFiltersPage::setupUi() {
     // Dangerous files info
     auto* dangerousLayout = new QHBoxLayout();
     auto* dangerousLabel = new QLabel(tr(
-        "⚠ <b>Always excluded:</b> Registry hives (NTUSER.DAT, UsrClass.dat), system folders"
+        "\u26a0 <b>Always excluded:</b> Registry hives (NTUSER.DAT, UsrClass.dat), system folders"
     ), this);
     dangerousLabel->setWordWrap(true);
     dangerousLayout->addWidget(dangerousLabel, 1);
@@ -279,11 +290,6 @@ void UserProfileBackupSmartFiltersPage::setupUi() {
     resetLayout->addWidget(m_resetButton);
     resetLayout->addStretch();
     layout->addLayout(resetLayout);
-    
-    // Summary
-    m_summaryLabel = new QLabel(this);
-    m_summaryLabel->setStyleSheet(QString("QLabel { padding: 10px; background-color: %1; border-radius: 10px; }").arg(sak::ui::kColorBgInfoPanel));
-    layout->addWidget(m_summaryLabel);
 }
 
 void UserProfileBackupSmartFiltersPage::initializePage() {
@@ -407,16 +413,7 @@ UserProfileBackupSettingsPage::UserProfileBackupSettingsPage(BackupManifest& man
     setupUi();
 }
 
-void UserProfileBackupSettingsPage::setupUi() {
-    auto* layout = new QVBoxLayout(this);
-    
-    // Instructions
-    auto* instructionLabel = new QLabel(tr(
-        "Choose where to save the backup and configure additional options."
-    ), this);
-    instructionLabel->setWordWrap(true);
-    layout->addWidget(instructionLabel);
-    
+void UserProfileBackupSettingsPage::setupUi_destinationAndCompression(QVBoxLayout* layout) {
     // Destination path
     auto* destLayout = new QHBoxLayout();
     destLayout->addWidget(new QLabel(tr("Backup destination:"), this));
@@ -443,7 +440,9 @@ void UserProfileBackupSettingsPage::setupUi() {
     compressionLayout->addWidget(m_compressionCombo);
     compressionLayout->addStretch();
     layout->addLayout(compressionLayout);
-    
+}
+
+void UserProfileBackupSettingsPage::setupUi_encryptionAndPermissions(QVBoxLayout* layout) {
     // Encryption
     auto* encryptionLayout = new QHBoxLayout();
     m_encryptionCheck = new QCheckBox(tr("Encrypt backup"), this);
@@ -497,7 +496,9 @@ void UserProfileBackupSettingsPage::setupUi() {
     permExplainLabel->setWordWrap(true);
     permExplainLabel->setStyleSheet(QString("QLabel { padding: 6px; color: %1; }").arg(sak::ui::kColorTextMuted));
     layout->addWidget(permExplainLabel);
-    
+}
+
+void UserProfileBackupSettingsPage::setupUi_summaryAndRegistration(QVBoxLayout* layout) {
     // Verification
     m_verifyCheck = new QCheckBox(tr("Verify files after backup (MD5 checksums)"), this);
     m_verifyCheck->setChecked(true);
@@ -515,6 +516,21 @@ void UserProfileBackupSettingsPage::setupUi() {
     registerField("compressionLevel", m_compressionCombo, "currentIndex");
     registerField("encryptionEnabled", m_encryptionCheck);
     registerField("encryptionPassword", m_passwordEdit);
+}
+
+void UserProfileBackupSettingsPage::setupUi() {
+    auto* layout = new QVBoxLayout(this);
+    
+    // Instructions
+    auto* instructionLabel = new QLabel(tr(
+        "Choose where to save the backup and configure additional options."
+    ), this);
+    instructionLabel->setWordWrap(true);
+    layout->addWidget(instructionLabel);
+    
+    setupUi_destinationAndCompression(layout);
+    setupUi_encryptionAndPermissions(layout);
+    setupUi_summaryAndRegistration(layout);
 }
 
 void UserProfileBackupSettingsPage::initializePage() {
@@ -732,6 +748,53 @@ bool UserProfileBackupInstalledAppsPage::isComplete() const {
     return true;
 }
 
+QString UserProfileBackupInstalledAppsPage::categorizeApp(const QString& name, const QString& publisher) {
+    Q_UNUSED(publisher)
+    const QString n = name.toLower();
+
+    if (n.contains("chrome") || n.contains("firefox") || n.contains("edge") ||
+        n.contains("opera") || n.contains("brave") || n.contains("vivaldi") || n.contains("browser"))
+        return QCoreApplication::translate("UserProfileBackupInstalledAppsPage", "Browsers");
+    if (n.contains("visual studio") || n.contains("vscode") || n.contains("jetbrains") ||
+        n.contains("intellij") || n.contains("pycharm") || n.contains("webstorm") ||
+        n.contains("rider") || n.contains("clion") || n.contains("android studio") ||
+        n.contains("eclipse") || n.contains("sublime") || n.contains("notepad++") ||
+        n.contains("atom") || n.contains("code"))
+        return QCoreApplication::translate("UserProfileBackupInstalledAppsPage", "Development");
+    if (n.contains("office") || n.contains("word") || n.contains("excel") ||
+        n.contains("powerpoint") || n.contains("outlook") || n.contains("onenote") ||
+        n.contains("libreoffice") || n.contains("openoffice"))
+        return QCoreApplication::translate("UserProfileBackupInstalledAppsPage", "Productivity");
+    if (n.contains("discord") || n.contains("slack") || n.contains("teams") ||
+        n.contains("zoom") || n.contains("skype") || n.contains("telegram") ||
+        n.contains("signal") || n.contains("whatsapp"))
+        return QCoreApplication::translate("UserProfileBackupInstalledAppsPage", "Communication");
+    if (n.contains("steam") || n.contains("epic games") || n.contains("origin") ||
+        n.contains("battle.net") || n.contains("gog") || n.contains("ubisoft") || n.contains("game"))
+        return QCoreApplication::translate("UserProfileBackupInstalledAppsPage", "Gaming");
+    if (n.contains("photoshop") || n.contains("illustrator") || n.contains("gimp") ||
+        n.contains("blender") || n.contains("inkscape") || n.contains("paint") ||
+        n.contains("krita") || n.contains("figma") || n.contains("canva"))
+        return QCoreApplication::translate("UserProfileBackupInstalledAppsPage", "Graphics & Design");
+    if (n.contains("vlc") || n.contains("spotify") || n.contains("itunes") ||
+        n.contains("audacity") || n.contains("obs") || n.contains("handbrake") ||
+        n.contains("media") || n.contains("player") || n.contains("foobar") || n.contains("winamp"))
+        return QCoreApplication::translate("UserProfileBackupInstalledAppsPage", "Media");
+    if (n.contains("7-zip") || n.contains("winrar") || n.contains("peazip") ||
+        n.contains("ccleaner") || n.contains("everything") || n.contains("totalcommander") ||
+        n.contains("wiztree") || n.contains("treesize") || n.contains("windirstat") || n.contains("revo"))
+        return QCoreApplication::translate("UserProfileBackupInstalledAppsPage", "Utilities");
+    if (n.contains("norton") || n.contains("kaspersky") || n.contains("malwarebytes") ||
+        n.contains("avast") || n.contains("avg") || n.contains("bitdefender") ||
+        n.contains("security") || n.contains("antivirus"))
+        return QCoreApplication::translate("UserProfileBackupInstalledAppsPage", "Security");
+    if (n.contains("nvidia") || n.contains("amd") || n.contains("realtek") ||
+        n.contains("intel") || n.contains("driver") || n.contains("logitech") ||
+        n.contains("corsair") || n.contains("razer"))
+        return QCoreApplication::translate("UserProfileBackupInstalledAppsPage", "Drivers & Hardware");
+    return QCoreApplication::translate("UserProfileBackupInstalledAppsPage", "Other");
+}
+
 void UserProfileBackupInstalledAppsPage::onScanApps() {
     m_scanButton->setEnabled(false);
     m_statusLabel->setText(tr("Scanning installed applications..."));
@@ -766,81 +829,7 @@ void UserProfileBackupInstalledAppsPage::onScanApps() {
         Q_EMIT safeThis->completeChanged();
     });
 
-    // Capture categorization logic as a plain function (no QWidget access from bg thread)
-    auto categorize = [](const QString& name, const QString& publisher) -> QString {
-        QString lowerName = name.toLower();
-        QString lowerPub = publisher.toLower();
-
-        if (lowerName.contains("chrome") || lowerName.contains("firefox") ||
-            lowerName.contains("edge") || lowerName.contains("opera") ||
-            lowerName.contains("brave") || lowerName.contains("vivaldi") ||
-            lowerName.contains("browser"))
-            return QCoreApplication::translate("UserProfileBackupInstalledAppsPage", "Browsers");
-
-        if (lowerName.contains("visual studio") || lowerName.contains("vscode") ||
-            lowerName.contains("jetbrains") || lowerName.contains("intellij") ||
-            lowerName.contains("pycharm") || lowerName.contains("webstorm") ||
-            lowerName.contains("rider") || lowerName.contains("clion") ||
-            lowerName.contains("android studio") || lowerName.contains("eclipse") ||
-            lowerName.contains("sublime") || lowerName.contains("notepad++") ||
-            lowerName.contains("atom") || lowerName.contains("code"))
-            return QCoreApplication::translate("UserProfileBackupInstalledAppsPage", "Development");
-
-        if (lowerName.contains("office") || lowerName.contains("word") ||
-            lowerName.contains("excel") || lowerName.contains("powerpoint") ||
-            lowerName.contains("outlook") || lowerName.contains("onenote") ||
-            lowerName.contains("libreoffice") || lowerName.contains("openoffice"))
-            return QCoreApplication::translate("UserProfileBackupInstalledAppsPage", "Productivity");
-
-        if (lowerName.contains("discord") || lowerName.contains("slack") ||
-            lowerName.contains("teams") || lowerName.contains("zoom") ||
-            lowerName.contains("skype") || lowerName.contains("telegram") ||
-            lowerName.contains("signal") || lowerName.contains("whatsapp"))
-            return QCoreApplication::translate("UserProfileBackupInstalledAppsPage", "Communication");
-
-        if (lowerName.contains("steam") || lowerName.contains("epic games") ||
-            lowerName.contains("origin") || lowerName.contains("battle.net") ||
-            lowerName.contains("gog") || lowerName.contains("ubisoft") ||
-            lowerName.contains("game"))
-            return QCoreApplication::translate("UserProfileBackupInstalledAppsPage", "Gaming");
-
-        if (lowerName.contains("photoshop") || lowerName.contains("illustrator") ||
-            lowerName.contains("gimp") || lowerName.contains("blender") ||
-            lowerName.contains("inkscape") || lowerName.contains("paint") ||
-            lowerName.contains("krita") || lowerName.contains("figma") ||
-            lowerName.contains("canva"))
-            return QCoreApplication::translate("UserProfileBackupInstalledAppsPage", "Graphics & Design");
-
-        if (lowerName.contains("vlc") || lowerName.contains("spotify") ||
-            lowerName.contains("itunes") || lowerName.contains("audacity") ||
-            lowerName.contains("obs") || lowerName.contains("handbrake") ||
-            lowerName.contains("media") || lowerName.contains("player") ||
-            lowerName.contains("foobar") || lowerName.contains("winamp"))
-            return QCoreApplication::translate("UserProfileBackupInstalledAppsPage", "Media");
-
-        if (lowerName.contains("7-zip") || lowerName.contains("winrar") ||
-            lowerName.contains("peazip") || lowerName.contains("ccleaner") ||
-            lowerName.contains("everything") || lowerName.contains("totalcommander") ||
-            lowerName.contains("wiztree") || lowerName.contains("treesize") ||
-            lowerName.contains("windirstat") || lowerName.contains("revo"))
-            return QCoreApplication::translate("UserProfileBackupInstalledAppsPage", "Utilities");
-
-        if (lowerName.contains("norton") || lowerName.contains("kaspersky") ||
-            lowerName.contains("malwarebytes") || lowerName.contains("avast") ||
-            lowerName.contains("avg") || lowerName.contains("bitdefender") ||
-            lowerName.contains("security") || lowerName.contains("antivirus"))
-            return QCoreApplication::translate("UserProfileBackupInstalledAppsPage", "Security");
-
-        if (lowerName.contains("nvidia") || lowerName.contains("amd") ||
-            lowerName.contains("realtek") || lowerName.contains("intel") ||
-            lowerName.contains("driver") || lowerName.contains("logitech") ||
-            lowerName.contains("corsair") || lowerName.contains("razer"))
-            return QCoreApplication::translate("UserProfileBackupInstalledAppsPage", "Drivers & Hardware");
-
-        return QCoreApplication::translate("UserProfileBackupInstalledAppsPage", "Other");
-    };
-
-    watcher->setFuture(QtConcurrent::run([categorize]() -> QVector<InstalledAppInfo> {
+    watcher->setFuture(QtConcurrent::run([]() -> QVector<InstalledAppInfo> {
         // Scan installed apps from registry + AppX (no Chocolatey calls).
         // Backup only needs name/version/publisher — restore handles Chocolatey matching.
         AppScanner scanner;
@@ -857,7 +846,7 @@ void UserProfileBackupInstalledAppsPage::onScanApps() {
             info.version = app.version;
             info.publisher = app.publisher;
             info.selected = true;
-            info.category = categorize(app.name, app.publisher);
+            info.category = categorizeApp(app.name, app.publisher);
             appInfos.append(info);
         }
 

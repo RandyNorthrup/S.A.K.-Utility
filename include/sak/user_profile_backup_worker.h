@@ -99,6 +99,10 @@ protected:
 
 private:
     // Core backup operations
+    /// @brief Run all user backup iterations
+    void backupAllUsers();
+    /// @brief Compose and emit the final backup summary
+    void emitBackupSummary();
     bool backupUser(const UserProfile& user, const QString& userBackupPath);
     bool backupFolder(const FolderSelection& folder, 
                      const QString& sourcePath,

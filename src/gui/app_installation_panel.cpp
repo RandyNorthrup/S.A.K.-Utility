@@ -86,7 +86,23 @@ void AppInstallationPanel::setupUi()
     sak::createPanelHeader(contentWidget, tr("App Installation"),
         tr("Search, queue, and batch-install applications via Chocolatey"), mainLayout);
 
-    // === Search section ===
+    setupUi_searchBar(mainLayout);
+
+    // === Splitter: Results table | Queue panel ===
+    auto* splitter = new QSplitter(Qt::Horizontal, this);
+    setupUi_packageTable(splitter);
+    setupUi_queueSection(splitter);
+
+    splitter->setHandleWidth(6);
+    splitter->setStretchFactor(0, 65);
+    splitter->setStretchFactor(1, 35);
+    mainLayout->addWidget(splitter, 1);
+
+    setupUi_bottomBar(mainLayout);
+}
+
+void AppInstallationPanel::setupUi_searchBar(QVBoxLayout* mainLayout)
+{
     auto* searchGroup = new QGroupBox(tr("Search Packages"), this);
     auto* searchLayout = new QHBoxLayout(searchGroup);
 
@@ -118,11 +134,10 @@ void AppInstallationPanel::setupUi()
     searchLayout->addWidget(m_searchButton);
 
     mainLayout->addWidget(searchGroup);
+}
 
-    // === Splitter: Results table | Queue panel ===
-    auto* splitter = new QSplitter(Qt::Horizontal, this);
-
-    // Left side: Results
+void AppInstallationPanel::setupUi_packageTable(QSplitter* splitter)
+{
     auto* resultsWidget = new QWidget(this);
     auto* resultsLayout = new QVBoxLayout(resultsWidget);
     resultsLayout->setContentsMargins(0, 0, 8, 0);
@@ -159,13 +174,17 @@ void AppInstallationPanel::setupUi()
 
     resultsLayout->addWidget(m_resultsTable, 1);
 
-    m_addToQueueButton = new QPushButton(tr("Add Selected to Queue  ▶"), this);
-    m_addToQueueButton->setEnabled(false);    m_addToQueueButton->setAccessibleName(QStringLiteral("Add to Queue"));
-    m_addToQueueButton->setToolTip(QStringLiteral("Add checked packages to the install queue"));    resultsLayout->addWidget(m_addToQueueButton);
+    m_addToQueueButton = new QPushButton(tr("Add Selected to Queue  \u25b6"), this);
+    m_addToQueueButton->setEnabled(false);
+    m_addToQueueButton->setAccessibleName(QStringLiteral("Add to Queue"));
+    m_addToQueueButton->setToolTip(QStringLiteral("Add checked packages to the install queue"));
+    resultsLayout->addWidget(m_addToQueueButton);
 
     splitter->addWidget(resultsWidget);
+}
 
-    // Right side: Queue
+void AppInstallationPanel::setupUi_queueSection(QSplitter* splitter)
+{
     auto* queueWidget = new QWidget(this);
     auto* queueLayout = new QVBoxLayout(queueWidget);
     queueLayout->setContentsMargins(8, 0, 0, 0);
@@ -226,17 +245,10 @@ void AppInstallationPanel::setupUi()
     queueLayout->addLayout(saveLoadLayout);
 
     splitter->addWidget(queueWidget);
+}
 
-    // Splitter handle styling
-    splitter->setHandleWidth(6);
-
-    // Set splitter proportions (65% results, 35% queue)
-    splitter->setStretchFactor(0, 65);
-    splitter->setStretchFactor(1, 35);
-
-    mainLayout->addWidget(splitter, 1);
-
-    // === Bottom bar: Log toggle only ===
+void AppInstallationPanel::setupUi_bottomBar(QVBoxLayout* mainLayout)
+{
     m_logToggle = new sak::LogToggleSwitch(tr("Log"), this);
     auto* bottomLayout = new QHBoxLayout();
     bottomLayout->setContentsMargins(0, 4, 0, 0);
@@ -246,6 +258,12 @@ void AppInstallationPanel::setupUi()
 }
 
 void AppInstallationPanel::setupConnections()
+{
+    setupSearchAndQueueConnections();
+    setupWorkerConnections();
+}
+
+void AppInstallationPanel::setupSearchAndQueueConnections()
 {
     // Search
     connect(m_searchButton, &QPushButton::clicked, this, &AppInstallationPanel::onSearch);
@@ -282,8 +300,10 @@ void AppInstallationPanel::setupConnections()
             m_addToQueueButton->setEnabled(anyChecked && !m_install_in_progress);
         }
     });
+}
 
-    // Worker signals
+void AppInstallationPanel::setupWorkerConnections()
+{
     connect(m_worker.get(), &AppInstallationWorker::migrationStarted, this, [this](int totalJobs) {
         Q_EMIT progressUpdated(0, totalJobs);
         Q_EMIT statusMessage("App Installation: Installing packages...", 0);

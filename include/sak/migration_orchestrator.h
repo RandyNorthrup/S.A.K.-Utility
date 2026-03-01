@@ -75,6 +75,10 @@ Q_SIGNALS:
 
 private:
     void tryAssignQueuedDeployments();
+    /// @brief Connect registry and deployment manager signals
+    void connectRegistrySignals();
+    /// @brief Connect orchestration server signals (progress, completion)
+    void connectServerSignals();
     QString selectDestinationFor(const DeploymentAssignment& assignment, qint64 required_free_bytes);
     bool dispatchAssignment(const QString& destination_id, const DeploymentAssignment& assignment);
     void handleAssignmentCompletion(const QString& destination_id);

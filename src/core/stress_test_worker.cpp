@@ -88,13 +88,37 @@ auto StressTestWorker::execute() -> std::expected<void, sak::error_code>
     m_max_temp.store(0.0, std::memory_order_relaxed);
     m_stop_children.store(false, std::memory_order_relaxed);
 
-    const int total_seconds = m_config.duration_minutes * 60;
-    QElapsedTimer elapsed_timer;
-    elapsed_timer.start();
-
     // Launch stress threads
     std::vector<std::future<void>> futures;
+    launchStressThreads(futures);
 
+    // Monitor loop — runs in the WorkerBase thread
+    const int total_seconds = m_config.duration_minutes * 60;
+    monitorStressLoop(total_seconds);
+
+    // Signal child stress threads to stop (without marking WorkerBase cancelled)
+    m_stop_children.store(true, std::memory_order_release);
+    for (auto& future : futures) {
+        future.get();
+    }
+
+    // Finalize results
+    m_result.end_time = QDateTime::currentDateTime();
+    m_result.duration_seconds = static_cast<int>(m_elapsed_timer.elapsed() / 1000);
+    m_result.errors_detected = m_error_count.load(std::memory_order_relaxed);
+    m_result.max_cpu_temp = m_max_temp.load(std::memory_order_relaxed);
+    m_result.passed = m_result.abort_reason.isEmpty() && m_result.errors_detected == 0;
+
+    logInfo("Stress test {} — {} seconds, {} errors",
+            m_result.passed ? "PASSED" : "FAILED",
+            m_result.duration_seconds, m_result.errors_detected);
+
+    Q_EMIT stressTestComplete(m_result);
+    return {};
+}
+
+void StressTestWorker::launchStressThreads(std::vector<std::future<void>>& futures)
+{
     if (m_config.stress_cpu) {
         const int threads = m_config.cpu_threads > 0
                                 ? m_config.cpu_threads
@@ -122,16 +146,20 @@ auto StressTestWorker::execute() -> std::expected<void, sak::error_code>
         }));
         logInfo("Launched disk stress thread");
     }
+}
 
-    // Monitor loop — runs in the WorkerBase thread
+void StressTestWorker::monitorStressLoop(int total_seconds)
+{
+    m_elapsed_timer.start();
     int last_status_sec = 0;
-    while (elapsed_timer.elapsed() / 1000 < total_seconds) {
+
+    while (m_elapsed_timer.elapsed() / 1000 < total_seconds) {
         if (checkStop()) {
             m_result.abort_reason = "Cancelled by user";
             break;
         }
 
-        const int elapsed_sec = static_cast<int>(elapsed_timer.elapsed() / 1000);
+        const int elapsed_sec = static_cast<int>(m_elapsed_timer.elapsed() / 1000);
 
         // Periodic status update
         if (elapsed_sec - last_status_sec >= kStatusIntervalSec) {
@@ -177,26 +205,6 @@ auto StressTestWorker::execute() -> std::expected<void, sak::error_code>
         // Sleep to avoid busy-waiting in monitor loop
         std::this_thread::sleep_for(std::chrono::milliseconds(500));
     }
-
-    // Signal child stress threads to stop (without marking WorkerBase cancelled)
-    m_stop_children.store(true, std::memory_order_release);
-    for (auto& future : futures) {
-        future.get();
-    }
-
-    // Finalize results
-    m_result.end_time = QDateTime::currentDateTime();
-    m_result.duration_seconds = static_cast<int>(elapsed_timer.elapsed() / 1000);
-    m_result.errors_detected = m_error_count.load(std::memory_order_relaxed);
-    m_result.max_cpu_temp = m_max_temp.load(std::memory_order_relaxed);
-    m_result.passed = m_result.abort_reason.isEmpty() && m_result.errors_detected == 0;
-
-    logInfo("Stress test {} — {} seconds, {} errors",
-            m_result.passed ? "PASSED" : "FAILED",
-            m_result.duration_seconds, m_result.errors_detected);
-
-    Q_EMIT stressTestComplete(m_result);
-    return {};
 }
 
 // ============================================================================
@@ -261,43 +269,8 @@ void StressTestWorker::runCpuStress()
 
 int StressTestWorker::runMemoryStress()
 {
-    // Allocate a large chunk of memory and repeatedly write patterns then verify
-
     constexpr size_t kFallbackMemoryBytes = 512ULL * 1024 * 1024; // 512 MB
-    size_t target_bytes = kFallbackMemoryBytes;
-
-#ifdef SAK_PLATFORM_WINDOWS
-    MEMORYSTATUSEX mem_status{};
-    mem_status.dwLength = sizeof(mem_status);
-    if (GlobalMemoryStatusEx(&mem_status)) {
-        target_bytes = static_cast<size_t>(
-            static_cast<double>(mem_status.ullAvailPhys) *
-            (m_config.memory_usage_percent / 100.0));
-    } else {
-        logWarning("GlobalMemoryStatusEx failed (error {}), "
-                   "using {} MB fallback allocation",
-                   GetLastError(), kFallbackMemoryBytes / (1024 * 1024));
-    }
-#else
-    // Non-Windows: use sysconf for available memory when possible
-    #if defined(_SC_AVPHYS_PAGES) && defined(_SC_PAGESIZE)
-    {
-        const long pages = sysconf(_SC_AVPHYS_PAGES);
-        const long page_size = sysconf(_SC_PAGESIZE);
-        if (pages > 0 && page_size > 0) {
-            target_bytes = static_cast<size_t>(
-                static_cast<double>(pages) * static_cast<double>(page_size) *
-                (m_config.memory_usage_percent / 100.0));
-        } else {
-            logWarning("sysconf memory query failed, using {} MB fallback",
-                       kFallbackMemoryBytes / (1024 * 1024));
-        }
-    }
-    #else
-    logInfo("Platform memory detection unavailable, using {} MB fallback",
-            kFallbackMemoryBytes / (1024 * 1024));
-    #endif
-#endif
+    const size_t target_bytes = determineTargetMemoryBytes(kFallbackMemoryBytes);
 
     // Cap at available memory, minimum 64 MB, maximum 16 GB
     constexpr size_t kMaxAlloc = 16ULL * 1024 * 1024 * 1024;
@@ -307,13 +280,7 @@ int StressTestWorker::runMemoryStress()
 
     logInfo("Memory stress: allocating {} MB", alloc_size / (1024 * 1024));
 
-#ifdef SAK_PLATFORM_WINDOWS
-    auto* data = static_cast<volatile uint64_t*>(
-        VirtualAlloc(nullptr, alloc_size, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE));
-#else
-    auto* data = static_cast<volatile uint64_t*>(std::malloc(alloc_size));
-#endif
-
+    auto* data = allocateStressMemory(alloc_size);
     if (!data) {
         logError("Memory stress: allocation failed");
         return 0;
@@ -325,11 +292,9 @@ int StressTestWorker::runMemoryStress()
     uint64_t pattern_seed = 0xCAFEBABE;
 
     while (!childrenShouldStop()) {
-        // Write pattern
         patternFill(data, count, pattern_seed);
         total_bytes_written += alloc_size;
 
-        // Verify pattern
         int errors = patternVerify(data, count, pattern_seed);
         if (errors > 0) {
             logError("Memory stress: {} pattern errors with seed {:#x}",
@@ -343,15 +308,65 @@ int StressTestWorker::runMemoryStress()
     m_result.memory_bytes_written = total_bytes_written;
     m_result.memory_pattern_errors = total_errors;
 
+    freeStressMemory(data);
+
+    logInfo("Memory stress: wrote {} GB, {} pattern errors",
+            total_bytes_written / (1024ULL * 1024 * 1024), total_errors);
+    return total_errors;
+}
+
+size_t StressTestWorker::determineTargetMemoryBytes(size_t fallback_bytes) const
+{
+#ifdef SAK_PLATFORM_WINDOWS
+    MEMORYSTATUSEX mem_status{};
+    mem_status.dwLength = sizeof(mem_status);
+    if (GlobalMemoryStatusEx(&mem_status)) {
+        return static_cast<size_t>(
+            static_cast<double>(mem_status.ullAvailPhys) *
+            (m_config.memory_usage_percent / 100.0));
+    }
+    logWarning("GlobalMemoryStatusEx failed (error {}), "
+               "using {} MB fallback allocation",
+               GetLastError(), fallback_bytes / (1024 * 1024));
+    return fallback_bytes;
+#else
+    #if defined(_SC_AVPHYS_PAGES) && defined(_SC_PAGESIZE)
+    {
+        const long pages = sysconf(_SC_AVPHYS_PAGES);
+        const long page_size = sysconf(_SC_PAGESIZE);
+        if (pages > 0 && page_size > 0) {
+            return static_cast<size_t>(
+                static_cast<double>(pages) * static_cast<double>(page_size) *
+                (m_config.memory_usage_percent / 100.0));
+        }
+        logWarning("sysconf memory query failed, using {} MB fallback",
+                   fallback_bytes / (1024 * 1024));
+    }
+    #else
+    logInfo("Platform memory detection unavailable, using {} MB fallback",
+            fallback_bytes / (1024 * 1024));
+    #endif
+    return fallback_bytes;
+#endif
+}
+
+volatile uint64_t* StressTestWorker::allocateStressMemory(size_t alloc_size)
+{
+#ifdef SAK_PLATFORM_WINDOWS
+    return static_cast<volatile uint64_t*>(
+        VirtualAlloc(nullptr, alloc_size, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE));
+#else
+    return static_cast<volatile uint64_t*>(std::malloc(alloc_size));
+#endif
+}
+
+void StressTestWorker::freeStressMemory(volatile uint64_t* data)
+{
 #ifdef SAK_PLATFORM_WINDOWS
     VirtualFree(const_cast<uint64_t*>(data), 0, MEM_RELEASE);
 #else
     std::free(const_cast<uint64_t*>(data));
 #endif
-
-    logInfo("Memory stress: wrote {} GB, {} pattern errors",
-            total_bytes_written / (1024ULL * 1024 * 1024), total_errors);
-    return total_errors;
 }
 
 // ============================================================================

@@ -19,6 +19,8 @@
 #include <QTextEdit>
 #include <QProgressBar>
 
+class QVBoxLayout;
+
 namespace sak {
 
 // Forward declarations
@@ -198,6 +200,10 @@ private Q_SLOTS:
     
 private:
     void setupUi();
+    /// @brief Create filter settings grid (file size, folder size limits)
+    void setupUi_filterSettings(QVBoxLayout* layout);
+    /// @brief Create exclusion checkboxes and control buttons
+    void setupUi_exclusionsAndControls(QVBoxLayout* layout);
     void loadFilterSettings();
     
     SmartFilter& m_filter;
@@ -232,6 +238,9 @@ private Q_SLOTS:
     
 private:
     void setupUi();
+    void setupUi_destinationAndCompression(QVBoxLayout* layout);
+    void setupUi_encryptionAndPermissions(QVBoxLayout* layout);
+    void setupUi_summaryAndRegistration(QVBoxLayout* layout);
     
     BackupManifest& m_manifest;
     QString m_destinationPath;
@@ -271,6 +280,13 @@ private Q_SLOTS:
 private:
     void setupUi();
     void appendLog(const QString& message);
+
+    /// @brief Save installed apps list from wizard to backup directory
+    void saveInstalledAppsToBackup(const QVector<InstalledAppInfo>& installedApps);
+
+    /// @brief Create, connect, and start the backup worker
+    void connectAndStartBackupWorker(SmartFilter smartFilter, PermissionMode permissionMode,
+                                     int compressionLevel, bool encrypt, const QString& password);
     
     BackupManifest& m_manifest;
     const QVector<UserProfile>& m_users;
@@ -316,6 +332,9 @@ private:
     void populateTree(const QVector<InstalledAppInfo>& apps);
     void updateParentCheckState(QTreeWidgetItem* parent);
     void updateNextButtonText();
+
+    /// @brief Categorize an application by name/publisher into a UI group
+    static QString categorizeApp(const QString& name, const QString& publisher);
 
     QTreeWidget* m_appTree{nullptr};
     QPushButton* m_scanButton{nullptr};

@@ -154,44 +154,9 @@ void PhotoManagementBackupAction::execute() {
             return;
         }
 
-        QString safe_dir = sanitizePathForBackup(data.path);
-        QString dest_path = backup_dir.filePath(data.software_name + "/" + data.data_type + "/" + safe_dir);
-        QDir().mkpath(dest_path);
-        
-        QFileInfo src_info(data.path);
-        
-        if (src_info.isFile()) {
-            QString dest_file = dest_path + "/" + src_info.fileName();
-            if (QFile::exists(dest_file)) {
-                QString base = src_info.completeBaseName();
-                QString ext = src_info.suffix();
-                int suffix = 1;
-                QString candidate;
-                do {
-                    candidate = dest_path + "/" + QString("%1_%2.%3").arg(base).arg(suffix).arg(ext);
-                    suffix++;
-                } while (QFile::exists(candidate));
-                dest_file = candidate;
-            }
-            if (QFile::copy(data.path, dest_file)) {
-                processed++;
-                bytes_copied += data.size;
-            }
-        } else if (src_info.isDir()) {
-            // Copy directory recursively
-            QDirIterator it(data.path, QDir::Files, QDirIterator::Subdirectories);
-            while (it.hasNext()) {
-                it.next();
-                QString rel = QDir(data.path).relativeFilePath(it.filePath());
-                QString dest = dest_path + "/" + rel;
-                
-                QDir().mkpath(QFileInfo(dest).absolutePath());
-                if (QFile::copy(it.filePath(), dest)) {
-                    bytes_copied += it.fileInfo().size();
-                }
-            }
-            processed++;
-        }
+        auto [ok, copied] = backupPhotoItem(data, backup_dir);
+        if (ok) processed++;
+        bytes_copied += copied;
         
         Q_EMIT executionProgress(QString("Backing up %1 %2...").arg(data.software_name, data.data_type),
                              (processed * 100) / m_photo_data.count());
@@ -208,6 +173,52 @@ void PhotoManagementBackupAction::execute() {
     result.output_path = backup_dir.absolutePath();
     
     finishWithResult(result, processed > 0 ? ActionStatus::Success : ActionStatus::Failed);
+}
+
+QPair<bool, qint64> PhotoManagementBackupAction::backupPhotoItem(
+        const PhotoSoftwareData& data, const QDir& backup_dir)
+{
+    QString safe_dir = sanitizePathForBackup(data.path);
+    QString dest_path = backup_dir.filePath(data.software_name + "/" + data.data_type + "/" + safe_dir);
+    QDir().mkpath(dest_path);
+
+    QFileInfo src_info(data.path);
+
+    if (src_info.isFile()) {
+        QString dest_file = dest_path + "/" + src_info.fileName();
+        if (QFile::exists(dest_file)) {
+            QString base = src_info.completeBaseName();
+            QString ext = src_info.suffix();
+            int suffix = 1;
+            QString candidate;
+            do {
+                candidate = dest_path + "/" + QString("%1_%2.%3").arg(base).arg(suffix).arg(ext);
+                suffix++;
+            } while (QFile::exists(candidate));
+            dest_file = candidate;
+        }
+        if (QFile::copy(data.path, dest_file)) {
+            return {true, data.size};
+        }
+        return {false, 0};
+    }
+
+    if (src_info.isDir()) {
+        qint64 bytes_copied = 0;
+        QDirIterator it(data.path, QDir::Files, QDirIterator::Subdirectories);
+        while (it.hasNext()) {
+            it.next();
+            QString rel = QDir(data.path).relativeFilePath(it.filePath());
+            QString dest = dest_path + "/" + rel;
+            QDir().mkpath(QFileInfo(dest).absolutePath());
+            if (QFile::copy(it.filePath(), dest)) {
+                bytes_copied += it.fileInfo().size();
+            }
+        }
+        return {true, bytes_copied};
+    }
+
+    return {false, 0};
 }
 
 } // namespace sak

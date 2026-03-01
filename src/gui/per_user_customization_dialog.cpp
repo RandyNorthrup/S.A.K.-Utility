@@ -49,6 +49,12 @@ void PerUserCustomizationDialog::setupUi() {
     separator1->setFrameShadow(QFrame::Sunken);
     mainLayout->addWidget(separator1);
     
+    setupUi_foldersSection(mainLayout);
+    setupUi_appDataSection(mainLayout);
+    setupUi_dialogButtons(mainLayout);
+}
+
+void PerUserCustomizationDialog::setupUi_foldersSection(QVBoxLayout* mainLayout) {
     // Standard folders section
     auto* foldersGroup = new QGroupBox("Standard Folders");
     auto* foldersLayout = new QVBoxLayout(foldersGroup);
@@ -107,7 +113,9 @@ void PerUserCustomizationDialog::setupUi() {
     foldersLayout->addLayout(customLayout);
     
     mainLayout->addWidget(foldersGroup);
-    
+}
+
+void PerUserCustomizationDialog::setupUi_appDataSection(QVBoxLayout* mainLayout) {
     // Application data section
     m_appDataGroup = new QGroupBox("Application Data (Selective)");
     auto* appDataLayout = new QVBoxLayout(m_appDataGroup);
@@ -140,7 +148,9 @@ void PerUserCustomizationDialog::setupUi() {
     m_summaryLabel = new QLabel();
     m_summaryLabel->setStyleSheet(QString("padding: 10px; background-color: %1; border-radius: 10px;").arg(sak::ui::kColorBgInfoPanel));
     mainLayout->addWidget(m_summaryLabel);
-    
+}
+
+void PerUserCustomizationDialog::setupUi_dialogButtons(QVBoxLayout* mainLayout) {
     // Separator
     auto* separator2 = new QFrame();
     separator2->setFrameShape(QFrame::HLine);
@@ -431,6 +441,68 @@ void PerUserCustomizationDialog::onCollapseAll() {
     m_folderTree->collapseAll();
 }
 
+QString PerUserCustomizationDialog::formatFileSize(qint64 bytes) {
+    double sizeMB = bytes / (1024.0 * 1024.0);
+    if (sizeMB >= 1024) {
+        return QString("%1 GB").arg(sizeMB / 1024.0, 0, 'f', 2);
+    } else if (sizeMB >= 1) {
+        return QString("%1 MB").arg(sizeMB, 0, 'f', 1);
+    } else if (bytes >= 1024) {
+        return QString("%1 KB").arg(bytes / 1024.0, 0, 'f', 1);
+    } else if (bytes > 0) {
+        return QString("%1 bytes").arg(bytes);
+    }
+    return "0 KB";
+}
+
+void PerUserCustomizationDialog::addDirectoryChildItem(const QFileInfo& entry, QTreeWidgetItem* parent, qint64& totalSize, int& totalFiles, bool checked, int depth, int maxDepth) {
+    QTreeWidgetItem* childItem = new QTreeWidgetItem(parent);
+    
+    if (entry.isDir()) {
+        // Skip symbolic links to prevent infinite loops
+        if (entry.isSymLink()) {
+            childItem->setFlags(childItem->flags() | Qt::ItemIsUserCheckable);
+            childItem->setCheckState(0, checked ? Qt::Checked : Qt::Unchecked);
+            childItem->setText(0, QString("[LINK] %1").arg(entry.fileName()));
+            childItem->setData(0, Qt::UserRole + 1, true);
+            childItem->setText(1, "-");
+            childItem->setText(2, "-");
+            return;
+        }
+        
+        // Directory - add tri-state checkbox
+        childItem->setFlags(childItem->flags() | Qt::ItemIsUserCheckable | Qt::ItemIsAutoTristate);
+        childItem->setCheckState(0, checked ? Qt::Checked : Qt::Unchecked);
+        childItem->setText(0, QString("[DIR] %1").arg(entry.fileName()));
+        childItem->setData(0, Qt::UserRole + 1, true);
+        
+        // Recursively add subdirectory contents
+        qint64 subDirSize = 0;
+        int subDirFiles = 0;
+        QDir subDir(entry.filePath());
+        addDirectoryContents(subDir, childItem, subDirSize, subDirFiles, checked, depth + 1, maxDepth);
+        
+        totalSize += subDirSize;
+        totalFiles += subDirFiles;
+        
+        childItem->setText(1, formatFileSize(subDirSize));
+        childItem->setText(2, QString::number(subDirFiles));
+        
+    } else if (entry.isFile()) {
+        childItem->setFlags(childItem->flags() | Qt::ItemIsUserCheckable);
+        childItem->setCheckState(0, checked ? Qt::Checked : Qt::Unchecked);
+        childItem->setText(0, entry.fileName());
+        childItem->setData(0, Qt::UserRole + 1, false);
+        
+        qint64 fileSize = entry.size();
+        totalSize += fileSize;
+        totalFiles++;
+        
+        childItem->setText(2, formatFileSize(fileSize));
+        childItem->setText(3, "-");
+    }
+}
+
 void PerUserCustomizationDialog::addDirectoryContents(const QDir& dir, QTreeWidgetItem* parent, qint64& totalSize, int& totalFiles, bool checked, int depth, int maxDepth) {
     // Depth limit to prevent stack overflow
     if (depth >= maxDepth) {
@@ -442,7 +514,6 @@ void PerUserCustomizationDialog::addDirectoryContents(const QDir& dir, QTreeWidg
     try {
         entries = dir.entryInfoList(QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Readable, QDir::Name | QDir::DirsFirst);
     } catch (...) {
-        // Skip directories we can't read
         sak::logWarning("Failed to list directory contents: {}", dir.absolutePath().toStdString());
         return;
     }
@@ -453,93 +524,18 @@ void PerUserCustomizationDialog::addDirectoryContents(const QDir& dir, QTreeWidg
     
     for (const QFileInfo& entry : entries) {
         if (itemCount >= MAX_ITEMS_PER_DIR) {
-            // Add a placeholder for remaining items
             QTreeWidgetItem* moreItem = new QTreeWidgetItem(parent);
             moreItem->setText(0, QString("... (%1 more items)").arg(entries.size() - itemCount));
             moreItem->setFlags(Qt::ItemIsEnabled);
             break;
         }
         
-        // Skip if we can't read the entry
         if (!entry.isReadable()) {
             continue;
         }
         
-        QTreeWidgetItem* childItem = new QTreeWidgetItem(parent);
-        
-        if (entry.isDir()) {
-            // Skip symbolic links to prevent infinite loops
-            if (entry.isSymLink()) {
-                childItem->setFlags(childItem->flags() | Qt::ItemIsUserCheckable);
-                childItem->setCheckState(0, checked ? Qt::Checked : Qt::Unchecked);
-                childItem->setText(0, QString("[LINK] %1").arg(entry.fileName()));
-                childItem->setData(0, Qt::UserRole + 1, true);
-                childItem->setText(1, "-");
-                childItem->setText(2, "-");
-                itemCount++;
-                continue;
-            }
-            
-            // Directory - add tri-state checkbox
-            childItem->setFlags(childItem->flags() | Qt::ItemIsUserCheckable | Qt::ItemIsAutoTristate);
-            childItem->setCheckState(0, checked ? Qt::Checked : Qt::Unchecked);
-            // Column 0: Folder name with checkbox
-            childItem->setText(0, QString("[DIR] %1").arg(entry.fileName()));
-            childItem->setData(0, Qt::UserRole + 1, true); // Mark as folder
-            
-            // Recursively add subdirectory contents
-            qint64 subDirSize = 0;
-            int subDirFiles = 0;
-            QDir subDir(entry.filePath());
-            addDirectoryContents(subDir, childItem, subDirSize, subDirFiles, checked, depth + 1, maxDepth);
-            
-            totalSize += subDirSize;
-            totalFiles += subDirFiles;
-            
-            // Display subdirectory size and file count
-            QString sizeStr;
-            if (subDirSize > 0) {
-                double sizeMB = subDirSize / (1024.0 * 1024.0);
-                if (sizeMB >= 1024) {
-                    sizeStr = QString("%1 GB").arg(sizeMB / 1024.0, 0, 'f', 2);
-                } else if (sizeMB >= 1) {
-                    sizeStr = QString("%1 MB").arg(sizeMB, 0, 'f', 1);
-                } else {
-                    sizeStr = QString("%1 KB").arg(subDirSize / 1024.0, 0, 'f', 1);
-                }
-            } else {
-                sizeStr = "0 KB";
-            }
-            childItem->setText(1, sizeStr);
-            childItem->setText(2, QString::number(subDirFiles));
-            
-        } else if (entry.isFile()) {
-            // File - add regular checkbox
-            childItem->setFlags(childItem->flags() | Qt::ItemIsUserCheckable);
-            childItem->setCheckState(0, checked ? Qt::Checked : Qt::Unchecked);
-            // Column 0: File name with checkbox
-            childItem->setText(0, entry.fileName());
-            childItem->setData(0, Qt::UserRole + 1, false); // Mark as file
-            
-            qint64 fileSize = entry.size();
-            totalSize += fileSize;
-            totalFiles++;
-            
-            // Display file size
-            QString sizeStr;
-            double sizeMB = fileSize / (1024.0 * 1024.0);
-            if (sizeMB >= 1024) {
-                sizeStr = QString("%1 GB").arg(sizeMB / 1024.0, 0, 'f', 2);
-            } else if (sizeMB >= 1) {
-                sizeStr = QString("%1 MB").arg(sizeMB, 0, 'f', 1);
-            } else if (fileSize >= 1024) {
-                sizeStr = QString("%1 KB").arg(fileSize / 1024.0, 0, 'f', 1);
-            } else {
-                sizeStr = QString("%1 bytes").arg(fileSize);
-            }
-            childItem->setText(2, sizeStr);
-            childItem->setText(3, "-");
-        }
+        addDirectoryChildItem(entry, parent, totalSize, totalFiles, checked, depth, maxDepth);
+        itemCount++;
     }
 }
 

@@ -105,90 +105,106 @@ void ResetNetworkAction::execute() {
     QDateTime start_time = QDateTime::currentDateTime();
     
     m_requires_reboot = false;
-
     QStringList errors;
 
-    auto runCommand = [&errors](const QString& program, const QStringList& args, const QString& label) {
-        ProcessResult proc = runProcess(program, args, 15000);
-        if (proc.timed_out) {
-            errors << QString("%1 timed out").arg(label);
-            return false;
-        }
-
-        if (proc.exit_code != 0) {
-            errors << QString("%1 failed (exit %2)").arg(label).arg(proc.exit_code);
-            return false;
-        }
-
-        return true;
-    };
-    
-    // Enterprise network reset sequence per Microsoft documentation
-    // Proper order: Backup → Reset → Verify
-    
-    Q_EMIT executionProgress("Backing up Winsock catalog...", 5);
-    
-    // Step 1: Backup current Winsock configuration
-    QString backupPath = QDir::temp().filePath("winsock_backup.txt");
-    QString backupCmd = QString("netsh winsock show catalog > \"%1\"").arg(backupPath);
-    runCommand("cmd.exe", QStringList() << "/C" << backupCmd, "Winsock backup");
-    
-    if (isCancelled()) {
+    if (!executeFlushDns(errors)) {
         emitCancelledResult(QStringLiteral("Network reset cancelled by user"), start_time);
         return;
     }
+    if (!executeResetWinsock(errors)) {
+        emitCancelledResult(QStringLiteral("Network reset cancelled by user"), start_time);
+        return;
+    }
+    if (!executeResetIpStack(errors)) {
+        emitCancelledResult(QStringLiteral("Network reset cancelled by user"), start_time);
+        return;
+    }
+
+    executeBuildReport(errors, start_time);
+}
+
+bool ResetNetworkAction::executeFlushDns(QStringList& errors) {
+    // Step 1: Backup current Winsock configuration
+    Q_EMIT executionProgress("Backing up Winsock catalog...", 5);
+    
+    QString backupPath = QDir::temp().filePath("winsock_backup.txt");
+    QString backupCmd = QString("netsh winsock show catalog > \"%1\"").arg(backupPath);
+    {
+        ProcessResult proc = runProcess("cmd.exe", QStringList() << "/C" << backupCmd, 15000);
+        if (proc.timed_out) errors << "Winsock backup timed out";
+        else if (proc.exit_code != 0) errors << QString("Winsock backup failed (exit %1)").arg(proc.exit_code);
+    }
+    
+    if (isCancelled()) return false;
     
     // Step 2: Flush DNS cache
     Q_EMIT executionProgress("Flushing DNS cache...", 15);
-    runCommand("ipconfig", QStringList() << "/flushdns", "DNS flush");
-    
-    if (isCancelled()) {
-        emitCancelledResult(QStringLiteral("Network reset cancelled by user"), start_time);
-        return;
+    {
+        ProcessResult proc = runProcess("ipconfig", QStringList() << "/flushdns", 15000);
+        if (proc.timed_out) errors << "DNS flush timed out";
+        else if (proc.exit_code != 0) errors << QString("DNS flush failed (exit %1)").arg(proc.exit_code);
     }
     
+    return !isCancelled();
+}
+
+bool ResetNetworkAction::executeResetWinsock(QStringList& errors) {
     // Step 3: Reset Winsock catalog
     Q_EMIT executionProgress("Resetting Winsock catalog...", 30);
-    runCommand("netsh", QStringList() << "winsock" << "reset", "Winsock reset");
+    {
+        ProcessResult proc = runProcess("netsh", QStringList() << "winsock" << "reset", 15000);
+        if (proc.timed_out) errors << "Winsock reset timed out";
+        else if (proc.exit_code != 0) errors << QString("Winsock reset failed (exit %1)").arg(proc.exit_code);
+    }
     m_requires_reboot = true;
     
-    if (isCancelled()) {
-        emitCancelledResult(QStringLiteral("Network reset cancelled by user"), start_time);
-        return;
-    }
+    if (isCancelled()) return false;
     
     // Step 4: Reset TCP/IP stack
     Q_EMIT executionProgress("Resetting TCP/IP stack...", 45);
-    runCommand("netsh", QStringList() << "int" << "ip" << "reset", "TCP/IP reset");
-    runCommand("netsh", QStringList() << "int" << "ipv6" << "reset", "IPv6 reset");
-    
-    if (isCancelled()) {
-        emitCancelledResult(QStringLiteral("Network reset cancelled by user"), start_time);
-        return;
+    {
+        ProcessResult proc = runProcess("netsh", QStringList() << "int" << "ip" << "reset", 15000);
+        if (proc.timed_out) errors << "TCP/IP reset timed out";
+        else if (proc.exit_code != 0) errors << QString("TCP/IP reset failed (exit %1)").arg(proc.exit_code);
+    }
+    {
+        ProcessResult proc = runProcess("netsh", QStringList() << "int" << "ipv6" << "reset", 15000);
+        if (proc.timed_out) errors << "IPv6 reset timed out";
+        else if (proc.exit_code != 0) errors << QString("IPv6 reset failed (exit %1)").arg(proc.exit_code);
     }
     
+    return !isCancelled();
+}
+
+bool ResetNetworkAction::executeResetIpStack(QStringList& errors) {
     // Step 5: Release and renew IP addresses
     Q_EMIT executionProgress("Releasing IP addresses...", 60);
-    runCommand("ipconfig", QStringList() << "/release", "IP release");
+    {
+        ProcessResult proc = runProcess("ipconfig", QStringList() << "/release", 15000);
+        if (proc.timed_out) errors << "IP release timed out";
+        else if (proc.exit_code != 0) errors << QString("IP release failed (exit %1)").arg(proc.exit_code);
+    }
     
     QThread::msleep(2000);
     
     Q_EMIT executionProgress("Renewing IP addresses...", 70);
-    runCommand("ipconfig", QStringList() << "/renew", "IP renew");
-    
-    if (isCancelled()) {
-        emitCancelledResult(QStringLiteral("Network reset cancelled by user"), start_time);
-        return;
+    {
+        ProcessResult proc = runProcess("ipconfig", QStringList() << "/renew", 15000);
+        if (proc.timed_out) errors << "IP renew timed out";
+        else if (proc.exit_code != 0) errors << QString("IP renew failed (exit %1)").arg(proc.exit_code);
     }
+    
+    if (isCancelled()) return false;
     
     // Step 6: Reset Windows Firewall to defaults
     Q_EMIT executionProgress("Resetting Windows Firewall...", 80);
-    runCommand("netsh", QStringList() << "advfirewall" << "reset", "Firewall reset");
-    
-    if (isCancelled()) {
-        emitCancelledResult(QStringLiteral("Network reset cancelled by user"), start_time);
-        return;
+    {
+        ProcessResult proc = runProcess("netsh", QStringList() << "advfirewall" << "reset", 15000);
+        if (proc.timed_out) errors << "Firewall reset timed out";
+        else if (proc.exit_code != 0) errors << QString("Firewall reset failed (exit %1)").arg(proc.exit_code);
     }
+    
+    if (isCancelled()) return false;
     
     // Step 7: Reset network adapter settings
     Q_EMIT executionProgress("Resetting network adapters...", 85);
@@ -208,21 +224,25 @@ void ResetNetworkAction::execute() {
         }
     }
     
-    if (isCancelled()) {
-        emitCancelledResult(QStringLiteral("Network reset cancelled by user"), start_time);
-        return;
-    }
+    if (isCancelled()) return false;
     
     // Step 8: Clear NetBIOS cache
     Q_EMIT executionProgress("Clearing NetBIOS cache...", 90);
-    runCommand("nbtstat", QStringList() << "-R", "NetBIOS cache clear");
-    runCommand("nbtstat", QStringList() << "-RR", "NetBIOS refresh");
-    
-    if (isCancelled()) {
-        emitCancelledResult(QStringLiteral("Network reset cancelled by user"), start_time);
-        return;
+    {
+        ProcessResult proc = runProcess("nbtstat", QStringList() << "-R", 15000);
+        if (proc.timed_out) errors << "NetBIOS cache clear timed out";
+        else if (proc.exit_code != 0) errors << QString("NetBIOS cache clear failed (exit %1)").arg(proc.exit_code);
+    }
+    {
+        ProcessResult proc = runProcess("nbtstat", QStringList() << "-RR", 15000);
+        if (proc.timed_out) errors << "NetBIOS refresh timed out";
+        else if (proc.exit_code != 0) errors << QString("NetBIOS refresh failed (exit %1)").arg(proc.exit_code);
     }
     
+    return !isCancelled();
+}
+
+void ResetNetworkAction::executeBuildReport(const QStringList& errors, const QDateTime& start_time) {
     // Step 9: Verify network configuration
     Q_EMIT executionProgress("Verifying network configuration...", 95);
     
@@ -251,6 +271,7 @@ void ResetNetworkAction::execute() {
         result.message += " - REBOOT REQUIRED for Winsock/TCP-IP changes";
     }
     
+    QString backupPath = QDir::temp().filePath("winsock_backup.txt");
     result.log = QString("Winsock backup saved to: %1\n\nVerification:\n%2")
                     .arg(backupPath)
                     .arg(verifyOutput);

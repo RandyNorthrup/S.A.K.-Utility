@@ -49,45 +49,9 @@ bool DriveUnmounter::unmountDrive(int driveNumber) {
     bool allSucceeded = true;
     for (const QString& volumePath : volumes) {
         Q_EMIT statusMessage(QString("Unmounting volume %1...").arg(volumePath));
-
-        // Delete mount points first
-        if (!deleteMountPoints(volumePath)) {
-            sak::logWarning(QString("Failed to delete mount points for %1")
-                .arg(volumePath).toStdString());
-        }
-
-        // Lock the volume with retry
-        HANDLE volumeHandle = INVALID_HANDLE_VALUE;
-        bool locked = retryWithBackoff([&]() {
-            volumeHandle = lockVolume(volumePath);
-            return volumeHandle != INVALID_HANDLE_VALUE;
-        });
-
-        if (!locked) {
-            m_lastError = QString("Failed to lock volume %1: %2")
-                .arg(volumePath).arg(m_lastError);
-            sak::logError(m_lastError.toStdString());
+        if (!lockAndDismountVolume(volumePath)) {
             allSucceeded = false;
-            continue;
         }
-
-        // Dismount the volume with retry
-        bool dismounted = retryWithBackoff([&]() {
-            return dismountVolume(volumeHandle);
-        });
-
-        if (!dismounted) {
-            m_lastError = QString("Failed to dismount volume %1: %2")
-                .arg(volumePath).arg(m_lastError);
-            sak::logError(m_lastError.toStdString());
-            CloseHandle(volumeHandle);
-            allSucceeded = false;
-            continue;
-        }
-
-        // Keep handle open until we're done with the drive
-        m_lockedVolumes.insert(volumePath, volumeHandle);
-        sak::logInfo(QString("Successfully unmounted %1").arg(volumePath).toStdString());
     }
 
     // Step 4: Close all remaining handles
@@ -102,6 +66,46 @@ bool DriveUnmounter::unmountDrive(int driveNumber) {
     }
 
     return allSucceeded;
+}
+
+bool DriveUnmounter::lockAndDismountVolume(const QString& volumePath) {
+    // Delete mount points first
+    if (!deleteMountPoints(volumePath)) {
+        sak::logWarning(QString("Failed to delete mount points for %1")
+            .arg(volumePath).toStdString());
+    }
+
+    // Lock the volume with retry
+    HANDLE volumeHandle = INVALID_HANDLE_VALUE;
+    bool locked = retryWithBackoff([&]() {
+        volumeHandle = lockVolume(volumePath);
+        return volumeHandle != INVALID_HANDLE_VALUE;
+    });
+
+    if (!locked) {
+        m_lastError = QString("Failed to lock volume %1: %2")
+            .arg(volumePath).arg(m_lastError);
+        sak::logError(m_lastError.toStdString());
+        return false;
+    }
+
+    // Dismount the volume with retry
+    bool dismounted = retryWithBackoff([&]() {
+        return dismountVolume(volumeHandle);
+    });
+
+    if (!dismounted) {
+        m_lastError = QString("Failed to dismount volume %1: %2")
+            .arg(volumePath).arg(m_lastError);
+        sak::logError(m_lastError.toStdString());
+        CloseHandle(volumeHandle);
+        return false;
+    }
+
+    // Keep handle open until we're done with the drive
+    m_lockedVolumes.insert(volumePath, volumeHandle);
+    sak::logInfo(QString("Successfully unmounted %1").arg(volumePath).toStdString());
+    return true;
 }
 
 QStringList DriveUnmounter::getVolumesOnDrive(int driveNumber) const {
@@ -384,90 +388,98 @@ bool DriveUnmounter::closeAllHandles(int driveNumber) {
         }
     }
     m_lockedVolumes.clear();
-    
+
     DWORD dwSession;
     WCHAR szSessionKey[CCH_RM_SESSION_KEY + 1] = {0};
     DWORD dwError = RmStartSession(&dwSession, 0, szSessionKey);
-    
+
     if (dwError != ERROR_SUCCESS) {
         sak::logWarning(QString("Failed to start Restart Manager session: %1").arg(dwError).toStdString());
         return true;
     }
-    
+
+    QStringList mountPoints = findVolumesForDrive(driveNumber);
+    shutdownHandlesViaRestartManager(dwSession, mountPoints);
+
+    RmEndSession(dwSession);
+    return true;
+}
+
+QStringList DriveUnmounter::findVolumesForDrive(int driveNumber) const {
     QStringList mountPoints;
     wchar_t volumeName[MAX_PATH];
     HANDLE hFind = FindFirstVolumeW(volumeName, MAX_PATH);
-    
-    if (hFind != INVALID_HANDLE_VALUE) {
-        do {
-            HANDLE hVolume = CreateFileW(
-                volumeName,
-                0,
-                FILE_SHARE_READ | FILE_SHARE_WRITE,
-                nullptr,
-                OPEN_EXISTING,
-                0,
-                nullptr
-            );
-            
-            if (hVolume != INVALID_HANDLE_VALUE) {
-                STORAGE_DEVICE_NUMBER deviceNumber = {};
-                DWORD bytesReturned = 0;
-                
-                if (DeviceIoControl(
-                    hVolume,
-                    IOCTL_STORAGE_GET_DEVICE_NUMBER,
-                    nullptr, 0,
-                    &deviceNumber, sizeof(deviceNumber),
-                    &bytesReturned,
-                    nullptr)
-                    && static_cast<int>(deviceNumber.DeviceNumber) == driveNumber)
-                {
-                    size_t len = wcslen(volumeName);
-                    if (len > 0 && volumeName[len - 1] == L'\\') {
-                        volumeName[len - 1] = L'\0';
-                    }
-                    mountPoints.append(QString::fromWCharArray(volumeName));
-                }
-                
-                CloseHandle(hVolume);
-            }
-        } while (FindNextVolumeW(hFind, volumeName, MAX_PATH));
-        
-        FindVolumeClose(hFind);
+
+    if (hFind == INVALID_HANDLE_VALUE) {
+        return mountPoints;
     }
-    
+
+    do {
+        HANDLE hVolume = CreateFileW(
+            volumeName, 0,
+            FILE_SHARE_READ | FILE_SHARE_WRITE,
+            nullptr, OPEN_EXISTING, 0, nullptr);
+
+        if (hVolume != INVALID_HANDLE_VALUE) {
+            STORAGE_DEVICE_NUMBER deviceNumber = {};
+            DWORD bytesReturned = 0;
+
+            if (DeviceIoControl(
+                hVolume, IOCTL_STORAGE_GET_DEVICE_NUMBER,
+                nullptr, 0,
+                &deviceNumber, sizeof(deviceNumber),
+                &bytesReturned, nullptr)
+                && static_cast<int>(deviceNumber.DeviceNumber) == driveNumber)
+            {
+                size_t len = wcslen(volumeName);
+                if (len > 0 && volumeName[len - 1] == L'\\') {
+                    volumeName[len - 1] = L'\0';
+                }
+                mountPoints.append(QString::fromWCharArray(volumeName));
+            }
+
+            CloseHandle(hVolume);
+        }
+    } while (FindNextVolumeW(hFind, volumeName, MAX_PATH));
+
+    FindVolumeClose(hFind);
+    return mountPoints;
+}
+
+void DriveUnmounter::shutdownHandlesViaRestartManager(DWORD dwSession,
+                                                      const QStringList& mountPoints) {
     QVector<LPCWSTR> files;
     for (const QString& mountPoint : mountPoints) {
         files.append(reinterpret_cast<LPCWSTR>(mountPoint.utf16()));
     }
-    
-    if (!files.isEmpty()) {
-        dwError = RmRegisterResources(dwSession, files.size(), const_cast<LPCWSTR*>(files.data()), 0, nullptr, 0, nullptr);
-        
+
+    if (files.isEmpty()) {
+        return;
+    }
+
+    DWORD dwError = RmRegisterResources(
+        dwSession, files.size(), const_cast<LPCWSTR*>(files.data()),
+        0, nullptr, 0, nullptr);
+
+    if (dwError != ERROR_SUCCESS) {
+        return;
+    }
+
+    DWORD dwReason;
+    UINT nProcInfoNeeded = 0;
+    UINT nProcInfo = 0;
+    RM_PROCESS_INFO rgpi[10];
+
+    dwError = RmGetList(dwSession, &nProcInfoNeeded, &nProcInfo, rgpi, &dwReason);
+
+    if ((dwError == ERROR_SUCCESS || dwError == ERROR_MORE_DATA) && nProcInfoNeeded > 0) {
+        sak::logInfo(QString("Found %1 processes with open handles").arg(nProcInfoNeeded).toStdString());
+
+        dwError = RmShutdown(dwSession, RmForceShutdown, nullptr);
         if (dwError == ERROR_SUCCESS) {
-            DWORD dwReason;
-            UINT nProcInfoNeeded = 0;
-            UINT nProcInfo = 0;
-            RM_PROCESS_INFO rgpi[10];
-            
-            dwError = RmGetList(dwSession, &nProcInfoNeeded, &nProcInfo, rgpi, &dwReason);
-            
-            if (dwError == ERROR_SUCCESS || dwError == ERROR_MORE_DATA) {
-                if (nProcInfoNeeded > 0) {
-                    sak::logInfo(QString("Found %1 processes with open handles").arg(nProcInfoNeeded).toStdString());
-                    
-                    dwError = RmShutdown(dwSession, RmForceShutdown, nullptr);
-                    if (dwError == ERROR_SUCCESS) {
-                        sak::logInfo("Successfully closed all file handles");
-                    } else {
-                        sak::logWarning(QString("Failed to close handles: %1").arg(dwError).toStdString());
-                    }
-                }
-            }
+            sak::logInfo("Successfully closed all file handles");
+        } else {
+            sak::logWarning(QString("Failed to close handles: %1").arg(dwError).toStdString());
         }
     }
-    
-    RmEndSession(dwSession);
-    return true;
 }

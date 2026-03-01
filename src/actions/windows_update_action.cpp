@@ -134,14 +134,33 @@ void WindowsUpdateAction::execute() {
     }
     setStatus(ActionStatus::Running);
     QDateTime start_time = QDateTime::currentDateTime();
-    
+
+    QString ps_script;
+    executeInitSession(start_time, ps_script);
+
+    QString accumulated_output;
+    QString errors;
+    int exit_code = 0;
+    if (!executeSearchUpdates(start_time, ps_script, accumulated_output, errors, exit_code)) return;
+
+    executeBuildReport(start_time, accumulated_output, errors, exit_code);
+}
+
+void WindowsUpdateAction::executeInitSession(const QDateTime& start_time, QString& ps_script)
+{
+    Q_UNUSED(start_time)
     Q_EMIT executionProgress("Initiating Windows Update scan...", 5);
-    
+
     // Modern Windows 10/11 approach: Use UsoClient (Update Session Orchestrator)
     // Per Microsoft docs: UsoClient replaces deprecated COM API for Windows Update automation
     // Commands: StartScan, StartDownload, StartInstall, ResumeUpdate, RestartDevice
-    
-    QString ps_script = 
+
+    ps_script = buildUpdateScanScript() + buildUpdateInstallScript();
+}
+
+QString WindowsUpdateAction::buildUpdateScanScript()
+{
+    return
         "# Enterprise Windows Update using UsoClient\n"
         "Write-Output 'Starting update scan via UsoClient...'; \n"
         "$usoClient = Join-Path $env:SystemRoot 'System32\\UsoClient.exe'; \n"
@@ -183,7 +202,12 @@ void WindowsUpdateAction::execute() {
         "  Write-Warning \"Could not query updates: $_\"; \n"
         "  # Continue anyway - UsoClient will handle\n"
         "} \n"
-        "\n"
+        "\n";
+}
+
+QString WindowsUpdateAction::buildUpdateInstallScript()
+{
+    return
         "# Step 2: Download updates\n"
         "Write-Output 'Starting download via UsoClient...'; \n"
         "try { \n"
@@ -226,7 +250,14 @@ void WindowsUpdateAction::execute() {
         "} \n"
         "\n"
         "exit 0";
-    
+}
+
+bool WindowsUpdateAction::executeSearchUpdates(const QDateTime& start_time,
+                                                 const QString& ps_script,
+                                                 QString& accumulated_output,
+                                                 QString& errors,
+                                                 int& exit_code)
+{
     Q_EMIT executionProgress("Scanning for updates...", 20);
     Q_EMIT executionProgress("Preparing download...", 35);
     Q_EMIT executionProgress("Downloading updates...", 50);
@@ -236,7 +267,7 @@ void WindowsUpdateAction::execute() {
 
     if (ps.cancelled) {
         emitCancelledResult(QStringLiteral("Windows Update cancelled"), start_time);
-        return;
+        return false;
     }
 
     if (ps.timed_out) {
@@ -244,7 +275,7 @@ void WindowsUpdateAction::execute() {
             QStringLiteral("Operation timed out after 30 minutes"),
             QString(),
             start_time);
-        return;
+        return false;
     }
 
     if (!ps.std_err.trimmed().isEmpty()) {
@@ -253,15 +284,23 @@ void WindowsUpdateAction::execute() {
 
     Q_EMIT executionProgress("Finalizing...", 95);
 
-    QString accumulated_output = ps.std_out;
-    QString errors = ps.std_err;
-    int exit_code = ps.exit_code;
-    
+    accumulated_output = ps.std_out;
+    errors = ps.std_err;
+    exit_code = ps.exit_code;
+
+    return true;
+}
+
+void WindowsUpdateAction::executeBuildReport(const QDateTime& start_time,
+                                               const QString& accumulated_output,
+                                               const QString& errors,
+                                               int exit_code)
+{
     qint64 duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
-    
+
     ExecutionResult result;
     result.duration_ms = duration_ms;
-    
+
     if (accumulated_output.contains("No updates available")) {
         result.success = true;
         result.message = "Windows is up to date";
@@ -289,7 +328,7 @@ void WindowsUpdateAction::execute() {
         result.message = "Windows Update failed";
         result.log = QString("Exit code: %1\n%2\nErrors:\n%3").arg(exit_code).arg(accumulated_output).arg(errors);
     }
-    
+
     finishWithResult(result, result.success ? ActionStatus::Success : ActionStatus::Failed);
 }
 

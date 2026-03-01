@@ -66,6 +66,60 @@ QuickActionsPanel::~QuickActionsPanel() {
     saveSettings();
 }
 
+void QuickActionsPanel::setupUi_statusSection(QVBoxLayout* main_layout) {
+    auto* status_group = new QGroupBox("Status");
+    auto* status_layout = new QVBoxLayout(status_group);
+
+    // Status labels
+    auto* labels_layout = new QGridLayout();
+    labels_layout->setSpacing(5);
+
+    m_action_label = new QLabel("Action: Ready");
+    m_status_label = new QLabel("Status: Idle");
+    m_location_label = new QLabel("Location: -");
+    m_duration_label = new QLabel("Duration: -");
+    m_bytes_label = new QLabel("Bytes: -");
+
+    labels_layout->addWidget(m_action_label, 0, 0);
+    labels_layout->addWidget(m_status_label, 0, 1);
+    labels_layout->addWidget(m_location_label, 1, 0);
+    labels_layout->addWidget(m_duration_label, 1, 1);
+    labels_layout->addWidget(m_bytes_label, 2, 0, 1, 2);
+
+    status_layout->addLayout(labels_layout);
+
+    main_layout->addWidget(status_group);
+}
+
+void QuickActionsPanel::setupUi_bottomRow(QVBoxLayout* main_layout) {
+    auto* bottomLayout = new QHBoxLayout();
+
+    auto* settingsBtn = new QPushButton(tr("Settings"), this);
+    settingsBtn->setAccessibleName(QStringLiteral("Quick Actions Settings"));
+    settingsBtn->setToolTip(QStringLiteral("Configure quick actions settings"));
+    connect(settingsBtn, &QPushButton::clicked, this, &QuickActionsPanel::showSettingsDialog);
+    bottomLayout->addWidget(settingsBtn);
+
+    m_open_folder_button = new QPushButton("Open Output Folder");
+    m_open_folder_button->setEnabled(false);
+    m_open_folder_button->setAccessibleName(QStringLiteral("Open Output Folder"));
+    m_open_folder_button->setToolTip(QStringLiteral("Open the last output folder in file explorer"));
+    connect(m_open_folder_button, &QPushButton::clicked, this, [this]() {
+        if (!m_last_output_path.isEmpty()) {
+            const QFileInfo fi(m_last_output_path);
+            const QString folder = fi.isDir() ? m_last_output_path : fi.absolutePath();
+            QDesktopServices::openUrl(QUrl::fromLocalFile(folder));
+        }
+    });
+    bottomLayout->addWidget(m_open_folder_button);
+
+    m_logToggle = new LogToggleSwitch(tr("Log"), this);
+    bottomLayout->addWidget(m_logToggle);
+    bottomLayout->addStretch();
+
+    main_layout->addLayout(bottomLayout);
+}
+
 void QuickActionsPanel::setupUi() {
     auto* main_layout = new QVBoxLayout(this);
     main_layout->setContentsMargins(12, 12, 12, 12);
@@ -121,57 +175,8 @@ void QuickActionsPanel::setupUi() {
     scroll_area->setWidget(scroll_widget);
     main_layout->addWidget(scroll_area, 1);
 
-    // Status section
-    auto* status_group = new QGroupBox("Status");
-    auto* status_layout = new QVBoxLayout(status_group);
-
-    // Status labels
-    auto* labels_layout = new QGridLayout();
-    labels_layout->setSpacing(5);
-
-    m_action_label = new QLabel("Action: Ready");
-    m_status_label = new QLabel("Status: Idle");
-    m_location_label = new QLabel("Location: -");
-    m_duration_label = new QLabel("Duration: -");
-    m_bytes_label = new QLabel("Bytes: -");
-
-    labels_layout->addWidget(m_action_label, 0, 0);
-    labels_layout->addWidget(m_status_label, 0, 1);
-    labels_layout->addWidget(m_location_label, 1, 0);
-    labels_layout->addWidget(m_duration_label, 1, 1);
-    labels_layout->addWidget(m_bytes_label, 2, 0, 1, 2);
-
-    status_layout->addLayout(labels_layout);
-
-    main_layout->addWidget(status_group);
-
-    // Bottom row: Settings + Open Output Folder + Log toggle + stretch
-    auto* bottomLayout = new QHBoxLayout();
-
-    auto* settingsBtn = new QPushButton(tr("Settings"), this);
-    settingsBtn->setAccessibleName(QStringLiteral("Quick Actions Settings"));
-    settingsBtn->setToolTip(QStringLiteral("Configure quick actions settings"));
-    connect(settingsBtn, &QPushButton::clicked, this, &QuickActionsPanel::showSettingsDialog);
-    bottomLayout->addWidget(settingsBtn);
-
-    m_open_folder_button = new QPushButton("Open Output Folder");
-    m_open_folder_button->setEnabled(false);
-    m_open_folder_button->setAccessibleName(QStringLiteral("Open Output Folder"));
-    m_open_folder_button->setToolTip(QStringLiteral("Open the last output folder in file explorer"));
-    connect(m_open_folder_button, &QPushButton::clicked, this, [this]() {
-        if (!m_last_output_path.isEmpty()) {
-            const QFileInfo fi(m_last_output_path);
-            const QString folder = fi.isDir() ? m_last_output_path : fi.absolutePath();
-            QDesktopServices::openUrl(QUrl::fromLocalFile(folder));
-        }
-    });
-    bottomLayout->addWidget(m_open_folder_button);
-
-    m_logToggle = new LogToggleSwitch(tr("Log"), this);
-    bottomLayout->addWidget(m_logToggle);
-    bottomLayout->addStretch();
-
-    main_layout->addLayout(bottomLayout);
+    setupUi_statusSection(main_layout);
+    setupUi_bottomRow(main_layout);
 }
 
 void QuickActionsPanel::createActions() {
@@ -218,61 +223,69 @@ void QuickActionsPanel::createCategorySections() {
     };
 
     for (const auto& cat_info : categories) {
-        auto* group_box = new QGroupBox(cat_info.title);
-        group_box->setStyleSheet(
-            QString("QGroupBox {"
-            "  font-weight: 600;"
-            "  border: 1px solid %1;"
-            "  border-radius: 12px;"
-            "  margin-top: 18px;"
-            "  padding: 26px 10px 10px 10px;"
-            "  background-color: rgba(255, 255, 255, 0.9);"
-            "}"
-            "QGroupBox::title {"
-            "  subcontrol-origin: margin;"
-            "  subcontrol-position: top left;"
-            "  padding: 0 8px;"
-            "  color: %2;"
-            "}").arg(sak::ui::kColorBorderDefault, sak::ui::kColorTextBody)
-        );
+        createSingleCategorySection(cat_info.category, cat_info.title, cat_info.description);
+    }
+}
 
-        auto* cat_layout = new QVBoxLayout(group_box);
-        
-        // Description
-        auto* desc_label = new QLabel(cat_info.description);
-        desc_label->setStyleSheet(QString("color: %1; font-weight: 400; font-size: %2pt;").arg(sak::ui::kColorTextMuted).arg(sak::ui::kFontSizeStatus));
-        cat_layout->addWidget(desc_label);
+void QuickActionsPanel::createSingleCategorySection(
+    QuickAction::ActionCategory category,
+    const QString& title,
+    const QString& description)
+{
+    auto* group_box = new QGroupBox(title);
+    group_box->setStyleSheet(
+        QString("QGroupBox {"
+        "  font-weight: 600;"
+        "  border: 1px solid %1;"
+        "  border-radius: 12px;"
+        "  margin-top: 18px;"
+        "  padding: 26px 10px 10px 10px;"
+        "  background-color: rgba(255, 255, 255, 0.9);"
+        "}"
+        "QGroupBox::title {"
+        "  subcontrol-origin: margin;"
+        "  subcontrol-position: top left;"
+        "  padding: 0 8px;"
+        "  color: %2;"
+        "}").arg(sak::ui::kColorBorderDefault, sak::ui::kColorTextBody)
+    );
 
-        // Action buttons grid
-        auto* buttons_grid = new QGridLayout();
-        buttons_grid->setSpacing(10);
-        cat_layout->addLayout(buttons_grid);
+    auto* cat_layout = new QVBoxLayout(group_box);
+    
+    // Description
+    auto* desc_label = new QLabel(description);
+    desc_label->setStyleSheet(QString("color: %1; font-weight: 400; font-size: %2pt;").arg(sak::ui::kColorTextMuted).arg(sak::ui::kFontSizeStatus));
+    cat_layout->addWidget(desc_label);
 
-        // Store group box
-        m_category_sections[cat_info.category] = group_box;
-        m_actions_layout->insertWidget(m_actions_layout->count() - 1, group_box);
+    // Action buttons grid
+    auto* buttons_grid = new QGridLayout();
+    buttons_grid->setSpacing(10);
+    cat_layout->addLayout(buttons_grid);
 
-        // Populate with actions
-        auto actions = m_controller->getActionsByCategory(cat_info.category);
-        int row = 0, col = 0;
-        const int cols_per_row = 4;
+    // Store group box
+    m_category_sections[category] = group_box;
+    m_actions_layout->insertWidget(m_actions_layout->count() - 1, group_box);
 
-        for (auto* action : actions) {
-            auto* button = createActionButton(action);
-            buttons_grid->addWidget(button, row, col);
-            m_action_buttons[action] = button;
+    // Populate with actions
+    auto actions = m_controller->getActionsByCategory(category);
+    int row = 0, col = 0;
+    const int cols_per_row = 4;
 
-            col++;
-            if (col >= cols_per_row) {
-                col = 0;
-                row++;
-            }
+    for (auto* action : actions) {
+        auto* button = createActionButton(action);
+        buttons_grid->addWidget(button, row, col);
+        m_action_buttons[action] = button;
+
+        col++;
+        if (col >= cols_per_row) {
+            col = 0;
+            row++;
         }
+    }
 
-        // Hide empty categories
-        if (actions.empty()) {
-            group_box->hide();
-        }
+    // Hide empty categories
+    if (actions.empty()) {
+        group_box->hide();
     }
 }
 

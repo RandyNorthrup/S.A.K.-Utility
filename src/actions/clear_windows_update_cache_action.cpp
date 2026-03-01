@@ -132,6 +132,11 @@ void ClearWindowsUpdateCacheAction::execute() {
 
 QString ClearWindowsUpdateCacheAction::buildCacheCleanupScript() const
 {
+    return buildServiceStopScript() + buildCachePurgeScript() + buildServiceStartScript();
+}
+
+QString ClearWindowsUpdateCacheAction::buildServiceStopScript() const
+{
     return QString(
         "$ErrorActionPreference = 'Continue'\n"
         "$results = @{}\n"
@@ -180,6 +185,12 @@ QString ClearWindowsUpdateCacheAction::buildCacheCleanupScript() const
         "    $totalBefore += $size\n"
         "}\n"
         "$results['TotalBefore'] = $totalBefore\n"
+    );
+}
+
+QString ClearWindowsUpdateCacheAction::buildCachePurgeScript() const
+{
+    return QString(
         "\n"
         "# Stop services\n"
         "$stopSuccess = 0\n"
@@ -228,6 +239,12 @@ QString ClearWindowsUpdateCacheAction::buildCacheCleanupScript() const
         "    }\n"
         "}\n"
         "$results['ClearedPaths'] = $clearedPaths\n"
+    );
+}
+
+QString ClearWindowsUpdateCacheAction::buildServiceStartScript() const
+{
+    return QString(
         "\n"
         "# Start services\n"
         "$startSuccess = 0\n"

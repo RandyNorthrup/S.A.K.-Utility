@@ -159,6 +159,10 @@ private:
     void loadApps();
     void populateTree(const QVector<RestoreAppInfo>& apps);
     void updateParentCheckState(QTreeWidgetItem* parent);
+    /// @brief Collect checked apps from the tree widget
+    QVector<RestoreAppInfo> collectSelectedApps() const;
+    /// @brief Install apps sequentially; returns (installed, failed) counts
+    QPair<int,int> installAppsSequentially(const QVector<RestoreAppInfo>& apps);
 
     QTreeWidget* m_appTree{nullptr};
     QPushButton* m_selectAllButton{nullptr};

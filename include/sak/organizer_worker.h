@@ -103,6 +103,9 @@ private:
      */
     auto executeMove(const MoveOperation& operation) -> std::expected<void, sak::error_code>;
 
+    /// @brief Execute all planned file move operations
+    auto executePlannedMoves() -> std::expected<void, sak::error_code>;
+
     /**
      * @brief Handle file collision based on strategy
      * @param operation Move operation with collision

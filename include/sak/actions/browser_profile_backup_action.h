@@ -4,9 +4,14 @@
 #pragma once
 
 #include "sak/quick_action.h"
+#include <QDateTime>
+#include <QDir>
 #include <QString>
+#include <QVector>
 
 namespace sak {
+
+struct UserProfile;
 
 /**
  * @brief Browser Profile Backup Action
@@ -31,6 +36,12 @@ public:
 
 private:
     QString m_backup_location;
+
+    /// @brief Backup browser profiles for all users
+    /// @return false if cancelled, true if completed
+    bool backupAllBrowserProfiles(const QVector<UserProfile>& users, const QDir& backup_dir,
+                                  const QDateTime& start_time,
+                                  int& profile_count, int& files_copied, qint64& bytes_copied);
 };
 
 } // namespace sak

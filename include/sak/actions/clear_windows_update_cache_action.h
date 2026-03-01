@@ -36,6 +36,9 @@ private:
     /// @brief Build the enterprise PowerShell script for cache cleanup.
     /// @return Complete PS script string.
     QString buildCacheCleanupScript() const;
+    QString buildServiceStopScript() const;
+    QString buildCachePurgeScript() const;
+    QString buildServiceStartScript() const;
 
     /// Results parsed from the cache cleanup PS script output.
     struct CacheCleanupResult {

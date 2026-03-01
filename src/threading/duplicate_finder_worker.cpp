@@ -39,37 +39,8 @@ auto DuplicateFinderWorker::execute() -> std::expected<void, sak::error_code>
         return {};
     }
 
-    // Calculate hashes for all files (parallel or sequential)
-    std::expected<std::vector<std::pair<std::filesystem::path, std::string>>, sak::error_code> hashed_result;
-    
-    if (m_config.parallel_hashing) {
-        sak::logInfo("Using parallel hash calculation");
-        hashed_result = calculateHashesParallel(files);
-    } else {
-        sak::logInfo("Using sequential hash calculation");
-        std::vector<std::pair<std::filesystem::path, std::string>> hashed_files;
-        const size_t file_count = files.size();
-        hashed_files.reserve(file_count);
-
-        for (size_t i = 0; i < file_count; ++i) {
-            if (checkStop()) {
-                return std::unexpected(sak::error_code::operation_cancelled);
-            }
-
-            const auto& file = files[i];
-            Q_EMIT scanProgress(static_cast<int>(i + 1), static_cast<int>(file_count),
-                               QString::fromStdString(file.string()));
-
-            auto hash_result = calculateFileHash(file);
-            if (hash_result) {
-                hashed_files.emplace_back(file, hash_result.value());
-            } else {
-                sak::logWarning("Failed to hash file: {}", file.string());
-            }
-        }
-        hashed_result = std::move(hashed_files);
-    }
-
+    // Calculate hashes for all files
+    auto hashed_result = hashFiles(files);
     if (!hashed_result) {
         return std::unexpected(hashed_result.error());
     }
@@ -77,14 +48,61 @@ auto DuplicateFinderWorker::execute() -> std::expected<void, sak::error_code>
     const auto& hashed_files = hashed_result.value();
     sak::logInfo("Hashed {} files successfully", hashed_files.size());
 
-    // Group files by hash
+    // Group files by hash and find duplicates
     auto hash_groups = groupByHash(hashed_files);
 
-    // Build duplicate groups
     std::vector<DuplicateGroup> duplicate_groups;
     int total_duplicates = 0;
     qint64 total_wasted = 0;
+    buildDuplicateGroups(hash_groups, duplicate_groups, total_duplicates, total_wasted);
 
+    sak::logInfo("Found {} duplicate groups, {} duplicate files, {} bytes wasted",
+                  duplicate_groups.size(), total_duplicates, total_wasted);
+
+    // Generate and emit results
+    QString summary = generateSummary(duplicate_groups);
+    Q_EMIT resultsReady(summary, total_duplicates, total_wasted);
+
+    return {};
+}
+
+auto DuplicateFinderWorker::hashFiles(const std::vector<std::filesystem::path>& files)
+    -> std::expected<std::vector<std::pair<std::filesystem::path, std::string>>, sak::error_code>
+{
+    if (m_config.parallel_hashing) {
+        sak::logInfo("Using parallel hash calculation");
+        return calculateHashesParallel(files);
+    }
+
+    sak::logInfo("Using sequential hash calculation");
+    std::vector<std::pair<std::filesystem::path, std::string>> hashed_files;
+    const size_t file_count = files.size();
+    hashed_files.reserve(file_count);
+
+    for (size_t i = 0; i < file_count; ++i) {
+        if (checkStop()) {
+            return std::unexpected(sak::error_code::operation_cancelled);
+        }
+
+        const auto& file = files[i];
+        Q_EMIT scanProgress(static_cast<int>(i + 1), static_cast<int>(file_count),
+                           QString::fromStdString(file.string()));
+
+        auto hash_result = calculateFileHash(file);
+        if (hash_result) {
+            hashed_files.emplace_back(file, hash_result.value());
+        } else {
+            sak::logWarning("Failed to hash file: {}", file.string());
+        }
+    }
+    return hashed_files;
+}
+
+void DuplicateFinderWorker::buildDuplicateGroups(
+    const std::unordered_map<std::string, std::vector<std::filesystem::path>>& hash_groups,
+    std::vector<DuplicateGroup>& duplicate_groups,
+    int& total_duplicates, qint64& total_wasted)
+{
     for (const auto& [hash, paths] : hash_groups) {
         if (paths.size() > 1) {
             DuplicateGroup group;
@@ -106,15 +124,6 @@ auto DuplicateFinderWorker::execute() -> std::expected<void, sak::error_code>
             }
         }
     }
-
-    sak::logInfo("Found {} duplicate groups, {} duplicate files, {} bytes wasted",
-                  duplicate_groups.size(), total_duplicates, total_wasted);
-
-    // Generate and emit results
-    QString summary = generateSummary(duplicate_groups);
-    Q_EMIT resultsReady(summary, total_duplicates, total_wasted);
-
-    return {};
 }
 
 auto DuplicateFinderWorker::scanDirectories() 
@@ -269,15 +278,48 @@ auto DuplicateFinderWorker::calculateHashesParallel(const std::vector<std::files
     results.resize(files.size());
     QMutex results_mutex;
 
-    // Lambda for hashing a single file
-    auto hash_file = [this, &files, &results, &processed_count, &error_occurred, &results_mutex](int index) {
+    auto hash_file = createHashTask(files, results, processed_count,
+                                     error_occurred, results_mutex);
+
+    // Map files to thread pool
+    QVector<int> indices;
+    indices.reserve(static_cast<int>(files.size()));
+    for (size_t i = 0; i < files.size(); ++i) {
+        indices.push_back(static_cast<int>(i));
+    }
+
+    QtConcurrent::blockingMap(indices, hash_file);
+
+    if (checkStop()) {
+        return std::unexpected(sak::error_code::operation_cancelled);
+    }
+
+    if (error_occurred.load()) {
+        sak::logError("Errors occurred during parallel hashing");
+    }
+
+    auto valid_results = filterValidResults(results);
+
+    sak::logInfo("Parallel hashing complete: {}/{} files successful", 
+                  valid_results.size(), files.size());
+
+    return valid_results;
+}
+
+std::function<void(int)> DuplicateFinderWorker::createHashTask(
+    const std::vector<std::filesystem::path>& files,
+    std::vector<std::pair<std::filesystem::path, std::string>>& results,
+    std::atomic<int>& processed_count,
+    std::atomic<bool>& error_occurred,
+    QMutex& results_mutex)
+{
+    return [this, &files, &results, &processed_count, &error_occurred, &results_mutex](int index) {
         if (checkStop() || error_occurred.load()) {
             return;
         }
 
         const auto& file = files[static_cast<size_t>(index)];
         
-        // Create a file hasher for this thread
         sak::file_hasher hasher(sak::hash_algorithm::md5);
         auto hash_result = hasher.calculateHash(file);
 
@@ -289,44 +331,25 @@ auto DuplicateFinderWorker::calculateHashesParallel(const std::vector<std::files
             error_occurred.store(true);
         }
 
-        // Update progress
         int current = ++processed_count;
         if (current % 10 == 0 || current == static_cast<int>(files.size())) {
             Q_EMIT scanProgress(current, static_cast<int>(files.size()),
                                QString::fromStdString(file.string()));
         }
     };
+}
 
-    // Map files to thread pool
-    QVector<int> indices;
-    indices.reserve(static_cast<int>(files.size()));
-    for (size_t i = 0; i < files.size(); ++i) {
-        indices.push_back(static_cast<int>(i));
-    }
-
-    // Execute parallel map
-    QtConcurrent::blockingMap(indices, hash_file);
-
-    if (checkStop()) {
-        return std::unexpected(sak::error_code::operation_cancelled);
-    }
-
-    if (error_occurred.load()) {
-        sak::logError("Errors occurred during parallel hashing");
-    }
-
-    // Filter out empty results (failed hashes)
-    std::vector<std::pair<std::filesystem::path, std::string>> valid_results;
-    valid_results.reserve(results.size());
+std::vector<std::pair<std::filesystem::path, std::string>>
+DuplicateFinderWorker::filterValidResults(
+    const std::vector<std::pair<std::filesystem::path, std::string>>& results)
+{
+    std::vector<std::pair<std::filesystem::path, std::string>> valid;
+    valid.reserve(results.size());
     
     for (const auto& result : results) {
         if (!result.first.empty() && !result.second.empty()) {
-            valid_results.push_back(result);
+            valid.push_back(result);
         }
     }
-
-    sak::logInfo("Parallel hashing complete: {}/{} files successful", 
-                  valid_results.size(), files.size());
-
-    return valid_results;
+    return valid;
 }

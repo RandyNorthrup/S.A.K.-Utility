@@ -66,51 +66,7 @@ void UserMigrationPanel::setupUi()
     sak::createPanelHeader(contentWidget, tr("User Profile Backup & Restore"),
         tr("Comprehensive backup and restore wizards for Windows user profiles."), mainLayout);
 
-    // Action buttons in a card-style layout
-    auto* actionsGroup = new QGroupBox("Backup & Restore Wizards");
-    auto* actionsLayout = new QVBoxLayout(actionsGroup);
-    actionsLayout->setSpacing(12);
-    actionsLayout->setContentsMargins(12, 18, 12, 12);
-    
-    // Backup section
-    auto* backupTitle = new QLabel("<b>Backup User Profiles</b>");
-    actionsLayout->addWidget(backupTitle);
-    
-    auto* backupDesc = new QLabel(
-        "Scan and select users, choose folders, configure filters, and create backup packages."
-    );
-    backupDesc->setWordWrap(true);
-    backupDesc->setStyleSheet(QString("color: %1; font-size: %2pt;").arg(
-        sak::ui::kColorTextSecondary).arg(sak::ui::kFontSizeNote));
-    actionsLayout->addWidget(backupDesc);
-    
-    m_backupButton = new QPushButton("Start Backup Wizard...");
-    m_backupButton->setMinimumHeight(40);
-    m_backupButton->setToolTip("Step-by-step wizard to select apps, configure options, and create backups");
-    m_backupButton->setAccessibleName(QStringLiteral("Start Backup Wizard"));
-    actionsLayout->addWidget(m_backupButton);
-    
-    actionsLayout->addSpacing(8);
-    
-    // Restore section
-    auto* restoreTitle = new QLabel("<b>Restore User Profiles</b>");
-    actionsLayout->addWidget(restoreTitle);
-    
-    auto* restoreDesc = new QLabel(
-        "Select backup, map users, configure merge options, and restore data with permissions."
-    );
-    restoreDesc->setWordWrap(true);
-    restoreDesc->setStyleSheet(QString("color: %1; font-size: %2pt;").arg(
-        sak::ui::kColorTextSecondary).arg(sak::ui::kFontSizeNote));
-    actionsLayout->addWidget(restoreDesc);
-    
-    m_restoreButton = new QPushButton("Start Restore Wizard...");
-    m_restoreButton->setMinimumHeight(40);
-    m_restoreButton->setToolTip("Step-by-step wizard to select backups, map users, and restore data");
-    m_restoreButton->setAccessibleName(QStringLiteral("Start Restore Wizard"));
-    actionsLayout->addWidget(m_restoreButton);
-    
-    mainLayout->addWidget(actionsGroup);
+    mainLayout->addWidget(createWizardButtonsGroup());
 
     mainLayout->addStretch();
 
@@ -127,6 +83,54 @@ void UserMigrationPanel::setupUi()
     bottomLayout->addWidget(m_logToggle);
     bottomLayout->addStretch();
     rootLayout->addLayout(bottomLayout);
+}
+
+QGroupBox* UserMigrationPanel::createWizardButtonsGroup()
+{
+    auto* group = new QGroupBox("Backup & Restore Wizards");
+    auto* layout = new QVBoxLayout(group);
+    layout->setSpacing(12);
+    layout->setContentsMargins(12, 18, 12, 12);
+
+    // Backup section
+    auto* backupTitle = new QLabel("<b>Backup User Profiles</b>");
+    layout->addWidget(backupTitle);
+
+    auto* backupDesc = new QLabel(
+        "Scan and select users, choose folders, configure filters, and create backup packages."
+    );
+    backupDesc->setWordWrap(true);
+    backupDesc->setStyleSheet(QString("color: %1; font-size: %2pt;").arg(
+        sak::ui::kColorTextSecondary).arg(sak::ui::kFontSizeNote));
+    layout->addWidget(backupDesc);
+
+    m_backupButton = new QPushButton("Start Backup Wizard...");
+    m_backupButton->setMinimumHeight(40);
+    m_backupButton->setToolTip("Step-by-step wizard to select apps, configure options, and create backups");
+    m_backupButton->setAccessibleName(QStringLiteral("Start Backup Wizard"));
+    layout->addWidget(m_backupButton);
+
+    layout->addSpacing(8);
+
+    // Restore section
+    auto* restoreTitle = new QLabel("<b>Restore User Profiles</b>");
+    layout->addWidget(restoreTitle);
+
+    auto* restoreDesc = new QLabel(
+        "Select backup, map users, configure merge options, and restore data with permissions."
+    );
+    restoreDesc->setWordWrap(true);
+    restoreDesc->setStyleSheet(QString("color: %1; font-size: %2pt;").arg(
+        sak::ui::kColorTextSecondary).arg(sak::ui::kFontSizeNote));
+    layout->addWidget(restoreDesc);
+
+    m_restoreButton = new QPushButton("Start Restore Wizard...");
+    m_restoreButton->setMinimumHeight(40);
+    m_restoreButton->setToolTip("Step-by-step wizard to select backups, map users, and restore data");
+    m_restoreButton->setAccessibleName(QStringLiteral("Start Restore Wizard"));
+    layout->addWidget(m_restoreButton);
+
+    return group;
 }
 
 void UserMigrationPanel::setupConnections()

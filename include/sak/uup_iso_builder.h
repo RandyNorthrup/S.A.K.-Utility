@@ -152,9 +152,26 @@ private Q_SLOTS:
 private:
     // Phase execution
     void executePreparation();
+    /// @brief Validate bundled tools and create work directory
+    void prepareWorkspace();
+    /// @brief Generate aria2c download manifest and converter configuration
+    void downloadPackages();
+    /// @brief Deploy converter tools to work directory
+    void validateDownloads();
     void executeDownload();
+    /// @brief Build the full argument list for aria2c download
+    QStringList buildAria2Arguments(const QString& inputFile, const QString& downloadDir) const;
     void executeConversion();
+    /// @brief Validate admin privileges, create directories, and locate converter
+    bool prepareConversionEnvironment(QString& uupsDir, QString& nativeConversionTempDir,
+                                       QString& outputIsoPath, QString& uupMediaConverter);
+    /// @brief Connect QProcess signals for the converter process
+    void connectConverterSignals();
     void finalizeBuild();
+    /// @brief Search work directory for generated ISO files and return the largest
+    QString findLargestGeneratedIso() const;
+    /// @brief Move or copy the source ISO to the configured output destination
+    bool moveIsoToDestination(const QString& sourceIso);
     void cleanupWorkDir();
 
     // Tool path resolution
@@ -174,8 +191,19 @@ private:
     static bool isRunningAsAdmin();
 
     // Progress parsing
+    /// @brief Poll download-phase progress and emit updates
+    void pollDownloadProgress();
+    /// @brief Poll conversion-phase progress and emit updates
+    void pollConversionProgress();
+    /// @brief Check for previously downloaded files when resuming a build
+    void checkResumedDownloads();
     void parseAria2Progress(const QString& line);
     void parseConverterProgress(const QString& line);
+    /// @brief Parse tagged stage percentages from converter output
+    /// @return true if a stage match was found
+    bool parseConverterStagePercent(const QString& line, bool& hasPercent, QString& detail);
+    /// @brief Parse fallback patterns (image export, metadata, done) from converter output
+    void parseConverterFallbackPatterns(const QString& line, bool& hasPercent, QString& detail);
     void updateOverallProgress();
 
     // State

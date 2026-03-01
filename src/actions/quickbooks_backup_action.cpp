@@ -153,19 +153,7 @@ void QuickBooksBackupAction::execute() {
     
     Q_EMIT executionProgress("Checking if QuickBooks is running...", 5);
     
-    // Check if QuickBooks is running
-    ProcessResult proc = runProcess("tasklist", QStringList() << "/FI" << "IMAGENAME eq QBW32.EXE", 3000);
-    QString output = proc.std_out;
-    bool qb_running = output.contains("QBW32.EXE", Qt::CaseInsensitive);
-    
-    if (!qb_running) {
-        // Also check for 64-bit version
-        proc = runProcess("tasklist", QStringList() << "/FI" << "IMAGENAME eq QBW64.EXE", 3000);
-        output = proc.std_out;
-        qb_running = output.contains("QBW64.EXE", Qt::CaseInsensitive);
-    }
-    
-    if (qb_running) {
+    if (isQuickBooksRunning()) {
         emitFailedResult("QuickBooks is currently running",
                          "Please close QuickBooks before backing up data files",
                          start_time);
@@ -194,7 +182,29 @@ void QuickBooksBackupAction::execute() {
     int files_skipped_open = 0;
     qint64 bytes_copied = 0;
     QStringList copied_files;
-    
+
+    executeCopyFiles(backup_dir, start_time, files_copied, files_skipped_open,
+                     bytes_copied, copied_files);
+    if (isCancelled()) {
+        return;
+    }
+
+    executeBuildResult(start_time, backup_dir, files_copied, files_skipped_open,
+                       bytes_copied, copied_files);
+}
+
+bool QuickBooksBackupAction::isQuickBooksRunning() {
+    ProcessResult proc = runProcess("tasklist", QStringList() << "/FI" << "IMAGENAME eq QBW32.EXE", 3000);
+    if (proc.std_out.contains("QBW32.EXE", Qt::CaseInsensitive)) {
+        return true;
+    }
+    proc = runProcess("tasklist", QStringList() << "/FI" << "IMAGENAME eq QBW64.EXE", 3000);
+    return proc.std_out.contains("QBW64.EXE", Qt::CaseInsensitive);
+}
+
+void QuickBooksBackupAction::executeCopyFiles(const QDir& backup_dir, const QDateTime& start_time,
+                                               int& files_copied, int& files_skipped_open,
+                                               qint64& bytes_copied, QStringList& copied_files) {
     for (size_t i = 0; i < m_found_files.size(); ++i) {
         if (isCancelled()) {
             emitCancelledResult("QuickBooks backup cancelled", start_time);
@@ -224,7 +234,11 @@ void QuickBooksBackupAction::execute() {
             copied_files << dest_path;
         }
     }
-    
+}
+
+void QuickBooksBackupAction::executeBuildResult(const QDateTime& start_time, const QDir& backup_dir,
+                                                 int files_copied, int files_skipped_open,
+                                                 qint64 bytes_copied, const QStringList& copied_files) {
     Q_EMIT executionProgress("Backup complete", 100);
     
     qint64 duration_ms = start_time.msecsTo(QDateTime::currentDateTime());

@@ -8,6 +8,7 @@
 #include "sak/process_runner.h"
 #include <QDir>
 #include <QDateTime>
+#include <QFileInfo>
 #include <QSysInfo>
 #include <QStorageInfo>
 
@@ -82,6 +83,12 @@ void GenerateSystemReportAction::execute() {
     report += QString("Report completed in %1 seconds\n")
         .arg(start_time.msecsTo(QDateTime::currentDateTime()) / 1000.0, 0, 'f', 1);
     
+    saveReportAndFinish(report, filepath, start_time);
+}
+
+void GenerateSystemReportAction::saveReportAndFinish(
+        const QString& report, const QString& filepath, const QDateTime& start_time)
+{
     bool save_success = saveReport(report, filepath);
     
     Q_EMIT executionProgress("Report complete", 100);
@@ -94,7 +101,8 @@ void GenerateSystemReportAction::execute() {
     
     if (save_success) {
         result.success = true;
-        result.message = QString("Comprehensive system report generated: %1").arg(filename);
+        result.message = QString("Comprehensive system report generated: %1")
+            .arg(QFileInfo(filepath).fileName());
         result.output_path = filepath;
         result.log = QString("Report saved to: %1\nSize: %2 KB\nDuration: %3 seconds")
             .arg(filepath)
@@ -123,9 +131,9 @@ QString GenerateSystemReportAction::buildReportHeader() const
     return header;
 }
 
-QString GenerateSystemReportAction::gatherOsAndHardwareInfo()
+QString GenerateSystemReportAction::buildOsInfoScript() const
 {
-    QString ps_cmd_info = 
+    return
         "$info = Get-ComputerInfo\n"
         "\n"
         "Write-Output \"=== OPERATING SYSTEM ===\"\n"
@@ -161,7 +169,12 @@ QString GenerateSystemReportAction::gatherOsAndHardwareInfo()
         "Write-Output \"Max Clock Speed: $($info.CsProcessors[0].MaxClockSpeed) MHz\"\n"
         "Write-Output \"Current Clock Speed: $($info.CsProcessors[0].CurrentClockSpeed) MHz\"\n"
         "Write-Output \"Address Width: $($info.CsProcessors[0].AddressWidth) bit\"\n"
-        "Write-Output \"\"\n"
+        "Write-Output \"\"\n";
+}
+
+QString GenerateSystemReportAction::buildHardwareInfoScript() const
+{
+    return
         "\n"
         "Write-Output \"=== MEMORY ===\"\n"
         "Write-Output \"Total Physical Memory: $([math]::Round($info.CsTotalPhysicalMemory / 1GB, 2)) GB\"\n"
@@ -198,6 +211,11 @@ QString GenerateSystemReportAction::gatherOsAndHardwareInfo()
         "Write-Output \"Edition ID: $($info.WindowsEditionId)\"\n"
         "Write-Output \"Registered Owner: $($info.WindowsRegisteredOwner)\"\n"
         "Write-Output \"Registered Organization: $($info.WindowsRegisteredOrganization)\"";
+}
+
+QString GenerateSystemReportAction::gatherOsAndHardwareInfo()
+{
+    QString ps_cmd_info = buildOsInfoScript() + buildHardwareInfoScript();
     
     ProcessResult proc_info = runPowerShell(ps_cmd_info, 15000);
     if (!proc_info.std_err.trimmed().isEmpty()) {

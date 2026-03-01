@@ -75,8 +75,14 @@ private:
     /// @brief Query memory via WMI Win32_PhysicalMemory + GlobalMemoryStatusEx
     MemorySummary queryMemory();
 
+    /// @brief Parse a single WMI memory module result into MemoryModuleInfo
+    static MemoryModuleInfo parseMemoryModule(const QVariantMap& mod, uint32_t slotIndex);
+
     /// @brief Query storage via WMI Win32_DiskDrive + volumes
     QVector<StorageDeviceInfo> queryStorage();
+
+    /// @brief Enrich storage devices with partition/volume information
+    void enrichStorageWithVolumeInfo(QVector<StorageDeviceInfo>& devices);
 
     /// @brief Query GPU via DXGI adapter enumeration + WMI fallback
     QVector<GpuInfo> queryGpu();

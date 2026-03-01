@@ -220,54 +220,70 @@ void RebuildIconCacheAction::execute() {
         total_size += info.size_bytes;
     }
     
-    QString report = "╔════════════════════════════════════════════════════════════════╗\n";
-    report += "║           ICON & THUMBNAIL CACHE REBUILD REPORT              ║\n";
-    report += "╠════════════════════════════════════════════════════════════════╣\n";
-    report += QString("║ Cache Files Found: %1\n").arg(cache_files.size()).leftJustified(67, ' ') + "║\n";
-    report += QString("║ Total Cache Size:  %1 KB\n").arg(total_size / 1024).leftJustified(67, ' ') + "║\n";
-    report += "╠════════════════════════════════════════════════════════════════╣\n";
-    
-    // List cache files
-    if (!cache_files.isEmpty()) {
-        report += QString("║ Cache Files:\n").leftJustified(67, ' ') + "║\n";
-        for (const CacheFileInfo& info : cache_files) {
-            QFileInfo fi(info.file_name);
-            QString file_line = QString("║   • %1 (%2 KB)\n")
-                                   .arg(fi.fileName())
-                                   .arg(info.size_bytes / 1024);
-            report += file_line.leftJustified(67, ' ') + "║\n";
-        }
-        report += "╠════════════════════════════════════════════════════════════════╣\n";
-    }
+    QString report = buildIconCacheReportHeader(cache_files, total_size);
     
     // PHASE 2: Stop Explorer
     bool explorer_stopped = stopExplorer();
-    report += QString("║ Explorer Stopped:  %1\n").arg(explorer_stopped ? "SUCCESS" : "FAILED").leftJustified(67, ' ') + "║\n";
+    report += QString("\u2551 Explorer Stopped:  %1\n").arg(explorer_stopped ? "SUCCESS" : "FAILED").leftJustified(67, ' ') + "\u2551\n";
     
     if (!explorer_stopped) {
-        report += QString("║ WARNING: Explorer did not stop cleanly\n").leftJustified(67, ' ') + "║\n";
+        report += QString("\u2551 WARNING: Explorer did not stop cleanly\n").leftJustified(67, ' ') + "\u2551\n";
     }
     
     // PHASE 3: Delete cache files
     int deleted_count = deleteCacheFiles(cache_files);
-    report += QString("║ Files Deleted:     %1 / %2\n").arg(deleted_count).arg(cache_files.size()).leftJustified(67, ' ') + "║\n";
+    report += QString("\u2551 Files Deleted:     %1 / %2\n").arg(deleted_count).arg(cache_files.size()).leftJustified(67, ' ') + "\u2551\n";
     
-    // PHASE 5: Start Explorer
+    // PHASE 4: Start Explorer
     bool explorer_started = startExplorer();
-    report += (QString("║ Explorer Started:  %1\n").arg(explorer_started ? "SUCCESS" : "FAILED") + "║\n");
+    report += (QString("\u2551 Explorer Started:  %1\n").arg(explorer_started ? "SUCCESS" : "FAILED") + "\u2551\n");
     
     // PHASE 5: Refresh icon cache
     if (explorer_started) {
         refreshIconCache();
-        report += "║ Icon Cache:        Refreshed                     ║\n";
+        report += "\u2551 Icon Cache:        Refreshed                     \u2551\n";
     }
     
-    report += "╚════════════════════════════════════════════════════════════════╝\n";
+    report += "\u255a\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u255d\n";
     
     Q_EMIT executionProgress("Icon cache rebuild complete", 100);
-    
     qint64 duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
     
+    buildAndFinishIconCacheResult(deleted_count, total_size,
+                                  explorer_stopped, explorer_started,
+                                  report, duration_ms);
+}
+
+QString RebuildIconCacheAction::buildIconCacheReportHeader(
+    const QVector<CacheFileInfo>& cache_files, qint64 total_size) const
+{
+    QString report = "\u2554\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2557\n";
+    report += "\u2551           ICON & THUMBNAIL CACHE REBUILD REPORT              \u2551\n";
+    report += "\u2560\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2563\n";
+    report += QString("\u2551 Cache Files Found: %1\n").arg(cache_files.size()).leftJustified(67, ' ') + "\u2551\n";
+    report += QString("\u2551 Total Cache Size:  %1 KB\n").arg(total_size / 1024).leftJustified(67, ' ') + "\u2551\n";
+    report += "\u2560\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2563\n";
+    
+    if (!cache_files.isEmpty()) {
+        report += QString("\u2551 Cache Files:\n").leftJustified(67, ' ') + "\u2551\n";
+        for (const CacheFileInfo& info : cache_files) {
+            QFileInfo fi(info.file_name);
+            QString file_line = QString("\u2551   \u2022 %1 (%2 KB)\n")
+                                   .arg(fi.fileName())
+                                   .arg(info.size_bytes / 1024);
+            report += file_line.leftJustified(67, ' ') + "\u2551\n";
+        }
+        report += "\u2560\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2563\n";
+    }
+    
+    return report;
+}
+
+void RebuildIconCacheAction::buildAndFinishIconCacheResult(
+    int deleted_count, qint64 total_size,
+    bool explorer_stopped, bool explorer_started,
+    const QString& report, qint64 duration_ms)
+{
     ExecutionResult result;
     result.duration_ms = duration_ms;
     result.files_processed = deleted_count;
@@ -283,9 +299,9 @@ void RebuildIconCacheAction::execute() {
         result.log = report;
         result.log += QString("\nCompleted in %1 seconds\n").arg(duration_ms / 1000);
         result.log += "RECOMMENDATIONS:\n";
-        result.log += "• Icons will refresh automatically\n";
-        result.log += "• Thumbnails will regenerate as needed\n";
-        result.log += "• No reboot required\n";
+        result.log += "\u2022 Icons will refresh automatically\n";
+        result.log += "\u2022 Thumbnails will regenerate as needed\n";
+        result.log += "\u2022 No reboot required\n";
     } else if (explorer_started) {
         result.success = true;
         result.message = QString("Icon cache rebuilt with warnings (%1 files)").arg(deleted_count);

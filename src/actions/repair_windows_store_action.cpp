@@ -176,60 +176,26 @@ void RepairWindowsStoreAction::execute() {
         emitCancelledResult(QStringLiteral("Windows Store repair cancelled"), start_time);
         return;
     }
-    
-    QString report = "╔════════════════════════════════════════════════════════════════╗\n";
-    report += "║           WINDOWS STORE DIAGNOSTIC REPORT                    ║\n";
-    report += "╠════════════════════════════════════════════════════════════════╣\n";
-    
-    if (before_info.is_registered) {
-        report += QString("║ Package:     %1\n").arg(before_info.name).leftJustified(67, ' ') + "║\n";
-        report += QString("║ Version:     %1\n").arg(before_info.version).leftJustified(67, ' ') + "║\n";
-        report += QString("║ Status:      %1\n").arg(before_info.status.isEmpty() ? "OK" : before_info.status).leftJustified(67, ' ') + "║\n";
-    } else {
-        report += "║ Package:     NOT REGISTERED                      ║\n";
-    }
-    
-    report += QString("║ Event Errors: %1\n").arg(error_count).leftJustified(67, ' ') + "║\n";
-    report += "╠════════════════════════════════════════════════════════════════╣\n";
-    
-    // PHASE 2: Reset Store cache
+
+    // PHASE 2-5: Repair operations
     bool cache_reset = resetWindowsStoreCache();
-    report += QString("║ WSReset:     %1\n").arg(cache_reset ? "SUCCESS" : "FAILED").leftJustified(67, ' ') + "║\n";
-    
-    // PHASE 3: Reset Store package
     bool package_reset = resetStorePackage();
-    report += QString("║ Reset Package: %1\n").arg(package_reset ? "SUCCESS" : "FAILED").leftJustified(67, ' ') + "║\n";
-    
-    // PHASE 4: Re-register Store
     bool reregistered = reregisterWindowsStore();
-    report += QString("║ Re-register: %1\n").arg(reregistered ? "SUCCESS" : "FAILED").leftJustified(67, ' ') + "║\n";
-    
-    // PHASE 5: Restart services
     bool services_restarted = resetStoreServices();
 
     if (isCancelled()) {
         emitCancelledResult(QStringLiteral("Windows Store repair cancelled"), start_time);
         return;
     }
-    report += QString("║ Services:    %1\n").arg(services_restarted ? "SUCCESS" : "FAILED").leftJustified(67, ' ') + "║\n";
-    
-    report += "╠════════════════════════════════════════════════════════════════╣\n";
-    
-    // Check Store status after repair
+
+    // Verify Store status after repair
     Q_EMIT executionProgress("Verifying Store registration...", 90);
     StorePackageInfo after_info = checkStorePackage();
     int post_error_count = checkStoreEventLogs();
-    
-    if (after_info.is_registered) {
-        report += "║ Final Status: REGISTERED                          ║\n";
-        report += QString("║ Version:     %1\n").arg(after_info.version).leftJustified(67, ' ') + "║\n";
-    } else {
-        report += "║ Final Status: REGISTRATION FAILED                 ║\n";
-    }
-    report += QString("║ Event Errors (post): %1\n").arg(post_error_count).leftJustified(67, ' ') + "║\n";
-    
-    report += "╚════════════════════════════════════════════════════════════════╝\n";
-    
+
+    QString report = buildRepairReport(before_info, error_count, cache_reset, package_reset,
+                                       reregistered, services_restarted, after_info, post_error_count);
+
     Q_EMIT executionProgress("Windows Store repair complete", 100);
     
     qint64 duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
@@ -237,7 +203,8 @@ void RepairWindowsStoreAction::execute() {
     ExecutionResult result;
     result.duration_ms = duration_ms;
     
-    bool overall_success = cache_reset && package_reset && reregistered && services_restarted && after_info.is_registered;
+    bool overall_success = cache_reset && package_reset && reregistered
+                           && services_restarted && after_info.is_registered;
     
     if (overall_success) {
         result.success = true;
@@ -256,6 +223,44 @@ void RepairWindowsStoreAction::execute() {
     }
     
     finishWithResult(result, overall_success ? ActionStatus::Success : ActionStatus::Failed);
+}
+
+QString RepairWindowsStoreAction::buildRepairReport(
+    const StorePackageInfo& before_info, int error_count,
+    bool cache_reset, bool package_reset,
+    bool reregistered, bool services_restarted,
+    const StorePackageInfo& after_info, int post_error_count)
+{
+    QString report = "╔════════════════════════════════════════════════════════════════╗\n";
+    report += "║           WINDOWS STORE DIAGNOSTIC REPORT                    ║\n";
+    report += "╠════════════════════════════════════════════════════════════════╣\n";
+    
+    if (before_info.is_registered) {
+        report += QString("║ Package:     %1\n").arg(before_info.name).leftJustified(67, ' ') + "║\n";
+        report += QString("║ Version:     %1\n").arg(before_info.version).leftJustified(67, ' ') + "║\n";
+        report += QString("║ Status:      %1\n").arg(before_info.status.isEmpty() ? "OK" : before_info.status).leftJustified(67, ' ') + "║\n";
+    } else {
+        report += "║ Package:     NOT REGISTERED                      ║\n";
+    }
+    
+    report += QString("║ Event Errors: %1\n").arg(error_count).leftJustified(67, ' ') + "║\n";
+    report += "╠════════════════════════════════════════════════════════════════╣\n";
+    report += QString("║ WSReset:     %1\n").arg(cache_reset ? "SUCCESS" : "FAILED").leftJustified(67, ' ') + "║\n";
+    report += QString("║ Reset Package: %1\n").arg(package_reset ? "SUCCESS" : "FAILED").leftJustified(67, ' ') + "║\n";
+    report += QString("║ Re-register: %1\n").arg(reregistered ? "SUCCESS" : "FAILED").leftJustified(67, ' ') + "║\n";
+    report += QString("║ Services:    %1\n").arg(services_restarted ? "SUCCESS" : "FAILED").leftJustified(67, ' ') + "║\n";
+    report += "╠════════════════════════════════════════════════════════════════╣\n";
+    
+    if (after_info.is_registered) {
+        report += "║ Final Status: REGISTERED                          ║\n";
+        report += QString("║ Version:     %1\n").arg(after_info.version).leftJustified(67, ' ') + "║\n";
+    } else {
+        report += "║ Final Status: REGISTRATION FAILED                 ║\n";
+    }
+    report += QString("║ Event Errors (post): %1\n").arg(post_error_count).leftJustified(67, ' ') + "║\n";
+    
+    report += "╚════════════════════════════════════════════════════════════════╝\n";
+    return report;
 }
 
 } // namespace sak

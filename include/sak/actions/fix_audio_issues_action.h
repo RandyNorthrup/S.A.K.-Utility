@@ -41,6 +41,12 @@ private:
     bool restartAudioEndpointBuilder();
     int resetAudioDevices();
     QString checkUSBAudioDevices();
+
+    /// @brief Build the box-drawing diagnostic report from service/device results
+    QString buildDiagnosticReport(const AudioServiceStatus& audiosrv,
+                                  const AudioServiceStatus& endpoint_builder,
+                                  bool audiosrv_restarted, bool endpoint_restarted,
+                                  int device_count, const QString& usb_info);
 };
 
 } // namespace sak

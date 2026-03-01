@@ -5,6 +5,7 @@
 
 #include "sak/quick_action.h"
 
+#include <QDateTime>
 #include <QString>
 #include <QStringList>
 
@@ -40,6 +41,19 @@ public:
     void execute() override;
 
 private:
+    /// @brief Configure Disk Cleanup registry profile and enumerate drives
+    /// @return false if configuration failed (result already emitted)
+    bool executeCalculateSpace(QStringList& drives, QString& drives_error,
+                               const QDateTime& start_time);
+
+    /// @brief Run cleanmgr on each drive and measure freed space
+    void executeCleanup(const QStringList& drives, const QString& sagerun_arg,
+                        int& drives_processed, qint64& total_freed);
+
+    /// @brief Build and emit the final execution result
+    void executeBuildReport(int drives_processed, qint64 total_freed,
+                            const QString& drives_error, const QDateTime& start_time);
+
     /// @brief Represents a directory or cache targeted for cleanup with size and file count
     struct CleanupTarget {
         QString path;

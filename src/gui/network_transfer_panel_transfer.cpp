@@ -374,6 +374,22 @@ void NetworkTransferPanel::onTransferCompleted(bool success, const QString& mess
         m_activeAssignmentLabel->setText(tr("No active assignment"));
     }
 
+    saveTransferReport(success);
+
+    if (success && m_modeCombo->currentIndex() == 1 && m_applyRestoreCheck->isChecked()) {
+        startPostTransferRestore();
+    }
+
+    if (!m_assignmentQueue.isEmpty()) {
+        const auto next = m_assignmentQueue.dequeue();
+        activateAssignment(next);
+    } else {
+        refreshAssignmentQueue();
+    }
+    persistAssignmentQueue();
+}
+
+void NetworkTransferPanel::saveTransferReport(bool success) {
     TransferReport report;
     report.transfer_id = m_currentManifest.transfer_id;
     report.source_host = m_currentManifest.source_hostname;
@@ -405,72 +421,64 @@ void NetworkTransferPanel::onTransferCompleted(bool success, const QString& mess
     } else {
         Q_EMIT logOutput(tr("Transfer report saved to %1").arg(reportPath));
     }
+}
 
-    if (success && m_modeCombo->currentIndex() == 1 && m_applyRestoreCheck->isChecked()) {
-        if (m_restoreWorker && m_restoreWorker->isRunning()) {
-            Q_EMIT logOutput(tr("Restore already running."));
+void NetworkTransferPanel::startPostTransferRestore() {
+    if (m_restoreWorker && m_restoreWorker->isRunning()) {
+        Q_EMIT logOutput(tr("Restore already running."));
+        return;
+    }
+
+    // Save manifest to staging directory for restore worker validation
+    BackupManifest backupManifest;
+    backupManifest.version = "1.0";
+    backupManifest.created = QDateTime::currentDateTime();
+    backupManifest.source_machine = m_currentManifest.source_hostname;
+    backupManifest.sak_version = m_currentManifest.sak_version;
+    backupManifest.users = m_currentManifest.users;
+    backupManifest.total_backup_size_bytes = m_currentManifest.total_bytes;
+
+    const QString manifestPath = destinationBase() + "/manifest.json";
+    backupManifest.saveToFile(manifestPath);
+
+    // Build user mappings
+    QVector<UserProfile> destUsers = m_userScanner->scanUsers();
+    QSet<QString> existing;
+    for (const auto& user : destUsers) {
+        existing.insert(user.username.toLower());
+    }
+
+    QVector<UserMapping> mappings;
+    for (const auto& user : backupManifest.users) {
+        UserMapping mapping;
+        mapping.source_username = user.username;
+        mapping.source_sid = user.sid;
+        if (existing.contains(user.username.toLower())) {
+            mapping.destination_username = user.username;
+            mapping.mode = MergeMode::MergeIntoDestination;
         } else {
-            // Save manifest to staging directory for restore worker validation
-            BackupManifest backupManifest;
-            backupManifest.version = "1.0";
-            backupManifest.created = QDateTime::currentDateTime();
-            backupManifest.source_machine = m_currentManifest.source_hostname;
-            backupManifest.sak_version = m_currentManifest.sak_version;
-            backupManifest.users = m_currentManifest.users;
-            backupManifest.total_backup_size_bytes = m_currentManifest.total_bytes;
-
-            const QString manifestPath = destinationBase() + "/manifest.json";
-            backupManifest.saveToFile(manifestPath);
-
-            // Build user mappings
-            QVector<UserProfile> destUsers = m_userScanner->scanUsers();
-            QSet<QString> existing;
-            for (const auto& user : destUsers) {
-                existing.insert(user.username.toLower());
-            }
-
-            QVector<UserMapping> mappings;
-            for (const auto& user : backupManifest.users) {
-                UserMapping mapping;
-                mapping.source_username = user.username;
-                mapping.source_sid = user.sid;
-                if (existing.contains(user.username.toLower())) {
-                    mapping.destination_username = user.username;
-                    mapping.mode = MergeMode::MergeIntoDestination;
-                } else {
-                    mapping.destination_username = user.username;
-                    mapping.mode = MergeMode::CreateNewUser;
-                }
-                mapping.conflict_resolution = ConflictResolution::RenameWithSuffix;
-                mappings.append(mapping);
-            }
-
-            if (!m_restoreWorker) {
-                m_restoreWorker = new UserProfileRestoreWorker(this);
-                connect(m_restoreWorker, &UserProfileRestoreWorker::logMessage, this, [this](const QString& msg, bool warn) {
-                    Q_EMIT logOutput(warn ? tr("RESTORE WARN: %1").arg(msg) : msg);
-                });
-                connect(m_restoreWorker, &UserProfileRestoreWorker::restoreComplete, this, [this](bool ok, const QString& msg) {
-                    Q_EMIT logOutput(ok ? msg : tr("Restore failed: %1").arg(msg));
-                });
-            }
-
-            Q_EMIT logOutput(tr("Starting profile restore into system profiles..."));
-            m_restoreWorker->startRestore(destinationBase(), backupManifest, mappings,
-                                          ConflictResolution::RenameWithSuffix,
-                                          PermissionMode::StripAll,
-                                          true);
+            mapping.destination_username = user.username;
+            mapping.mode = MergeMode::CreateNewUser;
         }
+        mapping.conflict_resolution = ConflictResolution::RenameWithSuffix;
+        mappings.append(mapping);
     }
 
-    if (!m_assignmentQueue.isEmpty()) {
-        const auto next = m_assignmentQueue.dequeue();
-        activateAssignment(next);
-    } else {
-        refreshAssignmentQueue();
+    if (!m_restoreWorker) {
+        m_restoreWorker = new UserProfileRestoreWorker(this);
+        connect(m_restoreWorker, &UserProfileRestoreWorker::logMessage, this, [this](const QString& msg, bool warn) {
+            Q_EMIT logOutput(warn ? tr("RESTORE WARN: %1").arg(msg) : msg);
+        });
+        connect(m_restoreWorker, &UserProfileRestoreWorker::restoreComplete, this, [this](bool ok, const QString& msg) {
+            Q_EMIT logOutput(ok ? msg : tr("Restore failed: %1").arg(msg));
+        });
     }
-    persistAssignmentQueue();
 
+    Q_EMIT logOutput(tr("Starting profile restore into system profiles..."));
+    m_restoreWorker->startRestore(destinationBase(), backupManifest, mappings,
+                                  ConflictResolution::RenameWithSuffix,
+                                  PermissionMode::StripAll,
+                                  true);
 }
 
 void NetworkTransferPanel::buildManifest() {
@@ -484,75 +492,69 @@ void NetworkTransferPanel::buildManifest() {
 QVector<TransferFileEntry> NetworkTransferPanel::buildFileList() {
     QVector<TransferFileEntry> files;
 
+    for (int i = 0; i < m_users.size(); ++i) {
+        auto* selectItem = m_userTable->item(i, kUserColSelect);
+        if (!selectItem || selectItem->checkState() != Qt::Checked) {
+            continue;
+        }
+        collectUserFiles(files, m_users[i]);
+    }
+
+    return files;
+}
+
+void NetworkTransferPanel::collectUserFiles(
+    QVector<TransferFileEntry>& files, const UserProfile& user)
+{
     file_hasher hasher(hash_algorithm::sha256);
     SmartFileFilter smartFilter{SmartFilter{}};
     PermissionManager permissionManager;
     const auto selectedPermMode = static_cast<PermissionMode>(m_permissionModeCombo->currentData().toInt());
 
-    for (int i = 0; i < m_users.size(); ++i) {
-        auto& user = m_users[i];
-        auto* selectItem = m_userTable->item(i, kUserColSelect);
-        if (!selectItem || selectItem->checkState() != Qt::Checked) {
-            continue;
-        }
+    for (const auto& folder : user.folder_selections) {
+        if (!folder.selected) continue;
 
-        for (const auto& folder : user.folder_selections) {
-            if (!folder.selected) {
-                continue;
+        QString folderPath = QDir(user.profile_path).filePath(folder.relative_path);
+        file_scanner scanner;
+        scan_options options;
+        options.recursive = true;
+        options.type_filter = file_type_filter::files_only;
+
+        for (const auto& include : folder.include_patterns)
+            options.include_patterns.push_back(include.toStdString());
+        for (const auto& exclude : folder.exclude_patterns)
+            options.exclude_patterns.push_back(exclude.toStdString());
+
+        auto result = scanner.scanAndCollect(folderPath.toStdString(), options);
+        if (!result) continue;
+
+        for (const auto& path : *result) {
+            std::filesystem::path fsPath = path;
+            if (!std::filesystem::is_regular_file(fsPath)) continue;
+
+            QFileInfo fileInfo(QString::fromStdString(fsPath.string()));
+            if (smartFilter.shouldExcludeFile(fileInfo, user.profile_path) ||
+                smartFilter.exceedsSizeLimit(fileInfo.size())) continue;
+
+            TransferFileEntry entry;
+            entry.file_id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+            entry.absolute_path = QString::fromStdString(fsPath.string());
+            auto rel = path_utils::makeRelative(fsPath, std::filesystem::path(user.profile_path.toStdString()));
+            if (!rel) continue;
+            QString relative = QString::fromStdString(rel->generic_string());
+            entry.relative_path = user.username + "/" + relative;
+            entry.size_bytes = static_cast<qint64>(std::filesystem::file_size(fsPath));
+            if (selectedPermMode == PermissionMode::PreserveOriginal) {
+                entry.acl_sddl = permissionManager.getSecurityDescriptorSddl(entry.absolute_path);
             }
-            QString folderPath = QDir(user.profile_path).filePath(folder.relative_path);
-            file_scanner scanner;
-            scan_options options;
-            options.recursive = true;
-            options.type_filter = file_type_filter::files_only;
-
-            for (const auto& include : folder.include_patterns) {
-                options.include_patterns.push_back(include.toStdString());
-            }
-            for (const auto& exclude : folder.exclude_patterns) {
-                options.exclude_patterns.push_back(exclude.toStdString());
+            auto hashResult = hasher.calculateHash(fsPath);
+            if (hashResult) {
+                entry.checksum_sha256 = QString::fromStdString(*hashResult);
             }
 
-            auto result = scanner.scanAndCollect(folderPath.toStdString(), options);
-            if (!result) {
-                continue;
-            }
-
-            for (const auto& path : *result) {
-                std::filesystem::path fsPath = path;
-                if (!std::filesystem::is_regular_file(fsPath)) {
-                    continue;
-                }
-
-                QFileInfo fileInfo(QString::fromStdString(fsPath.string()));
-                if (smartFilter.shouldExcludeFile(fileInfo, user.profile_path) || smartFilter.exceedsSizeLimit(fileInfo.size())) {
-                    continue;
-                }
-
-                TransferFileEntry entry;
-                entry.file_id = QUuid::createUuid().toString(QUuid::WithoutBraces);
-                entry.absolute_path = QString::fromStdString(fsPath.string());
-                auto rel = path_utils::makeRelative(fsPath, std::filesystem::path(user.profile_path.toStdString()));
-                if (!rel) {
-                    continue;
-                }
-                QString relative = QString::fromStdString(rel->generic_string());
-                entry.relative_path = user.username + "/" + relative;
-                entry.size_bytes = static_cast<qint64>(std::filesystem::file_size(fsPath));
-                if (selectedPermMode == PermissionMode::PreserveOriginal) {
-                    entry.acl_sddl = permissionManager.getSecurityDescriptorSddl(entry.absolute_path);
-                }
-                auto hashResult = hasher.calculateHash(fsPath);
-                if (hashResult) {
-                    entry.checksum_sha256 = QString::fromStdString(*hashResult);
-                }
-
-                files.append(entry);
-            }
+            files.append(entry);
         }
     }
-
-    return files;
 }
 
 QVector<TransferFileEntry> NetworkTransferPanel::buildFileListForUsers(const QVector<UserProfile>& users) {

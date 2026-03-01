@@ -12,6 +12,8 @@
 #include <QCheckBox>
 #include <memory>
 
+class QVBoxLayout;
+
 class DuplicateFinderWorker;
 
 namespace sak {
@@ -59,6 +61,9 @@ private Q_SLOTS:
 
 private:
     void setupUi();
+    void createDirectoryGroup(QVBoxLayout* layout);
+    void createOptionsWidgets();
+    void createControlButtons(QVBoxLayout* layout);
     void setOperationRunning(bool running);
     void logMessage(const QString& message);
 

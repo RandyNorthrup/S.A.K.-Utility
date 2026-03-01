@@ -163,15 +163,23 @@ protected:
 private:
     bool openDevice();
     void closeDevice();
+    void cleanupFlashResources();
     bool lockVolume();
     bool unlockVolume();
     bool dismountVolume();
     
     bool writeImage();
+    bool prepareSourceChecksum();
+    bool padBufferToSectorSize(QByteArray& buffer, qint64& bytesRead);
     sak::ValidationResult verifyImage();
     QString calculateChecksum(HANDLE handle, qint64 size);
     sak::ValidationResult verifyFull();
     sak::ValidationResult verifySample();
+    /// @brief Verify individual sample blocks against the target device
+    /// @return Number of blocks successfully verified
+    int verifySampleBlocks(sak::ValidationResult& result, int numSamples,
+                           qint64 blockSize, qint64 totalBlocks, qint64 sampleSize,
+                           QByteArray& sourceBuffer, QByteArray& targetBuffer);
     
     void updateProgress(qint64 bytesWritten);
     void updateSpeed(qint64 bytesWritten);

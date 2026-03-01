@@ -158,22 +158,7 @@ std::vector<PackageMatcher::MatchResult> PackageMatcher::findMatchesParallel(
     // Phase 1: Quick exact matches (no API calls needed)
     std::vector<std::pair<int, MatchResult>> exact_results;
     std::vector<std::pair<int, AppScanner::AppInfo>> fuzzy_candidates;
-    
-    const size_t app_count = apps.size();
-    exact_results.reserve(app_count / 2);  // Estimate 50% exact matches
-    fuzzy_candidates.reserve(app_count / 2);
-    
-    for (size_t i = 0; i < app_count; ++i) {
-        QString base_name = extractBaseAppName(apps[i].name);
-        auto exact = exactMatch(base_name);
-        if (exact.has_value() && exact->confidence >= config.min_confidence) {
-            exact_results.push_back({static_cast<int>(i), *exact});
-            QMutexLocker locker(&m_stats_mutex);
-            m_exact_match_count++;
-        } else {
-            fuzzy_candidates.push_back({static_cast<int>(i), apps[i]});
-        }
-    }
+    collectExactMatches(apps, exact_results, fuzzy_candidates);
     
     // Phase 2: Parallel fuzzy/search matching for remaining apps
     QThreadPool pool;
@@ -210,17 +195,44 @@ std::vector<PackageMatcher::MatchResult> PackageMatcher::findMatchesParallel(
         }
     );
     
-    // Combine results in original order
-    std::vector<MatchResult> all_results(apps.size());
-    std::vector<bool> has_match(apps.size(), false);
+    return mergeMatchResults(apps.size(), exact_results, fuzzy_results);
+}
+
+void PackageMatcher::collectExactMatches(
+    const std::vector<AppScanner::AppInfo>& apps,
+    std::vector<std::pair<int, MatchResult>>& exact_results,
+    std::vector<std::pair<int, AppScanner::AppInfo>>& fuzzy_candidates)
+{
+    const size_t app_count = apps.size();
+    exact_results.reserve(app_count / 2);
+    fuzzy_candidates.reserve(app_count / 2);
     
-    // Add exact matches
+    for (size_t i = 0; i < app_count; ++i) {
+        QString base_name = extractBaseAppName(apps[i].name);
+        auto exact = exactMatch(base_name);
+        if (exact.has_value() && exact->confidence >= 0.5) {
+            exact_results.push_back({static_cast<int>(i), *exact});
+            QMutexLocker locker(&m_stats_mutex);
+            m_exact_match_count++;
+        } else {
+            fuzzy_candidates.push_back({static_cast<int>(i), apps[i]});
+        }
+    }
+}
+
+std::vector<PackageMatcher::MatchResult> PackageMatcher::mergeMatchResults(
+    size_t total_count,
+    const std::vector<std::pair<int, MatchResult>>& exact_results,
+    const std::vector<std::pair<int, std::optional<MatchResult>>>& fuzzy_results)
+{
+    std::vector<MatchResult> all_results(total_count);
+    std::vector<bool> has_match(total_count, false);
+    
     for (const auto& [idx, result] : exact_results) {
         all_results[idx] = result;
         has_match[idx] = true;
     }
     
-    // Add fuzzy/search matches
     for (const auto& [idx, result] : fuzzy_results) {
         if (result.has_value()) {
             all_results[idx] = *result;
@@ -228,9 +240,8 @@ std::vector<PackageMatcher::MatchResult> PackageMatcher::findMatchesParallel(
         }
     }
     
-    // Extract only matched apps
     std::vector<MatchResult> final_results;
-    for (size_t i = 0; i < apps.size(); ++i) {
+    for (size_t i = 0; i < total_count; ++i) {
         if (has_match[i]) {
             final_results.push_back(all_results[i]);
         }

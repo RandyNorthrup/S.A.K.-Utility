@@ -7,6 +7,8 @@
 #include <QJsonObject>
 #include <QString>
 
+class QDateTime;
+
 namespace sak {
 
 /**
@@ -45,6 +47,11 @@ private:
     /// @return PowerShell script that outputs CHANGES and TOTAL counts.
     QString buildApplySettingsScript() const;
 
+    /// @brief Builds the performance-related registry checks (first 6 settings).
+    QString buildApplyScriptPerformanceChecks() const;
+    /// @brief Builds the desktop/icon registry checks (last 6 settings) and output.
+    QString buildApplyScriptDesktopChecks() const;
+
     /// @brief Builds the current settings analysis section of the report.
     /// @return Report section with current settings values.
     QString buildCurrentSettingsReport(const QJsonObject& current_settings) const;
@@ -52,6 +59,13 @@ private:
     /// @brief Builds the optimization summary section of the report.
     /// @return Report section with summary, restart notice, and optimizations list.
     QString buildSummaryReport(int settings_total, int settings_changed, const QString& fx_mode) const;
+
+    /// @brief Run apply-settings script and parse CHANGES/TOTAL counts.
+    void applyVisualEffectsSettings(QString& report, int& settings_changed, int& settings_total);
+    /// @brief Build structured output and finalize the ExecutionResult.
+    void buildAndFinishVisualEffectsResult(const QString& report, int settings_total,
+                                           int settings_changed, bool notification_success,
+                                           const QString& fx_mode, const QDateTime& start_time);
 };
 
 } // namespace sak

@@ -118,6 +118,12 @@ private:
     /// @param report Report to enrich (modified in-place)
     void generateRecommendations(SmartReport& report);
 
+    /// @brief Generate SATA-specific warnings and recommendations
+    void generateSataRecommendations(SmartReport& report);
+
+    /// @brief Generate NVMe-specific warnings and recommendations
+    void generateNvmeRecommendations(SmartReport& report);
+
     /// @brief Enumerate available physical drive numbers
     /// @return Sorted list of drive numbers present on the system
     [[nodiscard]] QVector<uint32_t> enumerateDrives();

@@ -94,6 +94,16 @@ private:
     std::optional<MatchResult> fuzzyMatch(const QString& app_name, ChocolateyManager* choco_mgr);
     std::optional<MatchResult> searchMatch(const QString& app_name, ChocolateyManager* choco_mgr, int max_results);
     
+    /// @brief Phase 1: Collect exact matches and separate remaining fuzzy candidates.
+    void collectExactMatches(const std::vector<AppScanner::AppInfo>& apps,
+                             std::vector<std::pair<int, MatchResult>>& exact_results,
+                             std::vector<std::pair<int, AppScanner::AppInfo>>& fuzzy_candidates);
+    /// @brief Merge exact and fuzzy/search results in original order; return only matched entries.
+    std::vector<MatchResult> mergeMatchResults(
+        size_t total_count,
+        const std::vector<std::pair<int, MatchResult>>& exact_results,
+        const std::vector<std::pair<int, std::optional<MatchResult>>>& fuzzy_results);
+
     // Batch operations (for parallel processing)
     std::vector<QString> batchSearchChocolatey(const QStringList& keywords, ChocolateyManager* choco_mgr);
     

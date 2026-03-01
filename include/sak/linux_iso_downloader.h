@@ -143,7 +143,11 @@ private:
     void setPhase(Phase phase, const QString& description);
     void startAria2cDownload(const QString& url, const QString& savePath,
                              const QString& fileName);
+    QStringList buildAria2cArguments(const QString& url, const QString& outDir,
+                                     const QString& outFile) const;
     void verifyChecksum();
+    void onChecksumReplyFinished(QNetworkReply* reply, QNetworkAccessManager* nam);
+    QString parseExpectedHash(const QString& checksumData, const QString& expectedFileName) const;
     void onChecksumVerified(bool match, const QString& expected, const QString& actual);
     QString findAria2c() const;
     void cleanupPartialFiles();

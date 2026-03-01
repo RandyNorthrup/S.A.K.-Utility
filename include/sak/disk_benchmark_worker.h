@@ -94,6 +94,24 @@ private:
                           double& iops, double& avg_latency_us,
                           std::vector<double>* latencies_out = nullptr);
 
+    /// @brief Run all benchmark phases (sequential + random I/O)
+    /// @return Success or error code (cancellation)
+    auto runAllBenchmarks() -> std::expected<void, sak::error_code>;
+
+    /// @brief Inner timing loop for random 4K read benchmark
+    /// @return Elapsed time in seconds
+    double runRandom4KReadLoop(void* file_handle, uint8_t* buf_data,
+                                int queue_depth, uint64_t max_offset,
+                                int duration_ms, std::vector<double>& latencies,
+                                uint64_t& total_ops, uint64_t& total_bytes);
+
+    /// @brief Inner timing loop for random 4K write benchmark
+    /// @return Elapsed time in seconds
+    double runRandom4KWriteLoop(void* file_handle, const uint8_t* buf_data,
+                                 int queue_depth, uint64_t max_offset,
+                                 int duration_ms, std::vector<double>& latencies,
+                                 uint64_t& total_ops, uint64_t& total_bytes);
+
     /// @brief Calculate the P99 latency from a sorted list
     /// @param latencies Sorted vector of latencies
     /// @return P99 latency value

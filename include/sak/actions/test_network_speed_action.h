@@ -4,6 +4,7 @@
 #pragma once
 
 #include "sak/quick_action.h"
+#include <QDateTime>
 #include <QString>
 
 namespace sak {
@@ -54,9 +55,15 @@ private:
     // Test methods
     void checkConnectivity();
     void testDownloadSpeed();
+    void parseDownloadSpeedOutput(const QString& output);
     void testUploadSpeed();
     void testLatencyAndJitter();
     void getPublicIPInfo();
+
+    /// @brief Build the complete speed test report string from collected metrics
+    QString buildSpeedTestReport() const;
+    /// @brief Create and emit the final execution result
+    void finalizeSpeedTestResult(const QDateTime& start_time, const QString& report);
 };
 
 } // namespace sak

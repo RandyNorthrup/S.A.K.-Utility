@@ -45,28 +45,9 @@ void ExportRegistryKeysAction::scan() {
     Q_EMIT scanComplete(result);
 }
 
-void ExportRegistryKeysAction::execute() {
-    if (isCancelled()) {
-        emitCancelledResult("Registry export cancelled");
-        return;
-    }
-
-    setStatus(ActionStatus::Running);
-    QDateTime start_time = QDateTime::currentDateTime();
-    
-    Q_EMIT executionProgress("Preparing enterprise registry backup...", 5);
-    
-    QDir backup_dir(m_backup_location + "/Registry");
-    backup_dir.mkpath(".");
-    
-    QString timestamp = QDateTime::currentDateTime().toString("yyyyMMdd_hhmmss");
-    QString backup_path = backup_dir.absolutePath().replace("/", "\\");
-    
-    // Enterprise registry backup using PowerShell
-    // Per Microsoft docs: reg export for comprehensive backup of entire hives
-    // Includes verification and file size reporting
-    
-    QString ps_script = QString(
+QString ExportRegistryKeysAction::buildRegistryBackupScript(const QString& backup_path,
+                                                              const QString& timestamp) const {
+    return QString(
         "# Enterprise Registry Backup Script\n"
         "$ErrorActionPreference = 'Continue'; \n"
         "$backupPath = '%1'; \n"
@@ -124,6 +105,63 @@ void ExportRegistryKeysAction::execute() {
         "Write-Output \"TOTAL_SIZE:$totalSize\"; \n"
         "Write-Output \"MANIFEST:$manifestPath\""
     ).arg(backup_path, timestamp);
+}
+
+void ExportRegistryKeysAction::finalizeRegistryExportResult(
+    const QDateTime& start_time,
+    const QDir& backup_dir,
+    int keys_exported,
+    qint64 total_size,
+    const QString& manifest_path,
+    const QString& accumulated_output)
+{
+    Q_EMIT executionProgress("Backup complete", 100);
+
+    qint64 duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
+
+    ExecutionResult result;
+    result.duration_ms = duration_ms;
+    result.files_processed = keys_exported;
+    result.bytes_processed = total_size;
+    result.output_path = backup_dir.absolutePath();
+
+    if (keys_exported > 0) {
+        result.success = true;
+        double size_mb = total_size / (1024.0 * 1024.0);
+        result.message = QString("Exported %1 registry hive(s) - %2 MB")
+            .arg(keys_exported)
+            .arg(size_mb, 0, 'f', 2);
+        result.log = QString("Backup location: %1\nManifest: %2\n\nDetails:\n%3")
+                        .arg(backup_dir.absolutePath())
+                        .arg(manifest_path)
+                        .arg(accumulated_output);
+    } else {
+        result.success = false;
+        result.message = "Failed to export registry keys";
+        result.log = QString("No registry keys were successfully exported\n\nOutput:\n%1").arg(accumulated_output);
+    }
+
+    finishWithResult(result, result.success ? ActionStatus::Success : ActionStatus::Failed);
+}
+
+void ExportRegistryKeysAction::execute() {
+    if (isCancelled()) {
+        emitCancelledResult("Registry export cancelled");
+        return;
+    }
+
+    setStatus(ActionStatus::Running);
+    QDateTime start_time = QDateTime::currentDateTime();
+    
+    Q_EMIT executionProgress("Preparing enterprise registry backup...", 5);
+    
+    QDir backup_dir(m_backup_location + "/Registry");
+    backup_dir.mkpath(".");
+    
+    QString timestamp = QDateTime::currentDateTime().toString("yyyyMMdd_hhmmss");
+    QString backup_path = backup_dir.absolutePath().replace("/", "\\");
+    
+    QString ps_script = buildRegistryBackupScript(backup_path, timestamp);
     
     ProcessResult ps = runPowerShell(ps_script, 60000);
     if (!ps.std_err.trimmed().isEmpty()) {
@@ -143,45 +181,14 @@ void ExportRegistryKeysAction::execute() {
     QRegularExpressionMatch sizeMatch = totalSizeRe.match(accumulated_output);
     QRegularExpressionMatch manifestMatch = manifestRe.match(accumulated_output);
     
-    if (keysMatch.hasMatch()) {
-        keys_exported = keysMatch.captured(1).toInt();
-    }
-    if (sizeMatch.hasMatch()) {
-        total_size = sizeMatch.captured(1).toLongLong();
-    }
+    if (keysMatch.hasMatch()) keys_exported = keysMatch.captured(1).toInt();
+    if (sizeMatch.hasMatch()) total_size = sizeMatch.captured(1).toLongLong();
     
     QString manifest_path;
-    if (manifestMatch.hasMatch()) {
-        manifest_path = manifestMatch.captured(1).trimmed();
-    }
+    if (manifestMatch.hasMatch()) manifest_path = manifestMatch.captured(1).trimmed();
     
-    Q_EMIT executionProgress("Backup complete", 100);
-    
-    qint64 duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
-    
-    ExecutionResult result;
-    result.duration_ms = duration_ms;
-    result.files_processed = keys_exported;
-    result.bytes_processed = total_size;
-    result.output_path = backup_dir.absolutePath();
-    
-    if (keys_exported > 0) {
-        result.success = true;
-        double size_mb = total_size / (1024.0 * 1024.0);
-        result.message = QString("Exported %1 registry hive(s) - %2 MB")
-            .arg(keys_exported)
-            .arg(size_mb, 0, 'f', 2);
-        result.log = QString("Backup location: %1\nManifest: %2\n\nDetails:\n%3")
-                        .arg(backup_dir.absolutePath())
-                        .arg(manifest_path)
-                        .arg(accumulated_output);
-    } else {
-        result.success = false;
-        result.message = "Failed to export registry keys";
-        result.log = QString("No registry keys were successfully exported\n\nOutput:\n%1").arg(accumulated_output);
-    }
-    
-    finishWithResult(result, result.success ? ActionStatus::Success : ActionStatus::Failed);
+    finalizeRegistryExportResult(start_time, backup_dir, keys_exported,
+                                  total_size, manifest_path, accumulated_output);
 }
 
 } // namespace sak

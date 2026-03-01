@@ -168,9 +168,16 @@ private Q_SLOTS:
 
 private:
     void populateCatalog();
+    void addGeneralPurposeDistros();
+    void addSecurityDistros();
+    void addSystemRecoveryDistros();
+    void addDiskToolDistros();
+    void addUtilityDistros();
     void addDistro(const DistroInfo& distro);
     QString substituteVersion(const QString& pattern, const QString& version) const;
     void parseGitHubRelease(const QString& distroId, const QJsonObject& release);
+    bool resolveGitHubAsset(const QString& distroId, DistroInfo& distro,
+                           const QJsonArray& assets, QString& matchedName);
 
     QList<DistroInfo> m_distros;
     QMap<QString, int> m_distroIndex; ///< Maps distro ID to index in m_distros

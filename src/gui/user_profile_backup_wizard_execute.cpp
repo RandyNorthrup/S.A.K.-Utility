@@ -101,12 +101,8 @@ void UserProfileBackupExecutePage::onStartBackup() {
     }
     
     SmartFilter smartFilter = wiz->getSmartFilter();
-    
-    // Get permission mode from settings page (through wizard field)
-    // Default to StripAll if not found
     PermissionMode permissionMode = PermissionMode::StripAll;
     
-    // Get compression and encryption settings
     int compressionLevel = wiz->getCompressionLevel();
     bool encrypt = wiz->isEncryptionEnabled();
     QString password = wiz->getEncryptionPassword();
@@ -120,35 +116,42 @@ void UserProfileBackupExecutePage::onStartBackup() {
         appendLog(tr("Encryption: Enabled (AES-256)"));
     }
     
-    // Save installed apps list to backup directory
-    QVector<InstalledAppInfo> installedApps = wiz->installedApps();
-    if (!installedApps.isEmpty()) {
-        QJsonArray appsArray;
-        for (const auto& app : installedApps) {
-            QJsonObject appObj;
-            appObj["name"] = app.name;
-            appObj["version"] = app.version;
-            appObj["publisher"] = app.publisher;
-            appObj["choco_package"] = app.choco_package;
-            appObj["category"] = app.category;
-            appsArray.append(appObj);
-        }
-        
-        QJsonDocument doc(appsArray);
-        QFile appsFile(m_destinationPath + "/installed_apps.json");
-        if (appsFile.open(QIODevice::WriteOnly)) {
-            appsFile.write(doc.toJson(QJsonDocument::Indented));
-            appsFile.close();
-            appendLog(tr("Saved %1 installed application(s) to backup").arg(installedApps.size()));
-        } else {
-            appendLog(tr("WARNING: Could not save installed applications list"));
-        }
+    saveInstalledAppsToBackup(wiz->installedApps());
+    connectAndStartBackupWorker(smartFilter, permissionMode,
+                                compressionLevel, encrypt, password);
+}
+
+void UserProfileBackupExecutePage::saveInstalledAppsToBackup(
+    const QVector<InstalledAppInfo>& installedApps) {
+    if (installedApps.isEmpty()) return;
+
+    QJsonArray appsArray;
+    for (const auto& app : installedApps) {
+        QJsonObject appObj;
+        appObj["name"] = app.name;
+        appObj["version"] = app.version;
+        appObj["publisher"] = app.publisher;
+        appObj["choco_package"] = app.choco_package;
+        appObj["category"] = app.category;
+        appsArray.append(appObj);
     }
     
-    // Create and configure backup worker
+    QJsonDocument doc(appsArray);
+    QFile appsFile(m_destinationPath + "/installed_apps.json");
+    if (appsFile.open(QIODevice::WriteOnly)) {
+        appsFile.write(doc.toJson(QJsonDocument::Indented));
+        appsFile.close();
+        appendLog(tr("Saved %1 installed application(s) to backup").arg(installedApps.size()));
+    } else {
+        appendLog(tr("WARNING: Could not save installed applications list"));
+    }
+}
+
+void UserProfileBackupExecutePage::connectAndStartBackupWorker(
+    SmartFilter smartFilter, PermissionMode permissionMode,
+    int compressionLevel, bool encrypt, const QString& password) {
     auto worker = new UserProfileBackupWorker(this);
     
-    // Connect signals for progress tracking
     connect(worker, &UserProfileBackupWorker::overallProgress, 
             this, &UserProfileBackupExecutePage::onBackupProgress);
     connect(worker, &UserProfileBackupWorker::logMessage,
@@ -165,13 +168,11 @@ void UserProfileBackupExecutePage::onStartBackup() {
                 worker->deleteLater();
             });
     
-    // Start backup operation with compression and encryption
     worker->startBackup(m_manifest, m_users, m_destinationPath, smartFilter, permissionMode,
                        compressionLevel, encrypt, password);
     
-    // Configure progress bars
     m_overallProgress->setRange(0, m_users.size());
-    m_currentProgress->setRange(0, 0); // Indeterminate for file operations
+    m_currentProgress->setRange(0, 0);
 }
 
 void UserProfileBackupExecutePage::onBackupProgress(int current, int total, qint64 bytes, qint64 totalBytes) {

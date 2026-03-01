@@ -67,9 +67,19 @@ private:
     /// @return Complete PowerShell script string.
     QString buildCacheClearingScript() const;
 
+    /// @brief PowerShell helper function definitions and browser config array.
+    QString buildScriptPreamble() const;
+    /// @brief PowerShell foreach loop clearing Chromium-based browser caches.
+    QString buildScriptChromiumLoop() const;
+    /// @brief PowerShell Firefox cache clearing and output section.
+    QString buildScriptFirefoxAndOutput() const;
+
     /// @brief Parses structured output from the cache clearing script.
     /// @return Populated BrowserCacheResult.
     BrowserCacheResult parseCacheOutput(const QString& output) const;
+
+    /// @brief Scan all browser cache locations and accumulate totals.
+    void scanAllBrowserCaches(qint64& total_bytes, qint64& total_files, int& locations);
 
     /// @brief Builds the box-drawing success log.
     /// @return Formatted success log string.

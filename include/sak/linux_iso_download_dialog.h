@@ -15,6 +15,7 @@
 #include <QListWidget>
 #include <QString>
 
+class QVBoxLayout;
 class LinuxISODownloader;
 
 /**
@@ -68,6 +69,8 @@ private Q_SLOTS:
 
 private:
     void setupUi();
+    void setupUi_selectionGroup(QVBoxLayout* mainLayout);
+    void setupUi_progressAndButtons(QVBoxLayout* mainLayout);
     void connectSignals();
     void populateDistroList();
     void updateDistroDetails();

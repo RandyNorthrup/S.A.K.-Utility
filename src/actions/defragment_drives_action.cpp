@@ -73,16 +73,20 @@ void DefragmentDrivesAction::scan() {
 void DefragmentDrivesAction::execute() {
     setStatus(ActionStatus::Running);
     QDateTime start_time = QDateTime::currentDateTime();
-    
     Q_EMIT executionProgress("Analyzing drives for optimization...", 5);
-    
+
+    QString ps_script = executeEnumerateVolumes();
+    executeDefrag(ps_script, start_time);
+}
+
+QString DefragmentDrivesAction::executeEnumerateVolumes() const {
     // Enterprise approach: Use Optimize-Volume PowerShell cmdlet
     // Per Microsoft docs: Automatically selects correct optimization per drive type:
     // - HDD: Defragmentation
     // - SSD with TRIM: TRIM/Retrim operation
     // - Tiered Storage: TierOptimize
     
-    QString ps_script = 
+    return 
         "# Enterprise Drive Optimization using Optimize-Volume\n"
         "$ErrorActionPreference = 'Continue'; \n"
         "\n"
@@ -139,7 +143,9 @@ void DefragmentDrivesAction::execute() {
         "Write-Output \"TOTAL_OPTIMIZED:$optimized\"; \n"
         "Write-Output \"TOTAL_SKIPPED:$skipped\"; \n"
         "Write-Output 'COMPLETE'";
-    
+}
+
+void DefragmentDrivesAction::executeDefrag(const QString& ps_script, const QDateTime& start_time) {
     Q_EMIT executionProgress("Optimizing drives...", 15);
 
     ProcessResult ps_result = runPowerShell(ps_script, 3600000);
@@ -148,47 +154,24 @@ void DefragmentDrivesAction::execute() {
         return;
     }
 
-    QString accumulated_output = ps_result.std_out;
+    executeBuildReport(ps_result.std_out, ps_result.std_err, start_time);
+}
 
-    int optimized = 0;
-    int total_drives = 0;
-    QStringList drive_types;
+void DefragmentDrivesAction::executeBuildReport(
+        const QString& accumulated_output, const QString& std_err,
+        const QDateTime& start_time) {
 
-    QRegularExpression optRe("OPTIMIZING:([A-Z])");
-    auto optIt = optRe.globalMatch(accumulated_output);
-    while (optIt.hasNext()) {
-        optIt.next();
-        total_drives++;
-    }
-
-    QRegularExpression typeRe("DRIVE_TYPE:([A-Z])=(.+)");
-    auto typeIt = typeRe.globalMatch(accumulated_output);
-    while (typeIt.hasNext()) {
-        auto match = typeIt.next();
-        drive_types.append(QString("%1: = %2").arg(match.captured(1), match.captured(2).trimmed()));
-    }
-
-    optimized = accumulated_output.count("SUCCESS:", Qt::CaseInsensitive);
+    auto summary = parseOptimizationOutput(accumulated_output);
     
     if (accumulated_output.contains("NO_DRIVES_FOUND")) {
         ExecutionResult result;
         result.success = true;
         result.message = "No fixed NTFS drives found to optimize";
         result.duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
-        result.log = accumulated_output + (ps_result.std_err.isEmpty() ? "" : "\nErrors:\n" + ps_result.std_err);
+        result.log = accumulated_output + (std_err.isEmpty() ? "" : "\nErrors:\n" + std_err);
         finishWithResult(result, ActionStatus::Success);
         return;
     }
-    
-    // Parse final results
-    QRegularExpression optimizedRe("TOTAL_OPTIMIZED:(\\d+)");
-    QRegularExpression skippedRe("TOTAL_SKIPPED:(\\d+)");
-    
-    QRegularExpressionMatch optMatch = optimizedRe.match(accumulated_output);
-    QRegularExpressionMatch skipMatch = skippedRe.match(accumulated_output);
-    
-    int total_optimized = optMatch.hasMatch() ? optMatch.captured(1).toInt() : optimized;
-    int total_skipped = skipMatch.hasMatch() ? skipMatch.captured(1).toInt() : 0;
     
     Q_EMIT executionProgress("Optimization complete", 100);
     
@@ -198,15 +181,15 @@ void DefragmentDrivesAction::execute() {
     result.duration_ms = duration_ms;
     result.success = true;
     
-    QString drive_info = drive_types.join("\n");
+    QString drive_info = summary.drive_types.join("\n");
     
-    if (total_optimized > 0) {
-        result.message = QString("Optimized %1 drive(s)").arg(total_optimized);
-        if (total_skipped > 0) {
-            result.message += QString(" (%1 skipped)").arg(total_skipped);
+    if (summary.total_optimized > 0) {
+        result.message = QString("Optimized %1 drive(s)").arg(summary.total_optimized);
+        if (summary.total_skipped > 0) {
+            result.message += QString(" (%1 skipped)").arg(summary.total_skipped);
         }
-    } else if (total_skipped > 0) {
-        result.message = QString("All %1 drive(s) skipped (no optimization needed)").arg(total_skipped);
+    } else if (summary.total_skipped > 0) {
+        result.message = QString("All %1 drive(s) skipped (no optimization needed)").arg(summary.total_skipped);
     } else {
         result.message = "Drive optimization completed";
     }
@@ -214,11 +197,44 @@ void DefragmentDrivesAction::execute() {
     result.log = QString("Drive Types:\n%1\n\nOptimization Details:\n%2")
                     .arg(drive_info)
                     .arg(accumulated_output);
-    if (!ps_result.std_err.trimmed().isEmpty()) {
-        result.log += "\nErrors:\n" + ps_result.std_err.trimmed();
+    if (!std_err.trimmed().isEmpty()) {
+        result.log += "\nErrors:\n" + std_err.trimmed();
     }
     
     finishWithResult(result, ActionStatus::Success);
+}
+
+DefragmentDrivesAction::OptimizationSummary DefragmentDrivesAction::parseOptimizationOutput(
+        const QString& output) const
+{
+    OptimizationSummary summary;
+
+    QRegularExpression optRe("OPTIMIZING:([A-Z])");
+    auto optIt = optRe.globalMatch(output);
+    while (optIt.hasNext()) {
+        optIt.next();
+        summary.total_drives++;
+    }
+
+    QRegularExpression typeRe("DRIVE_TYPE:([A-Z])=(.+)");
+    auto typeIt = typeRe.globalMatch(output);
+    while (typeIt.hasNext()) {
+        auto match = typeIt.next();
+        summary.drive_types.append(QString("%1: = %2").arg(match.captured(1), match.captured(2).trimmed()));
+    }
+
+    summary.optimized = output.count("SUCCESS:", Qt::CaseInsensitive);
+
+    QRegularExpression optimizedRe("TOTAL_OPTIMIZED:(\\d+)");
+    QRegularExpression skippedRe("TOTAL_SKIPPED:(\\d+)");
+
+    QRegularExpressionMatch optMatch = optimizedRe.match(output);
+    QRegularExpressionMatch skipMatch = skippedRe.match(output);
+
+    summary.total_optimized = optMatch.hasMatch() ? optMatch.captured(1).toInt() : summary.optimized;
+    summary.total_skipped = skipMatch.hasMatch() ? skipMatch.captured(1).toInt() : 0;
+
+    return summary;
 }
 
 } // namespace sak

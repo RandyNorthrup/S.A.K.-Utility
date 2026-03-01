@@ -4,6 +4,8 @@
 #pragma once
 
 #include "sak/quick_action.h"
+#include <QDateTime>
+#include <QDir>
 #include <QString>
 
 namespace sak {
@@ -53,6 +55,11 @@ private:
                              const QString& output_dir_path, const QString& timestamp);
     void generateReport(const QString& output_dir_path, const QString& timestamp,
                         int monitor_count, const CaptureResult& capture) const;
+
+    /// @brief Assemble structured log and ExecutionResult from capture outcome
+    void buildExecutionResult(const CaptureResult& capture, int total_pages,
+                              const QDir& output_dir, int monitor_count,
+                              const QString& timestamp, const QDateTime& start_time);
 };
 
 } // namespace sak

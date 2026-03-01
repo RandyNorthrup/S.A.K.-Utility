@@ -9,6 +9,8 @@
 #include <QStringList>
 #include <vector>
 
+class QDir;
+
 namespace sak {
 
 /**
@@ -92,6 +94,19 @@ private:
      * @return Human-readable type
      */
     QString getFileTypeDescription(const QString& extension) const;
+
+    /// @brief Check if QuickBooks process is currently running
+    bool isQuickBooksRunning();
+
+    /// @brief Copy discovered QuickBooks files to backup directory
+    void executeCopyFiles(const QDir& backup_dir, const QDateTime& start_time,
+                          int& files_copied, int& files_skipped_open,
+                          qint64& bytes_copied, QStringList& copied_files);
+
+    /// @brief Build and emit the final execution result
+    void executeBuildResult(const QDateTime& start_time, const QDir& backup_dir,
+                            int files_copied, int files_skipped_open,
+                            qint64 bytes_copied, const QStringList& copied_files);
 
     QString m_backup_location;
     std::vector<QuickBooksFile> m_found_files;

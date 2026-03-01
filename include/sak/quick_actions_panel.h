@@ -157,6 +157,8 @@ private:
      * @brief Initialize UI components
      */
     void setupUi();
+    void setupUi_statusSection(QVBoxLayout* main_layout);
+    void setupUi_bottomRow(QVBoxLayout* main_layout);
 
     /**
      * @brief Create all action instances
@@ -167,6 +169,16 @@ private:
      * @brief Create category sections
      */
     void createCategorySections();
+
+    /**
+     * @brief Create a single category group box with action buttons
+     * @param category Action category enum
+     * @param title Category title text
+     * @param description Category description text
+     */
+    void createSingleCategorySection(QuickAction::ActionCategory category,
+                                      const QString& title,
+                                      const QString& description);
 
     /**
      * @brief Create action button for UI

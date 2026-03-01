@@ -69,6 +69,16 @@ void OrganizerPanel::setupUi()
     sak::createPanelHeader(contentWidget, tr("Directory Organizer"),
         tr("Automatically sort and organize files by type, date, or custom rules"), mainLayout);
 
+    setupUi_directoryAndCategories(mainLayout);
+    setupUi_controlsAndConnections(mainLayout);
+}
+
+// ----------------------------------------------------------------------------
+// setupUi helpers
+// ----------------------------------------------------------------------------
+
+void OrganizerPanel::setupUi_directoryAndCategories(QVBoxLayout* mainLayout)
+{
     // Target directory group
     auto* pathGroup = new QGroupBox("Target Directory", this);
     auto* pathLayout = new QHBoxLayout(pathGroup);
@@ -114,7 +124,10 @@ void OrganizerPanel::setupUi()
     categoryLayout->addLayout(buttonLayout);
     
     mainLayout->addWidget(categoryGroup);
+}
 
+void OrganizerPanel::setupUi_controlsAndConnections(QVBoxLayout* mainLayout)
+{
     // Options widgets (hidden — managed via Settings modal)
     m_collision_strategy = new QComboBox(this);
     m_collision_strategy->addItems({"Rename", "Skip", "Overwrite"});

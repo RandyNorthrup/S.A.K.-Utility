@@ -13,6 +13,8 @@
 #include "sak/network_transfer_types.h"
 #include "sak/orchestration_types.h"
 
+class QJsonObject;
+
 namespace sak {
 
 class PeerDiscoveryService;
@@ -86,6 +88,11 @@ private:
     void resetWorker();
     void startWorkerSender();
     void startWorkerReceiver();
+    /// @brief Wire all signal connections for the receiver worker
+    void connectReceiverSignals();
+    void handleHelloMessage(const QJsonObject& message);
+    void handleAuthChallengeMessage(const QJsonObject& message);
+    void handleAuthResponseMessage(const QJsonObject& message);
 
     TransferSettings m_settings;
     Mode m_mode{Mode::Idle};

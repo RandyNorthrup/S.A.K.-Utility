@@ -45,6 +45,16 @@ private:
 
     /** Collect all known WiFi profile details via netsh */
     QList<NetworkEntry> collectProfiles() const;
+
+    /** Fetch detail for a single WiFi profile and populate a NetworkEntry */
+    NetworkEntry fetchProfileDetail(
+        const QString& name,
+        const QRegularExpression& keyRe,
+        const QRegularExpression& authRe,
+        const QRegularExpression& nbRe) const;
+
+    /// @brief Build JSON from collected profiles and write to backup file
+    void buildAndWriteBackup(const QList<NetworkEntry>& entries, const QDateTime& startTime);
 };
 
 } // namespace sak

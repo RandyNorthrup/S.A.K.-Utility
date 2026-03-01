@@ -78,6 +78,11 @@ auto OrganizerWorker::execute() -> std::expected<void, sak::error_code>
     }
 
     // Execute moves
+    return executePlannedMoves();
+}
+
+auto OrganizerWorker::executePlannedMoves() -> std::expected<void, sak::error_code>
+{
     const size_t op_count = m_planned_operations.size();
     for (size_t i = 0; i < op_count; ++i) {
         if (checkStop()) {

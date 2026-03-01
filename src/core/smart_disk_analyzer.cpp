@@ -407,21 +407,8 @@ void SmartDiskAnalyzer::assessHealth(SmartReport& report)
     }
 }
 
-void SmartDiskAnalyzer::generateRecommendations(SmartReport& report)
+void SmartDiskAnalyzer::generateSataRecommendations(SmartReport& report)
 {
-    report.warnings.clear();
-    report.recommendations.clear();
-
-    // ── Temperature warnings ────────────────────────────────────
-    if (report.temperature_celsius > 55.0) {
-        report.warnings.append(
-            QString("Drive temperature is elevated (%1°C)")
-                .arg(report.temperature_celsius, 0, 'f', 0));
-        report.recommendations.append(
-            "Check case airflow and ensure drive has adequate cooling");
-    }
-
-    // ── SATA-specific recommendations ───────────────────────────
     if (report.reallocated_sectors > 0) {
         report.warnings.append(
             QString("Reallocated sectors detected: %1").arg(report.reallocated_sectors));
@@ -451,44 +438,69 @@ void SmartDiskAnalyzer::generateRecommendations(SmartReport& report)
                 "Check SATA cable connections or replace SATA cable");
         }
     }
+}
+
+void SmartDiskAnalyzer::generateNvmeRecommendations(SmartReport& report)
+{
+    if (!report.nvme_health.has_value()) {
+        return;
+    }
+
+    const auto& nvme = report.nvme_health.value();
+
+    if (nvme.percentage_used >= kNvmeWearCriticalPercent) {
+        report.warnings.append(
+            QString("NVMe drive endurance at %1% — nearing end of life")
+                .arg(nvme.percentage_used));
+        report.recommendations.append(
+            "CRITICAL: Plan drive replacement — SSD endurance nearly exhausted");
+    } else if (nvme.percentage_used >= kNvmeWearWarningPercent) {
+        report.warnings.append(
+            QString("NVMe drive endurance at %1%").arg(nvme.percentage_used));
+        report.recommendations.append(
+            "Consider planning drive replacement in the near future");
+    }
+
+    if (nvme.media_errors > 0) {
+        report.warnings.append(
+            QString("NVMe media errors detected: %1").arg(nvme.media_errors));
+        report.recommendations.append(
+            "Media errors indicate flash cell failure — back up data and monitor closely");
+    }
+
+    if (nvme.unsafe_shutdowns > 100) {
+        report.warnings.append(
+            QString("High number of unsafe shutdowns: %1").arg(nvme.unsafe_shutdowns));
+        report.recommendations.append(
+            "Investigate power supply or shutdown procedures to reduce unsafe shutdowns");
+    }
+
+    if (nvme.available_spare < nvme.available_spare_threshold) {
+        report.warnings.append("Available spare NVM below threshold");
+        report.recommendations.append(
+            "Drive spare capacity is low — plan for replacement");
+    }
+}
+
+void SmartDiskAnalyzer::generateRecommendations(SmartReport& report)
+{
+    report.warnings.clear();
+    report.recommendations.clear();
+
+    // ── Temperature warnings ────────────────────────────────────
+    if (report.temperature_celsius > 55.0) {
+        report.warnings.append(
+            QString("Drive temperature is elevated (%1°C)")
+                .arg(report.temperature_celsius, 0, 'f', 0));
+        report.recommendations.append(
+            "Check case airflow and ensure drive has adequate cooling");
+    }
+
+    // ── SATA-specific recommendations ───────────────────────────
+    generateSataRecommendations(report);
 
     // ── NVMe-specific recommendations ───────────────────────────
-    if (report.nvme_health.has_value()) {
-        const auto& nvme = report.nvme_health.value();
-
-        if (nvme.percentage_used >= kNvmeWearCriticalPercent) {
-            report.warnings.append(
-                QString("NVMe drive endurance at %1% — nearing end of life")
-                    .arg(nvme.percentage_used));
-            report.recommendations.append(
-                "CRITICAL: Plan drive replacement — SSD endurance nearly exhausted");
-        } else if (nvme.percentage_used >= kNvmeWearWarningPercent) {
-            report.warnings.append(
-                QString("NVMe drive endurance at %1%").arg(nvme.percentage_used));
-            report.recommendations.append(
-                "Consider planning drive replacement in the near future");
-        }
-
-        if (nvme.media_errors > 0) {
-            report.warnings.append(
-                QString("NVMe media errors detected: %1").arg(nvme.media_errors));
-            report.recommendations.append(
-                "Media errors indicate flash cell failure — back up data and monitor closely");
-        }
-
-        if (nvme.unsafe_shutdowns > 100) {
-            report.warnings.append(
-                QString("High number of unsafe shutdowns: %1").arg(nvme.unsafe_shutdowns));
-            report.recommendations.append(
-                "Investigate power supply or shutdown procedures to reduce unsafe shutdowns");
-        }
-
-        if (nvme.available_spare < nvme.available_spare_threshold) {
-            report.warnings.append("Available spare NVM below threshold");
-            report.recommendations.append(
-                "Drive spare capacity is low — plan for replacement");
-        }
-    }
+    generateNvmeRecommendations(report);
 
     // ── Power-on hours advisory ─────────────────────────────────
     if (report.power_on_hours > 50000) {

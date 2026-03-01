@@ -41,6 +41,14 @@ private:
     int deleteCacheFiles(const QVector<CacheFileInfo>& files);
     bool startExplorer();
     bool refreshIconCache();
+
+    /// @brief Build the header portion of the icon cache report
+    QString buildIconCacheReportHeader(const QVector<CacheFileInfo>& cache_files,
+                                        qint64 total_size) const;
+    /// @brief Build the execution result and finish the action
+    void buildAndFinishIconCacheResult(int deleted_count, qint64 total_size,
+                                       bool explorer_stopped, bool explorer_started,
+                                       const QString& report, qint64 duration_ms);
 };
 
 } // namespace sak

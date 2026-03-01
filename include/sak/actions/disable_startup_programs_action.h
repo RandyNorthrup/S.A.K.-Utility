@@ -4,6 +4,7 @@
 #pragma once
 
 #include "sak/quick_action.h"
+#include <QDateTime>
 #include <QString>
 #include <QVector>
 
@@ -47,6 +48,16 @@ private:
     void scanStartupFolder();
     void scanTaskScheduler();
     QString determineImpact(const QString& name);
+
+    // TigerStyle helpers for execute() decomposition
+    bool executeScanRegistry(const QDateTime& start_time, QString& startup_output, int& startup_count);
+    bool executeScanTaskScheduler(const QDateTime& start_time, QString& task_output, int& task_count);
+    void executeDisableEntries(const QDateTime& start_time, const QString& startup_output, int startup_count,
+                               const QString& task_output, int task_count, QString& report, bool& tm_launched);
+    void executeBuildReport(const QDateTime& start_time, int startup_count, int task_count,
+                            const QString& report, bool tm_launched);
+    QString formatStartupProgramsSection(const QString& startup_output, int startup_count) const;
+    QString formatStartupTasksSection(const QString& task_output, int task_count) const;
 };
 
 } // namespace sak

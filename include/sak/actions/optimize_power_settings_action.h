@@ -4,6 +4,7 @@
 #pragma once
 
 #include "sak/quick_action.h"
+#include <QDateTime>
 #include <QString>
 
 namespace sak {
@@ -42,6 +43,19 @@ private:
     bool setPowerPlan(const QString& guid);
     PowerPlan findPowerPlanByName(const QString& name);
     QString getStandardPowerPlanGuid(const QString& plan_name);
+
+    /// @brief Activate the High Performance plan, verify, and append status to report
+    bool activateHighPerformancePlan(const PowerPlan& high_perf_plan,
+                                      const QString& current_plan_name,
+                                      QString& report);
+    /// @brief Build the report header listing current and available power plans
+    QString buildPowerPlanListReport(const PowerPlan& current_plan,
+                                      const QVector<PowerPlan>& all_plans) const;
+    /// @brief Create and emit the final execution result with recommendations
+    void finalizePowerOptimizationResult(const QDateTime& start_time, const QString& report,
+                                          const QString& previous_plan_name,
+                                          const QString& high_perf_guid,
+                                          bool already_optimized, bool success);
 };
 
 } // namespace sak

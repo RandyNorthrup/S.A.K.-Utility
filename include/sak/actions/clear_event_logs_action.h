@@ -4,7 +4,9 @@
 #pragma once
 
 #include "sak/quick_action.h"
+#include <QDateTime>
 #include <QString>
+#include <QStringList>
 
 namespace sak {
 
@@ -37,6 +39,19 @@ private:
     qint64 getEventLogSize(const QString& log_name);
     bool backupEventLog(const QString& log_name);
     bool clearEventLog(const QString& log_name);
+
+    // TigerStyle helpers for execute() decomposition
+    bool executeEnumerateLogs(const QDateTime& start_time, QString& ps_script);
+    bool executeClearLogs(const QDateTime& start_time, const QString& ps_script,
+                          int& total_logs, int& cleared_logs, int& total_entries,
+                          int& backed_up, QString& backup_path, QStringList& details);
+    void executeBuildReport(const QDateTime& start_time, int total_logs, int cleared_logs,
+                            int total_entries, int backed_up, const QString& backup_path,
+                            const QStringList& details);
+    void appendSuccessReport(QString& log_output, int total_logs, int cleared_logs,
+                             int total_entries, int backed_up, const QString& backup_path,
+                             const QStringList& details, qint64 duration_ms);
+    void appendFailureReport(QString& log_output, const QStringList& details);
 };
 
 } // namespace sak

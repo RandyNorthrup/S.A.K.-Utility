@@ -8,6 +8,7 @@
 #include <QString>
 #include <QVector>
 #include <QMutex>
+#include <QFileInfo>
 #include <atomic>
 
 namespace sak {
@@ -102,8 +103,14 @@ protected:
 private:
     // Core operations
     bool restoreUser(const UserMapping& mapping);
+    /// @brief Resolve the destination profile directory based on merge mode
+    bool resolveDestinationProfilePath(const UserMapping& mapping, QString& destProfilePath);
     bool restoreFolder(const FolderSelection& folder, const QString& sourcePath, const QString& destPath);
     bool copyFileWithConflictResolution(const QString& source, const QString& dest, qint64 size);
+    /// @brief Resolve file conflict according to m_conflictMode
+    /// @return true if copy should proceed, false if file was skipped
+    bool resolveFileConflict(const QString& source, const QFileInfo& destInfo,
+                              qint64 size, QString& finalDestPath);
     bool applyPermissions(const QString& filePath, const QString& destinationUser);
     
     // Helpers

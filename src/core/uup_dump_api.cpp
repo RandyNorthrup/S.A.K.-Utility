@@ -382,46 +382,10 @@ void UupDumpApi::onFilesReply() {
 
     for (auto it = filesObj.begin(); it != filesObj.end(); ++it) {
         QJsonObject fileObj = it.value().toObject();
-        FileInfo info;
-        info.fileName = it.key();
-        info.sha1 = fileObj["sha1"].toString();
-        info.size = fileObj["size"].toString().toLongLong();
-        info.url = fileObj["url"].toString();
-        info.uuid = fileObj["uuid"].toString();
-        info.expire = fileObj["expire"].toString();
-
-        // Sanitize filename — reject path traversal attempts
-        if (info.fileName.contains("..") || info.fileName.contains('/') ||
-            info.fileName.contains('\\')) {
-            sak::logWarning("Rejected unsafe filename from API: " + info.fileName.toStdString());
-            continue;
-        }
-
-        // Validate download URL scheme
-        // Microsoft's UUP CDN (tlu.dl.delivery.mp.microsoft.com) only serves
-        // HTTP — allow it since every file is integrity-verified via SHA-1.
-        // Reject non-HTTPS URLs from all other origins.
-        QUrl downloadUrl(info.url);
-        if (!downloadUrl.isValid()) {
-            sak::logWarning("Rejected invalid download URL for: " + info.fileName.toStdString());
-            continue;
-        }
-
-        QString scheme = downloadUrl.scheme().toLower();
-        QString host = downloadUrl.host().toLower();
-        if (scheme == "http" && host.endsWith(".microsoft.com")) {
-            // Microsoft's UUP CDN does not support HTTPS — allow HTTP since
-            // every file is integrity-verified via SHA-1 checksums.
-            sak::logDebug("Allowing HTTP Microsoft CDN URL for: " + info.fileName.toStdString());
-        } else if (scheme != "https") {
-            sak::logWarning("Rejected non-HTTPS download URL for: " + info.fileName.toStdString());
-            continue;
-        }
-
-        // Only include files with valid download URLs
-        if (!info.url.isEmpty() && info.url != "null") {
-            files.append(info);
-            totalSize += info.size;
+        auto maybeInfo = parseAndValidateFileEntry(it.key(), fileObj);
+        if (maybeInfo.has_value()) {
+            files.append(maybeInfo.value());
+            totalSize += maybeInfo.value().size;
         }
     }
 
@@ -433,6 +397,50 @@ void UupDumpApi::onFilesReply() {
 }
 
 // ─── Private Helpers ────────────────────────────────────────────────────────
+
+std::optional<UupDumpApi::FileInfo> UupDumpApi::parseAndValidateFileEntry(
+    const QString& key, const QJsonObject& fileObj)
+{
+    FileInfo info;
+    info.fileName = key;
+    info.sha1 = fileObj["sha1"].toString();
+    info.size = fileObj["size"].toString().toLongLong();
+    info.url = fileObj["url"].toString();
+    info.uuid = fileObj["uuid"].toString();
+    info.expire = fileObj["expire"].toString();
+
+    // Sanitize filename — reject path traversal attempts
+    if (info.fileName.contains("..") || info.fileName.contains('/') ||
+        info.fileName.contains('\\')) {
+        sak::logWarning("Rejected unsafe filename from API: " + info.fileName.toStdString());
+        return std::nullopt;
+    }
+
+    // Validate download URL scheme
+    QUrl downloadUrl(info.url);
+    if (!downloadUrl.isValid()) {
+        sak::logWarning("Rejected invalid download URL for: " + info.fileName.toStdString());
+        return std::nullopt;
+    }
+
+    QString scheme = downloadUrl.scheme().toLower();
+    QString host = downloadUrl.host().toLower();
+    if (scheme == "http" && host.endsWith(".microsoft.com")) {
+        // Microsoft's UUP CDN does not support HTTPS — allow HTTP since
+        // every file is integrity-verified via SHA-1 checksums.
+        sak::logDebug("Allowing HTTP Microsoft CDN URL for: " + info.fileName.toStdString());
+    } else if (scheme != "https") {
+        sak::logWarning("Rejected non-HTTPS download URL for: " + info.fileName.toStdString());
+        return std::nullopt;
+    }
+
+    // Only include files with valid download URLs
+    if (info.url.isEmpty() || info.url == "null") {
+        return std::nullopt;
+    }
+
+    return info;
+}
 
 QNetworkReply* UupDumpApi::sendApiRequest(const QString& endpoint,
                                            const QMap<QString, QString>& params) {

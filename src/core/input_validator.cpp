@@ -31,6 +31,80 @@ namespace sak {
 // Path Validation
 // ============================================
 
+validation_result input_validator::validatePathExistence(
+    const std::filesystem::path& path,
+    const path_validation_config& config) {
+    
+    std::error_code ec;
+    const bool exists = std::filesystem::exists(path, ec);
+    
+    if (config.must_exist && !exists) {
+        return failure(error_code::file_not_found,
+                      "Path must exist but does not");
+    }
+    
+    if (!exists) {
+        return success();
+    }
+    
+    // Check symlink requirement
+    const bool is_symlink = std::filesystem::is_symlink(path, ec);
+    if (is_symlink && !config.allow_symlinks) {
+        return failure(error_code::invalid_path,
+                      "Symbolic links are not allowed");
+    }
+    
+    // Check directory requirement
+    const bool is_dir = std::filesystem::is_directory(path, ec);
+    if (config.must_be_directory && !is_dir) {
+        return failure(error_code::not_a_directory,
+                      "Path must be a directory");
+    }
+    
+    // Check file requirement
+    const bool is_file = std::filesystem::is_regular_file(path, ec);
+    if (config.must_be_file && !is_file) {
+        return failure(error_code::invalid_file,
+                      "Path must be a regular file");
+    }
+    
+    return success();
+}
+
+validation_result input_validator::validatePathPermissions(
+    const std::filesystem::path& path,
+    const path_validation_config& config) {
+    
+#ifdef _WIN32
+    // Windows permission checks via GetFileAttributes
+    DWORD attrs = GetFileAttributesW(path.wstring().c_str());
+    if (attrs == INVALID_FILE_ATTRIBUTES) {
+        if (config.check_read_permission || config.check_write_permission) {
+            return failure(error_code::permission_denied,
+                          "Cannot check file permissions");
+        }
+    }
+    
+    if (config.check_write_permission && (attrs & FILE_ATTRIBUTE_READONLY)) {
+        return failure(error_code::permission_denied,
+                      "Path is read-only");
+    }
+#else
+    // Unix permission checks via access()
+    if (config.check_read_permission && access(path.c_str(), R_OK) != 0) {
+        return failure(error_code::permission_denied,
+                      "Path is not readable");
+    }
+    
+    if (config.check_write_permission && access(path.c_str(), W_OK) != 0) {
+        return failure(error_code::permission_denied,
+                      "Path is not writable");
+    }
+#endif
+    
+    return success();
+}
+
 validation_result input_validator::validatePath(
     const std::filesystem::path& path,
     const path_validation_config& config) {
@@ -66,64 +140,19 @@ validation_result input_validator::validatePath(
                       "Relative paths are not allowed");
     }
     
-    // Check existence
-    std::error_code ec;
-    const bool exists = std::filesystem::exists(path, ec);
-    
-    if (config.must_exist && !exists) {
-        return failure(error_code::file_not_found,
-                      "Path must exist but does not");
+    // Check existence and type constraints
+    auto existence_result = validatePathExistence(path, config);
+    if (!existence_result) {
+        return existence_result;
     }
     
-    if (exists) {
-        // Check symlink requirement
-        const bool is_symlink = std::filesystem::is_symlink(path, ec);
-        if (is_symlink && !config.allow_symlinks) {
-            return failure(error_code::invalid_path,
-                          "Symbolic links are not allowed");
+    // Check permissions (only if path exists)
+    std::error_code ec;
+    if (std::filesystem::exists(path, ec)) {
+        auto perm_result = validatePathPermissions(path, config);
+        if (!perm_result) {
+            return perm_result;
         }
-        
-        // Check directory requirement
-        const bool is_dir = std::filesystem::is_directory(path, ec);
-        if (config.must_be_directory && !is_dir) {
-            return failure(error_code::not_a_directory,
-                          "Path must be a directory");
-        }
-        
-        // Check file requirement
-        const bool is_file = std::filesystem::is_regular_file(path, ec);
-        if (config.must_be_file && !is_file) {
-            return failure(error_code::invalid_file,
-                          "Path must be a regular file");
-        }
-        
-        // Check permissions (platform-specific)
-#ifdef _WIN32
-        // Windows permission checks via GetFileAttributes
-        DWORD attrs = GetFileAttributesW(path.wstring().c_str());
-        if (attrs == INVALID_FILE_ATTRIBUTES) {
-            if (config.check_read_permission || config.check_write_permission) {
-                return failure(error_code::permission_denied,
-                              "Cannot check file permissions");
-            }
-        }
-        
-        if (config.check_write_permission && (attrs & FILE_ATTRIBUTE_READONLY)) {
-            return failure(error_code::permission_denied,
-                          "Path is read-only");
-        }
-#else
-        // Unix permission checks via access()
-        if (config.check_read_permission && access(path.c_str(), R_OK) != 0) {
-            return failure(error_code::permission_denied,
-                          "Path is not readable");
-        }
-        
-        if (config.check_write_permission && access(path.c_str(), W_OK) != 0) {
-            return failure(error_code::permission_denied,
-                          "Path is not writable");
-        }
-#endif
     }
     
     // Check base directory constraint

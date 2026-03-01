@@ -106,6 +106,21 @@ private:
      */
     void createPanels();
 
+    /// @brief Create all tool/feature panel tabs
+    void createToolPanels();
+
+    /// @brief Create the About information panel tab
+    void createAboutPanel();
+
+    /// @brief Load splash screen icon into the About panel header
+    void loadAboutPanelIcon(QLabel* iconLabel);
+
+    /// @brief Connect panel status and progress signals to the main window
+    void connectPanelSignals();
+
+    /// @brief Connect panel log signals to the shared log window
+    void connectPanelLogs();
+
     /**
      * @brief Create keyboard shortcuts for accessibility
      */

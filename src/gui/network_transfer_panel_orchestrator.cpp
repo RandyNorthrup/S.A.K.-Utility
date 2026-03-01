@@ -803,62 +803,8 @@ MappingEngine::DeploymentMapping NetworkTransferPanel::buildDeploymentMapping() 
     MappingEngine::DeploymentMapping mapping;
     mapping.deployment_id = m_activeDeploymentId;
 
-    QString localIp;
-    for (const auto& iface : QNetworkInterface::allInterfaces()) {
-        for (const auto& entry : iface.addressEntries()) {
-            if (entry.ip().protocol() == QAbstractSocket::IPv4Protocol && !entry.ip().isLoopback()) {
-                localIp = entry.ip().toString();
-                break;
-            }
-        }
-        if (!localIp.isEmpty()) {
-            break;
-        }
-    }
-
-    for (int row = 0; row < m_orchestratorUserTable->rowCount(); ++row) {
-        auto* selectItem = m_orchestratorUserTable->item(row, 0);
-        if (!selectItem || selectItem->checkState() != Qt::Checked) {
-            continue;
-        }
-        auto* userItem = m_orchestratorUserTable->item(row, 1);
-        if (!userItem) {
-            continue;
-        }
-        const int index = userItem->data(Qt::UserRole).toInt();
-        if (index < 0 || index >= m_users.size()) {
-            continue;
-        }
-
-        const auto& user = m_users[index];
-        MappingEngine::SourceProfile source;
-        source.username = user.username;
-        source.source_hostname = QHostInfo::localHostName();
-        source.source_ip = localIp;
-        source.profile_size_bytes = user.total_size_estimated;
-        mapping.sources.push_back(source);
-    }
-
-    QMap<QString, DestinationPC> destinationMap;
-    if (m_orchestrator && m_orchestrator->registry()) {
-        const auto destinations = m_orchestrator->registry()->destinations();
-        for (const auto& destination : destinations) {
-            destinationMap.insert(destination.destination_id, destination);
-        }
-    }
-
-    for (int row = 0; row < m_orchestratorDestTable->rowCount(); ++row) {
-        auto* selectItem = m_orchestratorDestTable->item(row, 0);
-        if (!selectItem || selectItem->checkState() != Qt::Checked) {
-            continue;
-        }
-
-        const QString destinationId = selectItem->data(Qt::UserRole).toString();
-        if (destinationId.isEmpty() || !destinationMap.contains(destinationId)) {
-            continue;
-        }
-        mapping.destinations.push_back(destinationMap.value(destinationId));
-    }
+    mapping.sources = collectSelectedSources();
+    mapping.destinations = collectSelectedDestinations();
 
     const int mappingTypeIndex = m_mappingTypeCombo->currentIndex();
     if (mappingTypeIndex == 1) {
@@ -870,21 +816,80 @@ MappingEngine::DeploymentMapping NetworkTransferPanel::buildDeploymentMapping() 
     }
 
     if (mapping.type == MappingEngine::MappingType::CustomMapping) {
-        for (int row = 0; row < m_customRulesTable->rowCount(); ++row) {
-            auto* sourceItem = m_customRulesTable->item(row, 0);
-            auto* destinationItem = m_customRulesTable->item(row, 1);
-            if (!sourceItem || !destinationItem) {
-                continue;
-            }
-            const QString sourceUser = sourceItem->text().trimmed();
-            const QString destinationId = destinationItem->text().trimmed();
-            if (!sourceUser.isEmpty() && !destinationId.isEmpty()) {
-                mapping.custom_rules.insert(sourceUser, destinationId);
-            }
-        }
+        mapping.custom_rules = collectCustomMappingRules();
     }
 
     return mapping;
+}
+
+QVector<MappingEngine::SourceProfile> NetworkTransferPanel::collectSelectedSources() {
+    QVector<MappingEngine::SourceProfile> sources;
+
+    QString localIp;
+    for (const auto& iface : QNetworkInterface::allInterfaces()) {
+        for (const auto& entry : iface.addressEntries()) {
+            if (entry.ip().protocol() == QAbstractSocket::IPv4Protocol && !entry.ip().isLoopback()) {
+                localIp = entry.ip().toString();
+                break;
+            }
+        }
+        if (!localIp.isEmpty()) break;
+    }
+
+    for (int row = 0; row < m_orchestratorUserTable->rowCount(); ++row) {
+        auto* selectItem = m_orchestratorUserTable->item(row, 0);
+        if (!selectItem || selectItem->checkState() != Qt::Checked) continue;
+        auto* userItem = m_orchestratorUserTable->item(row, 1);
+        if (!userItem) continue;
+        const int index = userItem->data(Qt::UserRole).toInt();
+        if (index < 0 || index >= m_users.size()) continue;
+
+        const auto& user = m_users[index];
+        MappingEngine::SourceProfile source;
+        source.username = user.username;
+        source.source_hostname = QHostInfo::localHostName();
+        source.source_ip = localIp;
+        source.profile_size_bytes = user.total_size_estimated;
+        sources.push_back(source);
+    }
+    return sources;
+}
+
+QVector<DestinationPC> NetworkTransferPanel::collectSelectedDestinations() {
+    QVector<DestinationPC> destinations;
+
+    QMap<QString, DestinationPC> destinationMap;
+    if (m_orchestrator && m_orchestrator->registry()) {
+        const auto dests = m_orchestrator->registry()->destinations();
+        for (const auto& dest : dests) {
+            destinationMap.insert(dest.destination_id, dest);
+        }
+    }
+
+    for (int row = 0; row < m_orchestratorDestTable->rowCount(); ++row) {
+        auto* selectItem = m_orchestratorDestTable->item(row, 0);
+        if (!selectItem || selectItem->checkState() != Qt::Checked) continue;
+
+        const QString destinationId = selectItem->data(Qt::UserRole).toString();
+        if (destinationId.isEmpty() || !destinationMap.contains(destinationId)) continue;
+        destinations.push_back(destinationMap.value(destinationId));
+    }
+    return destinations;
+}
+
+QMap<QString, QString> NetworkTransferPanel::collectCustomMappingRules() {
+    QMap<QString, QString> rules;
+    for (int row = 0; row < m_customRulesTable->rowCount(); ++row) {
+        auto* sourceItem = m_customRulesTable->item(row, 0);
+        auto* destinationItem = m_customRulesTable->item(row, 1);
+        if (!sourceItem || !destinationItem) continue;
+        const QString sourceUser = sourceItem->text().trimmed();
+        const QString destinationId = destinationItem->text().trimmed();
+        if (!sourceUser.isEmpty() && !destinationId.isEmpty()) {
+            rules.insert(sourceUser, destinationId);
+        }
+    }
+    return rules;
 }
 
 void NetworkTransferPanel::refreshAssignmentQueue() {

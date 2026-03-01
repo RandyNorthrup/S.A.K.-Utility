@@ -11,6 +11,8 @@
 #include <QPushButton>
 #include <memory>
 
+class QGroupBox;
+
 namespace sak {
 
 class ConfigManager;
@@ -46,7 +48,9 @@ private Q_SLOTS:
 private:
     void setupUi();
     void createBackupTab();
-    
+    QGroupBox* createBackupSettingsGroup(QWidget* parent);
+    QGroupBox* createQuickActionsGroup(QWidget* parent);
+
     void loadSettings();
     void saveSettings();
     void applySettings();

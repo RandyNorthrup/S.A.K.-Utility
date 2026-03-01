@@ -135,6 +135,10 @@ void ClearPrintSpoolerAction::execute() {
 // ─── Private Helpers ────────────────────────────────────────────────────────────
 
 QString ClearPrintSpoolerAction::buildSpoolerScript() const {
+    return buildSpoolerScriptPreamble() + buildSpoolerScriptRestart();
+}
+
+QString ClearPrintSpoolerAction::buildSpoolerScriptPreamble() const {
     return QString(
         "$ErrorActionPreference = 'Continue'\n"
         "$spoolPath = 'C:\\Windows\\System32\\spool\\PRINTERS'\n"
@@ -199,7 +203,11 @@ QString ClearPrintSpoolerAction::buildSpoolerScript() const {
         "        $results['ClearError'] = $_.Exception.Message\n"
         "    }\n"
         "}\n"
-        "\n"
+    );
+}
+
+QString ClearPrintSpoolerAction::buildSpoolerScriptRestart() const {
+    return QString(
         "# Start spooler service\n"
         "try {\n"
         "    Start-Service -Name 'Spooler' -ErrorAction Stop\n"

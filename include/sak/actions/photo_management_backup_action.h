@@ -5,6 +5,8 @@
 
 #include "sak/quick_action.h"
 #include "sak/user_profile_types.h"
+#include <QDir>
+#include <QPair>
 #include <QString>
 #include <QVector>
 
@@ -47,6 +49,10 @@ private:
     void scanLightroomCatalogs();
     void scanPhotoshopSettings();
     void scanCaptureOne();
+
+    /// @brief Backup a single photo software data item (file or directory)
+    /// @return {success, bytes_copied}
+    QPair<bool, qint64> backupPhotoItem(const PhotoSoftwareData& data, const QDir& backup_dir);
 };
 
 } // namespace sak

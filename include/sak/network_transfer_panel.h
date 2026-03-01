@@ -28,7 +28,11 @@ class QSpinBox;
 class QCheckBox;
 class QLabel;
 class QStackedWidget;
+class QDialog;
+class QFormLayout;
+class QGridLayout;
 class QGroupBox;
+class QVBoxLayout;
 class QMimeData;
 
 namespace sak {
@@ -150,14 +154,58 @@ private Q_SLOTS:
 private:
     /** @brief Build the panel layout with mode selector and stacked pages */
     void setupUi();
+    /** @brief Build Source page: data-selection table and peer-discovery table */
+    void setupUi_sourceSection(QVBoxLayout* sourceLayout);
+    /** @brief Create hidden security widgets (encrypt, compress, resume, etc.) */
+    void setupUi_securityWidgets();
+    /** @brief Build Destination page: connection setup, orchestrator link, and
+     *         restore checkbox */
+    void setupUi_destinationSection(QVBoxLayout* destLayout);
+    /** @brief Build Destination page: incoming manifest + assignment queue tables */
+    void setupUi_destinationIncoming(QVBoxLayout* destLayout);
+    /** @brief Build Orchestrator server group (listen port, start button, status) */
+    void setupUi_orchestratorServer(QVBoxLayout* orchestratorLayout);
+    /** @brief Build Orchestrator source-profiles group (scan button + user table) */
+    void setupUi_orchestratorSources(QVBoxLayout* orchestratorLayout);
+    /** @brief Build Orchestrator destinations table with drag-drop support */
+    void setupUi_orchestratorDestinations(QVBoxLayout* orchestratorLayout);
+    /** @brief Build deployment controls: mapping, concurrency, bandwidth rows */
+    void setupUi_deploymentControls(QVBoxLayout* orchestratorLayout);
+    /** @brief Build template toggle + deployment action buttons inside the
+     *         deployment-controls group */
+    void setupUi_deploymentTemplateActions(QVBoxLayout* controlLayout);
+    /** @brief Build custom user-to-destination mapping rules table */
+    void setupUi_customRules(QVBoxLayout* orchestratorLayout);
+    /** @brief Build deployment jobs table with pause/resume/retry/cancel buttons */
+    void setupUi_deploymentJobs(QVBoxLayout* orchestratorLayout);
+    /** @brief Build deployment progress, history table, and status legend */
+    void setupUi_deploymentProgress(QVBoxLayout* orchestratorLayout);
+    /** @brief Build bottom button row: settings, security, log toggle, transfer */
+    void setupUi_bottomButtons(QVBoxLayout* mainLayout);
     /** @brief Wire signals/slots between widgets and backend objects */
     void setupConnections();
+    /** @brief Connect source-tab widget signals (mode, scan, transfer, pause) */
+    void setupConnections_sourceSignals();
+    /** @brief Connect destination-tab widget and assignment signals */
+    void setupConnections_destinationSignals();
+    /** @brief Connect orchestrator-tab widget and backend signals */
+    void setupConnections_orchestratorSignals();
+    /** @brief Connect core controller and parallel-manager signals */
+    void setupConnections_controllerSignals();
     /** @brief Load persisted transfer settings from QSettings */
     void loadSettings();
+    /** @brief Initialize the deployment history manager from persisted path */
+    void loadSettings_initHistoryManager();
+    /** @brief Initialize the assignment queue store from persisted path */
+    void loadSettings_initAssignmentQueue();
+    /** @brief Restore last deployment template and deployment ID */
+    void loadSettings_restoreDeploymentState();
     /** @brief Build a transfer manifest from the selected user profiles */
     void buildManifest();
     /** @brief Enumerate files to transfer for all selected users */
     QVector<TransferFileEntry> buildFileList();
+    /** @brief Collect files from all selected folders for a single user */
+    void collectUserFiles(QVector<TransferFileEntry>& files, const UserProfile& user);
     /** @brief Enumerate files for a specific set of user profiles */
     QVector<TransferFileEntry> buildFileListForUsers(const QVector<UserProfile>& users);
     /** @brief Create a manifest payload from the enumerated file list */
@@ -173,6 +221,12 @@ private:
     void refreshJobsTable();
     /** @brief Build a deployment mapping from the current UI configuration */
     MappingEngine::DeploymentMapping buildDeploymentMapping();
+    /** @brief Collect source profiles from checked orchestrator user rows */
+    QVector<MappingEngine::SourceProfile> collectSelectedSources();
+    /** @brief Collect destinations from checked orchestrator destination rows */
+    QVector<DestinationPC> collectSelectedDestinations();
+    /** @brief Collect custom user-to-destination rules from the rules table */
+    QMap<QString, QString> collectCustomMappingRules();
     /** @brief Reload the deployment history table from the history manager */
     void refreshDeploymentHistory();
     /** @brief Reload the assignment queue table from the queue store */
@@ -197,6 +251,33 @@ private:
     QString destinationIdForRow(int row) const;
     /** @brief Parse a dragged user name from MIME data */
     QString extractDraggedUserName(const QMimeData* mime) const;
+
+    /** @brief Build toggle checkboxes for network settings dialog */
+    void buildNetworkSettingsToggles(QFormLayout* layout, QDialog* dialog);
+    /** @brief Build port/bandwidth/relay fields for network settings dialog */
+    void buildNetworkSettingsPorts(QFormLayout* layout, QDialog* dialog);
+
+    /// @brief Controls bundle created by buildSecurityDialogControls
+    struct SecurityDialogControls {
+        QCheckBox* encryptCheck{nullptr};
+        QCheckBox* compressCheck{nullptr};
+        QCheckBox* resumeCheck{nullptr};
+        QSpinBox* chunkSpin{nullptr};
+        QSpinBox* bwSpin{nullptr};
+        QComboBox* permCombo{nullptr};
+        QLineEdit* passEdit{nullptr};
+    };
+    /// @brief Populate the security dialog grid with all control widgets
+    SecurityDialogControls buildSecurityDialogControls(QGridLayout* layout, QDialog* dialog);
+    /// @brief Apply accepted security dialog values back to panel widgets
+    void applySecurityDialogResults(const SecurityDialogControls& ctl);
+
+    /** @brief Save accepted network settings from dialog widgets */
+    void saveNetworkSettingsFromDialog(QDialog* dialog);
+    /** @brief Save transfer report to disk after transfer completion */
+    void saveTransferReport(bool success);
+    /** @brief Start automatic profile restore after successful transfer */
+    void startPostTransferRestore();
 
     // UI elements
     QComboBox* m_modeCombo{nullptr};

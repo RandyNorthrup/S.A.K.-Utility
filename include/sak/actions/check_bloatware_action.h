@@ -4,6 +4,7 @@
 #pragma once
 
 #include "sak/quick_action.h"
+#include <QDateTime>
 #include <QString>
 #include <QVector>
 
@@ -47,6 +48,19 @@ private:
     void scanVendorSoftware();
     void scanStartupBloat();
     bool isBloatware(const QString& app_name);
+
+    // TigerStyle helpers for execute() decomposition
+    void executeScanApps(const QDateTime& start_time, QString& scan_output, QString& report);
+    void executeMatchBloatware(const QString& scan_output, QString& report,
+                               QString& structured_output, int& bloatware_count,
+                               qint64& total_size, int& apps_scanned);
+    void formatBloatwareMatchReport(
+        const QVector<QPair<QString, QPair<QString, double>>>& detected,
+        int apps_count, int installed_scanned, int provisioned_scanned,
+        int safe_to_remove, int bloatware_count,
+        QString& report, QString& structured_output);
+    void executeBuildReport(const QDateTime& start_time, int apps_scanned, int bloatware_count,
+                            qint64 total_size, QString& report, const QString& structured_output);
 };
 
 } // namespace sak

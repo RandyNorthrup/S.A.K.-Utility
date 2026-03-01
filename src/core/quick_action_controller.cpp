@@ -208,77 +208,7 @@ void QuickActionController::executeAction(const QString& action_name, bool requi
 
     // Check admin requirements
     if (action->requiresAdmin() && !hasAdminPrivileges()) {
-        // Check if already executing
-        if (m_current_execution_action) {
-            // Queue for later
-            m_action_queue.enqueue(action_name);
-            Q_EMIT logMessage(QString("Action queued: %1").arg(action_name));
-            return;
-        }
-
-        m_current_execution_action = action;
-        Q_EMIT actionExecutionStarted(action);
-        action->updateStatus(QuickAction::ActionStatus::Running);
-        Q_EMIT actionExecutionProgress(action, "Requesting administrator approval...", 5);
-        logOperation(action, "Requesting administrator elevation");
-
-        QString temp_dir = QStandardPaths::writableLocation(QStandardPaths::TempLocation);
-        QDir().mkpath(temp_dir);
-        QString safe_name = action->name();
-        safe_name.replace(' ', '_');
-        QString result_file = QDir(temp_dir).filePath(
-            QString("sak_quick_action_%1_%2.json")
-                .arg(safe_name, QUuid::createUuid().toString(QUuid::Id128)));
-
-        QString backup_location = m_backup_location.isEmpty() ? "C:/SAK_Backups" : m_backup_location;
-
-        QStringList args;
-        args << "--run-quick-action" << action->name();
-        args << "--backup-location" << backup_location;
-        args << "--result-file" << result_file;
-
-        QString arg_string;
-        for (const auto& arg : args) {
-            if (!arg_string.isEmpty()) {
-                arg_string += ' ';
-            }
-            QString escaped = arg;
-            escaped.replace('"', "\\\"");
-            if (escaped.contains(' ')) {
-                arg_string += QString("\"%1\"").arg(escaped);
-            } else {
-                arg_string += escaped;
-            }
-        }
-
-        const QString exe_path = QCoreApplication::applicationFilePath();
-        auto elevation_result = ElevationManager::executeElevated(
-            exe_path.toStdWString(),
-            arg_string.toStdWString(),
-            true);
-
-        QuickAction::ExecutionResult result;
-        QuickAction::ActionStatus status = QuickAction::ActionStatus::Failed;
-
-        if (!elevation_result) {
-            result.success = false;
-            result.message = "Administrator privileges required but not granted";
-            result.log = "Elevation request failed or was cancelled";
-            status = QuickAction::ActionStatus::Failed;
-        } else {
-            QString error_message;
-            if (!readExecutionResultFile(result_file, &result, &status, &error_message)) {
-                result.success = false;
-                result.message = "Failed to read elevated action result";
-                result.log = error_message;
-                status = QuickAction::ActionStatus::Failed;
-            }
-        }
-
-        QFile::remove(result_file);
-
-        action->applyExecutionResult(result, status);
-        onExecutionComplete();
+        executeElevatedAction(action, action_name);
         return;
     }
 
@@ -294,6 +224,68 @@ void QuickActionController::executeAction(const QString& action_name, bool requi
     Q_UNUSED(require_confirmation)
 
     startExecutionWorker(action);
+}
+
+void QuickActionController::executeElevatedAction(QuickAction* action, const QString& action_name) {
+    if (m_current_execution_action) {
+        m_action_queue.enqueue(action_name);
+        Q_EMIT logMessage(QString("Action queued: %1").arg(action_name));
+        return;
+    }
+
+    m_current_execution_action = action;
+    Q_EMIT actionExecutionStarted(action);
+    action->updateStatus(QuickAction::ActionStatus::Running);
+    Q_EMIT actionExecutionProgress(action, "Requesting administrator approval...", 5);
+    logOperation(action, "Requesting administrator elevation");
+
+    QString temp_dir = QStandardPaths::writableLocation(QStandardPaths::TempLocation);
+    QDir().mkpath(temp_dir);
+    QString safe_name = action->name();
+    safe_name.replace(' ', '_');
+    QString result_file = QDir(temp_dir).filePath(
+        QString("sak_quick_action_%1_%2.json")
+            .arg(safe_name, QUuid::createUuid().toString(QUuid::Id128)));
+
+    QString backup_location = m_backup_location.isEmpty() ? "C:/SAK_Backups" : m_backup_location;
+
+    QStringList args;
+    args << "--run-quick-action" << action->name()
+         << "--backup-location" << backup_location
+         << "--result-file" << result_file;
+
+    QString arg_string;
+    for (const auto& arg : args) {
+        if (!arg_string.isEmpty()) arg_string += ' ';
+        QString escaped = arg;
+        escaped.replace('"', "\\\"");
+        arg_string += escaped.contains(' ') ? QString("\"%1\"").arg(escaped) : escaped;
+    }
+
+    const QString exe_path = QCoreApplication::applicationFilePath();
+    auto elevation_result = ElevationManager::executeElevated(
+        exe_path.toStdWString(), arg_string.toStdWString(), true);
+
+    QuickAction::ExecutionResult result;
+    QuickAction::ActionStatus status = QuickAction::ActionStatus::Failed;
+
+    if (!elevation_result) {
+        result.success = false;
+        result.message = "Administrator privileges required but not granted";
+        result.log = "Elevation request failed or was cancelled";
+    } else {
+        QString error_message;
+        if (!readExecutionResultFile(result_file, &result, &status, &error_message)) {
+            result.success = false;
+            result.message = "Failed to read elevated action result";
+            result.log = error_message;
+            status = QuickAction::ActionStatus::Failed;
+        }
+    }
+
+    QFile::remove(result_file);
+    action->applyExecutionResult(result, status);
+    onExecutionComplete();
 }
 
 void QuickActionController::scanAllActions() {

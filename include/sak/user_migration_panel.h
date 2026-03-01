@@ -16,6 +16,8 @@
 #include <memory>
 #include <vector>
 
+class QGroupBox;
+
 namespace sak {
 class UserDataManager;
 class LogToggleSwitch;
@@ -70,6 +72,9 @@ private:
     void setupUi();
     void setupConnections();
     void appendLog(const QString& message);
+
+    /// @brief Creates the Backup & Restore Wizards group box with action buttons.
+    QGroupBox* createWizardButtonsGroup();
 
     // UI Components
     QPushButton* m_backupButton{nullptr};

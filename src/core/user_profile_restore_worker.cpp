@@ -159,48 +159,10 @@ bool UserProfileRestoreWorker::restoreUser(const UserMapping& mapping) {
         Q_EMIT logMessage(tr("Invalid source path for user: %1").arg(mapping.source_username), true);
         return false;
     }
-    QString destProfilePath;
-    QString systemDrive = QString::fromLocal8Bit(qgetenv("SystemDrive"));
-    if (systemDrive.isEmpty()) systemDrive = "C:";
-    
-    // Determine destination path based on merge mode
-    switch (mapping.mode) {
-        case MergeMode::CreateNewUser: {
-            // For new user, create profile path
-            const QString destUsername = mapping.destination_username.isEmpty()
-                ? mapping.source_username
-                : mapping.destination_username;
-            QString baseProfileRoot = systemDrive + "/Users";
-            if (!buildSafePath(baseProfileRoot, destUsername, destProfilePath)) {
-                Q_EMIT logMessage(tr("Invalid destination username: %1").arg(destUsername), true);
-                return false;
-            }
-            if (!QDir().mkpath(destProfilePath)) {
-                Q_EMIT logMessage(tr("Failed to create profile directory: %1").arg(destProfilePath), true);
-                return false;
-            }
-            Q_EMIT logMessage(tr("Created new profile: %1").arg(destProfilePath), false);
-            break;
-        }
-        case MergeMode::ReplaceDestination:
-        case MergeMode::MergeIntoDestination:
-            // Use existing destination user's profile
-            if (mapping.destination_username.isEmpty()) {
-                Q_EMIT logMessage(tr("Destination username not specified"), true);
-                return false;
-            }
 
-            destProfilePath = WindowsUserScanner::getProfilePath(mapping.destination_username);
-            if (destProfilePath.isEmpty()) {
-                Q_EMIT logMessage(tr("Failed to resolve destination profile path: %1")
-                                      .arg(mapping.destination_username), true);
-                return false;
-            }
-            if (!QDir(destProfilePath).exists()) {
-                Q_EMIT logMessage(tr("Destination profile does not exist: %1").arg(destProfilePath), true);
-                return false;
-            }
-            break;
+    QString destProfilePath;
+    if (!resolveDestinationProfilePath(mapping, destProfilePath)) {
+        return false;
     }
     
     // Restore each folder
@@ -226,6 +188,50 @@ bool UserProfileRestoreWorker::restoreUser(const UserMapping& mapping) {
         }
     }
     
+    return true;
+}
+
+bool UserProfileRestoreWorker::resolveDestinationProfilePath(
+    const UserMapping& mapping, QString& destProfilePath) {
+    QString systemDrive = QString::fromLocal8Bit(qgetenv("SystemDrive"));
+    if (systemDrive.isEmpty()) systemDrive = "C:";
+    
+    switch (mapping.mode) {
+        case MergeMode::CreateNewUser: {
+            const QString destUsername = mapping.destination_username.isEmpty()
+                ? mapping.source_username
+                : mapping.destination_username;
+            QString baseProfileRoot = systemDrive + "/Users";
+            if (!buildSafePath(baseProfileRoot, destUsername, destProfilePath)) {
+                Q_EMIT logMessage(tr("Invalid destination username: %1").arg(destUsername), true);
+                return false;
+            }
+            if (!QDir().mkpath(destProfilePath)) {
+                Q_EMIT logMessage(tr("Failed to create profile directory: %1").arg(destProfilePath), true);
+                return false;
+            }
+            Q_EMIT logMessage(tr("Created new profile: %1").arg(destProfilePath), false);
+            break;
+        }
+        case MergeMode::ReplaceDestination:
+        case MergeMode::MergeIntoDestination:
+            if (mapping.destination_username.isEmpty()) {
+                Q_EMIT logMessage(tr("Destination username not specified"), true);
+                return false;
+            }
+
+            destProfilePath = WindowsUserScanner::getProfilePath(mapping.destination_username);
+            if (destProfilePath.isEmpty()) {
+                Q_EMIT logMessage(tr("Failed to resolve destination profile path: %1")
+                                      .arg(mapping.destination_username), true);
+                return false;
+            }
+            if (!QDir(destProfilePath).exists()) {
+                Q_EMIT logMessage(tr("Destination profile does not exist: %1").arg(destProfilePath), true);
+                return false;
+            }
+            break;
+    }
     return true;
 }
 
@@ -302,64 +308,10 @@ bool UserProfileRestoreWorker::copyFileWithConflictResolution(const QString& sou
     QFileInfo destInfo(dest);
     QString finalDestPath = dest;
     
-    // Check if destination file exists
+    // Check if destination file exists and resolve conflict
     if (destInfo.exists()) {
-        // Apply conflict resolution strategy
-        switch (m_conflictMode) {
-            case ConflictResolution::SkipDuplicate:
-                Q_EMIT logMessage(tr("Skipping existing file: %1").arg(destInfo.fileName()), false);
-                m_filesSkipped++;
-                return true;
-                
-            case ConflictResolution::RenameWithSuffix: {
-                // Add suffix to avoid conflict
-                QFileInfo sourceInfo(source);
-                QString baseName = destInfo.completeBaseName();
-                QString extension = destInfo.suffix();
-                QString dirPath = destInfo.absolutePath();
-                
-                int counter = 1;
-                do {
-                    finalDestPath = QString("%1/%2_backup%3%4")
-                        .arg(dirPath, baseName, QString::number(counter++),
-                             extension.isEmpty() ? "" : "." + extension);
-                } while (QFileInfo::exists(finalDestPath) && counter < 1000);
-                
-                Q_EMIT logMessage(tr("Renaming to avoid conflict: %1").arg(QFileInfo(finalDestPath).fileName()), false);
-                break;
-            }
-            
-            case ConflictResolution::KeepNewer: {
-                QFileInfo sourceInfo(source);
-                if (destInfo.lastModified() >= sourceInfo.lastModified()) {
-                    Q_EMIT logMessage(tr("Keeping newer existing file: %1").arg(destInfo.fileName()), false);
-                    m_filesSkipped++;
-                    return true;
-                }
-                // Otherwise overwrite
-                Q_EMIT logMessage(tr("Replacing with newer file: %1").arg(destInfo.fileName()), false);
-                QFile::remove(dest);
-                break;
-            }
-            
-            case ConflictResolution::KeepLarger: {
-                if (destInfo.size() >= size) {
-                    Q_EMIT logMessage(tr("Keeping larger existing file: %1").arg(destInfo.fileName()), false);
-                    m_filesSkipped++;
-                    return true;
-                }
-                // Otherwise overwrite
-                Q_EMIT logMessage(tr("Replacing with larger file: %1").arg(destInfo.fileName()), false);
-                QFile::remove(dest);
-                break;
-            }
-            
-            case ConflictResolution::PromptUser:
-                // Auto-rename (interactive prompts can't run in background worker)
-                finalDestPath = resolveConflict(source, dest);
-                Q_EMIT logMessage(tr("File exists, auto-renamed: %1 → %2")
-                    .arg(destInfo.fileName(), QFileInfo(finalDestPath).fileName()), false);
-                break;
+        if (!resolveFileConflict(source, destInfo, size, finalDestPath)) {
+            return true; // File was skipped per conflict resolution strategy
         }
     }
     
@@ -377,7 +329,6 @@ bool UserProfileRestoreWorker::copyFileWithConflictResolution(const QString& sou
     // Apply permissions based on mode
     if (!applyPermissions(finalDestPath, "")) {
         Q_EMIT logMessage(tr("Warning: Failed to adjust permissions: %1").arg(finalDestPath), true);
-        // Continue anyway
     }
     
     // Verify file if requested
@@ -391,6 +342,64 @@ bool UserProfileRestoreWorker::copyFileWithConflictResolution(const QString& sou
     m_filesRestored++;
     updateProgress(size);
     
+    return true;
+}
+
+bool UserProfileRestoreWorker::resolveFileConflict(const QString& source,
+                                                    const QFileInfo& destInfo,
+                                                    qint64 size,
+                                                    QString& finalDestPath) {
+    switch (m_conflictMode) {
+        case ConflictResolution::SkipDuplicate:
+            Q_EMIT logMessage(tr("Skipping existing file: %1").arg(destInfo.fileName()), false);
+            m_filesSkipped++;
+            return false;
+            
+        case ConflictResolution::RenameWithSuffix: {
+            QString baseName = destInfo.completeBaseName();
+            QString extension = destInfo.suffix();
+            QString dirPath = destInfo.absolutePath();
+            
+            int counter = 1;
+            do {
+                finalDestPath = QString("%1/%2_backup%3%4")
+                    .arg(dirPath, baseName, QString::number(counter++),
+                         extension.isEmpty() ? "" : "." + extension);
+            } while (QFileInfo::exists(finalDestPath) && counter < 1000);
+            
+            Q_EMIT logMessage(tr("Renaming to avoid conflict: %1").arg(QFileInfo(finalDestPath).fileName()), false);
+            break;
+        }
+        
+        case ConflictResolution::KeepNewer: {
+            QFileInfo sourceInfo(source);
+            if (destInfo.lastModified() >= sourceInfo.lastModified()) {
+                Q_EMIT logMessage(tr("Keeping newer existing file: %1").arg(destInfo.fileName()), false);
+                m_filesSkipped++;
+                return false;
+            }
+            Q_EMIT logMessage(tr("Replacing with newer file: %1").arg(destInfo.fileName()), false);
+            QFile::remove(finalDestPath);
+            break;
+        }
+        
+        case ConflictResolution::KeepLarger: {
+            if (destInfo.size() >= size) {
+                Q_EMIT logMessage(tr("Keeping larger existing file: %1").arg(destInfo.fileName()), false);
+                m_filesSkipped++;
+                return false;
+            }
+            Q_EMIT logMessage(tr("Replacing with larger file: %1").arg(destInfo.fileName()), false);
+            QFile::remove(finalDestPath);
+            break;
+        }
+        
+        case ConflictResolution::PromptUser:
+            finalDestPath = resolveConflict(source, finalDestPath);
+            Q_EMIT logMessage(tr("File exists, auto-renamed: %1 → %2")
+                .arg(destInfo.fileName(), QFileInfo(finalDestPath).fileName()), false);
+            break;
+    }
     return true;
 }
 

@@ -106,7 +106,10 @@ void TestNetworkSpeedAction::testDownloadSpeed() {
     if (!proc.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("Download speed test warning: " + proc.std_err.trimmed());
     }
-    QString output = proc.std_out;
+    parseDownloadSpeedOutput(proc.std_out);
+}
+
+void TestNetworkSpeedAction::parseDownloadSpeedOutput(const QString& output) {
     QStringList lines = output.split('\n');
     
     QVector<double> speeds;
@@ -317,6 +320,99 @@ void TestNetworkSpeedAction::scan() {
     Q_EMIT scanComplete(result);
 }
 
+QString TestNetworkSpeedAction::buildSpeedTestReport() const {
+    QString report;
+    report += QString("╔").repeated(1) + QString("═").repeated(78) + QString("╗\n");
+    report += QString("║") + QString(" NETWORK SPEED TEST RESULTS").leftJustified(78) + QString("║\n");
+    report += QString("╠").repeated(1) + QString("═").repeated(78) + QString("╣\n");
+    
+    // Connection Information
+    if (!m_public_ip.isEmpty()) {
+        report += QString("║ Public IP:    %1").arg(m_public_ip).leftJustified(79) + QString("║\n");
+    }
+    if (!m_isp.isEmpty()) {
+        report += QString("║ ISP:          %1").arg(m_isp).leftJustified(79) + QString("║\n");
+    }
+    if (!m_city.isEmpty() && !m_country.isEmpty()) {
+        QString location = QString("%1, %2, %3").arg(m_city, m_region, m_country);
+        report += QString("║ Location:     %1").arg(location).leftJustified(79) + QString("║\n");
+    }
+    report += QString("╠").repeated(1) + QString("═").repeated(78) + QString("╣\n");
+    // Download Speed
+    if (m_download_speed > 0) {
+        report += QString("║ Download Speed (Avg):  %1 Mbps").arg(m_download_speed, 0, 'f', 2).leftJustified(79) + QString("║\n");
+        if (m_max_download_speed > 0) {
+            report += QString("║ Download Speed (Max):  %1 Mbps").arg(m_max_download_speed, 0, 'f', 2).leftJustified(79) + QString("║\n");
+        }
+        report += QString("║ Successful Tests:     %1/3 servers").arg(m_download_tests_successful).leftJustified(79) + QString("║\n");
+    } else {
+        report += QString("║ Download Speed:        Test failed (check firewall/connection)").leftJustified(79) + QString("║\n");
+    }
+    report += QString("╠").repeated(1) + QString("═").repeated(78) + QString("╣\n");
+    // Upload Speed
+    if (m_upload_test_successful && m_upload_speed > 0) {
+        report += QString("║ Upload Speed:          %1 Mbps").arg(m_upload_speed, 0, 'f', 2).leftJustified(79) + QString("║\n");
+    } else {
+        report += QString("║ Upload Speed:          Test failed (may require HTTPS access)").leftJustified(79) + QString("║\n");
+    }
+    report += QString("╠").repeated(1) + QString("═").repeated(78) + QString("╣\n");
+    // Latency and Quality Metrics
+    if (m_latency > 0) {
+        report += QString("║ Latency (Avg):         %1 ms").arg(m_latency).leftJustified(79) + QString("║\n");
+        report += QString("║ Latency Range:         %1 - %2 ms").arg(m_min_latency).arg(m_max_latency).leftJustified(79) + QString("║\n");
+        report += QString("║ Jitter:                %1 ms").arg(m_jitter, 0, 'f', 2).leftJustified(79) + QString("║\n");
+        report += QString("║ Packet Loss:           %1%").arg(m_packet_loss, 0, 'f', 2).leftJustified(79) + QString("║\n");
+        report += QString("╠").repeated(1) + QString("═").repeated(78) + QString("╣\n");
+        
+        // Connection Quality Assessment
+        QString quality, recommendation;
+        if (m_latency < 20 && m_jitter < 10 && m_packet_loss < 1.0) {
+            quality = "Excellent";
+            recommendation = "Ideal for gaming, video calls, and streaming";
+        } else if (m_latency < 50 && m_jitter < 20 && m_packet_loss < 2.0) {
+            quality = "Good";
+            recommendation = "Suitable for most online activities";
+        } else if (m_latency < 100 && m_jitter < 30 && m_packet_loss < 5.0) {
+            quality = "Fair";
+            recommendation = "May experience delays in real-time applications";
+        } else {
+            quality = "Poor";
+            recommendation = "Not recommended for latency-sensitive tasks";
+        }
+        
+        report += QString("║ Connection Quality:    %1").arg(quality).leftJustified(79) + QString("║\n");
+        report += QString("║ Recommendation:        %1").arg(recommendation).leftJustified(79) + QString("║\n");
+    } else {
+        report += QString("║ Latency Test:          Failed to measure latency").leftJustified(79) + QString("║\n");
+    }
+    
+    report += QString("╚").repeated(1) + QString("═").repeated(78) + QString("╝\n");
+    return report;
+}
+
+void TestNetworkSpeedAction::finalizeSpeedTestResult(const QDateTime& start_time,
+                                                      const QString& report) {
+    Q_EMIT executionProgress("Speed test complete", 100);
+    
+    qint64 duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
+    
+    ExecutionResult result;
+    result.duration_ms = duration_ms;
+    result.success = (m_download_speed > 0 || m_latency > 0);
+    
+    if (result.success) {
+        result.message = QString("Network speed test complete - %1 Mbps down, %2 ms latency")
+                            .arg(m_download_speed, 0, 'f', 2)
+                            .arg(m_latency);
+    } else {
+        result.message = "Network speed test completed with limited results";
+    }
+    
+    result.log = report;
+    
+    finishWithResult(result, result.success ? ActionStatus::Success : ActionStatus::Failed);
+}
+
 void TestNetworkSpeedAction::execute() {
     if (isCancelled()) {
         emitCancelledResult("Network speed test cancelled");
@@ -364,99 +460,8 @@ void TestNetworkSpeedAction::execute() {
     }
     
     Q_EMIT executionProgress("Generating comprehensive report...", 90);
-    
-    // Build enterprise-grade report with box-drawing
-    QString report;
-    report += QString("╔").repeated(1) + QString("═").repeated(78) + QString("╗\n");
-    report += QString("║") + QString(" NETWORK SPEED TEST RESULTS").leftJustified(78) + QString("║\n");
-    report += QString("╠").repeated(1) + QString("═").repeated(78) + QString("╣\n");
-    
-    // Connection Information
-    if (!m_public_ip.isEmpty()) {
-        report += QString("║ Public IP:    %1").arg(m_public_ip).leftJustified(79) + QString("║\n");
-    }
-    if (!m_isp.isEmpty()) {
-        report += QString("║ ISP:          %1").arg(m_isp).leftJustified(79) + QString("║\n");
-    }
-    if (!m_city.isEmpty() && !m_country.isEmpty()) {
-        QString location = QString("%1, %2, %3").arg(m_city, m_region, m_country);
-        report += QString("║ Location:     %1").arg(location).leftJustified(79) + QString("║\n");
-    }
-    report += QString("╠").repeated(1) + QString("═").repeated(78) + QString("╣\n");
-    
-    // Download Speed
-    if (m_download_speed > 0) {
-        report += QString("║ Download Speed (Avg):  %1 Mbps").arg(m_download_speed, 0, 'f', 2).leftJustified(79) + QString("║\n");
-        if (m_max_download_speed > 0) {
-            report += QString("║ Download Speed (Max):  %1 Mbps").arg(m_max_download_speed, 0, 'f', 2).leftJustified(79) + QString("║\n");
-        }
-        report += QString("║ Successful Tests:     %1/3 servers").arg(m_download_tests_successful).leftJustified(79) + QString("║\n");
-    } else {
-        report += QString("║ Download Speed:        Test failed (check firewall/connection)").leftJustified(79) + QString("║\n");
-    }
-    report += QString("╠").repeated(1) + QString("═").repeated(78) + QString("╣\n");
-    
-    // Upload Speed
-    if (m_upload_test_successful && m_upload_speed > 0) {
-        report += QString("║ Upload Speed:          %1 Mbps").arg(m_upload_speed, 0, 'f', 2).leftJustified(79) + QString("║\n");
-    } else {
-        report += QString("║ Upload Speed:          Test failed (may require HTTPS access)").leftJustified(79) + QString("║\n");
-    }
-    report += QString("╠").repeated(1) + QString("═").repeated(78) + QString("╣\n");
-    
-    // Latency and Quality Metrics
-    if (m_latency > 0) {
-        report += QString("║ Latency (Avg):         %1 ms").arg(m_latency).leftJustified(79) + QString("║\n");
-        report += QString("║ Latency Range:         %1 - %2 ms").arg(m_min_latency).arg(m_max_latency).leftJustified(79) + QString("║\n");
-        report += QString("║ Jitter:                %1 ms").arg(m_jitter, 0, 'f', 2).leftJustified(79) + QString("║\n");
-        report += QString("║ Packet Loss:           %1%").arg(m_packet_loss, 0, 'f', 2).leftJustified(79) + QString("║\n");
-        report += QString("╠").repeated(1) + QString("═").repeated(78) + QString("╣\n");
-        
-        // Connection Quality Assessment
-        QString quality;
-        QString recommendation;
-        
-        if (m_latency < 20 && m_jitter < 10 && m_packet_loss < 1.0) {
-            quality = "Excellent";
-            recommendation = "Ideal for gaming, video calls, and streaming";
-        } else if (m_latency < 50 && m_jitter < 20 && m_packet_loss < 2.0) {
-            quality = "Good";
-            recommendation = "Suitable for most online activities";
-        } else if (m_latency < 100 && m_jitter < 30 && m_packet_loss < 5.0) {
-            quality = "Fair";
-            recommendation = "May experience delays in real-time applications";
-        } else {
-            quality = "Poor";
-            recommendation = "Not recommended for latency-sensitive tasks";
-        }
-        
-        report += QString("║ Connection Quality:    %1").arg(quality).leftJustified(79) + QString("║\n");
-        report += QString("║ Recommendation:        %1").arg(recommendation).leftJustified(79) + QString("║\n");
-    } else {
-        report += QString("║ Latency Test:          Failed to measure latency").leftJustified(79) + QString("║\n");
-    }
-    
-    report += QString("╚").repeated(1) + QString("═").repeated(78) + QString("╝\n");
-    
-    Q_EMIT executionProgress("Speed test complete", 100);
-    
-    qint64 duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
-    
-    ExecutionResult result;
-    result.duration_ms = duration_ms;
-    result.success = (m_download_speed > 0 || m_latency > 0);
-    
-    if (result.success) {
-        result.message = QString("Network speed test complete - %1 Mbps down, %2 ms latency")
-                            .arg(m_download_speed, 0, 'f', 2)
-                            .arg(m_latency);
-    } else {
-        result.message = "Network speed test completed with limited results";
-    }
-    
-    result.log = report;
-    
-    finishWithResult(result, result.success ? ActionStatus::Success : ActionStatus::Failed);
+    QString report = buildSpeedTestReport();
+    finalizeSpeedTestResult(start_time, report);
 }
 
 } // namespace sak

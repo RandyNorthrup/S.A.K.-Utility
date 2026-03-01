@@ -10,6 +10,8 @@
 #include <QComboBox>
 #include <QPushButton>
 
+class QVBoxLayout;
+
 /**
  * @brief Settings dialog for Image Flasher configuration
  * 
@@ -30,6 +32,9 @@ private Q_SLOTS:
 
 private:
     void setupUi();
+    void setupUi_generalSection(QVBoxLayout* layout);
+    void setupUi_advancedSection(QVBoxLayout* layout);
+    void setupUi_buttonBar(QVBoxLayout* layout);
     void loadSettings();
     void saveSettings();
 

@@ -71,7 +71,22 @@ void SettingsDialog::createBackupTab() {
     auto* widget = new QWidget();
     auto* layout = new QVBoxLayout(widget);
 
-    // Backup Settings Group
+    layout->addWidget(createBackupSettingsGroup(widget));
+    layout->addWidget(createQuickActionsGroup(widget));
+
+    layout->addStretch();
+    m_tabWidget->addTab(widget, tr("Backup"));
+
+    connect(m_backupThreadCount, QOverload<int>::of(&QSpinBox::valueChanged), this, &SettingsDialog::onSettingChanged);
+    connect(m_backupVerifyMD5, &QCheckBox::stateChanged, this, &SettingsDialog::onSettingChanged);
+    connect(m_quickActionsBackupLocation, &QLineEdit::textChanged, this, &SettingsDialog::onSettingChanged);
+    connect(m_quickActionsConfirm, &QCheckBox::stateChanged, this, &SettingsDialog::onSettingChanged);
+    connect(m_quickActionsNotifications, &QCheckBox::stateChanged, this, &SettingsDialog::onSettingChanged);
+    connect(m_quickActionsLogging, &QCheckBox::stateChanged, this, &SettingsDialog::onSettingChanged);
+    connect(m_quickActionsCompress, &QCheckBox::stateChanged, this, &SettingsDialog::onSettingChanged);
+}
+
+QGroupBox* SettingsDialog::createBackupSettingsGroup(QWidget* parent) {
     auto* backupGroup = new QGroupBox(tr("Backup Settings"));
     auto* backupLayout = new QFormLayout();
 
@@ -79,13 +94,13 @@ void SettingsDialog::createBackupTab() {
     m_backupThreadCount->setRange(1, 16);
     backupLayout->addRow(
         InfoButton::createInfoLabel(tr("Thread Count:"),
-            tr("Higher values speed up backup but use more CPU and disk I/O"), widget),
+            tr("Higher values speed up backup but use more CPU and disk I/O"), parent),
         m_backupThreadCount);
 
     m_backupVerifyMD5 = new QCheckBox(tr("Verify files using MD5 hash after backup"));
     backupLayout->addRow(
         InfoButton::createInfoLabel(tr("Verify MD5:"),
-            tr("Re-read each copied file and verify its MD5 checksum matches the original — slower but ensures integrity"), widget),
+            tr("Re-read each copied file and verify its MD5 checksum matches the original — slower but ensures integrity"), parent),
         m_backupVerifyMD5);
 
     auto* locationLayout = new QHBoxLayout();
@@ -107,13 +122,14 @@ void SettingsDialog::createBackupTab() {
     locationLayout->addWidget(browseButton);
     backupLayout->addRow(
         InfoButton::createInfoLabel(tr("Last Location:"),
-            tr("The most recently used backup destination folder"), widget),
+            tr("The most recently used backup destination folder"), parent),
         locationLayout);
 
     backupGroup->setLayout(backupLayout);
-    layout->addWidget(backupGroup);
+    return backupGroup;
+}
 
-    // Quick Actions Settings Group
+QGroupBox* SettingsDialog::createQuickActionsGroup(QWidget* parent) {
     auto* quickActionsGroup = new QGroupBox(tr("Quick Actions"));
     auto* quickActionsLayout = new QFormLayout();
 
@@ -136,47 +152,35 @@ void SettingsDialog::createBackupTab() {
     qaLocationLayout->addWidget(qaBrowseButton);
     quickActionsLayout->addRow(
         InfoButton::createInfoLabel(tr("Backup Location:"),
-            tr("Default location for Quick Actions backup operations"), widget),
+            tr("Default location for Quick Actions backup operations"), parent),
         qaLocationLayout);
 
     m_quickActionsConfirm = new QCheckBox(tr("Confirm before executing actions"));
     quickActionsLayout->addRow(
         InfoButton::createInfoLabel(QString(),
-            tr("Show a confirmation dialog before each action runs to prevent accidental execution"), widget),
+            tr("Show a confirmation dialog before each action runs to prevent accidental execution"), parent),
         m_quickActionsConfirm);
 
     m_quickActionsNotifications = new QCheckBox(tr("Show completion notifications"));
     quickActionsLayout->addRow(
         InfoButton::createInfoLabel(QString(),
-            tr("Display a status bar notification when an action finishes or fails"), widget),
+            tr("Display a status bar notification when an action finishes or fails"), parent),
         m_quickActionsNotifications);
 
     m_quickActionsLogging = new QCheckBox(tr("Enable detailed logging"));
     quickActionsLayout->addRow(
         InfoButton::createInfoLabel(QString(),
-            tr("Write detailed progress and scan information to the log window"), widget),
+            tr("Write detailed progress and scan information to the log window"), parent),
         m_quickActionsLogging);
 
     m_quickActionsCompress = new QCheckBox(tr("Compress backups (saves space)"));
     quickActionsLayout->addRow(
         InfoButton::createInfoLabel(QString(),
-            tr("Use ZIP compression for backup output files — slower but uses less disk space"), widget),
+            tr("Use ZIP compression for backup output files — slower but uses less disk space"), parent),
         m_quickActionsCompress);
 
     quickActionsGroup->setLayout(quickActionsLayout);
-    layout->addWidget(quickActionsGroup);
-
-    layout->addStretch();
-    m_tabWidget->addTab(widget, tr("Backup"));
-
-    // Connect change signals
-    connect(m_backupThreadCount, QOverload<int>::of(&QSpinBox::valueChanged), this, &SettingsDialog::onSettingChanged);
-    connect(m_backupVerifyMD5, &QCheckBox::stateChanged, this, &SettingsDialog::onSettingChanged);
-    connect(m_quickActionsBackupLocation, &QLineEdit::textChanged, this, &SettingsDialog::onSettingChanged);
-    connect(m_quickActionsConfirm, &QCheckBox::stateChanged, this, &SettingsDialog::onSettingChanged);
-    connect(m_quickActionsNotifications, &QCheckBox::stateChanged, this, &SettingsDialog::onSettingChanged);
-    connect(m_quickActionsLogging, &QCheckBox::stateChanged, this, &SettingsDialog::onSettingChanged);
-    connect(m_quickActionsCompress, &QCheckBox::stateChanged, this, &SettingsDialog::onSettingChanged);
+    return quickActionsGroup;
 }
 
 void SettingsDialog::loadSettings() {

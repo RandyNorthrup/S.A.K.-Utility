@@ -21,18 +21,45 @@ ClearBrowserCacheAction::ClearBrowserCacheAction()
 void ClearBrowserCacheAction::scan() {
     setStatus(ActionStatus::Scanning);
 
+    Q_EMIT scanProgress("Scanning browser cache locations...");
+
+    qint64 total_bytes = 0;
+    qint64 total_files = 0;
+    int locations = 0;
+    scanAllBrowserCaches(total_bytes, total_files, locations);
+
+    ScanResult result;
+    result.applicable = total_bytes > 0;
+    result.bytes_affected = total_bytes;
+    result.files_count = total_files;
+    result.estimated_duration_ms = std::max<qint64>(3000, total_files * 3);
+
+    if (result.applicable) {
+        double mb = total_bytes / (1024.0 * 1024.0);
+        result.summary = QString("Cache size: %1 MB").arg(mb, 0, 'f', 1);
+        result.details = QString("Locations: %1").arg(locations);
+    } else {
+        result.summary = "No browser caches found";
+        result.details = "Caches are already minimal or browsers not installed";
+    }
+
+    setScanResult(result);
+    setStatus(ActionStatus::Ready);
+    Q_EMIT scanComplete(result);
+}
+
+void ClearBrowserCacheAction::scanAllBrowserCaches(qint64& total_bytes,
+                                                    qint64& total_files,
+                                                    int& locations) {
     auto dirSize = [this](const QString& path, qint64& files) -> qint64 {
         qint64 total = 0;
         QDir dir(path);
-        if (!dir.exists()) {
-            return 0;
-        }
+        if (!dir.exists()) return 0;
 
-        QDirIterator it(path, QDir::Files | QDir::Hidden | QDir::System, QDirIterator::Subdirectories);
+        QDirIterator it(path, QDir::Files | QDir::Hidden | QDir::System,
+                        QDirIterator::Subdirectories);
         while (it.hasNext()) {
-            if (isCancelled()) {
-                break;
-            }
+            if (isCancelled()) break;
             it.next();
             total += it.fileInfo().size();
             files++;
@@ -57,12 +84,6 @@ void ClearBrowserCacheAction::scan() {
         {"Opera", QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/Opera Software/Opera Stable/Cache"},
         {"Opera Code Cache", QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/Opera Software/Opera Stable/Code Cache"}
     };
-
-    qint64 total_bytes = 0;
-    qint64 total_files = 0;
-    int locations = 0;
-
-    Q_EMIT scanProgress("Scanning browser cache locations...");
 
     for (const auto& cache : cache_paths) {
         qint64 files = 0;
@@ -89,25 +110,6 @@ void ClearBrowserCacheAction::scan() {
             }
         }
     }
-
-    ScanResult result;
-    result.applicable = total_bytes > 0;
-    result.bytes_affected = total_bytes;
-    result.files_count = total_files;
-    result.estimated_duration_ms = std::max<qint64>(3000, total_files * 3);
-
-    if (result.applicable) {
-        double mb = total_bytes / (1024.0 * 1024.0);
-        result.summary = QString("Cache size: %1 MB").arg(mb, 0, 'f', 1);
-        result.details = QString("Locations: %1").arg(locations);
-    } else {
-        result.summary = "No browser caches found";
-        result.details = "Caches are already minimal or browsers not installed";
-    }
-
-    setScanResult(result);
-    setStatus(ActionStatus::Ready);
-    Q_EMIT scanComplete(result);
 }
 
 void ClearBrowserCacheAction::execute() {
@@ -171,6 +173,11 @@ void ClearBrowserCacheAction::execute() {
 
 QString ClearBrowserCacheAction::buildCacheClearingScript() const
 {
+    return buildScriptPreamble() + buildScriptChromiumLoop() + buildScriptFirefoxAndOutput();
+}
+
+QString ClearBrowserCacheAction::buildScriptPreamble() const
+{
     return QString(
         "$ErrorActionPreference = 'SilentlyContinue'\n"
         "$results = @()\n"
@@ -208,6 +215,12 @@ QString ClearBrowserCacheAction::buildCacheClearingScript() const
         "    @{Name='Vivaldi'; Process='vivaldi'; Paths=@(\"$env:LOCALAPPDATA\\Vivaldi\\User Data\\Default\\Cache\", \"$env:LOCALAPPDATA\\Vivaldi\\User Data\\Default\\Code Cache\")}\n"
         ")\n"
         "\n"
+    );
+}
+
+QString ClearBrowserCacheAction::buildScriptChromiumLoop() const
+{
+    return QString(
         "foreach ($browser in $browsers) {\n"
         "    $running = Get-Process -Name $browser.Process -ErrorAction SilentlyContinue\n"
         "    $browserSizeBefore = 0\n"
@@ -242,6 +255,12 @@ QString ClearBrowserCacheAction::buildCacheClearingScript() const
         "    }\n"
         "}\n"
         "\n"
+    );
+}
+
+QString ClearBrowserCacheAction::buildScriptFirefoxAndOutput() const
+{
+    return QString(
         "# Firefox special handling (profiles-based)\n"
         "$ffProfilesPath = \"$env:APPDATA\\Mozilla\\Firefox\\Profiles\"\n"
         "if (Test-Path $ffProfilesPath) {\n"

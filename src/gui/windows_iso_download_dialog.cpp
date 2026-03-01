@@ -45,7 +45,16 @@ WindowsISODownloadDialog::~WindowsISODownloadDialog() = default;
 void WindowsISODownloadDialog::setupUi()
 {
     auto* mainLayout = new QVBoxLayout(this);
+    setupUi_formSections(mainLayout);
+    setupUi_progressAndButtons(mainLayout);
+}
 
+// ----------------------------------------------------------------------------
+// setupUi helpers
+// ----------------------------------------------------------------------------
+
+void WindowsISODownloadDialog::setupUi_formSections(QVBoxLayout* mainLayout)
+{
     // ---- Step 1: Architecture & Channel ----
     auto* configGroup = new QGroupBox("Build Configuration", this);
     auto* configLayout = new QGridLayout(configGroup);
@@ -112,7 +121,10 @@ void WindowsISODownloadDialog::setupUi()
     saveLayout->addWidget(m_browseSaveButton);
 
     mainLayout->addWidget(saveGroup);
+}
 
+void WindowsISODownloadDialog::setupUi_progressAndButtons(QVBoxLayout* mainLayout)
+{
     // ---- Progress ----
     auto* progressGroup = new QGroupBox("Progress", this);
     auto* progressLayout = new QVBoxLayout(progressGroup);

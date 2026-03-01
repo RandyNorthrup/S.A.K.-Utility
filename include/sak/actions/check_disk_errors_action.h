@@ -4,6 +4,7 @@
 #pragma once
 
 #include "sak/quick_action.h"
+#include <QDateTime>
 #include <QString>
 #include <QVector>
 
@@ -44,6 +45,19 @@ private:
 
     void checkDrive(const QString& drive_letter);
     void parseChkdskOutput(const QString& output, DriveCheckResult& result);
+
+    // TigerStyle helpers for execute() decomposition
+    bool executeEnumerateVolumes(const QDateTime& start_time, QVector<QChar>& drives, QString& report);
+    void executeRunChkdsk(const QVector<QChar>& drives, QString& report,
+                          int& drives_scanned, int& errors_found, int& errors_fixed);
+    void executeBuildReport(const QDateTime& start_time, const QString& report,
+                            int drives_scanned, int errors_found, int errors_fixed);
+    static QString buildRepairVolumeScript(QChar drive);
+    void parseDriveScanResult(const QString& output, QChar drive, QString& report,
+                              int& drives_scanned, int& errors_found, int& errors_fixed);
+    void appendDriveScanEntry(const QString& drive_letter, const QString& status,
+                              bool has_corrupt, bool scan_success, bool reboot_needed,
+                              QString& report, int& drives_scanned, int& errors_found);
 };
 
 } // namespace sak

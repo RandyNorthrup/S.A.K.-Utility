@@ -14,6 +14,7 @@
 #include <QMap>
 #include <memory>
 
+class QVBoxLayout;
 class OrganizerWorker;
 
 namespace sak {
@@ -63,6 +64,8 @@ private Q_SLOTS:
 
 private:
     void setupUi();
+    void setupUi_directoryAndCategories(QVBoxLayout* mainLayout);
+    void setupUi_controlsAndConnections(QVBoxLayout* mainLayout);
     void setupDefaultCategories();
     QMap<QString, QStringList> getCategoryMapping() const;
     void setOperationRunning(bool running);

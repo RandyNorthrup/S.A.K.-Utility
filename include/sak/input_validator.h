@@ -238,6 +238,16 @@ public:
         std::string_view message);
 
 private:
+    /// @brief Validate file/directory existence and type constraints
+    [[nodiscard]] static validation_result validatePathExistence(
+        const std::filesystem::path& path,
+        const path_validation_config& config);
+
+    /// @brief Platform-specific permission checks
+    [[nodiscard]] static validation_result validatePathPermissions(
+        const std::filesystem::path& path,
+        const path_validation_config& config);
+
     // Platform-specific helpers
     static std::uintmax_t get_available_memory_impl();
     static std::size_t get_file_descriptor_count_impl();

@@ -33,6 +33,14 @@ ConfigManager::ConfigManager(QObject* parent)
 
 void ConfigManager::initializeDefaults()
 {
+    initializeBackupAndOrganizerDefaults();
+    initializeFlasherDefaults();
+    initializeNetworkDefaults();
+    initializeUiDefaults();
+}
+
+void ConfigManager::initializeBackupAndOrganizerDefaults()
+{
     // Only set defaults if keys don't exist
     if (!contains("backup/thread_count")) {
         setValue("backup/thread_count", 4);
@@ -49,6 +57,10 @@ void ConfigManager::initializeDefaults()
     if (!contains("duplicate/keep_strategy")) {
         setValue("duplicate/keep_strategy", "oldest");
     }
+}
+
+void ConfigManager::initializeFlasherDefaults()
+{
     if (!contains("image_flasher/validation_mode")) {
         setValue("image_flasher/validation_mode", "full");
     }
@@ -73,6 +85,10 @@ void ConfigManager::initializeDefaults()
     if (!contains("image_flasher/enable_notifications")) {
         setValue("image_flasher/enable_notifications", true);
     }
+}
+
+void ConfigManager::initializeNetworkDefaults()
+{
     if (!contains("network_transfer/enabled")) {
         setValue("network_transfer/enabled", true);
     }
@@ -108,6 +124,10 @@ void ConfigManager::initializeDefaults()
     if (!contains("network_transfer/relay_server")) {
         setValue("network_transfer/relay_server", QString());
     }
+}
+
+void ConfigManager::initializeUiDefaults()
+{
     if (!contains("ui/restore_window_geometry")) {
         setValue("ui/restore_window_geometry", true);
     }

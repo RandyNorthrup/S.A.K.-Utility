@@ -16,6 +16,7 @@
 class QCheckBox;
 class QComboBox;
 class QGroupBox;
+class QHBoxLayout;
 class QLabel;
 class QLineEdit;
 class QProgressBar;
@@ -23,6 +24,7 @@ class QPushButton;
 class QSpinBox;
 class QTableWidget;
 class QTextEdit;
+class QVBoxLayout;
 
 namespace sak {
 
@@ -118,10 +120,24 @@ private:
     QGroupBox* createHardwareSection();
     QGroupBox* createSmartSection();
     QGroupBox* createBenchmarkSection();
+    QGroupBox* createCpuBenchmarkGroup();
+    QGroupBox* createDiskBenchmarkGroup();
+    QGroupBox* createMemoryBenchmarkGroup();
     QGroupBox* createStressTestSection();
     QGroupBox* createThermalSection();
     QGroupBox* createSuiteSection();
     QGroupBox* createReportSection();
+
+    /// @brief Build technician/ticket/notes input fields for report section
+    void createReportInfoFields(QVBoxLayout* layout);
+    /// @brief Build export buttons (HTML/JSON/CSV) and their signal connections
+    void createReportExportButtons(QVBoxLayout* layout);
+
+    /// @brief Build the stress test configuration row (components + duration + thermal)
+    QHBoxLayout* createStressConfigRow();
+
+    /// @brief Build the stress test start/stop button row
+    QHBoxLayout* createStressButtonRow();
 
     /// @brief Format byte count to human-readable string
     [[nodiscard]] static QString formatBytes(uint64_t bytes);

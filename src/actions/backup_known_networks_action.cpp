@@ -63,44 +63,54 @@ QList<BackupKnownNetworksAction::NetworkEntry> BackupKnownNetworksAction::collec
 
     for (const QString& name : profileNames) {
         if (isCancelled()) break;
-
-        const ProcessResult detail = runProcess(
-            "netsh",
-            QStringList{"wlan", "show", "profile", "name=" + name, "key=clear"},
-            8000,
-            [this]() { return isCancelled(); });
-
-        if (detail.timed_out) continue;
-
-        NetworkEntry entry;
-        entry.ssid = name;
-
-        const auto keyMatch = keyRe.match(detail.std_out);
-        if (keyMatch.hasMatch())
-            entry.password = keyMatch.captured(1).trimmed();
-
-        entry.security = "WPA/WPA2/WPA3";  // default
-        const auto authMatch = authRe.match(detail.std_out);
-        if (authMatch.hasMatch()) {
-            const QString auth = authMatch.captured(1).trimmed().toUpper();
-            if (auth.contains("WEP"))
-                entry.security = "WEP";
-            else if (auth == "OPEN" || auth.contains("NONE"))
-                entry.security = "None (Open)";
-        }
-
-        const auto nbMatch = nbRe.match(detail.std_out);
-        if (nbMatch.hasMatch()) {
-            const QString nbVal = nbMatch.captured(1).trimmed();
-            entry.hidden = nbVal.compare("Don't broadcast", Qt::CaseInsensitive) == 0 ||
-                           nbVal.compare("Not broadcasting", Qt::CaseInsensitive) == 0;
-        }
-
-        result.append(entry);
+        NetworkEntry entry = fetchProfileDetail(name, keyRe, authRe, nbRe);
+        if (!entry.ssid.isEmpty())
+            result.append(entry);
     }
 
     return result;
 #endif
+}
+
+BackupKnownNetworksAction::NetworkEntry BackupKnownNetworksAction::fetchProfileDetail(
+    const QString& name,
+    const QRegularExpression& keyRe,
+    const QRegularExpression& authRe,
+    const QRegularExpression& nbRe) const
+{
+    const ProcessResult detail = runProcess(
+        "netsh",
+        QStringList{"wlan", "show", "profile", "name=" + name, "key=clear"},
+        8000,
+        [this]() { return isCancelled(); });
+
+    if (detail.timed_out) return {};
+
+    NetworkEntry entry;
+    entry.ssid = name;
+
+    const auto keyMatch = keyRe.match(detail.std_out);
+    if (keyMatch.hasMatch())
+        entry.password = keyMatch.captured(1).trimmed();
+
+    entry.security = "WPA/WPA2/WPA3";
+    const auto authMatch = authRe.match(detail.std_out);
+    if (authMatch.hasMatch()) {
+        const QString auth = authMatch.captured(1).trimmed().toUpper();
+        if (auth.contains("WEP"))
+            entry.security = "WEP";
+        else if (auth == "OPEN" || auth.contains("NONE"))
+            entry.security = "None (Open)";
+    }
+
+    const auto nbMatch = nbRe.match(detail.std_out);
+    if (nbMatch.hasMatch()) {
+        const QString nbVal = nbMatch.captured(1).trimmed();
+        entry.hidden = nbVal.compare("Don't broadcast", Qt::CaseInsensitive) == 0 ||
+                       nbVal.compare("Not broadcasting", Qt::CaseInsensitive) == 0;
+    }
+
+    return entry;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -194,6 +204,13 @@ void BackupKnownNetworksAction::execute()
         return;
     }
 
+    buildAndWriteBackup(entries, startTime);
+#endif
+}
+
+void BackupKnownNetworksAction::buildAndWriteBackup(
+        const QList<NetworkEntry>& entries, const QDateTime& startTime)
+{
     Q_EMIT executionProgress("Writing JSON file...", 80);
 
     // Build JSON array in WiFi Manager format
@@ -238,7 +255,6 @@ void BackupKnownNetworksAction::execute()
     result.log             = QString("Saved to: %1\nLoad this file in the WiFi Manager panel to restore.").arg(filepath);
     result.duration_ms     = startTime.msecsTo(QDateTime::currentDateTime());
     finishWithResult(result, ActionStatus::Success);
-#endif
 }
 
 } // namespace sak

@@ -106,6 +106,14 @@ void MainWindow::createStatusBar()
 
 void MainWindow::createPanels()
 {
+    createToolPanels();
+    createAboutPanel();
+    connectPanelSignals();
+    connectPanelLogs();
+}
+
+void MainWindow::createToolPanels()
+{
     // Create Quick Actions panel (first tab)
     m_quick_actions_panel = std::make_unique<QuickActionsPanel>(this);
     m_tab_widget->addTab(m_quick_actions_panel.get(), "Quick Actions");
@@ -154,45 +162,47 @@ void MainWindow::createPanels()
     m_tab_widget->setTabToolTip(m_tab_widget->count() - 1, "Manage WiFi networks, QR codes, and profiles (Ctrl+9)");
     connect(m_wifi_manager_panel.get(), &WifiManagerPanel::statusMessage,
             this, &MainWindow::updateStatus);
+}
 
+void MainWindow::loadAboutPanelIcon(QLabel* iconLabel)
+{
+    const QString appDir = QCoreApplication::applicationDirPath();
+    const QStringList splashCandidates = {
+        appDir + "/sak_splash.png",
+        appDir + "/resources/sak_splash.png",
+        appDir + "/../resources/sak_splash.png",
+        appDir + "/../sak_splash.png"
+    };
+    QPixmap splashPix;
+    for (const auto& path : splashCandidates) {
+        if (QFileInfo::exists(path)) {
+            splashPix.load(path);
+            break;
+        }
+    }
+    if (!splashPix.isNull()) {
+        iconLabel->setPixmap(
+            splashPix.scaled(64, 64, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+    } else {
+        iconLabel->setStyleSheet(
+            "QLabel { background: qlineargradient(x1:0,y1:0,x2:1,y2:1,"
+            "stop:0 #3b82f6,stop:1 #2563eb); border-radius: 12px; }");
+    }
+}
 
-
-    // Create About panel (embedded version of AboutDialog content)
-    {
-        auto* aboutPanel = new QWidget(this);
-        auto* aboutLayout = new QVBoxLayout(aboutPanel);
-        aboutLayout->setSpacing(12);
-        aboutLayout->setContentsMargins(16, 16, 16, 16);
+void MainWindow::createAboutPanel()
+{
+    auto* aboutPanel = new QWidget(this);
+    auto* aboutLayout = new QVBoxLayout(aboutPanel);
+    aboutLayout->setSpacing(12);
+    aboutLayout->setContentsMargins(16, 16, 16, 16);
 
         // Header â€” use splash screen image as icon
         auto* headerLayout = new QHBoxLayout();
         auto* iconLabel = new QLabel(aboutPanel);
         iconLabel->setFixedSize(64, 64);
         iconLabel->setAccessibleName(QStringLiteral("S.A.K. Utility application icon"));
-        {
-            const QString appDir = QCoreApplication::applicationDirPath();
-            const QStringList splashCandidates = {
-                appDir + "/sak_splash.png",
-                appDir + "/resources/sak_splash.png",
-                appDir + "/../resources/sak_splash.png",
-                appDir + "/../sak_splash.png"
-            };
-            QPixmap splashPix;
-            for (const auto& path : splashCandidates) {
-                if (QFileInfo::exists(path)) {
-                    splashPix.load(path);
-                    break;
-                }
-            }
-            if (!splashPix.isNull()) {
-                iconLabel->setPixmap(
-                    splashPix.scaled(64, 64, Qt::KeepAspectRatio, Qt::SmoothTransformation));
-            } else {
-                iconLabel->setStyleSheet(
-                    "QLabel { background: qlineargradient(x1:0,y1:0,x2:1,y2:1,"
-                    "stop:0 #3b82f6,stop:1 #2563eb); border-radius: 12px; }");
-            }
-        }
+        loadAboutPanelIcon(iconLabel);
         headerLayout->addWidget(iconLabel);
 
         auto* titleLayout = new QVBoxLayout();
@@ -241,8 +251,10 @@ void MainWindow::createPanels()
 
         aboutLayout->addWidget(aboutTabs);
         m_tab_widget->addTab(aboutPanel, "About");
-    }
-    
+}
+
+void MainWindow::connectPanelSignals()
+{
     // Connect panel signals to main window status bar
     connect(m_quick_actions_panel.get(), &QuickActionsPanel::statusMessage,
             this, [this](const QString& msg, int timeout) { updateStatus(msg, timeout); });
@@ -283,7 +295,10 @@ void MainWindow::createPanels()
             this, [this](const QString& msg, int timeout) { updateStatus(msg, timeout > 0 ? timeout : 5000); });
     connect(m_diagnostic_benchmark_panel.get(), &DiagnosticBenchmarkPanel::progressUpdate,
             this, &MainWindow::updateProgress);
+}
 
+void MainWindow::connectPanelLogs()
+{
     // Connect all panel log signals to the shared log window (panel-aware)
     auto connectLog = [this](auto* panel) {
         int tabIdx = m_tab_widget->indexOf(panel);
@@ -327,7 +342,6 @@ void MainWindow::createPanels()
                     onTabChanged(m_tab_widget->currentIndex());
                 }
             });
-    
 }
 
 void MainWindow::updateStatus(const QString& message, int timeout_ms)

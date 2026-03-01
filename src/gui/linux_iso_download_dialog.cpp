@@ -56,7 +56,12 @@ LinuxISODownloadDialog::~LinuxISODownloadDialog() = default;
 void LinuxISODownloadDialog::setupUi()
 {
     auto* mainLayout = new QVBoxLayout(this);
+    setupUi_selectionGroup(mainLayout);
+    setupUi_progressAndButtons(mainLayout);
+}
 
+void LinuxISODownloadDialog::setupUi_selectionGroup(QVBoxLayout* mainLayout)
+{
     // ---- Distribution Selection ----
     auto* selectionGroup = new QGroupBox("Select Distribution", this);
     auto* selectionLayout = new QVBoxLayout(selectionGroup);
@@ -113,7 +118,10 @@ void LinuxISODownloadDialog::setupUi()
 
     selectionLayout->addLayout(contentLayout);
     mainLayout->addWidget(selectionGroup);
+}
 
+void LinuxISODownloadDialog::setupUi_progressAndButtons(QVBoxLayout* mainLayout)
+{
     // ---- Save Location ----
     auto* saveGroup = new QGroupBox("Save Location", this);
     auto* saveLayout = new QHBoxLayout(saveGroup);

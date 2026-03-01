@@ -270,36 +270,7 @@ MemorySummary HardwareInventoryScanner::queryMemory()
     uint32_t slot_index = 0;
 
     for (const auto& mod : results) {
-        MemoryModuleInfo module;
-        module.manufacturer = mod.value("Manufacturer").toString().trimmed();
-        module.part_number  = mod.value("PartNumber").toString().trimmed();
-        module.capacity_bytes = mod.value("Capacity").toULongLong();
-        module.speed_mhz    = mod.value("Speed").toUInt();
-        module.serial_number = mod.value("SerialNumber").toString().trimmed();
-        module.slot          = slot_index++;
-
-        // SMBIOSMemoryType mapping (key values)
-        const uint32_t smbios_type = mod.value("SMBIOSMemoryType").toUInt();
-        switch (smbios_type) {
-            case 20: module.memory_type = "DDR";   break;
-            case 21: module.memory_type = "DDR2";  break;
-            case 22: // intentional fallthrough
-            case 24: module.memory_type = "DDR3";  break;
-            case 26: module.memory_type = "DDR4";  break;
-            case 30: // intentional fallthrough
-            case 34: module.memory_type = "DDR5";  break;
-            default: module.memory_type = "Unknown"; break;
-        }
-
-        // FormFactor mapping
-        const uint32_t form = mod.value("FormFactor").toUInt();
-        switch (form) {
-            case 8:  module.form_factor = "DIMM";    break;
-            case 12: module.form_factor = "SODIMM";  break;
-            default: module.form_factor = "Unknown";  break;
-        }
-
-        summary.modules.append(module);
+        summary.modules.append(parseMemoryModule(mod, slot_index++));
     }
 
     summary.slots_used = static_cast<uint32_t>(summary.modules.size());
@@ -319,6 +290,41 @@ MemorySummary HardwareInventoryScanner::queryMemory()
             summary.slots_used, summary.slots_total);
 
     return summary;
+}
+
+MemoryModuleInfo HardwareInventoryScanner::parseMemoryModule(
+    const QVariantMap& mod, uint32_t slotIndex)
+{
+    MemoryModuleInfo module;
+    module.manufacturer   = mod.value("Manufacturer").toString().trimmed();
+    module.part_number    = mod.value("PartNumber").toString().trimmed();
+    module.capacity_bytes = mod.value("Capacity").toULongLong();
+    module.speed_mhz      = mod.value("Speed").toUInt();
+    module.serial_number  = mod.value("SerialNumber").toString().trimmed();
+    module.slot            = slotIndex;
+
+    // SMBIOSMemoryType mapping (key values)
+    const uint32_t smbios_type = mod.value("SMBIOSMemoryType").toUInt();
+    switch (smbios_type) {
+        case 20: module.memory_type = "DDR";   break;
+        case 21: module.memory_type = "DDR2";  break;
+        case 22: // intentional fallthrough
+        case 24: module.memory_type = "DDR3";  break;
+        case 26: module.memory_type = "DDR4";  break;
+        case 30: // intentional fallthrough
+        case 34: module.memory_type = "DDR5";  break;
+        default: module.memory_type = "Unknown"; break;
+    }
+
+    // FormFactor mapping
+    const uint32_t form = mod.value("FormFactor").toUInt();
+    switch (form) {
+        case 8:  module.form_factor = "DIMM";    break;
+        case 12: module.form_factor = "SODIMM";  break;
+        default: module.form_factor = "Unknown";  break;
+    }
+
+    return module;
 }
 
 QVector<StorageDeviceInfo> HardwareInventoryScanner::queryStorage()
@@ -371,6 +377,14 @@ QVector<StorageDeviceInfo> HardwareInventoryScanner::queryStorage()
     }
 
     // Enrich with partition/volume info from Qt
+    enrichStorageWithVolumeInfo(devices);
+
+    logInfo("Storage: {} device(s) detected", devices.size());
+    return devices;
+}
+
+void HardwareInventoryScanner::enrichStorageWithVolumeInfo(QVector<StorageDeviceInfo>& devices)
+{
     const auto volumes = QStorageInfo::mountedVolumes();
     for (auto& dev : devices) {
         for (const auto& vol : volumes) {
@@ -397,9 +411,6 @@ QVector<StorageDeviceInfo> HardwareInventoryScanner::queryStorage()
             }
         }
     }
-
-    logInfo("Storage: {} device(s) detected", devices.size());
-    return devices;
 }
 
 QVector<GpuInfo> HardwareInventoryScanner::queryGpu()

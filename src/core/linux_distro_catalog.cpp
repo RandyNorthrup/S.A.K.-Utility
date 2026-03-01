@@ -45,8 +45,15 @@ LinuxDistroCatalog::~LinuxDistroCatalog()
 
 void LinuxDistroCatalog::populateCatalog()
 {
-    // ---- General Purpose ----
+    addGeneralPurposeDistros();
+    addSecurityDistros();
+    addSystemRecoveryDistros();
+    addDiskToolDistros();
+    addUtilityDistros();
+}
 
+void LinuxDistroCatalog::addGeneralPurposeDistros()
+{
     addDistro({
         /*.id =*/               "ubuntu-desktop",
         /*.name =*/             "Ubuntu Desktop",
@@ -109,9 +116,10 @@ void LinuxDistroCatalog::populateCatalog()
         /*.githubRepo =*/       {},
         /*.githubAssetPattern =*/ {}
     });
+}
 
-    // ---- Security ----
-
+void LinuxDistroCatalog::addSecurityDistros()
+{
     addDistro({
         /*.id =*/               "kali-linux",
         /*.name =*/             "Kali Linux",
@@ -132,9 +140,10 @@ void LinuxDistroCatalog::populateCatalog()
         /*.githubRepo =*/       {},
         /*.githubAssetPattern =*/ {}
     });
+}
 
-    // ---- System Recovery ----
-
+void LinuxDistroCatalog::addSystemRecoveryDistros()
+{
     addDistro({
         /*.id =*/               "systemrescue",
         /*.name =*/             "SystemRescue",
@@ -155,9 +164,10 @@ void LinuxDistroCatalog::populateCatalog()
         /*.githubRepo =*/       {},
         /*.githubAssetPattern =*/ {}
     });
+}
 
-    // ---- Disk Tools ----
-
+void LinuxDistroCatalog::addDiskToolDistros()
+{
     addDistro({
         /*.id =*/               "clonezilla",
         /*.name =*/             "Clonezilla Live",
@@ -220,9 +230,10 @@ void LinuxDistroCatalog::populateCatalog()
         /*.githubRepo =*/       "shredos.x86_64",
         /*.githubAssetPattern =*/ R"(shredos.*x86-64.*\.iso$)"
     });
+}
 
-    // ---- Utilities ----
-
+void LinuxDistroCatalog::addUtilityDistros()
+{
     addDistro({
         /*.id =*/               "ventoy",
         /*.name =*/             "Ventoy LiveCD",
@@ -469,54 +480,14 @@ void LinuxDistroCatalog::parseGitHubRelease(const QString& distroId,
     // Update version (strip leading 'v' if present for display)
     distro.version = tagName;
 
-    // Find matching asset by pattern
     QJsonArray assets = release["assets"].toArray();
-    QRegularExpression assetRegex(distro.githubAssetPattern,
-                                 QRegularExpression::CaseInsensitiveOption);
-
-    QString matchedUrl;
-    qint64 matchedSize = 0;
     QString matchedName;
-
-    for (const auto& assetVal : assets) {
-        QJsonObject asset = assetVal.toObject();
-        QString name = asset["name"].toString();
-
-        if (assetRegex.match(name).hasMatch()) {
-            matchedUrl = asset["browser_download_url"].toString();
-            matchedSize = asset["size"].toInteger();
-            matchedName = name;
-            break;
-        }
-    }
-
-    if (matchedUrl.isEmpty()) {
+    if (!resolveGitHubAsset(distroId, distro, assets, matchedName)) {
         sak::logWarning("No matching asset found for " + distroId.toStdString() +
                         " with pattern: " + distro.githubAssetPattern.toStdString());
         Q_EMIT versionCheckFailed(distroId,
             "No matching ISO asset found in latest GitHub release");
         return;
-    }
-
-    // Cache the resolved URL and size
-    m_githubAssetUrls[distroId] = matchedUrl;
-    m_githubAssetSizes[distroId] = matchedSize;
-
-    // Update approximate size if GitHub reports it
-    if (matchedSize > 0) {
-        distro.approximateSize = matchedSize;
-    }
-
-    // Look for checksum sidecar (e.g., .sha256, .sha1)
-    for (const auto& assetVal : assets) {
-        QJsonObject asset = assetVal.toObject();
-        QString name = asset["name"].toString();
-
-        if (name == matchedName + ".sha256" || name == matchedName + ".sha1") {
-            m_githubAssetUrls[distroId + "_checksum"] =
-                asset["browser_download_url"].toString();
-            break;
-        }
     }
 
     bool changed = (oldVersion != distro.version);
@@ -526,6 +497,49 @@ void LinuxDistroCatalog::parseGitHubRelease(const QString& distroId,
                   " asset: " + matchedName.toStdString());
 
     Q_EMIT versionCheckCompleted(distroId, distro, changed);
+}
+
+bool LinuxDistroCatalog::resolveGitHubAsset(
+    const QString& distroId, DistroInfo& distro,
+    const QJsonArray& assets, QString& matchedName)
+{
+    QRegularExpression assetRegex(distro.githubAssetPattern,
+                                 QRegularExpression::CaseInsensitiveOption);
+    QString matchedUrl;
+    qint64 matchedSize = 0;
+
+    for (const auto& assetVal : assets) {
+        QJsonObject asset = assetVal.toObject();
+        QString name = asset["name"].toString();
+        if (assetRegex.match(name).hasMatch()) {
+            matchedUrl = asset["browser_download_url"].toString();
+            matchedSize = asset["size"].toInteger();
+            matchedName = name;
+            break;
+        }
+    }
+
+    if (matchedUrl.isEmpty()) return false;
+
+    // Cache the resolved URL and size
+    m_githubAssetUrls[distroId] = matchedUrl;
+    m_githubAssetSizes[distroId] = matchedSize;
+    if (matchedSize > 0) {
+        distro.approximateSize = matchedSize;
+    }
+
+    // Look for checksum sidecar (e.g., .sha256, .sha1)
+    for (const auto& assetVal : assets) {
+        QJsonObject asset = assetVal.toObject();
+        QString name = asset["name"].toString();
+        if (name == matchedName + ".sha256" || name == matchedName + ".sha1") {
+            m_githubAssetUrls[distroId + "_checksum"] =
+                asset["browser_download_url"].toString();
+            break;
+        }
+    }
+
+    return true;
 }
 
 // ============================================================================

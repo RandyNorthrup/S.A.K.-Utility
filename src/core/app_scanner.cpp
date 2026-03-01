@@ -100,30 +100,9 @@ std::vector<AppScanner::AppInfo> AppScanner::scanRegistryHive(void* hive, const 
             app.install_location = readRegistryValue(appKey, "InstallLocation");
             app.uninstall_string = readRegistryValue(appKey, "UninstallString");
             
-            // Only add if we have a display name
-            if (!app.name.isEmpty()) {
-                // Filter out Windows system components, updates, and redistributables
-                // but keep user-facing Microsoft apps (Edge, Office, VS Code, etc.)
-                bool isSystemComponent = 
-                    app.name.startsWith("KB") ||
-                    app.name.startsWith("Security Update") ||
-                    app.name.startsWith("Update for") ||
-                    app.name.startsWith("Hotfix") ||
-                    app.name.contains("(KB") ||
-                    app.name.contains("Redistributable") ||
-                    app.name.contains("Microsoft .NET") ||
-                    app.name.contains("Windows SDK") ||
-                    app.name.contains("Windows Driver Kit") ||
-                    app.name.contains("Windows Assessment") ||
-                    app.name.contains("Microsoft Visual C++") ||
-                    app.name.startsWith("vs_") ||
-                    app.name.startsWith("Microsoft DCF") ||
-                    app.name.startsWith("Microsoft Help") ||
-                    app.name.startsWith("Microsoft SQL Server") && !app.name.contains("Management Studio");
-                
-                if (!isSystemComponent) {
-                    apps.push_back(app);
-                }
+            // Only add if we have a display name and not a system component
+            if (!app.name.isEmpty() && !isSystemComponent(app.name)) {
+                apps.push_back(app);
             }
             
             RegCloseKey(appKey);
@@ -157,6 +136,24 @@ QString AppScanner::readRegistryValue(void* key, const QString& valueName) {
     }
     
     return QString();
+}
+
+bool AppScanner::isSystemComponent(const QString& name) {
+    return name.startsWith("KB") ||
+           name.startsWith("Security Update") ||
+           name.startsWith("Update for") ||
+           name.startsWith("Hotfix") ||
+           name.contains("(KB") ||
+           name.contains("Redistributable") ||
+           name.contains("Microsoft .NET") ||
+           name.contains("Windows SDK") ||
+           name.contains("Windows Driver Kit") ||
+           name.contains("Windows Assessment") ||
+           name.contains("Microsoft Visual C++") ||
+           name.startsWith("vs_") ||
+           name.startsWith("Microsoft DCF") ||
+           name.startsWith("Microsoft Help") ||
+           (name.startsWith("Microsoft SQL Server") && !name.contains("Management Studio"));
 }
 
 std::vector<AppScanner::AppInfo> AppScanner::scanAppX() {

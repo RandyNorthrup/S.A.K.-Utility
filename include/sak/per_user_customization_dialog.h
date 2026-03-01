@@ -12,7 +12,9 @@
 #include <QGroupBox>
 
 class QDir;
+class QFileInfo;
 class QTreeWidgetItem;
+class QVBoxLayout;
 
 namespace sak {
 
@@ -55,9 +57,14 @@ private Q_SLOTS:
 
 private:
     void setupUi();
+    void setupUi_foldersSection(QVBoxLayout* layout);
+    void setupUi_appDataSection(QVBoxLayout* layout);
+    void setupUi_dialogButtons(QVBoxLayout* layout);
     void populateTree();
     void addFolderToTree(const FolderSelection& selection, QTreeWidgetItem* parent = nullptr);
     void addDirectoryContents(const QDir& dir, QTreeWidgetItem* parent, qint64& totalSize, int& totalFiles, bool checked, int depth = 0, int maxDepth = 3);
+    void addDirectoryChildItem(const QFileInfo& entry, QTreeWidgetItem* parent, qint64& totalSize, int& totalFiles, bool checked, int depth, int maxDepth);
+    static QString formatFileSize(qint64 bytes);
     void calculateDirectorySize(const QDir& dir, qint64& totalSize, int& fileCount, int depth = 0, int maxDepth = 10);
     void setChildrenCheckState(QTreeWidgetItem* item, Qt::CheckState state);
     void updateParentCheckState(QTreeWidgetItem* item);

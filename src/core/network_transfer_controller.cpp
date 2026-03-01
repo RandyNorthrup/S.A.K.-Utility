@@ -430,84 +430,16 @@ void NetworkTransferController::onDataReceived(const QByteArray& data) {
         }
 
         switch (*type) {
-            case TransferMessageType::Hello: {
-                if (m_mode == Mode::Destination && message.contains("salt")) {
-                    m_salt = QByteArray::fromBase64(message.value("salt").toString().toUtf8());
-                }
-                Q_EMIT statusMessage(tr("Handshake completed"));
-
-                if (m_mode == Mode::Destination && m_auth_required) {
-                    m_auth_nonce = TransferSecurityManager::generateRandomBytes(16);
-                    QJsonObject challenge;
-                    challenge["nonce"] = QString::fromUtf8(m_auth_nonce.toBase64());
-                    TransferProtocol::writeMessage(m_connection->socket(),
-                        TransferProtocol::makeMessage(TransferMessageType::AuthChallenge, challenge));
-                }
+            case TransferMessageType::Hello:
+                handleHelloMessage(message);
                 break;
-            }
-            case TransferMessageType::AuthChallenge: {
-                if (!m_auth_required) {
-                    break;
-                }
-                const auto nonce = QByteArray::fromBase64(message.value("nonce").toString().toUtf8());
-                auto keyResult = TransferSecurityManager::deriveKey(m_passphrase, m_salt);
-                if (!keyResult) {
-                    Q_EMIT errorMessage(tr("Failed to derive authentication key"));
-                    break;
-                }
-                QByteArray authData = nonce + *keyResult;
-                QByteArray digest = QCryptographicHash::hash(authData, QCryptographicHash::Sha256);
-
-                QJsonObject response;
-                response["response"] = QString::fromUtf8(digest.toBase64());
-                TransferProtocol::writeMessage(m_connection->socket(),
-                    TransferProtocol::makeMessage(TransferMessageType::AuthResponse, response));
+            case TransferMessageType::AuthChallenge:
+                handleAuthChallengeMessage(message);
                 break;
-            }
-            case TransferMessageType::AuthResponse: {
-                if (!m_auth_required) {
-                    break;
-                }
-
-                if (message.contains("status")) {
-                    const auto status = message.value("status").toString();
-                    if (status == "ok") {
-                        m_authenticated = true;
-                        if (m_mode == Mode::Source) {
-                            QJsonObject manifestPayload = m_manifest.toJson(false);
-                            manifestPayload["files_count"] = static_cast<int>(m_files.size());
-                            TransferProtocol::writeMessage(m_connection->socket(),
-                                TransferProtocol::makeMessage(TransferMessageType::TransferManifest, manifestPayload));
-                            Q_EMIT statusMessage(tr("Manifest sent. Awaiting approval..."));
-                        }
-                    }
-                    break;
-                }
-
-                if (m_mode == Mode::Destination) {
-                    const auto response = QByteArray::fromBase64(message.value("response").toString().toUtf8());
-                    auto keyResult = TransferSecurityManager::deriveKey(m_passphrase, m_salt);
-                    if (!keyResult) {
-                        Q_EMIT errorMessage(tr("Failed to derive authentication key"));
-                        break;
-                    }
-                    QByteArray expected = QCryptographicHash::hash(m_auth_nonce + *keyResult, QCryptographicHash::Sha256);
-
-                    if (response != expected) {
-                        TransferProtocol::writeMessage(m_connection->socket(),
-                            TransferProtocol::makeMessage(TransferMessageType::Error, { {"error", "Authentication failed"} }));
-                        Q_EMIT errorMessage(tr("Authentication failed"));
-                        break;
-                    }
-
-                    m_authenticated = true;
-                    TransferProtocol::writeMessage(m_connection->socket(),
-                        TransferProtocol::makeMessage(TransferMessageType::AuthResponse, { {"status", "ok"} }));
-                    Q_EMIT statusMessage(tr("Authentication successful"));
-                }
+            case TransferMessageType::AuthResponse:
+                handleAuthResponseMessage(message);
                 break;
-            }
-            case TransferMessageType::TransferManifest: {
+            case TransferMessageType::TransferManifest:
                 if (m_mode == Mode::Destination) {
                     if (m_auth_required && !m_authenticated) {
                         Q_EMIT errorMessage(tr("Manifest received before authentication"));
@@ -518,26 +450,99 @@ void NetworkTransferController::onDataReceived(const QByteArray& data) {
                     Q_EMIT statusMessage(tr("Transfer manifest received"));
                 }
                 break;
-            }
-            case TransferMessageType::TransferApprove: {
+            case TransferMessageType::TransferApprove:
                 if (m_mode == Mode::Source) {
                     Q_EMIT statusMessage(tr("Transfer approved. Starting data transfer..."));
                     startWorkerSender();
                 }
                 break;
-            }
-            case TransferMessageType::TransferReject: {
+            case TransferMessageType::TransferReject:
                 Q_EMIT errorMessage(tr("Transfer rejected: %1").arg(message.value("reason").toString()));
                 break;
-            }
-            case TransferMessageType::Error: {
+            case TransferMessageType::Error:
                 Q_EMIT errorMessage(message.value("error").toString());
                 break;
-            }
             case TransferMessageType::Heartbeat:
             default:
                 break;
         }
+    }
+}
+
+void NetworkTransferController::handleHelloMessage(const QJsonObject& message) {
+    if (m_mode == Mode::Destination && message.contains("salt")) {
+        m_salt = QByteArray::fromBase64(message.value("salt").toString().toUtf8());
+    }
+    Q_EMIT statusMessage(tr("Handshake completed"));
+
+    if (m_mode == Mode::Destination && m_auth_required) {
+        m_auth_nonce = TransferSecurityManager::generateRandomBytes(16);
+        QJsonObject challenge;
+        challenge["nonce"] = QString::fromUtf8(m_auth_nonce.toBase64());
+        TransferProtocol::writeMessage(m_connection->socket(),
+            TransferProtocol::makeMessage(TransferMessageType::AuthChallenge, challenge));
+    }
+}
+
+void NetworkTransferController::handleAuthChallengeMessage(const QJsonObject& message) {
+    if (!m_auth_required) {
+        return;
+    }
+    const auto nonce = QByteArray::fromBase64(message.value("nonce").toString().toUtf8());
+    auto keyResult = TransferSecurityManager::deriveKey(m_passphrase, m_salt);
+    if (!keyResult) {
+        Q_EMIT errorMessage(tr("Failed to derive authentication key"));
+        return;
+    }
+    QByteArray authData = nonce + *keyResult;
+    QByteArray digest = QCryptographicHash::hash(authData, QCryptographicHash::Sha256);
+
+    QJsonObject response;
+    response["response"] = QString::fromUtf8(digest.toBase64());
+    TransferProtocol::writeMessage(m_connection->socket(),
+        TransferProtocol::makeMessage(TransferMessageType::AuthResponse, response));
+}
+
+void NetworkTransferController::handleAuthResponseMessage(const QJsonObject& message) {
+    if (!m_auth_required) {
+        return;
+    }
+
+    if (message.contains("status")) {
+        const auto status = message.value("status").toString();
+        if (status == "ok") {
+            m_authenticated = true;
+            if (m_mode == Mode::Source) {
+                QJsonObject manifestPayload = m_manifest.toJson(false);
+                manifestPayload["files_count"] = static_cast<int>(m_files.size());
+                TransferProtocol::writeMessage(m_connection->socket(),
+                    TransferProtocol::makeMessage(TransferMessageType::TransferManifest, manifestPayload));
+                Q_EMIT statusMessage(tr("Manifest sent. Awaiting approval..."));
+            }
+        }
+        return;
+    }
+
+    if (m_mode == Mode::Destination) {
+        const auto response = QByteArray::fromBase64(message.value("response").toString().toUtf8());
+        auto keyResult = TransferSecurityManager::deriveKey(m_passphrase, m_salt);
+        if (!keyResult) {
+            Q_EMIT errorMessage(tr("Failed to derive authentication key"));
+            return;
+        }
+        QByteArray expected = QCryptographicHash::hash(m_auth_nonce + *keyResult, QCryptographicHash::Sha256);
+
+        if (response != expected) {
+            TransferProtocol::writeMessage(m_connection->socket(),
+                TransferProtocol::makeMessage(TransferMessageType::Error, { {"error", "Authentication failed"} }));
+            Q_EMIT errorMessage(tr("Authentication failed"));
+            return;
+        }
+
+        m_authenticated = true;
+        TransferProtocol::writeMessage(m_connection->socket(),
+            TransferProtocol::makeMessage(TransferMessageType::AuthResponse, { {"status", "ok"} }));
+        Q_EMIT statusMessage(tr("Authentication successful"));
     }
 }
 
@@ -586,13 +591,7 @@ void NetworkTransferController::startWorkerSender() {
     }, Qt::QueuedConnection);
 }
 
-void NetworkTransferController::startWorkerReceiver() {
-    resetWorker();
-
-    m_workerThread = new QThread(this);
-    m_worker = new NetworkTransferWorker();
-    m_worker->moveToThread(m_workerThread);
-
+void NetworkTransferController::connectReceiverSignals() {
     connect(m_workerThread, &QThread::finished, m_worker, &QObject::deleteLater);
     connect(m_worker, &NetworkTransferWorker::overallProgress, this, &NetworkTransferController::transferProgress);
     connect(m_worker, &NetworkTransferWorker::transferCompleted, this, &NetworkTransferController::transferCompleted);
@@ -640,6 +639,16 @@ void NetworkTransferController::startWorkerReceiver() {
         m_orchestratorClient->sendCompletion(completion);
         m_pendingApprove = false;
     });
+}
+
+void NetworkTransferController::startWorkerReceiver() {
+    resetWorker();
+
+    m_workerThread = new QThread(this);
+    m_worker = new NetworkTransferWorker();
+    m_worker->moveToThread(m_workerThread);
+
+    connectReceiverSignals();
 
     m_workerThread->start();
 

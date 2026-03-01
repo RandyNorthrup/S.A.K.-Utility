@@ -52,36 +52,7 @@ void MigrationReport::generateReport(
         entry.install_date = QDateTime::fromString(app.install_date, Qt::ISODate);
         entry.registry_key = app.registry_key;
         
-        // Find match (try normalized name and original name)
-        QString normalized_name = app.name;
-        normalized_name.remove(QRegularExpression("[\\(\\)\\[\\]]"));  // Remove brackets
-        
-        bool found_match = false;
-        if (match_map.contains(app.name)) {
-            auto& match = match_map[app.name];
-            entry.choco_package = match.choco_package;
-            entry.confidence = match.confidence;
-            entry.match_type = match.match_type;
-            entry.available = match.available;
-            entry.available_version = match.version;
-            found_match = true;
-        } else if (match_map.contains(normalized_name)) {
-            auto& match = match_map[normalized_name];
-            entry.choco_package = match.choco_package;
-            entry.confidence = match.confidence;
-            entry.match_type = match.match_type;
-            entry.available = match.available;
-            entry.available_version = match.version;
-            found_match = true;
-        }
-        
-        if (!found_match) {
-            entry.choco_package = "";
-            entry.confidence = 0.0;
-            entry.match_type = "none";
-            entry.available = false;
-            entry.available_version = "";
-        }
+        populateMatchFields(entry, match_map, app.name);
         
         // Migration control (default: auto-select high confidence matches)
         entry.selected = (entry.confidence >= 0.8);
@@ -102,6 +73,34 @@ void MigrationReport::generateReport(
     m_metadata.selected_apps = getSelectedCount();
     m_metadata.match_rate = getMatchRate();
     m_metadata.created_at = QDateTime::currentDateTime();
+}
+
+void MigrationReport::populateMatchFields(
+    MigrationEntry& entry,
+    const QMap<QString, PackageMatcher::MatchResult>& match_map,
+    const QString& app_name)
+{
+    QString normalized_name = app_name;
+    normalized_name.remove(QRegularExpression("[\\(\\)\\[\\]]"));
+
+    auto it = match_map.constFind(app_name);
+    if (it == match_map.constEnd()) {
+        it = match_map.constFind(normalized_name);
+    }
+
+    if (it != match_map.constEnd()) {
+        entry.choco_package = it->choco_package;
+        entry.confidence = it->confidence;
+        entry.match_type = it->match_type;
+        entry.available = it->available;
+        entry.available_version = it->version;
+    } else {
+        entry.choco_package.clear();
+        entry.confidence = 0.0;
+        entry.match_type = "none";
+        entry.available = false;
+        entry.available_version.clear();
+    }
 }
 
 void MigrationReport::addEntry(const MigrationEntry& entry) {
@@ -316,38 +315,40 @@ bool MigrationReport::importFromJson(const QString& file_path) {
     if (root.contains("entries")) {
         QJsonArray entries = root["entries"].toArray();
         for (const QJsonValue& val : entries) {
-            QJsonObject e = val.toObject();
-            
-            MigrationEntry entry;
-            entry.app_name = e["app_name"].toString();
-            entry.app_version = e["app_version"].toString();
-            entry.app_publisher = e["app_publisher"].toString();
-            entry.install_location = e["install_location"].toString();
-            entry.install_date = QDateTime::fromString(e["install_date"].toString(), Qt::ISODate);
-            entry.registry_key = e["registry_key"].toString();
-            
-            entry.choco_package = e["choco_package"].toString();
-            entry.confidence = e["confidence"].toDouble();
-            entry.match_type = e["match_type"].toString();
-            entry.available = e["available"].toBool();
-            entry.available_version = e["available_version"].toString();
-            
-            entry.selected = e["selected"].toBool();
-            entry.version_lock = e["version_lock"].toBool();
-            entry.locked_version = e["locked_version"].toString();
-            entry.notes = e["notes"].toString();
-            
-            entry.status = e["status"].toString();
-            entry.error_message = e["error_message"].toString();
-            if (e.contains("executed_at")) {
-                entry.executed_at = QDateTime::fromString(e["executed_at"].toString(), Qt::ISODate);
-            }
-            
-            m_entries.push_back(entry);
+            m_entries.push_back(parseEntryFromJson(val.toObject()));
         }
     }
     
     return true;
+}
+
+MigrationReport::MigrationEntry MigrationReport::parseEntryFromJson(const QJsonObject& e) const {
+    MigrationEntry entry;
+    entry.app_name = e["app_name"].toString();
+    entry.app_version = e["app_version"].toString();
+    entry.app_publisher = e["app_publisher"].toString();
+    entry.install_location = e["install_location"].toString();
+    entry.install_date = QDateTime::fromString(e["install_date"].toString(), Qt::ISODate);
+    entry.registry_key = e["registry_key"].toString();
+
+    entry.choco_package = e["choco_package"].toString();
+    entry.confidence = e["confidence"].toDouble();
+    entry.match_type = e["match_type"].toString();
+    entry.available = e["available"].toBool();
+    entry.available_version = e["available_version"].toString();
+
+    entry.selected = e["selected"].toBool();
+    entry.version_lock = e["version_lock"].toBool();
+    entry.locked_version = e["locked_version"].toString();
+    entry.notes = e["notes"].toString();
+
+    entry.status = e["status"].toString();
+    entry.error_message = e["error_message"].toString();
+    if (e.contains("executed_at")) {
+        entry.executed_at = QDateTime::fromString(e["executed_at"].toString(), Qt::ISODate);
+    }
+
+    return entry;
 }
 
 int MigrationReport::getSelectedCount() const {
@@ -437,28 +438,8 @@ QString MigrationReport::formatHtmlReport() const {
     out << "<!DOCTYPE html>\n<html>\n<head>\n";
     out << "<meta charset=\"UTF-8\">\n";
     out << "<title>Application Migration Report</title>\n";
-    out << "<style>\n";
-    out << "body { font-family: Arial, sans-serif; margin: 20px; background-color: #f5f5f5; }\n";
-    out << "h1 { color: #333; }\n";
-    out << ".metadata { background: white; padding: 20px; margin-bottom: 20px; border-radius: 5px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }\n";
-    out << ".metadata table { width: 100%; border-collapse: collapse; }\n";
-    out << ".metadata td { padding: 8px; border-bottom: 1px solid #eee; }\n";
-    out << ".metadata td:first-child { font-weight: bold; width: 200px; }\n";
-    out << ".stats { background: white; padding: 20px; margin-bottom: 20px; border-radius: 5px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }\n";
-    out << ".stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; }\n";
-    out << ".stat-box { text-align: center; padding: 15px; background: #f8f9fa; border-radius: 5px; }\n";
-    out << ".stat-value { font-size: 32px; font-weight: bold; color: #007bff; }\n";
-    out << ".stat-label { color: #666; margin-top: 5px; }\n";
-    out << "table { width: 100%; border-collapse: collapse; background: white; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }\n";
-    out << "th { background: #007bff; color: white; padding: 12px; text-align: left; font-weight: bold; }\n";
-    out << "td { padding: 10px; border-bottom: 1px solid #eee; }\n";
-    out << "tr:hover { background: #f8f9fa; }\n";
-    out << ".selected { color: #28a745; font-weight: bold; }\n";
-    out << ".unmatched { color: #dc3545; }\n";
-    out << ".exact { background: #d4edda; }\n";
-    out << ".fuzzy { background: #fff3cd; }\n";
-    out << ".confidence { font-weight: bold; }\n";
-    out << "</style>\n</head>\n<body>\n";
+    out << buildHtmlStyles();
+    out << "</head>\n<body>\n";
     
     // Title
     out << "<h1>Application Migration Report</h1>\n";
@@ -487,6 +468,43 @@ QString MigrationReport::formatHtmlReport() const {
     out << "<th>App Name</th><th>Version</th><th>Publisher</th><th>Chocolatey Package</th><th>Confidence</th><th>Match Type</th><th>Selected</th>\n";
     out << "</tr>\n</thead>\n<tbody>\n";
     
+    buildHtmlEntryRows(out);
+    
+    out << "</tbody>\n</table>\n";
+    out << "</body>\n</html>\n";
+    
+    return html;
+}
+
+QString MigrationReport::buildHtmlStyles() {
+    QString css;
+    QTextStream out(&css);
+    out << "<style>\n";
+    out << "body { font-family: Arial, sans-serif; margin: 20px; background-color: #f5f5f5; }\n";
+    out << "h1 { color: #333; }\n";
+    out << ".metadata { background: white; padding: 20px; margin-bottom: 20px; border-radius: 5px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }\n";
+    out << ".metadata table { width: 100%; border-collapse: collapse; }\n";
+    out << ".metadata td { padding: 8px; border-bottom: 1px solid #eee; }\n";
+    out << ".metadata td:first-child { font-weight: bold; width: 200px; }\n";
+    out << ".stats { background: white; padding: 20px; margin-bottom: 20px; border-radius: 5px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }\n";
+    out << ".stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; }\n";
+    out << ".stat-box { text-align: center; padding: 15px; background: #f8f9fa; border-radius: 5px; }\n";
+    out << ".stat-value { font-size: 32px; font-weight: bold; color: #007bff; }\n";
+    out << ".stat-label { color: #666; margin-top: 5px; }\n";
+    out << "table { width: 100%; border-collapse: collapse; background: white; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }\n";
+    out << "th { background: #007bff; color: white; padding: 12px; text-align: left; font-weight: bold; }\n";
+    out << "td { padding: 10px; border-bottom: 1px solid #eee; }\n";
+    out << "tr:hover { background: #f8f9fa; }\n";
+    out << ".selected { color: #28a745; font-weight: bold; }\n";
+    out << ".unmatched { color: #dc3545; }\n";
+    out << ".exact { background: #d4edda; }\n";
+    out << ".fuzzy { background: #fff3cd; }\n";
+    out << ".confidence { font-weight: bold; }\n";
+    out << "</style>\n";
+    return css;
+}
+
+void MigrationReport::buildHtmlEntryRows(QTextStream& out) const {
     for (const auto& entry : m_entries) {
         QString row_class = entry.match_type == "exact" ? " class=\"exact\"" : (entry.match_type == "fuzzy" ? " class=\"fuzzy\"" : "");
         out << "<tr" << row_class << ">\n";
@@ -496,14 +514,9 @@ QString MigrationReport::formatHtmlReport() const {
         out << "<td>" << (entry.choco_package.isEmpty() ? "<span class=\"unmatched\">No match</span>" : entry.choco_package) << "</td>\n";
         out << "<td class=\"confidence\">" << QString::number(entry.confidence * 100, 'f', 0) << "%</td>\n";
         out << "<td>" << entry.match_type << "</td>\n";
-        out << "<td>" << (entry.selected ? "<span class=\"selected\">✓ Yes</span>" : "No") << "</td>\n";
+        out << "<td>" << (entry.selected ? "<span class=\"selected\">\xe2\x9c\x93 Yes</span>" : "No") << "</td>\n";
         out << "</tr>\n";
     }
-    
-    out << "</tbody>\n</table>\n";
-    out << "</body>\n</html>\n";
-    
-    return html;
 }
 
 } // namespace sak
