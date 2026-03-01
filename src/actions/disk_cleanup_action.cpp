@@ -425,29 +425,31 @@ qint64 DiskCleanupAction::deleteDirectoryContents(const QString& path, int& dele
     QFileInfoList entries = dir.entryInfoList(QDir::Files | QDir::Dirs | QDir::NoDotAndDotDot | QDir::Hidden | QDir::System);
     
     for (const QFileInfo& entry : entries) {
-        if (isCancelled()) {
-            break;
-        }
-
-        if (entry.isDir()) {
-            int subdir_deleted = 0;
-            total_deleted += deleteDirectoryContents(entry.absoluteFilePath(), subdir_deleted);
-            deleted_count += subdir_deleted;
-            
-            QDir subdir(entry.absoluteFilePath());
-            if (subdir.isEmpty()) {
-                subdir.removeRecursively();
-            }
-        } else {
-            qint64 file_size = entry.size();
-            if (QFile::remove(entry.absoluteFilePath())) {
-                total_deleted += file_size;
-                deleted_count++;
-            }
-        }
+        if (isCancelled()) break;
+        deleteEntry(entry, total_deleted, deleted_count);
     }
 
     return total_deleted;
+}
+
+void DiskCleanupAction::deleteEntry(const QFileInfo& entry, qint64& total_deleted, int& deleted_count) {
+    if (entry.isDir()) {
+        int subdir_deleted = 0;
+        total_deleted += deleteDirectoryContents(entry.absoluteFilePath(), subdir_deleted);
+        deleted_count += subdir_deleted;
+
+        QDir subdir(entry.absoluteFilePath());
+        if (subdir.isEmpty()) {
+            subdir.removeRecursively();
+        }
+        return;
+    }
+
+    qint64 file_size = entry.size();
+    if (QFile::remove(entry.absoluteFilePath())) {
+        total_deleted += file_size;
+        deleted_count++;
+    }
 }
 
 bool DiskCleanupAction::isSafeToDelete(const QString& path) const {

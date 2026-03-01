@@ -109,6 +109,8 @@ private:
     void setupWorkerConnections();
     /** @brief Parse Chocolatey search output into the results model */
     void updateResultsFromSearch(const QString& output);
+    /** @brief Handle search completion on the main thread */
+    void onSearchCompleted(bool success, const QString& output, const QString& errorMessage);
     /** @brief Refresh the queue list widget from m_installQueue */
     void updateQueueDisplay();
     /** @brief Enable or disable interactive controls during install */

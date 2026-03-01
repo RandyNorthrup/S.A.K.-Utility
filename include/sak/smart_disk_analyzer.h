@@ -124,6 +124,11 @@ private:
     /// @brief Generate NVMe-specific warnings and recommendations
     void generateNvmeRecommendations(SmartReport& report);
 
+    /// @brief Check a single SATA attribute against known thresholds
+    /// @return The worst health status indicated by this attribute
+    [[nodiscard]] SmartHealthStatus checkAttributeAgainstThresholds(
+        const SmartAttribute& attr) const;
+
     /// @brief Enumerate available physical drive numbers
     /// @return Sorted list of drive numbers present on the system
     [[nodiscard]] QVector<uint32_t> enumerateDrives();

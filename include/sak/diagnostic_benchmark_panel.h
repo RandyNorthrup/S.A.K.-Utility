@@ -116,6 +116,12 @@ private:
     /// @brief Append a timestamped message to the log viewer
     void logMessage(const QString& message);
 
+    /// @brief Populate disk drive combo from hardware inventory storage data
+    void populateDiskDriveCombo(const HardwareInventory& inventory);
+
+    /// @brief Add partitions of a single disk to the disk drive combo
+    void addDiskPartitionsToCombo(const StorageDeviceInfo& disk);
+
     // ── Section Builders ────────────────────────────────────────
     QGroupBox* createHardwareSection();
     QGroupBox* createSmartSection();

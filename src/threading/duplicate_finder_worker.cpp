@@ -105,25 +105,56 @@ void DuplicateFinderWorker::buildDuplicateGroups(
     int& total_duplicates, qint64& total_wasted)
 {
     for (const auto& [hash, paths] : hash_groups) {
-        if (paths.size() > 1) {
-            DuplicateGroup group;
-            group.hash = QString::fromStdString(hash);
-            
-            for (const auto& path : paths) {
-                group.file_paths.push_back(QString::fromStdString(path.string()));
-            }
+        if (paths.size() <= 1) continue;
 
-            try {
-                group.file_size = std::filesystem::file_size(paths[0]);
-                group.wasted_space = group.file_size * (paths.size() - 1);
-                
-                duplicate_groups.push_back(group);
-                total_duplicates += static_cast<int>(paths.size() - 1);
-                total_wasted += group.wasted_space;
-            } catch (const std::filesystem::filesystem_error& e) {
-                sak::logWarning("Failed to get file size: {}", e.what());
-            }
+        DuplicateGroup group;
+        group.hash = QString::fromStdString(hash);
+
+        for (const auto& path : paths) {
+            group.file_paths.push_back(QString::fromStdString(path.string()));
         }
+
+        try {
+            group.file_size = std::filesystem::file_size(paths[0]);
+            group.wasted_space = group.file_size * (paths.size() - 1);
+
+            duplicate_groups.push_back(group);
+            total_duplicates += static_cast<int>(paths.size() - 1);
+            total_wasted += group.wasted_space;
+        } catch (const std::filesystem::filesystem_error& e) {
+            sak::logWarning("Failed to get file size: {}", e.what());
+        }
+    }
+}
+
+template<typename DirIter>
+auto DuplicateFinderWorker::collectEntries(
+    const std::filesystem::path& dir_path,
+    std::vector<std::filesystem::path>& files)
+    -> std::expected<void, sak::error_code>
+{
+    for (const auto& entry : DirIter(dir_path)) {
+        if (checkStop()) return std::unexpected(sak::error_code::operation_cancelled);
+        if (!entry.is_regular_file()) continue;
+        if (static_cast<qint64>(entry.file_size()) < m_config.minimum_file_size) continue;
+        files.push_back(entry.path());
+    }
+    return {};
+}
+
+auto DuplicateFinderWorker::collectFilesFromDirectory(
+    const std::filesystem::path& dir_path,
+    std::vector<std::filesystem::path>& files)
+    -> std::expected<void, sak::error_code>
+{
+    try {
+        if (m_config.recursive_scan) {
+            return collectEntries<std::filesystem::recursive_directory_iterator>(dir_path, files);
+        }
+        return collectEntries<std::filesystem::directory_iterator>(dir_path, files);
+    } catch (const std::filesystem::filesystem_error& e) {
+        sak::logError("Error scanning directory {}: {}", dir_path.string(), e.what());
+        return std::unexpected(sak::error_code::scan_failed);
     }
 }
 
@@ -150,38 +181,8 @@ auto DuplicateFinderWorker::scanDirectories()
             continue;
         }
 
-        try {
-            if (m_config.recursive_scan) {
-                for (const auto& entry : std::filesystem::recursive_directory_iterator(dir_path)) {
-                    if (checkStop()) {
-                        return std::unexpected(sak::error_code::operation_cancelled);
-                    }
-
-                    if (entry.is_regular_file()) {
-                        auto size = static_cast<qint64>(entry.file_size());
-                        if (size >= m_config.minimum_file_size) {
-                            files.push_back(entry.path());
-                        }
-                    }
-                }
-            } else {
-                for (const auto& entry : std::filesystem::directory_iterator(dir_path)) {
-                    if (checkStop()) {
-                        return std::unexpected(sak::error_code::operation_cancelled);
-                    }
-
-                    if (entry.is_regular_file()) {
-                        auto size = static_cast<qint64>(entry.file_size());
-                        if (size >= m_config.minimum_file_size) {
-                            files.push_back(entry.path());
-                        }
-                    }
-                }
-            }
-        } catch (const std::filesystem::filesystem_error& e) {
-            sak::logError("Error scanning directory {}: {}", dir_path.string(), e.what());
-            return std::unexpected(sak::error_code::scan_failed);
-        }
+        auto result = collectFilesFromDirectory(dir_path, files);
+        if (!result) return std::unexpected(result.error());
     }
 
     return files;

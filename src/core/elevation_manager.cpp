@@ -84,28 +84,28 @@ std::wstring ElevationManager::get_command_line_args()
     int argc;
     LPWSTR* argv = CommandLineToArgvW(cmd_line, &argc);
     
+    if (!argv || argc <= 1) {
+        if (argv) LocalFree(argv);
+        return {};
+    }
+
     std::wstring args;
-    if (argv && argc > 1) {
-        for (int i = 1; i < argc; ++i) {
-            if (i > 1) {
-                args += L" ";
-            }
-            
-            std::wstring arg(argv[i]);
-            
-            // Quote if contains spaces
-            if (arg.find(L' ') != std::wstring::npos) {
-                args += L"\"" + arg + L"\"";
-            } else {
-                args += arg;
-            }
+    for (int i = 1; i < argc; ++i) {
+        if (i > 1) {
+            args += L" ";
+        }
+
+        std::wstring arg(argv[i]);
+
+        // Quote if contains spaces
+        if (arg.find(L' ') != std::wstring::npos) {
+            args += L"\"" + arg + L"\"";
+        } else {
+            args += arg;
         }
     }
-    
-    if (argv) {
-        LocalFree(argv);
-    }
-    
+
+    LocalFree(argv);
     return args;
 }
 

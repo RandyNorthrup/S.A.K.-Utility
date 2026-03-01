@@ -58,26 +58,28 @@ bool WindowsUSBCreator::copyISOContents(const QString& sourcePath, const QString
     return true;
 }
 
+QString WindowsUSBCreator::parseVolumeLabelFromOutput(const QString& output) {
+    QStringList lines = output.split('\n');
+    for (const QString& line : lines) {
+        if (!line.startsWith("Comment = ")) continue;
+        QString label = line.mid(10).trimmed();
+        sak::logInfo(QString("ISO volume label: %1").arg(label).toStdString());
+        return label;
+    }
+    return {};
+}
+
 void WindowsUSBCreator::copyISO_extractVolumeLabel(const QString& sevenZipPath, const QString& sourcePath) {
     QProcess labelExtract;
     QStringList labelArgs;
     labelArgs << "l" << "-slt" << sourcePath; // List with technical info
     
     labelExtract.start(sevenZipPath, labelArgs);
-    if (labelExtract.waitForFinished(sak::kTimeoutProcessMediumMs)) {
-        QString labelOutput = labelExtract.readAllStandardOutput();
-        // Look for "Comment = " line which contains volume label
-        QStringList lines = labelOutput.split('\n');
-        for (const QString& line : lines) {
-            if (line.startsWith("Comment = ")) {
-                m_volumeLabel = line.mid(10).trimmed();
-                sak::logInfo(QString("ISO volume label: %1").arg(m_volumeLabel).toStdString());
-                break;
-            }
-        }
-    } else {
+    if (!labelExtract.waitForFinished(sak::kTimeoutProcessMediumMs)) {
         sak::logWarning("7z label extraction timed out after 10s \xe2\x80\x94 will use default label");
         labelExtract.kill();
+    } else {
+        m_volumeLabel = parseVolumeLabelFromOutput(labelExtract.readAllStandardOutput());
     }
     
     // Default to WINDOWS if label not found
@@ -215,56 +217,48 @@ void WindowsUSBCreator::copyISO_parseExtractionProgress(
     QRegularExpression bytesRegex(R"((\d+)\s*\+\s*(\d+))");
     QRegularExpressionMatch bytesMatch = bytesRegex.match(output);
     
-    if (bytesMatch.hasMatch()) {
-        processedBytes = bytesMatch.captured(1).toLongLong();
-        qint64 newTotal = bytesMatch.captured(2).toLongLong();
+    if (!bytesMatch.hasMatch()) {
+        // Fallback: Try to parse percentage if bytes format not found
+        QRegularExpression percentRegex(R"(\s+(\d+)%)");
+        QRegularExpressionMatch percentMatch = percentRegex.match(output);
+        if (!percentMatch.hasMatch()) return;
         
-        // Update total if we get a larger value (7z reports it progressively)
-        if (newTotal > totalBytes) {
-            totalBytes = newTotal;
-        }
+        int extractPercent = percentMatch.captured(1).toInt();
+        int totalProgress = 15 + (extractPercent * 35 / 100);
+        if (totalProgress <= lastProgressPercent) return;
         
-        // Calculate percentage based on actual bytes
-        if (totalBytes > 0) {
-            int extractPercent = static_cast<int>((processedBytes * 100) / totalBytes);
-            
-            // Map 0-100% of extraction to 15-50% of total progress
-            int totalProgress = 15 + (extractPercent * 35 / 100);
-            
-            if (totalProgress > lastProgressPercent) {
-                lastProgressPercent = totalProgress;
-                Q_EMIT progressUpdated(totalProgress);
-                
-                double processedMB = processedBytes / sak::kBytesPerMBf;
-                double totalMB = totalBytes / sak::kBytesPerMBf;
-                
-                Q_EMIT statusChanged(QString("Extracting Windows files... %1 MB / %2 MB (%3%)") .arg(processedMB, 0, 'f', 1)
-                    .arg(totalMB, 0, 'f', 1)
-                    .arg(extractPercent));
-                
-                sak::logInfo(QString("Extraction progress: %1 MB / %2 MB (%3%)") .arg(processedMB, 0, 'f', 1)
-                    .arg(totalMB, 0, 'f', 1)
-                    .arg(extractPercent).toStdString());
-            }
-        }
+        lastProgressPercent = totalProgress;
+        Q_EMIT progressUpdated(totalProgress);
+        Q_EMIT statusChanged(QString("Extracting Windows files... %1%").arg(extractPercent));
+        sak::logInfo(QString("Extraction progress: %1%").arg(extractPercent).toStdString());
         return;
     }
     
-    // Fallback: Try to parse percentage if bytes format not found
-    QRegularExpression percentRegex(R"(\s+(\d+)%)");
-    QRegularExpressionMatch percentMatch = percentRegex.match(output);
+    // Bytes format matched
+    processedBytes = bytesMatch.captured(1).toLongLong();
+    qint64 newTotal = bytesMatch.captured(2).toLongLong();
+    if (newTotal > totalBytes) totalBytes = newTotal;
+    if (totalBytes <= 0) return;
     
-    if (percentMatch.hasMatch()) {
-        int extractPercent = percentMatch.captured(1).toInt();
-        int totalProgress = 15 + (extractPercent * 35 / 100);
-        
-        if (totalProgress > lastProgressPercent) {
-            lastProgressPercent = totalProgress;
-            Q_EMIT progressUpdated(totalProgress);
-            Q_EMIT statusChanged(QString("Extracting Windows files... %1%").arg(extractPercent));
-            sak::logInfo(QString("Extraction progress: %1%").arg(extractPercent).toStdString());
-        }
-    }
+    int extractPercent = static_cast<int>((processedBytes * 100) / totalBytes);
+    int totalProgress = 15 + (extractPercent * 35 / 100);
+    if (totalProgress <= lastProgressPercent) return;
+    
+    lastProgressPercent = totalProgress;
+    Q_EMIT progressUpdated(totalProgress);
+    
+    double processedMB = processedBytes / sak::kBytesPerMBf;
+    double totalMB = totalBytes / sak::kBytesPerMBf;
+    
+    Q_EMIT statusChanged(QString("Extracting Windows files... %1 MB / %2 MB (%3%)")
+        .arg(processedMB, 0, 'f', 1)
+        .arg(totalMB, 0, 'f', 1)
+        .arg(extractPercent));
+    
+    sak::logInfo(QString("Extraction progress: %1 MB / %2 MB (%3%)")
+        .arg(processedMB, 0, 'f', 1)
+        .arg(totalMB, 0, 'f', 1)
+        .arg(extractPercent).toStdString());
 }
 
 bool WindowsUSBCreator::copyISO_logExtractionResult(QProcess& extract) {
@@ -278,10 +272,8 @@ bool WindowsUSBCreator::copyISO_logExtractionResult(QProcess& extract) {
         QStringList lines = output.split('\n', Qt::SkipEmptyParts);
         sak::logInfo(QString("7z processed %1 lines of output").arg(lines.count()).toStdString());
         // Log last few lines which contain summary
-        if (lines.count() > 0) {
-            for (int i = qMax(0, lines.count() - 5); i < lines.count(); ++i) {
-                sak::logInfo(QString("  %1").arg(lines[i].trimmed()).toStdString());
-            }
+        for (int i = qMax(0, lines.count() - 5); i < lines.count(); ++i) {
+            sak::logInfo(QString("  %1").arg(lines[i].trimmed()).toStdString());
         }
     }
     
@@ -343,39 +335,30 @@ bool WindowsUSBCreator::copyISO_findSetupExe(const QString& cleanDest) {
     // Verify setup.exe exists (absolute requirement for Windows boot)
     sak::logInfo(QString("Checking for setup.exe at: %1").arg(setupPath).toStdString());
     
-    // Check if setup.exe exists with case-insensitive search
-    bool setupFound = false;
-    QStringList rootFiles;
-    
     if (QFile::exists(setupPath)) {
-        setupFound = true;
-    } else {
-        // Try case-insensitive search in root directory
-        sak::logWarning("setup.exe not found with exact case, searching case-insensitively...");
-        rootFiles = checkDest.entryList(QDir::Files | QDir::NoDotAndDotDot);
-        for (const QString& file : rootFiles) {
-            if (file.toLower() == "setup.exe") {
-                setupFound = true;
-                setupPath = cleanDest + file;
-                sak::logInfo(QString("Found setup file with different case: %1").arg(file).toStdString());
-                break;
-            }
-        }
+        sak::logInfo(QString("\xe2\x9c\x93 setup.exe found at: %1").arg(setupPath).toStdString());
+        return true;
     }
     
-    if (!setupFound) {
-        m_lastError = "CRITICAL: setup.exe not found after extraction";
-        sak::logError(m_lastError.toStdString());
-        sak::logError(QString("Checked path: %1").arg(setupPath).toStdString());
-        if (!rootFiles.isEmpty()) {
-            sak::logError(QString("Files in root: %1").arg(rootFiles.join(", ")).toStdString());
-        }
-        sak::logError("ISO extraction may have failed or ISO may be corrupt");
-        return false;
+    // Try case-insensitive search in root directory
+    sak::logWarning("setup.exe not found with exact case, searching case-insensitively...");
+    QStringList rootFiles = checkDest.entryList(QDir::Files | QDir::NoDotAndDotDot);
+    for (const QString& file : rootFiles) {
+        if (file.toLower() != "setup.exe") continue;
+        setupPath = cleanDest + file;
+        sak::logInfo(QString("Found setup file with different case: %1").arg(file).toStdString());
+        sak::logInfo(QString("\xe2\x9c\x93 setup.exe found at: %1").arg(setupPath).toStdString());
+        return true;
     }
     
-    sak::logInfo(QString("\xe2\x9c\x93 setup.exe found at: %1").arg(setupPath).toStdString());
-    return true;
+    m_lastError = "CRITICAL: setup.exe not found after extraction";
+    sak::logError(m_lastError.toStdString());
+    sak::logError(QString("Checked path: %1").arg(setupPath).toStdString());
+    if (!rootFiles.isEmpty()) {
+        sak::logError(QString("Files in root: %1").arg(rootFiles.join(", ")).toStdString());
+    }
+    sak::logError("ISO extraction may have failed or ISO may be corrupt");
+    return false;
 }
 
 bool WindowsUSBCreator::copyISO_verifyBootFiles(const QString& cleanDest) {
@@ -432,28 +415,30 @@ bool WindowsUSBCreator::copyISO_verifyBootFiles(const QString& cleanDest) {
 }
 
 void WindowsUSBCreator::copyISO_setVolumeLabel(const QString& cleanDest) {
-    if (!m_volumeLabel.isEmpty()) {
-        sak::logInfo(QString("Setting volume label to: %1").arg(m_volumeLabel).toStdString());
-        // Extract single drive letter from normalized path ("E:\\" -> "E")
-        QString driveLetter = cleanDest.left(1);
-        if (driveLetter.isEmpty() || !driveLetter[0].isLetter()) {
-            sak::logWarning(QString("Invalid drive letter for volume label: '%1'").arg(cleanDest).toStdString());
-        } else {
-            QProcess labelProcess;
-            QString labelCmd = QString("Set-Volume -DriveLetter %1 -NewFileSystemLabel '%2'")
-                .arg(driveLetter, m_volumeLabel);
-            labelProcess.start("powershell.exe", QStringList() << "-NoProfile" << "-Command" << labelCmd);
-            if (labelProcess.waitForFinished(sak::kTimeoutProcessMediumMs)) {
-                if (labelProcess.exitCode() == 0) {
-                    sak::logInfo("Volume label set successfully");
-                } else {
-                    QString labelErrors = QString(labelProcess.readAllStandardError()).trimmed();
-                    sak::logWarning(QString("Failed to set volume label: %1").arg(labelErrors).toStdString());
-                }
-            } else {
-                sak::logWarning("Volume label command timed out");
-            }
-        }
+    if (m_volumeLabel.isEmpty()) return;
+    
+    sak::logInfo(QString("Setting volume label to: %1").arg(m_volumeLabel).toStdString());
+    // Extract single drive letter from normalized path ("E:\\" -> "E")
+    QString driveLetter = cleanDest.left(1);
+    if (driveLetter.isEmpty() || !driveLetter[0].isLetter()) {
+        sak::logWarning(QString("Invalid drive letter for volume label: '%1'").arg(cleanDest).toStdString());
+        return;
+    }
+    
+    QProcess labelProcess;
+    QString labelCmd = QString("Set-Volume -DriveLetter %1 -NewFileSystemLabel '%2'")
+        .arg(driveLetter, m_volumeLabel);
+    labelProcess.start("powershell.exe", QStringList() << "-NoProfile" << "-Command" << labelCmd);
+    if (!labelProcess.waitForFinished(sak::kTimeoutProcessMediumMs)) {
+        sak::logWarning("Volume label command timed out");
+        return;
+    }
+    
+    if (labelProcess.exitCode() == 0) {
+        sak::logInfo("Volume label set successfully");
+    } else {
+        QString labelErrors = QString(labelProcess.readAllStandardError()).trimmed();
+        sak::logWarning(QString("Failed to set volume label: %1").arg(labelErrors).toStdString());
     }
 }
 
@@ -566,12 +551,12 @@ bool WindowsUSBCreator::checkPartitionActive(const QString& diskNumber) {
     if (isActive) {
         sak::logInfo("✓ Bootable flag verified - partition is active");
         return true;
-    } else {
-        m_lastError = "VERIFICATION FAILED: Partition is not marked as active/bootable";
-        sak::logError(m_lastError.toStdString());
-        sak::logError("USB drive will NOT be bootable - bootable flag must be set");
-        return false;
     }
+    
+    m_lastError = "VERIFICATION FAILED: Partition is not marked as active/bootable";
+    sak::logError(m_lastError.toStdString());
+    sak::logError("USB drive will NOT be bootable - bootable flag must be set");
+    return false;
 }
 
 bool WindowsUSBCreator::verifyBootableFlag(const QString& driveLetter) {
@@ -645,6 +630,18 @@ bool WindowsUSBCreator::verifyExtractionIntegrity(const QString& isoPath, const 
     return verifyCriticalFilesOnDisk(criticalFiles, destPath);
 }
 
+bool WindowsUSBCreator::isCriticalWindowsFile(const QString& path) const {
+    QString lowerPath = path.toLower();
+    return lowerPath.contains("setup.exe") || 
+           lowerPath.contains("bootmgr") ||
+           lowerPath.contains("sources/boot.wim") ||
+           lowerPath.contains("sources\\\\boot.wim") ||
+           lowerPath.contains("sources/install.wim") ||
+           lowerPath.contains("sources\\\\install.wim") ||
+           lowerPath.contains("sources/install.esd") ||
+           lowerPath.contains("sources\\\\install.esd");
+}
+
 QList<QPair<QString, qint64>> WindowsUSBCreator::parseIsoCriticalFiles(const QStringList& lines) {
     QList<QPair<QString, qint64>> criticalFiles;
     QString currentPath;
@@ -655,34 +652,27 @@ QList<QPair<QString, qint64>> WindowsUSBCreator::parseIsoCriticalFiles(const QSt
         QString trimmed = line.trimmed();
         if (trimmed.startsWith("Path = ")) {
             currentPath = trimmed.mid(7).trimmed();
-        } else if (trimmed.startsWith("Size = ")) {
+            continue;
+        }
+        if (trimmed.startsWith("Size = ")) {
             bool ok = false;
             currentSize = trimmed.mid(7).toLongLong(&ok);
-            if (!ok) {
-                currentSize = 0;
-            }
-        } else if (trimmed.startsWith("Folder = ")) {
-            isFolder = (trimmed.mid(9).trimmed() == "+");
-        } else if (trimmed.isEmpty() && !currentPath.isEmpty()) {
-            // End of entry
-            if (!isFolder) {
-                // Only verify critical Windows installation files
-                QString lowerPath = currentPath.toLower();
-                if (lowerPath.contains("setup.exe") || 
-                    lowerPath.contains("bootmgr") ||
-                    lowerPath.contains("sources/boot.wim") ||
-                    lowerPath.contains("sources\\\\boot.wim") ||
-                    lowerPath.contains("sources/install.wim") ||
-                    lowerPath.contains("sources\\\\install.wim") ||
-                    lowerPath.contains("sources/install.esd") ||
-                    lowerPath.contains("sources\\\\install.esd")) {
-                    criticalFiles.append({currentPath, currentSize});
-                }
-            }
-            currentPath.clear();
-            currentSize = 0;
-            isFolder = false;
+            if (!ok) currentSize = 0;
+            continue;
         }
+        if (trimmed.startsWith("Folder = ")) {
+            isFolder = (trimmed.mid(9).trimmed() == "+");
+            continue;
+        }
+        if (!trimmed.isEmpty() || currentPath.isEmpty()) continue;
+        
+        // End of entry — add if it's a critical file (not a folder)
+        if (!isFolder && isCriticalWindowsFile(currentPath)) {
+            criticalFiles.append({currentPath, currentSize});
+        }
+        currentPath.clear();
+        currentSize = 0;
+        isFolder = false;
     }
     
     return criticalFiles;

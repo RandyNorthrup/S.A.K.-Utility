@@ -276,12 +276,11 @@ std::pair<bool, QString> CreateRestorePointAction::createAndFormatResult(
         }
 
         for (const QString& line : create_output.split("\n")) {
-            if (line.contains("ERROR:") && !line.contains("ERROR_CODE:")) {
-                error_msg = line;
-                error_msg = error_msg.replace("ERROR:", "").trimmed();
-                section += QString("║   Error: %1").arg(error_msg.left(66).leftJustified(61)) + QString("║\n");
-                break;
-            }
+            if (!line.contains("ERROR:") || line.contains("ERROR_CODE:")) continue;
+            error_msg = line;
+            error_msg = error_msg.replace("ERROR:", "").trimmed();
+            section += QString("║   Error: %1").arg(error_msg.left(66).leftJustified(61)) + QString("║\n");
+            break;
         }
 
         section += buildTroubleshootingReport(error_code);
@@ -304,19 +303,20 @@ QString CreateRestorePointAction::verifyLatestRestorePoint()
     section += "╠══════════════════════════════════════════════════════════════════════╣\n";
     section += "║ Latest Restore Point Verification:                                  ║\n";
 
-    if (!verify_output.contains("VERIFY_FAILED") && verify_output.contains("SEQ:")) {
-        QString seq_num, desc, time;
-        for (const QString& vline : verify_output.split("\n")) {
-            if (vline.startsWith("SEQ:")) seq_num = vline.mid(4).trimmed();
-            else if (vline.startsWith("DESC:")) desc = vline.mid(5).trimmed();
-            else if (vline.startsWith("TIME:")) time = vline.mid(5).trimmed();
-        }
-        section += QString("║   Sequence Number: %1").arg(seq_num.leftJustified(49)) + QString("║\n");
-        section += QString("║   Description: %1").arg(desc.left(53).leftJustified(53)) + QString("║\n");
-        section += QString("║   Creation Time: %1").arg(time.leftJustified(47)) + QString("║\n");
-    } else {
+    if (verify_output.contains("VERIFY_FAILED") || !verify_output.contains("SEQ:")) {
         section += "║   Unable to verify restore point details                            ║\n";
+        return section;
     }
+
+    QString seq_num, desc, time;
+    for (const QString& vline : verify_output.split("\n")) {
+        if (vline.startsWith("SEQ:")) seq_num = vline.mid(4).trimmed();
+        else if (vline.startsWith("DESC:")) desc = vline.mid(5).trimmed();
+        else if (vline.startsWith("TIME:")) time = vline.mid(5).trimmed();
+    }
+    section += QString("║   Sequence Number: %1").arg(seq_num.leftJustified(49)) + QString("║\n");
+    section += QString("║   Description: %1").arg(desc.left(53).leftJustified(53)) + QString("║\n");
+    section += QString("║   Creation Time: %1").arg(time.leftJustified(47)) + QString("║\n");
 
     return section;
 }

@@ -20,6 +20,7 @@
 #include <QtConcurrent>
 #include <QFutureWatcher>
 #include <QPointer>
+#include <algorithm>
 
 namespace sak {
 
@@ -115,35 +116,31 @@ void UserProfileBackupCustomizeDataPage::populateUserList() {
     }
 }
 
+UserProfile* UserProfileBackupCustomizeDataPage::findSelectedUserByRow(int selectedRow) {
+    int currentRow = 0;
+    for (auto& user : m_users) {
+        if (!user.is_selected) continue;
+        if (currentRow == selectedRow) return &user;
+        currentRow++;
+    }
+    return nullptr;
+}
+
 void UserProfileBackupCustomizeDataPage::onCustomizeUser() {
     int selectedRow = m_userTable->currentRow();
     if (selectedRow < 0) return;
     
-    // Find the selected user
-    int userIndex = 0;
-    int currentRow = 0;
-    for (auto& user : m_users) {
-        if (!user.is_selected) {
-            userIndex++;
-            continue;
-        }
-        if (currentRow == selectedRow) {
-            // Open customization dialog
-            PerUserCustomizationDialog dialog(user, this);
-            if (dialog.exec() == QDialog::Accepted) {
-                // Update table
-                int selectedCount = 0;
-                for (const auto& folder : user.folder_selections) {
-                    if (folder.selected) selectedCount++;
-                }
-                m_userTable->item(selectedRow, 1)->setText(tr("%1 folders selected").arg(selectedCount));
-                updateSummary();
-            }
-            break;
-        }
-        currentRow++;
-        userIndex++;
-    }
+    auto* user = findSelectedUserByRow(selectedRow);
+    if (!user) return;
+    
+    PerUserCustomizationDialog dialog(*user, this);
+    if (dialog.exec() != QDialog::Accepted) return;
+    
+    int selectedCount = static_cast<int>(std::count_if(
+        user->folder_selections.begin(), user->folder_selections.end(),
+        [](const auto& f) { return f.selected; }));
+    m_userTable->item(selectedRow, 1)->setText(tr("%1 folders selected").arg(selectedCount));
+    updateSummary();
 }
 
 void UserProfileBackupCustomizeDataPage::updateSummary() {
@@ -156,10 +153,9 @@ void UserProfileBackupCustomizeDataPage::updateSummary() {
         totalUsers++;
         
         for (const auto& folder : user.folder_selections) {
-            if (folder.selected) {
-                totalFolders++;
-                totalSize += folder.size_bytes;
-            }
+            if (!folder.selected) continue;
+            totalFolders++;
+            totalSize += folder.size_bytes;
         }
     }
     
@@ -724,20 +720,42 @@ void UserProfileBackupInstalledAppsPage::cleanupPage() {
     }
 }
 
+/// @brief Check if any app in a category is checked
+static bool categoryHasCheckedApp(QTreeWidgetItem* category) {
+    for (int a = 0; a < category->childCount(); ++a) {
+        if (category->child(a)->checkState(0) == Qt::Checked) return true;
+    }
+    return false;
+}
+
+/// @brief Collect selected apps from one category into the output vector
+static void collectCategoryApps(QTreeWidgetItem* category, int& total,
+                                int& selected, QVector<InstalledAppInfo>& out) {
+    for (int a = 0; a < category->childCount(); ++a) {
+        auto* appItem = category->child(a);
+        total++;
+        if (appItem->checkState(0) != Qt::Checked) continue;
+        selected++;
+        InstalledAppInfo info;
+        info.name = appItem->text(0);
+        info.version = appItem->text(1);
+        info.publisher = appItem->text(2);
+        info.category = category->text(0);
+        info.selected = true;
+        out.append(info);
+    }
+}
+
 void UserProfileBackupInstalledAppsPage::updateNextButtonText() {
     auto* wiz = wizard();
     if (!wiz) return;
 
     bool hasSelection = false;
     for (int c = 0; c < m_appTree->topLevelItemCount(); ++c) {
-        auto* cat = m_appTree->topLevelItem(c);
-        for (int a = 0; a < cat->childCount(); ++a) {
-            if (cat->child(a)->checkState(0) == Qt::Checked) {
-                hasSelection = true;
-                break;
-            }
+        if (categoryHasCheckedApp(m_appTree->topLevelItem(c))) {
+            hasSelection = true;
+            break;
         }
-        if (hasSelection) break;
     }
 
     wiz->setButtonText(QWizard::NextButton,
@@ -903,12 +921,8 @@ void UserProfileBackupInstalledAppsPage::onItemChanged(QTreeWidgetItem* item, in
         for (int i = 0; i < item->childCount(); ++i) {
             item->child(i)->setCheckState(0, state);
         }
-    } else {
-        // Child changed — update parent's tri-state
-        auto* parent = item->parent();
-        if (parent) {
-            updateParentCheckState(parent);
-        }
+    } else if (item->parent()) {
+        updateParentCheckState(item->parent());
     }
 
     m_appTree->blockSignals(false);
@@ -919,21 +933,7 @@ void UserProfileBackupInstalledAppsPage::onItemChanged(QTreeWidgetItem* item, in
     QVector<InstalledAppInfo> selectedApps;
 
     for (int c = 0; c < m_appTree->topLevelItemCount(); ++c) {
-        auto* category = m_appTree->topLevelItem(c);
-        for (int a = 0; a < category->childCount(); ++a) {
-            auto* appItem = category->child(a);
-            total++;
-            if (appItem->checkState(0) == Qt::Checked) {
-                selected++;
-                InstalledAppInfo info;
-                info.name = appItem->text(0);
-                info.version = appItem->text(1);
-                info.publisher = appItem->text(2);
-                info.category = category->text(0);
-                info.selected = true;
-                selectedApps.append(info);
-            }
-        }
+        collectCategoryApps(m_appTree->topLevelItem(c), total, selected, selectedApps);
     }
 
     m_summaryLabel->setText(tr("%1 application(s) selected out of %2")

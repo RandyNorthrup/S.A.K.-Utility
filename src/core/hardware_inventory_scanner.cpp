@@ -388,28 +388,33 @@ void HardwareInventoryScanner::enrichStorageWithVolumeInfo(QVector<StorageDevice
 {
     const auto volumes = QStorageInfo::mountedVolumes();
     for (auto& dev : devices) {
-        for (const auto& vol : volumes) {
-            // Match by checking if the volume's device contains the disk number
-            // This is a best-effort match; exact mapping requires more APIs
-            if (vol.isValid() && vol.isReady()) {
-                const QString root = vol.rootPath();
-                if (!root.isEmpty()) {
-                    PartitionInfo part;
-                    part.drive_letter = root.left(2);        // "C:"
-                    part.label        = vol.name();
-                    part.file_system  = QString::fromUtf8(vol.fileSystemType());
-                    part.total_bytes  = static_cast<uint64_t>(vol.bytesTotal());
-                    part.free_bytes   = static_cast<uint64_t>(vol.bytesFree());
-                    part.is_boot      = vol.isRoot();
+        enrichDeviceWithVolumes(dev, volumes);
+    }
+}
 
-                    // Assign volumes to the first device that has capacity
-                    // (simplified; exact matching requires Win32_LogicalDiskToPartition)
-                    if (dev.partitions.isEmpty() ||
-                        dev.size_bytes > part.total_bytes) {
-                        dev.partitions.append(part);
-                    }
-                }
-            }
+void HardwareInventoryScanner::enrichDeviceWithVolumes(
+    StorageDeviceInfo& dev, const QList<QStorageInfo>& volumes)
+{
+    for (const auto& vol : volumes) {
+        // Match by checking if the volume's device contains the disk number
+        // This is a best-effort match; exact mapping requires more APIs
+        if (!vol.isValid() || !vol.isReady()) continue;
+
+        const QString root = vol.rootPath();
+        if (root.isEmpty()) continue;
+
+        PartitionInfo part;
+        part.drive_letter = root.left(2);        // "C:"
+        part.label        = vol.name();
+        part.file_system  = QString::fromUtf8(vol.fileSystemType());
+        part.total_bytes  = static_cast<uint64_t>(vol.bytesTotal());
+        part.free_bytes   = static_cast<uint64_t>(vol.bytesFree());
+        part.is_boot      = vol.isRoot();
+
+        // Assign volumes to the first device that has capacity
+        // (simplified; exact matching requires Win32_LogicalDiskToPartition)
+        if (dev.partitions.isEmpty() || dev.size_bytes > part.total_bytes) {
+            dev.partitions.append(part);
         }
     }
 }
@@ -420,35 +425,7 @@ QVector<GpuInfo> HardwareInventoryScanner::queryGpu()
 
 #ifdef SAK_PLATFORM_WINDOWS
     // Primary method: DXGI adapter enumeration (most accurate VRAM reporting)
-    Microsoft::WRL::ComPtr<IDXGIFactory1> factory;
-    if (SUCCEEDED(CreateDXGIFactory1(IID_PPV_ARGS(&factory)))) {
-        Microsoft::WRL::ComPtr<IDXGIAdapter1> adapter;
-        for (UINT i = 0; factory->EnumAdapters1(i, &adapter) != DXGI_ERROR_NOT_FOUND; ++i) {
-            DXGI_ADAPTER_DESC1 desc{};
-            if (SUCCEEDED(adapter->GetDesc1(&desc))) {
-                // Skip software / remote adapters
-                if (desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) {
-                    adapter.Reset();
-                    continue;
-                }
-
-                GpuInfo gpu;
-                gpu.name         = QString::fromWCharArray(desc.Description);
-                gpu.vram_bytes   = desc.DedicatedVideoMemory;
-
-                // Determine manufacturer from vendor ID
-                switch (desc.VendorId) {
-                    case 0x10DE: gpu.manufacturer = "NVIDIA"; break;
-                    case 0x1002: gpu.manufacturer = "AMD";    break;
-                    case 0x8086: gpu.manufacturer = "Intel";  break;
-                    default:     gpu.manufacturer = "Unknown"; break;
-                }
-
-                gpus.append(gpu);
-            }
-            adapter.Reset();
-        }
-    }
+    enumerateDxgiAdapters(gpus);
 #endif
 
     // Enrich with driver info from WMI
@@ -482,6 +459,41 @@ QVector<GpuInfo> HardwareInventoryScanner::queryGpu()
 
     logInfo("GPU: {} adapter(s) detected", gpus.size());
     return gpus;
+}
+
+void HardwareInventoryScanner::enumerateDxgiAdapters(QVector<GpuInfo>& gpus)
+{
+#ifdef SAK_PLATFORM_WINDOWS
+    Microsoft::WRL::ComPtr<IDXGIFactory1> factory;
+    if (!SUCCEEDED(CreateDXGIFactory1(IID_PPV_ARGS(&factory)))) {
+        return;
+    }
+
+    Microsoft::WRL::ComPtr<IDXGIAdapter1> adapter;
+    for (UINT i = 0; factory->EnumAdapters1(i, &adapter) != DXGI_ERROR_NOT_FOUND; ++i) {
+        DXGI_ADAPTER_DESC1 desc{};
+        if (!SUCCEEDED(adapter->GetDesc1(&desc)) ||
+            (desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE)) {
+            adapter.Reset();
+            continue;
+        }
+
+        GpuInfo gpu;
+        gpu.name         = QString::fromWCharArray(desc.Description);
+        gpu.vram_bytes   = desc.DedicatedVideoMemory;
+
+        // Determine manufacturer from vendor ID
+        switch (desc.VendorId) {
+            case 0x10DE: gpu.manufacturer = "NVIDIA"; break;
+            case 0x1002: gpu.manufacturer = "AMD";    break;
+            case 0x8086: gpu.manufacturer = "Intel";  break;
+            default:     gpu.manufacturer = "Unknown"; break;
+        }
+
+        gpus.append(gpu);
+        adapter.Reset();
+    }
+#endif
 }
 
 MotherboardInfo HardwareInventoryScanner::queryMotherboard()

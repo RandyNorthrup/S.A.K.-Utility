@@ -83,6 +83,11 @@ private:
     bool dispatchAssignment(const QString& destination_id, const DeploymentAssignment& assignment);
     void handleAssignmentCompletion(const QString& destination_id);
 
+    /// @brief Compute and emit aggregate progress across all destinations
+    void emitAggregateProgress();
+    /// @brief Poll health for all registered destinations
+    void pollHealthChecks();
+
     DestinationRegistry* m_registry{nullptr};
     DeploymentManager* m_deploymentManager{nullptr};
     OrchestrationServerInterface* m_server{nullptr};

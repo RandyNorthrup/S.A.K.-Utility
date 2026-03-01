@@ -162,6 +162,15 @@ void mergeChunkRange(QVector<QPair<int, int>>& ranges, int chunkId) {
     });
 }
 
+bool isChunkInRanges(int chunkId, const QVector<QPair<int, int>>& ranges) {
+    for (const auto& range : ranges) {
+        if (chunkId >= range.first && chunkId <= range.second) {
+            return true;
+        }
+    }
+    return false;
+}
+
 } // namespace
 
 NetworkTransferWorker::NetworkTransferWorker(QObject* parent)
@@ -370,6 +379,52 @@ QVector<QPair<int, int>> NetworkTransferWorker::parseResumePayload(const QByteAr
     return ranges;
 }
 
+bool NetworkTransferWorker::trySendSingleFile(QTcpSocket* socket,
+                                               const TransferFileEntry& file,
+                                               const DataOptions& options,
+                                               const QByteArray& key,
+                                               qint64& bytesSent, qint64 totalBytes,
+                                               QElapsedTimer& rateTimer, qint64& rateBytesSent) {
+    Q_ASSERT_X(socket != nullptr, "trySendSingleFile", "socket must not be null");
+    QFile source(file.absolute_path);
+    if (!source.open(QIODevice::ReadOnly)) {
+        logError("NetworkTransferWorker sender failed to open file {}", file.absolute_path.toStdString());
+        Q_EMIT errorOccurred(tr("Failed to open file %1").arg(file.absolute_path));
+        return false;
+    }
+
+    Q_EMIT fileStarted(file.file_id, file.relative_path, file.size_bytes);
+
+    if (!sendFileHeader(socket, file, options)) {
+        return false;
+    }
+
+    // Resume info
+    QVector<QPair<int, int>> resumeRanges;
+    if (options.resume_enabled) {
+        FrameHeader resumeHeader;
+        if (readHeader(socket, resumeHeader) && resumeHeader.frame_type == FrameResumeInfo) {
+            QByteArray resumePayload = readExact(socket, resumeHeader.payload_size);
+            int totalChunks = 0;
+            resumeRanges = parseResumePayload(resumePayload, totalChunks);
+        }
+    }
+
+    if (!sendFileChunks(socket, source, file, options, key,
+                       resumeRanges, bytesSent, totalBytes,
+                       rateTimer, rateBytesSent)) {
+        return false;
+    }
+
+    if (!sendFrame(socket, FrameFileEnd, 0, 0, {}, 0, 0)) {
+        logError("NetworkTransferWorker sender failed to finalize file {}", file.relative_path.toStdString());
+        Q_EMIT errorOccurred(tr("Failed to finalize file"));
+        return false;
+    }
+
+    return awaitFileAck(socket, file);
+}
+
 bool NetworkTransferWorker::handleSender(QTcpSocket* socket,
                                          const QVector<TransferFileEntry>& files,
                                          const DataOptions& options) {
@@ -408,50 +463,11 @@ bool NetworkTransferWorker::handleSender(QTcpSocket* socket,
             return false;
         }
         logInfo("NetworkTransferWorker sender starting file {}", file.relative_path.toStdString());
-        int attempts = 0;
+
         bool sent = false;
-        while (attempts < 3 && !sent) {
-            attempts++;
-
-            QFile source(file.absolute_path);
-            if (!source.open(QIODevice::ReadOnly)) {
-                logError("NetworkTransferWorker sender failed to open file {}", file.absolute_path.toStdString());
-                Q_EMIT errorOccurred(tr("Failed to open file %1").arg(file.absolute_path));
-                return false;
-            }
-
-            Q_EMIT fileStarted(file.file_id, file.relative_path, file.size_bytes);
-
-            if (!sendFileHeader(socket, file, options)) {
-                return false;
-            }
-
-            // Resume info
-            QVector<QPair<int, int>> resumeRanges;
-            if (options.resume_enabled) {
-                FrameHeader resumeHeader;
-                if (readHeader(socket, resumeHeader) && resumeHeader.frame_type == FrameResumeInfo) {
-                    QByteArray resumePayload = readExact(socket, resumeHeader.payload_size);
-                    int totalChunks = 0;
-                    resumeRanges = parseResumePayload(resumePayload, totalChunks);
-                }
-            }
-
-            if (!sendFileChunks(socket, source, file, options, key,
-                               resumeRanges, bytesSent, totalBytes,
-                               rateTimer, rateBytesSent)) {
-                return false;
-            }
-
-            if (!sendFrame(socket, FrameFileEnd, 0, 0, {}, 0, 0)) {
-                logError("NetworkTransferWorker sender failed to finalize file {}", file.relative_path.toStdString());
-                Q_EMIT errorOccurred(tr("Failed to finalize file"));
-                return false;
-            }
-
-            if (awaitFileAck(socket, file)) {
-                sent = true;
-            }
+        for (int attempt = 0; attempt < 3 && !sent; ++attempt) {
+            sent = trySendSingleFile(socket, file, options, key,
+                                     bytesSent, totalBytes, rateTimer, rateBytesSent);
         }
 
         if (!sent) {
@@ -497,14 +513,6 @@ bool NetworkTransferWorker::sendFileChunks(QTcpSocket* socket, QFile& source,
                                            qint64& bytesSent, qint64 totalBytes,
                                            QElapsedTimer& rateTimer, qint64& rateBytesSent) {
     Q_ASSERT_X(socket != nullptr, "sendFileChunks", "socket must not be null");
-    auto isChunkSkipped = [&](int chunkId) {
-        for (const auto& range : resumeRanges) {
-            if (chunkId >= range.first && chunkId <= range.second) {
-                return true;
-            }
-        }
-        return false;
-    };
 
     int chunkId = 0;
     while (!source.atEnd()) {
@@ -517,7 +525,7 @@ bool NetworkTransferWorker::sendFileChunks(QTcpSocket* socket, QFile& source,
             break;
         }
 
-        if (options.resume_enabled && isChunkSkipped(chunkId)) {
+        if (options.resume_enabled && isChunkInRanges(chunkId, resumeRanges)) {
             bytesSent += chunk.size();
             Q_EMIT fileProgress(file.file_id, bytesSent, file.size_bytes);
             Q_EMIT overallProgress(bytesSent, totalBytes);
@@ -533,15 +541,8 @@ bool NetworkTransferWorker::sendFileChunks(QTcpSocket* socket, QFile& source,
             flags |= kFlagCompressed;
         }
 
-        if (options.encryption_enabled) {
-            auto encrypted = TransferSecurityManager::encryptAesGcm(payload, key, options.transfer_id.toUtf8());
-            if (!encrypted) {
-                logError("NetworkTransferWorker sender encryption failed for file {}", file.relative_path.toStdString());
-                Q_EMIT errorOccurred(tr("Encryption failed"));
-                return false;
-            }
-            payload = packEncrypted(*encrypted);
-            flags |= kFlagEncrypted;
+        if (!encryptPayloadIfNeeded(payload, flags, key, options, file.relative_path)) {
+            return false;
         }
 
         const bool isLast = source.atEnd();
@@ -560,24 +561,48 @@ bool NetworkTransferWorker::sendFileChunks(QTcpSocket* socket, QFile& source,
         Q_EMIT fileProgress(file.file_id, bytesSent, file.size_bytes);
         Q_EMIT overallProgress(bytesSent, totalBytes);
 
-        const int maxBandwidthKbps = m_dynamicMaxBandwidthKbps.load(std::memory_order_relaxed);
-        if (maxBandwidthKbps > 0) {
-            rateBytesSent += chunk.size();
-            const qint64 expectedMs = (rateBytesSent * 1000) / (static_cast<qint64>(maxBandwidthKbps) * sak::kBytesPerKB);
-            const qint64 elapsedMs = rateTimer.elapsed();
-            if (expectedMs > elapsedMs) {
-                QThread::msleep(static_cast<unsigned long>(expectedMs - elapsedMs));
-            }
-            if (elapsedMs >= 1000) {
-                rateTimer.restart();
-                rateBytesSent = 0;
-            }
-        }
+        throttleBandwidth(chunk.size(), rateTimer, rateBytesSent);
 
         chunkId++;
     }
 
     return true;
+}
+
+bool NetworkTransferWorker::encryptPayloadIfNeeded(QByteArray& payload, quint16& flags,
+                                                    const QByteArray& key,
+                                                    const DataOptions& options,
+                                                    const QString& relativePath) {
+    if (!options.encryption_enabled) {
+        return true;
+    }
+    auto encrypted = TransferSecurityManager::encryptAesGcm(payload, key, options.transfer_id.toUtf8());
+    if (!encrypted) {
+        logError("NetworkTransferWorker sender encryption failed for file {}", relativePath.toStdString());
+        Q_EMIT errorOccurred(tr("Encryption failed"));
+        return false;
+    }
+    payload = packEncrypted(*encrypted);
+    flags |= kFlagEncrypted;
+    return true;
+}
+
+void NetworkTransferWorker::throttleBandwidth(qint64 chunkSize, QElapsedTimer& rateTimer,
+                                              qint64& rateBytesSent) {
+    const int maxBandwidthKbps = m_dynamicMaxBandwidthKbps.load(std::memory_order_relaxed);
+    if (maxBandwidthKbps <= 0) {
+        return;
+    }
+    rateBytesSent += chunkSize;
+    const qint64 expectedMs = (rateBytesSent * 1000) / (static_cast<qint64>(maxBandwidthKbps) * sak::kBytesPerKB);
+    const qint64 elapsedMs = rateTimer.elapsed();
+    if (expectedMs > elapsedMs) {
+        QThread::msleep(static_cast<unsigned long>(expectedMs - elapsedMs));
+    }
+    if (elapsedMs >= 1000) {
+        rateTimer.restart();
+        rateBytesSent = 0;
+    }
 }
 
 bool NetworkTransferWorker::awaitFileAck(QTcpSocket* socket, const TransferFileEntry& file) {
@@ -746,13 +771,11 @@ bool NetworkTransferWorker::processFileHeader(QTcpSocket* socket,
     }
 
     QDir destDir = QFileInfo(destinationPath).absoluteDir();
-    if (!destDir.exists()) {
-        if (!destDir.mkpath(".")) {
-            logError("NetworkTransferWorker receiver failed to create destination directory {}",
-                      destDir.path().toStdString());
-            Q_EMIT errorOccurred(tr("Failed to create destination directory"));
-            return false;
-        }
+    if (!destDir.exists() && !destDir.mkpath(".")) {
+        logError("NetworkTransferWorker receiver failed to create destination directory {}",
+                  destDir.path().toStdString());
+        Q_EMIT errorOccurred(tr("Failed to create destination directory"));
+        return false;
     }
 
     QString tempPath = destinationPath + ".partial";
@@ -764,35 +787,43 @@ bool NetworkTransferWorker::processFileHeader(QTcpSocket* socket,
     }
 
     if (options.resume_enabled) {
-        state.resume_path = destinationPath + ".resume.json";
-        QString resumeFileId;
-        int resumeTotalChunks = state.total_chunks;
-        state.current_ranges = loadResumeInfo(state.resume_path, resumeFileId, resumeTotalChunks);
-        if (!resumeFileId.isEmpty() && resumeFileId != state.current_file_id) {
-            state.current_ranges.clear();
-            QFile::remove(state.resume_path);
-        } else if (resumeTotalChunks > 0 && resumeTotalChunks != state.total_chunks) {
-            state.current_ranges.clear();
-            QFile::remove(state.resume_path);
-        }
-        if (state.current_ranges.isEmpty()) {
-            qint64 existing = state.current_file->size();
-            int completedChunks = static_cast<int>(existing / state.chunk_size);
-            if (completedChunks > 0) {
-                state.current_ranges.append({0, completedChunks - 1});
-            }
-        }
-
-        QByteArray resumePayload = buildResumePayload(state.current_file_id, state.current_ranges, state.total_chunks);
-        if (!sendFrame(socket, FrameResumeInfo, 0, 0, resumePayload, resumePayload.size(), computeCrc32(resumePayload))) {
-            logWarning("NetworkTransferWorker failed to send resume info frame");
-        }
+        initReceiverResume(socket, options, state);
     }
 
     state.bytes_received = 0;
     Q_EMIT fileStarted(state.current_file_id, state.current_relative_path, state.current_size);
     logInfo("NetworkTransferWorker receiver starting file {}", state.current_relative_path.toStdString());
     return true;
+}
+
+void NetworkTransferWorker::initReceiverResume(QTcpSocket* socket, const DataOptions& options,
+                                               ReceiverState& state) {
+    const QString destinationPath = QDir(options.destination_base).filePath(state.current_relative_path);
+    state.resume_path = destinationPath + ".resume.json";
+    QString resumeFileId;
+    int resumeTotalChunks = state.total_chunks;
+    state.current_ranges = loadResumeInfo(state.resume_path, resumeFileId, resumeTotalChunks);
+
+    if (!resumeFileId.isEmpty() && resumeFileId != state.current_file_id) {
+        state.current_ranges.clear();
+        QFile::remove(state.resume_path);
+    } else if (resumeTotalChunks > 0 && resumeTotalChunks != state.total_chunks) {
+        state.current_ranges.clear();
+        QFile::remove(state.resume_path);
+    }
+
+    if (state.current_ranges.isEmpty()) {
+        const qint64 existing = state.current_file->size();
+        const int completedChunks = static_cast<int>(existing / state.chunk_size);
+        if (completedChunks > 0) {
+            state.current_ranges.append({0, completedChunks - 1});
+        }
+    }
+
+    QByteArray resumePayload = buildResumePayload(state.current_file_id, state.current_ranges, state.total_chunks);
+    if (!sendFrame(socket, FrameResumeInfo, 0, 0, resumePayload, resumePayload.size(), computeCrc32(resumePayload))) {
+        logWarning("NetworkTransferWorker failed to send resume info frame");
+    }
 }
 
 bool NetworkTransferWorker::processDataChunk(QTcpSocket* /*socket*/,
@@ -868,9 +899,7 @@ bool NetworkTransferWorker::processFileEnd(QTcpSocket* socket,
             QFile::remove(tempPath);
             // Remove stale resume metadata so retries start from scratch
             // instead of skipping chunks that no longer exist on disk.
-            if (!state.resume_path.isEmpty()) {
-                QFile::remove(state.resume_path);
-            }
+            QFile::remove(state.resume_path);
             state.current_ranges.clear();
             return false;
         }

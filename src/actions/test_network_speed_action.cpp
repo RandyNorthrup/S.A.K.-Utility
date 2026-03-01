@@ -50,15 +50,12 @@ void TestNetworkSpeedAction::checkConnectivity() {
     for (const QString& line : lines) {
         if (line.contains("PING_SUCCESS:")) {
             m_has_internet = line.contains("True", Qt::CaseInsensitive);
+            continue;
         }
-        if (line.contains("PING_RTT:")) {
-            QString rtt = line.split(':').value(1).trimmed();
-            if (!rtt.isEmpty()) {
-                bool ok = false;
-                int val = rtt.toInt(&ok);
-                if (ok) m_latency = val;
-            }
-        }
+        if (!line.contains("PING_RTT:")) continue;
+        bool ok = false;
+        int val = line.split(':').value(1).trimmed().toInt(&ok);
+        if (ok) m_latency = val;
     }
 }
 
@@ -121,16 +118,15 @@ void TestNetworkSpeedAction::parseDownloadSpeedOutput(const QString& output) {
             bool ok = false;
             double speed = line.split(':').value(1).trimmed().toDouble(&ok);
             if (ok) speeds.append(speed);
+            continue;
         }
         if (line.contains("AVG_DOWNLOAD_SPEED:")) {
-            bool ok = false;
-            double val = line.split(':').value(1).trimmed().toDouble(&ok);
-            if (ok) m_download_speed = val;
+            m_download_speed = line.split(':').value(1).trimmed().toDouble();
+            continue;
         }
         if (line.contains("MAX_DOWNLOAD_SPEED:")) {
-            bool ok = false;
-            double val = line.split(':').value(1).trimmed().toDouble(&ok);
-            if (ok) m_max_download_speed = val;
+            m_max_download_speed = line.split(':').value(1).trimmed().toDouble();
+            continue;
         }
         if (line.contains("TESTS_SUCCESSFUL:")) {
             bool ok = false;
@@ -178,9 +174,8 @@ void TestNetworkSpeedAction::testUploadSpeed() {
     
     for (const QString& line : lines) {
         if (line.contains("UPLOAD_SPEED:")) {
-            bool ok = false;
-            double val = line.split(':').value(1).trimmed().toDouble(&ok);
-            if (ok) m_upload_speed = val;
+            m_upload_speed = line.split(':').value(1).trimmed().toDouble();
+            continue;
         }
         if (line.contains("UPLOAD_SUCCESS:")) {
             m_upload_test_successful = line.contains("True", Qt::CaseInsensitive);
@@ -231,29 +226,23 @@ void TestNetworkSpeedAction::testLatencyAndJitter() {
     
     for (const QString& line : lines) {
         if (line.contains("AVG_LATENCY:")) {
-            bool ok = false;
-            int val = line.split(':').value(1).trimmed().toInt(&ok);
-            if (ok) m_latency = val;
+            m_latency = line.split(':').value(1).trimmed().toInt();
+            continue;
         }
         if (line.contains("MIN_LATENCY:")) {
-            bool ok = false;
-            int val = line.split(':').value(1).trimmed().toInt(&ok);
-            if (ok) m_min_latency = val;
+            m_min_latency = line.split(':').value(1).trimmed().toInt();
+            continue;
         }
         if (line.contains("MAX_LATENCY:")) {
-            bool ok = false;
-            int val = line.split(':').value(1).trimmed().toInt(&ok);
-            if (ok) m_max_latency = val;
+            m_max_latency = line.split(':').value(1).trimmed().toInt();
+            continue;
         }
         if (line.contains("JITTER:")) {
-            bool ok = false;
-            double val = line.split(':').value(1).trimmed().toDouble(&ok);
-            if (ok) m_jitter = val;
+            m_jitter = line.split(':').value(1).trimmed().toDouble();
+            continue;
         }
         if (line.contains("PACKET_LOSS:")) {
-            bool ok = false;
-            double val = line.split(':').value(1).trimmed().toDouble(&ok);
-            if (ok) m_packet_loss = val;
+            m_packet_loss = line.split(':').value(1).trimmed().toDouble();
         }
     }
 }

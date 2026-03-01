@@ -286,30 +286,31 @@ void UupIsoBuilder::prepareWorkspace()
 void UupIsoBuilder::checkResumedDownloads()
 {
     QDir workDir(m_workDir);
-    // Check if this is a resumed build
     QString downloadDir = workDir.filePath("UUPs");
     QDir dlDir(downloadDir);
+
+    if (!dlDir.exists()) return;
+
     int existingFiles = 0;
     qint64 existingBytes = 0;
-    if (dlDir.exists()) {
-        QDirIterator existingIt(dlDir.absolutePath(), QDir::Files);
-        while (existingIt.hasNext()) {
-            existingIt.next();
-            if (!existingIt.fileName().endsWith(".aria2")) {
-                existingFiles++;
-                existingBytes += existingIt.fileInfo().size();
-            }
+    QDirIterator existingIt(dlDir.absolutePath(), QDir::Files);
+    while (existingIt.hasNext()) {
+        existingIt.next();
+        if (existingIt.fileName().endsWith(".aria2")) {
+            continue;
         }
+        existingFiles++;
+        existingBytes += existingIt.fileInfo().size();
     }
 
-    if (existingFiles > 0) {
-        double existingGB = existingBytes / sak::kBytesPerGBf;
-        sak::logInfo("Resuming download — found " + std::to_string(existingFiles) +
-                     " existing files (" + std::to_string(static_cast<int>(existingGB * 100) / 100) +
-                     " GB) in work directory");
-        Q_EMIT progressUpdated(1, QString("Resuming download \u2014 %1 files already present (%2 GB)")
-            .arg(existingFiles).arg(existingGB, 0, 'f', 2));
-    }
+    if (existingFiles <= 0) return;
+
+    double existingGB = existingBytes / sak::kBytesPerGBf;
+    sak::logInfo("Resuming download — found " + std::to_string(existingFiles) +
+                 " existing files (" + std::to_string(static_cast<int>(existingGB * 100) / 100) +
+                 " GB) in work directory");
+    Q_EMIT progressUpdated(1, QString("Resuming download \u2014 %1 files already present (%2 GB)")
+        .arg(existingFiles).arg(existingGB, 0, 'f', 2));
 }
 
 void UupIsoBuilder::downloadPackages()
@@ -630,10 +631,11 @@ void UupIsoBuilder::parseAria2Progress(const QString& line)
         QRegularExpressionMatch hrMatch = hrSpeedPattern.match(line);
         if (hrMatch.hasMatch()) {
             double val = hrMatch.captured(1).toDouble();
-            QString unit = hrMatch.captured(2);
-            if (unit == "KiB") val /= sak::kBytesPerKBf;
-            else if (unit == "GiB") val *= sak::kBytesPerKBf;
-            m_currentSpeedMBps = val;
+            const QString unit = hrMatch.captured(2);
+            const double multiplier = (unit == "KiB") ? (1.0 / sak::kBytesPerKBf)
+                                    : (unit == "GiB") ? sak::kBytesPerKBf
+                                    : 1.0;  // MiB
+            m_currentSpeedMBps = val * multiplier;
             Q_EMIT speedUpdated(m_currentSpeedMBps);
         }
     }
@@ -754,23 +756,22 @@ void UupIsoBuilder::onAria2Finished(int exitCode, QProcess::ExitStatus exitStatu
         return;
     }
 
-    if (exitCode != 0) {
-        // aria2c exit code 7 = "unfinished downloads" which may be recoverable
-        if (exitCode == 7) {
-            sak::logWarning("aria2c: some downloads may be incomplete (exit code 7)");
-        } else {
-            m_phase = Phase::Failed;
-            QString errorDetail;
-            if (m_aria2Process) {
-                errorDetail = QString::fromUtf8(
-                    m_aria2Process->readAllStandardOutput()).right(500);
-            }
-            Q_EMIT buildError(
-                QString("Download failed (aria2c exit code %1). %2")
-                    .arg(exitCode)
-                    .arg(errorDetail));
-            return;
+    if (exitCode != 0 && exitCode != 7) {
+        m_phase = Phase::Failed;
+        QString errorDetail;
+        if (m_aria2Process) {
+            errorDetail = QString::fromUtf8(
+                m_aria2Process->readAllStandardOutput()).right(500);
         }
+        Q_EMIT buildError(
+            QString("Download failed (aria2c exit code %1). %2")
+                .arg(exitCode)
+                .arg(errorDetail));
+        return;
+    }
+
+    if (exitCode == 7) {
+        sak::logWarning("aria2c: some downloads may be incomplete (exit code 7)");
     }
 
     // Verify at least some files were downloaded
@@ -1059,41 +1060,43 @@ bool UupIsoBuilder::parseConverterStagePercent(
 void UupIsoBuilder::parseConverterFallbackPatterns(
     const QString& line, bool& hasPercent, QString& detail)
 {
-    if (line.contains("Exporting image", Qt::CaseInsensitive) ||
-        line.contains("Applying image", Qt::CaseInsensitive)) {
+    const bool isImageLine = line.contains("Exporting image", Qt::CaseInsensitive) ||
+                             line.contains("Applying image", Qt::CaseInsensitive);
+
+    if (isImageLine) {
         static const QRegularExpression imagePattern(
             R"(image\s+(\d+)\s+of\s+(\d+))", QRegularExpression::CaseInsensitiveOption);
         QRegularExpressionMatch imgMatch = imagePattern.match(line);
-        if (imgMatch.hasMatch()) {
-            detail = QString("Processing image %1 of %2")
-                         .arg(imgMatch.captured(1), imgMatch.captured(2));
-            int current = imgMatch.captured(1).toInt();
-            int total = imgMatch.captured(2).toInt();
-            if (total > 0) {
-                int mapped = 20 + (current * 30 / total); // 20..50
-                if (mapped > m_conversionPercent) {
-                    m_conversionPercent = mapped;
-                }
-                hasPercent = true;
-            }
-        } else {
+        if (!imgMatch.hasMatch()) {
             detail = "Processing Windows images...";
-            if (m_conversionPercent < 20) {
-                m_conversionPercent = 20;
-            }
+            m_conversionPercent = (std::max)(m_conversionPercent, 20);
+            return;
         }
-    } else if (line.contains("[ReadingMetadata]", Qt::CaseInsensitive)) {
+
+        detail = QString("Processing image %1 of %2")
+                     .arg(imgMatch.captured(1), imgMatch.captured(2));
+        const int current = imgMatch.captured(1).toInt();
+        const int total = imgMatch.captured(2).toInt();
+        if (total <= 0) return;
+
+        m_conversionPercent = (std::max)(m_conversionPercent, 20 + (current * 30 / total));
+        hasPercent = true;
+        return;
+    }
+
+    if (line.contains("[ReadingMetadata]", Qt::CaseInsensitive)) {
         detail = "Reading build metadata...";
-        if (m_conversionPercent < 5) {
-            m_conversionPercent = 5;
-        }
-    } else if (line.contains("[ApplyingImage]", Qt::CaseInsensitive)) {
+        m_conversionPercent = (std::max)(m_conversionPercent, 5);
+        return;
+    }
+
+    if (line.contains("[ApplyingImage]", Qt::CaseInsensitive)) {
         detail = "Applying Windows image...";
-        if (m_conversionPercent < 45) {
-            m_conversionPercent = 45;
-        }
-    } else if (line.contains("Done", Qt::CaseInsensitive) &&
-               line.length() < 30) {
+        m_conversionPercent = (std::max)(m_conversionPercent, 45);
+        return;
+    }
+
+    if (line.contains("Done", Qt::CaseInsensitive) && line.length() < 30) {
         detail = "Conversion complete";
         m_conversionPercent = 100;
     }

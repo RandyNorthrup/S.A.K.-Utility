@@ -11,6 +11,24 @@
 #include <algorithm>
 #include <cmath>
 
+namespace {
+
+/// @brief Find a matching character in s2 within match_distance of position i in s1.
+/// @return Index in s2 if found, -1 otherwise.
+int findJaroMatch(const QString& s1, const QString& s2, int i, int match_distance,
+                  std::vector<bool>& s2_matches) {
+    const int start = std::max(0, i - match_distance);
+    const int end = std::min(i + match_distance + 1, static_cast<int>(s2.length()));
+    for (int j = start; j < end; ++j) {
+        if (s2_matches[j] || s1[i] != s2[j]) continue;
+        s2_matches[j] = true;
+        return j;
+    }
+    return -1;
+}
+
+} // namespace
+
 namespace sak {
 
 PackageMatcher::PackageMatcher()
@@ -87,6 +105,25 @@ void PackageMatcher::initializeCommonMappings() {
     m_exact_mappings["Steam"] = "steam";
 }
 
+std::optional<PackageMatcher::MatchResult> PackageMatcher::resolveExactMatch(
+    const QString& base_name,
+    ChocolateyManager* choco_mgr,
+    const MatchConfig& config)
+{
+    auto exact = exactMatch(base_name);
+    if (!exact.has_value() || exact->confidence < config.min_confidence) {
+        return std::nullopt;
+    }
+    if (config.verify_availability && choco_mgr) {
+        exact->available = choco_mgr->isPackageAvailable(exact->choco_package);
+    }
+    if (config.verify_availability && !exact->available) {
+        return std::nullopt;
+    }
+    m_exact_match_count++;
+    return exact;
+}
+
 std::optional<PackageMatcher::MatchResult> PackageMatcher::findMatch(
     const AppScanner::AppInfo& app,
     ChocolateyManager* choco_mgr,
@@ -97,16 +134,9 @@ std::optional<PackageMatcher::MatchResult> PackageMatcher::findMatch(
     
     // Strategy 1: Exact mapping
     if (config.use_exact_mappings) {
-        auto exact = exactMatch(base_name);
-        if (exact.has_value() && exact->confidence >= config.min_confidence) {
-            // Verify availability if requested
-            if (config.verify_availability && choco_mgr) {
-                exact->available = choco_mgr->isPackageAvailable(exact->choco_package);
-            }
-            if (!config.verify_availability || exact->available) {
-                m_exact_match_count++;
-                return exact;
-            }
+        auto exact = resolveExactMatch(base_name, choco_mgr, config);
+        if (exact.has_value()) {
+            return exact;
         }
     }
     
@@ -167,35 +197,39 @@ std::vector<PackageMatcher::MatchResult> PackageMatcher::findMatchesParallel(
     auto fuzzy_results = QtConcurrent::blockingMapped<std::vector<std::pair<int, std::optional<MatchResult>>>>(
         &pool,
         fuzzy_candidates,
-        [this, choco_mgr, &config](const std::pair<int, AppScanner::AppInfo>& item) -> std::pair<int, std::optional<MatchResult>> {
-            const auto& [idx, app] = item;
-            QString base_name = extractBaseAppName(app.name);
-            
-            // Try fuzzy matching first
-            if (config.use_fuzzy_matching && choco_mgr) {
-                auto fuzzy = fuzzyMatch(base_name, choco_mgr);
-                if (fuzzy.has_value() && fuzzy->confidence >= config.min_confidence) {
-                    QMutexLocker locker(&m_stats_mutex);
-                    m_fuzzy_match_count++;
-                    return {idx, fuzzy};
-                }
-            }
-            
-            // Fall back to search
-            if (config.use_choco_search && choco_mgr) {
-                auto search = searchMatch(base_name, choco_mgr, config.max_search_results);
-                if (search.has_value() && search->confidence >= config.min_confidence) {
-                    QMutexLocker locker(&m_stats_mutex);
-                    m_search_match_count++;
-                    return {idx, search};
-                }
-            }
-            
-            return {idx, std::nullopt};
+        [this, choco_mgr, &config](const std::pair<int, AppScanner::AppInfo>& item) {
+            return matchSingleApp(item.first, item.second, choco_mgr, config);
         }
     );
     
     return mergeMatchResults(apps.size(), exact_results, fuzzy_results);
+}
+
+std::pair<int, std::optional<PackageMatcher::MatchResult>> PackageMatcher::matchSingleApp(
+    int idx, const AppScanner::AppInfo& app,
+    ChocolateyManager* choco_mgr, const MatchConfig& config)
+{
+    QString base_name = extractBaseAppName(app.name);
+    
+    if (config.use_fuzzy_matching && choco_mgr) {
+        auto fuzzy = fuzzyMatch(base_name, choco_mgr);
+        if (fuzzy.has_value() && fuzzy->confidence >= config.min_confidence) {
+            QMutexLocker locker(&m_stats_mutex);
+            m_fuzzy_match_count++;
+            return {idx, fuzzy};
+        }
+    }
+    
+    if (config.use_choco_search && choco_mgr) {
+        auto search = searchMatch(base_name, choco_mgr, config.max_search_results);
+        if (search.has_value() && search->confidence >= config.min_confidence) {
+            QMutexLocker locker(&m_stats_mutex);
+            m_search_match_count++;
+            return {idx, search};
+        }
+    }
+    
+    return {idx, std::nullopt};
 }
 
 void PackageMatcher::collectExactMatches(
@@ -283,6 +317,32 @@ std::optional<PackageMatcher::MatchResult> PackageMatcher::exactMatch(const QStr
     return std::nullopt;
 }
 
+QString PackageMatcher::fetchSearchOutput(const QString& keyword, ChocolateyManager* choco_mgr) {
+    QString cached = getCachedSearch(keyword);
+    if (!cached.isEmpty()) {
+        return cached;
+    }
+    auto result = choco_mgr->searchPackage(keyword, 10);
+    if (!result.success) {
+        return {};
+    }
+    cacheSearch(keyword, result.output);
+    return result.output;
+}
+
+void PackageMatcher::updateBestFuzzyMatch(const QString& normalized,
+                                           const std::vector<ChocolateyManager::PackageInfo>& packages,
+                                           double& best_similarity, QString& best_package,
+                                           QString& best_matched_name) const {
+    for (const auto& pkg : packages) {
+        const double similarity = calculateSimilarity(normalized, pkg.package_id);
+        if (similarity <= best_similarity) continue;
+        best_similarity = similarity;
+        best_package = pkg.package_id;
+        best_matched_name = pkg.title;
+    }
+}
+
 std::optional<PackageMatcher::MatchResult> PackageMatcher::fuzzyMatch(
     const QString& app_name,
     ChocolateyManager* choco_mgr)
@@ -290,42 +350,21 @@ std::optional<PackageMatcher::MatchResult> PackageMatcher::fuzzyMatch(
     QString normalized = normalizeAppName(app_name);
     QStringList keywords = extractKeywords(app_name);
     
-    // Search for each keyword
     double best_similarity = 0.0;
     QString best_package;
     QString best_matched_name;
     
     for (const QString& keyword : keywords) {
-        if (keyword.length() < 3) continue;  // Skip short keywords
+        if (keyword.length() < 3) continue;
         
-        // Check cache first
-        QString cached = getCachedSearch(keyword);
-        QString search_output;
-        
-        if (!cached.isEmpty()) {
-            search_output = cached;
-        } else {
-            // Search Chocolatey
-            auto result = choco_mgr->searchPackage(keyword, 10);
-            if (!result.success) continue;
-            
-            search_output = result.output;
-            cacheSearch(keyword, search_output);  // Cache for future use
-        }
+        const QString search_output = fetchSearchOutput(keyword, choco_mgr);
+        if (search_output.isEmpty()) continue;
         
         auto packages = choco_mgr->parseSearchResults(search_output);
-        
-        for (const auto& pkg : packages) {
-            double similarity = calculateSimilarity(normalized, pkg.package_id);
-            if (similarity > best_similarity) {
-                best_similarity = similarity;
-                best_package = pkg.package_id;
-                best_matched_name = pkg.title;
-            }
-        }
+        updateBestFuzzyMatch(normalized, packages, best_similarity, best_package, best_matched_name);
     }
     
-    if (best_similarity >= 0.6) {  // Minimum threshold for fuzzy match
+    if (best_similarity >= 0.6) {
         return MatchResult{
             best_package,
             best_matched_name,
@@ -519,16 +558,10 @@ double PackageMatcher::jaroWinklerSimilarity(const QString& s1, const QString& s
     
     // Find matches
     for (int i = 0; i < len1; ++i) {
-        int start = std::max(0, i - match_distance);
-        int end = std::min(i + match_distance + 1, len2);
-        
-        for (int j = start; j < end; ++j) {
-            if (s2_matches[j] || s1[i] != s2[j]) continue;
-            s1_matches[i] = true;
-            s2_matches[j] = true;
-            ++matches;
-            break;
-        }
+        int j = findJaroMatch(s1, s2, i, match_distance, s2_matches);
+        if (j < 0) continue;
+        s1_matches[i] = true;
+        ++matches;
     }
     
     if (matches == 0) return 0.0;

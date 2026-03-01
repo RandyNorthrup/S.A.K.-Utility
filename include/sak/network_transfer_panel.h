@@ -9,6 +9,7 @@
 #include <QSet>
 #include <QQueue>
 #include <memory>
+#include <filesystem>
 
 #include "sak/user_profile_types.h"
 #include "sak/network_transfer_types.h"
@@ -33,6 +34,8 @@ class QFormLayout;
 class QGridLayout;
 class QGroupBox;
 class QVBoxLayout;
+class QDragEnterEvent;
+class QDropEvent;
 class QMimeData;
 
 namespace sak {
@@ -44,6 +47,9 @@ class ParallelTransferManager;
 class MappingEngine;
 class DetachableLogWindow;
 class LogToggleSwitch;
+class SmartFileFilter;
+class PermissionManager;
+class file_hasher;
 
 /// @brief UI panel for peer-to-peer network data transfers
 class NetworkTransferPanel : public QWidget {
@@ -204,6 +210,15 @@ private:
     void buildManifest();
     /** @brief Enumerate files to transfer for all selected users */
     QVector<TransferFileEntry> buildFileList();
+    /** @brief Process a single scanned file and append to transfer file list */
+    void processScannedFile(QVector<TransferFileEntry>& files,
+                           const std::filesystem::path& fsPath,
+                           const QString& username,
+                           const QString& profilePath,
+                           SmartFileFilter& smartFilter,
+                           PermissionManager& permissionManager,
+                           file_hasher& hasher,
+                           PermissionMode permMode);
     /** @brief Collect files from all selected folders for a single user */
     void collectUserFiles(QVector<TransferFileEntry>& files, const UserProfile& user);
     /** @brief Enumerate files for a specific set of user profiles */
@@ -245,6 +260,10 @@ private:
     void updatePauseResumeButton();
     /** @brief Event filter for drag-and-drop user-to-destination mapping */
     bool eventFilter(QObject* obj, QEvent* event) override;
+    /// @brief Handle drag-enter events on the destination table
+    bool handleDragEnterEvent(QDragEnterEvent* event);
+    /// @brief Handle drop events on the destination table
+    bool handleDropEvent(QDropEvent* event);
     /** @brief Insert or update a custom user-to-destination mapping rule */
     void upsertCustomRule(const QString& sourceUser, const QString& destinationId);
     /** @brief Extract the destination ID from a table row */

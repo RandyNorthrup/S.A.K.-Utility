@@ -681,21 +681,23 @@ QStringList ImageFlasherPanel::buildDriveDetailsList(bool& hasSystemDrive) const
     QStringList driveDetails;
     hasSystemDrive = false;
     for (const auto& drivePath : m_selectedDrives) {
-        QString label = drivePath;
-        // Find the display text from the list widget
-        for (int i = 0; i < m_driveListWidget->count(); ++i) {
-            auto* item = m_driveListWidget->item(i);
-            if (item->data(Qt::UserRole).toString() == drivePath) {
-                label = item->text();
-                break;
-            }
-        }
-        driveDetails << QString("  • %1").arg(label);
+        QString label = findDriveDisplayText(drivePath);
+        driveDetails << QString("  \u2022 %1").arg(label);
         if (isSystemDrive(drivePath)) {
             hasSystemDrive = true;
         }
     }
     return driveDetails;
+}
+
+QString ImageFlasherPanel::findDriveDisplayText(const QString& devicePath) const {
+    for (int i = 0; i < m_driveListWidget->count(); ++i) {
+        auto* item = m_driveListWidget->item(i);
+        if (item->data(Qt::UserRole).toString() == devicePath) {
+            return item->text();
+        }
+    }
+    return devicePath;
 }
 
 QString ImageFlasherPanel::buildFlashConfirmationMessage(const QStringList& driveDetails, bool isWindowsISO) const {
@@ -744,27 +746,28 @@ void ImageFlasherPanel::showConfirmationDialog() {
     auto reply = QMessageBox::warning(this, "Confirm Flash — Data Loss Warning", message,
         QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
     
-    if (reply == QMessageBox::Yes) {
-        // Disable UI immediately upon confirmation
-        m_isFlashing = true;
-        m_flashButton->setEnabled(false);
-        m_flashButton->setVisible(false);
-        updateNavigationButtons(); // Update all navigation state
-        
-        // Switch to progress page
-        m_stackedWidget->setCurrentWidget(m_flashProgressPage);
-        
-        if (isWindowsISO) {
-            // Use Windows USB Creator for proper NTFS extraction
-            createWindowsUSB();
-        } else {
-            // Use raw disk imaging for other ISOs
-            if (!m_flashCoordinator->startFlash(m_selectedImagePath, m_selectedDrives)) {
-                m_isFlashing = false;
-                onFlashError("Failed to start flash operation - flash coordinator returned error");
-                return;
-            }
-        }
+    if (reply != QMessageBox::Yes) {
+        return;
+    }
+
+    // Disable UI immediately upon confirmation
+    m_isFlashing = true;
+    m_flashButton->setEnabled(false);
+    m_flashButton->setVisible(false);
+    updateNavigationButtons();
+
+    // Switch to progress page
+    m_stackedWidget->setCurrentWidget(m_flashProgressPage);
+
+    if (isWindowsISO) {
+        createWindowsUSB();
+        return;
+    }
+
+    // Use raw disk imaging for other ISOs
+    if (!m_flashCoordinator->startFlash(m_selectedImagePath, m_selectedDrives)) {
+        m_isFlashing = false;
+        onFlashError("Failed to start flash operation - flash coordinator returned error");
     }
 }
 

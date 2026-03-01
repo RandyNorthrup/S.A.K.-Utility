@@ -52,11 +52,9 @@ void DefragmentDrivesAction::scan() {
 
     int fixed_drives = 0;
     for (const QStorageInfo& storage : QStorageInfo::mountedVolumes()) {
-        if (storage.isValid() && storage.isReady() && !storage.isReadOnly()) {
-            if (!storage.rootPath().isEmpty() && storage.rootPath().length() >= 2) {
-                fixed_drives++;
-            }
-        }
+        if (!storage.isValid() || !storage.isReady() || storage.isReadOnly()) continue;
+        if (storage.rootPath().isEmpty() || storage.rootPath().length() < 2) continue;
+        fixed_drives++;
     }
 
     ScanResult result;

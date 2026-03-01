@@ -18,6 +18,21 @@
 #include <QTemporaryFile>
 #include <optional>
 
+namespace {
+
+/// @brief Append paths that exist for the given name variants in a base directory.
+void appendExistingVariants(QStringList& paths, const QString& base_dir,
+                            const QStringList& variants) {
+    for (const auto& variant : variants) {
+        QString path = QDir(base_dir).filePath(variant);
+        if (QDir(path).exists()) {
+            paths.append(path);
+        }
+    }
+}
+
+} // namespace
+
 namespace sak {
 
 UserDataManager::UserDataManager(QObject* parent)
@@ -67,11 +82,9 @@ std::optional<UserDataManager::BackupEntry> UserDataManager::backupAppData(const
     } else {
         // Direct copy without compression
         QString copy_dir = dir.filePath(safe_name + "_" + timestamp);
-        for (const auto& source : source_paths) {
-            if (!copyDirectory(source, copy_dir, config.exclude_patterns)) {
-                Q_EMIT operationError(app_name, "Failed to copy directory");
-                return std::nullopt;
-            }
+        if (!copySourcesToDest(source_paths, copy_dir, config.exclude_patterns)) {
+            Q_EMIT operationError(app_name, "Failed to copy directory");
+            return std::nullopt;
         }
     }
     
@@ -234,12 +247,7 @@ QStringList UserDataManager::discoverAppDataPaths(const QString& app_name) const
     
     // Search in standard locations
     for (const auto& base : base_dirs) {
-        for (const auto& variant : name_variants) {
-            QString path = QDir(base).filePath(variant);
-            if (QDir(path).exists()) {
-                paths.append(path);
-            }
-        }
+        appendExistingVariants(paths, base, name_variants);
     }
     
     return paths;
@@ -314,11 +322,11 @@ std::vector<UserDataManager::BackupEntry> UserDataManager::listBackups(const QSt
     
     for (const auto& file : files) {
         QString metadata_path = dir.filePath(file) + ".json";
-        if (QFile::exists(metadata_path)) {
-            auto entry = readMetadata(metadata_path);
-            if (entry.has_value()) {
-                backups.push_back(entry.value());
-            }
+        if (!QFile::exists(metadata_path)) continue;
+        
+        auto entry = readMetadata(metadata_path);
+        if (entry.has_value()) {
+            backups.push_back(entry.value());
         }
     }
     
@@ -404,11 +412,11 @@ QString UserDataManager::mapCompressionLevel(int level)
 {
     if (level == 0) {
         return QStringLiteral("NoCompression");
-    } else if (level <= 3) {
-        return QStringLiteral("Fastest");
-    } else {
-        return QStringLiteral("Optimal"); // PowerShell doesn't have higher levels
     }
+    if (level <= 3) {
+        return QStringLiteral("Fastest");
+    }
+    return QStringLiteral("Optimal"); // PowerShell doesn't have higher levels
 }
 
 bool UserDataManager::encryptArchiveInPlace(const QString& archive_path,
@@ -621,6 +629,18 @@ QStringList UserDataManager::getStandardDataPaths() const
     paths.append(QStandardPaths::writableLocation(QStandardPaths::HomeLocation));
     
     return paths;
+}
+
+bool UserDataManager::copySourcesToDest(const QStringList& source_paths,
+                                         const QString& dest_dir,
+                                         const QStringList& exclude_patterns)
+{
+    for (const auto& source : source_paths) {
+        if (!copyDirectory(source, dest_dir, exclude_patterns)) {
+            return false;
+        }
+    }
+    return true;
 }
 
 bool UserDataManager::copyDirectory(const QString& source,

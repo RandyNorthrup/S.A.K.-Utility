@@ -9,6 +9,7 @@
 #include <QMessageBox>
 #include <QApplication>
 #include <QtConcurrent>
+#include <algorithm>
 
 using sak::AppInstallationPanel;
 using sak::ChocolateyManager;
@@ -60,17 +61,22 @@ void AppInstallationPanel::onSearch()
         auto result = m_choco_manager->searchPackage(query, 50);
 
         QMetaObject::invokeMethod(this, [this, result]() {
-            m_search_in_progress = false;
-            m_searchButton->setEnabled(true);
-
-            if (result.success) {
-                updateResultsFromSearch(result.output);
-            } else {
-                Q_EMIT logOutput(QString("Search failed: %1").arg(result.error_message));
-                Q_EMIT statusMessage(tr("Search failed"), 3000);
-            }
+            onSearchCompleted(result.success, result.output, result.error_message);
         }, Qt::QueuedConnection);
     });
+}
+
+void AppInstallationPanel::onSearchCompleted(bool success, const QString& output, const QString& errorMessage)
+{
+    m_search_in_progress = false;
+    m_searchButton->setEnabled(true);
+
+    if (success) {
+        updateResultsFromSearch(output);
+        return;
+    }
+    Q_EMIT logOutput(QString("Search failed: %1").arg(errorMessage));
+    Q_EMIT statusMessage(tr("Search failed"), 3000);
 }
 
 void AppInstallationPanel::onCategoryChanged(int index)
@@ -114,13 +120,8 @@ void AppInstallationPanel::onAddToQueue()
         QString version = versionItem ? versionItem->text() : QString();
 
         // Check for duplicates
-        bool duplicate = false;
-        for (const auto& entry : m_installQueue) {
-            if (entry.package_id == packageId) {
-                duplicate = true;
-                break;
-            }
-        }
+        bool duplicate = std::any_of(m_installQueue.cbegin(), m_installQueue.cend(),
+            [&packageId](const QueueEntry& entry) { return entry.package_id == packageId; });
 
         if (!duplicate) {
             auto* publisherItem = m_resultsModel->item(i, RColPublisher);

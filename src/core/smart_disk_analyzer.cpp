@@ -356,6 +356,23 @@ void SmartDiskAnalyzer::parseNvmeHealth(
     report.temperature_celsius = static_cast<double>(nvme.temperature);
 }
 
+SmartHealthStatus SmartDiskAnalyzer::checkAttributeAgainstThresholds(
+    const SmartAttribute& attr) const
+{
+    for (const auto& thresh : kSataThresholds) {
+        if (attr.id != thresh.id) {
+            continue;
+        }
+        if (attr.raw_value >= thresh.critical_raw) {
+            return SmartHealthStatus::Critical;
+        }
+        if (attr.raw_value >= thresh.warning_raw) {
+            return SmartHealthStatus::Warning;
+        }
+    }
+    return SmartHealthStatus::Healthy;
+}
+
 void SmartDiskAnalyzer::assessHealth(SmartReport& report)
 {
     // Default to Healthy
@@ -377,17 +394,14 @@ void SmartDiskAnalyzer::assessHealth(SmartReport& report)
 
     // SATA threshold checks
     for (const auto& attr : report.attributes) {
-        for (const auto& thresh : kSataThresholds) {
-            if (attr.id == thresh.id) {
-                if (attr.raw_value >= thresh.critical_raw) {
-                    report.overall_health = SmartHealthStatus::Critical;
-                    return;
-                }
-                if (attr.raw_value >= thresh.warning_raw) {
-                    report.overall_health = SmartHealthStatus::Warning;
-                    // Don't return — keep checking for worse conditions
-                }
-            }
+        auto status = checkAttributeAgainstThresholds(attr);
+        if (status == SmartHealthStatus::Critical) {
+            report.overall_health = SmartHealthStatus::Critical;
+            return;
+        }
+        if (status == SmartHealthStatus::Warning) {
+            report.overall_health = SmartHealthStatus::Warning;
+            // Don't return — keep checking for worse conditions
         }
     }
 

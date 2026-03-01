@@ -200,6 +200,10 @@ private:
     QList<WifiConfig> checkedConfigs() const;
     void updateSearchMatches(const QString& text);
     void highlightSearchMatches();
+    /** Set all table row checkboxes to the given state */
+    void setAllCheckStates(bool allChecked);
+    /** Returns true if any visible column in the given row matches @p text */
+    bool rowMatchesSearch(int row, const QString& text) const;
     /** Scan Windows known WiFi profile names via netsh */
     QStringList scanWindowsProfileNames() const;
     /** Parse a single Windows WiFi profile and return its config */

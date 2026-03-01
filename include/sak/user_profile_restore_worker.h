@@ -116,6 +116,10 @@ private:
     // Helpers
     bool validateBackup();
     bool createRestoreStructure();
+    /// @brief Create standard user profile subdirectories inside a destination dir
+    void createStandardSubfolders(const QDir& destDir);
+    /// @brief Find a user's data in the manifest by username
+    const BackupUserData* findManifestUser(const QString& username) const;
     qint64 calculateTotalSize();
     void updateProgress(qint64 bytesAdded);
     bool verifyFile(const QString& filePath);

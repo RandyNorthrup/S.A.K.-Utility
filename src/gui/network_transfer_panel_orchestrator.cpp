@@ -824,19 +824,29 @@ MappingEngine::DeploymentMapping NetworkTransferPanel::buildDeploymentMapping() 
     return mapping;
 }
 
+/// @brief Return the first non-loopback IPv4 address from one interface
+static QString firstIpv4Address(const QNetworkInterface& iface) {
+    for (const auto& entry : iface.addressEntries()) {
+        if (entry.ip().protocol() == QAbstractSocket::IPv4Protocol && !entry.ip().isLoopback()) {
+            return entry.ip().toString();
+        }
+    }
+    return {};
+}
+
+/// @brief Discover the local machine's IPv4 address
+static QString findLocalIpAddress() {
+    for (const auto& iface : QNetworkInterface::allInterfaces()) {
+        QString ip = firstIpv4Address(iface);
+        if (!ip.isEmpty()) return ip;
+    }
+    return {};
+}
+
 QVector<MappingEngine::SourceProfile> NetworkTransferPanel::collectSelectedSources() {
     QVector<MappingEngine::SourceProfile> sources;
 
-    QString localIp;
-    for (const auto& iface : QNetworkInterface::allInterfaces()) {
-        for (const auto& entry : iface.addressEntries()) {
-            if (entry.ip().protocol() == QAbstractSocket::IPv4Protocol && !entry.ip().isLoopback()) {
-                localIp = entry.ip().toString();
-                break;
-            }
-        }
-        if (!localIp.isEmpty()) break;
-    }
+    const QString localIp = findLocalIpAddress();
 
     for (int row = 0; row < m_orchestratorUserTable->rowCount(); ++row) {
         auto* selectItem = m_orchestratorUserTable->item(row, 0);
@@ -916,44 +926,46 @@ void NetworkTransferPanel::refreshAssignmentQueue() {
     }
 }
 
+bool NetworkTransferPanel::handleDragEnterEvent(QDragEnterEvent* dragEvent) {
+    if (extractDraggedUserName(dragEvent->mimeData()).isEmpty()) {
+        return false;
+    }
+    dragEvent->acceptProposedAction();
+    return true;
+}
+
+bool NetworkTransferPanel::handleDropEvent(QDropEvent* dropEvent) {
+    const QString user = extractDraggedUserName(dropEvent->mimeData());
+    if (user.isEmpty()) return false;
+
+    const QPoint pos = dropEvent->position().toPoint();
+    auto* item = m_orchestratorDestTable->itemAt(pos);
+    int row = item ? item->row() : m_orchestratorDestTable->currentRow();
+    if (row < 0) return false;
+
+    const QString destinationId = destinationIdForRow(row);
+    if (destinationId.isEmpty()) return false;
+
+    auto* selectItem = m_orchestratorDestTable->item(row, 0);
+    if (selectItem && selectItem->checkState() != Qt::Checked) {
+        selectItem->setCheckState(Qt::Checked);
+    }
+
+    upsertCustomRule(user, destinationId);
+    dropEvent->acceptProposedAction();
+    return true;
+}
+
 bool NetworkTransferPanel::eventFilter(QObject* obj, QEvent* event) {
-    if (obj == m_orchestratorDestTable) {
-        if (event->type() == QEvent::DragEnter || event->type() == QEvent::DragMove) {
-            auto* dragEvent = static_cast<QDragEnterEvent*>(event);
-            if (extractDraggedUserName(dragEvent->mimeData()).isEmpty()) {
-                return false;
-            }
-            dragEvent->acceptProposedAction();
-            return true;
-        }
-        if (event->type() == QEvent::Drop) {
-            auto* dropEvent = static_cast<QDropEvent*>(event);
-            const QString user = extractDraggedUserName(dropEvent->mimeData());
-            if (user.isEmpty()) {
-                return false;
-            }
+    if (obj != m_orchestratorDestTable) {
+        return QWidget::eventFilter(obj, event);
+    }
 
-            const QPoint pos = dropEvent->position().toPoint();
-            auto* item = m_orchestratorDestTable->itemAt(pos);
-            int row = item ? item->row() : m_orchestratorDestTable->currentRow();
-            if (row < 0) {
-                return false;
-            }
-
-            const QString destinationId = destinationIdForRow(row);
-            if (destinationId.isEmpty()) {
-                return false;
-            }
-
-            auto* selectItem = m_orchestratorDestTable->item(row, 0);
-            if (selectItem && selectItem->checkState() != Qt::Checked) {
-                selectItem->setCheckState(Qt::Checked);
-            }
-
-            upsertCustomRule(user, destinationId);
-            dropEvent->acceptProposedAction();
-            return true;
-        }
+    if (event->type() == QEvent::DragEnter || event->type() == QEvent::DragMove) {
+        return handleDragEnterEvent(static_cast<QDragEnterEvent*>(event));
+    }
+    if (event->type() == QEvent::Drop) {
+        return handleDropEvent(static_cast<QDropEvent*>(event));
     }
 
     return QWidget::eventFilter(obj, event);
@@ -966,18 +978,14 @@ void NetworkTransferPanel::upsertCustomRule(const QString& sourceUser, const QSt
 
     for (int row = 0; row < m_customRulesTable->rowCount(); ++row) {
         auto* sourceItem = m_customRulesTable->item(row, 0);
-        if (sourceItem && sourceItem->text().trimmed() == sourceUser) {
-            auto* destItem = m_customRulesTable->item(row, 1);
-            if (!destItem) {
-                destItem = new QTableWidgetItem();
-                m_customRulesTable->setItem(row, 1, destItem);
-            }
-            destItem->setText(destinationId);
-            if (m_mappingTypeCombo) {
-                m_mappingTypeCombo->setCurrentIndex(2);
-            }
-            return;
+        if (!sourceItem || sourceItem->text().trimmed() != sourceUser) continue;
+        
+        if (!m_customRulesTable->item(row, 1)) {
+            m_customRulesTable->setItem(row, 1, new QTableWidgetItem());
         }
+        m_customRulesTable->item(row, 1)->setText(destinationId);
+        if (m_mappingTypeCombo) m_mappingTypeCombo->setCurrentIndex(2);
+        return;
     }
 
     const int row = m_customRulesTable->rowCount();

@@ -21,11 +21,10 @@ void CheckDiskErrorsAction::scan() {
 
     QVector<QChar> drives;
     for (const QStorageInfo& storage : QStorageInfo::mountedVolumes()) {
-        if (storage.isValid() && !storage.isReadOnly() && storage.rootPath().length() >= 2) {
-            QChar drive = storage.rootPath().at(0);
-            if (drive.isLetter()) {
-                drives.append(drive);
-            }
+        if (!storage.isValid() || storage.isReadOnly() || storage.rootPath().length() < 2) continue;
+        QChar drive = storage.rootPath().at(0);
+        if (drive.isLetter()) {
+            drives.append(drive);
         }
     }
 
@@ -70,11 +69,10 @@ bool CheckDiskErrorsAction::executeEnumerateVolumes(const QDateTime& start_time,
 
     // Get all drives
     for (const QStorageInfo& storage : QStorageInfo::mountedVolumes()) {
-        if (storage.isValid() && !storage.isReadOnly() && storage.rootPath().length() >= 2) {
-            QChar drive = storage.rootPath().at(0);
-            if (drive.isLetter()) {
-                drives.append(drive);
-            }
+        if (!storage.isValid() || storage.isReadOnly() || storage.rootPath().length() < 2) continue;
+        QChar drive = storage.rootPath().at(0);
+        if (drive.isLetter()) {
+            drives.append(drive);
         }
     }
 

@@ -306,31 +306,36 @@ void WindowsUpdateAction::executeBuildReport(const QDateTime& start_time,
         result.success = true;
         result.message = "Windows is up to date";
         result.log = accumulated_output;
-    } else if (exit_code == 0) {
-        result.success = true;
-        bool reboot_required = accumulated_output.contains("REBOOT_REQUIRED", Qt::CaseInsensitive);
-        result.message = reboot_required ?
-            "Updates installed successfully - REBOOT REQUIRED" :
-            "Updates installed successfully";
-        result.log = accumulated_output;
+        finishWithResult(result, ActionStatus::Success);
+        return;
+    }
 
-        int remaining = queryPendingUpdateCount();
-        if (remaining >= 0) {
-            result.log += QString("\nVerification: %1 update(s) remaining").arg(remaining);
-            if (remaining > 0 && !reboot_required) {
-                result.message += " (some updates still pending)";
-            }
-        } else {
-            result.log += "\nVerification: Unable to query remaining updates";
-        }
-
-    } else {
+    if (exit_code != 0) {
         result.success = false;
         result.message = "Windows Update failed";
         result.log = QString("Exit code: %1\n%2\nErrors:\n%3").arg(exit_code).arg(accumulated_output).arg(errors);
+        finishWithResult(result, ActionStatus::Failed);
+        return;
     }
 
-    finishWithResult(result, result.success ? ActionStatus::Success : ActionStatus::Failed);
+    result.success = true;
+    bool reboot_required = accumulated_output.contains("REBOOT_REQUIRED", Qt::CaseInsensitive);
+    result.message = reboot_required ?
+        "Updates installed successfully - REBOOT REQUIRED" :
+        "Updates installed successfully";
+    result.log = accumulated_output;
+
+    int remaining = queryPendingUpdateCount();
+    if (remaining >= 0) {
+        result.log += QString("\nVerification: %1 update(s) remaining").arg(remaining);
+        if (remaining > 0 && !reboot_required) {
+            result.message += " (some updates still pending)";
+        }
+    } else {
+        result.log += "\nVerification: Unable to query remaining updates";
+    }
+
+    finishWithResult(result, ActionStatus::Success);
 }
 
 } // namespace sak

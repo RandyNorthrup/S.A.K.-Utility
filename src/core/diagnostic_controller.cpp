@@ -504,10 +504,13 @@ void DiagnosticController::aggregateResults()
             m_report_data.critical_issues.append(
                 QString("Drive %1 (%2): CRITICAL health status")
                     .arg(report.device_path, report.model));
-        } else if (report.overall_health == SmartHealthStatus::Warning) {
-            if (m_report_data.overall_status == DiagnosticStatus::AllPassed) {
-                m_report_data.overall_status = DiagnosticStatus::Warnings;
-            }
+        }
+
+        const bool is_warning = (report.overall_health == SmartHealthStatus::Warning);
+        if (is_warning && m_report_data.overall_status == DiagnosticStatus::AllPassed) {
+            m_report_data.overall_status = DiagnosticStatus::Warnings;
+        }
+        if (is_warning) {
             m_report_data.warnings.append(
                 QString("Drive %1 (%2): Warning health status")
                     .arg(report.device_path, report.model));
@@ -521,10 +524,10 @@ void DiagnosticController::aggregateResults()
     // Stress test
     if (m_report_data.stress_test.has_value()) {
         const auto& st = m_report_data.stress_test.value();
+        if (!st.passed && m_report_data.overall_status != DiagnosticStatus::CriticalIssues) {
+            m_report_data.overall_status = DiagnosticStatus::CriticalIssues;
+        }
         if (!st.passed) {
-            if (m_report_data.overall_status != DiagnosticStatus::CriticalIssues) {
-                m_report_data.overall_status = DiagnosticStatus::CriticalIssues;
-            }
             m_report_data.critical_issues.append(
                 QString("Stress test FAILED: %1").arg(st.abort_reason));
         }

@@ -125,18 +125,7 @@ void DiagnosticBenchmarkPanel::onHardwareScanComplete(
     }
 
     // Populate disk drive combo for disk benchmark
-    m_disk_drive_combo->clear();
-    for (const auto& disk : inventory.storage) {
-        for (const auto& part : disk.partitions) {
-            if (!part.drive_letter.isEmpty()) {
-                m_disk_drive_combo->addItem(
-                    QString("%1 (%2 - %3)")
-                        .arg(part.drive_letter, disk.model,
-                             formatBytes(disk.size_bytes)),
-                    part.drive_letter + "\\");
-            }
-        }
-    }
+    populateDiskDriveCombo(inventory);
 
     logMessage("Hardware inventory scan complete");
     Q_EMIT statusMessage("Hardware scan complete", sak::kTimerStatusMessageMs);
@@ -145,6 +134,28 @@ void DiagnosticBenchmarkPanel::onHardwareScanComplete(
     logMessage("Starting SMART disk analysis...");
     setOperationRunning(true);
     m_controller->runSmartAnalysis();
+}
+
+void DiagnosticBenchmarkPanel::populateDiskDriveCombo(
+    const HardwareInventory& inventory)
+{
+    m_disk_drive_combo->clear();
+    for (const auto& disk : inventory.storage) {
+        addDiskPartitionsToCombo(disk);
+    }
+}
+
+void DiagnosticBenchmarkPanel::addDiskPartitionsToCombo(
+    const StorageDeviceInfo& disk)
+{
+    for (const auto& part : disk.partitions) {
+        if (part.drive_letter.isEmpty()) continue;
+        m_disk_drive_combo->addItem(
+            QString("%1 (%2 - %3)")
+                .arg(part.drive_letter, disk.model,
+                     formatBytes(disk.size_bytes)),
+            part.drive_letter + "\\");
+    }
 }
 
 // ============================================================================

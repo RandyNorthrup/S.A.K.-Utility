@@ -142,14 +142,7 @@ void UserProfileRestoreWorker::run() {
 
 bool UserProfileRestoreWorker::restoreUser(const UserMapping& mapping) {
     // Find source user data in manifest
-    const BackupUserData* sourceUser = nullptr;
-    for (const auto& user : m_manifest.users) {
-        if (user.username == mapping.source_username) {
-            sourceUser = &user;
-            break;
-        }
-    }
-    
+    const BackupUserData* sourceUser = findManifestUser(mapping.source_username);
     if (!sourceUser) {
         Q_EMIT logMessage(tr("Source user not found in manifest: %1").arg(mapping.source_username), true);
         return false;
@@ -281,16 +274,15 @@ bool UserProfileRestoreWorker::copyDirectory(const QString& sourceDir,
         QString sourceItem = entry.absoluteFilePath();
         QString destItem = destDir + "/" + entry.fileName();
         
-        if (entry.isDir()) {
-            // Recursively copy subdirectory
-            if (!copyDirectory(sourceItem, destItem, folderConfig)) {
-                Q_EMIT logMessage(tr("Warning: Failed to copy directory: %1").arg(sourceItem), true);
-            }
-        } else if (entry.isFile()) {
-            // Copy file with conflict resolution
-            if (!copyFileWithConflictResolution(sourceItem, destItem, entry.size())) {
-                // Error already logged
-            }
+        // Recursively copy subdirectory
+        if (entry.isDir() && !copyDirectory(sourceItem, destItem, folderConfig)) {
+            Q_EMIT logMessage(tr("Warning: Failed to copy directory: %1").arg(sourceItem), true);
+            continue;
+        }
+        
+        // Copy file with conflict resolution
+        if (entry.isFile()) {
+            copyFileWithConflictResolution(sourceItem, destItem, entry.size());
         }
     }
     
@@ -474,33 +466,18 @@ bool UserProfileRestoreWorker::createRestoreStructure() {
         }
         
         QDir destDir(destPath);
+        bool needsCreation = !destDir.exists();
         
-        if (!destDir.exists()) {
-            if (!destDir.mkpath(".")) {
-                Q_EMIT logMessage(tr("Failed to create directory: %1").arg(destPath), true);
-                return false;
-            }
+        if (needsCreation && !destDir.mkpath(".")) {
+            Q_EMIT logMessage(tr("Failed to create directory: %1").arg(destPath), true);
+            return false;
+        }
+        if (needsCreation) {
             Q_EMIT logMessage(tr("Created directory: %1").arg(destPath), false);
         }
         
         // Create standard user profile subdirectories
-        QStringList standardFolders = {
-            "Documents", "Desktop", "Pictures", "Videos", 
-            "Music", "Downloads", "AppData", "AppData/Local", 
-            "AppData/Roaming", "Favorites"
-        };
-        
-        for (const QString& folder : standardFolders) {
-            QString folderPath = destDir.filePath(folder);
-            QDir folderDir(folderPath);
-            
-            if (!folderDir.exists()) {
-                if (!folderDir.mkpath(".")) {
-                    Q_EMIT logMessage(tr("Failed to create subdirectory: %1").arg(folderPath), true);
-                    // Continue anyway - not all folders may be needed
-                }
-            }
-        }
+        createStandardSubfolders(destDir);
     }
     
     Q_EMIT logMessage(tr("Restore directory structure created"), false);
@@ -514,19 +491,41 @@ qint64 UserProfileRestoreWorker::calculateTotalSize() {
     for (const auto& mapping : m_mappings) {
         if (!mapping.selected) continue;
         
-        // Find user data in manifest
-        for (const auto& user : m_manifest.users) {
-            if (user.username == mapping.source_username) {
-                for (const auto& folder : user.backed_up_folders) {
-                    totalSize += folder.size_bytes;
-                    m_totalFilesToRestore += folder.file_count;
-                }
-                break;
-            }
+        const auto* user = findManifestUser(mapping.source_username);
+        if (!user) continue;
+        
+        for (const auto& folder : user->backed_up_folders) {
+            totalSize += folder.size_bytes;
+            m_totalFilesToRestore += folder.file_count;
         }
     }
     
     return totalSize;
+}
+
+const BackupUserData* UserProfileRestoreWorker::findManifestUser(const QString& username) const {
+    for (const auto& user : m_manifest.users) {
+        if (user.username == username) {
+            return &user;
+        }
+    }
+    return nullptr;
+}
+
+void UserProfileRestoreWorker::createStandardSubfolders(const QDir& destDir) {
+    QStringList standardFolders = {
+        "Documents", "Desktop", "Pictures", "Videos",
+        "Music", "Downloads", "AppData", "AppData/Local",
+        "AppData/Roaming", "Favorites"
+    };
+    
+    for (const QString& folder : standardFolders) {
+        QString folderPath = destDir.filePath(folder);
+        if (!QDir(folderPath).exists() && !QDir().mkpath(folderPath)) {
+            Q_EMIT logMessage(tr("Failed to create subdirectory: %1").arg(folderPath), true);
+            // Continue anyway - not all folders may be needed
+        }
+    }
 }
 
 void UserProfileRestoreWorker::updateProgress(qint64 bytesAdded) {

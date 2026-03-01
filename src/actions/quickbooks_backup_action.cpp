@@ -116,26 +116,29 @@ void QuickBooksBackupAction::scan() {
     result.files_count = static_cast<qint64>(m_found_files.size());
     result.estimated_duration_ms = std::max<qint64>(5000, m_total_bytes / (1024 * 10));
 
-    if (result.applicable) {
-        double mb = m_total_bytes / sak::kBytesPerMBf;
-        result.summary = QString("Found %1 files (%2 MB)")
-            .arg(result.files_count)
-            .arg(mb, 0, 'f', 1);
-
-        int open_files = 0;
-        for (const auto& file : m_found_files) {
-            if (file.is_open) {
-                open_files++;
-            }
-        }
-
-        if (open_files > 0) {
-            result.warning = QString("%1 file(s) appear to be in use. Close QuickBooks before backup.")
-                .arg(open_files);
-        }
-    } else {
+    if (!result.applicable) {
         result.summary = "No QuickBooks files found";
         result.details = "Check default QuickBooks locations or map network drives.";
+        setScanResult(result);
+        setStatus(ActionStatus::Ready);
+        Q_EMIT scanComplete(result);
+        return;
+    }
+
+    double mb = m_total_bytes / sak::kBytesPerMBf;
+    result.summary = QString("Found %1 files (%2 MB)")
+        .arg(result.files_count)
+        .arg(mb, 0, 'f', 1);
+
+    int open_files = 0;
+    for (const auto& file : m_found_files) {
+        if (file.is_open)
+            open_files++;
+    }
+
+    if (open_files > 0) {
+        result.warning = QString("%1 file(s) appear to be in use. Close QuickBooks before backup.")
+            .arg(open_files);
     }
 
     setScanResult(result);

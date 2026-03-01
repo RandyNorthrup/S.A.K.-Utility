@@ -93,6 +93,21 @@ private:
     std::optional<MatchResult> exactMatch(const QString& app_name);
     std::optional<MatchResult> fuzzyMatch(const QString& app_name, ChocolateyManager* choco_mgr);
     std::optional<MatchResult> searchMatch(const QString& app_name, ChocolateyManager* choco_mgr, int max_results);
+
+    /// @brief Resolve an exact match with availability verification.
+    std::optional<MatchResult> resolveExactMatch(const QString& base_name, ChocolateyManager* choco_mgr,
+                                                  const MatchConfig& config);
+    /// @brief Fetch search output from cache or Chocolatey API.
+    QString fetchSearchOutput(const QString& keyword, ChocolateyManager* choco_mgr);
+    /// @brief Update best fuzzy match from a list of packages.
+    void updateBestFuzzyMatch(const QString& normalized,
+                               const std::vector<ChocolateyManager::PackageInfo>& packages,
+                               double& best_similarity, QString& best_package,
+                               QString& best_matched_name) const;
+    /// @brief Match a single app for parallel processing.
+    std::pair<int, std::optional<MatchResult>> matchSingleApp(int idx, const AppScanner::AppInfo& app,
+                                                               ChocolateyManager* choco_mgr,
+                                                               const MatchConfig& config);
     
     /// @brief Phase 1: Collect exact matches and separate remaining fuzzy candidates.
     void collectExactMatches(const std::vector<AppScanner::AppInfo>& apps,

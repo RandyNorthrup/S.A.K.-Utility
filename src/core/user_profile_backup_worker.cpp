@@ -207,7 +207,8 @@ bool UserProfileBackupWorker::backupFolder(const FolderSelection& folder,
     
     if (sourceInfo.isDir()) {
         return copyDirectory(sourcePath, destPath, folder);
-    } else if (sourceInfo.isFile()) {
+    }
+    if (sourceInfo.isFile()) {
         return copyFileWithFiltering(sourcePath, destPath, sourceInfo.size());
     }
     
@@ -243,20 +244,14 @@ bool UserProfileBackupWorker::copyDirectory(const QString& sourceDir,
         
         QString sourceItem = it.next();
         QFileInfo itemInfo(sourceItem);
-        QString itemName = itemInfo.fileName();
-        QString destItem = destDir + "/" + itemName;
+        QString destItem = destDir + "/" + itemInfo.fileName();
         
-        if (itemInfo.isDir()) {
-            // Recursively copy subdirectory
-            if (!copyDirectory(sourceItem, destItem, folderConfig)) {
-                Q_EMIT logMessage(tr("Warning: Failed to copy directory: %1").arg(sourceItem), true);
-                // Continue with other items
-            }
-        } else if (itemInfo.isFile()) {
-            // Copy file with filtering
-            if (!copyFileWithFiltering(sourceItem, destItem, itemInfo.size())) {
-                // Error already logged
-            }
+        if (itemInfo.isDir() && !copyDirectory(sourceItem, destItem, folderConfig)) {
+            Q_EMIT logMessage(tr("Warning: Failed to copy directory: %1").arg(sourceItem), true);
+        }
+        
+        if (itemInfo.isFile()) {
+            copyFileWithFiltering(sourceItem, destItem, itemInfo.size());
         }
     }
     
@@ -375,22 +370,40 @@ bool UserProfileBackupWorker::saveManifest() {
     return m_manifest.saveToFile(manifestPath);
 }
 
+qint64 UserProfileBackupWorker::accumulateUserFolderSizes(const UserProfile& user) {
+    qint64 size = 0;
+    for (const auto& folder : user.folder_selections) {
+        if (!folder.selected) continue;
+        size += folder.size_bytes;
+        m_totalFilesToCopy += folder.file_count;
+    }
+    return size;
+}
+
 qint64 UserProfileBackupWorker::calculateTotalSize() {
     qint64 totalSize = 0;
     m_totalFilesToCopy = 0;
     
     for (const auto& user : m_users) {
         if (!user.is_selected) continue;
-        
-        for (const auto& folder : user.folder_selections) {
-            if (!folder.selected) continue;
-            
-            totalSize += folder.size_bytes;
-            m_totalFilesToCopy += folder.file_count;
-        }
+        totalSize += accumulateUserFolderSizes(user);
     }
     
     return totalSize;
+}
+
+void UserProfileBackupWorker::countSelectedUsers(int& currentUser, int& totalUsers) const {
+    totalUsers = 0;
+    currentUser = 0;
+    for (int i = 0; i < m_users.size(); ++i) {
+        if (!m_users[i].is_selected) {
+            continue;
+        }
+        totalUsers++;
+        if (i < m_users.size() - 1) {
+            currentUser++;
+        }
+    }
 }
 
 void UserProfileBackupWorker::updateProgress(qint64 bytesAdded) {
@@ -403,16 +416,8 @@ void UserProfileBackupWorker::updateProgress(qint64 bytesAdded) {
     if (m_filesCopied - lastFileCount >= 100 || 
         m_bytesCopied - lastByteCount >= 100 * sak::kBytesPerMB) {
         
-        int totalUsers = 0;
-        int currentUser = 0;
-        for (int i = 0; i < m_users.size(); ++i) {
-            if (m_users[i].is_selected) {
-                totalUsers++;
-                if (i < m_users.size() - 1) {
-                    currentUser++;
-                }
-            }
-        }
+        int currentUser = 0, totalUsers = 0;
+        countSelectedUsers(currentUser, totalUsers);
         
         Q_EMIT overallProgress(currentUser, totalUsers, m_bytesCopied, m_totalBytesToCopy);
         Q_EMIT fileProgress(m_filesCopied, m_totalFilesToCopy);

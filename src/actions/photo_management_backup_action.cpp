@@ -21,85 +21,93 @@ PhotoManagementBackupAction::PhotoManagementBackupAction(const QString& backup_l
 
 void PhotoManagementBackupAction::scanLightroomCatalogs() {
     for (const UserProfile& user : m_user_profiles) {
-        QStringList search_paths = {
-            user.profile_path + "/Pictures/Lightroom",
-            user.profile_path + "/Documents/Lightroom"
-        };
+        scanLightroomCatalogsForUser(user);
+    }
+}
+
+void PhotoManagementBackupAction::scanLightroomCatalogsForUser(const UserProfile& user) {
+    QStringList search_paths = {
+        user.profile_path + "/Pictures/Lightroom",
+        user.profile_path + "/Documents/Lightroom"
+    };
+    
+    for (const QString& path : search_paths) {
+        QDir dir(path);
+        if (!dir.exists()) continue;
         
-        for (const QString& path : search_paths) {
-            QDir dir(path);
-            if (!dir.exists()) continue;
+        QDirIterator it(path, QStringList() << "*.lrcat", QDir::Files, QDirIterator::Subdirectories);
+        while (it.hasNext()) {
+            it.next();
+            PhotoSoftwareData data;
+            data.software_name = "Lightroom";
+            data.data_type = "Catalog";
+            data.path = it.filePath();
+            data.size = it.fileInfo().size();
             
-            QDirIterator it(path, QStringList() << "*.lrcat", QDir::Files, QDirIterator::Subdirectories);
-            while (it.hasNext()) {
-                it.next();
-                PhotoSoftwareData data;
-                data.software_name = "Lightroom";
-                data.data_type = "Catalog";
-                data.path = it.filePath();
-                data.size = it.fileInfo().size();
-                
-                m_photo_data.append(data);
-                m_total_size += data.size;
-            }
+            m_photo_data.append(data);
+            m_total_size += data.size;
         }
     }
 }
 
 void PhotoManagementBackupAction::scanPhotoshopSettings() {
     for (const UserProfile& user : m_user_profiles) {
-        QString ps_path = user.profile_path + "/AppData/Roaming/Adobe/Adobe Photoshop";
-        QDir dir(ps_path);
-        
-        if (dir.exists()) {
-            QDirIterator it(ps_path, QDir::Dirs | QDir::NoDotAndDotDot);
-            while (it.hasNext()) {
-                it.next();
-                QString presets = it.filePath() + "/Presets";
-                
-                if (QDir(presets).exists()) {
-                    PhotoSoftwareData data;
-                    data.software_name = "Photoshop";
-                    data.data_type = "Presets";
-                    data.path = presets;
-                    
-                    qint64 size = 0;
-                    QDirIterator files(presets, QDir::Files, QDirIterator::Subdirectories);
-                    while (files.hasNext()) {
-                        files.next();
-                        size += files.fileInfo().size();
-                    }
-                    
-                    data.size = size;
-                    m_photo_data.append(data);
-                    m_total_size += size;
-                }
-            }
-        }
+        scanPhotoshopSettingsForUser(user);
     }
+}
+
+void PhotoManagementBackupAction::scanPhotoshopSettingsForUser(const UserProfile& user) {
+    QString ps_path = user.profile_path + "/AppData/Roaming/Adobe/Adobe Photoshop";
+    if (!QDir(ps_path).exists()) return;
+    
+    QDirIterator it(ps_path, QDir::Dirs | QDir::NoDotAndDotDot);
+    while (it.hasNext()) {
+        it.next();
+        QString presets = it.filePath() + "/Presets";
+        if (!QDir(presets).exists()) continue;
+        
+        PhotoSoftwareData data;
+        data.software_name = "Photoshop";
+        data.data_type = "Presets";
+        data.path = presets;
+        data.size = calculateDirSize(presets);
+        m_photo_data.append(data);
+        m_total_size += data.size;
+    }
+}
+
+qint64 PhotoManagementBackupAction::calculateDirSize(const QString& path) {
+    qint64 size = 0;
+    QDirIterator files(path, QDir::Files, QDirIterator::Subdirectories);
+    while (files.hasNext()) {
+        files.next();
+        size += files.fileInfo().size();
+    }
+    return size;
 }
 
 void PhotoManagementBackupAction::scanCaptureOne() {
     for (const UserProfile& user : m_user_profiles) {
-        QString c1_path = user.profile_path + "/Pictures/Capture One";
-        QDir dir(c1_path);
+        scanCaptureOneForUser(user);
+    }
+}
+
+void PhotoManagementBackupAction::scanCaptureOneForUser(const UserProfile& user) {
+    QString c1_path = user.profile_path + "/Pictures/Capture One";
+    if (!QDir(c1_path).exists()) return;
+    
+    QDirIterator it(c1_path, QStringList() << "*.cosessiondb", 
+                  QDir::Files, QDirIterator::Subdirectories);
+    while (it.hasNext()) {
+        it.next();
+        PhotoSoftwareData data;
+        data.software_name = "Capture One";
+        data.data_type = "Catalog";
+        data.path = it.filePath();
+        data.size = it.fileInfo().size();
         
-        if (dir.exists()) {
-            QDirIterator it(c1_path, QStringList() << "*.cosessiondb", 
-                          QDir::Files, QDirIterator::Subdirectories);
-            
-            while (it.hasNext()) {
-                it.next();
-                PhotoSoftwareData data;
-                data.software_name = "Capture One";
-                data.data_type = "Catalog";
-                data.path = it.filePath();
-                data.size = it.fileInfo().size();
-                
-                m_photo_data.append(data);
-                m_total_size += data.size;
-            }
-        }
+        m_photo_data.append(data);
+        m_total_size += data.size;
     }
 }
 
@@ -186,40 +194,56 @@ QPair<bool, qint64> PhotoManagementBackupAction::backupPhotoItem(
     QFileInfo src_info(data.path);
 
     if (src_info.isFile()) {
-        QString dest_file = dest_path + "/" + src_info.fileName();
-        if (QFile::exists(dest_file)) {
-            QString base = src_info.completeBaseName();
-            QString ext = src_info.suffix();
-            int suffix = 1;
-            QString candidate;
-            do {
-                candidate = dest_path + "/" + QString("%1_%2.%3").arg(base).arg(suffix).arg(ext);
-                suffix++;
-            } while (QFile::exists(candidate));
-            dest_file = candidate;
-        }
-        if (QFile::copy(data.path, dest_file)) {
-            return {true, data.size};
-        }
-        return {false, 0};
+        return backupSingleFile(data, dest_path);
     }
-
     if (src_info.isDir()) {
-        qint64 bytes_copied = 0;
-        QDirIterator it(data.path, QDir::Files, QDirIterator::Subdirectories);
-        while (it.hasNext()) {
-            it.next();
-            QString rel = QDir(data.path).relativeFilePath(it.filePath());
-            QString dest = dest_path + "/" + rel;
-            QDir().mkpath(QFileInfo(dest).absolutePath());
-            if (QFile::copy(it.filePath(), dest)) {
-                bytes_copied += it.fileInfo().size();
-            }
-        }
-        return {true, bytes_copied};
+        return backupDirectory(data.path, dest_path);
     }
-
     return {false, 0};
+}
+
+QPair<bool, qint64> PhotoManagementBackupAction::backupSingleFile(
+        const PhotoSoftwareData& data, const QString& dest_path)
+{
+    QFileInfo src_info(data.path);
+    QString dest_file = dest_path + "/" + src_info.fileName();
+    if (QFile::exists(dest_file)) {
+        dest_file = generateUniqueFilename(dest_path,
+            src_info.completeBaseName(), src_info.suffix());
+    }
+    if (QFile::copy(data.path, dest_file)) {
+        return {true, data.size};
+    }
+    return {false, 0};
+}
+
+QString PhotoManagementBackupAction::generateUniqueFilename(
+        const QString& dest_path, const QString& base_name, const QString& ext)
+{
+    int suffix = 1;
+    QString candidate;
+    do {
+        candidate = dest_path + "/" + QString("%1_%2.%3").arg(base_name).arg(suffix).arg(ext);
+        suffix++;
+    } while (QFile::exists(candidate));
+    return candidate;
+}
+
+QPair<bool, qint64> PhotoManagementBackupAction::backupDirectory(
+        const QString& src_path, const QString& dest_path)
+{
+    qint64 bytes_copied = 0;
+    QDirIterator it(src_path, QDir::Files, QDirIterator::Subdirectories);
+    while (it.hasNext()) {
+        it.next();
+        QString rel = QDir(src_path).relativeFilePath(it.filePath());
+        QString dest = dest_path + "/" + rel;
+        QDir().mkpath(QFileInfo(dest).absolutePath());
+        if (QFile::copy(it.filePath(), dest)) {
+            bytes_copied += it.fileInfo().size();
+        }
+    }
+    return {true, bytes_copied};
 }
 
 } // namespace sak

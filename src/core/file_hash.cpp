@@ -106,27 +106,9 @@ auto file_hasher::calculateMd5(
             return std::unexpected(error_code::read_error);
         }
         
-        // Get file size
-        const auto file_size = static_cast<std::size_t>(file.size());
-        
         // Initialize MD5 hash
         QCryptographicHash hash(QCryptographicHash::Md5);
-        
-        // Read and hash in chunks
-        std::size_t bytes_processed = 0;
-        
-        while (!file.atEnd() && !stop_token.stop_requested()) {
-            QByteArray buffer = file.read(m_chunk_size);
-            
-            if (!buffer.isEmpty()) {
-                hash.addData(buffer);
-                bytes_processed += buffer.size();
-                
-                if (progress) {
-                    progress(bytes_processed, file_size);
-                }
-            }
-        }
+        hashFileInChunks(file, hash, progress, stop_token);
         
         if (stop_token.stop_requested()) {
             return std::unexpected(error_code::operation_cancelled);
@@ -163,27 +145,9 @@ auto file_hasher::calculateSha256(
             return std::unexpected(error_code::read_error);
         }
         
-        // Get file size
-        const auto file_size = static_cast<std::size_t>(file.size());
-        
         // Initialize SHA-256 hash
         QCryptographicHash hash(QCryptographicHash::Sha256);
-        
-        // Read and hash in chunks
-        std::size_t bytes_processed = 0;
-        
-        while (!file.atEnd() && !stop_token.stop_requested()) {
-            QByteArray buffer = file.read(m_chunk_size);
-            
-            if (!buffer.isEmpty()) {
-                hash.addData(buffer);
-                bytes_processed += buffer.size();
-                
-                if (progress) {
-                    progress(bytes_processed, file_size);
-                }
-            }
-        }
+        hashFileInChunks(file, hash, progress, stop_token);
         
         if (stop_token.stop_requested()) {
             return std::unexpected(error_code::operation_cancelled);
@@ -234,6 +198,22 @@ auto file_hasher::calculateSha256(
     } catch (...) {
         logError("Unknown exception calculating in-memory SHA-256 hash");
         return std::unexpected(error_code::hash_calculation_failed);
+    }
+}
+
+void file_hasher::hashFileInChunks(QFile& file, QCryptographicHash& hash,
+                                    hash_progress_callback& progress,
+                                    std::stop_token& stop_token) const {
+    const auto file_size = static_cast<std::size_t>(file.size());
+    std::size_t bytes_processed = 0;
+
+    while (!file.atEnd() && !stop_token.stop_requested()) {
+        QByteArray buffer = file.read(m_chunk_size);
+        if (buffer.isEmpty()) continue;
+
+        hash.addData(buffer);
+        bytes_processed += buffer.size();
+        if (progress) progress(bytes_processed, file_size);
     }
 }
 

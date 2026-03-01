@@ -116,7 +116,11 @@ private:
     bool createBackupStructure();
     bool saveManifest();
     qint64 calculateTotalSize();
+    /// @brief Sum folder sizes for a single selected user
+    qint64 accumulateUserFolderSizes(const UserProfile& user);
     void updateProgress(qint64 bytesAdded);
+    /// @brief Count selected users for progress tracking
+    void countSelectedUsers(int& currentUser, int& totalUsers) const;
     
     // Directory operations
     bool copyDirectory(const QString& sourceDir, 

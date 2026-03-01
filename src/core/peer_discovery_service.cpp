@@ -79,13 +79,7 @@ void PeerDiscoveryService::sendAnnouncement() {
             continue;
         }
 
-        for (const auto& entry : interface.addressEntries()) {
-            if (entry.broadcast().isNull()) {
-                continue;
-            }
-            m_socket->writeDatagram(datagram, entry.broadcast(), m_port);
-            sentAny = true;
-        }
+        sentAny |= broadcastOnInterface(datagram, interface);
     }
 
     if (!sentAny) {
@@ -148,6 +142,17 @@ void PeerDiscoveryService::onReadyRead() {
             logWarning("PeerDiscoveryService received unknown message type");
         }
     }
+}
+
+bool PeerDiscoveryService::broadcastOnInterface(
+    const QByteArray& datagram, const QNetworkInterface& iface) {
+    bool sent = false;
+    for (const auto& entry : iface.addressEntries()) {
+        if (entry.broadcast().isNull()) continue;
+        m_socket->writeDatagram(datagram, entry.broadcast(), m_port);
+        sent = true;
+    }
+    return sent;
 }
 
 void PeerDiscoveryService::sendResponse(const QHostAddress& address, quint16 port) {

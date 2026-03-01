@@ -16,6 +16,9 @@
 #include <string>
 #include <stop_token>
 
+class QFile;
+class QCryptographicHash;
+
 namespace sak {
 
 /// @brief Hash algorithm selection
@@ -115,6 +118,11 @@ private:
     /// @return Expected containing hash string or error code
     [[nodiscard]] auto calculateSha256(
         std::span<const std::byte> data) const -> std::expected<std::string, error_code>;
+
+    /// @brief Hash file content in chunks with progress reporting
+    void hashFileInChunks(QFile& file, QCryptographicHash& hash,
+                          hash_progress_callback& progress,
+                          std::stop_token& stop_token) const;
 };
 
 /// @brief Convenience function to calculate MD5 hash of a file

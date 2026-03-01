@@ -14,6 +14,36 @@
 #pragma comment(lib, "setupapi.lib")
 #pragma comment(lib, "Rstrtmgr.lib")
 
+namespace {
+
+/// @brief Query the physical drive number for a volume path
+/// @param volumePath Volume GUID path (with or without trailing backslash)
+/// @return Drive number, or -1 on failure
+int queryVolumeDriveNumber(const wchar_t* volumePath)
+{
+    HANDLE hVolume = CreateFileW(
+        volumePath, 0,
+        FILE_SHARE_READ | FILE_SHARE_WRITE,
+        nullptr, OPEN_EXISTING, 0, nullptr);
+
+    if (hVolume == INVALID_HANDLE_VALUE) return -1;
+
+    STORAGE_DEVICE_NUMBER deviceNumber = {};
+    DWORD bytesReturned = 0;
+    int result = -1;
+
+    if (DeviceIoControl(hVolume, IOCTL_STORAGE_GET_DEVICE_NUMBER,
+                        nullptr, 0, &deviceNumber, sizeof(deviceNumber),
+                        &bytesReturned, nullptr)) {
+        result = static_cast<int>(deviceNumber.DeviceNumber);
+    }
+
+    CloseHandle(hVolume);
+    return result;
+}
+
+} // anonymous namespace
+
 DriveUnmounter::DriveUnmounter(QObject* parent)
     : QObject(parent)
 {
@@ -125,38 +155,8 @@ QStringList DriveUnmounter::getVolumesOnDrive(int driveNumber) const {
             volumeName[length - 1] = L'\0';
         }
 
-        // Open the volume
-        HANDLE hVolume = CreateFileW(
-            volumeName,
-            0,
-            FILE_SHARE_READ | FILE_SHARE_WRITE,
-            nullptr,
-            OPEN_EXISTING,
-            0,
-            nullptr
-        );
-
-        if (hVolume != INVALID_HANDLE_VALUE) {
-            // Get the drive number for this volume
-            STORAGE_DEVICE_NUMBER deviceNumber = {};
-            DWORD bytesReturned = 0;
-
-            if (DeviceIoControl(
-                hVolume,
-                IOCTL_STORAGE_GET_DEVICE_NUMBER,
-                nullptr,
-                0,
-                &deviceNumber,
-                sizeof(deviceNumber),
-                &bytesReturned,
-                nullptr
-            )) {
-                if (static_cast<int>(deviceNumber.DeviceNumber) == driveNumber) {
-                    volumes.append(QString::fromWCharArray(volumeName));
-                }
-            }
-
-            CloseHandle(hVolume);
+        if (queryVolumeDriveNumber(volumeName) == driveNumber) {
+            volumes.append(QString::fromWCharArray(volumeName));
         }
 
         // Restore trailing backslash for FindNextVolume
@@ -415,31 +415,16 @@ QStringList DriveUnmounter::findVolumesForDrive(int driveNumber) const {
     }
 
     do {
-        HANDLE hVolume = CreateFileW(
-            volumeName, 0,
-            FILE_SHARE_READ | FILE_SHARE_WRITE,
-            nullptr, OPEN_EXISTING, 0, nullptr);
-
-        if (hVolume != INVALID_HANDLE_VALUE) {
-            STORAGE_DEVICE_NUMBER deviceNumber = {};
-            DWORD bytesReturned = 0;
-
-            if (DeviceIoControl(
-                hVolume, IOCTL_STORAGE_GET_DEVICE_NUMBER,
-                nullptr, 0,
-                &deviceNumber, sizeof(deviceNumber),
-                &bytesReturned, nullptr)
-                && static_cast<int>(deviceNumber.DeviceNumber) == driveNumber)
-            {
-                size_t len = wcslen(volumeName);
-                if (len > 0 && volumeName[len - 1] == L'\\') {
-                    volumeName[len - 1] = L'\0';
-                }
-                mountPoints.append(QString::fromWCharArray(volumeName));
-            }
-
-            CloseHandle(hVolume);
+        if (queryVolumeDriveNumber(volumeName) != driveNumber) {
+            continue;
         }
+
+        // Strip trailing backslash before appending
+        size_t len = wcslen(volumeName);
+        if (len > 0 && volumeName[len - 1] == L'\\') {
+            volumeName[len - 1] = L'\0';
+        }
+        mountPoints.append(QString::fromWCharArray(volumeName));
     } while (FindNextVolumeW(hFind, volumeName, MAX_PATH));
 
     FindVolumeClose(hFind);

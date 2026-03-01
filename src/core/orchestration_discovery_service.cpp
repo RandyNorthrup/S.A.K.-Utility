@@ -131,19 +131,23 @@ void OrchestrationDiscoveryService::sendBroadcastDiscovery() {
             || (interface.flags() & QNetworkInterface::IsLoopBack)) {
             continue;
         }
-
-        for (const auto& entry : interface.addressEntries()) {
-            if (entry.broadcast().isNull()) {
-                continue;
-            }
-            m_socket->writeDatagram(datagram, entry.broadcast(), m_port);
-            sentAny = true;
-        }
+        sentAny |= sendBroadcastOnInterface(interface, datagram);
     }
 
     if (!sentAny) {
         logWarning("OrchestrationDiscoveryService broadcast skipped: no broadcast interfaces");
     }
+}
+
+bool OrchestrationDiscoveryService::sendBroadcastOnInterface(
+    const QNetworkInterface& iface, const QByteArray& datagram) {
+    bool sentAny = false;
+    for (const auto& entry : iface.addressEntries()) {
+        if (entry.broadcast().isNull()) continue;
+        m_socket->writeDatagram(datagram, entry.broadcast(), m_port);
+        sentAny = true;
+    }
+    return sentAny;
 }
 
 void OrchestrationDiscoveryService::sendDestinationAnnounce(const QHostAddress& address, quint16 port) {
@@ -167,33 +171,35 @@ void OrchestrationDiscoveryService::onReadyRead() {
 
         QJsonParseError error{};
         const auto doc = QJsonDocument::fromJson(datagram, &error);
-        if (error.error != QJsonParseError::NoError || !doc.isObject()) {
-            continue;
-        }
+        if (error.error != QJsonParseError::NoError || !doc.isObject()) continue;
 
-        const auto obj = doc.object();
-        const QString type = obj.value("message_type").toString();
-
-        if (type == "ORCH_DISCOVERY") {
-            const auto port = static_cast<quint16>(obj.value("orchestrator_port").toInt(m_orchestratorPort));
-            Q_EMIT orchestratorDiscovered(sender, port);
-
-            if (!m_roleOrchestrator) {
-                sendDestinationAnnounce(sender, senderPort);
-            }
-        } else if (type == "DESTINATION_ANNOUNCE") {
-            if (m_roleOrchestrator) {
-                auto infoObj = obj.value("destination_info").toObject();
-                DestinationPC destination = DestinationPC::fromJson(infoObj);
-                destination.ip_address = sender.toString();
-                destination.last_seen = QDateTime::currentDateTimeUtc();
-                if (destination.destination_id.isEmpty()) {
-                    destination.destination_id = QString("%1@%2").arg(destination.hostname, destination.ip_address);
-                }
-                Q_EMIT destinationDiscovered(destination);
-            }
-        }
+        processDiscoveryDatagram(doc.object(), sender, senderPort);
     }
+}
+
+void OrchestrationDiscoveryService::processDiscoveryDatagram(
+    const QJsonObject& obj, const QHostAddress& sender, quint16 senderPort) {
+    const QString type = obj.value("message_type").toString();
+
+    if (type == "ORCH_DISCOVERY") {
+        const auto port = static_cast<quint16>(obj.value("orchestrator_port").toInt(m_orchestratorPort));
+        Q_EMIT orchestratorDiscovered(sender, port);
+        if (!m_roleOrchestrator) {
+            sendDestinationAnnounce(sender, senderPort);
+        }
+        return;
+    }
+
+    if (type != "DESTINATION_ANNOUNCE" || !m_roleOrchestrator) return;
+
+    auto infoObj = obj.value("destination_info").toObject();
+    DestinationPC destination = DestinationPC::fromJson(infoObj);
+    destination.ip_address = sender.toString();
+    destination.last_seen = QDateTime::currentDateTimeUtc();
+    if (destination.destination_id.isEmpty()) {
+        destination.destination_id = QString("%1@%2").arg(destination.hostname, destination.ip_address);
+    }
+    Q_EMIT destinationDiscovered(destination);
 }
 
 } // namespace sak

@@ -76,6 +76,9 @@ Q_SIGNALS:
     void mappingReady(const DeploymentMapping& mapping);
 
 private:
+    /// @brief Validate custom mapping rules (source/destination references).
+    bool validateCustomMappingRules(const DeploymentMapping& mapping, QString& errorMessage) const;
+
     static QString mappingTypeToString(MappingType type);
     static MappingType mappingTypeFromString(const QString& value);
 

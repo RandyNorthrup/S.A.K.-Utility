@@ -71,21 +71,15 @@ qint64 StreamingDecompressor::read(char* data, qint64 maxSize)
     setOutput(data, static_cast<size_t>(maxSize));
 
     while (outputRemaining() > 0 && !m_eof) {
-        if (inputEmpty()) {
-            if (!fillInputBuffer()) {
-                if (m_file.atEnd()) {
-                    m_eof = true;
-                    break;
-                }
-                return -1;
-            }
-        }
+        if (!tryRefillInput()) return -1;
+        if (m_eof) break;
 
         StepResult result = decompressStep();
         if (result == StepResult::stream_end) {
             m_eof = true;
             break;
-        } else if (result == StepResult::error) {
+        }
+        if (result == StepResult::error) {
             logError(m_lastError.toStdString());
             return -1;
         }
@@ -115,6 +109,17 @@ qint64 StreamingDecompressor::compressedBytesRead() const
 qint64 StreamingDecompressor::decompressedBytesProduced() const
 {
     return m_decompressedBytesProduced;
+}
+
+bool StreamingDecompressor::tryRefillInput()
+{
+    if (!inputEmpty()) return true;
+    if (fillInputBuffer()) return true;
+    if (m_file.atEnd()) {
+        m_eof = true;
+        return true;
+    }
+    return false;
 }
 
 bool StreamingDecompressor::fillInputBuffer()

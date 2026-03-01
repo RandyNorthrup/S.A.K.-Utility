@@ -81,10 +81,7 @@ void ScreenshotSettingsAction::execute() {
 
     for (auto it = settings_pages.begin(); it != settings_pages.end(); ++it) {
         if (isCancelled()) {
-            ProcessResult kill_proc = runProcess("taskkill", QStringList() << "/IM" << "SystemSettings.exe" << "/F", sak::kTimeoutProcessMediumMs);
-            if (!kill_proc.succeeded()) {
-                Q_EMIT logMessage("Settings close warning: " + kill_proc.std_err.trimmed());
-            }
+            closeSettingsApp();
             emitCancelledResult("Settings screenshots cancelled", start_time);
             return;
         }
@@ -168,53 +165,59 @@ QMap<QString, QString> ScreenshotSettingsAction::buildSettingsPageMap() {
     };
 }
 
+void ScreenshotSettingsAction::closeSettingsApp() {
+    ProcessResult close_proc = runProcess("taskkill",
+        QStringList() << "/IM" << "SystemSettings.exe" << "/F",
+        sak::kTimeoutProcessMediumMs);
+    if (!close_proc.succeeded()) {
+        Q_EMIT logMessage("Settings close warning: " + close_proc.std_err.trimmed());
+    }
+}
+
+bool ScreenshotSettingsAction::captureAllScreens(const QDir& output_dir,
+                                                   const QString& page_name,
+                                                   const QString& timestamp) {
+    QList<QScreen*> screens = QGuiApplication::screens();
+    if (screens.size() <= 1) {
+        QScreen* screen = QGuiApplication::primaryScreen();
+        if (!screen) return false;
+        QPixmap screenshot = screen->grabWindow(0);
+        QString filepath = output_dir.filePath(QString("%1_%2.png").arg(page_name, timestamp));
+        return screenshot.save(filepath, "PNG");
+    }
+
+    bool captured = false;
+    for (int i = 0; i < screens.size(); i++) {
+        QPixmap screenshot = screens[i]->grabWindow(0);
+        QString filepath = output_dir.filePath(
+            QString("%1_Monitor%2_%3.png").arg(page_name).arg(i + 1).arg(timestamp));
+        if (screenshot.save(filepath, "PNG")) {
+            captured = true;
+        }
+    }
+    return captured;
+}
+
 bool ScreenshotSettingsAction::captureSettingsPage(const QString& ms_uri,
                                                      const QString& page_name,
                                                      const QString& output_dir_path,
                                                      const QString& timestamp) {
     QDir output_dir(output_dir_path);
     for (int attempt = 1; attempt <= 3; attempt++) {
-        QProcess::startDetached("explorer.exe", QStringList() << QString("ms-settings:%1").arg(ms_uri));
+        QProcess::startDetached("explorer.exe",
+            QStringList() << QString("ms-settings:%1").arg(ms_uri));
 
         int wait_time = 2000 + (attempt - 1) * 1000;
         QThread::msleep(wait_time);
 
         if (!isProcessRunning("SystemSettings.exe")) {
-            ProcessResult close_proc = runProcess("taskkill", QStringList() << "/IM" << "SystemSettings.exe" << "/F", sak::kTimeoutProcessMediumMs);
-            if (!close_proc.succeeded()) {
-                Q_EMIT logMessage("Settings close warning: " + close_proc.std_err.trimmed());
-            }
+            closeSettingsApp();
             QThread::msleep(sak::kTimerRetryBaseMs);
             continue;
         }
 
-        bool captured = false;
-        QList<QScreen*> screens = QGuiApplication::screens();
-
-        if (screens.size() > 1) {
-            for (int i = 0; i < screens.size(); i++) {
-                QScreen* screen = screens[i];
-                QPixmap screenshot = screen->grabWindow(0);
-                QString filepath = output_dir.filePath(QString("%1_Monitor%2_%3.png").arg(page_name).arg(i+1).arg(timestamp));
-                if (screenshot.save(filepath, "PNG")) {
-                    captured = true;
-                }
-            }
-        } else {
-            QScreen* screen = QGuiApplication::primaryScreen();
-            if (screen) {
-                QPixmap screenshot = screen->grabWindow(0);
-                QString filepath = output_dir.filePath(QString("%1_%2.png").arg(page_name).arg(timestamp));
-                if (screenshot.save(filepath, "PNG")) {
-                    captured = true;
-                }
-            }
-        }
-
-        ProcessResult close_proc = runProcess("taskkill", QStringList() << "/IM" << "SystemSettings.exe" << "/F", sak::kTimeoutProcessMediumMs);
-        if (!close_proc.succeeded()) {
-            Q_EMIT logMessage("Settings close warning: " + close_proc.std_err.trimmed());
-        }
+        bool captured = captureAllScreens(output_dir, page_name, timestamp);
+        closeSettingsApp();
         QThread::msleep(sak::kTimerRetryBaseMs);
 
         if (captured) return true;

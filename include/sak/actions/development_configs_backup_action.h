@@ -50,6 +50,11 @@ private:
     void scanVSCodeSettings();
     void scanVisualStudioSettings();
     void scanIntelliJSettings();
+
+    /// @brief Calculate total size of all files in a directory recursively
+    qint64 calculateDirSize(const QString& path) const;
+    /// @brief Copy all files from a directory to a destination, preserving structure
+    qint64 copyDirectoryContents(const QString& src_path, const QString& dest_path);
 };
 
 } // namespace sak

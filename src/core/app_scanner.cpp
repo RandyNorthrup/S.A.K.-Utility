@@ -86,31 +86,33 @@ std::vector<AppScanner::AppInfo> AppScanner::scanRegistryHive(void* hive, const 
     DWORD subKeyNameSize = 256;
     
     while (RegEnumKeyExW(hKey, index, subKeyName, &subKeyNameSize, nullptr, nullptr, nullptr, nullptr) == ERROR_SUCCESS) {
-        // Open this application's registry key
-        HKEY appKey;
-        if (RegOpenKeyExW(hKey, subKeyName, 0, KEY_READ, &appKey) == ERROR_SUCCESS) {
-            AppInfo app;
-            app.source = AppInfo::Source::Registry;
-            app.registry_key = subkey + "\\" + QString::fromWCharArray(subKeyName);
-            
-            // Read application details
-            app.name = readRegistryValue(appKey, "DisplayName");
-            app.version = readRegistryValue(appKey, "DisplayVersion");
-            app.publisher = readRegistryValue(appKey, "Publisher");
-            app.install_date = readRegistryValue(appKey, "InstallDate");
-            app.install_location = readRegistryValue(appKey, "InstallLocation");
-            app.uninstall_string = readRegistryValue(appKey, "UninstallString");
-            
-            // Only add if we have a display name and not a system component
-            if (!app.name.isEmpty() && !isSystemComponent(app.name)) {
-                apps.push_back(app);
-            }
-            
-            RegCloseKey(appKey);
-        }
-        
         index++;
         subKeyNameSize = 256;
+
+        // Open this application's registry key
+        HKEY appKey;
+        if (RegOpenKeyExW(hKey, subKeyName, 0, KEY_READ, &appKey) != ERROR_SUCCESS) {
+            continue;
+        }
+
+        AppInfo app;
+        app.source = AppInfo::Source::Registry;
+        app.registry_key = subkey + "\\" + QString::fromWCharArray(subKeyName);
+
+        // Read application details
+        app.name = readRegistryValue(appKey, "DisplayName");
+        app.version = readRegistryValue(appKey, "DisplayVersion");
+        app.publisher = readRegistryValue(appKey, "Publisher");
+        app.install_date = readRegistryValue(appKey, "InstallDate");
+        app.install_location = readRegistryValue(appKey, "InstallLocation");
+        app.uninstall_string = readRegistryValue(appKey, "UninstallString");
+
+        // Only add if we have a display name and not a system component
+        if (!app.name.isEmpty() && !isSystemComponent(app.name)) {
+            apps.push_back(app);
+        }
+
+        RegCloseKey(appKey);
     }
     
     RegCloseKey(hKey);

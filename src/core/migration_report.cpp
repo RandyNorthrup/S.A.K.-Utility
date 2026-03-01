@@ -506,7 +506,12 @@ QString MigrationReport::buildHtmlStyles() {
 
 void MigrationReport::buildHtmlEntryRows(QTextStream& out) const {
     for (const auto& entry : m_entries) {
-        QString row_class = entry.match_type == "exact" ? " class=\"exact\"" : (entry.match_type == "fuzzy" ? " class=\"fuzzy\"" : "");
+        QString row_class;
+        if (entry.match_type == "exact") {
+            row_class = " class=\"exact\"";
+        } else if (entry.match_type == "fuzzy") {
+            row_class = " class=\"fuzzy\"";
+        }
         out << "<tr" << row_class << ">\n";
         out << "<td>" << entry.app_name << "</td>\n";
         out << "<td>" << entry.app_version << "</td>\n";

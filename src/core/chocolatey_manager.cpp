@@ -265,16 +265,19 @@ QString ChocolateyManager::getInstalledVersion(const QString& package_name) {
     QStringList args = {"list", "--local-only", package_name, "--exact", "--limit-output"};
     Result result = executeChoco(args, 10000);
     
-    if (result.success) {
-        // Parse "package_name|version"
-        QStringList lines = result.output.split('\n', Qt::SkipEmptyParts);
-        for (const QString& line : lines) {
-            if (line.startsWith(package_name + "|")) {
-                QStringList parts = line.split('|');
-                if (parts.size() >= 2) {
-                    return parts[1].trimmed();
-                }
-            }
+    if (!result.success) {
+        return QString();
+    }
+    
+    // Parse "package_name|version"
+    QStringList lines = result.output.split('\n', Qt::SkipEmptyParts);
+    for (const QString& line : lines) {
+        if (!line.startsWith(package_name + "|")) {
+            continue;
+        }
+        QStringList parts = line.split('|');
+        if (parts.size() >= 2) {
+            return parts[1].trimmed();
         }
     }
     
@@ -287,13 +290,14 @@ bool ChocolateyManager::isPackageAvailable(const QString& package_name) {
     }
     
     Result result = searchPackage(package_name, 1);
+    if (!result.success) {
+        return false;
+    }
     
-    if (result.success) {
-        auto packages = parseSearchResults(result.output);
-        for (const auto& pkg : packages) {
-            if (pkg.package_id.compare(package_name, Qt::CaseInsensitive) == 0) {
-                return true;
-            }
+    auto packages = parseSearchResults(result.output);
+    for (const auto& pkg : packages) {
+        if (pkg.package_id.compare(package_name, Qt::CaseInsensitive) == 0) {
+            return true;
         }
     }
     
@@ -309,13 +313,15 @@ QStringList ChocolateyManager::getOutdatedPackages() {
     }
     
     auto result = executeChoco({"outdated", "-r"}, 30000);
-    if (result.success) {
-        QStringList lines = result.output.split('\n', Qt::SkipEmptyParts);
-        for (const QString& line : lines) {
-            QStringList parts = line.split('|');
-            if (parts.size() >= 3) {
-                outdated.append(parts[0]); // Package name
-            }
+    if (!result.success) {
+        return outdated;
+    }
+    
+    QStringList lines = result.output.split('\n', Qt::SkipEmptyParts);
+    for (const QString& line : lines) {
+        QStringList parts = line.split('|');
+        if (parts.size() >= 3) {
+            outdated.append(parts[0]); // Package name
         }
     }
     

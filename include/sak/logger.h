@@ -15,6 +15,7 @@
 #include <format>
 #include <fstream>
 #include <mutex>
+#include <vector>
 #include <print>
 #include <source_location>
 #include <string>
@@ -141,6 +142,15 @@ private:
     
     /// @brief Perform log rotation
     void rotateLog() noexcept;
+
+    /// @brief Write a formatted log entry to the log file under lock
+    void writeEntryToFile(std::string_view log_entry, log_level level) noexcept;
+
+    /// @brief Write a formatted log entry to console (stdout/stderr)
+    void writeEntryToConsole(std::string_view log_entry, log_level level) noexcept;
+
+    /// @brief Collect existing log files matching the current prefix
+    [[nodiscard]] std::vector<std::filesystem::path> collectRotationCandidates() const;
     
     mutable std::mutex m_mutex;                    ///< Mutex for thread safety
     std::ofstream m_file_stream;                   ///< Output file stream

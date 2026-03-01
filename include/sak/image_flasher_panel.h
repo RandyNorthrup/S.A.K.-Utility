@@ -155,6 +155,8 @@ private:
     void connectWindowsUSBCreatorSignals(WindowsUSBCreator* creator, QThread* thread);
     /** @brief Parse disk number from PhysicalDrive device path; returns empty on failure */
     QString parseDiskNumberFromDevicePath(const QString& devicePath);
+    /** @brief Find the display text for a drive by matching its device path in the list widget */
+    QString findDriveDisplayText(const QString& devicePath) const;
     /** @brief Format a byte count as a human-readable string */
     QString formatFileSize(qint64 bytes) const;
     /** @brief Format a transfer speed in MB/s */

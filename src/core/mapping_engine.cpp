@@ -78,6 +78,38 @@ MappingEngine::DeploymentMapping MappingEngine::createCustomMapping(const QVecto
     return mapping;
 }
 
+bool MappingEngine::validateCustomMappingRules(const DeploymentMapping& mapping, QString& errorMessage) const {
+    if (mapping.custom_rules.isEmpty()) {
+        errorMessage = tr("Custom mapping rules are empty");
+        return false;
+    }
+
+    QSet<QString> sourceNames;
+    for (const auto& source : mapping.sources) {
+        sourceNames.insert(source.username);
+    }
+
+    QSet<QString> destinationIds;
+    for (const auto& destination : mapping.destinations) {
+        if (!destination.destination_id.isEmpty()) {
+            destinationIds.insert(destination.destination_id);
+        }
+    }
+
+    for (auto it = mapping.custom_rules.constBegin(); it != mapping.custom_rules.constEnd(); ++it) {
+        if (!sourceNames.contains(it.key())) {
+            errorMessage = tr("Custom mapping references unknown source: %1").arg(it.key());
+            return false;
+        }
+        if (!destinationIds.contains(it.value())) {
+            errorMessage = tr("Custom mapping references unknown destination: %1").arg(it.value());
+            return false;
+        }
+    }
+
+    return true;
+}
+
 bool MappingEngine::validateMapping(const DeploymentMapping& mapping, QString& errorMessage) const {
     if (mapping.sources.isEmpty()) {
         errorMessage = tr("No source profiles selected");
@@ -102,35 +134,8 @@ bool MappingEngine::validateMapping(const DeploymentMapping& mapping, QString& e
             return false;
         }
         break;
-    case MappingType::CustomMapping: {
-        if (mapping.custom_rules.isEmpty()) {
-            errorMessage = tr("Custom mapping rules are empty");
-            return false;
-        }
-
-        QSet<QString> sourceNames;
-        for (const auto& source : mapping.sources) {
-            sourceNames.insert(source.username);
-        }
-
-        QSet<QString> destinationIds;
-        for (const auto& destination : mapping.destinations) {
-            if (!destination.destination_id.isEmpty()) {
-                destinationIds.insert(destination.destination_id);
-            }
-        }
-
-        for (auto it = mapping.custom_rules.constBegin(); it != mapping.custom_rules.constEnd(); ++it) {
-            if (!sourceNames.contains(it.key())) {
-                errorMessage = tr("Custom mapping references unknown source: %1").arg(it.key());
-                return false;
-            }
-            if (!destinationIds.contains(it.value())) {
-                errorMessage = tr("Custom mapping references unknown destination: %1").arg(it.value());
-                return false;
-            }
-        }
-        break; }
+    case MappingType::CustomMapping:
+        return validateCustomMappingRules(mapping, errorMessage);
     }
 
     return true;

@@ -444,12 +444,7 @@ bool BackupBitlockerKeysAction::executeExtractKeys(const QDateTime& start_time,
 
         vol.key_protectors = getKeyProtectors(vol.drive_letter);
         total_keys_found += vol.key_protectors.size();
-
-        for (const auto& kp : vol.key_protectors) {
-            if (!kp.recovery_password.isEmpty()) {
-                total_recovery_passwords++;
-            }
-        }
+        total_recovery_passwords += countRecoveryPasswords(vol.key_protectors);
 
         // Log protector IDs only (never log the actual recovery passwords)
         for (const auto& kp : vol.key_protectors) {
@@ -538,32 +533,7 @@ bool BackupBitlockerKeysAction::writeJsonBackup(const QString& backup_dir_path)
 
     QJsonArray volumes_json;
     for (const auto& vol : m_volumes) {
-        QJsonObject vol_obj;
-        vol_obj["drive_letter"] = vol.drive_letter;
-        vol_obj["volume_label"] = vol.volume_label;
-        vol_obj["device_id"] = vol.device_id;
-        vol_obj["protection_status"] = vol.protection_status;
-        vol_obj["encryption_method"] = vol.encryption_method;
-        vol_obj["encryption_percentage"] = vol.encryption_percentage;
-        vol_obj["lock_status"] = vol.lock_status;
-        vol_obj["volume_type"] = vol.volume_type;
-        vol_obj["volume_size_bytes"] = vol.volume_size_bytes;
-
-        QJsonArray protectors_json;
-        for (const auto& kp : vol.key_protectors) {
-            QJsonObject kp_obj;
-            kp_obj["protector_id"] = kp.protector_id;
-            kp_obj["protector_type"] = kp.protector_type;
-            if (!kp.recovery_password.isEmpty()) {
-                kp_obj["recovery_password"] = kp.recovery_password;
-            }
-            if (!kp.key_file_name.isEmpty()) {
-                kp_obj["key_file_name"] = kp.key_file_name;
-            }
-            protectors_json.append(kp_obj);
-        }
-        vol_obj["key_protectors"] = protectors_json;
-        volumes_json.append(vol_obj);
+        volumes_json.append(buildVolumeJson(vol));
     }
     json_backup["volumes"] = volumes_json;
 
@@ -715,25 +685,7 @@ void BackupBitlockerKeysAction::writeRecoveryDocumentVolumes(QTextStream& out) c
         }
 
         for (int k = 0; k < vol.key_protectors.size(); ++k) {
-            const auto& kp = vol.key_protectors[k];
-
-            out << "    Protector " << (k + 1) << ":\n";
-            out << "      Type:           " << kp.protector_type << "\n";
-            out << "      Protector ID:   " << kp.protector_id << "\n";
-
-            if (!kp.recovery_password.isEmpty()) {
-                out << "\n";
-                out << "      *** RECOVERY PASSWORD ***\n";
-                out << "      " << kp.recovery_password << "\n";
-                out << "\n";
-                out << "      (Enter this 48-digit password at the BitLocker recovery screen)\n";
-            }
-
-            if (!kp.key_file_name.isEmpty()) {
-                out << "      Key File:       " << kp.key_file_name << "\n";
-            }
-
-            out << "\n";
+            writeKeyProtectorEntry(out, vol.key_protectors[k], k);
         }
 
         out << "\n";
@@ -778,17 +730,7 @@ int BackupBitlockerKeysAction::writePerVolumeKeyFiles(const QString& backup_dir)
 
     for (const auto& vol : m_volumes) {
         // Only write files for volumes that have recovery passwords
-        bool has_recovery_password = false;
-        for (const auto& kp : vol.key_protectors) {
-            if (!kp.recovery_password.isEmpty()) {
-                has_recovery_password = true;
-                break;
-            }
-        }
-
-        if (!has_recovery_password) {
-            continue;
-        }
+        if (!volumeHasRecoveryPassword(vol.key_protectors)) continue;
 
         // Create a file named like "BitLocker Recovery Key C.txt"
         QString safe_drive = vol.drive_letter;
@@ -811,15 +753,7 @@ int BackupBitlockerKeysAction::writePerVolumeKeyFiles(const QString& backup_dir)
         out << "the following identifier with the identifier value displayed on your PC.\n";
         out << "\n";
 
-        for (const auto& kp : vol.key_protectors) {
-            if (kp.recovery_password.isEmpty()) {
-                continue;
-            }
-
-            out << "Identifier:   " << kp.protector_id << "\n";
-            out << "Recovery Key: " << kp.recovery_password << "\n";
-            out << "\n";
-        }
+        writeVolumeKeyEntries(out, vol.key_protectors);
 
         out << "Drive:        " << vol.drive_letter;
         if (!vol.volume_label.isEmpty()) {
@@ -890,6 +824,93 @@ try {
 
     ProcessResult proc = runPowerShell(script, sak::kTimeoutChocoListMs);
     return proc.succeeded() && proc.std_out.trimmed().contains("SUCCESS");
+}
+
+// ============================================================================
+// Extracted Helpers — Nesting Reduction
+// ============================================================================
+
+int BackupBitlockerKeysAction::countRecoveryPasswords(const QVector<KeyProtectorInfo>& protectors)
+{
+    int count = 0;
+    for (const auto& kp : protectors) {
+        if (!kp.recovery_password.isEmpty()) {
+            count++;
+        }
+    }
+    return count;
+}
+
+bool BackupBitlockerKeysAction::volumeHasRecoveryPassword(const QVector<KeyProtectorInfo>& protectors)
+{
+    for (const auto& kp : protectors) {
+        if (!kp.recovery_password.isEmpty()) return true;
+    }
+    return false;
+}
+
+void BackupBitlockerKeysAction::writeKeyProtectorEntry(QTextStream& out,
+                                                        const KeyProtectorInfo& kp,
+                                                        int index) const
+{
+    out << "    Protector " << (index + 1) << ":\n";
+    out << "      Type:           " << kp.protector_type << "\n";
+    out << "      Protector ID:   " << kp.protector_id << "\n";
+
+    if (!kp.recovery_password.isEmpty()) {
+        out << "\n";
+        out << "      *** RECOVERY PASSWORD ***\n";
+        out << "      " << kp.recovery_password << "\n";
+        out << "\n";
+        out << "      (Enter this 48-digit password at the BitLocker recovery screen)\n";
+    }
+
+    if (!kp.key_file_name.isEmpty()) {
+        out << "      Key File:       " << kp.key_file_name << "\n";
+    }
+
+    out << "\n";
+}
+
+void BackupBitlockerKeysAction::writeVolumeKeyEntries(QTextStream& out,
+                                                       const QVector<KeyProtectorInfo>& protectors) const
+{
+    for (const auto& kp : protectors) {
+        if (kp.recovery_password.isEmpty()) continue;
+        out << "Identifier:   " << kp.protector_id << "\n";
+        out << "Recovery Key: " << kp.recovery_password << "\n";
+        out << "\n";
+    }
+}
+
+QJsonObject BackupBitlockerKeysAction::buildVolumeJson(const VolumeInfo& vol) const
+{
+    QJsonObject vol_obj;
+    vol_obj["drive_letter"] = vol.drive_letter;
+    vol_obj["volume_label"] = vol.volume_label;
+    vol_obj["device_id"] = vol.device_id;
+    vol_obj["protection_status"] = vol.protection_status;
+    vol_obj["encryption_method"] = vol.encryption_method;
+    vol_obj["encryption_percentage"] = vol.encryption_percentage;
+    vol_obj["lock_status"] = vol.lock_status;
+    vol_obj["volume_type"] = vol.volume_type;
+    vol_obj["volume_size_bytes"] = vol.volume_size_bytes;
+
+    QJsonArray protectors_json;
+    for (const auto& kp : vol.key_protectors) {
+        QJsonObject kp_obj;
+        kp_obj["protector_id"] = kp.protector_id;
+        kp_obj["protector_type"] = kp.protector_type;
+        if (!kp.recovery_password.isEmpty()) {
+            kp_obj["recovery_password"] = kp.recovery_password;
+        }
+        if (!kp.key_file_name.isEmpty()) {
+            kp_obj["key_file_name"] = kp.key_file_name;
+        }
+        protectors_json.append(kp_obj);
+    }
+    vol_obj["key_protectors"] = protectors_json;
+    return vol_obj;
 }
 
 } // namespace sak

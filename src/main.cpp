@@ -63,6 +63,62 @@ QString findIconPath() {
 
 } // namespace
 
+/// @brief Write an execution result file if a result file path was provided.
+void writeResultIfNeeded(const QString& result_file,
+                         const sak::QuickAction::ExecutionResult& result,
+                         sak::QuickAction::ActionStatus status) {
+    if (result_file.isEmpty()) {
+        return;
+    }
+    QString error_message;
+    if (!sak::writeExecutionResultFile(result_file, result, status, &error_message)) {
+        sak::logWarning("Failed to write result file: {}", error_message.toStdString());
+    }
+}
+
+/// @brief Run a quick action in headless/elevated mode and return exit code.
+int runElevatedQuickAction(QApplication& app,
+                           const QString& action_to_run,
+                           const QString& backup_location,
+                           const QString& result_file) {
+    sak::logInfo("Running elevated quick action: {}", action_to_run.toStdString());
+
+    sak::QuickActionController controller;
+    controller.setBackupLocation(backup_location);
+
+    QObject::connect(&controller, &sak::QuickActionController::logMessage, [](const QString& message) {
+        sak::logInfo("{}", message.toStdString());
+    });
+
+    auto actions = sak::ActionFactory::createAllActions(backup_location);
+    for (auto& action : actions) {
+        controller.registerAction(std::move(action));
+    }
+
+    sak::QuickAction* action = controller.getAction(action_to_run);
+    if (!action) {
+        sak::QuickAction::ExecutionResult result;
+        result.success = false;
+        result.message = "Action not found";
+        result.log = QString("No action registered with name: %1").arg(action_to_run);
+        writeResultIfNeeded(result_file, result, sak::QuickAction::ActionStatus::Failed);
+        return 1;
+    }
+
+    QObject::connect(&controller, &sak::QuickActionController::actionExecutionComplete,
+                     &app, [&app, action, result_file](sak::QuickAction* completed) {
+        if (completed != action) {
+            return;
+        }
+        writeResultIfNeeded(result_file, action->lastExecutionResult(), action->status());
+        const int exit_code = action->lastExecutionResult().success ? 0 : 2;
+        app.exit(exit_code);
+    }, Qt::QueuedConnection);
+
+    controller.executeAction(action->name(), false);
+    return app.exec();
+}
+
 /// @brief Main application entry point
 /// @param argc Argument count
 /// @param argv Argument vector
@@ -130,58 +186,7 @@ int main(int argc, char* argv[]) {
         }
 
         if (!action_to_run.isEmpty()) {
-            sak::logInfo("Running elevated quick action: {}", action_to_run.toStdString());
-
-            sak::QuickActionController controller;
-            controller.setBackupLocation(backup_location);
-
-            QObject::connect(&controller, &sak::QuickActionController::logMessage, [](const QString& message) {
-                sak::logInfo("{}", message.toStdString());
-            });
-
-            auto actions = sak::ActionFactory::createAllActions(backup_location);
-            for (auto& action : actions) {
-                controller.registerAction(std::move(action));
-            }
-
-            sak::QuickAction* action = controller.getAction(action_to_run);
-            if (!action) {
-                sak::QuickAction::ExecutionResult result;
-                result.success = false;
-                result.message = "Action not found";
-                result.log = QString("No action registered with name: %1").arg(action_to_run);
-                if (!result_file.isEmpty()) {
-                    QString error_message;
-                    if (!sak::writeExecutionResultFile(result_file, result, sak::QuickAction::ActionStatus::Failed, &error_message)) {
-                        sak::logWarning("Failed to write result file: {}", error_message.toStdString());
-                    }
-                }
-                return 1;
-            }
-
-            QObject::connect(&controller, &sak::QuickActionController::actionExecutionComplete,
-                             &app, [&app, action, result_file](sak::QuickAction* completed) {
-                if (completed != action) {
-                    return;
-                }
-
-                if (!result_file.isEmpty()) {
-                    QString error_message;
-                    if (!sak::writeExecutionResultFile(
-                            result_file,
-                            action->lastExecutionResult(),
-                            action->status(),
-                            &error_message)) {
-                        sak::logWarning("Failed to write result file: {}", error_message.toStdString());
-                    }
-                }
-
-                const int exit_code = action->lastExecutionResult().success ? 0 : 2;
-                app.exit(exit_code);
-            }, Qt::QueuedConnection);
-
-            controller.executeAction(action->name(), false);
-            return app.exec();
+            return runElevatedQuickAction(app, action_to_run, backup_location, result_file);
         }
         
         std::unique_ptr<sak::ui::SplashScreen> splash;

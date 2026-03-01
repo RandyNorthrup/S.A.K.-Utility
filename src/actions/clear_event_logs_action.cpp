@@ -187,12 +187,12 @@ bool ClearEventLogsAction::executeClearLogs(const QDateTime& start_time,
     Q_EMIT executionProgress("║ Backing up logs with wevtutil...                             ║", 40);
     Q_EMIT executionProgress("║ Clearing event log entries...                                ║", 60);
 
-    if (ps.timed_out || isCancelled()) {
-        if (isCancelled()) {
-            emitCancelledResult("Event log clearing cancelled", start_time);
-        } else {
-            emitFailedResult("Operation timed out after 5 minutes", {}, start_time);
-        }
+    if (isCancelled()) {
+        emitCancelledResult("Event log clearing cancelled", start_time);
+        return false;
+    }
+    if (ps.timed_out) {
+        emitFailedResult("Operation timed out after 5 minutes", {}, start_time);
         return false;
     }
 

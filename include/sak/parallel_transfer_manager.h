@@ -107,6 +107,12 @@ private:
     int priorityScore(JobPriority priority) const;
     void rebalanceBandwidth();
 
+    /// @brief Enqueue jobs using custom mapping rules
+    void enqueueCustomMappingJobs(const MappingEngine::DeploymentMapping& mapping);
+
+    /// @brief Find the best candidate index in the queue; returns -1 if none ready
+    int findBestCandidateIndex() const;
+
     /// @brief Per-job bandwidth allocation entry used during rebalancing
     struct BandwidthAllocation {
         QString jobId;
@@ -120,6 +126,12 @@ private:
 
     /// @brief Distribute remaining bandwidth across under-capped jobs
     void distributeExcessBandwidth(QVector<BandwidthAllocation>& allocations, int remaining);
+
+    /// @brief Sum weights of jobs that have not reached their bandwidth cap
+    int computeUncappedWeightSum(const QVector<BandwidthAllocation>& allocations) const;
+
+    /// @brief Run one distribution pass; returns true if any bandwidth was assigned
+    bool distributeOneBandwidthPass(QVector<BandwidthAllocation>& allocations, int& remaining);
 
     QString m_currentDeploymentId;
     bool m_deploymentPaused{false};

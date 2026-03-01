@@ -9,6 +9,8 @@
 #include <QHostAddress>
 #include <atomic>
 
+class QNetworkInterface;
+
 #include "sak/network_transfer_types.h"
 #include "sak/network_constants.h"
 
@@ -38,6 +40,7 @@ private Q_SLOTS:
 
 private:
     void sendResponse(const QHostAddress& address, quint16 port);
+    bool broadcastOnInterface(const QByteArray& datagram, const QNetworkInterface& iface);
 
     QUdpSocket* m_socket{nullptr};
     QTimer* m_broadcastTimer{nullptr};

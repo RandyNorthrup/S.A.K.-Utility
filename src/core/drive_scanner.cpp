@@ -14,6 +14,16 @@
 
 #pragma comment(lib, "setupapi.lib")
 
+namespace {
+/// @brief Check if any drive in the list has the given devicePath
+bool containsDevicePath(const QList<sak::DriveInfo>& drives, const QString& devicePath) {
+    for (const auto& drive : drives) {
+        if (drive.devicePath == devicePath) return true;
+    }
+    return false;
+}
+} // anonymous namespace
+
 DriveScanner* DriveScanner::s_instance = nullptr;
 
 DriveScanner::DriveScanner(QObject* parent)
@@ -114,34 +124,18 @@ void DriveScanner::scanDrives() {
     
     // Find removed drives
     for (const auto& oldDrive : m_drives) {
-        bool found = false;
-        for (const auto& newDrive : newDrives) {
-            if (newDrive.devicePath == oldDrive.devicePath) {
-                found = true;
-                break;
-            }
-        }
-        if (!found) {
-            sak::logInfo(QString("Drive detached: %1").arg(oldDrive.devicePath).toStdString());
-            Q_EMIT driveDetached(oldDrive.devicePath);
-            hasChanges = true;
-        }
+        if (containsDevicePath(newDrives, oldDrive.devicePath)) continue;
+        sak::logInfo(QString("Drive detached: %1").arg(oldDrive.devicePath).toStdString());
+        Q_EMIT driveDetached(oldDrive.devicePath);
+        hasChanges = true;
     }
     
     // Find new drives
     for (const auto& newDrive : newDrives) {
-        bool found = false;
-        for (const auto& oldDrive : m_drives) {
-            if (newDrive.devicePath == oldDrive.devicePath) {
-                found = true;
-                break;
-            }
-        }
-        if (!found) {
-            sak::logInfo(QString("Drive attached: %1 (%2)").arg(newDrive.devicePath, newDrive.name).toStdString());
-            Q_EMIT driveAttached(newDrive);
-            hasChanges = true;
-        }
+        if (containsDevicePath(m_drives, newDrive.devicePath)) continue;
+        sak::logInfo(QString("Drive attached: %1 (%2)").arg(newDrive.devicePath, newDrive.name).toStdString());
+        Q_EMIT driveAttached(newDrive);
+        hasChanges = true;
     }
     
     m_drives = newDrives;
@@ -449,39 +443,49 @@ QStringList DriveScanner::getMountPoints(int driveNumber) {
             nullptr
         );
         
-        if (hVolume != INVALID_HANDLE_VALUE) {
-            STORAGE_DEVICE_NUMBER deviceNumber = {};
-            DWORD bytesReturned = 0;
-            
-            if (DeviceIoControl(
-                hVolume,
-                IOCTL_STORAGE_GET_DEVICE_NUMBER,
-                nullptr, 0,
-                &deviceNumber, sizeof(deviceNumber),
-                &bytesReturned,
-                nullptr)
-                && static_cast<int>(deviceNumber.DeviceNumber) == driveNumber)
-            {
-                wchar_t pathNames[MAX_PATH * 4];
-                DWORD pathLen = 0;
-                
-                volumeName[len - 1] = L'\\';
-                if (GetVolumePathNamesForVolumeNameW(volumeName, pathNames, sizeof(pathNames) / sizeof(wchar_t), &pathLen)) {
-                    wchar_t* ptr = pathNames;
-                    while (*ptr) {
-                        mountPoints.append(QString::fromWCharArray(ptr));
-                        ptr += wcslen(ptr) + 1;
-                    }
-                }
-                volumeName[len - 1] = L'\0';
-            }
-            
+        if (hVolume == INVALID_HANDLE_VALUE) continue;
+        
+        STORAGE_DEVICE_NUMBER deviceNumber = {};
+        DWORD bytesReturned = 0;
+        
+        bool isMatch = DeviceIoControl(
+            hVolume,
+            IOCTL_STORAGE_GET_DEVICE_NUMBER,
+            nullptr, 0,
+            &deviceNumber, sizeof(deviceNumber),
+            &bytesReturned,
+            nullptr)
+            && static_cast<int>(deviceNumber.DeviceNumber) == driveNumber;
+        
+        if (!isMatch) {
             CloseHandle(hVolume);
+            continue;
         }
+        
+        collectMountPaths(volumeName, len, mountPoints);
+        CloseHandle(hVolume);
     } while (FindNextVolumeW(hFind, volumeName, MAX_PATH));
     
     FindVolumeClose(hFind);
     return mountPoints;
+}
+
+void DriveScanner::collectMountPaths(wchar_t* volumeName, size_t nameLen, QStringList& mountPoints) {
+    volumeName[nameLen - 1] = L'\\';
+    
+    wchar_t pathNames[MAX_PATH * 4];
+    DWORD pathLen = 0;
+    if (!GetVolumePathNamesForVolumeNameW(volumeName, pathNames, sizeof(pathNames) / sizeof(wchar_t), &pathLen)) {
+        volumeName[nameLen - 1] = L'\0';
+        return;
+    }
+    
+    wchar_t* ptr = pathNames;
+    while (*ptr) {
+        mountPoints.append(QString::fromWCharArray(ptr));
+        ptr += wcslen(ptr) + 1;
+    }
+    volumeName[nameLen - 1] = L'\0';
 }
 
 QString DriveScanner::getVolumeLabel(const QString& mountPoint) {
@@ -541,18 +545,17 @@ void DriveScanner::registerDeviceNotification() {
     WNDCLASSEXW wc = {};
     wc.cbSize = sizeof(WNDCLASSEXW);
     wc.lpfnWndProc = [](HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) -> LRESULT {
-        if (msg == WM_DEVICECHANGE) {
-            if (wParam == DBT_DEVICEARRIVAL || wParam == DBT_DEVICEREMOVECOMPLETE) {
-                auto* pHdr = reinterpret_cast<DEV_BROADCAST_HDR*>(lParam);
-                if (pHdr && pHdr->dbch_devicetype == DBT_DEVTYP_VOLUME) {
-                    if (DriveScanner::s_instance) {
-                        QMetaObject::invokeMethod(DriveScanner::s_instance, "scanDrives", Qt::QueuedConnection);
-                    }
-                }
-            }
+        if (msg != WM_DEVICECHANGE) {
+            return DefWindowProcW(hwnd, msg, wParam, lParam);
+        }
+        if (wParam != DBT_DEVICEARRIVAL && wParam != DBT_DEVICEREMOVECOMPLETE) {
             return TRUE;
         }
-        return DefWindowProcW(hwnd, msg, wParam, lParam);
+        auto* pHdr = reinterpret_cast<DEV_BROADCAST_HDR*>(lParam);
+        if (pHdr && pHdr->dbch_devicetype == DBT_DEVTYP_VOLUME && DriveScanner::s_instance) {
+            QMetaObject::invokeMethod(DriveScanner::s_instance, "scanDrives", Qt::QueuedConnection);
+        }
+        return TRUE;
     };
     wc.hInstance = GetModuleHandleW(nullptr);
     wc.lpszClassName = className;
@@ -612,12 +615,10 @@ void DriveScanner::unregisterDeviceNotification() {
 LRESULT CALLBACK DriveScanner::deviceNotificationProc(HWND hwnd, UINT message, 
                                                      WPARAM wParam, LPARAM lParam)
 {
-    if (message == WM_DEVICECHANGE) {
-        if (wParam == DBT_DEVICEARRIVAL || wParam == DBT_DEVICEREMOVECOMPLETE) {
-            if (s_instance) {
-                s_instance->refresh();
-            }
-        }
+    if (message == WM_DEVICECHANGE
+        && (wParam == DBT_DEVICEARRIVAL || wParam == DBT_DEVICEREMOVECOMPLETE)
+        && s_instance) {
+        s_instance->refresh();
     }
     
     return DefWindowProc(hwnd, message, wParam, lParam);

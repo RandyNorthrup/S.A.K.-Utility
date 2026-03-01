@@ -149,6 +149,30 @@ private:
     void emitReceiverProgress(const DataOptions& options, ReceiverState& state,
                               QElapsedTimer& resumeTimer);
 
+    /// @brief Attempt to send a single file (one try, no retry loop).
+    bool trySendSingleFile(QTcpSocket* socket, const TransferFileEntry& file,
+                           const DataOptions& options, const QByteArray& key,
+                           qint64& bytesSent, qint64 totalBytes,
+                           QElapsedTimer& rateTimer, qint64& rateBytesSent);
+
+    /// @brief Encrypt payload in-place if encryption is enabled.
+    bool encryptPayloadIfNeeded(QByteArray& payload, quint16& flags, const QByteArray& key,
+                                const DataOptions& options, const QString& relativePath);
+
+    /// @brief Apply bandwidth throttling between chunks.
+    void throttleBandwidth(qint64 chunkSize, QElapsedTimer& rateTimer, qint64& rateBytesSent);
+
+    /// @brief Initialize resume state for the receiver and send resume info frame.
+    void initReceiverResume(QTcpSocket* socket, const DataOptions& options, ReceiverState& state);
+
+    /// @brief Dispatch a received frame to the appropriate handler.
+    /// @param done Set to true when FrameTransferEnd is received.
+    /// @return false on fatal error, true to continue.
+    bool dispatchReceiverFrame(QTcpSocket* socket, const FrameHeader& header,
+                               const QByteArray& payload, const DataOptions& options,
+                               ReceiverState& state, QElapsedTimer& resumeTimer,
+                               bool& done);
+
     QByteArray compressData(const QByteArray& data) const;
     QByteArray decompressData(const QByteArray& data) const;
 

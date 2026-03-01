@@ -103,6 +103,10 @@ protected:
     QString m_lastError;
 
 private:
+    /// @brief Attempt to refill input; sets m_eof at end of file
+    /// @return true if input available or eof reached, false on read error
+    bool tryRefillInput();
+
     /// @brief Fill m_inputBuffer from m_file and call setInputFromBuffer()
     bool fillInputBuffer();
 

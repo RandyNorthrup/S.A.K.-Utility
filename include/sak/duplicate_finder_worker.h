@@ -134,6 +134,17 @@ private:
     auto hashFiles(const std::vector<std::filesystem::path>& files)
         -> std::expected<std::vector<std::pair<std::filesystem::path, std::string>>, sak::error_code>;
 
+    /// @brief Collect files from a single directory with error handling
+    auto collectFilesFromDirectory(const std::filesystem::path& dir_path,
+                                    std::vector<std::filesystem::path>& files)
+        -> std::expected<void, sak::error_code>;
+
+    /// @brief Iterate directory entries, collecting eligible files
+    template<typename DirIter>
+    auto collectEntries(const std::filesystem::path& dir_path,
+                        std::vector<std::filesystem::path>& files)
+        -> std::expected<void, sak::error_code>;
+
     /// @brief Build duplicate groups from hash-grouped files
     void buildDuplicateGroups(
         const std::unordered_map<std::string, std::vector<std::filesystem::path>>& hash_groups,

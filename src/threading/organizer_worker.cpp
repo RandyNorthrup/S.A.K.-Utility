@@ -120,22 +120,23 @@ auto OrganizerWorker::scanDirectory()
         return std::unexpected(sak::error_code::invalid_path);
     }
 
-    try {
-        // Only scan immediate files, not subdirectories
-        // Reserve capacity to reduce allocations
-        files.reserve(256);  // Reasonable default, will grow if needed
-        
-        for (const auto& entry : std::filesystem::directory_iterator(target_path)) {
-            if (checkStop()) {
-                return std::unexpected(sak::error_code::operation_cancelled);
-            }
+    // Only scan immediate files, not subdirectories
+    // Reserve capacity to reduce allocations
+    files.reserve(256);  // Reasonable default, will grow if needed
 
-            if (entry.is_regular_file()) {
-                files.push_back(entry.path());
-            }
+    std::error_code ec;
+    for (const auto& entry : std::filesystem::directory_iterator(target_path, ec)) {
+        if (checkStop()) {
+            return std::unexpected(sak::error_code::operation_cancelled);
         }
-    } catch (const std::filesystem::filesystem_error& e) {
-        sak::logError("Filesystem error during scan: {}", e.what());
+
+        if (entry.is_regular_file()) {
+            files.push_back(entry.path());
+        }
+    }
+
+    if (ec) {
+        sak::logError("Filesystem error during scan: {}", ec.message());
         return std::unexpected(sak::error_code::scan_failed);
     }
 
@@ -191,13 +192,9 @@ auto OrganizerWorker::executeMove(const MoveOperation& operation)
     -> std::expected<void, sak::error_code>
 {
     try {
-        // Create category directory if needed
+        // Create category directory if needed (create_directories is a no-op if it exists)
         if (m_config.create_subdirectories) {
-            std::filesystem::path category_dir = operation.destination.parent_path();
-            if (!std::filesystem::exists(category_dir)) {
-                std::filesystem::create_directories(category_dir);
-                sak::logInfo("Created directory: {}", category_dir.string());
-            }
+            std::filesystem::create_directories(operation.destination.parent_path());
         }
 
         // Handle collision

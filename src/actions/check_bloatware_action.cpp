@@ -75,6 +75,20 @@ QMap<QString, QPair<QString, bool>> buildBloatwarePatterns() {
     return bloatware_patterns;
 }
 
+/// @brief Find the first matching bloatware pattern for the given app name/package.
+QMap<QString, QPair<QString, bool>>::const_iterator findBloatwareMatch(
+    const QString& name, const QString& package_full,
+    const QMap<QString, QPair<QString, bool>>& patterns)
+{
+    for (auto it = patterns.constBegin(); it != patterns.constEnd(); ++it) {
+        if (name.contains(it.key(), Qt::CaseInsensitive) ||
+            package_full.contains(it.key(), Qt::CaseInsensitive)) {
+            return it;
+        }
+    }
+    return patterns.constEnd();
+}
+
 }
 
 CheckBloatwareAction::CheckBloatwareAction(QObject* parent)
@@ -124,20 +138,18 @@ QVector<CheckBloatwareAction::BloatwareItem> CheckBloatwareAction::scanForBloatw
         }
         seen.insert(dedupe_key);
 
-        for (auto it = bloatware_patterns.begin(); it != bloatware_patterns.end(); ++it) {
-            if (name.contains(it.key(), Qt::CaseInsensitive) || package_full.contains(it.key(), Qt::CaseInsensitive)) {
-                BloatwareItem item;
-                item.name = name.isEmpty() ? package_full : name;
-                item.type = source == "Provisioned" ? "Provisioned App" : "Installed Store App";
-                item.size = static_cast<qint64>(size_mb * sak::kBytesPerMB);
-                item.removal_method = source == "Provisioned"
-                    ? "PowerShell Remove-AppxProvisionedPackage"
-                    : "PowerShell Remove-AppxPackage";
-                item.is_safe_to_remove = it.value().second;
-                bloatware.append(item);
-                break;
-            }
-        }
+        auto match = findBloatwareMatch(name, package_full, bloatware_patterns);
+        if (match == bloatware_patterns.constEnd()) continue;
+
+        BloatwareItem item;
+        item.name = name.isEmpty() ? package_full : name;
+        item.type = source == "Provisioned" ? "Provisioned App" : "Installed Store App";
+        item.size = static_cast<qint64>(size_mb * sak::kBytesPerMB);
+        item.removal_method = source == "Provisioned"
+            ? "PowerShell Remove-AppxProvisionedPackage"
+            : "PowerShell Remove-AppxPackage";
+        item.is_safe_to_remove = match.value().second;
+        bloatware.append(item);
     }
     
     return bloatware;
@@ -262,16 +274,13 @@ void CheckBloatwareAction::executeMatchBloatware(const QString& scan_output,
             installed_scanned++;
         }
 
-        // Check against patterns
-        for (auto it = bloatware_patterns.begin(); it != bloatware_patterns.end(); ++it) {
-            if (name.contains(it.key(), Qt::CaseInsensitive) || package_full.contains(it.key(), Qt::CaseInsensitive)) {
-                bloatware_count++;
-                detected_bloatware.append(qMakePair(name.isEmpty() ? package_full : name, qMakePair(it.value().first, size_mb)));
-                total_size += static_cast<qint64>(size_mb * sak::kBytesPerMB);
-                if (it.value().second) safe_to_remove++;
-                break;
-            }
-        }
+        auto match = findBloatwareMatch(name, package_full, bloatware_patterns);
+        if (match == bloatware_patterns.constEnd()) continue;
+
+        bloatware_count++;
+        detected_bloatware.append(qMakePair(name.isEmpty() ? package_full : name, qMakePair(match.value().first, size_mb)));
+        total_size += static_cast<qint64>(size_mb * sak::kBytesPerMB);
+        if (match.value().second) safe_to_remove++;
     }
 
     formatBloatwareMatchReport(detected_bloatware, apps.size(), installed_scanned,
@@ -304,9 +313,9 @@ void CheckBloatwareAction::formatBloatwareMatchReport(
         report += "\u2551 DETECTED BLOATWARE                                                   \u2551\n";
         report += "\u2560\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2563\n";
 
-        int displayed = 0;
-        for (const auto& item : detected) {
-            if (displayed >= 20) break;  // Limit display
+        const int display_limit = qMin(detected.size(), 20);
+        for (int i = 0; i < display_limit; ++i) {
+            const auto& item = detected[i];
             QString name = item.first.left(40);
             QString category = item.second.first;
             double size_mb = item.second.second;
@@ -314,7 +323,6 @@ void CheckBloatwareAction::formatBloatwareMatchReport(
             report += QString("\u2551 \u2022 %1").arg(name).leftJustified(73, ' ') + "\u2551\n";
             report += QString("\u2551   Category: %1 | Size: %2 MB")
                          .arg(category).arg(QString::number(size_mb, 'f', 2)).leftJustified(73, ' ') + "\u2551\n";
-            displayed++;
         }
 
         if (detected.size() > 20) {

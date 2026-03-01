@@ -40,19 +40,18 @@ void DevelopmentConfigsBackupAction::scanSSHKeys() {
     for (const UserProfile& user : m_user_profiles) {
         QString ssh_dir = user.profile_path + "/.ssh";
         QDir dir(ssh_dir);
-        
-        if (dir.exists()) {
-            for (const QFileInfo& file : dir.entryInfoList(QDir::Files)) {
-                DevConfig cfg;
-                cfg.name = ".ssh/" + file.fileName();
-                cfg.path = file.absoluteFilePath();
-                cfg.size = file.size();
-                cfg.is_sensitive = true; // SSH keys are sensitive!
-                
-                m_configs.append(cfg);
-                m_total_size += cfg.size;
-                m_found_sensitive_data = true;
-            }
+        if (!dir.exists()) continue;
+
+        for (const QFileInfo& file : dir.entryInfoList(QDir::Files)) {
+            DevConfig cfg;
+            cfg.name = ".ssh/" + file.fileName();
+            cfg.path = file.absoluteFilePath();
+            cfg.size = file.size();
+            cfg.is_sensitive = true; // SSH keys are sensitive!
+
+            m_configs.append(cfg);
+            m_total_size += cfg.size;
+            m_found_sensitive_data = true;
         }
     }
 }
@@ -61,33 +60,22 @@ void DevelopmentConfigsBackupAction::scanVSCodeSettings() {
     for (const UserProfile& user : m_user_profiles) {
         QString vscode_dir = user.profile_path + "/AppData/Roaming/Code/User";
         QDir dir(vscode_dir);
-        
-        if (dir.exists()) {
-            QStringList files = {"settings.json", "keybindings.json", "snippets"};
-            
-            for (const QString& file : files) {
-                QString path = dir.filePath(file);
-                QFileInfo info(path);
-                
-                if (info.exists()) {
-                    DevConfig cfg;
-                    cfg.name = "VSCode/" + file;
-                    cfg.path = path;
-                    cfg.size = info.isDir() ? 0 : info.size();
-                    cfg.is_sensitive = false;
-                    
-                    if (info.isDir()) {
-                        QDirIterator it(path, QDir::Files, QDirIterator::Subdirectories);
-                        while (it.hasNext()) {
-                            it.next();
-                            cfg.size += it.fileInfo().size();
-                        }
-                    }
-                    
-                    m_configs.append(cfg);
-                    m_total_size += cfg.size;
-                }
-            }
+        if (!dir.exists()) continue;
+
+        QStringList files = {"settings.json", "keybindings.json", "snippets"};
+        for (const QString& file : files) {
+            QString path = dir.filePath(file);
+            QFileInfo info(path);
+            if (!info.exists()) continue;
+
+            DevConfig cfg;
+            cfg.name = "VSCode/" + file;
+            cfg.path = path;
+            cfg.size = info.isDir() ? calculateDirSize(path) : info.size();
+            cfg.is_sensitive = false;
+
+            m_configs.append(cfg);
+            m_total_size += cfg.size;
         }
     }
 }
@@ -96,22 +84,20 @@ void DevelopmentConfigsBackupAction::scanVisualStudioSettings() {
     for (const UserProfile& user : m_user_profiles) {
         QString vs_path = user.profile_path + "/AppData/Local/Microsoft/VisualStudio";
         QDir dir(vs_path);
-        
-        if (dir.exists()) {
-            QDirIterator it(vs_path, QStringList() << "*.vssettings", 
-                          QDir::Files, QDirIterator::Subdirectories);
-            
-            while (it.hasNext()) {
-                it.next();
-                DevConfig cfg;
-                cfg.name = "VisualStudio/" + it.fileName();
-                cfg.path = it.filePath();
-                cfg.size = it.fileInfo().size();
-                cfg.is_sensitive = false;
-                
-                m_configs.append(cfg);
-                m_total_size += cfg.size;
-            }
+        if (!dir.exists()) continue;
+
+        QDirIterator it(vs_path, QStringList() << "*.vssettings", 
+                      QDir::Files, QDirIterator::Subdirectories);
+        while (it.hasNext()) {
+            it.next();
+            DevConfig cfg;
+            cfg.name = "VisualStudio/" + it.fileName();
+            cfg.path = it.filePath();
+            cfg.size = it.fileInfo().size();
+            cfg.is_sensitive = false;
+
+            m_configs.append(cfg);
+            m_total_size += cfg.size;
         }
     }
 }
@@ -120,32 +106,22 @@ void DevelopmentConfigsBackupAction::scanIntelliJSettings() {
     for (const UserProfile& user : m_user_profiles) {
         QString intellij_path = user.profile_path + "/AppData/Roaming/JetBrains";
         QDir dir(intellij_path);
-        
-        if (dir.exists()) {
-            QDirIterator it(intellij_path, QDir::Dirs | QDir::NoDotAndDotDot);
-            
-            while (it.hasNext()) {
-                it.next();
-                QString config = it.filePath() + "/config";
-                
-                if (QDir(config).exists()) {
-                    DevConfig cfg;
-                    cfg.name = "IntelliJ/" + it.fileName();
-                    cfg.path = config;
-                    cfg.is_sensitive = false;
-                    
-                    qint64 size = 0;
-                    QDirIterator files(config, QDir::Files, QDirIterator::Subdirectories);
-                    while (files.hasNext()) {
-                        files.next();
-                        size += files.fileInfo().size();
-                    }
-                    
-                    cfg.size = size;
-                    m_configs.append(cfg);
-                    m_total_size += size;
-                }
-            }
+        if (!dir.exists()) continue;
+
+        QDirIterator it(intellij_path, QDir::Dirs | QDir::NoDotAndDotDot);
+        while (it.hasNext()) {
+            it.next();
+            QString config = it.filePath() + "/config";
+            if (!QDir(config).exists()) continue;
+
+            DevConfig cfg;
+            cfg.name = "IntelliJ/" + it.fileName();
+            cfg.path = config;
+            cfg.is_sensitive = false;
+            cfg.size = calculateDirSize(config);
+
+            m_configs.append(cfg);
+            m_total_size += cfg.size;
         }
     }
 }
@@ -212,27 +188,17 @@ void DevelopmentConfigsBackupAction::execute() {
 
         const QString dest = backup_dir.filePath(cfg.name);
         QFileInfo src_info(cfg.path);
-        
+
         if (src_info.isFile()) {
             QDir().mkpath(QFileInfo(dest).absolutePath());
-            if (QFile::copy(cfg.path, dest)) {
-                processed++;
-                bytes_copied += cfg.size;
-            }
+            bool ok = QFile::copy(cfg.path, dest);
+            processed += ok ? 1 : 0;
+            bytes_copied += ok ? cfg.size : 0;
         } else if (src_info.isDir()) {
-            QDirIterator it(cfg.path, QDir::Files, QDirIterator::Subdirectories);
-            while (it.hasNext()) {
-                it.next();
-                const QString rel = QDir(cfg.path).relativeFilePath(it.filePath());
-                const QString dest_file = dest + "/" + rel;
-                QDir().mkpath(QFileInfo(dest_file).absolutePath());
-                if (QFile::copy(it.filePath(), dest_file)) {
-                    bytes_copied += it.fileInfo().size();
-                }
-            }
+            bytes_copied += copyDirectoryContents(cfg.path, dest);
             processed++;
         }
-        
+
         Q_EMIT executionProgress(QString("Backing up %1...").arg(cfg.name),
                              (processed * 100) / m_configs.count());
     }
@@ -248,6 +214,31 @@ void DevelopmentConfigsBackupAction::execute() {
     result.output_path = backup_dir.absolutePath();
     
     finishWithResult(result, processed > 0 ? ActionStatus::Success : ActionStatus::Failed);
+}
+
+qint64 DevelopmentConfigsBackupAction::calculateDirSize(const QString& path) const {
+    qint64 size = 0;
+    QDirIterator it(path, QDir::Files, QDirIterator::Subdirectories);
+    while (it.hasNext()) {
+        it.next();
+        size += it.fileInfo().size();
+    }
+    return size;
+}
+
+qint64 DevelopmentConfigsBackupAction::copyDirectoryContents(const QString& src_path, const QString& dest_path) {
+    qint64 bytes_copied = 0;
+    QDirIterator it(src_path, QDir::Files, QDirIterator::Subdirectories);
+    while (it.hasNext()) {
+        it.next();
+        const QString rel = QDir(src_path).relativeFilePath(it.filePath());
+        const QString dest_file = dest_path + "/" + rel;
+        QDir().mkpath(QFileInfo(dest_file).absolutePath());
+        if (QFile::copy(it.filePath(), dest_file)) {
+            bytes_copied += it.fileInfo().size();
+        }
+    }
+    return bytes_copied;
 }
 
 } // namespace sak

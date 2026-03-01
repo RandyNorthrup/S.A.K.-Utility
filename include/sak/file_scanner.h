@@ -152,6 +152,14 @@ private:
         scan_statistics& stats,
         std::size_t current_depth,
         std::stop_token stop_token) -> std::expected<void, error_code>;
+
+    /// @brief Process a single entry with exception handling (nesting reduction)
+    auto processEntryWithErrorHandling(
+        const std::filesystem::directory_entry& entry,
+        const scan_options& options,
+        scan_statistics& stats,
+        std::size_t current_depth,
+        std::stop_token stop_token) -> std::expected<void, error_code>;
     
     std::atomic<std::size_t> m_files_processed{0};  ///< Files processed counter
     std::atomic<std::uintmax_t> m_size_processed{0}; ///< Size processed counter

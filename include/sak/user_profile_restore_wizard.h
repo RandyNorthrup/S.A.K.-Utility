@@ -72,6 +72,8 @@ private:
     void setupUi();
     void loadMappingTable();
     void updateSummary();
+    /// @brief Build a single UserMapping from a table row
+    UserMapping buildMappingForRow(int row, const BackupManifest& manifest) const;
     
     QTableWidget* m_mappingTable;
     QLabel* m_summaryLabel;
@@ -158,6 +160,10 @@ private:
     void setupUi();
     void loadApps();
     void populateTree(const QVector<RestoreAppInfo>& apps);
+    /// @brief Populate one category's app items; returns count of selected apps
+    int populateCategoryApps(QTreeWidgetItem* categoryItem,
+                             const QVector<const RestoreAppInfo*>& apps,
+                             int& totalWithPackage);
     void updateParentCheckState(QTreeWidgetItem* parent);
     /// @brief Collect checked apps from the tree widget
     QVector<RestoreAppInfo> collectSelectedApps() const;

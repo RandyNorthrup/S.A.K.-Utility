@@ -173,6 +173,8 @@ private Q_SLOTS:
 private:
     void setupUi();
     void populateUserList();
+    /// @brief Find the nth selected user in m_users
+    UserProfile* findSelectedUserByRow(int selectedRow);
     
     QVector<UserProfile>& m_users;
     

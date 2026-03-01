@@ -165,11 +165,10 @@ bool file_scanner::shouldProcessEntry(
         
         // Check excluded directories
         if (is_dir) {
-            auto dir_name = path.filename().string();
-            for (const auto& excluded : options.exclude_dirs) {
-                if (dir_name == excluded) {
-                    return false;
-                }
+            const auto dir_name = path.filename().string();
+            if (std::ranges::any_of(options.exclude_dirs,
+                    [&dir_name](const auto& excl) { return dir_name == excl; })) {
+                return false;
             }
         }
         
@@ -195,17 +194,15 @@ bool file_scanner::shouldIncludeFile(
     const scan_options& options) const noexcept {
     try {
         // Check exclude patterns
-        if (!options.exclude_patterns.empty()) {
-            if (path_utils::matchesPattern(path, options.exclude_patterns)) {
-                return false;
-            }
+        if (!options.exclude_patterns.empty()
+            && path_utils::matchesPattern(path, options.exclude_patterns)) {
+            return false;
         }
 
         // Check include patterns (if specified, must match at least one)
-        if (!options.include_patterns.empty()) {
-            if (!path_utils::matchesPattern(path, options.include_patterns)) {
-                return false;
-            }
+        if (!options.include_patterns.empty()
+            && !path_utils::matchesPattern(path, options.include_patterns)) {
+            return false;
         }
 
         // Check file size
@@ -213,14 +210,12 @@ bool file_scanner::shouldIncludeFile(
             std::error_code ec;
             auto size = entry.file_size(ec);
 
-            if (!ec) {
-                if (options.min_file_size > 0 && size < options.min_file_size) {
-                    return false;
-                }
+            if (!ec && options.min_file_size > 0 && size < options.min_file_size) {
+                return false;
+            }
 
-                if (options.max_file_size > 0 && size > options.max_file_size) {
-                    return false;
-                }
+            if (!ec && options.max_file_size > 0 && size > options.max_file_size) {
+                return false;
             }
         }
 
@@ -325,6 +320,25 @@ auto file_scanner::processScannedEntry(
     return {};
 }
 
+auto file_scanner::processEntryWithErrorHandling(
+    const std::filesystem::directory_entry& entry,
+    const scan_options& options,
+    scan_statistics& stats,
+    std::size_t current_depth,
+    std::stop_token stop_token) -> std::expected<void, error_code> {
+    try {
+        return processScannedEntry(entry, options, stats, current_depth, stop_token);
+    } catch (const std::filesystem::filesystem_error& e) {
+        logWarning("Error processing entry: {} - {}", entry.path().string(), e.what());
+        stats.errors_encountered++;
+        return {};
+    } catch (const std::exception& e) {
+        logWarning("Unexpected error processing entry: {}", e.what());
+        stats.errors_encountered++;
+        return {};
+    }
+}
+
 auto file_scanner::scanDirectoryRecursive(
     const std::filesystem::path& current_path,
     const scan_options& options,
@@ -357,17 +371,9 @@ auto file_scanner::scanDirectoryRecursive(
                 return std::unexpected(error_code::operation_cancelled);
             }
             
-            try {
-                auto result = processScannedEntry(entry, options, stats, current_depth, stop_token);
-                if (!result) {
-                    return result;
-                }
-            } catch (const std::filesystem::filesystem_error& e) {
-                logWarning("Error processing entry: {} - {}", entry.path().string(), e.what());
-                stats.errors_encountered++;
-            } catch (const std::exception& e) {
-                logWarning("Unexpected error processing entry: {}", e.what());
-                stats.errors_encountered++;
+            auto result = processEntryWithErrorHandling(entry, options, stats, current_depth, stop_token);
+            if (!result) {
+                return result;
             }
         }
         

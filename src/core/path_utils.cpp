@@ -12,6 +12,35 @@
 
 namespace sak {
 
+namespace {
+
+/// @brief Normalize path separators and case for comparison
+std::string normalize_for_compare(std::string value) {
+    std::replace(value.begin(), value.end(), '\\', '/');
+#ifdef _WIN32
+    std::transform(value.begin(), value.end(), value.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+#endif
+    return value;
+}
+
+/// @brief Accumulate size information for a single directory entry
+void accumulateFileEntry(const std::filesystem::directory_entry& entry,
+                         path_utils::DirectorySizeInfo& info) {
+    if (!entry.is_regular_file()) {
+        return;
+    }
+    std::error_code ec;
+    auto size = entry.file_size(ec);
+    if (ec) {
+        return;
+    }
+    info.total_bytes += size;
+    info.file_count++;
+}
+
+} // anonymous namespace
+
 auto path_utils::normalize(
     const std::filesystem::path& path) -> std::expected<std::filesystem::path, error_code> {
     Q_ASSERT_X(!path.empty(), "path_utils::normalize", "path must not be empty");
@@ -79,15 +108,6 @@ auto path_utils::isSafePath(
         auto path_str = norm_path.string();
         auto base_str = norm_base.string();
 
-        auto normalize_for_compare = [](std::string value) {
-            std::replace(value.begin(), value.end(), '\\', '/');
-#ifdef _WIN32
-            std::transform(value.begin(), value.end(), value.begin(),
-                           [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-#endif
-            return value;
-        };
-
         path_str = normalize_for_compare(std::move(path_str));
         base_str = normalize_for_compare(std::move(base_str));
         
@@ -112,15 +132,11 @@ bool path_utils::matchesPattern(
     const std::vector<std::string>& patterns) noexcept {
     
     try {
-        auto filename = path.filename().string();
-        
-        for (const auto& pattern : patterns) {
-            if (wildcardMatch(filename, pattern)) {
-                return true;
-            }
-        }
-        
-        return false;
+        const auto filename = path.filename().string();
+        return std::any_of(patterns.begin(), patterns.end(),
+            [&filename](const std::string& pattern) {
+                return wildcardMatch(filename, pattern);
+            });
     } catch (const std::exception& e) {
         logError("Exception in matchesPattern(): {}", e.what());
         return false;
@@ -135,32 +151,22 @@ auto path_utils::getDirectorySizeAndCount(
     Q_ASSERT_X(!dir_path.empty(), "path_utils::getDirectorySizeAndCount",
         "dir_path must not be empty");
     
+    std::error_code ec;
+    if (!std::filesystem::exists(dir_path, ec) || ec) {
+        return std::unexpected(error_code::file_not_found);
+    }
+    
+    if (!std::filesystem::is_directory(dir_path, ec) || ec) {
+        return std::unexpected(error_code::not_a_directory);
+    }
+    
+    DirectorySizeInfo info;
+    
     try {
-        if (!std::filesystem::exists(dir_path)) {
-            return std::unexpected(error_code::file_not_found);
-        }
-        
-        if (!std::filesystem::is_directory(dir_path)) {
-            return std::unexpected(error_code::not_a_directory);
-        }
-        
-        DirectorySizeInfo info;
-        
         for (const auto& entry : std::filesystem::recursive_directory_iterator(
                 dir_path, std::filesystem::directory_options::skip_permission_denied)) {
-            
-            if (entry.is_regular_file()) {
-                std::error_code ec;
-                auto size = entry.file_size(ec);
-                if (!ec) {
-                    info.total_bytes += size;
-                    info.file_count++;
-                }
-            }
+            accumulateFileEntry(entry, info);
         }
-        
-        return info;
-        
     } catch (const std::filesystem::filesystem_error& e) {
         logError("Failed to calculate directory size: {}", e.what());
         return std::unexpected(error_code::read_error);
@@ -171,6 +177,8 @@ auto path_utils::getDirectorySizeAndCount(
         logError("Non-standard exception in getDirectorySizeAndCount()");
         return std::unexpected(error_code::unknown_error);
     }
+    
+    return info;
 }
 
 auto path_utils::getAvailableSpace(

@@ -162,6 +162,7 @@ private:
     QStringList getMountPoints(int driveNumber);
     QString getVolumeLabel(const QString& mountPoint);
     bool containsWindowsInstallation(int driveNumber);
+    void collectMountPaths(wchar_t* volumeName, size_t nameLen, QStringList& mountPoints);
 
     static LRESULT CALLBACK deviceNotificationProc(HWND hwnd, UINT message, 
                                                    WPARAM wParam, LPARAM lParam);

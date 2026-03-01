@@ -34,6 +34,19 @@
 
 namespace {
 QString formatSize(qint64 bytes) { return sak::formatBytes(bytes); }
+
+/// @brief Parse aria2c speed string (e.g. "2.3MiB", "512KiB") to MB/s
+double parseAria2cSpeedMBps(const QString& dlSpeedStr)
+{
+    if (dlSpeedStr.endsWith("MiB"))
+        return dlSpeedStr.chopped(3).toDouble();
+    if (dlSpeedStr.endsWith("KiB"))
+        return dlSpeedStr.chopped(3).toDouble() / 1024.0;
+    if (dlSpeedStr.endsWith("GiB"))
+        return dlSpeedStr.chopped(3).toDouble() * 1024.0;
+    // Fallback: raw bytes/sec
+    return dlSpeedStr.toDouble() / (1024.0 * 1024.0);
+}
 } // anonymous namespace
 
 // ============================================================================
@@ -409,23 +422,7 @@ void LinuxISODownloader::onProgressPollTimer()
             qint64 downloaded = match.captured(1).toLongLong();
             qint64 total = match.captured(2).toLongLong();
             int percent = match.captured(3).toInt();
-            QString dlSpeedStr = match.captured(4);
-
-            // Normalise to MiB/s — aria2c switches units dynamically
-            // (e.g. "512KiB" at low speed, "2.3MiB" at high speed),
-            // so we must handle every variant to display correct values.
-            double speedMBps = 0.0;
-            if (dlSpeedStr.endsWith("MiB")) {
-                speedMBps = dlSpeedStr.chopped(3).toDouble();
-            } else if (dlSpeedStr.endsWith("KiB")) {
-                speedMBps = dlSpeedStr.chopped(3).toDouble() / 1024.0;
-            } else if (dlSpeedStr.endsWith("GiB")) {
-                speedMBps = dlSpeedStr.chopped(3).toDouble() * 1024.0;
-            } else {
-                // Fallback: aria2c sometimes omits the suffix entirely
-                // when reporting raw bytes/sec.
-                speedMBps = dlSpeedStr.toDouble() / (1024.0 * 1024.0);
-            }
+            double speedMBps = parseAria2cSpeedMBps(match.captured(4));
 
             QString detail = QString("%1 / %2")
                 .arg(formatSize(downloaded), formatSize(total));
@@ -458,17 +455,20 @@ QString LinuxISODownloader::parseExpectedHash(const QString& checksumData, const
         // Split on whitespace (hash  filename OR hash *filename)
         QStringList parts = trimmed.split(QRegularExpression("\\s+"),
                                           Qt::SkipEmptyParts);
-        if (parts.size() >= 2) {
-            QString filename = parts.last();
-            // Remove leading * (binary mode indicator)
-            if (filename.startsWith('*')) {
-                filename = filename.mid(1);
-            }
-            if (filename == expectedFileName) {
-                return parts.first().toLower();
-            }
-        } else if (parts.size() == 1) {
-            // Single hash in file — assume it's for our file
+        // Single hash in file — assume it's for our file
+        if (parts.size() == 1) {
+            return parts.first().toLower();
+        }
+        if (parts.size() < 2) {
+            continue;
+        }
+
+        QString filename = parts.last();
+        // Remove leading * (binary mode indicator)
+        if (filename.startsWith('*')) {
+            filename = filename.mid(1);
+        }
+        if (filename == expectedFileName) {
             return parts.first().toLower();
         }
     }

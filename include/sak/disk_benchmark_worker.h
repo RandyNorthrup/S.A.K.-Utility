@@ -112,6 +112,28 @@ private:
                                  int duration_ms, std::vector<double>& latencies,
                                  uint64_t& total_ops, uint64_t& total_bytes);
 
+    /// @brief Execute a single random 4K read I/O operation
+    void processRandomReadOp(void* file_handle, uint8_t* buf_data,
+                             int queue_index, uint64_t offset,
+                             std::vector<double>& latencies,
+                             uint64_t& total_ops, uint64_t& total_bytes);
+
+    /// @brief Execute a single random 4K write I/O operation
+    void processRandomWriteOp(void* file_handle, const uint8_t* buf_data,
+                              int queue_index, uint64_t offset,
+                              std::vector<double>& latencies,
+                              uint64_t& total_ops, uint64_t& total_bytes);
+
+    /// @brief Execute a single sequential read pass
+    /// @return Total bytes read in this pass
+    size_t readSequentialPass(void* file_handle, uint8_t* buffer,
+                              size_t bufSize, size_t total_bytes);
+
+    /// @brief Execute a single sequential write pass
+    /// @return Total bytes written in this pass
+    size_t writeSequentialPass(void* file_handle, const uint8_t* buffer,
+                               size_t bufSize, size_t total_bytes);
+
     /// @brief Calculate the P99 latency from a sorted list
     /// @param latencies Sorted vector of latencies
     /// @return P99 latency value

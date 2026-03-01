@@ -36,16 +36,7 @@ void ParallelTransferManager::startDeployment(const MappingEngine::DeploymentMap
             enqueueJob(mapping.sources[i], mapping.destinations[i]);
         }
     } else {
-        QMap<QString, DestinationPC> destinationMap;
-        for (const auto& destination : mapping.destinations) {
-            destinationMap.insert(destination.destination_id, destination);
-        }
-        for (const auto& source : mapping.sources) {
-            const auto destinationId = mapping.custom_rules.value(source.username);
-            if (!destinationId.isEmpty() && destinationMap.contains(destinationId)) {
-                enqueueJob(source, destinationMap.value(destinationId));
-            }
-        }
+        enqueueCustomMappingJobs(mapping);
     }
 
     Q_EMIT deploymentStarted(m_currentDeploymentId);
@@ -296,37 +287,27 @@ void ParallelTransferManager::enqueueJob(const MappingEngine::SourceProfile& sou
     m_queue.append(job.job_id);
 }
 
+void ParallelTransferManager::enqueueCustomMappingJobs(const MappingEngine::DeploymentMapping& mapping) {
+    QMap<QString, DestinationPC> destinationMap;
+    for (const auto& destination : mapping.destinations) {
+        destinationMap.insert(destination.destination_id, destination);
+    }
+    for (const auto& source : mapping.sources) {
+        const auto destinationId = mapping.custom_rules.value(source.username);
+        if (destinationId.isEmpty() || !destinationMap.contains(destinationId)) {
+            continue;
+        }
+        enqueueJob(source, destinationMap.value(destinationId));
+    }
+}
+
 void ParallelTransferManager::startNextJobs() {
     if (m_deploymentPaused) {
         return;
     }
 
     while (!m_queue.isEmpty() && m_activeJobs.size() < m_maxConcurrent) {
-        const auto now = QDateTime::currentDateTimeUtc();
-        int bestIndex = -1;
-        int bestScore = -1;
-
-        for (int i = 0; i < m_queue.size(); ++i) {
-            const auto& jobId = m_queue.at(i);
-            if (!m_jobs.contains(jobId)) {
-                continue;
-            }
-
-            const auto& job = m_jobs.value(jobId);
-            if (job.status == "canceled") {
-                continue;
-            }
-
-            if (m_retrySchedule.contains(jobId) && m_retrySchedule.value(jobId) > now) {
-                continue;
-            }
-
-            const int score = priorityScore(job.priority);
-            if (score > bestScore) {
-                bestScore = score;
-                bestIndex = i;
-            }
-        }
+        const int bestIndex = findBestCandidateIndex();
 
         if (bestIndex < 0) {
             updateRetryTimer();
@@ -353,6 +334,28 @@ void ParallelTransferManager::startNextJobs() {
     }
 
     rebalanceBandwidth();
+}
+
+int ParallelTransferManager::findBestCandidateIndex() const {
+    const auto now = QDateTime::currentDateTimeUtc();
+    int bestIndex = -1;
+    int bestScore = -1;
+
+    for (int i = 0; i < m_queue.size(); ++i) {
+        const auto& jobId = m_queue.at(i);
+        if (!m_jobs.contains(jobId)) continue;
+
+        const auto& job = m_jobs.value(jobId);
+        if (job.status == "canceled") continue;
+        if (m_retrySchedule.contains(jobId) && m_retrySchedule.value(jobId) > now) continue;
+
+        const int score = priorityScore(job.priority);
+        if (score > bestScore) {
+            bestScore = score;
+            bestIndex = i;
+        }
+    }
+    return bestIndex;
 }
 
 void ParallelTransferManager::deferredStartNextJobs() {
@@ -459,35 +462,42 @@ ParallelTransferManager::buildInitialAllocations(int totalKbps, int perJobCapKbp
 
 void ParallelTransferManager::distributeExcessBandwidth(
     QVector<BandwidthAllocation>& allocations, int remaining) {
-    int iterations = 0;
-    while (remaining > 0 && iterations < 1000) {
-        int weightSum = 0;
-        for (const auto& alloc : allocations) {
-            if (alloc.assigned < alloc.cap) {
-                weightSum += alloc.weight;
-            }
-        }
-
-        if (weightSum <= 0) break;
-
-        bool progress = false;
-        for (auto& alloc : allocations) {
-            if (alloc.assigned >= alloc.cap) continue;
-
-            const int slice = qMax(1, static_cast<int>(
-                (static_cast<long long>(remaining) * alloc.weight) / weightSum));
-            const int delta = qMin(slice, alloc.cap - alloc.assigned);
-            if (delta > 0) {
-                alloc.assigned += delta;
-                remaining -= delta;
-                progress = true;
-                if (remaining <= 0) break;
-            }
-        }
-
-        if (!progress) break;
-        ++iterations;
+    for (int iter = 0; iter < 1000 && remaining > 0; ++iter) {
+        if (!distributeOneBandwidthPass(allocations, remaining)) break;
     }
+}
+
+int ParallelTransferManager::computeUncappedWeightSum(
+    const QVector<BandwidthAllocation>& allocations) const {
+    int weightSum = 0;
+    for (const auto& alloc : allocations) {
+        if (alloc.assigned < alloc.cap) {
+            weightSum += alloc.weight;
+        }
+    }
+    return weightSum;
+}
+
+bool ParallelTransferManager::distributeOneBandwidthPass(
+    QVector<BandwidthAllocation>& allocations, int& remaining) {
+    const int weightSum = computeUncappedWeightSum(allocations);
+    if (weightSum <= 0) return false;
+
+    bool progress = false;
+    for (auto& alloc : allocations) {
+        if (alloc.assigned >= alloc.cap) continue;
+
+        const int slice = qMax(1, static_cast<int>(
+            (static_cast<long long>(remaining) * alloc.weight) / weightSum));
+        const int delta = qMin(slice, alloc.cap - alloc.assigned);
+        if (delta <= 0) continue;
+
+        alloc.assigned += delta;
+        remaining -= delta;
+        progress = true;
+        if (remaining <= 0) break;
+    }
+    return progress;
 }
 
 } // namespace sak

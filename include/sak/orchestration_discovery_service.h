@@ -12,6 +12,8 @@
 #include "sak/orchestration_types.h"
 #include "sak/network_constants.h"
 
+class QNetworkInterface;
+
 namespace sak {
 
 /// @brief UDP broadcast discovery for orchestrator and destinations
@@ -45,6 +47,8 @@ private Q_SLOTS:
 private:
     void sendBroadcastDiscovery();
     void sendDestinationAnnounce(const QHostAddress& address, quint16 port);
+    bool sendBroadcastOnInterface(const QNetworkInterface& iface, const QByteArray& datagram);
+    void processDiscoveryDatagram(const QJsonObject& obj, const QHostAddress& sender, quint16 senderPort);
 
     QUdpSocket* m_socket{nullptr};
     QTimer* m_broadcastTimer{nullptr};

@@ -159,6 +159,17 @@ private:
                             int total_recovery_passwords, const QString& backup_dir_path,
                             int key_files_written, bool permissions_set);
     bool writeJsonBackup(const QString& backup_dir_path);
+
+    /// @brief Count recovery passwords in a protector list
+    static int countRecoveryPasswords(const QVector<KeyProtectorInfo>& protectors);
+    /// @brief Check if any protector has a recovery password
+    static bool volumeHasRecoveryPassword(const QVector<KeyProtectorInfo>& protectors);
+    /// @brief Write a single key protector entry to the recovery document
+    void writeKeyProtectorEntry(QTextStream& out, const KeyProtectorInfo& kp, int index) const;
+    /// @brief Write recovery password entries for a volume
+    void writeVolumeKeyEntries(QTextStream& out, const QVector<KeyProtectorInfo>& protectors) const;
+    /// @brief Build JSON object for a single volume
+    QJsonObject buildVolumeJson(const VolumeInfo& vol) const;
 };
 
 } // namespace sak

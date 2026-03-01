@@ -306,10 +306,7 @@ void MainWindow::connectPanelLogs()
         connect(panel, &std::remove_pointer_t<decltype(panel)>::logOutput,
                 this, [this, tabIdx](const QString& msg) {
                     QString formatted = QDateTime::currentDateTime().toString("[HH:mm:ss] ") + msg;
-                    m_panelLogs[tabIdx].append(formatted);
-                    if (m_tab_widget->currentIndex() == tabIdx && m_logWindow->isLogVisible()) {
-                        m_logWindow->logTextEdit()->append(formatted);
-                    }
+                    appendLogIfActive(tabIdx, formatted);
                 });
 
         auto* toggle = panel->logToggle();
@@ -358,22 +355,32 @@ void MainWindow::updateStatus(const QString& message, int timeout_ms)
 
 void MainWindow::updateProgress(int current, int maximum)
 {
-    if (m_progress_bar) {
-        m_progress_bar->setMaximum(maximum);
-        m_progress_bar->setValue(current);
+    if (!m_progress_bar) return;
 
-        // Auto-show when work starts, auto-hide when complete
-        if (current >= maximum && maximum > 0) {
-            // Hide after a brief delay so the user sees 100%
-            QTimer::singleShot(sak::kTimerSplashMs, this, [this]() {
-                if (m_progress_bar &&
-                    m_progress_bar->value() >= m_progress_bar->maximum()) {
-                    m_progress_bar->setVisible(false);
-                }
-            });
-        } else if (maximum > 0) {
-            m_progress_bar->setVisible(true);
-        }
+    m_progress_bar->setMaximum(maximum);
+    m_progress_bar->setValue(current);
+
+    // Auto-show when work starts, auto-hide when complete
+    if (current >= maximum && maximum > 0) {
+        // Hide after a brief delay so the user sees 100%
+        QTimer::singleShot(sak::kTimerSplashMs, this, &MainWindow::hideProgressBarIfComplete);
+    } else if (maximum > 0) {
+        m_progress_bar->setVisible(true);
+    }
+}
+
+void MainWindow::hideProgressBarIfComplete()
+{
+    if (m_progress_bar && m_progress_bar->value() >= m_progress_bar->maximum()) {
+        m_progress_bar->setVisible(false);
+    }
+}
+
+void MainWindow::appendLogIfActive(int tabIdx, const QString& formatted)
+{
+    m_panelLogs[tabIdx].append(formatted);
+    if (m_tab_widget->currentIndex() == tabIdx && m_logWindow->isLogVisible()) {
+        m_logWindow->logTextEdit()->append(formatted);
     }
 }
 

@@ -14,6 +14,25 @@
 #include "sak/logger.h"
 #include "sak/layout_constants.h"
 
+namespace {
+/// @brief Resolve a unique destination path, appending a numeric suffix if needed
+QString resolveUniqueDestPath(const QDir& target_dir, const QString& filename)
+{
+    QString dest_path = target_dir.filePath(filename);
+    if (!QFile::exists(dest_path)) return dest_path;
+
+    const QString base = QFileInfo(filename).completeBaseName();
+    const QString ext  = QFileInfo(filename).suffix();
+    int suffix_num = 1;
+    QString candidate;
+    do {
+        candidate = target_dir.filePath(QString("%1_%2.%3").arg(base).arg(suffix_num).arg(ext));
+        suffix_num++;
+    } while (QFile::exists(candidate));
+    return candidate;
+}
+} // anonymous namespace
+
 namespace sak {
 
 OutlookBackupAction::OutlookBackupAction(const QString& backup_location, QObject* parent)
@@ -117,18 +136,7 @@ bool OutlookBackupAction::copyOutlookFilesToBackup(const QVector<OutlookFile>& f
 
         QDir target_dir(backup_dir.filePath(safe_dir));
         target_dir.mkpath(".");
-        QString dest_path = target_dir.filePath(file.filename);
-        if (QFile::exists(dest_path)) {
-            QString base = QFileInfo(file.filename).completeBaseName();
-            QString ext = QFileInfo(file.filename).suffix();
-            int suffix = 1;
-            QString candidate;
-            do {
-                candidate = target_dir.filePath(QString("%1_%2.%3").arg(base).arg(suffix).arg(ext));
-                suffix++;
-            } while (QFile::exists(candidate));
-            dest_path = candidate;
-        }
+        QString dest_path = resolveUniqueDestPath(target_dir, file.filename);
 
         if (QFile::copy(file.path, dest_path)) {
             files_copied++;

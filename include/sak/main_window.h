@@ -136,6 +136,12 @@ private:
      */
     void saveWindowState();
 
+    /// @brief Append a log line and show it if the tab is active
+    void appendLogIfActive(int tabIdx, const QString& formatted);
+
+    /// @brief Hide the progress bar if it has reached maximum
+    void hideProgressBarIfComplete();
+
 protected:
     void closeEvent(QCloseEvent* event) override;
     void moveEvent(QMoveEvent* event) override;

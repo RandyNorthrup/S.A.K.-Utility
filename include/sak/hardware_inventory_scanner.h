@@ -9,6 +9,7 @@
 #include "sak/diagnostic_types.h"
 
 #include <QObject>
+#include <QStorageInfo>
 #include <QVariant>
 #include <QVariantMap>
 
@@ -83,6 +84,12 @@ private:
 
     /// @brief Enrich storage devices with partition/volume information
     void enrichStorageWithVolumeInfo(QVector<StorageDeviceInfo>& devices);
+
+    /// @brief Enrich a single storage device with volume info from mounted volumes
+    void enrichDeviceWithVolumes(StorageDeviceInfo& dev, const QList<QStorageInfo>& volumes);
+
+    /// @brief Enumerate GPU adapters using DXGI (Windows only)
+    void enumerateDxgiAdapters(QVector<GpuInfo>& gpus);
 
     /// @brief Query GPU via DXGI adapter enumeration + WMI fallback
     QVector<GpuInfo> queryGpu();

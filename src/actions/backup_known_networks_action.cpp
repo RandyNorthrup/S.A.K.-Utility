@@ -45,15 +45,16 @@ QList<BackupKnownNetworksAction::NetworkEntry> BackupKnownNetworksAction::collec
     const QRegularExpression nameRe(R"(:\s+(.+)$)");
     for (const QString& line : listResult.std_out.split('\n')) {
         const QString trimmed = line.trimmed();
-        if (trimmed.contains("All User Profile", Qt::CaseInsensitive) ||
-            trimmed.contains("Current User Profile", Qt::CaseInsensitive)) {
-            const auto match = nameRe.match(trimmed);
-            if (match.hasMatch()) {
-                const QString name = match.captured(1).trimmed();
-                if (!name.isEmpty())
-                    profileNames.append(name);
-            }
-        }
+        if (!trimmed.contains("All User Profile", Qt::CaseInsensitive) &&
+            !trimmed.contains("Current User Profile", Qt::CaseInsensitive))
+            continue;
+
+        const auto match = nameRe.match(trimmed);
+        if (!match.hasMatch()) continue;
+
+        const QString name = match.captured(1).trimmed();
+        if (!name.isEmpty())
+            profileNames.append(name);
     }
 
     // Step 2: fetch details for each profile
@@ -139,25 +140,30 @@ void BackupKnownNetworksAction::scan()
     if (proc.timed_out) {
         result.applicable = false;
         result.summary    = "netsh timed out";
-    } else {
-        // Count profiles
-        int count = 0;
-        const QRegularExpression nameRe(R"(:\s+(.+)$)");
-        for (const QString& line : proc.std_out.split('\n')) {
-            const QString trimmed = line.trimmed();
-            if (trimmed.contains("All User Profile", Qt::CaseInsensitive) ||
-                trimmed.contains("Current User Profile", Qt::CaseInsensitive)) {
-                const auto match = nameRe.match(trimmed);
-                if (match.hasMatch() && !match.captured(1).trimmed().isEmpty())
-                    ++count;
-            }
-        }
-        result.applicable  = count > 0;
-        result.files_count = count;
-        result.summary     = count > 0
-            ? QString("Found %1 known WiFi profile(s) to back up").arg(count)
-            : "No known WiFi profiles found";
+        setScanResult(result);
+        setStatus(ActionStatus::Ready);
+        Q_EMIT scanComplete(result);
+        return;
     }
+
+    // Count profiles
+    int count = 0;
+    const QRegularExpression nameRe(R"(:\s+(.+)$)");
+    for (const QString& line : proc.std_out.split('\n')) {
+        const QString trimmed = line.trimmed();
+        if (!trimmed.contains("All User Profile", Qt::CaseInsensitive) &&
+            !trimmed.contains("Current User Profile", Qt::CaseInsensitive))
+            continue;
+
+        const auto match = nameRe.match(trimmed);
+        if (match.hasMatch() && !match.captured(1).trimmed().isEmpty())
+            ++count;
+    }
+    result.applicable  = count > 0;
+    result.files_count = count;
+    result.summary     = count > 0
+        ? QString("Found %1 known WiFi profile(s) to back up").arg(count)
+        : "No known WiFi profiles found";
 
     setScanResult(result);
     setStatus(ActionStatus::Ready);

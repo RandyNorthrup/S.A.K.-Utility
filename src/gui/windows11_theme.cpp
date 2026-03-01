@@ -81,11 +81,12 @@ void applyTooltips(QWidget* root) {
             applyTabTooltips(tabs);
         }
 
-        if (widget->toolTip().isEmpty()) {
-            const QString tooltip = inferTooltip(widget);
-            if (!tooltip.isEmpty()) {
-                widget->setToolTip(tooltip);
-            }
+        if (!widget->toolTip().isEmpty()) {
+            continue;
+        }
+        const QString tooltip = inferTooltip(widget);
+        if (!tooltip.isEmpty()) {
+            widget->setToolTip(tooltip);
         }
     }
 
@@ -130,21 +131,23 @@ public:
             return QObject::eventFilter(watched, event);
         }
 
-        if (event->type() == QEvent::Show || event->type() == QEvent::Polish) {
-            auto* widget = qobject_cast<QWidget*>(watched);
-            if (!widget) {
-                return QObject::eventFilter(watched, event);
-            }
+        if (event->type() != QEvent::Show && event->type() != QEvent::Polish) {
+            return QObject::eventFilter(watched, event);
+        }
 
-            if (!widget->property("sakTooltipsApplied").toBool()) {
-                applyTooltips(widget);
-                widget->setProperty("sakTooltipsApplied", true);
-            }
+        auto* widget = qobject_cast<QWidget*>(watched);
+        if (!widget) {
+            return QObject::eventFilter(watched, event);
+        }
 
-            if (!widget->property("sakShadowApplied").toBool()) {
-                applyShadow(widget);
-                widget->setProperty("sakShadowApplied", true);
-            }
+        if (!widget->property("sakTooltipsApplied").toBool()) {
+            applyTooltips(widget);
+            widget->setProperty("sakTooltipsApplied", true);
+        }
+
+        if (!widget->property("sakShadowApplied").toBool()) {
+            applyShadow(widget);
+            widget->setProperty("sakShadowApplied", true);
         }
 
         return QObject::eventFilter(watched, event);

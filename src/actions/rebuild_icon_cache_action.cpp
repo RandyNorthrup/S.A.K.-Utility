@@ -112,22 +112,23 @@ int RebuildIconCacheAction::deleteCacheFiles(const QVector<CacheFileInfo>& files
     int deleted_count = 0;
     
     for (const CacheFileInfo& info : files) {
+        if (!QFile::exists(info.file_name)) continue;
+
         // Use QFile::remove for reliable deletion
-        if (QFile::exists(info.file_name)) {
-            if (QFile::remove(info.file_name)) {
-                deleted_count++;
-            } else {
-                // Try PowerShell Remove-Item if QFile fails
-                QString ps_cmd = QString("Remove-Item -Path '%1' -Force -ErrorAction SilentlyContinue").arg(info.file_name);
-                ProcessResult proc = runPowerShell(ps_cmd, sak::kTimeoutProcessShortMs);
-                if (!proc.std_err.trimmed().isEmpty()) {
-                    Q_EMIT logMessage("Cache delete warning for " + info.file_name + ": " + proc.std_err.trimmed());
-                }
-                
-                if (!QFile::exists(info.file_name)) {
-                    deleted_count++;
-                }
-            }
+        if (QFile::remove(info.file_name)) {
+            deleted_count++;
+            continue;
+        }
+
+        // Try PowerShell Remove-Item if QFile fails
+        QString ps_cmd = QString("Remove-Item -Path '%1' -Force -ErrorAction SilentlyContinue").arg(info.file_name);
+        ProcessResult proc = runPowerShell(ps_cmd, sak::kTimeoutProcessShortMs);
+        if (!proc.std_err.trimmed().isEmpty()) {
+            Q_EMIT logMessage("Cache delete warning for " + info.file_name + ": " + proc.std_err.trimmed());
+        }
+
+        if (!QFile::exists(info.file_name)) {
+            deleted_count++;
         }
     }
     

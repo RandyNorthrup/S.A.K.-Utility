@@ -126,39 +126,63 @@ bool BrowserProfileBackupAction::backupAllBrowserProfiles(
             return false;
         }
 
-        const QString user_name = QFileInfo(user.profile_path).fileName();
+        if (!backupUserBrowserProfiles(user, backup_dir, start_time,
+                                       user_idx, total_users,
+                                       profile_count, files_copied, bytes_copied)) {
+            return false;
+        }
+    }
+    return true;
+}
 
-        for (const BrowserPath& bp : kBrowserPaths) {
-            if (isCancelled()) {
-                emitCancelledResult("Browser profile backup cancelled", start_time);
-                return false;
-            }
+bool BrowserProfileBackupAction::backupUserBrowserProfiles(
+    const UserProfile& user, const QDir& backup_dir, const QDateTime& start_time,
+    int user_idx, int total_users,
+    int& profile_count, int& files_copied, qint64& bytes_copied)
+{
+    const QString user_name = QFileInfo(user.profile_path).fileName();
 
-            const QString src_root = QDir::cleanPath(user.profile_path + "/" + bp.rel_path);
-            if (!QDir(src_root).exists()) continue;
+    for (const BrowserPath& bp : kBrowserPaths) {
+        if (isCancelled()) {
+            emitCancelledResult("Browser profile backup cancelled", start_time);
+            return false;
+        }
 
-            ++profile_count;
-            const QString dest_root = backup_dir.filePath(user_name + "/" + bp.display_name);
+        const QString src_root = QDir::cleanPath(user.profile_path + "/" + bp.rel_path);
+        if (!QDir(src_root).exists()) continue;
 
-            Q_EMIT executionProgress(
-                QString("Backing up %1 profile for '%2'...").arg(bp.display_name, user_name),
-                5 + (user_idx * 90) / qMax(total_users, 1));
+        ++profile_count;
+        const QString dest_root = backup_dir.filePath(user_name + "/" + bp.display_name);
 
-            QDirIterator it(src_root, QDir::Files, QDirIterator::Subdirectories);
-            while (it.hasNext()) {
-                if (isCancelled()) {
-                    emitCancelledResult("Browser profile backup cancelled", start_time);
-                    return false;
-                }
-                it.next();
-                const QString rel       = QDir(src_root).relativeFilePath(it.filePath());
-                const QString dest_file = dest_root + "/" + rel;
-                QDir().mkpath(QFileInfo(dest_file).absolutePath());
-                if (QFile::copy(it.filePath(), dest_file)) {
-                    ++files_copied;
-                    bytes_copied += it.fileInfo().size();
-                }
-            }
+        Q_EMIT executionProgress(
+            QString("Backing up %1 profile for '%2'...").arg(bp.display_name, user_name),
+            5 + (user_idx * 90) / qMax(total_users, 1));
+
+        if (!copyProfileFiles(src_root, dest_root, start_time, files_copied, bytes_copied)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool BrowserProfileBackupAction::copyProfileFiles(
+    const QString& src_root, const QString& dest_root,
+    const QDateTime& start_time,
+    int& files_copied, qint64& bytes_copied)
+{
+    QDirIterator it(src_root, QDir::Files, QDirIterator::Subdirectories);
+    while (it.hasNext()) {
+        if (isCancelled()) {
+            emitCancelledResult("Browser profile backup cancelled", start_time);
+            return false;
+        }
+        it.next();
+        const QString rel       = QDir(src_root).relativeFilePath(it.filePath());
+        const QString dest_file = dest_root + "/" + rel;
+        QDir().mkpath(QFileInfo(dest_file).absolutePath());
+        if (QFile::copy(it.filePath(), dest_file)) {
+            ++files_copied;
+            bytes_copied += it.fileInfo().size();
         }
     }
     return true;

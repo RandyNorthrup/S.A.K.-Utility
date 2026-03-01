@@ -15,6 +15,7 @@
 #include <QJsonObject>
 #include <QFile>
 #include <QApplication>
+#include <algorithm>
 
 namespace sak {
 
@@ -138,15 +139,13 @@ void UserProfileRestoreUserMappingPage::onAutoMap() {
     BackupManifest manifest = wiz->manifest();
     
     for (int row = 0; row < m_mappingTable->rowCount(); ++row) {
-        QString sourceUsername = m_mappingTable->item(row, 1)->text();
         auto* destCombo = qobject_cast<QComboBox*>(m_mappingTable->cellWidget(row, 3));
+        if (!destCombo) continue;
         
-        if (destCombo) {
-            // Find matching destination user
-            int matchIndex = destCombo->findText(sourceUsername);
-            if (matchIndex >= 0) {
-                destCombo->setCurrentIndex(matchIndex);
-            }
+        QString sourceUsername = m_mappingTable->item(row, 1)->text();
+        int matchIndex = destCombo->findText(sourceUsername);
+        if (matchIndex >= 0) {
+            destCombo->setCurrentIndex(matchIndex);
         }
     }
     
@@ -166,15 +165,16 @@ void UserProfileRestoreUserMappingPage::updateSummary() {
     int merges = 0;
     
     for (int row = 0; row < m_mappingTable->rowCount(); ++row) {
-        if (m_mappingTable->item(row, 0)->checkState() == Qt::Checked) {
-            selectedMappings++;
-            
-            auto* destCombo = qobject_cast<QComboBox*>(m_mappingTable->cellWidget(row, 3));
-            if (destCombo && destCombo->currentData().toString().isEmpty()) {
-                newUsers++;
-            } else {
-                merges++;
-            }
+        if (m_mappingTable->item(row, 0)->checkState() != Qt::Checked) {
+            continue;
+        }
+        selectedMappings++;
+        
+        auto* destCombo = qobject_cast<QComboBox*>(m_mappingTable->cellWidget(row, 3));
+        if (destCombo && destCombo->currentData().toString().isEmpty()) {
+            newUsers++;
+        } else {
+            merges++;
         }
     }
     
@@ -185,6 +185,42 @@ void UserProfileRestoreUserMappingPage::updateSummary() {
             .arg(merges)
             .arg(newUsers)
     );
+}
+
+UserMapping UserProfileRestoreUserMappingPage::buildMappingForRow(int row, const BackupManifest& manifest) const {
+    UserMapping mapping;
+    mapping.source_username = m_mappingTable->item(row, 1)->text();
+    mapping.selected = true;
+    
+    // Find source SID
+    auto srcIt = std::find_if(manifest.users.begin(), manifest.users.end(),
+        [&](const auto& u) { return u.username == mapping.source_username; });
+    if (srcIt != manifest.users.end()) {
+        mapping.source_sid = srcIt->sid;
+    }
+    
+    // Get destination user
+    auto* destCombo = qobject_cast<QComboBox*>(m_mappingTable->cellWidget(row, 3));
+    if (destCombo) {
+        mapping.destination_username = destCombo->currentData().toString();
+    }
+    
+    // Find destination SID
+    if (!mapping.destination_username.isEmpty()) {
+        auto destIt = std::find_if(m_destinationUsers.begin(), m_destinationUsers.end(),
+            [&](const auto& u) { return u.username == mapping.destination_username; });
+        if (destIt != m_destinationUsers.end()) {
+            mapping.destination_sid = destIt->sid;
+        }
+    }
+    
+    // Get merge mode
+    auto* modeCombo = qobject_cast<QComboBox*>(m_mappingTable->cellWidget(row, 4));
+    if (modeCombo) {
+        mapping.mode = static_cast<MergeMode>(modeCombo->currentData().toInt());
+    }
+    
+    return mapping;
 }
 
 bool UserProfileRestoreUserMappingPage::validatePage() {
@@ -198,42 +234,7 @@ bool UserProfileRestoreUserMappingPage::validatePage() {
         if (m_mappingTable->item(row, 0)->checkState() != Qt::Checked) {
             continue;
         }
-        
-        UserMapping mapping;
-        mapping.source_username = m_mappingTable->item(row, 1)->text();
-        mapping.selected = true;
-        
-        // Find source user data
-        for (const auto& user : manifest.users) {
-            if (user.username == mapping.source_username) {
-                mapping.source_sid = user.sid;
-                break;
-            }
-        }
-        
-        // Get destination user
-        auto* destCombo = qobject_cast<QComboBox*>(m_mappingTable->cellWidget(row, 3));
-        if (destCombo) {
-            mapping.destination_username = destCombo->currentData().toString();
-            
-            // Find destination SID
-            if (!mapping.destination_username.isEmpty()) {
-                for (const auto& user : m_destinationUsers) {
-                    if (user.username == mapping.destination_username) {
-                        mapping.destination_sid = user.sid;
-                        break;
-                    }
-                }
-            }
-        }
-        
-        // Get merge mode
-        auto* modeCombo = qobject_cast<QComboBox*>(m_mappingTable->cellWidget(row, 4));
-        if (modeCombo) {
-            mapping.mode = static_cast<MergeMode>(modeCombo->currentData().toInt());
-        }
-        
-        mappings.append(mapping);
+        mappings.append(buildMappingForRow(row, manifest));
     }
     
     if (mappings.isEmpty()) {
@@ -459,41 +460,39 @@ void UserProfileRestoreFolderSelectionPage::loadFolderTable() {
     m_folderTable->setRowCount(0);
     
     for (const auto& mapping : mappings) {
-        // Find backup user data
-        for (const auto& backupUser : manifest.users) {
-            if (backupUser.username != mapping.source_username) continue;
+        auto userIt = std::find_if(manifest.users.begin(), manifest.users.end(),
+            [&](const auto& u) { return u.username == mapping.source_username; });
+        if (userIt == manifest.users.end()) continue;
+        
+        for (const auto& folder : userIt->backed_up_folders) {
+            int row = m_folderTable->rowCount();
+            m_folderTable->insertRow(row);
             
-            // Add each folder
-            for (const auto& folder : backupUser.backed_up_folders) {
-                int row = m_folderTable->rowCount();
-                m_folderTable->insertRow(row);
-                
-                // Checkbox
-                auto* checkItem = new QTableWidgetItem();
-                checkItem->setCheckState(Qt::Checked);
-                m_folderTable->setItem(row, 0, checkItem);
-                
-                // User
-                auto* userItem = new QTableWidgetItem(mapping.source_username);
-                userItem->setFlags(userItem->flags() & ~Qt::ItemIsEditable);
-                m_folderTable->setItem(row, 1, userItem);
-                
-                // Folder name
-                auto* folderItem = new QTableWidgetItem(folder.display_name);
-                folderItem->setFlags(folderItem->flags() & ~Qt::ItemIsEditable);
-                m_folderTable->setItem(row, 2, folderItem);
-                
-                // Size
-                double sizeMB = folder.size_bytes / sak::kBytesPerMBf;
-                auto* sizeItem = new QTableWidgetItem(QString("%1 MB").arg(sizeMB, 0, 'f', 1));
-                sizeItem->setFlags(sizeItem->flags() & ~Qt::ItemIsEditable);
-                m_folderTable->setItem(row, 3, sizeItem);
-                
-                // File count
-                auto* filesItem = new QTableWidgetItem(QString::number(folder.file_count));
-                filesItem->setFlags(filesItem->flags() & ~Qt::ItemIsEditable);
-                m_folderTable->setItem(row, 4, filesItem);
-            }
+            // Checkbox
+            auto* checkItem = new QTableWidgetItem();
+            checkItem->setCheckState(Qt::Checked);
+            m_folderTable->setItem(row, 0, checkItem);
+            
+            // User
+            auto* userItem = new QTableWidgetItem(mapping.source_username);
+            userItem->setFlags(userItem->flags() & ~Qt::ItemIsEditable);
+            m_folderTable->setItem(row, 1, userItem);
+            
+            // Folder name
+            auto* folderItem = new QTableWidgetItem(folder.display_name);
+            folderItem->setFlags(folderItem->flags() & ~Qt::ItemIsEditable);
+            m_folderTable->setItem(row, 2, folderItem);
+            
+            // Size
+            double sizeMB = folder.size_bytes / sak::kBytesPerMBf;
+            auto* sizeItem = new QTableWidgetItem(QString("%1 MB").arg(sizeMB, 0, 'f', 1));
+            sizeItem->setFlags(sizeItem->flags() & ~Qt::ItemIsEditable);
+            m_folderTable->setItem(row, 3, sizeItem);
+            
+            // File count
+            auto* filesItem = new QTableWidgetItem(QString::number(folder.file_count));
+            filesItem->setFlags(filesItem->flags() & ~Qt::ItemIsEditable);
+            m_folderTable->setItem(row, 4, filesItem);
         }
     }
 }
@@ -836,6 +835,44 @@ void UserProfileRestoreAppRestorePage::loadApps() {
     populateTree(m_apps);
 }
 
+/// @brief Count enabled apps in a single category for summary
+static QPair<int,int> countEnabledCategoryApps(QTreeWidgetItem* category) {
+    int total = 0, selected = 0;
+    for (int a = 0; a < category->childCount(); ++a) {
+        auto* item = category->child(a);
+        if (!(item->flags() & Qt::ItemIsEnabled)) continue;
+        total++;
+        if (item->checkState(0) == Qt::Checked) selected++;
+    }
+    return {total, selected};
+}
+
+int UserProfileRestoreAppRestorePage::populateCategoryApps(
+        QTreeWidgetItem* categoryItem,
+        const QVector<const RestoreAppInfo*>& apps,
+        int& totalWithPackage) {
+    int catSelected = 0;
+    for (const auto* app : apps) {
+        auto* appItem = new QTreeWidgetItem(categoryItem);
+        appItem->setText(0, app->name);
+        appItem->setText(1, app->version);
+        appItem->setText(2, app->choco_package.isEmpty() ? tr("(no match)") : app->choco_package);
+        appItem->setFlags(appItem->flags() | Qt::ItemIsUserCheckable);
+
+        if (app->choco_package.isEmpty()) {
+            appItem->setCheckState(0, Qt::Unchecked);
+            appItem->setForeground(2, QBrush(Qt::gray));
+            appItem->setFlags(appItem->flags() & ~Qt::ItemIsEnabled);
+            continue;
+        }
+
+        appItem->setCheckState(0, app->selected ? Qt::Checked : Qt::Unchecked);
+        totalWithPackage++;
+        catSelected += app->selected ? 1 : 0;
+    }
+    return catSelected;
+}
+
 void UserProfileRestoreAppRestorePage::populateTree(const QVector<RestoreAppInfo>& apps) {
     m_appTree->blockSignals(true);
     m_appTree->clear();
@@ -855,27 +892,8 @@ void UserProfileRestoreAppRestorePage::populateTree(const QVector<RestoreAppInfo
         categoryItem->setText(0, it.key());
         categoryItem->setFlags(categoryItem->flags() | Qt::ItemIsUserCheckable);
 
-        int catSelected = 0;
-        for (const auto* app : it.value()) {
-            auto* appItem = new QTreeWidgetItem(categoryItem);
-            appItem->setText(0, app->name);
-            appItem->setText(1, app->version);
-            appItem->setText(2, app->choco_package.isEmpty() ? tr("(no match)") : app->choco_package);
-            appItem->setFlags(appItem->flags() | Qt::ItemIsUserCheckable);
-
-            if (app->choco_package.isEmpty()) {
-                appItem->setCheckState(0, Qt::Unchecked);
-                appItem->setForeground(2, QBrush(Qt::gray));
-                appItem->setFlags(appItem->flags() & ~Qt::ItemIsEnabled);
-            } else {
-                appItem->setCheckState(0, app->selected ? Qt::Checked : Qt::Unchecked);
-                totalWithPackage++;
-                if (app->selected) {
-                    catSelected++;
-                    totalSelected++;
-                }
-            }
-        }
+        int catSelected = populateCategoryApps(categoryItem, it.value(), totalWithPackage);
+        totalSelected += catSelected;
 
         // Set parent check state
         if (catSelected == 0) {
@@ -904,16 +922,11 @@ void UserProfileRestoreAppRestorePage::onItemChanged(QTreeWidgetItem* item, int 
         Qt::CheckState state = item->checkState(0);
         for (int i = 0; i < item->childCount(); ++i) {
             auto* child = item->child(i);
-            if (child->flags() & Qt::ItemIsEnabled) {
-                child->setCheckState(0, state);
-            }
+            if (!(child->flags() & Qt::ItemIsEnabled)) continue;
+            child->setCheckState(0, state);
         }
-    } else {
-        // Child item — update parent
-        auto* parent = item->parent();
-        if (parent) {
-            updateParentCheckState(parent);
-        }
+    } else if (item->parent()) {
+        updateParentCheckState(item->parent());
     }
 
     m_appTree->blockSignals(false);
@@ -922,16 +935,9 @@ void UserProfileRestoreAppRestorePage::onItemChanged(QTreeWidgetItem* item, int 
     int total = 0;
     int selected = 0;
     for (int c = 0; c < m_appTree->topLevelItemCount(); ++c) {
-        auto* category = m_appTree->topLevelItem(c);
-        for (int a = 0; a < category->childCount(); ++a) {
-            auto* appItem = category->child(a);
-            if (appItem->flags() & Qt::ItemIsEnabled) {
-                total++;
-                if (appItem->checkState(0) == Qt::Checked) {
-                    selected++;
-                }
-            }
-        }
+        auto [t, s] = countEnabledCategoryApps(m_appTree->topLevelItem(c));
+        total += t;
+        selected += s;
     }
 
     m_summaryLabel->setText(tr("%1 application(s) selected for installation out of %2 available")
@@ -944,12 +950,9 @@ void UserProfileRestoreAppRestorePage::updateParentCheckState(QTreeWidgetItem* p
 
     for (int i = 0; i < parent->childCount(); ++i) {
         auto* child = parent->child(i);
-        if (child->flags() & Qt::ItemIsEnabled) {
-            enabledCount++;
-            if (child->checkState(0) == Qt::Checked) {
-                checkedCount++;
-            }
-        }
+        if (!(child->flags() & Qt::ItemIsEnabled)) continue;
+        enabledCount++;
+        if (child->checkState(0) == Qt::Checked) checkedCount++;
     }
 
     if (enabledCount == 0 || checkedCount == 0) {
@@ -967,9 +970,8 @@ void UserProfileRestoreAppRestorePage::onSelectAll() {
         auto* category = m_appTree->topLevelItem(c);
         for (int a = 0; a < category->childCount(); ++a) {
             auto* child = category->child(a);
-            if (child->flags() & Qt::ItemIsEnabled) {
-                child->setCheckState(0, Qt::Checked);
-            }
+            if (!(child->flags() & Qt::ItemIsEnabled)) continue;
+            child->setCheckState(0, Qt::Checked);
         }
         updateParentCheckState(category);
     }
@@ -986,9 +988,8 @@ void UserProfileRestoreAppRestorePage::onSelectNone() {
         auto* category = m_appTree->topLevelItem(c);
         for (int a = 0; a < category->childCount(); ++a) {
             auto* child = category->child(a);
-            if (child->flags() & Qt::ItemIsEnabled) {
-                child->setCheckState(0, Qt::Unchecked);
-            }
+            if (!(child->flags() & Qt::ItemIsEnabled)) continue;
+            child->setCheckState(0, Qt::Unchecked);
         }
         category->setCheckState(0, Qt::Unchecked);
     }

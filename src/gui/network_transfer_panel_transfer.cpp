@@ -504,6 +504,40 @@ QVector<TransferFileEntry> NetworkTransferPanel::buildFileList() {
     return files;
 }
 
+void NetworkTransferPanel::processScannedFile(
+    QVector<TransferFileEntry>& files,
+    const std::filesystem::path& fsPath,
+    const QString& username,
+    const QString& profilePath,
+    SmartFileFilter& smartFilter,
+    PermissionManager& permissionManager,
+    file_hasher& hasher,
+    PermissionMode permMode)
+{
+    if (!std::filesystem::is_regular_file(fsPath)) return;
+
+    QFileInfo fileInfo(QString::fromStdString(fsPath.string()));
+    if (smartFilter.shouldExcludeFile(fileInfo, profilePath) ||
+        smartFilter.exceedsSizeLimit(fileInfo.size())) return;
+
+    TransferFileEntry entry;
+    entry.file_id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    entry.absolute_path = QString::fromStdString(fsPath.string());
+    auto rel = path_utils::makeRelative(fsPath, std::filesystem::path(profilePath.toStdString()));
+    if (!rel) return;
+    QString relative = QString::fromStdString(rel->generic_string());
+    entry.relative_path = username + "/" + relative;
+    entry.size_bytes = static_cast<qint64>(std::filesystem::file_size(fsPath));
+    if (permMode == PermissionMode::PreserveOriginal) {
+        entry.acl_sddl = permissionManager.getSecurityDescriptorSddl(entry.absolute_path);
+    }
+    auto hashResult = hasher.calculateHash(fsPath);
+    if (hashResult) {
+        entry.checksum_sha256 = QString::fromStdString(*hashResult);
+    }
+    files.append(entry);
+}
+
 void NetworkTransferPanel::collectUserFiles(
     QVector<TransferFileEntry>& files, const UserProfile& user)
 {
@@ -530,99 +564,17 @@ void NetworkTransferPanel::collectUserFiles(
         if (!result) continue;
 
         for (const auto& path : *result) {
-            std::filesystem::path fsPath = path;
-            if (!std::filesystem::is_regular_file(fsPath)) continue;
-
-            QFileInfo fileInfo(QString::fromStdString(fsPath.string()));
-            if (smartFilter.shouldExcludeFile(fileInfo, user.profile_path) ||
-                smartFilter.exceedsSizeLimit(fileInfo.size())) continue;
-
-            TransferFileEntry entry;
-            entry.file_id = QUuid::createUuid().toString(QUuid::WithoutBraces);
-            entry.absolute_path = QString::fromStdString(fsPath.string());
-            auto rel = path_utils::makeRelative(fsPath, std::filesystem::path(user.profile_path.toStdString()));
-            if (!rel) continue;
-            QString relative = QString::fromStdString(rel->generic_string());
-            entry.relative_path = user.username + "/" + relative;
-            entry.size_bytes = static_cast<qint64>(std::filesystem::file_size(fsPath));
-            if (selectedPermMode == PermissionMode::PreserveOriginal) {
-                entry.acl_sddl = permissionManager.getSecurityDescriptorSddl(entry.absolute_path);
-            }
-            auto hashResult = hasher.calculateHash(fsPath);
-            if (hashResult) {
-                entry.checksum_sha256 = QString::fromStdString(*hashResult);
-            }
-
-            files.append(entry);
+            processScannedFile(files, path, user.username, user.profile_path,
+                             smartFilter, permissionManager, hasher, selectedPermMode);
         }
     }
 }
 
 QVector<TransferFileEntry> NetworkTransferPanel::buildFileListForUsers(const QVector<UserProfile>& users) {
     QVector<TransferFileEntry> files;
-
-    file_hasher hasher(hash_algorithm::sha256);
-    SmartFileFilter smartFilter{SmartFilter{}};
-    PermissionManager permissionManager;
-    const auto selectedPermMode = static_cast<PermissionMode>(m_permissionModeCombo->currentData().toInt());
-
     for (const auto& user : users) {
-        for (const auto& folder : user.folder_selections) {
-            if (!folder.selected) {
-                continue;
-            }
-            QString folderPath = QDir(user.profile_path).filePath(folder.relative_path);
-            file_scanner scanner;
-            scan_options options;
-            options.recursive = true;
-            options.type_filter = file_type_filter::files_only;
-
-            for (const auto& include : folder.include_patterns) {
-                options.include_patterns.push_back(include.toStdString());
-            }
-            for (const auto& exclude : folder.exclude_patterns) {
-                options.exclude_patterns.push_back(exclude.toStdString());
-            }
-
-            auto result = scanner.scanAndCollect(folderPath.toStdString(), options);
-            if (!result) {
-                continue;
-            }
-
-            for (const auto& path : *result) {
-                std::filesystem::path fsPath = path;
-                if (!std::filesystem::is_regular_file(fsPath)) {
-                    continue;
-                }
-
-                QFileInfo fileInfo(QString::fromStdString(fsPath.string()));
-                if (smartFilter.shouldExcludeFile(fileInfo, user.profile_path) || smartFilter.exceedsSizeLimit(fileInfo.size())) {
-                    continue;
-                }
-
-                TransferFileEntry entry;
-                entry.file_id = QUuid::createUuid().toString(QUuid::WithoutBraces);
-                entry.absolute_path = QString::fromStdString(fsPath.string());
-                auto rel = path_utils::makeRelative(fsPath, std::filesystem::path(user.profile_path.toStdString()));
-                if (!rel) {
-                    continue;
-                }
-                QString relative = QString::fromStdString(rel->generic_string());
-                entry.relative_path = user.username + "/" + relative;
-                entry.size_bytes = static_cast<qint64>(std::filesystem::file_size(fsPath));
-                if (selectedPermMode == PermissionMode::PreserveOriginal) {
-                    entry.acl_sddl = permissionManager.getSecurityDescriptorSddl(entry.absolute_path);
-                }
-                auto hashResult = hasher.calculateHash(fsPath);
-                if (hashResult) {
-                    entry.checksum_sha256 = QString::fromStdString(*hashResult);
-                }
-
-                files.append(entry);
-            }
-        }
+        collectUserFiles(files, user);
     }
-
     return files;
 }
 

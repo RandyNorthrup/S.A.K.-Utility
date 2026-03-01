@@ -221,19 +221,20 @@ void UserProfileRestoreExecutePage::onViewLog() {
     msgBox.setIcon(m_restoreSuccess ? QMessageBox::Information : QMessageBox::Warning);
     msgBox.setStandardButtons(QMessageBox::Ok | QMessageBox::Save);
     
-    int ret = msgBox.exec();
-    if (ret == QMessageBox::Save) {
-        QString fileName = QFileDialog::getSaveFileName(this, tr("Save Log"), 
-            QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation) + "/restore_log.txt",
-            tr("Text Files (*.txt);;All Files (*.*)"));
-        if (!fileName.isEmpty()) {
-            QFile file(fileName);
-            if (file.open(QIODevice::WriteOnly | QIODevice::Text)) {
-                QTextStream out(&file);
-                out << m_logText->toPlainText();
-                file.close();
-            }
-        }
+    if (msgBox.exec() != QMessageBox::Save) {
+        return;
+    }
+    QString fileName = QFileDialog::getSaveFileName(this, tr("Save Log"), 
+        QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation) + "/restore_log.txt",
+        tr("Text Files (*.txt);;All Files (*.*)"));
+    if (fileName.isEmpty()) {
+        return;
+    }
+    QFile file(fileName);
+    if (file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        QTextStream out(&file);
+        out << m_logText->toPlainText();
+        file.close();
     }
 }
 

@@ -83,44 +83,44 @@ protected:
         painter->save();
         QHeaderView::paintSection(painter, rect, logicalIndex);
         painter->restore();
-        if (logicalIndex == 0) {
-            // Draw a custom checkbox that matches the table indicator stylesheet:
-            // unchecked:        #f8fafc bg, #94a3b8 border, 4px radius
-            // checked:          #3b82f6 bg, #2563eb border + white tick
-            // partially-checked:#3b82f6 bg, #2563eb border + white dash
-            constexpr int side = 16;
-            const int cx = rect.x() + (rect.width()  - side) / 2;
-            const int cy = rect.y() + (rect.height() - side) / 2;
-            const QRect cbRect(cx, cy, side, side);
+        if (logicalIndex != 0) return;
 
-            painter->save();
-            painter->setRenderHint(QPainter::Antialiasing);
+        // Draw a custom checkbox that matches the table indicator stylesheet:
+        // unchecked:        #f8fafc bg, #94a3b8 border, 4px radius
+        // checked:          #3b82f6 bg, #2563eb border + white tick
+        // partially-checked:#3b82f6 bg, #2563eb border + white dash
+        constexpr int side = 16;
+        const int cx = rect.x() + (rect.width()  - side) / 2;
+        const int cy = rect.y() + (rect.height() - side) / 2;
+        const QRect cbRect(cx, cy, side, side);
 
-            if (m_state == Qt::Unchecked) {
-                painter->setBrush(QColor(0xf8, 0xfa, 0xfc));
-                painter->setPen(QPen(QColor(0x94, 0xa3, 0xb8), 1));
-                painter->drawRoundedRect(cbRect, 4, 4);
+        painter->save();
+        painter->setRenderHint(QPainter::Antialiasing);
+
+        if (m_state == Qt::Unchecked) {
+            painter->setBrush(QColor(0xf8, 0xfa, 0xfc));
+            painter->setPen(QPen(QColor(0x94, 0xa3, 0xb8), 1));
+            painter->drawRoundedRect(cbRect, 4, 4);
+        } else {
+            // Checked or PartiallyChecked  --  blue fill
+            painter->setBrush(QColor(0x3b, 0x82, 0xf6));
+            painter->setPen(QPen(QColor(0x25, 0x63, 0xeb), 1));
+            painter->drawRoundedRect(cbRect, 4, 4);
+            painter->setPen(QPen(Qt::white, 2, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+            painter->setBrush(Qt::NoBrush);
+            if (m_state == Qt::Checked) {
+                // White tick mark
+                QPainterPath tick;
+                tick.moveTo(cx + 3,  cy + 8);
+                tick.lineTo(cx + 6,  cy + 11);
+                tick.lineTo(cx + 13, cy + 4);
+                painter->drawPath(tick);
             } else {
-                // Checked or PartiallyChecked  --  blue fill
-                painter->setBrush(QColor(0x3b, 0x82, 0xf6));
-                painter->setPen(QPen(QColor(0x25, 0x63, 0xeb), 1));
-                painter->drawRoundedRect(cbRect, 4, 4);
-                painter->setPen(QPen(Qt::white, 2, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
-                painter->setBrush(Qt::NoBrush);
-                if (m_state == Qt::Checked) {
-                    // White tick mark
-                    QPainterPath tick;
-                    tick.moveTo(cx + 3,  cy + 8);
-                    tick.lineTo(cx + 6,  cy + 11);
-                    tick.lineTo(cx + 13, cy + 4);
-                    painter->drawPath(tick);
-                } else {
-                    // White horizontal dash for partial
-                    painter->drawLine(cx + 4, cy + 8, cx + 12, cy + 8);
-                }
+                // White horizontal dash for partial
+                painter->drawLine(cx + 4, cy + 8, cx + 12, cy + 8);
             }
-            painter->restore();
         }
+        painter->restore();
     }
 
     void mousePressEvent(QMouseEvent* event) override {
@@ -435,17 +435,19 @@ void WifiManagerPanel::connectSignals()
 
     // Wire the CheckHeaderView "select all" checkbox
     auto* checkHdr = qobject_cast<CheckHeaderView*>(m_network_table->horizontalHeader());
-    if (checkHdr) {
-        connect(checkHdr, &CheckHeaderView::checkToggled, this, [this](bool allChecked) {
-            m_network_table->blockSignals(true);
-            for (int r = 0; r < m_network_table->rowCount(); ++r) {
-                auto* item = m_network_table->item(r, COL_SELECT);
-                if (item) item->setCheckState(allChecked ? Qt::Checked : Qt::Unchecked);
-            }
-            m_network_table->blockSignals(false);
-            onSelectionChanged();
-        });
+    if (checkHdr)
+        connect(checkHdr, &CheckHeaderView::checkToggled, this, &WifiManagerPanel::setAllCheckStates);
+}
+
+void WifiManagerPanel::setAllCheckStates(bool allChecked)
+{
+    m_network_table->blockSignals(true);
+    for (int r = 0; r < m_network_table->rowCount(); ++r) {
+        auto* item = m_network_table->item(r, COL_SELECT);
+        if (item) item->setCheckState(allChecked ? Qt::Checked : Qt::Unchecked);
     }
+    m_network_table->blockSignals(false);
+    onSelectionChanged();
 }
 
 // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -934,30 +936,31 @@ void WifiManagerPanel::onExportWindowsScriptClicked()
         QTextStream out(&file);
         out << script;
         Q_EMIT statusMessage(QString("Saved Windows script: %1").arg(path), sak::kTimerStatusDefaultMs);
-    } else {
-        // Multiple networks  --  ask for a folder, save one .cmd per network
-        const QString outDir = QFileDialog::getExistingDirectory(
-            this, "Select Output Folder for Windows Scripts",
-            QStandardPaths::writableLocation(QStandardPaths::DesktopLocation));
-        if (outDir.isEmpty()) return;
-
-        int saved = 0, failed = 0;
-        for (const WifiConfig& cfg : sources) {
-            if (cfg.ssid.isEmpty()) continue;
-            const QString script = buildWindowsScript(cfg.ssid, cfg.password, cfg.security, cfg.hidden);
-            const QString safeName = QString(cfg.ssid).replace(QRegularExpression("[\\\\/:*?\"<>|]"), "_");
-            const QString path = outDir + "/" + safeName + "_wifi_connect.cmd";
-            QFile file(path);
-            if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) { ++failed; continue; }
-            QTextStream out(&file);
-            out << script;
-            ++saved;
-        }
-        const QString msg = failed > 0
-            ? QString("Saved %1 script(s) to %2 (%3 failed).").arg(saved).arg(outDir).arg(failed)
-            : QString("Saved %1 Windows script(s) to: %2").arg(saved).arg(outDir);
-        Q_EMIT statusMessage(msg, sak::kTimerStatusLongMs);
+        return;
     }
+
+    // Multiple networks  --  ask for a folder, save one .cmd per network
+    const QString outDir = QFileDialog::getExistingDirectory(
+        this, "Select Output Folder for Windows Scripts",
+        QStandardPaths::writableLocation(QStandardPaths::DesktopLocation));
+    if (outDir.isEmpty()) return;
+
+    int saved = 0, failed = 0;
+    for (const WifiConfig& cfg : sources) {
+        if (cfg.ssid.isEmpty()) continue;
+        const QString script = buildWindowsScript(cfg.ssid, cfg.password, cfg.security, cfg.hidden);
+        const QString safeName = QString(cfg.ssid).replace(QRegularExpression("[\\\\/:*?\"<>|]"), "_");
+        const QString path = outDir + "/" + safeName + "_wifi_connect.cmd";
+        QFile file(path);
+        if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) { ++failed; continue; }
+        QTextStream out(&file);
+        out << script;
+        ++saved;
+    }
+    const QString msg = failed > 0
+        ? QString("Saved %1 script(s) to %2 (%3 failed).").arg(saved).arg(outDir).arg(failed)
+        : QString("Saved %1 Windows script(s) to: %2").arg(saved).arg(outDir);
+    Q_EMIT statusMessage(msg, sak::kTimerStatusLongMs);
 }
 
 void WifiManagerPanel::onExportMacosProfileClicked()
@@ -1220,15 +1223,14 @@ QStringList WifiManagerPanel::scanWindowsProfileNames() const
     const QRegularExpression nameRe(R"(:\s+(.+)$)");
     for (const QString& line : output.split('\n')) {
         const QString trimmed = line.trimmed();
-        if (trimmed.contains("All User Profile", Qt::CaseInsensitive) ||
-            trimmed.contains("Current User Profile", Qt::CaseInsensitive)) {
-            const auto match = nameRe.match(trimmed);
-            if (match.hasMatch()) {
-                const QString name = match.captured(1).trimmed();
-                if (!name.isEmpty())
-                    profileNames.append(name);
-            }
-        }
+        if (!trimmed.contains("All User Profile", Qt::CaseInsensitive) &&
+            !trimmed.contains("Current User Profile", Qt::CaseInsensitive))
+            continue;
+        const auto match = nameRe.match(trimmed);
+        if (!match.hasMatch()) continue;
+        const QString name = match.captured(1).trimmed();
+        if (!name.isEmpty())
+            profileNames.append(name);
     }
     return profileNames;
 }
@@ -1492,51 +1494,58 @@ QString WifiManagerPanel::buildWifiPayloadFromConfig(const WifiConfig& cfg)
 // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // QR generation
 // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+// QR drawing helper (extracted to keep generateQrImage nesting ≤ 3)
+// â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+static void drawQrModules(QImage& out, const QString& payload, int imageSize)
+{
+    constexpr int BORDER = 4;
+    // HIGH ECC trades capacity for resilience — critical because phone cameras
+    // often scan QR codes at oblique angles or in poor lighting.
+    const qrcodegen::QrCode qr =
+        qrcodegen::QrCode::encodeText(
+            payload.toUtf8().constData(),
+            qrcodegen::QrCode::Ecc::HIGH);
+
+    const int    modules      = qr.getSize();
+    // The quiet zone (BORDER) around the QR is required by the spec so
+    // scanners can reliably detect the code boundaries.
+    const int    totalModules = modules + BORDER * 2;
+    const double cellSize     = static_cast<double>(imageSize) / totalModules;
+
+    QPainter painter(&out);
+    // Antialiasing must be OFF — sub-pixel blending produces grey edges
+    // that confuse QR decoders.
+    painter.setRenderHint(QPainter::Antialiasing, false);
+    painter.setBrush(Qt::black);
+    painter.setPen(Qt::NoPen);
+
+    for (int y = 0; y < modules; ++y) {
+        for (int x = 0; x < modules; ++x) {
+            if (!qr.getModule(x, y)) continue;
+            // Compute each cell's pixel rect from (x+1)*cellSize - x*cellSize
+            // rather than using a fixed integer cell width; this prevents
+            // cumulative rounding drift that would create visible gaps.
+            const int px = static_cast<int>((x + BORDER) * cellSize);
+            const int py = static_cast<int>((y + BORDER) * cellSize);
+            const int pw = static_cast<int>((x + BORDER + 1) * cellSize) - px;
+            const int ph = static_cast<int>((y + BORDER + 1) * cellSize) - py;
+            painter.drawRect(px, py, pw, ph);
+        }
+    }
+}
+
 // static
 QImage WifiManagerPanel::generateQrImage(const QString& payload)
 {
     constexpr int IMAGE_SIZE = 640;
-    constexpr int BORDER     = 4;
 
     QImage out(IMAGE_SIZE, IMAGE_SIZE, QImage::Format_RGB32);
     out.fill(Qt::white);
     if (payload.isEmpty()) return out;
 
     try {
-        // HIGH ECC trades capacity for resilience — critical because phone cameras
-        // often scan QR codes at oblique angles or in poor lighting.
-        const qrcodegen::QrCode qr =
-            qrcodegen::QrCode::encodeText(
-                payload.toUtf8().constData(),
-                qrcodegen::QrCode::Ecc::HIGH);
-
-        const int    modules      = qr.getSize();
-        // The quiet zone (BORDER) around the QR is required by the spec so
-        // scanners can reliably detect the code boundaries.
-        const int    totalModules = modules + BORDER * 2;
-        const double cellSize     = static_cast<double>(IMAGE_SIZE) / totalModules;
-
-        QPainter painter(&out);
-        // Antialiasing must be OFF — sub-pixel blending produces grey edges
-        // that confuse QR decoders.
-        painter.setRenderHint(QPainter::Antialiasing, false);
-        painter.setBrush(Qt::black);
-        painter.setPen(Qt::NoPen);
-
-        for (int y = 0; y < modules; ++y) {
-            for (int x = 0; x < modules; ++x) {
-                if (qr.getModule(x, y)) {
-                    // Compute each cell's pixel rect from (x+1)*cellSize - x*cellSize
-                    // rather than using a fixed integer cell width; this prevents
-                    // cumulative rounding drift that would create visible gaps.
-                    const int px = static_cast<int>((x + BORDER) * cellSize);
-                    const int py = static_cast<int>((y + BORDER) * cellSize);
-                    const int pw = static_cast<int>((x + BORDER + 1) * cellSize) - px;
-                    const int ph = static_cast<int>((y + BORDER + 1) * cellSize) - py;
-                    painter.drawRect(px, py, pw, ph);
-                }
-            }
-        }
+        drawQrModules(out, payload, IMAGE_SIZE);
     } catch (const std::exception& ex) {
         sak::logWarning("QR code generation failed: {}", ex.what());
         QPainter p(&out);
@@ -1798,32 +1807,41 @@ QList<WifiManagerPanel::WifiConfig> WifiManagerPanel::checkedConfigs() const
 // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // Search
 // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+bool WifiManagerPanel::rowMatchesSearch(int row, const QString& text) const
+{
+    for (int col = COL_LOCATION; col < COL_COUNT; ++col) {
+        auto* item = m_network_table->item(row, col);
+        if (item && item->text().contains(text, Qt::CaseInsensitive))
+            return true;
+    }
+    return false;
+}
+
 void WifiManagerPanel::updateSearchMatches(const QString& text)
 {
     m_search_matches.clear();
     if (text.isEmpty()) return;
     for (int row = 0; row < m_network_table->rowCount(); ++row) {
-        for (int col = COL_LOCATION; col < COL_COUNT; ++col) {  // skip COL_SELECT
-            auto* item = m_network_table->item(row, col);
-            if (item && item->text().contains(text, Qt::CaseInsensitive)) {
-                m_search_matches.append(row);
-                break;
-            }
-        }
+        if (rowMatchesSearch(row, text))
+            m_search_matches.append(row);
+    }
+}
+
+static void setRowBackground(QTableWidget* table, int row, const QBrush& brush)
+{
+    for (int col = COL_LOCATION; col < COL_COUNT; ++col) {
+        auto* item = table->item(row, col);
+        if (item) item->setBackground(brush);
     }
 }
 
 void WifiManagerPanel::highlightSearchMatches()
 {
     for (int row = 0; row < m_network_table->rowCount(); ++row)
-        for (int col = COL_LOCATION; col < COL_COUNT; ++col)  // skip COL_SELECT
-            if (auto* item = m_network_table->item(row, col))
-                item->setBackground(QBrush());
+        setRowBackground(m_network_table, row, QBrush());
 
     for (int row : m_search_matches)
-        for (int col = COL_LOCATION; col < COL_COUNT; ++col)
-            if (auto* item = m_network_table->item(row, col))
-                item->setBackground(QColor(255, 255, 150));
+        setRowBackground(m_network_table, row, QColor(255, 255, 150));
 }
 
 // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€

@@ -120,6 +120,9 @@ private:
      */
     void copyISO_extractVolumeLabel(const QString& sevenZipPath, const QString& sourcePath);
 
+    /// @brief Parse 7z listing output for volume label ("Comment = ..." line)
+    QString parseVolumeLabelFromOutput(const QString& output);
+
     /**
      * @brief Normalize a drive letter destination path to "X:\\" format
      * @param destPath Raw destination path input
@@ -220,6 +223,9 @@ private:
      * @return true if all critical files match in size and presence
      */
     bool verifyExtractionIntegrity(const QString& isoPath, const QString& destPath, const QString& sevenZipPath);
+
+    /// @brief Check if a file path matches a critical Windows installation file
+    bool isCriticalWindowsFile(const QString& path) const;
 
     /// @brief Parse ISO listing output and return critical Windows file paths with sizes
     QList<QPair<QString, qint64>> parseIsoCriticalFiles(const QStringList& lines);

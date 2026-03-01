@@ -81,6 +81,9 @@ private:
     /// @brief Scan all browser cache locations and accumulate totals.
     void scanAllBrowserCaches(qint64& total_bytes, qint64& total_files, int& locations);
 
+    /// @brief Calculate total size of all files in a directory recursively.
+    qint64 calculateDirectorySize(const QString& path, qint64& files);
+
     /// @brief Builds the box-drawing success log.
     /// @return Formatted success log string.
     QString buildSuccessLog(const BrowserCacheResult& parsed, const QString& stderr_output, qint64 duration_ms) const;

@@ -122,30 +122,26 @@ void TaxSoftwareBackupAction::scanTurboTax() {
     for (const UserProfile& user : m_user_profiles) {
         QString turbotax_path = user.profile_path + "/Documents/TurboTax";
         QDir dir(turbotax_path);
-        
-        if (dir.exists()) {
-            QDirIterator it(turbotax_path, QStringList() << "*.tax*" << "*.ttax", 
-                          QDir::Files, QDirIterator::Subdirectories);
-            
-            while (it.hasNext()) {
-                it.next();
-                TaxDataLocation loc;
-                loc.software_name = "TurboTax";
-                loc.path = it.filePath();
-                loc.size = it.fileInfo().size();
-                loc.file_count = 1;
-                
-                // Try to extract year from filename
-                QString filename = it.fileName();
-                QRegularExpression re("(20\\d{2})");
-                QRegularExpressionMatch match = re.match(filename);
-                if (match.hasMatch()) {
-                    loc.tax_year = match.captured(1).toInt();
-                }
-                
-                m_tax_data.append(loc);
-                m_total_size += loc.size;
-            }
+        if (!dir.exists()) continue;
+
+        QDirIterator it(turbotax_path, QStringList() << "*.tax*" << "*.ttax", 
+                      QDir::Files, QDirIterator::Subdirectories);
+
+        while (it.hasNext()) {
+            it.next();
+            TaxDataLocation loc;
+            loc.software_name = "TurboTax";
+            loc.path = it.filePath();
+            loc.size = it.fileInfo().size();
+            loc.file_count = 1;
+
+            // Try to extract year from filename
+            QRegularExpression re("(20\\d{2})");
+            QRegularExpressionMatch match = re.match(it.fileName());
+            loc.tax_year = match.hasMatch() ? match.captured(1).toInt() : 0;
+
+            m_tax_data.append(loc);
+            m_total_size += loc.size;
         }
     }
 }
@@ -154,25 +150,24 @@ void TaxSoftwareBackupAction::scanHRBlock() {
     for (const UserProfile& user : m_user_profiles) {
         QString hrblock_path = user.profile_path + "/Documents/HRBlock";
         QDir dir(hrblock_path);
-        
-        if (dir.exists()) {
-            const QStringList hr_filters = {
-                "*.tax", "*.t17", "*.t18", "*.t19", "*.t20",
-                "*.t21", "*.t22", "*.t23", "*.t24", "*.t25"
-            };
-            QDirIterator it(hrblock_path, hr_filters, QDir::Files, QDirIterator::Subdirectories);
-            
-            while (it.hasNext()) {
-                it.next();
-                TaxDataLocation loc;
-                loc.software_name = "H&R Block";
-                loc.path = it.filePath();
-                loc.size = it.fileInfo().size();
-                loc.file_count = 1;
-                
-                m_tax_data.append(loc);
-                m_total_size += loc.size;
-            }
+        if (!dir.exists()) continue;
+
+        const QStringList hr_filters = {
+            "*.tax", "*.t17", "*.t18", "*.t19", "*.t20",
+            "*.t21", "*.t22", "*.t23", "*.t24", "*.t25"
+        };
+        QDirIterator it(hrblock_path, hr_filters, QDir::Files, QDirIterator::Subdirectories);
+
+        while (it.hasNext()) {
+            it.next();
+            TaxDataLocation loc;
+            loc.software_name = "H&R Block";
+            loc.path = it.filePath();
+            loc.size = it.fileInfo().size();
+            loc.file_count = 1;
+
+            m_tax_data.append(loc);
+            m_total_size += loc.size;
         }
     }
 }
@@ -181,22 +176,21 @@ void TaxSoftwareBackupAction::scanTaxAct() {
     for (const UserProfile& user : m_user_profiles) {
         QString taxact_path = user.profile_path + "/Documents/TaxACT";
         QDir dir(taxact_path);
-        
-        if (dir.exists()) {
-            QDirIterator it(taxact_path, QStringList() << "*.ta*", 
-                          QDir::Files, QDirIterator::Subdirectories);
-            
-            while (it.hasNext()) {
-                it.next();
-                TaxDataLocation loc;
-                loc.software_name = "TaxACT";
-                loc.path = it.filePath();
-                loc.size = it.fileInfo().size();
-                loc.file_count = 1;
-                
-                m_tax_data.append(loc);
-                m_total_size += loc.size;
-            }
+        if (!dir.exists()) continue;
+
+        QDirIterator it(taxact_path, QStringList() << "*.ta*", 
+                      QDir::Files, QDirIterator::Subdirectories);
+
+        while (it.hasNext()) {
+            it.next();
+            TaxDataLocation loc;
+            loc.software_name = "TaxACT";
+            loc.path = it.filePath();
+            loc.size = it.fileInfo().size();
+            loc.file_count = 1;
+
+            m_tax_data.append(loc);
+            m_total_size += loc.size;
         }
     }
 }
@@ -259,17 +253,7 @@ void TaxSoftwareBackupAction::execute() {
         QString safe_dir = sanitizePathForBackup(source_dir);
 
         QString dest = backup_dir.filePath(loc.software_name + "/" + safe_dir + "/" + filename);
-        if (QFile::exists(dest)) {
-            QString base = QFileInfo(filename).completeBaseName();
-            QString ext = QFileInfo(filename).suffix();
-            int suffix = 1;
-            QString candidate;
-            do {
-                candidate = backup_dir.filePath(loc.software_name + "/" + safe_dir + "/" + QString("%1_%2.%3").arg(base).arg(suffix).arg(ext));
-                suffix++;
-            } while (QFile::exists(candidate));
-            dest = candidate;
-        }
+        dest = resolveUniqueDestPath(dest);
         
         QDir().mkpath(QFileInfo(dest).absolutePath());
         
@@ -293,6 +277,21 @@ void TaxSoftwareBackupAction::execute() {
     result.output_path = backup_dir.absolutePath();
     
     finishWithResult(result, processed > 0 ? ActionStatus::Success : ActionStatus::Failed);
+}
+
+QString TaxSoftwareBackupAction::resolveUniqueDestPath(const QString& dest) {
+    if (!QFile::exists(dest)) return dest;
+
+    QString base = QFileInfo(dest).completeBaseName();
+    QString ext = QFileInfo(dest).suffix();
+    QString dir_path = QFileInfo(dest).absolutePath();
+    int suffix_num = 1;
+    QString candidate;
+    do {
+        candidate = dir_path + "/" + QString("%1_%2.%3").arg(base).arg(suffix_num).arg(ext);
+        suffix_num++;
+    } while (QFile::exists(candidate));
+    return candidate;
 }
 
 } // namespace sak

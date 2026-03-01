@@ -261,20 +261,10 @@ void DiskBenchmarkWorker::runSequentialRead()
     double best_mbps = 0.0;
 
     for (int pass = 0; pass < m_config.sequential_passes; ++pass) {
-        SetFilePointer(h, 0, nullptr, FILE_BEGIN);
-
         QElapsedTimer timer;
         timer.start();
 
-        size_t bytes_read_total = 0;
-        while (bytes_read_total < total_bytes) {
-            DWORD bytes_read = 0;
-            if (!ReadFile(h, buf.data(), static_cast<DWORD>(buf.size()),
-                         &bytes_read, nullptr) || bytes_read == 0) {
-                break;
-            }
-            bytes_read_total += bytes_read;
-        }
+        size_t bytes_read_total = readSequentialPass(h, buf.data(), buf.size(), total_bytes);
 
         const double elapsed_sec = timer.nsecsElapsed() / 1'000'000'000.0;
         const double mbps = static_cast<double>(bytes_read_total) /
@@ -287,6 +277,26 @@ void DiskBenchmarkWorker::runSequentialRead()
     logInfo("Sequential read: {:.0f} MB/s", best_mbps);
 #endif
 }
+
+#ifdef SAK_PLATFORM_WINDOWS
+size_t DiskBenchmarkWorker::readSequentialPass(
+    void* file_handle, uint8_t* buffer, size_t bufSize, size_t total_bytes)
+{
+    HANDLE h = static_cast<HANDLE>(file_handle);
+    SetFilePointer(h, 0, nullptr, FILE_BEGIN);
+
+    size_t bytes_read_total = 0;
+    while (bytes_read_total < total_bytes) {
+        DWORD bytes_read = 0;
+        if (!ReadFile(h, buffer, static_cast<DWORD>(bufSize),
+                     &bytes_read, nullptr) || bytes_read == 0) {
+            break;
+        }
+        bytes_read_total += bytes_read;
+    }
+    return bytes_read_total;
+}
+#endif
 
 void DiskBenchmarkWorker::runSequentialWrite()
 {
@@ -323,16 +333,7 @@ void DiskBenchmarkWorker::runSequentialWrite()
         QElapsedTimer timer;
         timer.start();
 
-        size_t written_total = 0;
-        while (written_total < total_bytes) {
-            DWORD bytes_written = 0;
-            const DWORD to_write = static_cast<DWORD>(
-                std::min(buf.size(), total_bytes - written_total));
-            if (!WriteFile(h, buf.data(), to_write, &bytes_written, nullptr)) {
-                break;
-            }
-            written_total += bytes_written;
-        }
+        size_t written_total = writeSequentialPass(h, buf.data(), buf.size(), total_bytes);
 
         FlushFileBuffers(h);
         const double elapsed_sec = timer.nsecsElapsed() / 1'000'000'000.0;
@@ -347,6 +348,25 @@ void DiskBenchmarkWorker::runSequentialWrite()
     logInfo("Sequential write: {:.0f} MB/s", best_mbps);
 #endif
 }
+
+#ifdef SAK_PLATFORM_WINDOWS
+size_t DiskBenchmarkWorker::writeSequentialPass(
+    void* file_handle, const uint8_t* buffer, size_t bufSize, size_t total_bytes)
+{
+    HANDLE h = static_cast<HANDLE>(file_handle);
+    size_t written_total = 0;
+    while (written_total < total_bytes) {
+        DWORD bytes_written = 0;
+        const DWORD to_write = static_cast<DWORD>(
+            std::min(bufSize, total_bytes - written_total));
+        if (!WriteFile(h, buffer, to_write, &bytes_written, nullptr)) {
+            break;
+        }
+        written_total += bytes_written;
+    }
+    return written_total;
+}
+#endif
 
 // ============================================================================
 // Random I/O Benchmarks
@@ -417,13 +437,46 @@ void DiskBenchmarkWorker::runRandom4KRead(
 }
 
 #ifdef SAK_PLATFORM_WINDOWS
+void DiskBenchmarkWorker::processRandomReadOp(
+    void* file_handle, uint8_t* buf_data,
+    int queue_index, uint64_t offset,
+    std::vector<double>& latencies,
+    uint64_t& total_ops, uint64_t& total_bytes)
+{
+    HANDLE h = static_cast<HANDLE>(file_handle);
+
+    LARGE_INTEGER li;
+    li.QuadPart = static_cast<LONGLONG>(offset);
+    if (!SetFilePointerEx(h, li, nullptr, FILE_BEGIN)) {
+        logWarning("Random 4K read: SetFilePointerEx failed at offset {} (error {})",
+                   offset, GetLastError());
+        return;
+    }
+
+    QElapsedTimer op_timer;
+    op_timer.start();
+
+    DWORD bytes_read = 0;
+    if (!ReadFile(h, buf_data + queue_index * kRandomBlockSize,
+            static_cast<DWORD>(kRandomBlockSize), &bytes_read, nullptr)) {
+        logWarning("Random 4K read: ReadFile failed at offset {} (error {})",
+                   offset, GetLastError());
+        return;
+    }
+
+    latencies.push_back(op_timer.nsecsElapsed() / 1000.0);
+    total_bytes += bytes_read;
+    ++total_ops;
+}
+#endif
+
+#ifdef SAK_PLATFORM_WINDOWS
 double DiskBenchmarkWorker::runRandom4KReadLoop(
     void* file_handle, uint8_t* buf_data, int queue_depth,
     uint64_t max_offset, int duration_ms,
     std::vector<double>& latencies,
     uint64_t& total_ops, uint64_t& total_bytes)
 {
-    HANDLE h = static_cast<HANDLE>(file_handle);
     std::mt19937_64 rng(654);
     std::uniform_int_distribution<uint64_t> offset_dist(0, max_offset / kRandomBlockSize);
 
@@ -435,35 +488,46 @@ double DiskBenchmarkWorker::runRandom4KReadLoop(
 
         for (int q = 0; q < queue_depth; ++q) {
             const uint64_t offset = offset_dist(rng) * kRandomBlockSize;
-
-            LARGE_INTEGER li;
-            li.QuadPart = static_cast<LONGLONG>(offset);
-            if (!SetFilePointerEx(h, li, nullptr, FILE_BEGIN)) {
-                logWarning("Random 4K read: SetFilePointerEx failed at offset {} (error {})",
-                           offset, GetLastError());
-                continue;
-            }
-
-            QElapsedTimer op_timer;
-            op_timer.start();
-
-            DWORD bytes_read = 0;
-            if (!ReadFile(h, buf_data + q * kRandomBlockSize,
-                    static_cast<DWORD>(kRandomBlockSize), &bytes_read, nullptr)) {
-                logWarning("Random 4K read: ReadFile failed at offset {} (error {})",
-                           offset, GetLastError());
-                continue;
-            }
-
-            const double lat_us = op_timer.nsecsElapsed() / 1000.0;
-            latencies.push_back(lat_us);
-
-            total_bytes += bytes_read;
-            ++total_ops;
+            processRandomReadOp(file_handle, buf_data, q, offset,
+                                latencies, total_ops, total_bytes);
         }
     }
 
     return total_timer.nsecsElapsed() / 1'000'000'000.0;
+}
+#endif
+
+#ifdef SAK_PLATFORM_WINDOWS
+void DiskBenchmarkWorker::processRandomWriteOp(
+    void* file_handle, const uint8_t* buf_data,
+    int queue_index, uint64_t offset,
+    std::vector<double>& latencies,
+    uint64_t& total_ops, uint64_t& total_bytes)
+{
+    HANDLE h = static_cast<HANDLE>(file_handle);
+
+    LARGE_INTEGER li;
+    li.QuadPart = static_cast<LONGLONG>(offset);
+    if (!SetFilePointerEx(h, li, nullptr, FILE_BEGIN)) {
+        logWarning("Random 4K write: SetFilePointerEx failed at offset {} (error {})",
+                   offset, GetLastError());
+        return;
+    }
+
+    QElapsedTimer op_timer;
+    op_timer.start();
+
+    DWORD bytes_written = 0;
+    if (!WriteFile(h, buf_data + queue_index * kRandomBlockSize,
+             static_cast<DWORD>(kRandomBlockSize), &bytes_written, nullptr)) {
+        logWarning("Random 4K write: WriteFile failed at offset {} (error {})",
+                   offset, GetLastError());
+        return;
+    }
+
+    latencies.push_back(op_timer.nsecsElapsed() / 1000.0);
+    total_bytes += bytes_written;
+    ++total_ops;
 }
 #endif
 
@@ -474,7 +538,6 @@ double DiskBenchmarkWorker::runRandom4KWriteLoop(
     std::vector<double>& latencies,
     uint64_t& total_ops, uint64_t& total_bytes)
 {
-    HANDLE h = static_cast<HANDLE>(file_handle);
     std::mt19937_64 rng(876);
     std::uniform_int_distribution<uint64_t> offset_dist(0, max_offset / kRandomBlockSize);
 
@@ -486,31 +549,8 @@ double DiskBenchmarkWorker::runRandom4KWriteLoop(
 
         for (int q = 0; q < queue_depth; ++q) {
             const uint64_t offset = offset_dist(rng) * kRandomBlockSize;
-
-            LARGE_INTEGER li;
-            li.QuadPart = static_cast<LONGLONG>(offset);
-            if (!SetFilePointerEx(h, li, nullptr, FILE_BEGIN)) {
-                logWarning("Random 4K write: SetFilePointerEx failed at offset {} (error {})",
-                           offset, GetLastError());
-                continue;
-            }
-
-            QElapsedTimer op_timer;
-            op_timer.start();
-
-            DWORD bytes_written = 0;
-            if (!WriteFile(h, buf_data + q * kRandomBlockSize,
-                     static_cast<DWORD>(kRandomBlockSize), &bytes_written, nullptr)) {
-                logWarning("Random 4K write: WriteFile failed at offset {} (error {})",
-                           offset, GetLastError());
-                continue;
-            }
-
-            const double lat_us = op_timer.nsecsElapsed() / 1000.0;
-            latencies.push_back(lat_us);
-
-            total_bytes += bytes_written;
-            ++total_ops;
+            processRandomWriteOp(file_handle, buf_data, q, offset,
+                                 latencies, total_ops, total_bytes);
         }
     }
 

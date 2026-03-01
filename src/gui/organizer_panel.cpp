@@ -364,18 +364,18 @@ QMap<QString, QStringList> OrganizerPanel::getCategoryMapping() const
         auto* categoryItem = m_category_table->item(row, 0);
         auto* extensionsItem = m_category_table->item(row, 1);
 
-        if (categoryItem && extensionsItem) {
-            QString category = categoryItem->text().trimmed();
-            QString extensionsStr = extensionsItem->text().trimmed();
+        if (!categoryItem || !extensionsItem) continue;
 
-            if (!category.isEmpty() && !extensionsStr.isEmpty()) {
-                QStringList extensions = extensionsStr.split(',', Qt::SkipEmptyParts);
-                for (auto& ext : extensions) {
-                    ext = ext.trimmed();
-                }
-                mapping[category] = extensions;
-            }
+        QString category = categoryItem->text().trimmed();
+        QString extensionsStr = extensionsItem->text().trimmed();
+
+        if (category.isEmpty() || extensionsStr.isEmpty()) continue;
+
+        QStringList extensions = extensionsStr.split(',', Qt::SkipEmptyParts);
+        for (auto& ext : extensions) {
+            ext = ext.trimmed();
         }
+        mapping[category] = extensions;
     }
 
     return mapping;

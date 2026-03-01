@@ -186,6 +186,10 @@ private:
                       const QString& destination,
                       const QStringList& exclude_patterns);
 
+    /// @brief Copy all source paths into a single destination directory
+    bool copySourcesToDest(const QStringList& source_paths, const QString& dest_dir,
+                           const QStringList& exclude_patterns);
+
     /**
      * @brief Calculate SHA256 checksum
      */

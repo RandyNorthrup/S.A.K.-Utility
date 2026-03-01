@@ -874,26 +874,22 @@ void NetworkTransferPanel::setupConnections_controllerSignals() {
                 if (m_jobSourceControllers.contains(job_id)) {
                     m_jobSourceControllers.value(job_id)->pauseTransfer();
                 }
-                if (m_orchestrator) {
-                    const QString destination_id = m_jobToDestinationId.value(job_id);
-                    const QString deployment_id = m_jobToDeploymentId.value(job_id);
-                    if (!destination_id.isEmpty()) {
-                        m_orchestrator->pauseAssignment(destination_id, deployment_id, job_id);
-                    }
-                }
+                if (!m_orchestrator) return;
+                const QString destination_id = m_jobToDestinationId.value(job_id);
+                if (destination_id.isEmpty()) return;
+                const QString deployment_id = m_jobToDeploymentId.value(job_id);
+                m_orchestrator->pauseAssignment(destination_id, deployment_id, job_id);
             });
         connect(m_parallelManager, &ParallelTransferManager::jobResumeRequested,
             this, [this](const QString& job_id) {
                 if (m_jobSourceControllers.contains(job_id)) {
                     m_jobSourceControllers.value(job_id)->resumeTransfer();
                 }
-                if (m_orchestrator) {
-                    const QString destination_id = m_jobToDestinationId.value(job_id);
-                    const QString deployment_id = m_jobToDeploymentId.value(job_id);
-                    if (!destination_id.isEmpty()) {
-                        m_orchestrator->resumeAssignment(destination_id, deployment_id, job_id);
-                    }
-                }
+                if (!m_orchestrator) return;
+                const QString destination_id = m_jobToDestinationId.value(job_id);
+                if (destination_id.isEmpty()) return;
+                const QString deployment_id = m_jobToDeploymentId.value(job_id);
+                m_orchestrator->resumeAssignment(destination_id, deployment_id, job_id);
             });
         connect(m_parallelManager, &ParallelTransferManager::jobCancelRequested,
             this, [this](const QString& job_id) {
@@ -902,13 +898,11 @@ void NetworkTransferPanel::setupConnections_controllerSignals() {
                     controller->cancelTransfer();
                     controller->deleteLater();
                 }
-                if (m_orchestrator) {
-                    const QString destination_id = m_jobToDestinationId.value(job_id);
-                    const QString deployment_id = m_jobToDeploymentId.value(job_id);
-                    if (!destination_id.isEmpty()) {
-                        m_orchestrator->cancelAssignment(destination_id, deployment_id, job_id);
-                    }
-                }
+                if (!m_orchestrator) return;
+                const QString destination_id = m_jobToDestinationId.value(job_id);
+                if (destination_id.isEmpty()) return;
+                const QString deployment_id = m_jobToDeploymentId.value(job_id);
+                m_orchestrator->cancelAssignment(destination_id, deployment_id, job_id);
             });
     }
 }
@@ -950,9 +944,9 @@ void NetworkTransferPanel::loadSettings() {
     QStringList addresses;
     for (const auto& iface : QNetworkInterface::allInterfaces()) {
         for (const auto& entry : iface.addressEntries()) {
-            if (entry.ip().protocol() == QAbstractSocket::IPv4Protocol && !entry.ip().isLoopback()) {
-                addresses.append(entry.ip().toString());
-            }
+            if (entry.ip().protocol() != QAbstractSocket::IPv4Protocol) continue;
+            if (entry.ip().isLoopback()) continue;
+            addresses.append(entry.ip().toString());
         }
     }
     m_destinationInfo->setText(tr("Listening on ports %1/%2. Local IPs: %3")
@@ -1015,11 +1009,9 @@ void NetworkTransferPanel::loadSettings_initAssignmentQueue() {
         m_assignmentQueue = storedQueue;
         m_assignmentStatusByJob = storedStatus;
         m_assignmentEventByJob = storedEvent;
-        if (!m_activeAssignment.deployment_id.isEmpty()) {
-            if (m_activeAssignmentLabel) {
-                m_activeAssignmentLabel->setText(tr("Active: %1 (%2)")
-                                                     .arg(m_activeAssignment.source_user, m_activeAssignment.deployment_id));
-            }
+        if (!m_activeAssignment.deployment_id.isEmpty() && m_activeAssignmentLabel) {
+            m_activeAssignmentLabel->setText(tr("Active: %1 (%2)")
+                                                 .arg(m_activeAssignment.source_user, m_activeAssignment.deployment_id));
         }
         refreshAssignmentQueue();
         refreshAssignmentStatus();

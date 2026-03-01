@@ -121,28 +121,94 @@ QString WindowsUserScanner::getUserSID(const QString& username) {
     // First call to get required buffer size
     LookupAccountNameW(nullptr, usernameW, nullptr, &sidSize, domain, &domainSize, &sidType);
     
-    if (sidSize > 0) {
-        sid = (PSID)LocalAlloc(LPTR, sidSize);
-        if (!sid) {
-            return QString();
-        }
-        domainSize = 256;
-        
-        if (LookupAccountNameW(nullptr, usernameW, sid, &sidSize, domain, &domainSize, &sidType)) {
-            LPWSTR sidString = nullptr;
-            if (ConvertSidToStringSidW(sid, &sidString)) {
-                QString result = QString::fromWCharArray(sidString);
-                LocalFree(sidString);
-                LocalFree(sid);
-                return result;
-            }
-        }
-        
-        LocalFree(sid);
+    if (sidSize == 0) {
+        return QString();
     }
-#endif
+    
+    sid = (PSID)LocalAlloc(LPTR, sidSize);
+    if (!sid) {
+        return QString();
+    }
+    domainSize = 256;
+    
+    if (!LookupAccountNameW(nullptr, usernameW, sid, &sidSize, domain, &domainSize, &sidType)) {
+        LocalFree(sid);
+        return QString();
+    }
+    
+    LPWSTR sidString = nullptr;
+    if (!ConvertSidToStringSidW(sid, &sidString)) {
+        LocalFree(sid);
+        return QString();
+    }
+    
+    QString result = QString::fromWCharArray(sidString);
+    LocalFree(sidString);
+    LocalFree(sid);
+    return result;
+#else
+    (void)username;
     return QString();
+#endif
 }
+
+namespace {
+
+/// @brief Expand a registry path value, handling REG_EXPAND_SZ environment variables
+QString expandRegistryPath(const wchar_t* profileDir, DWORD valueType) {
+    if (valueType != REG_EXPAND_SZ) {
+        return QString::fromWCharArray(profileDir);
+    }
+    wchar_t expandedPath[MAX_PATH] = {};
+    DWORD expandedLen = ExpandEnvironmentStringsW(profileDir, expandedPath, MAX_PATH);
+    if (expandedLen > 0 && expandedLen <= MAX_PATH) {
+        return QString::fromWCharArray(expandedPath);
+    }
+    return QString::fromWCharArray(profileDir);
+}
+
+/// @brief Look up a user's profile path from the registry using their SID
+QString lookupRegistryProfilePath(const QString& sid) {
+    QString regPath = QString("SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\ProfileList\\%1").arg(sid);
+    HKEY hKey = nullptr;
+    LONG result = RegOpenKeyExW(
+        HKEY_LOCAL_MACHINE,
+        reinterpret_cast<LPCWSTR>(regPath.utf16()),
+        0, KEY_READ, &hKey);
+    
+    if (result != ERROR_SUCCESS) {
+        return {};
+    }
+    
+    wchar_t profileDir[MAX_PATH] = {};
+    DWORD bufferSize = sizeof(profileDir);
+    DWORD valueType = 0;
+    
+    result = RegQueryValueExW(
+        hKey,
+        L"ProfileImagePath",
+        nullptr,
+        &valueType,
+        reinterpret_cast<LPBYTE>(profileDir),
+        &bufferSize);
+    
+    RegCloseKey(hKey);
+    
+    if (result != ERROR_SUCCESS) {
+        return {};
+    }
+    if (valueType != REG_SZ && valueType != REG_EXPAND_SZ) {
+        return {};
+    }
+    
+    QString registryPath = expandRegistryPath(profileDir, valueType);
+    if (QDir(registryPath).exists()) {
+        return registryPath;
+    }
+    return {};
+}
+
+} // anonymous namespace
 
 QString WindowsUserScanner::getProfilePath(const QString& username) {
     // First try standard location using SystemDrive environment variable
@@ -158,53 +224,13 @@ QString WindowsUserScanner::getProfilePath(const QString& username) {
 #ifdef Q_OS_WIN
     // Query registry for actual profile path using the user's SID
     QString sid = getUserSID(username);
-    if (!sid.isEmpty()) {
-        QString regPath = QString("SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\ProfileList\\%1").arg(sid);
-        HKEY hKey = nullptr;
-        LONG result = RegOpenKeyExW(
-            HKEY_LOCAL_MACHINE,
-            reinterpret_cast<LPCWSTR>(regPath.utf16()),
-            0, KEY_READ, &hKey);
-        
-        if (result == ERROR_SUCCESS) {
-            wchar_t profileDir[MAX_PATH] = {};
-            DWORD bufferSize = sizeof(profileDir);
-            DWORD valueType = 0;
-            
-            result = RegQueryValueExW(
-                hKey,
-                L"ProfileImagePath",
-                nullptr,
-                &valueType,
-                reinterpret_cast<LPBYTE>(profileDir),
-                &bufferSize);
-            
-            RegCloseKey(hKey);
-            
-            if (result == ERROR_SUCCESS && (valueType == REG_SZ || valueType == REG_EXPAND_SZ)) {
-                QString registryPath;
-                if (valueType == REG_EXPAND_SZ) {
-                    // Expand environment variables (e.g., %SystemDrive%)
-                    wchar_t expandedPath[MAX_PATH] = {};
-                    DWORD expandedLen = ExpandEnvironmentStringsW(profileDir, expandedPath, MAX_PATH);
-                    if (expandedLen > 0 && expandedLen <= MAX_PATH) {
-                        registryPath = QString::fromWCharArray(expandedPath);
-                    } else {
-                        registryPath = QString::fromWCharArray(profileDir);
-                    }
-                } else {
-                    registryPath = QString::fromWCharArray(profileDir);
-                }
-                
-                if (QDir(registryPath).exists()) {
-                    return registryPath;
-                }
-            }
-        }
+    if (sid.isEmpty()) {
+        return {};
     }
+    return lookupRegistryProfilePath(sid);
+#else
+    return {};
 #endif
-    
-    return QString();
 }
 
 bool WindowsUserScanner::isUserLoggedIn(const QString& username) {
@@ -230,21 +256,22 @@ bool WindowsUserScanner::isUserLoggedIn(const QString& username) {
         LPWSTR pUserName = nullptr;
         DWORD bytesReturned = 0;
         
-        if (WTSQuerySessionInformationW(
+        if (!WTSQuerySessionInformationW(
                 WTS_CURRENT_SERVER_HANDLE,
                 pSessionInfo[i].SessionId,
                 WTSUserName,
                 &pUserName,
                 &bytesReturned)) {
-            
-            QString sessionUser = QString::fromWCharArray(pUserName);
-            WTSFreeMemory(pUserName);
-            
-            // Compare usernames (case-insensitive)
-            if (sessionUser.compare(username, Qt::CaseInsensitive) == 0) {
-                isLoggedIn = true;
-                break;
-            }
+            continue;
+        }
+        
+        QString sessionUser = QString::fromWCharArray(pUserName);
+        WTSFreeMemory(pUserName);
+        
+        // Compare usernames (case-insensitive)
+        if (sessionUser.compare(username, Qt::CaseInsensitive) == 0) {
+            isLoggedIn = true;
+            break;
         }
     }
     
@@ -264,15 +291,16 @@ qint64 WindowsUserScanner::estimateProfileSize(const QString& profilePath) {
     
     for (const QString& folder : mainFolders) {
         QString folderPath = profilePath + "/" + folder;
-        QDir dir(folderPath);
-        if (dir.exists()) {
-            QDirIterator it(folderPath, QDir::Files, QDirIterator::Subdirectories);
-            int fileCount = 0;
-            while (it.hasNext() && fileCount < 1000) { // Limit for speed
-                it.next();
-                totalSize += it.fileInfo().size();
-                fileCount++;
-            }
+        if (!QDir(folderPath).exists()) {
+            continue;
+        }
+        
+        QDirIterator it(folderPath, QDir::Files, QDirIterator::Subdirectories);
+        int fileCount = 0;
+        while (it.hasNext() && fileCount < 1000) { // Limit for speed
+            it.next();
+            totalSize += it.fileInfo().size();
+            fileCount++;
         }
     }
     
@@ -297,20 +325,17 @@ QVector<FolderSelection> WindowsUserScanner::getDefaultFolderSelections(const QS
         sel.exclude_patterns = QStringList();
         
         // Calculate size if folder exists
+        sel.size_bytes = 0;
+        sel.file_count = 0;
         QString fullPath = profilePath + "/" + relativePath;
-        QDir dir(fullPath);
-        if (dir.exists()) {
+        if (QDir(fullPath).exists()) {
             sel.size_bytes = WindowsUserScanner::estimateProfileSize(fullPath);
             // Quick file count
-            sel.file_count = 0;
             QDirIterator it(fullPath, QDir::Files, QDirIterator::Subdirectories);
             while (it.hasNext() && sel.file_count < 10000) {
                 it.next();
                 sel.file_count++;
             }
-        } else {
-            sel.size_bytes = 0;
-            sel.file_count = 0;
         }
         
         selections.append(sel);

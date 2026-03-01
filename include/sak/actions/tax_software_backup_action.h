@@ -48,6 +48,9 @@ private:
     void scanTurboTax();
     void scanHRBlock();
     void scanTaxAct();
+
+    /// @brief Resolve a unique destination path, appending _N suffix if file exists
+    static QString resolveUniqueDestPath(const QString& dest);
 };
 
 } // namespace sak

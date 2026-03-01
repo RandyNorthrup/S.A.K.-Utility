@@ -93,12 +93,12 @@ void ClearPrintSpoolerAction::execute() {
     ProcessResult ps = runPowerShell(buildSpoolerScript(), sak::kTimeoutProcessVeryLongMs);
     Q_EMIT executionProgress("║ Stopping service with Stop-Service...                        ║", 40);
 
-    if (ps.timed_out || isCancelled()) {
-        if (isCancelled()) {
-            emitCancelledResult("Spooler clearing cancelled", start_time);
-        } else {
-            emitFailedResult("Operation timed out", {}, start_time);
-        }
+    if (isCancelled()) {
+        emitCancelledResult("Spooler clearing cancelled", start_time);
+        return;
+    }
+    if (ps.timed_out) {
+        emitFailedResult("Operation timed out", {}, start_time);
         return;
     }
 

@@ -36,6 +36,17 @@ constexpr double kBaselineMatrixMultiplyMs   = 350.0;
 constexpr double kBaselineZlibCompressionMs  = 280.0;
 constexpr double kBaselineAesEncryptionMs    = 180.0;
 
+/// @brief Compute one row of C = A × B (ikj order for cache-friendly B access)
+void multiplyMatrixRow(const std::vector<double>& a, const std::vector<double>& b,
+                       std::vector<double>& c, int row, int n) {
+    for (int k = 0; k < n; ++k) {
+        const double a_ik = a[row * n + k];
+        for (int j = 0; j < n; ++j) {
+            c[row * n + j] += a_ik * b[k * n + j];
+        }
+    }
+}
+
 /// AES S-Box (simplified; used for byte-level permutation workload)
 alignas(64) constexpr uint8_t kAesSBox[256] = {
     0x63,0x7c,0x77,0x7b,0xf2,0x6b,0x6f,0xc5,0x30,0x01,0x67,0x2b,0xfe,0xd7,0xab,0x76,
@@ -155,10 +166,9 @@ double CpuBenchmarkWorker::runPrimeSieve(uint64_t limit)
     const uint64_t sqrt_limit = static_cast<uint64_t>(std::sqrt(static_cast<double>(limit)));
 
     for (uint64_t i = 2; i <= sqrt_limit; ++i) {
-        if (sieve[i]) {
-            for (uint64_t j = i * i; j <= limit; j += i) {
-                sieve[j] = false;
-            }
+        if (!sieve[i]) continue;
+        for (uint64_t j = i * i; j <= limit; j += i) {
+            sieve[j] = false;
         }
     }
 
@@ -192,12 +202,7 @@ double CpuBenchmarkWorker::runMatrixMultiply(int size)
 
     // ikj loop order for cache-friendly access of B
     for (int i = 0; i < n; ++i) {
-        for (int k = 0; k < n; ++k) {
-            const double a_ik = a[i * n + k];
-            for (int j = 0; j < n; ++j) {
-                c[i * n + j] += a_ik * b[k * n + j];
-            }
-        }
+        multiplyMatrixRow(a, b, c, i, n);
     }
 
     const double elapsed = timer.nsecsElapsed() / 1'000'000.0;

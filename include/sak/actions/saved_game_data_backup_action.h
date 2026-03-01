@@ -48,6 +48,15 @@ private:
     void scanEpicSaves();
     void scanGOGSaves();
     void scanDocumentsSaves();
+
+    /// @brief Scan Steam save paths for a single user profile
+    void scanSteamSavesForUser(const UserProfile& user);
+    /// @brief Collect Steam remote save directories under the given path
+    void collectSteamRemoteDirs(const QString& path);
+    /// @brief Measure and append a save location to the list
+    void addSaveLocation(const QString& platform, const QString& path);
+    /// @brief Recursively copy all files from src_path to dest_path
+    qint64 copyDirectoryRecursive(const QString& src_path, const QString& dest_path);
 };
 
 } // namespace sak

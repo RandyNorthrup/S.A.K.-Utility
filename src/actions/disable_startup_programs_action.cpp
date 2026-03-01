@@ -74,19 +74,18 @@ void DisableStartupProgramsAction::scanTaskScheduler() {
     QStringList lines = output.split('\n');
     
     for (const QString& line : lines) {
-        if (line.contains("Ready") && line.contains("\\Microsoft\\Windows")) {
-            QStringList parts = line.split(',');
-            if (parts.size() > 0) {
-                StartupItem item;
-                item.name = parts[0].trimmed().remove('"');
-                item.command = "Scheduled Task";
-                item.location = "Task Scheduler";
-                item.is_enabled = true;
-                item.impact = "Low";
-                
-                m_startup_items.append(item);
-            }
-        }
+        if (!line.contains("Ready") || !line.contains("\\Microsoft\\Windows")) continue;
+        QStringList parts = line.split(',');
+        if (parts.isEmpty()) continue;
+
+        StartupItem item;
+        item.name = parts[0].trimmed().remove('"');
+        item.command = "Scheduled Task";
+        item.location = "Task Scheduler";
+        item.is_enabled = true;
+        item.impact = "Low";
+
+        m_startup_items.append(item);
     }
 }
 
@@ -192,85 +191,85 @@ bool DisableStartupProgramsAction::executeScanTaskScheduler(const QDateTime& sta
 QString DisableStartupProgramsAction::formatStartupProgramsSection(const QString& startup_output,
                                                                      int startup_count) const
 {
+    if (startup_count <= 0) return {};
+
     QString section;
-    if (startup_count > 0) {
-        section += QString::fromUtf8("║                         STARTUP PROGRAMS                                   ║\n");
-        section += QString::fromUtf8("╠════════════════════════════════════════════════════════════════════════════╣\n");
+    section += QString::fromUtf8("║                         STARTUP PROGRAMS                                   ║\n");
+    section += QString::fromUtf8("╠════════════════════════════════════════════════════════════════════════════╣\n");
 
-        QJsonDocument doc = QJsonDocument::fromJson(startup_output.toUtf8());
-        QJsonArray programs = doc.array();
+    QJsonDocument doc = QJsonDocument::fromJson(startup_output.toUtf8());
+    QJsonArray programs = doc.array();
 
-        int displayed = 0;
-        for (const QJsonValue& value : programs) {
-            if (displayed >= 15) break; // Limit to first 15 for readability
-            QJsonObject program = value.toObject();
-            QString name = program["Name"].toString().left(50);
-            QString location = program["Location"].toString();
+    int displayed = 0;
+    for (const QJsonValue& value : programs) {
+        if (displayed >= 15) break; // Limit to first 15 for readability
+        QJsonObject program = value.toObject();
+        QString name = program["Name"].toString().left(50);
+        QString location = program["Location"].toString();
 
-            // Determine location type for icon
-            QString icon = QString::fromUtf8("●");
-            if (location.contains("HKLM", Qt::CaseInsensitive)) {
-                icon = QString::fromUtf8("■"); // System-wide
-            } else if (location.contains("HKCU", Qt::CaseInsensitive)) {
-                icon = QString::fromUtf8("□"); // User-specific
-            } else if (location.contains("Startup", Qt::CaseInsensitive)) {
-                icon = QString::fromUtf8("▸"); // Startup folder
-            }
-
-            section += QString::fromUtf8("║ %1 %2").arg(icon).arg(name).leftJustified(73, ' ') + QString::fromUtf8("║\n");
-
-            QString loc_short = location.left(60);
-            if (!loc_short.isEmpty()) {
-                section += QString::fromUtf8("║   Location: %1").arg(loc_short).leftJustified(73, ' ') + QString::fromUtf8("║\n");
-            }
-            displayed++;
+        // Determine location type for icon
+        QString icon = QString::fromUtf8("●");
+        if (location.contains("HKLM", Qt::CaseInsensitive)) {
+            icon = QString::fromUtf8("■"); // System-wide
+        } else if (location.contains("HKCU", Qt::CaseInsensitive)) {
+            icon = QString::fromUtf8("□"); // User-specific
+        } else if (location.contains("Startup", Qt::CaseInsensitive)) {
+            icon = QString::fromUtf8("▸"); // Startup folder
         }
 
-        if (programs.size() > 15) {
-            section += QString::fromUtf8("║   ... and %1 more startup program(s)                                      ║\n")
-                         .arg(programs.size() - 15);
+        section += QString::fromUtf8("║ %1 %2").arg(icon).arg(name).leftJustified(73, ' ') + QString::fromUtf8("║\n");
+
+        QString loc_short = location.left(60);
+        if (!loc_short.isEmpty()) {
+            section += QString::fromUtf8("║   Location: %1").arg(loc_short).leftJustified(73, ' ') + QString::fromUtf8("║\n");
         }
-        section += QString::fromUtf8("╠════════════════════════════════════════════════════════════════════════════╣\n");
+        displayed++;
     }
+
+    if (programs.size() > 15) {
+        section += QString::fromUtf8("║   ... and %1 more startup program(s)                                      ║\n")
+                     .arg(programs.size() - 15);
+    }
+    section += QString::fromUtf8("╠════════════════════════════════════════════════════════════════════════════╣\n");
     return section;
 }
 
 QString DisableStartupProgramsAction::formatStartupTasksSection(const QString& task_output,
                                                                   int task_count) const
 {
+    if (task_count <= 0) return {};
+
     QString section;
-    if (task_count > 0) {
-        section += QString::fromUtf8("║                         STARTUP TASKS                                      ║\n");
-        section += QString::fromUtf8("╠════════════════════════════════════════════════════════════════════════════╣\n");
+    section += QString::fromUtf8("║                         STARTUP TASKS                                      ║\n");
+    section += QString::fromUtf8("╠════════════════════════════════════════════════════════════════════════════╣\n");
 
-        QJsonDocument doc = QJsonDocument::fromJson(task_output.toUtf8());
-        QJsonArray tasks;
-        if (doc.isArray()) {
-            tasks = doc.array();
-        } else if (doc.isObject()) {
-            tasks.append(doc.object());
-        }
-
-        int displayed = 0;
-        for (const QJsonValue& value : tasks) {
-            if (displayed >= 10) break;
-            QJsonObject task = value.toObject();
-            QString name = task["TaskName"].toString().left(50);
-            QString state = task["State"].toString();
-
-            QString state_icon = (state == "Ready") ? QString::fromUtf8("✓") : QString::fromUtf8("◯");
-
-            section += QString::fromUtf8("║ %1 %2").arg(state_icon).arg(name).leftJustified(73, ' ') + QString::fromUtf8("║\n");
-            section += QString::fromUtf8("║   State: %1").arg(state).leftJustified(73, ' ') + QString::fromUtf8("║\n");
-            displayed++;
-        }
-
-        if (tasks.size() > 10) {
-            section += QString::fromUtf8("║   ... and %1 more startup task(s)                                         ║\n")
-                         .arg(tasks.size() - 10);
-        }
-        section += QString::fromUtf8("╠════════════════════════════════════════════════════════════════════════════╣\n");
+    QJsonDocument doc = QJsonDocument::fromJson(task_output.toUtf8());
+    QJsonArray tasks;
+    if (doc.isArray()) {
+        tasks = doc.array();
+    } else if (doc.isObject()) {
+        tasks.append(doc.object());
     }
+
+    int displayed = 0;
+    for (const QJsonValue& value : tasks) {
+        if (displayed >= 10) break;
+        QJsonObject task = value.toObject();
+        QString name = task["TaskName"].toString().left(50);
+        QString state = task["State"].toString();
+
+        QString state_icon = (state == "Ready") ? QString::fromUtf8("✓") : QString::fromUtf8("◯");
+
+        section += QString::fromUtf8("║ %1 %2").arg(state_icon).arg(name).leftJustified(73, ' ') + QString::fromUtf8("║\n");
+        section += QString::fromUtf8("║   State: %1").arg(state).leftJustified(73, ' ') + QString::fromUtf8("║\n");
+        displayed++;
+    }
+
+    if (tasks.size() > 10) {
+        section += QString::fromUtf8("║   ... and %1 more startup task(s)                                         ║\n")
+                     .arg(tasks.size() - 10);
+    }
+    section += QString::fromUtf8("╠════════════════════════════════════════════════════════════════════════════╣\n");
     return section;
 }
 

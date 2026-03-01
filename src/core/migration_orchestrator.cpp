@@ -25,14 +25,7 @@ MigrationOrchestrator::MigrationOrchestrator(QObject* parent)
         });
 
     m_healthPollTimer->setInterval(sak::kTimerHealthPollMs);
-    connect(m_healthPollTimer, &QTimer::timeout, this, [this]() {
-        const auto items = m_registry->destinations();
-        for (const auto& destination : items) {
-            if (!destination.destination_id.isEmpty()) {
-                m_server->sendHealthCheck(destination.destination_id);
-            }
-        }
-    });
+    connect(m_healthPollTimer, &QTimer::timeout, this, &MigrationOrchestrator::pollHealthChecks);
 }
 
 void MigrationOrchestrator::connectRegistrySignals() {
@@ -74,19 +67,7 @@ void MigrationOrchestrator::connectServerSignals() {
             m_progressByDestination.insert(progress.destination_id, progress);
         }
         Q_EMIT deploymentProgress(progress);
-
-        const auto destinations = m_registry->destinations();
-        const int total = destinations.size();
-        if (total > 0) {
-            int sum = 0;
-            for (const auto& destination : destinations) {
-                if (m_progressByDestination.contains(destination.destination_id)) {
-                    sum += m_progressByDestination.value(destination.destination_id).progress_percent;
-                }
-            }
-            const int percent = sum / total;
-            Q_EMIT aggregateProgress(m_completedDestinations.size(), total, percent);
-        }
+        emitAggregateProgress();
     });
     connect(m_server, &OrchestrationServerInterface::deploymentCompleted, this, [this](const DeploymentCompletion& completion) {
         if (!completion.destination_id.isEmpty()) {
@@ -97,19 +78,7 @@ void MigrationOrchestrator::connectServerSignals() {
             m_progressByDestination.insert(completion.destination_id, progress);
         }
         Q_EMIT deploymentCompleted(completion);
-
-        const auto destinations = m_registry->destinations();
-        const int total = destinations.size();
-        if (total > 0) {
-            int sum = 0;
-            for (const auto& destination : destinations) {
-                if (m_progressByDestination.contains(destination.destination_id)) {
-                    sum += m_progressByDestination.value(destination.destination_id).progress_percent;
-                }
-            }
-            const int percent = sum / total;
-            Q_EMIT aggregateProgress(m_completedDestinations.size(), total, percent);
-        }
+        emitAggregateProgress();
 
         if (!completion.destination_id.isEmpty()) {
             handleAssignmentCompletion(completion.destination_id);
@@ -140,57 +109,7 @@ void MigrationOrchestrator::setServer(OrchestrationServerInterface* server) {
     }
 
     m_server = server;
-    connect(m_server, &OrchestrationServerInterface::destinationRegistered, this, &MigrationOrchestrator::registerDestination);
-    connect(m_server, &OrchestrationServerInterface::healthUpdated, this, &MigrationOrchestrator::updateHealth);
-    connect(m_server, &OrchestrationServerInterface::statusMessage, this, &MigrationOrchestrator::orchestratorStatus);
-    connect(m_server, &OrchestrationServerInterface::progressUpdated, this, [this](const DeploymentProgress& progress) {
-        if (!progress.destination_id.isEmpty()) {
-            m_progressByDestination.insert(progress.destination_id, progress);
-        }
-        Q_EMIT deploymentProgress(progress);
-
-        const auto destinations = m_registry->destinations();
-        const int total = destinations.size();
-        if (total > 0) {
-            int sum = 0;
-            for (const auto& destination : destinations) {
-                if (m_progressByDestination.contains(destination.destination_id)) {
-                    sum += m_progressByDestination.value(destination.destination_id).progress_percent;
-                }
-            }
-            const int percent = sum / total;
-            Q_EMIT aggregateProgress(m_completedDestinations.size(), total, percent);
-        }
-    });
-    connect(m_server, &OrchestrationServerInterface::deploymentCompleted, this, [this](const DeploymentCompletion& completion) {
-        if (!completion.destination_id.isEmpty()) {
-            m_completedDestinations.insert(completion.destination_id);
-            m_activeDestinations.remove(completion.destination_id);
-            auto progress = m_progressByDestination.value(completion.destination_id);
-            progress.progress_percent = 100;
-            m_progressByDestination.insert(completion.destination_id, progress);
-        }
-        Q_EMIT deploymentCompleted(completion);
-
-        const auto destinations = m_registry->destinations();
-        const int total = destinations.size();
-        if (total > 0) {
-            int sum = 0;
-            for (const auto& destination : destinations) {
-                if (m_progressByDestination.contains(destination.destination_id)) {
-                    sum += m_progressByDestination.value(destination.destination_id).progress_percent;
-                }
-            }
-            const int percent = sum / total;
-            Q_EMIT aggregateProgress(m_completedDestinations.size(), total, percent);
-        }
-
-        if (!completion.destination_id.isEmpty()) {
-            handleAssignmentCompletion(completion.destination_id);
-        }
-        tryAssignQueuedDeployments();
-    });
-
+    connectServerSignals();
     tryAssignQueuedDeployments();
 }
 
@@ -410,6 +329,33 @@ void MigrationOrchestrator::handleAssignmentCompletion(const QString& destinatio
     if (dispatchAssignment(destination_id, next)) {
         Q_EMIT orchestratorStatus(tr("Deployment assigned: %1 -> %2")
                                     .arg(next.deployment_id, destination_id));
+    }
+}
+
+void MigrationOrchestrator::emitAggregateProgress()
+{
+    const auto destinations = m_registry->destinations();
+    const int total = destinations.size();
+    if (total == 0) {
+        return;
+    }
+    int sum = 0;
+    for (const auto& destination : destinations) {
+        if (m_progressByDestination.contains(destination.destination_id)) {
+            sum += m_progressByDestination.value(destination.destination_id).progress_percent;
+        }
+    }
+    const int percent = sum / total;
+    Q_EMIT aggregateProgress(m_completedDestinations.size(), total, percent);
+}
+
+void MigrationOrchestrator::pollHealthChecks()
+{
+    const auto items = m_registry->destinations();
+    for (const auto& destination : items) {
+        if (!destination.destination_id.isEmpty()) {
+            m_server->sendHealthCheck(destination.destination_id);
+        }
     }
 }
 

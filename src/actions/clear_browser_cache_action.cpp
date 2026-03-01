@@ -49,25 +49,25 @@ void ClearBrowserCacheAction::scan() {
     Q_EMIT scanComplete(result);
 }
 
+qint64 ClearBrowserCacheAction::calculateDirectorySize(const QString& path, qint64& files) {
+    QDir dir(path);
+    if (!dir.exists()) return 0;
+
+    qint64 total = 0;
+    QDirIterator it(path, QDir::Files | QDir::Hidden | QDir::System,
+                    QDirIterator::Subdirectories);
+    while (it.hasNext()) {
+        if (isCancelled()) break;
+        it.next();
+        total += it.fileInfo().size();
+        files++;
+    }
+    return total;
+}
+
 void ClearBrowserCacheAction::scanAllBrowserCaches(qint64& total_bytes,
                                                     qint64& total_files,
                                                     int& locations) {
-    auto dirSize = [this](const QString& path, qint64& files) -> qint64 {
-        qint64 total = 0;
-        QDir dir(path);
-        if (!dir.exists()) return 0;
-
-        QDirIterator it(path, QDir::Files | QDir::Hidden | QDir::System,
-                        QDirIterator::Subdirectories);
-        while (it.hasNext()) {
-            if (isCancelled()) break;
-            it.next();
-            total += it.fileInfo().size();
-            files++;
-        }
-        return total;
-    };
-
     struct CachePath {
         QString name;
         QString path;
@@ -88,7 +88,7 @@ void ClearBrowserCacheAction::scanAllBrowserCaches(qint64& total_bytes,
 
     for (const auto& cache : cache_paths) {
         qint64 files = 0;
-        qint64 bytes = dirSize(cache.path, files);
+        qint64 bytes = calculateDirectorySize(cache.path, files);
         if (bytes > 0) {
             total_bytes += bytes;
             total_files += files;
@@ -99,17 +99,16 @@ void ClearBrowserCacheAction::scanAllBrowserCaches(qint64& total_bytes,
     // Firefox profiles
     QString ff_profiles_path = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/Mozilla/Firefox/Profiles";
     QDir profiles_dir(ff_profiles_path);
-    if (profiles_dir.exists()) {
-        const auto profiles = profiles_dir.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot);
-        for (const auto& profile : profiles) {
-            qint64 files = 0;
-            qint64 bytes = dirSize(profile.absoluteFilePath() + "/cache2", files);
-            if (bytes > 0) {
-                total_bytes += bytes;
-                total_files += files;
-                locations++;
-            }
-        }
+    if (!profiles_dir.exists()) return;
+
+    const auto profiles = profiles_dir.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot);
+    for (const auto& profile : profiles) {
+        qint64 files = 0;
+        qint64 bytes = calculateDirectorySize(profile.absoluteFilePath() + "/cache2", files);
+        if (bytes <= 0) continue;
+        total_bytes += bytes;
+        total_files += files;
+        locations++;
     }
 }
 
@@ -134,12 +133,12 @@ void ClearBrowserCacheAction::execute() {
 
     Q_EMIT executionProgress("║ Calculating cache sizes before clearing...                   ║", 40);
 
-    if (ps.timed_out || isCancelled()) {
-        if (isCancelled()) {
-            emitCancelledResult("Cache clearing cancelled", start_time);
-        } else {
-            emitFailedResult("Operation timed out after 3 minutes", {}, start_time);
-        }
+    if (isCancelled()) {
+        emitCancelledResult("Cache clearing cancelled", start_time);
+        return;
+    }
+    if (ps.timed_out) {
+        emitFailedResult("Operation timed out after 3 minutes", {}, start_time);
         return;
     }
     

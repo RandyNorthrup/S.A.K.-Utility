@@ -76,11 +76,8 @@ int AppInstallationWorker::startMigration(std::shared_ptr<MigrationReport> repor
             job.entryIndex = static_cast<int>(i);
             job.appName = entry.app_name;
             job.packageId = entry.choco_package;
-            if (entry.version_lock && !entry.locked_version.isEmpty()) {
-                job.version = entry.locked_version;
-            } else {
-                job.version = QString();  // Use latest version
-            }
+            job.version = (entry.version_lock && !entry.locked_version.isEmpty())
+                ? entry.locked_version : QString();
             job.status = MigrationStatus::Queued;
             
             m_jobs.append(job);
@@ -211,18 +208,18 @@ void AppInstallationWorker::processQueue() {
                 continue;
             }
             
+            // All jobs complete?
+            if (m_activeJobs == 0 && m_jobQueue.isEmpty()) {
+                m_running = false;
+                locker.unlock();
+                
+                auto stats = getStats();
+                Q_EMIT migrationCompleted(stats);
+                return;
+            }
+            
             // Check if can start new job
             if (m_activeJobs >= m_maxConcurrent || m_jobQueue.isEmpty()) {
-                if (m_activeJobs == 0 && m_jobQueue.isEmpty()) {
-                    // All jobs complete
-                    m_running = false;
-                    locker.unlock();
-                    
-                    auto stats = getStats();
-                    Q_EMIT migrationCompleted(stats);
-                    return;
-                }
-                
                 // Wait for active jobs to finish
                 locker.unlock();
                 QThread::msleep(sak::kTimerPollingFastMs);

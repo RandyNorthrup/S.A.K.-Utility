@@ -90,6 +90,21 @@ private:
     /// @brief Disk stress: continuous sequential I/O
     void runDiskStress();
 
+    /// @brief Write a single stress-test file, returning error count
+    int writeDiskStressFile(void* file_handle, const uint8_t* buf,
+                            size_t blockSize, size_t fileSize,
+                            uint64_t& total_bytes_written);
+
+    /// @brief Check if a number is prime (with periodic cancellation check)
+    [[nodiscard]] bool isPrimeStress(uint64_t candidate) const;
+
+    /// @brief Handle periodic status update during stress test
+    /// @return true if the test should abort
+    [[nodiscard]] bool handleStatusUpdate(int elapsed_sec, int total_seconds);
+
+    /// @brief Atomically update the maximum observed temperature
+    void updateMaxTemperature(double temp) noexcept;
+
     /// @brief Determine target memory allocation based on system available RAM
     /// @param fallback_bytes Allocation to use if platform detection fails
     /// @return Target bytes to allocate

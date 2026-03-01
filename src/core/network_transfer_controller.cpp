@@ -441,15 +441,16 @@ void NetworkTransferController::onDataReceived(const QByteArray& data) {
                 handleAuthResponseMessage(message);
                 break;
             case TransferMessageType::TransferManifest:
-                if (m_mode == Mode::Destination) {
-                    if (m_auth_required && !m_authenticated) {
-                        Q_EMIT errorMessage(tr("Manifest received before authentication"));
-                        break;
-                    }
-                    m_pendingManifest = TransferManifest::fromJson(message);
-                    Q_EMIT manifestReceived(m_pendingManifest);
-                    Q_EMIT statusMessage(tr("Transfer manifest received"));
+                if (m_mode != Mode::Destination) {
+                    break;
                 }
+                if (m_auth_required && !m_authenticated) {
+                    Q_EMIT errorMessage(tr("Manifest received before authentication"));
+                    break;
+                }
+                m_pendingManifest = TransferManifest::fromJson(message);
+                Q_EMIT manifestReceived(m_pendingManifest);
+                Q_EMIT statusMessage(tr("Transfer manifest received"));
                 break;
             case TransferMessageType::TransferApprove:
                 if (m_mode == Mode::Source) {

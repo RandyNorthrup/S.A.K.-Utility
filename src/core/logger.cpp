@@ -28,31 +28,33 @@ auto logger::initialize(
     const std::filesystem::path& log_dir,
     std::string_view prefix) -> std::expected<void, error_code> {
     
-    std::lock_guard lock(m_mutex);
-    
-    // Ensure log directory exists
-    if (auto result = ensureLogDirectory(log_dir); !result) {
-        return std::unexpected(result.error());
+    {
+        std::lock_guard lock(m_mutex);
+        
+        // Ensure log directory exists
+        if (auto result = ensureLogDirectory(log_dir); !result) {
+            return std::unexpected(result.error());
+        }
+        
+        m_log_dir = log_dir;
+        m_prefix = prefix;
+        
+        // Generate log file path with timestamp
+        auto timestamp = std::format("{:%Y-%m-%d_%H-%M-%S}",
+                                     std::chrono::system_clock::now());
+        m_log_file = m_log_dir / std::format("{}_{}.log", m_prefix, timestamp);
+        
+        // Open log file
+        m_file_stream.open(m_log_file, std::ios::out | std::ios::app);
+        if (!m_file_stream.is_open()) {
+            return std::unexpected(error_code::write_error);
+        }
+        
+        m_initialized.store(true, std::memory_order_release);
+        m_bytes_written.store(0, std::memory_order_relaxed);
     }
     
-    m_log_dir = log_dir;
-    m_prefix = prefix;
-    
-    // Generate log file path with timestamp
-    auto timestamp = std::format("{:%Y-%m-%d_%H-%M-%S}",
-                                 std::chrono::system_clock::now());
-    m_log_file = m_log_dir / std::format("{}_{}.log", m_prefix, timestamp);
-    
-    // Open log file
-    m_file_stream.open(m_log_file, std::ios::out | std::ios::app);
-    if (!m_file_stream.is_open()) {
-        return std::unexpected(error_code::write_error);
-    }
-    
-    m_initialized.store(true, std::memory_order_release);
-    m_bytes_written.store(0, std::memory_order_relaxed);
-    
-    // Write initialization message
+    // Write initialization message (outside lock — writeEntryToFile acquires it)
     logInfo("Logger initialized: {}", m_log_file.string());
     
     return {};
@@ -115,34 +117,8 @@ void logger::logInternal(
             message
         );
         
-        {
-            std::lock_guard lock(m_mutex);
-            
-            // Check if rotation is needed
-            if (needsRotation()) {
-                rotateLog();
-            }
-            
-            // Write to file
-            if (m_file_stream.is_open()) {
-                m_file_stream << log_entry;
-                m_bytes_written.fetch_add(log_entry.size(), std::memory_order_relaxed);
-                
-                // Flush immediately for error and critical messages
-                if (level >= log_level::error) {
-                    m_file_stream.flush();
-                }
-            }
-        }
-        
-        // Console output
-        if (m_console_output.load(std::memory_order_relaxed)) {
-            if (level >= log_level::error) {
-                std::print(std::cerr, "{}", log_entry);
-            } else {
-                std::print("{}", log_entry);
-            }
-        }
+        writeEntryToFile(log_entry, level);
+        writeEntryToConsole(log_entry, level);
         
     } catch (const std::exception& e) {
         // Logger itself cannot recurse — fall back to stderr
@@ -150,6 +126,44 @@ void logger::logInternal(
     } catch (...) {
         std::fprintf(stderr, "SAK Logger: logInternal failed with unknown exception\n");
     }
+}
+
+void logger::writeEntryToFile(
+    std::string_view log_entry,
+    log_level level) noexcept {
+    
+    std::lock_guard lock(m_mutex);
+    
+    if (needsRotation()) {
+        rotateLog();
+    }
+    
+    if (!m_file_stream.is_open()) {
+        return;
+    }
+    
+    m_file_stream << log_entry;
+    m_bytes_written.fetch_add(log_entry.size(), std::memory_order_relaxed);
+    
+    // Flush immediately for error and critical messages
+    if (level >= log_level::error) {
+        m_file_stream.flush();
+    }
+}
+
+void logger::writeEntryToConsole(
+    std::string_view log_entry,
+    log_level level) noexcept {
+    
+    if (!m_console_output.load(std::memory_order_relaxed)) {
+        return;
+    }
+    
+    if (level >= log_level::error) {
+        std::print(std::cerr, "{}", log_entry);
+        return;
+    }
+    std::print("{}", log_entry);
 }
 
 auto logger::ensureLogDirectory(
@@ -205,14 +219,7 @@ void logger::rotateLog() noexcept {
         }
         
         // Find existing log files
-        std::vector<std::filesystem::path> log_files;
-        for (const auto& entry : std::filesystem::directory_iterator(m_log_dir)) {
-            if (entry.is_regular_file() &&
-                entry.path().extension() == ".log" &&
-                entry.path().stem().string().starts_with(m_prefix)) {
-                log_files.push_back(entry.path());
-            }
-        }
+        auto log_files = collectRotationCandidates();
         
         // Sort by modification time (oldest first)
         std::sort(log_files.begin(), log_files.end(),
@@ -241,6 +248,17 @@ void logger::rotateLog() noexcept {
     } catch (...) {
         std::fprintf(stderr, "SAK Logger: Log rotation failed with unknown exception\n");
     }
+}
+
+std::vector<std::filesystem::path> logger::collectRotationCandidates() const {
+    std::vector<std::filesystem::path> log_files;
+    for (const auto& entry : std::filesystem::directory_iterator(m_log_dir)) {
+        if (!entry.is_regular_file()) continue;
+        if (entry.path().extension() != ".log") continue;
+        if (!entry.path().stem().string().starts_with(m_prefix)) continue;
+        log_files.push_back(entry.path());
+    }
+    return log_files;
 }
 
 void logger::log(

@@ -60,6 +60,27 @@ int patternVerify(const volatile uint64_t* data, size_t count, uint64_t seed)
 
 constexpr int kStatusIntervalSec = 5;  // Report status every 5 seconds
 
+/// @brief Multiply a single row of a 4x4 matrix by the full matrix
+void matrixRowMultiply4x4(const double mat[16], const double other[16],
+                          double out[16], int row)
+{
+    for (int k = 0; k < 4; ++k) {
+        for (int j = 0; j < 4; ++j) {
+            out[row * 4 + j] += mat[row * 4 + k] * other[k * 4 + j];
+        }
+    }
+}
+
+/// @brief Self-multiply a 4x4 matrix in-place
+void matrixSelfMultiply4x4(double mat[16])
+{
+    double result[16] = {};
+    for (int i = 0; i < 4; ++i) {
+        matrixRowMultiply4x4(mat, mat, result, i);
+    }
+    std::memcpy(mat, result, sizeof(double) * 16);
+}
+
 } // anonymous namespace
 
 // ============================================================================
@@ -153,8 +174,9 @@ void StressTestWorker::monitorStressLoop(int total_seconds)
 {
     m_elapsed_timer.start();
     int last_status_sec = 0;
+    bool should_stop = false;
 
-    while (m_elapsed_timer.elapsed() / 1000 < total_seconds) {
+    while (!should_stop && m_elapsed_timer.elapsed() / 1000 < total_seconds) {
         if (checkStop()) {
             m_result.abort_reason = "Cancelled by user";
             break;
@@ -162,50 +184,58 @@ void StressTestWorker::monitorStressLoop(int total_seconds)
 
         const int elapsed_sec = static_cast<int>(m_elapsed_timer.elapsed() / 1000);
 
-        // Periodic status update
         if (elapsed_sec - last_status_sec >= kStatusIntervalSec) {
             last_status_sec = elapsed_sec;
-
-            const double temp = ThermalMonitor::queryCpuTemperature();
-            m_current_temp.store(temp, std::memory_order_relaxed);
-
-            if (temp > 0) {
-                double prev_max = m_max_temp.load(std::memory_order_relaxed);
-                while (temp > prev_max) {
-                    m_max_temp.compare_exchange_weak(prev_max, temp, std::memory_order_relaxed);
-                }
-            }
-
-            // Thermal abort check
-            if (temp > 0 && temp >= m_config.thermal_limit_celsius) {
-                logWarning("Thermal limit reached: {:.1f}°C >= {:.1f}°C — aborting",
-                           temp, m_config.thermal_limit_celsius);
-                m_result.abort_reason = QString("Thermal limit exceeded (%1°C)")
-                                            .arg(temp, 0, 'f', 1);
-                m_result.thermal_throttle_events++;
-                m_stop_children.store(true, std::memory_order_release);
-                break;
-            }
-
-            const int errors = m_error_count.load(std::memory_order_relaxed);
-            Q_EMIT stressTestStatus(elapsed_sec, temp, errors);
-
-            reportProgress(elapsed_sec, total_seconds,
-                           QString("Stress test running... %1/%2 sec")
-                               .arg(elapsed_sec).arg(total_seconds));
-
-            // Error abort check
-            if (m_config.abort_on_error && errors > 0) {
-                logError("Stress test aborting: {} error(s) detected", errors);
-                m_result.abort_reason = QString("%1 error(s) detected").arg(errors);
-                m_stop_children.store(true, std::memory_order_release);
-                break;
-            }
+            should_stop = handleStatusUpdate(elapsed_sec, total_seconds);
         }
 
         // Sleep to avoid busy-waiting in monitor loop
         std::this_thread::sleep_for(std::chrono::milliseconds(500));
     }
+}
+
+void StressTestWorker::updateMaxTemperature(double temp) noexcept
+{
+    if (temp <= 0) return;
+    double prev_max = m_max_temp.load(std::memory_order_relaxed);
+    while (temp > prev_max) {
+        m_max_temp.compare_exchange_weak(prev_max, temp, std::memory_order_relaxed);
+    }
+}
+
+bool StressTestWorker::handleStatusUpdate(int elapsed_sec, int total_seconds)
+{
+    const double temp = ThermalMonitor::queryCpuTemperature();
+    m_current_temp.store(temp, std::memory_order_relaxed);
+    updateMaxTemperature(temp);
+
+    // Thermal abort check
+    if (temp > 0 && temp >= m_config.thermal_limit_celsius) {
+        logWarning("Thermal limit reached: {:.1f}°C >= {:.1f}°C — aborting",
+                   temp, m_config.thermal_limit_celsius);
+        m_result.abort_reason = QString("Thermal limit exceeded (%1°C)")
+                                    .arg(temp, 0, 'f', 1);
+        m_result.thermal_throttle_events++;
+        m_stop_children.store(true, std::memory_order_release);
+        return true;
+    }
+
+    const int errors = m_error_count.load(std::memory_order_relaxed);
+    Q_EMIT stressTestStatus(elapsed_sec, temp, errors);
+
+    reportProgress(elapsed_sec, total_seconds,
+                   QString("Stress test running... %1/%2 sec")
+                       .arg(elapsed_sec).arg(total_seconds));
+
+    // Error abort check
+    if (m_config.abort_on_error && errors > 0) {
+        logError("Stress test aborting: {} error(s) detected", errors);
+        m_result.abort_reason = QString("%1 error(s) detected").arg(errors);
+        m_stop_children.store(true, std::memory_order_release);
+        return true;
+    }
+
+    return false;
 }
 
 // ============================================================================
@@ -222,21 +252,8 @@ void StressTestWorker::runCpuStress()
     while (!childrenShouldStop()) {
         // Integer workload: check if large random numbers are prime
         const uint64_t candidate = rng() | 1ULL;  // Ensure odd
-        [[maybe_unused]] bool is_prime = true;
-
-        if (candidate < 4) {
-            is_prime = (candidate >= 2);
-        } else {
-            const uint64_t limit = static_cast<uint64_t>(std::sqrt(static_cast<double>(candidate)));
-            for (uint64_t d = 3; d <= limit; d += 2) {
-                if (candidate % d == 0) {
-                    is_prime = false;
-                    break;
-                }
-                // Periodic cancellation check every 65536 iterations
-                if ((d & 0xFFFF) == 1 && childrenShouldStop()) return;
-            }
-        }
+        [[maybe_unused]] bool is_prime = isPrimeStress(candidate);
+        if (childrenShouldStop()) return;
 
         // Floating-point workload: matrix operations
         alignas(64) double mat[16];
@@ -246,22 +263,28 @@ void StressTestWorker::runCpuStress()
 
         // 4x4 matrix self-multiply, repeated
         for (int iter = 0; iter < 100; ++iter) {
-            double result[16] = {};
-            for (int i = 0; i < 4; ++i) {
-                for (int k = 0; k < 4; ++k) {
-                    for (int j = 0; j < 4; ++j) {
-                        result[i * 4 + j] += mat[i * 4 + k] * mat[k * 4 + j];
-                    }
-                }
-            }
-            // Copy result back for next iteration
-            std::memcpy(mat, result, sizeof(mat));
+            matrixSelfMultiply4x4(mat);
         }
 
         // Prevent optimizer from removing everything
         volatile double sink = mat[0];
         (void)sink;
     }
+}
+
+bool StressTestWorker::isPrimeStress(uint64_t candidate) const
+{
+    if (candidate < 4) {
+        return candidate >= 2;
+    }
+
+    const uint64_t limit = static_cast<uint64_t>(std::sqrt(static_cast<double>(candidate)));
+    for (uint64_t d = 3; d <= limit; d += 2) {
+        if (candidate % d == 0) return false;
+        // Periodic cancellation check every 65536 iterations
+        if ((d & 0xFFFF) == 1 && childrenShouldStop()) return false;
+    }
+    return true;
 }
 
 // ============================================================================
@@ -418,14 +441,7 @@ void StressTestWorker::runDiskStress()
         }
 
         // Write phase
-        for (size_t written = 0; written < kFileSize && !childrenShouldStop(); written += kBlockSize) {
-            DWORD bytes_written = 0;
-            if (!WriteFile(h, buf, static_cast<DWORD>(kBlockSize), &bytes_written, nullptr)) {
-                ++disk_errors;
-                break;
-            }
-            total_bytes_written += bytes_written;
-        }
+        disk_errors += writeDiskStressFile(h, buf, kBlockSize, kFileSize, total_bytes_written);
 
         FlushFileBuffers(h);
         CloseHandle(h);
@@ -442,5 +458,23 @@ void StressTestWorker::runDiskStress()
             total_bytes_written / static_cast<uint64_t>(sak::kBytesPerGB), disk_errors);
 #endif
 }
+
+#ifdef SAK_PLATFORM_WINDOWS
+int StressTestWorker::writeDiskStressFile(
+    void* file_handle, const uint8_t* buf,
+    size_t blockSize, size_t fileSize,
+    uint64_t& total_bytes_written)
+{
+    HANDLE h = static_cast<HANDLE>(file_handle);
+    for (size_t written = 0; written < fileSize && !childrenShouldStop(); written += blockSize) {
+        DWORD bytes_written = 0;
+        if (!WriteFile(h, buf, static_cast<DWORD>(blockSize), &bytes_written, nullptr)) {
+            return 1;
+        }
+        total_bytes_written += bytes_written;
+    }
+    return 0;
+}
+#endif
 
 } // namespace sak

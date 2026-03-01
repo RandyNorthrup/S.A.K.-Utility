@@ -53,6 +53,22 @@ private:
     /// @brief Backup a single photo software data item (file or directory)
     /// @return {success, bytes_copied}
     QPair<bool, qint64> backupPhotoItem(const PhotoSoftwareData& data, const QDir& backup_dir);
+
+    /// @brief Scan Lightroom catalogs for a single user profile
+    void scanLightroomCatalogsForUser(const UserProfile& user);
+    /// @brief Scan Photoshop settings for a single user profile
+    void scanPhotoshopSettingsForUser(const UserProfile& user);
+    /// @brief Scan Capture One catalogs for a single user profile
+    void scanCaptureOneForUser(const UserProfile& user);
+    /// @brief Calculate total file size in a directory recursively
+    static qint64 calculateDirSize(const QString& path);
+    /// @brief Backup a single file with unique-name collision handling
+    QPair<bool, qint64> backupSingleFile(const PhotoSoftwareData& data, const QString& dest_path);
+    /// @brief Generate a unique filename when dest already exists
+    static QString generateUniqueFilename(const QString& dest_path, const QString& base_name,
+                                          const QString& ext);
+    /// @brief Recursively copy a directory
+    QPair<bool, qint64> backupDirectory(const QString& src_path, const QString& dest_path);
 };
 
 } // namespace sak

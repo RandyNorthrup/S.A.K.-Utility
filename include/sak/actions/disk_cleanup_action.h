@@ -6,6 +6,7 @@
 #include "sak/quick_action.h"
 
 #include <QDateTime>
+#include <QFileInfo>
 #include <QString>
 #include <QStringList>
 
@@ -108,6 +109,9 @@ private:
      * @return Bytes deleted
      */
     qint64 deleteDirectoryContents(const QString& path, int& deleted_count);
+
+    /// @brief Process a single directory entry for deletion
+    void deleteEntry(const QFileInfo& entry, qint64& total_deleted, int& deleted_count);
 
     /**
      * @brief Check if path is safe to delete

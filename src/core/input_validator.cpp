@@ -27,6 +27,36 @@
 
 namespace sak {
 
+namespace {
+
+/// @brief Check and return the byte count of a multi-byte UTF-8 sequence
+/// @return Number of bytes in the sequence (2-4), or 0 if invalid
+int checkMultiByteUtf8(std::string_view str, std::size_t pos) noexcept {
+    unsigned char c = static_cast<unsigned char>(str[pos]);
+
+    if ((c & 0xE0) == 0xC0) {
+        if (c < 0xC2 || pos + 1 >= str.length() ||
+            (static_cast<unsigned char>(str[pos + 1]) & 0xC0) != 0x80) return 0;
+        return 2;
+    }
+    if ((c & 0xF0) == 0xE0) {
+        if (pos + 2 >= str.length() ||
+            (static_cast<unsigned char>(str[pos + 1]) & 0xC0) != 0x80 ||
+            (static_cast<unsigned char>(str[pos + 2]) & 0xC0) != 0x80) return 0;
+        return 3;
+    }
+    if ((c & 0xF8) == 0xF0) {
+        if (pos + 3 >= str.length() ||
+            (static_cast<unsigned char>(str[pos + 1]) & 0xC0) != 0x80 ||
+            (static_cast<unsigned char>(str[pos + 2]) & 0xC0) != 0x80 ||
+            (static_cast<unsigned char>(str[pos + 3]) & 0xC0) != 0x80) return 0;
+        return 4;
+    }
+    return 0;
+}
+
+} // anonymous namespace
+
 // ============================================
 // Path Validation
 // ============================================
@@ -346,42 +376,14 @@ bool input_validator::isValidUtf8(std::string_view str) noexcept {
     while (i < str.length()) {
         unsigned char c = static_cast<unsigned char>(str[i]);
         
-        // ASCII
         if (c < 0x80) {
             i++;
             continue;
         }
         
-        // 2-byte sequence (U+0080..U+07FF)
-        if ((c & 0xE0) == 0xC0) {
-            if (c < 0xC2) return false; // Reject overlong encodings (C0, C1)
-            if (i + 1 >= str.length()) return false;
-            if ((static_cast<unsigned char>(str[i + 1]) & 0xC0) != 0x80) return false;
-            i += 2;
-            continue;
-        }
-        
-        // 3-byte sequence
-        if ((c & 0xF0) == 0xE0) {
-            if (i + 2 >= str.length()) return false;
-            if ((static_cast<unsigned char>(str[i + 1]) & 0xC0) != 0x80) return false;
-            if ((static_cast<unsigned char>(str[i + 2]) & 0xC0) != 0x80) return false;
-            i += 3;
-            continue;
-        }
-        
-        // 4-byte sequence
-        if ((c & 0xF8) == 0xF0) {
-            if (i + 3 >= str.length()) return false;
-            if ((static_cast<unsigned char>(str[i + 1]) & 0xC0) != 0x80) return false;
-            if ((static_cast<unsigned char>(str[i + 2]) & 0xC0) != 0x80) return false;
-            if ((static_cast<unsigned char>(str[i + 3]) & 0xC0) != 0x80) return false;
-            i += 4;
-            continue;
-        }
-        
-        // Invalid UTF-8
-        return false;
+        int seq_len = checkMultiByteUtf8(str, i);
+        if (seq_len == 0) return false;
+        i += seq_len;
     }
     
     return true;
@@ -395,25 +397,19 @@ std::string input_validator::sanitizeString(
     result.reserve(str.length());
     
     for (unsigned char c : str) {
-        // Remove null bytes
         if (c == '\0') {
             continue;
         }
         
-        // Remove control characters (except newline, carriage return, tab)
         if (std::iscntrl(c) && c != '\n' && c != '\r' && c != '\t') {
             continue;
         }
         
-        // Handle non-ASCII
-        if (c >= 128) {
-            if (allow_unicode) {
-                result.push_back(static_cast<char>(c));
-            }
-            // else skip non-ASCII
-        } else {
-            result.push_back(static_cast<char>(c));
+        if (c >= 128 && !allow_unicode) {
+            continue;
         }
+        
+        result.push_back(static_cast<char>(c));
     }
     
     return result;

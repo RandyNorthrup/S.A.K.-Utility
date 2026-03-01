@@ -423,11 +423,11 @@ void PerUserCustomizationDialog::onTreeItemChanged(QTreeWidgetItem* item, int co
     // Update corresponding folder selection for top-level folders
     QString relativePath = item->data(0, Qt::UserRole).toString();
     if (!relativePath.isEmpty()) {
-        for (auto& sel : m_profile.folder_selections) {
-            if (sel.relative_path == relativePath) {
-                sel.selected = (item->checkState(0) == Qt::Checked);
-                break;
-            }
+        auto it = std::find_if(m_profile.folder_selections.begin(),
+                               m_profile.folder_selections.end(),
+                               [&](const auto& s) { return s.relative_path == relativePath; });
+        if (it != m_profile.folder_selections.end()) {
+            it->selected = (item->checkState(0) == Qt::Checked);
         }
     }
     
@@ -561,9 +561,8 @@ void PerUserCustomizationDialog::calculateDirectorySize(const QDir& dir, qint64&
     }
     
     for (const QFileInfo& entry : entries) {
-        if (!entry.isReadable()) {
-            continue;
-        }
+        if (!entry.isReadable()) continue;
+        if (fileCount >= MAX_FILE_COUNT) return;
         
         if (entry.isDir() && !entry.isSymLink()) {
             QDir subDir(entry.filePath());
@@ -571,10 +570,6 @@ void PerUserCustomizationDialog::calculateDirectorySize(const QDir& dir, qint64&
         } else if (entry.isFile()) {
             totalSize += entry.size();
             fileCount++;
-            
-            if (fileCount >= MAX_FILE_COUNT) {
-                return;
-            }
         }
     }
 }
@@ -633,24 +628,24 @@ void PerUserCustomizationDialog::updateFolderCheckStates(QTreeWidgetItem* item) 
     }
     
     // Update parent based on children
-    if (item->parent()) {
-        QTreeWidgetItem* parent = item->parent();
-        int checkedCount = 0;
-        int uncheckedCount = 0;
-        
-        for (int i = 0; i < parent->childCount(); ++i) {
-            Qt::CheckState childState = parent->child(i)->checkState(0);
-            if (childState == Qt::Checked) checkedCount++;
-            else if (childState == Qt::Unchecked) uncheckedCount++;
-        }
-        
-        if (checkedCount == parent->childCount()) {
-            parent->setCheckState(0, Qt::Checked);
-        } else if (uncheckedCount == parent->childCount()) {
-            parent->setCheckState(0, Qt::Unchecked);
-        } else {
-            parent->setCheckState(0, Qt::PartiallyChecked);
-        }
+    QTreeWidgetItem* parent = item->parent();
+    if (!parent) return;
+    
+    int checkedCount = 0;
+    int uncheckedCount = 0;
+    
+    for (int i = 0; i < parent->childCount(); ++i) {
+        Qt::CheckState childState = parent->child(i)->checkState(0);
+        if (childState == Qt::Checked) checkedCount++;
+        else if (childState == Qt::Unchecked) uncheckedCount++;
+    }
+    
+    if (checkedCount == parent->childCount()) {
+        parent->setCheckState(0, Qt::Checked);
+    } else if (uncheckedCount == parent->childCount()) {
+        parent->setCheckState(0, Qt::Unchecked);
+    } else {
+        parent->setCheckState(0, Qt::PartiallyChecked);
     }
 }
 
