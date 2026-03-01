@@ -17,10 +17,6 @@ file(MAKE_DIRECTORY "${TEST_OUTPUT_DIR}")
 # Unit Tests - Core Components
 # ============================================================================
 
-# All fake tests have been removed
-# Previous tests were not testing real functionality (e.g., QVERIFY(42 >= 0))
-# TODO: Write real tests that verify actual behavior
-
 set(UNIT_TESTS
     test_transfer_protocol
     test_transfer_types
@@ -954,6 +950,503 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/integration/test_uup_conversion_pipeline.
 endif()
 
 # ============================================================================
+# Unit Tests - Quick Actions
+# ============================================================================
+
+# test_action_factory — Factory completeness, metadata, category distribution, initial state
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/actions/test_action_factory.cpp")
+    add_executable(test_action_factory
+        unit/actions/test_action_factory.cpp
+
+        # Factory
+        ../src/actions/action_factory.cpp
+        ../include/sak/actions/action_factory.h
+
+        # Base class
+        ../src/core/quick_action.cpp
+        ../include/sak/quick_action.h
+
+        # Dependencies used by actions
+        ../src/core/process_runner.cpp
+        ../include/sak/process_runner.h
+        ../src/core/logger.cpp
+        ../include/sak/logger.h
+        ../src/core/bundled_tools_manager.cpp
+        ../include/sak/bundled_tools_manager.h
+        ../src/core/path_utils.cpp
+        ../include/sak/path_utils.h
+        ../src/core/windows_user_scanner.cpp
+        ../include/sak/windows_user_scanner.h
+        ../src/core/user_profile_types.cpp
+        ../include/sak/user_profile_types.h
+        ../src/core/chocolatey_manager.cpp
+        ../include/sak/chocolatey_manager.h
+
+        # System Optimization actions
+        ../src/actions/disk_cleanup_action.cpp
+        ../include/sak/actions/disk_cleanup_action.h
+        ../src/actions/clear_browser_cache_action.cpp
+        ../include/sak/actions/clear_browser_cache_action.h
+        ../src/actions/defragment_drives_action.cpp
+        ../include/sak/actions/defragment_drives_action.h
+        ../src/actions/clear_windows_update_cache_action.cpp
+        ../include/sak/actions/clear_windows_update_cache_action.h
+        ../src/actions/disable_startup_programs_action.cpp
+        ../include/sak/actions/disable_startup_programs_action.h
+        ../src/actions/clear_event_logs_action.cpp
+        ../include/sak/actions/clear_event_logs_action.h
+        ../src/actions/optimize_power_settings_action.cpp
+        ../include/sak/actions/optimize_power_settings_action.h
+        ../src/actions/disable_visual_effects_action.cpp
+        ../include/sak/actions/disable_visual_effects_action.h
+
+        # Quick Backup actions
+        ../src/actions/quickbooks_backup_action.cpp
+        ../include/sak/actions/quickbooks_backup_action.h
+        ../src/actions/browser_profile_backup_action.cpp
+        ../include/sak/actions/browser_profile_backup_action.h
+        ../src/actions/outlook_backup_action.cpp
+        ../include/sak/actions/outlook_backup_action.h
+        ../src/actions/sticky_notes_backup_action.cpp
+        ../include/sak/actions/sticky_notes_backup_action.h
+        ../src/actions/saved_game_data_backup_action.cpp
+        ../include/sak/actions/saved_game_data_backup_action.h
+        ../src/actions/tax_software_backup_action.cpp
+        ../include/sak/actions/tax_software_backup_action.h
+        ../src/actions/photo_management_backup_action.cpp
+        ../include/sak/actions/photo_management_backup_action.h
+        ../src/actions/development_configs_backup_action.cpp
+        ../include/sak/actions/development_configs_backup_action.h
+        ../src/actions/backup_known_networks_action.cpp
+        ../include/sak/actions/backup_known_networks_action.h
+
+        # Maintenance actions
+        ../src/actions/update_all_apps_action.cpp
+        ../include/sak/actions/update_all_apps_action.h
+        ../src/actions/windows_update_action.cpp
+        ../include/sak/actions/windows_update_action.h
+        ../src/actions/verify_system_files_action.cpp
+        ../include/sak/actions/verify_system_files_action.h
+        ../src/actions/check_disk_errors_action.cpp
+        ../include/sak/actions/check_disk_errors_action.h
+        ../src/actions/rebuild_icon_cache_action.cpp
+        ../include/sak/actions/rebuild_icon_cache_action.h
+        ../src/actions/reset_network_action.cpp
+        ../include/sak/actions/reset_network_action.h
+        ../src/actions/clear_print_spooler_action.cpp
+        ../include/sak/actions/clear_print_spooler_action.h
+
+        # Troubleshooting actions
+        ../src/actions/generate_system_report_action.cpp
+        ../include/sak/actions/generate_system_report_action.h
+        ../src/actions/check_bloatware_action.cpp
+        ../include/sak/actions/check_bloatware_action.h
+        ../src/actions/test_network_speed_action.cpp
+        ../include/sak/actions/test_network_speed_action.h
+        ../src/actions/scan_malware_action.cpp
+        ../include/sak/actions/scan_malware_action.h
+        ../src/actions/repair_windows_store_action.cpp
+        ../include/sak/actions/repair_windows_store_action.h
+        ../src/actions/fix_audio_issues_action.cpp
+        ../include/sak/actions/fix_audio_issues_action.h
+
+        # Emergency Recovery actions
+        ../src/actions/create_restore_point_action.cpp
+        ../include/sak/actions/create_restore_point_action.h
+        ../src/actions/export_registry_keys_action.cpp
+        ../include/sak/actions/export_registry_keys_action.h
+        ../src/actions/screenshot_settings_action.cpp
+        ../include/sak/actions/screenshot_settings_action.h
+        ../src/actions/backup_desktop_wallpaper_action.cpp
+        ../include/sak/actions/backup_desktop_wallpaper_action.h
+        ../src/actions/backup_printer_settings_action.cpp
+        ../include/sak/actions/backup_printer_settings_action.h
+        ../src/actions/backup_bitlocker_keys_action.cpp
+        ../include/sak/actions/backup_bitlocker_keys_action.h
+    )
+
+    set_target_properties(test_action_factory PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+    )
+
+    target_link_libraries(test_action_factory PRIVATE
+        Qt6::Core
+        Qt6::Test
+        Qt6::Widgets
+        ${PLATFORM_LIBS}
+    )
+
+    target_include_directories(test_action_factory PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+
+    add_test(NAME test_action_factory
+             COMMAND test_action_factory
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+
+    message(STATUS "Added unit test: test_action_factory")
+endif()
+
+# ============================================================================
+# Unit Tests - Enterprise Hardening Sprint (TST-02, TST-04, TST-05, TST-10, TST-11)
+# ============================================================================
+
+# test_flash_types — FlashProgress arithmetic, FlashResult checks (TST-02)
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_flash_types.cpp")
+    add_executable(test_flash_types
+        unit/test_flash_types.cpp
+    )
+    set_target_properties(test_flash_types PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+    )
+    target_link_libraries(test_flash_types PRIVATE
+        Qt6::Core Qt6::Test
+    )
+    target_include_directories(test_flash_types PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_flash_types COMMAND test_flash_types
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_flash_types")
+endif()
+
+# test_quick_action — QuickAction static helpers and base class (TST-10)
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_quick_action.cpp")
+    add_executable(test_quick_action
+        unit/test_quick_action.cpp
+        ../src/core/quick_action.cpp
+        ../include/sak/quick_action.h
+        ../src/core/logger.cpp
+    )
+    set_target_properties(test_quick_action PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+    )
+    target_link_libraries(test_quick_action PRIVATE
+        Qt6::Core Qt6::Gui Qt6::Test ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_quick_action PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_quick_action COMMAND test_quick_action
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_quick_action")
+endif()
+
+# test_user_profile_types — Serialization round-trips (TST-05)
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_user_profile_types.cpp")
+    add_executable(test_user_profile_types
+        unit/test_user_profile_types.cpp
+        ../src/core/user_profile_types.cpp
+        ../src/core/logger.cpp
+    )
+    set_target_properties(test_user_profile_types PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+    )
+    target_link_libraries(test_user_profile_types PRIVATE
+        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_user_profile_types PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_user_profile_types COMMAND test_user_profile_types
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_user_profile_types")
+endif()
+
+# test_user_data_manager — Checksums, data locations, size calc (TST-04)
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_user_data_manager.cpp")
+    add_executable(test_user_data_manager
+        unit/test_user_data_manager.cpp
+        ../src/core/user_data_manager.cpp
+        ../include/sak/user_data_manager.h
+        ../src/core/encryption.cpp
+        ../src/core/secure_memory.cpp
+        ../src/core/logger.cpp
+    )
+    set_target_properties(test_user_data_manager PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+    )
+    target_link_libraries(test_user_data_manager PRIVATE
+        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_user_data_manager PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_user_data_manager COMMAND test_user_data_manager
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_user_data_manager")
+endif()
+
+# test_duplicate_finder_worker — Duplicate detection with temp files (TST-11)
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_duplicate_finder_worker.cpp")
+    add_executable(test_duplicate_finder_worker
+        unit/test_duplicate_finder_worker.cpp
+        ../src/threading/duplicate_finder_worker.cpp
+        ../include/sak/duplicate_finder_worker.h
+        ../src/threading/worker_base.cpp
+        ../include/sak/worker_base.h
+        ../src/core/file_hash.cpp
+        ../include/sak/file_hash.h
+        ../src/core/logger.cpp
+    )
+    set_target_properties(test_duplicate_finder_worker PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+    )
+    target_link_libraries(test_duplicate_finder_worker PRIVATE
+        Qt6::Core Qt6::Test Qt6::Concurrent ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_duplicate_finder_worker PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_duplicate_finder_worker COMMAND test_duplicate_finder_worker
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_duplicate_finder_worker")
+endif()
+
+# test_organizer_worker — File categorization and undo (TST-11)
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_organizer_worker.cpp")
+    add_executable(test_organizer_worker
+        unit/test_organizer_worker.cpp
+        ../src/threading/organizer_worker.cpp
+        ../include/sak/organizer_worker.h
+        ../src/threading/worker_base.cpp
+        ../include/sak/worker_base.h
+        ../src/core/logger.cpp
+        ../src/core/input_validator.cpp
+    )
+    set_target_properties(test_organizer_worker PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+    )
+    target_link_libraries(test_organizer_worker PRIVATE
+        Qt6::Core Qt6::Test Qt6::Concurrent ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_organizer_worker PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_organizer_worker COMMAND test_organizer_worker
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_organizer_worker")
+endif()
+
+# test_app_installation_worker — Job filtering, stats, state management (TST-03)
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_app_installation_worker.cpp")
+    add_executable(test_app_installation_worker
+        unit/test_app_installation_worker.cpp
+        ../src/core/app_installation_worker.cpp
+        ../include/sak/app_installation_worker.h
+        ../src/core/chocolatey_manager.cpp
+        ../include/sak/chocolatey_manager.h
+        ../src/core/migration_report.cpp
+        ../include/sak/migration_report.h
+        ../src/core/app_scanner.cpp
+        ../include/sak/app_scanner.h
+        ../src/core/package_matcher.cpp
+        ../include/sak/package_matcher.h
+        ../src/core/logger.cpp
+    )
+    set_target_properties(test_app_installation_worker PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+    )
+    target_link_libraries(test_app_installation_worker PRIVATE
+        Qt6::Core Qt6::Test Qt6::Concurrent Qt6::Network ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_app_installation_worker PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_app_installation_worker COMMAND test_app_installation_worker
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_app_installation_worker")
+endif()
+
+# test_user_profile_restore_worker — Restore flow, conflict resolution, signals (TST-06)
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_user_profile_restore_worker.cpp")
+    add_executable(test_user_profile_restore_worker
+        unit/test_user_profile_restore_worker.cpp
+        ../src/core/user_profile_restore_worker.cpp
+        ../include/sak/user_profile_restore_worker.h
+        ../src/core/user_profile_types.cpp
+        ../include/sak/user_profile_types.h
+        ../src/core/smart_file_filter.cpp
+        ../include/sak/smart_file_filter.h
+        ../src/core/permission_manager.cpp
+        ../include/sak/permission_manager.h
+        ../src/core/windows_user_scanner.cpp
+        ../include/sak/windows_user_scanner.h
+        ../src/core/path_utils.cpp
+        ../include/sak/path_utils.h
+        ../src/core/logger.cpp
+    )
+    set_target_properties(test_user_profile_restore_worker PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+    )
+    target_link_libraries(test_user_profile_restore_worker PRIVATE
+        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_user_profile_restore_worker PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_user_profile_restore_worker COMMAND test_user_profile_restore_worker
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_user_profile_restore_worker")
+endif()
+
+# test_windows_usb_creator — Input validation, BUG-09 disk number injection (TST-07)
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_windows_usb_creator.cpp")
+    add_executable(test_windows_usb_creator
+        unit/test_windows_usb_creator.cpp
+        ../src/core/windows_usb_creator.cpp
+        ../src/core/windows_usb_creator_extract.cpp
+        ../include/sak/windows_usb_creator.h
+        ../src/core/logger.cpp
+    )
+    set_target_properties(test_windows_usb_creator PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+    )
+    target_link_libraries(test_windows_usb_creator PRIVATE
+        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_windows_usb_creator PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_windows_usb_creator COMMAND test_windows_usb_creator
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_windows_usb_creator")
+endif()
+
+# test_network_transfer_controller — Config, mode transitions, pause/resume/cancel, signals (TST-08)
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_network_transfer_controller.cpp")
+    add_executable(test_network_transfer_controller
+        unit/test_network_transfer_controller.cpp
+        ../src/core/network_transfer_controller.cpp
+        ../src/core/network_transfer_worker.cpp
+        ../src/core/network_connection_manager.cpp
+        ../src/core/peer_discovery_service.cpp
+        ../src/core/orchestration_client.cpp
+        ../src/core/orchestration_discovery_service.cpp
+        ../src/core/orchestration_protocol.cpp
+        ../src/core/orchestration_types.cpp
+        ../src/core/network_transfer_protocol.cpp
+        ../src/core/network_transfer_types.cpp
+        ../src/core/network_transfer_security.cpp
+        ../src/core/user_profile_types.cpp
+        ../src/core/permission_manager.cpp
+        ../src/core/file_hash.cpp
+        ../src/core/path_utils.cpp
+        ../src/core/logger.cpp
+        ../include/sak/network_transfer_controller.h
+        ../include/sak/network_transfer_worker.h
+        ../include/sak/network_connection_manager.h
+        ../include/sak/peer_discovery_service.h
+        ../include/sak/orchestration_client.h
+        ../include/sak/orchestration_discovery_service.h
+        ../include/sak/orchestration_protocol.h
+        ../include/sak/orchestration_types.h
+        ../include/sak/network_transfer_protocol.h
+        ../include/sak/network_transfer_types.h
+        ../include/sak/network_transfer_security.h
+        ../include/sak/user_profile_types.h
+    )
+    set_target_properties(test_network_transfer_controller PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+    )
+    target_link_libraries(test_network_transfer_controller PRIVATE
+        Qt6::Core Qt6::Network Qt6::Test Qt6::Concurrent ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_network_transfer_controller PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_network_transfer_controller COMMAND test_network_transfer_controller
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_network_transfer_controller")
+endif()
+
+# test_flash_worker — Structs, validation, early-exit paths, cancellation (TST-09)
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_flash_worker.cpp")
+    add_executable(test_flash_worker
+        unit/test_flash_worker.cpp
+        ../src/threading/flash_worker.cpp
+        ../src/threading/worker_base.cpp
+        ../src/core/image_source.cpp
+        ../src/core/streaming_decompressor.cpp
+        ../src/core/decompressor_factory.cpp
+        ../src/core/gzip_decompressor.cpp
+        ../src/core/bzip2_decompressor.cpp
+        ../src/core/xz_decompressor.cpp
+        ../src/core/keep_awake.cpp
+        ../src/core/logger.cpp
+        ../include/sak/flash_worker.h
+        ../include/sak/worker_base.h
+        ../include/sak/image_source.h
+        ../include/sak/streaming_decompressor.h
+        ../include/sak/decompressor_factory.h
+        ../include/sak/gzip_decompressor.h
+        ../include/sak/bzip2_decompressor.h
+        ../include/sak/xz_decompressor.h
+        ../include/sak/keep_awake.h
+    )
+    set_target_properties(test_flash_worker PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+    )
+    target_link_libraries(test_flash_worker PRIVATE
+        Qt6::Core Qt6::Test ZLIB::ZLIB BZip2::BZip2 LibLZMA::LibLZMA ${PLATFORM_LIBS}
+    )
+    target_compile_definitions(test_flash_worker PRIVATE
+        QT_DISABLE_DEPRECATED_BEFORE=0x060000
+    )
+    target_include_directories(test_flash_worker PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_flash_worker COMMAND test_flash_worker
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_flash_worker")
+endif()
+
+# test_network_transfer_worker — DataOptions, stop/bandwidth, protocol validation via loopback (TST-01)
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_network_transfer_worker.cpp")
+    add_executable(test_network_transfer_worker
+        unit/test_network_transfer_worker.cpp
+        ../src/core/network_transfer_worker.cpp
+        ../src/core/network_transfer_types.cpp
+        ../src/core/network_transfer_security.cpp
+        ../src/core/user_profile_types.cpp
+        ../src/core/permission_manager.cpp
+        ../src/core/file_hash.cpp
+        ../src/core/path_utils.cpp
+        ../src/core/logger.cpp
+        ../include/sak/network_transfer_worker.h
+        ../include/sak/network_transfer_types.h
+        ../include/sak/network_transfer_security.h
+        ../include/sak/user_profile_types.h
+        ../include/sak/permission_manager.h
+    )
+    set_target_properties(test_network_transfer_worker PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+    )
+    target_link_libraries(test_network_transfer_worker PRIVATE
+        Qt6::Core Qt6::Network Qt6::Test ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_network_transfer_worker PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_network_transfer_worker COMMAND test_network_transfer_worker
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_network_transfer_worker")
+endif()
+
+# ============================================================================
 # Test Targets
 # ============================================================================
 
@@ -966,7 +1459,7 @@ add_custom_target(run_all_tests
 
 # Run unit tests only
 add_custom_target(run_unit_tests
-    COMMAND ${CMAKE_CTEST_COMMAND} -R "test_(path_utils|logger|config_manager|file_scanner|encryption)" --output-on-failure
+    COMMAND ${CMAKE_CTEST_COMMAND} -R "^test_" -E "_workflow|_pipeline" --output-on-failure
     WORKING_DIRECTORY "${CMAKE_BINARY_DIR}"
     COMMENT "Running unit tests..."
 )

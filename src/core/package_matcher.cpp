@@ -8,7 +8,6 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
-#include <QDebug>
 #include <algorithm>
 #include <cmath>
 
@@ -607,7 +606,7 @@ void PackageMatcher::exportMappings(const QString& file_path) const {
 void PackageMatcher::importMappings(const QString& file_path) {
     QFile file(file_path);
     if (!file.open(QIODevice::ReadOnly)) {
-        qWarning() << "[PackageMatcher] Failed to open mappings file:" << file_path;
+        sak::logWarning("[PackageMatcher] Failed to open mappings file: {}", file_path.toStdString());
         return;
     }
     

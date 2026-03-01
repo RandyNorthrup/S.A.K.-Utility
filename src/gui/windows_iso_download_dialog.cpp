@@ -3,6 +3,8 @@
 
 #include "sak/windows_iso_download_dialog.h"
 #include "sak/windows_iso_downloader.h"
+#include "sak/logger.h"
+#include "sak/style_constants.h"
 
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -28,7 +30,7 @@ WindowsISODownloadDialog::WindowsISODownloadDialog(WindowsISODownloader* downloa
     setModal(true);
     resize(720, 620);
 
-    setupUI();
+    setupUi();
     connectSignals();
 
     m_statusLabel->setText("Select architecture and channel, then click Fetch Builds.");
@@ -40,7 +42,7 @@ WindowsISODownloadDialog::~WindowsISODownloadDialog() = default;
 // UI Setup
 // ============================================================================
 
-void WindowsISODownloadDialog::setupUI()
+void WindowsISODownloadDialog::setupUi()
 {
     auto* mainLayout = new QVBoxLayout(this);
 
@@ -78,7 +80,7 @@ void WindowsISODownloadDialog::setupUI()
 
     m_buildInfoLabel = new QLabel("", buildGroup);
     m_buildInfoLabel->setWordWrap(true);
-    m_buildInfoLabel->setStyleSheet("color: #64748b; font-size: 9pt;");
+    m_buildInfoLabel->setStyleSheet(QString("color: %1; font-size: %2pt;").arg(sak::ui::kColorTextMuted).arg(sak::ui::kFontSizeNote));
     buildLayout->addWidget(m_buildInfoLabel);
 
     mainLayout->addWidget(buildGroup);
@@ -155,6 +157,7 @@ void WindowsISODownloadDialog::setupUI()
 
     m_startButton = new QPushButton("Download && Build ISO", this);
     m_startButton->setEnabled(false);
+    m_startButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
     buttonLayout->addWidget(m_startButton);
 
     m_cancelButton = new QPushButton("Cancel", this);
@@ -367,6 +370,7 @@ void WindowsISODownloadDialog::onEditionsFetched(
 void WindowsISODownloadDialog::onStartDownload()
 {
     if (m_selectedUpdateId.isEmpty()) {
+        sak::logWarning("No Build Selected: Please select a build first.");
         QMessageBox::warning(this, "No Build Selected",
                              "Please select a build first.");
         return;
@@ -377,11 +381,13 @@ void WindowsISODownloadDialog::onStartDownload()
     QString savePath = m_saveLocationEdit->text().trimmed();
 
     if (langCode.isEmpty() || edition.isEmpty()) {
+        sak::logWarning("Incomplete Selection: Please select a language and edition.");
         QMessageBox::warning(this, "Incomplete Selection",
                              "Please select a language and edition.");
         return;
     }
     if (savePath.isEmpty()) {
+        sak::logWarning("No Save Path: Please specify where to save the ISO.");
         QMessageBox::warning(this, "No Save Path",
                              "Please specify where to save the ISO.");
         return;
@@ -410,23 +416,28 @@ void WindowsISODownloadDialog::onPhaseChanged(UupIsoBuilder::Phase phase,
                                               const QString& description)
 {
     m_currentPhase = phase;
-    m_phaseLabel->setText(description);
 
+    // A11Y: prefix phase text so status is conveyed without relying on color alone
     switch (phase) {
     case UupIsoBuilder::Phase::PreparingDownload:
-        m_phaseLabel->setStyleSheet("font-weight: bold; color: #2563eb;");
+        m_phaseLabel->setStyleSheet(QString("font-weight: bold; color: %1;").arg(sak::ui::kStatusColorRunning));
+        m_phaseLabel->setText(QStringLiteral("\u2699 ") + description); // ⚙
         break;
     case UupIsoBuilder::Phase::DownloadingFiles:
-        m_phaseLabel->setStyleSheet("font-weight: bold; color: #059669;");
+        m_phaseLabel->setStyleSheet(QString("font-weight: bold; color: %1;").arg(sak::ui::kColorAccentEmerald));
+        m_phaseLabel->setText(QStringLiteral("\u2B07 ") + description); // ⬇
         break;
     case UupIsoBuilder::Phase::ConvertingToISO:
-        m_phaseLabel->setStyleSheet("font-weight: bold; color: #d97706;");
+        m_phaseLabel->setStyleSheet(QString("font-weight: bold; color: %1;").arg(sak::ui::kStatusColorWarning));
+        m_phaseLabel->setText(QStringLiteral("\u23F3 ") + description); // ⏳
         break;
     case UupIsoBuilder::Phase::Completed:
-        m_phaseLabel->setStyleSheet("font-weight: bold; color: #16a34a;");
+        m_phaseLabel->setStyleSheet(QString("font-weight: bold; color: %1;").arg(sak::ui::kStatusColorSuccess));
+        m_phaseLabel->setText(QStringLiteral("\u2714 ") + description); // ✔
         break;
     case UupIsoBuilder::Phase::Failed:
-        m_phaseLabel->setStyleSheet("font-weight: bold; color: #dc2626;");
+        m_phaseLabel->setStyleSheet(QString("font-weight: bold; color: %1;").arg(sak::ui::kStatusColorError));
+        m_phaseLabel->setText(QStringLiteral("\u2718 ") + description); // ✘
         break;
     default:
         break;
@@ -493,7 +504,7 @@ void WindowsISODownloadDialog::onDownloadComplete(const QString& isoPath,
     m_statusLabel->setText(
         QString("ISO created successfully! (%1 GB)").arg(sizeGB, 0, 'f', 2));
     m_phaseLabel->setText("Complete!");
-    m_phaseLabel->setStyleSheet("font-weight: bold; color: #16a34a;");
+    m_phaseLabel->setStyleSheet(QString("font-weight: bold; color: %1;").arg(sak::ui::kStatusColorSuccess));
     m_speedLabel->clear();
     m_detailLabel->clear();
     m_cancelButton->setEnabled(false);
@@ -524,6 +535,7 @@ void WindowsISODownloadDialog::onDownloadError(const QString& error)
         guidance = "Please check your internet connection and try again.";
     }
 
+    sak::logError(("Build Error: Failed to create Windows ISO: " + error).toStdString());
     QMessageBox::critical(this, "Build Error",
         QString("Failed to create Windows ISO:\n\n%1\n\n%2")
             .arg(error, guidance));

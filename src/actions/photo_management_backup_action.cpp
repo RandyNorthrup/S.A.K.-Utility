@@ -1,10 +1,14 @@
-// Copyright (c) 2025 Randy Northrup. All rights reserved.
+﻿// Copyright (c) 2025 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
+
+/// @file photo_management_backup_action.cpp
+/// @brief Implements photo library catalog backup for management applications
 
 #include "sak/actions/photo_management_backup_action.h"
 #include "sak/windows_user_scanner.h"
 #include <QDir>
 #include <QDirIterator>
+#include "sak/logger.h"
 
 namespace sak {
 

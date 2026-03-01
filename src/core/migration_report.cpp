@@ -2,13 +2,13 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "sak/migration_report.h"
+#include "sak/logger.h"
 #include <QFile>
 #include <QTextStream>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
 #include <QSysInfo>
-#include <QDebug>
 #include <algorithm>
 
 #ifdef Q_OS_WIN
@@ -215,7 +215,7 @@ bool MigrationReport::exportToJson(const QString& file_path) const {
     // Write to file
     QFile file(file_path);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
-        qWarning() << "[MigrationReport] Failed to open file for writing:" << file_path;
+        sak::logWarning("[MigrationReport] Failed to open file for writing: {}", file_path.toStdString());
         return false;
     }
     
@@ -229,7 +229,7 @@ bool MigrationReport::exportToJson(const QString& file_path) const {
 bool MigrationReport::exportToCsv(const QString& file_path) const {
     QFile file(file_path);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
-        qWarning() << "[MigrationReport] Failed to open file for writing:" << file_path;
+        sak::logWarning("[MigrationReport] Failed to open file for writing: {}", file_path.toStdString());
         return false;
     }
     
@@ -267,7 +267,7 @@ bool MigrationReport::exportToCsv(const QString& file_path) const {
 bool MigrationReport::exportToHtml(const QString& file_path) const {
     QFile file(file_path);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
-        qWarning() << "[MigrationReport] Failed to open file for writing:" << file_path;
+        sak::logWarning("[MigrationReport] Failed to open file for writing: {}", file_path.toStdString());
         return false;
     }
     
@@ -281,7 +281,7 @@ bool MigrationReport::exportToHtml(const QString& file_path) const {
 bool MigrationReport::importFromJson(const QString& file_path) {
     QFile file(file_path);
     if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        qWarning() << "[MigrationReport] Failed to open file for reading:" << file_path;
+        sak::logWarning("[MigrationReport] Failed to open file for reading: {}", file_path.toStdString());
         return false;
     }
     
@@ -290,7 +290,7 @@ bool MigrationReport::importFromJson(const QString& file_path) {
     
     QJsonDocument doc = QJsonDocument::fromJson(data);
     if (!doc.isObject()) {
-        qWarning() << "[MigrationReport] Invalid JSON format";
+        sak::logWarning("[MigrationReport] Invalid JSON format");
         return false;
     }
     

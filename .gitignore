@@ -425,6 +425,13 @@ node_modules/
 *.pid.lock
 
 # ============================================================================
+# Local Secrets / Personal Configuration (never commit)
+# ============================================================================
+
+# Local signing config with subscription ID and other sensitive values
+scripts/sign-config.ps1
+
+# ============================================================================
 # Keep These Files (Explicitly Track)
 # ============================================================================
 

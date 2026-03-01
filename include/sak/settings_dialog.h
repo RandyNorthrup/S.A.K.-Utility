@@ -44,7 +44,7 @@ private Q_SLOTS:
     void onSettingChanged();
 
 private:
-    void setupUI();
+    void setupUi();
     void createBackupTab();
     
     void loadSettings();

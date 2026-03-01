@@ -1,11 +1,11 @@
-// Copyright (c) 2025 Randy Northrup. All rights reserved.
+﻿// Copyright (c) 2025 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
+
+/// @file quickbooks_backup_action.cpp
+/// @brief Implements QuickBooks company file backup and discovery
 
 /**
  * RESEARCH-BASED IMPLEMENTATION (3 Sources - December 15, 2025)
- * =============================================================
- *
- * SOURCE 1: Chrome DevTools MCP - Web Research (10 authoritative sources, Dec 2025)
  * ---------------------------------------------------------------------------------
  * Default QuickBooks File Locations:
  *   - Primary: C:\Users\Public\Documents\Intuit\QuickBooks\Company Files
@@ -92,6 +92,7 @@
 #include <QDirIterator>
 #include <QStandardPaths>
 #include <QDateTime>
+#include "sak/logger.h"
 
 namespace sak {
 

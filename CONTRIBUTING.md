@@ -123,7 +123,7 @@ Thank you for your interest in contributing to S.A.K. Utility! This document pro
 
 ```cpp
 // Classes: PascalCase
-class AppMigrationPanel : public QWidget { };
+class AppInstallationPanel : public QWidget { };
 
 // Functions/Methods: camelCase
 void updateTableView();

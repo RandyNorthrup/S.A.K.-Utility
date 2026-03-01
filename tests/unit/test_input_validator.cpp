@@ -427,11 +427,17 @@ void InputValidatorTests::isValidUtf8_valid()
 
 void InputValidatorTests::isValidUtf8_invalid()
 {
-    // Invalid UTF-8: continuation byte without start byte
-    std::string invalid = "hello\x80world";
-    // Some implementations may accept this; check implementation behavior
-    Q_UNUSED(invalid);
-    QVERIFY(true); // Placeholder; exact behavior depends on implementation
+    // Invalid UTF-8: lone continuation byte
+    QVERIFY(!sak::input_validator::isValidUtf8("hello\x80world"));
+
+    // Invalid UTF-8: truncated 2-byte sequence
+    QVERIFY(!sak::input_validator::isValidUtf8("abc\xC3"));
+
+    // Invalid UTF-8: truncated 3-byte sequence
+    QVERIFY(!sak::input_validator::isValidUtf8("abc\xE0\xA0"));
+
+    // Invalid UTF-8: overlong 2-byte encoding of ASCII
+    QVERIFY(!sak::input_validator::isValidUtf8("\xC0\x80"));
 }
 
 QTEST_GUILESS_MAIN(InputValidatorTests)

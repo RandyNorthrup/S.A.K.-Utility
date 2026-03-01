@@ -64,9 +64,10 @@ void ProcessRunnerTests::runProcess_nonExistentProgram()
     auto result = sak::runProcess(
         "nonexistent_program_xyz_12345.exe", {}, 5000);
 
-    // QProcess FailedToStart leaves exit_code=0 and exit_status=0 in this implementation.
-    // Verify no output was produced (program never ran).
-    QVERIFY(result.std_out.isEmpty());
+    // After BUG-13 fix: waitForStarted() detects launch failure immediately.
+    // exit_code should be -1 and std_err should contain an error message.
+    QCOMPARE(result.exit_code, -1);
+    QVERIFY(!result.std_err.isEmpty());
 }
 
 void ProcessRunnerTests::runProcess_timeout()

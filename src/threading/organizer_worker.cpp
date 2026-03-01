@@ -1,15 +1,14 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+/// @file organizer_worker.cpp
+/// @brief Implements the background worker thread for file organization operations
+
 #include "sak/organizer_worker.h"
 #include "sak/input_validator.h"
 #include "sak/logger.h"
 #include <QVector>
 #include <QFile>
-#include <QJsonDocument>
-#include <QJsonObject>
-#include <QJsonArray>
-#include <QDateTime>
 
 OrganizerWorker::OrganizerWorker(const Config& config, QObject* parent)
     : WorkerBase(parent)
@@ -266,179 +265,5 @@ auto OrganizerWorker::generatePreviewSummary() -> QString
     }
 
     return summary;
-}
-
-void OrganizerWorker::logForUndo(const MoveOperation& operation)
-{
-    if (!operation.was_executed) {
-        return;
-    }
-
-    UndoEntry entry;
-    entry.original_source = operation.source;
-    entry.current_location = operation.destination;
-    entry.timestamp = QDateTime::currentDateTime();
-    entry.can_undo = std::filesystem::exists(operation.destination);
-
-    m_undo_history.push_back(entry);
-    sak::logInfo("Logged undo entry: {} -> {}", 
-                 entry.original_source.string(), 
-                 entry.current_location.string());
-}
-
-bool OrganizerWorker::canRestore(const UndoEntry& entry)
-{
-    // Check if file still exists at current location
-    if (!std::filesystem::exists(entry.current_location)) {
-        return false;
-    }
-
-    // Check if original parent directory exists
-    auto original_parent = entry.original_source.parent_path();
-    if (!std::filesystem::exists(original_parent)) {
-        return false;
-    }
-
-    // Check if original location is now occupied
-    if (std::filesystem::exists(entry.original_source)) {
-        return false; // Would cause collision
-    }
-
-    return true;
-}
-
-auto OrganizerWorker::undoLastOperation() -> std::expected<void, sak::error_code>
-{
-    if (m_undo_history.empty()) {
-        sak::logInfo("No operations to undo");
-        return std::unexpected(sak::error_code::invalid_operation);
-    }
-
-    const auto& entry = m_undo_history.back();
-    
-    if (!canRestore(entry)) {
-        sak::logError("Cannot undo: file state changed");
-        return std::unexpected(sak::error_code::invalid_operation);
-    }
-
-    try {
-        std::filesystem::rename(entry.current_location, entry.original_source);
-        sak::logInfo("Undone: {} -> {}", 
-                     entry.current_location.string(), 
-                     entry.original_source.string());
-        
-        m_undo_history.pop_back();
-        return {};
-
-    } catch (const std::filesystem::filesystem_error& e) {
-        sak::logError("Failed to undo operation: {}", e.what());
-        return std::unexpected(sak::error_code::write_error);
-    }
-}
-
-auto OrganizerWorker::undoAllOperations() -> std::expected<void, sak::error_code>
-{
-    if (m_undo_history.empty()) {
-        sak::logInfo("No operations to undo");
-        return {};
-    }
-
-    int successful_undos = 0;
-    int failed_undos = 0;
-
-    // Undo in reverse order (last operation first)
-    while (!m_undo_history.empty()) {
-        auto result = undoLastOperation();
-        if (result) {
-            ++successful_undos;
-        } else {
-            ++failed_undos;
-            sak::logError("Failed to undo operation, stopping undo process");
-            break;
-        }
-    }
-
-    sak::logInfo("Undo complete: {} succeeded, {} failed", successful_undos, failed_undos);
-    
-    if (failed_undos > 0) {
-        return std::unexpected(sak::error_code::partial_failure);
-    }
-
-    return {};
-}
-
-auto OrganizerWorker::saveUndoLog(const QString& file_path) -> std::expected<void, sak::error_code>
-{
-    if (m_undo_history.empty()) {
-        sak::logInfo("No undo history to save");
-        return {};
-    }
-
-    QJsonArray entries_array;
-    for (const auto& entry : m_undo_history) {
-        QJsonObject entry_obj;
-        entry_obj["original_source"] = QString::fromStdString(entry.original_source.string());
-        entry_obj["current_location"] = QString::fromStdString(entry.current_location.string());
-        entry_obj["timestamp"] = entry.timestamp.toString(Qt::ISODate);
-        entry_obj["can_undo"] = entry.can_undo;
-        entries_array.append(entry_obj);
-    }
-
-    QJsonObject root;
-    root["version"] = 1;
-    root["timestamp"] = QDateTime::currentDateTime().toString(Qt::ISODate);
-    root["entries"] = entries_array;
-
-    QJsonDocument doc(root);
-    QFile file(file_path);
-    if (!file.open(QIODevice::WriteOnly)) {
-        sak::logError("Failed to open undo log file for writing: {}", file_path.toStdString());
-        return std::unexpected(sak::error_code::write_error);
-    }
-
-    file.write(doc.toJson());
-    file.close();
-
-    sak::logInfo("Saved undo log: {} entries to {}", m_undo_history.size(), file_path.toStdString());
-    return {};
-}
-
-auto OrganizerWorker::loadUndoLog(const QString& file_path) -> std::expected<void, sak::error_code>
-{
-    QFile file(file_path);
-    if (!file.open(QIODevice::ReadOnly)) {
-        sak::logError("Failed to open undo log file for reading: {}", file_path.toStdString());
-        return std::unexpected(sak::error_code::file_not_found);
-    }
-
-    QByteArray data = file.readAll();
-    file.close();
-
-    QJsonDocument doc = QJsonDocument::fromJson(data);
-    if (!doc.isObject()) {
-        sak::logError("Invalid undo log file format");
-        return std::unexpected(sak::error_code::parse_error);
-    }
-
-    QJsonObject root = doc.object();
-    QJsonArray entries_array = root["entries"].toArray();
-
-    m_undo_history.clear();
-    m_undo_history.reserve(static_cast<size_t>(entries_array.size()));
-
-    for (const auto& entry_value : entries_array) {
-        QJsonObject entry_obj = entry_value.toObject();
-        
-        UndoEntry entry;
-        entry.original_source = std::filesystem::path(entry_obj["original_source"].toString().toStdString());
-        entry.current_location = std::filesystem::path(entry_obj["current_location"].toString().toStdString());
-        entry.timestamp = QDateTime::fromString(entry_obj["timestamp"].toString(), Qt::ISODate);
-        entry.can_undo = entry_obj["can_undo"].toBool();
-
-        m_undo_history.push_back(entry);
-    }
-
-    sak::logInfo("Loaded undo log: {} entries from {}", m_undo_history.size(), file_path.toStdString());
-    return {};
 }
 

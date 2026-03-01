@@ -1,11 +1,16 @@
-// Copyright (c) 2025 Randy Northrup. All rights reserved.
+﻿// Copyright (c) 2025 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
+
+/// @file duplicate_finder_panel.cpp
+/// @brief Implements the duplicate file finder panel UI with scan controls
 
 #include "sak/duplicate_finder_panel.h"
 #include "sak/duplicate_finder_worker.h"
 #include "sak/logger.h"
 #include "sak/detachable_log_window.h"
 #include "sak/info_button.h"
+#include "sak/style_constants.h"
+#include "sak/widget_helpers.h"
 
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -19,12 +24,14 @@
 #include <QDialog>
 #include <QFormLayout>
 
+namespace sak {
+
 DuplicateFinderPanel::DuplicateFinderPanel(QWidget* parent)
     : QWidget(parent)
     , m_worker(nullptr)
 {
     setupUi();
-    sak::logInfo("DuplicateFinderPanel initialized");
+    logInfo("DuplicateFinderPanel initialized");
 }
 
 DuplicateFinderPanel::~DuplicateFinderPanel()
@@ -32,46 +39,53 @@ DuplicateFinderPanel::~DuplicateFinderPanel()
     if (m_worker) {
         m_worker->requestStop();
         if (!m_worker->wait(15000)) {
-            sak::logError("DuplicateFinderWorker did not stop within 15s \u2014 potential resource leak");
+            logError("DuplicateFinderWorker did not stop within 15s \u2014 potential resource leak");
         }
     }
-    sak::logInfo("DuplicateFinderPanel destroyed");
+    logInfo("DuplicateFinderPanel destroyed");
 }
 
 void DuplicateFinderPanel::setupUi()
 {
-    auto* root_layout = new QVBoxLayout(this);
-    root_layout->setContentsMargins(0, 0, 0, 0);
+    auto* rootLayout = new QVBoxLayout(this);
+    rootLayout->setContentsMargins(0, 0, 0, 0);
 
-    auto* scroll_area = new QScrollArea(this);
-    scroll_area->setWidgetResizable(true);
-    scroll_area->setFrameShape(QFrame::NoFrame);
+    auto* scrollArea = new QScrollArea(this);
+    scrollArea->setWidgetResizable(true);
+    scrollArea->setFrameShape(QFrame::NoFrame);
 
-    auto* content_widget = new QWidget(scroll_area);
-    auto* main_layout = new QVBoxLayout(content_widget);
-    main_layout->setContentsMargins(12, 12, 12, 12);
-    main_layout->setSpacing(10);
+    auto* contentWidget = new QWidget(scrollArea);
+    auto* mainLayout = new QVBoxLayout(contentWidget);
+    mainLayout->setContentsMargins(12, 12, 12, 12);
+    mainLayout->setSpacing(10);
 
-    scroll_area->setWidget(content_widget);
-    root_layout->addWidget(scroll_area);
+    scrollArea->setWidget(contentWidget);
+    rootLayout->addWidget(scrollArea);
+
+    // Panel header — consistent title + muted subtitle
+    sak::createPanelHeader(contentWidget, tr("Duplicate Finder"),
+        tr("Scan directories for duplicate files using content-based hashing"), mainLayout);
 
     // Scan directories group
-    auto* dir_group = new QGroupBox("Scan Directories", this);
-    auto* dir_layout = new QVBoxLayout(dir_group);
+    auto* dirGroup = new QGroupBox("Scan Directories", this);
+    auto* dirLayout = new QVBoxLayout(dirGroup);
     
     m_directory_list = new QListWidget(this);
     m_directory_list->setMinimumHeight(100);
-    dir_layout->addWidget(m_directory_list);
+    m_directory_list->setAccessibleName(QStringLiteral("Scan Directories List"));
+    dirLayout->addWidget(m_directory_list);
     
-    auto* button_layout = new QHBoxLayout();
+    auto* buttonLayout = new QHBoxLayout();
     m_add_directory_button = new QPushButton("Add Directory", this);
+    m_add_directory_button->setAccessibleName(QStringLiteral("Add Scan Directory"));
     m_remove_directory_button = new QPushButton("Remove Selected", this);
-    button_layout->addWidget(m_add_directory_button);
-    button_layout->addWidget(m_remove_directory_button);
-    button_layout->addStretch();
-    dir_layout->addLayout(button_layout);
+    m_remove_directory_button->setAccessibleName(QStringLiteral("Remove Selected Directory"));
+    buttonLayout->addWidget(m_add_directory_button);
+    buttonLayout->addWidget(m_remove_directory_button);
+    buttonLayout->addStretch();
+    dirLayout->addLayout(buttonLayout);
     
-    main_layout->addWidget(dir_group);
+    mainLayout->addWidget(dirGroup);
 
     // Options widgets (hidden — managed via Settings modal)
     m_min_size_spinbox = new QSpinBox(this);
@@ -79,35 +93,41 @@ void DuplicateFinderPanel::setupUi()
     m_min_size_spinbox->setMaximum(1000000);
     m_min_size_spinbox->setValue(0);
     m_min_size_spinbox->setToolTip("Skip tiny files to speed up scanning (0 = check all files)");
+    m_min_size_spinbox->setAccessibleName(QStringLiteral("Minimum File Size (KB)"));
     m_min_size_spinbox->setVisible(false);
 
     m_recursive_checkbox = new QCheckBox("Recursive Scan", this);
     m_recursive_checkbox->setChecked(true);
     m_recursive_checkbox->setToolTip("Include all nested subfolders, not just the top-level directory");
+    m_recursive_checkbox->setAccessibleName(QStringLiteral("Recursive Scan"));
     m_recursive_checkbox->setVisible(false);
 
     // Control buttons
-    auto* control_layout = new QHBoxLayout();
+    auto* controlLayout = new QHBoxLayout();
 
     auto* settingsBtn = new QPushButton("Settings", this);
+    settingsBtn->setAccessibleName(QStringLiteral("Duplicate Finder Settings"));
     connect(settingsBtn, &QPushButton::clicked, this, &DuplicateFinderPanel::onSettingsClicked);
-    control_layout->addWidget(settingsBtn);
+    controlLayout->addWidget(settingsBtn);
 
-    control_layout->addStretch();
+    controlLayout->addStretch();
     
     m_scan_button = new QPushButton("Start Scan", this);
     m_scan_button->setMinimumWidth(120);
-    control_layout->addWidget(m_scan_button);
+    m_scan_button->setStyleSheet(ui::kPrimaryButtonStyle);
+    m_scan_button->setAccessibleName(QStringLiteral("Start Duplicate Scan"));
+    controlLayout->addWidget(m_scan_button);
     
     m_cancel_button = new QPushButton("Cancel", this);
     m_cancel_button->setMinimumWidth(120);
     m_cancel_button->setEnabled(false);
-    control_layout->addWidget(m_cancel_button);
+    m_cancel_button->setAccessibleName(QStringLiteral("Cancel Scan"));
+    controlLayout->addWidget(m_cancel_button);
     
-    m_logToggle = new sak::LogToggleSwitch(tr("Log"), this);
-    control_layout->insertWidget(1, m_logToggle);
+    m_logToggle = new LogToggleSwitch(tr("Log"), this);
+    controlLayout->insertWidget(1, m_logToggle);
 
-    main_layout->addLayout(control_layout);
+    mainLayout->addLayout(controlLayout);
 
     // Connect signals
     connect(m_add_directory_button, &QPushButton::clicked, this, &DuplicateFinderPanel::onAddDirectoryClicked);
@@ -174,7 +194,7 @@ void DuplicateFinderPanel::onScanClicked()
     Q_EMIT statusMessage("Starting scan...", 0);
     m_worker->start();
 
-    sak::logInfo("Duplicate finder scan initiated");
+    logInfo("Duplicate finder scan initiated");
 }
 
 void DuplicateFinderPanel::onCancelClicked()
@@ -183,7 +203,7 @@ void DuplicateFinderPanel::onCancelClicked()
         m_worker->requestStop();
         logMessage("Cancellation requested...");
         Q_EMIT statusMessage("Cancelling...", 0);
-        sak::logInfo("Duplicate finder cancellation requested by user");
+        logInfo("Duplicate finder cancellation requested by user");
     }
 }
 
@@ -199,17 +219,17 @@ void DuplicateFinderPanel::onWorkerFinished()
     Q_EMIT statusMessage("Scan complete", 5000);
     Q_EMIT progressUpdate(100, 100);
     logMessage("Scan completed successfully");
-    sak::logInfo("Duplicate finder scan completed successfully");
+    logInfo("Duplicate finder scan completed successfully");
 }
 
-void DuplicateFinderPanel::onWorkerFailed(int error_code, const QString& error_message)
+void DuplicateFinderPanel::onWorkerFailed(int errorCode, const QString& errorMessage)
 {
     setOperationRunning(false);
     Q_EMIT statusMessage("Scan failed", 5000);
     Q_EMIT progressUpdate(0, 100);
-    logMessage(QString("Scan failed: Error %1: %2").arg(error_code).arg(error_message));
-    QMessageBox::warning(this, "Scan Failed", QString("Error %1: %2").arg(error_code).arg(error_message));
-    sak::logError("Duplicate finder scan failed: {}", error_message.toStdString());
+    logMessage(QString("Scan failed: Error %1: %2").arg(errorCode).arg(errorMessage));
+    QMessageBox::warning(this, "Scan Failed", QString("Error %1: %2").arg(errorCode).arg(errorMessage));
+    logError("Duplicate finder scan failed: {}", errorMessage.toStdString());
 }
 
 void DuplicateFinderPanel::onWorkerCancelled()
@@ -228,14 +248,14 @@ void DuplicateFinderPanel::onScanProgress(int current, int total, const QString&
     Q_EMIT statusMessage(QString("Scanning: %1").arg(info.fileName()), 0);
 }
 
-void DuplicateFinderPanel::onResultsReady(const QString& summary, int duplicate_count, qint64 wasted_space)
+void DuplicateFinderPanel::onResultsReady(const QString& summary, int duplicateCount, qint64 wastedSpace)
 {
-    QString results_text = QString("Found %1 duplicate files, %2 MB wasted space")
-        .arg(duplicate_count)
-        .arg(wasted_space / (1024.0 * 1024.0), 0, 'f', 2);
+    QString resultsText = QString("Found %1 duplicate files, %2 MB wasted space")
+        .arg(duplicateCount)
+        .arg(wastedSpace / (1024.0 * 1024.0), 0, 'f', 2);
     
-    Q_EMIT statusMessage(results_text, 10000);
-    logMessage(results_text);
+    Q_EMIT statusMessage(resultsText, 10000);
+    logMessage(resultsText);
     
     QMessageBox::information(this, "Scan Results", summary);
 }
@@ -273,14 +293,14 @@ void DuplicateFinderPanel::onSettingsClicked()
     minSizeSpin->setValue(m_min_size_spinbox->value());
     minSizeSpin->setSuffix(tr(" KB"));
     layout->addRow(
-        sak::InfoButton::createInfoLabel(tr("Minimum File Size:"),
+        InfoButton::createInfoLabel(tr("Minimum File Size:"),
             tr("Skip tiny files to speed up scanning (0 = check all files)"), &dialog),
         minSizeSpin);
 
     auto* recursiveCheck = new QCheckBox(tr("Include all nested subfolders"), &dialog);
     recursiveCheck->setChecked(m_recursive_checkbox->isChecked());
     layout->addRow(
-        sak::InfoButton::createInfoLabel(tr("Recursive Scan:"),
+        InfoButton::createInfoLabel(tr("Recursive Scan:"),
             tr("Scan all subdirectories recursively, not just the top-level folder"), &dialog),
         recursiveCheck);
 
@@ -300,3 +320,4 @@ void DuplicateFinderPanel::onSettingsClicked()
     }
 }
 
+} // namespace sak

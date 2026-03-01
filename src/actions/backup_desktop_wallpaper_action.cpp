@@ -1,6 +1,9 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+/// @file backup_desktop_wallpaper_action.cpp
+/// @brief Implements desktop wallpaper backup for all user profiles
+
 #include "sak/actions/backup_desktop_wallpaper_action.h"
 #include "sak/windows_user_scanner.h"
 #include "sak/process_runner.h"
@@ -38,7 +41,7 @@ bool BackupDesktopWallpaperAction::backupRegistrySettings(const QString& dest_fo
         << reg_file
         << "/y",
         5000);
-    return !proc.timed_out && proc.exit_code == 0;
+    return proc.succeeded();
 }
 
 void BackupDesktopWallpaperAction::scan() {

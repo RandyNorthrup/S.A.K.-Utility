@@ -52,6 +52,7 @@ class UserProfileBackupWizard : public QWizard {
     Q_OBJECT
 
 public:
+    /// Unscoped enum required for implicit int conversion by QWizard::setPage()
     enum PageId {
         Page_Welcome = 0,
         Page_SelectUsers,

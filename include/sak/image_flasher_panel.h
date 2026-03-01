@@ -22,7 +22,6 @@ namespace sak {
     struct FlashProgress;
     enum class FlashState;
     class LogToggleSwitch;
-}
 
 /**
  * @brief Image Flasher Panel
@@ -70,7 +69,7 @@ public:
     bool loadImageFile(const QString& filePath);
 
     /** @brief Access the log toggle switch for MainWindow connection */
-    sak::LogToggleSwitch* logToggle() const { return m_logToggle; }
+    LogToggleSwitch* logToggle() const { return m_logToggle; }
 
 Q_SIGNALS:
     void flashCompleted(int driveCount, qint64 totalBytes);
@@ -82,40 +81,67 @@ Q_SIGNALS:
 
 private Q_SLOTS:
     // Step 1: Image Selection
+    /** @brief Open a file dialog to choose a local image file */
     void onSelectImageClicked();
+    /** @brief Launch the Windows 11 ISO download dialog */
     void onDownloadWindowsClicked();
+    /** @brief Open the Microsoft Windows download page in a browser */
     void onOpenMicrosoftWindowsDownloadClicked();
+    /** @brief Launch the Linux distribution ISO download dialog */
     void onDownloadLinuxClicked();
+    /** @brief Handle a successfully chosen image path */
     void onImageSelected(const QString& imagePath);
+    /** @brief Handle a completed Windows ISO download */
     void onWindowsISODownloaded(const QString& isoPath);
 
     // Step 2: Drive Selection
+    /** @brief Refresh the drive list after a scan completes */
     void onDriveListUpdated();
+    /** @brief Update UI state when drive selection changes */
     void onDriveSelectionChanged();
 
     // Step 3: Flash
+    /** @brief Start writing the selected image to the selected drives */
     void onFlashClicked();
-    void onFlashProgress(const sak::FlashProgress& progress);
-    void onFlashStateChanged(sak::FlashState newState, const QString& message);
-    void onFlashCompleted(const sak::FlashResult& result);
+    /** @brief Update progress indicators from the flash coordinator */
+    void onFlashProgress(const FlashProgress& progress);
+    /** @brief Update the UI when the flash state machine transitions */
+    void onFlashStateChanged(FlashState newState, const QString& message);
+    /** @brief Handle final flash result (success or failure details) */
+    void onFlashCompleted(const FlashResult& result);
+    /** @brief Display a flash error and transition to error state */
     void onFlashError(const QString& error);
+    /** @brief Request cancellation of the in-progress flash operation */
     void onCancelClicked();
 
 private:
-    void setupUI();
+    /** @brief Build the panel layout and stacked-widget pages */
+    void setupUi();
+    /** @brief Build the image-selection wizard page */
     void createImageSelectionPage();
+    /** @brief Build the drive-selection wizard page */
     void createDriveSelectionPage();
+    /** @brief Build the flash-progress wizard page */
     void createFlashProgressPage();
+    /** @brief Build the completion/summary wizard page */
     void createCompletionPage();
-    
+
+    /** @brief Show or hide back/next/flash buttons per current page */
     void updateNavigationButtons();
+    /** @brief Validate the selected image file format and readability */
     void validateImageFile(const QString& filePath);
+    /** @brief Ask the user to confirm before destructive write */
     void showConfirmationDialog();
-    
+
+    /** @brief Return true if the device path belongs to the OS drive */
     bool isSystemDrive(const QString& devicePath) const;
+    /** @brief Return true if the ISO is a Windows installer (needs special handling) */
     bool isWindowsInstallISO(const QString& isoPath) const;
+    /** @brief Create a bootable Windows USB instead of raw flash */
     void createWindowsUSB();
+    /** @brief Format a byte count as a human-readable string */
     QString formatFileSize(qint64 bytes) const;
+    /** @brief Format a transfer speed in MB/s */
     QString formatSpeed(double mbps) const;
 
     // UI Components
@@ -167,5 +193,7 @@ private:
     QStringList m_selectedDrives;
     bool m_isFlashing;
     int m_currentPage;
-    sak::LogToggleSwitch* m_logToggle{nullptr};
+    LogToggleSwitch* m_logToggle{nullptr};
 };
+
+} // namespace sak

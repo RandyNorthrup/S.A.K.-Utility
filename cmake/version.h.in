@@ -14,7 +14,7 @@
 // Build configuration
 #define SAK_BUILD_DATE __DATE__
 #define SAK_BUILD_TIME __TIME__
-#define SAK_BUILD_TYPE "@CMAKE_BUILD_TYPE@"
+#define SAK_BUILD_TYPE "@SAK_RESOLVED_BUILD_TYPE@"
 #define SAK_COMPILER_ID "@CMAKE_CXX_COMPILER_ID@"
 #define SAK_COMPILER_VERSION "@CMAKE_CXX_COMPILER_VERSION@"
 
@@ -22,8 +22,8 @@
 #define SAK_PRODUCT_NAME "S.A.K. Utility"
 #define SAK_PRODUCT_FULL_NAME "Swiss Army Knife Utility"
 #define SAK_PRODUCT_DESCRIPTION "PC Technician's Toolkit - Windows PC Migration & Backup Tool"
-#define SAK_COPYRIGHT "Copyright (C) 2025 Randy Northrup"
-#define SAK_LICENSE "GNU General Public License v2.0"
+#define SAK_COPYRIGHT "Copyright (C) 2025-2026 Randy Northrup"
+#define SAK_LICENSE "AGPL-3.0-or-later"
 
 // Organization information
 #define SAK_ORGANIZATION_NAME "SAK"

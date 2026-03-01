@@ -1,6 +1,9 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+/// @file flash_worker.cpp
+/// @brief Implements the background worker thread for USB image flashing operations
+
 #include "sak/flash_worker.h"
 #include "sak/keep_awake.h"
 #include "sak/logger.h"
@@ -291,8 +294,12 @@ bool FlashWorker::writeImage() {
         updateSpeed(m_bytesWritten);
     }
     
-    // Flush buffers
-    FlushFileBuffers(m_deviceHandle);
+    // Flush buffers and check for failure to prevent silent data loss.
+    if (!FlushFileBuffers(m_deviceHandle)) {
+        DWORD flushError = GetLastError();
+        sak::logError(QString("FlushFileBuffers failed with error %1").arg(flushError).toStdString());
+        return false;
+    }
     
     sak::logInfo(QString("Wrote %1 bytes").arg(m_bytesWritten).toStdString());
     return !stopRequested();
@@ -393,10 +400,18 @@ sak::ValidationResult FlashWorker::verifySample() {
     int samplesVerified = 0;
     result.passed = true;
     
+    // Guard against images smaller than one block — nothing to sample.
+    const qint64 totalBlocks = m_totalBytes / blockSize;
+    if (totalBlocks < 1) {
+        sak::logWarning("Image too small for sample verification, skipping");
+        return result;
+    }
+    
     for (int i = 0; i < numSamples && !stopRequested(); ++i) {
-        // Calculate random offset aligned to block boundary
-        qint64 maxOffset = (m_totalBytes / blockSize) - 1;
-        qint64 blockIndex = QRandomGenerator::global()->bounded(maxOffset);
+        // Calculate random offset aligned to block boundary.
+        // bounded() takes an exclusive upper bound, so pass totalBlocks directly
+        // to produce indices in [0, totalBlocks - 1].
+        qint64 blockIndex = QRandomGenerator::global()->bounded(totalBlocks);
         qint64 offset = blockIndex * blockSize;
         
         // Read from source

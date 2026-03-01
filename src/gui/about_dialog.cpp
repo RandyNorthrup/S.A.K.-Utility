@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "sak/about_dialog.h"
+#include "sak/style_constants.h"
 #include "sak/version.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -36,16 +37,17 @@ void AboutDialog::setupUi()
     
     m_icon_label = new QLabel(this);
     m_icon_label->setFixedSize(64, 64);
+    m_icon_label->setAccessibleName(QStringLiteral("S.A.K. Utility application icon"));
     m_icon_label->setStyleSheet("QLabel { background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #3b82f6, stop:1 #2563eb); border-radius: 12px; }");
     header_layout->addWidget(m_icon_label);
     
     auto* title_layout = new QVBoxLayout();
     m_title_label = new QLabel("<b>S.A.K. Utility</b>", this);
-    m_title_label->setStyleSheet("font-size: 18pt; font-weight: 700; color: #0f172a;");
+    m_title_label->setStyleSheet(QString("font-size: %1pt; font-weight: 700; color: %2;").arg(sak::ui::kFontSizeTitle).arg(sak::ui::kColorTextPrimary));
     title_layout->addWidget(m_title_label);
     
     m_version_label = new QLabel(getVersionInfo(), this);
-    m_version_label->setStyleSheet("font-size: 10pt; color: #64748b;");
+    m_version_label->setStyleSheet(QString("font-size: %1pt; color: %2;").arg(sak::ui::kFontSizeBody).arg(sak::ui::kColorTextMuted));
     title_layout->addWidget(m_version_label);
     
     header_layout->addLayout(title_layout);
@@ -85,7 +87,7 @@ void AboutDialog::setupAboutTab()
         "<p><b>Core Features:</b></p>"
         "<ul>"
         "<li>User Profile Backup & Restore - Comprehensive wizards for PC migrations</li>"
-        "<li>Application Migration - Automated software reinstallation via Chocolatey</li>"
+        "<li>Application Installation - Automated software reinstallation via Chocolatey</li>"
         "<li>Directory Organizer - Quick file sorting by extension</li>"
         "<li>Duplicate File Finder - Free up disk space with MD5 detection</li>"
         "<li>License Key Scanner - Locate registry-stored product keys</li>"
@@ -168,7 +170,7 @@ QString AboutDialog::getCreditsText() const
 <li><b>Chocolatey</b> - Windows package manager (embedded)
     <br/>Licensed under Apache 2.0
     <br/><a href="https://chocolatey.org/">https://chocolatey.org/</a>
-    <br/>Used for: Application migration and automated software installation</li>
+    <br/>Used for: Application installation and automated software management</li>
 </ul>
 
 <h3>Special Thanks</h3>

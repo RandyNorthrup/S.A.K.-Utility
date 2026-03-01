@@ -1,7 +1,8 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-#include "sak/app_migration_worker.h"
+#include "sak/app_installation_worker.h"
+#include "sak/logger.h"
 #include "sak/chocolatey_manager.h"
 #include "sak/migration_report.h"
 #include "sak/app_scanner.h"
@@ -9,35 +10,39 @@
 #include <QThread>
 #include <QMetaObject>
 #include <QTimer>
-#include <QDebug>
 #include <QtConcurrent>
 
 namespace sak {
 
-AppMigrationWorker::AppMigrationWorker(std::shared_ptr<ChocolateyManager> chocoManager,
+AppInstallationWorker::AppInstallationWorker(std::shared_ptr<ChocolateyManager> chocoManager,
                                        QObject* parent)
     : QObject(parent)
     , m_chocoManager(chocoManager)
 {
     // Connect to Chocolatey manager signals
     connect(m_chocoManager.get(), &ChocolateyManager::installStarted,
-            this, &AppMigrationWorker::onInstallStarted);
+            this, &AppInstallationWorker::onInstallStarted);
     connect(m_chocoManager.get(), &ChocolateyManager::installSuccess,
-            this, &AppMigrationWorker::onInstallSuccess);
+            this, &AppInstallationWorker::onInstallSuccess);
     connect(m_chocoManager.get(), &ChocolateyManager::installFailed,
-            this, &AppMigrationWorker::onInstallFailed);
+            this, &AppInstallationWorker::onInstallFailed);
     connect(m_chocoManager.get(), &ChocolateyManager::installRetrying,
-            this, &AppMigrationWorker::onInstallRetrying);
+            this, &AppInstallationWorker::onInstallRetrying);
 }
 
-AppMigrationWorker::~AppMigrationWorker() {
+AppInstallationWorker::~AppInstallationWorker() {
+    // Ensure background thread is stopped before destruction
+    cancel();
+    if (m_processFuture.isRunning()) {
+        m_processFuture.waitForFinished();
+    }
 }
 
-int AppMigrationWorker::startMigration(std::shared_ptr<MigrationReport> report, int maxConcurrent) {
+int AppInstallationWorker::startMigration(std::shared_ptr<MigrationReport> report, int maxConcurrent) {
     QMutexLocker locker(&m_mutex);
     
     if (m_running) {
-        qWarning() << "[AppMigrationWorker] Migration already running";
+        sak::logWarning("[AppInstallationWorker] Installation already running");
         return 0;
     }
     
@@ -90,7 +95,7 @@ int AppMigrationWorker::startMigration(std::shared_ptr<MigrationReport> report, 
     return totalJobs;
 }
 
-void AppMigrationWorker::pause() {
+void AppInstallationWorker::pause() {
     QMutexLocker locker(&m_mutex);
     
     if (!m_running || m_paused) {
@@ -101,7 +106,7 @@ void AppMigrationWorker::pause() {
     Q_EMIT migrationPaused();
 }
 
-void AppMigrationWorker::resume() {
+void AppInstallationWorker::resume() {
     QMutexLocker locker(&m_mutex);
     
     if (!m_running || !m_paused) {
@@ -115,7 +120,7 @@ void AppMigrationWorker::resume() {
     Q_EMIT migrationResumed();
 }
 
-void AppMigrationWorker::cancel() {
+void AppInstallationWorker::cancel() {
     QMutexLocker locker(&m_mutex);
     
     if (!m_running) {
@@ -143,17 +148,17 @@ void AppMigrationWorker::cancel() {
     Q_EMIT migrationCancelled();
 }
 
-bool AppMigrationWorker::isRunning() const {
+bool AppInstallationWorker::isRunning() const {
     QMutexLocker locker(&m_mutex);
     return m_running;
 }
 
-bool AppMigrationWorker::isPaused() const {
+bool AppInstallationWorker::isPaused() const {
     QMutexLocker locker(&m_mutex);
     return m_paused;
 }
 
-AppMigrationWorker::Stats AppMigrationWorker::getStats() const {
+AppInstallationWorker::Stats AppInstallationWorker::getStats() const {
     QMutexLocker locker(&m_mutex);
     
     Stats stats;
@@ -174,12 +179,12 @@ AppMigrationWorker::Stats AppMigrationWorker::getStats() const {
     return stats;
 }
 
-QVector<MigrationJob> AppMigrationWorker::getJobs() const {
+QVector<MigrationJob> AppInstallationWorker::getJobs() const {
     QMutexLocker locker(&m_mutex);
     return m_jobs;
 }
 
-void AppMigrationWorker::processQueue() {
+void AppInstallationWorker::processQueue() {
     while (true) {
         {
             QMutexLocker locker(&m_mutex);
@@ -249,7 +254,7 @@ void AppMigrationWorker::processQueue() {
     }
 }
 
-bool AppMigrationWorker::installPackage(MigrationJob& job) {
+bool AppInstallationWorker::installPackage(MigrationJob& job) {
     // Update status to installing
     job.status = MigrationStatus::Installing;
     job.startTime = QDateTime::currentDateTime();
@@ -278,7 +283,7 @@ bool AppMigrationWorker::installPackage(MigrationJob& job) {
         job.status = MigrationStatus::Failed;
         job.errorMessage = result.error_message.isEmpty() ? "Installation failed" : result.error_message;
         Q_EMIT jobProgress(job.entryIndex, "Failed to install " + job.packageId);
-        qWarning() << "[AppMigrationWorker] Failed:" << job.packageId << "-" << job.errorMessage;
+        sak::logWarning("[AppInstallationWorker] Failed: {} - {}", job.packageId.toStdString(), job.errorMessage.toStdString());
     }
     
     Q_EMIT jobStatusChanged(job.entryIndex, job);
@@ -286,7 +291,7 @@ bool AppMigrationWorker::installPackage(MigrationJob& job) {
     return success;
 }
 
-void AppMigrationWorker::updateJobStatus(int index, MigrationStatus status, const QString& error) {
+void AppInstallationWorker::updateJobStatus(int index, MigrationStatus status, const QString& error) {
     QMutexLocker locker(&m_mutex);
     
     if (index < 0 || index >= m_jobs.size()) {
@@ -301,30 +306,30 @@ void AppMigrationWorker::updateJobStatus(int index, MigrationStatus status, cons
     Q_EMIT jobStatusChanged(m_jobs[index].entryIndex, m_jobs[index]);
 }
 
-bool AppMigrationWorker::shouldRetry(const MigrationJob& job) const {
+bool AppInstallationWorker::shouldRetry(const MigrationJob& job) const {
     return job.status == MigrationStatus::Failed && 
            job.retryCount < MAX_RETRIES &&
            !m_cancelled;
 }
 
-int AppMigrationWorker::getRetryDelay(int retryCount) const {
+int AppInstallationWorker::getRetryDelay(int retryCount) const {
     // Exponential backoff: 5s, 10s, 20s
     return BASE_RETRY_DELAY_MS * (1 << retryCount);
 }
 
-void AppMigrationWorker::onInstallStarted(const QString& packageId) {
+void AppInstallationWorker::onInstallStarted(const QString& packageId) {
     Q_EMIT jobProgress(-1, "Starting installation of " + packageId);
 }
 
-void AppMigrationWorker::onInstallSuccess(const QString& packageId) {
+void AppInstallationWorker::onInstallSuccess(const QString& packageId) {
     Q_EMIT jobProgress(-1, "Successfully installed " + packageId);
 }
 
-void AppMigrationWorker::onInstallFailed(const QString& packageId, const QString& error) {
+void AppInstallationWorker::onInstallFailed(const QString& packageId, const QString& error) {
     Q_EMIT jobProgress(-1, "Failed to install " + packageId + ": " + error);
 }
 
-void AppMigrationWorker::onInstallRetrying(const QString& packageId, int attempt) {
+void AppInstallationWorker::onInstallRetrying(const QString& packageId, int attempt) {
     Q_EMIT jobProgress(-1, QString("Retrying %1 (attempt %2)").arg(packageId).arg(attempt));
 }
 

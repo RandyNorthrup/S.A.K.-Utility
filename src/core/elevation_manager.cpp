@@ -1,6 +1,9 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+/// @file elevation_manager.cpp
+/// @brief Implements Windows UAC elevation detection and privilege management
+
 #include "sak/elevation_manager.h"
 
 #ifdef _WIN32
@@ -59,10 +62,10 @@ bool ElevationManager::isUserAdmin() noexcept
 }
 
 auto ElevationManager::get_executable_path()
-    -> std::expected<std::string, sak::error_code>
+    -> std::expected<std::wstring, sak::error_code>
 {
-    char path[MAX_PATH];
-    DWORD result = GetModuleFileNameA(nullptr, path, MAX_PATH);
+    wchar_t path[MAX_PATH];
+    DWORD result = GetModuleFileNameW(nullptr, path, MAX_PATH);
     
     if (result == 0 || result == MAX_PATH) {
         DWORD error = GetLastError();
@@ -70,10 +73,10 @@ auto ElevationManager::get_executable_path()
         return std::unexpected(sak::error_code::execution_failed);
     }
 
-    return std::string(path);
+    return std::wstring(path);
 }
 
-std::string ElevationManager::get_command_line_args()
+std::wstring ElevationManager::get_command_line_args()
 {
     LPWSTR cmd_line = GetCommandLineW();
     
@@ -81,25 +84,20 @@ std::string ElevationManager::get_command_line_args()
     int argc;
     LPWSTR* argv = CommandLineToArgvW(cmd_line, &argc);
     
-    std::string args;
+    std::wstring args;
     if (argv && argc > 1) {
         for (int i = 1; i < argc; ++i) {
             if (i > 1) {
-                args += " ";
+                args += L" ";
             }
             
-            // Convert wide string to narrow
-            int size = WideCharToMultiByte(CP_UTF8, 0, argv[i], -1, nullptr, 0, nullptr, nullptr);
-            if (size > 0) {
-                std::string arg(static_cast<size_t>(size - 1), '\0');
-                WideCharToMultiByte(CP_UTF8, 0, argv[i], -1, arg.data(), size, nullptr, nullptr);
-                
-                // Quote if contains spaces
-                if (arg.find(' ') != std::string::npos) {
-                    args += "\"" + arg + "\"";
-                } else {
-                    args += arg;
-                }
+            std::wstring arg(argv[i]);
+            
+            // Quote if contains spaces
+            if (arg.find(L' ') != std::wstring::npos) {
+                args += L"\"" + arg + L"\"";
+            } else {
+                args += arg;
             }
         }
     }
@@ -124,27 +122,33 @@ auto ElevationManager::restartElevated(bool wait_for_exit)
         return std::unexpected(exe_path_result.error());
     }
 
-    std::string args = get_command_line_args();
+    std::wstring args = get_command_line_args();
     
-    sak::logInfo("Restarting with elevation: {} {}", exe_path_result.value(), args);
+    // Log using narrow-string conversion for log output
+    int logLen = WideCharToMultiByte(CP_UTF8, 0, exe_path_result.value().c_str(), -1, nullptr, 0, nullptr, nullptr);
+    std::string logPath(logLen > 0 ? static_cast<size_t>(logLen - 1) : 0, '\0');
+    if (logLen > 0) {
+        WideCharToMultiByte(CP_UTF8, 0, exe_path_result.value().c_str(), -1, logPath.data(), logLen, nullptr, nullptr);
+    }
+    sak::logInfo("Restarting with elevation: {}", logPath);
 
     return executeElevated(exe_path_result.value(), args, wait_for_exit);
 }
 
 auto ElevationManager::executeElevated(
-    const std::string& executable,
-    const std::string& arguments,
+    const std::wstring& executable,
+    const std::wstring& arguments,
     bool wait_for_exit)
     -> std::expected<void, sak::error_code>
 {
-    SHELLEXECUTEINFOA sei = { sizeof(SHELLEXECUTEINFOA) };
-    sei.lpVerb = "runas";  // Request elevation
+    SHELLEXECUTEINFOW sei = { sizeof(SHELLEXECUTEINFOW) };
+    sei.lpVerb = L"runas";  // Request elevation
     sei.lpFile = executable.c_str();
     sei.lpParameters = arguments.empty() ? nullptr : arguments.c_str();
     sei.nShow = SW_NORMAL;
     sei.fMask = SEE_MASK_NOCLOSEPROCESS;
 
-    if (!ShellExecuteExA(&sei)) {
+    if (!ShellExecuteExW(&sei)) {
         DWORD error = GetLastError();
         
         if (error == ERROR_CANCELLED) {

@@ -14,6 +14,10 @@
 namespace sak {
 
 QByteArray TransferSecurityManager::generateRandomBytes(int size) {
+    if (size <= 0) {
+        logWarning("TransferSecurityManager::generateRandomBytes called with non-positive size {}", size);
+        return {};
+    }
     QByteArray result(size, 0);
 #ifdef _WIN32
     BCRYPT_ALG_HANDLE hAlg = nullptr;
@@ -21,7 +25,7 @@ QByteArray TransferSecurityManager::generateRandomBytes(int size) {
         return {};
     }
 
-    if (BCryptGenRandom(hAlg, reinterpret_cast<PUCHAR>(result.data()), size, 0) != 0) {
+    if (BCryptGenRandom(hAlg, reinterpret_cast<PUCHAR>(result.data()), static_cast<ULONG>(size), 0) != 0) {
         BCryptCloseAlgorithmProvider(hAlg, 0);
         return {};
     }

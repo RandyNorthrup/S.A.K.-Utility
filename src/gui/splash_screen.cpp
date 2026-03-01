@@ -1,7 +1,7 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-#include "gui/splash_screen.h"
+#include "sak/splash_screen.h"
 
 #include <QApplication>
 #include <QPainter>

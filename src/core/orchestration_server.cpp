@@ -1,4 +1,4 @@
-// Copyright (c) 2025 Randy Northrup. All rights reserved.
+﻿// Copyright (c) 2025 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "sak/orchestration_server.h"
@@ -6,6 +6,7 @@
 #include <QTcpServer>
 #include <QTcpSocket>
 #include <QJsonObject>
+#include "sak/logger.h"
 
 namespace sak {
 

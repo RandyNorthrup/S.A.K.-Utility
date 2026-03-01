@@ -1,6 +1,9 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+/// @file export_registry_keys_action.cpp
+/// @brief Implements Windows registry key export and backup
+
 #include "sak/actions/export_registry_keys_action.h"
 #include "sak/process_runner.h"
 #include <QDir>
@@ -19,7 +22,7 @@ void ExportRegistryKeysAction::exportKey(const QString& key_path, const QString&
     QString output_file = m_backup_location + "/Registry/" + filename;
     QString cmd = QString("reg export \"%1\" \"%2\" /y").arg(key_path, output_file);
     ProcessResult proc = runProcess("cmd.exe", QStringList() << "/c" << cmd, 10000);
-    if (proc.timed_out || proc.exit_code != 0) {
+    if (!proc.succeeded()) {
         Q_EMIT logMessage("Registry export warning: " + proc.std_err.trimmed());
     }
     

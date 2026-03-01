@@ -1,6 +1,9 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+/// @file browser_profile_backup_action.cpp
+/// @brief Implements browser profile data backup for major web browsers
+
 #include "sak/actions/browser_profile_backup_action.h"
 #include "sak/windows_user_scanner.h"
 #include <QDir>

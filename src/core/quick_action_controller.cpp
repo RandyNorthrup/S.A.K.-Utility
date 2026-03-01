@@ -253,8 +253,8 @@ void QuickActionController::executeAction(const QString& action_name, bool requi
 
         const QString exe_path = QCoreApplication::applicationFilePath();
         auto elevation_result = ElevationManager::executeElevated(
-            exe_path.toStdString(),
-            arg_string.toStdString(),
+            exe_path.toStdWString(),
+            arg_string.toStdWString(),
             true);
 
         QuickAction::ExecutionResult result;

@@ -15,6 +15,7 @@
 
 #include "sak/linux_iso_downloader.h"
 #include "sak/bundled_tools_manager.h"
+#include "sak/format_utils.h"
 #include "sak/logger.h"
 
 #include <QCoreApplication>
@@ -30,13 +31,7 @@
 #include <QNetworkReply>
 
 namespace {
-QString formatSize(qint64 bytes)
-{
-    if (bytes < 1024) return QString("%1 B").arg(bytes);
-    if (bytes < 1024 * 1024) return QString("%1 KB").arg(bytes / 1024.0, 0, 'f', 1);
-    if (bytes < 1024LL * 1024 * 1024) return QString("%1 MB").arg(bytes / (1024.0 * 1024.0), 0, 'f', 1);
-    return QString("%1 GB").arg(bytes / (1024.0 * 1024.0 * 1024.0), 0, 'f', 2);
-}
+QString formatSize(qint64 bytes) { return sak::formatBytes(bytes); }
 } // anonymous namespace
 
 // ============================================================================
@@ -408,7 +403,9 @@ void LinuxISODownloader::onProgressPollTimer()
             int percent = match.captured(3).toInt();
             QString dlSpeedStr = match.captured(4);
 
-            // Parse speed — could be bytes or human-readable
+            // Normalise to MiB/s — aria2c switches units dynamically
+            // (e.g. "512KiB" at low speed, "2.3MiB" at high speed),
+            // so we must handle every variant to display correct values.
             double speedMBps = 0.0;
             if (dlSpeedStr.endsWith("MiB")) {
                 speedMBps = dlSpeedStr.chopped(3).toDouble();
@@ -417,7 +414,8 @@ void LinuxISODownloader::onProgressPollTimer()
             } else if (dlSpeedStr.endsWith("GiB")) {
                 speedMBps = dlSpeedStr.chopped(3).toDouble() * 1024.0;
             } else {
-                // Raw bytes
+                // Fallback: aria2c sometimes omits the suffix entirely
+                // when reporting raw bytes/sec.
                 speedMBps = dlSpeedStr.toDouble() / (1024.0 * 1024.0);
             }
 

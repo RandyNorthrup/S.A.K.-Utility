@@ -67,7 +67,7 @@ private Q_SLOTS:
     void onStatusMessage(const QString& message);
 
 private:
-    void setupUI();
+    void setupUi();
     void connectSignals();
     void populateDistroList();
     void updateDistroDetails();

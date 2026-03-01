@@ -17,7 +17,6 @@ class DuplicateFinderWorker;
 namespace sak {
 class DetachableLogWindow;
 class LogToggleSwitch;
-}
 
 /**
  * @brief Duplicate file finder feature panel
@@ -37,7 +36,7 @@ public:
     DuplicateFinderPanel& operator=(DuplicateFinderPanel&&) = delete;
 
     /** @brief Access the log toggle switch for MainWindow connection */
-    sak::LogToggleSwitch* logToggle() const { return m_logToggle; }
+    LogToggleSwitch* logToggle() const { return m_logToggle; }
 
 Q_SIGNALS:
     void statusMessage(const QString& message, int timeout_ms);
@@ -53,10 +52,10 @@ private Q_SLOTS:
     
     void onWorkerStarted();
     void onWorkerFinished();
-    void onWorkerFailed(int error_code, const QString& error_message);
+    void onWorkerFailed(int errorCode, const QString& errorMessage);
     void onWorkerCancelled();
     void onScanProgress(int current, int total, const QString& path);
-    void onResultsReady(const QString& summary, int duplicate_count, qint64 wasted_space);
+    void onResultsReady(const QString& summary, int duplicateCount, qint64 wastedSpace);
 
 private:
     void setupUi();
@@ -75,8 +74,10 @@ private:
     QPushButton* m_scan_button{nullptr};
     QPushButton* m_cancel_button{nullptr};
     
-    sak::LogToggleSwitch* m_logToggle{nullptr};
+    LogToggleSwitch* m_logToggle{nullptr};
     
     std::unique_ptr<DuplicateFinderWorker> m_worker;
     bool m_operation_running{false};
 };
+
+} // namespace sak

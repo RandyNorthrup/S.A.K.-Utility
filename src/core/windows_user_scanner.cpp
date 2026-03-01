@@ -1,4 +1,4 @@
-// Copyright (c) 2025 Randy Northrup. All rights reserved.
+﻿// Copyright (c) 2025 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "sak/windows_user_scanner.h"
@@ -13,6 +13,7 @@
 #include <sddl.h>
 #include <userenv.h>
 #include <wtsapi32.h>
+#include "sak/logger.h"
 #pragma comment(lib, "netapi32.lib")
 #pragma comment(lib, "userenv.lib")
 #pragma comment(lib, "wtsapi32.lib")

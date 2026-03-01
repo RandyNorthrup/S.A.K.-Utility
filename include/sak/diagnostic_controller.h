@@ -13,6 +13,7 @@
 #include <QString>
 
 #include <memory>
+#include <atomic>
 
 namespace sak {
 
@@ -234,8 +235,8 @@ private:
 
     // State
     SuiteState m_suite_state{SuiteState::Idle};
-    bool m_running_suite{false};
-    bool m_skipping_step{false};       ///< Guards skipCurrentStep from double-advance
+    std::atomic<bool> m_running_suite{false};
+    std::atomic<bool> m_skipping_step{false};       ///< Guards skipCurrentStep from double-advance
     DiagnosticReportData m_report_data;
 
     // Async operation futures (prevent fire-and-forget)

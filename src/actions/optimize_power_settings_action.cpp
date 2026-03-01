@@ -1,6 +1,9 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+/// @file optimize_power_settings_action.cpp
+/// @brief Implements Windows power plan optimization for performance
+
 #include "sak/actions/optimize_power_settings_action.h"
 #include "sak/process_runner.h"
 #include <QRegularExpression>
@@ -70,7 +73,7 @@ bool OptimizePowerSettingsAction::setPowerPlan(const QString& guid) {
     if (!proc.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("Power plan activate warning: " + proc.std_err.trimmed());
     }
-    return !proc.timed_out && proc.exit_code == 0;
+    return proc.succeeded();
 }
 
 // ENTERPRISE-GRADE: Get active power plan using powercfg -GETACTIVESCHEME

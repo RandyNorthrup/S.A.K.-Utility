@@ -58,77 +58,144 @@ Q_SIGNALS:
     void logOutput(const QString& message);
 
 private Q_SLOTS:
+    /** @brief Switch between Source / Destination / Orchestrator modes */
     void onModeChanged(int index);
+    /** @brief Scan the local machine for Windows user profiles */
     void onScanUsers();
+    /** @brief Open the customization dialog for the selected user */
     void onCustomizeUser();
+    /** @brief Broadcast a peer-discovery request on the LAN */
     void onDiscoverPeers();
+    /** @brief Begin sending data as the source machine */
     void onStartSource();
+    /** @brief Begin receiving data as the destination machine */
     void onStartDestination();
+    /** @brief Approve an incoming transfer manifest */
     void onApproveTransfer();
+    /** @brief Reject an incoming transfer manifest */
     void onRejectTransfer();
+    /** @brief Connect to a remote orchestrator server */
     void onConnectOrchestrator();
+    /** @brief Handle a deployment assignment received from orchestrator */
     void onOrchestrationAssignment(const DeploymentAssignment& assignment);
+    /** @brief Start a local orchestrator server for multi-PC deployments */
     void onStartOrchestratorServer();
+    /** @brief Scan user profiles on the orchestrator source machine */
     void onScanOrchestratorUsers();
+    /** @brief Launch the orchestrated deployment to all destinations */
     void onStartDeployment();
+    /** @brief Pause the running deployment */
     void onPauseDeployment();
+    /** @brief Resume a previously paused deployment */
     void onResumeDeployment();
+    /** @brief Cancel the deployment and clean up */
     void onCancelDeployment();
+    /** @brief Persist the current mapping configuration as a template */
     void onSaveDeploymentTemplate();
+    /** @brief Load a previously saved deployment template */
     void onLoadDeploymentTemplate();
+    /** @brief Insert or update a destination row when it registers */
     void onOrchestratorDestinationRegistered(const DestinationPC& destination);
+    /** @brief Update a destination row with new metadata */
     void onOrchestratorDestinationUpdated(const DestinationPC& destination);
+    /** @brief Remove a destination row when it disconnects */
     void onOrchestratorDestinationRemoved(const QString& destination_id);
+    /** @brief Update progress display for orchestrated deployments */
     void onOrchestratorProgress(const DeploymentProgress& progress);
+    /** @brief Handle orchestrated deployment completion */
     void onOrchestratorCompletion(const DeploymentCompletion& completion);
+    /** @brief Start a single job transferring from source to destination */
     void onJobStartRequested(const QString& job_id,
                              const MappingEngine::SourceProfile& source,
                              const DestinationPC& destination);
+    /** @brief Update the jobs table progress for a running job */
     void onJobUpdated(const QString& job_id, int progress_percent);
+    /** @brief Handle a single job completing (success or failure) */
     void onJobCompleted(const QString& job_id, bool success, const QString& error_message);
+    /** @brief Update the aggregate progress bar and ETA */
     void onAggregateProgress(int completed, int total, int percent);
+    /** @brief Update the parallel deployment progress summary */
     void onParallelDeploymentProgress(int completed, int total);
+    /** @brief Pause the selected job */
     void onPauseJob();
+    /** @brief Resume the selected paused job */
     void onResumeJob();
+    /** @brief Retry the selected failed job */
     void onRetryJob();
+    /** @brief Cancel the selected running job */
     void onCancelJob();
+    /** @brief Export full deployment history to JSON */
     void onExportDeploymentHistory();
+    /** @brief Export deployment summary as CSV */
     void onExportDeploymentSummaryCsv();
+    /** @brief Export deployment summary as PDF */
     void onExportDeploymentSummaryPdf();
+    /** @brief Recover and resume the last interrupted deployment */
     void onRecoverLastDeployment();
+    /** @brief Handle parallel deployment completion event */
     void onParallelDeploymentCompleted(const QString& deployment_id, bool success);
+    /** @brief Handle a newly discovered LAN peer */
     void onPeerDiscovered(const TransferPeerInfo& peer);
+    /** @brief Handle a received transfer manifest from a peer */
     void onManifestReceived(const TransferManifest& manifest);
+    /** @brief Update byte-level transfer progress */
     void onTransferProgress(qint64 bytes, qint64 total);
+    /** @brief Handle direct peer-to-peer transfer completion */
     void onTransferCompleted(bool success, const QString& message);
+    /** @brief Open the security settings dialog */
     void onSecuritySettings();
+    /** @brief Open the network settings dialog */
     void onNetworkSettings();
 
 private:
+    /** @brief Build the panel layout with mode selector and stacked pages */
     void setupUi();
+    /** @brief Wire signals/slots between widgets and backend objects */
     void setupConnections();
+    /** @brief Load persisted transfer settings from QSettings */
     void loadSettings();
+    /** @brief Build a transfer manifest from the selected user profiles */
     void buildManifest();
+    /** @brief Enumerate files to transfer for all selected users */
     QVector<TransferFileEntry> buildFileList();
+    /** @brief Enumerate files for a specific set of user profiles */
     QVector<TransferFileEntry> buildFileListForUsers(const QVector<UserProfile>& users);
+    /** @brief Create a manifest payload from the enumerated file list */
     TransferManifest buildManifestPayload(const QVector<TransferFileEntry>& files);
+    /** @brief Create a manifest payload for specific user profiles */
     TransferManifest buildManifestPayloadForUsers(const QVector<TransferFileEntry>& files,
                                                   const QVector<UserProfile>& users);
+    /** @brief Return the destination base directory from user input */
     QString destinationBase() const;
+    /** @brief Reload the orchestrator destination table from server state */
     void refreshOrchestratorDestinations();
+    /** @brief Reload the jobs table from the parallel transfer manager */
     void refreshJobsTable();
+    /** @brief Build a deployment mapping from the current UI configuration */
     MappingEngine::DeploymentMapping buildDeploymentMapping();
+    /** @brief Reload the deployment history table from the history manager */
     void refreshDeploymentHistory();
+    /** @brief Reload the assignment queue table from the queue store */
     void refreshAssignmentQueue();
+    /** @brief Reload the assignment status table with current job states */
     void refreshAssignmentStatus();
+    /** @brief Activate a queued assignment for execution */
     void activateAssignment(const DeploymentAssignment& assignment);
+    /** @brief Save the current assignment queue to persistent storage */
     void persistAssignmentQueue() const;
+    /** @brief Update UI when orchestrator connection state changes */
     void onConnectionStateChanged(bool connected);
+    /** @brief Enable or disable the transfer button based on current state */
     void updateTransferButton();
+    /** @brief Toggle the pause/resume button label and icon */
     void updatePauseResumeButton();
+    /** @brief Event filter for drag-and-drop user-to-destination mapping */
     bool eventFilter(QObject* obj, QEvent* event) override;
+    /** @brief Insert or update a custom user-to-destination mapping rule */
     void upsertCustomRule(const QString& sourceUser, const QString& destinationId);
+    /** @brief Extract the destination ID from a table row */
     QString destinationIdForRow(int row) const;
+    /** @brief Parse a dragged user name from MIME data */
     QString extractDraggedUserName(const QMimeData* mime) const;
 
     // UI elements

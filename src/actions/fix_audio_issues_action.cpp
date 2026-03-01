@@ -1,6 +1,9 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+/// @file fix_audio_issues_action.cpp
+/// @brief Implements automated Windows audio troubleshooting and repair
+
 #include "sak/actions/fix_audio_issues_action.h"
 #include "sak/process_runner.h"
 #include <QThread>

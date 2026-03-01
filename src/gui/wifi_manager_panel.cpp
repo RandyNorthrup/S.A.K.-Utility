@@ -1,7 +1,13 @@
 ﻿// Copyright (c) 2025 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+/// @file wifi_manager_panel.cpp
+/// @brief Implements the Wi-Fi network manager panel UI with QR code generation
+
 #include "sak/wifi_manager_panel.h"
+#include "sak/logger.h"
+#include "sak/style_constants.h"
+#include "sak/widget_helpers.h"
 #include "qrcodegen.hpp"
 
 #include <QCheckBox>
@@ -24,6 +30,7 @@
 #include <QLineEdit>
 #include <QMessageBox>
 #include <QMimeData>
+#include <QScrollArea>
 #include <QPainter>
 #include <QPainterPath>
 #include <QPdfWriter>
@@ -161,14 +168,24 @@ WifiManagerPanel::~WifiManagerPanel() = default;
 // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 void WifiManagerPanel::setupUi()
 {
-    auto* rootLayout = new QVBoxLayout(this);
+    auto* outerLayout = new QVBoxLayout(this);
+    outerLayout->setContentsMargins(0, 0, 0, 0);
+
+    auto* scrollArea = new QScrollArea(this);
+    scrollArea->setWidgetResizable(true);
+    scrollArea->setFrameShape(QFrame::NoFrame);
+
+    auto* contentWidget = new QWidget(scrollArea);
+    auto* rootLayout = new QVBoxLayout(contentWidget);
     rootLayout->setContentsMargins(8, 8, 8, 8);
     rootLayout->setSpacing(6);
 
-    // Title bar
-    auto* titleLabel = new QLabel("<b>WiFi Manager</b>", this);
-    titleLabel->setStyleSheet("font-size: 13pt;");
-    rootLayout->addWidget(titleLabel);
+    scrollArea->setWidget(contentWidget);
+    outerLayout->addWidget(scrollArea);
+
+    // Panel header — consistent title + muted subtitle
+    sak::createPanelHeader(contentWidget, tr("WiFi Manager"),
+        tr("Manage, share, and deploy Wi-Fi network profiles"), rootLayout);
 
     // Main content: horizontal splitter form | table
     auto* splitter = new QSplitter(Qt::Horizontal, this);
@@ -184,6 +201,27 @@ void WifiManagerPanel::setupUi()
     rootLayout->addWidget(splitter, 1);
 
     setupActionButtons();
+
+    // A11Y-07: explicit tab order for keyboard navigation
+    setTabOrder(m_ssid_input,            m_location_input);
+    setTabOrder(m_location_input,        m_password_input);
+    setTabOrder(m_password_input,        m_password_toggle_btn);
+    setTabOrder(m_password_toggle_btn,   m_security_combo);
+    setTabOrder(m_security_combo,        m_hidden_checkbox);
+    setTabOrder(m_hidden_checkbox,       m_connect_phone_btn);
+    setTabOrder(m_connect_phone_btn,     m_add_table_btn);
+    setTabOrder(m_add_table_btn,         m_search_input);
+    setTabOrder(m_search_input,          m_search_up_btn);
+    setTabOrder(m_search_up_btn,         m_search_down_btn);
+    setTabOrder(m_search_down_btn,       m_network_table);
+    setTabOrder(m_network_table,         m_delete_selected_btn);
+    setTabOrder(m_delete_selected_btn,   m_add_to_windows_btn);
+    setTabOrder(m_add_to_windows_btn,    m_save_table_btn);
+    setTabOrder(m_save_table_btn,        m_load_table_btn);
+    setTabOrder(m_load_table_btn,        m_generate_qr_btn);
+    setTabOrder(m_generate_qr_btn,       m_export_script_btn);
+    setTabOrder(m_export_script_btn,     m_export_macos_btn);
+    setTabOrder(m_export_macos_btn,      m_scan_networks_btn);
 }
 
 void WifiManagerPanel::setupFormGroup()
@@ -197,12 +235,14 @@ void WifiManagerPanel::setupFormGroup()
     m_location_input = new QLineEdit(m_form_group);
     m_location_input->setPlaceholderText("e.g. Home, Office, Guest");
     m_location_input->setToolTip("Optional label for this network entry");
+    m_location_input->setAccessibleName(QStringLiteral("Network Location"));
     layout->addRow("Location:", m_location_input);
 
     // SSID
     m_ssid_input = new QLineEdit(m_form_group);
     m_ssid_input->setPlaceholderText("Network name (SSID)");
     m_ssid_input->setToolTip("The exact name of the WiFi network");
+    m_ssid_input->setAccessibleName(QStringLiteral("Network SSID"));
     layout->addRow("SSID:", m_ssid_input);
 
     // Password with show/hide toggle
@@ -210,11 +250,13 @@ void WifiManagerPanel::setupFormGroup()
     m_password_input = new QLineEdit(m_form_group);
     m_password_input->setPlaceholderText("Password");
     m_password_input->setEchoMode(QLineEdit::Password);
+    m_password_input->setAccessibleName(QStringLiteral("Network Password"));
     m_password_toggle_btn = new QToolButton(m_form_group);
     m_password_toggle_btn->setCheckable(true);
     m_password_toggle_btn->setIcon(QIcon(":/icons/eye_open.svg"));
     m_password_toggle_btn->setIconSize(QSize(16, 16));
     m_password_toggle_btn->setToolTip("Show/hide password");
+    m_password_toggle_btn->setAccessibleName(QStringLiteral("Toggle password visibility"));
     passRow->addWidget(m_password_input);
     passRow->addWidget(m_password_toggle_btn);
     auto* passWidget = new QWidget(m_form_group);
@@ -225,17 +267,21 @@ void WifiManagerPanel::setupFormGroup()
     m_security_combo = new QComboBox(m_form_group);
     m_security_combo->addItems({"WPA/WPA2/WPA3", "WEP", "None (Open)"});
     m_security_combo->setToolTip("WiFi security type");
+    m_security_combo->setAccessibleName(QStringLiteral("Security Type"));
     layout->addRow("Security:", m_security_combo);
 
     // Hidden network
     m_hidden_checkbox = new QCheckBox("This network is hidden (not broadcasting SSID)", m_form_group);
+    m_hidden_checkbox->setAccessibleName(QStringLiteral("Hidden Network"));
     layout->addRow("", m_hidden_checkbox);
 
     // Action buttons at the bottom of the form â€” side by side
     m_connect_phone_btn = new QPushButton("Connect with Phone/Tablet", m_form_group);
     m_connect_phone_btn->setToolTip("Show a QR code of the current network for phone/tablet scanning");
+    m_connect_phone_btn->setAccessibleName(QStringLiteral("Connect with Phone"));
     m_add_table_btn = new QPushButton("Add to Table", m_form_group);
     m_add_table_btn->setToolTip("Add current form entry to the saved networks table");
+    m_add_table_btn->setAccessibleName(QStringLiteral("Add to Table"));
     auto* formBtnRow = new QHBoxLayout();
     formBtnRow->setContentsMargins(0, 10, 0, 0);  // 10px top buffer
     formBtnRow->addWidget(m_connect_phone_btn);
@@ -256,13 +302,16 @@ void WifiManagerPanel::setupTableGroup()
     auto* searchRow   = new QHBoxLayout();
     m_search_input    = new QLineEdit(m_table_group);
     m_search_input->setPlaceholderText("Search networks\u2026");
+    m_search_input->setAccessibleName(QStringLiteral("Search Networks"));
     m_search_up_btn   = new QToolButton(m_table_group);
     m_search_up_btn->setText("\u25b2");
     m_search_up_btn->setToolTip("Previous match");
+    m_search_up_btn->setAccessibleName(QStringLiteral("Previous search match"));
     m_search_up_btn->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Expanding);
     m_search_down_btn = new QToolButton(m_table_group);
     m_search_down_btn->setText("\u25bc");
     m_search_down_btn->setToolTip("Next match");
+    m_search_down_btn->setAccessibleName(QStringLiteral("Next search match"));
     m_search_down_btn->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Expanding);
     searchRow->addWidget(m_search_input, 1);
     searchRow->addWidget(m_search_up_btn);
@@ -271,6 +320,7 @@ void WifiManagerPanel::setupTableGroup()
 
     // Table â€” install custom CheckHeaderView so section 0 shows a select-all checkbox
     m_network_table = new QTableWidget(0, COL_COUNT, m_table_group);
+    m_network_table->setAccessibleName(QStringLiteral("Saved WiFi Networks Table"));
     auto* checkHeader = new CheckHeaderView(m_table_group);
     m_network_table->setHorizontalHeader(checkHeader);
     m_network_table->setHorizontalHeaderLabels({"", "Location", "SSID", "Password", "Security", "Hidden"});
@@ -288,18 +338,26 @@ void WifiManagerPanel::setupTableGroup()
     m_network_table->setEditTriggers(QAbstractItemView::NoEditTriggers);
     m_network_table->setToolTip("Double-click a row to load it into the form");
     m_network_table->setStyleSheet(
-        "QTableWidget::indicator { width: 16px; height: 16px; border: 1px solid #94a3b8; border-radius: 4px; background: #f8fafc; }"
-        "QTableWidget::indicator:checked { background: #3b82f6; border: 1px solid #2563eb; }"
-        "QTableWidget::indicator:unchecked { background: #f8fafc; border: 1px solid #94a3b8; }"
+        QString("QTableWidget::indicator { width: 16px; height: 16px; border: 1px solid %1; border-radius: 4px; background: %2; }"
+                "QTableWidget::indicator:checked { background: %3; border: 1px solid %4; }"
+                "QTableWidget::indicator:unchecked { background: %2; border: 1px solid %1; }")
+            .arg(sak::ui::kColorBorderMuted)
+            .arg(sak::ui::kColorBgSurface)
+            .arg(sak::ui::kColorPrimary)
+            .arg(sak::ui::kColorPrimaryDark)
     );
     layout->addWidget(m_network_table, 1);
 
     // Table action buttons
     auto* tableActions    = new QHBoxLayout();
     m_delete_selected_btn = new QPushButton("Delete Selected", m_table_group);
+    m_delete_selected_btn->setAccessibleName(QStringLiteral("Delete Selected Networks"));
     m_add_to_windows_btn  = new QPushButton("Add Selected to Windows", m_table_group);
+    m_add_to_windows_btn->setAccessibleName(QStringLiteral("Add Selected to Windows"));
     m_save_table_btn      = new QPushButton("Save\u2026",      m_table_group);
+    m_save_table_btn->setAccessibleName(QStringLiteral("Save Networks to File"));
     m_load_table_btn      = new QPushButton("Load\u2026",      m_table_group);
+    m_load_table_btn->setAccessibleName(QStringLiteral("Load Networks from File"));
     m_delete_selected_btn->setToolTip("Remove the selected row(s) from the table");
     m_add_to_windows_btn->setToolTip("Add checked networks to Windows known WiFi profiles via netsh");
     m_add_to_windows_btn->setEnabled(false);
@@ -319,9 +377,13 @@ void WifiManagerPanel::setupActionButtons()
     auto* bar = new QHBoxLayout();
 
     m_generate_qr_btn   = new QPushButton("Generate QR Code",      this);
+    m_generate_qr_btn->setAccessibleName(QStringLiteral("Generate QR Code"));
     m_export_script_btn = new QPushButton("Generate Windows Script", this);
+    m_export_script_btn->setAccessibleName(QStringLiteral("Generate Windows Script"));
     m_export_macos_btn  = new QPushButton("Generate macOS Profile",  this);
+    m_export_macos_btn->setAccessibleName(QStringLiteral("Generate macOS Profile"));
     m_scan_networks_btn = new QPushButton("Scan Known Networks",     this);
+    m_scan_networks_btn->setAccessibleName(QStringLiteral("Scan Known Networks"));
 
     m_generate_qr_btn->setToolTip("Export the current network as a QR code image (PNG, PDF, JPG, BMP)");
     m_export_script_btn->setToolTip("Generate a Windows netsh .cmd script for the current network");
@@ -513,6 +575,7 @@ void WifiManagerPanel::onGenerateQrClicked()
         previewLabel->setFixedSize(180, 180);
         previewLabel->setAlignment(Qt::AlignCenter);
         previewLabel->setStyleSheet("border: 1px solid #ccc; background: white;");
+        previewLabel->setAccessibleName(QStringLiteral("QR code preview"));
 
         auto* optWidget = new QWidget(page0);
         auto* p0layout  = new QVBoxLayout(optWidget);
@@ -612,6 +675,7 @@ void WifiManagerPanel::onGenerateQrClicked()
             if (baseDir.isEmpty()) return;
             const QString outDir = baseDir + "/" + subName;
             if (!QDir().mkpath(outDir)) {
+                sak::logWarning(("Could not create output folder: " + outDir).toStdString());
                 QMessageBox::warning(&dlg, "Error", "Could not create output folder:\n" + outDir);
                 return;
             }
@@ -620,10 +684,12 @@ void WifiManagerPanel::onGenerateQrClicked()
             QStringList     saved;
             auto savePlain = [&](const QString& ext, const QString& fmt) {
                 const QString path = outDir + "/" + subName + "." + ext;
-                if (!finalImg.save(path, fmt.toUtf8().constData()))
+                if (!finalImg.save(path, fmt.toUtf8().constData())) {
+                    sak::logWarning(("Failed to save " + ext.toUpper() + ": " + path).toStdString());
                     QMessageBox::warning(&dlg, "Export Error", "Failed to save " + ext.toUpper() + ":\n" + path);
-                else
+                } else {
                     saved.append(ext.toUpper());
+                }
             };
             if (chkPng->isChecked()) savePlain("png", "PNG");
             if (chkJpg->isChecked()) savePlain("jpg", "JPEG");
@@ -722,6 +788,7 @@ void WifiManagerPanel::onGenerateQrClicked()
             if (baseDir.isEmpty()) return;
             if (!chkPng->isChecked() && !chkPdf->isChecked() &&
                 !chkJpg->isChecked() && !chkBmp->isChecked()) {
+                sak::logWarning("Select at least one export format.");
                 QMessageBox::warning(&dlg, "No Format", "Select at least one export format.");
                 return;
             }
@@ -807,6 +874,7 @@ void WifiManagerPanel::onExportWindowsScriptClicked()
 
         QFile file(path);
         if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+            sak::logWarning("Export Error: Failed to open file for writing.");
             QMessageBox::warning(this, "Export Error", "Failed to open file for writing.");
             return;
         }
@@ -867,6 +935,7 @@ void WifiManagerPanel::onExportMacosProfileClicked()
 
     QFile file(path);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        sak::logWarning("Export Error: Failed to open file for writing.");
         QMessageBox::warning(this, "Export Error", "Failed to open file for writing.");
         return;
     }
@@ -913,6 +982,7 @@ void WifiManagerPanel::onSaveTableClicked()
         QJsonDocument doc(arr);
         QFile f(path);
         if (!f.open(QIODevice::WriteOnly)) {
+            sak::logWarning(("Could not open file for writing: " + path).toStdString());
             QMessageBox::warning(this, "Save Error", "Could not open file for writing:\n" + path);
             return;
         }
@@ -972,6 +1042,7 @@ void WifiManagerPanel::onConnectWithPhoneClicked()
         imgLbl->setPixmap(QPixmap::fromImage(qrImg));
         imgLbl->setAlignment(Qt::AlignCenter);
         imgLbl->setStyleSheet("background: white; border: 1px solid #ccc; padding: 4px;");
+        imgLbl->setAccessibleName(QStringLiteral("WiFi QR code"));
         layout->addWidget(imgLbl);
 
         auto* hintLbl = new QLabel("Scan this QR code with your phone or tablet\nto connect to the network.", &dlg);
@@ -1012,6 +1083,7 @@ void WifiManagerPanel::onConnectWithPhoneClicked()
         imgLbl->setAlignment(Qt::AlignCenter);
         imgLbl->setStyleSheet("background: white; border: 1px solid #ccc; padding: 4px;");
         imgLbl->setFixedSize(360, 360);
+        imgLbl->setAccessibleName(QStringLiteral("WiFi QR code"));
         layout->addWidget(imgLbl, 0, Qt::AlignHCenter);
 
         // Hint
@@ -1036,7 +1108,8 @@ void WifiManagerPanel::onConnectWithPhoneClicked()
 
         int currentIdx = 0;
 
-        auto updatePage = [&](int idx) {
+        // Update the QR dialog page with the network at the given index.
+        auto updatePage = [&sources, imgLbl, titleLbl, idxLbl, prevBtn, nextBtn, this](int idx) {
             const WifiConfig& cfg     = sources[idx];
             const QString     payload = buildWifiPayloadFromConfig(cfg);
             const QImage qrImg = generateQrImage(payload).scaled(360, 360, Qt::KeepAspectRatio, Qt::SmoothTransformation);
@@ -1044,11 +1117,11 @@ void WifiManagerPanel::onConnectWithPhoneClicked()
             titleLbl->setText(QString("<b>%1</b>").arg(cfg.ssid.isEmpty() ? "WiFi Network" : cfg.ssid.toHtmlEscaped()));
             idxLbl->setText(QString("Network %1 of %2").arg(idx + 1).arg(sources.size()));
             prevBtn->setEnabled(idx > 0);
-            nextBtn->setEnabled(idx < sources.size() - 1);
+            nextBtn->setEnabled(idx < static_cast<int>(sources.size()) - 1);
         };
 
-        connect(prevBtn,  &QPushButton::clicked, [&]() { updatePage(--currentIdx); });
-        connect(nextBtn,  &QPushButton::clicked, [&]() { updatePage(++currentIdx); });
+        connect(prevBtn,  &QPushButton::clicked, &dlg, [&currentIdx, &updatePage]() { updatePage(--currentIdx); });
+        connect(nextBtn,  &QPushButton::clicked, &dlg, [&currentIdx, &updatePage]() { updatePage(++currentIdx); });
         connect(closeBtn, &QPushButton::clicked, &dlg, &QDialog::accept);
 
         updatePage(0);
@@ -1359,16 +1432,22 @@ QImage WifiManagerPanel::generateQrImage(const QString& payload)
     if (payload.isEmpty()) return out;
 
     try {
+        // HIGH ECC trades capacity for resilience — critical because phone cameras
+        // often scan QR codes at oblique angles or in poor lighting.
         const qrcodegen::QrCode qr =
             qrcodegen::QrCode::encodeText(
                 payload.toUtf8().constData(),
                 qrcodegen::QrCode::Ecc::HIGH);
 
         const int    modules      = qr.getSize();
+        // The quiet zone (BORDER) around the QR is required by the spec so
+        // scanners can reliably detect the code boundaries.
         const int    totalModules = modules + BORDER * 2;
         const double cellSize     = static_cast<double>(IMAGE_SIZE) / totalModules;
 
         QPainter painter(&out);
+        // Antialiasing must be OFF — sub-pixel blending produces grey edges
+        // that confuse QR decoders.
         painter.setRenderHint(QPainter::Antialiasing, false);
         painter.setBrush(Qt::black);
         painter.setPen(Qt::NoPen);
@@ -1376,6 +1455,9 @@ QImage WifiManagerPanel::generateQrImage(const QString& payload)
         for (int y = 0; y < modules; ++y) {
             for (int x = 0; x < modules; ++x) {
                 if (qr.getModule(x, y)) {
+                    // Compute each cell's pixel rect from (x+1)*cellSize - x*cellSize
+                    // rather than using a fixed integer cell width; this prevents
+                    // cumulative rounding drift that would create visible gaps.
                     const int px = static_cast<int>((x + BORDER) * cellSize);
                     const int py = static_cast<int>((y + BORDER) * cellSize);
                     const int pw = static_cast<int>((x + BORDER + 1) * cellSize) - px;
@@ -1385,7 +1467,7 @@ QImage WifiManagerPanel::generateQrImage(const QString& payload)
             }
         }
     } catch (const std::exception& ex) {
-        Q_UNUSED(ex)
+        sak::logWarning("QR code generation failed: {}", ex.what());
         QPainter p(&out);
         p.setPen(Qt::red);
         p.drawText(out.rect(), Qt::AlignCenter, "QR Error");
@@ -1584,6 +1666,7 @@ void WifiManagerPanel::addRowToTable(const WifiConfig& cfg)
         eyeBtn->setCheckable(true);
         eyeBtn->setFixedSize(22, 22);
         eyeBtn->setToolTip("Show/hide password");
+        eyeBtn->setAccessibleName(QStringLiteral("Toggle password visibility"));
         eyeBtn->setStyleSheet("QToolButton { border: none; background: transparent; }");
         eyeBtn->setEnabled(!pwd.isEmpty());
 
@@ -1691,6 +1774,7 @@ void WifiManagerPanel::saveTableToJson(const QString& path)
     QJsonDocument doc(arr);
     QFile f(path);
     if (!f.open(QIODevice::WriteOnly)) {
+        sak::logWarning(("Could not open file for writing: " + path).toStdString());
         QMessageBox::warning(this, "Save Error", "Could not open file for writing:\n" + path);
         return;
     }
@@ -1702,11 +1786,13 @@ void WifiManagerPanel::loadTableFromJson(const QString& path)
 {
     QFile f(path);
     if (!f.open(QIODevice::ReadOnly)) {
+        sak::logWarning(("Could not open file: " + path).toStdString());
         QMessageBox::warning(this, "Load Error", "Could not open file:\n" + path);
         return;
     }
     const QJsonDocument doc = QJsonDocument::fromJson(f.readAll());
     if (!doc.isArray()) {
+        sak::logWarning("Load Error: Invalid JSON format (expected array).");
         QMessageBox::warning(this, "Load Error", "Invalid JSON format (expected array).");
         return;
     }

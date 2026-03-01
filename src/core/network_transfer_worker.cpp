@@ -1,6 +1,9 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+/// @file network_transfer_worker.cpp
+/// @brief Implements network file transfer operations over TCP sockets
+
 #include "sak/network_transfer_worker.h"
 
 #include "sak/network_transfer_security.h"
@@ -278,9 +281,9 @@ bool NetworkTransferWorker::readHeader(QTcpSocket* socket, FrameHeader& header) 
 
 QByteArray NetworkTransferWorker::readExact(QTcpSocket* socket, qint64 size) {
     QByteArray data;
-    data.reserve(static_cast<int>(size));
+    data.reserve(static_cast<int>(qMin(size, static_cast<qint64>(INT_MAX))));
 
-    while (data.size() < size && !m_stopRequested) {
+    while (static_cast<qint64>(data.size()) < size && !m_stopRequested) {
         if (socket->bytesAvailable() <= 0) {
             if (!socket->waitForReadyRead(15000)) {
                 break;
@@ -625,8 +628,16 @@ bool NetworkTransferWorker::handleReceiver(QTcpSocket* socket, const DataOptions
             break;
         }
 
+        // Validate payload size before allocating memory (BUG-02: prevent OOM DoS).
+        if (header.payload_size > kMaxPayloadSize) {
+            logError("NetworkTransferWorker receiver payload size {} exceeds maximum {}",
+                     header.payload_size, kMaxPayloadSize);
+            Q_EMIT errorOccurred(tr("Payload too large — possible protocol violation"));
+            return false;
+        }
+
         QByteArray payload = readExact(socket, header.payload_size);
-        if (payload.size() != header.payload_size) {
+        if (payload.size() != static_cast<qint64>(header.payload_size)) {
             return false;
         }
 
@@ -717,7 +728,7 @@ bool NetworkTransferWorker::processFileHeader(QTcpSocket* socket,
     }
 
     QString tempPath = destinationPath + ".partial";
-    state.current_file = new QFile(tempPath);
+    state.current_file = std::make_unique<QFile>(tempPath);
     if (!state.current_file->open(QIODevice::ReadWrite)) {
         logError("NetworkTransferWorker receiver failed to open destination file {}", destinationPath.toStdString());
         Q_EMIT errorOccurred(tr("Failed to open destination file"));
@@ -745,7 +756,9 @@ bool NetworkTransferWorker::processFileHeader(QTcpSocket* socket,
         }
 
         QByteArray resumePayload = buildResumePayload(state.current_file_id, state.current_ranges, state.total_chunks);
-        sendFrame(socket, FrameResumeInfo, 0, 0, resumePayload, resumePayload.size(), computeCrc32(resumePayload));
+        if (!sendFrame(socket, FrameResumeInfo, 0, 0, resumePayload, resumePayload.size(), computeCrc32(resumePayload))) {
+            logWarning("NetworkTransferWorker failed to send resume info frame");
+        }
     }
 
     state.bytes_received = 0;
@@ -806,8 +819,7 @@ bool NetworkTransferWorker::processFileEnd(QTcpSocket* socket,
                                             ReceiverState& state) {
     state.current_file->flush();
     state.current_file->close();
-    delete state.current_file;
-    state.current_file = nullptr;
+    state.current_file.reset();
 
     QString finalPath = QDir(options.destination_base).filePath(state.current_relative_path);
     QString tempPath = finalPath + ".partial";
@@ -825,6 +837,12 @@ bool NetworkTransferWorker::processFileEnd(QTcpSocket* socket,
             sendFrame(socket, FrameFileAck, 0, 0,
                 QJsonDocument(ackPayload).toJson(QJsonDocument::Compact), 0, 0);
             QFile::remove(tempPath);
+            // Remove stale resume metadata so retries start from scratch
+            // instead of skipping chunks that no longer exist on disk.
+            if (!state.resume_path.isEmpty()) {
+                QFile::remove(state.resume_path);
+            }
+            state.current_ranges.clear();
             return false;
         }
     }

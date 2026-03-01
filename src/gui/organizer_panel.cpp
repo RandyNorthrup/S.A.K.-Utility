@@ -1,11 +1,16 @@
-// Copyright (c) 2025 Randy Northrup. All rights reserved.
+﻿// Copyright (c) 2025 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
+
+/// @file organizer_panel.cpp
+/// @brief Implements the file organizer panel UI with rule-based file sorting
 
 #include "sak/organizer_panel.h"
 #include "sak/organizer_worker.h"
 #include "sak/logger.h"
 #include "sak/detachable_log_window.h"
 #include "sak/info_button.h"
+#include "sak/style_constants.h"
+#include "sak/widget_helpers.h"
 
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -20,13 +25,15 @@
 #include <QDialog>
 #include <QFormLayout>
 
+namespace sak {
+
 OrganizerPanel::OrganizerPanel(QWidget* parent)
     : QWidget(parent)
     , m_worker(nullptr)
 {
     setupUi();
     setupDefaultCategories();
-    sak::logInfo("OrganizerPanel initialized");
+    logInfo("OrganizerPanel initialized");
 }
 
 OrganizerPanel::~OrganizerPanel()
@@ -34,45 +41,54 @@ OrganizerPanel::~OrganizerPanel()
     if (m_worker) {
         m_worker->requestStop();
         if (!m_worker->wait(15000)) {
-            sak::logError("OrganizerWorker did not stop within 15s \u2014 potential resource leak");
+            logError("OrganizerWorker did not stop within 15s \u2014 potential resource leak");
         }
     }
-    sak::logInfo("OrganizerPanel destroyed");
+    logInfo("OrganizerPanel destroyed");
 }
 
 void OrganizerPanel::setupUi()
 {
-    auto* root_layout = new QVBoxLayout(this);
-    root_layout->setContentsMargins(0, 0, 0, 0);
+    auto* rootLayout = new QVBoxLayout(this);
+    rootLayout->setContentsMargins(0, 0, 0, 0);
 
-    auto* scroll_area = new QScrollArea(this);
-    scroll_area->setWidgetResizable(true);
-    scroll_area->setFrameShape(QFrame::NoFrame);
+    auto* scrollArea = new QScrollArea(this);
+    scrollArea->setWidgetResizable(true);
+    scrollArea->setFrameShape(QFrame::NoFrame);
 
-    auto* content_widget = new QWidget(scroll_area);
-    auto* main_layout = new QVBoxLayout(content_widget);
-    main_layout->setContentsMargins(16, 16, 16, 16);
-    main_layout->setSpacing(12);
+    auto* contentWidget = new QWidget(scrollArea);
+    auto* mainLayout = new QVBoxLayout(contentWidget);
+    mainLayout->setContentsMargins(ui::kMarginMedium, ui::kMarginMedium,
+                                     ui::kMarginMedium, ui::kMarginMedium);
+    mainLayout->setSpacing(ui::kSpacingDefault);
 
-    scroll_area->setWidget(content_widget);
-    root_layout->addWidget(scroll_area);
+    scrollArea->setWidget(contentWidget);
+    rootLayout->addWidget(scrollArea);
+
+    // Panel header — consistent title + muted subtitle
+    sak::createPanelHeader(contentWidget, tr("Directory Organizer"),
+        tr("Automatically sort and organize files by type, date, or custom rules"), mainLayout);
 
     // Target directory group
-    auto* path_group = new QGroupBox("Target Directory", this);
-    auto* path_layout = new QHBoxLayout(path_group);
+    auto* pathGroup = new QGroupBox("Target Directory", this);
+    auto* pathLayout = new QHBoxLayout(pathGroup);
     
     m_target_path = new QLineEdit(this);
     m_target_path->setPlaceholderText("Select directory to organize...");
-    path_layout->addWidget(m_target_path, 1);
+    m_target_path->setAccessibleName(QStringLiteral("Target Directory Path"));
+    m_target_path->setToolTip(QStringLiteral("Path to the directory that will be organized"));
+    pathLayout->addWidget(m_target_path, 1);
     
     m_browse_button = new QPushButton("Browse...", this);
-    path_layout->addWidget(m_browse_button);
+    m_browse_button->setAccessibleName(QStringLiteral("Browse Directory"));
+    m_browse_button->setToolTip(QStringLiteral("Browse for a directory to organize"));
+    pathLayout->addWidget(m_browse_button);
     
-    main_layout->addWidget(path_group);
+    mainLayout->addWidget(pathGroup);
 
     // Category mapping group
-    auto* category_group = new QGroupBox("Category Mapping", this);
-    auto* category_layout = new QVBoxLayout(category_group);
+    auto* categoryGroup = new QGroupBox("Category Mapping", this);
+    auto* categoryLayout = new QVBoxLayout(categoryGroup);
     
     m_category_table = new QTableWidget(this);
     m_category_table->setColumnCount(2);
@@ -81,53 +97,72 @@ void OrganizerPanel::setupUi()
     m_category_table->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Stretch);
     m_category_table->setAlternatingRowColors(true);
     m_category_table->setMinimumHeight(200);
-    category_layout->addWidget(m_category_table);
+    m_category_table->setAccessibleName(QStringLiteral("Category Mappings Table"));
+    m_category_table->setToolTip(QStringLiteral("File categories and their associated extensions"));
+    categoryLayout->addWidget(m_category_table);
     
-    auto* button_layout = new QHBoxLayout();
+    auto* buttonLayout = new QHBoxLayout();
     m_add_category_button = new QPushButton("Add Category", this);
+    m_add_category_button->setAccessibleName(QStringLiteral("Add Category"));
+    m_add_category_button->setToolTip(QStringLiteral("Add a new file category row"));
     m_remove_category_button = new QPushButton("Remove Selected", this);
-    button_layout->addWidget(m_add_category_button);
-    button_layout->addWidget(m_remove_category_button);
-    button_layout->addStretch();
-    category_layout->addLayout(button_layout);
+    m_remove_category_button->setAccessibleName(QStringLiteral("Remove Category"));
+    m_remove_category_button->setToolTip(QStringLiteral("Remove the selected category from the list"));
+    buttonLayout->addWidget(m_add_category_button);
+    buttonLayout->addWidget(m_remove_category_button);
+    buttonLayout->addStretch();
+    categoryLayout->addLayout(buttonLayout);
     
-    main_layout->addWidget(category_group);
+    mainLayout->addWidget(categoryGroup);
 
     // Options widgets (hidden — managed via Settings modal)
     m_collision_strategy = new QComboBox(this);
     m_collision_strategy->addItems({"Rename", "Skip", "Overwrite"});
+    m_collision_strategy->setAccessibleName(QStringLiteral("Collision Strategy"));
+    m_collision_strategy->setToolTip(QStringLiteral("How to handle filename conflicts"));
     m_collision_strategy->setVisible(false);
 
     m_preview_mode_checkbox = new QCheckBox("Preview Mode (Dry Run)", this);
     m_preview_mode_checkbox->setChecked(true);
+    m_preview_mode_checkbox->setAccessibleName(QStringLiteral("Preview Mode"));
+    m_preview_mode_checkbox->setToolTip(QStringLiteral("Show what would happen without moving files"));
     m_preview_mode_checkbox->setVisible(false);
 
     // Control buttons
-    auto* control_layout = new QHBoxLayout();
+    auto* controlLayout = new QHBoxLayout();
 
     auto* settingsBtn = new QPushButton("Settings", this);
+    settingsBtn->setAccessibleName(QStringLiteral("Organizer Settings"));
+    settingsBtn->setToolTip(QStringLiteral("Configure organizer settings"));
     connect(settingsBtn, &QPushButton::clicked, this, &OrganizerPanel::onSettingsClicked);
-    control_layout->addWidget(settingsBtn);
+    controlLayout->addWidget(settingsBtn);
 
-    control_layout->addStretch();
+    controlLayout->addStretch();
     
     m_preview_button = new QPushButton("Preview", this);
     m_preview_button->setMinimumWidth(100);
-    control_layout->addWidget(m_preview_button);
+    m_preview_button->setAccessibleName(QStringLiteral("Preview Organization"));
+    m_preview_button->setToolTip(QStringLiteral("Preview file organization without making changes"));
+    controlLayout->addWidget(m_preview_button);
     
     m_execute_button = new QPushButton("Execute", this);
     m_execute_button->setMinimumWidth(100);
-    control_layout->addWidget(m_execute_button);
+    m_execute_button->setAccessibleName(QStringLiteral("Execute Organization"));
+    m_execute_button->setToolTip(QStringLiteral("Organize files into category folders"));
+    m_execute_button->setStyleSheet(ui::kPrimaryButtonStyle);
+    controlLayout->addWidget(m_execute_button);
     
     m_cancel_button = new QPushButton("Cancel", this);
     m_cancel_button->setMinimumWidth(100);
     m_cancel_button->setEnabled(false);
-    control_layout->addWidget(m_cancel_button);
+    m_cancel_button->setAccessibleName(QStringLiteral("Cancel Organization"));
+    m_cancel_button->setToolTip(QStringLiteral("Cancel the current organization operation"));
+    controlLayout->addWidget(m_cancel_button);
     
-    m_logToggle = new sak::LogToggleSwitch(tr("Log"), this);
-    control_layout->insertWidget(1, m_logToggle);
+    m_logToggle = new LogToggleSwitch(tr("Log"), this);
+    controlLayout->insertWidget(1, m_logToggle);
 
-    main_layout->addLayout(control_layout);
+    mainLayout->addLayout(controlLayout);
 
     // Connect signals
     connect(m_browse_button, &QPushButton::clicked, this, &OrganizerPanel::onBrowseClicked);
@@ -184,8 +219,8 @@ void OrganizerPanel::onExecuteClicked()
         return;
     }
 
-    QDir target_dir(m_target_path->text());
-    if (!target_dir.exists()) {
+    QDir targetDir(m_target_path->text());
+    if (!targetDir.exists()) {
         QMessageBox::warning(this, "Validation Error", "Target directory does not exist.");
         return;
     }
@@ -218,7 +253,7 @@ void OrganizerPanel::onExecuteClicked()
     m_worker->start();
 
     QString mode = config.preview_mode ? "Preview" : "Execute";
-    sak::logInfo("Organization operation initiated ({}): {}", mode.toStdString(), 
+    logInfo("Organization operation initiated ({}): {}", mode.toStdString(), 
                   config.target_directory.toStdString());
 }
 
@@ -228,7 +263,7 @@ void OrganizerPanel::onCancelClicked()
         m_worker->requestStop();
         logMessage("Cancellation requested...");
         Q_EMIT statusMessage("Cancelling...", 0);
-        sak::logInfo("Organization cancellation requested by user");
+        logInfo("Organization cancellation requested by user");
     }
 }
 
@@ -271,18 +306,18 @@ void OrganizerPanel::onWorkerFinished()
     logMessage(QString("%1 completed successfully").arg(mode));
     QMessageBox::information(this, QString("%1 Complete").arg(mode), 
                             QString("%1 operation completed successfully").arg(mode));
-    sak::logInfo("Organization operation completed successfully");
+    logInfo("Organization operation completed successfully");
 }
 
-void OrganizerPanel::onWorkerFailed(int error_code, const QString& error_message)
+void OrganizerPanel::onWorkerFailed(int errorCode, const QString& errorMessage)
 {
     setOperationRunning(false);
     Q_EMIT statusMessage("Organization failed", 5000);
     Q_EMIT progressUpdate(0, 100);
-    logMessage(QString("Organization failed: Error %1: %2").arg(error_code).arg(error_message));
+    logMessage(QString("Organization failed: Error %1: %2").arg(errorCode).arg(errorMessage));
     QMessageBox::warning(this, "Organization Failed", 
-                        QString("Error %1: %2").arg(error_code).arg(error_message));
-    sak::logError("Organization failed: {}", error_message.toStdString());
+                        QString("Error %1: %2").arg(errorCode).arg(errorMessage));
+    logError("Organization failed: {}", errorMessage.toStdString());
 }
 
 void OrganizerPanel::onWorkerCancelled()
@@ -293,18 +328,18 @@ void OrganizerPanel::onWorkerCancelled()
     Q_EMIT progressUpdate(0, 100);
 }
 
-void OrganizerPanel::onFileProgress(int current, int total, const QString& file_path)
+void OrganizerPanel::onFileProgress(int current, int total, const QString& filePath)
 {
     Q_EMIT progressUpdate(current, total);
     
-    QString filename = QFileInfo(file_path).fileName();
+    QString filename = QFileInfo(filePath).fileName();
     Q_EMIT statusMessage(QString("Processing: %1").arg(filename), 0);
 }
 
-void OrganizerPanel::onPreviewResults(const QString& summary, int operation_count)
+void OrganizerPanel::onPreviewResults(const QString& summary, int operationCount)
 {
     QMessageBox::information(this, "Preview Results", summary);
-    logMessage(QString("Preview completed: %1 operations planned").arg(operation_count));
+    logMessage(QString("Preview completed: %1 operations planned").arg(operationCount));
 }
 
 QMap<QString, QStringList> OrganizerPanel::getCategoryMapping() const
@@ -312,15 +347,15 @@ QMap<QString, QStringList> OrganizerPanel::getCategoryMapping() const
     QMap<QString, QStringList> mapping;
 
     for (int row = 0; row < m_category_table->rowCount(); ++row) {
-        auto* category_item = m_category_table->item(row, 0);
-        auto* extensions_item = m_category_table->item(row, 1);
+        auto* categoryItem = m_category_table->item(row, 0);
+        auto* extensionsItem = m_category_table->item(row, 1);
 
-        if (category_item && extensions_item) {
-            QString category = category_item->text().trimmed();
-            QString extensions_str = extensions_item->text().trimmed();
+        if (categoryItem && extensionsItem) {
+            QString category = categoryItem->text().trimmed();
+            QString extensionsStr = extensionsItem->text().trimmed();
 
-            if (!category.isEmpty() && !extensions_str.isEmpty()) {
-                QStringList extensions = extensions_str.split(',', Qt::SkipEmptyParts);
+            if (!category.isEmpty() && !extensionsStr.isEmpty()) {
+                QStringList extensions = extensionsStr.split(',', Qt::SkipEmptyParts);
                 for (auto& ext : extensions) {
                     ext = ext.trimmed();
                 }
@@ -366,7 +401,7 @@ void OrganizerPanel::onSettingsClicked()
     collisionCombo->addItems({"Rename", "Skip", "Overwrite"});
     collisionCombo->setCurrentIndex(m_collision_strategy->currentIndex());
     layout->addRow(
-        sak::InfoButton::createInfoLabel(tr("Collision Strategy:"),
+        InfoButton::createInfoLabel(tr("Collision Strategy:"),
             tr("How to handle files when a file with the same name already exists in the destination folder"), &dialog),
         collisionCombo);
 
@@ -374,7 +409,7 @@ void OrganizerPanel::onSettingsClicked()
     previewCheck->setChecked(m_preview_mode_checkbox->isChecked());
     auto* previewRow = new QHBoxLayout();
     previewRow->addWidget(previewCheck);
-    previewRow->addWidget(new sak::InfoButton(
+    previewRow->addWidget(new InfoButton(
         tr("When enabled, shows what would happen without actually moving any files"), &dialog));
     previewRow->addStretch();
     layout->addRow(previewRow);
@@ -394,3 +429,5 @@ void OrganizerPanel::onSettingsClicked()
         m_preview_mode_checkbox->setChecked(previewCheck->isChecked());
     }
 }
+
+} // namespace sak

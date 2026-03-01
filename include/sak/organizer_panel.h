@@ -19,7 +19,6 @@ class OrganizerWorker;
 namespace sak {
 class DetachableLogWindow;
 class LogToggleSwitch;
-}
 
 /**
  * @brief Directory organizer feature panel
@@ -39,7 +38,7 @@ public:
     OrganizerPanel& operator=(OrganizerPanel&&) = delete;
 
     /** @brief Access the log toggle switch for MainWindow connection */
-    sak::LogToggleSwitch* logToggle() const { return m_logToggle; }
+    LogToggleSwitch* logToggle() const { return m_logToggle; }
 
 Q_SIGNALS:
     void statusMessage(const QString& message, int timeout_ms);
@@ -57,10 +56,10 @@ private Q_SLOTS:
     
     void onWorkerStarted();
     void onWorkerFinished();
-    void onWorkerFailed(int error_code, const QString& error_message);
+    void onWorkerFailed(int errorCode, const QString& errorMessage);
     void onWorkerCancelled();
-    void onFileProgress(int current, int total, const QString& file_path);
-    void onPreviewResults(const QString& summary, int operation_count);
+    void onFileProgress(int current, int total, const QString& filePath);
+    void onPreviewResults(const QString& summary, int operationCount);
 
 private:
     void setupUi();
@@ -85,8 +84,10 @@ private:
     QPushButton* m_execute_button{nullptr};
     QPushButton* m_cancel_button{nullptr};
     
-    sak::LogToggleSwitch* m_logToggle{nullptr};
+    LogToggleSwitch* m_logToggle{nullptr};
     
     std::unique_ptr<OrganizerWorker> m_worker;
     bool m_operation_running{false};
 };
+
+} // namespace sak

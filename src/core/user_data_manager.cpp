@@ -12,7 +12,6 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
-#include <QDebug>
 #include <QProcess>
 #include <QTemporaryFile>
 #include <optional>
@@ -98,7 +97,7 @@ std::optional<UserDataManager::BackupEntry> UserDataManager::backupAppData(const
     // Write metadata
     QString metadata_path = archive_path + ".json";
     if (!writeMetadata(entry, metadata_path)) {
-        qWarning() << "[UserDataManager] Failed to write metadata";
+        sak::logWarning("[UserDataManager] Failed to write metadata");
     }
     
     Q_EMIT operationCompleted(app_name, true, "Backup completed successfully");
@@ -115,7 +114,7 @@ bool UserDataManager::backupMultipleApps(const QStringList& app_names,
         // Discover data paths
         auto paths = discoverAppDataPaths(app_name);
         if (paths.isEmpty()) {
-            qWarning() << "[UserDataManager] No data paths found for" << app_name;
+            sak::logWarning("[UserDataManager] No data paths found for {}", app_name.toStdString());
             Q_EMIT operationError(app_name, "No data paths found");
             all_success = false;
             continue;
@@ -161,7 +160,7 @@ bool UserDataManager::restoreAppData(const QString& backup_path,
             QString backup_name = "backup_" + QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss");
             QString backup_existing = restore.filePath("../" + backup_name);
             if (!copyDirectory(restore_dir, backup_existing, {})) {
-                qWarning() << "[UserDataManager] Failed to backup existing data";
+                sak::logWarning("[UserDataManager] Failed to backup existing data");
             }
         }
     }
@@ -428,6 +427,7 @@ bool UserDataManager::createArchive(const QStringList& source_paths,
         // Read original archive
         QFile archive(archive_path);
         if (!archive.open(QIODevice::ReadOnly)) {
+            sak::logError("[UserDataManager] Failed to open archive for reading: {}", archive_path.toStdString());
             return false;
         }
         QByteArray data = archive.readAll();
@@ -436,14 +436,14 @@ bool UserDataManager::createArchive(const QStringList& source_paths,
         // Encrypt data
         auto encrypted = sak::encryptData(data, config.password);
         if (!encrypted) {
-            qWarning() << "[UserDataManager] Encryption failed:" << static_cast<int>(encrypted.error());
+            sak::logWarning("[UserDataManager] Encryption failed: {}", static_cast<int>(encrypted.error()));
             QFile::remove(archive_path);
             return false;
         }
         
         // Write encrypted data
         if (!archive.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-            qWarning() << "[UserDataManager] Failed to write encrypted file";
+            sak::logWarning("[UserDataManager] Failed to write encrypted file");
             return false;
         }
         archive.write(*encrypted);
@@ -465,6 +465,7 @@ bool UserDataManager::extractArchive(const QString& archive_path,
         // Read encrypted archive
         QFile archive(archive_path);
         if (!archive.open(QIODevice::ReadOnly)) {
+            sak::logError("[UserDataManager] Failed to open encrypted archive for reading: {}", archive_path.toStdString());
             return false;
         }
         QByteArray encrypted_data = archive.readAll();
@@ -473,14 +474,20 @@ bool UserDataManager::extractArchive(const QString& archive_path,
         // Decrypt data
         auto decrypted = sak::decryptData(encrypted_data, config.password);
         if (!decrypted) {
-            qWarning() << "[UserDataManager] Decryption failed:" << static_cast<int>(decrypted.error());
+            sak::logWarning("[UserDataManager] Decryption failed: {}", static_cast<int>(decrypted.error()));
             return false;
         }
         
-        // Write decrypted data to temp file with unpredictable name
+        // QTemporaryFile gives us an OS-generated unique name, preventing
+        // adversaries from predicting the path and racing to read the
+        // plaintext (TOCTOU mitigation).
         QTemporaryFile temp;
-        temp.setAutoRemove(false);  // We manage removal ourselves
+        // AutoRemove is disabled because we must keep the file alive until
+        // PowerShell finishes reading it — cleanup is handled manually on
+        // every exit path below.
+        temp.setAutoRemove(false);
         if (!temp.open()) {
+            sak::logError("[UserDataManager] Failed to create temporary file for decryption");
             return false;
         }
         temp_decrypted = temp.fileName();
@@ -492,9 +499,13 @@ bool UserDataManager::extractArchive(const QString& archive_path,
     
     // Use PowerShell's Expand-Archive for Windows
     QStringList args;
+    // -NoProfile avoids loading the user's PS profile, which could alter
+    // execution behaviour or add unwanted delays during restore.
     args << "-NoProfile" << "-Command";
     
-    // Escape single quotes in paths to prevent PowerShell injection
+    // Doubling single-quotes is PowerShell's escape for literal quotes
+    // inside a single-quoted string; this neutralises paths containing
+    // apostrophes without opening a code-injection vector.
     QString safe_source = QString(file_to_extract).replace("'", "''");
     QString safe_dest = QString(destination).replace("'", "''");
     QString command = QString("Expand-Archive -Path '%1' -DestinationPath '%2' -Force")
@@ -506,6 +517,7 @@ bool UserDataManager::extractArchive(const QString& archive_path,
     process.start("powershell.exe", args);
     
     if (!process.waitForStarted()) {
+        // Ensure decrypted plaintext never lingers on disk after failure.
         if (!temp_decrypted.isEmpty()) QFile::remove(temp_decrypted);
         return false;
     }
@@ -581,7 +593,7 @@ bool UserDataManager::copyDirectory(const QString& source,
         
         QString dest_file = dest_dir.filePath(file);
         if (!QFile::copy(source_file, dest_file)) {
-            qWarning() << "[UserDataManager] Failed to copy" << source_file;
+            sak::logWarning("[UserDataManager] Failed to copy {}", source_file.toStdString());
         }
     }
     

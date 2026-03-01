@@ -1,6 +1,9 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+/// @file backup_bitlocker_keys_action.cpp
+/// @brief Implements BitLocker recovery key backup to a specified location
+
 #include "sak/actions/backup_bitlocker_keys_action.h"
 #include "sak/process_runner.h"
 #include "sak/logger.h"
@@ -130,7 +133,7 @@ try {
 
     ProcessResult proc = runPowerShell(script, 30000);
 
-    if (proc.exit_code != 0 || proc.timed_out) {
+    if (!proc.succeeded()) {
         QString error = proc.std_err.trimmed();
         if (error.contains("Access is denied", Qt::CaseInsensitive) ||
             error.contains("not recognized", Qt::CaseInsensitive)) {
@@ -263,7 +266,7 @@ try {
 
     ProcessResult proc = runPowerShell(script, 30000);
 
-    if (proc.exit_code != 0 || proc.timed_out) {
+    if (!proc.succeeded()) {
         if (!proc.std_err.trimmed().isEmpty()) {
             Q_EMIT logMessage(QString("Key protector query failed for %1: %2")
                              .arg(drive_letter, proc.std_err.trimmed()));
@@ -824,7 +827,7 @@ try {
 )PS").arg(QString(path).replace("'", "''"));
 
     ProcessResult proc = runPowerShell(script, 15000);
-    return proc.exit_code == 0 && proc.std_out.trimmed().contains("SUCCESS");
+    return proc.succeeded() && proc.std_out.trimmed().contains("SUCCESS");
 }
 
 } // namespace sak

@@ -4,7 +4,6 @@
 #include "sak/app_scanner.h"
 #include "sak/logger.h"
 #include <QProcess>
-#include <QDebug>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
@@ -28,20 +27,20 @@ std::vector<AppScanner::AppInfo> AppScanner::scanAll() {
     
     // Scan registry (HKLM + HKCU)
     auto registry_apps = scanRegistry();
-    qDebug() << "AppScanner: Registry scan found" << registry_apps.size() << "apps";
+    sak::logDebug("AppScanner: Registry scan found {} apps", registry_apps.size());
     all_apps.insert(all_apps.end(), registry_apps.begin(), registry_apps.end());
     
     // Scan AppX packages
     auto appx_apps = scanAppX();
-    qDebug() << "AppScanner: AppX scan found" << appx_apps.size() << "apps";
+    sak::logDebug("AppScanner: AppX scan found {} apps", appx_apps.size());
     all_apps.insert(all_apps.end(), appx_apps.begin(), appx_apps.end());
     
     // Scan Chocolatey packages
     auto choco_apps = scanChocolatey();
-    qDebug() << "AppScanner: Chocolatey scan found" << choco_apps.size() << "apps";
+    sak::logDebug("AppScanner: Chocolatey scan found {} apps", choco_apps.size());
     all_apps.insert(all_apps.end(), choco_apps.begin(), choco_apps.end());
     
-    qDebug() << "AppScanner: Total apps found:" << all_apps.size();
+    sak::logDebug("AppScanner: Total apps found: {}", all_apps.size());
     return all_apps;
 }
 
@@ -76,7 +75,7 @@ std::vector<AppScanner::AppInfo> AppScanner::scanRegistryHive(void* hive, const 
     );
     
     if (result != ERROR_SUCCESS) {
-        qWarning() << "AppScanner: Failed to open registry key:" << subkey;
+        sak::logWarning("AppScanner: Failed to open registry key: {}", subkey.toStdString());
         return apps;
     }
     
@@ -174,7 +173,7 @@ std::vector<AppScanner::AppInfo> AppScanner::scanAppX() {
     
     process.start();
     if (!process.waitForFinished(30000)) {
-        qWarning() << "AppScanner: PowerShell timeout while scanning AppX packages";
+        sak::logWarning("AppScanner: PowerShell timeout while scanning AppX packages");
         return apps;
     }
     
@@ -183,7 +182,7 @@ std::vector<AppScanner::AppInfo> AppScanner::scanAppX() {
     QJsonParseError error{};
     QJsonDocument doc = QJsonDocument::fromJson(output.toUtf8(), &error);
     if (error.error != QJsonParseError::NoError) {
-        qWarning() << "AppScanner: Failed to parse AppX JSON" << error.errorString();
+        sak::logWarning("AppScanner: Failed to parse AppX JSON {}", error.errorString().toStdString());
         return apps;
     }
 

@@ -435,6 +435,7 @@ void DiskBenchmarkWorker::runRandom4KRead(
     logInfo("Random 4K read QD{}: {:.0f} IOPS, {:.1f} MB/s, {:.0f} µs avg",
             queue_depth, iops, read_mbps, avg_latency_us);
 #else
+    logWarning("Random 4K read benchmark requires Windows platform");
     (void)queue_depth; (void)read_mbps; (void)iops; (void)avg_latency_us;
     (void)latencies_out;
 #endif
@@ -539,6 +540,7 @@ void DiskBenchmarkWorker::runRandom4KWrite(
     logInfo("Random 4K write QD{}: {:.0f} IOPS, {:.1f} MB/s, {:.0f} µs avg",
             queue_depth, iops, write_mbps, avg_latency_us);
 #else
+    logWarning("Random 4K write benchmark requires Windows platform");
     (void)queue_depth; (void)write_mbps; (void)iops; (void)avg_latency_us;
     (void)latencies_out;
 #endif

@@ -1,6 +1,9 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+/// @file check_disk_errors_action.cpp
+/// @brief Implements disk error checking using the Windows chkdsk utility
+
 #include "sak/actions/check_disk_errors_action.h"
 #include "sak/process_runner.h"
 #include <QStorageInfo>

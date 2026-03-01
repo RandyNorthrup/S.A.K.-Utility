@@ -1,6 +1,9 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+/// @file clear_windows_update_cache_action.cpp
+/// @brief Implements Windows Update cache cleanup to free disk space
+
 #include "sak/actions/clear_windows_update_cache_action.h"
 #include "sak/path_utils.h"
 #include "sak/process_runner.h"
@@ -18,13 +21,13 @@ bool ClearWindowsUpdateCacheAction::stopWindowsUpdateService() {
     Q_EMIT executionProgress("Stopping Windows Update service...", 20);
     ProcessResult result = runProcess("net", QStringList() << "stop" << "wuauserv", 15000);
     QThread::msleep(2000);
-    return !result.timed_out && result.exit_code == 0;
+    return result.succeeded();
 }
 
 bool ClearWindowsUpdateCacheAction::startWindowsUpdateService() {
     Q_EMIT executionProgress("Starting Windows Update service...", 80);
     ProcessResult result = runProcess("net", QStringList() << "start" << "wuauserv", 15000);
-    return !result.timed_out && result.exit_code == 0;
+    return result.succeeded();
 }
 
 qint64 ClearWindowsUpdateCacheAction::calculateDirectorySize(const QString& path, int& file_count) {

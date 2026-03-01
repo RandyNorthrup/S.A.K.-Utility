@@ -8,7 +8,6 @@
 #include <QFileInfo>
 #include <QThread>
 #include <QRegularExpression>
-#include <QDebug>
 
 namespace sak {
 
@@ -46,14 +45,14 @@ bool ChocolateyManager::initialize(const QString& choco_portable_path) {
     }
     
     if (m_choco_path.isEmpty()) {
-        qWarning() << "[ChocolateyManager] choco.exe not found in" << choco_portable_path;
+        sak::logWarning("[ChocolateyManager] choco.exe not found in {}", choco_portable_path.toStdString());
         return false;
     }
     
     // Verify Chocolatey works
     QString version = getChocoVersion();
     if (version.isEmpty()) {
-        qWarning() << "[ChocolateyManager] Failed to get Chocolatey version";
+        sak::logWarning("[ChocolateyManager] Failed to get Chocolatey version");
         return false;
     }
     
@@ -73,7 +72,7 @@ bool ChocolateyManager::verifyIntegrity() {
     
     // Check if choco.exe still exists
     if (!QFile::exists(m_choco_path)) {
-        qWarning() << "[ChocolateyManager] choco.exe no longer exists at:" << m_choco_path;
+        sak::logWarning("[ChocolateyManager] choco.exe no longer exists at: {}", m_choco_path.toStdString());
         m_initialized = false;
         return false;
     }
@@ -152,7 +151,7 @@ ChocolateyManager::Result ChocolateyManager::installPackage(const InstallConfig&
         Q_EMIT installSuccess(config.package_name, installed_version);
     } else {
         Q_EMIT installFailed(config.package_name, result.error_message);
-        qWarning() << "[ChocolateyManager] Failed to install" << config.package_name << ":" << result.error_message;
+        sak::logWarning("[ChocolateyManager] Failed to install {}: {}", config.package_name.toStdString(), result.error_message.toStdString());
     }
     
     return result;
@@ -344,7 +343,7 @@ ChocolateyManager::Result ChocolateyManager::installWithRetry(
         
         // Check if error is retryable
         if (isPermissionError(last_result.output)) {
-            qWarning() << "[ChocolateyManager] Permission error - not retrying";
+            sak::logWarning("[ChocolateyManager] Permission error - not retrying");
             break;
         }
     }

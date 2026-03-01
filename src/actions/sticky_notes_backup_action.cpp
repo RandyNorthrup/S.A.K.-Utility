@@ -1,6 +1,9 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+/// @file sticky_notes_backup_action.cpp
+/// @brief Implements Windows Sticky Notes database backup
+
 #include "sak/actions/sticky_notes_backup_action.h"
 #include "sak/windows_user_scanner.h"
 #include <QFile>

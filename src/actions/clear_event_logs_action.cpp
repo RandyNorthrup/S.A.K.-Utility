@@ -1,6 +1,9 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+/// @file clear_event_logs_action.cpp
+/// @brief Implements Windows event log clearing and backup
+
 #include "sak/actions/clear_event_logs_action.h"
 #include "sak/process_runner.h"
 #include <QDir>
@@ -22,19 +25,13 @@ bool ClearEventLogsAction::backupEventLog(const QString& log_name) {
     
     QString cmd = QString("wevtutil epl %1 \"%2\"").arg(log_name, backup_path);
     ProcessResult proc = runProcess("cmd.exe", QStringList() << "/c" << cmd, 10000);
-    if (proc.timed_out) {
-        return false;
-    }
-    return proc.exit_code == 0;
+    return proc.succeeded();
 }
 
 bool ClearEventLogsAction::clearEventLog(const QString& log_name) {
     QString cmd = QString("wevtutil cl %1").arg(log_name);
     ProcessResult proc = runProcess("cmd.exe", QStringList() << "/c" << cmd, 5000);
-    if (proc.timed_out) {
-        return false;
-    }
-    return proc.exit_code == 0;
+    return proc.succeeded();
 }
 
 void ClearEventLogsAction::scan() {

@@ -1,11 +1,16 @@
-// Copyright (c) 2025 Randy Northrup. All rights reserved.
+﻿// Copyright (c) 2025 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-#include "sak/app_migration_panel.h"
+/// @file app_installation_panel.cpp
+/// @brief Implements the application installation panel UI for software reinstallation
+
+#include "sak/app_installation_panel.h"
 #include "sak/chocolatey_manager.h"
-#include "sak/app_migration_worker.h"
+#include "sak/app_installation_worker.h"
 #include "sak/migration_report.h"
 #include "sak/detachable_log_window.h"
+#include "sak/style_constants.h"
+#include "sak/widget_helpers.h"
 
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -13,12 +18,13 @@
 #include <QApplication>
 #include <QSplitter>
 #include <QGroupBox>
+#include <QScrollArea>
 #include <QStyle>
 #include <memory>
 
-using sak::AppMigrationPanel;
+using sak::AppInstallationPanel;
 using sak::ChocolateyManager;
-using sak::AppMigrationWorker;
+using sak::AppInstallationWorker;
 using sak::MigrationReport;
 using sak::MigrationJob;
 using sak::MigrationStatus;
@@ -32,17 +38,17 @@ enum ResultColumn {
     RColCount
 };
 
-AppMigrationPanel::AppMigrationPanel(QWidget* parent)
+AppInstallationPanel::AppInstallationPanel(QWidget* parent)
     : QWidget(parent)
-    , m_chocoManager(std::make_shared<ChocolateyManager>())
-    , m_worker(std::make_shared<AppMigrationWorker>(m_chocoManager))
+    , m_choco_manager(std::make_shared<ChocolateyManager>())
+    , m_worker(std::make_shared<AppInstallationWorker>(m_choco_manager))
 {
-    setupUI();
+    setupUi();
     setupConnections();
 
     // Initialize Chocolatey on startup
     QString chocoPath = QApplication::applicationDirPath() + "/tools/chocolatey";
-    bool init_success = m_chocoManager->initialize(chocoPath);
+    bool init_success = m_choco_manager->initialize(chocoPath);
     if (!init_success) {
         Q_EMIT logOutput(QString("WARNING: Chocolatey initialization failed"));
         Q_EMIT logOutput("Package installation will not be available.");
@@ -52,17 +58,33 @@ AppMigrationPanel::AppMigrationPanel(QWidget* parent)
     }
 }
 
-AppMigrationPanel::~AppMigrationPanel() {
+AppInstallationPanel::~AppInstallationPanel() {
     if (m_worker && m_worker->isRunning()) {
         m_worker->cancel();
     }
 }
 
-void AppMigrationPanel::setupUI()
+void AppInstallationPanel::setupUi()
 {
-    auto* mainLayout = new QVBoxLayout(this);
-    mainLayout->setSpacing(8);
-    mainLayout->setContentsMargins(8, 8, 8, 8);
+    auto* rootLayout = new QVBoxLayout(this);
+    rootLayout->setContentsMargins(0, 0, 0, 0);
+
+    auto* scrollArea = new QScrollArea(this);
+    scrollArea->setWidgetResizable(true);
+    scrollArea->setFrameShape(QFrame::NoFrame);
+
+    auto* contentWidget = new QWidget(scrollArea);
+    auto* mainLayout = new QVBoxLayout(contentWidget);
+    mainLayout->setSpacing(sak::ui::kSpacingDefault);
+    mainLayout->setContentsMargins(sak::ui::kMarginMedium, sak::ui::kMarginMedium,
+                                   sak::ui::kMarginMedium, sak::ui::kMarginMedium);
+
+    scrollArea->setWidget(contentWidget);
+    rootLayout->addWidget(scrollArea);
+
+    // Panel header — consistent title + muted subtitle
+    sak::createPanelHeader(contentWidget, tr("App Installation"),
+        tr("Search, queue, and batch-install applications via Chocolatey"), mainLayout);
 
     // === Search section ===
     auto* searchGroup = new QGroupBox(tr("Search Packages"), this);
@@ -71,6 +93,8 @@ void AppMigrationPanel::setupUI()
     m_searchEdit = new QLineEdit(this);
     m_searchEdit->setPlaceholderText(tr("Search Chocolatey packages..."));
     m_searchEdit->setClearButtonEnabled(true);
+    m_searchEdit->setAccessibleName(QStringLiteral("Package Search"));
+    m_searchEdit->setToolTip(QStringLiteral("Type to search for Chocolatey packages"));
     searchLayout->addWidget(m_searchEdit, 1);
 
     m_categoryCombo = new QComboBox(this);
@@ -84,10 +108,13 @@ void AppMigrationPanel::setupUI()
         tr("Productivity"),
         tr("Communication")
     });
+    m_categoryCombo->setAccessibleName(QStringLiteral("Package Category"));
     m_categoryCombo->setToolTip(tr("Select a category to browse"));
     searchLayout->addWidget(m_categoryCombo);
 
     m_searchButton = new QPushButton(tr("Search"), this);
+    m_searchButton->setAccessibleName(QStringLiteral("Search Packages"));
+    m_searchButton->setToolTip(QStringLiteral("Search the Chocolatey repository"));
     searchLayout->addWidget(m_searchButton);
 
     mainLayout->addWidget(searchGroup);
@@ -114,6 +141,8 @@ void AppMigrationPanel::setupUI()
     m_resultsTable->setAlternatingRowColors(true);
     m_resultsTable->setSortingEnabled(true);
     m_resultsTable->verticalHeader()->setVisible(false);
+    m_resultsTable->setAccessibleName(QStringLiteral("Search Results Table"));
+    m_resultsTable->setToolTip(QStringLiteral("Packages matching your search query"));
 
     auto* header = m_resultsTable->horizontalHeader();
     header->setSectionResizeMode(RColCheck, QHeaderView::Fixed);
@@ -131,8 +160,8 @@ void AppMigrationPanel::setupUI()
     resultsLayout->addWidget(m_resultsTable, 1);
 
     m_addToQueueButton = new QPushButton(tr("Add Selected to Queue  ▶"), this);
-    m_addToQueueButton->setEnabled(false);
-    resultsLayout->addWidget(m_addToQueueButton);
+    m_addToQueueButton->setEnabled(false);    m_addToQueueButton->setAccessibleName(QStringLiteral("Add to Queue"));
+    m_addToQueueButton->setToolTip(QStringLiteral("Add checked packages to the install queue"));    resultsLayout->addWidget(m_addToQueueButton);
 
     splitter->addWidget(resultsWidget);
 
@@ -148,38 +177,51 @@ void AppMigrationPanel::setupUI()
     m_queueList = new QListWidget(this);
     m_queueList->setAlternatingRowColors(true);
     m_queueList->setSelectionMode(QAbstractItemView::ExtendedSelection);
+    m_queueList->setAccessibleName(QStringLiteral("Install Queue List"));
+    m_queueList->setToolTip(QStringLiteral("Packages queued for installation"));
     queueLayout->addWidget(m_queueList, 1);
 
     auto* queueButtonLayout = new QHBoxLayout();
     m_removeFromQueueButton = new QPushButton(tr("Remove"), this);
     m_removeFromQueueButton->setEnabled(false);
+    m_removeFromQueueButton->setAccessibleName(QStringLiteral("Remove from Queue"));
+    m_removeFromQueueButton->setToolTip(QStringLiteral("Remove selected packages from the queue"));
     queueButtonLayout->addWidget(m_removeFromQueueButton);
 
     m_clearQueueButton = new QPushButton(tr("Clear All"), this);
     m_clearQueueButton->setEnabled(false);
+    m_clearQueueButton->setAccessibleName(QStringLiteral("Clear Queue"));
+    m_clearQueueButton->setToolTip(QStringLiteral("Remove all packages from the queue"));
     queueButtonLayout->addWidget(m_clearQueueButton);
     queueLayout->addLayout(queueButtonLayout);
 
     m_installButton = new QPushButton(tr("Install All"), this);
     m_installButton->setEnabled(false);
+    m_installButton->setAccessibleName(QStringLiteral("Install All Packages"));
+    m_installButton->setToolTip(QStringLiteral("Install all queued packages"));
+    m_installButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
     queueLayout->addWidget(m_installButton);
 
     m_cancelButton = new QPushButton(tr("Cancel"), this);
     m_cancelButton->setEnabled(false);
     m_cancelButton->setVisible(false);
+    m_cancelButton->setAccessibleName(QStringLiteral("Cancel Installation"));
+    m_cancelButton->setToolTip(QStringLiteral("Cancel the current installation process"));
     queueLayout->addWidget(m_cancelButton);
 
     // Save/Load queue buttons
     auto* saveLoadLayout = new QHBoxLayout();
     m_saveQueueButton = new QPushButton(tr("Save List"), this);
+    m_saveQueueButton->setAccessibleName(QStringLiteral("Save Install List"));
     m_saveQueueButton->setToolTip(tr("Save the current install queue to a JSON file for later use"));
     m_saveQueueButton->setEnabled(false);
-    connect(m_saveQueueButton, &QPushButton::clicked, this, &AppMigrationPanel::saveQueueToFile);
+    connect(m_saveQueueButton, &QPushButton::clicked, this, &AppInstallationPanel::saveQueueToFile);
     saveLoadLayout->addWidget(m_saveQueueButton);
 
     auto* loadQueueBtn = new QPushButton(tr("Load List"), this);
+    loadQueueBtn->setAccessibleName(QStringLiteral("Load Install List"));
     loadQueueBtn->setToolTip(tr("Load a previously saved app list into the install queue"));
-    connect(loadQueueBtn, &QPushButton::clicked, this, &AppMigrationPanel::loadQueueFromFile);
+    connect(loadQueueBtn, &QPushButton::clicked, this, &AppInstallationPanel::loadQueueFromFile);
     saveLoadLayout->addWidget(loadQueueBtn);
     queueLayout->addLayout(saveLoadLayout);
 
@@ -203,26 +245,26 @@ void AppMigrationPanel::setupUI()
     mainLayout->addLayout(bottomLayout);
 }
 
-void AppMigrationPanel::setupConnections()
+void AppInstallationPanel::setupConnections()
 {
     // Search
-    connect(m_searchButton, &QPushButton::clicked, this, &AppMigrationPanel::onSearch);
-    connect(m_searchEdit, &QLineEdit::returnPressed, this, &AppMigrationPanel::onSearch);
+    connect(m_searchButton, &QPushButton::clicked, this, &AppInstallationPanel::onSearch);
+    connect(m_searchEdit, &QLineEdit::returnPressed, this, &AppInstallationPanel::onSearch);
     connect(m_categoryCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
-            this, &AppMigrationPanel::onCategoryChanged);
+            this, &AppInstallationPanel::onCategoryChanged);
 
     // Queue management
-    connect(m_addToQueueButton, &QPushButton::clicked, this, &AppMigrationPanel::onAddToQueue);
-    connect(m_removeFromQueueButton, &QPushButton::clicked, this, &AppMigrationPanel::onRemoveFromQueue);
-    connect(m_clearQueueButton, &QPushButton::clicked, this, &AppMigrationPanel::onClearQueue);
+    connect(m_addToQueueButton, &QPushButton::clicked, this, &AppInstallationPanel::onAddToQueue);
+    connect(m_removeFromQueueButton, &QPushButton::clicked, this, &AppInstallationPanel::onRemoveFromQueue);
+    connect(m_clearQueueButton, &QPushButton::clicked, this, &AppInstallationPanel::onClearQueue);
 
     // Install
-    connect(m_installButton, &QPushButton::clicked, this, &AppMigrationPanel::onInstallAll);
-    connect(m_cancelButton, &QPushButton::clicked, this, &AppMigrationPanel::onCancelInstall);
+    connect(m_installButton, &QPushButton::clicked, this, &AppInstallationPanel::onInstallAll);
+    connect(m_cancelButton, &QPushButton::clicked, this, &AppInstallationPanel::onCancelInstall);
 
     // Queue selection
     connect(m_queueList, &QListWidget::itemSelectionChanged, this, [this]() {
-        m_removeFromQueueButton->setEnabled(!m_queueList->selectedItems().isEmpty() && !m_installInProgress);
+        m_removeFromQueueButton->setEnabled(!m_queueList->selectedItems().isEmpty() && !m_install_in_progress);
     });
 
     // Results selection
@@ -237,25 +279,25 @@ void AppMigrationPanel::setupConnections()
                     break;
                 }
             }
-            m_addToQueueButton->setEnabled(anyChecked && !m_installInProgress);
+            m_addToQueueButton->setEnabled(anyChecked && !m_install_in_progress);
         }
     });
 
     // Worker signals
-    connect(m_worker.get(), &AppMigrationWorker::migrationStarted, this, [this](int totalJobs) {
+    connect(m_worker.get(), &AppInstallationWorker::migrationStarted, this, [this](int totalJobs) {
         Q_EMIT progressUpdated(0, totalJobs);
         Q_EMIT statusMessage("App Installation: Installing packages...", 0);
         Q_EMIT logOutput(QString("Installation started: %1 package(s)").arg(totalJobs));
     });
 
-    connect(m_worker.get(), &AppMigrationWorker::jobProgress, this,
+    connect(m_worker.get(), &AppInstallationWorker::jobProgress, this,
             [this](int entryIndex, const QString& message) {
                 Q_UNUSED(entryIndex);
                 Q_EMIT logOutput(message);
                 Q_EMIT statusMessage(message, 0);
             });
 
-    connect(m_worker.get(), &AppMigrationWorker::jobStatusChanged, this,
+    connect(m_worker.get(), &AppInstallationWorker::jobStatusChanged, this,
             [this](int entryIndex, const MigrationJob& job) {
                 Q_UNUSED(entryIndex);
                 switch (job.status) {
@@ -277,15 +319,15 @@ void AppMigrationPanel::setupConnections()
                 Q_EMIT progressUpdated(completed, stats.total);
             });
 
-    connect(m_worker.get(), &AppMigrationWorker::migrationCompleted, this,
-            [this](const AppMigrationWorker::Stats& stats) {
+    connect(m_worker.get(), &AppInstallationWorker::migrationCompleted, this,
+            [this](const AppInstallationWorker::Stats& stats) {
                 Q_EMIT logOutput(QString("Installation complete: %1 succeeded, %2 failed, %3 skipped")
                     .arg(stats.success).arg(stats.failed).arg(stats.skipped));
                 Q_EMIT statusMessage(QString("App Installation: %1 succeeded, %2 failed")
                     .arg(stats.success).arg(stats.failed), 5000);
 
                 Q_EMIT statusMessage(tr("Installation complete"), 5000);
-                m_installInProgress = false;
+                m_install_in_progress = false;
                 m_cancelButton->setVisible(false);
                 m_cancelButton->setEnabled(false);
                 m_installButton->setVisible(true);

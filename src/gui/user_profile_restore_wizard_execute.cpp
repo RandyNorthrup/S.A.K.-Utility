@@ -3,6 +3,7 @@
 
 #include "sak/user_profile_restore_wizard.h"
 #include "sak/user_profile_restore_worker.h"
+#include "sak/style_constants.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QTimer>
@@ -36,7 +37,7 @@ void UserProfileRestoreExecutePage::setupUi() {
     
     // Status
     m_statusLabel = new QLabel(tr("Ready to restore..."), this);
-    m_statusLabel->setStyleSheet("QLabel { font-weight: 600; font-size: 11pt; color: #1e293b; }");
+    m_statusLabel->setStyleSheet(QString("QLabel { font-weight: 600; font-size: 11pt; color: %1; }").arg(sak::ui::kColorTextHeading));
     layout->addWidget(m_statusLabel);
     
     // Overall progress

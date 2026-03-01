@@ -12,6 +12,14 @@ ProcessResult runProcess(const QString& program, const QStringList& args, int ti
     QProcess proc;
     proc.start(program, args);
 
+    // Ensure the process actually started before entering the wait loop.
+    if (!proc.waitForStarted(5000)) {
+        ProcessResult result;
+        result.exit_code = -1;
+        result.std_err = QStringLiteral("Failed to start process: %1").arg(proc.errorString()).toUtf8();
+        return result;
+    }
+
     ProcessResult result;
     QElapsedTimer timer;
     timer.start();

@@ -1,6 +1,9 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+/// @file rebuild_icon_cache_action.cpp
+/// @brief Implements Windows icon cache rebuild to fix display issues
+
 #include "sak/actions/rebuild_icon_cache_action.h"
 #include "sak/process_runner.h"
 #include <QThread>
@@ -172,7 +175,7 @@ bool RebuildIconCacheAction::refreshIconCache() {
     if (!proc.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("Icon cache refresh warning: " + proc.std_err.trimmed());
     }
-    return !proc.timed_out && proc.exit_code == 0;
+    return proc.succeeded();
 }
 
 void RebuildIconCacheAction::scan() {

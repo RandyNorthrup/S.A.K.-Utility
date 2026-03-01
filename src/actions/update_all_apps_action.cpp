@@ -1,6 +1,9 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+/// @file update_all_apps_action.cpp
+/// @brief Implements batch application updates via Chocolatey package manager
+
 #include "sak/actions/update_all_apps_action.h"
 #include "sak/chocolatey_manager.h"
 #include "sak/logger.h"

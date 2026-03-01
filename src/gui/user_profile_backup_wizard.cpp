@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "sak/user_profile_backup_wizard.h"
+#include "sak/style_constants.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QHeaderView>
@@ -199,7 +200,7 @@ void UserProfileBackupSelectUsersPage::setupUi() {
     
     // Summary
     m_summaryLabel = new QLabel(this);
-    m_summaryLabel->setStyleSheet("QLabel { padding: 10px; background-color: #e0f2fe; border-radius: 10px; }");
+    m_summaryLabel->setStyleSheet(QString("QLabel { padding: 10px; background-color: %1; border-radius: 10px; }").arg(sak::ui::kColorBgInfoPanel));
     layout->addWidget(m_summaryLabel);
     updateSummary();
 }

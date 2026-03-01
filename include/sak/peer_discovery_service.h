@@ -7,6 +7,7 @@
 #include <QUdpSocket>
 #include <QTimer>
 #include <QHostAddress>
+#include <atomic>
 
 #include "sak/network_transfer_types.h"
 
@@ -41,7 +42,7 @@ private:
     QTimer* m_broadcastTimer{nullptr};
     TransferPeerInfo m_peerInfo;
     quint16 m_port{54321};
-    bool m_running{false};
+    std::atomic<bool> m_running{false};
 };
 
 } // namespace sak

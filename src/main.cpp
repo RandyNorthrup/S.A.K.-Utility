@@ -11,13 +11,14 @@
 #include "sak/quick_action_controller.h"
 #include "sak/actions/action_factory.h"
 #include "sak/quick_action_result_io.h"
-#include "gui/windows11_theme.h"
-#include "gui/splash_screen.h"
+#include "sak/windows11_theme.h"
+#include "sak/splash_screen.h"
 #include <QApplication>
 #include <QCoreApplication>
 #include <QMessageBox>
 #include <QFileInfo>
 #include <QIcon>
+#include <QStandardPaths>
 #include <filesystem>
 #include <print>
 #include <iostream>
@@ -113,7 +114,8 @@ int main(int argc, char* argv[]) {
 
         // Headless quick action runner (elevated mode)
         QString action_to_run;
-        QString backup_location = "C:/SAK_Backups";
+        QString backup_location = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)
+            + QStringLiteral("/SAK_Backups");
         QString result_file;
 
         for (int i = 1; i < argc; ++i) {
@@ -195,7 +197,7 @@ int main(int argc, char* argv[]) {
 
         // Create and show main window
         sak::logInfo("Creating main window...");
-        MainWindow main_window;
+        sak::MainWindow main_window;
         main_window.show();
 
         if (splash) {
@@ -213,6 +215,7 @@ int main(int argc, char* argv[]) {
         return result;
         
     } catch (const std::exception& e) {
+        sak::logError("Fatal error: {}", e.what());
         std::println(std::cerr, "Fatal error: {}", e.what());
         QMessageBox::critical(
             nullptr,
@@ -220,6 +223,7 @@ int main(int argc, char* argv[]) {
             QString("Unhandled exception: %1").arg(e.what()));
         return 1;
     } catch (...) {
+        sak::logError("Unknown fatal error");
         std::println(std::cerr, "Unknown fatal error");
         QMessageBox::critical(
             nullptr,

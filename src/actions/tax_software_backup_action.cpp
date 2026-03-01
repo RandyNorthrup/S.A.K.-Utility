@@ -1,13 +1,11 @@
-// Copyright (c) 2025 Randy Northrup. All rights reserved.
+﻿// Copyright (c) 2025 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
+
+/// @file tax_software_backup_action.cpp
+/// @brief Implements tax software data file backup for TurboTax, H&R Block, and TaxAct
 
 /**
  * RESEARCH-BASED IMPLEMENTATION (3 Sources - December 15, 2025)
- * =============================================================
- *
- * SOURCE 1: Chrome DevTools MCP - Web Research (December 2025)
- * -------------------------------------------------------------
- * TURBOTAX:
  *   Default Location: C:\Users\<username>\Documents\TurboTax
  *   - Source: ttlc.intuit.com (Official TurboTax support)
  *   - Summary: "TurboTax saves tax files in the My Documents TurboTax folder"
@@ -109,6 +107,7 @@
 #include <QDir>
 #include <QDirIterator>
 #include <QDateTime>
+#include "sak/logger.h"
 
 namespace sak {
 

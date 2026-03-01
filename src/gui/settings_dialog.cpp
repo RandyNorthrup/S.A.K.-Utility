@@ -1,7 +1,7 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-#include "gui/settings_dialog.h"
+#include "sak/settings_dialog.h"
 #include "sak/config_manager.h"
 #include "sak/info_button.h"
 
@@ -20,7 +20,7 @@ namespace sak {
 SettingsDialog::SettingsDialog(QWidget* parent)
     : QDialog(parent)
 {
-    setupUI();
+    setupUi();
     loadSettings();
     
     // Connect signals
@@ -30,7 +30,7 @@ SettingsDialog::SettingsDialog(QWidget* parent)
     connect(m_resetButton, &QPushButton::clicked, this, &SettingsDialog::onResetToDefaultsClicked);
 }
 
-void SettingsDialog::setupUI() {
+void SettingsDialog::setupUi() {
     setWindowTitle(tr("Settings"));
     setMinimumSize(520, 420);
     resize(640, 540);

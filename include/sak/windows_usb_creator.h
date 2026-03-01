@@ -5,6 +5,7 @@
 
 #include <QObject>
 #include <QString>
+#include <QMutex>
 #include <atomic>
 
 /**
@@ -129,7 +130,8 @@ private:
     QString getDriveLetterFromDiskNumber();
     
     std::atomic<bool> m_cancelled{false};
-    QString m_lastError;
+    mutable QMutex m_errorMutex;          ///< Guards m_lastError for cross-thread access
+    QString m_lastError;                  ///< Protected by m_errorMutex
     QString m_volumeLabel;  // Volume label extracted from ISO
     QString m_diskNumber;   // Hardware disk number (e.g., "1" for PhysicalDrive1)
 };

@@ -8,6 +8,7 @@
 #include <QObject>
 #include <QString>
 #include <QStringList>
+#include <QMutex>
 #include <memory>
 #include <vector>
 #include <atomic>
@@ -235,9 +236,10 @@ private:
     std::unique_ptr<ImageSource> m_imageSource;
     std::vector<std::unique_ptr<FlashWorker>> m_workers;
     
-    sak::FlashState m_state;
-    sak::FlashProgress m_progress;
-    sak::FlashResult m_result;
+    mutable QMutex m_mutex;           ///< Guards m_state, m_progress, m_result
+    sak::FlashState m_state;          // Protected by m_mutex
+    sak::FlashProgress m_progress;    // Protected by m_mutex
+    sak::FlashResult m_result;        // Protected by m_mutex
     
     bool m_verificationEnabled;
     qint64 m_bufferSize;

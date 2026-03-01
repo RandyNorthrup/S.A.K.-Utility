@@ -1,6 +1,9 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+/// @file create_restore_point_action.cpp
+/// @brief Implements Windows System Restore point creation via PowerShell
+
 /**
  * RESEARCH-BASED IMPLEMENTATION (3 Sources - December 15, 2025)
  * =============================================================

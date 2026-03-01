@@ -68,7 +68,7 @@ if(MSVC)
         /utf-8              # UTF-8 source and execution charset
         /external:anglebrackets  # Treat <> includes as external
         /external:W0        # Disable warnings for external headers
-        /MT$<$<CONFIG:Debug>:d>  # Static runtime: /MT (Release) or /MTd (Debug)
+        # Static runtime is set via CMAKE_MSVC_RUNTIME_LIBRARY in cmake/SAK_BuildConfig.cmake
     )
     
     # Release optimizations
@@ -84,7 +84,7 @@ if(MSVC)
     
     # Security features
     add_compile_options(/guard:cf)  # Control Flow Guard
-    add_link_options(/guard:cf /DYNAMICBASE /NXCOMPAT)
+    add_link_options(/guard:cf /DYNAMICBASE /NXCOMPAT /HIGHENTROPYVA)
     
 # Clang/GCC Compiler Flags
 elseif(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
@@ -195,6 +195,14 @@ endif()
 # Project Configuration
 # ============================================================================
 
+# Resolve build type for multi-config generators (MSVC)
+# CMAKE_BUILD_TYPE is empty on multi-config; use generator expression fallback
+if(CMAKE_BUILD_TYPE)
+    set(SAK_RESOLVED_BUILD_TYPE "${CMAKE_BUILD_TYPE}")
+else()
+    set(SAK_RESOLVED_BUILD_TYPE "Release")
+endif()
+
 # Version header generation
 configure_file(
     "${CMAKE_CURRENT_SOURCE_DIR}/cmake/version.h.in"
@@ -230,7 +238,7 @@ set(CORE_SOURCES
     src/core/chocolatey_manager.cpp
     src/core/package_matcher.cpp
     src/core/migration_report.cpp
-    src/core/app_migration_worker.cpp
+    src/core/app_installation_worker.cpp
     src/core/user_data_manager.cpp
     src/core/user_profile_types.cpp
     src/core/smart_file_filter.cpp
@@ -297,6 +305,9 @@ set(CORE_SOURCES
     include/sak/elevation_manager.h
     include/sak/bundled_tools_manager.h
     include/sak/error_codes.h
+    include/sak/aligned_buffer.h
+    include/sak/format_utils.h
+    include/sak/widget_helpers.h
     include/sak/config_manager.h
     include/sak/app_scanner.h
     include/sak/drive_scanner.h
@@ -317,7 +328,7 @@ set(CORE_SOURCES
     include/sak/chocolatey_manager.h
     include/sak/package_matcher.h
     include/sak/migration_report.h
-    include/sak/app_migration_worker.h
+    include/sak/app_installation_worker.h
     include/sak/user_data_manager.h
     include/sak/user_profile_types.h
     include/sak/smart_file_filter.h
@@ -386,12 +397,12 @@ set(GUI_SOURCES
     include/sak/duplicate_finder_panel.h
     include/sak/about_dialog.h
     include/sak/log_viewer.h
-    include/gui/settings_dialog.h
+    include/sak/settings_dialog.h
     src/gui/settings_dialog.cpp
-    src/gui/app_migration_panel.cpp
-    src/gui/app_migration_panel_actions.cpp
-    src/gui/app_migration_panel_table.cpp
-    include/sak/app_migration_panel.h
+    src/gui/app_installation_panel.cpp
+    src/gui/app_installation_panel_actions.cpp
+    src/gui/app_installation_panel_table.cpp
+    include/sak/app_installation_panel.h
     src/gui/per_user_customization_dialog.cpp
     include/sak/per_user_customization_dialog.h
     src/gui/user_profile_backup_wizard.cpp
@@ -419,9 +430,9 @@ set(GUI_SOURCES
     src/gui/detachable_log_window.cpp
     include/sak/detachable_log_window.h
     src/gui/windows11_theme.cpp
-    include/gui/windows11_theme.h
+    include/sak/windows11_theme.h
     src/gui/splash_screen.cpp
-    include/gui/splash_screen.h
+    include/sak/splash_screen.h
     include/sak/quick_action.h
     include/sak/quick_action_controller.h
     src/core/quick_action_result_io.cpp
@@ -437,6 +448,7 @@ set(GUI_SOURCES
     src/gui/wifi_manager_panel.cpp
     include/sak/wifi_manager_panel.h
     src/third_party/qrcodegen/qrcodegen.cpp
+    src/third_party/qrcodegen/qrcodegen.hpp
 )
 
 # Quick Actions
@@ -445,7 +457,7 @@ set(QUICK_ACTIONS_SOURCES
     src/actions/action_factory.cpp
     include/sak/actions/action_factory.h
     
-    # System Optimization (8 actions)
+    # System Optimization
     src/actions/disk_cleanup_action.cpp
     src/actions/clear_browser_cache_action.cpp
     src/actions/defragment_drives_action.cpp
@@ -455,7 +467,7 @@ set(QUICK_ACTIONS_SOURCES
     src/actions/optimize_power_settings_action.cpp
     src/actions/disable_visual_effects_action.cpp
     
-    # Quick Backups (8 actions)
+    # Quick Backups
     src/actions/quickbooks_backup_action.cpp
     src/actions/browser_profile_backup_action.cpp
     src/actions/outlook_backup_action.cpp
@@ -464,9 +476,9 @@ set(QUICK_ACTIONS_SOURCES
     src/actions/tax_software_backup_action.cpp
     src/actions/photo_management_backup_action.cpp
     src/actions/development_configs_backup_action.cpp
+    src/actions/backup_known_networks_action.cpp
     
-    # Maintenance (8 actions)
-    src/actions/check_disk_health_action.cpp
+    # Maintenance
     src/actions/update_all_apps_action.cpp
     src/actions/windows_update_action.cpp
     src/actions/verify_system_files_action.cpp
@@ -475,7 +487,7 @@ set(QUICK_ACTIONS_SOURCES
     src/actions/reset_network_action.cpp
     src/actions/clear_print_spooler_action.cpp
     
-    # Troubleshooting (6 actions)
+    # Troubleshooting
     src/actions/generate_system_report_action.cpp
     src/actions/check_bloatware_action.cpp
     src/actions/test_network_speed_action.cpp
@@ -483,14 +495,13 @@ set(QUICK_ACTIONS_SOURCES
     src/actions/repair_windows_store_action.cpp
     src/actions/fix_audio_issues_action.cpp
     
-    # Emergency Recovery (6 actions)
+    # Emergency Recovery
     src/actions/create_restore_point_action.cpp
     src/actions/export_registry_keys_action.cpp
     src/actions/screenshot_settings_action.cpp
     src/actions/backup_desktop_wallpaper_action.cpp
     src/actions/backup_printer_settings_action.cpp
     src/actions/backup_bitlocker_keys_action.cpp
-    src/actions/backup_known_networks_action.cpp
     
     # Headers for all actions
     include/sak/actions/disk_cleanup_action.h
@@ -509,7 +520,7 @@ set(QUICK_ACTIONS_SOURCES
     include/sak/actions/tax_software_backup_action.h
     include/sak/actions/photo_management_backup_action.h
     include/sak/actions/development_configs_backup_action.h
-    include/sak/actions/check_disk_health_action.h
+    include/sak/actions/backup_known_networks_action.h
     include/sak/actions/update_all_apps_action.h
     include/sak/actions/windows_update_action.h
     include/sak/actions/verify_system_files_action.h
@@ -529,7 +540,6 @@ set(QUICK_ACTIONS_SOURCES
     include/sak/actions/backup_desktop_wallpaper_action.h
     include/sak/actions/backup_printer_settings_action.h
     include/sak/actions/backup_bitlocker_keys_action.h
-    include/sak/actions/backup_known_networks_action.h
 )
 
 # Main entry point

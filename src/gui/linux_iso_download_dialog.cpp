@@ -11,7 +11,9 @@
  */
 
 #include "sak/linux_iso_download_dialog.h"
+#include "sak/format_utils.h"
 #include "sak/linux_iso_downloader.h"
+#include "sak/style_constants.h"
 
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -38,7 +40,7 @@ LinuxISODownloadDialog::LinuxISODownloadDialog(LinuxISODownloader* downloader,
     setModal(true);
     resize(780, 680);
 
-    setupUI();
+    setupUi();
     connectSignals();
     populateDistroList();
 
@@ -51,7 +53,7 @@ LinuxISODownloadDialog::~LinuxISODownloadDialog() = default;
 // UI Setup
 // ============================================================================
 
-void LinuxISODownloadDialog::setupUI()
+void LinuxISODownloadDialog::setupUi()
 {
     auto* mainLayout = new QVBoxLayout(this);
 
@@ -94,11 +96,11 @@ void LinuxISODownloadDialog::setupUI()
     detailsLayout->addSpacing(8);
 
     m_distroVersionLabel = new QLabel("", detailsWidget);
-    m_distroVersionLabel->setStyleSheet("color: #64748b;");
+    m_distroVersionLabel->setStyleSheet(QString("color: %1;").arg(sak::ui::kColorTextMuted));
     detailsLayout->addWidget(m_distroVersionLabel);
 
     m_distroSizeLabel = new QLabel("", detailsWidget);
-    m_distroSizeLabel->setStyleSheet("color: #64748b;");
+    m_distroSizeLabel->setStyleSheet(QString("color: %1;").arg(sak::ui::kColorTextMuted));
     detailsLayout->addWidget(m_distroSizeLabel);
 
     m_distroHomepageLabel = new QLabel("", detailsWidget);
@@ -157,6 +159,7 @@ void LinuxISODownloadDialog::setupUI()
 
     m_startButton = new QPushButton("Download ISO", this);
     m_startButton->setEnabled(false);
+    m_startButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
     buttonLayout->addWidget(m_startButton);
 
     m_cancelButton = new QPushButton("Cancel", this);
@@ -371,23 +374,27 @@ void LinuxISODownloadDialog::onStartDownload()
 void LinuxISODownloadDialog::onPhaseChanged(LinuxISODownloader::Phase phase,
                                             const QString& description)
 {
-    m_phaseLabel->setText(description);
-
+    // A11Y: prefix phase text so status is conveyed without relying on color alone
     switch (phase) {
     case LinuxISODownloader::Phase::ResolvingVersion:
-        m_phaseLabel->setStyleSheet("font-weight: bold; color: #7c3aed;");
+        m_phaseLabel->setStyleSheet(QString("font-weight: bold; color: %1;").arg(sak::ui::kColorAccentPurple));
+        m_phaseLabel->setText(QStringLiteral("\u2699 ") + description); // ⚙
         break;
     case LinuxISODownloader::Phase::Downloading:
-        m_phaseLabel->setStyleSheet("font-weight: bold; color: #059669;");
+        m_phaseLabel->setStyleSheet(QString("font-weight: bold; color: %1;").arg(sak::ui::kColorAccentEmerald));
+        m_phaseLabel->setText(QStringLiteral("\u2B07 ") + description); // ⬇
         break;
     case LinuxISODownloader::Phase::VerifyingChecksum:
-        m_phaseLabel->setStyleSheet("font-weight: bold; color: #d97706;");
+        m_phaseLabel->setStyleSheet(QString("font-weight: bold; color: %1;").arg(sak::ui::kStatusColorWarning));
+        m_phaseLabel->setText(QStringLiteral("\u23F3 ") + description); // ⏳
         break;
     case LinuxISODownloader::Phase::Completed:
-        m_phaseLabel->setStyleSheet("font-weight: bold; color: #16a34a;");
+        m_phaseLabel->setStyleSheet(QString("font-weight: bold; color: %1;").arg(sak::ui::kStatusColorSuccess));
+        m_phaseLabel->setText(QStringLiteral("\u2714 ") + description); // ✔
         break;
     case LinuxISODownloader::Phase::Failed:
-        m_phaseLabel->setStyleSheet("font-weight: bold; color: #dc2626;");
+        m_phaseLabel->setStyleSheet(QString("font-weight: bold; color: %1;").arg(sak::ui::kStatusColorError));
+        m_phaseLabel->setText(QStringLiteral("\u2718 ") + description); // ✘
         break;
     default:
         m_phaseLabel->setStyleSheet("font-weight: bold;");
@@ -422,7 +429,7 @@ void LinuxISODownloadDialog::onDownloadComplete(const QString& isoPath,
     QString sizeStr = formatSize(fileSize);
     m_statusLabel->setText(QString("Download complete! (%1)").arg(sizeStr));
     m_phaseLabel->setText("Complete!");
-    m_phaseLabel->setStyleSheet("font-weight: bold; color: #16a34a;");
+    m_phaseLabel->setStyleSheet(QString("font-weight: bold; color: %1;").arg(sak::ui::kStatusColorSuccess));
 
     QMessageBox::information(this, "Download Complete",
         QString("Linux ISO downloaded successfully!\n\n"
@@ -508,9 +515,6 @@ QString LinuxISODownloadDialog::getDefaultSavePath(const QString& fileName) cons
 
 QString LinuxISODownloadDialog::formatSize(qint64 bytes)
 {
-    if (bytes <= 0) return "Unknown";
-    if (bytes < 1024) return QString("%1 B").arg(bytes);
-    if (bytes < 1024 * 1024) return QString("%1 KB").arg(bytes / 1024.0, 0, 'f', 1);
-    if (bytes < 1024LL * 1024 * 1024) return QString("%1 MB").arg(bytes / (1024.0 * 1024.0), 0, 'f', 1);
-    return QString("%1 GB").arg(bytes / (1024.0 * 1024.0 * 1024.0), 0, 'f', 2);
+    if (bytes <= 0) return QStringLiteral("Unknown");
+    return sak::formatBytes(bytes);
 }

@@ -1,5 +1,8 @@
-// Copyright (c) 2025 Randy Northrup. All rights reserved.
+﻿// Copyright (c) 2025 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
+
+/// @file disable_startup_programs_action.cpp
+/// @brief Implements startup program management and disabling
 
 #include "sak/actions/disable_startup_programs_action.h"
 #include "sak/process_runner.h"
@@ -11,6 +14,7 @@
 #include <QJsonDocument>
 #include <QJsonArray>
 #include <QJsonObject>
+#include "sak/logger.h"
 
 namespace sak {
 

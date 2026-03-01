@@ -8,6 +8,7 @@
 #include <QList>
 #include <QTimer>
 #include <memory>
+#include <atomic>
 #include <windows.h>
 
 namespace sak {
@@ -169,7 +170,7 @@ private:
     QTimer* m_refreshTimer;
     HWND m_notificationWindow;
     HDEVNOTIFY m_deviceNotify;
-    bool m_isScanning;
+    std::atomic<bool> m_isScanning;
     
     static DriveScanner* s_instance; // For static callback
 };

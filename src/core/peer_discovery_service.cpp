@@ -93,9 +93,21 @@ void PeerDiscoveryService::sendAnnouncement() {
 }
 
 void PeerDiscoveryService::onReadyRead() {
+    // Maximum acceptable datagram size (64 KB) to prevent resource exhaustion.
+    constexpr qint64 kMaxDatagramSize = 65536;
+
     while (m_socket->hasPendingDatagrams()) {
+        const qint64 datagramSize = m_socket->pendingDatagramSize();
+        if (datagramSize > kMaxDatagramSize || datagramSize <= 0) {
+            // Discard oversized or empty datagrams.
+            QByteArray discard(static_cast<int>(datagramSize), 0);
+            m_socket->readDatagram(discard.data(), discard.size());
+            logWarning("PeerDiscoveryService discarded oversized datagram ({} bytes)", datagramSize);
+            continue;
+        }
+
         QByteArray datagram;
-        datagram.resize(static_cast<int>(m_socket->pendingDatagramSize()));
+        datagram.resize(static_cast<int>(datagramSize));
         QHostAddress sender;
         quint16 senderPort = 0;
         m_socket->readDatagram(datagram.data(), datagram.size(), &sender, &senderPort);
@@ -108,7 +120,15 @@ void PeerDiscoveryService::onReadyRead() {
         }
 
         auto obj = doc.object();
-        if (obj.value("message_type").toString() == "ANNOUNCE") {
+
+        // Validate required fields to reject malformed announcements.
+        const QString messageType = obj.value("message_type").toString();
+        if (messageType.isEmpty()) {
+            logWarning("PeerDiscoveryService received packet with missing message_type");
+            continue;
+        }
+
+        if (messageType == "ANNOUNCE") {
             auto peer_obj = obj.value("peer_info").toObject();
             TransferPeerInfo peer = TransferPeerInfo::fromJson(peer_obj);
             peer.ip_address = sender.toString();
@@ -117,7 +137,7 @@ void PeerDiscoveryService::onReadyRead() {
 
             // Send unicast response
             sendResponse(sender, senderPort);
-        } else if (obj.value("message_type").toString() == "DISCOVERY_REPLY") {
+        } else if (messageType == "DISCOVERY_REPLY") {
             auto peer_obj = obj.value("peer_info").toObject();
             TransferPeerInfo peer = TransferPeerInfo::fromJson(peer_obj);
             peer.ip_address = sender.toString();

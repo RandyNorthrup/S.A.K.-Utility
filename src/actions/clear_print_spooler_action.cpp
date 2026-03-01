@@ -1,6 +1,9 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+/// @file clear_print_spooler_action.cpp
+/// @brief Implements print spooler queue clearing and service restart
+
 #include "sak/actions/clear_print_spooler_action.h"
 #include "sak/process_runner.h"
 #include <QThread>
@@ -28,7 +31,7 @@ int ClearPrintSpoolerAction::countSpoolFiles() {
 void ClearPrintSpoolerAction::stopSpooler() {
     Q_EMIT executionProgress("Stopping print spooler service...", 20);
     ProcessResult proc = runProcess("net", QStringList() << "stop" << "spooler", 15000);
-    if (proc.timed_out || proc.exit_code != 0) {
+    if (!proc.succeeded()) {
         Q_EMIT logMessage("Stop spooler warning: " + proc.std_err.trimmed());
     }
     QThread::msleep(2000);
@@ -50,7 +53,7 @@ void ClearPrintSpoolerAction::clearSpoolFolder() {
 void ClearPrintSpoolerAction::startSpooler() {
     Q_EMIT executionProgress("Starting print spooler service...", 80);
     ProcessResult proc = runProcess("net", QStringList() << "start" << "spooler", 15000);
-    if (proc.timed_out || proc.exit_code != 0) {
+    if (!proc.succeeded()) {
         Q_EMIT logMessage("Start spooler warning: " + proc.std_err.trimmed());
     }
 }

@@ -75,11 +75,14 @@ void EncryptionTests::roundTrip_emptyData()
     QVERIFY(encrypted.has_value());
 
     auto decrypted = sak::decryptData(encrypted.value(), password);
-    // Empty data may or may not round-trip depending on padding behavior.
-    // The implementation may fail to decrypt zero-length plaintext.
-    // Just verify no crash and that encrypt succeeded.
-    Q_UNUSED(decrypted);
-    QVERIFY(true);
+    // Empty data should either round-trip to empty or fail gracefully.
+    if (decrypted.has_value()) {
+        QCOMPARE(decrypted.value(), original);
+    } else {
+        // If decryption fails for zero-length plaintext due to padding,
+        // that's acceptable — just verify no crash occurred.
+        QVERIFY2(true, "Decryption of empty plaintext failed gracefully");
+    }
 }
 
 void EncryptionTests::roundTrip_largeData()

@@ -22,12 +22,21 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+# ── Local config (not tracked by git) ───────────────────────────
+# Copy scripts/sign-config.template.ps1 to scripts/sign-config.ps1
+# and fill in your subscription ID.
+$configPath = Join-Path $PSScriptRoot "sign-config.ps1"
+if (-not (Test-Path $configPath)) {
+    Write-Error "Missing local config: $configPath`nCopy sign-config.template.ps1 to sign-config.ps1 and fill in your SubscriptionId."
+    exit 1
+}
+. $configPath
+
 # ── Configuration ────────────────────────────────────────────────
 $AccountName      = "scnetsolutions"
 $ProfileName      = "SAKUtility"
 $Endpoint         = "https://wus.codesigning.azure.net/"
 $TimestampUrl     = "http://timestamp.acs.microsoft.com"
-$SubscriptionId   = "781cdf6a-5b53-4e2b-9317-1b04c712466d"
 
 # ── Resolve exe path ────────────────────────────────────────────
 $resolvedPath = Resolve-Path $ExePath -ErrorAction SilentlyContinue

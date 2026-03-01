@@ -7,7 +7,6 @@
 #include <QString>
 #include <QStringList>
 #include <QMap>
-#include <QDateTime>
 #include <filesystem>
 #include <vector>
 
@@ -32,17 +31,6 @@ public:
         std::filesystem::path destination;
         QString category;
         bool would_overwrite{false};
-        bool was_executed{false};  ///< Track if operation was completed
-    };
-
-    /**
-     * @brief Undo log entry for rollback capability
-     */
-    struct UndoEntry {
-        std::filesystem::path original_source;
-        std::filesystem::path current_location;
-        QDateTime timestamp;
-        bool can_undo{true};
     };
 
     /**
@@ -54,7 +42,6 @@ public:
         bool preview_mode{false};                      ///< Dry run without moving
         bool create_subdirectories{true};              ///< Create category folders
         QString collision_strategy{"rename"};          ///< rename/skip/overwrite
-        bool enable_undo_log{true};                    ///< Track operations for undo
     };
 
     /**
@@ -63,44 +50,6 @@ public:
      * @param parent Parent QObject
      */
     explicit OrganizerWorker(const Config& config, QObject* parent = nullptr);
-
-    /**
-     * @brief Get undo history
-     * @return Vector of undo entries
-     */
-    [[nodiscard]] const std::vector<UndoEntry>& getUndoHistory() const { return m_undo_history; }
-
-    /**
-     * @brief Check if undo is available
-     * @return True if operations can be undone
-     */
-    [[nodiscard]] bool canUndo() const { return !m_undo_history.empty(); }
-
-    /**
-     * @brief Undo last organization operation
-     * @return Success or error code
-     */
-    auto undoLastOperation() -> std::expected<void, sak::error_code>;
-
-    /**
-     * @brief Undo all operations in this session
-     * @return Success or error code
-     */
-    auto undoAllOperations() -> std::expected<void, sak::error_code>;
-
-    /**
-     * @brief Save undo log to file for future recovery
-     * @param file_path Path to save undo log
-     * @return Success or error code
-     */
-    auto saveUndoLog(const QString& file_path) -> std::expected<void, sak::error_code>;
-
-    /**
-     * @brief Load undo log from file
-     * @param file_path Path to undo log file
-     * @return Success or error code
-     */
-    auto loadUndoLog(const QString& file_path) -> std::expected<void, sak::error_code>;
 
 Q_SIGNALS:
     /**
@@ -167,20 +116,6 @@ private:
      */
     auto generatePreviewSummary() -> QString;
 
-    /**
-     * @brief Log operation for undo capability
-     * @param operation Move operation to log
-     */
-    void logForUndo(const MoveOperation& operation);
-
-    /**
-     * @brief Verify file can be restored to original location
-     * @param entry Undo entry to verify
-     * @return True if file can be restored
-     */
-    bool canRestore(const UndoEntry& entry);
-
     Config m_config;
     std::vector<MoveOperation> m_planned_operations;
-    std::vector<UndoEntry> m_undo_history;
 };

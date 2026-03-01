@@ -1,6 +1,9 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+/// @file config_manager.cpp
+/// @brief Implements application configuration persistence and settings management
+
 #include "sak/config_manager.h"
 #include "sak/logger.h"
 #include <QCoreApplication>
@@ -71,6 +74,8 @@ void ConfigManager::initializeDefaults()
     if (!contains("network_transfer/enabled")) {
         setValue("network_transfer/enabled", true);
     }
+    // Default ports for peer-to-peer network transfer (IANA ephemeral range).
+    // Users can override via Settings → Network Transfer.
     if (!contains("network_transfer/discovery_port")) {
         setValue("network_transfer/discovery_port", 54321);
     }

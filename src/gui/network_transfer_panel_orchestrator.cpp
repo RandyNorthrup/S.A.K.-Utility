@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "sak/network_transfer_panel.h"
+#include "sak/format_utils.h"
+#include "sak/widget_helpers.h"
+#include "sak/logger.h"
 
 #include "sak/windows_user_scanner.h"
 #include "sak/per_user_customization_dialog.h"
@@ -58,51 +61,6 @@
 
 namespace sak {
 
-namespace {
-
-QString formatBytes(qint64 bytes) {
-    const double gb = bytes / (1024.0 * 1024.0 * 1024.0);
-    if (gb >= 1.0) return QString::number(gb, 'f', 2) + " GB";
-    const double mb = bytes / (1024.0 * 1024.0);
-    if (mb >= 1.0) return QString::number(mb, 'f', 2) + " MB";
-    const double kb = bytes / 1024.0;
-    return QString::number(kb, 'f', 2) + " KB";
-}
-
-QColor statusColor(const QString& status) {
-    const QString value = status.trimmed().toLower();
-    if (value.contains("success") || value.contains("complete") || value.contains("ready")) {
-        return QColor(56, 142, 60);
-    }
-    if (value.contains("fail") || value.contains("error") || value.contains("reject") || value.contains("cancel")) {
-        return QColor(198, 40, 40);
-    }
-    if (value.contains("active") || value.contains("transfer") || value.contains("approved") || value.contains("queued") || value.contains("progress")) {
-        return QColor(245, 124, 0);
-    }
-    return QColor(97, 97, 97);
-}
-
-QColor progressColor(int percent) {
-    if (percent >= 100) {
-        return QColor(56, 142, 60);
-    }
-    if (percent > 0) {
-        return QColor(245, 124, 0);
-    }
-    return QColor(97, 97, 97);
-}
-
-void applyStatusColors(QTableWidgetItem* item, const QColor& color) {
-    if (!item) {
-        return;
-    }
-    item->setBackground(color);
-    item->setForeground(Qt::white);
-}
-
-} // namespace
-
 void NetworkTransferPanel::onOrchestrationAssignment(const DeploymentAssignment& assignment) {
     if (!assignment.job_id.isEmpty()) {
         m_assignmentStatusByJob[assignment.job_id] = tr("queued");
@@ -129,6 +87,7 @@ void NetworkTransferPanel::onStartOrchestratorServer() {
     if (!m_orchestratorServerRunning) {
         const auto port = static_cast<quint16>(m_orchestratorListenPortSpin->value());
         if (!m_orchestrator->startServer(port)) {
+            sak::logWarning("Failed to start orchestration server.");
             QMessageBox::warning(this, tr("Orchestrator Error"), tr("Failed to start orchestration server."));
             return;
         }
@@ -177,6 +136,7 @@ void NetworkTransferPanel::onStartDeployment() {
 
     auto mapping = buildDeploymentMapping();
     if (mapping.sources.isEmpty() || mapping.destinations.isEmpty()) {
+        sak::logWarning("Deployment Error: Select source profiles and destinations first.");
         QMessageBox::warning(this, tr("Deployment Error"), tr("Select source profiles and destinations first."));
         return;
     }
@@ -187,16 +147,19 @@ void NetworkTransferPanel::onStartDeployment() {
 
     QString validationError;
     if (!m_mappingEngine->validateMapping(mapping, validationError)) {
+        sak::logWarning(validationError.toStdString());
         QMessageBox::warning(this, tr("Deployment Error"), validationError);
         return;
     }
 
     if (!m_mappingEngine->checkDestinationReadiness(mapping)) {
+        sak::logWarning("Deployment Error: One or more destinations are not ready.");
         QMessageBox::warning(this, tr("Deployment Error"), tr("One or more destinations are not ready."));
         return;
     }
 
     if (!m_mappingEngine->checkDiskSpace(mapping)) {
+        sak::logWarning("Deployment Error: Insufficient disk space on one or more destinations.");
         QMessageBox::warning(this, tr("Deployment Error"), tr("Insufficient disk space on one or more destinations."));
         return;
     }
@@ -250,6 +213,7 @@ void NetworkTransferPanel::onCancelDeployment() {
 void NetworkTransferPanel::onSaveDeploymentTemplate() {
     auto mapping = buildDeploymentMapping();
     if (mapping.sources.isEmpty() || mapping.destinations.isEmpty()) {
+        sak::logWarning("Template Error: Select sources and destinations first.");
         QMessageBox::warning(this, tr("Template Error"), tr("Select sources and destinations first."));
         return;
     }
@@ -261,6 +225,7 @@ void NetworkTransferPanel::onSaveDeploymentTemplate() {
     }
 
     if (!m_mappingEngine->saveTemplate(mapping, filePath)) {
+        sak::logWarning("Template Error: Failed to save template.");
         QMessageBox::warning(this, tr("Template Error"), tr("Failed to save template."));
         return;
     }
@@ -279,6 +244,7 @@ void NetworkTransferPanel::onLoadDeploymentTemplate() {
 
     m_loadedMapping = m_mappingEngine->loadTemplate(filePath);
     if (m_loadedMapping.sources.isEmpty() || m_loadedMapping.destinations.isEmpty()) {
+        sak::logWarning("Template Error: Template is invalid or empty.");
         QMessageBox::warning(this, tr("Template Error"), tr("Template is invalid or empty."));
         return;
     }
@@ -546,6 +512,7 @@ void NetworkTransferPanel::onExportDeploymentHistory() {
     }
 
     if (!m_historyManager->exportCsv(filePath)) {
+        sak::logWarning("Export Error: Failed to export deployment history.");
         QMessageBox::warning(this, tr("Export Error"), tr("Failed to export deployment history."));
         return;
     }
@@ -598,6 +565,7 @@ void NetworkTransferPanel::onExportDeploymentSummaryCsv() {
                                             completedAt,
                                             jobs,
                                             destinations)) {
+        sak::logWarning("Export Error: Failed to export deployment summary.");
         QMessageBox::warning(this, tr("Export Error"), tr("Failed to export deployment summary."));
         return;
     }
@@ -650,6 +618,7 @@ void NetworkTransferPanel::onExportDeploymentSummaryPdf() {
                                             completedAt,
                                             jobs,
                                             destinations)) {
+        sak::logWarning("Export Error: Failed to export deployment summary.");
         QMessageBox::warning(this, tr("Export Error"), tr("Failed to export deployment summary."));
         return;
     }

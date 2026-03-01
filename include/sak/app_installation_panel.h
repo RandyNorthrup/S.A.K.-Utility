@@ -1,4 +1,4 @@
-// Copyright (c) 2025 Randy Northrup. All rights reserved.
+﻿// Copyright (c) 2025 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 #pragma once
@@ -22,7 +22,7 @@
 namespace sak {
 
 class ChocolateyManager;
-class AppMigrationWorker;
+class AppInstallationWorker;
 class MigrationReport;
 class LogToggleSwitch;
 
@@ -42,7 +42,7 @@ class LogToggleSwitch;
  * Thread-Safety: UI updates occur on main thread.
  * Search and install operations run on background threads.
  */
-class AppMigrationPanel : public QWidget {
+class AppInstallationPanel : public QWidget {
     Q_OBJECT
 
 public:
@@ -55,14 +55,14 @@ public:
         QString publisher;
     };
 
-    explicit AppMigrationPanel(QWidget* parent = nullptr);
-    ~AppMigrationPanel() override;
+    explicit AppInstallationPanel(QWidget* parent = nullptr);
+    ~AppInstallationPanel() override;
 
     // Disable copy and move
-    AppMigrationPanel(const AppMigrationPanel&) = delete;
-    AppMigrationPanel& operator=(const AppMigrationPanel&) = delete;
-    AppMigrationPanel(AppMigrationPanel&&) = delete;
-    AppMigrationPanel& operator=(AppMigrationPanel&&) = delete;
+    AppInstallationPanel(const AppInstallationPanel&) = delete;
+    AppInstallationPanel& operator=(const AppInstallationPanel&) = delete;
+    AppInstallationPanel(AppInstallationPanel&&) = delete;
+    AppInstallationPanel& operator=(AppInstallationPanel&&) = delete;
 
     /** @brief Access the log toggle switch for MainWindow connection */
     LogToggleSwitch* logToggle() const { return m_logToggle; }
@@ -73,22 +73,37 @@ Q_SIGNALS:
     void logOutput(const QString& message);
 
 private Q_SLOTS:
+    /** @brief Execute a Chocolatey package search with the current query */
     void onSearch();
+    /** @brief Add the selected search result to the install queue */
     void onAddToQueue();
+    /** @brief Remove the selected entry from the install queue */
     void onRemoveFromQueue();
+    /** @brief Clear all entries from the install queue */
     void onClearQueue();
+    /** @brief Begin sequential installation of all queued packages */
     void onInstallAll();
+    /** @brief Abort the running installation sequence */
     void onCancelInstall();
+    /** @brief Filter search results by the selected category */
     void onCategoryChanged(int index);
 
 private:
-    void setupUI();
+    /** @brief Build the panel layout and child widgets */
+    void setupUi();
+    /** @brief Wire signals/slots between widgets and backend */
     void setupConnections();
+    /** @brief Parse Chocolatey search output into the results model */
     void updateResultsFromSearch(const QString& output);
+    /** @brief Refresh the queue list widget from m_installQueue */
     void updateQueueDisplay();
+    /** @brief Enable or disable interactive controls during install */
     void enableControls(bool enabled);
+    /** @brief Persist the current install queue to a JSON file */
     void saveQueueToFile();
+    /** @brief Load a previously saved install queue from disk */
     void loadQueueFromFile();
+    /** @brief Return a publisher-specific icon for a Chocolatey package */
     QIcon publisherIcon(const QString& packageId) const;
 
     // Publisher icon cache
@@ -121,14 +136,14 @@ private:
     QVector<QueueEntry> m_installQueue;
 
     // Backend
-    std::shared_ptr<ChocolateyManager> m_chocoManager;
-    std::shared_ptr<AppMigrationWorker> m_worker;
+    std::shared_ptr<ChocolateyManager> m_choco_manager;
+    std::shared_ptr<AppInstallationWorker> m_worker;
 
     // Async
     QFuture<void> m_searchFuture;
-    std::atomic<bool> m_searchInProgress{false};
-    bool m_installInProgress{false};
+    std::atomic<bool> m_search_in_progress{false};
+    bool m_install_in_progress{false};
 
-}; // class AppMigrationPanel
+}; // class AppInstallationPanel
 
 } // namespace sak

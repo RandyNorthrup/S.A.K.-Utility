@@ -1,6 +1,9 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+/// @file verify_system_files_action.cpp
+/// @brief Implements Windows system file verification using SFC and DISM
+
 #include "sak/actions/verify_system_files_action.h"
 #include "sak/process_runner.h"
 #include <QRegularExpression>
@@ -17,11 +20,12 @@ void VerifySystemFilesAction::runSFC() {
     
     // Enterprise approach: Run SFC with real-time progress monitoring and accumulated output
     QString ps_script = 
-        "$process = Start-Process -FilePath 'sfc' -ArgumentList '/scannow' -PassThru -NoNewWindow -Wait -RedirectStandardOutput 'sfc_output.txt'; "
-        "Get-Content 'sfc_output.txt' | Write-Output; "
+        "$sfcOutput = Join-Path $env:TEMP 'sak_sfc_output.txt'; "
+        "$process = Start-Process -FilePath 'sfc' -ArgumentList '/scannow' -PassThru -NoNewWindow -Wait -RedirectStandardOutput $sfcOutput; "
+        "Get-Content $sfcOutput | Write-Output; "
         "$cbsLog = \"$env:SystemRoot\\Logs\\CBS\\CBS.log\"; "
         "if (Test-Path $cbsLog) { Write-Output \"CBS_LOG_PATH:$cbsLog\" }; "
-        "Remove-Item 'sfc_output.txt' -ErrorAction SilentlyContinue";
+        "Remove-Item $sfcOutput -ErrorAction SilentlyContinue";
     
     Q_EMIT executionProgress("SFC scanning...", 25);
     ProcessResult proc = runPowerShell(ps_script, 1800000, true, true, [this]() { return isCancelled(); });

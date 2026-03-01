@@ -23,6 +23,10 @@ namespace {
 #ifdef _WIN32
 /// @brief Generate cryptographic random bytes
 QByteArray generate_random_bytes(int size) {
+    if (size <= 0) {
+        sak::logWarning("generate_random_bytes called with non-positive size {}", size);
+        return {};
+    }
     QByteArray result(size, 0);
     BCRYPT_ALG_HANDLE hAlg = nullptr;
     
@@ -31,7 +35,7 @@ QByteArray generate_random_bytes(int size) {
         return {};
     }
     
-    if (BCryptGenRandom(hAlg, reinterpret_cast<PUCHAR>(result.data()), size, 0) != 0) {
+    if (BCryptGenRandom(hAlg, reinterpret_cast<PUCHAR>(result.data()), static_cast<ULONG>(size), 0) != 0) {
         sak::logError("BCrypt: Failed to generate {} random bytes", size);
         BCryptCloseAlgorithmProvider(hAlg, 0);
         return {};

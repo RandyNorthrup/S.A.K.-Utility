@@ -3,6 +3,7 @@
 
 #include "sak/user_profile_backup_wizard.h"
 #include "sak/user_profile_backup_worker.h"
+#include "sak/style_constants.h"
 #include <QVBoxLayout>
 #include <QDateTime>
 #include <QJsonDocument>
@@ -36,7 +37,7 @@ void UserProfileBackupExecutePage::setupUi() {
     
     // Status label
     m_statusLabel = new QLabel(tr("Ready to start backup"), this);
-    m_statusLabel->setStyleSheet("QLabel { font-weight: 600; color: #1e293b; }");
+    m_statusLabel->setStyleSheet(QString("QLabel { font-weight: 600; color: %1; }").arg(sak::ui::kColorTextHeading));
     layout->addWidget(m_statusLabel);
     
     // Current user being backed up
@@ -65,6 +66,7 @@ void UserProfileBackupExecutePage::setupUi() {
     // Start button
     m_startButton = new QPushButton(tr("Start Backup"), this);
     m_startButton->setIcon(QIcon::fromTheme("media-playback-start"));
+    m_startButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
     connect(m_startButton, &QPushButton::clicked, this, &UserProfileBackupExecutePage::onStartBackup);
     layout->addWidget(m_startButton);
     

@@ -4,6 +4,8 @@
 #include "sak/user_profile_backup_wizard.h"
 #include "sak/per_user_customization_dialog.h"
 #include "sak/app_scanner.h"
+#include "sak/logger.h"
+#include "sak/style_constants.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QGridLayout>
@@ -68,7 +70,7 @@ void UserProfileBackupCustomizeDataPage::setupUi() {
     
     // Summary
     m_summaryLabel = new QLabel(this);
-    m_summaryLabel->setStyleSheet("QLabel { padding: 10px; background-color: #e0f2fe; border-radius: 10px; }");
+    m_summaryLabel->setStyleSheet(QString("QLabel { padding: 10px; background-color: %1; border-radius: 10px; }").arg(sak::ui::kColorBgInfoPanel));
     layout->addWidget(m_summaryLabel);
 }
 
@@ -280,7 +282,7 @@ void UserProfileBackupSmartFiltersPage::setupUi() {
     
     // Summary
     m_summaryLabel = new QLabel(this);
-    m_summaryLabel->setStyleSheet("QLabel { padding: 10px; background-color: #e0f2fe; border-radius: 10px; }");
+    m_summaryLabel->setStyleSheet(QString("QLabel { padding: 10px; background-color: %1; border-radius: 10px; }").arg(sak::ui::kColorBgInfoPanel));
     layout->addWidget(m_summaryLabel);
 }
 
@@ -493,7 +495,7 @@ void UserProfileBackupSettingsPage::setupUi() {
         "<b>Assign Standard:</b> Sets full control for destination user."
     ), this);
     permExplainLabel->setWordWrap(true);
-    permExplainLabel->setStyleSheet("QLabel { padding: 6px; color: #64748b; }");
+    permExplainLabel->setStyleSheet(QString("QLabel { padding: 6px; color: %1; }").arg(sak::ui::kColorTextMuted));
     layout->addWidget(permExplainLabel);
     
     // Verification
@@ -505,7 +507,7 @@ void UserProfileBackupSettingsPage::setupUi() {
     
     // Summary
     m_summaryLabel = new QLabel(this);
-    m_summaryLabel->setStyleSheet("QLabel { padding: 10px; background-color: #e0f2fe; border-radius: 10px; }");
+    m_summaryLabel->setStyleSheet(QString("QLabel { padding: 10px; background-color: %1; border-radius: 10px; }").arg(sak::ui::kColorBgInfoPanel));
     layout->addWidget(m_summaryLabel);
     
     // Register wizard fields for validation
@@ -687,7 +689,7 @@ void UserProfileBackupInstalledAppsPage::setupUi() {
 
     // Summary
     m_summaryLabel = new QLabel(this);
-    m_summaryLabel->setStyleSheet("QLabel { padding: 10px; background-color: #e0f2fe; border-radius: 10px; }");
+    m_summaryLabel->setStyleSheet(QString("QLabel { padding: 10px; background-color: %1; border-radius: 10px; }").arg(sak::ui::kColorBgInfoPanel));
     m_summaryLabel->setText(tr("No applications scanned yet"));
     layout->addWidget(m_summaryLabel);
 }
@@ -844,7 +846,7 @@ void UserProfileBackupInstalledAppsPage::onScanApps() {
         AppScanner scanner;
         auto apps = scanner.scanAll();
 
-        qDebug() << "onScanApps background: scanAll returned" << apps.size() << "apps";
+        sak::logDebug("onScanApps background: scanAll returned {} apps", apps.size());
 
         QVector<InstalledAppInfo> appInfos;
         appInfos.reserve(apps.size());
@@ -859,7 +861,7 @@ void UserProfileBackupInstalledAppsPage::onScanApps() {
             appInfos.append(info);
         }
 
-        qDebug() << "onScanApps background: returning" << appInfos.size() << "app infos";
+        sak::logDebug("onScanApps background: returning {} app infos", appInfos.size());
         return appInfos;
     }));
 }

@@ -1,11 +1,28 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+/// @file test_network_speed_action.cpp
+/// @brief Implements network speed testing with download throughput measurement
+
 #include "sak/actions/test_network_speed_action.h"
 #include "sak/process_runner.h"
 #include <QRegularExpression>
 
 namespace sak {
+
+// Configurable test infrastructure endpoints
+static constexpr const char* kConnectivityHost = "8.8.8.8";
+static constexpr const char* kDownloadTestUrls[] = {
+    "https://speedtest.tele2.net/10MB.zip",
+    "https://proof.ovh.net/files/10Mb.dat",
+    "https://speed.hetzner.de/10MB.bin"
+};
+static constexpr const char* kUploadTestUrl = "https://httpbin.org/post";
+static constexpr int kConnectivityTimeoutMs = 10000;
+static constexpr int kDownloadTimeoutMs = 120000;
+static constexpr int kUploadTimeoutMs = 45000;
+static constexpr int kLatencyTimeoutMs = 30000;
+static constexpr int kLatencyPingCount = 10;
 
 TestNetworkSpeedAction::TestNetworkSpeedAction(QObject* parent)
     : QuickAction(parent)
@@ -14,15 +31,15 @@ TestNetworkSpeedAction::TestNetworkSpeedAction(QObject* parent)
 
 // ENTERPRISE-GRADE: Comprehensive network connectivity test using Test-NetConnection
 void TestNetworkSpeedAction::checkConnectivity() {
-    QString ps_cmd = QString("Test-NetConnection -ComputerName '8.8.8.8' -InformationLevel Detailed | "
+    QString ps_cmd = QString("Test-NetConnection -ComputerName '%1' -InformationLevel Detailed | "
                              "Select-Object PingSucceeded,PingReplyDetails,RemoteAddress | "
                              "ForEach-Object { "
                              "Write-Output \"PING_SUCCESS:$($_.PingSucceeded)\"; "
                              "Write-Output \"PING_RTT:$($_.PingReplyDetails.RoundtripTime)\"; "
                              "Write-Output \"REMOTE_ADDR:$($_.RemoteAddress)\" "
-                             "}");
+                             "}").arg(kConnectivityHost);
     
-    ProcessResult proc = runPowerShell(ps_cmd, 10000);
+    ProcessResult proc = runPowerShell(ps_cmd, kConnectivityTimeoutMs);
     if (!proc.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("Connectivity test warning: " + proc.std_err.trimmed());
     }
@@ -48,11 +65,11 @@ void TestNetworkSpeedAction::checkConnectivity() {
 void TestNetworkSpeedAction::testDownloadSpeed() {
     Q_EMIT executionProgress("Testing download speed with multiple servers...", 30);
     
-    // Test with 3 different servers for reliability
+    // Test with multiple servers for reliability
     QStringList test_urls = {
-        "https://speedtest.tele2.net/10MB.zip",
-        "https://proof.ovh.net/files/10Mb.dat",
-        "https://speed.hetzner.de/10MB.bin"
+        kDownloadTestUrls[0],
+        kDownloadTestUrls[1],
+        kDownloadTestUrls[2]
     };
     
     QString ps_cmd = QString(
@@ -85,7 +102,7 @@ void TestNetworkSpeedAction::testDownloadSpeed() {
         "}"
     ).arg(test_urls[0], test_urls[1], test_urls[2]);
     
-    ProcessResult proc = runPowerShell(ps_cmd, 120000);
+    ProcessResult proc = runPowerShell(ps_cmd, kDownloadTimeoutMs);
     if (!proc.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("Download speed test warning: " + proc.std_err.trimmed());
     }
@@ -130,7 +147,7 @@ void TestNetworkSpeedAction::testUploadSpeed() {
         "$data = [byte[]]::new(1MB); "
         "$rnd = [System.Random]::new(); "
         "$rnd.NextBytes($data); "
-        "$url = 'https://httpbin.org/post'; "
+        "$url = '%1'; "
         "try { "
         "  $start = Get-Date; "
         "  $response = Invoke-WebRequest -Uri $url -Method POST -Body $data -UseBasicParsing -TimeoutSec 30 -ErrorAction Stop; "
@@ -146,9 +163,9 @@ void TestNetworkSpeedAction::testUploadSpeed() {
         "  Write-Output \"UPLOAD_SUCCESS:False\"; "
         "  Write-Output \"UPLOAD_ERROR:$($_.Exception.Message)\"; "
         "}"
-    );
+    ).arg(kUploadTestUrl);
     
-    ProcessResult proc = runPowerShell(ps_cmd, 45000);
+    ProcessResult proc = runPowerShell(ps_cmd, kUploadTimeoutMs);
     if (!proc.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("Upload speed test warning: " + proc.std_err.trimmed());
     }
@@ -173,8 +190,8 @@ void TestNetworkSpeedAction::testLatencyAndJitter() {
     
     QString ps_cmd = QString(
         "$pings = @(); "
-        "$host = '8.8.8.8'; "
-        "for ($i = 0; $i -lt 10; $i++) { "
+        "$host = '%1'; "
+        "for ($i = 0; $i -lt %2; $i++) { "
         "  $result = Test-NetConnection -ComputerName $host -InformationLevel Quiet; "
         "  if ($result) { "
         "    $testResult = Test-NetConnection -ComputerName $host; "
@@ -189,7 +206,7 @@ void TestNetworkSpeedAction::testLatencyAndJitter() {
         "  $minLatency = ($pings | Measure-Object -Minimum).Minimum; "
         "  $maxLatency = ($pings | Measure-Object -Maximum).Maximum; "
         "  $jitter = $maxLatency - $minLatency; "
-        "  $packetLoss = ((10 - $pings.Count) / 10) * 100; "
+        "  $packetLoss = ((%2 - $pings.Count) / %2) * 100; "
         "  Write-Output \"AVG_LATENCY:$([math]::Round($avgLatency, 2))\"; "
         "  Write-Output \"MIN_LATENCY:$minLatency\"; "
         "  Write-Output \"MAX_LATENCY:$maxLatency\"; "
@@ -199,9 +216,9 @@ void TestNetworkSpeedAction::testLatencyAndJitter() {
         "} else { "
         "  Write-Output \"LATENCY_TEST_FAILED\"; "
         "}"
-    );
+    ).arg(kConnectivityHost).arg(kLatencyPingCount);
     
-    ProcessResult proc = runPowerShell(ps_cmd, 15000);
+    ProcessResult proc = runPowerShell(ps_cmd, kLatencyTimeoutMs);
     if (!proc.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("Latency/jitter test warning: " + proc.std_err.trimmed());
     }
@@ -327,12 +344,24 @@ void TestNetworkSpeedAction::execute() {
     
     // Phase 3: Test latency, jitter, and packet loss
     testLatencyAndJitter();
+    if (isCancelled()) {
+        emitCancelledResult("Network speed test cancelled during latency test");
+        return;
+    }
     
     // Phase 4: Test download speed
     testDownloadSpeed();
+    if (isCancelled()) {
+        emitCancelledResult("Network speed test cancelled during download test");
+        return;
+    }
     
     // Phase 5: Test upload speed
     testUploadSpeed();
+    if (isCancelled()) {
+        emitCancelledResult("Network speed test cancelled during upload test");
+        return;
+    }
     
     Q_EMIT executionProgress("Generating comprehensive report...", 90);
     

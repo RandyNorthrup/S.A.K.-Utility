@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "sak/network_transfer_panel.h"
+#include "sak/format_utils.h"
+#include "sak/logger.h"
 
 #include "sak/windows_user_scanner.h"
 #include "sak/per_user_customization_dialog.h"
@@ -69,16 +71,6 @@ constexpr int kPeerColIp = 1;
 constexpr int kPeerColMode = 2;
 constexpr int kPeerColCaps = 3;
 constexpr int kPeerColSeen = 4;
-
-QString formatBytes(qint64 bytes) {
-    const double gb = bytes / (1024.0 * 1024.0 * 1024.0);
-    if (gb >= 1.0) return QString::number(gb, 'f', 2) + " GB";
-    const double mb = bytes / (1024.0 * 1024.0);
-    if (mb >= 1.0) return QString::number(mb, 'f', 2) + " MB";
-    const double kb = bytes / 1024.0;
-    return QString::number(kb, 'f', 2) + " KB";
-}
-
 } // namespace
 
 void NetworkTransferPanel::onScanUsers() {
@@ -143,6 +135,7 @@ void NetworkTransferPanel::onStartSource() {
     }
 
     if (peer.ip_address.isEmpty()) {
+        sak::logWarning("Missing Destination: Select a peer or enter a manual IP.");
         QMessageBox::warning(this, tr("Missing Destination"), tr("Select a peer or enter a manual IP."));
         return;
     }
@@ -159,11 +152,13 @@ void NetworkTransferPanel::onStartSource() {
     m_settings.max_bandwidth_kbps = m_bandwidthSpin->value();
 
     if (m_settings.encryption_enabled && m_passphraseEdit->text().isEmpty()) {
+        sak::logWarning("Missing Passphrase: Enter a passphrase for encrypted transfers.");
         QMessageBox::warning(this, tr("Missing Passphrase"), tr("Enter a passphrase for encrypted transfers."));
         return;
     }
 
     if (m_settings.encryption_enabled && m_passphraseEdit->text().size() < 8) {
+        sak::logWarning("Weak Passphrase: Passphrase must be at least 8 characters.");
         QMessageBox::warning(this, tr("Weak Passphrase"), tr("Passphrase must be at least 8 characters."));
         return;
     }
@@ -188,23 +183,27 @@ void NetworkTransferPanel::onStartDestination() {
     m_settings.max_bandwidth_kbps = m_bandwidthSpin->value();
 
     if (m_settings.encryption_enabled && m_destinationPassphraseEdit->text().isEmpty()) {
+        sak::logWarning("Missing Passphrase: Enter a passphrase for encrypted transfers.");
         QMessageBox::warning(this, tr("Missing Passphrase"), tr("Enter a passphrase for encrypted transfers."));
         return;
     }
 
     if (m_settings.encryption_enabled && m_destinationPassphraseEdit->text().size() < 8) {
+        sak::logWarning("Weak Passphrase: Passphrase must be at least 8 characters.");
         QMessageBox::warning(this, tr("Weak Passphrase"), tr("Passphrase must be at least 8 characters."));
         return;
     }
 
     const QString base = destinationBase();
     if (base.isEmpty()) {
+        sak::logWarning("Missing Destination: Set a destination base path.");
         QMessageBox::warning(this, tr("Missing Destination"), tr("Set a destination base path."));
         return;
     }
 
     QDir destDir(base);
     if (!destDir.exists() && !destDir.mkpath(".")) {
+        sak::logWarning("Destination Error: Failed to create destination base directory.");
         QMessageBox::warning(this, tr("Destination Error"), tr("Failed to create destination base directory."));
         return;
     }
@@ -219,6 +218,7 @@ void NetworkTransferPanel::onStartDestination() {
 void NetworkTransferPanel::onConnectOrchestrator() {
     const QString host = m_orchestratorHostEdit->text().trimmed();
     if (host.isEmpty()) {
+        sak::logWarning("Missing Host: Enter an orchestrator host.");
         QMessageBox::warning(this, tr("Missing Host"), tr("Enter an orchestrator host."));
         return;
     }

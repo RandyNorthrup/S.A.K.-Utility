@@ -7,6 +7,7 @@
 #include <QUdpSocket>
 #include <QTimer>
 #include <QHostAddress>
+#include <atomic>
 
 #include "sak/orchestration_types.h"
 
@@ -49,7 +50,7 @@ private:
     DestinationPC m_destinationInfo;
     quint16 m_orchestratorPort{54322};
     quint16 m_port{54321};
-    bool m_running{false};
+    std::atomic<bool> m_running{false};
     bool m_roleOrchestrator{true};
 };
 

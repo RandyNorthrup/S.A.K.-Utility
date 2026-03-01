@@ -1,326 +1,188 @@
-# SAK Utility - Test Suite Documentation
+# SAK Utility — Test Suite
 
 ## Overview
 
-Comprehensive test suite for SAK Utility covering unit tests, integration tests, and end-to-end workflows.
+Comprehensive test suite for SAK Utility using the **Qt Test** framework. Tests cover core utilities, security, networking, orchestration, diagnostics, ISO pipelines, deployment, and quick action validation.
 
-## Test Structure
+## Structure
 
 ```
 tests/
-├── unit/                      # Unit tests for individual components
-│   ├── test_path_utils.cpp
-│   ├── test_logger.cpp
+├── unit/                          # Unit tests for individual components
+│   ├── actions/                   # Quick action validation tests
+│   │   └── test_action_factory.cpp
+│   ├── test_assignment_queue_store.cpp
 │   ├── test_config_manager.cpp
-│   ├── test_file_scanner.cpp
+│   ├── test_decompressor_factory.cpp
+│   ├── test_deployment_history.cpp
+│   ├── test_deployment_manager.cpp
+│   ├── test_destination_registry.cpp
+│   ├── test_diagnostic_controller.cpp
+│   ├── test_diagnostic_report_generator.cpp
+│   ├── test_diagnostic_types.cpp
+│   ├── test_drive_scanner.cpp
+│   ├── test_elevation_manager.cpp
 │   ├── test_encryption.cpp
-│   └── actions/               # Unit tests for action classes
-│       ├── test_disk_cleanup_action.cpp
-│       └── test_backup_browser_data_action.cpp
-├── integration/               # Integration tests for workflows
-│   ├── test_backup_workflow.cpp
-│   └── test_migration_workflow.cpp
-├── test_*.cpp                 # Legacy integration/manual tests
-└── CMakeLists.txt            # Test build configuration
+│   ├── test_error_codes.cpp
+│   ├── test_file_hash.cpp
+│   ├── test_file_scanner.cpp
+│   ├── test_input_validator.cpp
+│   ├── test_linux_iso_downloader.cpp
+│   ├── test_logger.cpp
+│   ├── test_mapping_engine.cpp
+│   ├── test_migration_orchestrator.cpp
+│   ├── test_network_connection.cpp
+│   ├── test_orchestration_client.cpp
+│   ├── test_orchestration_discovery_service.cpp
+│   ├── test_orchestration_protocol.cpp
+│   ├── test_orchestration_types.cpp
+│   ├── test_package_matcher.cpp
+│   ├── test_parallel_transfer_manager.cpp
+│   ├── test_parallel_transfer_manager_stress.cpp
+│   ├── test_path_utils.cpp
+│   ├── test_peer_discovery.cpp
+│   ├── test_permission_manager.cpp
+│   ├── test_process_runner.cpp
+│   ├── test_secure_memory.cpp
+│   ├── test_smart_disk_analyzer.cpp
+│   ├── test_smart_file_filter.cpp
+│   ├── test_streaming_decompressor.cpp
+│   ├── test_thermal_monitor.cpp
+│   ├── test_transfer_protocol.cpp
+│   ├── test_transfer_security.cpp
+│   ├── test_transfer_types.cpp
+│   ├── test_windows_iso_downloader.cpp
+│   └── test_worker_base.cpp
+├── integration/                   # End-to-end workflow tests
+│   ├── test_network_transfer_workflow.cpp
+│   └── test_uup_conversion_pipeline.cpp
+├── CMakeLists.txt                 # Test build configuration
+└── README.md                      # This file
 ```
 
 ## Running Tests
 
-### Build All Tests
+### Build and Run All
 
 ```powershell
-# Configure with tests
-cmake -S . -B build
-
-# Build all tests
-cmake --build build --config Release --target run_all_tests
-```
-
-### Run Specific Test Categories
-
-```powershell
-# Run all unit tests
-cmake --build build --target run_unit_tests
-
-# Run all integration tests
-cmake --build build --target run_integration_tests
-
-# Run specific test
-.\build\Release\test_path_utils.exe
+cmake --build build --config Release --target RUN_TESTS
 ```
 
 ### Using CTest
 
 ```powershell
-# Run all tests with CTest
 cd build
-ctest --output-on-failure
+ctest --build-config Release --output-on-failure
 
-# Run tests matching pattern
-ctest -R "test_path"
+# Pattern matching
+ctest -R "test_encryption"
 
-# Run with verbose output
+# Verbose output
 ctest -VV
+```
 
-# Generate XML report
-ctest --output-junit test_results.xml
+### Custom Targets
+
+```powershell
+# All tests
+cmake --build build --target run_all_tests
+
+# Unit tests only
+cmake --build build --target run_unit_tests
+
+# Integration tests only
+cmake --build build --target run_integration_tests
+```
+
+### Run a Single Test
+
+```powershell
+.\build\Release\test_path_utils.exe
+.\build\Release\test_path_utils.exe -v2   # verbose
 ```
 
 ## Test Categories
 
-### Unit Tests - Core Components
+### Core Utilities
+| Test | Module Under Test | Coverage |
+|---|---|---|
+| test_path_utils | `path_utils` | Path validation, normalization, sanitization, env-var expansion, safe-delete checks |
+| test_logger | `logger` | Log levels, formatting, file rotation, thread safety |
+| test_config_manager | `config_manager` | Get/set values, persistence, portable mode, type conversions |
+| test_file_scanner | `file_scanner` | Recursive scan, extension/size/date filters, cancellation |
+| test_file_hash | `file_hash` | MD5/SHA-256 hashing, large-file streaming, hash comparison |
+| test_process_runner | `process_runner` | Process execution, stdout/stderr capture, timeout, exit codes |
+| test_error_codes | `error_codes` | Error code enum values, category strings, display messages |
+| test_input_validator | `input_validator` | Path, IP, port, Chocolatey name, and URL validation |
+| test_worker_base | `worker_base` | Thread lifecycle, cancellation, progress signals |
 
-#### test_path_utils
-Tests path manipulation, validation, and sanitization.
+### Security & Encryption
+| Test | Module Under Test | Coverage |
+|---|---|---|
+| test_encryption | `encryption` | AES-256-CBC encrypt/decrypt, wrong password, Unicode, file encryption, IV randomness |
+| test_secure_memory | `secure_memory` | SecureString/SecureBuffer zeroing, VirtualLock, random generation |
+| test_transfer_security | `network_transfer_security` | AES-256-GCM per-chunk, PBKDF2 key derivation, challenge/response auth |
 
-**Coverage:**
-- Path validation (valid/invalid paths, reserved names)
-- Path normalization (forward/back slashes, ..)
-- Filename sanitization (remove invalid characters)
-- Relative path calculation
-- Path joining with proper separators
-- Environment variable expansion
-- File and directory size calculation
-- Directory creation with nested paths
-- Safe deletion checks (protect system directories)
+### Network Transfer & Orchestration
+| Test | Module Under Test | Coverage |
+|---|---|---|
+| test_transfer_types | `network_transfer_types` | Transfer state, file metadata, chunk structures |
+| test_transfer_protocol | `network_transfer_protocol` | Protocol message serialization, versioning, handshake |
+| test_peer_discovery | `peer_discovery_service` | UDP broadcast, peer registration, timeout expiry |
+| test_network_connection | `network_connection_manager` | Connection lifecycle, reconnection, error handling |
+| test_parallel_transfer_manager | `parallel_transfer_manager` | Concurrent transfers, queue management, bandwidth limits |
+| test_parallel_transfer_manager_stress | `parallel_transfer_manager` | High-concurrency stress, thread safety under load |
+| test_orchestration_types | `orchestration_types` | Job state, assignment, deployment plan structures |
+| test_orchestration_protocol | `orchestration_protocol` | Multi-PC protocol messages, serialization roundtrip |
+| test_orchestration_client | `orchestration_client` | Client connection, job acceptance, status reporting |
+| test_orchestration_discovery_service | `orchestration_discovery_service` | Orchestrator advertisement, client discovery |
 
-**Key Test Cases:**
-```cpp
-testIsValidPath()           // Validate Windows paths
-testNormalizePath()         // Convert mixed slashes
-testSanitizeFilename()      // Remove illegal characters
-testExpandEnvironmentVariables()  // %USERPROFILE% expansion
-testIsSafeToDelete()        // Prevent system folder deletion
-```
+### Deployment & Migration
+| Test | Module Under Test | Coverage |
+|---|---|---|
+| test_destination_registry | `destination_registry` | PC registration, capacity tracking, availability |
+| test_deployment_manager | `deployment_manager` | Job creation, assignment, progress tracking |
+| test_deployment_history | `deployment_history` | History persistence, query, cleanup |
+| test_assignment_queue_store | `assignment_queue_store` | Queue serialization, ordering, deduplication |
+| test_mapping_engine | `mapping_engine` | Source→destination path mapping, conflict resolution |
+| test_migration_orchestrator | `migration_orchestrator` | End-to-end migration planning, rollback |
+| test_package_matcher | `package_matcher` | App-to-Chocolatey matching, confidence scoring |
+| test_permission_manager | `permission_manager` | NTFS ACL read/write, permission preservation |
+| test_smart_file_filter | `smart_file_filter` | Category-based filtering, exclusion patterns, size thresholds |
+| test_elevation_manager | `elevation_manager` | Admin privilege detection, UAC status |
 
-#### test_logger
-Tests logging functionality with different levels and outputs.
+### Diagnostics & Benchmarking
+| Test | Module Under Test | Coverage |
+|---|---|---|
+| test_diagnostic_types | `diagnostic_types` | Hardware info structs, SMART data, benchmark results |
+| test_diagnostic_controller | `diagnostic_controller` | Full-suite orchestration, step sequencing, cancellation |
+| test_diagnostic_report_generator | `diagnostic_report_generator` | HTML/JSON/CSV generation, data formatting |
+| test_smart_disk_analyzer | `smart_disk_analyzer` | smartctl output parsing, health classification, attribute extraction |
+| test_thermal_monitor | `thermal_monitor` | Temperature polling, threshold alerts, auto-abort |
 
-**Coverage:**
-- Singleton pattern enforcement
-- Log level filtering (Debug, Info, Warning, Error)
-- Log formatting with timestamps
-- File rotation when size limits reached
-- Concurrent logging from multiple threads
-- Context information (class, method names)
+### ISO & Image Handling
+| Test | Module Under Test | Coverage |
+|---|---|---|
+| test_windows_iso_downloader | `windows_iso_downloader` | UUP API, download URL validation, HTTP-allow for Microsoft CDN |
+| test_linux_iso_downloader | `linux_iso_downloader` | Distro catalog, GitHub URL resolution, aria2c integration |
+| test_drive_scanner | `drive_scanner` | Physical drive enumeration, USB detection, formatting info |
+| test_streaming_decompressor | `streaming_decompressor` | Streaming gzip/bzip2/xz decompression, error handling |
+| test_decompressor_factory | `decompressor_factory` | Format detection, correct decompressor selection |
 
-**Key Test Cases:**
-```cpp
-testLogLevels()             // Filter by minimum level
-testLogFormatting()         // Timestamp and level prefix
-testLogRotation()           // Auto-rotate large files
-testConcurrentLogging()     // Thread-safe operations
-```
-
-#### test_config_manager
-Tests configuration storage and retrieval.
-
-**Coverage:**
-- Default configuration values
-- Setting and getting values (string, int, bool)
-- Configuration persistence across instances
-- Value removal and clearing
-- Group and key enumeration
-- Portable mode detection (portable.ini)
-- Array value storage
-- Type conversions (string to int/bool/double)
-
-**Key Test Cases:**
-```cpp
-testSetAndGetValues()       // Store and retrieve config
-testPersistence()           // Save and load from file
-testPortableMode()          // Detect portable.ini
-testTypeConversions()       // Auto-convert value types
-```
-
-#### test_file_scanner
-Tests file system scanning and filtering.
-
-**Coverage:**
-- Recursive and non-recursive scanning
-- Extension filtering (*.txt, *.log)
-- Multiple extension support
-- Directory exclusion patterns
-- File size filtering (min/max)
-- Date range filtering (modified after/before)
-- Hidden file handling
-- Symlink following
-- Progress reporting
-- Scan cancellation
-
-**Key Test Cases:**
-```cpp
-testScanWithExtensionFilter()  // Filter by file type
-testRecursiveScan()            // Include subdirectories
-testExcludeDirectories()       // Skip specified folders
-testMinMaxFileSize()           // Filter by size range
-testCancelScan()               // Abort long-running scan
-```
-
-#### test_encryption
-Tests encryption, decryption, and key management.
-
-**Coverage:**
-- String encryption/decryption
-- Binary data (QByteArray) encryption
-- Password verification (wrong password fails)
-- Empty data handling
-- Large data encryption (10KB+)
-- Unicode text support
-- Special character handling
-- Random key generation (256-bit)
-- Salt generation
-- Password hashing (with verification)
-- File encryption/decryption
-- Encryption strength (random IV per encryption)
-
-**Key Test Cases:**
-```cpp
-testEncryptDecryptString()     // Encrypt and decrypt text
-testWrongPassword()            // Fail with incorrect password
-testUnicodeData()              // Handle international text
-testEncryptFile()              // Encrypt entire files
-testEncryptionStrength()       // Different IV each time
-```
-
-### Unit Tests - Action Classes
-
-#### test_disk_cleanup_action
-Tests disk cleanup with file deletion.
-
-**Coverage:**
-- Temp file scanning and size calculation
-- Cleanup execution with signals
-- Progress reporting during cleanup
-- Exclude patterns (keep certain files)
-- Dry run mode (calculate without deleting)
-- Cancellation support
-
-**Key Test Cases:**
-```cpp
-testScanTempFiles()            // Find cleanable files
-testCleanupExecution()         // Delete files, emit signals
-testExcludePatterns()          // Keep *.log files
-testDryRun()                   // Calculate without deleting
-```
-
-#### test_backup_browser_data_action
-Tests browser profile backup.
-
-**Coverage:**
-- Chrome profile detection
-- Firefox profile detection
-- Chrome data backup (Bookmarks, History, Cookies)
-- Firefox data backup (places.sqlite, cookies.sqlite)
-- Selective backup (choose which items)
-- Manifest creation (backup metadata)
-- Error handling (invalid paths)
-
-**Key Test Cases:**
-```cpp
-testDetectChrome()             // Find Chrome profiles
-testBackupChrome()             // Copy Chrome data
-testSelectiveBackup()          // Backup only selected items
-testManifestCreation()         // Create backup metadata
-```
+### Quick Actions
+| Test | Module Under Test | Coverage |
+|---|---|---|
+| test_action_factory | `action_factory` | Factory completeness, metadata validity (name, description, category), initial state, no duplicates, all categories populated |
 
 ### Integration Tests
-
-#### test_backup_workflow
-Tests end-to-end backup process.
-
-**Coverage:**
-- Full backup workflow (Documents, Desktop, AppData)
-- Incremental backup (only changed files)
-- Backup verification (hash checks)
-- Backup encryption (with password)
-- Progress tracking
-- Backup cancellation
-- File filtering (include/exclude patterns)
-- Restore from backup
-
-**Key Test Cases:**
-```cpp
-testFullBackupWorkflow()       // Complete backup cycle
-testIncrementalBackup()        // Only backup changes
-testBackupEncryption()         // Encrypt backup data
-testRestoreFromBackup()        // Restore backed up files
-```
-
-#### test_migration_workflow
-Tests app migration process.
-
-**Coverage:**
-- App scanning and matching
-- Chocolatey package resolution
-- Migration report creation
-- Report import/export (JSON)
-- Migration execution
-- Progress tracking
-- Error handling
-
-**Key Test Cases:**
-```cpp
-testAppScanningAndMatching()   // Scan apps, find packages
-testMigrationReportCreation()  // Generate migration plan
-testMigrationExecution()       // Install matched packages
-```
-
-## Test Data
-
-### Fixtures
-
-Tests use temporary directories for isolated file operations:
-
-```cpp
-QTemporaryDir tempDir;  // Auto-cleaned after test
-QString testPath = tempDir.path();
-```
-
-### Mock Data
-
-Integration tests create realistic test data structures:
-
-```cpp
-// Browser profile structure
-AppData/Local/Google/Chrome/User Data/Default/
-    ├── Bookmarks
-    ├── History
-    ├── Preferences
-    └── Cookies
-
-AppData/Roaming/Mozilla/Firefox/Profiles/test.default/
-    ├── places.sqlite
-    ├── cookies.sqlite
-    └── prefs.js
-```
-
-## CI/CD Integration
-
-### GitHub Actions
-
-Tests run automatically on:
-- Push to main
-- Pull requests
-- Release tags
-
-```yaml
-- name: Run Tests
-  run: |
-    cmake --build build --target run_all_tests
-    cd build
-    ctest --output-junit test_results.xml
-
-- name: Upload Test Results
-  uses: actions/upload-artifact@v4
-  with:
-    name: test-results
-    path: build/test_results.xml
-```
+| Test | Workflow | Coverage |
+|---|---|---|
+| test_network_transfer_workflow | Network Transfer | End-to-end peer discovery → connect → transfer → verify |
+| test_uup_conversion_pipeline | UUP-to-ISO | Converter process attachment, config parsing, missing files, stdin close, exit handling |
 
 ## Writing New Tests
 
-### Unit Test Template
+### Template
 
 ```cpp
 #include "sak/my_component.h"
@@ -330,27 +192,15 @@ class TestMyComponent : public QObject {
     Q_OBJECT
 
 private slots:
-    void initTestCase() {
-        // Setup before all tests
-    }
+    void initTestCase();    // Before all tests
+    void cleanupTestCase(); // After all tests
+    void init();            // Before each test
+    void cleanup();         // After each test
 
-    void cleanupTestCase() {
-        // Cleanup after all tests
-    }
-
-    void init() {
-        // Setup before each test
-    }
-
-    void cleanup() {
-        // Cleanup after each test
-    }
-
-    void testBasicFunctionality() {
-        sak::MyComponent component;
-        
-        QVERIFY(component.isValid());
-        QCOMPARE(component.getValue(), 42);
+    void testSomething() {
+        sak::MyComponent c;
+        QVERIFY(c.isValid());
+        QCOMPARE(c.value(), expected);
     }
 };
 
@@ -358,128 +208,43 @@ QTEST_MAIN(TestMyComponent)
 #include "test_my_component.moc"
 ```
 
-### Adding to CMakeLists.txt
+### Registering in CMakeLists.txt
+
+Add a guarded block in `tests/CMakeLists.txt`:
 
 ```cmake
-# Add to UNIT_TESTS list
-set(UNIT_TESTS
-    test_path_utils
-    test_logger
-    test_my_component  # <-- Add here
-)
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_my_component.cpp")
+    add_executable(test_my_component unit/test_my_component.cpp)
+    set_target_properties(test_my_component PROPERTIES AUTOMOC ON)
+    target_link_libraries(test_my_component PRIVATE
+        Qt6::Test Qt6::Core
+        # ... add modules your test needs
+    )
+    add_test(NAME test_my_component COMMAND test_my_component)
+endif()
 ```
 
 ## Best Practices
 
-### 1. Isolation
-- Each test should be independent
-- Use temporary directories for file operations
-- Clean up resources in `cleanup()` slots
+- **Isolation:** Use `QTemporaryDir` for file operations — auto-cleaned after test
+- **No hardcoded counts:** Validate structure and invariants, not exact numbers
+- **One concept per test:** Keep tests focused and named descriptively
+- **Fast:** Target < 1 second per test (use mocks for slow operations)
+- **Edge cases:** Test empty input, max values, boundary conditions, error paths
 
-### 2. Clarity
-- Descriptive test names (`testSanitizeFilenameRemovesIllegalChars`)
-- One concept per test
-- Clear assertion messages
-
-### 3. Coverage
-- Test happy path and error cases
-- Test edge cases (empty input, max values)
-- Test boundary conditions
-
-### 4. Performance
-- Keep tests fast (<1 second each)
-- Use mocks for slow operations
-- Parallel test execution where possible
-
-### 5. Maintainability
-- Avoid hardcoded paths (use QTemporaryDir)
-- Use test fixtures for repeated setup
-- Document complex test scenarios
-
-## QTest Assertions
+## QTest Quick Reference
 
 ```cpp
-QVERIFY(condition)                    // Verify condition is true
-QCOMPARE(actual, expected)            // Verify exact match
-QVERIFY2(condition, "message")        // Verify with message
-QTEST(actual, "expected")             // Data-driven testing
+QVERIFY(condition)                       // Assert true
+QVERIFY2(condition, "message")           // Assert with message
+QCOMPARE(actual, expected)               // Assert equality
+QSKIP("reason")                          // Skip test
 
-// Exceptions and signals
-QVERIFY_EXCEPTION_THROWN(code, ExceptionType)
-QSignalSpy spy(&object, &Object::signal);
+QSignalSpy spy(&obj, &Obj::signal);      // Signal monitoring
 QCOMPARE(spy.count(), 1);
-
-// Skip tests
-QSKIP("Test not applicable");
-
-// Expected failures
-QEXPECT_FAIL("", "Known issue", Continue);
 ```
-
-## Debugging Tests
-
-### Visual Studio
-
-1. Set test executable as startup project
-2. Add breakpoints in test code
-3. Press F5 to debug
-
-### Command Line
-
-```powershell
-# Run single test with debugger
-windbg .\build\Release\test_path_utils.exe
-
-# Run with verbose output
-.\build\Release\test_path_utils.exe -v2
-```
-
-## Test Coverage
-
-### Measuring Coverage
-
-```powershell
-# Build with coverage flags
-cmake -S . -B build -DCMAKE_CXX_FLAGS="--coverage"
-cmake --build build
-
-# Run tests
-cd build
-ctest
-
-# Generate coverage report
-gcov **/*.cpp
-lcov --capture --directory . --output-file coverage.info
-genhtml coverage.info --output-directory coverage_html
-```
-
-## Continuous Improvement
-
-### Current Coverage
-- ✅ Core utilities (path_utils, logger, config_manager)
-- ✅ File operations (file_scanner, encryption)
-- ✅ Action system (disk_cleanup, browser_backup)
-- ✅ Backup workflow (full, incremental, encrypted)
-- ✅ Migration workflow (scan, match, report)
-
-### Future Additions
-- [ ] GUI component tests
-- [ ] Windows-specific functionality tests
-- [ ] Performance benchmarks
-- [ ] Stress tests (large datasets)
-- [ ] Security tests (privilege escalation)
-
-## Support
-
-For test-related questions:
-- Check existing tests for examples
-- Review Qt Test documentation
-- Open issue on GitHub
-- Contact maintainers
 
 ---
 
-**Last Updated:** December 16, 2025  
 **Test Framework:** Qt Test  
-**Qt Version:** 6.5.3  
 **Platform:** Windows 10/11

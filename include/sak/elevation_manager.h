@@ -16,6 +16,7 @@ namespace sak {
  * 
  * Provides utilities for checking and requesting administrator privileges
  * on Windows systems using UAC (User Account Control).
+ * Uses wide-char (W) Win32 APIs internally to support Unicode paths.
  * 
  * Thread-Safety: Can be used from any thread
  */
@@ -51,8 +52,8 @@ public:
      * @return Success or error code
      */
     static auto executeElevated(
-        const std::string& executable,
-        const std::string& arguments = "",
+        const std::wstring& executable,
+        const std::wstring& arguments = L"",
         bool wait_for_exit = true)
         -> std::expected<void, sak::error_code>;
 
@@ -71,17 +72,17 @@ private:
     [[nodiscard]] static bool isUserAdmin() noexcept;
 
     /**
-     * @brief Get current executable path
+     * @brief Get current executable path (wide-char for Unicode support)
      * @return Executable path or error
      */
     [[nodiscard]] static auto get_executable_path()
-        -> std::expected<std::string, sak::error_code>;
+        -> std::expected<std::wstring, sak::error_code>;
 
     /**
-     * @brief Get command line arguments
+     * @brief Get command line arguments (wide-char for Unicode support)
      * @return Arguments string
      */
-    [[nodiscard]] static std::string get_command_line_args();
+    [[nodiscard]] static std::wstring get_command_line_args();
 };
 
 } // namespace sak

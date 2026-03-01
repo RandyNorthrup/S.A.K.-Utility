@@ -5,6 +5,7 @@
 #include "sak/config_manager.h"
 #include "sak/info_button.h"
 #include "sak/logger.h"
+#include "sak/style_constants.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QGridLayout>
@@ -24,13 +25,13 @@ ImageFlasherSettingsDialog::ImageFlasherSettingsDialog(QWidget* parent)
     setModal(true);
     resize(500, 450);
     
-    setupUI();
+    setupUi();
     loadSettings();
 }
 
 ImageFlasherSettingsDialog::~ImageFlasherSettingsDialog() = default;
 
-void ImageFlasherSettingsDialog::setupUI() {
+void ImageFlasherSettingsDialog::setupUi() {
     auto* mainLayout = new QVBoxLayout(this);
     
     // Verification group
@@ -55,7 +56,7 @@ void ImageFlasherSettingsDialog::setupUI() {
         verificationGroup
     );
     validationNote->setWordWrap(true);
-    validationNote->setStyleSheet("color: #64748b; font-size: 9pt;");
+    validationNote->setStyleSheet(QString("color: %1; font-size: %2pt;").arg(sak::ui::kColorTextMuted).arg(sak::ui::kFontSizeNote));
     verificationLayout->addWidget(validationNote, 1, 0, 1, 2);
     
     mainLayout->addWidget(verificationGroup);
@@ -90,7 +91,7 @@ void ImageFlasherSettingsDialog::setupUI() {
         performanceGroup
     );
     performanceNote->setWordWrap(true);
-    performanceNote->setStyleSheet("color: #64748b; font-size: 9pt;");
+    performanceNote->setStyleSheet(QString("color: %1; font-size: %2pt;").arg(sak::ui::kColorTextMuted).arg(sak::ui::kFontSizeNote));
     performanceLayout->addWidget(performanceNote, 2, 0, 1, 2);
     
     mainLayout->addWidget(performanceGroup);
@@ -158,7 +159,7 @@ void ImageFlasherSettingsDialog::setupUI() {
     auto* storageLayout = new QVBoxLayout(storageGroup);
 
     m_cacheInfoLabel = new QLabel(storageGroup);
-    m_cacheInfoLabel->setStyleSheet("color: #64748b; font-size: 9pt;");
+    m_cacheInfoLabel->setStyleSheet(QString("color: %1; font-size: %2pt;").arg(sak::ui::kColorTextMuted).arg(sak::ui::kFontSizeNote));
     storageLayout->addWidget(m_cacheInfoLabel);
 
     m_clearCacheButton = new QPushButton("Clear Download Caches", storageGroup);

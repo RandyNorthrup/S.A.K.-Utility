@@ -1,6 +1,9 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+/// @file defragment_drives_action.cpp
+/// @brief Implements drive defragmentation and optimization analysis
+
 #include "sak/actions/defragment_drives_action.h"
 #include "sak/process_runner.h"
 #include <QStorageInfo>

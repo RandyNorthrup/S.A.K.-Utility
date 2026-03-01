@@ -29,7 +29,7 @@ private Q_SLOTS:
     void onClearDownloadCaches();
 
 private:
-    void setupUI();
+    void setupUi();
     void loadSettings();
     void saveSettings();
 

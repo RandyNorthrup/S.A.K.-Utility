@@ -5,6 +5,7 @@
 /// @brief Diagnostic report generation implementation (HTML, JSON, CSV)
 
 #include "sak/diagnostic_report_generator.h"
+#include "sak/format_utils.h"
 #include "sak/logger.h"
 
 #include <QDir>
@@ -723,20 +724,7 @@ QString DiagnosticReportGenerator::healthStatusText(SmartHealthStatus status)
 
 QString DiagnosticReportGenerator::formatBytes(uint64_t bytes)
 {
-    if (bytes == 0) return "0 B";
-    if (bytes >= 1024ULL * 1024 * 1024 * 1024) {
-        return QString("%1 TB").arg(
-            static_cast<double>(bytes) / (1024.0 * 1024 * 1024 * 1024), 0, 'f', 1);
-    }
-    if (bytes >= 1024ULL * 1024 * 1024) {
-        return QString("%1 GB").arg(
-            static_cast<double>(bytes) / (1024.0 * 1024 * 1024), 0, 'f', 1);
-    }
-    if (bytes >= 1024ULL * 1024) {
-        return QString("%1 MB").arg(
-            static_cast<double>(bytes) / (1024.0 * 1024), 0, 'f', 1);
-    }
-    return QString("%1 KB").arg(static_cast<double>(bytes) / 1024.0, 0, 'f', 1);
+    return sak::formatBytes(bytes);
 }
 
 } // namespace sak

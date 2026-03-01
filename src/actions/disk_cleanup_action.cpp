@@ -1,5 +1,8 @@
-// Copyright (c) 2025 Randy Northrup. All rights reserved.
+﻿// Copyright (c) 2025 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
+
+/// @file disk_cleanup_action.cpp
+/// @brief Implements comprehensive disk space cleanup across system directories
 
 #include "sak/actions/disk_cleanup_action.h"
 #include "sak/path_utils.h"
@@ -10,6 +13,7 @@
 #include <QFileInfo>
 #include <QStandardPaths>
 #include <QDateTime>
+#include "sak/logger.h"
 
 namespace sak {
 
@@ -137,7 +141,7 @@ void DiskCleanupAction::execute() {
     ).arg(PROFILE_ID);
     
     ProcessResult config_result = runPowerShell(ps_config, 300000);
-    if (config_result.timed_out || config_result.exit_code != 0) {
+    if (!config_result.succeeded()) {
         ExecutionResult result;
         result.success = false;
         result.message = "Failed to configure Disk Cleanup";
@@ -181,7 +185,7 @@ void DiskCleanupAction::execute() {
         
         // Run cleanup on this drive
         ProcessResult cleanmgr = runProcess("cleanmgr.exe", QStringList() << "/d" << drive_letter << sagerun_arg, 300000);
-        if (cleanmgr.timed_out || cleanmgr.exit_code != 0) {
+        if (!cleanmgr.succeeded()) {
             // Continue but record error
             Q_EMIT executionProgress(QString("Cleanup warning on %1:").arg(drive_letter), progress);
         }
@@ -236,7 +240,8 @@ void DiskCleanupAction::execute() {
 }
 
 void DiskCleanupAction::scanWindowsTemp() {
-    QString path = "C:\\Windows\\Temp";
+    const QString system_root = qEnvironmentVariable("SystemRoot", "C:\\Windows");
+    QString path = system_root + "\\Temp";
     QDir dir(path);
     
     if (!dir.exists()) {
@@ -317,29 +322,34 @@ void DiskCleanupAction::scanBrowserCaches() {
 
 void DiskCleanupAction::scanRecycleBin() {
 #ifdef _WIN32
-    QString recycle_path = "C:\\$Recycle.Bin";
-    QDir dir(recycle_path);
-    
-    if (!dir.exists()) {
-        return;
-    }
+    // Scan Recycle Bin on all available drives
+    const QFileInfoList drives = QDir::drives();
+    for (const QFileInfo& drive_info : drives) {
+        const QString recycle_path = drive_info.absoluteFilePath() + "$Recycle.Bin";
+        QDir dir(recycle_path);
 
-    CleanupTarget target;
-    target.path = recycle_path;
-    target.description = "Recycle Bin";
-    target.size = calculateDirectorySize(recycle_path, target.file_count);
-    target.safe_to_delete = true;
+        if (!dir.exists()) {
+            continue;
+        }
 
-    if (target.size > 0) {
-        m_targets.push_back(target);
-        m_total_bytes += target.size;
-        m_total_files += target.file_count;
+        CleanupTarget target;
+        target.path = recycle_path;
+        target.description = QString("Recycle Bin (%1)").arg(drive_info.absoluteFilePath());
+        target.size = calculateDirectorySize(recycle_path, target.file_count);
+        target.safe_to_delete = true;
+
+        if (target.size > 0) {
+            m_targets.push_back(target);
+            m_total_bytes += target.size;
+            m_total_files += target.file_count;
+        }
     }
 #endif
 }
 
 void DiskCleanupAction::scanWindowsUpdate() {
-    QString path = "C:\\Windows\\SoftwareDistribution\\Download";
+    const QString system_root = qEnvironmentVariable("SystemRoot", "C:\\Windows");
+    QString path = system_root + "\\SoftwareDistribution\\Download";
     QDir dir(path);
     
     if (!dir.exists()) {
@@ -425,14 +435,16 @@ qint64 DiskCleanupAction::deleteDirectoryContents(const QString& path, int& dele
 }
 
 bool DiskCleanupAction::isSafeToDelete(const QString& path) const {
-    // Blacklist critical system paths
-    QStringList dangerous_paths = {
-        "C:\\Windows\\System32",
-        "C:\\Windows\\SysWOW64",
-        "C:\\Program Files",
-        "C:\\Program Files (x86)",
-        "C:\\Users\\Public",
-        "C:\\ProgramData"
+    // Blacklist critical system paths using environment variables
+    const QString system_root = qEnvironmentVariable("SystemRoot", "C:\\Windows");
+    const QString system_drive = qEnvironmentVariable("SystemDrive", "C:");
+    const QStringList dangerous_paths = {
+        system_root + "\\System32",
+        system_root + "\\SysWOW64",
+        system_drive + "\\Program Files",
+        system_drive + "\\Program Files (x86)",
+        system_drive + "\\Users\\Public",
+        system_drive + "\\ProgramData"
     };
 
     for (const QString& dangerous : dangerous_paths) {

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "sak/user_profile_restore_wizard.h"
+#include "sak/style_constants.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QFileInfo>
@@ -76,7 +77,7 @@ void UserProfileRestoreWelcomePage::setupUi() {
     // Manifest info
     m_manifestInfoLabel = new QLabel(this);
     m_manifestInfoLabel->setWordWrap(true);
-    m_manifestInfoLabel->setStyleSheet("QLabel { background-color: #f8fafc; padding: 12px; border-radius: 10px; }");
+    m_manifestInfoLabel->setStyleSheet(QString("QLabel { background-color: %1; padding: 12px; border-radius: 10px; }").arg(sak::ui::kColorBgSurface));
     m_manifestInfoLabel->hide();
     layout->addWidget(m_manifestInfoLabel);
     

@@ -41,7 +41,7 @@ if (-not $AllFilesExist) {
 }
 
 Write-Host ""
-Write-Host "[2/7] Verifying all 39 action source files..." -ForegroundColor Yellow
+Write-Host "[2/7] Verifying all 37 action source files..." -ForegroundColor Yellow
 
 $ActionFiles = @(
     "src/actions/disk_cleanup_action.cpp",
@@ -60,7 +60,7 @@ $ActionFiles = @(
     "src/actions/tax_software_backup_action.cpp",
     "src/actions/photo_management_backup_action.cpp",
     "src/actions/development_configs_backup_action.cpp",
-    "src/actions/check_disk_health_action.cpp",
+    "src/actions/backup_known_networks_action.cpp",
     "src/actions/update_all_apps_action.cpp",
     "src/actions/windows_update_action.cpp",
     "src/actions/verify_system_files_action.cpp",
@@ -74,14 +74,12 @@ $ActionFiles = @(
     "src/actions/scan_malware_action.cpp",
     "src/actions/repair_windows_store_action.cpp",
     "src/actions/fix_audio_issues_action.cpp",
-    "src/actions/backup_browser_data_action.cpp",
-    "src/actions/backup_email_data_action.cpp",
     "src/actions/create_restore_point_action.cpp",
     "src/actions/export_registry_keys_action.cpp",
-    "src/actions/backup_activation_keys_action.cpp",
     "src/actions/screenshot_settings_action.cpp",
     "src/actions/backup_desktop_wallpaper_action.cpp",
     "src/actions/backup_printer_settings_action.cpp",
+    "src/actions/backup_bitlocker_keys_action.cpp",
     "src/actions/action_factory.cpp"
 )
 
@@ -102,7 +100,7 @@ foreach ($file in $ActionFiles) {
 }
 
 if ($MissingCount -eq 0) {
-    Write-Host "  [OK] All $($ActionFiles.Count) actions referenced" -ForegroundColor Green
+    Write-Host "  [OK] All $($ActionFiles.Count) action files referenced" -ForegroundColor Green
 } else {
     Write-Host "  [X] Missing $MissingCount references" -ForegroundColor Red
     exit 1
@@ -171,7 +169,7 @@ Write-Host "Verification Complete" -ForegroundColor Cyan
 Write-Host "===========================================================================" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "[OK] All required files present" -ForegroundColor Green
-Write-Host "[OK] All 39 actions verified" -ForegroundColor Green
+Write-Host "[OK] All 37 action files verified" -ForegroundColor Green
 Write-Host "[OK] CMakeLists.txt properly configured" -ForegroundColor Green
 Write-Host "[OK] Build configuration validated" -ForegroundColor Green
 Write-Host ""

@@ -73,7 +73,7 @@ private Q_SLOTS:
     void onCancelDownload();
 
 private:
-    void setupUI();
+    void setupUi();
     void connectSignals();
     void updateStartButton();
     QString getDefaultSavePath();

@@ -17,6 +17,11 @@ struct ProcessResult {
     bool cancelled{false};
     QString std_out;
     QString std_err;
+
+    /// @brief Check if the process completed successfully (no timeout, exit code 0)
+    [[nodiscard]] bool succeeded() const noexcept {
+        return !timed_out && exit_code == 0;
+    }
 };
 
 using CancelCheck = std::function<bool()>;

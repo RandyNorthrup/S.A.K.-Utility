@@ -1,11 +1,17 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+/// @file quick_actions_panel.cpp
+/// @brief Implements the quick actions panel UI for system maintenance tasks
+
 #include "sak/quick_actions_panel.h"
+#include "sak/format_utils.h"
 #include "sak/quick_action_controller.h"
 #include "sak/actions/action_factory.h"
 #include "sak/detachable_log_window.h"
 #include "sak/info_button.h"
+#include "sak/style_constants.h"
+#include "sak/widget_helpers.h"
 
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -65,21 +71,21 @@ void QuickActionsPanel::setupUi() {
     main_layout->setContentsMargins(12, 12, 12, 12);
     main_layout->setSpacing(10);
 
-    // Header
-    auto* header_label = new QLabel("<h2>Quick Actions</h2>");
-    main_layout->addWidget(header_label);
-
-    auto* subtitle = new QLabel("One-click technician tools for common maintenance tasks");
-    subtitle->setStyleSheet("color: #64748b; margin-bottom: 10px;");
-    main_layout->addWidget(subtitle);
+    // Panel header — consistent title + muted subtitle
+    sak::createPanelHeader(this, tr("Quick Actions"),
+        tr("One-click technician tools for common maintenance tasks"), main_layout);
 
     // Backup Location row at the top
     auto* backupLocRow = new QHBoxLayout();
     backupLocRow->addWidget(new QLabel(tr("Backup Location:"), this));
     m_backup_location_edit = new QLineEdit(this);
     m_backup_location_edit->setPlaceholderText(tr("C:\\SAK_Backups"));
+    m_backup_location_edit->setAccessibleName(QStringLiteral("Backup Location Path"));
+    m_backup_location_edit->setToolTip(QStringLiteral("Directory where backups will be saved"));
     backupLocRow->addWidget(m_backup_location_edit, 1);
     m_browse_button = new QPushButton(tr("Browse..."), this);
+    m_browse_button->setAccessibleName(QStringLiteral("Browse Backup Folder"));
+    m_browse_button->setToolTip(QStringLiteral("Browse for a backup output directory"));
     connect(m_browse_button, &QPushButton::clicked, this, &QuickActionsPanel::onBrowseBackupLocation);
     backupLocRow->addWidget(m_browse_button);
     main_layout->addLayout(backupLocRow);
@@ -87,15 +93,19 @@ void QuickActionsPanel::setupUi() {
     // Initialize hidden settings checkboxes (managed via Settings modal)
     m_confirm_checkbox = new QCheckBox("Confirm before executing actions");
     m_confirm_checkbox->setChecked(true);
+    m_confirm_checkbox->setAccessibleName(QStringLiteral("Confirm Before Executing"));
     m_confirm_checkbox->hide();
     m_notifications_checkbox = new QCheckBox("Show completion notifications");
     m_notifications_checkbox->setChecked(true);
+    m_notifications_checkbox->setAccessibleName(QStringLiteral("Show Completion Notifications"));
     m_notifications_checkbox->hide();
     m_logging_checkbox = new QCheckBox("Enable detailed logging");
     m_logging_checkbox->setChecked(true);
+    m_logging_checkbox->setAccessibleName(QStringLiteral("Enable Detailed Logging"));
     m_logging_checkbox->hide();
     m_compression_checkbox = new QCheckBox("Compress backups (saves space)");
     m_compression_checkbox->setChecked(true);
+    m_compression_checkbox->setAccessibleName(QStringLiteral("Compress Backups"));
     m_compression_checkbox->hide();
 
     // Actions section (scrollable)
@@ -139,11 +149,15 @@ void QuickActionsPanel::setupUi() {
     auto* bottomLayout = new QHBoxLayout();
 
     auto* settingsBtn = new QPushButton(tr("Settings"), this);
+    settingsBtn->setAccessibleName(QStringLiteral("Quick Actions Settings"));
+    settingsBtn->setToolTip(QStringLiteral("Configure quick actions settings"));
     connect(settingsBtn, &QPushButton::clicked, this, &QuickActionsPanel::showSettingsDialog);
     bottomLayout->addWidget(settingsBtn);
 
     m_open_folder_button = new QPushButton("Open Output Folder");
     m_open_folder_button->setEnabled(false);
+    m_open_folder_button->setAccessibleName(QStringLiteral("Open Output Folder"));
+    m_open_folder_button->setToolTip(QStringLiteral("Open the last output folder in file explorer"));
     connect(m_open_folder_button, &QPushButton::clicked, this, [this]() {
         if (!m_last_output_path.isEmpty()) {
             const QFileInfo fi(m_last_output_path);
@@ -206,9 +220,9 @@ void QuickActionsPanel::createCategorySections() {
     for (const auto& cat_info : categories) {
         auto* group_box = new QGroupBox(cat_info.title);
         group_box->setStyleSheet(
-            "QGroupBox {"
+            QString("QGroupBox {"
             "  font-weight: 600;"
-            "  border: 1px solid #cbd5e1;"
+            "  border: 1px solid %1;"
             "  border-radius: 12px;"
             "  margin-top: 18px;"
             "  padding: 26px 10px 10px 10px;"
@@ -218,15 +232,15 @@ void QuickActionsPanel::createCategorySections() {
             "  subcontrol-origin: margin;"
             "  subcontrol-position: top left;"
             "  padding: 0 8px;"
-            "  color: #334155;"
-            "}"
+            "  color: %2;"
+            "}").arg(sak::ui::kColorBorderDefault, sak::ui::kColorTextBody)
         );
 
         auto* cat_layout = new QVBoxLayout(group_box);
         
         // Description
         auto* desc_label = new QLabel(cat_info.description);
-        desc_label->setStyleSheet("color: #64748b; font-weight: 400; font-size: 11px;");
+        desc_label->setStyleSheet(QString("color: %1; font-weight: 400; font-size: %2pt;").arg(sak::ui::kColorTextMuted).arg(sak::ui::kFontSizeStatus));
         cat_layout->addWidget(desc_label);
 
         // Action buttons grid
@@ -510,19 +524,7 @@ void QuickActionsPanel::appendLog(const QString& message) {
 }
 
 QString QuickActionsPanel::formatBytes(qint64 bytes) {
-    const qint64 kb = 1024;
-    const qint64 mb = kb * 1024;
-    const qint64 gb = mb * 1024;
-
-    if (bytes >= gb) {
-        return QString("%1 GB").arg(bytes / static_cast<double>(gb), 0, 'f', 2);
-    } else if (bytes >= mb) {
-        return QString("%1 MB").arg(bytes / static_cast<double>(mb), 0, 'f', 1);
-    } else if (bytes >= kb) {
-        return QString("%1 KB").arg(bytes / kb);
-    } else {
-        return QString("%1 bytes").arg(bytes);
-    }
+    return sak::formatBytes(bytes);
 }
 
 QString QuickActionsPanel::formatDuration(qint64 seconds) {

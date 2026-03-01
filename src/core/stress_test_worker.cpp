@@ -263,16 +263,40 @@ int StressTestWorker::runMemoryStress()
 {
     // Allocate a large chunk of memory and repeatedly write patterns then verify
 
+    constexpr size_t kFallbackMemoryBytes = 512ULL * 1024 * 1024; // 512 MB
+    size_t target_bytes = kFallbackMemoryBytes;
+
 #ifdef SAK_PLATFORM_WINDOWS
     MEMORYSTATUSEX mem_status{};
     mem_status.dwLength = sizeof(mem_status);
-    GlobalMemoryStatusEx(&mem_status);
-
-    const size_t target_bytes = static_cast<size_t>(
-        static_cast<double>(mem_status.ullAvailPhys) *
-        (m_config.memory_usage_percent / 100.0));
+    if (GlobalMemoryStatusEx(&mem_status)) {
+        target_bytes = static_cast<size_t>(
+            static_cast<double>(mem_status.ullAvailPhys) *
+            (m_config.memory_usage_percent / 100.0));
+    } else {
+        logWarning("GlobalMemoryStatusEx failed (error {}), "
+                   "using {} MB fallback allocation",
+                   GetLastError(), kFallbackMemoryBytes / (1024 * 1024));
+    }
 #else
-    const size_t target_bytes = 512ULL * 1024 * 1024; // 512 MB fallback
+    // Non-Windows: use sysconf for available memory when possible
+    #if defined(_SC_AVPHYS_PAGES) && defined(_SC_PAGESIZE)
+    {
+        const long pages = sysconf(_SC_AVPHYS_PAGES);
+        const long page_size = sysconf(_SC_PAGESIZE);
+        if (pages > 0 && page_size > 0) {
+            target_bytes = static_cast<size_t>(
+                static_cast<double>(pages) * static_cast<double>(page_size) *
+                (m_config.memory_usage_percent / 100.0));
+        } else {
+            logWarning("sysconf memory query failed, using {} MB fallback",
+                       kFallbackMemoryBytes / (1024 * 1024));
+        }
+    }
+    #else
+    logInfo("Platform memory detection unavailable, using {} MB fallback",
+            kFallbackMemoryBytes / (1024 * 1024));
+    #endif
 #endif
 
     // Cap at available memory, minimum 64 MB, maximum 16 GB

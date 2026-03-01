@@ -1,10 +1,14 @@
-// Copyright (c) 2025 Randy Northrup. All rights reserved.
+﻿// Copyright (c) 2025 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
+
+/// @file saved_game_data_backup_action.cpp
+/// @brief Implements saved game data backup across user profiles
 
 #include "sak/actions/saved_game_data_backup_action.h"
 #include "sak/windows_user_scanner.h"
 #include <QDir>
 #include <QDirIterator>
+#include "sak/logger.h"
 
 namespace sak {
 

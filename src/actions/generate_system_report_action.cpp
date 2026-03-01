@@ -1,6 +1,9 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+/// @file generate_system_report_action.cpp
+/// @brief Implements system information report generation
+
 #include "sak/actions/generate_system_report_action.h"
 #include "sak/process_runner.h"
 #include <QDir>
@@ -303,7 +306,7 @@ QString GenerateSystemReportAction::gatherQtAndVolumeInfo() const
         section += QString("  Total: %1 GB\n").arg(storage.bytesTotal() / (1024.0 * 1024 * 1024), 0, 'f', 2);
         section += QString("  Free: %1 GB\n").arg(storage.bytesFree() / (1024.0 * 1024 * 1024), 0, 'f', 2);
         section += QString("  Available: %1 GB\n").arg(storage.bytesAvailable() / (1024.0 * 1024 * 1024), 0, 'f', 2);
-        section += QString("  Used: %1%%\n\n").arg(100.0 * (1.0 - (double)storage.bytesFree() / storage.bytesTotal()), 0, 'f', 1);
+        section += QString("  Used: %1%%\n\n").arg(100.0 * (1.0 - static_cast<double>(storage.bytesFree()) / storage.bytesTotal()), 0, 'f', 1);
     }
     
     return section;

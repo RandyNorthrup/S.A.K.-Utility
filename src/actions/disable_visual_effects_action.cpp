@@ -1,6 +1,9 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+/// @file disable_visual_effects_action.cpp
+/// @brief Implements Windows visual effects optimization for performance
+
 #include "sak/actions/disable_visual_effects_action.h"
 #include "sak/process_runner.h"
 #include <QSettings>
@@ -42,7 +45,7 @@ bool DisableVisualEffectsAction::disableVisualEffects() {
     
     // Notify system of changes
     ProcessResult proc = runProcess("rundll32.exe", QStringList() << "user32.dll,UpdatePerUserSystemParameters" << "1" << "True", 5000);
-    if (proc.timed_out || proc.exit_code != 0) {
+    if (!proc.succeeded()) {
         Q_EMIT logMessage("Visual effects notify warning: " + proc.std_err.trimmed());
     }
     
@@ -133,10 +136,10 @@ void DisableVisualEffectsAction::execute() {
     
     ProcessResult notify_proc = runProcess("rundll32.exe",
         QStringList() << "user32.dll,UpdatePerUserSystemParameters" << "1" << "True", 5000);
-    if (notify_proc.timed_out || notify_proc.exit_code != 0) {
+    if (!notify_proc.succeeded()) {
         Q_EMIT logMessage("Visual effects notify warning: " + notify_proc.std_err.trimmed());
     }
-    bool notification_success = notify_proc.exit_code == 0 && !notify_proc.timed_out;
+    bool notification_success = notify_proc.succeeded();
     
     report += QString("║ System Notification: %1").arg(notification_success ? "✓ Success" : "✗ Failed").leftJustified(73, ' ') + "║\n";
     report += "╠══════════════════════════════════════════════════════════════════════╣\n";

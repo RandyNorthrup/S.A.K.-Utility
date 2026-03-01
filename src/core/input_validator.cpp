@@ -199,7 +199,12 @@ validation_result input_validator::validatePathWithinBase(
         
         return success();
         
+    } catch (const std::exception& e) {
+        sak::logWarning("Exception during path validation: {}", e.what());
+        return failure(error_code::unknown_error,
+                      "Exception during path validation");
     } catch (...) {
+        sak::logWarning("Unknown exception during path validation");
         return failure(error_code::unknown_error,
                       "Exception during path validation");
     }
@@ -317,8 +322,9 @@ bool input_validator::isValidUtf8(std::string_view str) noexcept {
             continue;
         }
         
-        // 2-byte sequence
+        // 2-byte sequence (U+0080..U+07FF)
         if ((c & 0xE0) == 0xC0) {
+            if (c < 0xC2) return false; // Reject overlong encodings (C0, C1)
             if (i + 1 >= str.length()) return false;
             if ((static_cast<unsigned char>(str[i + 1]) & 0xC0) != 0x80) return false;
             i += 2;
@@ -429,7 +435,12 @@ validation_result input_validator::validate_disk_space(
         
         return success();
         
+    } catch (const std::exception& e) {
+        sak::logWarning("Exception during disk space validation: {}", e.what());
+        return failure(error_code::unknown_error,
+                      "Exception during disk space validation");
     } catch (...) {
+        sak::logWarning("Unknown exception during disk space validation");
         return failure(error_code::unknown_error,
                       "Exception during disk space validation");
     }

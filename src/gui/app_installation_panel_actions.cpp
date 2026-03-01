@@ -1,23 +1,23 @@
-// Copyright (c) 2025 Randy Northrup. All rights reserved.
+﻿// Copyright (c) 2025 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-#include "sak/app_migration_panel.h"
+#include "sak/app_installation_panel.h"
 #include "sak/chocolatey_manager.h"
-#include "sak/app_migration_worker.h"
+#include "sak/app_installation_worker.h"
 #include "sak/migration_report.h"
 
 #include <QMessageBox>
 #include <QApplication>
 #include <QtConcurrent>
 
-using sak::AppMigrationPanel;
+using sak::AppInstallationPanel;
 using sak::ChocolateyManager;
-using sak::AppMigrationWorker;
+using sak::AppInstallationWorker;
 using sak::MigrationReport;
 using sak::MigrationJob;
 using sak::MigrationStatus;
 
-// Results table columns (must match app_migration_panel.cpp)
+// Results table columns (must match app_installation_panel.cpp)
 enum ResultColumn {
     RColCheck = 0,
     RColPackage,
@@ -30,14 +30,14 @@ enum ResultColumn {
 // Search
 // ============================================================================
 
-void AppMigrationPanel::onSearch()
+void AppInstallationPanel::onSearch()
 {
-    if (m_searchInProgress) {
+    if (m_search_in_progress) {
         Q_EMIT logOutput("Search already in progress...");
         return;
     }
 
-    if (!m_chocoManager->isInitialized()) {
+    if (!m_choco_manager->isInitialized()) {
         QMessageBox::warning(this, tr("Chocolatey Not Available"),
             tr("Chocolatey is not initialized. Search is unavailable."));
         return;
@@ -50,17 +50,17 @@ void AppMigrationPanel::onSearch()
         return;
     }
 
-    m_searchInProgress = true;
+    m_search_in_progress = true;
     m_searchButton->setEnabled(false);
     Q_EMIT statusMessage(tr("Searching for \"%1\"...").arg(query), 0);
     Q_EMIT logOutput(QString("Searching Chocolatey for: %1").arg(query));
 
     // Run search in background
     m_searchFuture = QtConcurrent::run([this, query]() {
-        auto result = m_chocoManager->searchPackage(query, 50);
+        auto result = m_choco_manager->searchPackage(query, 50);
 
         QMetaObject::invokeMethod(this, [this, result]() {
-            m_searchInProgress = false;
+            m_search_in_progress = false;
             m_searchButton->setEnabled(true);
 
             if (result.success) {
@@ -73,7 +73,7 @@ void AppMigrationPanel::onSearch()
     });
 }
 
-void AppMigrationPanel::onCategoryChanged(int index)
+void AppInstallationPanel::onCategoryChanged(int index)
 {
     // Map category index to search term
     static const char* const categoryQueries[] = {
@@ -97,7 +97,7 @@ void AppMigrationPanel::onCategoryChanged(int index)
 // Queue Management
 // ============================================================================
 
-void AppMigrationPanel::onAddToQueue()
+void AppInstallationPanel::onAddToQueue()
 {
     int added = 0;
     for (int i = 0; i < m_resultsModel->rowCount(); ++i) {
@@ -147,7 +147,7 @@ void AppMigrationPanel::onAddToQueue()
     m_addToQueueButton->setEnabled(false);
 }
 
-void AppMigrationPanel::onRemoveFromQueue()
+void AppInstallationPanel::onRemoveFromQueue()
 {
     auto selectedItems = m_queueList->selectedItems();
     if (selectedItems.isEmpty()) return;
@@ -169,7 +169,7 @@ void AppMigrationPanel::onRemoveFromQueue()
     updateQueueDisplay();
 }
 
-void AppMigrationPanel::onClearQueue()
+void AppInstallationPanel::onClearQueue()
 {
     if (m_installQueue.isEmpty()) return;
 
@@ -182,7 +182,7 @@ void AppMigrationPanel::onClearQueue()
 // Installation
 // ============================================================================
 
-void AppMigrationPanel::onInstallAll()
+void AppInstallationPanel::onInstallAll()
 {
     if (m_installQueue.isEmpty()) {
         QMessageBox::information(this, tr("Empty Queue"),
@@ -190,7 +190,7 @@ void AppMigrationPanel::onInstallAll()
         return;
     }
 
-    if (!m_chocoManager->isInitialized()) {
+    if (!m_choco_manager->isInitialized()) {
         QMessageBox::warning(this, tr("Chocolatey Not Available"),
             tr("Chocolatey is not initialized. Installation is unavailable."));
         return;
@@ -212,7 +212,7 @@ void AppMigrationPanel::onInstallAll()
 
     Q_EMIT logOutput(QString("=== Installing %1 Package(s) ===").arg(m_installQueue.size()));
 
-    m_installInProgress = true;
+    m_install_in_progress = true;
     enableControls(false);
     m_installButton->setVisible(false);
     m_cancelButton->setVisible(true);
@@ -236,14 +236,14 @@ void AppMigrationPanel::onInstallAll()
     int queued = m_worker->startMigration(report, 1);  // Sequential installation
     if (queued == 0) {
         Q_EMIT logOutput("No packages queued for installation.");
-        m_installInProgress = false;
+        m_install_in_progress = false;
         m_cancelButton->setVisible(false);
         m_installButton->setVisible(true);
         enableControls(true);
     }
 }
 
-void AppMigrationPanel::onCancelInstall()
+void AppInstallationPanel::onCancelInstall()
 {
     if (m_worker && m_worker->isRunning()) {
         m_worker->cancel();

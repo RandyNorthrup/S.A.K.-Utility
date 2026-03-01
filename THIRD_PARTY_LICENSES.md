@@ -6,11 +6,11 @@ below.
 
 ---
 
-## Qt 6.5.3
+## Qt 6.5+
 
 **License:** LGPL v3 (GNU Lesser General Public License, version 3)
 **Website:** https://www.qt.io/
-**Modules used:** Core, Gui, Widgets, Concurrent, Network, Svg (runtime plugin)
+**Modules used:** Core, Widgets, Concurrent, Network (Gui linked transitively via Widgets; Svg icon-engine plugin loaded at runtime)
 
 The Qt Toolkit is Copyright (C) 2023 The Qt Company Ltd and other
 contributors.

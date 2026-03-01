@@ -1,6 +1,9 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+/// @file reset_network_action.cpp
+/// @brief Implements Windows network stack reset and adapter refresh
+
 #include "sak/actions/reset_network_action.h"
 #include "sak/process_runner.h"
 #include <QThread>
@@ -16,7 +19,7 @@ ResetNetworkAction::ResetNetworkAction(QObject* parent)
 void ResetNetworkAction::flushDNS() {
     Q_EMIT executionProgress("Flushing DNS cache...", 20);
     ProcessResult proc = runProcess("ipconfig", QStringList() << "/flushdns", 15000);
-    if (proc.timed_out || proc.exit_code != 0) {
+    if (!proc.succeeded()) {
         Q_EMIT logMessage("Flush DNS warning: " + proc.std_err.trimmed());
     }
 }
@@ -24,7 +27,7 @@ void ResetNetworkAction::flushDNS() {
 void ResetNetworkAction::resetWinsock() {
     Q_EMIT executionProgress("Resetting Winsock catalog...", 40);
     ProcessResult proc = runProcess("netsh", QStringList() << "winsock" << "reset", 15000);
-    if (proc.timed_out || proc.exit_code != 0) {
+    if (!proc.succeeded()) {
         Q_EMIT logMessage("Winsock reset warning: " + proc.std_err.trimmed());
     }
     m_requires_reboot = true;
@@ -33,7 +36,7 @@ void ResetNetworkAction::resetWinsock() {
 void ResetNetworkAction::resetTCPIP() {
     Q_EMIT executionProgress("Resetting TCP/IP stack...", 60);
     ProcessResult proc = runProcess("netsh", QStringList() << "int" << "ip" << "reset", 15000);
-    if (proc.timed_out || proc.exit_code != 0) {
+    if (!proc.succeeded()) {
         Q_EMIT logMessage("TCP/IP reset warning: " + proc.std_err.trimmed());
     }
     m_requires_reboot = true;
@@ -42,12 +45,12 @@ void ResetNetworkAction::resetTCPIP() {
 void ResetNetworkAction::releaseRenewIP() {
     Q_EMIT executionProgress("Releasing and renewing IP address...", 80);
     ProcessResult release_proc = runProcess("ipconfig", QStringList() << "/release", 15000);
-    if (release_proc.timed_out || release_proc.exit_code != 0) {
+    if (!release_proc.succeeded()) {
         Q_EMIT logMessage("IP release warning: " + release_proc.std_err.trimmed());
     }
     QThread::msleep(1000);
     ProcessResult renew_proc = runProcess("ipconfig", QStringList() << "/renew", 15000);
-    if (renew_proc.timed_out || renew_proc.exit_code != 0) {
+    if (!renew_proc.succeeded()) {
         Q_EMIT logMessage("IP renew warning: " + renew_proc.std_err.trimmed());
     }
 }
@@ -55,7 +58,7 @@ void ResetNetworkAction::releaseRenewIP() {
 void ResetNetworkAction::resetFirewall() {
     Q_EMIT executionProgress("Resetting firewall to defaults...", 90);
     ProcessResult proc = runProcess("netsh", QStringList() << "advfirewall" << "reset", 15000);
-    if (proc.timed_out || proc.exit_code != 0) {
+    if (!proc.succeeded()) {
         Q_EMIT logMessage("Firewall reset warning: " + proc.std_err.trimmed());
     }
 }

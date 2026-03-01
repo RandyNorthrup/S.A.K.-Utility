@@ -11,6 +11,7 @@
 #include <QFuture>
 #include <QDateTime>
 #include <memory>
+#include <atomic>
 
 // Include full definitions needed for shared_ptr usage
 #include "sak/chocolatey_manager.h"
@@ -56,7 +57,7 @@ struct MigrationJob {
  * - Progress tracking with signals
  * - Thread-safe status updates
  */
-class AppMigrationWorker : public QObject {
+class AppInstallationWorker : public QObject {
     Q_OBJECT
 
 public:
@@ -65,10 +66,10 @@ public:
      * @param chocoManager Chocolatey manager for installations
      * @param parent Parent QObject
      */
-    explicit AppMigrationWorker(std::shared_ptr<ChocolateyManager> chocoManager,
+    explicit AppInstallationWorker(std::shared_ptr<ChocolateyManager> chocoManager,
                                 QObject* parent = nullptr);
     
-    ~AppMigrationWorker();
+    ~AppInstallationWorker();
 
     /**
      * @brief Start migration from report
@@ -151,7 +152,7 @@ Q_SIGNALS:
      * @brief Emitted when migration completes (all jobs done)
      * @param stats Final statistics
      */
-    void migrationCompleted(const AppMigrationWorker::Stats& stats);
+    void migrationCompleted(const AppInstallationWorker::Stats& stats);
 
     /**
      * @brief Emitted when migration is paused
@@ -218,9 +219,9 @@ private:
     mutable QMutex m_mutex;              ///< Protects job data
     QWaitCondition m_waitCondition;      ///< For pause/resume
     
-    bool m_running = false;
-    bool m_paused = false;
-    bool m_cancelled = false;
+    std::atomic<bool> m_running{false};
+    std::atomic<bool> m_paused{false};
+    std::atomic<bool> m_cancelled{false};
     int m_maxConcurrent = 2;
     int m_activeJobs = 0;
     

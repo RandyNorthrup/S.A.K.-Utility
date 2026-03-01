@@ -1,4 +1,4 @@
-// Copyright (c) 2025 Randy Northrup. All rights reserved.
+﻿// Copyright (c) 2025 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "sak/user_profile_backup_worker.h"
@@ -9,6 +9,7 @@
 #include <QDirIterator>
 #include <QStorageInfo>
 #include <QJsonDocument>
+#include "sak/logger.h"
 
 namespace sak {
 

@@ -286,6 +286,7 @@ QString MappingEngine::selectDestination(const DeploymentAssignment& assignment,
                                          const QVector<DestinationPC>& destinations,
                                          const QSet<QString>& activeDestinations,
                                          qint64 required_free_bytes) {
+    // assignment reserved for future priority-based destination selection
     Q_UNUSED(assignment);
 
     QVector<DestinationPC> candidates;

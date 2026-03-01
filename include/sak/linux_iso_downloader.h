@@ -11,6 +11,7 @@
 #include <QTimer>
 #include <QCryptographicHash>
 #include <memory>
+#include <atomic>
 
 /**
  * @brief Orchestrator for downloading Linux ISO images
@@ -160,6 +161,6 @@ private:
     QString m_checksumType;
     QString m_expectedFileName;
     qint64 m_totalSize = 0;
-    bool m_cancelled = false;
+    std::atomic<bool> m_cancelled{false};
     LinuxDistroCatalog::SourceType m_sourceType = LinuxDistroCatalog::SourceType::DirectURL;
 };

@@ -1,6 +1,9 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+/// @file clear_browser_cache_action.cpp
+/// @brief Implements browser cache cleanup for major web browsers
+
 #include "sak/actions/clear_browser_cache_action.h"
 #include "sak/process_runner.h"
 

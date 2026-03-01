@@ -19,7 +19,6 @@
 namespace sak {
 class UserDataManager;
 class LogToggleSwitch;
-}
 
 /**
  * @brief Windows User Migration Panel
@@ -31,7 +30,7 @@ class LogToggleSwitch;
  * - Restore wizard with user mapping and conflict resolution
  * - Detailed operation logging and progress tracking
  * 
- * Similar to Application Migration panel but for user data.
+ * Similar to Application Installation panel but for user data.
  */
 class UserMigrationPanel : public QWidget {
     Q_OBJECT
@@ -55,7 +54,7 @@ public:
     UserMigrationPanel& operator=(UserMigrationPanel&&) = delete;
 
     /** @brief Access the log toggle switch for MainWindow connection */
-    sak::LogToggleSwitch* logToggle() const { return m_logToggle; }
+    LogToggleSwitch* logToggle() const { return m_logToggle; }
 
 Q_SIGNALS:
     void statusMessage(const QString& message, int timeout_ms);
@@ -75,8 +74,10 @@ private:
     // UI Components
     QPushButton* m_backupButton{nullptr};
     QPushButton* m_restoreButton{nullptr};
-    sak::LogToggleSwitch* m_logToggle{nullptr};
+    LogToggleSwitch* m_logToggle{nullptr};
     
     // Data
-    std::shared_ptr<sak::UserDataManager> m_dataManager;
+    std::shared_ptr<UserDataManager> m_dataManager;
 };
+
+} // namespace sak

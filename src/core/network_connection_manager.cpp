@@ -73,6 +73,9 @@ quint16 NetworkConnectionManager::serverPort() const {
 
 void NetworkConnectionManager::onNewConnection() {
     if (m_socket) {
+        // Disconnect all signals from old socket before replacing it to
+        // prevent stale callbacks from firing after the socket is deleted.
+        disconnect(m_socket, nullptr, this, nullptr);
         m_socket->disconnectFromHost();
         m_socket->deleteLater();
         m_socket = nullptr;
@@ -82,7 +85,14 @@ void NetworkConnectionManager::onNewConnection() {
     connect(m_socket, &QTcpSocket::readyRead, this, &NetworkConnectionManager::onSocketReadyRead);
     connect(m_socket, &QTcpSocket::disconnected, this, &NetworkConnectionManager::onSocketDisconnected);
     connect(m_socket, &QTcpSocket::errorOccurred, this, [this](QAbstractSocket::SocketError) {
-        QString errorStr = m_socket ? m_socket->errorString() : QStringLiteral("unknown");
+        // Capture a local copy of the error string — m_socket may be replaced by the
+        // time this lambda executes in a queued connection.
+        if (!m_socket) {
+            logError("NetworkConnectionManager socket error on already-released socket");
+            Q_EMIT connectionError(QStringLiteral("Socket error (socket released)"));
+            return;
+        }
+        QString errorStr = m_socket->errorString();
         logError("NetworkConnectionManager socket error: {}", errorStr.toStdString());
         Q_EMIT connectionError(errorStr);
     });

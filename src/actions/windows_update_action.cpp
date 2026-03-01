@@ -1,6 +1,9 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+/// @file windows_update_action.cpp
+/// @brief Implements Windows Update checking and installation
+
 #include "sak/actions/windows_update_action.h"
 #include "sak/process_runner.h"
 
@@ -17,7 +20,7 @@ int queryPendingUpdateCount() {
         "} catch { Write-Output -1 }";
 
     ProcessResult proc = runPowerShell(ps_cmd, 15000);
-    if (proc.timed_out || proc.exit_code != 0) {
+    if (!proc.succeeded()) {
         return -1;
     }
     bool ok = false;
@@ -48,7 +51,7 @@ bool WindowsUpdateAction::installPSWindowsUpdateModule() {
     if (!proc.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("PSWindowsUpdate install warning: " + proc.std_err.trimmed());
     }
-    return !proc.timed_out && proc.exit_code == 0;
+    return proc.succeeded();
 }
 
 void WindowsUpdateAction::checkForUpdates() {

@@ -1,8 +1,9 @@
-// Copyright (c) 2025 Randy Northrup. All rights reserved.
+﻿// Copyright (c) 2025 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-#include "sak/app_migration_panel.h"
+#include "sak/app_installation_panel.h"
 #include "sak/chocolatey_manager.h"
+#include "sak/logger.h"
 
 #include <QApplication>
 #include <QFileDialog>
@@ -12,10 +13,10 @@
 #include <QMessageBox>
 #include <QStyle>
 
-using sak::AppMigrationPanel;
+using sak::AppInstallationPanel;
 using sak::ChocolateyManager;
 
-// Results table columns (must match app_migration_panel.cpp)
+// Results table columns (must match app_installation_panel.cpp)
 enum ResultColumn {
     RColCheck = 0,
     RColPackage,
@@ -25,7 +26,7 @@ enum ResultColumn {
 };
 
 // Well-known publisher map: package-id prefix -> publisher name
-QHash<QString, QString> AppMigrationPanel::s_publisherMap = {
+QHash<QString, QString> AppInstallationPanel::s_publisherMap = {
     {"googlechrome", "Google"},
     {"google-chrome", "Google"},
     {"google-", "Google"},
@@ -95,7 +96,7 @@ QHash<QString, QString> AppMigrationPanel::s_publisherMap = {
 // Publisher lookup
 // ============================================================================
 
-QIcon AppMigrationPanel::publisherIcon(const QString& packageId) const
+QIcon AppInstallationPanel::publisherIcon(const QString& packageId) const
 {
     // Look up the publisher from the known map
     QString lowerPkg = packageId.toLower();
@@ -150,9 +151,9 @@ static QString lookupPublisher(const QString& packageId,
 // Results Table
 // ============================================================================
 
-void AppMigrationPanel::updateResultsFromSearch(const QString& output)
+void AppInstallationPanel::updateResultsFromSearch(const QString& output)
 {
-    auto packages = m_chocoManager->parseSearchResults(output);
+    auto packages = m_choco_manager->parseSearchResults(output);
 
     // Disable sorting during population
     const bool wasSortingEnabled = m_resultsTable->isSortingEnabled();
@@ -206,7 +207,7 @@ void AppMigrationPanel::updateResultsFromSearch(const QString& output)
 // Queue Display
 // ============================================================================
 
-void AppMigrationPanel::updateQueueDisplay()
+void AppInstallationPanel::updateQueueDisplay()
 {
     m_queueList->clear();
 
@@ -223,8 +224,8 @@ void AppMigrationPanel::updateQueueDisplay()
     }
 
     bool hasItems = !m_installQueue.isEmpty();
-    m_clearQueueButton->setEnabled(hasItems && !m_installInProgress);
-    m_installButton->setEnabled(hasItems && !m_installInProgress);
+    m_clearQueueButton->setEnabled(hasItems && !m_install_in_progress);
+    m_installButton->setEnabled(hasItems && !m_install_in_progress);
     m_saveQueueButton->setEnabled(hasItems);
     m_removeFromQueueButton->setEnabled(false);  // Reset until selection
 }
@@ -233,7 +234,7 @@ void AppMigrationPanel::updateQueueDisplay()
 // Controls
 // ============================================================================
 
-void AppMigrationPanel::enableControls(bool enabled)
+void AppInstallationPanel::enableControls(bool enabled)
 {
     m_searchButton->setEnabled(enabled);
     m_searchEdit->setEnabled(enabled);
@@ -248,7 +249,7 @@ void AppMigrationPanel::enableControls(bool enabled)
 // Save / Load Queue
 // ============================================================================
 
-void AppMigrationPanel::saveQueueToFile()
+void AppInstallationPanel::saveQueueToFile()
 {
     if (m_installQueue.isEmpty()) {
         QMessageBox::information(this, tr("Save App List"),
@@ -272,6 +273,7 @@ void AppMigrationPanel::saveQueueToFile()
     QJsonDocument doc(arr);
     QFile file(filePath);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        sak::logWarning(("Save Failed: Could not write to file: " + filePath).toStdString());
         QMessageBox::warning(this, tr("Save Failed"),
             tr("Could not write to file:\n%1").arg(filePath));
         return;
@@ -286,7 +288,7 @@ void AppMigrationPanel::saveQueueToFile()
         QString("App list saved (%1 packages)").arg(m_installQueue.size()), 3000);
 }
 
-void AppMigrationPanel::loadQueueFromFile()
+void AppInstallationPanel::loadQueueFromFile()
 {
     QString filePath = QFileDialog::getOpenFileName(
         this, tr("Load App List"), QString(), tr("JSON Files (*.json)"));
@@ -294,6 +296,7 @@ void AppMigrationPanel::loadQueueFromFile()
 
     QFile file(filePath);
     if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        sak::logWarning(("Load Failed: Could not read file: " + filePath).toStdString());
         QMessageBox::warning(this, tr("Load Failed"),
             tr("Could not read file:\n%1").arg(filePath));
         return;
@@ -304,12 +307,14 @@ void AppMigrationPanel::loadQueueFromFile()
     file.close();
 
     if (parseError.error != QJsonParseError::NoError) {
+        sak::logWarning(("Load Failed: Invalid JSON: " + parseError.errorString()).toStdString());
         QMessageBox::warning(this, tr("Load Failed"),
             tr("Invalid JSON:\n%1").arg(parseError.errorString()));
         return;
     }
 
     if (!doc.isArray()) {
+        sak::logWarning("Load Failed: Expected a JSON array of packages.");
         QMessageBox::warning(this, tr("Load Failed"),
             tr("Expected a JSON array of packages."));
         return;

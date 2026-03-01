@@ -6,7 +6,7 @@
 
 [![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](LICENSE)
 [![C++23](https://img.shields.io/badge/C%2B%2B-23-blue.svg)](https://isocpp.org/)
-[![Qt 6.5.3](https://img.shields.io/badge/Qt-6.5.3-41cd52.svg)](https://www.qt.io/)
+[![Qt 6.5+](https://img.shields.io/badge/Qt-6.5%2B-41cd52.svg)](https://www.qt.io/)
 [![Windows 10/11](https://img.shields.io/badge/Windows-10%20%7C%2011-0078d4.svg)](https://www.microsoft.com/windows)
 [![Build](https://github.com/RandyNorthrup/S.A.K.-Utility/actions/workflows/build-release.yml/badge.svg)](https://github.com/RandyNorthrup/S.A.K.-Utility/actions)
 [![Version](https://img.shields.io/badge/Version-0.6.3-orange.svg)](VERSION)
@@ -22,20 +22,20 @@ Migration · Maintenance · Recovery · Imaging · Deployment — one portable E
 - **Code cleanup** — Removed legacy `BackupWorker`, `BackupWizard`, and `RestoreWizard` classes that had been superseded by the user-profile wizard suite.
 - **Renamed panels for clarity** — `BackupPanel` → `UserMigrationPanel` (`user_migration_panel.h/.cpp`); `WifiQrPanel` → `WifiManagerPanel` (`wifi_manager_panel.h/.cpp`). All internal member names and CMake source lists updated.
 - **Dead code pruned** — Removed unused member variables and stale includes from `browser_profile_backup_action.h` left over from a previous refactor.
-- **Accurate tech-stack docs** — `THIRD_PARTY_LICENSES.md` now includes the bundled `qrcodegen` library (MIT, Project Nayuki) and corrects the Qt module list (Gui, Svg). `README.md` quick-action counts corrected (36 total), Backup Known Networks action added, WiFi Manager feature section added.
+- **Accurate tech-stack docs** — `THIRD_PARTY_LICENSES.md` now includes the bundled `qrcodegen` library (MIT, Project Nayuki) and corrects the Qt module list. Backup Known Networks action added, WiFi Manager feature section added.
 
 ### v0.6.2
 
 - **Fixed UUP-to-ISO conversion** — Root cause: `convert-UUP.cmd` re-launches itself through PowerShell to disable QuickEdit mode, which detaches from the tracked process and causes the app to report instant success with no ISO output. Fix passes `-qedit -elevated` flags to prevent both the QuickEdit re-launch and UAC self-elevation from orphaning the process. Also corrected ConvertConfig.ini option names, added admin-privilege check, closes stdin to prevent hanging, and sets `AutoExit=1`.
 - **License compliance** — Added complete license notices for all bundled tools (aria2, wimlib, 7-Zip, uup-converter-wimlib, ManagedDism, Microsoft ADK utilities) to THIRD_PARTY_LICENSES.md and README acknowledgments.
-- **New integration tests** — 5 tests verifying the converter process stays attached, reads config correctly, handles missing files, and exits cleanly on closed stdin.
+- **New integration tests** — Verifying the converter process stays attached, reads config correctly, handles missing files, and exits cleanly on closed stdin.
 
 ### v0.6.1
 
 - **Fixed Windows ISO downloads** — Microsoft's UUP CDN serves HTTP-only URLs; the strict HTTPS-only validation was rejecting every download file. HTTP is now allowed for `*.microsoft.com` origins (files are SHA-1 integrity-verified).
 - **Fixed Linux ISO downloads** — Added proper User-Agent headers to aria2c and HTTP requests to resolve 403 errors from SourceForge/CDN mirrors. Updated SystemRescue and Clonezilla download URLs.
 - **Bundled aria2c** — aria2c 1.37.0 is now included in local builds and CI so ISO downloads work out of the box.
-- **Expanded test suite** — 43 tests covering network transfer, orchestration, diagnostics, security, and ISO download pipelines.
+- **Expanded test suite** — Tests covering network transfer, orchestration, diagnostics, security, and ISO download pipelines.
 
 ---
 
@@ -44,8 +44,8 @@ Migration · Maintenance · Recovery · Imaging · Deployment — one portable E
 | | |
 |---|---|
 | **100 % Portable** | No installer. Drop on a USB stick and go. |
-| **36 Quick Actions** | One-click system optimization, backups, maintenance, troubleshooting, and recovery. |
-| **User Profile Backup & Restore** | 6-page wizards with smart filtering, AES-256 encryption, and NTFS permission handling. |
+| **Quick Actions** | One-click system optimization, backups, maintenance, troubleshooting, and recovery. |
+| **User Profile Backup & Restore** | Step-by-step wizards with smart filtering, AES-256 encryption, and NTFS permission handling. |
 | **Application Migration** | Scan installed apps, match to Chocolatey packages, bulk-install on a new PC. |
 | **Diagnostics & Benchmarking** | SMART disk health, CPU/disk/memory benchmarks, stress testing, thermal monitoring, HTML/JSON/CSV reports. |
 | **Network Transfer** | Peer-to-peer LAN migration with AES-256-GCM, resume, and multi-PC orchestrator mode. |
@@ -110,10 +110,10 @@ Migration · Maintenance · Recovery · Imaging · Deployment — one portable E
 
 ### Quick Actions
 
-**36 one-click operations** organized into five categories with real-time progress and detailed logging.
+One-click operations organized into five categories with real-time progress and detailed logging.
 
 <details>
-<summary><strong>System Optimization (8)</strong></summary>
+<summary><strong>System Optimization</strong></summary>
 
 | Action | Description |
 |---|---|
@@ -129,7 +129,7 @@ Migration · Maintenance · Recovery · Imaging · Deployment — one portable E
 </details>
 
 <details>
-<summary><strong>Quick Backups (9)</strong></summary>
+<summary><strong>Quick Backups</strong></summary>
 
 | Action | Description |
 |---|---|
@@ -142,11 +142,13 @@ Migration · Maintenance · Recovery · Imaging · Deployment — one portable E
 | Photo Management Backup | Lightroom catalogs, Photoshop preferences |
 | Dev Configs Backup | VS Code settings, Git config, SSH keys, env vars |
 | Backup Known Networks | Saved WiFi profiles exported via `netsh wlan export` |
+| Backup Desktop Wallpaper | Saves current wallpaper and theme files |
+| Backup Printer Settings | Printer drivers, queues, and port configurations |
 
 </details>
 
 <details>
-<summary><strong>Maintenance (7)</strong></summary>
+<summary><strong>Maintenance</strong></summary>
 
 | Action | Description |
 |---|---|
@@ -161,7 +163,7 @@ Migration · Maintenance · Recovery · Imaging · Deployment — one portable E
 </details>
 
 <details>
-<summary><strong>Troubleshooting (6)</strong></summary>
+<summary><strong>Troubleshooting</strong></summary>
 
 | Action | Description |
 |---|---|
@@ -175,15 +177,13 @@ Migration · Maintenance · Recovery · Imaging · Deployment — one portable E
 </details>
 
 <details>
-<summary><strong>Emergency Recovery (6)</strong></summary>
+<summary><strong>Emergency Recovery</strong></summary>
 
 | Action | Description |
 |---|---|
 | Create Restore Point | System Restore checkpoint via WMI |
 | Export Registry Keys | Critical registry hives (HKLM\Software, HKCU, etc.) |
 | Screenshot Settings | Captures screenshots of Windows Settings panels |
-| Backup Desktop Wallpaper | Saves current wallpaper and theme files |
-| Backup Printer Settings | Printer drivers, queues, and port configurations |
 | Backup BitLocker Keys | Recovery keys for all encrypted volumes (restricted permissions) |
 
 </details>
@@ -192,23 +192,11 @@ Migration · Maintenance · Recovery · Imaging · Deployment — one portable E
 
 ### User Profile Backup & Restore
 
-Two 6-page wizards for comprehensive user-profile migration with smart filtering, encryption, and NTFS permission handling.
+Guided wizards for comprehensive user-profile migration with smart filtering, AES-256 encryption, and NTFS permission handling.
 
-**Backup Wizard**
-1. Welcome
-2. Scan & select user profiles (auto-excludes system accounts)
-3. Per-user data customization (Desktop, Documents, AppData, browsers, email …)
-4. Smart filter config (exclude temp/cache, size limits, locked-file detection)
-5. Settings (destination, compression 0-9, AES-256 encryption, permission mode)
-6. Execution with real-time progress, log viewer, and cancellation support
+**Backup Wizard** — Scan and select user profiles, customize per-user data categories (Desktop, Documents, AppData, browsers, email, and more), configure filters, compression, and encryption, then execute with real-time progress and cancellation support.
 
-**Restore Wizard**
-1. Welcome
-2. User mapping (map source users to destination users — auto-map or manual)
-3. Merge options (skip / overwrite / rename, permission handling, checksums)
-4. Folder selection (choose which data categories to restore)
-5. Permission settings (NTFS permission handling and ownership configuration)
-6. Execution with progress, logging, and restore report
+**Restore Wizard** — Map source users to destination users (auto-map or manual), configure merge behavior, select data categories, handle NTFS permissions, and restore with detailed logging.
 
 ---
 
@@ -217,7 +205,7 @@ Two 6-page wizards for comprehensive user-profile migration with smart filtering
 Scan installed apps, match them to Chocolatey packages, and bulk-install on a new PC.
 
 1. **Scan** — Queries HKLM/HKCU Uninstall registry keys; extracts name, version, publisher.
-2. **Match** — `PackageMatcher` with 42 curated mappings (high/medium/low/manual confidence).
+2. **Match** — `PackageMatcher` with curated mappings (high/medium/low/manual confidence).
 3. **Backup** — Optional data backup via `UserProfileBackupWizard` (browser profiles, IDE settings, etc.).
 4. **Export** — JSON migration report portable to the target machine.
 5. **Install** — Embedded Chocolatey with retry logic (3 attempts, exponential backoff).
@@ -372,7 +360,7 @@ All crypto uses the **Windows BCrypt API** (FIPS 140-2 validated provider).
 |---|---|
 | Visual Studio 2022 | v17+ with _Desktop development with C++_ |
 | CMake | 3.28+ |
-| Qt | 6.5.3 MSVC 2019 64-bit |
+| Qt | 6.5+ MSVC 2019 64-bit |
 | vcpkg | Latest (for zlib, bzip2, liblzma) |
 
 ### Build
@@ -419,7 +407,7 @@ Requires Azure CLI and access to the Azure Trusted Signing account. CI builds (G
 
 | Library | License | Purpose |
 |---|---|---|
-| [Qt 6.5.3](https://www.qt.io/) | LGPL v3 | UI framework (Core, Gui, Widgets, Concurrent, Network, Svg) |
+| [Qt 6.5+](https://www.qt.io/) | LGPL v3 | UI framework (Core, Widgets, Concurrent, Network; Gui linked transitively via Widgets) |
 | [zlib](https://www.zlib.net/) | zlib License | gzip compression |
 | [bzip2](https://sourceware.org/bzip2/) | BSD-style | bzip2 compression |
 | [liblzma](https://tukaani.org/xz/) | 0BSD / Public Domain | xz/LZMA compression |
@@ -436,7 +424,7 @@ Full license texts: [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md)
 cmake --build build --config Release --target RUN_TESTS
 ```
 
-44 tests covering network transfer, orchestration, diagnostics, security, encryption, configuration, and ISO download. Includes 42 unit tests and 2 integration tests.
+Unit and integration tests covering network transfer, orchestration, diagnostics, security, encryption, configuration, ISO download, and quick action factory validation.
 
 ---
 

@@ -7,6 +7,7 @@
 #include "sak/diagnostic_benchmark_panel.h"
 #include "sak/diagnostic_controller.h"
 #include "sak/logger.h"
+#include "sak/style_constants.h"
 
 #include <QApplication>
 #include <QCheckBox>
@@ -175,15 +176,15 @@ void DiagnosticBenchmarkPanel::onSmartAnalysisComplete(
         switch (r.overall_health) {
             case SmartHealthStatus::Healthy:
                 health_item->setText("PASS");
-                health_item->setForeground(QColor("#16a34a"));
+                health_item->setForeground(QColor(sak::ui::kStatusColorSuccess));
                 break;
             case SmartHealthStatus::Warning:
                 health_item->setText("WARN");
-                health_item->setForeground(QColor("#ea580c"));
+                health_item->setForeground(QColor(sak::ui::kStatusColorWarning));
                 break;
             case SmartHealthStatus::Critical:
                 health_item->setText("FAIL");
-                health_item->setForeground(QColor("#dc2626"));
+                health_item->setForeground(QColor(sak::ui::kStatusColorError));
                 break;
             default:
                 health_item->setText("N/A");
@@ -388,7 +389,7 @@ void DiagnosticBenchmarkPanel::onStartStressTestClicked()
     m_stress_start_button->setEnabled(false);
     m_stress_stop_button->setEnabled(true);
     m_stress_status_label->setText("Status: Running");
-    m_stress_status_label->setStyleSheet("font-weight: 600; color: #16a34a;");
+    m_stress_status_label->setStyleSheet(QString("font-weight: 600; color: %1;").arg(sak::ui::kStatusColorSuccess));
 
     m_controller->runStressTest(config);
 }
@@ -408,11 +409,11 @@ void DiagnosticBenchmarkPanel::onStressTestComplete(
 
     if (result.passed) {
         m_stress_status_label->setText("Status: PASSED");
-        m_stress_status_label->setStyleSheet("font-weight: 600; color: #16a34a;");
+        m_stress_status_label->setStyleSheet(QString("font-weight: 600; color: %1;").arg(sak::ui::kStatusColorSuccess));
     } else {
         m_stress_status_label->setText(
-            QString("Status: FAILED — %1").arg(result.abort_reason));
-        m_stress_status_label->setStyleSheet("font-weight: 600; color: #dc2626;");
+            QString("Status: FAILED \u2014 %1").arg(result.abort_reason));
+        m_stress_status_label->setStyleSheet(QString("font-weight: 600; color: %1;").arg(sak::ui::kStatusColorError));
     }
 
     logMessage(QString("Stress test %1 (%2s, %3 errors, max temp: %4°C)")
@@ -447,7 +448,7 @@ void DiagnosticBenchmarkPanel::onStressTestStatus(
         QString("Errors: %1").arg(errors));
 
     if (errors > 0) {
-        m_stress_errors_label->setStyleSheet("color: #dc2626; font-weight: 600;");
+        m_stress_errors_label->setStyleSheet(QString("color: %1; font-weight: 600;").arg(sak::ui::kStatusColorError));
     }
 }
 
@@ -480,7 +481,7 @@ void DiagnosticBenchmarkPanel::onRunFullSuiteClicked()
 
     // Reset step labels
     for (int i = 0; i < 7; ++i) {
-        m_suite_step_labels[i]->setStyleSheet("color: #94a3b8;");
+        m_suite_step_labels[i]->setStyleSheet(QString("color: %1;").arg(sak::ui::kColorTextDisabled));
     }
 
     m_controller->runFullSuite(stress_config, disk_config);
@@ -532,13 +533,13 @@ void DiagnosticBenchmarkPanel::onSuiteStateChanged(
             m_suite_step_labels[i]->setText(
                 QString("  %1  %2").arg(QChar(0x2705)).arg(m_suite_step_names[i]));
             m_suite_step_labels[i]->setStyleSheet(
-                "color: #16a34a; font-weight: 600;");
+                QString("color: %1; font-weight: 600;").arg(sak::ui::kStatusColorSuccess));
         } else if (i == step) {
-            // Current — use BMP arrow symbol (U+25B6) instead of non-BMP U+1F504
+            // Current \u2014 use BMP arrow symbol (U+25B6) instead of non-BMP U+1F504
             m_suite_step_labels[i]->setText(
                 QString("  %1  %2").arg(QChar(0x25B6)).arg(m_suite_step_names[i]));
             m_suite_step_labels[i]->setStyleSheet(
-                "color: #2563eb; font-weight: 600;");
+                QString("color: %1; font-weight: 600;").arg(sak::ui::kStatusColorRunning));
         }
     }
 }
@@ -557,14 +558,14 @@ void DiagnosticBenchmarkPanel::onSuiteComplete()
     m_suite_cancel_button->setEnabled(false);
     m_suite_skip_button->setEnabled(false);
     m_suite_status_label->setText("Suite complete!");
-    m_suite_status_label->setStyleSheet("font-weight: 600; color: #16a34a;");
+    m_suite_status_label->setStyleSheet(QString("font-weight: 600; color: %1;").arg(sak::ui::kStatusColorSuccess));
 
-    // Mark all steps as complete — reconstruct from stored step names
+    // Mark all steps as complete \u2014 reconstruct from stored step names
     for (int i = 0; i < 7; ++i) {
         m_suite_step_labels[i]->setText(
             QString("  %1  %2").arg(QChar(0x2705)).arg(m_suite_step_names[i]));
         m_suite_step_labels[i]->setStyleSheet(
-            "color: #16a34a; font-weight: 600;");
+            QString("color: %1; font-weight: 600;").arg(sak::ui::kStatusColorSuccess));
     }
 
     logMessage("Full diagnostic suite complete");
@@ -582,9 +583,9 @@ void DiagnosticBenchmarkPanel::onThermalReadingsUpdated(
         const int temp = static_cast<int>(reading.temperature_celsius);
 
         // Color code: green < 60, yellow 60-80, red > 80
-        QString color = "#16a34a";
-        if (temp >= 80) color = "#dc2626";
-        else if (temp >= 60) color = "#ea580c";
+        QString color = sak::ui::kStatusColorSuccess;
+        if (temp >= 80) color = sak::ui::kStatusColorError;
+        else if (temp >= 60) color = sak::ui::kColorWarning;
 
         const QString temp_text = QString("<span style='color:%1; font-weight:600;'>"
                                           "%2°C</span>").arg(color).arg(temp);

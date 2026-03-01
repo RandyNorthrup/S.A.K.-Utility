@@ -1,6 +1,9 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+/// @file repair_windows_store_action.cpp
+/// @brief Implements Microsoft Store repair and cache reset
+
 #include "sak/actions/repair_windows_store_action.h"
 #include "sak/process_runner.h"
 #include <QProcess>
@@ -76,7 +79,7 @@ bool RepairWindowsStoreAction::resetStorePackage() {
     if (!proc.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("Store package reset warning: " + proc.std_err.trimmed());
     }
-    return !proc.timed_out && proc.exit_code == 0 && proc.exit_status != QProcess::CrashExit;
+    return proc.succeeded() && proc.exit_status != QProcess::CrashExit;
 }
 
 // ENTERPRISE-GRADE: Re-register Store using Add-AppxPackage
@@ -93,7 +96,7 @@ bool RepairWindowsStoreAction::reregisterWindowsStore() {
     if (!proc.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("Store re-registration warning: " + proc.std_err.trimmed());
     }
-    return !proc.timed_out && proc.exit_code == 0 && proc.exit_status != QProcess::CrashExit;
+    return proc.succeeded() && proc.exit_status != QProcess::CrashExit;
 }
 
 // ENTERPRISE-GRADE: Restart related services
@@ -112,7 +115,7 @@ bool RepairWindowsStoreAction::resetStoreServices() {
     if (!proc.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("Store services reset warning: " + proc.std_err.trimmed());
     }
-    return !proc.timed_out && proc.exit_code == 0 && proc.exit_status != QProcess::CrashExit;
+    return proc.succeeded() && proc.exit_status != QProcess::CrashExit;
 }
 
 // ENTERPRISE-GRADE: Check event logs for Store errors

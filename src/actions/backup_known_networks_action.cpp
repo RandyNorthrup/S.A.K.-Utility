@@ -1,6 +1,9 @@
 // Copyright (c) 2026 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+/// @file backup_known_networks_action.cpp
+/// @brief Implements backup of saved Wi-Fi network profiles
+
 #include "sak/actions/backup_known_networks_action.h"
 #include "sak/process_runner.h"
 #include <QDir>
@@ -35,7 +38,7 @@ QList<BackupKnownNetworksAction::NetworkEntry> BackupKnownNetworksAction::collec
         "netsh", QStringList{"wlan", "show", "profiles"}, 10000,
         [this]() { return isCancelled(); });
 
-    if (listResult.timed_out || listResult.exit_code != 0)
+    if (!listResult.succeeded())
         return result;
 
     QStringList profileNames;

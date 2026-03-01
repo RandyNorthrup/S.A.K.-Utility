@@ -1,6 +1,9 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+/// @file screenshot_settings_action.cpp
+/// @brief Implements screenshot capture and display settings backup
+
 #include "sak/actions/screenshot_settings_action.h"
 #include "sak/logger.h"
 #include "sak/process_runner.h"
@@ -78,7 +81,7 @@ void ScreenshotSettingsAction::execute() {
     for (auto it = settings_pages.begin(); it != settings_pages.end(); ++it) {
         if (isCancelled()) {
             ProcessResult kill_proc = runProcess("taskkill", QStringList() << "/IM" << "SystemSettings.exe" << "/F", 10000);
-            if (kill_proc.timed_out || kill_proc.exit_code != 0) {
+            if (!kill_proc.succeeded()) {
                 Q_EMIT logMessage("Settings close warning: " + kill_proc.std_err.trimmed());
             }
             emitCancelledResult("Settings screenshots cancelled", start_time);
@@ -168,7 +171,7 @@ bool ScreenshotSettingsAction::captureSettingsPage(const QString& ms_uri,
 
         if (!isProcessRunning("SystemSettings.exe")) {
             ProcessResult close_proc = runProcess("taskkill", QStringList() << "/IM" << "SystemSettings.exe" << "/F", 10000);
-            if (close_proc.timed_out || close_proc.exit_code != 0) {
+            if (!close_proc.succeeded()) {
                 Q_EMIT logMessage("Settings close warning: " + close_proc.std_err.trimmed());
             }
             QThread::msleep(500);
@@ -199,7 +202,7 @@ bool ScreenshotSettingsAction::captureSettingsPage(const QString& ms_uri,
         }
 
         ProcessResult close_proc = runProcess("taskkill", QStringList() << "/IM" << "SystemSettings.exe" << "/F", 10000);
-        if (close_proc.timed_out || close_proc.exit_code != 0) {
+        if (!close_proc.succeeded()) {
             Q_EMIT logMessage("Settings close warning: " + close_proc.std_err.trimmed());
         }
         QThread::msleep(500);
@@ -259,15 +262,15 @@ int ScreenshotSettingsAction::detectMonitorCount() {
     QList<QScreen*> screens = QGuiApplication::screens();
     int count = screens.size();
     
-    qDebug() << "Detected" << count << "monitor(s)";
+    sak::logDebug("Detected {} monitor(s)", count);
     
     // Log each monitor's properties
     for (int i = 0; i < count; i++) {
         QScreen* screen = screens[i];
         QRect geometry = screen->geometry();
-        qDebug() << "Monitor" << (i+1) << ":" 
-                 << geometry.width() << "x" << geometry.height()
-                 << "at" << geometry.x() << "," << geometry.y();
+        sak::logDebug("Monitor {}: {}x{} at {},{}",
+                     i + 1, geometry.width(), geometry.height(),
+                     geometry.x(), geometry.y());
     }
     
     return count;

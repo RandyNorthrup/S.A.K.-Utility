@@ -4,6 +4,7 @@
 #include "sak/user_profile_restore_wizard.h"
 #include "sak/windows_user_scanner.h"
 #include "sak/chocolatey_manager.h"
+#include "sak/style_constants.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QGridLayout>
@@ -62,7 +63,7 @@ void UserProfileRestoreUserMappingPage::setupUi() {
     
     // Summary
     m_summaryLabel = new QLabel(this);
-    m_summaryLabel->setStyleSheet("QLabel { background-color: #e0f2fe; padding: 10px; border-radius: 10px; }");
+    m_summaryLabel->setStyleSheet(QString("QLabel { background-color: %1; padding: 10px; border-radius: 10px; }").arg(sak::ui::kColorBgInfoPanel));
     layout->addWidget(m_summaryLabel);
     
     // Connections
@@ -280,7 +281,7 @@ void UserProfileRestoreMergeConfigPage::setupUi() {
     
     // Summary
     m_summaryLabel = new QLabel(this);
-    m_summaryLabel->setStyleSheet("QLabel { background-color: #e0f2fe; padding: 10px; border-radius: 10px; }");
+    m_summaryLabel->setStyleSheet(QString("QLabel { background-color: %1; padding: 10px; border-radius: 10px; }").arg(sak::ui::kColorBgInfoPanel));
     layout->addWidget(m_summaryLabel);
     
     // Connections
@@ -433,7 +434,7 @@ void UserProfileRestoreFolderSelectionPage::setupUi() {
     
     // Summary
     m_summaryLabel = new QLabel(this);
-    m_summaryLabel->setStyleSheet("QLabel { background-color: #e0f2fe; padding: 10px; border-radius: 10px; }");
+    m_summaryLabel->setStyleSheet(QString("QLabel { background-color: %1; padding: 10px; border-radius: 10px; }").arg(sak::ui::kColorBgInfoPanel));
     layout->addWidget(m_summaryLabel);
     
     // Connections
@@ -626,7 +627,7 @@ void UserProfileRestorePermissionSettingsPage::setupUi() {
     
     // Summary
     m_summaryLabel = new QLabel(this);
-    m_summaryLabel->setStyleSheet("QLabel { background-color: #fef3c7; padding: 12px; border-radius: 10px; }");
+    m_summaryLabel->setStyleSheet(QString("QLabel { background-color: %1; padding: 12px; border-radius: 10px; }").arg(sak::ui::kColorBgWarningPanel));
     m_summaryLabel->setWordWrap(true);
     layout->addWidget(m_summaryLabel);
     
@@ -752,7 +753,7 @@ void UserProfileRestoreAppRestorePage::setupUi() {
 
     m_installButton = new QPushButton(tr("Install Selected Apps"), this);
     m_installButton->setEnabled(false);
-    m_installButton->setStyleSheet("QPushButton { background-color: #2563eb; color: white; padding: 8px 20px; border-radius: 6px; font-weight: 600; }");
+    m_installButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
     connect(m_installButton, &QPushButton::clicked, this, &UserProfileRestoreAppRestorePage::onInstallApps);
     buttonLayout->addWidget(m_installButton);
 
@@ -765,7 +766,7 @@ void UserProfileRestoreAppRestorePage::setupUi() {
 
     // Summary
     m_summaryLabel = new QLabel(this);
-    m_summaryLabel->setStyleSheet("QLabel { padding: 10px; background-color: #e0f2fe; border-radius: 10px; }");
+    m_summaryLabel->setStyleSheet(QString("QLabel { padding: 10px; background-color: %1; border-radius: 10px; }").arg(sak::ui::kColorBgInfoPanel));
     m_summaryLabel->setText(tr("No application data found in backup"));
     layout->addWidget(m_summaryLabel);
 }

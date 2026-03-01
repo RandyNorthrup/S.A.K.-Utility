@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "sak/info_button.h"
+#include "sak/style_constants.h"
 
 #include <QApplication>
 #include <QFrame>
@@ -63,7 +64,10 @@ InfoButton::InfoButton(const QString& infoText, QWidget* parent)
     setCursor(Qt::PointingHandCursor);
     setAutoRaise(true);
     setFixedSize(20, 20);
-    setFocusPolicy(Qt::NoFocus);
+    setFocusPolicy(Qt::TabFocus);
+    setAccessibleName(QStringLiteral("Info"));
+    setAccessibleDescription(infoText);
+    setToolTip(QStringLiteral("Show more info"));
 
     // Transparent background — the icon alone is the visual
     setStyleSheet(
@@ -93,12 +97,12 @@ void InfoButton::togglePopup()
     popup->setAttribute(Qt::WA_DeleteOnClose);
     popup->setObjectName("sakInfoPopup");
     popup->setStyleSheet(
-        "#sakInfoPopup {"
+        QString("#sakInfoPopup {"
         "  background-color: rgba(255, 255, 255, 0.97);"
-        "  border: 1px solid #cbd5e1;"
+        "  border: 1px solid %1;"
         "  border-radius: 8px;"
         "  padding: 0px;"
-        "}"
+        "}").arg(sak::ui::kColorBorderDefault)
     );
 
     auto* layout = new QVBoxLayout(popup);
@@ -108,13 +112,13 @@ void InfoButton::togglePopup()
     label->setWordWrap(true);
     label->setMaximumWidth(280);
     label->setStyleSheet(
-        "QLabel {"
-        "  color: #0f172a;"
+        QString("QLabel {"
+        "  color: %1;"
         "  font-size: 9pt;"
         "  background: transparent;"
         "  border: none;"
         "  padding: 0px;"
-        "}"
+        "}").arg(sak::ui::kColorTextPrimary)
     );
     layout->addWidget(label);
 

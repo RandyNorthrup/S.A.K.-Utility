@@ -1,7 +1,11 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+/// @file permission_manager.cpp
+/// @brief Implements file system permission checking and ACL management
+
 #include "sak/permission_manager.h"
+#include "sak/logger.h"
 #include <QFile>
 #include <QFileInfo>
 
@@ -182,9 +186,11 @@ bool PermissionManager::applyPermissionStrategy(const QString& path,
             // Strip, then assign to destination user
             return stripPermissions(path) &&
                    setStandardUserPermissions(path, destinationUserSID);
+
+        default:
+            sak::logWarning("Unknown PermissionMode value: {}", static_cast<int>(mode));
+            return false;
     }
-    
-    return false;
 }
 
 QString PermissionManager::getOwner(const QString& path) {

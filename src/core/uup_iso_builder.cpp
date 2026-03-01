@@ -168,6 +168,8 @@ QString UupIsoBuilder::find7zPath() const
     if (QFileInfo::exists(path))
         return path;
 
+    sak::logWarning("7z.exe/7zr.exe not found in bundled tools. "
+                     "Ensure tools/chocolatey/tools/ or tools/uup/ contains a 7-Zip executable.");
     return {};
 }
 
@@ -193,6 +195,8 @@ QString UupIsoBuilder::findUupMediaConverterPath() const
             return it.next();
     }
 
+    sak::logWarning("UUPMediaConverter.exe not found in bundled tools. "
+                     "Run 'powershell -File scripts/bundle_uup_tools.ps1' to bundle required tools.");
     return {};
 }
 

@@ -229,7 +229,7 @@ jobs:
       run: |
         # Skip GUI tests in CI (they require user interaction)
         $guiTests = @(
-          "test_app_migration_panel.exe",
+          "test_app_installation_panel.exe",
           "test_backup_wizard.exe", 
           "test_restore_wizard.exe"
         )

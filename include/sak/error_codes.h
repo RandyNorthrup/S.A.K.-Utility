@@ -4,6 +4,9 @@
 /// @file error_codes.h
 /// @brief Error code definitions for SAK Utility
 /// @note Using std::expected pattern for type-safe error handling
+/// @note All error codes form part of the stable API surface. Codes not yet
+///       used in production are reserved for planned features (network transfer,
+///       memory diagnostics, etc.) and must not be removed or renumbered.
 
 #pragma once
 

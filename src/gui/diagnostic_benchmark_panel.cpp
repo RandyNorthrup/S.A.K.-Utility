@@ -1,4 +1,4 @@
-// Copyright (c) 2025 Randy Northrup. All rights reserved.
+﻿// Copyright (c) 2025 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 /// @file diagnostic_benchmark_panel.cpp
@@ -6,8 +6,11 @@
 
 #include "sak/diagnostic_benchmark_panel.h"
 #include "sak/diagnostic_controller.h"
+#include "sak/format_utils.h"
 #include "sak/logger.h"
 #include "sak/detachable_log_window.h"
+#include "sak/style_constants.h"
+#include "sak/widget_helpers.h"
 
 #include <QApplication>
 #include <QCheckBox>
@@ -60,7 +63,7 @@ DiagnosticBenchmarkPanel::~DiagnosticBenchmarkPanel()
 
 void DiagnosticBenchmarkPanel::setupUi()
 {
-    // Root: zero margin → scroll area
+    // Root: zero margin ? scroll area
     auto* root_layout = new QVBoxLayout(this);
     root_layout->setContentsMargins(0, 0, 0, 0);
 
@@ -70,13 +73,18 @@ void DiagnosticBenchmarkPanel::setupUi()
 
     auto* content_widget = new QWidget(scroll_area);
     auto* main_layout = new QVBoxLayout(content_widget);
-    main_layout->setContentsMargins(12, 12, 12, 12);
-    main_layout->setSpacing(10);
+    main_layout->setContentsMargins(sak::ui::kMarginMedium, sak::ui::kMarginMedium,
+                                     sak::ui::kMarginMedium, sak::ui::kMarginMedium);
+    main_layout->setSpacing(sak::ui::kSpacingDefault);
 
     scroll_area->setWidget(content_widget);
     root_layout->addWidget(scroll_area);
 
-    // â”€â”€ Sections â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // Panel header — consistent title + muted subtitle
+    sak::createPanelHeader(content_widget, tr("Diagnostics"),
+        tr("Hardware inventory, SMART analysis, benchmarks, and stress tests"), main_layout);
+
+    // ── Sections ────────────────────────────────────────────────
     main_layout->addWidget(createHardwareSection());
     main_layout->addWidget(createSmartSection());
     main_layout->addWidget(createBenchmarkSection());
@@ -117,7 +125,7 @@ QGroupBox* DiagnosticBenchmarkPanel::createHardwareSection()
         key_label->setStyleSheet("font-weight: 600;");
         row->addWidget(key_label);
 
-        value_label = new QLabel("—", this);
+        value_label = new QLabel("�", this);
         value_label->setWordWrap(true);
         row->addWidget(value_label, 1);
         layout->addLayout(row);
@@ -137,10 +145,14 @@ QGroupBox* DiagnosticBenchmarkPanel::createHardwareSection()
 
     m_hw_rescan_button = new QPushButton("Scan Hardware", this);
     m_hw_rescan_button->setMinimumWidth(140);
+    m_hw_rescan_button->setAccessibleName(QStringLiteral("Scan Hardware"));
+    m_hw_rescan_button->setToolTip(QStringLiteral("Scan and display hardware information"));
     button_layout->addWidget(m_hw_rescan_button);
 
     m_hw_copy_button = new QPushButton("Copy to Clipboard", this);
     m_hw_copy_button->setMinimumWidth(140);
+    m_hw_copy_button->setAccessibleName(QStringLiteral("Copy Hardware Info"));
+    m_hw_copy_button->setToolTip(QStringLiteral("Copy hardware inventory to the clipboard"));
     button_layout->addWidget(m_hw_copy_button);
 
     layout->addLayout(button_layout);
@@ -173,6 +185,8 @@ QGroupBox* DiagnosticBenchmarkPanel::createSmartSection()
     m_smart_table->setEditTriggers(QAbstractItemView::NoEditTriggers);
     m_smart_table->setMaximumHeight(160);
     m_smart_table->verticalHeader()->setVisible(false);
+    m_smart_table->setAccessibleName(QStringLiteral("SMART Health Table"));
+    m_smart_table->setToolTip(QStringLiteral("S.M.A.R.T. health data for detected storage drives"));
     layout->addWidget(m_smart_table);
 
     // Warnings label
@@ -186,6 +200,8 @@ QGroupBox* DiagnosticBenchmarkPanel::createSmartSection()
     button_layout->addStretch();
     m_smart_rescan_button = new QPushButton("Scan SMART", this);
     m_smart_rescan_button->setMinimumWidth(140);
+    m_smart_rescan_button->setAccessibleName(QStringLiteral("Scan SMART Health"));
+    m_smart_rescan_button->setToolTip(QStringLiteral("Scan storage drives for S.M.A.R.T. health data"));
     button_layout->addWidget(m_smart_rescan_button);
     layout->addLayout(button_layout);
 
@@ -204,16 +220,16 @@ QGroupBox* DiagnosticBenchmarkPanel::createBenchmarkSection()
     auto* group = new QGroupBox("Benchmarks", this);
     auto* layout = new QVBoxLayout(group);
 
-    // â”€â”€ CPU Benchmark â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── CPU Benchmark ───────────────────────────────────────────
     auto* cpu_group = new QGroupBox("CPU Benchmark", this);
     auto* cpu_layout = new QVBoxLayout(cpu_group);
 
     auto* cpu_scores = new QHBoxLayout();
-    m_cpu_single_score_label = new QLabel("Single-Thread: —", this);
+    m_cpu_single_score_label = new QLabel("Single-Thread: �", this);
     m_cpu_single_score_label->setStyleSheet("font-weight: 600;");
     cpu_scores->addWidget(m_cpu_single_score_label);
 
-    m_cpu_multi_score_label = new QLabel("Multi-Thread: —", this);
+    m_cpu_multi_score_label = new QLabel("Multi-Thread: �", this);
     m_cpu_multi_score_label->setStyleSheet("font-weight: 600;");
     cpu_scores->addWidget(m_cpu_multi_score_label);
 
@@ -225,23 +241,28 @@ QGroupBox* DiagnosticBenchmarkPanel::createBenchmarkSection()
     m_cpu_score_bar->setValue(0);
     m_cpu_score_bar->setTextVisible(true);
     m_cpu_score_bar->setFormat("Score: %v / 3000 (baseline i5-12400 = 1000)");
+    m_cpu_score_bar->setAccessibleName(QStringLiteral("CPU Benchmark Score"));
+    m_cpu_score_bar->setAccessibleDescription(QStringLiteral("Displays the CPU benchmark score out of 3000"));
+    m_cpu_score_bar->setToolTip(QStringLiteral("CPU benchmark score relative to an i5-12400 baseline"));
     cpu_layout->addWidget(m_cpu_score_bar);
 
     m_cpu_details_label = new QLabel("", this);
     m_cpu_details_label->setWordWrap(true);
-    m_cpu_details_label->setStyleSheet("color: #475569; font-size: 11px;");
+    m_cpu_details_label->setStyleSheet("color: #475569; font-size: 11pt;");
     cpu_layout->addWidget(m_cpu_details_label);
 
     auto* cpu_btn_layout = new QHBoxLayout();
     cpu_btn_layout->addStretch();
     m_cpu_benchmark_button = new QPushButton("Run CPU Benchmark", this);
     m_cpu_benchmark_button->setMinimumWidth(160);
+    m_cpu_benchmark_button->setAccessibleName(QStringLiteral("Run CPU Benchmark"));
+    m_cpu_benchmark_button->setToolTip(QStringLiteral("Run a single and multi-threaded CPU performance test"));
     cpu_btn_layout->addWidget(m_cpu_benchmark_button);
     cpu_layout->addLayout(cpu_btn_layout);
 
     layout->addWidget(cpu_group);
 
-    // â”€â”€ Disk Benchmark â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── Disk Benchmark ──────────────────────────────────────────
     auto* disk_group = new QGroupBox("Disk I/O Benchmark", this);
     auto* disk_layout = new QVBoxLayout(disk_group);
 
@@ -249,21 +270,23 @@ QGroupBox* DiagnosticBenchmarkPanel::createBenchmarkSection()
     drive_row->addWidget(new QLabel("Drive:", this));
     m_disk_drive_combo = new QComboBox(this);
     m_disk_drive_combo->setMinimumWidth(300);
+    m_disk_drive_combo->setAccessibleName(QStringLiteral("Benchmark Drive"));
+    m_disk_drive_combo->setToolTip(QStringLiteral("Select a drive to benchmark"));
     drive_row->addWidget(m_disk_drive_combo);
     drive_row->addStretch();
     disk_layout->addLayout(drive_row);
 
-    m_disk_seq_label = new QLabel("Sequential: —", this);
+    m_disk_seq_label = new QLabel("Sequential: �", this);
     m_disk_seq_label->setStyleSheet("font-weight: 600;");
     disk_layout->addWidget(m_disk_seq_label);
 
-    m_disk_rand_label = new QLabel("Random 4K: —", this);
+    m_disk_rand_label = new QLabel("Random 4K: �", this);
     disk_layout->addWidget(m_disk_rand_label);
 
-    m_disk_latency_label = new QLabel("Latency: —", this);
+    m_disk_latency_label = new QLabel("Latency: �", this);
     disk_layout->addWidget(m_disk_latency_label);
 
-    m_disk_score_label = new QLabel("Score: —", this);
+    m_disk_score_label = new QLabel("Score: �", this);
     m_disk_score_label->setStyleSheet("font-weight: 600; color: #2563eb;");
     disk_layout->addWidget(m_disk_score_label);
 
@@ -271,23 +294,25 @@ QGroupBox* DiagnosticBenchmarkPanel::createBenchmarkSection()
     disk_btn_layout->addStretch();
     m_disk_benchmark_button = new QPushButton("Run Disk Benchmark", this);
     m_disk_benchmark_button->setMinimumWidth(160);
+    m_disk_benchmark_button->setAccessibleName(QStringLiteral("Run Disk Benchmark"));
+    m_disk_benchmark_button->setToolTip(QStringLiteral("Measure sequential and random I/O performance"));
     disk_btn_layout->addWidget(m_disk_benchmark_button);
     disk_layout->addLayout(disk_btn_layout);
 
     layout->addWidget(disk_group);
 
-    // â”€â”€ Memory Benchmark â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── Memory Benchmark ────────────────────────────────────────
     auto* mem_group = new QGroupBox("Memory Benchmark", this);
     auto* mem_layout = new QVBoxLayout(mem_group);
 
-    m_mem_bandwidth_label = new QLabel("Bandwidth: —", this);
+    m_mem_bandwidth_label = new QLabel("Bandwidth: �", this);
     m_mem_bandwidth_label->setStyleSheet("font-weight: 600;");
     mem_layout->addWidget(m_mem_bandwidth_label);
 
-    m_mem_latency_label = new QLabel("Random Latency: —", this);
+    m_mem_latency_label = new QLabel("Random Latency: �", this);
     mem_layout->addWidget(m_mem_latency_label);
 
-    m_mem_score_label = new QLabel("Score: —", this);
+    m_mem_score_label = new QLabel("Score: �", this);
     m_mem_score_label->setStyleSheet("font-weight: 600; color: #2563eb;");
     mem_layout->addWidget(m_mem_score_label);
 
@@ -295,6 +320,8 @@ QGroupBox* DiagnosticBenchmarkPanel::createBenchmarkSection()
     mem_btn_layout->addStretch();
     m_mem_benchmark_button = new QPushButton("Run Memory Benchmark", this);
     m_mem_benchmark_button->setMinimumWidth(160);
+    m_mem_benchmark_button->setAccessibleName(QStringLiteral("Run Memory Benchmark"));
+    m_mem_benchmark_button->setToolTip(QStringLiteral("Measure memory bandwidth and latency"));
     mem_btn_layout->addWidget(m_mem_benchmark_button);
     mem_layout->addLayout(mem_btn_layout);
 
@@ -326,13 +353,19 @@ QGroupBox* DiagnosticBenchmarkPanel::createStressTestSection()
 
     m_stress_cpu_check = new QCheckBox("CPU", this);
     m_stress_cpu_check->setChecked(true);
+    m_stress_cpu_check->setAccessibleName(QStringLiteral("Stress Test CPU"));
+    m_stress_cpu_check->setToolTip(QStringLiteral("Include CPU in the stress test"));
     config_row->addWidget(m_stress_cpu_check);
 
     m_stress_memory_check = new QCheckBox("Memory", this);
     m_stress_memory_check->setChecked(true);
+    m_stress_memory_check->setAccessibleName(QStringLiteral("Stress Test Memory"));
+    m_stress_memory_check->setToolTip(QStringLiteral("Include memory in the stress test"));
     config_row->addWidget(m_stress_memory_check);
 
     m_stress_disk_check = new QCheckBox("Disk", this);
+    m_stress_disk_check->setAccessibleName(QStringLiteral("Stress Test Disk"));
+    m_stress_disk_check->setToolTip(QStringLiteral("Include disk I/O in the stress test"));
     config_row->addWidget(m_stress_disk_check);
 
     config_row->addSpacing(20);
@@ -340,13 +373,17 @@ QGroupBox* DiagnosticBenchmarkPanel::createStressTestSection()
     m_stress_duration_spin = new QSpinBox(this);
     m_stress_duration_spin->setRange(1, 1440);
     m_stress_duration_spin->setValue(10);
+    m_stress_duration_spin->setAccessibleName(QStringLiteral("Stress Duration"));
+    m_stress_duration_spin->setToolTip(QStringLiteral("Duration of the stress test in minutes"));
     config_row->addWidget(m_stress_duration_spin);
 
     config_row->addSpacing(20);
-    config_row->addWidget(new QLabel("Thermal Limit (°C):", this));
+    config_row->addWidget(new QLabel("Thermal Limit (�C):", this));
     m_stress_thermal_limit_spin = new QSpinBox(this);
     m_stress_thermal_limit_spin->setRange(60, 110);
     m_stress_thermal_limit_spin->setValue(95);
+    m_stress_thermal_limit_spin->setAccessibleName(QStringLiteral("Thermal Limit"));
+    m_stress_thermal_limit_spin->setToolTip(QStringLiteral("Maximum temperature before the stress test is paused"));
     config_row->addWidget(m_stress_thermal_limit_spin);
 
     config_row->addStretch();
@@ -377,11 +414,15 @@ QGroupBox* DiagnosticBenchmarkPanel::createStressTestSection()
 
     m_stress_start_button = new QPushButton("Start Stress Test", this);
     m_stress_start_button->setMinimumWidth(140);
+    m_stress_start_button->setAccessibleName(QStringLiteral("Start Stress Test"));
+    m_stress_start_button->setToolTip(QStringLiteral("Begin the hardware stress test"));
     button_layout->addWidget(m_stress_start_button);
 
     m_stress_stop_button = new QPushButton("Stop Stress Test", this);
     m_stress_stop_button->setMinimumWidth(140);
     m_stress_stop_button->setEnabled(false);
+    m_stress_stop_button->setAccessibleName(QStringLiteral("Stop Stress Test"));
+    m_stress_stop_button->setToolTip(QStringLiteral("Stop the running stress test"));
     button_layout->addWidget(m_stress_stop_button);
 
     layout->addLayout(button_layout);
@@ -411,7 +452,7 @@ QGroupBox* DiagnosticBenchmarkPanel::createThermalSection()
         name_label->setStyleSheet("font-weight: 600;");
         row->addWidget(name_label);
 
-        label = new QLabel("—°C", this);
+        label = new QLabel("��C", this);
         label->setFixedWidth(60);
         row->addWidget(label);
 
@@ -419,7 +460,10 @@ QGroupBox* DiagnosticBenchmarkPanel::createThermalSection()
         bar->setRange(0, max_temp);
         bar->setValue(0);
         bar->setTextVisible(true);
-        bar->setFormat("%v / %m °C");
+        bar->setFormat("%v / %m �C");
+        bar->setAccessibleName(name.chopped(1) + QStringLiteral(" Temperature"));
+        bar->setAccessibleDescription(QStringLiteral("Current temperature reading in degrees Celsius"));
+        bar->setToolTip(QStringLiteral("Current temperature for this component"));
         row->addWidget(bar, 1);
 
         layout->addLayout(row);
@@ -441,7 +485,7 @@ QGroupBox* DiagnosticBenchmarkPanel::createSuiteSection()
     auto* group = new QGroupBox("Full Diagnostic Suite", this);
     auto* layout = new QVBoxLayout(group);
 
-    // Step labels — names stored in member array for safe reconstruction
+    // Step labels � names stored in member array for safe reconstruction
     m_suite_step_names[0] = "Hardware Inventory";
     m_suite_step_names[1] = "SMART Disk Health";
     m_suite_step_names[2] = "CPU Benchmark";
@@ -467,16 +511,23 @@ QGroupBox* DiagnosticBenchmarkPanel::createSuiteSection()
 
     m_suite_run_button = new QPushButton("Run Full Suite", this);
     m_suite_run_button->setMinimumWidth(140);
+    m_suite_run_button->setAccessibleName(QStringLiteral("Run Full Suite"));
+    m_suite_run_button->setToolTip(QStringLiteral("Run the complete diagnostic and benchmark suite"));
+    m_suite_run_button->setStyleSheet(sak::ui::kPrimaryButtonStyle);
     button_layout->addWidget(m_suite_run_button);
 
     m_suite_cancel_button = new QPushButton("Cancel Suite", this);
     m_suite_cancel_button->setMinimumWidth(120);
     m_suite_cancel_button->setEnabled(false);
+    m_suite_cancel_button->setAccessibleName(QStringLiteral("Cancel Suite"));
+    m_suite_cancel_button->setToolTip(QStringLiteral("Cancel the running diagnostic suite"));
     button_layout->addWidget(m_suite_cancel_button);
 
     m_suite_skip_button = new QPushButton("Skip Step", this);
     m_suite_skip_button->setMinimumWidth(100);
     m_suite_skip_button->setEnabled(false);
+    m_suite_skip_button->setAccessibleName(QStringLiteral("Skip Suite Step"));
+    m_suite_skip_button->setToolTip(QStringLiteral("Skip the current step in the suite"));
     button_layout->addWidget(m_suite_skip_button);
 
     layout->addLayout(button_layout);
@@ -505,12 +556,16 @@ QGroupBox* DiagnosticBenchmarkPanel::createReportSection()
     info_row->addWidget(new QLabel("Technician:", this));
     m_report_technician_edit = new QLineEdit(this);
     m_report_technician_edit->setPlaceholderText("Name");
+    m_report_technician_edit->setAccessibleName(QStringLiteral("Technician Name"));
+    m_report_technician_edit->setToolTip(QStringLiteral("Name of the technician generating the report"));
     info_row->addWidget(m_report_technician_edit);
 
     info_row->addSpacing(20);
     info_row->addWidget(new QLabel("Ticket #:", this));
     m_report_ticket_edit = new QLineEdit(this);
     m_report_ticket_edit->setPlaceholderText("Ticket number");
+    m_report_ticket_edit->setAccessibleName(QStringLiteral("Ticket Number"));
+    m_report_ticket_edit->setToolTip(QStringLiteral("Ticket or work order number for the report"));
     info_row->addWidget(m_report_ticket_edit);
 
     layout->addLayout(info_row);
@@ -530,14 +585,20 @@ QGroupBox* DiagnosticBenchmarkPanel::createReportSection()
 
     m_report_html_button = new QPushButton("Generate HTML Report", this);
     m_report_html_button->setMinimumWidth(160);
+    m_report_html_button->setAccessibleName(QStringLiteral("Generate HTML Report"));
+    m_report_html_button->setToolTip(QStringLiteral("Generate a formatted HTML diagnostic report"));
     export_layout->addWidget(m_report_html_button);
 
     m_report_json_button = new QPushButton("Export JSON", this);
     m_report_json_button->setMinimumWidth(120);
+    m_report_json_button->setAccessibleName(QStringLiteral("Export JSON Report"));
+    m_report_json_button->setToolTip(QStringLiteral("Export diagnostic data as a JSON file"));
     export_layout->addWidget(m_report_json_button);
 
     m_report_csv_button = new QPushButton("Export CSV", this);
     m_report_csv_button->setMinimumWidth(120);
+    m_report_csv_button->setAccessibleName(QStringLiteral("Export CSV Report"));
+    m_report_csv_button->setToolTip(QStringLiteral("Export diagnostic data as a CSV file"));
     export_layout->addWidget(m_report_csv_button);
 
     layout->addLayout(export_layout);
@@ -655,19 +716,7 @@ void DiagnosticBenchmarkPanel::logMessage(const QString& message)
 
 QString DiagnosticBenchmarkPanel::formatBytes(uint64_t bytes)
 {
-    if (bytes == 0) return "0 B";
-
-    static constexpr const char* units[] = {"B", "KB", "MB", "GB", "TB"};
-    int unit_index = 0;
-    auto value = static_cast<double>(bytes);
-
-    while (value >= 1024.0 && unit_index < 4) {
-        value /= 1024.0;
-        ++unit_index;
-    }
-
-    return QString("%1 %2").arg(value, 0, 'f', unit_index > 0 ? 1 : 0)
-                           .arg(units[unit_index]);
+    return sak::formatBytes(bytes);
 }
 
 QString DiagnosticBenchmarkPanel::formatUptime(uint64_t seconds)

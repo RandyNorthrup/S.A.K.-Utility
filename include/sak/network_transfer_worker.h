@@ -8,6 +8,7 @@
 #include <QElapsedTimer>
 #include <QVector>
 #include <atomic>
+#include <memory>
 
 class QTcpSocket;
 class QFile;
@@ -113,10 +114,13 @@ private:
     /// @return True if ACK indicates success, false to retry or fail.
     bool awaitFileAck(QTcpSocket* socket, const TransferFileEntry& file);
 
+    /// @brief Maximum allowed payload size (256 MB) to prevent OOM from malicious peers.
+    static constexpr qint64 kMaxPayloadSize = 256LL * 1024 * 1024;
+
     /// @brief State tracked across frames during a receive session
     struct ReceiverState {
         QByteArray key;
-        QFile* current_file = nullptr;
+        std::unique_ptr<QFile> current_file;
         QString current_file_id;
         QString current_relative_path;
         QString current_checksum;

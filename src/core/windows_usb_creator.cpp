@@ -1,9 +1,13 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+/// @file windows_usb_creator.cpp
+/// @brief Implements Windows USB installation media creation
+
 #include "sak/windows_usb_creator.h"
 #include "sak/logger.h"
 #include <QCoreApplication>
+#include <QMutexLocker>
 #include <QProcess>
 #include <QDir>
 #include <QFile>
@@ -25,6 +29,15 @@ bool WindowsUSBCreator::createBootableUSB(const QString& isoPath, const QString&
     m_cancelled = false;
     m_lastError.clear();
     m_diskNumber = diskNumber;
+
+    // Validate diskNumber is a pure integer to prevent command injection (BUG-09).
+    static const QRegularExpression diskNumRegex(QStringLiteral("^\\d{1,3}$"));
+    if (!diskNumRegex.match(diskNumber).hasMatch()) {
+        m_lastError = QString("Invalid disk number format: %1").arg(diskNumber);
+        sak::logError(m_lastError.toStdString());
+        Q_EMIT failed(m_lastError);
+        return false;
+    }
     
     sak::logInfo(QString("========================================").toStdString());
     sak::logInfo(QString("Creating Windows bootable USB: %1 -> Disk %2").arg(isoPath, diskNumber).toStdString());
@@ -244,6 +257,7 @@ void WindowsUSBCreator::cancel() {
 }
 
 QString WindowsUSBCreator::lastError() const {
+    QMutexLocker locker(&m_errorMutex);
     return m_lastError;
 }
 

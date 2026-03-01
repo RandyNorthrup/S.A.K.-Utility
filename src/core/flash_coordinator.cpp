@@ -7,6 +7,7 @@
 #include "sak/input_validator.h"
 #include "sak/logger.h"
 #include <QThread>
+#include <QMutexLocker>
 #include <windows.h>
 #include <winioctl.h>
 
@@ -167,16 +168,19 @@ void FlashCoordinator::cancel() {
 }
 
 bool FlashCoordinator::isFlashing() const {
+    QMutexLocker locker(&m_mutex);
     return m_state == sak::FlashState::Flashing || 
            m_state == sak::FlashState::Verifying ||
            m_state == sak::FlashState::Decompressing;
 }
 
 sak::FlashState FlashCoordinator::state() const {
+    QMutexLocker locker(&m_mutex);
     return m_state;
 }
 
 sak::FlashProgress FlashCoordinator::progress() const {
+    QMutexLocker locker(&m_mutex);
     return m_progress;
 }
 
@@ -197,8 +201,8 @@ void FlashCoordinator::setBufferCount(int count) {
 }
 
 void FlashCoordinator::onWorkerProgress(double percentage, qint64 bytesWritten) {
-    (void)percentage;
-    (void)bytesWritten;
+    Q_UNUSED(percentage);
+    Q_UNUSED(bytesWritten);
     updateProgress();
 }
 
@@ -211,6 +215,7 @@ void FlashCoordinator::onWorkerCompleted(const sak::ValidationResult& result) {
     QString devicePath = worker->targetDevice();
     sak::logInfo(QString("Drive completed: %1").arg(devicePath).toStdString());
     
+    QMutexLocker locker(&m_mutex);
     m_progress.completedDrives++;
     m_progress.activeDrives--;
     
@@ -253,6 +258,7 @@ void FlashCoordinator::onWorkerFailed(const QString& error) {
     QString devicePath = worker->targetDevice();
     sak::logError(QString("Drive failed: %1 - %2").arg(devicePath, error).toStdString());
     
+    QMutexLocker locker(&m_mutex);
     m_progress.failedDrives++;
     m_progress.activeDrives--;
     
@@ -357,6 +363,7 @@ bool FlashCoordinator::unmountVolumes(const QStringList& targetDrives) {
 }
 
 void FlashCoordinator::updateProgress() {
+    QMutexLocker locker(&m_mutex);
     m_progress.bytesWritten = 0;
     double totalSpeed = 0.0;
     

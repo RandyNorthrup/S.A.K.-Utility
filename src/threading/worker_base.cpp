@@ -1,6 +1,9 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+/// @file worker_base.cpp
+/// @brief Implements the base worker thread class with cancellation and error handling
+
 #include "sak/worker_base.h"
 #include "sak/logger.h"
 

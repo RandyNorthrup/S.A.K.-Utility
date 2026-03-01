@@ -1,12 +1,17 @@
 ﻿// Copyright (c) 2025 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+/// @file user_migration_panel.cpp
+/// @brief Implements the user profile migration panel UI for backup and restore
+
 #include "sak/user_migration_panel.h"
 #include "sak/user_data_manager.h"
 #include "sak/user_profile_backup_wizard.h"
 #include "sak/user_profile_restore_wizard.h"
 #include "sak/detachable_log_window.h"
 #include "sak/info_button.h"
+#include "sak/style_constants.h"
+#include "sak/widget_helpers.h"
 
 #include "sak/config_manager.h"
 
@@ -25,9 +30,11 @@
 #include <QFileDialog>
 #include <QSpinBox>
 
+namespace sak {
+
 UserMigrationPanel::UserMigrationPanel(QWidget* parent)
     : QWidget(parent)
-    , m_dataManager(std::make_shared<sak::UserDataManager>())
+    , m_dataManager(std::make_shared<UserDataManager>())
 {
     setupUi();
     setupConnections();
@@ -55,16 +62,9 @@ void UserMigrationPanel::setupUi()
     scrollArea->setWidget(contentWidget);
     rootLayout->addWidget(scrollArea);
 
-    // Title and description
-    auto* titleLabel = new QLabel("<h2>User Profile Backup & Restore</h2>");
-    mainLayout->addWidget(titleLabel);
-    
-    auto* descLabel = new QLabel(
-        "Comprehensive backup and restore wizards for Windows user profiles."
-    );
-    descLabel->setWordWrap(true);
-    descLabel->setStyleSheet("color: #64748b; margin-bottom: 5px;");
-    mainLayout->addWidget(descLabel);
+    // Panel header — consistent title + muted subtitle
+    sak::createPanelHeader(contentWidget, tr("User Profile Backup & Restore"),
+        tr("Comprehensive backup and restore wizards for Windows user profiles."), mainLayout);
 
     // Action buttons in a card-style layout
     auto* actionsGroup = new QGroupBox("Backup & Restore Wizards");
@@ -80,12 +80,14 @@ void UserMigrationPanel::setupUi()
         "Scan and select users, choose folders, configure filters, and create backup packages."
     );
     backupDesc->setWordWrap(true);
-    backupDesc->setStyleSheet("color: #475569; font-size: 9pt;");
+    backupDesc->setStyleSheet(QString("color: %1; font-size: %2pt;").arg(
+        sak::ui::kColorTextSecondary).arg(sak::ui::kFontSizeNote));
     actionsLayout->addWidget(backupDesc);
     
     m_backupButton = new QPushButton("Start Backup Wizard...");
     m_backupButton->setMinimumHeight(40);
     m_backupButton->setToolTip("Step-by-step wizard to select apps, configure options, and create backups");
+    m_backupButton->setAccessibleName(QStringLiteral("Start Backup Wizard"));
     actionsLayout->addWidget(m_backupButton);
     
     actionsLayout->addSpacing(8);
@@ -98,12 +100,14 @@ void UserMigrationPanel::setupUi()
         "Select backup, map users, configure merge options, and restore data with permissions."
     );
     restoreDesc->setWordWrap(true);
-    restoreDesc->setStyleSheet("color: #475569; font-size: 9pt;");
+    restoreDesc->setStyleSheet(QString("color: %1; font-size: %2pt;").arg(
+        sak::ui::kColorTextSecondary).arg(sak::ui::kFontSizeNote));
     actionsLayout->addWidget(restoreDesc);
     
     m_restoreButton = new QPushButton("Start Restore Wizard...");
     m_restoreButton->setMinimumHeight(40);
     m_restoreButton->setToolTip("Step-by-step wizard to select backups, map users, and restore data");
+    m_restoreButton->setAccessibleName(QStringLiteral("Start Restore Wizard"));
     actionsLayout->addWidget(m_restoreButton);
     
     mainLayout->addWidget(actionsGroup);
@@ -115,10 +119,11 @@ void UserMigrationPanel::setupUi()
     bottomLayout->setContentsMargins(12, 6, 12, 8);
 
     auto* settingsBtn = new QPushButton(tr("Settings"), this);
+    settingsBtn->setAccessibleName(QStringLiteral("User Migration Settings"));
     connect(settingsBtn, &QPushButton::clicked, this, &UserMigrationPanel::onSettingsClicked);
     bottomLayout->addWidget(settingsBtn);
 
-    m_logToggle = new sak::LogToggleSwitch(tr("Log"), this);
+    m_logToggle = new LogToggleSwitch(tr("Log"), this);
     bottomLayout->addWidget(m_logToggle);
     bottomLayout->addStretch();
     rootLayout->addLayout(bottomLayout);
@@ -135,7 +140,7 @@ void UserMigrationPanel::setupConnections()
 void UserMigrationPanel::onBackupSelected()
 {
     // Launch the comprehensive user profile backup wizard
-    auto* wizard = new sak::UserProfileBackupWizard(this);
+    auto* wizard = new UserProfileBackupWizard(this);
     
     // Connect wizard completion to log updates
     connect(wizard, &QDialog::finished, this, [this, wizard](int result) {
@@ -160,7 +165,7 @@ void UserMigrationPanel::onBackupSelected()
 void UserMigrationPanel::onRestoreBackup()
 {
     // Launch the comprehensive user profile restore wizard
-    auto* wizard = new sak::UserProfileRestoreWizard(this);
+    auto* wizard = new UserProfileRestoreWizard(this);
     
     // Connect wizard completion to log updates
     connect(wizard, &QDialog::finished, this, [this, wizard](int result) {
@@ -190,7 +195,7 @@ void UserMigrationPanel::appendLog(const QString& message)
 
 void UserMigrationPanel::onSettingsClicked()
 {
-    auto& config = sak::ConfigManager::instance();
+    auto& config = ConfigManager::instance();
 
     QDialog dialog(this);
     dialog.setWindowTitle(tr("User Migration Settings"));
@@ -203,14 +208,14 @@ void UserMigrationPanel::onSettingsClicked()
     threadSpin->setRange(1, 16);
     threadSpin->setValue(config.getBackupThreadCount());
     formLayout->addRow(
-        sak::InfoButton::createInfoLabel(tr("Thread Count:"),
+        InfoButton::createInfoLabel(tr("Thread Count:"),
             tr("Number of parallel copy threads \u2014 higher values speed up backup but increase CPU and disk I/O load"), &dialog),
         threadSpin);
 
     auto* verifyCheck = new QCheckBox(tr("Verify files using MD5 hash after backup"), &dialog);
     verifyCheck->setChecked(config.getBackupVerifyMD5());
     formLayout->addRow(
-        sak::InfoButton::createInfoLabel(tr("Verify MD5:"),
+        InfoButton::createInfoLabel(tr("Verify MD5:"),
             tr("Re-read each copied file and verify its MD5 checksum matches the original \u2014 slower but ensures integrity"), &dialog),
         verifyCheck);
 
@@ -225,7 +230,7 @@ void UserMigrationPanel::onSettingsClicked()
     locRow->addWidget(locEdit);
     locRow->addWidget(browseBtn);
     formLayout->addRow(
-        sak::InfoButton::createInfoLabel(tr("Backup Location:"),
+        InfoButton::createInfoLabel(tr("Backup Location:"),
             tr("Choose the destination folder for backup files"), &dialog),
         locRow);
 
@@ -247,3 +252,5 @@ void UserMigrationPanel::onSettingsClicked()
                       .arg(locEdit->text()));
     }
 }
+
+} // namespace sak

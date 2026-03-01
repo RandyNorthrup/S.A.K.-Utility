@@ -1,5 +1,8 @@
-// Copyright (c) 2025 Randy Northrup. All rights reserved.
+﻿// Copyright (c) 2025 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
+
+/// @file outlook_backup_action.cpp
+/// @brief Implements Microsoft Outlook data file backup (PST/OST)
 
 #include "sak/actions/outlook_backup_action.h"
 #include "sak/windows_user_scanner.h"
@@ -8,6 +11,7 @@
 #include <QDirIterator>
 #include <QFile>
 #include <QDateTime>
+#include "sak/logger.h"
 
 namespace sak {
 

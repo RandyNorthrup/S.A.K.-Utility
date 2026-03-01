@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "sak/quick_action.h"
+#include "sak/format_utils.h"
 
 #include <QDateTime>
 
@@ -83,16 +84,7 @@ void QuickAction::finishWithResult(const ExecutionResult& result, ActionStatus s
 
 QString QuickAction::formatFileSize(qint64 bytes)
 {
-    if (bytes >= 1073741824LL) {
-        return QString::number(bytes / 1073741824.0, 'f', 2) + " GB";
-    }
-    if (bytes >= 1048576LL) {
-        return QString::number(bytes / 1048576.0, 'f', 2) + " MB";
-    }
-    if (bytes >= 1024LL) {
-        return QString::number(bytes / 1024.0, 'f', 2) + " KB";
-    }
-    return QString::number(bytes) + " bytes";
+    return sak::formatBytes(bytes);
 }
 
 QString QuickAction::formatLogBox(const QString& title, const QStringList& content_lines, qint64 duration_ms)

@@ -3,6 +3,7 @@
 
 #include "sak/per_user_customization_dialog.h"
 #include "sak/logger.h"
+#include "sak/style_constants.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QHeaderView>
@@ -37,7 +38,7 @@ void PerUserCustomizationDialog::setupUi() {
     headerLayout->addWidget(m_usernameLabel);
     
     m_profilePathLabel = new QLabel(QString("Profile Path: %1").arg(m_profile.profile_path));
-    m_profilePathLabel->setStyleSheet("color: #64748b;");
+    m_profilePathLabel->setStyleSheet(QString("color: %1;").arg(sak::ui::kColorTextMuted));
     headerLayout->addWidget(m_profilePathLabel);
     
     mainLayout->addLayout(headerLayout);
@@ -130,14 +131,14 @@ void PerUserCustomizationDialog::setupUi() {
         "It contains machine-specific files that can corrupt profiles."
     );
     warningLabel->setWordWrap(true);
-    warningLabel->setStyleSheet("color: #b91c1c; padding: 8px; background-color: #fee2e2; border-radius: 10px;");
+    warningLabel->setStyleSheet(QString("color: %1; padding: 8px; background-color: %2; border-radius: 10px;").arg(sak::ui::kColorErrorText, sak::ui::kColorBgErrorPanel));
     appDataLayout->addWidget(warningLabel);
     
     mainLayout->addWidget(m_appDataGroup);
     
     // Summary
     m_summaryLabel = new QLabel();
-    m_summaryLabel->setStyleSheet("padding: 10px; background-color: #e0f2fe; border-radius: 10px;");
+    m_summaryLabel->setStyleSheet(QString("padding: 10px; background-color: %1; border-radius: 10px;").arg(sak::ui::kColorBgInfoPanel));
     mainLayout->addWidget(m_summaryLabel);
     
     // Separator

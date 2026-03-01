@@ -13,21 +13,23 @@
 #include <QStringList>
 #include <memory>
 
+// Forward declarations for feature panels (in global namespace)
+// -- none needed; all panels now in sak::
+
+namespace sak {
+
 // Forward declarations for feature panels
 class UserMigrationPanel;
 class OrganizerPanel;
 class DuplicateFinderPanel;
 class ImageFlasherPanel;
-
-namespace sak {
-    class AppMigrationPanel;
-    class QuickActionsPanel;
-    class NetworkTransferPanel;
-    class DiagnosticBenchmarkPanel;
-    class DetachableLogWindow;
-    class LogToggleSwitch;
-    class WifiManagerPanel;
-}
+class AppInstallationPanel;
+class QuickActionsPanel;
+class NetworkTransferPanel;
+class DiagnosticBenchmarkPanel;
+class DetachableLogWindow;
+class LogToggleSwitch;
+class WifiManagerPanel;
 
 /**
  * @brief Main application window for S.A.K. Utility
@@ -81,8 +83,6 @@ public Q_SLOTS:
     void setProgressVisible(bool visible);
 
 private Q_SLOTS:
-    void onAboutClicked();
-    void onExitClicked();
     void onTabChanged(int index);
 
 private:
@@ -107,6 +107,11 @@ private:
     void createPanels();
 
     /**
+     * @brief Create keyboard shortcuts for accessibility
+     */
+    void createKeyboardShortcuts();
+
+    /**
      * @brief Load window state from settings
      */
     void loadWindowState();
@@ -129,20 +134,22 @@ private:
     std::unique_ptr<UserMigrationPanel> m_user_migration_panel;
     std::unique_ptr<OrganizerPanel> m_organizer_panel;
     std::unique_ptr<DuplicateFinderPanel> m_duplicate_finder_panel;
-    std::unique_ptr<sak::AppMigrationPanel> m_app_migration_panel;
+    std::unique_ptr<AppInstallationPanel> m_app_installation_panel;
     std::unique_ptr<ImageFlasherPanel> m_image_flasher_panel;
-    std::unique_ptr<sak::QuickActionsPanel> m_quick_actions_panel;
-    std::unique_ptr<sak::NetworkTransferPanel> m_network_transfer_panel;
-    std::unique_ptr<sak::DiagnosticBenchmarkPanel> m_diagnostic_panel;
-    std::unique_ptr<sak::WifiManagerPanel> m_wifi_manager_panel;
+    std::unique_ptr<QuickActionsPanel> m_quick_actions_panel;
+    std::unique_ptr<NetworkTransferPanel> m_network_transfer_panel;
+    std::unique_ptr<DiagnosticBenchmarkPanel> m_diagnostic_benchmark_panel;
+    std::unique_ptr<WifiManagerPanel> m_wifi_manager_panel;
 
     // Status bar components
     QLabel* m_status_label{nullptr};
     QProgressBar* m_progress_bar{nullptr};
 
     // Shared log window
-    sak::DetachableLogWindow* m_logWindow{nullptr};
+    DetachableLogWindow* m_logWindow{nullptr};
 
     // Per-panel log storage for tab-aware log switching
     QMap<int, QStringList> m_panelLogs;
 };
+
+} // namespace sak

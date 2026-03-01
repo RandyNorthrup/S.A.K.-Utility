@@ -1,6 +1,9 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+/// @file duplicate_finder_worker.cpp
+/// @brief Implements the background worker thread for duplicate file detection
+
 #include "sak/duplicate_finder_worker.h"
 #include "sak/logger.h"
 #include <QFileInfo>
@@ -237,11 +240,14 @@ auto DuplicateFinderWorker::calculateHashesParallel(const std::vector<std::files
     -> std::expected<std::vector<std::pair<std::filesystem::path, std::string>>, sak::error_code>
 {
     // Determine thread count
+    constexpr int kDefaultHashThreadCount = 4;
     int thread_count = m_config.hash_thread_count;
     if (thread_count <= 0) {
         thread_count = static_cast<int>(std::thread::hardware_concurrency());
         if (thread_count <= 0) {
-            thread_count = 4; // Default fallback
+            thread_count = kDefaultHashThreadCount;
+            sak::logWarning("std::thread::hardware_concurrency() returned 0, "
+                            "using default thread count: {}", kDefaultHashThreadCount);
         }
     }
 

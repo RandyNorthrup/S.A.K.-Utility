@@ -1,12 +1,15 @@
 ﻿// Copyright (c) 2025 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+/// @file main_window.cpp
+/// @brief Implements the main application window with tabbed panel navigation
+
 #include "sak/main_window.h"
 #include "sak/version.h"
 #include "sak/user_migration_panel.h"
 #include "sak/organizer_panel.h"
 #include "sak/duplicate_finder_panel.h"
-#include "sak/app_migration_panel.h"
+#include "sak/app_installation_panel.h"
 #include "sak/image_flasher_panel.h"
 #include "sak/quick_actions_panel.h"
 #include "sak/network_transfer_panel.h"
@@ -15,6 +18,7 @@
 #include "sak/detachable_log_window.h"
 #include "sak/config_manager.h"
 #include "sak/about_dialog.h"
+#include "sak/style_constants.h"
 
 #include <QAction>
 #include <QCloseEvent>
@@ -28,12 +32,13 @@
 #include <QPixmap>
 #include <QMoveEvent>
 #include <QResizeEvent>
+#include <QShortcut>
 #include <QTextBrowser>
 #include <QTimer>
 #include <QVBoxLayout>
 #include <QDateTime>
 
-using sak::AppMigrationPanel;
+namespace sak {
 
 MainWindow::MainWindow(QWidget* parent)
     : QMainWindow(parent)
@@ -67,9 +72,10 @@ void MainWindow::setupUi()
     createStatusBar();
 
     // Create shared log window BEFORE panels so connectLog() can reference it
-    m_logWindow = new sak::DetachableLogWindow(tr("S.A.K. Log"), this);
+    m_logWindow = new DetachableLogWindow(tr("S.A.K. Log"), this);
 
     createPanels();
+    createKeyboardShortcuts();
     
     updateStatus("Ready", 0);
 }
@@ -101,43 +107,52 @@ void MainWindow::createStatusBar()
 void MainWindow::createPanels()
 {
     // Create Quick Actions panel (first tab)
-    m_quick_actions_panel = std::make_unique<sak::QuickActionsPanel>(this);
+    m_quick_actions_panel = std::make_unique<QuickActionsPanel>(this);
     m_tab_widget->addTab(m_quick_actions_panel.get(), "Quick Actions");
+    m_tab_widget->setTabToolTip(m_tab_widget->count() - 1, "Common system utilities and Quick Actions (Ctrl+1)");
     
     // Create User Migration panel
     m_user_migration_panel = std::make_unique<UserMigrationPanel>(this);
-    m_tab_widget->addTab(m_user_migration_panel.get(), "User Migration");
+    m_tab_widget->addTab(m_user_migration_panel.get(), "Backup & Restore");
+    m_tab_widget->setTabToolTip(m_tab_widget->count() - 1, "Backup and restore user profiles (Ctrl+2)");
     
     // Create Organizer panel
     m_organizer_panel = std::make_unique<OrganizerPanel>(this);
     m_tab_widget->addTab(m_organizer_panel.get(), "Directory Organizer");
+    m_tab_widget->setTabToolTip(m_tab_widget->count() - 1, "Organize files in a directory by type (Ctrl+3)");
     
     // Create Duplicate Finder panel
     m_duplicate_finder_panel = std::make_unique<DuplicateFinderPanel>(this);
     m_tab_widget->addTab(m_duplicate_finder_panel.get(), "Duplicate Finder");
+    m_tab_widget->setTabToolTip(m_tab_widget->count() - 1, "Find and manage duplicate files (Ctrl+4)");
     
     // Create App Installation panel
-    m_app_migration_panel = std::make_unique<AppMigrationPanel>(this);
-    m_tab_widget->addTab(m_app_migration_panel.get(), "App Installation");
+    m_app_installation_panel = std::make_unique<AppInstallationPanel>(this);
+    m_tab_widget->addTab(m_app_installation_panel.get(), "App Installation");
+    m_tab_widget->setTabToolTip(m_tab_widget->count() - 1, "Install applications via Chocolatey (Ctrl+5)");
 
     // Create Network Transfer panel
-    if (sak::ConfigManager::instance().getNetworkTransferEnabled()) {
-        m_network_transfer_panel = std::make_unique<sak::NetworkTransferPanel>(this);
+    if (ConfigManager::instance().getNetworkTransferEnabled()) {
+        m_network_transfer_panel = std::make_unique<NetworkTransferPanel>(this);
         m_tab_widget->addTab(m_network_transfer_panel.get(), "Network Transfer");
+        m_tab_widget->setTabToolTip(m_tab_widget->count() - 1, "Transfer user profiles across the network (Ctrl+6)");
     }
     
     // Create Image Flasher panel
     m_image_flasher_panel = std::make_unique<ImageFlasherPanel>(this);
     m_tab_widget->addTab(m_image_flasher_panel.get(), "Image Flasher");
+    m_tab_widget->setTabToolTip(m_tab_widget->count() - 1, "Flash ISO images to USB drives (Ctrl+7)");
     
     // Create Diagnostic & Benchmarking panel
-    m_diagnostic_panel = std::make_unique<sak::DiagnosticBenchmarkPanel>(this);
-    m_tab_widget->addTab(m_diagnostic_panel.get(), "Diagnostics");
+    m_diagnostic_benchmark_panel = std::make_unique<DiagnosticBenchmarkPanel>(this);
+    m_tab_widget->addTab(m_diagnostic_benchmark_panel.get(), "Diagnostics");
+    m_tab_widget->setTabToolTip(m_tab_widget->count() - 1, "System diagnostics, benchmarks, and stress tests (Ctrl+8)");
 
     // Create WiFi Manager panel
-    m_wifi_manager_panel = std::make_unique<sak::WifiManagerPanel>(this);
+    m_wifi_manager_panel = std::make_unique<WifiManagerPanel>(this);
     m_tab_widget->addTab(m_wifi_manager_panel.get(), "WiFi Manager");
-    connect(m_wifi_manager_panel.get(), &sak::WifiManagerPanel::statusMessage,
+    m_tab_widget->setTabToolTip(m_tab_widget->count() - 1, "Manage WiFi networks, QR codes, and profiles (Ctrl+9)");
+    connect(m_wifi_manager_panel.get(), &WifiManagerPanel::statusMessage,
             this, &MainWindow::updateStatus);
 
 
@@ -153,6 +168,7 @@ void MainWindow::createPanels()
         auto* headerLayout = new QHBoxLayout();
         auto* iconLabel = new QLabel(aboutPanel);
         iconLabel->setFixedSize(64, 64);
+        iconLabel->setAccessibleName(QStringLiteral("S.A.K. Utility application icon"));
         {
             const QString appDir = QCoreApplication::applicationDirPath();
             const QStringList splashCandidates = {
@@ -181,11 +197,11 @@ void MainWindow::createPanels()
 
         auto* titleLayout = new QVBoxLayout();
         auto* title = new QLabel("<b>S.A.K. Utility</b>", aboutPanel);
-        title->setStyleSheet("font-size: 18pt; font-weight: 700;");
+        title->setStyleSheet(QString("font-size: %1pt; font-weight: 700;").arg(ui::kFontSizeTitle));
         titleLayout->addWidget(title);
         auto* ver = new QLabel(
-            QString("Version %1 \u2014 %2").arg(sak::get_version(), sak::get_build_date()), aboutPanel);
-        ver->setStyleSheet("font-size: 10pt; color: #64748b;");
+            QString("Version %1 \u2014 %2").arg(get_version(), get_build_date()), aboutPanel);
+        ver->setStyleSheet(QString("font-size: %1pt; color: %2;").arg(ui::kFontSizeBody).arg(ui::kColorTextMuted));
         titleLayout->addWidget(ver);
         headerLayout->addLayout(titleLayout);
         headerLayout->addStretch();
@@ -228,9 +244,9 @@ void MainWindow::createPanels()
     }
     
     // Connect panel signals to main window status bar
-    connect(m_quick_actions_panel.get(), &sak::QuickActionsPanel::statusMessage,
+    connect(m_quick_actions_panel.get(), &QuickActionsPanel::statusMessage,
             this, [this](const QString& msg, int timeout) { updateStatus(msg, timeout); });
-    connect(m_quick_actions_panel.get(), &sak::QuickActionsPanel::progressUpdate,
+    connect(m_quick_actions_panel.get(), &QuickActionsPanel::progressUpdate,
             this, &MainWindow::updateProgress);
     
     connect(m_user_migration_panel.get(), &UserMigrationPanel::statusMessage,
@@ -246,9 +262,9 @@ void MainWindow::createPanels()
     connect(m_duplicate_finder_panel.get(), &DuplicateFinderPanel::progressUpdate,
             this, &MainWindow::updateProgress);
     
-    connect(m_app_migration_panel.get(), &AppMigrationPanel::statusMessage,
+    connect(m_app_installation_panel.get(), &AppInstallationPanel::statusMessage,
             this, [this](const QString& msg, int timeout) { updateStatus(msg, timeout > 0 ? timeout : 5000); });
-    connect(m_app_migration_panel.get(), &AppMigrationPanel::progressUpdated,
+    connect(m_app_installation_panel.get(), &AppInstallationPanel::progressUpdated,
             this, &MainWindow::updateProgress);
 
     connect(m_image_flasher_panel.get(), &ImageFlasherPanel::statusMessage,
@@ -257,15 +273,15 @@ void MainWindow::createPanels()
             this, &MainWindow::updateProgress);
 
     if (m_network_transfer_panel) {
-        connect(m_network_transfer_panel.get(), &sak::NetworkTransferPanel::statusMessage,
+        connect(m_network_transfer_panel.get(), &NetworkTransferPanel::statusMessage,
             this, [this](const QString& msg) { updateStatus(msg, 5000); });
-        connect(m_network_transfer_panel.get(), &sak::NetworkTransferPanel::progressUpdate,
+        connect(m_network_transfer_panel.get(), &NetworkTransferPanel::progressUpdate,
             this, &MainWindow::updateProgress);
     }
 
-    connect(m_diagnostic_panel.get(), &sak::DiagnosticBenchmarkPanel::statusMessage,
+    connect(m_diagnostic_benchmark_panel.get(), &DiagnosticBenchmarkPanel::statusMessage,
             this, [this](const QString& msg, int timeout) { updateStatus(msg, timeout > 0 ? timeout : 5000); });
-    connect(m_diagnostic_panel.get(), &sak::DiagnosticBenchmarkPanel::progressUpdate,
+    connect(m_diagnostic_benchmark_panel.get(), &DiagnosticBenchmarkPanel::progressUpdate,
             this, &MainWindow::updateProgress);
 
     // Connect all panel log signals to the shared log window (panel-aware)
@@ -282,10 +298,10 @@ void MainWindow::createPanels()
 
         auto* toggle = panel->logToggle();
         if (toggle) {
-            connect(toggle, &sak::LogToggleSwitch::toggled,
-                    m_logWindow, &sak::DetachableLogWindow::setLogVisible);
-            connect(m_logWindow, &sak::DetachableLogWindow::visibilityChanged,
-                    toggle, &sak::LogToggleSwitch::setChecked);
+            connect(toggle, &LogToggleSwitch::toggled,
+                    m_logWindow, &DetachableLogWindow::setLogVisible);
+            connect(m_logWindow, &DetachableLogWindow::visibilityChanged,
+                    toggle, &LogToggleSwitch::setChecked);
         }
     };
 
@@ -293,9 +309,9 @@ void MainWindow::createPanels()
     connectLog(m_user_migration_panel.get());
     connectLog(m_organizer_panel.get());
     connectLog(m_duplicate_finder_panel.get());
-    connectLog(m_app_migration_panel.get());
+    connectLog(m_app_installation_panel.get());
     connectLog(m_image_flasher_panel.get());
-    connectLog(m_diagnostic_panel.get());
+    connectLog(m_diagnostic_benchmark_panel.get());
 
     if (m_network_transfer_panel) {
         connectLog(m_network_transfer_panel.get());
@@ -305,7 +321,7 @@ void MainWindow::createPanels()
     connect(m_tab_widget, &QTabWidget::currentChanged, this, &MainWindow::onTabChanged);
 
     // Re-populate log when the log window becomes visible
-    connect(m_logWindow, &sak::DetachableLogWindow::visibilityChanged,
+    connect(m_logWindow, &DetachableLogWindow::visibilityChanged,
             this, [this](bool visible) {
                 if (visible) {
                     onTabChanged(m_tab_widget->currentIndex());
@@ -353,10 +369,6 @@ void MainWindow::setProgressVisible(bool visible)
     }
 }
 
-void MainWindow::onAboutClicked()
-{
-    // About is now a panel â€” no-op
-}
 
 void MainWindow::onTabChanged(int index)
 {
@@ -371,14 +383,45 @@ void MainWindow::onTabChanged(int index)
     }
 }
 
-void MainWindow::onExitClicked()
+void MainWindow::createKeyboardShortcuts()
 {
-    close();
+    // Tab navigation: Ctrl+1..9 switches to tab index 0..8
+    for (int i = 0; i < qMin(m_tab_widget->count(), 9); ++i) {
+        auto* shortcut = new QShortcut(QKeySequence(Qt::CTRL | static_cast<Qt::Key>(Qt::Key_1 + i)), this);
+        shortcut->setContext(Qt::ApplicationShortcut);
+        connect(shortcut, &QShortcut::activated, this, [this, i]() {
+            m_tab_widget->setCurrentIndex(i);
+        });
+    }
+
+    // Ctrl+Tab / Ctrl+Shift+Tab: cycle through tabs
+    auto* nextTab = new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_Tab), this);
+    nextTab->setContext(Qt::ApplicationShortcut);
+    connect(nextTab, &QShortcut::activated, this, [this]() {
+        int next = (m_tab_widget->currentIndex() + 1) % m_tab_widget->count();
+        m_tab_widget->setCurrentIndex(next);
+    });
+
+    auto* prevTab = new QShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_Tab), this);
+    prevTab->setContext(Qt::ApplicationShortcut);
+    connect(prevTab, &QShortcut::activated, this, [this]() {
+        int prev = (m_tab_widget->currentIndex() - 1 + m_tab_widget->count()) % m_tab_widget->count();
+        m_tab_widget->setCurrentIndex(prev);
+    });
+
+    // Ctrl+L: Toggle log panel visibility
+    auto* toggleLog = new QShortcut(QKeySequence(QStringLiteral("Ctrl+L")), this);
+    toggleLog->setContext(Qt::ApplicationShortcut);
+    connect(toggleLog, &QShortcut::activated, this, [this]() {
+        if (m_logWindow) {
+            m_logWindow->setLogVisible(!m_logWindow->isLogVisible());
+        }
+    });
 }
 
 void MainWindow::loadWindowState()
 {
-    auto& config = sak::ConfigManager::instance();
+    auto& config = ConfigManager::instance();
     
     if (config.getRestoreWindowGeometry()) {
         restoreGeometry(config.getWindowGeometry());
@@ -391,7 +434,7 @@ void MainWindow::loadWindowState()
 
 void MainWindow::saveWindowState()
 {
-    auto& config = sak::ConfigManager::instance();
+    auto& config = ConfigManager::instance();
     config.setWindowGeometry(saveGeometry());
     config.setWindowState(saveState());
 }
@@ -416,3 +459,5 @@ void MainWindow::resizeEvent(QResizeEvent* event)
         m_logWindow->repositionIfAnchored();
     }
 }
+
+} // namespace sak

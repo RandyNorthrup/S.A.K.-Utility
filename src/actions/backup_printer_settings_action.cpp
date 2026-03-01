@@ -1,6 +1,9 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+/// @file backup_printer_settings_action.cpp
+/// @brief Implements printer configuration backup via Windows print management
+
 #include "sak/actions/backup_printer_settings_action.h"
 #include "sak/process_runner.h"
 #include <QFile>
@@ -34,7 +37,7 @@ bool BackupPrinterSettingsAction::exportPrinterRegistry(const QString& dest_file
         << dest_file
         << "/y",
         10000);
-    return !proc.timed_out && proc.exit_code == 0 && QFile::exists(dest_file);
+    return proc.succeeded() && QFile::exists(dest_file);
 }
 
 void BackupPrinterSettingsAction::scan() {
