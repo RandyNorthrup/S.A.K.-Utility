@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "sak/user_profile_backup_worker.h"
+#include <QtGlobal>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -35,6 +36,10 @@ void UserProfileBackupWorker::startBackup(const BackupManifest& manifest,
                                           int compressionLevel,
                                           bool encrypt,
                                           const QString& password) {
+    Q_ASSERT_X(!users.isEmpty(), "startBackup", "users must not be empty");
+    Q_ASSERT_X(!destinationPath.isEmpty(), "startBackup", "destinationPath must not be empty");
+    Q_ASSERT_X(compressionLevel >= 0 && compressionLevel <= 9, "startBackup",
+        "compressionLevel must be 0-9");
     if (m_running) {
         Q_EMIT logMessage(tr("Backup already in progress"), true);
         return;
@@ -181,6 +186,8 @@ bool UserProfileBackupWorker::backupUser(const UserProfile& user, const QString&
 bool UserProfileBackupWorker::backupFolder(const FolderSelection& folder,
                                            const QString& sourcePath,
                                            const QString& destPath) {
+    Q_ASSERT_X(!sourcePath.isEmpty(), "backupFolder", "sourcePath must not be empty");
+    Q_ASSERT_X(!destPath.isEmpty(), "backupFolder", "destPath must not be empty");
     QFileInfo sourceInfo(sourcePath);
     
     if (!sourceInfo.exists()) {
@@ -200,6 +207,8 @@ bool UserProfileBackupWorker::backupFolder(const FolderSelection& folder,
 bool UserProfileBackupWorker::copyDirectory(const QString& sourceDir,
                                            const QString& destDir,
                                            const FolderSelection& folderConfig) {
+    Q_ASSERT_X(!sourceDir.isEmpty(), "copyDirectory", "sourceDir must not be empty");
+    Q_ASSERT_X(!destDir.isEmpty(), "copyDirectory", "destDir must not be empty");
     // Check if folder should be excluded
     QFileInfo sourceDirInfo(sourceDir);
     QString currentUserProfile = m_users.isEmpty() ? QString() : m_users[0].profile_path;
@@ -247,6 +256,9 @@ bool UserProfileBackupWorker::copyDirectory(const QString& sourceDir,
 bool UserProfileBackupWorker::copyFileWithFiltering(const QString& sourcePath,
                                                     const QString& destPath,
                                                     qint64 fileSize) {
+    Q_ASSERT_X(!sourcePath.isEmpty(), "copyFileWithFiltering", "sourcePath must not be empty");
+    Q_ASSERT_X(!destPath.isEmpty(), "copyFileWithFiltering", "destPath must not be empty");
+    Q_ASSERT_X(fileSize >= 0, "copyFileWithFiltering", "fileSize must be non-negative");
     QFileInfo sourceInfo(sourcePath);
     QString currentUserProfile = m_users.isEmpty() ? QString() : m_users[0].profile_path;
     

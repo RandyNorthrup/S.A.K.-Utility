@@ -12,6 +12,7 @@
 #include "sak/logger.h"
 #include "sak/permission_manager.h"
 
+#include <QtGlobal>
 #include <QTcpServer>
 #include <QTcpSocket>
 #include <QFile>
@@ -171,6 +172,8 @@ void NetworkTransferWorker::startSender(const QVector<TransferFileEntry>& files,
                                         const QHostAddress& host,
                                         quint16 port,
                                         const DataOptions& options) {
+    Q_ASSERT_X(!files.isEmpty(), "startSender", "files must not be empty");
+    Q_ASSERT_X(port > 0, "startSender", "port must be positive");
     m_stopRequested = false;
     m_dynamicMaxBandwidthKbps.store(options.max_bandwidth_kbps, std::memory_order_relaxed);
 
@@ -202,6 +205,7 @@ void NetworkTransferWorker::startSender(const QVector<TransferFileEntry>& files,
 void NetworkTransferWorker::startReceiver(const QHostAddress& listenAddress,
                                           quint16 port,
                                           const DataOptions& options) {
+    Q_ASSERT_X(port > 0, "startReceiver", "port must be positive");
     m_stopRequested = false;
     m_dynamicMaxBandwidthKbps.store(options.max_bandwidth_kbps, std::memory_order_relaxed);
 
@@ -263,6 +267,7 @@ QByteArray NetworkTransferWorker::serializeHeader(const FrameHeader& header) con
 }
 
 bool NetworkTransferWorker::readHeader(QTcpSocket* socket, FrameHeader& header) {
+    Q_ASSERT_X(socket != nullptr, "readHeader", "socket must not be null");
     QByteArray headerBytes = readExact(socket, kHeaderSize);
     if (headerBytes.size() != kHeaderSize) {
         return false;
@@ -297,6 +302,7 @@ QByteArray NetworkTransferWorker::readExact(QTcpSocket* socket, qint64 size) {
 
 bool NetworkTransferWorker::sendFrame(QTcpSocket* socket, FrameType type, quint16 flags, quint32 chunkId,
                                       const QByteArray& payload, quint32 plainSize, quint32 crc) {
+    Q_ASSERT_X(socket != nullptr, "sendFrame", "socket must not be null");
     FrameHeader header;
     header.frame_type = static_cast<quint8>(type);
     header.flags = flags;
@@ -366,6 +372,8 @@ QVector<QPair<int, int>> NetworkTransferWorker::parseResumePayload(const QByteAr
 bool NetworkTransferWorker::handleSender(QTcpSocket* socket,
                                          const QVector<TransferFileEntry>& files,
                                          const DataOptions& options) {
+    Q_ASSERT_X(socket != nullptr, "handleSender", "socket must not be null");
+    Q_ASSERT_X(!files.isEmpty(), "handleSender", "files must not be empty");
     QByteArray key;
     // Scope guard to securely wipe the derived key on all exit paths
     auto keyGuard = qScopeGuard([&key]() {
@@ -460,6 +468,7 @@ bool NetworkTransferWorker::handleSender(QTcpSocket* socket,
 bool NetworkTransferWorker::sendFileHeader(QTcpSocket* socket,
                                            const TransferFileEntry& file,
                                            const DataOptions& options) {
+    Q_ASSERT_X(socket != nullptr, "sendFileHeader", "socket must not be null");
     QJsonObject fileHeader;
     fileHeader["file_id"] = file.file_id;
     fileHeader["relative_path"] = file.relative_path;
@@ -486,6 +495,7 @@ bool NetworkTransferWorker::sendFileChunks(QTcpSocket* socket, QFile& source,
                                            const QVector<QPair<int, int>>& resumeRanges,
                                            qint64& bytesSent, qint64 totalBytes,
                                            QElapsedTimer& rateTimer, qint64& rateBytesSent) {
+    Q_ASSERT_X(socket != nullptr, "sendFileChunks", "socket must not be null");
     auto isChunkSkipped = [&](int chunkId) {
         for (const auto& range : resumeRanges) {
             if (chunkId >= range.first && chunkId <= range.second) {
@@ -570,6 +580,7 @@ bool NetworkTransferWorker::sendFileChunks(QTcpSocket* socket, QFile& source,
 }
 
 bool NetworkTransferWorker::awaitFileAck(QTcpSocket* socket, const TransferFileEntry& file) {
+    Q_ASSERT_X(socket != nullptr, "awaitFileAck", "socket must not be null");
     FrameHeader ackHeader;
     if (!readHeader(socket, ackHeader) || ackHeader.frame_type != FrameFileAck) {
         logWarning("NetworkTransferWorker sender did not receive file ACK for {}", file.relative_path.toStdString());
@@ -598,6 +609,7 @@ bool NetworkTransferWorker::awaitFileAck(QTcpSocket* socket, const TransferFileE
 }
 
 bool NetworkTransferWorker::handleReceiver(QTcpSocket* socket, const DataOptions& options) {
+    Q_ASSERT_X(socket != nullptr, "handleReceiver", "socket must not be null");
     ReceiverState state;
     state.chunk_size = options.chunk_size;
     state.overall_received = 0;
@@ -684,6 +696,7 @@ bool NetworkTransferWorker::processFileHeader(QTcpSocket* socket,
                                                const QByteArray& payload,
                                                const DataOptions& options,
                                                ReceiverState& state) {
+    Q_ASSERT_X(socket != nullptr, "processFileHeader", "socket must not be null");
     QJsonParseError error{};
     QJsonDocument doc = QJsonDocument::fromJson(payload, &error);
     if (error.error != QJsonParseError::NoError || !doc.isObject()) {
@@ -817,6 +830,7 @@ bool NetworkTransferWorker::processDataChunk(QTcpSocket* /*socket*/,
 bool NetworkTransferWorker::processFileEnd(QTcpSocket* socket,
                                             const DataOptions& options,
                                             ReceiverState& state) {
+    Q_ASSERT_X(socket != nullptr, "processFileEnd", "socket must not be null");
     state.current_file->flush();
     state.current_file->close();
     state.current_file.reset();

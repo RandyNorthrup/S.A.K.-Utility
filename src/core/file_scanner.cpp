@@ -6,6 +6,7 @@
 
 #include "sak/file_scanner.h"
 #include "sak/logger.h"
+#include <QtGlobal>
 #include <algorithm>
 
 #ifdef _WIN32
@@ -24,6 +25,7 @@ auto file_scanner::scan(
     const std::filesystem::path& root_path,
     const scan_options& options,
     std::stop_token stop_token) -> std::expected<scan_statistics, error_code> {
+    Q_ASSERT_X(!root_path.empty(), "file_scanner::scan", "root_path must not be empty");
     
     // Validate root path
     if (!std::filesystem::exists(root_path)) {
@@ -58,6 +60,11 @@ auto file_scanner::scan(
     
     logInfo("Directory scan complete: {} files, {} dirs, {} errors",
              stats.files_found, stats.directories_found, stats.errors_encountered);
+    
+    // Postcondition: stats counters must be consistent
+    Q_ASSERT_X(stats.files_found + stats.directories_found + stats.skipped_by_filter + stats.errors_encountered > 0
+               || stats.files_found == 0,
+               "file_scanner::scan", "scan stats must be consistent");
     
     return stats;
 }
@@ -97,6 +104,7 @@ auto file_scanner::scanAndCollect(
 auto file_scanner::listFiles(
     const std::filesystem::path& root_path,
     bool recursive) -> std::expected<std::vector<std::filesystem::path>, error_code> {
+    Q_ASSERT_X(!root_path.empty(), "file_scanner::listFiles", "root_path must not be empty");
     
     scan_options options;
     options.recursive = recursive;
@@ -110,6 +118,8 @@ auto file_scanner::findFiles(
     const std::filesystem::path& root_path,
     const std::vector<std::string>& patterns,
     bool recursive) -> std::expected<std::vector<std::filesystem::path>, error_code> {
+    Q_ASSERT_X(!root_path.empty(), "file_scanner::findFiles", "root_path must not be empty");
+    Q_ASSERT_X(!patterns.empty(), "file_scanner::findFiles", "patterns must not be empty");
     
     scan_options options;
     options.recursive = recursive;
@@ -241,6 +251,7 @@ auto file_scanner::scanDirectoryRecursive(
     scan_statistics& stats,
     std::size_t current_depth,
     std::stop_token stop_token) -> std::expected<void, error_code> {
+    Q_ASSERT_X(!current_path.empty(), "scanDirectoryRecursive", "current_path must not be empty");
     
     // Check for cancellation
     if (stop_token.stop_requested()) {

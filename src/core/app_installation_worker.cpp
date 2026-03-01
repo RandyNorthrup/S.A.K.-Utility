@@ -7,6 +7,7 @@
 #include "sak/migration_report.h"
 #include "sak/app_scanner.h"
 #include "sak/package_matcher.h"
+#include <QtGlobal>
 #include <QThread>
 #include <QMetaObject>
 #include <QTimer>
@@ -19,6 +20,8 @@ AppInstallationWorker::AppInstallationWorker(std::shared_ptr<ChocolateyManager> 
     : QObject(parent)
     , m_chocoManager(chocoManager)
 {
+    Q_ASSERT_X(chocoManager != nullptr, "AppInstallationWorker",
+        "chocoManager must not be null");
     // Connect to Chocolatey manager signals
     connect(m_chocoManager.get(), &ChocolateyManager::installStarted,
             this, &AppInstallationWorker::onInstallStarted);
@@ -39,6 +42,8 @@ AppInstallationWorker::~AppInstallationWorker() {
 }
 
 int AppInstallationWorker::startMigration(std::shared_ptr<MigrationReport> report, int maxConcurrent) {
+    Q_ASSERT_X(report != nullptr, "startMigration", "report must not be null");
+    Q_ASSERT_X(maxConcurrent > 0, "startMigration", "maxConcurrent must be positive");
     QMutexLocker locker(&m_mutex);
     
     if (m_running) {

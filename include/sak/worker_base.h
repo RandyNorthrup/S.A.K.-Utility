@@ -9,6 +9,7 @@
 #include <expected>
 #include <stop_token>
 #include <functional>
+#include <type_traits>
 
 /**
  * @brief Base class for worker threads
@@ -122,3 +123,19 @@ private:
     std::atomic<bool> m_stop_requested{false};
     std::atomic<bool> m_is_running{false};
 };
+
+// ── Compile-Time Invariants (TigerStyle) ────────────────────────────────────
+
+/// WorkerBase must inherit QThread (which inherits QObject).
+static_assert(std::is_base_of_v<QThread, WorkerBase>,
+    "WorkerBase must inherit QThread.");
+
+/// WorkerBase must be abstract (pure virtual execute()).
+static_assert(std::is_abstract_v<WorkerBase>,
+    "WorkerBase must be abstract.");
+
+/// WorkerBase must not be copyable or movable.
+static_assert(!std::is_copy_constructible_v<WorkerBase>,
+    "WorkerBase must not be copy-constructible.");
+static_assert(!std::is_move_constructible_v<WorkerBase>,
+    "WorkerBase must not be move-constructible.");

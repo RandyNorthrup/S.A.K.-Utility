@@ -221,5 +221,26 @@ enum class error_code {
     }
 }
 
+// ── Compile-Time Invariants (TigerStyle) ────────────────────────────────────
+
+/// Verify error_code has int-sized underlying type for ABI stability.
+static_assert(sizeof(error_code) == sizeof(int),
+    "error_code must be int-sized for ABI stability.");
+
+/// Verify sentinel values are in expected ranges.
+static_assert(static_cast<int>(error_code::success) == 0,
+    "success must be zero.");
+static_assert(static_cast<int>(error_code::file_not_found) >= 1
+    && static_cast<int>(error_code::file_not_found) < 100,
+    "File system errors must be in range [1, 100).");
+static_assert(static_cast<int>(error_code::read_error) >= 100
+    && static_cast<int>(error_code::read_error) < 200,
+    "I/O errors must be in range [100, 200).");
+static_assert(static_cast<int>(error_code::hash_calculation_failed) >= 200
+    && static_cast<int>(error_code::hash_calculation_failed) < 300,
+    "Hash errors must be in range [200, 300).");
+static_assert(static_cast<int>(error_code::unknown_error) >= 900,
+    "Generic errors must be in range [900, 1000).");
+
 } // namespace sak
 

@@ -6,6 +6,7 @@
 
 #include "sak/config_manager.h"
 #include "sak/logger.h"
+#include <QtGlobal>
 #include <QCoreApplication>
 
 namespace sak {
@@ -25,6 +26,7 @@ ConfigManager::ConfigManager(QObject* parent)
         "Utility"
     ))
 {
+    Q_ASSERT(m_settings != nullptr);
     logInfo("ConfigManager initialized: {}", m_settings->fileName().toStdString());
     initializeDefaults();
 }
@@ -113,22 +115,26 @@ void ConfigManager::initializeDefaults()
 
 QVariant ConfigManager::getValue(const QString& key, const QVariant& default_value) const
 {
+    Q_ASSERT_X(!key.isEmpty(), "ConfigManager::getValue", "key must not be empty");
     return m_settings->value(key, default_value);
 }
 
 void ConfigManager::setValue(const QString& key, const QVariant& value)
 {
+    Q_ASSERT_X(!key.isEmpty(), "ConfigManager::setValue", "key must not be empty");
     m_settings->setValue(key, value);
     Q_EMIT settingChanged(key, value);
 }
 
 bool ConfigManager::contains(const QString& key) const
 {
+    Q_ASSERT_X(!key.isEmpty(), "ConfigManager::contains", "key must not be empty");
     return m_settings->contains(key);
 }
 
 void ConfigManager::remove(const QString& key)
 {
+    Q_ASSERT_X(!key.isEmpty(), "ConfigManager::remove", "key must not be empty");
     m_settings->remove(key);
 }
 
@@ -158,6 +164,7 @@ int ConfigManager::getBackupThreadCount() const
 
 void ConfigManager::setBackupThreadCount(int count)
 {
+    Q_ASSERT_X(count > 0, "setBackupThreadCount", "count must be positive");
     setValue("backup/thread_count", count);
 }
 
@@ -200,6 +207,7 @@ qint64 ConfigManager::getDuplicateMinimumFileSize() const
 
 void ConfigManager::setDuplicateMinimumFileSize(qint64 size)
 {
+    Q_ASSERT_X(size >= 0, "setDuplicateMinimumFileSize", "size must be non-negative");
     setValue("duplicate/minimum_file_size", size);
 }
 
@@ -210,6 +218,7 @@ QString ConfigManager::getDuplicateKeepStrategy() const
 
 void ConfigManager::setDuplicateKeepStrategy(const QString& strategy)
 {
+    Q_ASSERT_X(!strategy.isEmpty(), "setDuplicateKeepStrategy", "strategy must not be empty");
     setValue("duplicate/keep_strategy", strategy);
 }
 
@@ -221,6 +230,7 @@ QString ConfigManager::getImageFlasherValidationMode() const
 
 void ConfigManager::setImageFlasherValidationMode(const QString& mode)
 {
+    Q_ASSERT_X(!mode.isEmpty(), "setImageFlasherValidationMode", "mode must not be empty");
     setValue("image_flasher/validation_mode", mode);
 }
 
@@ -231,6 +241,7 @@ int ConfigManager::getImageFlasherBufferSize() const
 
 void ConfigManager::setImageFlasherBufferSize(int size)
 {
+    Q_ASSERT_X(size > 0, "setImageFlasherBufferSize", "size must be positive");
     setValue("image_flasher/buffer_size", size);
 }
 
@@ -271,6 +282,7 @@ int ConfigManager::getImageFlasherLargeDriveThreshold() const
 
 void ConfigManager::setImageFlasherLargeDriveThreshold(int threshold)
 {
+    Q_ASSERT_X(threshold > 0, "setImageFlasherLargeDriveThreshold", "threshold must be positive");
     setValue("image_flasher/large_drive_threshold", threshold);
 }
 
@@ -281,6 +293,7 @@ int ConfigManager::getImageFlasherMaxConcurrentWrites() const
 
 void ConfigManager::setImageFlasherMaxConcurrentWrites(int max)
 {
+    Q_ASSERT_X(max > 0, "setImageFlasherMaxConcurrentWrites", "max must be positive");
     setValue("image_flasher/max_concurrent_writes", max);
 }
 
@@ -311,6 +324,8 @@ int ConfigManager::getNetworkTransferDiscoveryPort() const
 
 void ConfigManager::setNetworkTransferDiscoveryPort(int port)
 {
+    Q_ASSERT_X(port > 0 && port <= 65535, "setNetworkTransferDiscoveryPort",
+        "port must be in range [1, 65535]");
     setValue("network_transfer/discovery_port", port);
 }
 
@@ -321,6 +336,8 @@ int ConfigManager::getNetworkTransferControlPort() const
 
 void ConfigManager::setNetworkTransferControlPort(int port)
 {
+    Q_ASSERT_X(port > 0 && port <= 65535, "setNetworkTransferControlPort",
+        "port must be in range [1, 65535]");
     setValue("network_transfer/control_port", port);
 }
 
@@ -331,6 +348,8 @@ int ConfigManager::getNetworkTransferDataPort() const
 
 void ConfigManager::setNetworkTransferDataPort(int port)
 {
+    Q_ASSERT_X(port > 0 && port <= 65535, "setNetworkTransferDataPort",
+        "port must be in range [1, 65535]");
     setValue("network_transfer/data_port", port);
 }
 
@@ -371,6 +390,8 @@ int ConfigManager::getNetworkTransferMaxBandwidth() const
 
 void ConfigManager::setNetworkTransferMaxBandwidth(int bandwidth)
 {
+    Q_ASSERT_X(bandwidth >= 0, "setNetworkTransferMaxBandwidth",
+        "bandwidth must be non-negative (0 = unlimited)");
     setValue("network_transfer/max_bandwidth", bandwidth);
 }
 
@@ -391,6 +412,7 @@ int ConfigManager::getNetworkTransferChunkSize() const
 
 void ConfigManager::setNetworkTransferChunkSize(int size)
 {
+    Q_ASSERT_X(size > 0, "setNetworkTransferChunkSize", "size must be positive");
     setValue("network_transfer/chunk_size", size);
 }
 

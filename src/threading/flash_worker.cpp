@@ -7,6 +7,7 @@
 #include "sak/flash_worker.h"
 #include "sak/keep_awake.h"
 #include "sak/logger.h"
+#include <QtGlobal>
 #include <QObject>
 #include <QElapsedTimer>
 #include <QCryptographicHash>
@@ -35,6 +36,10 @@ FlashWorker::FlashWorker(std::unique_ptr<ImageSource> imageSource,
     , m_lastSpeedBytes(0)
     , m_lastVerifyUpdate(0)
 {
+    Q_ASSERT_X(m_imageSource != nullptr, "FlashWorker",
+        "imageSource must not be null");
+    Q_ASSERT_X(!m_targetDevice.isEmpty(), "FlashWorker",
+        "targetDevice must not be empty");
 }
 
 FlashWorker::~FlashWorker() {
@@ -50,6 +55,7 @@ void FlashWorker::setValidationMode(sak::ValidationMode mode) {
 }
 
 void FlashWorker::setBufferSize(qint64 sizeBytes) {
+    Q_ASSERT_X(sizeBytes > 0, "setBufferSize", "sizeBytes must be positive");
     m_bufferSize = sizeBytes;
 }
 

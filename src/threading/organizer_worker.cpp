@@ -7,6 +7,7 @@
 #include "sak/organizer_worker.h"
 #include "sak/input_validator.h"
 #include "sak/logger.h"
+#include <QtGlobal>
 #include <QVector>
 #include <QFile>
 
@@ -14,6 +15,8 @@ OrganizerWorker::OrganizerWorker(const Config& config, QObject* parent)
     : WorkerBase(parent)
     , m_config(config)
 {
+    Q_ASSERT_X(!config.target_directory.isEmpty(), "OrganizerWorker",
+        "target_directory must not be empty");
 }
 
 auto OrganizerWorker::execute() -> std::expected<void, sak::error_code>

@@ -129,4 +129,42 @@ constexpr auto kPrimaryButtonStyle =
     "  background-color: #cbd5e1; color: #64748b;"
     "}";
 
+// ── Compile-Time Invariants (TigerStyle) ────────────────────────────────────
+
+// Margins must be monotonically increasing.
+static_assert(kMarginNone < kMarginTight,
+    "Margins must be monotonically increasing.");
+static_assert(kMarginTight < kMarginSmall,
+    "Margins must be monotonically increasing.");
+static_assert(kMarginSmall < kMarginMedium,
+    "Margins must be monotonically increasing.");
+static_assert(kMarginMedium < kMarginLarge,
+    "Margins must be monotonically increasing.");
+static_assert(kMarginLarge < kMarginXLarge,
+    "Margins must be monotonically increasing.");
+
+// Spacings must be monotonically increasing.
+static_assert(kSpacingTight < kSpacingSmall,
+    "Spacings must be monotonically increasing.");
+static_assert(kSpacingSmall < kSpacingMedium,
+    "Spacings must be monotonically increasing.");
+static_assert(kSpacingMedium < kSpacingDefault,
+    "Spacings must be monotonically increasing.");
+static_assert(kSpacingDefault < kSpacingLarge,
+    "Spacings must be monotonically increasing.");
+static_assert(kSpacingLarge < kSpacingXLarge,
+    "Spacings must be monotonically increasing.");
+
+// Font sizes must be monotonically increasing.
+static_assert(kFontSizeSmall < kFontSizeNote,
+    "Font sizes must be monotonically increasing.");
+static_assert(kFontSizeNote < kFontSizeBody,
+    "Font sizes must be monotonically increasing.");
+static_assert(kFontSizeBody < kFontSizeStatus,
+    "Font sizes must be monotonically increasing.");
+static_assert(kFontSizeStatus < kFontSizeSection,
+    "Font sizes must be monotonically increasing.");
+static_assert(kFontSizeSection < kFontSizeTitle,
+    "Font sizes must be monotonically increasing.");
+
 } // namespace sak::ui

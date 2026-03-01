@@ -8,6 +8,7 @@
 #include "sak/format_utils.h"
 #include "sak/logger.h"
 
+#include <QtGlobal>
 #include <QDir>
 #include <QFile>
 #include <QJsonArray>
@@ -50,6 +51,7 @@ DiagnosticReportGenerator::DiagnosticReportGenerator(QObject* parent)
 
 bool DiagnosticReportGenerator::generateHtml(const QString& output_path)
 {
+    Q_ASSERT_X(!output_path.isEmpty(), "generateHtml", "output_path must not be empty");
     const QString html = renderHtml();
     if (html.isEmpty()) {
         Q_EMIT errorOccurred("Failed to render HTML report");
@@ -80,6 +82,7 @@ bool DiagnosticReportGenerator::generateHtml(const QString& output_path)
 
 bool DiagnosticReportGenerator::generateJson(const QString& output_path)
 {
+    Q_ASSERT_X(!output_path.isEmpty(), "generateJson", "output_path must not be empty");
     QJsonObject root;
 
     // Metadata
@@ -266,6 +269,7 @@ bool DiagnosticReportGenerator::generateJson(const QString& output_path)
 
 bool DiagnosticReportGenerator::generateCsv(const QString& output_path)
 {
+    Q_ASSERT_X(!output_path.isEmpty(), "generateCsv", "output_path must not be empty");
     QDir().mkpath(QFileInfo(output_path).absolutePath());
     QFile file(output_path);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {

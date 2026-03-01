@@ -7,6 +7,7 @@
 #include "sak/input_validator.h"
 #include "sak/logger.h"
 #include "sak/path_utils.h"
+#include <QtGlobal>
 #include <algorithm>
 #include <cctype>
 #include <regex>
@@ -397,6 +398,7 @@ validation_result input_validator::validateBufferSize(
     std::size_t buffer_size,
     std::size_t max_size,
     std::size_t required_size) {
+    Q_ASSERT_X(max_size > 0, "validateBufferSize", "max_size must be positive");
     
     if (required_size > 0 && buffer_size < required_size) {
         return failure(error_code::validation_failed,
@@ -418,6 +420,8 @@ validation_result input_validator::validateBufferSize(
 validation_result input_validator::validate_disk_space(
     const std::filesystem::path& path,
     std::uintmax_t required_bytes) {
+    Q_ASSERT_X(!path.empty(), "validate_disk_space", "path must not be empty");
+    Q_ASSERT_X(required_bytes > 0, "validate_disk_space", "required_bytes must be positive");
     
     try {
         std::error_code ec;
@@ -448,6 +452,8 @@ validation_result input_validator::validate_disk_space(
 
 validation_result input_validator::validate_available_memory(
     std::size_t required_bytes) {
+    Q_ASSERT_X(required_bytes > 0, "validate_available_memory",
+        "required_bytes must be positive");
     
     const auto available = get_available_memory_impl();
     
@@ -484,6 +490,8 @@ validation_result input_validator::validate_file_descriptor_limit() {
 
 validation_result input_validator::validate_thread_count(
     std::size_t requested_threads) {
+    Q_ASSERT_X(requested_threads > 0, "validate_thread_count",
+        "requested_threads must be positive");
     
     const auto hardware_threads = std::thread::hardware_concurrency();
     

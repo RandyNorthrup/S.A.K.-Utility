@@ -6,6 +6,7 @@
 
 #include "sak/path_utils.h"
 #include "sak/logger.h"
+#include <QtGlobal>
 #include <algorithm>
 #include <cctype>
 
@@ -13,9 +14,12 @@ namespace sak {
 
 auto path_utils::normalize(
     const std::filesystem::path& path) -> std::expected<std::filesystem::path, error_code> {
+    Q_ASSERT_X(!path.empty(), "path_utils::normalize", "path must not be empty");
     
     try {
         auto normalized = std::filesystem::weakly_canonical(path);
+        Q_ASSERT_X(normalized.is_absolute(), "path_utils::normalize",
+            "normalized path must be absolute");
         return normalized;
     } catch (const std::filesystem::filesystem_error& e) {
         logError("Failed to normalize path: {}", e.what());
@@ -32,6 +36,8 @@ auto path_utils::normalize(
 auto path_utils::makeRelative(
     const std::filesystem::path& path,
     const std::filesystem::path& base) -> std::expected<std::filesystem::path, error_code> {
+    Q_ASSERT_X(!path.empty(), "path_utils::makeRelative", "path must not be empty");
+    Q_ASSERT_X(!base.empty(), "path_utils::makeRelative", "base must not be empty");
     
     try {
         auto rel = std::filesystem::relative(path, base);
@@ -54,6 +60,8 @@ auto path_utils::makeRelative(
 auto path_utils::isSafePath(
     const std::filesystem::path& path,
     const std::filesystem::path& base_dir) -> std::expected<bool, error_code> {
+    Q_ASSERT_X(!path.empty(), "path_utils::isSafePath", "path must not be empty");
+    Q_ASSERT_X(!base_dir.empty(), "path_utils::isSafePath", "base_dir must not be empty");
     
     try {
         // Normalize both paths
@@ -124,6 +132,8 @@ bool path_utils::matchesPattern(
 
 auto path_utils::getDirectorySizeAndCount(
     const std::filesystem::path& dir_path) -> std::expected<DirectorySizeInfo, error_code> {
+    Q_ASSERT_X(!dir_path.empty(), "path_utils::getDirectorySizeAndCount",
+        "dir_path must not be empty");
     
     try {
         if (!std::filesystem::exists(dir_path)) {
@@ -165,6 +175,7 @@ auto path_utils::getDirectorySizeAndCount(
 
 auto path_utils::getAvailableSpace(
     const std::filesystem::path& path) -> std::expected<std::uintmax_t, error_code> {
+    Q_ASSERT_X(!path.empty(), "path_utils::getAvailableSpace", "path must not be empty");
     
     try {
         auto space_info = std::filesystem::space(path);

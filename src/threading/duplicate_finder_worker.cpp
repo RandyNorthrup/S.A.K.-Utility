@@ -6,6 +6,7 @@
 
 #include "sak/duplicate_finder_worker.h"
 #include "sak/logger.h"
+#include <QtGlobal>
 #include <QFileInfo>
 #include <QThreadPool>
 #include <QtConcurrent>
@@ -16,6 +17,8 @@ DuplicateFinderWorker::DuplicateFinderWorker(const Config& config, QObject* pare
     , m_config(config)
     , m_hasher(sak::hash_algorithm::md5)
 {
+    Q_ASSERT_X(!config.scanDirectories.isEmpty(), "DuplicateFinderWorker",
+        "scanDirectories must not be empty");
 }
 
 auto DuplicateFinderWorker::execute() -> std::expected<void, sak::error_code>

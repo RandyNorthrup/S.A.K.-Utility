@@ -7,6 +7,7 @@
 #include "sak/cpu_benchmark_worker.h"
 #include "sak/logger.h"
 
+#include <QtGlobal>
 #include <QElapsedTimer>
 #include <QtConcurrent>
 
@@ -142,6 +143,7 @@ auto CpuBenchmarkWorker::execute() -> std::expected<void, sak::error_code>
 
 double CpuBenchmarkWorker::runPrimeSieve(uint64_t limit)
 {
+    Q_ASSERT_X(limit >= 2, "runPrimeSieve", "limit must be >= 2");
     // Sieve of Eratosthenes — stresses integer arithmetic + memory
     QElapsedTimer timer;
     timer.start();
@@ -170,6 +172,7 @@ double CpuBenchmarkWorker::runPrimeSieve(uint64_t limit)
 
 double CpuBenchmarkWorker::runMatrixMultiply(int size)
 {
+    Q_ASSERT_X(size > 0, "runMatrixMultiply", "matrix size must be positive");
     // Dense matrix multiply C = A × B — stresses FP pipeline + cache
     const int n = size;
     std::vector<double> a(n * n);
@@ -215,6 +218,7 @@ double CpuBenchmarkWorker::runMatrixMultiply(int size)
 
 double CpuBenchmarkWorker::runZlibCompression(int data_size_mb)
 {
+    Q_ASSERT_X(data_size_mb > 0, "runZlibCompression", "data_size_mb must be positive");
     const size_t data_size = static_cast<size_t>(data_size_mb) * 1024 * 1024;
 
     // Generate compressible data (mixed patterns)
@@ -260,6 +264,7 @@ double CpuBenchmarkWorker::runZlibCompression(int data_size_mb)
 
 double CpuBenchmarkWorker::runAesEncryption(int data_size_mb)
 {
+    Q_ASSERT_X(data_size_mb > 0, "runAesEncryption", "data_size_mb must be positive");
     const size_t data_size = static_cast<size_t>(data_size_mb) * 1024 * 1024;
 
     // Generate random data
@@ -305,6 +310,7 @@ double CpuBenchmarkWorker::runAesEncryption(int data_size_mb)
 
 double CpuBenchmarkWorker::runMultiThreaded(int thread_count)
 {
+    Q_ASSERT_X(thread_count > 0, "runMultiThreaded", "thread_count must be positive");
     // Run all four benchmarks in parallel across thread_count threads.
     // Each thread executes the full benchmark suite; the total wall time is measured.
 

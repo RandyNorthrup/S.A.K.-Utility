@@ -9,6 +9,7 @@
 #include "sak/keep_awake.h"
 #include "sak/logger.h"
 
+#include <QtGlobal>
 #include <QDir>
 #include <QElapsedTimer>
 #include <QStorageInfo>
@@ -348,6 +349,7 @@ void DiskBenchmarkWorker::runRandom4KRead(
     double& avg_latency_us,
     std::vector<double>* latencies_out)
 {
+    Q_ASSERT_X(queue_depth > 0, "runRandom4KRead", "queue_depth must be positive");
 #ifdef SAK_PLATFORM_WINDOWS
     const std::wstring wpath = testFilePath().toStdWString();
 
@@ -448,6 +450,7 @@ void DiskBenchmarkWorker::runRandom4KWrite(
     double& avg_latency_us,
     std::vector<double>* latencies_out)
 {
+    Q_ASSERT_X(queue_depth > 0, "runRandom4KWrite", "queue_depth must be positive");
 #ifdef SAK_PLATFORM_WINDOWS
     const std::wstring wpath = testFilePath().toStdWString();
 

@@ -6,6 +6,7 @@
 
 #include "sak/file_hash.h"
 #include "sak/logger.h"
+#include <QtGlobal>
 #include <QCryptographicHash>
 #include <QFile>
 #include <QByteArrayView>
@@ -21,12 +22,14 @@ namespace sak {
 file_hasher::file_hasher(hash_algorithm algorithm, std::size_t chunk_size) noexcept
     : m_algorithm(algorithm)
     , m_chunk_size(chunk_size) {
+    Q_ASSERT_X(chunk_size > 0, "file_hasher", "chunk_size must be positive");
 }
 
 auto file_hasher::calculateHash(
     const std::filesystem::path& file_path,
     hash_progress_callback progress,
     std::stop_token stop_token) const -> std::expected<std::string, error_code> {
+    Q_ASSERT_X(!file_path.empty(), "calculateHash", "file_path must not be empty");
     
     // Validate file exists
     if (!std::filesystem::exists(file_path)) {
@@ -68,6 +71,8 @@ auto file_hasher::verifyHash(
     const std::filesystem::path& file_path,
     std::string_view expected_hash,
     std::stop_token stop_token) const -> std::expected<bool, error_code> {
+    Q_ASSERT_X(!file_path.empty(), "verifyHash", "file_path must not be empty");
+    Q_ASSERT_X(!expected_hash.empty(), "verifyHash", "expected_hash must not be empty");
     
     auto calculated = calculateHash(file_path, nullptr, stop_token);
     if (!calculated) {
@@ -90,6 +95,8 @@ auto file_hasher::calculateMd5(
     const std::filesystem::path& file_path,
     hash_progress_callback& progress,
     std::stop_token stop_token) const -> std::expected<std::string, error_code> {
+    Q_ASSERT_X(!file_path.empty(), "calculateMd5", "file_path must not be empty");
+    Q_ASSERT_X(m_chunk_size > 0, "calculateMd5", "chunk_size must be positive");
     
     try {
         // Open file with Qt
@@ -127,7 +134,10 @@ auto file_hasher::calculateMd5(
         
         // Get final hash as hex string
         QByteArray result = hash.result();
-        return result.toHex().toStdString();
+        Q_ASSERT_X(result.size() == 16, "calculateMd5", "MD5 digest must be 16 bytes");
+        auto hex = result.toHex().toStdString();
+        Q_ASSERT_X(hex.size() == 32, "calculateMd5", "MD5 hex string must be 32 chars");
+        return hex;
         
     } catch (const std::exception& e) {
         logError("Exception calculating MD5: {}", e.what());
@@ -142,6 +152,8 @@ auto file_hasher::calculateSha256(
     const std::filesystem::path& file_path,
     hash_progress_callback& progress,
     std::stop_token stop_token) const -> std::expected<std::string, error_code> {
+    Q_ASSERT_X(!file_path.empty(), "calculateSha256", "file_path must not be empty");
+    Q_ASSERT_X(m_chunk_size > 0, "calculateSha256", "chunk_size must be positive");
     
     try {
         // Open file with Qt
@@ -179,7 +191,10 @@ auto file_hasher::calculateSha256(
         
         // Get final hash as hex string
         QByteArray result = hash.result();
-        return result.toHex().toStdString();
+        Q_ASSERT_X(result.size() == 32, "calculateSha256", "SHA-256 digest must be 32 bytes");
+        auto hex = result.toHex().toStdString();
+        Q_ASSERT_X(hex.size() == 64, "calculateSha256", "SHA-256 hex string must be 64 chars");
+        return hex;
         
     } catch (const std::exception& e) {
         logError("Exception calculating SHA-256: {}", e.what());

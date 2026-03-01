@@ -7,6 +7,7 @@
 #include "sak/worker_base.h"
 #include "sak/logger.h"
 
+#include <QtGlobal>
 #include <stdexcept>
 
 WorkerBase::WorkerBase(QObject* parent)
@@ -92,5 +93,7 @@ bool WorkerBase::checkStop()
 
 void WorkerBase::reportProgress(int current, int total, const QString& message)
 {
+    Q_ASSERT_X(total > 0, "reportProgress", "total must be positive");
+    Q_ASSERT_X(current >= 0, "reportProgress", "current must be non-negative");
     Q_EMIT progress(current, total, message);
 }

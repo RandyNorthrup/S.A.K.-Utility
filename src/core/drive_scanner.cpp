@@ -3,6 +3,7 @@
 
 #include "sak/drive_scanner.h"
 #include "sak/logger.h"
+#include <QtGlobal>
 #include <QDir>
 #include <dbt.h>
 #include <setupapi.h>
@@ -152,6 +153,7 @@ void DriveScanner::scanDrives() {
 }
 
 sak::DriveInfo DriveScanner::queryDriveInfo(int driveNumber) {
+    Q_ASSERT_X(driveNumber >= 0, "queryDriveInfo", "driveNumber must be non-negative");
     sak::DriveInfo info;
     info.devicePath = QString("\\\\.\\PhysicalDrive%1").arg(driveNumber);
     
@@ -190,6 +192,7 @@ sak::DriveInfo DriveScanner::queryDriveInfo(int driveNumber) {
 }
 
 QString DriveScanner::getDriveName(int driveNumber) {
+    Q_ASSERT_X(driveNumber >= 0, "getDriveName", "driveNumber must be non-negative");
     QString devicePath = QString("\\\\.\\PhysicalDrive%1").arg(driveNumber);
     HANDLE hDrive = CreateFileW(
         reinterpret_cast<LPCWSTR>(devicePath.utf16()),
@@ -247,6 +250,8 @@ QString DriveScanner::getDriveName(int driveNumber) {
 }
 
 qint64 DriveScanner::getDriveSize(HANDLE hDrive) {
+    Q_ASSERT_X(hDrive != INVALID_HANDLE_VALUE, "getDriveSize",
+        "hDrive must be a valid handle");
     DISK_GEOMETRY_EX geometry = {};
     DWORD bytesReturned = 0;
     
@@ -265,6 +270,8 @@ qint64 DriveScanner::getDriveSize(HANDLE hDrive) {
 }
 
 quint32 DriveScanner::getBlockSize(HANDLE hDrive) {
+    Q_ASSERT_X(hDrive != INVALID_HANDLE_VALUE, "getBlockSize",
+        "hDrive must be a valid handle");
     DISK_GEOMETRY geometry = {};
     DWORD bytesReturned = 0;
     
@@ -283,6 +290,8 @@ quint32 DriveScanner::getBlockSize(HANDLE hDrive) {
 }
 
 QString DriveScanner::getBusType(HANDLE hDrive) {
+    Q_ASSERT_X(hDrive != INVALID_HANDLE_VALUE, "getBusType",
+        "hDrive must be a valid handle");
     STORAGE_PROPERTY_QUERY query = {};
     query.PropertyId = StorageDeviceProperty;
     query.QueryType = PropertyStandardQuery;
@@ -315,6 +324,7 @@ QString DriveScanner::getBusType(HANDLE hDrive) {
 }
 
 bool DriveScanner::isDriveRemovable(int driveNumber) {
+    Q_ASSERT_X(driveNumber >= 0, "isDriveRemovable", "driveNumber must be non-negative");
     // Use IOCTL_STORAGE_QUERY_PROPERTY to check both RemovableMedia flag and BusType
     QString devicePath = QString("\\\\.\\PhysicalDrive%1").arg(driveNumber);
     HANDLE hDrive = CreateFileW(
@@ -373,6 +383,8 @@ bool DriveScanner::isDriveRemovable(int driveNumber) {
 }
 
 bool DriveScanner::isDriveReadOnly(HANDLE hDrive) {
+    Q_ASSERT_X(hDrive != INVALID_HANDLE_VALUE, "isDriveReadOnly",
+        "hDrive must be a valid handle");
     DISK_GEOMETRY geometry = {};
     DWORD bytesReturned = 0;
     
@@ -410,6 +422,7 @@ bool DriveScanner::isDriveReadOnly(HANDLE hDrive) {
 }
 
 QStringList DriveScanner::getMountPoints(int driveNumber) {
+    Q_ASSERT_X(driveNumber >= 0, "getMountPoints", "driveNumber must be non-negative");
     QStringList mountPoints;
     
     wchar_t volumeName[MAX_PATH];
@@ -471,6 +484,7 @@ QStringList DriveScanner::getMountPoints(int driveNumber) {
 }
 
 QString DriveScanner::getVolumeLabel(const QString& mountPoint) {
+    Q_ASSERT_X(!mountPoint.isEmpty(), "getVolumeLabel", "mountPoint must not be empty");
     wchar_t volumeLabel[MAX_PATH + 1] = {};
     
     if (GetVolumeInformationW(
@@ -486,6 +500,8 @@ QString DriveScanner::getVolumeLabel(const QString& mountPoint) {
 }
 
 bool DriveScanner::containsWindowsInstallation(int driveNumber) {
+    Q_ASSERT_X(driveNumber >= 0, "containsWindowsInstallation",
+        "driveNumber must be non-negative");
     QStringList mountPoints = getMountPoints(driveNumber);
     
     for (const QString& mountPoint : mountPoints) {

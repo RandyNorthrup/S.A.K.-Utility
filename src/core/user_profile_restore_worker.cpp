@@ -7,6 +7,7 @@
 #include "sak/windows_user_scanner.h"
 #include "sak/path_utils.h"
 #include "sak/logger.h"
+#include <QtGlobal>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -52,6 +53,8 @@ void UserProfileRestoreWorker::startRestore(const QString& backupPath,
                                             ConflictResolution conflictMode,
                                             PermissionMode permMode,
                                             bool verify) {
+    Q_ASSERT_X(!backupPath.isEmpty(), "startRestore", "backupPath must not be empty");
+    Q_ASSERT_X(!mappings.isEmpty(), "startRestore", "mappings must not be empty");
     if (m_running) {
         Q_EMIT logMessage(tr("Restore already in progress"), true);
         return;
@@ -229,6 +232,8 @@ bool UserProfileRestoreWorker::restoreUser(const UserMapping& mapping) {
 bool UserProfileRestoreWorker::restoreFolder(const FolderSelection& folder,
                                              const QString& sourcePath,
                                              const QString& destPath) {
+    Q_ASSERT_X(!sourcePath.isEmpty(), "restoreFolder", "sourcePath must not be empty");
+    Q_ASSERT_X(!destPath.isEmpty(), "restoreFolder", "destPath must not be empty");
     QFileInfo sourceInfo(sourcePath);
     
     if (!sourceInfo.exists()) {
@@ -252,6 +257,8 @@ bool UserProfileRestoreWorker::restoreFolder(const FolderSelection& folder,
 bool UserProfileRestoreWorker::copyDirectory(const QString& sourceDir,
                                              const QString& destDir,
                                              const FolderSelection& folderConfig) {
+    Q_ASSERT_X(!sourceDir.isEmpty(), "copyDirectory", "sourceDir must not be empty");
+    Q_ASSERT_X(!destDir.isEmpty(), "copyDirectory", "destDir must not be empty");
     QDir dir(sourceDir);
     if (!dir.exists()) return false;
     
@@ -286,6 +293,12 @@ bool UserProfileRestoreWorker::copyDirectory(const QString& sourceDir,
 bool UserProfileRestoreWorker::copyFileWithConflictResolution(const QString& source,
                                                               const QString& dest,
                                                               qint64 size) {
+    Q_ASSERT_X(!source.isEmpty(), "copyFileWithConflictResolution",
+        "source must not be empty");
+    Q_ASSERT_X(!dest.isEmpty(), "copyFileWithConflictResolution",
+        "dest must not be empty");
+    Q_ASSERT_X(size >= 0, "copyFileWithConflictResolution",
+        "size must be non-negative");
     QFileInfo destInfo(dest);
     QString finalDestPath = dest;
     
