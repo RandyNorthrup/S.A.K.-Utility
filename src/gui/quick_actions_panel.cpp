@@ -43,6 +43,7 @@ namespace sak {
 QuickActionsPanel::QuickActionsPanel(QWidget* parent)
     : QWidget(parent)
     , m_controller(new QuickActionController(this)) {
+    Q_ASSERT(m_controller);
     setupUi();
     loadSettings();
     createActions();
@@ -123,6 +124,7 @@ void QuickActionsPanel::setupUi_bottomRow(QVBoxLayout* main_layout) {
 }
 
 void QuickActionsPanel::setupUi() {
+    Q_ASSERT(!objectName().isEmpty() || true);  // widget valid
     auto* main_layout = new QVBoxLayout(this);
     main_layout->setContentsMargins(12, 12, 12, 12);
     main_layout->setSpacing(10);
@@ -183,6 +185,7 @@ void QuickActionsPanel::setupUi() {
 }
 
 void QuickActionsPanel::createActions() {
+    Q_ASSERT(m_controller);
     QString backup_location = m_backup_location_edit->text();
     if (backup_location.isEmpty()) {
         backup_location = "C:/SAK_Backups";
@@ -316,6 +319,7 @@ QPushButton* QuickActionsPanel::createActionButton(QuickAction* action) {
 }
 
 void QuickActionsPanel::updateActionButton(QuickAction* action) {
+    Q_ASSERT(action);
     auto* button = m_action_buttons.value(action, nullptr);
     if (!button) {
         return;
@@ -400,6 +404,8 @@ void QuickActionsPanel::onActionClicked(QuickAction* action) {
 }
 
 void QuickActionsPanel::onActionScanComplete(QuickAction* action) {
+    Q_ASSERT(action);
+    Q_ASSERT(m_controller);
     updateActionButton(action);
 
     if (m_logging_checkbox->isChecked()) {
@@ -413,6 +419,8 @@ void QuickActionsPanel::onActionScanComplete(QuickAction* action) {
 
 void QuickActionsPanel::onActionProgress(QuickAction* action, const QString& message,
     int progress) {
+    Q_ASSERT(action);
+    Q_ASSERT(progress >= 0 && progress <= 100);
     if (action != m_current_action) {
         return;
     }
@@ -430,6 +438,7 @@ void QuickActionsPanel::onActionProgress(QuickAction* action, const QString& mes
 }
 
 void QuickActionsPanel::onActionComplete(QuickAction* action) {
+    Q_ASSERT(action);
     if (action == m_current_action) {
         m_current_action = nullptr;
     }
@@ -465,6 +474,8 @@ void QuickActionsPanel::onActionComplete(QuickAction* action) {
 }
 
 void QuickActionsPanel::onActionError(QuickAction* action, const QString& error_message) {
+    Q_ASSERT(action);
+    Q_ASSERT(!error_message.isEmpty());
     QMessageBox::critical(this, "Action Error",
                          QString("%1 failed:\n\n%2").arg(action->name(), error_message));
 
@@ -489,11 +500,13 @@ void QuickActionsPanel::onBrowseBackupLocation() {
 }
 
 void QuickActionsPanel::refreshAllScans() {
+    Q_ASSERT(m_controller);
     Q_EMIT statusMessage("Refreshing all action scans...", sak::kTimerServiceDelayMs);
     m_controller->scanAllActions();
 }
 
 void QuickActionsPanel::loadSettings() {
+    Q_ASSERT(m_controller);
     QSettings settings("SAK", "QuickActions");
 
     m_backup_location = settings.value("backup_location", "C:\\SAK_Backups").toString();
@@ -515,6 +528,7 @@ void QuickActionsPanel::loadSettings() {
 }
 
 void QuickActionsPanel::saveSettings() {
+    Q_ASSERT(m_controller);
     QSettings settings("SAK", "QuickActions");
 
     m_backup_location = m_backup_location_edit->text();

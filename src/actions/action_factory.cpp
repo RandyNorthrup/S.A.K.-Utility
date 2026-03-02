@@ -59,6 +59,7 @@ namespace sak {
 
 std::vector<std::unique_ptr<QuickAction>> ActionFactory::createAllActions(
     const QString& backup_location) {
+    Q_ASSERT(!backup_location.isEmpty());
     std::vector<std::unique_ptr<QuickAction>> actions;
 
     // System Optimization

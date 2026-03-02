@@ -38,6 +38,7 @@ QString StickyNotesBackupAction::findStickyNotesDatabase() {
 
 void StickyNotesBackupAction::scan() {
     setStatus(ActionStatus::Scanning);
+    Q_ASSERT(status() == ActionStatus::Scanning);
 
     Q_EMIT scanProgress("Checking for Sticky Notes...");
 
@@ -53,6 +54,7 @@ void StickyNotesBackupAction::scan() {
     result.summary = sticky_notes_found
         ? "Sticky Notes database detected - ready to backup"
         : "Ready to scan for Sticky Notes data";
+    Q_ASSERT(!result.summary.isEmpty());
     setScanResult(result);
     setStatus(ActionStatus::Ready);
     Q_EMIT scanComplete(result);
@@ -65,7 +67,9 @@ void StickyNotesBackupAction::execute() {
     }
 
     setStatus(ActionStatus::Running);
+    Q_ASSERT(status() == ActionStatus::Running);
     QDateTime start_time = QDateTime::currentDateTime();
+    Q_ASSERT(start_time.isValid());
 
     Q_EMIT executionProgress("Locating Sticky Notes database...", 10);
 
@@ -103,6 +107,7 @@ void StickyNotesBackupAction::execute() {
     qint64 duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
 
     ExecutionResult result;
+    Q_ASSERT(!result.success);  // verify default init
     result.duration_ms = duration_ms;
 
     if (success) {
@@ -113,6 +118,7 @@ void StickyNotesBackupAction::execute() {
         result.message = QString("Backed up Sticky Notes database (%1)")
             .arg(formatFileSize(file_size));
         result.log = QString("Saved to: %1").arg(dest_path);
+        Q_ASSERT(result.duration_ms >= 0);
         finishWithResult(result, ActionStatus::Success);
     } else {
         result.success = false;

@@ -21,6 +21,7 @@ ClearBrowserCacheAction::ClearBrowserCacheAction()
 
 void ClearBrowserCacheAction::scan() {
     setStatus(ActionStatus::Scanning);
+    Q_ASSERT(status() == ActionStatus::Scanning);
 
     Q_EMIT scanProgress("Scanning browser cache locations...");
 
@@ -43,6 +44,8 @@ void ClearBrowserCacheAction::scan() {
         result.summary = "No browser caches found";
         result.details = "Caches are already minimal or browsers not installed";
     }
+
+    Q_ASSERT(!result.summary.isEmpty());
 
     setScanResult(result);
     setStatus(ActionStatus::Ready);
@@ -140,7 +143,9 @@ void ClearBrowserCacheAction::execute() {
     }
 
     setStatus(ActionStatus::Running);
+    Q_ASSERT(status() == ActionStatus::Running);
     QDateTime start_time = QDateTime::currentDateTime();
+    Q_ASSERT(start_time.isValid());
 
     Q_EMIT executionProgress("╔════════════════════════════════════════════════════════════════╗",
         0);
@@ -178,12 +183,14 @@ void ClearBrowserCacheAction::execute() {
         90);
 
     ExecutionResult result;
+    Q_ASSERT(!result.success);  // verify default init
     result.duration_ms = duration_ms;
 
     if (parsed.cleared_count > 0) {
         result.success = true;
         result.message = QString("Successfully cleared %1 browser(s)").arg(parsed.cleared_count);
         result.log = buildSuccessLog(parsed, ps.std_err, duration_ms);
+        Q_ASSERT(result.duration_ms >= 0);
         finishWithResult(result, ActionStatus::Success);
     } else {
         result.success = false;

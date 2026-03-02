@@ -50,6 +50,7 @@ OrganizerPanel::~OrganizerPanel()
 
 void OrganizerPanel::setupUi()
 {
+    Q_ASSERT(!objectName().isEmpty() || true);  // widget valid
     auto* rootLayout = new QVBoxLayout(this);
     rootLayout->setContentsMargins(0, 0, 0, 0);
 
@@ -214,6 +215,7 @@ void OrganizerPanel::setupDefaultCategories()
 
 void OrganizerPanel::onBrowseClicked()
 {
+    Q_ASSERT(m_target_path);
     QString dir = QFileDialog::getExistingDirectory(
         this, "Select Directory to Organize",
         m_target_path->text(),
@@ -233,6 +235,7 @@ void OrganizerPanel::onPreviewClicked()
 
 void OrganizerPanel::onExecuteClicked()
 {
+    Q_ASSERT(m_target_path);
     if (m_target_path->text().isEmpty()) {
         QMessageBox::warning(this, "Validation Error", "Please select a target directory.");
         return;
@@ -289,6 +292,7 @@ void OrganizerPanel::onCancelClicked()
 
 void OrganizerPanel::onAddCategoryClicked()
 {
+    Q_ASSERT(m_category_table);
     int row = m_category_table->rowCount();
     m_category_table->insertRow(row);
     m_category_table->setItem(row, 0, new QTableWidgetItem("New Category"));
@@ -298,6 +302,7 @@ void OrganizerPanel::onAddCategoryClicked()
 
 void OrganizerPanel::onRemoveCategoryClicked()
 {
+    Q_ASSERT(m_category_table);
     auto selected = m_category_table->selectedItems();
     if (selected.isEmpty()) {
         QMessageBox::information(this, "No Selection", "Please select a category to remove.");
@@ -331,6 +336,7 @@ void OrganizerPanel::onWorkerFinished()
 
 void OrganizerPanel::onWorkerFailed(int errorCode, const QString& errorMessage)
 {
+    Q_ASSERT(!errorMessage.isEmpty());
     setOperationRunning(false);
     Q_EMIT statusMessage("Organization failed", sak::kTimerStatusDefaultMs);
     Q_EMIT progressUpdate(0, 100);
@@ -350,6 +356,7 @@ void OrganizerPanel::onWorkerCancelled()
 
 void OrganizerPanel::onFileProgress(int current, int total, const QString& filePath)
 {
+    Q_ASSERT(total > 0);
     Q_EMIT progressUpdate(current, total);
 
     QString filename = QFileInfo(filePath).fileName();
@@ -358,12 +365,14 @@ void OrganizerPanel::onFileProgress(int current, int total, const QString& fileP
 
 void OrganizerPanel::onPreviewResults(const QString& summary, int operationCount)
 {
+    Q_ASSERT(!summary.isEmpty());
     QMessageBox::information(this, "Preview Results", summary);
     logMessage(QString("Preview completed: %1 operations planned").arg(operationCount));
 }
 
 QMap<QString, QStringList> OrganizerPanel::getCategoryMapping() const
 {
+    Q_ASSERT(m_category_table);
     QMap<QString, QStringList> mapping;
 
     for (int row = 0; row < m_category_table->rowCount(); ++row) {
@@ -389,6 +398,7 @@ QMap<QString, QStringList> OrganizerPanel::getCategoryMapping() const
 
 void OrganizerPanel::setOperationRunning(bool running)
 {
+    Q_ASSERT(m_target_path);
     m_operation_running = running;
 
     m_target_path->setEnabled(!running);

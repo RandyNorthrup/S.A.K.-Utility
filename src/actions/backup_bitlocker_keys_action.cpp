@@ -333,6 +333,7 @@ BackupBitlockerKeysAction::parseKeyProtectorResponse(const QString& output)
 void BackupBitlockerKeysAction::scan()
 {
     setStatus(ActionStatus::Scanning);
+    Q_ASSERT(status() == ActionStatus::Scanning);
     Q_EMIT scanProgress("Detecting BitLocker-encrypted volumes...");
 
     m_volumes = detectEncryptedVolumes();
@@ -376,6 +377,8 @@ void BackupBitlockerKeysAction::scan()
         result.warning = "Recovery keys are sensitive — store the backup securely";
     }
 
+    Q_ASSERT(!result.summary.isEmpty());
+
     setScanResult(result);
     setStatus(ActionStatus::Ready);
     Q_EMIT scanComplete(result);
@@ -393,7 +396,9 @@ void BackupBitlockerKeysAction::execute()
     }
 
     setStatus(ActionStatus::Running);
+    Q_ASSERT(status() == ActionStatus::Running);
     QDateTime start_time = QDateTime::currentDateTime();
+    Q_ASSERT(start_time.isValid());
 
     int total_keys_found = 0;
     int total_recovery_passwords = 0;
@@ -584,6 +589,7 @@ void BackupBitlockerKeysAction::executeBuildReport(const QDateTime& start_time,
     qint64 duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
 
     ExecutionResult result;
+    Q_ASSERT(!result.success);  // verify default init
     result.success = true;
     result.bytes_processed = total_bytes;
     result.files_processed = total_files;
@@ -611,6 +617,8 @@ void BackupBitlockerKeysAction::executeBuildReport(const QDateTime& start_time,
     log_lines.append("IMPORTANT: Store this backup in a secure location.");
     log_lines.append("Recovery keys can unlock BitLocker-encrypted volumes.");
     result.log = log_lines.join("\n");
+
+    Q_ASSERT(result.duration_ms >= 0);
 
     finishWithResult(result, ActionStatus::Success);
 }

@@ -36,11 +36,14 @@ void ExportRegistryKeysAction::exportKey(const QString& key_path, const QString&
 
 void ExportRegistryKeysAction::scan() {
     setStatus(ActionStatus::Scanning);
+    Q_ASSERT(status() == ActionStatus::Scanning);
 
     ScanResult result;
     result.applicable = true;
     result.summary = "Registry backup will export critical hives";
     result.details = "Exports HKLM/HKCU hives and creates a manifest";
+
+    Q_ASSERT(!result.summary.isEmpty());
 
     setScanResult(result);
     setStatus(ActionStatus::Ready);
@@ -124,6 +127,7 @@ void ExportRegistryKeysAction::finalizeRegistryExportResult(
     qint64 duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
 
     ExecutionResult result;
+    Q_ASSERT(!result.success);  // verify default init
     result.duration_ms = duration_ms;
     result.files_processed = keys_exported;
     result.bytes_processed = total_size;
@@ -156,7 +160,9 @@ void ExportRegistryKeysAction::execute() {
     }
 
     setStatus(ActionStatus::Running);
+    Q_ASSERT(status() == ActionStatus::Running);
     QDateTime start_time = QDateTime::currentDateTime();
+    Q_ASSERT(start_time.isValid());
 
     Q_EMIT executionProgress("Preparing enterprise registry backup...", 5);
 

@@ -140,6 +140,7 @@ int RepairWindowsStoreAction::checkStoreEventLogs() {
 
 void RepairWindowsStoreAction::scan() {
     setStatus(ActionStatus::Scanning);
+    Q_ASSERT(status() == ActionStatus::Scanning);
 
     Q_EMIT scanProgress("Checking Windows Store package...");
 
@@ -158,6 +159,8 @@ void RepairWindowsStoreAction::scan() {
         result.warning = QString("Detected %1 recent Store deployment errors").arg(error_count);
     }
 
+    Q_ASSERT(!result.summary.isEmpty());
+
     setScanResult(result);
     setStatus(ActionStatus::Ready);
     Q_EMIT scanComplete(result);
@@ -170,7 +173,9 @@ void RepairWindowsStoreAction::execute() {
     }
 
     setStatus(ActionStatus::Running);
+    Q_ASSERT(status() == ActionStatus::Running);
     QDateTime start_time = QDateTime::currentDateTime();
+    Q_ASSERT(start_time.isValid());
 
     Q_EMIT executionProgress("Diagnosing Windows Store...", 5);
 
@@ -208,6 +213,7 @@ void RepairWindowsStoreAction::execute() {
     qint64 duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
 
     ExecutionResult result;
+    Q_ASSERT(!result.success);  // verify default init
     result.duration_ms = duration_ms;
 
     bool overall_success = cache_reset && package_reset && reregistered

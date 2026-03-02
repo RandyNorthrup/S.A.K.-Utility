@@ -45,6 +45,7 @@ qint64 ClearWindowsUpdateCacheAction::calculateDirectorySize(const QString& path
 
 void ClearWindowsUpdateCacheAction::scan() {
     setStatus(ActionStatus::Scanning);
+    Q_ASSERT(status() == ActionStatus::Scanning);
 
     Q_EMIT scanProgress("Calculating Windows Update cache size...");
 
@@ -75,6 +76,8 @@ void ClearWindowsUpdateCacheAction::scan() {
         : "Windows Update cache is already minimal";
     result.details = "Clearing cache stops update services briefly";
 
+    Q_ASSERT(!result.summary.isEmpty());
+
     setScanResult(result);
     setStatus(ActionStatus::Ready);
     Q_EMIT scanComplete(result);
@@ -82,7 +85,9 @@ void ClearWindowsUpdateCacheAction::scan() {
 
 void ClearWindowsUpdateCacheAction::execute() {
     setStatus(ActionStatus::Running);
+    Q_ASSERT(status() == ActionStatus::Running);
     QDateTime start_time = QDateTime::currentDateTime();
+    Q_ASSERT(start_time.isValid());
 
     Q_EMIT executionProgress("╔════════════════════════════════════════════════════════════════╗",
         0);
@@ -117,6 +122,7 @@ void ClearWindowsUpdateCacheAction::execute() {
         80);
 
     ExecutionResult result;
+    Q_ASSERT(!result.success);  // verify default init
     result.duration_ms = duration_ms;
     result.bytes_processed = parsed.total_cleared;
     result.files_processed = parsed.paths_cleared;
@@ -126,6 +132,7 @@ void ClearWindowsUpdateCacheAction::execute() {
         result.message = QString("Cleared %1 from Windows Update cache")
             .arg(formatFileSize(parsed.total_cleared));
         result.log = buildSuccessLog(parsed, duration_ms);
+        Q_ASSERT(result.duration_ms >= 0);
         finishWithResult(result, ActionStatus::Success);
     } else {
         result.success = false;

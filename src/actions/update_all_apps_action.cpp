@@ -24,6 +24,7 @@ UpdateAllAppsAction::UpdateAllAppsAction(QObject* parent)
 
 void UpdateAllAppsAction::scan() {
     setStatus(ActionStatus::Scanning);
+    Q_ASSERT(status() == ActionStatus::Scanning);
 
     bool winget_installed = (system("where winget > nul 2>&1") == 0);
     bool choco_installed = (system("where choco > nul 2>&1") == 0);
@@ -79,6 +80,8 @@ void UpdateAllAppsAction::scan() {
         result.details = "Install WinGet or Chocolatey to manage updates";
     }
 
+    Q_ASSERT(!result.summary.isEmpty());
+
     setScanResult(result);
     setStatus(ActionStatus::Ready);
     Q_EMIT scanComplete(result);
@@ -91,7 +94,9 @@ void UpdateAllAppsAction::execute() {
     }
 
     setStatus(ActionStatus::Running);
+    Q_ASSERT(status() == ActionStatus::Running);
     QDateTime start_time = QDateTime::currentDateTime();
+    Q_ASSERT(start_time.isValid());
 
     UpdateSummary summary;
     summary.report += "╔══════════════════════════════════════════════════════════════════════╗\n";
@@ -119,6 +124,7 @@ void UpdateAllAppsAction::execute() {
     buildUpdateReport(summary, duration_ms);
 
     ExecutionResult result;
+    Q_ASSERT(!result.success);  // verify default init
     result.duration_ms = duration_ms;
     result.files_processed = summary.total_updated;
     result.success = true;
@@ -133,6 +139,8 @@ void UpdateAllAppsAction::execute() {
         result.message = "No package managers available";
     }
     result.log = summary.report + "\n" + summary.structured_output;
+
+    Q_ASSERT(result.duration_ms >= 0);
 
     finishWithResult(result, ActionStatus::Success);
 }

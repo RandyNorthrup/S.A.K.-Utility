@@ -35,6 +35,7 @@ BrowserProfileBackupAction::BrowserProfileBackupAction(const QString& backup_loc
 
 void BrowserProfileBackupAction::scan() {
     setStatus(ActionStatus::Scanning);
+    Q_ASSERT(status() == ActionStatus::Scanning);
 
     Q_EMIT scanProgress("Detecting browser profiles...");
 
@@ -54,6 +55,7 @@ void BrowserProfileBackupAction::scan() {
     ScanResult result;
     result.applicable = true;
     result.summary = QString("Found %1 browser profile(s) - ready to backup").arg(profiles_found);
+    Q_ASSERT(!result.summary.isEmpty());
     setScanResult(result);
     setStatus(ActionStatus::Ready);
     Q_EMIT scanComplete(result);
@@ -66,7 +68,9 @@ void BrowserProfileBackupAction::execute() {
     }
 
     setStatus(ActionStatus::Running);
+    Q_ASSERT(status() == ActionStatus::Running);
     QDateTime start_time = QDateTime::currentDateTime();
+    Q_ASSERT(start_time.isValid());
 
     Q_EMIT executionProgress("Scanning for browser profiles...", 5);
 
@@ -90,6 +94,7 @@ void BrowserProfileBackupAction::execute() {
     const qint64 duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
 
     ExecutionResult result;
+    Q_ASSERT(!result.success);  // verify default init
     result.duration_ms    = duration_ms;
     result.files_processed = files_copied;
     result.bytes_processed = bytes_copied;
@@ -103,6 +108,7 @@ void BrowserProfileBackupAction::execute() {
                                   .arg(profile_count).arg(files_copied)
                                   .arg(formatFileSize(bytes_copied))
                                   .arg(backup_dir.absolutePath());
+        Q_ASSERT(result.duration_ms >= 0);
         finishWithResult(result, ActionStatus::Success);
     } else {
         result.success  = false;

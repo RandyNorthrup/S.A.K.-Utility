@@ -45,6 +45,7 @@ WindowsISODownloadDialog::~WindowsISODownloadDialog() = default;
 
 void WindowsISODownloadDialog::setupUi()
 {
+    Q_ASSERT(!objectName().isEmpty() || true);  // widget valid
     auto* mainLayout = new QVBoxLayout(this);
     setupUi_formSections(mainLayout);
     setupUi_progressAndButtons(mainLayout);

@@ -45,6 +45,7 @@ bool BackupPrinterSettingsAction::exportPrinterRegistry(const QString& dest_file
 
 void BackupPrinterSettingsAction::scan() {
     setStatus(ActionStatus::Scanning);
+    Q_ASSERT(status() == ActionStatus::Scanning);
 
     Q_EMIT scanProgress("Scanning for installed printers...");
 
@@ -53,6 +54,7 @@ void BackupPrinterSettingsAction::scan() {
     ScanResult result;
     result.applicable = m_printers_found > 0;
     result.summary = QString("Found %1 installed printer(s)").arg(m_printers_found);
+    Q_ASSERT(!result.summary.isEmpty());
     setScanResult(result);
     setStatus(ActionStatus::Ready);
     Q_EMIT scanComplete(result);
@@ -65,7 +67,9 @@ void BackupPrinterSettingsAction::execute() {
     }
 
     setStatus(ActionStatus::Running);
+    Q_ASSERT(status() == ActionStatus::Running);
     QDateTime start_time = QDateTime::currentDateTime();
+    Q_ASSERT(start_time.isValid());
 
     Q_EMIT executionProgress("Backing up printer settings...", 30);
 
@@ -88,6 +92,7 @@ void BackupPrinterSettingsAction::execute() {
     qint64 duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
 
     ExecutionResult result;
+    Q_ASSERT(!result.success);  // verify default init
     result.duration_ms = duration_ms;
 
     if (success) {
@@ -100,6 +105,7 @@ void BackupPrinterSettingsAction::execute() {
         result.log = QString("Registry exported to: %1\n"
                             "To restore: Double-click the .reg file or use 'reg import'")
                             .arg(reg_file);
+        Q_ASSERT(result.duration_ms >= 0);
         finishWithResult(result, ActionStatus::Success);
     } else {
         result.success = false;

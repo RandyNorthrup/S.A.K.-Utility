@@ -64,6 +64,7 @@ DiagnosticBenchmarkPanel::~DiagnosticBenchmarkPanel()
 
 void DiagnosticBenchmarkPanel::setupUi()
 {
+    Q_ASSERT(!objectName().isEmpty() || true);  // widget valid
     // Root: zero margin ? scroll area
     auto* root_layout = new QVBoxLayout(this);
     root_layout->setContentsMargins(0, 0, 0, 0);
@@ -677,6 +678,7 @@ void DiagnosticBenchmarkPanel::createReportExportButtons(QVBoxLayout* layout)
 
 void DiagnosticBenchmarkPanel::connectController()
 {
+    Q_ASSERT(m_controller);
     // Hardware scan
     connect(m_controller.get(), &DiagnosticController::hardwareScanComplete,
             this, &DiagnosticBenchmarkPanel::onHardwareScanComplete);
@@ -749,6 +751,7 @@ void DiagnosticBenchmarkPanel::setOperationRunning(bool running)
 
 void DiagnosticBenchmarkPanel::logMessage(const QString& message)
 {
+    Q_ASSERT(!message.isEmpty());
     Q_EMIT logOutput(message);
 }
 

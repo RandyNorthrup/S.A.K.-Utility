@@ -137,6 +137,7 @@ QString FixAudioIssuesAction::checkUSBAudioDevices() {
 
 void FixAudioIssuesAction::scan() {
     setStatus(ActionStatus::Scanning);
+    Q_ASSERT(status() == ActionStatus::Scanning);
 
     AudioServiceStatus audiosrv = checkAudioService("Audiosrv");
     AudioServiceStatus endpoint = checkAudioService("AudioEndpointBuilder");
@@ -152,6 +153,8 @@ void FixAudioIssuesAction::scan() {
         result.warning = "One or more audio services are stopped";
     }
 
+    Q_ASSERT(!result.summary.isEmpty());
+
     setScanResult(result);
     setStatus(ActionStatus::Ready);
     Q_EMIT scanComplete(result);
@@ -164,7 +167,9 @@ void FixAudioIssuesAction::execute() {
     }
 
     setStatus(ActionStatus::Running);
+    Q_ASSERT(status() == ActionStatus::Running);
     QDateTime start_time = QDateTime::currentDateTime();
+    Q_ASSERT(start_time.isValid());
 
     Q_EMIT executionProgress("Diagnosing audio services...", 5);
 
@@ -192,6 +197,7 @@ void FixAudioIssuesAction::execute() {
     qint64 duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
 
     ExecutionResult result;
+    Q_ASSERT(!result.success);  // verify default init
     result.duration_ms = duration_ms;
     result.files_processed = device_count;
 

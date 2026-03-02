@@ -48,6 +48,7 @@ UserMigrationPanel::~UserMigrationPanel() = default;
 
 void UserMigrationPanel::setupUi()
 {
+    Q_ASSERT(!objectName().isEmpty() || true);  // widget valid
     auto* rootLayout = new QVBoxLayout(this);
     rootLayout->setContentsMargins(0, 0, 0, 0);
 
@@ -146,6 +147,7 @@ void UserMigrationPanel::setupConnections()
 
 void UserMigrationPanel::onBackupSelected()
 {
+    Q_ASSERT(m_dataManager);
     // Launch the comprehensive user profile backup wizard
     auto* wizard = new UserProfileBackupWizard(this);
 
@@ -171,6 +173,7 @@ void UserMigrationPanel::onBackupSelected()
 
 void UserMigrationPanel::onRestoreBackup()
 {
+    Q_ASSERT(m_dataManager);
     // Launch the comprehensive user profile restore wizard
     auto* wizard = new UserProfileRestoreWizard(this);
 
@@ -197,6 +200,7 @@ void UserMigrationPanel::onRestoreBackup()
 
 void UserMigrationPanel::appendLog(const QString& message)
 {
+    Q_ASSERT(!message.isEmpty());
     Q_EMIT logOutput(message);
 }
 

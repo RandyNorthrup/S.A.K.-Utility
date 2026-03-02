@@ -295,6 +295,7 @@ void TestNetworkSpeedAction::getPublicIPInfo() {
 
 void TestNetworkSpeedAction::scan() {
     setStatus(ActionStatus::Scanning);
+    Q_ASSERT(status() == ActionStatus::Scanning);
 
     checkConnectivity();
 
@@ -307,6 +308,8 @@ void TestNetworkSpeedAction::scan() {
     if (!m_has_internet) {
         result.warning = "Network speed test cannot run without connectivity";
     }
+
+    Q_ASSERT(!result.summary.isEmpty());
 
     setScanResult(result);
     setStatus(ActionStatus::Ready);
@@ -404,6 +407,7 @@ void TestNetworkSpeedAction::finalizeSpeedTestResult(const QDateTime& start_time
     qint64 duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
 
     ExecutionResult result;
+    Q_ASSERT(!result.success);  // verify default init
     result.duration_ms = duration_ms;
     result.success = (m_download_speed > 0 || m_latency > 0);
 
@@ -427,7 +431,9 @@ void TestNetworkSpeedAction::execute() {
     }
 
     setStatus(ActionStatus::Running);
+    Q_ASSERT(status() == ActionStatus::Running);
     QDateTime start_time = QDateTime::currentDateTime();
+    Q_ASSERT(start_time.isValid());
 
     // Phase 1: Get public IP and ISP information
     getPublicIPInfo();

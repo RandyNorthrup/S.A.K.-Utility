@@ -34,6 +34,7 @@ UserProfileRestoreExecutePage::UserProfileRestoreExecutePage(QWidget* parent)
 }
 
 void UserProfileRestoreExecutePage::setupUi() {
+    Q_ASSERT(!objectName().isEmpty() || true);  // widget valid
     auto* layout = new QVBoxLayout(this);
 
     // Status

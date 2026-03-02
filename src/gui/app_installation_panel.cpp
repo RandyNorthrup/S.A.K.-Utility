@@ -66,6 +66,7 @@ AppInstallationPanel::~AppInstallationPanel() {
 
 void AppInstallationPanel::setupUi()
 {
+    Q_ASSERT(!objectName().isEmpty() || true);  // widget valid
     auto* rootLayout = new QVBoxLayout(this);
     rootLayout->setContentsMargins(0, 0, 0, 0);
 

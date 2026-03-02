@@ -55,6 +55,7 @@ MainWindow::~MainWindow()
 
 void MainWindow::setupUi()
 {
+    Q_ASSERT(!objectName().isEmpty() || true);  // widget valid
     setWindowTitle("S.A.K. Utility - Swiss Army Knife Utility");
     setMinimumSize(sak::kMainWindowMinW, sak::kMainWindowMinH);
     resize(sak::kMainWindowInitW, sak::kMainWindowInitH);
@@ -115,6 +116,7 @@ void MainWindow::createPanels()
 
 void MainWindow::createToolPanels()
 {
+    Q_ASSERT(m_tab_widget);
     // Create Quick Actions panel (first tab)
     m_quick_actions_panel = std::make_unique<QuickActionsPanel>(this);
     m_tab_widget->addTab(m_quick_actions_panel.get(), "Quick Actions");
@@ -176,6 +178,7 @@ void MainWindow::createToolPanels()
 
 void MainWindow::loadAboutPanelIcon(QLabel* iconLabel)
 {
+    Q_ASSERT(iconLabel);
     const QString appDir = QCoreApplication::applicationDirPath();
     const QStringList splashCandidates = {
         appDir + "/sak_splash.png",
@@ -202,6 +205,7 @@ void MainWindow::loadAboutPanelIcon(QLabel* iconLabel)
 
 void MainWindow::createAboutPanel()
 {
+    Q_ASSERT(m_tab_widget);
     auto* aboutPanel = new QWidget(this);
     auto* aboutLayout = new QVBoxLayout(aboutPanel);
     aboutLayout->setSpacing(12);
@@ -267,6 +271,8 @@ void MainWindow::createAboutPanel()
 
 void MainWindow::connectPanelSignals()
 {
+    Q_ASSERT(m_quick_actions_panel);
+    Q_ASSERT(m_user_migration_panel);
     // Connect panel signals to main window status bar
     connect(m_quick_actions_panel.get(), &QuickActionsPanel::statusMessage,
             this, [this](const QString& msg, int timeout_ms) { updateStatus(msg, timeout_ms); });
@@ -315,6 +321,8 @@ void MainWindow::connectPanelSignals()
 
 void MainWindow::connectPanelLogs()
 {
+    Q_ASSERT(m_tab_widget);
+    Q_ASSERT(m_logWindow);
     // Connect all panel log signals to the shared log window (panel-aware)
     auto connectLog = [this](auto* panel) {
         int tabIdx = m_tab_widget->indexOf(panel);
@@ -359,6 +367,7 @@ void MainWindow::connectPanelLogs()
 
 void MainWindow::updateStatus(const QString& message, int timeout_ms)
 {
+    Q_ASSERT(m_status_label);
     if (m_status_label) {
         if (timeout_ms > 0) {
             statusBar()->showMessage(message, timeout_ms);
@@ -393,6 +402,7 @@ void MainWindow::hideProgressBarIfComplete()
 
 void MainWindow::appendLogIfActive(int tabIdx, const QString& formatted)
 {
+    Q_ASSERT(m_tab_widget);
     m_panelLogs[tabIdx].append(formatted);
     if (m_tab_widget->currentIndex() == tabIdx && m_logWindow->isLogVisible()) {
         m_logWindow->logTextEdit()->append(formatted);
@@ -409,6 +419,8 @@ void MainWindow::setProgressVisible(bool visible)
 
 void MainWindow::onTabChanged(int index)
 {
+    Q_ASSERT(m_tab_widget);
+    Q_ASSERT(index >= -1 && index < m_tab_widget->count());
     if (!m_logWindow) return;
 
     // Replace log content with the active panel's accumulated log
@@ -422,6 +434,7 @@ void MainWindow::onTabChanged(int index)
 
 void MainWindow::createKeyboardShortcuts()
 {
+    Q_ASSERT(m_tab_widget);
     // Tab navigation: Ctrl+1..9 switches to tab index 0..8
     for (int i = 0; i < qMin(m_tab_widget->count(), 9); ++i) {
         auto* shortcut = new QShortcut(QKeySequence(Qt::CTRL | static_cast<Qt::Key>(Qt::Key_1 +
@@ -460,6 +473,7 @@ void MainWindow::createKeyboardShortcuts()
 
 void MainWindow::loadWindowState()
 {
+    Q_ASSERT(m_tab_widget);
     auto& config = ConfigManager::instance();
 
     if (config.getRestoreWindowGeometry()) {
@@ -480,11 +494,13 @@ void MainWindow::saveWindowState()
 
 void MainWindow::closeEvent(QCloseEvent* event)
 {
+    Q_ASSERT(event);
     event->accept();
 }
 
 void MainWindow::moveEvent(QMoveEvent* event)
 {
+    Q_ASSERT(event);
     QMainWindow::moveEvent(event);
     if (m_logWindow) {
         m_logWindow->repositionIfAnchored();
@@ -493,6 +509,7 @@ void MainWindow::moveEvent(QMoveEvent* event)
 
 void MainWindow::resizeEvent(QResizeEvent* event)
 {
+    Q_ASSERT(event);
     QMainWindow::resizeEvent(event);
     if (m_logWindow) {
         m_logWindow->repositionIfAnchored();

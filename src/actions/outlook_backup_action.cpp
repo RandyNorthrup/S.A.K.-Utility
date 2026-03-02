@@ -43,6 +43,7 @@ OutlookBackupAction::OutlookBackupAction(const QString& backup_location, QObject
 
 void OutlookBackupAction::scan() {
     setStatus(ActionStatus::Scanning);
+    Q_ASSERT(status() == ActionStatus::Scanning);
 
     WindowsUserScanner scanner;
     QVector<UserProfile> users = scanner.scanUsers();
@@ -78,6 +79,8 @@ void OutlookBackupAction::scan() {
         ? QString("Outlook files found: %1").arg(files_found)
         : "No Outlook data files found";
     result.details = "Close Outlook before running backup";
+
+    Q_ASSERT(!result.summary.isEmpty());
 
     setScanResult(result);
     setStatus(ActionStatus::Ready);
@@ -153,7 +156,9 @@ void OutlookBackupAction::execute() {
     }
 
     setStatus(ActionStatus::Running);
+    Q_ASSERT(status() == ActionStatus::Running);
     QDateTime start_time = QDateTime::currentDateTime();
+    Q_ASSERT(start_time.isValid());
     Q_EMIT executionProgress("Checking if Outlook is running...", 5);
     ProcessResult proc = runProcess("tasklist",
         QStringList() << "/FI" << "IMAGENAME eq OUTLOOK.EXE", sak::kTimeoutThermalQueryMs);
@@ -196,6 +201,7 @@ void OutlookBackupAction::execute() {
     qint64 duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
 
     ExecutionResult result;
+    Q_ASSERT(!result.success);  // verify default init
     result.duration_ms = duration_ms;
     result.files_processed = files_copied;
     result.bytes_processed = bytes_copied;
@@ -207,6 +213,7 @@ void OutlookBackupAction::execute() {
             .arg(files_copied)
             .arg(formatFileSize(bytes_copied));
         result.log = QString("Saved to: %1").arg(backup_dir.absolutePath());
+        Q_ASSERT(result.duration_ms >= 0);
         finishWithResult(result, ActionStatus::Success);
     } else {
         result.success = false;

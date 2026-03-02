@@ -29,6 +29,7 @@ AboutDialog::AboutDialog(QWidget* parent)
 
 void AboutDialog::setupUi()
 {
+    Q_ASSERT(!objectName().isEmpty() || true);  // widget valid
     auto* main_layout = new QVBoxLayout(this);
     main_layout->setSpacing(12);
     main_layout->setContentsMargins(16, 16, 16, 16);

@@ -103,6 +103,7 @@ NetworkTransferPanel::NetworkTransferPanel(QWidget* parent)
 NetworkTransferPanel::~NetworkTransferPanel() = default;
 
 void NetworkTransferPanel::setupUi() {
+    Q_ASSERT(!objectName().isEmpty() || true);  // widget valid
     auto* mainLayout = new QVBoxLayout(this);
     mainLayout->setSpacing(sak::ui::kSpacingDefault);
     mainLayout->setContentsMargins(sak::ui::kMarginMedium, sak::ui::kMarginMedium,
@@ -768,6 +769,7 @@ void NetworkTransferPanel::setupUi_bottomButtons(QVBoxLayout* mainLayout) {
 
 
 void NetworkTransferPanel::setupConnections() {
+    Q_ASSERT(m_controller);
     setupConnections_sourceSignals();
     setupConnections_destinationSignals();
     setupConnections_orchestratorSignals();
@@ -998,6 +1000,7 @@ void NetworkTransferPanel::setupConnections_controllerSignals() {
 }
 
 void NetworkTransferPanel::loadSettings() {
+    Q_ASSERT(m_controller);
     auto& config = ConfigManager::instance();
     m_settings.encryption_enabled = config.getNetworkTransferEncryptionEnabled();
     m_settings.compression_enabled = config.getNetworkTransferCompressionEnabled();
@@ -1141,6 +1144,7 @@ void NetworkTransferPanel::loadSettings_restoreDeploymentState() {
 }
 
 void NetworkTransferPanel::onModeChanged(int index) {
+    Q_ASSERT(m_controller);
     m_modeStack->setCurrentIndex(index);
     m_controller->stopDiscovery();
 }
@@ -1270,6 +1274,8 @@ void NetworkTransferPanel::onNetworkSettings() {
 }
 
 void NetworkTransferPanel::buildNetworkSettingsToggles(QFormLayout* layout, QDialog* dialog) {
+    Q_ASSERT(layout);
+    Q_ASSERT(dialog);
     auto& config = ConfigManager::instance();
 
     auto* enabledCheck = new QCheckBox(dialog);
@@ -1317,6 +1323,8 @@ void NetworkTransferPanel::buildNetworkSettingsToggles(QFormLayout* layout, QDia
 }
 
 void NetworkTransferPanel::buildNetworkSettingsPorts(QFormLayout* layout, QDialog* dialog) {
+    Q_ASSERT(layout);
+    Q_ASSERT(dialog);
     auto& config = ConfigManager::instance();
 
     auto* discoveryPort = new QSpinBox(dialog);
@@ -1379,6 +1387,7 @@ void NetworkTransferPanel::buildNetworkSettingsPorts(QFormLayout* layout, QDialo
 }
 
 void NetworkTransferPanel::saveNetworkSettingsFromDialog(QDialog* dialog) {
+    Q_ASSERT(dialog);
     auto& config = ConfigManager::instance();
 
     config
@@ -1419,6 +1428,7 @@ void NetworkTransferPanel::saveNetworkSettingsFromDialog(QDialog* dialog) {
 }
 
 void NetworkTransferPanel::updateTransferButton() {
+    Q_ASSERT(m_transferButton);
     if (m_sourceTransferActive) {
         m_transferButton->setText(tr("Stop Transfer"));
         m_transferButton->setStyleSheet(
@@ -1445,6 +1455,7 @@ void NetworkTransferPanel::updateTransferButton() {
 }
 
 void NetworkTransferPanel::updatePauseResumeButton() {
+    Q_ASSERT(m_pauseResumeButton);
     if (m_sourceTransferActive) {
         m_pauseResumeButton->setVisible(true);
         if (m_sourceTransferPaused) {

@@ -62,6 +62,7 @@ bool ClearEventLogsAction::clearEventLog(const QString& log_name) {
 
 void ClearEventLogsAction::scan() {
     setStatus(ActionStatus::Scanning);
+    Q_ASSERT(status() == ActionStatus::Scanning);
 
     Q_EMIT scanProgress("Enumerating event logs...");
 
@@ -98,6 +99,8 @@ void ClearEventLogsAction::scan() {
         : "No event log entries detected";
     result.details = "Full run will backup and clear all event logs";
 
+    Q_ASSERT(!result.summary.isEmpty());
+
     setScanResult(result);
     setStatus(ActionStatus::Ready);
     Q_EMIT scanComplete(result);
@@ -110,7 +113,9 @@ void ClearEventLogsAction::execute() {
     }
 
     setStatus(ActionStatus::Running);
+    Q_ASSERT(status() == ActionStatus::Running);
     QDateTime start_time = QDateTime::currentDateTime();
+    Q_ASSERT(start_time.isValid());
 
     QString ps_script;
     if (!executeEnumerateLogs(start_time, ps_script)) return;
@@ -272,6 +277,7 @@ void ClearEventLogsAction::executeBuildReport(const QDateTime& start_time,
     qint64 duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
 
     ExecutionResult result;
+    Q_ASSERT(!result.success);  // verify default init
     result.duration_ms = duration_ms;
     result.files_processed = cleared_logs;
     result.output_path = backup_path;
@@ -286,6 +292,7 @@ void ClearEventLogsAction::executeBuildReport(const QDateTime& start_time,
         appendSuccessReport(log_output, total_logs, cleared_logs, total_entries,
                             backed_up, backup_path, details, duration_ms);
         result.log = log_output;
+        Q_ASSERT(result.duration_ms >= 0);
         finishWithResult(result, ActionStatus::Success);
     } else {
         result.success = false;

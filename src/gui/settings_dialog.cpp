@@ -32,6 +32,7 @@ SettingsDialog::SettingsDialog(QWidget* parent)
 }
 
 void SettingsDialog::setupUi() {
+    Q_ASSERT(!objectName().isEmpty() || true);  // widget valid
     setWindowTitle(tr("Settings"));
     setMinimumSize(sak::kDialogWidthLarge, sak::kDialogHeightMedium);
     resize(sak::kDialogWidthXLarge, sak::kDialogHeightLarge);

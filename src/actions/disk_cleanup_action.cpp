@@ -24,6 +24,7 @@ DiskCleanupAction::DiskCleanupAction()
 
 void DiskCleanupAction::scan() {
     setStatus(ActionStatus::Scanning);
+    Q_ASSERT(status() == ActionStatus::Scanning);
     m_targets.clear();
     m_total_bytes = 0;
     m_total_files = 0;
@@ -78,6 +79,8 @@ void DiskCleanupAction::scan() {
         result.details = "System appears clean";
     }
 
+    Q_ASSERT(!result.summary.isEmpty());
+
     setScanResult(result);
     setStatus(ActionStatus::Ready);
     Q_EMIT scanComplete(result);
@@ -90,7 +93,9 @@ void DiskCleanupAction::execute() {
     }
 
     setStatus(ActionStatus::Running);
+    Q_ASSERT(status() == ActionStatus::Running);
     QDateTime start_time = QDateTime::currentDateTime();
+    Q_ASSERT(start_time.isValid());
 
     QStringList drives;
     QString drives_error;
@@ -162,6 +167,7 @@ bool DiskCleanupAction::executeCalculateSpace(QStringList& drives, QString& driv
     ProcessResult config_result = runPowerShell(ps_config, sak::kTimeoutArchiveMs);
     if (!config_result.succeeded()) {
         ExecutionResult result;
+    Q_ASSERT(!result.success);  // verify default init
         result.success = false;
         result.message = "Failed to configure Disk Cleanup";
         result.duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
@@ -231,6 +237,7 @@ void DiskCleanupAction::executeBuildReport(int drives_processed, qint64 total_fr
     qint64 duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
 
     ExecutionResult result;
+    Q_ASSERT(!result.success);  // verify default init
     result.duration_ms = duration_ms;
     result.files_processed = drives_processed;
     result.bytes_processed = total_freed;

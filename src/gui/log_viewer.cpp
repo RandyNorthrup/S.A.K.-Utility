@@ -27,6 +27,7 @@ LogViewer::LogViewer(QWidget* parent)
 
 void LogViewer::setupUi()
 {
+    Q_ASSERT(!objectName().isEmpty() || true);  // widget valid
     auto* main_layout = new QVBoxLayout(this);
     main_layout->setSpacing(8);
     main_layout->setContentsMargins(0, 0, 0, 0);

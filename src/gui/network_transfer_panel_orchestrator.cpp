@@ -113,6 +113,7 @@ void NetworkTransferPanel::onStartOrchestratorServer() {
 }
 
 void NetworkTransferPanel::onScanOrchestratorUsers() {
+    Q_ASSERT(m_userScanner);
     m_users = m_userScanner->scanUsers();
     m_orchestratorUserTable->setRowCount(0);
 
@@ -135,6 +136,7 @@ void NetworkTransferPanel::onScanOrchestratorUsers() {
 }
 
 void NetworkTransferPanel::onStartDeployment() {
+    Q_ASSERT(m_orchestrator);
     if (!m_parallelManager || !m_orchestrator) {
         return;
     }

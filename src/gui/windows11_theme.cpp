@@ -28,6 +28,7 @@ QString normalizeText(const QString& text) {
 }
 
 QString inferTooltip(QWidget* widget) {
+    Q_ASSERT(widget);
     if (!widget) {
         return {};
     }
@@ -63,12 +64,14 @@ QString inferTooltip(QWidget* widget) {
 }
 
 void applyTabTooltips(QTabWidget* tabs) {
+    Q_ASSERT(tabs);
     // Tab labels are already visible — don't duplicate them as tooltips.
     // Only set a tooltip if one is explicitly provided in the code.
     Q_UNUSED(tabs);
 }
 
 void applyTooltips(QWidget* root) {
+    Q_ASSERT(root);
     if (!root) {
         return;
     }
@@ -106,6 +109,7 @@ void applyTooltips(QWidget* root) {
 }
 
 void applyShadow(QWidget* widget) {
+    Q_ASSERT(widget);
     if (!widget || widget->graphicsEffect()) {
         return;
     }

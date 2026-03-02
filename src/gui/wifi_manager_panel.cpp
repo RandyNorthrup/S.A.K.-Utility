@@ -169,6 +169,7 @@ WifiManagerPanel::~WifiManagerPanel() = default;
 // ─────────────────────────────────────────────────────────────────────────────
 void WifiManagerPanel::setupUi()
 {
+    Q_ASSERT(!objectName().isEmpty() || true);  // widget valid
     auto* outerLayout = new QVBoxLayout(this);
     outerLayout->setContentsMargins(0, 0, 0, 0);
 
@@ -813,6 +814,8 @@ void WifiManagerPanel::executeBatchQrExport(
     const QString& baseDir, bool showHeader,
     bool png, bool pdf, bool jpg, bool bmp)
 {
+    Q_ASSERT(!sources.isEmpty());
+    Q_ASSERT(!baseDir.isEmpty());
     int saved = 0, failed = 0;
     for (const WifiConfig& cfg : sources) {
         if (cfg.ssid.isEmpty()) continue;
@@ -1122,6 +1125,7 @@ void WifiManagerPanel::onConnectWithPhoneClicked()
 
 void WifiManagerPanel::showSingleNetworkQrDialog(const WifiConfig& cfg)
 {
+    Q_ASSERT(!cfg.ssid.isEmpty());
     const QString     payload = buildWifiPayloadFromConfig(cfg);
     const QImage qrImg = generateQrImage(payload).scaled(360, 360, Qt::KeepAspectRatio,
         Qt::SmoothTransformation);
@@ -1161,6 +1165,7 @@ void WifiManagerPanel::showSingleNetworkQrDialog(const WifiConfig& cfg)
 
 void WifiManagerPanel::showMultiNetworkQrDialog(const QList<WifiConfig>& sources)
 {
+    Q_ASSERT(!sources.isEmpty());
     QDialog dlg(this);
     dlg.setWindowTitle(QString("Connect with Phone / Tablet (%1 networks)").arg(sources.size()));
     dlg.setFixedSize(420, 530);
@@ -1285,6 +1290,7 @@ QStringList WifiManagerPanel::scanWindowsProfileNames() const
 WifiManagerPanel::WifiConfig WifiManagerPanel::parseWindowsWifiProfile(
     const QString& profileName) const
 {
+    Q_ASSERT(!profileName.isEmpty());
     QProcess p2;
     p2.start("netsh", QStringList{"wlan", "show", "profile", "name=" + profileName, "key=clear"});
     p2.waitForFinished(sak::kTimeoutProcessShortMs);
@@ -1336,6 +1342,7 @@ WifiManagerPanel::WifiConfig WifiManagerPanel::parseWindowsWifiProfile(
 
 void WifiManagerPanel::onSelectionChanged()
 {
+    Q_ASSERT(m_network_table);
     const int total   = m_network_table->rowCount();
     int checked = 0;
     for (int row_index = 0; row_index < total; ++row_index) {
@@ -1441,6 +1448,7 @@ void WifiManagerPanel::onAddToWindowsClicked()
 
 QString WifiManagerPanel::buildWlanProfileXml(const WifiConfig& cfg)
 {
+    Q_ASSERT(!cfg.ssid.isEmpty());
     const QString upper = cfg.security.toUpper();
     QString authType;
     QString encType;
@@ -1481,6 +1489,7 @@ QString WifiManagerPanel::buildWlanProfileXml(const WifiConfig& cfg)
 
 bool WifiManagerPanel::installWlanProfile(const QString& xml, int row)
 {
+    Q_ASSERT(!xml.isEmpty());
     const QString tmpPath = QDir::tempPath() + QString("/sak_wifi_%1.xml").arg(row);
     {
         QFile f(tmpPath);
@@ -1634,6 +1643,7 @@ QString WifiManagerPanel::buildWindowsScript(const QString& ssid,
                                         const QString& security,
                                         bool hidden)
 {
+    Q_ASSERT(!ssid.isEmpty());
     const QString upper = security.toUpper();
     QString authType;
     QString encType;
@@ -1706,6 +1716,7 @@ QString WifiManagerPanel::buildWindowsScript(const QString& ssid,
 // static
 QString WifiManagerPanel::buildMacosProfile(const QList<WifiConfig>& networks)
 {
+    Q_ASSERT(!networks.isEmpty());
     const QString profileUuid = QUuid::createUuid().toString(QUuid::WithoutBraces).toUpper();
     const QString payloadId   = "com.sak.wifi." + profileUuid.left(8).toLower();
     const QString now         = QDateTime::currentDateTimeUtc().toString(Qt::ISODate);
@@ -1785,6 +1796,7 @@ void WifiManagerPanel::loadConfigToForm(const WifiConfig& cfg)
 
 void WifiManagerPanel::addRowToTable(const WifiConfig& cfg)
 {
+    Q_ASSERT(m_network_table);
     const int row = m_network_table->rowCount();
     m_network_table->insertRow(row);
 
@@ -1847,6 +1859,7 @@ void WifiManagerPanel::addRowToTable(const WifiConfig& cfg)
 
 WifiManagerPanel::WifiConfig WifiManagerPanel::configFromRow(int row) const
 {
+    Q_ASSERT(row >= 0);
     auto text = [&](int col) -> QString {
         auto* item = m_network_table->item(row, col);
         return item ? item->text() : QString{};
@@ -1927,6 +1940,7 @@ void WifiManagerPanel::highlightSearchMatches()
 // ─────────────────────────────────────────────────────────────────────────────
 void WifiManagerPanel::saveTableToJson(const QString& path)
 {
+    Q_ASSERT(!path.isEmpty());
     QJsonArray arr;
     for (int i = 0; i < m_network_table->rowCount(); ++i) {
         const WifiConfig cfg = configFromRow(i);
@@ -1952,6 +1966,7 @@ void WifiManagerPanel::saveTableToJson(const QString& path)
 
 void WifiManagerPanel::loadTableFromJson(const QString& path)
 {
+    Q_ASSERT(!path.isEmpty());
     QFile f(path);
     if (!f.open(QIODevice::ReadOnly)) {
         sak::logWarning(("Could not open file: " + path).toStdString());

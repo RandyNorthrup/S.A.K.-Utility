@@ -100,6 +100,7 @@ void CreateRestorePointAction::checkRestoreStatus() {
 
 void CreateRestorePointAction::scan() {
     setStatus(ActionStatus::Scanning);
+    Q_ASSERT(status() == ActionStatus::Scanning);
 
     Q_EMIT scanProgress("Checking System Restore status...");
 
@@ -149,6 +150,8 @@ void CreateRestorePointAction::scan() {
         result.summary = "System Restore status uncertain - will verify during execution";
     }
 
+    Q_ASSERT(!result.summary.isEmpty());
+
     setScanResult(result);
     setStatus(ActionStatus::Ready);
     Q_EMIT scanComplete(result);
@@ -168,7 +171,9 @@ void CreateRestorePointAction::createRestorePoint() {
 
 void CreateRestorePointAction::execute() {
     setStatus(ActionStatus::Running);
+    Q_ASSERT(status() == ActionStatus::Running);
     QDateTime start_time = QDateTime::currentDateTime();
+    Q_ASSERT(start_time.isValid());
 
     if (isCancelled()) {
         emitCancelledResult("Restore point creation cancelled", start_time);
@@ -220,6 +225,7 @@ void CreateRestorePointAction::execute() {
     }
 
     ExecutionResult result;
+    Q_ASSERT(!result.success);  // verify default init
     result.success = success;
     result.message = success ? "Restore point created successfully" : "Restore point creation "
                                                                       "failed";

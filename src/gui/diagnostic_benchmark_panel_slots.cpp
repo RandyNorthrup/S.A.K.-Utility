@@ -41,6 +41,7 @@ namespace sak {
 
 void DiagnosticBenchmarkPanel::onRescanHardwareClicked()
 {
+    Q_ASSERT(m_controller);
     logMessage("Starting hardware inventory scan...");
     setOperationRunning(true);
     m_controller->runHardwareScan();
@@ -48,6 +49,7 @@ void DiagnosticBenchmarkPanel::onRescanHardwareClicked()
 
 void DiagnosticBenchmarkPanel::onCopyInventoryClicked()
 {
+    Q_ASSERT(m_controller);
     const auto& report_data = m_controller->reportData();
     const auto& inv = report_data.inventory;
 
@@ -164,6 +166,7 @@ void DiagnosticBenchmarkPanel::addDiskPartitionsToCombo(
 
 void DiagnosticBenchmarkPanel::onRescanSmartClicked()
 {
+    Q_ASSERT(m_controller);
     logMessage("Starting SMART disk analysis...");
     setOperationRunning(true);
     m_controller->runSmartAnalysis();
@@ -237,6 +240,7 @@ void DiagnosticBenchmarkPanel::onSmartAnalysisComplete(
 
 void DiagnosticBenchmarkPanel::onRunCpuBenchmarkClicked()
 {
+    Q_ASSERT(m_controller);
     logMessage("Starting CPU benchmark...");
     setOperationRunning(true);
     m_controller->runCpuBenchmark();
@@ -283,6 +287,7 @@ void DiagnosticBenchmarkPanel::onCpuBenchmarkComplete(
 
 void DiagnosticBenchmarkPanel::onRunDiskBenchmarkClicked()
 {
+    Q_ASSERT(m_controller);
     if (m_disk_drive_combo->count() == 0) {
         logMessage("No drives available — run Hardware Scan first");
         Q_EMIT statusMessage("No drives — run Hardware Scan first", sak::kTimerStatusMessageMs);
@@ -344,6 +349,7 @@ void DiagnosticBenchmarkPanel::onDiskBenchmarkComplete(
 
 void DiagnosticBenchmarkPanel::onRunMemoryBenchmarkClicked()
 {
+    Q_ASSERT(m_controller);
     logMessage("Starting memory benchmark...");
     setOperationRunning(true);
     m_controller->runMemoryBenchmark();
@@ -382,6 +388,7 @@ void DiagnosticBenchmarkPanel::onMemoryBenchmarkComplete(
 
 void DiagnosticBenchmarkPanel::onStartStressTestClicked()
 {
+    Q_ASSERT(m_controller);
     StressTestConfig config;
     config.stress_cpu = m_stress_cpu_check->isChecked();
     config.stress_memory = m_stress_memory_check->isChecked();
@@ -409,6 +416,7 @@ void DiagnosticBenchmarkPanel::onStartStressTestClicked()
 
 void DiagnosticBenchmarkPanel::onStopStressTestClicked()
 {
+    Q_ASSERT(m_controller);
     logMessage("Stopping stress test...");
     m_controller->stopStressTest();
 }
@@ -443,6 +451,7 @@ void DiagnosticBenchmarkPanel::onStressTestComplete(
 void DiagnosticBenchmarkPanel::onStressTestStatus(
     int elapsed_seconds, double cpu_temp, int errors)
 {
+    Q_ASSERT(elapsed_seconds >= 0);
     const int duration_sec = m_stress_duration_spin->value() * 60;
     const int percent = duration_sec > 0
                             ? (elapsed_seconds * 100 / duration_sec)
@@ -474,6 +483,7 @@ void DiagnosticBenchmarkPanel::onStressTestStatus(
 
 void DiagnosticBenchmarkPanel::onRunFullSuiteClicked()
 {
+    Q_ASSERT(m_controller);
     // Build configs from current UI state
     StressTestConfig stress_config;
     stress_config.stress_cpu = m_stress_cpu_check->isChecked();
@@ -506,6 +516,7 @@ void DiagnosticBenchmarkPanel::onRunFullSuiteClicked()
 
 void DiagnosticBenchmarkPanel::onCancelSuiteClicked()
 {
+    Q_ASSERT(m_controller);
     logMessage("Cancelling diagnostic suite...");
     m_controller->cancelCurrent();
     m_suite_running = false;
@@ -517,6 +528,7 @@ void DiagnosticBenchmarkPanel::onCancelSuiteClicked()
 
 void DiagnosticBenchmarkPanel::onSkipStepClicked()
 {
+    Q_ASSERT(m_controller);
     logMessage("Skipping current suite step...");
     m_controller->skipCurrentStep();
 }
@@ -564,6 +576,7 @@ void DiagnosticBenchmarkPanel::onSuiteStateChanged(
 void DiagnosticBenchmarkPanel::onSuiteProgress(
     int percent, const QString& message)
 {
+    Q_ASSERT(percent >= 0 && percent <= 100);
     Q_EMIT progressUpdate(percent, 100);
     m_suite_status_label->setText(message);
 }
@@ -627,6 +640,7 @@ void DiagnosticBenchmarkPanel::onThermalReadingsUpdated(
 
 void DiagnosticBenchmarkPanel::onGenerateReportClicked()
 {
+    Q_ASSERT(m_controller);
     const auto dir = QFileDialog::getExistingDirectory(
         this, "Select Report Output Directory");
     if (dir.isEmpty()) return;
@@ -642,6 +656,7 @@ void DiagnosticBenchmarkPanel::onGenerateReportClicked()
 
 void DiagnosticBenchmarkPanel::onReportsGenerated(const QString& output_dir)
 {
+    Q_ASSERT(!output_dir.isEmpty());
     logMessage(QString("Reports generated in %1").arg(output_dir));
     Q_EMIT statusMessage("Reports saved to " + output_dir, sak::kTimerStatusDefaultMs);
 
@@ -656,12 +671,14 @@ void DiagnosticBenchmarkPanel::onReportsGenerated(const QString& output_dir)
 void DiagnosticBenchmarkPanel::onOperationProgress(
     int percent, const QString& message)
 {
+    Q_ASSERT(percent >= 0 && percent <= 100);
     Q_EMIT progressUpdate(percent, 100);
     Q_EMIT statusMessage(message, 0);
 }
 
 void DiagnosticBenchmarkPanel::onErrorOccurred(const QString& message)
 {
+    Q_ASSERT(!message.isEmpty());
     // Note: Do NOT call setOperationRunning(false) here.
     // SmartDiskAnalyzer emits non-fatal per-drive errors while analysis
     // continues. The completion handler takes care of re-enabling buttons.

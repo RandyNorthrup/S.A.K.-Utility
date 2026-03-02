@@ -48,6 +48,7 @@ bool BackupDesktopWallpaperAction::backupRegistrySettings(const QString& dest_fo
 
 void BackupDesktopWallpaperAction::scan() {
     setStatus(ActionStatus::Scanning);
+    Q_ASSERT(status() == ActionStatus::Scanning);
 
     Q_EMIT scanProgress("Scanning for desktop wallpapers...");
 
@@ -65,6 +66,7 @@ void BackupDesktopWallpaperAction::scan() {
     ScanResult result;
     result.applicable = m_wallpapers_found > 0;
     result.summary = QString("Found %1 user wallpaper(s)").arg(m_wallpapers_found);
+    Q_ASSERT(!result.summary.isEmpty());
     setScanResult(result);
     setStatus(ActionStatus::Ready);
     Q_EMIT scanComplete(result);
@@ -77,7 +79,9 @@ void BackupDesktopWallpaperAction::execute() {
     }
 
     setStatus(ActionStatus::Running);
+    Q_ASSERT(status() == ActionStatus::Running);
     QDateTime start_time = QDateTime::currentDateTime();
+    Q_ASSERT(start_time.isValid());
 
     Q_EMIT executionProgress("Backing up desktop wallpapers...", 20);
 
@@ -122,6 +126,7 @@ void BackupDesktopWallpaperAction::execute() {
     qint64 duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
 
     ExecutionResult result;
+    Q_ASSERT(!result.success);  // verify default init
     result.duration_ms = duration_ms;
 
     if (backed_up > 0) {
@@ -130,6 +135,7 @@ void BackupDesktopWallpaperAction::execute() {
         result.bytes_processed = total_bytes;
         result.message = QString("Backed up %1 wallpaper(s)").arg(backed_up);
         result.log = QString("Saved to: %1").arg(wallpaper_folder);
+        Q_ASSERT(result.duration_ms >= 0);
         finishWithResult(result, ActionStatus::Success);
     } else {
         result.success = false;

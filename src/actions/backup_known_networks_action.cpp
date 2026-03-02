@@ -122,6 +122,7 @@ BackupKnownNetworksAction::NetworkEntry BackupKnownNetworksAction::fetchProfileD
 void BackupKnownNetworksAction::scan()
 {
     setStatus(ActionStatus::Scanning);
+    Q_ASSERT(status() == ActionStatus::Scanning);
     Q_EMIT scanProgress("Scanning for known WiFi profiles...");
 
     ScanResult result;
@@ -129,6 +130,7 @@ void BackupKnownNetworksAction::scan()
 #ifndef Q_OS_WIN
     result.applicable = false;
     result.summary    = "Not supported on this platform";
+    Q_ASSERT(!result.summary.isEmpty());
     setScanResult(result);
     setStatus(ActionStatus::Ready);
     Q_EMIT scanComplete(result);
@@ -184,12 +186,14 @@ void BackupKnownNetworksAction::execute()
     }
 
     setStatus(ActionStatus::Running);
+    Q_ASSERT(status() == ActionStatus::Running);
     const QDateTime startTime = QDateTime::currentDateTime();
 
     Q_EMIT executionProgress("Collecting WiFi profiles...", 20);
 
 #ifndef Q_OS_WIN
     ExecutionResult result;
+    Q_ASSERT(!result.success);  // verify default init
     result.success = false;
     result.message = "Backup Known Networks is only supported on Windows";
     finishWithResult(result, ActionStatus::Failed);
@@ -204,6 +208,7 @@ void BackupKnownNetworksAction::execute()
 
     if (entries.isEmpty()) {
         ExecutionResult result;
+    Q_ASSERT(!result.success);  // verify default init
         result.success  = false;
         result.message  = "No known WiFi profiles found";
         result.duration_ms = startTime.msecsTo(QDateTime::currentDateTime());
@@ -244,6 +249,7 @@ void BackupKnownNetworksAction::buildAndWriteBackup(
     QFile file(filepath);
     if (!file.open(QIODevice::WriteOnly)) {
         ExecutionResult result;
+    Q_ASSERT(!result.success);  // verify default init
         result.success    = false;
         result.message    = QString("Could not write to: %1").arg(filepath);
         result.duration_ms = startTime.msecsTo(QDateTime::currentDateTime());
@@ -255,6 +261,7 @@ void BackupKnownNetworksAction::buildAndWriteBackup(
     Q_EMIT executionProgress("Complete", 100);
 
     ExecutionResult result;
+    Q_ASSERT(!result.success);  // verify default init
     result.success         = true;
     result.files_processed = entries.size();
     result.message         = QString("Backed up %1 WiFi network(s)").arg(entries.size());
@@ -262,6 +269,7 @@ void BackupKnownNetworksAction::buildAndWriteBackup(
     result.log             = QString("Saved to: %1\nLoad this file in the WiFi Manager panel to "
                                      "restore.").arg(filepath);
     result.duration_ms     = startTime.msecsTo(QDateTime::currentDateTime());
+    Q_ASSERT(result.duration_ms >= 0);
     finishWithResult(result, ActionStatus::Success);
 }
 

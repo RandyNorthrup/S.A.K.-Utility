@@ -92,6 +92,7 @@ void DisableStartupProgramsAction::scanTaskScheduler() {
 
 void DisableStartupProgramsAction::scan() {
     setStatus(ActionStatus::Scanning);
+    Q_ASSERT(status() == ActionStatus::Scanning);
 
     m_startup_items.clear();
     scanRegistryStartup();
@@ -106,6 +107,8 @@ void DisableStartupProgramsAction::scan() {
         : "No startup items detected";
     result.details = "Run analysis to review and disable non-essential items";
 
+    Q_ASSERT(!result.summary.isEmpty());
+
     setScanResult(result);
     setStatus(ActionStatus::Ready);
     Q_EMIT scanComplete(result);
@@ -118,7 +121,9 @@ void DisableStartupProgramsAction::execute() {
     }
 
     setStatus(ActionStatus::Running);
+    Q_ASSERT(status() == ActionStatus::Running);
     QDateTime start_time = QDateTime::currentDateTime();
+    Q_ASSERT(start_time.isValid());
 
     QString startup_output;
     int startup_count = 0;
@@ -372,6 +377,7 @@ void DisableStartupProgramsAction::executeBuildReport(const QDateTime& start_tim
 
     // Structured output for external processing
     ExecutionResult result;
+    Q_ASSERT(!result.success);  // verify default init
     result.duration_ms = duration_ms;
     result.files_processed = startup_count + task_count;
 
@@ -385,6 +391,8 @@ void DisableStartupProgramsAction::executeBuildReport(const QDateTime& start_tim
     result.success = true;
     result.message = QString("Found %1 startup item(s) - Task Manager opened").arg(total_items);
     result.log = structured_log + "\n" + report;
+
+    Q_ASSERT(result.duration_ms >= 0);
 
     finishWithResult(result, ActionStatus::Success);
 }

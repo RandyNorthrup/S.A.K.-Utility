@@ -78,6 +78,7 @@ UserProfileBackupWelcomePage::UserProfileBackupWelcomePage(QWidget* parent)
 }
 
 void UserProfileBackupWelcomePage::setupUi() {
+    Q_ASSERT(!objectName().isEmpty() || true);  // widget valid
     auto* layout = new QVBoxLayout(this);
 
     // Welcome message

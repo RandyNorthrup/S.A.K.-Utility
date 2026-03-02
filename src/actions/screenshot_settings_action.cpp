@@ -47,11 +47,14 @@ void ScreenshotSettingsAction::openSettingsAndCapture(const QString& uri, const 
 
 void ScreenshotSettingsAction::scan() {
     setStatus(ActionStatus::Scanning);
+    Q_ASSERT(status() == ActionStatus::Scanning);
 
     ScanResult result;
     result.applicable = true;
     result.summary = "Settings screenshots will open and capture key pages";
     result.details = "Requires interactive desktop session";
+
+    Q_ASSERT(!result.summary.isEmpty());
 
     setScanResult(result);
     setStatus(ActionStatus::Ready);
@@ -64,7 +67,9 @@ void ScreenshotSettingsAction::execute() {
         return;
     }
     setStatus(ActionStatus::Running);
+    Q_ASSERT(status() == ActionStatus::Running);
     QDateTime start_time = QDateTime::currentDateTime();
+    Q_ASSERT(start_time.isValid());
 
     Q_EMIT executionProgress("Detecting monitor configuration...", 3);
     int monitor_count = detectMonitorCount();
@@ -115,6 +120,7 @@ void ScreenshotSettingsAction::buildExecutionResult(
     qint64 duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
 
     ExecutionResult result;
+    Q_ASSERT(!result.success);  // verify default init
     result.duration_ms = duration_ms;
     result.files_processed = capture.screenshots_taken;
     result.output_path = output_dir.absolutePath();

@@ -166,6 +166,7 @@ QVector<CheckBloatwareAction::BloatwareItem> CheckBloatwareAction::scanForBloatw
 
 void CheckBloatwareAction::scan() {
     setStatus(ActionStatus::Scanning);
+    Q_ASSERT(status() == ActionStatus::Scanning);
 
     QVector<BloatwareItem> items = scanForBloatware();
 
@@ -176,6 +177,8 @@ void CheckBloatwareAction::scan() {
         ? QString("Potential bloatware apps: %1").arg(items.size())
         : "No common bloatware detected";
     result.details = "Full scan reports removable apps and sizes";
+
+    Q_ASSERT(!result.summary.isEmpty());
 
     setScanResult(result);
     setStatus(ActionStatus::Ready);
@@ -189,7 +192,9 @@ void CheckBloatwareAction::execute() {
     }
 
     setStatus(ActionStatus::Running);
+    Q_ASSERT(status() == ActionStatus::Running);
     QDateTime start_time = QDateTime::currentDateTime();
+    Q_ASSERT(start_time.isValid());
 
     QString scan_output;
     QString report;
@@ -404,6 +409,7 @@ void CheckBloatwareAction::executeBuildReport(const QDateTime& start_time, int a
     qint64 duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
 
     ExecutionResult result;
+    Q_ASSERT(!result.success);  // verify default init
     result.duration_ms = duration_ms;
     result.files_processed = apps_scanned;
     result.success = true;
@@ -412,6 +418,8 @@ void CheckBloatwareAction::executeBuildReport(const QDateTime& start_time, int a
             .arg(QString::number(total_size / (1024.0 * 1024.0), 'f', 2))
         : "No common bloatware detected";
     result.log = report + "\n" + structured_output;
+
+    Q_ASSERT(result.duration_ms >= 0);
 
     finishWithResult(result, ActionStatus::Success);
 }

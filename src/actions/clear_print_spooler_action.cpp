@@ -63,6 +63,7 @@ void ClearPrintSpoolerAction::startSpooler() {
 
 void ClearPrintSpoolerAction::scan() {
     setStatus(ActionStatus::Scanning);
+    Q_ASSERT(status() == ActionStatus::Scanning);
 
     int files = countSpoolFiles();
 
@@ -73,6 +74,8 @@ void ClearPrintSpoolerAction::scan() {
         ? QString("Spool files queued: %1").arg(files)
         : "No spool files detected";
     result.details = "Clearing spooler will restart Print Spooler service";
+
+    Q_ASSERT(!result.summary.isEmpty());
 
     setScanResult(result);
     setStatus(ActionStatus::Ready);
@@ -85,7 +88,9 @@ void ClearPrintSpoolerAction::execute() {
         return;
     }
     setStatus(ActionStatus::Running);
+    Q_ASSERT(status() == ActionStatus::Running);
     QDateTime start_time = QDateTime::currentDateTime();
+    Q_ASSERT(start_time.isValid());
 
     Q_EMIT executionProgress("╔════════════════════════════════════════════════════════════════╗",
         0);
@@ -123,6 +128,7 @@ void ClearPrintSpoolerAction::execute() {
         80);
 
     ExecutionResult result;
+    Q_ASSERT(!result.success);  // verify default init
     result.duration_ms = duration_ms;
     result.files_processed = spooler.cleared;
     result.bytes_processed = spooler.size_before;
@@ -133,6 +139,7 @@ void ClearPrintSpoolerAction::execute() {
             ? QString("Cleared %1 stuck print job(s)").arg(spooler.cleared)
             : "Print spooler refreshed (no stuck jobs)";
         result.log = buildSuccessLog(spooler, duration_ms);
+        Q_ASSERT(result.duration_ms >= 0);
         finishWithResult(result, ActionStatus::Success);
     } else {
         result.success = false;

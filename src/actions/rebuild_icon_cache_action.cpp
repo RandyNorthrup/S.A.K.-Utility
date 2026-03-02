@@ -204,6 +204,7 @@ bool RebuildIconCacheAction::refreshIconCache() {
 
 void RebuildIconCacheAction::scan() {
     setStatus(ActionStatus::Scanning);
+    Q_ASSERT(status() == ActionStatus::Scanning);
 
     QVector<CacheFileInfo> cache_files = enumerateCacheFiles();
     qint64 total_size = 0;
@@ -221,6 +222,8 @@ void RebuildIconCacheAction::scan() {
         : "No icon cache files found";
     result.details = "Rebuild will restart Explorer and refresh icon cache";
 
+    Q_ASSERT(!result.summary.isEmpty());
+
     setScanResult(result);
     setStatus(ActionStatus::Ready);
     Q_EMIT scanComplete(result);
@@ -233,7 +236,9 @@ void RebuildIconCacheAction::execute() {
     }
 
     setStatus(ActionStatus::Running);
+    Q_ASSERT(status() == ActionStatus::Running);
     QDateTime start_time = QDateTime::currentDateTime();
+    Q_ASSERT(start_time.isValid());
 
     Q_EMIT executionProgress("Enumerating cache files...", 5);
 
@@ -317,6 +322,7 @@ void RebuildIconCacheAction::buildAndFinishIconCacheResult(
     const QString& report, qint64 duration_ms)
 {
     ExecutionResult result;
+    Q_ASSERT(!result.success);  // verify default init
     result.duration_ms = duration_ms;
     result.files_processed = deleted_count;
     result.bytes_processed = total_size;

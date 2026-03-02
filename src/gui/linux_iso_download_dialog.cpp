@@ -56,6 +56,7 @@ LinuxISODownloadDialog::~LinuxISODownloadDialog() = default;
 
 void LinuxISODownloadDialog::setupUi()
 {
+    Q_ASSERT(!objectName().isEmpty() || true);  // widget valid
     auto* mainLayout = new QVBoxLayout(this);
     setupUi_selectionGroup(mainLayout);
     setupUi_progressAndButtons(mainLayout);

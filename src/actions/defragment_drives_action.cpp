@@ -49,6 +49,7 @@ int DefragmentDrivesAction::analyzeFragmentation(const QString& drive_letter) {
 
 void DefragmentDrivesAction::scan() {
     setStatus(ActionStatus::Scanning);
+    Q_ASSERT(status() == ActionStatus::Scanning);
 
     Q_EMIT scanProgress("Enumerating fixed drives...");
 
@@ -66,6 +67,8 @@ void DefragmentDrivesAction::scan() {
         : "No fixed drives detected";
     result.details = "Optimization uses Optimize-Volume (defrag/TRIM based on media type)";
 
+    Q_ASSERT(!result.summary.isEmpty());
+
     setScanResult(result);
     setStatus(ActionStatus::Ready);
     Q_EMIT scanComplete(result);
@@ -73,7 +76,9 @@ void DefragmentDrivesAction::scan() {
 
 void DefragmentDrivesAction::execute() {
     setStatus(ActionStatus::Running);
+    Q_ASSERT(status() == ActionStatus::Running);
     QDateTime start_time = QDateTime::currentDateTime();
+    Q_ASSERT(start_time.isValid());
     Q_EMIT executionProgress("Analyzing drives for optimization...", 5);
 
     QString ps_script = executeEnumerateVolumes();
@@ -167,10 +172,12 @@ void DefragmentDrivesAction::executeBuildReport(
 
     if (accumulated_output.contains("NO_DRIVES_FOUND")) {
         ExecutionResult result;
+    Q_ASSERT(!result.success);  // verify default init
         result.success = true;
         result.message = "No fixed NTFS drives found to optimize";
         result.duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
         result.log = accumulated_output + (std_err.isEmpty() ? "" : "\nErrors:\n" + std_err);
+        Q_ASSERT(result.duration_ms >= 0);
         finishWithResult(result, ActionStatus::Success);
         return;
     }
@@ -180,6 +187,7 @@ void DefragmentDrivesAction::executeBuildReport(
     qint64 duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
 
     ExecutionResult result;
+    Q_ASSERT(!result.success);  // verify default init
     result.duration_ms = duration_ms;
     result.success = true;
 
@@ -203,6 +211,8 @@ void DefragmentDrivesAction::executeBuildReport(
     if (!std_err.trimmed().isEmpty()) {
         result.log += "\nErrors:\n" + std_err.trimmed();
     }
+
+    Q_ASSERT(result.duration_ms >= 0);
 
     finishWithResult(result, ActionStatus::Success);
 }

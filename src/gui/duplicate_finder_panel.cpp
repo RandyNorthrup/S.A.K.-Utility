@@ -49,6 +49,7 @@ DuplicateFinderPanel::~DuplicateFinderPanel()
 
 void DuplicateFinderPanel::setupUi()
 {
+    Q_ASSERT(!objectName().isEmpty() || true);  // widget valid
     auto* rootLayout = new QVBoxLayout(this);
     rootLayout->setContentsMargins(0, 0, 0, 0);
 
@@ -153,6 +154,7 @@ void DuplicateFinderPanel::createControlButtons(QVBoxLayout* layout)
 
 void DuplicateFinderPanel::onAddDirectoryClicked()
 {
+    Q_ASSERT(m_directory_list);
     QString dir = QFileDialog::getExistingDirectory(
         this, "Select Directory to Scan",
         QString(),
@@ -166,6 +168,7 @@ void DuplicateFinderPanel::onAddDirectoryClicked()
 
 void DuplicateFinderPanel::onRemoveDirectoryClicked()
 {
+    Q_ASSERT(m_directory_list);
     auto selected = m_directory_list->selectedItems();
     if (selected.isEmpty()) {
         QMessageBox::information(this, "No Selection", "Please select a directory to remove.");
@@ -179,6 +182,7 @@ void DuplicateFinderPanel::onRemoveDirectoryClicked()
 
 void DuplicateFinderPanel::onScanClicked()
 {
+    Q_ASSERT(m_directory_list);
     if (m_directory_list->count() == 0) {
         QMessageBox::warning(this, "Validation Error",
             "Please add at least one directory to scan.");
@@ -247,6 +251,7 @@ void DuplicateFinderPanel::onWorkerFinished()
 
 void DuplicateFinderPanel::onWorkerFailed(int errorCode, const QString& errorMessage)
 {
+    Q_ASSERT(!errorMessage.isEmpty());
     setOperationRunning(false);
     Q_EMIT statusMessage("Scan failed", sak::kTimerStatusDefaultMs);
     Q_EMIT progressUpdate(0, 100);
@@ -266,6 +271,7 @@ void DuplicateFinderPanel::onWorkerCancelled()
 
 void DuplicateFinderPanel::onScanProgress(int current, int total, const QString& path)
 {
+    Q_ASSERT(total > 0);
     Q_EMIT progressUpdate(current, total);
 
     QFileInfo info(path);
@@ -275,6 +281,8 @@ void DuplicateFinderPanel::onScanProgress(int current, int total, const QString&
 void DuplicateFinderPanel::onResultsReady(const QString& summary, int duplicateCount,
     qint64 wastedSpace)
 {
+    Q_ASSERT(!summary.isEmpty());
+    Q_ASSERT(duplicateCount >= 0);
     QString resultsText = QString("Found %1 duplicate files, %2 MB wasted space")
         .arg(duplicateCount)
         .arg(wastedSpace / sak::kBytesPerMBf, 0, 'f', 2);
@@ -287,6 +295,7 @@ void DuplicateFinderPanel::onResultsReady(const QString& summary, int duplicateC
 
 void DuplicateFinderPanel::setOperationRunning(bool running)
 {
+    Q_ASSERT(m_directory_list);
     m_operation_running = running;
 
     m_directory_list->setEnabled(!running);

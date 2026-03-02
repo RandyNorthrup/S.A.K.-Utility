@@ -129,6 +129,7 @@ void DevelopmentConfigsBackupAction::scanIntelliJSettings() {
 
 void DevelopmentConfigsBackupAction::scan() {
     setStatus(ActionStatus::Scanning);
+    Q_ASSERT(status() == ActionStatus::Scanning);
 
     WindowsUserScanner scanner;
     m_user_profiles = scanner.scanUsers();
@@ -162,6 +163,8 @@ void DevelopmentConfigsBackupAction::scan() {
         result.summary = "No development configs found";
     }
 
+    Q_ASSERT(!result.summary.isEmpty());
+
     setScanResult(result);
     setStatus(ActionStatus::Ready);
     Q_EMIT scanComplete(result);
@@ -173,7 +176,9 @@ void DevelopmentConfigsBackupAction::execute() {
         return;
     }
     setStatus(ActionStatus::Running);
+    Q_ASSERT(status() == ActionStatus::Running);
     QDateTime start_time = QDateTime::currentDateTime();
+    Q_ASSERT(start_time.isValid());
 
     QDir backup_dir(m_backup_location + "/DevConfigs");
     backup_dir.mkpath(".");
@@ -205,6 +210,7 @@ void DevelopmentConfigsBackupAction::execute() {
     }
 
     ExecutionResult result;
+    Q_ASSERT(!result.success);  // verify default init
     result.success = processed > 0;
     result.duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
     result.files_processed = processed;

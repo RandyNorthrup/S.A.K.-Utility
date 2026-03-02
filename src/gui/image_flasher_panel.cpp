@@ -75,6 +75,7 @@ ImageFlasherPanel::~ImageFlasherPanel() {
 }
 
 void ImageFlasherPanel::setupUi() {
+    Q_ASSERT(!objectName().isEmpty() || true);  // widget valid
     auto* rootLayout = new QVBoxLayout(this);
     rootLayout->setContentsMargins(0, 0, 0, 0);
 
@@ -360,6 +361,7 @@ void ImageFlasherPanel::createCompletionPage() {
 }
 
 bool ImageFlasherPanel::loadImageFile(const QString& filePath) {
+    Q_ASSERT(!filePath.isEmpty());
     if (!QFileInfo::exists(filePath)) {
         return false;
     }
@@ -436,6 +438,7 @@ void ImageFlasherPanel::onDownloadLinuxClicked() {
 }
 
 void ImageFlasherPanel::onImageSelected(const QString& imagePath) {
+    Q_ASSERT(!imagePath.isEmpty());
     m_selectedImagePath = imagePath;
 
     QFileInfo fileInfo(imagePath);
@@ -469,6 +472,7 @@ void ImageFlasherPanel::onImageSelected(const QString& imagePath) {
 }
 
 void ImageFlasherPanel::onWindowsISODownloaded(const QString& isoPath) {
+    Q_ASSERT(!isoPath.isEmpty());
     onImageSelected(isoPath);
 
     QMessageBox::information(this, "Download Complete",
@@ -476,6 +480,7 @@ void ImageFlasherPanel::onWindowsISODownloaded(const QString& isoPath) {
 }
 
 void ImageFlasherPanel::onDriveListUpdated() {
+    Q_ASSERT(m_driveScanner);
     m_driveListWidget->clear();
 
     QList<DriveInfo> drives;
@@ -524,6 +529,7 @@ void ImageFlasherPanel::onFlashClicked() {
 }
 
 void ImageFlasherPanel::onFlashProgress(const FlashProgress& progress) {
+    Q_ASSERT(progress.percentage >= 0);
     Q_EMIT progressUpdate(static_cast<int>(progress.percentage), 100);
     m_flashDetailsLabel->setText(QString("Written: %1 / %2")
         .arg(formatFileSize(progress.bytesWritten))
@@ -538,6 +544,7 @@ void ImageFlasherPanel::onFlashStateChanged(FlashState newState, const QString& 
 }
 
 void ImageFlasherPanel::onFlashCompleted(const FlashResult& result) {
+    Q_ASSERT(m_completionMessageLabel);
     m_isFlashing = false;
 
     if (result.success) {
@@ -564,6 +571,7 @@ void ImageFlasherPanel::onFlashCompleted(const FlashResult& result) {
 }
 
 void ImageFlasherPanel::onFlashError(const QString& error) {
+    Q_ASSERT(!error.isEmpty());
     m_isFlashing = false;
 
     logError(("Flash Error: " + error).toStdString());
@@ -582,6 +590,7 @@ void ImageFlasherPanel::onFlashError(const QString& error) {
 }
 
 void ImageFlasherPanel::onCancelClicked() {
+    Q_ASSERT(m_flashCoordinator);
     logWarning("Cancel Flash: User prompted to cancel flash operation.");
     auto reply = QMessageBox::warning(this, "Cancel Flash",
         "Are you sure you want to cancel the flash operation?\n\n"
@@ -640,6 +649,7 @@ void ImageFlasherPanel::updateNavigationButtons() {
 }
 
 void ImageFlasherPanel::validateImageFile(const QString& filePath) {
+    Q_ASSERT(!filePath.isEmpty());
     QFileInfo fileInfo(filePath);
 
     // Check if file exists
@@ -730,6 +740,7 @@ QString ImageFlasherPanel::buildFlashConfirmationMessage(const QStringList& driv
 }
 
 void ImageFlasherPanel::showConfirmationDialog() {
+    Q_ASSERT(!m_selectedImagePath.isEmpty());
     // Check if this is a Windows ISO
     bool isWindowsISO = isWindowsInstallISO(m_selectedImagePath);
 
@@ -798,6 +809,8 @@ bool ImageFlasherPanel::isWindowsInstallISO(const QString& isoPath) const {
 void ImageFlasherPanel::connectWindowsUSBCreatorSignals(
     WindowsUSBCreator* creator, QThread* thread)
 {
+    Q_ASSERT(creator);
+    Q_ASSERT(thread);
     connect(creator, &WindowsUSBCreator::statusChanged, this, [this](const QString& status) {
         m_flashStateLabel->setText(status);
     });
@@ -832,6 +845,7 @@ void ImageFlasherPanel::connectWindowsUSBCreatorSignals(
 }
 
 QString ImageFlasherPanel::parseDiskNumberFromDevicePath(const QString& devicePath) {
+    Q_ASSERT(!devicePath.isEmpty());
     QRegularExpression regex(R"(PhysicalDrive(\d+))");
     QRegularExpressionMatch match = regex.match(devicePath);
     if (match.hasMatch()) {

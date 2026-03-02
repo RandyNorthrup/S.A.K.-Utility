@@ -59,6 +59,7 @@ bool DisableVisualEffectsAction::disableVisualEffects() {
 
 void DisableVisualEffectsAction::scan() {
     setStatus(ActionStatus::Scanning);
+    Q_ASSERT(status() == ActionStatus::Scanning);
 
     bool enabled = areVisualEffectsEnabled();
 
@@ -68,6 +69,8 @@ void DisableVisualEffectsAction::scan() {
         ? "Visual effects are enabled"
         : "Visual effects already optimized for performance";
     result.details = "Optimization sets Best Performance and disables animations";
+
+    Q_ASSERT(!result.summary.isEmpty());
 
     setScanResult(result);
     setStatus(ActionStatus::Ready);
@@ -81,7 +84,9 @@ void DisableVisualEffectsAction::execute() {
     }
 
     setStatus(ActionStatus::Running);
+    Q_ASSERT(status() == ActionStatus::Running);
     QDateTime start_time = QDateTime::currentDateTime();
+    Q_ASSERT(start_time.isValid());
 
     Q_EMIT executionProgress("Analyzing current visual effects settings...", 10);
 
@@ -187,6 +192,7 @@ void DisableVisualEffectsAction::buildAndFinishVisualEffectsResult(
     qint64 duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
 
     ExecutionResult result;
+    Q_ASSERT(!result.success);  // verify default init
     result.duration_ms = duration_ms;
     result.success = (settings_total > 0);
     result.message = settings_changed > 0

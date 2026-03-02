@@ -75,6 +75,7 @@ constexpr int kPeerColSeen = 4;
 } // namespace
 
 void NetworkTransferPanel::onScanUsers() {
+    Q_ASSERT(m_userScanner);
     m_users = m_userScanner->scanUsers();
     m_userTable->setRowCount(0);
 
@@ -110,6 +111,7 @@ void NetworkTransferPanel::onCustomizeUser() {
 }
 
 void NetworkTransferPanel::onDiscoverPeers() {
+    Q_ASSERT(m_controller);
     m_peers.clear();
     m_peerTable->setRowCount(0);
     m_controller->configure(m_settings);
@@ -123,6 +125,7 @@ void NetworkTransferPanel::onDiscoverPeers() {
 }
 
 void NetworkTransferPanel::onStartSource() {
+    Q_ASSERT(m_controller);
     buildManifest();
 
     TransferPeerInfo peer;
@@ -182,6 +185,7 @@ void NetworkTransferPanel::onStartSource() {
 }
 
 void NetworkTransferPanel::onStartDestination() {
+    Q_ASSERT(m_controller);
     m_settings.encryption_enabled = m_encryptCheck->isChecked();
     m_settings.compression_enabled = m_compressCheck->isChecked();
     m_settings.resume_enabled = m_resumeCheck->isChecked();
@@ -361,6 +365,7 @@ void NetworkTransferPanel::onManifestReceived(const TransferManifest& manifest) 
 }
 
 void NetworkTransferPanel::onTransferProgress(qint64 bytes, qint64 total) {
+    Q_ASSERT(total >= 0);
     if (total > 0) {
         const int percent = static_cast<int>((bytes * 100) / total);
         Q_EMIT progressUpdate(percent, 100);

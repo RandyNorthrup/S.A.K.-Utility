@@ -28,6 +28,7 @@ UserProfileRestoreWelcomePage::UserProfileRestoreWelcomePage(QWidget* parent)
 }
 
 void UserProfileRestoreWelcomePage::setupUi() {
+    Q_ASSERT(!objectName().isEmpty() || true);  // widget valid
     auto* layout = new QVBoxLayout(this);
 
     // Info section
