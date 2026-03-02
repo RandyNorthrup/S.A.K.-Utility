@@ -7,6 +7,10 @@ if(EXISTS "${SAK_BUILD_CONFIG}")
     message(STATUS "Loaded build configuration from ${SAK_BUILD_CONFIG}")
 else()
     message(STATUS "No build configuration found - using environment/command-line settings")
+    # Default to dynamic CRT when no build config is present (CI environments)
+    if(NOT DEFINED CMAKE_MSVC_RUNTIME_LIBRARY)
+        set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL" CACHE STRING "MSVC runtime library")
+    endif()
 endif()
 
 # Project definition
@@ -598,11 +602,16 @@ target_link_libraries(sak_utility PRIVATE
 )
 
 # Suppress MSVCRT defaultlib conflicts when linking static runtime with Qt libs
+# Only needed when static CRT (/MT) is used — suppressing MSVCRT with dynamic CRT causes LNK2001
 if(MSVC)
-    target_link_options(sak_utility PRIVATE
-        /NODEFAULTLIB:MSVCRT
-        /NODEFAULTLIB:MSVCRTD
-    )
+    string(FIND "${CMAKE_MSVC_RUNTIME_LIBRARY}" "DLL" _sak_crt_dll_pos)
+    if(_sak_crt_dll_pos EQUAL -1)
+        # Static CRT: suppress conflicting dynamic CRT default libs
+        target_link_options(sak_utility PRIVATE
+            /NODEFAULTLIB:MSVCRT
+            /NODEFAULTLIB:MSVCRTD
+        )
+    endif()
 endif()
 
 # Include directories
