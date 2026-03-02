@@ -1447,6 +1447,349 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_network_transfer_worker.cpp")
 endif()
 
 # ============================================================================
+# Unit Tests - Phase 8: Expanded Test Coverage
+# ============================================================================
+
+# test_quick_action_result_io — enum ↔ string round-trips, file write/read
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_quick_action_result_io.cpp")
+    add_executable(test_quick_action_result_io
+        unit/test_quick_action_result_io.cpp
+        ../src/core/quick_action_result_io.cpp
+        ../include/sak/quick_action_result_io.h
+        ../src/core/quick_action.cpp
+        ../include/sak/quick_action.h
+        ../src/core/logger.cpp
+    )
+    set_target_properties(test_quick_action_result_io PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+    )
+    target_link_libraries(test_quick_action_result_io PRIVATE
+        Qt6::Core Qt6::Gui Qt6::Test ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_quick_action_result_io PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_quick_action_result_io COMMAND test_quick_action_result_io
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_quick_action_result_io")
+endif()
+
+# test_quick_action_controller — registration, lookup, category filtering
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_quick_action_controller.cpp")
+    add_executable(test_quick_action_controller
+        unit/test_quick_action_controller.cpp
+        ../src/core/quick_action_controller.cpp
+        ../include/sak/quick_action_controller.h
+        ../src/core/quick_action.cpp
+        ../include/sak/quick_action.h
+        ../src/core/quick_action_result_io.cpp
+        ../include/sak/quick_action_result_io.h
+        ../src/core/elevation_manager.cpp
+        ../include/sak/elevation_manager.h
+        ../src/core/logger.cpp
+        ../include/sak/logger.h
+    )
+    set_target_properties(test_quick_action_controller PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+    )
+    target_link_libraries(test_quick_action_controller PRIVATE
+        Qt6::Core Qt6::Gui Qt6::Test ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_quick_action_controller PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_quick_action_controller COMMAND test_quick_action_controller
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_quick_action_controller")
+endif()
+
+# test_migration_report — entry CRUD, selection, counts, distribution
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_migration_report.cpp")
+    add_executable(test_migration_report
+        unit/test_migration_report.cpp
+        ../src/core/migration_report.cpp
+        ../include/sak/migration_report.h
+        ../src/core/app_scanner.cpp
+        ../include/sak/app_scanner.h
+        ../src/core/package_matcher.cpp
+        ../include/sak/package_matcher.h
+        ../src/core/chocolatey_manager.cpp
+        ../include/sak/chocolatey_manager.h
+        ../src/core/logger.cpp
+    )
+    set_target_properties(test_migration_report PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+    )
+    target_link_libraries(test_migration_report PRIVATE
+        Qt6::Core Qt6::Test Qt6::Concurrent Qt6::Network ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_migration_report PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_migration_report COMMAND test_migration_report
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_migration_report")
+endif()
+
+# test_linux_distro_catalog — catalog integrity, category filtering, resolution
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_linux_distro_catalog.cpp")
+    add_executable(test_linux_distro_catalog
+        unit/test_linux_distro_catalog.cpp
+        ../src/core/linux_distro_catalog.cpp
+        ../include/sak/linux_distro_catalog.h
+        ../src/core/logger.cpp
+    )
+    set_target_properties(test_linux_distro_catalog PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+    )
+    target_link_libraries(test_linux_distro_catalog PRIVATE
+        Qt6::Core Qt6::Test Qt6::Network ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_linux_distro_catalog PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_linux_distro_catalog COMMAND test_linux_distro_catalog
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_linux_distro_catalog")
+endif()
+
+# test_flash_coordinator — defaults, config, guards, cancel safety
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_flash_coordinator.cpp")
+    add_executable(test_flash_coordinator
+        unit/test_flash_coordinator.cpp
+        ../src/core/flash_coordinator.cpp
+        ../include/sak/flash_coordinator.h
+        ../src/threading/flash_worker.cpp
+        ../include/sak/flash_worker.h
+        ../src/threading/worker_base.cpp
+        ../include/sak/worker_base.h
+        ../src/core/image_source.cpp
+        ../include/sak/image_source.h
+        ../src/core/drive_unmounter.cpp
+        ../include/sak/drive_unmounter.h
+        ../src/core/drive_scanner.cpp
+        ../include/sak/drive_scanner.h
+        ../src/core/input_validator.cpp
+        ../src/core/streaming_decompressor.cpp
+        ../include/sak/streaming_decompressor.h
+        ../src/core/decompressor_factory.cpp
+        ../src/core/gzip_decompressor.cpp
+        ../include/sak/gzip_decompressor.h
+        ../src/core/bzip2_decompressor.cpp
+        ../include/sak/bzip2_decompressor.h
+        ../src/core/xz_decompressor.cpp
+        ../include/sak/xz_decompressor.h
+        ../src/core/keep_awake.cpp
+        ../include/sak/keep_awake.h
+        ../src/core/logger.cpp
+    )
+    set_target_properties(test_flash_coordinator PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+    )
+    target_link_libraries(test_flash_coordinator PRIVATE
+        Qt6::Core Qt6::Test ZLIB::ZLIB BZip2::BZip2 LibLZMA::LibLZMA ${PLATFORM_LIBS}
+    )
+    target_compile_definitions(test_flash_coordinator PRIVATE
+        QT_DISABLE_DEPRECATED_BEFORE=0x060000
+    )
+    target_include_directories(test_flash_coordinator PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_flash_coordinator COMMAND test_flash_coordinator
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_flash_coordinator")
+endif()
+
+# test_user_profile_backup_worker — construction, initial state, cancel
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_user_profile_backup_worker.cpp")
+    add_executable(test_user_profile_backup_worker
+        unit/test_user_profile_backup_worker.cpp
+        ../src/core/user_profile_backup_worker.cpp
+        ../include/sak/user_profile_backup_worker.h
+        ../src/core/user_profile_types.cpp
+        ../include/sak/user_profile_types.h
+        ../src/core/smart_file_filter.cpp
+        ../include/sak/smart_file_filter.h
+        ../src/core/permission_manager.cpp
+        ../include/sak/permission_manager.h
+        ../src/core/path_utils.cpp
+        ../src/core/logger.cpp
+    )
+    set_target_properties(test_user_profile_backup_worker PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+    )
+    target_link_libraries(test_user_profile_backup_worker PRIVATE
+        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_user_profile_backup_worker PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_user_profile_backup_worker COMMAND test_user_profile_backup_worker
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_user_profile_backup_worker")
+endif()
+
+# test_uup_iso_builder — phase defaults, cancel, weight constants
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_uup_iso_builder.cpp")
+    add_executable(test_uup_iso_builder
+        unit/test_uup_iso_builder.cpp
+        ../src/core/uup_iso_builder.cpp
+        ../include/sak/uup_iso_builder.h
+        ../src/core/uup_dump_api.cpp
+        ../include/sak/uup_dump_api.h
+        ../src/core/bundled_tools_manager.cpp
+        ../include/sak/bundled_tools_manager.h
+        ../src/core/logger.cpp
+    )
+    set_target_properties(test_uup_iso_builder PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+    )
+    target_link_libraries(test_uup_iso_builder PRIVATE
+        Qt6::Core Qt6::Test Qt6::Network ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_uup_iso_builder PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_uup_iso_builder COMMAND test_uup_iso_builder
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_uup_iso_builder")
+endif()
+
+# test_all_actions_metadata — per-action expected values, cancel behavior
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/actions/test_all_actions_metadata.cpp")
+    add_executable(test_all_actions_metadata
+        unit/actions/test_all_actions_metadata.cpp
+
+        # Factory
+        ../src/actions/action_factory.cpp
+        ../include/sak/actions/action_factory.h
+
+        # Base class
+        ../src/core/quick_action.cpp
+        ../include/sak/quick_action.h
+
+        # Dependencies used by actions
+        ../src/core/process_runner.cpp
+        ../include/sak/process_runner.h
+        ../src/core/logger.cpp
+        ../include/sak/logger.h
+        ../src/core/bundled_tools_manager.cpp
+        ../include/sak/bundled_tools_manager.h
+        ../src/core/path_utils.cpp
+        ../include/sak/path_utils.h
+        ../src/core/windows_user_scanner.cpp
+        ../include/sak/windows_user_scanner.h
+        ../src/core/user_profile_types.cpp
+        ../include/sak/user_profile_types.h
+        ../src/core/chocolatey_manager.cpp
+        ../include/sak/chocolatey_manager.h
+
+        # System Optimization actions
+        ../src/actions/disk_cleanup_action.cpp
+        ../include/sak/actions/disk_cleanup_action.h
+        ../src/actions/clear_browser_cache_action.cpp
+        ../include/sak/actions/clear_browser_cache_action.h
+        ../src/actions/defragment_drives_action.cpp
+        ../include/sak/actions/defragment_drives_action.h
+        ../src/actions/clear_windows_update_cache_action.cpp
+        ../include/sak/actions/clear_windows_update_cache_action.h
+        ../src/actions/disable_startup_programs_action.cpp
+        ../include/sak/actions/disable_startup_programs_action.h
+        ../src/actions/clear_event_logs_action.cpp
+        ../include/sak/actions/clear_event_logs_action.h
+        ../src/actions/optimize_power_settings_action.cpp
+        ../include/sak/actions/optimize_power_settings_action.h
+        ../src/actions/disable_visual_effects_action.cpp
+        ../include/sak/actions/disable_visual_effects_action.h
+
+        # Quick Backup actions
+        ../src/actions/quickbooks_backup_action.cpp
+        ../include/sak/actions/quickbooks_backup_action.h
+        ../src/actions/browser_profile_backup_action.cpp
+        ../include/sak/actions/browser_profile_backup_action.h
+        ../src/actions/outlook_backup_action.cpp
+        ../include/sak/actions/outlook_backup_action.h
+        ../src/actions/sticky_notes_backup_action.cpp
+        ../include/sak/actions/sticky_notes_backup_action.h
+        ../src/actions/saved_game_data_backup_action.cpp
+        ../include/sak/actions/saved_game_data_backup_action.h
+        ../src/actions/tax_software_backup_action.cpp
+        ../include/sak/actions/tax_software_backup_action.h
+        ../src/actions/photo_management_backup_action.cpp
+        ../include/sak/actions/photo_management_backup_action.h
+        ../src/actions/development_configs_backup_action.cpp
+        ../include/sak/actions/development_configs_backup_action.h
+        ../src/actions/backup_known_networks_action.cpp
+        ../include/sak/actions/backup_known_networks_action.h
+
+        # Maintenance actions
+        ../src/actions/update_all_apps_action.cpp
+        ../include/sak/actions/update_all_apps_action.h
+        ../src/actions/windows_update_action.cpp
+        ../include/sak/actions/windows_update_action.h
+        ../src/actions/verify_system_files_action.cpp
+        ../include/sak/actions/verify_system_files_action.h
+        ../src/actions/check_disk_errors_action.cpp
+        ../include/sak/actions/check_disk_errors_action.h
+        ../src/actions/rebuild_icon_cache_action.cpp
+        ../include/sak/actions/rebuild_icon_cache_action.h
+        ../src/actions/reset_network_action.cpp
+        ../include/sak/actions/reset_network_action.h
+        ../src/actions/clear_print_spooler_action.cpp
+        ../include/sak/actions/clear_print_spooler_action.h
+
+        # Troubleshooting actions
+        ../src/actions/generate_system_report_action.cpp
+        ../include/sak/actions/generate_system_report_action.h
+        ../src/actions/check_bloatware_action.cpp
+        ../include/sak/actions/check_bloatware_action.h
+        ../src/actions/test_network_speed_action.cpp
+        ../include/sak/actions/test_network_speed_action.h
+        ../src/actions/scan_malware_action.cpp
+        ../include/sak/actions/scan_malware_action.h
+        ../src/actions/repair_windows_store_action.cpp
+        ../include/sak/actions/repair_windows_store_action.h
+        ../src/actions/fix_audio_issues_action.cpp
+        ../include/sak/actions/fix_audio_issues_action.h
+
+        # Emergency Recovery actions
+        ../src/actions/create_restore_point_action.cpp
+        ../include/sak/actions/create_restore_point_action.h
+        ../src/actions/export_registry_keys_action.cpp
+        ../include/sak/actions/export_registry_keys_action.h
+        ../src/actions/screenshot_settings_action.cpp
+        ../include/sak/actions/screenshot_settings_action.h
+        ../src/actions/backup_desktop_wallpaper_action.cpp
+        ../include/sak/actions/backup_desktop_wallpaper_action.h
+        ../src/actions/backup_printer_settings_action.cpp
+        ../include/sak/actions/backup_printer_settings_action.h
+        ../src/actions/backup_bitlocker_keys_action.cpp
+        ../include/sak/actions/backup_bitlocker_keys_action.h
+    )
+
+    set_target_properties(test_all_actions_metadata PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+    )
+    target_link_libraries(test_all_actions_metadata PRIVATE
+        Qt6::Core Qt6::Test Qt6::Widgets ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_all_actions_metadata PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_all_actions_metadata COMMAND test_all_actions_metadata
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_all_actions_metadata")
+endif()
+
+# ============================================================================
 # Test Targets
 # ============================================================================
 
