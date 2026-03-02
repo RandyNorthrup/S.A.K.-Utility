@@ -20,10 +20,11 @@ Migration · Maintenance · Recovery · Imaging · Deployment — one portable E
 
 ## What's New in v0.7.0
 
+- **Advanced Search panel** — Enterprise-grade grep-style file content search with a three-panel interface (file explorer, results tree, preview pane). Supports text, regex, image metadata (EXIF/GPS), file metadata (PDF/Office/audio/video), archive content (ZIP/EPUB with deflate decompression), and binary/hex search modes. Includes a regex pattern library with 8 built-in patterns and custom user-defined patterns with JSON persistence.
 - **Modernized About panel** — Rebuilt as a multi-tab view (About, License, Credits, System) with styled HTML, full dependency attribution (12 third-party components), and live runtime info. Removed dead `AboutDialog` class.
 - **Unified UI polish** — Glass-effect 3-stop rgba button gradients, transparent widget backgrounds eliminating patchy gray/white artifacts, harmonized margins and border-radii via style tokens, centered quick-action labels, consistent UUP progress bar height.
 - **TigerStyle Phase 9 compliance** — Lint errors reduced from 52 → 0 across the codebase; 0 compiler warnings in Release builds.
-- **README accuracy** — Corrected stress-test durations, build output paths, and removed hardcoded iteration counts.
+- **69 automated tests** — Comprehensive test suite covering all major subsystems including Advanced Search (types, regex library, worker, controller).
 
 ### v0.6.3
 
@@ -58,6 +59,7 @@ Migration · Maintenance · Recovery · Imaging · Deployment — one portable E
 | **Diagnostics & Benchmarking** | SMART disk health, CPU/disk/memory benchmarks, stress testing, thermal monitoring, HTML/JSON/CSV reports. |
 | **Network Transfer** | Peer-to-peer LAN migration with AES-256-GCM, resume, and multi-PC orchestrator mode. |
 | **Image Flasher** | Flash ISOs/IMGs to USB. Download Windows and Linux ISOs directly. |
+| **Advanced Search** | Grep-style file content search with regex, metadata, archive, and binary/hex modes across directory trees. |
 | **BitLocker Key Backup** | Export recovery keys from all encrypted volumes with restricted-permission files. |
 | **Modern UI** | Windows 11-style rounded corners, custom splash screen, and responsive layouts. |
 
@@ -77,6 +79,7 @@ Migration · Maintenance · Recovery · Imaging · Deployment — one portable E
   - [Directory Organizer](#directory-organizer)
   - [Duplicate Finder](#duplicate-finder)
   - [WiFi Manager](#wifi-manager)
+  - [Advanced Search](#advanced-search)
   - [Settings](#settings)
 - [Security](#security)
 - [Building from Source](#building-from-source)
@@ -333,6 +336,24 @@ Generate and manage WiFi network QR codes and network configuration scripts.
 
 ---
 
+### Advanced Search
+
+Enterprise-grade grep-style file content search with a three-panel interface: file explorer, results tree, and preview pane.
+
+- **Text content search** — Line-by-line search with configurable context window (0–10 lines before/after)
+- **Regex support** — Full QRegularExpression engine with case-sensitive, whole-word, and multiline options
+- **Regex Pattern Library** — 8 built-in patterns (emails, URLs, IPv4, phone numbers, dates, hex, numbers, words) plus custom user-defined patterns with JSON persistence
+- **Binary/hex search** — Search binary files for text or hex patterns with hex-context display
+- **Image metadata search** — Search EXIF/GPS metadata in image files
+- **File metadata search** — Search metadata in PDF, Office, audio/video files
+- **Archive search** — Search inside ZIP/EPUB archives with deflate decompression (handles real-world .docx, .xlsx, .pptx, .odt, .epub)
+- **File explorer** — Drive and directory navigation with lazy-loading tree, context menus
+- **Results tree** — Grouped by file with 8 sort modes (path, match count, file size, date modified)
+- **Preview pane** — Monospace file preview with yellow/orange match highlighting, previous/next navigation with wrapping, line numbers with `>>>` match indicators
+- **Search history** — Last 50 searches persisted via ConfigManager
+
+---
+
 ### Settings
 
 Global application settings accessible from the **Edit → Settings** menu (`Ctrl+,`):
@@ -416,7 +437,7 @@ Requires Azure CLI and access to the Azure Trusted Signing account. CI builds (G
 | Library | License | Purpose |
 |---|---|---|
 | [Qt 6.5+](https://www.qt.io/) | LGPL v3 | UI framework (Core, Widgets, Concurrent, Network; Gui linked transitively via Widgets) |
-| [zlib](https://www.zlib.net/) | zlib License | gzip compression |
+| [zlib](https://www.zlib.net/) | zlib License | Compression and ZIP archive decompression (deflate) |
 | [bzip2](https://sourceware.org/bzip2/) | BSD-style | bzip2 compression |
 | [liblzma](https://tukaani.org/xz/) | 0BSD / Public Domain | xz/LZMA compression |
 | [qrcodegen](https://www.nayuki.io/page/qr-code-generator-library) | MIT | QR code generation (bundled source) |
@@ -432,7 +453,7 @@ Full license texts: [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md)
 cmake --build build --config Release --target RUN_TESTS
 ```
 
-Unit and integration tests covering network transfer, orchestration, diagnostics, security, encryption, configuration, ISO download, and quick action factory validation.
+Unit and integration tests covering Advanced Search, network transfer, orchestration, diagnostics, security, encryption, configuration, ISO download, and quick action factory validation.
 
 ---
 

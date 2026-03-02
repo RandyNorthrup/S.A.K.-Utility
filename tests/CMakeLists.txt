@@ -1790,6 +1790,109 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/actions/test_all_actions_metadata.cp
 endif()
 
 # ============================================================================
+# Unit Tests - Advanced Search Panel
+# ============================================================================
+
+# test_advanced_search_types — struct defaults, extension sets, value semantics
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_advanced_search_types.cpp")
+    add_executable(test_advanced_search_types
+        unit/test_advanced_search_types.cpp
+    )
+    set_target_properties(test_advanced_search_types PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+    )
+    target_link_libraries(test_advanced_search_types PRIVATE
+        Qt6::Core Qt6::Test
+    )
+    target_include_directories(test_advanced_search_types PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_advanced_search_types COMMAND test_advanced_search_types
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_advanced_search_types")
+endif()
+
+# test_regex_pattern_library — built-in/custom patterns, enable/disable, CRUD, combined
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_regex_pattern_library.cpp")
+    add_executable(test_regex_pattern_library
+        unit/test_regex_pattern_library.cpp
+        ../src/core/regex_pattern_library.cpp
+        ../src/core/logger.cpp
+        ../include/sak/regex_pattern_library.h
+    )
+    set_target_properties(test_regex_pattern_library PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+    )
+    target_link_libraries(test_regex_pattern_library PRIVATE
+        Qt6::Core Qt6::Test
+    )
+    target_include_directories(test_regex_pattern_library PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_regex_pattern_library COMMAND test_regex_pattern_library
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_regex_pattern_library")
+endif()
+
+# test_advanced_search_worker — regex compilation, text/metadata/archive/binary search
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_advanced_search_worker.cpp")
+    add_executable(test_advanced_search_worker
+        unit/test_advanced_search_worker.cpp
+        ../src/core/advanced_search_worker.cpp
+        ../src/threading/worker_base.cpp
+        ../src/core/logger.cpp
+        ../include/sak/advanced_search_worker.h
+        ../include/sak/worker_base.h
+    )
+    set_target_properties(test_advanced_search_worker PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+    )
+    target_link_libraries(test_advanced_search_worker PRIVATE
+        Qt6::Core Qt6::Gui Qt6::Test ZLIB::ZLIB
+    )
+    target_include_directories(test_advanced_search_worker PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_advanced_search_worker COMMAND test_advanced_search_worker
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_advanced_search_worker")
+endif()
+
+# test_advanced_search_controller — state machine, history, preferences, lifecycle
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_advanced_search_controller.cpp")
+    add_executable(test_advanced_search_controller
+        unit/test_advanced_search_controller.cpp
+        ../src/core/advanced_search_controller.cpp
+        ../src/core/advanced_search_worker.cpp
+        ../src/core/regex_pattern_library.cpp
+        ../src/core/config_manager.cpp
+        ../src/threading/worker_base.cpp
+        ../src/core/logger.cpp
+        ../include/sak/advanced_search_controller.h
+        ../include/sak/advanced_search_worker.h
+        ../include/sak/regex_pattern_library.h
+        ../include/sak/config_manager.h
+        ../include/sak/worker_base.h
+    )
+    set_target_properties(test_advanced_search_controller PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+    )
+    target_link_libraries(test_advanced_search_controller PRIVATE
+        Qt6::Core Qt6::Gui Qt6::Test ZLIB::ZLIB
+    )
+    target_include_directories(test_advanced_search_controller PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_advanced_search_controller COMMAND test_advanced_search_controller
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_advanced_search_controller")
+endif()
+
+# ============================================================================
 # Test Targets
 # ============================================================================
 

@@ -373,6 +373,13 @@ set(CORE_SOURCES
     include/sak/thermal_monitor.h
     include/sak/diagnostic_report_generator.h
     include/sak/diagnostic_controller.h
+    src/core/advanced_search_worker.cpp
+    src/core/advanced_search_controller.cpp
+    src/core/regex_pattern_library.cpp
+    include/sak/advanced_search_types.h
+    include/sak/advanced_search_worker.h
+    include/sak/advanced_search_controller.h
+    include/sak/regex_pattern_library.h
 )
 
 # Threading infrastructure
@@ -451,6 +458,8 @@ set(GUI_SOURCES
     include/sak/wifi_manager_panel.h
     src/third_party/qrcodegen/qrcodegen.cpp
     src/third_party/qrcodegen/qrcodegen.hpp
+    src/gui/advanced_search_panel.cpp
+    include/sak/advanced_search_panel.h
 )
 
 # Quick Actions

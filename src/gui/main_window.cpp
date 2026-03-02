@@ -15,6 +15,7 @@
 #include "sak/network_transfer_panel.h"
 #include "sak/diagnostic_benchmark_panel.h"
 #include "sak/wifi_manager_panel.h"
+#include "sak/advanced_search_panel.h"
 #include "sak/detachable_log_window.h"
 #include "sak/config_manager.h"
 #include "sak/style_constants.h"
@@ -174,6 +175,12 @@ void MainWindow::createToolPanels()
         "Manage WiFi networks, QR codes, and profiles (Ctrl+9)");
     connect(m_wifi_manager_panel.get(), &WifiManagerPanel::statusMessage,
             this, &MainWindow::updateStatus);
+
+    // Create Advanced Search panel
+    m_advanced_search_panel = std::make_unique<AdvancedSearchPanel>(this);
+    m_tab_widget->addTab(m_advanced_search_panel.get(), "Advanced Search");
+    m_tab_widget->setTabToolTip(m_tab_widget->count() - 1,
+        "Search file contents, metadata, archives, and binary data");
 }
 
 void MainWindow::loadAboutPanelIcon(QLabel* iconLabel)
@@ -486,6 +493,12 @@ void MainWindow::connectPanelSignals()
                 timeout_ms > 0 ? timeout_ms : 5000); });
     connect(m_diagnostic_benchmark_panel.get(), &DiagnosticBenchmarkPanel::progressUpdate,
             this, &MainWindow::updateProgress);
+
+    connect(m_advanced_search_panel.get(), &AdvancedSearchPanel::statusMessage,
+            this, [this](const QString& msg, int timeout_ms) { updateStatus(msg,
+                timeout_ms > 0 ? timeout_ms : 5000); });
+    connect(m_advanced_search_panel.get(), &AdvancedSearchPanel::progressUpdate,
+            this, &MainWindow::updateProgress);
 }
 
 void MainWindow::connectPanelLogs()
@@ -517,6 +530,7 @@ void MainWindow::connectPanelLogs()
     connectLog(m_app_installation_panel.get());
     connectLog(m_image_flasher_panel.get());
     connectLog(m_diagnostic_benchmark_panel.get());
+    connectLog(m_advanced_search_panel.get());
 
     if (m_network_transfer_panel) {
         connectLog(m_network_transfer_panel.get());
