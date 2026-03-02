@@ -6,6 +6,7 @@
 #include "sak/quick_action.h"
 #include <QDateTime>
 #include <QString>
+#include <utility>
 
 namespace sak {
 
@@ -60,6 +61,8 @@ private:
     void testLatencyAndJitter();
     void getPublicIPInfo();
 
+    /// @brief Assess latency/jitter/loss and return {quality, recommendation}
+    std::pair<QString, QString> assessConnectionQuality() const;
     /// @brief Build the complete speed test report string from collected metrics
     QString buildSpeedTestReport() const;
     /// @brief Create and emit the final execution result

@@ -42,6 +42,8 @@ private:
 
     // TigerStyle helpers for execute() decomposition
     bool executeEnumerateLogs(const QDateTime& start_time, QString& ps_script);
+    QString buildLogScriptInit() const;
+    QString buildLogScriptLoop() const;
     bool executeClearLogs(const QDateTime& start_time, const QString& ps_script,
                           int& total_logs, int& cleared_logs, int& total_entries,
                           int& backed_up, QString& backup_path, QStringList& details);

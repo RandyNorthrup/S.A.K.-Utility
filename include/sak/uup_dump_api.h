@@ -189,6 +189,9 @@ private:
     bool checkApiError(const QJsonObject& response, const QString& context);
     QString buildSearchQuery(const QString& arch, ReleaseChannel channel) const;
 
+    /// @brief Extract langFancyNames from API response into a display-name map
+    QMap<QString, QString> parseLangFancyNames(const QJsonObject& response);
+
     /// @brief Parse and validate a single file entry from the API response
     /// @return FileInfo if valid, std::nullopt if rejected
     std::optional<FileInfo> parseAndValidateFileEntry(const QString& key,

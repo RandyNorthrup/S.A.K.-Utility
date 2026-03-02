@@ -57,6 +57,8 @@ private:
     /// @brief Copy discovered Outlook files to the backup directory
     bool copyOutlookFilesToBackup(const QVector<OutlookFile>& found_files, const QDir& backup_dir,
                                    int& files_copied, qint64& bytes_copied);
+    void finalizeOutlookResult(int files_copied, qint64 bytes_copied,
+                               const QDir& backup_dir, const QDateTime& start_time);
 };
 
 } // namespace sak

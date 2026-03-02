@@ -85,15 +85,7 @@ void BackupDesktopWallpaperAction::execute() {
 
     Q_EMIT executionProgress("Backing up desktop wallpapers...", 20);
 
-    QDir backup_dir(m_backup_location);
-    if (!backup_dir.exists()) {
-        backup_dir.mkpath(".");
-    }
-
-    QString wallpaper_folder = backup_dir.filePath("Wallpapers");
-    QDir wallpaper_dir(wallpaper_folder);
-    wallpaper_dir.mkpath(".");
-
+    QString wallpaper_folder = prepareWallpaperDirectory();
     int backed_up = 0;
     qint64 total_bytes = 0;
 
@@ -143,6 +135,18 @@ void BackupDesktopWallpaperAction::execute() {
         result.log = "TranscodedWallpaper files not found in user profiles";
         finishWithResult(result, ActionStatus::Failed);
     }
+}
+
+QString BackupDesktopWallpaperAction::prepareWallpaperDirectory() {
+    QDir backup_dir(m_backup_location);
+    if (!backup_dir.exists()) {
+        backup_dir.mkpath(".");
+    }
+
+    QString wallpaper_folder = backup_dir.filePath("Wallpapers");
+    QDir wallpaper_dir(wallpaper_folder);
+    wallpaper_dir.mkpath(".");
+    return wallpaper_folder;
 }
 
 } // namespace sak

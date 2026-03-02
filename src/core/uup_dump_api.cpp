@@ -205,6 +205,15 @@ void UupDumpApi::onBuildsFetchReply() {
     Q_EMIT buildsFetched(builds);
 }
 
+QMap<QString, QString> UupDumpApi::parseLangFancyNames(const QJsonObject& response) {
+    QJsonObject langFancyNames = response["langFancyNames"].toObject();
+    QMap<QString, QString> langNames;
+    for (auto it = langFancyNames.begin(); it != langFancyNames.end(); ++it) {
+        langNames[it.key()] = it.value().toString();
+    }
+    return langNames;
+}
+
 void UupDumpApi::onLanguagesReply() {
     QNetworkReply* reply = qobject_cast<QNetworkReply*>(sender());
     if (!reply) {
@@ -256,11 +265,7 @@ void UupDumpApi::onLanguagesReply() {
         }
     }
 
-    QJsonObject langFancyNames = response["langFancyNames"].toObject();
-    QMap<QString, QString> langNames;
-    for (auto it = langFancyNames.begin(); it != langFancyNames.end(); ++it) {
-        langNames[it.key()] = it.value().toString();
-    }
+    QMap<QString, QString> langNames = parseLangFancyNames(response);
 
     // Sort by friendly name for better UX
     std::sort(langCodes.begin(), langCodes.end(), [&langNames](const QString& a, const QString& b) {

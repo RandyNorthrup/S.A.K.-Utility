@@ -47,6 +47,7 @@ private Q_SLOTS:
 
 private:
     void handleMessage(const QJsonObject& message);
+    void dispatchAssignmentControl(const QJsonObject& message);
 
     QTcpSocket* m_socket{nullptr};
     QByteArray m_buffer;

@@ -3,6 +3,7 @@
 
 #include "sak/detachable_log_window.h"
 #include "sak/layout_constants.h"
+#include "sak/style_constants.h"
 
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -31,7 +32,8 @@ DetachableLogWindow::DetachableLogWindow(const QString& title, QWidget* parent)
     resize(sak::kDetachLogInitW, sak::kDetachLogInitH);
 
     auto* layout = new QVBoxLayout(this);
-    layout->setContentsMargins(6, 6, 6, 6);
+    layout->setContentsMargins(sak::ui::kMarginTight, sak::ui::kMarginTight,
+        sak::ui::kMarginTight, sak::ui::kMarginTight);
     layout->setSpacing(4);
 
     // Log text area (uses app theme — no custom dark style)

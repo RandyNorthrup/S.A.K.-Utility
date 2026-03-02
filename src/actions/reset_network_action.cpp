@@ -234,6 +234,10 @@ bool ResetNetworkAction::executeResetIpStack(QStringList& errors) {
 
     if (isCancelled()) return false;
 
+    return executeResetAdaptersAndCache(errors);
+}
+
+bool ResetNetworkAction::executeResetAdaptersAndCache(QStringList& errors) {
     // Step 7: Reset network adapter settings
     Q_EMIT executionProgress("Resetting network adapters...", 85);
     QString resetAdapterScript =

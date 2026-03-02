@@ -51,6 +51,10 @@ private:
     /// @return false if cancelled
     bool executeResetIpStack(QStringList& errors);
 
+    /// @brief Execute adapter restart and NetBIOS cache clearing
+    /// @return false if cancelled
+    bool executeResetAdaptersAndCache(QStringList& errors);
+
     /// @brief Build and emit the final execution report
     void executeBuildReport(const QStringList& errors, const QDateTime& start_time);
 };

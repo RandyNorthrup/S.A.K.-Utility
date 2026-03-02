@@ -51,6 +51,9 @@ private:
                               bool cache_reset, bool package_reset,
                               bool reregistered, bool services_restarted,
                               const StorePackageInfo& after_info, int post_error_count);
+    void finalizeRepairResult(bool cache_reset, bool package_reset, bool reregistered,
+                              bool services_restarted, const StorePackageInfo& after_info,
+                              const QString& report, const QDateTime& start_time);
 };
 
 } // namespace sak

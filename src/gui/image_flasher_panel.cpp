@@ -549,10 +549,12 @@ void ImageFlasherPanel::onFlashCompleted(const FlashResult& result) {
 
     if (result.success) {
         m_completionMessageLabel->setText("✓ Flash Completed Successfully!");
-        m_completionMessageLabel->setStyleSheet("color: #16a34a;");
+        m_completionMessageLabel->setStyleSheet(
+            QString("color: %1;").arg(sak::ui::kColorSuccess));
     } else {
-        m_completionMessageLabel->setText("✗ Flash Completed with Errors");
-        m_completionMessageLabel->setStyleSheet("color: #dc2626;");
+        m_completionMessageLabel->setText("\u2717 Flash Completed with Errors");
+        m_completionMessageLabel->setStyleSheet(
+            QString("color: %1;").arg(sak::ui::kColorError));
     }
 
     QString details = QString("Successful: %1\nFailed: %2")

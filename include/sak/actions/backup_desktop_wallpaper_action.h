@@ -38,6 +38,7 @@ private:
 
     QString findTranscodedWallpaper(const QString& profile_path);
     bool backupRegistrySettings(const QString& dest_folder);
+    QString prepareWallpaperDirectory();
 };
 
 } // namespace sak

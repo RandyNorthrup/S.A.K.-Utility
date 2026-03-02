@@ -316,6 +316,19 @@ void TestNetworkSpeedAction::scan() {
     Q_EMIT scanComplete(result);
 }
 
+std::pair<QString, QString> TestNetworkSpeedAction::assessConnectionQuality() const {
+    if (m_latency < 20 && m_jitter < 10 && m_packet_loss < 1.0) {
+        return {"Excellent", "Ideal for gaming, video calls, and streaming"};
+    }
+    if (m_latency < 50 && m_jitter < 20 && m_packet_loss < 2.0) {
+        return {"Good", "Suitable for most online activities"};
+    }
+    if (m_latency < 100 && m_jitter < 30 && m_packet_loss < 5.0) {
+        return {"Fair", "May experience delays in real-time applications"};
+    }
+    return {"Poor", "Not recommended for latency-sensitive tasks"};
+}
+
 QString TestNetworkSpeedAction::buildSpeedTestReport() const {
     QString report;
     report += QString("╔").repeated(1) + QString("═").repeated(78) + QString("╗\n");
@@ -371,22 +384,7 @@ QString TestNetworkSpeedAction::buildSpeedTestReport() const {
             2).leftJustified(79) + QString("║\n");
         report += QString("╠").repeated(1) + QString("═").repeated(78) + QString("╣\n");
 
-        // Connection Quality Assessment
-        QString quality, recommendation;
-        if (m_latency < 20 && m_jitter < 10 && m_packet_loss < 1.0) {
-            quality = "Excellent";
-            recommendation = "Ideal for gaming, video calls, and streaming";
-        } else if (m_latency < 50 && m_jitter < 20 && m_packet_loss < 2.0) {
-            quality = "Good";
-            recommendation = "Suitable for most online activities";
-        } else if (m_latency < 100 && m_jitter < 30 && m_packet_loss < 5.0) {
-            quality = "Fair";
-            recommendation = "May experience delays in real-time applications";
-        } else {
-            quality = "Poor";
-            recommendation = "Not recommended for latency-sensitive tasks";
-        }
-
+        const auto [quality, recommendation] = assessConnectionQuality();
         report += QString("║ Connection Quality:    %1").arg(quality).leftJustified(79) +
             QString("║\n");
         report += QString("║ Recommendation:        %1").arg(recommendation).leftJustified(79) +

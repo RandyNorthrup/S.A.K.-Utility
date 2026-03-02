@@ -640,6 +640,10 @@ void UserProfileRestorePermissionSettingsPage::setupUi() {
 
     layout->addWidget(conflictGroup);
 
+    setupUi_optionsAndConnections(layout);
+}
+
+void UserProfileRestorePermissionSettingsPage::setupUi_optionsAndConnections(QVBoxLayout* layout) {
     layout->addSpacing(20);
 
     // Options

@@ -143,8 +143,12 @@ bool ClearEventLogsAction::executeEnumerateLogs(const QDateTime& start_time, QSt
     Q_EMIT executionProgress("╠════════════════════════════════════════════════════════════════╣",
         0);
 
-    // Comprehensive PowerShell script for enterprise-grade event log management
-    ps_script = QString(
+    ps_script = buildLogScriptInit() + buildLogScriptLoop();
+    return true;
+}
+
+QString ClearEventLogsAction::buildLogScriptInit() const {
+    return QString(
         "$ErrorActionPreference = 'Continue'\n"
         "$results = @()\n"
         "$totalLogs = 0\n"
@@ -162,6 +166,11 @@ bool ClearEventLogsAction::executeEnumerateLogs(const QDateTime& start_time, QSt
         "# Get all event logs using Get-EventLog -List\n"
         "$allLogs = Get-EventLog -List | Where-Object { $_.Entries.Count -gt 0 } | Sort-Object "
         "Log\n"
+    );
+}
+
+QString ClearEventLogsAction::buildLogScriptLoop() const {
+    return QString(
         "\n"
         "foreach ($log in $allLogs) {\n"
         "    $totalLogs++\n"
@@ -206,8 +215,6 @@ bool ClearEventLogsAction::executeEnumerateLogs(const QDateTime& start_time, QSt
         "    Write-Output \"DETAIL:$result\"\n"
         "}\n"
     );
-
-    return true;
 }
 
 bool ClearEventLogsAction::executeClearLogs(const QDateTime& start_time,

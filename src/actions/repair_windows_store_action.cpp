@@ -210,6 +210,14 @@ void RepairWindowsStoreAction::execute() {
 
     Q_EMIT executionProgress("Windows Store repair complete", 100);
 
+    finalizeRepairResult(cache_reset, package_reset, reregistered,
+                         services_restarted, after_info, report, start_time);
+}
+
+void RepairWindowsStoreAction::finalizeRepairResult(
+    bool cache_reset, bool package_reset, bool reregistered,
+    bool services_restarted, const StorePackageInfo& after_info,
+    const QString& report, const QDateTime& start_time) {
     qint64 duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
 
     ExecutionResult result;

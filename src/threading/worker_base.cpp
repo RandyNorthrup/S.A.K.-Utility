@@ -72,7 +72,7 @@ void WorkerBase::run()
             static_cast<int>(sak::error_code::internal_error),
             QString("Unhandled exception: %1").arg(e.what())
         );
-    } catch (...) {
+    } catch (...) {  // Final safety net: re-throw in debug builds
         m_is_running.store(false, std::memory_order_release);
         sak::logError("Worker thread threw unknown exception");
         Q_EMIT failed(

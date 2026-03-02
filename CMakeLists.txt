@@ -11,7 +11,7 @@ endif()
 
 # Project definition
 project(SAK_Utility 
-    VERSION 0.6.3
+    VERSION 0.7.0
     DESCRIPTION "Swiss Army Knife Utility - PC technician's toolkit for Windows migration and maintenance"
     LANGUAGES CXX
 )# C++23 Standard - Strict compliance required
@@ -389,13 +389,11 @@ set(GUI_SOURCES
     src/gui/user_migration_panel.cpp
     src/gui/organizer_panel.cpp
     src/gui/duplicate_finder_panel.cpp
-    src/gui/about_dialog.cpp
     src/gui/log_viewer.cpp
     include/sak/main_window.h
     include/sak/user_migration_panel.h
     include/sak/organizer_panel.h
     include/sak/duplicate_finder_panel.h
-    include/sak/about_dialog.h
     include/sak/log_viewer.h
     include/sak/settings_dialog.h
     src/gui/settings_dialog.cpp

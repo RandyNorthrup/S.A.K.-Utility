@@ -5,6 +5,7 @@
 #include "sak/config_manager.h"
 #include "sak/info_button.h"
 #include "sak/layout_constants.h"
+#include "sak/style_constants.h"
 
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -39,7 +40,8 @@ void SettingsDialog::setupUi() {
     setSizeGripEnabled(true);
 
     auto* mainLayout = new QVBoxLayout(this);
-    mainLayout->setContentsMargins(10, 10, 10, 10);
+    mainLayout->setContentsMargins(sak::ui::kMarginMedium, sak::ui::kMarginMedium,
+        sak::ui::kMarginMedium, sak::ui::kMarginMedium);
 
     // Create tab widget
     m_tabWidget = new QTabWidget(this);

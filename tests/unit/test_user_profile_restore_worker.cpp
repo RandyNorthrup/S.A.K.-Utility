@@ -37,7 +37,7 @@ static sak::BackupManifest buildManifest(const QString& username,
     sak::BackupManifest manifest;
     manifest.version = QStringLiteral("1.0");
     manifest.source_machine = QStringLiteral("TEST-PC");
-    manifest.sak_version = QStringLiteral("0.6.3");
+    manifest.sak_version = QStringLiteral("0.7.0");
     manifest.backup_type = QStringLiteral("full");
 
     sak::BackupUserData user;

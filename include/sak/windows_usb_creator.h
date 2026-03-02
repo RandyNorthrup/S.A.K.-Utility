@@ -207,6 +207,10 @@ private:
      */
     bool makeBootable(const QString& driveLetter);
 
+    /// @brief Execute the bcdboot process to configure boot files
+    /// @return true on success or non-critical failure
+    bool runBcdboot(const QString& bcdbootPath, const QString& cleanDrive);
+
     /**
      * @brief Verify that the bootable flag is set on the partition
      * @param driveLetter Drive letter to verify

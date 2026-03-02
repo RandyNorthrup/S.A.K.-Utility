@@ -51,6 +51,8 @@ private:
     };
 
     bool runWingetUpdate(UpdateSummary& summary, const QDateTime& start_time);
+    /// @brief Execute the winget upgrade command and record results
+    void executeWingetUpgrade(UpdateSummary& summary);
     bool runStoreUpdate(UpdateSummary& summary);
     bool runChocoUpdate(UpdateSummary& summary, const QDateTime& start_time);
     void buildUpdateReport(UpdateSummary& summary, qint64 duration_ms) const;

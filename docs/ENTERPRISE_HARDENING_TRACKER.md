@@ -1,6 +1,6 @@
 # S.A.K. Utility — Enterprise Hardening Tracker
 
-> **Version:** 0.6.3 | **Date:** 2025-01-XX | **Stack:** C++23 / Qt 6.5.3 / CMake 3.28 / MSVC 19.44  
+> **Version:** 0.7.0 | **Date:** 2026-03-02 | **Stack:** C++23 / Qt 6.5.3 / CMake 3.28 / MSVC 19.44  
 > **Status:** 🔄 In Progress — 93 / 99 findings resolved
 
 ---

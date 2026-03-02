@@ -93,11 +93,12 @@ void LinuxISODownloadDialog::setupUi_selectionGroup(QVBoxLayout* mainLayout)
     // Right: Details panel
     auto* detailsWidget = new QWidget(selectionGroup);
     auto* detailsLayout = new QVBoxLayout(detailsWidget);
-    detailsLayout->setContentsMargins(8, 0, 0, 0);
+    detailsLayout->setContentsMargins(sak::ui::kMarginSmall, 0, 0, 0);
 
     m_distroDescriptionLabel = new QLabel("", detailsWidget);
     m_distroDescriptionLabel->setWordWrap(true);
-    m_distroDescriptionLabel->setStyleSheet("font-size: 10pt;");
+    m_distroDescriptionLabel->setStyleSheet(
+        QString("font-size: %1pt;").arg(sak::ui::kFontSizeBody));
     detailsLayout->addWidget(m_distroDescriptionLabel);
 
     detailsLayout->addSpacing(8);

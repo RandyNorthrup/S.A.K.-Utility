@@ -197,7 +197,12 @@ void OutlookBackupAction::execute() {
     }
 
     Q_EMIT executionProgress("Backup complete", 100);
+    finalizeOutlookResult(files_copied, bytes_copied, backup_dir, start_time);
+}
 
+void OutlookBackupAction::finalizeOutlookResult(
+    int files_copied, qint64 bytes_copied,
+    const QDir& backup_dir, const QDateTime& start_time) {
     qint64 duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
 
     ExecutionResult result;

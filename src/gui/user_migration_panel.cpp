@@ -74,7 +74,8 @@ void UserMigrationPanel::setupUi()
 
     // Bottom row: Settings + Log toggle (outside scroll area, pinned to bottom)
     auto* bottomLayout = new QHBoxLayout();
-    bottomLayout->setContentsMargins(12, 6, 12, 8);
+    bottomLayout->setContentsMargins(sak::ui::kMarginMedium, sak::ui::kMarginTight,
+        sak::ui::kMarginMedium, sak::ui::kMarginSmall);
 
     auto* settingsBtn = new QPushButton(tr("Settings"), this);
     settingsBtn->setAccessibleName(QStringLiteral("User Migration Settings"));
@@ -92,7 +93,8 @@ QGroupBox* UserMigrationPanel::createWizardButtonsGroup()
     auto* group = new QGroupBox("Backup & Restore Wizards");
     auto* layout = new QVBoxLayout(group);
     layout->setSpacing(12);
-    layout->setContentsMargins(12, 18, 12, 12);
+    layout->setContentsMargins(sak::ui::kMarginMedium, sak::ui::kMarginLarge,
+        sak::ui::kMarginMedium, sak::ui::kMarginMedium);
 
     // Backup section
     auto* backupTitle = new QLabel("<b>Backup User Profiles</b>");

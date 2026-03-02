@@ -9,7 +9,8 @@
 [![Qt 6.5+](https://img.shields.io/badge/Qt-6.5%2B-41cd52.svg)](https://www.qt.io/)
 [![Windows 10/11](https://img.shields.io/badge/Windows-10%20%7C%2011-0078d4.svg)](https://www.microsoft.com/windows)
 [![Build](https://github.com/RandyNorthrup/S.A.K.-Utility/actions/workflows/build-release.yml/badge.svg)](https://github.com/RandyNorthrup/S.A.K.-Utility/actions)
-[![Version](https://img.shields.io/badge/Version-0.6.3-orange.svg)](VERSION)
+[![Version](https://img.shields.io/badge/Version-0.7.0-orange.svg)](VERSION)
+[![TigerStyle](https://img.shields.io/badge/code%20style-TigerStyle-f80.svg)](docs/TIGERSTYLE_COMPLIANCE_PLAN.md)
 
 Migration · Maintenance · Recovery · Imaging · Deployment — one portable EXE.
 
@@ -17,7 +18,14 @@ Migration · Maintenance · Recovery · Imaging · Deployment — one portable E
 
 ---
 
-## What's New in v0.6.3
+## What's New in v0.7.0
+
+- **Modernized About panel** — Rebuilt as a multi-tab view (About, License, Credits, System) with styled HTML, full dependency attribution (12 third-party components), and live runtime info. Removed dead `AboutDialog` class.
+- **Unified UI polish** — Glass-effect 3-stop rgba button gradients, transparent widget backgrounds eliminating patchy gray/white artifacts, harmonized margins and border-radii via style tokens, centered quick-action labels, consistent UUP progress bar height.
+- **TigerStyle Phase 9 compliance** — Lint errors reduced from 52 → 0 across the codebase; 0 compiler warnings in Release builds.
+- **README accuracy** — Corrected stress-test durations, build output paths, and removed hardcoded iteration counts.
+
+### v0.6.3
 
 - **Code cleanup** — Removed legacy `BackupWorker`, `BackupWizard`, and `RestoreWizard` classes that had been superseded by the user-profile wizard suite.
 - **Renamed panels for clarity** — `BackupPanel` → `UserMigrationPanel` (`user_migration_panel.h/.cpp`); `WifiQrPanel` → `WifiManagerPanel` (`wifi_manager_panel.h/.cpp`). All internal member names and CMake source lists updated.
@@ -167,7 +175,7 @@ One-click operations organized into five categories with real-time progress and 
 
 | Action | Description |
 |---|---|
-| Generate System Report | 100+ properties: OS, hardware, drivers, event logs, programs (HTML) |
+| Generate System Report | Comprehensive report: OS, hardware, storage, network, drivers, event logs, installed programs (HTML) |
 | Check for Bloatware | Scans for known bloatware and OEM software |
 | Test Network Speed | Download/upload speed and latency |
 | Scan for Malware | Windows Defender quick scan via `Start-MpScan` |
@@ -208,7 +216,7 @@ Scan installed apps, match them to Chocolatey packages, and bulk-install on a ne
 2. **Match** — `PackageMatcher` with curated mappings (high/medium/low/manual confidence).
 3. **Backup** — Optional data backup via `UserProfileBackupWizard` (browser profiles, IDE settings, etc.).
 4. **Export** — JSON migration report portable to the target machine.
-5. **Install** — Embedded Chocolatey with retry logic (3 attempts, exponential backoff).
+5. **Install** — Embedded Chocolatey with retry logic and exponential backoff.
 6. **Restore** — `UserProfileRestoreWizard` maps source paths to target paths and restores data.
 
 ---
@@ -219,13 +227,13 @@ Secure peer-to-peer LAN transfer with three modes.
 
 | Mode | Description |
 |---|---|
-| **Source** | Scan users, discover peers (UDP 54321), connect, send encrypted data |
+| **Source** | Scan users, discover peers via UDP broadcast, connect, send encrypted data |
 | **Destination** | Listen for incoming transfers, approve/reject, receive + restore |
 | **Orchestrator** | Centralized multi-PC deployment — mapping strategies, concurrency, job queues |
 
-**Security:** AES-256-GCM per chunk (64 KB), PBKDF2 key derivation (200 k iterations), challenge/response authentication, SHA-256 integrity per file.
+**Security:** AES-256-GCM encryption per chunk, PBKDF2 key derivation, challenge/response authentication, SHA-256 integrity verification per file.
 
-**Resume:** Checkpoint every 1 MB, partial-file tracking, integrity validation before resume.
+**Resume:** Periodic checkpointing, partial-file tracking, integrity validation before resume.
 
 ---
 
@@ -250,12 +258,12 @@ Comprehensive hardware diagnostics, performance benchmarking, and stability test
 
 | Benchmark | Metrics |
 |---|---|
-| **CPU** | Single-thread & multi-thread scores, matrix multiply GFLOPS, ZLIB throughput (MB/s), prime computation |
-| **Disk** | Sequential read/write (MB/s), random 4K IOPS (read & write), queue-depth scoring |
-| **Memory** | Read/write bandwidth (GB/s), random-access latency (ns) |
+| **CPU** | Single-thread and multi-thread scores, matrix multiply, compression throughput, prime computation |
+| **Disk** | Sequential read/write, random 4K IOPS (read and write), queue-depth scoring |
+| **Memory** | Read/write bandwidth, random-access latency |
 
 **Stress Testing**
-- Configurable duration (1–60 minutes)
+- Configurable duration
 - CPU stress (all-core compute + floating-point)
 - Memory stress (pattern write/verify for ECC error detection)
 - Disk stress (sustained sequential I/O with direct writes)
@@ -321,7 +329,7 @@ Generate and manage WiFi network QR codes and network configuration scripts.
 - **Export** — Windows netsh `.cmd` script (per network or bulk), macOS `.mobileconfig` plist
 - **Scan networks** — detect nearby SSIDs and pre-fill the form
 - **Connect with phone** — display full-screen QR for easy mobile scanning
-- Error correction: HIGH (30%) for reliable scanning even with partial occlusion
+- High error correction level for reliable scanning even with partial occlusion
 
 ---
 
@@ -342,8 +350,8 @@ Global application settings accessible from the **Edit → Settings** menu (`Ctr
 
 | Layer | Implementation |
 |---|---|
-| **File encryption** | AES-256-CBC via Windows BCrypt (PBKDF2, 100 k iterations, 32-byte salt) |
-| **Network encryption** | AES-256-GCM via Windows BCrypt (PBKDF2, 200 k iterations, 12-byte nonce, 16-byte GCM tag per chunk) |
+| **File encryption** | AES-256-CBC via Windows BCrypt with PBKDF2 key derivation |
+| **Network encryption** | AES-256-GCM via Windows BCrypt with PBKDF2 key derivation, per-chunk authentication tags |
 | **Secure memory** | `SecureString` / `SecureBuffer` — zero-fill on destruction, page locking via `VirtualLock` |
 | **Input validation** | Path sanitization, IP/port validation, Chocolatey name format checks |
 | **Elevation** | UAC manifest (`requireAdministrator`), runtime privilege verification |
@@ -380,7 +388,7 @@ cmake --build build --config Release --parallel
 powershell -ExecutionPolicy Bypass -File scripts/bundle_smartmontools.ps1
 
 # Run
-.\build\Release\sak_utility.exe
+.\build\Release\Release\sak_utility.exe
 ```
 
 ### Code Signing (Optional)

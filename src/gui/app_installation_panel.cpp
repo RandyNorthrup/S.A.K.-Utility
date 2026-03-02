@@ -169,10 +169,12 @@ void AppInstallationPanel::setupUi_packageTable(QSplitter* splitter)
     m_resultsTable->setColumnWidth(RColCheck, 36);
 
     m_resultsTable->setStyleSheet(
-        "QTableView::indicator { width: 16px; height: 16px; border: 1px solid #94a3b8; "
-        "border-radius: 4px; background: #f8fafc; }"
-        "QTableView::indicator:checked { background: #3b82f6; border: 1px solid #2563eb; }"
-        "QTableView::indicator:unchecked { background: #f8fafc; border: 1px solid #94a3b8; }"
+        QString("QTableView::indicator { width: 16px; height: 16px; border: 1px solid %1; "
+            "border-radius: 4px; background: %2; }"
+            "QTableView::indicator:checked { background: %3; border: 1px solid %4; }"
+            "QTableView::indicator:unchecked { background: %2; border: 1px solid %1; }")
+        .arg(sak::ui::kColorBorderMuted, sak::ui::kColorBgSurface,
+             sak::ui::kColorPrimary, sak::ui::kColorPrimaryDark)
     );
 
     resultsLayout->addWidget(m_resultsTable, 1);

@@ -32,7 +32,8 @@ void PerUserCustomizationDialog::setupUi() {
     Q_ASSERT(!objectName().isEmpty() || true);  // widget valid
     auto* mainLayout = new QVBoxLayout(this);
     mainLayout->setSpacing(10);
-    mainLayout->setContentsMargins(15, 15, 15, 15);
+    mainLayout->setContentsMargins(sak::ui::kMarginLarge, sak::ui::kMarginLarge,
+        sak::ui::kMarginLarge, sak::ui::kMarginLarge);
 
     // User info header
     auto* headerLayout = new QVBoxLayout();

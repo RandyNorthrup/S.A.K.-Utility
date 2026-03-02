@@ -61,6 +61,12 @@ constexpr auto kColorDangerBtnDark   = "#c62828";  ///< MUI red — button gradi
 constexpr auto kColorDangerBtnHover  = "#ff7043";  ///< MUI red — button hover
 constexpr auto kColorDangerBtnPressed= "#b71c1c";  ///< MUI red — button pressed
 
+// Pause (Amber)
+constexpr auto kColorPauseBtnNormal  = "#ffa726";  ///< MUI amber — button normal
+constexpr auto kColorPauseBtnDark    = "#f57c00";  ///< MUI amber — button gradient
+constexpr auto kColorPauseBtnHover   = "#ffb74d";  ///< MUI amber — button hover
+constexpr auto kColorPauseBtnPressed = "#e65100";  ///< MUI amber — button pressed
+
 // Accent
 constexpr auto kColorAccentPurple  = "#7c3aed";  ///< violet-600 — special phases
 constexpr auto kColorAccentEmerald = "#059669";  ///< emerald-600 — download phases
@@ -113,20 +119,115 @@ constexpr int kFontSizeSmall   = 8;   ///< Sub-labels, fine print
 constexpr auto kPrimaryButtonStyle =
     "QPushButton {"
     "  background: qlineargradient(x1:0, y1:0, x2:0, y2:1,"
-    "    stop:0 #3b82f6, stop:1 #2563eb);"
+    "    stop:0 rgba(79, 142, 252, 0.92),"
+    "    stop:0.5 rgba(59, 130, 246, 0.90),"
+    "    stop:1 rgba(37, 99, 235, 0.88));"
     "  color: white; font-weight: 600;"
-    "  padding: 8px 20px; border-radius: 6px; border: none;"
+    "  padding: 8px 20px; border-radius: 10px;"
+    "  border: 1px solid rgba(29, 78, 216, 0.7);"
     "}"
     "QPushButton:hover {"
     "  background: qlineargradient(x1:0, y1:0, x2:0, y2:1,"
-    "    stop:0 #4f8efc, stop:1 #3b82f6);"
+    "    stop:0 rgba(96, 155, 253, 0.95),"
+    "    stop:0.5 rgba(79, 142, 252, 0.93),"
+    "    stop:1 rgba(59, 130, 246, 0.90));"
     "}"
     "QPushButton:pressed {"
     "  background: qlineargradient(x1:0, y1:0, x2:0, y2:1,"
-    "    stop:0 #2563eb, stop:1 #1d4ed8);"
+    "    stop:0 rgba(37, 99, 235, 0.95),"
+    "    stop:0.5 rgba(29, 78, 216, 0.93),"
+    "    stop:1 rgba(21, 61, 178, 0.92));"
     "}"
     "QPushButton:disabled {"
-    "  background-color: #cbd5e1; color: #64748b;"
+    "  background: rgba(203, 213, 225, 0.75); color: #64748b;"
+    "  border: 1px solid rgba(203, 213, 225, 0.6);"
+    "}";
+
+/// Success action button — green gradient, uniform with theme QPushButton.
+/// Apply via `button->setStyleSheet(sak::ui::kSuccessButtonStyle);`
+constexpr auto kSuccessButtonStyle =
+    "QPushButton {"
+    "  background: qlineargradient(x1:0, y1:0, x2:0, y2:1,"
+    "    stop:0 rgba(67, 160, 71, 0.92),"
+    "    stop:0.5 rgba(56, 142, 60, 0.90),"
+    "    stop:1 rgba(46, 125, 50, 0.88));"
+    "  color: white;"
+    "  padding: 8px 14px; border-radius: 10px;"
+    "  border: 1px solid rgba(46, 125, 50, 0.7);"
+    "}"
+    "QPushButton:hover {"
+    "  background: qlineargradient(x1:0, y1:0, x2:0, y2:1,"
+    "    stop:0 rgba(102, 187, 106, 0.95),"
+    "    stop:0.5 rgba(67, 160, 71, 0.93),"
+    "    stop:1 rgba(56, 142, 60, 0.90));"
+    "}"
+    "QPushButton:pressed {"
+    "  background: qlineargradient(x1:0, y1:0, x2:0, y2:1,"
+    "    stop:0 rgba(46, 125, 50, 0.95),"
+    "    stop:0.5 rgba(27, 94, 32, 0.93),"
+    "    stop:1 rgba(20, 78, 25, 0.92));"
+    "}"
+    "QPushButton:disabled {"
+    "  background: rgba(203, 213, 225, 0.75); color: #64748b;"
+    "  border: 1px solid rgba(203, 213, 225, 0.6);"
+    "}";
+
+/// Danger action button — red gradient, uniform with theme QPushButton.
+/// Apply via `button->setStyleSheet(sak::ui::kDangerButtonStyle);`
+constexpr auto kDangerButtonStyle =
+    "QPushButton {"
+    "  background: qlineargradient(x1:0, y1:0, x2:0, y2:1,"
+    "    stop:0 rgba(239, 83, 80, 0.92),"
+    "    stop:0.5 rgba(211, 47, 47, 0.90),"
+    "    stop:1 rgba(198, 40, 40, 0.88));"
+    "  color: white;"
+    "  padding: 8px 14px; border-radius: 10px;"
+    "  border: 1px solid rgba(198, 40, 40, 0.7);"
+    "}"
+    "QPushButton:hover {"
+    "  background: qlineargradient(x1:0, y1:0, x2:0, y2:1,"
+    "    stop:0 rgba(255, 112, 67, 0.95),"
+    "    stop:0.5 rgba(239, 83, 80, 0.93),"
+    "    stop:1 rgba(211, 47, 47, 0.90));"
+    "}"
+    "QPushButton:pressed {"
+    "  background: qlineargradient(x1:0, y1:0, x2:0, y2:1,"
+    "    stop:0 rgba(198, 40, 40, 0.95),"
+    "    stop:0.5 rgba(183, 28, 28, 0.93),"
+    "    stop:1 rgba(155, 20, 20, 0.92));"
+    "}"
+    "QPushButton:disabled {"
+    "  background: rgba(203, 213, 225, 0.75); color: #64748b;"
+    "  border: 1px solid rgba(203, 213, 225, 0.6);"
+    "}";
+
+/// Pause action button — amber gradient, uniform with theme QPushButton.
+/// Apply via `button->setStyleSheet(sak::ui::kPauseButtonStyle);`
+constexpr auto kPauseButtonStyle =
+    "QPushButton {"
+    "  background: qlineargradient(x1:0, y1:0, x2:0, y2:1,"
+    "    stop:0 rgba(255, 167, 38, 0.92),"
+    "    stop:0.5 rgba(251, 140, 0, 0.90),"
+    "    stop:1 rgba(245, 124, 0, 0.88));"
+    "  color: white;"
+    "  padding: 8px 14px; border-radius: 10px;"
+    "  border: 1px solid rgba(245, 124, 0, 0.7);"
+    "}"
+    "QPushButton:hover {"
+    "  background: qlineargradient(x1:0, y1:0, x2:0, y2:1,"
+    "    stop:0 rgba(255, 183, 77, 0.95),"
+    "    stop:0.5 rgba(255, 167, 38, 0.93),"
+    "    stop:1 rgba(251, 140, 0, 0.90));"
+    "}"
+    "QPushButton:pressed {"
+    "  background: qlineargradient(x1:0, y1:0, x2:0, y2:1,"
+    "    stop:0 rgba(245, 124, 0, 0.95),"
+    "    stop:0.5 rgba(230, 81, 0, 0.93),"
+    "    stop:1 rgba(210, 70, 0, 0.92));"
+    "}"
+    "QPushButton:disabled {"
+    "  background: rgba(203, 213, 225, 0.75); color: #64748b;"
+    "  border: 1px solid rgba(203, 213, 225, 0.6);"
     "}";
 
 // ── Compile-Time Invariants (TigerStyle) ────────────────────────────────────

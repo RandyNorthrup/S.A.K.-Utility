@@ -17,7 +17,6 @@
 #include "sak/wifi_manager_panel.h"
 #include "sak/detachable_log_window.h"
 #include "sak/config_manager.h"
-#include "sak/about_dialog.h"
 #include "sak/style_constants.h"
 #include "sak/layout_constants.h"
 
@@ -38,6 +37,7 @@
 #include <QTimer>
 #include <QVBoxLayout>
 #include <QDateTime>
+#include <QSysInfo>
 
 namespace sak {
 
@@ -198,8 +198,9 @@ void MainWindow::loadAboutPanelIcon(QLabel* iconLabel)
             splashPix.scaled(64, 64, Qt::KeepAspectRatio, Qt::SmoothTransformation));
     } else {
         iconLabel->setStyleSheet(
-            "QLabel { background: qlineargradient(x1:0,y1:0,x2:1,y2:1,"
-            "stop:0 #3b82f6,stop:1 #2563eb); border-radius: 12px; }");
+            QString("QLabel { background: qlineargradient(x1:0,y1:0,x2:1,y2:1,"
+                    "stop:0 %1,stop:1 %2); border-radius: 12px; }")
+            .arg(ui::kColorPrimary, ui::kColorPrimaryDark));
     }
 }
 
@@ -209,7 +210,8 @@ void MainWindow::createAboutPanel()
     auto* aboutPanel = new QWidget(this);
     auto* aboutLayout = new QVBoxLayout(aboutPanel);
     aboutLayout->setSpacing(12);
-    aboutLayout->setContentsMargins(16, 16, 16, 16);
+    aboutLayout->setContentsMargins(ui::kMarginLarge, ui::kMarginLarge,
+        ui::kMarginLarge, ui::kMarginLarge);
 
         // Header  --  use splash screen image as icon
         auto* headerLayout = new QHBoxLayout();
@@ -235,23 +237,86 @@ void MainWindow::createAboutPanel()
         // Tabs inside about panel  --  all use QTextBrowser for uniform look
         auto* aboutTabs = new QTabWidget(aboutPanel);
 
-        // About tab (QTextBrowser with HTML  --  matches License tab style)
+        // About tab  --  comprehensive feature overview with styled HTML
         auto* descBrowser = new QTextBrowser(aboutPanel);
         descBrowser->setOpenExternalLinks(true);
-        descBrowser->setHtml(
-            "<h3>Swiss Army Knife (S.A.K.) Utility</h3>"
-            "<p><b>PC Technician's Toolkit for Windows Migration and Maintenance</b></p>"
-            "<p>Designed for PC technicians who need to migrate systems, backup user profiles, "
-            "and manage files efficiently. Built with modern C++23 and Qt6 for Windows 10/11 "
-            "x64.</p>");
+        descBrowser->setHtml(QStringLiteral(R"(
+<style>
+  body { font-family: 'Segoe UI', sans-serif; margin: 8px; }
+  h2 { color: #1e293b; margin-bottom: 4px; }
+  .subtitle { color: #64748b; font-size: 10pt; margin-bottom: 12px; }
+  .section { margin-bottom: 14px; }
+  .section-title {
+    font-weight: 700; font-size: 10pt; color: #3b82f6;
+    border-bottom: 1px solid #e2e8f0; padding-bottom: 3px; margin-bottom: 6px;
+  }
+  ul { margin: 2px 0 0 16px; padding: 0; }
+  li { margin-bottom: 3px; color: #334155; }
+  a { color: #3b82f6; text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .footer { color: #94a3b8; font-size: 9pt; margin-top: 12px; border-top: 1px solid #e2e8f0; padding-top: 6px; }
+</style>
+
+<h2>Swiss Army Knife (S.A.K.) Utility</h2>
+<div class="subtitle">A portable Windows toolkit for PC technicians, IT pros, and sysadmins.<br/>
+Built with modern C++23 and Qt 6 for Windows 10/11 x64.</div>
+
+<div class="section">
+  <div class="section-title">Migration &amp; Backup</div>
+  <ul>
+    <li><b>User Profile Backup &amp; Restore</b> &mdash; Step-by-step wizards with smart filtering, per-user customization, AES-256 encryption, and NTFS permission handling</li>
+    <li><b>Application Migration</b> &mdash; Scan installed apps, match to Chocolatey packages, export/import, and bulk-install on a new PC</li>
+    <li><b>Network Transfer</b> &mdash; Peer-to-peer encrypted LAN migration with resume, multi-PC orchestrator mode, and AES-256-GCM per chunk</li>
+  </ul>
+</div>
+
+<div class="section">
+  <div class="section-title">Quick Actions</div>
+  <ul>
+    <li><b>System Optimization</b> &mdash; Disk cleanup, browser cache, defragment, startup programs, power settings, visual effects</li>
+    <li><b>Quick Backups</b> &mdash; QuickBooks, browser profiles, Outlook, Sticky Notes, saved games, tax software, photo tools, dev configs, WiFi networks, wallpaper, printers</li>
+    <li><b>Maintenance</b> &mdash; App updates, Windows Update, system file verification, disk checks, icon cache, network reset, print spooler</li>
+    <li><b>Troubleshooting</b> &mdash; System reports, bloatware scan, network speed test, malware scan, Windows Store repair, audio fixes</li>
+    <li><b>Emergency Recovery</b> &mdash; Restore points, registry export, settings screenshots, BitLocker key backup</li>
+  </ul>
+</div>
+
+<div class="section">
+  <div class="section-title">Diagnostics &amp; Benchmarking</div>
+  <ul>
+    <li><b>Hardware Inventory</b> &mdash; CPU, memory, storage, GPU, and OS details</li>
+    <li><b>SMART Disk Health</b> &mdash; Drive health, temperature, power-on hours, and attribute monitoring via bundled smartmontools</li>
+    <li><b>Benchmarks</b> &mdash; CPU (single/multi-thread), disk (sequential &amp; random I/O), memory (bandwidth &amp; latency)</li>
+    <li><b>Stress Testing</b> &mdash; CPU, memory, and disk stress with real-time thermal monitoring and configurable auto-abort</li>
+    <li><b>Report Export</b> &mdash; HTML, JSON, and CSV reports</li>
+  </ul>
+</div>
+
+<div class="section">
+  <div class="section-title">Imaging &amp; File Tools</div>
+  <ul>
+    <li><b>Image Flasher</b> &mdash; Flash ISOs/IMGs to USB with streaming decompression and system-drive protection</li>
+    <li><b>Windows ISO Download</b> &mdash; Download directly from Microsoft via UUP Dump API</li>
+    <li><b>Linux ISO Download</b> &mdash; Built-in distro catalog (Ubuntu, Mint, Kali, SystemRescue, Clonezilla, and more)</li>
+    <li><b>Directory Organizer</b> &mdash; Sort files by extension into categorized subdirectories with preview mode</li>
+    <li><b>Duplicate File Finder</b> &mdash; MD5 hash-based duplicate detection with size filtering</li>
+    <li><b>WiFi Manager</b> &mdash; QR code generation, network scanning, bulk export, and connection scripts</li>
+  </ul>
+</div>
+
+<div class="footer">
+  100% portable &mdash; no installer required. Drop on a USB drive and go.<br/>
+  <a href="https://github.com/RandyNorthrup/S.A.K.-Utility">GitHub</a> &middot; AGPL-3.0 license
+</div>
+)"));
         aboutTabs->addTab(descBrowser, "About");
 
-        // License tab (QTextBrowser with HTML)
+        // License tab
         auto* licBrowser = new QTextBrowser(aboutPanel);
         licBrowser->setOpenExternalLinks(true);
-        licBrowser->setHtml(
+        licBrowser->setHtml(QStringLiteral(
             "<h3>GNU Affero General Public License v3.0</h3>"
-            "<p>Copyright &copy; 2025 Randy Northrup</p>"
+            "<p>Copyright &copy; 2025-2026 Randy Northrup</p>"
             "<p>This program is free software: you can redistribute it and/or modify "
             "it under the terms of the GNU Affero General Public License as published by "
             "the Free Software Foundation, either version 3 of the License, or "
@@ -262,8 +327,112 @@ void MainWindow::createAboutPanel()
             "GNU Affero General Public License for more details.</p>"
             "<p>You should have received a copy of the GNU Affero General Public License "
             "along with this program. If not, see "
-            "<a href='https://www.gnu.org/licenses/'>https://www.gnu.org/licenses/</a>.</p>");
+            "<a href='https://www.gnu.org/licenses/'>https://www.gnu.org/licenses/</a>.</p>"
+            "<p><b>Note:</b> This application uses Qt Framework (LGPL v3), Chocolatey (Apache 2.0), "
+            "smartmontools (GPLv2), aria2 (GPLv2), wimlib (LGPL v3), 7-Zip (LGPL v2.1), "
+            "qrcodegen (MIT), and additional open-source libraries. See the Credits tab "
+            "for the full list.</p>"));
         aboutTabs->addTab(licBrowser, "License");
+
+        // Credits tab
+        auto* creditsBrowser = new QTextBrowser(aboutPanel);
+        creditsBrowser->setOpenExternalLinks(true);
+        creditsBrowser->setHtml(QStringLiteral(R"(
+<style>
+  body { font-family: 'Segoe UI', sans-serif; margin: 8px; }
+  h3 { color: #1e293b; margin-bottom: 6px; }
+  .dep { margin-bottom: 10px; }
+  .dep b { color: #334155; }
+  .dep .desc { color: #475569; font-size: 9pt; }
+  a { color: #3b82f6; text-decoration: none; }
+  a:hover { text-decoration: underline; }
+</style>
+
+<h3>Development</h3>
+<p><b>Lead Developer:</b> Randy Northrup</p>
+
+<h3>Third-Party Components</h3>
+
+<div class="dep">
+  <b><a href="https://www.qt.io/">Qt Framework 6.5+</a></b> &mdash; LGPL v3<br/>
+  <span class="desc">GUI framework, threading, networking, cryptography</span>
+</div>
+<div class="dep">
+  <b><a href="https://www.nayuki.io/page/qr-code-generator-library">qrcodegen</a></b> &mdash; MIT (Project Nayuki)<br/>
+  <span class="desc">QR code generation (bundled source)</span>
+</div>
+<div class="dep">
+  <b><a href="https://www.smartmontools.org/">smartmontools</a></b> &mdash; GPLv2<br/>
+  <span class="desc">SMART disk health analysis (bundled smartctl)</span>
+</div>
+<div class="dep">
+  <b><a href="https://chocolatey.org/">Chocolatey</a></b> &mdash; Apache 2.0<br/>
+  <span class="desc">Windows package manager for application migration</span>
+</div>
+<div class="dep">
+  <b><a href="https://aria2.github.io/">aria2</a></b> &mdash; GPLv2<br/>
+  <span class="desc">Multi-connection download manager for ISO downloads</span>
+</div>
+<div class="dep">
+  <b><a href="https://wimlib.net/">wimlib</a></b> &mdash; LGPL v3 (Eric Biggers)<br/>
+  <span class="desc">WIM image library for UUP-to-ISO conversion</span>
+</div>
+<div class="dep">
+  <b><a href="https://www.7-zip.org/">7-Zip</a></b> &mdash; LGPL v2.1 (Igor Pavlov)<br/>
+  <span class="desc">Archive tool for ISO extraction and compression</span>
+</div>
+<div class="dep">
+  <b><a href="https://github.com/abbodi1406">uup-converter-wimlib</a></b> &mdash; abbodi1406<br/>
+  <span class="desc">UUP-to-ISO converter scripts</span>
+</div>
+<div class="dep">
+  <b><a href="https://www.zlib.net/">zlib</a></b> &mdash; zlib License<br/>
+  <span class="desc">gzip compression</span>
+</div>
+<div class="dep">
+  <b><a href="https://sourceware.org/bzip2/">bzip2</a></b> &mdash; BSD-style<br/>
+  <span class="desc">bzip2 compression</span>
+</div>
+<div class="dep">
+  <b><a href="https://tukaani.org/xz/">XZ Utils / liblzma</a></b> &mdash; 0BSD / Public Domain<br/>
+  <span class="desc">LZMA compression</span>
+</div>
+<div class="dep">
+  <b>Windows BCrypt API</b> &mdash; OS component<br/>
+  <span class="desc">AES-256 encryption, PBKDF2, SHA-256 (FIPS 140-2 validated)</span>
+</div>
+
+<h3>Special Thanks</h3>
+<p>To the C++ and Qt communities for their excellent documentation and support.</p>
+<p>To Microsoft for Windows API documentation, PowerShell, Windows SDK, and ADK tools.</p>
+)"));
+        aboutTabs->addTab(creditsBrowser, "Credits");
+
+        // System tab  --  runtime environment details
+        auto* systemBrowser = new QTextBrowser(aboutPanel);
+        {
+            QString info;
+            info += QString("Application Version: %1\n").arg(get_version());
+            info += QString("Build Date: %1 %2\n\n").arg(get_build_date(), get_build_time());
+            info += QString("Operating System: %1\n").arg(QSysInfo::prettyProductName());
+            info += QString("Kernel: %1 %2\n").arg(QSysInfo::kernelType(), QSysInfo::kernelVersion());
+            info += QString("Architecture: %1\n").arg(QSysInfo::currentCpuArchitecture());
+            info += QString("Build ABI: %1\n\n").arg(QSysInfo::buildAbi());
+            info += QString("Qt Version: %1 (Runtime: %2)\n").arg(QT_VERSION_STR, qVersion());
+#if defined(_MSC_VER)
+            info += QString("Compiler: MSVC %1\n").arg(_MSC_VER);
+#elif defined(__clang__)
+            info += QString("Compiler: Clang %1.%2.%3\n").arg(__clang_major__).arg(__clang_minor__).arg(__clang_patchlevel__);
+#elif defined(__GNUC__)
+            info += QString("Compiler: GCC %1.%2.%3\n").arg(__GNUC__).arg(__GNUC_MINOR__).arg(__GNUC_PATCHLEVEL__);
+#else
+            info += QStringLiteral("Compiler: Unknown\n");
+#endif
+            info += QString("\nC++ Standard: C++%1\n").arg(__cplusplus);
+            info += QStringLiteral("\nPlatform: Windows");
+            systemBrowser->setPlainText(info);
+        }
+        aboutTabs->addTab(systemBrowser, "System");
 
         aboutLayout->addWidget(aboutTabs);
         m_tab_widget->addTab(aboutPanel, "About");

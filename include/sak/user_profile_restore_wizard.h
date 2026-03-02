@@ -19,6 +19,8 @@
 #include <QFileDialog>
 #include <QHeaderView>
 
+class QVBoxLayout;
+
 namespace sak {
 
 class WindowsUserScanner;
@@ -195,6 +197,8 @@ public:
     
 private:
     void setupUi();
+    /// @brief Build verify/backup options, summary label, and signal connections
+    void setupUi_optionsAndConnections(QVBoxLayout* layout);
     void updateSummary();
     
     QComboBox* m_permissionModeCombo;

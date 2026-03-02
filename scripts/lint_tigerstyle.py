@@ -117,26 +117,103 @@ def check_line_length(filepath: str, lines: list[str]) -> list[Violation]:
     return violations
 
 
+# Regex to match regular C++ string literal content (double-quoted strings)
+# Handles escaped characters including \" inside strings.
+_STRING_LITERAL_RE = re.compile(r'"(?:[^"\\]|\\.)*"')
+
+# Regex to match character literal content (single-quoted chars)
+_CHAR_LITERAL_RE = re.compile(r"'(?:[^'\\]|\\.)*'")
+
+
+def _strip_string_braces(line: str) -> str:
+    """Remove braces that appear inside string/char literals or comments.
+
+    Returns a version of the line where braces inside quotes and after
+    ``//`` are replaced so they are not counted as C++ scope braces.
+    """
+    # Strip content inside string literals (replaces all content with empty)
+    result = _STRING_LITERAL_RE.sub('""', line)
+    # Strip content inside character literals
+    result = _CHAR_LITERAL_RE.sub("''", result)
+    # Strip line comments (braces in comments are not code)
+    comment_pos = result.find("//")
+    if comment_pos >= 0:
+        result = result[:comment_pos]
+    return result
+
+
 def _find_functions(lines: list[str]) -> list[FunctionInfo]:
-    """Find function bodies by tracking brace depth."""
+    """Find function bodies by tracking brace depth.
+
+    Handles raw strings and regular string literals so that braces
+    inside PowerShell/SQL/JSON embedded strings are not mis-counted.
+    """
     functions: list[FunctionInfo] = []
     brace_depth = 0
     current_func: FunctionInfo | None = None
     func_brace_depth = 0
+    in_raw = False
+    raw_delim = ""
 
     for i, line in enumerate(lines, 1):
         stripped = line.strip()
 
-        # Skip comments and preprocessor
+        # ── Raw string tracking ──────────────────────────────────────
+        if in_raw:
+            close_pattern = f"){raw_delim}\""
+            if close_pattern in stripped:
+                in_raw = False
+            # Inside raw string: skip brace counting entirely, but
+            # still count assertions if inside a function.
+            if current_func:
+                current_func.assertion_count += len(ASSERT_RE.findall(line))
+            continue
+
+        # Check if this line opens a raw string
+        raw_match = RAW_STRING_OPEN.search(stripped)
+        if raw_match:
+            raw_delim = raw_match.group(1)
+            close_pattern = f"){raw_delim}\""
+            after_open = stripped[raw_match.end():]
+            if close_pattern not in after_open:
+                # Multi-line raw string starts here
+                in_raw = True
+                # Count braces only BEFORE the raw string opening
+                prefix = stripped[:raw_match.start()]
+                code_line = _strip_string_braces(prefix)
+                opens = code_line.count("{")
+                closes = code_line.count("}")
+                if current_func:
+                    current_func.assertion_count += len(
+                        ASSERT_RE.findall(line))
+                    nesting = (brace_depth - func_brace_depth - 1
+                               + max(0, opens - closes))
+                    if nesting > current_func.max_nesting:
+                        current_func.max_nesting = nesting
+                    brace_depth += opens - closes
+                    if brace_depth <= func_brace_depth:
+                        current_func.end_line = i
+                        functions.append(current_func)
+                        current_func = None
+                else:
+                    brace_depth += opens - closes
+                continue
+            # Single-line raw string: strip it before counting braces
+            # Replace the whole raw string with empty placeholder
+            stripped = (stripped[:raw_match.start()]
+                        + stripped[stripped.index(close_pattern)
+                                  + len(close_pattern):])
+
+        # ── Skip pure comments and preprocessor ──────────────────────
         if stripped.startswith("//") or stripped.startswith("#"):
             if current_func:
                 current_func.assertion_count += len(ASSERT_RE.findall(line))
             continue
 
-        # Count braces (simplified — doesn't handle strings/comments
-        # perfectly but good enough for lint)
-        opens = line.count("{") - line.count("\\{")
-        closes = line.count("}") - line.count("\\}")
+        # ── Count braces excluding those in string literals ──────────
+        code_line = _strip_string_braces(line)
+        opens = code_line.count("{")
+        closes = code_line.count("}")
 
         if current_func is None:
             # Look for function definition
@@ -144,7 +221,7 @@ def _find_functions(lines: list[str]) -> list[FunctionInfo]:
                 brace_depth == 1 and stripped == "{"
                 and i > 1 and FUNCTION_DEF.match(lines[i - 2].strip())
             ):
-                if "{" in stripped:
+                if "{" in code_line:
                     current_func = FunctionInfo(
                         name=stripped.split("(")[0].strip().split()[-1]
                         if "(" in stripped else "unknown",
@@ -160,7 +237,7 @@ def _find_functions(lines: list[str]) -> list[FunctionInfo]:
             current_func.assertion_count += len(ASSERT_RE.findall(line))
 
             # Track nesting relative to function
-            nesting = brace_depth - func_brace_depth - 1 + opens
+            nesting = brace_depth - func_brace_depth - 1 + max(0, opens - closes)
             if nesting > current_func.max_nesting:
                 current_func.max_nesting = nesting
 
@@ -229,14 +306,20 @@ def check_assertion_density(
 def check_catch_all(
     filepath: str, lines: list[str]
 ) -> list[Violation]:
-    """Check that catch(...) has an explanatory comment."""
+    """Check that catch(...) has an explanatory comment.
+
+    Accepts comments on the same line, the previous line, or the
+    first line inside the catch body (the next line after the opening brace).
+    """
     violations: list[Violation] = []
     for i, line in enumerate(lines, 1):
         if CATCH_ALL_RE.search(line):
-            # Check this line and the previous line for a comment
+            # Check this line, the previous line, and the next line
             has_comment = "//" in line
             if i > 1 and not has_comment:
                 has_comment = "//" in lines[i - 2]
+            if i < len(lines) and not has_comment:
+                has_comment = "//" in lines[i]  # next line (body)
             if not has_comment:
                 violations.append(Violation(
                     file=filepath, line=i, severity=Severity.ERROR,
@@ -250,16 +333,29 @@ def check_catch_all(
 # Main
 # ---------------------------------------------------------------------------
 
+# Directories excluded from linting (third-party code we do not own)
+EXCLUDED_DIRS = {"third_party", "3rdparty", "external"}
+
+
+def _is_excluded(filepath: str) -> bool:
+    """Return True if the file is inside an excluded directory."""
+    parts = Path(filepath).parts
+    return any(part in EXCLUDED_DIRS for part in parts)
+
+
 def collect_files(paths: list[str]) -> list[str]:
-    """Collect all .cpp/.h files from given paths."""
+    """Collect all .cpp/.h files from given paths, excluding third-party."""
     result: list[str] = []
     for p in paths:
         path = Path(p)
         if path.is_file() and path.suffix in (".cpp", ".h"):
-            result.append(str(path))
+            if not _is_excluded(str(path)):
+                result.append(str(path))
         elif path.is_dir():
             for ext in ("*.cpp", "*.h"):
-                result.extend(str(f) for f in path.rglob(ext))
+                for f in path.rglob(ext):
+                    if not _is_excluded(str(f)):
+                        result.append(str(f))
     return sorted(set(result))
 
 

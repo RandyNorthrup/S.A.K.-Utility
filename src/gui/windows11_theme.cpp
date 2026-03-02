@@ -159,9 +159,7 @@ public:
     }
 };
 
-} // namespace
-
-QString windows11ThemeStyleSheet() {
+QString themeBaseAndChromeStyles() {
     return QStringLiteral(R"(
         * {
             font-family: "Segoe UI";
@@ -173,11 +171,17 @@ QString windows11ThemeStyleSheet() {
             background-color: #f3f5f9;
         }
 
+        /* Leaf widgets & generic frames inherit parent bg
+           — prevents gray-on-white and white-on-gray patches */
+        QLabel, QFrame, QCheckBox, QRadioButton {
+            background: transparent;
+        }
+
         QMainWindow {
             background-color: #eef2f7;
         }
 
-        QDialog, QFrame, QGroupBox {
+        QDialog, QGroupBox {
             background-color: rgba(255, 255, 255, 0.92);
         }
 
@@ -226,7 +230,11 @@ QString windows11ThemeStyleSheet() {
         QMenu::item:selected {
             background-color: rgba(59, 130, 246, 0.18);
         }
+    )");
+}
 
+QString themeTabAndButtonStyles() {
+    return QStringLiteral(R"(
         QTabWidget::pane {
             border: 1px solid rgba(148, 163, 184, 0.45);
             border-radius: 12px;
@@ -244,35 +252,46 @@ QString windows11ThemeStyleSheet() {
 
         QTabBar::tab:selected {
             background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
-                stop:0 #3b82f6, stop:1 #2563eb);
+                stop:0 rgba(59, 130, 246, 0.92),
+                stop:1 rgba(37, 99, 235, 0.88));
             color: #ffffff;
         }
 
         QPushButton, QToolButton {
             background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                stop:0 #3b82f6, stop:1 #2563eb);
+                stop:0 rgba(79, 142, 252, 0.92),
+                stop:0.5 rgba(59, 130, 246, 0.90),
+                stop:1 rgba(37, 99, 235, 0.88));
             color: #ffffff;
-            border: 1px solid #1d4ed8;
+            border: 1px solid rgba(29, 78, 216, 0.7);
             border-radius: 10px;
             padding: 8px 14px;
         }
 
         QPushButton:hover, QToolButton:hover {
             background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                stop:0 #4f8efc, stop:1 #3b82f6);
+                stop:0 rgba(96, 155, 253, 0.95),
+                stop:0.5 rgba(79, 142, 252, 0.93),
+                stop:1 rgba(59, 130, 246, 0.90));
         }
 
         QPushButton:pressed, QToolButton:pressed {
             background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                stop:0 #2563eb, stop:1 #1d4ed8);
+                stop:0 rgba(37, 99, 235, 0.95),
+                stop:0.5 rgba(29, 78, 216, 0.93),
+                stop:1 rgba(21, 61, 178, 0.92));
         }
 
         QPushButton:disabled, QToolButton:disabled {
-            background: #cbd5e1;
+            background: rgba(203, 213, 225, 0.75);
             color: #64748b;
-            border: 1px solid #cbd5e1;
+            border: 1px solid rgba(203, 213, 225, 0.6);
         }
+    )");
+}
 
+QString themeInputAndIndicatorStyles() {
+    return QStringLiteral(R"(
         QLineEdit, QPlainTextEdit, QTextEdit, QComboBox, QSpinBox, QDoubleSpinBox, QDateEdit,
             QTimeEdit {
             background-color: rgba(255, 255, 255, 0.98);
@@ -329,14 +348,21 @@ QString windows11ThemeStyleSheet() {
             border-radius: 9px;
             background: rgba(226, 232, 240, 0.85);
             text-align: center;
+            min-height: 18px;
+            max-height: 18px;
         }
 
         QProgressBar::chunk {
             background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                stop:0 #3b82f6, stop:1 #1d4ed8);
+                stop:0 rgba(59, 130, 246, 0.92),
+                stop:1 rgba(29, 78, 216, 0.90));
             border-radius: 8px;
         }
+    )");
+}
 
+QString themeContainerAndTableStyles() {
+    return QStringLiteral(R"(
         QGroupBox {
             border: 1px solid rgba(148, 163, 184, 0.55);
             border-radius: 12px;
@@ -384,7 +410,11 @@ QString windows11ThemeStyleSheet() {
         QSplitter::handle {
             background: rgba(148, 163, 184, 0.4);
         }
+    )");
+}
 
+QString themeSliderStyles() {
+    return QStringLiteral(R"(
         QSlider::groove:horizontal {
             height: 6px;
             background: rgba(148, 163, 184, 0.4);
@@ -412,7 +442,11 @@ QString windows11ThemeStyleSheet() {
             margin: 0 -6px;
             border-radius: 8px;
         }
+    )");
+}
 
+QString themeScrollBarStyles() {
+    return QStringLiteral(R"(
         QScrollBar:vertical, QScrollBar:horizontal {
             background: transparent;
             border: none;
@@ -455,6 +489,17 @@ QString windows11ThemeStyleSheet() {
             border-top: 1px solid rgba(148, 163, 184, 0.4);
         }
     )");
+}
+
+} // namespace
+
+QString windows11ThemeStyleSheet() {
+    return themeBaseAndChromeStyles()
+         + themeTabAndButtonStyles()
+         + themeInputAndIndicatorStyles()
+         + themeContainerAndTableStyles()
+         + themeSliderStyles()
+         + themeScrollBarStyles();
 }
 
 void applyWindows11Theme(QApplication& app) {

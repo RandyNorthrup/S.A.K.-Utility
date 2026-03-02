@@ -193,6 +193,11 @@ bool UpdateAllAppsAction::runWingetUpdate(UpdateSummary& summary, const QDateTim
         return false;
     }
 
+    executeWingetUpgrade(summary);
+    return true;
+}
+
+void UpdateAllAppsAction::executeWingetUpgrade(UpdateSummary& summary) {
     ProcessResult ps_upgrade = runPowerShell(
         "winget upgrade --all --include-unknown --silent --accept-package-agreements "
         "--accept-source-agreements 2>&1 | Out-String",
@@ -220,7 +225,6 @@ bool UpdateAllAppsAction::runWingetUpdate(UpdateSummary& summary, const QDateTim
     }
 
     summary.report += "╠══════════════════════════════════════════════════════════════════════╣\n";
-    return true;
 }
 
 bool UpdateAllAppsAction::runStoreUpdate(UpdateSummary& summary) {

@@ -162,6 +162,8 @@ private:
     void setupUi();
     /** @brief Build Source page: data-selection table and peer-discovery table */
     void setupUi_sourceSection(QVBoxLayout* sourceLayout);
+    /** @brief Build peer discovery group with peer table and manual IP entry */
+    void setupUi_peerDiscovery(QVBoxLayout* sourceLayout);
     /** @brief Create hidden security widgets (encrypt, compress, resume, etc.) */
     void setupUi_securityWidgets();
     /** @brief Build Destination page: connection setup, orchestrator link, and
@@ -186,6 +188,8 @@ private:
     void setupUi_deploymentJobs(QVBoxLayout* orchestratorLayout);
     /** @brief Build deployment progress, history table, and status legend */
     void setupUi_deploymentProgress(QVBoxLayout* orchestratorLayout);
+    /** @brief Build status legend pills (success, in-progress, error, idle) */
+    void setupUi_statusLegend(QVBoxLayout* orchestratorLayout);
     /** @brief Build bottom button row: settings, security, log toggle, transfer */
     void setupUi_bottomButtons(QVBoxLayout* mainLayout);
     /** @brief Wire signals/slots between widgets and backend objects */
@@ -198,6 +202,8 @@ private:
     void setupConnections_orchestratorSignals();
     /** @brief Connect core controller and parallel-manager signals */
     void setupConnections_controllerSignals();
+    /** @brief Connect parallel transfer manager pause/resume/cancel signals */
+    void setupConnections_parallelManager();
     /** @brief Load persisted transfer settings from QSettings */
     void loadSettings();
     /** @brief Initialize the deployment history manager from persisted path */

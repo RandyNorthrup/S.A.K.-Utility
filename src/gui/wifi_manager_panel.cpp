@@ -179,7 +179,8 @@ void WifiManagerPanel::setupUi()
 
     auto* contentWidget = new QWidget(scrollArea);
     auto* rootLayout = new QVBoxLayout(contentWidget);
-    rootLayout->setContentsMargins(8, 8, 8, 8);
+    rootLayout->setContentsMargins(sak::ui::kMarginSmall, sak::ui::kMarginSmall,
+        sak::ui::kMarginSmall, sak::ui::kMarginSmall);
     rootLayout->setSpacing(6);
 
     scrollArea->setWidget(contentWidget);
@@ -231,7 +232,8 @@ void WifiManagerPanel::setupFormGroup()
     m_form_group = new QGroupBox("Network Details", this);
     auto* layout = new QFormLayout(m_form_group);
     layout->setSpacing(8);
-    layout->setContentsMargins(10, 14, 10, 10);
+    layout->setContentsMargins(sak::ui::kSpacingDefault, sak::ui::kSpacingLarge + 2,
+        sak::ui::kSpacingDefault, sak::ui::kSpacingDefault);
 
     // Location
     m_location_input = new QLineEdit(m_form_group);
@@ -287,7 +289,7 @@ void WifiManagerPanel::setupFormGroup()
     m_add_table_btn->setToolTip("Add current form entry to the saved networks table");
     m_add_table_btn->setAccessibleName(QStringLiteral("Add to Table"));
     auto* formBtnRow = new QHBoxLayout();
-    formBtnRow->setContentsMargins(0, 10, 0, 0);  // 10px top buffer
+    formBtnRow->setContentsMargins(0, sak::ui::kSpacingDefault, 0, 0);  // top buffer
     formBtnRow->addWidget(m_connect_phone_btn);
     formBtnRow->addWidget(m_add_table_btn);
     auto* formBtnWidget = new QWidget(m_form_group);
@@ -299,7 +301,8 @@ void WifiManagerPanel::setupTableGroup()
 {
     m_table_group = new QGroupBox("Saved Networks", this);
     auto* layout = new QVBoxLayout(m_table_group);
-    layout->setContentsMargins(8, 12, 8, 8);
+    layout->setContentsMargins(sak::ui::kMarginSmall, sak::ui::kMarginMedium,
+        sak::ui::kMarginSmall, sak::ui::kMarginSmall);
     layout->setSpacing(6);
 
     setupTableSearchRow(layout);
@@ -620,12 +623,14 @@ QWidget* WifiManagerPanel::buildQrFormatPage(const QString& payload,
     ctl.previewLabel->setPixmap(QPixmap::fromImage(previewImg));
     ctl.previewLabel->setFixedSize(sak::kQrImageSize, sak::kQrImageSize);
     ctl.previewLabel->setAlignment(Qt::AlignCenter);
-    ctl.previewLabel->setStyleSheet("border: 1px solid #ccc; background: white;");
+    ctl.previewLabel->setStyleSheet(
+        QString("border: 1px solid %1; background: %2;").arg(
+            sak::ui::kColorBorderDefault, sak::ui::kColorBgWhite));
     ctl.previewLabel->setAccessibleName(QStringLiteral("QR code preview"));
 
     auto* optWidget = new QWidget(page);
     auto* optLayout = new QVBoxLayout(optWidget);
-    optLayout->setContentsMargins(8, 0, 0, 0);
+    optLayout->setContentsMargins(sak::ui::kMarginSmall, 0, 0, 0);
     optLayout->addWidget(new QLabel("Select export format(s):"));
     ctl.chkPng = new QCheckBox("PNG");  ctl.chkPng->setChecked(true);
     ctl.chkPdf = new QCheckBox("PDF");
@@ -674,7 +679,9 @@ QWidget* WifiManagerPanel::buildQrOutputPage(QrWizardControls& ctl)
     layout->addLayout(dirRow);
     ctl.subLabel = new QLabel("Files will be saved to: (select a folder first)");
     ctl.subLabel->setWordWrap(true);
-    ctl.subLabel->setStyleSheet("color: #666; font-size: 8pt;");
+    ctl.subLabel->setStyleSheet(
+        QString("color: %1; font-size: %2pt;").arg(
+            sak::ui::kColorTextMuted).arg(sak::ui::kFontSizeSmall));
     layout->addWidget(ctl.subLabel);
     layout->addStretch();
     auto* btnRow    = new QHBoxLayout;
@@ -877,7 +884,9 @@ void WifiManagerPanel::showBatchQrDialog(const QList<WifiConfig>& sources)
     layout->addLayout(dirRow);
     auto* subLabel = new QLabel("");
     subLabel->setWordWrap(true);
-    subLabel->setStyleSheet("color: #666; font-size: 8pt;");
+    subLabel->setStyleSheet(
+        QString("color: %1; font-size: %2pt;").arg(
+            sak::ui::kColorTextMuted).arg(sak::ui::kFontSizeSmall));
     layout->addWidget(subLabel);
     layout->addStretch();
     auto* btnRow    = new QHBoxLayout;
@@ -1135,25 +1144,31 @@ void WifiManagerPanel::showSingleNetworkQrDialog(const WifiConfig& cfg)
     dlg.setFixedSize(400, 460);
 
     auto* layout = new QVBoxLayout(&dlg);
-    layout->setContentsMargins(20, 20, 20, 20);
-    layout->setSpacing(10);
+    layout->setContentsMargins(sak::ui::kMarginXLarge, sak::ui::kMarginXLarge,
+        sak::ui::kMarginXLarge, sak::ui::kMarginXLarge);
+    layout->setSpacing(sak::ui::kSpacingDefault);
 
     auto* titleLbl = new QLabel(QString("<b>%1</b>").arg(cfg.ssid.toHtmlEscaped()), &dlg);
     titleLbl->setAlignment(Qt::AlignCenter);
-    titleLbl->setStyleSheet("font-size: 13pt;");
+    titleLbl->setStyleSheet(
+        QString("font-size: %1pt;").arg(sak::ui::kFontSizeSection));
     layout->addWidget(titleLbl);
 
     auto* imgLbl = new QLabel(&dlg);
     imgLbl->setPixmap(QPixmap::fromImage(qrImg));
     imgLbl->setAlignment(Qt::AlignCenter);
-    imgLbl->setStyleSheet("background: white; border: 1px solid #ccc; padding: 4px;");
+    imgLbl->setStyleSheet(
+        QString("background: %1; border: 1px solid %2; padding: 4px;").arg(
+            sak::ui::kColorBgWhite, sak::ui::kColorBorderDefault));
     imgLbl->setAccessibleName(QStringLiteral("WiFi QR code"));
     layout->addWidget(imgLbl);
 
     auto* hintLbl = new QLabel("Scan this QR code with your phone or tablet\nto connect to the "
         "network.", &dlg);
     hintLbl->setAlignment(Qt::AlignCenter);
-    hintLbl->setStyleSheet("color: #555; font-size: 9pt;");
+    hintLbl->setStyleSheet(
+        QString("color: %1; font-size: %2pt;").arg(
+            sak::ui::kColorTextSecondary, QString::number(sak::ui::kFontSizeNote)));
     layout->addWidget(hintLbl);
 
     auto* closeBtn = new QPushButton("Close", &dlg);
@@ -1171,22 +1186,28 @@ void WifiManagerPanel::showMultiNetworkQrDialog(const QList<WifiConfig>& sources
     dlg.setFixedSize(420, 530);
 
     auto* layout = new QVBoxLayout(&dlg);
-    layout->setContentsMargins(20, 16, 20, 16);
-    layout->setSpacing(8);
+    layout->setContentsMargins(sak::ui::kMarginXLarge, sak::ui::kMarginLarge,
+        sak::ui::kMarginXLarge, sak::ui::kMarginLarge);
+    layout->setSpacing(sak::ui::kSpacingMedium);
 
     auto* idxLbl = new QLabel(&dlg);
     idxLbl->setAlignment(Qt::AlignCenter);
-    idxLbl->setStyleSheet("color: #666; font-size: 9pt;");
+    idxLbl->setStyleSheet(
+        QString("color: %1; font-size: %2pt;").arg(
+            sak::ui::kColorTextMuted, QString::number(sak::ui::kFontSizeNote)));
     layout->addWidget(idxLbl);
 
     auto* titleLbl = new QLabel(&dlg);
     titleLbl->setAlignment(Qt::AlignCenter);
-    titleLbl->setStyleSheet("font-size: 13pt;");
+    titleLbl->setStyleSheet(
+        QString("font-size: %1pt;").arg(sak::ui::kFontSizeSection));
     layout->addWidget(titleLbl);
 
     auto* imgLbl = new QLabel(&dlg);
     imgLbl->setAlignment(Qt::AlignCenter);
-    imgLbl->setStyleSheet("background: white; border: 1px solid #ccc; padding: 4px;");
+    imgLbl->setStyleSheet(
+        QString("background: %1; border: 1px solid %2; padding: 4px;").arg(
+            sak::ui::kColorBgWhite, sak::ui::kColorBorderDefault));
     imgLbl->setFixedSize(360, 360);
     imgLbl->setAccessibleName(QStringLiteral("WiFi QR code"));
     layout->addWidget(imgLbl, 0, Qt::AlignHCenter);
@@ -1194,7 +1215,9 @@ void WifiManagerPanel::showMultiNetworkQrDialog(const QList<WifiConfig>& sources
     auto* hintLbl = new QLabel("Scan this QR code with your phone or tablet\nto connect to the "
         "network.", &dlg);
     hintLbl->setAlignment(Qt::AlignCenter);
-    hintLbl->setStyleSheet("color: #555; font-size: 9pt;");
+    hintLbl->setStyleSheet(
+        QString("color: %1; font-size: %2pt;").arg(
+            sak::ui::kColorTextSecondary, QString::number(sak::ui::kFontSizeNote)));
     layout->addWidget(hintLbl);
 
     auto* navBar   = new QHBoxLayout();

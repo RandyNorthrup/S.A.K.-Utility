@@ -246,7 +246,6 @@ void QuickActionsPanel::createSingleCategorySection(
         "  border-radius: 12px;"
         "  margin-top: 18px;"
         "  padding: 26px 10px 10px 10px;"
-        "  background-color: rgba(255, 255, 255, 0.9);"
         "}"
         "QGroupBox::title {"
         "  subcontrol-origin: margin;"
@@ -307,7 +306,7 @@ QPushButton* QuickActionsPanel::createActionButton(QuickAction* action) {
     button->setToolTip(action->description());
     // Use app theme styling — only override alignment and padding
     button->setStyleSheet(
-        "QPushButton { text-align: left; padding: 8px 14px; }"
+        "QPushButton { text-align: center; padding: 8px 14px; }"
     );
 
     connect(button, &QPushButton::clicked, this, [this, action]() {

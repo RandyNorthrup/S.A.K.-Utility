@@ -125,22 +125,26 @@ void OrchestrationClient::handleMessage(const QJsonObject& message) {
             Q_EMIT assignmentReceived(assignment);
             break;
         }
-        case OrchestrationMessageType::AssignmentControl: {
-            const QString deployment_id = message.value("deployment_id").toString();
-            const QString job_id = message.value("job_id").toString();
-            const QString action = message.value("action").toString().toLower();
-
-            if (action == "pause") {
-                Q_EMIT assignmentPaused(deployment_id, job_id);
-            } else if (action == "resume") {
-                Q_EMIT assignmentResumed(deployment_id, job_id);
-            } else if (action == "cancel") {
-                Q_EMIT assignmentCanceled(deployment_id, job_id);
-            }
+        case OrchestrationMessageType::AssignmentControl:
+            dispatchAssignmentControl(message);
             break;
-        }
         default:
             break;
+    }
+}
+
+void OrchestrationClient::dispatchAssignmentControl(
+    const QJsonObject& message) {
+    const QString deployment_id = message.value("deployment_id").toString();
+    const QString job_id = message.value("job_id").toString();
+    const QString action = message.value("action").toString().toLower();
+
+    if (action == "pause") {
+        Q_EMIT assignmentPaused(deployment_id, job_id);
+    } else if (action == "resume") {
+        Q_EMIT assignmentResumed(deployment_id, job_id);
+    } else if (action == "cancel") {
+        Q_EMIT assignmentCanceled(deployment_id, job_id);
     }
 }
 

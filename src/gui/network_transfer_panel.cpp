@@ -202,6 +202,10 @@ void NetworkTransferPanel::setupUi_sourceSection(QVBoxLayout* sourceLayout) {
     dataGroup->setLayout(dataLayout);
     sourceLayout->addWidget(dataGroup);
 
+    setupUi_peerDiscovery(sourceLayout);
+}
+
+void NetworkTransferPanel::setupUi_peerDiscovery(QVBoxLayout* sourceLayout) {
     auto* peerGroup = new QGroupBox(tr("Destination Discovery"), this);
     auto* peerLayout = new QVBoxLayout(peerGroup);
 
@@ -688,6 +692,10 @@ void NetworkTransferPanel::setupUi_deploymentProgress(QVBoxLayout* orchestratorL
     historyGroup->setLayout(historyLayout);
     orchestratorLayout->addWidget(historyGroup);
 
+    setupUi_statusLegend(orchestratorLayout);
+}
+
+void NetworkTransferPanel::setupUi_statusLegend(QVBoxLayout* orchestratorLayout) {
     auto* legendGroup = new QGroupBox(tr("Status Legend"), this);
     auto* legendLayout = new QHBoxLayout(legendGroup);
     // A11Y: emoji prefixes ensure status is readable without relying on color alone
@@ -752,15 +760,7 @@ void NetworkTransferPanel::setupUi_bottomButtons(QVBoxLayout* mainLayout) {
     m_transferButton->setFixedSize(sak::kButtonWidthLarge, sak::kButtonHeightCompact);
     m_transferButton->setAccessibleName(QStringLiteral("Start Transfer"));
     m_transferButton->setToolTip(QStringLiteral("Start the network file transfer"));
-    m_transferButton->setStyleSheet(
-        "QPushButton { background: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #43a047,stop:1 "
-        "#2e7d32); color: white; font-weight: 600; border-radius: 12px; }"
-        "QPushButton:hover { background: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #66bb6a,stop:1 "
-        "#43a047); }"
-        "QPushButton:pressed { background: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 "
-        "#2e7d32,stop:1 #1b5e20); }"
-        + QString("QPushButton:disabled { background-color: %1; color: %2; }")
-            .arg(sak::ui::kColorBorderDefault, sak::ui::kColorTextMuted));
+    m_transferButton->setStyleSheet(sak::ui::kSuccessButtonStyle);
     transferBtnLayout->addWidget(m_transferButton);
 
     mainLayout->addLayout(transferBtnLayout);
@@ -944,6 +944,10 @@ void NetworkTransferPanel::setupConnections_controllerSignals() {
         Q_EMIT statusMessage(msg, sak::kTimerStatusDefaultMs);
     });
 
+    setupConnections_parallelManager();
+}
+
+void NetworkTransferPanel::setupConnections_parallelManager() {
     if (m_parallelManager) {
         connect(m_parallelManager, &ParallelTransferManager::jobStartRequested, this,
             &NetworkTransferPanel::onJobStartRequested);
@@ -1431,26 +1435,10 @@ void NetworkTransferPanel::updateTransferButton() {
     Q_ASSERT(m_transferButton);
     if (m_sourceTransferActive) {
         m_transferButton->setText(tr("Stop Transfer"));
-        m_transferButton->setStyleSheet(
-            "QPushButton { background: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #ef5350,stop:1 "
-            "#c62828); color: white; font-weight: 600; border-radius: 12px; }"
-            "QPushButton:hover { background: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 "
-            "#ff7043,stop:1 #ef5350); }"
-            "QPushButton:pressed { background: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 "
-            "#c62828,stop:1 #b71c1c); }"
-            + QString("QPushButton:disabled { background-color: %1; color: %2; }")
-                .arg(sak::ui::kColorBorderDefault, sak::ui::kColorTextMuted));
+        m_transferButton->setStyleSheet(sak::ui::kDangerButtonStyle);
     } else {
         m_transferButton->setText(tr("Start Transfer"));
-        m_transferButton->setStyleSheet(
-            "QPushButton { background: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #43a047,stop:1 "
-            "#2e7d32); color: white; font-weight: 600; border-radius: 12px; }"
-            "QPushButton:hover { background: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 "
-            "#66bb6a,stop:1 #43a047); }"
-            "QPushButton:pressed { background: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 "
-            "#2e7d32,stop:1 #1b5e20); }"
-            + QString("QPushButton:disabled { background-color: %1; color: %2; }")
-                .arg(sak::ui::kColorBorderDefault, sak::ui::kColorTextMuted));
+        m_transferButton->setStyleSheet(sak::ui::kSuccessButtonStyle);
     }
 }
 
@@ -1460,26 +1448,10 @@ void NetworkTransferPanel::updatePauseResumeButton() {
         m_pauseResumeButton->setVisible(true);
         if (m_sourceTransferPaused) {
             m_pauseResumeButton->setText(tr("Resume"));
-            m_pauseResumeButton->setStyleSheet(
-                "QPushButton { background: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 "
-                "#43a047,stop:1 #2e7d32); color: white; font-weight: 600; border-radius: 12px; }"
-                "QPushButton:hover { background: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 "
-                "#66bb6a,stop:1 #43a047); }"
-                "QPushButton:pressed { background: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 "
-                "#2e7d32,stop:1 #1b5e20); }"
-                + QString("QPushButton:disabled { background-color: %1; color: %2; }")
-                    .arg(sak::ui::kColorBorderDefault, sak::ui::kColorTextMuted));
+            m_pauseResumeButton->setStyleSheet(sak::ui::kSuccessButtonStyle);
         } else {
             m_pauseResumeButton->setText(tr("Pause"));
-            m_pauseResumeButton->setStyleSheet(
-                "QPushButton { background: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 "
-                "#ffa726,stop:1 #f57c00); color: white; font-weight: 600; border-radius: 12px; }"
-                "QPushButton:hover { background: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 "
-                "#ffb74d,stop:1 #ffa726); }"
-                "QPushButton:pressed { background: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 "
-                "#f57c00,stop:1 #e65100); }"
-                + QString("QPushButton:disabled { background-color: %1; color: %2; }")
-                    .arg(sak::ui::kColorBorderDefault, sak::ui::kColorTextMuted));
+            m_pauseResumeButton->setStyleSheet(sak::ui::kPauseButtonStyle);
         }
     } else {
         m_pauseResumeButton->setVisible(false);

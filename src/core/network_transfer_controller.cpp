@@ -536,16 +536,17 @@ void NetworkTransferController::handleAuthResponseMessage(const QJsonObject& mes
 
     if (message.contains("status")) {
         const auto status = message.value("status").toString();
-        if (status == "ok") {
-            m_authenticated = true;
-            if (m_mode == Mode::Source) {
-                QJsonObject manifestPayload = m_manifest.toJson(false);
-                manifestPayload["files_count"] = static_cast<int>(m_files.size());
-                TransferProtocol::writeMessage(m_connection->socket(),
-                    TransferProtocol::makeMessage(TransferMessageType::TransferManifest,
-                        manifestPayload));
-                Q_EMIT statusMessage(tr("Manifest sent. Awaiting approval..."));
-            }
+        if (status != "ok") {
+            return;
+        }
+        m_authenticated = true;
+        if (m_mode == Mode::Source) {
+            QJsonObject manifestPayload = m_manifest.toJson(false);
+            manifestPayload["files_count"] = static_cast<int>(m_files.size());
+            TransferProtocol::writeMessage(m_connection->socket(),
+                TransferProtocol::makeMessage(TransferMessageType::TransferManifest,
+                    manifestPayload));
+            Q_EMIT statusMessage(tr("Manifest sent. Awaiting approval..."));
         }
         return;
     }
@@ -561,16 +562,17 @@ void NetworkTransferController::handleAuthResponseMessage(const QJsonObject& mes
             QCryptographicHash::Sha256);
 
         if (response != expected) {
+            const QJsonObject payload{{"error", "Authentication failed"}};
             TransferProtocol::writeMessage(m_connection->socket(),
-                TransferProtocol::makeMessage(TransferMessageType::Error, { {"error",
-                    "Authentication failed"} }));
+                TransferProtocol::makeMessage(TransferMessageType::Error, payload));
             Q_EMIT errorMessage(tr("Authentication failed"));
             return;
         }
 
         m_authenticated = true;
+        const QJsonObject okPayload{{"status", "ok"}};
         TransferProtocol::writeMessage(m_connection->socket(),
-            TransferProtocol::makeMessage(TransferMessageType::AuthResponse, { {"status", "ok"} }));
+            TransferProtocol::makeMessage(TransferMessageType::AuthResponse, okPayload));
         Q_EMIT statusMessage(tr("Authentication successful"));
     }
 }

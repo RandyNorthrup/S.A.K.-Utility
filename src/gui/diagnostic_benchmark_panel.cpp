@@ -194,7 +194,8 @@ QGroupBox* DiagnosticBenchmarkPanel::createSmartSection()
     // Warnings label
     m_smart_warnings_label = new QLabel("", this);
     m_smart_warnings_label->setWordWrap(true);
-    m_smart_warnings_label->setStyleSheet("color: #ea580c;");
+    m_smart_warnings_label->setStyleSheet(
+        QString("color: %1;").arg(sak::ui::kColorWarning));
     layout->addWidget(m_smart_warnings_label);
 
     // Button
@@ -268,7 +269,9 @@ QGroupBox* DiagnosticBenchmarkPanel::createCpuBenchmarkGroup()
 
     m_cpu_details_label = new QLabel("", this);
     m_cpu_details_label->setWordWrap(true);
-    m_cpu_details_label->setStyleSheet("color: #475569; font-size: 11pt;");
+    m_cpu_details_label->setStyleSheet(
+        QString("color: %1; font-size: %2pt;").arg(
+            sak::ui::kColorTextSecondary).arg(sak::ui::kFontSizeStatus));
     cpu_layout->addWidget(m_cpu_details_label);
 
     auto* cpu_btn_layout = new QHBoxLayout();
@@ -310,7 +313,8 @@ QGroupBox* DiagnosticBenchmarkPanel::createDiskBenchmarkGroup()
     disk_layout->addWidget(m_disk_latency_label);
 
     m_disk_score_label = new QLabel("Score: \u2014", this);
-    m_disk_score_label->setStyleSheet("font-weight: 600; color: #2563eb;");
+    m_disk_score_label->setStyleSheet(
+        QString("font-weight: 600; color: %1;").arg(sak::ui::kColorPrimaryDark));
     disk_layout->addWidget(m_disk_score_label);
 
     auto* disk_btn_layout = new QHBoxLayout();
@@ -339,7 +343,8 @@ QGroupBox* DiagnosticBenchmarkPanel::createMemoryBenchmarkGroup()
     mem_layout->addWidget(m_mem_latency_label);
 
     m_mem_score_label = new QLabel("Score: \u2014", this);
-    m_mem_score_label->setStyleSheet("font-weight: 600; color: #2563eb;");
+    m_mem_score_label->setStyleSheet(
+        QString("font-weight: 600; color: %1;").arg(sak::ui::kColorPrimaryDark));
     mem_layout->addWidget(m_mem_score_label);
 
     auto* mem_btn_layout = new QHBoxLayout();
@@ -369,7 +374,8 @@ QGroupBox* DiagnosticBenchmarkPanel::createStressTestSection()
 
     // Status
     m_stress_status_label = new QLabel("Status: Not Running", this);
-    m_stress_status_label->setStyleSheet("font-weight: 600; color: #1e293b;");
+    m_stress_status_label->setStyleSheet(
+        QString("font-weight: 600; color: %1;").arg(sak::ui::kColorTextHeading));
     layout->addWidget(m_stress_status_label);
 
     // Live stats row
@@ -526,12 +532,14 @@ QGroupBox* DiagnosticBenchmarkPanel::createSuiteSection()
     for (int i = 0; i < 7; ++i) {
         m_suite_step_labels[i] = new QLabel(
             QString("  %1  %2").arg(QChar(0x23F3)).arg(m_suite_step_names[i]), this);
-        m_suite_step_labels[i]->setStyleSheet("color: #94a3b8;");
+        m_suite_step_labels[i]->setStyleSheet(
+            QString("color: %1;").arg(sak::ui::kColorTextDisabled));
         layout->addWidget(m_suite_step_labels[i]);
     }
 
     m_suite_status_label = new QLabel("Suite not started", this);
-    m_suite_status_label->setStyleSheet("font-weight: 600; color: #1e293b;");
+    m_suite_status_label->setStyleSheet(
+        QString("font-weight: 600; color: %1;").arg(sak::ui::kColorTextHeading));
     layout->addWidget(m_suite_status_label);
 
     // Buttons

@@ -490,6 +490,10 @@ bool WindowsUSBCreator::makeBootable(const QString& driveLetter) {
     sak::logInfo(QString("Configuring boot environment using bcdboot from %1")
         .arg(bcdbootPath).toStdString());
 
+    return runBcdboot(bcdbootPath, cleanDrive);
+}
+
+bool WindowsUSBCreator::runBcdboot(const QString& bcdbootPath, const QString& cleanDrive) {
     // Run bcdboot to configure boot files
     QProcess bcdboot;
     QStringList args;
