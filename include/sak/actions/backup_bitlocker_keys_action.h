@@ -35,7 +35,8 @@ public:
     explicit BackupBitlockerKeysAction(const QString& backup_location, QObject* parent = nullptr);
 
     QString name() const override { return "BitLocker Key Backup"; }
-    QString description() const override { return "Backup BitLocker recovery keys for all encrypted volumes"; }
+    QString description() const override { return "Backup BitLocker recovery keys for all "
+                                                  "encrypted volumes"; }
     QIcon icon() const override { return QIcon(); }
     ActionCategory category() const override { return ActionCategory::EmergencyRecovery; }
     bool requiresAdmin() const override { return true; }

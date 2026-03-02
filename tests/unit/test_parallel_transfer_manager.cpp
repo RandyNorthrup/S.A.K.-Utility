@@ -167,7 +167,8 @@ void ParallelTransferManagerTests::schedulesRetryBackoff() {
     manager.retryJob(retryJobId);
 
     // Retry is delayed by backoff (base 50ms) â€” verify it eventually fires
-    QTRY_VERIFY2_WITH_TIMEOUT(startSpy.count() >= 1, "Expected retried job to start after backoff", 2000);
+    QTRY_VERIFY2_WITH_TIMEOUT(startSpy.count() >= 1, "Expected retried job to start after backoff",
+        2000);
 }
 
 void ParallelTransferManagerTests::broadcastsBandwidthUpdates() {
@@ -183,7 +184,8 @@ void ParallelTransferManagerTests::broadcastsBandwidthUpdates() {
     QSignalSpy bandwidthSpy(&manager, &ParallelTransferManager::jobBandwidthUpdateRequested);
     manager.startDeployment(mapping);
 
-    QTRY_VERIFY2_WITH_TIMEOUT(bandwidthSpy.count() >= 2, "Expected bandwidth updates for 2 jobs", 1000);
+    QTRY_VERIFY2_WITH_TIMEOUT(bandwidthSpy.count() >= 2, "Expected bandwidth updates for 2 jobs",
+        1000);
 }
 
 void ParallelTransferManagerTests::allocatesBandwidthByPriority() {
@@ -209,7 +211,8 @@ void ParallelTransferManagerTests::allocatesBandwidthByPriority() {
     manager.setJobPriority(criticalJobId, ParallelTransferManager::JobPriority::Critical);
     manager.setJobPriority(lowJobId, ParallelTransferManager::JobPriority::Low);
 
-    QTRY_VERIFY2_WITH_TIMEOUT(bandwidthSpy.count() >= 2, "Expected bandwidth rebalance after priority change", 1000);
+    QTRY_VERIFY2_WITH_TIMEOUT(bandwidthSpy.count() >= 2,
+        "Expected bandwidth rebalance after priority change", 1000);
 
     QMap<QString, int> lastKbps;
     for (const auto& args : bandwidthSpy) {

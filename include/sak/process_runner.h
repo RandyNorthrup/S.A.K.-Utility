@@ -26,7 +26,9 @@ struct ProcessResult {
 
 using CancelCheck = std::function<bool()>;
 
-[[nodiscard]] ProcessResult runProcess(const QString& program, const QStringList& args, int timeout_ms, const CancelCheck& should_cancel = {});
-[[nodiscard]] ProcessResult runPowerShell(const QString& script, int timeout_ms, bool no_profile = true, bool bypass_policy = true, const CancelCheck& should_cancel = {});
+[[nodiscard]] ProcessResult runProcess(const QString& program, const QStringList& args,
+    int timeout_ms, const CancelCheck& should_cancel = {});
+[[nodiscard]] ProcessResult runPowerShell(const QString& script, int timeout_ms,
+    bool no_profile = true, bool bypass_policy = true, const CancelCheck& should_cancel = {});
 
 } // namespace sak

@@ -21,15 +21,15 @@ UserProfileRestoreWelcomePage::UserProfileRestoreWelcomePage(QWidget* parent)
 {
     setTitle(tr("Restore User Profiles"));
     setSubTitle(tr("Select a backup to restore user profile data"));
-    
+
     setupUi();
-    
+
     registerField("backupPath*", m_backupPathEdit);
 }
 
 void UserProfileRestoreWelcomePage::setupUi() {
     auto* layout = new QVBoxLayout(this);
-    
+
     // Info section
     QString infoHtml = QString(
         "<h3>%1</h3>"
@@ -50,43 +50,47 @@ void UserProfileRestoreWelcomePage::setupUi() {
         tr("<b>App Restore</b>: Reinstall saved applications via Chocolatey (optional)"),
         tr("<b>Permissions</b>: Set permission strategies for restored files")
     );
-    
+
     m_infoLabel = new QLabel(infoHtml, this);
     m_infoLabel->setWordWrap(true);
     m_infoLabel->setTextFormat(Qt::RichText);
     layout->addWidget(m_infoLabel);
-    
+
     layout->addSpacing(20);
-    
+
     // Backup selection
     auto* selectGroup = new QWidget(this);
     auto* selectLayout = new QHBoxLayout(selectGroup);
     selectLayout->setContentsMargins(0, 0, 0, 0);
-    
+
     auto* backupLabel = new QLabel(tr("Backup Location:"), selectGroup);
     m_backupPathEdit = new QLineEdit(selectGroup);
     m_backupPathEdit->setPlaceholderText(tr("Select backup directory or manifest.json file..."));
-    
+
     m_browseButton = new QPushButton(tr("Browse..."), selectGroup);
-    
+
     selectLayout->addWidget(backupLabel);
     selectLayout->addWidget(m_backupPathEdit, 1);
     selectLayout->addWidget(m_browseButton);
-    
+
     layout->addWidget(selectGroup);
-    
+
     // Manifest info
     m_manifestInfoLabel = new QLabel(this);
     m_manifestInfoLabel->setWordWrap(true);
-    m_manifestInfoLabel->setStyleSheet(QString("QLabel { background-color: %1; padding: 12px; border-radius: 10px; }").arg(sak::ui::kColorBgSurface));
+    m_manifestInfoLabel->setStyleSheet(QString("QLabel { background-color: %1; padding: 12px; "
+                                               "border-radius: 10px; }")
+                                                   .arg(sak::ui::kColorBgSurface));
     m_manifestInfoLabel->hide();
     layout->addWidget(m_manifestInfoLabel);
-    
+
     layout->addStretch(1);
-    
+
     // Connections
-    connect(m_browseButton, &QPushButton::clicked, this, &UserProfileRestoreWelcomePage::onBrowseBackup);
-    connect(m_backupPathEdit, &QLineEdit::textChanged, this, &UserProfileRestoreWelcomePage::onBackupPathChanged);
+    connect(m_browseButton, &QPushButton::clicked, this,
+        &UserProfileRestoreWelcomePage::onBrowseBackup);
+    connect(m_backupPathEdit, &QLineEdit::textChanged, this,
+        &UserProfileRestoreWelcomePage::onBackupPathChanged);
 }
 
 void UserProfileRestoreWelcomePage::onBrowseBackup() {
@@ -96,7 +100,7 @@ void UserProfileRestoreWelcomePage::onBrowseBackup() {
         QDir::homePath(),
         QFileDialog::ShowDirsOnly | QFileDialog::DontResolveSymlinks
     );
-    
+
     if (!path.isEmpty()) {
         m_backupPathEdit->setText(path);
     }
@@ -104,38 +108,40 @@ void UserProfileRestoreWelcomePage::onBrowseBackup() {
 
 void UserProfileRestoreWelcomePage::onBackupPathChanged() {
     QString path = m_backupPathEdit->text();
-    
+
     if (path.isEmpty()) {
         m_manifestInfoLabel->hide();
         Q_EMIT completeChanged();
         return;
     }
-    
+
     // Try to load manifest
     QFileInfo fileInfo(path);
     QString manifestPath;
-    
+
     if (fileInfo.isDir()) {
         manifestPath = path + "/manifest.json";
     } else if (fileInfo.fileName() == "manifest.json") {
         manifestPath = path;
         m_backupPathEdit->setText(fileInfo.absolutePath());
     } else {
-        m_manifestInfoLabel->setText(tr("❌ Invalid backup path. Please select a backup directory or manifest.json file."));
+        m_manifestInfoLabel->setText(tr("❌ Invalid backup path. Please select a backup directory "
+                                        "or manifest.json file."));
         m_manifestInfoLabel->show();
         Q_EMIT completeChanged();
         return;
     }
-    
+
     // Load manifest
     BackupManifest manifest = BackupManifest::loadFromFile(manifestPath);
     if (manifest.version.isEmpty()) {
-        m_manifestInfoLabel->setText(tr("❌ Failed to load backup manifest. The backup may be corrupted."));
+        m_manifestInfoLabel->setText(tr("❌ Failed to load backup manifest. The backup may be "
+                                        "corrupted."));
         m_manifestInfoLabel->show();
         Q_EMIT completeChanged();
         return;
     }
-    
+
     // Display manifest info
     QString info = QString(
         "<b>✅ Valid Backup Found</b><br>"
@@ -151,17 +157,17 @@ void UserProfileRestoreWelcomePage::onBackupPathChanged() {
         QString::number(manifest.users.size()),
         QString::number(manifest.total_backup_size_bytes / sak::kBytesPerGBf, 'f', 2)
     );
-    
+
     m_manifestInfoLabel->setText(info);
     m_manifestInfoLabel->show();
-    
+
     // Store manifest in wizard
     auto* wiz = qobject_cast<UserProfileRestoreWizard*>(wizard());
     if (wiz) {
         wiz->setBackupPath(m_backupPathEdit->text());
         wiz->setManifest(manifest);
     }
-    
+
     Q_EMIT completeChanged();
 }
 
@@ -180,7 +186,7 @@ UserProfileRestoreWizard::UserProfileRestoreWizard(QWidget* parent)
     setWizardStyle(QWizard::ModernStyle);
     setOption(QWizard::HaveHelpButton, false);
     setOption(QWizard::NoCancelButton, false);
-    
+
     // Add pages
     addPage(new UserProfileRestoreWelcomePage(this));
     addPage(new UserProfileRestoreUserMappingPage(this));
@@ -189,7 +195,7 @@ UserProfileRestoreWizard::UserProfileRestoreWizard(QWidget* parent)
     addPage(new UserProfileRestoreAppRestorePage(this));
     addPage(new UserProfileRestorePermissionSettingsPage(this));
     addPage(new UserProfileRestoreExecutePage(this));
-    
+
     resize(sak::kWizardLargeWidth, sak::kWizardLargeHeight);
 }
 

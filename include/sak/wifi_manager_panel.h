@@ -114,7 +114,8 @@ private:
     /** Render a QR code for @p payload into a 640Ã—640 QImage (white background) */
     static QImage generateQrImage(const QString& payload);
 
-    // -------------------------------------------------------------------------    // QR wizard decomposition helpers
+    // ------------------------------------------------------------------------- // QR wizard
+    /// decomposition helpers
     // -------------------------------------------------------------------------
     /** Bundle of widget pointers shared between QR-wizard page builders */
     struct QrWizardControls {
@@ -177,7 +178,8 @@ private:
                               const QString& baseDir, bool showHeader,
                               bool png, bool pdf, bool jpg, bool bmp);
 
-    // -------------------------------------------------------------------------    // Export helpers
+    // -----------------------------------------------------------------
+    // Export helpers
     // -------------------------------------------------------------------------
     /** Generate content of a Windows netsh .cmd script for a single network */
     static QString buildWindowsScript(const QString& ssid,

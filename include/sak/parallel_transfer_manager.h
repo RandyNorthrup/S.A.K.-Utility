@@ -77,7 +77,8 @@ public:
                            qint64 total_bytes,
                            double speed_mbps,
                            const QString& current_file);
-    void markJobComplete(const QString& job_id, bool success, const QString& error_message = QString());
+    void markJobComplete(const QString& job_id, bool success,
+        const QString& error_message = QString());
 
 Q_SIGNALS:
     void deploymentStarted(const QString& deployment_id);

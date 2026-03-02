@@ -15,7 +15,7 @@ namespace sak {
 
 /**
  * @brief Configuration manager for application settings
- * 
+ *
  * Provides:
  * - QSettings-based persistence
  * - Default values
@@ -44,7 +44,8 @@ public:
      * @param default_value Default value if key not found
      * @return Configuration value
      */
-    [[nodiscard]] QVariant getValue(const QString& key, const QVariant& default_value = QVariant()) const;
+    [[nodiscard]] QVariant getValue(const QString& key,
+        const QVariant& default_value = QVariant()) const;
 
     /**
      * @brief Set configuration value

@@ -83,24 +83,24 @@ void OrganizerPanel::setupUi_directoryAndCategories(QVBoxLayout* mainLayout)
     // Target directory group
     auto* pathGroup = new QGroupBox("Target Directory", this);
     auto* pathLayout = new QHBoxLayout(pathGroup);
-    
+
     m_target_path = new QLineEdit(this);
     m_target_path->setPlaceholderText("Select directory to organize...");
     m_target_path->setAccessibleName(QStringLiteral("Target Directory Path"));
     m_target_path->setToolTip(QStringLiteral("Path to the directory that will be organized"));
     pathLayout->addWidget(m_target_path, 1);
-    
+
     m_browse_button = new QPushButton("Browse...", this);
     m_browse_button->setAccessibleName(QStringLiteral("Browse Directory"));
     m_browse_button->setToolTip(QStringLiteral("Browse for a directory to organize"));
     pathLayout->addWidget(m_browse_button);
-    
+
     mainLayout->addWidget(pathGroup);
 
     // Category mapping group
     auto* categoryGroup = new QGroupBox("Category Mapping", this);
     auto* categoryLayout = new QVBoxLayout(categoryGroup);
-    
+
     m_category_table = new QTableWidget(this);
     m_category_table->setColumnCount(2);
     m_category_table->setHorizontalHeaderLabels({"Category", "Extensions (comma-separated)"});
@@ -111,19 +111,20 @@ void OrganizerPanel::setupUi_directoryAndCategories(QVBoxLayout* mainLayout)
     m_category_table->setAccessibleName(QStringLiteral("Category Mappings Table"));
     m_category_table->setToolTip(QStringLiteral("File categories and their associated extensions"));
     categoryLayout->addWidget(m_category_table);
-    
+
     auto* buttonLayout = new QHBoxLayout();
     m_add_category_button = new QPushButton("Add Category", this);
     m_add_category_button->setAccessibleName(QStringLiteral("Add Category"));
     m_add_category_button->setToolTip(QStringLiteral("Add a new file category row"));
     m_remove_category_button = new QPushButton("Remove Selected", this);
     m_remove_category_button->setAccessibleName(QStringLiteral("Remove Category"));
-    m_remove_category_button->setToolTip(QStringLiteral("Remove the selected category from the list"));
+    m_remove_category_button->setToolTip(QStringLiteral(
+        "Remove the selected category from the list"));
     buttonLayout->addWidget(m_add_category_button);
     buttonLayout->addWidget(m_remove_category_button);
     buttonLayout->addStretch();
     categoryLayout->addLayout(buttonLayout);
-    
+
     mainLayout->addWidget(categoryGroup);
 }
 
@@ -139,7 +140,8 @@ void OrganizerPanel::setupUi_controlsAndConnections(QVBoxLayout* mainLayout)
     m_preview_mode_checkbox = new QCheckBox("Preview Mode (Dry Run)", this);
     m_preview_mode_checkbox->setChecked(true);
     m_preview_mode_checkbox->setAccessibleName(QStringLiteral("Preview Mode"));
-    m_preview_mode_checkbox->setToolTip(QStringLiteral("Show what would happen without moving files"));
+    m_preview_mode_checkbox->setToolTip(QStringLiteral(
+        "Show what would happen without moving files"));
     m_preview_mode_checkbox->setVisible(false);
 
     // Control buttons
@@ -152,27 +154,28 @@ void OrganizerPanel::setupUi_controlsAndConnections(QVBoxLayout* mainLayout)
     controlLayout->addWidget(settingsBtn);
 
     controlLayout->addStretch();
-    
+
     m_preview_button = new QPushButton("Preview", this);
     m_preview_button->setMinimumWidth(sak::kButtonWidthSmall);
     m_preview_button->setAccessibleName(QStringLiteral("Preview Organization"));
-    m_preview_button->setToolTip(QStringLiteral("Preview file organization without making changes"));
+    m_preview_button->setToolTip(QStringLiteral(
+        "Preview file organization without making changes"));
     controlLayout->addWidget(m_preview_button);
-    
+
     m_execute_button = new QPushButton("Execute", this);
     m_execute_button->setMinimumWidth(sak::kButtonWidthSmall);
     m_execute_button->setAccessibleName(QStringLiteral("Execute Organization"));
     m_execute_button->setToolTip(QStringLiteral("Organize files into category folders"));
     m_execute_button->setStyleSheet(ui::kPrimaryButtonStyle);
     controlLayout->addWidget(m_execute_button);
-    
+
     m_cancel_button = new QPushButton("Cancel", this);
     m_cancel_button->setMinimumWidth(sak::kButtonWidthSmall);
     m_cancel_button->setEnabled(false);
     m_cancel_button->setAccessibleName(QStringLiteral("Cancel Organization"));
     m_cancel_button->setToolTip(QStringLiteral("Cancel the current organization operation"));
     controlLayout->addWidget(m_cancel_button);
-    
+
     m_logToggle = new LogToggleSwitch(tr("Log"), this);
     controlLayout->insertWidget(1, m_logToggle);
 
@@ -183,8 +186,10 @@ void OrganizerPanel::setupUi_controlsAndConnections(QVBoxLayout* mainLayout)
     connect(m_preview_button, &QPushButton::clicked, this, &OrganizerPanel::onPreviewClicked);
     connect(m_execute_button, &QPushButton::clicked, this, &OrganizerPanel::onExecuteClicked);
     connect(m_cancel_button, &QPushButton::clicked, this, &OrganizerPanel::onCancelClicked);
-    connect(m_add_category_button, &QPushButton::clicked, this, &OrganizerPanel::onAddCategoryClicked);
-    connect(m_remove_category_button, &QPushButton::clicked, this, &OrganizerPanel::onRemoveCategoryClicked);
+    connect(m_add_category_button, &QPushButton::clicked, this,
+        &OrganizerPanel::onAddCategoryClicked);
+    connect(m_remove_category_button, &QPushButton::clicked, this,
+        &OrganizerPanel::onRemoveCategoryClicked);
 }
 
 void OrganizerPanel::setupDefaultCategories()
@@ -248,7 +253,7 @@ void OrganizerPanel::onExecuteClicked()
     config.category_mapping = getCategoryMapping();
     config.preview_mode = m_preview_mode_checkbox->isChecked();
     config.create_subdirectories = true;
-    
+
     QString strategy = m_collision_strategy->currentText().toLower();
     config.collision_strategy = strategy;
 
@@ -260,14 +265,15 @@ void OrganizerPanel::onExecuteClicked()
     connect(m_worker.get(), &OrganizerWorker::failed, this, &OrganizerPanel::onWorkerFailed);
     connect(m_worker.get(), &OrganizerWorker::cancelled, this, &OrganizerPanel::onWorkerCancelled);
     connect(m_worker.get(), &OrganizerWorker::fileProgress, this, &OrganizerPanel::onFileProgress);
-    connect(m_worker.get(), &OrganizerWorker::previewResults, this, &OrganizerPanel::onPreviewResults);
+    connect(m_worker.get(), &OrganizerWorker::previewResults, this,
+        &OrganizerPanel::onPreviewResults);
 
     setOperationRunning(true);
     Q_EMIT statusMessage("Starting...", 0);
     m_worker->start();
 
     QString mode = config.preview_mode ? "Preview" : "Execute";
-    logInfo("Organization operation initiated ({}): {}", mode.toStdString(), 
+    logInfo("Organization operation initiated ({}): {}", mode.toStdString(),
                   config.target_directory.toStdString());
 }
 
@@ -318,7 +324,7 @@ void OrganizerPanel::onWorkerFinished()
     Q_EMIT statusMessage(QString("%1 complete").arg(mode), sak::kTimerStatusDefaultMs);
     Q_EMIT progressUpdate(100, 100);
     logMessage(QString("%1 completed successfully").arg(mode));
-    QMessageBox::information(this, QString("%1 Complete").arg(mode), 
+    QMessageBox::information(this, QString("%1 Complete").arg(mode),
                             QString("%1 operation completed successfully").arg(mode));
     logInfo("Organization operation completed successfully");
 }
@@ -329,7 +335,7 @@ void OrganizerPanel::onWorkerFailed(int errorCode, const QString& errorMessage)
     Q_EMIT statusMessage("Organization failed", sak::kTimerStatusDefaultMs);
     Q_EMIT progressUpdate(0, 100);
     logMessage(QString("Organization failed: Error %1: %2").arg(errorCode).arg(errorMessage));
-    QMessageBox::warning(this, "Organization Failed", 
+    QMessageBox::warning(this, "Organization Failed",
                         QString("Error %1: %2").arg(errorCode).arg(errorMessage));
     logError("Organization failed: {}", errorMessage.toStdString());
 }
@@ -345,7 +351,7 @@ void OrganizerPanel::onWorkerCancelled()
 void OrganizerPanel::onFileProgress(int current, int total, const QString& filePath)
 {
     Q_EMIT progressUpdate(current, total);
-    
+
     QString filename = QFileInfo(filePath).fileName();
     Q_EMIT statusMessage(QString("Processing: %1").arg(filename), 0);
 }
@@ -384,7 +390,7 @@ QMap<QString, QStringList> OrganizerPanel::getCategoryMapping() const
 void OrganizerPanel::setOperationRunning(bool running)
 {
     m_operation_running = running;
-    
+
     m_target_path->setEnabled(!running);
     m_browse_button->setEnabled(!running);
     m_category_table->setEnabled(!running);
@@ -392,7 +398,7 @@ void OrganizerPanel::setOperationRunning(bool running)
     m_remove_category_button->setEnabled(!running);
     m_collision_strategy->setEnabled(!running);
     m_preview_mode_checkbox->setEnabled(!running);
-    
+
     m_preview_button->setEnabled(!running);
     m_execute_button->setEnabled(!running);
     m_cancel_button->setEnabled(running);
@@ -416,7 +422,8 @@ void OrganizerPanel::onSettingsClicked()
     collisionCombo->setCurrentIndex(m_collision_strategy->currentIndex());
     layout->addRow(
         InfoButton::createInfoLabel(tr("Collision Strategy:"),
-            tr("How to handle files when a file with the same name already exists in the destination folder"), &dialog),
+            tr("How to handle files when a file with the same name already exists in the "
+               "destination folder"), &dialog),
         collisionCombo);
 
     auto* previewCheck = new QCheckBox(tr("Preview Mode (Dry Run)"), &dialog);

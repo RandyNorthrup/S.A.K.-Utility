@@ -13,7 +13,7 @@ namespace sak {
 
 std::unique_ptr<StreamingDecompressor> DecompressorFactory::create(const QString& filePath) {
     QString format = detectFormat(filePath);
-    
+
     if (format.isEmpty()) {
         sak::logWarning(QString("Unknown compression format: %1").arg(filePath).toStdString());
         return nullptr;
@@ -104,7 +104,8 @@ QString DecompressorFactory::detectByMagicNumber(const QString& filePath) {
     return QString();
 }
 
-bool DecompressorFactory::readMagicNumber(const QString& filePath, unsigned char* buffer, int size) {
+bool DecompressorFactory::readMagicNumber(const QString& filePath, unsigned char* buffer,
+    int size) {
     QFile file(filePath);
     if (!file.open(QIODevice::ReadOnly)) {
         return false;

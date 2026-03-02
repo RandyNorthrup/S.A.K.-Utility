@@ -22,11 +22,12 @@ ExportRegistryKeysAction::ExportRegistryKeysAction(const QString& backup_locatio
 void ExportRegistryKeysAction::exportKey(const QString& key_path, const QString& filename) {
     QString output_file = m_backup_location + "/Registry/" + filename;
     QString cmd = QString("reg export \"%1\" \"%2\" /y").arg(key_path, output_file);
-    ProcessResult proc = runProcess("cmd.exe", QStringList() << "/c" << cmd, sak::kTimeoutProcessMediumMs);
+    ProcessResult proc = runProcess("cmd.exe", QStringList() << "/c" << cmd,
+        sak::kTimeoutProcessMediumMs);
     if (!proc.succeeded()) {
         Q_EMIT logMessage("Registry export warning: " + proc.std_err.trimmed());
     }
-    
+
     if (QFile::exists(output_file)) {
         m_keys_exported++;
         m_total_size += QFileInfo(output_file).size();
@@ -74,13 +75,15 @@ QString ExportRegistryKeysAction::buildRegistryBackupScript(const QString& backu
         "    \n"
         "    try { \n"
         "        # Use reg.exe for reliable export\n"
-        "        $process = Start-Process -FilePath 'reg.exe' -ArgumentList @('export', $key.Path, $outputFile, '/y') -NoNewWindow -Wait -PassThru; \n"
+        "        $process = Start-Process -FilePath 'reg.exe' -ArgumentList @('export', $key.Path, "
+        "$outputFile, '/y') -NoNewWindow -Wait -PassThru; \n"
         "        \n"
         "        if ($process.ExitCode -eq 0 -and (Test-Path $outputFile)) { \n"
         "            $fileInfo = Get-Item $outputFile; \n"
         "            $totalSize += $fileInfo.Length; \n"
         "            $keysExported++; \n"
-        "            Write-Output \"SUCCESS: $($key.Name) - $([math]::Round($fileInfo.Length/1MB, 2)) MB\"; \n"
+        "            Write-Output \"SUCCESS: $($key.Name) - "
+        "$([math]::Round($fileInfo.Length/1MB, 2)) MB\"; \n"
         "        } else { \n"
         "            Write-Warning \"FAILED: $($key.Path) - Exit code $($process.ExitCode)\"; \n"
         "        } \n"
@@ -139,7 +142,8 @@ void ExportRegistryKeysAction::finalizeRegistryExportResult(
     } else {
         result.success = false;
         result.message = "Failed to export registry keys";
-        result.log = QString("No registry keys were successfully exported\n\nOutput:\n%1").arg(accumulated_output);
+        result.log = QString("No registry keys were successfully exported\n\nOutput:\n%1")
+            .arg(accumulated_output);
     }
 
     finishWithResult(result, result.success ? ActionStatus::Success : ActionStatus::Failed);
@@ -153,17 +157,17 @@ void ExportRegistryKeysAction::execute() {
 
     setStatus(ActionStatus::Running);
     QDateTime start_time = QDateTime::currentDateTime();
-    
+
     Q_EMIT executionProgress("Preparing enterprise registry backup...", 5);
-    
+
     QDir backup_dir(m_backup_location + "/Registry");
     backup_dir.mkpath(".");
-    
+
     QString timestamp = QDateTime::currentDateTime().toString("yyyyMMdd_hhmmss");
     QString backup_path = backup_dir.absolutePath().replace("/", "\\");
-    
+
     QString ps_script = buildRegistryBackupScript(backup_path, timestamp);
-    
+
     ProcessResult ps = runPowerShell(ps_script, sak::kTimeoutProcessVeryLongMs);
     if (!ps.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("Registry export warning: " + ps.std_err.trimmed());
@@ -172,22 +176,22 @@ void ExportRegistryKeysAction::execute() {
     QString accumulated_output = ps.std_out;
     int keys_exported = 0;
     qint64 total_size = 0;
-    
+
     // Parse results
     QRegularExpression totalKeysRe("TOTAL_KEYS:(\\d+)");
     QRegularExpression totalSizeRe("TOTAL_SIZE:(\\d+)");
     QRegularExpression manifestRe("MANIFEST:(.+)");
-    
+
     QRegularExpressionMatch keysMatch = totalKeysRe.match(accumulated_output);
     QRegularExpressionMatch sizeMatch = totalSizeRe.match(accumulated_output);
     QRegularExpressionMatch manifestMatch = manifestRe.match(accumulated_output);
-    
+
     if (keysMatch.hasMatch()) keys_exported = keysMatch.captured(1).toInt();
     if (sizeMatch.hasMatch()) total_size = sizeMatch.captured(1).toLongLong();
-    
+
     QString manifest_path;
     if (manifestMatch.hasMatch()) manifest_path = manifestMatch.captured(1).trimmed();
-    
+
     finalizeRegistryExportResult(start_time, backup_dir, keys_exported,
                                   total_size, manifest_path, accumulated_output);
 }

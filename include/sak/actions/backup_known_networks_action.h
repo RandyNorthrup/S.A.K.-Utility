@@ -24,7 +24,8 @@ public:
     explicit BackupKnownNetworksAction(const QString& backup_location, QObject* parent = nullptr);
 
     QString name()        const override { return "Backup Known Networks"; }
-    QString description() const override { return "Export all known WiFi profiles to a JSON file loadable in WiFi Manager"; }
+    QString description() const override { return "Export all known WiFi profiles to a JSON file "
+                                                  "loadable in WiFi Manager"; }
     QIcon   icon()        const override { return QIcon(); }
     ActionCategory category()     const override { return ActionCategory::QuickBackup; }
     bool   requiresAdmin()        const override { return false; }

@@ -12,7 +12,7 @@ namespace sak {
 
 /**
  * @brief Factory for creating all quick actions
- * 
+ *
  * Separates action creation from panel code to avoid windows.h pollution.
  */
 class ActionFactory {
@@ -22,7 +22,8 @@ public:
      * @param backup_location Default location for backup actions
      * @return Vector of all actions
      */
-    static std::vector<std::unique_ptr<QuickAction>> createAllActions(const QString& backup_location);
+    static std::vector<std::unique_ptr<QuickAction>> createAllActions(
+        const QString& backup_location);
 };
 
 } // namespace sak

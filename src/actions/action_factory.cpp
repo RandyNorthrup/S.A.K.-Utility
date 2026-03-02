@@ -57,9 +57,10 @@
 
 namespace sak {
 
-std::vector<std::unique_ptr<QuickAction>> ActionFactory::createAllActions(const QString& backup_location) {
+std::vector<std::unique_ptr<QuickAction>> ActionFactory::createAllActions(
+    const QString& backup_location) {
     std::vector<std::unique_ptr<QuickAction>> actions;
-    
+
     // System Optimization
     actions.push_back(std::make_unique<DiskCleanupAction>());
     actions.push_back(std::make_unique<ClearBrowserCacheAction>());
@@ -69,7 +70,7 @@ std::vector<std::unique_ptr<QuickAction>> ActionFactory::createAllActions(const 
     actions.push_back(std::make_unique<ClearEventLogsAction>());
     actions.push_back(std::make_unique<OptimizePowerSettingsAction>());
     actions.push_back(std::make_unique<DisableVisualEffectsAction>());
-    
+
     // Quick Backups
     actions.push_back(std::make_unique<QuickBooksBackupAction>(backup_location));
     actions.push_back(std::make_unique<BrowserProfileBackupAction>(backup_location));
@@ -80,7 +81,7 @@ std::vector<std::unique_ptr<QuickAction>> ActionFactory::createAllActions(const 
     actions.push_back(std::make_unique<PhotoManagementBackupAction>(backup_location));
     actions.push_back(std::make_unique<DevelopmentConfigsBackupAction>(backup_location));
     actions.push_back(std::make_unique<BackupKnownNetworksAction>(backup_location));
-    
+
     // Maintenance
     actions.push_back(std::make_unique<UpdateAllAppsAction>());
     actions.push_back(std::make_unique<WindowsUpdateAction>());
@@ -89,7 +90,7 @@ std::vector<std::unique_ptr<QuickAction>> ActionFactory::createAllActions(const 
     actions.push_back(std::make_unique<RebuildIconCacheAction>());
     actions.push_back(std::make_unique<ResetNetworkAction>());
     actions.push_back(std::make_unique<ClearPrintSpoolerAction>());
-    
+
     // Troubleshooting
     actions.push_back(std::make_unique<GenerateSystemReportAction>(backup_location));
     actions.push_back(std::make_unique<CheckBloatwareAction>());
@@ -97,7 +98,7 @@ std::vector<std::unique_ptr<QuickAction>> ActionFactory::createAllActions(const 
     actions.push_back(std::make_unique<ScanMalwareAction>());
     actions.push_back(std::make_unique<RepairWindowsStoreAction>());
     actions.push_back(std::make_unique<FixAudioIssuesAction>());
-    
+
     // Emergency Recovery
     actions.push_back(std::make_unique<CreateRestorePointAction>());
     actions.push_back(std::make_unique<ExportRegistryKeysAction>(backup_location));
@@ -105,7 +106,7 @@ std::vector<std::unique_ptr<QuickAction>> ActionFactory::createAllActions(const 
     actions.push_back(std::make_unique<BackupDesktopWallpaperAction>(backup_location));
     actions.push_back(std::make_unique<BackupPrinterSettingsAction>(backup_location));
     actions.push_back(std::make_unique<BackupBitlockerKeysAction>(backup_location));
-    
+
     return actions;
 }
 

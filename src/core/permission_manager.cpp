@@ -301,7 +301,9 @@ bool PermissionManager::setSecurityDescriptorSddl(const QString& path, const QSt
     DWORD result = SetNamedSecurityInfoW(
         (LPWSTR)path.toStdWString().c_str(),
         SE_FILE_OBJECT,
-        OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+        OWNER_SECURITY_INFORMATION
+            | DACL_SECURITY_INFORMATION
+            | PROTECTED_DACL_SECURITY_INFORMATION,
         pOwner,
         nullptr,
         pDacl,

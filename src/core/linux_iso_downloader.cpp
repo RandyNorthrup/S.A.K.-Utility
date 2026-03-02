@@ -277,7 +277,9 @@ QStringList LinuxISODownloader::buildAria2cArguments(const QString& url,
              << "--check-certificate=false"   // SF mirrors may have cert issues
              << "--follow-metalink=mem"        // SF may serve metalink responses
              << "--follow-torrent=false"
-             << "--max-tries=" + QString::number(sak::kAria2MaxTriesHigh)              // More retries for mirror selection
+             << "--max-tries=" +
+                 QString::number(
+                     sak::kAria2MaxTriesHigh)              // More retries for mirror selection
              << "--retry-wait=" + QString::number(sak::kAria2RetryWaitLongSec)
              << "--connect-timeout=" + QString::number(sak::kAria2ConnectTimeoutLongSec)
              << "--timeout=" + QString::number(sak::kAria2TimeoutLongSec)
@@ -444,7 +446,8 @@ void LinuxISODownloader::onProgressPollTimer()
 // Checksum Verification
 // ============================================================================
 
-QString LinuxISODownloader::parseExpectedHash(const QString& checksumData, const QString& expectedFileName) const
+QString LinuxISODownloader::parseExpectedHash(const QString& checksumData,
+    const QString& expectedFileName) const
 {
     QStringList checksumLines = checksumData.split('\n', Qt::SkipEmptyParts);
 

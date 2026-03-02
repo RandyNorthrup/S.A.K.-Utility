@@ -31,14 +31,29 @@ void DiagnosticControllerTests::initialState()
 void DiagnosticControllerTests::suiteStateEnum()
 {
     // Verify all suite states are distinct values
-    QVERIFY(DiagnosticController::SuiteState::Idle != DiagnosticController::SuiteState::HardwareScan);
-    QVERIFY(DiagnosticController::SuiteState::HardwareScan != DiagnosticController::SuiteState::SmartAnalysis);
-    QVERIFY(DiagnosticController::SuiteState::SmartAnalysis != DiagnosticController::SuiteState::CpuBenchmark);
-    QVERIFY(DiagnosticController::SuiteState::CpuBenchmark != DiagnosticController::SuiteState::DiskBenchmark);
-    QVERIFY(DiagnosticController::SuiteState::DiskBenchmark != DiagnosticController::SuiteState::MemoryBenchmark);
-    QVERIFY(DiagnosticController::SuiteState::MemoryBenchmark != DiagnosticController::SuiteState::StressTest);
-    QVERIFY(DiagnosticController::SuiteState::StressTest != DiagnosticController::SuiteState::ReportGeneration);
-    QVERIFY(DiagnosticController::SuiteState::ReportGeneration != DiagnosticController::SuiteState::Complete);
+    QVERIFY(
+        DiagnosticController::SuiteState::Idle != DiagnosticController::SuiteState::HardwareScan);
+    QVERIFY(
+        DiagnosticController::SuiteState::HardwareScan
+            != DiagnosticController::SuiteState::SmartAnalysis);
+    QVERIFY(
+        DiagnosticController::SuiteState::SmartAnalysis
+            != DiagnosticController::SuiteState::CpuBenchmark);
+    QVERIFY(
+        DiagnosticController::SuiteState::CpuBenchmark
+            != DiagnosticController::SuiteState::DiskBenchmark);
+    QVERIFY(
+        DiagnosticController::SuiteState::DiskBenchmark
+            != DiagnosticController::SuiteState::MemoryBenchmark);
+    QVERIFY(
+        DiagnosticController::SuiteState::MemoryBenchmark
+            != DiagnosticController::SuiteState::StressTest);
+    QVERIFY(
+        DiagnosticController::SuiteState::StressTest
+            != DiagnosticController::SuiteState::ReportGeneration);
+    QVERIFY(
+        DiagnosticController::SuiteState::ReportGeneration
+            != DiagnosticController::SuiteState::Complete);
 }
 
 void DiagnosticControllerTests::cancelCurrentResetsState()

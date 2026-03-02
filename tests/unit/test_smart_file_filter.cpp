@@ -255,7 +255,8 @@ void SmartFileFilterTests::cacheDirectory_detected()
     sak::SmartFileFilter filter;
     // isInCacheDirectory checks for \cache\ (with separators) in the path
     // Use a path where Cache is an intermediate directory, not the final segment
-    QString cachePath = m_tempDir.filePath("AppData/Local/Google/Chrome/User Data/Default/Cache/cached_data.bin");
+    QString cachePath = m_tempDir.filePath("AppData/Local/Google/Chrome/User "
+                                           "Data/Default/Cache/cached_data.bin");
     QVERIFY(filter.isInCacheDirectory(cachePath));
 }
 

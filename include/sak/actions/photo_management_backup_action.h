@@ -14,7 +14,7 @@ namespace sak {
 
 /**
  * @brief Photo Management Backup Action
- * 
+ *
  * Backs up Lightroom catalogs, Photoshop settings, and photo editing software data.
  */
 class PhotoManagementBackupAction : public QuickAction {
@@ -24,7 +24,8 @@ public:
     explicit PhotoManagementBackupAction(const QString& backup_location, QObject* parent = nullptr);
 
     QString name() const override { return "Photo Management Backup"; }
-    QString description() const override { return "Backup Lightroom catalogs and Photoshop settings"; }
+    QString description(
+        ) const override { return "Backup Lightroom catalogs and Photoshop settings"; }
     QIcon icon() const override { return QIcon(); }
     ActionCategory category() const override { return ActionCategory::QuickBackup; }
     bool requiresAdmin() const override { return false; }

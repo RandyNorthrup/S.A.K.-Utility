@@ -67,7 +67,8 @@ void OrchestrationServer::sendHealthCheck(const QString& destination_id) {
         OrchestrationProtocol::makeMessage(OrchestrationMessageType::HealthCheckRequest, payload));
 }
 
-void OrchestrationServer::sendDeploymentAssignment(const QString& destination_id, const DeploymentAssignment& assignment) {
+void OrchestrationServer::sendDeploymentAssignment(const QString& destination_id,
+    const DeploymentAssignment& assignment) {
     if (!m_destinationSockets.contains(destination_id)) {
         return;
     }
@@ -104,8 +105,10 @@ void OrchestrationServer::onNewConnection() {
         }
         m_buffers.insert(socket, {});
         connect(socket, &QTcpSocket::readyRead, this, &OrchestrationServer::onSocketReadyRead);
-        connect(socket, &QTcpSocket::disconnected, this, &OrchestrationServer::onSocketDisconnected);
-        connect(socket, &QTcpSocket::errorOccurred, this, [this, socket](QAbstractSocket::SocketError) {
+        connect(socket, &QTcpSocket::disconnected, this,
+            &OrchestrationServer::onSocketDisconnected);
+        connect(socket, &QTcpSocket::errorOccurred, this, [this,
+            socket](QAbstractSocket::SocketError) {
             Q_EMIT connectionError(socket->errorString());
         });
     }
@@ -141,7 +144,8 @@ void OrchestrationServer::onSocketDisconnected() {
     m_buffers.remove(socket);
 }
 
-QString OrchestrationServer::ensureDestinationId(const DestinationPC& destination, const QTcpSocket* socket) const {
+QString OrchestrationServer::ensureDestinationId(const DestinationPC& destination,
+    const QTcpSocket* socket) const {
     if (!destination.destination_id.isEmpty()) {
         return destination.destination_id;
     }
@@ -173,7 +177,8 @@ void OrchestrationServer::handleMessage(QTcpSocket* socket, const QJsonObject& m
             const auto healthObj = message.value("health_metrics").toObject();
             const DestinationHealth health = DestinationHealth::fromJson(healthObj);
 
-            const QString resolved = destination_id.isEmpty() && m_socketDestinations.contains(socket)
+            const QString resolved = destination_id.isEmpty() &&
+                m_socketDestinations.contains(socket)
                 ? m_socketDestinations.value(socket)
                 : destination_id;
 

@@ -29,24 +29,29 @@ MigrationOrchestrator::MigrationOrchestrator(QObject* parent)
 }
 
 void MigrationOrchestrator::connectRegistrySignals() {
-    connect(m_registry, &DestinationRegistry::destinationRegistered, this, [this](const DestinationPC&) {
+    connect(m_registry, &DestinationRegistry::destinationRegistered, this,
+        [this](const DestinationPC&) {
         tryAssignQueuedDeployments();
     });
-    connect(m_registry, &DestinationRegistry::destinationUpdated, this, [this](const DestinationPC&) {
+    connect(m_registry, &DestinationRegistry::destinationUpdated, this,
+        [this](const DestinationPC&) {
         tryAssignQueuedDeployments();
     });
-    connect(m_registry, &DestinationRegistry::destinationRemoved, this, [this](const QString& destination_id) {
+    connect(m_registry, &DestinationRegistry::destinationRemoved, this,
+        [this](const QString& destination_id) {
         m_activeDestinations.remove(destination_id);
         tryAssignQueuedDeployments();
     });
 
-    connect(m_deploymentManager, &DeploymentManager::deploymentQueued, this, [this](const DeploymentAssignment& assignment) {
+    connect(m_deploymentManager, &DeploymentManager::deploymentQueued, this,
+        [this](const DeploymentAssignment& assignment) {
         Q_EMIT orchestratorStatus(tr("Deployment queued: %1").arg(assignment.deployment_id));
         Q_EMIT deploymentReady(assignment);
         tryAssignQueuedDeployments();
     });
 
-    connect(m_deploymentManager, &DeploymentManager::deploymentRejected, this, [this](const QString& destination_id, const QString& reason) {
+    connect(m_deploymentManager, &DeploymentManager::deploymentRejected, this,
+        [this](const QString& destination_id, const QString& reason) {
         Q_EMIT orchestratorStatus(tr("Deployment rejected for %1: %2").arg(destination_id, reason));
         Q_EMIT deploymentRejected(destination_id, reason);
     });
@@ -59,17 +64,22 @@ void MigrationOrchestrator::connectRegistrySignals() {
 }
 
 void MigrationOrchestrator::connectServerSignals() {
-    connect(m_server, &OrchestrationServerInterface::destinationRegistered, this, &MigrationOrchestrator::registerDestination);
-    connect(m_server, &OrchestrationServerInterface::healthUpdated, this, &MigrationOrchestrator::updateHealth);
-    connect(m_server, &OrchestrationServerInterface::statusMessage, this, &MigrationOrchestrator::orchestratorStatus);
-    connect(m_server, &OrchestrationServerInterface::progressUpdated, this, [this](const DeploymentProgress& progress) {
+    connect(m_server, &OrchestrationServerInterface::destinationRegistered, this,
+        &MigrationOrchestrator::registerDestination);
+    connect(m_server, &OrchestrationServerInterface::healthUpdated, this,
+        &MigrationOrchestrator::updateHealth);
+    connect(m_server, &OrchestrationServerInterface::statusMessage, this,
+        &MigrationOrchestrator::orchestratorStatus);
+    connect(m_server, &OrchestrationServerInterface::progressUpdated, this,
+        [this](const DeploymentProgress& progress) {
         if (!progress.destination_id.isEmpty()) {
             m_progressByDestination.insert(progress.destination_id, progress);
         }
         Q_EMIT deploymentProgress(progress);
         emitAggregateProgress();
     });
-    connect(m_server, &OrchestrationServerInterface::deploymentCompleted, this, [this](const DeploymentCompletion& completion) {
+    connect(m_server, &OrchestrationServerInterface::deploymentCompleted, this,
+        [this](const DeploymentCompletion& completion) {
         if (!completion.destination_id.isEmpty()) {
             m_completedDestinations.insert(completion.destination_id);
             m_activeDestinations.remove(completion.destination_id);
@@ -166,7 +176,8 @@ void MigrationOrchestrator::registerDestination(const DestinationPC& destination
     Q_EMIT orchestratorStatus(tr("Destination registered: %1").arg(destination.hostname));
 }
 
-void MigrationOrchestrator::updateHealth(const QString& destination_id, const DestinationHealth& health) {
+void MigrationOrchestrator::updateHealth(const QString& destination_id,
+    const DestinationHealth& health) {
     m_registry->updateHealth(destination_id, health);
 }
 
@@ -291,12 +302,15 @@ void MigrationOrchestrator::tryAssignQueuedDeployments() {
     }
 }
 
-QString MigrationOrchestrator::selectDestinationFor(const DeploymentAssignment& assignment, qint64 required_free_bytes) {
+QString MigrationOrchestrator::selectDestinationFor(const DeploymentAssignment& assignment,
+    qint64 required_free_bytes) {
     const auto destinations = m_registry->destinations();
-    return m_mappingEngine.selectDestination(assignment, destinations, m_activeDestinations, required_free_bytes);
+    return m_mappingEngine.selectDestination(assignment, destinations, m_activeDestinations,
+        required_free_bytes);
 }
 
-bool MigrationOrchestrator::dispatchAssignment(const QString& destination_id, const DeploymentAssignment& assignment) {
+bool MigrationOrchestrator::dispatchAssignment(const QString& destination_id,
+    const DeploymentAssignment& assignment) {
     if (!m_server || destination_id.isEmpty()) {
         return false;
     }

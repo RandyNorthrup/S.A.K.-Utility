@@ -46,7 +46,7 @@ bool WindowsUpdateAction::isPSWindowsUpdateInstalled() {
 
 bool WindowsUpdateAction::installPSWindowsUpdateModule() {
     Q_EMIT executionProgress("Installing PSWindowsUpdate module...", 10);
-    
+
     QString ps_cmd = "Install-Module -Name PSWindowsUpdate -Force -Confirm:$false";
     ProcessResult proc = runPowerShell(ps_cmd, sak::kTimeoutDismCheckMs);
     if (!proc.std_err.trimmed().isEmpty()) {
@@ -63,13 +63,13 @@ void WindowsUpdateAction::checkForUpdates() {
     }
     QString output = proc.std_out;
     QStringList lines = output.split('\n', Qt::SkipEmptyParts);
-    
+
     m_available_updates = lines.count() - 2; // Subtract header lines
 }
 
 void WindowsUpdateAction::installUpdates() {
     Q_EMIT executionProgress("Installing Windows Updates...", 30);
-    
+
     QString ps_cmd = "Install-WindowsUpdate -MicrosoftUpdate -AcceptAll -AutoReboot";
     ProcessResult proc = runPowerShell(ps_cmd, sak::kTimeoutSystemRepairMs);
     if (!proc.std_err.trimmed().isEmpty()) {
@@ -186,7 +186,8 @@ QString WindowsUpdateAction::buildUpdateScanScript()
         "try { \n"
         "  $updateSession = New-Object -ComObject Microsoft.Update.Session; \n"
         "  $updateSearcher = $updateSession.CreateUpdateSearcher(); \n"
-        "  $searchResult = $updateSearcher.Search('IsInstalled=0 and Type=\'Software\' and IsHidden=0'); \n"
+        "  $searchResult = $updateSearcher.Search('IsInstalled=0 and Type=\'Software\' and "
+        "IsHidden=0'); \n"
         "  $updateCount = $searchResult.Updates.Count; \n"
         "  Write-Output \"Found $updateCount update(s)\"; \n"
         "  \n"
@@ -238,7 +239,8 @@ QString WindowsUpdateAction::buildUpdateInstallScript()
         "  $rebootRequired = $systemInfo.RebootRequired; \n"
         "} catch { \n"
         "  # Also check registry\n"
-        "  $regPath = 'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\WindowsUpdate\\Auto Update\\RebootRequired'; \n"
+        "  $regPath = 'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\WindowsUpdate\\Auto "
+        "Update\\RebootRequired'; \n"
         "  if (Test-Path $regPath) { \n"
         "    $rebootRequired = $true; \n"
         "  } \n"
@@ -264,7 +266,8 @@ bool WindowsUpdateAction::executeSearchUpdates(const QDateTime& start_time,
     Q_EMIT executionProgress("Downloading updates...", 50);
     Q_EMIT executionProgress("Installing updates...", 70);
 
-    ProcessResult ps = runPowerShell(ps_script, sak::kTimeoutSystemRepairMs, true, true, [this]() { return isCancelled(); });
+    ProcessResult ps = runPowerShell(ps_script, sak::kTimeoutSystemRepairMs, true, true,
+        [this]() { return isCancelled(); });
 
     if (ps.cancelled) {
         emitCancelledResult(QStringLiteral("Windows Update cancelled"), start_time);
@@ -313,7 +316,8 @@ void WindowsUpdateAction::executeBuildReport(const QDateTime& start_time,
     if (exit_code != 0) {
         result.success = false;
         result.message = "Windows Update failed";
-        result.log = QString("Exit code: %1\n%2\nErrors:\n%3").arg(exit_code).arg(accumulated_output).arg(errors);
+        result.log = QString("Exit code: %1\n%2\nErrors:\n%3").arg(exit_code)
+            .arg(accumulated_output).arg(errors);
         finishWithResult(result, ActionStatus::Failed);
         return;
     }

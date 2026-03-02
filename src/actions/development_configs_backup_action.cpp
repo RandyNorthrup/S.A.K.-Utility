@@ -14,7 +14,8 @@
 
 namespace sak {
 
-DevelopmentConfigsBackupAction::DevelopmentConfigsBackupAction(const QString& backup_location, QObject* parent)
+DevelopmentConfigsBackupAction::DevelopmentConfigsBackupAction(const QString& backup_location,
+    QObject* parent)
     : QuickAction(parent)
     , m_backup_location(backup_location)
 {
@@ -29,7 +30,7 @@ void DevelopmentConfigsBackupAction::scanGitConfig() {
             cfg.path = gitconfig;
             cfg.size = QFileInfo(gitconfig).size();
             cfg.is_sensitive = false;
-            
+
             m_configs.append(cfg);
             m_total_size += cfg.size;
         }
@@ -86,7 +87,7 @@ void DevelopmentConfigsBackupAction::scanVisualStudioSettings() {
         QDir dir(vs_path);
         if (!dir.exists()) continue;
 
-        QDirIterator it(vs_path, QStringList() << "*.vssettings", 
+        QDirIterator it(vs_path, QStringList() << "*.vssettings",
                       QDir::Files, QDirIterator::Subdirectories);
         while (it.hasNext()) {
             it.next();
@@ -128,39 +129,39 @@ void DevelopmentConfigsBackupAction::scanIntelliJSettings() {
 
 void DevelopmentConfigsBackupAction::scan() {
     setStatus(ActionStatus::Scanning);
-    
+
     WindowsUserScanner scanner;
     m_user_profiles = scanner.scanUsers();
-    
+
     m_configs.clear();
     m_total_size = 0;
     m_found_sensitive_data = false;
-    
+
     scanGitConfig();
     scanSSHKeys();
     scanVSCodeSettings();
     scanVisualStudioSettings();
     scanIntelliJSettings();
-    
+
     ScanResult result;
     result.applicable = (m_configs.count() > 0);
     result.bytes_affected = m_total_size;
     result.files_count = m_configs.count();
     result.estimated_duration_ms = 5000;
-    
+
     if (m_configs.count() > 0) {
         result.summary = QString("Found %1 dev config(s) - %2 KB")
             .arg(m_configs.count())
             .arg(m_total_size / sak::kBytesPerKB);
-        
+
         if (m_found_sensitive_data) {
             result.warning = "Includes SSH keys - ensure backup location is secure!";
         }
-        
+
     } else {
         result.summary = "No development configs found";
     }
-    
+
     setScanResult(result);
     setStatus(ActionStatus::Ready);
     Q_EMIT scanComplete(result);
@@ -173,13 +174,13 @@ void DevelopmentConfigsBackupAction::execute() {
     }
     setStatus(ActionStatus::Running);
     QDateTime start_time = QDateTime::currentDateTime();
-    
+
     QDir backup_dir(m_backup_location + "/DevConfigs");
     backup_dir.mkpath(".");
-    
+
     int processed = 0;
     qint64 bytes_copied = 0;
-    
+
     for (const DevConfig& cfg : m_configs) {
         if (isCancelled()) {
             emitCancelledResult("Development config backup cancelled", start_time);
@@ -202,7 +203,7 @@ void DevelopmentConfigsBackupAction::execute() {
         Q_EMIT executionProgress(QString("Backing up %1...").arg(cfg.name),
                              (processed * 100) / m_configs.count());
     }
-    
+
     ExecutionResult result;
     result.success = processed > 0;
     result.duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
@@ -212,7 +213,7 @@ void DevelopmentConfigsBackupAction::execute() {
         ? QString("Backed up %1 dev config(s)").arg(processed)
         : "No development configs were backed up";
     result.output_path = backup_dir.absolutePath();
-    
+
     finishWithResult(result, processed > 0 ? ActionStatus::Success : ActionStatus::Failed);
 }
 
@@ -226,7 +227,8 @@ qint64 DevelopmentConfigsBackupAction::calculateDirSize(const QString& path) con
     return size;
 }
 
-qint64 DevelopmentConfigsBackupAction::copyDirectoryContents(const QString& src_path, const QString& dest_path) {
+qint64 DevelopmentConfigsBackupAction::copyDirectoryContents(const QString& src_path,
+    const QString& dest_path) {
     qint64 bytes_copied = 0;
     QDirIterator it(src_path, QDir::Files, QDirIterator::Subdirectories);
     while (it.hasNext()) {

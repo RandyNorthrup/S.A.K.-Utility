@@ -197,8 +197,10 @@ QString UupIsoBuilder::findUupMediaConverterPath() const
             return it.next();
     }
 
-    sak::logWarning("UUPMediaConverter.exe not found in bundled tools. "
-                     "Run 'powershell -File scripts/bundle_uup_tools.ps1' to bundle required tools.");
+    sak::logWarning(
+        "UUPMediaConverter.exe not found in bundled tools. "
+        "Run 'powershell -File scripts/bundle_uup_tools.ps1' "
+        "to bundle required tools.");
     return {};
 }
 
@@ -486,7 +488,8 @@ bool UupIsoBuilder::generateAria2InputFile(const QString& outputPath)
     if (skippedFiles > 0) {
         double skippedMB = skippedBytes / sak::kBytesPerMBf;
         sak::logInfo("Resume: skipped " + std::to_string(skippedFiles) +
-                      " already-downloaded files (" + std::to_string(static_cast<int>(skippedMB)) + " MB)");
+                      " already-downloaded files (" + std::to_string(static_cast<int>(skippedMB)) +
+                          " MB)");
         Q_EMIT progressUpdated(2, QString("Skipped %1 already-downloaded files (%2 MB)")
             .arg(skippedFiles).arg(skippedMB, 0, 'f', 0));
     }

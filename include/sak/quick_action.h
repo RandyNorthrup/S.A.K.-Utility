@@ -15,14 +15,14 @@ namespace sak {
 
 /**
  * @brief Base class for all quick actions
- * 
+ *
  * Provides a common interface for one-click operations that technicians
  * frequently perform. Each action supports:
  * - Pre-scan to detect what will be affected (files, size, count)
  * - Execution with progress tracking
  * - Result reporting
  * - Applicability checking
- * 
+ *
  * Thread-Safety: scan() and execute() may be called from worker threads.
  * Signals are emitted on the thread where the action was created.
  */
@@ -210,20 +210,20 @@ Q_SIGNALS:
 public Q_SLOTS:
     /**
      * @brief Perform pre-execution scan
-     * 
+     *
      * Scans the system to determine what files/data will be affected.
      * This is called when the panel loads to show size estimates.
-     * 
+     *
      * Thread-Safety: May be called from worker thread
      */
     virtual void scan() = 0;
 
     /**
      * @brief Execute the action
-     * 
+     *
      * Performs the actual operation (cleanup, backup, etc.)
      * Should emit executionProgress regularly for UI updates.
-     * 
+     *
      * Thread-Safety: May be called from worker thread
      */
     virtual void execute() = 0;
@@ -307,7 +307,8 @@ protected:
      * @param duration_ms Optional duration to append in footer (-1 to omit)
      * @return Formatted string with ╔═╗║╚═╝ box-drawing characters
      */
-    static QString formatLogBox(const QString& title, const QStringList& content_lines, qint64 duration_ms = -1);
+    static QString formatLogBox(const QString& title, const QStringList& content_lines,
+        qint64 duration_ms = -1);
 
     /**
      * @brief Sanitize a filesystem path for use as a backup subdirectory name

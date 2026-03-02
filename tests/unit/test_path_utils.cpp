@@ -260,7 +260,8 @@ void PathUtilsTests::availableSpace_validPath()
 
 void PathUtilsTests::availableSpace_invalidPath()
 {
-    auto result = sak::path_utils::getAvailableSpace(std::filesystem::path("Z:\\NonExistent\\Path"));
+    auto result =
+        sak::path_utils::getAvailableSpace(std::filesystem::path("Z:\\NonExistent\\Path"));
     // May fail with error on most systems (Z: doesn't exist)
     if (!result.has_value()) {
         QVERIFY(true); // Expected failure

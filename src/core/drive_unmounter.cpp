@@ -394,7 +394,8 @@ bool DriveUnmounter::closeAllHandles(int driveNumber) {
     DWORD dwError = RmStartSession(&dwSession, 0, szSessionKey);
 
     if (dwError != ERROR_SUCCESS) {
-        sak::logWarning(QString("Failed to start Restart Manager session: %1").arg(dwError).toStdString());
+        sak::logWarning(QString("Failed to start Restart Manager session: %1")
+            .arg(dwError).toStdString());
         return true;
     }
 
@@ -458,7 +459,8 @@ void DriveUnmounter::shutdownHandlesViaRestartManager(DWORD dwSession,
     dwError = RmGetList(dwSession, &nProcInfoNeeded, &nProcInfo, rgpi, &dwReason);
 
     if ((dwError == ERROR_SUCCESS || dwError == ERROR_MORE_DATA) && nProcInfoNeeded > 0) {
-        sak::logInfo(QString("Found %1 processes with open handles").arg(nProcInfoNeeded).toStdString());
+        sak::logInfo(QString("Found %1 processes with open handles")
+            .arg(nProcInfoNeeded).toStdString());
 
         dwError = RmShutdown(dwSession, RmForceShutdown, nullptr);
         if (dwError == ERROR_SUCCESS) {

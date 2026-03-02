@@ -12,7 +12,7 @@ namespace sak {
 
 /**
  * @brief Clear browser caches
- * 
+ *
  * ENTERPRISE FEATURES:
  * - Supports 6 major browsers: Chrome, Edge, Firefox, Brave, Opera, Vivaldi
  * - Get-Process verification before clearing
@@ -21,18 +21,18 @@ namespace sak {
  * - Firefox multi-profile support
  * - Detailed per-browser clearing results
  * - Structured output with formatted reporting
- * 
+ *
  * PROCESS MANAGEMENT:
  * - Detects running browser processes
  * - Skips browsers currently in use
  * - Provides clear guidance on blocked browsers
- * 
+ *
  * SIZE TRACKING:
  * - Calculates cache size before clearing
  * - Reports freed space per browser
  * - Total cleared space summary
  * - Smart size formatting (GB/MB/KB/bytes)
- * 
+ *
  * Category: System Optimization
  */
 class ClearBrowserCacheAction : public QuickAction {
@@ -43,7 +43,8 @@ public:
     ~ClearBrowserCacheAction() override = default;
 
     QString name() const override { return "Clear Browser Cache"; }
-    QString description() const override { return "Clear cache from Chrome, Edge, Firefox, Brave, Opera, and Vivaldi"; }
+    QString description() const override { return "Clear cache from Chrome, Edge, Firefox, Brave, "
+                                                  "Opera, and Vivaldi"; }
     QIcon icon() const override { return QIcon(); }
     ActionCategory category() const override { return ActionCategory::SystemOptimization; }
     bool requiresAdmin() const override { return false; }
@@ -86,7 +87,8 @@ private:
 
     /// @brief Builds the box-drawing success log.
     /// @return Formatted success log string.
-    QString buildSuccessLog(const BrowserCacheResult& parsed, const QString& stderr_output, qint64 duration_ms) const;
+    QString buildSuccessLog(const BrowserCacheResult& parsed, const QString& stderr_output,
+        qint64 duration_ms) const;
 
     /// @brief Builds the box-drawing failure/blocked log.
     /// @return Formatted failure log string.

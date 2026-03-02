@@ -158,7 +158,7 @@ auto DuplicateFinderWorker::collectFilesFromDirectory(
     }
 }
 
-auto DuplicateFinderWorker::scanDirectories() 
+auto DuplicateFinderWorker::scanDirectories()
     -> std::expected<std::vector<std::filesystem::path>, sak::error_code>
 {
     std::vector<std::filesystem::path> files;
@@ -229,18 +229,19 @@ auto DuplicateFinderWorker::generateSummary(const std::vector<DuplicateGroup>& g
     }
 
     summary += QString("Total duplicate files: %1\n").arg(total_duplicates);
-    summary += QString("Total wasted space: %1 MB\n\n").arg(total_wasted / sak::kBytesPerMBf, 0, 'f', 2);
+    summary += QString("Total wasted space: %1 MB\n\n").arg(total_wasted / sak::kBytesPerMBf, 0,
+        'f', 2);
 
     summary += "Top duplicate groups:\n";
     int count = 0;
     for (const auto& group : groups) {
         if (++count > 10) break; // Show only top 10
-        
+
         summary += QString("\nGroup %1 (%2 files, %3 KB wasted):\n")
             .arg(count)
             .arg(group.file_paths.size())
             .arg(group.wasted_space / sak::kBytesPerKBf, 0, 'f', 1);
-        
+
         for (const auto& path : group.file_paths) {
             QFileInfo info(path);
             summary += QString("  - %1\n").arg(info.fileName());
@@ -302,7 +303,7 @@ auto DuplicateFinderWorker::calculateHashesParallel(const std::vector<std::files
 
     auto valid_results = filterValidResults(results);
 
-    sak::logInfo("Parallel hashing complete: {}/{} files successful", 
+    sak::logInfo("Parallel hashing complete: {}/{} files successful",
                   valid_results.size(), files.size());
 
     return valid_results;
@@ -321,7 +322,7 @@ std::function<void(int)> DuplicateFinderWorker::createHashTask(
         }
 
         const auto& file = files[static_cast<size_t>(index)];
-        
+
         sak::file_hasher hasher(sak::hash_algorithm::md5);
         auto hash_result = hasher.calculateHash(file);
 
@@ -347,7 +348,7 @@ DuplicateFinderWorker::filterValidResults(
 {
     std::vector<std::pair<std::filesystem::path, std::string>> valid;
     valid.reserve(results.size());
-    
+
     for (const auto& result : results) {
         if (!result.first.empty() && !result.second.empty()) {
             valid.push_back(result);

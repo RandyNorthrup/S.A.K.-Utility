@@ -339,12 +339,15 @@ void SmartDiskAnalyzer::parseNvmeHealth(
     NvmeHealthInfo nvme;
 
     nvme.percentage_used      = static_cast<uint8_t>(nvme_obj.value("percentage_used").toInt());
-    nvme.data_units_read      = static_cast<uint64_t>(nvme_obj.value("data_units_read").toInteger());
-    nvme.data_units_written   = static_cast<uint64_t>(nvme_obj.value("data_units_written").toInteger());
+    nvme.data_units_read      =
+        static_cast<uint64_t>(nvme_obj.value("data_units_read").toInteger());
+    nvme.data_units_written   =
+        static_cast<uint64_t>(nvme_obj.value("data_units_written").toInteger());
     nvme.power_on_hours       = static_cast<uint64_t>(nvme_obj.value("power_on_hours").toInteger());
     nvme.unsafe_shutdowns     = static_cast<uint32_t>(nvme_obj.value("unsafe_shutdowns").toInt());
     nvme.media_errors         = static_cast<uint32_t>(nvme_obj.value("media_errors").toInt());
-    nvme.error_log_entries    = static_cast<uint32_t>(nvme_obj.value("num_err_log_entries").toInt());
+    nvme.error_log_entries    =
+        static_cast<uint32_t>(nvme_obj.value("num_err_log_entries").toInt());
     nvme.temperature          = static_cast<int16_t>(nvme_obj.value("temperature").toInt());
     nvme.available_spare      = static_cast<uint16_t>(nvme_obj.value("available_spare").toInt());
     nvme.available_spare_threshold =
@@ -430,7 +433,8 @@ void SmartDiskAnalyzer::generateSataRecommendations(SmartReport& report)
 
         if (report.reallocated_sectors >= 50) {
             report.recommendations.append(
-                "CRITICAL: Drive has significant sector damage — back up data immediately and replace drive");
+                "CRITICAL: Drive has significant sector damage — back up data immediately and "
+                "replace drive");
         } else {
             report.recommendations.append(
                 "Monitor reallocated sector count — back up important data as a precaution");
@@ -531,7 +535,8 @@ void SmartDiskAnalyzer::generateRecommendations(SmartReport& report)
     if (report.smart_status == "FAILED") {
         report.warnings.prepend("SMART overall health assessment: FAILED");
         report.recommendations.prepend(
-            "CRITICAL: Drive is reporting imminent failure — back up all data immediately and replace drive");
+            "CRITICAL: Drive is reporting imminent failure — back up all data immediately and "
+            "replace drive");
     }
 
     // If no issues found, add a positive note

@@ -45,7 +45,8 @@ using scan_callback = std::function<bool(const std::filesystem::path& path, bool
 /// @brief Progress callback for scan operations
 /// @param files_processed Number of files processed so far
 /// @param total_size_processed Total size processed in bytes
-using scan_progress_callback = std::function<void(std::size_t files_processed, std::uintmax_t total_size_processed)>;
+using scan_progress_callback = std::function<void(std::size_t files_processed,
+    std::uintmax_t total_size_processed)>;
 
 /// @brief Scan options for file scanner
 struct scan_options {
@@ -70,7 +71,7 @@ class file_scanner {
 public:
     /// @brief Default constructor
     file_scanner() = default;
-    
+
     /// @brief Scan directory with options
     /// @param root_path Root directory to scan
     /// @param options Scan options
@@ -80,7 +81,7 @@ public:
         const std::filesystem::path& root_path,
         const scan_options& options,
         std::stop_token stop_token = {}) -> std::expected<scan_statistics, error_code>;
-    
+
     /// @brief Scan directory and collect all matching paths
     /// @param root_path Root directory to scan
     /// @param options Scan options
@@ -89,8 +90,9 @@ public:
     [[nodiscard]] auto scanAndCollect(
         const std::filesystem::path& root_path,
         const scan_options& options,
-        std::stop_token stop_token = {}) -> std::expected<std::vector<std::filesystem::path>, error_code>;
-    
+        std::stop_token stop_token = {}) -> std::expected<std::vector<std::filesystem::path>,
+            error_code>;
+
     /// @brief Simple recursive file listing
     /// @param root_path Root directory to scan
     /// @param recursive Whether to recurse into subdirectories
@@ -98,7 +100,7 @@ public:
     [[nodiscard]] static auto listFiles(
         const std::filesystem::path& root_path,
         bool recursive = true) -> std::expected<std::vector<std::filesystem::path>, error_code>;
-    
+
     /// @brief Find files matching patterns
     /// @param root_path Root directory to search
     /// @param patterns Filename patterns (e.g., "*.txt", "test_*")
@@ -108,7 +110,7 @@ public:
         const std::filesystem::path& root_path,
         const std::vector<std::string>& patterns,
         bool recursive = true) -> std::expected<std::vector<std::filesystem::path>, error_code>;
-    
+
 private:
     /// @brief Check if entry should be processed based on filters
     /// @param entry Directory entry
@@ -119,18 +121,18 @@ private:
         const std::filesystem::directory_entry& entry,
         const scan_options& options,
         std::size_t current_depth) const noexcept;
-    
+
     /// @brief Check file-specific filters (patterns, size limits)
     [[nodiscard]] bool shouldIncludeFile(
         const std::filesystem::directory_entry& entry,
         const std::filesystem::path& path,
         const scan_options& options) const noexcept;
-    
+
     /// @brief Check if path is hidden
     /// @param path Path to check
     /// @return True if hidden
     [[nodiscard]] static bool isHidden(const std::filesystem::path& path) noexcept;
-    
+
     /// @brief Recursive scan implementation
     /// @param current_path Current directory path
     /// @param options Scan options
@@ -144,7 +146,7 @@ private:
         scan_statistics& stats,
         std::size_t current_depth,
         std::stop_token stop_token) -> std::expected<void, error_code>;
-    
+
     /// @brief Process a single directory entry during recursive scan
     auto processScannedEntry(
         const std::filesystem::directory_entry& entry,
@@ -160,7 +162,7 @@ private:
         scan_statistics& stats,
         std::size_t current_depth,
         std::stop_token stop_token) -> std::expected<void, error_code>;
-    
+
     std::atomic<std::size_t> m_files_processed{0};  ///< Files processed counter
     std::atomic<std::uintmax_t> m_size_processed{0}; ///< Size processed counter
 };

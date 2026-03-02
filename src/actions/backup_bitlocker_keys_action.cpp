@@ -26,7 +26,8 @@ namespace sak {
 // Construction
 // ============================================================================
 
-BackupBitlockerKeysAction::BackupBitlockerKeysAction(const QString& backup_location, QObject* parent)
+BackupBitlockerKeysAction::BackupBitlockerKeysAction(const QString& backup_location,
+    QObject* parent)
     : QuickAction(parent)
     , m_backup_location(backup_location)
 {
@@ -90,7 +91,8 @@ QString BackupBitlockerKeysAction::backupTimestamp()
 // Volume Detection — WMI Queries via PowerShell
 // ============================================================================
 
-QVector<BackupBitlockerKeysAction::VolumeInfo> BackupBitlockerKeysAction::parseDetectedVolumes(const QString& output)
+QVector<BackupBitlockerKeysAction::VolumeInfo> BackupBitlockerKeysAction::parseDetectedVolumes(
+    const QString& output)
 {
     QVector<VolumeInfo> volumes;
 
@@ -165,7 +167,8 @@ try {
         $convStatus = $vol.GetConversionStatus()
         $lockStatus = $vol.GetLockStatus()
 
-        $driveInfo = Get-Volume -DriveLetter ($vol.DriveLetter -replace ':', '') -ErrorAction SilentlyContinue
+        $driveInfo = Get-Volume -DriveLetter ($vol.DriveLetter -replace ':',
+            '') -ErrorAction SilentlyContinue
 
         $obj = @{
             DriveLetter      = $vol.DriveLetter
@@ -400,7 +403,8 @@ void BackupBitlockerKeysAction::execute()
     QString backup_dir_path;
     int key_files_written = 0;
     bool permissions_set = false;
-    if (!executeSaveKeyFiles(start_time, backup_dir_path, key_files_written, permissions_set)) return;
+    if (!executeSaveKeyFiles(start_time, backup_dir_path, key_files_written,
+        permissions_set)) return;
 
     executeBuildReport(start_time, total_keys_found, total_recovery_passwords,
                        backup_dir_path, key_files_written, permissions_set);
@@ -422,7 +426,8 @@ bool BackupBitlockerKeysAction::executeDiscoverVolumes(const QDateTime& start_ti
         return false;
     }
 
-    if (isCancelled()) { emitCancelledResult("BitLocker key backup cancelled", start_time); return false; }
+    if (isCancelled()) { emitCancelledResult("BitLocker key backup cancelled",
+        start_time); return false; }
     return true;
 }
 
@@ -433,7 +438,8 @@ bool BackupBitlockerKeysAction::executeExtractKeys(const QDateTime& start_time,
     Q_EMIT executionProgress("Retrieving recovery keys...", 15);
 
     for (int i = 0; i < m_volumes.size(); ++i) {
-        if (isCancelled()) { emitCancelledResult("BitLocker key backup cancelled", start_time); return false; }
+        if (isCancelled()) { emitCancelledResult("BitLocker key backup cancelled",
+            start_time); return false; }
 
         auto& vol = m_volumes[i];
         int progress = 15 + static_cast<int>((static_cast<double>(i) / m_volumes.size()) * 40);
@@ -463,7 +469,8 @@ bool BackupBitlockerKeysAction::executeExtractKeys(const QDateTime& start_time,
         return false;
     }
 
-    if (isCancelled()) { emitCancelledResult("BitLocker key backup cancelled", start_time); return false; }
+    if (isCancelled()) { emitCancelledResult("BitLocker key backup cancelled",
+        start_time); return false; }
     return true;
 }
 
@@ -486,7 +493,8 @@ bool BackupBitlockerKeysAction::executeSaveKeyFiles(const QDateTime& start_time,
         return false;
     }
 
-    if (isCancelled()) { emitCancelledResult("BitLocker key backup cancelled", start_time); return false; }
+    if (isCancelled()) { emitCancelledResult("BitLocker key backup cancelled",
+        start_time); return false; }
 
     Q_EMIT executionProgress("Writing recovery key document...", 70);
 
@@ -496,13 +504,15 @@ bool BackupBitlockerKeysAction::executeSaveKeyFiles(const QDateTime& start_time,
         return false;
     }
 
-    if (isCancelled()) { emitCancelledResult("BitLocker key backup cancelled", start_time); return false; }
+    if (isCancelled()) { emitCancelledResult("BitLocker key backup cancelled",
+        start_time); return false; }
 
     Q_EMIT executionProgress("Writing per-volume key files...", 80);
 
     key_files_written = writePerVolumeKeyFiles(backup_dir_path);
 
-    if (isCancelled()) { emitCancelledResult("BitLocker key backup cancelled", start_time); return false; }
+    if (isCancelled()) { emitCancelledResult("BitLocker key backup cancelled",
+        start_time); return false; }
 
     Q_EMIT executionProgress("Writing JSON backup...", 85);
 
@@ -511,7 +521,8 @@ bool BackupBitlockerKeysAction::executeSaveKeyFiles(const QDateTime& start_time,
         return false;
     }
 
-    if (isCancelled()) { emitCancelledResult("BitLocker key backup cancelled", start_time); return false; }
+    if (isCancelled()) { emitCancelledResult("BitLocker key backup cancelled",
+        start_time); return false; }
 
     Q_EMIT executionProgress("Securing backup files...", 90);
 
@@ -545,7 +556,8 @@ bool BackupBitlockerKeysAction::writeJsonBackup(const QString& backup_dir_path)
         return true;
     }
 
-    logError("Failed to write BitLocker key backup JSON: {}", json_file.errorString().toStdString());
+    logError("Failed to write BitLocker key backup JSON: {}",
+        json_file.errorString().toStdString());
     return false;
 }
 
@@ -636,7 +648,8 @@ void BackupBitlockerKeysAction::writeRecoveryDocumentHeader(QTextStream& out) co
     out << "===============================================================================\n";
     out << "\n";
     out << "  Computer Name:  " << QSysInfo::machineHostName() << "\n";
-    out << "  Backup Date:    " << QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss") << "\n";
+    out << "  Backup Date:    " << QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss")
+        << "\n";
     out << "  OS Version:     " << QSysInfo::prettyProductName() << "\n";
     out << "  Kernel:         " << QSysInfo::kernelVersion() << "\n";
     out << "  Generated By:   S.A.K. Utility\n";
@@ -761,7 +774,8 @@ int BackupBitlockerKeysAction::writePerVolumeKeyFiles(const QString& backup_dir)
         }
         out << "\n";
         out << "Computer:     " << QSysInfo::machineHostName() << "\n";
-        out << "Date:         " << QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss") << "\n";
+        out << "Date:         " << QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss")
+            << "\n";
         out << "\n";
         out << "If the above identifier matches the one shown on your PC, you can use\n";
         out << "the corresponding recovery key to unlock the drive.\n";
@@ -841,7 +855,8 @@ int BackupBitlockerKeysAction::countRecoveryPasswords(const QVector<KeyProtector
     return count;
 }
 
-bool BackupBitlockerKeysAction::volumeHasRecoveryPassword(const QVector<KeyProtectorInfo>& protectors)
+bool BackupBitlockerKeysAction::volumeHasRecoveryPassword(
+    const QVector<KeyProtectorInfo>& protectors)
 {
     for (const auto& kp : protectors) {
         if (!kp.recovery_password.isEmpty()) return true;
@@ -872,8 +887,9 @@ void BackupBitlockerKeysAction::writeKeyProtectorEntry(QTextStream& out,
     out << "\n";
 }
 
-void BackupBitlockerKeysAction::writeVolumeKeyEntries(QTextStream& out,
-                                                       const QVector<KeyProtectorInfo>& protectors) const
+void BackupBitlockerKeysAction::writeVolumeKeyEntries(
+    QTextStream& out,
+    const QVector<KeyProtectorInfo>& protectors) const
 {
     for (const auto& kp : protectors) {
         if (kp.recovery_password.isEmpty()) continue;

@@ -15,7 +15,8 @@
 
 namespace sak {
 
-GenerateSystemReportAction::GenerateSystemReportAction(const QString& output_location, QObject* parent)
+GenerateSystemReportAction::GenerateSystemReportAction(const QString& output_location,
+    QObject* parent)
     : QuickAction(parent)
     , m_output_location(output_location)
 {
@@ -42,48 +43,52 @@ void GenerateSystemReportAction::execute() {
 
     setStatus(ActionStatus::Running);
     QDateTime start_time = QDateTime::currentDateTime();
-    
+
     Q_EMIT executionProgress("Gathering comprehensive system information...", 5);
 
     // Phase 1: Report header
     QString report = buildReportHeader();
-    
+
     // Phase 2: OS and hardware
     Q_EMIT executionProgress("Collecting OS and hardware information...", 15);
     report += gatherOsAndHardwareInfo();
-    if (isCancelled()) { emitCancelledResult(QStringLiteral("System report generation cancelled"), start_time); return; }
-    
+    if (isCancelled()) { emitCancelledResult(QStringLiteral("System report generation cancelled"),
+        start_time); return; }
+
     // Phase 3: Storage
     Q_EMIT executionProgress("Collecting storage information...", 40);
     report += gatherStorageInfo();
-    if (isCancelled()) { emitCancelledResult(QStringLiteral("System report generation cancelled"), start_time); return; }
-    
+    if (isCancelled()) { emitCancelledResult(QStringLiteral("System report generation cancelled"),
+        start_time); return; }
+
     // Phase 4: Network
     Q_EMIT executionProgress("Collecting network configuration...", 60);
     report += gatherNetworkInfo();
-    if (isCancelled()) { emitCancelledResult(QStringLiteral("System report generation cancelled"), start_time); return; }
-    
+    if (isCancelled()) { emitCancelledResult(QStringLiteral("System report generation cancelled"),
+        start_time); return; }
+
     // Phase 5: Qt/Volume info
     Q_EMIT executionProgress("Adding supplemental system data...", 80);
     report += gatherQtAndVolumeInfo();
-    if (isCancelled()) { emitCancelledResult(QStringLiteral("System report generation cancelled"), start_time); return; }
-    
+    if (isCancelled()) { emitCancelledResult(QStringLiteral("System report generation cancelled"),
+        start_time); return; }
+
     // Phase 6: Save
     Q_EMIT executionProgress("Saving report...", 95);
-    
+
     QDir output_dir(m_output_location);
     if (!output_dir.exists()) {
         output_dir.mkpath(".");
     }
-    
+
     QString filename = QString("SystemReport_%1.txt")
         .arg(QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss"));
     QString filepath = output_dir.filePath(filename);
-    
+
     report += QString("─").repeated(78) + "\n";
     report += QString("Report completed in %1 seconds\n")
         .arg(start_time.msecsTo(QDateTime::currentDateTime()) / 1000.0, 0, 'f', 1);
-    
+
     saveReportAndFinish(report, filepath, start_time);
 }
 
@@ -91,15 +96,15 @@ void GenerateSystemReportAction::saveReportAndFinish(
         const QString& report, const QString& filepath, const QDateTime& start_time)
 {
     bool save_success = saveReport(report, filepath);
-    
+
     Q_EMIT executionProgress("Report complete", 100);
-    
+
     qint64 duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
-    
+
     ExecutionResult result;
     result.duration_ms = duration_ms;
     result.bytes_processed = report.size();
-    
+
     if (save_success) {
         result.success = true;
         result.message = QString("Comprehensive system report generated: %1")
@@ -114,7 +119,7 @@ void GenerateSystemReportAction::saveReportAndFinish(
         result.message = "Failed to save system report";
         result.log = QString("Could not write to: %1").arg(filepath);
     }
-    
+
     finishWithResult(result, save_success ? ActionStatus::Success : ActionStatus::Failed);
 }
 
@@ -128,7 +133,8 @@ QString GenerateSystemReportAction::buildReportHeader() const
     header += "╔" + QString("═").repeated(78) + "╗\n";
     header += "║" + QString(" COMPREHENSIVE SYSTEM DIAGNOSTIC REPORT").leftJustified(78) + "║\n";
     header += "╚" + QString("═").repeated(78) + "╝\n\n";
-    header += QString("Generated: %1\n\n").arg(QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss"));
+    header += QString("Generated: %1\n\n").arg(QDateTime::currentDateTime().toString("yyyy-MM-dd "
+                                                                                     "HH:mm:ss"));
     return header;
 }
 
@@ -178,11 +184,16 @@ QString GenerateSystemReportAction::buildHardwareInfoScript() const
     return
         "\n"
         "Write-Output \"=== MEMORY ===\"\n"
-        "Write-Output \"Total Physical Memory: $([math]::Round($info.CsTotalPhysicalMemory / 1GB, 2)) GB\"\n"
-        "Write-Output \"Free Physical Memory: $([math]::Round($info.OsFreePhysicalMemory / 1MB, 2)) MB\"\n"
-        "Write-Output \"Total Virtual Memory: $([math]::Round($info.OsTotalVirtualMemorySize / 1MB, 2)) MB\"\n"
-        "Write-Output \"Free Virtual Memory: $([math]::Round($info.OsFreeVirtualMemory / 1MB, 2)) MB\"\n"
-        "Write-Output \"Page File Size: $([math]::Round($info.OsSizeStoredInPagingFiles / 1MB, 2)) MB\"\n"
+        "Write-Output \"Total Physical Memory: "
+        "$([math]::Round($info.CsTotalPhysicalMemory / 1GB, 2)) GB\"\n"
+        "Write-Output \"Free Physical Memory: "
+        "$([math]::Round($info.OsFreePhysicalMemory / 1MB, 2)) MB\"\n"
+        "Write-Output \"Total Virtual Memory: "
+        "$([math]::Round($info.OsTotalVirtualMemorySize / 1MB, 2)) MB\"\n"
+        "Write-Output \"Free Virtual Memory: $([math]::Round($info.OsFreeVirtualMemory / 1MB, 2)) "
+        "MB\"\n"
+        "Write-Output \"Page File Size: $([math]::Round($info.OsSizeStoredInPagingFiles / 1MB, 2)) "
+        "MB\"\n"
         "Write-Output \"\"\n"
         "\n"
         "Write-Output \"=== BIOS ===\"\n"
@@ -217,12 +228,12 @@ QString GenerateSystemReportAction::buildHardwareInfoScript() const
 QString GenerateSystemReportAction::gatherOsAndHardwareInfo()
 {
     QString ps_cmd_info = buildOsInfoScript() + buildHardwareInfoScript();
-    
+
     ProcessResult proc_info = runPowerShell(ps_cmd_info, sak::kTimeoutChocoListMs);
     if (!proc_info.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("System report OS warning: " + proc_info.std_err.trimmed());
     }
-    
+
     if (!proc_info.timed_out) {
         return proc_info.std_out + "\n";
     }
@@ -231,7 +242,7 @@ QString GenerateSystemReportAction::gatherOsAndHardwareInfo()
 
 QString GenerateSystemReportAction::gatherStorageInfo()
 {
-    QString ps_cmd_storage = 
+    QString ps_cmd_storage =
         "Write-Output \"=== STORAGE DEVICES ===\"\n"
         "$disks = Get-PhysicalDisk\n"
         "foreach ($disk in $disks) {\n"
@@ -255,12 +266,12 @@ QString GenerateSystemReportAction::gatherStorageInfo()
         "    } catch {}\n"
         "}\n"
         "Write-Output \"\"";
-    
+
     ProcessResult proc_storage = runPowerShell(ps_cmd_storage, sak::kTimeoutProcessMediumMs);
     if (!proc_storage.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("System report storage warning: " + proc_storage.std_err.trimmed());
     }
-    
+
     if (!proc_storage.timed_out) {
         return proc_storage.std_out + "\n";
     }
@@ -269,7 +280,7 @@ QString GenerateSystemReportAction::gatherStorageInfo()
 
 QString GenerateSystemReportAction::gatherNetworkInfo()
 {
-    QString ps_cmd_network = 
+    QString ps_cmd_network =
         "Write-Output \"=== NETWORK ADAPTERS ===\"\n"
         "$adapters = Get-NetAdapter | Where-Object {$_.Status -eq 'Up'}\n"
         "foreach ($adapter in $adapters) {\n"
@@ -280,7 +291,8 @@ QString GenerateSystemReportAction::gatherNetworkInfo()
         "    Write-Output \"  Link Speed: $($adapter.LinkSpeed)\"\n"
         "    Write-Output \"  Status: $($adapter.Status)\"\n"
         "    \n"
-        "    $ipconfig = Get-NetIPAddress -InterfaceIndex $adapter.ifIndex -ErrorAction SilentlyContinue\n"
+        "    $ipconfig = Get-NetIPAddress -InterfaceIndex $adapter.ifIndex -ErrorAction "
+        "SilentlyContinue\n"
         "    foreach ($ip in $ipconfig) {\n"
         "        if ($ip.AddressFamily -eq 'IPv4') {\n"
         "            Write-Output \"  IPv4 Address: $($ip.IPAddress)\"\n"
@@ -289,12 +301,12 @@ QString GenerateSystemReportAction::gatherNetworkInfo()
         "    }\n"
         "}\n"
         "Write-Output \"\"";
-    
+
     ProcessResult proc_network = runPowerShell(ps_cmd_network, sak::kTimeoutProcessMediumMs);
     if (!proc_network.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("System report network warning: " + proc_network.std_err.trimmed());
     }
-    
+
     if (!proc_network.timed_out) {
         return proc_network.std_out + "\n";
     }
@@ -304,7 +316,7 @@ QString GenerateSystemReportAction::gatherNetworkInfo()
 QString GenerateSystemReportAction::gatherQtAndVolumeInfo() const
 {
     QString section;
-    
+
     section += "=== QT SYSTEM INFORMATION ===\n\n";
     section += QString("Machine Host Name: %1\n").arg(QSysInfo::machineHostName());
     section += QString("Pretty Product Name: %1\n").arg(QSysInfo::prettyProductName());
@@ -313,21 +325,26 @@ QString GenerateSystemReportAction::gatherQtAndVolumeInfo() const
     section += QString("CPU Architecture: %1\n").arg(QSysInfo::currentCpuArchitecture());
     section += QString("Build CPU Architecture: %1\n").arg(QSysInfo::buildCpuArchitecture());
     section += QString("Build ABI: %1\n\n").arg(QSysInfo::buildAbi());
-    
+
     section += "=== VOLUME INFORMATION ===\n\n";
     for (const QStorageInfo& storage : QStorageInfo::mountedVolumes()) {
         if (!storage.isValid() || !storage.isReady()) continue;
-        
+
         section += QString("Volume: %1\n").arg(storage.rootPath());
         section += QString("  Name: %1\n").arg(storage.name());
         section += QString("  File System: %1\n").arg(QString::fromUtf8(storage.fileSystemType()));
         section += QString("  Device: %1\n").arg(QString::fromUtf8(storage.device()));
-        section += QString("  Total: %1 GB\n").arg(storage.bytesTotal() / sak::kBytesPerGBf, 0, 'f', 2);
-        section += QString("  Free: %1 GB\n").arg(storage.bytesFree() / sak::kBytesPerGBf, 0, 'f', 2);
-        section += QString("  Available: %1 GB\n").arg(storage.bytesAvailable() / sak::kBytesPerGBf, 0, 'f', 2);
-        section += QString("  Used: %1%%\n\n").arg(100.0 * (1.0 - static_cast<double>(storage.bytesFree()) / storage.bytesTotal()), 0, 'f', 1);
+        section += QString("  Total: %1 GB\n").arg(storage.bytesTotal() / sak::kBytesPerGBf, 0,
+            'f', 2);
+        section += QString("  Free: %1 GB\n").arg(storage.bytesFree() / sak::kBytesPerGBf, 0, 'f',
+            2);
+        section += QString("  Available: %1 GB\n")
+            .arg(storage.bytesAvailable() / sak::kBytesPerGBf, 0, 'f', 2);
+        section += QString("  Used: %1%%\n\n")
+            .arg(100.0 * (1.0 - static_cast<double>(storage.bytesFree()) / storage
+                .bytesTotal()), 0, 'f', 1);
     }
-    
+
     return section;
 }
 

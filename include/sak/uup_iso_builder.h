@@ -106,7 +106,8 @@ public:
     /**
      * @brief Check if a build is currently in progress
      */
-    bool isRunning() const { return m_phase != Phase::Idle && m_phase != Phase::Completed && m_phase != Phase::Failed; }
+    bool isRunning() const { return m_phase != Phase::Idle && m_phase != Phase::Completed &&
+        m_phase != Phase::Failed; }
 
 Q_SIGNALS:
     /**

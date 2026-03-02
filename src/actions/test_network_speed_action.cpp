@@ -39,14 +39,14 @@ void TestNetworkSpeedAction::checkConnectivity() {
                              "Write-Output \"PING_RTT:$($_.PingReplyDetails.RoundtripTime)\"; "
                              "Write-Output \"REMOTE_ADDR:$($_.RemoteAddress)\" "
                              "}").arg(kConnectivityHost);
-    
+
     ProcessResult proc = runPowerShell(ps_cmd, kConnectivityTimeoutMs);
     if (!proc.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("Connectivity test warning: " + proc.std_err.trimmed());
     }
     QString output = proc.std_out;
     QStringList lines = output.split('\n');
-    
+
     for (const QString& line : lines) {
         if (line.contains("PING_SUCCESS:")) {
             m_has_internet = line.contains("True", Qt::CaseInsensitive);
@@ -62,21 +62,22 @@ void TestNetworkSpeedAction::checkConnectivity() {
 // ENTERPRISE-GRADE: Multiple server download speed test with Measure-Command
 void TestNetworkSpeedAction::testDownloadSpeed() {
     Q_EMIT executionProgress("Testing download speed with multiple servers...", 30);
-    
+
     // Test with multiple servers for reliability
     QStringList test_urls = {
         kDownloadTestUrls[0],
         kDownloadTestUrls[1],
         kDownloadTestUrls[2]
     };
-    
+
     QString ps_cmd = QString(
         "$urls = @('%1', '%2', '%3'); "
         "$speeds = @(); "
         "foreach ($url in $urls) { "
         "  try { "
         "    $start = Get-Date; "
-        "    $response = Invoke-WebRequest -Uri $url -UseBasicParsing -TimeoutSec 30 -ErrorAction Stop; "
+        "    $response = Invoke-WebRequest -Uri $url -UseBasicParsing -TimeoutSec 30 -ErrorAction "
+        "Stop; "
         "    $end = Get-Date; "
         "    $duration = ($end - $start).TotalSeconds; "
         "    if ($duration -gt 0) { "
@@ -99,7 +100,7 @@ void TestNetworkSpeedAction::testDownloadSpeed() {
         "  Write-Output \"ALL_TESTS_FAILED\"; "
         "}"
     ).arg(test_urls[0], test_urls[1], test_urls[2]);
-    
+
     ProcessResult proc = runPowerShell(ps_cmd, kDownloadTimeoutMs);
     if (!proc.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("Download speed test warning: " + proc.std_err.trimmed());
@@ -109,10 +110,10 @@ void TestNetworkSpeedAction::testDownloadSpeed() {
 
 void TestNetworkSpeedAction::parseDownloadSpeedOutput(const QString& output) {
     QStringList lines = output.split('\n');
-    
+
     QVector<double> speeds;
     int successful_tests = 0;
-    
+
     for (const QString& line : lines) {
         if (line.contains("SERVER_SPEED:")) {
             bool ok = false;
@@ -134,14 +135,14 @@ void TestNetworkSpeedAction::parseDownloadSpeedOutput(const QString& output) {
             if (ok) successful_tests = val;
         }
     }
-    
+
     m_download_tests_successful = successful_tests;
 }
 
 // ENTERPRISE-GRADE: Upload speed test with timing measurement
 void TestNetworkSpeedAction::testUploadSpeed() {
     Q_EMIT executionProgress("Testing upload speed...", 60);
-    
+
     // Upload test using HTTP POST with measured timing
     QString ps_cmd = QString(
         "$data = [byte[]]::new(1MB); "
@@ -150,7 +151,8 @@ void TestNetworkSpeedAction::testUploadSpeed() {
         "$url = '%1'; "
         "try { "
         "  $start = Get-Date; "
-        "  $response = Invoke-WebRequest -Uri $url -Method POST -Body $data -UseBasicParsing -TimeoutSec 30 -ErrorAction Stop; "
+        "  $response = Invoke-WebRequest -Uri $url -Method POST -Body $data -UseBasicParsing "
+        "-TimeoutSec 30 -ErrorAction Stop; "
         "  $end = Get-Date; "
         "  $duration = ($end - $start).TotalSeconds; "
         "  if ($duration -gt 0) { "
@@ -164,14 +166,14 @@ void TestNetworkSpeedAction::testUploadSpeed() {
         "  Write-Output \"UPLOAD_ERROR:$($_.Exception.Message)\"; "
         "}"
     ).arg(kUploadTestUrl);
-    
+
     ProcessResult proc = runPowerShell(ps_cmd, kUploadTimeoutMs);
     if (!proc.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("Upload speed test warning: " + proc.std_err.trimmed());
     }
     QString output = proc.std_out;
     QStringList lines = output.split('\n');
-    
+
     for (const QString& line : lines) {
         if (line.contains("UPLOAD_SPEED:")) {
             m_upload_speed = line.split(':').value(1).trimmed().toDouble();
@@ -186,7 +188,7 @@ void TestNetworkSpeedAction::testUploadSpeed() {
 // ENTERPRISE-GRADE: Advanced latency test with jitter and packet loss
 void TestNetworkSpeedAction::testLatencyAndJitter() {
     Q_EMIT executionProgress("Measuring latency, jitter, and packet loss...", 45);
-    
+
     QString ps_cmd = QString(
         "$pings = @(); "
         "$host = '%1'; "
@@ -216,14 +218,14 @@ void TestNetworkSpeedAction::testLatencyAndJitter() {
         "  Write-Output \"LATENCY_TEST_FAILED\"; "
         "}"
     ).arg(kConnectivityHost).arg(kLatencyPingCount);
-    
+
     ProcessResult proc = runPowerShell(ps_cmd, kLatencyTimeoutMs);
     if (!proc.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("Latency/jitter test warning: " + proc.std_err.trimmed());
     }
     QString output = proc.std_out;
     QStringList lines = output.split('\n');
-    
+
     for (const QString& line : lines) {
         if (line.contains("AVG_LATENCY:")) {
             m_latency = line.split(':').value(1).trimmed().toInt();
@@ -250,10 +252,11 @@ void TestNetworkSpeedAction::testLatencyAndJitter() {
 // ENTERPRISE-GRADE: Get public IP and ISP information
 void TestNetworkSpeedAction::getPublicIPInfo() {
     Q_EMIT executionProgress("Retrieving public IP and ISP information...", 15);
-    
+
     QString ps_cmd = QString(
         "try { "
-        "  $response = Invoke-RestMethod -Uri 'https://ipapi.co/json/' -TimeoutSec 10 -ErrorAction Stop; "
+        "  $response = Invoke-RestMethod -Uri 'https://ipapi.co/json/' -TimeoutSec 10 -ErrorAction "
+        "Stop; "
         "  Write-Output \"PUBLIC_IP:$($response.ip)\"; "
         "  Write-Output \"ISP:$($response.org)\"; "
         "  Write-Output \"CITY:$($response.city)\"; "
@@ -263,14 +266,14 @@ void TestNetworkSpeedAction::getPublicIPInfo() {
         "  Write-Output \"IP_INFO_FAILED\"; "
         "}"
     );
-    
+
     ProcessResult proc = runPowerShell(ps_cmd, sak::kTimeoutChocoListMs);
     if (!proc.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("Public IP lookup warning: " + proc.std_err.trimmed());
     }
     QString output = proc.std_out;
     QStringList lines = output.split('\n');
-    
+
     for (const QString& line : lines) {
         if (line.contains("PUBLIC_IP:")) {
             m_public_ip = line.split(':',Qt::SkipEmptyParts).value(1).trimmed();
@@ -313,9 +316,10 @@ void TestNetworkSpeedAction::scan() {
 QString TestNetworkSpeedAction::buildSpeedTestReport() const {
     QString report;
     report += QString("╔").repeated(1) + QString("═").repeated(78) + QString("╗\n");
-    report += QString("║") + QString(" NETWORK SPEED TEST RESULTS").leftJustified(78) + QString("║\n");
+    report += QString("║") + QString(" NETWORK SPEED TEST RESULTS").leftJustified(78) +
+        QString("║\n");
     report += QString("╠").repeated(1) + QString("═").repeated(78) + QString("╣\n");
-    
+
     // Connection Information
     if (!m_public_ip.isEmpty()) {
         report += QString("║ Public IP:    %1").arg(m_public_ip).leftJustified(79) + QString("║\n");
@@ -330,30 +334,40 @@ QString TestNetworkSpeedAction::buildSpeedTestReport() const {
     report += QString("╠").repeated(1) + QString("═").repeated(78) + QString("╣\n");
     // Download Speed
     if (m_download_speed > 0) {
-        report += QString("║ Download Speed (Avg):  %1 Mbps").arg(m_download_speed, 0, 'f', 2).leftJustified(79) + QString("║\n");
+        report += QString("║ Download Speed (Avg):  %1 Mbps").arg(m_download_speed, 0, 'f',
+            2).leftJustified(79) + QString("║\n");
         if (m_max_download_speed > 0) {
-            report += QString("║ Download Speed (Max):  %1 Mbps").arg(m_max_download_speed, 0, 'f', 2).leftJustified(79) + QString("║\n");
+            report += QString("║ Download Speed (Max):  %1 Mbps").arg(m_max_download_speed, 0, 'f',
+                2).leftJustified(79) + QString("║\n");
         }
-        report += QString("║ Successful Tests:     %1/3 servers").arg(m_download_tests_successful).leftJustified(79) + QString("║\n");
+        report += QString("║ Successful Tests:     %1/3 servers")
+            .arg(m_download_tests_successful).leftJustified(79) + QString("║\n");
     } else {
-        report += QString("║ Download Speed:        Test failed (check firewall/connection)").leftJustified(79) + QString("║\n");
+        report += QString("║ Download Speed:        Test failed (check firewall/connection)")
+            .leftJustified(79) + QString("║\n");
     }
     report += QString("╠").repeated(1) + QString("═").repeated(78) + QString("╣\n");
     // Upload Speed
     if (m_upload_test_successful && m_upload_speed > 0) {
-        report += QString("║ Upload Speed:          %1 Mbps").arg(m_upload_speed, 0, 'f', 2).leftJustified(79) + QString("║\n");
+        report += QString("║ Upload Speed:          %1 Mbps").arg(m_upload_speed, 0, 'f',
+            2).leftJustified(79) + QString("║\n");
     } else {
-        report += QString("║ Upload Speed:          Test failed (may require HTTPS access)").leftJustified(79) + QString("║\n");
+        report += QString("║ Upload Speed:          Test failed (may require HTTPS access)")
+            .leftJustified(79) + QString("║\n");
     }
     report += QString("╠").repeated(1) + QString("═").repeated(78) + QString("╣\n");
     // Latency and Quality Metrics
     if (m_latency > 0) {
-        report += QString("║ Latency (Avg):         %1 ms").arg(m_latency).leftJustified(79) + QString("║\n");
-        report += QString("║ Latency Range:         %1 - %2 ms").arg(m_min_latency).arg(m_max_latency).leftJustified(79) + QString("║\n");
-        report += QString("║ Jitter:                %1 ms").arg(m_jitter, 0, 'f', 2).leftJustified(79) + QString("║\n");
-        report += QString("║ Packet Loss:           %1%").arg(m_packet_loss, 0, 'f', 2).leftJustified(79) + QString("║\n");
+        report += QString("║ Latency (Avg):         %1 ms").arg(m_latency).leftJustified(79) +
+            QString("║\n");
+        report += QString("║ Latency Range:         %1 - %2 ms").arg(m_min_latency)
+            .arg(m_max_latency).leftJustified(79) + QString("║\n");
+        report += QString("║ Jitter:                %1 ms").arg(m_jitter, 0, 'f',
+            2).leftJustified(79) + QString("║\n");
+        report += QString("║ Packet Loss:           %1%").arg(m_packet_loss, 0, 'f',
+            2).leftJustified(79) + QString("║\n");
         report += QString("╠").repeated(1) + QString("═").repeated(78) + QString("╣\n");
-        
+
         // Connection Quality Assessment
         QString quality, recommendation;
         if (m_latency < 20 && m_jitter < 10 && m_packet_loss < 1.0) {
@@ -369,13 +383,16 @@ QString TestNetworkSpeedAction::buildSpeedTestReport() const {
             quality = "Poor";
             recommendation = "Not recommended for latency-sensitive tasks";
         }
-        
-        report += QString("║ Connection Quality:    %1").arg(quality).leftJustified(79) + QString("║\n");
-        report += QString("║ Recommendation:        %1").arg(recommendation).leftJustified(79) + QString("║\n");
+
+        report += QString("║ Connection Quality:    %1").arg(quality).leftJustified(79) +
+            QString("║\n");
+        report += QString("║ Recommendation:        %1").arg(recommendation).leftJustified(79) +
+            QString("║\n");
     } else {
-        report += QString("║ Latency Test:          Failed to measure latency").leftJustified(79) + QString("║\n");
+        report += QString("║ Latency Test:          Failed to measure latency").leftJustified(79) +
+            QString("║\n");
     }
-    
+
     report += QString("╚").repeated(1) + QString("═").repeated(78) + QString("╝\n");
     return report;
 }
@@ -383,13 +400,13 @@ QString TestNetworkSpeedAction::buildSpeedTestReport() const {
 void TestNetworkSpeedAction::finalizeSpeedTestResult(const QDateTime& start_time,
                                                       const QString& report) {
     Q_EMIT executionProgress("Speed test complete", 100);
-    
+
     qint64 duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
-    
+
     ExecutionResult result;
     result.duration_ms = duration_ms;
     result.success = (m_download_speed > 0 || m_latency > 0);
-    
+
     if (result.success) {
         result.message = QString("Network speed test complete - %1 Mbps down, %2 ms latency")
                             .arg(m_download_speed, 0, 'f', 2)
@@ -397,9 +414,9 @@ void TestNetworkSpeedAction::finalizeSpeedTestResult(const QDateTime& start_time
     } else {
         result.message = "Network speed test completed with limited results";
     }
-    
+
     result.log = report;
-    
+
     finishWithResult(result, result.success ? ActionStatus::Success : ActionStatus::Failed);
 }
 
@@ -411,14 +428,14 @@ void TestNetworkSpeedAction::execute() {
 
     setStatus(ActionStatus::Running);
     QDateTime start_time = QDateTime::currentDateTime();
-    
+
     // Phase 1: Get public IP and ISP information
     getPublicIPInfo();
-    
+
     // Phase 2: Check connectivity
     Q_EMIT executionProgress("Checking internet connectivity...", 10);
     checkConnectivity();
-    
+
     if (!m_has_internet) {
         emitFailedResult(
             QStringLiteral("No internet connection detected"),
@@ -427,28 +444,28 @@ void TestNetworkSpeedAction::execute() {
             start_time);
         return;
     }
-    
+
     // Phase 3: Test latency, jitter, and packet loss
     testLatencyAndJitter();
     if (isCancelled()) {
         emitCancelledResult("Network speed test cancelled during latency test");
         return;
     }
-    
+
     // Phase 4: Test download speed
     testDownloadSpeed();
     if (isCancelled()) {
         emitCancelledResult("Network speed test cancelled during download test");
         return;
     }
-    
+
     // Phase 5: Test upload speed
     testUploadSpeed();
     if (isCancelled()) {
         emitCancelledResult("Network speed test cancelled during upload test");
         return;
     }
-    
+
     Q_EMIT executionProgress("Generating comprehensive report...", 90);
     QString report = buildSpeedTestReport();
     finalizeSpeedTestResult(start_time, report);

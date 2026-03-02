@@ -106,23 +106,27 @@ auto DiskBenchmarkWorker::runAllBenchmarks() -> std::expected<void, sak::error_c
 {
     // Sequential tests
     reportProgress(1, 8, "Sequential read benchmark...");
-    if (checkStop()) { cleanupTestFile(); return std::unexpected(sak::error_code::operation_cancelled); }
+    if (checkStop()) { cleanupTestFile(); return std::unexpected(
+        sak::error_code::operation_cancelled); }
     runSequentialRead();
 
     reportProgress(2, 8, "Sequential write benchmark...");
-    if (checkStop()) { cleanupTestFile(); return std::unexpected(sak::error_code::operation_cancelled); }
+    if (checkStop()) { cleanupTestFile(); return std::unexpected(
+        sak::error_code::operation_cancelled); }
     runSequentialWrite();
 
     // Random 4K QD1
     reportProgress(3, 8, "Random 4K QD1 read...");
-    if (checkStop()) { cleanupTestFile(); return std::unexpected(sak::error_code::operation_cancelled); }
+    if (checkStop()) { cleanupTestFile(); return std::unexpected(
+        sak::error_code::operation_cancelled); }
     runRandom4KRead(m_config.queue_depth_low,
                     m_result.rand_4k_read_mbps,
                     m_result.rand_4k_read_iops,
                     m_result.avg_read_latency_us);
 
     reportProgress(4, 8, "Random 4K QD1 write...");
-    if (checkStop()) { cleanupTestFile(); return std::unexpected(sak::error_code::operation_cancelled); }
+    if (checkStop()) { cleanupTestFile(); return std::unexpected(
+        sak::error_code::operation_cancelled); }
     runRandom4KWrite(m_config.queue_depth_low,
                      m_result.rand_4k_write_mbps,
                      m_result.rand_4k_write_iops,
@@ -135,7 +139,8 @@ auto DiskBenchmarkWorker::runAllBenchmarks() -> std::expected<void, sak::error_c
     double qd32_avg_write_lat = 0.0;
 
     reportProgress(5, 8, "Random 4K QD32 read...");
-    if (checkStop()) { cleanupTestFile(); return std::unexpected(sak::error_code::operation_cancelled); }
+    if (checkStop()) { cleanupTestFile(); return std::unexpected(
+        sak::error_code::operation_cancelled); }
     runRandom4KRead(m_config.queue_depth_high,
                     m_result.rand_4k_qd32_read_mbps,
                     m_result.rand_4k_qd32_read_iops,
@@ -144,7 +149,8 @@ auto DiskBenchmarkWorker::runAllBenchmarks() -> std::expected<void, sak::error_c
     m_result.p99_read_latency_us = calculateP99(qd32_read_latencies);
 
     reportProgress(6, 8, "Random 4K QD32 write...");
-    if (checkStop()) { cleanupTestFile(); return std::unexpected(sak::error_code::operation_cancelled); }
+    if (checkStop()) { cleanupTestFile(); return std::unexpected(
+        sak::error_code::operation_cancelled); }
     runRandom4KWrite(m_config.queue_depth_high,
                      m_result.rand_4k_qd32_write_mbps,
                      m_result.rand_4k_qd32_write_iops,

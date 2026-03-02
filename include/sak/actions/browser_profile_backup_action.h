@@ -15,7 +15,7 @@ struct UserProfile;
 
 /**
  * @brief Browser Profile Backup Action
- * 
+ *
  * Backs up complete browser profiles using existing UserDataManager.
  * Includes bookmarks, passwords, extensions, and settings for Chrome, Firefox, Edge.
  */
@@ -26,7 +26,8 @@ public:
     explicit BrowserProfileBackupAction(const QString& backup_location, QObject* parent = nullptr);
 
     QString name() const override { return "Browser Profile Backup"; }
-    QString description() const override { return "Backup browser profiles with bookmarks and passwords"; }
+    QString description() const override { return "Backup browser profiles with bookmarks and "
+                                                  "passwords"; }
     QIcon icon() const override { return QIcon(); }
     ActionCategory category() const override { return ActionCategory::QuickBackup; }
     bool requiresAdmin() const override { return false; }

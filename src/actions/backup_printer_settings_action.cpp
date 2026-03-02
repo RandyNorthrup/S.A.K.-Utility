@@ -13,7 +13,8 @@
 
 namespace sak {
 
-BackupPrinterSettingsAction::BackupPrinterSettingsAction(const QString& backup_location, QObject* parent)
+BackupPrinterSettingsAction::BackupPrinterSettingsAction(const QString& backup_location,
+    QObject* parent)
     : QuickAction(parent)
     , m_backup_location(backup_location)
 {
@@ -21,7 +22,8 @@ BackupPrinterSettingsAction::BackupPrinterSettingsAction(const QString& backup_l
 
 int BackupPrinterSettingsAction::countInstalledPrinters() {
     // Count installed printers via PowerShell
-    ProcessResult proc = runPowerShell("Get-Printer | Measure-Object | Select-Object -ExpandProperty Count", sak::kTimeoutProcessShortMs);
+    ProcessResult proc = runPowerShell("Get-Printer | Measure-Object | Select-Object "
+                                       "-ExpandProperty Count", sak::kTimeoutProcessShortMs);
     if (!proc.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("Printer scan warning: " + proc.std_err.trimmed());
     }
@@ -43,11 +45,11 @@ bool BackupPrinterSettingsAction::exportPrinterRegistry(const QString& dest_file
 
 void BackupPrinterSettingsAction::scan() {
     setStatus(ActionStatus::Scanning);
-    
+
     Q_EMIT scanProgress("Scanning for installed printers...");
-    
+
     m_printers_found = countInstalledPrinters();
-    
+
     ScanResult result;
     result.applicable = m_printers_found > 0;
     result.summary = QString("Found %1 installed printer(s)").arg(m_printers_found);
@@ -64,30 +66,30 @@ void BackupPrinterSettingsAction::execute() {
 
     setStatus(ActionStatus::Running);
     QDateTime start_time = QDateTime::currentDateTime();
-    
+
     Q_EMIT executionProgress("Backing up printer settings...", 30);
 
     if (isCancelled()) {
         emitCancelledResult("Printer settings backup cancelled", start_time);
         return;
     }
-    
+
     QDir backup_dir(m_backup_location);
     if (!backup_dir.exists()) {
         backup_dir.mkpath(".");
     }
-    
+
     QString reg_file = backup_dir.filePath("printer_settings.reg");
-    
+
     bool success = exportPrinterRegistry(reg_file);
-    
+
     Q_EMIT executionProgress("Backup complete", 100);
-    
+
     qint64 duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
-    
+
     ExecutionResult result;
     result.duration_ms = duration_ms;
-    
+
     if (success) {
         QFileInfo info(reg_file);
         result.success = true;
@@ -102,7 +104,8 @@ void BackupPrinterSettingsAction::execute() {
     } else {
         result.success = false;
         result.message = "Failed to export printer registry";
-        result.log = "Check administrator privileges - registry export requires elevated permissions";
+        result.log = "Check administrator privileges - registry export requires elevated "
+                     "permissions";
         finishWithResult(result, ActionStatus::Failed);
     }
 }

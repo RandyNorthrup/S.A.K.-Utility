@@ -8,7 +8,8 @@
 
 namespace sak {
 
-QJsonObject OrchestrationProtocol::makeMessage(OrchestrationMessageType type, const QJsonObject& payload) {
+QJsonObject OrchestrationProtocol::makeMessage(OrchestrationMessageType type,
+    const QJsonObject& payload) {
     QJsonObject message = payload;
     message["message_type"] = typeToString(type);
     message["protocol_version"] = "1.0";
@@ -69,7 +70,8 @@ bool OrchestrationProtocol::writeMessage(QTcpSocket* socket, const QJsonObject& 
     return bytes_written == framed.size();
 }
 
-QList<QJsonObject> OrchestrationProtocol::readMessages(QByteArray& buffer, const QByteArray& incoming) {
+QList<QJsonObject> OrchestrationProtocol::readMessages(QByteArray& buffer,
+    const QByteArray& incoming) {
     buffer.append(incoming);
     QList<QJsonObject> messages;
 

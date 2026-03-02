@@ -202,7 +202,8 @@ QGroupBox* DiagnosticBenchmarkPanel::createSmartSection()
     m_smart_rescan_button = new QPushButton("Scan SMART", this);
     m_smart_rescan_button->setMinimumWidth(sak::kButtonWidthLarge);
     m_smart_rescan_button->setAccessibleName(QStringLiteral("Scan SMART Health"));
-    m_smart_rescan_button->setToolTip(QStringLiteral("Scan storage drives for S.M.A.R.T. health data"));
+    m_smart_rescan_button->setToolTip(QStringLiteral("Scan storage drives for S.M.A.R.T. health "
+                                                     "data"));
     button_layout->addWidget(m_smart_rescan_button);
     layout->addLayout(button_layout);
 
@@ -258,8 +259,10 @@ QGroupBox* DiagnosticBenchmarkPanel::createCpuBenchmarkGroup()
     m_cpu_score_bar->setTextVisible(true);
     m_cpu_score_bar->setFormat("Score: %v / 3000 (baseline i5-12400 = 1000)");
     m_cpu_score_bar->setAccessibleName(QStringLiteral("CPU Benchmark Score"));
-    m_cpu_score_bar->setAccessibleDescription(QStringLiteral("Displays the CPU benchmark score out of 3000"));
-    m_cpu_score_bar->setToolTip(QStringLiteral("CPU benchmark score relative to an i5-12400 baseline"));
+    m_cpu_score_bar->setAccessibleDescription(QStringLiteral("Displays the CPU benchmark score out "
+                                                             "of 3000"));
+    m_cpu_score_bar->setToolTip(QStringLiteral("CPU benchmark score relative to an i5-12400 "
+                                               "baseline"));
     cpu_layout->addWidget(m_cpu_score_bar);
 
     m_cpu_details_label = new QLabel("", this);
@@ -272,7 +275,8 @@ QGroupBox* DiagnosticBenchmarkPanel::createCpuBenchmarkGroup()
     m_cpu_benchmark_button = new QPushButton("Run CPU Benchmark", this);
     m_cpu_benchmark_button->setMinimumWidth(sak::kButtonWidthXLarge);
     m_cpu_benchmark_button->setAccessibleName(QStringLiteral("Run CPU Benchmark"));
-    m_cpu_benchmark_button->setToolTip(QStringLiteral("Run a single and multi-threaded CPU performance test"));
+    m_cpu_benchmark_button->setToolTip(QStringLiteral("Run a single and multi-threaded CPU "
+                                                      "performance test"));
     cpu_btn_layout->addWidget(m_cpu_benchmark_button);
     cpu_layout->addLayout(cpu_btn_layout);
 
@@ -313,7 +317,8 @@ QGroupBox* DiagnosticBenchmarkPanel::createDiskBenchmarkGroup()
     m_disk_benchmark_button = new QPushButton("Run Disk Benchmark", this);
     m_disk_benchmark_button->setMinimumWidth(sak::kButtonWidthXLarge);
     m_disk_benchmark_button->setAccessibleName(QStringLiteral("Run Disk Benchmark"));
-    m_disk_benchmark_button->setToolTip(QStringLiteral("Measure sequential and random I/O performance"));
+    m_disk_benchmark_button->setToolTip(QStringLiteral("Measure sequential and random I/O "
+                                                       "performance"));
     disk_btn_layout->addWidget(m_disk_benchmark_button);
     disk_layout->addLayout(disk_btn_layout);
 
@@ -423,7 +428,8 @@ QHBoxLayout* DiagnosticBenchmarkPanel::createStressConfigRow()
     m_stress_thermal_limit_spin->setRange(60, 110);
     m_stress_thermal_limit_spin->setValue(95);
     m_stress_thermal_limit_spin->setAccessibleName(QStringLiteral("Thermal Limit"));
-    m_stress_thermal_limit_spin->setToolTip(QStringLiteral("Maximum temperature before the stress test is paused"));
+    m_stress_thermal_limit_spin->setToolTip(QStringLiteral("Maximum temperature before the stress "
+                                                           "test is paused"));
     config_row->addWidget(m_stress_thermal_limit_spin);
 
     config_row->addStretch();
@@ -483,7 +489,8 @@ QGroupBox* DiagnosticBenchmarkPanel::createThermalSection()
         bar->setTextVisible(true);
         bar->setFormat("%v / %m \u00B0C");
         bar->setAccessibleName(name.chopped(1) + QStringLiteral(" Temperature"));
-        bar->setAccessibleDescription(QStringLiteral("Current temperature reading in degrees Celsius"));
+        bar->setAccessibleDescription(QStringLiteral("Current temperature reading in degrees "
+                                                     "Celsius"));
         bar->setToolTip(QStringLiteral("Current temperature for this component"));
         row->addWidget(bar, 1);
 
@@ -533,7 +540,8 @@ QGroupBox* DiagnosticBenchmarkPanel::createSuiteSection()
     m_suite_run_button = new QPushButton("Run Full Suite", this);
     m_suite_run_button->setMinimumWidth(sak::kButtonWidthLarge);
     m_suite_run_button->setAccessibleName(QStringLiteral("Run Full Suite"));
-    m_suite_run_button->setToolTip(QStringLiteral("Run the complete diagnostic and benchmark suite"));
+    m_suite_run_button->setToolTip(QStringLiteral(
+        "Run the complete diagnostic and benchmark suite"));
     m_suite_run_button->setStyleSheet(sak::ui::kPrimaryButtonStyle);
     button_layout->addWidget(m_suite_run_button);
 
@@ -586,7 +594,8 @@ void DiagnosticBenchmarkPanel::createReportInfoFields(QVBoxLayout* layout)
     m_report_technician_edit = new QLineEdit(this);
     m_report_technician_edit->setPlaceholderText("Name");
     m_report_technician_edit->setAccessibleName(QStringLiteral("Technician Name"));
-    m_report_technician_edit->setToolTip(QStringLiteral("Name of the technician generating the report"));
+    m_report_technician_edit->setToolTip(QStringLiteral("Name of the technician generating the "
+                                                        "report"));
     info_row->addWidget(m_report_technician_edit);
 
     info_row->addSpacing(20);

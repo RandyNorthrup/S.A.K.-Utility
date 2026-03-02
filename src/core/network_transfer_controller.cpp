@@ -34,7 +34,8 @@ QString firstNonLoopbackIPv4() {
             continue;
         }
         for (const auto& entry : iface.addressEntries()) {
-            if (entry.ip().protocol() == QAbstractSocket::IPv4Protocol && !entry.ip().isLoopback()) {
+            if (entry.ip().protocol() == QAbstractSocket::IPv4Protocol &&
+                !entry.ip().isLoopback()) {
                 return entry.ip().toString();
             }
         }
@@ -51,15 +52,20 @@ NetworkTransferController::NetworkTransferController(QObject* parent)
     , m_orchestratorClient(new OrchestrationClient(this))
     , m_orchestratorDiscovery(new OrchestrationDiscoveryService(this))
 {
-    connect(m_discovery, &PeerDiscoveryService::peerDiscovered, this, &NetworkTransferController::peerDiscovered);
+    connect(m_discovery, &PeerDiscoveryService::peerDiscovered, this,
+        &NetworkTransferController::peerDiscovered);
     connect(m_discovery, &PeerDiscoveryService::discoveryError, this, [this](const QString& msg) {
         Q_EMIT errorMessage(msg);
     });
 
-    connect(m_connection, &NetworkConnectionManager::dataReceived, this, &NetworkTransferController::onDataReceived);
-    connect(m_connection, &NetworkConnectionManager::connected, this, &NetworkTransferController::onConnected);
-    connect(m_connection, &NetworkConnectionManager::disconnected, this, &NetworkTransferController::onDisconnected);
-    connect(m_connection, &NetworkConnectionManager::connectionError, this, [this](const QString& msg) {
+    connect(m_connection, &NetworkConnectionManager::dataReceived, this,
+        &NetworkTransferController::onDataReceived);
+    connect(m_connection, &NetworkConnectionManager::connected, this,
+        &NetworkTransferController::onConnected);
+    connect(m_connection, &NetworkConnectionManager::disconnected, this,
+        &NetworkTransferController::onDisconnected);
+    connect(m_connection, &NetworkConnectionManager::connectionError, this,
+        [this](const QString& msg) {
         Q_EMIT errorMessage(msg);
     });
 
@@ -71,23 +77,28 @@ NetworkTransferController::NetworkTransferController(QObject* parent)
         }
     });
 
-    connect(m_orchestratorClient, &OrchestrationClient::assignmentReceived, this, [this](const DeploymentAssignment& assignment) {
+    connect(m_orchestratorClient, &OrchestrationClient::assignmentReceived, this,
+        [this](const DeploymentAssignment& assignment) {
         m_orchestratorDeploymentId = assignment.deployment_id;
         m_orchestratorJobId = assignment.job_id;
         Q_EMIT orchestrationAssignmentReceived(assignment);
-        Q_EMIT statusMessage(tr("Orchestration assignment received for %1").arg(assignment.source_user));
+        Q_EMIT statusMessage(tr("Orchestration assignment received for %1")
+            .arg(assignment.source_user));
 
-        if (!m_connection->isServerRunning() && !m_destinationBase.isEmpty() && !m_passphrase.isEmpty()) {
+        if (!m_connection->isServerRunning() && !m_destinationBase.isEmpty() &&
+            !m_passphrase.isEmpty()) {
             startDestination(m_passphrase, m_destinationBase);
         }
     });
 
     connect(m_orchestratorClient, &OrchestrationClient::assignmentPaused, this,
         [this](const QString& deployment_id, const QString& job_id) {
-            if (!m_orchestratorDeploymentId.isEmpty() && deployment_id != m_orchestratorDeploymentId) {
+            if (!m_orchestratorDeploymentId.isEmpty() &&
+                deployment_id != m_orchestratorDeploymentId) {
                 return;
             }
-            if (!m_orchestratorJobId.isEmpty() && !job_id.isEmpty() && job_id != m_orchestratorJobId) {
+            if (!m_orchestratorJobId.isEmpty() && !job_id.isEmpty() &&
+                job_id != m_orchestratorJobId) {
                 return;
             }
             Q_EMIT orchestrationAssignmentPaused(job_id);
@@ -96,10 +107,12 @@ NetworkTransferController::NetworkTransferController(QObject* parent)
 
     connect(m_orchestratorClient, &OrchestrationClient::assignmentResumed, this,
         [this](const QString& deployment_id, const QString& job_id) {
-            if (!m_orchestratorDeploymentId.isEmpty() && deployment_id != m_orchestratorDeploymentId) {
+            if (!m_orchestratorDeploymentId.isEmpty() &&
+                deployment_id != m_orchestratorDeploymentId) {
                 return;
             }
-            if (!m_orchestratorJobId.isEmpty() && !job_id.isEmpty() && job_id != m_orchestratorJobId) {
+            if (!m_orchestratorJobId.isEmpty() && !job_id.isEmpty() &&
+                job_id != m_orchestratorJobId) {
                 return;
             }
             Q_EMIT orchestrationAssignmentResumed(job_id);
@@ -108,18 +121,22 @@ NetworkTransferController::NetworkTransferController(QObject* parent)
 
     connect(m_orchestratorClient, &OrchestrationClient::assignmentCanceled, this,
         [this](const QString& deployment_id, const QString& job_id) {
-            if (!m_orchestratorDeploymentId.isEmpty() && deployment_id != m_orchestratorDeploymentId) {
+            if (!m_orchestratorDeploymentId.isEmpty() &&
+                deployment_id != m_orchestratorDeploymentId) {
                 return;
             }
-            if (!m_orchestratorJobId.isEmpty() && !job_id.isEmpty() && job_id != m_orchestratorJobId) {
+            if (!m_orchestratorJobId.isEmpty() && !job_id.isEmpty() &&
+                job_id != m_orchestratorJobId) {
                 return;
             }
             Q_EMIT orchestrationAssignmentCanceled(job_id);
             cancelTransfer();
         });
 
-    connect(m_orchestratorClient, &OrchestrationClient::connectionError, this, &NetworkTransferController::errorMessage);
-    connect(m_orchestratorClient, &OrchestrationClient::statusMessage, this, &NetworkTransferController::statusMessage);
+    connect(m_orchestratorClient, &OrchestrationClient::connectionError, this,
+        &NetworkTransferController::errorMessage);
+    connect(m_orchestratorClient, &OrchestrationClient::statusMessage, this,
+        &NetworkTransferController::statusMessage);
 
     connect(m_orchestratorDiscovery, &OrchestrationDiscoveryService::orchestratorDiscovered, this,
         [this](const QHostAddress& address, quint16 port) {
@@ -133,7 +150,8 @@ NetworkTransferController::NetworkTransferController(QObject* parent)
 
             m_orchestratorClient->setAutoReconnectEnabled(true);
             m_orchestratorClient->connectToServer(address, port);
-            Q_EMIT statusMessage(tr("Discovered orchestrator at %1:%2").arg(address.toString()).arg(port));
+            Q_EMIT statusMessage(tr("Discovered orchestrator at %1:%2").arg(address.toString())
+                .arg(port));
         });
 }
 
@@ -162,7 +180,8 @@ void NetworkTransferController::startSource(const TransferManifest& manifest,
     m_authenticated = false;
     m_auth_required = m_settings.encryption_enabled;
 
-    logInfo("NetworkTransferController startSource to {}:{} with {} files", peer.ip_address.toStdString(),
+    logInfo("NetworkTransferController startSource to {}:{} with {} files",
+        peer.ip_address.toStdString(),
              m_settings.control_port, files.size());
 
     if (m_settings.encryption_enabled) {
@@ -189,7 +208,8 @@ void NetworkTransferController::startSource(const TransferManifest& manifest,
     m_connection->connectToHost(QHostAddress(peer.ip_address), m_settings.control_port);
 }
 
-void NetworkTransferController::startDestination(const QString& passphrase, const QString& destinationBase) {
+void NetworkTransferController::startDestination(const QString& passphrase,
+    const QString& destinationBase) {
     stop();
     m_mode = Mode::Destination;
     m_passphrase = passphrase;
@@ -249,7 +269,8 @@ void NetworkTransferController::approveTransfer(bool approved) {
         return;
     }
 
-    if (!m_connection->socket() || m_connection->socket()->state() != QAbstractSocket::ConnectedState) {
+    if (!m_connection->socket() ||
+        m_connection->socket()->state() != QAbstractSocket::ConnectedState) {
         Q_EMIT errorMessage(tr("No active control connection to approve transfer."));
         return;
     }
@@ -404,13 +425,15 @@ void NetworkTransferController::onConnected() {
         helloPayload["salt"] = QString::fromUtf8(m_salt.toBase64());
     }
 
-    TransferProtocol::writeMessage(m_connection->socket(), TransferProtocol::makeMessage(TransferMessageType::Hello, helloPayload));
+    TransferProtocol::writeMessage(m_connection->socket(),
+        TransferProtocol::makeMessage(TransferMessageType::Hello, helloPayload));
 
     if (m_mode == Mode::Source && !m_auth_required) {
         m_authenticated = true;
         QJsonObject manifestPayload = m_manifest.toJson(false);
         manifestPayload["files_count"] = static_cast<int>(m_files.size());
-        TransferProtocol::writeMessage(m_connection->socket(), TransferProtocol::makeMessage(TransferMessageType::TransferManifest, manifestPayload));
+        TransferProtocol::writeMessage(m_connection->socket(),
+            TransferProtocol::makeMessage(TransferMessageType::TransferManifest, manifestPayload));
         Q_EMIT statusMessage(tr("Manifest sent. Awaiting approval..."));
     }
 }
@@ -459,7 +482,8 @@ void NetworkTransferController::onDataReceived(const QByteArray& data) {
                 }
                 break;
             case TransferMessageType::TransferReject:
-                Q_EMIT errorMessage(tr("Transfer rejected: %1").arg(message.value("reason").toString()));
+                Q_EMIT errorMessage(tr("Transfer rejected: %1")
+                    .arg(message.value("reason").toString()));
                 break;
             case TransferMessageType::Error:
                 Q_EMIT errorMessage(message.value("error").toString());
@@ -518,7 +542,8 @@ void NetworkTransferController::handleAuthResponseMessage(const QJsonObject& mes
                 QJsonObject manifestPayload = m_manifest.toJson(false);
                 manifestPayload["files_count"] = static_cast<int>(m_files.size());
                 TransferProtocol::writeMessage(m_connection->socket(),
-                    TransferProtocol::makeMessage(TransferMessageType::TransferManifest, manifestPayload));
+                    TransferProtocol::makeMessage(TransferMessageType::TransferManifest,
+                        manifestPayload));
                 Q_EMIT statusMessage(tr("Manifest sent. Awaiting approval..."));
             }
         }
@@ -532,11 +557,13 @@ void NetworkTransferController::handleAuthResponseMessage(const QJsonObject& mes
             Q_EMIT errorMessage(tr("Failed to derive authentication key"));
             return;
         }
-        QByteArray expected = QCryptographicHash::hash(m_auth_nonce + *keyResult, QCryptographicHash::Sha256);
+        QByteArray expected = QCryptographicHash::hash(m_auth_nonce + *keyResult,
+            QCryptographicHash::Sha256);
 
         if (response != expected) {
             TransferProtocol::writeMessage(m_connection->socket(),
-                TransferProtocol::makeMessage(TransferMessageType::Error, { {"error", "Authentication failed"} }));
+                TransferProtocol::makeMessage(TransferMessageType::Error, { {"error",
+                    "Authentication failed"} }));
             Q_EMIT errorMessage(tr("Authentication failed"));
             return;
         }
@@ -571,9 +598,12 @@ void NetworkTransferController::startWorkerSender() {
     m_worker->moveToThread(m_workerThread);
 
     connect(m_workerThread, &QThread::finished, m_worker, &QObject::deleteLater);
-    connect(m_worker, &NetworkTransferWorker::overallProgress, this, &NetworkTransferController::transferProgress);
-    connect(m_worker, &NetworkTransferWorker::transferCompleted, this, &NetworkTransferController::transferCompleted);
-    connect(m_worker, &NetworkTransferWorker::errorOccurred, this, &NetworkTransferController::errorMessage);
+    connect(m_worker, &NetworkTransferWorker::overallProgress, this,
+        &NetworkTransferController::transferProgress);
+    connect(m_worker, &NetworkTransferWorker::transferCompleted, this,
+        &NetworkTransferController::transferCompleted);
+    connect(m_worker, &NetworkTransferWorker::errorOccurred, this,
+        &NetworkTransferController::errorMessage);
 
     m_workerThread->start();
 
@@ -589,15 +619,19 @@ void NetworkTransferController::startWorkerSender() {
     options.total_bytes = m_manifest.total_bytes;
 
     QMetaObject::invokeMethod(m_worker, [this, options]() {
-        m_worker->startSender(m_files, QHostAddress(m_selectedPeer.ip_address), m_settings.data_port, options);
+        m_worker->startSender(m_files, QHostAddress(m_selectedPeer.ip_address),
+            m_settings.data_port, options);
     }, Qt::QueuedConnection);
 }
 
 void NetworkTransferController::connectReceiverSignals() {
     connect(m_workerThread, &QThread::finished, m_worker, &QObject::deleteLater);
-    connect(m_worker, &NetworkTransferWorker::overallProgress, this, &NetworkTransferController::transferProgress);
-    connect(m_worker, &NetworkTransferWorker::transferCompleted, this, &NetworkTransferController::transferCompleted);
-    connect(m_worker, &NetworkTransferWorker::errorOccurred, this, &NetworkTransferController::errorMessage);
+    connect(m_worker, &NetworkTransferWorker::overallProgress, this,
+        &NetworkTransferController::transferProgress);
+    connect(m_worker, &NetworkTransferWorker::transferCompleted, this,
+        &NetworkTransferController::transferCompleted);
+    connect(m_worker, &NetworkTransferWorker::errorOccurred, this,
+        &NetworkTransferController::errorMessage);
 
     connect(m_worker, &NetworkTransferWorker::transferStarted, this, [this]() {
         if (!m_pendingApprove) {
@@ -612,7 +646,8 @@ void NetworkTransferController::connectReceiverSignals() {
         m_pendingApprove = false;
     });
 
-    connect(m_worker, &NetworkTransferWorker::overallProgress, this, [this](qint64 bytes, qint64 total) {
+    connect(m_worker, &NetworkTransferWorker::overallProgress, this, [this](qint64 bytes,
+        qint64 total) {
         if (m_orchestratorDeploymentId.isEmpty()) {
             return;
         }
@@ -628,7 +663,8 @@ void NetworkTransferController::connectReceiverSignals() {
         m_orchestratorClient->sendProgress(progress);
     });
 
-    connect(m_worker, &NetworkTransferWorker::transferCompleted, this, [this](bool success, const QString& message) {
+    connect(m_worker, &NetworkTransferWorker::transferCompleted, this, [this](bool success,
+        const QString& message) {
         if (m_orchestratorDeploymentId.isEmpty()) {
             return;
         }

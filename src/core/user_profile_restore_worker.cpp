@@ -60,22 +60,22 @@ void UserProfileRestoreWorker::startRestore(const QString& backupPath,
         Q_EMIT logMessage(tr("Restore already in progress"), true);
         return;
     }
-    
+
     QMutexLocker locker(&m_mutex);
-    
+
     m_backupPath = backupPath;
     m_manifest = manifest;
     m_mappings = mappings;
     m_conflictMode = conflictMode;
     m_permissionMode = permMode;
     m_verify = verify;
-    
+
     m_cancelled = false;
     m_bytesRestored = 0;
     m_filesRestored = 0;
     m_filesSkipped = 0;
     m_filesErrored = 0;
-    
+
     start();
 }
 
@@ -86,22 +86,22 @@ void UserProfileRestoreWorker::cancel() {
 
 void UserProfileRestoreWorker::run() {
     m_running = true;
-    
+
     Q_EMIT logMessage(tr("=== Restore Started ==="), false);
     Q_EMIT logMessage(tr("Backup: %1").arg(m_backupPath), false);
     Q_EMIT logMessage(tr("Users to restore: %1").arg(m_mappings.size()), false);
-    
+
     // Validate backup
     if (!validateBackup()) {
         Q_EMIT restoreComplete(false, tr("Invalid backup"));
         m_running = false;
         return;
     }
-    
+
     // Calculate total size
     Q_EMIT logMessage(tr("Calculating total size..."), false);
     m_totalBytesToRestore = calculateTotalSize();
-    
+
     // Restore each mapped user
     int userIndex = 0;
     for (const auto& mapping : m_mappings) {
@@ -111,32 +111,36 @@ void UserProfileRestoreWorker::run() {
             m_running = false;
             return;
         }
-        
+
         if (!mapping.selected) continue;
-        
+
         Q_EMIT statusUpdate(mapping.source_username, tr("Starting restore..."));
         Q_EMIT logMessage(tr("=== Restoring user: %1 → %2 ===")
-            .arg(mapping.source_username, mapping.destination_username.isEmpty() ? tr("(New)") : mapping.destination_username), false);
-        
+            .arg(mapping.source_username,
+                mapping.destination_username.isEmpty() ? tr("(New)") : mapping
+                    .destination_username), false);
+
         if (!restoreUser(mapping)) {
             Q_EMIT logMessage(tr("Failed to restore user: %1").arg(mapping.source_username), true);
         }
-        
+
         userIndex++;
-        Q_EMIT overallProgress(userIndex, m_mappings.size(), m_bytesRestored, m_totalBytesToRestore);
+        Q_EMIT overallProgress(userIndex, m_mappings.size(), m_bytesRestored,
+            m_totalBytesToRestore);
     }
-    
+
     // Complete
-    QString summary = tr("Restore complete!\nFiles restored: %1\nFiles skipped: %2\nErrors: %3\nTotal size: %4 MB")
+    QString summary = tr("Restore complete!\nFiles restored: %1\nFiles skipped: %2\nErrors: "
+                         "%3\nTotal size: %4 MB")
         .arg(m_filesRestored)
         .arg(m_filesSkipped)
         .arg(m_filesErrored)
         .arg(m_bytesRestored / sak::kBytesPerMBf, 0, 'f', 1);
-    
+
     Q_EMIT logMessage(tr("=== Restore Complete ==="), false);
     Q_EMIT logMessage(summary, false);
     Q_EMIT restoreComplete(true, summary);
-    
+
     m_running = false;
 }
 
@@ -144,13 +148,15 @@ bool UserProfileRestoreWorker::restoreUser(const UserMapping& mapping) {
     // Find source user data in manifest
     const BackupUserData* sourceUser = findManifestUser(mapping.source_username);
     if (!sourceUser) {
-        Q_EMIT logMessage(tr("Source user not found in manifest: %1").arg(mapping.source_username), true);
+        Q_EMIT logMessage(tr("Source user not found in manifest: %1").arg(mapping.source_username),
+            true);
         return false;
     }
-    
+
     QString sourcePath;
     if (!buildSafePath(m_backupPath, mapping.source_username, sourcePath)) {
-        Q_EMIT logMessage(tr("Invalid source path for user: %1").arg(mapping.source_username), true);
+        Q_EMIT logMessage(tr("Invalid source path for user: %1").arg(mapping.source_username),
+            true);
         return false;
     }
 
@@ -158,13 +164,13 @@ bool UserProfileRestoreWorker::restoreUser(const UserMapping& mapping) {
     if (!resolveDestinationProfilePath(mapping, destProfilePath)) {
         return false;
     }
-    
+
     // Restore each folder
     for (const auto& folder : sourceUser->backed_up_folders) {
         if (m_cancelled) return false;
-        
+
         Q_EMIT statusUpdate(mapping.source_username, tr("Restoring: %1").arg(folder.display_name));
-        
+
         QString folderSourcePath;
         QString folderDestPath;
         if (!buildSafePath(sourcePath, folder.relative_path, folderSourcePath)) {
@@ -172,16 +178,18 @@ bool UserProfileRestoreWorker::restoreUser(const UserMapping& mapping) {
             continue;
         }
         if (!buildSafePath(destProfilePath, folder.relative_path, folderDestPath)) {
-            Q_EMIT logMessage(tr("Invalid destination folder path: %1").arg(folder.relative_path), true);
+            Q_EMIT logMessage(tr("Invalid destination folder path: %1").arg(folder.relative_path),
+                true);
             continue;
         }
-        
+
         if (!restoreFolder(folder, folderSourcePath, folderDestPath)) {
-            Q_EMIT logMessage(tr("Warning: Failed to restore folder: %1").arg(folder.display_name), true);
+            Q_EMIT logMessage(tr("Warning: Failed to restore folder: %1").arg(folder.display_name),
+                true);
             // Continue with other folders
         }
     }
-    
+
     return true;
 }
 
@@ -189,7 +197,7 @@ bool UserProfileRestoreWorker::resolveDestinationProfilePath(
     const UserMapping& mapping, QString& destProfilePath) {
     QString systemDrive = QString::fromLocal8Bit(qgetenv("SystemDrive"));
     if (systemDrive.isEmpty()) systemDrive = "C:";
-    
+
     switch (mapping.mode) {
         case MergeMode::CreateNewUser: {
             const QString destUsername = mapping.destination_username.isEmpty()
@@ -201,7 +209,8 @@ bool UserProfileRestoreWorker::resolveDestinationProfilePath(
                 return false;
             }
             if (!QDir().mkpath(destProfilePath)) {
-                Q_EMIT logMessage(tr("Failed to create profile directory: %1").arg(destProfilePath), true);
+                Q_EMIT logMessage(tr("Failed to create profile directory: %1")
+                    .arg(destProfilePath), true);
                 return false;
             }
             Q_EMIT logMessage(tr("Created new profile: %1").arg(destProfilePath), false);
@@ -221,7 +230,8 @@ bool UserProfileRestoreWorker::resolveDestinationProfilePath(
                 return false;
             }
             if (!QDir(destProfilePath).exists()) {
-                Q_EMIT logMessage(tr("Destination profile does not exist: %1").arg(destProfilePath), true);
+                Q_EMIT logMessage(tr("Destination profile does not exist: %1")
+                    .arg(destProfilePath), true);
                 return false;
             }
             break;
@@ -235,12 +245,12 @@ bool UserProfileRestoreWorker::restoreFolder(const FolderSelection& folder,
     Q_ASSERT_X(!sourcePath.isEmpty(), "restoreFolder", "sourcePath must not be empty");
     Q_ASSERT_X(!destPath.isEmpty(), "restoreFolder", "destPath must not be empty");
     QFileInfo sourceInfo(sourcePath);
-    
+
     if (!sourceInfo.exists()) {
         Q_EMIT logMessage(tr("Source folder does not exist: %1").arg(sourcePath), true);
         return false;
     }
-    
+
     // Create destination directory
     QDir destDir(destPath);
     if (!destDir.exists()) {
@@ -249,7 +259,7 @@ bool UserProfileRestoreWorker::restoreFolder(const FolderSelection& folder,
             return false;
         }
     }
-    
+
     // Recursively copy directory contents
     return copyDirectory(sourcePath, destPath, folder);
 }
@@ -261,31 +271,32 @@ bool UserProfileRestoreWorker::copyDirectory(const QString& sourceDir,
     Q_ASSERT_X(!destDir.isEmpty(), "copyDirectory", "destDir must not be empty");
     QDir dir(sourceDir);
     if (!dir.exists()) return false;
-    
+
     // Create destination directory
     QDir().mkpath(destDir);
-    
+
     // Iterate through all entries
-    QFileInfoList entries = dir.entryInfoList(QDir::Files | QDir::Dirs | QDir::NoDotAndDotDot | QDir::Hidden);
-    
+    QFileInfoList entries =
+        dir.entryInfoList(QDir::Files | QDir::Dirs | QDir::NoDotAndDotDot | QDir::Hidden);
+
     for (const QFileInfo& entry : entries) {
         if (m_cancelled) return false;
-        
+
         QString sourceItem = entry.absoluteFilePath();
         QString destItem = destDir + "/" + entry.fileName();
-        
+
         // Recursively copy subdirectory
         if (entry.isDir() && !copyDirectory(sourceItem, destItem, folderConfig)) {
             Q_EMIT logMessage(tr("Warning: Failed to copy directory: %1").arg(sourceItem), true);
             continue;
         }
-        
+
         // Copy file with conflict resolution
         if (entry.isFile()) {
             copyFileWithConflictResolution(sourceItem, destItem, entry.size());
         }
     }
-    
+
     return true;
 }
 
@@ -300,41 +311,41 @@ bool UserProfileRestoreWorker::copyFileWithConflictResolution(const QString& sou
         "size must be non-negative");
     QFileInfo destInfo(dest);
     QString finalDestPath = dest;
-    
+
     // Check if destination file exists and resolve conflict
     if (destInfo.exists()) {
         if (!resolveFileConflict(source, destInfo, size, finalDestPath)) {
             return true; // File was skipped per conflict resolution strategy
         }
     }
-    
+
     // Ensure destination directory exists
     QFileInfo finalDestInfo(finalDestPath);
     QDir().mkpath(finalDestInfo.absolutePath());
-    
+
     // Copy the file
     if (!QFile::copy(source, finalDestPath)) {
         Q_EMIT logMessage(tr("Error copying file: %1").arg(source), true);
         m_filesErrored++;
         return false;
     }
-    
+
     // Apply permissions based on mode
     if (!applyPermissions(finalDestPath, "")) {
         Q_EMIT logMessage(tr("Warning: Failed to adjust permissions: %1").arg(finalDestPath), true);
     }
-    
+
     // Verify file if requested
     if (m_verify) {
         if (!verifyFile(finalDestPath)) {
             Q_EMIT logMessage(tr("Warning: File verification failed: %1").arg(finalDestPath), true);
         }
     }
-    
+
     // Update progress
     m_filesRestored++;
     updateProgress(size);
-    
+
     return true;
 }
 
@@ -347,27 +358,29 @@ bool UserProfileRestoreWorker::resolveFileConflict(const QString& source,
             Q_EMIT logMessage(tr("Skipping existing file: %1").arg(destInfo.fileName()), false);
             m_filesSkipped++;
             return false;
-            
+
         case ConflictResolution::RenameWithSuffix: {
             QString baseName = destInfo.completeBaseName();
             QString extension = destInfo.suffix();
             QString dirPath = destInfo.absolutePath();
-            
+
             int counter = 1;
             do {
                 finalDestPath = QString("%1/%2_backup%3%4")
                     .arg(dirPath, baseName, QString::number(counter++),
                          extension.isEmpty() ? "" : "." + extension);
             } while (QFileInfo::exists(finalDestPath) && counter < 1000);
-            
-            Q_EMIT logMessage(tr("Renaming to avoid conflict: %1").arg(QFileInfo(finalDestPath).fileName()), false);
+
+            Q_EMIT logMessage(tr("Renaming to avoid conflict: %1")
+                .arg(QFileInfo(finalDestPath).fileName()), false);
             break;
         }
-        
+
         case ConflictResolution::KeepNewer: {
             QFileInfo sourceInfo(source);
             if (destInfo.lastModified() >= sourceInfo.lastModified()) {
-                Q_EMIT logMessage(tr("Keeping newer existing file: %1").arg(destInfo.fileName()), false);
+                Q_EMIT logMessage(tr("Keeping newer existing file: %1").arg(destInfo.fileName()),
+                    false);
                 m_filesSkipped++;
                 return false;
             }
@@ -375,10 +388,11 @@ bool UserProfileRestoreWorker::resolveFileConflict(const QString& source,
             QFile::remove(finalDestPath);
             break;
         }
-        
+
         case ConflictResolution::KeepLarger: {
             if (destInfo.size() >= size) {
-                Q_EMIT logMessage(tr("Keeping larger existing file: %1").arg(destInfo.fileName()), false);
+                Q_EMIT logMessage(tr("Keeping larger existing file: %1").arg(destInfo.fileName()),
+                    false);
                 m_filesSkipped++;
                 return false;
             }
@@ -386,7 +400,7 @@ bool UserProfileRestoreWorker::resolveFileConflict(const QString& source,
             QFile::remove(finalDestPath);
             break;
         }
-        
+
         case ConflictResolution::PromptUser:
             finalDestPath = resolveConflict(source, finalDestPath);
             Q_EMIT logMessage(tr("File exists, auto-renamed: %1 → %2")
@@ -402,11 +416,11 @@ bool UserProfileRestoreWorker::applyPermissions(const QString& filePath,
         case PermissionMode::StripAll:
             // Remove all ACLs, inherit from parent
             return m_permissionManager->stripPermissions(filePath);
-            
+
         case PermissionMode::PreserveOriginal:
             // Keep existing permissions from backup (already set by copy)
             return true;
-            
+
         case PermissionMode::AssignToDestination:
             // Assign ownership to destination user
             if (destinationUser.isEmpty()) {
@@ -417,7 +431,8 @@ bool UserProfileRestoreWorker::applyPermissions(const QString& filePath,
             {
                 QString userSID = WindowsUserScanner::getUserSID(destinationUser);
                 if (userSID.isEmpty()) {
-                    sak::logWarning("Could not resolve SID for user '{}', stripping permissions instead",
+                    sak::logWarning("Could not resolve SID for user '{}', stripping permissions "
+                                    "instead",
                                     destinationUser.toStdString());
                     return m_permissionManager->stripPermissions(filePath);
                 }
@@ -428,7 +443,7 @@ bool UserProfileRestoreWorker::applyPermissions(const QString& filePath,
                 }
                 return m_permissionManager->setStandardUserPermissions(filePath, userSID);
             }
-            
+
         case PermissionMode::Hybrid:
             // Try to preserve, fall back to strip on error
             if (!m_permissionManager->stripPermissions(filePath)) {
@@ -436,7 +451,7 @@ bool UserProfileRestoreWorker::applyPermissions(const QString& filePath,
             }
             return true;
     }
-    
+
     return true;
 }
 
@@ -446,28 +461,29 @@ bool UserProfileRestoreWorker::validateBackup() {
         Q_EMIT logMessage(tr("Manifest file not found"), true);
         return false;
     }
-    
+
     Q_EMIT logMessage(tr("Backup validation passed"), false);
     return true;
 }
 
 bool UserProfileRestoreWorker::createRestoreStructure() {
     Q_EMIT logMessage(tr("Creating restore directory structure..."), false);
-    
+
     // Create destination directories for each mapping
     for (const auto& mapping : m_mappings) {
         if (!mapping.selected) continue;
-        
+
         // Get destination profile path from username
         QString destPath = WindowsUserScanner::getProfilePath(mapping.destination_username);
         if (destPath.isEmpty()) {
-            Q_EMIT logMessage(tr("Failed to resolve profile path for user: %1").arg(mapping.destination_username), true);
+            Q_EMIT logMessage(tr("Failed to resolve profile path for user: %1")
+                .arg(mapping.destination_username), true);
             return false;
         }
-        
+
         QDir destDir(destPath);
         bool needsCreation = !destDir.exists();
-        
+
         if (needsCreation && !destDir.mkpath(".")) {
             Q_EMIT logMessage(tr("Failed to create directory: %1").arg(destPath), true);
             return false;
@@ -475,11 +491,11 @@ bool UserProfileRestoreWorker::createRestoreStructure() {
         if (needsCreation) {
             Q_EMIT logMessage(tr("Created directory: %1").arg(destPath), false);
         }
-        
+
         // Create standard user profile subdirectories
         createStandardSubfolders(destDir);
     }
-    
+
     Q_EMIT logMessage(tr("Restore directory structure created"), false);
     return true;
 }
@@ -487,19 +503,19 @@ bool UserProfileRestoreWorker::createRestoreStructure() {
 qint64 UserProfileRestoreWorker::calculateTotalSize() {
     qint64 totalSize = 0;
     m_totalFilesToRestore = 0;
-    
+
     for (const auto& mapping : m_mappings) {
         if (!mapping.selected) continue;
-        
+
         const auto* user = findManifestUser(mapping.source_username);
         if (!user) continue;
-        
+
         for (const auto& folder : user->backed_up_folders) {
             totalSize += folder.size_bytes;
             m_totalFilesToRestore += folder.file_count;
         }
     }
-    
+
     return totalSize;
 }
 
@@ -518,7 +534,7 @@ void UserProfileRestoreWorker::createStandardSubfolders(const QDir& destDir) {
         "Music", "Downloads", "AppData", "AppData/Local",
         "AppData/Roaming", "Favorites"
     };
-    
+
     for (const QString& folder : standardFolders) {
         QString folderPath = destDir.filePath(folder);
         if (!QDir(folderPath).exists() && !QDir().mkpath(folderPath)) {
@@ -530,15 +546,15 @@ void UserProfileRestoreWorker::createStandardSubfolders(const QDir& destDir) {
 
 void UserProfileRestoreWorker::updateProgress(qint64 bytesAdded) {
     m_bytesRestored += bytesAdded;
-    
+
     static int lastFileCount = 0;
     static qint64 lastByteCount = 0;
-    
+
     if (m_filesRestored - lastFileCount >= 100 ||
         m_bytesRestored - lastByteCount >= 100 * sak::kBytesPerMB) {
-        
+
         Q_EMIT fileProgress(m_filesRestored, m_totalFilesToRestore);
-        
+
         lastFileCount = m_filesRestored;
         lastByteCount = m_bytesRestored;
     }
@@ -546,17 +562,17 @@ void UserProfileRestoreWorker::updateProgress(qint64 bytesAdded) {
 
 bool UserProfileRestoreWorker::verifyFile(const QString& filePath) {
     QFileInfo fileInfo(filePath);
-    
+
     if (!fileInfo.exists()) {
         Q_EMIT logMessage(tr("Verification failed - file missing: %1").arg(filePath), true);
         return false;
     }
-    
+
     if (!fileInfo.isReadable()) {
         Q_EMIT logMessage(tr("Verification failed - file not readable: %1").arg(filePath), true);
         return false;
     }
-    
+
     // Basic verification - file exists and is readable
     // Could add checksum verification if checksums were stored in manifest
     return true;
@@ -565,13 +581,13 @@ bool UserProfileRestoreWorker::verifyFile(const QString& filePath) {
 QString UserProfileRestoreWorker::resolveConflict(const QString& sourcePath,
                                                   const QString& destPath) {
     Q_UNUSED(sourcePath);
-    
+
     // Generate unique filename by adding suffix
     QFileInfo destInfo(destPath);
     QString baseName = destInfo.completeBaseName();
     QString extension = destInfo.suffix();
     QString dirPath = destInfo.absolutePath();
-    
+
     int counter = 1;
     QString newPath;
     do {
@@ -579,7 +595,7 @@ QString UserProfileRestoreWorker::resolveConflict(const QString& sourcePath,
             .arg(dirPath, baseName, QString::number(counter++),
                  extension.isEmpty() ? "" : "." + extension);
     } while (QFileInfo::exists(newPath) && counter < 1000);
-    
+
     return newPath;
 }
 

@@ -22,7 +22,8 @@ public:
         sentHealthChecks.append(destination_id);
     }
 
-    void sendDeploymentAssignment(const QString& destination_id, const DeploymentAssignment& assignment) override {
+    void sendDeploymentAssignment(const QString& destination_id,
+        const DeploymentAssignment& assignment) override {
         sentAssignments.append({destination_id, assignment.deployment_id});
     }
 

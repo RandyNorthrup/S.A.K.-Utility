@@ -66,7 +66,8 @@ void AppInstallationPanel::onSearch()
     });
 }
 
-void AppInstallationPanel::onSearchCompleted(bool success, const QString& output, const QString& errorMessage)
+void AppInstallationPanel::onSearchCompleted(bool success, const QString& output,
+    const QString& errorMessage)
 {
     m_search_in_progress = false;
     m_searchButton->setEnabled(true);

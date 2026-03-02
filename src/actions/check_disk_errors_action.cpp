@@ -220,7 +220,8 @@ void CheckDiskErrorsAction::executeRunChkdsk(const QVector<QChar>& drives, QStri
         const QChar& drive = drives[i];
 
         int progress = 10 + ((i * 80) / drives.count());
-        Q_EMIT executionProgress(QString("Scanning drive %1: with Repair-Volume...").arg(drive), progress);
+        Q_EMIT executionProgress(QString("Scanning drive %1: with Repair-Volume...").arg(drive),
+            progress);
 
         QString ps_cmd = buildRepairVolumeScript(drive);
 
@@ -230,10 +231,12 @@ void CheckDiskErrorsAction::executeRunChkdsk(const QVector<QChar>& drives, QStri
             continue;
         }
         if (!proc.std_err.trimmed().isEmpty()) {
-            Q_EMIT logMessage("Disk scan warning for drive " + QString(drive) + ": " + proc.std_err.trimmed());
+            Q_EMIT logMessage("Disk scan warning for drive " + QString(drive) + ": " +
+                proc.std_err.trimmed());
         }
 
-        parseDriveScanResult(proc.std_out, drive, report, drives_scanned, errors_found, errors_fixed);
+        parseDriveScanResult(proc.std_out, drive, report, drives_scanned, errors_found,
+            errors_fixed);
     }
 
     Q_EMIT executionProgress("Disk error check complete", 100);
@@ -247,7 +250,8 @@ void CheckDiskErrorsAction::executeBuildReport(const QDateTime& start_time,
 {
     QString final_report = report;
     final_report += QString("─").repeated(78) + "\n";
-    final_report += QString("Summary: %1 drive(s) scanned, %2 error(s) found, %3 repair(s) scheduled\n")
+    final_report += QString("Summary: %1 drive(s) scanned, %2 error(s) found, %3 repair(s) "
+                            "scheduled\n")
         .arg(drives_scanned).arg(errors_found).arg(errors_fixed);
 
     if (errors_fixed > 0) {
@@ -268,7 +272,8 @@ void CheckDiskErrorsAction::executeBuildReport(const QDateTime& start_time,
     } else {
         result.success = false;
         result.message = "Could not scan any drives";
-        result.log = "No drives scanned or PowerShell Storage module unavailable (requires admin privileges)";
+        result.log = "No drives scanned or PowerShell Storage module unavailable (requires admin "
+                     "privileges)";
     }
 
     finishWithResult(result, drives_scanned > 0 ? ActionStatus::Success : ActionStatus::Failed);

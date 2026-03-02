@@ -53,9 +53,9 @@
 #include <QVBoxLayout>
 #include "sak/detachable_log_window.h"
 
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─────────────────────────────────────────────────────────────────────────────
 // CheckHeaderView  --  column 0 renders a tri-state "select all" checkbox
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─────────────────────────────────────────────────────────────────────────────
 namespace {
 class CheckHeaderView : public QHeaderView {
     Q_OBJECT
@@ -141,9 +141,9 @@ private:
 
 namespace sak {
 
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─────────────────────────────────────────────────────────────────────────────
 // Table column indices
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─────────────────────────────────────────────────────────────────────────────
 static constexpr int COL_SELECT   = 0;  // checkbox
 static constexpr int COL_LOCATION = 1;
 static constexpr int COL_SSID     = 2;
@@ -152,9 +152,9 @@ static constexpr int COL_SECURITY = 4;
 static constexpr int COL_HIDDEN   = 5;
 static constexpr int COL_COUNT    = 6;
 
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─────────────────────────────────────────────────────────────────────────────
 // Construction / destruction
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─────────────────────────────────────────────────────────────────────────────
 WifiManagerPanel::WifiManagerPanel(QWidget* parent)
     : QWidget(parent)
 {
@@ -164,9 +164,9 @@ WifiManagerPanel::WifiManagerPanel(QWidget* parent)
 
 WifiManagerPanel::~WifiManagerPanel() = default;
 
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─────────────────────────────────────────────────────────────────────────────
 // UI setup
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─────────────────────────────────────────────────────────────────────────────
 void WifiManagerPanel::setupUi()
 {
     auto* outerLayout = new QVBoxLayout(this);
@@ -272,13 +272,15 @@ void WifiManagerPanel::setupFormGroup()
     layout->addRow("Security:", m_security_combo);
 
     // Hidden network
-    m_hidden_checkbox = new QCheckBox("This network is hidden (not broadcasting SSID)", m_form_group);
+    m_hidden_checkbox = new QCheckBox("This network is hidden (not broadcasting SSID)",
+        m_form_group);
     m_hidden_checkbox->setAccessibleName(QStringLiteral("Hidden Network"));
     layout->addRow("", m_hidden_checkbox);
 
     // Action buttons at the bottom of the form  --  side by side
     m_connect_phone_btn = new QPushButton("Connect with Phone/Tablet", m_form_group);
-    m_connect_phone_btn->setToolTip("Show a QR code of the current network for phone/tablet scanning");
+    m_connect_phone_btn->setToolTip("Show a QR code of the current network for phone/tablet "
+        "scanning");
     m_connect_phone_btn->setAccessibleName(QStringLiteral("Connect with Phone"));
     m_add_table_btn = new QPushButton("Add to Table", m_form_group);
     m_add_table_btn->setToolTip("Add current form entry to the saved networks table");
@@ -332,14 +334,17 @@ void WifiManagerPanel::setupNetworkTable(QVBoxLayout* layout)
     m_network_table->setAccessibleName(QStringLiteral("Saved WiFi Networks Table"));
     auto* checkHeader = new CheckHeaderView(m_table_group);
     m_network_table->setHorizontalHeader(checkHeader);
-    m_network_table->setHorizontalHeaderLabels({"", "Location", "SSID", "Password", "Security", "Hidden"});
+    m_network_table->setHorizontalHeaderLabels({"", "Location", "SSID", "Password", "Security",
+        "Hidden"});
     m_network_table->horizontalHeader()->setStretchLastSection(false);
     m_network_table->horizontalHeader()->setSectionResizeMode(COL_SELECT,   QHeaderView::Fixed);
     m_network_table->horizontalHeader()->setSectionResizeMode(COL_LOCATION, QHeaderView::Stretch);
     m_network_table->horizontalHeader()->setSectionResizeMode(COL_SSID,     QHeaderView::Stretch);
     m_network_table->horizontalHeader()->setSectionResizeMode(COL_PASSWORD, QHeaderView::Stretch);
-    m_network_table->horizontalHeader()->setSectionResizeMode(COL_SECURITY, QHeaderView::ResizeToContents);
-    m_network_table->horizontalHeader()->setSectionResizeMode(COL_HIDDEN,   QHeaderView::ResizeToContents);
+    m_network_table->horizontalHeader()->setSectionResizeMode(COL_SECURITY,
+        QHeaderView::ResizeToContents);
+    m_network_table->horizontalHeader()->setSectionResizeMode(COL_HIDDEN,
+        QHeaderView::ResizeToContents);
     m_network_table->setColumnWidth(COL_SELECT, 36);
     m_network_table->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_network_table->setSelectionMode(QAbstractItemView::ExtendedSelection);
@@ -347,7 +352,8 @@ void WifiManagerPanel::setupNetworkTable(QVBoxLayout* layout)
     m_network_table->setEditTriggers(QAbstractItemView::NoEditTriggers);
     m_network_table->setToolTip("Double-click a row to load it into the form");
     m_network_table->setStyleSheet(
-        QString("QTableWidget::indicator { width: 16px; height: 16px; border: 1px solid %1; border-radius: 4px; background: %2; }"
+        QString("QTableWidget::indicator { width: 16px; height: 16px; border: 1px solid %1; "
+            "border-radius: 4px; background: %2; }"
                 "QTableWidget::indicator:checked { background: %3; border: 1px solid %4; }"
                 "QTableWidget::indicator:unchecked { background: %2; border: 1px solid %1; }")
             .arg(sak::ui::kColorBorderMuted)
@@ -370,7 +376,8 @@ void WifiManagerPanel::setupTableActionButtons(QVBoxLayout* layout)
     m_load_table_btn      = new QPushButton("Load\u2026",      m_table_group);
     m_load_table_btn->setAccessibleName(QStringLiteral("Load Networks from File"));
     m_delete_selected_btn->setToolTip("Remove the selected row(s) from the table");
-    m_add_to_windows_btn->setToolTip("Add checked networks to Windows known WiFi profiles via netsh");
+    m_add_to_windows_btn->setToolTip(
+        "Add checked networks to Windows known WiFi profiles via netsh");
     m_add_to_windows_btn->setEnabled(false);
     m_save_table_btn->setToolTip("Save table to a JSON file");
     m_save_table_btn->setEnabled(false);
@@ -396,9 +403,11 @@ void WifiManagerPanel::setupActionButtons()
     m_scan_networks_btn = new QPushButton("Scan Known Networks",     this);
     m_scan_networks_btn->setAccessibleName(QStringLiteral("Scan Known Networks"));
 
-    m_generate_qr_btn->setToolTip("Export the current network as a QR code image (PNG, PDF, JPG, BMP)");
+    m_generate_qr_btn->setToolTip("Export the current network as a QR code image (PNG, PDF, JPG, "
+        "BMP)");
     m_export_script_btn->setToolTip("Generate a Windows netsh .cmd script for the current network");
-    m_export_macos_btn->setToolTip("Generate a macOS WiFi .mobileconfig profile for the current network");
+    m_export_macos_btn->setToolTip("Generate a macOS WiFi .mobileconfig profile for the current "
+        "network");
     m_scan_networks_btn->setToolTip("Scan Windows known WiFi profiles and add them to the table");
 
     bar->addWidget(m_generate_qr_btn);
@@ -414,29 +423,48 @@ void WifiManagerPanel::setupActionButtons()
 
 void WifiManagerPanel::connectSignals()
 {
-    connect(m_security_combo,      &QComboBox::currentTextChanged,    this, &WifiManagerPanel::onSecurityChanged);
-    connect(m_password_toggle_btn, &QToolButton::toggled,             this, &WifiManagerPanel::onTogglePasswordVisibility);
-    connect(m_add_table_btn,       &QPushButton::clicked,             this, &WifiManagerPanel::onAddToTableClicked);
-    connect(m_delete_selected_btn, &QPushButton::clicked,             this, &WifiManagerPanel::onDeleteSelectedClicked);
-    connect(m_save_table_btn,      &QPushButton::clicked,             this, &WifiManagerPanel::onSaveTableClicked);
-    connect(m_load_table_btn,      &QPushButton::clicked,             this, &WifiManagerPanel::onLoadTableClicked);
-    connect(m_network_table,       &QTableWidget::doubleClicked,      this, &WifiManagerPanel::onTableDoubleClicked);
-    connect(m_search_input,        &QLineEdit::textChanged,           this, &WifiManagerPanel::onSearchChanged);
-    connect(m_search_up_btn,       &QToolButton::clicked,             this, &WifiManagerPanel::onFindPrev);
-    connect(m_search_down_btn,     &QToolButton::clicked,             this, &WifiManagerPanel::onFindNext);
-    connect(m_generate_qr_btn,     &QPushButton::clicked,               this, &WifiManagerPanel::onGenerateQrClicked);
-    connect(m_export_script_btn,   &QPushButton::clicked,               this, &WifiManagerPanel::onExportWindowsScriptClicked);
-    connect(m_export_macos_btn,    &QPushButton::clicked,               this, &WifiManagerPanel::onExportMacosProfileClicked);
-    connect(m_connect_phone_btn,   &QPushButton::clicked,               this, &WifiManagerPanel::onConnectWithPhoneClicked);
-    connect(m_scan_networks_btn,   &QPushButton::clicked,               this, &WifiManagerPanel::onScanNetworksClicked);
-    connect(m_add_to_windows_btn,  &QPushButton::clicked,               this, &WifiManagerPanel::onAddToWindowsClicked);
-    connect(m_network_table,       &QTableWidget::itemSelectionChanged, this, &WifiManagerPanel::onSelectionChanged);
-    connect(m_network_table,       &QTableWidget::itemChanged,         this, &WifiManagerPanel::onTableItemChanged);
+    connect(m_security_combo,      &QComboBox::currentTextChanged,    this,
+        &WifiManagerPanel::onSecurityChanged);
+    connect(m_password_toggle_btn, &QToolButton::toggled,             this,
+        &WifiManagerPanel::onTogglePasswordVisibility);
+    connect(m_add_table_btn,       &QPushButton::clicked,             this,
+        &WifiManagerPanel::onAddToTableClicked);
+    connect(m_delete_selected_btn, &QPushButton::clicked,             this,
+        &WifiManagerPanel::onDeleteSelectedClicked);
+    connect(m_save_table_btn,      &QPushButton::clicked,             this,
+        &WifiManagerPanel::onSaveTableClicked);
+    connect(m_load_table_btn,      &QPushButton::clicked,             this,
+        &WifiManagerPanel::onLoadTableClicked);
+    connect(m_network_table,       &QTableWidget::doubleClicked,      this,
+        &WifiManagerPanel::onTableDoubleClicked);
+    connect(m_search_input,        &QLineEdit::textChanged,           this,
+        &WifiManagerPanel::onSearchChanged);
+    connect(m_search_up_btn,       &QToolButton::clicked,             this,
+        &WifiManagerPanel::onFindPrev);
+    connect(m_search_down_btn,     &QToolButton::clicked,             this,
+        &WifiManagerPanel::onFindNext);
+    connect(m_generate_qr_btn,     &QPushButton::clicked,               this,
+        &WifiManagerPanel::onGenerateQrClicked);
+    connect(m_export_script_btn,   &QPushButton::clicked,               this,
+        &WifiManagerPanel::onExportWindowsScriptClicked);
+    connect(m_export_macos_btn,    &QPushButton::clicked,               this,
+        &WifiManagerPanel::onExportMacosProfileClicked);
+    connect(m_connect_phone_btn,   &QPushButton::clicked,               this,
+        &WifiManagerPanel::onConnectWithPhoneClicked);
+    connect(m_scan_networks_btn,   &QPushButton::clicked,               this,
+        &WifiManagerPanel::onScanNetworksClicked);
+    connect(m_add_to_windows_btn,  &QPushButton::clicked,               this,
+        &WifiManagerPanel::onAddToWindowsClicked);
+    connect(m_network_table,       &QTableWidget::itemSelectionChanged, this,
+        &WifiManagerPanel::onSelectionChanged);
+    connect(m_network_table,       &QTableWidget::itemChanged,         this,
+        &WifiManagerPanel::onTableItemChanged);
 
     // Wire the CheckHeaderView "select all" checkbox
     auto* checkHdr = qobject_cast<CheckHeaderView*>(m_network_table->horizontalHeader());
     if (checkHdr)
-        connect(checkHdr, &CheckHeaderView::checkToggled, this, &WifiManagerPanel::setAllCheckStates);
+        connect(checkHdr, &CheckHeaderView::checkToggled, this,
+            &WifiManagerPanel::setAllCheckStates);
 }
 
 void WifiManagerPanel::setAllCheckStates(bool allChecked)
@@ -450,9 +478,9 @@ void WifiManagerPanel::setAllCheckStates(bool allChecked)
     onSelectionChanged();
 }
 
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─────────────────────────────────────────────────────────────────────────────
 // Slots
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─────────────────────────────────────────────────────────────────────────────
 
 void WifiManagerPanel::onSecurityChanged(const QString& value)
 {
@@ -468,7 +496,8 @@ void WifiManagerPanel::onTogglePasswordVisibility()
     const bool showing = m_password_toggle_btn->isChecked();
     m_password_input->setEchoMode(showing ? QLineEdit::Normal : QLineEdit::Password);
     // Eye open = "click to show" (password hidden); Eye closed = "click to hide" (password shown)
-    m_password_toggle_btn->setIcon(QIcon(showing ? ":/icons/eye_closed.svg" : ":/icons/eye_open.svg"));
+    m_password_toggle_btn->setIcon(QIcon(showing ?
+        ":/icons/eye_closed.svg" : ":/icons/eye_open.svg"));
 }
 
 void WifiManagerPanel::onAddToTableClicked()
@@ -496,7 +525,8 @@ void WifiManagerPanel::onDeleteSelectedClicked()
         m_network_table->removeRow(row);
 
     onSelectionChanged();
-    Q_EMIT statusMessage(QString("Deleted %1 row(s).").arg(rows.size()), sak::kTimerStatusMessageMs);
+    Q_EMIT statusMessage(QString("Deleted %1 row(s).").arg(rows.size()),
+        sak::kTimerStatusMessageMs);
 }
 
 void WifiManagerPanel::onTableDoubleClicked(const QModelIndex& index)
@@ -518,7 +548,8 @@ void WifiManagerPanel::onFindNext()
 {
     if (m_search_matches.isEmpty()) return;
     m_search_index = (m_search_index + 1) % m_search_matches.size();
-    m_network_table->scrollToItem(m_network_table->item(m_search_matches.at(m_search_index), COL_SSID));
+    m_network_table->scrollToItem(m_network_table->item(m_search_matches.at(m_search_index),
+        COL_SSID));
     m_network_table->selectRow(m_search_matches.at(m_search_index));
 }
 
@@ -526,7 +557,8 @@ void WifiManagerPanel::onFindPrev()
 {
     if (m_search_matches.isEmpty()) return;
     m_search_index = (m_search_index - 1 + m_search_matches.size()) % m_search_matches.size();
-    m_network_table->scrollToItem(m_network_table->item(m_search_matches.at(m_search_index), COL_SSID));
+    m_network_table->scrollToItem(m_network_table->item(m_search_matches.at(m_search_index),
+        COL_SSID));
     m_network_table->selectRow(m_search_matches.at(m_search_index));
 }
 
@@ -919,7 +951,8 @@ void WifiManagerPanel::onExportWindowsScriptClicked()
     if (sources.size() == 1) {
         // Single network  --  original save-dialog behavior
         const WifiConfig& cfg     = sources.first();
-        const QString script      = buildWindowsScript(cfg.ssid, cfg.password, cfg.security, cfg.hidden);
+        const QString script      = buildWindowsScript(cfg.ssid, cfg.password, cfg.security,
+            cfg.hidden);
         const QString defaultName = cfg.ssid + "_wifi_connect.cmd";
         const QString path = QFileDialog::getSaveFileName(
             this, "Save Windows Script",
@@ -935,7 +968,8 @@ void WifiManagerPanel::onExportWindowsScriptClicked()
         }
         QTextStream out(&file);
         out << script;
-        Q_EMIT statusMessage(QString("Saved Windows script: %1").arg(path), sak::kTimerStatusDefaultMs);
+        Q_EMIT statusMessage(QString("Saved Windows script: %1").arg(path),
+            sak::kTimerStatusDefaultMs);
         return;
     }
 
@@ -949,7 +983,8 @@ void WifiManagerPanel::onExportWindowsScriptClicked()
     for (const WifiConfig& cfg : sources) {
         if (cfg.ssid.isEmpty()) continue;
         const QString script = buildWindowsScript(cfg.ssid, cfg.password, cfg.security, cfg.hidden);
-        const QString safeName = QString(cfg.ssid).replace(QRegularExpression("[\\\\/:*?\"<>|]"), "_");
+        const QString safeName = QString(cfg.ssid).replace(QRegularExpression("[\\\\/:*?\"<>|]"),
+            "_");
         const QString path = outDir + "/" + safeName + "_wifi_connect.cmd";
         QFile file(path);
         if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) { ++failed; continue; }
@@ -1017,7 +1052,8 @@ void WifiManagerPanel::onSaveTableClicked()
     const QString path = QFileDialog::getSaveFileName(
         this, "Save Network Table",
         m_save_path.isEmpty()
-            ? QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation) + "/wifi_networks.json"
+            ? QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation) + "/wifi_networks"
+                ".json"
             : m_save_path + "/wifi_networks.json",
         "JSON Files (*.json)");
     if (path.isEmpty()) return;
@@ -1043,7 +1079,9 @@ void WifiManagerPanel::onSaveTableClicked()
             return;
         }
         f.write(doc.toJson());
-        Q_EMIT statusMessage(QString("Saved %1 checked network(s) to %2").arg(arr.size()).arg(path), sak::kTimerStatusDefaultMs);
+        Q_EMIT statusMessage(
+            QString("Saved %1 checked network(s) to %2").arg(arr.size()).arg(path),
+                sak::kTimerStatusDefaultMs);
     } else {
         saveTableToJson(path);
     }
@@ -1085,7 +1123,8 @@ void WifiManagerPanel::onConnectWithPhoneClicked()
 void WifiManagerPanel::showSingleNetworkQrDialog(const WifiConfig& cfg)
 {
     const QString     payload = buildWifiPayloadFromConfig(cfg);
-    const QImage qrImg = generateQrImage(payload).scaled(360, 360, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+    const QImage qrImg = generateQrImage(payload).scaled(360, 360, Qt::KeepAspectRatio,
+        Qt::SmoothTransformation);
 
     QDialog dlg(this);
     dlg.setWindowTitle("Connect with Phone / Tablet");
@@ -1107,7 +1146,8 @@ void WifiManagerPanel::showSingleNetworkQrDialog(const WifiConfig& cfg)
     imgLbl->setAccessibleName(QStringLiteral("WiFi QR code"));
     layout->addWidget(imgLbl);
 
-    auto* hintLbl = new QLabel("Scan this QR code with your phone or tablet\nto connect to the network.", &dlg);
+    auto* hintLbl = new QLabel("Scan this QR code with your phone or tablet\nto connect to the "
+        "network.", &dlg);
     hintLbl->setAlignment(Qt::AlignCenter);
     hintLbl->setStyleSheet("color: #555; font-size: 9pt;");
     layout->addWidget(hintLbl);
@@ -1146,7 +1186,8 @@ void WifiManagerPanel::showMultiNetworkQrDialog(const QList<WifiConfig>& sources
     imgLbl->setAccessibleName(QStringLiteral("WiFi QR code"));
     layout->addWidget(imgLbl, 0, Qt::AlignHCenter);
 
-    auto* hintLbl = new QLabel("Scan this QR code with your phone or tablet\nto connect to the network.", &dlg);
+    auto* hintLbl = new QLabel("Scan this QR code with your phone or tablet\nto connect to the "
+        "network.", &dlg);
     hintLbl->setAlignment(Qt::AlignCenter);
     hintLbl->setStyleSheet("color: #555; font-size: 9pt;");
     layout->addWidget(hintLbl);
@@ -1169,16 +1210,20 @@ void WifiManagerPanel::showMultiNetworkQrDialog(const QList<WifiConfig>& sources
     auto updatePage = [&sources, imgLbl, titleLbl, idxLbl, prevBtn, nextBtn, this](int idx) {
         const WifiConfig& cfg     = sources[idx];
         const QString     payload = buildWifiPayloadFromConfig(cfg);
-        const QImage qrImg = generateQrImage(payload).scaled(360, 360, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+        const QImage qrImg = generateQrImage(payload).scaled(360, 360, Qt::KeepAspectRatio,
+            Qt::SmoothTransformation);
         imgLbl->setPixmap(QPixmap::fromImage(qrImg));
-        titleLbl->setText(QString("<b>%1</b>").arg(cfg.ssid.isEmpty() ? "WiFi Network" : cfg.ssid.toHtmlEscaped()));
+        titleLbl->setText(QString("<b>%1</b>").arg(cfg.ssid.isEmpty() ?
+            "WiFi Network" : cfg.ssid.toHtmlEscaped()));
         idxLbl->setText(QString("Network %1 of %2").arg(idx + 1).arg(sources.size()));
         prevBtn->setEnabled(idx > 0);
         nextBtn->setEnabled(idx < static_cast<int>(sources.size()) - 1);
     };
 
-    connect(prevBtn,  &QPushButton::clicked, &dlg, [&currentIdx, &updatePage]() { updatePage(--currentIdx); });
-    connect(nextBtn,  &QPushButton::clicked, &dlg, [&currentIdx, &updatePage]() { updatePage(++currentIdx); });
+    connect(prevBtn,  &QPushButton::clicked, &dlg, [&currentIdx,
+        &updatePage]() { updatePage(--currentIdx); });
+    connect(nextBtn,  &QPushButton::clicked, &dlg, [&currentIdx,
+        &updatePage]() { updatePage(++currentIdx); });
     connect(closeBtn, &QPushButton::clicked, &dlg, &QDialog::accept);
 
     updatePage(0);
@@ -1189,7 +1234,8 @@ void WifiManagerPanel::showMultiNetworkQrDialog(const QList<WifiConfig>& sources
 void WifiManagerPanel::onScanNetworksClicked()
 {
 #ifndef Q_OS_WIN
-    Q_EMIT statusMessage("Scan Known Networks is only supported on Windows.", sak::kTimerStatusWarnMs);
+    Q_EMIT statusMessage("Scan Known Networks is only supported on Windows.",
+        sak::kTimerStatusWarnMs);
     return;
 #else
     QStringList profileNames = scanWindowsProfileNames();
@@ -1206,7 +1252,8 @@ void WifiManagerPanel::onScanNetworksClicked()
         ++added;
     }
 
-    Q_EMIT statusMessage(QString("Added %1 known network(s) to table.").arg(added), sak::kTimerStatusDefaultMs);
+    Q_EMIT statusMessage(QString("Added %1 known network(s) to table.").arg(added),
+        sak::kTimerStatusDefaultMs);
 #endif
 }
 
@@ -1235,7 +1282,8 @@ QStringList WifiManagerPanel::scanWindowsProfileNames() const
     return profileNames;
 }
 
-WifiManagerPanel::WifiConfig WifiManagerPanel::parseWindowsWifiProfile(const QString& profileName) const
+WifiManagerPanel::WifiConfig WifiManagerPanel::parseWindowsWifiProfile(
+    const QString& profileName) const
 {
     QProcess p2;
     p2.start("netsh", QStringList{"wlan", "show", "profile", "name=" + profileName, "key=clear"});
@@ -1246,12 +1294,16 @@ WifiManagerPanel::WifiConfig WifiManagerPanel::parseWindowsWifiProfile(const QSt
     QString security = "WPA/WPA2/WPA3";
     bool hidden = false;
 
-    const QRegularExpression keyRe(R"(Key Content\s*:\s+(.+))", QRegularExpression::CaseInsensitiveOption);
+    const QRegularExpression keyRe(
+        R"(Key Content\s*:\s+(.+))",
+        QRegularExpression::CaseInsensitiveOption);
     const auto keyMatch = keyRe.match(detail);
     if (keyMatch.hasMatch())
         password = keyMatch.captured(1).trimmed();
 
-    const QRegularExpression authRe(R"(Authentication\s*:\s+(.+))", QRegularExpression::CaseInsensitiveOption);
+    const QRegularExpression authRe(
+        R"(Authentication\s*:\s+(.+))",
+        QRegularExpression::CaseInsensitiveOption);
     const auto authMatch = authRe.match(detail);
     if (authMatch.hasMatch()) {
         const QString auth = authMatch.captured(1).trimmed().toUpper();
@@ -1261,11 +1313,17 @@ WifiManagerPanel::WifiConfig WifiManagerPanel::parseWindowsWifiProfile(const QSt
             security = "None (Open)";
     }
 
-    const QRegularExpression nonBcRe(R"(Network broadcast\s*:\s+(.+))", QRegularExpression::CaseInsensitiveOption);
+    const QRegularExpression nonBcRe(
+        R"(Network broadcast\s*:\s+(.+))",
+        QRegularExpression::CaseInsensitiveOption);
     const auto nbMatch = nonBcRe.match(detail);
     if (nbMatch.hasMatch())
-        hidden = nbMatch.captured(1).trimmed().compare("Don't broadcast", Qt::CaseInsensitive) == 0 ||
-                 nbMatch.captured(1).trimmed().compare("Not broadcasting", Qt::CaseInsensitive) == 0;
+        hidden = nbMatch.captured(1).trimmed().compare(
+                     "Don't broadcast",
+                     Qt::CaseInsensitive) == 0 ||
+                 nbMatch.captured(1).trimmed().compare(
+                     "Not broadcasting",
+                     Qt::CaseInsensitive) == 0;
 
     WifiConfig cfg;
     cfg.location = {};
@@ -1316,10 +1374,18 @@ void WifiManagerPanel::onSelectionChanged()
         m_export_macos_btn->setToolTip(QString("Generate macOS profile for %1").arg(src));
         m_connect_phone_btn->setToolTip(QString("Show QR dialog for %1").arg(src));
     } else {
-        m_generate_qr_btn->setToolTip("Export the current network form as a QR code image (PNG, PDF, JPG, BMP)");
-        m_export_script_btn->setToolTip("Generate a Windows netsh .cmd script for the current network form");
-        m_export_macos_btn->setToolTip("Generate a macOS WiFi .mobileconfig profile for the current network form");
-        m_connect_phone_btn->setToolTip("Show a QR code of the current network form for phone/tablet scanning");
+        m_generate_qr_btn->setToolTip(
+            "Export the current network form as a"
+            " QR code image (PNG, PDF, JPG, BMP)");
+        m_export_script_btn->setToolTip(
+            "Generate a Windows netsh .cmd script"
+            " for the current network form");
+        m_export_macos_btn->setToolTip(
+            "Generate a macOS WiFi .mobileconfig"
+            " profile for the current network form");
+        m_connect_phone_btn->setToolTip(
+            "Show a QR code of the current network"
+            " form for phone/tablet scanning");
     }
 }
 
@@ -1366,7 +1432,10 @@ void WifiManagerPanel::onAddToWindowsClicked()
             QString("Added %1 network(s) to Windows WiFi profiles.").arg(added), 5000);
     else
         Q_EMIT statusMessage(
-            QString("Added %1 network(s); %2 failed (try running as Administrator).").arg(added).arg(failed), 6000);
+            QString("Added %1 network(s); %2 failed"
+                    " (try running as Administrator).")
+                .arg(added).arg(failed),
+            6000);
 #endif
 }
 
@@ -1433,9 +1502,9 @@ bool WifiManagerPanel::installWlanProfile(const QString& xml, int row)
     return exitCode == 0;
 }
 
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─────────────────────────────────────────────────────────────────────────────
 // WiFi payload helpers
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─────────────────────────────────────────────────────────────────────────────
 // static
 QString WifiManagerPanel::escapeWifiField(const QString& value)
 {
@@ -1492,12 +1561,12 @@ QString WifiManagerPanel::buildWifiPayloadFromConfig(const WifiConfig& cfg)
     return payload;
 }
 
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─────────────────────────────────────────────────────────────────────────────
 // QR generation
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-// â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+// ─────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
 // QR drawing helper (extracted to keep generateQrImage nesting ≤ 3)
-// â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+// ─────────────────────────────────────────────────────────────────────────────
 static void drawQrModules(QImage& out, const QString& payload, int imageSize)
 {
     constexpr int BORDER = 4;
@@ -1556,9 +1625,9 @@ QImage WifiManagerPanel::generateQrImage(const QString& payload)
     return out;
 }
 
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─────────────────────────────────────────────────────────────────────────────
 // Export script builders
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─────────────────────────────────────────────────────────────────────────────
 // static
 QString WifiManagerPanel::buildWindowsScript(const QString& ssid,
                                         const QString& password,
@@ -1612,7 +1681,8 @@ QString WifiManagerPanel::buildWindowsScript(const QString& ssid,
     script += "echo Network: " + ssid + "\r\n";
     script += "echo.\r\n";
     script += "set PROFILE_XML=%TEMP%\\wifi_profile_sak.xml\r\n";
-    script += "powershell -Command \"[System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('"
+    script += "powershell -Command \"[System.Text.Encoding]::UTF8.GetString([System.Convert]::FromB"
+        "ase64String('"
               + xmlB64 + "')) | Set-Content -Path '%PROFILE_XML%' -Encoding UTF8\"\r\n";
     script += "netsh wlan add profile filename=\"%PROFILE_XML%\" user=all\r\n";
     script += "if %errorlevel% neq 0 (\r\n";
@@ -1661,9 +1731,12 @@ QString WifiManagerPanel::buildMacosProfile(const QList<WifiConfig>& networks)
         plist += "      <key>HIDDEN_NETWORK</key>";
         plist += cfg.hidden ? "<true/>\n" : "<false/>\n";
         if (encType != "None" && !cfg.password.isEmpty())
-            plist += "      <key>Password</key><string>" + cfg.password.toHtmlEscaped() + "</string>\n";
-        plist += "      <key>PayloadDisplayName</key><string>WiFi (" + cfg.ssid.toHtmlEscaped() + ")</string>\n";
-        plist += "      <key>PayloadIdentifier</key><string>com.sak.wifi." + netUuid.toLower() + "</string>\n";
+            plist += "      <key>Password</key><string>" + cfg.password.toHtmlEscaped() + "</"
+                "string>\n";
+        plist += "      <key>PayloadDisplayName</key><string>WiFi (" + cfg.ssid.toHtmlEscaped() +
+            ")</string>\n";
+        plist += "      <key>PayloadIdentifier</key><string>com.sak.wifi." + netUuid.toLower() +
+            "</string>\n";
         plist += "      <key>PayloadType</key><string>com.apple.wifi.managed</string>\n";
         plist += "      <key>PayloadUUID</key><string>" + netUuid + "</string>\n";
         plist += "      <key>PayloadVersion</key><integer>1</integer>\n";
@@ -1672,9 +1745,11 @@ QString WifiManagerPanel::buildMacosProfile(const QList<WifiConfig>& networks)
     }
 
     plist += "  </array>\n";
-    plist += "  <key>PayloadDescription</key><string>WiFi config by S.A.K. Utility on " + now + "</string>\n";
+    plist += "  <key>PayloadDescription</key><string>WiFi config by S.A.K. Utility on " + now +
+        "</string>\n";
     const QString displayName = networks.isEmpty() ? "WiFi Networks" : networks.first().ssid;
-    plist += "  <key>PayloadDisplayName</key><string>" + displayName.toHtmlEscaped() + " WiFi</string>\n";
+    plist += "  <key>PayloadDisplayName</key><string>" + displayName.toHtmlEscaped() + " WiFi</"
+        "string>\n";
     plist += "  <key>PayloadIdentifier</key><string>" + payloadId + "</string>\n";
     plist += "  <key>PayloadRemovalDisallowed</key><false/>\n";
     plist += "  <key>PayloadType</key><string>Configuration</string>\n";
@@ -1684,9 +1759,9 @@ QString WifiManagerPanel::buildMacosProfile(const QList<WifiConfig>& networks)
     return plist;
 }
 
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─────────────────────────────────────────────────────────────────────────────
 // Table helpers
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─────────────────────────────────────────────────────────────────────────────
 WifiManagerPanel::WifiConfig WifiManagerPanel::configFromForm() const
 {
     WifiConfig cfg;
@@ -1754,7 +1829,8 @@ void WifiManagerPanel::addRowToTable(const WifiConfig& cfg)
 
         QObject::connect(eyeBtn, &QToolButton::toggled, [lbl, eyeBtn, pwd](bool showing) {
             lbl->setText(showing ? pwd
-                                 : (pwd.isEmpty() ? QString{} : QString(pwd.length(), QChar(0x2022))));
+                                 : (pwd.isEmpty() ? QString{} : QString(pwd.length(),
+                                     QChar(0x2022))));
             eyeBtn->setIcon(QIcon(showing ? ":/icons/eye_closed.svg" : ":/icons/eye_open.svg"));
         });
 
@@ -1806,9 +1882,9 @@ QList<WifiManagerPanel::WifiConfig> WifiManagerPanel::checkedConfigs() const
     return list;
 }
 
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─────────────────────────────────────────────────────────────────────────────
 // Search
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─────────────────────────────────────────────────────────────────────────────
 bool WifiManagerPanel::rowMatchesSearch(int row, const QString& text) const
 {
     for (int col = COL_LOCATION; col < COL_COUNT; ++col) {
@@ -1846,9 +1922,9 @@ void WifiManagerPanel::highlightSearchMatches()
         setRowBackground(m_network_table, row, QColor(255, 255, 150));
 }
 
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─────────────────────────────────────────────────────────────────────────────
 // Persistence
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─────────────────────────────────────────────────────────────────────────────
 void WifiManagerPanel::saveTableToJson(const QString& path)
 {
     QJsonArray arr;
@@ -1870,7 +1946,8 @@ void WifiManagerPanel::saveTableToJson(const QString& path)
         return;
     }
     f.write(doc.toJson());
-    Q_EMIT statusMessage(QString("Saved %1 network(s) to %2").arg(arr.size()).arg(path), sak::kTimerStatusDefaultMs);
+    Q_EMIT statusMessage(QString("Saved %1 network(s) to %2").arg(arr.size()).arg(path),
+        sak::kTimerStatusDefaultMs);
 }
 
 void WifiManagerPanel::loadTableFromJson(const QString& path)

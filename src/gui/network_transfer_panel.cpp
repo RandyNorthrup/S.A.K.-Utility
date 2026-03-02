@@ -115,7 +115,8 @@ void NetworkTransferPanel::setupUi() {
     auto* modeLayout = new QHBoxLayout();
     modeLayout->addWidget(new QLabel(tr("Mode:"), this));
     m_modeCombo = new QComboBox(this);
-    m_modeCombo->addItems({tr("Source (Send)"), tr("Destination (Receive)"), tr("Orchestrator (Deploy)")});
+    m_modeCombo->addItems({tr("Source (Send)"), tr("Destination (Receive)"),
+        tr("Orchestrator (Deploy)")});
     m_modeCombo->setAccessibleName(QStringLiteral("Transfer Mode"));
     m_modeCombo->setToolTip(QStringLiteral("Select the transfer mode for this machine"));
     modeLayout->addWidget(m_modeCombo);
@@ -176,7 +177,8 @@ void NetworkTransferPanel::setupUi_sourceSection(QVBoxLayout* sourceLayout) {
     m_scanUsersButton->setToolTip(QStringLiteral("Scan for Windows user profiles on this machine"));
     m_customizeUserButton = new QPushButton(tr("Customize Selected"), this);
     m_customizeUserButton->setAccessibleName(QStringLiteral("Customize User"));
-    m_customizeUserButton->setToolTip(QStringLiteral("Customize data selection for the selected user"));
+    m_customizeUserButton->setToolTip(QStringLiteral("Customize data selection for the selected "
+                                                     "user"));
     userHeaderLayout->addWidget(m_scanUsersButton);
     userHeaderLayout->addWidget(m_customizeUserButton);
     userHeaderLayout->addStretch();
@@ -184,13 +186,16 @@ void NetworkTransferPanel::setupUi_sourceSection(QVBoxLayout* sourceLayout) {
 
     m_userTable = new QTableWidget(0, kUserColCount, this);
     m_userTable->setHorizontalHeaderLabels({"?", tr("User"), tr("Profile Path"), tr("Size")});
-    m_userTable->horizontalHeader()->setSectionResizeMode(kUserColName, QHeaderView::ResizeToContents);
+    m_userTable->horizontalHeader()->setSectionResizeMode(kUserColName,
+        QHeaderView::ResizeToContents);
     m_userTable->horizontalHeader()->setSectionResizeMode(kUserColPath, QHeaderView::Stretch);
-    m_userTable->horizontalHeader()->setSectionResizeMode(kUserColSize, QHeaderView::ResizeToContents);
+    m_userTable->horizontalHeader()->setSectionResizeMode(kUserColSize,
+        QHeaderView::ResizeToContents);
     m_userTable->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_userTable->setSelectionMode(QAbstractItemView::SingleSelection);
     m_userTable->setAccessibleName(QStringLiteral("User Profiles Table"));
-    m_userTable->setToolTip(QStringLiteral("Detected Windows user profiles available for transfer"));
+    m_userTable->setToolTip(QStringLiteral(
+        "Detected Windows user profiles available for transfer"));
     dataLayout->addWidget(m_userTable);
 
     dataGroup->setLayout(dataLayout);
@@ -202,15 +207,19 @@ void NetworkTransferPanel::setupUi_sourceSection(QVBoxLayout* sourceLayout) {
     auto* peerHeaderLayout = new QHBoxLayout();
     m_discoverPeersButton = new QPushButton(tr("Discover Peers"), this);
     m_discoverPeersButton->setAccessibleName(QStringLiteral("Discover Peers"));
-    m_discoverPeersButton->setToolTip(QStringLiteral("Scan the network for available destination machines"));
+    m_discoverPeersButton->setToolTip(QStringLiteral("Scan the network for available destination "
+                                                     "machines"));
     peerHeaderLayout->addWidget(m_discoverPeersButton);
     peerHeaderLayout->addStretch();
     peerLayout->addLayout(peerHeaderLayout);
 
     m_peerTable = new QTableWidget(0, kPeerColCount, this);
-    m_peerTable->setHorizontalHeaderLabels({tr("Host"), tr("IP"), tr("Mode"), tr("Capabilities"), tr("Last Seen")});
-    m_peerTable->horizontalHeader()->setSectionResizeMode(kPeerColName, QHeaderView::ResizeToContents);
-    m_peerTable->horizontalHeader()->setSectionResizeMode(kPeerColIp, QHeaderView::ResizeToContents);
+    m_peerTable->setHorizontalHeaderLabels({tr("Host"), tr("IP"), tr("Mode"), tr("Capabilities"),
+        tr("Last Seen")});
+    m_peerTable->horizontalHeader()->setSectionResizeMode(kPeerColName,
+        QHeaderView::ResizeToContents);
+    m_peerTable->horizontalHeader()->setSectionResizeMode(kPeerColIp,
+        QHeaderView::ResizeToContents);
     m_peerTable->horizontalHeader()->setSectionResizeMode(kPeerColCaps, QHeaderView::Stretch);
     m_peerTable->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_peerTable->setSelectionMode(QAbstractItemView::SingleSelection);
@@ -266,11 +275,14 @@ void NetworkTransferPanel::setupUi_securityWidgets() {
 
     m_permissionModeCombo = new QComboBox(this);
     m_permissionModeCombo->addItem(tr("Strip All"), static_cast<int>(PermissionMode::StripAll));
-    m_permissionModeCombo->addItem(tr("Preserve Original"), static_cast<int>(PermissionMode::PreserveOriginal));
-    m_permissionModeCombo->addItem(tr("Assign to Destination"), static_cast<int>(PermissionMode::AssignToDestination));
+    m_permissionModeCombo->addItem(tr("Preserve Original"),
+        static_cast<int>(PermissionMode::PreserveOriginal));
+    m_permissionModeCombo->addItem(tr("Assign to Destination"),
+        static_cast<int>(PermissionMode::AssignToDestination));
     m_permissionModeCombo->addItem(tr("Hybrid"), static_cast<int>(PermissionMode::Hybrid));
     m_permissionModeCombo->setAccessibleName(QStringLiteral("Permission Mode"));
-    m_permissionModeCombo->setToolTip(QStringLiteral("How file permissions are handled during transfer"));
+    m_permissionModeCombo->setToolTip(QStringLiteral("How file permissions are handled during "
+                                                     "transfer"));
     m_permissionModeCombo->setVisible(false);
 
     m_passphraseEdit = new QLineEdit(this);
@@ -290,7 +302,8 @@ void NetworkTransferPanel::setupUi_destinationSection(QVBoxLayout* destLayout) {
     destBaseLayout->addWidget(new QLabel(tr("Destination Base:"), this));
     m_destinationBaseEdit = new QLineEdit(this);
     m_destinationBaseEdit->setAccessibleName(QStringLiteral("Destination Base Path"));
-    m_destinationBaseEdit->setToolTip(QStringLiteral("Root directory for receiving transferred files"));
+    m_destinationBaseEdit->setToolTip(QStringLiteral("Root directory for receiving transferred "
+                                                     "files"));
     destBaseLayout->addWidget(m_destinationBaseEdit);
     destInfoLayout->addLayout(destBaseLayout);
     auto* destPassLayout = new QHBoxLayout();
@@ -298,12 +311,14 @@ void NetworkTransferPanel::setupUi_destinationSection(QVBoxLayout* destLayout) {
     m_destinationPassphraseEdit = new QLineEdit(this);
     m_destinationPassphraseEdit->setEchoMode(QLineEdit::Password);
     m_destinationPassphraseEdit->setAccessibleName(QStringLiteral("Destination Passphrase"));
-    m_destinationPassphraseEdit->setToolTip(QStringLiteral("Passphrase to decrypt incoming transfers"));
+    m_destinationPassphraseEdit->setToolTip(QStringLiteral("Passphrase to decrypt incoming "
+                                                           "transfers"));
     destPassLayout->addWidget(m_destinationPassphraseEdit);
     destInfoLayout->addLayout(destPassLayout);
     m_startDestinationButton = new QPushButton(tr("Start Listening"), this);
     m_startDestinationButton->setAccessibleName(QStringLiteral("Start Listening"));
-    m_startDestinationButton->setToolTip(QStringLiteral("Start listening for incoming file transfers"));
+    m_startDestinationButton->setToolTip(QStringLiteral("Start listening for incoming file "
+                                                        "transfers"));
     destInfoLayout->addWidget(m_startDestinationButton);
     auto* orchestratorGroup = new QGroupBox(tr("Orchestrator Connection"), this);
     auto* orchestratorConnectionLayout = new QGridLayout(orchestratorGroup);
@@ -323,7 +338,8 @@ void NetworkTransferPanel::setupUi_destinationSection(QVBoxLayout* destLayout) {
     m_autoApproveOrchestratorCheck = new QCheckBox(tr("Auto-approve assignments"), this);
     m_autoApproveOrchestratorCheck->setChecked(true);
     m_autoApproveOrchestratorCheck->setAccessibleName(QStringLiteral("Auto-Approve Assignments"));
-    m_autoApproveOrchestratorCheck->setToolTip(QStringLiteral("Automatically accept transfer assignments from the orchestrator"));
+    m_autoApproveOrchestratorCheck->setToolTip(QStringLiteral("Automatically accept transfer "
+                                                              "assignments from the orchestrator"));
     orchestratorConnectionLayout->addWidget(m_autoApproveOrchestratorCheck, 1, 0, 1, 3);
     m_connectOrchestratorButton = new QPushButton(tr("Connect"), this);
     m_connectOrchestratorButton->setAccessibleName(QStringLiteral("Connect Orchestrator"));
@@ -334,7 +350,8 @@ void NetworkTransferPanel::setupUi_destinationSection(QVBoxLayout* destLayout) {
     m_applyRestoreCheck = new QCheckBox(tr("Apply restore into system profiles"), this);
     m_applyRestoreCheck->setChecked(true);
     m_applyRestoreCheck->setAccessibleName(QStringLiteral("Apply System Restore"));
-    m_applyRestoreCheck->setToolTip(QStringLiteral("Restore transferred data into system user profiles"));
+    m_applyRestoreCheck->setToolTip(QStringLiteral("Restore transferred data into system user "
+                                                   "profiles"));
     destInfoLayout->addWidget(m_applyRestoreCheck);
     destInfoGroup->setLayout(destInfoLayout);
     destLayout->addWidget(destInfoGroup);
@@ -370,22 +387,33 @@ void NetworkTransferPanel::setupUi_destinationIncoming(QVBoxLayout* destLayout) 
     m_assignmentBandwidthLabel = new QLabel(tr("Bandwidth limit: default"), this);
     assignmentLayout->addWidget(m_assignmentBandwidthLabel);
     m_assignmentQueueTable = new QTableWidget(0, 6, this);
-    m_assignmentQueueTable->setHorizontalHeaderLabels({tr("Deployment"), tr("Job"), tr("User"), tr("Size"), tr("Priority"), tr("Bandwidth")});
-    m_assignmentQueueTable->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
-    m_assignmentQueueTable->horizontalHeader()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
-    m_assignmentQueueTable->horizontalHeader()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
-    m_assignmentQueueTable->horizontalHeader()->setSectionResizeMode(3, QHeaderView::ResizeToContents);
-    m_assignmentQueueTable->horizontalHeader()->setSectionResizeMode(4, QHeaderView::ResizeToContents);
+    m_assignmentQueueTable->setHorizontalHeaderLabels({tr("Deployment"), tr("Job"), tr("User"),
+        tr("Size"), tr("Priority"), tr("Bandwidth")});
+    m_assignmentQueueTable->horizontalHeader()->setSectionResizeMode(0,
+        QHeaderView::ResizeToContents);
+    m_assignmentQueueTable->horizontalHeader()->setSectionResizeMode(1,
+        QHeaderView::ResizeToContents);
+    m_assignmentQueueTable->horizontalHeader()->setSectionResizeMode(2,
+        QHeaderView::ResizeToContents);
+    m_assignmentQueueTable->horizontalHeader()->setSectionResizeMode(3,
+        QHeaderView::ResizeToContents);
+    m_assignmentQueueTable->horizontalHeader()->setSectionResizeMode(4,
+        QHeaderView::ResizeToContents);
     m_assignmentQueueTable->horizontalHeader()->setSectionResizeMode(5, QHeaderView::Stretch);
     m_assignmentQueueTable->setAccessibleName(QStringLiteral("Assignment Queue Table"));
     assignmentLayout->addWidget(m_assignmentQueueTable);
 
     m_assignmentStatusTable = new QTableWidget(0, 5, this);
-    m_assignmentStatusTable->setHorizontalHeaderLabels({tr("Deployment"), tr("Job"), tr("User"), tr("Status"), tr("Last Event")});
-    m_assignmentStatusTable->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
-    m_assignmentStatusTable->horizontalHeader()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
-    m_assignmentStatusTable->horizontalHeader()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
-    m_assignmentStatusTable->horizontalHeader()->setSectionResizeMode(3, QHeaderView::ResizeToContents);
+    m_assignmentStatusTable->setHorizontalHeaderLabels({tr("Deployment"), tr("Job"), tr("User"),
+        tr("Status"), tr("Last Event")});
+    m_assignmentStatusTable->horizontalHeader()->setSectionResizeMode(0,
+        QHeaderView::ResizeToContents);
+    m_assignmentStatusTable->horizontalHeader()->setSectionResizeMode(1,
+        QHeaderView::ResizeToContents);
+    m_assignmentStatusTable->horizontalHeader()->setSectionResizeMode(2,
+        QHeaderView::ResizeToContents);
+    m_assignmentStatusTable->horizontalHeader()->setSectionResizeMode(3,
+        QHeaderView::ResizeToContents);
     m_assignmentStatusTable->horizontalHeader()->setSectionResizeMode(4, QHeaderView::Stretch);
     m_assignmentStatusTable->setAccessibleName(QStringLiteral("Assignment Status Table"));
     assignmentLayout->addWidget(m_assignmentStatusTable);
@@ -401,7 +429,8 @@ void NetworkTransferPanel::setupUi_orchestratorServer(QVBoxLayout* orchestratorL
     m_orchestratorListenPortSpin->setRange(sak::kPortRangeMin, sak::kPortRangeMax);
     m_orchestratorListenPortSpin->setValue(sak::kPortControl);
     m_orchestratorListenPortSpin->setAccessibleName(QStringLiteral("Listen Port"));
-    m_orchestratorListenPortSpin->setToolTip(QStringLiteral("Port the orchestrator server listens on"));
+    m_orchestratorListenPortSpin->setToolTip(QStringLiteral("Port the orchestrator server listens "
+                                                            "on"));
     orchestratorServerLayout->addWidget(m_orchestratorListenPortSpin);
     m_orchestratorListenButton = new QPushButton(tr("Start Server"), this);
     m_orchestratorListenButton->setAccessibleName(QStringLiteral("Start Orchestrator"));
@@ -426,7 +455,8 @@ void NetworkTransferPanel::setupUi_orchestratorSources(QVBoxLayout* orchestrator
     m_orchestratorUserTable = new QTableWidget(0, 3, this);
     m_orchestratorUserTable->setHorizontalHeaderLabels({"?", tr("User"), tr("Size")});
     m_orchestratorUserTable->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Stretch);
-    m_orchestratorUserTable->horizontalHeader()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
+    m_orchestratorUserTable->horizontalHeader()->setSectionResizeMode(2,
+        QHeaderView::ResizeToContents);
     m_orchestratorUserTable->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_orchestratorUserTable->setSelectionMode(QAbstractItemView::SingleSelection);
     m_orchestratorUserTable->setDragEnabled(true);
@@ -441,16 +471,24 @@ void NetworkTransferPanel::setupUi_orchestratorDestinations(QVBoxLayout* orchest
     auto* orchestratorDestGroup = new QGroupBox(tr("Destinations"), this);
     auto* orchestratorDestLayout = new QVBoxLayout(orchestratorDestGroup);
     m_orchestratorDestTable = new QTableWidget(0, 9, this);
-    m_orchestratorDestTable->setHorizontalHeaderLabels({"?", tr("Host"), tr("IP"), tr("Status"), tr("Free Disk"), tr("CPU%"), tr("RAM%"), tr("Last Seen"), tr("Progress")});
+    m_orchestratorDestTable->setHorizontalHeaderLabels({"?", tr("Host"), tr("IP"), tr("Status"),
+        tr("Free Disk"), tr("CPU%"), tr("RAM%"), tr("Last Seen"), tr("Progress")});
     m_orchestratorDestTable->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Fixed);
     m_orchestratorDestTable->setColumnWidth(0, sak::kCheckboxColumnW);
-    m_orchestratorDestTable->horizontalHeader()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
-    m_orchestratorDestTable->horizontalHeader()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
-    m_orchestratorDestTable->horizontalHeader()->setSectionResizeMode(3, QHeaderView::ResizeToContents);
-    m_orchestratorDestTable->horizontalHeader()->setSectionResizeMode(4, QHeaderView::ResizeToContents);
-    m_orchestratorDestTable->horizontalHeader()->setSectionResizeMode(5, QHeaderView::ResizeToContents);
-    m_orchestratorDestTable->horizontalHeader()->setSectionResizeMode(6, QHeaderView::ResizeToContents);
-    m_orchestratorDestTable->horizontalHeader()->setSectionResizeMode(7, QHeaderView::ResizeToContents);
+    m_orchestratorDestTable->horizontalHeader()->setSectionResizeMode(1,
+        QHeaderView::ResizeToContents);
+    m_orchestratorDestTable->horizontalHeader()->setSectionResizeMode(2,
+        QHeaderView::ResizeToContents);
+    m_orchestratorDestTable->horizontalHeader()->setSectionResizeMode(3,
+        QHeaderView::ResizeToContents);
+    m_orchestratorDestTable->horizontalHeader()->setSectionResizeMode(4,
+        QHeaderView::ResizeToContents);
+    m_orchestratorDestTable->horizontalHeader()->setSectionResizeMode(5,
+        QHeaderView::ResizeToContents);
+    m_orchestratorDestTable->horizontalHeader()->setSectionResizeMode(6,
+        QHeaderView::ResizeToContents);
+    m_orchestratorDestTable->horizontalHeader()->setSectionResizeMode(7,
+        QHeaderView::ResizeToContents);
     m_orchestratorDestTable->horizontalHeader()->setSectionResizeMode(8, QHeaderView::Stretch);
     m_orchestratorDestTable->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_orchestratorDestTable->setSelectionMode(QAbstractItemView::SingleSelection);
@@ -479,7 +517,8 @@ void NetworkTransferPanel::setupUi_deploymentControls(QVBoxLayout* orchestratorL
     m_mappingStrategyCombo = new QComboBox(this);
     m_mappingStrategyCombo->addItems({tr("Largest Free"), tr("Round Robin")});
     m_mappingStrategyCombo->setAccessibleName(QStringLiteral("Mapping Strategy"));
-    m_mappingStrategyCombo->setToolTip(QStringLiteral("Strategy for distributing users across destinations"));
+    m_mappingStrategyCombo->setToolTip(QStringLiteral("Strategy for distributing users across "
+                                                      "destinations"));
     mappingRow->addWidget(m_mappingStrategyCombo);
     deploymentControlLayout->addLayout(mappingRow);
     // Concurrency and bandwidth
@@ -519,7 +558,8 @@ void NetworkTransferPanel::setupUi_deploymentTemplateActions(QVBoxLayout* contro
     templateRow->addWidget(m_templateStatusLabel, 1);
     m_saveTemplateButton = new QPushButton(tr("Save Template"), this);
     m_saveTemplateButton->setAccessibleName(QStringLiteral("Save Template"));
-    m_saveTemplateButton->setToolTip(QStringLiteral("Save the current deployment settings as a template"));
+    m_saveTemplateButton->setToolTip(QStringLiteral("Save the current deployment settings as a "
+                                                    "template"));
     templateRow->addWidget(m_saveTemplateButton);
     m_loadTemplateButton = new QPushButton(tr("Load Template"), this);
     m_loadTemplateButton->setAccessibleName(QStringLiteral("Load Template"));
@@ -530,7 +570,8 @@ void NetworkTransferPanel::setupUi_deploymentTemplateActions(QVBoxLayout* contro
     auto* actionRow = new QHBoxLayout();
     m_startDeploymentButton = new QPushButton(tr("Start Deployment"), this);
     m_startDeploymentButton->setAccessibleName(QStringLiteral("Start Deployment"));
-    m_startDeploymentButton->setToolTip(QStringLiteral("Begin deploying user profiles to destinations"));
+    m_startDeploymentButton->setToolTip(QStringLiteral("Begin deploying user profiles to "
+                                                       "destinations"));
     m_pauseDeploymentButton = new QPushButton(tr("Pause"), this);
     m_pauseDeploymentButton->setAccessibleName(QStringLiteral("Pause Deployment"));
     m_pauseDeploymentButton->setToolTip(QStringLiteral("Pause the active deployment"));
@@ -565,7 +606,8 @@ void NetworkTransferPanel::setupUi_deploymentJobs(QVBoxLayout* orchestratorLayou
     auto* jobsGroup = new QGroupBox(tr("Deployment Jobs"), this);
     auto* jobsLayout = new QVBoxLayout(jobsGroup);
     m_jobsTable = new QTableWidget(0, 7, this);
-    m_jobsTable->setHorizontalHeaderLabels({tr("Job ID"), tr("Deployment"), tr("Source User"), tr("Destination"), tr("Status"), tr("Progress"), tr("Error")});
+    m_jobsTable->setHorizontalHeaderLabels({tr("Job ID"), tr("Deployment"), tr("Source User"),
+        tr("Destination"), tr("Status"), tr("Progress"), tr("Error")});
     m_jobsTable->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
     m_jobsTable->horizontalHeader()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
     m_jobsTable->horizontalHeader()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
@@ -622,7 +664,8 @@ void NetworkTransferPanel::setupUi_deploymentProgress(QVBoxLayout* orchestratorL
     deploymentProgressLayout->addLayout(summaryExportRow);
     m_recoverDeploymentButton = new QPushButton(tr("Recover Last Deployment"), this);
     m_recoverDeploymentButton->setAccessibleName(QStringLiteral("Recover Deployment"));
-    m_recoverDeploymentButton->setToolTip(QStringLiteral("Attempt to recover a previously interrupted deployment"));
+    m_recoverDeploymentButton->setToolTip(QStringLiteral("Attempt to recover a previously "
+                                                         "interrupted deployment"));
     deploymentProgressLayout->addWidget(m_recoverDeploymentButton);
     deploymentProgressGroup->setLayout(deploymentProgressLayout);
     orchestratorLayout->addWidget(deploymentProgressGroup);
@@ -630,7 +673,8 @@ void NetworkTransferPanel::setupUi_deploymentProgress(QVBoxLayout* orchestratorL
     auto* historyGroup = new QGroupBox(tr("Deployment History"), this);
     auto* historyLayout = new QVBoxLayout(historyGroup);
     m_historyTable = new QTableWidget(0, 7, this);
-    m_historyTable->setHorizontalHeaderLabels({tr("Deployment"), tr("Started"), tr("Completed"), tr("Total"), tr("Completed"), tr("Failed"), tr("Status")});
+    m_historyTable->setHorizontalHeaderLabels({tr("Deployment"), tr("Started"), tr("Completed"),
+        tr("Total"), tr("Completed"), tr("Failed"), tr("Status")});
     m_historyTable->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
     m_historyTable->horizontalHeader()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
     m_historyTable->horizontalHeader()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
@@ -647,13 +691,22 @@ void NetworkTransferPanel::setupUi_deploymentProgress(QVBoxLayout* orchestratorL
     auto* legendLayout = new QHBoxLayout(legendGroup);
     // A11Y: emoji prefixes ensure status is readable without relying on color alone
     auto* okLabel = new QLabel(QStringLiteral("\u2714 ") + tr("Success"), this);
-        okLabel->setStyleSheet(QString("QLabel { background-color: %1; color: white; padding: 6px 10px; border-radius: 10px; }").arg(sak::ui::kStatusColorSuccess));
+        okLabel->setStyleSheet(QString("QLabel { background-color: %1; color: white; padding: 6px "
+                                       "10px; border-radius: 10px; }")
+                                           .arg(sak::ui::kStatusColorSuccess));
     auto* warnLabel = new QLabel(QStringLiteral("\u23F3 ") + tr("In Progress"), this);
-        warnLabel->setStyleSheet(QString("QLabel { background-color: %1; color: %2; padding: 6px 10px; border-radius: 10px; }").arg(sak::ui::kColorWarningBadge, sak::ui::kColorTextHeading));
+        warnLabel->setStyleSheet(QString("QLabel { background-color: %1; color: %2; padding: 6px "
+                                         "10px; border-radius: 10px; }")
+                                             .arg(sak::ui::kColorWarningBadge,
+                                                 sak::ui::kColorTextHeading));
     auto* errLabel = new QLabel(QStringLiteral("\u2718 ") + tr("Error"), this);
-        errLabel->setStyleSheet(QString("QLabel { background-color: %1; color: white; padding: 6px 10px; border-radius: 10px; }").arg(sak::ui::kStatusColorError));
+        errLabel->setStyleSheet(QString("QLabel { background-color: %1; color: white; padding: 6px "
+                                        "10px; border-radius: 10px; }")
+                                            .arg(sak::ui::kStatusColorError));
     auto* idleLabel = new QLabel(QStringLiteral("\u25CB ") + tr("Idle"), this);
-        idleLabel->setStyleSheet(QString("QLabel { background-color: %1; color: white; padding: 6px 10px; border-radius: 10px; }").arg(sak::ui::kStatusColorIdle));
+        idleLabel->setStyleSheet(QString("QLabel { background-color: %1; color: white; padding: "
+                                         "6px 10px; border-radius: 10px; }")
+                                             .arg(sak::ui::kStatusColorIdle));
     legendLayout->addWidget(okLabel);
     legendLayout->addWidget(warnLabel);
     legendLayout->addWidget(errLabel);
@@ -678,7 +731,8 @@ void NetworkTransferPanel::setupUi_bottomButtons(QVBoxLayout* mainLayout) {
     securitySettingsBtn->setFixedSize(sak::kButtonWidthXLarge, sak::kButtonHeightCompact);
     securitySettingsBtn->setAccessibleName(QStringLiteral("Security Settings"));
     securitySettingsBtn->setToolTip(QStringLiteral("Configure encryption and security options"));
-    connect(securitySettingsBtn, &QPushButton::clicked, this, &NetworkTransferPanel::onSecuritySettings);
+    connect(securitySettingsBtn, &QPushButton::clicked, this,
+        &NetworkTransferPanel::onSecuritySettings);
     transferBtnLayout->addWidget(securitySettingsBtn);
 
     m_logToggle = new LogToggleSwitch(tr("Log"), this);
@@ -698,10 +752,14 @@ void NetworkTransferPanel::setupUi_bottomButtons(QVBoxLayout* mainLayout) {
     m_transferButton->setAccessibleName(QStringLiteral("Start Transfer"));
     m_transferButton->setToolTip(QStringLiteral("Start the network file transfer"));
     m_transferButton->setStyleSheet(
-        "QPushButton { background: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #43a047,stop:1 #2e7d32); color: white; font-weight: 600; border-radius: 12px; }"
-        "QPushButton:hover { background: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #66bb6a,stop:1 #43a047); }"
-        "QPushButton:pressed { background: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #2e7d32,stop:1 #1b5e20); }"
-        + QString("QPushButton:disabled { background-color: %1; color: %2; }").arg(sak::ui::kColorBorderDefault, sak::ui::kColorTextMuted));
+        "QPushButton { background: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #43a047,stop:1 "
+        "#2e7d32); color: white; font-weight: 600; border-radius: 12px; }"
+        "QPushButton:hover { background: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #66bb6a,stop:1 "
+        "#43a047); }"
+        "QPushButton:pressed { background: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 "
+        "#2e7d32,stop:1 #1b5e20); }"
+        + QString("QPushButton:disabled { background-color: %1; color: %2; }")
+            .arg(sak::ui::kColorBorderDefault, sak::ui::kColorTextMuted));
     transferBtnLayout->addWidget(m_transferButton);
 
     mainLayout->addLayout(transferBtnLayout);
@@ -717,10 +775,13 @@ void NetworkTransferPanel::setupConnections() {
 }
 
 void NetworkTransferPanel::setupConnections_sourceSignals() {
-    connect(m_modeCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &NetworkTransferPanel::onModeChanged);
+    connect(m_modeCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+        &NetworkTransferPanel::onModeChanged);
     connect(m_scanUsersButton, &QPushButton::clicked, this, &NetworkTransferPanel::onScanUsers);
-    connect(m_customizeUserButton, &QPushButton::clicked, this, &NetworkTransferPanel::onCustomizeUser);
-    connect(m_discoverPeersButton, &QPushButton::clicked, this, &NetworkTransferPanel::onDiscoverPeers);
+    connect(m_customizeUserButton, &QPushButton::clicked, this,
+        &NetworkTransferPanel::onCustomizeUser);
+    connect(m_discoverPeersButton, &QPushButton::clicked, this,
+        &NetworkTransferPanel::onDiscoverPeers);
     connect(m_transferButton, &QPushButton::clicked, this, [this]() {
         if (m_sourceTransferActive) {
             m_controller->stop();
@@ -748,14 +809,17 @@ void NetworkTransferPanel::setupConnections_sourceSignals() {
 }
 
 void NetworkTransferPanel::setupConnections_destinationSignals() {
-    connect(m_startDestinationButton, &QPushButton::clicked, this, &NetworkTransferPanel::onStartDestination);
-    connect(m_connectOrchestratorButton, &QPushButton::clicked, this, &NetworkTransferPanel::onConnectOrchestrator);
+    connect(m_startDestinationButton, &QPushButton::clicked, this,
+        &NetworkTransferPanel::onStartDestination);
+    connect(m_connectOrchestratorButton, &QPushButton::clicked, this,
+        &NetworkTransferPanel::onConnectOrchestrator);
     connect(m_approveButton, &QPushButton::clicked, this, &NetworkTransferPanel::onApproveTransfer);
     connect(m_rejectButton, &QPushButton::clicked, this, &NetworkTransferPanel::onRejectTransfer);
 
     connect(m_controller, &NetworkTransferController::orchestrationAssignmentReceived,
         this, &NetworkTransferPanel::onOrchestrationAssignment);
-    connect(m_controller, &NetworkTransferController::orchestrationAssignmentPaused, this, [this](const QString& job_id) {
+    connect(m_controller, &NetworkTransferController::orchestrationAssignmentPaused, this,
+        [this](const QString& job_id) {
         const QString key = job_id.isEmpty() ? m_activeAssignment.job_id : job_id;
         if (!key.isEmpty()) {
             m_assignmentStatusByJob[key] = tr("paused");
@@ -765,7 +829,8 @@ void NetworkTransferPanel::setupConnections_destinationSignals() {
         refreshAssignmentStatus();
         persistAssignmentQueue();
     });
-    connect(m_controller, &NetworkTransferController::orchestrationAssignmentResumed, this, [this](const QString& job_id) {
+    connect(m_controller, &NetworkTransferController::orchestrationAssignmentResumed, this,
+        [this](const QString& job_id) {
         const QString key = job_id.isEmpty() ? m_activeAssignment.job_id : job_id;
         if (!key.isEmpty()) {
             m_assignmentStatusByJob[key] = tr("active");
@@ -774,7 +839,8 @@ void NetworkTransferPanel::setupConnections_destinationSignals() {
         refreshAssignmentStatus();
         persistAssignmentQueue();
     });
-    connect(m_controller, &NetworkTransferController::orchestrationAssignmentCanceled, this, [this](const QString& job_id) {
+    connect(m_controller, &NetworkTransferController::orchestrationAssignmentCanceled, this,
+        [this](const QString& job_id) {
         const QString key = job_id.isEmpty() ? m_activeAssignment.job_id : job_id;
         if (!key.isEmpty()) {
             m_assignmentStatusByJob[key] = tr("canceled");
@@ -803,22 +869,34 @@ void NetworkTransferPanel::setupConnections_destinationSignals() {
 }
 
 void NetworkTransferPanel::setupConnections_orchestratorSignals() {
-    connect(m_orchestratorListenButton, &QPushButton::clicked, this, &NetworkTransferPanel::onStartOrchestratorServer);
-    connect(m_orchestratorScanUsersButton, &QPushButton::clicked, this, &NetworkTransferPanel::onScanOrchestratorUsers);
-    connect(m_startDeploymentButton, &QPushButton::clicked, this, &NetworkTransferPanel::onStartDeployment);
-    connect(m_pauseDeploymentButton, &QPushButton::clicked, this, &NetworkTransferPanel::onPauseDeployment);
-    connect(m_resumeDeploymentButton, &QPushButton::clicked, this, &NetworkTransferPanel::onResumeDeployment);
-    connect(m_cancelDeploymentButton, &QPushButton::clicked, this, &NetworkTransferPanel::onCancelDeployment);
-    connect(m_saveTemplateButton, &QPushButton::clicked, this, &NetworkTransferPanel::onSaveDeploymentTemplate);
-    connect(m_loadTemplateButton, &QPushButton::clicked, this, &NetworkTransferPanel::onLoadDeploymentTemplate);
+    connect(m_orchestratorListenButton, &QPushButton::clicked, this,
+        &NetworkTransferPanel::onStartOrchestratorServer);
+    connect(m_orchestratorScanUsersButton, &QPushButton::clicked, this,
+        &NetworkTransferPanel::onScanOrchestratorUsers);
+    connect(m_startDeploymentButton, &QPushButton::clicked, this,
+        &NetworkTransferPanel::onStartDeployment);
+    connect(m_pauseDeploymentButton, &QPushButton::clicked, this,
+        &NetworkTransferPanel::onPauseDeployment);
+    connect(m_resumeDeploymentButton, &QPushButton::clicked, this,
+        &NetworkTransferPanel::onResumeDeployment);
+    connect(m_cancelDeploymentButton, &QPushButton::clicked, this,
+        &NetworkTransferPanel::onCancelDeployment);
+    connect(m_saveTemplateButton, &QPushButton::clicked, this,
+        &NetworkTransferPanel::onSaveDeploymentTemplate);
+    connect(m_loadTemplateButton, &QPushButton::clicked, this,
+        &NetworkTransferPanel::onLoadDeploymentTemplate);
     connect(m_pauseJobButton, &QPushButton::clicked, this, &NetworkTransferPanel::onPauseJob);
     connect(m_resumeJobButton, &QPushButton::clicked, this, &NetworkTransferPanel::onResumeJob);
     connect(m_retryJobButton, &QPushButton::clicked, this, &NetworkTransferPanel::onRetryJob);
     connect(m_cancelJobButton, &QPushButton::clicked, this, &NetworkTransferPanel::onCancelJob);
-    connect(m_exportHistoryButton, &QPushButton::clicked, this, &NetworkTransferPanel::onExportDeploymentHistory);
-    connect(m_exportSummaryCsvButton, &QPushButton::clicked, this, &NetworkTransferPanel::onExportDeploymentSummaryCsv);
-    connect(m_exportSummaryPdfButton, &QPushButton::clicked, this, &NetworkTransferPanel::onExportDeploymentSummaryPdf);
-    connect(m_recoverDeploymentButton, &QPushButton::clicked, this, &NetworkTransferPanel::onRecoverLastDeployment);
+    connect(m_exportHistoryButton, &QPushButton::clicked, this,
+        &NetworkTransferPanel::onExportDeploymentHistory);
+    connect(m_exportSummaryCsvButton, &QPushButton::clicked, this,
+        &NetworkTransferPanel::onExportDeploymentSummaryCsv);
+    connect(m_exportSummaryPdfButton, &QPushButton::clicked, this,
+        &NetworkTransferPanel::onExportDeploymentSummaryPdf);
+    connect(m_recoverDeploymentButton, &QPushButton::clicked, this,
+        &NetworkTransferPanel::onRecoverLastDeployment);
 
     if (m_orchestrator && m_orchestrator->registry()) {
         connect(m_orchestrator->registry(), &DestinationRegistry::destinationRegistered,
@@ -835,7 +913,8 @@ void NetworkTransferPanel::setupConnections_orchestratorSignals() {
             this, &NetworkTransferPanel::onOrchestratorCompletion);
         connect(m_orchestrator, &MigrationOrchestrator::aggregateProgress,
             this, &NetworkTransferPanel::onAggregateProgress);
-        connect(m_orchestrator, &MigrationOrchestrator::orchestratorStatus, this, [this](const QString& msg) {
+        connect(m_orchestrator, &MigrationOrchestrator::orchestratorStatus, this,
+            [this](const QString& msg) {
             Q_EMIT logOutput(msg);
             Q_EMIT statusMessage(msg, sak::kTimerStatusDefaultMs);
         });
@@ -843,26 +922,37 @@ void NetworkTransferPanel::setupConnections_orchestratorSignals() {
 }
 
 void NetworkTransferPanel::setupConnections_controllerSignals() {
-    connect(m_controller, &NetworkTransferController::peerDiscovered, this, &NetworkTransferPanel::onPeerDiscovered);
-    connect(m_controller, &NetworkTransferController::manifestReceived, this, &NetworkTransferPanel::onManifestReceived);
-    connect(m_controller, &NetworkTransferController::transferProgress, this, &NetworkTransferPanel::onTransferProgress);
-    connect(m_controller, &NetworkTransferController::transferCompleted, this, &NetworkTransferPanel::onTransferCompleted);
-    connect(m_controller, &NetworkTransferController::statusMessage, this, [this](const QString& msg) {
+    connect(m_controller, &NetworkTransferController::peerDiscovered, this,
+        &NetworkTransferPanel::onPeerDiscovered);
+    connect(m_controller, &NetworkTransferController::manifestReceived, this,
+        &NetworkTransferPanel::onManifestReceived);
+    connect(m_controller, &NetworkTransferController::transferProgress, this,
+        &NetworkTransferPanel::onTransferProgress);
+    connect(m_controller, &NetworkTransferController::transferCompleted, this,
+        &NetworkTransferPanel::onTransferCompleted);
+    connect(m_controller, &NetworkTransferController::statusMessage, this,
+        [this](const QString& msg) {
         Q_EMIT logOutput(msg);
         Q_EMIT statusMessage(msg, sak::kTimerStatusDefaultMs);
     });
-    connect(m_controller, &NetworkTransferController::errorMessage, this, [this](const QString& msg) {
+    connect(m_controller, &NetworkTransferController::errorMessage, this,
+        [this](const QString& msg) {
         Q_EMIT logOutput(tr("ERROR: %1").arg(msg));
         m_transferErrors.append(msg);
         Q_EMIT statusMessage(msg, sak::kTimerStatusDefaultMs);
     });
 
     if (m_parallelManager) {
-        connect(m_parallelManager, &ParallelTransferManager::jobStartRequested, this, &NetworkTransferPanel::onJobStartRequested);
-        connect(m_parallelManager, &ParallelTransferManager::jobUpdated, this, &NetworkTransferPanel::onJobUpdated);
-        connect(m_parallelManager, &ParallelTransferManager::jobCompleted, this, &NetworkTransferPanel::onJobCompleted);
-        connect(m_parallelManager, &ParallelTransferManager::deploymentProgress, this, &NetworkTransferPanel::onParallelDeploymentProgress);
-        connect(m_parallelManager, &ParallelTransferManager::deploymentComplete, this, &NetworkTransferPanel::onParallelDeploymentCompleted);
+        connect(m_parallelManager, &ParallelTransferManager::jobStartRequested, this,
+            &NetworkTransferPanel::onJobStartRequested);
+        connect(m_parallelManager, &ParallelTransferManager::jobUpdated, this,
+            &NetworkTransferPanel::onJobUpdated);
+        connect(m_parallelManager, &ParallelTransferManager::jobCompleted, this,
+            &NetworkTransferPanel::onJobCompleted);
+        connect(m_parallelManager, &ParallelTransferManager::deploymentProgress, this,
+            &NetworkTransferPanel::onParallelDeploymentProgress);
+        connect(m_parallelManager, &ParallelTransferManager::deploymentComplete, this,
+            &NetworkTransferPanel::onParallelDeploymentCompleted);
         connect(m_parallelManager, &ParallelTransferManager::jobBandwidthUpdateRequested,
             this, [this](const QString& job_id, int max_kbps) {
                 if (m_jobSourceControllers.contains(job_id)) {
@@ -929,8 +1019,10 @@ void NetworkTransferPanel::loadSettings() {
     m_permissionModeCombo->setCurrentIndex(0);
 
     m_mappingTypeCombo->setCurrentIndex(config.getValue("orchestration/mapping_type", 0).toInt());
-    m_mappingStrategyCombo->setCurrentIndex(config.getValue("orchestration/mapping_strategy", 0).toInt());
-    m_maxConcurrentSpin->setValue(config.getValue("orchestration/max_concurrent", sak::kMaxConcurrentScrape).toInt());
+    m_mappingStrategyCombo->setCurrentIndex(config.getValue("orchestration/mapping_strategy",
+        0).toInt());
+    m_maxConcurrentSpin->setValue(config.getValue("orchestration/max_concurrent",
+        sak::kMaxConcurrentScrape).toInt());
     m_globalBandwidthSpin->setValue(config.getValue("orchestration/global_bandwidth", 0).toInt());
     m_perJobBandwidthSpin->setValue(config.getValue("orchestration/per_job_bandwidth", 0).toInt());
     m_useTemplateCheck->setChecked(config.getValue("orchestration/use_template", false).toBool());
@@ -938,7 +1030,8 @@ void NetworkTransferPanel::loadSettings() {
     m_controller->configure(m_settings);
 
     QString defaultBase = QDir::toNativeSeparators(QDir::rootPath() + "Users");
-    QString stagingBase = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation) + "/SAK/Incoming";
+    QString stagingBase = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation) +
+        "/SAK/Incoming";
     m_destinationBaseEdit->setText(QDir::toNativeSeparators(stagingBase));
 
     QStringList addresses;
@@ -965,7 +1058,8 @@ void NetworkTransferPanel::loadSettings_initHistoryManager() {
     auto& config = ConfigManager::instance();
     QString historyPath = config.getValue("orchestration/history_path").toString();
     if (historyPath.isEmpty()) {
-        const QString historyDir = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation) + "/SAK";
+        const QString historyDir =
+            QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation) + "/SAK";
         QDir dir(historyDir);
         if (!dir.exists()) {
             dir.mkpath(".");
@@ -986,7 +1080,8 @@ void NetworkTransferPanel::loadSettings_initAssignmentQueue() {
     auto& config = ConfigManager::instance();
     QString queuePath = config.getValue("orchestration/assignment_queue_path").toString();
     if (queuePath.isEmpty()) {
-        const QString queueDir = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation) + "/SAK";
+        const QString queueDir =
+            QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation) + "/SAK";
         QDir dir(queueDir);
         if (!dir.exists()) {
             dir.mkpath(".");
@@ -1011,7 +1106,8 @@ void NetworkTransferPanel::loadSettings_initAssignmentQueue() {
         m_assignmentEventByJob = storedEvent;
         if (!m_activeAssignment.deployment_id.isEmpty() && m_activeAssignmentLabel) {
             m_activeAssignmentLabel->setText(tr("Active: %1 (%2)")
-                                                 .arg(m_activeAssignment.source_user, m_activeAssignment.deployment_id));
+                                                 .arg(m_activeAssignment.source_user,
+                                                     m_activeAssignment.deployment_id));
         }
         refreshAssignmentQueue();
         refreshAssignmentStatus();
@@ -1026,7 +1122,8 @@ void NetworkTransferPanel::loadSettings_restoreDeploymentState() {
         m_loadedMapping = m_mappingEngine->loadTemplate(lastTemplatePath);
         if (!m_loadedMapping.sources.isEmpty()) {
             m_loadedTemplatePath = lastTemplatePath;
-            m_templateStatusLabel->setText(tr("Loaded template: %1").arg(QFileInfo(lastTemplatePath).fileName()));
+            m_templateStatusLabel->setText(tr("Loaded template: %1")
+                .arg(QFileInfo(lastTemplatePath).fileName()));
         }
     }
 
@@ -1086,15 +1183,18 @@ NetworkTransferPanel::buildSecurityDialogControls(QGridLayout* layout, QDialog* 
 
     auto* encRow = new QHBoxLayout();
     encRow->addWidget(ctl.encryptCheck);
-    encRow->addWidget(new sak::InfoButton(tr("Encrypt all data in transit using AES-256-GCM"), dialog));
+    encRow->addWidget(new sak::InfoButton(tr("Encrypt all data in transit using AES-256-GCM"),
+        dialog));
     layout->addLayout(encRow, 0, 0);
     auto* cmpRow = new QHBoxLayout();
     cmpRow->addWidget(ctl.compressCheck);
-    cmpRow->addWidget(new sak::InfoButton(tr("Compress data before sending to reduce bandwidth"), dialog));
+    cmpRow->addWidget(new sak::InfoButton(tr("Compress data before sending to reduce bandwidth"),
+        dialog));
     layout->addLayout(cmpRow, 0, 1);
     auto* resRow = new QHBoxLayout();
     resRow->addWidget(ctl.resumeCheck);
-    resRow->addWidget(new sak::InfoButton(tr("Allow interrupted transfers to resume from the last checkpoint"), dialog));
+    resRow->addWidget(new sak::InfoButton(tr("Allow interrupted transfers to resume from the last "
+                                             "checkpoint"), dialog));
     layout->addLayout(resRow, 0, 2);
 
     layout->addWidget(sak::InfoButton::createInfoLabel(tr("Chunk (KB):"),
@@ -1115,8 +1215,10 @@ NetworkTransferPanel::buildSecurityDialogControls(QGridLayout* layout, QDialog* 
         tr("How to handle file permissions on the destination machine"), dialog), 2, 0);
     ctl.permCombo = new QComboBox(dialog);
     ctl.permCombo->addItem(tr("Strip All"), static_cast<int>(PermissionMode::StripAll));
-    ctl.permCombo->addItem(tr("Preserve Original"), static_cast<int>(PermissionMode::PreserveOriginal));
-    ctl.permCombo->addItem(tr("Assign to Destination"), static_cast<int>(PermissionMode::AssignToDestination));
+    ctl.permCombo->addItem(tr("Preserve Original"),
+        static_cast<int>(PermissionMode::PreserveOriginal));
+    ctl.permCombo->addItem(tr("Assign to Destination"),
+        static_cast<int>(PermissionMode::AssignToDestination));
     ctl.permCombo->addItem(tr("Hybrid"), static_cast<int>(PermissionMode::Hybrid));
     ctl.permCombo->setCurrentIndex(m_permissionModeCombo->currentIndex());
     layout->addWidget(ctl.permCombo, 2, 1, 1, 2);
@@ -1183,7 +1285,8 @@ void NetworkTransferPanel::buildNetworkSettingsToggles(QFormLayout* layout, QDia
     autoDiscCheck->setChecked(config.getNetworkTransferAutoDiscoveryEnabled());
     layout->addRow(
         sak::InfoButton::createInfoLabel(tr("Auto Discovery:"),
-            tr("Automatically find other S.A.K. instances on the local network via UDP broadcast"), dialog),
+            tr("Automatically find other S.A.K. instances on the local network via UDP broadcast"),
+                dialog),
         autoDiscCheck);
 
     auto* encryptCheck = new QCheckBox(dialog);
@@ -1199,7 +1302,8 @@ void NetworkTransferPanel::buildNetworkSettingsToggles(QFormLayout* layout, QDia
     compressCheck->setChecked(config.getNetworkTransferCompressionEnabled());
     layout->addRow(
         sak::InfoButton::createInfoLabel(tr("Compression:"),
-            tr("Compress file data before sending — reduces bandwidth but adds CPU overhead"), dialog),
+            tr("Compress file data before sending — reduces bandwidth but adds CPU overhead"),
+                dialog),
         compressCheck);
 
     auto* resumeCheck = new QCheckBox(dialog);
@@ -1207,7 +1311,8 @@ void NetworkTransferPanel::buildNetworkSettingsToggles(QFormLayout* layout, QDia
     resumeCheck->setChecked(config.getNetworkTransferResumeEnabled());
     layout->addRow(
         sak::InfoButton::createInfoLabel(tr("Resume:"),
-            tr("Allow interrupted transfers to resume from where they left off instead of restarting"), dialog),
+            tr("Allow interrupted transfers to resume from where they left off instead of "
+               "restarting"), dialog),
         resumeCheck);
 }
 
@@ -1220,7 +1325,8 @@ void NetworkTransferPanel::buildNetworkSettingsPorts(QFormLayout* layout, QDialo
     discoveryPort->setValue(config.getNetworkTransferDiscoveryPort());
     layout->addRow(
         sak::InfoButton::createInfoLabel(tr("Discovery Port:"),
-            tr("UDP port used for auto-discovery broadcasts — must match on both machines"), dialog),
+            tr("UDP port used for auto-discovery broadcasts — must match on both machines"),
+                dialog),
         discoveryPort);
 
     auto* controlPort = new QSpinBox(dialog);
@@ -1248,7 +1354,8 @@ void NetworkTransferPanel::buildNetworkSettingsPorts(QFormLayout* layout, QDialo
     chunkSize->setValue(config.getNetworkTransferChunkSize());
     layout->addRow(
         sak::InfoButton::createInfoLabel(tr("Chunk Size:"),
-            tr("Size of each data block sent over the network — larger chunks improve throughput on fast links"), dialog),
+            tr("Size of each data block sent over the network — larger chunks improve throughput "
+               "on fast links"), dialog),
         chunkSize);
 
     auto* maxBw = new QSpinBox(dialog);
@@ -1266,24 +1373,47 @@ void NetworkTransferPanel::buildNetworkSettingsPorts(QFormLayout* layout, QDialo
     relaySrv->setText(config.getNetworkTransferRelayServer());
     layout->addRow(
         sak::InfoButton::createInfoLabel(tr("Relay Server:"),
-            tr("Optional relay server address for transfers across different networks or subnets"), dialog),
+            tr("Optional relay server address for transfers across different networks or subnets"),
+                dialog),
         relaySrv);
 }
 
 void NetworkTransferPanel::saveNetworkSettingsFromDialog(QDialog* dialog) {
     auto& config = ConfigManager::instance();
 
-    config.setNetworkTransferEnabled(dialog->findChild<QCheckBox*>(QStringLiteral("ntEnabled"))->isChecked());
-    config.setNetworkTransferAutoDiscoveryEnabled(dialog->findChild<QCheckBox*>(QStringLiteral("ntAutoDisc"))->isChecked());
-    config.setNetworkTransferEncryptionEnabled(dialog->findChild<QCheckBox*>(QStringLiteral("ntEncrypt"))->isChecked());
-    config.setNetworkTransferCompressionEnabled(dialog->findChild<QCheckBox*>(QStringLiteral("ntCompress"))->isChecked());
-    config.setNetworkTransferResumeEnabled(dialog->findChild<QCheckBox*>(QStringLiteral("ntResume"))->isChecked());
-    config.setNetworkTransferDiscoveryPort(dialog->findChild<QSpinBox*>(QStringLiteral("ntDiscoveryPort"))->value());
-    config.setNetworkTransferControlPort(dialog->findChild<QSpinBox*>(QStringLiteral("ntControlPort"))->value());
-    config.setNetworkTransferDataPort(dialog->findChild<QSpinBox*>(QStringLiteral("ntDataPort"))->value());
-    config.setNetworkTransferChunkSize(dialog->findChild<QSpinBox*>(QStringLiteral("ntChunkSize"))->value());
-    config.setNetworkTransferMaxBandwidth(dialog->findChild<QSpinBox*>(QStringLiteral("ntMaxBw"))->value());
-    config.setNetworkTransferRelayServer(dialog->findChild<QLineEdit*>(QStringLiteral("ntRelay"))->text());
+    config
+        .setNetworkTransferEnabled(dialog->findChild<QCheckBox*>(QStringLiteral(
+            "ntEnabled"))->isChecked());
+    config
+        .setNetworkTransferAutoDiscoveryEnabled(dialog->findChild<QCheckBox*>(QStringLiteral(
+            "ntAutoDisc"))->isChecked());
+    config
+        .setNetworkTransferEncryptionEnabled(dialog->findChild<QCheckBox*>(QStringLiteral(
+            "ntEncrypt"))->isChecked());
+    config
+        .setNetworkTransferCompressionEnabled(dialog->findChild<QCheckBox*>(QStringLiteral(
+            "ntCompress"))->isChecked());
+    config
+        .setNetworkTransferResumeEnabled(dialog->findChild<QCheckBox*>(QStringLiteral(
+            "ntResume"))->isChecked());
+    config
+        .setNetworkTransferDiscoveryPort(dialog->findChild<QSpinBox*>(QStringLiteral(
+            "ntDiscoveryPort"))->value());
+    config
+        .setNetworkTransferControlPort(dialog->findChild<QSpinBox*>(QStringLiteral(
+            "ntControlPort"))->value());
+    config
+        .setNetworkTransferDataPort(dialog->findChild<QSpinBox*>(QStringLiteral(
+            "ntDataPort"))->value());
+    config
+        .setNetworkTransferChunkSize(dialog->findChild<QSpinBox*>(QStringLiteral(
+            "ntChunkSize"))->value());
+    config
+        .setNetworkTransferMaxBandwidth(dialog->findChild<QSpinBox*>(QStringLiteral(
+            "ntMaxBw"))->value());
+    config
+        .setNetworkTransferRelayServer(dialog->findChild<QLineEdit*>(QStringLiteral(
+            "ntRelay"))->text());
 
     loadSettings();
 }
@@ -1292,17 +1422,25 @@ void NetworkTransferPanel::updateTransferButton() {
     if (m_sourceTransferActive) {
         m_transferButton->setText(tr("Stop Transfer"));
         m_transferButton->setStyleSheet(
-            "QPushButton { background: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #ef5350,stop:1 #c62828); color: white; font-weight: 600; border-radius: 12px; }"
-            "QPushButton:hover { background: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #ff7043,stop:1 #ef5350); }"
-            "QPushButton:pressed { background: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #c62828,stop:1 #b71c1c); }"
-            + QString("QPushButton:disabled { background-color: %1; color: %2; }").arg(sak::ui::kColorBorderDefault, sak::ui::kColorTextMuted));
+            "QPushButton { background: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #ef5350,stop:1 "
+            "#c62828); color: white; font-weight: 600; border-radius: 12px; }"
+            "QPushButton:hover { background: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 "
+            "#ff7043,stop:1 #ef5350); }"
+            "QPushButton:pressed { background: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 "
+            "#c62828,stop:1 #b71c1c); }"
+            + QString("QPushButton:disabled { background-color: %1; color: %2; }")
+                .arg(sak::ui::kColorBorderDefault, sak::ui::kColorTextMuted));
     } else {
         m_transferButton->setText(tr("Start Transfer"));
         m_transferButton->setStyleSheet(
-            "QPushButton { background: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #43a047,stop:1 #2e7d32); color: white; font-weight: 600; border-radius: 12px; }"
-            "QPushButton:hover { background: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #66bb6a,stop:1 #43a047); }"
-            "QPushButton:pressed { background: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #2e7d32,stop:1 #1b5e20); }"
-            + QString("QPushButton:disabled { background-color: %1; color: %2; }").arg(sak::ui::kColorBorderDefault, sak::ui::kColorTextMuted));
+            "QPushButton { background: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #43a047,stop:1 "
+            "#2e7d32); color: white; font-weight: 600; border-radius: 12px; }"
+            "QPushButton:hover { background: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 "
+            "#66bb6a,stop:1 #43a047); }"
+            "QPushButton:pressed { background: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 "
+            "#2e7d32,stop:1 #1b5e20); }"
+            + QString("QPushButton:disabled { background-color: %1; color: %2; }")
+                .arg(sak::ui::kColorBorderDefault, sak::ui::kColorTextMuted));
     }
 }
 
@@ -1312,17 +1450,25 @@ void NetworkTransferPanel::updatePauseResumeButton() {
         if (m_sourceTransferPaused) {
             m_pauseResumeButton->setText(tr("Resume"));
             m_pauseResumeButton->setStyleSheet(
-                "QPushButton { background: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #43a047,stop:1 #2e7d32); color: white; font-weight: 600; border-radius: 12px; }"
-                "QPushButton:hover { background: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #66bb6a,stop:1 #43a047); }"
-                "QPushButton:pressed { background: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #2e7d32,stop:1 #1b5e20); }"
-                + QString("QPushButton:disabled { background-color: %1; color: %2; }").arg(sak::ui::kColorBorderDefault, sak::ui::kColorTextMuted));
+                "QPushButton { background: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 "
+                "#43a047,stop:1 #2e7d32); color: white; font-weight: 600; border-radius: 12px; }"
+                "QPushButton:hover { background: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 "
+                "#66bb6a,stop:1 #43a047); }"
+                "QPushButton:pressed { background: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 "
+                "#2e7d32,stop:1 #1b5e20); }"
+                + QString("QPushButton:disabled { background-color: %1; color: %2; }")
+                    .arg(sak::ui::kColorBorderDefault, sak::ui::kColorTextMuted));
         } else {
             m_pauseResumeButton->setText(tr("Pause"));
             m_pauseResumeButton->setStyleSheet(
-                "QPushButton { background: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #ffa726,stop:1 #f57c00); color: white; font-weight: 600; border-radius: 12px; }"
-                "QPushButton:hover { background: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #ffb74d,stop:1 #ffa726); }"
-                "QPushButton:pressed { background: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #f57c00,stop:1 #e65100); }"
-                + QString("QPushButton:disabled { background-color: %1; color: %2; }").arg(sak::ui::kColorBorderDefault, sak::ui::kColorTextMuted));
+                "QPushButton { background: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 "
+                "#ffa726,stop:1 #f57c00); color: white; font-weight: 600; border-radius: 12px; }"
+                "QPushButton:hover { background: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 "
+                "#ffb74d,stop:1 #ffa726); }"
+                "QPushButton:pressed { background: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 "
+                "#f57c00,stop:1 #e65100); }"
+                + QString("QPushButton:disabled { background-color: %1; color: %2; }")
+                    .arg(sak::ui::kColorBorderDefault, sak::ui::kColorTextMuted));
         }
     } else {
         m_pauseResumeButton->setVisible(false);

@@ -26,7 +26,7 @@ ScreenshotSettingsAction::ScreenshotSettingsAction(const QString& output_locatio
 void ScreenshotSettingsAction::captureScreen(const QString& filename) {
     QScreen* screen = QGuiApplication::primaryScreen();
     if (!screen) return;
-    
+
     QPixmap screenshot = screen->grabWindow(0);
     screenshot.save(filename, "PNG");
 }
@@ -34,14 +34,14 @@ void ScreenshotSettingsAction::captureScreen(const QString& filename) {
 void ScreenshotSettingsAction::openSettingsAndCapture(const QString& uri, const QString& name) {
     // Open Windows Settings
     QProcess::startDetached("explorer.exe", QStringList() << QString("ms-settings:%1").arg(uri));
-    
+
     // Wait for window to open
     QThread::msleep(sak::kTimerServiceDelayMs);
-    
+
     // Capture screenshot
     QString filepath = m_output_location + "/SettingsScreenshots/" + name + ".png";
     captureScreen(filepath);
-    
+
     m_screenshots_taken++;
 }
 
@@ -124,8 +124,10 @@ void ScreenshotSettingsAction::buildExecutionResult(
     structured_log += QString("SUCCESSFUL_CAPTURES:%1\n").arg(capture.captured_pages.size());
     structured_log += QString("FAILED_CAPTURES:%1\n").arg(capture.failed_attempts);
     structured_log += QString("TOTAL_PAGES:%1\n").arg(total_pages);
-    structured_log += QString("SUCCESS_RATE:%1%\n").arg(capture.captured_pages.size() * 100 / total_pages);
-    structured_log += QString("REPORT_PATH:%1\n").arg(output_dir.filePath(QString("Screenshot_Report_%1.txt").arg(timestamp)));
+    structured_log += QString("SUCCESS_RATE:%1%\n")
+        .arg(capture.captured_pages.size() * 100 / total_pages);
+    structured_log += QString("REPORT_PATH:%1\n")
+        .arg(output_dir.filePath(QString("Screenshot_Report_%1.txt").arg(timestamp)));
 
     if (capture.screenshots_taken > 0) {
         result.success = true;
@@ -241,11 +243,21 @@ void ScreenshotSettingsAction::generateReport(const QString& output_dir_path,
     report << "╔══════════════════════════════════════════════════════════════╗\n";
     report << "║         WINDOWS SETTINGS SCREENSHOT REPORT                   ║\n";
     report << "╠══════════════════════════════════════════════════════════════╣\n";
-    report << QString("║ Timestamp:         %1                    ║\n").arg(QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss"));
-    report << QString("║ Monitors Detected: %1                                       ║\n").arg(monitor_count);
-    report << QString("║ Total Pages:       %1                                      ║\n").arg(total_pages);
-    report << QString("║ Successful:        %1                                      ║\n").arg(capture.captured_pages.size());
-    report << QString("║ Failed:            %1                                       ║\n").arg(capture.failed_attempts);
+    report
+        << QString("║ Timestamp:         %1                    ║\n")
+            .arg(QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss"));
+    report
+        << QString("║ Monitors Detected: %1                                       ║\n")
+            .arg(monitor_count);
+    report
+        << QString("║ Total Pages:       %1                                      ║\n")
+            .arg(total_pages);
+    report
+        << QString("║ Successful:        %1                                      ║\n")
+            .arg(capture.captured_pages.size());
+    report
+        << QString("║ Failed:            %1                                       ║\n")
+            .arg(capture.failed_attempts);
     report << "╠══════════════════════════════════════════════════════════════╣\n";
     report << "║                    CAPTURED PAGES                            ║\n";
     report << "╠══════════════════════════════════════════════════════════════╣\n";
@@ -264,7 +276,8 @@ void ScreenshotSettingsAction::generateReport(const QString& output_dir_path,
     }
 
     report << "╠══════════════════════════════════════════════════════════════╣\n";
-    report << QString("║ Output Location: %1").arg(output_dir.absolutePath()).leftJustified(61, ' ') << "║\n";
+    report << QString("║ Output Location: %1").arg(output_dir.absolutePath()).leftJustified(61,
+        ' ') << "║\n";
     report << "╚══════════════════════════════════════════════════════════════╝\n";
 
     report_file.close();
@@ -274,9 +287,9 @@ void ScreenshotSettingsAction::generateReport(const QString& output_dir_path,
 int ScreenshotSettingsAction::detectMonitorCount() {
     QList<QScreen*> screens = QGuiApplication::screens();
     int count = screens.size();
-    
+
     sak::logDebug("Detected {} monitor(s)", count);
-    
+
     // Log each monitor's properties
     for (int i = 0; i < count; i++) {
         QScreen* screen = screens[i];
@@ -285,27 +298,28 @@ int ScreenshotSettingsAction::detectMonitorCount() {
                      i + 1, geometry.width(), geometry.height(),
                      geometry.x(), geometry.y());
     }
-    
+
     return count;
 }
 
 // Helper method: Check if a process is currently running
 bool ScreenshotSettingsAction::isProcessRunning(const QString& process_name) {
     QProcess tasklist;
-    tasklist.start("tasklist", QStringList() << "/FI" << QString("IMAGENAME eq %1").arg(process_name));
+    tasklist.start("tasklist",
+        QStringList() << "/FI" << QString("IMAGENAME eq %1").arg(process_name));
     if (!tasklist.waitForFinished(sak::kTimerServiceDelayMs)) {
         sak::logWarning("tasklist timed out checking for process: {}",
                         process_name.toStdString());
         tasklist.kill();
         return false;
     }
-    
+
     if (tasklist.exitCode() != 0) {
         sak::logDebug("tasklist returned exit code {} for process: {}",
                       tasklist.exitCode(), process_name.toStdString());
         return false;
     }
-    
+
     QString output = tasklist.readAllStandardOutput();
     return output.contains(process_name, Qt::CaseInsensitive);
 }

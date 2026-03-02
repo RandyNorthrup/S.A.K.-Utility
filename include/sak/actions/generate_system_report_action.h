@@ -10,7 +10,7 @@ namespace sak {
 
 /**
  * @brief Generate System Report Action
- * 
+ *
  * Generates comprehensive HTML system report using msinfo32 and PowerShell.
  */
 class GenerateSystemReportAction : public QuickAction {
@@ -36,7 +36,8 @@ private:
     /// @return Formatted report header string.
     QString buildReportHeader() const;
 
-    /// @brief Gathers OS, hardware, CPU, memory, BIOS, network, and activation info via Get-ComputerInfo.
+    /// @brief Gathers OS, hardware, CPU, memory, BIOS,
+    /// network, and activation info via Get-ComputerInfo.
     /// @return Report section text; may contain timeout fallback text.
     QString gatherOsAndHardwareInfo();
 
@@ -62,7 +63,8 @@ private:
     bool saveReport(const QString& report, const QString& filepath);
 
     /// @brief Save the report file and emit the final ExecutionResult
-    void saveReportAndFinish(const QString& report, const QString& filepath, const QDateTime& start_time);
+    void saveReportAndFinish(const QString& report, const QString& filepath,
+        const QDateTime& start_time);
 };
 
 } // namespace sak

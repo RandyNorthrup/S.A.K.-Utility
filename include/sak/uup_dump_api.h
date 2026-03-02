@@ -47,7 +47,8 @@ public:
     /// @brief Information about an available Windows build
     struct BuildInfo {
         QString uuid;       ///< Unique update identifier (used for subsequent API calls)
-        QString title;      ///< Human-readable title (e.g., "Windows 11, version 24H2 (26100.3194)")
+        QString title;      ///< Human-readable title
+            ///< (e.g., "Windows 11, version 24H2 (26100.3194)")
         QString build;      ///< Build number (e.g., "26100.3194")
         QString arch;       ///< Architecture (e.g., "amd64", "arm64")
         qint64  created;    ///< Unix timestamp of when the build was added to the database
@@ -148,7 +149,8 @@ Q_SIGNALS:
     /**
      * @brief Emitted when languages for a build are available
      * @param langCodes List of language codes (e.g., "en-us", "de-de")
-     * @param langNames Map of language code to friendly name (e.g., "en-us" → "English (United States)")
+     * @param langNames Map of language code to friendly name (e.g.,
+         "en-us" → "English (United States)")
      */
     void languagesFetched(const QStringList& langCodes,
                           const QMap<QString, QString>& langNames);

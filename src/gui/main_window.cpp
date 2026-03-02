@@ -59,7 +59,7 @@ void MainWindow::setupUi()
     setMinimumSize(sak::kMainWindowMinW, sak::kMainWindowMinH);
     resize(sak::kMainWindowInitW, sak::kMainWindowInitH);
 
-    
+
     // Create central tab widget
     m_tab_widget = new QTabWidget(this);
     m_tab_widget->setTabPosition(QTabWidget::North);
@@ -67,7 +67,7 @@ void MainWindow::setupUi()
     m_tab_widget->setUsesScrollButtons(true);  // Scroll tabs when window is narrow
     m_tab_widget->setElideMode(Qt::ElideNone); // Don't truncate tab labels
     setCentralWidget(m_tab_widget);
-    
+
     // Create UI elements
     createMenuBar();
     createStatusBar();
@@ -77,7 +77,7 @@ void MainWindow::setupUi()
 
     createPanels();
     createKeyboardShortcuts();
-    
+
     updateStatus("Ready", 0);
 }
 
@@ -95,7 +95,7 @@ void MainWindow::createStatusBar()
     m_status_label = new QLabel("Ready", this);
     m_status_label->setContentsMargins(6, 0, 6, 0);
     statusBar()->addWidget(m_status_label, 1);
-    
+
     // Progress bar (hidden by default)
     m_progress_bar = new QProgressBar(this);
     m_progress_bar->setMaximumWidth(sak::kProgressBarMaxW);
@@ -118,49 +118,58 @@ void MainWindow::createToolPanels()
     // Create Quick Actions panel (first tab)
     m_quick_actions_panel = std::make_unique<QuickActionsPanel>(this);
     m_tab_widget->addTab(m_quick_actions_panel.get(), "Quick Actions");
-    m_tab_widget->setTabToolTip(m_tab_widget->count() - 1, "Common system utilities and Quick Actions (Ctrl+1)");
-    
+    m_tab_widget->setTabToolTip(m_tab_widget->count() - 1,
+        "Common system utilities and Quick Actions (Ctrl+1)");
+
     // Create User Migration panel
     m_user_migration_panel = std::make_unique<UserMigrationPanel>(this);
     m_tab_widget->addTab(m_user_migration_panel.get(), "Backup & Restore");
-    m_tab_widget->setTabToolTip(m_tab_widget->count() - 1, "Backup and restore user profiles (Ctrl+2)");
-    
+    m_tab_widget->setTabToolTip(m_tab_widget->count() - 1,
+        "Backup and restore user profiles (Ctrl+2)");
+
     // Create Organizer panel
     m_organizer_panel = std::make_unique<OrganizerPanel>(this);
     m_tab_widget->addTab(m_organizer_panel.get(), "Directory Organizer");
-    m_tab_widget->setTabToolTip(m_tab_widget->count() - 1, "Organize files in a directory by type (Ctrl+3)");
-    
+    m_tab_widget->setTabToolTip(m_tab_widget->count() - 1,
+        "Organize files in a directory by type (Ctrl+3)");
+
     // Create Duplicate Finder panel
     m_duplicate_finder_panel = std::make_unique<DuplicateFinderPanel>(this);
     m_tab_widget->addTab(m_duplicate_finder_panel.get(), "Duplicate Finder");
-    m_tab_widget->setTabToolTip(m_tab_widget->count() - 1, "Find and manage duplicate files (Ctrl+4)");
-    
+    m_tab_widget->setTabToolTip(m_tab_widget->count() - 1,
+        "Find and manage duplicate files (Ctrl+4)");
+
     // Create App Installation panel
     m_app_installation_panel = std::make_unique<AppInstallationPanel>(this);
     m_tab_widget->addTab(m_app_installation_panel.get(), "App Installation");
-    m_tab_widget->setTabToolTip(m_tab_widget->count() - 1, "Install applications via Chocolatey (Ctrl+5)");
+    m_tab_widget->setTabToolTip(m_tab_widget->count() - 1,
+        "Install applications via Chocolatey (Ctrl+5)");
 
     // Create Network Transfer panel
     if (ConfigManager::instance().getNetworkTransferEnabled()) {
         m_network_transfer_panel = std::make_unique<NetworkTransferPanel>(this);
         m_tab_widget->addTab(m_network_transfer_panel.get(), "Network Transfer");
-        m_tab_widget->setTabToolTip(m_tab_widget->count() - 1, "Transfer user profiles across the network (Ctrl+6)");
+        m_tab_widget->setTabToolTip(m_tab_widget->count() - 1,
+            "Transfer user profiles across the network (Ctrl+6)");
     }
-    
+
     // Create Image Flasher panel
     m_image_flasher_panel = std::make_unique<ImageFlasherPanel>(this);
     m_tab_widget->addTab(m_image_flasher_panel.get(), "Image Flasher");
-    m_tab_widget->setTabToolTip(m_tab_widget->count() - 1, "Flash ISO images to USB drives (Ctrl+7)");
-    
+    m_tab_widget->setTabToolTip(m_tab_widget->count() - 1,
+        "Flash ISO images to USB drives (Ctrl+7)");
+
     // Create Diagnostic & Benchmarking panel
     m_diagnostic_benchmark_panel = std::make_unique<DiagnosticBenchmarkPanel>(this);
     m_tab_widget->addTab(m_diagnostic_benchmark_panel.get(), "Diagnostics");
-    m_tab_widget->setTabToolTip(m_tab_widget->count() - 1, "System diagnostics, benchmarks, and stress tests (Ctrl+8)");
+    m_tab_widget->setTabToolTip(m_tab_widget->count() - 1,
+        "System diagnostics, benchmarks, and stress tests (Ctrl+8)");
 
     // Create WiFi Manager panel
     m_wifi_manager_panel = std::make_unique<WifiManagerPanel>(this);
     m_tab_widget->addTab(m_wifi_manager_panel.get(), "WiFi Manager");
-    m_tab_widget->setTabToolTip(m_tab_widget->count() - 1, "Manage WiFi networks, QR codes, and profiles (Ctrl+9)");
+    m_tab_widget->setTabToolTip(m_tab_widget->count() - 1,
+        "Manage WiFi networks, QR codes, and profiles (Ctrl+9)");
     connect(m_wifi_manager_panel.get(), &WifiManagerPanel::statusMessage,
             this, &MainWindow::updateStatus);
 }
@@ -212,7 +221,8 @@ void MainWindow::createAboutPanel()
         titleLayout->addWidget(title);
         auto* ver = new QLabel(
             QString("Version %1 \u2014 %2").arg(get_version(), get_build_date()), aboutPanel);
-        ver->setStyleSheet(QString("font-size: %1pt; color: %2;").arg(ui::kFontSizeBody).arg(ui::kColorTextMuted));
+        ver->setStyleSheet(QString("font-size: %1pt; color: %2;").arg(ui::kFontSizeBody)
+            .arg(ui::kColorTextMuted));
         titleLayout->addWidget(ver);
         headerLayout->addLayout(titleLayout);
         headerLayout->addStretch();
@@ -228,7 +238,8 @@ void MainWindow::createAboutPanel()
             "<h3>Swiss Army Knife (S.A.K.) Utility</h3>"
             "<p><b>PC Technician's Toolkit for Windows Migration and Maintenance</b></p>"
             "<p>Designed for PC technicians who need to migrate systems, backup user profiles, "
-            "and manage files efficiently. Built with modern C++23 and Qt6 for Windows 10/11 x64.</p>");
+            "and manage files efficiently. Built with modern C++23 and Qt6 for Windows 10/11 "
+            "x64.</p>");
         aboutTabs->addTab(descBrowser, "About");
 
         // License tab (QTextBrowser with HTML)
@@ -261,22 +272,25 @@ void MainWindow::connectPanelSignals()
             this, [this](const QString& msg, int timeout_ms) { updateStatus(msg, timeout_ms); });
     connect(m_quick_actions_panel.get(), &QuickActionsPanel::progressUpdate,
             this, &MainWindow::updateProgress);
-    
+
     connect(m_user_migration_panel.get(), &UserMigrationPanel::statusMessage,
             this, [this](const QString& msg) { updateStatus(msg, 5000); });
-    
+
     connect(m_organizer_panel.get(), &OrganizerPanel::statusMessage,
-            this, [this](const QString& msg, int timeout_ms) { updateStatus(msg, timeout_ms > 0 ? timeout_ms : 5000); });
+            this, [this](const QString& msg, int timeout_ms) { updateStatus(msg,
+                timeout_ms > 0 ? timeout_ms : 5000); });
     connect(m_organizer_panel.get(), &OrganizerPanel::progressUpdate,
             this, &MainWindow::updateProgress);
-    
+
     connect(m_duplicate_finder_panel.get(), &DuplicateFinderPanel::statusMessage,
-            this, [this](const QString& msg, int timeout_ms) { updateStatus(msg, timeout_ms > 0 ? timeout_ms : 5000); });
+            this, [this](const QString& msg, int timeout_ms) { updateStatus(msg,
+                timeout_ms > 0 ? timeout_ms : 5000); });
     connect(m_duplicate_finder_panel.get(), &DuplicateFinderPanel::progressUpdate,
             this, &MainWindow::updateProgress);
-    
+
     connect(m_app_installation_panel.get(), &AppInstallationPanel::statusMessage,
-            this, [this](const QString& msg, int timeout_ms) { updateStatus(msg, timeout_ms > 0 ? timeout_ms : 5000); });
+            this, [this](const QString& msg, int timeout_ms) { updateStatus(msg,
+                timeout_ms > 0 ? timeout_ms : 5000); });
     connect(m_app_installation_panel.get(), &AppInstallationPanel::progressUpdated,
             this, &MainWindow::updateProgress);
 
@@ -293,7 +307,8 @@ void MainWindow::connectPanelSignals()
     }
 
     connect(m_diagnostic_benchmark_panel.get(), &DiagnosticBenchmarkPanel::statusMessage,
-            this, [this](const QString& msg, int timeout_ms) { updateStatus(msg, timeout_ms > 0 ? timeout_ms : 5000); });
+            this, [this](const QString& msg, int timeout_ms) { updateStatus(msg,
+                timeout_ms > 0 ? timeout_ms : 5000); });
     connect(m_diagnostic_benchmark_panel.get(), &DiagnosticBenchmarkPanel::progressUpdate,
             this, &MainWindow::updateProgress);
 }
@@ -409,7 +424,8 @@ void MainWindow::createKeyboardShortcuts()
 {
     // Tab navigation: Ctrl+1..9 switches to tab index 0..8
     for (int i = 0; i < qMin(m_tab_widget->count(), 9); ++i) {
-        auto* shortcut = new QShortcut(QKeySequence(Qt::CTRL | static_cast<Qt::Key>(Qt::Key_1 + i)), this);
+        auto* shortcut = new QShortcut(QKeySequence(Qt::CTRL | static_cast<Qt::Key>(Qt::Key_1 +
+            i)), this);
         shortcut->setContext(Qt::ApplicationShortcut);
         connect(shortcut, &QShortcut::activated, this, [this, i]() {
             m_tab_widget->setCurrentIndex(i);
@@ -427,7 +443,8 @@ void MainWindow::createKeyboardShortcuts()
     auto* prevTab = new QShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_Tab), this);
     prevTab->setContext(Qt::ApplicationShortcut);
     connect(prevTab, &QShortcut::activated, this, [this]() {
-        int prev = (m_tab_widget->currentIndex() - 1 + m_tab_widget->count()) % m_tab_widget->count();
+        int prev = (m_tab_widget->currentIndex() - 1 +
+            m_tab_widget->count()) % m_tab_widget->count();
         m_tab_widget->setCurrentIndex(prev);
     });
 
@@ -444,12 +461,12 @@ void MainWindow::createKeyboardShortcuts()
 void MainWindow::loadWindowState()
 {
     auto& config = ConfigManager::instance();
-    
+
     if (config.getRestoreWindowGeometry()) {
         restoreGeometry(config.getWindowGeometry());
         restoreState(config.getWindowState());
     }
-    
+
     // Always start on Quick Actions tab (index 0)
     m_tab_widget->setCurrentIndex(0);
 }

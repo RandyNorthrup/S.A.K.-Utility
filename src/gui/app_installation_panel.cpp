@@ -148,7 +148,8 @@ void AppInstallationPanel::setupUi_packageTable(QSplitter* splitter)
 
     m_resultsTable = new QTableView(this);
     m_resultsModel = new QStandardItemModel(0, RColCount, this);
-    m_resultsModel->setHorizontalHeaderLabels({tr(""), tr("Package"), tr("Version"), tr("Publisher")});
+    m_resultsModel->setHorizontalHeaderLabels({tr(""), tr("Package"), tr("Version"),
+        tr("Publisher")});
 
     m_resultsTable->setModel(m_resultsModel);
     m_resultsTable->setSelectionBehavior(QAbstractItemView::SelectRows);
@@ -167,7 +168,8 @@ void AppInstallationPanel::setupUi_packageTable(QSplitter* splitter)
     m_resultsTable->setColumnWidth(RColCheck, 36);
 
     m_resultsTable->setStyleSheet(
-        "QTableView::indicator { width: 16px; height: 16px; border: 1px solid #94a3b8; border-radius: 4px; background: #f8fafc; }"
+        "QTableView::indicator { width: 16px; height: 16px; border: 1px solid #94a3b8; "
+        "border-radius: 4px; background: #f8fafc; }"
         "QTableView::indicator:checked { background: #3b82f6; border: 1px solid #2563eb; }"
         "QTableView::indicator:unchecked { background: #f8fafc; border: 1px solid #94a3b8; }"
     );
@@ -232,7 +234,8 @@ void AppInstallationPanel::setupUi_queueSection(QSplitter* splitter)
     auto* saveLoadLayout = new QHBoxLayout();
     m_saveQueueButton = new QPushButton(tr("Save List"), this);
     m_saveQueueButton->setAccessibleName(QStringLiteral("Save Install List"));
-    m_saveQueueButton->setToolTip(tr("Save the current install queue to a JSON file for later use"));
+    m_saveQueueButton->setToolTip(tr(
+        "Save the current install queue to a JSON file for later use"));
     m_saveQueueButton->setEnabled(false);
     connect(m_saveQueueButton, &QPushButton::clicked, this, &AppInstallationPanel::saveQueueToFile);
     saveLoadLayout->addWidget(m_saveQueueButton);
@@ -273,7 +276,8 @@ void AppInstallationPanel::setupSearchAndQueueConnections()
 
     // Queue management
     connect(m_addToQueueButton, &QPushButton::clicked, this, &AppInstallationPanel::onAddToQueue);
-    connect(m_removeFromQueueButton, &QPushButton::clicked, this, &AppInstallationPanel::onRemoveFromQueue);
+    connect(m_removeFromQueueButton, &QPushButton::clicked, this,
+        &AppInstallationPanel::onRemoveFromQueue);
     connect(m_clearQueueButton, &QPushButton::clicked, this, &AppInstallationPanel::onClearQueue);
 
     // Install
@@ -282,7 +286,8 @@ void AppInstallationPanel::setupSearchAndQueueConnections()
 
     // Queue selection
     connect(m_queueList, &QListWidget::itemSelectionChanged, this, [this]() {
-        m_removeFromQueueButton->setEnabled(!m_queueList->selectedItems().isEmpty() && !m_install_in_progress);
+        m_removeFromQueueButton->setEnabled(!m_queueList->selectedItems().isEmpty() &&
+            !m_install_in_progress);
     });
 
     // Results selection
@@ -328,7 +333,8 @@ void AppInstallationPanel::setupWorkerConnections()
                         Q_EMIT logOutput(QString("✓ %1 installed successfully").arg(job.packageId));
                         break;
                     case MigrationStatus::Failed:
-                        Q_EMIT logOutput(QString("✗ %1 failed: %2").arg(job.packageId, job.errorMessage));
+                        Q_EMIT logOutput(QString("✗ %1 failed: %2").arg(job.packageId,
+                            job.errorMessage));
                         break;
                     default:
                         break;
@@ -341,7 +347,8 @@ void AppInstallationPanel::setupWorkerConnections()
 
     connect(m_worker.get(), &AppInstallationWorker::migrationCompleted, this,
             [this](const AppInstallationWorker::Stats& stats) {
-                Q_EMIT logOutput(QString("Installation complete: %1 succeeded, %2 failed, %3 skipped")
+                Q_EMIT logOutput(QString("Installation complete: %1 succeeded, %2 failed, %3 "
+                                         "skipped")
                     .arg(stats.success).arg(stats.failed).arg(stats.skipped));
                 Q_EMIT statusMessage(QString("App Installation: %1 succeeded, %2 failed")
                     .arg(stats.success).arg(stats.failed), 5000);

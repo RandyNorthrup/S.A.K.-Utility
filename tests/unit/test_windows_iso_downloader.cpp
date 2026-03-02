@@ -191,7 +191,8 @@ void WindowsISODownloaderTests::testGetFilesReturnsResults()
     auto files = filesSpy.at(0).at(1).value<QList<UupDumpApi::FileInfo>>();
     qInfo() << "Files fetched:" << files.size();
     QVERIFY2(!files.isEmpty(),
-             "Expected non-empty file list (URL validation may be rejecting valid Microsoft CDN URLs)");
+             "Expected non-empty file list (URL validation may be rejecting valid Microsoft CDN "
+             "URLs)");
 }
 
 /**

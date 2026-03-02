@@ -15,7 +15,8 @@ namespace sak {
 
 QByteArray TransferSecurityManager::generateRandomBytes(int size) {
     if (size <= 0) {
-        logWarning("TransferSecurityManager::generateRandomBytes called with non-positive size {}", size);
+        logWarning("TransferSecurityManager::generateRandomBytes called with non-positive size {}",
+            size);
         return {};
     }
     QByteArray result(size, 0);
@@ -25,7 +26,8 @@ QByteArray TransferSecurityManager::generateRandomBytes(int size) {
         return {};
     }
 
-    if (BCryptGenRandom(hAlg, reinterpret_cast<PUCHAR>(result.data()), static_cast<ULONG>(size), 0) != 0) {
+    if (BCryptGenRandom(hAlg, reinterpret_cast<PUCHAR>(result.data()), static_cast<ULONG>(size),
+        0) != 0) {
         BCryptCloseAlgorithmProvider(hAlg, 0);
         return {};
     }
@@ -49,7 +51,8 @@ std::expected<QByteArray, error_code> TransferSecurityManager::deriveKey(
     }
 
     BCRYPT_ALG_HANDLE hAlg = nullptr;
-    if (BCryptOpenAlgorithmProvider(&hAlg, BCRYPT_SHA256_ALGORITHM, nullptr, BCRYPT_ALG_HANDLE_HMAC_FLAG) != 0) {
+    if (BCryptOpenAlgorithmProvider(&hAlg, BCRYPT_SHA256_ALGORITHM, nullptr,
+        BCRYPT_ALG_HANDLE_HMAC_FLAG) != 0) {
         return std::unexpected(error_code::crypto_error);
     }
 

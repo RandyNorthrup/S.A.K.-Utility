@@ -97,7 +97,8 @@ auto MemoryBenchmarkWorker::execute() -> std::expected<void, sak::error_code>
     // Latency: lower is better, so invert
     const double lat_score   = (kRefLatencyNs / std::max(m_result.random_latency_ns, 1.0)) * 0.25;
 
-    m_result.overall_score = static_cast<int>((read_score + write_score + copy_score + lat_score) * 1000.0);
+    m_result.overall_score = static_cast<int>((read_score + write_score + copy_score +
+        lat_score) * 1000.0);
     m_result.timestamp = QDateTime::currentDateTime();
 
     logInfo("Memory benchmark complete — R: {:.1f} GB/s, W: {:.1f} GB/s, "
@@ -149,7 +150,8 @@ double MemoryBenchmarkWorker::runReadBandwidth()
         }
 
         const double elapsed_sec = timer.nsecsElapsed() / 1'000'000'000.0;
-        const double gbps = static_cast<double>(buf.size()) / (1024.0 * 1024.0 * 1024.0) / elapsed_sec;
+        const double gbps =
+            static_cast<double>(buf.size()) / (1024.0 * 1024.0 * 1024.0) / elapsed_sec;
         best_gbps = std::max(best_gbps, gbps);
 
         // Prevent optimization from eliding reads
@@ -191,7 +193,8 @@ double MemoryBenchmarkWorker::runWriteBandwidth()
         }
 
         const double elapsed_sec = timer.nsecsElapsed() / 1'000'000'000.0;
-        const double gbps = static_cast<double>(buf.size()) / (1024.0 * 1024.0 * 1024.0) / elapsed_sec;
+        const double gbps =
+            static_cast<double>(buf.size()) / (1024.0 * 1024.0 * 1024.0) / elapsed_sec;
         best_gbps = std::max(best_gbps, gbps);
     }
 
@@ -219,7 +222,8 @@ double MemoryBenchmarkWorker::runCopyBandwidth()
 
         const double elapsed_sec = timer.nsecsElapsed() / 1'000'000'000.0;
         // Copy touches both read and write = 2× buffer size
-        const double gbps = static_cast<double>(src.size()) / (1024.0 * 1024.0 * 1024.0) / elapsed_sec;
+        const double gbps =
+            static_cast<double>(src.size()) / (1024.0 * 1024.0 * 1024.0) / elapsed_sec;
         best_gbps = std::max(best_gbps, gbps);
     }
 

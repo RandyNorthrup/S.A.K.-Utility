@@ -92,7 +92,8 @@ void OrchestrationClientTests::autoReconnectsAfterDisconnect() {
 
     // Process events so the client receives the disconnect and starts the reconnect timer
     QSignalSpy newConnSpy(&server, &QTcpServer::newConnection);
-    QTRY_VERIFY2_WITH_TIMEOUT(newConnSpy.count() >= 1, "Client should auto-reconnect after disconnect", 5000);
+    QTRY_VERIFY2_WITH_TIMEOUT(newConnSpy.count() >= 1,
+        "Client should auto-reconnect after disconnect", 5000);
 }
 
 void OrchestrationClientTests::receivesAssignmentControl() {
@@ -124,7 +125,8 @@ void OrchestrationClientTests::receivesAssignmentControl() {
         payload["job_id"] = "job-ctl";
         payload["action"] = action;
         OrchestrationProtocol::writeMessage(socket,
-            OrchestrationProtocol::makeMessage(OrchestrationMessageType::AssignmentControl, payload));
+            OrchestrationProtocol::makeMessage(OrchestrationMessageType::AssignmentControl,
+                payload));
     };
 
     sendControl("pause");

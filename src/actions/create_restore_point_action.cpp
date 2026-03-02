@@ -84,13 +84,14 @@ CreateRestorePointAction::CreateRestorePointAction(QObject* parent)
 }
 
 void CreateRestorePointAction::checkRestoreStatus() {
-    ProcessResult proc = runPowerShell("Get-ComputerRestorePoint | Select-Object -First 1 | Format-List", sak::kTimeoutProcessShortMs);
+    ProcessResult proc = runPowerShell("Get-ComputerRestorePoint | Select-Object -First 1 | "
+                                       "Format-List", sak::kTimeoutProcessShortMs);
     if (!proc.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("Restore point status warning: " + proc.std_err.trimmed());
     }
     QString output = proc.std_out;
     m_restore_enabled = !output.isEmpty();
-    
+
     if (m_restore_enabled) {
         // Parse last restore point info
         m_last_restore_point = "Previous restore point exists";
@@ -101,7 +102,7 @@ void CreateRestorePointAction::scan() {
     setStatus(ActionStatus::Scanning);
 
     Q_EMIT scanProgress("Checking System Restore status...");
-    
+
     // Check if System Restore is enabled on the system drive (C:\)
     // Uses Enable-ComputerRestore / Disable-ComputerRestore status detection
     const QString status_script = R"PS(
@@ -112,7 +113,8 @@ void CreateRestorePointAction::scan() {
             if ($rps.Count -gt 0) { Write-Output "ENABLED|$($rps.Count)|$vssRunning" }
             else { Write-Output "NO_POINTS|0|$vssRunning" }
         } catch {
-            if ($_.Exception.Message -match 'disabled|turned off') { Write-Output 'DISABLED|0|Unknown' }
+            if ($_.Exception
+                .Message -match 'disabled|turned off') { Write-Output 'DISABLED|0|Unknown' }
             else { Write-Output 'UNKNOWN|0|Unknown' }
         }
     )PS";
@@ -122,38 +124,42 @@ void CreateRestorePointAction::scan() {
     }
     QString output = check_proc.std_out.trimmed();
     QStringList parts = output.split("|");
-    
+
     ScanResult result;
     result.applicable = true;
-    
+
     QString status = parts.value(0, "UNKNOWN");
     QString point_count = parts.value(1, "0");
     QString vss_status = parts.value(2, "Unknown");
-    
+
     if (status == "ENABLED") {
-        result.summary = QString("System Restore enabled - %1 existing restore point(s) - VSS service %2")
+        result.summary = QString("System Restore enabled - %1 existing restore point(s) - VSS "
+                                 "service %2")
             .arg(point_count)
             .arg(vss_status == "True" ? "running" : "stopped");
     } else if (status == "NO_POINTS") {
-        result.summary = QString("System Restore enabled but no restore points yet - VSS service %1")
+        result.summary =
+            QString("System Restore enabled but no restore points yet - VSS service %1")
             .arg(vss_status == "True" ? "running" : "stopped");
     } else if (status == "DISABLED") {
-        result.summary = "System Restore is DISABLED - Enable via: System Properties > System Protection > Configure";
+        result.summary = "System Restore is DISABLED - Enable via: System Properties > System "
+                         "Protection > Configure";
         result.applicable = true; // Still applicable, will attempt to enable during execution
     } else {
         result.summary = "System Restore status uncertain - will verify during execution";
     }
-    
+
     setScanResult(result);
     setStatus(ActionStatus::Ready);
     Q_EMIT scanComplete(result);
 }
 
 void CreateRestorePointAction::createRestorePoint() {
-    QString ps_script = "Checkpoint-Computer -Description 'SAK Utility Emergency Restore Point' -RestorePointType 'MODIFY_SETTINGS'";
-    
+    QString ps_script = "Checkpoint-Computer -Description 'SAK Utility Emergency Restore Point' "
+                        "-RestorePointType 'MODIFY_SETTINGS'";
+
     Q_EMIT executionProgress("Creating restore point...", 50);
-    
+
     ProcessResult proc = runPowerShell(ps_script, sak::kTimeoutProcessVeryLongMs);
     if (!proc.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("Restore point create warning: " + proc.std_err.trimmed());
@@ -168,39 +174,41 @@ void CreateRestorePointAction::execute() {
         emitCancelledResult("Restore point creation cancelled", start_time);
         return;
     }
-    
+
     QString report;
     report += "╔══════════════════════════════════════════════════════════════════════╗\n";
     report += "║              SYSTEM RESTORE POINT CREATION REPORT                    ║\n";
     report += "╠══════════════════════════════════════════════════════════════════════╣\n";
-    
+
     // Phase 1: Check VSS service status
     Q_EMIT executionProgress("Checking System Restore status...", 10);
     QString vss_status = queryVssServiceStatus();
-    report += QString("║ Volume Shadow Copy Service: %1").arg(vss_status.leftJustified(38)) + QString("║\n");
-    
+    report += QString("║ Volume Shadow Copy Service: %1").arg(vss_status.leftJustified(38)) +
+        QString("║\n");
+
     // Phase 2: Get existing restore points count
     Q_EMIT executionProgress("Checking existing restore points...", 20);
     QString existing_count = queryRestorePointCount();
-    report += QString("║ Existing Restore Points: %1").arg(existing_count.leftJustified(42)) + QString("║\n");
+    report += QString("║ Existing Restore Points: %1").arg(existing_count.leftJustified(42)) +
+        QString("║\n");
     report += "╠══════════════════════════════════════════════════════════════════════╣\n";
-    
+
     // Phase 3: Create restore point
     Q_EMIT executionProgress("Creating new restore point...", 30);
     QString error_msg;
     QString error_code;
     auto [success, create_section] = createAndFormatResult(error_msg, error_code);
     report += create_section;
-    
+
     // Phase 4: Verify latest restore point
     Q_EMIT executionProgress("Verifying restore point creation...", 70);
     report += verifyLatestRestorePoint();
-    
+
     // Phase 5: Final count + management report
     Q_EMIT executionProgress("Generating final report...", 90);
     QString final_count = queryRestorePointCount();
     report += buildManagementReport(final_count);
-    
+
     // Structured output
     QString structured_output = "\n";
     structured_output += QString("RESTORE_POINT_CREATED:%1\n").arg(success ? "YES" : "NO");
@@ -210,10 +218,11 @@ void CreateRestorePointAction::execute() {
     if (!error_msg.isEmpty()) {
         structured_output += QString("ERROR_MESSAGE:%1\n").arg(error_msg);
     }
-    
+
     ExecutionResult result;
     result.success = success;
-    result.message = success ? "Restore point created successfully" : "Restore point creation failed";
+    result.message = success ? "Restore point created successfully" : "Restore point creation "
+                                                                      "failed";
     result.log = report + structured_output;
     result.files_processed = success ? 1 : 0;
     result.duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
@@ -238,7 +247,8 @@ QString CreateRestorePointAction::queryVssServiceStatus()
 QString CreateRestorePointAction::queryRestorePointCount()
 {
     ProcessResult count_proc = runPowerShell(
-        "try { $rps = Get-ComputerRestorePoint -ErrorAction Stop; Write-Output $rps.Count } catch { Write-Output '0' }",
+        "try { $rps = Get-ComputerRestorePoint -ErrorAction Stop; Write-Output $rps.Count } catch "
+        "{ Write-Output '0' }",
         10000);
     if (!count_proc.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("Restore point count warning: " + count_proc.std_err.trimmed());
@@ -263,7 +273,8 @@ std::pair<bool, QString> CreateRestorePointAction::createAndFormatResult(
         QRegularExpression re("Restore point created at (.+)");
         QRegularExpressionMatch match = re.match(create_output);
         if (match.hasMatch()) {
-            section += QString("║   Timestamp: %1").arg(match.captured(1).leftJustified(55)) + QString("║\n");
+            section += QString("║   Timestamp: %1").arg(match.captured(1).leftJustified(55)) +
+                QString("║\n");
         }
         section += "║   Method: Checkpoint-Computer (SystemRestore WMI class)             ║\n";
     } else {
@@ -279,7 +290,8 @@ std::pair<bool, QString> CreateRestorePointAction::createAndFormatResult(
             if (!line.contains("ERROR:") || line.contains("ERROR_CODE:")) continue;
             error_msg = line;
             error_msg = error_msg.replace("ERROR:", "").trimmed();
-            section += QString("║   Error: %1").arg(error_msg.left(66).leftJustified(61)) + QString("║\n");
+            section += QString("║   Error: %1").arg(error_msg.left(66).leftJustified(61)) +
+                QString("║\n");
             break;
         }
 
@@ -292,7 +304,10 @@ std::pair<bool, QString> CreateRestorePointAction::createAndFormatResult(
 QString CreateRestorePointAction::verifyLatestRestorePoint()
 {
     ProcessResult verify_proc = runPowerShell(
-        "try { $rp = Get-ComputerRestorePoint -ErrorAction Stop | Sort-Object CreationTime -Descending | Select-Object -First 1; $seq = $rp.SequenceNumber; $desc = $rp.Description; $time = $rp.CreationTime; Write-Output \"SEQ:$seq\"; Write-Output \"DESC:$desc\"; Write-Output \"TIME:$time\" } catch { Write-Output 'VERIFY_FAILED' }",
+        "try { $rp = Get-ComputerRestorePoint -ErrorAction Stop | Sort-Object CreationTime "
+        "-Descending | Select-Object -First 1; $seq = $rp.SequenceNumber; $desc = $rp.Description; "
+        "$time = $rp.CreationTime; Write-Output \"SEQ:$seq\"; Write-Output \"DESC:$desc\"; "
+        "Write-Output \"TIME:$time\" } catch { Write-Output 'VERIFY_FAILED' }",
         15000);
     if (!verify_proc.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("Restore point verify warning: " + verify_proc.std_err.trimmed());
@@ -353,7 +368,7 @@ QString CreateRestorePointAction::buildTroubleshootingReport(const QString& erro
     QString section;
     section += "║                                                                      ║\n";
     section += "║ TROUBLESHOOTING GUIDANCE:                                            ║\n";
-    
+
     if (error_code == "24HR_LIMIT") {
         section += "║ Issue: Windows Limitation - 24-Hour Frequency Restriction            ║\n";
         section += "║   • Windows 8+ allows only ONE restore point per 24-hour period     ║\n";
@@ -384,7 +399,7 @@ QString CreateRestorePointAction::buildTroubleshootingReport(const QString& erro
         section += "║   • Ensure C:\\ drive has System Protection enabled                   ║\n";
         section += "║   • Check Event Viewer for detailed VSS/SR errors                    ║\n";
     }
-    
+
     return section;
 }
 
@@ -392,7 +407,8 @@ QString CreateRestorePointAction::buildManagementReport(const QString& final_cou
 {
     QString section;
     section += "╠══════════════════════════════════════════════════════════════════════╣\n";
-    section += QString("║ Total Restore Points Available: %1").arg(final_count.leftJustified(34)) + QString("║\n");
+    section += QString("║ Total Restore Points Available: %1").arg(final_count.leftJustified(34)) +
+        QString("║\n");
     section += "║                                                                      ║\n";
     section += "║ RESTORE POINT MANAGEMENT:                                            ║\n";
     section += "║   View All Points:                                                   ║\n";

@@ -29,48 +29,50 @@ UserProfileBackupExecutePage::UserProfileBackupExecutePage(BackupManifest& manif
 {
     setTitle(tr("Execute Backup"));
     setSubTitle(tr("Backup in progress..."));
-    
+
     setupUi();
 }
 
 void UserProfileBackupExecutePage::setupUi() {
     auto* layout = new QVBoxLayout(this);
-    
+
     // Status label
     m_statusLabel = new QLabel(tr("Ready to start backup"), this);
-    m_statusLabel->setStyleSheet(QString("QLabel { font-weight: 600; color: %1; }").arg(sak::ui::kColorTextHeading));
+    m_statusLabel->setStyleSheet(QString("QLabel { font-weight: 600; color: %1; }")
+        .arg(sak::ui::kColorTextHeading));
     layout->addWidget(m_statusLabel);
-    
+
     // Current user being backed up
     m_currentUserLabel = new QLabel(this);
     layout->addWidget(m_currentUserLabel);
-    
+
     // Overall progress
     layout->addWidget(new QLabel(tr("Overall Progress:"), this));
     m_overallProgress = new QProgressBar(this);
     m_overallProgress->setFormat("%v / %m (%p%)");
     layout->addWidget(m_overallProgress);
-    
+
     // Current file/folder progress
     layout->addWidget(new QLabel(tr("Current Operation:"), this));
     m_currentProgress = new QProgressBar(this);
     m_currentProgress->setFormat("%v / %m (%p%)");
     layout->addWidget(m_currentProgress);
-    
+
     // Log output
     layout->addWidget(new QLabel(tr("Log:"), this));
     m_logEdit = new QTextEdit(this);
     m_logEdit->setReadOnly(true);
     m_logEdit->setMaximumHeight(sak::kLogAreaSmallMaxH);
     layout->addWidget(m_logEdit);
-    
+
     // Start button
     m_startButton = new QPushButton(tr("Start Backup"), this);
     m_startButton->setIcon(QIcon::fromTheme("media-playback-start"));
     m_startButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
-    connect(m_startButton, &QPushButton::clicked, this, &UserProfileBackupExecutePage::onStartBackup);
+    connect(m_startButton, &QPushButton::clicked, this,
+        &UserProfileBackupExecutePage::onStartBackup);
     layout->addWidget(m_startButton);
-    
+
     layout->addStretch();
 }
 
@@ -85,38 +87,38 @@ bool UserProfileBackupExecutePage::isComplete() const {
 
 void UserProfileBackupExecutePage::onStartBackup() {
     if (m_started) return;
-    
+
     m_started = true;
     m_startButton->setEnabled(false);
     m_statusLabel->setText(tr("Backup in progress..."));
-    
+
     appendLog(tr("=== Backup Started ==="));
     appendLog(tr("Destination: %1").arg(m_destinationPath));
     appendLog(tr("Users to backup: %1").arg(m_users.size()));
-    
+
     // Get smart filter and permission mode from wizard
     auto* wiz = qobject_cast<UserProfileBackupWizard*>(wizard());
     if (!wiz) {
         appendLog(tr("ERROR: Could not access wizard"));
         return;
     }
-    
+
     SmartFilter smartFilter = wiz->getSmartFilter();
     PermissionMode permissionMode = PermissionMode::StripAll;
-    
+
     int compressionLevel = wiz->getCompressionLevel();
     bool encrypt = wiz->isEncryptionEnabled();
     QString password = wiz->getEncryptionPassword();
-    
+
     appendLog(tr("Compression: %1").arg(
         compressionLevel == 0 ? tr("None") :
         compressionLevel <= 3 ? tr("Fast") :
         compressionLevel <= 6 ? tr("Balanced") : tr("Maximum")));
-    
+
     if (encrypt) {
         appendLog(tr("Encryption: Enabled (AES-256)"));
     }
-    
+
     saveInstalledAppsToBackup(wiz->installedApps());
     connectAndStartBackupWorker(smartFilter, permissionMode,
                                 compressionLevel, encrypt, password);
@@ -136,7 +138,7 @@ void UserProfileBackupExecutePage::saveInstalledAppsToBackup(
         appObj["category"] = app.category;
         appsArray.append(appObj);
     }
-    
+
     QJsonDocument doc(appsArray);
     QFile appsFile(m_destinationPath + "/installed_apps.json");
     if (appsFile.open(QIODevice::WriteOnly)) {
@@ -152,8 +154,8 @@ void UserProfileBackupExecutePage::connectAndStartBackupWorker(
     SmartFilter smartFilter, PermissionMode permissionMode,
     int compressionLevel, bool encrypt, const QString& password) {
     auto worker = new UserProfileBackupWorker(this);
-    
-    connect(worker, &UserProfileBackupWorker::overallProgress, 
+
+    connect(worker, &UserProfileBackupWorker::overallProgress,
             this, &UserProfileBackupExecutePage::onBackupProgress);
     connect(worker, &UserProfileBackupWorker::logMessage,
             this, [this](const QString& message, bool isWarning) {
@@ -168,15 +170,16 @@ void UserProfileBackupExecutePage::connectAndStartBackupWorker(
                 onBackupComplete(success, message);
                 worker->deleteLater();
             });
-    
+
     worker->startBackup(m_manifest, m_users, m_destinationPath, smartFilter, permissionMode,
                        compressionLevel, encrypt, password);
-    
+
     m_overallProgress->setRange(0, m_users.size());
     m_currentProgress->setRange(0, 0);
 }
 
-void UserProfileBackupExecutePage::onBackupProgress(int current, int total, qint64 bytes, qint64 totalBytes) {
+void UserProfileBackupExecutePage::onBackupProgress(int current, int total, qint64 bytes,
+    qint64 totalBytes) {
     (void)bytes;
     (void)totalBytes;
     m_overallProgress->setMaximum(total);

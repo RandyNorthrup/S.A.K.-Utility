@@ -64,18 +64,21 @@ void OrchestrationClient::setDestinationInfo(const DestinationPC& destination) {
 
 void OrchestrationClient::sendProgress(const DeploymentProgress& progress) {
     OrchestrationProtocol::writeMessage(m_socket,
-        OrchestrationProtocol::makeMessage(OrchestrationMessageType::ProgressUpdate, progress.toJson()));
+        OrchestrationProtocol::makeMessage(OrchestrationMessageType::ProgressUpdate,
+            progress.toJson()));
 }
 
 void OrchestrationClient::sendCompletion(const DeploymentCompletion& completion) {
     OrchestrationProtocol::writeMessage(m_socket,
-        OrchestrationProtocol::makeMessage(OrchestrationMessageType::DeploymentComplete, completion.toJson()));
+        OrchestrationProtocol::makeMessage(OrchestrationMessageType::DeploymentComplete,
+            completion.toJson()));
 }
 
 void OrchestrationClient::onConnected() {
     m_reconnectTimer->stop();
     if (m_destination.destination_id.isEmpty()) {
-        m_destination.destination_id = QString("%1@%2").arg(m_destination.hostname, m_socket->localAddress().toString());
+        m_destination.destination_id = QString("%1@%2").arg(m_destination.hostname,
+            m_socket->localAddress().toString());
     }
 
     QJsonObject payload;
@@ -112,7 +115,8 @@ void OrchestrationClient::handleMessage(const QJsonObject& message) {
             payload["destination_id"] = m_destination.destination_id;
             payload["health_metrics"] = m_destination.health.toJson();
             OrchestrationProtocol::writeMessage(m_socket,
-                OrchestrationProtocol::makeMessage(OrchestrationMessageType::HealthCheckResponse, payload));
+                OrchestrationProtocol::makeMessage(OrchestrationMessageType::HealthCheckResponse,
+                    payload));
             break;
         }
         case OrchestrationMessageType::DeploymentAssign: {

@@ -13,10 +13,10 @@ class QProcess;
 
 /**
  * @brief Creates bootable Windows USB drives from ISO files
- * 
+ *
  * This class properly extracts Windows ISO contents to a USB drive formatted
  * as NTFS, unlike raw disk imaging which would result in a UDF filesystem.
- * 
+ *
  * Process:
  * 1. Format USB drive as NTFS (using diskpart)
  * 2. Extract ISO contents directly using 7z (no mounting required)
@@ -27,11 +27,11 @@ class QProcess;
  */
 class WindowsUSBCreator : public QObject {
     Q_OBJECT
-    
+
 public:
     explicit WindowsUSBCreator(QObject* parent = nullptr);
     ~WindowsUSBCreator();
-    
+
     /**
      * @brief Create a bootable Windows USB drive from an ISO
      * @param isoPath Path to the Windows ISO file
@@ -39,31 +39,31 @@ public:
      * @return true if successful, false otherwise
      */
     bool createBootableUSB(const QString& isoPath, const QString& diskNumber);
-    
+
     /**
      * @brief Cancel the current operation
      */
     void cancel();
-    
+
     /**
      * @brief Get the last error message
      * @return Error message string
      */
     QString lastError() const;
-    
+
 Q_SIGNALS:
     /**
      * @brief Emitted when status changes (e.g., "Formatting...", "Copying files...")
      * @param status Current status message
      */
     void statusChanged(const QString& status);
-    
+
     /**
      * @brief Emitted to report progress
      * @param percentage Progress percentage (0-100)
      */
     void progressUpdated(int percentage);
-    
+
     /**
      * @brief Emitted when operation completes successfully after ALL verifications pass
      * This signal is ONLY emitted when:
@@ -73,13 +73,13 @@ Q_SIGNALS:
      * - Bootable flag verified as Active
      */
     void completed();
-    
+
     /**
      * @brief Emitted when operation fails at any step or verification fails
      * @param error Error message
      */
     void failed(const QString& error);
-    
+
 private:
     /// @brief Validate ISO and disk number inputs before USB creation
     bool validateUSBInputs(const QString& isoPath, const QString& diskNumber);
@@ -104,7 +104,7 @@ private:
     bool cleanAndPartitionDisk(const QString& diskNumber);
     /// @brief Format the partition as NTFS using diskpart
     bool formatPartitionNTFS(const QString& diskNumber);
-    
+
     /**
      * @brief Extract ISO contents directly to USB drive using 7z
      * @param sourcePath Path to ISO file
@@ -146,7 +146,8 @@ private:
      * @param cleanDest Normalized destination path
      * @return true if extraction succeeded
      */
-    bool copyISO_runExtraction(const QString& sevenZipPath, const QString& sourcePath, const QString& cleanDest);
+    bool copyISO_runExtraction(const QString& sevenZipPath, const QString& sourcePath,
+        const QString& cleanDest);
 
     /**
      * @brief Monitor a running 7z extraction process for progress and cancellation
@@ -162,7 +163,8 @@ private:
      * @param processedBytes [in/out] Processed bytes reported by 7z
      * @param lastProgressPercent [in/out] Last emitted progress percentage
      */
-    void copyISO_parseExtractionProgress(const QString& output, qint64& totalBytes, qint64& processedBytes, int& lastProgressPercent);
+    void copyISO_parseExtractionProgress(const QString& output, qint64& totalBytes,
+        qint64& processedBytes, int& lastProgressPercent);
 
     /**
      * @brief Log 7z extraction result and check exit code
@@ -197,14 +199,14 @@ private:
      * @param cleanDest Normalized destination path
      */
     void copyISO_setVolumeLabel(const QString& cleanDest);
-    
+
     /**
      * @brief Configure boot files using bcdboot (if available)
      * @param driveLetter Target drive letter (single letter, e.g., "E")
      * @return true if successful (non-critical - boot may work without bcdboot)
      */
     bool makeBootable(const QString& driveLetter);
-    
+
     /**
      * @brief Verify that the bootable flag is set on the partition
      * @param driveLetter Drive letter to verify
@@ -214,7 +216,7 @@ private:
 
     /// @brief Run diskpart to check if the partition on the given disk is active/bootable
     bool checkPartitionActive(const QString& diskNumber);
-    
+
     /**
      * @brief Verify extraction integrity by comparing ISO contents with extracted files
      * @param isoPath Path to source ISO file
@@ -222,7 +224,8 @@ private:
      * @param sevenZipPath Path to 7z.exe executable
      * @return true if all critical files match in size and presence
      */
-    bool verifyExtractionIntegrity(const QString& isoPath, const QString& destPath, const QString& sevenZipPath);
+    bool verifyExtractionIntegrity(const QString& isoPath, const QString& destPath,
+        const QString& sevenZipPath);
 
     /// @brief Check if a file path matches a critical Windows installation file
     bool isCriticalWindowsFile(const QString& path) const;
@@ -246,13 +249,13 @@ private:
 
     /// @brief Log final verification success details
     void logFinalVerificationSuccess(int fileCount);
-    
+
     /**
      * @brief Get current drive letter for the disk number
      * @return Drive letter (e.g., "E") or empty if not found
      */
     QString getDriveLetterFromDiskNumber();
-    
+
     std::atomic<bool> m_cancelled{false};
     mutable QMutex m_errorMutex;          ///< Guards m_lastError for cross-thread access
     QString m_lastError;                  ///< Protected by m_errorMutex

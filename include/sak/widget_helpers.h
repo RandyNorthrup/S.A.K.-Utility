@@ -70,16 +70,19 @@ inline void setAccessible(QWidget* widget, const QString& name,
 
 /// @brief Map a status string to an appropriate semantic color
 /// @param status The status text (e.g., "Success", "Failed", "Active")
-/// @return Green for success/complete/ready, Red for fail/error, Orange for active/progress, Gray default
+/// @return Green for success/complete/ready, Red for fail/error,
+///     Orange for active/progress, Gray default
 [[nodiscard]] inline QColor statusColor(const QString& status) {
     const QString value = status.trimmed().toLower();
     if (value.contains("success") || value.contains("complete") || value.contains("ready")) {
         return QColor(ui::kStatusColorSuccess);
     }
-    if (value.contains("fail") || value.contains("error") || value.contains("reject") || value.contains("cancel")) {
+    if (value.contains("fail") || value.contains("error") || value.contains("reject") ||
+        value.contains("cancel")) {
         return QColor(ui::kStatusColorError);
     }
-    if (value.contains("active") || value.contains("transfer") || value.contains("approved") || value.contains("queued") || value.contains("progress")) {
+    if (value.contains("active") || value.contains("transfer") || value.contains("approved") ||
+        value.contains("queued") || value.contains("progress")) {
         return QColor(ui::kStatusColorWarning);
     }
     return QColor(ui::kStatusColorIdle);

@@ -52,7 +52,8 @@ void ParallelTransferManagerStressTests::handlesManyJobs() {
     QSignalSpy completedSpy(&manager, &ParallelTransferManager::deploymentComplete);
 
     connect(&manager, &ParallelTransferManager::jobStartRequested, this,
-        [&manager, &startedJobs](const QString& jobId, const MappingEngine::SourceProfile&, const DestinationPC&) {
+        [&manager, &startedJobs](const QString& jobId, const MappingEngine::SourceProfile&,
+            const DestinationPC&) {
             startedJobs.append(jobId);
             QTimer::singleShot(5, [&manager, jobId]() {
                 manager.markJobComplete(jobId, true);

@@ -32,7 +32,7 @@ void SmartFilter::initializeDefaults() {
         "UsrClass.dat.LOG1",
         "UsrClass.dat.LOG2"
     };
-    
+
     // Pattern exclusions (case-insensitive)
     exclude_patterns = {
         ".*\\.tmp$",
@@ -47,7 +47,7 @@ void SmartFilter::initializeDefaults() {
         "thumbs\\.db$",
         "\\.DS_Store$"
     };
-    
+
     // Folder exclusions
     exclude_folders = {
         "Temp",
@@ -85,7 +85,7 @@ SmartFilter SmartFilter::fromJson(const QJsonObject& json) {
     filter.enable_folder_size_limit = json.value("enable_folder_size_limit").toBool(false);
     filter.max_single_file_size_bytes = qint64FromJson(json, "max_single_file_size");
     filter.max_folder_size_bytes = qint64FromJson(json, "max_folder_size");
-    
+
     auto arrayToStringList = [](const QJsonArray& arr) {
         QStringList list;
         for (const auto& val : arr) {
@@ -93,11 +93,11 @@ SmartFilter SmartFilter::fromJson(const QJsonObject& json) {
         }
         return list;
     };
-    
+
     filter.exclude_patterns = arrayToStringList(json["exclude_patterns"].toArray());
     filter.exclude_folders = arrayToStringList(json["exclude_folders"].toArray());
     filter.dangerous_files = arrayToStringList(json["dangerous_files"].toArray());
-    
+
     return filter;
 }
 
@@ -122,7 +122,7 @@ FolderSelection FolderSelection::fromJson(const QJsonObject& json) {
     sel.selected = json["selected"].toBool();
     sel.size_bytes = qint64FromJson(json, "size_bytes");
     sel.file_count = json["file_count"].toInt();
-    
+
     auto arrayToStringList = [](const QJsonArray& arr) {
         QStringList list;
         for (const auto& val : arr) {
@@ -130,10 +130,10 @@ FolderSelection FolderSelection::fromJson(const QJsonObject& json) {
         }
         return list;
     };
-    
+
     sel.include_patterns = arrayToStringList(json["include_patterns"].toArray());
     sel.exclude_patterns = arrayToStringList(json["exclude_patterns"].toArray());
-    
+
     return sel;
 }
 
@@ -144,13 +144,13 @@ QJsonObject UserProfile::toJson() const {
     obj["profile_path"] = profile_path;
     obj["is_current_user"] = is_current_user;
     obj["total_size_estimated"] = static_cast<double>(total_size_estimated);
-    
+
     QJsonArray selections;
     for (const auto& sel : folder_selections) {
         selections.append(sel.toJson());
     }
     obj["folder_selections"] = selections;
-    
+
     return obj;
 }
 
@@ -161,12 +161,12 @@ UserProfile UserProfile::fromJson(const QJsonObject& json) {
     profile.profile_path = json["profile_path"].toString();
     profile.is_current_user = json["is_current_user"].toBool();
     profile.total_size_estimated = qint64FromJson(json, "total_size_estimated");
-    
+
     QJsonArray selections = json["folder_selections"].toArray();
     for (const auto& val : selections) {
         profile.folder_selections.append(FolderSelection::fromJson(val.toObject()));
     }
-    
+
     return profile;
 }
 
@@ -175,18 +175,18 @@ QJsonObject BackupUserData::toJson() const {
     obj["username"] = username;
     obj["sid"] = sid;
     obj["profile_path"] = profile_path;
-    
+
     QJsonArray folders;
     for (const auto& folder : backed_up_folders) {
         folders.append(folder.toJson());
     }
     obj["backed_up_folders"] = folders;
-    
+
     obj["permissions_mode"] = permissionModeToString(permissions_mode);
     obj["encrypted"] = encrypted;
     obj["compression"] = compression;
     obj["checksum_sha256"] = checksum_sha256;
-    
+
     return obj;
 }
 
@@ -195,29 +195,30 @@ BackupUserData BackupUserData::fromJson(const QJsonObject& json) {
     data.username = json["username"].toString();
     data.sid = json["sid"].toString();
     data.profile_path = json["profile_path"].toString();
-    
+
     QJsonArray folders = json["backed_up_folders"].toArray();
     for (const auto& val : folders) {
         data.backed_up_folders.append(FolderSelection::fromJson(val.toObject()));
     }
-    
+
     // Parse permission mode
     QString permMode = json["permissions_mode"].toString();
     if (permMode == "PreserveOriginal") data.permissions_mode = PermissionMode::PreserveOriginal;
-    else if (permMode == "AssignToDestination") data.permissions_mode = PermissionMode::AssignToDestination;
+    else if (permMode == "AssignToDestination") data.permissions_mode =
+        PermissionMode::AssignToDestination;
     else if (permMode == "Hybrid") data.permissions_mode = PermissionMode::Hybrid;
     else data.permissions_mode = PermissionMode::StripAll;
-    
+
     data.encrypted = json["encrypted"].toBool();
     data.compression = json["compression"].toString();
     data.checksum_sha256 = json["checksum_sha256"].toString();
-    
+
     return data;
 }
 
 QJsonObject BackupManifest::toJson() const {
     QJsonObject obj;
-    
+
     QJsonObject metadata;
     metadata["version"] = version;
     metadata["created_date"] = created.toString(Qt::ISODate);
@@ -225,39 +226,39 @@ QJsonObject BackupManifest::toJson() const {
     metadata["sak_utility_version"] = sak_version;
     metadata["backup_type"] = backup_type;
     obj["backup_metadata"] = metadata;
-    
+
     QJsonArray usersArray;
     for (const auto& user : users) {
         usersArray.append(user.toJson());
     }
     obj["users"] = usersArray;
-    
+
     obj["filter_rules"] = filter_rules.toJson();
     obj["total_backup_size_bytes"] = static_cast<double>(total_backup_size_bytes);
     obj["manifest_checksum"] = manifest_checksum;
-    
+
     return obj;
 }
 
 BackupManifest BackupManifest::fromJson(const QJsonObject& json) {
     BackupManifest manifest;
-    
+
     QJsonObject metadata = json["backup_metadata"].toObject();
     manifest.version = metadata["version"].toString();
     manifest.created = QDateTime::fromString(metadata["created_date"].toString(), Qt::ISODate);
     manifest.source_machine = metadata["source_machine"].toString();
     manifest.sak_version = metadata["sak_utility_version"].toString();
     manifest.backup_type = metadata["backup_type"].toString();
-    
+
     QJsonArray usersArray = json["users"].toArray();
     for (const auto& val : usersArray) {
         manifest.users.append(BackupUserData::fromJson(val.toObject()));
     }
-    
+
     manifest.filter_rules = SmartFilter::fromJson(json["filter_rules"].toObject());
     manifest.total_backup_size_bytes = qint64FromJson(json, "total_backup_size_bytes");
     manifest.manifest_checksum = json["manifest_checksum"].toString();
-    
+
     return manifest;
 }
 
@@ -266,7 +267,7 @@ bool BackupManifest::saveToFile(const QString& path) const {
     if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
         return false;
     }
-    
+
     QJsonDocument doc(toJson());
     file.write(doc.toJson(QJsonDocument::Indented));
     return true;
@@ -277,7 +278,7 @@ BackupManifest BackupManifest::loadFromFile(const QString& path) {
     if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
         return BackupManifest();
     }
-    
+
     QByteArray data = file.readAll();
     QJsonDocument doc = QJsonDocument::fromJson(data);
     return fromJson(doc.object());

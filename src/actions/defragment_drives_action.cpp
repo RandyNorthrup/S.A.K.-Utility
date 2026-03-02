@@ -18,7 +18,8 @@ DefragmentDrivesAction::DefragmentDrivesAction(QObject* parent)
 }
 
 bool DefragmentDrivesAction::isDriveSSD(const QString& drive_letter) {
-    QString cmd = QString("Get-PhysicalDisk | Where-Object {$_.DeviceID -eq (Get-Partition -DriveLetter %1).DiskNumber} | Select-Object -ExpandProperty MediaType")
+    QString cmd = QString("Get-PhysicalDisk | Where-Object {$_.DeviceID -eq (Get-Partition "
+                          "-DriveLetter %1).DiskNumber} | Select-Object -ExpandProperty MediaType")
                      .arg(drive_letter.left(1));
     ProcessResult proc = runPowerShell(cmd, sak::kTimeoutProcessShortMs);
     if (!proc.std_err.trimmed().isEmpty()) {
@@ -30,13 +31,14 @@ bool DefragmentDrivesAction::isDriveSSD(const QString& drive_letter) {
 
 int DefragmentDrivesAction::analyzeFragmentation(const QString& drive_letter) {
     QString cmd = QString("defrag %1: /A").arg(drive_letter);
-    ProcessResult proc = runProcess("cmd.exe", QStringList() << "/c" << cmd, sak::kTimeoutProcessLongMs);
+    ProcessResult proc = runProcess("cmd.exe", QStringList() << "/c" << cmd,
+        sak::kTimeoutProcessLongMs);
     QString output = proc.std_out;
-    
+
     // Parse fragmentation percentage from output
     QRegularExpression re("(\\d+)%.*fragmented");
     QRegularExpressionMatch match = re.match(output);
-    
+
     if (match.hasMatch()) {
         bool ok = false;
         int fragmentation = match.captured(1).toInt(&ok);
@@ -84,8 +86,8 @@ QString DefragmentDrivesAction::executeEnumerateVolumes() const {
     // - HDD: Defragmentation
     // - SSD with TRIM: TRIM/Retrim operation
     // - Tiered Storage: TierOptimize
-    
-    return 
+
+    return
         "# Enterprise Drive Optimization using Optimize-Volume\n"
         "$ErrorActionPreference = 'Continue'; \n"
         "\n"
@@ -112,7 +114,8 @@ QString DefragmentDrivesAction::executeEnumerateVolumes() const {
         "    \n"
         "    try { \n"
         "        # Get drive type using Get-PhysicalDisk\n"
-        "        $partition = Get-Partition -DriveLetter $driveLetter -ErrorAction SilentlyContinue; \n"
+        "        $partition = Get-Partition -DriveLetter $driveLetter -ErrorAction "
+        "SilentlyContinue; \n"
         "        $disk = Get-PhysicalDisk -ErrorAction SilentlyContinue | Where-Object { \n"
         "            $_.DeviceID -eq $partition.DiskNumber \n"
         "        } | Select-Object -First 1; \n"
@@ -161,7 +164,7 @@ void DefragmentDrivesAction::executeBuildReport(
         const QDateTime& start_time) {
 
     auto summary = parseOptimizationOutput(accumulated_output);
-    
+
     if (accumulated_output.contains("NO_DRIVES_FOUND")) {
         ExecutionResult result;
         result.success = true;
@@ -171,35 +174,36 @@ void DefragmentDrivesAction::executeBuildReport(
         finishWithResult(result, ActionStatus::Success);
         return;
     }
-    
+
     Q_EMIT executionProgress("Optimization complete", 100);
-    
+
     qint64 duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
-    
+
     ExecutionResult result;
     result.duration_ms = duration_ms;
     result.success = true;
-    
+
     QString drive_info = summary.drive_types.join("\n");
-    
+
     if (summary.total_optimized > 0) {
         result.message = QString("Optimized %1 drive(s)").arg(summary.total_optimized);
         if (summary.total_skipped > 0) {
             result.message += QString(" (%1 skipped)").arg(summary.total_skipped);
         }
     } else if (summary.total_skipped > 0) {
-        result.message = QString("All %1 drive(s) skipped (no optimization needed)").arg(summary.total_skipped);
+        result.message = QString("All %1 drive(s) skipped (no optimization needed)")
+            .arg(summary.total_skipped);
     } else {
         result.message = "Drive optimization completed";
     }
-    
+
     result.log = QString("Drive Types:\n%1\n\nOptimization Details:\n%2")
                     .arg(drive_info)
                     .arg(accumulated_output);
     if (!std_err.trimmed().isEmpty()) {
         result.log += "\nErrors:\n" + std_err.trimmed();
     }
-    
+
     finishWithResult(result, ActionStatus::Success);
 }
 
@@ -219,7 +223,8 @@ DefragmentDrivesAction::OptimizationSummary DefragmentDrivesAction::parseOptimiz
     auto typeIt = typeRe.globalMatch(output);
     while (typeIt.hasNext()) {
         auto match = typeIt.next();
-        summary.drive_types.append(QString("%1: = %2").arg(match.captured(1), match.captured(2).trimmed()));
+        summary.drive_types.append(QString("%1: = %2").arg(match.captured(1),
+            match.captured(2).trimmed()));
     }
 
     summary.optimized = output.count("SUCCESS:", Qt::CaseInsensitive);
@@ -230,7 +235,8 @@ DefragmentDrivesAction::OptimizationSummary DefragmentDrivesAction::parseOptimiz
     QRegularExpressionMatch optMatch = optimizedRe.match(output);
     QRegularExpressionMatch skipMatch = skippedRe.match(output);
 
-    summary.total_optimized = optMatch.hasMatch() ? optMatch.captured(1).toInt() : summary.optimized;
+    summary.total_optimized =
+        optMatch.hasMatch() ? optMatch.captured(1).toInt() : summary.optimized;
     summary.total_skipped = skipMatch.hasMatch() ? skipMatch.captured(1).toInt() : 0;
 
     return summary;

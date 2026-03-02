@@ -38,7 +38,8 @@ SplashScreen::SplashScreen(const QPixmap& pixmap, QWidget* parent)
     : QWidget(parent)
 {
     const QSize max_size(640, 640);
-    if (!pixmap.isNull() && (pixmap.width() > max_size.width() || pixmap.height() > max_size.height())) {
+    if (!pixmap.isNull() && (pixmap.width() > max_size.width() ||
+        pixmap.height() > max_size.height())) {
         m_pixmap = pixmap.scaled(max_size, Qt::KeepAspectRatio, Qt::SmoothTransformation);
     } else {
         m_pixmap = pixmap;
@@ -92,11 +93,13 @@ void SplashScreen::paintEvent(QPaintEvent* event) {
         QColor c = shadow_color;
         c.setAlpha(shadow_color.alpha() * (m_shadow_radius - i) / m_shadow_radius);
         painter.setPen(c);
-        painter.drawRoundedRect(content_rect.adjusted(-i, -i, i, i), m_corner_radius + i, m_corner_radius + i);
+        painter.drawRoundedRect(content_rect.adjusted(-i, -i, i, i), m_corner_radius + i,
+            m_corner_radius + i);
     }
 
     if (!m_rounded_pixmap.isNull()) {
-        painter.drawPixmap(content_rect.topLeft(), m_rounded_pixmap.scaled(content_rect.size(), Qt::KeepAspectRatio, Qt::SmoothTransformation));
+        painter.drawPixmap(content_rect.topLeft(), m_rounded_pixmap.scaled(content_rect.size(),
+            Qt::KeepAspectRatio, Qt::SmoothTransformation));
     }
 }
 

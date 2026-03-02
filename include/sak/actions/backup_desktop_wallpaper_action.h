@@ -12,14 +12,15 @@ namespace sak {
 
 /**
  * @brief Desktop Wallpaper Backup Action
- * 
+ *
  * Backs up Windows desktop wallpaper (TranscodedWallpaper file + registry keys).
  */
 class BackupDesktopWallpaperAction : public QuickAction {
     Q_OBJECT
 
 public:
-    explicit BackupDesktopWallpaperAction(const QString& backup_location, QObject* parent = nullptr);
+    explicit BackupDesktopWallpaperAction(const QString& backup_location,
+        QObject* parent = nullptr);
 
     QString name() const override { return "Desktop Wallpaper Backup"; }
     QString description() const override { return "Backup desktop wallpaper settings"; }

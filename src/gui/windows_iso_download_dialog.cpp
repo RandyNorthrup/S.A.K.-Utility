@@ -90,7 +90,8 @@ void WindowsISODownloadDialog::setupUi_formSections(QVBoxLayout* mainLayout)
 
     m_buildInfoLabel = new QLabel("", buildGroup);
     m_buildInfoLabel->setWordWrap(true);
-    m_buildInfoLabel->setStyleSheet(QString("color: %1; font-size: %2pt;").arg(sak::ui::kColorTextMuted).arg(sak::ui::kFontSizeNote));
+    m_buildInfoLabel->setStyleSheet(QString("color: %1; font-size: %2pt;")
+        .arg(sak::ui::kColorTextMuted).arg(sak::ui::kFontSizeNote));
     buildLayout->addWidget(m_buildInfoLabel);
 
     mainLayout->addWidget(buildGroup);
@@ -433,23 +434,28 @@ void WindowsISODownloadDialog::onPhaseChanged(UupIsoBuilder::Phase phase,
     // A11Y: prefix phase text so status is conveyed without relying on color alone
     switch (phase) {
     case UupIsoBuilder::Phase::PreparingDownload:
-        m_phaseLabel->setStyleSheet(QString("font-weight: bold; color: %1;").arg(sak::ui::kStatusColorRunning));
+        m_phaseLabel->setStyleSheet(QString("font-weight: bold; color: %1;")
+            .arg(sak::ui::kStatusColorRunning));
         m_phaseLabel->setText(QStringLiteral("\u2699 ") + description); // ⚙
         break;
     case UupIsoBuilder::Phase::DownloadingFiles:
-        m_phaseLabel->setStyleSheet(QString("font-weight: bold; color: %1;").arg(sak::ui::kColorAccentEmerald));
+        m_phaseLabel->setStyleSheet(QString("font-weight: bold; color: %1;")
+            .arg(sak::ui::kColorAccentEmerald));
         m_phaseLabel->setText(QStringLiteral("\u2B07 ") + description); // ⬇
         break;
     case UupIsoBuilder::Phase::ConvertingToISO:
-        m_phaseLabel->setStyleSheet(QString("font-weight: bold; color: %1;").arg(sak::ui::kStatusColorWarning));
+        m_phaseLabel->setStyleSheet(QString("font-weight: bold; color: %1;")
+            .arg(sak::ui::kStatusColorWarning));
         m_phaseLabel->setText(QStringLiteral("\u23F3 ") + description); // ⏳
         break;
     case UupIsoBuilder::Phase::Completed:
-        m_phaseLabel->setStyleSheet(QString("font-weight: bold; color: %1;").arg(sak::ui::kStatusColorSuccess));
+        m_phaseLabel->setStyleSheet(QString("font-weight: bold; color: %1;")
+            .arg(sak::ui::kStatusColorSuccess));
         m_phaseLabel->setText(QStringLiteral("\u2714 ") + description); // ✔
         break;
     case UupIsoBuilder::Phase::Failed:
-        m_phaseLabel->setStyleSheet(QString("font-weight: bold; color: %1;").arg(sak::ui::kStatusColorError));
+        m_phaseLabel->setStyleSheet(QString("font-weight: bold; color: %1;")
+            .arg(sak::ui::kStatusColorError));
         m_phaseLabel->setText(QStringLiteral("\u2718 ") + description); // ✘
         break;
     default:
@@ -517,7 +523,8 @@ void WindowsISODownloadDialog::onDownloadComplete(const QString& isoPath,
     m_statusLabel->setText(
         QString("ISO created successfully! (%1 GB)").arg(sizeGB, 0, 'f', 2));
     m_phaseLabel->setText("Complete!");
-    m_phaseLabel->setStyleSheet(QString("font-weight: bold; color: %1;").arg(sak::ui::kStatusColorSuccess));
+    m_phaseLabel->setStyleSheet(QString("font-weight: bold; color: %1;")
+        .arg(sak::ui::kStatusColorSuccess));
     m_speedLabel->clear();
     m_detailLabel->clear();
     m_cancelButton->setEnabled(false);

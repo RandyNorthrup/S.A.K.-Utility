@@ -216,7 +216,8 @@ void UupDumpApi::onLanguagesReply() {
     reply->deleteLater();
 
     if (reply->error() != QNetworkReply::NoError) {
-        QString errorMsg = QString("Network error fetching languages: %1").arg(reply->errorString());
+        QString errorMsg = QString("Network error fetching languages: %1")
+            .arg(reply->errorString());
         sak::logError(errorMsg.toStdString());
         Q_EMIT apiError(errorMsg);
         return;
@@ -227,7 +228,8 @@ void UupDumpApi::onLanguagesReply() {
     QJsonDocument doc = QJsonDocument::fromJson(data, &parseError);
 
     if (parseError.error != QJsonParseError::NoError) {
-        QString errorMsg = QString("JSON parse error in languages response: %1").arg(parseError.errorString());
+        QString errorMsg = QString("JSON parse error in languages response: %1")
+            .arg(parseError.errorString());
         sak::logError(errorMsg.toStdString());
         Q_EMIT apiError(errorMsg);
         return;
@@ -297,7 +299,8 @@ void UupDumpApi::onEditionsReply() {
     QJsonDocument doc = QJsonDocument::fromJson(data, &parseError);
 
     if (parseError.error != QJsonParseError::NoError) {
-        QString errorMsg = QString("JSON parse error in editions response: %1").arg(parseError.errorString());
+        QString errorMsg = QString("JSON parse error in editions response: %1")
+            .arg(parseError.errorString());
         sak::logError(errorMsg.toStdString());
         Q_EMIT apiError(errorMsg);
         return;
@@ -362,7 +365,8 @@ void UupDumpApi::onFilesReply() {
     QJsonDocument doc = QJsonDocument::fromJson(data, &parseError);
 
     if (parseError.error != QJsonParseError::NoError) {
-        QString errorMsg = QString("JSON parse error in files response: %1").arg(parseError.errorString());
+        QString errorMsg = QString("JSON parse error in files response: %1")
+            .arg(parseError.errorString());
         sak::logError(errorMsg.toStdString());
         Q_EMIT apiError(errorMsg);
         return;

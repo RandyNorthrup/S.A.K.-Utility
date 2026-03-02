@@ -20,7 +20,8 @@ ParallelTransferManager::ParallelTransferManager(QObject* parent)
 
 void ParallelTransferManager::startDeployment(const MappingEngine::DeploymentMapping& mapping) {
     reset();
-    m_currentDeploymentId = mapping.deployment_id.isEmpty() ? QUuid::createUuid().toString(QUuid::WithoutBraces)
+    m_currentDeploymentId =
+        mapping.deployment_id.isEmpty() ? QUuid::createUuid().toString(QUuid::WithoutBraces)
                                                             : mapping.deployment_id;
 
     if (mapping.type == MappingEngine::MappingType::OneToMany) {
@@ -182,7 +183,8 @@ QVector<ParallelTransferManager::TransferJob> ParallelTransferManager::allJobs()
     return m_jobs.values().toVector();
 }
 
-ParallelTransferManager::TransferJob ParallelTransferManager::getJobStatus(const QString& job_id) const {
+ParallelTransferManager::TransferJob ParallelTransferManager::getJobStatus(
+    const QString& job_id) const {
     return m_jobs.value(job_id);
 }
 
@@ -234,7 +236,8 @@ void ParallelTransferManager::updateJobProgress(const QString& job_id,
     updateDeploymentProgress();
 }
 
-void ParallelTransferManager::markJobComplete(const QString& job_id, bool success, const QString& error_message) {
+void ParallelTransferManager::markJobComplete(const QString& job_id, bool success,
+    const QString& error_message) {
     if (!m_jobs.contains(job_id)) {
         return;
     }
@@ -273,7 +276,8 @@ void ParallelTransferManager::reset() {
     m_deploymentPaused = false;
 }
 
-void ParallelTransferManager::enqueueJob(const MappingEngine::SourceProfile& source, const DestinationPC& destination) {
+void ParallelTransferManager::enqueueJob(const MappingEngine::SourceProfile& source,
+    const DestinationPC& destination) {
     TransferJob job;
     job.job_id = QUuid::createUuid().toString(QUuid::WithoutBraces);
     job.source = source;
@@ -287,7 +291,8 @@ void ParallelTransferManager::enqueueJob(const MappingEngine::SourceProfile& sou
     m_queue.append(job.job_id);
 }
 
-void ParallelTransferManager::enqueueCustomMappingJobs(const MappingEngine::DeploymentMapping& mapping) {
+void ParallelTransferManager::enqueueCustomMappingJobs(
+    const MappingEngine::DeploymentMapping& mapping) {
     QMap<QString, DestinationPC> destinationMap;
     for (const auto& destination : mapping.destinations) {
         destinationMap.insert(destination.destination_id, destination);

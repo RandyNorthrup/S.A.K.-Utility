@@ -110,7 +110,8 @@ TransferManifest TransferManifest::fromJson(const QJsonObject& json) {
     manifest.source_hostname = json.value("source_hostname").toString();
     manifest.source_os = json.value("source_os").toString();
     manifest.sak_version = json.value("sak_version").toString();
-    manifest.created = QDateTime::fromSecsSinceEpoch(json.value("created").toVariant().toLongLong());
+    manifest.created =
+        QDateTime::fromSecsSinceEpoch(json.value("created").toVariant().toLongLong());
     manifest.total_bytes = json.value("total_bytes").toVariant().toLongLong();
     manifest.total_files = json.value("total_files").toInt();
     manifest.checksum_sha256 = json.value("checksum_sha256").toString();

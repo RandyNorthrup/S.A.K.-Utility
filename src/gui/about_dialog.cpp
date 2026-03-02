@@ -35,25 +35,28 @@ void AboutDialog::setupUi()
 
     // Header with icon and title
     auto* header_layout = new QHBoxLayout();
-    
+
     m_icon_label = new QLabel(this);
     m_icon_label->setFixedSize(sak::kIconSize, sak::kIconSize);
     m_icon_label->setAccessibleName(QStringLiteral("S.A.K. Utility application icon"));
-    m_icon_label->setStyleSheet("QLabel { background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #3b82f6, stop:1 #2563eb); border-radius: 12px; }");
+    m_icon_label->setStyleSheet("QLabel { background: qlineargradient(x1:0, y1:0, x2:1, y2:1, "
+                                "stop:0 #3b82f6, stop:1 #2563eb); border-radius: 12px; }");
     header_layout->addWidget(m_icon_label);
-    
+
     auto* title_layout = new QVBoxLayout();
     m_title_label = new QLabel("<b>S.A.K. Utility</b>", this);
-    m_title_label->setStyleSheet(QString("font-size: %1pt; font-weight: 700; color: %2;").arg(sak::ui::kFontSizeTitle).arg(sak::ui::kColorTextPrimary));
+    m_title_label->setStyleSheet(QString("font-size: %1pt; font-weight: 700; color: %2;")
+        .arg(sak::ui::kFontSizeTitle).arg(sak::ui::kColorTextPrimary));
     title_layout->addWidget(m_title_label);
-    
+
     m_version_label = new QLabel(getVersionInfo(), this);
-    m_version_label->setStyleSheet(QString("font-size: %1pt; color: %2;").arg(sak::ui::kFontSizeBody).arg(sak::ui::kColorTextMuted));
+    m_version_label->setStyleSheet(QString("font-size: %1pt; color: %2;")
+        .arg(sak::ui::kFontSizeBody).arg(sak::ui::kColorTextMuted));
     title_layout->addWidget(m_version_label);
-    
+
     header_layout->addLayout(title_layout);
     header_layout->addStretch();
-    
+
     main_layout->addLayout(header_layout);
 
     // Tab widget
@@ -67,11 +70,11 @@ void AboutDialog::setupUi()
     // Close button
     auto* button_layout = new QHBoxLayout();
     button_layout->addStretch();
-    
+
     m_close_button = new QPushButton("Close", this);
     connect(m_close_button, &QPushButton::clicked, this, &AboutDialog::accept);
     button_layout->addWidget(m_close_button);
-    
+
     main_layout->addLayout(button_layout);
 }
 
@@ -79,7 +82,7 @@ void AboutDialog::setupAboutTab()
 {
     auto* about_widget = new QWidget(this);
     auto* about_layout = new QVBoxLayout(about_widget);
-    
+
     auto* description = new QLabel(
         "<p><b>Swiss Army Knife (S.A.K.) Utility</b></p>"
         "<p><b>PC Technician's Toolkit for Windows Migration and Maintenance</b></p>"
@@ -99,7 +102,7 @@ void AboutDialog::setupAboutTab()
     description->setOpenExternalLinks(true);
     about_layout->addWidget(description);
     about_layout->addStretch();
-    
+
     m_tab_widget->addTab(about_widget, "About");
 }
 
@@ -183,20 +186,21 @@ QString AboutDialog::getCreditsText() const
 QString AboutDialog::getSystemInfo() const
 {
     QString info;
-    
+
     info += QString("Application Version: %1\n").arg(sak::get_version());
     info += QString("Build Date: %1 %2\n\n").arg(sak::get_build_date(), sak::get_build_time());
-    
+
     info += QString("Operating System: %1\n").arg(QSysInfo::prettyProductName());
     info += QString("Kernel: %1 %2\n").arg(QSysInfo::kernelType(), QSysInfo::kernelVersion());
     info += QString("Architecture: %1\n").arg(QSysInfo::currentCpuArchitecture());
     info += QString("Build ABI: %1\n\n").arg(QSysInfo::buildAbi());
-    
+
     info += QString("Qt Version: %1 (Runtime: %2)\n").arg(QT_VERSION_STR, qVersion());
     info += QString("Compiler: ");
-    
+
 #if defined(__clang__)
-    info += QString("Clang %1.%2.%3\n").arg(__clang_major__).arg(__clang_minor__).arg(__clang_patchlevel__);
+    info += QString("Clang %1.%2.%3\n").arg(__clang_major__).arg(__clang_minor__)
+        .arg(__clang_patchlevel__);
 #elif defined(__GNUC__)
     info += QString("GCC %1.%2.%3\n").arg(__GNUC__).arg(__GNUC_MINOR__).arg(__GNUC_PATCHLEVEL__);
 #elif defined(_MSC_VER)
@@ -204,9 +208,9 @@ QString AboutDialog::getSystemInfo() const
 #else
     info += "Unknown\n";
 #endif
-    
+
     info += QString("\nC++ Standard: C++%1\n").arg(__cplusplus);
-    
+
 #ifdef _WIN32
     info += "\nPlatform: Windows";
 #elif defined(__APPLE__)
@@ -216,6 +220,6 @@ QString AboutDialog::getSystemInfo() const
 #else
     info += "\nPlatform: Unknown";
 #endif
-    
+
     return info;
 }

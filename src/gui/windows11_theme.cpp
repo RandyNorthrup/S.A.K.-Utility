@@ -113,7 +113,8 @@ void applyShadow(QWidget* widget) {
     const bool should_shadow = qobject_cast<QGroupBox*>(widget)
         || widget->property("sakElevated").toBool()
         || widget->property("sakCard").toBool()
-        || (widget->styleSheet().contains("border-radius") && widget->styleSheet().contains("background-color"));
+        || (widget->styleSheet().contains("border-radius") &&
+            widget->styleSheet().contains("background-color"));
 
     if (should_shadow) {
         auto* shadow = new QGraphicsDropShadowEffect(widget);
@@ -268,7 +269,8 @@ QString windows11ThemeStyleSheet() {
             border: 1px solid #cbd5e1;
         }
 
-        QLineEdit, QPlainTextEdit, QTextEdit, QComboBox, QSpinBox, QDoubleSpinBox, QDateEdit, QTimeEdit {
+        QLineEdit, QPlainTextEdit, QTextEdit, QComboBox, QSpinBox, QDoubleSpinBox, QDateEdit,
+            QTimeEdit {
             background-color: rgba(255, 255, 255, 0.98);
             border: 1px solid #cbd5e1;
             border-radius: 10px;
@@ -276,7 +278,8 @@ QString windows11ThemeStyleSheet() {
             selection-background-color: rgba(59, 130, 246, 0.3);
         }
 
-        QLineEdit:focus, QPlainTextEdit:focus, QTextEdit:focus, QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus, QDateEdit:focus, QTimeEdit:focus {
+        QLineEdit:focus, QPlainTextEdit:focus, QTextEdit:focus, QComboBox:focus, QSpinBox:focus,
+            QDoubleSpinBox:focus, QDateEdit:focus, QTimeEdit:focus {
             border: 1px solid #3b82f6;
             background-color: #ffffff;
         }

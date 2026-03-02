@@ -51,7 +51,7 @@ struct MigrationJob {
 
 /**
  * @brief Background worker thread for app migration
- * 
+ *
  * Manages parallel installation of Chocolatey packages with:
  * - Queue-based job processing
  * - Pause/resume/cancel support
@@ -70,7 +70,7 @@ public:
      */
     explicit AppInstallationWorker(std::shared_ptr<ChocolateyManager> chocoManager,
                                 QObject* parent = nullptr);
-    
+
     ~AppInstallationWorker();
 
     /**
@@ -79,7 +79,8 @@ public:
      * @param maxConcurrent Maximum concurrent installations (default: 2)
      * @return Number of jobs queued
      */
-    int startMigration(std::shared_ptr<MigrationReport> report, int maxConcurrent = kMaxConcurrentTransfers);
+    int startMigration(std::shared_ptr<MigrationReport> report,
+        int maxConcurrent = kMaxConcurrentTransfers);
 
     /**
      * @brief Pause migration
@@ -213,14 +214,14 @@ private:
 
     std::shared_ptr<ChocolateyManager> m_chocoManager;
     std::shared_ptr<MigrationReport> m_report;
-    
+
     QVector<MigrationJob> m_jobs;
     QQueue<int> m_jobQueue;              ///< Indices of pending jobs
     QFuture<void> m_processFuture;
-    
+
     mutable QMutex m_mutex;              ///< Protects job data
     QWaitCondition m_waitCondition;      ///< For pause/resume
-    
+
     std::atomic<bool> m_running{false};
     std::atomic<bool> m_paused{false};
     std::atomic<bool> m_cancelled{false};

@@ -64,7 +64,8 @@ void LinuxDistroCatalog::addGeneralPurposeDistros()
                                 "setting up client workstations.",
         /*.category =*/         Category::GeneralPurpose,
         /*.sourceType =*/       SourceType::DirectURL,
-        /*.downloadUrl =*/      "https://releases.ubuntu.com/noble/ubuntu-{version}-desktop-amd64.iso",
+        /*.downloadUrl =
+            */      "https://releases.ubuntu.com/noble/ubuntu-{version}-desktop-amd64.iso",
         /*.checksumUrl =*/      "https://releases.ubuntu.com/noble/SHA256SUMS",
         /*.checksumType =*/     "sha256",
         /*.fileName =*/         "ubuntu-{version}-desktop-amd64.iso",
@@ -85,7 +86,8 @@ void LinuxDistroCatalog::addGeneralPurposeDistros()
                                 "and cloud-init.",
         /*.category =*/         Category::GeneralPurpose,
         /*.sourceType =*/       SourceType::DirectURL,
-        /*.downloadUrl =*/      "https://releases.ubuntu.com/noble/ubuntu-{version}-live-server-amd64.iso",
+        /*.downloadUrl =
+            */      "https://releases.ubuntu.com/noble/ubuntu-{version}-live-server-amd64.iso",
         /*.checksumUrl =*/      "https://releases.ubuntu.com/noble/SHA256SUMS",
         /*.checksumType =*/     "sha256",
         /*.fileName =*/         "ubuntu-{version}-live-server-amd64.iso",
@@ -106,8 +108,12 @@ void LinuxDistroCatalog::addGeneralPurposeDistros()
                                 "full multimedia codecs.",
         /*.category =*/         Category::GeneralPurpose,
         /*.sourceType =*/       SourceType::DirectURL,
-        /*.downloadUrl =*/      "https://mirrors.kernel.org/linuxmint/stable/{version}/linuxmint-{version}-cinnamon-64bit.iso",
-        /*.checksumUrl =*/      "https://mirrors.kernel.org/linuxmint/stable/{version}/sha256sum.txt",
+        /*.downloadUrl =
+            */      "https://mirrors.kernel.org/linuxmint/"
+                    "stable/{version}/"
+                    "linuxmint-{version}-cinnamon-64bit.iso",
+        /*.checksumUrl =
+            */      "https://mirrors.kernel.org/linuxmint/stable/{version}/sha256sum.txt",
         /*.checksumType =*/     "sha256",
         /*.fileName =*/         "linuxmint-{version}-cinnamon-64bit.iso",
         /*.approximateSize =*/  static_cast<qint64>(2.9 * 1024 * 1024 * 1024), // ~2.9 GB
@@ -130,7 +136,9 @@ void LinuxDistroCatalog::addSecurityDistros()
                                 "assessment, and forensics. Essential for security audits.",
         /*.category =*/         Category::Security,
         /*.sourceType =*/       SourceType::DirectURL,
-        /*.downloadUrl =*/      "https://cdimage.kali.org/kali-{version}/kali-linux-{version}-installer-amd64.iso",
+        /*.downloadUrl =
+            */      "https://cdimage.kali.org/kali-{version}/"
+                    "kali-linux-{version}-installer-amd64.iso",
         /*.checksumUrl =*/      "https://cdimage.kali.org/kali-{version}/SHA256SUMS",
         /*.checksumType =*/     "sha256",
         /*.fileName =*/         "kali-linux-{version}-installer-amd64.iso",
@@ -149,12 +157,17 @@ void LinuxDistroCatalog::addSystemRecoveryDistros()
         /*.name =*/             "SystemRescue",
         /*.version =*/          "12.03",
         /*.versionLabel =*/     {},
-        /*.description =*/      "Bootable Linux rescue environment for repairing unbootable systems. "
+        /*.description =*/      "Bootable Linux rescue environment for repairing unbootable "
+                                "systems. "
                                 "Includes filesystem tools (fsck, ntfsfix), network tools, "
                                 "partition editors, and data recovery utilities.",
         /*.category =*/         Category::SystemRecovery,
         /*.sourceType =*/       SourceType::SourceForge,
-        /*.downloadUrl =*/      "https://sourceforge.net/projects/systemrescuecd/files/sysresccd-x86/{version}/systemrescue-{version}-amd64.iso/download",
+        /*.downloadUrl =
+            */      "https://sourceforge.net/projects/"
+                    "systemrescuecd/files/sysresccd-x86/"
+                    "{version}/systemrescue-{version}-"
+                    "amd64.iso/download",
         /*.checksumUrl =*/      {},  // SourceForge provides checksums on download page
         /*.checksumType =*/     {},
         /*.fileName =*/         "systemrescue-{version}-amd64.iso",
@@ -178,7 +191,11 @@ void LinuxDistroCatalog::addDiskToolDistros()
                                 "for deploying to many machines simultaneously.",
         /*.category =*/         Category::DiskTools,
         /*.sourceType =*/       SourceType::SourceForge,
-        /*.downloadUrl =*/      "https://sourceforge.net/projects/clonezilla/files/clonezilla_live_stable/{version}/clonezilla-live-{version}-amd64.iso/download",
+        /*.downloadUrl =
+            */      "https://sourceforge.net/projects/"
+                    "clonezilla/files/clonezilla_live_stable/"
+                    "{version}/clonezilla-live-{version}-"
+                    "amd64.iso/download",
         /*.checksumUrl =*/      {},  // SourceForge provides checksums on download page
         /*.checksumType =*/     {},
         /*.fileName =*/         "clonezilla-live-{version}-amd64.iso",
@@ -199,7 +216,11 @@ void LinuxDistroCatalog::addDiskToolDistros()
                                 "HFS+, XFS, and many more filesystems.",
         /*.category =*/         Category::DiskTools,
         /*.sourceType =*/       SourceType::SourceForge,
-        /*.downloadUrl =*/      "https://sourceforge.net/projects/gparted/files/gparted-live-stable/{version}/gparted-live-{version}-amd64.iso/download",
+        /*.downloadUrl =
+            */      "https://sourceforge.net/projects/gparted/"
+                    "files/gparted-live-stable/{version}/"
+                    "gparted-live-{version}-amd64.iso/"
+                    "download",
         /*.checksumUrl =*/      {},  // SourceForge provides checksums on download page
         /*.checksumType =*/     {},
         /*.fileName =*/         "gparted-live-{version}-amd64.iso",
@@ -239,7 +260,8 @@ void LinuxDistroCatalog::addUtilityDistros()
         /*.name =*/             "Ventoy LiveCD",
         /*.version =*/          "1.1.10",
         /*.versionLabel =*/     {},
-        /*.description =*/      "Multi-boot USB solution. Install Ventoy to a USB drive, then simply "
+        /*.description =*/      "Multi-boot USB solution. Install Ventoy to a USB drive, then "
+                                "simply "
                                 "copy ISO files to the drive — no reformatting needed. Supports "
                                 "110+ OS types including Windows, Linux, and WinPE.",
         /*.category =*/         Category::Utilities,
@@ -261,7 +283,8 @@ void LinuxDistroCatalog::addUtilityDistros()
         /*.version =*/          "7.20",
         /*.versionLabel =*/     {},
         /*.description =*/      "Comprehensive memory diagnostic tool. Tests RAM for errors using "
-                                "multiple test patterns. Boots directly — no OS required. Essential "
+                                "multiple test patterns. Boots directly — no OS required. "
+                                "Essential "
                                 "for diagnosing random crashes and blue screens.",
         /*.category =*/         Category::Utilities,
         /*.sourceType =*/       SourceType::GitHubRelease,

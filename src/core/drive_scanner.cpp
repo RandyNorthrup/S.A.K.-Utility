@@ -35,7 +35,7 @@ DriveScanner::DriveScanner(QObject* parent)
 {
     Q_ASSERT_X(s_instance == nullptr, "DriveScanner", "Only one DriveScanner instance is allowed");
     s_instance = this;
-    
+
     // Refresh every 5 seconds as fallback
     m_refreshTimer->setInterval(sak::kTimerRefreshMs);
     connect(m_refreshTimer, &QTimer::timeout, this, &DriveScanner::onRefreshTimer);
@@ -48,20 +48,20 @@ DriveScanner::~DriveScanner() {
 
 void DriveScanner::start() {
     sak::logInfo("Starting drive scanner");
-    
+
     // Initial scan
     scanDrives();
-    
+
     // Register for device notifications
     registerDeviceNotification();
-    
+
     // Start refresh timer
     m_refreshTimer->start();
 }
 
 void DriveScanner::stop() {
     sak::logInfo("Stopping drive scanner");
-    
+
     m_refreshTimer->stop();
     unregisterDeviceNotification();
     m_drives.clear();
@@ -107,10 +107,10 @@ void DriveScanner::scanDrives() {
     if (m_isScanning) {
         return;
     }
-    
+
     m_isScanning = true;
     QList<sak::DriveInfo> newDrives;
-    
+
     // Enumerate physical drives (0-99 should be more than enough)
     for (int driveNumber = 0; driveNumber < 100; ++driveNumber) {
         sak::DriveInfo info = queryDriveInfo(driveNumber);
@@ -118,10 +118,10 @@ void DriveScanner::scanDrives() {
             newDrives.append(info);
         }
     }
-    
+
     // Check for changes
     bool hasChanges = false;
-    
+
     // Find removed drives
     for (const auto& oldDrive : m_drives) {
         if (containsDevicePath(newDrives, oldDrive.devicePath)) continue;
@@ -129,21 +129,22 @@ void DriveScanner::scanDrives() {
         Q_EMIT driveDetached(oldDrive.devicePath);
         hasChanges = true;
     }
-    
+
     // Find new drives
     for (const auto& newDrive : newDrives) {
         if (containsDevicePath(m_drives, newDrive.devicePath)) continue;
-        sak::logInfo(QString("Drive attached: %1 (%2)").arg(newDrive.devicePath, newDrive.name).toStdString());
+        sak::logInfo(QString("Drive attached: %1 (%2)").arg(newDrive.devicePath,
+            newDrive.name).toStdString());
         Q_EMIT driveAttached(newDrive);
         hasChanges = true;
     }
-    
+
     m_drives = newDrives;
-    
+
     if (hasChanges) {
         Q_EMIT drivesUpdated(m_drives);
     }
-    
+
     m_isScanning = false;
 }
 
@@ -151,7 +152,7 @@ sak::DriveInfo DriveScanner::queryDriveInfo(int driveNumber) {
     Q_ASSERT_X(driveNumber >= 0, "queryDriveInfo", "driveNumber must be non-negative");
     sak::DriveInfo info;
     info.devicePath = QString("\\\\.\\PhysicalDrive%1").arg(driveNumber);
-    
+
     // Try to open drive
     HANDLE hDrive = CreateFileW(
         reinterpret_cast<LPCWSTR>(info.devicePath.utf16()),
@@ -162,11 +163,11 @@ sak::DriveInfo DriveScanner::queryDriveInfo(int driveNumber) {
         0,
         nullptr
     );
-    
+
     if (hDrive == INVALID_HANDLE_VALUE) {
         return sak::DriveInfo{}; // Drive doesn't exist or can't be accessed
     }
-    
+
     // Get drive geometry and size
     info.size = getDriveSize(hDrive);
     info.blockSize = getBlockSize(hDrive);
@@ -176,13 +177,13 @@ sak::DriveInfo DriveScanner::queryDriveInfo(int driveNumber) {
     info.isReadOnly = isDriveReadOnly(hDrive);
     info.isSystem = containsWindowsInstallation(driveNumber);
     info.mountPoints = getMountPoints(driveNumber);
-    
+
     if (!info.mountPoints.isEmpty()) {
         info.volumeLabel = getVolumeLabel(info.mountPoints.first());
     }
-    
+
     CloseHandle(hDrive);
-    
+
     return info;
 }
 
@@ -198,18 +199,18 @@ QString DriveScanner::getDriveName(int driveNumber) {
         0,
         nullptr
     );
-    
+
     if (hDrive == INVALID_HANDLE_VALUE) {
         return QString("Physical Drive %1").arg(driveNumber);
     }
-    
+
     STORAGE_PROPERTY_QUERY query = {};
     query.PropertyId = StorageDeviceProperty;
     query.QueryType = PropertyStandardQuery;
-    
+
     BYTE buffer[1024] = {};
     DWORD bytesReturned = 0;
-    
+
     if (DeviceIoControl(
         hDrive,
         IOCTL_STORAGE_QUERY_PROPERTY,
@@ -219,18 +220,20 @@ QString DriveScanner::getDriveName(int driveNumber) {
         nullptr))
     {
         auto* desc = reinterpret_cast<STORAGE_DEVICE_DESCRIPTOR*>(buffer);
-        
+
         QString vendor;
         QString product;
         if (desc->VendorIdOffset != 0) {
-            vendor = QString::fromLatin1(reinterpret_cast<const char*>(buffer + desc->VendorIdOffset)).trimmed();
+            vendor = QString::fromLatin1(reinterpret_cast<const char*>(buffer +
+                desc->VendorIdOffset)).trimmed();
         }
         if (desc->ProductIdOffset != 0) {
-            product = QString::fromLatin1(reinterpret_cast<const char*>(buffer + desc->ProductIdOffset)).trimmed();
+            product = QString::fromLatin1(reinterpret_cast<const char*>(buffer +
+                desc->ProductIdOffset)).trimmed();
         }
-        
+
         CloseHandle(hDrive);
-        
+
         if (!vendor.isEmpty() && !product.isEmpty()) {
             return QString("%1 %2").arg(vendor, product);
         } else if (!product.isEmpty()) {
@@ -241,7 +244,7 @@ QString DriveScanner::getDriveName(int driveNumber) {
     } else {
         CloseHandle(hDrive);
     }
-    
+
     return QString("Physical Drive %1").arg(driveNumber);
 }
 
@@ -250,7 +253,7 @@ qint64 DriveScanner::getDriveSize(HANDLE hDrive) {
         "hDrive must be a valid handle");
     DISK_GEOMETRY_EX geometry = {};
     DWORD bytesReturned = 0;
-    
+
     if (DeviceIoControl(
         hDrive,
         IOCTL_DISK_GET_DRIVE_GEOMETRY_EX,
@@ -261,7 +264,7 @@ qint64 DriveScanner::getDriveSize(HANDLE hDrive) {
     {
         return geometry.DiskSize.QuadPart;
     }
-    
+
     return 0;
 }
 
@@ -270,7 +273,7 @@ quint32 DriveScanner::getBlockSize(HANDLE hDrive) {
         "hDrive must be a valid handle");
     DISK_GEOMETRY geometry = {};
     DWORD bytesReturned = 0;
-    
+
     if (DeviceIoControl(
         hDrive,
         IOCTL_DISK_GET_DRIVE_GEOMETRY,
@@ -281,7 +284,7 @@ quint32 DriveScanner::getBlockSize(HANDLE hDrive) {
     {
         return geometry.BytesPerSector;
     }
-    
+
     return 512; // Default
 }
 
@@ -291,10 +294,10 @@ QString DriveScanner::getBusType(HANDLE hDrive) {
     STORAGE_PROPERTY_QUERY query = {};
     query.PropertyId = StorageDeviceProperty;
     query.QueryType = PropertyStandardQuery;
-    
+
     BYTE buffer[1024] = {};
     DWORD bytesReturned = 0;
-    
+
     if (DeviceIoControl(
         hDrive,
         IOCTL_STORAGE_QUERY_PROPERTY,
@@ -304,7 +307,7 @@ QString DriveScanner::getBusType(HANDLE hDrive) {
         nullptr))
     {
         auto* desc = reinterpret_cast<STORAGE_DEVICE_DESCRIPTOR*>(buffer);
-        
+
         switch (desc->BusType) {
             case BusTypeUsb: return "USB";
             case BusTypeAta: return "ATA";
@@ -315,7 +318,7 @@ QString DriveScanner::getBusType(HANDLE hDrive) {
             default: return "Unknown";
         }
     }
-    
+
     return "Unknown";
 }
 
@@ -332,20 +335,20 @@ bool DriveScanner::isDriveRemovable(int driveNumber) {
         0,
         nullptr
     );
-    
+
     if (hDrive == INVALID_HANDLE_VALUE) {
         return false;
     }
-    
+
     STORAGE_PROPERTY_QUERY query = {};
     query.PropertyId = StorageDeviceProperty;
     query.QueryType = PropertyStandardQuery;
-    
+
     BYTE buffer[1024] = {};
     DWORD bytesReturned = 0;
-    
+
     bool removable = false;
-    
+
     if (DeviceIoControl(
         hDrive,
         IOCTL_STORAGE_QUERY_PROPERTY,
@@ -355,12 +358,12 @@ bool DriveScanner::isDriveRemovable(int driveNumber) {
         nullptr))
     {
         auto* desc = reinterpret_cast<STORAGE_DEVICE_DESCRIPTOR*>(buffer);
-        
+
         // Primary: use the RemovableMedia flag from the device descriptor
         if (desc->RemovableMedia) {
             removable = true;
         }
-        
+
         // Secondary: certain bus types are inherently removable
         switch (desc->BusType) {
             case BusTypeUsb:
@@ -373,7 +376,7 @@ bool DriveScanner::isDriveRemovable(int driveNumber) {
                 break;
         }
     }
-    
+
     CloseHandle(hDrive);
     return removable;
 }
@@ -383,7 +386,7 @@ bool DriveScanner::isDriveReadOnly(HANDLE hDrive) {
         "hDrive must be a valid handle");
     DISK_GEOMETRY geometry = {};
     DWORD bytesReturned = 0;
-    
+
     if (DeviceIoControl(
         hDrive,
         IOCTL_DISK_IS_WRITABLE,
@@ -394,12 +397,12 @@ bool DriveScanner::isDriveReadOnly(HANDLE hDrive) {
     {
         return false;
     }
-    
+
     DWORD error = GetLastError();
     if (error == ERROR_WRITE_PROTECT) {
         return true;
     }
-    
+
     GET_LENGTH_INFORMATION lengthInfo = {};
     if (DeviceIoControl(
         hDrive,
@@ -413,27 +416,27 @@ bool DriveScanner::isDriveReadOnly(HANDLE hDrive) {
             return true;
         }
     }
-    
+
     return false;
 }
 
 QStringList DriveScanner::getMountPoints(int driveNumber) {
     Q_ASSERT_X(driveNumber >= 0, "getMountPoints", "driveNumber must be non-negative");
     QStringList mountPoints;
-    
+
     wchar_t volumeName[MAX_PATH];
     HANDLE hFind = FindFirstVolumeW(volumeName, MAX_PATH);
-    
+
     if (hFind == INVALID_HANDLE_VALUE) {
         return mountPoints;
     }
-    
+
     do {
         size_t len = wcslen(volumeName);
         if (len > 0 && volumeName[len - 1] == L'\\') {
             volumeName[len - 1] = L'\0';
         }
-        
+
         HANDLE hVolume = CreateFileW(
             volumeName,
             0,
@@ -443,12 +446,12 @@ QStringList DriveScanner::getMountPoints(int driveNumber) {
             0,
             nullptr
         );
-        
+
         if (hVolume == INVALID_HANDLE_VALUE) continue;
-        
+
         STORAGE_DEVICE_NUMBER deviceNumber = {};
         DWORD bytesReturned = 0;
-        
+
         bool isMatch = DeviceIoControl(
             hVolume,
             IOCTL_STORAGE_GET_DEVICE_NUMBER,
@@ -457,30 +460,32 @@ QStringList DriveScanner::getMountPoints(int driveNumber) {
             &bytesReturned,
             nullptr)
             && static_cast<int>(deviceNumber.DeviceNumber) == driveNumber;
-        
+
         if (!isMatch) {
             CloseHandle(hVolume);
             continue;
         }
-        
+
         collectMountPaths(volumeName, len, mountPoints);
         CloseHandle(hVolume);
     } while (FindNextVolumeW(hFind, volumeName, MAX_PATH));
-    
+
     FindVolumeClose(hFind);
     return mountPoints;
 }
 
-void DriveScanner::collectMountPaths(wchar_t* volumeName, size_t nameLen, QStringList& mountPoints) {
+void DriveScanner::collectMountPaths(wchar_t* volumeName, size_t nameLen,
+    QStringList& mountPoints) {
     volumeName[nameLen - 1] = L'\\';
-    
+
     wchar_t pathNames[MAX_PATH * 4];
     DWORD pathLen = 0;
-    if (!GetVolumePathNamesForVolumeNameW(volumeName, pathNames, sizeof(pathNames) / sizeof(wchar_t), &pathLen)) {
+    if (!GetVolumePathNamesForVolumeNameW(volumeName, pathNames,
+        sizeof(pathNames) / sizeof(wchar_t), &pathLen)) {
         volumeName[nameLen - 1] = L'\0';
         return;
     }
-    
+
     wchar_t* ptr = pathNames;
     while (*ptr) {
         mountPoints.append(QString::fromWCharArray(ptr));
@@ -492,7 +497,7 @@ void DriveScanner::collectMountPaths(wchar_t* volumeName, size_t nameLen, QStrin
 QString DriveScanner::getVolumeLabel(const QString& mountPoint) {
     Q_ASSERT_X(!mountPoint.isEmpty(), "getVolumeLabel", "mountPoint must not be empty");
     wchar_t volumeLabel[MAX_PATH + 1] = {};
-    
+
     if (GetVolumeInformationW(
         reinterpret_cast<LPCWSTR>(mountPoint.utf16()),
         volumeLabel, MAX_PATH,
@@ -501,7 +506,7 @@ QString DriveScanner::getVolumeLabel(const QString& mountPoint) {
     {
         return QString::fromWCharArray(volumeLabel);
     }
-    
+
     return QString();
 }
 
@@ -509,40 +514,41 @@ bool DriveScanner::containsWindowsInstallation(int driveNumber) {
     Q_ASSERT_X(driveNumber >= 0, "containsWindowsInstallation",
         "driveNumber must be non-negative");
     QStringList mountPoints = getMountPoints(driveNumber);
-    
+
     for (const QString& mountPoint : mountPoints) {
         QDir mountDir(mountPoint);
-        
+
         // Check for Windows system directory
-        if (mountDir.exists("Windows/System32") && mountDir.exists("Windows/System32/ntoskrnl.exe")) {
+        if (mountDir.exists("Windows/System32") &&
+            mountDir.exists("Windows/System32/ntoskrnl.exe")) {
             return true;
         }
-        
+
         // Check for Windows installation with explorer
         if (mountDir.exists("Windows/explorer.exe") && mountDir.exists("Program Files")) {
             return true;
         }
-        
+
         // Check for boot files (but only if other Windows indicators present)
         // Boot files alone don't mean it's a system drive - recovery/install media has these too
-        if ((mountDir.exists("bootmgr") || mountDir.exists("BOOTNXT")) && 
+        if ((mountDir.exists("bootmgr") || mountDir.exists("BOOTNXT")) &&
             mountDir.exists("Windows")) {
             return true;
         }
-        
+
         // Check for EFI boot files with Windows
-        if (mountDir.exists("EFI/Microsoft/Boot/bootmgfw.efi") && 
+        if (mountDir.exists("EFI/Microsoft/Boot/bootmgfw.efi") &&
             mountDir.exists("Windows")) {
             return true;
         }
     }
-    
+
     return false;
 }
 
 void DriveScanner::registerDeviceNotification() {
     const wchar_t* className = L"DriveScannerWindowClass";
-    
+
     WNDCLASSEXW wc = {};
     wc.cbSize = sizeof(WNDCLASSEXW);
     wc.lpfnWndProc = [](HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) -> LRESULT {
@@ -560,12 +566,12 @@ void DriveScanner::registerDeviceNotification() {
     };
     wc.hInstance = GetModuleHandleW(nullptr);
     wc.lpszClassName = className;
-    
+
     if (!RegisterClassExW(&wc) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) {
         sak::logError("Failed to register window class");
         return;
     }
-    
+
     m_notificationWindow = CreateWindowExW(
         0,
         className,
@@ -576,22 +582,22 @@ void DriveScanner::registerDeviceNotification() {
         GetModuleHandleW(nullptr),
         nullptr
     );
-    
+
     if (!m_notificationWindow) {
         sak::logError("Failed to create notification window");
         return;
     }
-    
+
     DEV_BROADCAST_DEVICEINTERFACE_W notificationFilter = {};
     notificationFilter.dbcc_size = sizeof(notificationFilter);
     notificationFilter.dbcc_devicetype = DBT_DEVTYP_DEVICEINTERFACE;
-    
+
     m_deviceNotify = RegisterDeviceNotificationW(
         m_notificationWindow,
         &notificationFilter,
         DEVICE_NOTIFY_WINDOW_HANDLE | DEVICE_NOTIFY_ALL_INTERFACE_CLASSES
     );
-    
+
     if (!m_deviceNotify) {
         sak::logError("Failed to register device notification");
         DestroyWindow(m_notificationWindow);
@@ -606,14 +612,14 @@ void DriveScanner::unregisterDeviceNotification() {
         UnregisterDeviceNotification(m_deviceNotify);
         m_deviceNotify = nullptr;
     }
-    
+
     if (m_notificationWindow != nullptr) {
         DestroyWindow(m_notificationWindow);
         m_notificationWindow = nullptr;
     }
 }
 
-LRESULT CALLBACK DriveScanner::deviceNotificationProc(HWND hwnd, UINT message, 
+LRESULT CALLBACK DriveScanner::deviceNotificationProc(HWND hwnd, UINT message,
                                                      WPARAM wParam, LPARAM lParam)
 {
     if (message == WM_DEVICECHANGE
@@ -621,7 +627,7 @@ LRESULT CALLBACK DriveScanner::deviceNotificationProc(HWND hwnd, UINT message,
         && s_instance) {
         s_instance->refresh();
     }
-    
+
     return DefWindowProc(hwnd, message, wParam, lParam);
 }
 

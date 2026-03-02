@@ -26,7 +26,8 @@ void OrchestrationProtocolTests::encodeDecodeRoundtrip() {
     auto messages = OrchestrationProtocol::readMessages(buffer, framed);
     QCOMPARE(messages.size(), 1);
     QCOMPARE(messages[0].value("message_type").toString(), QString("DESTINATION_REGISTER"));
-    QCOMPARE(messages[0].value("destination_info").toObject().value("hostname").toString(), QString("TEST-PC"));
+    QCOMPARE(messages[0].value("destination_info").toObject().value("hostname").toString(),
+        QString("TEST-PC"));
 }
 
 QTEST_MAIN(OrchestrationProtocolTests)

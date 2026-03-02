@@ -12,7 +12,7 @@ namespace sak {
 
 /**
  * @brief Check Disk Errors Action
- * 
+ *
  * Runs CHKDSK /scan on all drives to detect file system errors.
  */
 class CheckDiskErrorsAction : public QuickAction {
@@ -47,7 +47,8 @@ private:
     void parseChkdskOutput(const QString& output, DriveCheckResult& result);
 
     // TigerStyle helpers for execute() decomposition
-    bool executeEnumerateVolumes(const QDateTime& start_time, QVector<QChar>& drives, QString& report);
+    bool executeEnumerateVolumes(const QDateTime& start_time, QVector<QChar>& drives,
+        QString& report);
     void executeRunChkdsk(const QVector<QChar>& drives, QString& report,
                           int& drives_scanned, int& errors_found, int& errors_fixed);
     void executeBuildReport(const QDateTime& start_time, const QString& report,

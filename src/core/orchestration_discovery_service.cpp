@@ -22,7 +22,8 @@ OrchestrationDiscoveryService::OrchestrationDiscoveryService(QObject* parent)
     , m_broadcastTimer(new QTimer(this))
 {
     m_broadcastTimer->setInterval(kBroadcastIntervalMs);
-    connect(m_broadcastTimer, &QTimer::timeout, this, &OrchestrationDiscoveryService::onBroadcastTimeout);
+    connect(m_broadcastTimer, &QTimer::timeout, this,
+        &OrchestrationDiscoveryService::onBroadcastTimeout);
     connect(m_socket, &QUdpSocket::readyRead, this, &OrchestrationDiscoveryService::onReadyRead);
 }
 
@@ -44,7 +45,8 @@ void OrchestrationDiscoveryService::startAsOrchestrator() {
         return;
     }
 
-    if (!m_socket->bind(QHostAddress::AnyIPv4, m_port, QUdpSocket::ShareAddress | QUdpSocket::ReuseAddressHint)) {
+    if (!m_socket->bind(QHostAddress::AnyIPv4, m_port,
+        QUdpSocket::ShareAddress | QUdpSocket::ReuseAddressHint)) {
         Q_EMIT discoveryError(tr("Failed to bind discovery port %1").arg(m_port));
         logError("OrchestrationDiscoveryService bind failed on port {}: {}", m_port,
                   m_socket->errorString().toStdString());
@@ -63,7 +65,8 @@ void OrchestrationDiscoveryService::startAsDestination() {
         return;
     }
 
-    if (!m_socket->bind(QHostAddress::AnyIPv4, m_port, QUdpSocket::ShareAddress | QUdpSocket::ReuseAddressHint)) {
+    if (!m_socket->bind(QHostAddress::AnyIPv4, m_port,
+        QUdpSocket::ShareAddress | QUdpSocket::ReuseAddressHint)) {
         Q_EMIT discoveryError(tr("Failed to bind discovery port %1").arg(m_port));
         logError("OrchestrationDiscoveryService bind failed on port {}: {}", m_port,
                   m_socket->errorString().toStdString());
@@ -102,7 +105,8 @@ void OrchestrationDiscoveryService::sendDiscoveryProbe(const QHostAddress& addre
     m_socket->writeDatagram(doc.toJson(QJsonDocument::Compact), address, port);
 }
 
-void OrchestrationDiscoveryService::sendDestinationAnnounceTo(const QHostAddress& address, quint16 port) {
+void OrchestrationDiscoveryService::sendDestinationAnnounceTo(const QHostAddress& address,
+    quint16 port) {
     sendDestinationAnnounce(address, port);
 }
 
@@ -150,7 +154,8 @@ bool OrchestrationDiscoveryService::sendBroadcastOnInterface(
     return sentAny;
 }
 
-void OrchestrationDiscoveryService::sendDestinationAnnounce(const QHostAddress& address, quint16 port) {
+void OrchestrationDiscoveryService::sendDestinationAnnounce(const QHostAddress& address,
+    quint16 port) {
     QJsonObject payload;
     payload["message_type"] = "DESTINATION_ANNOUNCE";
     payload["protocol_version"] = "1.0";
@@ -182,7 +187,8 @@ void OrchestrationDiscoveryService::processDiscoveryDatagram(
     const QString type = obj.value("message_type").toString();
 
     if (type == "ORCH_DISCOVERY") {
-        const auto port = static_cast<quint16>(obj.value("orchestrator_port").toInt(m_orchestratorPort));
+        const auto port =
+            static_cast<quint16>(obj.value("orchestrator_port").toInt(m_orchestratorPort));
         Q_EMIT orchestratorDiscovered(sender, port);
         if (!m_roleOrchestrator) {
             sendDestinationAnnounce(sender, senderPort);
@@ -197,7 +203,8 @@ void OrchestrationDiscoveryService::processDiscoveryDatagram(
     destination.ip_address = sender.toString();
     destination.last_seen = QDateTime::currentDateTimeUtc();
     if (destination.destination_id.isEmpty()) {
-        destination.destination_id = QString("%1@%2").arg(destination.hostname, destination.ip_address);
+        destination.destination_id = QString("%1@%2").arg(destination.hostname,
+            destination.ip_address);
     }
     Q_EMIT destinationDiscovered(destination);
 }

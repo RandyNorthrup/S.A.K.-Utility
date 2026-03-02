@@ -135,8 +135,10 @@ void NetworkTransferWorkflowTests::transferEncryptedFiles() {
     QVERIFY(manifestSpy.wait(15000));
     destination.approveTransfer(true);
 
-    QTRY_VERIFY2_WITH_TIMEOUT(destCompletedSpy.count() >= 1, "Destination transfer should complete", 30000);
-    QTRY_VERIFY2_WITH_TIMEOUT(sourceCompletedSpy.count() >= 1, "Source transfer should complete", 30000);
+    QTRY_VERIFY2_WITH_TIMEOUT(destCompletedSpy.count() >= 1,
+        "Destination transfer should complete", 30000);
+    QTRY_VERIFY2_WITH_TIMEOUT(sourceCompletedSpy.count() >= 1, "Source transfer should complete",
+        30000);
 
     const auto destArgs = destCompletedSpy.takeFirst();
     QVERIFY(destArgs.at(0).toBool());
@@ -166,7 +168,8 @@ void NetworkTransferWorkflowTests::transferMultipleFiles() {
 
     QStringList relativePaths;
     for (int i = 0; i < 25; ++i) {
-        relativePaths.append(QString("%1/file_%2.txt").arg(userRoot).arg(i, 3, 10, QLatin1Char('0')));
+        relativePaths.append(QString("%1/file_%2.txt").arg(userRoot).arg(i, 3, 10,
+            QLatin1Char('0')));
     }
 
     QVector<TransferFileEntry> entries;
@@ -246,8 +249,10 @@ void NetworkTransferWorkflowTests::transferMultipleFiles() {
     QVERIFY(manifestSpy.wait(15000));
     destination.approveTransfer(true);
 
-    QTRY_VERIFY2_WITH_TIMEOUT(destCompletedSpy.count() >= 1, "Destination transfer should complete", 60000);
-    QTRY_VERIFY2_WITH_TIMEOUT(sourceCompletedSpy.count() >= 1, "Source transfer should complete", 60000);
+    QTRY_VERIFY2_WITH_TIMEOUT(destCompletedSpy.count() >= 1,
+        "Destination transfer should complete", 60000);
+    QTRY_VERIFY2_WITH_TIMEOUT(sourceCompletedSpy.count() >= 1, "Source transfer should complete",
+        60000);
 
     const auto destArgs = destCompletedSpy.takeFirst();
     QVERIFY(destArgs.at(0).toBool());
@@ -279,7 +284,8 @@ void NetworkTransferWorkflowTests::transferManySmallFiles() {
 
     QStringList relativePaths;
     for (int i = 0; i < 200; ++i) {
-        relativePaths.append(QString("%1/small_%2.txt").arg(userRoot).arg(i, 4, 10, QLatin1Char('0')));
+        relativePaths.append(QString("%1/small_%2.txt").arg(userRoot).arg(i, 4, 10,
+            QLatin1Char('0')));
     }
 
     QVector<TransferFileEntry> entries;
@@ -357,8 +363,10 @@ void NetworkTransferWorkflowTests::transferManySmallFiles() {
     QVERIFY(manifestSpy.wait(15000));
     destination.approveTransfer(true);
 
-    QTRY_VERIFY2_WITH_TIMEOUT(destCompletedSpy.count() >= 1, "Destination transfer should complete", 60000);
-    QTRY_VERIFY2_WITH_TIMEOUT(sourceCompletedSpy.count() >= 1, "Source transfer should complete", 60000);
+    QTRY_VERIFY2_WITH_TIMEOUT(destCompletedSpy.count() >= 1,
+        "Destination transfer should complete", 60000);
+    QTRY_VERIFY2_WITH_TIMEOUT(sourceCompletedSpy.count() >= 1, "Source transfer should complete",
+        60000);
 
     const auto destArgs = destCompletedSpy.takeFirst();
     QVERIFY(destArgs.at(0).toBool());
@@ -483,8 +491,10 @@ void NetworkTransferWorkflowTests::resumeInterruptedTransfer() {
     QVERIFY(manifestSpy2.wait(15000));
     destinationResume.approveTransfer(true);
 
-    QTRY_VERIFY2_WITH_TIMEOUT(destCompletedSpy2.count() >= 1, "Destination resume transfer should complete", 60000);
-    QTRY_VERIFY2_WITH_TIMEOUT(sourceCompletedSpy2.count() >= 1, "Source resume transfer should complete", 60000);
+    QTRY_VERIFY2_WITH_TIMEOUT(destCompletedSpy2.count() >= 1,
+        "Destination resume transfer should complete", 60000);
+    QTRY_VERIFY2_WITH_TIMEOUT(sourceCompletedSpy2.count() >= 1,
+        "Source resume transfer should complete", 60000);
 
     const auto destArgs = destCompletedSpy2.takeFirst();
     QVERIFY2(destArgs.at(0).toBool(), "Destination must report success after resume");
@@ -585,8 +595,10 @@ void NetworkTransferWorkflowTests::throttledTransferRespectsLimit() {
     QVERIFY(manifestSpy.wait(15000));
     destination.approveTransfer(true);
 
-    QTRY_VERIFY2_WITH_TIMEOUT(destCompletedSpy.count() >= 1, "Destination throttled transfer should complete", 60000);
-    QTRY_VERIFY2_WITH_TIMEOUT(sourceCompletedSpy.count() >= 1, "Source throttled transfer should complete", 60000);
+    QTRY_VERIFY2_WITH_TIMEOUT(destCompletedSpy.count() >= 1,
+        "Destination throttled transfer should complete", 60000);
+    QTRY_VERIFY2_WITH_TIMEOUT(sourceCompletedSpy.count() >= 1,
+        "Source throttled transfer should complete", 60000);
 
     const auto destArgs = destCompletedSpy.takeFirst();
     QVERIFY(destArgs.at(0).toBool());

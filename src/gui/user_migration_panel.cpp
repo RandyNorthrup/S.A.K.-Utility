@@ -39,7 +39,7 @@ UserMigrationPanel::UserMigrationPanel(QWidget* parent)
 {
     setupUi();
     setupConnections();
-    
+
     appendLog("User Migration Panel initialized");
     appendLog("Click 'Backup User Profiles...' to start the migration wizard");
 }
@@ -107,7 +107,8 @@ QGroupBox* UserMigrationPanel::createWizardButtonsGroup()
 
     m_backupButton = new QPushButton("Start Backup Wizard...");
     m_backupButton->setMinimumHeight(sak::kButtonHeightStd);
-    m_backupButton->setToolTip("Step-by-step wizard to select apps, configure options, and create backups");
+    m_backupButton->setToolTip("Step-by-step wizard to select apps, configure options, and create "
+                               "backups");
     m_backupButton->setAccessibleName(QStringLiteral("Start Backup Wizard"));
     layout->addWidget(m_backupButton);
 
@@ -127,7 +128,8 @@ QGroupBox* UserMigrationPanel::createWizardButtonsGroup()
 
     m_restoreButton = new QPushButton("Start Restore Wizard...");
     m_restoreButton->setMinimumHeight(sak::kButtonHeightStd);
-    m_restoreButton->setToolTip("Step-by-step wizard to select backups, map users, and restore data");
+    m_restoreButton->setToolTip(
+        "Step-by-step wizard to select backups, map users, and restore data");
     m_restoreButton->setAccessibleName(QStringLiteral("Start Restore Wizard"));
     layout->addWidget(m_restoreButton);
 
@@ -146,7 +148,7 @@ void UserMigrationPanel::onBackupSelected()
 {
     // Launch the comprehensive user profile backup wizard
     auto* wizard = new UserProfileBackupWizard(this);
-    
+
     // Connect wizard completion to log updates
     connect(wizard, &QDialog::finished, this, [this, wizard](int result) {
         if (result == QDialog::Accepted) {
@@ -158,7 +160,7 @@ void UserMigrationPanel::onBackupSelected()
         }
         wizard->deleteLater();
     });
-    
+
     // Show wizard
     appendLog("Launching backup wizard...");
     Q_EMIT statusMessage("Backup wizard launched", sak::kTimerStatusMessageMs);
@@ -171,7 +173,7 @@ void UserMigrationPanel::onRestoreBackup()
 {
     // Launch the comprehensive user profile restore wizard
     auto* wizard = new UserProfileRestoreWizard(this);
-    
+
     // Connect wizard completion to log updates
     connect(wizard, &QDialog::finished, this, [this, wizard](int result) {
         if (result == QDialog::Accepted) {
@@ -184,7 +186,7 @@ void UserMigrationPanel::onRestoreBackup()
         }
         wizard->deleteLater();
     });
-    
+
     // Show wizard
     appendLog("Launching restore wizard...");
     Q_EMIT statusMessage("Restore wizard launched", sak::kTimerStatusMessageMs);
@@ -214,14 +216,16 @@ void UserMigrationPanel::onSettingsClicked()
     threadSpin->setValue(config.getBackupThreadCount());
     formLayout->addRow(
         InfoButton::createInfoLabel(tr("Thread Count:"),
-            tr("Number of parallel copy threads \u2014 higher values speed up backup but increase CPU and disk I/O load"), &dialog),
+            tr("Number of parallel copy threads \u2014 higher values speed up backup but increase "
+               "CPU and disk I/O load"), &dialog),
         threadSpin);
 
     auto* verifyCheck = new QCheckBox(tr("Verify files using MD5 hash after backup"), &dialog);
     verifyCheck->setChecked(config.getBackupVerifyMD5());
     formLayout->addRow(
         InfoButton::createInfoLabel(tr("Verify MD5:"),
-            tr("Re-read each copied file and verify its MD5 checksum matches the original \u2014 slower but ensures integrity"), &dialog),
+            tr("Re-read each copied file and verify its MD5 checksum matches the original \u2014 "
+               "slower but ensures integrity"), &dialog),
         verifyCheck);
 
     auto* locRow = new QHBoxLayout();
@@ -229,7 +233,8 @@ void UserMigrationPanel::onSettingsClicked()
     locEdit->setReadOnly(true);
     auto* browseBtn = new QPushButton(tr("Browse..."), &dialog);
     connect(browseBtn, &QPushButton::clicked, &dialog, [&locEdit, &dialog]() {
-        QString dir = QFileDialog::getExistingDirectory(&dialog, tr("Select Backup Location"), locEdit->text());
+        QString dir = QFileDialog::getExistingDirectory(&dialog, tr("Select Backup Location"),
+            locEdit->text());
         if (!dir.isEmpty()) locEdit->setText(dir);
     });
     locRow->addWidget(locEdit);

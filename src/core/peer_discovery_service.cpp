@@ -34,8 +34,10 @@ void PeerDiscoveryService::start() {
         return;
     }
 
-    if (!m_socket->bind(QHostAddress::AnyIPv4, m_port, QUdpSocket::ShareAddress | QUdpSocket::ReuseAddressHint)) {
-        logError("PeerDiscoveryService bind failed on port {}: {}", m_port, m_socket->errorString().toStdString());
+    if (!m_socket->bind(QHostAddress::AnyIPv4, m_port,
+        QUdpSocket::ShareAddress | QUdpSocket::ReuseAddressHint)) {
+        logError("PeerDiscoveryService bind failed on port {}: {}", m_port,
+            m_socket->errorString().toStdString());
         Q_EMIT discoveryError(tr("Failed to bind discovery port %1").arg(m_port));
         return;
     }
@@ -97,7 +99,8 @@ void PeerDiscoveryService::onReadyRead() {
             // Discard oversized or empty datagrams.
             QByteArray discard(static_cast<int>(datagramSize), 0);
             m_socket->readDatagram(discard.data(), discard.size());
-            logWarning("PeerDiscoveryService discarded oversized datagram ({} bytes)", datagramSize);
+            logWarning("PeerDiscoveryService discarded oversized datagram ({} bytes)",
+                datagramSize);
             continue;
         }
 

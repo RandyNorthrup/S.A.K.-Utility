@@ -13,7 +13,7 @@ namespace sak {
 
 /**
  * @brief Disable Visual Effects Action
- * 
+ *
  * Disables Windows visual effects (animations, transparency, shadows)
  * for improved performance on lower-end systems.
  */
@@ -58,7 +58,8 @@ private:
 
     /// @brief Builds the optimization summary section of the report.
     /// @return Report section with summary, restart notice, and optimizations list.
-    QString buildSummaryReport(int settings_total, int settings_changed, const QString& fx_mode) const;
+    QString buildSummaryReport(int settings_total, int settings_changed,
+        const QString& fx_mode) const;
 
     /// @brief Run apply-settings script and parse CHANGES/TOTAL counts.
     void applyVisualEffectsSettings(QString& report, int& settings_changed, int& settings_total);

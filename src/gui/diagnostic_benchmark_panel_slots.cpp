@@ -401,7 +401,8 @@ void DiagnosticBenchmarkPanel::onStartStressTestClicked()
     m_stress_start_button->setEnabled(false);
     m_stress_stop_button->setEnabled(true);
     m_stress_status_label->setText("Status: Running");
-    m_stress_status_label->setStyleSheet(QString("font-weight: 600; color: %1;").arg(sak::ui::kStatusColorSuccess));
+    m_stress_status_label->setStyleSheet(QString("font-weight: 600; color: %1;")
+        .arg(sak::ui::kStatusColorSuccess));
 
     m_controller->runStressTest(config);
 }
@@ -421,11 +422,13 @@ void DiagnosticBenchmarkPanel::onStressTestComplete(
 
     if (result.passed) {
         m_stress_status_label->setText("Status: PASSED");
-        m_stress_status_label->setStyleSheet(QString("font-weight: 600; color: %1;").arg(sak::ui::kStatusColorSuccess));
+        m_stress_status_label->setStyleSheet(QString("font-weight: 600; color: %1;")
+            .arg(sak::ui::kStatusColorSuccess));
     } else {
         m_stress_status_label->setText(
             QString("Status: FAILED \u2014 %1").arg(result.abort_reason));
-        m_stress_status_label->setStyleSheet(QString("font-weight: 600; color: %1;").arg(sak::ui::kStatusColorError));
+        m_stress_status_label->setStyleSheet(QString("font-weight: 600; color: %1;")
+            .arg(sak::ui::kStatusColorError));
     }
 
     logMessage(QString("Stress test %1 (%2s, %3 errors, max temp: %4°C)")
@@ -460,7 +463,8 @@ void DiagnosticBenchmarkPanel::onStressTestStatus(
         QString("Errors: %1").arg(errors));
 
     if (errors > 0) {
-        m_stress_errors_label->setStyleSheet(QString("color: %1; font-weight: 600;").arg(sak::ui::kStatusColorError));
+        m_stress_errors_label->setStyleSheet(QString("color: %1; font-weight: 600;")
+            .arg(sak::ui::kStatusColorError));
     }
 }
 
@@ -493,7 +497,8 @@ void DiagnosticBenchmarkPanel::onRunFullSuiteClicked()
 
     // Reset step labels
     for (int i = 0; i < 7; ++i) {
-        m_suite_step_labels[i]->setStyleSheet(QString("color: %1;").arg(sak::ui::kColorTextDisabled));
+        m_suite_step_labels[i]->setStyleSheet(QString("color: %1;")
+            .arg(sak::ui::kColorTextDisabled));
     }
 
     m_controller->runFullSuite(stress_config, disk_config);
@@ -570,7 +575,8 @@ void DiagnosticBenchmarkPanel::onSuiteComplete()
     m_suite_cancel_button->setEnabled(false);
     m_suite_skip_button->setEnabled(false);
     m_suite_status_label->setText("Suite complete!");
-    m_suite_status_label->setStyleSheet(QString("font-weight: 600; color: %1;").arg(sak::ui::kStatusColorSuccess));
+    m_suite_status_label->setStyleSheet(QString("font-weight: 600; color: %1;")
+        .arg(sak::ui::kStatusColorSuccess));
 
     // Mark all steps as complete \u2014 reconstruct from stored step names
     for (int i = 0; i < 7; ++i) {

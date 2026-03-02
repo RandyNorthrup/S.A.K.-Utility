@@ -23,7 +23,7 @@ SettingsDialog::SettingsDialog(QWidget* parent)
 {
     setupUi();
     loadSettings();
-    
+
     // Connect signals
     connect(m_okButton, &QPushButton::clicked, this, &SettingsDialog::onOkClicked);
     connect(m_cancelButton, &QPushButton::clicked, this, &SettingsDialog::onCancelClicked);
@@ -48,19 +48,19 @@ void SettingsDialog::setupUi() {
 
     // Button layout
     auto* buttonLayout = new QHBoxLayout();
-    
+
     m_resetButton = new QPushButton(tr("Reset to Defaults"), this);
     buttonLayout->addWidget(m_resetButton);
-    
+
     buttonLayout->addStretch();
-    
+
     m_okButton = new QPushButton(tr("OK"), this);
     m_okButton->setDefault(true);
     buttonLayout->addWidget(m_okButton);
-    
+
     m_cancelButton = new QPushButton(tr("Cancel"), this);
     buttonLayout->addWidget(m_cancelButton);
-    
+
     m_applyButton = new QPushButton(tr("Apply"), this);
     m_applyButton->setEnabled(false);
     buttonLayout->addWidget(m_applyButton);
@@ -78,13 +78,19 @@ void SettingsDialog::createBackupTab() {
     layout->addStretch();
     m_tabWidget->addTab(widget, tr("Backup"));
 
-    connect(m_backupThreadCount, QOverload<int>::of(&QSpinBox::valueChanged), this, &SettingsDialog::onSettingChanged);
+    connect(m_backupThreadCount, QOverload<int>::of(&QSpinBox::valueChanged), this,
+        &SettingsDialog::onSettingChanged);
     connect(m_backupVerifyMD5, &QCheckBox::stateChanged, this, &SettingsDialog::onSettingChanged);
-    connect(m_quickActionsBackupLocation, &QLineEdit::textChanged, this, &SettingsDialog::onSettingChanged);
-    connect(m_quickActionsConfirm, &QCheckBox::stateChanged, this, &SettingsDialog::onSettingChanged);
-    connect(m_quickActionsNotifications, &QCheckBox::stateChanged, this, &SettingsDialog::onSettingChanged);
-    connect(m_quickActionsLogging, &QCheckBox::stateChanged, this, &SettingsDialog::onSettingChanged);
-    connect(m_quickActionsCompress, &QCheckBox::stateChanged, this, &SettingsDialog::onSettingChanged);
+    connect(m_quickActionsBackupLocation, &QLineEdit::textChanged, this,
+        &SettingsDialog::onSettingChanged);
+    connect(m_quickActionsConfirm, &QCheckBox::stateChanged, this,
+        &SettingsDialog::onSettingChanged);
+    connect(m_quickActionsNotifications, &QCheckBox::stateChanged, this,
+        &SettingsDialog::onSettingChanged);
+    connect(m_quickActionsLogging, &QCheckBox::stateChanged, this,
+        &SettingsDialog::onSettingChanged);
+    connect(m_quickActionsCompress, &QCheckBox::stateChanged, this,
+        &SettingsDialog::onSettingChanged);
 }
 
 QGroupBox* SettingsDialog::createBackupSettingsGroup(QWidget* parent) {
@@ -101,7 +107,8 @@ QGroupBox* SettingsDialog::createBackupSettingsGroup(QWidget* parent) {
     m_backupVerifyMD5 = new QCheckBox(tr("Verify files using MD5 hash after backup"));
     backupLayout->addRow(
         InfoButton::createInfoLabel(tr("Verify MD5:"),
-            tr("Re-read each copied file and verify its MD5 checksum matches the original — slower but ensures integrity"), parent),
+            tr("Re-read each copied file and verify its MD5 checksum matches the original — slower "
+               "but ensures integrity"), parent),
         m_backupVerifyMD5);
 
     auto* locationLayout = new QHBoxLayout();
@@ -159,7 +166,9 @@ QGroupBox* SettingsDialog::createQuickActionsGroup(QWidget* parent) {
     m_quickActionsConfirm = new QCheckBox(tr("Confirm before executing actions"));
     quickActionsLayout->addRow(
         InfoButton::createInfoLabel(QString(),
-            tr("Show a confirmation dialog before each action runs to prevent accidental execution"), parent),
+            tr("Show a confirmation dialog before each "
+               "action runs to prevent accidental execution"),
+            parent),
         m_quickActionsConfirm);
 
     m_quickActionsNotifications = new QCheckBox(tr("Show completion notifications"));
@@ -177,7 +186,8 @@ QGroupBox* SettingsDialog::createQuickActionsGroup(QWidget* parent) {
     m_quickActionsCompress = new QCheckBox(tr("Compress backups (saves space)"));
     quickActionsLayout->addRow(
         InfoButton::createInfoLabel(QString(),
-            tr("Use ZIP compression for backup output files — slower but uses less disk space"), parent),
+            tr("Use ZIP compression for backup output files — slower but uses less disk space"),
+                parent),
         m_quickActionsCompress);
 
     quickActionsGroup->setLayout(quickActionsLayout);
@@ -195,9 +205,12 @@ void SettingsDialog::loadSettings() {
     // Quick Actions
     {
         QSettings qaSettings("SAK", "QuickActions");
-        m_quickActionsBackupLocation->setText(qaSettings.value("backup_location", "C:\\SAK_Backups").toString());
-        m_quickActionsConfirm->setChecked(qaSettings.value("confirm_before_execute", true).toBool());
-        m_quickActionsNotifications->setChecked(qaSettings.value("show_notifications", true).toBool());
+        m_quickActionsBackupLocation->setText(qaSettings.value("backup_location",
+            "C:\\SAK_Backups").toString());
+        m_quickActionsConfirm->setChecked(qaSettings.value("confirm_before_execute",
+            true).toBool());
+        m_quickActionsNotifications->setChecked(qaSettings.value("show_notifications",
+            true).toBool());
         m_quickActionsLogging->setChecked(qaSettings.value("enable_logging", true).toBool());
         m_quickActionsCompress->setChecked(qaSettings.value("compress_backups", true).toBool());
     }
@@ -241,7 +254,7 @@ void SettingsDialog::applySettings() {
 bool SettingsDialog::validateSettings() {
     // Validate thread count
     if (m_backupThreadCount->value() < 1) {
-        QMessageBox::warning(this, tr("Invalid Setting"), 
+        QMessageBox::warning(this, tr("Invalid Setting"),
                            tr("Thread count must be at least 1."));
         m_tabWidget->setCurrentIndex(0); // Switch to Backup tab
         m_backupThreadCount->setFocus();
@@ -271,7 +284,7 @@ void SettingsDialog::onCancelClicked() {
             QMessageBox::Yes | QMessageBox::No,
             QMessageBox::No
         );
-        
+
         if (reply != QMessageBox::Yes) {
             return;
         }
@@ -291,7 +304,7 @@ void SettingsDialog::onResetToDefaultsClicked() {
     if (reply == QMessageBox::Yes) {
         ConfigManager::instance().resetToDefaults();
         loadSettings();
-        QMessageBox::information(this, tr("Reset Complete"), 
+        QMessageBox::information(this, tr("Reset Complete"),
                                tr("All settings have been reset to defaults."));
     }
 }

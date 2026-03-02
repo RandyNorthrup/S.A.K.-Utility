@@ -29,7 +29,8 @@ public:
     int healthIntervalMs() const;
 
     void sendHealthCheck(const QString& destination_id) override;
-    void sendDeploymentAssignment(const QString& destination_id, const DeploymentAssignment& assignment) override;
+    void sendDeploymentAssignment(const QString& destination_id,
+        const DeploymentAssignment& assignment) override;
     void sendAssignmentPause(const QString& destination_id,
                              const QString& deployment_id,
                              const QString& job_id) override;

@@ -86,7 +86,8 @@ int runElevatedQuickAction(QApplication& app,
     sak::QuickActionController controller;
     controller.setBackupLocation(backup_location);
 
-    QObject::connect(&controller, &sak::QuickActionController::logMessage, [](const QString& message) {
+    QObject::connect(&controller, &sak::QuickActionController::logMessage,
+        [](const QString& message) {
         sak::logInfo("{}", message.toStdString());
     });
 
@@ -139,10 +140,10 @@ int main(int argc, char* argv[]) {
 
         sak::ui::applyWindows11Theme(app);
         sak::ui::installTooltipHelper(app);
-        
+
         // Setup log directory
         auto log_dir = std::filesystem::current_path() / "_logs";
-        
+
         // Initialize logger
         auto& logger = sak::logger::instance();
         if (auto result = logger.initialize(log_dir); !result) {
@@ -153,7 +154,7 @@ int main(int argc, char* argv[]) {
                     .arg(QString::fromStdString(std::string(sak::to_string(result.error())))));
             return 1;
         }
-        
+
         sak::logInfo("===========================================");
         sak::logInfo("SAK Utility Starting");
         sak::logInfo("Version: {}", sak::get_version());
@@ -188,7 +189,7 @@ int main(int argc, char* argv[]) {
         if (!action_to_run.isEmpty()) {
             return runElevatedQuickAction(app, action_to_run, backup_location, result_file);
         }
-        
+
         std::unique_ptr<sak::ui::SplashScreen> splash;
         const QString splash_path = findSplashPath();
         if (!splash_path.isEmpty()) {
@@ -208,17 +209,17 @@ int main(int argc, char* argv[]) {
         if (splash) {
             splash->finish();
         }
-        
+
         sak::logInfo("Main window displayed - application ready");
-        
+
         // Enter Qt event loop
         int result = app.exec();
-        
+
         sak::logInfo("Application shutting down with exit code: {}", result);
         logger.flush();
-        
+
         return result;
-        
+
     } catch (const std::exception& e) {
         sak::logError("Fatal error: {}", e.what());
         std::println(std::cerr, "Fatal error: {}", e.what());

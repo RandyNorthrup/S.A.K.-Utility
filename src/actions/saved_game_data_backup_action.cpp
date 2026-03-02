@@ -13,7 +13,8 @@
 
 namespace sak {
 
-SavedGameDataBackupAction::SavedGameDataBackupAction(const QString& backup_location, QObject* parent)
+SavedGameDataBackupAction::SavedGameDataBackupAction(const QString& backup_location,
+    QObject* parent)
     : QuickAction(parent)
     , m_backup_location(backup_location)
 {
@@ -30,7 +31,7 @@ void SavedGameDataBackupAction::scanSteamSavesForUser(const UserProfile& user) {
         user.profile_path + "/AppData/Roaming/Steam",
         "C:/Program Files (x86)/Steam/userdata"
     };
-    
+
     for (const QString& path : steam_paths) {
         QDir dir(path);
         if (!dir.exists()) continue;
@@ -89,25 +90,25 @@ void SavedGameDataBackupAction::scanDocumentsSaves() {
 
 void SavedGameDataBackupAction::scan() {
     setStatus(ActionStatus::Scanning);
-    
+
     // Scan all user profiles
     WindowsUserScanner scanner;
     m_user_profiles = scanner.scanUsers();
-    
+
     m_save_locations.clear();
     m_total_size = 0;
-    
+
     scanSteamSaves();
     scanEpicSaves();
     scanGOGSaves();
     scanDocumentsSaves();
-    
+
     ScanResult result;
     result.applicable = (m_save_locations.count() > 0);
     result.bytes_affected = m_total_size;
     result.files_count = m_save_locations.count();
     result.estimated_duration_ms = (m_total_size / (10 * sak::kBytesPerMB)) * 1000;
-    
+
     if (m_save_locations.count() > 0) {
         result.summary = QString("Found %1 game save location(s) - %2 MB")
             .arg(m_save_locations.count())
@@ -115,7 +116,7 @@ void SavedGameDataBackupAction::scan() {
     } else {
         result.summary = "No game save data found";
     }
-    
+
     setScanResult(result);
     setStatus(ActionStatus::Ready);
     Q_EMIT scanComplete(result);
@@ -128,13 +129,13 @@ void SavedGameDataBackupAction::execute() {
     }
     setStatus(ActionStatus::Running);
     QDateTime start_time = QDateTime::currentDateTime();
-    
+
     QDir backup_dir(m_backup_location + "/GameSaves");
     backup_dir.mkpath(".");
-    
+
     int processed = 0;
     qint64 bytes_copied = 0;
-    
+
     for (const GameSaveLocation& loc : m_save_locations) {
         if (isCancelled()) {
             emitCancelledResult("Game save backup cancelled", start_time);
@@ -144,15 +145,15 @@ void SavedGameDataBackupAction::execute() {
         QString safe_dir = sanitizePathForBackup(loc.path);
         QString dest = backup_dir.filePath(loc.platform + "/" + safe_dir);
         QDir().mkpath(dest);
-        
-        Q_EMIT executionProgress(QString("Backing up %1...").arg(loc.platform), 
+
+        Q_EMIT executionProgress(QString("Backing up %1...").arg(loc.platform),
                              (processed * 100) / m_save_locations.count());
-        
+
         bytes_copied += copyDirectoryRecursive(loc.path, dest);
-        
+
         processed++;
     }
-    
+
     ExecutionResult result;
     result.success = processed > 0;
     result.duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
@@ -162,11 +163,12 @@ void SavedGameDataBackupAction::execute() {
         ? QString("Backed up game saves from %1 location(s)").arg(processed)
         : "No game save locations were backed up";
     result.output_path = backup_dir.absolutePath();
-    
+
     finishWithResult(result, processed > 0 ? ActionStatus::Success : ActionStatus::Failed);
 }
 
-qint64 SavedGameDataBackupAction::copyDirectoryRecursive(const QString& src_path, const QString& dest_path) {
+qint64 SavedGameDataBackupAction::copyDirectoryRecursive(const QString& src_path,
+    const QString& dest_path) {
     qint64 bytes_copied = 0;
     QDirIterator it(src_path, QDir::Files, QDirIterator::Subdirectories);
     while (it.hasNext()) {

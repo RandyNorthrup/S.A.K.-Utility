@@ -37,7 +37,8 @@ void DestinationRegistry::registerDestination(const DestinationPC& destination) 
     }
 }
 
-void DestinationRegistry::updateHealth(const QString& destination_id, const DestinationHealth& health) {
+void DestinationRegistry::updateHealth(const QString& destination_id,
+    const DestinationHealth& health) {
     if (!m_destinations.contains(destination_id)) {
         return;
     }
@@ -56,7 +57,8 @@ bool DestinationRegistry::contains(const QString& destination_id) const {
     return m_destinations.contains(destination_id);
 }
 
-bool DestinationRegistry::checkReadiness(const DestinationPC& destination, qint64 required_free_bytes, QString* reason) {
+bool DestinationRegistry::checkReadiness(const DestinationPC& destination,
+    qint64 required_free_bytes, QString* reason) {
     if (!destination.health.admin_rights) {
         if (reason) {
             *reason = QObject::tr("Admin rights required");

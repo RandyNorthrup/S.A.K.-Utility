@@ -28,15 +28,15 @@ public:
         if (ptr == nullptr || size == 0) {
             return;
         }
-        
+
         // Use volatile to prevent compiler from optimizing away the zeroing
         volatile unsigned char* vptr = static_cast<volatile unsigned char*>(ptr);
-        
+
         // Zero the memory
         for (std::size_t i = 0; i < size; ++i) {
             vptr[i] = 0;
         }
-        
+
         // Memory barrier to ensure writes complete
 #ifdef _MSC_VER
         _ReadWriteBarrier();
@@ -44,7 +44,7 @@ public:
         __asm__ __volatile__("" : : "r"(ptr) : "memory");
 #endif
     }
-    
+
     /// @brief Securely wipe std::span
     /// @tparam T Element type
     /// @param data Span to wipe
@@ -63,26 +63,26 @@ public:
     using size_type = std::size_t;
     using difference_type = std::ptrdiff_t;
     using propagate_on_container_move_assignment = std::true_type;
-    
+
     constexpr secure_allocator() noexcept = default;
     constexpr secure_allocator(const secure_allocator&) noexcept = default;
-    
+
     template<typename U>
     constexpr secure_allocator(const secure_allocator<U>&) noexcept {}
-    
+
     [[nodiscard]] T* allocate(std::size_t n) {
         if (n > std::numeric_limits<std::size_t>::max() / sizeof(T)) {
             throw std::bad_alloc();
         }
-        
+
         void* ptr = ::operator new(n * sizeof(T));
         if (!ptr) {
             throw std::bad_alloc();
         }
-        
+
         return static_cast<T*>(ptr);
     }
-    
+
     void deallocate(T* ptr, std::size_t n) noexcept {
         if (ptr != nullptr && n > 0) {
             // Securely wipe memory before deallocation
@@ -90,14 +90,14 @@ public:
         }
         ::operator delete(ptr);
     }
-    
+
     template<typename U>
     friend constexpr bool operator==(
         const secure_allocator<T>&,
         const secure_allocator<U>&) noexcept {
         return true;
     }
-    
+
     template<typename U>
     friend constexpr bool operator!=(
         const secure_allocator<T>&,
@@ -119,22 +119,22 @@ public:
     explicit secure_buffer(std::size_t size)
         : m_data(std::make_unique<T[]>(size))
         , m_size(size) {
-        
+
         // Zero initialize
         std::memset(m_data.get(), 0, size * sizeof(T));
     }
-    
+
     // No copy
     secure_buffer(const secure_buffer&) = delete;
     secure_buffer& operator=(const secure_buffer&) = delete;
-    
+
     // Move allowed
     secure_buffer(secure_buffer&& other) noexcept
         : m_data(std::move(other.m_data))
         , m_size(other.m_size) {
         other.m_size = 0;
     }
-    
+
     secure_buffer& operator=(secure_buffer&& other) noexcept {
         if (this != &other) {
             clear();
@@ -144,54 +144,54 @@ public:
         }
         return *this;
     }
-    
+
     /// @brief Destructor - securely wipes memory
     ~secure_buffer() {
         clear();
     }
-    
+
     /// @brief Get pointer to buffer data
     [[nodiscard]] T* data() noexcept {
         return m_data.get();
     }
-    
+
     /// @brief Get const pointer to buffer data
     [[nodiscard]] const T* data() const noexcept {
         return m_data.get();
     }
-    
+
     /// @brief Get buffer size
     [[nodiscard]] std::size_t size() const noexcept {
         return m_size;
     }
-    
+
     /// @brief Get span view of buffer
     [[nodiscard]] std::span<T> span() noexcept {
         return std::span<T>(m_data.get(), m_size);
     }
-    
+
     /// @brief Get const span view of buffer
     [[nodiscard]] std::span<const T> span() const noexcept {
         return std::span<const T>(m_data.get(), m_size);
     }
-    
+
     /// @brief Array subscript operator
     [[nodiscard]] T& operator[](std::size_t index) noexcept {
         return m_data[index];
     }
-    
+
     /// @brief Const array subscript operator
     [[nodiscard]] const T& operator[](std::size_t index) const noexcept {
         return m_data[index];
     }
-    
+
     /// @brief Securely clear buffer contents
     void clear() noexcept {
         if (m_data && m_size > 0) {
             secure_wiper::wipe(m_data.get(), m_size * sizeof(T));
         }
     }
-    
+
     /// @brief Check if buffer is empty
     [[nodiscard]] bool empty() const noexcept {
         return m_size == 0;
@@ -213,19 +213,19 @@ public:
     secure_memory_guard(T* ptr, std::size_t size) noexcept
         : m_ptr(ptr)
         , m_size(size) {}
-    
+
     /// @brief Construct guard for span
     /// @param data Span to guard
     explicit secure_memory_guard(std::span<T> data) noexcept
         : m_ptr(data.data())
         , m_size(data.size()) {}
-    
+
     // No copy or move
     secure_memory_guard(const secure_memory_guard&) = delete;
     secure_memory_guard& operator=(const secure_memory_guard&) = delete;
     secure_memory_guard(secure_memory_guard&&) = delete;
     secure_memory_guard& operator=(secure_memory_guard&&) = delete;
-    
+
     /// @brief Destructor - securely wipes memory
     ~secure_memory_guard() {
         if (m_ptr && m_size > 0) {
@@ -266,17 +266,17 @@ template<typename T>
     if (a.size() != b.size()) {
         return false;
     }
-    
+
     // Constant-time comparison
     volatile unsigned char result = 0;
     const auto* ptr_a = reinterpret_cast<const unsigned char*>(a.data());
     const auto* ptr_b = reinterpret_cast<const unsigned char*>(b.data());
     const std::size_t byte_count = a.size() * sizeof(T);
-    
+
     for (std::size_t i = 0; i < byte_count; ++i) {
         result |= ptr_a[i] ^ ptr_b[i];
     }
-    
+
     return result == 0;
 }
 
@@ -287,16 +287,16 @@ template<typename T>
 [[nodiscard]] inline bool secureCompare(
     std::string_view a,
     std::string_view b) noexcept {
-    
+
     if (a.size() != b.size()) {
         return false;
     }
-    
+
     volatile unsigned char result = 0;
     for (std::size_t i = 0; i < a.size(); ++i) {
         result |= static_cast<unsigned char>(a[i]) ^ static_cast<unsigned char>(b[i]);
     }
-    
+
     return result == 0;
 }
 
@@ -338,13 +338,13 @@ public:
         : m_ptr(ptr)
         , m_size(size)
         , m_locked(lockMemory(ptr, size)) {}
-    
+
     // No copy or move
     locked_memory(const locked_memory&) = delete;
     locked_memory& operator=(const locked_memory&) = delete;
     locked_memory(locked_memory&&) = delete;
     locked_memory& operator=(locked_memory&&) = delete;
-    
+
     /// @brief Destructor - unlocks memory
     ~locked_memory() {
         if (m_locked && m_ptr) {
@@ -352,11 +352,12 @@ public:
                 // Memory unlock failure in destructor is non-recoverable but should
                 // be visible during development. Use fprintf to avoid header dependencies
                 // on logger or Windows headers.
-                (void)std::fprintf(stderr, "SAK: WARNING — VirtualUnlock failed in locked_memory destructor\n");
+                (void)std::fprintf(stderr,
+                    "SAK: WARNING — VirtualUnlock failed in locked_memory destructor\n");
             }
         }
     }
-    
+
     /// @brief Check if memory was successfully locked
     [[nodiscard]] bool isLocked() const noexcept {
         return m_locked;

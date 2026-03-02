@@ -118,7 +118,8 @@ bool DiskCleanupAction::executeCalculateSpace(QStringList& drives, QString& driv
 
     // Configure StateFlags registry for comprehensive cleanup
     QString ps_config = QString(
-        "$volumeCachesKey = 'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer\\VolumeCaches'; "
+        "$volumeCachesKey = "
+        "'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer\\VolumeCaches'; "
         "$stateFlags = 'StateFlags%1'; "
         "$cacheFolders = @("
         "  'Active Setup Temp Folders',"
@@ -151,7 +152,8 @@ bool DiskCleanupAction::executeCalculateSpace(QStringList& drives, QString& driv
         "  try { "
         "    $path = Join-Path $volumeCachesKey $folder; "
         "    if (Test-Path $path) { "
-        "      Set-ItemProperty -Path $path -Name $stateFlags -Value 2 -Type DWord -ErrorAction SilentlyContinue; "
+        "      Set-ItemProperty -Path $path -Name $stateFlags -Value 2 -Type DWord -ErrorAction "
+        "SilentlyContinue; "
         "    } "
         "  } catch {} "
         "}"
@@ -163,7 +165,9 @@ bool DiskCleanupAction::executeCalculateSpace(QStringList& drives, QString& driv
         result.success = false;
         result.message = "Failed to configure Disk Cleanup";
         result.duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
-        result.log = config_result.std_err.isEmpty() ? "Disk Cleanup configuration failed" : config_result.std_err.trimmed();
+        result.log =
+            config_result.std_err.isEmpty() ? "Disk Cleanup configuration failed" : config_result
+                .std_err.trimmed();
         finishWithResult(result, ActionStatus::Failed);
         return false;
     }
@@ -172,7 +176,8 @@ bool DiskCleanupAction::executeCalculateSpace(QStringList& drives, QString& driv
 
     // Get all drives for cleanup
     ProcessResult drives_proc = runPowerShell(
-        "Get-Volume | Where-Object {$_.DriveLetter -and $_.FileSystem -eq 'NTFS'} | Select-Object -ExpandProperty DriveLetter",
+        "Get-Volume | Where-Object {$_.DriveLetter -and $_.FileSystem -eq 'NTFS'} | Select-Object "
+        "-ExpandProperty DriveLetter",
         120000);
     drives = drives_proc.std_out.split('\n', Qt::SkipEmptyParts);
     drives_error = drives_proc.std_err;
@@ -198,7 +203,8 @@ void DiskCleanupAction::executeCleanup(const QStringList& drives, const QString&
         qint64 free_before = space_before.std_out.trimmed().toLongLong(&ok_before);
 
         // Run cleanup on this drive
-        ProcessResult cleanmgr = runProcess("cleanmgr.exe", QStringList() << "/d" << drive_letter << sagerun_arg, sak::kTimeoutArchiveMs);
+        ProcessResult cleanmgr = runProcess("cleanmgr.exe",
+            QStringList() << "/d" << drive_letter << sagerun_arg, sak::kTimeoutArchiveMs);
         if (!cleanmgr.succeeded()) {
             Q_EMIT executionProgress(QString("Cleanup warning on %1:").arg(drive_letter), progress);
         }
@@ -220,7 +226,8 @@ void DiskCleanupAction::executeCleanup(const QStringList& drives, const QString&
 }
 
 void DiskCleanupAction::executeBuildReport(int drives_processed, qint64 total_freed,
-                                            const QString& drives_error, const QDateTime& start_time) {
+                                            const QString& drives_error,
+                                                const QDateTime& start_time) {
     qint64 duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
 
     ExecutionResult result;
@@ -241,7 +248,8 @@ void DiskCleanupAction::executeBuildReport(int drives_processed, qint64 total_fr
                 .arg(drives_processed).arg(mb_freed, 0, 'f', 1);
         }
 
-        result.log = QString("Completed in %1 seconds\nProfile: Comprehensive Windows cleanup\nDrives processed: %2")
+        result.log = QString("Completed in %1 seconds\nProfile: Comprehensive Windows "
+                             "cleanup\nDrives processed: %2")
             .arg(duration_ms / 1000).arg(drives_processed);
         if (!drives_error.trimmed().isEmpty()) {
             result.log += QString("\nDrive enumeration errors:\n%1").arg(drives_error.trimmed());
@@ -259,7 +267,7 @@ void DiskCleanupAction::scanWindowsTemp() {
     const QString system_root = qEnvironmentVariable("SystemRoot", "C:\\Windows");
     QString path = system_root + "\\Temp";
     QDir dir(path);
-    
+
     if (!dir.exists()) {
         return;
     }
@@ -280,7 +288,7 @@ void DiskCleanupAction::scanWindowsTemp() {
 void DiskCleanupAction::scanUserTemp() {
     QString path = QStandardPaths::writableLocation(QStandardPaths::TempLocation);
     QDir dir(path);
-    
+
     if (!dir.exists()) {
         return;
     }
@@ -300,19 +308,19 @@ void DiskCleanupAction::scanUserTemp() {
 
 void DiskCleanupAction::scanBrowserCaches() {
     QStringList cache_paths;
-    
+
     // Chrome
-    QString chrome_cache = QStandardPaths::writableLocation(QStandardPaths::GenericCacheLocation) 
+    QString chrome_cache = QStandardPaths::writableLocation(QStandardPaths::GenericCacheLocation)
                           + "/Google/Chrome/User Data/Default/Cache";
     cache_paths.append(chrome_cache);
 
     // Firefox
-    QString firefox_cache = QStandardPaths::writableLocation(QStandardPaths::GenericCacheLocation) 
+    QString firefox_cache = QStandardPaths::writableLocation(QStandardPaths::GenericCacheLocation)
                            + "/Mozilla/Firefox/Profiles";
     cache_paths.append(firefox_cache);
 
     // Edge
-    QString edge_cache = QStandardPaths::writableLocation(QStandardPaths::GenericCacheLocation) 
+    QString edge_cache = QStandardPaths::writableLocation(QStandardPaths::GenericCacheLocation)
                         + "/Microsoft/Edge/User Data/Default/Cache";
     cache_paths.append(edge_cache);
 
@@ -367,7 +375,7 @@ void DiskCleanupAction::scanWindowsUpdate() {
     const QString system_root = qEnvironmentVariable("SystemRoot", "C:\\Windows");
     QString path = system_root + "\\SoftwareDistribution\\Download";
     QDir dir(path);
-    
+
     if (!dir.exists()) {
         return;
     }
@@ -386,9 +394,10 @@ void DiskCleanupAction::scanWindowsUpdate() {
 }
 
 void DiskCleanupAction::scanThumbnailCache() {
-    QString path = QStandardPaths::writableLocation(QStandardPaths::GenericCacheLocation) + "/IconCache.db";
+    QString path = QStandardPaths::writableLocation(QStandardPaths::GenericCacheLocation) +
+        "/IconCache.db";
     QFileInfo file_info(path);
-    
+
     if (file_info.exists()) {
         CleanupTarget target;
         target.path = path;
@@ -422,8 +431,10 @@ qint64 DiskCleanupAction::deleteDirectoryContents(const QString& path, int& dele
         return 0;
     }
 
-    QFileInfoList entries = dir.entryInfoList(QDir::Files | QDir::Dirs | QDir::NoDotAndDotDot | QDir::Hidden | QDir::System);
-    
+    QFileInfoList entries =
+        dir.entryInfoList(
+            QDir::Files | QDir::Dirs | QDir::NoDotAndDotDot | QDir::Hidden | QDir::System);
+
     for (const QFileInfo& entry : entries) {
         if (isCancelled()) break;
         deleteEntry(entry, total_deleted, deleted_count);
@@ -432,7 +443,8 @@ qint64 DiskCleanupAction::deleteDirectoryContents(const QString& path, int& dele
     return total_deleted;
 }
 
-void DiskCleanupAction::deleteEntry(const QFileInfo& entry, qint64& total_deleted, int& deleted_count) {
+void DiskCleanupAction::deleteEntry(const QFileInfo& entry, qint64& total_deleted,
+    int& deleted_count) {
     if (entry.isDir()) {
         int subdir_deleted = 0;
         total_deleted += deleteDirectoryContents(entry.absoluteFilePath(), subdir_deleted);

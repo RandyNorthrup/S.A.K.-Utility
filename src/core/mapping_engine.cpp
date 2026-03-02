@@ -25,8 +25,9 @@ MappingEngine::Strategy MappingEngine::strategy() const {
     return m_strategy;
 }
 
-MappingEngine::DeploymentMapping MappingEngine::createOneToMany(const SourceProfile& source,
-                                                                const QVector<DestinationPC>& destinations) {
+MappingEngine::DeploymentMapping MappingEngine::createOneToMany(
+    const SourceProfile& source,
+    const QVector<DestinationPC>& destinations) {
     DeploymentMapping mapping;
     mapping.type = MappingType::OneToMany;
     mapping.sources = {source};
@@ -42,8 +43,9 @@ MappingEngine::DeploymentMapping MappingEngine::createOneToMany(const SourceProf
     return mapping;
 }
 
-MappingEngine::DeploymentMapping MappingEngine::createManyToMany(const QVector<SourceProfile>& sources,
-                                                                 const QVector<DestinationPC>& destinations) {
+MappingEngine::DeploymentMapping MappingEngine::createManyToMany(
+    const QVector<SourceProfile>& sources,
+    const QVector<DestinationPC>& destinations) {
     DeploymentMapping mapping;
     mapping.type = MappingType::ManyToMany;
     mapping.sources = sources;
@@ -59,9 +61,10 @@ MappingEngine::DeploymentMapping MappingEngine::createManyToMany(const QVector<S
     return mapping;
 }
 
-MappingEngine::DeploymentMapping MappingEngine::createCustomMapping(const QVector<SourceProfile>& sources,
-                                                                    const QVector<DestinationPC>& destinations,
-                                                                    const QMap<QString, QString>& rules) {
+MappingEngine::DeploymentMapping MappingEngine::createCustomMapping(
+    const QVector<SourceProfile>& sources,
+    const QVector<DestinationPC>& destinations,
+    const QMap<QString, QString>& rules) {
     DeploymentMapping mapping;
     mapping.type = MappingType::CustomMapping;
     mapping.sources = sources;
@@ -78,7 +81,8 @@ MappingEngine::DeploymentMapping MappingEngine::createCustomMapping(const QVecto
     return mapping;
 }
 
-bool MappingEngine::validateCustomMappingRules(const DeploymentMapping& mapping, QString& errorMessage) const {
+bool MappingEngine::validateCustomMappingRules(const DeploymentMapping& mapping,
+    QString& errorMessage) const {
     if (mapping.custom_rules.isEmpty()) {
         errorMessage = tr("Custom mapping rules are empty");
         return false;
@@ -151,7 +155,8 @@ bool MappingEngine::checkDiskSpace(const DeploymentMapping& mapping) const {
         }
     } else if (mapping.type == MappingType::ManyToMany) {
         for (int i = 0; i < mapping.sources.size() && i < mapping.destinations.size(); ++i) {
-            requiredByDestination[mapping.destinations[i].destination_id] = mapping.sources[i].profile_size_bytes;
+            requiredByDestination[mapping.destinations[i].destination_id] =
+                mapping.sources[i].profile_size_bytes;
         }
     } else {
         for (const auto& source : mapping.sources) {
@@ -180,7 +185,8 @@ bool MappingEngine::checkDestinationReadiness(const DeploymentMapping& mapping) 
         }
     } else if (mapping.type == MappingType::ManyToMany) {
         for (int i = 0; i < mapping.sources.size() && i < mapping.destinations.size(); ++i) {
-            requiredByDestination[mapping.destinations[i].destination_id] = mapping.sources[i].profile_size_bytes;
+            requiredByDestination[mapping.destinations[i].destination_id] =
+                mapping.sources[i].profile_size_bytes;
         }
     } else {
         for (const auto& source : mapping.sources) {

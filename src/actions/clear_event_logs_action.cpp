@@ -13,6 +13,29 @@
 
 namespace sak {
 
+namespace {
+/// Box-drawing border helpers (avoid 400+ char \uXXXX lines)
+constexpr int kBoxWidth = 63;
+inline QString boxTop()
+{
+    return QChar(0x2554)
+        + QString(kBoxWidth, QChar(0x2550))
+        + QChar(0x2557) + "\n";
+}
+inline QString boxMid()
+{
+    return QChar(0x2560)
+        + QString(kBoxWidth, QChar(0x2550))
+        + QChar(0x2563) + "\n";
+}
+inline QString boxBot()
+{
+    return QChar(0x255A)
+        + QString(kBoxWidth, QChar(0x2550))
+        + QChar(0x255D) + "\n";
+}
+}  // namespace
+
 ClearEventLogsAction::ClearEventLogsAction(QObject* parent)
     : QuickAction(parent)
 {
@@ -21,17 +44,19 @@ ClearEventLogsAction::ClearEventLogsAction(QObject* parent)
 bool ClearEventLogsAction::backupEventLog(const QString& log_name) {
     QString timestamp = QDateTime::currentDateTime().toString("yyyyMMdd_hhmmss");
     QString backup_path = QString("C:/SAK_Backups/EventLogs/%1_%2.evtx").arg(log_name, timestamp);
-    
+
     QDir().mkpath("C:/SAK_Backups/EventLogs");
-    
+
     QString cmd = QString("wevtutil epl %1 \"%2\"").arg(log_name, backup_path);
-    ProcessResult proc = runProcess("cmd.exe", QStringList() << "/c" << cmd, sak::kTimeoutProcessMediumMs);
+    ProcessResult proc = runProcess("cmd.exe", QStringList() << "/c" << cmd,
+        sak::kTimeoutProcessMediumMs);
     return proc.succeeded();
 }
 
 bool ClearEventLogsAction::clearEventLog(const QString& log_name) {
     QString cmd = QString("wevtutil cl %1").arg(log_name);
-    ProcessResult proc = runProcess("cmd.exe", QStringList() << "/c" << cmd, sak::kTimeoutProcessShortMs);
+    ProcessResult proc = runProcess("cmd.exe", QStringList() << "/c" << cmd,
+        sak::kTimeoutProcessShortMs);
     return proc.succeeded();
 }
 
@@ -106,9 +131,12 @@ void ClearEventLogsAction::execute() {
 bool ClearEventLogsAction::executeEnumerateLogs(const QDateTime& start_time, QString& ps_script)
 {
     Q_UNUSED(start_time)
-    Q_EMIT executionProgress("╔════════════════════════════════════════════════════════════════╗", 0);
-    Q_EMIT executionProgress("║        EVENT LOG CLEARING - ENTERPRISE MODE                   ║", 0);
-    Q_EMIT executionProgress("╠════════════════════════════════════════════════════════════════╣", 0);
+    Q_EMIT executionProgress("╔════════════════════════════════════════════════════════════════╗",
+        0);
+    Q_EMIT executionProgress("║        EVENT LOG CLEARING - ENTERPRISE MODE                   ║",
+        0);
+    Q_EMIT executionProgress("╠════════════════════════════════════════════════════════════════╣",
+        0);
 
     // Comprehensive PowerShell script for enterprise-grade event log management
     ps_script = QString(
@@ -127,7 +155,8 @@ bool ClearEventLogsAction::executeEnumerateLogs(const QDateTime& start_time, QSt
         "$timestamp = Get-Date -Format 'yyyyMMdd_HHmmss'\n"
         "\n"
         "# Get all event logs using Get-EventLog -List\n"
-        "$allLogs = Get-EventLog -List | Where-Object { $_.Entries.Count -gt 0 } | Sort-Object Log\n"
+        "$allLogs = Get-EventLog -List | Where-Object { $_.Entries.Count -gt 0 } | Sort-Object "
+        "Log\n"
         "\n"
         "foreach ($log in $allLogs) {\n"
         "    $totalLogs++\n"
@@ -138,7 +167,8 @@ bool ClearEventLogsAction::executeEnumerateLogs(const QDateTime& start_time, QSt
         "    # Attempt to backup using wevtutil\n"
         "    $backupFile = Join-Path $backupPath (\"$($logName)_$timestamp.evtx\")\n"
         "    try {\n"
-        "        $backup = Start-Process -FilePath 'wevtutil.exe' -ArgumentList \"epl\", $logName, \"\\\"$backupFile\\\"\" -NoNewWindow -Wait -PassThru\n"
+        "        $backup = Start-Process -FilePath 'wevtutil.exe' -ArgumentList \"epl\", $logName, "
+        "\"\\\"$backupFile\\\"\" -NoNewWindow -Wait -PassThru\n"
         "        if ($backup.ExitCode -eq 0) {\n"
         "            $backedUp++\n"
         "        }\n"
@@ -148,7 +178,8 @@ bool ClearEventLogsAction::executeEnumerateLogs(const QDateTime& start_time, QSt
         "    \n"
         "    # Clear the log using wevtutil\n"
         "    try {\n"
-        "        $clear = Start-Process -FilePath 'wevtutil.exe' -ArgumentList 'cl', $logName -NoNewWindow -Wait -PassThru\n"
+        "        $clear = Start-Process -FilePath 'wevtutil.exe' -ArgumentList 'cl', $logName "
+        "-NoNewWindow -Wait -PassThru\n"
         "        if ($clear.ExitCode -eq 0) {\n"
         "            $clearedLogs++\n"
         "            $results += \"$($logName): Cleared $entryCount entries\"\n"
@@ -180,12 +211,15 @@ bool ClearEventLogsAction::executeClearLogs(const QDateTime& start_time,
                                              int& total_entries, int& backed_up,
                                              QString& backup_path, QStringList& details)
 {
-    Q_EMIT executionProgress("║ Enumerating all event logs with Get-EventLog...              ║", 20);
+    Q_EMIT executionProgress("║ Enumerating all event logs with Get-EventLog...              ║",
+        20);
 
     ProcessResult ps = runPowerShell(ps_script, sak::kTimeoutArchiveMs);
 
-    Q_EMIT executionProgress("║ Backing up logs with wevtutil...                             ║", 40);
-    Q_EMIT executionProgress("║ Clearing event log entries...                                ║", 60);
+    Q_EMIT executionProgress("║ Backing up logs with wevtutil...                             ║",
+        40);
+    Q_EMIT executionProgress("║ Clearing event log entries...                                ║",
+        60);
 
     if (isCancelled()) {
         emitCancelledResult("Event log clearing cancelled", start_time);
@@ -196,7 +230,8 @@ bool ClearEventLogsAction::executeClearLogs(const QDateTime& start_time,
         return false;
     }
 
-    Q_EMIT executionProgress("║ Processing results and generating report...                   ║", 80);
+    Q_EMIT executionProgress("║ Processing results and generating report...                   ║",
+        80);
 
     if (!ps.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("Event log clear warning: " + ps.std_err.trimmed());
@@ -232,7 +267,7 @@ void ClearEventLogsAction::executeBuildReport(const QDateTime& start_time,
                                                const QString& backup_path,
                                                const QStringList& details)
 {
-    Q_EMIT executionProgress("\u2560\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2563", 90);
+    Q_EMIT executionProgress(boxMid().trimmed(), 90);
 
     qint64 duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
 
@@ -241,9 +276,9 @@ void ClearEventLogsAction::executeBuildReport(const QDateTime& start_time,
     result.files_processed = cleared_logs;
     result.output_path = backup_path;
 
-    QString log_output = "\u2554\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2557\n";
+    QString log_output = boxTop();
     log_output += "\u2551        EVENT LOG CLEARING - RESULTS                           \u2551\n";
-    log_output += "\u2560\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2563\n";
+    log_output += boxMid();
 
     if (cleared_logs > 0) {
         result.success = true;
@@ -268,16 +303,21 @@ void ClearEventLogsAction::appendSuccessReport(QString& log_output,
                                                 const QStringList& details,
                                                 qint64 duration_ms)
 {
-    log_output += QString("\u2551 Logs Processed: %1/%2\n").arg(cleared_logs).arg(total_logs).leftJustified(66) + "\u2551\n";
-    log_output += QString("\u2551 Total Entries Cleared: %1\n").arg(total_entries).leftJustified(66) + "\u2551\n";
-    log_output += QString("\u2551 Logs Backed Up: %1\n").arg(backed_up).leftJustified(66) + "\u2551\n";
+    log_output += QString("\u2551 Logs Processed: %1/%2\n").arg(cleared_logs)
+        .arg(total_logs).leftJustified(66) + "\u2551\n";
+    log_output += QString("\u2551 Total Entries Cleared: %1\n")
+        .arg(total_entries).leftJustified(66) + "\u2551\n";
+    log_output += QString("\u2551 Logs Backed Up: %1\n").arg(backed_up).leftJustified(66) +
+        "\u2551\n";
 
     if (!backup_path.isEmpty()) {
-        log_output += QString("\u2551 Backup Location: %1\n").arg(backup_path).leftJustified(66) + "\u2551\n";
+        log_output += QString("\u2551 Backup Location: %1\n").arg(backup_path).leftJustified(66) +
+            "\u2551\n";
     }
 
-    log_output += "\u2560\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2563\n";
-    log_output += QString("\u2551 CLEARED LOGS:                                                  \u2551\n");
+    log_output += boxMid();
+    log_output += QString("\u2551 CLEARED LOGS:                                                  "
+                          "\u2551\n");
 
     // Show first 10 cleared logs
     int shown = 0;
@@ -289,31 +329,37 @@ void ClearEventLogsAction::appendSuccessReport(QString& log_output,
     }
 
     if (details.size() > 10) {
-        log_output += QString("\u2551 ... and %1 more\n").arg(details.size() - 10).leftJustified(66) + "\u2551\n";
+        log_output += QString("\u2551 ... and %1 more\n")
+            .arg(details.size() - 10).leftJustified(66) + "\u2551\n";
     }
 
-    log_output += "\u2560\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2563\n";
-    log_output += QString("\u2551 Completed in: %1 seconds\n").arg(duration_ms / 1000.0, 0, 'f', 2).leftJustified(66) + "\u2551\n";
-    log_output += "\u255a\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u255d\n";
+    log_output += boxMid();
+    log_output += QString("\u2551 Completed in: %1 seconds\n").arg(duration_ms / 1000.0, 0, 'f',
+        2).leftJustified(66) + "\u2551\n";
+    log_output += boxBot();
 }
 
 void ClearEventLogsAction::appendFailureReport(QString& log_output,
                                                 const QStringList& details)
 {
-    log_output += QString("\u2551 Status: No logs processed                                      \u2551\n");
-    log_output += "\u2560\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2563\n";
-    log_output += QString("\u2551 Reason: Administrator privileges may be required              \u2551\n");
-    log_output += QString("\u2551 or all event logs are already empty                           \u2551\n");
-    log_output += "\u2560\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2563\n";
+    log_output += QString("\u2551 Status: No logs processed                                      "
+                          "\u2551\n");
+    log_output += boxMid();
+    log_output += QString("\u2551 Reason: Administrator privileges may be required              "
+                          "\u2551\n");
+    log_output += QString("\u2551 or all event logs are already empty                           "
+                          "\u2551\n");
+    log_output += boxMid();
 
     if (details.size() > 0) {
-        log_output += QString("\u2551 ERROR DETAILS:                                                 \u2551\n");
+        log_output += QString("\u2551 ERROR DETAILS:                                               "
+                              "  \u2551\n");
         for (int i = 0; i < qMin(5, details.size()); i++) {
             log_output += QString("\u2551 %1\n").arg(details[i]).leftJustified(66) + "\u2551\n";
         }
     }
 
-    log_output += "\u255a\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u255d\n";
+    log_output += boxBot();
 }
 
 } // namespace sak

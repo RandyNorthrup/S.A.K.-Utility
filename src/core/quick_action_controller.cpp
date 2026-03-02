@@ -82,17 +82,20 @@ QString QuickActionController::registerAction(std::unique_ptr<QuickAction> actio
         }
     });
 
-    connect(action_ptr, &QuickAction::scanProgress, this, [this, action_ptr](const QString& message) {
+    connect(action_ptr, &QuickAction::scanProgress, this, [this,
+        action_ptr](const QString& message) {
         logOperation(action_ptr, QString("Scanning: %1").arg(message));
     });
 
-    connect(action_ptr, &QuickAction::executionProgress, this, [this, action_ptr](const QString& msg, int prog) {
+    connect(action_ptr, &QuickAction::executionProgress, this, [this,
+        action_ptr](const QString& msg, int prog) {
         QString message = QString("%1 - %2%").arg(msg).arg(prog);
         Q_EMIT actionExecutionProgress(action_ptr, message, prog);
         logOperation(action_ptr, message);
     });
 
-    connect(action_ptr, &QuickAction::errorOccurred, this, [this, action_ptr](const QString& error) {
+    connect(action_ptr, &QuickAction::errorOccurred, this, [this,
+        action_ptr](const QString& error) {
         Q_EMIT actionError(action_ptr, error);
         logOperation(action_ptr, QString("ERROR: %1").arg(error));
     });
@@ -114,7 +117,8 @@ std::vector<QuickAction*> QuickActionController::getAllActions() const {
     return result;
 }
 
-std::vector<QuickAction*> QuickActionController::getActionsByCategory(QuickAction::ActionCategory category) const {
+std::vector<QuickAction*> QuickActionController::getActionsByCategory(
+    QuickAction::ActionCategory category) const {
     std::vector<QuickAction*> result;
     for (const auto& action : m_actions) {
         if (action->category() == category) {
@@ -347,10 +351,10 @@ void QuickActionController::onExecutionComplete() {
     m_current_execution_action = nullptr;
 
     Q_EMIT actionExecutionComplete(action);
-    
+
     const auto& result = action->lastExecutionResult();
     qint64 duration_sec = result.duration_ms / 1000;
-    QString log_msg = result.success 
+    QString log_msg = result.success
         ? QString("Execution complete: %1 (%2 bytes in %3s)")
             .arg(result.message).arg(result.bytes_processed).arg(duration_sec)
         : QString("Execution failed: %1").arg(result.message);
@@ -372,7 +376,8 @@ void QuickActionController::onExecutionComplete() {
 }
 
 void QuickActionController::onWorkerError(const QString& error) {
-    QuickAction* action = m_current_execution_action ? m_current_execution_action : m_current_scan_action;
+    QuickAction* action =
+        m_current_execution_action ? m_current_execution_action : m_current_scan_action;
     if (action) {
         Q_EMIT actionError(action, error);
         logOperation(action, QString("ERROR: %1").arg(error));
@@ -389,7 +394,8 @@ void QuickActionController::startScanWorker(QuickAction* action) {
     action->moveToThread(m_scan_thread);
 
     // Connect completion
-    connect(action, &QuickAction::scanComplete, this, [this](const QuickAction::ScanResult& result) {
+    connect(action, &QuickAction::scanComplete, this,
+        [this](const QuickAction::ScanResult& result) {
         Q_UNUSED(result);
         onScanComplete();
     });
@@ -414,7 +420,8 @@ void QuickActionController::startExecutionWorker(QuickAction* action) {
     action->moveToThread(m_execution_thread);
 
     // Connect completion
-    connect(action, &QuickAction::executionComplete, this, [this](const QuickAction::ExecutionResult& result) {
+    connect(action, &QuickAction::executionComplete, this,
+        [this](const QuickAction::ExecutionResult& result) {
         Q_UNUSED(result);
         onExecutionComplete();
     });

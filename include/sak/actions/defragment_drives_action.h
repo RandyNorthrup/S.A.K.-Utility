@@ -12,7 +12,7 @@ namespace sak {
 
 /**
  * @brief Defragment Drives Action
- * 
+ *
  * Analyzes and defragments HDDs (skips SSDs automatically).
  * Uses Windows defrag.exe with /O optimization.
  */
@@ -56,7 +56,8 @@ private:
 
     QString executeEnumerateVolumes() const;
     void executeDefrag(const QString& script, const QDateTime& start_time);
-    void executeBuildReport(const QString& accumulated_output, const QString& std_err, const QDateTime& start_time);
+    void executeBuildReport(const QString& accumulated_output, const QString& std_err,
+        const QDateTime& start_time);
 
     /// @brief Parse OPTIMIZING/DRIVE_TYPE/SUCCESS/TOTAL tags from PowerShell output
     OptimizationSummary parseOptimizationOutput(const QString& output) const;

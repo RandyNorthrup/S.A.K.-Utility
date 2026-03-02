@@ -428,7 +428,8 @@ void ConfigManager::setNetworkTransferAutoDiscoveryEnabled(bool enabled)
 
 int ConfigManager::getNetworkTransferChunkSize() const
 {
-    return getValue("network_transfer/chunk_size", static_cast<int>(sak::kBufferChunkDefault)).toInt();
+    return getValue("network_transfer/chunk_size",
+        static_cast<int>(sak::kBufferChunkDefault)).toInt();
 }
 
 void ConfigManager::setNetworkTransferChunkSize(int size)

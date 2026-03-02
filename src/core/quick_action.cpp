@@ -34,7 +34,7 @@ void QuickAction::setExecutionResult(const ExecutionResult& result)
 void QuickAction::cancel()
 {
     m_cancelled = true;
-    
+
     if (m_status == ActionStatus::Scanning || m_status == ActionStatus::Running) {
         setStatus(ActionStatus::Cancelled);
     }
@@ -63,7 +63,8 @@ void QuickAction::emitCancelledResult(const QString& message, const QDateTime& s
     Q_EMIT executionComplete(result);
 }
 
-void QuickAction::emitFailedResult(const QString& message, const QString& log, const QDateTime& start_time)
+void QuickAction::emitFailedResult(const QString& message, const QString& log,
+    const QDateTime& start_time)
 {
     ExecutionResult result;
     result.success = false;
@@ -87,11 +88,15 @@ QString QuickAction::formatFileSize(qint64 bytes)
     return sak::formatBytes(bytes);
 }
 
-QString QuickAction::formatLogBox(const QString& title, const QStringList& content_lines, qint64 duration_ms)
+QString QuickAction::formatLogBox(const QString& title, const QStringList& content_lines,
+    qint64 duration_ms)
 {
-    const QString top    = QStringLiteral("╔════════════════════════════════════════════════════════════════╗\n");
-    const QString sep    = QStringLiteral("╠════════════════════════════════════════════════════════════════╣\n");
-    const QString bottom = QStringLiteral("╚════════════════════════════════════════════════════════════════╝\n");
+    const QString top    =
+        QStringLiteral("╔════════════════════════════════════════════════════════════════╗\n");
+    const QString sep    =
+        QStringLiteral("╠════════════════════════════════════════════════════════════════╣\n");
+    const QString bottom =
+        QStringLiteral("╚════════════════════════════════════════════════════════════════╝\n");
 
     QString box = top;
     box += QString("║ %1║\n").arg(title.leftJustified(65));

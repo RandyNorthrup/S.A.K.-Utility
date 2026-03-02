@@ -478,7 +478,8 @@ QString DiagnosticReportGenerator::buildHtmlHeader() const
 <title>S.A.K. Diagnostic Report</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
-  body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #f5f5f5; color: #333; line-height: 1.6; }
+  body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana,
+      sans-serif; background: #f5f5f5; color: #333; line-height: 1.6; }
   .container { max-width: 900px; margin: 20px auto; background: #fff; padding: 30px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
   h1 { color: #1a237e; margin-bottom: 10px; font-size: 24px; }
   h2 { color: #283593; margin: 25px 0 10px; padding-bottom: 5px; border-bottom: 2px solid #e8eaf6; font-size: 18px; }

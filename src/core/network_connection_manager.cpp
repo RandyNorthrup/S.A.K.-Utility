@@ -19,7 +19,8 @@ void NetworkConnectionManager::startServer(quint16 port) {
     }
 
     if (!m_server->listen(QHostAddress::AnyIPv4, port)) {
-        logError("NetworkConnectionManager listen failed on port {}: {}", port, m_server->errorString().toStdString());
+        logError("NetworkConnectionManager listen failed on port {}: {}", port,
+            m_server->errorString().toStdString());
         Q_EMIT connectionError(tr("Failed to listen on port %1").arg(port));
         return;
     }
@@ -43,7 +44,8 @@ void NetworkConnectionManager::connectToHost(const QHostAddress& host, quint16 p
 
     m_socket = new QTcpSocket(this);
     connect(m_socket, &QTcpSocket::connected, this, &NetworkConnectionManager::connected);
-    connect(m_socket, &QTcpSocket::disconnected, this, &NetworkConnectionManager::onSocketDisconnected);
+    connect(m_socket, &QTcpSocket::disconnected, this,
+        &NetworkConnectionManager::onSocketDisconnected);
     connect(m_socket, &QTcpSocket::readyRead, this, &NetworkConnectionManager::onSocketReadyRead);
     connect(m_socket, &QTcpSocket::errorOccurred, this, [this](QAbstractSocket::SocketError) {
         Q_EMIT connectionError(m_socket->errorString());
@@ -83,7 +85,8 @@ void NetworkConnectionManager::onNewConnection() {
 
     m_socket = m_server->nextPendingConnection();
     connect(m_socket, &QTcpSocket::readyRead, this, &NetworkConnectionManager::onSocketReadyRead);
-    connect(m_socket, &QTcpSocket::disconnected, this, &NetworkConnectionManager::onSocketDisconnected);
+    connect(m_socket, &QTcpSocket::disconnected, this,
+        &NetworkConnectionManager::onSocketDisconnected);
     connect(m_socket, &QTcpSocket::errorOccurred, this, [this](QAbstractSocket::SocketError) {
         // Capture a local copy of the error string — m_socket may be replaced by the
         // time this lambda executes in a queued connection.

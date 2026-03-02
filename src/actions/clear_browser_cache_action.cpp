@@ -74,16 +74,36 @@ void ClearBrowserCacheAction::scanAllBrowserCaches(qint64& total_bytes,
     };
 
     QVector<CachePath> cache_paths = {
-        {"Chrome", QStandardPaths::writableLocation(QStandardPaths::GenericCacheLocation) + "/Google/Chrome/User Data/Default/Cache"},
-        {"Chrome Code Cache", QStandardPaths::writableLocation(QStandardPaths::GenericCacheLocation) + "/Google/Chrome/User Data/Default/Code Cache"},
-        {"Edge", QStandardPaths::writableLocation(QStandardPaths::GenericCacheLocation) + "/Microsoft/Edge/User Data/Default/Cache"},
-        {"Edge Code Cache", QStandardPaths::writableLocation(QStandardPaths::GenericCacheLocation) + "/Microsoft/Edge/User Data/Default/Code Cache"},
-        {"Brave", QStandardPaths::writableLocation(QStandardPaths::GenericCacheLocation) + "/BraveSoftware/Brave-Browser/User Data/Default/Cache"},
-        {"Brave Code Cache", QStandardPaths::writableLocation(QStandardPaths::GenericCacheLocation) + "/BraveSoftware/Brave-Browser/User Data/Default/Code Cache"},
-        {"Vivaldi", QStandardPaths::writableLocation(QStandardPaths::GenericCacheLocation) + "/Vivaldi/User Data/Default/Cache"},
-        {"Vivaldi Code Cache", QStandardPaths::writableLocation(QStandardPaths::GenericCacheLocation) + "/Vivaldi/User Data/Default/Code Cache"},
-        {"Opera", QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/Opera Software/Opera Stable/Cache"},
-        {"Opera Code Cache", QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/Opera Software/Opera Stable/Code Cache"}
+        {"Chrome",
+            QStandardPaths::writableLocation(QStandardPaths::GenericCacheLocation) +
+                "/Google/Chrome/User Data/Default/Cache"},
+        {"Chrome Code Cache",
+            QStandardPaths::writableLocation(QStandardPaths::GenericCacheLocation) +
+                "/Google/Chrome/User Data/Default/Code Cache"},
+        {"Edge",
+            QStandardPaths::writableLocation(QStandardPaths::GenericCacheLocation) +
+                "/Microsoft/Edge/User Data/Default/Cache"},
+        {"Edge Code Cache",
+            QStandardPaths::writableLocation(QStandardPaths::GenericCacheLocation) +
+                "/Microsoft/Edge/User Data/Default/Code Cache"},
+        {"Brave",
+            QStandardPaths::writableLocation(QStandardPaths::GenericCacheLocation) +
+                "/BraveSoftware/Brave-Browser/User Data/Default/Cache"},
+        {"Brave Code Cache",
+            QStandardPaths::writableLocation(QStandardPaths::GenericCacheLocation) +
+                "/BraveSoftware/Brave-Browser/User Data/Default/Code Cache"},
+        {"Vivaldi",
+            QStandardPaths::writableLocation(QStandardPaths::GenericCacheLocation) +
+                "/Vivaldi/User Data/Default/Cache"},
+        {"Vivaldi Code Cache",
+            QStandardPaths::writableLocation(QStandardPaths::GenericCacheLocation) +
+                "/Vivaldi/User Data/Default/Code Cache"},
+        {"Opera",
+            QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) +
+                "/Opera Software/Opera Stable/Cache"},
+        {"Opera Code Cache",
+            QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) +
+                "/Opera Software/Opera Stable/Code Cache"}
     };
 
     for (const auto& cache : cache_paths) {
@@ -97,7 +117,8 @@ void ClearBrowserCacheAction::scanAllBrowserCaches(qint64& total_bytes,
     }
 
     // Firefox profiles
-    QString ff_profiles_path = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/Mozilla/Firefox/Profiles";
+    QString ff_profiles_path = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) +
+        "/Mozilla/Firefox/Profiles";
     QDir profiles_dir(ff_profiles_path);
     if (!profiles_dir.exists()) return;
 
@@ -120,18 +141,23 @@ void ClearBrowserCacheAction::execute() {
 
     setStatus(ActionStatus::Running);
     QDateTime start_time = QDateTime::currentDateTime();
-    
-    Q_EMIT executionProgress("╔════════════════════════════════════════════════════════════════╗", 0);
-    Q_EMIT executionProgress("║          BROWSER CACHE CLEARING - ENTERPRISE MODE             ║", 0);
-    Q_EMIT executionProgress("╠════════════════════════════════════════════════════════════════╣", 0);
-    
+
+    Q_EMIT executionProgress("╔════════════════════════════════════════════════════════════════╗",
+        0);
+    Q_EMIT executionProgress("║          BROWSER CACHE CLEARING - ENTERPRISE MODE             ║",
+        0);
+    Q_EMIT executionProgress("╠════════════════════════════════════════════════════════════════╣",
+        0);
+
     QString ps_script = buildCacheClearingScript();
-    
-    Q_EMIT executionProgress("║ Detecting browser processes and cache locations...           ║", 20);
-    
+
+    Q_EMIT executionProgress("║ Detecting browser processes and cache locations...           ║",
+        20);
+
     ProcessResult ps = runPowerShell(ps_script, sak::kTimeoutBrowserCacheMs);
 
-    Q_EMIT executionProgress("║ Calculating cache sizes before clearing...                   ║", 40);
+    Q_EMIT executionProgress("║ Calculating cache sizes before clearing...                   ║",
+        40);
 
     if (isCancelled()) {
         emitCancelledResult("Cache clearing cancelled", start_time);
@@ -141,17 +167,19 @@ void ClearBrowserCacheAction::execute() {
         emitFailedResult("Operation timed out after 3 minutes", {}, start_time);
         return;
     }
-    
-    Q_EMIT executionProgress("║ Processing results and generating report...                   ║", 80);
-    
+
+    Q_EMIT executionProgress("║ Processing results and generating report...                   ║",
+        80);
+
     qint64 duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
     BrowserCacheResult parsed = parseCacheOutput(ps.std_out);
-    
-    Q_EMIT executionProgress("╠════════════════════════════════════════════════════════════════╣", 90);
-    
+
+    Q_EMIT executionProgress("╠════════════════════════════════════════════════════════════════╣",
+        90);
+
     ExecutionResult result;
     result.duration_ms = duration_ms;
-    
+
     if (parsed.cleared_count > 0) {
         result.success = true;
         result.message = QString("Successfully cleared %1 browser(s)").arg(parsed.cleared_count);
@@ -190,7 +218,8 @@ QString ClearBrowserCacheAction::buildScriptPreamble() const
         "function Get-DirectorySize {\n"
         "    param([string]$Path)\n"
         "    if (Test-Path $Path) {\n"
-        "        $size = (Get-ChildItem -Path $Path -Recurse -File -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum).Sum\n"
+        "        $size = (Get-ChildItem -Path $Path -Recurse -File -ErrorAction SilentlyContinue | "
+        "Measure-Object -Property Length -Sum).Sum\n"
         "        if ($null -eq $size) { return 0 }\n"
         "        return $size\n"
         "    }\n"
@@ -208,11 +237,19 @@ QString ClearBrowserCacheAction::buildScriptPreamble() const
         "\n"
         "# Browser configurations (Chromium-based and Firefox)\n"
         "$browsers = @(\n"
-        "    @{Name='Chrome'; Process='chrome'; Paths=@(\"$env:LOCALAPPDATA\\Google\\Chrome\\User Data\\Default\\Cache\", \"$env:LOCALAPPDATA\\Google\\Chrome\\User Data\\Default\\Code Cache\")},\n"
-        "    @{Name='Edge'; Process='msedge'; Paths=@(\"$env:LOCALAPPDATA\\Microsoft\\Edge\\User Data\\Default\\Cache\", \"$env:LOCALAPPDATA\\Microsoft\\Edge\\User Data\\Default\\Code Cache\")},\n"
-        "    @{Name='Brave'; Process='brave'; Paths=@(\"$env:LOCALAPPDATA\\BraveSoftware\\Brave-Browser\\User Data\\Default\\Cache\", \"$env:LOCALAPPDATA\\BraveSoftware\\Brave-Browser\\User Data\\Default\\Code Cache\")},\n"
-        "    @{Name='Opera'; Process='opera'; Paths=@(\"$env:APPDATA\\Opera Software\\Opera Stable\\Cache\", \"$env:APPDATA\\Opera Software\\Opera Stable\\Code Cache\")},\n"
-        "    @{Name='Vivaldi'; Process='vivaldi'; Paths=@(\"$env:LOCALAPPDATA\\Vivaldi\\User Data\\Default\\Cache\", \"$env:LOCALAPPDATA\\Vivaldi\\User Data\\Default\\Code Cache\")}\n"
+        "    @{Name='Chrome'; Process='chrome'; Paths=@(\"$env:LOCALAPPDATA\\Google\\Chrome\\User "
+        "Data\\Default\\Cache\", \"$env:LOCALAPPDATA\\Google\\Chrome\\User Data\\Default\\Code "
+        "Cache\")},\n"
+        "    @{Name='Edge'; Process='msedge'; Paths=@(\"$env:LOCALAPPDATA\\Microsoft\\Edge\\User "
+        "Data\\Default\\Cache\", \"$env:LOCALAPPDATA\\Microsoft\\Edge\\User Data\\Default\\Code "
+        "Cache\")},\n"
+        "    @{Name='Brave'; Process='brave'; "
+        "Paths=@(\"$env:LOCALAPPDATA\\BraveSoftware\\Brave-Browser\\User Data\\Default\\Cache\", "
+        "\"$env:LOCALAPPDATA\\BraveSoftware\\Brave-Browser\\User Data\\Default\\Code Cache\")},\n"
+        "    @{Name='Opera'; Process='opera'; Paths=@(\"$env:APPDATA\\Opera Software\\Opera "
+        "Stable\\Cache\", \"$env:APPDATA\\Opera Software\\Opera Stable\\Code Cache\")},\n"
+        "    @{Name='Vivaldi'; Process='vivaldi'; Paths=@(\"$env:LOCALAPPDATA\\Vivaldi\\User "
+        "Data\\Default\\Cache\", \"$env:LOCALAPPDATA\\Vivaldi\\User Data\\Default\\Code Cache\")}\n"
         ")\n"
         "\n"
     );
@@ -277,7 +314,8 @@ QString ClearBrowserCacheAction::buildScriptFirefoxAndOutput() const
         "                $sizeBefore = Get-DirectorySize -Path $cachePath\n"
         "                $ffSizeBefore += $sizeBefore\n"
         "                \n"
-        "                Remove-Item -Path \"$cachePath\\*\" -Recurse -Force -ErrorAction SilentlyContinue\n"
+        "                Remove-Item -Path \"$cachePath\\*\" -Recurse -Force -ErrorAction "
+        "SilentlyContinue\n"
         "                Start-Sleep -Milliseconds 100\n"
         "                \n"
         "                $sizeAfter = Get-DirectorySize -Path $cachePath\n"
@@ -289,7 +327,8 @@ QString ClearBrowserCacheAction::buildScriptFirefoxAndOutput() const
         "            $totalBefore += $ffSizeBefore\n"
         "            $totalAfter += $ffSizeAfter\n"
         "            $clearedBrowsers += 'Firefox'\n"
-        "            $results += \"Firefox: Cleared $(Format-Bytes $cleared) across $($profiles.Count) profile(s)\"\n"
+        "            $results += \"Firefox: Cleared $(Format-Bytes $cleared) across "
+        "$($profiles.Count) profile(s)\"\n"
         "        }\n"
         "    }\n"
         "}\n"
@@ -350,7 +389,8 @@ QString ClearBrowserCacheAction::buildSuccessLog(const BrowserCacheResult& parse
                   "╠════════════════════════════════════════════════════════════════╣\n";
 
     log += QString("║ Total Cleared: %1\n").arg(size_str).leftJustified(66) + "║\n";
-    log += QString("║ Browsers Processed: %1/%2\n").arg(parsed.cleared_count).arg(parsed.cleared_count + parsed.blocked_count).leftJustified(66) + "║\n";
+    log += QString("║ Browsers Processed: %1/%2\n").arg(parsed.cleared_count)
+        .arg(parsed.cleared_count + parsed.blocked_count).leftJustified(66) + "║\n";
     log += "╠════════════════════════════════════════════════════════════════╣\n";
 
     for (const QString& detail : parsed.details) {
@@ -359,7 +399,8 @@ QString ClearBrowserCacheAction::buildSuccessLog(const BrowserCacheResult& parse
 
     if (parsed.blocked_count > 0) {
         log += "╠════════════════════════════════════════════════════════════════╣\n";
-        log += QString("║ Skipped (%1 running): %2\n").arg(parsed.blocked_count).arg(parsed.blocked_browsers.join(", ")).leftJustified(66) + "║\n";
+        log += QString("║ Skipped (%1 running): %2\n").arg(parsed.blocked_count)
+            .arg(parsed.blocked_browsers.join(", ")).leftJustified(66) + "║\n";
     }
 
     if (!stderr_output.trimmed().isEmpty()) {
@@ -373,7 +414,8 @@ QString ClearBrowserCacheAction::buildSuccessLog(const BrowserCacheResult& parse
     }
 
     log += "╠════════════════════════════════════════════════════════════════╣\n";
-    log += QString("║ Completed in: %1 seconds\n").arg(duration_ms / 1000.0, 0, 'f', 2).leftJustified(66) + "║\n";
+    log += QString("║ Completed in: %1 seconds\n").arg(duration_ms / 1000.0, 0, 'f',
+        2).leftJustified(66) + "║\n";
     log += "╚════════════════════════════════════════════════════════════════╝\n";
 
     return log;

@@ -149,7 +149,8 @@ void WindowsISODownloader::onFilesFetched(const QString& updateName,
                              .arg(files.size())
                              .arg(totalBytes / sak::kBytesPerGBf, 0, 'f', 2));
 
-    m_builder->startBuild(files, m_pendingSavePath, m_pendingEdition, m_pendingLang, m_pendingUpdateId);
+    m_builder->startBuild(files, m_pendingSavePath, m_pendingEdition, m_pendingLang,
+        m_pendingUpdateId);
 }
 
 void WindowsISODownloader::onApiError(const QString& error)

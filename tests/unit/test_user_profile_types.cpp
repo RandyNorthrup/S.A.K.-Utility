@@ -153,7 +153,8 @@ private Q_SLOTS:
     void permissionModeToStringValid()
     {
         QCOMPARE(permissionModeToString(PermissionMode::StripAll), QStringLiteral("StripAll"));
-        QCOMPARE(permissionModeToString(PermissionMode::PreserveOriginal), QStringLiteral("PreserveOriginal"));
+        QCOMPARE(permissionModeToString(PermissionMode::PreserveOriginal),
+            QStringLiteral("PreserveOriginal"));
     }
 
     // --- BackupUserData round-trip ---

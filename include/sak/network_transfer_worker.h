@@ -96,14 +96,17 @@ private:
     bool sendFrame(QTcpSocket* socket, FrameType type, quint16 flags, quint32 chunkId,
                    const QByteArray& payload, quint32 plainSize, quint32 crc32);
 
-    bool handleSender(QTcpSocket* socket, const QVector<TransferFileEntry>& files, const DataOptions& options);
+    bool handleSender(QTcpSocket* socket, const QVector<TransferFileEntry>& files,
+        const DataOptions& options);
     bool handleReceiver(QTcpSocket* socket, const DataOptions& options);
 
     /// @brief Sends the JSON file header frame for a single file.
     /// @return True if header was sent successfully.
-    bool sendFileHeader(QTcpSocket* socket, const TransferFileEntry& file, const DataOptions& options);
+    bool sendFileHeader(QTcpSocket* socket, const TransferFileEntry& file,
+        const DataOptions& options);
 
-    /// @brief Sends all data chunks for a single file with compression, encryption, and bandwidth throttling.
+    /// @brief Sends all data chunks for a single file
+    /// with compression, encryption, and bandwidth throttling.
     /// @return True if all chunks were sent successfully.
     bool sendFileChunks(QTcpSocket* socket, QFile& source, const TransferFileEntry& file,
                        const DataOptions& options, const QByteArray& key,
@@ -178,7 +181,8 @@ private:
 
     quint32 computeCrc32(const QByteArray& data) const;
 
-    QByteArray buildResumePayload(const QString& fileId, const QVector<QPair<int,int>>& ranges, int totalChunks) const;
+    QByteArray buildResumePayload(const QString& fileId, const QVector<QPair<int,int>>& ranges,
+        int totalChunks) const;
     QVector<QPair<int,int>> parseResumePayload(const QByteArray& payload, int& totalChunks) const;
 
     std::atomic<bool> m_stopRequested{false};

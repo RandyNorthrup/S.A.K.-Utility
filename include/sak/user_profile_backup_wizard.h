@@ -40,7 +40,7 @@ struct InstalledAppInfo {
 
 /**
  * @brief Wizard for backing up Windows user profiles
- * 
+ *
  * 7-Page Wizard:
  * 1. Welcome & Instructions
  * 2. Scan & Select Users
@@ -67,27 +67,27 @@ public:
 
     explicit UserProfileBackupWizard(QWidget* parent = nullptr);
     ~UserProfileBackupWizard() override;
-    
+
     /**
      * @brief Get the backup manifest after completion
      */
     BackupManifest getBackupManifest() const { return m_manifest; }
-    
+
     /**
      * @brief Get the smart filter configuration
      */
     SmartFilter getSmartFilter() const { return m_smartFilter; }
-    
+
     /**
      * @brief Get compression level (0-9: 0=none, 3=fast, 6=balanced, 9=max)
      */
     int getCompressionLevel() const;
-    
+
     /**
      * @brief Check if encryption is enabled
      */
     bool isEncryptionEnabled() const;
-    
+
     /**
      * @brief Get encryption password
      */
@@ -112,7 +112,7 @@ class UserProfileBackupWelcomePage : public QWizardPage {
 
 public:
     explicit UserProfileBackupWelcomePage(QWidget* parent = nullptr);
-    
+
 private:
     void setupUi();
 };
@@ -124,25 +124,26 @@ class UserProfileBackupSelectUsersPage : public QWizardPage {
     Q_OBJECT
 
 public:
-    explicit UserProfileBackupSelectUsersPage(QVector<UserProfile>& users, QWidget* parent = nullptr);
-    
+    explicit UserProfileBackupSelectUsersPage(QVector<UserProfile>& users,
+        QWidget* parent = nullptr);
+
     void initializePage() override;
     bool isComplete() const override;
-    
+
 private Q_SLOTS:
     void onScanUsers();
     void onSelectAll();
     void onSelectNone();
     void onUserScanned(const QString& username);
     void updateSummary();
-    
+
 private:
     void setupUi();
     void populateTable();
-    
+
     QVector<UserProfile>& m_users;
     WindowsUserScanner* m_scanner{nullptr};
-    
+
     QTableWidget* m_userTable{nullptr};
     QPushButton* m_scanButton{nullptr};
     QPushButton* m_selectAllButton{nullptr};
@@ -150,7 +151,7 @@ private:
     QLabel* m_summaryLabel{nullptr};
     QLabel* m_statusLabel{nullptr};
     QProgressBar* m_scanProgress{nullptr};
-    
+
     bool m_scanned{false};
 };
 
@@ -161,23 +162,24 @@ class UserProfileBackupCustomizeDataPage : public QWizardPage {
     Q_OBJECT
 
 public:
-    explicit UserProfileBackupCustomizeDataPage(QVector<UserProfile>& users, QWidget* parent = nullptr);
-    
+    explicit UserProfileBackupCustomizeDataPage(QVector<UserProfile>& users,
+        QWidget* parent = nullptr);
+
     void initializePage() override;
     bool isComplete() const override;
-    
+
 private Q_SLOTS:
     void onCustomizeUser();
     void updateSummary();
-    
+
 private:
     void setupUi();
     void populateUserList();
     /// @brief Find the nth selected user in m_users
     UserProfile* findSelectedUserByRow(int selectedRow);
-    
+
     QVector<UserProfile>& m_users;
-    
+
     QTableWidget* m_userTable{nullptr};
     QPushButton* m_customizeButton{nullptr};
     QLabel* m_summaryLabel{nullptr};
@@ -192,14 +194,14 @@ class UserProfileBackupSmartFiltersPage : public QWizardPage {
 
 public:
     explicit UserProfileBackupSmartFiltersPage(SmartFilter& filter, QWidget* parent = nullptr);
-    
+
     void initializePage() override;
-    
+
 private Q_SLOTS:
     void onResetToDefaults();
     void onViewDangerousList();
     void updateSummary();
-    
+
 private:
     void setupUi();
     /// @brief Create filter settings grid (file size, folder size limits)
@@ -207,9 +209,9 @@ private:
     /// @brief Create exclusion checkboxes and control buttons
     void setupUi_exclusionsAndControls(QVBoxLayout* layout);
     void loadFilterSettings();
-    
+
     SmartFilter& m_filter;
-    
+
     QCheckBox* m_enableFileSizeLimitCheck{nullptr};
     QSpinBox* m_maxFileSizeSpinBox{nullptr};
     QCheckBox* m_enableFolderSizeLimitCheck{nullptr};
@@ -230,23 +232,23 @@ class UserProfileBackupSettingsPage : public QWizardPage {
 
 public:
     explicit UserProfileBackupSettingsPage(BackupManifest& manifest, QWidget* parent = nullptr);
-    
+
     void initializePage() override;
     bool validatePage() override;
-    
+
 private Q_SLOTS:
     void onBrowseDestination();
     void updateSummary();
-    
+
 private:
     void setupUi();
     void setupUi_destinationAndCompression(QVBoxLayout* layout);
     void setupUi_encryptionAndPermissions(QVBoxLayout* layout);
     void setupUi_summaryAndRegistration(QVBoxLayout* layout);
-    
+
     BackupManifest& m_manifest;
     QString m_destinationPath;
-    
+
     QLineEdit* m_destinationEdit{nullptr};
     QPushButton* m_browseButton{nullptr};
     QComboBox* m_compressionCombo{nullptr};
@@ -265,20 +267,20 @@ class UserProfileBackupExecutePage : public QWizardPage {
     Q_OBJECT
 
 public:
-    explicit UserProfileBackupExecutePage(BackupManifest& manifest, 
+    explicit UserProfileBackupExecutePage(BackupManifest& manifest,
                                const QVector<UserProfile>& users,
                                const QString& destinationPath,
                                QWidget* parent = nullptr);
-    
+
     void initializePage() override;
     bool isComplete() const override;
-    
+
 private Q_SLOTS:
     void onStartBackup();
     void onBackupProgress(int current, int total, qint64 bytes, qint64 totalBytes);
     void onBackupComplete(bool success, const QString& message);
     void onLogMessage(const QString& message);
-    
+
 private:
     void setupUi();
     void appendLog(const QString& message);
@@ -289,26 +291,26 @@ private:
     /// @brief Create, connect, and start the backup worker
     void connectAndStartBackupWorker(SmartFilter smartFilter, PermissionMode permissionMode,
                                      int compressionLevel, bool encrypt, const QString& password);
-    
+
     BackupManifest& m_manifest;
     const QVector<UserProfile>& m_users;
     const QString& m_destinationPath;
     UserProfileBackupWorker* m_worker{nullptr};
-    
+
     QProgressBar* m_overallProgress{nullptr};
     QProgressBar* m_currentProgress{nullptr};
     QLabel* m_statusLabel{nullptr};
     QLabel* m_currentUserLabel{nullptr};
     QTextEdit* m_logEdit{nullptr};
     QPushButton* m_startButton{nullptr};
-    
+
     bool m_started{false};
     bool m_completed{false};
 };
 
 /**
  * @brief Page 4: Installed Applications Selection
- * 
+ *
  * Scans for installed applications and presents them in a hierarchical
  * tree with categories and checkboxes. Selected apps are saved to the
  * backup for potential restoration via Chocolatey.

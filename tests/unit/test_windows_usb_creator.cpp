@@ -99,22 +99,36 @@ void WindowsUSBCreatorTests::invalidDiskNumbersRejected_data()
     QTest::addColumn<QString>("description");
 
     // Command injection attempts (BUG-09 vectors).
-    QTest::newRow("semicolon injection")    << QStringLiteral("1; rm -rf /")   << QStringLiteral("semicolon cmd injection");
-    QTest::newRow("newline injection")       << QStringLiteral("1\nselect disk 0") << QStringLiteral("newline diskpart injection");
-    QTest::newRow("pipe injection")          << QStringLiteral("1 | del *")    << QStringLiteral("pipe injection");
-    QTest::newRow("ampersand injection")     << QStringLiteral("1 & echo pwned") << QStringLiteral("ampersand injection");
+    QTest::newRow("semicolon injection")    << QStringLiteral("1; rm -rf /")
+        << QStringLiteral("semicolon cmd injection");
+    QTest::newRow("newline injection")       << QStringLiteral("1\nselect disk 0")
+        << QStringLiteral("newline diskpart injection");
+    QTest::newRow("pipe injection")          << QStringLiteral("1 | del *")
+        << QStringLiteral("pipe injection");
+    QTest::newRow("ampersand injection")     << QStringLiteral("1 & echo pwned")
+        << QStringLiteral("ampersand injection");
 
     // Invalid formats.
-    QTest::newRow("empty string")           << QString()                         << QStringLiteral("empty string");
-    QTest::newRow("alphabetic")             << QStringLiteral("abc")             << QStringLiteral("non-numeric");
-    QTest::newRow("negative number")        << QStringLiteral("-1")              << QStringLiteral("negative number");
-    QTest::newRow("decimal number")         << QStringLiteral("1.5")             << QStringLiteral("decimal");
-    QTest::newRow("four digits")            << QStringLiteral("1234")            << QStringLiteral(">3 digits");
-    QTest::newRow("leading space")          << QStringLiteral(" 1")              << QStringLiteral("whitespace prefix");
-    QTest::newRow("trailing space")         << QStringLiteral("1 ")              << QStringLiteral("whitespace suffix");
-    QTest::newRow("hex prefix")             << QStringLiteral("0x1")             << QStringLiteral("hex prefix");
-    QTest::newRow("special chars")          << QStringLiteral("@#$")             << QStringLiteral("special characters");
-    QTest::newRow("path traversal")         << QStringLiteral("../etc")          << QStringLiteral("path traversal");
+    QTest::newRow("empty string")           << QString()
+        << QStringLiteral("empty string");
+    QTest::newRow("alphabetic")             << QStringLiteral("abc")
+        << QStringLiteral("non-numeric");
+    QTest::newRow("negative number")        << QStringLiteral("-1")
+        << QStringLiteral("negative number");
+    QTest::newRow("decimal number")         << QStringLiteral("1.5")
+        << QStringLiteral("decimal");
+    QTest::newRow("four digits")            << QStringLiteral("1234")
+        << QStringLiteral(">3 digits");
+    QTest::newRow("leading space")          << QStringLiteral(" 1")
+        << QStringLiteral("whitespace prefix");
+    QTest::newRow("trailing space")         << QStringLiteral("1 ")
+        << QStringLiteral("whitespace suffix");
+    QTest::newRow("hex prefix")             << QStringLiteral("0x1")
+        << QStringLiteral("hex prefix");
+    QTest::newRow("special chars")          << QStringLiteral("@#$")
+        << QStringLiteral("special characters");
+    QTest::newRow("path traversal")         << QStringLiteral("../etc")
+        << QStringLiteral("path traversal");
 }
 
 void WindowsUSBCreatorTests::invalidDiskNumbersRejected()

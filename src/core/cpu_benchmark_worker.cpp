@@ -347,10 +347,14 @@ double CpuBenchmarkWorker::runMultiThreaded(int thread_count)
 void CpuBenchmarkWorker::calculateScores()
 {
     // Single-thread score: geometric mean of individual ratios x 1000
-    const double prime_ratio  = kBaselinePrimeSieveMs / std::max(m_result.prime_sieve_time_ms, 0.001);
-    const double matrix_ratio = kBaselineMatrixMultiplyMs / std::max(m_result.matrix_multiply_time_ms, 0.001);
-    const double zlib_ratio   = kBaselineZlibCompressionMs / std::max(m_result.zlib_compression_time_ms, 0.001);
-    const double aes_ratio    = kBaselineAesEncryptionMs / std::max(m_result.aes_encryption_time_ms, 0.001);
+    const double prime_ratio  = kBaselinePrimeSieveMs / std::max(m_result.prime_sieve_time_ms,
+        0.001);
+    const double matrix_ratio =
+        kBaselineMatrixMultiplyMs / std::max(m_result.matrix_multiply_time_ms, 0.001);
+    const double zlib_ratio   =
+        kBaselineZlibCompressionMs / std::max(m_result.zlib_compression_time_ms, 0.001);
+    const double aes_ratio    =
+        kBaselineAesEncryptionMs / std::max(m_result.aes_encryption_time_ms, 0.001);
 
     const double geometric_mean = std::pow(
         prime_ratio * matrix_ratio * zlib_ratio * aes_ratio,

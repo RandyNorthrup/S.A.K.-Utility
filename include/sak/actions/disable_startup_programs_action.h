@@ -12,7 +12,7 @@ namespace sak {
 
 /**
  * @brief Disable Startup Programs Action
- * 
+ *
  * Shows list of high-impact startup programs and allows user to disable them.
  * Reads from Registry and Task Scheduler startup locations.
  */
@@ -50,10 +50,14 @@ private:
     QString determineImpact(const QString& name);
 
     // TigerStyle helpers for execute() decomposition
-    bool executeScanRegistry(const QDateTime& start_time, QString& startup_output, int& startup_count);
-    bool executeScanTaskScheduler(const QDateTime& start_time, QString& task_output, int& task_count);
-    void executeDisableEntries(const QDateTime& start_time, const QString& startup_output, int startup_count,
-                               const QString& task_output, int task_count, QString& report, bool& tm_launched);
+    bool executeScanRegistry(const QDateTime& start_time, QString& startup_output,
+        int& startup_count);
+    bool executeScanTaskScheduler(const QDateTime& start_time, QString& task_output,
+        int& task_count);
+    void executeDisableEntries(const QDateTime& start_time, const QString& startup_output,
+        int startup_count,
+                               const QString& task_output, int task_count, QString& report,
+                                   bool& tm_launched);
     void executeBuildReport(const QDateTime& start_time, int startup_count, int task_count,
                             const QString& report, bool tm_launched);
     QString formatStartupProgramsSection(const QString& startup_output, int startup_count) const;

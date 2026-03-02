@@ -12,14 +12,15 @@ namespace sak {
 
 /**
  * @brief Development Configs Backup Action
- * 
+ *
  * Backs up Git configs, SSH keys, IDE settings (VS Code, Visual Studio, IntelliJ).
  */
 class DevelopmentConfigsBackupAction : public QuickAction {
     Q_OBJECT
 
 public:
-    explicit DevelopmentConfigsBackupAction(const QString& backup_location, QObject* parent = nullptr);
+    explicit DevelopmentConfigsBackupAction(const QString& backup_location,
+        QObject* parent = nullptr);
 
     QString name() const override { return "Development Configs Backup"; }
     QString description() const override { return "Backup Git, SSH keys, IDE settings"; }

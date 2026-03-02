@@ -26,7 +26,8 @@ const QList<BrowserPath> kBrowserPaths = {
 
 namespace sak {
 
-BrowserProfileBackupAction::BrowserProfileBackupAction(const QString& backup_location, QObject* parent)
+BrowserProfileBackupAction::BrowserProfileBackupAction(const QString& backup_location,
+    QObject* parent)
     : QuickAction(parent)
     , m_backup_location(backup_location)
 {
@@ -34,9 +35,9 @@ BrowserProfileBackupAction::BrowserProfileBackupAction(const QString& backup_loc
 
 void BrowserProfileBackupAction::scan() {
     setStatus(ActionStatus::Scanning);
-    
+
     Q_EMIT scanProgress("Detecting browser profiles...");
-    
+
     // Quick scan for browser profile directories
     QString user_profile = QDir::homePath();
     QStringList profile_checks = {
@@ -44,12 +45,12 @@ void BrowserProfileBackupAction::scan() {
         user_profile + "/AppData/Local/Microsoft/Edge/User Data/Default",
         user_profile + "/AppData/Roaming/Mozilla/Firefox/Profiles"
     };
-    
+
     int profiles_found = 0;
     for (const QString& path : profile_checks) {
         if (QDir(path).exists()) profiles_found++;
     }
-    
+
     ScanResult result;
     result.applicable = true;
     result.summary = QString("Found %1 browser profile(s) - ready to backup").arg(profiles_found);

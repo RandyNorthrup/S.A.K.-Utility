@@ -27,7 +27,8 @@ public:
     QVector<DestinationPC> destinations() const;
     bool contains(const QString& destination_id) const;
 
-    static bool checkReadiness(const DestinationPC& destination, qint64 required_free_bytes, QString* reason = nullptr);
+    static bool checkReadiness(const DestinationPC& destination, qint64 required_free_bytes,
+        QString* reason = nullptr);
 
 Q_SIGNALS:
     void destinationRegistered(const DestinationPC& destination);

@@ -17,10 +17,10 @@
 
 /**
  * @brief Worker thread for duplicate file detection
- * 
+ *
  * Scans directories for duplicate files using MD5 hash comparison.
  * Groups duplicates and reports space savings potential.
- * 
+ *
  * Thread-Safety: All signals are emitted from worker thread and should
  * be connected with Qt::QueuedConnection.
  */
@@ -92,7 +92,7 @@ private:
      * @param file_path File to hash
      * @return Hash string or error
      */
-    auto calculateFileHash(const std::filesystem::path& file_path) 
+    auto calculateFileHash(const std::filesystem::path& file_path)
         -> std::expected<std::string, sak::error_code>;
 
     /**
@@ -101,7 +101,8 @@ private:
      * @return Vector of (path, hash) pairs
      */
     auto calculateHashesParallel(const std::vector<std::filesystem::path>& files)
-        -> std::expected<std::vector<std::pair<std::filesystem::path, std::string>>, sak::error_code>;
+        -> std::expected<std::vector<std::pair<std::filesystem::path, std::string>>,
+            sak::error_code>;
 
     /// @brief Create the per-file hashing task callable for parallel execution
     std::function<void(int)> createHashTask(
@@ -132,7 +133,8 @@ private:
 
     /// @brief Hash all files (parallel or sequential based on config)
     auto hashFiles(const std::vector<std::filesystem::path>& files)
-        -> std::expected<std::vector<std::pair<std::filesystem::path, std::string>>, sak::error_code>;
+        -> std::expected<std::vector<std::pair<std::filesystem::path, std::string>>,
+            sak::error_code>;
 
     /// @brief Collect files from a single directory with error handling
     auto collectFilesFromDirectory(const std::filesystem::path& dir_path,

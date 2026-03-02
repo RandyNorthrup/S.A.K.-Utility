@@ -34,7 +34,7 @@ bool ElevationManager::isElevated() noexcept
             DOMAIN_ALIAS_RID_ADMINS,
             0, 0, 0, 0, 0, 0,
             &administrators_group)) {
-        
+
         CheckTokenMembership(nullptr, administrators_group, &is_admin);
         FreeSid(administrators_group);
     }
@@ -66,7 +66,7 @@ auto ElevationManager::get_executable_path()
 {
     wchar_t path[MAX_PATH];
     DWORD result = GetModuleFileNameW(nullptr, path, MAX_PATH);
-    
+
     if (result == 0 || result == MAX_PATH) {
         DWORD error = GetLastError();
         sak::logError("Failed to get executable path: error {}", error);
@@ -79,11 +79,11 @@ auto ElevationManager::get_executable_path()
 std::wstring ElevationManager::get_command_line_args()
 {
     LPWSTR cmd_line = GetCommandLineW();
-    
+
     // Skip the executable name (first argument)
     int argc;
     LPWSTR* argv = CommandLineToArgvW(cmd_line, &argc);
-    
+
     if (!argv || argc <= 1) {
         if (argv) LocalFree(argv);
         return {};
@@ -123,12 +123,14 @@ auto ElevationManager::restartElevated(bool wait_for_exit)
     }
 
     std::wstring args = get_command_line_args();
-    
+
     // Log using narrow-string conversion for log output
-    int logLen = WideCharToMultiByte(CP_UTF8, 0, exe_path_result.value().c_str(), -1, nullptr, 0, nullptr, nullptr);
+    int logLen = WideCharToMultiByte(CP_UTF8, 0, exe_path_result.value().c_str(), -1, nullptr, 0,
+        nullptr, nullptr);
     std::string logPath(logLen > 0 ? static_cast<size_t>(logLen - 1) : 0, '\0');
     if (logLen > 0) {
-        WideCharToMultiByte(CP_UTF8, 0, exe_path_result.value().c_str(), -1, logPath.data(), logLen, nullptr, nullptr);
+        WideCharToMultiByte(CP_UTF8, 0, exe_path_result.value().c_str(), -1, logPath.data(),
+            logLen, nullptr, nullptr);
     }
     sak::logInfo("Restarting with elevation: {}", logPath);
 
@@ -150,13 +152,13 @@ auto ElevationManager::executeElevated(
 
     if (!ShellExecuteExW(&sei)) {
         DWORD error = GetLastError();
-        
+
         if (error == ERROR_CANCELLED) {
             sak::logInfo("User cancelled elevation request");
             return std::unexpected(sak::error_code::operation_cancelled);
         }
-        
-        sak::logError("Failed to execute with elevation: {}", 
+
+        sak::logError("Failed to execute with elevation: {}",
                       getElevationErrorMessage(error));
         return std::unexpected(sak::error_code::elevation_failed);
     }
@@ -166,11 +168,11 @@ auto ElevationManager::executeElevated(
     if (wait_for_exit && sei.hProcess) {
         sak::logInfo("Waiting for elevated process to complete...");
         WaitForSingleObject(sei.hProcess, INFINITE);
-        
+
         DWORD exit_code = 0;
         GetExitCodeProcess(sei.hProcess, &exit_code);
         CloseHandle(sei.hProcess);
-        
+
         if (exit_code != 0) {
             sak::logError("Elevated process failed with exit code {}", exit_code);
             return std::unexpected(sak::error_code::execution_failed);
@@ -186,7 +188,7 @@ auto ElevationManager::executeElevated(
 std::string ElevationManager::getElevationErrorMessage(unsigned long error_code)
 {
     char* message_buffer = nullptr;
-    
+
     DWORD size = FormatMessageA(
         FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
         nullptr,

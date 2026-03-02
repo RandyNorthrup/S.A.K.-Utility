@@ -44,7 +44,7 @@ void accumulateFileEntry(const std::filesystem::directory_entry& entry,
 auto path_utils::normalize(
     const std::filesystem::path& path) -> std::expected<std::filesystem::path, error_code> {
     Q_ASSERT_X(!path.empty(), "path_utils::normalize", "path must not be empty");
-    
+
     try {
         auto normalized = std::filesystem::weakly_canonical(path);
         Q_ASSERT_X(normalized.is_absolute(), "path_utils::normalize",
@@ -64,7 +64,7 @@ auto path_utils::makeRelative(
     const std::filesystem::path& base) -> std::expected<std::filesystem::path, error_code> {
     Q_ASSERT_X(!path.empty(), "path_utils::makeRelative", "path must not be empty");
     Q_ASSERT_X(!base.empty(), "path_utils::makeRelative", "base must not be empty");
-    
+
     try {
         auto rel = std::filesystem::relative(path, base);
         if (rel.empty()) {
@@ -85,33 +85,34 @@ auto path_utils::isSafePath(
     const std::filesystem::path& base_dir) -> std::expected<bool, error_code> {
     Q_ASSERT_X(!path.empty(), "path_utils::isSafePath", "path must not be empty");
     Q_ASSERT_X(!base_dir.empty(), "path_utils::isSafePath", "base_dir must not be empty");
-    
+
     try {
         // Normalize both paths
         auto norm_path_result = normalize(path);
         auto norm_base_result = normalize(base_dir);
-        
+
         if (!norm_path_result || !norm_base_result) {
             return std::unexpected(error_code::invalid_path);
         }
-        
+
         auto norm_path = *norm_path_result;
         auto norm_base = *norm_base_result;
-        
+
         // Check if normalized path starts with base directory
         auto path_str = norm_path.string();
         auto base_str = norm_base.string();
 
         path_str = normalize_for_compare(std::move(path_str));
         base_str = normalize_for_compare(std::move(base_str));
-        
+
         // Ensure both end with separator for proper comparison
         if (!base_str.empty() && base_str.back() != '/') {
             base_str += '/';
         }
-        
-        return path_str.starts_with(base_str) || path_str == normalize_for_compare(norm_base.string());
-        
+
+        return path_str.starts_with(base_str) ||
+            path_str == normalize_for_compare(norm_base.string());
+
     } catch (const std::exception& e) {
         logError("Exception in isSafePath(): {}", e.what());
         return std::unexpected(error_code::unknown_error);
@@ -121,7 +122,7 @@ auto path_utils::isSafePath(
 bool path_utils::matchesPattern(
     const std::filesystem::path& path,
     const std::vector<std::string>& patterns) noexcept {
-    
+
     try {
         const auto filename = path.filename().string();
         return std::any_of(patterns.begin(), patterns.end(),
@@ -142,18 +143,18 @@ auto path_utils::getDirectorySizeAndCount(
     const std::filesystem::path& dir_path) -> std::expected<DirectorySizeInfo, error_code> {
     Q_ASSERT_X(!dir_path.empty(), "path_utils::getDirectorySizeAndCount",
         "dir_path must not be empty");
-    
+
     std::error_code ec;
     if (!std::filesystem::exists(dir_path, ec) || ec) {
         return std::unexpected(error_code::file_not_found);
     }
-    
+
     if (!std::filesystem::is_directory(dir_path, ec) || ec) {
         return std::unexpected(error_code::not_a_directory);
     }
-    
+
     DirectorySizeInfo info;
-    
+
     try {
         for (const auto& entry : std::filesystem::recursive_directory_iterator(
                 dir_path, std::filesystem::directory_options::skip_permission_denied)) {
@@ -166,14 +167,14 @@ auto path_utils::getDirectorySizeAndCount(
         logError("Unexpected exception in getDirectorySizeAndCount(): {}", e.what());
         return std::unexpected(error_code::unknown_error);
     }
-    
+
     return info;
 }
 
 auto path_utils::getAvailableSpace(
     const std::filesystem::path& path) -> std::expected<std::uintmax_t, error_code> {
     Q_ASSERT_X(!path.empty(), "path_utils::getAvailableSpace", "path must not be empty");
-    
+
     try {
         auto space_info = std::filesystem::space(path);
         return space_info.available;
@@ -189,11 +190,11 @@ auto path_utils::getAvailableSpace(
 bool path_utils::wildcardMatch(
     std::string_view str,
     std::string_view pattern) noexcept {
-    
+
     std::size_t s = 0, p = 0;
     std::size_t star_idx = std::string_view::npos;
     std::size_t match_idx = 0;
-    
+
     while (s < str.size()) {
         if (p < pattern.size() && (pattern[p] == '?' || pattern[p] == str[s])) {
             ++s;
@@ -210,11 +211,11 @@ bool path_utils::wildcardMatch(
             return false;
         }
     }
-    
+
     while (p < pattern.size() && pattern[p] == '*') {
         ++p;
     }
-    
+
     return p == pattern.size();
 }
 

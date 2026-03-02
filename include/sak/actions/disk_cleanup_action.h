@@ -14,7 +14,7 @@ namespace sak {
 
 /**
  * @brief Clean temporary files and system junk
- * 
+ *
  * Scans and removes:
  * - Windows temp folders
  * - User temp folders
@@ -22,7 +22,7 @@ namespace sak {
  * - Recycle bin
  * - Windows Update cleanup
  * - Thumbnail cache
- * 
+ *
  * Category: System Optimization
  */
 class DiskCleanupAction : public QuickAction {
@@ -33,7 +33,8 @@ public:
     ~DiskCleanupAction() override = default;
 
     QString name() const override { return "Disk Cleanup"; }
-    QString description() const override { return "Remove temporary files, caches, and system junk"; }
+    QString description(
+        ) const override { return "Remove temporary files, caches, and system junk"; }
     QIcon icon() const override { return QIcon(); }
     ActionCategory category() const override { return ActionCategory::SystemOptimization; }
     bool requiresAdmin() const override { return true; }

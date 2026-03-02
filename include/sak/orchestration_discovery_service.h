@@ -48,7 +48,8 @@ private:
     void sendBroadcastDiscovery();
     void sendDestinationAnnounce(const QHostAddress& address, quint16 port);
     bool sendBroadcastOnInterface(const QNetworkInterface& iface, const QByteArray& datagram);
-    void processDiscoveryDatagram(const QJsonObject& obj, const QHostAddress& sender, quint16 senderPort);
+    void processDiscoveryDatagram(const QJsonObject& obj, const QHostAddress& sender,
+        quint16 senderPort);
 
     QUdpSocket* m_socket{nullptr};
     QTimer* m_broadcastTimer{nullptr};

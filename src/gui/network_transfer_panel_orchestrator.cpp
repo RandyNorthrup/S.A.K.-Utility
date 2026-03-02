@@ -74,7 +74,8 @@ void NetworkTransferPanel::onOrchestrationAssignment(const DeploymentAssignment&
         refreshAssignmentQueue();
         refreshAssignmentStatus();
         persistAssignmentQueue();
-        Q_EMIT logOutput(tr("Queued assignment %1 for %2").arg(assignment.deployment_id, assignment.source_user));
+        Q_EMIT logOutput(tr("Queued assignment %1 for %2").arg(assignment.deployment_id,
+            assignment.source_user));
         return;
     }
 
@@ -90,7 +91,8 @@ void NetworkTransferPanel::onStartOrchestratorServer() {
         const auto port = static_cast<quint16>(m_orchestratorListenPortSpin->value());
         if (!m_orchestrator->startServer(port)) {
             sak::logWarning("Failed to start orchestration server.");
-            QMessageBox::warning(this, tr("Orchestrator Error"), tr("Failed to start orchestration server."));
+            QMessageBox::warning(this, tr("Orchestrator Error"),
+                tr("Failed to start orchestration server."));
             return;
         }
         m_orchestrator->startHealthPolling(10000);
@@ -125,7 +127,8 @@ void NetworkTransferPanel::onScanOrchestratorUsers() {
         auto* userItem = new QTableWidgetItem(user.username);
         userItem->setData(Qt::UserRole, i);
         m_orchestratorUserTable->setItem(i, 1, userItem);
-        m_orchestratorUserTable->setItem(i, 2, new QTableWidgetItem(formatBytes(user.total_size_estimated)));
+        m_orchestratorUserTable->setItem(i, 2,
+            new QTableWidgetItem(formatBytes(user.total_size_estimated)));
     }
 
     Q_EMIT logOutput(tr("Scanned %1 users for deployment").arg(m_users.size()));
@@ -139,7 +142,8 @@ void NetworkTransferPanel::onStartDeployment() {
     auto mapping = buildDeploymentMapping();
     if (mapping.sources.isEmpty() || mapping.destinations.isEmpty()) {
         sak::logWarning("Deployment Error: Select source profiles and destinations first.");
-        QMessageBox::warning(this, tr("Deployment Error"), tr("Select source profiles and destinations first."));
+        QMessageBox::warning(this, tr("Deployment Error"),
+            tr("Select source profiles and destinations first."));
         return;
     }
 
@@ -156,13 +160,15 @@ void NetworkTransferPanel::onStartDeployment() {
 
     if (!m_mappingEngine->checkDestinationReadiness(mapping)) {
         sak::logWarning("Deployment Error: One or more destinations are not ready.");
-        QMessageBox::warning(this, tr("Deployment Error"), tr("One or more destinations are not ready."));
+        QMessageBox::warning(this, tr("Deployment Error"),
+            tr("One or more destinations are not ready."));
         return;
     }
 
     if (!m_mappingEngine->checkDiskSpace(mapping)) {
         sak::logWarning("Deployment Error: Insufficient disk space on one or more destinations.");
-        QMessageBox::warning(this, tr("Deployment Error"), tr("Insufficient disk space on one or more destinations."));
+        QMessageBox::warning(this, tr("Deployment Error"),
+            tr("Insufficient disk space on one or more destinations."));
         return;
     }
 
@@ -171,7 +177,8 @@ void NetworkTransferPanel::onStartDeployment() {
 
     auto& config = ConfigManager::instance();
     config.setValue("orchestration/last_deployment_id", m_activeDeploymentId);
-    config.setValue("orchestration/last_deployment_started", m_deploymentStartedAt.toString(Qt::ISODate));
+    config.setValue("orchestration/last_deployment_started",
+        m_deploymentStartedAt.toString(Qt::ISODate));
     config.setValue("orchestration/mapping_type", m_mappingTypeCombo->currentIndex());
     config.setValue("orchestration/mapping_strategy", m_mappingStrategyCombo->currentIndex());
     config.setValue("orchestration/max_concurrent", m_maxConcurrentSpin->value());
@@ -216,12 +223,14 @@ void NetworkTransferPanel::onSaveDeploymentTemplate() {
     auto mapping = buildDeploymentMapping();
     if (mapping.sources.isEmpty() || mapping.destinations.isEmpty()) {
         sak::logWarning("Template Error: Select sources and destinations first.");
-        QMessageBox::warning(this, tr("Template Error"), tr("Select sources and destinations first."));
+        QMessageBox::warning(this, tr("Template Error"),
+            tr("Select sources and destinations first."));
         return;
     }
 
     const QString filePath = QFileDialog::getSaveFileName(this, tr("Save Template"),
-                                                          QDir::homePath(), tr("JSON Files (*.json)"));
+                                                          QDir::homePath(),
+                                                              tr("JSON Files (*.json)"));
     if (filePath.isEmpty()) {
         return;
     }
@@ -239,7 +248,8 @@ void NetworkTransferPanel::onSaveDeploymentTemplate() {
 
 void NetworkTransferPanel::onLoadDeploymentTemplate() {
     const QString filePath = QFileDialog::getOpenFileName(this, tr("Load Template"),
-                                                          QDir::homePath(), tr("JSON Files (*.json)"));
+                                                          QDir::homePath(),
+                                                              tr("JSON Files (*.json)"));
     if (filePath.isEmpty()) {
         return;
     }
@@ -266,7 +276,8 @@ void NetworkTransferPanel::onOrchestratorDestinationRegistered(const Destination
 
 void NetworkTransferPanel::onOrchestratorDestinationUpdated(const DestinationPC& destination) {
     if (!destination.destination_id.isEmpty()) {
-        m_destinationStatusHistory[destination.destination_id].append(tr("Updated: %1").arg(destination.status));
+        m_destinationStatusHistory[destination.destination_id].append(tr("Updated: %1")
+            .arg(destination.status));
     }
     refreshOrchestratorDestinations();
 }
@@ -282,7 +293,8 @@ void NetworkTransferPanel::onOrchestratorDestinationRemoved(const QString& desti
 void NetworkTransferPanel::onOrchestratorProgress(const DeploymentProgress& progress) {
     if (!progress.destination_id.isEmpty()) {
         m_destinationProgress.insert(progress.destination_id, progress.progress_percent);
-        m_destinationStatusHistory[progress.destination_id].append(tr("Progress %1%").arg(progress.progress_percent));
+        m_destinationStatusHistory[progress.destination_id].append(tr("Progress %1%")
+            .arg(progress.progress_percent));
     }
 
     QString jobId = progress.job_id;
@@ -304,7 +316,8 @@ void NetworkTransferPanel::onOrchestratorProgress(const DeploymentProgress& prog
 
 void NetworkTransferPanel::onOrchestratorCompletion(const DeploymentCompletion& completion) {
     if (!completion.destination_id.isEmpty()) {
-        m_destinationStatusHistory[completion.destination_id].append(tr("Completed: %1").arg(completion.status));
+        m_destinationStatusHistory[completion.destination_id].append(tr("Completed: %1")
+            .arg(completion.status));
     }
     QString jobId = completion.job_id;
     if (jobId.isEmpty()) {
@@ -339,14 +352,16 @@ void NetworkTransferPanel::onJobStartRequested(const QString& job_id,
     m_jobToDeploymentId.insert(job_id, assignment.deployment_id);
     m_knownJobIds.insert(job_id);
     if (!destination.destination_id.isEmpty()) {
-        m_destinationStatusHistory[destination.destination_id].append(tr("Job started: %1").arg(job_id));
+        m_destinationStatusHistory[destination.destination_id].append(tr("Job started: %1")
+            .arg(job_id));
     }
 
     m_orchestrator->assignDeploymentToDestination(destination.destination_id,
                                                   assignment,
                                                   assignment.profile_size_bytes);
 
-    const auto it = std::find_if(m_users.begin(), m_users.end(), [&source](const UserProfile& user) {
+    const auto it = std::find_if(m_users.begin(), m_users.end(),
+        [&source](const UserProfile& user) {
         return user.username == source.username;
     });
 
@@ -360,7 +375,8 @@ void NetworkTransferPanel::onJobStartRequested(const QString& job_id,
 
     if (m_settings.encryption_enabled && m_passphraseEdit->text().isEmpty()) {
         if (m_parallelManager) {
-            m_parallelManager->markJobComplete(job_id, false, tr("Missing passphrase for encrypted transfer"));
+            m_parallelManager->markJobComplete(job_id, false,
+                tr("Missing passphrase for encrypted transfer"));
         }
         refreshJobsTable();
         return;
@@ -407,7 +423,8 @@ void NetworkTransferPanel::onJobUpdated(const QString& job_id, int progress_perc
     refreshJobsTable();
 }
 
-void NetworkTransferPanel::onJobCompleted(const QString& job_id, bool success, const QString& error_message) {
+void NetworkTransferPanel::onJobCompleted(const QString& job_id, bool success,
+    const QString& error_message) {
     Q_UNUSED(success);
     Q_UNUSED(error_message);
     m_knownJobIds.insert(job_id);
@@ -508,7 +525,8 @@ void NetworkTransferPanel::onExportDeploymentHistory() {
     }
 
     const QString filePath = QFileDialog::getSaveFileName(this, tr("Export Deployment History"),
-                                                          QDir::homePath(), tr("CSV Files (*.csv)"));
+                                                          QDir::homePath(),
+                                                              tr("CSV Files (*.csv)"));
     if (filePath.isEmpty()) {
         return;
     }
@@ -528,7 +546,8 @@ void NetworkTransferPanel::onExportDeploymentSummaryCsv() {
     }
 
     const QString filePath = QFileDialog::getSaveFileName(this, tr("Export Deployment Summary"),
-                                                          QDir::homePath(), tr("CSV Files (*.csv)"));
+                                                          QDir::homePath(),
+                                                              tr("CSV Files (*.csv)"));
     if (filePath.isEmpty()) {
         return;
     }
@@ -581,7 +600,8 @@ void NetworkTransferPanel::onExportDeploymentSummaryPdf() {
     }
 
     const QString filePath = QFileDialog::getSaveFileName(this, tr("Export Deployment Summary"),
-                                                          QDir::homePath(), tr("PDF Files (*.pdf)"));
+                                                          QDir::homePath(),
+                                                              tr("PDF Files (*.pdf)"));
     if (filePath.isEmpty()) {
         return;
     }
@@ -633,10 +653,12 @@ void NetworkTransferPanel::onRecoverLastDeployment() {
     const QString deploymentId = config.getValue("orchestration/last_deployment_id").toString();
     const QString status = config.getValue("orchestration/last_deployment_status").toString();
     const QString startedAt = config.getValue("orchestration/last_deployment_started").toString();
-    const QString completedAt = config.getValue("orchestration/last_deployment_completed").toString();
+    const QString completedAt =
+        config.getValue("orchestration/last_deployment_completed").toString();
 
     if (deploymentId.isEmpty()) {
-        QMessageBox::information(this, tr("Recover Deployment"), tr("No previous deployment state found."));
+        QMessageBox::information(this, tr("Recover Deployment"),
+            tr("No previous deployment state found."));
         return;
     }
 
@@ -646,8 +668,10 @@ void NetworkTransferPanel::onRecoverLastDeployment() {
     }
 
     m_mappingTypeCombo->setCurrentIndex(config.getValue("orchestration/mapping_type", 0).toInt());
-    m_mappingStrategyCombo->setCurrentIndex(config.getValue("orchestration/mapping_strategy", 0).toInt());
-    m_maxConcurrentSpin->setValue(config.getValue("orchestration/max_concurrent", sak::kMaxConcurrentScrape).toInt());
+    m_mappingStrategyCombo->setCurrentIndex(config.getValue("orchestration/mapping_strategy",
+        0).toInt());
+    m_maxConcurrentSpin->setValue(config.getValue("orchestration/max_concurrent",
+        sak::kMaxConcurrentScrape).toInt());
     m_globalBandwidthSpin->setValue(config.getValue("orchestration/global_bandwidth", 0).toInt());
     m_perJobBandwidthSpin->setValue(config.getValue("orchestration/per_job_bandwidth", 0).toInt());
     m_useTemplateCheck->setChecked(config.getValue("orchestration/use_template", false).toBool());
@@ -657,7 +681,8 @@ void NetworkTransferPanel::onRecoverLastDeployment() {
         m_loadedMapping = m_mappingEngine->loadTemplate(templatePath);
         if (!m_loadedMapping.sources.isEmpty()) {
             m_loadedTemplatePath = templatePath;
-            m_templateStatusLabel->setText(tr("Loaded template: %1").arg(QFileInfo(templatePath).fileName()));
+            m_templateStatusLabel->setText(tr("Loaded template: %1")
+                .arg(QFileInfo(templatePath).fileName()));
         }
     }
 
@@ -670,7 +695,8 @@ void NetworkTransferPanel::onRecoverLastDeployment() {
                           .arg(completedAt.isEmpty() ? tr("n/a") : completedAt));
 }
 
-void NetworkTransferPanel::onParallelDeploymentCompleted(const QString& deployment_id, bool success) {
+void NetworkTransferPanel::onParallelDeploymentCompleted(const QString& deployment_id,
+    bool success) {
     Q_UNUSED(deployment_id);
 
     if (!m_historyManager || !m_parallelManager) {
@@ -690,7 +716,8 @@ void NetworkTransferPanel::onParallelDeploymentCompleted(const QString& deployme
     m_historyManager->appendEntry(entry);
 
     auto& config = ConfigManager::instance();
-    config.setValue("orchestration/last_deployment_completed", entry.completed_at.toString(Qt::ISODate));
+    config.setValue("orchestration/last_deployment_completed",
+        entry.completed_at.toString(Qt::ISODate));
     config.setValue("orchestration/last_deployment_status", entry.status);
 
     Q_EMIT logOutput(tr("Deployment %1 %2. %3/%4 complete, %5 failed.")
@@ -726,10 +753,14 @@ void NetworkTransferPanel::refreshOrchestratorDestinations() {
         auto* statusItem = new QTableWidgetItem(destination.status);
         applyStatusColors(statusItem, statusColor(destination.status));
         m_orchestratorDestTable->setItem(row, 3, statusItem);
-        m_orchestratorDestTable->setItem(row, 4, new QTableWidgetItem(formatBytes(destination.health.free_disk_bytes)));
-        m_orchestratorDestTable->setItem(row, 5, new QTableWidgetItem(QString::number(destination.health.cpu_usage_percent)));
-        m_orchestratorDestTable->setItem(row, 6, new QTableWidgetItem(QString::number(destination.health.ram_usage_percent)));
-        m_orchestratorDestTable->setItem(row, 7, new QTableWidgetItem(destination.last_seen.toString("hh:mm:ss")));
+        m_orchestratorDestTable->setItem(row, 4,
+            new QTableWidgetItem(formatBytes(destination.health.free_disk_bytes)));
+        m_orchestratorDestTable->setItem(row, 5,
+            new QTableWidgetItem(QString::number(destination.health.cpu_usage_percent)));
+        m_orchestratorDestTable->setItem(row, 6,
+            new QTableWidgetItem(QString::number(destination.health.ram_usage_percent)));
+        m_orchestratorDestTable->setItem(row, 7,
+            new QTableWidgetItem(destination.last_seen.toString("hh:mm:ss")));
 
         const int progress = m_destinationProgress.value(destination.destination_id, 0);
         auto* progressItem = new QTableWidgetItem(QString::number(progress) + "%");
@@ -790,7 +821,8 @@ void NetworkTransferPanel::refreshJobsTable() {
             const double bytesPerSecond = (totalSpeedMbps * sak::kBytesPerMBf) / 8.0;
             const qint64 etaSeconds = static_cast<qint64>(remainingBytes / bytesPerSecond);
             const QTime etaTime(0, 0, 0);
-            m_deploymentEtaLabel->setText(tr("ETA: %1").arg(etaTime.addSecs(static_cast<int>(etaSeconds)).toString("hh:mm:ss")));
+            m_deploymentEtaLabel->setText(tr("ETA: %1")
+                .arg(etaTime.addSecs(static_cast<int>(etaSeconds)).toString("hh:mm:ss")));
         } else {
             m_deploymentEtaLabel->setText(tr("ETA: --"));
         }
@@ -798,7 +830,8 @@ void NetworkTransferPanel::refreshJobsTable() {
 }
 
 MappingEngine::DeploymentMapping NetworkTransferPanel::buildDeploymentMapping() {
-    if (m_useTemplateCheck && m_useTemplateCheck->isChecked() && !m_loadedMapping.sources.isEmpty()) {
+    if (m_useTemplateCheck && m_useTemplateCheck->isChecked() &&
+        !m_loadedMapping.sources.isEmpty()) {
         return m_loadedMapping;
     }
 
@@ -916,7 +949,8 @@ void NetworkTransferPanel::refreshAssignmentQueue() {
         m_assignmentQueueTable->setItem(row, 0, new QTableWidgetItem(assignment.deployment_id));
         m_assignmentQueueTable->setItem(row, 1, new QTableWidgetItem(assignment.job_id));
         m_assignmentQueueTable->setItem(row, 2, new QTableWidgetItem(assignment.source_user));
-        m_assignmentQueueTable->setItem(row, 3, new QTableWidgetItem(formatBytes(assignment.profile_size_bytes)));
+        m_assignmentQueueTable->setItem(row, 3,
+            new QTableWidgetItem(formatBytes(assignment.profile_size_bytes)));
         m_assignmentQueueTable->setItem(row, 4, new QTableWidgetItem(assignment.priority));
         const QString bandwidthText = assignment.max_bandwidth_kbps > 0
             ? tr("%1 KB/s").arg(assignment.max_bandwidth_kbps)
@@ -971,7 +1005,8 @@ bool NetworkTransferPanel::eventFilter(QObject* obj, QEvent* event) {
     return QWidget::eventFilter(obj, event);
 }
 
-void NetworkTransferPanel::upsertCustomRule(const QString& sourceUser, const QString& destinationId) {
+void NetworkTransferPanel::upsertCustomRule(const QString& sourceUser,
+    const QString& destinationId) {
     if (!m_customRulesTable || sourceUser.isEmpty() || destinationId.isEmpty()) {
         return;
     }
@@ -979,7 +1014,7 @@ void NetworkTransferPanel::upsertCustomRule(const QString& sourceUser, const QSt
     for (int row = 0; row < m_customRulesTable->rowCount(); ++row) {
         auto* sourceItem = m_customRulesTable->item(row, 0);
         if (!sourceItem || sourceItem->text().trimmed() != sourceUser) continue;
-        
+
         if (!m_customRulesTable->item(row, 1)) {
             m_customRulesTable->setItem(row, 1, new QTableWidgetItem());
         }
@@ -1046,7 +1081,8 @@ void NetworkTransferPanel::refreshAssignmentStatus() {
     m_assignmentStatusTable->setRowCount(0);
     int row = 0;
 
-    auto addRow = [this, &row](const DeploymentAssignment& assignment, const QString& status, const QString& eventText) {
+    auto addRow = [this, &row](const DeploymentAssignment& assignment, const QString& status,
+        const QString& eventText) {
         m_assignmentStatusTable->insertRow(row);
         m_assignmentStatusTable->setItem(row, 0, new QTableWidgetItem(assignment.deployment_id));
         m_assignmentStatusTable->setItem(row, 1, new QTableWidgetItem(assignment.job_id));
@@ -1059,8 +1095,10 @@ void NetworkTransferPanel::refreshAssignmentStatus() {
     };
 
     if (!m_activeAssignment.deployment_id.isEmpty()) {
-        const QString status = m_assignmentStatusByJob.value(m_activeAssignment.job_id, tr("active"));
-        const QString eventText = m_assignmentEventByJob.value(m_activeAssignment.job_id, tr("Active"));
+        const QString status = m_assignmentStatusByJob.value(m_activeAssignment.job_id,
+            tr("active"));
+        const QString eventText = m_assignmentEventByJob.value(m_activeAssignment.job_id,
+            tr("Active"));
         addRow(m_activeAssignment, status, eventText);
     }
 
@@ -1089,10 +1127,13 @@ void NetworkTransferPanel::refreshDeploymentHistory() {
     for (const auto& entry : entries) {
         m_historyTable->insertRow(row);
         m_historyTable->setItem(row, 0, new QTableWidgetItem(entry.deployment_id));
-        m_historyTable->setItem(row, 1, new QTableWidgetItem(entry.started_at.toString("yyyy-MM-dd hh:mm:ss")));
-        m_historyTable->setItem(row, 2, new QTableWidgetItem(entry.completed_at.toString("yyyy-MM-dd hh:mm:ss")));
+        m_historyTable->setItem(row, 1,
+            new QTableWidgetItem(entry.started_at.toString("yyyy-MM-dd hh:mm:ss")));
+        m_historyTable->setItem(row, 2,
+            new QTableWidgetItem(entry.completed_at.toString("yyyy-MM-dd hh:mm:ss")));
         m_historyTable->setItem(row, 3, new QTableWidgetItem(QString::number(entry.total_jobs)));
-        m_historyTable->setItem(row, 4, new QTableWidgetItem(QString::number(entry.completed_jobs)));
+        m_historyTable->setItem(row, 4,
+            new QTableWidgetItem(QString::number(entry.completed_jobs)));
         m_historyTable->setItem(row, 5, new QTableWidgetItem(QString::number(entry.failed_jobs)));
         m_historyTable->setItem(row, 6, new QTableWidgetItem(entry.status));
         row++;

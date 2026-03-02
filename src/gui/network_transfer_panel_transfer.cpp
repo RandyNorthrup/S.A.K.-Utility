@@ -88,7 +88,8 @@ void NetworkTransferPanel::onScanUsers() {
 
         m_userTable->setItem(i, kUserColName, new QTableWidgetItem(user.username));
         m_userTable->setItem(i, kUserColPath, new QTableWidgetItem(user.profile_path));
-        m_userTable->setItem(i, kUserColSize, new QTableWidgetItem(formatBytes(user.total_size_estimated)));
+        m_userTable->setItem(i, kUserColSize,
+            new QTableWidgetItem(formatBytes(user.total_size_estimated)));
     }
 
     Q_EMIT logOutput(tr("Scanned %1 users").arg(m_users.size()));
@@ -113,7 +114,8 @@ void NetworkTransferPanel::onDiscoverPeers() {
     m_peerTable->setRowCount(0);
     m_controller->configure(m_settings);
     if (!m_settings.auto_discovery_enabled) {
-        QMessageBox::information(this, tr("Discovery Disabled"), tr("Enable auto discovery in settings to find peers."));
+        QMessageBox::information(this, tr("Discovery Disabled"),
+            tr("Enable auto discovery in settings to find peers."));
         return;
     }
     m_controller->startDiscovery("source");
@@ -137,7 +139,8 @@ void NetworkTransferPanel::onStartSource() {
 
     if (peer.ip_address.isEmpty()) {
         sak::logWarning("Missing Destination: Select a peer or enter a manual IP.");
-        QMessageBox::warning(this, tr("Missing Destination"), tr("Select a peer or enter a manual IP."));
+        QMessageBox::warning(this, tr("Missing Destination"),
+            tr("Select a peer or enter a manual IP."));
         return;
     }
 
@@ -154,13 +157,15 @@ void NetworkTransferPanel::onStartSource() {
 
     if (m_settings.encryption_enabled && m_passphraseEdit->text().isEmpty()) {
         sak::logWarning("Missing Passphrase: Enter a passphrase for encrypted transfers.");
-        QMessageBox::warning(this, tr("Missing Passphrase"), tr("Enter a passphrase for encrypted transfers."));
+        QMessageBox::warning(this, tr("Missing Passphrase"),
+            tr("Enter a passphrase for encrypted transfers."));
         return;
     }
 
     if (m_settings.encryption_enabled && m_passphraseEdit->text().size() < 8) {
         sak::logWarning("Weak Passphrase: Passphrase must be at least 8 characters.");
-        QMessageBox::warning(this, tr("Weak Passphrase"), tr("Passphrase must be at least 8 characters."));
+        QMessageBox::warning(this, tr("Weak Passphrase"),
+            tr("Passphrase must be at least 8 characters."));
         return;
     }
 
@@ -185,13 +190,15 @@ void NetworkTransferPanel::onStartDestination() {
 
     if (m_settings.encryption_enabled && m_destinationPassphraseEdit->text().isEmpty()) {
         sak::logWarning("Missing Passphrase: Enter a passphrase for encrypted transfers.");
-        QMessageBox::warning(this, tr("Missing Passphrase"), tr("Enter a passphrase for encrypted transfers."));
+        QMessageBox::warning(this, tr("Missing Passphrase"),
+            tr("Enter a passphrase for encrypted transfers."));
         return;
     }
 
     if (m_settings.encryption_enabled && m_destinationPassphraseEdit->text().size() < 8) {
         sak::logWarning("Weak Passphrase: Passphrase must be at least 8 characters.");
-        QMessageBox::warning(this, tr("Weak Passphrase"), tr("Passphrase must be at least 8 characters."));
+        QMessageBox::warning(this, tr("Weak Passphrase"),
+            tr("Passphrase must be at least 8 characters."));
         return;
     }
 
@@ -205,7 +212,8 @@ void NetworkTransferPanel::onStartDestination() {
     QDir destDir(base);
     if (!destDir.exists() && !destDir.mkpath(".")) {
         sak::logWarning("Destination Error: Failed to create destination base directory.");
-        QMessageBox::warning(this, tr("Destination Error"), tr("Failed to create destination base directory."));
+        QMessageBox::warning(this, tr("Destination Error"),
+            tr("Failed to create destination base directory."));
         return;
     }
 
@@ -292,8 +300,10 @@ void NetworkTransferPanel::onPeerDiscovered(const TransferPeerInfo& peer) {
         m_peerTable->setItem(row, kPeerColName, new QTableWidgetItem(entry.hostname));
         m_peerTable->setItem(row, kPeerColIp, new QTableWidgetItem(entry.ip_address));
         m_peerTable->setItem(row, kPeerColMode, new QTableWidgetItem(entry.mode));
-        m_peerTable->setItem(row, kPeerColCaps, new QTableWidgetItem(entry.capabilities.join(", ")));
-        m_peerTable->setItem(row, kPeerColSeen, new QTableWidgetItem(entry.last_seen.toString("hh:mm:ss")));
+        m_peerTable->setItem(row, kPeerColCaps,
+            new QTableWidgetItem(entry.capabilities.join(", ")));
+        m_peerTable->setItem(row, kPeerColSeen,
+            new QTableWidgetItem(entry.last_seen.toString("hh:mm:ss")));
         row++;
     }
 }
@@ -311,15 +321,18 @@ void NetworkTransferPanel::onManifestReceived(const TransferManifest& manifest) 
     TransferManifest verifyManifest = manifest;
     verifyManifest.checksum_sha256.clear();
     QJsonDocument verifyDoc(verifyManifest.toJson());
-    QByteArray verifyHash = QCryptographicHash::hash(verifyDoc.toJson(QJsonDocument::Compact), QCryptographicHash::Sha256);
-    if (!manifest.checksum_sha256.isEmpty() && verifyHash.toHex() != manifest.checksum_sha256.toUtf8()) {
+    QByteArray verifyHash = QCryptographicHash::hash(verifyDoc.toJson(QJsonDocument::Compact),
+        QCryptographicHash::Sha256);
+    if (!manifest.checksum_sha256.isEmpty() &&
+        verifyHash.toHex() != manifest.checksum_sha256.toUtf8()) {
         m_manifestText->append(tr("\nWARNING: Manifest checksum mismatch."));
         m_controller->approveTransfer(false);
         m_approveButton->setEnabled(false);
         return;
     }
 
-    auto available = path_utils::getAvailableSpace(std::filesystem::path(destinationBase().toStdString()));
+    auto available =
+        path_utils::getAvailableSpace(std::filesystem::path(destinationBase().toStdString()));
     if (!available) {
         m_manifestText->append(tr("\nWARNING: Unable to determine available disk space."));
         m_controller->approveTransfer(false);
@@ -365,7 +378,8 @@ void NetworkTransferPanel::onTransferCompleted(bool success, const QString& mess
     updateTransferButton();
     updatePauseResumeButton();
     if (!m_activeAssignment.job_id.isEmpty()) {
-        m_assignmentStatusByJob[m_activeAssignment.job_id] = success ? tr("completed") : tr("failed");
+        m_assignmentStatusByJob[m_activeAssignment.job_id] =
+            success ? tr("completed") : tr("failed");
         m_assignmentEventByJob[m_activeAssignment.job_id] = message;
         refreshAssignmentStatus();
         persistAssignmentQueue();
@@ -405,7 +419,8 @@ void NetworkTransferPanel::saveTransferReport(bool success) {
 
     QString reportDir;
     if (m_isSourceTransfer) {
-        reportDir = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation) + "/SAK/TransferReports";
+        reportDir = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation) +
+            "/SAK/TransferReports";
     } else {
         reportDir = destinationBase() + "/TransferReports";
     }
@@ -467,10 +482,12 @@ void NetworkTransferPanel::startPostTransferRestore() {
 
     if (!m_restoreWorker) {
         m_restoreWorker = new UserProfileRestoreWorker(this);
-        connect(m_restoreWorker, &UserProfileRestoreWorker::logMessage, this, [this](const QString& msg, bool warn) {
+        connect(m_restoreWorker, &UserProfileRestoreWorker::logMessage, this,
+            [this](const QString& msg, bool warn) {
             Q_EMIT logOutput(warn ? tr("RESTORE WARN: %1").arg(msg) : msg);
         });
-        connect(m_restoreWorker, &UserProfileRestoreWorker::restoreComplete, this, [this](bool ok, const QString& msg) {
+        connect(m_restoreWorker, &UserProfileRestoreWorker::restoreComplete, this, [this](bool ok,
+            const QString& msg) {
             Q_EMIT logOutput(ok ? msg : tr("Restore failed: %1").arg(msg));
         });
     }
@@ -544,7 +561,8 @@ void NetworkTransferPanel::collectUserFiles(
     file_hasher hasher(hash_algorithm::sha256);
     SmartFileFilter smartFilter{SmartFilter{}};
     PermissionManager permissionManager;
-    const auto selectedPermMode = static_cast<PermissionMode>(m_permissionModeCombo->currentData().toInt());
+    const auto selectedPermMode =
+        static_cast<PermissionMode>(m_permissionModeCombo->currentData().toInt());
 
     for (const auto& folder : user.folder_selections) {
         if (!folder.selected) continue;
@@ -570,7 +588,8 @@ void NetworkTransferPanel::collectUserFiles(
     }
 }
 
-QVector<TransferFileEntry> NetworkTransferPanel::buildFileListForUsers(const QVector<UserProfile>& users) {
+QVector<TransferFileEntry> NetworkTransferPanel::buildFileListForUsers(
+    const QVector<UserProfile>& users) {
     QVector<TransferFileEntry> files;
     for (const auto& user : users) {
         collectUserFiles(files, user);
@@ -578,7 +597,8 @@ QVector<TransferFileEntry> NetworkTransferPanel::buildFileListForUsers(const QVe
     return files;
 }
 
-TransferManifest NetworkTransferPanel::buildManifestPayload(const QVector<TransferFileEntry>& files) {
+TransferManifest NetworkTransferPanel::buildManifestPayload(
+    const QVector<TransferFileEntry>& files) {
     TransferManifest manifest;
     manifest.transfer_id = QUuid::createUuid().toString(QUuid::WithoutBraces);
     manifest.source_hostname = QHostInfo::localHostName();
@@ -587,7 +607,8 @@ TransferManifest NetworkTransferPanel::buildManifestPayload(const QVector<Transf
     manifest.created = QDateTime::currentDateTime();
     manifest.files = files;
 
-    const auto selectedPermMode = static_cast<PermissionMode>(m_permissionModeCombo->currentData().toInt());
+    const auto selectedPermMode =
+        static_cast<PermissionMode>(m_permissionModeCombo->currentData().toInt());
 
     for (int i = 0; i < m_users.size(); ++i) {
         auto& user = m_users[i];
@@ -612,14 +633,16 @@ TransferManifest NetworkTransferPanel::buildManifestPayload(const QVector<Transf
     manifest.total_files = files.size();
 
     QJsonDocument doc(manifest.toJson());
-    QByteArray hash = QCryptographicHash::hash(doc.toJson(QJsonDocument::Compact), QCryptographicHash::Sha256);
+    QByteArray hash = QCryptographicHash::hash(doc.toJson(QJsonDocument::Compact),
+        QCryptographicHash::Sha256);
     manifest.checksum_sha256 = hash.toHex();
 
     return manifest;
 }
 
-TransferManifest NetworkTransferPanel::buildManifestPayloadForUsers(const QVector<TransferFileEntry>& files,
-                                                                    const QVector<UserProfile>& users) {
+TransferManifest NetworkTransferPanel::buildManifestPayloadForUsers(
+    const QVector<TransferFileEntry>& files,
+    const QVector<UserProfile>& users) {
     TransferManifest manifest;
     manifest.transfer_id = QUuid::createUuid().toString(QUuid::WithoutBraces);
     manifest.source_hostname = QHostInfo::localHostName();
@@ -628,7 +651,8 @@ TransferManifest NetworkTransferPanel::buildManifestPayloadForUsers(const QVecto
     manifest.created = QDateTime::currentDateTime();
     manifest.files = files;
 
-    const auto selectedPermMode = static_cast<PermissionMode>(m_permissionModeCombo->currentData().toInt());
+    const auto selectedPermMode =
+        static_cast<PermissionMode>(m_permissionModeCombo->currentData().toInt());
 
     for (const auto& user : users) {
         BackupUserData userData;
@@ -648,7 +672,8 @@ TransferManifest NetworkTransferPanel::buildManifestPayloadForUsers(const QVecto
     manifest.total_files = files.size();
 
     QJsonDocument doc(manifest.toJson());
-    QByteArray hash = QCryptographicHash::hash(doc.toJson(QJsonDocument::Compact), QCryptographicHash::Sha256);
+    QByteArray hash = QCryptographicHash::hash(doc.toJson(QJsonDocument::Compact),
+        QCryptographicHash::Sha256);
     manifest.checksum_sha256 = hash.toHex();
 
     return manifest;
@@ -674,12 +699,14 @@ void NetworkTransferPanel::activateAssignment(const DeploymentAssignment& assign
     m_activeAssignment = assignment;
     if (m_activeAssignmentLabel) {
         m_activeAssignmentLabel->setText(tr("Active: %1 (%2)")
-                                             .arg(assignment.source_user, assignment.deployment_id));
+                                             .arg(assignment.source_user,
+                                                 assignment.deployment_id));
     }
 
     if (m_assignmentBandwidthLabel) {
         if (assignment.max_bandwidth_kbps > 0) {
-            m_assignmentBandwidthLabel->setText(tr("Bandwidth limit: %1 KB/s").arg(assignment.max_bandwidth_kbps));
+            m_assignmentBandwidthLabel->setText(tr("Bandwidth limit: %1 KB/s")
+                .arg(assignment.max_bandwidth_kbps));
             m_settings.max_bandwidth_kbps = assignment.max_bandwidth_kbps;
         } else {
             m_assignmentBandwidthLabel->setText(tr("Bandwidth limit: default"));
@@ -704,11 +731,13 @@ void NetworkTransferPanel::activateAssignment(const DeploymentAssignment& assign
 
     if (m_controller && m_controller->mode() != NetworkTransferController::Mode::Destination) {
         const bool hasDestinationBase = !destinationBase().isEmpty();
-        const bool hasPassphrase = !m_settings.encryption_enabled || !m_destinationPassphraseEdit->text().isEmpty();
+        const bool hasPassphrase = !m_settings.encryption_enabled ||
+            !m_destinationPassphraseEdit->text().isEmpty();
         if (hasDestinationBase && hasPassphrase) {
             onStartDestination();
         } else {
-            Q_EMIT logOutput(tr("Assignment received. Set destination base/passphrase to begin listening."));
+            Q_EMIT logOutput(tr("Assignment received. Set destination base/passphrase to begin "
+                                "listening."));
         }
     }
 }

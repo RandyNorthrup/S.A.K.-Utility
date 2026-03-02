@@ -29,13 +29,13 @@ UserProfileRestoreUserMappingPage::UserProfileRestoreUserMappingPage(QWidget* pa
 {
     setTitle(tr("Map Users"));
     setSubTitle(tr("Map backup users to destination users on this system"));
-    
+
     setupUi();
 }
 
 void UserProfileRestoreUserMappingPage::setupUi() {
     auto* layout = new QVBoxLayout(this);
-    
+
     // Instructions
     auto* infoLabel = new QLabel(
         tr("Map each user from the backup to a user on this system. "
@@ -44,15 +44,16 @@ void UserProfileRestoreUserMappingPage::setupUi() {
     );
     infoLabel->setWordWrap(true);
     layout->addWidget(infoLabel);
-    
+
     // Auto-map button
     auto* buttonLayout = new QHBoxLayout();
     m_autoMapButton = new QPushButton(tr("Auto-Map by Username"), this);
-    m_autoMapButton->setToolTip(tr("Pairs each backup user to a local account with the same username"));
+    m_autoMapButton->setToolTip(tr("Pairs each backup user to a local account with the same "
+                                   "username"));
     buttonLayout->addWidget(m_autoMapButton);
     buttonLayout->addStretch(1);
     layout->addLayout(buttonLayout);
-    
+
     // Mapping table
     m_mappingTable = new QTableWidget(0, 5, this);
     m_mappingTable->setHorizontalHeaderLabels({
@@ -62,21 +63,25 @@ void UserProfileRestoreUserMappingPage::setupUi() {
     m_mappingTable->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_mappingTable->verticalHeader()->setVisible(false);
     layout->addWidget(m_mappingTable);
-    
+
     // Summary
     m_summaryLabel = new QLabel(this);
-    m_summaryLabel->setStyleSheet(QString("QLabel { background-color: %1; padding: 10px; border-radius: 10px; }").arg(sak::ui::kColorBgInfoPanel));
+    m_summaryLabel->setStyleSheet(QString("QLabel { background-color: %1; padding: 10px; "
+                                          "border-radius: 10px; }")
+                                              .arg(sak::ui::kColorBgInfoPanel));
     layout->addWidget(m_summaryLabel);
-    
+
     // Connections
-    connect(m_autoMapButton, &QPushButton::clicked, this, &UserProfileRestoreUserMappingPage::onAutoMap);
-    connect(m_mappingTable, &QTableWidget::cellChanged, this, &UserProfileRestoreUserMappingPage::onMappingChanged);
+    connect(m_autoMapButton, &QPushButton::clicked, this,
+        &UserProfileRestoreUserMappingPage::onAutoMap);
+    connect(m_mappingTable, &QTableWidget::cellChanged, this,
+        &UserProfileRestoreUserMappingPage::onMappingChanged);
 }
 
 void UserProfileRestoreUserMappingPage::initializePage() {
     // Scan destination users
     m_destinationUsers = m_scanner->scanUsers();
-    
+
     loadMappingTable();
     updateSummary();
 }
@@ -84,31 +89,31 @@ void UserProfileRestoreUserMappingPage::initializePage() {
 void UserProfileRestoreUserMappingPage::loadMappingTable() {
     auto* wiz = qobject_cast<UserProfileRestoreWizard*>(wizard());
     if (!wiz) return;
-    
+
     BackupManifest manifest = wiz->manifest();
-    
+
     m_mappingTable->setRowCount(0);
-    
+
     for (const auto& backupUser : manifest.users) {
         int row = m_mappingTable->rowCount();
         m_mappingTable->insertRow(row);
-        
+
         // Checkbox
         auto* checkItem = new QTableWidgetItem();
         checkItem->setCheckState(Qt::Checked);
         m_mappingTable->setItem(row, 0, checkItem);
-        
+
         // Source user
         auto* sourceItem = new QTableWidgetItem(backupUser.username);
         sourceItem->setFlags(sourceItem->flags() & ~Qt::ItemIsEditable);
         m_mappingTable->setItem(row, 1, sourceItem);
-        
+
         // Arrow
         auto* arrowItem = new QTableWidgetItem("→");
         arrowItem->setFlags(arrowItem->flags() & ~Qt::ItemIsEditable);
         arrowItem->setTextAlignment(Qt::AlignCenter);
         m_mappingTable->setItem(row, 2, arrowItem);
-        
+
         // Destination user combo
         auto* destCombo = new QComboBox();
         destCombo->addItem(tr("(Create New User)"), QString());
@@ -116,14 +121,16 @@ void UserProfileRestoreUserMappingPage::loadMappingTable() {
             destCombo->addItem(destUser.username, destUser.username);
         }
         m_mappingTable->setCellWidget(row, 3, destCombo);
-        
+
         // Merge mode combo
         auto* modeCombo = new QComboBox();
-        modeCombo->addItem(tr("Replace Destination"), static_cast<int>(MergeMode::ReplaceDestination));
-        modeCombo->addItem(tr("Merge Into Destination"), static_cast<int>(MergeMode::MergeIntoDestination));
+        modeCombo->addItem(tr("Replace Destination"),
+            static_cast<int>(MergeMode::ReplaceDestination));
+        modeCombo->addItem(tr("Merge Into Destination"),
+            static_cast<int>(MergeMode::MergeIntoDestination));
         modeCombo->addItem(tr("Create New User"), static_cast<int>(MergeMode::CreateNewUser));
         m_mappingTable->setCellWidget(row, 4, modeCombo);
-        
+
         // Connect signals
         connect(destCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
                 this, [this, row](int) { onMappingChanged(row, 3); });
@@ -135,20 +142,20 @@ void UserProfileRestoreUserMappingPage::loadMappingTable() {
 void UserProfileRestoreUserMappingPage::onAutoMap() {
     auto* wiz = qobject_cast<UserProfileRestoreWizard*>(wizard());
     if (!wiz) return;
-    
+
     BackupManifest manifest = wiz->manifest();
-    
+
     for (int row = 0; row < m_mappingTable->rowCount(); ++row) {
         auto* destCombo = qobject_cast<QComboBox*>(m_mappingTable->cellWidget(row, 3));
         if (!destCombo) continue;
-        
+
         QString sourceUsername = m_mappingTable->item(row, 1)->text();
         int matchIndex = destCombo->findText(sourceUsername);
         if (matchIndex >= 0) {
             destCombo->setCurrentIndex(matchIndex);
         }
     }
-    
+
     updateSummary();
 }
 
@@ -163,13 +170,13 @@ void UserProfileRestoreUserMappingPage::updateSummary() {
     int selectedMappings = 0;
     int newUsers = 0;
     int merges = 0;
-    
+
     for (int row = 0; row < m_mappingTable->rowCount(); ++row) {
         if (m_mappingTable->item(row, 0)->checkState() != Qt::Checked) {
             continue;
         }
         selectedMappings++;
-        
+
         auto* destCombo = qobject_cast<QComboBox*>(m_mappingTable->cellWidget(row, 3));
         if (destCombo && destCombo->currentData().toString().isEmpty()) {
             newUsers++;
@@ -177,7 +184,7 @@ void UserProfileRestoreUserMappingPage::updateSummary() {
             merges++;
         }
     }
-    
+
     m_summaryLabel->setText(
         tr("Summary: %1 of %2 users selected | %3 merges, %4 new users")
             .arg(selectedMappings)
@@ -187,24 +194,25 @@ void UserProfileRestoreUserMappingPage::updateSummary() {
     );
 }
 
-UserMapping UserProfileRestoreUserMappingPage::buildMappingForRow(int row, const BackupManifest& manifest) const {
+UserMapping UserProfileRestoreUserMappingPage::buildMappingForRow(int row,
+    const BackupManifest& manifest) const {
     UserMapping mapping;
     mapping.source_username = m_mappingTable->item(row, 1)->text();
     mapping.selected = true;
-    
+
     // Find source SID
     auto srcIt = std::find_if(manifest.users.begin(), manifest.users.end(),
         [&](const auto& u) { return u.username == mapping.source_username; });
     if (srcIt != manifest.users.end()) {
         mapping.source_sid = srcIt->sid;
     }
-    
+
     // Get destination user
     auto* destCombo = qobject_cast<QComboBox*>(m_mappingTable->cellWidget(row, 3));
     if (destCombo) {
         mapping.destination_username = destCombo->currentData().toString();
     }
-    
+
     // Find destination SID
     if (!mapping.destination_username.isEmpty()) {
         auto destIt = std::find_if(m_destinationUsers.begin(), m_destinationUsers.end(),
@@ -213,36 +221,36 @@ UserMapping UserProfileRestoreUserMappingPage::buildMappingForRow(int row, const
             mapping.destination_sid = destIt->sid;
         }
     }
-    
+
     // Get merge mode
     auto* modeCombo = qobject_cast<QComboBox*>(m_mappingTable->cellWidget(row, 4));
     if (modeCombo) {
         mapping.mode = static_cast<MergeMode>(modeCombo->currentData().toInt());
     }
-    
+
     return mapping;
 }
 
 bool UserProfileRestoreUserMappingPage::validatePage() {
     auto* wiz = qobject_cast<UserProfileRestoreWizard*>(wizard());
     if (!wiz) return false;
-    
+
     BackupManifest manifest = wiz->manifest();
     QVector<UserMapping> mappings;
-    
+
     for (int row = 0; row < m_mappingTable->rowCount(); ++row) {
         if (m_mappingTable->item(row, 0)->checkState() != Qt::Checked) {
             continue;
         }
         mappings.append(buildMappingForRow(row, manifest));
     }
-    
+
     if (mappings.isEmpty()) {
         QMessageBox::warning(this, tr("No Users Selected"),
             tr("Please select at least one user to restore."));
         return false;
     }
-    
+
     wiz->setUserMappings(mappings);
     return true;
 }
@@ -256,13 +264,13 @@ UserProfileRestoreMergeConfigPage::UserProfileRestoreMergeConfigPage(QWidget* pa
 {
     setTitle(tr("Merge Configuration"));
     setSubTitle(tr("Configure how to merge data for each user"));
-    
+
     setupUi();
 }
 
 void UserProfileRestoreMergeConfigPage::setupUi() {
     auto* layout = new QVBoxLayout(this);
-    
+
     // Instructions
     auto* infoLabel = new QLabel(
         tr("For each user mapping, configure the merge behavior and conflict resolution."),
@@ -270,7 +278,7 @@ void UserProfileRestoreMergeConfigPage::setupUi() {
     );
     infoLabel->setWordWrap(true);
     layout->addWidget(infoLabel);
-    
+
     // Merge table
     m_mergeTable = new QTableWidget(0, 4, this);
     m_mergeTable->setHorizontalHeaderLabels({
@@ -280,14 +288,17 @@ void UserProfileRestoreMergeConfigPage::setupUi() {
     m_mergeTable->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_mergeTable->verticalHeader()->setVisible(false);
     layout->addWidget(m_mergeTable);
-    
+
     // Summary
     m_summaryLabel = new QLabel(this);
-    m_summaryLabel->setStyleSheet(QString("QLabel { background-color: %1; padding: 10px; border-radius: 10px; }").arg(sak::ui::kColorBgInfoPanel));
+    m_summaryLabel->setStyleSheet(QString("QLabel { background-color: %1; padding: 10px; "
+                                          "border-radius: 10px; }")
+                                              .arg(sak::ui::kColorBgInfoPanel));
     layout->addWidget(m_summaryLabel);
-    
+
     // Connections
-    connect(m_mergeTable, &QTableWidget::cellChanged, this, &UserProfileRestoreMergeConfigPage::onMergeSettingsChanged);
+    connect(m_mergeTable, &QTableWidget::cellChanged, this,
+        &UserProfileRestoreMergeConfigPage::onMergeSettingsChanged);
 }
 
 void UserProfileRestoreMergeConfigPage::initializePage() {
@@ -298,44 +309,46 @@ void UserProfileRestoreMergeConfigPage::initializePage() {
 void UserProfileRestoreMergeConfigPage::loadMergeTable() {
     auto* wiz = qobject_cast<UserProfileRestoreWizard*>(wizard());
     if (!wiz) return;
-    
+
     QVector<UserMapping> mappings = wiz->userMappings();
-    
+
     m_mergeTable->setRowCount(0);
-    
+
     for (const auto& mapping : mappings) {
         int row = m_mergeTable->rowCount();
         m_mergeTable->insertRow(row);
-        
+
         // Mapping info
         QString mappingText = mapping.destination_username.isEmpty()
             ? tr("%1 → (New User)").arg(mapping.source_username)
             : tr("%1 → %2").arg(mapping.source_username, mapping.destination_username);
-        
+
         auto* mappingItem = new QTableWidgetItem(mappingText);
         mappingItem->setFlags(mappingItem->flags() & ~Qt::ItemIsEditable);
         m_mergeTable->setItem(row, 0, mappingItem);
-        
+
         // Merge mode (read-only display)
         auto* modeItem = new QTableWidgetItem(mergeModeToString(mapping.mode));
         modeItem->setFlags(modeItem->flags() & ~Qt::ItemIsEditable);
         m_mergeTable->setItem(row, 1, modeItem);
-        
+
         // Conflict resolution combo
         auto* conflictCombo = new QComboBox();
-        conflictCombo->addItem(tr("Skip Duplicate"), static_cast<int>(ConflictResolution::SkipDuplicate));
-        conflictCombo->addItem(tr("Rename with Suffix"), static_cast<int>(ConflictResolution::RenameWithSuffix));
+        conflictCombo->addItem(tr("Skip Duplicate"),
+            static_cast<int>(ConflictResolution::SkipDuplicate));
+        conflictCombo->addItem(tr("Rename with Suffix"),
+            static_cast<int>(ConflictResolution::RenameWithSuffix));
         conflictCombo->addItem(tr("Keep Newer"), static_cast<int>(ConflictResolution::KeepNewer));
         conflictCombo->addItem(tr("Keep Larger"), static_cast<int>(ConflictResolution::KeepLarger));
         conflictCombo->addItem(tr("Prompt User"), static_cast<int>(ConflictResolution::PromptUser));
         conflictCombo->setCurrentIndex(1); // Default to RenameWithSuffix
         m_mergeTable->setCellWidget(row, 2, conflictCombo);
-        
+
         // Status
         auto* statusItem = new QTableWidgetItem(tr("Ready"));
         statusItem->setFlags(statusItem->flags() & ~Qt::ItemIsEditable);
         m_mergeTable->setItem(row, 3, statusItem);
-        
+
         // Connect signals
         connect(conflictCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
                 this, [this, row](int) { onMergeSettingsChanged(row, 2); });
@@ -352,10 +365,10 @@ void UserProfileRestoreMergeConfigPage::updateSummary() {
     int replaceCount = 0;
     int mergeCount = 0;
     int newCount = 0;
-    
+
     for (int row = 0; row < m_mergeTable->rowCount(); ++row) {
         QString modeText = m_mergeTable->item(row, 1)->text();
-        
+
         if (modeText.contains("Replace", Qt::CaseInsensitive)) {
             replaceCount++;
         } else if (modeText.contains("Merge", Qt::CaseInsensitive)) {
@@ -364,7 +377,7 @@ void UserProfileRestoreMergeConfigPage::updateSummary() {
             newCount++;
         }
     }
-    
+
     m_summaryLabel->setText(
         tr("Operations: %1 replace, %2 merge, %3 new users")
             .arg(replaceCount)
@@ -376,17 +389,18 @@ void UserProfileRestoreMergeConfigPage::updateSummary() {
 bool UserProfileRestoreMergeConfigPage::validatePage() {
     auto* wiz = qobject_cast<UserProfileRestoreWizard*>(wizard());
     if (!wiz) return false;
-    
+
     // Update mappings with conflict resolution settings
     QVector<UserMapping> mappings = wiz->userMappings();
-    
+
     for (int row = 0; row < m_mergeTable->rowCount() && row < mappings.size(); ++row) {
         auto* conflictCombo = qobject_cast<QComboBox*>(m_mergeTable->cellWidget(row, 2));
         if (conflictCombo) {
-            mappings[row].conflict_resolution = static_cast<ConflictResolution>(conflictCombo->currentData().toInt());
+            mappings[row].conflict_resolution =
+                static_cast<ConflictResolution>(conflictCombo->currentData().toInt());
         }
     }
-    
+
     wiz->setUserMappings(mappings);
     return true;
 }
@@ -400,13 +414,13 @@ UserProfileRestoreFolderSelectionPage::UserProfileRestoreFolderSelectionPage(QWi
 {
     setTitle(tr("Select Folders"));
     setSubTitle(tr("Choose which folders to restore for each user"));
-    
+
     setupUi();
 }
 
 void UserProfileRestoreFolderSelectionPage::setupUi() {
     auto* layout = new QVBoxLayout(this);
-    
+
     // Instructions
     auto* infoLabel = new QLabel(
         tr("Select the folders you want to restore. Uncheck folders to skip them."),
@@ -414,7 +428,7 @@ void UserProfileRestoreFolderSelectionPage::setupUi() {
     );
     infoLabel->setWordWrap(true);
     layout->addWidget(infoLabel);
-    
+
     // Buttons
     auto* buttonLayout = new QHBoxLayout();
     m_selectAllButton = new QPushButton(tr("Select All"), this);
@@ -423,7 +437,7 @@ void UserProfileRestoreFolderSelectionPage::setupUi() {
     buttonLayout->addWidget(m_selectNoneButton);
     buttonLayout->addStretch(1);
     layout->addLayout(buttonLayout);
-    
+
     // Folder table
     m_folderTable = new QTableWidget(0, 5, this);
     m_folderTable->setHorizontalHeaderLabels({
@@ -433,16 +447,21 @@ void UserProfileRestoreFolderSelectionPage::setupUi() {
     m_folderTable->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_folderTable->verticalHeader()->setVisible(false);
     layout->addWidget(m_folderTable);
-    
+
     // Summary
     m_summaryLabel = new QLabel(this);
-    m_summaryLabel->setStyleSheet(QString("QLabel { background-color: %1; padding: 10px; border-radius: 10px; }").arg(sak::ui::kColorBgInfoPanel));
+    m_summaryLabel->setStyleSheet(QString("QLabel { background-color: %1; padding: 10px; "
+                                          "border-radius: 10px; }")
+                                              .arg(sak::ui::kColorBgInfoPanel));
     layout->addWidget(m_summaryLabel);
-    
+
     // Connections
-    connect(m_selectAllButton, &QPushButton::clicked, this, &UserProfileRestoreFolderSelectionPage::onSelectAll);
-    connect(m_selectNoneButton, &QPushButton::clicked, this, &UserProfileRestoreFolderSelectionPage::onSelectNone);
-    connect(m_folderTable, &QTableWidget::cellChanged, this, &UserProfileRestoreFolderSelectionPage::onFolderSelectionChanged);
+    connect(m_selectAllButton, &QPushButton::clicked, this,
+        &UserProfileRestoreFolderSelectionPage::onSelectAll);
+    connect(m_selectNoneButton, &QPushButton::clicked, this,
+        &UserProfileRestoreFolderSelectionPage::onSelectNone);
+    connect(m_folderTable, &QTableWidget::cellChanged, this,
+        &UserProfileRestoreFolderSelectionPage::onFolderSelectionChanged);
 }
 
 void UserProfileRestoreFolderSelectionPage::initializePage() {
@@ -453,42 +472,42 @@ void UserProfileRestoreFolderSelectionPage::initializePage() {
 void UserProfileRestoreFolderSelectionPage::loadFolderTable() {
     auto* wiz = qobject_cast<UserProfileRestoreWizard*>(wizard());
     if (!wiz) return;
-    
+
     BackupManifest manifest = wiz->manifest();
     QVector<UserMapping> mappings = wiz->userMappings();
-    
+
     m_folderTable->setRowCount(0);
-    
+
     for (const auto& mapping : mappings) {
         auto userIt = std::find_if(manifest.users.begin(), manifest.users.end(),
             [&](const auto& u) { return u.username == mapping.source_username; });
         if (userIt == manifest.users.end()) continue;
-        
+
         for (const auto& folder : userIt->backed_up_folders) {
             int row = m_folderTable->rowCount();
             m_folderTable->insertRow(row);
-            
+
             // Checkbox
             auto* checkItem = new QTableWidgetItem();
             checkItem->setCheckState(Qt::Checked);
             m_folderTable->setItem(row, 0, checkItem);
-            
+
             // User
             auto* userItem = new QTableWidgetItem(mapping.source_username);
             userItem->setFlags(userItem->flags() & ~Qt::ItemIsEditable);
             m_folderTable->setItem(row, 1, userItem);
-            
+
             // Folder name
             auto* folderItem = new QTableWidgetItem(folder.display_name);
             folderItem->setFlags(folderItem->flags() & ~Qt::ItemIsEditable);
             m_folderTable->setItem(row, 2, folderItem);
-            
+
             // Size
             double sizeMB = folder.size_bytes / sak::kBytesPerMBf;
             auto* sizeItem = new QTableWidgetItem(QString("%1 MB").arg(sizeMB, 0, 'f', 1));
             sizeItem->setFlags(sizeItem->flags() & ~Qt::ItemIsEditable);
             m_folderTable->setItem(row, 3, sizeItem);
-            
+
             // File count
             auto* filesItem = new QTableWidgetItem(QString::number(folder.file_count));
             filesItem->setFlags(filesItem->flags() & ~Qt::ItemIsEditable);
@@ -522,21 +541,21 @@ void UserProfileRestoreFolderSelectionPage::updateSummary() {
     int selectedFolders = 0;
     qint64 totalSize = 0;
     int totalFiles = 0;
-    
+
     for (int row = 0; row < m_folderTable->rowCount(); ++row) {
         if (m_folderTable->item(row, 0)->checkState() == Qt::Checked) {
             selectedFolders++;
-            
+
             QString sizeText = m_folderTable->item(row, 3)->text();
             sizeText.remove(" MB");
             totalSize += static_cast<qint64>(sizeText.toDouble() * sak::kBytesPerMB);
-            
+
             totalFiles += m_folderTable->item(row, 4)->text().toInt();
         }
     }
-    
+
     double totalGB = totalSize / sak::kBytesPerGBf;
-    
+
     m_summaryLabel->setText(
         tr("Selected: %1 of %2 folders | %3 files | %4 GB")
             .arg(selectedFolders)
@@ -554,13 +573,13 @@ bool UserProfileRestoreFolderSelectionPage::validatePage() {
             selectedCount++;
         }
     }
-    
+
     if (selectedCount == 0) {
         QMessageBox::warning(this, tr("No Folders Selected"),
             tr("Please select at least one folder to restore."));
         return false;
     }
-    
+
     // Note: Folder selection is applied during restore worker initialization
     return true;
 }
@@ -574,65 +593,76 @@ UserProfileRestorePermissionSettingsPage::UserProfileRestorePermissionSettingsPa
 {
     setTitle(tr("Permission & Verification"));
     setSubTitle(tr("Configure permission handling and verification options"));
-    
+
     setupUi();
 }
 
 void UserProfileRestorePermissionSettingsPage::setupUi() {
     auto* layout = new QVBoxLayout(this);
-    
+
     // Permission mode
     auto* permGroup = new QWidget(this);
     auto* permLayout = new QGridLayout(permGroup);
     permLayout->setContentsMargins(0, 0, 0, 0);
-    
+
     permLayout->addWidget(new QLabel(tr("Permission Mode:"), permGroup), 0, 0);
     m_permissionModeCombo = new QComboBox(permGroup);
-    m_permissionModeCombo->addItem(tr("Strip All ACLs (Safest)"), static_cast<int>(PermissionMode::StripAll));
-    m_permissionModeCombo->addItem(tr("Assign to Destination User"), static_cast<int>(PermissionMode::AssignToDestination));
-    m_permissionModeCombo->addItem(tr("Preserve Original"), static_cast<int>(PermissionMode::PreserveOriginal));
-    m_permissionModeCombo->addItem(tr("Hybrid (Safe + Assign)"), static_cast<int>(PermissionMode::Hybrid));
+    m_permissionModeCombo->addItem(tr("Strip All ACLs (Safest)"),
+        static_cast<int>(PermissionMode::StripAll));
+    m_permissionModeCombo->addItem(tr("Assign to Destination User"),
+        static_cast<int>(PermissionMode::AssignToDestination));
+    m_permissionModeCombo->addItem(tr("Preserve Original"),
+        static_cast<int>(PermissionMode::PreserveOriginal));
+    m_permissionModeCombo->addItem(tr("Hybrid (Safe + Assign)"),
+        static_cast<int>(PermissionMode::Hybrid));
     permLayout->addWidget(m_permissionModeCombo, 0, 1);
-    
+
     layout->addWidget(permGroup);
-    
+
     // Conflict resolution
     auto* conflictGroup = new QWidget(this);
     auto* conflictLayout = new QGridLayout(conflictGroup);
     conflictLayout->setContentsMargins(0, 0, 0, 0);
-    
+
     conflictLayout->addWidget(new QLabel(tr("Conflict Resolution:"), conflictGroup), 0, 0);
     m_conflictResolutionCombo = new QComboBox(conflictGroup);
-    m_conflictResolutionCombo->addItem(tr("Skip Duplicate"), static_cast<int>(ConflictResolution::SkipDuplicate));
-    m_conflictResolutionCombo->addItem(tr("Rename with Suffix"), static_cast<int>(ConflictResolution::RenameWithSuffix));
-    m_conflictResolutionCombo->addItem(tr("Keep Newer"), static_cast<int>(ConflictResolution::KeepNewer));
-    m_conflictResolutionCombo->addItem(tr("Keep Larger"), static_cast<int>(ConflictResolution::KeepLarger));
+    m_conflictResolutionCombo->addItem(tr("Skip Duplicate"),
+        static_cast<int>(ConflictResolution::SkipDuplicate));
+    m_conflictResolutionCombo->addItem(tr("Rename with Suffix"),
+        static_cast<int>(ConflictResolution::RenameWithSuffix));
+    m_conflictResolutionCombo->addItem(tr("Keep Newer"),
+        static_cast<int>(ConflictResolution::KeepNewer));
+    m_conflictResolutionCombo->addItem(tr("Keep Larger"),
+        static_cast<int>(ConflictResolution::KeepLarger));
     m_conflictResolutionCombo->setCurrentIndex(1); // Default to RenameWithSuffix
     conflictLayout->addWidget(m_conflictResolutionCombo, 0, 1);
-    
+
     layout->addWidget(conflictGroup);
-    
+
     layout->addSpacing(20);
-    
+
     // Options
     m_verifyCheckBox = new QCheckBox(tr("Verify file integrity after restore"), this);
     m_verifyCheckBox->setChecked(true);
     layout->addWidget(m_verifyCheckBox);
-    
-    m_createBackupCheckBox = new QCheckBox(tr("Create backup of existing files before overwriting"), this);
+
+    m_createBackupCheckBox =
+        new QCheckBox(tr("Create backup of existing files before overwriting"), this);
     m_createBackupCheckBox->setChecked(false);
     layout->addWidget(m_createBackupCheckBox);
-    
+
     layout->addSpacing(20);
-    
+
     // Summary
     m_summaryLabel = new QLabel(this);
-    m_summaryLabel->setStyleSheet(QString("QLabel { background-color: %1; padding: 12px; border-radius: 10px; }").arg(sak::ui::kColorBgWarningPanel));
+    m_summaryLabel->setStyleSheet(QString("QLabel { background-color: %1; padding: 12px; "
+                                          "border-radius: 10px; }")
+                                              .arg(sak::ui::kColorBgWarningPanel));
     m_summaryLabel->setWordWrap(true);
     layout->addWidget(m_summaryLabel);
-    
+
     layout->addStretch(1);
-    
+
     // Connections
     connect(m_permissionModeCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, &UserProfileRestorePermissionSettingsPage::onSettingsChanged);
@@ -642,7 +672,7 @@ void UserProfileRestorePermissionSettingsPage::setupUi() {
             this, &UserProfileRestorePermissionSettingsPage::onSettingsChanged);
     connect(m_createBackupCheckBox, &QCheckBox::stateChanged,
             this, &UserProfileRestorePermissionSettingsPage::onSettingsChanged);
-    
+
     onSettingsChanged();
 }
 
@@ -653,18 +683,20 @@ void UserProfileRestorePermissionSettingsPage::onSettingsChanged() {
 void UserProfileRestorePermissionSettingsPage::updateSummary() {
     QString permMode = m_permissionModeCombo->currentText();
     QString conflictMode = m_conflictResolutionCombo->currentText();
-    
+
     QString warning;
     PermissionMode mode = static_cast<PermissionMode>(m_permissionModeCombo->currentData().toInt());
-    
+
     if (mode == PermissionMode::PreserveOriginal) {
-        warning = tr("⚠️ <b>Warning:</b> Preserving original permissions may cause access issues if SIDs don't match.");
+        warning = tr("⚠️ <b>Warning:</b> Preserving original permissions may cause access issues "
+                     "if SIDs don't match.");
     } else if (mode == PermissionMode::StripAll) {
-        warning = tr("✅ <b>Recommended:</b> Stripping ACLs ensures files inherit safe permissions from parent folders.");
+        warning = tr("✅ <b>Recommended:</b> Stripping ACLs ensures files inherit safe permissions "
+                     "from parent folders.");
     } else if (mode == PermissionMode::AssignToDestination) {
         warning = tr("ℹ️ <b>Info:</b> Files will be owned by the destination user.");
     }
-    
+
     QString summary = QString(
         "<b>Configuration Summary:</b><br>"
         "• Permission Mode: %1<br>"
@@ -679,19 +711,21 @@ void UserProfileRestorePermissionSettingsPage::updateSummary() {
         m_createBackupCheckBox->isChecked() ? tr("Yes") : tr("No"),
         warning
     );
-    
+
     m_summaryLabel->setText(summary);
 }
 
 bool UserProfileRestorePermissionSettingsPage::validatePage() {
     auto* wiz = qobject_cast<UserProfileRestoreWizard*>(wizard());
     if (!wiz) return false;
-    
-    wiz->setPermissionMode(static_cast<PermissionMode>(m_permissionModeCombo->currentData().toInt()));
-    wiz->setConflictResolution(static_cast<ConflictResolution>(m_conflictResolutionCombo->currentData().toInt()));
+
+    wiz->setPermissionMode(static_cast<PermissionMode>(m_permissionModeCombo->currentData()
+        .toInt()));
+    wiz->setConflictResolution(static_cast<ConflictResolution>(
+        m_conflictResolutionCombo->currentData().toInt()));
     wiz->setVerifyFiles(m_verifyCheckBox->isChecked());
     wiz->setCreateBackup(m_createBackupCheckBox->isChecked());
-    
+
     return true;
 }
 
@@ -741,12 +775,14 @@ void UserProfileRestoreAppRestorePage::setupUi() {
     auto* buttonLayout = new QHBoxLayout();
     m_selectAllButton = new QPushButton(tr("Select All"), this);
     m_selectAllButton->setEnabled(false);
-    connect(m_selectAllButton, &QPushButton::clicked, this, &UserProfileRestoreAppRestorePage::onSelectAll);
+    connect(m_selectAllButton, &QPushButton::clicked, this,
+        &UserProfileRestoreAppRestorePage::onSelectAll);
     buttonLayout->addWidget(m_selectAllButton);
 
     m_selectNoneButton = new QPushButton(tr("Select None"), this);
     m_selectNoneButton->setEnabled(false);
-    connect(m_selectNoneButton, &QPushButton::clicked, this, &UserProfileRestoreAppRestorePage::onSelectNone);
+    connect(m_selectNoneButton, &QPushButton::clicked, this,
+        &UserProfileRestoreAppRestorePage::onSelectNone);
     buttonLayout->addWidget(m_selectNoneButton);
 
     buttonLayout->addStretch();
@@ -754,7 +790,8 @@ void UserProfileRestoreAppRestorePage::setupUi() {
     m_installButton = new QPushButton(tr("Install Selected Apps"), this);
     m_installButton->setEnabled(false);
     m_installButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
-    connect(m_installButton, &QPushButton::clicked, this, &UserProfileRestoreAppRestorePage::onInstallApps);
+    connect(m_installButton, &QPushButton::clicked, this,
+        &UserProfileRestoreAppRestorePage::onInstallApps);
     buttonLayout->addWidget(m_installButton);
 
     layout->addLayout(buttonLayout);
@@ -766,7 +803,9 @@ void UserProfileRestoreAppRestorePage::setupUi() {
 
     // Summary
     m_summaryLabel = new QLabel(this);
-    m_summaryLabel->setStyleSheet(QString("QLabel { padding: 10px; background-color: %1; border-radius: 10px; }").arg(sak::ui::kColorBgInfoPanel));
+    m_summaryLabel->setStyleSheet(QString("QLabel { padding: 10px; background-color: %1; "
+                                          "border-radius: 10px; }")
+                                              .arg(sak::ui::kColorBgInfoPanel));
     m_summaryLabel->setText(tr("No application data found in backup"));
     layout->addWidget(m_summaryLabel);
 }
@@ -908,7 +947,8 @@ void UserProfileRestoreAppRestorePage::populateTree(const QVector<RestoreAppInfo
     }
 
     m_appTree->blockSignals(false);
-    m_summaryLabel->setText(tr("%1 application(s) selected for installation (%2 have Chocolatey packages)")
+    m_summaryLabel->setText(tr("%1 application(s) selected for installation (%2 have Chocolatey "
+                               "packages)")
                                 .arg(totalSelected).arg(totalWithPackage));
 }
 
@@ -934,7 +974,8 @@ void UserProfileRestoreAppRestorePage::onItemChanged(QTreeWidgetItem* item, int 
     // Count selected
     int total = 0;
     int selected = 0;
-    for (int category_index = 0; category_index < m_appTree->topLevelItemCount(); ++category_index) {
+    for (int category_index =
+        0; category_index < m_appTree->topLevelItemCount(); ++category_index) {
         auto [t, s] = countEnabledCategoryApps(m_appTree->topLevelItem(category_index));
         total += t;
         selected += s;
@@ -966,7 +1007,8 @@ void UserProfileRestoreAppRestorePage::updateParentCheckState(QTreeWidgetItem* p
 
 void UserProfileRestoreAppRestorePage::onSelectAll() {
     m_appTree->blockSignals(true);
-    for (int category_index = 0; category_index < m_appTree->topLevelItemCount(); ++category_index) {
+    for (int category_index =
+        0; category_index < m_appTree->topLevelItemCount(); ++category_index) {
         auto* category = m_appTree->topLevelItem(category_index);
         for (int child_index = 0; child_index < category->childCount(); ++child_index) {
             auto* child = category->child(child_index);
@@ -984,7 +1026,8 @@ void UserProfileRestoreAppRestorePage::onSelectAll() {
 
 void UserProfileRestoreAppRestorePage::onSelectNone() {
     m_appTree->blockSignals(true);
-    for (int category_index = 0; category_index < m_appTree->topLevelItemCount(); ++category_index) {
+    for (int category_index =
+        0; category_index < m_appTree->topLevelItemCount(); ++category_index) {
         auto* category = m_appTree->topLevelItem(category_index);
         for (int child_index = 0; child_index < category->childCount(); ++child_index) {
             auto* child = category->child(child_index);
@@ -1035,13 +1078,15 @@ void UserProfileRestoreAppRestorePage::onInstallApps() {
 
     m_statusLabel->setText(tr("Installation complete: %1 succeeded, %2 failed")
                                 .arg(installed).arg(failed));
-    m_summaryLabel->setText(tr("App installation finished — %1 installed, %2 failed. Click Next to continue.")
+    m_summaryLabel->setText(tr("App installation finished — %1 installed, %2 failed. Click Next to "
+                               "continue.")
                                 .arg(installed).arg(failed));
 }
 
 QVector<RestoreAppInfo> UserProfileRestoreAppRestorePage::collectSelectedApps() const {
     QVector<RestoreAppInfo> selectedApps;
-    for (int category_index = 0; category_index < m_appTree->topLevelItemCount(); ++category_index) {
+    for (int category_index =
+        0; category_index < m_appTree->topLevelItemCount(); ++category_index) {
         auto* category = m_appTree->topLevelItem(category_index);
         for (int child_index = 0; child_index < category->childCount(); ++child_index) {
             auto* appItem = category->child(child_index);
@@ -1056,7 +1101,9 @@ QVector<RestoreAppInfo> UserProfileRestoreAppRestorePage::collectSelectedApps() 
     return selectedApps;
 }
 
-QPair<int,int> UserProfileRestoreAppRestorePage::installAppsSequentially(const QVector<RestoreAppInfo>& apps) {
+QPair<int,
+    int> UserProfileRestoreAppRestorePage::installAppsSequentially(
+        const QVector<RestoreAppInfo>& apps) {
     auto chocoManager = std::make_shared<ChocolateyManager>();
     QString chocoPath = QApplication::applicationDirPath() + "/tools/chocolatey";
     chocoManager->initialize(chocoPath);

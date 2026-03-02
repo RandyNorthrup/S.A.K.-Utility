@@ -16,7 +16,8 @@
 
 namespace sak {
 
-BackupKnownNetworksAction::BackupKnownNetworksAction(const QString& backup_location, QObject* parent)
+BackupKnownNetworksAction::BackupKnownNetworksAction(const QString& backup_location,
+    QObject* parent)
     : QuickAction(parent)
     , m_backup_location(backup_location)
 {
@@ -258,7 +259,8 @@ void BackupKnownNetworksAction::buildAndWriteBackup(
     result.files_processed = entries.size();
     result.message         = QString("Backed up %1 WiFi network(s)").arg(entries.size());
     result.output_path     = filepath;
-    result.log             = QString("Saved to: %1\nLoad this file in the WiFi Manager panel to restore.").arg(filepath);
+    result.log             = QString("Saved to: %1\nLoad this file in the WiFi Manager panel to "
+                                     "restore.").arg(filepath);
     result.duration_ms     = startTime.msecsTo(QDateTime::currentDateTime());
     finishWithResult(result, ActionStatus::Success);
 }

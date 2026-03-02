@@ -42,34 +42,35 @@ AppInstallationWorker::~AppInstallationWorker() {
     }
 }
 
-int AppInstallationWorker::startMigration(std::shared_ptr<MigrationReport> report, int maxConcurrent) {
+int AppInstallationWorker::startMigration(std::shared_ptr<MigrationReport> report,
+    int maxConcurrent) {
     Q_ASSERT_X(report != nullptr, "startMigration", "report must not be null");
     Q_ASSERT_X(maxConcurrent > 0, "startMigration", "maxConcurrent must be positive");
     QMutexLocker locker(&m_mutex);
-    
+
     if (m_running) {
         sak::logWarning("[AppInstallationWorker] Installation already running");
         return 0;
     }
-    
+
     m_report = report;
     m_maxConcurrent = qMax(1, maxConcurrent);
     m_running = true;
     m_paused = false;
     m_cancelled = false;
     m_activeJobs = 0;
-    
+
     // Build job list from selected entries
     m_jobs.clear();
     m_jobQueue.clear();
-    
+
     const auto& entries = m_report->getEntries();
     const size_t entry_count = entries.size();
     m_jobs.reserve(entry_count / 2);  // Estimate based on selected entries
-    
+
     for (size_t i = 0; i < entry_count; ++i) {
         const auto& entry = entries[i];
-        
+
         // Only queue selected entries with matches
         if (entry.selected && !entry.choco_package.isEmpty() && entry.available) {
             MigrationJob job;
@@ -79,45 +80,45 @@ int AppInstallationWorker::startMigration(std::shared_ptr<MigrationReport> repor
             job.version = (entry.version_lock && !entry.locked_version.isEmpty())
                 ? entry.locked_version : QString();
             job.status = MigrationStatus::Queued;
-            
+
             m_jobs.append(job);
             m_jobQueue.enqueue(m_jobs.size() - 1);
             Q_EMIT jobStatusChanged(job.entryIndex, job);
         }
     }
-    
+
     int totalJobs = m_jobs.size();
-    
+
     Q_EMIT migrationStarted(totalJobs);
-    
+
     // Process queue in background
     m_processFuture = QtConcurrent::run([this]() {
         processQueue();
     });
-    
+
     return totalJobs;
 }
 
 void AppInstallationWorker::pause() {
     QMutexLocker locker(&m_mutex);
-    
+
     if (!m_running || m_paused) {
         return;
     }
-    
+
     m_paused = true;
     Q_EMIT migrationPaused();
 }
 
 void AppInstallationWorker::resume() {
     QMutexLocker locker(&m_mutex);
-    
+
     if (!m_running || !m_paused) {
         return;
     }
-    
+
     m_paused = false;
-    
+
     // Wake up worker thread
     m_waitCondition.wakeAll();
     Q_EMIT migrationResumed();
@@ -125,27 +126,27 @@ void AppInstallationWorker::resume() {
 
 void AppInstallationWorker::cancel() {
     QMutexLocker locker(&m_mutex);
-    
+
     if (!m_running) {
         return;
     }
-    
+
     m_cancelled = true;
     m_paused = false;  // Unpause to allow cancellation
-    
+
     // Cancel all queued jobs
     while (!m_jobQueue.isEmpty()) {
         int jobIndex = m_jobQueue.dequeue();
         m_jobs[jobIndex].status = MigrationStatus::Cancelled;
-        
+
         // Update report entry
         if (m_report) {
             m_report->getEntry(m_jobs[jobIndex].entryIndex).status = "cancelled";
         }
-        
+
         Q_EMIT jobStatusChanged(m_jobs[jobIndex].entryIndex, m_jobs[jobIndex]);
     }
-    
+
     // Wake up worker thread
     m_waitCondition.wakeAll();
     Q_EMIT migrationCancelled();
@@ -163,10 +164,10 @@ bool AppInstallationWorker::isPaused() const {
 
 AppInstallationWorker::Stats AppInstallationWorker::getStats() const {
     QMutexLocker locker(&m_mutex);
-    
+
     Stats stats;
     stats.total = m_jobs.size();
-    
+
     for (const auto& job : m_jobs) {
         switch (job.status) {
             case MigrationStatus::Pending:    stats.pending++; break;
@@ -178,7 +179,7 @@ AppInstallationWorker::Stats AppInstallationWorker::getStats() const {
             case MigrationStatus::Cancelled:  stats.cancelled++; break;
         }
     }
-    
+
     return stats;
 }
 
@@ -191,33 +192,33 @@ void AppInstallationWorker::processQueue() {
     while (true) {
         {
             QMutexLocker locker(&m_mutex);
-            
+
             // Check if should stop
             if (m_cancelled || (!m_running && m_activeJobs == 0)) {
                 m_running = false;
                 locker.unlock();
-                
+
                 auto stats = getStats();
                 Q_EMIT migrationCompleted(stats);
                 return;
             }
-            
+
             // Check if paused
             if (m_paused) {
                 m_waitCondition.wait(&m_mutex);
                 continue;
             }
-            
+
             // All jobs complete?
             if (m_activeJobs == 0 && m_jobQueue.isEmpty()) {
                 m_running = false;
                 locker.unlock();
-                
+
                 auto stats = getStats();
                 Q_EMIT migrationCompleted(stats);
                 return;
             }
-            
+
             // Check if can start new job
             if (m_activeJobs >= m_maxConcurrent || m_jobQueue.isEmpty()) {
                 // Wait for active jobs to finish
@@ -226,7 +227,7 @@ void AppInstallationWorker::processQueue() {
                 continue;
             }
         }
-        
+
         // Get next job under lock, then release for installation
         int jobIndex;
         {
@@ -234,21 +235,21 @@ void AppInstallationWorker::processQueue() {
             jobIndex = m_jobQueue.dequeue();
             m_activeJobs++;
         }
-        
+
         // Install package (outside lock)
         MigrationJob& job = m_jobs[jobIndex];
         bool success = installPackage(job);
-        
+
         {
             QMutexLocker locker(&m_mutex);
             m_activeJobs--;
-            
+
             // Handle retry logic
             if (!success && shouldRetry(job)) {
                 int delay_ms = getRetryDelay(job.retryCount);
                 locker.unlock();
                 QThread::msleep(delay_ms);
-                
+
                 QMutexLocker retryLocker(&m_mutex);
                 job.retryCount++;
                 m_jobQueue.enqueue(jobIndex);
@@ -263,7 +264,7 @@ bool AppInstallationWorker::installPackage(MigrationJob& job) {
     job.startTime = QDateTime::currentDateTime();
     Q_EMIT jobStatusChanged(job.entryIndex, job);
     Q_EMIT jobProgress(job.entryIndex, "Installing " + job.packageId + "...");
-    
+
     // Install via Chocolatey
     ChocolateyManager::InstallConfig config;
     config.package_name = job.packageId;
@@ -272,45 +273,48 @@ bool AppInstallationWorker::installPackage(MigrationJob& job) {
     config.auto_confirm = true;
     config.force = false;
     config.allow_unofficial = false;
-    
+
     auto result = m_chocoManager->installPackage(config);
     bool success = result.success;
-    
+
     // Update status
     job.endTime = QDateTime::currentDateTime();
-    
+
     if (success) {
         job.status = MigrationStatus::Success;
         Q_EMIT jobProgress(job.entryIndex, "Successfully installed " + job.packageId);
     } else {
         job.status = MigrationStatus::Failed;
-        job.errorMessage = result.error_message.isEmpty() ? "Installation failed" : result.error_message;
+        job.errorMessage =
+            result.error_message.isEmpty() ? "Installation failed" : result.error_message;
         Q_EMIT jobProgress(job.entryIndex, "Failed to install " + job.packageId);
-        sak::logWarning("[AppInstallationWorker] Failed: {} - {}", job.packageId.toStdString(), job.errorMessage.toStdString());
+        sak::logWarning("[AppInstallationWorker] Failed: {} - {}", job.packageId.toStdString(),
+            job.errorMessage.toStdString());
     }
-    
+
     Q_EMIT jobStatusChanged(job.entryIndex, job);
-    
+
     return success;
 }
 
-void AppInstallationWorker::updateJobStatus(int index, MigrationStatus status, const QString& error) {
+void AppInstallationWorker::updateJobStatus(int index, MigrationStatus status,
+    const QString& error) {
     QMutexLocker locker(&m_mutex);
-    
+
     if (index < 0 || index >= m_jobs.size()) {
         return;
     }
-    
+
     m_jobs[index].status = status;
     if (!error.isEmpty()) {
         m_jobs[index].errorMessage = error;
     }
-    
+
     Q_EMIT jobStatusChanged(m_jobs[index].entryIndex, m_jobs[index]);
 }
 
 bool AppInstallationWorker::shouldRetry(const MigrationJob& job) const {
-    return job.status == MigrationStatus::Failed && 
+    return job.status == MigrationStatus::Failed &&
            job.retryCount < kRetryCountDefault &&
            !m_cancelled;
 }

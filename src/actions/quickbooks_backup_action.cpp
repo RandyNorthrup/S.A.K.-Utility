@@ -154,16 +154,16 @@ void QuickBooksBackupAction::execute() {
 
     setStatus(ActionStatus::Running);
     QDateTime start_time = QDateTime::currentDateTime();
-    
+
     Q_EMIT executionProgress("Checking if QuickBooks is running...", 5);
-    
+
     if (isQuickBooksRunning()) {
         emitFailedResult("QuickBooks is currently running",
                          "Please close QuickBooks before backing up data files",
                          start_time);
         return;
     }
-    
+
     Q_EMIT executionProgress("Scanning for QuickBooks files...", 15);
 
     m_found_files.clear();
@@ -176,12 +176,12 @@ void QuickBooksBackupAction::execute() {
                          start_time);
         return;
     }
-    
+
     Q_EMIT executionProgress("Preparing backup directory...", 30);
-    
+
     QDir backup_dir(m_backup_location + "/QuickBooksBackup");
     backup_dir.mkpath(".");
-    
+
     int files_copied = 0;
     int files_skipped_open = 0;
     qint64 bytes_copied = 0;
@@ -198,11 +198,13 @@ void QuickBooksBackupAction::execute() {
 }
 
 bool QuickBooksBackupAction::isQuickBooksRunning() {
-    ProcessResult proc = runProcess("tasklist", QStringList() << "/FI" << "IMAGENAME eq QBW32.EXE", sak::kTimeoutThermalQueryMs);
+    ProcessResult proc = runProcess("tasklist", QStringList() << "/FI" << "IMAGENAME eq QBW32.EXE",
+        sak::kTimeoutThermalQueryMs);
     if (proc.std_out.contains("QBW32.EXE", Qt::CaseInsensitive)) {
         return true;
     }
-    proc = runProcess("tasklist", QStringList() << "/FI" << "IMAGENAME eq QBW64.EXE", sak::kTimeoutThermalQueryMs);
+    proc = runProcess("tasklist", QStringList() << "/FI" << "IMAGENAME eq QBW64.EXE",
+        sak::kTimeoutThermalQueryMs);
     return proc.std_out.contains("QBW64.EXE", Qt::CaseInsensitive);
 }
 
@@ -242,17 +244,18 @@ void QuickBooksBackupAction::executeCopyFiles(const QDir& backup_dir, const QDat
 
 void QuickBooksBackupAction::executeBuildResult(const QDateTime& start_time, const QDir& backup_dir,
                                                  int files_copied, int files_skipped_open,
-                                                 qint64 bytes_copied, const QStringList& copied_files) {
+                                                 qint64 bytes_copied,
+                                                     const QStringList& copied_files) {
     Q_EMIT executionProgress("Backup complete", 100);
-    
+
     qint64 duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
-    
+
     ExecutionResult result;
     result.duration_ms = duration_ms;
     result.files_processed = files_copied;
     result.bytes_processed = bytes_copied;
     result.output_path = backup_dir.absolutePath();
-    
+
     if (files_copied > 0) {
         result.success = true;
         result.message = QString("Backed up %1 QuickBooks file(s) - %2")
@@ -280,7 +283,7 @@ void QuickBooksBackupAction::scanCommonLocations() {
 
     // Public documents
     search_paths.append("C:\\Users\\Public\\Documents\\Intuit\\QuickBooks");
-    
+
     // User documents
     QString user_docs = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
     search_paths.append(user_docs + "/QuickBooks");
@@ -313,12 +316,12 @@ void QuickBooksBackupAction::scanDirectory(const QString& dir_path) {
     }
 
     QStringList filters;
-        filters << "*.qbw" << "*.QBW" << "*.qbb" << "*.QBB" 
+        filters << "*.qbw" << "*.QBW" << "*.qbb" << "*.QBB"
             << "*.qbm" << "*.QBM" << "*.qbx" << "*.QBX"
             << "*.tlg" << "*.TLG" << "*.nd" << "*.ND";
 
     QDirIterator it(dir_path, filters, QDir::Files, QDirIterator::Subdirectories);
-    
+
     while (it.hasNext()) {
         if (isCancelled()) {
             break;
@@ -351,7 +354,8 @@ bool QuickBooksBackupAction::isFileOpen(const QString& file_path) const {
     return false;
 }
 
-bool QuickBooksBackupAction::copyFileWithProgress(const QString& source, const QString& destination) {
+bool QuickBooksBackupAction::copyFileWithProgress(const QString& source,
+    const QString& destination) {
     QFile source_file(source);
     QFile dest_file(destination);
 
@@ -399,14 +403,14 @@ bool QuickBooksBackupAction::copyFileWithProgress(const QString& source, const Q
 
 QString QuickBooksBackupAction::getFileTypeDescription(const QString& extension) const {
     QString ext = extension.toUpper();
-    
+
     if (ext == "QBW") return "Company File";
     if (ext == "QBB") return "Backup File";
     if (ext == "QBM") return "Portable File";
     if (ext == "QBX") return "Accountant Copy";
     if (ext == "TLG") return "Transaction Log";
     if (ext == "ND") return "Network Data";
-    
+
     return "QuickBooks File";
 }
 
