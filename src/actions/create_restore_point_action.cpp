@@ -308,7 +308,9 @@ QString CreateRestorePointAction::verifyLatestRestorePoint()
         return section;
     }
 
-    QString seq_num, desc, time;
+    QString seq_num;
+    QString desc;
+    QString time;
     for (const QString& vline : verify_output.split("\n")) {
         if (vline.startsWith("SEQ:")) seq_num = vline.mid(4).trimmed();
         else if (vline.startsWith("DESC:")) desc = vline.mid(5).trimmed();

@@ -183,6 +183,7 @@ bool file_scanner::shouldProcessEntry(
         logDebug("Exception in shouldProcessEntry(): {}", e.what());
         return false;
     } catch (...) {
+        // Intentional: final safety net in noexcept function
         logDebug("Non-standard exception in shouldProcessEntry()");
         return false;
     }
@@ -224,6 +225,7 @@ bool file_scanner::shouldIncludeFile(
         logDebug("Exception in shouldIncludeFile(): {}", e.what());
         return false;
     } catch (...) {
+        // Intentional: final safety net in noexcept function
         logDebug("Non-standard exception in shouldIncludeFile()");
         return false;
     }
@@ -252,6 +254,7 @@ bool file_scanner::isHidden(const std::filesystem::path& path) noexcept {
         logDebug("Exception in isHidden(): {}", e.what());
         return false;
     } catch (...) {
+        // Intentional: final safety net in noexcept function
         logDebug("Non-standard exception in isHidden()");
         return false;
     }

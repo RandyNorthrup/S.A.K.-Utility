@@ -486,9 +486,9 @@ double DiskBenchmarkWorker::runRandom4KReadLoop(
     while (total_timer.elapsed() < duration_ms) {
         if (stopRequested()) break;
 
-        for (int q = 0; q < queue_depth; ++q) {
+        for (int queue_index = 0; queue_index < queue_depth; ++queue_index) {
             const uint64_t offset = offset_dist(rng) * kRandomBlockSize;
-            processRandomReadOp(file_handle, buf_data, q, offset,
+            processRandomReadOp(file_handle, buf_data, queue_index, offset,
                                 latencies, total_ops, total_bytes);
         }
     }
@@ -547,9 +547,9 @@ double DiskBenchmarkWorker::runRandom4KWriteLoop(
     while (total_timer.elapsed() < duration_ms) {
         if (stopRequested()) break;
 
-        for (int q = 0; q < queue_depth; ++q) {
+        for (int queue_index = 0; queue_index < queue_depth; ++queue_index) {
             const uint64_t offset = offset_dist(rng) * kRandomBlockSize;
-            processRandomWriteOp(file_handle, buf_data, q, offset,
+            processRandomWriteOp(file_handle, buf_data, queue_index, offset,
                                  latencies, total_ops, total_bytes);
         }
     }

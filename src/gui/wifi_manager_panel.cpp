@@ -442,8 +442,8 @@ void WifiManagerPanel::connectSignals()
 void WifiManagerPanel::setAllCheckStates(bool allChecked)
 {
     m_network_table->blockSignals(true);
-    for (int r = 0; r < m_network_table->rowCount(); ++r) {
-        auto* item = m_network_table->item(r, COL_SELECT);
+    for (int row_index = 0; row_index < m_network_table->rowCount(); ++row_index) {
+        auto* item = m_network_table->item(row_index, COL_SELECT);
         if (item) item->setCheckState(allChecked ? Qt::Checked : Qt::Unchecked);
     }
     m_network_table->blockSignals(false);
@@ -1008,10 +1008,10 @@ void WifiManagerPanel::onSaveTableClicked()
 {
     // Collect checked rows
     QList<int> checkedRows;
-    for (int r = 0; r < m_network_table->rowCount(); ++r) {
-        auto* item = m_network_table->item(r, COL_SELECT);
+    for (int row_index = 0; row_index < m_network_table->rowCount(); ++row_index) {
+        auto* item = m_network_table->item(row_index, COL_SELECT);
         if (item && item->checkState() == Qt::Checked)
-            checkedRows.append(r);
+            checkedRows.append(row_index);
     }
 
     const QString path = QFileDialog::getSaveFileName(
@@ -1025,8 +1025,8 @@ void WifiManagerPanel::onSaveTableClicked()
 
     if (!checkedRows.isEmpty()) {
         QJsonArray arr;
-        for (int r : checkedRows) {
-            const WifiConfig cfg = configFromRow(r);
+        for (int row_index : checkedRows) {
+            const WifiConfig cfg = configFromRow(row_index);
             QJsonObject obj;
             obj["location"] = cfg.location;
             obj["ssid"]     = cfg.ssid;
@@ -1280,8 +1280,8 @@ void WifiManagerPanel::onSelectionChanged()
 {
     const int total   = m_network_table->rowCount();
     int checked = 0;
-    for (int r = 0; r < total; ++r) {
-        auto* item = m_network_table->item(r, COL_SELECT);
+    for (int row_index = 0; row_index < total; ++row_index) {
+        auto* item = m_network_table->item(row_index, COL_SELECT);
         if (item && item->checkState() == Qt::Checked)
             ++checked;
     }
@@ -1339,10 +1339,10 @@ void WifiManagerPanel::onAddToWindowsClicked()
 #else
     // Collect checked rows
     QList<int> checkedRows;
-    for (int r = 0; r < m_network_table->rowCount(); ++r) {
-        auto* item = m_network_table->item(r, COL_SELECT);
+    for (int row_index = 0; row_index < m_network_table->rowCount(); ++row_index) {
+        auto* item = m_network_table->item(row_index, COL_SELECT);
         if (item && item->checkState() == Qt::Checked)
-            checkedRows.append(r);
+            checkedRows.append(row_index);
     }
     if (checkedRows.isEmpty()) {
         Q_EMIT statusMessage("Check at least one network row first.", sak::kTimerStatusMessageMs);
@@ -1373,7 +1373,8 @@ void WifiManagerPanel::onAddToWindowsClicked()
 QString WifiManagerPanel::buildWlanProfileXml(const WifiConfig& cfg)
 {
     const QString upper = cfg.security.toUpper();
-    QString authType, encType;
+    QString authType;
+    QString encType;
     if (upper.contains("WEP")) {
         authType = "open";    encType = "WEP";
     } else if (upper.contains("NONE") || upper.contains("OPEN")) {
@@ -1565,7 +1566,8 @@ QString WifiManagerPanel::buildWindowsScript(const QString& ssid,
                                         bool hidden)
 {
     const QString upper = security.toUpper();
-    QString authType, encType;
+    QString authType;
+    QString encType;
     if (upper.contains("WEP")) {
         authType = "open";   encType = "WEP";
     } else if (upper.contains("NONE") || upper.contains("OPEN")) {
@@ -1796,10 +1798,10 @@ QList<WifiManagerPanel::WifiConfig> WifiManagerPanel::allConfigs() const
 QList<WifiManagerPanel::WifiConfig> WifiManagerPanel::checkedConfigs() const
 {
     QList<WifiConfig> list;
-    for (int r = 0; r < m_network_table->rowCount(); ++r) {
-        auto* item = m_network_table->item(r, COL_SELECT);
+    for (int row_index = 0; row_index < m_network_table->rowCount(); ++row_index) {
+        auto* item = m_network_table->item(row_index, COL_SELECT);
         if (item && item->checkState() == Qt::Checked)
-            list.append(configFromRow(r));
+            list.append(configFromRow(row_index));
     }
     return list;
 }

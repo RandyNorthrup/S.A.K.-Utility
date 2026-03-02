@@ -79,6 +79,9 @@ void WorkerBase::run()
             static_cast<int>(sak::error_code::internal_error),
             QStringLiteral("Unhandled unknown exception")
         );
+#ifndef NDEBUG
+        throw;
+#endif
     }
 }
 

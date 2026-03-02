@@ -362,7 +362,7 @@ QVector<FolderSelection> WindowsUserScanner::getDefaultFolderSelections(const QS
 qint64 WindowsUserScanner::quickSizeEstimate(const QString& path, int maxDepth) {
     if (maxDepth <= 0) return 0;
     
-    qint64 size = 0;
+    qint64 size_bytes = 0;
     QDir dir(path);
     
     if (!dir.exists()) return 0;
@@ -370,18 +370,18 @@ qint64 WindowsUserScanner::quickSizeEstimate(const QString& path, int maxDepth) 
     // Get files in current directory
     QFileInfoList files = dir.entryInfoList(QDir::Files | QDir::NoDotAndDotDot);
     for (const QFileInfo& file : files) {
-        size += file.size();
+        size_bytes += file.size();
     }
     
     // Recurse into subdirectories (limited depth)
     if (maxDepth > 1) {
         QFileInfoList dirs = dir.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot);
         for (const QFileInfo& subdir : dirs) {
-            size += quickSizeEstimate(subdir.absoluteFilePath(), maxDepth - 1);
+            size_bytes += quickSizeEstimate(subdir.absoluteFilePath(), maxDepth - 1);
         }
     }
     
-    return size;
+    return size_bytes;
 }
 
 } // namespace sak

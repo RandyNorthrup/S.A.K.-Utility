@@ -237,28 +237,28 @@ double MemoryBenchmarkWorker::runRandomLatency()
     // Each element points to a random other element. Sequential
     // prefetchers cannot predict the next access → measures true latency.
 
-    const size_t n = kLatencyArrayElements;
-    VirtualBuffer buf(n * sizeof(size_t));
+    const size_t element_count = kLatencyArrayElements;
+    VirtualBuffer buf(element_count * sizeof(size_t));
     if (!buf.valid()) return 0.0;
 
     auto* arr = buf.as<size_t>();
 
     // Create a random permutation for the chase sequence
-    std::vector<size_t> indices(n);
+    std::vector<size_t> indices(element_count);
     std::iota(indices.begin(), indices.end(), 0);
 
     // Fisher-Yates shuffle with fixed seed
     std::mt19937_64 rng(0xC0FFEE);
-    for (size_t i = n - 1; i > 0; --i) {
+    for (size_t i = element_count - 1; i > 0; --i) {
         std::uniform_int_distribution<size_t> dist(0, i);
         std::swap(indices[i], indices[dist(rng)]);
     }
 
     // Build the pointer-chase chain: arr[indices[i]] = indices[i+1]
-    for (size_t i = 0; i < n - 1; ++i) {
+    for (size_t i = 0; i < element_count - 1; ++i) {
         arr[indices[i]] = indices[i + 1];
     }
-    arr[indices[n - 1]] = indices[0]; // Close the loop
+    arr[indices[element_count - 1]] = indices[0]; // Close the loop
 
     // Warm up
     size_t idx = 0;

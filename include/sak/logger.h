@@ -288,6 +288,7 @@ void logger::log(
         auto message = std::vformat(format, std::make_format_args(arg1, args...));
         logInternal(level, message, std::source_location::current());
     } catch (...) {
+        // Intentional: final safety net in noexcept function
         // Never throw from logger - best effort only
     }
 }

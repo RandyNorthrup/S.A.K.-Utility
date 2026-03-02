@@ -113,8 +113,8 @@ struct SmartFilter {
     // Size limits
     bool enable_file_size_limit;    // Enable file size checking
     bool enable_folder_size_limit;  // Enable folder size checking
-    qint64 max_single_file_size;    // Skip files larger than this
-    qint64 max_folder_size;          // Warn if folder exceeds
+    qint64 max_single_file_size_bytes;    // Skip files larger than this
+    qint64 max_folder_size_bytes;          // Warn if folder exceeds
     
     // Pattern exclusions (regex-compatible)
     QStringList exclude_patterns;
@@ -124,8 +124,8 @@ struct SmartFilter {
     SmartFilter()
         : enable_file_size_limit(false)  // Optional by default
         , enable_folder_size_limit(false) // Optional by default
-        , max_single_file_size(2 * sak::kBytesPerGB)  // 2 GB
-        , max_folder_size(50 * sak::kBytesPerGB)      // 50 GB
+        , max_single_file_size_bytes(2 * sak::kBytesPerGB)  // 2 GB
+        , max_folder_size_bytes(50 * sak::kBytesPerGB)      // 50 GB
     {
         initializeDefaults();
     }

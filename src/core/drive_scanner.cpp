@@ -220,7 +220,8 @@ QString DriveScanner::getDriveName(int driveNumber) {
     {
         auto* desc = reinterpret_cast<STORAGE_DEVICE_DESCRIPTOR*>(buffer);
         
-        QString vendor, product;
+        QString vendor;
+        QString product;
         if (desc->VendorIdOffset != 0) {
             vendor = QString::fromLatin1(reinterpret_cast<const char*>(buffer + desc->VendorIdOffset)).trimmed();
         }

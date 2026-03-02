@@ -258,7 +258,7 @@ void MainWindow::connectPanelSignals()
 {
     // Connect panel signals to main window status bar
     connect(m_quick_actions_panel.get(), &QuickActionsPanel::statusMessage,
-            this, [this](const QString& msg, int timeout) { updateStatus(msg, timeout); });
+            this, [this](const QString& msg, int timeout_ms) { updateStatus(msg, timeout_ms); });
     connect(m_quick_actions_panel.get(), &QuickActionsPanel::progressUpdate,
             this, &MainWindow::updateProgress);
     
@@ -266,17 +266,17 @@ void MainWindow::connectPanelSignals()
             this, [this](const QString& msg) { updateStatus(msg, 5000); });
     
     connect(m_organizer_panel.get(), &OrganizerPanel::statusMessage,
-            this, [this](const QString& msg, int timeout) { updateStatus(msg, timeout > 0 ? timeout : 5000); });
+            this, [this](const QString& msg, int timeout_ms) { updateStatus(msg, timeout_ms > 0 ? timeout_ms : 5000); });
     connect(m_organizer_panel.get(), &OrganizerPanel::progressUpdate,
             this, &MainWindow::updateProgress);
     
     connect(m_duplicate_finder_panel.get(), &DuplicateFinderPanel::statusMessage,
-            this, [this](const QString& msg, int timeout) { updateStatus(msg, timeout > 0 ? timeout : 5000); });
+            this, [this](const QString& msg, int timeout_ms) { updateStatus(msg, timeout_ms > 0 ? timeout_ms : 5000); });
     connect(m_duplicate_finder_panel.get(), &DuplicateFinderPanel::progressUpdate,
             this, &MainWindow::updateProgress);
     
     connect(m_app_installation_panel.get(), &AppInstallationPanel::statusMessage,
-            this, [this](const QString& msg, int timeout) { updateStatus(msg, timeout > 0 ? timeout : 5000); });
+            this, [this](const QString& msg, int timeout_ms) { updateStatus(msg, timeout_ms > 0 ? timeout_ms : 5000); });
     connect(m_app_installation_panel.get(), &AppInstallationPanel::progressUpdated,
             this, &MainWindow::updateProgress);
 
@@ -293,7 +293,7 @@ void MainWindow::connectPanelSignals()
     }
 
     connect(m_diagnostic_benchmark_panel.get(), &DiagnosticBenchmarkPanel::statusMessage,
-            this, [this](const QString& msg, int timeout) { updateStatus(msg, timeout > 0 ? timeout : 5000); });
+            this, [this](const QString& msg, int timeout_ms) { updateStatus(msg, timeout_ms > 0 ? timeout_ms : 5000); });
     connect(m_diagnostic_benchmark_panel.get(), &DiagnosticBenchmarkPanel::progressUpdate,
             this, &MainWindow::updateProgress);
 }

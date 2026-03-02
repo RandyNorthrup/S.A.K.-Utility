@@ -263,10 +263,6 @@ validation_result input_validator::validatePathWithinBase(
         sak::logWarning("Exception during path validation: {}", e.what());
         return failure(error_code::unknown_error,
                       "Exception during path validation");
-    } catch (...) {
-        sak::logWarning("Unknown exception during path validation");
-        return failure(error_code::unknown_error,
-                      "Exception during path validation");
     }
 }
 
@@ -468,10 +464,6 @@ validation_result input_validator::validate_disk_space(
         sak::logWarning("Exception during disk space validation: {}", e.what());
         return failure(error_code::unknown_error,
                       "Exception during disk space validation");
-    } catch (...) {
-        sak::logWarning("Unknown exception during disk space validation");
-        return failure(error_code::unknown_error,
-                      "Exception during disk space validation");
     }
 }
 
@@ -593,8 +585,8 @@ std::size_t input_validator::get_file_descriptor_count_impl() {
             (void)entry;
             ++count;
         }
-    } catch (...) {
-        logDebug("Failed to enumerate /proc/self/fd for file descriptor count");
+    } catch (const std::exception& e) {
+        logDebug("Failed to enumerate /proc/self/fd for file descriptor count: {}", e.what());
         return 0;  // Cannot determine
     }
     return count;

@@ -320,7 +320,7 @@ bool DriveUnmounter::preventAutoMount(int driveNumber) {
 }
 
 bool DriveUnmounter::retryWithBackoff(std::function<bool()> operation, int maxAttempts) {
-    int delay = 100; // Start with 100ms
+    int delay_ms = 100; // Start with 100ms
 
     for (int attempt = 1; attempt <= maxAttempts; ++attempt) {
         if (operation()) {
@@ -329,9 +329,9 @@ bool DriveUnmounter::retryWithBackoff(std::function<bool()> operation, int maxAt
 
         if (attempt < maxAttempts) {
             sak::logInfo(QString("Retry attempt %1/%2, waiting %3ms")
-                .arg(attempt).arg(maxAttempts).arg(delay).toStdString());
-            QThread::msleep(delay);
-            delay *= 2; // Exponential backoff
+                .arg(attempt).arg(maxAttempts).arg(delay_ms).toStdString());
+            QThread::msleep(delay_ms);
+            delay_ms *= 2; // Exponential backoff
         }
     }
 

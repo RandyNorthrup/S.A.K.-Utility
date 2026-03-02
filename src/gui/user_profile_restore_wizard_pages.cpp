@@ -838,8 +838,8 @@ void UserProfileRestoreAppRestorePage::loadApps() {
 /// @brief Count enabled apps in a single category for summary
 static QPair<int,int> countEnabledCategoryApps(QTreeWidgetItem* category) {
     int total = 0, selected = 0;
-    for (int a = 0; a < category->childCount(); ++a) {
-        auto* item = category->child(a);
+    for (int child_index = 0; child_index < category->childCount(); ++child_index) {
+        auto* item = category->child(child_index);
         if (!(item->flags() & Qt::ItemIsEnabled)) continue;
         total++;
         if (item->checkState(0) == Qt::Checked) selected++;
@@ -934,8 +934,8 @@ void UserProfileRestoreAppRestorePage::onItemChanged(QTreeWidgetItem* item, int 
     // Count selected
     int total = 0;
     int selected = 0;
-    for (int c = 0; c < m_appTree->topLevelItemCount(); ++c) {
-        auto [t, s] = countEnabledCategoryApps(m_appTree->topLevelItem(c));
+    for (int category_index = 0; category_index < m_appTree->topLevelItemCount(); ++category_index) {
+        auto [t, s] = countEnabledCategoryApps(m_appTree->topLevelItem(category_index));
         total += t;
         selected += s;
     }
@@ -966,10 +966,10 @@ void UserProfileRestoreAppRestorePage::updateParentCheckState(QTreeWidgetItem* p
 
 void UserProfileRestoreAppRestorePage::onSelectAll() {
     m_appTree->blockSignals(true);
-    for (int c = 0; c < m_appTree->topLevelItemCount(); ++c) {
-        auto* category = m_appTree->topLevelItem(c);
-        for (int a = 0; a < category->childCount(); ++a) {
-            auto* child = category->child(a);
+    for (int category_index = 0; category_index < m_appTree->topLevelItemCount(); ++category_index) {
+        auto* category = m_appTree->topLevelItem(category_index);
+        for (int child_index = 0; child_index < category->childCount(); ++child_index) {
+            auto* child = category->child(child_index);
             if (!(child->flags() & Qt::ItemIsEnabled)) continue;
             child->setCheckState(0, Qt::Checked);
         }
@@ -984,10 +984,10 @@ void UserProfileRestoreAppRestorePage::onSelectAll() {
 
 void UserProfileRestoreAppRestorePage::onSelectNone() {
     m_appTree->blockSignals(true);
-    for (int c = 0; c < m_appTree->topLevelItemCount(); ++c) {
-        auto* category = m_appTree->topLevelItem(c);
-        for (int a = 0; a < category->childCount(); ++a) {
-            auto* child = category->child(a);
+    for (int category_index = 0; category_index < m_appTree->topLevelItemCount(); ++category_index) {
+        auto* category = m_appTree->topLevelItem(category_index);
+        for (int child_index = 0; child_index < category->childCount(); ++child_index) {
+            auto* child = category->child(child_index);
             if (!(child->flags() & Qt::ItemIsEnabled)) continue;
             child->setCheckState(0, Qt::Unchecked);
         }
@@ -1041,10 +1041,10 @@ void UserProfileRestoreAppRestorePage::onInstallApps() {
 
 QVector<RestoreAppInfo> UserProfileRestoreAppRestorePage::collectSelectedApps() const {
     QVector<RestoreAppInfo> selectedApps;
-    for (int c = 0; c < m_appTree->topLevelItemCount(); ++c) {
-        auto* category = m_appTree->topLevelItem(c);
-        for (int a = 0; a < category->childCount(); ++a) {
-            auto* appItem = category->child(a);
+    for (int category_index = 0; category_index < m_appTree->topLevelItemCount(); ++category_index) {
+        auto* category = m_appTree->topLevelItem(category_index);
+        for (int child_index = 0; child_index < category->childCount(); ++child_index) {
+            auto* appItem = category->child(child_index);
             if ((appItem->flags() & Qt::ItemIsEnabled) && appItem->checkState(0) == Qt::Checked) {
                 RestoreAppInfo info;
                 info.name = appItem->text(0);

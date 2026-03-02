@@ -108,7 +108,7 @@ bool SmartFileFilter::exceedsSizeLimit(qint64 size) const {
     if (!m_rules.enable_file_size_limit) {
         return false;
     }
-    return size > m_rules.max_single_file_size;
+    return size > m_rules.max_single_file_size_bytes;
 }
 
 bool SmartFileFilter::isDangerousFile(const QString& fileName) const {
@@ -180,7 +180,7 @@ QString SmartFileFilter::getExclusionReason(const QFileInfo& fileInfo) const {
         if (m_rules.enable_file_size_limit) {
             return QString("File too large: %1 MB (limit: %2 MB)")
                 .arg(sizeMB, 0, 'f', 1)
-                .arg(m_rules.max_single_file_size / (1024.0 * 1024.0), 0, 'f', 0);
+                .arg(m_rules.max_single_file_size_bytes / (1024.0 * 1024.0), 0, 'f', 0);
         }
     }
     

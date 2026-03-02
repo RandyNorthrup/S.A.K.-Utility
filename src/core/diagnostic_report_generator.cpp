@@ -122,9 +122,9 @@ bool DiagnosticReportGenerator::generateJson(const QString& output_path)
 
     // Issues and recommendations
     QJsonArray critical_arr, warn_arr, rec_arr;
-    for (const auto& c : m_data.critical_issues) critical_arr.append(c);
-    for (const auto& w : m_data.warnings) warn_arr.append(w);
-    for (const auto& r : m_data.recommendations) rec_arr.append(r);
+    for (const auto& issue : m_data.critical_issues) critical_arr.append(issue);
+    for (const auto& warning : m_data.warnings) warn_arr.append(warning);
+    for (const auto& recommendation : m_data.recommendations) rec_arr.append(recommendation);
     root["critical_issues"]  = critical_arr;
     root["warnings"]         = warn_arr;
     root["recommendations"]  = rec_arr;
@@ -246,7 +246,7 @@ QJsonArray DiagnosticReportGenerator::serializeSmartSection() const
         s["power_on_hours"] = static_cast<qint64>(report.power_on_hours);
 
         QJsonArray warnings;
-        for (const auto& w : report.warnings) warnings.append(w);
+        for (const auto& warning : report.warnings) warnings.append(warning);
         s["warnings"] = warnings;
 
         smart_arr.append(s);
@@ -596,8 +596,8 @@ QString DiagnosticReportGenerator::buildSmartSection() const
         if (!report.warnings.isEmpty()) {
             html += QString("<p><strong>%1:</strong></p>\n<ul>\n")
                         .arg(report.model.toHtmlEscaped());
-            for (const auto& w : report.warnings) {
-                html += QString("<li>%1</li>\n").arg(w.toHtmlEscaped());
+            for (const auto& warning : report.warnings) {
+                html += QString("<li>%1</li>\n").arg(warning.toHtmlEscaped());
             }
             html += "</ul>\n";
         }

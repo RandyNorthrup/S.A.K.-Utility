@@ -245,9 +245,9 @@ void AppInstallationWorker::processQueue() {
             
             // Handle retry logic
             if (!success && shouldRetry(job)) {
-                int delay = getRetryDelay(job.retryCount);
+                int delay_ms = getRetryDelay(job.retryCount);
                 locker.unlock();
-                QThread::msleep(delay);
+                QThread::msleep(delay_ms);
                 
                 QMutexLocker retryLocker(&m_mutex);
                 job.retryCount++;

@@ -234,6 +234,9 @@ int main(int argc, char* argv[]) {
             nullptr,
             "Fatal Error",
             "Unknown unhandled exception");
+#ifndef NDEBUG
+        throw;
+#endif
         return 1;
     }
 }

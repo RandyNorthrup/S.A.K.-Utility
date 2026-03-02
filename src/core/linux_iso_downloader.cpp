@@ -279,7 +279,7 @@ QStringList LinuxISODownloader::buildAria2cArguments(const QString& url,
              << "--follow-torrent=false"
              << "--max-tries=" + QString::number(sak::kAria2MaxTriesHigh)              // More retries for mirror selection
              << "--retry-wait=" + QString::number(sak::kAria2RetryWaitLongSec)
-             << "--connect-timeout=" + QString::number(sak::kAria2ConnectTimeoutLong)
+             << "--connect-timeout=" + QString::number(sak::kAria2ConnectTimeoutLongSec)
              << "--timeout=" + QString::number(sak::kAria2TimeoutLongSec)
              << "--max-file-not-found=5"
              << "--lowest-speed-limit=10K";   // Lenient speed limit for SF
@@ -647,9 +647,9 @@ QString LinuxISODownloader::findAria2c() const
         appDir + "/tools/uup/aria2c.exe",
         appDir + "/aria2c.exe",
     };
-    for (const auto& p : searchPaths) {
-        if (QFileInfo::exists(p))
-            return p;
+    for (const auto& search_path : searchPaths) {
+        if (QFileInfo::exists(search_path))
+            return search_path;
     }
 
     // Check PATH environment variable

@@ -300,11 +300,11 @@ void UserProfileBackupSmartFiltersPage::loadFilterSettings() {
     m_enableFolderSizeLimitCheck->setChecked(m_filter.enable_folder_size_limit);
     
     // Load from m_filter (convert bytes to MB/GB for UI)
-    qint64 fileSizeMB = m_filter.max_single_file_size / sak::kBytesPerMB;
+    qint64 fileSizeMB = m_filter.max_single_file_size_bytes / sak::kBytesPerMB;
     m_maxFileSizeSpinBox->setValue(static_cast<int>(fileSizeMB));
     m_maxFileSizeSpinBox->setEnabled(m_filter.enable_file_size_limit);
     
-    qint64 folderSizeGB = m_filter.max_folder_size / sak::kBytesPerGB;
+    qint64 folderSizeGB = m_filter.max_folder_size_bytes / sak::kBytesPerGB;
     m_maxFolderSizeSpinBox->setValue(static_cast<int>(folderSizeGB));
     m_maxFolderSizeSpinBox->setEnabled(m_filter.enable_folder_size_limit);
     
@@ -376,8 +376,8 @@ void UserProfileBackupSmartFiltersPage::updateSummary() {
     m_filter.enable_folder_size_limit = m_enableFolderSizeLimitCheck->isChecked();
     
     // Update filter from UI (convert MB/GB back to bytes)
-    m_filter.max_single_file_size = static_cast<qint64>(m_maxFileSizeSpinBox->value()) * sak::kBytesPerMB;
-    m_filter.max_folder_size = static_cast<qint64>(m_maxFolderSizeSpinBox->value()) * sak::kBytesPerGB;
+    m_filter.max_single_file_size_bytes = static_cast<qint64>(m_maxFileSizeSpinBox->value()) * sak::kBytesPerMB;
+    m_filter.max_folder_size_bytes = static_cast<qint64>(m_maxFolderSizeSpinBox->value()) * sak::kBytesPerGB;
     
     // Count total exclusions
     int exclusionCount = m_filter.dangerous_files.size() + 
@@ -722,8 +722,8 @@ void UserProfileBackupInstalledAppsPage::cleanupPage() {
 
 /// @brief Check if any app in a category is checked
 static bool categoryHasCheckedApp(QTreeWidgetItem* category) {
-    for (int a = 0; a < category->childCount(); ++a) {
-        if (category->child(a)->checkState(0) == Qt::Checked) return true;
+    for (int child_index = 0; child_index < category->childCount(); ++child_index) {
+        if (category->child(child_index)->checkState(0) == Qt::Checked) return true;
     }
     return false;
 }
@@ -731,8 +731,8 @@ static bool categoryHasCheckedApp(QTreeWidgetItem* category) {
 /// @brief Collect selected apps from one category into the output vector
 static void collectCategoryApps(QTreeWidgetItem* category, int& total,
                                 int& selected, QVector<InstalledAppInfo>& out) {
-    for (int a = 0; a < category->childCount(); ++a) {
-        auto* appItem = category->child(a);
+    for (int child_index = 0; child_index < category->childCount(); ++child_index) {
+        auto* appItem = category->child(child_index);
         total++;
         if (appItem->checkState(0) != Qt::Checked) continue;
         selected++;
@@ -751,8 +751,8 @@ void UserProfileBackupInstalledAppsPage::updateNextButtonText() {
     if (!wiz) return;
 
     bool hasSelection = false;
-    for (int c = 0; c < m_appTree->topLevelItemCount(); ++c) {
-        if (categoryHasCheckedApp(m_appTree->topLevelItem(c))) {
+    for (int category_index = 0; category_index < m_appTree->topLevelItemCount(); ++category_index) {
+        if (categoryHasCheckedApp(m_appTree->topLevelItem(category_index))) {
             hasSelection = true;
             break;
         }
@@ -769,47 +769,47 @@ bool UserProfileBackupInstalledAppsPage::isComplete() const {
 
 QString UserProfileBackupInstalledAppsPage::categorizeApp(const QString& name, const QString& publisher) {
     Q_UNUSED(publisher)
-    const QString n = name.toLower();
+    const QString app_name_lower = name.toLower();
 
-    if (n.contains("chrome") || n.contains("firefox") || n.contains("edge") ||
-        n.contains("opera") || n.contains("brave") || n.contains("vivaldi") || n.contains("browser"))
+    if (app_name_lower.contains("chrome") || app_name_lower.contains("firefox") || app_name_lower.contains("edge") ||
+        app_name_lower.contains("opera") || app_name_lower.contains("brave") || app_name_lower.contains("vivaldi") || app_name_lower.contains("browser"))
         return QCoreApplication::translate("UserProfileBackupInstalledAppsPage", "Browsers");
-    if (n.contains("visual studio") || n.contains("vscode") || n.contains("jetbrains") ||
-        n.contains("intellij") || n.contains("pycharm") || n.contains("webstorm") ||
-        n.contains("rider") || n.contains("clion") || n.contains("android studio") ||
-        n.contains("eclipse") || n.contains("sublime") || n.contains("notepad++") ||
-        n.contains("atom") || n.contains("code"))
+    if (app_name_lower.contains("visual studio") || app_name_lower.contains("vscode") || app_name_lower.contains("jetbrains") ||
+        app_name_lower.contains("intellij") || app_name_lower.contains("pycharm") || app_name_lower.contains("webstorm") ||
+        app_name_lower.contains("rider") || app_name_lower.contains("clion") || app_name_lower.contains("android studio") ||
+        app_name_lower.contains("eclipse") || app_name_lower.contains("sublime") || app_name_lower.contains("notepad++") ||
+        app_name_lower.contains("atom") || app_name_lower.contains("code"))
         return QCoreApplication::translate("UserProfileBackupInstalledAppsPage", "Development");
-    if (n.contains("office") || n.contains("word") || n.contains("excel") ||
-        n.contains("powerpoint") || n.contains("outlook") || n.contains("onenote") ||
-        n.contains("libreoffice") || n.contains("openoffice"))
+    if (app_name_lower.contains("office") || app_name_lower.contains("word") || app_name_lower.contains("excel") ||
+        app_name_lower.contains("powerpoint") || app_name_lower.contains("outlook") || app_name_lower.contains("onenote") ||
+        app_name_lower.contains("libreoffice") || app_name_lower.contains("openoffice"))
         return QCoreApplication::translate("UserProfileBackupInstalledAppsPage", "Productivity");
-    if (n.contains("discord") || n.contains("slack") || n.contains("teams") ||
-        n.contains("zoom") || n.contains("skype") || n.contains("telegram") ||
-        n.contains("signal") || n.contains("whatsapp"))
+    if (app_name_lower.contains("discord") || app_name_lower.contains("slack") || app_name_lower.contains("teams") ||
+        app_name_lower.contains("zoom") || app_name_lower.contains("skype") || app_name_lower.contains("telegram") ||
+        app_name_lower.contains("signal") || app_name_lower.contains("whatsapp"))
         return QCoreApplication::translate("UserProfileBackupInstalledAppsPage", "Communication");
-    if (n.contains("steam") || n.contains("epic games") || n.contains("origin") ||
-        n.contains("battle.net") || n.contains("gog") || n.contains("ubisoft") || n.contains("game"))
+    if (app_name_lower.contains("steam") || app_name_lower.contains("epic games") || app_name_lower.contains("origin") ||
+        app_name_lower.contains("battle.net") || app_name_lower.contains("gog") || app_name_lower.contains("ubisoft") || app_name_lower.contains("game"))
         return QCoreApplication::translate("UserProfileBackupInstalledAppsPage", "Gaming");
-    if (n.contains("photoshop") || n.contains("illustrator") || n.contains("gimp") ||
-        n.contains("blender") || n.contains("inkscape") || n.contains("paint") ||
-        n.contains("krita") || n.contains("figma") || n.contains("canva"))
+    if (app_name_lower.contains("photoshop") || app_name_lower.contains("illustrator") || app_name_lower.contains("gimp") ||
+        app_name_lower.contains("blender") || app_name_lower.contains("inkscape") || app_name_lower.contains("paint") ||
+        app_name_lower.contains("krita") || app_name_lower.contains("figma") || app_name_lower.contains("canva"))
         return QCoreApplication::translate("UserProfileBackupInstalledAppsPage", "Graphics & Design");
-    if (n.contains("vlc") || n.contains("spotify") || n.contains("itunes") ||
-        n.contains("audacity") || n.contains("obs") || n.contains("handbrake") ||
-        n.contains("media") || n.contains("player") || n.contains("foobar") || n.contains("winamp"))
+    if (app_name_lower.contains("vlc") || app_name_lower.contains("spotify") || app_name_lower.contains("itunes") ||
+        app_name_lower.contains("audacity") || app_name_lower.contains("obs") || app_name_lower.contains("handbrake") ||
+        app_name_lower.contains("media") || app_name_lower.contains("player") || app_name_lower.contains("foobar") || app_name_lower.contains("winamp"))
         return QCoreApplication::translate("UserProfileBackupInstalledAppsPage", "Media");
-    if (n.contains("7-zip") || n.contains("winrar") || n.contains("peazip") ||
-        n.contains("ccleaner") || n.contains("everything") || n.contains("totalcommander") ||
-        n.contains("wiztree") || n.contains("treesize") || n.contains("windirstat") || n.contains("revo"))
+    if (app_name_lower.contains("7-zip") || app_name_lower.contains("winrar") || app_name_lower.contains("peazip") ||
+        app_name_lower.contains("ccleaner") || app_name_lower.contains("everything") || app_name_lower.contains("totalcommander") ||
+        app_name_lower.contains("wiztree") || app_name_lower.contains("treesize") || app_name_lower.contains("windirstat") || app_name_lower.contains("revo"))
         return QCoreApplication::translate("UserProfileBackupInstalledAppsPage", "Utilities");
-    if (n.contains("norton") || n.contains("kaspersky") || n.contains("malwarebytes") ||
-        n.contains("avast") || n.contains("avg") || n.contains("bitdefender") ||
-        n.contains("security") || n.contains("antivirus"))
+    if (app_name_lower.contains("norton") || app_name_lower.contains("kaspersky") || app_name_lower.contains("malwarebytes") ||
+        app_name_lower.contains("avast") || app_name_lower.contains("avg") || app_name_lower.contains("bitdefender") ||
+        app_name_lower.contains("security") || app_name_lower.contains("antivirus"))
         return QCoreApplication::translate("UserProfileBackupInstalledAppsPage", "Security");
-    if (n.contains("nvidia") || n.contains("amd") || n.contains("realtek") ||
-        n.contains("intel") || n.contains("driver") || n.contains("logitech") ||
-        n.contains("corsair") || n.contains("razer"))
+    if (app_name_lower.contains("nvidia") || app_name_lower.contains("amd") || app_name_lower.contains("realtek") ||
+        app_name_lower.contains("intel") || app_name_lower.contains("driver") || app_name_lower.contains("logitech") ||
+        app_name_lower.contains("corsair") || app_name_lower.contains("razer"))
         return QCoreApplication::translate("UserProfileBackupInstalledAppsPage", "Drivers & Hardware");
     return QCoreApplication::translate("UserProfileBackupInstalledAppsPage", "Other");
 }
@@ -932,8 +932,8 @@ void UserProfileBackupInstalledAppsPage::onItemChanged(QTreeWidgetItem* item, in
     int selected = 0;
     QVector<InstalledAppInfo> selectedApps;
 
-    for (int c = 0; c < m_appTree->topLevelItemCount(); ++c) {
-        collectCategoryApps(m_appTree->topLevelItem(c), total, selected, selectedApps);
+    for (int category_index = 0; category_index < m_appTree->topLevelItemCount(); ++category_index) {
+        collectCategoryApps(m_appTree->topLevelItem(category_index), total, selected, selectedApps);
     }
 
     m_summaryLabel->setText(tr("%1 application(s) selected out of %2")
@@ -968,11 +968,11 @@ void UserProfileBackupInstalledAppsPage::updateParentCheckState(QTreeWidgetItem*
 
 void UserProfileBackupInstalledAppsPage::onSelectAll() {
     m_appTree->blockSignals(true);
-    for (int c = 0; c < m_appTree->topLevelItemCount(); ++c) {
-        auto* category = m_appTree->topLevelItem(c);
+    for (int category_index = 0; category_index < m_appTree->topLevelItemCount(); ++category_index) {
+        auto* category = m_appTree->topLevelItem(category_index);
         category->setCheckState(0, Qt::Checked);
-        for (int a = 0; a < category->childCount(); ++a) {
-            category->child(a)->setCheckState(0, Qt::Checked);
+        for (int child_index = 0; child_index < category->childCount(); ++child_index) {
+            category->child(child_index)->setCheckState(0, Qt::Checked);
         }
     }
     m_appTree->blockSignals(false);
@@ -985,11 +985,11 @@ void UserProfileBackupInstalledAppsPage::onSelectAll() {
 
 void UserProfileBackupInstalledAppsPage::onSelectNone() {
     m_appTree->blockSignals(true);
-    for (int c = 0; c < m_appTree->topLevelItemCount(); ++c) {
-        auto* category = m_appTree->topLevelItem(c);
+    for (int category_index = 0; category_index < m_appTree->topLevelItemCount(); ++category_index) {
+        auto* category = m_appTree->topLevelItem(category_index);
         category->setCheckState(0, Qt::Unchecked);
-        for (int a = 0; a < category->childCount(); ++a) {
-            category->child(a)->setCheckState(0, Qt::Unchecked);
+        for (int child_index = 0; child_index < category->childCount(); ++child_index) {
+            category->child(child_index)->setCheckState(0, Qt::Unchecked);
         }
     }
     m_appTree->blockSignals(false);

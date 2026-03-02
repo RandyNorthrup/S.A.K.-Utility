@@ -417,8 +417,8 @@ void QuickActionsPanel::onActionProgress(QuickAction* action, const QString& mes
     m_status_label->setText(QString("Status: %1").arg(message));
     // Update duration
     if (m_last_action_time.isValid()) {
-        qint64 elapsed = m_last_action_time.secsTo(QDateTime::currentDateTime());
-        m_duration_label->setText(QString("Duration: %1").arg(formatDuration(elapsed)));
+        qint64 elapsed_sec = m_last_action_time.secsTo(QDateTime::currentDateTime());
+        m_duration_label->setText(QString("Duration: %1").arg(formatDuration(elapsed_sec)));
     }
 
     updateActionButton(action);

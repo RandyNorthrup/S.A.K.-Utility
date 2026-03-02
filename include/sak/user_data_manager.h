@@ -44,8 +44,8 @@ public:
         QStringList source_paths;      // Source directories/files
         QString backup_path;           // Archive file path
         QDateTime backup_date;
-        qint64 total_size{0};             // Total bytes
-        qint64 compressed_size{0};        // Archive size
+        qint64 total_size_bytes{0};             // Total bytes
+        qint64 compressed_size_bytes{0};        // Archive size
         QString checksum;              // SHA256 of archive
         bool encrypted{false};                // Future: encryption support
         QStringList excluded_patterns; // Excluded files (*.log, *.tmp)

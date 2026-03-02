@@ -175,20 +175,20 @@ double CpuBenchmarkWorker::runPrimeSieve(uint64_t limit)
     // Count primes (prevents optimizer from eliding the work)
     [[maybe_unused]] const auto count = std::count(sieve.begin(), sieve.end(), true);
 
-    const double elapsed = timer.nsecsElapsed() / 1'000'000.0;
+    const double elapsed_ms = timer.nsecsElapsed() / 1'000'000.0;
     logInfo("Prime sieve ({} primes up to {}) completed in {:.1f} ms",
-            count, limit, elapsed);
-    return elapsed;
+            count, limit, elapsed_ms);
+    return elapsed_ms;
 }
 
 double CpuBenchmarkWorker::runMatrixMultiply(int size)
 {
     Q_ASSERT_X(size > 0, "runMatrixMultiply", "matrix size must be positive");
     // Dense matrix multiply C = A × B — stresses FP pipeline + cache
-    const int n = size;
-    std::vector<double> a(n * n);
-    std::vector<double> b(n * n);
-    std::vector<double> c(n * n, 0.0);
+    const int element_count = size;
+    std::vector<double> a(element_count * element_count);
+    std::vector<double> b(element_count * element_count);
+    std::vector<double> c(element_count * element_count, 0.0);
 
     // Deterministic init with fixed seed for reproducibility
     std::mt19937 rng(42);
@@ -201,16 +201,16 @@ double CpuBenchmarkWorker::runMatrixMultiply(int size)
     timer.start();
 
     // ikj loop order for cache-friendly access of B
-    for (int i = 0; i < n; ++i) {
-        multiplyMatrixRow(a, b, c, i, n);
+    for (int i = 0; i < element_count; ++i) {
+        multiplyMatrixRow(a, b, c, i, element_count);
     }
 
-    const double elapsed = timer.nsecsElapsed() / 1'000'000.0;
+    const double elapsed_ms = timer.nsecsElapsed() / 1'000'000.0;
 
     // GFLOPS = 2*N^3 / (time_sec * 10^9)
-    const double ops = 2.0 * static_cast<double>(n) * n * n;
-    const double gflops = (elapsed > 0.0)
-                              ? (ops / (elapsed / 1000.0) / 1e9)
+    const double ops = 2.0 * static_cast<double>(element_count) * element_count * element_count;
+    const double gflops = (elapsed_ms > 0.0)
+                              ? (ops / (elapsed_ms / 1000.0) / 1e9)
                               : 0.0;
 
     // Prevent optimizer from eliding c
@@ -218,8 +218,8 @@ double CpuBenchmarkWorker::runMatrixMultiply(int size)
     (void)sink;
 
     logInfo("Matrix {}x{} multiply completed in {:.1f} ms ({:.2f} GFLOPS)",
-            n, n, elapsed, gflops);
-    return elapsed;
+            element_count, element_count, elapsed_ms, gflops);
+    return elapsed_ms;
 }
 
 double CpuBenchmarkWorker::runZlibCompression(int data_size_mb)
@@ -251,21 +251,21 @@ double CpuBenchmarkWorker::runZlibCompression(int data_size_mb)
         input.data(), static_cast<uLong>(data_size),
         Z_DEFAULT_COMPRESSION);
 
-    const double elapsed = timer.nsecsElapsed() / 1'000'000.0;
+    const double elapsed_ms = timer.nsecsElapsed() / 1'000'000.0;
 
     if (ret != Z_OK) {
         logError("ZLIB compression failed with code {}", ret);
-        return elapsed;
+        return elapsed_ms;
     }
 
     const double ratio = static_cast<double>(data_size) /
                           static_cast<double>(compressed_size);
     m_zlib_throughput_mbps = static_cast<double>(data_size) / (1024.0 * 1024.0) /
-                             (elapsed / 1000.0);
+                             (elapsed_ms / 1000.0);
 
     logInfo("ZLIB: {} MB compressed in {:.1f} ms ({:.1f} MB/s, {:.2f}x ratio)",
-            data_size_mb, elapsed, m_zlib_throughput_mbps, ratio);
-    return elapsed;
+            data_size_mb, elapsed_ms, m_zlib_throughput_mbps, ratio);
+    return elapsed_ms;
 }
 
 double CpuBenchmarkWorker::runAesEncryption(int data_size_mb)
@@ -294,24 +294,24 @@ double CpuBenchmarkWorker::runAesEncryption(int data_size_mb)
     // Processes data in 16-byte blocks, applying SubBytes + AddRoundKey × 10 rounds.
     for (size_t block = 0; block + 16 <= data_size; block += 16) {
         for (int round = 0; round < 10; ++round) {
-            for (int b = 0; b < 16; ++b) {
-                data[block + b] = kAesSBox[data[block + b]] ^ key[b];
+            for (int block_index = 0; block_index < 16; ++block_index) {
+                data[block + block_index] = kAesSBox[data[block + block_index]] ^ key[block_index];
             }
         }
     }
 
-    const double elapsed = timer.nsecsElapsed() / 1'000'000.0;
+    const double elapsed_ms = timer.nsecsElapsed() / 1'000'000.0;
 
     // Prevent optimizer from eliding
     volatile uint8_t sink = data[0];
     (void)sink;
 
     m_aes_throughput_mbps = static_cast<double>(data_size) / (1024.0 * 1024.0) /
-                            (elapsed / 1000.0);
+                            (elapsed_ms / 1000.0);
 
     logInfo("AES: {} MB encrypted in {:.1f} ms ({:.1f} MB/s)",
-            data_size_mb, elapsed, m_aes_throughput_mbps);
-    return elapsed;
+            data_size_mb, elapsed_ms, m_aes_throughput_mbps);
+    return elapsed_ms;
 }
 
 double CpuBenchmarkWorker::runMultiThreaded(int thread_count)
@@ -326,7 +326,7 @@ double CpuBenchmarkWorker::runMultiThreaded(int thread_count)
     std::vector<std::future<void>> futures;
     futures.reserve(static_cast<size_t>(thread_count));
 
-    for (int t = 0; t < thread_count; ++t) {
+    for (int thread_index = 0; thread_index < thread_count; ++thread_index) {
         futures.push_back(std::async(std::launch::async, [this]() {
             // Smaller workloads per thread to keep total duration reasonable
             (void)runPrimeSieve(2'000'000);
@@ -334,14 +334,14 @@ double CpuBenchmarkWorker::runMultiThreaded(int thread_count)
         }));
     }
 
-    for (auto& f : futures) {
-        f.get();
+    for (auto& future : futures) {
+        future.get();
     }
 
-    const double elapsed = timer.nsecsElapsed() / 1'000'000.0;
+    const double elapsed_ms = timer.nsecsElapsed() / 1'000'000.0;
     logInfo("Multi-threaded benchmark ({} threads) completed in {:.1f} ms",
-            thread_count, elapsed);
-    return elapsed;
+            thread_count, elapsed_ms);
+    return elapsed_ms;
 }
 
 void CpuBenchmarkWorker::calculateScores()

@@ -146,7 +146,7 @@ void StressTestWorker::launchStressThreads(std::vector<std::future<void>>& futur
                                 ? m_config.cpu_threads
                                 : static_cast<int>(std::thread::hardware_concurrency());
 
-        for (int t = 0; t < threads; ++t) {
+        for (int thread_index = 0; thread_index < threads; ++thread_index) {
             futures.push_back(std::async(std::launch::async, [this]() {
                 runCpuStress();
             }));

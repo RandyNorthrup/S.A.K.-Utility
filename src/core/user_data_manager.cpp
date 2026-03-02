@@ -118,8 +118,8 @@ UserDataManager::BackupEntry UserDataManager::buildBackupResult(const QString& a
     entry.source_paths = source_paths;
     entry.backup_path = archive_path;
     entry.backup_date = QDateTime::currentDateTime();
-    entry.total_size = total_size;
-    entry.compressed_size = config.compress ? QFileInfo(archive_path).size() : total_size;
+    entry.total_size_bytes = total_size;
+    entry.compressed_size_bytes = config.compress ? QFileInfo(archive_path).size() : total_size;
     entry.encrypted = false;
     entry.excluded_patterns = config.exclude_patterns;
     
@@ -199,7 +199,7 @@ bool UserDataManager::restoreAppData(const QString& backup_path,
     
     // Extract archive
     if (backup_path.endsWith(".zip")) {
-        Q_EMIT progressUpdate(0, entry.compressed_size, "Extracting archive...");
+        Q_EMIT progressUpdate(0, entry.compressed_size_bytes, "Extracting archive...");
         if (!extractArchive(backup_path, restore_dir, config)) {
             Q_EMIT operationError(entry.app_name, "Failed to extract archive");
             return false;
@@ -725,8 +725,8 @@ bool UserDataManager::writeMetadata(const BackupEntry& entry, const QString& met
     
     json["backup_path"] = entry.backup_path;
     json["backup_date"] = entry.backup_date.toString(Qt::ISODate);
-    json["total_size"] = entry.total_size;
-    json["compressed_size"] = entry.compressed_size;
+    json["total_size"] = entry.total_size_bytes;
+    json["compressed_size"] = entry.compressed_size_bytes;
     json["checksum"] = entry.checksum;
     json["encrypted"] = entry.encrypted;
     
@@ -773,8 +773,8 @@ std::optional<UserDataManager::BackupEntry> UserDataManager::readMetadata(const 
     
     entry.backup_path = json["backup_path"].toString();
     entry.backup_date = QDateTime::fromString(json["backup_date"].toString(), Qt::ISODate);
-    entry.total_size = json["total_size"].toInteger();
-    entry.compressed_size = json["compressed_size"].toInteger();
+    entry.total_size_bytes = json["total_size"].toInteger();
+    entry.compressed_size_bytes = json["compressed_size"].toInteger();
     entry.checksum = json["checksum"].toString();
     entry.encrypted = json["encrypted"].toBool();
     

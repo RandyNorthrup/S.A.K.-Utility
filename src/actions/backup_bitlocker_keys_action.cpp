@@ -653,11 +653,11 @@ void BackupBitlockerKeysAction::writeRecoveryDocumentHeader(QTextStream& out) co
 void BackupBitlockerKeysAction::writeRecoveryDocumentVolumes(QTextStream& out) const
 {
     // Per-volume sections
-    for (int v = 0; v < m_volumes.size(); ++v) {
-        const auto& vol = m_volumes[v];
+    for (int volume_index = 0; volume_index < m_volumes.size(); ++volume_index) {
+        const auto& vol = m_volumes[volume_index];
 
         out << "-------------------------------------------------------------------------------\n";
-        out << "  VOLUME " << (v + 1) << ": " << vol.drive_letter;
+        out << "  VOLUME " << (volume_index + 1) << ": " << vol.drive_letter;
         if (!vol.volume_label.isEmpty()) {
             out << " (" << vol.volume_label << ")";
         }

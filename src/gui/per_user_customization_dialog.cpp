@@ -514,8 +514,8 @@ void PerUserCustomizationDialog::addDirectoryContents(const QDir& dir, QTreeWidg
     QFileInfoList entries;
     try {
         entries = dir.entryInfoList(QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Readable, QDir::Name | QDir::DirsFirst);
-    } catch (...) {
-        sak::logWarning("Failed to list directory contents: {}", dir.absolutePath().toStdString());
+    } catch (const std::exception& e) {
+        sak::logWarning("Failed to list directory contents: {} ({})", dir.absolutePath().toStdString(), e.what());
         return;
     }
     
@@ -555,8 +555,8 @@ void PerUserCustomizationDialog::calculateDirectorySize(const QDir& dir, qint64&
     QFileInfoList entries;
     try {
         entries = dir.entryInfoList(QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Readable);
-    } catch (...) {
-        sak::logWarning("Failed to enumerate directory for size calculation: {}", dir.absolutePath().toStdString());
+    } catch (const std::exception& e) {
+        sak::logWarning("Failed to enumerate directory for size calculation: {} ({})", dir.absolutePath().toStdString(), e.what());
         return;
     }
     

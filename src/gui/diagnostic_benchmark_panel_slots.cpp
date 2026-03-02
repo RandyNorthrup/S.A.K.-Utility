@@ -178,14 +178,14 @@ void DiagnosticBenchmarkPanel::onSmartAnalysisComplete(
     QStringList warnings_list;
 
     for (int row = 0; row < reports.size(); ++row) {
-        const auto& r = reports[row];
+        const auto& report = reports[row];
 
-        m_smart_table->setItem(row, 0, new QTableWidgetItem(r.model));
-        m_smart_table->setItem(row, 1, new QTableWidgetItem(r.interface_type));
+        m_smart_table->setItem(row, 0, new QTableWidgetItem(report.model));
+        m_smart_table->setItem(row, 1, new QTableWidgetItem(report.interface_type));
 
         // Health with icon
         auto* health_item = new QTableWidgetItem();
-        switch (r.overall_health) {
+        switch (report.overall_health) {
             case SmartHealthStatus::Healthy:
                 health_item->setText("PASS");
                 health_item->setForeground(QColor(sak::ui::kStatusColorSuccess));
@@ -205,21 +205,21 @@ void DiagnosticBenchmarkPanel::onSmartAnalysisComplete(
         m_smart_table->setItem(row, 2, health_item);
 
         m_smart_table->setItem(row, 3,
-            new QTableWidgetItem(QString("%1°C").arg(r.temperature_celsius, 0, 'f', 0)));
+            new QTableWidgetItem(QString("%1°C").arg(report.temperature_celsius, 0, 'f', 0)));
 
         m_smart_table->setItem(row, 4,
             new QTableWidgetItem(
-                QString::number(r.power_on_hours)));
+                QString::number(report.power_on_hours)));
 
         // Wear level: NVMe percentage or "—" for SATA
-        const QString wear = r.nvme_health.has_value()
-            ? QString("%1%").arg(r.nvme_health->percentage_used)
+        const QString wear = report.nvme_health.has_value()
+            ? QString("%1%").arg(report.nvme_health->percentage_used)
             : "—";
         m_smart_table->setItem(row, 5, new QTableWidgetItem(wear));
 
         // Collect warnings
-        for (const auto& w : r.warnings) {
-            warnings_list.append(w);
+        for (const auto& warning : report.warnings) {
+            warnings_list.append(warning);
         }
     }
 

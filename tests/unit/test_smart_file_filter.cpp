@@ -138,7 +138,7 @@ void SmartFileFilterTests::sizeLimit_enabled_exceedsLimit()
 {
     sak::SmartFilter rules;
     rules.enable_file_size_limit = true;
-    rules.max_single_file_size = 100;
+    rules.max_single_file_size_bytes = 100;
     rules.initializeDefaults();
 
     sak::SmartFileFilter filter(rules);
@@ -149,7 +149,7 @@ void SmartFileFilterTests::sizeLimit_enabled_withinLimit()
 {
     sak::SmartFilter rules;
     rules.enable_file_size_limit = true;
-    rules.max_single_file_size = 1000;
+    rules.max_single_file_size_bytes = 1000;
     rules.initializeDefaults();
 
     sak::SmartFileFilter filter(rules);
@@ -160,7 +160,7 @@ void SmartFileFilterTests::sizeLimit_disabled_noFiltering()
 {
     sak::SmartFilter rules;
     rules.enable_file_size_limit = false;
-    rules.max_single_file_size = 10;
+    rules.max_single_file_size_bytes = 10;
     rules.initializeDefaults();
 
     sak::SmartFileFilter filter(rules);
@@ -280,7 +280,7 @@ void SmartFileFilterTests::shouldExcludeFile_tooLarge()
 {
     sak::SmartFilter rules;
     rules.enable_file_size_limit = true;
-    rules.max_single_file_size = 1; // 1 byte limit
+    rules.max_single_file_size_bytes = 1; // 1 byte limit
     rules.initializeDefaults();
 
     sak::SmartFileFilter filter(rules);

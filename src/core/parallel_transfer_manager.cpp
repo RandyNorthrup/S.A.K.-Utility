@@ -115,8 +115,8 @@ void ParallelTransferManager::retryJob(const QString& job_id) {
     m_failedJobs.remove(job_id);
     m_activeJobs.remove(job_id);
 
-    const int delay = qMin(m_retryBaseMs * (1 << qMin(job.retry_count - 1, 6)), m_retryMaxMs);
-    m_retrySchedule.insert(job_id, QDateTime::currentDateTimeUtc().addMSecs(delay));
+    const int delay_ms = qMin(m_retryBaseMs * (1 << qMin(job.retry_count - 1, 6)), m_retryMaxMs);
+    m_retrySchedule.insert(job_id, QDateTime::currentDateTimeUtc().addMSecs(delay_ms));
 
     if (!m_queue.contains(job_id)) {
         m_queue.append(job_id);
@@ -388,8 +388,8 @@ void ParallelTransferManager::updateRetryTimer() {
     }
 
     const auto now = QDateTime::currentDateTimeUtc();
-    const int delay = qMax(0, static_cast<int>(now.msecsTo(next)));
-    m_retryTimer->setInterval(qMax(100, delay));
+    const int delay_ms = qMax(0, static_cast<int>(now.msecsTo(next)));
+    m_retryTimer->setInterval(qMax(100, delay_ms));
     if (!m_retryTimer->isActive()) {
         m_retryTimer->start();
     }

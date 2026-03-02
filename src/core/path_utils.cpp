@@ -56,9 +56,6 @@ auto path_utils::normalize(
     } catch (const std::exception& e) {
         logError("Unexpected exception in normalize(): {}", e.what());
         return std::unexpected(error_code::unknown_error);
-    } catch (...) {
-        logError("Non-standard exception in normalize()");
-        return std::unexpected(error_code::unknown_error);
     }
 }
 
@@ -79,9 +76,6 @@ auto path_utils::makeRelative(
         return std::unexpected(error_code::invalid_path);
     } catch (const std::exception& e) {
         logError("Unexpected exception in makeRelative(): {}", e.what());
-        return std::unexpected(error_code::unknown_error);
-    } catch (...) {
-        logError("Non-standard exception in makeRelative()");
         return std::unexpected(error_code::unknown_error);
     }
 }
@@ -121,9 +115,6 @@ auto path_utils::isSafePath(
     } catch (const std::exception& e) {
         logError("Exception in isSafePath(): {}", e.what());
         return std::unexpected(error_code::unknown_error);
-    } catch (...) {
-        logError("Non-standard exception in isSafePath()");
-        return std::unexpected(error_code::unknown_error);
     }
 }
 
@@ -141,6 +132,7 @@ bool path_utils::matchesPattern(
         logError("Exception in matchesPattern(): {}", e.what());
         return false;
     } catch (...) {
+        // Intentional: final safety net in noexcept function
         logError("Non-standard exception in matchesPattern()");
         return false;
     }
@@ -173,9 +165,6 @@ auto path_utils::getDirectorySizeAndCount(
     } catch (const std::exception& e) {
         logError("Unexpected exception in getDirectorySizeAndCount(): {}", e.what());
         return std::unexpected(error_code::unknown_error);
-    } catch (...) {
-        logError("Non-standard exception in getDirectorySizeAndCount()");
-        return std::unexpected(error_code::unknown_error);
     }
     
     return info;
@@ -193,9 +182,6 @@ auto path_utils::getAvailableSpace(
         return std::unexpected(error_code::read_error);
     } catch (const std::exception& e) {
         logError("Unexpected exception in getAvailableSpace(): {}", e.what());
-        return std::unexpected(error_code::unknown_error);
-    } catch (...) {
-        logError("Non-standard exception in getAvailableSpace()");
         return std::unexpected(error_code::unknown_error);
     }
 }

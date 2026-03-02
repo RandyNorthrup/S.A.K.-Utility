@@ -296,9 +296,9 @@ QList<LinuxDistroCatalog::DistroInfo> LinuxDistroCatalog::distrosByCategory(
     Category category) const
 {
     QList<DistroInfo> result;
-    for (const auto& d : m_distros) {
-        if (d.category == category) {
-            result.append(d);
+    for (const auto& distro : m_distros) {
+        if (distro.category == category) {
+            result.append(distro);
         }
     }
     return result;

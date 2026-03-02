@@ -124,6 +124,7 @@ void logger::logInternal(
         // Logger itself cannot recurse — fall back to stderr
         std::fprintf(stderr, "SAK Logger: logInternal failed: %s\n", e.what());
     } catch (...) {
+        // Intentional: final safety net in noexcept function
         std::fprintf(stderr, "SAK Logger: logInternal failed with unknown exception\n");
     }
 }
@@ -192,6 +193,7 @@ auto logger::ensureLogDirectory(
     } catch (const std::filesystem::filesystem_error&) {
         return std::unexpected(error_code::permission_denied);
     } catch (...) {
+        // Intentional: final safety net in noexcept function
         std::fprintf(stderr, "SAK Logger: ensureLogDirectory failed with unknown exception\n");
         return std::unexpected(error_code::unknown_error);
     }
@@ -202,6 +204,7 @@ std::string logger::getTimestamp() const noexcept {
         auto now = std::chrono::system_clock::now();
         return std::format("{:%Y-%m-%d %H:%M:%S}", now);
     } catch (...) {
+        // Intentional: final safety net in noexcept function
         std::fprintf(stderr, "SAK Logger: getTimestamp failed\n");
         return "TIMESTAMP_ERROR";
     }
@@ -246,6 +249,7 @@ void logger::rotateLog() noexcept {
         // Logger cannot use logError (infinite recursion), fall back to stderr
         std::fprintf(stderr, "SAK Logger: Log rotation failed: %s\n", e.what());
     } catch (...) {
+        // Intentional: final safety net in noexcept function
         std::fprintf(stderr, "SAK Logger: Log rotation failed with unknown exception\n");
     }
 }

@@ -71,8 +71,8 @@ QJsonObject SmartFilter::toJson() const {
     QJsonObject obj;
     obj["enable_file_size_limit"] = enable_file_size_limit;
     obj["enable_folder_size_limit"] = enable_folder_size_limit;
-    obj["max_single_file_size"] = static_cast<double>(max_single_file_size);
-    obj["max_folder_size"] = static_cast<double>(max_folder_size);
+    obj["max_single_file_size"] = static_cast<double>(max_single_file_size_bytes);
+    obj["max_folder_size"] = static_cast<double>(max_folder_size_bytes);
     obj["exclude_patterns"] = QJsonArray::fromStringList(exclude_patterns);
     obj["exclude_folders"] = QJsonArray::fromStringList(exclude_folders);
     obj["dangerous_files"] = QJsonArray::fromStringList(dangerous_files);
@@ -83,8 +83,8 @@ SmartFilter SmartFilter::fromJson(const QJsonObject& json) {
     SmartFilter filter;
     filter.enable_file_size_limit = json.value("enable_file_size_limit").toBool(false);
     filter.enable_folder_size_limit = json.value("enable_folder_size_limit").toBool(false);
-    filter.max_single_file_size = qint64FromJson(json, "max_single_file_size");
-    filter.max_folder_size = qint64FromJson(json, "max_folder_size");
+    filter.max_single_file_size_bytes = qint64FromJson(json, "max_single_file_size");
+    filter.max_folder_size_bytes = qint64FromJson(json, "max_folder_size");
     
     auto arrayToStringList = [](const QJsonArray& arr) {
         QStringList list;

@@ -124,9 +124,6 @@ auto file_hasher::calculateMd5(
     } catch (const std::exception& e) {
         logError("Exception calculating MD5: {}", e.what());
         return std::unexpected(error_code::hash_calculation_failed);
-    } catch (...) {
-        logError("Unknown exception calculating MD5");
-        return std::unexpected(error_code::unknown_error);
     }
 }
 
@@ -163,9 +160,6 @@ auto file_hasher::calculateSha256(
     } catch (const std::exception& e) {
         logError("Exception calculating SHA-256: {}", e.what());
         return std::unexpected(error_code::hash_calculation_failed);
-    } catch (...) {
-        logError("Unknown exception calculating SHA-256");
-        return std::unexpected(error_code::unknown_error);
     }
 }
 
@@ -179,8 +173,8 @@ auto file_hasher::calculateMd5(
         QByteArray result = hash.result();
         return result.toHex().toStdString();
         
-    } catch (...) {
-        logError("Unknown exception calculating in-memory MD5 hash");
+    } catch (const std::exception& e) {
+        logError("Exception calculating in-memory MD5 hash: {}", e.what());
         return std::unexpected(error_code::hash_calculation_failed);
     }
 }
@@ -195,8 +189,8 @@ auto file_hasher::calculateSha256(
         QByteArray result = hash.result();
         return result.toHex().toStdString();
         
-    } catch (...) {
-        logError("Unknown exception calculating in-memory SHA-256 hash");
+    } catch (const std::exception& e) {
+        logError("Exception calculating in-memory SHA-256 hash: {}", e.what());
         return std::unexpected(error_code::hash_calculation_failed);
     }
 }

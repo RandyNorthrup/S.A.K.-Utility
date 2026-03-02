@@ -119,8 +119,8 @@ auto FlashWorker::execute() -> std::expected<void, sak::error_code> {
     // Cleanup
     cleanupFlashResources();
     
-    qint64 elapsed = timer.elapsed();
-    sak::logInfo(QString("Flash completed in %1 seconds").arg(elapsed / 1000.0).toStdString());
+    qint64 elapsed_ms = timer.elapsed();
+    sak::logInfo(QString("Flash completed in %1 seconds").arg(elapsed_ms / 1000.0).toStdString());
     
     return {};
 }
@@ -379,9 +379,9 @@ sak::ValidationResult FlashWorker::verifyFull() {
     }
     
     // Calculate speed
-    qint64 elapsed = timer.elapsed();
-    if (elapsed > 0) {
-        result.verificationSpeed = (m_totalBytes / sak::kBytesPerMBf) / (elapsed / 1000.0);
+    qint64 elapsed_ms = timer.elapsed();
+    if (elapsed_ms > 0) {
+        result.verificationSpeed = (m_totalBytes / sak::kBytesPerMBf) / (elapsed_ms / 1000.0);
     }
     
     return result;
@@ -433,9 +433,9 @@ sak::ValidationResult FlashWorker::verifySample() {
         sourceBuffer, targetBuffer);
     
     // Calculate speed
-    qint64 elapsed = timer.elapsed();
-    if (elapsed > 0) {
-        result.verificationSpeed = (sampleSize / sak::kBytesPerMBf) / (elapsed / 1000.0);
+    qint64 elapsed_ms = timer.elapsed();
+    if (elapsed_ms > 0) {
+        result.verificationSpeed = (sampleSize / sak::kBytesPerMBf) / (elapsed_ms / 1000.0);
     }
     
     sak::logInfo(QString("Sample verification complete - %1/%2 blocks verified, %3 mismatches")
@@ -453,11 +453,11 @@ int FlashWorker::verifySampleBlocks(
     
     for (int i = 0; i < numSamples && !stopRequested(); ++i) {
         qint64 blockIndex = QRandomGenerator::global()->bounded(totalBlocks);
-        qint64 offset = blockIndex * blockSize;
+        qint64 offset_bytes = blockIndex * blockSize;
         
         // Read from source
-        if (!m_imageSource->seek(offset)) {
-            result.errors.append(QString("Failed to seek source to offset %1").arg(offset));
+        if (!m_imageSource->seek(offset_bytes)) {
+            result.errors.append(QString("Failed to seek source to offset %1").arg(offset_bytes));
             continue;
         }
         
@@ -472,26 +472,26 @@ int FlashWorker::verifySampleBlocks(
         
         // Read from target device
         LARGE_INTEGER li;
-        li.QuadPart = offset;
+        li.QuadPart = offset_bytes;
         if (!SetFilePointerEx(m_deviceHandle, li, nullptr, FILE_BEGIN)) {
-            result.errors.append(QString("Failed to seek target to offset %1").arg(offset));
+            result.errors.append(QString("Failed to seek target to offset %1").arg(offset_bytes));
             continue;
         }
         
         DWORD bytesReadFromDevice = 0;
         if (!ReadFile(m_deviceHandle, targetBuffer.data(), 
                      static_cast<DWORD>(bytesRead), &bytesReadFromDevice, nullptr)) {
-            result.errors.append(QString("Failed to read from device at offset %1").arg(offset));
+            result.errors.append(QString("Failed to read from device at offset %1").arg(offset_bytes));
             continue;
         }
         
         // Compare blocks
         if (memcmp(sourceBuffer.data(), targetBuffer.data(), bytesRead) != 0) {
             result.passed = false;
-            result.mismatchOffset = offset;
+            result.mismatchOffset = offset_bytes;
             result.corruptedBlocks++;
-            result.errors.append(QString("Data mismatch at offset %1").arg(offset));
-            sak::logError(QString("Data mismatch at offset %1").arg(offset).toStdString());
+            result.errors.append(QString("Data mismatch at offset %1").arg(offset_bytes));
+            sak::logError(QString("Data mismatch at offset %1").arg(offset_bytes).toStdString());
         }
         
         samplesVerified++;

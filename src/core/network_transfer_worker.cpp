@@ -853,8 +853,8 @@ bool NetworkTransferWorker::processDataChunk(QTcpSocket* /*socket*/,
         return false;
     }
 
-    const qint64 offset = static_cast<qint64>(header.chunk_id) * state.chunk_size;
-    if (!state.current_file->seek(offset)) {
+    const qint64 offset_bytes = static_cast<qint64>(header.chunk_id) * state.chunk_size;
+    if (!state.current_file->seek(offset_bytes)) {
         Q_EMIT errorOccurred(tr("Failed to seek in destination file"));
         return false;
     }
