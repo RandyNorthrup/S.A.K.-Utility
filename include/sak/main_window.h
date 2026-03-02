@@ -31,6 +31,7 @@ class DetachableLogWindow;
 class LogToggleSwitch;
 class WifiManagerPanel;
 class AdvancedSearchPanel;
+class AdvancedUninstallPanel;
 
 /**
  * @brief Main application window for S.A.K. Utility
@@ -163,6 +164,7 @@ private:
     std::unique_ptr<DiagnosticBenchmarkPanel> m_diagnostic_benchmark_panel;
     std::unique_ptr<WifiManagerPanel> m_wifi_manager_panel;
     std::unique_ptr<AdvancedSearchPanel> m_advanced_search_panel;
+    std::unique_ptr<AdvancedUninstallPanel> m_advanced_uninstall_panel;
 
     // Status bar components
     QLabel* m_status_label{nullptr};

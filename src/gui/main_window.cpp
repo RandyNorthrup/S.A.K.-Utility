@@ -16,6 +16,7 @@
 #include "sak/diagnostic_benchmark_panel.h"
 #include "sak/wifi_manager_panel.h"
 #include "sak/advanced_search_panel.h"
+#include "sak/advanced_uninstall_panel.h"
 #include "sak/detachable_log_window.h"
 #include "sak/config_manager.h"
 #include "sak/style_constants.h"
@@ -181,6 +182,12 @@ void MainWindow::createToolPanels()
     m_tab_widget->addTab(m_advanced_search_panel.get(), "Advanced Search");
     m_tab_widget->setTabToolTip(m_tab_widget->count() - 1,
         "Search file contents, metadata, archives, and binary data");
+
+    // Create Advanced Uninstall panel
+    m_advanced_uninstall_panel = std::make_unique<AdvancedUninstallPanel>(this);
+    m_tab_widget->addTab(m_advanced_uninstall_panel.get(), "Advanced Uninstall");
+    m_tab_widget->setTabToolTip(m_tab_widget->count() - 1,
+        "Deep application removal with leftover scanning and batch uninstall");
 }
 
 void MainWindow::loadAboutPanelIcon(QLabel* iconLabel)
@@ -499,6 +506,12 @@ void MainWindow::connectPanelSignals()
                 timeout_ms > 0 ? timeout_ms : 5000); });
     connect(m_advanced_search_panel.get(), &AdvancedSearchPanel::progressUpdate,
             this, &MainWindow::updateProgress);
+
+    connect(m_advanced_uninstall_panel.get(), &AdvancedUninstallPanel::statusMessage,
+            this, [this](const QString& msg, int timeout_ms) { updateStatus(msg,
+                timeout_ms > 0 ? timeout_ms : 5000); });
+    connect(m_advanced_uninstall_panel.get(), &AdvancedUninstallPanel::progressUpdate,
+            this, &MainWindow::updateProgress);
 }
 
 void MainWindow::connectPanelLogs()
@@ -531,6 +544,7 @@ void MainWindow::connectPanelLogs()
     connectLog(m_image_flasher_panel.get());
     connectLog(m_diagnostic_benchmark_panel.get());
     connectLog(m_advanced_search_panel.get());
+    connectLog(m_advanced_uninstall_panel.get());
 
     if (m_network_transfer_panel) {
         connectLog(m_network_transfer_panel.get());

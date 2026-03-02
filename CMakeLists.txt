@@ -380,6 +380,22 @@ set(CORE_SOURCES
     include/sak/advanced_search_worker.h
     include/sak/advanced_search_controller.h
     include/sak/regex_pattern_library.h
+    # Advanced Uninstall core
+    src/core/program_enumerator.cpp
+    src/core/uninstall_worker.cpp
+    src/core/leftover_scanner.cpp
+    src/core/cleanup_worker.cpp
+    src/core/restore_point_manager.cpp
+    src/core/registry_snapshot_engine.cpp
+    src/core/advanced_uninstall_controller.cpp
+    include/sak/advanced_uninstall_types.h
+    include/sak/program_enumerator.h
+    include/sak/uninstall_worker.h
+    include/sak/leftover_scanner.h
+    include/sak/cleanup_worker.h
+    include/sak/restore_point_manager.h
+    include/sak/registry_snapshot_engine.h
+    include/sak/advanced_uninstall_controller.h
 )
 
 # Threading infrastructure
@@ -460,6 +476,10 @@ set(GUI_SOURCES
     src/third_party/qrcodegen/qrcodegen.hpp
     src/gui/advanced_search_panel.cpp
     include/sak/advanced_search_panel.h
+    # Advanced Uninstall panel
+    src/gui/advanced_uninstall_panel.cpp
+    src/gui/advanced_uninstall_panel_dialogs.cpp
+    include/sak/advanced_uninstall_panel.h
 )
 
 # Quick Actions

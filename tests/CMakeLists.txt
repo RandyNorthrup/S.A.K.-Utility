@@ -1893,6 +1893,117 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_advanced_search_controller.cpp"
 endif()
 
 # ============================================================================
+# Unit Tests - Advanced Uninstall Panel
+# ============================================================================
+
+# test_advanced_uninstall_types — struct defaults, enums, value semantics
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_advanced_uninstall_types.cpp")
+    add_executable(test_advanced_uninstall_types
+        unit/test_advanced_uninstall_types.cpp
+    )
+    set_target_properties(test_advanced_uninstall_types PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+    )
+    target_link_libraries(test_advanced_uninstall_types PRIVATE
+        Qt6::Core Qt6::Gui Qt6::Test
+    )
+    target_include_directories(test_advanced_uninstall_types PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_advanced_uninstall_types COMMAND test_advanced_uninstall_types
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_advanced_uninstall_types")
+endif()
+
+# test_advanced_uninstall_controller — state machine, queue, settings, input validation
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_advanced_uninstall_controller.cpp")
+    add_executable(test_advanced_uninstall_controller
+        unit/test_advanced_uninstall_controller.cpp
+        ../src/core/advanced_uninstall_controller.cpp
+        ../src/core/program_enumerator.cpp
+        ../src/core/uninstall_worker.cpp
+        ../src/core/leftover_scanner.cpp
+        ../src/core/cleanup_worker.cpp
+        ../src/core/registry_snapshot_engine.cpp
+        ../src/core/restore_point_manager.cpp
+        ../src/core/config_manager.cpp
+        ../src/threading/worker_base.cpp
+        ../src/core/logger.cpp
+        ../include/sak/advanced_uninstall_controller.h
+        ../include/sak/program_enumerator.h
+        ../include/sak/uninstall_worker.h
+        ../include/sak/leftover_scanner.h
+        ../include/sak/cleanup_worker.h
+        ../include/sak/registry_snapshot_engine.h
+        ../include/sak/restore_point_manager.h
+        ../include/sak/config_manager.h
+        ../include/sak/worker_base.h
+    )
+    set_target_properties(test_advanced_uninstall_controller PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+    )
+    target_link_libraries(test_advanced_uninstall_controller PRIVATE
+        Qt6::Core Qt6::Gui Qt6::Test ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_advanced_uninstall_controller PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_advanced_uninstall_controller COMMAND test_advanced_uninstall_controller
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_advanced_uninstall_controller")
+endif()
+
+# test_leftover_scanner — pattern building, risk classification, scan levels, cancellation
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_leftover_scanner.cpp")
+    add_executable(test_leftover_scanner
+        unit/test_leftover_scanner.cpp
+        ../src/core/leftover_scanner.cpp
+        ../src/core/registry_snapshot_engine.cpp
+        ../src/core/logger.cpp
+        ../include/sak/leftover_scanner.h
+        ../include/sak/registry_snapshot_engine.h
+    )
+    set_target_properties(test_leftover_scanner PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+    )
+    target_link_libraries(test_leftover_scanner PRIVATE
+        Qt6::Core Qt6::Gui Qt6::Test ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_leftover_scanner PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_leftover_scanner COMMAND test_leftover_scanner
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_leftover_scanner")
+endif()
+
+# test_registry_snapshot_engine — diff logic, pattern matching, capture smoke test
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_registry_snapshot_engine.cpp")
+    add_executable(test_registry_snapshot_engine
+        unit/test_registry_snapshot_engine.cpp
+        ../src/core/registry_snapshot_engine.cpp
+        ../src/core/logger.cpp
+        ../include/sak/registry_snapshot_engine.h
+    )
+    set_target_properties(test_registry_snapshot_engine PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+    )
+    target_link_libraries(test_registry_snapshot_engine PRIVATE
+        Qt6::Core Qt6::Gui Qt6::Test ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_registry_snapshot_engine PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_registry_snapshot_engine COMMAND test_registry_snapshot_engine
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_registry_snapshot_engine")
+endif()
+
+# ============================================================================
 # Test Targets
 # ============================================================================
 
