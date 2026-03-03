@@ -24,6 +24,12 @@
 
 class QVBoxLayout;
 class QHBoxLayout;
+class QDialog;
+class QCheckBox;
+class QRadioButton;
+class QListWidget;
+class QFormLayout;
+class QDialogButtonBox;
 
 namespace sak {
 
@@ -81,6 +87,7 @@ private Q_SLOTS:
     void onCleanupStarted(int totalItems);
     void onItemCleaned(const QString& path, bool success);
     void onCleanupFinished(int succeeded, int failed, qint64 bytesRecovered);
+    void onRebootPendingItems(QStringList paths);
 
     // Program table
     void onProgramSelectionChanged();
@@ -89,6 +96,7 @@ private Q_SLOTS:
 
     // Leftover table
     void onLeftoverSelectionChanged();
+    void onSelectAll();
     void onSelectAllSafe();
     void onDeselectAll();
     void onDeleteSelectedLeftovers();
@@ -116,6 +124,35 @@ private:
     void showForcedUninstallDialog(const ProgramInfo& program);
     void showBatchUninstallDialog();
     void showProgramProperties(const ProgramInfo& program);
+    void showSettingsDialog();
+
+    // Dialog helper builders (split for TigerStyle function-length)
+    void populateBatchUninstallQueueList(const QVector<UninstallQueueItem>& queue,
+                                         QListWidget* queueList,
+                                         qint64* totalBytesOut) const;
+    void wireBatchUninstallQueueActions(QListWidget* queueList,
+                                        QLabel* headerLabel,
+                                        QLabel* totalLabel,
+                                        QPushButton* removeBtn,
+                                        QPushButton* clearBtn,
+                                        QDialog* dialog);
+
+    QCheckBox* addBatchUninstallOptions(QDialog* dialog, QVBoxLayout* layout) const;
+    QDialogButtonBox* addBatchUninstallButtons(QDialog* dialog, QVBoxLayout* layout) const;
+
+    void populateProgramPropertiesForm(const ProgramInfo& program,
+                                       QWidget* scrollWidget,
+                                       QFormLayout* formLayout) const;
+
+    QCheckBox* addSettingsSelectionGroup(QDialog* dialog, QVBoxLayout* layout) const;
+    QCheckBox* addSettingsDeletionGroup(QDialog* dialog, QVBoxLayout* layout) const;
+    QCheckBox* addSettingsRestorePointGroup(QDialog* dialog, QVBoxLayout* layout) const;
+    void addSettingsScanLevelGroup(QDialog* dialog,
+                                   QVBoxLayout* layout,
+                                   QRadioButton*& safeRadio,
+                                   QRadioButton*& moderateRadio,
+                                   QRadioButton*& advancedRadio) const;
+    QCheckBox* addSettingsDisplayGroup(QDialog* dialog, QVBoxLayout* layout) const;
 
     // ── Table Population ──
     void populateProgramTable(const QVector<ProgramInfo>& programs);
@@ -145,6 +182,7 @@ private:
     QPushButton* m_uninstall_button{nullptr};
     QPushButton* m_forced_uninstall_button{nullptr};
     QPushButton* m_batch_button{nullptr};
+    QPushButton* m_settings_button{nullptr};
 
     // ── Program Table ──
     QTableWidget* m_program_table{nullptr};
@@ -156,6 +194,7 @@ private:
     QTableWidget* m_leftover_table{nullptr};
     QLabel* m_leftover_header_label{nullptr};
     QLabel* m_leftover_count_label{nullptr};
+    QPushButton* m_select_all_button{nullptr};
     QPushButton* m_select_safe_button{nullptr};
     QPushButton* m_deselect_all_button{nullptr};
     QPushButton* m_delete_selected_button{nullptr};

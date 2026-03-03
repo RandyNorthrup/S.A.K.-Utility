@@ -9,7 +9,7 @@
 [![Qt 6.5+](https://img.shields.io/badge/Qt-6.5%2B-41cd52.svg)](https://www.qt.io/)
 [![Windows 10/11](https://img.shields.io/badge/Windows-10%20%7C%2011-0078d4.svg)](https://www.microsoft.com/windows)
 [![Build](https://github.com/RandyNorthrup/S.A.K.-Utility/actions/workflows/build-release.yml/badge.svg)](https://github.com/RandyNorthrup/S.A.K.-Utility/actions)
-[![Version](https://img.shields.io/badge/Version-0.7.0-orange.svg)](VERSION)
+[![Version](https://img.shields.io/badge/Version-0.8.0-orange.svg)](VERSION)
 [![TigerStyle](https://img.shields.io/badge/code%20style-TigerStyle-f80.svg)](docs/TIGERSTYLE_COMPLIANCE_PLAN.md)
 
 Migration · Maintenance · Recovery · Imaging · Deployment — one portable EXE.
@@ -18,13 +18,18 @@ Migration · Maintenance · Recovery · Imaging · Deployment — one portable E
 
 ---
 
-## What's New in v0.7.0
+## What's New in v0.8.0
+
+- **Advanced Uninstall panel** — Deep application removal with leftover scanning and cleanup. Enumerates Win32, UWP, and provisioned apps. Three uninstall modes: standard, forced (registry-only), and batch queue. Post-uninstall leftover scanner detects orphaned files, folders, registry keys, services, scheduled tasks, firewall rules, startup entries, and shell extensions across three depth levels (Safe / Moderate / Advanced). Risk-level color coding per item. Settings modal with recycle bin deletion, auto restore point, default scan level, and select-all preferences. Locked files are automatically scheduled for removal on reboot via `MoveFileExW`. Registry snapshot engine captures before/after diffs.
+- **Network Diagnostics panel** — 10-tool network diagnostic suite: Ping, Traceroute, MTR, DNS Lookup, Port Scanner, Bandwidth (iPerf3 + HTTP), WiFi Analyzer, Active Connections, Firewall Auditor, and Network Share Browser. Adapter inspector with full IPv4/IPv6 config, DHCP, driver details, and traffic stats. Ethernet settings backup/restore to JSON for cross-machine portability. HTML and JSON report generation with technician metadata.
+- **76 automated tests** — Full coverage including Advanced Uninstall (types, controller, leftover scanner, registry snapshot engine) and Network Diagnostics (types, utils, report generation).
+
+### v0.7.0
 
 - **Advanced Search panel** — Enterprise-grade grep-style file content search with a three-panel interface (file explorer, results tree, preview pane). Supports text, regex, image metadata (EXIF/GPS), file metadata (PDF/Office/audio/video), archive content (ZIP/EPUB with deflate decompression), and binary/hex search modes. Includes a regex pattern library with 8 built-in patterns and custom user-defined patterns with JSON persistence.
 - **Modernized About panel** — Rebuilt as a multi-tab view (About, License, Credits, System) with styled HTML, full dependency attribution (12 third-party components), and live runtime info. Removed dead `AboutDialog` class.
 - **Unified UI polish** — Glass-effect 3-stop rgba button gradients, transparent widget backgrounds eliminating patchy gray/white artifacts, harmonized margins and border-radii via style tokens, centered quick-action labels, consistent UUP progress bar height.
-- **TigerStyle Phase 9 compliance** — Lint errors reduced from 52 → 0 across the codebase; 0 compiler warnings in Release builds.
-- **69 automated tests** — Comprehensive test suite covering all major subsystems including Advanced Search (types, regex library, worker, controller).
+- **TigerStyle alignment (ongoing)** — TigerStyle lint tooling and a compliance plan are in place (`scripts/lint_tigerstyle.py`, `docs/TIGERSTYLE_COMPLIANCE_PLAN.md`). Current lint status is tracked and addressed as part of the enterprise hardening work.
 
 ### v0.6.3
 
@@ -60,6 +65,8 @@ Migration · Maintenance · Recovery · Imaging · Deployment — one portable E
 | **Network Transfer** | Peer-to-peer LAN migration with AES-256-GCM, resume, and multi-PC orchestrator mode. |
 | **Image Flasher** | Flash ISOs/IMGs to USB. Download Windows and Linux ISOs directly. |
 | **Advanced Search** | Grep-style file content search with regex, metadata, archive, and binary/hex modes across directory trees. |
+| **Advanced Uninstall** | Deep application removal with leftover scanning, recycle bin support, locked-file reboot scheduling, and registry snapshot diffs. |
+| **Network Diagnostics** | 10-tool diagnostic suite (ping, traceroute, MTR, DNS, port scan, bandwidth, WiFi, connections, firewall, shares) with ethernet backup/restore and report export. |
 | **BitLocker Key Backup** | Export recovery keys from all encrypted volumes with restricted-permission files. |
 | **Modern UI** | Windows 11-style rounded corners, custom splash screen, and responsive layouts. |
 
@@ -80,6 +87,8 @@ Migration · Maintenance · Recovery · Imaging · Deployment — one portable E
   - [Duplicate Finder](#duplicate-finder)
   - [WiFi Manager](#wifi-manager)
   - [Advanced Search](#advanced-search)
+  - [Advanced Uninstall](#advanced-uninstall)
+  - [Network Diagnostics](#network-diagnostics)
   - [Settings](#settings)
 - [Security](#security)
 - [Building from Source](#building-from-source)
@@ -354,6 +363,87 @@ Enterprise-grade grep-style file content search with a three-panel interface: fi
 
 ---
 
+### Advanced Uninstall
+
+Deep application removal with leftover scanning, cleanup, and system protection.
+
+**Program Enumeration**
+- Win32 apps (HKLM, HKLM\WOW6432Node, HKCU Uninstall registry keys)
+- UWP / Microsoft Store apps
+- Windows provisioned apps
+- View filters: All, Win32 Only, UWP Only, Bloatware Only, Orphaned Only
+
+**Uninstall Modes**
+
+| Mode | Description |
+|---|---|
+| **Standard** | Runs the native uninstaller with optional auto-cleanup of detected leftovers |
+| **Forced** | Bypasses the native uninstaller — removes registry entries and leftover artifacts directly |
+| **Batch** | Queue multiple programs and process sequentially with full logging |
+
+**Leftover Scanner**
+- Three depth levels: **Safe** (common paths/registry), **Moderate** (broader pattern matching), **Advanced** (deep scan with registry diff)
+- Detects: files, folders, registry keys/values, services, scheduled tasks, firewall rules, startup entries, shell extensions
+- Risk-level color coding: Safe (green), Review (yellow), Risky (red)
+- Registry Snapshot Engine — captures pre/post uninstall diffs to detect leftover changes
+
+**Cleanup & Deletion**
+- Select All, Select Safe Only, Deselect All, or manual per-item selection
+- Recycle Bin support — files routed via `SHFileOperationW` with `FOF_ALLOWUNDO` (registry and service entries are always permanent)
+- Locked file handling — files that cannot be removed are automatically scheduled for deletion on reboot via `MoveFileExW` with `MOVEFILE_DELAY_UNTIL_REBOOT`
+- User notification of reboot-pending items
+
+**Settings Modal**
+
+| Group | Options |
+|---|---|
+| **Leftover Selection** | Select all leftovers by default vs. safe only |
+| **Deletion Behavior** | Send deleted files to Recycle Bin (toggle) |
+| **System Protection** | Auto-create restore point before uninstall |
+| **Default Scan Level** | Safe / Moderate / Advanced |
+| **Display** | Show system components in the program list |
+
+**Context Menu** — Uninstall, Forced Uninstall, Add to Queue, Open Install Location, Copy Program Name, Copy Uninstall Command, Show Properties, Remove Registry Entry
+
+---
+
+### Network Diagnostics
+
+10-tool network diagnostic suite with adapter inspector, ethernet backup/restore, and report generation.
+
+**Adapter Inspector**
+- Enumerates all network adapters (Ethernet, WiFi, Virtual)
+- Full configuration display: IPv4/IPv6 addresses, subnet masks, gateways, DHCP status, DNS servers, MAC address, driver info, link speed, traffic statistics
+- Copy adapter configuration to clipboard
+
+**Ethernet Backup & Restore**
+- Capture adapter IP/DNS/gateway settings to a portable JSON file
+- Restore settings to the same or a different adapter on any machine via `netsh` commands
+- Supports DHCP and static configurations, primary and secondary DNS servers
+- Cross-machine portability — back up on one PC, restore on another
+
+**Diagnostic Tools**
+
+| Tool | Capabilities |
+|---|---|
+| **Ping** | Configurable count, timeout, interval, packet size; per-reply stats with min/max/avg/jitter aggregation |
+| **Traceroute** | Max hops, hostname resolution; per-hop RTT table |
+| **MTR** | Continuous ping + traceroute with cycle-by-cycle stats: loss %, avg/best/worst/jitter per hop |
+| **DNS Lookup** | Query by record type, custom DNS server, reverse lookup, multi-server comparison, flush DNS cache |
+| **Port Scanner** | Preset port lists + custom ranges, concurrent scanning, banner grabbing, timeout control |
+| **Bandwidth** | iPerf3 client + server mode; HTTP speed test; bidirectional and multi-stream testing |
+| **WiFi Analyzer** | Scan nearby networks with signal/channel/security; continuous scanning; channel utilization analysis |
+| **Active Connections** | TCP/UDP connection monitor with process info, auto-refresh, process/port filters |
+| **Firewall Auditor** | Enumerate all Windows Firewall rules; detect conflicts and coverage gaps; filter by direction/action |
+| **Network Share Browser** | Discover SMB shares on a host; test access permissions |
+
+**Report Generation**
+- **HTML** — Styled report with all cached diagnostic results and adapter info
+- **JSON** — Machine-readable structured data
+- Technician name, ticket number, and notes metadata fields
+
+---
+
 ### Settings
 
 Global application settings accessible from the **Edit → Settings** menu (`Ctrl+,`):
@@ -453,7 +543,7 @@ Full license texts: [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md)
 cmake --build build --config Release --target RUN_TESTS
 ```
 
-Unit and integration tests covering Advanced Search, network transfer, orchestration, diagnostics, security, encryption, configuration, ISO download, and quick action factory validation.
+76 unit and integration tests covering Advanced Search, Advanced Uninstall (types, controller, leftover scanner, registry snapshot engine), Network Diagnostics (types, utils, report generation), network transfer, orchestration, diagnostics, security, encryption, configuration, ISO download, and quick action factory validation.
 
 ---
 

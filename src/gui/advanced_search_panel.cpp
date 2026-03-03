@@ -38,6 +38,316 @@
 
 namespace sak {
 
+namespace {
+
+struct SearchBarRow1Ui {
+    QComboBox* search_combo = nullptr;
+    QPushButton* search_button = nullptr;
+    QPushButton* stop_button = nullptr;
+};
+
+SearchBarRow1Ui buildSearchBarRow1(AdvancedSearchPanel* panel, QHBoxLayout* row)
+{
+    SearchBarRow1Ui ui;
+
+    auto* searchLabel = new QLabel(QObject::tr("Search for:"), panel);
+    row->addWidget(searchLabel);
+
+    ui.search_combo = new QComboBox(panel);
+    ui.search_combo->setEditable(true);
+    ui.search_combo->setInsertPolicy(QComboBox::NoInsert);
+    ui.search_combo->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+    ui.search_combo->setToolTip(QObject::tr("Enter search pattern (text or regex)"));
+    setAccessible(ui.search_combo, QObject::tr("Search pattern"),
+        QObject::tr("Enter text or regex pattern to search for"));
+    row->addWidget(ui.search_combo);
+
+    ui.search_button = new QPushButton(QObject::tr("Search"), panel);
+    ui.search_button->setStyleSheet(ui::kPrimaryButtonStyle);
+    ui.search_button->setToolTip(QObject::tr("Start search (Enter)"));
+    setAccessible(ui.search_button, QObject::tr("Start search"));
+    row->addWidget(ui.search_button);
+
+    ui.stop_button = new QPushButton(QObject::tr("Stop"), panel);
+    ui.stop_button->setStyleSheet(ui::kDangerButtonStyle);
+    ui.stop_button->setToolTip(QObject::tr("Cancel current search"));
+    ui.stop_button->setEnabled(false);
+    setAccessible(ui.stop_button, QObject::tr("Stop search"));
+    row->addWidget(ui.stop_button);
+
+    return ui;
+}
+
+struct SearchBarRow2Ui {
+    QComboBox* context_lines_combo = nullptr;
+    QPushButton* regex_patterns_button = nullptr;
+    QCheckBox* case_sensitive_check = nullptr;
+    QCheckBox* whole_word_check = nullptr;
+    QCheckBox* use_regex_check = nullptr;
+    QCheckBox* image_metadata_check = nullptr;
+};
+
+SearchBarRow2Ui buildSearchBarRow2(AdvancedSearchPanel* panel, QHBoxLayout* row,
+    int defaultContextLines)
+{
+    SearchBarRow2Ui ui;
+
+    auto* contextLabel = new QLabel(QObject::tr("Context:"), panel);
+    row->addWidget(contextLabel);
+
+    ui.context_lines_combo = new QComboBox(panel);
+    for (int i = 0; i <= 10; ++i) {
+        ui.context_lines_combo->addItem(QString::number(i), i);
+    }
+    ui.context_lines_combo->setCurrentIndex(defaultContextLines);
+    ui.context_lines_combo->setToolTip(QObject::tr("Lines of context before/after matches"));
+    ui.context_lines_combo->setFixedWidth(60);
+    setAccessible(ui.context_lines_combo, QObject::tr("Context lines"));
+    row->addWidget(ui.context_lines_combo);
+
+    ui.regex_patterns_button = new QPushButton(QObject::tr("Regex Patterns"), panel);
+    ui.regex_patterns_button->setToolTip(
+        QObject::tr("Select built-in or custom regex patterns"));
+    setAccessible(ui.regex_patterns_button, QObject::tr("Regex pattern library"));
+    row->addWidget(ui.regex_patterns_button);
+
+    ui.case_sensitive_check = new QCheckBox(QObject::tr("Case sensitive"), panel);
+    setAccessible(ui.case_sensitive_check, QObject::tr("Case sensitive search"));
+    row->addWidget(ui.case_sensitive_check);
+
+    ui.whole_word_check = new QCheckBox(QObject::tr("Whole word"), panel);
+    setAccessible(ui.whole_word_check, QObject::tr("Match whole words only"));
+    row->addWidget(ui.whole_word_check);
+
+    ui.use_regex_check = new QCheckBox(QObject::tr("Regex"), panel);
+    ui.use_regex_check->setToolTip(
+        QObject::tr("Interpret search pattern as a regular expression"));
+    setAccessible(ui.use_regex_check, QObject::tr("Use regex search"));
+    row->addWidget(ui.use_regex_check);
+
+    ui.image_metadata_check = new QCheckBox(QObject::tr("Image metadata"), panel);
+    ui.image_metadata_check->setToolTip(
+        QObject::tr("Search EXIF/GPS metadata in image files"));
+    setAccessible(ui.image_metadata_check, QObject::tr("Search image metadata"));
+    row->addWidget(ui.image_metadata_check);
+
+    row->addStretch();
+
+    return ui;
+}
+
+struct SearchBarRow3Ui {
+    QLineEdit* extensions_edit = nullptr;
+    QCheckBox* file_metadata_check = nullptr;
+    QCheckBox* archive_search_check = nullptr;
+    QCheckBox* binary_hex_check = nullptr;
+    QPushButton* preferences_button = nullptr;
+};
+
+SearchBarRow3Ui buildSearchBarRow3(AdvancedSearchPanel* panel, QHBoxLayout* row)
+{
+    SearchBarRow3Ui ui;
+
+    auto* extLabel = new QLabel(QObject::tr("Extensions:"), panel);
+    row->addWidget(extLabel);
+
+    ui.extensions_edit = new QLineEdit(panel);
+    ui.extensions_edit->setPlaceholderText(QObject::tr(".py,.txt,.js,.cpp"));
+    ui.extensions_edit->setToolTip(QObject::tr(
+        "Comma-separated file extensions to include (empty = all files)"));
+    ui.extensions_edit->setMaximumWidth(200);
+    setAccessible(ui.extensions_edit, QObject::tr("File extension filter"));
+    row->addWidget(ui.extensions_edit);
+
+    ui.file_metadata_check = new QCheckBox(QObject::tr("File metadata"), panel);
+    ui.file_metadata_check->setToolTip(
+        QObject::tr("Search metadata in PDF, Office, audio/video files"));
+    setAccessible(ui.file_metadata_check, QObject::tr("Search file metadata"));
+    row->addWidget(ui.file_metadata_check);
+
+    ui.archive_search_check = new QCheckBox(QObject::tr("Archive search"), panel);
+    ui.archive_search_check->setToolTip(QObject::tr("Search inside ZIP/EPUB archives"));
+    setAccessible(ui.archive_search_check, QObject::tr("Search archives"));
+    row->addWidget(ui.archive_search_check);
+
+    ui.binary_hex_check = new QCheckBox(QObject::tr("Binary/hex"), panel);
+    ui.binary_hex_check->setToolTip(QObject::tr("Search binary files for hex patterns"));
+    setAccessible(ui.binary_hex_check, QObject::tr("Binary hex search"));
+    row->addWidget(ui.binary_hex_check);
+
+    row->addStretch();
+
+    ui.preferences_button = new QPushButton(QObject::tr("Preferences"), panel);
+    ui.preferences_button->setToolTip(
+        QObject::tr("Search preferences (max results, file sizes, etc.)"));
+    setAccessible(ui.preferences_button, QObject::tr("Search preferences"));
+    row->addWidget(ui.preferences_button);
+
+    return ui;
+}
+
+struct PreferencesDialogUi {
+    QDialog* dialog = nullptr;
+    QSpinBox* maxResultsSpin = nullptr;
+    QSpinBox* previewSizeSpin = nullptr;
+    QSpinBox* searchSizeSpin = nullptr;
+    QSpinBox* contextLinesSpin = nullptr;
+    QSpinBox* cacheSizeSpin = nullptr;
+};
+
+PreferencesDialogUi buildPreferencesDialog(QWidget* parent, const SearchPreferences& prefs)
+{
+    PreferencesDialogUi ui;
+
+    ui.dialog = new QDialog(parent);
+    ui.dialog->setWindowTitle(QObject::tr("Search Preferences"));
+    ui.dialog->setMinimumWidth(380);
+
+    auto* layout = new QVBoxLayout(ui.dialog);
+
+    auto* form = new QFormLayout();
+    form->setSpacing(ui::kSpacingSmall);
+
+    ui.maxResultsSpin = new QSpinBox(ui.dialog);
+    ui.maxResultsSpin->setRange(0, 1000000);
+    ui.maxResultsSpin->setSpecialValueText(QObject::tr("Unlimited"));
+    ui.maxResultsSpin->setValue(prefs.max_results);
+    ui.maxResultsSpin->setToolTip(QObject::tr("Maximum total matches (0 = unlimited)"));
+    form->addRow(QObject::tr("Max results:"), ui.maxResultsSpin);
+
+    ui.previewSizeSpin = new QSpinBox(ui.dialog);
+    ui.previewSizeSpin->setRange(1, 500);
+    ui.previewSizeSpin->setSuffix(QObject::tr(" MB"));
+    ui.previewSizeSpin->setValue(prefs.max_preview_file_size_mb);
+    ui.previewSizeSpin->setToolTip(QObject::tr("Maximum file size for preview pane"));
+    form->addRow(QObject::tr("Max preview file size:"), ui.previewSizeSpin);
+
+    ui.searchSizeSpin = new QSpinBox(ui.dialog);
+    ui.searchSizeSpin->setRange(1, 1000);
+    ui.searchSizeSpin->setSuffix(QObject::tr(" MB"));
+    ui.searchSizeSpin->setValue(prefs.max_search_file_size_mb);
+    ui.searchSizeSpin->setToolTip(QObject::tr("Maximum file size to search"));
+    form->addRow(QObject::tr("Max search file size:"), ui.searchSizeSpin);
+
+    ui.contextLinesSpin = new QSpinBox(ui.dialog);
+    ui.contextLinesSpin->setRange(0, 10);
+    ui.contextLinesSpin->setValue(prefs.context_lines);
+    ui.contextLinesSpin->setToolTip(
+        QObject::tr("Default context lines before/after matches"));
+    form->addRow(QObject::tr("Default context lines:"), ui.contextLinesSpin);
+
+    ui.cacheSizeSpin = new QSpinBox(ui.dialog);
+    ui.cacheSizeSpin->setRange(1, 1000);
+    ui.cacheSizeSpin->setValue(prefs.max_cache_size);
+    ui.cacheSizeSpin->setToolTip(QObject::tr("Maximum LRU file cache entries"));
+    form->addRow(QObject::tr("Cache size:"), ui.cacheSizeSpin);
+
+    layout->addLayout(form);
+
+    auto* buttons = new QDialogButtonBox(
+        QDialogButtonBox::Ok | QDialogButtonBox::Cancel, ui.dialog);
+    layout->addWidget(buttons);
+
+    QObject::connect(buttons, &QDialogButtonBox::accepted, ui.dialog, &QDialog::accept);
+    QObject::connect(buttons, &QDialogButtonBox::rejected, ui.dialog, &QDialog::reject);
+
+    return ui;
+}
+
+SearchPreferences preferencesFromDialogUi(const PreferencesDialogUi& ui)
+{
+    SearchPreferences newPrefs;
+    newPrefs.max_results = ui.maxResultsSpin->value();
+    newPrefs.max_preview_file_size_mb = ui.previewSizeSpin->value();
+    newPrefs.max_search_file_size_mb = ui.searchSizeSpin->value();
+    newPrefs.context_lines = ui.contextLinesSpin->value();
+    newPrefs.max_cache_size = ui.cacheSizeSpin->value();
+    return newPrefs;
+}
+
+struct FileSortEntry {
+    QString path;
+    QVector<SearchMatch> matches;
+    qint64 fileSize = 0;
+    QDateTime lastModified;
+};
+
+QVector<FileSortEntry> buildSortedFileEntries(
+    const QMap<QString, QVector<SearchMatch>>& allResults,
+    int sortMode)
+{
+    QVector<FileSortEntry> sortedFiles;
+    sortedFiles.reserve(allResults.size());
+
+    const bool needsFileInfo = (sortMode >= 4); // Size or Date sorts
+
+    for (auto it = allResults.constBegin(); it != allResults.constEnd(); ++it) {
+        FileSortEntry entry;
+        entry.path = it.key();
+        entry.matches = it.value();
+
+        if (needsFileInfo) {
+            const QFileInfo info(entry.path);
+            entry.fileSize = info.size();
+            entry.lastModified = info.lastModified();
+        }
+
+        sortedFiles.append(std::move(entry));
+    }
+
+    std::sort(sortedFiles.begin(), sortedFiles.end(),
+        [sortMode](const FileSortEntry& a, const FileSortEntry& b) {
+            switch (sortMode) {
+                case 0: // Path A-Z
+                    return a.path.compare(b.path, Qt::CaseInsensitive) < 0;
+                case 1: // Path Z-A
+                    return a.path.compare(b.path, Qt::CaseInsensitive) > 0;
+                case 2: // Match Count High
+                    return a.matches.size() > b.matches.size();
+                case 3: // Match Count Low
+                    return a.matches.size() < b.matches.size();
+                case 4: // File Size Large
+                    return a.fileSize > b.fileSize;
+                case 5: // File Size Small
+                    return a.fileSize < b.fileSize;
+                case 6: // Date Modified Newest
+                    return a.lastModified > b.lastModified;
+                case 7: // Date Modified Oldest
+                    return a.lastModified < b.lastModified;
+                default:
+                    return a.path < b.path;
+            }
+        });
+
+    return sortedFiles;
+}
+
+void populateSortedResultsTree(QTreeWidget* tree, QWidget* iconSource,
+    const QVector<FileSortEntry>& sortedFiles)
+{
+    for (const auto& entry : sortedFiles) {
+        auto* fileItem = new QTreeWidgetItem(tree);
+        fileItem->setText(0, QString("%1  (%2)")
+            .arg(entry.path).arg(entry.matches.size()));
+        fileItem->setData(0, Qt::UserRole, entry.path);
+        fileItem->setData(0, Qt::UserRole + 1, -1); // Not a specific match
+        fileItem->setIcon(0, iconSource->style()->standardIcon(QStyle::SP_FileIcon));
+
+        for (int i = 0; i < entry.matches.size(); ++i) {
+            const auto& match = entry.matches[i];
+            auto* matchItem = new QTreeWidgetItem(fileItem);
+
+            const QString truncated = match.line_content.left(80).trimmed();
+            matchItem->setText(0, QString("Line %1: %2")
+                .arg(match.line_number).arg(truncated));
+            matchItem->setData(0, Qt::UserRole, entry.path);
+            matchItem->setData(0, Qt::UserRole + 1, i); // Match index
+        }
+    }
+}
+
+} // namespace
+
 // ── Construction / Destruction ──────────────────────────────────────────────
 
 AdvancedSearchPanel::AdvancedSearchPanel(QWidget* parent)
@@ -116,30 +426,12 @@ void AdvancedSearchPanel::createSearchBar(QVBoxLayout* layout)
     auto* row1 = new QHBoxLayout();
     row1->setSpacing(ui::kSpacingSmall);
 
-    auto* searchLabel = new QLabel(tr("Search for:"), this);
-    row1->addWidget(searchLabel);
-
-    m_search_combo = new QComboBox(this);
-    m_search_combo->setEditable(true);
-    m_search_combo->setInsertPolicy(QComboBox::NoInsert);
-    m_search_combo->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
-    m_search_combo->setToolTip(tr("Enter search pattern (text or regex)"));
-    setAccessible(m_search_combo, tr("Search pattern"),
-        tr("Enter text or regex pattern to search for"));
-    row1->addWidget(m_search_combo);
-
-    m_search_button = new QPushButton(tr("Search"), this);
-    m_search_button->setStyleSheet(ui::kPrimaryButtonStyle);
-    m_search_button->setToolTip(tr("Start search (Enter)"));
-    setAccessible(m_search_button, tr("Start search"));
-    row1->addWidget(m_search_button);
-
-    m_stop_button = new QPushButton(tr("Stop"), this);
-    m_stop_button->setStyleSheet(ui::kDangerButtonStyle);
-    m_stop_button->setToolTip(tr("Cancel current search"));
-    m_stop_button->setEnabled(false);
-    setAccessible(m_stop_button, tr("Stop search"));
-    row1->addWidget(m_stop_button);
+    {
+        const SearchBarRow1Ui ui = buildSearchBarRow1(this, row1);
+        m_search_combo = ui.search_combo;
+        m_search_button = ui.search_button;
+        m_stop_button = ui.stop_button;
+    }
 
     searchLayout->addLayout(row1);
 
@@ -147,83 +439,30 @@ void AdvancedSearchPanel::createSearchBar(QVBoxLayout* layout)
     auto* row2 = new QHBoxLayout();
     row2->setSpacing(ui::kSpacingMedium);
 
-    auto* contextLabel = new QLabel(tr("Context:"), this);
-    row2->addWidget(contextLabel);
-
-    m_context_lines_combo = new QComboBox(this);
-    for (int i = 0; i <= 10; ++i) {
-        m_context_lines_combo->addItem(QString::number(i), i);
+    {
+        const SearchBarRow2Ui ui = buildSearchBarRow2(
+            this, row2, m_controller->preferences().context_lines);
+        m_context_lines_combo = ui.context_lines_combo;
+        m_regex_patterns_button = ui.regex_patterns_button;
+        m_case_sensitive_check = ui.case_sensitive_check;
+        m_whole_word_check = ui.whole_word_check;
+        m_use_regex_check = ui.use_regex_check;
+        m_image_metadata_check = ui.image_metadata_check;
     }
-    m_context_lines_combo->setCurrentIndex(
-        m_controller->preferences().context_lines);
-    m_context_lines_combo->setToolTip(tr("Lines of context before/after matches"));
-    m_context_lines_combo->setFixedWidth(60);
-    setAccessible(m_context_lines_combo, tr("Context lines"));
-    row2->addWidget(m_context_lines_combo);
-
-    m_regex_patterns_button = new QPushButton(tr("Regex Patterns"), this);
-    m_regex_patterns_button->setToolTip(tr("Select built-in or custom regex patterns"));
-    setAccessible(m_regex_patterns_button, tr("Regex pattern library"));
-    row2->addWidget(m_regex_patterns_button);
-
-    m_case_sensitive_check = new QCheckBox(tr("Case sensitive"), this);
-    setAccessible(m_case_sensitive_check, tr("Case sensitive search"));
-    row2->addWidget(m_case_sensitive_check);
-
-    m_whole_word_check = new QCheckBox(tr("Whole word"), this);
-    setAccessible(m_whole_word_check, tr("Match whole words only"));
-    row2->addWidget(m_whole_word_check);
-
-    m_use_regex_check = new QCheckBox(tr("Regex"), this);
-    m_use_regex_check->setToolTip(tr("Interpret search pattern as a regular expression"));
-    setAccessible(m_use_regex_check, tr("Use regex search"));
-    row2->addWidget(m_use_regex_check);
-
-    m_image_metadata_check = new QCheckBox(tr("Image metadata"), this);
-    m_image_metadata_check->setToolTip(tr("Search EXIF/GPS metadata in image files"));
-    setAccessible(m_image_metadata_check, tr("Search image metadata"));
-    row2->addWidget(m_image_metadata_check);
-
-    row2->addStretch();
     searchLayout->addLayout(row2);
 
     // ── Row 3: Extensions + More checkboxes ──
     auto* row3 = new QHBoxLayout();
     row3->setSpacing(ui::kSpacingMedium);
 
-    auto* extLabel = new QLabel(tr("Extensions:"), this);
-    row3->addWidget(extLabel);
-
-    m_extensions_edit = new QLineEdit(this);
-    m_extensions_edit->setPlaceholderText(tr(".py,.txt,.js,.cpp"));
-    m_extensions_edit->setToolTip(
-        tr("Comma-separated file extensions to include (empty = all files)"));
-    m_extensions_edit->setMaximumWidth(200);
-    setAccessible(m_extensions_edit, tr("File extension filter"));
-    row3->addWidget(m_extensions_edit);
-
-    m_file_metadata_check = new QCheckBox(tr("File metadata"), this);
-    m_file_metadata_check->setToolTip(
-        tr("Search metadata in PDF, Office, audio/video files"));
-    setAccessible(m_file_metadata_check, tr("Search file metadata"));
-    row3->addWidget(m_file_metadata_check);
-
-    m_archive_search_check = new QCheckBox(tr("Archive search"), this);
-    m_archive_search_check->setToolTip(tr("Search inside ZIP/EPUB archives"));
-    setAccessible(m_archive_search_check, tr("Search archives"));
-    row3->addWidget(m_archive_search_check);
-
-    m_binary_hex_check = new QCheckBox(tr("Binary/hex"), this);
-    m_binary_hex_check->setToolTip(tr("Search binary files for hex patterns"));
-    setAccessible(m_binary_hex_check, tr("Binary hex search"));
-    row3->addWidget(m_binary_hex_check);
-
-    row3->addStretch();
-
-    m_preferences_button = new QPushButton(tr("Preferences"), this);
-    m_preferences_button->setToolTip(tr("Search preferences (max results, file sizes, etc.)"));
-    setAccessible(m_preferences_button, tr("Search preferences"));
-    row3->addWidget(m_preferences_button);
+    {
+        const SearchBarRow3Ui ui = buildSearchBarRow3(this, row3);
+        m_extensions_edit = ui.extensions_edit;
+        m_file_metadata_check = ui.file_metadata_check;
+        m_archive_search_check = ui.archive_search_check;
+        m_binary_hex_check = ui.binary_hex_check;
+        m_preferences_button = ui.preferences_button;
+    }
 
     searchLayout->addLayout(row3);
 
@@ -609,76 +848,17 @@ void AdvancedSearchPanel::onRegexPatternsClicked()
 
 void AdvancedSearchPanel::onPreferencesClicked()
 {
-    auto* dialog = new QDialog(this);
-    dialog->setWindowTitle(tr("Search Preferences"));
-    dialog->setMinimumWidth(380);
-
-    auto* layout = new QVBoxLayout(dialog);
-
-    auto* form = new QFormLayout();
-    form->setSpacing(ui::kSpacingSmall);
-
     const auto prefs = m_controller->preferences();
+    const PreferencesDialogUi ui = buildPreferencesDialog(this, prefs);
 
-    auto* maxResultsSpin = new QSpinBox(dialog);
-    maxResultsSpin->setRange(0, 1000000);
-    maxResultsSpin->setSpecialValueText(tr("Unlimited"));
-    maxResultsSpin->setValue(prefs.max_results);
-    maxResultsSpin->setToolTip(tr("Maximum total matches (0 = unlimited)"));
-    form->addRow(tr("Max results:"), maxResultsSpin);
-
-    auto* previewSizeSpin = new QSpinBox(dialog);
-    previewSizeSpin->setRange(1, 500);
-    previewSizeSpin->setSuffix(tr(" MB"));
-    previewSizeSpin->setValue(prefs.max_preview_file_size_mb);
-    previewSizeSpin->setToolTip(tr("Maximum file size for preview pane"));
-    form->addRow(tr("Max preview file size:"), previewSizeSpin);
-
-    auto* searchSizeSpin = new QSpinBox(dialog);
-    searchSizeSpin->setRange(1, 1000);
-    searchSizeSpin->setSuffix(tr(" MB"));
-    searchSizeSpin->setValue(prefs.max_search_file_size_mb);
-    searchSizeSpin->setToolTip(tr("Maximum file size to search"));
-    form->addRow(tr("Max search file size:"), searchSizeSpin);
-
-    auto* contextLinesSpin = new QSpinBox(dialog);
-    contextLinesSpin->setRange(0, 10);
-    contextLinesSpin->setValue(prefs.context_lines);
-    contextLinesSpin->setToolTip(tr("Default context lines before/after matches"));
-    form->addRow(tr("Default context lines:"), contextLinesSpin);
-
-    auto* cacheSizeSpin = new QSpinBox(dialog);
-    cacheSizeSpin->setRange(1, 1000);
-    cacheSizeSpin->setValue(prefs.max_cache_size);
-    cacheSizeSpin->setToolTip(tr("Maximum LRU file cache entries"));
-    form->addRow(tr("Cache size:"), cacheSizeSpin);
-
-    layout->addLayout(form);
-
-    auto* buttons = new QDialogButtonBox(
-        QDialogButtonBox::Ok | QDialogButtonBox::Cancel, dialog);
-    layout->addWidget(buttons);
-
-    connect(buttons, &QDialogButtonBox::accepted, dialog, &QDialog::accept);
-    connect(buttons, &QDialogButtonBox::rejected, dialog, &QDialog::reject);
-
-    if (dialog->exec() == QDialog::Accepted) {
-        SearchPreferences newPrefs;
-        newPrefs.max_results = maxResultsSpin->value();
-        newPrefs.max_preview_file_size_mb = previewSizeSpin->value();
-        newPrefs.max_search_file_size_mb = searchSizeSpin->value();
-        newPrefs.context_lines = contextLinesSpin->value();
-        newPrefs.max_cache_size = cacheSizeSpin->value();
-
+    if (ui.dialog->exec() == QDialog::Accepted) {
+        const SearchPreferences newPrefs = preferencesFromDialogUi(ui);
         m_controller->setPreferences(newPrefs);
-
-        // Update context lines combo to match new default
         m_context_lines_combo->setCurrentIndex(newPrefs.context_lines);
-
         logMessage(tr("Preferences updated"));
     }
 
-    dialog->deleteLater();
+    ui.dialog->deleteLater();
 }
 
 SearchConfig AdvancedSearchPanel::buildSearchConfig() const
@@ -972,80 +1152,10 @@ void AdvancedSearchPanel::sortResults()
 {
     m_results_tree->clear();
 
-    // Build sorted list of files with pre-computed metadata for sort efficiency
-    struct FileSortEntry {
-        QString path;
-        QVector<SearchMatch> matches;
-        qint64 fileSize = 0;
-        QDateTime lastModified;
-    };
-
-    QVector<FileSortEntry> sortedFiles;
-    sortedFiles.reserve(m_all_results.size());
-
     const int sortMode = m_sort_combo->currentIndex();
-    const bool needsFileInfo = (sortMode >= 4); // Size or Date sorts
-
-    for (auto it = m_all_results.constBegin(); it != m_all_results.constEnd(); ++it) {
-        FileSortEntry entry;
-        entry.path = it.key();
-        entry.matches = it.value();
-
-        // Only query filesystem when needed for the current sort mode
-        if (needsFileInfo) {
-            const QFileInfo info(entry.path);
-            entry.fileSize = info.size();
-            entry.lastModified = info.lastModified();
-        }
-
-        sortedFiles.append(std::move(entry));
-    }
-
-    std::sort(sortedFiles.begin(), sortedFiles.end(),
-        [sortMode](const FileSortEntry& a, const FileSortEntry& b) {
-            switch (sortMode) {
-                case 0: // Path A-Z
-                    return a.path.compare(b.path, Qt::CaseInsensitive) < 0;
-                case 1: // Path Z-A
-                    return a.path.compare(b.path, Qt::CaseInsensitive) > 0;
-                case 2: // Match Count High
-                    return a.matches.size() > b.matches.size();
-                case 3: // Match Count Low
-                    return a.matches.size() < b.matches.size();
-                case 4: // File Size Large
-                    return a.fileSize > b.fileSize;
-                case 5: // File Size Small
-                    return a.fileSize < b.fileSize;
-                case 6: // Date Modified Newest
-                    return a.lastModified > b.lastModified;
-                case 7: // Date Modified Oldest
-                    return a.lastModified < b.lastModified;
-                default:
-                    return a.path < b.path;
-            }
-        });
-
-    // Populate tree
-    for (const auto& entry : sortedFiles) {
-        auto* fileItem = new QTreeWidgetItem(m_results_tree);
-        fileItem->setText(0, QString("%1  (%2)")
-            .arg(entry.path).arg(entry.matches.size()));
-        fileItem->setData(0, Qt::UserRole, entry.path);
-        fileItem->setData(0, Qt::UserRole + 1, -1); // Not a specific match
-        fileItem->setIcon(0, style()->standardIcon(QStyle::SP_FileIcon));
-
-        // Add match sub-items
-        for (int i = 0; i < entry.matches.size(); ++i) {
-            const auto& match = entry.matches[i];
-            auto* matchItem = new QTreeWidgetItem(fileItem);
-
-            const QString truncated = match.line_content.left(80).trimmed();
-            matchItem->setText(0, QString("Line %1: %2")
-                .arg(match.line_number).arg(truncated));
-            matchItem->setData(0, Qt::UserRole, entry.path);
-            matchItem->setData(0, Qt::UserRole + 1, i); // Match index
-        }
-    }
+    const QVector<FileSortEntry> sortedFiles =
+        buildSortedFileEntries(m_all_results, sortMode);
+    populateSortedResultsTree(m_results_tree, this, sortedFiles);
 }
 
 // ── Preview ─────────────────────────────────────────────────────────────────

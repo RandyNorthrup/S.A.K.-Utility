@@ -126,6 +126,14 @@ public:
     [[nodiscard]] bool showSystemComponents() const;
     void setShowSystemComponents(bool show);
 
+    /// @brief Get the use-recycle-bin preference
+    [[nodiscard]] bool useRecycleBin() const;
+    void setUseRecycleBin(bool enabled);
+
+    /// @brief Get the select-all-by-default preference
+    [[nodiscard]] bool selectAllByDefault() const;
+    void setSelectAllByDefault(bool enabled);
+
     // ── Restore Point Manager ──
 
     /// @brief Access the restore point manager
@@ -189,6 +197,9 @@ Q_SIGNALS:
     /// @brief Cleanup completed
     void cleanupFinished(int succeeded, int failed, qint64 bytesRecovered);
 
+    /// @brief Locked files scheduled for removal on next Windows reboot
+    void rebootPendingItems(QStringList paths);
+
     /// @brief Batch queue item status changed
     void queueItemStatusChanged(int index, sak::UninstallQueueItem::Status status);
 
@@ -248,6 +259,8 @@ private:
     ScanLevel m_defaultScanLevel = ScanLevel::Moderate;
     bool m_autoRestorePoint = true;
     bool m_showSystemComponents = false;
+    bool m_useRecycleBin = false;
+    bool m_selectAllByDefault = false;
 };
 
 // ── Compile-Time Invariants ─────────────────────────────────────────────────

@@ -2004,6 +2004,78 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_registry_snapshot_engine.cpp")
 endif()
 
 # ============================================================================
+# Network Diagnostic Panel Tests
+# ============================================================================
+
+# test_network_diagnostic_types — value/move semantics, enums, compile-time invariants
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_network_diagnostic_types.cpp")
+    add_executable(test_network_diagnostic_types
+        unit/test_network_diagnostic_types.cpp
+    )
+    set_target_properties(test_network_diagnostic_types PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+    )
+    target_link_libraries(test_network_diagnostic_types PRIVATE
+        Qt6::Core Qt6::Test
+    )
+    target_include_directories(test_network_diagnostic_types PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_network_diagnostic_types COMMAND test_network_diagnostic_types
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_network_diagnostic_types")
+endif()
+
+# test_network_diagnostic_utils — WiFi freq conversion, vendor lookup, port presets, DNS lists
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_network_diagnostic_utils.cpp")
+    add_executable(test_network_diagnostic_utils
+        unit/test_network_diagnostic_utils.cpp
+        ../src/core/wifi_analyzer.cpp
+        ../src/core/port_scanner.cpp
+        ../src/core/dns_diagnostic_tool.cpp
+        ../include/sak/wifi_analyzer.h
+        ../include/sak/port_scanner.h
+        ../include/sak/dns_diagnostic_tool.h
+    )
+    set_target_properties(test_network_diagnostic_utils PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+    )
+    target_link_libraries(test_network_diagnostic_utils PRIVATE
+        Qt6::Core Qt6::Network Qt6::Test ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_network_diagnostic_utils PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_network_diagnostic_utils COMMAND test_network_diagnostic_utils
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_network_diagnostic_utils")
+endif()
+
+# test_network_diagnostic_report — HTML/JSON report generation, sections, metadata
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_network_diagnostic_report.cpp")
+    add_executable(test_network_diagnostic_report
+        unit/test_network_diagnostic_report.cpp
+        ../src/core/network_diagnostic_report_generator.cpp
+        ../include/sak/network_diagnostic_report_generator.h
+    )
+    set_target_properties(test_network_diagnostic_report PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+    )
+    target_link_libraries(test_network_diagnostic_report PRIVATE
+        Qt6::Core Qt6::Test
+    )
+    target_include_directories(test_network_diagnostic_report PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_network_diagnostic_report COMMAND test_network_diagnostic_report
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_network_diagnostic_report")
+endif()
+
+# ============================================================================
 # Test Targets
 # ============================================================================
 

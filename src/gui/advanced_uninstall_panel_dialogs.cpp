@@ -204,6 +204,124 @@ void AdvancedUninstallPanel::showForcedUninstallDialog(
 
 // ── Batch Uninstall Dialog ──────────────────────────────────────────────────
 
+void AdvancedUninstallPanel::populateBatchUninstallQueueList(
+    const QVector<UninstallQueueItem>& queue,
+    QListWidget* queueList,
+    qint64* totalBytesOut) const
+{
+    Q_ASSERT(queueList);
+    Q_ASSERT(totalBytesOut);
+
+    qint64 totalBytes = 0;
+    for (const auto& item : queue) {
+        QString text = item.program.displayName;
+        if (!item.program.displayVersion.isEmpty()) {
+            text += " (" + item.program.displayVersion + ")";
+        }
+        if (item.program.estimatedSizeKB > 0) {
+            text += " \u2014 "
+                + formatSize(item.program.estimatedSizeKB * 1024);
+            totalBytes += item.program.estimatedSizeKB * 1024;
+        }
+        queueList->addItem(text);
+    }
+
+    *totalBytesOut = totalBytes;
+}
+
+void AdvancedUninstallPanel::wireBatchUninstallQueueActions(
+    QListWidget* queueList,
+    QLabel* headerLabel,
+    QLabel* totalLabel,
+    QPushButton* removeBtn,
+    QPushButton* clearBtn,
+    QDialog* dialog)
+{
+    Q_ASSERT(queueList);
+    Q_ASSERT(headerLabel);
+    Q_ASSERT(totalLabel);
+    Q_ASSERT(removeBtn);
+    Q_ASSERT(clearBtn);
+    Q_ASSERT(dialog);
+
+    connect(queueList, &QListWidget::currentRowChanged,
+            removeBtn, [removeBtn](int row) {
+                removeBtn->setEnabled(row >= 0);
+            });
+
+    connect(removeBtn, &QPushButton::clicked, dialog,
+            [this, queueList, headerLabel, totalLabel]() {
+                int row = queueList->currentRow();
+                if (row < 0) return;
+
+                m_controller->removeFromQueue(row);
+                delete queueList->takeItem(row);
+
+                headerLabel->setText(
+                    tr("<b>Batch Uninstall Queue</b> — %1 programs")
+                        .arg(queueList->count()));
+
+                qint64 newTotal = 0;
+                for (const auto& qi : m_controller->queue()) {
+                    newTotal += qi.program.estimatedSizeKB * 1024;
+                }
+                totalLabel->setText(
+                    tr("Total size: %1").arg(formatSize(newTotal)));
+            });
+
+    connect(clearBtn, &QPushButton::clicked, dialog,
+            [this, dialog]() {
+                m_controller->clearQueue();
+                dialog->reject();
+            });
+}
+
+QCheckBox* AdvancedUninstallPanel::addBatchUninstallOptions(
+    QDialog* dialog,
+    QVBoxLayout* layout) const
+{
+    Q_ASSERT(dialog);
+    Q_ASSERT(layout);
+
+    auto* restoreCheck = new QCheckBox(
+        tr("Create single restore point before batch"), dialog);
+    restoreCheck->setChecked(m_controller->autoRestorePoint());
+
+    bool elevated = RestorePointManager::isElevated();
+    if (!elevated) {
+        restoreCheck->setEnabled(false);
+        restoreCheck->setChecked(false);
+        restoreCheck->setToolTip(tr("Requires administrator privileges."));
+    }
+    layout->addWidget(restoreCheck);
+
+    auto* noteLabel = new QLabel(
+        tr("Programs will be uninstalled sequentially. You may cancel "
+           "the batch at any time — remaining programs will be skipped."),
+        dialog);
+    noteLabel->setWordWrap(true);
+    noteLabel->setStyleSheet(QString("color: %1;").arg(ui::kColorTextMuted));
+    layout->addWidget(noteLabel);
+
+    return restoreCheck;
+}
+
+QDialogButtonBox* AdvancedUninstallPanel::addBatchUninstallButtons(
+    QDialog* dialog,
+    QVBoxLayout* layout) const
+{
+    Q_ASSERT(dialog);
+    Q_ASSERT(layout);
+
+    auto* buttonBox = new QDialogButtonBox(
+        QDialogButtonBox::Ok | QDialogButtonBox::Cancel, dialog);
+    auto* startBtn = buttonBox->button(QDialogButtonBox::Ok);
+    startBtn->setText(tr("Start Batch Uninstall"));
+    startBtn->setStyleSheet(ui::kDangerButtonStyle);
+    layout->addWidget(buttonBox);
+    return buttonBox;
+}
+
 void AdvancedUninstallPanel::showBatchUninstallDialog()
 {
     const auto queue = m_controller->queue();
@@ -230,17 +348,7 @@ void AdvancedUninstallPanel::showBatchUninstallDialog()
     queueList->setSelectionMode(QAbstractItemView::SingleSelection);
 
     qint64 totalSize = 0;
-    for (const auto& item : queue) {
-        QString text = item.program.displayName;
-        if (!item.program.displayVersion.isEmpty()) {
-            text += " (" + item.program.displayVersion + ")";
-        }
-        if (item.program.estimatedSizeKB > 0) {
-            text += " \u2014 " + formatSize(item.program.estimatedSizeKB * 1024);
-            totalSize += item.program.estimatedSizeKB * 1024;
-        }
-        queueList->addItem(text);
-    }
+    populateBatchUninstallQueueList(queue, queueList, &totalSize);
     layout->addWidget(queueList, 1);
 
     // Queue actions
@@ -262,67 +370,11 @@ void AdvancedUninstallPanel::showBatchUninstallDialog()
 
     layout->addLayout(actionRow);
 
-    // Options
-    auto* restoreCheck = new QCheckBox(
-        tr("Create single restore point before batch"), &dialog);
-    restoreCheck->setChecked(m_controller->autoRestorePoint());
+    auto* restoreCheck = addBatchUninstallOptions(&dialog, layout);
+    auto* buttonBox = addBatchUninstallButtons(&dialog, layout);
 
-    bool elevated = RestorePointManager::isElevated();
-    if (!elevated) {
-        restoreCheck->setEnabled(false);
-        restoreCheck->setChecked(false);
-        restoreCheck->setToolTip(tr("Requires administrator privileges."));
-    }
-    layout->addWidget(restoreCheck);
-
-    // Note
-    auto* noteLabel = new QLabel(
-        tr("Programs will be uninstalled sequentially. You may cancel "
-           "the batch at any time — remaining programs will be skipped."),
-        &dialog);
-    noteLabel->setWordWrap(true);
-    noteLabel->setStyleSheet(
-        QString("color: %1;").arg(ui::kColorTextMuted));
-    layout->addWidget(noteLabel);
-
-    // Buttons
-    auto* buttonBox = new QDialogButtonBox(
-        QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
-    auto* startBtn = buttonBox->button(QDialogButtonBox::Ok);
-    startBtn->setText(tr("Start Batch Uninstall"));
-    startBtn->setStyleSheet(ui::kDangerButtonStyle);
-    layout->addWidget(buttonBox);
-
-    // Wire actions
-    connect(queueList, &QListWidget::currentRowChanged,
-            removeBtn, [removeBtn](int row) {
-                removeBtn->setEnabled(row >= 0);
-            });
-
-    connect(removeBtn, &QPushButton::clicked, &dialog,
-            [this, queueList, headerLabel, totalLabel]() {
-                int row = queueList->currentRow();
-                if (row >= 0) {
-                    m_controller->removeFromQueue(row);
-                    delete queueList->takeItem(row);
-                    headerLabel->setText(
-                        tr("<b>Batch Uninstall Queue</b> — %1 programs")
-                            .arg(queueList->count()));
-                    // Recalculate total
-                    qint64 newTotal = 0;
-                    for (const auto& qi : m_controller->queue()) {
-                        newTotal += qi.program.estimatedSizeKB * 1024;
-                    }
-                    totalLabel->setText(
-                        tr("Total size: %1").arg(formatSize(newTotal)));
-                }
-            });
-
-    connect(clearBtn, &QPushButton::clicked, &dialog,
-            [this, queueList, &dialog]() {
-                m_controller->clearQueue();
-                dialog.reject();
-            });
+    wireBatchUninstallQueueActions(
+        queueList, headerLabel, totalLabel, removeBtn, clearBtn, &dialog);
 
     connect(buttonBox, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
     connect(buttonBox, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
@@ -341,26 +393,15 @@ void AdvancedUninstallPanel::showBatchUninstallDialog()
 
 // ── Program Properties Dialog ───────────────────────────────────────────────
 
-void AdvancedUninstallPanel::showProgramProperties(const ProgramInfo& program)
+void AdvancedUninstallPanel::populateProgramPropertiesForm(
+    const ProgramInfo& program,
+    QWidget* scrollWidget,
+    QFormLayout* formLayout) const
 {
-    QDialog dialog(this);
-    dialog.setWindowTitle(tr("Program Properties — %1").arg(program.displayName));
-    dialog.setMinimumWidth(520);
+    Q_ASSERT(scrollWidget);
+    Q_ASSERT(formLayout);
 
-    auto* layout = new QVBoxLayout(&dialog);
-    layout->setSpacing(ui::kSpacingLarge);
-
-    // Scroll area for properties
-    auto* scrollArea = new QScrollArea(&dialog);
-    scrollArea->setWidgetResizable(true);
-    auto* scrollWidget = new QWidget(scrollArea);
-    auto* formLayout = new QFormLayout(scrollWidget);
-    formLayout->setSpacing(ui::kSpacingSmall);
-    formLayout->setLabelAlignment(Qt::AlignRight | Qt::AlignVCenter);
-    scrollArea->setWidget(scrollWidget);
-
-    // Helper to add a row if the value is non-empty
-    auto addRow = [&](const QString& label, const QString& value) {
+    const auto addRow = [&](const QString& label, const QString& value) {
         if (value.isEmpty()) return;
         auto* valueLabel = new QLabel(value, scrollWidget);
         valueLabel->setTextInteractionFlags(
@@ -371,7 +412,6 @@ void AdvancedUninstallPanel::showProgramProperties(const ProgramInfo& program)
             valueLabel);
     };
 
-    // Icon and name header
     if (!program.cachedImage.isNull()) {
         auto* iconLabel = new QLabel(scrollWidget);
         iconLabel->setPixmap(
@@ -387,10 +427,10 @@ void AdvancedUninstallPanel::showProgramProperties(const ProgramInfo& program)
     addRow(tr("Install Location"), program.installLocation);
 
     if (program.estimatedSizeKB > 0) {
-        addRow(tr("Estimated Size"), formatSize(program.estimatedSizeKB * 1024));
+        addRow(tr("Estimated Size"),
+               formatSize(program.estimatedSizeKB * 1024));
     }
 
-    // Source type
     QString sourceText;
     switch (program.source) {
     case ProgramInfo::Source::RegistryHKLM:       sourceText = tr("Win32 (HKLM)"); break;
@@ -401,7 +441,6 @@ void AdvancedUninstallPanel::showProgramProperties(const ProgramInfo& program)
     }
     addRow(tr("Source"), sourceText);
 
-    // Status flags
     QStringList flags;
     if (program.isSystemComponent) flags << tr("System Component");
     if (program.isBloatware)       flags << tr("Potential Bloatware");
@@ -410,7 +449,6 @@ void AdvancedUninstallPanel::showProgramProperties(const ProgramInfo& program)
         addRow(tr("Flags"), flags.join(", "));
     }
 
-    // Technical details
     formLayout->addRow(new QLabel(
         QString("<br><b>%1</b>").arg(tr("Technical Details")), scrollWidget));
 
@@ -420,6 +458,28 @@ void AdvancedUninstallPanel::showProgramProperties(const ProgramInfo& program)
     addRow(tr("Registry Key"), program.registryKeyPath);
     addRow(tr("Package Family"), program.packageFamilyName);
     addRow(tr("Package Full Name"), program.packageFullName);
+}
+
+void AdvancedUninstallPanel::showProgramProperties(const ProgramInfo& program)
+{
+    QDialog dialog(this);
+    dialog.setWindowTitle(
+        tr("Program Properties — %1").arg(program.displayName));
+    dialog.setMinimumWidth(520);
+
+    auto* layout = new QVBoxLayout(&dialog);
+    layout->setSpacing(ui::kSpacingLarge);
+
+    // Scroll area for properties
+    auto* scrollArea = new QScrollArea(&dialog);
+    scrollArea->setWidgetResizable(true);
+    auto* scrollWidget = new QWidget(scrollArea);
+    auto* formLayout = new QFormLayout(scrollWidget);
+    formLayout->setSpacing(ui::kSpacingSmall);
+    formLayout->setLabelAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    scrollArea->setWidget(scrollWidget);
+
+    populateProgramPropertiesForm(program, scrollWidget, formLayout);
 
     layout->addWidget(scrollArea, 1);
 
@@ -430,6 +490,195 @@ void AdvancedUninstallPanel::showProgramProperties(const ProgramInfo& program)
     connect(buttonBox, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
 
     dialog.exec();
+}
+
+// ── Settings Dialog ─────────────────────────────────────────────────────────
+
+QCheckBox* AdvancedUninstallPanel::addSettingsSelectionGroup(
+    QDialog* dialog,
+    QVBoxLayout* layout) const
+{
+    Q_ASSERT(dialog);
+    Q_ASSERT(layout);
+
+    auto* group = new QGroupBox(tr("Leftover Selection"), dialog);
+    auto* groupLayout = new QVBoxLayout(group);
+
+    auto* selectAllCheck = new QCheckBox(
+        tr("Select all leftovers by default (instead of safe only)"), dialog);
+    selectAllCheck->setChecked(m_controller->selectAllByDefault());
+    selectAllCheck->setToolTip(
+        tr("When enabled, all leftover items are pre-selected after scanning. "
+           "Otherwise, only items classified as Safe are selected."));
+    groupLayout->addWidget(selectAllCheck);
+
+    layout->addWidget(group);
+    return selectAllCheck;
+}
+
+QCheckBox* AdvancedUninstallPanel::addSettingsDeletionGroup(
+    QDialog* dialog,
+    QVBoxLayout* layout) const
+{
+    Q_ASSERT(dialog);
+    Q_ASSERT(layout);
+
+    auto* group = new QGroupBox(tr("Deletion Behavior"), dialog);
+    auto* groupLayout = new QVBoxLayout(group);
+
+    auto* recycleBinCheck = new QCheckBox(
+        tr("Delete to Recycle Bin instead of permanent deletion"), dialog);
+    recycleBinCheck->setChecked(m_controller->useRecycleBin());
+    recycleBinCheck->setToolTip(
+        tr("When enabled, files and folders are sent to the Recycle Bin, "
+           "allowing recovery. Registry entries and services are always "
+           "removed permanently."));
+    groupLayout->addWidget(recycleBinCheck);
+
+    auto* recycleBinNote = new QLabel(
+        tr("Note: Registry keys, services, scheduled tasks, and firewall "
+           "rules are always removed permanently regardless of this setting."),
+        dialog);
+    recycleBinNote->setWordWrap(true);
+    recycleBinNote->setStyleSheet(
+        QString("color: %1; font-size: %2pt;")
+            .arg(ui::kColorTextMuted)
+            .arg(ui::kFontSizeSmall));
+    groupLayout->addWidget(recycleBinNote);
+
+    layout->addWidget(group);
+    return recycleBinCheck;
+}
+
+QCheckBox* AdvancedUninstallPanel::addSettingsRestorePointGroup(
+    QDialog* dialog,
+    QVBoxLayout* layout) const
+{
+    Q_ASSERT(dialog);
+    Q_ASSERT(layout);
+
+    auto* group = new QGroupBox(tr("System Protection"), dialog);
+    auto* groupLayout = new QVBoxLayout(group);
+
+    auto* restorePointCheck = new QCheckBox(
+        tr("Create a restore point before uninstall"), dialog);
+    restorePointCheck->setChecked(m_controller->autoRestorePoint());
+    restorePointCheck->setToolTip(
+        tr("When enabled, a Windows System Restore point is created before "
+           "running the uninstaller. Requires administrator privileges."));
+
+    bool elevated = RestorePointManager::isElevated();
+    if (!elevated) {
+        restorePointCheck->setEnabled(false);
+        restorePointCheck->setChecked(false);
+        restorePointCheck->setToolTip(tr("Requires administrator privileges."));
+    }
+
+    groupLayout->addWidget(restorePointCheck);
+    layout->addWidget(group);
+    return restorePointCheck;
+}
+
+void AdvancedUninstallPanel::addSettingsScanLevelGroup(
+    QDialog* dialog,
+    QVBoxLayout* layout,
+    QRadioButton*& safeRadio,
+    QRadioButton*& moderateRadio,
+    QRadioButton*& advancedRadio) const
+{
+    Q_ASSERT(dialog);
+    Q_ASSERT(layout);
+
+    auto* group = new QGroupBox(tr("Default Scan Level"), dialog);
+    auto* groupLayout = new QVBoxLayout(group);
+
+    safeRadio = new QRadioButton(
+        tr("Safe — Only obvious leftovers in known locations (fast)"), dialog);
+    moderateRadio = new QRadioButton(
+        tr("Moderate — Extended scanning with pattern matching (recommended)"),
+        dialog);
+    advancedRadio = new QRadioButton(
+        tr("Advanced — Deep scan including services, tasks, firewall, "
+           "shell extensions"),
+        dialog);
+
+    switch (m_controller->defaultScanLevel()) {
+    case ScanLevel::Safe:     safeRadio->setChecked(true); break;
+    case ScanLevel::Moderate: moderateRadio->setChecked(true); break;
+    case ScanLevel::Advanced: advancedRadio->setChecked(true); break;
+    }
+
+    groupLayout->addWidget(safeRadio);
+    groupLayout->addWidget(moderateRadio);
+    groupLayout->addWidget(advancedRadio);
+    layout->addWidget(group);
+}
+
+QCheckBox* AdvancedUninstallPanel::addSettingsDisplayGroup(
+    QDialog* dialog,
+    QVBoxLayout* layout) const
+{
+    Q_ASSERT(dialog);
+    Q_ASSERT(layout);
+
+    auto* group = new QGroupBox(tr("Display"), dialog);
+    auto* groupLayout = new QVBoxLayout(group);
+
+    auto* systemComponentsCheck = new QCheckBox(
+        tr("Show system components in program list"), dialog);
+    systemComponentsCheck->setChecked(m_controller->showSystemComponents());
+    systemComponentsCheck->setToolTip(
+        tr("When enabled, programs marked as system components are shown "
+           "in the program list. These are typically Windows components."));
+    groupLayout->addWidget(systemComponentsCheck);
+
+    layout->addWidget(group);
+    return systemComponentsCheck;
+}
+
+void AdvancedUninstallPanel::showSettingsDialog()
+{
+    QDialog dialog(this);
+    dialog.setWindowTitle(tr("Advanced Uninstall Settings"));
+    dialog.setMinimumWidth(520);
+
+    auto* layout = new QVBoxLayout(&dialog);
+    layout->setSpacing(ui::kSpacingLarge);
+
+    auto* selectAllCheck = addSettingsSelectionGroup(&dialog, layout);
+    auto* recycleBinCheck = addSettingsDeletionGroup(&dialog, layout);
+    auto* restorePointCheck = addSettingsRestorePointGroup(&dialog, layout);
+
+    QRadioButton* safeRadio = nullptr;
+    QRadioButton* moderateRadio = nullptr;
+    QRadioButton* advancedRadio = nullptr;
+    addSettingsScanLevelGroup(
+        &dialog, layout, safeRadio, moderateRadio, advancedRadio);
+
+    auto* systemComponentsCheck = addSettingsDisplayGroup(&dialog, layout);
+
+    auto* buttonBox = new QDialogButtonBox(
+        QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+    buttonBox->button(QDialogButtonBox::Ok)->setText(tr("Save Settings"));
+    layout->addWidget(buttonBox);
+
+    connect(buttonBox, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    connect(buttonBox, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+
+    if (dialog.exec() != QDialog::Accepted) return;
+
+    m_controller->setSelectAllByDefault(selectAllCheck->isChecked());
+    m_controller->setUseRecycleBin(recycleBinCheck->isChecked());
+    m_controller->setAutoRestorePoint(restorePointCheck->isChecked());
+
+    ScanLevel scanLevel = ScanLevel::Safe;
+    if (advancedRadio && advancedRadio->isChecked()) scanLevel = ScanLevel::Advanced;
+    if (moderateRadio && moderateRadio->isChecked()) scanLevel = ScanLevel::Moderate;
+    m_controller->setDefaultScanLevel(scanLevel);
+
+    m_controller->setShowSystemComponents(systemComponentsCheck->isChecked());
+    m_controller->saveSettings();
+    Q_EMIT statusMessage(tr("Settings saved."), 3000);
 }
 
 } // namespace sak

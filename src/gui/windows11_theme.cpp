@@ -159,8 +159,7 @@ public:
     }
 };
 
-QString themeBaseAndChromeStyles() {
-    return QStringLiteral(R"(
+static constexpr const char kThemeBaseAndChromeStyles[] = R"SAK(
         * {
             font-family: "Segoe UI";
             font-size: 10pt;
@@ -230,7 +229,10 @@ QString themeBaseAndChromeStyles() {
         QMenu::item:selected {
             background-color: rgba(59, 130, 246, 0.18);
         }
-    )");
+    )SAK";
+
+QString themeBaseAndChromeStyles() {
+    return QString::fromUtf8(kThemeBaseAndChromeStyles);
 }
 
 QString themeTabAndButtonStyles() {

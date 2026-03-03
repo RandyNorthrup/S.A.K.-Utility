@@ -400,7 +400,9 @@ QVector<SearchMatch> AdvancedSearchWorker::searchTextContent(
 
             // Extract context lines after
             const int ctxAfter = m_config.context_lines;
-            for (int j = i + 1; j <= std::min(static_cast<int>(lines.size()) - 1, i + ctxAfter); ++j) {
+            const int lastLine = static_cast<int>(lines.size()) - 1;
+            const int end = std::min(lastLine, i + ctxAfter);
+            for (int j = i + 1; j <= end; ++j) {
                 match.context_after.append(lines[j]);
             }
 
@@ -658,7 +660,8 @@ void parseExifIFD(const QByteArray& tiffData, uint32_t ifdOffset,
         const QByteArray chunkType = fileData.mid(offset + 4, 4);
 
         if (chunkType == "tEXt" && static_cast<int>(chunkLen) > 0) {
-            const QByteArray chunkData = fileData.mid(offset + 8, static_cast<int>(chunkLen));
+            const int chunkLenInt = static_cast<int>(chunkLen);
+            const QByteArray chunkData = fileData.mid(offset + 8, chunkLenInt);
             const int nullPos = chunkData.indexOf('\0');
             if (nullPos > 0) {
                 const QString key = QString::fromLatin1(chunkData.left(nullPos));
@@ -666,14 +669,17 @@ void parseExifIFD(const QByteArray& tiffData, uint32_t ifdOffset,
                 metadata.insert(key, val);
             }
         } else if (chunkType == "iTXt" && static_cast<int>(chunkLen) > 0) {
-            const QByteArray chunkData = fileData.mid(offset + 8, static_cast<int>(chunkLen));
+            const int chunkLenInt = static_cast<int>(chunkLen);
+            const QByteArray chunkData = fileData.mid(offset + 8, chunkLenInt);
             const int nullPos = chunkData.indexOf('\0');
             if (nullPos > 0) {
                 const QString key = QString::fromLatin1(chunkData.left(nullPos));
                 // iTXt has compression flag + method + lang + translated keyword + text
                 // For simplicity, extract text after the 3rd null byte
                 int textStart = nullPos + 1;
-                for (int nullCount = 0; nullCount < 3 && textStart < chunkData.size(); ++textStart) {
+                for (int nullCount = 0;
+                     nullCount < 3 && textStart < chunkData.size();
+                     ++textStart) {
                     if (chunkData[textStart] == '\0') ++nullCount;
                 }
                 if (textStart < chunkData.size()) {
@@ -946,7 +952,9 @@ namespace {
 
     // Only scan the last 4KB of the file (xref/trailer area) plus first 4KB
     // to find the Info dictionary reference, then search relevant sections
-    const int scanSize = static_cast<int>(std::min(static_cast<qsizetype>(32 * 1024), fileData.size()));
+    constexpr qsizetype kPdfScanMaxBytes = 32 * 1024;
+    const qsizetype scanSizeBytes = std::min(kPdfScanMaxBytes, fileData.size());
+    const int scanSize = static_cast<int>(scanSizeBytes);
     const QString pdfText = QString::fromLatin1(fileData.left(scanSize));
 
     auto matchIter = infoPattern.globalMatch(pdfText);
@@ -988,7 +996,9 @@ namespace {
         (static_cast<uint32_t>(static_cast<uint8_t>(fileData[8]) & 0x7F) <<  7) |
          static_cast<uint32_t>(static_cast<uint8_t>(fileData[9]) & 0x7F);
 
-    const int maxOffset = static_cast<int>(std::min(static_cast<qsizetype>(tagSize + 10), fileData.size()));
+    const auto tagSizeBytes = static_cast<qsizetype>(tagSize + 10);
+    const qsizetype maxOffsetBytes = std::min(tagSizeBytes, fileData.size());
+    const int maxOffset = static_cast<int>(maxOffsetBytes);
     int offset = 10;
 
     // ID3v2 frame mapping

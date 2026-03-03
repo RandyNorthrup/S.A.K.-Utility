@@ -24,6 +24,43 @@
 
 namespace sak {
 
+namespace {
+[[nodiscard]] QString normalizeUninstallExePath(QString uninstallString)
+{
+    QString exePath = std::move(uninstallString);
+
+    if (exePath.startsWith('"')) {
+        const int endQuote = exePath.indexOf('"', 1);
+        if (endQuote > 0) {
+            exePath = exePath.mid(1, endQuote - 1);
+        }
+        return exePath;
+    }
+
+    const int space = exePath.indexOf(' ');
+    if (space > 0) {
+        exePath = exePath.left(space);
+    }
+    return exePath;
+}
+
+[[nodiscard]] QJsonArray jsonDocToArray(const QJsonDocument& doc)
+{
+    if (doc.isArray()) {
+        return doc.array();
+    }
+    if (doc.isObject()) {
+        return QJsonArray{doc.object()};
+    }
+    return {};
+}
+
+const auto kUwpPackagesCommand = QStringLiteral(
+    "Get-AppxPackage | Select-Object Name, PackageFamilyName, "
+    "PackageFullName, Publisher, Version, InstallLocation, "
+    "IsFramework, SignatureKind | ConvertTo-Json -Compress");
+} // namespace
+
 ProgramEnumerator::ProgramEnumerator(QObject* parent)
     : QObject(parent)
 {
@@ -72,13 +109,15 @@ void ProgramEnumerator::enumerateAll()
             // Extract icon
             if (!prog.displayIcon.isEmpty()) {
                 prog.cachedImage = extractIcon(prog.displayIcon);
-            } else if (!prog.installLocation.isEmpty()) {
-                // Try to find an exe in install location
+            }
+
+            if (prog.cachedImage.isNull() && !prog.installLocation.isEmpty()) {
                 QDir dir(prog.installLocation);
                 const auto exes = dir.entryList({"*.exe"}, QDir::Files, QDir::Name);
-                if (!exes.isEmpty()) {
-                    prog.cachedImage = extractIcon(dir.filePath(exes.first()));
-                }
+                const QString exe = exes.value(0);
+                prog.cachedImage = exe.isEmpty()
+                                     ? QImage{}
+                                     : extractIcon(dir.filePath(exe));
             }
 
             // Calculate actual size if install location exists
@@ -112,42 +151,25 @@ void ProgramEnumerator::detectOrphaned(QVector<ProgramInfo>& programs)
             continue;  // UWP apps are always "installed"
         }
 
-        bool orphaned = false;
-
-        // Check if install location exists
-        if (!prog.installLocation.isEmpty()) {
-            if (!QDir(prog.installLocation).exists()) {
-                orphaned = true;
-            }
+        const bool installMissing = !prog.installLocation.isEmpty()
+                                  && !QDir(prog.installLocation).exists();
+        if (installMissing) {
+            prog.isOrphaned = true;
+            continue;
         }
 
-        // Check if uninstall executable exists
-        if (!orphaned && !prog.uninstallString.isEmpty()) {
-            QString exe_path = prog.uninstallString;
-
-            // Strip quotes
-            if (exe_path.startsWith('"')) {
-                int end_quote = exe_path.indexOf('"', 1);
-                if (end_quote > 0) {
-                    exe_path = exe_path.mid(1, end_quote - 1);
-                }
-            } else {
-                // Take first token as path
-                int space = exe_path.indexOf(' ');
-                if (space > 0) {
-                    exe_path = exe_path.left(space);
-                }
-            }
-
-            // Handle MsiExec — always valid since msiexec.exe is a system tool
-            if (exe_path.toLower().contains("msiexec")) {
-                // MSI uninstaller is always present
-            } else if (!exe_path.isEmpty() && !QFileInfo::exists(exe_path)) {
-                orphaned = true;
-            }
+        const QString exePath = normalizeUninstallExePath(prog.uninstallString);
+        if (exePath.isEmpty()) {
+            prog.isOrphaned = false;
+            continue;
         }
 
-        prog.isOrphaned = orphaned;
+        if (exePath.contains("msiexec", Qt::CaseInsensitive)) {
+            prog.isOrphaned = false;
+            continue;
+        }
+
+        prog.isOrphaned = !QFileInfo::exists(exePath);
     }
 }
 
@@ -365,9 +387,7 @@ QVector<ProgramInfo> ProgramEnumerator::scanUwpPackages()
     ps.setProgram("powershell.exe");
     ps.setArguments({
         "-NoProfile", "-NonInteractive", "-Command",
-        "Get-AppxPackage | Select-Object Name, PackageFamilyName, "
-        "PackageFullName, Publisher, Version, InstallLocation, "
-        "IsFramework, SignatureKind | ConvertTo-Json -Compress"
+        kUwpPackagesCommand
     });
     ps.start();
 
@@ -386,13 +406,7 @@ QVector<ProgramInfo> ProgramEnumerator::scanUwpPackages()
         return results;
     }
 
-    // Handle both single object and array
-    QJsonArray arr;
-    if (doc.isArray()) {
-        arr = doc.array();
-    } else if (doc.isObject()) {
-        arr.append(doc.object());
-    }
+    const QJsonArray arr = jsonDocToArray(doc);
 
     for (const auto& val : arr) {
         QJsonObject obj = val.toObject();

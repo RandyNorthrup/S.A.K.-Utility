@@ -1,5 +1,16 @@
 """Second-pass decomposition: split 4 methods still over 70 lines."""
-import re, sys, os
+
+from __future__ import annotations
+
+import argparse
+import os
+import re
+import sys
+from pathlib import Path
+
+
+def _default_repo_root() -> Path:
+    return Path(__file__).resolve().parents[1]
 
 def find_method_range(lines, class_name, method_name):
     """Find method start line and matching closing brace, aware of string literals."""
@@ -86,9 +97,9 @@ def insert_after_method(filepath, class_name, method_name, new_code):
 # ============================================================
 # 1. clear_event_logs_action.cpp - executeBuildReport (79 -> ~30)
 # ============================================================
-def patch_clear_event_logs():
-    filepath = r'c:\Users\Randy\Coding\S.A.K.-Utility\src\actions\clear_event_logs_action.cpp'
-    print(f'\n=== Patching {os.path.basename(filepath)} ===')
+def patch_clear_event_logs(repo_root: Path) -> bool:
+    filepath = repo_root / 'src' / 'actions' / 'clear_event_logs_action.cpp'
+    print(f'\n=== Patching {filepath.name} ===')
 
     # Replace executeBuildReport with smaller orchestrator
     new_build_report = r'''void ClearEventLogsAction::executeBuildReport(const QDateTime& start_time,
@@ -196,9 +207,9 @@ void ClearEventLogsAction::appendFailureReport(QString& log_output,
 # ============================================================
 # 2. check_disk_errors_action.cpp - parseDriveScanResult (74 -> ~50)
 # ============================================================
-def patch_check_disk_errors():
-    filepath = r'c:\Users\Randy\Coding\S.A.K.-Utility\src\actions\check_disk_errors_action.cpp'
-    print(f'\n=== Patching {os.path.basename(filepath)} ===')
+def patch_check_disk_errors(repo_root: Path) -> bool:
+    filepath = repo_root / 'src' / 'actions' / 'check_disk_errors_action.cpp'
+    print(f'\n=== Patching {filepath.name} ===')
 
     new_parse = r'''void CheckDiskErrorsAction::parseDriveScanResult(const QString& output, QChar drive,
                                                    QString& report, int& drives_scanned,
@@ -300,9 +311,9 @@ void CheckDiskErrorsAction::appendDriveScanEntry(const QString& drive_letter,
 # ============================================================
 # 3. check_bloatware_action.cpp - executeMatchBloatware (109 -> ~55 + ~60)
 # ============================================================
-def patch_check_bloatware():
-    filepath = r'c:\Users\Randy\Coding\S.A.K.-Utility\src\actions\check_bloatware_action.cpp'
-    print(f'\n=== Patching {os.path.basename(filepath)} ===')
+def patch_check_bloatware(repo_root: Path) -> bool:
+    filepath = repo_root / 'src' / 'actions' / 'check_bloatware_action.cpp'
+    print(f'\n=== Patching {filepath.name} ===')
 
     new_match = r'''void CheckBloatwareAction::executeMatchBloatware(const QString& scan_output,
                                                    QString& report,
@@ -443,9 +454,9 @@ void CheckBloatwareAction::formatBloatwareMatchReport(
 # ============================================================
 # 4. windows_update_action.cpp - executeInitSession (95 -> ~7 + 45 + 45)
 # ============================================================
-def patch_windows_update():
-    filepath = r'c:\Users\Randy\Coding\S.A.K.-Utility\src\actions\windows_update_action.cpp'
-    print(f'\n=== Patching {os.path.basename(filepath)} ===')
+def patch_windows_update(repo_root: Path) -> bool:
+    filepath = repo_root / 'src' / 'actions' / 'windows_update_action.cpp'
+    print(f'\n=== Patching {filepath.name} ===')
 
     new_init = r'''void WindowsUpdateAction::executeInitSession(const QDateTime& start_time, QString& ps_script)
 {
@@ -565,11 +576,21 @@ QString WindowsUpdateAction::buildUpdateInstallScript()
 
 
 if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        '--repo-root',
+        type=Path,
+        default=_default_repo_root(),
+        help='Path to the S.A.K.-Utility repo root (defaults to script-relative).',
+    )
+    args = parser.parse_args(sys.argv[1:])
+    repo_root = args.repo_root.resolve()
+
     ok = True
-    ok = patch_clear_event_logs() and ok
-    ok = patch_check_disk_errors() and ok
-    ok = patch_check_bloatware() and ok
-    ok = patch_windows_update() and ok
+    ok = patch_clear_event_logs(repo_root) and ok
+    ok = patch_check_disk_errors(repo_root) and ok
+    ok = patch_check_bloatware(repo_root) and ok
+    ok = patch_windows_update(repo_root) and ok
 
     if ok:
         print('\nAll 4 decompositions applied successfully!')

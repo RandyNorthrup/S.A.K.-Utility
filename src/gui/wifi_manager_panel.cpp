@@ -854,75 +854,193 @@ void WifiManagerPanel::executeBatchQrExport(
     Q_EMIT statusMessage(msg, sak::kTimerStatusExtendedMs);
 }
 
+namespace {
+
+struct BatchQrDialogUi {
+    QCheckBox* chkPng{nullptr};
+    QCheckBox* chkPdf{nullptr};
+    QCheckBox* chkJpg{nullptr};
+    QCheckBox* chkBmp{nullptr};
+    LogToggleSwitch* headerToggle{nullptr};
+    QLineEdit* dirEdit{nullptr};
+    QLabel* subLabel{nullptr};
+    QPushButton* btnBrowse{nullptr};
+    QPushButton* btnCancel{nullptr};
+    QPushButton* btnGen{nullptr};
+};
+
+BatchQrDialogUi buildBatchQrDialogUi(QDialog* dlg, int networkCount)
+{
+    Q_ASSERT(dlg);
+
+    BatchQrDialogUi ui;
+    dlg->setWindowTitle(QString("Batch QR Export (%1 networks)").arg(networkCount));
+    dlg->setMinimumWidth(400);
+
+    auto* layout = new QVBoxLayout(dlg);
+    layout->addWidget(new QLabel(
+        QString("Generate QR codes for %1 selected networks:").arg(networkCount),
+        dlg));
+    layout->addSpacing(6);
+    layout->addWidget(new QLabel("Export format(s):", dlg));
+
+    ui.chkPng = new QCheckBox("PNG", dlg);
+    ui.chkPng->setChecked(true);
+    ui.chkPdf = new QCheckBox("PDF", dlg);
+    ui.chkJpg = new QCheckBox("JPG", dlg);
+    ui.chkBmp = new QCheckBox("BMP", dlg);
+    for (auto* chk : {ui.chkPng, ui.chkPdf, ui.chkJpg, ui.chkBmp}) {
+        layout->addWidget(chk);
+    }
+
+    layout->addSpacing(8);
+    ui.headerToggle = new LogToggleSwitch("Location header", dlg);
+    ui.headerToggle->setFixedWidth(180);
+    ui.headerToggle->setChecked(true);
+    layout->addWidget(ui.headerToggle);
+    layout->addSpacing(8);
+
+    layout->addWidget(new QLabel(
+        "Output directory (one subfolder per network):", dlg));
+    auto* dirRow = new QHBoxLayout;
+    ui.dirEdit = new QLineEdit(dlg);
+    ui.dirEdit->setReadOnly(true);
+    ui.dirEdit->setPlaceholderText("Click Browse...");
+    ui.btnBrowse = new QPushButton("Browse...", dlg);
+    ui.btnBrowse->setFixedWidth(80);
+    dirRow->addWidget(ui.dirEdit, 1);
+    dirRow->addWidget(ui.btnBrowse);
+    layout->addLayout(dirRow);
+
+    ui.subLabel = new QLabel("", dlg);
+    ui.subLabel->setWordWrap(true);
+    ui.subLabel->setStyleSheet(
+        QString("color: %1; font-size: %2pt;")
+            .arg(sak::ui::kColorTextMuted)
+            .arg(sak::ui::kFontSizeSmall));
+    layout->addWidget(ui.subLabel);
+
+    layout->addStretch();
+    auto* btnRow = new QHBoxLayout;
+    ui.btnCancel = new QPushButton("Cancel", dlg);
+    ui.btnGen = new QPushButton("Batch Generate", dlg);
+    ui.btnGen->setDefault(true);
+    ui.btnGen->setEnabled(false);
+    btnRow->addStretch();
+    btnRow->addWidget(ui.btnCancel);
+    btnRow->addWidget(ui.btnGen);
+    layout->addLayout(btnRow);
+
+    return ui;
+}
+
+struct MultiNetworkQrDialogUi {
+    QLabel* idxLbl{nullptr};
+    QLabel* titleLbl{nullptr};
+    QLabel* imgLbl{nullptr};
+    QPushButton* prevBtn{nullptr};
+    QPushButton* nextBtn{nullptr};
+    QPushButton* closeBtn{nullptr};
+};
+
+MultiNetworkQrDialogUi buildMultiNetworkQrDialogUi(QDialog* dlg, int networkCount)
+{
+    Q_ASSERT(dlg);
+
+    MultiNetworkQrDialogUi ui;
+    dlg->setWindowTitle(
+        QString("Connect with Phone / Tablet (%1 networks)").arg(networkCount));
+    dlg->setFixedSize(420, 530);
+
+    auto* layout = new QVBoxLayout(dlg);
+    layout->setContentsMargins(
+        sak::ui::kMarginXLarge,
+        sak::ui::kMarginLarge,
+        sak::ui::kMarginXLarge,
+        sak::ui::kMarginLarge);
+    layout->setSpacing(sak::ui::kSpacingMedium);
+
+    ui.idxLbl = new QLabel(dlg);
+    ui.idxLbl->setAlignment(Qt::AlignCenter);
+    ui.idxLbl->setStyleSheet(
+        QString("color: %1; font-size: %2pt;").arg(
+            sak::ui::kColorTextMuted, QString::number(sak::ui::kFontSizeNote)));
+    layout->addWidget(ui.idxLbl);
+
+    ui.titleLbl = new QLabel(dlg);
+    ui.titleLbl->setAlignment(Qt::AlignCenter);
+    ui.titleLbl->setStyleSheet(
+        QString("font-size: %1pt;").arg(sak::ui::kFontSizeSection));
+    layout->addWidget(ui.titleLbl);
+
+    ui.imgLbl = new QLabel(dlg);
+    ui.imgLbl->setAlignment(Qt::AlignCenter);
+    ui.imgLbl->setStyleSheet(
+        QString("background: %1; border: 1px solid %2; padding: 4px;").arg(
+            sak::ui::kColorBgWhite, sak::ui::kColorBorderDefault));
+    ui.imgLbl->setFixedSize(360, 360);
+    ui.imgLbl->setAccessibleName(QStringLiteral("WiFi QR code"));
+    layout->addWidget(ui.imgLbl, 0, Qt::AlignHCenter);
+
+    auto* hintLbl = new QLabel(
+        "Scan this QR code with your phone or tablet\n"
+        "to connect to the network.",
+        dlg);
+    hintLbl->setAlignment(Qt::AlignCenter);
+    hintLbl->setStyleSheet(
+        QString("color: %1; font-size: %2pt;").arg(
+            sak::ui::kColorTextSecondary, QString::number(sak::ui::kFontSizeNote)));
+    layout->addWidget(hintLbl);
+
+    auto* navBar = new QHBoxLayout();
+    ui.prevBtn = new QPushButton("< Prev", dlg);
+    ui.nextBtn = new QPushButton("Next >", dlg);
+    ui.closeBtn = new QPushButton("Close", dlg);
+    ui.prevBtn->setFixedWidth(70);
+    ui.nextBtn->setFixedWidth(70);
+    navBar->addWidget(ui.prevBtn);
+    navBar->addStretch();
+    navBar->addWidget(ui.closeBtn);
+    navBar->addStretch();
+    navBar->addWidget(ui.nextBtn);
+    layout->addLayout(navBar);
+
+    return ui;
+}
+
+} // namespace
+
 void WifiManagerPanel::showBatchQrDialog(const QList<WifiConfig>& sources)
 {
     QDialog dlg(this);
-    dlg.setWindowTitle(QString("Batch QR Export (%1 networks)").arg(sources.size()));
-    dlg.setMinimumWidth(400);
-    auto* layout = new QVBoxLayout(&dlg);
-    layout->addWidget(new QLabel(
-        QString("Generate QR codes for %1 selected networks:").arg(sources.size())));
-    layout->addSpacing(6);
-    layout->addWidget(new QLabel("Export format(s):"));
-    auto* chkPng = new QCheckBox("PNG");  chkPng->setChecked(true);
-    auto* chkPdf = new QCheckBox("PDF");
-    auto* chkJpg = new QCheckBox("JPG");
-    auto* chkBmp = new QCheckBox("BMP");
-    for (auto* chk : {chkPng, chkPdf, chkJpg, chkBmp}) layout->addWidget(chk);
-    layout->addSpacing(8);
-    auto* headerToggle = new LogToggleSwitch("Location header", &dlg);
-    headerToggle->setFixedWidth(180); headerToggle->setChecked(true);
-    layout->addWidget(headerToggle);
-    layout->addSpacing(8);
-    layout->addWidget(new QLabel("Output directory (one subfolder per network):"));
-    auto* dirRow   = new QHBoxLayout;
-    auto* dirEdit  = new QLineEdit;
-    dirEdit->setReadOnly(true); dirEdit->setPlaceholderText("Click Browse...");
-    auto* btnBrowse = new QPushButton("Browse...");
-    btnBrowse->setFixedWidth(80);
-    dirRow->addWidget(dirEdit, 1); dirRow->addWidget(btnBrowse);
-    layout->addLayout(dirRow);
-    auto* subLabel = new QLabel("");
-    subLabel->setWordWrap(true);
-    subLabel->setStyleSheet(
-        QString("color: %1; font-size: %2pt;").arg(
-            sak::ui::kColorTextMuted).arg(sak::ui::kFontSizeSmall));
-    layout->addWidget(subLabel);
-    layout->addStretch();
-    auto* btnRow    = new QHBoxLayout;
-    auto* btnCancel = new QPushButton("Cancel");
-    auto* btnGen    = new QPushButton("Batch Generate");
-    btnGen->setDefault(true);
-    btnGen->setEnabled(false);
-    btnRow->addStretch();
-    btnRow->addWidget(btnCancel);
-    btnRow->addWidget(btnGen);
-    layout->addLayout(btnRow);
-    QObject::connect(btnCancel, &QPushButton::clicked, &dlg, &QDialog::reject);
-    QObject::connect(btnBrowse, &QPushButton::clicked, [&]() {
-        const QString start = dirEdit->text().isEmpty()
+    const BatchQrDialogUi ui = buildBatchQrDialogUi(&dlg, sources.size());
+
+    QObject::connect(ui.btnCancel, &QPushButton::clicked, &dlg, &QDialog::reject);
+    QObject::connect(ui.btnBrowse, &QPushButton::clicked, &dlg, [&]() {
+        const QString start = ui.dirEdit->text().isEmpty()
             ? QStandardPaths::writableLocation(QStandardPaths::DesktopLocation)
-            : dirEdit->text();
+            : ui.dirEdit->text();
         const QString chosen = QFileDialog::getExistingDirectory(
             &dlg, "Select Output Directory", start);
         if (chosen.isEmpty()) return;
-        dirEdit->setText(chosen);
-        subLabel->setText(
+        ui.dirEdit->setText(chosen);
+        ui.subLabel->setText(
             QString("One subfolder will be created per network under: %1").arg(chosen));
-        btnGen->setEnabled(true);
+        ui.btnGen->setEnabled(true);
     });
-    QObject::connect(btnGen, &QPushButton::clicked, [&]() {
-        const QString baseDir = dirEdit->text();
+
+    QObject::connect(ui.btnGen, &QPushButton::clicked, &dlg, [&]() {
+        const QString baseDir = ui.dirEdit->text();
         if (baseDir.isEmpty()) return;
-        if (!chkPng->isChecked() && !chkPdf->isChecked() &&
-            !chkJpg->isChecked() && !chkBmp->isChecked()) {
+        if (!ui.chkPng->isChecked() && !ui.chkPdf->isChecked() &&
+            !ui.chkJpg->isChecked() && !ui.chkBmp->isChecked()) {
             sak::logWarning("Select at least one export format.");
             QMessageBox::warning(&dlg, "No Format", "Select at least one export format.");
             return;
         }
-        executeBatchQrExport(&dlg, sources, baseDir, headerToggle->isChecked(),
-                             chkPng->isChecked(), chkPdf->isChecked(),
-                             chkJpg->isChecked(), chkBmp->isChecked());
+        executeBatchQrExport(&dlg, sources, baseDir, ui.headerToggle->isChecked(),
+                             ui.chkPng->isChecked(), ui.chkPdf->isChecked(),
+                             ui.chkJpg->isChecked(), ui.chkBmp->isChecked());
     });
     dlg.exec();
 }
@@ -1182,77 +1300,36 @@ void WifiManagerPanel::showMultiNetworkQrDialog(const QList<WifiConfig>& sources
 {
     Q_ASSERT(!sources.isEmpty());
     QDialog dlg(this);
-    dlg.setWindowTitle(QString("Connect with Phone / Tablet (%1 networks)").arg(sources.size()));
-    dlg.setFixedSize(420, 530);
-
-    auto* layout = new QVBoxLayout(&dlg);
-    layout->setContentsMargins(sak::ui::kMarginXLarge, sak::ui::kMarginLarge,
-        sak::ui::kMarginXLarge, sak::ui::kMarginLarge);
-    layout->setSpacing(sak::ui::kSpacingMedium);
-
-    auto* idxLbl = new QLabel(&dlg);
-    idxLbl->setAlignment(Qt::AlignCenter);
-    idxLbl->setStyleSheet(
-        QString("color: %1; font-size: %2pt;").arg(
-            sak::ui::kColorTextMuted, QString::number(sak::ui::kFontSizeNote)));
-    layout->addWidget(idxLbl);
-
-    auto* titleLbl = new QLabel(&dlg);
-    titleLbl->setAlignment(Qt::AlignCenter);
-    titleLbl->setStyleSheet(
-        QString("font-size: %1pt;").arg(sak::ui::kFontSizeSection));
-    layout->addWidget(titleLbl);
-
-    auto* imgLbl = new QLabel(&dlg);
-    imgLbl->setAlignment(Qt::AlignCenter);
-    imgLbl->setStyleSheet(
-        QString("background: %1; border: 1px solid %2; padding: 4px;").arg(
-            sak::ui::kColorBgWhite, sak::ui::kColorBorderDefault));
-    imgLbl->setFixedSize(360, 360);
-    imgLbl->setAccessibleName(QStringLiteral("WiFi QR code"));
-    layout->addWidget(imgLbl, 0, Qt::AlignHCenter);
-
-    auto* hintLbl = new QLabel("Scan this QR code with your phone or tablet\nto connect to the "
-        "network.", &dlg);
-    hintLbl->setAlignment(Qt::AlignCenter);
-    hintLbl->setStyleSheet(
-        QString("color: %1; font-size: %2pt;").arg(
-            sak::ui::kColorTextSecondary, QString::number(sak::ui::kFontSizeNote)));
-    layout->addWidget(hintLbl);
-
-    auto* navBar   = new QHBoxLayout();
-    auto* prevBtn  = new QPushButton("< Prev", &dlg);
-    auto* nextBtn  = new QPushButton("Next >", &dlg);
-    auto* closeBtn = new QPushButton("Close",  &dlg);
-    prevBtn->setFixedWidth(70);
-    nextBtn->setFixedWidth(70);
-    navBar->addWidget(prevBtn);
-    navBar->addStretch();
-    navBar->addWidget(closeBtn);
-    navBar->addStretch();
-    navBar->addWidget(nextBtn);
-    layout->addLayout(navBar);
+    const MultiNetworkQrDialogUi ui = buildMultiNetworkQrDialogUi(&dlg, sources.size());
 
     int currentIdx = 0;
 
-    auto updatePage = [&sources, imgLbl, titleLbl, idxLbl, prevBtn, nextBtn, this](int idx) {
-        const WifiConfig& cfg     = sources[idx];
-        const QString     payload = buildWifiPayloadFromConfig(cfg);
-        const QImage qrImg = generateQrImage(payload).scaled(360, 360, Qt::KeepAspectRatio,
-            Qt::SmoothTransformation);
-        imgLbl->setPixmap(QPixmap::fromImage(qrImg));
-        titleLbl->setText(QString("<b>%1</b>").arg(cfg.ssid.isEmpty() ?
-            "WiFi Network" : cfg.ssid.toHtmlEscaped()));
-        idxLbl->setText(QString("Network %1 of %2").arg(idx + 1).arg(sources.size()));
-        prevBtn->setEnabled(idx > 0);
-        nextBtn->setEnabled(idx < static_cast<int>(sources.size()) - 1);
+    auto updatePage = [this, &sources, &ui](int idx) {
+        Q_ASSERT(idx >= 0);
+        Q_ASSERT(idx < sources.size());
+
+        const WifiConfig& cfg = sources[idx];
+        const QString payload = buildWifiPayloadFromConfig(cfg);
+        const QImage qrImg = generateQrImage(payload).scaled(
+            360, 360, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+        ui.imgLbl->setPixmap(QPixmap::fromImage(qrImg));
+
+        ui.titleLbl->setText(QString("<b>%1</b>").arg(cfg.ssid.isEmpty()
+            ? QStringLiteral("WiFi Network")
+            : cfg.ssid.toHtmlEscaped()));
+        ui.idxLbl->setText(
+            QString("Network %1 of %2").arg(idx + 1).arg(sources.size()));
+        ui.prevBtn->setEnabled(idx > 0);
+        ui.nextBtn->setEnabled(idx < static_cast<int>(sources.size()) - 1);
     };
 
-    connect(prevBtn,  &QPushButton::clicked, &dlg, [&currentIdx,
-        &updatePage]() { updatePage(--currentIdx); });
-    connect(nextBtn,  &QPushButton::clicked, &dlg, [&currentIdx,
-        &updatePage]() { updatePage(++currentIdx); });
-    connect(closeBtn, &QPushButton::clicked, &dlg, &QDialog::accept);
+    connect(ui.prevBtn, &QPushButton::clicked, &dlg, [&currentIdx, &updatePage]() {
+        updatePage(--currentIdx);
+    });
+    connect(ui.nextBtn, &QPushButton::clicked, &dlg, [&currentIdx, &updatePage]() {
+        updatePage(++currentIdx);
+    });
+    connect(ui.closeBtn, &QPushButton::clicked, &dlg, &QDialog::accept);
 
     updatePage(0);
     dlg.exec();

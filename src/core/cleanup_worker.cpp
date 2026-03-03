@@ -13,14 +13,17 @@
 
 #ifdef Q_OS_WIN
 #include <windows.h>
+#include <shellapi.h>
 #endif
 
 namespace sak {
 
 CleanupWorker::CleanupWorker(const QVector<LeftoverItem>& selectedItems,
+                             bool useRecycleBin,
                              QObject* parent)
     : WorkerBase(parent)
     , m_items(selectedItems)
+    , m_useRecycleBin(useRecycleBin)
 {
 }
 
@@ -104,6 +107,10 @@ auto CleanupWorker::execute() -> std::expected<void, sak::error_code>
     reportProgress(total, total, "Cleanup complete");
     Q_EMIT cleanupComplete(succeeded, failed, bytes_recovered);
 
+    if (!m_rebootPendingPaths.isEmpty()) {
+        Q_EMIT rebootPendingItems(m_rebootPendingPaths);
+    }
+
     return {};
 }
 
@@ -114,13 +121,32 @@ bool CleanupWorker::deleteFile(const QString& path)
         return true;  // Already gone
     }
 
-    if (!QFile::remove(path)) {
-        // Try setting writable first
-        QFile file(path);
-        file.setPermissions(QFile::ReadOther | QFile::WriteOther);
-        return file.remove();
+    // If recycle bin mode is enabled, try that first
+    if (m_useRecycleBin) {
+        if (sendToRecycleBin(path)) {
+            return true;
+        }
+        // Fall through to direct deletion if recycle bin fails
     }
-    return true;
+
+    if (QFile::remove(path)) {
+        return true;
+    }
+
+    // Try setting writable and retry
+    QFile file(path);
+    file.setPermissions(QFile::ReadOther | QFile::WriteOther);
+    if (file.remove()) {
+        return true;
+    }
+
+    // File is locked — schedule removal on next reboot
+    if (scheduleRebootRemoval(path)) {
+        m_rebootPendingPaths.append(path);
+        return true;  // Counted as success; actual removal happens on reboot
+    }
+
+    return false;
 }
 
 bool CleanupWorker::deleteFolder(const QString& path)
@@ -130,7 +156,89 @@ bool CleanupWorker::deleteFolder(const QString& path)
         return true;  // Already gone
     }
 
-    return dir.removeRecursively();
+    // If recycle bin mode, try sending the entire folder
+    if (m_useRecycleBin) {
+        if (sendToRecycleBin(path)) {
+            return true;
+        }
+    }
+
+    if (dir.removeRecursively()) {
+        return true;
+    }
+
+    // Folder has locked contents — attempt to remove individual files,
+    // scheduling locked ones for reboot removal
+    bool allHandled = true;
+    const auto entries = dir.entryInfoList(
+        QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Hidden | QDir::System,
+        QDir::DirsLast);
+
+    for (const auto& entry : entries) {
+        const QString entryPath = entry.absoluteFilePath();
+        if (entry.isDir()) {
+            if (!deleteFolder(entryPath)) {
+                allHandled = false;
+            }
+            continue;
+        }
+
+        if (QFile::remove(entryPath)) {
+            continue;
+        }
+
+        if (scheduleRebootRemoval(entryPath)) {
+            m_rebootPendingPaths.append(entryPath);
+            continue;
+        }
+
+        allHandled = false;
+    }
+
+    // Try removing the now-possibly-empty directory
+    if (!dir.rmdir(path)) {
+        if (scheduleRebootRemoval(path)) {
+            m_rebootPendingPaths.append(path);
+        } else {
+            allHandled = false;
+        }
+    }
+
+    return allHandled;
+}
+
+bool CleanupWorker::sendToRecycleBin(const QString& path)
+{
+#ifdef Q_OS_WIN
+    // SHFileOperationW requires double-null terminated string
+    std::wstring widePath = path.toStdWString();
+    widePath.push_back(L'\0');  // Extra null terminator
+
+    SHFILEOPSTRUCTW op{};
+    op.wFunc = FO_DELETE;
+    op.pFrom = widePath.c_str();
+    op.fFlags = FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_NOERRORUI | FOF_SILENT;
+
+    return SHFileOperationW(&op) == 0 && !op.fAnyOperationsAborted;
+#else
+    Q_UNUSED(path)
+    return false;
+#endif
+}
+
+bool CleanupWorker::scheduleRebootRemoval(const QString& path)
+{
+#ifdef Q_OS_WIN
+    // MoveFileExW with MOVEFILE_DELAY_UNTIL_REBOOT schedules the file
+    // for deletion when Windows restarts (independent of this application)
+    return MoveFileExW(
+        reinterpret_cast<LPCWSTR>(path.utf16()),
+        nullptr,
+        MOVEFILE_DELAY_UNTIL_REBOOT) != 0;
+#else
+    Q_UNUSED(path)
+    return false;
+#endif
 }
 
 bool CleanupWorker::deleteRegistryKey(const QString& fullKeyPath)

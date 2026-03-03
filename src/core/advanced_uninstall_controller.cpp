@@ -57,7 +57,9 @@ AdvancedUninstallController::currentState() const
 void AdvancedUninstallController::refreshPrograms()
 {
     if (m_state != State::Idle) {
-        Q_EMIT statusMessage("Cannot refresh while another operation is in progress.", kStatusTimeoutShortMs);
+        Q_EMIT statusMessage(
+            "Cannot refresh while another operation is in progress.",
+            kStatusTimeoutShortMs);
         return;
     }
 
@@ -232,7 +234,9 @@ void AdvancedUninstallController::cleanLeftovers(
     const QVector<LeftoverItem>& selectedItems)
 {
     if (m_state != State::Idle && m_state != State::Uninstalling) {
-        Q_EMIT statusMessage("Cannot clean while another operation is in progress.", kStatusTimeoutShortMs);
+        Q_EMIT statusMessage(
+            "Cannot clean while another operation is in progress.",
+            kStatusTimeoutShortMs);
         return;
     }
 
@@ -246,12 +250,15 @@ void AdvancedUninstallController::cleanLeftovers(
     Q_EMIT cleanupStarted(total);
     Q_EMIT statusMessage(QString("Cleaning %1 leftover items...").arg(total), 0);
 
-    m_cleanup_worker = std::make_unique<CleanupWorker>(selectedItems, this);
+    m_cleanup_worker = std::make_unique<CleanupWorker>(
+        selectedItems, m_useRecycleBin, this);
 
     connect(m_cleanup_worker.get(), &CleanupWorker::itemCleaned,
             this, &AdvancedUninstallController::itemCleaned);
     connect(m_cleanup_worker.get(), &CleanupWorker::cleanupComplete,
             this, &AdvancedUninstallController::onCleanupComplete);
+    connect(m_cleanup_worker.get(), &CleanupWorker::rebootPendingItems,
+            this, &AdvancedUninstallController::rebootPendingItems);
     connect(m_cleanup_worker.get(), &CleanupWorker::failed,
             this, &AdvancedUninstallController::onCleanupWorkerFailed);
     connect(m_cleanup_worker.get(), &CleanupWorker::progress,
@@ -349,6 +356,10 @@ void AdvancedUninstallController::loadSettings()
         cfg.getValue("advuninstall/auto_clean_safe", true).toBool();
     m_showSystemComponents =
         cfg.getValue("advuninstall/show_system_components", false).toBool();
+    m_useRecycleBin =
+        cfg.getValue("advuninstall/use_recycle_bin", false).toBool();
+    m_selectAllByDefault =
+        cfg.getValue("advuninstall/select_all_by_default", false).toBool();
 }
 
 void AdvancedUninstallController::saveSettings()
@@ -360,6 +371,8 @@ void AdvancedUninstallController::saveSettings()
     cfg.setValue("advuninstall/auto_restore_point", m_autoRestorePoint);
     cfg.setValue("advuninstall/auto_clean_safe", m_autoCleanSafe);
     cfg.setValue("advuninstall/show_system_components", m_showSystemComponents);
+    cfg.setValue("advuninstall/use_recycle_bin", m_useRecycleBin);
+    cfg.setValue("advuninstall/select_all_by_default", m_selectAllByDefault);
 }
 
 bool AdvancedUninstallController::autoRestorePoint() const
@@ -400,6 +413,26 @@ bool AdvancedUninstallController::showSystemComponents() const
 void AdvancedUninstallController::setShowSystemComponents(bool show)
 {
     m_showSystemComponents = show;
+}
+
+bool AdvancedUninstallController::useRecycleBin() const
+{
+    return m_useRecycleBin;
+}
+
+void AdvancedUninstallController::setUseRecycleBin(bool enabled)
+{
+    m_useRecycleBin = enabled;
+}
+
+bool AdvancedUninstallController::selectAllByDefault() const
+{
+    return m_selectAllByDefault;
+}
+
+void AdvancedUninstallController::setSelectAllByDefault(bool enabled)
+{
+    m_selectAllByDefault = enabled;
 }
 
 RestorePointManager* AdvancedUninstallController::restorePointManager() const

@@ -25,7 +25,58 @@ constexpr int kCancellationPollMs      = 1000;
 constexpr int kProcessKillWaitMs       = 5000;
 constexpr int kUwpRemovalTimeoutMs     = 60000;
 constexpr int kMsiRebootRequiredCode   = 3010;
-}  // namespace
+
+struct ParsedCommand {
+    QString exe;
+    QStringList args;
+};
+
+[[nodiscard]] QStringList splitArgsRespectingQuotes(const QString& remainder)
+{
+    const auto trimmed = remainder.trimmed();
+    if (trimmed.isEmpty()) {
+        return {};
+    }
+
+    static const QRegularExpression kArgRe(R"(\"([^\"]*)\"|(\S+))");
+    QStringList args;
+    auto it = kArgRe.globalMatch(trimmed);
+    while (it.hasNext()) {
+        const auto match = it.next();
+        args.append(match.captured(1).isEmpty() ? match.captured(2) : match.captured(1));
+    }
+    return args;
+}
+
+[[nodiscard]] ParsedCommand parseUninstallCommand(const QString& cmd)
+{
+    ParsedCommand parsed;
+    if (cmd.isEmpty()) {
+        return parsed;
+    }
+
+    if (cmd.startsWith('"')) {
+        const int endQuote = cmd.indexOf('"', 1);
+        if (endQuote <= 0) {
+            return parsed;
+        }
+        parsed.exe = cmd.mid(1, endQuote - 1);
+        parsed.args = splitArgsRespectingQuotes(cmd.mid(endQuote + 1));
+        return parsed;
+    }
+
+    const int exeEnd = cmd.indexOf(".exe", 0, Qt::CaseInsensitive);
+    if (exeEnd > 0) {
+        parsed.exe = cmd.left(exeEnd + 4);
+        parsed.args = splitArgsRespectingQuotes(cmd.mid(exeEnd + 4));
+        return parsed;
+    }
+
+    parsed.exe = cmd;
+    return parsed;
+}
+
+} // namespace
 
 UninstallWorker::UninstallWorker(const ProgramInfo& program, Mode mode,
                                  ScanLevel scanLevel,
@@ -175,50 +226,9 @@ bool UninstallWorker::runNativeUninstaller()
 
     QProcess proc;
 
-    // Parse command into program + arguments
-    QString exe;
-    QStringList args;
-
-    if (cmd.startsWith('"')) {
-        // Quoted path
-        int end_quote = cmd.indexOf('"', 1);
-        if (end_quote > 0) {
-            exe = cmd.mid(1, end_quote - 1);
-            QString remainder = cmd.mid(end_quote + 1).trimmed();
-            if (!remainder.isEmpty()) {
-                // Split remaining args — handle quoted args
-                QRegularExpression arg_re(R"(\"([^\"]*)\"|(\S+))");
-                auto it = arg_re.globalMatch(remainder);
-                while (it.hasNext()) {
-                    auto match = it.next();
-                    args.append(match.captured(1).isEmpty()
-                                    ? match.captured(2) : match.captured(1));
-                }
-            }
-        }
-    } else {
-        // Unquoted — find exe by looking for .exe
-        int exe_end = cmd.indexOf(".exe", 0, Qt::CaseInsensitive);
-        if (exe_end > 0) {
-            exe = cmd.left(exe_end + 4);
-            QString remainder = cmd.mid(exe_end + 4).trimmed();
-            if (!remainder.isEmpty()) {
-                QRegularExpression arg_re(R"(\"([^\"]*)\"|(\S+))");
-                auto it = arg_re.globalMatch(remainder);
-                while (it.hasNext()) {
-                    auto match = it.next();
-                    args.append(match.captured(1).isEmpty()
-                                    ? match.captured(2) : match.captured(1));
-                }
-            }
-        } else {
-            // Fallback: treat entire string as command
-            exe = cmd;
-        }
-    }
-
-    proc.setProgram(exe);
-    proc.setArguments(args);
+    const auto parsed = parseUninstallCommand(cmd);
+    proc.setProgram(parsed.exe);
+    proc.setArguments(parsed.args);
     proc.start();
 
     if (!proc.waitForStarted(kProcessStartTimeoutMs)) {

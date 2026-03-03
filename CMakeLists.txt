@@ -15,7 +15,7 @@ endif()
 
 # Project definition
 project(SAK_Utility 
-    VERSION 0.7.0
+    VERSION 0.8.0
     DESCRIPTION "Swiss Army Knife Utility - PC technician's toolkit for Windows migration and maintenance"
     LANGUAGES CXX
 )# C++23 Standard - Strict compliance required
@@ -186,8 +186,10 @@ find_package(LibLZMA REQUIRED)
 
 # Platform-specific libraries
 if(PLATFORM_WINDOWS)
-    # Windows-specific: Registry access, WMI, DXGI, performance counters
-    set(PLATFORM_LIBS advapi32 shell32 user32 dxgi pdh)
+    # Windows-specific: Registry access, WMI, DXGI, performance counters,
+    # networking (IP Helper, Winsock, DNS, WLAN, NetBIOS), COM (Firewall)
+    set(PLATFORM_LIBS advapi32 shell32 user32 dxgi pdh
+        iphlpapi ws2_32 dnsapi wlanapi netapi32 ole32 oleaut32)
 elseif(PLATFORM_MACOS)
     # macOS-specific: CoreFoundation, IOKit
     find_library(COREFOUNDATION_LIBRARY CoreFoundation REQUIRED)
@@ -396,6 +398,32 @@ set(CORE_SOURCES
     include/sak/restore_point_manager.h
     include/sak/registry_snapshot_engine.h
     include/sak/advanced_uninstall_controller.h
+    # Network Diagnostic core
+    src/core/network_adapter_inspector.cpp
+    src/core/connectivity_tester.cpp
+    src/core/dns_diagnostic_tool.cpp
+    src/core/port_scanner.cpp
+    src/core/bandwidth_tester.cpp
+    src/core/wifi_analyzer.cpp
+    src/core/active_connections_monitor.cpp
+    src/core/firewall_rule_auditor.cpp
+    src/core/network_share_browser.cpp
+    src/core/network_diagnostic_report_generator.cpp
+    src/core/network_diagnostic_controller.cpp
+    src/core/ethernet_config_manager.cpp
+    include/sak/network_diagnostic_types.h
+    include/sak/network_adapter_inspector.h
+    include/sak/connectivity_tester.h
+    include/sak/dns_diagnostic_tool.h
+    include/sak/port_scanner.h
+    include/sak/bandwidth_tester.h
+    include/sak/wifi_analyzer.h
+    include/sak/active_connections_monitor.h
+    include/sak/firewall_rule_auditor.h
+    include/sak/network_share_browser.h
+    include/sak/network_diagnostic_report_generator.h
+    include/sak/network_diagnostic_controller.h
+    include/sak/ethernet_config_manager.h
 )
 
 # Threading infrastructure
@@ -480,6 +508,9 @@ set(GUI_SOURCES
     src/gui/advanced_uninstall_panel.cpp
     src/gui/advanced_uninstall_panel_dialogs.cpp
     include/sak/advanced_uninstall_panel.h
+    # Network Diagnostic panel
+    src/gui/network_diagnostic_panel.cpp
+    include/sak/network_diagnostic_panel.h
 )
 
 # Quick Actions

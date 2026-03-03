@@ -23,6 +23,17 @@ constexpr int kPowerShellTimeoutMs       = 15000;
 constexpr DWORD kMaxRegistryKeyNameLen   = 256;
 constexpr DWORD kMaxRegistryValueNameLen = 256;
 constexpr DWORD kMaxRegistryValueDataLen = 1024;
+
+template <typename ReportFn>
+void appendAndReportItems(QVector<LeftoverItem>& out,
+                          const QVector<LeftoverItem>& items,
+                          ReportFn report)
+{
+    for (const auto& item : items) {
+        report(item.path);
+    }
+    out.append(items);
+}
 }  // namespace
 
 // Protected system paths that should NEVER be auto-selected for deletion
@@ -131,22 +142,14 @@ QVector<LeftoverItem> LeftoverScanner::scan(
 
     // Phase 1: File system scanning (all levels)
     if (!stopRequested.load()) {
-        auto fs_items = scanFileSystem(stopRequested);
-        for (const auto& item : fs_items) {
-            report(item.path);
-        }
-        all_leftovers.append(fs_items);
+        appendAndReportItems(all_leftovers, scanFileSystem(stopRequested), report);
     }
 
     // Phase 2: Registry scanning (Moderate and Advanced)
     if (!stopRequested.load()
         && (m_level == ScanLevel::Moderate || m_level == ScanLevel::Advanced)) {
 #ifdef Q_OS_WIN
-        auto reg_items = scanRegistry(stopRequested);
-        for (const auto& item : reg_items) {
-            report(item.path);
-        }
-        all_leftovers.append(reg_items);
+        appendAndReportItems(all_leftovers, scanRegistry(stopRequested), report);
 #endif
     }
 
@@ -156,34 +159,15 @@ QVector<LeftoverItem> LeftoverScanner::scan(
 
     // Phase 4: System objects (Advanced only)
     if (!stopRequested.load() && m_level == ScanLevel::Advanced) {
-        auto service_items = scanServices(stopRequested);
-        for (const auto& item : service_items) {
-            report(item.path);
-        }
-        all_leftovers.append(service_items);
-
+        appendAndReportItems(all_leftovers, scanServices(stopRequested), report);
         if (!stopRequested.load()) {
-            auto task_items = scanScheduledTasks(stopRequested);
-            for (const auto& item : task_items) {
-                report(item.path);
-            }
-            all_leftovers.append(task_items);
+            appendAndReportItems(all_leftovers, scanScheduledTasks(stopRequested), report);
         }
-
         if (!stopRequested.load()) {
-            auto fw_items = scanFirewallRules(stopRequested);
-            for (const auto& item : fw_items) {
-                report(item.path);
-            }
-            all_leftovers.append(fw_items);
+            appendAndReportItems(all_leftovers, scanFirewallRules(stopRequested), report);
         }
-
         if (!stopRequested.load()) {
-            auto startup_items = scanStartupEntries(stopRequested);
-            for (const auto& item : startup_items) {
-                report(item.path);
-            }
-            all_leftovers.append(startup_items);
+            appendAndReportItems(all_leftovers, scanStartupEntries(stopRequested), report);
         }
     }
 
@@ -726,24 +710,28 @@ LeftoverItem::RiskLevel LeftoverScanner::classifyRisk(
 bool LeftoverScanner::isProtectedPath(const QString& path) const
 {
     const QString path_native = QDir::toNativeSeparators(path);
+    const QString install_native = m_program.installLocation.isEmpty()
+                                      ? QString{}
+                                      : QDir::toNativeSeparators(m_program.installLocation);
     for (const auto& protected_path : kProtectedPaths) {
-        if (path_native.startsWith(protected_path, Qt::CaseInsensitive)) {
-            // Allow paths that go deeper than the protected path
-            // but block direct matches
-            if (path_native.length() == protected_path.length()
-                || (path_native.length() > protected_path.length()
-                    && path_native[protected_path.length()] == '\\')) {
-                // Check if part of our install — if install location IS
-                // under a protected path, allow it
-                if (!m_program.installLocation.isEmpty()
-                    && path_native.startsWith(
-                        QDir::toNativeSeparators(m_program.installLocation),
-                        Qt::CaseInsensitive)) {
-                    return false;
-                }
-                return true;
-            }
+        if (!path_native.startsWith(protected_path, Qt::CaseInsensitive)) {
+            continue;
         }
+
+        const int protectedLen = protected_path.length();
+        const bool directMatch = (path_native.length() == protectedLen);
+        const bool directChild = (path_native.length() > protectedLen
+                                  && path_native[protectedLen] == '\\');
+        if (!directMatch && !directChild) {
+            continue;
+        }
+
+        if (!install_native.isEmpty()
+            && path_native.startsWith(install_native, Qt::CaseInsensitive)) {
+            return false;
+        }
+
+        return true;
     }
     return false;
 }

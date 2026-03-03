@@ -342,6 +342,10 @@ python_archive/**/dist/
 python_archive/**/build/
 python_archive/**/*.egg-info/
 
+# Ignore Python bytecode/caches everywhere (tools/, scripts/, etc.)
+**/__pycache__/
+**/*.py[cod]
+
 # ============================================================================
 # Project Specific
 # ============================================================================
