@@ -1044,7 +1044,7 @@ void UserProfileBackupInstalledAppsPage::onSelectAll() {
     }
     m_appTree->blockSignals(false);
 
-    // Trigger update via fake item change
+    // Recalculate summary and persist selection to wizard
     if (m_appTree->topLevelItemCount() > 0) {
         onItemChanged(m_appTree->topLevelItem(0), 0);
     }

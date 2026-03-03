@@ -54,6 +54,7 @@ public:
 
 Q_SIGNALS:
     void statusMessage(const QString& message, int timeout_ms);
+    void progressUpdate(int current, int maximum);
     void logOutput(const QString& message);
 
 private Q_SLOTS:
@@ -128,10 +129,6 @@ private Q_SLOTS:
     void onDiscoverShares();
     void onSharesDiscovered(QVector<sak::NetworkShareInfo> shares);
 
-    // Report
-    void onGenerateHtmlReport();
-    void onGenerateJsonReport();
-
     // Controller
     void onStateChanged(int newState);
     void onError(QString error);
@@ -179,7 +176,6 @@ private:
     void setupFirewallRuleTable(QWidget* widget, QVBoxLayout* layout);
     void setupFirewallAnalysis(QWidget* widget, QVBoxLayout* layout);
     QWidget* createSharesTab();
-    QWidget* createReportSection();
     void connectSignals();
     void connectUiSignals();
     void connectControllerCoreSignals();
@@ -198,7 +194,10 @@ private:
 
     // ── Adapter UI ──
     QTableWidget* m_adapterTable  = nullptr;
-    QLabel* m_adapterDetailLabel  = nullptr;
+    QLabel* m_detailIdentity      = nullptr;  ///< Name / Description / MAC
+    QLabel* m_detailAddressing     = nullptr;  ///< IPv4 / IPv6
+    QLabel* m_detailGatewayDns    = nullptr;  ///< Gateways / DNS
+    QLabel* m_detailStatus        = nullptr;  ///< DHCP / Speed / Status
     QPushButton* m_refreshBtn     = nullptr;
     QPushButton* m_copyConfigBtn  = nullptr;
     QPushButton* m_backupEthernetBtn  = nullptr;
@@ -306,13 +305,6 @@ private:
     QLineEdit* m_shareHostname    = nullptr;
     QTableWidget* m_shareTable    = nullptr;
     QPushButton* m_shareDiscoverBtn = nullptr;  ///< Owned by layout hierarchy
-
-    // ── Report UI ──
-    QLineEdit* m_reportTechnician = nullptr;
-    QLineEdit* m_reportTicket     = nullptr;
-    QLineEdit* m_reportNotes      = nullptr;
-    QPushButton* m_htmlReportBtn  = nullptr;
-    QPushButton* m_jsonReportBtn  = nullptr;
 
     // Cached data for UI
     QVector<NetworkAdapterInfo> m_adapters;

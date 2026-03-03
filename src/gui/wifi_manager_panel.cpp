@@ -418,6 +418,9 @@ void WifiManagerPanel::setupActionButtons()
     bar->addWidget(m_export_script_btn);
     bar->addWidget(m_export_macos_btn);
     bar->addStretch();
+
+    m_logToggle = new LogToggleSwitch(tr("Log"), this);
+    bar->addWidget(m_logToggle);
     bar->addWidget(m_scan_networks_btn);
 
     auto* barWidget = new QWidget(this);

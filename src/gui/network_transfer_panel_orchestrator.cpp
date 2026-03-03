@@ -405,8 +405,8 @@ void NetworkTransferPanel::onJobStartRequested(const QString& job_id,
 
     connect(controller, &NetworkTransferController::transferCompleted, this,
             [this, job_id, controller](bool success, const QString& message) {
-                if (!success && m_parallelManager) {
-                    m_parallelManager->markJobComplete(job_id, false, message);
+                if (m_parallelManager) {
+                    m_parallelManager->markJobComplete(job_id, success, message);
                     refreshJobsTable();
                 }
                 controller->deleteLater();
@@ -427,10 +427,15 @@ void NetworkTransferPanel::onJobUpdated(const QString& job_id, int progress_perc
 
 void NetworkTransferPanel::onJobCompleted(const QString& job_id, bool success,
     const QString& error_message) {
-    Q_UNUSED(success);
-    Q_UNUSED(error_message);
     m_knownJobIds.insert(job_id);
     refreshJobsTable();
+
+    if (success) {
+        Q_EMIT logOutput(tr("Job %1 completed successfully.").arg(job_id));
+    } else {
+        Q_EMIT logOutput(tr("Job %1 failed: %2").arg(job_id, error_message));
+        Q_EMIT statusMessage(tr("Transfer job failed: %1").arg(error_message), 5000);
+    }
 }
 
 void NetworkTransferPanel::onAggregateProgress(int completed, int total, int percent) {

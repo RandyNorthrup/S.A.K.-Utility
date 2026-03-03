@@ -243,8 +243,17 @@ void AddTabWithTooltip(
     Q_ASSERT(tabTitle);
     Q_ASSERT(tooltip);
 
-    tabWidget->addTab(panel, QString::fromUtf8(tabTitle));
-    tabWidget->setTabToolTip(tabWidget->count() - 1, QString::fromUtf8(tooltip));
+    const int idx = tabWidget->addTab(panel, QString::fromUtf8(tabTitle));
+    tabWidget->setTabToolTip(idx, QString::fromUtf8(tooltip));
+
+    // Set accessible name on the panel widget so screen readers
+    // identify each tab's content area
+    const QString title = QString::fromUtf8(tabTitle);
+    panel->setAccessibleName(title + QStringLiteral(" panel"));
+    panel->setAccessibleDescription(QString::fromUtf8(tooltip));
+
+    // Also set accessible text on the tab bar tab via tab widget
+    tabWidget->setTabWhatsThis(idx, QString::fromUtf8(tooltip));
 }
 
 QTextBrowser* CreateHtmlBrowser(QWidget* parent, const char* html)
@@ -256,38 +265,6 @@ QTextBrowser* CreateHtmlBrowser(QWidget* parent, const char* html)
         browser->setOpenExternalLinks(true);
         browser->setHtml(QString::fromUtf8(html));
         return browser;
-}
-
-QString BuildSystemInfoText()
-{
-        QString info;
-        info += QString("Application Version: %1\n").arg(get_version());
-        info += QString("Build Date: %1 %2\n\n").arg(get_build_date(), get_build_time());
-        info += QString("Operating System: %1\n").arg(QSysInfo::prettyProductName());
-        info += QString("Kernel: %1 %2\n").arg(QSysInfo::kernelType(), QSysInfo::kernelVersion());
-        info += QString("Architecture: %1\n").arg(QSysInfo::currentCpuArchitecture());
-        info += QString("Build ABI: %1\n\n").arg(QSysInfo::buildAbi());
-        info += QString("Qt Version: %1 (Runtime: %2)\n").arg(QT_VERSION_STR, qVersion());
-
-#if defined(_MSC_VER)
-        info += QString("Compiler: MSVC %1\n").arg(_MSC_VER);
-#elif defined(__clang__)
-        info += QString("Compiler: Clang %1.%2.%3\n")
-                .arg(__clang_major__)
-                .arg(__clang_minor__)
-                .arg(__clang_patchlevel__);
-#elif defined(__GNUC__)
-        info += QString("Compiler: GCC %1.%2.%3\n")
-                .arg(__GNUC__)
-                .arg(__GNUC_MINOR__)
-                .arg(__GNUC_PATCHLEVEL__);
-#else
-        info += QStringLiteral("Compiler: Unknown\n");
-#endif
-
-        info += QString("\nC++ Standard: C++%1\n").arg(__cplusplus);
-        info += QStringLiteral("\nPlatform: Windows");
-        return info;
 }
 
 } // namespace
@@ -318,6 +295,12 @@ void MainWindow::setupUi()
     m_tab_widget->setDocumentMode(true);
     m_tab_widget->setUsesScrollButtons(true);  // Scroll tabs when window is narrow
     m_tab_widget->setElideMode(Qt::ElideNone); // Don't truncate tab labels
+    m_tab_widget->setAccessibleName(tr("Main panel tabs"));
+    m_tab_widget->setAccessibleDescription(
+        tr("Tab bar for switching between application panels. "
+           "Use Ctrl+1..9 for tabs 1-9, Ctrl+0 for tab 10, "
+           "Ctrl+Shift+1..4 for tabs 11-14, "
+           "or Ctrl+Tab / Ctrl+Shift+Tab to cycle."));
     setCentralWidget(m_tab_widget);
 
     // Create UI elements
@@ -505,11 +488,6 @@ void MainWindow::createAboutPanel()
             CreateHtmlBrowser(aboutPanel, kCreditsTabHtml),
             QStringLiteral("Credits"));
 
-        // System tab  --  runtime environment details
-        auto* systemBrowser = new QTextBrowser(aboutPanel);
-        systemBrowser->setPlainText(BuildSystemInfoText());
-        aboutTabs->addTab(systemBrowser, QStringLiteral("System"));
-
         aboutLayout->addWidget(aboutTabs);
         m_tab_widget->addTab(aboutPanel, QStringLiteral("About"));
 }
@@ -578,6 +556,8 @@ void MainWindow::connectPanelSignals()
     connect(m_network_diagnostic_panel.get(), &NetworkDiagnosticPanel::statusMessage,
             this, [this](const QString& msg, int timeout_ms) { updateStatus(msg,
                 timeout_ms > 0 ? timeout_ms : 5000); });
+    connect(m_network_diagnostic_panel.get(), &NetworkDiagnosticPanel::progressUpdate,
+            this, &MainWindow::updateProgress);
 }
 
 void MainWindow::connectPanelLogs()
@@ -612,6 +592,10 @@ void MainWindow::connectPanelLogs()
     connectLog(m_advanced_search_panel.get());
     connectLog(m_advanced_uninstall_panel.get());
     connectLog(m_network_diagnostic_panel.get());
+
+    if (m_wifi_manager_panel) {
+        connectLog(m_wifi_manager_panel.get());
+    }
 
     if (m_network_transfer_panel) {
         connectLog(m_network_transfer_panel.get());
@@ -699,13 +683,36 @@ void MainWindow::onTabChanged(int index)
 void MainWindow::createKeyboardShortcuts()
 {
     Q_ASSERT(m_tab_widget);
+    const int tabCount = m_tab_widget->count();
+
     // Tab navigation: Ctrl+1..9 switches to tab index 0..8
-    for (int i = 0; i < qMin(m_tab_widget->count(), 9); ++i) {
+    for (int i = 0; i < qMin(tabCount, 9); ++i) {
         auto* shortcut = new QShortcut(QKeySequence(Qt::CTRL | static_cast<Qt::Key>(Qt::Key_1 +
             i)), this);
         shortcut->setContext(Qt::ApplicationShortcut);
         connect(shortcut, &QShortcut::activated, this, [this, i]() {
             m_tab_widget->setCurrentIndex(i);
+        });
+    }
+
+    // Ctrl+0: switches to tab index 9 (10th tab) — browser convention
+    if (tabCount > 9) {
+        auto* tab10 = new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_0), this);
+        tab10->setContext(Qt::ApplicationShortcut);
+        connect(tab10, &QShortcut::activated, this, [this]() {
+            m_tab_widget->setCurrentIndex(9);
+        });
+    }
+
+    // Ctrl+Shift+1..5: switches to tab index 10..14 (tabs beyond 10)
+    for (int i = 0; i < qMin(tabCount - 10, 5); ++i) {
+        const int tabIdx = 10 + i;
+        if (tabIdx >= tabCount) break;
+        auto* shortcut = new QShortcut(QKeySequence(
+            Qt::CTRL | Qt::SHIFT | static_cast<Qt::Key>(Qt::Key_1 + i)), this);
+        shortcut->setContext(Qt::ApplicationShortcut);
+        connect(shortcut, &QShortcut::activated, this, [this, tabIdx]() {
+            m_tab_widget->setCurrentIndex(tabIdx);
         });
     }
 

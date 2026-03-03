@@ -73,7 +73,6 @@ private Q_SLOTS:
     // Controller signals
     void onSearchStarted(const QString& pattern);
     void onResultsReceived(QVector<sak::SearchMatch> matches);
-    void onFileSearched(const QString& filePath, int matchCount);
     void onSearchFinished(int totalMatches, int totalFiles);
     void onSearchFailed(const QString& error);
     void onSearchCancelled();

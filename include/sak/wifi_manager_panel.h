@@ -46,8 +46,12 @@ public:
     WifiManagerPanel(WifiManagerPanel&&) = delete;
     WifiManagerPanel& operator=(WifiManagerPanel&&) = delete;
 
+    /// @brief Access the log toggle switch for MainWindow log window connection
+    [[nodiscard]] LogToggleSwitch* logToggle() const { return m_logToggle; }
+
 Q_SIGNALS:
     void statusMessage(const QString& message, int timeout_ms);
+    void logOutput(const QString& message);
 
 private Q_SLOTS:
     void onAddToTableClicked();
@@ -264,6 +268,7 @@ private:
     QList<int> m_search_matches;
     int        m_search_index{-1};
     QString    m_save_path;
+    LogToggleSwitch* m_logToggle{nullptr};
 };
 
 }  // namespace sak

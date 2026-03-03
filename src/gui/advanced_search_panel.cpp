@@ -361,8 +361,8 @@ AdvancedSearchPanel::AdvancedSearchPanel(QWidget* parent)
             this, &AdvancedSearchPanel::onSearchStarted);
     connect(m_controller.get(), &AdvancedSearchController::resultsReceived,
             this, &AdvancedSearchPanel::onResultsReceived);
-    connect(m_controller.get(), &AdvancedSearchController::fileSearched,
-            this, &AdvancedSearchPanel::onFileSearched);
+    // fileSearched is handled internally by the controller for counting;
+    // results are delivered via resultsReceived — no panel slot needed.
     connect(m_controller.get(), &AdvancedSearchController::searchFinished,
             this, &AdvancedSearchPanel::onSearchFinished);
     connect(m_controller.get(), &AdvancedSearchController::searchFailed,
@@ -977,13 +977,6 @@ void AdvancedSearchPanel::onResultsReceived(QVector<sak::SearchMatch> matches)
             matchItem->setData(0, Qt::UserRole + 1, i);
         }
     }
-}
-
-void AdvancedSearchPanel::onFileSearched(const QString& filePath, int matchCount)
-{
-    Q_UNUSED(filePath);
-    Q_UNUSED(matchCount);
-    // Results tree is updated via onResultsReceived
 }
 
 void AdvancedSearchPanel::onSearchFinished(int totalMatches, int totalFiles)

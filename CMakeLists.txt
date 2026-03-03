@@ -15,7 +15,7 @@ endif()
 
 # Project definition
 project(SAK_Utility 
-    VERSION 0.8.0
+    VERSION 0.8.1
     DESCRIPTION "Swiss Army Knife Utility - PC technician's toolkit for Windows migration and maintenance"
     LANGUAGES CXX
 )# C++23 Standard - Strict compliance required
@@ -342,7 +342,6 @@ set(CORE_SOURCES
     include/sak/permission_manager.h
     include/sak/user_profile_backup_worker.h
     include/sak/user_profile_restore_worker.h
-    include/sak/user_profile_restore_wizard.h
     include/sak/network_transfer_types.h
     include/sak/network_transfer_protocol.h
     include/sak/network_transfer_security.h
@@ -424,6 +423,10 @@ set(CORE_SOURCES
     include/sak/network_diagnostic_report_generator.h
     include/sak/network_diagnostic_controller.h
     include/sak/ethernet_config_manager.h
+    include/sak/action_constants.h
+    include/sak/layout_constants.h
+    include/sak/network_constants.h
+    include/sak/style_constants.h
 )
 
 # Threading infrastructure

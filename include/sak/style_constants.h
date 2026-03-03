@@ -143,6 +143,35 @@ constexpr auto kPrimaryButtonStyle =
     "  border: 1px solid rgba(203, 213, 225, 0.6);"
     "}";
 
+/// Secondary action button — subtle slate gradient for non-primary actions.
+/// Apply via `button->setStyleSheet(sak::ui::kSecondaryButtonStyle);`
+constexpr auto kSecondaryButtonStyle =
+    "QPushButton {"
+    "  background: qlineargradient(x1:0, y1:0, x2:0, y2:1,"
+    "    stop:0 rgba(100, 116, 139, 0.92),"
+    "    stop:0.5 rgba(71, 85, 105, 0.90),"
+    "    stop:1 rgba(51, 65, 85, 0.88));"
+    "  color: white;"
+    "  padding: 8px 14px; border-radius: 10px;"
+    "  border: 1px solid rgba(51, 65, 85, 0.7);"
+    "}"
+    "QPushButton:hover {"
+    "  background: qlineargradient(x1:0, y1:0, x2:0, y2:1,"
+    "    stop:0 rgba(120, 137, 158, 0.95),"
+    "    stop:0.5 rgba(100, 116, 139, 0.93),"
+    "    stop:1 rgba(71, 85, 105, 0.90));"
+    "}"
+    "QPushButton:pressed {"
+    "  background: qlineargradient(x1:0, y1:0, x2:0, y2:1,"
+    "    stop:0 rgba(51, 65, 85, 0.95),"
+    "    stop:0.5 rgba(30, 41, 59, 0.93),"
+    "    stop:1 rgba(15, 23, 42, 0.92));"
+    "}"
+    "QPushButton:disabled {"
+    "  background: rgba(203, 213, 225, 0.75); color: #64748b;"
+    "  border: 1px solid rgba(203, 213, 225, 0.6);"
+    "}";
+
 /// Success action button — green gradient, uniform with theme QPushButton.
 /// Apply via `button->setStyleSheet(sak::ui::kSuccessButtonStyle);`
 constexpr auto kSuccessButtonStyle =
