@@ -174,7 +174,7 @@ try {
     # --- Step 3: Download and extract uup-converter-wimlib ---
     $converterDir = Join-Path $OutputDir "converter"
     $converterBinReady = (Test-Path (Join-Path $converterDir "convert-UUP.cmd")) -and
-                         (Test-Path (Join-Path $converterDir "bin" "wimlib-imagex.exe"))
+                         (Test-Path (Join-Path (Join-Path $converterDir "bin") "wimlib-imagex.exe"))
 
     if ($converterBinReady -and -not $Force) {
         Write-Status "UUP converter already present. Use -Force to re-download."
