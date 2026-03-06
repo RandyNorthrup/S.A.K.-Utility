@@ -244,28 +244,8 @@ try {
         if (Test-Path $uupmcDir) {
             Remove-Item $uupmcDir -Recurse -Force
         }
-        New-Item -ItemType Directory -Path $uupmcDir -Force | Out-Null
 
-        $uupmcExtractTemp = Join-Path $tempDir "uupmc_extract"
-        New-Item -ItemType Directory -Path $uupmcExtractTemp -Force | Out-Null
-
-        Expand-Archive -Path $uupmcZip -DestinationPath $uupmcExtractTemp -Force
-
-        # Copy all extracted files to uupmc directory
-        Get-ChildItem -Path $uupmcExtractTemp -Recurse | ForEach-Object {
-            $relativePath = $_.FullName.Substring($uupmcExtractTemp.Length + 1)
-            $destPath = Join-Path $uupmcDir $relativePath
-            if ($_.PSIsContainer) {
-                New-Item -ItemType Directory -Path $destPath -Force | Out-Null
-            }
-            else {
-                $destDir = Split-Path $destPath -Parent
-                if (-not (Test-Path $destDir)) {
-                    New-Item -ItemType Directory -Path $destDir -Force | Out-Null
-                }
-                Copy-Item -Path $_.FullName -Destination $destPath -Force
-            }
-        }
+        Expand-Archive -Path $uupmcZip -DestinationPath $uupmcDir -Force
 
         # Verify critical files were extracted
         $uupmcCritical = @("UUPMediaConverter.exe", "UUPDownload.exe")

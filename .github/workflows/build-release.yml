@@ -88,7 +88,7 @@ jobs:
         # Download and extract smartctl.exe for SMART disk diagnostics.
         # The script is idempotent — skips if smartctl.exe is already present
         # (e.g. checked into the repo via the .gitignore exception).
-        powershell -ExecutionPolicy Bypass -File scripts/bundle_smartmontools.ps1
+        & scripts/bundle_smartmontools.ps1
 
     - name: Cache UUP tools
       uses: actions/cache@v4
@@ -101,7 +101,7 @@ jobs:
       run: |
         # Download and extract aria2c.exe, uup-converter-wimlib, and UUP Media Creator.
         # The script is idempotent — skips if tools are already present.
-        powershell -ExecutionPolicy Bypass -File scripts/bundle_uup_tools.ps1
+        & scripts/bundle_uup_tools.ps1
 
     - name: Configure CMake
       run: |
