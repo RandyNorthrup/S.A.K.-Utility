@@ -131,6 +131,8 @@ void applyShadow(QWidget* widget) {
 
 class TooltipEventFilter final : public QObject {
 public:
+    using QObject::QObject;
+
     bool eventFilter(QObject* watched, QEvent* event) override {
         if (!watched || !event) {
             return QObject::eventFilter(watched, event);
@@ -509,7 +511,7 @@ void applyWindows11Theme(QApplication& app) {
 }
 
 void installTooltipHelper(QApplication& app) {
-    app.installEventFilter(new TooltipEventFilter());
+    app.installEventFilter(new TooltipEventFilter(&app));
 }
 
 } // namespace sak::ui

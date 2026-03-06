@@ -85,13 +85,12 @@ HttpSample downloadHttpSample(const QString& url)
     QNetworkRequest request{QUrl(url)};
     request.setTransferTimeout(kSpeedTestDurationMs);
 
+    const auto start = std::chrono::high_resolution_clock::now();
     QNetworkReply* reply = manager.get(request);
 
     QEventLoop loop;
     QObject::connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
     QTimer::singleShot(kSpeedTestDurationMs, &loop, &QEventLoop::quit);
-
-    const auto start = std::chrono::high_resolution_clock::now();
     loop.exec();
     const auto end = std::chrono::high_resolution_clock::now();
 
@@ -99,6 +98,35 @@ HttpSample downloadHttpSample(const QString& url)
     if (reply->error() == QNetworkReply::NoError) {
         const auto data = reply->readAll();
         sample.bytes = static_cast<double>(data.size());
+        sample.timeMs = std::chrono::duration<double, std::milli>(end - start).count();
+    }
+
+    reply->deleteLater();
+    return sample;
+}
+
+HttpSample uploadHttpSample(const QString& url, int payloadBytes)
+{
+    QNetworkAccessManager manager;
+    QNetworkRequest request{QUrl(url)};
+    request.setTransferTimeout(kSpeedTestDurationMs);
+    request.setHeader(QNetworkRequest::ContentTypeHeader,
+                      QStringLiteral("application/octet-stream"));
+
+    const QByteArray payload(payloadBytes, '\0');
+
+    const auto start = std::chrono::high_resolution_clock::now();
+    QNetworkReply* reply = manager.post(request, payload);
+
+    QEventLoop loop;
+    QObject::connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
+    QTimer::singleShot(kSpeedTestDurationMs, &loop, &QEventLoop::quit);
+    loop.exec();
+    const auto end = std::chrono::high_resolution_clock::now();
+
+    HttpSample sample;
+    if (reply->error() == QNetworkReply::NoError) {
+        sample.bytes = static_cast<double>(payloadBytes);
         sample.timeMs = std::chrono::duration<double, std::milli>(end - start).count();
     }
 
@@ -367,38 +395,65 @@ void BandwidthTester::runHttpSpeedTest()
 {
     m_cancelled.store(false);
 
-    // Use multiple well-known CDN endpoints for speed testing
-    const QStringList testUrls = {
-        QStringLiteral("http://speedtest.tele2.net/1MB.zip"),
-        QStringLiteral("http://proof.ovh.net/files/1Mb.dat"),
-    };
+    // Cloudflare speed test endpoints (HTTPS, globally available)
+    constexpr int kDownloadBytes = 10'000'000; // 10 MB
+    constexpr int kUploadBytes   = 2'000'000;  // 2 MB
 
-    double totalBytes = 0.0;
-    double totalTimeMs = 0.0;
+    const QString downloadUrl =
+        QStringLiteral("https://speed.cloudflare.com/__down?bytes=%1").arg(kDownloadBytes);
+    const QString uploadUrl =
+        QStringLiteral("https://speed.cloudflare.com/__up");
 
-    for (const auto& url : testUrls) {
-        if (m_cancelled.load()) {
-            return;
-        }
+    // ── Latency ──
+    double latencyMs = measureHttpHeadLatencyMs(
+        QStringLiteral("https://speed.cloudflare.com/__down?bytes=0"), 5000);
 
-        const auto sample = downloadHttpSample(url);
-        totalBytes += sample.bytes;
-        totalTimeMs += sample.timeMs;
+    if (m_cancelled.load()) return;
+
+    // ── Download ──
+    double dlTotalBytes = 0.0;
+    double dlTotalTimeMs = 0.0;
+    constexpr int kDownloadSamples = 2;
+
+    for (int i = 0; i < kDownloadSamples; ++i) {
+        if (m_cancelled.load()) return;
+        const auto sample = downloadHttpSample(downloadUrl);
+        dlTotalBytes += sample.bytes;
+        dlTotalTimeMs += sample.timeMs;
     }
 
-    if (totalTimeMs > 0.0) {
-        const double downloadMbps =
-            (totalBytes * kBitsPerByte) / (totalTimeMs / 1000.0) / kMegabit;
+    double downloadMbps = 0.0;
+    if (dlTotalTimeMs > 0.0) {
+        downloadMbps =
+            (dlTotalBytes * kBitsPerByte) / (dlTotalTimeMs / 1000.0) / kMegabit;
+    }
 
-        // Ping latency estimate (use first test time minus transfer time)
-        double latencyMs = 0.0;
-        if (!testUrls.isEmpty()) {
-            latencyMs = measureHttpHeadLatencyMs(testUrls.first(), 5000);
-        }
+    Q_EMIT httpSpeedTestProgress(downloadMbps, 0.0);
 
-        Q_EMIT httpSpeedTestComplete(downloadMbps, 0.0, latencyMs);
+    if (m_cancelled.load()) return;
+
+    // ── Upload ──
+    double ulTotalBytes = 0.0;
+    double ulTotalTimeMs = 0.0;
+    constexpr int kUploadSamples = 2;
+
+    for (int i = 0; i < kUploadSamples; ++i) {
+        if (m_cancelled.load()) return;
+        const auto sample = uploadHttpSample(uploadUrl, kUploadBytes);
+        ulTotalBytes += sample.bytes;
+        ulTotalTimeMs += sample.timeMs;
+    }
+
+    double uploadMbps = 0.0;
+    if (ulTotalTimeMs > 0.0) {
+        uploadMbps =
+            (ulTotalBytes * kBitsPerByte) / (ulTotalTimeMs / 1000.0) / kMegabit;
+    }
+
+    if (dlTotalTimeMs > 0.0 || ulTotalTimeMs > 0.0) {
+        Q_EMIT httpSpeedTestComplete(downloadMbps, uploadMbps, latencyMs);
     } else {
-        Q_EMIT errorOccurred(QStringLiteral("HTTP speed test failed: no data downloaded"));
+        Q_EMIT errorOccurred(QStringLiteral("HTTP speed test failed: no data transferred"));
     }
 }
 

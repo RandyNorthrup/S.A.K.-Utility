@@ -3,5 +3,26 @@
     <qresource prefix="/icons">
         <file>icons/eye_open.svg</file>
         <file>icons/eye_closed.svg</file>
+        <file>icons/microsoft_logo.svg</file>
+        <file>icons/uup_logo.svg</file>
+        <file>icons/tux_logo.svg</file>
+        <file>icons/backup.svg</file>
+        <file>icons/restore.svg</file>
+        <file>icons/features.svg</file>
+        <file>icons/bugs.svg</file>
+        <file>icons/help.svg</file>
+        <file>icons/discord.svg</file>
+        <file>icons/panel_app_install.svg</file>
+        <file>icons/panel_backup_restore.svg</file>
+        <file>icons/panel_diagnostic.svg</file>
+        <file>icons/panel_help.svg</file>
+        <file>icons/panel_image_flasher.svg</file>
+        <file>icons/panel_network.svg</file>
+        <file>icons/panel_network_transfer.svg</file>
+        <file>icons/panel_organizer.svg</file>
+        <file>icons/panel_quick_actions.svg</file>
+        <file>icons/panel_search.svg</file>
+        <file>icons/panel_uninstall.svg</file>
+        <file>icons/panel_wifi.svg</file>
     </qresource>
 </RCC>

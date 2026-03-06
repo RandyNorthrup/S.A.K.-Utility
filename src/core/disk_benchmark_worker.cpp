@@ -289,7 +289,10 @@ size_t DiskBenchmarkWorker::readSequentialPass(
     void* file_handle, uint8_t* buffer, size_t bufSize, size_t total_bytes)
 {
     HANDLE h = static_cast<HANDLE>(file_handle);
-    SetFilePointer(h, 0, nullptr, FILE_BEGIN);
+    LARGE_INTEGER zero{};
+    if (!SetFilePointerEx(h, zero, nullptr, FILE_BEGIN)) {
+        return 0;
+    }
 
     size_t bytes_read_total = 0;
     while (bytes_read_total < total_bytes) {

@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="48" height="48">
+  <!-- Microsoft four-square logo -->
+  <rect x="2" y="2" width="20" height="20" rx="2" fill="#F25022"/>
+  <rect x="26" y="2" width="20" height="20" rx="2" fill="#7FBA00"/>
+  <rect x="2" y="26" width="20" height="20" rx="2" fill="#00A4EF"/>
+  <rect x="26" y="26" width="20" height="20" rx="2" fill="#FFB900"/>
+</svg>

@@ -19,7 +19,9 @@ ClearPrintSpoolerAction::ClearPrintSpoolerAction(QObject* parent)
 }
 
 int ClearPrintSpoolerAction::countSpoolFiles() {
-    QString spool_path = "C:/Windows/System32/spool/PRINTERS";
+    const QString spool_path =
+        qEnvironmentVariable("SystemRoot", QStringLiteral("C:\\Windows"))
+        + QStringLiteral("/System32/spool/PRINTERS");
     QDir spool_dir(spool_path);
 
     if (!spool_dir.exists()) {
@@ -42,7 +44,9 @@ void ClearPrintSpoolerAction::stopSpooler() {
 void ClearPrintSpoolerAction::clearSpoolFolder() {
     Q_EMIT executionProgress("Clearing spool folder...", 50);
 
-    QString spool_path = "C:/Windows/System32/spool/PRINTERS";
+    const QString spool_path =
+        qEnvironmentVariable("SystemRoot", QStringLiteral("C:\\Windows"))
+        + QStringLiteral("/System32/spool/PRINTERS");
     QDir spool_dir(spool_path);
 
     if (spool_dir.exists()) {

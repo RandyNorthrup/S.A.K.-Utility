@@ -191,6 +191,9 @@ private:
     // Check if process is running with administrator privileges
     static bool isRunningAsAdmin();
 
+    /// @brief Rewrite ConvertConfig.ini with SkipApps=1 for AppX retry
+    void updateConvertConfigSkipApps();
+
     // Progress parsing
     /// @brief Poll download-phase progress and emit updates
     void pollDownloadProgress();
@@ -235,6 +238,8 @@ private:
     double m_currentSpeedMBps = 0.0;
     qint64 m_downloadedBytes = 0;
     QString m_converterOutputTail;
+    int m_conversionRetryCount = 0;
+    bool m_skipAppxOnRetry = false;
 
     // Phase weight in overall progress (must sum to 100)
     static constexpr int PHASE_PREPARE_WEIGHT = 5;

@@ -43,9 +43,12 @@ ClearEventLogsAction::ClearEventLogsAction(QObject* parent)
 
 bool ClearEventLogsAction::backupEventLog(const QString& log_name) {
     QString timestamp = QDateTime::currentDateTime().toString("yyyyMMdd_hhmmss");
-    QString backup_path = QString("C:/SAK_Backups/EventLogs/%1_%2.evtx").arg(log_name, timestamp);
+    const QString base = m_backup_location.isEmpty()
+        ? QStringLiteral("C:/SAK_Backups") : m_backup_location;
+    const QString backup_dir = base + QStringLiteral("/EventLogs");
+    QString backup_path = QString("%1/%2_%3.evtx").arg(backup_dir, log_name, timestamp);
 
-    QDir().mkpath("C:/SAK_Backups/EventLogs");
+    QDir().mkpath(backup_dir);
 
     QString cmd = QString("wevtutil epl %1 \"%2\"").arg(log_name, backup_path);
     ProcessResult proc = runProcess("cmd.exe", QStringList() << "/c" << cmd,

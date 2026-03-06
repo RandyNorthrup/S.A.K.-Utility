@@ -66,7 +66,8 @@ void DuplicateFinderPanel::setupUi()
     rootLayout->addWidget(scrollArea);
 
     // Panel header — consistent title + muted subtitle
-    sak::createPanelHeader(contentWidget, tr("Duplicate Finder"),
+    sak::createPanelHeader(contentWidget, QStringLiteral(":/icons/icons/panel_organizer.svg"),
+        tr("Duplicate Finder"),
         tr("Scan directories for duplicate files using content-based hashing"), mainLayout);
 
     createDirectoryGroup(mainLayout);

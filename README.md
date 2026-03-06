@@ -9,7 +9,7 @@
 [![Qt 6.5+](https://img.shields.io/badge/Qt-6.5%2B-41cd52.svg)](https://www.qt.io/)
 [![Windows 10/11](https://img.shields.io/badge/Windows-10%20%7C%2011-0078d4.svg)](https://www.microsoft.com/windows)
 [![Build](https://github.com/RandyNorthrup/S.A.K.-Utility/actions/workflows/build-release.yml/badge.svg)](https://github.com/RandyNorthrup/S.A.K.-Utility/actions)
-[![Version](https://img.shields.io/badge/Version-0.8.1-orange.svg)](VERSION)
+[![Version](https://img.shields.io/badge/Version-0.8.5-orange.svg)](VERSION)
 [![TigerStyle](https://img.shields.io/badge/code%20style-TigerStyle-f80.svg)](docs/TIGERSTYLE_COMPLIANCE_PLAN.md)
 
 Migration · Maintenance · Recovery · Imaging · Deployment — one portable EXE.
@@ -18,7 +18,15 @@ Migration · Maintenance · Recovery · Imaging · Deployment — one portable E
 
 ---
 
-## What's New in v0.8.1
+## What's New in v0.8.5
+
+- **Enterprise-grade Directory Organizer** — Merged duplicate finder into the organizer panel. Added confirmation dialogs before destructive operations (file count + collision strategy warning), category validation (empty mapping / duplicate name detection), Reset to Defaults button, cross-operation locking (disables organizer widgets during dedup and vice versa), duplicate directory prevention, and scrollable results dialogs for large output.
+- **Parallel duplicate hashing** — Dedup settings now expose parallel hashing toggle and thread count spinner with auto-detected ideal thread count display.
+- **Codebase security hardening** — 20+ files fixed: `findChild` null checks, hardcoded paths replaced with environment variables (`%SystemRoot%`, `%ProgramFiles(x86)%`), `QProcess::waitForStarted` timeout checks, insecure temp files migrated to `QTemporaryFile`, thread-safe `setError()` in USB creator (29 assignments migrated), `SetFilePointer` → `SetFilePointerEx` for large-disk correctness.
+- **UI robustness** — Network Transfer panel re-enabled, `setFixedSize` → `setMinimumSize` across 3 dialogs for DPI scaling, centralized style constants (`style_constants.h`), tooltip event filter parent fix, dead lambda cleanup in network settings.
+- **Build quality** — Clean MSVC `/W4 /WX` build, 76 automated tests (74 passing, 2 pre-existing network timeouts).
+
+### v0.8.1
 
 - **Network Diagnostics UI polish** — Horizontal 4-column adapter detail layout (Identity, Addressing, Gateway/DNS, Status) replaces single stacked label for better space utilization. Tightened adapter section margins to maximize table visibility. Removed unused report generation section from the Network Diagnostics panel (reports remain in PC Diagnostics). Speed column widened, adapter detail area compacted, QSplitter layout for adapters/tools split.
 - **UI refinements** — Style constants centralized (`style_constants.h`), keyboard shortcut improvements, accessible names audit, and layout fixes across multiple panels.
@@ -70,6 +78,7 @@ Migration · Maintenance · Recovery · Imaging · Deployment — one portable E
 | **Network Transfer** | Peer-to-peer LAN migration with AES-256-GCM, resume, and multi-PC orchestrator mode. |
 | **Image Flasher** | Flash ISOs/IMGs to USB. Download Windows and Linux ISOs directly. |
 | **Advanced Search** | Grep-style file content search with regex, metadata, archive, and binary/hex modes across directory trees. |
+| **Directory Organizer** | Organize files by extension with duplicate detection, parallel hashing, category validation, and cross-operation safety. |
 | **Advanced Uninstall** | Deep application removal with leftover scanning, recycle bin support, locked-file reboot scheduling, and registry snapshot diffs. |
 | **Network Diagnostics** | 10-tool diagnostic suite (ping, traceroute, MTR, DNS, port scan, bandwidth, WiFi, connections, firewall, shares) with ethernet backup/restore and report export. |
 | **BitLocker Key Backup** | Export recovery keys from all encrypted volumes with restricted-permission files. |
@@ -88,8 +97,7 @@ Migration · Maintenance · Recovery · Imaging · Deployment — one portable E
   - [Network Transfer](#network-transfer)
   - [Diagnostics & Benchmarking](#diagnostics--benchmarking)
   - [Image Flasher](#image-flasher)
-  - [Directory Organizer](#directory-organizer)
-  - [Duplicate Finder](#duplicate-finder)
+  - [Directory Organizer & Duplicate Finder](#directory-organizer--duplicate-finder)
   - [WiFi Manager](#wifi-manager)
   - [Advanced Search](#advanced-search)
   - [Advanced Uninstall](#advanced-uninstall)
@@ -315,24 +323,27 @@ Create bootable USB drives from disk images.
 
 ---
 
-### Directory Organizer
+### Directory Organizer & Duplicate Finder
 
-Organize files by extension into categorized subdirectories.
+Unified panel for organizing files by extension and detecting duplicates via MD5 hashing.
 
-- Default categories: Images, Documents, Audio, Video, Archives, Code
-- Custom categories with user-defined extensions
+**File Organization**
+- Default categories: Images, Documents, Audio, Video, Archives, Code — fully customizable with user-defined extensions
 - Collision handling: rename, skip, or overwrite
 - Preview mode — see what would happen without moving anything
+- Confirmation dialog before destructive operations (shows file count and collision strategy)
+- Category validation — detects empty mappings and duplicate category names
+- Reset to Defaults — one-click restore of built-in category mappings
 
----
+**Duplicate Detection**
+- MD5 hash-based duplicate detection with configurable minimum-size filtering
+- Multi-directory recursive scan with duplicate directory prevention
+- Parallel hashing with configurable thread count (auto-detects ideal thread count)
+- Summary: duplicate count, wasted space, scrollable results for large scans
 
-### Duplicate Finder
-
-MD5 hash-based duplicate detection with minimum-size filtering.
-
-- Multi-directory recursive scan
-- Minimum-size filter to skip small files
-- Summary: duplicate count, wasted space
+**Cross-Operation Safety**
+- Organizer and duplicate finder share mutual locking — running one disables the other to prevent conflicts
+- Cancel support for both operations
 
 ---
 
@@ -457,7 +468,7 @@ Global application settings accessible from the **Edit → Settings** menu (`Ctr
 |---|---|
 | **General** | Theme, startup behavior, logging preferences |
 | **Backup** | Default backup location, Quick Actions backup settings (location, confirmations, notifications, logging, compression) |
-| **Duplicate Finder** | Default minimum file size, recursive scan defaults |
+| **Organizer** | Default minimum file size for dedup, recursive scan defaults, parallel hashing |
 | **Advanced** | Network Transfer toggle, experimental features |
 
 ---

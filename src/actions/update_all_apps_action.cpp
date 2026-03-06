@@ -13,6 +13,7 @@
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QProcess>
+#include <QStandardPaths>
 
 namespace sak {
 
@@ -26,8 +27,8 @@ void UpdateAllAppsAction::scan() {
     setStatus(ActionStatus::Scanning);
     Q_ASSERT(status() == ActionStatus::Scanning);
 
-    bool winget_installed = (system("where winget > nul 2>&1") == 0);
-    bool choco_installed = (system("where choco > nul 2>&1") == 0);
+    bool winget_installed = !QStandardPaths::findExecutable(QStringLiteral("winget")).isEmpty();
+    bool choco_installed = !QStandardPaths::findExecutable(QStringLiteral("choco")).isEmpty();
 
     int winget_available = 0;
     int choco_available = 0;
@@ -148,7 +149,7 @@ void UpdateAllAppsAction::execute() {
 // ─── Private Helpers ────────────────────────────────────────────────────────────
 
 bool UpdateAllAppsAction::runWingetUpdate(UpdateSummary& summary, const QDateTime& start_time) {
-    summary.winget_installed = (system("where winget > nul 2>&1") == 0);
+    summary.winget_installed = !QStandardPaths::findExecutable(QStringLiteral("winget")).isEmpty();
 
     if (!summary.winget_installed) {
         summary.report += "║ Phase 1: WinGet - Not Available                                     "
@@ -258,7 +259,7 @@ bool UpdateAllAppsAction::runStoreUpdate(UpdateSummary& summary) {
 }
 
 bool UpdateAllAppsAction::runChocoUpdate(UpdateSummary& summary, const QDateTime& start_time) {
-    summary.choco_installed = (system("where choco > nul 2>&1") == 0);
+    summary.choco_installed = !QStandardPaths::findExecutable(QStringLiteral("choco")).isEmpty();
 
     if (!summary.choco_installed) {
         summary.report += "║ Phase 3: Chocolatey - Not Available                                 "

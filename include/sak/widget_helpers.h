@@ -9,7 +9,10 @@
 
 #include <QColor>
 #include <QFont>
+#include <QHBoxLayout>
+#include <QIcon>
 #include <QLabel>
+#include <QPixmap>
 #include <QString>
 #include <QTableWidgetItem>
 #include <QVBoxLayout>
@@ -47,6 +50,52 @@ inline void createPanelHeader(QWidget* parent, const QString& title,
         QString("color: %1; margin-bottom: 5px;").arg(ui::kColorTextMuted));
     subtitle_label->setAccessibleName(subtitle);
     layout->addWidget(subtitle_label);
+}
+
+/// @brief Create a panel header with an icon to the left of the title/subtitle.
+///
+/// Mirrors the About panel's icon layout: a 48×48 SVG icon in an HBox
+/// alongside the bold title and muted subtitle in a VBox.
+///
+/// @param parent   The parent widget that owns the labels.
+/// @param iconPath Qt resource path to the SVG icon (e.g. ":/icons/icons/panel_foo.svg").
+/// @param title    The panel title text.
+/// @param subtitle A one-line description of the panel's purpose.
+/// @param layout   The QVBoxLayout to which the header row is appended.
+inline void createPanelHeader(QWidget* parent, const QString& iconPath,
+                              const QString& title, const QString& subtitle,
+                              QVBoxLayout* layout) {
+    constexpr int kPanelIconSize = 48;
+
+    auto* headerRow = new QHBoxLayout();
+    headerRow->setSpacing(12);
+
+    auto* iconLabel = new QLabel(parent);
+    iconLabel->setFixedSize(kPanelIconSize, kPanelIconSize);
+    iconLabel->setPixmap(
+        QIcon(iconPath).pixmap(kPanelIconSize, kPanelIconSize));
+    iconLabel->setAccessibleName(title + QStringLiteral(" icon"));
+    headerRow->addWidget(iconLabel);
+
+    auto* titleLayout = new QVBoxLayout();
+    auto* title_label = new QLabel(title, parent);
+    QFont title_font  = title_label->font();
+    title_font.setPointSize(ui::kFontSizeSection);
+    title_font.setBold(true);
+    title_label->setFont(title_font);
+    title_label->setAccessibleName(title);
+    titleLayout->addWidget(title_label);
+
+    auto* subtitle_label = new QLabel(subtitle, parent);
+    subtitle_label->setWordWrap(true);
+    subtitle_label->setStyleSheet(
+        QString("color: %1; margin-bottom: 5px;").arg(ui::kColorTextMuted));
+    subtitle_label->setAccessibleName(subtitle);
+    titleLayout->addWidget(subtitle_label);
+
+    headerRow->addLayout(titleLayout);
+    headerRow->addStretch();
+    layout->addLayout(headerRow);
 }
 
 // ── Accessibility Helpers ───────────────────────────────────────────────────

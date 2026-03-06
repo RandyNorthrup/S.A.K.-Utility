@@ -124,7 +124,6 @@ bld/
 # EXCEPTION: Keep embedded tool executables
 !tools/chocolatey/choco.exe
 !tools/smartmontools/smartctl.exe
-!tools/uup/aria2c.exe
 
 # Linker files
 *.ilk

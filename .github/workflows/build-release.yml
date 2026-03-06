@@ -90,10 +90,10 @@ jobs:
         # (e.g. checked into the repo via the .gitignore exception).
         powershell -ExecutionPolicy Bypass -File scripts/bundle_smartmontools.ps1
 
-    - name: Bundle UUP tools (aria2c + converter)
+    - name: Bundle UUP tools (aria2c + converter + uupmc)
       shell: pwsh
       run: |
-        # Download and extract aria2c.exe and uup-converter-wimlib for ISO downloads.
+        # Download and extract aria2c.exe, uup-converter-wimlib, and UUP Media Creator.
         # The script is idempotent — skips if tools are already present.
         powershell -ExecutionPolicy Bypass -File scripts/bundle_uup_tools.ps1
 
@@ -187,6 +187,28 @@ jobs:
         } else {
           $aria2Ver = & .\tools\uup\aria2c.exe --version 2>&1 | Select-Object -First 1
           Write-Host "OK  tools/uup/aria2c.exe ($aria2Ver)"
+        }
+        
+        # uup-converter-wimlib (bundled for UUP-to-ISO conversion)
+        if (!(Test-Path "tools/uup/converter/convert-UUP.cmd")) {
+          Write-Error "FATAL: tools/uup/converter/convert-UUP.cmd not found — UUP conversion will be broken"
+          exit 1
+        } else {
+          Write-Host "OK  tools/uup/converter/convert-UUP.cmd"
+        }
+        
+        # UUP Media Creator (bundled for UUP-to-ISO conversion)
+        if (!(Test-Path "tools/uup/uupmc/UUPMediaConverter.exe")) {
+          Write-Error "FATAL: tools/uup/uupmc/UUPMediaConverter.exe not found — UUP conversion will be broken"
+          exit 1
+        } else {
+          Write-Host "OK  tools/uup/uupmc/UUPMediaConverter.exe"
+        }
+        if (!(Test-Path "tools/uup/uupmc/UUPDownload.exe")) {
+          Write-Error "FATAL: tools/uup/uupmc/UUPDownload.exe not found — UUP downloads will be broken"
+          exit 1
+        } else {
+          Write-Host "OK  tools/uup/uupmc/UUPDownload.exe"
         }
         
         Write-Host ""

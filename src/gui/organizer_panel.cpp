@@ -6,6 +6,7 @@
 
 #include "sak/organizer_panel.h"
 #include "sak/organizer_worker.h"
+#include "sak/duplicate_finder_worker.h"
 #include "sak/logger.h"
 #include "sak/detachable_log_window.h"
 #include "sak/info_button.h"
@@ -25,6 +26,10 @@
 #include <QFrame>
 #include <QDialog>
 #include <QFormLayout>
+#include <QDialogButtonBox>
+#include <QDir>
+#include <QSet>
+#include <QThread>
 
 namespace sak {
 
@@ -43,6 +48,13 @@ OrganizerPanel::~OrganizerPanel()
         m_worker->requestStop();
         if (!m_worker->wait(15000)) {
             logError("OrganizerWorker did not stop within 15s \u2014 potential resource leak");
+        }
+    }
+    if (m_dedup_worker) {
+        m_dedup_worker->requestStop();
+        if (!m_dedup_worker->wait(15000)) {
+            logError(
+                "DuplicateFinderWorker did not stop within 15s \u2014 potential resource leak");
         }
     }
     logInfo("OrganizerPanel destroyed");
@@ -68,11 +80,13 @@ void OrganizerPanel::setupUi()
     rootLayout->addWidget(scrollArea);
 
     // Panel header — consistent title + muted subtitle
-    sak::createPanelHeader(contentWidget, tr("Directory Organizer"),
+    sak::createPanelHeader(contentWidget, QStringLiteral(":/icons/icons/panel_organizer.svg"),
+        tr("Directory Organizer"),
         tr("Automatically sort and organize files by type, date, or custom rules"), mainLayout);
 
     setupUi_directoryAndCategories(mainLayout);
     setupUi_controlsAndConnections(mainLayout);
+    setupUi_duplicateDetection(mainLayout);
 }
 
 // ----------------------------------------------------------------------------
@@ -121,8 +135,13 @@ void OrganizerPanel::setupUi_directoryAndCategories(QVBoxLayout* mainLayout)
     m_remove_category_button->setAccessibleName(QStringLiteral("Remove Category"));
     m_remove_category_button->setToolTip(QStringLiteral(
         "Remove the selected category from the list"));
+    m_reset_categories_button = new QPushButton(tr("Reset to Defaults"), this);
+    m_reset_categories_button->setAccessibleName(QStringLiteral("Reset Categories"));
+    m_reset_categories_button->setToolTip(QStringLiteral(
+        "Restore the default category-to-extension mappings"));
     buttonLayout->addWidget(m_add_category_button);
     buttonLayout->addWidget(m_remove_category_button);
+    buttonLayout->addWidget(m_reset_categories_button);
     buttonLayout->addStretch();
     categoryLayout->addLayout(buttonLayout);
 
@@ -191,6 +210,8 @@ void OrganizerPanel::setupUi_controlsAndConnections(QVBoxLayout* mainLayout)
         &OrganizerPanel::onAddCategoryClicked);
     connect(m_remove_category_button, &QPushButton::clicked, this,
         &OrganizerPanel::onRemoveCategoryClicked);
+    connect(m_reset_categories_button, &QPushButton::clicked, this,
+        &OrganizerPanel::onResetCategoriesClicked);
 }
 
 void OrganizerPanel::setupDefaultCategories()
@@ -247,6 +268,30 @@ void OrganizerPanel::onExecuteClicked()
         return;
     }
 
+    if (!validateCategoryMapping()) {
+        return;
+    }
+
+    // Confirmation dialog for destructive (non-preview) operations
+    if (!m_preview_mode_checkbox->isChecked()) {
+        int fileCount = 0;
+        const QDir dir(m_target_path->text());
+        const auto entries = dir.entryInfoList(QDir::Files | QDir::NoDotAndDotDot);
+        fileCount = entries.size();
+
+        auto result = QMessageBox::question(this, tr("Confirm Organization"),
+            tr("This will move up to %1 files in:\n%2\n\n"
+               "Collision strategy: %3\n\n"
+               "This operation cannot be automatically undone. Continue?")
+                .arg(fileCount)
+                .arg(m_target_path->text(),
+                     m_collision_strategy->currentText()),
+            QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+        if (result != QMessageBox::Yes) {
+            return;
+        }
+    }
+
     // Clean up previous worker
     m_worker.reset();
 
@@ -298,6 +343,19 @@ void OrganizerPanel::onAddCategoryClicked()
     m_category_table->setItem(row, 0, new QTableWidgetItem("New Category"));
     m_category_table->setItem(row, 1, new QTableWidgetItem(""));
     m_category_table->editItem(m_category_table->item(row, 0));
+}
+
+void OrganizerPanel::onResetCategoriesClicked()
+{
+    Q_ASSERT(m_category_table);
+    auto result = QMessageBox::question(this, tr("Reset Categories"),
+        tr("Reset all categories to their default values?\n"
+           "Any custom categories will be lost."),
+        QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+    if (result == QMessageBox::Yes) {
+        setupDefaultCategories();
+        logMessage(tr("Category mappings reset to defaults"));
+    }
 }
 
 void OrganizerPanel::onRemoveCategoryClicked()
@@ -366,7 +424,7 @@ void OrganizerPanel::onFileProgress(int current, int total, const QString& fileP
 void OrganizerPanel::onPreviewResults(const QString& summary, int operationCount)
 {
     Q_ASSERT(!summary.isEmpty());
-    QMessageBox::information(this, "Preview Results", summary);
+    showScrollableResultsDialog(tr("Preview Results"), summary);
     logMessage(QString("Preview completed: %1 operations planned").arg(operationCount));
 }
 
@@ -406,17 +464,71 @@ void OrganizerPanel::setOperationRunning(bool running)
     m_category_table->setEnabled(!running);
     m_add_category_button->setEnabled(!running);
     m_remove_category_button->setEnabled(!running);
+    m_reset_categories_button->setEnabled(!running);
     m_collision_strategy->setEnabled(!running);
     m_preview_mode_checkbox->setEnabled(!running);
 
     m_preview_button->setEnabled(!running);
     m_execute_button->setEnabled(!running);
     m_cancel_button->setEnabled(running);
+
+    // Cross-operation lock: disable dedup while organizing
+    m_dedup_directory_list->setEnabled(!running);
+    m_dedup_add_button->setEnabled(!running);
+    m_dedup_remove_button->setEnabled(!running);
+    m_dedup_scan_button->setEnabled(!running);
 }
 
 void OrganizerPanel::logMessage(const QString& message)
 {
     Q_EMIT logOutput(message);
+}
+
+bool OrganizerPanel::validateCategoryMapping() const
+{
+    auto mapping = getCategoryMapping();
+    if (mapping.isEmpty()) {
+        QMessageBox::warning(const_cast<OrganizerPanel*>(this), tr("Validation Error"),
+            tr("No valid category mappings defined.\n"
+               "Add at least one category with extensions, or reset to defaults."));
+        return false;
+    }
+
+    // Check for duplicate category names (case-insensitive)
+    QSet<QString> seen;
+    for (auto it = mapping.cbegin(); it != mapping.cend(); ++it) {
+        QString lower = it.key().toLower();
+        if (seen.contains(lower)) {
+            QMessageBox::warning(const_cast<OrganizerPanel*>(this), tr("Validation Error"),
+                tr("Duplicate category name: \"%1\".\n"
+                   "Each category must have a unique name.").arg(it.key()));
+            return false;
+        }
+        seen.insert(lower);
+    }
+    return true;
+}
+
+void OrganizerPanel::showScrollableResultsDialog(const QString& title, const QString& text)
+{
+    QDialog dialog(this);
+    dialog.setWindowTitle(title);
+    dialog.setMinimumSize(sak::kDialogWidthLarge, sak::kDialogHeightMedium);
+    dialog.resize(sak::kDialogWidthLarge, sak::kDialogHeightLarge);
+
+    auto* layout = new QVBoxLayout(&dialog);
+
+    auto* textEdit = new QTextEdit(&dialog);
+    textEdit->setReadOnly(true);
+    textEdit->setPlainText(text);
+    textEdit->setAccessibleName(QStringLiteral("Scan Results"));
+    layout->addWidget(textEdit);
+
+    auto* buttonBox = new QDialogButtonBox(QDialogButtonBox::Ok, &dialog);
+    connect(buttonBox, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    layout->addWidget(buttonBox);
+
+    dialog.exec();
 }
 
 void OrganizerPanel::onSettingsClicked()
@@ -459,6 +571,331 @@ void OrganizerPanel::onSettingsClicked()
         m_collision_strategy->setCurrentIndex(collisionCombo->currentIndex());
         m_preview_mode_checkbox->setChecked(previewCheck->isChecked());
     }
+}
+
+// ============================================================================
+// Duplicate Detection UI & Logic
+// ============================================================================
+
+void OrganizerPanel::setupUi_duplicateDetection(QVBoxLayout* mainLayout)
+{
+    // Scan Directories group
+    auto* dirGroup = new QGroupBox(tr("Duplicate Detection \u2014 Scan Directories"), this);
+    auto* dirLayout = new QVBoxLayout(dirGroup);
+
+    m_dedup_directory_list = new QListWidget(this);
+    m_dedup_directory_list->setMinimumHeight(sak::kListAreaMinH);
+    m_dedup_directory_list->setAccessibleName(QStringLiteral("Duplicate Scan Directories List"));
+    m_dedup_directory_list->setToolTip(
+        QStringLiteral("Directories to scan for duplicate files"));
+    dirLayout->addWidget(m_dedup_directory_list);
+
+    auto* dirBtnLayout = new QHBoxLayout();
+    m_dedup_add_button = new QPushButton(tr("Add Directory"), this);
+    m_dedup_add_button->setAccessibleName(QStringLiteral("Add Scan Directory"));
+    m_dedup_remove_button = new QPushButton(tr("Remove Selected"), this);
+    m_dedup_remove_button->setAccessibleName(QStringLiteral("Remove Selected Directory"));
+    dirBtnLayout->addWidget(m_dedup_add_button);
+    dirBtnLayout->addWidget(m_dedup_remove_button);
+    dirBtnLayout->addStretch();
+    dirLayout->addLayout(dirBtnLayout);
+
+    mainLayout->addWidget(dirGroup);
+
+    // Hidden options (managed via Settings dialog)
+    m_dedup_min_size = new QSpinBox(this);
+    m_dedup_min_size->setMinimum(0);
+    m_dedup_min_size->setMaximum(1000000);
+    m_dedup_min_size->setValue(0);
+    m_dedup_min_size->setVisible(false);
+
+    m_dedup_recursive = new QCheckBox(tr("Recursive Scan"), this);
+    m_dedup_recursive->setChecked(true);
+    m_dedup_recursive->setVisible(false);
+
+    m_dedup_parallel_hashing = new QCheckBox(tr("Parallel Hashing"), this);
+    m_dedup_parallel_hashing->setChecked(true);
+    m_dedup_parallel_hashing->setVisible(false);
+
+    m_dedup_thread_count = new QSpinBox(this);
+    m_dedup_thread_count->setMinimum(0);
+    m_dedup_thread_count->setMaximum(64);
+    m_dedup_thread_count->setValue(0);
+    m_dedup_thread_count->setVisible(false);
+
+    // Control buttons
+    auto* dedupControlLayout = new QHBoxLayout();
+
+    auto* dedupSettingsBtn = new QPushButton(tr("Settings"), this);
+    dedupSettingsBtn->setAccessibleName(QStringLiteral("Duplicate Finder Settings"));
+    dedupSettingsBtn->setToolTip(
+        QStringLiteral("Configure minimum file size and recursive scan options"));
+    connect(dedupSettingsBtn, &QPushButton::clicked,
+        this, &OrganizerPanel::onDedupSettingsClicked);
+    dedupControlLayout->addWidget(dedupSettingsBtn);
+
+    dedupControlLayout->addStretch();
+
+    m_dedup_scan_button = new QPushButton(tr("Find Duplicates"), this);
+    m_dedup_scan_button->setMinimumWidth(sak::kButtonWidthMedium);
+    m_dedup_scan_button->setStyleSheet(ui::kPrimaryButtonStyle);
+    m_dedup_scan_button->setAccessibleName(QStringLiteral("Start Duplicate Scan"));
+    m_dedup_scan_button->setToolTip(
+        QStringLiteral("Scan the listed directories for duplicate files using MD5 hashing"));
+    dedupControlLayout->addWidget(m_dedup_scan_button);
+
+    m_dedup_cancel_button = new QPushButton(tr("Cancel"), this);
+    m_dedup_cancel_button->setMinimumWidth(sak::kButtonWidthMedium);
+    m_dedup_cancel_button->setEnabled(false);
+    m_dedup_cancel_button->setAccessibleName(QStringLiteral("Cancel Duplicate Scan"));
+    dedupControlLayout->addWidget(m_dedup_cancel_button);
+
+    mainLayout->addLayout(dedupControlLayout);
+
+    // Connect signals
+    connect(m_dedup_add_button, &QPushButton::clicked,
+        this, &OrganizerPanel::onDedupAddDirectoryClicked);
+    connect(m_dedup_remove_button, &QPushButton::clicked,
+        this, &OrganizerPanel::onDedupRemoveDirectoryClicked);
+    connect(m_dedup_scan_button, &QPushButton::clicked,
+        this, &OrganizerPanel::onDedupScanClicked);
+    connect(m_dedup_cancel_button, &QPushButton::clicked,
+        this, &OrganizerPanel::onDedupCancelClicked);
+}
+
+void OrganizerPanel::onDedupAddDirectoryClicked()
+{
+    Q_ASSERT(m_dedup_directory_list);
+    QString dir = QFileDialog::getExistingDirectory(
+        this, tr("Select Directory to Scan"),
+        QString(),
+        QFileDialog::ShowDirsOnly | QFileDialog::DontResolveSymlinks);
+
+    if (!dir.isEmpty()) {
+        // Prevent duplicate directory entries
+        for (int i = 0; i < m_dedup_directory_list->count(); ++i) {
+            if (QDir(m_dedup_directory_list->item(i)->text()) == QDir(dir)) {
+                QMessageBox::information(this, tr("Duplicate Directory"),
+                    tr("This directory is already in the scan list."));
+                return;
+            }
+        }
+        m_dedup_directory_list->addItem(dir);
+        logMessage(QString("Added scan directory: %1").arg(dir));
+    }
+}
+
+void OrganizerPanel::onDedupRemoveDirectoryClicked()
+{
+    Q_ASSERT(m_dedup_directory_list);
+    auto selected = m_dedup_directory_list->selectedItems();
+    if (selected.isEmpty()) {
+        QMessageBox::information(this, tr("No Selection"),
+            tr("Please select a directory to remove."));
+        return;
+    }
+
+    for (auto* item : selected) {
+        delete item;
+    }
+}
+
+void OrganizerPanel::onDedupScanClicked()
+{
+    Q_ASSERT(m_dedup_directory_list);
+    if (m_dedup_directory_list->count() == 0) {
+        QMessageBox::warning(this, tr("Validation Error"),
+            tr("Please add at least one directory to scan for duplicates."));
+        return;
+    }
+
+    m_dedup_worker.reset();
+
+    DuplicateFinderWorker::Config config;
+    for (int i = 0; i < m_dedup_directory_list->count(); ++i) {
+        config.scanDirectories.push_back(m_dedup_directory_list->item(i)->text());
+    }
+    config.minimum_file_size =
+        m_dedup_min_size->value() * sak::kBytesPerKB;
+    config.recursive_scan = m_dedup_recursive->isChecked();
+    config.parallel_hashing = m_dedup_parallel_hashing->isChecked();
+    config.hash_thread_count = m_dedup_thread_count->value();
+
+    m_dedup_worker = std::make_unique<DuplicateFinderWorker>(config, this);
+
+    connect(m_dedup_worker.get(), &DuplicateFinderWorker::started,
+        this, &OrganizerPanel::onDedupWorkerStarted);
+    connect(m_dedup_worker.get(), &DuplicateFinderWorker::finished,
+        this, &OrganizerPanel::onDedupWorkerFinished);
+    connect(m_dedup_worker.get(), &DuplicateFinderWorker::failed,
+        this, &OrganizerPanel::onDedupWorkerFailed);
+    connect(m_dedup_worker.get(), &DuplicateFinderWorker::cancelled,
+        this, &OrganizerPanel::onDedupWorkerCancelled);
+    connect(m_dedup_worker.get(), &DuplicateFinderWorker::scanProgress,
+        this, &OrganizerPanel::onDedupScanProgress);
+    connect(m_dedup_worker.get(), &DuplicateFinderWorker::resultsReady,
+        this, &OrganizerPanel::onDedupResultsReady);
+
+    setDedupRunning(true);
+    Q_EMIT statusMessage(tr("Starting duplicate scan..."), 0);
+    m_dedup_worker->start();
+
+    logInfo("Duplicate finder scan initiated from organizer panel");
+}
+
+void OrganizerPanel::onDedupCancelClicked()
+{
+    if (m_dedup_worker) {
+        m_dedup_worker->requestStop();
+        logMessage(tr("Duplicate scan cancellation requested..."));
+        Q_EMIT statusMessage(tr("Cancelling duplicate scan..."), 0);
+    }
+}
+
+void OrganizerPanel::onDedupSettingsClicked()
+{
+    QDialog dialog(this);
+    dialog.setWindowTitle(tr("Duplicate Finder Settings"));
+    dialog.setMinimumWidth(sak::kDialogWidthSmall);
+
+    auto* layout = new QFormLayout(&dialog);
+
+    auto* minSizeSpin = new QSpinBox(&dialog);
+    minSizeSpin->setMinimum(0);
+    minSizeSpin->setMaximum(1000000);
+    minSizeSpin->setValue(m_dedup_min_size->value());
+    minSizeSpin->setSuffix(tr(" KB"));
+    layout->addRow(
+        InfoButton::createInfoLabel(tr("Minimum File Size:"),
+            tr("Skip tiny files to speed up scanning (0 = check all files)"), &dialog),
+        minSizeSpin);
+
+    auto* recursiveCheck = new QCheckBox(tr("Include all nested subfolders"), &dialog);
+    recursiveCheck->setChecked(m_dedup_recursive->isChecked());
+    layout->addRow(
+        InfoButton::createInfoLabel(tr("Recursive Scan:"),
+            tr("Scan all subdirectories recursively, not just the top-level folder"), &dialog),
+        recursiveCheck);
+
+    auto* parallelCheck = new QCheckBox(tr("Use parallel hashing"), &dialog);
+    parallelCheck->setChecked(m_dedup_parallel_hashing->isChecked());
+    layout->addRow(
+        InfoButton::createInfoLabel(tr("Parallel Hashing:"),
+            tr("Use multiple CPU cores for faster hash calculation. "
+               "Disable for debugging or low-resource systems."), &dialog),
+        parallelCheck);
+
+    int cpuCores = QThread::idealThreadCount();
+    auto* threadSpin = new QSpinBox(&dialog);
+    threadSpin->setMinimum(0);
+    threadSpin->setMaximum(64);
+    threadSpin->setValue(m_dedup_thread_count->value());
+    threadSpin->setSpecialValueText(tr("Auto (%1 cores)").arg(cpuCores > 0 ? cpuCores : 4));
+    threadSpin->setEnabled(parallelCheck->isChecked());
+    connect(parallelCheck, &QCheckBox::toggled, threadSpin, &QSpinBox::setEnabled);
+    layout->addRow(
+        InfoButton::createInfoLabel(tr("Thread Count:"),
+            tr("Number of threads for parallel hashing. "
+               "0 = auto-detect from CPU cores."), &dialog),
+        threadSpin);
+
+    auto* btnLayout = new QHBoxLayout();
+    btnLayout->addStretch();
+    auto* okBtn = new QPushButton(tr("OK"), &dialog);
+    auto* cancelBtn = new QPushButton(tr("Cancel"), &dialog);
+    connect(okBtn, &QPushButton::clicked, &dialog, &QDialog::accept);
+    connect(cancelBtn, &QPushButton::clicked, &dialog, &QDialog::reject);
+    btnLayout->addWidget(okBtn);
+    btnLayout->addWidget(cancelBtn);
+    layout->addRow(btnLayout);
+
+    if (dialog.exec() == QDialog::Accepted) {
+        m_dedup_min_size->setValue(minSizeSpin->value());
+        m_dedup_recursive->setChecked(recursiveCheck->isChecked());
+        m_dedup_parallel_hashing->setChecked(parallelCheck->isChecked());
+        m_dedup_thread_count->setValue(threadSpin->value());
+    }
+}
+
+void OrganizerPanel::onDedupWorkerStarted()
+{
+    logMessage(tr("Duplicate file scan started"));
+    Q_EMIT statusMessage(tr("Duplicate scan in progress"), 0);
+}
+
+void OrganizerPanel::onDedupWorkerFinished()
+{
+    setDedupRunning(false);
+    Q_EMIT statusMessage(tr("Duplicate scan complete"), sak::kTimerStatusDefaultMs);
+    Q_EMIT progressUpdate(100, 100);
+    logMessage(tr("Duplicate scan completed successfully"));
+    logInfo("Duplicate finder scan completed successfully");
+}
+
+void OrganizerPanel::onDedupWorkerFailed(int errorCode, const QString& errorMessage)
+{
+    Q_ASSERT(!errorMessage.isEmpty());
+    setDedupRunning(false);
+    Q_EMIT statusMessage(tr("Duplicate scan failed"), sak::kTimerStatusDefaultMs);
+    Q_EMIT progressUpdate(0, 100);
+    logMessage(QString("Duplicate scan failed: Error %1: %2").arg(errorCode).arg(errorMessage));
+    QMessageBox::warning(this, tr("Scan Failed"),
+        QString("Error %1: %2").arg(errorCode).arg(errorMessage));
+    logError("Duplicate finder scan failed: {}", errorMessage.toStdString());
+}
+
+void OrganizerPanel::onDedupWorkerCancelled()
+{
+    setDedupRunning(false);
+    logMessage(tr("Duplicate scan cancelled by user"));
+    Q_EMIT statusMessage(tr("Duplicate scan cancelled"), sak::kTimerStatusMessageMs);
+    Q_EMIT progressUpdate(0, 100);
+}
+
+void OrganizerPanel::onDedupScanProgress(int current, int total, const QString& path)
+{
+    Q_ASSERT(total > 0);
+    Q_EMIT progressUpdate(current, total);
+
+    QFileInfo info(path);
+    Q_EMIT statusMessage(QString("Scanning: %1").arg(info.fileName()), 0);
+}
+
+void OrganizerPanel::onDedupResultsReady(const QString& summary, int duplicateCount,
+    qint64 wastedSpace)
+{
+    Q_ASSERT(!summary.isEmpty());
+    Q_ASSERT(duplicateCount >= 0);
+    QString resultsText = QString("Found %1 duplicate files, %2 MB wasted space")
+        .arg(duplicateCount)
+        .arg(wastedSpace / sak::kBytesPerMBf, 0, 'f', 2);
+
+    Q_EMIT statusMessage(resultsText, sak::kTimerHealthPollMs);
+    logMessage(resultsText);
+
+    showScrollableResultsDialog(tr("Duplicate Scan Results"), summary);
+}
+
+void OrganizerPanel::setDedupRunning(bool running)
+{
+    Q_ASSERT(m_dedup_directory_list);
+    m_dedup_running = running;
+
+    m_dedup_directory_list->setEnabled(!running);
+    m_dedup_add_button->setEnabled(!running);
+    m_dedup_remove_button->setEnabled(!running);
+    m_dedup_scan_button->setEnabled(!running);
+    m_dedup_cancel_button->setEnabled(running);
+
+    // Cross-operation lock: disable organizer while dedup runs
+    m_target_path->setEnabled(!running);
+    m_browse_button->setEnabled(!running);
+    m_category_table->setEnabled(!running);
+    m_add_category_button->setEnabled(!running);
+    m_remove_category_button->setEnabled(!running);
+    m_reset_categories_button->setEnabled(!running);
+    m_preview_button->setEnabled(!running);
+    m_execute_button->setEnabled(!running);
 }
 
 } // namespace sak

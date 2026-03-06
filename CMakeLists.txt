@@ -15,7 +15,7 @@ endif()
 
 # Project definition
 project(SAK_Utility 
-    VERSION 0.8.1
+    VERSION 0.8.5
     DESCRIPTION "Swiss Army Knife Utility - PC technician's toolkit for Windows migration and maintenance"
     LANGUAGES CXX
 )# C++23 Standard - Strict compliance required
@@ -446,12 +446,10 @@ set(GUI_SOURCES
     src/gui/main_window.cpp
     src/gui/user_migration_panel.cpp
     src/gui/organizer_panel.cpp
-    src/gui/duplicate_finder_panel.cpp
     src/gui/log_viewer.cpp
     include/sak/main_window.h
     include/sak/user_migration_panel.h
     include/sak/organizer_panel.h
-    include/sak/duplicate_finder_panel.h
     include/sak/log_viewer.h
     include/sak/settings_dialog.h
     src/gui/settings_dialog.cpp
@@ -692,7 +690,17 @@ endif()
 
 if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/uup/aria2c.exe")
     message(WARNING "aria2c not found! ISO downloads will be unavailable.\n"
-                    "Run 'powershell -File scripts/bundle_uup_tools.ps1' to bundle aria2c.exe.")
+                    "Run 'powershell -File scripts/bundle_uup_tools.ps1' to bundle UUP tools.")
+endif()
+
+if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/uup/converter/convert-UUP.cmd")
+    message(WARNING "uup-converter-wimlib not found! UUP-to-ISO conversion will be unavailable.\n"
+                    "Run 'powershell -File scripts/bundle_uup_tools.ps1' to bundle UUP tools.")
+endif()
+
+if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/uup/uupmc/UUPMediaConverter.exe")
+    message(WARNING "UUP Media Creator not found! UUP-to-ISO conversion will be unavailable.\n"
+                    "Run 'powershell -File scripts/bundle_uup_tools.ps1' to bundle UUP tools.")
 endif()
 
 # Copy embedded tools directory to output

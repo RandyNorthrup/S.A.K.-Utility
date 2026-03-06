@@ -83,7 +83,8 @@ void DiagnosticBenchmarkPanel::setupUi()
     root_layout->addWidget(scroll_area);
 
     // Panel header — consistent title + muted subtitle
-    sak::createPanelHeader(content_widget, tr("Diagnostics"),
+    sak::createPanelHeader(content_widget, QStringLiteral(":/icons/icons/panel_diagnostic.svg"),
+        tr("Diagnostics"),
         tr("Hardware inventory, SMART analysis, benchmarks, and stress tests"), main_layout);
 
     // ── Sections ────────────────────────────────────────────────

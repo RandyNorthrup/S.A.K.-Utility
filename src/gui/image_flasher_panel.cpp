@@ -30,6 +30,7 @@
 #include <QRegularExpression>
 #include <QDesktopServices>
 #include <QUrl>
+#include <QIcon>
 
 namespace sak {
 
@@ -96,7 +97,8 @@ void ImageFlasherPanel::setupUi() {
     auto* headerWidget = new QWidget(this);
     auto* headerLayout = new QVBoxLayout(headerWidget);
     headerLayout->setContentsMargins(0, 0, 0, 0);
-    sak::createPanelHeader(headerWidget, tr("Image Flasher"),
+    sak::createPanelHeader(headerWidget, QStringLiteral(":/icons/icons/panel_image_flasher.svg"),
+        tr("Image Flasher"),
         tr("Flash disk images to USB drives and SD cards"), headerLayout);
     titleRow->addWidget(headerWidget);
     titleRow->addStretch();
@@ -183,84 +185,227 @@ void ImageFlasherPanel::setupNavigationButtons(QVBoxLayout* mainLayout) {
 void ImageFlasherPanel::createImageSelectionPage() {
     m_imageSelectionPage = new QWidget();
     auto* layout = new QVBoxLayout(m_imageSelectionPage);
+    layout->setSpacing(sak::ui::kSpacingLarge);
 
-    auto* groupBox = new QGroupBox("Step 1: Select Image", m_imageSelectionPage);
-    auto* groupLayout = new QVBoxLayout(groupBox);
+    auto* stepLabel = new QLabel("Step 1: Select Image", m_imageSelectionPage);
+    stepLabel->setStyleSheet(QString("font-size: %1pt; font-weight: 700; color: %2;")
+        .arg(sak::ui::kFontSizeSection)
+        .arg(sak::ui::kColorTextHeading));
+    layout->addWidget(stepLabel);
 
-    createDownloadButtons(groupLayout, groupBox);
+    createDownloadCards(layout);
 
-    groupLayout->addSpacing(12);
-
-    // Image info
-    m_imagePathLabel = new QLabel("No image selected", groupBox);
+    // Image info (below cards)
+    m_imagePathLabel = new QLabel("No image selected", m_imageSelectionPage);
     m_imagePathLabel->setWordWrap(true);
-    groupLayout->addWidget(m_imagePathLabel);
+    layout->addWidget(m_imagePathLabel);
 
-    m_imageSizeLabel = new QLabel("", groupBox);
-    groupLayout->addWidget(m_imageSizeLabel);
+    m_imageSizeLabel = new QLabel("", m_imageSelectionPage);
+    layout->addWidget(m_imageSizeLabel);
 
-    m_imageFormatLabel = new QLabel("", groupBox);
-    groupLayout->addWidget(m_imageFormatLabel);
+    m_imageFormatLabel = new QLabel("", m_imageSelectionPage);
+    layout->addWidget(m_imageFormatLabel);
 
-    groupLayout->addStretch();
+    layout->addStretch();
 
-    layout->addWidget(groupBox);
     m_stackedWidget->addWidget(m_imageSelectionPage);
 }
 
-void ImageFlasherPanel::createDownloadButtons(QVBoxLayout* groupLayout, QGroupBox* groupBox) {
-    // Download Windows button
-    m_downloadWindowsButton = new QPushButton("Download Windows 11", groupBox);
-    m_downloadWindowsButton->setMinimumHeight(sak::kButtonHeightTall);
-    m_downloadWindowsButton->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
-    m_downloadWindowsButton->setAccessibleName(QStringLiteral("Download Windows ISO"));
-    m_downloadWindowsButton->setToolTip(QStringLiteral("Download a Windows 11 ISO using UUP dump"));
-    groupLayout->addWidget(m_downloadWindowsButton);
-    connect(m_downloadWindowsButton, &QPushButton::clicked,
-            this, &ImageFlasherPanel::onDownloadWindowsClicked);
+void ImageFlasherPanel::createDownloadCards(QVBoxLayout* pageLayout) {
+    // ── Card stylesheet ─────────────────────────────────────────────────
+    const QString cardStyle = QString(
+        "QFrame {"
+        "  background-color: %1;"
+        "  border: 1px solid %2;"
+        "  border-radius: 10px;"
+        "  padding: %3px;"
+        "}"
+        "QFrame:hover {"
+        "  border-color: %4;"
+        "}")
+        .arg(sak::ui::kColorBgWhite)
+        .arg(sak::ui::kColorBorderDefault)
+        .arg(sak::ui::kMarginMedium)
+        .arg(sak::ui::kColorPrimary);
 
-    auto* microsoftDownloadDescription = new QLabel(
-        "Tip: Downloading directly from Microsoft is often faster than building an ISO from UUP "
-        "files.",
-        groupBox);
-    microsoftDownloadDescription->setWordWrap(true);
-    microsoftDownloadDescription->setStyleSheet(QString("color: %1;").arg(ui::kColorTextMuted));
-    groupLayout->addWidget(microsoftDownloadDescription);
+    const QString cardTitleStyle = QString(
+        "font-size: %1pt; font-weight: 700; color: %2; border: none; background: transparent;")
+        .arg(sak::ui::kFontSizeSection)
+        .arg(sak::ui::kColorTextHeading);
 
-    m_microsoftWindowsDownloadButton = new QPushButton("Open Microsoft Windows 11 ISO Download",
-        groupBox);
+    const QString cardDescStyle = QString(
+        "font-size: %1pt; color: %2; border: none; background: transparent;")
+        .arg(sak::ui::kFontSizeBody)
+        .arg(sak::ui::kColorTextSecondary);
+
+    const QString logoStyle = QStringLiteral(
+        "border: none; background: transparent;");
+
+    constexpr int kLogoSize = 48;
+
+    // ── Row of 3 cards ──────────────────────────────────────────────────
+    auto* cardRow = new QHBoxLayout();
+    cardRow->setSpacing(sak::ui::kSpacingLarge);
+
+    // ── Card 1: Microsoft Windows Download ──────────────────────────────
+    auto* msCard = new QFrame(m_imageSelectionPage);
+    msCard->setStyleSheet(cardStyle);
+    msCard->setCursor(Qt::PointingHandCursor);
+    auto* msLayout = new QVBoxLayout(msCard);
+    msLayout->setSpacing(sak::ui::kSpacingMedium);
+    msLayout->setContentsMargins(0, 0, 0, 0);
+
+    auto* msLogo = new QLabel(msCard);
+    msLogo->setPixmap(QIcon(":/icons/icons/microsoft_logo.svg")
+                          .pixmap(kLogoSize, kLogoSize));
+    msLogo->setAlignment(Qt::AlignCenter);
+    msLogo->setStyleSheet(logoStyle);
+    msLayout->addWidget(msLogo);
+
+    auto* msTitle = new QLabel(tr("Windows from Microsoft"), msCard);
+    msTitle->setAlignment(Qt::AlignCenter);
+    msTitle->setStyleSheet(cardTitleStyle);
+    msLayout->addWidget(msTitle);
+
+    auto* msDesc = new QLabel(
+        tr("Download an official Windows ISO directly from the Microsoft website."),
+        msCard);
+    msDesc->setWordWrap(true);
+    msDesc->setAlignment(Qt::AlignCenter);
+    msDesc->setStyleSheet(cardDescStyle);
+    msLayout->addWidget(msDesc);
+
+    auto* msTip = new QLabel(
+        tr("Tip: Downloading directly from Microsoft is often faster "
+           "than building an ISO from UUP files."),
+        msCard);
+    msTip->setWordWrap(true);
+    msTip->setAlignment(Qt::AlignCenter);
+    msTip->setStyleSheet(cardDescStyle);
+    msLayout->addWidget(msTip);
+
+    msLayout->addStretch();
+
+    m_microsoftWindowsDownloadButton = new QPushButton(
+        tr("Open Microsoft Download"), msCard);
     m_microsoftWindowsDownloadButton->setMinimumHeight(sak::kButtonHeightTall);
-    m_microsoftWindowsDownloadButton->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
-    m_microsoftWindowsDownloadButton->setAccessibleName(QStringLiteral("Microsoft ISO Download"));
-    m_microsoftWindowsDownloadButton->setToolTip(QStringLiteral("Open the official Microsoft "
-                                                                "Windows 11 ISO download page"));
-    groupLayout->addWidget(m_microsoftWindowsDownloadButton);
+    m_microsoftWindowsDownloadButton->setStyleSheet(sak::ui::kSecondaryButtonStyle);
+    m_microsoftWindowsDownloadButton->setAccessibleName(
+        QStringLiteral("Microsoft ISO Download"));
+    m_microsoftWindowsDownloadButton->setToolTip(
+        QStringLiteral("Open the official Microsoft Windows ISO download page"));
+    msLayout->addWidget(m_microsoftWindowsDownloadButton);
     connect(m_microsoftWindowsDownloadButton, &QPushButton::clicked,
             this, &ImageFlasherPanel::onOpenMicrosoftWindowsDownloadClicked);
 
-    groupLayout->addSpacing(6);
+    cardRow->addWidget(msCard);
 
-    // Download Linux button
-    m_downloadLinuxButton = new QPushButton("Download Linux ISO", groupBox);
+    // ── Card 2: UUP Windows Download ────────────────────────────────────
+    auto* uupCard = new QFrame(m_imageSelectionPage);
+    uupCard->setStyleSheet(cardStyle);
+    uupCard->setCursor(Qt::PointingHandCursor);
+    auto* uupLayout = new QVBoxLayout(uupCard);
+    uupLayout->setSpacing(sak::ui::kSpacingMedium);
+    uupLayout->setContentsMargins(0, 0, 0, 0);
+
+    auto* uupLogo = new QLabel(uupCard);
+    uupLogo->setPixmap(QIcon(":/icons/icons/uup_logo.svg")
+                           .pixmap(kLogoSize, kLogoSize));
+    uupLogo->setAlignment(Qt::AlignCenter);
+    uupLogo->setStyleSheet(logoStyle);
+    uupLayout->addWidget(uupLogo);
+
+    auto* uupTitle = new QLabel(tr("Windows via UUP"), uupCard);
+    uupTitle->setAlignment(Qt::AlignCenter);
+    uupTitle->setStyleSheet(cardTitleStyle);
+    uupLayout->addWidget(uupTitle);
+
+    auto* uupDesc = new QLabel(
+        tr("Build a custom Windows ISO from UUP update packages with edition selection."),
+        uupCard);
+    uupDesc->setWordWrap(true);
+    uupDesc->setAlignment(Qt::AlignCenter);
+    uupDesc->setStyleSheet(cardDescStyle);
+    uupLayout->addWidget(uupDesc);
+
+    uupLayout->addStretch();
+
+    m_downloadWindowsButton = new QPushButton(tr("Download and Build ISO"), uupCard);
+    m_downloadWindowsButton->setMinimumHeight(sak::kButtonHeightTall);
+    m_downloadWindowsButton->setStyleSheet(sak::ui::kSecondaryButtonStyle);
+    m_downloadWindowsButton->setAccessibleName(
+        QStringLiteral("Download Windows ISO via UUP"));
+    m_downloadWindowsButton->setToolTip(
+        QStringLiteral("Download a Windows 11 ISO using UUP dump"));
+    uupLayout->addWidget(m_downloadWindowsButton);
+    connect(m_downloadWindowsButton, &QPushButton::clicked,
+            this, &ImageFlasherPanel::onDownloadWindowsClicked);
+
+    cardRow->addWidget(uupCard);
+
+    // ── Card 3: Linux ISO Download ──────────────────────────────────────
+    auto* linuxCard = new QFrame(m_imageSelectionPage);
+    linuxCard->setStyleSheet(cardStyle);
+    linuxCard->setCursor(Qt::PointingHandCursor);
+    auto* linuxLayout = new QVBoxLayout(linuxCard);
+    linuxLayout->setSpacing(sak::ui::kSpacingMedium);
+    linuxLayout->setContentsMargins(0, 0, 0, 0);
+
+    auto* linuxLogo = new QLabel(linuxCard);
+    linuxLogo->setPixmap(QIcon(":/icons/icons/tux_logo.svg")
+                             .pixmap(kLogoSize, kLogoSize));
+    linuxLogo->setAlignment(Qt::AlignCenter);
+    linuxLogo->setStyleSheet(logoStyle);
+    linuxLayout->addWidget(linuxLogo);
+
+    auto* linuxTitle = new QLabel(tr("Linux ISO"), linuxCard);
+    linuxTitle->setAlignment(Qt::AlignCenter);
+    linuxTitle->setStyleSheet(cardTitleStyle);
+    linuxLayout->addWidget(linuxTitle);
+
+    auto* linuxDesc = new QLabel(
+        tr("Download a Linux distribution ISO — Ubuntu, Fedora, Debian, and more."),
+        linuxCard);
+    linuxDesc->setWordWrap(true);
+    linuxDesc->setAlignment(Qt::AlignCenter);
+    linuxDesc->setStyleSheet(cardDescStyle);
+    linuxLayout->addWidget(linuxDesc);
+
+    linuxLayout->addStretch();
+
+    m_downloadLinuxButton = new QPushButton(tr("Download Linux ISO"), linuxCard);
     m_downloadLinuxButton->setMinimumHeight(sak::kButtonHeightTall);
-    m_downloadLinuxButton->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
-    m_downloadLinuxButton->setAccessibleName(QStringLiteral("Download Linux ISO"));
-    m_downloadLinuxButton->setToolTip(QStringLiteral("Download a Linux distribution ISO image"));
-    groupLayout->addWidget(m_downloadLinuxButton);
+    m_downloadLinuxButton->setStyleSheet(sak::ui::kSecondaryButtonStyle);
+    m_downloadLinuxButton->setAccessibleName(
+        QStringLiteral("Download Linux ISO"));
+    m_downloadLinuxButton->setToolTip(
+        QStringLiteral("Download a Linux distribution ISO image"));
+    linuxLayout->addWidget(m_downloadLinuxButton);
     connect(m_downloadLinuxButton, &QPushButton::clicked,
             this, &ImageFlasherPanel::onDownloadLinuxClicked);
 
-    groupLayout->addSpacing(6);
+    cardRow->addWidget(linuxCard);
 
-    // Select image button (at bottom of button stack)
-    m_selectImageButton = new QPushButton("Select Image File", groupBox);
+    pageLayout->addLayout(cardRow);
+
+    // ── Select Image File button (centered, fixed width below cards) ────
+    auto* selectRow = new QHBoxLayout();
+    selectRow->addStretch();
+
+    m_selectImageButton = new QPushButton(tr("Select Image File"), m_imageSelectionPage);
     m_selectImageButton->setMinimumHeight(sak::kButtonHeightTall);
-    m_selectImageButton->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+    m_selectImageButton->setFixedWidth(260);
+    m_selectImageButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
     m_selectImageButton->setAccessibleName(QStringLiteral("Browse ISO File"));
-    m_selectImageButton->setToolTip(QStringLiteral("Browse for a local disk image file to flash"));
-    groupLayout->addWidget(m_selectImageButton);
+    m_selectImageButton->setToolTip(
+        QStringLiteral("Browse for a local disk image file to flash"));
     connect(m_selectImageButton, &QPushButton::clicked,
             this, &ImageFlasherPanel::onSelectImageClicked);
+
+    selectRow->addWidget(m_selectImageButton);
+    selectRow->addStretch();
+
+    pageLayout->addLayout(selectRow);
 }
 
 void ImageFlasherPanel::createDriveSelectionPage() {

@@ -260,6 +260,12 @@ private:
      */
     QString getDriveLetterFromDiskNumber();
 
+    /// @brief Thread-safe setter for m_lastError
+    void setError(const QString& error) {
+        QMutexLocker locker(&m_errorMutex);
+        m_lastError = error;
+    }
+
     std::atomic<bool> m_cancelled{false};
     mutable QMutex m_errorMutex;          ///< Guards m_lastError for cross-thread access
     QString m_lastError;                  ///< Protected by m_errorMutex

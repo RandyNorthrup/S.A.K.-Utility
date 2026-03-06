@@ -124,14 +124,6 @@ ToolbarUi buildToolbarUi(AdvancedUninstallPanel* panel, QHBoxLayout* toolbar)
             "Add checked programs to the uninstall queue and process them sequentially"));
     toolbar->addWidget(ui.batch_button);
 
-    ui.settings_button = new QPushButton(QObject::tr("Settings"), panel);
-    ui.settings_button->setToolTip(QObject::tr(
-        "Configure uninstall preferences — recycle bin, restore points, "
-        "default scan level, and more"));
-    setAccessible(ui.settings_button, QObject::tr("Uninstall settings"),
-        QObject::tr("Open the settings dialog to configure uninstall behavior"));
-    toolbar->addWidget(ui.settings_button);
-
     return ui;
 }
 
@@ -401,7 +393,8 @@ void AdvancedUninstallPanel::setupUi()
     rootLayout->addWidget(contentWidget);
 
     // Panel header
-    createPanelHeader(contentWidget, tr("Advanced Uninstall"),
+    createPanelHeader(contentWidget, QStringLiteral(":/icons/icons/panel_uninstall.svg"),
+        tr("Advanced Uninstall"),
         tr("Deep application removal with registry cleanup, leftover scanning, "
            "and batch uninstall support"),
         mainLayout);
@@ -425,7 +418,6 @@ void AdvancedUninstallPanel::createToolbar(QVBoxLayout* layout)
         m_uninstall_button = ui.uninstall_button;
         m_forced_uninstall_button = ui.forced_uninstall_button;
         m_batch_button = ui.batch_button;
-        m_settings_button = ui.settings_button;
     }
 
     layout->addLayout(toolbar);
@@ -444,8 +436,6 @@ void AdvancedUninstallPanel::createToolbar(QVBoxLayout* layout)
             this, &AdvancedUninstallPanel::onForcedUninstallClicked);
     connect(m_batch_button, &QPushButton::clicked,
             this, &AdvancedUninstallPanel::onBatchUninstallClicked);
-    connect(m_settings_button, &QPushButton::clicked,
-            this, &AdvancedUninstallPanel::showSettingsDialog);
 }
 
 void AdvancedUninstallPanel::createProgramTable(QVBoxLayout* layout)
@@ -533,20 +523,17 @@ void AdvancedUninstallPanel::createStatusBar(QVBoxLayout* layout)
     m_log_toggle = new LogToggleSwitch(tr("Log"), this);
     statusRow->addWidget(m_log_toggle);
 
-    statusRow->addSpacing(ui::kSpacingMedium);
+    // Settings button next to log toggle
+    m_settings_button = new QPushButton(tr("Settings"), this);
+    m_settings_button->setToolTip(tr(
+        "Configure uninstall preferences — recycle bin, restore points, "
+        "default scan level, and more"));
+    m_settings_button->setAccessibleName(tr("Uninstall settings"));
+    statusRow->addWidget(m_settings_button);
+    connect(m_settings_button, &QPushButton::clicked,
+            this, &AdvancedUninstallPanel::showSettingsDialog);
 
-    m_status_label = new QLabel(tr("Ready"), this);
-    m_status_label->setStyleSheet(
-        QString("color: %1;").arg(ui::kColorTextMuted));
-    statusRow->addWidget(m_status_label);
     statusRow->addStretch();
-
-    m_progress_bar = new QProgressBar(this);
-    m_progress_bar->setRange(0, 100);
-    m_progress_bar->setValue(0);
-    m_progress_bar->setFixedWidth(200);
-    m_progress_bar->setVisible(false);
-    statusRow->addWidget(m_progress_bar);
 
     layout->addLayout(statusRow);
 }
@@ -616,16 +603,14 @@ void AdvancedUninstallPanel::onViewFilterChanged(int index)
 void AdvancedUninstallPanel::onEnumerationStarted()
 {
     setOperationRunning(true);
-    m_status_label->setText(tr("Scanning installed programs..."));
-    m_progress_bar->setVisible(true);
-    m_progress_bar->setRange(0, 0);  // Indeterminate
+    Q_EMIT statusMessage(tr("Scanning installed programs..."), 0);
+    Q_EMIT progressUpdate(0, 0);
     logMessage("Program enumeration started.");
 }
 
 void AdvancedUninstallPanel::onEnumerationProgress(int current, int total)
 {
-    m_progress_bar->setRange(0, total);
-    m_progress_bar->setValue(current);
+    Q_EMIT progressUpdate(current, total);
 }
 
 void AdvancedUninstallPanel::onEnumerationFinished(
@@ -634,16 +619,16 @@ void AdvancedUninstallPanel::onEnumerationFinished(
     m_allPrograms = programs;
     applyFilter();
     setOperationRunning(false);
-    m_progress_bar->setVisible(false);
-    m_status_label->setText(tr("Ready"));
+    Q_EMIT progressUpdate(0, 1);
+    Q_EMIT statusMessage(tr("Ready"), 3000);
     logMessage(QString("Found %1 installed programs.").arg(programs.size()));
 }
 
 void AdvancedUninstallPanel::onEnumerationFailed(const QString& error)
 {
     setOperationRunning(false);
-    m_progress_bar->setVisible(false);
-    m_status_label->setText(tr("Enumeration failed"));
+    Q_EMIT progressUpdate(0, 1);
+    Q_EMIT statusMessage(tr("Enumeration failed"), 5000);
     logMessage(QString("ERROR: Enumeration failed: %1").arg(error));
     QMessageBox::warning(this, tr("Enumeration Error"),
         tr("Failed to enumerate installed programs:\n%1").arg(error));
@@ -652,17 +637,15 @@ void AdvancedUninstallPanel::onEnumerationFailed(const QString& error)
 void AdvancedUninstallPanel::onUninstallStarted(const QString& programName)
 {
     setOperationRunning(true);
-    m_status_label->setText(tr("Uninstalling: %1").arg(programName));
-    m_progress_bar->setVisible(true);
-    m_progress_bar->setRange(0, 100);
-    m_progress_bar->setValue(0);
+    Q_EMIT statusMessage(tr("Uninstalling: %1").arg(programName), 0);
+    Q_EMIT progressUpdate(0, 100);
     logMessage(QString("Uninstall started: %1").arg(programName));
 }
 
 void AdvancedUninstallPanel::onUninstallProgress(int percent, const QString& phase)
 {
-    m_progress_bar->setValue(percent);
-    m_status_label->setText(phase);
+    Q_EMIT progressUpdate(percent, 100);
+    Q_EMIT statusMessage(phase, 0);
 }
 
 void AdvancedUninstallPanel::onLeftoverScanFinished(
@@ -688,7 +671,7 @@ void AdvancedUninstallPanel::onLeftoverScanFinished(
 void AdvancedUninstallPanel::onUninstallFinished(UninstallReport report)
 {
     setOperationRunning(false);
-    m_progress_bar->setVisible(false);
+    Q_EMIT progressUpdate(0, 1);
 
     QString resultStr;
     switch (report.uninstallResult) {
@@ -706,8 +689,8 @@ void AdvancedUninstallPanel::onUninstallFinished(UninstallReport report)
         break;
     }
 
-    m_status_label->setText(
-        tr("Uninstall %1: %2").arg(resultStr, report.programName));
+    Q_EMIT statusMessage(
+        tr("Uninstall %1: %2").arg(resultStr, report.programName), 5000);
 
     logMessage(QString("Uninstall complete: %1 — %2 (exit code: %3)")
                    .arg(report.programName, resultStr)
@@ -728,8 +711,8 @@ void AdvancedUninstallPanel::onUninstallFinished(UninstallReport report)
 void AdvancedUninstallPanel::onUninstallFailed(const QString& error)
 {
     setOperationRunning(false);
-    m_progress_bar->setVisible(false);
-    m_status_label->setText(tr("Uninstall failed"));
+    Q_EMIT progressUpdate(0, 1);
+    Q_EMIT statusMessage(tr("Uninstall failed"), 5000);
     logMessage(QString("ERROR: Uninstall failed: %1").arg(error));
     QMessageBox::warning(this, tr("Uninstall Error"),
         tr("The uninstall operation failed:\n%1").arg(error));
@@ -738,24 +721,25 @@ void AdvancedUninstallPanel::onUninstallFailed(const QString& error)
 void AdvancedUninstallPanel::onUninstallCancelled()
 {
     setOperationRunning(false);
-    m_progress_bar->setVisible(false);
-    m_status_label->setText(tr("Uninstall cancelled"));
+    Q_EMIT progressUpdate(0, 1);
+    Q_EMIT statusMessage(tr("Uninstall cancelled"), 5000);
     logMessage("Uninstall operation cancelled by user.");
 }
 
 void AdvancedUninstallPanel::onCleanupStarted(int totalItems)
 {
     setOperationRunning(true);
-    m_progress_bar->setVisible(true);
-    m_progress_bar->setRange(0, totalItems);
-    m_progress_bar->setValue(0);
-    m_status_label->setText(tr("Cleaning %1 items...").arg(totalItems));
+    m_cleanup_progress = 0;
+    m_cleanup_total = totalItems;
+    Q_EMIT progressUpdate(0, totalItems);
+    Q_EMIT statusMessage(tr("Cleaning %1 items...").arg(totalItems), 0);
     logMessage(QString("Cleanup started: %1 items to remove.").arg(totalItems));
 }
 
 void AdvancedUninstallPanel::onItemCleaned(const QString& path, bool success)
 {
-    m_progress_bar->setValue(m_progress_bar->value() + 1);
+    ++m_cleanup_progress;
+    Q_EMIT progressUpdate(m_cleanup_progress, m_cleanup_total);
     if (success) {
         logMessage(QString("  Removed: %1").arg(path));
     } else {
@@ -767,7 +751,7 @@ void AdvancedUninstallPanel::onCleanupFinished(
     int succeeded, int failed, qint64 bytesRecovered)
 {
     setOperationRunning(false);
-    m_progress_bar->setVisible(false);
+    Q_EMIT progressUpdate(0, 1);
 
     QString msg = tr("Cleanup complete: %1 removed").arg(succeeded);
     if (failed > 0) {
@@ -776,7 +760,7 @@ void AdvancedUninstallPanel::onCleanupFinished(
     if (bytesRecovered > 0) {
         msg += tr(" (%1 recovered)").arg(formatSize(bytesRecovered));
     }
-    m_status_label->setText(msg);
+    Q_EMIT statusMessage(msg, 5000);
     logMessage(msg);
 
     // Clear leftover section after cleanup

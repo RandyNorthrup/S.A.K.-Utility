@@ -1,28 +1,190 @@
 ---
+# =============================================================================
+# S.A.K. Utility — Clang-Format Configuration
+# Production-grade C++23 formatting for consistent, readable code.
+# Requires: clang-format 17+
+# =============================================================================
 Language: Cpp
 BasedOnStyle: Google
+Standard: c++23
 ColumnLimit: 100
+
+# ── Indentation ──────────────────────────────────────────────────────────────
 IndentWidth: 4
+TabWidth: 4
 UseTab: Never
+ContinuationIndentWidth: 4
+IndentCaseLabels: false
+IndentCaseBlocks: false
+IndentGotoLabels: true
+IndentPPDirectives: None
+IndentExternBlock: AfterExternBlock
+IndentWrappedFunctionNames: false
+NamespaceIndentation: None
+LambdaBodyIndentation: Signature
+IndentRequiresClause: true
+RequiresClausePosition: OwnLine
+
+# ── Access Modifiers ─────────────────────────────────────────────────────────
 AccessModifierOffset: -4
+EmptyLineBeforeAccessModifier: LogicalBlock
+EmptyLineAfterAccessModifier: Never
+
+# ── Alignment ────────────────────────────────────────────────────────────────
 AlignAfterOpenBracket: Align
-AlignConsecutiveAssignments: false
-AlignConsecutiveDeclarations: false
-AlignOperands: true
-AllowShortBlocksOnASingleLine: Empty
-AllowShortFunctionsOnASingleLine: Inline
-AllowShortIfStatementsOnASingleLine: Never
-AllowShortLoopsOnASingleLine: false
+AlignArrayOfStructures: Left
+AlignConsecutiveAssignments: None
+AlignConsecutiveBitFields: Consecutive
+AlignConsecutiveDeclarations: None
+AlignConsecutiveMacros: Consecutive
+AlignEscapedNewlines: Left
+AlignOperands: Align
+AlignTrailingComments:
+  Kind: Always
+  OverEmptyLines: 1
+
+# ── Arguments / Parameters ───────────────────────────────────────────────────
+AllowAllArgumentsOnNextLine: true
+AllowAllParametersOfDeclarationOnNextLine: true
 BinPackArguments: false
 BinPackParameters: false
-BreakBeforeBraces: Attach
+
+# ── Short Forms ──────────────────────────────────────────────────────────────
+AllowShortBlocksOnASingleLine: Empty
+AllowShortCaseLabelsOnASingleLine: false
+AllowShortEnumsOnASingleLine: false
+AllowShortFunctionsOnASingleLine: Inline
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLambdasOnASingleLine: Inline
+AllowShortLoopsOnASingleLine: false
+
+# ── Braces ───────────────────────────────────────────────────────────────────
+BreakBeforeBraces: Custom
+BraceWrapping:
+  AfterCaseLabel: false
+  AfterClass: false
+  AfterControlStatement: Never
+  AfterEnum: false
+  AfterFunction: false
+  AfterNamespace: false
+  AfterStruct: false
+  AfterUnion: false
+  AfterExternBlock: false
+  BeforeCatch: false
+  BeforeElse: false
+  BeforeLambdaBody: false
+  BeforeWhile: false
+  IndentBraces: false
+  SplitEmptyFunction: false
+  SplitEmptyRecord: false
+  SplitEmptyNamespace: false
+InsertBraces: true
+
+# ── Breaking ─────────────────────────────────────────────────────────────────
+BreakBeforeBinaryOperators: None
+BreakBeforeConceptDeclarations: Always
+BreakBeforeTernaryOperators: true
 BreakConstructorInitializers: BeforeComma
+BreakInheritanceList: BeforeComma
+BreakStringLiterals: true
+BreakAfterAttributes: Leave
+
+# ── Constructors / Initializers ──────────────────────────────────────────────
 Cpp11BracedListStyle: true
-IncludeBlocks: Preserve
-IndentCaseLabels: false
-NamespaceIndentation: None
+PackConstructorInitializers: NextLine
+ConstructorInitializerIndentWidth: 4
+
+# ── Include Sorting ──────────────────────────────────────────────────────────
+SortIncludes: CaseInsensitive
+IncludeBlocks: Regroup
+IncludeCategories:
+  # 1. Corresponding header (auto-matched by clang-format)
+  # 2. Project headers ("sak/...")
+  - Regex: '^"sak/'
+    Priority: 2
+    SortPriority: 2
+  # 3. Other project-local headers
+  - Regex: '^"'
+    Priority: 3
+    SortPriority: 3
+  # 4. Qt headers
+  - Regex: '^<Q'
+    Priority: 4
+    SortPriority: 4
+  # 5. Windows / platform headers
+  - Regex: '^<(windows|winrt|comdef|shlobj|objbase|wrl)'
+    Priority: 6
+    SortPriority: 6
+  # 6. C++ standard library
+  - Regex: '^<'
+    Priority: 5
+    SortPriority: 5
+
+# ── Pointer / Reference Alignment ────────────────────────────────────────────
+DerivePointerAlignment: false
 PointerAlignment: Left
-SortIncludes: false
+ReferenceAlignment: Left
+QualifierAlignment: Left
+
+# ── Spaces ───────────────────────────────────────────────────────────────────
 SpaceAfterCStyleCast: false
+SpaceAfterLogicalNot: false
+SpaceAfterTemplateKeyword: true
+SpaceAroundPointerQualifiers: Default
+SpaceBeforeAssignmentOperators: true
+SpaceBeforeCaseColon: false
+SpaceBeforeCpp11BracedList: false
+SpaceBeforeCtorInitializerColon: true
+SpaceBeforeInheritanceColon: true
 SpaceBeforeParens: ControlStatements
-Standard: c++20
+SpaceBeforeRangeBasedForLoopColon: true
+SpaceBeforeSquareBrackets: false
+SpaceInEmptyBlock: false
+SpaceInEmptyParentheses: false
+SpacesBeforeTrailingComments: 2
+SpacesInAngles: Never
+SpacesInCStyleCastParentheses: false
+SpacesInConditionalStatement: false
+SpacesInContainerLiterals: false
+SpacesInLineCommentPrefix:
+  Minimum: 1
+  Maximum: 1
+SpacesInParentheses: false
+SpacesInSquareBrackets: false
+
+# ── Penalties (tune line-break heuristics) ────────────────────────────────────
+PenaltyBreakAssignment: 25
+PenaltyBreakBeforeFirstCallParameter: 50
+PenaltyBreakComment: 300
+PenaltyBreakFirstLessLess: 120
+PenaltyBreakOpenParenthesis: 0
+PenaltyBreakString: 1000
+PenaltyBreakTemplateDeclaration: 10
+PenaltyExcessCharacter: 1000000
+PenaltyIndentedWhitespace: 0
+PenaltyReturnTypeOnItsOwnLine: 200
+
+# ── Miscellaneous ────────────────────────────────────────────────────────────
+CompactNamespaces: false
+FixNamespaceComments: true
+MaxEmptyLinesToKeep: 2
+ReflowComments: true
+SeparateDefinitionBlocks: Leave
+InsertNewlineAtEOF: true
+RemoveSemicolon: true
+IntegerLiteralSeparator:
+  Binary: 4
+  Decimal: 3
+  Hex: 2
+  DecimalMinDigits: 5
+  HexMinDigits: 6
+
+# ── Qt-Specific ──────────────────────────────────────────────────────────────
+# Treat Q_OBJECT, Q_SIGNALS, etc. as macros that don't get formatted oddly
+AttributeMacros: ['Q_EMIT']
+StatementAttributeLikeMacros: ['Q_EMIT']
+StatementMacros: ['Q_OBJECT', 'Q_GADGET', 'Q_ENUM', 'Q_FLAG', 'Q_PROPERTY']
+WhitespaceSensitiveMacros: ['QStringLiteral', 'QT_STRINGIFY']
+MacroBlockBegin: ''
+MacroBlockEnd: ''
+ForEachMacros: ['forever', 'foreach', 'Q_FOREACH', 'BOOST_FOREACH']

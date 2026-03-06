@@ -42,6 +42,7 @@
 #include <QStackedWidget>
 #include <QStandardPaths>
 #include <QTableWidgetItem>
+#include <QTemporaryFile>
 #include <QTextStream>
 #include <QToolButton>
 #include <QMouseEvent>
@@ -187,7 +188,8 @@ void WifiManagerPanel::setupUi()
     outerLayout->addWidget(scrollArea);
 
     // Panel header — consistent title + muted subtitle
-    sak::createPanelHeader(contentWidget, tr("WiFi Manager"),
+    sak::createPanelHeader(contentWidget, QStringLiteral(":/icons/icons/panel_wifi.svg"),
+        tr("WiFi Manager"),
         tr("Manage, share, and deploy Wi-Fi network profiles"), rootLayout);
 
     // Main content: horizontal splitter form | table
@@ -953,7 +955,8 @@ MultiNetworkQrDialogUi buildMultiNetworkQrDialogUi(QDialog* dlg, int networkCoun
     MultiNetworkQrDialogUi ui;
     dlg->setWindowTitle(
         QString("Connect with Phone / Tablet (%1 networks)").arg(networkCount));
-    dlg->setFixedSize(420, 530);
+    dlg->setMinimumSize(420, 530);
+    dlg->resize(420, 530);
 
     auto* layout = new QVBoxLayout(dlg);
     layout->setContentsMargins(
@@ -1262,7 +1265,8 @@ void WifiManagerPanel::showSingleNetworkQrDialog(const WifiConfig& cfg)
 
     QDialog dlg(this);
     dlg.setWindowTitle("Connect with Phone / Tablet");
-    dlg.setFixedSize(400, 460);
+    dlg.setMinimumSize(400, 460);
+    dlg.resize(400, 460);
 
     auto* layout = new QVBoxLayout(&dlg);
     layout->setContentsMargins(sak::ui::kMarginXLarge, sak::ui::kMarginXLarge,
@@ -1396,6 +1400,9 @@ WifiManagerPanel::WifiConfig WifiManagerPanel::parseWindowsWifiProfile(
     Q_ASSERT(!profileName.isEmpty());
     QProcess p2;
     p2.start("netsh", QStringList{"wlan", "show", "profile", "name=" + profileName, "key=clear"});
+    if (!p2.waitForStarted(sak::kTimeoutProcessStartMs)) {
+        return {};
+    }
     p2.waitForFinished(sak::kTimeoutProcessShortMs);
     const QString detail = QString::fromLocal8Bit(p2.readAllStandardOutput());
 
@@ -1593,25 +1600,32 @@ QString WifiManagerPanel::buildWlanProfileXml(const WifiConfig& cfg)
 bool WifiManagerPanel::installWlanProfile(const QString& xml, int row)
 {
     Q_ASSERT(!xml.isEmpty());
-    const QString tmpPath = QDir::tempPath() + QString("/sak_wifi_%1.xml").arg(row);
+    (void)row;
+
+    // Use QTemporaryFile with .xml suffix for secure unique temp file
+    QTemporaryFile tmpFile(QDir::tempPath() + QStringLiteral("/sak_wifi_XXXXXX.xml"));
+    tmpFile.setAutoRemove(true);
+    if (!tmpFile.open()) {
+        return false;
+    }
     {
-        QFile f(tmpPath);
-        if (!f.open(QIODevice::WriteOnly | QIODevice::Text)) {
-            return false;
-        }
-        QTextStream ts(&f);
+        QTextStream ts(&tmpFile);
         ts.setEncoding(QStringConverter::Utf8);
         ts << xml;
     }
+    tmpFile.close();
+
+    const QString tmpPath = tmpFile.fileName();
 
     QProcess proc;
     proc.start("netsh", QStringList{"wlan", "add", "profile",
                                     "filename=" + tmpPath,
                                     "user=all"});
+    if (!proc.waitForStarted(sak::kTimeoutProcessStartMs)) {
+        return false;
+    }
     proc.waitForFinished(sak::kTimerNetshWaitMs);
-    const int exitCode = proc.exitCode();
-    QFile::remove(tmpPath);
-    return exitCode == 0;
+    return proc.exitCode() == 0;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

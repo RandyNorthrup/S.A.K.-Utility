@@ -130,7 +130,8 @@ void QuickActionsPanel::setupUi() {
     main_layout->setSpacing(10);
 
     // Panel header — consistent title + muted subtitle
-    sak::createPanelHeader(this, tr("Quick Actions"),
+    sak::createPanelHeader(this, QStringLiteral(":/icons/icons/panel_quick_actions.svg"),
+        tr("Quick Actions"),
         tr("One-click technician tools for common maintenance tasks"), main_layout);
 
     // Backup Location row at the top

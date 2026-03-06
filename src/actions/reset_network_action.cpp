@@ -9,6 +9,7 @@
 #include "sak/process_runner.h"
 #include <QThread>
 #include <QDir>
+#include <QTemporaryFile>
 
 namespace sak {
 
@@ -139,9 +140,14 @@ bool ResetNetworkAction::executeFlushDns(QStringList& errors) {
     // Step 1: Backup current Winsock configuration
     Q_EMIT executionProgress("Backing up Winsock catalog...", 5);
 
-    QString backupPath = QDir::temp().filePath("winsock_backup.txt");
-    QString backupCmd = QString("netsh winsock show catalog > \"%1\"").arg(backupPath);
-    {
+    QTemporaryFile backupFile(QDir::temp().filePath(QStringLiteral("sak_winsock_XXXXXX.txt")));
+    backupFile.setAutoRemove(true);
+    if (!backupFile.open()) {
+        errors << "Failed to create temp file for Winsock backup";
+    } else {
+        const QString backupPath = backupFile.fileName();
+        backupFile.close();
+        QString backupCmd = QString("netsh winsock show catalog > \"%1\"").arg(backupPath);
         ProcessResult proc = runProcess("cmd.exe", QStringList() << "/C" << backupCmd,
             sak::kTimeoutNetworkReadMs);
         if (proc.timed_out) errors << "Winsock backup timed out";

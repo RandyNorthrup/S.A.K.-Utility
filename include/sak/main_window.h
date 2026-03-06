@@ -21,7 +21,6 @@ namespace sak {
 // Forward declarations for feature panels
 class UserMigrationPanel;
 class OrganizerPanel;
-class DuplicateFinderPanel;
 class ImageFlasherPanel;
 class AppInstallationPanel;
 class QuickActionsPanel;
@@ -115,6 +114,9 @@ private:
     /// @brief Create the About information panel tab
     void createAboutPanel();
 
+    /// @brief Create the Help & Support panel tab
+    void createHelpPanel();
+
     /// @brief Load splash screen icon into the About panel header
     void loadAboutPanelIcon(QLabel* iconLabel);
 
@@ -157,7 +159,6 @@ private:
     // Feature panels
     std::unique_ptr<UserMigrationPanel> m_user_migration_panel;
     std::unique_ptr<OrganizerPanel> m_organizer_panel;
-    std::unique_ptr<DuplicateFinderPanel> m_duplicate_finder_panel;
     std::unique_ptr<AppInstallationPanel> m_app_installation_panel;
     std::unique_ptr<ImageFlasherPanel> m_image_flasher_panel;
     std::unique_ptr<QuickActionsPanel> m_quick_actions_panel;

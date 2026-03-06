@@ -63,7 +63,7 @@ void NetworkDiagnosticPanel::setupUi()
     rootLayout->setSpacing(ui::kSpacingSmall);
 
     // Panel header
-    createPanelHeader(this,
+    createPanelHeader(this, QStringLiteral(":/icons/icons/panel_network.svg"),
         tr("Network Diagnostics & Troubleshooting"),
         tr("Comprehensive network analysis — adapter inspection, connectivity testing, "
            "DNS diagnostics, port scanning, bandwidth, WiFi analysis, firewall auditing, and more"),
@@ -238,8 +238,8 @@ void NetworkDiagnosticPanel::setupAdapterDetailLabel(QGroupBox* group, QVBoxLayo
 
     auto* detailWidget = new QWidget(group);
     detailWidget->setLayout(detailRow);
-    detailWidget->setFixedHeight(50);
-    detailWidget->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    detailWidget->setMinimumHeight(50);
+    detailWidget->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Minimum);
     layout->addWidget(detailWidget, 0);
 
     // Show placeholder

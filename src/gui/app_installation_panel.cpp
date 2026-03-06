@@ -84,7 +84,8 @@ void AppInstallationPanel::setupUi()
     rootLayout->addWidget(scrollArea);
 
     // Panel header — consistent title + muted subtitle
-    sak::createPanelHeader(contentWidget, tr("App Installation"),
+    sak::createPanelHeader(contentWidget, QStringLiteral(":/icons/icons/panel_app_install.svg"),
+        tr("App Installation"),
         tr("Search, queue, and batch-install applications via Chocolatey"), mainLayout);
 
     setupUi_searchBar(mainLayout);

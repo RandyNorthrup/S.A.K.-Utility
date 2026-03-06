@@ -3,6 +3,7 @@
 
 #include "sak/log_viewer.h"
 #include "sak/logger.h"
+#include "sak/style_constants.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QFileDialog>
@@ -247,10 +248,10 @@ QString LogViewer::formatLogMessage(const QString& message, LogLevel level) cons
 QString LogViewer::getLevelColor(LogLevel level) const
 {
     switch (level) {
-        case LogLevel::Info:    return "#4A90E2";
-        case LogLevel::Warning: return "#F39C12";
-        case LogLevel::Error:   return "#E74C3C";
-        default:                return "#333333";
+        case LogLevel::Info:    return sak::ui::kStatusColorRunning;
+        case LogLevel::Warning: return sak::ui::kStatusColorWarning;
+        case LogLevel::Error:   return sak::ui::kStatusColorError;
+        default:                return sak::ui::kColorTextBody;
     }
 }
 

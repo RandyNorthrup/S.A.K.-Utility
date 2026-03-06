@@ -46,7 +46,8 @@ bool RestorePointManager::isSystemRestoreEnabled() const
     });
     ps.start();
 
-    if (!ps.waitForFinished(kCheckTimeoutMs)) {
+    if (!ps.waitForStarted(kCheckTimeoutMs)
+        || !ps.waitForFinished(kCheckTimeoutMs)) {
         return false;
     }
 
@@ -84,6 +85,11 @@ bool RestorePointManager::createRestorePoint(const QString& description)
         ).arg(safe_desc)
     });
     ps.start();
+
+    if (!ps.waitForStarted(kCreateTimeoutMs)) {
+        Q_EMIT restorePointFailed("Failed to start PowerShell for restore point creation.");
+        return false;
+    }
 
     if (!ps.waitForFinished(kCreateTimeoutMs)) {
         Q_EMIT restorePointFailed("Timeout creating restore point (exceeded 2 minutes).");
@@ -129,7 +135,8 @@ QVector<QPair<QDateTime, QString>> RestorePointManager::listRestorePoints() cons
     });
     ps.start();
 
-    if (!ps.waitForFinished(kCheckTimeoutMs)) {
+    if (!ps.waitForStarted(kCheckTimeoutMs)
+        || !ps.waitForFinished(kCheckTimeoutMs)) {
         return points;
     }
 

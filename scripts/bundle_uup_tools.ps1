@@ -3,18 +3,23 @@
 #
 # bundle_uup_tools.ps1 - Downloads and bundles UUP dump converter tools
 #
-# This script downloads aria2c and the uup-converter-wimlib package,
-# then extracts them into tools/uup/ for build-time bundling.
+# This script downloads aria2c, the uup-converter-wimlib package, and
+# UUP Media Creator, then extracts them into tools/uup/ for build-time bundling.
 # These tools enable portable ISO building from UUP files at runtime.
 #
 # Usage: powershell -ExecutionPolicy Bypass -File scripts/bundle_uup_tools.ps1
 #
 # Required tools after bundling:
-#   tools/uup/aria2c.exe          - Multi-connection download manager
-#   tools/uup/uup-converter-wimlib/ - UUP-to-ISO converter (wimlib-based)
-#     ├── convert-UUP.cmd              - Main conversion script
-#     ├── wimlib-imagex.exe        - WIM image manipulation tool
+#   tools/uup/aria2c.exe              - Multi-connection download manager
+#   tools/uup/converter/              - UUP-to-ISO converter (wimlib-based)
+#     ├── convert-UUP.cmd             - Main conversion script
+#     ├── wimlib-imagex.exe            - WIM image manipulation tool
 #     └── (supporting DLLs/files)
+#   tools/uup/uupmc/                  - UUP Media Creator (gus33000)
+#     ├── UUPMediaConverter.exe        - UUP-to-ISO conversion utility
+#     ├── UUPDownload.exe              - UUP download utility
+#     ├── libwim-15.dll                - WIM library
+#     └── CDImage/cdimage.exe          - CD/DVD image builder
 
 param(
     [string]$OutputDir = (Join-Path $PSScriptRoot "..\tools\uup"),
@@ -34,6 +39,10 @@ $ConverterSha256 = "9c03f6153c90859882e507cb727b9963f28c8bbf3e6eca51ff7ed286d526
 
 $SevenZrUrl = "https://uupdump.net/misc/7zr.exe"
 $SevenZrSha256 = "72c98287b2e8f85ea7bb87834b6ce1ce7ce7f41a8c97a81b307d4d4bf900922b"
+
+$UupmcVersion = "3.1.9.2"
+$UupmcUrl = "https://github.com/OSTooling/UUPMediaCreator/releases/download/v$UupmcVersion/win-x64-binaries.zip"
+$UupmcSha256 = "CD5475D5405751B25B7CE98BDA9AE4620690E541BB2C24D03EBBAE04A52B9F93"
 
 # --- Functions ---
 
@@ -202,12 +211,71 @@ try {
         Write-Success "UUP converter installed to $converterDir"
     }
 
-    # --- Step 4: Verify installation ---
+    # --- Step 4: Download and extract UUP Media Creator ---
+    $uupmcDir = Join-Path $OutputDir "uupmc"
+
+    if ((Test-Path $uupmcDir) -and -not $Force) {
+        $uupmcExe = Join-Path $uupmcDir "UUPMediaConverter.exe"
+        if (Test-Path $uupmcExe) {
+            Write-Status "UUP Media Creator already present. Use -Force to re-download."
+        }
+        else {
+            $Force = $true
+        }
+    }
+
+    if (-not (Test-Path (Join-Path $uupmcDir "UUPMediaConverter.exe")) -or $Force) {
+        $uupmcZip = Join-Path $tempDir "uupmc-win-x64.zip"
+        if (-not (Get-SecureDownload -Url $UupmcUrl -OutputPath $uupmcZip -ExpectedSha256 $UupmcSha256 -Description "UUP Media Creator v$UupmcVersion")) {
+            throw "Failed to download UUP Media Creator"
+        }
+
+        Write-Status "Extracting UUP Media Creator..."
+        if (Test-Path $uupmcDir) {
+            Remove-Item $uupmcDir -Recurse -Force
+        }
+        New-Item -ItemType Directory -Path $uupmcDir -Force | Out-Null
+
+        $uupmcExtractTemp = Join-Path $tempDir "uupmc_extract"
+        New-Item -ItemType Directory -Path $uupmcExtractTemp -Force | Out-Null
+
+        Expand-Archive -Path $uupmcZip -DestinationPath $uupmcExtractTemp -Force
+
+        # Copy all extracted files to uupmc directory
+        Get-ChildItem -Path $uupmcExtractTemp -Recurse | ForEach-Object {
+            $relativePath = $_.FullName.Substring($uupmcExtractTemp.Length + 1)
+            $destPath = Join-Path $uupmcDir $relativePath
+            if ($_.PSIsContainer) {
+                New-Item -ItemType Directory -Path $destPath -Force | Out-Null
+            }
+            else {
+                $destDir = Split-Path $destPath -Parent
+                if (-not (Test-Path $destDir)) {
+                    New-Item -ItemType Directory -Path $destDir -Force | Out-Null
+                }
+                Copy-Item -Path $_.FullName -Destination $destPath -Force
+            }
+        }
+
+        # Verify critical files were extracted
+        $uupmcCritical = @("UUPMediaConverter.exe", "UUPDownload.exe")
+        foreach ($file in $uupmcCritical) {
+            if (-not (Test-Path (Join-Path $uupmcDir $file))) {
+                throw "UUP Media Creator extraction failed: $file not found"
+            }
+        }
+
+        Write-Success "UUP Media Creator installed to $uupmcDir"
+    }
+
+    # --- Step 5: Verify installation ---
     Write-Status "Verifying installation..."
 
     $requiredFiles = @(
         (Join-Path $OutputDir "aria2c.exe"),
-        (Join-Path $converterDir "convert-UUP.cmd")
+        (Join-Path $converterDir "convert-UUP.cmd"),
+        (Join-Path $uupmcDir "UUPMediaConverter.exe"),
+        (Join-Path $uupmcDir "UUPDownload.exe")
     )
 
     $allPresent = $true
@@ -227,6 +295,17 @@ try {
         $converterDirFull = (Resolve-Path $converterDir).Path
         Get-ChildItem -Path $converterDirFull -Recurse -File | ForEach-Object {
             $relativePath = $_.FullName.Substring($converterDirFull.Length + 1)
+            $sizeKB = [math]::Round($_.Length / 1024, 1)
+            Write-Status "  $relativePath ($sizeKB KB)"
+        }
+    }
+
+    # List uupmc contents
+    if (Test-Path $uupmcDir) {
+        Write-Status "UUP Media Creator contents:"
+        $uupmcDirFull = (Resolve-Path $uupmcDir).Path
+        Get-ChildItem -Path $uupmcDirFull -Recurse -File | ForEach-Object {
+            $relativePath = $_.FullName.Substring($uupmcDirFull.Length + 1)
             $sizeKB = [math]::Round($_.Length / 1024, 1)
             Write-Status "  $relativePath ($sizeKB KB)"
         }

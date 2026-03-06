@@ -5,6 +5,7 @@
 /// @brief Deletes selected leftover items safely on a background thread
 
 #include "sak/cleanup_worker.h"
+#include "sak/layout_constants.h"
 
 #include <QDir>
 #include <QFile>
@@ -318,7 +319,9 @@ bool CleanupWorker::removeService(const QString& serviceName)
     stop_proc.setProgram("sc.exe");
     stop_proc.setArguments({"stop", serviceName});
     stop_proc.start();
-    stop_proc.waitForFinished(10000);
+    if (stop_proc.waitForStarted(sak::kTimeoutProcessStartMs)) {
+        stop_proc.waitForFinished(10000);
+    }
 
     // Wait a moment for it to stop
     QThread::msleep(1000);
@@ -329,7 +332,8 @@ bool CleanupWorker::removeService(const QString& serviceName)
     del_proc.setArguments({"delete", serviceName});
     del_proc.start();
 
-    if (!del_proc.waitForFinished(10000)) {
+    if (!del_proc.waitForStarted(sak::kTimeoutProcessStartMs)
+        || !del_proc.waitForFinished(10000)) {
         return false;
     }
 
@@ -343,7 +347,8 @@ bool CleanupWorker::removeScheduledTask(const QString& taskName)
     proc.setArguments({"/delete", "/tn", taskName, "/f"});
     proc.start();
 
-    if (!proc.waitForFinished(10000)) {
+    if (!proc.waitForStarted(sak::kTimeoutProcessStartMs)
+        || !proc.waitForFinished(10000)) {
         return false;
     }
 
@@ -358,7 +363,8 @@ bool CleanupWorker::removeFirewallRule(const QString& ruleName)
                        QString("name=%1").arg(ruleName)});
     proc.start();
 
-    if (!proc.waitForFinished(10000)) {
+    if (!proc.waitForStarted(sak::kTimeoutProcessStartMs)
+        || !proc.waitForFinished(10000)) {
         return false;
     }
 

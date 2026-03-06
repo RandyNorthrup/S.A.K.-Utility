@@ -49,10 +49,12 @@ void ClearWindowsUpdateCacheAction::scan() {
 
     Q_EMIT scanProgress("Calculating Windows Update cache size...");
 
+    const QString sysRoot =
+        qEnvironmentVariable("SystemRoot", QStringLiteral("C:\\Windows"));
     QStringList paths = {
-        "C:/Windows/SoftwareDistribution/Download",
-        "C:/Windows/SoftwareDistribution/DataStore",
-        "C:/Windows/System32/catroot2"
+        sysRoot + QStringLiteral("/SoftwareDistribution/Download"),
+        sysRoot + QStringLiteral("/SoftwareDistribution/DataStore"),
+        sysRoot + QStringLiteral("/System32/catroot2")
     };
 
     qint64 total_size = 0;

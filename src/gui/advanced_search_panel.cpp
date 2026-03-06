@@ -177,12 +177,6 @@ SearchBarRow3Ui buildSearchBarRow3(AdvancedSearchPanel* panel, QHBoxLayout* row)
 
     row->addStretch();
 
-    ui.preferences_button = new QPushButton(QObject::tr("Preferences"), panel);
-    ui.preferences_button->setToolTip(
-        QObject::tr("Search preferences (max results, file sizes, etc.)"));
-    setAccessible(ui.preferences_button, QObject::tr("Search preferences"));
-    row->addWidget(ui.preferences_button);
-
     return ui;
 }
 
@@ -406,7 +400,8 @@ void AdvancedSearchPanel::setupUi()
     rootLayout->addWidget(contentWidget);
 
     // Panel header
-    createPanelHeader(contentWidget, tr("Advanced Search"),
+    createPanelHeader(contentWidget, QStringLiteral(":/icons/icons/panel_search.svg"),
+        tr("Advanced Search"),
         tr("Search file contents, metadata, archives, and binary data across directory trees"),
         mainLayout);
 
@@ -461,7 +456,6 @@ void AdvancedSearchPanel::createSearchBar(QVBoxLayout* layout)
         m_file_metadata_check = ui.file_metadata_check;
         m_archive_search_check = ui.archive_search_check;
         m_binary_hex_check = ui.binary_hex_check;
-        m_preferences_button = ui.preferences_button;
     }
 
     searchLayout->addLayout(row3);
@@ -475,8 +469,6 @@ void AdvancedSearchPanel::createSearchBar(QVBoxLayout* layout)
             this, &AdvancedSearchPanel::onStopClicked);
     connect(m_regex_patterns_button, &QPushButton::clicked,
             this, &AdvancedSearchPanel::onRegexPatternsClicked);
-    connect(m_preferences_button, &QPushButton::clicked,
-            this, &AdvancedSearchPanel::onPreferencesClicked);
 
     // Enter key triggers search
     connect(m_search_combo->lineEdit(), &QLineEdit::returnPressed,
@@ -663,6 +655,16 @@ void AdvancedSearchPanel::createStatusBar(QVBoxLayout* layout)
     // Log toggle on the left — matches all other panels
     m_log_toggle = new LogToggleSwitch(tr("Log"), this);
     statusRow->addWidget(m_log_toggle);
+
+    // Settings button next to log toggle
+    m_preferences_button = new QPushButton(tr("Settings"), this);
+    m_preferences_button->setToolTip(
+        tr("Search settings (max results, file sizes, etc.)"));
+    m_preferences_button->setAccessibleName(tr("Search settings"));
+    statusRow->addWidget(m_preferences_button);
+    connect(m_preferences_button, &QPushButton::clicked,
+            this, &AdvancedSearchPanel::onPreferencesClicked);
+
     statusRow->addStretch();
 
     layout->addLayout(statusRow);

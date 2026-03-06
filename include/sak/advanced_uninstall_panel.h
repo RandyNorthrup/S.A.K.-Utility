@@ -13,7 +13,6 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QMenu>
-#include <QProgressBar>
 #include <QPushButton>
 #include <QSplitter>
 #include <QTableWidget>
@@ -200,8 +199,8 @@ private:
     QPushButton* m_delete_selected_button{nullptr};
 
     // ── Status Bar ──
-    QLabel* m_status_label{nullptr};
-    QProgressBar* m_progress_bar{nullptr};
+    int m_cleanup_progress{0};
+    int m_cleanup_total{0};
 
     // ── Log toggle ──
     LogToggleSwitch* m_log_toggle{nullptr};

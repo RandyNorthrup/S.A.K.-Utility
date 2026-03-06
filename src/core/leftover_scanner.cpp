@@ -7,6 +7,7 @@
 
 #include "sak/leftover_scanner.h"
 #include "sak/registry_snapshot_engine.h"
+#include "sak/layout_constants.h"
 
 #include <QRegularExpression>
 
@@ -374,7 +375,8 @@ QVector<LeftoverItem> LeftoverScanner::scanServices(
     proc.setArguments({"query", "type=", "service", "state=", "all"});
     proc.start();
 
-    if (!proc.waitForFinished(kPowerShellTimeoutMs)) {
+    if (!proc.waitForStarted(sak::kTimeoutProcessStartMs)
+        || !proc.waitForFinished(kPowerShellTimeoutMs)) {
         return items;
     }
 
@@ -421,7 +423,8 @@ QVector<LeftoverItem> LeftoverScanner::scanScheduledTasks(
     proc.setArguments({"/query", "/fo", "CSV", "/nh"});
     proc.start();
 
-    if (!proc.waitForFinished(kPowerShellTimeoutMs)) {
+    if (!proc.waitForStarted(sak::kTimeoutProcessStartMs)
+        || !proc.waitForFinished(kPowerShellTimeoutMs)) {
         return items;
     }
 
@@ -465,7 +468,8 @@ QVector<LeftoverItem> LeftoverScanner::scanFirewallRules(
                        "name=all", "dir=in"});
     proc.start();
 
-    if (!proc.waitForFinished(kPowerShellTimeoutMs)) {
+    if (!proc.waitForStarted(sak::kTimeoutProcessStartMs)
+        || !proc.waitForFinished(kPowerShellTimeoutMs)) {
         return items;
     }
 
@@ -500,7 +504,8 @@ QVector<LeftoverItem> LeftoverScanner::scanFirewallRules(
                         "name=all", "dir=out"});
     proc2.start();
 
-    if (proc2.waitForFinished(kPowerShellTimeoutMs)) {
+    if (proc2.waitForStarted(sak::kTimeoutProcessStartMs)
+        && proc2.waitForFinished(kPowerShellTimeoutMs)) {
         output = QString::fromLocal8Bit(proc2.readAllStandardOutput());
         lines = output.split('\n');
 

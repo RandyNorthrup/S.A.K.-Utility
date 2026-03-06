@@ -17,7 +17,6 @@ class FlashCoordinator;
 class WindowsISODownloader;
 class LinuxISODownloader;
 class QVBoxLayout;
-class QGroupBox;
 class QThread;
 class WindowsUSBCreator;
 
@@ -125,8 +124,8 @@ private:
     void setupNavigationButtons(QVBoxLayout* mainLayout);
     /** @brief Build the image-selection wizard page */
     void createImageSelectionPage();
-    /** @brief Create download/select buttons within the image selection group */
-    void createDownloadButtons(QVBoxLayout* groupLayout, QGroupBox* groupBox);
+    /** @brief Create download cards and select-file button */
+    void createDownloadCards(QVBoxLayout* pageLayout);
     /** @brief Build the drive-selection wizard page */
     void createDriveSelectionPage();
     /** @brief Build the flash-progress wizard page */

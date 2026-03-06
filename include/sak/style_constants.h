@@ -151,7 +151,7 @@ constexpr auto kSecondaryButtonStyle =
     "    stop:0 rgba(100, 116, 139, 0.92),"
     "    stop:0.5 rgba(71, 85, 105, 0.90),"
     "    stop:1 rgba(51, 65, 85, 0.88));"
-    "  color: white;"
+    "  color: white; font-weight: 600;"
     "  padding: 8px 14px; border-radius: 10px;"
     "  border: 1px solid rgba(51, 65, 85, 0.7);"
     "}"
@@ -180,7 +180,7 @@ constexpr auto kSuccessButtonStyle =
     "    stop:0 rgba(67, 160, 71, 0.92),"
     "    stop:0.5 rgba(56, 142, 60, 0.90),"
     "    stop:1 rgba(46, 125, 50, 0.88));"
-    "  color: white;"
+    "  color: white; font-weight: 600;"
     "  padding: 8px 14px; border-radius: 10px;"
     "  border: 1px solid rgba(46, 125, 50, 0.7);"
     "}"
@@ -209,7 +209,7 @@ constexpr auto kDangerButtonStyle =
     "    stop:0 rgba(239, 83, 80, 0.92),"
     "    stop:0.5 rgba(211, 47, 47, 0.90),"
     "    stop:1 rgba(198, 40, 40, 0.88));"
-    "  color: white;"
+    "  color: white; font-weight: 600;"
     "  padding: 8px 14px; border-radius: 10px;"
     "  border: 1px solid rgba(198, 40, 40, 0.7);"
     "}"
@@ -296,5 +296,31 @@ static_assert(kFontSizeStatus < kFontSizeSection,
     "Font sizes must be monotonically increasing.");
 static_assert(kFontSizeSection < kFontSizeTitle,
     "Font sizes must be monotonically increasing.");
+
+// ── Icons (Icons8 win10, #7a8a9e) ──────────────────────────────────────────
+
+/// Chevron left SVG (16 px logical, viewBox 0 0 32 32)
+inline constexpr auto kIconChevronLeftSvg =
+    "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 32 32\">"
+    "<path fill=\"#7a8a9e\" d=\"M 19.75 2.59375 L 19.03125 3.28125 "
+    "L 7.03125 15.28125 L 6.34375 16 L 7.03125 16.71875 "
+    "L 19.03125 28.71875 L 19.75 29.40625 L 20.46875 28.71875 "
+    "L 24.0625 25.09375 L 24.75 24.40625 L 24.0625 23.6875 "
+    "L 16.375 16 L 24.0625 8.3125 L 24.75 7.59375 L 24.0625 6.90625 "
+    "L 20.46875 3.28125 Z M 19.75 5.4375 L 21.9375 7.625 "
+    "L 14.25 15.28125 L 13.53125 16 L 14.25 16.71875 "
+    "L 21.9375 24.375 L 19.75 26.5625 L 9.1875 16 Z\"/></svg>";
+
+/// Chevron right SVG (16 px logical, viewBox 0 0 32 32)
+inline constexpr auto kIconChevronRightSvg =
+    "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 32 32\">"
+    "<path fill=\"#7a8a9e\" d=\"M 12.25 2.59375 L 11.53125 3.28125 "
+    "L 7.9375 6.90625 L 7.25 7.59375 L 7.9375 8.3125 "
+    "L 15.625 16 L 7.9375 23.6875 L 7.25 24.40625 L 7.9375 25.09375 "
+    "L 11.53125 28.71875 L 12.25 29.40625 L 12.96875 28.71875 "
+    "L 24.96875 16.71875 L 25.65625 16 L 24.96875 15.28125 "
+    "L 12.96875 3.28125 Z M 12.25 5.4375 L 22.8125 16 "
+    "L 12.25 26.5625 L 10.0625 24.375 L 17.75 16.71875 "
+    "L 18.46875 16 L 17.75 15.28125 L 10.0625 7.625 Z\"/></svg>";
 
 } // namespace sak::ui

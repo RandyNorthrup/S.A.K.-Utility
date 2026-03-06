@@ -27,9 +27,12 @@ void SavedGameDataBackupAction::scanSteamSaves() {
 }
 
 void SavedGameDataBackupAction::scanSteamSavesForUser(const UserProfile& user) {
+    const QString programFilesX86 =
+        qEnvironmentVariable("ProgramFiles(x86)",
+            QStringLiteral("C:\\Program Files (x86)"));
     QStringList steam_paths = {
-        user.profile_path + "/AppData/Roaming/Steam",
-        "C:/Program Files (x86)/Steam/userdata"
+        user.profile_path + QStringLiteral("/AppData/Roaming/Steam"),
+        programFilesX86 + QStringLiteral("/Steam/userdata")
     };
 
     for (const QString& path : steam_paths) {

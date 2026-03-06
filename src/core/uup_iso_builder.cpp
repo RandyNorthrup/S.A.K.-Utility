@@ -66,6 +66,8 @@ void UupIsoBuilder::startBuild(const QList<UupDumpApi::FileInfo>& files,
     m_downloadedBytes = 0;
     m_allFilesAlreadyDownloaded = false;
     m_converterOutputTail.clear();
+    m_conversionRetryCount = 0;
+    m_skipAppxOnRetry = false;
 
     // Calculate total download size
     m_totalDownloadBytes = 0;
@@ -361,7 +363,11 @@ void UupIsoBuilder::downloadPackages()
             << "RefESD     =0\n"
             << "UpdtBootFiles=1\n"
             << "AutoExit   =1\n"   // Exit without waiting for keypress
-            << "SkipEdge   =0\n";
+            << "SkipEdge   =0\n"
+            << "\n[Store_Apps]\n"
+            << "SkipApps   =0\n"
+            << "AppsLevel  =0\n"
+            << "CustomList =0\n";
     }
     configFile.close();
 }
@@ -732,7 +738,7 @@ void UupIsoBuilder::pollConversionProgress()
         Q_EMIT progressUpdated(
             PHASE_PREPARE_WEIGHT + PHASE_DOWNLOAD_WEIGHT +
                 (conversionProgress * PHASE_CONVERT_WEIGHT / 100),
-            QString("Creating ISO (%1 GB)...").arg(sizeGB, 0, 'f', 2));
+            QString("Building bootable ISO (%1 GB written)...").arg(sizeGB, 0, 'f', 2));
     } else if (m_converterProcess &&
                m_converterProcess->state() == QProcess::Running) {
         int conversionProgress = m_conversionPercent;
@@ -743,7 +749,7 @@ void UupIsoBuilder::pollConversionProgress()
                       (conversionProgress * PHASE_CONVERT_WEIGHT / 100);
         Q_EMIT progressUpdated(
             overall,
-            QString("Converting UUP files... (%1%)").arg(conversionProgress));
+            QString("Building Windows ISO... (%1%)").arg(conversionProgress));
     }
 }
 
@@ -935,6 +941,9 @@ void UupIsoBuilder::executeConversion()
     // Set environment for non-interactive execution
     QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
     env.insert("UUP_AUTOMATIC", "1");
+    if (m_skipAppxOnRetry) {
+        env.insert("SKIP_APPS", "1");
+    }
     m_converterProcess->setProcessEnvironment(env);
 
     // UUPMediaConverter desktop-convert -u <UUPs> -i <ISO> -l <lang> -e <edition>
@@ -947,6 +956,11 @@ void UupIsoBuilder::executeConversion()
          << "--no-key-prompt";
     if (!m_edition.isEmpty()) {
         args << "-e" << m_edition;
+    }
+    if (m_skipAppxOnRetry) {
+        args << "--skip-appx";
+        sak::logInfo("Retrying conversion with --skip-appx (attempt " +
+                      std::to_string(m_conversionRetryCount) + ")");
     }
 
     sak::logInfo("Starting UUPMediaConverter: " +
@@ -1008,7 +1022,7 @@ void UupIsoBuilder::parseConverterProgress(const QString& line)
         if (visiblePercent >= 100) {
             visiblePercent = 99;
         }
-        detail = QString("Converting UUP files... (%1%)").arg(visiblePercent);
+        detail = QString("Building Windows ISO... (%1%)").arg(visiblePercent);
     }
 
     // Log warnings/errors
@@ -1044,13 +1058,13 @@ bool UupIsoBuilder::parseConverterStagePercent(
 
     if (stage == "creatingwindowsinstaller") {
         mappedProgress = 5 + (stagePct * 45 / 100);   // 5..50
-        detail = QString("Creating Windows installer image... (%1%)").arg(stagePct);
+        detail = QString("Applying Windows image (%1%)...").arg(stagePct);
     } else if (stage == "preparingfiles") {
         mappedProgress = 50 + (stagePct * 40 / 100);  // 50..90
-        detail = QString("Preparing conversion files... (%1%)").arg(stagePct);
+        detail = QString("Integrating updates and components (%1%)...").arg(stagePct);
     } else if (stage == "creatingiso") {
         mappedProgress = 90 + (stagePct * 9 / 100);   // 90..99
-        detail = QString("Creating bootable ISO image... (%1%)").arg(stagePct);
+        detail = QString("Writing bootable ISO file (%1%)...").arg(stagePct);
     }
 
     if (mappedProgress > m_conversionPercent) {
@@ -1071,12 +1085,12 @@ void UupIsoBuilder::parseConverterFallbackPatterns(
             R"(image\s+(\d+)\s+of\s+(\d+))", QRegularExpression::CaseInsensitiveOption);
         QRegularExpressionMatch imgMatch = imagePattern.match(line);
         if (!imgMatch.hasMatch()) {
-            detail = "Processing Windows images...";
+            detail = "Preparing Windows installation images...";
             m_conversionPercent = (std::max)(m_conversionPercent, 20);
             return;
         }
 
-        detail = QString("Processing image %1 of %2")
+        detail = QString("Processing Windows image %1 of %2")
                      .arg(imgMatch.captured(1), imgMatch.captured(2));
         const int current = imgMatch.captured(1).toInt();
         const int total = imgMatch.captured(2).toInt();
@@ -1088,19 +1102,19 @@ void UupIsoBuilder::parseConverterFallbackPatterns(
     }
 
     if (line.contains("[ReadingMetadata]", Qt::CaseInsensitive)) {
-        detail = "Reading build metadata...";
+        detail = "Analyzing Windows build metadata...";
         m_conversionPercent = (std::max)(m_conversionPercent, 5);
         return;
     }
 
     if (line.contains("[ApplyingImage]", Qt::CaseInsensitive)) {
-        detail = "Applying Windows image...";
+        detail = "Applying Windows installation image...";
         m_conversionPercent = (std::max)(m_conversionPercent, 45);
         return;
     }
 
     if (line.contains("Done", Qt::CaseInsensitive) && line.length() < 30) {
-        detail = "Conversion complete";
+        detail = "Finalizing ISO image...";
         m_conversionPercent = 100;
     }
 }
@@ -1119,6 +1133,25 @@ void UupIsoBuilder::onConverterFinished(int exitCode,
     }
 
     if (exitCode != 0) {
+        // Check for AppX provisioning failure — can retry without Store apps
+        bool isAppxFailure =
+            m_converterOutputTail.contains("appx", Qt::CaseInsensitive) ||
+            m_converterOutputTail.contains("provisioning", Qt::CaseInsensitive) ||
+            m_converterOutputTail.contains("external tool for appx", Qt::CaseInsensitive);
+        if (isAppxFailure && m_conversionRetryCount < 1) {
+            m_conversionRetryCount++;
+            m_skipAppxOnRetry = true;
+            m_converterOutputTail.clear();
+            sak::logWarning(
+                "AppX provisioning failed — retrying without Store app integration");
+            Q_EMIT progressUpdated(
+                PHASE_PREPARE_WEIGHT + PHASE_DOWNLOAD_WEIGHT,
+                "AppX provisioning failed \u2014 retrying without Store apps...");
+            updateConvertConfigSkipApps();
+            executeConversion();
+            return;
+        }
+
         m_phase = Phase::Failed;
         QString errorDetail = m_converterOutputTail.trimmed();
         if (errorDetail.isEmpty() && m_converterProcess) {
@@ -1138,16 +1171,35 @@ void UupIsoBuilder::onConverterFinished(int exitCode,
 
     QFileInfo finalInfo(m_outputIsoPath);
     if (!finalInfo.exists() || finalInfo.size() <= 0) {
+        // Check for AppX provisioning failure — can retry without Store apps
+        bool isAppxFailure =
+            m_converterOutputTail.contains("appx", Qt::CaseInsensitive) ||
+            m_converterOutputTail.contains("provisioning", Qt::CaseInsensitive) ||
+            m_converterOutputTail.contains("external tool for appx", Qt::CaseInsensitive);
+        if (isAppxFailure && m_conversionRetryCount < 1) {
+            m_conversionRetryCount++;
+            m_skipAppxOnRetry = true;
+            m_converterOutputTail.clear();
+            sak::logWarning(
+                "AppX provisioning failed (no ISO created) — retrying without Store apps");
+            Q_EMIT progressUpdated(
+                PHASE_PREPARE_WEIGHT + PHASE_DOWNLOAD_WEIGHT,
+                "AppX provisioning failed \u2014 retrying without Store apps...");
+            updateConvertConfigSkipApps();
+            executeConversion();
+            return;
+        }
+
         QString tail = m_converterOutputTail.trimmed();
         if (tail.length() > 2000)
             tail = tail.right(2000);
 
         QString appxHint;
-        if (tail.contains("external tool for appx installation", Qt::CaseInsensitive) ||
-            tail.contains("appx", Qt::CaseInsensitive)) {
+        if (isAppxFailure) {
             appxHint =
-                "\n\nDetected AppX provisioning failure. This step requires an "
-                "elevated Administrator process.";
+                "\n\nDetected AppX provisioning failure. The retry with "
+                "--skip-appx also failed. Ensure S.A.K. Utility is running "
+                "as Administrator and try again.";
         }
 
         m_phase = Phase::Failed;
@@ -1305,6 +1357,43 @@ void UupIsoBuilder::cleanupWorkDir()
         }
     }
     m_workDir.clear();
+}
+
+void UupIsoBuilder::updateConvertConfigSkipApps()
+{
+    if (m_workDir.isEmpty()) return;
+
+    QString configPath = QDir(m_workDir).filePath("ConvertConfig.ini");
+    QFile configFile(configPath);
+    if (!configFile.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        sak::logWarning("Failed to rewrite ConvertConfig.ini for AppX skip");
+        return;
+    }
+
+    QTextStream cfg(&configFile);
+    cfg << "[convert-UUP]\n"
+        << "AutoStart  =1\n"
+        << "AddUpdates =1\n"
+        << "Cleanup    =1\n"
+        << "ResetBase  =0\n"
+        << "NetFx3     =0\n"
+        << "StartVirtual=0\n"
+        << "wim2esd    =0\n"
+        << "wim2swm    =0\n"
+        << "SkipISO    =0\n"
+        << "SkipWinRE  =0\n"
+        << "ForceDism  =0\n"
+        << "RefESD     =0\n"
+        << "UpdtBootFiles=1\n"
+        << "AutoExit   =1\n"
+        << "SkipEdge   =0\n"
+        << "\n[Store_Apps]\n"
+        << "SkipApps   =1\n"
+        << "AppsLevel  =0\n"
+        << "CustomList =0\n";
+    configFile.close();
+
+    sak::logInfo("Rewrote ConvertConfig.ini with SkipApps=1 for retry");
 }
 
 void UupIsoBuilder::updateOverallProgress()

@@ -110,7 +110,8 @@ void NetworkTransferPanel::setupUi() {
                                    sak::ui::kMarginMedium, sak::ui::kMarginMedium);
 
     // Panel header — consistent title + muted subtitle
-    sak::createPanelHeader(this, tr("Network Transfer"),
+    sak::createPanelHeader(this, QStringLiteral(":/icons/icons/panel_network_transfer.svg"),
+        tr("Network Transfer"),
         tr("Transfer files and deploy profiles across machines on your network"), mainLayout);
 
     auto* modeLayout = new QHBoxLayout();
@@ -1394,39 +1395,28 @@ void NetworkTransferPanel::saveNetworkSettingsFromDialog(QDialog* dialog) {
     Q_ASSERT(dialog);
     auto& config = ConfigManager::instance();
 
-    config
-        .setNetworkTransferEnabled(dialog->findChild<QCheckBox*>(QStringLiteral(
-            "ntEnabled"))->isChecked());
-    config
-        .setNetworkTransferAutoDiscoveryEnabled(dialog->findChild<QCheckBox*>(QStringLiteral(
-            "ntAutoDisc"))->isChecked());
-    config
-        .setNetworkTransferEncryptionEnabled(dialog->findChild<QCheckBox*>(QStringLiteral(
-            "ntEncrypt"))->isChecked());
-    config
-        .setNetworkTransferCompressionEnabled(dialog->findChild<QCheckBox*>(QStringLiteral(
-            "ntCompress"))->isChecked());
-    config
-        .setNetworkTransferResumeEnabled(dialog->findChild<QCheckBox*>(QStringLiteral(
-            "ntResume"))->isChecked());
-    config
-        .setNetworkTransferDiscoveryPort(dialog->findChild<QSpinBox*>(QStringLiteral(
-            "ntDiscoveryPort"))->value());
-    config
-        .setNetworkTransferControlPort(dialog->findChild<QSpinBox*>(QStringLiteral(
-            "ntControlPort"))->value());
-    config
-        .setNetworkTransferDataPort(dialog->findChild<QSpinBox*>(QStringLiteral(
-            "ntDataPort"))->value());
-    config
-        .setNetworkTransferChunkSize(dialog->findChild<QSpinBox*>(QStringLiteral(
-            "ntChunkSize"))->value());
-    config
-        .setNetworkTransferMaxBandwidth(dialog->findChild<QSpinBox*>(QStringLiteral(
-            "ntMaxBw"))->value());
-    config
-        .setNetworkTransferRelayServer(dialog->findChild<QLineEdit*>(QStringLiteral(
-            "ntRelay"))->text());
+    if (auto* w = dialog->findChild<QCheckBox*>(QStringLiteral("ntEnabled")))
+        config.setNetworkTransferEnabled(w->isChecked());
+    if (auto* w = dialog->findChild<QCheckBox*>(QStringLiteral("ntAutoDisc")))
+        config.setNetworkTransferAutoDiscoveryEnabled(w->isChecked());
+    if (auto* w = dialog->findChild<QCheckBox*>(QStringLiteral("ntEncrypt")))
+        config.setNetworkTransferEncryptionEnabled(w->isChecked());
+    if (auto* w = dialog->findChild<QCheckBox*>(QStringLiteral("ntCompress")))
+        config.setNetworkTransferCompressionEnabled(w->isChecked());
+    if (auto* w = dialog->findChild<QCheckBox*>(QStringLiteral("ntResume")))
+        config.setNetworkTransferResumeEnabled(w->isChecked());
+    if (auto* w = dialog->findChild<QSpinBox*>(QStringLiteral("ntDiscoveryPort")))
+        config.setNetworkTransferDiscoveryPort(w->value());
+    if (auto* w = dialog->findChild<QSpinBox*>(QStringLiteral("ntControlPort")))
+        config.setNetworkTransferControlPort(w->value());
+    if (auto* w = dialog->findChild<QSpinBox*>(QStringLiteral("ntDataPort")))
+        config.setNetworkTransferDataPort(w->value());
+    if (auto* w = dialog->findChild<QSpinBox*>(QStringLiteral("ntChunkSize")))
+        config.setNetworkTransferChunkSize(w->value());
+    if (auto* w = dialog->findChild<QSpinBox*>(QStringLiteral("ntMaxBw")))
+        config.setNetworkTransferMaxBandwidth(w->value());
+    if (auto* w = dialog->findChild<QLineEdit*>(QStringLiteral("ntRelay")))
+        config.setNetworkTransferRelayServer(w->text());
 
     loadSettings();
 }
