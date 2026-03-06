@@ -75,7 +75,8 @@ function Get-SecureDownload {
         [string]$Url,
         [string]$OutputPath,
         [string]$ExpectedSha256,
-        [string]$Description
+        [string]$Description,
+        [int]$MaxRetries = 3
     )
 
     if ((Test-Path $OutputPath) -and -not $Force) {
@@ -87,31 +88,46 @@ function Get-SecureDownload {
         Remove-Item $OutputPath -Force
     }
 
-    Write-Status "Downloading $Description..."
-    Write-Status "  URL: $Url"
+    for ($attempt = 1; $attempt -le $MaxRetries; $attempt++) {
+        Write-Status "Downloading $Description (attempt $attempt/$MaxRetries)..."
+        Write-Status "  URL: $Url"
 
-    try {
-        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-        $webClient = New-Object System.Net.WebClient
-        $webClient.DownloadFile($Url, $OutputPath)
-        $webClient.Dispose()
-    }
-    catch {
-        Write-Err "Failed to download $Description : $_"
-        return $false
-    }
+        try {
+            [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+            $webClient = New-Object System.Net.WebClient
+            $webClient.DownloadFile($Url, $OutputPath)
+            $webClient.Dispose()
+        }
+        catch {
+            Write-Err "Download attempt $attempt failed: $_"
+            if ($attempt -lt $MaxRetries) {
+                $delay = $attempt * 10
+                Write-Status "Retrying in $delay seconds..."
+                Start-Sleep -Seconds $delay
+                continue
+            }
+            return $false
+        }
 
-    if (-not (Test-FileHash -FilePath $OutputPath -ExpectedHash $ExpectedSha256)) {
-        Write-Err "SHA-256 hash mismatch for $Description"
+        if (Test-FileHash -FilePath $OutputPath -ExpectedHash $ExpectedSha256) {
+            Write-Success "$Description downloaded and verified."
+            return $true
+        }
+
+        Write-Err "SHA-256 hash mismatch for $Description (attempt $attempt)"
         Write-Err "  Expected: $ExpectedSha256"
         $actualHash = (Get-FileHash -Path $OutputPath -Algorithm SHA256).Hash
         Write-Err "  Actual:   $actualHash"
         Remove-Item $OutputPath -Force
-        return $false
+
+        if ($attempt -lt $MaxRetries) {
+            $delay = $attempt * 10
+            Write-Status "Retrying in $delay seconds..."
+            Start-Sleep -Seconds $delay
+        }
     }
 
-    Write-Success "$Description downloaded and verified."
-    return $true
+    return $false
 }
 
 # --- Main ---
@@ -152,26 +168,24 @@ try {
         Write-Success "aria2c.exe installed to $aria2Exe"
     }
 
-    # --- Step 2: Download 7zr.exe for extracting the converter ---
+    # --- Step 2: Download 7zr.exe (only if converter needs extraction) ---
     $sevenZrPath = Join-Path $tempDir "7zr.exe"
-    if (-not (Get-SecureDownload -Url $SevenZrUrl -OutputPath $sevenZrPath -ExpectedSha256 $SevenZrSha256 -Description "7zr.exe")) {
-        throw "Failed to download 7zr.exe"
-    }
 
     # --- Step 3: Download and extract uup-converter-wimlib ---
     $converterDir = Join-Path $OutputDir "converter"
+    $converterBinReady = (Test-Path (Join-Path $converterDir "convert-UUP.cmd")) -and
+                         (Test-Path (Join-Path $converterDir "bin" "wimlib-imagex.exe"))
 
-    if ((Test-Path $converterDir) -and -not $Force) {
-        $convertCmd = Join-Path $converterDir "convert-UUP.cmd"
-        if (Test-Path $convertCmd) {
-            Write-Status "UUP converter already present. Use -Force to re-download."
-        }
-        else {
-            $Force = $true
-        }
+    if ($converterBinReady -and -not $Force) {
+        Write-Status "UUP converter already present. Use -Force to re-download."
     }
 
-    if (-not (Test-Path (Join-Path $converterDir "convert-UUP.cmd")) -or $Force) {
+    if (-not $converterBinReady -or $Force) {
+        # Only download 7zr.exe when we actually need it for extraction
+        if (-not (Get-SecureDownload -Url $SevenZrUrl -OutputPath $sevenZrPath -ExpectedSha256 $SevenZrSha256 -Description "7zr.exe")) {
+            throw "Failed to download 7zr.exe"
+        }
+
         $converter7z = Join-Path $tempDir "uup-converter-wimlib.7z"
         if (-not (Get-SecureDownload -Url $ConverterUrl -OutputPath $converter7z -ExpectedSha256 $ConverterSha256 -Description "uup-converter-wimlib")) {
             throw "Failed to download uup-converter-wimlib"
@@ -213,18 +227,14 @@ try {
 
     # --- Step 4: Download and extract UUP Media Creator ---
     $uupmcDir = Join-Path $OutputDir "uupmc"
+    $uupmcExe = Join-Path $uupmcDir "UUPMediaConverter.exe"
+    $uupmcReady = Test-Path $uupmcExe
 
-    if ((Test-Path $uupmcDir) -and -not $Force) {
-        $uupmcExe = Join-Path $uupmcDir "UUPMediaConverter.exe"
-        if (Test-Path $uupmcExe) {
-            Write-Status "UUP Media Creator already present. Use -Force to re-download."
-        }
-        else {
-            $Force = $true
-        }
+    if ($uupmcReady -and -not $Force) {
+        Write-Status "UUP Media Creator already present. Use -Force to re-download."
     }
 
-    if (-not (Test-Path (Join-Path $uupmcDir "UUPMediaConverter.exe")) -or $Force) {
+    if (-not $uupmcReady -or $Force) {
         $uupmcZip = Join-Path $tempDir "uupmc-win-x64.zip"
         if (-not (Get-SecureDownload -Url $UupmcUrl -OutputPath $uupmcZip -ExpectedSha256 $UupmcSha256 -Description "UUP Media Creator v$UupmcVersion")) {
             throw "Failed to download UUP Media Creator"

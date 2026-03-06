@@ -90,6 +90,12 @@ jobs:
         # (e.g. checked into the repo via the .gitignore exception).
         powershell -ExecutionPolicy Bypass -File scripts/bundle_smartmontools.ps1
 
+    - name: Cache UUP tools
+      uses: actions/cache@v4
+      with:
+        path: tools/uup/uupmc
+        key: ${{ runner.os }}-uupmc-${{ hashFiles('scripts/bundle_uup_tools.ps1') }}
+
     - name: Bundle UUP tools (aria2c + converter + uupmc)
       shell: pwsh
       run: |
@@ -195,6 +201,12 @@ jobs:
           exit 1
         } else {
           Write-Host "OK  tools/uup/converter/convert-UUP.cmd"
+        }
+        if (!(Test-Path "tools/uup/converter/bin/wimlib-imagex.exe")) {
+          Write-Error "FATAL: tools/uup/converter/bin/wimlib-imagex.exe not found — UUP conversion binaries missing"
+          exit 1
+        } else {
+          Write-Host "OK  tools/uup/converter/bin/wimlib-imagex.exe"
         }
         
         # UUP Media Creator (bundled for UUP-to-ISO conversion)

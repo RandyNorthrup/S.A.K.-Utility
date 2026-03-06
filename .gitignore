@@ -107,6 +107,10 @@ bld/
 # EXCEPTION: Keep embedded Chocolatey DLLs and tools
 !tools/chocolatey/**/*.dll
 
+# EXCEPTION: Keep UUP converter binaries (wimlib, 7-Zip, cdimage, etc.)
+!tools/uup/converter/**/*.dll
+!tools/uup/converter/**/*.exe
+
 # Compiled Static libraries
 *.a
 *.lib
@@ -124,6 +128,7 @@ bld/
 # EXCEPTION: Keep embedded tool executables
 !tools/chocolatey/choco.exe
 !tools/smartmontools/smartctl.exe
+!tools/uup/aria2c.exe
 
 # Linker files
 *.ilk
