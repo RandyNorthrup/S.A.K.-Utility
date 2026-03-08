@@ -321,7 +321,10 @@ void DiagnosticController::generateReport(
 
     m_report_generator->setReportData(m_report_data);
 
-    QDir().mkpath(output_dir);
+    if (!QDir().mkpath(output_dir)) {
+        sak::logWarning("Failed to create report output directory: {}",
+                        output_dir.toStdString());
+    }
     const QString timestamp = QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss");
     const QString base_name = QString("%1/SAK_Diagnostic_%2").arg(output_dir, timestamp);
 

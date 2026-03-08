@@ -13,6 +13,7 @@
 #include "sak/style_constants.h"
 #include "sak/widget_helpers.h"
 #include "sak/layout_constants.h"
+#include "sak/logger.h"
 
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -136,7 +137,7 @@ void QuickActionsPanel::setupUi() {
 
     // Backup Location row at the top
     auto* backupLocRow = new QHBoxLayout();
-    backupLocRow->addWidget(new QLabel(tr("Backup Location:"), this));
+    backupLocRow->addWidget(new QLabel(tr("Quick Backup Location:"), this));
     m_backup_location_edit = new QLineEdit(this);
     m_backup_location_edit->setPlaceholderText(tr("C:\\SAK_Backups"));
     m_backup_location_edit->setAccessibleName(QStringLiteral("Backup Location Path"));
@@ -204,7 +205,6 @@ void QuickActionsPanel::createActions() {
 }
 
 void QuickActionsPanel::createCategorySections() {
-    // Define category display names and order
     struct CategoryInfo {
         QuickAction::ActionCategory category;
         QString title;
@@ -213,87 +213,298 @@ void QuickActionsPanel::createCategorySections() {
 
     const std::vector<CategoryInfo> categories = {
         {QuickAction::ActionCategory::SystemOptimization,
-         "System Optimization",
-         "Clean temporary files, optimize performance"},
+         tr("System Optimization"),
+         tr("Clean temporary files, optimize performance, and manage startup programs")},
         {QuickAction::ActionCategory::QuickBackup,
-         "Quick Backups",
-         "Fast backup of critical user data"},
+         tr("Quick Backups"),
+         tr("Fast backup of critical user data including browsers, email, and game saves")},
         {QuickAction::ActionCategory::Maintenance,
-         "Maintenance",
-         "Regular maintenance and health checks"},
+         tr("Maintenance"),
+         tr("Regular health checks, disk repair, updates, and system file verification")},
         {QuickAction::ActionCategory::Troubleshooting,
-         "Troubleshooting",
-         "Diagnostic and repair tools"},
+         tr("Troubleshooting"),
+         tr("Diagnostic reports, bloatware detection, network tests, and repair tools")},
         {QuickAction::ActionCategory::EmergencyRecovery,
-         "Emergency Recovery",
-         "Critical recovery operations"}
+         tr("Emergency Recovery"),
+         tr("Create restore points, export licenses, and backup critical system settings")}
     };
 
+    auto* cardsGrid = new QGridLayout();
+    cardsGrid->setSpacing(sak::ui::kSpacingLarge);
+
+    int idx = 0;
+    const int cols = 3;
     for (const auto& cat_info : categories) {
-        createSingleCategorySection(cat_info.category, cat_info.title, cat_info.description);
+        auto actions = m_controller->getActionsByCategory(cat_info.category);
+        if (actions.empty()) continue;
+
+        auto* card = createCategoryCard(cat_info.category, cat_info.title,
+                                         cat_info.description,
+                                         static_cast<int>(actions.size()));
+        cardsGrid->addWidget(card, idx / cols, idx % cols);
+        idx++;
+    }
+
+    // Add vertical stretch below the grid
+    m_actions_layout->insertLayout(m_actions_layout->count() - 1, cardsGrid);
+}
+
+QFrame* QuickActionsPanel::createCategoryCard(
+    QuickAction::ActionCategory category,
+    const QString& title,
+    const QString& description,
+    int actionCount)
+{
+    auto* card = new QFrame(this);
+    card->setFrameShape(QFrame::StyledPanel);
+    card->setCursor(Qt::PointingHandCursor);
+    card->setMinimumHeight(120);
+    card->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+    card->setStyleSheet(
+        QString(
+            "QFrame#categoryCard {"
+            "  background-color: %1;"
+            "  border: 1px solid %2;"
+            "  border-radius: 10px;"
+            "  padding: %3px;"
+            "}"
+            "QFrame#categoryCard:hover {"
+            "  border-color: %4;"
+            "  background-color: %5;"
+            "}")
+            .arg(sak::ui::kColorBgWhite)
+            .arg(sak::ui::kColorBorderDefault)
+            .arg(sak::ui::kMarginMedium)
+            .arg(sak::ui::kColorPrimary)
+            .arg(sak::ui::kColorBgSurface)
+    );
+    card->setObjectName("categoryCard");
+
+    auto* cardLayout = new QVBoxLayout(card);
+    cardLayout->setContentsMargins(sak::ui::kMarginMedium, sak::ui::kMarginMedium,
+                                    sak::ui::kMarginMedium, sak::ui::kMarginMedium);
+    cardLayout->setSpacing(sak::ui::kSpacingSmall);
+
+    auto* titleLabel = new QLabel(title, card);
+    titleLabel->setStyleSheet(
+        QString("font-size: %1pt; font-weight: 700; color: %2;"
+                " border: none; background: transparent;")
+            .arg(sak::ui::kFontSizeSection)
+            .arg(sak::ui::kColorTextHeading));
+    cardLayout->addWidget(titleLabel);
+
+    auto* descLabel = new QLabel(description, card);
+    descLabel->setWordWrap(true);
+    descLabel->setStyleSheet(
+        QString("font-size: %1pt; color: %2; border: none; background: transparent;")
+            .arg(sak::ui::kFontSizeBody)
+            .arg(sak::ui::kColorTextSecondary));
+    cardLayout->addWidget(descLabel);
+
+    cardLayout->addStretch();
+
+    auto* countLabel = new QLabel(tr("%1 action(s)").arg(actionCount), card);
+    countLabel->setStyleSheet(
+        QString("font-size: %1pt; color: %2; font-weight: 600;"
+                " border: none; background: transparent;")
+            .arg(sak::ui::kFontSizeSmall)
+            .arg(sak::ui::kColorTextMuted));
+    cardLayout->addWidget(countLabel);
+
+    // Click handler — show category library dialog
+    card->installEventFilter(this);
+    card->setProperty("sak_category", static_cast<int>(category));
+    card->setProperty("sak_title", title);
+
+    return card;
+}
+
+void QuickActionsPanel::updateActionCardStatus(QLabel* label, QuickAction* action) {
+    switch (action->status()) {
+        case QuickAction::ActionStatus::Ready:
+            label->setText(tr("Ready"));
+            label->setStyleSheet(
+                label->styleSheet() +
+                QString(" color: %1;").arg(sak::ui::kColorSuccess));
+            break;
+        case QuickAction::ActionStatus::Scanning:
+            label->setText(tr("Scanning..."));
+            label->setStyleSheet(
+                label->styleSheet() +
+                QString(" color: %1;").arg(sak::ui::kColorWarning));
+            break;
+        case QuickAction::ActionStatus::Running:
+            label->setText(tr("Running..."));
+            label->setStyleSheet(
+                label->styleSheet() +
+                QString(" color: %1;").arg(sak::ui::kColorPrimary));
+            break;
+        case QuickAction::ActionStatus::Success:
+            label->setText(tr("Complete"));
+            label->setStyleSheet(
+                label->styleSheet() +
+                QString(" color: %1;").arg(sak::ui::kColorSuccess));
+            break;
+        case QuickAction::ActionStatus::Failed:
+            label->setText(tr("Error"));
+            label->setStyleSheet(
+                label->styleSheet() +
+                QString(" color: %1;").arg(sak::ui::kColorError));
+            break;
+        case QuickAction::ActionStatus::Cancelled:
+            label->setText(tr("Cancelled"));
+            label->setStyleSheet(
+                label->styleSheet() +
+                QString(" color: %1;").arg(sak::ui::kColorTextMuted));
+            break;
+        default:
+            label->setText(tr("Idle"));
+            label->setStyleSheet(
+                label->styleSheet() +
+                QString(" color: %1;").arg(sak::ui::kColorTextMuted));
+            break;
     }
 }
 
-void QuickActionsPanel::createSingleCategorySection(
-    QuickAction::ActionCategory category,
-    const QString& title,
-    const QString& description)
-{
-    auto* group_box = new QGroupBox(title);
-    group_box->setStyleSheet(
-        QString("QGroupBox {"
-        "  font-weight: 600;"
-        "  border: 1px solid %1;"
-        "  border-radius: 12px;"
-        "  margin-top: 18px;"
-        "  padding: 26px 10px 10px 10px;"
-        "}"
-        "QGroupBox::title {"
-        "  subcontrol-origin: margin;"
-        "  subcontrol-position: top left;"
-        "  padding: 0 8px;"
-        "  color: %2;"
-        "}").arg(sak::ui::kColorBorderDefault, sak::ui::kColorTextBody)
-    );
+bool QuickActionsPanel::eventFilter(QObject* obj, QEvent* event) {
+    if (event->type() == QEvent::MouseButtonRelease) {
+        auto* frame = qobject_cast<QFrame*>(obj);
+        if (frame && frame->property("sak_category").isValid()) {
+            auto category = static_cast<QuickAction::ActionCategory>(
+                frame->property("sak_category").toInt());
+            QString title = frame->property("sak_title").toString();
+            showCategoryDialog(category, title);
+            return true;
+        }
+    }
+    return QWidget::eventFilter(obj, event);
+}
 
-    auto* cat_layout = new QVBoxLayout(group_box);
-
-    // Description
-    auto* desc_label = new QLabel(description);
-    desc_label->setStyleSheet(QString("color: %1; font-weight: 400; font-size: %2pt;")
-        .arg(sak::ui::kColorTextMuted).arg(sak::ui::kFontSizeStatus));
-    cat_layout->addWidget(desc_label);
-
-    // Action buttons grid
-    auto* buttons_grid = new QGridLayout();
-    buttons_grid->setSpacing(10);
-    cat_layout->addLayout(buttons_grid);
-
-    // Store group box
-    m_category_sections[category] = group_box;
-    m_actions_layout->insertWidget(m_actions_layout->count() - 1, group_box);
-
-    // Populate with actions
+void QuickActionsPanel::showCategoryDialog(QuickAction::ActionCategory category,
+    const QString& title) {
     auto actions = m_controller->getActionsByCategory(category);
+    if (actions.empty()) return;
+
+    QDialog dialog(this);
+    dialog.setWindowTitle(title);
+    dialog.setMinimumSize(700, 450);
+    dialog.setStyleSheet(
+        QString("QDialog { background-color: %1; }").arg(sak::ui::kColorBgSurface));
+
+    auto* layout = new QVBoxLayout(&dialog);
+    layout->setContentsMargins(sak::ui::kMarginLarge, sak::ui::kMarginLarge,
+                                sak::ui::kMarginLarge, sak::ui::kMarginLarge);
+    layout->setSpacing(sak::ui::kSpacingLarge);
+
+    // Header
+    auto* headerLabel = new QLabel(title, &dialog);
+    headerLabel->setStyleSheet(
+        QString("font-size: %1pt; font-weight: 700; color: %2;")
+            .arg(sak::ui::kFontSizeSection + 2)
+            .arg(sak::ui::kColorTextHeading));
+    layout->addWidget(headerLabel);
+
+    // Scrollable action area
+    auto* scrollArea = new QScrollArea(&dialog);
+    scrollArea->setWidgetResizable(true);
+    scrollArea->setFrameShape(QFrame::NoFrame);
+
+    auto* scrollWidget = new QWidget();
+    auto* gridLayout = new QGridLayout(scrollWidget);
+    gridLayout->setSpacing(sak::ui::kSpacingDefault);
+
+    const int cols = 3;
     int row = 0, col = 0;
-    const int cols_per_row = 4;
 
     for (auto* action : actions) {
-        auto* button = createActionButton(action);
-        buttons_grid->addWidget(button, row, col);
-        m_action_buttons[action] = button;
+        auto* actionCard = new QFrame(scrollWidget);
+        actionCard->setFrameShape(QFrame::StyledPanel);
+        actionCard->setCursor(Qt::PointingHandCursor);
+        actionCard->setObjectName("actionCard");
+        actionCard->setStyleSheet(
+            QString(
+                "QFrame#actionCard {"
+                "  background-color: %1;"
+                "  border: 1px solid %2;"
+                "  border-radius: 8px;"
+                "  padding: %3px;"
+                "}"
+                "QFrame#actionCard:hover {"
+                "  border-color: %4;"
+                "  background-color: %5;"
+                "}")
+                .arg(sak::ui::kColorBgWhite)
+                .arg(sak::ui::kColorBorderDefault)
+                .arg(sak::ui::kSpacingMedium)
+                .arg(sak::ui::kColorPrimaryDark)
+                .arg(sak::ui::kColorBgInfoPanel)
+        );
 
+        auto* cardLayout = new QVBoxLayout(actionCard);
+        cardLayout->setContentsMargins(sak::ui::kMarginSmall, sak::ui::kMarginSmall,
+                                        sak::ui::kMarginSmall, sak::ui::kMarginSmall);
+        cardLayout->setSpacing(sak::ui::kSpacingTight);
+
+        auto* nameLabel = new QLabel(action->name(), actionCard);
+        nameLabel->setStyleSheet(
+            QString("font-size: %1pt; font-weight: 600; color: %2;"
+                    " border: none; background: transparent;")
+                .arg(sak::ui::kFontSizeBody + 1)
+                .arg(sak::ui::kColorTextBody));
+        cardLayout->addWidget(nameLabel);
+
+        auto* descriptionLabel = new QLabel(action->description(), actionCard);
+        descriptionLabel->setWordWrap(true);
+        descriptionLabel->setStyleSheet(
+            QString("font-size: %1pt; color: %2; border: none; background: transparent;")
+                .arg(sak::ui::kFontSizeNote)
+                .arg(sak::ui::kColorTextMuted));
+        cardLayout->addWidget(descriptionLabel);
+
+        cardLayout->addStretch();
+
+        // Status indicator
+        auto* statusLabel = new QLabel(actionCard);
+        statusLabel->setObjectName("statusLabel");
+        updateActionCardStatus(statusLabel, action);
+        statusLabel->setStyleSheet(
+            QString("font-size: %1pt; font-weight: 600; border: none; background: transparent;")
+                .arg(sak::ui::kFontSizeSmall));
+        cardLayout->addWidget(statusLabel);
+
+        // Run button
+        auto* runButton = new QPushButton(tr("Run"), actionCard);
+        runButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
+        runButton->setMinimumHeight(32);
+        connect(runButton, &QPushButton::clicked, &dialog, [this, action, &dialog]() {
+            dialog.accept();
+            onActionClicked(action);
+        });
+        cardLayout->addWidget(runButton);
+
+        gridLayout->addWidget(actionCard, row, col);
         col++;
-        if (col >= cols_per_row) {
+        if (col >= cols) {
             col = 0;
             row++;
         }
     }
 
-    // Hide empty categories
-    if (actions.empty()) {
-        group_box->hide();
-    }
+    scrollArea->setWidget(scrollWidget);
+    layout->addWidget(scrollArea, 1);
+
+    // Close button
+    auto* closeButton = new QPushButton(tr("Close"), &dialog);
+    closeButton->setStyleSheet(sak::ui::kSecondaryButtonStyle);
+    closeButton->setMinimumHeight(sak::kButtonHeightStd);
+    connect(closeButton, &QPushButton::clicked, &dialog, &QDialog::reject);
+
+    auto* buttonLayout = new QHBoxLayout();
+    buttonLayout->addStretch();
+    buttonLayout->addWidget(closeButton);
+    layout->addLayout(buttonLayout);
+
+    dialog.exec();
 }
 
 QPushButton* QuickActionsPanel::createActionButton(QuickAction* action) {
@@ -476,6 +687,8 @@ void QuickActionsPanel::onActionComplete(QuickAction* action) {
 void QuickActionsPanel::onActionError(QuickAction* action, const QString& error_message) {
     Q_ASSERT(action);
     Q_ASSERT(!error_message.isEmpty());
+    sak::logError("Action '{}' failed: {}", action->name().toStdString(),
+                  error_message.toStdString());
     QMessageBox::critical(this, "Action Error",
                          QString("%1 failed:\n\n%2").arg(action->name(), error_message));
 

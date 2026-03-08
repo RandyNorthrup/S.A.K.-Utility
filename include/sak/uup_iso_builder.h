@@ -153,6 +153,8 @@ private Q_SLOTS:
 private:
     // Phase execution
     void executePreparation();
+    /// @brief Attempt AppX retry on provisioning failure; returns true if retrying
+    bool tryAppxRetry();
     /// @brief Validate bundled tools and create work directory
     void prepareWorkspace();
     /// @brief Generate aria2c download manifest and converter configuration

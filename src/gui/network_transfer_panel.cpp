@@ -6,6 +6,7 @@
 
 #include "sak/network_transfer_panel.h"
 #include "sak/format_utils.h"
+#include "sak/logger.h"
 #include "sak/widget_helpers.h"
 #include "sak/style_constants.h"
 #include "sak/network_constants.h"
@@ -203,7 +204,66 @@ void NetworkTransferPanel::setupUi_sourceSection(QVBoxLayout* sourceLayout) {
     dataGroup->setLayout(dataLayout);
     sourceLayout->addWidget(dataGroup);
 
+    setupUi_sourceAdditionalData(sourceLayout);
     setupUi_peerDiscovery(sourceLayout);
+}
+
+void NetworkTransferPanel::setupUi_sourceAdditionalData(QVBoxLayout* sourceLayout) {
+    auto* group = new QGroupBox(tr("Additional Data (Optional)"), this);
+    auto* layout = new QVBoxLayout(group);
+
+    // Installed Applications row
+    auto* appsRow = new QHBoxLayout();
+    m_scanAppsButton = new QPushButton(tr("Scan Installed Apps"), this);
+    m_scanAppsButton->setToolTip(tr("Scan for installed applications to include in transfer"));
+    m_installedAppsLabel = new QLabel(tr("Not scanned"), this);
+    m_installedAppsLabel->setStyleSheet(
+        QStringLiteral("QLabel { color: %1; }").arg(sak::ui::kColorTextSecondary));
+    appsRow->addWidget(m_scanAppsButton);
+    appsRow->addWidget(m_installedAppsLabel);
+    appsRow->addStretch();
+    layout->addLayout(appsRow);
+
+    // Application Data row
+    auto* appDataRow = new QHBoxLayout();
+    m_scanAppDataButton = new QPushButton(tr("Scan App Data"), this);
+    m_scanAppDataButton->setToolTip(
+        tr("Scan for common application data (browser profiles, configs, etc.)"));
+    m_appDataLabel = new QLabel(tr("Not scanned"), this);
+    m_appDataLabel->setStyleSheet(
+        QStringLiteral("QLabel { color: %1; }").arg(sak::ui::kColorTextSecondary));
+    appDataRow->addWidget(m_scanAppDataButton);
+    appDataRow->addWidget(m_appDataLabel);
+    appDataRow->addStretch();
+    layout->addLayout(appDataRow);
+
+    // WiFi Profiles row
+    auto* wifiRow = new QHBoxLayout();
+    m_scanWifiButton = new QPushButton(tr("Scan WiFi Profiles"), this);
+    m_scanWifiButton->setToolTip(tr("Export saved WiFi network profiles for transfer"));
+    m_wifiLabel = new QLabel(tr("Not scanned"), this);
+    m_wifiLabel->setStyleSheet(
+        QStringLiteral("QLabel { color: %1; }").arg(sak::ui::kColorTextSecondary));
+    wifiRow->addWidget(m_scanWifiButton);
+    wifiRow->addWidget(m_wifiLabel);
+    wifiRow->addStretch();
+    layout->addLayout(wifiRow);
+
+    // Ethernet Settings row
+    auto* ethRow = new QHBoxLayout();
+    m_scanEthernetButton = new QPushButton(tr("Scan Ethernet Settings"), this);
+    m_scanEthernetButton->setToolTip(
+        tr("Capture ethernet adapter IP/DNS configurations for transfer"));
+    m_ethernetLabel = new QLabel(tr("Not scanned"), this);
+    m_ethernetLabel->setStyleSheet(
+        QStringLiteral("QLabel { color: %1; }").arg(sak::ui::kColorTextSecondary));
+    ethRow->addWidget(m_scanEthernetButton);
+    ethRow->addWidget(m_ethernetLabel);
+    ethRow->addStretch();
+    layout->addLayout(ethRow);
+
+    group->setLayout(layout);
+    sourceLayout->addWidget(group);
 }
 
 void NetworkTransferPanel::setupUi_peerDiscovery(QVBoxLayout* sourceLayout) {
@@ -785,6 +845,14 @@ void NetworkTransferPanel::setupConnections_sourceSignals() {
         &NetworkTransferPanel::onCustomizeUser);
     connect(m_discoverPeersButton, &QPushButton::clicked, this,
         &NetworkTransferPanel::onDiscoverPeers);
+    connect(m_scanAppsButton, &QPushButton::clicked, this,
+        &NetworkTransferPanel::onScanInstalledApps);
+    connect(m_scanAppDataButton, &QPushButton::clicked, this,
+        &NetworkTransferPanel::onScanAppData);
+    connect(m_scanWifiButton, &QPushButton::clicked, this,
+        &NetworkTransferPanel::onScanWifiProfiles);
+    connect(m_scanEthernetButton, &QPushButton::clicked, this,
+        &NetworkTransferPanel::onScanEthernetConfigs);
     connect(m_transferButton, &QPushButton::clicked, this, [this]() {
         if (m_sourceTransferActive) {
             m_controller->stop();
@@ -1070,14 +1138,20 @@ void NetworkTransferPanel::loadSettings_initHistoryManager() {
             QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation) + "/SAK";
         QDir dir(historyDir);
         if (!dir.exists()) {
-            dir.mkpath(".");
+            if (!dir.mkpath(".")) {
+                sak::logWarning("Failed to create history directory: {}",
+                                historyDir.toStdString());
+            }
         }
         historyPath = historyDir + "/DeploymentHistory.json";
         config.setValue("orchestration/history_path", historyPath);
     }
     QDir dir(QFileInfo(historyPath).absolutePath());
     if (!dir.exists()) {
-        dir.mkpath(".");
+        if (!dir.mkpath(".")) {
+            sak::logWarning("Failed to create history file directory: {}",
+                            dir.absolutePath().toStdString());
+        }
     }
     m_historyManager = std::make_unique<DeploymentHistoryManager>(historyPath);
 }
@@ -1092,14 +1166,20 @@ void NetworkTransferPanel::loadSettings_initAssignmentQueue() {
             QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation) + "/SAK";
         QDir dir(queueDir);
         if (!dir.exists()) {
-            dir.mkpath(".");
+            if (!dir.mkpath(".")) {
+                sak::logWarning("Failed to create queue directory: {}",
+                                queueDir.toStdString());
+            }
         }
         queuePath = queueDir + "/AssignmentQueue.json";
         config.setValue("orchestration/assignment_queue_path", queuePath);
     }
     QDir dir(QFileInfo(queuePath).absolutePath());
     if (!dir.exists()) {
-        dir.mkpath(".");
+        if (!dir.mkpath(".")) {
+            sak::logWarning("Failed to create queue file directory: {}",
+                            dir.absolutePath().toStdString());
+        }
     }
     m_assignmentQueueStore = std::make_unique<AssignmentQueueStore>(queuePath);
 

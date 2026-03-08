@@ -8,9 +8,11 @@
 #include "sak/advanced_uninstall_panel.h"
 #include "sak/advanced_uninstall_controller.h"
 #include "sak/detachable_log_window.h"
+#include "sak/format_utils.h"
 #include "sak/restore_point_manager.h"
 #include "sak/style_constants.h"
 #include "sak/widget_helpers.h"
+#include "sak/logger.h"
 
 #include <QApplication>
 #include <QCheckBox>
@@ -392,13 +394,6 @@ void AdvancedUninstallPanel::setupUi()
 
     rootLayout->addWidget(contentWidget);
 
-    // Panel header
-    createPanelHeader(contentWidget, QStringLiteral(":/icons/icons/panel_uninstall.svg"),
-        tr("Advanced Uninstall"),
-        tr("Deep application removal with registry cleanup, leftover scanning, "
-           "and batch uninstall support"),
-        mainLayout);
-
     createToolbar(mainLayout);
     createProgramTable(mainLayout);
     createLeftoverSection(mainLayout);
@@ -630,6 +625,7 @@ void AdvancedUninstallPanel::onEnumerationFailed(const QString& error)
     Q_EMIT progressUpdate(0, 1);
     Q_EMIT statusMessage(tr("Enumeration failed"), 5000);
     logMessage(QString("ERROR: Enumeration failed: %1").arg(error));
+    sak::logError("Enumeration failed: {}", error.toStdString());
     QMessageBox::warning(this, tr("Enumeration Error"),
         tr("Failed to enumerate installed programs:\n%1").arg(error));
 }
@@ -714,6 +710,7 @@ void AdvancedUninstallPanel::onUninstallFailed(const QString& error)
     Q_EMIT progressUpdate(0, 1);
     Q_EMIT statusMessage(tr("Uninstall failed"), 5000);
     logMessage(QString("ERROR: Uninstall failed: %1").arg(error));
+    sak::logError("Uninstall failed: {}", error.toStdString());
     QMessageBox::warning(this, tr("Uninstall Error"),
         tr("The uninstall operation failed:\n%1").arg(error));
 }
@@ -1289,12 +1286,7 @@ bool AdvancedUninstallPanel::matchesFilter(const ProgramInfo& program) const
 QString AdvancedUninstallPanel::formatSize(qint64 bytes) const
 {
     if (bytes <= 0) return QString();
-    if (bytes < 1024) return tr("%1 B").arg(bytes);
-    if (bytes < 1024 * 1024)
-        return tr("%1 KB").arg(bytes / 1024.0, 0, 'f', 1);
-    if (bytes < 1024LL * 1024 * 1024)
-        return tr("%1 MB").arg(bytes / (1024.0 * 1024.0), 0, 'f', 1);
-    return tr("%1 GB").arg(bytes / (1024.0 * 1024.0 * 1024.0), 0, 'f', 2);
+    return sak::formatBytes(bytes);
 }
 
 void AdvancedUninstallPanel::logMessage(const QString& message)

@@ -35,7 +35,6 @@
 #include <QIcon>
 #include <QLabel>
 #include <QMessageBox>
-#include <QPainter>
 #include <QPixmap>
 #include <QMoveEvent>
 #include <QResizeEvent>
@@ -111,8 +110,7 @@ Built with modern C++23 and Qt 6 for Windows 10/11 x64.</div>
         <li><b>Image Flasher</b> &mdash; Flash ISOs/IMGs to USB with streaming decompression and system-drive protection</li>
         <li><b>Windows ISO Download</b> &mdash; Download directly from Microsoft via UUP Dump API</li>
         <li><b>Linux ISO Download</b> &mdash; Built-in distro catalog (Ubuntu, Mint, Kali, SystemRescue, Clonezilla, and more)</li>
-        <li><b>Directory Organizer</b> &mdash; Sort files by extension into categorized subdirectories with preview mode</li>
-        <li><b>Duplicate File Finder</b> &mdash; MD5 hash-based duplicate detection with size filtering</li>
+        <li><b>File Management</b> &mdash; Organize files by type with preview mode, and find duplicate files with content-based hashing</li>
         <li><b>WiFi Manager</b> &mdash; QR code generation, network scanning, bulk export, and connection scripts</li>
     </ul>
 </div>
@@ -218,37 +216,39 @@ constexpr char kTooltipQuickActions[] =
 constexpr char kTooltipUserMigration[] =
     "Backup and restore user profiles (Ctrl+2)";
 constexpr char kTooltipOrganizer[] =
-    "Organize files in a directory by type (Ctrl+3)";
-constexpr char kTooltipAppInstallation[] =
-    "Install applications via Chocolatey (Ctrl+5)";
+    "Organize files, find duplicates, and advanced search (Ctrl+3)";
+constexpr char kTooltipAppManagement[] =
+    "Install, uninstall, and manage applications (Ctrl+4)";
 constexpr char kTooltipNetworkTransfer[] =
-    "Transfer user profiles across the network (Ctrl+6)";
+    "Transfer user profiles across the network (Ctrl+5)";
 constexpr char kTooltipImageFlasher[] =
-    "Flash ISO images to USB drives (Ctrl+7)";
+    "Flash ISO images to USB drives (Ctrl+6)";
 constexpr char kTooltipDiagnostics[] =
-    "System diagnostics, benchmarks, and stress tests (Ctrl+8)";
-constexpr char kTooltipWifiManager[] =
-    "Manage WiFi networks, QR codes, and profiles (Ctrl+9)";
-constexpr char kTooltipAdvancedSearch[] =
-    "Search file contents, metadata, archives, and binary data";
-constexpr char kTooltipAdvancedUninstall[] =
-    "Deep application removal with leftover scanning and batch uninstall";
-constexpr char kTooltipNetworkDiagnostics[] =
-    "Network adapter inspection, connectivity testing, DNS diagnostics, "
-    "port scanning, and more";
+    "System diagnostics, benchmarks, and stress tests (Ctrl+7)";
+constexpr char kTooltipNetworkManagement[] =
+    "Network diagnostics, WiFi management, and connectivity tools (Ctrl+8)";
+
+constexpr int kTabIconSize = 20;
 
 void AddTabWithTooltip(
         QTabWidget* tabWidget,
         QWidget* panel,
     const char* tabTitle,
-    const char* tooltip)
+    const char* tooltip,
+    const char* iconPath = nullptr)
 {
         Q_ASSERT(tabWidget);
         Q_ASSERT(panel);
     Q_ASSERT(tabTitle);
     Q_ASSERT(tooltip);
 
-    const int idx = tabWidget->addTab(panel, QString::fromUtf8(tabTitle));
+    const QIcon icon = iconPath ? QIcon(QString::fromUtf8(iconPath)) : QIcon();
+    const int idx = icon.isNull()
+        ? tabWidget->addTab(panel, QString::fromUtf8(tabTitle))
+        : tabWidget->addTab(panel, icon, QString::fromUtf8(tabTitle));
+    if (!icon.isNull()) {
+        tabWidget->setIconSize(QSize(kTabIconSize, kTabIconSize));
+    }
     tabWidget->setTabToolTip(idx, QString::fromUtf8(tooltip));
 
     // Set accessible name on the panel widget so screen readers
@@ -305,7 +305,6 @@ void MainWindow::setupUi()
     m_tab_widget->setAccessibleDescription(
         tr("Tab bar for switching between application panels. "
            "Use Ctrl+1..9 for tabs 1-9, Ctrl+0 for tab 10, "
-           "Ctrl+Shift+1..4 for tabs 11-14, "
            "or Ctrl+Tab / Ctrl+Shift+Tab to cycle."));
     setCentralWidget(m_tab_widget);
 
@@ -320,37 +319,11 @@ void MainWindow::setupUi()
     createKeyboardShortcuts();
 
     // Apply chevron icons to the tab-bar scroll buttons.
-    // Deferred: Qt creates the scroll QToolButtons lazily only after tabs
-    // overflow the available width, so they don't exist until layout runs.
-    QTimer::singleShot(0, this, [this]() {
-        auto makeChevronIcon = [](bool pointsLeft) {
-            constexpr int sz = 16;
-            QPixmap pix(sz, sz);
-            pix.fill(Qt::transparent);
-            QPainter painter(&pix);
-            painter.setRenderHint(QPainter::Antialiasing);
-            painter.setPen(QPen(QColor(ui::kColorTextMuted), 1.6));
-            painter.setBrush(Qt::NoBrush);
-            if (pointsLeft) {
-                painter.drawLine(QPointF(10, 3), QPointF(5, 8));
-                painter.drawLine(QPointF(5, 8), QPointF(10, 13));
-            } else {
-                painter.drawLine(QPointF(6, 3), QPointF(11, 8));
-                painter.drawLine(QPointF(11, 8), QPointF(6, 13));
-            }
-            return QIcon(pix);
-        };
-        const auto buttons = m_tab_widget->tabBar()->findChildren<QToolButton*>();
-        const QIcon leftIcon  = makeChevronIcon(true);
-        const QIcon rightIcon = makeChevronIcon(false);
-        for (auto* btn : buttons) {
-            btn->setArrowType(Qt::NoArrow);
-            if (btn == buttons.value(0)) {
-                btn->setIcon(leftIcon);
-            } else {
-                btn->setIcon(rightIcon);
-            }
-        }
+    // Qt creates the scroll QToolButtons lazily when tabs overflow, so we
+    // re-apply after layout and on tab changes to cover all cases.
+    QTimer::singleShot(0, this, &MainWindow::applyTabBarChevrons);
+    connect(m_tab_widget, &QTabWidget::currentChanged, this, [this](int) {
+        QTimer::singleShot(0, this, &MainWindow::applyTabBarChevrons);
     });
 
     updateStatus("Ready", 0);
@@ -383,6 +356,7 @@ void MainWindow::createStatusBar()
 void MainWindow::createPanels()
 {
     createToolPanels();
+    createHelpPanel();
     createAboutPanel();
     connectPanelSignals();
     connectPanelLogs();
@@ -391,64 +365,152 @@ void MainWindow::createPanels()
 void MainWindow::createToolPanels()
 {
     Q_ASSERT(m_tab_widget);
-    // Create Quick Actions panel (first tab)
+    createSimplePanels();
+    createAppManagementPanel();
+    createNetworkManagementPanel();
+}
+
+void MainWindow::createSimplePanels()
+{
+    // ── 1. Quick Actions ────────────────────────────────────────────────
     m_quick_actions_panel = std::make_unique<QuickActionsPanel>(this);
     AddTabWithTooltip(m_tab_widget, m_quick_actions_panel.get(),
-        "Quick Actions", kTooltipQuickActions);
+        "Quick Actions", kTooltipQuickActions,
+        ":/icons/icons/panel_quick_actions.svg");
 
-    // Create User Migration panel
+    // ── 2. Backup and Restore ───────────────────────────────────────────
     m_user_migration_panel = std::make_unique<UserMigrationPanel>(this);
     AddTabWithTooltip(m_tab_widget, m_user_migration_panel.get(),
-        "Backup and Restore", kTooltipUserMigration);
+        "Backup and Restore", kTooltipUserMigration,
+        ":/icons/icons/panel_backup_restore.svg");
 
-    // Create Organizer panel
+    // ── 3. File Management (Organizer + Duplicate Finder + Advanced Search)
     m_organizer_panel = std::make_unique<OrganizerPanel>(this);
+    m_advanced_search_panel = std::make_unique<AdvancedSearchPanel>(this);
+    m_organizer_panel->tabWidget()->addTab(
+        m_advanced_search_panel.get(), tr("Advanced Search"));
     AddTabWithTooltip(m_tab_widget, m_organizer_panel.get(),
-        "Directory Organizer", kTooltipOrganizer);
+        "File Management", kTooltipOrganizer,
+        ":/icons/icons/panel_organizer.svg");
 
-    // Create App Installation panel
-    m_app_installation_panel = std::make_unique<AppInstallationPanel>(this);
-    AddTabWithTooltip(m_tab_widget, m_app_installation_panel.get(),
-        "App Installation", kTooltipAppInstallation);
-
-    // Network Transfer panel — available when enabled in settings
+    // ── 4. Network Transfer (conditional) ───────────────────────────────
     if (ConfigManager::instance().getNetworkTransferEnabled()) {
         m_network_transfer_panel = std::make_unique<NetworkTransferPanel>(this);
         AddTabWithTooltip(m_tab_widget, m_network_transfer_panel.get(),
-            "Network Transfer", kTooltipNetworkTransfer);
+            "Network Transfer", kTooltipNetworkTransfer,
+            ":/icons/icons/panel_network_transfer.svg");
     }
 
-    // Create Image Flasher panel
+    // ── 5. Image Flasher ────────────────────────────────────────────────
     m_image_flasher_panel = std::make_unique<ImageFlasherPanel>(this);
     AddTabWithTooltip(m_tab_widget, m_image_flasher_panel.get(),
-        "Image Flasher", kTooltipImageFlasher);
+        "Image Flasher", kTooltipImageFlasher,
+        ":/icons/icons/panel_image_flasher.svg");
 
-    // Create Diagnostic & Benchmarking panel
+    // ── 6. Benchmark and Diagnostics ────────────────────────────────────
     m_diagnostic_benchmark_panel = std::make_unique<DiagnosticBenchmarkPanel>(this);
     AddTabWithTooltip(m_tab_widget, m_diagnostic_benchmark_panel.get(),
-        "Diagnostics", kTooltipDiagnostics);
+        "Benchmark and Diagnostics", kTooltipDiagnostics,
+        ":/icons/icons/panel_diagnostic.svg");
+}
 
-    // Create WiFi Manager panel
+void MainWindow::createAppManagementPanel()
+{
+    m_app_installation_panel = std::make_unique<AppInstallationPanel>(this);
+    m_advanced_uninstall_panel = std::make_unique<AdvancedUninstallPanel>(this);
+
+    auto* appMgmtWrapper = new QWidget(this);
+    auto* appMgmtLayout = new QVBoxLayout(appMgmtWrapper);
+    appMgmtLayout->setContentsMargins(ui::kMarginMedium, ui::kMarginMedium,
+                                      ui::kMarginMedium, ui::kMarginMedium);
+    appMgmtLayout->setSpacing(ui::kSpacingDefault);
+
+    auto appHdr = sak::createDynamicPanelHeader(appMgmtWrapper,
+        QStringLiteral(":/icons/icons/panel_app_install.svg"),
+        tr("App Installation"),
+        tr("Search, queue, and batch-install applications via Chocolatey"),
+        appMgmtLayout);
+
+    auto* appTabs = new QTabWidget(appMgmtWrapper);
+    appTabs->addTab(m_app_installation_panel.get(), tr("App Installation"));
+    appTabs->addTab(m_advanced_uninstall_panel.get(), tr("Advanced Uninstall"));
+    appMgmtLayout->addWidget(appTabs, 1);
+
+    connect(appTabs, &QTabWidget::currentChanged, this,
+        [appHdr](int index) {
+            struct TabMeta { const char* icon; const char* title; const char* subtitle; };
+            static constexpr TabMeta kTabs[] = {
+                {":/icons/icons/panel_app_install.svg",
+                 "App Installation",
+                 "Search, queue, and batch-install applications via Chocolatey"},
+                {":/icons/icons/panel_uninstall.svg",
+                 "Advanced Uninstall",
+                 "Deep application removal with registry cleanup, leftover scanning, "
+                 "and batch uninstall support"},
+            };
+            if (index >= 0 && index < static_cast<int>(std::size(kTabs))) {
+                const auto& m = kTabs[index];
+                sak::updatePanelHeader(appHdr,
+                    QString::fromUtf8(m.icon),
+                    QCoreApplication::translate("MainWindow", m.title),
+                    QCoreApplication::translate("MainWindow", m.subtitle));
+            }
+        });
+
+    AddTabWithTooltip(m_tab_widget, appMgmtWrapper,
+        "Application Management", kTooltipAppManagement,
+        ":/icons/icons/panel_app_install.svg");
+}
+
+void MainWindow::createNetworkManagementPanel()
+{
+    m_network_diagnostic_panel = std::make_unique<NetworkDiagnosticPanel>(this);
     m_wifi_manager_panel = std::make_unique<WifiManagerPanel>(this);
-    AddTabWithTooltip(m_tab_widget, m_wifi_manager_panel.get(),
-        "WiFi Manager", kTooltipWifiManager);
     connect(m_wifi_manager_panel.get(), &WifiManagerPanel::statusMessage,
             this, &MainWindow::updateStatus);
 
-    // Create Advanced Search panel
-    m_advanced_search_panel = std::make_unique<AdvancedSearchPanel>(this);
-    AddTabWithTooltip(m_tab_widget, m_advanced_search_panel.get(),
-        "Advanced Search", kTooltipAdvancedSearch);
+    auto* netMgmtWrapper = new QWidget(this);
+    auto* netMgmtLayout = new QVBoxLayout(netMgmtWrapper);
+    netMgmtLayout->setContentsMargins(ui::kMarginMedium, ui::kMarginMedium,
+                                      ui::kMarginMedium, ui::kMarginMedium);
+    netMgmtLayout->setSpacing(ui::kSpacingDefault);
 
-    // Create Advanced Uninstall panel
-    m_advanced_uninstall_panel = std::make_unique<AdvancedUninstallPanel>(this);
-    AddTabWithTooltip(m_tab_widget, m_advanced_uninstall_panel.get(),
-        "Advanced Uninstall", kTooltipAdvancedUninstall);
+    auto netHdr = sak::createDynamicPanelHeader(netMgmtWrapper,
+        QStringLiteral(":/icons/icons/panel_network.svg"),
+        tr("Network Diagnostics & Troubleshooting"),
+        tr("Comprehensive network analysis — adapter inspection, connectivity testing, "
+           "DNS diagnostics, port scanning, bandwidth, WiFi analysis, firewall auditing, and more"),
+        netMgmtLayout);
 
-    // Create Network Diagnostics panel
-    m_network_diagnostic_panel = std::make_unique<NetworkDiagnosticPanel>(this);
-    AddTabWithTooltip(m_tab_widget, m_network_diagnostic_panel.get(),
-        "Network Diagnostics", kTooltipNetworkDiagnostics);
+    auto* netTabs = new QTabWidget(netMgmtWrapper);
+    netTabs->addTab(m_network_diagnostic_panel.get(), tr("Network Diagnostics"));
+    netTabs->addTab(m_wifi_manager_panel.get(), tr("WiFi Manager"));
+    netMgmtLayout->addWidget(netTabs, 1);
+
+    connect(netTabs, &QTabWidget::currentChanged, this,
+        [netHdr](int index) {
+            struct TabMeta { const char* icon; const char* title; const char* subtitle; };
+            static constexpr TabMeta kTabs[] = {
+                {":/icons/icons/panel_network.svg",
+                 "Network Diagnostics & Troubleshooting",
+                 "Comprehensive network analysis \xe2\x80\x94 adapter inspection, connectivity testing, "
+                 "DNS diagnostics, port scanning, bandwidth, WiFi analysis, firewall auditing, and more"},
+                {":/icons/icons/panel_wifi.svg",
+                 "WiFi Manager",
+                 "Manage, share, and deploy Wi-Fi network profiles"},
+            };
+            if (index >= 0 && index < static_cast<int>(std::size(kTabs))) {
+                const auto& m = kTabs[index];
+                sak::updatePanelHeader(netHdr,
+                    QString::fromUtf8(m.icon),
+                    QCoreApplication::translate("MainWindow", m.title),
+                    QCoreApplication::translate("MainWindow", m.subtitle));
+            }
+        });
+
+    AddTabWithTooltip(m_tab_widget, netMgmtWrapper,
+        "Network Management", kTooltipNetworkManagement,
+        ":/icons/icons/panel_network.svg");
 }
 
 void MainWindow::loadAboutPanelIcon(QLabel* iconLabel)
@@ -524,10 +586,11 @@ void MainWindow::createAboutPanel()
             QStringLiteral("Credits"));
 
         aboutLayout->addWidget(aboutTabs);
-        m_tab_widget->addTab(aboutPanel, QStringLiteral("About"));
-
-    // ── Help & Support panel ────────────────────────────────────────────
-    createHelpPanel();
+        const int aboutIdx = m_tab_widget->addTab(aboutPanel, 
+            QIcon(QStringLiteral(":/icons/icons/panel_about.svg")),
+            QStringLiteral("About"));
+        m_tab_widget->setIconSize(QSize(kTabIconSize, kTabIconSize));
+        Q_UNUSED(aboutIdx);
 }
 
 void MainWindow::createHelpPanel()
@@ -550,7 +613,7 @@ void MainWindow::createHelpPanel()
         headerLayout);
     helpLayout->addWidget(headerWidget);
 
-    // ── Card stylesheet ─────────────────────────────────────────────────
+    // ── Shared card styles ──────────────────────────────────────────────
     const QString cardStyle = QString(
         "QFrame {"
         "  background-color: %1;"
@@ -566,26 +629,50 @@ void MainWindow::createHelpPanel()
         .arg(ui::kMarginMedium)
         .arg(ui::kColorPrimary);
 
-    const QString cardTitleStyle = QString(
-        "font-size: %1pt; font-weight: 700; color: %2; border: none; background: transparent;")
+    const QString titleStyle = QString(
+        "font-size: %1pt; font-weight: 700; color: %2;"
+        " border: none; background: transparent;")
         .arg(ui::kFontSizeSection)
         .arg(ui::kColorTextHeading);
 
-    const QString cardDescStyle = QString(
-        "font-size: %1pt; color: %2; border: none; background: transparent;")
+    const QString descStyle = QString(
+        "font-size: %1pt; color: %2;"
+        " border: none; background: transparent;")
         .arg(ui::kFontSizeBody)
         .arg(ui::kColorTextSecondary);
 
     const QString logoStyle = QStringLiteral(
         "border: none; background: transparent;");
 
+    helpLayout->addLayout(createHelpRow_requestsAndBugs(
+        helpPanel, cardStyle, titleStyle, descStyle, logoStyle));
+
+    helpLayout->addLayout(createHelpRow_wikiAndCommunity(
+        helpPanel, cardStyle, titleStyle, descStyle, logoStyle));
+
+    helpLayout->addStretch();
+
+    const int helpIdx = m_tab_widget->addTab(helpPanel,
+        QIcon(QStringLiteral(":/icons/icons/panel_help.svg")),
+        QStringLiteral("Help and Support"));
+    m_tab_widget->setIconSize(QSize(kTabIconSize, kTabIconSize));
+    Q_UNUSED(helpIdx);
+}
+
+// ============================================================================
+// Help Panel — Card Row Builders
+// ============================================================================
+
+QHBoxLayout* MainWindow::createHelpRow_requestsAndBugs(QWidget* parent,
+    const QString& cardStyle, const QString& titleStyle,
+    const QString& descStyle, const QString& logoStyle)
+{
     constexpr int kLogoSize = 48;
 
-    // Helper to create a card frame
     auto makeCard = [&](const QString& iconPath, const QString& title,
                         const QString& description,
                         QPushButton* button) -> QFrame* {
-        auto* card = new QFrame(helpPanel);
+        auto* card = new QFrame(parent);
         card->setStyleSheet(cardStyle);
         auto* layout = new QVBoxLayout(card);
         layout->setSpacing(ui::kSpacingMedium);
@@ -599,13 +686,13 @@ void MainWindow::createHelpPanel()
 
         auto* titleLabel = new QLabel(title, card);
         titleLabel->setAlignment(Qt::AlignCenter);
-        titleLabel->setStyleSheet(cardTitleStyle);
+        titleLabel->setStyleSheet(titleStyle);
         layout->addWidget(titleLabel);
 
         auto* descLabel = new QLabel(description, card);
         descLabel->setWordWrap(true);
         descLabel->setAlignment(Qt::AlignCenter);
-        descLabel->setStyleSheet(cardDescStyle);
+        descLabel->setStyleSheet(descStyle);
         layout->addWidget(descLabel);
 
         layout->addStretch();
@@ -614,68 +701,111 @@ void MainWindow::createHelpPanel()
         return card;
     };
 
-    // ── Row 1: Request a Feature | Report a Bug ─────────────────────────
-    auto* row1 = new QHBoxLayout();
-    row1->setSpacing(ui::kSpacingLarge);
+    auto* row = new QHBoxLayout();
+    row->setSpacing(ui::kSpacingLarge);
 
-    auto* featureBtn = new QPushButton(tr("Request a Feature"), helpPanel);
+    auto* featureBtn = new QPushButton(tr("Request a Feature"), parent);
     featureBtn->setMinimumHeight(sak::kButtonHeightTall);
     featureBtn->setStyleSheet(ui::kPrimaryButtonStyle);
-    featureBtn->setAccessibleName(QStringLiteral("Submit feature request on GitHub"));
-    featureBtn->setToolTip(QStringLiteral("Opens a GitHub issue form to submit a feature request"));
+    featureBtn->setAccessibleName(
+        QStringLiteral("Submit feature request on GitHub"));
+    featureBtn->setToolTip(
+        QStringLiteral("Opens a GitHub issue form to submit a feature request"));
     connect(featureBtn, &QPushButton::clicked, this, []() {
         QDesktopServices::openUrl(QUrl(QStringLiteral(
             "https://github.com/RandyNorthrup/S.A.K.-Utility/issues/new"
             "?template=feature_request.yml&title=%5BFeature+Request%5D%3A+")));
     });
 
-    row1->addWidget(makeCard(
+    row->addWidget(makeCard(
         QStringLiteral(":/icons/icons/features.svg"),
         tr("Feature Requests"),
-        tr("Have an idea to improve S.A.K. Utility? Submit a feature request on GitHub."),
+        tr("Have an idea to improve S.A.K. Utility?"
+           " Submit a feature request on GitHub."),
         featureBtn));
 
-    auto* bugBtn = new QPushButton(tr("Report a Bug"), helpPanel);
+    auto* bugBtn = new QPushButton(tr("Report a Bug"), parent);
     bugBtn->setMinimumHeight(sak::kButtonHeightTall);
     bugBtn->setStyleSheet(ui::kDangerButtonStyle);
     bugBtn->setAccessibleName(QStringLiteral("Report a bug on GitHub"));
-    bugBtn->setToolTip(QStringLiteral("Opens a GitHub issue form to report a bug"));
+    bugBtn->setToolTip(
+        QStringLiteral("Opens a GitHub issue form to report a bug"));
     connect(bugBtn, &QPushButton::clicked, this, []() {
         QDesktopServices::openUrl(QUrl(QStringLiteral(
             "https://github.com/RandyNorthrup/S.A.K.-Utility/issues/new"
             "?template=bug_report.yml&title=%5BBug%5D%3A+")));
     });
 
-    row1->addWidget(makeCard(
+    row->addWidget(makeCard(
         QStringLiteral(":/icons/icons/bugs.svg"),
         tr("Report a Bug"),
         tr("Found something broken? Let us know so we can fix it."),
         bugBtn));
 
-    helpLayout->addLayout(row1);
+    return row;
+}
 
-    // ── Row 2: Help Wiki | Community ────────────────────────────────────
-    auto* row2 = new QHBoxLayout();
-    row2->setSpacing(ui::kSpacingLarge);
+QHBoxLayout* MainWindow::createHelpRow_wikiAndCommunity(QWidget* parent,
+    const QString& cardStyle, const QString& titleStyle,
+    const QString& descStyle, const QString& logoStyle)
+{
+    constexpr int kLogoSize = 48;
 
-    auto* wikiBtn = new QPushButton(tr("Open Help Wiki"), helpPanel);
+    auto makeCard = [&](const QString& iconPath, const QString& title,
+                        const QString& description,
+                        QPushButton* button) -> QFrame* {
+        auto* card = new QFrame(parent);
+        card->setStyleSheet(cardStyle);
+        auto* layout = new QVBoxLayout(card);
+        layout->setSpacing(ui::kSpacingMedium);
+        layout->setContentsMargins(0, 0, 0, 0);
+
+        auto* logo = new QLabel(card);
+        logo->setPixmap(QIcon(iconPath).pixmap(kLogoSize, kLogoSize));
+        logo->setAlignment(Qt::AlignCenter);
+        logo->setStyleSheet(logoStyle);
+        layout->addWidget(logo);
+
+        auto* titleLabel = new QLabel(title, card);
+        titleLabel->setAlignment(Qt::AlignCenter);
+        titleLabel->setStyleSheet(titleStyle);
+        layout->addWidget(titleLabel);
+
+        auto* descLabel = new QLabel(description, card);
+        descLabel->setWordWrap(true);
+        descLabel->setAlignment(Qt::AlignCenter);
+        descLabel->setStyleSheet(descStyle);
+        layout->addWidget(descLabel);
+
+        layout->addStretch();
+        button->setParent(card);
+        layout->addWidget(button);
+        return card;
+    };
+
+    auto* row = new QHBoxLayout();
+    row->setSpacing(ui::kSpacingLarge);
+
+    auto* wikiBtn = new QPushButton(tr("Open Help Wiki"), parent);
     wikiBtn->setMinimumHeight(sak::kButtonHeightTall);
     wikiBtn->setStyleSheet(ui::kSecondaryButtonStyle);
-    wikiBtn->setAccessibleName(QStringLiteral("Open help wiki on GitHub"));
-    wikiBtn->setToolTip(QStringLiteral("Opens the S.A.K. Utility wiki on GitHub"));
+    wikiBtn->setAccessibleName(
+        QStringLiteral("Open help wiki on GitHub"));
+    wikiBtn->setToolTip(
+        QStringLiteral("Opens the S.A.K. Utility wiki on GitHub"));
     connect(wikiBtn, &QPushButton::clicked, this, []() {
         QDesktopServices::openUrl(QUrl(QStringLiteral(
             "https://github.com/RandyNorthrup/S.A.K.-Utility/wiki")));
     });
 
-    row2->addWidget(makeCard(
+    row->addWidget(makeCard(
         QStringLiteral(":/icons/icons/help.svg"),
         tr("Help & Documentation"),
         tr("Browse the wiki for guides, FAQ, and troubleshooting."),
         wikiBtn));
 
-    // Community card gets two buttons — build manually
-    auto* communityCard = new QFrame(helpPanel);
+    // Community card — two-button layout (Discord)
+    auto* communityCard = new QFrame(parent);
     communityCard->setStyleSheet(cardStyle);
     auto* communityLayout = new QVBoxLayout(communityCard);
     communityLayout->setSpacing(ui::kSpacingMedium);
@@ -690,15 +820,16 @@ void MainWindow::createHelpPanel()
 
     auto* communityTitle = new QLabel(tr("Community"), communityCard);
     communityTitle->setAlignment(Qt::AlignCenter);
-    communityTitle->setStyleSheet(cardTitleStyle);
+    communityTitle->setStyleSheet(titleStyle);
     communityLayout->addWidget(communityTitle);
 
     auto* communityDesc = new QLabel(
-        tr("Join the Discord server for general discussion, help, and announcements."),
+        tr("Join the Discord server for general discussion,"
+           " help, and announcements."),
         communityCard);
     communityDesc->setWordWrap(true);
     communityDesc->setAlignment(Qt::AlignCenter);
-    communityDesc->setStyleSheet(cardDescStyle);
+    communityDesc->setStyleSheet(descStyle);
     communityLayout->addWidget(communityDesc);
 
     communityLayout->addStretch();
@@ -729,23 +860,19 @@ void MainWindow::createHelpPanel()
     auto* discordBtn = new QPushButton(tr("Join Discord"), communityCard);
     discordBtn->setMinimumHeight(sak::kButtonHeightTall);
     discordBtn->setStyleSheet(discordBtnStyle);
-    discordBtn->setAccessibleName(QStringLiteral("Join S.A.K. Utility Discord server"));
-    discordBtn->setToolTip(QStringLiteral("Opens the general discussion Discord channel"));
+    discordBtn->setAccessibleName(
+        QStringLiteral("Join S.A.K. Utility Discord server"));
+    discordBtn->setToolTip(
+        QStringLiteral("Opens the general discussion Discord channel"));
     communityLayout->addWidget(discordBtn);
     connect(discordBtn, &QPushButton::clicked, this, []() {
         QDesktopServices::openUrl(QUrl(QStringLiteral(
-            "https://discord.gg/Dm3KKDuNgu")));
+            "https://discord.gg/pMh2n9kSK3")));
     });
 
+    row->addWidget(communityCard);
 
-
-    row2->addWidget(communityCard);
-
-    helpLayout->addLayout(row2);
-
-    helpLayout->addStretch();
-
-    m_tab_widget->addTab(helpPanel, QStringLiteral("Help and Support"));
+    return row;
 }
 
 void MainWindow::connectPanelSignals()
@@ -814,9 +941,27 @@ void MainWindow::connectPanelLogs()
 {
     Q_ASSERT(m_tab_widget);
     Q_ASSERT(m_logWindow);
+
+    // Helper: find the main tab index for a panel. For panels embedded inside
+    // wrapper widgets (Application Management, Network Management), walk up
+    // the widget tree to find which top-level tab contains them.
+    auto findTabIndex = [this](QWidget* panel) -> int {
+        int idx = m_tab_widget->indexOf(panel);
+        if (idx >= 0) return idx;
+        // Walk up through parent widgets to find the wrapper that is a direct
+        // child of the main tab widget.
+        QWidget* w = panel->parentWidget();
+        while (w && w != m_tab_widget) {
+            idx = m_tab_widget->indexOf(w);
+            if (idx >= 0) return idx;
+            w = w->parentWidget();
+        }
+        return -1;
+    };
+
     // Connect all panel log signals to the shared log window (panel-aware)
-    auto connectLog = [this](auto* panel) {
-        int tabIdx = m_tab_widget->indexOf(panel);
+    auto connectLog = [this, &findTabIndex](auto* panel) {
+        int tabIdx = findTabIndex(panel);
         connect(panel, &std::remove_pointer_t<decltype(panel)>::logOutput,
                 this, [this, tabIdx](const QString& msg) {
                     QString formatted = QDateTime::currentDateTime().toString("[HH:mm:ss] ") + msg;
@@ -1033,6 +1178,26 @@ void MainWindow::resizeEvent(QResizeEvent* event)
     QMainWindow::resizeEvent(event);
     if (m_logWindow) {
         m_logWindow->repositionIfAnchored();
+    }
+    // Scroll buttons may appear/disappear on resize
+    QTimer::singleShot(0, this, &MainWindow::applyTabBarChevrons);
+}
+
+void MainWindow::applyTabBarChevrons()
+{
+    if (!m_tab_widget) return;
+
+    const auto buttons = m_tab_widget->tabBar()->findChildren<QToolButton*>();
+    for (auto* btn : buttons) {
+        btn->setArrowType(Qt::NoArrow);
+        btn->setIcon(QIcon());
+        // Use unicode chevron text — inherits the theme's white-on-blue styling
+        if (btn == buttons.value(0)) {
+            btn->setText(QStringLiteral("\u276E"));  // ❮
+        } else {
+            btn->setText(QStringLiteral("\u276F"));  // ❯
+        }
+        btn->setToolButtonStyle(Qt::ToolButtonTextOnly);
     }
 }
 

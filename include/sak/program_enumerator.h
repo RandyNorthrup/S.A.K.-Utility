@@ -11,6 +11,7 @@
 #include <QObject>
 #include <QVector>
 
+#include <atomic>
 #include <memory>
 #include <type_traits>
 
@@ -39,6 +40,12 @@ public:
 
     /// @brief Start async enumeration of all installed programs
     void enumerateAll();
+
+    /// @brief Request cancellation of an in-progress enumeration
+    void requestCancel();
+
+    /// @brief Reset the cancellation flag (call before starting a new enumeration)
+    void resetCancel();
 
     /// @brief Get the last enumeration result (cached)
     [[nodiscard]] QVector<ProgramInfo> programs() const;
@@ -100,6 +107,7 @@ private:
 #endif
 
     QVector<ProgramInfo> m_cachedPrograms;
+    std::atomic<bool> m_cancelRequested{false};
 };
 
 // ── Compile-Time Invariants ─────────────────────────────────────────────────

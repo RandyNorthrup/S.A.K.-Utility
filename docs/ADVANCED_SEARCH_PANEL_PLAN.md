@@ -2,8 +2,8 @@
 
 **Version**: 1.0  
 **Date**: March 2, 2026  
-**Status**: ⏳ Planned  
-**Target Release**: v0.8.0  
+**Status**: ✅ Complete  
+**Completed in**: v0.8.5  
 **Source Reference**: [RandyNorthrup/advanced_search](https://github.com/RandyNorthrup/advanced_search) (v0.5.1, MIT License)
 
 ---
@@ -1835,7 +1835,7 @@ QMap<QString, QString> FileMetadataExtractor::extractAudioMetadata(const QString
 
 ### SAK Codebase Reference
 - `include/sak/worker_base.h` — Base class for worker threads
-- `src/gui/duplicate_finder_panel.cpp` — Similar panel pattern (directory scanning + results)
+- `src/gui/organizer_panel.cpp` — Similar panel pattern (directory scanning + results)
 - `src/gui/main_window.cpp` — Panel registration and tab creation
 - `include/sak/config_manager.h` — Settings persistence
 - `include/sak/error_codes.h` — Error code definitions

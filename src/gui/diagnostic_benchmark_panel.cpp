@@ -421,6 +421,11 @@ QHBoxLayout* DiagnosticBenchmarkPanel::createStressConfigRow()
     m_stress_disk_check->setToolTip(QStringLiteral("Include disk I/O in the stress test"));
     config_row->addWidget(m_stress_disk_check);
 
+    m_stress_gpu_check = new QCheckBox("GPU", this);
+    m_stress_gpu_check->setAccessibleName(QStringLiteral("Stress Test GPU"));
+    m_stress_gpu_check->setToolTip(QStringLiteral("Include GPU compute in the stress test"));
+    config_row->addWidget(m_stress_gpu_check);
+
     config_row->addSpacing(20);
     config_row->addWidget(new QLabel("Duration (min):", this));
     m_stress_duration_spin = new QSpinBox(this);

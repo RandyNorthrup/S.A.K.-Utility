@@ -154,6 +154,11 @@ QVector<QVariantMap> HardwareInventoryScanner::wmiQuery(
     ps.setProcessChannelMode(QProcess::MergedChannels);
     ps.start("powershell.exe", {"-NoProfile", "-NoLogo", "-Command", ps_command});
 
+    if (!ps.waitForStarted(sak::kTimeoutProcessStartMs)) {
+        logError("PowerShell failed to start for WMI query on class {}",
+                 wmi_class.toStdString());
+        return {};
+    }
     if (!ps.waitForFinished(timeout_ms)) {
         logError("WMI query timed out for class {}", wmi_class.toStdString());
         ps.kill();

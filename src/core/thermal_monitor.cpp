@@ -145,6 +145,9 @@ double ThermalMonitor::queryCpuTemperature()
         "| Select-Object -First 1 -ExpandProperty CurrentTemperature"
     });
 
+    if (!ps.waitForStarted(sak::kTimeoutProcessStartMs)) {
+        return -1.0;
+    }
     if (!ps.waitForFinished(sak::kTimeoutProcessShortMs)) {
         ps.kill();
         return -1.0;
@@ -175,7 +178,9 @@ double ThermalMonitor::queryGpuTemperature()
         "--format=csv,noheader,nounits"
     });
 
-    if (nv.waitForFinished(sak::kTimeoutThermalQueryMs) && nv.exitCode() == 0) {
+    if (!nv.waitForStarted(sak::kTimeoutProcessStartMs)) {
+        // nvidia-smi not available — fall through to fallback
+    } else if (nv.waitForFinished(sak::kTimeoutThermalQueryMs) && nv.exitCode() == 0) {
         const QString output = QString::fromUtf8(nv.readAllStandardOutput()).trimmed();
         bool ok = false;
         const double temp = output.split('\n').first().trimmed().toDouble(&ok);

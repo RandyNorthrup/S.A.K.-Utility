@@ -584,7 +584,7 @@ void NetworkTransferController::resetWorker() {
 
     if (m_workerThread) {
         m_workerThread->quit();
-        m_workerThread->wait(3000);
+        m_workerThread->wait(sak::kTimeoutWorkerResetMs);
         m_workerThread->deleteLater();
         m_workerThread = nullptr;
     }

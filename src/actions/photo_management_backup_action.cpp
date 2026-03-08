@@ -159,7 +159,10 @@ void PhotoManagementBackupAction::execute() {
     Q_ASSERT(start_time.isValid());
 
     QDir backup_dir(m_backup_location + "/PhotoSoftware");
-    backup_dir.mkpath(".");
+    if (!backup_dir.mkpath(".")) {
+        sak::logWarning("Failed to create photo backup directory: {}",
+                        backup_dir.absolutePath().toStdString());
+    }
 
     int processed = 0;
     qint64 bytes_copied = 0;
@@ -199,7 +202,10 @@ QPair<bool, qint64> PhotoManagementBackupAction::backupPhotoItem(
     QString safe_dir = sanitizePathForBackup(data.path);
     QString dest_path = backup_dir.filePath(data.software_name + "/" + data.data_type + "/" +
         safe_dir);
-    QDir().mkpath(dest_path);
+    if (!QDir().mkpath(dest_path)) {
+        sak::logWarning("Failed to create photo backup subdirectory: {}",
+                        dest_path.toStdString());
+    }
 
     QFileInfo src_info(data.path);
 
@@ -248,7 +254,9 @@ QPair<bool, qint64> PhotoManagementBackupAction::backupDirectory(
         it.next();
         QString rel = QDir(src_path).relativeFilePath(it.filePath());
         QString dest = dest_path + "/" + rel;
-        QDir().mkpath(QFileInfo(dest).absolutePath());
+        if (!QDir().mkpath(QFileInfo(dest).absolutePath())) {
+            sak::logWarning("Failed to create directory for photo file");
+        }
         if (QFile::copy(it.filePath(), dest)) {
             bytes_copied += it.fileInfo().size();
         }

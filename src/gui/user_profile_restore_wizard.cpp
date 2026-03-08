@@ -48,8 +48,8 @@ void UserProfileRestoreWelcomePage::setupUi() {
         tr("<b>User Mapping</b>: Map backup users to destination users"),
         tr("<b>Merge Options</b>: Choose how to handle existing files"),
         tr("<b>Folder Selection</b>: Select which folders to restore"),
-        tr("<b>App Restore</b>: Reinstall saved applications via Chocolatey (optional)"),
-        tr("<b>Permissions</b>: Set permission strategies for restored files")
+        tr("<b>App Data & Apps</b>: Restore application data and reinstall apps (optional)"),
+        tr("<b>Networks & Ethernet</b>: Restore WiFi profiles and adapter settings (optional)")
     );
 
     m_infoLabel = new QLabel(infoHtml, this);
@@ -193,7 +193,10 @@ UserProfileRestoreWizard::UserProfileRestoreWizard(QWidget* parent)
     addPage(new UserProfileRestoreUserMappingPage(this));
     addPage(new UserProfileRestoreMergeConfigPage(this));
     addPage(new UserProfileRestoreFolderSelectionPage(this));
+    addPage(new UserProfileRestoreAppDataPage(this));
     addPage(new UserProfileRestoreAppRestorePage(this));
+    addPage(new UserProfileRestoreNetworksPage(this));
+    addPage(new UserProfileRestoreEthernetPage(this));
     addPage(new UserProfileRestorePermissionSettingsPage(this));
     addPage(new UserProfileRestoreExecutePage(this));
 

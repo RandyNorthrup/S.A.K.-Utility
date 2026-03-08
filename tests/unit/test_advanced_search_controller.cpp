@@ -153,7 +153,7 @@ void AdvancedSearchControllerTests::cancelSearch_changesState()
     QVERIFY(longDir.isValid());
     for (int i = 0; i < 200; ++i) {
         QFile f(longDir.path() + QString("/file_%1.txt").arg(i));
-        f.open(QIODevice::WriteOnly);
+        QVERIFY(f.open(QIODevice::WriteOnly));
         f.write(QString("Content %1\nWith searchable text\n").arg(i).toUtf8());
         f.close();
     }

@@ -239,8 +239,11 @@ bool MappingEngine::saveTemplate(const DeploymentMapping& mapping, const QString
         return false;
     }
 
-    QJsonDocument doc(root);
-    file.write(doc.toJson(QJsonDocument::Indented));
+    const QByteArray json_bytes =
+        QJsonDocument(root).toJson(QJsonDocument::Indented);
+    if (file.write(json_bytes) != json_bytes.size()) {
+        return false;
+    }
     return file.commit();
 }
 

@@ -17,7 +17,10 @@
 #include "sak/network_diagnostic_report_generator.h"
 #include "sak/ethernet_config_manager.h"
 
+#include <QElapsedTimer>
 #include <QMetaObject>
+#include <QTcpServer>
+#include <QTcpSocket>
 #include <QTimer>
 
 namespace sak {
@@ -662,6 +665,248 @@ void NetworkDiagnosticController::discoverShares(const QString& hostname)
     }, State::BrowsingShares);
 }
 
+// ── LAN File Transfer Speed Test ────────────────────────────────────────────
+
+void NetworkDiagnosticController::startLanTransferServer(uint16_t port)
+{
+    if (m_lanTransferServerRunning.load(std::memory_order_acquire)) {
+        Q_EMIT errorOccurred(QStringLiteral(
+            "LAN transfer server is already running"));
+        return;
+    }
+
+    if (!m_lanTransferServer) {
+        m_lanTransferServer = new QTcpServer(this);
+    }
+
+    if (!m_lanTransferServer->listen(QHostAddress::Any, port)) {
+        Q_EMIT errorOccurred(
+            QStringLiteral(
+                "Failed to start LAN transfer server "
+                "on port %1: %2")
+                .arg(port)
+                .arg(m_lanTransferServer->errorString()));
+        return;
+    }
+
+    m_lanTransferServerRunning.store(
+        true, std::memory_order_release);
+    Q_EMIT lanTransferServerStarted(port);
+    Q_EMIT logOutput(QStringLiteral(
+        "LAN transfer server listening on port %1").arg(port));
+
+    connect(m_lanTransferServer, &QTcpServer::newConnection,
+            this, [this]() {
+        auto* socket =
+            m_lanTransferServer->nextPendingConnection();
+        if (!socket) { return; }
+        handleLanClientConnection(socket);
+    });
+}
+
+void NetworkDiagnosticController::handleLanClientConnection(
+    QTcpSocket* socket)
+{
+    Q_EMIT logOutput(
+        QStringLiteral("LAN transfer: peer connected from %1")
+            .arg(socket->peerAddress().toString()));
+
+    auto* timer = new QElapsedTimer();
+    timer->start();
+    auto* totalReceived = new qint64(0);
+    auto* peakMbps = new double(0.0);
+    auto* lastReportTime = new qint64(0);
+    auto* lastReportBytes = new qint64(0);
+    auto* speedSamples = new QVector<double>();
+
+    connect(socket, &QTcpSocket::readyRead, this,
+        [this, socket, timer, totalReceived, peakMbps,
+         lastReportTime, lastReportBytes, speedSamples]() {
+            qint64 bytes = socket->bytesAvailable();
+            QByteArray received_data = socket->read(bytes);
+            *totalReceived += received_data.size();
+
+            qint64 elapsed = timer->elapsed();
+            constexpr qint64 kReportIntervalMs = 1000;
+            if (elapsed - *lastReportTime >= kReportIntervalMs) {
+                qint64 deltaBytes =
+                    *totalReceived - *lastReportBytes;
+                double deltaSec =
+                    (elapsed - *lastReportTime) / 1000.0;
+                double currentMbps = deltaSec > 0
+                    ? (deltaBytes * 8.0 / (deltaSec * 1e6))
+                    : 0.0;
+                *peakMbps = std::max(*peakMbps, currentMbps);
+                speedSamples->append(currentMbps);
+                *lastReportTime = elapsed;
+                *lastReportBytes = *totalReceived;
+
+                Q_EMIT lanTransferProgress(currentMbps,
+                    elapsed / 1000.0, *totalReceived);
+            }
+        });
+
+    connect(socket, &QTcpSocket::disconnected, this,
+        [this, socket, timer, totalReceived, peakMbps,
+         lastReportTime, lastReportBytes, speedSamples]() {
+            double elapsed_sec = timer->elapsed() / 1000.0;
+
+            LanTransferResult result;
+            result.remoteAddress =
+                socket->peerAddress().toString();
+            result.port = socket->localPort();
+            result.bytesTransferred = *totalReceived;
+            result.durationSec = elapsed_sec;
+            result.avgSpeedMbps = elapsed_sec > 0
+                ? (*totalReceived * 8.0 / (elapsed_sec * 1e6))
+                : 0.0;
+            result.peakSpeedMbps = *peakMbps;
+            result.isUpload = false;
+            result.timestamp = QDateTime::currentDateTime();
+            result.speedSamplesMbps = *speedSamples;
+
+            Q_EMIT lanTransferComplete(result);
+            Q_EMIT logOutput(QStringLiteral(
+                "LAN transfer receive complete: "
+                "%1 MB in %2s (%3 Mbps avg)")
+                .arg(*totalReceived / (1024.0 * 1024.0),
+                     0, 'f', 1)
+                .arg(elapsed_sec, 0, 'f', 1)
+                .arg(result.avgSpeedMbps, 0, 'f', 1));
+
+            delete timer;
+            delete totalReceived;
+            delete peakMbps;
+            delete lastReportTime;
+            delete lastReportBytes;
+            delete speedSamples;
+            socket->deleteLater();
+        });
+}
+
+void NetworkDiagnosticController::stopLanTransferServer()
+{
+    if (m_lanTransferServer && m_lanTransferServer->isListening()) {
+        m_lanTransferServer->close();
+    }
+    m_lanTransferServerRunning.store(false, std::memory_order_release);
+    Q_EMIT lanTransferServerStopped();
+    Q_EMIT logOutput(QStringLiteral("LAN transfer server stopped"));
+}
+
+bool NetworkDiagnosticController::isLanTransferServerRunning() const
+{
+    return m_lanTransferServerRunning.load(std::memory_order_acquire);
+}
+
+void NetworkDiagnosticController::runLanTransferTest(
+    const QString& targetAddr, uint16_t port,
+    int durationSec, int blockSizeKB)
+{
+    if (targetAddr.trimmed().isEmpty()) {
+        Q_EMIT errorOccurred(QStringLiteral("Target address cannot be empty"));
+        return;
+    }
+    if (durationSec < 1) durationSec = 10;
+    if (blockSizeKB < 1) blockSizeKB = 64;
+
+    Q_EMIT logOutput(QStringLiteral("Starting LAN transfer test to %1:%2 (%3s, %4 KB blocks)")
+                         .arg(targetAddr).arg(port).arg(durationSec).arg(blockSizeKB));
+    Q_EMIT statusMessage(QStringLiteral("Running LAN transfer speed test..."), 0);
+
+    // Run on separate thread to avoid blocking
+    runOnThread([this, targetAddr, port, durationSec, blockSizeKB]() {
+        QTcpSocket socket;
+        socket.connectToHost(targetAddr, port);
+
+        if (!socket.waitForConnected(5000)) {
+            Q_EMIT errorOccurred(
+                QStringLiteral("Failed to connect to %1:%2 — %3. "
+                               "Ensure the remote device is running the LAN Transfer server.")
+                    .arg(targetAddr).arg(port).arg(socket.errorString()));
+            return;
+        }
+
+        // Prepare send buffer filled with random-ish data
+        const int blockSize = blockSizeKB * 1024;
+        QByteArray sendBuffer(blockSize, '\0');
+        for (int i = 0; i < blockSize; ++i) {
+            sendBuffer[i] = static_cast<char>(i & 0xFF);
+        }
+
+        QElapsedTimer timer;
+        timer.start();
+
+        qint64 totalSent = 0;
+        double peakMbps = 0.0;
+        qint64 lastReportTime = 0;
+        qint64 lastReportBytes = 0;
+        QVector<double> speedSamples;
+
+        const qint64 durationMs = static_cast<qint64>(durationSec) * 1000;
+
+        while (timer.elapsed() < durationMs) {
+            qint64 written = socket.write(sendBuffer);
+            if (written < 0) {
+                Q_EMIT errorOccurred(
+                    QStringLiteral("LAN transfer write error: %1").arg(socket.errorString()));
+                break;
+            }
+            totalSent += written;
+
+            // Flush periodically
+            if ((totalSent % (blockSize * 16)) == 0) {
+                socket.waitForBytesWritten(100);
+            }
+
+            // Report every second
+            qint64 elapsed = timer.elapsed();
+            if (elapsed - lastReportTime >= 1000) {
+                qint64 deltaBytes = totalSent - lastReportBytes;
+                double deltaSec = (elapsed - lastReportTime) / 1000.0;
+                double currentMbps = deltaSec > 0
+                    ? (deltaBytes * 8.0 / (deltaSec * 1e6))
+                    : 0.0;
+                peakMbps = std::max(peakMbps, currentMbps);
+                speedSamples.append(currentMbps);
+                lastReportTime = elapsed;
+                lastReportBytes = totalSent;
+
+                Q_EMIT lanTransferProgress(currentMbps, elapsed / 1000.0, totalSent);
+            }
+        }
+
+        // Ensure all data is sent before disconnecting
+        socket.waitForBytesWritten(3000);
+        socket.disconnectFromHost();
+        if (socket.state() != QAbstractSocket::UnconnectedState) {
+            socket.waitForDisconnected(3000);
+        }
+
+        double elapsed_sec = timer.elapsed() / 1000.0;
+
+        LanTransferResult result;
+        result.remoteAddress = targetAddr;
+        result.port = port;
+        result.bytesTransferred = totalSent;
+        result.durationSec = elapsed_sec;
+        result.avgSpeedMbps = elapsed_sec > 0
+            ? (totalSent * 8.0 / (elapsed_sec * 1e6))
+            : 0.0;
+        result.peakSpeedMbps = peakMbps;
+        result.isUpload = true;
+        result.timestamp = QDateTime::currentDateTime();
+        result.speedSamplesMbps = speedSamples;
+
+        Q_EMIT lanTransferComplete(result);
+        Q_EMIT logOutput(QStringLiteral("LAN transfer send complete: %1 MB in %2s (%3 Mbps avg)")
+            .arg(totalSent / (1024.0 * 1024.0), 0, 'f', 1)
+            .arg(elapsed_sec, 0, 'f', 1)
+            .arg(result.avgSpeedMbps, 0, 'f', 1));
+        Q_EMIT statusMessage(QStringLiteral("LAN transfer test complete"), 5000);
+    }, State::Idle);  // Don't lock state — server may still be running
+}
+
 void NetworkDiagnosticController::generateReport(const QString& outputPath,
                                                    const QString& format,
                                                    const QString& technician,
@@ -815,6 +1060,9 @@ void NetworkDiagnosticController::cancel()
     m_shareBrowser->cancel();
     m_wifiAnalyzer->stopContinuousScan();
     m_connectionMonitor->stopMonitoring();
+    if (m_lanTransferServerRunning.load(std::memory_order_acquire)) {
+        stopLanTransferServer();
+    }
 
     // If no worker thread is running (continuous monitors, etc.),
     // transition state to Idle directly since QThread::finished won't fire.

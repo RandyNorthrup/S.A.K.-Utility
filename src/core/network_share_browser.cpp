@@ -172,9 +172,9 @@ QPair<bool, bool> NetworkShareBrowser::testReadWriteAccess(const QString& uncPat
 
         QFile file(testFile);
         if (file.open(QIODevice::WriteOnly)) {
-            file.write("SAK write test");
+            const QByteArray test_data("SAK write test");
+            canWrite = (file.write(test_data) == test_data.size());
             file.close();
-            canWrite = true;
 
             // Clean up test file
             file.remove();

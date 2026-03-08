@@ -15,7 +15,7 @@ endif()
 
 # Project definition
 project(SAK_Utility 
-    VERSION 0.8.5
+    VERSION 0.8.8
     DESCRIPTION "Swiss Army Knife Utility - PC technician's toolkit for Windows migration and maintenance"
     LANGUAGES CXX
 )# C++23 Standard - Strict compliance required
@@ -404,6 +404,7 @@ set(CORE_SOURCES
     src/core/port_scanner.cpp
     src/core/bandwidth_tester.cpp
     src/core/wifi_analyzer.cpp
+    src/core/wifi_profile_scanner.cpp
     src/core/active_connections_monitor.cpp
     src/core/firewall_rule_auditor.cpp
     src/core/network_share_browser.cpp
@@ -417,6 +418,7 @@ set(CORE_SOURCES
     include/sak/port_scanner.h
     include/sak/bandwidth_tester.h
     include/sak/wifi_analyzer.h
+    include/sak/wifi_profile_scanner.h
     include/sak/active_connections_monitor.h
     include/sak/firewall_rule_auditor.h
     include/sak/network_share_browser.h

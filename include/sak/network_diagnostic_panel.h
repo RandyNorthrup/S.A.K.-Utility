@@ -129,6 +129,13 @@ private Q_SLOTS:
     void onDiscoverShares();
     void onSharesDiscovered(QVector<sak::NetworkShareInfo> shares);
 
+    // LAN Transfer
+    void onStartLanTransferServer();
+    void onStopLanTransferServer();
+    void onRunLanTransferTest();
+    void onLanTransferProgress(double currentMbps, double elapsedSec, qint64 totalBytes);
+    void onLanTransferComplete(sak::LanTransferResult result);
+
     // Controller
     void onStateChanged(int newState);
     void onError(QString error);
@@ -176,6 +183,9 @@ private:
     void setupFirewallRuleTable(QWidget* widget, QVBoxLayout* layout);
     void setupFirewallAnalysis(QWidget* widget, QVBoxLayout* layout);
     QWidget* createSharesTab();
+    QWidget* createLanTransferTab();
+    QGroupBox* createLanServerGroup(QWidget* parent);
+    QGroupBox* createLanClientGroup(QWidget* parent);
     void connectSignals();
     void connectUiSignals();
     void connectControllerCoreSignals();
@@ -305,6 +315,17 @@ private:
     QLineEdit* m_shareHostname    = nullptr;
     QTableWidget* m_shareTable    = nullptr;
     QPushButton* m_shareDiscoverBtn = nullptr;  ///< Owned by layout hierarchy
+
+    // ── LAN Transfer UI ──
+    QLineEdit* m_lanTarget        = nullptr;
+    QSpinBox* m_lanPort           = nullptr;
+    QSpinBox* m_lanDuration       = nullptr;
+    QSpinBox* m_lanBlockSize      = nullptr;
+    QLabel* m_lanResultLabel      = nullptr;
+    QPushButton* m_lanTestBtn     = nullptr;
+    QPushButton* m_lanServerStartBtn = nullptr;
+    QPushButton* m_lanServerStopBtn  = nullptr;
+    QLabel* m_lanServerStatus     = nullptr;
 
     // Cached data for UI
     QVector<NetworkAdapterInfo> m_adapters;

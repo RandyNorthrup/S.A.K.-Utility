@@ -218,6 +218,10 @@ private:
      */
     bool verifyBootableFlag(const QString& driveLetter);
 
+    /// @brief Set the active/bootable flag on partition 1 and verify
+    bool setAndVerifyBootFlag(const QString& diskNumber,
+        const QString& driveLetter);
+
     /// @brief Run diskpart to check if the partition on the given disk is active/bootable
     bool checkPartitionActive(const QString& diskNumber);
 

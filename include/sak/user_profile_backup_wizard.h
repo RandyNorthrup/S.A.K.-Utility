@@ -27,18 +27,6 @@ namespace sak {
 class UserProfileBackupWorker;
 
 /**
- * @brief Installed app entry for backup/restore
- */
-struct InstalledAppInfo {
-    QString name;
-    QString version;
-    QString publisher;
-    QString choco_package;
-    QString category;
-    bool selected{true};
-};
-
-/**
  * @brief Wizard for backing up Windows user profiles
  *
  * 7-Page Wizard:
@@ -60,7 +48,10 @@ public:
         Page_SelectUsers,
         Page_CustomizeData,
         Page_InstalledApps,
+        Page_AppData,
         Page_SmartFilters,
+        Page_KnownNetworks,
+        Page_EthernetSettings,
         Page_BackupSettings,
         Page_Execute
     };
@@ -97,11 +88,26 @@ public:
     QVector<InstalledAppInfo> installedApps() const { return m_installedApps; }
     void setInstalledApps(const QVector<InstalledAppInfo>& apps) { m_installedApps = apps; }
 
+    /** @brief Get/set WiFi profiles selected for backup */
+    QVector<WifiProfileInfo> wifiProfiles() const { return m_wifiProfiles; }
+    void setWifiProfiles(const QVector<WifiProfileInfo>& profiles) { m_wifiProfiles = profiles; }
+
+    /** @brief Get/set ethernet configs selected for backup */
+    QVector<EthernetConfigInfo> ethernetConfigs() const { return m_ethernetConfigs; }
+    void setEthernetConfigs(const QVector<EthernetConfigInfo>& configs) { m_ethernetConfigs = configs; }
+
+    /** @brief Get/set app data sources selected for backup */
+    QVector<AppDataSourceInfo> appDataSources() const { return m_appDataSources; }
+    void setAppDataSources(const QVector<AppDataSourceInfo>& sources) { m_appDataSources = sources; }
+
 private:
     BackupManifest m_manifest;
     QVector<UserProfile> m_scannedUsers;
     SmartFilter m_smartFilter;
     QVector<InstalledAppInfo> m_installedApps;
+    QVector<WifiProfileInfo> m_wifiProfiles;
+    QVector<EthernetConfigInfo> m_ethernetConfigs;
+    QVector<AppDataSourceInfo> m_appDataSources;
 };
 
 /**
@@ -187,7 +193,43 @@ private:
 };
 
 /**
- * @brief Page 4: Smart Filter Configuration
+ * @brief Page 4a: Application Data Sources
+ */
+class UserProfileBackupAppDataPage : public QWizardPage {
+    Q_OBJECT
+
+public:
+    explicit UserProfileBackupAppDataPage(QVector<UserProfile>& users, QWidget* parent = nullptr);
+
+    void initializePage() override;
+    bool isComplete() const override;
+    void cleanupPage() override;
+
+private Q_SLOTS:
+    void onScanAppData();
+    void onSelectAll();
+    void onSelectNone();
+    void onItemChanged(QTreeWidgetItem* item, int column);
+
+private:
+    void setupUi();
+    void populateTree(const QVector<AppDataSourceInfo>& sources);
+    void updateParentCheckState(QTreeWidgetItem* parent);
+    void updateNextButtonText();
+
+    QVector<UserProfile>& m_users;
+    QTreeWidget* m_appDataTree{nullptr};
+    QPushButton* m_scanButton{nullptr};
+    QPushButton* m_selectAllButton{nullptr};
+    QPushButton* m_selectNoneButton{nullptr};
+    QLabel* m_statusLabel{nullptr};
+    QLabel* m_summaryLabel{nullptr};
+    QProgressBar* m_scanProgress{nullptr};
+    bool m_scanned{false};
+};
+
+/**
+ * @brief Page 4b: Smart Filter Configuration
  */
 class UserProfileBackupSmartFiltersPage : public QWizardPage {
     Q_OBJECT
@@ -225,7 +267,74 @@ private:
 };
 
 /**
- * @brief Page 5: Backup Settings
+ * @brief Page 5a: Known WiFi Networks Backup (skippable)
+ */
+class UserProfileBackupKnownNetworksPage : public QWizardPage {
+    Q_OBJECT
+
+public:
+    explicit UserProfileBackupKnownNetworksPage(QWidget* parent = nullptr);
+
+    void initializePage() override;
+    bool isComplete() const override;
+    void cleanupPage() override;
+
+private Q_SLOTS:
+    void onScanNetworks();
+    void onSelectAll();
+    void onSelectNone();
+    void onItemChanged(QTreeWidgetItem* item, int column);
+
+private:
+    void setupUi();
+    void populateTree(const QVector<WifiProfileInfo>& profiles);
+    void updateNextButtonText();
+
+    QTreeWidget* m_networkTree{nullptr};
+    QPushButton* m_scanButton{nullptr};
+    QPushButton* m_selectAllButton{nullptr};
+    QPushButton* m_selectNoneButton{nullptr};
+    QLabel* m_statusLabel{nullptr};
+    QLabel* m_summaryLabel{nullptr};
+    QProgressBar* m_scanProgress{nullptr};
+    bool m_scanned{false};
+};
+
+/**
+ * @brief Page 5b: Ethernet Settings Backup (skippable)
+ */
+class UserProfileBackupEthernetSettingsPage : public QWizardPage {
+    Q_OBJECT
+
+public:
+    explicit UserProfileBackupEthernetSettingsPage(QWidget* parent = nullptr);
+
+    void initializePage() override;
+    bool isComplete() const override;
+    void cleanupPage() override;
+
+private Q_SLOTS:
+    void onScanEthernet();
+    void onSelectAll();
+    void onSelectNone();
+
+private:
+    void setupUi();
+    void populateTable(const QVector<EthernetConfigInfo>& configs);
+    void updateNextButtonText();
+
+    QTableWidget* m_ethernetTable{nullptr};
+    QPushButton* m_scanButton{nullptr};
+    QPushButton* m_selectAllButton{nullptr};
+    QPushButton* m_selectNoneButton{nullptr};
+    QLabel* m_statusLabel{nullptr};
+    QLabel* m_summaryLabel{nullptr};
+    QProgressBar* m_scanProgress{nullptr};
+    bool m_scanned{false};
+};
+
+/**
+ * @brief Page 6: Backup Settings
  */
 class UserProfileBackupSettingsPage : public QWizardPage {
     Q_OBJECT
@@ -287,6 +396,15 @@ private:
 
     /// @brief Save installed apps list from wizard to backup directory
     void saveInstalledAppsToBackup(const QVector<InstalledAppInfo>& installedApps);
+
+    /// @brief Save WiFi profiles from wizard to backup directory
+    void saveWifiProfilesToBackup(const QVector<WifiProfileInfo>& profiles);
+
+    /// @brief Save Ethernet configs from wizard to backup directory
+    void saveEthernetConfigsToBackup(const QVector<EthernetConfigInfo>& configs);
+
+    /// @brief Save app data sources from wizard to backup directory
+    void saveAppDataSourcesToBackup(const QVector<AppDataSourceInfo>& sources);
 
     /// @brief Create, connect, and start the backup worker
     void connectAndStartBackupWorker(SmartFilter smartFilter, PermissionMode permissionMode,

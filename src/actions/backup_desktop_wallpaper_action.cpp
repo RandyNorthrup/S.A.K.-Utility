@@ -7,6 +7,7 @@
 #include "sak/actions/backup_desktop_wallpaper_action.h"
 #include "sak/windows_user_scanner.h"
 #include "sak/process_runner.h"
+#include "sak/logger.h"
 #include <QFile>
 #include <QFileInfo>
 #include <QDir>
@@ -140,12 +141,18 @@ void BackupDesktopWallpaperAction::execute() {
 QString BackupDesktopWallpaperAction::prepareWallpaperDirectory() {
     QDir backup_dir(m_backup_location);
     if (!backup_dir.exists()) {
-        backup_dir.mkpath(".");
+        if (!backup_dir.mkpath(".")) {
+            sak::logWarning("Failed to create wallpaper backup directory: {}",
+                            m_backup_location.toStdString());
+        }
     }
 
     QString wallpaper_folder = backup_dir.filePath("Wallpapers");
     QDir wallpaper_dir(wallpaper_folder);
-    wallpaper_dir.mkpath(".");
+    if (!wallpaper_dir.mkpath(".")) {
+        sak::logWarning("Failed to create wallpaper subdirectory: {}",
+                        wallpaper_folder.toStdString());
+    }
     return wallpaper_folder;
 }
 

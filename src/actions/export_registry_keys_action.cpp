@@ -7,6 +7,7 @@
 #include "sak/actions/export_registry_keys_action.h"
 #include "sak/layout_constants.h"
 #include "sak/process_runner.h"
+#include "sak/logger.h"
 #include <QDir>
 #include <QDateTime>
 #include <QRegularExpression>
@@ -21,8 +22,8 @@ ExportRegistryKeysAction::ExportRegistryKeysAction(const QString& backup_locatio
 
 void ExportRegistryKeysAction::exportKey(const QString& key_path, const QString& filename) {
     QString output_file = m_backup_location + "/Registry/" + filename;
-    QString cmd = QString("reg export \"%1\" \"%2\" /y").arg(key_path, output_file);
-    ProcessResult proc = runProcess("cmd.exe", QStringList() << "/c" << cmd,
+    ProcessResult proc = runProcess("reg",
+        QStringList() << "export" << key_path << output_file << "/y",
         sak::kTimeoutProcessMediumMs);
     if (!proc.succeeded()) {
         Q_EMIT logMessage("Registry export warning: " + proc.std_err.trimmed());
@@ -167,7 +168,10 @@ void ExportRegistryKeysAction::execute() {
     Q_EMIT executionProgress("Preparing enterprise registry backup...", 5);
 
     QDir backup_dir(m_backup_location + "/Registry");
-    backup_dir.mkpath(".");
+    if (!backup_dir.mkpath(".")) {
+        sak::logWarning("Failed to create registry backup directory: {}",
+                        backup_dir.absolutePath().toStdString());
+    }
 
     QString timestamp = QDateTime::currentDateTime().toString("yyyyMMdd_hhmmss");
     QString backup_path = backup_dir.absolutePath().replace("/", "\\");

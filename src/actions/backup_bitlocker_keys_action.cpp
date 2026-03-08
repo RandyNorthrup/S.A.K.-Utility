@@ -556,7 +556,11 @@ bool BackupBitlockerKeysAction::writeJsonBackup(const QString& backup_dir_path)
     QString json_path = QDir(backup_dir_path).filePath("bitlocker_keys.json");
     QFile json_file(json_path);
     if (json_file.open(QIODevice::WriteOnly | QIODevice::Text)) {
-        json_file.write(QJsonDocument(json_backup).toJson(QJsonDocument::Indented));
+        const QByteArray data = QJsonDocument(json_backup).toJson(QJsonDocument::Indented);
+        if (json_file.write(data) != data.size()) {
+            logError("Incomplete write of BitLocker key backup JSON");
+            return false;
+        }
         json_file.close();
         return true;
     }

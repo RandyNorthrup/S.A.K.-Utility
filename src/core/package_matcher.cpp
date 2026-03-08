@@ -645,7 +645,11 @@ void PackageMatcher::exportMappings(const QString& file_path) const {
 
     QFile file(file_path);
     if (file.open(QIODevice::WriteOnly)) {
-        file.write(QJsonDocument(root).toJson(QJsonDocument::Indented));
+        const QByteArray json_bytes = QJsonDocument(root).toJson(QJsonDocument::Indented);
+        if (json_bytes.size() > 0 && file.write(json_bytes) != json_bytes.size()) {
+            sak::logWarning("[PackageMatcher] Incomplete write of mappings file: {}",
+                file_path.toStdString());
+        }
         file.close();
     }
 }

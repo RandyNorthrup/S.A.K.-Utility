@@ -279,7 +279,10 @@ void AppInstallationPanel::saveQueueToFile()
             tr("Could not write to file:\n%1").arg(filePath));
         return;
     }
-    file.write(doc.toJson(QJsonDocument::Indented));
+    const QByteArray json_bytes = doc.toJson(QJsonDocument::Indented);
+    if (file.write(json_bytes) != json_bytes.size()) {
+        sak::logWarning("Incomplete write to file: {}", filePath.toStdString());
+    }
     file.close();
 
     Q_EMIT logOutput(QString("Saved %1 package(s) to %2")

@@ -74,6 +74,7 @@ void AdvancedUninstallController::refreshPrograms()
     }
     m_enumThread = new QThread(this);
     m_enumerator->moveToThread(m_enumThread);
+    m_enumerator->resetCancel();
     connect(m_enumThread, &QThread::started,
             m_enumerator.get(), &ProgramEnumerator::enumerateAll);
     connect(m_enumThread, &QThread::finished,
@@ -271,6 +272,20 @@ void AdvancedUninstallController::cleanLeftovers(
 
 void AdvancedUninstallController::cancelOperation()
 {
+    // Cancel enumeration if running
+    if (m_state == State::Enumerating && m_enumerator) {
+        m_enumerator->requestCancel();
+        if (m_enumThread) {
+            m_enumThread->quit();
+            if (!m_enumThread->wait(kThreadWaitMs)) {
+                m_enumThread->terminate();
+                m_enumThread->wait(kThreadWaitMs);
+            }
+            m_enumThread = nullptr;
+        }
+        setState(State::Idle);
+    }
+
     if (m_uninstall_worker && m_uninstall_worker->isExecuting()) {
         m_uninstall_worker->requestStop();
     }
@@ -445,6 +460,11 @@ RestorePointManager* AdvancedUninstallController::restorePointManager() const
 void AdvancedUninstallController::onEnumerationFinished(
     QVector<ProgramInfo> programs)
 {
+    // Guard against stale signal after cancelOperation() already cleaned up
+    if (m_state != State::Enumerating) {
+        return;
+    }
+
     // Move enumerator back to main thread and stop the enum thread
     m_enumerator->moveToThread(thread());
     if (m_enumThread) {
@@ -461,6 +481,11 @@ void AdvancedUninstallController::onEnumerationFinished(
 
 void AdvancedUninstallController::onEnumerationFailed(const QString& error)
 {
+    // Guard against stale signal after cancelOperation() already cleaned up
+    if (m_state != State::Enumerating) {
+        return;
+    }
+
     // Move enumerator back to main thread and stop the enum thread
     m_enumerator->moveToThread(thread());
     if (m_enumThread) {
@@ -579,16 +604,13 @@ void AdvancedUninstallController::cleanupWorkers()
 {
     // Clean up enumeration thread
     if (m_enumThread) {
+        m_enumerator->requestCancel();
         m_enumThread->quit();
         if (!m_enumThread->wait(kStatusTimeoutShortMs)) {
             m_enumThread->terminate();
-            m_enumThread->wait();
+            m_enumThread->wait(kStatusTimeoutShortMs);
         }
         m_enumThread = nullptr;
-    }
-    // Move enumerator back to main thread if needed
-    if (m_enumerator && m_enumerator->thread() != thread()) {
-        m_enumerator->moveToThread(thread());
     }
 
     if (m_uninstall_worker) {

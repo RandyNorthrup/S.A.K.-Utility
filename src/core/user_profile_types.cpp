@@ -21,6 +21,29 @@ static qint64 qint64FromJson(const QJsonObject& json, const QString& key, qint64
 }
 
 
+QJsonObject InstalledAppInfo::toJson() const {
+    QJsonObject obj;
+    obj["name"] = name;
+    obj["version"] = version;
+    obj["publisher"] = publisher;
+    obj["choco_package"] = choco_package;
+    obj["category"] = category;
+    obj["selected"] = selected;
+    return obj;
+}
+
+InstalledAppInfo InstalledAppInfo::fromJson(const QJsonObject& json) {
+    InstalledAppInfo info;
+    info.name = json["name"].toString();
+    info.version = json["version"].toString();
+    info.publisher = json["publisher"].toString();
+    info.choco_package = json["choco_package"].toString();
+    info.category = json["category"].toString();
+    info.selected = json["selected"].toBool(true);
+    return info;
+}
+
+
 void SmartFilter::initializeDefaults() {
     // Dangerous files that MUST be excluded
     dangerous_files = {
@@ -237,6 +260,24 @@ QJsonObject BackupManifest::toJson() const {
     obj["total_backup_size_bytes"] = static_cast<double>(total_backup_size_bytes);
     obj["manifest_checksum"] = manifest_checksum;
 
+    QJsonArray wifiArray;
+    for (const auto& w : wifi_profiles) {
+        wifiArray.append(w.toJson());
+    }
+    if (!wifiArray.isEmpty()) obj["wifi_profiles"] = wifiArray;
+
+    QJsonArray ethArray;
+    for (const auto& e : ethernet_configs) {
+        ethArray.append(e.toJson());
+    }
+    if (!ethArray.isEmpty()) obj["ethernet_configs"] = ethArray;
+
+    QJsonArray appDataArray;
+    for (const auto& a : app_data_sources) {
+        appDataArray.append(a.toJson());
+    }
+    if (!appDataArray.isEmpty()) obj["app_data_sources"] = appDataArray;
+
     return obj;
 }
 
@@ -259,6 +300,19 @@ BackupManifest BackupManifest::fromJson(const QJsonObject& json) {
     manifest.total_backup_size_bytes = qint64FromJson(json, "total_backup_size_bytes");
     manifest.manifest_checksum = json["manifest_checksum"].toString();
 
+    QJsonArray wifiArray = json["wifi_profiles"].toArray();
+    for (const auto& val : wifiArray) {
+        manifest.wifi_profiles.append(WifiProfileInfo::fromJson(val.toObject()));
+    }
+    QJsonArray ethArray = json["ethernet_configs"].toArray();
+    for (const auto& val : ethArray) {
+        manifest.ethernet_configs.append(EthernetConfigInfo::fromJson(val.toObject()));
+    }
+    QJsonArray appDataArray = json["app_data_sources"].toArray();
+    for (const auto& val : appDataArray) {
+        manifest.app_data_sources.append(AppDataSourceInfo::fromJson(val.toObject()));
+    }
+
     return manifest;
 }
 
@@ -269,7 +323,10 @@ bool BackupManifest::saveToFile(const QString& path) const {
     }
 
     QJsonDocument doc(toJson());
-    file.write(doc.toJson(QJsonDocument::Indented));
+    const QByteArray json_bytes = doc.toJson(QJsonDocument::Indented);
+    if (file.write(json_bytes) != json_bytes.size()) {
+        return false;
+    }
     return true;
 }
 
@@ -353,6 +410,74 @@ QString conflictResolutionToString(ConflictResolution mode) {
         case ConflictResolution::PromptUser: return "Ask Me";
     }
     return "Rename";
+}
+
+QJsonObject WifiProfileInfo::toJson() const {
+    QJsonObject obj;
+    obj["profile_name"] = profile_name;
+    obj["security_type"] = security_type;
+    obj["xml_data"] = xml_data;
+    obj["selected"] = selected;
+    return obj;
+}
+
+WifiProfileInfo WifiProfileInfo::fromJson(const QJsonObject& json) {
+    WifiProfileInfo info;
+    info.profile_name = json["profile_name"].toString();
+    info.security_type = json["security_type"].toString();
+    info.xml_data = json["xml_data"].toString();
+    info.selected = json["selected"].toBool(true);
+    return info;
+}
+
+QJsonObject EthernetConfigInfo::toJson() const {
+    QJsonObject obj;
+    obj["adapter_name"] = adapter_name;
+    obj["description"] = description;
+    obj["dhcp_enabled"] = dhcp_enabled;
+    obj["ip_address"] = ip_address;
+    obj["subnet_mask"] = subnet_mask;
+    obj["default_gateway"] = default_gateway;
+    obj["dns_primary"] = dns_primary;
+    obj["dns_secondary"] = dns_secondary;
+    obj["selected"] = selected;
+    return obj;
+}
+
+EthernetConfigInfo EthernetConfigInfo::fromJson(const QJsonObject& json) {
+    EthernetConfigInfo info;
+    info.adapter_name = json["adapter_name"].toString();
+    info.description = json["description"].toString();
+    info.dhcp_enabled = json["dhcp_enabled"].toBool(true);
+    info.ip_address = json["ip_address"].toString();
+    info.subnet_mask = json["subnet_mask"].toString();
+    info.default_gateway = json["default_gateway"].toString();
+    info.dns_primary = json["dns_primary"].toString();
+    info.dns_secondary = json["dns_secondary"].toString();
+    info.selected = json["selected"].toBool(true);
+    return info;
+}
+
+QJsonObject AppDataSourceInfo::toJson() const {
+    QJsonObject obj;
+    obj["name"] = name;
+    obj["category"] = category;
+    obj["relative_path"] = relative_path;
+    obj["size_bytes"] = static_cast<double>(size_bytes);
+    obj["exists"] = exists;
+    obj["selected"] = selected;
+    return obj;
+}
+
+AppDataSourceInfo AppDataSourceInfo::fromJson(const QJsonObject& json) {
+    AppDataSourceInfo info;
+    info.name = json["name"].toString();
+    info.category = json["category"].toString();
+    info.relative_path = json["relative_path"].toString();
+    info.size_bytes = qint64FromJson(json, "size_bytes");
+    info.exists = json["exists"].toBool(false);
+    info.selected = json["selected"].toBool(true);
+    return info;
 }
 
 } // namespace sak

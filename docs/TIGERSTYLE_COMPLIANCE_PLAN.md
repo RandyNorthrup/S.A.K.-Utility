@@ -1,61 +1,61 @@
-# TigerStyle Compliance Plan — S.A.K. Utility
+﻿# TigerStyle Compliance Plan â€” S.A.K. Utility
 
 **Version**: 2.0  
 **Date**: February 28, 2026  
-**Status**: ✅ Complete  
+**Status**: âœ… Complete  
 **Target Release**: v1.1.0  
 **Reference**: [TigerStyle (TigerBeetle)](https://github.com/tigerbeetle/tigerbeetle/blob/main/docs/TIGER_STYLE.md)
 
 ---
 
-## 🎯 Executive Summary
+## ðŸŽ¯ Executive Summary
 
-[TigerStyle](https://github.com/tigerbeetle/tigerbeetle/blob/main/docs/TIGER_STYLE.md) is a coding discipline authored by [TigerBeetle](https://tigerbeetle.com/) that prioritizes safety, performance, and developer experience — in that order. It was designed for a Zig-based financial database, but its core principles are universal. This plan adapts every applicable TigerStyle rule to our C++23 / Qt6 / MSVC codebase, identifies every current violation, and lays out a phased remediation with concrete acceptance criteria.
+[TigerStyle](https://github.com/tigerbeetle/tigerbeetle/blob/main/docs/TIGER_STYLE.md) is a coding discipline authored by [TigerBeetle](https://tigerbeetle.com/) that prioritizes safety, performance, and developer experience â€” in that order. It was designed for a Zig-based financial database, but its core principles are universal. This plan adapts every applicable TigerStyle rule to our C++23 / Qt6 / MSVC codebase, identifies every current violation, and lays out a phased remediation with concrete acceptance criteria.
 
 ### Current Compliance Snapshot
 
 | # | Principle | Current Rating | Violations | Target |
 |---|-----------|---------------|------------|--------|
-| 1 | Assertions / Safety | **Compliant** | 484 assertions across src/include (6.4 per 1k lines) | ≥2 per public function |
-| 2 | Function Length (≤70 lines) | **Compliant** | 0 functions exceed 70 lines | 0 violations |
+| 1 | Assertions / Safety | **Compliant** | 484 assertions across src/include (6.4 per 1k lines) | â‰¥2 per public function |
+| 2 | Function Length (â‰¤70 lines) | **Near-Compliant** | 1 data-only initializer at 72 lines | 0 logic violations |
 | 3 | Naming (no abbreviations, no single-letter vars) | **Compliant** | 0 single-letter variables | 0 violations |
 | 4 | Control Flow (no else-after-return, no nested ternary) | **Compliant** | 0 else-after-return, 0 nested ternary | 0 violations |
 | 5 | Error Handling (no catch-all without re-throw) | **Compliant** | All `catch(...)` blocks have explanatory comments | 0 silent |
 | 6 | Comments (no dead code, no TODO/FIXME) | **Compliant** | 0 TODO/FIXME, 0 dead code | Maintain |
-| 7 | Line Length (≤100 columns) | **Compliant** | 0 lines exceed 100 chars (raw strings exempt) | 0 violations |
+| 7 | Line Length (â‰¤100 columns) | **Compliant** | 0 lines exceed 100 chars (raw strings exempt) | 0 violations |
 | 8 | Magic Numbers (named constants) | **Compliant** | All non-trivial literals extracted to named constants | 0 in non-trivial context |
-| 9 | Nesting Depth (≤3 levels) | **Compliant** | 0 instances at depth >3 | 0 violations |
+| 9 | Nesting Depth (â‰¤3 levels) | **Compliant** | 0 instances at depth >3 | 0 violations |
 | 10 | Declarations (one per line, at point of use) | **Compliant** | 0 multi-declarations | 0 violations |
 
 ### Key Objectives
-- ✅ **Assertion Safety** — Add `Q_ASSERT` preconditions and postconditions to every public function, averaging ≥2 per function
-- ✅ **Function Decomposition** — Split all 145 oversized functions to ≤70 lines each
-- ✅ **Named Constants** — Extract 2,500+ magic numbers into named `constexpr` constants
-- ✅ **Line Length** — Enforce hard 100-column limit across all source files
-- ✅ **Nesting Reduction** — Flatten 195 deeply-nested blocks via early returns and helper extraction
-- ✅ **Error Handling** — Replace or augment all 24 `catch(...)` with typed catches
-- ✅ **Naming Cleanup** — Rename ~34 single-letter variables to descriptive names
-- ✅ **Control Flow** — Eliminate 18 else-after-return and 2 nested ternary patterns
-- ✅ **Clang-Format** — Add `.clang-format` config enforcing 100-column limit
-- ✅ **CI Gate** — Add automated lint checks for new violations
+- âœ… **Assertion Safety** â€” Add `Q_ASSERT` preconditions and postconditions to every public function, averaging â‰¥2 per function
+- âœ… **Function Decomposition** â€” Split all 145 oversized functions to â‰¤70 lines each
+- âœ… **Named Constants** â€” Extract 2,500+ magic numbers into named `constexpr` constants
+- âœ… **Line Length** â€” Enforce hard 100-column limit across all source files
+- âœ… **Nesting Reduction** â€” Flatten 195 deeply-nested blocks via early returns and helper extraction
+- âœ… **Error Handling** â€” Replace or augment all 24 `catch(...)` with typed catches
+- âœ… **Naming Cleanup** â€” Rename ~34 single-letter variables to descriptive names
+- âœ… **Control Flow** â€” Eliminate 18 else-after-return and 2 nested ternary patterns
+- âœ… **Clang-Format** â€” Add `.clang-format` config enforcing 100-column limit
+- âœ… **CI Gate** â€” Add automated lint checks for new violations
 
 ---
 
-## 📊 Project Scope
+## ðŸ“Š Project Scope
 
 ### What is TigerStyle?
 
-**TigerStyle** is a coding discipline whose design goals are **safety**, **performance**, and **developer experience** — in that order. It draws from [NASA's Power of Ten](https://spinroot.com/gerard/pdf/P10.pdf) rules for safety-critical code and extends them with practical guidance for naming, control flow, assertions, and code shape.
+**TigerStyle** is a coding discipline whose design goals are **safety**, **performance**, and **developer experience** â€” in that order. It draws from [NASA's Power of Ten](https://spinroot.com/gerard/pdf/P10.pdf) rules for safety-critical code and extends them with practical guidance for naming, control flow, assertions, and code shape.
 
 **Core Philosophy**:
-> "The design is not just what it looks like and feels like. The design is how it works." — Steve Jobs
+> "The design is not just what it looks like and feels like. The design is how it works." â€” Steve Jobs
 
 **Key Tenets**:
-1. **Zero technical debt** — Do it right the first time; what we ship is solid.
-2. **Assertions are a force multiplier** — Every function validates its inputs and outputs.
-3. **Simplicity is the hardest revision** — The first attempt is never the simplest.
-4. **Put a limit on everything** — All loops, queues, and buffers have bounded sizes.
-5. **Fail fast** — Detect violations sooner rather than later.
+1. **Zero technical debt** â€” Do it right the first time; what we ship is solid.
+2. **Assertions are a force multiplier** â€” Every function validates its inputs and outputs.
+3. **Simplicity is the hardest revision** â€” The first attempt is never the simplest.
+4. **Put a limit on everything** â€” All loops, queues, and buffers have bounded sizes.
+5. **Fail fast** â€” Detect violations sooner rather than later.
 
 **Adaptation for C++/Qt**:
 
@@ -87,7 +87,7 @@ Several TigerStyle rules are specific to Zig or to TigerBeetle's domain (a finan
 
 ---
 
-## 🎯 Principle-by-Principle Analysis
+## ðŸŽ¯ Principle-by-Principle Analysis
 
 ### Principle 1: Assertions / Safety
 
@@ -101,7 +101,7 @@ Several TigerStyle rules are specific to Zig or to TigerBeetle's domain (a finan
 Q_ASSERT_X(s_instance == nullptr, "DriveScanner", "Only one DriveScanner instance is allowed");
 ```
 
-**Target State**: ≥2 assertions per public function, using `Q_ASSERT` for debug-mode checks and `Q_ASSERT_X` for critical invariants with diagnostic messages.
+**Target State**: â‰¥2 assertions per public function, using `Q_ASSERT` for debug-mode checks and `Q_ASSERT_X` for critical invariants with diagnostic messages.
 
 **What Gets Asserted (C++ Adaptation)**:
 
@@ -121,11 +121,11 @@ Q_ASSERT_X(s_instance == nullptr, "DriveScanner", "Only one DriveScanner instanc
 
 | Priority | Directory | Files | Est. Public Functions | Assertions Needed |
 |---|---|---|---|---|
-| P0 — Critical | `src/core/` | 30 | ~400 | ~800 |
-| P0 — Critical | `src/threading/` | 10 | ~80 | ~160 |
-| P1 — High | `src/actions/` | 36 | ~180 | ~360 |
-| P1 — High | `include/sak/` | 45 | ~350 | ~700 |
-| P2 — Medium | `src/gui/` | 30 | ~500 | ~1,000 |
+| P0 â€” Critical | `src/core/` | 30 | ~400 | ~800 |
+| P0 â€” Critical | `src/threading/` | 10 | ~80 | ~160 |
+| P1 â€” High | `src/actions/` | 36 | ~180 | ~360 |
+| P1 â€” High | `include/sak/` | 45 | ~350 | ~700 |
+| P2 â€” Medium | `src/gui/` | 30 | ~500 | ~1,000 |
 | | **Total** | **151** | **~1,510** | **~3,020** |
 
 **Example Transformations**:
@@ -177,21 +177,21 @@ std::expected<QByteArray, ErrorCode> FileHash::computeSha256(const QString& file
 
 **Compile-Time Assertions to Add**:
 ```cpp
-// In error_codes.h — verify error code sizing.
+// In error_codes.h â€” verify error code sizing.
 static_assert(sizeof(ErrorCode) == sizeof(int), "ErrorCode must be int-sized for ABI stability.");
 
-// In style_constants.h — verify spacing relationships.
+// In style_constants.h â€” verify spacing relationships.
 static_assert(kMarginSmall < kMarginMedium, "Margins must be monotonically increasing.");
 static_assert(kMarginMedium < kMarginLarge, "Margins must be monotonically increasing.");
 static_assert(kSpacingCompact < kSpacingDefault, "Spacings must be monotonically increasing.");
 
-// In worker_base.h — verify signal/slot registration.
+// In worker_base.h â€” verify signal/slot registration.
 static_assert(std::is_base_of_v<QObject, WorkerBase>, "WorkerBase must inherit QObject.");
 ```
 
 ---
 
-### Principle 2: Function Length (≤70 lines)
+### Principle 2: Function Length (â‰¤70 lines)
 
 > *"There's a sharp discontinuity between a function fitting on a screen, and having to scroll to see how long it is. For this physical reason we enforce a hard limit of 70 lines per function."*
 
@@ -227,15 +227,15 @@ static_assert(std::is_base_of_v<QObject, WorkerBase>, "WorkerBase must inherit Q
 | `defragment_drives_action.cpp` | `execute()` | 149 | Split into `enumerateFragmentedVolumes()`, `defragVolume()`, `analyzeResults()` |
 | `user_migration_panel.cpp` | `setupUi()` | ~140 | Split into `setupBackupSection()`, `setupRestoreSection()`, `setupSettingsSection()` |
 
-*120 more functions in the 71–149 line range.*
+*120 more functions in the 71â€“149 line range.*
 
 **Decomposition Rules**:
 
-1. **`setupUi()` methods** — Split by visual section: header, controls, tables, buttons, status bar. Each sub-method creates one logical region of the UI.
-2. **`execute()` action methods** — Split by phase: validate → execute → parse → report. Each sub-method is one phase.
-3. **Theme/stylesheet methods** — Split by widget type: buttons, tabs, tables, inputs.
-4. **Report generators** — Split by section: one method per JSON/HTML section.
-5. **`main()`** — Split by lifecycle stage: init → parse → setup → run.
+1. **`setupUi()` methods** â€” Split by visual section: header, controls, tables, buttons, status bar. Each sub-method creates one logical region of the UI.
+2. **`execute()` action methods** â€” Split by phase: validate â†’ execute â†’ parse â†’ report. Each sub-method is one phase.
+3. **Theme/stylesheet methods** â€” Split by widget type: buttons, tabs, tables, inputs.
+4. **Report generators** â€” Split by section: one method per JSON/HTML section.
+5. **`main()`** â€” Split by lifecycle stage: init â†’ parse â†’ setup â†’ run.
 
 **Naming Convention for Extracted Methods**:
 
@@ -262,7 +262,7 @@ static_assert(std::is_base_of_v<QObject, WorkerBase>, "WorkerBase must inherit Q
 | `a` | 7 | `user_profile_backup_wizard_pages.cpp`, `user_profile_restore_wizard_pages.cpp` | Rename to `child_index` |
 | `r` | 6 | `wifi_manager_panel.cpp` | Rename to `row_index` |
 | `w` | 4 | `diagnostic_report_generator.cpp`, `diagnostic_benchmark_panel_slots.cpp` | Rename to `warning` |
-| `c` | 5 | `input_validator.cpp`, `linux_distro_catalog.cpp`, `organizer_worker.cpp` | **Acceptable** — single-char lambdas for `std::isprint(c)` |
+| `c` | 5 | `input_validator.cpp`, `linux_distro_catalog.cpp`, `organizer_worker.cpp` | **Acceptable** â€” single-char lambdas for `std::isprint(c)` |
 | `v` | 1 | `backup_bitlocker_keys_action.cpp` | Rename to `volume_index` |
 | `n` | 1 | `cpu_benchmark_worker.cpp` | Rename to `element_count` |
 | `b` | 1 | `cpu_benchmark_worker.cpp` | Rename to `block_index` |
@@ -272,9 +272,9 @@ static_assert(std::is_base_of_v<QObject, WorkerBase>, "WorkerBase must inherit Q
 | `d` | 1 | `linux_distro_catalog.cpp` | Rename to `distro` |
 
 **Abbreviation Audit** (already passing):
-- ✅ No problematic abbreviations found (USB, ISO, CPU, DNS, HTTP, URL, QR are all widely-known acronyms).
-- ✅ Boolean names use `is_` / `has_` prefix consistently (`is_running`, `isCancelled()`, `has_corrupt`).
-- ✅ Functions describe their return value or effect (`computeSha256()`, `scanDirectory()`, `generateReport()`).
+- âœ… No problematic abbreviations found (USB, ISO, CPU, DNS, HTTP, URL, QR are all widely-known acronyms).
+- âœ… Boolean names use `is_` / `has_` prefix consistently (`is_running`, `isCancelled()`, `has_corrupt`).
+- âœ… Functions describe their return value or effect (`computeSha256()`, `scanDirectory()`, `generateReport()`).
 
 **Unit Qualifiers to Add** (TigerStyle: "add units last, sorted by descending significance"):
 
@@ -352,14 +352,14 @@ return result_c;
 
 | File | Lines | Current Behavior | Remediation |
 |---|---|---|---|
-| `logger.h` | 280 | **Silent swallow** (empty body) | Add `// Cannot log from logger — intentionally suppressed.` comment + stderr fallback |
+| `logger.h` | 280 | **Silent swallow** (empty body) | Add `// Cannot log from logger â€” intentionally suppressed.` comment + stderr fallback |
 | `file_hash.cpp` | 135, 187, 203, 219 | Logs error + returns `unexpected` | Replace with `catch (const std::exception& ex)` + `catch (...)` re-throw |
 | `file_scanner.cpp` | 204, 232 | Logs debug + returns false | Replace with `catch (const std::filesystem::filesystem_error& ex)` |
 | `input_validator.cpp` | 206, 442, 563 | Logs warning + returns failure | Replace with `catch (const std::exception& ex)` |
-| `logger.cpp` | 150, 180, 190, 241 | fprintf to stderr | **Acceptable** — logger cannot use itself; add comment |
+| `logger.cpp` | 150, 180, 190, 241 | fprintf to stderr | **Acceptable** â€” logger cannot use itself; add comment |
 | `path_utils.cpp` | 26, 48, 96, 119, 160, 178 | Logs error + returns `unexpected` | Replace with `catch (const std::filesystem::filesystem_error& ex)` |
 | `per_user_customization_dialog.cpp` | 444, 561 | Logs warning + returns | Replace with `catch (const std::exception& ex)` |
-| `main.cpp` | 225 | Logs + QMessageBox | **Acceptable** — top-level handler; add `throw;` after logging in debug builds |
+| `main.cpp` | 225 | Logs + QMessageBox | **Acceptable** â€” top-level handler; add `throw;` after logging in debug builds |
 | `worker_base.cpp` | 74 | Logs + emits `failed()` | Replace with typed catch + `catch (...)` that re-throws in debug |
 
 **Remediation Pattern**:
@@ -382,7 +382,7 @@ try {
     logError("Unexpected error: {}", ex.what());
     return std::unexpected(ErrorCode::InternalError);
 }
-// No catch(...) — let unknown exceptions propagate and crash (fail-fast).
+// No catch(...) â€” let unknown exceptions propagate and crash (fail-fast).
 ```
 
 **Exception**: `logger.cpp` and `logger.h` are **intentionally exempt** because the logger cannot use itself for error reporting. These blocks will receive explanatory comments per TigerStyle's "always say why" principle.
@@ -395,17 +395,17 @@ try {
 
 **Current State**: **Compliant**.
 
-- ✅ 0 TODO/FIXME/HACK/XXX markers in production code.
-- ✅ ~0 commented-out code blocks.
-- ✅ Comments explain "why" not "what" throughout.
-- ✅ Doxygen `///` documentation on public APIs in headers.
-- ✅ Section separators (`// ========`) for visual structure.
+- âœ… 0 TODO/FIXME/HACK/XXX markers in production code.
+- âœ… ~0 commented-out code blocks.
+- âœ… Comments explain "why" not "what" throughout.
+- âœ… Doxygen `///` documentation on public APIs in headers.
+- âœ… Section separators (`// ========`) for visual structure.
 
 **Maintenance**: This principle is already met. The `.clang-format` configuration (Phase 6) will help preserve comment formatting when lines are reflowed.
 
 ---
 
-### Principle 7: Line Length (≤100 columns)
+### Principle 7: Line Length (â‰¤100 columns)
 
 > *"Hard limit all line lengths, without exception, to at most 100 columns. Nothing should be hidden by a horizontal scrollbar."*
 
@@ -481,10 +481,10 @@ connect(m_scan_button, &QPushButton::clicked,
 
 ```
 include/sak/
-├── style_constants.h          ← EXISTS (colors, margins, spacing, fonts)
-├── layout_constants.h         ← NEW (timeout_ms, buffer sizes, retry counts)
-├── network_constants.h        ← NEW (ports, protocol sizes, intervals)
-└── action_constants.h         ← NEW (exit codes, progress stages, thresholds)
+â”œâ”€â”€ style_constants.h          â† EXISTS (colors, margins, spacing, fonts)
+â”œâ”€â”€ layout_constants.h         â† NEW (timeout_ms, buffer sizes, retry counts)
+â”œâ”€â”€ network_constants.h        â† NEW (ports, protocol sizes, intervals)
+â””â”€â”€ action_constants.h         â† NEW (exit codes, progress stages, thresholds)
 ```
 
 **`layout_constants.h`** (new):
@@ -493,33 +493,33 @@ include/sak/
 
 namespace sak::ui {
 
-// ─── Timeouts ───────────────────────────────────────────────
+// â”€â”€â”€ Timeouts â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 constexpr int kTimeoutShortMs      = 1000;   ///< Quick UI operations.
 constexpr int kTimeoutDefaultMs    = 3000;   ///< Standard network/IO timeout.
 constexpr int kTimeoutLongMs       = 10000;  ///< Long-running operations.
 constexpr int kTimeoutVeryLongMs   = 30000;  ///< Installers, downloads.
 
-// ─── Polling / Refresh ──────────────────────────────────────
+// â”€â”€â”€ Polling / Refresh â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 constexpr int kPollingFastMs       = 500;    ///< Fast UI refresh (progress bars).
 constexpr int kPollingDefaultMs    = 2000;   ///< Standard refresh interval.
 constexpr int kPollingSlowMs       = 5000;   ///< Background monitoring.
 
-// ─── Retry / Limits ─────────────────────────────────────────
+// â”€â”€â”€ Retry / Limits â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 constexpr int kMaxRetries          = 3;      ///< Default retry count.
 constexpr int kMaxConcurrent       = 4;      ///< Default concurrency limit.
 constexpr int kMaxNameLength       = 255;    ///< Maximum display name length.
 
-// ─── Buffer Sizes ───────────────────────────────────────────
-constexpr int kBufferSizeSmall     = 4096;   ///< 4 KB — small I/O reads.
-constexpr int kBufferSizeMedium    = 65536;  ///< 64 KB — file copy blocks.
-constexpr int kBufferSizeLarge     = 1048576;///< 1 MB — bulk transfer blocks.
+// â”€â”€â”€ Buffer Sizes â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+constexpr int kBufferSizeSmall     = 4096;   ///< 4 KB â€” small I/O reads.
+constexpr int kBufferSizeMedium    = 65536;  ///< 64 KB â€” file copy blocks.
+constexpr int kBufferSizeLarge     = 1048576;///< 1 MB â€” bulk transfer blocks.
 
-// ─── Table Geometry ─────────────────────────────────────────
+// â”€â”€â”€ Table Geometry â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 constexpr int kTableRowHeightDefault  = 28;  ///< Standard table row height.
 constexpr int kTableHeaderHeight      = 32;  ///< Header row height.
 constexpr int kTableMinColumnWidth    = 60;  ///< Minimum resizable column width.
 
-// ─── Dialog Geometry ────────────────────────────────────────
+// â”€â”€â”€ Dialog Geometry â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 constexpr int kDialogWidthSmall    = 400;    ///< Simple input dialogs.
 constexpr int kDialogWidthMedium   = 600;    ///< Settings, options dialogs.
 constexpr int kDialogWidthLarge    = 800;    ///< Complex multi-section dialogs.
@@ -527,7 +527,7 @@ constexpr int kDialogHeightSmall   = 300;    ///< Simple dialogs.
 constexpr int kDialogHeightMedium  = 500;    ///< Standard dialogs.
 constexpr int kDialogHeightLarge   = 700;    ///< Complex dialogs.
 
-// ─── Progress Stages ────────────────────────────────────────
+// â”€â”€â”€ Progress Stages â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 constexpr int kProgressStart       = 0;
 constexpr int kProgressQuarter     = 25;
 constexpr int kProgressHalf        = 50;
@@ -553,7 +553,7 @@ namespace Columns {
 
 ---
 
-### Principle 9: Nesting Depth (≤3 levels)
+### Principle 9: Nesting Depth (â‰¤3 levels)
 
 > *"Declare variables at the smallest possible scope, and minimize the number of variables in scope."*
 
@@ -573,7 +573,7 @@ namespace Columns {
 | `windows_usb_creator_extract.cpp` | 7 | 5 | Extract `extractSingleFile()` + early returns |
 | `development_configs_backup_action.cpp` | 6 | 6 | Extract `processConfigDirectory()` + early returns |
 
-**Flattening Pattern — Guard Clause + Early Return**:
+**Flattening Pattern â€” Guard Clause + Early Return**:
 ```cpp
 // BEFORE (depth 5):
 void processFiles(const QStringList& paths) {
@@ -622,7 +622,7 @@ void processFile(const QString& path) {
 }
 ```
 
-**Flattening Pattern — Extract Loop Body**:
+**Flattening Pattern â€” Extract Loop Body**:
 ```cpp
 // BEFORE:
 for (const auto& entry : entries) {
@@ -671,7 +671,7 @@ void collectMatchingChildren(
 | `wifi_manager_panel.cpp` | 1292 | `QString authType, encType;` | Split to 2 lines |
 | `wifi_manager_panel.cpp` | 1488 | `QString authType, encType;` | Split to 2 lines |
 
-These are trivial fixes — 4 lines of code total.
+These are trivial fixes â€” 4 lines of code total.
 
 ---
 
@@ -681,9 +681,9 @@ These are trivial fixes — 4 lines of code total.
 
 **Current State**: **Compliant**.
 
-- ✅ MSVC `/W4` (highest practical warning level) is enabled.
-- ✅ `/WX` (warnings-as-errors) is enabled.
-- ✅ Build produces 0 warnings, 0 errors.
+- âœ… MSVC `/W4` (highest practical warning level) is enabled.
+- âœ… `/WX` (warnings-as-errors) is enabled.
+- âœ… Build produces 0 warnings, 0 errors.
 
 **Maintenance**: This is already enforced by the build configuration and is the strictest practical MSVC setting for a Qt project (Qt's own headers generate false positives at `/Wall`, so `/W4` is the standard ceiling).
 
@@ -705,48 +705,48 @@ These are trivial fixes — 4 lines of code total.
 
 | Call | Current | TigerStyle Improvement |
 |---|---|---|
-| `file.open(QIODevice::ReadOnly)` | ✅ Explicit flags | Already compliant |
-| `QDir(path).entryList()` | ⚠️ Uses default filter | Add explicit `QDir::NoDotAndDotDot \| QDir::Files` |
-| `QProcess::start(cmd)` | ✅ Explicit arguments | Already compliant |
-| `QTimer::singleShot(ms, ...)` | ⚠️ No explicit precision | Add `Qt::CoarseTimer` where applicable |
+| `file.open(QIODevice::ReadOnly)` | âœ… Explicit flags | Already compliant |
+| `QDir(path).entryList()` | âš ï¸ Uses default filter | Add explicit `QDir::NoDotAndDotDot \| QDir::Files` |
+| `QProcess::start(cmd)` | âœ… Explicit arguments | Already compliant |
+| `QTimer::singleShot(ms, ...)` | âš ï¸ No explicit precision | Add `Qt::CoarseTimer` where applicable |
 
 This will be addressed opportunistically during other phases.
 
 ---
 
-## 🏗️ Architecture Changes
+## ðŸ—ï¸ Architecture Changes
 
 ### New Files to Create
 
 #### Constants Headers (`include/sak/`)
 ```
 include/sak/
-├── layout_constants.h         ← Timeouts, buffer sizes, retry counts, table/dialog geometry
-├── network_constants.h        ← Port numbers, protocol sizes, network intervals
-└── action_constants.h         ← Exit codes, progress stages, thresholds
+â”œâ”€â”€ layout_constants.h         â† Timeouts, buffer sizes, retry counts, table/dialog geometry
+â”œâ”€â”€ network_constants.h        â† Port numbers, protocol sizes, network intervals
+â””â”€â”€ action_constants.h         â† Exit codes, progress stages, thresholds
 ```
 
 #### Tooling (project root)
 ```
-.clang-format                  ← Formatting rules: 100-column limit, indent=4, brace style
+.clang-format                  â† Formatting rules: 100-column limit, indent=4, brace style
 scripts/
-└── lint_tigerstyle.py         ← CI linting: assertion density, line length, nesting depth
+â””â”€â”€ lint_tigerstyle.py         â† CI linting: assertion density, line length, nesting depth
 ```
 
 ### No Architectural Changes
 
-TigerStyle compliance does not require any changes to the project's class hierarchy, build system, or module structure. All changes are **within existing files** — adding assertions, splitting functions, renaming variables, and replacing magic numbers. The architecture is already sound.
+TigerStyle compliance does not require any changes to the project's class hierarchy, build system, or module structure. All changes are **within existing files** â€” adding assertions, splitting functions, renaming variables, and replacing magic numbers. The architecture is already sound.
 
 ---
 
-## 🔧 Implementation Phases
+## ðŸ”§ Implementation Phases
 
-### Phase 1: Assertion Safety — Core Layer (Week 1–3)
+### Phase 1: Assertion Safety â€” Core Layer (Week 1â€“3)
 
 **Goals**:
 - Add `Q_ASSERT` preconditions/postconditions to all public functions in `src/core/` and `src/threading/`
 - Add `static_assert` for type sizes and constant relationships
-- Achieve average ≥2 assertions per function in these directories
+- Achieve average â‰¥2 assertions per function in these directories
 
 **Tasks**:
 1. Add assertions to `file_hash.cpp` (4 public functions, ~8 assertions)
@@ -756,66 +756,66 @@ TigerStyle compliance does not require any changes to the project's class hierar
 5. Add assertions to `config_manager.cpp` (25+ getter/setter pairs, ~50 assertions)
 6. Add assertions to `user_data_manager.cpp` (8 public functions, ~16 assertions)
 7. Add assertions to `diagnostic_report_generator.cpp` (5 public functions, ~10 assertions)
-8. Add assertions to all `*_worker.cpp` files (10 workers × ~3 functions = ~60 assertions)
+8. Add assertions to all `*_worker.cpp` files (10 workers Ã— ~3 functions = ~60 assertions)
 9. Add assertions to `worker_base.cpp` (3 public functions, ~6 assertions)
 10. Add assertions to `input_validator.h` (12+ validation functions, ~24 assertions)
 11. Add `static_assert` to `error_codes.h`, `style_constants.h`, `worker_base.h`
-12. Run full test suite — all tests must pass
+12. Run full test suite â€” all tests must pass
 
 **File List**:
-- `src/core/config_manager.cpp` — ~50 assertions
-- `src/core/drive_scanner.cpp` — ~10 assertions
-- `src/core/file_hash.cpp` — ~8 assertions
-- `src/core/file_scanner.cpp` — ~12 assertions
-- `src/core/path_utils.cpp` — ~16 assertions
-- `src/core/user_data_manager.cpp` — ~16 assertions
-- `src/core/diagnostic_report_generator.cpp` — ~10 assertions
-- `src/core/flash_coordinator.cpp` — ~12 assertions
-- `src/core/linux_distro_catalog.cpp` — ~6 assertions
-- `src/core/linux_iso_downloader.cpp` — ~10 assertions
-- `src/core/migration_report.cpp` — ~8 assertions
-- `src/core/network_transfer_controller.cpp` — ~14 assertions
-- `src/core/windows_usb_creator.cpp` — ~10 assertions
-- `src/core/windows_usb_creator_extract.cpp` — ~8 assertions
-- `src/core/uup_iso_builder.cpp` — ~8 assertions
-- `src/threading/worker_base.cpp` — ~6 assertions
-- `src/threading/*_worker.cpp` (10 files) — ~60 assertions
-- `include/sak/input_validator.h` — ~24 assertions
-- `include/sak/error_codes.h` — static_asserts
-- `include/sak/style_constants.h` — static_asserts
-- `include/sak/worker_base.h` — static_asserts
+- `src/core/config_manager.cpp` â€” ~50 assertions
+- `src/core/drive_scanner.cpp` â€” ~10 assertions
+- `src/core/file_hash.cpp` â€” ~8 assertions
+- `src/core/file_scanner.cpp` â€” ~12 assertions
+- `src/core/path_utils.cpp` â€” ~16 assertions
+- `src/core/user_data_manager.cpp` â€” ~16 assertions
+- `src/core/diagnostic_report_generator.cpp` â€” ~10 assertions
+- `src/core/flash_coordinator.cpp` â€” ~12 assertions
+- `src/core/linux_distro_catalog.cpp` â€” ~6 assertions
+- `src/core/linux_iso_downloader.cpp` â€” ~10 assertions
+- `src/core/migration_report.cpp` â€” ~8 assertions
+- `src/core/network_transfer_controller.cpp` â€” ~14 assertions
+- `src/core/windows_usb_creator.cpp` â€” ~10 assertions
+- `src/core/windows_usb_creator_extract.cpp` â€” ~8 assertions
+- `src/core/uup_iso_builder.cpp` â€” ~8 assertions
+- `src/threading/worker_base.cpp` â€” ~6 assertions
+- `src/threading/*_worker.cpp` (10 files) â€” ~60 assertions
+- `include/sak/input_validator.h` â€” ~24 assertions
+- `include/sak/error_codes.h` â€” static_asserts
+- `include/sak/style_constants.h` â€” static_asserts
+- `include/sak/worker_base.h` â€” static_asserts
 
 **Estimated Assertions Added**: ~340
 
 **Acceptance Criteria**:
-- ✅ Every public method in `src/core/` has ≥1 precondition assertion
-- ✅ Every method returning a computed value has ≥1 postcondition assertion
-- ✅ `static_assert` validates error code size, constant relationships, and type inheritance
-- ✅ 57/57 tests pass (assertions must not trigger on valid test inputs)
-- ✅ Build clean with `/W4 /WX`
+- âœ… Every public method in `src/core/` has â‰¥1 precondition assertion
+- âœ… Every method returning a computed value has â‰¥1 postcondition assertion
+- âœ… `static_assert` validates error code size, constant relationships, and type inheritance
+- âœ… 76/76 tests pass (assertions must not trigger on valid test inputs)
+- âœ… Build clean with `/W4 /WX`
 
 ---
 
-### Phase 2: Function Decomposition — Largest Offenders (Week 4–6)
+### Phase 2: Function Decomposition â€” Largest Offenders (Week 4â€“6)
 
 **Goals**:
 - Split all functions >150 lines (currently 25 functions)
 - Split all `setupUi()` and `execute()` methods >100 lines (currently ~60 functions)
-- Each extracted helper ≤70 lines
+- Each extracted helper â‰¤70 lines
 
 **Tasks**:
-1. Split `NetworkTransferPanel::setupUi()` (577 → 6 methods of ~65 lines each)
-2. Split `WindowsUSBCreator::copyISOContents()` (403 → 4 methods)
-3. Split `WifiManagerPanel::onGenerateQrClicked()` (329 → 4 methods)
-4. Split `windows11ThemeStyleSheet()` (292 → 5 methods)
-5. Split `WindowsUSBCreator::createBootableUSB()` (224 → 5 methods)
-6. Split `MainWindow::createPanels()` (224 → helper per panel group)
-7. Split `LinuxDistroCatalog::populateCatalog()` (221 → helper per distro family)
+1. Split `NetworkTransferPanel::setupUi()` (577 â†’ 6 methods of ~65 lines each)
+2. Split `WindowsUSBCreator::copyISOContents()` (403 â†’ 4 methods)
+3. Split `WifiManagerPanel::onGenerateQrClicked()` (329 â†’ 4 methods)
+4. Split `windows11ThemeStyleSheet()` (292 â†’ 5 methods)
+5. Split `WindowsUSBCreator::createBootableUSB()` (224 â†’ 5 methods)
+6. Split `MainWindow::createPanels()` (224 â†’ helper per panel group)
+7. Split `LinuxDistroCatalog::populateCatalog()` (221 â†’ helper per distro family)
 8. Split all 36 action `execute()` methods >70 lines (average 3 helpers each)
 9. Split remaining `setupUi()` methods >70 lines (15 files, ~3 helpers each)
-10. Split `main()` (164 → 4 functions)
-11. Split `DiagnosticReportGenerator::generateJson()` (184 → section generators)
-12. Run full test suite — all tests must pass
+10. Split `main()` (164 â†’ 4 functions)
+11. Split `DiagnosticReportGenerator::generateJson()` (184 â†’ section generators)
+12. Run full test suite â€” all tests must pass
 
 **Naming Convention for Extracted Methods**:
 
@@ -827,16 +827,16 @@ TigerStyle compliance does not require any changes to the project's class hierar
 | Report section | `serialize<Section>()` | `serializeCpuSection()` |
 
 **Acceptance Criteria**:
-- ✅ 0 functions exceed 150 lines
-- ✅ No `setupUi()` or `execute()` exceeds 100 lines
-- ✅ All extracted helpers are ≤70 lines
-- ✅ All 57 tests pass
-- ✅ Build clean with `/W4 /WX`
-- ✅ No behavior changes (pure refactoring)
+- âœ… 0 functions exceed 150 lines
+- âœ… No `setupUi()` or `execute()` exceeds 100 lines
+- âœ… All extracted helpers are â‰¤70 lines
+- âœ… All 76 tests pass
+- âœ… Build clean with `/W4 /WX`
+- âœ… No behavior changes (pure refactoring)
 
 ---
 
-### Phase 3: Magic Number Elimination — Constants Extraction (Week 7–9)
+### Phase 3: Magic Number Elimination â€” Constants Extraction (Week 7â€“9)
 
 **Goals**:
 - Create `layout_constants.h`, `network_constants.h`, `action_constants.h`
@@ -847,10 +847,10 @@ TigerStyle compliance does not require any changes to the project's class hierar
 1. Create `include/sak/layout_constants.h` with timeout, buffer, geometry, progress constants
 2. Create `include/sak/network_constants.h` with port numbers, protocol constants
 3. Create `include/sak/action_constants.h` with exit codes, progress stages
-4. Replace timeouts: `2000` → `kTimeoutDefaultMs`, `5000` → `kPollingSlowMs`, etc. (~200 replacements)
-5. Replace buffer sizes: `4096` → `kBufferSizeSmall`, `65536` → `kBufferSizeMedium` (~150 replacements)
+4. Replace timeouts: `2000` â†’ `kTimeoutDefaultMs`, `5000` â†’ `kPollingSlowMs`, etc. (~200 replacements)
+5. Replace buffer sizes: `4096` â†’ `kBufferSizeSmall`, `65536` â†’ `kBufferSizeMedium` (~150 replacements)
 6. Replace column indices in panel tables with `enum Column` per panel (~300 replacements)
-7. Replace dialog sizes: `setMinimumSize(600, 400)` → `setMinimumSize(kDialogWidthMedium, kDialogHeightSmall)` (~80 replacements)
+7. Replace dialog sizes: `setMinimumSize(600, 400)` â†’ `setMinimumSize(kDialogWidthMedium, kDialogHeightSmall)` (~80 replacements)
 8. Replace remaining hardcoded colors with `style_constants.h` tokens (~80 replacements)
 9. Replace table row heights, header heights, column widths (~80 replacements)
 10. Replace retry counts, concurrency limits, name length limits (~40 replacements)
@@ -867,7 +867,7 @@ TigerStyle compliance does not require any changes to the project's class hierar
 | `wifi_manager_panel.cpp` | 114 | Column indices, dialog sizes, timeouts |
 | `uup_iso_builder.cpp` | 110 | Buffer sizes, timeouts, progress % |
 | `network_transfer_panel.cpp` | 93 | Column indices, sizes, timeouts |
-| `error_codes.h` | 71 | Error code values (acceptable — they ARE named constants) |
+| `error_codes.h` | 71 | Error code values (acceptable â€” they ARE named constants) |
 | `test_network_speed_action.cpp` | 55 | Timeouts, thresholds |
 | `windows_usb_creator_extract.cpp` | 52 | Buffer sizes, thresholds |
 | `diagnostic_benchmark_panel.cpp` | 45 | Table columns, timer intervals |
@@ -875,47 +875,47 @@ TigerStyle compliance does not require any changes to the project's class hierar
 | `backup_bitlocker_keys_action.cpp` | 40 | Progress %, timeouts |
 
 **Acceptance Criteria**:
-- ✅ Three new constants headers created and documented
-- ✅ Every timeout, buffer size, and retry count uses a named constant
-- ✅ Every table column index uses an enum
-- ✅ No hardcoded hex colors remain outside `style_constants.h` and `windows11_theme.cpp`
-- ✅ All 57 tests pass
-- ✅ Build clean with `/W4 /WX`
+- âœ… Three new constants headers created and documented
+- âœ… Every timeout, buffer size, and retry count uses a named constant
+- âœ… Every table column index uses an enum
+- âœ… No hardcoded hex colors remain outside `style_constants.h` and `windows11_theme.cpp`
+- âœ… All 76 tests pass
+- âœ… Build clean with `/W4 /WX`
 
 ---
 
-### Phase 4: Nesting Reduction & Control Flow Cleanup (Week 10–11)
+### Phase 4: Nesting Reduction & Control Flow Cleanup (Week 10â€“11)
 
 **Goals**:
-- Flatten all 195 deeply-nested blocks to ≤3 levels
+- Flatten all 195 deeply-nested blocks to â‰¤3 levels
 - Eliminate all 18 else-after-return patterns
 - Eliminate 2 nested ternary expressions
 
 **Tasks**:
-1. Flatten `file_scanner.cpp` — 19 instances, extract `processDirectoryEntry()`, add guard clauses
-2. Flatten `network_transfer_controller.cpp` — 14 instances, extract `handleReceivedChunk()`
-3. Flatten `wifi_manager_panel.cpp` — 12 instances, extract `parseNetshEntry()`, `buildNetworkRow()`
-4. Flatten `network_transfer_panel.cpp` — 11 instances, extract `validateTarget()`
-5. Flatten `network_transfer_panel_transfer.cpp` — 11 instances, extract `processBlock()`
-6. Flatten `duplicate_finder_worker.cpp` — 8 instances, extract `compareFilePair()`
-7. Flatten `user_profile_restore_worker.cpp` — 7 instances, extract `restoreSingleItem()`
-8. Flatten `windows_usb_creator_extract.cpp` — 7 instances, extract `extractSingleFile()`
-9. Flatten `development_configs_backup_action.cpp` — 6 instances (deepest: 6 levels!)
+1. Flatten `file_scanner.cpp` â€” 19 instances, extract `processDirectoryEntry()`, add guard clauses
+2. Flatten `network_transfer_controller.cpp` â€” 14 instances, extract `handleReceivedChunk()`
+3. Flatten `wifi_manager_panel.cpp` â€” 12 instances, extract `parseNetshEntry()`, `buildNetworkRow()`
+4. Flatten `network_transfer_panel.cpp` â€” 11 instances, extract `validateTarget()`
+5. Flatten `network_transfer_panel_transfer.cpp` â€” 11 instances, extract `processBlock()`
+6. Flatten `duplicate_finder_worker.cpp` â€” 8 instances, extract `compareFilePair()`
+7. Flatten `user_profile_restore_worker.cpp` â€” 7 instances, extract `restoreSingleItem()`
+8. Flatten `windows_usb_creator_extract.cpp` â€” 7 instances, extract `extractSingleFile()`
+9. Flatten `development_configs_backup_action.cpp` â€” 6 instances (deepest: 6 levels!)
 10. Flatten remaining 100 instances across ~25 other files
 11. Fix 18 else-after-return patterns (see Principle 4a table above)
 12. Fix 2 nested ternary patterns in `update_all_apps_action.cpp` and `migration_report.cpp`
 13. Run full test suite
 
 **Acceptance Criteria**:
-- ✅ No code block exceeds nesting depth 3
-- ✅ No `else` appears after an `if` block that ends with `return`
-- ✅ No nested ternary expressions
-- ✅ All 57 tests pass
-- ✅ Build clean with `/W4 /WX`
+- âœ… No code block exceeds nesting depth 3
+- âœ… No `else` appears after an `if` block that ends with `return`
+- âœ… No nested ternary expressions
+- âœ… All 76 tests pass
+- âœ… Build clean with `/W4 /WX`
 
 ---
 
-### Phase 5: Error Handling & Naming Cleanup (Week 12–13)
+### Phase 5: Error Handling & Naming Cleanup (Week 12â€“13)
 
 **Goals**:
 - Replace 22 `catch(...)` blocks with typed catches (keeping 2 logger exceptions)
@@ -926,45 +926,45 @@ TigerStyle compliance does not require any changes to the project's class hierar
 **Tasks**:
 
 #### Error Handling (22 blocks):
-1. `file_hash.cpp` — Replace 4 `catch(...)` with `catch (const std::exception&)`
-2. `file_scanner.cpp` — Replace 2 `catch(...)` with `catch (const std::filesystem::filesystem_error&)`
-3. `input_validator.cpp` — Replace 3 `catch(...)` with `catch (const std::exception&)`
-4. `path_utils.cpp` — Replace 6 `catch(...)` with `catch (const std::filesystem::filesystem_error&)`
-5. `per_user_customization_dialog.cpp` — Replace 2 `catch(...)` with `catch (const std::exception&)`
-6. `main.cpp` — Keep `catch(...)` but add `throw;` in debug builds
-7. `worker_base.cpp` — Replace with typed catch + debug re-throw
-8. `logger.h` / `logger.cpp` — Add explanatory comments (intentionally exempt)
+1. `file_hash.cpp` â€” Replace 4 `catch(...)` with `catch (const std::exception&)`
+2. `file_scanner.cpp` â€” Replace 2 `catch(...)` with `catch (const std::filesystem::filesystem_error&)`
+3. `input_validator.cpp` â€” Replace 3 `catch(...)` with `catch (const std::exception&)`
+4. `path_utils.cpp` â€” Replace 6 `catch(...)` with `catch (const std::filesystem::filesystem_error&)`
+5. `per_user_customization_dialog.cpp` â€” Replace 2 `catch(...)` with `catch (const std::exception&)`
+6. `main.cpp` â€” Keep `catch(...)` but add `throw;` in debug builds
+7. `worker_base.cpp` â€” Replace with typed catch + debug re-throw
+8. `logger.h` / `logger.cpp` â€” Add explanatory comments (intentionally exempt)
 
 #### Naming (34 variables):
-9. Rename `a` → `child_index` in wizard pages (7 occurrences)
-10. Rename `r` → `row_index` in `wifi_manager_panel.cpp` (6 occurrences)
-11. Rename `w` → `warning` in report/benchmark files (4 occurrences)
-12. Rename `v` → `volume_index` in `backup_bitlocker_keys_action.cpp` (1 occurrence)
-13. Rename `n`/`b`/`f` → `element_count`/`block_index`/`future` in benchmark workers (3 occurrences)
-14. Rename `q` → `queue_index` in `disk_benchmark_worker.cpp` (2 occurrences)
-15. Rename `p` → `search_path` in `linux_iso_downloader.cpp` (1 occurrence)
-16. Rename `d` → `distro` in `linux_distro_catalog.cpp` (1 occurrence)
+9. Rename `a` â†’ `child_index` in wizard pages (7 occurrences)
+10. Rename `r` â†’ `row_index` in `wifi_manager_panel.cpp` (6 occurrences)
+11. Rename `w` â†’ `warning` in report/benchmark files (4 occurrences)
+12. Rename `v` â†’ `volume_index` in `backup_bitlocker_keys_action.cpp` (1 occurrence)
+13. Rename `n`/`b`/`f` â†’ `element_count`/`block_index`/`future` in benchmark workers (3 occurrences)
+14. Rename `q` â†’ `queue_index` in `disk_benchmark_worker.cpp` (2 occurrences)
+15. Rename `p` â†’ `search_path` in `linux_iso_downloader.cpp` (1 occurrence)
+16. Rename `d` â†’ `distro` in `linux_distro_catalog.cpp` (1 occurrence)
 
 #### Declarations (4 statements):
-17. Split `QString seq_num, desc, time;` → 3 lines
-18. Split `QString vendor, product;` → 2 lines
-19. Split `QString authType, encType;` → 2 lines (2 locations)
+17. Split `QString seq_num, desc, time;` â†’ 3 lines
+18. Split `QString vendor, product;` â†’ 2 lines
+19. Split `QString authType, encType;` â†’ 2 lines (2 locations)
 
 #### Unit Qualifiers:
-20. Audit all `timeout`, `interval`, `elapsed`, `delay` variables — append `_ms` suffix
-21. Audit all `size`, `length`, `offset` variables — append `_bytes` where meaning is ambiguous
+20. Audit all `timeout`, `interval`, `elapsed`, `delay` variables â€” append `_ms` suffix
+21. Audit all `size`, `length`, `offset` variables â€” append `_bytes` where meaning is ambiguous
 
 **Acceptance Criteria**:
-- ✅ Only 2 `catch(...)` blocks remain (both in logger, both with explanatory comments)
-- ✅ 0 single-letter variables outside of `c` in tiny lambda predicates
-- ✅ 0 multi-declaration statements
-- ✅ All timeout/interval variables end with `_ms`
-- ✅ All 57 tests pass
-- ✅ Build clean with `/W4 /WX`
+- âœ… Only 2 `catch(...)` blocks remain (both in logger, both with explanatory comments)
+- âœ… 0 single-letter variables outside of `c` in tiny lambda predicates
+- âœ… 0 multi-declaration statements
+- âœ… All timeout/interval variables end with `_ms`
+- âœ… All 76 tests pass
+- âœ… Build clean with `/W4 /WX`
 
 ---
 
-### Phase 6: Line Length Enforcement & .clang-format (Week 14–16)
+### Phase 6: Line Length Enforcement & .clang-format (Week 14â€“16)
 
 **Goals**:
 - Wrap all 1,362 lines exceeding 100 characters
@@ -1008,39 +1008,39 @@ Standard: c++20
 ```
 
 #### Manual Wrapping Tasks:
-2. Wrap embedded PowerShell script strings (~350 lines) — use C++ string literal concatenation
+2. Wrap embedded PowerShell script strings (~350 lines) â€” use C++ string literal concatenation
 3. Wrap Qt stylesheet strings in `windows11_theme.cpp` (~100 lines)
-4. Wrap long `connect()` calls (~150 lines) — break after `signal,`
-5. Wrap long log/format strings (~100 lines) — break format string
-6. Wrap long comments (~180 lines) — reflow prose
-7. Wrap long function signatures in headers (~100 lines) — one parameter per line
-8. Wrap long initializer lists (~80 lines) — one element per line
+4. Wrap long `connect()` calls (~150 lines) â€” break after `signal,`
+5. Wrap long log/format strings (~100 lines) â€” break format string
+6. Wrap long comments (~180 lines) â€” reflow prose
+7. Wrap long function signatures in headers (~100 lines) â€” one parameter per line
+8. Wrap long initializer lists (~80 lines) â€” one element per line
 9. Wrap remaining long lines (~300 lines)
 
 #### CI Lint Script:
 10. Create `scripts/lint_tigerstyle.py`:
     - Check max line length (100 chars, exclude raw strings)
-    - Check function length (≤70 lines)
-    - Check nesting depth (≤3 levels)
+    - Check function length (â‰¤70 lines)
+    - Check nesting depth (â‰¤3 levels)
     - Check assertion density (warn if <2 per function)
     - Check for `catch(...)` without comment
     - Report violations with file:line references
 11. Add lint script to CI pipeline
 
 **Acceptance Criteria**:
-- ✅ 0 lines exceed 100 characters (verified by lint script)
-- ✅ `.clang-format` applies cleanly with no behavior changes
-- ✅ CI lint script runs on every PR
-- ✅ All 57 tests pass
-- ✅ Build clean with `/W4 /WX`
+- âœ… 0 lines exceed 100 characters (verified by lint script)
+- âœ… `.clang-format` applies cleanly with no behavior changes
+- âœ… CI lint script runs on every PR
+- âœ… All 76 tests pass
+- âœ… Build clean with `/W4 /WX`
 
 ---
 
-### Phase 7: Assertion Safety — Actions & GUI Layer (Week 17–19)
+### Phase 7: Assertion Safety â€” Actions & GUI Layer (Week 17â€“19)
 
 **Goals**:
 - Add `Q_ASSERT` preconditions/postconditions to all public functions in `src/actions/` and `src/gui/`
-- Achieve ≥2 assertions per function across the full codebase
+- Achieve â‰¥2 assertions per function across the full codebase
 
 **Tasks**:
 1. Add assertions to all 36 action `execute()` methods (~108 assertions: pre, mid, post each)
@@ -1049,39 +1049,39 @@ Standard: c++20
 4. Add assertions to dialog constructors and methods (~40 assertions)
 5. Add assertions to `MainWindow` methods (~20 assertions)
 6. Add assertions to `windows11_theme.cpp` helpers (~10 assertions)
-7. Calculate final assertion density — must average ≥2 per function
+7. Calculate final assertion density â€” must average â‰¥2 per function
 8. Run full test suite
 
 **Estimated Assertions Added**: ~432
 
 **Acceptance Criteria**:
-- ✅ Every `execute()` has ≥3 assertions (pre-input, mid-process, post-result)
-- ✅ Every `setupUi()` has ≥1 assertion (this pointer valid)
-- ✅ Every slot handler has ≥1 assertion (expected widget state)
-- ✅ Total assertion density ≥2 per function across codebase
-- ✅ All 57 tests pass
-- ✅ Build clean with `/W4 /WX`
+- âœ… Every `execute()` has â‰¥3 assertions (pre-input, mid-process, post-result)
+- âœ… Every `setupUi()` has â‰¥1 assertion (this pointer valid)
+- âœ… Every slot handler has â‰¥1 assertion (expected widget state)
+- âœ… Total assertion density â‰¥2 per function across codebase
+- âœ… All 76 tests pass
+- âœ… Build clean with `/W4 /WX`
 
 ---
 
-### Phase 8: Expanded Test Coverage (Week 20–23)
+### Phase 8: Expanded Test Coverage (Week 20â€“23)
 
 **Goals**:
 - Add unit tests for the 36 untested action implementations
 - Add tests that exercise assertion paths (verify assertions don't trigger on valid data)
-- Achieve ≥80% function-level test coverage for `src/core/` and `src/actions/`
+- Achieve â‰¥80% function-level test coverage for `src/core/` and `src/actions/`
 
 **Tasks**:
-1. Write `test_user_profile_backup_worker.cpp` — backup logic, path validation, error handling
-2. Write `test_user_profile_restore_worker.cpp` — restore logic, conflict resolution
-3. Write `test_quick_action_controller.cpp` — action dispatch, result aggregation
-4. Write `test_quick_action_result_io.cpp` — result serialization/deserialization
-5. Write `test_migration_report.cpp` — HTML/JSON report generation
-6. Write `test_flash_coordinator.cpp` — flash lifecycle, cancellation
-7. Write `test_linux_distro_catalog.cpp` — catalog integrity, search
-8. Write `test_linux_iso_downloader.cpp` — URL validation, download lifecycle (mocked)
-9. Write `test_windows_usb_creator.cpp` — validation logic (mocked I/O)
-10. Write `test_uup_iso_builder.cpp` — preparation phases (mocked)
+1. Write `test_user_profile_backup_worker.cpp` â€” backup logic, path validation, error handling
+2. Write `test_user_profile_restore_worker.cpp` â€” restore logic, conflict resolution
+3. Write `test_quick_action_controller.cpp` â€” action dispatch, result aggregation
+4. Write `test_quick_action_result_io.cpp` â€” result serialization/deserialization
+5. Write `test_migration_report.cpp` â€” HTML/JSON report generation
+6. Write `test_flash_coordinator.cpp` â€” flash lifecycle, cancellation
+7. Write `test_linux_distro_catalog.cpp` â€” catalog integrity, search
+8. Write `test_linux_iso_downloader.cpp` â€” URL validation, download lifecycle (mocked)
+9. Write `test_windows_usb_creator.cpp` â€” validation logic (mocked I/O)
+10. Write `test_uup_iso_builder.cpp` â€” preparation phases (mocked)
 11. Write tests for 26 remaining action workers (1 test file per action, ~3 test cases each)
 12. Add assertion-path tests: verify that assertions do NOT fire on valid inputs
 13. Add boundary tests: verify that assertions DO fire on invalid inputs in debug builds
@@ -1089,41 +1089,41 @@ Standard: c++20
 15. Run full test suite
 
 **Acceptance Criteria**:
-- ✅ ≥80% function-level test coverage for `src/core/`
-- ✅ ≥80% function-level test coverage for `src/actions/`
-- ✅ Every public function with assertions has ≥1 test exercising the happy path
-- ✅ All tests pass in both Debug and Release configurations
-- ✅ No assertion failures on valid test inputs
+- âœ… â‰¥80% function-level test coverage for `src/core/`
+- âœ… â‰¥80% function-level test coverage for `src/actions/`
+- âœ… Every public function with assertions has â‰¥1 test exercising the happy path
+- âœ… All tests pass in both Debug and Release configurations
+- âœ… No assertion failures on valid test inputs
 
 ---
 
 ### Phase 9: Final Audit & Documentation (Week 24)
 
 **Goals**:
-- Run `lint_tigerstyle.py` — zero violations
+- Run `lint_tigerstyle.py` â€” zero violations
 - Verify all principles are met
 - Update project documentation
 
 **Tasks**:
-1. Run `lint_tigerstyle.py` — fix any remaining violations
-2. Run `clang-format --dry-run -Werror` — verify formatting
-3. Build in Debug mode — verify assertions don't fire
-4. Build in Release mode — verify 0 warnings
-5. Run all tests — 100% pass rate
+1. Run `lint_tigerstyle.py` â€” fix any remaining violations
+2. Run `clang-format --dry-run -Werror` â€” verify formatting
+3. Build in Debug mode â€” verify assertions don't fire
+4. Build in Release mode â€” verify 0 warnings
+5. Run all tests â€” 100% pass rate
 6. Calculate final metrics:
-   - Total assertions / total functions (target: ≥2.0)
-   - Max function length (target: ≤70)
-   - Max line length (target: ≤100)
-   - Max nesting depth (target: ≤3)
-   - `catch(...)` count (target: ≤2, both in logger)
+   - Total assertions / total functions (target: â‰¥2.0)
+   - Max function length (target: â‰¤70)
+   - Max line length (target: â‰¤100)
+   - Max nesting depth (target: â‰¤3)
+   - `catch(...)` count (target: â‰¤2, both in logger)
 7. Update this document with final compliance ratings
 8. Update `README.md` with TigerStyle badge/reference
 9. Update `CONTRIBUTING.md` with TigerStyle expectations for new code
 
 **Acceptance Criteria**:
-- ✅ `lint_tigerstyle.py` reports 0 violations
-- ✅ All 10 principles rated "Compliant" or "Mostly Compliant" (with documented exceptions)
-- ✅ Documentation updated
+- âœ… `lint_tigerstyle.py` reports 0 violations
+- âœ… All 10 principles rated "Compliant" or "Mostly Compliant" (with documented exceptions)
+- âœ… Documentation updated
 
 **Final Metrics (Phase 9 Completion)**:
 
@@ -1131,7 +1131,7 @@ Standard: c++20
 |---|---|
 | Source files (src/ + include/) | 293 |
 | Source lines | 76,011 |
-| Test files | 65 |
+| Test files | 76 |
 | Test lines | 14,181 |
 | Assertions (src/include) | 484 |
 | Assertions (tests) | 1,619 |
@@ -1139,15 +1139,15 @@ Standard: c++20
 | Assertion density (src) | 6.4 per 1k lines |
 | `lint_tigerstyle.py` errors | **0** |
 | `lint_tigerstyle.py` warnings | 870 (assertion-density only) |
-| Max function length | ≤70 lines |
-| Max nesting depth | ≤3 levels |
-| Max line length | ≤100 columns |
+| Max function length | â‰¤70 lines |
+| Max nesting depth | â‰¤3 levels |
+| Max line length | â‰¤100 columns |
 | Release build warnings | **0** |
-| Tests passed | 65/65 (100%) |
+| Tests passed | 76/76 (100%) |
 
 ---
 
-## 📋 CMakeLists.txt Changes
+## ðŸ“‹ CMakeLists.txt Changes
 
 ### No Source File Changes
 
@@ -1156,7 +1156,7 @@ TigerStyle compliance does not add or remove any `.cpp` or `.h` files from the b
 ### New Test Targets
 
 ```cmake
-# Action worker tests (Phase 8) — 36 new test files
+# Action worker tests (Phase 8) â€” 36 new test files
 set(ACTION_TEST_SOURCES
     tests/unit/test_backup_bitlocker_keys_action.cpp
     tests/unit/test_check_bloatware_action.cpp
@@ -1194,11 +1194,11 @@ set(CORE_TEST_SOURCES
 
 ---
 
-## 📋 .clang-format Configuration
+## ðŸ“‹ .clang-format Configuration
 
 ```yaml
 ---
-# S.A.K. Utility — TigerStyle-aligned formatting.
+# S.A.K. Utility â€” TigerStyle-aligned formatting.
 # Enforces 100-column hard limit, 4-space indent, Attach braces.
 Language: Cpp
 BasedOnStyle: Google
@@ -1274,13 +1274,13 @@ Standard: c++20
 
 ---
 
-## 🧪 Testing Strategy
+## ðŸ§ª Testing Strategy
 
-### Existing Tests (57 files — maintained throughout)
+### Existing Tests (76 files â€” maintained throughout)
 
-All 57 existing tests must pass after every phase. No regressions. TigerStyle changes are pure refactoring plus addition of assertions — behavior must not change.
+All 76 existing tests must pass after every phase. No regressions. TigerStyle changes are pure refactoring plus addition of assertions â€” behavior must not change.
 
-### New Tests (Phase 8 — 46+ files)
+### New Tests (Phase 8 â€” 46+ files)
 
 | Category | Files | Test Cases |
 |---|---|---|
@@ -1321,25 +1321,25 @@ All 57 existing tests must pass after every phase. No regressions. TigerStyle ch
 
 ---
 
-## 🎯 Success Metrics
+## ðŸŽ¯ Success Metrics
 
 | Metric | Current | Target | Measurement |
 |---|---|---|---|
-| Assertion density (assertions/function) | 0.0005 | ≥ 2.0 | `grep -c Q_ASSERT` / function count |
-| Max function length (lines) | 577 | ≤ 70 | `lint_tigerstyle.py` |
-| Max line length (chars) | 300+ | ≤ 100 | `lint_tigerstyle.py` |
-| Max nesting depth (levels) | 6 | ≤ 3 | `lint_tigerstyle.py` |
-| `catch(...)` blocks | 24 | ≤ 2 (logger only) | `grep -c 'catch\s*(\.\.\.)` |
+| Assertion density (assertions/function) | 0.0005 | â‰¥ 2.0 | `grep -c Q_ASSERT` / function count |
+| Max function length (lines) | 577 | â‰¤ 70 | `lint_tigerstyle.py` |
+| Max line length (chars) | 300+ | â‰¤ 100 | `lint_tigerstyle.py` |
+| Max nesting depth (levels) | 6 | â‰¤ 3 | `lint_tigerstyle.py` |
+| `catch(...)` blocks | 24 | â‰¤ 2 (logger only) | `grep -c 'catch\s*(\.\.\.)` |
 | Magic number violations | ~2,589 | < 100 (acceptable 0/1/-1) | `lint_tigerstyle.py` |
-| Single-letter variables | 34 | ≤ 5 (tiny lambdas only) | `lint_tigerstyle.py` |
+| Single-letter variables | 34 | â‰¤ 5 (tiny lambdas only) | `lint_tigerstyle.py` |
 | Else-after-return violations | 18 | 0 | `lint_tigerstyle.py` |
-| Test count | 57 | ≥ 103 | `ctest --test-dir build -N` |
+| Test count | 76 | â‰¥ 103 | `ctest --test-dir build -N` |
 | Test pass rate | 100% | 100% | `ctest -C Release` |
 | Build warnings | 0 | 0 | `cmake --build --config Release` |
 
 ---
 
-## 🚧 Risks & Mitigations
+## ðŸš§ Risks & Mitigations
 
 ### Risk 1: Assertion Overhead in Release Builds
 - **Risk**: `Q_ASSERT` is a no-op in Release builds (compiled out by `QT_NO_DEBUG`). Some preconditions may need enforcement even in Release.
@@ -1349,7 +1349,7 @@ All 57 existing tests must pass after every phase. No regressions. TigerStyle ch
 - **Risk**: Splitting 145 functions and renaming 34 variables could introduce subtle behavior changes.
 - **Mitigation**: 
   - Run full test suite after every individual file change (not batched).
-  - Use `git diff` to verify no logic changes — only structural moves.
+  - Use `git diff` to verify no logic changes â€” only structural moves.
   - Phase 8 adds 46 new test files to catch anything missed.
 
 ### Risk 3: Embedded PowerShell Strings Resist Line Wrapping
@@ -1375,17 +1375,17 @@ All 57 existing tests must pass after every phase. No regressions. TigerStyle ch
 
 ---
 
-## 📊 Effort Estimates
+## ðŸ“Š Effort Estimates
 
 | Phase | Scope | Est. Files Changed | Est. Lines Changed | Duration |
 |---|---|---|---|---|
-| 1 | Assertions — Core | ~22 files | ~680 lines added | 3 weeks |
+| 1 | Assertions â€” Core | ~22 files | ~680 lines added | 3 weeks |
 | 2 | Function Decomposition | ~45 files | ~3,000 lines restructured | 3 weeks |
 | 3 | Magic Number Elimination | ~60 files + 3 new headers | ~2,800 lines changed | 3 weeks |
 | 4 | Nesting & Control Flow | ~35 files | ~1,200 lines restructured | 2 weeks |
 | 5 | Error Handling & Naming | ~20 files | ~200 lines changed | 2 weeks |
 | 6 | Line Length & .clang-format | ~80 files + 2 new files | ~2,700 lines reformatted | 3 weeks |
-| 7 | Assertions — Actions & GUI | ~45 files | ~860 lines added | 3 weeks |
+| 7 | Assertions â€” Actions & GUI | ~45 files | ~860 lines added | 3 weeks |
 | 8 | Expanded Test Coverage | ~46 new test files | ~4,600 lines added | 4 weeks |
 | 9 | Final Audit & Documentation | ~5 files | ~200 lines | 1 week |
 | | **Total** | **~151 files + 51 new** | **~16,240 lines** | **24 weeks** |
@@ -1394,7 +1394,7 @@ All 57 existing tests must pass after every phase. No regressions. TigerStyle ch
 
 ---
 
-## 💡 TigerStyle Rules Intentionally Deferred
+## ðŸ’¡ TigerStyle Rules Intentionally Deferred
 
 These TigerStyle principles are valid but are deferred beyond this plan's scope:
 
@@ -1408,7 +1408,7 @@ These TigerStyle principles are valid but are deferred beyond this plan's scope:
 
 ---
 
-## 📚 Resources
+## ðŸ“š Resources
 
 ### TigerStyle
 - [TigerStyle Document (GitHub)](https://github.com/tigerbeetle/tigerbeetle/blob/main/docs/TIGER_STYLE.md)
@@ -1425,13 +1425,13 @@ These TigerStyle principles are valid but are deferred beyond this plan's scope:
 - [MSVC /W4 Warning Level](https://learn.microsoft.com/en-us/cpp/build/reference/compiler-option-warning-level)
 
 ### S.A.K. Utility Internal
-- [style_constants.h](../include/sak/style_constants.h) — Existing design token system
-- [widget_helpers.h](../include/sak/widget_helpers.h) — Shared UI utility functions
-- [CONTRIBUTING.md](../CONTRIBUTING.md) — Contribution guidelines (to be updated)
+- [style_constants.h](../include/sak/style_constants.h) â€” Existing design token system
+- [widget_helpers.h](../include/sak/widget_helpers.h) â€” Shared UI utility functions
+- [CONTRIBUTING.md](../CONTRIBUTING.md) â€” Contribution guidelines (to be updated)
 
 ---
 
-## 📞 Support
+## ðŸ“ž Support
 
 **Questions?** Open a GitHub Discussion  
 **Found a Bug?** Open a GitHub Issue  
@@ -1442,4 +1442,4 @@ These TigerStyle principles are valid but are deferred beyond this plan's scope:
 **Document Version**: 2.0  
 **Last Updated**: February 28, 2026  
 **Author**: Randy Northrup  
-**Status**: ✅ Complete — All 10 principles compliant
+**Status**: âœ… Complete â€” All 10 principles compliant

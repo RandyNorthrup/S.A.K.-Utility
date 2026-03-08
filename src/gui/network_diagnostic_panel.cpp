@@ -11,6 +11,7 @@
 #include "sak/detachable_log_window.h"
 #include "sak/style_constants.h"
 #include "sak/widget_helpers.h"
+#include "sak/logger.h"
 
 #include <QApplication>
 #include <QCheckBox>
@@ -62,13 +63,6 @@ void NetworkDiagnosticPanel::setupUi()
         ui::kMarginMedium, ui::kMarginMedium);
     rootLayout->setSpacing(ui::kSpacingSmall);
 
-    // Panel header
-    createPanelHeader(this, QStringLiteral(":/icons/icons/panel_network.svg"),
-        tr("Network Diagnostics & Troubleshooting"),
-        tr("Comprehensive network analysis — adapter inspection, connectivity testing, "
-           "DNS diagnostics, port scanning, bandwidth, WiFi analysis, firewall auditing, and more"),
-        rootLayout);
-
     // Splitter: adapter section (top) / tool tabs (bottom)
     auto* splitter = new QSplitter(Qt::Vertical, this);
     splitter->setChildrenCollapsible(false);
@@ -87,6 +81,7 @@ void NetworkDiagnosticPanel::setupUi()
     m_toolTabs->addTab(createConnectionsTab(),   tr("Connections"));
     m_toolTabs->addTab(createFirewallTab(),      tr("Firewall"));
     m_toolTabs->addTab(createSharesTab(),        tr("Shares"));
+    m_toolTabs->addTab(createLanTransferTab(),   tr("LAN Transfer"));
     setAccessible(m_toolTabs, tr("Diagnostic tools"),
         tr("Tab widget for selecting network diagnostic tools"));
     splitter->addWidget(m_toolTabs);
@@ -1327,6 +1322,157 @@ QWidget* NetworkDiagnosticPanel::createSharesTab()
     return widget;
 }
 
+// ── LAN Transfer Tab — Group Builders ────────────────────────────────────
+
+QGroupBox* NetworkDiagnosticPanel::createLanServerGroup(QWidget* parent)
+{
+    auto* group = new QGroupBox(
+        tr("LAN Transfer Server (Receiver)"), parent);
+    auto* group_layout = new QVBoxLayout(group);
+    auto* row = new QHBoxLayout();
+
+    row->addWidget(new QLabel(tr("Listen Port:"), parent));
+    m_lanPort = new QSpinBox(parent);
+    m_lanPort->setRange(1024, 65535);
+    m_lanPort->setValue(5050);
+    m_lanPort->setToolTip(
+        tr("TCP port for the LAN transfer server to listen on"));
+    setAccessible(m_lanPort, tr("LAN transfer server port"));
+    row->addWidget(m_lanPort);
+
+    m_lanServerStartBtn = new QPushButton(
+        tr("Start Server"), parent);
+    m_lanServerStartBtn->setStyleSheet(ui::kSuccessButtonStyle);
+    m_lanServerStartBtn->setToolTip(
+        tr("Start a TCP server that receives data from the "
+           "remote device to measure transfer speed"));
+    setAccessible(
+        m_lanServerStartBtn, tr("Start LAN transfer server"));
+    row->addWidget(m_lanServerStartBtn);
+
+    m_lanServerStopBtn = new QPushButton(
+        tr("Stop Server"), parent);
+    m_lanServerStopBtn->setStyleSheet(ui::kDangerButtonStyle);
+    m_lanServerStopBtn->setEnabled(false);
+    m_lanServerStopBtn->setToolTip(
+        tr("Stop the LAN transfer server"));
+    setAccessible(
+        m_lanServerStopBtn, tr("Stop LAN transfer server"));
+    row->addWidget(m_lanServerStopBtn);
+
+    row->addStretch();
+    m_lanServerStatus = new QLabel(
+        tr("Server: Stopped"), parent);
+    m_lanServerStatus->setStyleSheet(
+        QStringLiteral("color: %1;").arg(ui::kColorTextMuted));
+    row->addWidget(m_lanServerStatus);
+    group_layout->addLayout(row);
+
+    return group;
+}
+
+QGroupBox* NetworkDiagnosticPanel::createLanClientGroup(
+    QWidget* parent)
+{
+    auto* group = new QGroupBox(
+        tr("LAN Transfer Client (Sender)"), parent);
+    auto* group_layout = new QVBoxLayout(group);
+
+    auto* targetRow = new QHBoxLayout();
+    targetRow->addWidget(new QLabel(tr("Target:"), parent));
+    m_lanTarget = new QLineEdit(parent);
+    m_lanTarget->setPlaceholderText(
+        tr("IP address of the receiving device"));
+    m_lanTarget->setToolTip(
+        tr("Enter the IP address of the device running "
+           "the LAN Transfer server"));
+    setAccessible(
+        m_lanTarget, tr("LAN transfer target address"));
+    targetRow->addWidget(m_lanTarget, 2);
+    group_layout->addLayout(targetRow);
+
+    auto* optRow = new QHBoxLayout();
+    optRow->addWidget(new QLabel(tr("Duration:"), parent));
+    m_lanDuration = new QSpinBox(parent);
+    m_lanDuration->setRange(1, 120);
+    m_lanDuration->setValue(10);
+    m_lanDuration->setSuffix(tr(" s"));
+    m_lanDuration->setToolTip(
+        tr("How long to send data, in seconds"));
+    setAccessible(
+        m_lanDuration, tr("LAN transfer test duration"));
+    optRow->addWidget(m_lanDuration);
+
+    optRow->addWidget(
+        new QLabel(tr("Block Size:"), parent));
+    m_lanBlockSize = new QSpinBox(parent);
+    m_lanBlockSize->setRange(1, 1024);
+    m_lanBlockSize->setValue(64);
+    m_lanBlockSize->setSuffix(tr(" KB"));
+    m_lanBlockSize->setToolTip(
+        tr("Size of each data block sent "
+           "(larger may improve throughput)"));
+    setAccessible(
+        m_lanBlockSize, tr("LAN transfer block size"));
+    optRow->addWidget(m_lanBlockSize);
+    optRow->addStretch();
+    group_layout->addLayout(optRow);
+
+    auto* btnRow = new QHBoxLayout();
+    m_lanTestBtn = new QPushButton(
+        tr("Run Transfer Test"), parent);
+    m_lanTestBtn->setStyleSheet(ui::kPrimaryButtonStyle);
+    m_lanTestBtn->setToolTip(
+        tr("Send data to the target device and measure "
+           "transfer speed"));
+    setAccessible(
+        m_lanTestBtn, tr("Run LAN transfer speed test"));
+    btnRow->addWidget(m_lanTestBtn);
+    btnRow->addStretch();
+    group_layout->addLayout(btnRow);
+
+    return group;
+}
+
+// ── LAN Transfer Tab ────────────────────────────────────────────────────
+
+QWidget* NetworkDiagnosticPanel::createLanTransferTab()
+{
+    auto* scrollArea = new QScrollArea(this);
+    scrollArea->setWidgetResizable(true);
+    scrollArea->setFrameShape(QFrame::NoFrame);
+
+    auto* widget = new QWidget(scrollArea);
+    auto* layout = new QVBoxLayout(widget);
+    layout->setContentsMargins(ui::kMarginSmall, ui::kMarginSmall,
+                               ui::kMarginSmall, ui::kMarginSmall);
+    layout->setSpacing(ui::kSpacingDefault);
+
+    layout->addWidget(createLanServerGroup(widget));
+    layout->addWidget(createLanClientGroup(widget));
+
+    m_lanResultLabel = new QLabel(widget);
+    m_lanResultLabel->setWordWrap(true);
+    m_lanResultLabel->setStyleSheet(
+        QStringLiteral("font-size: %1pt;")
+            .arg(ui::kFontSizeStatus));
+    layout->addWidget(m_lanResultLabel);
+    layout->addStretch();
+
+    connect(m_lanServerStartBtn, &QPushButton::clicked,
+            this,
+            &NetworkDiagnosticPanel::onStartLanTransferServer);
+    connect(m_lanServerStopBtn, &QPushButton::clicked,
+            this,
+            &NetworkDiagnosticPanel::onStopLanTransferServer);
+    connect(m_lanTestBtn, &QPushButton::clicked,
+            this,
+            &NetworkDiagnosticPanel::onRunLanTransferTest);
+
+    scrollArea->setWidget(widget);
+    return scrollArea;
+}
+
 // ── Report Section ──────────────────────────────────────────────────────
 
 
@@ -1513,6 +1659,26 @@ void NetworkDiagnosticPanel::connectControllerWifiConnectionsFirewallSharesSigna
 
     connect(m_controller.get(), &NetworkDiagnosticController::sharesDiscovered,
         this, &NetworkDiagnosticPanel::onSharesDiscovered);
+
+    // ── LAN Transfer ──
+    connect(m_controller.get(), &NetworkDiagnosticController::lanTransferServerStarted,
+        this, [this](uint16_t port) {
+        m_lanServerStatus->setText(
+            QStringLiteral("Server: Running on port %1").arg(port));
+        m_lanServerStartBtn->setEnabled(false);
+        m_lanServerStopBtn->setEnabled(true);
+        });
+    connect(m_controller.get(), &NetworkDiagnosticController::lanTransferServerStopped,
+        this, [this]() {
+        m_lanServerStatus->setText(tr("Server: Stopped"));
+        m_lanServerStartBtn->setEnabled(true);
+        m_lanServerStopBtn->setEnabled(false);
+        });
+    connect(m_controller.get(), &NetworkDiagnosticController::lanTransferProgress,
+        this, &NetworkDiagnosticPanel::onLanTransferProgress);
+    connect(m_controller.get(), &NetworkDiagnosticController::lanTransferComplete,
+        this, &NetworkDiagnosticPanel::onLanTransferComplete);
+
     connect(m_controller.get(), &NetworkDiagnosticController::reportGenerated,
         this, [this](QString path) {
         Q_EMIT statusMessage(QStringLiteral("Report saved to %1").arg(path), 5000);
@@ -1534,6 +1700,7 @@ void NetworkDiagnosticPanel::connectControllerWifiConnectionsFirewallSharesSigna
                "The adapter may take a moment to apply the new "
                "configuration."));
         } else {
+            sak::logWarning("Ethernet settings restore incomplete");
             QMessageBox::warning(this, tr("Restore Incomplete"),
             tr("Some settings could not be restored.\n"
                "Check the log for details. Administrator "
@@ -1729,6 +1896,7 @@ void NetworkDiagnosticPanel::onRestoreEthernetSettings()
     // Let user choose target adapter
     QStringList adapters = m_controller->listEthernetAdapters();
     if (adapters.isEmpty()) {
+        sak::logWarning("No Ethernet adapters found for settings restore");
         QMessageBox::warning(this, tr("No Adapters"),
             tr("No Ethernet adapters found on this system."));
         return;
@@ -2729,6 +2897,66 @@ void NetworkDiagnosticPanel::onSharesDiscovered(QVector<NetworkShareInfo> shares
     }
 }
 
+// ── LAN Transfer Slots ──
+
+void NetworkDiagnosticPanel::onStartLanTransferServer()
+{
+    m_lanServerStartBtn->setEnabled(false);
+    m_controller->startLanTransferServer(
+        static_cast<uint16_t>(m_lanPort->value()));
+}
+
+void NetworkDiagnosticPanel::onStopLanTransferServer()
+{
+    m_controller->stopLanTransferServer();
+}
+
+void NetworkDiagnosticPanel::onRunLanTransferTest()
+{
+    const auto target = m_lanTarget->text().trimmed();
+    if (target.isEmpty()) {
+        Q_EMIT statusMessage(tr("Enter the target device IP address"), 3000);
+        m_lanTarget->setFocus();
+        return;
+    }
+    m_lanTestBtn->setEnabled(false);
+    m_lanResultLabel->setText(tr("Running transfer test..."));
+    m_controller->runLanTransferTest(
+        target,
+        static_cast<uint16_t>(m_lanPort->value()),
+        m_lanDuration->value(),
+        m_lanBlockSize->value());
+}
+
+void NetworkDiagnosticPanel::onLanTransferProgress(
+    double currentMbps, double elapsedSec, qint64 totalBytes)
+{
+    m_lanResultLabel->setText(
+        QStringLiteral("Running: %1 Mbps | %2 s | %3 MB transferred")
+            .arg(currentMbps, 0, 'f', 1)
+            .arg(elapsedSec, 0, 'f', 0)
+            .arg(totalBytes / (1024.0 * 1024.0), 0, 'f', 1));
+}
+
+void NetworkDiagnosticPanel::onLanTransferComplete(LanTransferResult result)
+{
+    m_lanTestBtn->setEnabled(true);
+    m_lanResultLabel->setText(
+        QStringLiteral(
+            "<b>%1 Complete</b><br>"
+            "Remote: %2<br>"
+            "Transferred: %3 MB in %4 s<br>"
+            "Average Speed: <b>%5 Mbps</b> (%6 MB/s)<br>"
+            "Peak Speed: %7 Mbps")
+            .arg(result.isUpload ? tr("Upload") : tr("Download"))
+            .arg(result.remoteAddress)
+            .arg(result.bytesTransferred / (1024.0 * 1024.0), 0, 'f', 1)
+            .arg(result.durationSec, 0, 'f', 1)
+            .arg(result.avgSpeedMbps, 0, 'f', 1)
+            .arg(result.avgSpeedMbps / 8.0, 0, 'f', 1)
+            .arg(result.peakSpeedMbps, 0, 'f', 1));
+}
+
 // ── Controller State ──
 
 void NetworkDiagnosticPanel::onStateChanged(int newState)
@@ -2760,6 +2988,7 @@ void NetworkDiagnosticPanel::onStateChanged(int newState)
         m_httpSpeedBtn->setEnabled(true);
         m_fwAuditBtn->setEnabled(true);
         m_shareDiscoverBtn->setEnabled(true);
+        m_lanTestBtn->setEnabled(true);
     }
 }
 

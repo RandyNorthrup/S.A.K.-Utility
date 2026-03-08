@@ -3,6 +3,7 @@
 
 #include "sak/user_profile_restore_wizard.h"
 #include "sak/user_profile_restore_worker.h"
+#include "sak/logger.h"
 #include "sak/style_constants.h"
 #include "sak/layout_constants.h"
 #include <QVBoxLayout>
@@ -245,6 +246,8 @@ void UserProfileRestoreExecutePage::onViewLog() {
         QTextStream out(&file);
         out << m_logText->toPlainText();
         file.close();
+    } else {
+        sak::logError("Failed to save restore log: {}", fileName.toStdString());
     }
 }
 

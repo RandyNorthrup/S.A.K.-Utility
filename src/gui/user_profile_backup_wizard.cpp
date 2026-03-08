@@ -4,6 +4,7 @@
 #include "sak/user_profile_backup_wizard.h"
 #include "sak/style_constants.h"
 #include "sak/layout_constants.h"
+#include "sak/logger.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QHeaderView>
@@ -34,7 +35,10 @@ UserProfileBackupWizard::UserProfileBackupWizard(QWidget* parent)
     setPage(Page_SelectUsers, new UserProfileBackupSelectUsersPage(m_scannedUsers, this));
     setPage(Page_CustomizeData, new UserProfileBackupCustomizeDataPage(m_scannedUsers, this));
     setPage(Page_InstalledApps, new UserProfileBackupInstalledAppsPage(this));
+    setPage(Page_AppData, new UserProfileBackupAppDataPage(m_scannedUsers, this));
     setPage(Page_SmartFilters, new UserProfileBackupSmartFiltersPage(m_smartFilter, this));
+    setPage(Page_KnownNetworks, new UserProfileBackupKnownNetworksPage(this));
+    setPage(Page_EthernetSettings, new UserProfileBackupEthernetSettingsPage(this));
     setPage(Page_BackupSettings, new UserProfileBackupSettingsPage(m_manifest, this));
 
     // Note: Execute page will be created in BackupSettingsPage::validatePage
@@ -255,6 +259,7 @@ void UserProfileBackupSelectUsersPage::onScanUsers() {
 
     if (m_users.isEmpty()) {
         m_statusLabel->setText(tr("No user accounts found"));
+        sak::logWarning("No Windows user accounts detected during backup scan");
         QMessageBox::warning(this, tr("No Users"),
             tr("No Windows user accounts were detected. Make sure you have permission to scan "
                "users."));

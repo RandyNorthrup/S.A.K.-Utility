@@ -5,6 +5,7 @@
 /// @brief System Restore point creation and availability checking
 
 #include "sak/restore_point_manager.h"
+#include "sak/elevation_manager.h"
 
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -180,22 +181,7 @@ QVector<QPair<QDateTime, QString>> RestorePointManager::listRestorePoints() cons
 
 bool RestorePointManager::isElevated()
 {
-#ifdef Q_OS_WIN
-    HANDLE token = nullptr;
-    if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) {
-        return false;
-    }
-
-    TOKEN_ELEVATION elevation{};
-    DWORD size = sizeof(TOKEN_ELEVATION);
-    BOOL result = GetTokenInformation(token, TokenElevation, &elevation,
-                                       sizeof(elevation), &size);
-    CloseHandle(token);
-
-    return result && elevation.TokenIsElevated != 0;
-#else
-    return geteuid() == 0;
-#endif
+    return ElevationManager::isElevated();
 }
 
 } // namespace sak

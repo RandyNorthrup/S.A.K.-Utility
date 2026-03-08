@@ -24,5 +24,6 @@
         <file>icons/panel_search.svg</file>
         <file>icons/panel_uninstall.svg</file>
         <file>icons/panel_wifi.svg</file>
+        <file>icons/panel_about.svg</file>
     </qresource>
 </RCC>

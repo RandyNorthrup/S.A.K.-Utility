@@ -61,6 +61,21 @@ enum class ConflictResolution {
 };
 
 /**
+ * @brief Installed app entry for backup/restore and network transfer
+ */
+struct InstalledAppInfo {
+    QString name;
+    QString version;
+    QString publisher;
+    QString choco_package;
+    QString category;
+    bool selected{true};
+
+    QJsonObject toJson() const;
+    static InstalledAppInfo fromJson(const QJsonObject& json);
+};
+
+/**
  * @brief Selection of a folder to backup with filters
  */
 struct FolderSelection {
@@ -159,6 +174,52 @@ struct BackupUserData {
 };
 
 /**
+ * @brief WiFi network profile for backup/restore
+ */
+struct WifiProfileInfo {
+    QString profile_name;          // SSID / profile name
+    QString security_type;         // WPA2-Personal, Open, etc.
+    QString xml_data;              // Full XML profile data from netsh
+    bool selected{true};
+
+    QJsonObject toJson() const;
+    static WifiProfileInfo fromJson(const QJsonObject& json);
+};
+
+/**
+ * @brief Ethernet adapter configuration for backup/restore
+ */
+struct EthernetConfigInfo {
+    QString adapter_name;
+    QString description;
+    bool dhcp_enabled{true};
+    QString ip_address;
+    QString subnet_mask;
+    QString default_gateway;
+    QString dns_primary;
+    QString dns_secondary;
+    bool selected{true};
+
+    QJsonObject toJson() const;
+    static EthernetConfigInfo fromJson(const QJsonObject& json);
+};
+
+/**
+ * @brief Application data source for backup/restore
+ */
+struct AppDataSourceInfo {
+    QString name;                  // e.g. "Chrome Profiles"
+    QString category;              // e.g. "Browsers"
+    QString relative_path;         // Relative to user profile (e.g. AppData/Local/Google/Chrome)
+    qint64 size_bytes{0};
+    bool exists{false};
+    bool selected{true};
+
+    QJsonObject toJson() const;
+    static AppDataSourceInfo fromJson(const QJsonObject& json);
+};
+
+/**
  * @brief Complete backup manifest
  */
 struct BackupManifest {
@@ -172,6 +233,9 @@ struct BackupManifest {
     // Content
     QVector<BackupUserData> users;
     SmartFilter filter_rules;
+    QVector<WifiProfileInfo> wifi_profiles;
+    QVector<EthernetConfigInfo> ethernet_configs;
+    QVector<AppDataSourceInfo> app_data_sources;
     qint64 total_backup_size_bytes;
     QString manifest_checksum;
     

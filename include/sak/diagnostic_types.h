@@ -311,6 +311,7 @@ struct StressTestConfig {
     bool stress_cpu{true};
     bool stress_memory{true};
     bool stress_disk{false};
+    bool stress_gpu{false};
 
     int duration_minutes{10};
     int cpu_threads{0};                    ///< 0 = all logical processors
@@ -340,6 +341,10 @@ struct StressTestResult {
     // Disk stress results
     uint64_t disk_bytes_written{0};
     int disk_errors{0};
+
+    // GPU stress results
+    uint64_t gpu_operations{0};        ///< Number of compute dispatches completed
+    int gpu_errors{0};                 ///< GPU errors detected
 
     QString abort_reason;              ///< Empty if completed normally
     QDateTime start_time;

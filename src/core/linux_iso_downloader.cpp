@@ -223,7 +223,10 @@ void LinuxISODownloader::startAria2cDownload(const QString& url,
     QString outFile = saveInfo.fileName();
 
     // Create output directory if needed
-    QDir().mkpath(outDir);
+    if (!QDir().mkpath(outDir)) {
+        sak::logWarning("Failed to create ISO download directory: {}",
+                        outDir.toStdString());
+    }
 
     // Clean up any previous QProcess to prevent leaks
     if (m_aria2cProcess) {
@@ -274,7 +277,7 @@ QStringList LinuxISODownloader::buildAria2cArguments(const QString& url,
         args << "--max-connection-per-server=" + QString::number(sak::kAria2SingleConn)
              << "--split=" + QString::number(sak::kAria2SingleSplit)
              << "--min-split-size=20M"
-             << "--check-certificate=false"   // SF mirrors may have cert issues
+             << "--check-certificate=true"    // Always verify TLS certificates
              << "--follow-metalink=mem"        // SF may serve metalink responses
              << "--follow-torrent=false"
              << "--max-tries=" +

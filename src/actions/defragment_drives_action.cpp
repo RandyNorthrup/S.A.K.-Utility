@@ -30,8 +30,9 @@ bool DefragmentDrivesAction::isDriveSSD(const QString& drive_letter) {
 }
 
 int DefragmentDrivesAction::analyzeFragmentation(const QString& drive_letter) {
-    QString cmd = QString("defrag %1: /A").arg(drive_letter);
-    ProcessResult proc = runProcess("cmd.exe", QStringList() << "/c" << cmd,
+    QString drive_arg = drive_letter.left(1) + ":";
+    ProcessResult proc = runProcess("defrag",
+        QStringList() << drive_arg << "/A",
         sak::kTimeoutProcessLongMs);
     QString output = proc.std_out;
 

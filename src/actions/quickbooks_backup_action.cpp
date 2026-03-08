@@ -184,7 +184,10 @@ void QuickBooksBackupAction::execute() {
     Q_EMIT executionProgress("Preparing backup directory...", 30);
 
     QDir backup_dir(m_backup_location + "/QuickBooksBackup");
-    backup_dir.mkpath(".");
+    if (!backup_dir.mkpath(".")) {
+        sak::logWarning("Failed to create QuickBooks backup directory: {}",
+                        backup_dir.absolutePath().toStdString());
+    }
 
     int files_copied = 0;
     int files_skipped_open = 0;
@@ -235,7 +238,10 @@ void QuickBooksBackupAction::executeCopyFiles(const QDir& backup_dir, const QDat
         QString safe_dir = sanitizePathForBackup(source_dir);
 
         QDir target_dir(backup_dir.filePath(safe_dir));
-        target_dir.mkpath(".");
+        if (!target_dir.mkpath(".")) {
+            sak::logWarning("Failed to create QuickBooks backup subdirectory: {}",
+                            target_dir.absolutePath().toStdString());
+        }
         QString dest_path = target_dir.filePath(file.filename);
 
         if (copyFileWithProgress(file.path, dest_path)) {
@@ -387,7 +393,13 @@ bool QuickBooksBackupAction::copyFileWithProgress(const QString& source,
         }
 
         QByteArray buffer = source_file.read(buffer_size);
-        dest_file.write(buffer);
+        if (buffer.isEmpty()) break;
+        qint64 written = dest_file.write(buffer);
+        if (written != buffer.size()) {
+            sak::logError("File copy write failed: expected {} bytes, wrote {}",
+                          static_cast<qint64>(buffer.size()), written);
+            return false;
+        }
         total_read += buffer.size();
 
         // Progress update

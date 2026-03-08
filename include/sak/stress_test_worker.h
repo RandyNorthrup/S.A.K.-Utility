@@ -19,6 +19,9 @@
 
 namespace sak {
 
+/// Forward declaration for GPU stress resource context (defined in .cpp)
+struct GpuStressContext;
+
 /// @brief Runs sustained stress tests on CPU, memory, and/or disk
 ///
 /// Designed for burn-in testing and stability validation. Monitors
@@ -89,6 +92,21 @@ private:
 
     /// @brief Disk stress: continuous sequential I/O
     void runDiskStress();
+
+    /// @brief GPU stress: sustained compute shader load via DirectX 11
+    void runGpuStress();
+
+    /// @brief Load D3D11 library and create hardware device
+    bool initGpuDevice(GpuStressContext& ctx);
+
+    /// @brief Load shader compiler, compile and create compute shader
+    bool compileGpuShader(GpuStressContext& ctx);
+
+    /// @brief Create UAV buffer for compute shader output
+    bool createGpuUavBuffer(GpuStressContext& ctx);
+
+    /// @brief Run the GPU dispatch loop until cancelled or device removed
+    void runGpuDispatchLoop(GpuStressContext& ctx);
 
     /// @brief Write a single stress-test file, returning error count
     int writeDiskStressFile(void* file_handle, const uint8_t* buf,

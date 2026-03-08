@@ -13,9 +13,13 @@
 #include <QStringList>
 #include <QThread>
 
+#include <atomic>
 #include <functional>
 #include <memory>
 #include <type_traits>
+
+class QTcpServer;
+class QTcpSocket;
 
 namespace sak {
 
@@ -117,6 +121,21 @@ public:
     // ── Shares ──
     void discoverShares(const QString& hostname);
 
+    // ── LAN File Transfer Speed Test ──
+
+    /// @brief Start a TCP server to receive data from a peer for speed measurement
+    void startLanTransferServer(uint16_t port);
+
+    /// @brief Stop the LAN transfer server
+    void stopLanTransferServer();
+
+    /// @brief Check if the LAN transfer server is running
+    [[nodiscard]] bool isLanTransferServerRunning() const;
+
+    /// @brief Run a LAN transfer speed test as a client sending data to a server
+    void runLanTransferTest(const QString& targetAddr, uint16_t port,
+                            int durationSec, int blockSizeKB);
+
     // ── Ethernet Config ──
 
     /// @brief Backup the current Ethernet adapter settings to a JSON file
@@ -170,6 +189,10 @@ Q_SIGNALS:
                                 QVector<sak::FirewallConflict> conflicts,
                                 QVector<sak::FirewallGap> gaps);
     void sharesDiscovered(QVector<sak::NetworkShareInfo> shares);
+    void lanTransferServerStarted(uint16_t port);
+    void lanTransferServerStopped();
+    void lanTransferProgress(double currentMbps, double elapsedSec, qint64 bytesTransferred);
+    void lanTransferComplete(sak::LanTransferResult result);
     void ethernetBackupComplete(QString filePath);
     void ethernetRestoreComplete(bool success);
     void reportGenerated(QString path);
@@ -193,6 +216,10 @@ private:
 
     QThread* m_workerThread = nullptr;  ///< Owned; uses deleteLater via QThread::finished
 
+    // LAN transfer server state
+    QTcpServer* m_lanTransferServer = nullptr;
+    std::atomic<bool> m_lanTransferServerRunning{false};
+
     // Cached results for report generation
     QVector<NetworkAdapterInfo> m_cachedAdapters;
     PingResult m_cachedPing;
@@ -211,6 +238,9 @@ private:
     void runOnThread(std::function<void()> work, State operationState);
     void cleanupThread();
     void connectWorkerSignals();
+
+    /// @brief Handle an incoming LAN transfer client connection
+    void handleLanClientConnection(QTcpSocket* socket);
 
     void connectAdapterInspectorSignals();
     void connectConnectivityTesterSignals();

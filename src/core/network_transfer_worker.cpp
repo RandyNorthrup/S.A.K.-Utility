@@ -105,7 +105,10 @@ bool saveResumeInfo(const QString& resumePath, const QString& fileId,
     if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
         return false;
     }
-    file.write(QJsonDocument(root).toJson(QJsonDocument::Compact));
+    const QByteArray json_bytes = QJsonDocument(root).toJson(QJsonDocument::Compact);
+    if (file.write(json_bytes) != json_bytes.size()) {
+        return false;
+    }
     return true;
 }
 
@@ -219,6 +222,12 @@ void NetworkTransferWorker::startReceiver(const QHostAddress& listenAddress,
                                           quint16 port,
                                           const DataOptions& options) {
     Q_ASSERT_X(port > 0, "startReceiver", "port must be positive");
+
+    // If stop() was already called, bail out immediately
+    if (m_stopRequested) {
+        Q_EMIT transferCompleted(false, tr("Stopped before start"));
+        return;
+    }
     m_stopRequested = false;
     m_dynamicMaxBandwidthKbps.store(options.max_bandwidth_kbps, std::memory_order_relaxed);
 
@@ -237,10 +246,26 @@ void NetworkTransferWorker::startReceiver(const QHostAddress& listenAddress,
 
     Q_EMIT transferStarted();
 
-    if (!server.waitForNewConnection(60000)) {
-        logError("NetworkTransferWorker receiver timed out waiting for connection");
-        Q_EMIT errorOccurred(tr("No incoming connection"));
-        Q_EMIT transferCompleted(false, tr("No incoming connection"));
+    // Poll for new connections in 1-second intervals so we can respond to stop()
+    constexpr int kPollIntervalMs = 1000;
+    constexpr int kMaxWaitMs = 60000;
+    bool connected = false;
+    for (int elapsed = 0; elapsed < kMaxWaitMs && !m_stopRequested; elapsed += kPollIntervalMs) {
+        if (server.waitForNewConnection(kPollIntervalMs)) {
+            connected = true;
+            break;
+        }
+    }
+
+    if (!connected) {
+        if (m_stopRequested) {
+            logInfo("NetworkTransferWorker receiver stopped by request");
+            Q_EMIT transferCompleted(false, tr("Stopped"));
+        } else {
+            logError("NetworkTransferWorker receiver timed out waiting for connection");
+            Q_EMIT errorOccurred(tr("No incoming connection"));
+            Q_EMIT transferCompleted(false, tr("No incoming connection"));
+        }
         return;
     }
 
@@ -336,7 +361,7 @@ bool NetworkTransferWorker::sendFrame(QTcpSocket* socket, FrameType type, quint1
     if (socket->write(payload) != payload.size()) {
         return false;
     }
-    return socket->flush();
+    return socket->waitForBytesWritten(sak::kTimeoutNetworkReadMs);
 }
 
 QByteArray NetworkTransferWorker::compressData(const QByteArray& data) const {
@@ -476,7 +501,7 @@ bool NetworkTransferWorker::handleSender(QTcpSocket* socket,
         logInfo("NetworkTransferWorker sender starting file {}", file.relative_path.toStdString());
 
         bool sent = false;
-        for (int attempt = 0; attempt < 3 && !sent; ++attempt) {
+        for (int attempt = 0; attempt < 3 && !sent && !m_stopRequested; ++attempt) {
             sent = trySendSingleFile(socket, file, options, key,
                                      bytesSent, totalBytes, rateTimer, rateBytesSent);
         }

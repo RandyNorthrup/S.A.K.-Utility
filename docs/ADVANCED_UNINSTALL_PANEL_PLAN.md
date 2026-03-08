@@ -2,8 +2,8 @@
 
 **Version**: 1.0  
 **Date**: March 2, 2026  
-**Status**: ⏳ Planned  
-**Target Release**: v0.9.0  
+**Status**: ✅ Complete  
+**Completed in**: v0.8.5  
 **Inspiration**: [Revo Uninstaller Pro](https://www.revouninstaller.com/) feature set, adapted for SAK technician workflow
 
 ---

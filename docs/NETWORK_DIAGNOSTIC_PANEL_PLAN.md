@@ -2,8 +2,8 @@
 
 **Version**: 1.0  
 **Date**: February 25, 2026  
-**Status**: ⏳ Planned  
-**Target Release**: v1.0.0
+**Status**: ✅ Complete  
+**Completed in**: v0.8.5
 
 ---
 

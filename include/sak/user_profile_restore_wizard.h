@@ -142,6 +142,36 @@ private Q_SLOTS:
 };
 
 /**
+ * @brief Page 4a: Application Data Restore Selection
+ */
+class UserProfileRestoreAppDataPage : public QWizardPage {
+    Q_OBJECT
+
+public:
+    explicit UserProfileRestoreAppDataPage(QWidget* parent = nullptr);
+    void initializePage() override;
+    bool isComplete() const override;
+
+private Q_SLOTS:
+    void onSelectAll();
+    void onSelectNone();
+    void onItemChanged(QTreeWidgetItem* item, int column);
+
+private:
+    void setupUi();
+    void loadAppDataSources();
+    void populateTree(const QVector<AppDataSourceInfo>& sources);
+    void updateParentCheckState(QTreeWidgetItem* parent);
+
+    QTreeWidget* m_appDataTree{nullptr};
+    QPushButton* m_selectAllButton{nullptr};
+    QPushButton* m_selectNoneButton{nullptr};
+    QLabel* m_statusLabel{nullptr};
+    QLabel* m_summaryLabel{nullptr};
+    bool m_loaded{false};
+};
+
+/**
  * @brief Page 5: App Restore (install saved applications)
  */
 class UserProfileRestoreAppRestorePage : public QWizardPage {
@@ -182,6 +212,63 @@ private:
     QVector<RestoreAppInfo> m_apps;
     bool m_loaded{false};
     bool m_installing{false};
+};
+
+/**
+ * @brief Page 5a: Restore WiFi Networks
+ */
+class UserProfileRestoreNetworksPage : public QWizardPage {
+    Q_OBJECT
+
+public:
+    explicit UserProfileRestoreNetworksPage(QWidget* parent = nullptr);
+    void initializePage() override;
+    bool isComplete() const override;
+
+private Q_SLOTS:
+    void onSelectAll();
+    void onSelectNone();
+    void onItemChanged(QTreeWidgetItem* item, int column);
+
+private:
+    void setupUi();
+    void loadNetworkProfiles();
+    void populateTree(const QVector<WifiProfileInfo>& profiles);
+
+    QTreeWidget* m_networkTree{nullptr};
+    QPushButton* m_selectAllButton{nullptr};
+    QPushButton* m_selectNoneButton{nullptr};
+    QLabel* m_statusLabel{nullptr};
+    QLabel* m_summaryLabel{nullptr};
+    bool m_loaded{false};
+};
+
+/**
+ * @brief Page 5b: Restore Ethernet Settings
+ */
+class UserProfileRestoreEthernetPage : public QWizardPage {
+    Q_OBJECT
+
+public:
+    explicit UserProfileRestoreEthernetPage(QWidget* parent = nullptr);
+    void initializePage() override;
+    bool isComplete() const override;
+
+private Q_SLOTS:
+    void onSelectAll();
+    void onSelectNone();
+
+private:
+    void setupUi();
+    void loadEthernetConfigs();
+    void populateTable(const QVector<EthernetConfigInfo>& configs);
+
+    QTableWidget* m_ethernetTable{nullptr};
+    QPushButton* m_selectAllButton{nullptr};
+    QPushButton* m_selectNoneButton{nullptr};
+    QLabel* m_statusLabel{nullptr};
+    QLabel* m_summaryLabel{nullptr};
+    bool m_loaded{false};
 };
 
 /**

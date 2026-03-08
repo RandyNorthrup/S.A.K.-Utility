@@ -6,6 +6,7 @@
 
 #include "sak/actions/clear_event_logs_action.h"
 #include "sak/process_runner.h"
+#include "sak/logger.h"
 #include "sak/layout_constants.h"
 #include <QDir>
 #include <QDateTime>
@@ -48,17 +49,20 @@ bool ClearEventLogsAction::backupEventLog(const QString& log_name) {
     const QString backup_dir = base + QStringLiteral("/EventLogs");
     QString backup_path = QString("%1/%2_%3.evtx").arg(backup_dir, log_name, timestamp);
 
-    QDir().mkpath(backup_dir);
+    if (!QDir().mkpath(backup_dir)) {
+        sak::logWarning("Failed to create event log backup directory: {}",
+                        backup_dir.toStdString());
+    }
 
-    QString cmd = QString("wevtutil epl %1 \"%2\"").arg(log_name, backup_path);
-    ProcessResult proc = runProcess("cmd.exe", QStringList() << "/c" << cmd,
+    ProcessResult proc = runProcess("wevtutil",
+        QStringList() << "epl" << log_name << backup_path,
         sak::kTimeoutProcessMediumMs);
     return proc.succeeded();
 }
 
 bool ClearEventLogsAction::clearEventLog(const QString& log_name) {
-    QString cmd = QString("wevtutil cl %1").arg(log_name);
-    ProcessResult proc = runProcess("cmd.exe", QStringList() << "/c" << cmd,
+    ProcessResult proc = runProcess("wevtutil",
+        QStringList() << "cl" << log_name,
         sak::kTimeoutProcessShortMs);
     return proc.succeeded();
 }

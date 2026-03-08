@@ -399,12 +399,6 @@ void AdvancedSearchPanel::setupUi()
 
     rootLayout->addWidget(contentWidget);
 
-    // Panel header
-    createPanelHeader(contentWidget, QStringLiteral(":/icons/icons/panel_search.svg"),
-        tr("Advanced Search"),
-        tr("Search file contents, metadata, archives, and binary data across directory trees"),
-        mainLayout);
-
     createSearchBar(mainLayout);
     createThreePanelSplitter(mainLayout);
     createStatusBar(mainLayout);

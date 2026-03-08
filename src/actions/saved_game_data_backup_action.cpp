@@ -139,7 +139,10 @@ void SavedGameDataBackupAction::execute() {
     Q_ASSERT(start_time.isValid());
 
     QDir backup_dir(m_backup_location + "/GameSaves");
-    backup_dir.mkpath(".");
+    if (!backup_dir.mkpath(".")) {
+        sak::logWarning("Failed to create game saves backup directory: {}",
+                        backup_dir.absolutePath().toStdString());
+    }
 
     int processed = 0;
     qint64 bytes_copied = 0;
@@ -152,8 +155,10 @@ void SavedGameDataBackupAction::execute() {
 
         QString safe_dir = sanitizePathForBackup(loc.path);
         QString dest = backup_dir.filePath(loc.platform + "/" + safe_dir);
-        QDir().mkpath(dest);
-
+    if (!QDir().mkpath(dest)) {
+        sak::logWarning("Failed to create game save subdirectory: {}",
+                        dest.toStdString());
+    }
         Q_EMIT executionProgress(QString("Backing up %1...").arg(loc.platform),
                              (processed * 100) / m_save_locations.count());
 
@@ -184,7 +189,9 @@ qint64 SavedGameDataBackupAction::copyDirectoryRecursive(const QString& src_path
         it.next();
         QString rel_path = QDir(src_path).relativeFilePath(it.filePath());
         QString dest_file = dest_path + "/" + rel_path;
-        QDir().mkpath(QFileInfo(dest_file).absolutePath());
+        if (!QDir().mkpath(QFileInfo(dest_file).absolutePath())) {
+            sak::logWarning("Failed to create directory for game save file");
+        }
         if (QFile::copy(it.filePath(), dest_file)) {
             bytes_copied += it.fileInfo().size();
         }

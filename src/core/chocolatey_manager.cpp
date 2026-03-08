@@ -406,7 +406,9 @@ ChocolateyManager::Result ChocolateyManager::executeChoco(const QStringList& arg
     if (timeout_ms > 0) {
         finished = process.waitForFinished(timeout_ms);
     } else {
-        finished = process.waitForFinished(-1);  // No timeout
+        // Use extended timeout instead of infinite wait to prevent hangs
+        constexpr int kMaxChocoWaitMs = sak::kChocoTimeoutExtendedSec * 1000;
+        finished = process.waitForFinished(kMaxChocoWaitMs);
     }
 
     if (!finished) {

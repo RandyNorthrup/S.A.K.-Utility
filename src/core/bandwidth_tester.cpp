@@ -5,6 +5,8 @@
 /// @brief LAN bandwidth via iPerf3 and HTTP-based internet speed testing
 
 #include "sak/bandwidth_tester.h"
+#include "sak/layout_constants.h"
+#include "sak/logger.h"
 
 #include <QCoreApplication>
 #include <QDir>
@@ -70,7 +72,10 @@ bool waitForIperfWithProgress(QProcess& proc,
     }
 
     proc.terminate();
-    proc.waitForFinished(2000);
+    if (!proc.waitForFinished(2000)) {
+        proc.kill();
+        proc.waitForFinished(1000);
+    }
     return false;
 }
 
@@ -316,7 +321,13 @@ void BandwidthTester::runIperfTest(const IperfConfig& config)
         return;
     }
 
-    proc.waitForFinished(kProcessTimeout);
+    if (!proc.waitForFinished(kProcessTimeout)) {
+        sak::logError("iPerf3 process timed out after test completion");
+        proc.kill();
+        proc.waitForFinished(2000);
+        Q_EMIT errorOccurred(QStringLiteral("iPerf3 process timed out"));
+        return;
+    }
 
     const QByteArray output = proc.readAllStandardOutput();
     const QByteArray errOutput = proc.readAllStandardError();
@@ -468,7 +479,18 @@ void BandwidthTester::createFirewallRule(uint16_t port)
                 QStringLiteral("action=allow"),
                 QStringLiteral("protocol=tcp"),
                 QStringLiteral("localport=%1").arg(port)});
-    proc.waitForFinished(5000);
+    if (!proc.waitForStarted(sak::kTimeoutProcessStartMs)) {
+        sak::logWarning("Failed to start netsh for firewall rule on port {}", port);
+        return;
+    }
+    if (!proc.waitForFinished(5000)) {
+        sak::logWarning("Timed out adding firewall rule for port {}", port);
+        proc.kill();
+        proc.waitForFinished(2000);
+    } else if (proc.exitCode() != 0) {
+        sak::logWarning("Failed to add firewall rule: {}",
+                        QString::fromUtf8(proc.readAllStandardError()).toStdString());
+    }
 }
 
 void BandwidthTester::removeFirewallRule()
@@ -478,7 +500,18 @@ void BandwidthTester::removeFirewallRule()
                {QStringLiteral("advfirewall"), QStringLiteral("firewall"),
                 QStringLiteral("delete"), QStringLiteral("rule"),
                 QStringLiteral("name=%1").arg(kFirewallRuleName)});
-    proc.waitForFinished(5000);
+    if (!proc.waitForStarted(sak::kTimeoutProcessStartMs)) {
+        sak::logWarning("Failed to start netsh for firewall rule removal");
+        return;
+    }
+    if (!proc.waitForFinished(5000)) {
+        sak::logWarning("Timed out removing firewall rule");
+        proc.kill();
+        proc.waitForFinished(2000);
+    } else if (proc.exitCode() != 0) {
+        sak::logWarning("Failed to remove firewall rule: {}",
+                        QString::fromUtf8(proc.readAllStandardError()).toStdString());
+    }
 }
 
 } // namespace sak

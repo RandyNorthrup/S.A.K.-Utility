@@ -123,7 +123,11 @@ void NetworkDiagnosticReportGenerator::generateJson(const QString& outputPath)
         return;
     }
 
-    file.write(toJson().toUtf8());
+    const QByteArray data = toJson().toUtf8();
+    if (file.write(data) != data.size()) {
+        Q_EMIT errorOccurred(QStringLiteral("Incomplete write to %1").arg(outputPath));
+        return;
+    }
     file.close();
 
     Q_EMIT reportGenerated(outputPath);

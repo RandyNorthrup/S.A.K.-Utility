@@ -95,6 +95,14 @@ private:
     /// @brief Check if a file extension matches configured filters
     [[nodiscard]] bool matchesExtensionFilter(const QString& filePath) const;
 
+    /// @brief Prepare regex + exclusion patterns before search
+    [[nodiscard]] std::expected<QRegularExpression, sak::error_code>
+        prepareSearchConfig();
+
+    /// @brief Run directory-recursive search loop
+    void runDirectorySearch(const QRegularExpression& regex,
+        int& total_matches, int& total_files);
+
     SearchConfig m_config;
 
     /// @brief Compiled exclusion patterns (built once in execute())

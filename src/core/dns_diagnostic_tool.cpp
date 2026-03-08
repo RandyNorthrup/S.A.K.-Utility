@@ -301,7 +301,10 @@ void DnsDiagnosticTool::inspectDnsCache()
 
     QProcess proc;
     proc.start(QStringLiteral("ipconfig"), {QStringLiteral("/displaydns")});
-    proc.waitForFinished(10000);
+    if (!proc.waitForStarted(5000) || !proc.waitForFinished(10000)) {
+        Q_EMIT dnsCacheResults({});
+        return;
+    }
 
     const auto output = proc.readAllStandardOutput();
     const auto lines = QString::fromLocal8Bit(output).split(QLatin1Char('\n'));
@@ -336,7 +339,12 @@ void DnsDiagnosticTool::flushDnsCache()
 
     QProcess proc;
     proc.start(QStringLiteral("ipconfig"), {QStringLiteral("/flushdns")});
-    proc.waitForFinished(10000);
+    if (!proc.waitForStarted(5000) || !proc.waitForFinished(10000)
+        || proc.exitCode() != 0) {
+        Q_EMIT errorOccurred(
+            QStringLiteral("Failed to flush DNS cache."));
+        return;
+    }
 
     Q_EMIT dnsCacheFlushed();
 }

@@ -5,10 +5,12 @@
 /// @brief Implements batch application updates via Chocolatey package manager
 
 #include "sak/actions/update_all_apps_action.h"
+#include "sak/bundled_tools_manager.h"
 #include "sak/chocolatey_manager.h"
 #include "sak/logger.h"
 #include "sak/process_runner.h"
 #include "sak/layout_constants.h"
+#include <QCoreApplication>
 #include <QJsonDocument>
 #include <QJsonArray>
 #include <QJsonObject>
@@ -21,6 +23,13 @@ UpdateAllAppsAction::UpdateAllAppsAction(QObject* parent)
     : QuickAction(parent)
     , m_choco_manager(std::make_unique<ChocolateyManager>())
 {
+    // Initialize the bundled portable Chocolatey
+    const QString choco_dir = QCoreApplication::applicationDirPath()
+        + QStringLiteral("/tools/chocolatey");
+    if (!m_choco_manager->initialize(choco_dir)) {
+        sak::logWarning("Failed to initialize bundled Chocolatey from: {}",
+                        choco_dir.toStdString());
+    }
 }
 
 void UpdateAllAppsAction::scan() {
@@ -28,7 +37,7 @@ void UpdateAllAppsAction::scan() {
     Q_ASSERT(status() == ActionStatus::Scanning);
 
     bool winget_installed = !QStandardPaths::findExecutable(QStringLiteral("winget")).isEmpty();
-    bool choco_installed = !QStandardPaths::findExecutable(QStringLiteral("choco")).isEmpty();
+    bool choco_installed = m_choco_manager->isInitialized();
 
     int winget_available = 0;
     int choco_available = 0;
@@ -54,10 +63,12 @@ void UpdateAllAppsAction::scan() {
 
     if (choco_installed) {
         QProcess choco_list;
-        choco_list.setProgram("choco");
+        choco_list.setProgram(m_choco_manager->getChocoPath());
         choco_list.setArguments(QStringList() << "outdated" << "-r");
         choco_list.start();
-        if (!choco_list.waitForFinished(sak::kTimeoutChocoListMs)) {
+        if (!choco_list.waitForStarted(sak::kTimeoutProcessStartMs)) {
+            sak::logWarning("Chocolatey process failed to start");
+        } else if (!choco_list.waitForFinished(sak::kTimeoutChocoListMs)) {
             sak::logWarning("Chocolatey outdated check timed out after 15s");
             choco_list.kill();
         } else {
@@ -259,7 +270,7 @@ bool UpdateAllAppsAction::runStoreUpdate(UpdateSummary& summary) {
 }
 
 bool UpdateAllAppsAction::runChocoUpdate(UpdateSummary& summary, const QDateTime& start_time) {
-    summary.choco_installed = !QStandardPaths::findExecutable(QStringLiteral("choco")).isEmpty();
+    summary.choco_installed = m_choco_manager->isInitialized();
 
     if (!summary.choco_installed) {
         summary.report += "║ Phase 3: Chocolatey - Not Available                                 "

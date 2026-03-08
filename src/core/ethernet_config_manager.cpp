@@ -128,7 +128,12 @@ bool EthernetConfigManager::saveToFile(
     }
 
     QJsonDocument doc(snapshot.toJson());
-    file.write(doc.toJson(QJsonDocument::Indented));
+    const QByteArray data = doc.toJson(QJsonDocument::Indented);
+    if (file.write(data) != data.size()) {
+        Q_EMIT errorOccurred(
+            QString("Incomplete write to file: %1").arg(filePath));
+        return false;
+    }
     file.close();
 
     Q_EMIT logOutput(QString("Settings saved to: %1").arg(filePath));
@@ -321,6 +326,12 @@ QString EthernetConfigManager::runNetsh(const QStringList& args)
     proc.setProgram("netsh.exe");
     proc.setArguments(args);
     proc.start();
+
+    if (!proc.waitForStarted(5000)) {
+        Q_EMIT errorOccurred(
+            QString("Failed to start netsh: netsh %1").arg(args.join(' ')));
+        return {};
+    }
 
     if (!proc.waitForFinished(10000)) {
         Q_EMIT errorOccurred(

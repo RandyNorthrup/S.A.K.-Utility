@@ -90,6 +90,72 @@ UninstallWorker::UninstallWorker(const ProgramInfo& program, Mode mode,
 {
 }
 
+auto UninstallWorker::executeStandardMode(UninstallReport& report)
+    -> std::expected<void, sak::error_code>
+{
+    reportProgress(10, 100, "Capturing registry snapshot...");
+    [[maybe_unused]] auto snap_ok = captureRegistrySnapshot();
+    Q_EMIT registrySnapshotCaptured();
+
+    if (checkStop()) {
+        return std::unexpected(sak::error_code::operation_cancelled);
+    }
+
+    reportProgress(20, 100, "Running native uninstaller...");
+    Q_EMIT nativeUninstallerStarted(m_program.displayName);
+
+    if (!runNativeUninstaller()) {
+        report.uninstallResult =
+            UninstallReport::UninstallResult::Failed;
+        report.endTime = QDateTime::currentDateTime();
+        Q_EMIT uninstallComplete(report);
+        return std::unexpected(sak::error_code::execution_failed);
+    }
+
+    report.uninstallResult =
+        UninstallReport::UninstallResult::Success;
+    Q_EMIT nativeUninstallerFinished(report.nativeExitCode);
+    return {};
+}
+
+auto UninstallWorker::executeUwpMode(UninstallReport& report)
+    -> std::expected<void, sak::error_code>
+{
+    reportProgress(20, 100, "Removing UWP package...");
+    if (!removeUwpPackage()) {
+        report.uninstallResult =
+            UninstallReport::UninstallResult::Failed;
+        report.endTime = QDateTime::currentDateTime();
+        Q_EMIT uninstallComplete(report);
+        return std::unexpected(sak::error_code::execution_failed);
+    }
+    report.uninstallResult =
+        UninstallReport::UninstallResult::Success;
+    report.endTime = QDateTime::currentDateTime();
+    Q_EMIT uninstallComplete(report);
+    return {};
+}
+
+auto UninstallWorker::executeRegistryMode(UninstallReport& report)
+    -> std::expected<void, sak::error_code>
+{
+    reportProgress(50, 100,
+                   "Removing orphaned registry entry...");
+    if (!removeRegistryEntry()) {
+        report.uninstallResult =
+            UninstallReport::UninstallResult::Failed;
+        report.endTime = QDateTime::currentDateTime();
+        Q_EMIT uninstallComplete(report);
+        return std::unexpected(sak::error_code::execution_failed);
+    }
+    report.uninstallResult =
+        UninstallReport::UninstallResult::Success;
+    report.registryKeysDeleted = 1;
+    report.endTime = QDateTime::currentDateTime();
+    Q_EMIT uninstallComplete(report);
+    return {};
+}
+
 auto UninstallWorker::execute() -> std::expected<void, sak::error_code>
 {
     UninstallReport report;
@@ -104,83 +170,44 @@ auto UninstallWorker::execute() -> std::expected<void, sak::error_code>
         reportProgress(0, 100, "Creating system restore point...");
         if (createRestorePoint()) {
             report.restorePointCreated = true;
-            report.restorePointName = QString("SAK: Before uninstall %1")
-                .arg(m_program.displayName);
+            report.restorePointName =
+                QString("SAK: Before uninstall %1")
+                    .arg(m_program.displayName);
             Q_EMIT restorePointCreated(report.restorePointName);
         }
     }
 
     if (checkStop()) {
-        return std::unexpected(sak::error_code::operation_cancelled);
+        return std::unexpected(
+            sak::error_code::operation_cancelled);
     }
 
     // Phase 2: Handle by mode
     switch (m_mode) {
     case Mode::Standard: {
-        // 2a: Capture registry snapshot (before state)
-        reportProgress(10, 100, "Capturing registry snapshot...");
-        [[maybe_unused]] auto snap_ok = captureRegistrySnapshot();
-        Q_EMIT registrySnapshotCaptured();
-
-        if (checkStop()) {
-            return std::unexpected(sak::error_code::operation_cancelled);
-        }
-
-        // 2b: Run native uninstaller and wait for exit
-        reportProgress(20, 100, "Running native uninstaller...");
-        Q_EMIT nativeUninstallerStarted(m_program.displayName);
-
-        if (!runNativeUninstaller()) {
-            report.uninstallResult = UninstallReport::UninstallResult::Failed;
-            report.endTime = QDateTime::currentDateTime();
-            Q_EMIT uninstallComplete(report);
-            return std::unexpected(sak::error_code::execution_failed);
-        }
-
-        report.uninstallResult = UninstallReport::UninstallResult::Success;
-        Q_EMIT nativeUninstallerFinished(report.nativeExitCode);
+        auto result = executeStandardMode(report);
+        if (!result) { return result; }
         break;
     }
-
     case Mode::ForcedUninstall: {
-        report.uninstallResult = UninstallReport::UninstallResult::Skipped;
-        // Still capture snapshot for diff reference
-        reportProgress(10, 100, "Capturing registry snapshot...");
-        [[maybe_unused]] auto snap_ok_forced = captureRegistrySnapshot();
+        report.uninstallResult =
+            UninstallReport::UninstallResult::Skipped;
+        reportProgress(10, 100,
+                       "Capturing registry snapshot...");
+        [[maybe_unused]] auto snap_ok =
+            captureRegistrySnapshot();
         Q_EMIT registrySnapshotCaptured();
         break;
     }
-
     case Mode::UwpRemove:
-        reportProgress(20, 100, "Removing UWP package...");
-        if (!removeUwpPackage()) {
-            report.uninstallResult = UninstallReport::UninstallResult::Failed;
-            report.endTime = QDateTime::currentDateTime();
-            Q_EMIT uninstallComplete(report);
-            return std::unexpected(sak::error_code::execution_failed);
-        }
-        report.uninstallResult = UninstallReport::UninstallResult::Success;
-        report.endTime = QDateTime::currentDateTime();
-        Q_EMIT uninstallComplete(report);
-        return {};  // UWP — no leftover scan needed
-
+        return executeUwpMode(report);
     case Mode::RegistryOnly:
-        reportProgress(50, 100, "Removing orphaned registry entry...");
-        if (!removeRegistryEntry()) {
-            report.uninstallResult = UninstallReport::UninstallResult::Failed;
-            report.endTime = QDateTime::currentDateTime();
-            Q_EMIT uninstallComplete(report);
-            return std::unexpected(sak::error_code::execution_failed);
-        }
-        report.uninstallResult = UninstallReport::UninstallResult::Success;
-        report.registryKeysDeleted = 1;
-        report.endTime = QDateTime::currentDateTime();
-        Q_EMIT uninstallComplete(report);
-        return {};
+        return executeRegistryMode(report);
     }
 
     if (checkStop()) {
-        return std::unexpected(sak::error_code::operation_cancelled);
+        return std::unexpected(
+            sak::error_code::operation_cancelled);
     }
 
     // Phase 3: Leftover scanning
@@ -327,6 +354,9 @@ bool UninstallWorker::removeUwpPackage()
 
     ps.start();
 
+    if (!ps.waitForStarted(kProcessStartTimeoutMs)) {
+        return false;
+    }
     if (!ps.waitForFinished(kUwpRemovalTimeoutMs)) {
         return false;
     }

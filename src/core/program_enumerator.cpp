@@ -5,6 +5,7 @@
 /// @brief Enumerates all installed Win32 and UWP programs with rich metadata
 
 #include "sak/program_enumerator.h"
+#include "sak/layout_constants.h"
 
 #include <QDir>
 #include <QDirIterator>
@@ -68,8 +69,22 @@ ProgramEnumerator::ProgramEnumerator(QObject* parent)
 
 ProgramEnumerator::~ProgramEnumerator() = default;
 
+void ProgramEnumerator::requestCancel()
+{
+    m_cancelRequested.store(true, std::memory_order_release);
+}
+
+void ProgramEnumerator::resetCancel()
+{
+    m_cancelRequested.store(false, std::memory_order_release);
+}
+
 void ProgramEnumerator::enumerateAll()
 {
+    if (m_cancelRequested.load(std::memory_order_acquire)) {
+        Q_EMIT enumerationFailed("Enumeration cancelled.");
+        return;
+    }
     Q_EMIT enumerationStarted();
 
     QVector<ProgramInfo> all_programs;
@@ -78,17 +93,29 @@ void ProgramEnumerator::enumerateAll()
 #ifdef Q_OS_WIN
         // Phase 1: Win32 registry programs
         auto registry_programs = scanRegistryPrograms();
+        if (m_cancelRequested.load(std::memory_order_acquire)) {
+            Q_EMIT enumerationFailed("Enumeration cancelled.");
+            return;
+        }
         all_programs.append(registry_programs);
         Q_EMIT enumerationProgress(50, 100);
 #endif
 
         // Phase 2: UWP packages
         auto uwp_programs = scanUwpPackages();
+        if (m_cancelRequested.load(std::memory_order_acquire)) {
+            Q_EMIT enumerationFailed("Enumeration cancelled.");
+            return;
+        }
         all_programs.append(uwp_programs);
         Q_EMIT enumerationProgress(75, 100);
 
         // Phase 3: Provisioned UWP packages
         auto provisioned = scanProvisionedPackages();
+        if (m_cancelRequested.load(std::memory_order_acquire)) {
+            Q_EMIT enumerationFailed("Enumeration cancelled.");
+            return;
+        }
         all_programs.append(provisioned);
         Q_EMIT enumerationProgress(85, 100);
 
@@ -104,6 +131,10 @@ void ProgramEnumerator::enumerateAll()
 
         // Phase 7: Extract icons and calculate sizes
         for (int i = 0; i < all_programs.size(); ++i) {
+            if (m_cancelRequested.load(std::memory_order_acquire)) {
+                Q_EMIT enumerationFailed("Enumeration cancelled.");
+                return;
+            }
             auto& prog = all_programs[i];
 
             // Extract icon
@@ -391,6 +422,9 @@ QVector<ProgramInfo> ProgramEnumerator::scanUwpPackages()
     });
     ps.start();
 
+    if (!ps.waitForStarted(sak::kTimeoutProcessStartMs)) {
+        return results;
+    }
     if (!ps.waitForFinished(30000)) {
         return results;
     }
@@ -458,6 +492,9 @@ QVector<ProgramInfo> ProgramEnumerator::scanProvisionedPackages()
     });
     ps.start();
 
+    if (!ps.waitForStarted(sak::kTimeoutProcessStartMs)) {
+        return results;
+    }
     if (!ps.waitForFinished(30000)) {
         return results;
     }

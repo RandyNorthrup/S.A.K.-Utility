@@ -108,6 +108,7 @@ bool LogViewer::loadLogFile(const QString& file_path)
 {
     QFile file(file_path);
     if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        sak::logError("Failed to open log file: {}", file_path.toStdString());
         QMessageBox::warning(this, "Load Error",
                            QString("Failed to open log file: %1").arg(file_path));
         return false;
@@ -179,6 +180,7 @@ void LogViewer::onSaveClicked()
     
     QFile file(file_path);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        sak::logError("Failed to save log file: {}", file_path.toStdString());
         QMessageBox::warning(this, "Save Error",
                            QString("Failed to save log file: %1").arg(file_path));
         return;

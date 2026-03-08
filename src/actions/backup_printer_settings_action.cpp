@@ -6,6 +6,7 @@
 
 #include "sak/actions/backup_printer_settings_action.h"
 #include "sak/process_runner.h"
+#include "sak/logger.h"
 #include "sak/layout_constants.h"
 #include <QFile>
 #include <QDir>
@@ -80,7 +81,10 @@ void BackupPrinterSettingsAction::execute() {
 
     QDir backup_dir(m_backup_location);
     if (!backup_dir.exists()) {
-        backup_dir.mkpath(".");
+        if (!backup_dir.mkpath(".")) {
+            sak::logWarning("Failed to create printer backup directory: {}",
+                            m_backup_location.toStdString());
+        }
     }
 
     QString reg_file = backup_dir.filePath("printer_settings.reg");

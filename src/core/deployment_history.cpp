@@ -89,7 +89,10 @@ bool DeploymentHistoryManager::appendEntry(const DeploymentHistoryEntry& entry) 
     }
 
     QJsonDocument doc(array);
-    file.write(doc.toJson(QJsonDocument::Indented));
+    const QByteArray json_bytes = doc.toJson(QJsonDocument::Indented);
+    if (file.write(json_bytes) != json_bytes.size()) {
+        return false;
+    }
     return file.commit();
 }
 

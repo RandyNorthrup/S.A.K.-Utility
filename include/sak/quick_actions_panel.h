@@ -6,6 +6,7 @@
 #include "sak/quick_action.h"
 
 #include <QWidget>
+#include <QFrame>
 #include <QGroupBox>
 #include <QPushButton>
 #include <QLabel>
@@ -15,6 +16,7 @@
 #include <QScrollArea>
 #include <QVBoxLayout>
 #include <QHash>
+#include <QEvent>
 #include <memory>
 #include <vector>
 
@@ -171,14 +173,37 @@ private:
     void createCategorySections();
 
     /**
-     * @brief Create a single category group box with action buttons
+     * @brief Create a clickable category card widget
      * @param category Action category enum
      * @param title Category title text
      * @param description Category description text
+     * @param actionCount Number of actions in this category
+     * @return Card frame widget
      */
-    void createSingleCategorySection(QuickAction::ActionCategory category,
-                                      const QString& title,
-                                      const QString& description);
+    QFrame* createCategoryCard(QuickAction::ActionCategory category,
+                               const QString& title,
+                               const QString& description,
+                               int actionCount);
+
+    /**
+     * @brief Show a modal dialog with the category's action library
+     * @param category Action category enum
+     * @param title Category title text
+     */
+    void showCategoryDialog(QuickAction::ActionCategory category,
+                            const QString& title);
+
+    /**
+     * @brief Update an action card status label
+     * @param label Status label to update
+     * @param action Action whose status to reflect
+     */
+    void updateActionCardStatus(QLabel* label, QuickAction* action);
+
+    /**
+     * @brief Event filter for card click handling
+     */
+    bool eventFilter(QObject* obj, QEvent* event) override;
 
     /**
      * @brief Create action button for UI
@@ -224,25 +249,6 @@ private:
      */
     void appendLog(const QString& message);
 
-    /**
-     * @brief Update status display with latest action result
-     */
-    void updateStatusDisplay();
-
-    /**
-     * @brief Get category display name
-     * @param category Action category
-     * @return User-friendly category name
-     */
-    static QString getCategoryName(QuickAction::ActionCategory category);
-
-    /**
-     * @brief Get category icon
-     * @param category Action category
-     * @return Category icon
-     */
-    static QIcon getCategoryIcon(QuickAction::ActionCategory category);
-
     // Controller
     QuickActionController* m_controller{nullptr};
 
@@ -250,7 +256,7 @@ private:
     QHash<QString, QuickAction*> m_actions;
 
     // UI Components - Category sections
-    QHash<QuickAction::ActionCategory, QGroupBox*> m_category_sections;
+    QHash<QuickAction::ActionCategory, QFrame*> m_category_sections;
     QHash<QuickAction*, QPushButton*> m_action_buttons;
 
     // UI Components - Settings

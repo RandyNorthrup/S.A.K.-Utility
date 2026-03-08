@@ -77,7 +77,9 @@ void WindowsUSBCreator::copyISO_extractVolumeLabel(const QString& sevenZipPath,
     labelArgs << "l" << "-slt" << sourcePath; // List with technical info
 
     labelExtract.start(sevenZipPath, labelArgs);
-    if (!labelExtract.waitForFinished(sak::kTimeoutProcessMediumMs)) {
+    if (!labelExtract.waitForStarted(sak::kTimeoutProcessStartMs)) {
+        sak::logWarning("7z process failed to start for label extraction");
+    } else if (!labelExtract.waitForFinished(sak::kTimeoutProcessMediumMs)) {
         sak::logWarning("7z label extraction timed out after 10s \xe2\x80\x94 will use default "
                         "label");
         labelExtract.kill();
@@ -441,6 +443,10 @@ void WindowsUSBCreator::copyISO_setVolumeLabel(const QString& cleanDest) {
     QString labelCmd = QString("Set-Volume -DriveLetter %1 -NewFileSystemLabel '%2'")
         .arg(driveLetter, m_volumeLabel);
     labelProcess.start("powershell.exe", QStringList() << "-NoProfile" << "-Command" << labelCmd);
+    if (!labelProcess.waitForStarted(sak::kTimeoutProcessStartMs)) {
+        sak::logWarning("PowerShell failed to start for volume label command");
+        return;
+    }
     if (!labelProcess.waitForFinished(sak::kTimeoutProcessMediumMs)) {
         sak::logWarning("Volume label command timed out");
         return;
@@ -545,7 +551,11 @@ bool WindowsUSBCreator::checkPartitionActive(const QString& diskNumber) {
         return false;
     }
 
-    scriptFile.write(diskpartScript.toLocal8Bit());
+    const QByteArray script_bytes = diskpartScript.toLocal8Bit();
+    if (scriptFile.write(script_bytes) != script_bytes.size()) {
+        sak::logError("Failed to write diskpart verification script");
+        return false;
+    }
     scriptFile.flush();
 
     QProcess diskpart;

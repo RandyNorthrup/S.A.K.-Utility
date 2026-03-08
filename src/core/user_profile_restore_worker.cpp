@@ -273,7 +273,10 @@ bool UserProfileRestoreWorker::copyDirectory(const QString& sourceDir,
     if (!dir.exists()) return false;
 
     // Create destination directory
-    QDir().mkpath(destDir);
+    if (!QDir().mkpath(destDir)) {
+        Q_EMIT logMessage(tr("Failed to create directory: %1").arg(destDir), true);
+        return false;
+    }
 
     // Iterate through all entries
     QFileInfoList entries =
@@ -321,7 +324,12 @@ bool UserProfileRestoreWorker::copyFileWithConflictResolution(const QString& sou
 
     // Ensure destination directory exists
     QFileInfo finalDestInfo(finalDestPath);
-    QDir().mkpath(finalDestInfo.absolutePath());
+    if (!QDir().mkpath(finalDestInfo.absolutePath())) {
+        Q_EMIT logMessage(tr("Failed to create directory: %1")
+                              .arg(finalDestInfo.absolutePath()), true);
+        m_filesErrored++;
+        return false;
+    }
 
     // Copy the file
     if (!QFile::copy(source, finalDestPath)) {

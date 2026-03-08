@@ -448,7 +448,10 @@ bool UserDataManager::encryptArchiveInPlace(const QString& archive_path,
         sak::logWarning("[UserDataManager] Failed to write encrypted file");
         return false;
     }
-    archive.write(*encrypted);
+    if (archive.write(*encrypted) != encrypted->size()) {
+        sak::logWarning("[UserDataManager] Incomplete write of encrypted file");
+        return false;
+    }
     archive.close();
     return true;
 }
@@ -543,7 +546,10 @@ QString UserDataManager::decryptArchiveToTempFile(const QString& archive_path,
         return {};
     }
     QString temp_path = temp.fileName();
-    temp.write(*decrypted);
+    if (temp.write(*decrypted) != decrypted->size()) {
+        sak::logError("[UserDataManager] Incomplete write of decrypted temporary file");
+        return {};
+    }
     temp.close();
 
     return temp_path;
@@ -751,7 +757,10 @@ bool UserDataManager::writeMetadata(const BackupEntry& entry, const QString& met
         return false;
     }
 
-    file.write(doc.toJson());
+    const QByteArray json_bytes = doc.toJson();
+    if (file.write(json_bytes) != json_bytes.size()) {
+        return false;
+    }
     return true;
 }
 

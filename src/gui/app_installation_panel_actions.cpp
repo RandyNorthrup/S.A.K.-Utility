@@ -5,6 +5,7 @@
 #include "sak/chocolatey_manager.h"
 #include "sak/app_installation_worker.h"
 #include "sak/migration_report.h"
+#include "sak/logger.h"
 
 #include <QMessageBox>
 #include <QApplication>
@@ -39,6 +40,7 @@ void AppInstallationPanel::onSearch()
     }
 
     if (!m_choco_manager->isInitialized()) {
+        sak::logWarning("Search attempted but Chocolatey is not initialized");
         QMessageBox::warning(this, tr("Chocolatey Not Available"),
             tr("Chocolatey is not initialized. Search is unavailable."));
         return;
@@ -193,6 +195,7 @@ void AppInstallationPanel::onInstallAll()
     }
 
     if (!m_choco_manager->isInitialized()) {
+        sak::logWarning("Installation attempted but Chocolatey is not initialized");
         QMessageBox::warning(this, tr("Chocolatey Not Available"),
             tr("Chocolatey is not initialized. Installation is unavailable."));
         return;

@@ -56,6 +56,10 @@ struct TransferManifest {
     QDateTime created;
     QVector<BackupUserData> users;
     QVector<TransferFileEntry> files;
+    QVector<InstalledAppInfo> installed_apps;
+    QVector<WifiProfileInfo> wifi_profiles;
+    QVector<EthernetConfigInfo> ethernet_configs;
+    QVector<AppDataSourceInfo> app_data_sources;
     qint64 total_bytes{0};
     int total_files{0};
     QString checksum_sha256; // manifest checksum

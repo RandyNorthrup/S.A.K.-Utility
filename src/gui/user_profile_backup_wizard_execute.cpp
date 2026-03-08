@@ -3,6 +3,7 @@
 
 #include "sak/user_profile_backup_wizard.h"
 #include "sak/user_profile_backup_worker.h"
+#include "sak/logger.h"
 #include "sak/style_constants.h"
 #include "sak/layout_constants.h"
 #include <QVBoxLayout>
@@ -121,6 +122,9 @@ void UserProfileBackupExecutePage::onStartBackup() {
     }
 
     saveInstalledAppsToBackup(wiz->installedApps());
+    saveWifiProfilesToBackup(wiz->wifiProfiles());
+    saveEthernetConfigsToBackup(wiz->ethernetConfigs());
+    saveAppDataSourcesToBackup(wiz->appDataSources());
     connectAndStartBackupWorker(smartFilter, permissionMode,
                                 compressionLevel, encrypt, password);
 }
@@ -143,11 +147,94 @@ void UserProfileBackupExecutePage::saveInstalledAppsToBackup(
     QJsonDocument doc(appsArray);
     QFile appsFile(m_destinationPath + "/installed_apps.json");
     if (appsFile.open(QIODevice::WriteOnly)) {
-        appsFile.write(doc.toJson(QJsonDocument::Indented));
+        const QByteArray json_bytes = doc.toJson(QJsonDocument::Indented);
+        if (appsFile.write(json_bytes) != json_bytes.size()) {
+            sak::logError("Incomplete write of installed apps list");
+            appendLog(tr("WARNING: Incomplete write of installed applications list"));
+        }
         appsFile.close();
         appendLog(tr("Saved %1 installed application(s) to backup").arg(installedApps.size()));
     } else {
+        sak::logError("Could not save installed apps list: {}", appsFile.errorString().toStdString());
         appendLog(tr("WARNING: Could not save installed applications list"));
+    }
+}
+
+void UserProfileBackupExecutePage::saveWifiProfilesToBackup(
+    const QVector<WifiProfileInfo>& profiles) {
+    if (profiles.isEmpty()) return;
+
+    QJsonArray arr;
+    for (const auto& p : profiles) {
+        if (p.selected) arr.append(p.toJson());
+    }
+    if (arr.isEmpty()) return;
+
+    QJsonDocument doc(arr);
+    QFile file(m_destinationPath + "/wifi_profiles.json");
+    if (file.open(QIODevice::WriteOnly)) {
+        const QByteArray json_bytes = doc.toJson(QJsonDocument::Indented);
+        if (file.write(json_bytes) != json_bytes.size()) {
+            sak::logError("Incomplete write of WiFi profiles");
+            appendLog(tr("WARNING: Incomplete write of WiFi profiles"));
+        }
+        file.close();
+        appendLog(tr("Saved %1 WiFi profile(s) to backup").arg(arr.size()));
+    } else {
+        sak::logError("Could not save WiFi profiles: {}", file.errorString().toStdString());
+        appendLog(tr("WARNING: Could not save WiFi profiles"));
+    }
+}
+
+void UserProfileBackupExecutePage::saveEthernetConfigsToBackup(
+    const QVector<EthernetConfigInfo>& configs) {
+    if (configs.isEmpty()) return;
+
+    QJsonArray arr;
+    for (const auto& c : configs) {
+        if (c.selected) arr.append(c.toJson());
+    }
+    if (arr.isEmpty()) return;
+
+    QJsonDocument doc(arr);
+    QFile file(m_destinationPath + "/ethernet_configs.json");
+    if (file.open(QIODevice::WriteOnly)) {
+        const QByteArray json_bytes = doc.toJson(QJsonDocument::Indented);
+        if (file.write(json_bytes) != json_bytes.size()) {
+            sak::logError("Incomplete write of Ethernet configs");
+            appendLog(tr("WARNING: Incomplete write of Ethernet configurations"));
+        }
+        file.close();
+        appendLog(tr("Saved %1 Ethernet configuration(s) to backup").arg(arr.size()));
+    } else {
+        sak::logError("Could not save Ethernet configs: {}", file.errorString().toStdString());
+        appendLog(tr("WARNING: Could not save Ethernet configurations"));
+    }
+}
+
+void UserProfileBackupExecutePage::saveAppDataSourcesToBackup(
+    const QVector<AppDataSourceInfo>& sources) {
+    if (sources.isEmpty()) return;
+
+    QJsonArray arr;
+    for (const auto& s : sources) {
+        if (s.selected) arr.append(s.toJson());
+    }
+    if (arr.isEmpty()) return;
+
+    QJsonDocument doc(arr);
+    QFile file(m_destinationPath + "/app_data_sources.json");
+    if (file.open(QIODevice::WriteOnly)) {
+        const QByteArray json_bytes = doc.toJson(QJsonDocument::Indented);
+        if (file.write(json_bytes) != json_bytes.size()) {
+            sak::logError("Incomplete write of app data sources");
+            appendLog(tr("WARNING: Incomplete write of application data sources"));
+        }
+        file.close();
+        appendLog(tr("Saved %1 application data source(s) to backup").arg(arr.size()));
+    } else {
+        sak::logError("Could not save app data sources: {}", file.errorString().toStdString());
+        appendLog(tr("WARNING: Could not save application data sources"));
     }
 }
 

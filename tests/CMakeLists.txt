@@ -692,6 +692,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_package_matcher.cpp")
         unit/test_package_matcher.cpp
         ../src/core/package_matcher.cpp
         ../src/core/app_scanner.cpp
+        ../src/core/bundled_tools_manager.cpp
         ../src/core/chocolatey_manager.cpp
         ../src/core/logger.cpp
         ../include/sak/package_matcher.h
@@ -1247,6 +1248,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_app_installation_worker.cpp")
         ../include/sak/migration_report.h
         ../src/core/app_scanner.cpp
         ../include/sak/app_scanner.h
+        ../src/core/bundled_tools_manager.cpp
         ../src/core/package_matcher.cpp
         ../include/sak/package_matcher.h
         ../src/core/logger.cpp
@@ -1513,6 +1515,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_migration_report.cpp")
         ../include/sak/migration_report.h
         ../src/core/app_scanner.cpp
         ../include/sak/app_scanner.h
+        ../src/core/bundled_tools_manager.cpp
         ../src/core/package_matcher.cpp
         ../include/sak/package_matcher.h
         ../src/core/chocolatey_manager.cpp
@@ -1927,6 +1930,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_advanced_uninstall_controller.c
         ../src/core/cleanup_worker.cpp
         ../src/core/registry_snapshot_engine.cpp
         ../src/core/restore_point_manager.cpp
+        ../src/core/elevation_manager.cpp
         ../src/core/config_manager.cpp
         ../src/threading/worker_base.cpp
         ../src/core/logger.cpp
@@ -2073,6 +2077,78 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_network_diagnostic_report.cpp")
     add_test(NAME test_network_diagnostic_report COMMAND test_network_diagnostic_report
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_network_diagnostic_report")
+endif()
+
+# ============================================================================
+# Unit Tests - Utility & Deduplication
+# ============================================================================
+
+# test_format_utils — sak::formatBytes() display formatting
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_format_utils.cpp")
+    add_executable(test_format_utils
+        unit/test_format_utils.cpp
+    )
+    set_target_properties(test_format_utils PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+    )
+    target_link_libraries(test_format_utils PRIVATE
+        Qt6::Core Qt6::Test
+    )
+    target_include_directories(test_format_utils PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_format_utils COMMAND test_format_utils
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_format_utils")
+endif()
+
+# test_wifi_profile_scanner — WiFi profile name/security parsing
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_wifi_profile_scanner.cpp")
+    add_executable(test_wifi_profile_scanner
+        unit/test_wifi_profile_scanner.cpp
+        ../src/core/wifi_profile_scanner.cpp
+        ../src/core/user_profile_types.cpp
+        ../src/core/logger.cpp
+    )
+    set_target_properties(test_wifi_profile_scanner PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+    )
+    target_link_libraries(test_wifi_profile_scanner PRIVATE
+        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_wifi_profile_scanner PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_wifi_profile_scanner COMMAND test_wifi_profile_scanner
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_wifi_profile_scanner")
+endif()
+
+# test_network_transfer_report — TransferReport toJson serialization
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_network_transfer_report.cpp")
+    add_executable(test_network_transfer_report
+        unit/test_network_transfer_report.cpp
+        ../src/core/network_transfer_report.cpp
+        ../src/core/network_transfer_types.cpp
+        ../src/core/user_profile_types.cpp
+        ../src/core/logger.cpp
+    )
+    set_target_properties(test_network_transfer_report PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+    )
+    target_link_libraries(test_network_transfer_report PRIVATE
+        Qt6::Core Qt6::Network Qt6::Test ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_network_transfer_report PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_network_transfer_report
+             COMMAND test_network_transfer_report
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_network_transfer_report")
 endif()
 
 # ============================================================================

@@ -2,9 +2,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "sak/app_scanner.h"
+#include "sak/bundled_tools_manager.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
 #include <QProcess>
+#include <QStandardPaths>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
@@ -179,6 +181,10 @@ std::vector<AppScanner::AppInfo> AppScanner::scanAppX() {
     });
 
     process.start();
+    if (!process.waitForStarted(sak::kTimeoutProcessStartMs)) {
+        sak::logWarning("AppScanner: PowerShell failed to start for AppX scan");
+        return apps;
+    }
     if (!process.waitForFinished(sak::kTimeoutProcessLongMs)) {
         sak::logWarning("AppScanner: PowerShell timeout while scanning AppX packages");
         return apps;
@@ -224,12 +230,28 @@ std::vector<AppScanner::AppInfo> AppScanner::scanAppX() {
 std::vector<AppScanner::AppInfo> AppScanner::scanChocolatey() {
     std::vector<AppInfo> apps;
 
-    // Check if chocolatey is installed
+    // Prefer bundled portable choco, fall back to system PATH
+    QString choco_path;
+    auto& tools = BundledToolsManager::instance();
+    if (tools.toolExists(QStringLiteral("chocolatey"), QStringLiteral("choco.exe"))) {
+        choco_path = tools.toolPath(QStringLiteral("chocolatey"), QStringLiteral("choco.exe"));
+    } else {
+        choco_path = QStandardPaths::findExecutable(QStringLiteral("choco"));
+        if (choco_path.isEmpty()) {
+            sak::logWarning("Chocolatey not found (bundled or system PATH)");
+            return apps;
+        }
+    }
+
     QProcess process;
-    process.setProgram("choco");
+    process.setProgram(choco_path);
     process.setArguments({"list", "--local-only", "--limit-output"});
 
     process.start();
+    if (!process.waitForStarted(sak::kTimeoutProcessStartMs)) {
+        sak::logWarning("AppScanner: Chocolatey process failed to start");
+        return apps;
+    }
     if (!process.waitForFinished(sak::kTimeoutProcessMediumMs)) {
         sak::logWarning("Chocolatey package scan timed out after 10s — choco may not be installed "
                         "or is unresponsive");

@@ -58,138 +58,132 @@ void UserMigrationPanel::setupUi()
 
     auto* contentWidget = new QWidget(scrollArea);
     auto* mainLayout = new QVBoxLayout(contentWidget);
-    mainLayout->setContentsMargins(sak::ui::kMarginMedium, sak::ui::kMarginMedium,
-        sak::ui::kMarginMedium, sak::ui::kMarginMedium);
+    mainLayout->setContentsMargins(sak::ui::kMarginMedium,
+        sak::ui::kMarginMedium, sak::ui::kMarginMedium,
+        sak::ui::kMarginMedium);
     mainLayout->setSpacing(sak::ui::kSpacingLarge);
 
     scrollArea->setWidget(contentWidget);
     rootLayout->addWidget(scrollArea);
 
-    // Panel header — consistent title + muted subtitle
-    sak::createPanelHeader(contentWidget, QStringLiteral(":/icons/icons/panel_backup_restore.svg"),
+    sak::createPanelHeader(contentWidget,
+        QStringLiteral(":/icons/icons/panel_backup_restore.svg"),
         tr("Backup and Restore"),
-        tr("Comprehensive backup and restore wizards for Windows user profiles."), mainLayout);
+        tr("Comprehensive backup and restore wizards"
+           " for Windows user profiles."),
+        mainLayout);
 
-    // ── Card stylesheet ─────────────────────────────────────────────────
-    const QString cardStyle = QString(
-        "QFrame {"
-        "  background-color: %1;"
-        "  border: 1px solid %2;"
-        "  border-radius: 10px;"
-        "  padding: %3px;"
-        "}"
-        "QFrame:hover {"
-        "  border-color: %4;"
-        "}")
-        .arg(sak::ui::kColorBgWhite)
-        .arg(sak::ui::kColorBorderDefault)
-        .arg(sak::ui::kMarginMedium)
-        .arg(sak::ui::kColorPrimary);
-
-    const QString cardTitleStyle = QString(
-        "font-size: %1pt; font-weight: 700; color: %2; border: none; background: transparent;")
-        .arg(sak::ui::kFontSizeSection)
-        .arg(sak::ui::kColorTextHeading);
-
-    const QString cardDescStyle = QString(
-        "font-size: %1pt; color: %2; border: none; background: transparent;")
-        .arg(sak::ui::kFontSizeBody)
-        .arg(sak::ui::kColorTextSecondary);
-
-    // ── Row: Backup | Restore ───────────────────────────────────────────
-    auto* cardRow = new QHBoxLayout();
-    cardRow->setSpacing(sak::ui::kSpacingLarge);
-
-    // Backup card
-    auto* backupCard = new QFrame(contentWidget);
-    backupCard->setStyleSheet(cardStyle);
-    auto* backupLayout = new QVBoxLayout(backupCard);
-    backupLayout->setSpacing(sak::ui::kSpacingMedium);
-    backupLayout->setContentsMargins(0, 0, 0, 0);
-
-    auto* backupLogo = new QLabel(backupCard);
-    backupLogo->setPixmap(QIcon(":/icons/icons/backup.svg").pixmap(96, 96));
-    backupLogo->setAlignment(Qt::AlignCenter);
-    backupLogo->setStyleSheet(QStringLiteral("border: none; background: transparent;"));
-    backupLayout->addWidget(backupLogo);
-
-    auto* backupTitle = new QLabel(tr("Backup User Profiles"), backupCard);
-    backupTitle->setStyleSheet(cardTitleStyle);
-    backupLayout->addWidget(backupTitle);
-
-    auto* backupDesc = new QLabel(
-        tr("Scan and select users, choose folders, configure filters, and create backup packages."),
-        backupCard);
-    backupDesc->setWordWrap(true);
-    backupDesc->setStyleSheet(cardDescStyle);
-    backupLayout->addWidget(backupDesc);
-
-    backupLayout->addStretch();
-
-    m_backupButton = new QPushButton(tr("Start Backup Wizard..."), backupCard);
-    m_backupButton->setMinimumHeight(sak::kButtonHeightTall);
-    m_backupButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
-    m_backupButton->setToolTip(tr("Step-by-step wizard to select apps, configure options, "
-                                  "and create backups"));
-    m_backupButton->setAccessibleName(QStringLiteral("Start Backup Wizard"));
-    backupLayout->addWidget(m_backupButton);
-
-    cardRow->addWidget(backupCard);
-
-    // Restore card
-    auto* restoreCard = new QFrame(contentWidget);
-    restoreCard->setStyleSheet(cardStyle);
-    auto* restoreLayout = new QVBoxLayout(restoreCard);
-    restoreLayout->setSpacing(sak::ui::kSpacingMedium);
-    restoreLayout->setContentsMargins(0, 0, 0, 0);
-
-    auto* restoreLogo = new QLabel(restoreCard);
-    restoreLogo->setPixmap(QIcon(":/icons/icons/restore.svg").pixmap(96, 96));
-    restoreLogo->setAlignment(Qt::AlignCenter);
-    restoreLogo->setStyleSheet(QStringLiteral("border: none; background: transparent;"));
-    restoreLayout->addWidget(restoreLogo);
-
-    auto* restoreTitle = new QLabel(tr("Restore User Profiles"), restoreCard);
-    restoreTitle->setStyleSheet(cardTitleStyle);
-    restoreLayout->addWidget(restoreTitle);
-
-    auto* restoreDesc = new QLabel(
-        tr("Select backup, map users, configure merge options, and restore data with permissions."),
-        restoreCard);
-    restoreDesc->setWordWrap(true);
-    restoreDesc->setStyleSheet(cardDescStyle);
-    restoreLayout->addWidget(restoreDesc);
-
-    restoreLayout->addStretch();
-
-    m_restoreButton = new QPushButton(tr("Start Restore Wizard..."), restoreCard);
-    m_restoreButton->setMinimumHeight(sak::kButtonHeightTall);
-    m_restoreButton->setStyleSheet(sak::ui::kSecondaryButtonStyle);
-    m_restoreButton->setToolTip(tr("Step-by-step wizard to select backups, map users, "
-                                   "and restore data"));
-    m_restoreButton->setAccessibleName(QStringLiteral("Start Restore Wizard"));
-    restoreLayout->addWidget(m_restoreButton);
-
-    cardRow->addWidget(restoreCard);
-
-    mainLayout->addLayout(cardRow);
+    createMigrationCards(contentWidget, mainLayout);
 
     mainLayout->addStretch();
 
-    // Bottom row: Settings + Log toggle (outside scroll area, pinned to bottom)
+    // Bottom row: Settings + Log toggle
     auto* bottomLayout = new QHBoxLayout();
-    bottomLayout->setContentsMargins(sak::ui::kMarginMedium, sak::ui::kMarginTight,
-        sak::ui::kMarginMedium, sak::ui::kMarginSmall);
+    bottomLayout->setContentsMargins(sak::ui::kMarginMedium,
+        sak::ui::kMarginTight, sak::ui::kMarginMedium,
+        sak::ui::kMarginSmall);
 
     auto* settingsBtn = new QPushButton(tr("Settings"), this);
-    settingsBtn->setAccessibleName(QStringLiteral("User Migration Settings"));
-    connect(settingsBtn, &QPushButton::clicked, this, &UserMigrationPanel::onSettingsClicked);
+    settingsBtn->setAccessibleName(
+        QStringLiteral("User Migration Settings"));
+    connect(settingsBtn, &QPushButton::clicked,
+        this, &UserMigrationPanel::onSettingsClicked);
     bottomLayout->addWidget(settingsBtn);
 
     m_logToggle = new LogToggleSwitch(tr("Log"), this);
     bottomLayout->addWidget(m_logToggle);
     bottomLayout->addStretch();
     rootLayout->addLayout(bottomLayout);
+}
+
+void UserMigrationPanel::createMigrationCards(
+    QWidget* parent, QVBoxLayout* layout)
+{
+    const QString card_style = QString(
+        "QFrame { background-color: %1; border: 1px solid %2;"
+        " border-radius: 10px; padding: %3px; }"
+        "QFrame:hover { border-color: %4; }")
+        .arg(sak::ui::kColorBgWhite)
+        .arg(sak::ui::kColorBorderDefault)
+        .arg(sak::ui::kMarginMedium)
+        .arg(sak::ui::kColorPrimary);
+
+    const QString title_style = QString(
+        "font-size: %1pt; font-weight: 700; color: %2;"
+        " border: none; background: transparent;")
+        .arg(sak::ui::kFontSizeSection)
+        .arg(sak::ui::kColorTextHeading);
+
+    const QString desc_style = QString(
+        "font-size: %1pt; color: %2;"
+        " border: none; background: transparent;")
+        .arg(sak::ui::kFontSizeBody)
+        .arg(sak::ui::kColorTextSecondary);
+
+    constexpr int kLogoSize = 96;
+    auto makeCard = [&](const QString& icon, const QString& title,
+        const QString& desc, QPushButton*& btn,
+        const QString& btn_text, const QString& btn_style,
+        const QString& tip, const QString& acc) -> QFrame*
+    {
+        auto* card = new QFrame(parent);
+        card->setStyleSheet(card_style);
+        auto* lay = new QVBoxLayout(card);
+        lay->setSpacing(sak::ui::kSpacingMedium);
+        lay->setContentsMargins(0, 0, 0, 0);
+
+        auto* logo = new QLabel(card);
+        logo->setPixmap(QIcon(icon).pixmap(kLogoSize, kLogoSize));
+        logo->setAlignment(Qt::AlignCenter);
+        logo->setStyleSheet(QStringLiteral(
+            "border: none; background: transparent;"));
+        lay->addWidget(logo);
+
+        auto* tl = new QLabel(title, card);
+        tl->setStyleSheet(title_style);
+        lay->addWidget(tl);
+
+        auto* dl = new QLabel(desc, card);
+        dl->setWordWrap(true);
+        dl->setStyleSheet(desc_style);
+        lay->addWidget(dl);
+
+        lay->addStretch();
+        btn = new QPushButton(btn_text, card);
+        btn->setMinimumHeight(sak::kButtonHeightTall);
+        btn->setStyleSheet(btn_style);
+        btn->setToolTip(tip);
+        btn->setAccessibleName(acc);
+        lay->addWidget(btn);
+        return card;
+    };
+
+    auto* row = new QHBoxLayout();
+    row->setSpacing(sak::ui::kSpacingLarge);
+
+    row->addWidget(makeCard(
+        QStringLiteral(":/icons/icons/backup.svg"),
+        tr("Backup User Profiles"),
+        tr("Scan and select users, choose folders, configure"
+           " filters, and create backup packages."),
+        m_backupButton, tr("Start Backup Wizard..."),
+        sak::ui::kPrimaryButtonStyle,
+        tr("Step-by-step wizard to select apps, configure"
+           " options, and create backups"),
+        QStringLiteral("Start Backup Wizard")));
+
+    row->addWidget(makeCard(
+        QStringLiteral(":/icons/icons/restore.svg"),
+        tr("Restore User Profiles"),
+        tr("Select backup, map users, configure merge"
+           " options, and restore data with permissions."),
+        m_restoreButton, tr("Start Restore Wizard..."),
+        sak::ui::kSecondaryButtonStyle,
+        tr("Step-by-step wizard to select backups, map"
+           " users, and restore data"),
+        QStringLiteral("Start Restore Wizard")));
+
+    layout->addLayout(row);
 }
 
 void UserMigrationPanel::setupConnections()

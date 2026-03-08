@@ -27,6 +27,8 @@
 #define NOMINMAX
 #endif
 #include <Windows.h>
+#include <d3d11.h>
+#include <d3dcompiler.h>
 #endif
 
 namespace sak {
@@ -100,9 +102,10 @@ auto StressTestWorker::execute() -> std::expected<void, sak::error_code>
 {
     sak::KeepAwakeGuard keep_awake(sak::KeepAwake::PowerRequest::System, "Stress test");
 
-    logInfo("Starting stress test — CPU:{} Mem:{} Disk:{} Duration:{}min",
+    logInfo("Starting stress test — CPU:{} Mem:{} Disk:{} GPU:{} Duration:{}min",
             m_config.stress_cpu, m_config.stress_memory,
-            m_config.stress_disk, m_config.duration_minutes);
+            m_config.stress_disk, m_config.stress_gpu,
+            m_config.duration_minutes);
 
     m_result = StressTestResult{};
     m_result.start_time = QDateTime::currentDateTime();
@@ -167,6 +170,13 @@ void StressTestWorker::launchStressThreads(std::vector<std::future<void>>& futur
             runDiskStress();
         }));
         logInfo("Launched disk stress thread");
+    }
+
+    if (m_config.stress_gpu) {
+        futures.push_back(std::async(std::launch::async, [this]() {
+            runGpuStress();
+        }));
+        logInfo("Launched GPU stress thread");
     }
 }
 
@@ -476,5 +486,246 @@ int StressTestWorker::writeDiskStressFile(
     return 0;
 }
 #endif
+
+// ============================================================================
+// GPU Stress — RAII context and phase helpers
+// ============================================================================
+
+#ifdef SAK_PLATFORM_WINDOWS
+
+// Compute shader HLSL: heavy ALU loop per thread
+static const char* kGpuShaderSource =
+    "RWBuffer<float> buf : register(u0);\n"
+    "[numthreads(256, 1, 1)]\n"
+    "void CSMain(uint3 id : SV_DispatchThreadID) {\n"
+    "    float v = float(id.x) * 0.001f + 1.0f;\n"
+    "    [loop] for (int i = 0; i < 4096; ++i) {\n"
+    "        v = v * v - v * 0.5f + 0.1f;\n"
+    "        v = abs(v) < 1e15f ? v : 1.0f;\n"
+    "    }\n"
+    "    buf[id.x] = v;\n"
+    "}\n";
+
+constexpr UINT kGpuNumElements = 256 * 1024;
+constexpr UINT kGpuGroupsX = kGpuNumElements / 256;
+
+using PFN_D3D11CreateDevice = HRESULT(WINAPI*)(
+    IDXGIAdapter*, D3D_DRIVER_TYPE, HMODULE, UINT,
+    const D3D_FEATURE_LEVEL*, UINT, UINT,
+    ID3D11Device**, D3D_FEATURE_LEVEL*, ID3D11DeviceContext**);
+
+using PFN_D3DCompile = HRESULT(WINAPI*)(
+    LPCVOID, SIZE_T, LPCSTR, const D3D_SHADER_MACRO*, ID3DInclude*,
+    LPCSTR, LPCSTR, UINT, UINT, ID3DBlob**, ID3DBlob**);
+
+#endif // SAK_PLATFORM_WINDOWS
+
+} // namespace sak
+
+/// RAII context holding all GPU stress resources — defined outside
+/// namespace sak so the forward declaration in the header resolves.
+struct sak::GpuStressContext {
+#ifdef SAK_PLATFORM_WINDOWS
+    HMODULE d3d11{nullptr};
+    HMODULE d3dCompiler{nullptr};
+    ID3D11Device* device{nullptr};
+    ID3D11DeviceContext* context{nullptr};
+    ID3D11ComputeShader* computeShader{nullptr};
+    ID3D11Buffer* gpuBuffer{nullptr};
+    ID3D11UnorderedAccessView* uav{nullptr};
+
+    ~GpuStressContext()
+    {
+        if (uav) uav->Release();
+        if (gpuBuffer) gpuBuffer->Release();
+        if (computeShader) computeShader->Release();
+        if (context) context->Release();
+        if (device) device->Release();
+        if (d3dCompiler) FreeLibrary(d3dCompiler);
+        if (d3d11) FreeLibrary(d3d11);
+    }
+#endif
+};
+
+namespace sak {
+
+bool StressTestWorker::initGpuDevice(GpuStressContext& ctx)
+{
+#ifdef SAK_PLATFORM_WINDOWS
+    ctx.d3d11 = LoadLibraryW(L"d3d11.dll");
+    if (!ctx.d3d11) {
+        logWarning("GPU stress: d3d11.dll not available — skipping");
+        return false;
+    }
+
+    auto fnCreate = reinterpret_cast<PFN_D3D11CreateDevice>(
+        GetProcAddress(ctx.d3d11, "D3D11CreateDevice"));
+    if (!fnCreate) {
+        logWarning("GPU stress: D3D11CreateDevice not found");
+        return false;
+    }
+
+    D3D_FEATURE_LEVEL feature_level = D3D_FEATURE_LEVEL_11_0;
+    HRESULT hr = fnCreate(
+        nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, 0,
+        &feature_level, 1, D3D11_SDK_VERSION,
+        &ctx.device, nullptr, &ctx.context);
+
+    if (FAILED(hr) || !ctx.device || !ctx.context) {
+        logWarning("GPU stress: failed to create D3D11 device"
+                   " (HRESULT={:#x})", static_cast<unsigned>(hr));
+        return false;
+    }
+    return true;
+#else
+    Q_UNUSED(ctx)
+    return false;
+#endif
+}
+
+bool StressTestWorker::compileGpuShader(GpuStressContext& ctx)
+{
+#ifdef SAK_PLATFORM_WINDOWS
+    ctx.d3dCompiler = LoadLibraryW(L"d3dcompiler_47.dll");
+    if (!ctx.d3dCompiler) {
+        logWarning("GPU stress: d3dcompiler_47.dll not available");
+        return false;
+    }
+
+    auto fnCompile = reinterpret_cast<PFN_D3DCompile>(
+        GetProcAddress(ctx.d3dCompiler, "D3DCompile"));
+    if (!fnCompile) {
+        logWarning("GPU stress: D3DCompile not found");
+        return false;
+    }
+
+    ID3DBlob* shader_blob = nullptr;
+    ID3DBlob* error_blob = nullptr;
+    HRESULT hr = fnCompile(
+        kGpuShaderSource, strlen(kGpuShaderSource), "gpu_stress",
+        nullptr, nullptr, "CSMain", "cs_5_0", 0, 0,
+        &shader_blob, &error_blob);
+
+    if (FAILED(hr)) {
+        if (error_blob) {
+            logError("GPU stress: shader compile failed: {}",
+                static_cast<const char*>(
+                    error_blob->GetBufferPointer()));
+            error_blob->Release();
+        }
+        if (shader_blob) shader_blob->Release();
+        return false;
+    }
+    if (error_blob) error_blob->Release();
+
+    hr = ctx.device->CreateComputeShader(
+        shader_blob->GetBufferPointer(), shader_blob->GetBufferSize(),
+        nullptr, &ctx.computeShader);
+    shader_blob->Release();
+
+    if (FAILED(hr) || !ctx.computeShader) {
+        logError("GPU stress: CreateComputeShader failed");
+        return false;
+    }
+    return true;
+#else
+    Q_UNUSED(ctx)
+    return false;
+#endif
+}
+
+bool StressTestWorker::createGpuUavBuffer(GpuStressContext& ctx)
+{
+#ifdef SAK_PLATFORM_WINDOWS
+    D3D11_BUFFER_DESC buf_desc{};
+    buf_desc.ByteWidth = kGpuNumElements * sizeof(float);
+    buf_desc.Usage = D3D11_USAGE_DEFAULT;
+    buf_desc.BindFlags = D3D11_BIND_UNORDERED_ACCESS;
+    buf_desc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_ALLOW_RAW_VIEWS;
+
+    HRESULT hr = ctx.device->CreateBuffer(
+        &buf_desc, nullptr, &ctx.gpuBuffer);
+    if (FAILED(hr) || !ctx.gpuBuffer) {
+        logError("GPU stress: CreateBuffer failed");
+        return false;
+    }
+
+    D3D11_UNORDERED_ACCESS_VIEW_DESC uav_desc{};
+    uav_desc.ViewDimension = D3D11_UAV_DIMENSION_BUFFER;
+    uav_desc.Buffer.FirstElement = 0;
+    uav_desc.Buffer.NumElements = kGpuNumElements;
+    uav_desc.Format = DXGI_FORMAT_R32_FLOAT;
+
+    hr = ctx.device->CreateUnorderedAccessView(
+        ctx.gpuBuffer, &uav_desc, &ctx.uav);
+    if (FAILED(hr) || !ctx.uav) {
+        logError("GPU stress: CreateUnorderedAccessView failed");
+        return false;
+    }
+    return true;
+#else
+    Q_UNUSED(ctx)
+    return false;
+#endif
+}
+
+void StressTestWorker::runGpuDispatchLoop(GpuStressContext& ctx)
+{
+#ifdef SAK_PLATFORM_WINDOWS
+    uint64_t operations = 0;
+    int gpu_errors = 0;
+
+    ctx.context->CSSetShader(ctx.computeShader, nullptr, 0);
+    ctx.context->CSSetUnorderedAccessViews(
+        0, 1, &ctx.uav, nullptr);
+
+    logInfo("GPU stress: dispatching compute shader ({}x256"
+            " threads)", kGpuGroupsX);
+
+    while (!childrenShouldStop()) {
+        ctx.context->Dispatch(kGpuGroupsX, 1, 1);
+        ctx.context->Flush();
+        ++operations;
+
+        // Periodically check for device removal (GPU crash/reset)
+        if ((operations & 0xFF) == 0) {
+            HRESULT hr = ctx.device->GetDeviceRemovedReason();
+            if (FAILED(hr)) {
+                logError("GPU stress: device removed"
+                         " (HRESULT={:#x})",
+                         static_cast<unsigned>(hr));
+                ++gpu_errors;
+                m_error_count.fetch_add(
+                    1, std::memory_order_relaxed);
+                break;
+            }
+        }
+    }
+
+    m_result.gpu_operations = operations;
+    m_result.gpu_errors = gpu_errors;
+
+    logInfo("GPU stress: {} dispatches completed, {} errors",
+            operations, gpu_errors);
+#else
+    Q_UNUSED(ctx)
+#endif
+}
+
+void StressTestWorker::runGpuStress()
+{
+#ifdef SAK_PLATFORM_WINDOWS
+    GpuStressContext ctx;
+
+    if (!initGpuDevice(ctx)) return;
+    if (!compileGpuShader(ctx)) return;
+    if (!createGpuUavBuffer(ctx)) return;
+
+    runGpuDispatchLoop(ctx);
+    // ~GpuStressContext releases all D3D11 resources
+#else
+    logWarning("GPU stress: not supported on this platform");
+#endif
+}
 
 } // namespace sak

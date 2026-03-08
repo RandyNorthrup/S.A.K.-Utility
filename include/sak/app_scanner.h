@@ -12,12 +12,11 @@ namespace sak {
 
 /**
  * @brief Scans installed applications from Windows Registry and AppX packages
- * 
- * SCAN-FIRST APPROACH:
- * - Implement this first
- * - Run on dev machine to get real data
- * - Inspect actual values to design AppInfo structure
- * - Validate all fields populate correctly
+ *
+ * Enumerates all installed software on the system by querying:
+ * - Win32 registry (HKLM/HKCU Uninstall keys, both native and WoW64)
+ * - AppX/UWP packages via PowerShell
+ * - Chocolatey package manager (when available)
  */
 class AppScanner {
 public:

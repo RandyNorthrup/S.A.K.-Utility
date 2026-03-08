@@ -385,6 +385,8 @@ void ImageFlasherSettingsDialog::onClearDownloadCaches()
             QString("Successfully cleared %1 cached download folder(s) (%2 freed).")
                 .arg(removedCount).arg(sizeStr));
     } else {
+        sak::logWarning("Cache clear partially failed: cleared {} folder(s), {} could not be removed",
+                        removedCount, failedCount);
         QMessageBox::warning(this, "Clear Download Caches",
             QString("Cleared %1 folder(s), but %2 could not be removed.\n"
                     "They may be in use by an active download.")

@@ -3,6 +3,7 @@
 
 #include "sak/network_transfer_panel.h"
 #include "sak/format_utils.h"
+#include "sak/wifi_profile_scanner.h"
 #include "sak/logger.h"
 
 #include "sak/windows_user_scanner.h"
@@ -19,6 +20,7 @@
 #include "sak/smart_file_filter.h"
 #include "sak/permission_manager.h"
 #include "sak/layout_constants.h"
+#include "sak/app_scanner.h"
 
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -45,6 +47,7 @@
 #include <QDateTime>
 #include <QDir>
 #include <QJsonDocument>
+#include <QJsonArray>
 #include <QCryptographicHash>
 #include <QUuid>
 #include <QApplication>
@@ -58,6 +61,8 @@
 #include <filesystem>
 #include <QStandardPaths>
 #include <QSet>
+#include <QProcess>
+#include <QDirIterator>
 
 namespace sak {
 
@@ -72,6 +77,67 @@ constexpr int kPeerColIp = 1;
 constexpr int kPeerColMode = 2;
 constexpr int kPeerColCaps = 3;
 constexpr int kPeerColSeen = 4;
+
+QString categorizeApp(const QString& name) {
+    const QString lower = name.toLower();
+    if (lower.contains("chrome") || lower.contains("firefox") || lower.contains("edge") ||
+        lower.contains("opera") || lower.contains("brave") || lower.contains("browser"))
+        return QCoreApplication::translate("NetworkTransferPanel", "Browsers");
+    if (lower.contains("visual studio") || lower.contains("vscode") ||
+        lower.contains("jetbrains") || lower.contains("code") || lower.contains("sublime") ||
+        lower.contains("notepad++"))
+        return QCoreApplication::translate("NetworkTransferPanel", "Development");
+    if (lower.contains("office") || lower.contains("word") || lower.contains("excel"))
+        return QCoreApplication::translate("NetworkTransferPanel", "Productivity");
+    if (lower.contains("discord") || lower.contains("slack") || lower.contains("teams") ||
+        lower.contains("zoom"))
+        return QCoreApplication::translate("NetworkTransferPanel", "Communication");
+    if (lower.contains("steam") || lower.contains("epic games") || lower.contains("game"))
+        return QCoreApplication::translate("NetworkTransferPanel", "Gaming");
+    if (lower.contains("vlc") || lower.contains("spotify") || lower.contains("obs"))
+        return QCoreApplication::translate("NetworkTransferPanel", "Media");
+    if (lower.contains("7-zip") || lower.contains("winrar") || lower.contains("ccleaner"))
+        return QCoreApplication::translate("NetworkTransferPanel", "Utilities");
+    if (lower.contains("nvidia") || lower.contains("amd") || lower.contains("driver"))
+        return QCoreApplication::translate("NetworkTransferPanel", "Drivers & Hardware");
+    return QCoreApplication::translate("NetworkTransferPanel", "Other");
+}
+
+QVector<AppDataSourceInfo> getCommonAppDataSources() {
+    return {
+        {"Chrome Profiles", "Browsers", "AppData/Local/Google/Chrome/User Data", 0, false, true},
+        {"Firefox Profiles", "Browsers", "AppData/Roaming/Mozilla/Firefox/Profiles", 0, false, true},
+        {"Edge Profiles", "Browsers", "AppData/Local/Microsoft/Edge/User Data", 0, false, true},
+        {"Brave Profiles", "Browsers", "AppData/Local/BraveSoftware/Brave-Browser/User Data", 0, false, true},
+        {"Thunderbird Profiles", "Email", "AppData/Roaming/Thunderbird/Profiles", 0, false, true},
+        {"Outlook Data", "Email", "AppData/Local/Microsoft/Outlook", 0, false, true},
+        {"VS Code Settings", "Development", "AppData/Roaming/Code/User", 0, false, true},
+        {"VS Code Extensions", "Development", ".vscode/extensions", 0, false, true},
+        {"JetBrains Settings", "Development", "AppData/Roaming/JetBrains", 0, false, true},
+        {"Sublime Text Settings", "Development", "AppData/Roaming/Sublime Text 3", 0, false, true},
+        {"Notepad++ Settings", "Development", "AppData/Roaming/Notepad++", 0, false, true},
+        {"Discord Data", "Communication", "AppData/Roaming/discord", 0, false, true},
+        {"Telegram Data", "Communication", "AppData/Roaming/Telegram Desktop", 0, false, true},
+        {"Signal Data", "Communication", "AppData/Roaming/Signal", 0, false, true},
+        {"Slack Data", "Communication", "AppData/Roaming/Slack", 0, false, true},
+        {"Steam Config", "Gaming", "AppData/Local/Steam", 0, false, true},
+        {"Minecraft Data", "Gaming", "AppData/Roaming/.minecraft", 0, false, true},
+        {"Spotify Data", "Media", "AppData/Roaming/Spotify", 0, false, true},
+        {"VLC Settings", "Media", "AppData/Roaming/vlc", 0, false, true},
+        {"OBS Studio", "Media", "AppData/Roaming/obs-studio", 0, false, true},
+        {"PuTTY Sessions", "Utilities", "AppData/Roaming/PuTTY", 0, false, true},
+        {"WinSCP Settings", "Utilities", "AppData/Roaming/WinSCP", 0, false, true},
+        {"FileZilla Settings", "Utilities", "AppData/Roaming/FileZilla", 0, false, true},
+        {"PowerShell Profile", "Utilities", "Documents/PowerShell", 0, false, true},
+        {"Windows Terminal Settings", "Utilities",
+            "AppData/Local/Packages/Microsoft.WindowsTerminal_8wekyb3d8bbwe/LocalState",
+            0, false, true},
+        {"SSH Keys", "System", ".ssh", 0, false, true},
+        {"Git Config", "System", ".gitconfig", 0, false, true},
+        {"npm Config", "System", "AppData/Roaming/npm", 0, false, true},
+        {"pip Config", "System", "AppData/Roaming/pip", 0, false, true},
+    };
+}
 } // namespace
 
 void NetworkTransferPanel::onScanUsers() {
@@ -108,6 +174,181 @@ void NetworkTransferPanel::onCustomizeUser() {
     if (dialog.exec() == QDialog::Accepted) {
         profile.folder_selections = dialog.getFolderSelections();
     }
+}
+
+void NetworkTransferPanel::onScanInstalledApps() {
+    m_scanAppsButton->setEnabled(false);
+    m_installedAppsLabel->setText(tr("Scanning installed applications..."));
+    Q_EMIT logOutput(tr("Scanning installed applications..."));
+
+    QPointer<NetworkTransferPanel> safeThis(this);
+    auto* watcher = new QFutureWatcher<QVector<InstalledAppInfo>>(this);
+
+    connect(watcher, &QFutureWatcher<QVector<InstalledAppInfo>>::finished, this,
+        [safeThis, watcher]() {
+        watcher->deleteLater();
+        if (!safeThis) return;
+
+        safeThis->m_scannedApps = watcher->result();
+        safeThis->m_scanAppsButton->setEnabled(true);
+        safeThis->m_installedAppsLabel->setText(
+            QCoreApplication::translate("NetworkTransferPanel",
+                "Found %1 application(s)").arg(safeThis->m_scannedApps.size()));
+        Q_EMIT safeThis->logOutput(
+            QCoreApplication::translate("NetworkTransferPanel",
+                "Found %1 installed application(s)").arg(safeThis->m_scannedApps.size()));
+    });
+
+    watcher->setFuture(QtConcurrent::run([]() -> QVector<InstalledAppInfo> {
+        AppScanner scanner;
+        auto apps = scanner.scanAll();
+
+        QVector<InstalledAppInfo> result;
+        result.reserve(apps.size());
+        for (const auto& app : apps) {
+            InstalledAppInfo info;
+            info.name = app.name;
+            info.version = app.version;
+            info.publisher = app.publisher;
+            info.selected = true;
+            info.category = categorizeApp(app.name);
+            result.append(info);
+        }
+        return result;
+    }));
+}
+
+void NetworkTransferPanel::onScanAppData() {
+    m_scanAppDataButton->setEnabled(false);
+    m_appDataLabel->setText(tr("Scanning application data..."));
+    Q_EMIT logOutput(tr("Scanning application data sources..."));
+
+    QVector<AppDataSourceInfo> allSources;
+    auto commonSources = getCommonAppDataSources();
+
+    for (const auto& user : m_users) {
+        if (!user.is_selected) continue;
+
+        for (auto source : commonSources) {
+            QString fullPath = user.profile_path + "/" + source.relative_path;
+            QFileInfo info(fullPath);
+            if (info.exists()) {
+                source.exists = true;
+                if (info.isDir()) {
+                    qint64 dirSize = 0;
+                    QDirIterator it(fullPath, QDir::Files | QDir::NoDotAndDotDot,
+                                    QDirIterator::Subdirectories);
+                    while (it.hasNext()) {
+                        it.next();
+                        dirSize += it.fileInfo().size();
+                    }
+                    source.size_bytes = dirSize;
+                } else {
+                    source.size_bytes = info.size();
+                }
+                allSources.append(source);
+            }
+        }
+    }
+
+    m_scannedAppData = allSources;
+    m_scanAppDataButton->setEnabled(true);
+    m_appDataLabel->setText(tr("Found %1 app data source(s)").arg(allSources.size()));
+    Q_EMIT logOutput(tr("Found %1 application data source(s)").arg(allSources.size()));
+}
+
+void NetworkTransferPanel::onScanWifiProfiles() {
+    m_scanWifiButton->setEnabled(false);
+    m_wifiLabel->setText(tr("Scanning WiFi profiles..."));
+    Q_EMIT logOutput(tr("Scanning WiFi profiles..."));
+
+    const QVector<WifiProfileInfo> profiles = sak::scanAllWifiProfiles();
+
+    m_scannedWifi = profiles;
+    m_scanWifiButton->setEnabled(true);
+    m_wifiLabel->setText(tr("Found %1 WiFi profile(s)").arg(profiles.size()));
+    Q_EMIT logOutput(tr("Found %1 WiFi profile(s)").arg(profiles.size()));
+}
+
+void NetworkTransferPanel::onScanEthernetConfigs() {
+    m_scanEthernetButton->setEnabled(false);
+    m_ethernetLabel->setText(tr("Scanning ethernet adapters..."));
+    Q_EMIT logOutput(tr("Scanning ethernet adapters..."));
+
+    QVector<EthernetConfigInfo> configs;
+
+    QProcess process;
+    process.start("netsh", {"interface", "ipv4", "show", "config"});
+    if (!process.waitForStarted(sak::kTimeoutProcessStartMs)) {
+        sak::logError("netsh failed to start for ethernet adapter scan");
+        m_scanEthernetButton->setEnabled(true);
+        m_ethernetLabel->setText(tr("Failed to start ethernet scan"));
+        Q_EMIT logOutput(tr("Failed to start ethernet adapter scan"));
+        return;
+    }
+    if (!process.waitForFinished(kTimeoutNetworkReadMs)) {
+        sak::logError("Timed out scanning ethernet adapters");
+        process.kill();
+        process.waitForFinished(2000);
+        m_scanEthernetButton->setEnabled(true);
+        m_ethernetLabel->setText(tr("Ethernet scan timed out"));
+        Q_EMIT logOutput(tr("Ethernet adapter scan timed out"));
+        return;
+    }
+    QString output = QString::fromLocal8Bit(process.readAllStandardOutput());
+
+    EthernetConfigInfo current;
+    bool inAdapter = false;
+
+    for (const QString& line : output.split('\n')) {
+        QString trimmed = line.trimmed();
+
+        if (trimmed.startsWith("Configuration for interface")) {
+            if (inAdapter && !current.adapter_name.isEmpty()) {
+                configs.append(current);
+            }
+            current = EthernetConfigInfo();
+            int firstQuote = trimmed.indexOf('"');
+            int lastQuote = trimmed.lastIndexOf('"');
+            if (firstQuote >= 0 && lastQuote > firstQuote) {
+                current.adapter_name = trimmed.mid(firstQuote + 1,
+                                                    lastQuote - firstQuote - 1);
+            }
+            inAdapter = true;
+        } else if (inAdapter) {
+            if (trimmed.startsWith("DHCP enabled:", Qt::CaseInsensitive)) {
+                current.dhcp_enabled = trimmed.contains("Yes", Qt::CaseInsensitive);
+            } else if (trimmed.startsWith("IP Address:", Qt::CaseInsensitive)) {
+                int colonIdx = trimmed.indexOf(':');
+                if (colonIdx >= 0) current.ip_address = trimmed.mid(colonIdx + 1).trimmed();
+            } else if (trimmed.startsWith("Subnet Prefix:", Qt::CaseInsensitive) ||
+                       trimmed.startsWith("SubnetMask:", Qt::CaseInsensitive)) {
+                int colonIdx = trimmed.indexOf(':');
+                if (colonIdx >= 0) current.subnet_mask = trimmed.mid(colonIdx + 1).trimmed();
+            } else if (trimmed.startsWith("Default Gateway:", Qt::CaseInsensitive)) {
+                int colonIdx = trimmed.indexOf(':');
+                if (colonIdx >= 0) current.default_gateway = trimmed.mid(colonIdx + 1).trimmed();
+            } else if (trimmed.contains("DNS Server", Qt::CaseInsensitive) ||
+                       trimmed.startsWith("Statically Configured DNS", Qt::CaseInsensitive)) {
+                int colonIdx = trimmed.indexOf(':');
+                if (colonIdx >= 0) {
+                    QString dns = trimmed.mid(colonIdx + 1).trimmed();
+                    if (!dns.isEmpty()) {
+                        if (current.dns_primary.isEmpty()) current.dns_primary = dns;
+                        else if (current.dns_secondary.isEmpty()) current.dns_secondary = dns;
+                    }
+                }
+            }
+        }
+    }
+    if (inAdapter && !current.adapter_name.isEmpty()) {
+        configs.append(current);
+    }
+
+    m_scannedEthernet = configs;
+    m_scanEthernetButton->setEnabled(true);
+    m_ethernetLabel->setText(tr("Found %1 ethernet adapter(s)").arg(configs.size()));
+    Q_EMIT logOutput(tr("Found %1 ethernet adapter(s)").arg(configs.size()));
 }
 
 void NetworkTransferPanel::onDiscoverPeers() {
@@ -322,6 +563,19 @@ void NetworkTransferPanel::onManifestReceived(const TransferManifest& manifest) 
         .arg(manifest.total_files)
         .arg(formatBytes(manifest.total_bytes)));
 
+    if (!manifest.installed_apps.isEmpty()) {
+        m_manifestText->append(tr("  Installed Apps: %1").arg(manifest.installed_apps.size()));
+    }
+    if (!manifest.app_data_sources.isEmpty()) {
+        m_manifestText->append(tr("  App Data Sources: %1").arg(manifest.app_data_sources.size()));
+    }
+    if (!manifest.wifi_profiles.isEmpty()) {
+        m_manifestText->append(tr("  WiFi Profiles: %1").arg(manifest.wifi_profiles.size()));
+    }
+    if (!manifest.ethernet_configs.isEmpty()) {
+        m_manifestText->append(tr("  Ethernet Configs: %1").arg(manifest.ethernet_configs.size()));
+    }
+
     TransferManifest verifyManifest = manifest;
     verifyManifest.checksum_sha256.clear();
     QJsonDocument verifyDoc(verifyManifest.toJson());
@@ -396,8 +650,11 @@ void NetworkTransferPanel::onTransferCompleted(bool success, const QString& mess
 
     saveTransferReport(success);
 
-    if (success && m_modeCombo->currentIndex() == 1 && m_applyRestoreCheck->isChecked()) {
-        startPostTransferRestore();
+    if (success && m_modeCombo->currentIndex() == 1) {
+        writeAdditionalDataFiles(destinationBase(), m_currentManifest);
+        if (m_applyRestoreCheck->isChecked()) {
+            startPostTransferRestore();
+        }
     }
 
     if (!m_assignmentQueue.isEmpty()) {
@@ -432,7 +689,10 @@ void NetworkTransferPanel::saveTransferReport(bool success) {
 
     QDir dir(reportDir);
     if (!dir.exists()) {
-        dir.mkpath(".");
+        if (!dir.mkpath(".")) {
+            sak::logWarning("Failed to create transfer report directory: {}",
+                            reportDir.toStdString());
+        }
     }
     const QString reportPath = dir.filePath(QString("transfer_%1_%2.json")
         .arg(m_currentManifest.transfer_id)
@@ -442,6 +702,49 @@ void NetworkTransferPanel::saveTransferReport(bool success) {
     } else {
         Q_EMIT logOutput(tr("Transfer report saved to %1").arg(reportPath));
     }
+}
+
+void NetworkTransferPanel::writeAdditionalDataFiles(const QString& basePath,
+    const TransferManifest& manifest) {
+    QDir dir(basePath);
+    if (!dir.exists()) {
+        if (!dir.mkpath(".")) {
+            sak::logWarning("Failed to create transfer data directory: {}",
+                            basePath.toStdString());
+        }
+    }
+
+    auto writeJson = [&](const QString& filename, const QJsonArray& array) {
+        if (array.isEmpty()) return;
+        QFile file(dir.filePath(filename));
+        if (file.open(QIODevice::WriteOnly)) {
+            const QByteArray data = QJsonDocument(array).toJson(QJsonDocument::Indented);
+            if (file.write(data) != data.size()) {
+                sak::logError("Incomplete write of transfer data file: {}",
+                              filename.toStdString());
+            }
+            Q_EMIT logOutput(tr("Saved %1").arg(filename));
+        } else {
+            sak::logError("Failed to write transfer data file: {}",
+                          filename.toStdString());
+        }
+    };
+
+    QJsonArray appsArr;
+    for (const auto& app : manifest.installed_apps) appsArr.append(app.toJson());
+    writeJson("installed_apps.json", appsArr);
+
+    QJsonArray appDataArr;
+    for (const auto& src : manifest.app_data_sources) appDataArr.append(src.toJson());
+    writeJson("app_data_sources.json", appDataArr);
+
+    QJsonArray wifiArr;
+    for (const auto& prof : manifest.wifi_profiles) wifiArr.append(prof.toJson());
+    writeJson("wifi_profiles.json", wifiArr);
+
+    QJsonArray ethArr;
+    for (const auto& cfg : manifest.ethernet_configs) ethArr.append(cfg.toJson());
+    writeJson("ethernet_configs.json", ethArr);
 }
 
 void NetworkTransferPanel::startPostTransferRestore() {
@@ -458,6 +761,11 @@ void NetworkTransferPanel::startPostTransferRestore() {
     backupManifest.sak_version = m_currentManifest.sak_version;
     backupManifest.users = m_currentManifest.users;
     backupManifest.total_backup_size_bytes = m_currentManifest.total_bytes;
+
+    // Pass additional data through to restore
+    backupManifest.wifi_profiles = m_currentManifest.wifi_profiles;
+    backupManifest.ethernet_configs = m_currentManifest.ethernet_configs;
+    backupManifest.app_data_sources = m_currentManifest.app_data_sources;
 
     const QString manifestPath = destinationBase() + "/manifest.json";
     backupManifest.saveToFile(manifestPath);
@@ -629,6 +937,12 @@ TransferManifest NetworkTransferPanel::buildManifestPayload(
         userData.permissions_mode = selectedPermMode;
         manifest.users.append(userData);
     }
+
+    // Include additional scanned data
+    manifest.installed_apps = m_scannedApps;
+    manifest.app_data_sources = m_scannedAppData;
+    manifest.wifi_profiles = m_scannedWifi;
+    manifest.ethernet_configs = m_scannedEthernet;
 
     qint64 totalBytes = 0;
     for (const auto& file : files) {

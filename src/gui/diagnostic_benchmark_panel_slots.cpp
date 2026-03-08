@@ -393,10 +393,12 @@ void DiagnosticBenchmarkPanel::onStartStressTestClicked()
     config.stress_cpu = m_stress_cpu_check->isChecked();
     config.stress_memory = m_stress_memory_check->isChecked();
     config.stress_disk = m_stress_disk_check->isChecked();
+    config.stress_gpu = m_stress_gpu_check->isChecked();
     config.duration_minutes = m_stress_duration_spin->value();
     config.thermal_limit_celsius = m_stress_thermal_limit_spin->value();
 
-    if (!config.stress_cpu && !config.stress_memory && !config.stress_disk) {
+    if (!config.stress_cpu && !config.stress_memory && !config.stress_disk
+        && !config.stress_gpu) {
         logMessage("Select at least one component for stress testing");
         return;
     }

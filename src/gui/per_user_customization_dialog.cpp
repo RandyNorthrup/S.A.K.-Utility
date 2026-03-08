@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "sak/per_user_customization_dialog.h"
+#include "sak/format_utils.h"
 #include "sak/logger.h"
 #include "sak/style_constants.h"
 #include "sak/layout_constants.h"
@@ -396,6 +397,8 @@ void PerUserCustomizationDialog::onRemoveFolder() {
                           });
 
     if (it == m_profile.folder_selections.end()) {
+        sak::logWarning("Attempted to remove folder not found in profile: {}",
+                        relativePath.toStdString());
         QMessageBox::warning(this, "Remove Folder", "Folder not found in profile.");
         return;
     }
@@ -465,17 +468,7 @@ void PerUserCustomizationDialog::onCollapseAll() {
 }
 
 QString PerUserCustomizationDialog::formatFileSize(qint64 bytes) {
-    double sizeMB = bytes / sak::kBytesPerMBf;
-    if (sizeMB >= sak::kBytesPerKBf) {
-        return QString("%1 GB").arg(sizeMB / sak::kBytesPerKBf, 0, 'f', 2);
-    } else if (sizeMB >= 1) {
-        return QString("%1 MB").arg(sizeMB, 0, 'f', 1);
-    } else if (bytes >= sak::kBytesPerKB) {
-        return QString("%1 KB").arg(bytes / sak::kBytesPerKBf, 0, 'f', 1);
-    } else if (bytes > 0) {
-        return QString("%1 bytes").arg(bytes);
-    }
-    return "0 KB";
+    return sak::formatBytes(bytes);
 }
 
 void PerUserCustomizationDialog::addDirectoryChildItem(const QFileInfo& entry,

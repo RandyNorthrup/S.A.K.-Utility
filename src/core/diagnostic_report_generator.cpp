@@ -60,7 +60,10 @@ bool DiagnosticReportGenerator::generateHtml(const QString& output_path)
     }
 
     // Ensure output directory exists
-    QDir().mkpath(QFileInfo(output_path).absolutePath());
+    const QString html_dir = QFileInfo(output_path).absolutePath();
+    if (!QDir().mkpath(html_dir)) {
+        logWarning("Failed to create directory: {}", html_dir.toStdString());
+    }
 
     QFile file(output_path);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
@@ -130,14 +133,21 @@ bool DiagnosticReportGenerator::generateJson(const QString& output_path)
     root["recommendations"]  = rec_arr;
 
     // Write to file
-    QDir().mkpath(QFileInfo(output_path).absolutePath());
+    const QString json_dir = QFileInfo(output_path).absolutePath();
+    if (!QDir().mkpath(json_dir)) {
+        logWarning("Failed to create directory: {}", json_dir.toStdString());
+    }
     QFile file(output_path);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
         Q_EMIT errorOccurred(QString("Failed to open %1: %2").arg(output_path, file.errorString()));
         return false;
     }
 
-    file.write(QJsonDocument(root).toJson(QJsonDocument::Indented));
+    const QByteArray data = QJsonDocument(root).toJson(QJsonDocument::Indented);
+    if (file.write(data) != data.size()) {
+        Q_EMIT errorOccurred(QString("Incomplete write to %1").arg(output_path));
+        return false;
+    }
     file.close();
 
     logInfo("JSON report generated: {}", output_path.toStdString());
@@ -298,7 +308,10 @@ QJsonObject DiagnosticReportGenerator::serializeBenchmarkSection() const
 bool DiagnosticReportGenerator::generateCsv(const QString& output_path)
 {
     Q_ASSERT_X(!output_path.isEmpty(), "generateCsv", "output_path must not be empty");
-    QDir().mkpath(QFileInfo(output_path).absolutePath());
+    const QString csv_dir = QFileInfo(output_path).absolutePath();
+    if (!QDir().mkpath(csv_dir)) {
+        logWarning("Failed to create directory: {}", csv_dir.toStdString());
+    }
     QFile file(output_path);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
         Q_EMIT errorOccurred(QString("Failed to open %1: %2").arg(output_path, file.errorString()));

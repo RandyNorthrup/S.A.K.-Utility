@@ -19,6 +19,12 @@
 
 #pragma comment(lib, "setupapi.lib")
 
+namespace {
+constexpr qint64 kFlashBufferSize   = 64LL * 1024 * 1024;  // 64 MB
+constexpr qint64 kVerifySampleMax   = 100LL * 1024 * 1024;  // 100 MB
+constexpr qint64 kVerifyBlockSize   = 1024LL * 1024;        // 1 MB
+} // namespace
+
 FlashWorker::FlashWorker(std::unique_ptr<ImageSource> imageSource,
                          const QString& targetDevice,
                          QObject* parent)
@@ -29,7 +35,7 @@ FlashWorker::FlashWorker(std::unique_ptr<ImageSource> imageSource,
     , m_bytesWritten(0)
     , m_totalBytes(0)
     , m_speedMBps(0.0)
-    , m_bufferSize(64 * 1024 * 1024) // 64MB default
+    , m_bufferSize(kFlashBufferSize)
     , m_verificationEnabled(true)
     , m_validationMode(sak::ValidationMode::Full)
     , m_lastProgressUpdate(0)
@@ -109,8 +115,9 @@ auto FlashWorker::execute() -> std::expected<void, sak::error_code> {
 
         if (!result.passed) {
             sak::logError("Verification failed");
-            Q_EMIT error(QString("Verification failed: %1").arg(
-                result.errors.isEmpty() ? "Checksum mismatch" : result.errors.first()));
+            // Don't emit error() here — verificationCompleted already carries
+            // the failure info, and the coordinator handles it via
+            // onWorkerCompleted(). Emitting error() would double-count.
             cleanupFlashResources();
             return std::unexpected(sak::error_code::operation_cancelled);
         }
@@ -395,8 +402,8 @@ sak::ValidationResult FlashWorker::verifySample() {
     result.sourceChecksum = m_sourceChecksum;
 
     // Sample size: 100MB or 10% of image, whichever is smaller
-    qint64 sampleSize = qMin(100LL * 1024 * 1024, m_totalBytes / 10);
-    qint64 blockSize = 1024 * 1024; // 1MB blocks
+    qint64 sampleSize = qMin(kVerifySampleMax, m_totalBytes / 10);
+    qint64 blockSize = kVerifyBlockSize;
     int numSamples = static_cast<int>(sampleSize / blockSize);
 
     if (numSamples < 1) {
@@ -516,7 +523,7 @@ QString FlashWorker::calculateChecksum(HANDLE handle, qint64 size) {
 
     QCryptographicHash hash(QCryptographicHash::Sha512);
 
-    const qint64 bufferSize = 64 * 1024 * 1024; // 64MB
+    const qint64 bufferSize = kFlashBufferSize;
     QByteArray buffer(bufferSize, 0);
     qint64 totalRead = 0;
     m_lastVerifyUpdate = 0;

@@ -77,7 +77,10 @@ void ScreenshotSettingsAction::execute() {
     Q_EMIT executionProgress("Preparing screenshot directory...", 5);
     QString timestamp = QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss");
     QDir output_dir(m_output_location + "/SettingsScreenshots/" + timestamp);
-    output_dir.mkpath(".");
+    if (!output_dir.mkpath(".")) {
+        sak::logWarning("Failed to create screenshot output directory: {}",
+                        output_dir.absolutePath().toStdString());
+    }
 
     // Capture all settings pages
     QMap<QString, QString> settings_pages = buildSettingsPageMap();
@@ -313,6 +316,11 @@ bool ScreenshotSettingsAction::isProcessRunning(const QString& process_name) {
     QProcess tasklist;
     tasklist.start("tasklist",
         QStringList() << "/FI" << QString("IMAGENAME eq %1").arg(process_name));
+    if (!tasklist.waitForStarted(sak::kTimerServiceDelayMs)) {
+        sak::logWarning("tasklist failed to start for process: {}",
+                        process_name.toStdString());
+        return false;
+    }
     if (!tasklist.waitForFinished(sak::kTimerServiceDelayMs)) {
         sak::logWarning("tasklist timed out checking for process: {}",
                         process_name.toStdString());

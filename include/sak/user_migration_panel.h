@@ -13,6 +13,7 @@
 #include <QLineEdit>
 #include <QComboBox>
 #include <QSpinBox>
+#include <QVBoxLayout>
 #include <memory>
 #include <vector>
 
@@ -68,6 +69,7 @@ private Q_SLOTS:
 
 private:
     void setupUi();
+    void createMigrationCards(QWidget* parent, QVBoxLayout* layout);
     void setupConnections();
     void appendLog(const QString& message);
 

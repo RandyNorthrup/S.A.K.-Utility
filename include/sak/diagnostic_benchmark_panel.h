@@ -195,6 +195,7 @@ private:
     QCheckBox* m_stress_cpu_check{nullptr};
     QCheckBox* m_stress_memory_check{nullptr};
     QCheckBox* m_stress_disk_check{nullptr};
+    QCheckBox* m_stress_gpu_check{nullptr};
     QSpinBox* m_stress_duration_spin{nullptr};
     QSpinBox* m_stress_thermal_limit_spin{nullptr};
     QLabel* m_stress_status_label{nullptr};

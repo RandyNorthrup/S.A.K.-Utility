@@ -163,24 +163,24 @@ bool AdvancedSearchWorker::checkNetworkPathAccessible(const QString& path) const
 
 // ── Main Search Execution ───────────────────────────────────────────────────
 
-auto AdvancedSearchWorker::execute() -> std::expected<void, sak::error_code>
+auto AdvancedSearchWorker::prepareSearchConfig()
+    -> std::expected<QRegularExpression, sak::error_code>
 {
-    logInfo("AdvancedSearchWorker: starting search for '{}' in '{}'",
-            m_config.pattern.toStdString(), m_config.root_path.toStdString());
-
-    // Compile the search regex
     auto regexResult = compileRegex();
     if (!regexResult) {
-        logError("AdvancedSearchWorker: regex compilation failed: {}",
+        logError("AdvancedSearchWorker: regex compilation "
+                 "failed: {}",
                  regexResult.error().toStdString());
-        return std::unexpected(sak::error_code::invalid_argument);
+        return std::unexpected(
+            sak::error_code::invalid_argument);
     }
     const auto& regex = regexResult.value();
 
     // Compile exclusion patterns once
     m_compiled_excludes.clear();
     for (const auto& pattern : m_config.exclude_patterns) {
-        QRegularExpression excl(pattern, QRegularExpression::CaseInsensitiveOption);
+        QRegularExpression excl(
+            pattern, QRegularExpression::CaseInsensitiveOption);
         if (excl.isValid()) {
             m_compiled_excludes.append(excl);
         }
@@ -189,16 +189,105 @@ auto AdvancedSearchWorker::execute() -> std::expected<void, sak::error_code>
     // Check network accessibility
     if (isNetworkPath(m_config.root_path)) {
         if (!checkNetworkPathAccessible(m_config.root_path)) {
-            logError("AdvancedSearchWorker: network path not accessible: {}",
-                     m_config.root_path.toStdString());
-            return std::unexpected(sak::error_code::network_unavailable);
+            logError(
+                "AdvancedSearchWorker: network path "
+                "not accessible: {}",
+                m_config.root_path.toStdString());
+            return std::unexpected(
+                sak::error_code::network_unavailable);
         }
     }
+
+    return regex;
+}
+
+void AdvancedSearchWorker::runDirectorySearch(
+    const QRegularExpression& regex,
+    int& total_matches, int& total_files)
+{
+    QDirIterator it(m_config.root_path,
+                    QDir::Files | QDir::NoDotAndDotDot,
+                    QDirIterator::Subdirectories);
+
+    int fileCount = 0;
+    QVector<SearchMatch> batchMatches;
+
+    while (it.hasNext()) {
+        if (checkStop()) {
+            logInfo("AdvancedSearchWorker: search cancelled "
+                    "after {} files", fileCount);
+            return;
+        }
+
+        const QString filePath = it.next();
+
+        if (isExcluded(filePath)) { continue; }
+        if (!matchesExtensionFilter(filePath)) { continue; }
+
+        const QFileInfo fileInfo(filePath);
+        if (m_config.max_file_size > 0
+            && fileInfo.size() > m_config.max_file_size) {
+            continue;
+        }
+
+        auto matches = searchFile(filePath, regex);
+        if (!matches.isEmpty()) {
+            Q_EMIT fileSearched(filePath, matches.size());
+            batchMatches.append(matches);
+            total_matches += matches.size();
+            total_files++;
+        }
+
+        fileCount++;
+
+        if (m_config.max_results > 0
+            && total_matches >= m_config.max_results) {
+            logInfo("AdvancedSearchWorker: max results limit "
+                    "({}) reached", m_config.max_results);
+            break;
+        }
+
+        if (fileCount % kBatchSize == 0
+            && !batchMatches.isEmpty()) {
+            Q_EMIT resultsReady(batchMatches);
+            batchMatches.clear();
+        }
+
+        constexpr int kProgressInterval = 100;
+        if (fileCount % kProgressInterval == 0) {
+            reportProgress(fileCount, 0,
+                QString("Searching... %1 files scanned, "
+                        "%2 matches found")
+                    .arg(fileCount).arg(total_matches));
+        }
+    }
+
+    if (!batchMatches.isEmpty()) {
+        Q_EMIT resultsReady(batchMatches);
+    }
+
+    reportProgress(fileCount, fileCount,
+        QString("Search complete: %1 matches in %2 files "
+                "(%3 files scanned)")
+            .arg(total_matches).arg(total_files).arg(fileCount));
+}
+
+auto AdvancedSearchWorker::execute() -> std::expected<void, sak::error_code>
+{
+    logInfo("AdvancedSearchWorker: starting search for '{}' in '{}'",
+            m_config.pattern.toStdString(),
+            m_config.root_path.toStdString());
+
+    auto regexResult = prepareSearchConfig();
+    if (!regexResult) {
+        return std::unexpected(regexResult.error());
+    }
+    const auto& regex = regexResult.value();
 
     int totalMatches = 0;
     int totalFiles = 0;
 
-    // Single file search
+    // Single file search — no directory iteration needed
     if (QFileInfo(m_config.root_path).isFile()) {
         if (!isExcluded(m_config.root_path)) {
             auto matches = searchFile(m_config.root_path, regex);
@@ -215,81 +304,11 @@ auto AdvancedSearchWorker::execute() -> std::expected<void, sak::error_code>
         return {};
     }
 
-    // Directory recursive search
-    QDirIterator it(m_config.root_path,
-                    QDir::Files | QDir::NoDotAndDotDot,
-                    QDirIterator::Subdirectories);
+    runDirectorySearch(regex, totalMatches, totalFiles);
 
-    int fileCount = 0;
-    QVector<SearchMatch> batchMatches;
-
-    while (it.hasNext()) {
-        if (checkStop()) {
-            logInfo("AdvancedSearchWorker: search cancelled after {} files", fileCount);
-            return {};
-        }
-
-        const QString filePath = it.next();
-
-        // Skip excluded paths
-        if (isExcluded(filePath)) {
-            continue;
-        }
-
-        // Check file extension filter
-        if (!matchesExtensionFilter(filePath)) {
-            continue;
-        }
-
-        // Check file size limit
-        const QFileInfo fileInfo(filePath);
-        if (m_config.max_file_size > 0 && fileInfo.size() > m_config.max_file_size) {
-            continue;
-        }
-
-        // Search the file
-        auto matches = searchFile(filePath, regex);
-        if (!matches.isEmpty()) {
-            Q_EMIT fileSearched(filePath, matches.size());
-            batchMatches.append(matches);
-            totalMatches += matches.size();
-            totalFiles++;
-        }
-
-        fileCount++;
-
-        // Check max results limit
-        if (m_config.max_results > 0 && totalMatches >= m_config.max_results) {
-            logInfo("AdvancedSearchWorker: max results limit ({}) reached",
-                    m_config.max_results);
-            break;
-        }
-
-        // Batch emit for UI responsiveness
-        if (fileCount % kBatchSize == 0 && !batchMatches.isEmpty()) {
-            Q_EMIT resultsReady(batchMatches);
-            batchMatches.clear();
-        }
-
-        // Report progress periodically
-        if (fileCount % 100 == 0) {
-            reportProgress(fileCount, 0,
-                QString("Searching... %1 files scanned, %2 matches found")
-                    .arg(fileCount).arg(totalMatches));
-        }
-    }
-
-    // Emit remaining batch
-    if (!batchMatches.isEmpty()) {
-        Q_EMIT resultsReady(batchMatches);
-    }
-
-    reportProgress(fileCount, fileCount,
-        QString("Search complete: %1 matches in %2 files (%3 files scanned)")
-            .arg(totalMatches).arg(totalFiles).arg(fileCount));
-
-    logInfo("AdvancedSearchWorker: search complete — {} matches in {} files ({} scanned)",
-            totalMatches, totalFiles, fileCount);
+    logInfo("AdvancedSearchWorker: search complete — "
+            "{} matches in {} files",
+            totalMatches, totalFiles);
 
     return {};
 }

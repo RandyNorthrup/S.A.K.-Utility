@@ -102,8 +102,6 @@ void UupIsoBuilder::cancel()
         Q_EMIT phaseChanged(Phase::Failed, "Build cancelled by user");
     }
 
-    // Don't clean up work dir on cancel — allows resuming later
-    // cleanupWorkDir();  // Only cleaned up on successful build completion
 }
 
 // ============================================================================
@@ -392,7 +390,10 @@ void UupIsoBuilder::validateDownloads()
         QString destPath = workDir.filePath(relativePath);
 
         QFileInfo destInfo(destPath);
-        QDir().mkpath(destInfo.absolutePath());
+        if (!QDir().mkpath(destInfo.absolutePath())) {
+            sak::logWarning("Failed to create directory for converter file: " +
+                          destInfo.absolutePath().toStdString());
+        }
 
         // Skip files already present (resume scenario)
         if (destInfo.exists()) {
@@ -596,8 +597,7 @@ QStringList UupIsoBuilder::buildAria2Arguments(const QString& inputFile,
         "--timeout=" + QString::number(sak::kAria2TimeoutSec),
         "--max-file-not-found=3",
         // ── Security ──
-        // Microsoft CDN serves HTTP-only; certificate check applies to HTTPS only
-        "--check-certificate=false",
+        "--check-certificate=true",
         // ── Output formatting ──
         "--summary-interval=1",
         "--human-readable=false",
@@ -1119,6 +1119,29 @@ void UupIsoBuilder::parseConverterFallbackPatterns(
     }
 }
 
+bool UupIsoBuilder::tryAppxRetry()
+{
+    bool isAppxFailure =
+        m_converterOutputTail.contains("appx", Qt::CaseInsensitive) ||
+        m_converterOutputTail.contains("provisioning", Qt::CaseInsensitive) ||
+        m_converterOutputTail.contains("external tool for appx", Qt::CaseInsensitive);
+
+    if (!isAppxFailure || m_conversionRetryCount >= 1)
+        return false;
+
+    m_conversionRetryCount++;
+    m_skipAppxOnRetry = true;
+    m_converterOutputTail.clear();
+    sak::logWarning(
+        "AppX provisioning failed — retrying without Store app integration");
+    Q_EMIT progressUpdated(
+        PHASE_PREPARE_WEIGHT + PHASE_DOWNLOAD_WEIGHT,
+        "AppX provisioning failed \u2014 retrying without Store apps...");
+    updateConvertConfigSkipApps();
+    executeConversion();
+    return true;
+}
+
 void UupIsoBuilder::onConverterFinished(int exitCode,
                                         QProcess::ExitStatus exitStatus)
 {
@@ -1133,24 +1156,7 @@ void UupIsoBuilder::onConverterFinished(int exitCode,
     }
 
     if (exitCode != 0) {
-        // Check for AppX provisioning failure — can retry without Store apps
-        bool isAppxFailure =
-            m_converterOutputTail.contains("appx", Qt::CaseInsensitive) ||
-            m_converterOutputTail.contains("provisioning", Qt::CaseInsensitive) ||
-            m_converterOutputTail.contains("external tool for appx", Qt::CaseInsensitive);
-        if (isAppxFailure && m_conversionRetryCount < 1) {
-            m_conversionRetryCount++;
-            m_skipAppxOnRetry = true;
-            m_converterOutputTail.clear();
-            sak::logWarning(
-                "AppX provisioning failed — retrying without Store app integration");
-            Q_EMIT progressUpdated(
-                PHASE_PREPARE_WEIGHT + PHASE_DOWNLOAD_WEIGHT,
-                "AppX provisioning failed \u2014 retrying without Store apps...");
-            updateConvertConfigSkipApps();
-            executeConversion();
-            return;
-        }
+        if (tryAppxRetry()) return;
 
         m_phase = Phase::Failed;
         QString errorDetail = m_converterOutputTail.trimmed();
@@ -1171,29 +1177,15 @@ void UupIsoBuilder::onConverterFinished(int exitCode,
 
     QFileInfo finalInfo(m_outputIsoPath);
     if (!finalInfo.exists() || finalInfo.size() <= 0) {
-        // Check for AppX provisioning failure — can retry without Store apps
-        bool isAppxFailure =
-            m_converterOutputTail.contains("appx", Qt::CaseInsensitive) ||
-            m_converterOutputTail.contains("provisioning", Qt::CaseInsensitive) ||
-            m_converterOutputTail.contains("external tool for appx", Qt::CaseInsensitive);
-        if (isAppxFailure && m_conversionRetryCount < 1) {
-            m_conversionRetryCount++;
-            m_skipAppxOnRetry = true;
-            m_converterOutputTail.clear();
-            sak::logWarning(
-                "AppX provisioning failed (no ISO created) — retrying without Store apps");
-            Q_EMIT progressUpdated(
-                PHASE_PREPARE_WEIGHT + PHASE_DOWNLOAD_WEIGHT,
-                "AppX provisioning failed \u2014 retrying without Store apps...");
-            updateConvertConfigSkipApps();
-            executeConversion();
-            return;
-        }
+        if (tryAppxRetry()) return;
 
         QString tail = m_converterOutputTail.trimmed();
         if (tail.length() > 2000)
             tail = tail.right(2000);
 
+        bool isAppxFailure =
+            m_converterOutputTail.contains("appx", Qt::CaseInsensitive) ||
+            m_converterOutputTail.contains("provisioning", Qt::CaseInsensitive);
         QString appxHint;
         if (isAppxFailure) {
             appxHint =
@@ -1256,7 +1248,10 @@ bool UupIsoBuilder::moveIsoToDestination(const QString& sourceIso)
 {
     // Ensure output directory exists
     QFileInfo outputInfo(m_outputIsoPath);
-    QDir().mkpath(outputInfo.absolutePath());
+    if (!QDir().mkpath(outputInfo.absolutePath())) {
+        sak::logWarning("Failed to create output directory: " +
+                      outputInfo.absolutePath().toStdString());
+    }
 
     // Remove existing output file if present
     if (QFile::exists(m_outputIsoPath)) {

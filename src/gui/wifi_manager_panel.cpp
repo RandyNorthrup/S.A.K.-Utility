@@ -187,11 +187,6 @@ void WifiManagerPanel::setupUi()
     scrollArea->setWidget(contentWidget);
     outerLayout->addWidget(scrollArea);
 
-    // Panel header — consistent title + muted subtitle
-    sak::createPanelHeader(contentWidget, QStringLiteral(":/icons/icons/panel_wifi.svg"),
-        tr("WiFi Manager"),
-        tr("Manage, share, and deploy Wi-Fi network profiles"), rootLayout);
-
     // Main content: horizontal splitter form | table
     auto* splitter = new QSplitter(Qt::Horizontal, this);
 
@@ -427,7 +422,11 @@ void WifiManagerPanel::setupActionButtons()
 
     auto* barWidget = new QWidget(this);
     barWidget->setLayout(bar);
-    qobject_cast<QVBoxLayout*>(layout())->addWidget(barWidget);
+    if (auto* vbox = qobject_cast<QVBoxLayout*>(layout())) {
+        vbox->addWidget(barWidget);
+    } else {
+        sak::logError("WiFi panel: parent layout is not a QVBoxLayout");
+    }
 }
 
 void WifiManagerPanel::connectSignals()
@@ -840,9 +839,9 @@ void WifiManagerPanel::executeBatchQrExport(
         if (!QDir().mkpath(outDir)) { ++failed; continue; }
         const QImage img = renderQrWithHeader(cfgPayload, cfg.location, showHeader);
         bool anySaved = false;
-        if (png) { img.save(outDir + "/" + subName + ".png", "PNG"); anySaved = true; }
-        if (jpg) { img.save(outDir + "/" + subName + ".jpg", "JPEG"); anySaved = true; }
-        if (bmp) { img.save(outDir + "/" + subName + ".bmp", "BMP"); anySaved = true; }
+        if (png && img.save(outDir + "/" + subName + ".png", "PNG")) { anySaved = true; }
+        if (jpg && img.save(outDir + "/" + subName + ".jpg", "JPEG")) { anySaved = true; }
+        if (bmp && img.save(outDir + "/" + subName + ".bmp", "BMP")) { anySaved = true; }
         if (pdf) {
             exportQrToPdf(img, outDir + "/" + subName + ".pdf",
                           cfg.ssid + " WiFi QR Code");
@@ -1214,7 +1213,11 @@ void WifiManagerPanel::onSaveTableClicked()
             QMessageBox::warning(this, "Save Error", "Could not open file for writing:\n" + path);
             return;
         }
-        f.write(doc.toJson());
+        const QByteArray json_bytes = doc.toJson();
+        if (f.write(json_bytes) != json_bytes.size()) {
+            sak::logWarning("Incomplete write to checked network file: {}", path.toStdString());
+        }
+        f.close();
         Q_EMIT statusMessage(
             QString("Saved %1 checked network(s) to %2").arg(arr.size()).arg(path),
                 sak::kTimerStatusDefaultMs);
@@ -1373,6 +1376,9 @@ QStringList WifiManagerPanel::scanWindowsProfileNames() const
 {
     QProcess proc;
     proc.start("netsh", QStringList{"wlan", "show", "profiles"});
+    if (!proc.waitForStarted(sak::kTimeoutProcessStartMs)) {
+        return {};
+    }
     if (!proc.waitForFinished(sak::kTimerNetshWaitMs)) {
         return {};
     }
@@ -1403,7 +1409,12 @@ WifiManagerPanel::WifiConfig WifiManagerPanel::parseWindowsWifiProfile(
     if (!p2.waitForStarted(sak::kTimeoutProcessStartMs)) {
         return {};
     }
-    p2.waitForFinished(sak::kTimeoutProcessShortMs);
+    if (!p2.waitForFinished(sak::kTimeoutProcessShortMs)) {
+        sak::logWarning("Timed out parsing WiFi profile: {}", profileName.toStdString());
+        p2.kill();
+        p2.waitForFinished(2000);
+        return {};
+    }
     const QString detail = QString::fromLocal8Bit(p2.readAllStandardOutput());
 
     QString password;
@@ -1624,7 +1635,12 @@ bool WifiManagerPanel::installWlanProfile(const QString& xml, int row)
     if (!proc.waitForStarted(sak::kTimeoutProcessStartMs)) {
         return false;
     }
-    proc.waitForFinished(sak::kTimerNetshWaitMs);
+    if (!proc.waitForFinished(sak::kTimerNetshWaitMs)) {
+        sak::logError("Timed out installing WLAN profile");
+        proc.kill();
+        proc.waitForFinished(2000);
+        return false;
+    }
     return proc.exitCode() == 0;
 }
 
@@ -1799,13 +1815,30 @@ QString WifiManagerPanel::buildWindowsScript(const QString& ssid,
     xml += "  </security></MSM>\r\n";
     xml += "</WLANProfile>\r\n";
 
-    const QString xmlB64      = QString::fromLatin1(xml.toUtf8().toBase64());
-    const QString escapedSsid = ssid.contains(' ') ? "\"" + ssid + "\"" : ssid;
+    const QString xmlB64 = QString::fromLatin1(xml.toUtf8().toBase64());
+
+    // Escape SSID for safe use in batch scripts — prevent command injection
+    // Batch special chars: & | > < ^ % ! ( ) " need escaping with ^
+    auto escapeBatch = [](const QString& s) {
+        QString result;
+        result.reserve(s.size() * 2);
+        for (const QChar c : s) {
+            if (c == '&' || c == '|' || c == '>' || c == '<' || c == '^'
+                || c == '!' || c == '(' || c == ')') {
+                result += '^';
+            }
+            result += c;
+        }
+        return result;
+    };
+    const QString batchSafeSsid = escapeBatch(ssid);
+    // Always quote the SSID for netsh to handle spaces and special chars
+    const QString quotedSsid = "\"" + batchSafeSsid + "\"";
 
     QString script;
     script += "@echo off\r\n";
     script += "echo S.A.K. Utility - WiFi Network Setup Script\r\n";
-    script += "echo Network: " + ssid + "\r\n";
+    script += "echo Network: " + batchSafeSsid + "\r\n";
     script += "echo.\r\n";
     script += "set PROFILE_XML=%TEMP%\\wifi_profile_sak.xml\r\n";
     script += "powershell -Command \"[System.Text.Encoding]::UTF8.GetString([System.Convert]::FromB"
@@ -1819,12 +1852,12 @@ QString WifiManagerPanel::buildWindowsScript(const QString& ssid,
     script += "    exit /b 1\r\n";
     script += ")\r\n";
     script += "del \"%PROFILE_XML%\" 2>nul\r\n";
-    script += "netsh wlan connect name=" + escapedSsid + "\r\n";
+    script += "netsh wlan connect name=" + quotedSsid + "\r\n";
     script += "if %errorlevel% neq 0 (\r\n";
     script += "    echo Network profile added but could not connect immediately.\r\n";
     script += "    echo The network will connect automatically when in range.\r\n";
     script += ") else (\r\n";
-    script += "    echo Successfully connected to " + ssid + "!\r\n";
+    script += "    echo Successfully connected to " + batchSafeSsid + "!\r\n";
     script += ")\r\n";
     script += "pause\r\n";
     return script;
@@ -2076,7 +2109,11 @@ void WifiManagerPanel::saveTableToJson(const QString& path)
         QMessageBox::warning(this, "Save Error", "Could not open file for writing:\n" + path);
         return;
     }
-    f.write(doc.toJson());
+    const QByteArray json_bytes = doc.toJson();
+    if (f.write(json_bytes) != json_bytes.size()) {
+        sak::logWarning("Incomplete write to network table file: {}", path.toStdString());
+    }
+    f.close();
     Q_EMIT statusMessage(QString("Saved %1 network(s) to %2").arg(arr.size()).arg(path),
         sak::kTimerStatusDefaultMs);
 }

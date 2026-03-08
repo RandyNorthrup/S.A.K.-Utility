@@ -242,7 +242,10 @@ void TaxSoftwareBackupAction::execute() {
     Q_ASSERT(start_time.isValid());
     
     QDir backup_dir(m_backup_location + "/TaxData");
-    backup_dir.mkpath(".");
+    if (!backup_dir.mkpath(".")) {
+        sak::logWarning("Failed to create tax data backup directory: {}",
+                        backup_dir.absolutePath().toStdString());
+    }
     
     int processed = 0;
     qint64 bytes_copied = 0;
@@ -260,7 +263,9 @@ void TaxSoftwareBackupAction::execute() {
         QString dest = backup_dir.filePath(loc.software_name + "/" + safe_dir + "/" + filename);
         dest = resolveUniqueDestPath(dest);
         
-        QDir().mkpath(QFileInfo(dest).absolutePath());
+        if (!QDir().mkpath(QFileInfo(dest).absolutePath())) {
+            sak::logWarning("Failed to create directory for tax data file");
+        }
         
         if (QFile::copy(loc.path, dest)) {
             processed++;

@@ -13,6 +13,8 @@
 #include <QStringList>
 #include <memory>
 
+class QHBoxLayout;
+
 // Forward declarations for feature panels (in global namespace)
 // -- none needed; all panels now in sak::
 
@@ -111,11 +113,30 @@ private:
     /// @brief Create all tool/feature panel tabs
     void createToolPanels();
 
+    /// @brief Create simple standalone panel tabs
+    void createSimplePanels();
+
+    /// @brief Create the Application Management composite panel tab
+    void createAppManagementPanel();
+
+    /// @brief Create the Network Management composite panel tab
+    void createNetworkManagementPanel();
+
     /// @brief Create the About information panel tab
     void createAboutPanel();
 
     /// @brief Create the Help & Support panel tab
     void createHelpPanel();
+
+    /// @brief Build the Feature Request + Bug Report card row
+    QHBoxLayout* createHelpRow_requestsAndBugs(QWidget* parent,
+        const QString& cardStyle, const QString& titleStyle,
+        const QString& descStyle, const QString& logoStyle);
+
+    /// @brief Build the Wiki + Community card row
+    QHBoxLayout* createHelpRow_wikiAndCommunity(QWidget* parent,
+        const QString& cardStyle, const QString& titleStyle,
+        const QString& descStyle, const QString& logoStyle);
 
     /// @brief Load splash screen icon into the About panel header
     void loadAboutPanelIcon(QLabel* iconLabel);
@@ -146,6 +167,9 @@ private:
 
     /// @brief Hide the progress bar if it has reached maximum
     void hideProgressBarIfComplete();
+
+    /// @brief Apply chevron icons to the tab bar scroll buttons
+    void applyTabBarChevrons();
 
 protected:
     void closeEvent(QCloseEvent* event) override;

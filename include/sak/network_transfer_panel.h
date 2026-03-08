@@ -162,6 +162,8 @@ private:
     void setupUi();
     /** @brief Build Source page: data-selection table and peer-discovery table */
     void setupUi_sourceSection(QVBoxLayout* sourceLayout);
+    /** @brief Build additional data scanning section (apps, wifi, ethernet) */
+    void setupUi_sourceAdditionalData(QVBoxLayout* sourceLayout);
     /** @brief Build peer discovery group with peer table and manual IP entry */
     void setupUi_peerDiscovery(QVBoxLayout* sourceLayout);
     /** @brief Create hidden security widgets (encrypt, compress, resume, etc.) */
@@ -303,6 +305,16 @@ private:
     void saveTransferReport(bool success);
     /** @brief Start automatic profile restore after successful transfer */
     void startPostTransferRestore();
+    /** @brief Save additional data JSON files to destination after transfer */
+    void writeAdditionalDataFiles(const QString& basePath, const TransferManifest& manifest);
+    /** @brief Scan for installed applications */
+    void onScanInstalledApps();
+    /** @brief Scan for application data sources */
+    void onScanAppData();
+    /** @brief Scan for WiFi profiles */
+    void onScanWifiProfiles();
+    /** @brief Scan for Ethernet configurations */
+    void onScanEthernetConfigs();
 
     // UI elements
     QComboBox* m_modeCombo{nullptr};
@@ -320,6 +332,17 @@ private:
     QSpinBox* m_manualPortSpin{nullptr};
     QLineEdit* m_passphraseEdit{nullptr};
     QLineEdit* m_destinationPassphraseEdit{nullptr};
+
+    // Additional data scanning UI
+    QPushButton* m_scanAppsButton{nullptr};
+    QPushButton* m_scanAppDataButton{nullptr};
+    QPushButton* m_scanWifiButton{nullptr};
+    QPushButton* m_scanEthernetButton{nullptr};
+    QLabel* m_installedAppsLabel{nullptr};
+    QLabel* m_appDataLabel{nullptr};
+    QLabel* m_wifiLabel{nullptr};
+    QLabel* m_ethernetLabel{nullptr};
+
     QCheckBox* m_encryptCheck{nullptr};
     QCheckBox* m_compressCheck{nullptr};
     QCheckBox* m_resumeCheck{nullptr};
@@ -382,6 +405,10 @@ private:
     LogToggleSwitch* m_logToggle{nullptr};
 
     QVector<UserProfile> m_users;
+    QVector<InstalledAppInfo> m_scannedApps;
+    QVector<AppDataSourceInfo> m_scannedAppData;
+    QVector<WifiProfileInfo> m_scannedWifi;
+    QVector<EthernetConfigInfo> m_scannedEthernet;
     QMap<QString, TransferPeerInfo> m_peers;
 
     std::unique_ptr<WindowsUserScanner> m_userScanner;

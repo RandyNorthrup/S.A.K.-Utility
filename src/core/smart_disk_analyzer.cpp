@@ -147,6 +147,9 @@ bool SmartDiskAnalyzer::isSmartctlAvailable() const
 
     QProcess proc;
     proc.start(path, {"--version"});
+    if (!proc.waitForStarted(sak::kTimeoutProcessStartMs)) {
+        return false;
+    }
     return proc.waitForFinished(sak::kTimeoutSmartQueryMs) && proc.exitCode() == 0;
 }
 
@@ -190,6 +193,10 @@ QByteArray SmartDiskAnalyzer::runSmartctl(uint32_t disk_number)
         device_path
     });
 
+    if (!proc.waitForStarted(sak::kTimeoutProcessStartMs)) {
+        logError("smartctl failed to start for drive {}", disk_number);
+        return {};
+    }
     if (!proc.waitForFinished(kSmartctlTimeoutMs)) {
         logError("smartctl timed out for drive {}", disk_number);
         proc.kill();

@@ -6,6 +6,7 @@
 
 #include "sak/actions/backup_known_networks_action.h"
 #include "sak/process_runner.h"
+#include "sak/logger.h"
 #include <QDir>
 #include <QFile>
 #include <QDateTime>
@@ -239,8 +240,12 @@ void BackupKnownNetworksAction::buildAndWriteBackup(
 
     // Save to backup location
     QDir dir(m_backup_location);
-    if (!dir.exists())
-        dir.mkpath(".");
+    if (!dir.exists()) {
+        if (!dir.mkpath(".")) {
+            sak::logWarning("Failed to create network backup directory: {}",
+                            m_backup_location.toStdString());
+        }
+    }
 
     const QString timestamp = startTime.toString("yyyy-MM-dd_HH-mm-ss");
     const QString filename  = QString("wifi_networks_backup_%1.json").arg(timestamp);
@@ -256,7 +261,17 @@ void BackupKnownNetworksAction::buildAndWriteBackup(
         finishWithResult(result, ActionStatus::Failed);
         return;
     }
-    file.write(QJsonDocument(arr).toJson());
+    const QByteArray data = QJsonDocument(arr).toJson();
+    if (file.write(data) != data.size()) {
+        sak::logError("Incomplete write of WiFi network backup");
+        ExecutionResult result;
+        Q_ASSERT(!result.success);
+        result.success = false;
+        result.message = QString("Incomplete write to: %1").arg(filepath);
+        result.duration_ms = startTime.msecsTo(QDateTime::currentDateTime());
+        finishWithResult(result, ActionStatus::Failed);
+        return;
+    }
 
     Q_EMIT executionProgress("Complete", 100);
 

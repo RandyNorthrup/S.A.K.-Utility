@@ -9,7 +9,7 @@
 [![Qt 6.5+](https://img.shields.io/badge/Qt-6.5%2B-41cd52.svg)](https://www.qt.io/)
 [![Windows 10/11](https://img.shields.io/badge/Windows-10%20%7C%2011-0078d4.svg)](https://www.microsoft.com/windows)
 [![Build](https://github.com/RandyNorthrup/S.A.K.-Utility/actions/workflows/build-release.yml/badge.svg)](https://github.com/RandyNorthrup/S.A.K.-Utility/actions)
-[![Version](https://img.shields.io/badge/Version-0.8.5-orange.svg)](VERSION)
+[![Version](https://img.shields.io/badge/Version-0.8.8-orange.svg)](VERSION)
 [![TigerStyle](https://img.shields.io/badge/code%20style-TigerStyle-f80.svg)](docs/TIGERSTYLE_COMPLIANCE_PLAN.md)
 
 Migration · Maintenance · Recovery · Imaging · Deployment — one portable EXE.
@@ -18,13 +18,20 @@ Migration · Maintenance · Recovery · Imaging · Deployment — one portable E
 
 ---
 
-## What's New in v0.8.5
+## What's New in v0.8.8
+
+- **Network transfer reliability fix** — Fixed `sendFrame()` using `socket->flush()` instead of `waitForBytesWritten()`, causing spurious transfer failures under TCP backpressure during unthrottled resume transfers. Added stop-request guard to sender retry loop to prevent pointless retries on cancelled transfers.
+- **Error handling hardening** — Added `sak::logError()` to transfer report write failures, clarified best-effort banner probe in port scanner.
+- **Magic number elimination** — Extracted `kTimeoutThreadShutdownMs`, `kTimeoutThreadTerminateMs`, `kTimeoutWorkerResetMs` for worker lifecycle, and `kFlashBufferSize`, `kVerifySampleMax`, `kVerifyBlockSize` for flash operations. All bare numeric literals replaced with named constants.
+- **Build quality** — Clean MSVC `/W4 /WX` build, 79 automated tests (all passing).
+
+### v0.8.5
 
 - **Enterprise-grade Directory Organizer** — Merged duplicate finder into the organizer panel. Added confirmation dialogs before destructive operations (file count + collision strategy warning), category validation (empty mapping / duplicate name detection), Reset to Defaults button, cross-operation locking (disables organizer widgets during dedup and vice versa), duplicate directory prevention, and scrollable results dialogs for large output.
 - **Parallel duplicate hashing** — Dedup settings now expose parallel hashing toggle and thread count spinner with auto-detected ideal thread count display.
 - **Codebase security hardening** — 20+ files fixed: `findChild` null checks, hardcoded paths replaced with environment variables (`%SystemRoot%`, `%ProgramFiles(x86)%`), `QProcess::waitForStarted` timeout checks, insecure temp files migrated to `QTemporaryFile`, thread-safe `setError()` in USB creator (29 assignments migrated), `SetFilePointer` → `SetFilePointerEx` for large-disk correctness.
 - **UI robustness** — Network Transfer panel re-enabled, `setFixedSize` → `setMinimumSize` across 3 dialogs for DPI scaling, centralized style constants (`style_constants.h`), tooltip event filter parent fix, dead lambda cleanup in network settings.
-- **Build quality** — Clean MSVC `/W4 /WX` build, 76 automated tests (74 passing, 2 pre-existing network timeouts).
+- **Build quality** — Clean MSVC `/W4 /WX` build, 76 automated tests (all passing).
 
 ### v0.8.1
 

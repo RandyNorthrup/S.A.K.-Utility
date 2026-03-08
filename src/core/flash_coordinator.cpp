@@ -149,6 +149,17 @@ bool FlashCoordinator::unmountAndFlash(const QString& imagePath, const QStringLi
         connect(worker.get(), &FlashWorker::error,
                 this, &FlashCoordinator::onWorkerFailed);
 
+        // When verification is disabled, verificationCompleted never fires.
+        // Use writeCompleted as the completion signal in that case.
+        if (!m_verificationEnabled) {
+            connect(worker.get(), &FlashWorker::writeCompleted,
+                    this, [this](qint64 /*bytesWritten*/) {
+                sak::ValidationResult result;
+                result.passed = true;
+                onWorkerCompleted(result);
+            });
+        }
+
         worker->start();
 
         m_workers.push_back(std::move(worker));

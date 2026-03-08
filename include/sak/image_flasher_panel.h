@@ -126,6 +126,12 @@ private:
     void createImageSelectionPage();
     /** @brief Create download cards and select-file button */
     void createDownloadCards(QVBoxLayout* pageLayout);
+    /** @brief Build a single ISO download card */
+    QFrame* buildIsoDownloadCard(QWidget* parent,
+        const QString& iconPath, const QString& title,
+        const QString& description, QPushButton*& buttonOut,
+        const QString& buttonText, const QString& accessName,
+        const QString& tip);
     /** @brief Build the drive-selection wizard page */
     void createDriveSelectionPage();
     /** @brief Build the flash-progress wizard page */

@@ -6,6 +6,7 @@
 
 #include "sak/actions/browser_profile_backup_action.h"
 #include "sak/windows_user_scanner.h"
+#include "sak/logger.h"
 #include <QDir>
 #include <QDirIterator>
 #include <QFile>
@@ -78,7 +79,10 @@ void BrowserProfileBackupAction::execute() {
     QVector<UserProfile> users = scanner.scanUsers();
 
     QDir backup_dir(m_backup_location + "/BrowserProfiles");
-    backup_dir.mkpath(".");
+    if (!backup_dir.mkpath(".")) {
+        sak::logWarning("Failed to create browser profile backup directory: {}",
+                        backup_dir.absolutePath().toStdString());
+    }
 
     int profile_count = 0;
     int files_copied  = 0;
@@ -186,7 +190,9 @@ bool BrowserProfileBackupAction::copyProfileFiles(
         it.next();
         const QString rel       = QDir(src_root).relativeFilePath(it.filePath());
         const QString dest_file = dest_root + "/" + rel;
-        QDir().mkpath(QFileInfo(dest_file).absolutePath());
+        if (!QDir().mkpath(QFileInfo(dest_file).absolutePath())) {
+            sak::logWarning("Failed to create directory for browser profile file");
+        }
         if (QFile::copy(it.filePath(), dest_file)) {
             ++files_copied;
             bytes_copied += it.fileInfo().size();

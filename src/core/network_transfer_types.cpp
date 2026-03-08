@@ -92,6 +92,35 @@ QJsonObject TransferManifest::toJson(bool include_files) const {
     }
     json["users"] = users_array;
 
+    if (!installed_apps.isEmpty()) {
+        QJsonArray apps_array;
+        for (const auto& app : installed_apps) {
+            apps_array.append(app.toJson());
+        }
+        json["installed_apps"] = apps_array;
+    }
+    if (!wifi_profiles.isEmpty()) {
+        QJsonArray wifi_array;
+        for (const auto& w : wifi_profiles) {
+            wifi_array.append(w.toJson());
+        }
+        json["wifi_profiles"] = wifi_array;
+    }
+    if (!ethernet_configs.isEmpty()) {
+        QJsonArray eth_array;
+        for (const auto& e : ethernet_configs) {
+            eth_array.append(e.toJson());
+        }
+        json["ethernet_configs"] = eth_array;
+    }
+    if (!app_data_sources.isEmpty()) {
+        QJsonArray appdata_array;
+        for (const auto& a : app_data_sources) {
+            appdata_array.append(a.toJson());
+        }
+        json["app_data_sources"] = appdata_array;
+    }
+
     if (include_files) {
         QJsonArray files_array;
         for (const auto& file : files) {
@@ -124,6 +153,23 @@ TransferManifest TransferManifest::fromJson(const QJsonObject& json) {
     auto files_array = json.value("files").toArray();
     for (const auto& file : files_array) {
         manifest.files.append(TransferFileEntry::fromJson(file.toObject()));
+    }
+
+    auto apps_array = json.value("installed_apps").toArray();
+    for (const auto& app : apps_array) {
+        manifest.installed_apps.append(InstalledAppInfo::fromJson(app.toObject()));
+    }
+    auto wifi_array = json.value("wifi_profiles").toArray();
+    for (const auto& w : wifi_array) {
+        manifest.wifi_profiles.append(WifiProfileInfo::fromJson(w.toObject()));
+    }
+    auto eth_array = json.value("ethernet_configs").toArray();
+    for (const auto& e : eth_array) {
+        manifest.ethernet_configs.append(EthernetConfigInfo::fromJson(e.toObject()));
+    }
+    auto appdata_array = json.value("app_data_sources").toArray();
+    for (const auto& a : appdata_array) {
+        manifest.app_data_sources.append(AppDataSourceInfo::fromJson(a.toObject()));
     }
 
     return manifest;

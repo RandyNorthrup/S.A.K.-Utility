@@ -52,7 +52,7 @@ body:
     attributes:
       label: S.A.K. Utility Version
       description: The version of S.A.K. Utility you're using (shown in About tab).
-      placeholder: "e.g. 0.8.5"
+      placeholder: "e.g. 0.8.8"
     validations:
       required: true
 

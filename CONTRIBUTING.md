@@ -353,9 +353,8 @@ Add screenshots showing UI changes
 ## 🎉 Recognition
 
 Contributors will be recognized in:
-- CHANGELOG.md
 - Release notes
-- Contributors section (coming soon)
+- README.md Contributors section
 
 ## ❓ Questions?
 

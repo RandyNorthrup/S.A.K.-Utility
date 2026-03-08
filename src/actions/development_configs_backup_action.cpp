@@ -181,7 +181,10 @@ void DevelopmentConfigsBackupAction::execute() {
     Q_ASSERT(start_time.isValid());
 
     QDir backup_dir(m_backup_location + "/DevConfigs");
-    backup_dir.mkpath(".");
+    if (!backup_dir.mkpath(".")) {
+        sak::logWarning("Failed to create dev configs backup directory: {}",
+                        backup_dir.absolutePath().toStdString());
+    }
 
     int processed = 0;
     qint64 bytes_copied = 0;
@@ -196,7 +199,9 @@ void DevelopmentConfigsBackupAction::execute() {
         QFileInfo src_info(cfg.path);
 
         if (src_info.isFile()) {
-            QDir().mkpath(QFileInfo(dest).absolutePath());
+            if (!QDir().mkpath(QFileInfo(dest).absolutePath())) {
+                sak::logWarning("Failed to create directory for dev config file");
+            }
             bool ok = QFile::copy(cfg.path, dest);
             processed += ok ? 1 : 0;
             bytes_copied += ok ? cfg.size : 0;
@@ -241,7 +246,9 @@ qint64 DevelopmentConfigsBackupAction::copyDirectoryContents(const QString& src_
         it.next();
         const QString rel = QDir(src_path).relativeFilePath(it.filePath());
         const QString dest_file = dest_path + "/" + rel;
-        QDir().mkpath(QFileInfo(dest_file).absolutePath());
+        if (!QDir().mkpath(QFileInfo(dest_file).absolutePath())) {
+            sak::logWarning("Failed to create directory for dev config file");
+        }
         if (QFile::copy(it.filePath(), dest_file)) {
             bytes_copied += it.fileInfo().size();
         }

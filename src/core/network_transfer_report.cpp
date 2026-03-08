@@ -3,6 +3,8 @@
 
 #include "sak/network_transfer_report.h"
 
+#include "sak/logger.h"
+
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QFile>
@@ -39,10 +41,18 @@ QJsonObject TransferReport::toJson() const {
 bool TransferReport::saveToFile(const QString& path) const {
     QFile file(path);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        logError("Failed to open transfer report for writing: {}",
+                 path.toStdString());
         return false;
     }
     QJsonDocument doc(toJson());
-    file.write(doc.toJson(QJsonDocument::Indented));
+    const QByteArray data = doc.toJson(QJsonDocument::Indented);
+    qint64 written = file.write(data);
+    if (written != data.size()) {
+        logError("Failed to write transfer report: {}",
+                 path.toStdString());
+        return false;
+    }
     return true;
 }
 

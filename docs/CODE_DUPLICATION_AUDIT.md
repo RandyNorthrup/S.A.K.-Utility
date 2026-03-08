@@ -354,7 +354,7 @@ if (sizeMB >= 1024) {
 Additional ad-hoc conversions in:
 - [user_profile_backup_wizard_pages.cpp](../src/gui/user_profile_backup_wizard_pages.cpp#L164): `totalSize / (1024.0 * 1024.0 * 1024.0)`
 - [user_profile_restore_wizard.cpp](../src/gui/user_profile_restore_wizard.cpp#L150): `manifest.total_backup_size_bytes / (1024.0 * 1024.0 * 1024.0)`
-- [duplicate_finder_panel.cpp](../src/gui/duplicate_finder_panel.cpp#L235): `wasted_space / (1024.0 * 1024.0)`
+- [organizer_panel.cpp](../src/gui/organizer_panel.cpp): wasted-space formatting inline
 
 ### Recommendation
 

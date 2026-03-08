@@ -6,6 +6,7 @@
 
 #include "sak/worker_base.h"
 #include "sak/logger.h"
+#include "sak/layout_constants.h"
 
 #include <QtGlobal>
 #include <stdexcept>
@@ -19,10 +20,10 @@ WorkerBase::~WorkerBase()
 {
     if (isRunning()) {
         requestStop();
-        if (!wait(15000)) {
+        if (!wait(sak::kTimeoutThreadShutdownMs)) {
             sak::logError("Worker thread did not stop within 15s — forcing termination");
             terminate();
-            wait(5000);
+            wait(sak::kTimeoutThreadTerminateMs);
         }
     }
 }

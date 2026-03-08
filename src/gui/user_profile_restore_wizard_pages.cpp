@@ -588,6 +588,597 @@ bool UserProfileRestoreFolderSelectionPage::validatePage() {
 // ============================================================================
 // Page 5: Permission Settings
 // ============================================================================
+// Page 4a: Application Data Restore
+// ============================================================================
+
+UserProfileRestoreAppDataPage::UserProfileRestoreAppDataPage(QWidget* parent)
+    : QWizardPage(parent)
+{
+    setTitle(tr("Restore Application Data"));
+    setSubTitle(tr("Select application data and settings to restore (all selected by default)"));
+
+    setupUi();
+}
+
+void UserProfileRestoreAppDataPage::setupUi() {
+    auto* layout = new QVBoxLayout(this);
+
+    auto* instructionLabel = new QLabel(tr(
+        "The backup contains application data and settings. "
+        "Select the items you want to restore. All items are selected by default."
+    ), this);
+    instructionLabel->setWordWrap(true);
+    layout->addWidget(instructionLabel);
+
+    m_statusLabel = new QLabel(this);
+    layout->addWidget(m_statusLabel);
+
+    m_appDataTree = new QTreeWidget(this);
+    m_appDataTree->setHeaderLabels({tr("Application Data"), tr("Path"), tr("Size")});
+    m_appDataTree->setAlternatingRowColors(true);
+    m_appDataTree->setRootIsDecorated(true);
+    m_appDataTree->header()->setSectionResizeMode(0, QHeaderView::Stretch);
+    m_appDataTree->header()->setSectionResizeMode(1, QHeaderView::Stretch);
+    m_appDataTree->header()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
+    m_appDataTree->setEnabled(false);
+    connect(m_appDataTree, &QTreeWidget::itemChanged,
+            this, &UserProfileRestoreAppDataPage::onItemChanged);
+    layout->addWidget(m_appDataTree);
+
+    auto* buttonLayout = new QHBoxLayout();
+    m_selectAllButton = new QPushButton(tr("Select All"), this);
+    m_selectAllButton->setEnabled(false);
+    connect(m_selectAllButton, &QPushButton::clicked, this,
+        &UserProfileRestoreAppDataPage::onSelectAll);
+    buttonLayout->addWidget(m_selectAllButton);
+
+    m_selectNoneButton = new QPushButton(tr("Select None"), this);
+    m_selectNoneButton->setEnabled(false);
+    connect(m_selectNoneButton, &QPushButton::clicked, this,
+        &UserProfileRestoreAppDataPage::onSelectNone);
+    buttonLayout->addWidget(m_selectNoneButton);
+    buttonLayout->addStretch();
+    layout->addLayout(buttonLayout);
+
+    m_summaryLabel = new QLabel(this);
+    m_summaryLabel->setStyleSheet(QString("QLabel { padding: 10px; background-color: %1; "
+                                          "border-radius: 10px; }")
+                                              .arg(sak::ui::kColorBgInfoPanel));
+    m_summaryLabel->setText(tr("No application data found in backup"));
+    layout->addWidget(m_summaryLabel);
+}
+
+void UserProfileRestoreAppDataPage::initializePage() {
+    if (!m_loaded) {
+        loadAppDataSources();
+    }
+}
+
+bool UserProfileRestoreAppDataPage::isComplete() const {
+    return true; // Always complete — app data restore is optional
+}
+
+void UserProfileRestoreAppDataPage::loadAppDataSources() {
+    auto* wiz = qobject_cast<UserProfileRestoreWizard*>(wizard());
+    if (!wiz) return;
+
+    QString appDataFilePath = wiz->backupPath() + "/app_data_sources.json";
+    QFile file(appDataFilePath);
+    if (!file.open(QIODevice::ReadOnly)) {
+        m_statusLabel->setText(tr("No app_data_sources.json found in backup — skipping"));
+        m_summaryLabel->setText(tr("No application data available in this backup"));
+        return;
+    }
+
+    QJsonDocument doc = QJsonDocument::fromJson(file.readAll());
+    file.close();
+
+    if (!doc.isArray()) {
+        m_statusLabel->setText(tr("Invalid app_data_sources.json format"));
+        return;
+    }
+
+    QJsonArray sourcesArray = doc.array();
+    QVector<AppDataSourceInfo> sources;
+    sources.reserve(sourcesArray.size());
+
+    for (const auto& val : sourcesArray) {
+        QJsonObject obj = val.toObject();
+        AppDataSourceInfo info;
+        info.name = obj["name"].toString();
+        info.category = obj["category"].toString();
+        info.relative_path = obj["relative_path"].toString();
+        info.size_bytes = obj["size_bytes"].toVariant().toLongLong();
+        info.selected = true; // All selected by default for restore
+        sources.append(info);
+    }
+
+    m_loaded = true;
+
+    if (sources.isEmpty()) {
+        m_statusLabel->setText(tr("No application data found in backup"));
+        return;
+    }
+
+    m_statusLabel->setText(tr("Found %1 application data source(s) in backup").arg(sources.size()));
+    m_appDataTree->setEnabled(true);
+    m_selectAllButton->setEnabled(true);
+    m_selectNoneButton->setEnabled(true);
+
+    populateTree(sources);
+}
+
+void UserProfileRestoreAppDataPage::populateTree(const QVector<AppDataSourceInfo>& sources) {
+    m_appDataTree->blockSignals(true);
+    m_appDataTree->clear();
+
+    QMap<QString, QVector<const AppDataSourceInfo*>> categories;
+    for (const auto& source : sources) {
+        QString cat = source.category.isEmpty() ? tr("Other") : source.category;
+        categories[cat].append(&source);
+    }
+
+    int totalSelected = 0;
+    int total = 0;
+
+    for (auto it = categories.constBegin(); it != categories.constEnd(); ++it) {
+        auto* categoryItem = new QTreeWidgetItem(m_appDataTree);
+        categoryItem->setText(0, it.key());
+        categoryItem->setFlags(categoryItem->flags() | Qt::ItemIsUserCheckable);
+
+        int catSelected = 0;
+        for (const auto* source : it.value()) {
+            auto* item = new QTreeWidgetItem(categoryItem);
+            item->setText(0, source->name);
+            item->setText(1, source->relative_path);
+            double sizeMB = source->size_bytes / sak::kBytesPerMBf;
+            item->setText(2, QString("%1 MB").arg(sizeMB, 0, 'f', 1));
+            item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
+            item->setCheckState(0, Qt::Checked); // All selected by default
+            catSelected++;
+            total++;
+        }
+
+        totalSelected += catSelected;
+        categoryItem->setCheckState(0, Qt::Checked);
+        categoryItem->setExpanded(true);
+    }
+
+    m_appDataTree->blockSignals(false);
+    m_summaryLabel->setText(tr("%1 of %2 application data source(s) selected for restore")
+                                .arg(totalSelected).arg(total));
+}
+
+void UserProfileRestoreAppDataPage::updateParentCheckState(QTreeWidgetItem* parent) {
+    int checkedCount = 0;
+    int totalCount = parent->childCount();
+
+    for (int i = 0; i < totalCount; ++i) {
+        if (parent->child(i)->checkState(0) == Qt::Checked) checkedCount++;
+    }
+
+    if (checkedCount == 0) parent->setCheckState(0, Qt::Unchecked);
+    else if (checkedCount == totalCount) parent->setCheckState(0, Qt::Checked);
+    else parent->setCheckState(0, Qt::PartiallyChecked);
+}
+
+void UserProfileRestoreAppDataPage::onItemChanged(QTreeWidgetItem* item, int column) {
+    if (column != 0) return;
+
+    m_appDataTree->blockSignals(true);
+
+    if (item->childCount() > 0) {
+        Qt::CheckState state = item->checkState(0);
+        for (int i = 0; i < item->childCount(); ++i) {
+            item->child(i)->setCheckState(0, state);
+        }
+    } else if (item->parent()) {
+        updateParentCheckState(item->parent());
+    }
+
+    m_appDataTree->blockSignals(false);
+
+    int total = 0;
+    int selected = 0;
+    for (int i = 0; i < m_appDataTree->topLevelItemCount(); ++i) {
+        auto* category = m_appDataTree->topLevelItem(i);
+        for (int j = 0; j < category->childCount(); ++j) {
+            total++;
+            if (category->child(j)->checkState(0) == Qt::Checked) selected++;
+        }
+    }
+
+    m_summaryLabel->setText(tr("%1 of %2 application data source(s) selected for restore")
+                                .arg(selected).arg(total));
+}
+
+void UserProfileRestoreAppDataPage::onSelectAll() {
+    m_appDataTree->blockSignals(true);
+    for (int i = 0; i < m_appDataTree->topLevelItemCount(); ++i) {
+        auto* category = m_appDataTree->topLevelItem(i);
+        category->setCheckState(0, Qt::Checked);
+        for (int j = 0; j < category->childCount(); ++j) {
+            category->child(j)->setCheckState(0, Qt::Checked);
+        }
+    }
+    m_appDataTree->blockSignals(false);
+    if (m_appDataTree->topLevelItemCount() > 0) {
+        onItemChanged(m_appDataTree->topLevelItem(0), 0);
+    }
+}
+
+void UserProfileRestoreAppDataPage::onSelectNone() {
+    m_appDataTree->blockSignals(true);
+    for (int i = 0; i < m_appDataTree->topLevelItemCount(); ++i) {
+        auto* category = m_appDataTree->topLevelItem(i);
+        category->setCheckState(0, Qt::Unchecked);
+        for (int j = 0; j < category->childCount(); ++j) {
+            category->child(j)->setCheckState(0, Qt::Unchecked);
+        }
+    }
+    m_appDataTree->blockSignals(false);
+    if (m_appDataTree->topLevelItemCount() > 0) {
+        onItemChanged(m_appDataTree->topLevelItem(0), 0);
+    }
+}
+
+// ============================================================================
+// Page 5a: Restore WiFi Networks
+// ============================================================================
+
+UserProfileRestoreNetworksPage::UserProfileRestoreNetworksPage(QWidget* parent)
+    : QWizardPage(parent)
+{
+    setTitle(tr("Restore WiFi Networks"));
+    setSubTitle(tr("Select WiFi network profiles to restore (all selected by default)"));
+
+    setupUi();
+}
+
+void UserProfileRestoreNetworksPage::setupUi() {
+    auto* layout = new QVBoxLayout(this);
+
+    auto* instructionLabel = new QLabel(tr(
+        "The backup contains saved WiFi network profiles. "
+        "Select the ones you want to import on this machine. "
+        "All profiles are selected by default."
+    ), this);
+    instructionLabel->setWordWrap(true);
+    layout->addWidget(instructionLabel);
+
+    m_statusLabel = new QLabel(this);
+    layout->addWidget(m_statusLabel);
+
+    m_networkTree = new QTreeWidget(this);
+    m_networkTree->setHeaderLabels({tr("Network Name (SSID)"), tr("Security Type")});
+    m_networkTree->setAlternatingRowColors(true);
+    m_networkTree->header()->setSectionResizeMode(0, QHeaderView::Stretch);
+    m_networkTree->header()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
+    m_networkTree->setEnabled(false);
+    connect(m_networkTree, &QTreeWidget::itemChanged,
+            this, &UserProfileRestoreNetworksPage::onItemChanged);
+    layout->addWidget(m_networkTree);
+
+    auto* buttonLayout = new QHBoxLayout();
+    m_selectAllButton = new QPushButton(tr("Select All"), this);
+    m_selectAllButton->setEnabled(false);
+    connect(m_selectAllButton, &QPushButton::clicked, this,
+        &UserProfileRestoreNetworksPage::onSelectAll);
+    buttonLayout->addWidget(m_selectAllButton);
+
+    m_selectNoneButton = new QPushButton(tr("Select None"), this);
+    m_selectNoneButton->setEnabled(false);
+    connect(m_selectNoneButton, &QPushButton::clicked, this,
+        &UserProfileRestoreNetworksPage::onSelectNone);
+    buttonLayout->addWidget(m_selectNoneButton);
+    buttonLayout->addStretch();
+    layout->addLayout(buttonLayout);
+
+    m_summaryLabel = new QLabel(this);
+    m_summaryLabel->setStyleSheet(QString("QLabel { padding: 10px; background-color: %1; "
+                                          "border-radius: 10px; }")
+                                              .arg(sak::ui::kColorBgInfoPanel));
+    m_summaryLabel->setText(tr("No WiFi profiles found in backup"));
+    layout->addWidget(m_summaryLabel);
+}
+
+void UserProfileRestoreNetworksPage::initializePage() {
+    if (!m_loaded) {
+        loadNetworkProfiles();
+    }
+}
+
+bool UserProfileRestoreNetworksPage::isComplete() const {
+    return true; // Always complete — network restore is optional
+}
+
+void UserProfileRestoreNetworksPage::loadNetworkProfiles() {
+    auto* wiz = qobject_cast<UserProfileRestoreWizard*>(wizard());
+    if (!wiz) return;
+
+    QString networksFilePath = wiz->backupPath() + "/wifi_profiles.json";
+    QFile file(networksFilePath);
+    if (!file.open(QIODevice::ReadOnly)) {
+        m_statusLabel->setText(tr("No wifi_profiles.json found in backup — skipping"));
+        m_summaryLabel->setText(tr("No WiFi profile data available in this backup"));
+        return;
+    }
+
+    QJsonDocument doc = QJsonDocument::fromJson(file.readAll());
+    file.close();
+
+    if (!doc.isArray()) {
+        m_statusLabel->setText(tr("Invalid wifi_profiles.json format"));
+        return;
+    }
+
+    QJsonArray profilesArray = doc.array();
+    QVector<WifiProfileInfo> profiles;
+    profiles.reserve(profilesArray.size());
+
+    for (const auto& val : profilesArray) {
+        QJsonObject obj = val.toObject();
+        WifiProfileInfo info;
+        info.profile_name = obj["profile_name"].toString();
+        info.security_type = obj["security_type"].toString();
+        info.xml_data = obj["xml_data"].toString();
+        info.selected = true; // All selected by default
+        profiles.append(info);
+    }
+
+    m_loaded = true;
+
+    if (profiles.isEmpty()) {
+        m_statusLabel->setText(tr("No WiFi profiles found in backup"));
+        return;
+    }
+
+    m_statusLabel->setText(tr("Found %1 WiFi profile(s) in backup").arg(profiles.size()));
+    m_networkTree->setEnabled(true);
+    m_selectAllButton->setEnabled(true);
+    m_selectNoneButton->setEnabled(true);
+
+    populateTree(profiles);
+}
+
+void UserProfileRestoreNetworksPage::populateTree(const QVector<WifiProfileInfo>& profiles) {
+    m_networkTree->blockSignals(true);
+    m_networkTree->clear();
+
+    for (const auto& profile : profiles) {
+        auto* item = new QTreeWidgetItem(m_networkTree);
+        item->setText(0, profile.profile_name);
+        item->setText(1, profile.security_type.isEmpty() ? tr("Unknown") : profile.security_type);
+        item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
+        item->setCheckState(0, Qt::Checked); // All selected by default
+    }
+
+    m_networkTree->blockSignals(false);
+    m_summaryLabel->setText(tr("%1 of %2 WiFi profile(s) selected for restore")
+                                .arg(profiles.size()).arg(profiles.size()));
+}
+
+void UserProfileRestoreNetworksPage::onItemChanged(QTreeWidgetItem* item, int column) {
+    Q_UNUSED(item)
+    if (column != 0) return;
+
+    int selected = 0;
+    int total = m_networkTree->topLevelItemCount();
+    for (int i = 0; i < total; ++i) {
+        if (m_networkTree->topLevelItem(i)->checkState(0) == Qt::Checked) selected++;
+    }
+
+    m_summaryLabel->setText(tr("%1 of %2 WiFi profile(s) selected for restore")
+                                .arg(selected).arg(total));
+}
+
+void UserProfileRestoreNetworksPage::onSelectAll() {
+    m_networkTree->blockSignals(true);
+    for (int i = 0; i < m_networkTree->topLevelItemCount(); ++i) {
+        m_networkTree->topLevelItem(i)->setCheckState(0, Qt::Checked);
+    }
+    m_networkTree->blockSignals(false);
+    if (m_networkTree->topLevelItemCount() > 0) {
+        onItemChanged(m_networkTree->topLevelItem(0), 0);
+    }
+}
+
+void UserProfileRestoreNetworksPage::onSelectNone() {
+    m_networkTree->blockSignals(true);
+    for (int i = 0; i < m_networkTree->topLevelItemCount(); ++i) {
+        m_networkTree->topLevelItem(i)->setCheckState(0, Qt::Unchecked);
+    }
+    m_networkTree->blockSignals(false);
+    if (m_networkTree->topLevelItemCount() > 0) {
+        onItemChanged(m_networkTree->topLevelItem(0), 0);
+    }
+}
+
+// ============================================================================
+// Page 5b: Restore Ethernet Settings
+// ============================================================================
+
+UserProfileRestoreEthernetPage::UserProfileRestoreEthernetPage(QWidget* parent)
+    : QWizardPage(parent)
+{
+    setTitle(tr("Restore Ethernet Settings"));
+    setSubTitle(tr("Select ethernet configurations to restore (all selected by default)"));
+
+    setupUi();
+}
+
+void UserProfileRestoreEthernetPage::setupUi() {
+    auto* layout = new QVBoxLayout(this);
+
+    auto* instructionLabel = new QLabel(tr(
+        "The backup contains saved ethernet adapter configurations. "
+        "Select which configurations to apply. All are selected by default. "
+        "Static IP settings will be applied using netsh."
+    ), this);
+    instructionLabel->setWordWrap(true);
+    layout->addWidget(instructionLabel);
+
+    m_statusLabel = new QLabel(this);
+    layout->addWidget(m_statusLabel);
+
+    m_ethernetTable = new QTableWidget(0, 7, this);
+    m_ethernetTable->setHorizontalHeaderLabels({
+        tr("Select"), tr("Adapter"), tr("DHCP"), tr("IP Address"),
+        tr("Subnet"), tr("Gateway"), tr("DNS")
+    });
+    m_ethernetTable->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
+    m_ethernetTable->setSelectionBehavior(QAbstractItemView::SelectRows);
+    m_ethernetTable->verticalHeader()->setVisible(false);
+    m_ethernetTable->setEnabled(false);
+    layout->addWidget(m_ethernetTable);
+
+    auto* buttonLayout = new QHBoxLayout();
+    m_selectAllButton = new QPushButton(tr("Select All"), this);
+    m_selectAllButton->setEnabled(false);
+    connect(m_selectAllButton, &QPushButton::clicked, this,
+        &UserProfileRestoreEthernetPage::onSelectAll);
+    buttonLayout->addWidget(m_selectAllButton);
+
+    m_selectNoneButton = new QPushButton(tr("Select None"), this);
+    m_selectNoneButton->setEnabled(false);
+    connect(m_selectNoneButton, &QPushButton::clicked, this,
+        &UserProfileRestoreEthernetPage::onSelectNone);
+    buttonLayout->addWidget(m_selectNoneButton);
+    buttonLayout->addStretch();
+    layout->addLayout(buttonLayout);
+
+    m_summaryLabel = new QLabel(this);
+    m_summaryLabel->setStyleSheet(QString("QLabel { padding: 10px; background-color: %1; "
+                                          "border-radius: 10px; }")
+                                              .arg(sak::ui::kColorBgInfoPanel));
+    m_summaryLabel->setText(tr("No ethernet configuration data found in backup"));
+    layout->addWidget(m_summaryLabel);
+}
+
+void UserProfileRestoreEthernetPage::initializePage() {
+    if (!m_loaded) {
+        loadEthernetConfigs();
+    }
+}
+
+bool UserProfileRestoreEthernetPage::isComplete() const {
+    return true; // Always complete — ethernet restore is optional
+}
+
+void UserProfileRestoreEthernetPage::loadEthernetConfigs() {
+    auto* wiz = qobject_cast<UserProfileRestoreWizard*>(wizard());
+    if (!wiz) return;
+
+    QString ethernetFilePath = wiz->backupPath() + "/ethernet_configs.json";
+    QFile file(ethernetFilePath);
+    if (!file.open(QIODevice::ReadOnly)) {
+        m_statusLabel->setText(tr("No ethernet_configs.json found in backup — skipping"));
+        m_summaryLabel->setText(tr("No ethernet configuration data available in this backup"));
+        return;
+    }
+
+    QJsonDocument doc = QJsonDocument::fromJson(file.readAll());
+    file.close();
+
+    if (!doc.isArray()) {
+        m_statusLabel->setText(tr("Invalid ethernet_configs.json format"));
+        return;
+    }
+
+    QJsonArray configsArray = doc.array();
+    QVector<EthernetConfigInfo> configs;
+    configs.reserve(configsArray.size());
+
+    for (const auto& val : configsArray) {
+        QJsonObject obj = val.toObject();
+        EthernetConfigInfo info;
+        info.adapter_name = obj["adapter_name"].toString();
+        info.description = obj["description"].toString();
+        info.dhcp_enabled = obj["dhcp_enabled"].toBool(true);
+        info.ip_address = obj["ip_address"].toString();
+        info.subnet_mask = obj["subnet_mask"].toString();
+        info.default_gateway = obj["default_gateway"].toString();
+        info.dns_primary = obj["dns_primary"].toString();
+        info.dns_secondary = obj["dns_secondary"].toString();
+        info.selected = true; // All selected by default
+        configs.append(info);
+    }
+
+    m_loaded = true;
+
+    if (configs.isEmpty()) {
+        m_statusLabel->setText(tr("No ethernet configurations found in backup"));
+        return;
+    }
+
+    m_statusLabel->setText(tr("Found %1 ethernet configuration(s) in backup").arg(configs.size()));
+    m_ethernetTable->setEnabled(true);
+    m_selectAllButton->setEnabled(true);
+    m_selectNoneButton->setEnabled(true);
+
+    populateTable(configs);
+}
+
+void UserProfileRestoreEthernetPage::populateTable(const QVector<EthernetConfigInfo>& configs) {
+    m_ethernetTable->setRowCount(0);
+
+    for (const auto& config : configs) {
+        int row = m_ethernetTable->rowCount();
+        m_ethernetTable->insertRow(row);
+
+        auto* checkItem = new QTableWidgetItem();
+        checkItem->setCheckState(Qt::Checked); // All selected by default
+        m_ethernetTable->setItem(row, 0, checkItem);
+
+        auto* nameItem = new QTableWidgetItem(config.adapter_name);
+        nameItem->setFlags(nameItem->flags() & ~Qt::ItemIsEditable);
+        m_ethernetTable->setItem(row, 1, nameItem);
+
+        auto* dhcpItem = new QTableWidgetItem(config.dhcp_enabled ? tr("Yes") : tr("No"));
+        dhcpItem->setFlags(dhcpItem->flags() & ~Qt::ItemIsEditable);
+        m_ethernetTable->setItem(row, 2, dhcpItem);
+
+        auto* ipItem = new QTableWidgetItem(config.ip_address);
+        ipItem->setFlags(ipItem->flags() & ~Qt::ItemIsEditable);
+        m_ethernetTable->setItem(row, 3, ipItem);
+
+        auto* subnetItem = new QTableWidgetItem(config.subnet_mask);
+        subnetItem->setFlags(subnetItem->flags() & ~Qt::ItemIsEditable);
+        m_ethernetTable->setItem(row, 4, subnetItem);
+
+        auto* gwItem = new QTableWidgetItem(config.default_gateway);
+        gwItem->setFlags(gwItem->flags() & ~Qt::ItemIsEditable);
+        m_ethernetTable->setItem(row, 5, gwItem);
+
+        QString dns = config.dns_primary;
+        if (!config.dns_secondary.isEmpty()) dns += ", " + config.dns_secondary;
+        auto* dnsItem = new QTableWidgetItem(dns);
+        dnsItem->setFlags(dnsItem->flags() & ~Qt::ItemIsEditable);
+        m_ethernetTable->setItem(row, 6, dnsItem);
+    }
+
+    int total = m_ethernetTable->rowCount();
+    m_summaryLabel->setText(tr("%1 ethernet configuration(s) selected for restore").arg(total));
+}
+
+void UserProfileRestoreEthernetPage::onSelectAll() {
+    for (int i = 0; i < m_ethernetTable->rowCount(); ++i) {
+        m_ethernetTable->item(i, 0)->setCheckState(Qt::Checked);
+    }
+    m_summaryLabel->setText(tr("%1 ethernet configuration(s) selected for restore")
+                                .arg(m_ethernetTable->rowCount()));
+}
+
+void UserProfileRestoreEthernetPage::onSelectNone() {
+    for (int i = 0; i < m_ethernetTable->rowCount(); ++i) {
+        m_ethernetTable->item(i, 0)->setCheckState(Qt::Unchecked);
+    }
+    m_summaryLabel->setText(tr("0 ethernet configuration(s) selected for restore"));
+}
+
+// ============================================================================
+// Page 5: Permission Settings
+// ============================================================================
 
 UserProfileRestorePermissionSettingsPage::UserProfileRestorePermissionSettingsPage(QWidget* parent)
     : QWizardPage(parent)

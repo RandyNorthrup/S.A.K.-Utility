@@ -413,6 +413,29 @@ struct NetworkShareInfo {
 } // namespace sak
 
 // ═══════════════════════════════════════════════════════════════════════════
+// LAN File Transfer Speed Test
+// ═══════════════════════════════════════════════════════════════════════════
+
+namespace sak {
+
+/// @brief Result of a LAN file transfer speed test between two local devices
+struct LanTransferResult {
+    QString remoteAddress;         ///< IP address of the peer
+    uint16_t port{0};              ///< Port used for transfer
+    qint64 bytesTransferred{0};    ///< Total bytes transferred
+    double durationSec{0.0};       ///< Total transfer time in seconds
+    double avgSpeedMbps{0.0};      ///< Average speed in Mbps
+    double peakSpeedMbps{0.0};     ///< Peak observed speed in Mbps
+    bool isUpload{true};           ///< True = sent data, false = received
+    QDateTime timestamp;
+
+    /// @brief Per-second speed samples for graphing
+    QVector<double> speedSamplesMbps;
+};
+
+} // namespace sak
+
+// ═══════════════════════════════════════════════════════════════════════════
 // Qt Metatype Registration
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -444,6 +467,7 @@ Q_DECLARE_METATYPE(sak::FirewallGap)
 Q_DECLARE_METATYPE(QVector<sak::FirewallGap>)
 Q_DECLARE_METATYPE(sak::NetworkShareInfo)
 Q_DECLARE_METATYPE(QVector<sak::NetworkShareInfo>)
+Q_DECLARE_METATYPE(sak::LanTransferResult)
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Compile-Time Invariants (TigerStyle)
@@ -469,3 +493,5 @@ static_assert(std::is_copy_constructible_v<sak::FirewallRule>,
     "FirewallRule must be copyable for signal transport.");
 static_assert(std::is_copy_constructible_v<sak::NetworkShareInfo>,
     "NetworkShareInfo must be copyable for signal transport.");
+static_assert(std::is_copy_constructible_v<sak::LanTransferResult>,
+    "LanTransferResult must be copyable for signal transport.");

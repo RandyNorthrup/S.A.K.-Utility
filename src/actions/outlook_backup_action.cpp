@@ -138,7 +138,11 @@ bool OutlookBackupAction::copyOutlookFilesToBackup(const QVector<OutlookFile>& f
         QString safe_dir = sanitizePathForBackup(source_dir);
 
         QDir target_dir(backup_dir.filePath(safe_dir));
-        target_dir.mkpath(".");
+        if (!target_dir.mkpath(".")) {
+            sak::logWarning("Failed to create backup directory: {}",
+                            target_dir.absolutePath().toStdString());
+            continue;
+        }
         QString dest_path = resolveUniqueDestPath(target_dir, file.filename);
 
         if (QFile::copy(file.path, dest_path)) {
@@ -186,7 +190,10 @@ void OutlookBackupAction::execute() {
     Q_EMIT executionProgress("Preparing backup directory...", 30);
 
     QDir backup_dir(m_backup_location + "/OutlookBackup");
-    backup_dir.mkpath(".");
+    if (!backup_dir.mkpath(".")) {
+        sak::logWarning("Failed to create Outlook backup directory: {}",
+                        backup_dir.absolutePath().toStdString());
+    }
 
     int files_copied = 0;
     qint64 bytes_copied = 0;
@@ -253,7 +260,13 @@ bool OutlookBackupAction::copyFileWithProgress(const QString& source, const QStr
     char buffer[1024 * 64];
     while (!source_file.atEnd()) {
         qint64 read = source_file.read(buffer, sizeof(buffer));
-        dest_file.write(buffer, read);
+        if (read <= 0) break;
+        qint64 written = dest_file.write(buffer, read);
+        if (written != read) {
+            sak::logError("File copy write failed: expected {} bytes, wrote {}",
+                          read, written);
+            return false;
+        }
         copied += read;
 
         int progress = (copied * 100) / total;

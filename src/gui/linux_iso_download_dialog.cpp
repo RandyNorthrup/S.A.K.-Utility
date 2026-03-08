@@ -15,6 +15,7 @@
 #include "sak/linux_iso_downloader.h"
 #include "sak/style_constants.h"
 #include "sak/layout_constants.h"
+#include "sak/logger.h"
 
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -356,7 +357,11 @@ void LinuxISODownloadDialog::onStartDownload()
     }
 
     // Ensure parent directory exists
-    QDir().mkpath(QFileInfo(savePath).absolutePath());
+    const QString save_dir = QFileInfo(savePath).absolutePath();
+    if (!QDir().mkpath(save_dir)) {
+        sak::logWarning("Failed to create download directory: {}",
+                        save_dir.toStdString());
+    }
 
     // Check for existing file
     if (QFile::exists(savePath)) {
@@ -468,6 +473,8 @@ void LinuxISODownloadDialog::onDownloadError(const QString& error)
     setInputsEnabled(true);
     updateStartButton();
 
+    sak::logError("Linux ISO download failed: {}",
+                  error.toStdString());
     QMessageBox::critical(this, "Download Error",
         QString("Failed to download Linux ISO:\n\n%1\n\n"
                 "Please check your internet connection and try again.")

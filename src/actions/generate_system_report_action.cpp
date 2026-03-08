@@ -7,6 +7,7 @@
 #include "sak/actions/generate_system_report_action.h"
 #include "sak/layout_constants.h"
 #include "sak/process_runner.h"
+#include "sak/logger.h"
 #include <QDir>
 #include <QDateTime>
 #include <QFileInfo>
@@ -83,7 +84,10 @@ void GenerateSystemReportAction::execute() {
 
     QDir output_dir(m_output_location);
     if (!output_dir.exists()) {
-        output_dir.mkpath(".");
+        if (!output_dir.mkpath(".")) {
+            sak::logWarning("Failed to create system report directory: {}",
+                            m_output_location.toStdString());
+        }
     }
 
     QString filename = QString("SystemReport_%1.txt")
@@ -360,7 +364,10 @@ bool GenerateSystemReportAction::saveReport(const QString& report, const QString
     if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
         return false;
     }
-    file.write(report.toUtf8());
+    const QByteArray data = report.toUtf8();
+    if (file.write(data) != data.size()) {
+        return false;
+    }
     file.close();
     return true;
 }

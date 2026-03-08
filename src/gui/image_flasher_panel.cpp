@@ -211,192 +211,160 @@ void ImageFlasherPanel::createImageSelectionPage() {
     m_stackedWidget->addWidget(m_imageSelectionPage);
 }
 
+// ============================================================================
+// Download Card Builder
+// ============================================================================
+
+namespace {
+
+const QString kCardStyle = QString(
+    "QFrame {"
+    "  background-color: %1;"
+    "  border: 1px solid %2;"
+    "  border-radius: 10px;"
+    "  padding: %3px;"
+    "}"
+    "QFrame:hover {"
+    "  border-color: %4;"
+    "}")
+    .arg(sak::ui::kColorBgWhite)
+    .arg(sak::ui::kColorBorderDefault)
+    .arg(sak::ui::kMarginMedium)
+    .arg(sak::ui::kColorPrimary);
+
+const QString kCardTitleStyle = QString(
+    "font-size: %1pt; font-weight: 700; color: %2;"
+    " border: none; background: transparent;")
+    .arg(sak::ui::kFontSizeSection)
+    .arg(sak::ui::kColorTextHeading);
+
+const QString kCardDescStyle = QString(
+    "font-size: %1pt; color: %2;"
+    " border: none; background: transparent;")
+    .arg(sak::ui::kFontSizeBody)
+    .arg(sak::ui::kColorTextSecondary);
+
+const QString kLogoStyle = QStringLiteral(
+    "border: none; background: transparent;");
+
+constexpr int kCardLogoSize = 48;
+
+} // anonymous namespace
+
+QFrame* ImageFlasherPanel::buildIsoDownloadCard(QWidget* parent,
+    const QString& iconPath, const QString& title,
+    const QString& description, QPushButton*& buttonOut,
+    const QString& buttonText, const QString& accessName,
+    const QString& tip)
+{
+    auto* card = new QFrame(parent);
+    card->setStyleSheet(kCardStyle);
+    card->setCursor(Qt::PointingHandCursor);
+    auto* layout = new QVBoxLayout(card);
+    layout->setSpacing(sak::ui::kSpacingMedium);
+    layout->setContentsMargins(0, 0, 0, 0);
+
+    auto* logo = new QLabel(card);
+    logo->setPixmap(QIcon(iconPath).pixmap(kCardLogoSize, kCardLogoSize));
+    logo->setAlignment(Qt::AlignCenter);
+    logo->setStyleSheet(kLogoStyle);
+    layout->addWidget(logo);
+
+    auto* titleLabel = new QLabel(title, card);
+    titleLabel->setAlignment(Qt::AlignCenter);
+    titleLabel->setStyleSheet(kCardTitleStyle);
+    layout->addWidget(titleLabel);
+
+    auto* descLabel = new QLabel(description, card);
+    descLabel->setWordWrap(true);
+    descLabel->setAlignment(Qt::AlignCenter);
+    descLabel->setStyleSheet(kCardDescStyle);
+    layout->addWidget(descLabel);
+
+    layout->addStretch();
+
+    buttonOut = new QPushButton(buttonText, card);
+    buttonOut->setMinimumHeight(sak::kButtonHeightTall);
+    buttonOut->setStyleSheet(sak::ui::kSecondaryButtonStyle);
+    buttonOut->setAccessibleName(accessName);
+    buttonOut->setToolTip(tip);
+    layout->addWidget(buttonOut);
+
+    return card;
+}
+
 void ImageFlasherPanel::createDownloadCards(QVBoxLayout* pageLayout) {
-    // ── Card stylesheet ─────────────────────────────────────────────────
-    const QString cardStyle = QString(
-        "QFrame {"
-        "  background-color: %1;"
-        "  border: 1px solid %2;"
-        "  border-radius: 10px;"
-        "  padding: %3px;"
-        "}"
-        "QFrame:hover {"
-        "  border-color: %4;"
-        "}")
-        .arg(sak::ui::kColorBgWhite)
-        .arg(sak::ui::kColorBorderDefault)
-        .arg(sak::ui::kMarginMedium)
-        .arg(sak::ui::kColorPrimary);
-
-    const QString cardTitleStyle = QString(
-        "font-size: %1pt; font-weight: 700; color: %2; border: none; background: transparent;")
-        .arg(sak::ui::kFontSizeSection)
-        .arg(sak::ui::kColorTextHeading);
-
-    const QString cardDescStyle = QString(
-        "font-size: %1pt; color: %2; border: none; background: transparent;")
-        .arg(sak::ui::kFontSizeBody)
-        .arg(sak::ui::kColorTextSecondary);
-
-    const QString logoStyle = QStringLiteral(
-        "border: none; background: transparent;");
-
-    constexpr int kLogoSize = 48;
-
-    // ── Row of 3 cards ──────────────────────────────────────────────────
     auto* cardRow = new QHBoxLayout();
     cardRow->setSpacing(sak::ui::kSpacingLarge);
 
-    // ── Card 1: Microsoft Windows Download ──────────────────────────────
-    auto* msCard = new QFrame(m_imageSelectionPage);
-    msCard->setStyleSheet(cardStyle);
-    msCard->setCursor(Qt::PointingHandCursor);
-    auto* msLayout = new QVBoxLayout(msCard);
-    msLayout->setSpacing(sak::ui::kSpacingMedium);
-    msLayout->setContentsMargins(0, 0, 0, 0);
+    // Card 1: Microsoft Windows Download
+    auto* msCard = buildIsoDownloadCard(m_imageSelectionPage,
+        QStringLiteral(":/icons/icons/microsoft_logo.svg"),
+        tr("Windows from Microsoft"),
+        tr("Download an official Windows ISO directly"
+           " from the Microsoft website."),
+        m_microsoftWindowsDownloadButton,
+        tr("Open Microsoft Download"),
+        QStringLiteral("Microsoft ISO Download"),
+        QStringLiteral("Open the official Microsoft Windows ISO"
+                       " download page"));
 
-    auto* msLogo = new QLabel(msCard);
-    msLogo->setPixmap(QIcon(":/icons/icons/microsoft_logo.svg")
-                          .pixmap(kLogoSize, kLogoSize));
-    msLogo->setAlignment(Qt::AlignCenter);
-    msLogo->setStyleSheet(logoStyle);
-    msLayout->addWidget(msLogo);
-
-    auto* msTitle = new QLabel(tr("Windows from Microsoft"), msCard);
-    msTitle->setAlignment(Qt::AlignCenter);
-    msTitle->setStyleSheet(cardTitleStyle);
-    msLayout->addWidget(msTitle);
-
-    auto* msDesc = new QLabel(
-        tr("Download an official Windows ISO directly from the Microsoft website."),
-        msCard);
-    msDesc->setWordWrap(true);
-    msDesc->setAlignment(Qt::AlignCenter);
-    msDesc->setStyleSheet(cardDescStyle);
-    msLayout->addWidget(msDesc);
-
+    // Add a tip label to the MS card
     auto* msTip = new QLabel(
         tr("Tip: Downloading directly from Microsoft is often faster "
-           "than building an ISO from UUP files."),
-        msCard);
+           "than building an ISO from UUP files."), msCard);
     msTip->setWordWrap(true);
     msTip->setAlignment(Qt::AlignCenter);
-    msTip->setStyleSheet(cardDescStyle);
+    msTip->setStyleSheet(kCardDescStyle);
+    auto* msLayout = msCard->layout();
+    msLayout->removeWidget(m_microsoftWindowsDownloadButton);
     msLayout->addWidget(msTip);
-
-    msLayout->addStretch();
-
-    m_microsoftWindowsDownloadButton = new QPushButton(
-        tr("Open Microsoft Download"), msCard);
-    m_microsoftWindowsDownloadButton->setMinimumHeight(sak::kButtonHeightTall);
-    m_microsoftWindowsDownloadButton->setStyleSheet(sak::ui::kSecondaryButtonStyle);
-    m_microsoftWindowsDownloadButton->setAccessibleName(
-        QStringLiteral("Microsoft ISO Download"));
-    m_microsoftWindowsDownloadButton->setToolTip(
-        QStringLiteral("Open the official Microsoft Windows ISO download page"));
+    static_cast<QVBoxLayout*>(msLayout)->addStretch();
     msLayout->addWidget(m_microsoftWindowsDownloadButton);
+
     connect(m_microsoftWindowsDownloadButton, &QPushButton::clicked,
             this, &ImageFlasherPanel::onOpenMicrosoftWindowsDownloadClicked);
-
     cardRow->addWidget(msCard);
 
-    // ── Card 2: UUP Windows Download ────────────────────────────────────
-    auto* uupCard = new QFrame(m_imageSelectionPage);
-    uupCard->setStyleSheet(cardStyle);
-    uupCard->setCursor(Qt::PointingHandCursor);
-    auto* uupLayout = new QVBoxLayout(uupCard);
-    uupLayout->setSpacing(sak::ui::kSpacingMedium);
-    uupLayout->setContentsMargins(0, 0, 0, 0);
-
-    auto* uupLogo = new QLabel(uupCard);
-    uupLogo->setPixmap(QIcon(":/icons/icons/uup_logo.svg")
-                           .pixmap(kLogoSize, kLogoSize));
-    uupLogo->setAlignment(Qt::AlignCenter);
-    uupLogo->setStyleSheet(logoStyle);
-    uupLayout->addWidget(uupLogo);
-
-    auto* uupTitle = new QLabel(tr("Windows via UUP"), uupCard);
-    uupTitle->setAlignment(Qt::AlignCenter);
-    uupTitle->setStyleSheet(cardTitleStyle);
-    uupLayout->addWidget(uupTitle);
-
-    auto* uupDesc = new QLabel(
-        tr("Build a custom Windows ISO from UUP update packages with edition selection."),
-        uupCard);
-    uupDesc->setWordWrap(true);
-    uupDesc->setAlignment(Qt::AlignCenter);
-    uupDesc->setStyleSheet(cardDescStyle);
-    uupLayout->addWidget(uupDesc);
-
-    uupLayout->addStretch();
-
-    m_downloadWindowsButton = new QPushButton(tr("Download and Build ISO"), uupCard);
-    m_downloadWindowsButton->setMinimumHeight(sak::kButtonHeightTall);
-    m_downloadWindowsButton->setStyleSheet(sak::ui::kSecondaryButtonStyle);
-    m_downloadWindowsButton->setAccessibleName(
-        QStringLiteral("Download Windows ISO via UUP"));
-    m_downloadWindowsButton->setToolTip(
-        QStringLiteral("Download a Windows 11 ISO using UUP dump"));
-    uupLayout->addWidget(m_downloadWindowsButton);
+    // Card 2: UUP Windows Download
+    cardRow->addWidget(buildIsoDownloadCard(m_imageSelectionPage,
+        QStringLiteral(":/icons/icons/uup_logo.svg"),
+        tr("Windows via UUP"),
+        tr("Build a custom Windows ISO from UUP update"
+           " packages with edition selection."),
+        m_downloadWindowsButton,
+        tr("Download and Build ISO"),
+        QStringLiteral("Download Windows ISO via UUP"),
+        QStringLiteral("Download a Windows 11 ISO using UUP dump")));
     connect(m_downloadWindowsButton, &QPushButton::clicked,
             this, &ImageFlasherPanel::onDownloadWindowsClicked);
 
-    cardRow->addWidget(uupCard);
-
-    // ── Card 3: Linux ISO Download ──────────────────────────────────────
-    auto* linuxCard = new QFrame(m_imageSelectionPage);
-    linuxCard->setStyleSheet(cardStyle);
-    linuxCard->setCursor(Qt::PointingHandCursor);
-    auto* linuxLayout = new QVBoxLayout(linuxCard);
-    linuxLayout->setSpacing(sak::ui::kSpacingMedium);
-    linuxLayout->setContentsMargins(0, 0, 0, 0);
-
-    auto* linuxLogo = new QLabel(linuxCard);
-    linuxLogo->setPixmap(QIcon(":/icons/icons/tux_logo.svg")
-                             .pixmap(kLogoSize, kLogoSize));
-    linuxLogo->setAlignment(Qt::AlignCenter);
-    linuxLogo->setStyleSheet(logoStyle);
-    linuxLayout->addWidget(linuxLogo);
-
-    auto* linuxTitle = new QLabel(tr("Linux ISO"), linuxCard);
-    linuxTitle->setAlignment(Qt::AlignCenter);
-    linuxTitle->setStyleSheet(cardTitleStyle);
-    linuxLayout->addWidget(linuxTitle);
-
-    auto* linuxDesc = new QLabel(
-        tr("Download a Linux distribution ISO — Ubuntu, Fedora, Debian, and more."),
-        linuxCard);
-    linuxDesc->setWordWrap(true);
-    linuxDesc->setAlignment(Qt::AlignCenter);
-    linuxDesc->setStyleSheet(cardDescStyle);
-    linuxLayout->addWidget(linuxDesc);
-
-    linuxLayout->addStretch();
-
-    m_downloadLinuxButton = new QPushButton(tr("Download Linux ISO"), linuxCard);
-    m_downloadLinuxButton->setMinimumHeight(sak::kButtonHeightTall);
-    m_downloadLinuxButton->setStyleSheet(sak::ui::kSecondaryButtonStyle);
-    m_downloadLinuxButton->setAccessibleName(
-        QStringLiteral("Download Linux ISO"));
-    m_downloadLinuxButton->setToolTip(
-        QStringLiteral("Download a Linux distribution ISO image"));
-    linuxLayout->addWidget(m_downloadLinuxButton);
+    // Card 3: Linux ISO Download
+    cardRow->addWidget(buildIsoDownloadCard(m_imageSelectionPage,
+        QStringLiteral(":/icons/icons/tux_logo.svg"),
+        tr("Linux ISO"),
+        tr("Download a Linux distribution ISO"
+           " — Ubuntu, Fedora, Debian, and more."),
+        m_downloadLinuxButton,
+        tr("Download Linux ISO"),
+        QStringLiteral("Download Linux ISO"),
+        QStringLiteral("Download a Linux distribution ISO image")));
     connect(m_downloadLinuxButton, &QPushButton::clicked,
             this, &ImageFlasherPanel::onDownloadLinuxClicked);
 
-    cardRow->addWidget(linuxCard);
-
     pageLayout->addLayout(cardRow);
 
-    // ── Select Image File button (centered, fixed width below cards) ────
+    // Select Image File button (centered, fixed width below cards)
     auto* selectRow = new QHBoxLayout();
     selectRow->addStretch();
 
-    m_selectImageButton = new QPushButton(tr("Select Image File"), m_imageSelectionPage);
+    m_selectImageButton = new QPushButton(
+        tr("Select Image File"), m_imageSelectionPage);
     m_selectImageButton->setMinimumHeight(sak::kButtonHeightTall);
     m_selectImageButton->setFixedWidth(260);
     m_selectImageButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
-    m_selectImageButton->setAccessibleName(QStringLiteral("Browse ISO File"));
+    m_selectImageButton->setAccessibleName(
+        QStringLiteral("Browse ISO File"));
     m_selectImageButton->setToolTip(
         QStringLiteral("Browse for a local disk image file to flash"));
     connect(m_selectImageButton, &QPushButton::clicked,
@@ -897,6 +865,7 @@ void ImageFlasherPanel::showConfirmationDialog() {
 
     // Block system drive flashing with a hard error
     if (hasSystemDrive) {
+        sak::logError("Operation blocked: user attempted to flash system drive");
         QMessageBox::critical(this, "Operation Blocked",
             "One or more selected drives is your SYSTEM DRIVE.\n\n"
             "Flashing to the system drive would destroy your Windows installation "
@@ -1005,6 +974,7 @@ QString ImageFlasherPanel::parseDiskNumberFromDevicePath(const QString& devicePa
 
 void ImageFlasherPanel::createWindowsUSB() {
     if (m_selectedDrives.isEmpty()) {
+        sak::logError("Windows USB creation attempted with no target drives selected");
         QMessageBox::critical(this, "Error", "No target drives selected");
         m_isFlashing = false;
         return;

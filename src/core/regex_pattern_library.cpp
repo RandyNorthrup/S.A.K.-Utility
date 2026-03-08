@@ -35,7 +35,10 @@ RegexPatternLibrary::RegexPatternLibrary(QObject* parent)
         // Installed mode: use standard app data location
         const QString dataDir = QStandardPaths::writableLocation(
             QStandardPaths::AppLocalDataLocation);
-        QDir().mkpath(dataDir);
+        if (!QDir().mkpath(dataDir)) {
+            sak::logWarning("Failed to create app data directory: {}",
+                            dataDir.toStdString());
+        }
         m_storage_file = dataDir + "/custom_regex_patterns.json";
     }
 
@@ -294,7 +297,11 @@ void RegexPatternLibrary::saveCustomPatterns()
         return;
     }
 
-    file.write(doc.toJson(QJsonDocument::Indented));
+    const QByteArray json_bytes = doc.toJson(QJsonDocument::Indented);
+    if (file.write(json_bytes) != json_bytes.size()) {
+        logError("RegexPatternLibrary: incomplete write of custom patterns");
+        return;
+    }
     file.close();
 
     logInfo("RegexPatternLibrary: saved {} custom patterns",

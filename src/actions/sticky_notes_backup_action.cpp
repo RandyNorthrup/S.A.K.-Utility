@@ -6,6 +6,7 @@
 
 #include "sak/actions/sticky_notes_backup_action.h"
 #include "sak/windows_user_scanner.h"
+#include "sak/logger.h"
 #include <QFile>
 #include <QFileInfo>
 #include <QDir>
@@ -88,7 +89,10 @@ void StickyNotesBackupAction::execute() {
 
     QDir backup_dir(m_backup_location);
     if (!backup_dir.exists()) {
-        backup_dir.mkpath(".");
+        if (!backup_dir.mkpath(".")) {
+            sak::logWarning("Failed to create sticky notes backup directory: {}",
+                            m_backup_location.toStdString());
+        }
     }
 
     QString dest_path = backup_dir.filePath("sticky_notes_plum.sqlite");

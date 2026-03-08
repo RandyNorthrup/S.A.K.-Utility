@@ -86,6 +86,18 @@ private:
     [[nodiscard]] bool removeUwpPackage();
     [[nodiscard]] bool removeRegistryEntry();
 
+    /// @brief Execute the standard uninstall flow (registry snapshot + native uninstaller)
+    [[nodiscard]] std::expected<void, sak::error_code>
+        executeStandardMode(UninstallReport& report);
+
+    /// @brief Execute UWP package removal (complete + early return)
+    [[nodiscard]] std::expected<void, sak::error_code>
+        executeUwpMode(UninstallReport& report);
+
+    /// @brief Execute registry-only cleanup (complete + early return)
+    [[nodiscard]] std::expected<void, sak::error_code>
+        executeRegistryMode(UninstallReport& report);
+
     // Registry snapshot data
     QSet<QString> m_registrySnapshotBefore;
 

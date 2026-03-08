@@ -25,7 +25,10 @@ QuickActionController::QuickActionController(QObject* parent)
     : QObject(parent) {
     // Setup log file path
     QString log_dir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
-    QDir().mkpath(log_dir);
+    if (!QDir().mkpath(log_dir)) {
+        sak::logWarning("Failed to create quick actions log directory: {}",
+                        log_dir.toStdString());
+    }
     m_log_file_path = log_dir + "/quick_actions.log";
 }
 
@@ -129,21 +132,7 @@ std::vector<QuickAction*> QuickActionController::getActionsByCategory(
 }
 
 bool QuickActionController::hasAdminPrivileges() {
-#ifdef _WIN32
-    BOOL is_admin = FALSE;
-    PSID admin_group = nullptr;
-    SID_IDENTIFIER_AUTHORITY nt_authority = SECURITY_NT_AUTHORITY;
-
-    if (AllocateAndInitializeSid(&nt_authority, 2, SECURITY_BUILTIN_DOMAIN_RID,
-                                  DOMAIN_ALIAS_RID_ADMINS, 0, 0, 0, 0, 0, 0, &admin_group)) {
-        CheckTokenMembership(nullptr, admin_group, &is_admin);
-        FreeSid(admin_group);
-    }
-
-    return is_admin == TRUE;
-#else
-    return geteuid() == 0;
-#endif
+    return ElevationManager::isElevated();
 }
 
 bool QuickActionController::requestAdminElevation(const QString& reason) {
@@ -244,7 +233,10 @@ void QuickActionController::executeElevatedAction(QuickAction* action, const QSt
     logOperation(action, "Requesting administrator elevation");
 
     QString temp_dir = QStandardPaths::writableLocation(QStandardPaths::TempLocation);
-    QDir().mkpath(temp_dir);
+    if (!QDir().mkpath(temp_dir)) {
+        sak::logWarning("Failed to create temp directory: {}",
+                        temp_dir.toStdString());
+    }
     QString safe_name = action->name();
     safe_name.replace(' ', '_');
     QString result_file = QDir(temp_dir).filePath(

@@ -66,7 +66,13 @@ bool writeExecutionResultFile(
         return false;
     }
 
-    file.write(doc.toJson(QJsonDocument::Compact));
+    const QByteArray json_bytes = doc.toJson(QJsonDocument::Compact);
+    if (file.write(json_bytes) != json_bytes.size()) {
+        if (error_message) {
+            *error_message = QStringLiteral("Incomplete write of result file");
+        }
+        return false;
+    }
     return true;
 }
 

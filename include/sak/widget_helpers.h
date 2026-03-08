@@ -98,6 +98,77 @@ inline void createPanelHeader(QWidget* parent, const QString& iconPath,
     layout->addLayout(headerRow);
 }
 
+// ── Dynamic Panel Header ────────────────────────────────────────────────────
+
+/// @brief Pointers returned by createDynamicPanelHeader for runtime updates.
+struct PanelHeaderWidgets {
+    QLabel* iconLabel{nullptr};
+    QLabel* titleLabel{nullptr};
+    QLabel* subtitleLabel{nullptr};
+};
+
+/// @brief Create a panel header whose icon, title, and subtitle can be updated
+///        at runtime (e.g. when switching sub-tabs inside a composite panel).
+[[nodiscard]] inline PanelHeaderWidgets createDynamicPanelHeader(
+        QWidget* parent, const QString& iconPath,
+        const QString& title, const QString& subtitle,
+        QVBoxLayout* layout) {
+    constexpr int kPanelIconSize = 48;
+
+    auto* headerRow = new QHBoxLayout();
+    headerRow->setSpacing(12);
+
+    auto* iconLabel = new QLabel(parent);
+    iconLabel->setFixedSize(kPanelIconSize, kPanelIconSize);
+    iconLabel->setPixmap(
+        QIcon(iconPath).pixmap(kPanelIconSize, kPanelIconSize));
+    iconLabel->setAccessibleName(title + QStringLiteral(" icon"));
+    headerRow->addWidget(iconLabel);
+
+    auto* titleLayout = new QVBoxLayout();
+    auto* title_label = new QLabel(title, parent);
+    QFont title_font  = title_label->font();
+    title_font.setPointSize(ui::kFontSizeSection);
+    title_font.setBold(true);
+    title_label->setFont(title_font);
+    title_label->setAccessibleName(title);
+    titleLayout->addWidget(title_label);
+
+    auto* subtitle_label = new QLabel(subtitle, parent);
+    subtitle_label->setWordWrap(true);
+    subtitle_label->setStyleSheet(
+        QString("color: %1; margin-bottom: 5px;").arg(ui::kColorTextMuted));
+    subtitle_label->setAccessibleName(subtitle);
+    titleLayout->addWidget(subtitle_label);
+
+    headerRow->addLayout(titleLayout);
+    headerRow->addStretch();
+    layout->addLayout(headerRow);
+
+    return {iconLabel, title_label, subtitle_label};
+}
+
+/// @brief Update a dynamic panel header's icon, title, and subtitle in-place.
+inline void updatePanelHeader(const PanelHeaderWidgets& hw,
+                              const QString& iconPath,
+                              const QString& title,
+                              const QString& subtitle) {
+    constexpr int kPanelIconSize = 48;
+    if (hw.iconLabel) {
+        hw.iconLabel->setPixmap(
+            QIcon(iconPath).pixmap(kPanelIconSize, kPanelIconSize));
+        hw.iconLabel->setAccessibleName(title + QStringLiteral(" icon"));
+    }
+    if (hw.titleLabel) {
+        hw.titleLabel->setText(title);
+        hw.titleLabel->setAccessibleName(title);
+    }
+    if (hw.subtitleLabel) {
+        hw.subtitleLabel->setText(subtitle);
+        hw.subtitleLabel->setAccessibleName(subtitle);
+    }
+}
+
 // ── Accessibility Helpers ───────────────────────────────────────────────────
 
 /// @brief Set accessible name and optional description on any QWidget.
