@@ -3,8 +3,8 @@
 
 #pragma once
 
-#include <QToolButton>
 #include <QPointer>
+#include <QToolButton>
 
 class QFrame;
 class QLabel;
@@ -57,4 +57,4 @@ private:
     QPointer<QFrame> m_popup;
 };
 
-} // namespace sak
+}  // namespace sak

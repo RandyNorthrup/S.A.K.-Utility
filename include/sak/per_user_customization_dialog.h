@@ -4,12 +4,13 @@
 #pragma once
 
 #include "sak/user_profile_types.h"
-#include <QDialog>
-#include <QTreeWidget>
-#include <QPushButton>
-#include <QLabel>
+
 #include <QCheckBox>
+#include <QDialog>
 #include <QGroupBox>
+#include <QLabel>
+#include <QPushButton>
+#include <QTreeWidget>
 
 class QDir;
 class QFileInfo;
@@ -62,13 +63,23 @@ private:
     void setupUi_dialogButtons(QVBoxLayout* layout);
     void populateTree();
     void addFolderToTree(const FolderSelection& selection, QTreeWidgetItem* parent = nullptr);
-    void addDirectoryContents(const QDir& dir, QTreeWidgetItem* parent, qint64& totalSize,
-        int& totalFiles, bool checked, int depth = 0, int maxDepth = 3);
-    void addDirectoryChildItem(const QFileInfo& entry, QTreeWidgetItem* parent, qint64& totalSize,
-        int& totalFiles, bool checked, int depth, int maxDepth);
+    void addDirectoryContents(const QDir& dir,
+                              QTreeWidgetItem* parent,
+                              qint64& totalSize,
+                              int& totalFiles,
+                              bool checked,
+                              int depth = 0,
+                              int maxDepth = 3);
+    void addDirectoryChildItem(const QFileInfo& entry,
+                               QTreeWidgetItem* parent,
+                               qint64& totalSize,
+                               int& totalFiles,
+                               bool checked,
+                               int depth,
+                               int maxDepth);
     static QString formatFileSize(qint64 bytes);
-    void calculateDirectorySize(const QDir& dir, qint64& totalSize, int& fileCount, int depth = 0,
-        int maxDepth = 10);
+    void calculateDirectorySize(
+        const QDir& dir, qint64& totalSize, int& fileCount, int depth = 0, int maxDepth = 10);
     void setChildrenCheckState(QTreeWidgetItem* item, Qt::CheckState state);
     void updateParentCheckState(QTreeWidgetItem* item);
     void updateFolderCheckStates(QTreeWidgetItem* item);
@@ -99,4 +110,4 @@ private:
     QPushButton* m_cancelButton{nullptr};
 };
 
-} // namespace sak
+}  // namespace sak

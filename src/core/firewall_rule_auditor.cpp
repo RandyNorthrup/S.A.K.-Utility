@@ -7,14 +7,16 @@
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
-#include <winsock2.h>
-#include <windows.h>
-#include <netfw.h>
-#include <comdef.h>
-
 #include "sak/firewall_rule_auditor.h"
 
 #include <QSet>
+
+#include <winsock2.h>
+
+#include <windows.h>
+
+#include <comdef.h>
+#include <netfw.h>
 
 #pragma comment(lib, "ole32.lib")
 #pragma comment(lib, "oleaut32.lib")
@@ -22,19 +24,22 @@
 namespace sak {
 
 namespace {
-constexpr int kMaxPortValue = 65535;
+constexpr int kMaxPortValue = 65'535;
 
 /// @brief RAII wrapper for COM initialization
 struct ComInitializer {
     HRESULT hr;
     ComInitializer() : hr(CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED)) {}
-    ~ComInitializer() { if (SUCCEEDED(hr)) CoUninitialize(); }
+    ~ComInitializer() {
+        if (SUCCEEDED(hr)) {
+            CoUninitialize();
+        }
+    }
     [[nodiscard]] bool ok() const { return SUCCEEDED(hr); }
 };
 
 /// @brief Convert BSTR to QString safely
-[[nodiscard]] QString bstrToQString(BSTR bstr)
-{
+[[nodiscard]] QString bstrToQString(BSTR bstr) {
     if (bstr == nullptr) {
         return {};
     }
@@ -49,8 +54,7 @@ struct ComPtr {
     ComPtr(const ComPtr&) = delete;
     ComPtr& operator=(const ComPtr&) = delete;
 
-    void reset(T* newPtr = nullptr)
-    {
+    void reset(T* newPtr = nullptr) {
         if (ptr != nullptr) {
             ptr->Release();
         }
@@ -58,8 +62,7 @@ struct ComPtr {
     }
 
     [[nodiscard]] T* get() const { return ptr; }
-    [[nodiscard]] T** put()
-    {
+    [[nodiscard]] T** put() {
         reset();
         return &ptr;
     }
@@ -72,15 +75,13 @@ struct VariantHolder {
     VARIANT var;
     VariantHolder() { VariantInit(&var); }
     ~VariantHolder() { VariantClear(&var); }
-    void reset()
-    {
+    void reset() {
         VariantClear(&var);
         VariantInit(&var);
     }
 };
 
-void populateRuleIdentity(INetFwRule* pRule, FirewallRule& rule)
-{
+void populateRuleIdentity(INetFwRule* pRule, FirewallRule& rule) {
     BSTR name = nullptr;
     if (SUCCEEDED(pRule->get_Name(&name))) {
         rule.name = bstrToQString(name);
@@ -94,8 +95,8 @@ void populateRuleIdentity(INetFwRule* pRule, FirewallRule& rule)
     }
 }
 
-void populateRuleDirectionActionAndProtocol(INetFwRule* pRule, FirewallRule& rule)
-{
+void populateRuleDirectionActionAndProtocol(INetFwRule* pRule, FirewallRule& rule) {
+    Q_ASSERT(pRule);
     VARIANT_BOOL enabled = VARIANT_FALSE;
     if (SUCCEEDED(pRule->get_Enabled(&enabled))) {
         rule.enabled = (enabled == VARIANT_TRUE);
@@ -103,16 +104,14 @@ void populateRuleDirectionActionAndProtocol(INetFwRule* pRule, FirewallRule& rul
 
     NET_FW_RULE_DIRECTION dir = NET_FW_RULE_DIR_IN;
     if (SUCCEEDED(pRule->get_Direction(&dir))) {
-        rule.direction = (dir == NET_FW_RULE_DIR_IN)
-                             ? FirewallRule::Direction::Inbound
-                             : FirewallRule::Direction::Outbound;
+        rule.direction = (dir == NET_FW_RULE_DIR_IN) ? FirewallRule::Direction::Inbound
+                                                     : FirewallRule::Direction::Outbound;
     }
 
     NET_FW_ACTION action = NET_FW_ACTION_ALLOW;
     if (SUCCEEDED(pRule->get_Action(&action))) {
-        rule.action = (action == NET_FW_ACTION_ALLOW)
-                          ? FirewallRule::Action::Allow
-                          : FirewallRule::Action::Block;
+        rule.action = (action == NET_FW_ACTION_ALLOW) ? FirewallRule::Action::Allow
+                                                      : FirewallRule::Action::Block;
     }
 
     long proto = 0;
@@ -121,16 +120,26 @@ void populateRuleDirectionActionAndProtocol(INetFwRule* pRule, FirewallRule& rul
     }
 
     switch (proto) {
-    case 6:   rule.protocol = FirewallRule::Protocol::TCP; break;
-    case 17:  rule.protocol = FirewallRule::Protocol::UDP; break;
-    case 1:   rule.protocol = FirewallRule::Protocol::ICMPv4; break;
-    case 58:  rule.protocol = FirewallRule::Protocol::ICMPv6; break;
-    default:  rule.protocol = FirewallRule::Protocol::Any; break;
+    case 6:
+        rule.protocol = FirewallRule::Protocol::TCP;
+        break;
+    case 17:
+        rule.protocol = FirewallRule::Protocol::UDP;
+        break;
+    case 1:
+        rule.protocol = FirewallRule::Protocol::ICMPv4;
+        break;
+    case 58:
+        rule.protocol = FirewallRule::Protocol::ICMPv6;
+        break;
+    default:
+        rule.protocol = FirewallRule::Protocol::Any;
+        break;
     }
 }
 
-void populateRulePortsAndAddresses(INetFwRule* pRule, FirewallRule& rule)
-{
+void populateRulePortsAndAddresses(INetFwRule* pRule, FirewallRule& rule) {
+    Q_ASSERT(pRule);
     BSTR localPorts = nullptr;
     if (SUCCEEDED(pRule->get_LocalPorts(&localPorts))) {
         rule.localPorts = bstrToQString(localPorts);
@@ -156,8 +165,8 @@ void populateRulePortsAndAddresses(INetFwRule* pRule, FirewallRule& rule)
     }
 }
 
-void populateRuleAppAndProfileInfo(INetFwRule* pRule, FirewallRule& rule)
-{
+void populateRuleAppAndProfileInfo(INetFwRule* pRule, FirewallRule& rule) {
+    Q_ASSERT(pRule);
     BSTR appPath = nullptr;
     if (SUCCEEDED(pRule->get_ApplicationName(&appPath))) {
         rule.applicationPath = bstrToQString(appPath);
@@ -182,15 +191,14 @@ void populateRuleAppAndProfileInfo(INetFwRule* pRule, FirewallRule& rule)
     }
 }
 
-bool tryExtractFirewallRuleFromVariant(const VARIANT& var, FirewallRule& outRule)
-{
+bool tryExtractFirewallRuleFromVariant(const VARIANT& var, FirewallRule& outRule) {
     if (var.vt != VT_DISPATCH || var.pdispVal == nullptr) {
         return false;
     }
 
     ComPtr<INetFwRule> pRule;
-    const HRESULT hr = var.pdispVal->QueryInterface(
-        __uuidof(INetFwRule), reinterpret_cast<void**>(pRule.put()));
+    const HRESULT hr = var.pdispVal->QueryInterface(__uuidof(INetFwRule),
+                                                    reinterpret_cast<void**>(pRule.put()));
     if (FAILED(hr) || !pRule) {
         return false;
     }
@@ -204,8 +212,7 @@ bool tryExtractFirewallRuleFromVariant(const VARIANT& var, FirewallRule& outRule
     return true;
 }
 
-bool tryParsePortValue(const QString& s, uint16_t& port)
-{
+bool tryParsePortValue(const QString& s, uint16_t& port) {
     bool ok = false;
     const int value = s.trimmed().toInt(&ok);
     if (!ok || value < 0 || value > kMaxPortValue) {
@@ -215,8 +222,8 @@ bool tryParsePortValue(const QString& s, uint16_t& port)
     return true;
 }
 
-bool tryParsePortRange(const QString& s, int& start, int& end)
-{
+bool tryParsePortRange(const QString& s, int& start, int& end) {
+    Q_ASSERT(!s.isEmpty());
     if (!s.contains(QLatin1Char('-'))) {
         return false;
     }
@@ -229,7 +236,7 @@ bool tryParsePortRange(const QString& s, int& start, int& end)
     bool ok1 = false;
     bool ok2 = false;
     start = parts[0].trimmed().toInt(&ok1);
-    end   = parts[1].trimmed().toInt(&ok2);
+    end = parts[1].trimmed().toInt(&ok2);
     if (!ok1 || !ok2) {
         return false;
     }
@@ -240,26 +247,20 @@ bool tryParsePortRange(const QString& s, int& start, int& end)
     return true;
 }
 
-void appendPortRange(QVector<uint16_t>& ports, int start, int end)
-{
+void appendPortRange(QVector<uint16_t>& ports, int start, int end) {
     for (int p = start; p <= end; ++p) {
         ports.append(static_cast<uint16_t>(p));
     }
 }
-} // namespace
+}  // namespace
 
-FirewallRuleAuditor::FirewallRuleAuditor(QObject* parent)
-    : QObject(parent)
-{
-}
+FirewallRuleAuditor::FirewallRuleAuditor(QObject* parent) : QObject(parent) {}
 
-void FirewallRuleAuditor::cancel()
-{
+void FirewallRuleAuditor::cancel() {
     m_cancelled.store(true);
 }
 
-void FirewallRuleAuditor::enumerateRules()
-{
+void FirewallRuleAuditor::enumerateRules() {
     m_cancelled.store(false);
     m_rules = enumerateViaCOM();
 
@@ -268,22 +269,19 @@ void FirewallRuleAuditor::enumerateRules()
     }
 }
 
-void FirewallRuleAuditor::detectConflicts()
-{
+void FirewallRuleAuditor::detectConflicts() {
     m_cancelled.store(false);
     auto conflicts = findConflicts(m_rules);
     Q_EMIT conflictsDetected(conflicts);
 }
 
-void FirewallRuleAuditor::analyzeGaps()
-{
+void FirewallRuleAuditor::analyzeGaps() {
     m_cancelled.store(false);
     auto gaps = findGaps(m_rules);
     Q_EMIT gapsAnalyzed(gaps);
 }
 
-void FirewallRuleAuditor::fullAudit()
-{
+void FirewallRuleAuditor::fullAudit() {
     m_cancelled.store(false);
     m_rules = enumerateViaCOM();
 
@@ -298,8 +296,7 @@ void FirewallRuleAuditor::fullAudit()
 }
 
 QVector<FirewallRule> FirewallRuleAuditor::findRulesByPort(
-    uint16_t port, FirewallRule::Direction direction) const
-{
+    uint16_t port, FirewallRule::Direction direction) const {
     QVector<FirewallRule> matching;
 
     for (const auto& rule : m_rules) {
@@ -315,9 +312,7 @@ QVector<FirewallRule> FirewallRuleAuditor::findRulesByPort(
     return matching;
 }
 
-QVector<FirewallRule> FirewallRuleAuditor::findRulesByApplication(
-    const QString& appPath) const
-{
+QVector<FirewallRule> FirewallRuleAuditor::findRulesByApplication(const QString& appPath) const {
     QVector<FirewallRule> matching;
     for (const auto& rule : m_rules) {
         if (rule.applicationPath.contains(appPath, Qt::CaseInsensitive)) {
@@ -327,9 +322,7 @@ QVector<FirewallRule> FirewallRuleAuditor::findRulesByApplication(
     return matching;
 }
 
-QVector<FirewallRule> FirewallRuleAuditor::findRulesByName(
-    const QString& nameFilter) const
-{
+QVector<FirewallRule> FirewallRuleAuditor::findRulesByName(const QString& nameFilter) const {
     QVector<FirewallRule> matching;
     for (const auto& rule : m_rules) {
         if (rule.name.contains(nameFilter, Qt::CaseInsensitive)) {
@@ -339,8 +332,7 @@ QVector<FirewallRule> FirewallRuleAuditor::findRulesByName(
     return matching;
 }
 
-QVector<FirewallRule> FirewallRuleAuditor::enumerateViaCOM()
-{
+QVector<FirewallRule> FirewallRuleAuditor::enumerateViaCOM() {
     QVector<FirewallRule> rules;
 
     ComInitializer com;
@@ -350,9 +342,11 @@ QVector<FirewallRule> FirewallRuleAuditor::enumerateViaCOM()
     }
 
     ComPtr<INetFwPolicy2> pPolicy;
-    HRESULT hr = CoCreateInstance(
-        __uuidof(NetFwPolicy2), nullptr, CLSCTX_INPROC_SERVER,
-        __uuidof(INetFwPolicy2), reinterpret_cast<void**>(pPolicy.put()));
+    HRESULT hr = CoCreateInstance(__uuidof(NetFwPolicy2),
+                                  nullptr,
+                                  CLSCTX_INPROC_SERVER,
+                                  __uuidof(INetFwPolicy2),
+                                  reinterpret_cast<void**>(pPolicy.put()));
 
     if (FAILED(hr) || !pPolicy) {
         Q_EMIT errorOccurred(QStringLiteral("Failed to access firewall policy (HRESULT 0x%1)")
@@ -397,8 +391,7 @@ QVector<FirewallRule> FirewallRuleAuditor::enumerateViaCOM()
 }
 
 QVector<FirewallConflict> FirewallRuleAuditor::findConflicts(
-    const QVector<FirewallRule>& rules) const
-{
+    const QVector<FirewallRule>& rules) const {
     QVector<FirewallConflict> conflicts;
 
     for (int i = 0; i < rules.size(); ++i) {
@@ -438,10 +431,9 @@ QVector<FirewallConflict> FirewallRuleAuditor::findConflicts(
             }
 
             // Check if application paths match (both empty = match)
-            bool appOverlap = a.applicationPath.isEmpty() ||
-                              b.applicationPath.isEmpty() ||
-                              (a.applicationPath.compare(b.applicationPath,
-                                                          Qt::CaseInsensitive) == 0);
+            bool appOverlap =
+                a.applicationPath.isEmpty() || b.applicationPath.isEmpty() ||
+                (a.applicationPath.compare(b.applicationPath, Qt::CaseInsensitive) == 0);
             if (!appOverlap) {
                 continue;
             }
@@ -451,15 +443,17 @@ QVector<FirewallConflict> FirewallRuleAuditor::findConflicts(
             conflict.ruleB = b;
 
             const auto actionA = (a.action == FirewallRule::Action::Allow)
-                                     ? QStringLiteral("ALLOW") : QStringLiteral("BLOCK");
+                                     ? QStringLiteral("ALLOW")
+                                     : QStringLiteral("BLOCK");
             const auto actionB = (b.action == FirewallRule::Action::Allow)
-                                     ? QStringLiteral("ALLOW") : QStringLiteral("BLOCK");
+                                     ? QStringLiteral("ALLOW")
+                                     : QStringLiteral("BLOCK");
 
             conflict.conflictDescription =
-                QStringLiteral("\"%1\" (%2) conflicts with \"%3\" (%4) "
-                               "on ports %5/%6")
-                    .arg(a.name, actionA, b.name, actionB,
-                         a.localPorts, b.localPorts);
+                QStringLiteral(
+                    "\"%1\" (%2) conflicts with \"%3\" (%4) "
+                    "on ports %5/%6")
+                    .arg(a.name, actionA, b.name, actionB, a.localPorts, b.localPorts);
 
             // Severity: Block+Allow on same app is critical
             if (!a.applicationPath.isEmpty() &&
@@ -478,124 +472,136 @@ QVector<FirewallConflict> FirewallRuleAuditor::findConflicts(
     return conflicts;
 }
 
-QVector<FirewallGap> FirewallRuleAuditor::findGaps(
-    const QVector<FirewallRule>& rules) const
-{
+QVector<FirewallGap> FirewallRuleAuditor::findGaps(const QVector<FirewallRule>& rules) const {
     QVector<FirewallGap> gaps;
+    checkRdpGap(rules, gaps);
+    checkIcmpGap(rules, gaps);
+    checkWildcardGap(rules, gaps);
+    checkSmbGap(rules, gaps);
+    checkDisabledBlockGap(rules, gaps);
+    return gaps;
+}
 
-    // Check for common security gaps
-
-    // 1. Check if RDP (3389) is open to any address
-    bool rdpOpen = false;
+void FirewallRuleAuditor::checkRdpGap(const QVector<FirewallRule>& rules,
+                                       QVector<FirewallGap>& gaps) const {
     for (const auto& rule : rules) {
-        if (!rule.enabled) continue;
-        if (rule.action != FirewallRule::Action::Allow) continue;
-        if (rule.direction != FirewallRule::Direction::Inbound) continue;
-
-        auto ports = parsePorts(rule.localPorts);
-        if (ports.contains(3389) || rule.localPorts == QStringLiteral("*")) {
-            if (rule.remoteAddresses == QStringLiteral("*") ||
-                rule.remoteAddresses.isEmpty()) {
-                rdpOpen = true;
-                break;
-            }
+        if (!rule.enabled || rule.action != FirewallRule::Action::Allow) {
+            continue;
         }
-    }
-
-    if (rdpOpen) {
+        if (rule.direction != FirewallRule::Direction::Inbound) {
+            continue;
+        }
+        auto ports = parsePorts(rule.localPorts);
+        if (!ports.contains(3389) && rule.localPorts != QStringLiteral("*")) {
+            continue;
+        }
+        if (rule.remoteAddresses != QStringLiteral("*") && !rule.remoteAddresses.isEmpty()) {
+            continue;
+        }
         FirewallGap gap;
         gap.description = QStringLiteral("RDP (port 3389) is open to all addresses");
-        gap.recommendation = QStringLiteral(
-            "Restrict RDP access to specific IP ranges or use a VPN");
+        gap.recommendation =
+            QStringLiteral("Restrict RDP access to specific IP ranges or use a VPN");
         gap.severity = FirewallGap::Severity::Warning;
         gaps.append(gap);
+        return;
     }
+}
 
-    // 2. Check for open ICMP
-    bool icmpBlocked = false;
+void FirewallRuleAuditor::checkIcmpGap(const QVector<FirewallRule>& rules,
+                                        QVector<FirewallGap>& gaps) const {
     for (const auto& rule : rules) {
-        if (!rule.enabled) continue;
-        if (rule.protocol != FirewallRule::Protocol::ICMPv4) continue;
+        if (!rule.enabled) {
+            continue;
+        }
+        if (rule.protocol != FirewallRule::Protocol::ICMPv4) {
+            continue;
+        }
         if (rule.action == FirewallRule::Action::Block) {
-            icmpBlocked = true;
-            break;
+            return;
         }
     }
+    FirewallGap gap;
+    gap.description = QStringLiteral("No explicit ICMP block rules found");
+    gap.recommendation =
+        QStringLiteral("Consider adding ICMP rate limiting on public-facing networks");
+    gap.severity = FirewallGap::Severity::Info;
+    gaps.append(gap);
+}
 
-    if (!icmpBlocked) {
-        FirewallGap gap;
-        gap.description = QStringLiteral("No explicit ICMP block rules found");
-        gap.recommendation = QStringLiteral(
-            "Consider adding ICMP rate limiting on public-facing networks");
-        gap.severity = FirewallGap::Severity::Info;
-        gaps.append(gap);
-    }
-
-    // 3. Check for rules with wildcard application paths
+void FirewallRuleAuditor::checkWildcardGap(const QVector<FirewallRule>& rules,
+                                            QVector<FirewallGap>& gaps) const {
     int wildcardRules = 0;
     for (const auto& rule : rules) {
-        if (!rule.enabled) continue;
-        if (rule.action != FirewallRule::Action::Allow) continue;
-        if (rule.applicationPath.isEmpty() &&
-            rule.localPorts == QStringLiteral("*")) {
+        if (!rule.enabled || rule.action != FirewallRule::Action::Allow) {
+            continue;
+        }
+        if (rule.applicationPath.isEmpty() && rule.localPorts == QStringLiteral("*")) {
             wildcardRules++;
         }
     }
-
-    if (wildcardRules > 5) {
-        FirewallGap gap;
-        gap.description = QStringLiteral(
-            "%1 rules allow all ports without application restrictions").arg(wildcardRules);
-        gap.recommendation = QStringLiteral(
-            "Review and restrict overly permissive rules to specific applications");
-        gap.severity = FirewallGap::Severity::Warning;
-        gaps.append(gap);
+    if (wildcardRules <= 5) {
+        return;
     }
+    FirewallGap gap;
+    gap.description =
+        QStringLiteral("%1 rules allow all ports without application restrictions")
+            .arg(wildcardRules);
+    gap.recommendation =
+        QStringLiteral("Review and restrict overly permissive rules to specific applications");
+    gap.severity = FirewallGap::Severity::Warning;
+    gaps.append(gap);
+}
 
-    // 4. Check for SMB (445) accessible from external
+void FirewallRuleAuditor::checkSmbGap(const QVector<FirewallRule>& rules,
+                                       QVector<FirewallGap>& gaps) const {
     for (const auto& rule : rules) {
-        if (!rule.enabled) continue;
-        if (rule.action != FirewallRule::Action::Allow) continue;
-        if (rule.direction != FirewallRule::Direction::Inbound) continue;
-
+        if (!rule.enabled || rule.action != FirewallRule::Action::Allow) {
+            continue;
+        }
+        if (rule.direction != FirewallRule::Direction::Inbound) {
+            continue;
+        }
         auto ports = parsePorts(rule.localPorts);
-        if (ports.contains(445)) {
-            if (rule.profiles & static_cast<int>(FirewallRule::Profile::Public)) {
-                FirewallGap gap;
-                gap.description = QStringLiteral("SMB (port 445) is allowed on Public profile");
-                gap.recommendation = QStringLiteral(
-                    "Disable SMB on Public networks to prevent lateral movement attacks");
-                gap.severity = FirewallGap::Severity::Warning;
-                gaps.append(gap);
-                break;
-            }
+        if (!ports.contains(445)) {
+            continue;
+        }
+        if (rule.profiles & static_cast<int>(FirewallRule::Profile::Public)) {
+            FirewallGap gap;
+            gap.description = QStringLiteral("SMB (port 445) is allowed on Public profile");
+            gap.recommendation = QStringLiteral(
+                "Disable SMB on Public networks to prevent lateral movement attacks");
+            gap.severity = FirewallGap::Severity::Warning;
+            gaps.append(gap);
+            return;
         }
     }
+}
 
-    // 5. Check for disabled rules that were once important
+void FirewallRuleAuditor::checkDisabledBlockGap(const QVector<FirewallRule>& rules,
+                                                 QVector<FirewallGap>& gaps) const {
     int disabledBlockRules = 0;
     for (const auto& rule : rules) {
-        if (rule.enabled) continue;
+        if (rule.enabled) {
+            continue;
+        }
         if (rule.action == FirewallRule::Action::Block) {
             disabledBlockRules++;
         }
     }
-
-    if (disabledBlockRules > 10) {
-        FirewallGap gap;
-        gap.description = QStringLiteral(
-            "%1 block rules are disabled").arg(disabledBlockRules);
-        gap.recommendation = QStringLiteral(
-            "Review disabled block rules — they may have been turned off inadvertently");
-        gap.severity = FirewallGap::Severity::Info;
-        gaps.append(gap);
+    if (disabledBlockRules <= 10) {
+        return;
     }
-
-    return gaps;
+    FirewallGap gap;
+    gap.description = QStringLiteral("%1 block rules are disabled").arg(disabledBlockRules);
+    gap.recommendation = QStringLiteral(
+        "Review disabled block rules — they may have been turned off inadvertently");
+    gap.severity = FirewallGap::Severity::Info;
+    gaps.append(gap);
 }
 
-QVector<uint16_t> FirewallRuleAuditor::parsePorts(const QString& portStr)
-{
+QVector<uint16_t> FirewallRuleAuditor::parsePorts(const QString& portStr) {
+    Q_ASSERT(!portStr.isEmpty());
     QVector<uint16_t> ports;
 
     if (portStr.isEmpty() || portStr == QStringLiteral("*")) {
@@ -625,11 +631,9 @@ QVector<uint16_t> FirewallRuleAuditor::parsePorts(const QString& portStr)
     return ports;
 }
 
-bool FirewallRuleAuditor::portsOverlap(const QString& a, const QString& b)
-{
+bool FirewallRuleAuditor::portsOverlap(const QString& a, const QString& b) {
     // Wildcard matches everything
-    if (a == QStringLiteral("*") || b == QStringLiteral("*") ||
-        a.isEmpty() || b.isEmpty()) {
+    if (a == QStringLiteral("*") || b == QStringLiteral("*") || a.isEmpty() || b.isEmpty()) {
         return true;
     }
 
@@ -644,4 +648,4 @@ bool FirewallRuleAuditor::portsOverlap(const QString& a, const QString& b)
     return false;
 }
 
-} // namespace sak
+}  // namespace sak

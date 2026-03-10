@@ -26,12 +26,12 @@ class BandwidthTester : public QObject {
 public:
     struct IperfConfig {
         QString serverAddress;
-        uint16_t port         = netdiag::kDefaultIperfPort;
-        int durationSec       = netdiag::kDefaultBandwidthDuration;
-        int parallelStreams    = 1;
-        bool bidirectional    = true;
-        bool udpMode          = false;
-        int udpBandwidthMbps  = 100;
+        uint16_t port = netdiag::kDefaultIperfPort;
+        int durationSec = netdiag::kDefaultBandwidthDuration;
+        int parallelStreams = 1;
+        bool bidirectional = true;
+        bool udpMode = false;
+        int udpBandwidthMbps = 100;
     };
 
     explicit BandwidthTester(QObject* parent = nullptr);
@@ -84,7 +84,7 @@ private:
     void removeFirewallRule();
 };
 
-} // namespace sak
+}  // namespace sak
 
 static_assert(!std::is_copy_constructible_v<sak::BandwidthTester>,
-    "BandwidthTester must not be copyable.");
+              "BandwidthTester must not be copyable.");

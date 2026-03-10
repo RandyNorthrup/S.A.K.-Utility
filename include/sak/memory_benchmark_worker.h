@@ -72,4 +72,4 @@ private:
     MemoryBenchmarkResult m_result;
 };
 
-} // namespace sak
+}  // namespace sak

@@ -4,26 +4,25 @@
 /// @file test_duplicate_finder_worker.cpp
 /// @brief Unit tests for DuplicateFinderWorker (TST-11)
 
-#include <QtTest/QtTest>
-#include <QTemporaryDir>
-#include <QFile>
-#include <QDir>
 #include "sak/duplicate_finder_worker.h"
+
+#include <QDir>
+#include <QFile>
+#include <QTemporaryDir>
+#include <QtTest/QtTest>
 
 class DuplicateFinderWorkerTests : public QObject {
     Q_OBJECT
 
 private:
-    void createFile(const QString& dir, const QString& name, const QByteArray& content)
-    {
+    void createFile(const QString& dir, const QString& name, const QByteArray& content) {
         QFile f(QDir(dir).filePath(name));
         QVERIFY(f.open(QIODevice::WriteOnly));
         f.write(content);
     }
 
 private Q_SLOTS:
-    void findsExactDuplicates()
-    {
+    void findsExactDuplicates() {
         QTemporaryDir tmpDir;
         QVERIFY(tmpDir.isValid());
 
@@ -40,7 +39,8 @@ private Q_SLOTS:
 
         int duplicateCount = 0;
         qint64 wastedSpace = 0;
-        connect(&worker, &DuplicateFinderWorker::resultsReady,
+        connect(&worker,
+                &DuplicateFinderWorker::resultsReady,
                 [&](const QString&, int count, qint64 wasted) {
                     duplicateCount = count;
                     wastedSpace = wasted;
@@ -48,14 +48,13 @@ private Q_SLOTS:
 
         QSignalSpy spy(&worker, &DuplicateFinderWorker::finished);
         worker.start();
-        QVERIFY(spy.wait(10000));
+        QVERIFY(spy.wait(10'000));
 
         QCOMPARE(duplicateCount, 1);
         QCOMPARE(wastedSpace, static_cast<qint64>(content.size()));
     }
 
-    void noDuplicatesWhenAllUnique()
-    {
+    void noDuplicatesWhenAllUnique() {
         QTemporaryDir tmpDir;
         QVERIFY(tmpDir.isValid());
 
@@ -70,18 +69,18 @@ private Q_SLOTS:
         DuplicateFinderWorker worker(config);
 
         int duplicateCount = -1;
-        connect(&worker, &DuplicateFinderWorker::resultsReady,
+        connect(&worker,
+                &DuplicateFinderWorker::resultsReady,
                 [&](const QString&, int count, qint64) { duplicateCount = count; });
 
         QSignalSpy spy(&worker, &DuplicateFinderWorker::finished);
         worker.start();
-        QVERIFY(spy.wait(10000));
+        QVERIFY(spy.wait(10'000));
 
         QCOMPARE(duplicateCount, 0);
     }
 
-    void respectsMinimumFileSize()
-    {
+    void respectsMinimumFileSize() {
         QTemporaryDir tmpDir;
         QVERIFY(tmpDir.isValid());
 
@@ -96,18 +95,18 @@ private Q_SLOTS:
         DuplicateFinderWorker worker(config);
 
         int duplicateCount = -1;
-        connect(&worker, &DuplicateFinderWorker::resultsReady,
+        connect(&worker,
+                &DuplicateFinderWorker::resultsReady,
                 [&](const QString&, int count, qint64) { duplicateCount = count; });
 
         QSignalSpy spy(&worker, &DuplicateFinderWorker::finished);
         worker.start();
-        QVERIFY(spy.wait(10000));
+        QVERIFY(spy.wait(10'000));
 
         QCOMPARE(duplicateCount, 0);
     }
 
-    void recursiveScanFindsInSubdirs()
-    {
+    void recursiveScanFindsInSubdirs() {
         QTemporaryDir tmpDir;
         QVERIFY(tmpDir.isValid());
 
@@ -123,18 +122,18 @@ private Q_SLOTS:
         DuplicateFinderWorker worker(config);
 
         int duplicateCount = -1;
-        connect(&worker, &DuplicateFinderWorker::resultsReady,
+        connect(&worker,
+                &DuplicateFinderWorker::resultsReady,
                 [&](const QString&, int count, qint64) { duplicateCount = count; });
 
         QSignalSpy spy(&worker, &DuplicateFinderWorker::finished);
         worker.start();
-        QVERIFY(spy.wait(10000));
+        QVERIFY(spy.wait(10'000));
 
         QCOMPARE(duplicateCount, 1);
     }
 
-    void cancellationFlag()
-    {
+    void cancellationFlag() {
         DuplicateFinderWorker::Config config;
         config.scanDirectories << "C:\\nonexistent";
         DuplicateFinderWorker worker(config);

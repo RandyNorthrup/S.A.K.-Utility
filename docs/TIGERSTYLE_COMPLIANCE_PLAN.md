@@ -1,7 +1,7 @@
 ﻿# TigerStyle Compliance Plan â€” S.A.K. Utility
 
 **Version**: 2.0  
-**Date**: February 28, 2026  
+**Date**: March 7, 2026  
 **Status**: âœ… Complete  
 **Target Release**: v1.1.0  
 **Reference**: [TigerStyle (TigerBeetle)](https://github.com/tigerbeetle/tigerbeetle/blob/main/docs/TIGER_STYLE.md)
@@ -1347,28 +1347,28 @@ All 76 existing tests must pass after every phase. No regressions. TigerStyle ch
 
 ### Risk 2: Large Refactoring Introduces Regressions
 - **Risk**: Splitting 145 functions and renaming 34 variables could introduce subtle behavior changes.
-- **Mitigation**: 
+- **Mitigation**:
   - Run full test suite after every individual file change (not batched).
   - Use `git diff` to verify no logic changes â€” only structural moves.
   - Phase 8 adds 46 new test files to catch anything missed.
 
 ### Risk 3: Embedded PowerShell Strings Resist Line Wrapping
 - **Risk**: Some embedded PowerShell commands are inherently long (200+ chars) and cannot be meaningfully wrapped.
-- **Mitigation**: 
+- **Mitigation**:
   - Use C++ adjacent string literal concatenation (breaks at logical pipeline `|` points).
   - For very long scripts, externalize to `.ps1` files and load at runtime (eliminates the line-length issue entirely).
   - Document any remaining exemptions (target: < 10 lines total).
 
 ### Risk 4: clang-format Changes Too Aggressive
 - **Risk**: Running `clang-format` project-wide may change formatting in ways that create noisy diffs.
-- **Mitigation**: 
+- **Mitigation**:
   - Apply `clang-format` in a single dedicated commit (no mixed formatting+logic changes).
   - Use `// clang-format off` / `// clang-format on` for intentionally-aligned blocks (e.g., tabular constant definitions in `style_constants.h`).
   - Review the diff carefully before committing.
 
 ### Risk 5: Assertion Density Target Creates Low-Value Assertions
 - **Risk**: Mechanically adding `Q_ASSERT(true)` or trivial assertions to meet density targets.
-- **Mitigation**: 
+- **Mitigation**:
   - Every assertion must validate a real precondition, postcondition, or invariant.
   - Code review specifically checks assertion quality.
   - TigerStyle's "pair assertions" principle: assert validity before AND after data crosses a boundary.

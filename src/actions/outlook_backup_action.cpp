@@ -5,24 +5,27 @@
 /// @brief Implements Microsoft Outlook data file backup (PST/OST)
 
 #include "sak/actions/outlook_backup_action.h"
-#include "sak/windows_user_scanner.h"
+
+#include "sak/layout_constants.h"
+#include "sak/logger.h"
 #include "sak/process_runner.h"
+#include "sak/windows_user_scanner.h"
+
+#include <QDateTime>
 #include <QDir>
 #include <QDirIterator>
 #include <QFile>
-#include <QDateTime>
-#include "sak/logger.h"
-#include "sak/layout_constants.h"
 
 namespace {
 /// @brief Resolve a unique destination path, appending a numeric suffix if needed
-QString resolveUniqueDestPath(const QDir& target_dir, const QString& filename)
-{
+QString resolveUniqueDestPath(const QDir& target_dir, const QString& filename) {
     QString dest_path = target_dir.filePath(filename);
-    if (!QFile::exists(dest_path)) return dest_path;
+    if (!QFile::exists(dest_path)) {
+        return dest_path;
+    }
 
     const QString base = QFileInfo(filename).completeBaseName();
-    const QString ext  = QFileInfo(filename).suffix();
+    const QString ext = QFileInfo(filename).suffix();
     int suffix_num = 1;
     QString candidate;
     do {
@@ -31,15 +34,12 @@ QString resolveUniqueDestPath(const QDir& target_dir, const QString& filename)
     } while (QFile::exists(candidate));
     return candidate;
 }
-} // anonymous namespace
+}  // anonymous namespace
 
 namespace sak {
 
 OutlookBackupAction::OutlookBackupAction(const QString& backup_location, QObject* parent)
-    : QuickAction(parent)
-    , m_backup_location(backup_location)
-{
-}
+    : QuickAction(parent), m_backup_location(backup_location) {}
 
 void OutlookBackupAction::scan() {
     setStatus(ActionStatus::Scanning);
@@ -58,7 +58,9 @@ void OutlookBackupAction::scan() {
     qint64 total_size = 0;
     for (const QString& path : search_paths) {
         QDir dir(path);
-        if (!dir.exists()) continue;
+        if (!dir.exists()) {
+            continue;
+        }
 
         QStringList filters;
         filters << "*.pst" << "*.ost";
@@ -75,9 +77,8 @@ void OutlookBackupAction::scan() {
     result.applicable = files_found > 0;
     result.files_count = files_found;
     result.bytes_affected = total_size;
-    result.summary = files_found > 0
-        ? QString("Outlook files found: %1").arg(files_found)
-        : "No Outlook data files found";
+    result.summary = files_found > 0 ? QString("Outlook files found: %1").arg(files_found)
+                                     : "No Outlook data files found";
     result.details = "Close Outlook before running backup";
 
     Q_ASSERT(!result.summary.isEmpty());
@@ -88,7 +89,7 @@ void OutlookBackupAction::scan() {
 }
 
 void OutlookBackupAction::discoverOutlookFiles(QVector<OutlookFile>& found_files,
-                                                 qint64& total_size) {
+                                               qint64& total_size) {
     WindowsUserScanner scanner;
     QVector<UserProfile> users = scanner.scanUsers();
 
@@ -100,7 +101,9 @@ void OutlookBackupAction::discoverOutlookFiles(QVector<OutlookFile>& found_files
 
     for (const QString& path : search_paths) {
         QDir dir(path);
-        if (!dir.exists()) continue;
+        if (!dir.exists()) {
+            continue;
+        }
 
         QStringList filters;
         filters << "*.pst" << "*.ost";
@@ -121,9 +124,9 @@ void OutlookBackupAction::discoverOutlookFiles(QVector<OutlookFile>& found_files
 }
 
 bool OutlookBackupAction::copyOutlookFilesToBackup(const QVector<OutlookFile>& found_files,
-                                                     const QDir& backup_dir,
-                                                     int& files_copied,
-                                                     qint64& bytes_copied) {
+                                                   const QDir& backup_dir,
+                                                   int& files_copied,
+                                                   qint64& bytes_copied) {
     for (int i = 0; i < found_files.count(); ++i) {
         if (isCancelled()) {
             return false;
@@ -165,7 +168,8 @@ void OutlookBackupAction::execute() {
     Q_ASSERT(start_time.isValid());
     Q_EMIT executionProgress("Checking if Outlook is running...", 5);
     ProcessResult proc = runProcess("tasklist",
-        QStringList() << "/FI" << "IMAGENAME eq OUTLOOK.EXE", sak::kTimeoutThermalQueryMs);
+                                    QStringList() << "/FI" << "IMAGENAME eq OUTLOOK.EXE",
+                                    sak::kTimeoutThermalQueryMs);
     bool outlook_running = proc.std_out.contains("OUTLOOK.EXE", Qt::CaseInsensitive);
     if (outlook_running) {
         emitFailedResult("Outlook is currently running",
@@ -207,9 +211,10 @@ void OutlookBackupAction::execute() {
     finalizeOutlookResult(files_copied, bytes_copied, backup_dir, start_time);
 }
 
-void OutlookBackupAction::finalizeOutlookResult(
-    int files_copied, qint64 bytes_copied,
-    const QDir& backup_dir, const QDateTime& start_time) {
+void OutlookBackupAction::finalizeOutlookResult(int files_copied,
+                                                qint64 bytes_copied,
+                                                const QDir& backup_dir,
+                                                const QDateTime& start_time) {
     qint64 duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
 
     ExecutionResult result;
@@ -222,8 +227,8 @@ void OutlookBackupAction::finalizeOutlookResult(
     if (files_copied > 0) {
         result.success = true;
         result.message = QString("Backed up %1 Outlook file(s) - %2")
-            .arg(files_copied)
-            .arg(formatFileSize(bytes_copied));
+                             .arg(files_copied)
+                             .arg(formatFileSize(bytes_copied));
         result.log = QString("Saved to: %1").arg(backup_dir.absolutePath());
         Q_ASSERT(result.duration_ms >= 0);
         finishWithResult(result, ActionStatus::Success);
@@ -237,12 +242,15 @@ void OutlookBackupAction::finalizeOutlookResult(
 
 bool OutlookBackupAction::isOutlookRunning() {
     ProcessResult proc = runProcess("tasklist",
-        QStringList() << "/FI" << "IMAGENAME eq OUTLOOK.EXE", sak::kTimeoutThermalQueryMs);
+                                    QStringList() << "/FI" << "IMAGENAME eq OUTLOOK.EXE",
+                                    sak::kTimeoutThermalQueryMs);
     QString output = proc.std_out;
     return output.contains("OUTLOOK.EXE", Qt::CaseInsensitive);
 }
 
 bool OutlookBackupAction::copyFileWithProgress(const QString& source, const QString& dest) {
+    Q_ASSERT(!source.isEmpty());
+    Q_ASSERT(!dest.isEmpty());
     QFile source_file(source);
     if (!source_file.open(QIODevice::ReadOnly)) {
         return false;
@@ -260,18 +268,19 @@ bool OutlookBackupAction::copyFileWithProgress(const QString& source, const QStr
     char buffer[1024 * 64];
     while (!source_file.atEnd()) {
         qint64 read = source_file.read(buffer, sizeof(buffer));
-        if (read <= 0) break;
+        if (read <= 0) {
+            break;
+        }
         qint64 written = dest_file.write(buffer, read);
         if (written != read) {
-            sak::logError("File copy write failed: expected {} bytes, wrote {}",
-                          read, written);
+            sak::logError("File copy write failed: expected {} bytes, wrote {}", read, written);
             return false;
         }
         copied += read;
 
         int progress = (copied * 100) / total;
         Q_EMIT executionProgress(QString("Copying %1...").arg(QFileInfo(source).fileName()),
-            progress);
+                                 progress);
     }
 
     source_file.close();
@@ -280,4 +289,4 @@ bool OutlookBackupAction::copyFileWithProgress(const QString& source, const QStr
     return true;
 }
 
-} // namespace sak
+}  // namespace sak

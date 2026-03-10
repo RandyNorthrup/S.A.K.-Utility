@@ -103,29 +103,38 @@
  */
 
 #include "sak/actions/tax_software_backup_action.h"
+
+#include "sak/layout_constants.h"
+#include "sak/logger.h"
 #include "sak/windows_user_scanner.h"
+
+#include <QDateTime>
 #include <QDir>
 #include <QDirIterator>
-#include <QDateTime>
-#include "sak/logger.h"
-#include "sak/layout_constants.h"
+#include <QtGlobal>
+#include <QtGlobal>
+#include <QtGlobal>
+#include <QtGlobal>
 
 namespace sak {
 
 TaxSoftwareBackupAction::TaxSoftwareBackupAction(const QString& backup_location, QObject* parent)
-    : QuickAction(parent)
-    , m_backup_location(backup_location)
-{
-}
+    : QuickAction(parent), m_backup_location(backup_location) {}
 
 void TaxSoftwareBackupAction::scanTurboTax() {
+    Q_ASSERT(!m_tax_data.empty());
+    Q_ASSERT(!m_tax_data.isEmpty());
     for (const UserProfile& user : m_user_profiles) {
         QString turbotax_path = user.profile_path + "/Documents/TurboTax";
         QDir dir(turbotax_path);
-        if (!dir.exists()) continue;
+        if (!dir.exists()) {
+            continue;
+        }
 
-        QDirIterator it(turbotax_path, QStringList() << "*.tax*" << "*.ttax", 
-                      QDir::Files, QDirIterator::Subdirectories);
+        QDirIterator it(turbotax_path,
+                        QStringList() << "*.tax*" << "*.ttax",
+                        QDir::Files,
+                        QDirIterator::Subdirectories);
 
         while (it.hasNext()) {
             it.next();
@@ -147,15 +156,25 @@ void TaxSoftwareBackupAction::scanTurboTax() {
 }
 
 void TaxSoftwareBackupAction::scanHRBlock() {
+    Q_ASSERT(!m_tax_data.empty());
+    Q_ASSERT(!m_tax_data.isEmpty());
     for (const UserProfile& user : m_user_profiles) {
         QString hrblock_path = user.profile_path + "/Documents/HRBlock";
         QDir dir(hrblock_path);
-        if (!dir.exists()) continue;
+        if (!dir.exists()) {
+            continue;
+        }
 
-        const QStringList hr_filters = {
-            "*.tax", "*.t17", "*.t18", "*.t19", "*.t20",
-            "*.t21", "*.t22", "*.t23", "*.t24", "*.t25"
-        };
+        const QStringList hr_filters = {"*.tax",
+                                        "*.t17",
+                                        "*.t18",
+                                        "*.t19",
+                                        "*.t20",
+                                        "*.t21",
+                                        "*.t22",
+                                        "*.t23",
+                                        "*.t24",
+                                        "*.t25"};
         QDirIterator it(hrblock_path, hr_filters, QDir::Files, QDirIterator::Subdirectories);
 
         while (it.hasNext()) {
@@ -173,13 +192,17 @@ void TaxSoftwareBackupAction::scanHRBlock() {
 }
 
 void TaxSoftwareBackupAction::scanTaxAct() {
+    Q_ASSERT(!m_tax_data.empty());
+    Q_ASSERT(!m_tax_data.isEmpty());
     for (const UserProfile& user : m_user_profiles) {
         QString taxact_path = user.profile_path + "/Documents/TaxACT";
         QDir dir(taxact_path);
-        if (!dir.exists()) continue;
+        if (!dir.exists()) {
+            continue;
+        }
 
-        QDirIterator it(taxact_path, QStringList() << "*.ta*", 
-                      QDir::Files, QDirIterator::Subdirectories);
+        QDirIterator it(
+            taxact_path, QStringList() << "*.ta*", QDir::Files, QDirIterator::Subdirectories);
 
         while (it.hasNext()) {
             it.next();
@@ -198,34 +221,34 @@ void TaxSoftwareBackupAction::scanTaxAct() {
 void TaxSoftwareBackupAction::scan() {
     setStatus(ActionStatus::Scanning);
     Q_ASSERT(status() == ActionStatus::Scanning);
-    
+
     WindowsUserScanner scanner;
     m_user_profiles = scanner.scanUsers();
-    
+
     m_tax_data.clear();
     m_total_size = 0;
-    
+
     scanTurboTax();
     scanHRBlock();
     scanTaxAct();
-    
+
     ScanResult result;
     result.applicable = (m_tax_data.count() > 0);
     result.bytes_affected = m_total_size;
     result.files_count = m_tax_data.count();
     result.estimated_duration_ms = 5000;
-    
+
     if (m_tax_data.count() > 0) {
         result.summary = QString("Found %1 tax file(s) - %2 MB")
-            .arg(m_tax_data.count())
-            .arg(m_total_size / sak::kBytesPerMB);
+                             .arg(m_tax_data.count())
+                             .arg(m_total_size / sak::kBytesPerMB);
         result.warning = "Tax files contain sensitive financial information";
     } else {
         result.summary = "No tax software data found";
     }
-    
+
     Q_ASSERT(!result.summary.isEmpty());
-    
+
     setScanResult(result);
     setStatus(ActionStatus::Ready);
     Q_EMIT scanComplete(result);
@@ -240,16 +263,16 @@ void TaxSoftwareBackupAction::execute() {
     Q_ASSERT(status() == ActionStatus::Running);
     QDateTime start_time = QDateTime::currentDateTime();
     Q_ASSERT(start_time.isValid());
-    
+
     QDir backup_dir(m_backup_location + "/TaxData");
     if (!backup_dir.mkpath(".")) {
         sak::logWarning("Failed to create tax data backup directory: {}",
                         backup_dir.absolutePath().toStdString());
     }
-    
+
     int processed = 0;
     qint64 bytes_copied = 0;
-    
+
     for (const TaxDataLocation& loc : m_tax_data) {
         if (isCancelled()) {
             emitCancelledResult("Tax data backup cancelled", start_time);
@@ -262,36 +285,38 @@ void TaxSoftwareBackupAction::execute() {
 
         QString dest = backup_dir.filePath(loc.software_name + "/" + safe_dir + "/" + filename);
         dest = resolveUniqueDestPath(dest);
-        
+
         if (!QDir().mkpath(QFileInfo(dest).absolutePath())) {
             sak::logWarning("Failed to create directory for tax data file");
         }
-        
+
         if (QFile::copy(loc.path, dest)) {
             processed++;
             bytes_copied += loc.size;
         }
-        
-        Q_EMIT executionProgress(QString("Copying %1...").arg(filename), 
-                             (processed * 100) / m_tax_data.count());
+
+        Q_EMIT executionProgress(QString("Copying %1...").arg(filename),
+                                 (processed * 100) / m_tax_data.count());
     }
-    
+
     ExecutionResult result;
     Q_ASSERT(!result.success);  // verify default init
     result.success = processed > 0;
     result.duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
     result.files_processed = processed;
     result.bytes_processed = bytes_copied;
-    result.message = processed > 0
-        ? QString("Backed up %1 tax file(s)").arg(processed)
-        : "No tax files were backed up";
+    result.message = processed > 0 ? QString("Backed up %1 tax file(s)").arg(processed)
+                                   : "No tax files were backed up";
     result.output_path = backup_dir.absolutePath();
-    
+
     finishWithResult(result, processed > 0 ? ActionStatus::Success : ActionStatus::Failed);
 }
 
 QString TaxSoftwareBackupAction::resolveUniqueDestPath(const QString& dest) {
-    if (!QFile::exists(dest)) return dest;
+    Q_ASSERT(!dest.isEmpty());
+    if (!QFile::exists(dest)) {
+        return dest;
+    }
 
     QString base = QFileInfo(dest).completeBaseName();
     QString ext = QFileInfo(dest).suffix();
@@ -305,4 +330,4 @@ QString TaxSoftwareBackupAction::resolveUniqueDestPath(const QString& dest) {
     return candidate;
 }
 
-} // namespace sak
+}  // namespace sak

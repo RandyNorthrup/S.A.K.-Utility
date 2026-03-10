@@ -1,11 +1,10 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-#include <QtTest/QtTest>
-
 #include "sak/mapping_engine.h"
 
 #include <QTemporaryDir>
+#include <QtTest/QtTest>
 
 using namespace sak;
 
@@ -19,6 +18,8 @@ private Q_SLOTS:
 };
 
 static DestinationPC makeReady(const QString& id, qint64 freeBytes) {
+    Q_ASSERT(!id.isEmpty());
+    Q_ASSERT(freeBytes >= 0);
     DestinationPC pc;
     pc.destination_id = id;
     pc.hostname = id;

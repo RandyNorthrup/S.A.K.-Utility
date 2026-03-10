@@ -2,13 +2,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "sak/smart_file_filter.h"
+
 #include <QDir>
 
 namespace sak {
 
-SmartFileFilter::SmartFileFilter(const SmartFilter& rules)
-    : m_rules(rules)
-{
+SmartFileFilter::SmartFileFilter(const SmartFilter& rules) : m_rules(rules) {
     compileRegexPatterns();
 
     // Convert lists to sets for faster lookup
@@ -48,7 +47,7 @@ void SmartFileFilter::compileRegexPatterns() {
 }
 
 bool SmartFileFilter::shouldExcludeFile(const QFileInfo& fileInfo,
-    const QString& profilePath) const {
+                                        const QString& profilePath) const {
     QString fileName = fileInfo.fileName();
     QString absolutePath = fileInfo.absoluteFilePath();
 
@@ -82,7 +81,7 @@ bool SmartFileFilter::shouldExcludeFile(const QFileInfo& fileInfo,
 }
 
 bool SmartFileFilter::shouldExcludeFolder(const QFileInfo& folderInfo,
-    const QString& profilePath) const {
+                                          const QString& profilePath) const {
     QString folderName = folderInfo.fileName();
     QString absolutePath = folderInfo.absoluteFilePath();
 
@@ -127,6 +126,7 @@ bool SmartFileFilter::matchesPattern(const QString& fileName) const {
 }
 
 bool SmartFileFilter::isInExcludedFolder(const QString& relativePath) const {
+    Q_ASSERT(!relativePath.isEmpty());
     // Split path into components
     QStringList components = relativePath.split('/', Qt::SkipEmptyParts);
     components.append(relativePath.split('\\', Qt::SkipEmptyParts));
@@ -141,25 +141,24 @@ bool SmartFileFilter::isInExcludedFolder(const QString& relativePath) const {
 }
 
 bool SmartFileFilter::isInCacheDirectory(const QString& path) const {
+    Q_ASSERT(!path.isEmpty());
     QString lowerPath = path.toLower();
 
     // Common cache directory patterns
-    QStringList cachePatterns = {
-        "\\cache\\",
-        "\\gpucache\\",
-        "\\code cache\\",
-        "\\shadercache\\",
-        "\\webcache\\",
-        "\\service worker\\",
-        "\\session storage\\",
-        "/cache/",
-        "/gpucache/",
-        "/code cache/",
-        "/shadercache/",
-        "/webcache/",
-        "/service worker/",
-        "/session storage/"
-    };
+    QStringList cachePatterns = {"\\cache\\",
+                                 "\\gpucache\\",
+                                 "\\code cache\\",
+                                 "\\shadercache\\",
+                                 "\\webcache\\",
+                                 "\\service worker\\",
+                                 "\\session storage\\",
+                                 "/cache/",
+                                 "/gpucache/",
+                                 "/code cache/",
+                                 "/shadercache/",
+                                 "/webcache/",
+                                 "/service worker/",
+                                 "/session storage/"};
 
     for (const QString& pattern : cachePatterns) {
         if (lowerPath.contains(pattern)) {
@@ -197,4 +196,4 @@ QString SmartFileFilter::getExclusionReason(const QFileInfo& fileInfo) const {
     return "Excluded by filter rules";
 }
 
-} // namespace sak
+}  // namespace sak

@@ -2,18 +2,16 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "sak/orchestration_client.h"
+
 #include "sak/layout_constants.h"
 
-#include <QTcpSocket>
 #include <QJsonObject>
+#include <QTcpSocket>
 
 namespace sak {
 
 OrchestrationClient::OrchestrationClient(QObject* parent)
-    : QObject(parent)
-    , m_socket(new QTcpSocket(this))
-    , m_reconnectTimer(new QTimer(this))
-{
+    : QObject(parent), m_socket(new QTcpSocket(this)), m_reconnectTimer(new QTimer(this)) {
     connect(m_socket, &QTcpSocket::connected, this, &OrchestrationClient::onConnected);
     connect(m_socket, &QTcpSocket::disconnected, this, &OrchestrationClient::onDisconnected);
     connect(m_socket, &QTcpSocket::readyRead, this, &OrchestrationClient::onReadyRead);
@@ -54,8 +52,8 @@ void OrchestrationClient::setAutoReconnectEnabled(bool enabled) {
 }
 
 bool OrchestrationClient::isConnected() const {
-    return m_socket->state() == QAbstractSocket::ConnectedState
-        || m_socket->state() == QAbstractSocket::ConnectingState;
+    return m_socket->state() == QAbstractSocket::ConnectedState ||
+           m_socket->state() == QAbstractSocket::ConnectingState;
 }
 
 void OrchestrationClient::setDestinationInfo(const DestinationPC& destination) {
@@ -63,27 +61,32 @@ void OrchestrationClient::setDestinationInfo(const DestinationPC& destination) {
 }
 
 void OrchestrationClient::sendProgress(const DeploymentProgress& progress) {
-    OrchestrationProtocol::writeMessage(m_socket,
+    OrchestrationProtocol::writeMessage(
+        m_socket,
         OrchestrationProtocol::makeMessage(OrchestrationMessageType::ProgressUpdate,
-            progress.toJson()));
+                                           progress.toJson()));
 }
 
 void OrchestrationClient::sendCompletion(const DeploymentCompletion& completion) {
-    OrchestrationProtocol::writeMessage(m_socket,
+    OrchestrationProtocol::writeMessage(
+        m_socket,
         OrchestrationProtocol::makeMessage(OrchestrationMessageType::DeploymentComplete,
-            completion.toJson()));
+                                           completion.toJson()));
 }
 
 void OrchestrationClient::onConnected() {
+    Q_ASSERT(m_reconnectTimer);
+    Q_ASSERT(m_socket);
     m_reconnectTimer->stop();
     if (m_destination.destination_id.isEmpty()) {
         m_destination.destination_id = QString("%1@%2").arg(m_destination.hostname,
-            m_socket->localAddress().toString());
+                                                            m_socket->localAddress().toString());
     }
 
     QJsonObject payload;
     payload["destination_info"] = m_destination.toJson();
-    OrchestrationProtocol::writeMessage(m_socket,
+    OrchestrationProtocol::writeMessage(
+        m_socket,
         OrchestrationProtocol::makeMessage(OrchestrationMessageType::DestinationRegister, payload));
     Q_EMIT statusMessage(tr("Registered destination with orchestrator"));
 }
@@ -104,37 +107,38 @@ void OrchestrationClient::onReadyRead() {
 }
 
 void OrchestrationClient::handleMessage(const QJsonObject& message) {
+    Q_ASSERT(!message.isEmpty());
     const auto type = OrchestrationProtocol::parseType(message.value("message_type").toString());
     if (!type.has_value()) {
         return;
     }
 
     switch (*type) {
-        case OrchestrationMessageType::HealthCheckRequest: {
-            QJsonObject payload;
-            payload["destination_id"] = m_destination.destination_id;
-            payload["health_metrics"] = m_destination.health.toJson();
-            OrchestrationProtocol::writeMessage(m_socket,
-                OrchestrationProtocol::makeMessage(OrchestrationMessageType::HealthCheckResponse,
-                    payload));
-            break;
-        }
-        case OrchestrationMessageType::DeploymentAssign: {
-            auto assignmentObj = message.value("assignment").toObject();
-            auto assignment = DeploymentAssignment::fromJson(assignmentObj);
-            Q_EMIT assignmentReceived(assignment);
-            break;
-        }
-        case OrchestrationMessageType::AssignmentControl:
-            dispatchAssignmentControl(message);
-            break;
-        default:
-            break;
+    case OrchestrationMessageType::HealthCheckRequest: {
+        QJsonObject payload;
+        payload["destination_id"] = m_destination.destination_id;
+        payload["health_metrics"] = m_destination.health.toJson();
+        OrchestrationProtocol::writeMessage(
+            m_socket,
+            OrchestrationProtocol::makeMessage(OrchestrationMessageType::HealthCheckResponse,
+                                               payload));
+        break;
+    }
+    case OrchestrationMessageType::DeploymentAssign: {
+        auto assignmentObj = message.value("assignment").toObject();
+        auto assignment = DeploymentAssignment::fromJson(assignmentObj);
+        Q_EMIT assignmentReceived(assignment);
+        break;
+    }
+    case OrchestrationMessageType::AssignmentControl:
+        dispatchAssignmentControl(message);
+        break;
+    default:
+        break;
     }
 }
 
-void OrchestrationClient::dispatchAssignmentControl(
-    const QJsonObject& message) {
+void OrchestrationClient::dispatchAssignmentControl(const QJsonObject& message) {
     const QString deployment_id = message.value("deployment_id").toString();
     const QString job_id = message.value("job_id").toString();
     const QString action = message.value("action").toString().toLower();
@@ -149,12 +153,13 @@ void OrchestrationClient::dispatchAssignmentControl(
 }
 
 void OrchestrationClient::onReconnectTimeout() {
+    Q_ASSERT(m_socket);
     if (m_lastHost.isNull() || m_lastPort == 0) {
         return;
     }
 
-    if (m_socket->state() == QAbstractSocket::ConnectedState
-        || m_socket->state() == QAbstractSocket::ConnectingState) {
+    if (m_socket->state() == QAbstractSocket::ConnectedState ||
+        m_socket->state() == QAbstractSocket::ConnectingState) {
         return;
     }
 
@@ -162,4 +167,4 @@ void OrchestrationClient::onReconnectTimeout() {
     m_socket->connectToHost(m_lastHost, m_lastPort);
 }
 
-} // namespace sak
+}  // namespace sak

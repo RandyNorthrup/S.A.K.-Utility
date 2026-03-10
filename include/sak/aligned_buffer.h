@@ -28,9 +28,7 @@ namespace sak {
 /// Required for FILE_FLAG_NO_BUFFERING disk operations.
 class AlignedBuffer {
 public:
-    explicit AlignedBuffer(size_t size, size_t alignment = 4096)
-        : m_size(size)
-    {
+    explicit AlignedBuffer(size_t size, size_t alignment = 4096) : m_size(size) {
 #ifdef SAK_PLATFORM_WINDOWS
         m_data = static_cast<uint8_t*>(_aligned_malloc(size, alignment));
 #else
@@ -38,12 +36,15 @@ public:
 #endif
     }
 
-    ~AlignedBuffer()
-    {
+    ~AlignedBuffer() {
 #ifdef SAK_PLATFORM_WINDOWS
-        if (m_data) _aligned_free(m_data);
+        if (m_data) {
+            _aligned_free(m_data);
+        }
 #else
-        if (m_data) std::free(m_data);
+        if (m_data) {
+            std::free(m_data);
+        }
 #endif
     }
 
@@ -68,9 +69,7 @@ private:
 /// contiguous committed regions are needed.
 class VirtualBuffer {
 public:
-    explicit VirtualBuffer(size_t size)
-        : m_size(size)
-    {
+    explicit VirtualBuffer(size_t size) : m_size(size) {
 #ifdef SAK_PLATFORM_WINDOWS
         m_data = VirtualAlloc(nullptr, size, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
 #else
@@ -78,12 +77,15 @@ public:
 #endif
     }
 
-    ~VirtualBuffer()
-    {
+    ~VirtualBuffer() {
 #ifdef SAK_PLATFORM_WINDOWS
-        if (m_data) VirtualFree(m_data, 0, MEM_RELEASE);
+        if (m_data) {
+            VirtualFree(m_data, 0, MEM_RELEASE);
+        }
 #else
-        if (m_data) std::free(m_data);
+        if (m_data) {
+            std::free(m_data);
+        }
 #endif
     }
 
@@ -97,11 +99,13 @@ public:
     [[nodiscard]] bool valid() const { return m_data != nullptr; }
 
     template <typename T>
-    [[nodiscard]] T* as() const { return static_cast<T*>(m_data); }
+    [[nodiscard]] T* as() const {
+        return static_cast<T*>(m_data);
+    }
 
 private:
     void* m_data{nullptr};
     size_t m_size{0};
 };
 
-} // namespace sak
+}  // namespace sak

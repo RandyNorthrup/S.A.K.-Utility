@@ -4,8 +4,6 @@
 /// @file test_diagnostic_report_generator.cpp
 /// @brief Unit tests for DiagnosticReportGenerator HTML, JSON, and CSV output
 
-#include <QtTest/QtTest>
-
 #include "sak/diagnostic_report_generator.h"
 #include "sak/diagnostic_types.h"
 
@@ -13,6 +11,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QTemporaryDir>
+#include <QtTest/QtTest>
 
 using namespace sak;
 
@@ -32,8 +31,7 @@ private:
     DiagnosticReportData createSampleData();
 };
 
-DiagnosticReportData DiagnosticReportGeneratorTests::createSampleData()
-{
+DiagnosticReportData DiagnosticReportGeneratorTests::createSampleData() {
     DiagnosticReportData data;
     data.technician_name = "Test Tech";
     data.ticket_number = "TICKET-001";
@@ -53,7 +51,7 @@ DiagnosticReportData DiagnosticReportGeneratorTests::createSampleData()
     // CPU benchmark
     CpuBenchmarkResult cpu;
     cpu.single_thread_score = 1200;
-    cpu.multi_thread_score = 15000;
+    cpu.multi_thread_score = 15'000;
     cpu.thread_count = 24;
     data.cpu_benchmark = cpu;
 
@@ -77,8 +75,7 @@ DiagnosticReportData DiagnosticReportGeneratorTests::createSampleData()
     return data;
 }
 
-void DiagnosticReportGeneratorTests::generatesHtmlReport()
-{
+void DiagnosticReportGeneratorTests::generatesHtmlReport() {
     QTemporaryDir tempDir;
     QVERIFY(tempDir.isValid());
 
@@ -95,8 +92,7 @@ void DiagnosticReportGeneratorTests::generatesHtmlReport()
     QVERIFY(content.size() > 100);
 }
 
-void DiagnosticReportGeneratorTests::generatesJsonReport()
-{
+void DiagnosticReportGeneratorTests::generatesJsonReport() {
     QTemporaryDir tempDir;
     QVERIFY(tempDir.isValid());
 
@@ -114,8 +110,7 @@ void DiagnosticReportGeneratorTests::generatesJsonReport()
     QVERIFY(json.isObject());
 }
 
-void DiagnosticReportGeneratorTests::generatesCsvReport()
-{
+void DiagnosticReportGeneratorTests::generatesCsvReport() {
     QTemporaryDir tempDir;
     QVERIFY(tempDir.isValid());
 
@@ -132,8 +127,7 @@ void DiagnosticReportGeneratorTests::generatesCsvReport()
     QVERIFY(content.contains(","));  // CSV has commas
 }
 
-void DiagnosticReportGeneratorTests::emptyDataGeneratesValidReports()
-{
+void DiagnosticReportGeneratorTests::emptyDataGeneratesValidReports() {
     QTemporaryDir tempDir;
     QVERIFY(tempDir.isValid());
 
@@ -146,8 +140,7 @@ void DiagnosticReportGeneratorTests::emptyDataGeneratesValidReports()
     QVERIFY(gen.generateCsv(tempDir.filePath("empty.csv")));
 }
 
-void DiagnosticReportGeneratorTests::htmlContainsKeyData()
-{
+void DiagnosticReportGeneratorTests::htmlContainsKeyData() {
     QTemporaryDir tempDir;
     QVERIFY(tempDir.isValid());
 
@@ -166,8 +159,7 @@ void DiagnosticReportGeneratorTests::htmlContainsKeyData()
     QVERIFY(content.contains("TICKET-001"));
 }
 
-void DiagnosticReportGeneratorTests::jsonContainsStructuredData()
-{
+void DiagnosticReportGeneratorTests::jsonContainsStructuredData() {
     QTemporaryDir tempDir;
     QVERIFY(tempDir.isValid());
 
@@ -183,12 +175,11 @@ void DiagnosticReportGeneratorTests::jsonContainsStructuredData()
     const auto root = doc.object();
 
     // Verify key sections exist
-    QVERIFY(root.contains("metadata") || root.contains("technician") ||
-            root.contains("hardware") || root.contains("report"));
+    QVERIFY(root.contains("metadata") || root.contains("technician") || root.contains("hardware") ||
+            root.contains("report"));
 }
 
-void DiagnosticReportGeneratorTests::csvContainsHeaders()
-{
+void DiagnosticReportGeneratorTests::csvContainsHeaders() {
     QTemporaryDir tempDir;
     QVERIFY(tempDir.isValid());
 

@@ -3,17 +3,17 @@
 
 #pragma once
 
-#include <QObject>
+#include "sak/action_constants.h"
+#include "sak/mapping_engine.h"
+#include "sak/network_constants.h"
+
 #include <QDateTime>
 #include <QMap>
+#include <QObject>
 #include <QQueue>
 #include <QSet>
 #include <QString>
 #include <QVector>
-
-#include "sak/mapping_engine.h"
-#include "sak/action_constants.h"
-#include "sak/network_constants.h"
 
 namespace sak {
 
@@ -77,8 +77,9 @@ public:
                            qint64 total_bytes,
                            double speed_mbps,
                            const QString& current_file);
-    void markJobComplete(const QString& job_id, bool success,
-        const QString& error_message = QString());
+    void markJobComplete(const QString& job_id,
+                         bool success,
+                         const QString& error_message = QString());
 
 Q_SIGNALS:
     void deploymentStarted(const QString& deployment_id);
@@ -153,4 +154,4 @@ private:
     JobPriority m_defaultPriority{JobPriority::Normal};
 };
 
-} // namespace sak
+}  // namespace sak

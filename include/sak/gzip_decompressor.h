@@ -4,6 +4,7 @@
 #pragma once
 
 #include "sak/streaming_decompressor.h"
+
 #include <zlib.h>
 
 namespace sak {
@@ -35,4 +36,4 @@ private:
     z_stream m_zstream{};
 };
 
-} // namespace sak
+}  // namespace sak

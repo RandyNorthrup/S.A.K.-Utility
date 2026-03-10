@@ -5,6 +5,7 @@
 
 #include "sak/quick_action.h"
 #include "sak/user_profile_types.h"
+
 #include <QDir>
 #include <QPair>
 #include <QString>
@@ -24,8 +25,9 @@ public:
     explicit PhotoManagementBackupAction(const QString& backup_location, QObject* parent = nullptr);
 
     QString name() const override { return "Photo Management Backup"; }
-    QString description(
-        ) const override { return "Backup Lightroom catalogs and Photoshop settings"; }
+    QString description() const override {
+        return "Backup Lightroom catalogs and Photoshop settings";
+    }
     QIcon icon() const override { return QIcon(); }
     ActionCategory category() const override { return ActionCategory::QuickBackup; }
     bool requiresAdmin() const override { return false; }
@@ -37,7 +39,7 @@ private:
     /// @brief Represents a photo editing software data location (catalog, presets, or settings)
     struct PhotoSoftwareData {
         QString software_name;
-        QString data_type; // Catalog, Presets, Settings
+        QString data_type;  // Catalog, Presets, Settings
         QString path;
         qint64 size;
     };
@@ -66,11 +68,11 @@ private:
     /// @brief Backup a single file with unique-name collision handling
     QPair<bool, qint64> backupSingleFile(const PhotoSoftwareData& data, const QString& dest_path);
     /// @brief Generate a unique filename when dest already exists
-    static QString generateUniqueFilename(const QString& dest_path, const QString& base_name,
+    static QString generateUniqueFilename(const QString& dest_path,
+                                          const QString& base_name,
                                           const QString& ext);
     /// @brief Recursively copy a directory
     QPair<bool, qint64> backupDirectory(const QString& src_path, const QString& dest_path);
 };
 
-} // namespace sak
-
+}  // namespace sak

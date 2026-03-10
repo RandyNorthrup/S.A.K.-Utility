@@ -5,33 +5,36 @@
 /// @brief Implements screenshot capture and display settings backup
 
 #include "sak/actions/screenshot_settings_action.h"
+
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
 #include "sak/process_runner.h"
-#include <QProcess>
-#include <QThread>
-#include <QDir>
+
 #include <QDateTime>
-#include <QScreen>
+#include <QDir>
 #include <QGuiApplication>
+#include <QProcess>
+#include <QScreen>
+#include <QThread>
 
 namespace sak {
 
 ScreenshotSettingsAction::ScreenshotSettingsAction(const QString& output_location, QObject* parent)
-    : QuickAction(parent)
-    , m_output_location(output_location)
-{
-}
+    : QuickAction(parent), m_output_location(output_location) {}
 
 void ScreenshotSettingsAction::captureScreen(const QString& filename) {
     QScreen* screen = QGuiApplication::primaryScreen();
-    if (!screen) return;
+    if (!screen) {
+        return;
+    }
 
     QPixmap screenshot = screen->grabWindow(0);
     screenshot.save(filename, "PNG");
 }
 
 void ScreenshotSettingsAction::openSettingsAndCapture(const QString& uri, const QString& name) {
+    Q_ASSERT(!uri.isEmpty());
+    Q_ASSERT(!name.isEmpty());
     // Open Windows Settings
     QProcess::startDetached("explorer.exe", QStringList() << QString("ms-settings:%1").arg(uri));
 
@@ -111,15 +114,16 @@ void ScreenshotSettingsAction::execute() {
     generateReport(output_dir.absolutePath(), timestamp, monitor_count, capture);
     Q_EMIT executionProgress("Screenshots complete", 100);
 
-    buildExecutionResult(capture, settings_pages.size(), output_dir, monitor_count,
-                         timestamp, start_time);
+    buildExecutionResult(
+        capture, settings_pages.size(), output_dir, monitor_count, timestamp, start_time);
 }
 
-void ScreenshotSettingsAction::buildExecutionResult(
-        const CaptureResult& capture, int total_pages,
-        const QDir& output_dir, int monitor_count,
-        const QString& timestamp, const QDateTime& start_time)
-{
+void ScreenshotSettingsAction::buildExecutionResult(const CaptureResult& capture,
+                                                    int total_pages,
+                                                    const QDir& output_dir,
+                                                    int monitor_count,
+                                                    const QString& timestamp,
+                                                    const QDateTime& start_time) {
     qint64 duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
 
     ExecutionResult result;
@@ -133,17 +137,18 @@ void ScreenshotSettingsAction::buildExecutionResult(
     structured_log += QString("SUCCESSFUL_CAPTURES:%1\n").arg(capture.captured_pages.size());
     structured_log += QString("FAILED_CAPTURES:%1\n").arg(capture.failed_attempts);
     structured_log += QString("TOTAL_PAGES:%1\n").arg(total_pages);
-    structured_log += QString("SUCCESS_RATE:%1%\n")
-        .arg(capture.captured_pages.size() * 100 / total_pages);
-    structured_log += QString("REPORT_PATH:%1\n")
-        .arg(output_dir.filePath(QString("Screenshot_Report_%1.txt").arg(timestamp)));
+    structured_log +=
+        QString("SUCCESS_RATE:%1%\n").arg(capture.captured_pages.size() * 100 / total_pages);
+    structured_log +=
+        QString("REPORT_PATH:%1\n")
+            .arg(output_dir.filePath(QString("Screenshot_Report_%1.txt").arg(timestamp)));
 
     if (capture.screenshots_taken > 0) {
         result.success = true;
         result.message = QString("Captured %1/%2 settings pages (%3 monitors detected)")
-                            .arg(capture.captured_pages.size())
-                            .arg(total_pages)
-                            .arg(monitor_count);
+                             .arg(capture.captured_pages.size())
+                             .arg(total_pages)
+                             .arg(monitor_count);
         result.log = structured_log + QString("\nSaved to: %1").arg(output_dir.absolutePath());
     } else {
         result.success = false;
@@ -157,41 +162,41 @@ void ScreenshotSettingsAction::buildExecutionResult(
 // ─── Private Helpers ────────────────────────────────────────────────────────────
 
 QMap<QString, QString> ScreenshotSettingsAction::buildSettingsPageMap() {
-    return {
-        {"about", "System_About"},
-        {"network", "Network_Status"},
-        {"display", "Display_Settings"},
-        {"privacy", "Privacy_General"},
-        {"windowsupdate", "Windows_Update"},
-        {"activation", "System_Activation"},
-        {"network-wifi", "WiFi_Settings"},
-        {"network-ethernet", "Ethernet_Settings"},
-        {"personalization", "Personalization"},
-        {"apps-features", "Installed_Apps"},
-        {"powersleep", "Power_Sleep"},
-        {"storagesense", "Storage_Settings"},
-        {"sound", "Sound_Settings"},
-        {"notifications", "Notifications"},
-        {"gaming", "Gaming_Settings"}
-    };
+    return {{"about", "System_About"},
+            {"network", "Network_Status"},
+            {"display", "Display_Settings"},
+            {"privacy", "Privacy_General"},
+            {"windowsupdate", "Windows_Update"},
+            {"activation", "System_Activation"},
+            {"network-wifi", "WiFi_Settings"},
+            {"network-ethernet", "Ethernet_Settings"},
+            {"personalization", "Personalization"},
+            {"apps-features", "Installed_Apps"},
+            {"powersleep", "Power_Sleep"},
+            {"storagesense", "Storage_Settings"},
+            {"sound", "Sound_Settings"},
+            {"notifications", "Notifications"},
+            {"gaming", "Gaming_Settings"}};
 }
 
 void ScreenshotSettingsAction::closeSettingsApp() {
     ProcessResult close_proc = runProcess("taskkill",
-        QStringList() << "/IM" << "SystemSettings.exe" << "/F",
-        sak::kTimeoutProcessMediumMs);
+                                          QStringList() << "/IM" << "SystemSettings.exe" << "/F",
+                                          sak::kTimeoutProcessMediumMs);
     if (!close_proc.succeeded()) {
         Q_EMIT logMessage("Settings close warning: " + close_proc.std_err.trimmed());
     }
 }
 
 bool ScreenshotSettingsAction::captureAllScreens(const QDir& output_dir,
-                                                   const QString& page_name,
-                                                   const QString& timestamp) {
+                                                 const QString& page_name,
+                                                 const QString& timestamp) {
     QList<QScreen*> screens = QGuiApplication::screens();
     if (screens.size() <= 1) {
         QScreen* screen = QGuiApplication::primaryScreen();
-        if (!screen) return false;
+        if (!screen) {
+            return false;
+        }
         QPixmap screenshot = screen->grabWindow(0);
         QString filepath = output_dir.filePath(QString("%1_%2.png").arg(page_name, timestamp));
         return screenshot.save(filepath, "PNG");
@@ -210,13 +215,13 @@ bool ScreenshotSettingsAction::captureAllScreens(const QDir& output_dir,
 }
 
 bool ScreenshotSettingsAction::captureSettingsPage(const QString& ms_uri,
-                                                     const QString& page_name,
-                                                     const QString& output_dir_path,
-                                                     const QString& timestamp) {
+                                                   const QString& page_name,
+                                                   const QString& output_dir_path,
+                                                   const QString& timestamp) {
     QDir output_dir(output_dir_path);
     for (int attempt = 1; attempt <= 3; attempt++) {
         QProcess::startDetached("explorer.exe",
-            QStringList() << QString("ms-settings:%1").arg(ms_uri));
+                                QStringList() << QString("ms-settings:%1").arg(ms_uri));
 
         int wait_time = 2000 + (attempt - 1) * 1000;
         QThread::msleep(wait_time);
@@ -231,20 +236,24 @@ bool ScreenshotSettingsAction::captureSettingsPage(const QString& ms_uri,
         closeSettingsApp();
         QThread::msleep(sak::kTimerRetryBaseMs);
 
-        if (captured) return true;
+        if (captured) {
+            return true;
+        }
     }
     return false;
 }
 
 void ScreenshotSettingsAction::generateReport(const QString& output_dir_path,
-                                                const QString& timestamp,
-                                                int monitor_count,
-                                                const CaptureResult& capture) const {
+                                              const QString& timestamp,
+                                              int monitor_count,
+                                              const CaptureResult& capture) const {
     QDir output_dir(output_dir_path);
     int total_pages = capture.captured_pages.size() + capture.failed_pages.size();
     QString report_path = output_dir.filePath(QString("Screenshot_Report_%1.txt").arg(timestamp));
     QFile report_file(report_path);
-    if (!report_file.open(QIODevice::WriteOnly | QIODevice::Text)) return;
+    if (!report_file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        return;
+    }
 
     QTextStream report(&report_file);
     report.setEncoding(QStringConverter::Utf8);
@@ -252,21 +261,16 @@ void ScreenshotSettingsAction::generateReport(const QString& output_dir_path,
     report << "╔══════════════════════════════════════════════════════════════╗\n";
     report << "║         WINDOWS SETTINGS SCREENSHOT REPORT                   ║\n";
     report << "╠══════════════════════════════════════════════════════════════╣\n";
-    report
-        << QString("║ Timestamp:         %1                    ║\n")
-            .arg(QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss"));
-    report
-        << QString("║ Monitors Detected: %1                                       ║\n")
-            .arg(monitor_count);
-    report
-        << QString("║ Total Pages:       %1                                      ║\n")
-            .arg(total_pages);
-    report
-        << QString("║ Successful:        %1                                      ║\n")
-            .arg(capture.captured_pages.size());
-    report
-        << QString("║ Failed:            %1                                       ║\n")
-            .arg(capture.failed_attempts);
+    report << QString("║ Timestamp:         %1                    ║\n")
+                  .arg(QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss"));
+    report << QString("║ Monitors Detected: %1                                       ║\n")
+                  .arg(monitor_count);
+    report << QString("║ Total Pages:       %1                                      ║\n")
+                  .arg(total_pages);
+    report << QString("║ Successful:        %1                                      ║\n")
+                  .arg(capture.captured_pages.size());
+    report << QString("║ Failed:            %1                                       ║\n")
+                  .arg(capture.failed_attempts);
     report << "╠══════════════════════════════════════════════════════════════╣\n";
     report << "║                    CAPTURED PAGES                            ║\n";
     report << "╠══════════════════════════════════════════════════════════════╣\n";
@@ -285,8 +289,8 @@ void ScreenshotSettingsAction::generateReport(const QString& output_dir_path,
     }
 
     report << "╠══════════════════════════════════════════════════════════════╣\n";
-    report << QString("║ Output Location: %1").arg(output_dir.absolutePath()).leftJustified(61,
-        ' ') << "║\n";
+    report << QString("║ Output Location: %1").arg(output_dir.absolutePath()).leftJustified(61, ' ')
+           << "║\n";
     report << "╚══════════════════════════════════════════════════════════════╝\n";
 
     report_file.close();
@@ -304,8 +308,11 @@ int ScreenshotSettingsAction::detectMonitorCount() {
         QScreen* screen = screens[i];
         QRect geometry = screen->geometry();
         sak::logDebug("Monitor {}: {}x{} at {},{}",
-                     i + 1, geometry.width(), geometry.height(),
-                     geometry.x(), geometry.y());
+                      i + 1,
+                      geometry.width(),
+                      geometry.height(),
+                      geometry.x(),
+                      geometry.y());
     }
 
     return count;
@@ -313,24 +320,24 @@ int ScreenshotSettingsAction::detectMonitorCount() {
 
 // Helper method: Check if a process is currently running
 bool ScreenshotSettingsAction::isProcessRunning(const QString& process_name) {
+    Q_ASSERT(!process_name.isEmpty());
     QProcess tasklist;
     tasklist.start("tasklist",
-        QStringList() << "/FI" << QString("IMAGENAME eq %1").arg(process_name));
+                   QStringList() << "/FI" << QString("IMAGENAME eq %1").arg(process_name));
     if (!tasklist.waitForStarted(sak::kTimerServiceDelayMs)) {
-        sak::logWarning("tasklist failed to start for process: {}",
-                        process_name.toStdString());
+        sak::logWarning("tasklist failed to start for process: {}", process_name.toStdString());
         return false;
     }
     if (!tasklist.waitForFinished(sak::kTimerServiceDelayMs)) {
-        sak::logWarning("tasklist timed out checking for process: {}",
-                        process_name.toStdString());
+        sak::logWarning("tasklist timed out checking for process: {}", process_name.toStdString());
         tasklist.kill();
         return false;
     }
 
     if (tasklist.exitCode() != 0) {
         sak::logDebug("tasklist returned exit code {} for process: {}",
-                      tasklist.exitCode(), process_name.toStdString());
+                      tasklist.exitCode(),
+                      process_name.toStdString());
         return false;
     }
 
@@ -338,4 +345,4 @@ bool ScreenshotSettingsAction::isProcessRunning(const QString& process_name) {
     return output.contains(process_name, Qt::CaseInsensitive);
 }
 
-} // namespace sak
+}  // namespace sak

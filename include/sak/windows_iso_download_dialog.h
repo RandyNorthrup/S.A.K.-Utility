@@ -6,15 +6,15 @@
 #include "sak/uup_dump_api.h"
 #include "sak/uup_iso_builder.h"
 
-#include <QDialog>
 #include <QComboBox>
-#include <QProgressBar>
+#include <QDialog>
 #include <QLabel>
-#include <QPushButton>
 #include <QLineEdit>
 #include <QListWidget>
-#include <QString>
 #include <QMap>
+#include <QProgressBar>
+#include <QPushButton>
+#include <QString>
 
 class QVBoxLayout;
 class WindowsISODownloader;
@@ -52,10 +52,8 @@ Q_SIGNALS:
 private Q_SLOTS:
     // API result handlers
     void onBuildsFetched(const QList<UupDumpApi::BuildInfo>& builds);
-    void onLanguagesFetched(const QStringList& langCodes,
-                            const QMap<QString, QString>& langNames);
-    void onEditionsFetched(const QStringList& editions,
-                           const QMap<QString, QString>& editionNames);
+    void onLanguagesFetched(const QStringList& langCodes, const QMap<QString, QString>& langNames);
+    void onEditionsFetched(const QStringList& editions, const QMap<QString, QString>& editionNames);
 
     // Build progress handlers
     void onPhaseChanged(UupIsoBuilder::Phase phase, const QString& description);

@@ -271,12 +271,12 @@ struct NetworkAdapterInfo {
     QString adapterType;       // "Ethernet" / "WiFi" / "VPN" / "Loopback"
     QString macAddress;        // "00:1A:2B:3C:4D:5E"
     uint32_t interfaceIndex;   // Windows interface index
-    
+
     // Status
     bool isConnected;          // Media connected
     uint64_t linkSpeedBps;     // e.g., 1000000000 (1 Gbps)
     QString mediaState;        // "Connected" / "Disconnected"
-    
+
     // IPv4 Configuration
     QVector<QString> ipv4Addresses;
     QVector<QString> ipv4SubnetMasks;
@@ -286,17 +286,17 @@ struct NetworkAdapterInfo {
     QString dhcpServer;
     QDateTime dhcpLeaseObtained;
     QDateTime dhcpLeaseExpires;
-    
+
     // IPv6 Configuration
     QVector<QString> ipv6Addresses;
     QString ipv6Gateway;
     QVector<QString> ipv6DnsServers;
-    
+
     // Driver Info
     QString driverName;
     QString driverVersion;
     QString driverDate;
-    
+
     // Statistics
     uint64_t bytesReceived;
     uint64_t bytesSent;
@@ -313,19 +313,19 @@ class NetworkAdapterInspector : public QObject {
     Q_OBJECT
 public:
     explicit NetworkAdapterInspector(QObject* parent = nullptr);
-    
+
     void scan();
     void refresh();
-    
+
 Q_SIGNALS:
     void scanComplete(QVector<NetworkAdapterInfo> adapters);
     void errorOccurred(QString error);
-    
+
 private:
     QVector<NetworkAdapterInfo> m_adapters;
-    
+
     QVector<NetworkAdapterInfo> enumerateAdapters();
-    
+
     // Uses GetAdaptersAddresses (IP_ADAPTER_ADDRESSES)
     // with GAA_FLAG_INCLUDE_ALL_INTERFACES for complete enumeration
 };
@@ -337,16 +337,16 @@ QVector<NetworkAdapterInfo> NetworkAdapterInspector::enumerateAdapters() {
     ULONG bufferSize = 15000;
     auto buffer = std::make_unique<uint8_t[]>(bufferSize);
     auto addresses = reinterpret_cast<PIP_ADAPTER_ADDRESSES>(buffer.get());
-    
+
     ULONG flags = GAA_FLAG_INCLUDE_PREFIX | GAA_FLAG_INCLUDE_GATEWAYS;
     ULONG result = GetAdaptersAddresses(AF_UNSPEC, flags, nullptr, addresses, &bufferSize);
-    
+
     if (result == ERROR_BUFFER_OVERFLOW) {
         buffer = std::make_unique<uint8_t[]>(bufferSize);
         addresses = reinterpret_cast<PIP_ADAPTER_ADDRESSES>(buffer.get());
         result = GetAdaptersAddresses(AF_UNSPEC, flags, nullptr, addresses, &bufferSize);
     }
-    
+
     QVector<NetworkAdapterInfo> adapters;
     if (result == NO_ERROR) {
         for (auto addr = addresses; addr != nullptr; addr = addr->Next) {
@@ -376,7 +376,7 @@ QVector<NetworkAdapterInfo> NetworkAdapterInspector::enumerateAdapters() {
 struct PingResult {
     QString target;            // Hostname or IP
     QString resolvedIP;        // Resolved IP address
-    
+
     struct PingReply {
         int sequenceNumber;
         bool success;
@@ -385,9 +385,9 @@ struct PingResult {
         QString replyFrom;     // IP of responder
         QString errorMessage;  // If !success
     };
-    
+
     QVector<PingReply> replies;
-    
+
     // Statistics
     int sent;
     int received;
@@ -456,7 +456,7 @@ public:
         int ttl = 128;               // Time to Live
         bool resolveHostnames = true;
     };
-    
+
     struct TracerouteConfig {
         QString target;
         int maxHops = 30;
@@ -464,7 +464,7 @@ public:
         int probesPerHop = 3;
         bool resolveHostnames = true;
     };
-    
+
     struct MtrConfig {
         QString target;
         int cycles = 100;            // Number of ping cycles
@@ -472,36 +472,36 @@ public:
         int maxHops = 30;
         int timeoutMs = 5000;
     };
-    
+
     explicit ConnectivityTester(QObject* parent = nullptr);
-    
+
     void ping(const PingConfig& config);
     void traceroute(const TracerouteConfig& config);
     void mtr(const MtrConfig& config);
     void cancel();
-    
+
 Q_SIGNALS:
     // Ping signals (real-time per-reply)
     void pingReply(int sequence, bool success, double rttMs, int ttl, QString from);
     void pingComplete(PingResult result);
-    
+
     // Traceroute signals (real-time per-hop)
     void tracerouteHop(TracerouteHop hop);
     void tracerouteComplete(TracerouteResult result);
-    
+
     // MTR signals (real-time updates)
     void mtrUpdate(QVector<MtrHopStats> hops, int cycle);
     void mtrComplete(MtrResult result);
-    
+
     void errorOccurred(QString error);
-    
+
 private:
     std::atomic<bool> m_cancelled{false};
-    
+
     // ICMP via Windows API (IcmpSendEcho2)
-    PingResult::PingReply sendIcmpEcho(const QString& target, int timeoutMs, 
+    PingResult::PingReply sendIcmpEcho(const QString& target, int timeoutMs,
                                        int packetSize, int ttl);
-    
+
     // Traceroute via incremental TTL
     TracerouteHop probeHop(const QString& target, int ttl, int timeoutMs, int probes);
 };
@@ -510,52 +510,52 @@ private:
 **ICMP Ping Implementation (Windows API)**:
 ```cpp
 PingResult::PingReply ConnectivityTester::sendIcmpEcho(
-    const QString& target, int timeoutMs, int packetSize, int ttl) 
+    const QString& target, int timeoutMs, int packetSize, int ttl)
 {
     HANDLE hIcmp = IcmpCreateFile();
     if (hIcmp == INVALID_HANDLE_VALUE) {
         return {0, false, 0, 0, "", "Failed to create ICMP handle"};
     }
-    
+
     // Resolve hostname
     IN_ADDR destAddr;
     // ... DNS resolution via getaddrinfo
-    
+
     // Set TTL via IP_OPTION_INFORMATION
     IP_OPTION_INFORMATION options{};
     options.Ttl = static_cast<UCHAR>(ttl);
-    
+
     // Send data buffer
     auto sendData = std::make_unique<char[]>(packetSize);
     std::fill_n(sendData.get(), packetSize, 'A');
-    
+
     // Reply buffer
     DWORD replySize = sizeof(ICMP_ECHO_REPLY) + packetSize;
     auto replyBuffer = std::make_unique<char[]>(replySize);
-    
+
     auto start = std::chrono::high_resolution_clock::now();
-    
+
     DWORD numReplies = IcmpSendEcho(
         hIcmp, destAddr.S_un.S_addr,
         sendData.get(), static_cast<WORD>(packetSize),
         &options, replyBuffer.get(), replySize,
         static_cast<DWORD>(timeoutMs));
-    
+
     auto end = std::chrono::high_resolution_clock::now();
     double rtt = std::chrono::duration<double, std::milli>(end - start).count();
-    
+
     IcmpCloseHandle(hIcmp);
-    
+
     if (numReplies > 0) {
         auto reply = reinterpret_cast<PICMP_ECHO_REPLY>(replyBuffer.get());
         IN_ADDR replyAddr;
         replyAddr.S_un.S_addr = reply->Address;
-        
-        return {0, true, static_cast<double>(reply->RoundTripTime), 
-                reply->Options.Ttl, 
+
+        return {0, true, static_cast<double>(reply->RoundTripTime),
+                reply->Options.Ttl,
                 QString::fromLatin1(inet_ntoa(replyAddr)), ""};
     }
-    
+
     return {0, false, 0, 0, "", "Request timed out"};
 }
 ```
@@ -572,17 +572,17 @@ struct DnsQueryResult {
     QString queryName;           // "example.com"
     QString recordType;          // "A" / "AAAA" / "MX" / "CNAME" / "TXT" / "SOA" / "NS" / "SRV" / "PTR"
     QString dnsServer;           // Server used for query
-    
+
     bool success;
     double responseTimeMs;
-    
+
     QVector<QString> answers;    // Resolved addresses/values
     QString errorMessage;
-    
+
     // Raw details
     int ttlSeconds;
     QString authoritySection;
-    
+
     QDateTime queryTimestamp;
 };
 
@@ -590,7 +590,7 @@ struct DnsServerComparison {
     QString queryName;
     QString recordType;
     QVector<DnsQueryResult> results;  // One per DNS server tested
-    
+
     // Analysis
     bool allAgree;               // All servers return same answers
     QString fastestServer;       // Lowest response time
@@ -604,26 +604,26 @@ class DnsDiagnosticTool : public QObject {
     Q_OBJECT
 public:
     explicit DnsDiagnosticTool(QObject* parent = nullptr);
-    
+
     // Single query
     void query(const QString& hostname, const QString& recordType = "A",
                const QString& dnsServer = ""); // Empty = system default
-    
+
     // Reverse lookup
     void reverseLookup(const QString& ipAddress, const QString& dnsServer = "");
-    
+
     // Multi-server comparison
     void compareServers(const QString& hostname, const QString& recordType,
                         const QStringList& dnsServers);
-    
+
     // DNS cache inspection
     void inspectDnsCache();
-    
+
     // Flush DNS cache
     void flushDnsCache();
-    
+
     void cancel();
-    
+
     // Well-known DNS servers
     static QVector<QPair<QString, QString>> wellKnownDnsServers() {
         return {
@@ -638,14 +638,14 @@ public:
             {"OpenDNS (Secondary)", "208.67.220.220"},
         };
     }
-    
+
 Q_SIGNALS:
     void queryComplete(DnsQueryResult result);
     void comparisonComplete(DnsServerComparison comparison);
     void dnsCacheResults(QVector<QPair<QString, QString>> entries);
     void dnsCacheFlushed();
     void errorOccurred(QString error);
-    
+
 private:
     // Use Qt's QDnsLookup for record-type queries
     // Use DnsQuery_W API for specific server targeting
@@ -657,15 +657,15 @@ private:
 **DNS Query with Specific Server (Windows API)**:
 ```cpp
 DnsQueryResult DnsDiagnosticTool::performQuery(
-    const QString& hostname, const QString& recordType, const QString& dnsServer) 
+    const QString& hostname, const QString& recordType, const QString& dnsServer)
 {
     DnsQueryResult result;
     result.queryName = hostname;
     result.recordType = recordType;
     result.dnsServer = dnsServer.isEmpty() ? "System Default" : dnsServer;
-    
+
     auto start = std::chrono::high_resolution_clock::now();
-    
+
     WORD type = DNS_TYPE_A;
     if (recordType == "AAAA") type = DNS_TYPE_AAAA;
     else if (recordType == "MX") type = DNS_TYPE_MX;
@@ -675,13 +675,13 @@ DnsQueryResult DnsDiagnosticTool::performQuery(
     else if (recordType == "NS") type = DNS_TYPE_NS;
     else if (recordType == "SRV") type = DNS_TYPE_SRV;
     else if (recordType == "PTR") type = DNS_TYPE_PTR;
-    
+
     DNS_QUERY_REQUEST request{};
     request.Version = DNS_QUERY_REQUEST_VERSION1;
     request.QueryName = hostname.toStdWString().c_str();
     request.QueryType = type;
     request.QueryOptions = DNS_QUERY_BYPASS_CACHE; // Always query fresh
-    
+
     // Set custom DNS server if specified
     IP4_ARRAY serverList{};
     if (!dnsServer.isEmpty()) {
@@ -689,7 +689,7 @@ DnsQueryResult DnsDiagnosticTool::performQuery(
         inet_pton(AF_INET, dnsServer.toLatin1().constData(), &serverList.AddrArray[0]);
         // Use legacy DnsQuery_W with pExtra parameter for server override
     }
-    
+
     PDNS_RECORD dnsRecord = nullptr;
     DNS_STATUS status = DnsQuery_W(
         hostname.toStdWString().c_str(),
@@ -698,10 +698,10 @@ DnsQueryResult DnsDiagnosticTool::performQuery(
         dnsServer.isEmpty() ? nullptr : &serverList,
         &dnsRecord,
         nullptr);
-    
+
     auto end = std::chrono::high_resolution_clock::now();
     result.responseTimeMs = std::chrono::duration<double, std::milli>(end - start).count();
-    
+
     if (status == 0 && dnsRecord) {
         result.success = true;
         // Parse DNS_RECORD linked list for answers
@@ -719,7 +719,7 @@ DnsQueryResult DnsDiagnosticTool::performQuery(
         result.success = false;
         result.errorMessage = QString("DNS query failed with status %1").arg(status);
     }
-    
+
     result.queryTimestamp = QDateTime::currentDateTime();
     return result;
 }
@@ -736,15 +736,15 @@ DnsQueryResult DnsDiagnosticTool::performQuery(
 struct PortScanResult {
     QString target;
     uint16_t port;
-    
+
     enum State { Open, Closed, Filtered, Error };
     State state;
-    
+
     double responseTimeMs;
     QString serviceName;         // "HTTP" / "HTTPS" / "SSH" / "RDP"
     QString banner;              // Service banner (if retrieved)
     QString errorMessage;
-    
+
     QDateTime scanTimestamp;
 };
 
@@ -769,12 +769,12 @@ public:
         int maxConcurrent = 50;         // Concurrent connections
         bool grabBanners = true;        // Attempt banner grabbing
     };
-    
+
     explicit PortScanner(QObject* parent = nullptr);
-    
+
     void scan(const ScanConfig& config);
     void cancel();
-    
+
     // Common presets
     static QVector<PortPreset> getPresets() {
         return {
@@ -788,22 +788,22 @@ public:
             {"Top 100", {/* top 100 most common ports */}},
         };
     }
-    
+
 Q_SIGNALS:
     void scanStarted(QString target, int totalPorts);
     void portScanned(PortScanResult result);
     void scanProgress(int scanned, int total);
     void scanComplete(QVector<PortScanResult> results);
     void errorOccurred(QString error);
-    
+
 private:
     std::atomic<bool> m_cancelled{false};
-    
-    PortScanResult scanPort(const QString& target, uint16_t port, 
+
+    PortScanResult scanPort(const QString& target, uint16_t port,
                             int timeoutMs, bool grabBanner);
     QString grabBanner(QTcpSocket& socket, uint16_t port);
     QString getServiceName(uint16_t port);
-    
+
     // Service name database (well-known ports)
     static const QHash<uint16_t, QString>& serviceDatabase();
 };
@@ -811,31 +811,31 @@ private:
 
 **TCP Connect Scan Implementation**:
 ```cpp
-PortScanResult PortScanner::scanPort(const QString& target, uint16_t port, 
+PortScanResult PortScanner::scanPort(const QString& target, uint16_t port,
                                       int timeoutMs, bool grabBannerFlag) {
     PortScanResult result;
     result.target = target;
     result.port = port;
     result.serviceName = getServiceName(port);
-    
+
     QTcpSocket socket;
-    
+
     auto start = std::chrono::high_resolution_clock::now();
-    
+
     socket.connectToHost(target, port);
     bool connected = socket.waitForConnected(timeoutMs);
-    
+
     auto end = std::chrono::high_resolution_clock::now();
     result.responseTimeMs = std::chrono::duration<double, std::milli>(end - start).count();
-    
+
     if (connected) {
         result.state = PortScanResult::Open;
-        
+
         // Attempt banner grab
         if (grabBannerFlag) {
             result.banner = grabBanner(socket, port);
         }
-        
+
         socket.disconnectFromHost();
     } else {
         QAbstractSocket::SocketError error = socket.error();
@@ -848,7 +848,7 @@ PortScanResult PortScanner::scanPort(const QString& target, uint16_t port,
             result.errorMessage = socket.errorString();
         }
     }
-    
+
     result.scanTimestamp = QDateTime::currentDateTime();
     return result;
 }
@@ -884,19 +884,19 @@ tools/
 struct BandwidthTestResult {
     enum TestMode { LAN_IPERF3, WAN_HTTP };
     TestMode mode;
-    
+
     QString target;            // iPerf3 server or URL
-    
+
     // Throughput
     double downloadMbps;       // Download speed (Mbps)
     double uploadMbps;         // Upload speed (Mbps)
-    
+
     // iPerf3 specific
     double tcpWindowSize;      // Negotiated window size
     double retransmissions;    // TCP retransmits count
     double jitterMs;           // UDP jitter (if UDP mode)
     double packetLossPercent;  // UDP packet loss (if UDP mode)
-    
+
     // Per-interval data (for graphing)
     struct IntervalData {
         double startSec;
@@ -905,12 +905,12 @@ struct BandwidthTestResult {
         int retransmits;
     };
     QVector<IntervalData> intervals;
-    
+
     // Test parameters
     int durationSec;
     int parallelStreams;
     bool reverseMode;          // Server sends to client
-    
+
     QDateTime timestamp;
 };
 ```
@@ -929,44 +929,44 @@ public:
         bool udpMode = false;
         int udpBandwidthMbps = 100;  // Target UDP bandwidth
     };
-    
+
     explicit BandwidthTester(QObject* parent = nullptr);
-    
+
     // Start iPerf3 server (so another SAK instance can test against this one)
     void startIperfServer(uint16_t port = 5201);
     void stopIperfServer();
     bool isServerRunning() const;
-    
+
     // Run iPerf3 client test against a server
     void runIperfTest(const IperfConfig& config);
-    
+
     // Simple HTTP-based internet speed test
     void runHttpSpeedTest(const QString& downloadUrl = "");
-    
+
     void cancel();
-    
+
 Q_SIGNALS:
     // Server signals
     void serverStarted(uint16_t port);
     void serverStopped();
     void serverClientConnected(QString clientIP);
-    
+
     // Client test signals
     void testStarted(QString target);
     void testProgress(double currentMbps, double elapsedSec, double totalSec);
     void testComplete(BandwidthTestResult result);
-    
+
     // HTTP speed test signals
     void httpSpeedTestProgress(double downloadMbps, double uploadMbps);
     void httpSpeedTestComplete(double downloadMbps, double uploadMbps, double latencyMs);
-    
+
     void errorOccurred(QString error);
-    
+
 private:
     QString m_iperf3Path;      // Path to bundled iperf3.exe
     QProcess* m_serverProcess = nullptr;
     QProcess* m_clientProcess = nullptr;
-    
+
     BandwidthTestResult parseIperfJson(const QByteArray& json);
 };
 ```
@@ -980,18 +980,18 @@ void BandwidthTester::runIperfTest(const IperfConfig& config) {
     args << "-t" << QString::number(config.durationSec);
     args << "-P" << QString::number(config.parallelStreams);
     args << "--json";  // JSON output for parsing
-    
+
     if (config.udpMode) {
         args << "-u" << "-b" << QString("%1M").arg(config.udpBandwidthMbps);
     }
-    
+
     if (config.bidirectional) {
         args << "--bidir";
     }
-    
+
     m_clientProcess = new QProcess(this);
     m_clientProcess->start(m_iperf3Path, args);
-    
+
     connect(m_clientProcess, &QProcess::finished, this, [this](int exitCode) {
         QByteArray output = m_clientProcess->readAllStandardOutput();
         BandwidthTestResult result = parseIperfJson(output);
@@ -1002,7 +1002,7 @@ void BandwidthTester::runIperfTest(const IperfConfig& config) {
 void BandwidthTester::startIperfServer(uint16_t port) {
     m_serverProcess = new QProcess(this);
     m_serverProcess->start(m_iperf3Path, {"-s", "-p", QString::number(port), "--json"});
-    
+
     if (m_serverProcess->waitForStarted(5000)) {
         emit serverStarted(port);
     } else {
@@ -1023,26 +1023,26 @@ struct WiFiNetworkInfo {
     // Identity
     QString ssid;              // Network name (empty for hidden)
     QString bssid;             // MAC address of AP
-    
+
     // Signal
     int signalQuality;         // 0-100 (Windows quality %)
     int rssiDbm;               // Signal strength in dBm (-30 to -90)
-    
+
     // Channel / Frequency
     uint32_t channelFrequencyKHz;  // e.g., 2437000 (channel 6)
     int channelNumber;             // e.g., 6
     QString band;                  // "2.4 GHz" / "5 GHz" / "6 GHz"
     int channelWidthMHz;           // 20 / 40 / 80 / 160
-    
+
     // Security
     QString authentication;    // "WPA2-Personal" / "WPA3-Personal" / "Open" / "WEP"
     QString encryption;        // "AES" / "TKIP" / "None"
     bool isSecure;             // true if WPA2+ with AES
-    
+
     // Network
     QString bssType;           // "Infrastructure" / "Ad-Hoc"
     bool isConnected;          // Currently connected to this network
-    
+
     // Vendor
     QString apVendor;          // OUI lookup from BSSID (e.g., "Cisco", "Ubiquiti")
 };
@@ -1063,26 +1063,26 @@ class WiFiAnalyzer : public QObject {
     Q_OBJECT
 public:
     explicit WiFiAnalyzer(QObject* parent = nullptr);
-    
+
     void scan();                     // Trigger new WiFi scan
     void startContinuousScan(int intervalMs = 5000);
     void stopContinuousScan();
-    
+
     QVector<WiFiNetworkInfo> getLastScanResults() const;
     QVector<WiFiChannelUtilization> getChannelUtilization() const;
-    
+
     WiFiNetworkInfo getCurrentConnection() const;
-    
+
 Q_SIGNALS:
     void scanComplete(QVector<WiFiNetworkInfo> networks);
     void channelUtilizationUpdated(QVector<WiFiChannelUtilization> channels);
     void errorOccurred(QString error);
-    
+
 private:
     QVector<WiFiNetworkInfo> m_lastScan;
     HANDLE m_wlanHandle = nullptr;
     GUID m_interfaceGuid{};
-    
+
     bool initializeWlan();
     void cleanupWlan();
     QVector<WiFiNetworkInfo> performWlanScan();
@@ -1099,23 +1099,23 @@ private:
 QVector<WiFiNetworkInfo> WiFiAnalyzer::performWlanScan() {
     // Trigger scan
     WlanScan(m_wlanHandle, &m_interfaceGuid, nullptr, nullptr, nullptr);
-    
+
     // Get available networks
     PWLAN_AVAILABLE_NETWORK_LIST networkList = nullptr;
     DWORD result = WlanGetAvailableNetworkList(m_wlanHandle, &m_interfaceGuid,
                                                 0, nullptr, &networkList);
-    
+
     // Also get BSS list for detailed RF info
     PWLAN_BSS_LIST bssList = nullptr;
     WlanGetNetworkBssList(m_wlanHandle, &m_interfaceGuid, nullptr,
                           dot11_BSS_type_any, FALSE, nullptr, &bssList);
-    
+
     QVector<WiFiNetworkInfo> networks;
-    
+
     if (bssList) {
         for (DWORD i = 0; i < bssList->dwNumberOfItems; ++i) {
             const WLAN_BSS_ENTRY& bss = bssList->wlanBssEntries[i];
-            
+
             WiFiNetworkInfo info;
             info.ssid = QString::fromUtf8(
                 reinterpret_cast<const char*>(bss.dot11Ssid.ucSSID),
@@ -1127,17 +1127,17 @@ QVector<WiFiNetworkInfo> WiFiAnalyzer::performWlanScan() {
             info.channelNumber = frequencyToChannel(bss.ulChCenterFrequency);
             info.band = frequencyToBand(bss.ulChCenterFrequency);
             info.apVendor = lookupVendor(info.bssid);
-            
+
             // Parse security from IE (Information Elements)
             // ... parse RSN/WPA IE for auth/encryption details
-            
+
             networks.append(info);
         }
         WlanFreeMemory(bssList);
     }
-    
+
     if (networkList) WlanFreeMemory(networkList);
-    
+
     return networks;
 }
 ```
@@ -1153,20 +1153,20 @@ QVector<WiFiNetworkInfo> WiFiAnalyzer::performWlanScan() {
 struct ConnectionInfo {
     enum Protocol { TCP, UDP };
     Protocol protocol;
-    
+
     QString localAddress;
     uint16_t localPort;
     QString remoteAddress;
     uint16_t remotePort;
-    
+
     // TCP state
     QString state;             // "ESTABLISHED", "LISTEN", "TIME_WAIT", "SYN_SENT", etc.
-    
+
     // Process info
     DWORD processId;
     QString processName;       // "chrome.exe"
     QString processPath;       // "C:\Program Files\Google\Chrome..."
-    
+
     // Resolved names (optional)
     QString remoteHostname;    // Reverse DNS of remote address
     QString serviceName;       // Service name for local/remote port
@@ -1186,26 +1186,26 @@ public:
         QString filterProcessName;          // Filter by process name
         uint16_t filterPort = 0;           // Filter by port (0 = all)
     };
-    
+
     explicit ActiveConnectionsMonitor(QObject* parent = nullptr);
-    
+
     void startMonitoring(const MonitorConfig& config = {});
     void stopMonitoring();
-    
+
     void refreshNow();
-    
+
     QVector<ConnectionInfo> getCurrentConnections() const;
-    
+
 Q_SIGNALS:
     void connectionsUpdated(QVector<ConnectionInfo> connections);
     void newConnectionDetected(ConnectionInfo connection);
     void connectionClosed(ConnectionInfo connection);
     void errorOccurred(QString error);
-    
+
 private:
     QTimer* m_refreshTimer;
     QVector<ConnectionInfo> m_lastConnections;
-    
+
     QVector<ConnectionInfo> enumerateTcpConnections();
     QVector<ConnectionInfo> enumerateUdpListeners();
     QString getProcessName(DWORD pid);
@@ -1217,35 +1217,35 @@ private:
 ```cpp
 QVector<ConnectionInfo> ActiveConnectionsMonitor::enumerateTcpConnections() {
     ULONG bufferSize = 0;
-    GetExtendedTcpTable(nullptr, &bufferSize, FALSE, AF_INET, 
+    GetExtendedTcpTable(nullptr, &bufferSize, FALSE, AF_INET,
                         TCP_TABLE_OWNER_PID_ALL, 0);
-    
+
     auto buffer = std::make_unique<uint8_t[]>(bufferSize);
     auto table = reinterpret_cast<PMIB_TCPTABLE_OWNER_PID>(buffer.get());
-    
+
     if (GetExtendedTcpTable(table, &bufferSize, FALSE, AF_INET,
                             TCP_TABLE_OWNER_PID_ALL, 0) != NO_ERROR) {
         return {};
     }
-    
+
     QVector<ConnectionInfo> connections;
     for (DWORD i = 0; i < table->dwNumEntries; ++i) {
         const auto& row = table->table[i];
-        
+
         ConnectionInfo info;
         info.protocol = ConnectionInfo::TCP;
-        
+
         IN_ADDR localAddr, remoteAddr;
         localAddr.S_un.S_addr = row.dwLocalAddr;
         remoteAddr.S_un.S_addr = row.dwRemoteAddr;
-        
+
         info.localAddress = QString::fromLatin1(inet_ntoa(localAddr));
         info.localPort = ntohs(static_cast<uint16_t>(row.dwLocalPort));
         info.remoteAddress = QString::fromLatin1(inet_ntoa(remoteAddr));
         info.remotePort = ntohs(static_cast<uint16_t>(row.dwRemotePort));
         info.processId = row.dwOwningPid;
         info.processName = getProcessName(row.dwOwningPid);
-        
+
         // Map TCP state
         switch (row.dwState) {
             case MIB_TCP_STATE_ESTAB: info.state = "ESTABLISHED"; break;
@@ -1261,10 +1261,10 @@ QVector<ConnectionInfo> ActiveConnectionsMonitor::enumerateTcpConnections() {
             case MIB_TCP_STATE_CLOSED: info.state = "CLOSED"; break;
             default: info.state = "UNKNOWN"; break;
         }
-        
+
         connections.append(info);
     }
-    
+
     return connections;
 }
 ```
@@ -1281,27 +1281,27 @@ struct FirewallRule {
     QString name;
     QString description;
     bool enabled;
-    
+
     enum Direction { Inbound, Outbound };
     Direction direction;
-    
+
     enum Action { Allow, Block };
     Action action;
-    
+
     enum Protocol { TCP, UDP, ICMPv4, ICMPv6, Any };
     Protocol protocol;
-    
+
     QString localPorts;        // "80,443" or "1024-65535" or "*"
     QString remotePorts;       // Same format
     QString localAddresses;    // "10.0.0.0/8" or "*" or "LocalSubnet"
     QString remoteAddresses;   // Same format
-    
+
     QString applicationPath;   // "C:\Program Files\App\app.exe" or "*"
     QString serviceName;       // Windows service name or "*"
-    
+
     enum Profile { Domain = 1, Private = 2, Public = 4 };
     int profiles;              // Bitmask of profiles
-    
+
     QString grouping;          // Rule group
 };
 
@@ -1327,30 +1327,30 @@ class FirewallRuleAuditor : public QObject {
     Q_OBJECT
 public:
     explicit FirewallRuleAuditor(QObject* parent = nullptr);
-    
+
     void enumerateRules();
     void detectConflicts();
     void analyzeGaps();
     void fullAudit();          // Enumerate + conflicts + gaps
-    
+
     // Search/filter
-    QVector<FirewallRule> findRulesByPort(uint16_t port, 
+    QVector<FirewallRule> findRulesByPort(uint16_t port,
                                           FirewallRule::Direction direction);
     QVector<FirewallRule> findRulesByApplication(const QString& appPath);
     QVector<FirewallRule> findRulesByName(const QString& nameFilter);
-    
+
 Q_SIGNALS:
     void rulesEnumerated(QVector<FirewallRule> rules);
     void conflictsDetected(QVector<FirewallConflict> conflicts);
     void gapsAnalyzed(QVector<FirewallGap> gaps);
-    void auditComplete(QVector<FirewallRule> rules, 
+    void auditComplete(QVector<FirewallRule> rules,
                        QVector<FirewallConflict> conflicts,
                        QVector<FirewallGap> gaps);
     void errorOccurred(QString error);
-    
+
 private:
     QVector<FirewallRule> m_rules;
-    
+
     QVector<FirewallRule> enumerateViaNetsh();
     QVector<FirewallRule> enumerateViaCOM();
     QVector<FirewallConflict> findConflicts(const QVector<FirewallRule>& rules);
@@ -1363,51 +1363,51 @@ private:
 QVector<FirewallRule> FirewallRuleAuditor::enumerateViaCOM() {
     // Initialize COM
     CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
-    
+
     // Create firewall policy instance
     INetFwPolicy2* fwPolicy = nullptr;
     CoCreateInstance(__uuidof(NetFwPolicy2), nullptr, CLSCTX_INPROC_SERVER,
                      __uuidof(INetFwPolicy2), reinterpret_cast<void**>(&fwPolicy));
-    
+
     // Get rules collection
     INetFwRules* fwRules = nullptr;
     fwPolicy->get_Rules(&fwRules);
-    
+
     // Enumerate
     IEnumVARIANT* enumVar = nullptr;
     IUnknown* unknown = nullptr;
     fwRules->get__NewEnum(&unknown);
     unknown->QueryInterface(__uuidof(IEnumVARIANT), reinterpret_cast<void**>(&enumVar));
-    
+
     QVector<FirewallRule> rules;
     VARIANT var;
     VariantInit(&var);
-    
+
     while (enumVar->Next(1, &var, nullptr) == S_OK) {
         INetFwRule* fwRule = nullptr;
         var.punkVal->QueryInterface(__uuidof(INetFwRule), reinterpret_cast<void**>(&fwRule));
-        
+
         FirewallRule rule;
         BSTR name, desc, appPath, ports;
-        
+
         fwRule->get_Name(&name);
         rule.name = QString::fromWCharArray(name);
         SysFreeString(name);
-        
+
         // ... extract all properties
-        
+
         rules.append(rule);
         fwRule->Release();
         VariantClear(&var);
     }
-    
+
     // Cleanup COM objects
     enumVar->Release();
     unknown->Release();
     fwRules->Release();
     fwPolicy->Release();
     CoUninitialize();
-    
+
     return rules;
 }
 ```
@@ -1424,18 +1424,18 @@ struct NetworkShareInfo {
     QString hostName;          // Server name or IP
     QString shareName;         // "Documents$", "Public"
     QString uncPath;           // "\\\\server\\share"
-    
+
     enum ShareType { Disk, Printer, Device, IPC, Special };
     ShareType type;
-    
+
     QString remark;            // Share description
-    
+
     // Access testing
     bool canRead = false;
     bool canWrite = false;
     bool requiresAuth = false;
     QString accessError;
-    
+
     QDateTime discovered;
 };
 ```
@@ -1446,22 +1446,22 @@ class NetworkShareBrowser : public QObject {
     Q_OBJECT
 public:
     explicit NetworkShareBrowser(QObject* parent = nullptr);
-    
+
     void discoverShares(const QString& hostname);
     void discoverSharesOnSubnet(const QString& subnet); // "192.168.1.0/24"
     void testAccess(const QString& uncPath);
-    
+
     void cancel();
-    
+
 Q_SIGNALS:
     void shareDiscovered(NetworkShareInfo share);
     void discoveryComplete(QVector<NetworkShareInfo> shares);
     void accessTestComplete(QString uncPath, bool canRead, bool canWrite);
     void errorOccurred(QString error);
-    
+
 private:
     std::atomic<bool> m_cancelled{false};
-    
+
     QVector<NetworkShareInfo> enumerateShares(const QString& hostname);
     QPair<bool, bool> testReadWriteAccess(const QString& uncPath);
 };
@@ -1492,61 +1492,61 @@ public:
         BrowsingShares,
         GeneratingReport
     };
-    
+
     explicit NetworkDiagnosticController(QObject* parent = nullptr);
     ~NetworkDiagnosticController();
-    
+
     // Adapter inspection
     void scanAdapters();
-    
+
     // Connectivity
     void ping(const ConnectivityTester::PingConfig& config);
     void traceroute(const ConnectivityTester::TracerouteConfig& config);
     void mtr(const ConnectivityTester::MtrConfig& config);
-    
+
     // DNS
-    void dnsQuery(const QString& hostname, const QString& recordType, 
+    void dnsQuery(const QString& hostname, const QString& recordType,
                   const QString& dnsServer);
     void dnsCompare(const QString& hostname, const QString& recordType,
                     const QStringList& servers);
-    
+
     // Port scanning
     void scanPorts(const PortScanner::ScanConfig& config);
-    
+
     // Bandwidth
     void startIperfServer(uint16_t port = 5201);
     void stopIperfServer();
     void runBandwidthTest(const BandwidthTester::IperfConfig& config);
     void runHttpSpeedTest();
-    
+
     // WiFi
     void scanWiFi();
     void startContinuousWiFiScan();
     void stopContinuousWiFiScan();
-    
+
     // Connections
     void startConnectionMonitor();
     void stopConnectionMonitor();
-    
+
     // Firewall
     void auditFirewall();
-    
+
     // Shares
     void discoverShares(const QString& hostname);
-    
+
     // Report
     void generateReport(const QString& outputPath, const QString& format);
-    
+
     // Cancel
     void cancel();
-    
+
     State currentState() const;
-    
+
 Q_SIGNALS:
     void stateChanged(State newState);
     void statusMessage(QString message, int timeout);
     void progressUpdated(int percent, QString status);
-    
+
     // Component-specific signals forwarded from workers
     void adaptersScanComplete(QVector<NetworkAdapterInfo> adapters);
     void pingReply(int seq, bool success, double rttMs, int ttl, QString from);
@@ -1570,11 +1570,11 @@ Q_SIGNALS:
     void sharesDiscovered(QVector<NetworkShareInfo> shares);
     void reportGenerated(QString path);
     void errorOccurred(QString error);
-    
+
 private:
     State m_state = State::Idle;
     QThread* m_workerThread;
-    
+
     std::unique_ptr<NetworkAdapterInspector> m_adapterInspector;
     std::unique_ptr<ConnectivityTester> m_connectivityTester;
     std::unique_ptr<DnsDiagnosticTool> m_dnsTool;

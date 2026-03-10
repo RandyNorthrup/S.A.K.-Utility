@@ -409,7 +409,7 @@ echo Enter individual edition number to create solely
 echo Enter multiple editions numbers to create, separated with spaces
 echo %_ln1%
 echo.
-set /p _index= ^> Enter your option and press "Enter": 
+set /p _index= ^> Enter your option and press "Enter":
 if not defined _index set _Debug=1&goto :QUIT
 if "%_index%"=="0" (set "_tag= AIO"&set "_ta2=AIO"&set AIO=1&goto :MAINMENU)
 for %%# in (%_index%) do call :setindex %%#
@@ -463,7 +463,7 @@ echo.       5 - Create%_tag% install.esd
 echo.       6 - Configuration Options
 echo %_ln1%
 echo.
-set /p userinp= ^> Enter your option and press "Enter": 
+set /p userinp= ^> Enter your option and press "Enter":
 if not defined userinp set _Debug=1&goto :QUIT
 set userinp=%userinp:~0,1%
 if %userinp% equ 0 (set _Debug=1&goto :QUIT)
@@ -526,7 +526,7 @@ if %W10UI% neq 0 if %SkipApps% equ 0 (
 )
 echo %_ln1%
 echo.
-set /p userinp= ^> Enter your option and press "Enter": 
+set /p userinp= ^> Enter your option and press "Enter":
 if not defined userinp goto :MAINMENU
 set userinp=%userinp:~0,1%
 if %userinp%==0 goto :MAINMENU
@@ -699,8 +699,8 @@ if %AIO% equ 1 del /f /q ISOFOLDER\sources\ei.cfg %_Nul3%
 if %_count% gtr 1 del /f /q ISOFOLDER\sources\ei.cfg %_Nul3%
 )
 if %_build% geq 17063 (
-if exist "!_UUP!\ei.cfg" (copy /y "!_UUP!\ei.cfg" ISOFOLDER\sources\ei.cfg %_Nul3%) else if exist "ei.cfg" (copy /y "ei.cfg" ISOFOLDER\sources\ei.cfg %_Nul3%) 
-if exist "!_UUP!\pid.txt" (copy /y "!_UUP!\pid.txt" ISOFOLDER\sources\pid.txt %_Nul3%) else if exist "pid.txt" (copy /y "pid.txt" ISOFOLDER\sources\pid.txt %_Nul3%) 
+if exist "!_UUP!\ei.cfg" (copy /y "!_UUP!\ei.cfg" ISOFOLDER\sources\ei.cfg %_Nul3%) else if exist "ei.cfg" (copy /y "ei.cfg" ISOFOLDER\sources\ei.cfg %_Nul3%)
+if exist "!_UUP!\pid.txt" (copy /y "!_UUP!\pid.txt" ISOFOLDER\sources\pid.txt %_Nul3%) else if exist "pid.txt" (copy /y "pid.txt" ISOFOLDER\sources\pid.txt %_Nul3%)
 )
 if %AIO% neq 1 if %_count% leq 1 if /i "%editionid%"=="PPIPro" (
 (

@@ -4,28 +4,30 @@
 #pragma once
 
 #include "sak/streaming_decompressor.h"
-#include <QString>
+
 #include <QFile>
+#include <QString>
+
 #include <memory>
 
 namespace sak {
 
 /**
  * @brief Factory for creating appropriate decompressor instances
- * 
+ *
  * Auto-detects compression format from file extension and magic numbers.
  * Creates the correct decompressor type for the file.
- * 
+ *
  * Supported Formats:
  * - .gz, .gzip - Gzip (via zlib)
  * - .bz2, .bzip2 - Bzip2 (via libbz2)
  * - .xz, .lzma - XZ/LZMA (via liblzma)
- * 
+ *
  * Note: ZIP format is not supported for disk image decompression.
  * ZIP is multi-file archive format, while disk images are single compressed files.
- * 
+ *
  * Thread-Safety: Thread-safe. Can be called from multiple threads.
- * 
+ *
  * Example:
  * @code
  * auto decompressor = DecompressorFactory::create("image.iso.gz");
@@ -83,4 +85,4 @@ private:
     static bool readMagicNumber(const QString& filePath, unsigned char* buffer, int size);
 };
 
-} // namespace sak
+}  // namespace sak

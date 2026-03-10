@@ -80,8 +80,10 @@ private:
     /// @param iops Output: I/O operations per second
     /// @param avg_latency_us Output: average latency in microseconds
     /// @param latencies_out Optional: raw latency samples for P99 calculation
-    void runRandom4KRead(int queue_depth, double& read_mbps,
-                         double& iops, double& avg_latency_us,
+    void runRandom4KRead(int queue_depth,
+                         double& read_mbps,
+                         double& iops,
+                         double& avg_latency_us,
                          std::vector<double>* latencies_out = nullptr);
 
     /// @brief Run random 4K write benchmark at the given queue depth
@@ -90,8 +92,10 @@ private:
     /// @param iops Output: I/O operations per second
     /// @param avg_latency_us Output: average latency in microseconds
     /// @param latencies_out Optional: raw latency samples for P99 calculation
-    void runRandom4KWrite(int queue_depth, double& write_mbps,
-                          double& iops, double& avg_latency_us,
+    void runRandom4KWrite(int queue_depth,
+                          double& write_mbps,
+                          double& iops,
+                          double& avg_latency_us,
                           std::vector<double>* latencies_out = nullptr);
 
     /// @brief Run all benchmark phases (sequential + random I/O)
@@ -100,39 +104,57 @@ private:
 
     /// @brief Inner timing loop for random 4K read benchmark
     /// @return Elapsed time in seconds
-    double runRandom4KReadLoop(void* file_handle, uint8_t* buf_data,
-                                int queue_depth, uint64_t max_offset,
-                                int duration_ms, std::vector<double>& latencies,
-                                uint64_t& total_ops, uint64_t& total_bytes);
+    double runRandom4KReadLoop(void* file_handle,
+                               uint8_t* buf_data,
+                               int queue_depth,
+                               uint64_t max_offset,
+                               int duration_ms,
+                               std::vector<double>& latencies,
+                               uint64_t& total_ops,
+                               uint64_t& total_bytes);
 
     /// @brief Inner timing loop for random 4K write benchmark
     /// @return Elapsed time in seconds
-    double runRandom4KWriteLoop(void* file_handle, const uint8_t* buf_data,
-                                 int queue_depth, uint64_t max_offset,
-                                 int duration_ms, std::vector<double>& latencies,
-                                 uint64_t& total_ops, uint64_t& total_bytes);
+    double runRandom4KWriteLoop(void* file_handle,
+                                const uint8_t* buf_data,
+                                int queue_depth,
+                                uint64_t max_offset,
+                                int duration_ms,
+                                std::vector<double>& latencies,
+                                uint64_t& total_ops,
+                                uint64_t& total_bytes);
 
     /// @brief Execute a single random 4K read I/O operation
-    void processRandomReadOp(void* file_handle, uint8_t* buf_data,
-                             int queue_index, uint64_t offset,
+    void processRandomReadOp(void* file_handle,
+                             uint8_t* buf_data,
+                             int queue_index,
+                             uint64_t offset,
                              std::vector<double>& latencies,
-                             uint64_t& total_ops, uint64_t& total_bytes);
+                             uint64_t& total_ops,
+                             uint64_t& total_bytes);
 
     /// @brief Execute a single random 4K write I/O operation
-    void processRandomWriteOp(void* file_handle, const uint8_t* buf_data,
-                              int queue_index, uint64_t offset,
+    void processRandomWriteOp(void* file_handle,
+                              const uint8_t* buf_data,
+                              int queue_index,
+                              uint64_t offset,
                               std::vector<double>& latencies,
-                              uint64_t& total_ops, uint64_t& total_bytes);
+                              uint64_t& total_ops,
+                              uint64_t& total_bytes);
 
     /// @brief Execute a single sequential read pass
     /// @return Total bytes read in this pass
-    size_t readSequentialPass(void* file_handle, uint8_t* buffer,
-                              size_t bufSize, size_t total_bytes);
+    size_t readSequentialPass(void* file_handle,
+                              uint8_t* buffer,
+                              size_t bufSize,
+                              size_t total_bytes);
 
     /// @brief Execute a single sequential write pass
     /// @return Total bytes written in this pass
-    size_t writeSequentialPass(void* file_handle, const uint8_t* buffer,
-                               size_t bufSize, size_t total_bytes);
+    size_t writeSequentialPass(void* file_handle,
+                               const uint8_t* buffer,
+                               size_t bufSize,
+                               size_t total_bytes);
 
     /// @brief Calculate the P99 latency from a sorted list
     /// @param latencies Sorted vector of latencies
@@ -149,4 +171,4 @@ private:
     DiskBenchmarkResult m_result;
 };
 
-} // namespace sak
+}  // namespace sak

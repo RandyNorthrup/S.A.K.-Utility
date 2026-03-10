@@ -3,22 +3,23 @@
 
 #pragma once
 
-#include <QWidget>
-#include <QPushButton>
-#include <QLineEdit>
-#include <QTableWidget>
-#include <QTextEdit>
-#include <QLabel>
+#include "sak/widget_helpers.h"
+
 #include <QCheckBox>
 #include <QComboBox>
-#include <QSpinBox>
+#include <QLabel>
+#include <QLineEdit>
 #include <QListWidget>
-#include <QProgressBar>
-#include <QTabWidget>
 #include <QMap>
-#include <memory>
+#include <QProgressBar>
+#include <QPushButton>
+#include <QSpinBox>
+#include <QTableWidget>
+#include <QTabWidget>
+#include <QTextEdit>
+#include <QWidget>
 
-#include "sak/widget_helpers.h"
+#include <memory>
 
 class QVBoxLayout;
 class QGroupBox;
@@ -163,4 +164,4 @@ private:
     bool m_dedup_running{false};
 };
 
-} // namespace sak
+}  // namespace sak

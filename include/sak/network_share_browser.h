@@ -49,12 +49,11 @@ Q_SIGNALS:
 private:
     std::atomic<bool> m_cancelled{false};
 
-    [[nodiscard]] QVector<NetworkShareInfo> enumerateShares(
-        const QString& hostname);
+    [[nodiscard]] QVector<NetworkShareInfo> enumerateShares(const QString& hostname);
     [[nodiscard]] QPair<bool, bool> testReadWriteAccess(const QString& uncPath);
 };
 
-} // namespace sak
+}  // namespace sak
 
 static_assert(!std::is_copy_constructible_v<sak::NetworkShareBrowser>,
-    "NetworkShareBrowser must not be copyable.");
+              "NetworkShareBrowser must not be copyable.");

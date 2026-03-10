@@ -4,6 +4,7 @@
 #pragma once
 
 #include "sak/quick_action.h"
+
 #include <QDateTime>
 #include <QDir>
 #include <QString>
@@ -12,7 +13,7 @@ namespace sak {
 
 /**
  * @brief Screenshot Settings Action
- * 
+ *
  * Captures screenshots of all Windows Settings pages for documentation.
  */
 class ScreenshotSettingsAction : public QuickAction {
@@ -51,21 +52,28 @@ private:
     void waitForWindow(int ms);
 
     static QMap<QString, QString> buildSettingsPageMap();
-    bool captureSettingsPage(const QString& ms_uri, const QString& page_name,
-                             const QString& output_dir_path, const QString& timestamp);
+    bool captureSettingsPage(const QString& ms_uri,
+                             const QString& page_name,
+                             const QString& output_dir_path,
+                             const QString& timestamp);
     /// @brief Kill SystemSettings.exe and log any warning
     void closeSettingsApp();
     /// @brief Capture screenshots from all monitors into output_dir
-    bool captureAllScreens(const QDir& output_dir, const QString& page_name,
+    bool captureAllScreens(const QDir& output_dir,
+                           const QString& page_name,
                            const QString& timestamp);
-    void generateReport(const QString& output_dir_path, const QString& timestamp,
-                        int monitor_count, const CaptureResult& capture) const;
+    void generateReport(const QString& output_dir_path,
+                        const QString& timestamp,
+                        int monitor_count,
+                        const CaptureResult& capture) const;
 
     /// @brief Assemble structured log and ExecutionResult from capture outcome
-    void buildExecutionResult(const CaptureResult& capture, int total_pages,
-                              const QDir& output_dir, int monitor_count,
-                              const QString& timestamp, const QDateTime& start_time);
+    void buildExecutionResult(const CaptureResult& capture,
+                              int total_pages,
+                              const QDir& output_dir,
+                              int monitor_count,
+                              const QString& timestamp,
+                              const QDateTime& start_time);
 };
 
-} // namespace sak
-
+}  // namespace sak

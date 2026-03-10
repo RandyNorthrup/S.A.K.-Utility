@@ -41,4 +41,4 @@ private:
     QTcpSocket* m_socket{nullptr};
 };
 
-} // namespace sak
+}  // namespace sak

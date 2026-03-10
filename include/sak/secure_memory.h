@@ -7,13 +7,15 @@
 
 #pragma once
 
+#include <QtGlobal>
+
+#include <algorithm>
 #include <cstddef>
 #include <cstdio>
 #include <cstring>
 #include <memory>
-#include <string>
 #include <span>
-#include <algorithm>
+#include <string>
 
 namespace sak {
 
@@ -25,6 +27,7 @@ public:
     /// @param ptr Pointer to memory to wipe
     /// @param size Size of memory region in bytes
     static void wipe(void* ptr, std::size_t size) noexcept {
+        Q_ASSERT(ptr);
         if (ptr == nullptr || size == 0) {
             return;
         }
@@ -48,7 +51,7 @@ public:
     /// @brief Securely wipe std::span
     /// @tparam T Element type
     /// @param data Span to wipe
-    template<typename T>
+    template <typename T>
     static void wipe(std::span<T> data) noexcept {
         wipe(data.data(), data.size_bytes());
     }
@@ -56,7 +59,7 @@ public:
 
 /// @brief Custom allocator that zeros memory on deallocation
 /// @tparam T Type to allocate
-template<typename T>
+template <typename T>
 class secure_allocator {
 public:
     using value_type = T;
@@ -67,7 +70,7 @@ public:
     constexpr secure_allocator() noexcept = default;
     constexpr secure_allocator(const secure_allocator&) noexcept = default;
 
-    template<typename U>
+    template <typename U>
     constexpr secure_allocator(const secure_allocator<U>&) noexcept {}
 
     [[nodiscard]] T* allocate(std::size_t n) {
@@ -91,17 +94,15 @@ public:
         ::operator delete(ptr);
     }
 
-    template<typename U>
-    friend constexpr bool operator==(
-        const secure_allocator<T>&,
-        const secure_allocator<U>&) noexcept {
+    template <typename U>
+    friend constexpr bool operator==(const secure_allocator<T>&,
+                                     const secure_allocator<U>&) noexcept {
         return true;
     }
 
-    template<typename U>
-    friend constexpr bool operator!=(
-        const secure_allocator<T>&,
-        const secure_allocator<U>&) noexcept {
+    template <typename U>
+    friend constexpr bool operator!=(const secure_allocator<T>&,
+                                     const secure_allocator<U>&) noexcept {
         return false;
     }
 };
@@ -111,15 +112,12 @@ using secure_string = std::basic_string<char, std::char_traits<char>, secure_all
 
 /// @brief RAII wrapper for secure memory regions
 /// @tparam T Element type
-template<typename T>
+template <typename T>
 class secure_buffer {
 public:
     /// @brief Construct secure buffer with specified size
     /// @param size Number of elements
-    explicit secure_buffer(std::size_t size)
-        : m_data(std::make_unique<T[]>(size))
-        , m_size(size) {
-
+    explicit secure_buffer(std::size_t size) : m_data(std::make_unique<T[]>(size)), m_size(size) {
         // Zero initialize
         std::memset(m_data.get(), 0, size * sizeof(T));
     }
@@ -130,8 +128,7 @@ public:
 
     // Move allowed
     secure_buffer(secure_buffer&& other) noexcept
-        : m_data(std::move(other.m_data))
-        , m_size(other.m_size) {
+        : m_data(std::move(other.m_data)), m_size(other.m_size) {
         other.m_size = 0;
     }
 
@@ -146,29 +143,19 @@ public:
     }
 
     /// @brief Destructor - securely wipes memory
-    ~secure_buffer() {
-        clear();
-    }
+    ~secure_buffer() { clear(); }
 
     /// @brief Get pointer to buffer data
-    [[nodiscard]] T* data() noexcept {
-        return m_data.get();
-    }
+    [[nodiscard]] T* data() noexcept { return m_data.get(); }
 
     /// @brief Get const pointer to buffer data
-    [[nodiscard]] const T* data() const noexcept {
-        return m_data.get();
-    }
+    [[nodiscard]] const T* data() const noexcept { return m_data.get(); }
 
     /// @brief Get buffer size
-    [[nodiscard]] std::size_t size() const noexcept {
-        return m_size;
-    }
+    [[nodiscard]] std::size_t size() const noexcept { return m_size; }
 
     /// @brief Get span view of buffer
-    [[nodiscard]] std::span<T> span() noexcept {
-        return std::span<T>(m_data.get(), m_size);
-    }
+    [[nodiscard]] std::span<T> span() noexcept { return std::span<T>(m_data.get(), m_size); }
 
     /// @brief Get const span view of buffer
     [[nodiscard]] std::span<const T> span() const noexcept {
@@ -176,14 +163,10 @@ public:
     }
 
     /// @brief Array subscript operator
-    [[nodiscard]] T& operator[](std::size_t index) noexcept {
-        return m_data[index];
-    }
+    [[nodiscard]] T& operator[](std::size_t index) noexcept { return m_data[index]; }
 
     /// @brief Const array subscript operator
-    [[nodiscard]] const T& operator[](std::size_t index) const noexcept {
-        return m_data[index];
-    }
+    [[nodiscard]] const T& operator[](std::size_t index) const noexcept { return m_data[index]; }
 
     /// @brief Securely clear buffer contents
     void clear() noexcept {
@@ -193,9 +176,7 @@ public:
     }
 
     /// @brief Check if buffer is empty
-    [[nodiscard]] bool empty() const noexcept {
-        return m_size == 0;
-    }
+    [[nodiscard]] bool empty() const noexcept { return m_size == 0; }
 
 private:
     std::unique_ptr<T[]> m_data;
@@ -204,21 +185,18 @@ private:
 
 /// @brief RAII guard for secure memory - wipes on scope exit
 /// @tparam T Element type
-template<typename T>
+template <typename T>
 class secure_memory_guard {
 public:
     /// @brief Construct guard for memory region
     /// @param ptr Pointer to memory to guard
     /// @param size Size of memory region
-    secure_memory_guard(T* ptr, std::size_t size) noexcept
-        : m_ptr(ptr)
-        , m_size(size) {}
+    secure_memory_guard(T* ptr, std::size_t size) noexcept : m_ptr(ptr), m_size(size) {}
 
     /// @brief Construct guard for span
     /// @param data Span to guard
     explicit secure_memory_guard(std::span<T> data) noexcept
-        : m_ptr(data.data())
-        , m_size(data.size()) {}
+        : m_ptr(data.data()), m_size(data.size()) {}
 
     // No copy or move
     secure_memory_guard(const secure_memory_guard&) = delete;
@@ -243,7 +221,7 @@ private:
 /// @param ptr Pointer to memory
 /// @param size Size of memory region
 /// @return RAII guard that will wipe memory on destruction
-template<typename T>
+template <typename T>
 [[nodiscard]] auto makeSecureGuard(T* ptr, std::size_t size) {
     return secure_memory_guard<T>(ptr, size);
 }
@@ -252,7 +230,7 @@ template<typename T>
 /// @tparam T Element type
 /// @param data Span to guard
 /// @return RAII guard that will wipe memory on destruction
-template<typename T>
+template <typename T>
 [[nodiscard]] auto makeSecureGuard(std::span<T> data) {
     return secure_memory_guard<T>(data);
 }
@@ -261,7 +239,7 @@ template<typename T>
 /// @param a First buffer
 /// @param b Second buffer
 /// @return True if buffers are equal
-template<typename T>
+template <typename T>
 [[nodiscard]] bool secureCompare(std::span<const T> a, std::span<const T> b) noexcept {
     if (a.size() != b.size()) {
         return false;
@@ -284,10 +262,7 @@ template<typename T>
 /// @param a First string
 /// @param b Second string
 /// @return True if strings are equal
-[[nodiscard]] inline bool secureCompare(
-    std::string_view a,
-    std::string_view b) noexcept {
-
+[[nodiscard]] inline bool secureCompare(std::string_view a, std::string_view b) noexcept {
     if (a.size() != b.size()) {
         return false;
     }
@@ -310,7 +285,7 @@ template<typename T>
 /// @tparam T Element type
 /// @param data Span to fill with random bytes
 /// @return True if successful
-template<typename T>
+template <typename T>
 [[nodiscard]] bool generateSecureRandom(std::span<T> data) noexcept {
     return generateSecureRandom(data.data(), data.size_bytes());
 }
@@ -335,9 +310,7 @@ public:
     /// @param ptr Pointer to memory
     /// @param size Size of memory region
     locked_memory(void* ptr, std::size_t size) noexcept
-        : m_ptr(ptr)
-        , m_size(size)
-        , m_locked(lockMemory(ptr, size)) {}
+        : m_ptr(ptr), m_size(size), m_locked(lockMemory(ptr, size)) {}
 
     // No copy or move
     locked_memory(const locked_memory&) = delete;
@@ -352,16 +325,14 @@ public:
                 // Memory unlock failure in destructor is non-recoverable but should
                 // be visible during development. Use fprintf to avoid header dependencies
                 // on logger or Windows headers.
-                (void)std::fprintf(stderr,
-                    "SAK: WARNING — VirtualUnlock failed in locked_memory destructor\n");
+                (void)std::fprintf(
+                    stderr, "SAK: WARNING — VirtualUnlock failed in locked_memory destructor\n");
             }
         }
     }
 
     /// @brief Check if memory was successfully locked
-    [[nodiscard]] bool isLocked() const noexcept {
-        return m_locked;
-    }
+    [[nodiscard]] bool isLocked() const noexcept { return m_locked; }
 
 private:
     void* m_ptr;
@@ -369,5 +340,4 @@ private:
     bool m_locked;
 };
 
-} // namespace sak
-
+}  // namespace sak

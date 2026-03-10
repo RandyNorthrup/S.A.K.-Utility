@@ -7,10 +7,6 @@
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
-#include <winsock2.h>
-#include <windows.h>
-#include <lm.h>
-
 #include "sak/network_share_browser.h"
 
 #include <QDir>
@@ -19,42 +15,46 @@
 #include <QTemporaryFile>
 #include <QUuid>
 
+#include <winsock2.h>
+
+#include <windows.h>
+
+#include <lm.h>
+
 #pragma comment(lib, "netapi32.lib")
 
 namespace sak {
 
 namespace {
-constexpr int kShareInfoLevel = 1; // SHARE_INFO_1 level
+constexpr int kShareInfoLevel = 1;  // SHARE_INFO_1 level
 
-[[nodiscard]] NetworkShareInfo::ShareType mapShareType(DWORD type)
-{
-    switch (type & 0x0000FFFF) {
-    case STYPE_DISKTREE:  return NetworkShareInfo::ShareType::Disk;
-    case STYPE_PRINTQ:    return NetworkShareInfo::ShareType::Printer;
-    case STYPE_DEVICE:    return NetworkShareInfo::ShareType::Device;
-    case STYPE_IPC:       return NetworkShareInfo::ShareType::IPC;
-    default:              return NetworkShareInfo::ShareType::Special;
+[[nodiscard]] NetworkShareInfo::ShareType mapShareType(DWORD type) {
+    switch (type & 0x00'00'FF'FF) {
+    case STYPE_DISKTREE:
+        return NetworkShareInfo::ShareType::Disk;
+    case STYPE_PRINTQ:
+        return NetworkShareInfo::ShareType::Printer;
+    case STYPE_DEVICE:
+        return NetworkShareInfo::ShareType::Device;
+    case STYPE_IPC:
+        return NetworkShareInfo::ShareType::IPC;
+    default:
+        return NetworkShareInfo::ShareType::Special;
     }
 }
 
-[[nodiscard]] bool isSpecialShare(const QString& name)
-{
+[[nodiscard]] bool isSpecialShare(const QString& name) {
     return name.endsWith(QLatin1Char('$'));
 }
-} // namespace
+}  // namespace
 
-NetworkShareBrowser::NetworkShareBrowser(QObject* parent)
-    : QObject(parent)
-{
-}
+NetworkShareBrowser::NetworkShareBrowser(QObject* parent) : QObject(parent) {}
 
-void NetworkShareBrowser::cancel()
-{
+void NetworkShareBrowser::cancel() {
     m_cancelled.store(true);
 }
 
-void NetworkShareBrowser::discoverShares(const QString& hostname)
-{
+void NetworkShareBrowser::discoverShares(const QString& hostname) {
     m_cancelled.store(false);
 
     if (hostname.isEmpty()) {
@@ -74,8 +74,7 @@ void NetworkShareBrowser::discoverShares(const QString& hostname)
     Q_EMIT discoveryComplete(shares);
 }
 
-void NetworkShareBrowser::testAccess(const QString& uncPath)
-{
+void NetworkShareBrowser::testAccess(const QString& uncPath) {
     m_cancelled.store(false);
 
     if (uncPath.isEmpty()) {
@@ -87,9 +86,8 @@ void NetworkShareBrowser::testAccess(const QString& uncPath)
     Q_EMIT accessTestComplete(uncPath, canRead, canWrite);
 }
 
-QVector<NetworkShareInfo> NetworkShareBrowser::enumerateShares(
-    const QString& hostname)
-{
+QVector<NetworkShareInfo> NetworkShareBrowser::enumerateShares(const QString& hostname) {
+    Q_ASSERT(!hostname.isEmpty());
     QVector<NetworkShareInfo> shares;
 
     const auto serverName = hostname.toStdWString();
@@ -99,20 +97,18 @@ QVector<NetworkShareInfo> NetworkShareBrowser::enumerateShares(
     DWORD totalEntries = 0;
     DWORD resumeHandle = 0;
 
-    NET_API_STATUS status = NetShareEnum(
-        const_cast<LPWSTR>(serverName.c_str()),
-        kShareInfoLevel,
-        reinterpret_cast<LPBYTE*>(&shareInfo),
-        MAX_PREFERRED_LENGTH,
-        &entriesRead,
-        &totalEntries,
-        &resumeHandle);
+    NET_API_STATUS status = NetShareEnum(const_cast<LPWSTR>(serverName.c_str()),
+                                         kShareInfoLevel,
+                                         reinterpret_cast<LPBYTE*>(&shareInfo),
+                                         MAX_PREFERRED_LENGTH,
+                                         &entriesRead,
+                                         &totalEntries,
+                                         &resumeHandle);
 
     if (status != NERR_Success && status != ERROR_MORE_DATA) {
-        Q_EMIT errorOccurred(
-            QStringLiteral("Failed to enumerate shares on %1 (error %2)")
-                .arg(hostname)
-                .arg(status));
+        Q_EMIT errorOccurred(QStringLiteral("Failed to enumerate shares on %1 (error %2)")
+                                 .arg(hostname)
+                                 .arg(status));
         return shares;
     }
 
@@ -135,8 +131,7 @@ QVector<NetworkShareInfo> NetworkShareBrowser::enumerateShares(
         info.discovered = QDateTime::currentDateTime();
 
         // Test access for non-special disk shares
-        if (info.type == NetworkShareInfo::ShareType::Disk &&
-            !isSpecialShare(info.shareName)) {
+        if (info.type == NetworkShareInfo::ShareType::Disk && !isSpecialShare(info.shareName)) {
             auto [canRead, canWrite] = testReadWriteAccess(info.uncPath);
             info.canRead = canRead;
             info.canWrite = canWrite;
@@ -149,8 +144,8 @@ QVector<NetworkShareInfo> NetworkShareBrowser::enumerateShares(
     return shares;
 }
 
-QPair<bool, bool> NetworkShareBrowser::testReadWriteAccess(const QString& uncPath)
-{
+QPair<bool, bool> NetworkShareBrowser::testReadWriteAccess(const QString& uncPath) {
+    Q_ASSERT(!uncPath.isEmpty());
     bool canRead = false;
     bool canWrite = false;
 
@@ -167,8 +162,8 @@ QPair<bool, bool> NetworkShareBrowser::testReadWriteAccess(const QString& uncPat
     // Test write access by creating a temporary file
     if (canRead) {
         const QString testFile = uncPath + QStringLiteral("\\._sak_write_test_") +
-                                  QUuid::createUuid().toString(QUuid::Id128).left(8) +
-                                  QStringLiteral(".tmp");
+                                 QUuid::createUuid().toString(QUuid::Id128).left(8) +
+                                 QStringLiteral(".tmp");
 
         QFile file(testFile);
         if (file.open(QIODevice::WriteOnly)) {
@@ -184,4 +179,4 @@ QPair<bool, bool> NetworkShareBrowser::testReadWriteAccess(const QString& uncPat
     return {canRead, canWrite};
 }
 
-} // namespace sak
+}  // namespace sak

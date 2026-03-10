@@ -2,36 +2,43 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "sak/app_installation_worker.h"
-#include "sak/logger.h"
-#include "sak/chocolatey_manager.h"
-#include "sak/migration_report.h"
+
 #include "sak/app_scanner.h"
-#include "sak/package_matcher.h"
+#include "sak/chocolatey_manager.h"
 #include "sak/layout_constants.h"
+#include "sak/logger.h"
+#include "sak/migration_report.h"
+#include "sak/package_matcher.h"
+
+#include <QMetaObject>
+#include <QtConcurrent>
 #include <QtGlobal>
 #include <QThread>
-#include <QMetaObject>
 #include <QTimer>
-#include <QtConcurrent>
 
 namespace sak {
 
 AppInstallationWorker::AppInstallationWorker(std::shared_ptr<ChocolateyManager> chocoManager,
-                                       QObject* parent)
-    : QObject(parent)
-    , m_chocoManager(chocoManager)
-{
-    Q_ASSERT_X(chocoManager != nullptr, "AppInstallationWorker",
-        "chocoManager must not be null");
+                                             QObject* parent)
+    : QObject(parent), m_chocoManager(chocoManager) {
+    Q_ASSERT_X(chocoManager != nullptr, "AppInstallationWorker", "chocoManager must not be null");
     // Connect to Chocolatey manager signals
-    connect(m_chocoManager.get(), &ChocolateyManager::installStarted,
-            this, &AppInstallationWorker::onInstallStarted);
-    connect(m_chocoManager.get(), &ChocolateyManager::installSuccess,
-            this, &AppInstallationWorker::onInstallSuccess);
-    connect(m_chocoManager.get(), &ChocolateyManager::installFailed,
-            this, &AppInstallationWorker::onInstallFailed);
-    connect(m_chocoManager.get(), &ChocolateyManager::installRetrying,
-            this, &AppInstallationWorker::onInstallRetrying);
+    connect(m_chocoManager.get(),
+            &ChocolateyManager::installStarted,
+            this,
+            &AppInstallationWorker::onInstallStarted);
+    connect(m_chocoManager.get(),
+            &ChocolateyManager::installSuccess,
+            this,
+            &AppInstallationWorker::onInstallSuccess);
+    connect(m_chocoManager.get(),
+            &ChocolateyManager::installFailed,
+            this,
+            &AppInstallationWorker::onInstallFailed);
+    connect(m_chocoManager.get(),
+            &ChocolateyManager::installRetrying,
+            this,
+            &AppInstallationWorker::onInstallRetrying);
 }
 
 AppInstallationWorker::~AppInstallationWorker() {
@@ -43,7 +50,7 @@ AppInstallationWorker::~AppInstallationWorker() {
 }
 
 int AppInstallationWorker::startMigration(std::shared_ptr<MigrationReport> report,
-    int maxConcurrent) {
+                                          int maxConcurrent) {
     Q_ASSERT_X(report != nullptr, "startMigration", "report must not be null");
     Q_ASSERT_X(maxConcurrent > 0, "startMigration", "maxConcurrent must be positive");
     QMutexLocker locker(&m_mutex);
@@ -78,7 +85,8 @@ int AppInstallationWorker::startMigration(std::shared_ptr<MigrationReport> repor
             job.appName = entry.app_name;
             job.packageId = entry.choco_package;
             job.version = (entry.version_lock && !entry.locked_version.isEmpty())
-                ? entry.locked_version : QString();
+                              ? entry.locked_version
+                              : QString();
             job.status = MigrationStatus::Queued;
 
             m_jobs.append(job);
@@ -92,9 +100,7 @@ int AppInstallationWorker::startMigration(std::shared_ptr<MigrationReport> repor
     Q_EMIT migrationStarted(totalJobs);
 
     // Process queue in background
-    m_processFuture = QtConcurrent::run([this]() {
-        processQueue();
-    });
+    m_processFuture = QtConcurrent::run([this]() { processQueue(); });
 
     return totalJobs;
 }
@@ -125,6 +131,8 @@ void AppInstallationWorker::resume() {
 }
 
 void AppInstallationWorker::cancel() {
+    Q_ASSERT(!m_jobQueue.isEmpty());
+    Q_ASSERT(m_report);
     QMutexLocker locker(&m_mutex);
 
     if (!m_running) {
@@ -163,6 +171,8 @@ bool AppInstallationWorker::isPaused() const {
 }
 
 AppInstallationWorker::Stats AppInstallationWorker::getStats() const {
+    Q_ASSERT(!m_jobs.empty());
+    Q_ASSERT(!m_jobs.isEmpty());
     QMutexLocker locker(&m_mutex);
 
     Stats stats;
@@ -170,13 +180,27 @@ AppInstallationWorker::Stats AppInstallationWorker::getStats() const {
 
     for (const auto& job : m_jobs) {
         switch (job.status) {
-            case MigrationStatus::Pending:    stats.pending++; break;
-            case MigrationStatus::Queued:     stats.queued++; break;
-            case MigrationStatus::Installing: stats.installing++; break;
-            case MigrationStatus::Success:    stats.success++; break;
-            case MigrationStatus::Failed:     stats.failed++; break;
-            case MigrationStatus::Skipped:    stats.skipped++; break;
-            case MigrationStatus::Cancelled:  stats.cancelled++; break;
+        case MigrationStatus::Pending:
+            stats.pending++;
+            break;
+        case MigrationStatus::Queued:
+            stats.queued++;
+            break;
+        case MigrationStatus::Installing:
+            stats.installing++;
+            break;
+        case MigrationStatus::Success:
+            stats.success++;
+            break;
+        case MigrationStatus::Failed:
+            stats.failed++;
+            break;
+        case MigrationStatus::Skipped:
+            stats.skipped++;
+            break;
+        case MigrationStatus::Cancelled:
+            stats.cancelled++;
+            break;
         }
     }
 
@@ -189,6 +213,8 @@ QVector<MigrationJob> AppInstallationWorker::getJobs() const {
 }
 
 void AppInstallationWorker::processQueue() {
+    Q_ASSERT(!m_jobQueue.empty());
+    Q_ASSERT(!m_jobQueue.isEmpty());
     while (true) {
         {
             QMutexLocker locker(&m_mutex);
@@ -259,6 +285,7 @@ void AppInstallationWorker::processQueue() {
 }
 
 bool AppInstallationWorker::installPackage(MigrationJob& job) {
+    Q_ASSERT(m_chocoManager);
     // Update status to installing
     job.status = MigrationStatus::Installing;
     job.startTime = QDateTime::currentDateTime();
@@ -285,11 +312,12 @@ bool AppInstallationWorker::installPackage(MigrationJob& job) {
         Q_EMIT jobProgress(job.entryIndex, "Successfully installed " + job.packageId);
     } else {
         job.status = MigrationStatus::Failed;
-        job.errorMessage =
-            result.error_message.isEmpty() ? "Installation failed" : result.error_message;
+        job.errorMessage = result.error_message.isEmpty() ? "Installation failed"
+                                                          : result.error_message;
         Q_EMIT jobProgress(job.entryIndex, "Failed to install " + job.packageId);
-        sak::logWarning("[AppInstallationWorker] Failed: {} - {}", job.packageId.toStdString(),
-            job.errorMessage.toStdString());
+        sak::logWarning("[AppInstallationWorker] Failed: {} - {}",
+                        job.packageId.toStdString(),
+                        job.errorMessage.toStdString());
     }
 
     Q_EMIT jobStatusChanged(job.entryIndex, job);
@@ -297,8 +325,9 @@ bool AppInstallationWorker::installPackage(MigrationJob& job) {
     return success;
 }
 
-void AppInstallationWorker::updateJobStatus(int index, MigrationStatus status,
-    const QString& error) {
+void AppInstallationWorker::updateJobStatus(int index,
+                                            MigrationStatus status,
+                                            const QString& error) {
     QMutexLocker locker(&m_mutex);
 
     if (index < 0 || index >= m_jobs.size()) {
@@ -314,8 +343,7 @@ void AppInstallationWorker::updateJobStatus(int index, MigrationStatus status,
 }
 
 bool AppInstallationWorker::shouldRetry(const MigrationJob& job) const {
-    return job.status == MigrationStatus::Failed &&
-           job.retryCount < kRetryCountDefault &&
+    return job.status == MigrationStatus::Failed && job.retryCount < kRetryCountDefault &&
            !m_cancelled;
 }
 
@@ -340,4 +368,4 @@ void AppInstallationWorker::onInstallRetrying(const QString& packageId, int atte
     Q_EMIT jobProgress(-1, QString("Retrying %1 (attempt %2)").arg(packageId).arg(attempt));
 }
 
-} // namespace sak
+}  // namespace sak

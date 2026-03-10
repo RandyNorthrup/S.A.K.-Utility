@@ -2,21 +2,22 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "sak/app_installation_panel.h"
-#include "sak/chocolatey_manager.h"
 #include "sak/app_installation_worker.h"
-#include "sak/migration_report.h"
+#include "sak/chocolatey_manager.h"
 #include "sak/logger.h"
+#include "sak/migration_report.h"
 
-#include <QMessageBox>
 #include <QApplication>
+#include <QMessageBox>
 #include <QtConcurrent>
+
 #include <algorithm>
 
 using sak::AppInstallationPanel;
-using sak::ChocolateyManager;
 using sak::AppInstallationWorker;
-using sak::MigrationReport;
+using sak::ChocolateyManager;
 using sak::MigrationJob;
+using sak::MigrationReport;
 using sak::MigrationStatus;
 
 // Results table columns (must match app_installation_panel.cpp)
@@ -32,8 +33,10 @@ enum ResultColumn {
 // Search
 // ============================================================================
 
-void AppInstallationPanel::onSearch()
-{
+void AppInstallationPanel::onSearch() {
+    Q_ASSERT(m_searchButton);
+    Q_ASSERT(m_choco_manager);
+    Q_ASSERT(m_searchEdit);
     if (m_search_in_progress) {
         Q_EMIT logOutput("Search already in progress...");
         return;
@@ -41,15 +44,15 @@ void AppInstallationPanel::onSearch()
 
     if (!m_choco_manager->isInitialized()) {
         sak::logWarning("Search attempted but Chocolatey is not initialized");
-        QMessageBox::warning(this, tr("Chocolatey Not Available"),
-            tr("Chocolatey is not initialized. Search is unavailable."));
+        QMessageBox::warning(this,
+                             tr("Chocolatey Not Available"),
+                             tr("Chocolatey is not initialized. Search is unavailable."));
         return;
     }
 
     QString query = m_searchEdit->text().trimmed();
     if (query.isEmpty()) {
-        QMessageBox::information(this, tr("Search"),
-            tr("Please enter a search term."));
+        QMessageBox::information(this, tr("Search"), tr("Please enter a search term."));
         return;
     }
 
@@ -62,15 +65,18 @@ void AppInstallationPanel::onSearch()
     m_searchFuture = QtConcurrent::run([this, query]() {
         auto result = m_choco_manager->searchPackage(query, 50);
 
-        QMetaObject::invokeMethod(this, [this, result]() {
-            onSearchCompleted(result.success, result.output, result.error_message);
-        }, Qt::QueuedConnection);
+        QMetaObject::invokeMethod(
+            this,
+            [this, result]() {
+                onSearchCompleted(result.success, result.output, result.error_message);
+            },
+            Qt::QueuedConnection);
     });
 }
 
-void AppInstallationPanel::onSearchCompleted(bool success, const QString& output,
-    const QString& errorMessage)
-{
+void AppInstallationPanel::onSearchCompleted(bool success,
+                                             const QString& output,
+                                             const QString& errorMessage) {
     m_search_in_progress = false;
     m_searchButton->setEnabled(true);
 
@@ -82,18 +88,19 @@ void AppInstallationPanel::onSearchCompleted(bool success, const QString& output
     Q_EMIT statusMessage(tr("Search failed"), 3000);
 }
 
-void AppInstallationPanel::onCategoryChanged(int index)
-{
+void AppInstallationPanel::onCategoryChanged(int index) {
+    Q_ASSERT(index >= 0);
+    Q_ASSERT(m_searchEdit);
     // Map category index to search term
     static const char* const categoryQueries[] = {
-        "",               // All
-        "browser",        // Browsers
-        "developer",      // Development
-        "media",          // Media
-        "utility",        // Utilities
-        "security",       // Security
-        "office",         // Productivity
-        "chat"            // Communication
+        "",           // All
+        "browser",    // Browsers
+        "developer",  // Development
+        "media",      // Media
+        "utility",    // Utilities
+        "security",   // Security
+        "office",     // Productivity
+        "chat"        // Communication
     };
 
     if (index > 0 && index < static_cast<int>(std::size(categoryQueries))) {
@@ -106,8 +113,9 @@ void AppInstallationPanel::onCategoryChanged(int index)
 // Queue Management
 // ============================================================================
 
-void AppInstallationPanel::onAddToQueue()
-{
+void AppInstallationPanel::onAddToQueue() {
+    Q_ASSERT(m_resultsModel);
+    Q_ASSERT(m_addToQueueButton);
     int added = 0;
     for (int i = 0; i < m_resultsModel->rowCount(); ++i) {
         auto* checkItem = m_resultsModel->item(i, RColCheck);
@@ -117,14 +125,19 @@ void AppInstallationPanel::onAddToQueue()
 
         auto* packageItem = m_resultsModel->item(i, RColPackage);
         auto* versionItem = m_resultsModel->item(i, RColVersion);
-        if (!packageItem) continue;
+        if (!packageItem) {
+            continue;
+        }
 
         QString packageId = packageItem->text();
         QString version = versionItem ? versionItem->text() : QString();
 
         // Check for duplicates
-        bool duplicate = std::any_of(m_installQueue.cbegin(), m_installQueue.cend(),
-            [&packageId](const QueueEntry& entry) { return entry.package_id == packageId; });
+        bool duplicate = std::any_of(m_installQueue.cbegin(),
+                                     m_installQueue.cend(),
+                                     [&packageId](const QueueEntry& entry) {
+                                         return entry.package_id == packageId;
+                                     });
 
         if (!duplicate) {
             auto* publisherItem = m_resultsModel->item(i, RColPublisher);
@@ -151,10 +164,13 @@ void AppInstallationPanel::onAddToQueue()
     m_addToQueueButton->setEnabled(false);
 }
 
-void AppInstallationPanel::onRemoveFromQueue()
-{
+void AppInstallationPanel::onRemoveFromQueue() {
+    Q_ASSERT(!m_installQueue.isEmpty());
+    Q_ASSERT(m_queueList);
     auto selectedItems = m_queueList->selectedItems();
-    if (selectedItems.isEmpty()) return;
+    if (selectedItems.isEmpty()) {
+        return;
+    }
 
     // Collect indices to remove (in reverse order)
     QVector<int> indices;
@@ -173,9 +189,10 @@ void AppInstallationPanel::onRemoveFromQueue()
     updateQueueDisplay();
 }
 
-void AppInstallationPanel::onClearQueue()
-{
-    if (m_installQueue.isEmpty()) return;
+void AppInstallationPanel::onClearQueue() {
+    if (m_installQueue.isEmpty()) {
+        return;
+    }
 
     m_installQueue.clear();
     updateQueueDisplay();
@@ -186,34 +203,45 @@ void AppInstallationPanel::onClearQueue()
 // Installation
 // ============================================================================
 
-void AppInstallationPanel::onInstallAll()
-{
+void AppInstallationPanel::onInstallAll() {
+    Q_ASSERT(m_installButton);
+    Q_ASSERT(m_cancelButton);
+    Q_ASSERT(m_choco_manager);
+    Q_ASSERT(m_worker);
     if (m_installQueue.isEmpty()) {
-        QMessageBox::information(this, tr("Empty Queue"),
+        QMessageBox::information(
+            this,
+            tr("Empty Queue"),
             tr("No packages in the install queue. Search for packages and add them first."));
         return;
     }
 
     if (!m_choco_manager->isInitialized()) {
         sak::logWarning("Installation attempted but Chocolatey is not initialized");
-        QMessageBox::warning(this, tr("Chocolatey Not Available"),
-            tr("Chocolatey is not initialized. Installation is unavailable."));
+        QMessageBox::warning(this,
+                             tr("Chocolatey Not Available"),
+                             tr("Chocolatey is not initialized. Installation is unavailable."));
         return;
     }
 
     if (m_worker->isRunning()) {
-        QMessageBox::information(this, tr("Installation In Progress"),
-            tr("An installation is already running."));
+        QMessageBox::information(this,
+                                 tr("Installation In Progress"),
+                                 tr("An installation is already running."));
         return;
     }
 
-    auto reply = QMessageBox::question(this, tr("Confirm Installation"),
-        tr("Install %1 package(s) via Chocolatey?\n\n"
-           "This may take several minutes depending on package sizes.")
-            .arg(m_installQueue.size()),
-        QMessageBox::Yes | QMessageBox::No);
+    auto reply =
+        QMessageBox::question(this,
+                              tr("Confirm Installation"),
+                              tr("Install %1 package(s) via Chocolatey?\n\n"
+                                 "This may take several minutes depending on package sizes.")
+                                  .arg(m_installQueue.size()),
+                              QMessageBox::Yes | QMessageBox::No);
 
-    if (reply != QMessageBox::Yes) return;
+    if (reply != QMessageBox::Yes) {
+        return;
+    }
 
     Q_EMIT logOutput(QString("=== Installing %1 Package(s) ===").arg(m_installQueue.size()));
 
@@ -248,8 +276,7 @@ void AppInstallationPanel::onInstallAll()
     }
 }
 
-void AppInstallationPanel::onCancelInstall()
-{
+void AppInstallationPanel::onCancelInstall() {
     if (m_worker && m_worker->isRunning()) {
         m_worker->cancel();
         Q_EMIT logOutput("Installation cancelled by user");

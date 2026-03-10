@@ -52,7 +52,7 @@ protected:
 private:
     QVector<LeftoverItem> m_items;
     bool m_useRecycleBin = false;
-    QStringList m_rebootPendingPaths;     ///< Paths scheduled for removal on reboot
+    QStringList m_rebootPendingPaths;  ///< Paths scheduled for removal on reboot
 
     /// @brief Delete a file, falling back to recycle bin or reboot scheduling
     [[nodiscard]] bool deleteFile(const QString& path);
@@ -67,8 +67,7 @@ private:
     [[nodiscard]] bool scheduleRebootRemoval(const QString& path);
 
     [[nodiscard]] bool deleteRegistryKey(const QString& fullKeyPath);
-    [[nodiscard]] bool deleteRegistryValue(const QString& keyPath,
-                                           const QString& valueName);
+    [[nodiscard]] bool deleteRegistryValue(const QString& keyPath, const QString& valueName);
     [[nodiscard]] bool removeService(const QString& serviceName);
     [[nodiscard]] bool removeScheduledTask(const QString& taskName);
     [[nodiscard]] bool removeFirewallRule(const QString& ruleName);
@@ -77,8 +76,8 @@ private:
 // ── Compile-Time Invariants ─────────────────────────────────────────────────
 
 static_assert(std::is_base_of_v<WorkerBase, CleanupWorker>,
-    "CleanupWorker must inherit WorkerBase.");
+              "CleanupWorker must inherit WorkerBase.");
 static_assert(!std::is_copy_constructible_v<CleanupWorker>,
-    "CleanupWorker must not be copy-constructible.");
+              "CleanupWorker must not be copy-constructible.");
 
-} // namespace sak
+}  // namespace sak

@@ -3,12 +3,14 @@
 
 #pragma once
 
-#include "sak/worker_base.h"
 #include "sak/file_hash.h"
-#include <QString>
+#include "sak/worker_base.h"
+
 #include <QMap>
 #include <QMutex>
+#include <QString>
 #include <QVector>
+
 #include <atomic>
 #include <filesystem>
 #include <functional>
@@ -32,21 +34,21 @@ public:
      * @brief Information about a duplicate file group
      */
     struct DuplicateGroup {
-        QString hash;                           ///< MD5 hash of files
-        QVector<QString> file_paths;            ///< Paths to duplicate files
-        qint64 file_size{0};                    ///< Size of each file
-        qint64 wasted_space{0};                 ///< Total space wasted by duplicates
+        QString hash;                 ///< MD5 hash of files
+        QVector<QString> file_paths;  ///< Paths to duplicate files
+        qint64 file_size{0};          ///< Size of each file
+        qint64 wasted_space{0};       ///< Total space wasted by duplicates
     };
 
     /**
      * @brief Configuration for duplicate finder operation
      */
     struct Config {
-        QVector<QString> scanDirectories;      ///< Directories to scan
-        qint64 minimum_file_size{0};            ///< Minimum file size to consider (bytes)
-        bool recursive_scan{true};              ///< Scan subdirectories
-        bool parallel_hashing{true};            ///< Use parallel hash calculation
-        int hash_thread_count{0};               ///< Thread count (0 = auto-detect)
+        QVector<QString> scanDirectories;  ///< Directories to scan
+        qint64 minimum_file_size{0};       ///< Minimum file size to consider (bytes)
+        bool recursive_scan{true};         ///< Scan subdirectories
+        bool parallel_hashing{true};       ///< Use parallel hash calculation
+        int hash_thread_count{0};          ///< Thread count (0 = auto-detect)
     };
 
     /**
@@ -102,7 +104,7 @@ private:
      */
     auto calculateHashesParallel(const std::vector<std::filesystem::path>& files)
         -> std::expected<std::vector<std::pair<std::filesystem::path, std::string>>,
-            sak::error_code>;
+                         sak::error_code>;
 
     /// @brief Create the per-file hashing task callable for parallel execution
     std::function<void(int)> createHashTask(
@@ -134,15 +136,15 @@ private:
     /// @brief Hash all files (parallel or sequential based on config)
     auto hashFiles(const std::vector<std::filesystem::path>& files)
         -> std::expected<std::vector<std::pair<std::filesystem::path, std::string>>,
-            sak::error_code>;
+                         sak::error_code>;
 
     /// @brief Collect files from a single directory with error handling
     auto collectFilesFromDirectory(const std::filesystem::path& dir_path,
-                                    std::vector<std::filesystem::path>& files)
+                                   std::vector<std::filesystem::path>& files)
         -> std::expected<void, sak::error_code>;
 
     /// @brief Iterate directory entries, collecting eligible files
-    template<typename DirIter>
+    template <typename DirIter>
     auto collectEntries(const std::filesystem::path& dir_path,
                         std::vector<std::filesystem::path>& files)
         -> std::expected<void, sak::error_code>;
@@ -151,7 +153,8 @@ private:
     void buildDuplicateGroups(
         const std::unordered_map<std::string, std::vector<std::filesystem::path>>& hash_groups,
         std::vector<DuplicateGroup>& duplicate_groups,
-        int& total_duplicates, qint64& total_wasted);
+        int& total_duplicates,
+        qint64& total_wasted);
 
     Config m_config;
     sak::file_hasher m_hasher;

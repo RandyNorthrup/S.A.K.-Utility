@@ -33,8 +33,9 @@ public:
     ~DiskCleanupAction() override = default;
 
     QString name() const override { return "Disk Cleanup"; }
-    QString description(
-        ) const override { return "Remove temporary files, caches, and system junk"; }
+    QString description() const override {
+        return "Remove temporary files, caches, and system junk";
+    }
     QIcon icon() const override { return QIcon(); }
     ActionCategory category() const override { return ActionCategory::SystemOptimization; }
     bool requiresAdmin() const override { return true; }
@@ -45,16 +46,21 @@ public:
 private:
     /// @brief Configure Disk Cleanup registry profile and enumerate drives
     /// @return false if configuration failed (result already emitted)
-    bool executeCalculateSpace(QStringList& drives, QString& drives_error,
+    bool executeCalculateSpace(QStringList& drives,
+                               QString& drives_error,
                                const QDateTime& start_time);
 
     /// @brief Run cleanmgr on each drive and measure freed space
-    void executeCleanup(const QStringList& drives, const QString& sagerun_arg,
-                        int& drives_processed, qint64& total_freed);
+    void executeCleanup(const QStringList& drives,
+                        const QString& sagerun_arg,
+                        int& drives_processed,
+                        qint64& total_freed);
 
     /// @brief Build and emit the final execution result
-    void executeBuildReport(int drives_processed, qint64 total_freed,
-                            const QString& drives_error, const QDateTime& start_time);
+    void executeBuildReport(int drives_processed,
+                            qint64 total_freed,
+                            const QString& drives_error,
+                            const QDateTime& start_time);
 
     /// @brief Represents a directory or cache targeted for cleanup with size and file count
     struct CleanupTarget {
@@ -126,5 +132,4 @@ private:
     int m_total_files{0};
 };
 
-} // namespace sak
-
+}  // namespace sak

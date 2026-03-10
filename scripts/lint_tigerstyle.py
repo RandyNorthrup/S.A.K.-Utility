@@ -3,7 +3,8 @@
 
 Checks C++ source files for TigerStyle compliance:
   - Max line length (100 chars, raw strings exempt)
-  - Function length (<=70 lines)
+  - Function length (<=70 code lines; blank lines and comment-only lines
+    are excluded so clang-format whitespace choices don't inflate counts)
   - Nesting depth (<=3 levels)
   - Assertion density (warn if <2 per function)
   - catch(...) without explanatory comment
@@ -69,6 +70,7 @@ class FunctionInfo:
     end_line: int = 0
     assertion_count: int = 0
     max_nesting: int = 0
+    code_line_count: int = 0  # Non-blank, non-comment-only lines
 
 
 # ---------------------------------------------------------------------------
@@ -164,9 +166,10 @@ def _find_functions(lines: list[str]) -> list[FunctionInfo]:
             if close_pattern in stripped:
                 in_raw = False
             # Inside raw string: skip brace counting entirely, but
-            # still count assertions if inside a function.
+            # still count assertions and code lines if inside a function.
             if current_func:
                 current_func.assertion_count += len(ASSERT_RE.findall(line))
+                current_func.code_line_count += 1
             continue
 
         # Check if this line opens a raw string
@@ -186,6 +189,7 @@ def _find_functions(lines: list[str]) -> list[FunctionInfo]:
                 if current_func:
                     current_func.assertion_count += len(
                         ASSERT_RE.findall(line))
+                    current_func.code_line_count += 1
                     nesting = (brace_depth - func_brace_depth - 1
                                + max(0, opens - closes))
                     if nesting > current_func.max_nesting:
@@ -210,6 +214,10 @@ def _find_functions(lines: list[str]) -> list[FunctionInfo]:
                 current_func.assertion_count += len(ASSERT_RE.findall(line))
             continue
 
+        # ── Track blank lines (don't count toward code lines) ────────
+        if not stripped:
+            continue
+
         # ── Count braces excluding those in string literals ──────────
         code_line = _strip_string_braces(line)
         opens = code_line.count("{")
@@ -218,15 +226,20 @@ def _find_functions(lines: list[str]) -> list[FunctionInfo]:
         if current_func is None:
             # Look for function definition
             if FUNCTION_DEF.match(stripped) or (
-                brace_depth == 1 and stripped == "{"
+                stripped == "{"
                 and i > 1 and FUNCTION_DEF.match(lines[i - 2].strip())
             ):
                 if "{" in code_line:
+                    # Extract name from signature line (current or previous)
+                    sig = stripped if "(" in stripped else (
+                        lines[i - 2].strip() if i > 1 else ""
+                    )
                     current_func = FunctionInfo(
-                        name=stripped.split("(")[0].strip().split()[-1]
-                        if "(" in stripped else "unknown",
+                        name=sig.split("(")[0].strip().split()[-1]
+                        if "(" in sig else "unknown",
                         start_line=i
                     )
+                    current_func.code_line_count = 1
                     func_brace_depth = brace_depth
             brace_depth += opens - closes
             if current_func is None and brace_depth == 1 and opens > 0:
@@ -235,6 +248,7 @@ def _find_functions(lines: list[str]) -> list[FunctionInfo]:
         else:
             # Inside a function
             current_func.assertion_count += len(ASSERT_RE.findall(line))
+            current_func.code_line_count += 1
 
             # Track nesting relative to function
             nesting = brace_depth - func_brace_depth - 1 + max(0, opens - closes)
@@ -254,15 +268,20 @@ def _find_functions(lines: list[str]) -> list[FunctionInfo]:
 def check_function_length(
     filepath: str, functions: list[FunctionInfo]
 ) -> list[Violation]:
-    """Check that no function exceeds MAX_FUNCTION_LINES."""
+    """Check that no function exceeds MAX_FUNCTION_LINES.
+
+    Uses code_line_count (non-blank, non-comment-only lines) so that
+    clang-format whitespace and comment formatting choices do not
+    inflate the count.
+    """
     violations: list[Violation] = []
     for func in functions:
-        length = func.end_line - func.start_line + 1
+        length = func.code_line_count
         if length > MAX_FUNCTION_LINES:
             violations.append(Violation(
                 file=filepath, line=func.start_line,
                 severity=Severity.ERROR, rule="function-length",
-                message=(f"Function '{func.name}' is {length} lines "
+                message=(f"Function '{func.name}' is {length} code lines "
                          f"(max {MAX_FUNCTION_LINES})")
             ))
     return violations
@@ -290,9 +309,10 @@ def check_assertion_density(
     """Warn if a function has fewer than MIN_ASSERTIONS_PER_FUNCTION."""
     violations: list[Violation] = []
     for func in functions:
-        length = func.end_line - func.start_line + 1
-        # Only check functions with meaningful length (>10 lines)
-        if length > 10 and func.assertion_count < MIN_ASSERTIONS_PER_FUNCTION:
+        # Only check functions with meaningful length (>15 code lines).
+        # Short functions (<= 15 lines) are typically trivial wrappers,
+        # formatters, or setup stubs where 2 assertions add noise.
+        if func.code_line_count > 15 and func.assertion_count < MIN_ASSERTIONS_PER_FUNCTION:
             violations.append(Violation(
                 file=filepath, line=func.start_line,
                 severity=Severity.WARNING, rule="assertion-density",

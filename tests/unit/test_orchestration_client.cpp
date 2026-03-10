@@ -1,13 +1,13 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-#include <QtTest/QtTest>
-#include <QTcpServer>
-#include <QTcpSocket>
-#include <QHostAddress>
-
 #include "sak/orchestration_client.h"
 #include "sak/orchestration_protocol.h"
+
+#include <QHostAddress>
+#include <QTcpServer>
+#include <QTcpSocket>
+#include <QtTest/QtTest>
 
 using namespace sak;
 
@@ -21,7 +21,7 @@ quint16 pickFreePort() {
     server.close();
     return port;
 }
-}
+}  // namespace
 
 class OrchestrationClientTests : public QObject {
     Q_OBJECT
@@ -62,7 +62,8 @@ void OrchestrationClientTests::receivesAssignment() {
 
     QJsonObject payload;
     payload["assignment"] = assignment.toJson();
-    OrchestrationProtocol::writeMessage(socket,
+    OrchestrationProtocol::writeMessage(
+        socket,
         OrchestrationProtocol::makeMessage(OrchestrationMessageType::DeploymentAssign, payload));
 
     QVERIFY(assignmentSpy.wait(3000));
@@ -93,7 +94,8 @@ void OrchestrationClientTests::autoReconnectsAfterDisconnect() {
     // Process events so the client receives the disconnect and starts the reconnect timer
     QSignalSpy newConnSpy(&server, &QTcpServer::newConnection);
     QTRY_VERIFY2_WITH_TIMEOUT(newConnSpy.count() >= 1,
-        "Client should auto-reconnect after disconnect", 5000);
+                              "Client should auto-reconnect after disconnect",
+                              5000);
 }
 
 void OrchestrationClientTests::receivesAssignmentControl() {
@@ -124,9 +126,10 @@ void OrchestrationClientTests::receivesAssignmentControl() {
         payload["deployment_id"] = "deploy-ctl";
         payload["job_id"] = "job-ctl";
         payload["action"] = action;
-        OrchestrationProtocol::writeMessage(socket,
+        OrchestrationProtocol::writeMessage(
+            socket,
             OrchestrationProtocol::makeMessage(OrchestrationMessageType::AssignmentControl,
-                payload));
+                                               payload));
     };
 
     sendControl("pause");

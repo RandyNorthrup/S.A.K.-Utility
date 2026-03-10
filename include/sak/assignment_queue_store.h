@@ -3,10 +3,10 @@
 
 #pragma once
 
+#include "sak/orchestration_types.h"
+
 #include <QQueue>
 #include <QString>
-
-#include "sak/orchestration_types.h"
 
 namespace sak {
 
@@ -31,4 +31,4 @@ private:
     QString m_filePath;
 };
 
-} // namespace sak
+}  // namespace sak

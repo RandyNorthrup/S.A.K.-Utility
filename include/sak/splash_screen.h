@@ -3,8 +3,8 @@
 
 #pragma once
 
-#include <QWidget>
 #include <QPixmap>
+#include <QWidget>
 
 namespace sak::ui {
 
@@ -29,4 +29,4 @@ private:
     int m_shadow_offset{8};
 };
 
-} // namespace sak::ui
+}  // namespace sak::ui

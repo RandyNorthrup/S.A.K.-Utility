@@ -3,14 +3,15 @@
 
 #pragma once
 
-#include <QMainWindow>
-#include <QTabWidget>
-#include <QStatusBar>
-#include <QProgressBar>
 #include <QLabel>
-#include <QMenuBar>
+#include <QMainWindow>
 #include <QMap>
+#include <QMenuBar>
+#include <QProgressBar>
+#include <QStatusBar>
 #include <QStringList>
+#include <QTabWidget>
+
 #include <memory>
 
 class QHBoxLayout;
@@ -37,10 +38,10 @@ class NetworkDiagnosticPanel;
 
 /**
  * @brief Main application window for S.A.K. Utility
- * 
+ *
  * Provides a tabbed interface for all feature modules with integrated
  * progress tracking and status reporting.
- * 
+ *
  * Thread-Safety: GUI operations must be performed on the main Qt thread.
  * Use Qt signals/slots for cross-thread communication.
  */
@@ -53,7 +54,7 @@ public:
      * @param parent Optional parent widget
      */
     explicit MainWindow(QWidget* parent = nullptr);
-    
+
     /**
      * @brief Destructor
      */
@@ -130,13 +131,17 @@ private:
 
     /// @brief Build the Feature Request + Bug Report card row
     QHBoxLayout* createHelpRow_requestsAndBugs(QWidget* parent,
-        const QString& cardStyle, const QString& titleStyle,
-        const QString& descStyle, const QString& logoStyle);
+                                               const QString& cardStyle,
+                                               const QString& titleStyle,
+                                               const QString& descStyle,
+                                               const QString& logoStyle);
 
     /// @brief Build the Wiki + Community card row
     QHBoxLayout* createHelpRow_wikiAndCommunity(QWidget* parent,
-        const QString& cardStyle, const QString& titleStyle,
-        const QString& descStyle, const QString& logoStyle);
+                                                const QString& cardStyle,
+                                                const QString& titleStyle,
+                                                const QString& descStyle,
+                                                const QString& logoStyle);
 
     /// @brief Load splash screen icon into the About panel header
     void loadAboutPanelIcon(QLabel* iconLabel);
@@ -144,8 +149,14 @@ private:
     /// @brief Connect panel status and progress signals to the main window
     void connectPanelSignals();
 
+    /// @brief Connect remaining panel status/progress signals
+    void connectRemainingPanelSignals();
+
     /// @brief Connect panel log signals to the shared log window
     void connectPanelLogs();
+
+    /// @brief Find the main tab index containing this panel widget
+    [[nodiscard]] int findPanelTabIndex(QWidget* panel) const;
 
     /**
      * @brief Create keyboard shortcuts for accessibility
@@ -204,4 +215,4 @@ private:
     QMap<int, QStringList> m_panelLogs;
 };
 
-} // namespace sak
+}  // namespace sak

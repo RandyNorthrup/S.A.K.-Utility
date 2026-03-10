@@ -6,13 +6,13 @@
 #include "sak/linux_distro_catalog.h"
 #include "sak/linux_iso_downloader.h"
 
-#include <QDialog>
 #include <QComboBox>
-#include <QProgressBar>
+#include <QDialog>
 #include <QLabel>
-#include <QPushButton>
 #include <QLineEdit>
 #include <QListWidget>
+#include <QProgressBar>
+#include <QPushButton>
 #include <QString>
 
 class QVBoxLayout;

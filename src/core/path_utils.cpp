@@ -5,8 +5,11 @@
 /// @brief Implementation of path manipulation utilities
 
 #include "sak/path_utils.h"
+
 #include "sak/logger.h"
+
 #include <QtGlobal>
+
 #include <algorithm>
 #include <cctype>
 
@@ -18,8 +21,9 @@ namespace {
 std::string normalize_for_compare(std::string value) {
     std::replace(value.begin(), value.end(), '\\', '/');
 #ifdef _WIN32
-    std::transform(value.begin(), value.end(), value.begin(),
-                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
 #endif
     return value;
 }
@@ -39,16 +43,17 @@ void accumulateFileEntry(const std::filesystem::directory_entry& entry,
     info.file_count++;
 }
 
-} // anonymous namespace
+}  // anonymous namespace
 
-auto path_utils::normalize(
-    const std::filesystem::path& path) -> std::expected<std::filesystem::path, error_code> {
+auto path_utils::normalize(const std::filesystem::path& path)
+    -> std::expected<std::filesystem::path, error_code> {
     Q_ASSERT_X(!path.empty(), "path_utils::normalize", "path must not be empty");
 
     try {
         auto normalized = std::filesystem::weakly_canonical(path);
-        Q_ASSERT_X(normalized.is_absolute(), "path_utils::normalize",
-            "normalized path must be absolute");
+        Q_ASSERT_X(normalized.is_absolute(),
+                   "path_utils::normalize",
+                   "normalized path must be absolute");
         return normalized;
     } catch (const std::filesystem::filesystem_error& e) {
         logError("Failed to normalize path: {}", e.what());
@@ -59,9 +64,8 @@ auto path_utils::normalize(
     }
 }
 
-auto path_utils::makeRelative(
-    const std::filesystem::path& path,
-    const std::filesystem::path& base) -> std::expected<std::filesystem::path, error_code> {
+auto path_utils::makeRelative(const std::filesystem::path& path, const std::filesystem::path& base)
+    -> std::expected<std::filesystem::path, error_code> {
     Q_ASSERT_X(!path.empty(), "path_utils::makeRelative", "path must not be empty");
     Q_ASSERT_X(!base.empty(), "path_utils::makeRelative", "base must not be empty");
 
@@ -80,9 +84,9 @@ auto path_utils::makeRelative(
     }
 }
 
-auto path_utils::isSafePath(
-    const std::filesystem::path& path,
-    const std::filesystem::path& base_dir) -> std::expected<bool, error_code> {
+auto path_utils::isSafePath(const std::filesystem::path& path,
+                            const std::filesystem::path& base_dir)
+    -> std::expected<bool, error_code> {
     Q_ASSERT_X(!path.empty(), "path_utils::isSafePath", "path must not be empty");
     Q_ASSERT_X(!base_dir.empty(), "path_utils::isSafePath", "base_dir must not be empty");
 
@@ -111,7 +115,7 @@ auto path_utils::isSafePath(
         }
 
         return path_str.starts_with(base_str) ||
-            path_str == normalize_for_compare(norm_base.string());
+               path_str == normalize_for_compare(norm_base.string());
 
     } catch (const std::exception& e) {
         logError("Exception in isSafePath(): {}", e.what());
@@ -119,16 +123,15 @@ auto path_utils::isSafePath(
     }
 }
 
-bool path_utils::matchesPattern(
-    const std::filesystem::path& path,
-    const std::vector<std::string>& patterns) noexcept {
-
+bool path_utils::matchesPattern(const std::filesystem::path& path,
+                                const std::vector<std::string>& patterns) noexcept {
     try {
         const auto filename = path.filename().string();
-        return std::any_of(patterns.begin(), patterns.end(),
-            [&filename](const std::string& pattern) {
-                return wildcardMatch(filename, pattern);
-            });
+        return std::any_of(patterns.begin(),
+                           patterns.end(),
+                           [&filename](const std::string& pattern) {
+                               return wildcardMatch(filename, pattern);
+                           });
     } catch (const std::exception& e) {
         logError("Exception in matchesPattern(): {}", e.what());
         return false;
@@ -139,10 +142,11 @@ bool path_utils::matchesPattern(
     }
 }
 
-auto path_utils::getDirectorySizeAndCount(
-    const std::filesystem::path& dir_path) -> std::expected<DirectorySizeInfo, error_code> {
-    Q_ASSERT_X(!dir_path.empty(), "path_utils::getDirectorySizeAndCount",
-        "dir_path must not be empty");
+auto path_utils::getDirectorySizeAndCount(const std::filesystem::path& dir_path)
+    -> std::expected<DirectorySizeInfo, error_code> {
+    Q_ASSERT_X(!dir_path.empty(),
+               "path_utils::getDirectorySizeAndCount",
+               "dir_path must not be empty");
 
     std::error_code ec;
     if (!std::filesystem::exists(dir_path, ec) || ec) {
@@ -157,7 +161,7 @@ auto path_utils::getDirectorySizeAndCount(
 
     try {
         for (const auto& entry : std::filesystem::recursive_directory_iterator(
-                dir_path, std::filesystem::directory_options::skip_permission_denied)) {
+                 dir_path, std::filesystem::directory_options::skip_permission_denied)) {
             accumulateFileEntry(entry, info);
         }
     } catch (const std::filesystem::filesystem_error& e) {
@@ -171,8 +175,8 @@ auto path_utils::getDirectorySizeAndCount(
     return info;
 }
 
-auto path_utils::getAvailableSpace(
-    const std::filesystem::path& path) -> std::expected<std::uintmax_t, error_code> {
+auto path_utils::getAvailableSpace(const std::filesystem::path& path)
+    -> std::expected<std::uintmax_t, error_code> {
     Q_ASSERT_X(!path.empty(), "path_utils::getAvailableSpace", "path must not be empty");
 
     try {
@@ -187,10 +191,9 @@ auto path_utils::getAvailableSpace(
     }
 }
 
-bool path_utils::wildcardMatch(
-    std::string_view str,
-    std::string_view pattern) noexcept {
-
+bool path_utils::wildcardMatch(std::string_view str, std::string_view pattern) noexcept {
+    Q_ASSERT(!str.empty());
+    Q_ASSERT(!pattern.empty());
     std::size_t s = 0, p = 0;
     std::size_t star_idx = std::string_view::npos;
     std::size_t match_idx = 0;
@@ -219,4 +222,4 @@ bool path_utils::wildcardMatch(
     return p == pattern.size();
 }
 
-} // namespace sak
+}  // namespace sak

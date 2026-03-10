@@ -3,15 +3,15 @@
 
 #pragma once
 
-#include <QObject>
-#include <QMap>
-#include <QByteArray>
-#include <QHostAddress>
-#include <QThread>
-#include <QTimer>
-
 #include "sak/network_transfer_types.h"
 #include "sak/orchestration_types.h"
+
+#include <QByteArray>
+#include <QHostAddress>
+#include <QMap>
+#include <QObject>
+#include <QThread>
+#include <QTimer>
 
 class QJsonObject;
 
@@ -129,4 +129,4 @@ private:
     bool m_transferPaused{false};
 };
 
-} // namespace sak
+}  // namespace sak

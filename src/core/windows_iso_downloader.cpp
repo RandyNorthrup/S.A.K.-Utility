@@ -11,8 +11,9 @@
  */
 
 #include "sak/windows_iso_downloader.h"
-#include "sak/logger.h"
+
 #include "sak/layout_constants.h"
+#include "sak/logger.h"
 
 // ============================================================================
 // Construction / Destruction
@@ -21,37 +22,36 @@
 WindowsISODownloader::WindowsISODownloader(QObject* parent)
     : QObject(parent)
     , m_api(std::make_unique<UupDumpApi>(this))
-    , m_builder(std::make_unique<UupIsoBuilder>(this))
-{
+    , m_builder(std::make_unique<UupIsoBuilder>(this)) {
     // Forward API signals
-    connect(m_api.get(), &UupDumpApi::buildsFetched,
-            this, &WindowsISODownloader::buildsFetched);
-    connect(m_api.get(), &UupDumpApi::languagesFetched,
-            this, &WindowsISODownloader::languagesFetched);
-    connect(m_api.get(), &UupDumpApi::editionsFetched,
-            this, &WindowsISODownloader::editionsFetched);
-    connect(m_api.get(), &UupDumpApi::filesFetched,
-            this, &WindowsISODownloader::onFilesFetched);
-    connect(m_api.get(), &UupDumpApi::apiError,
-            this, &WindowsISODownloader::onApiError);
+    connect(m_api.get(), &UupDumpApi::buildsFetched, this, &WindowsISODownloader::buildsFetched);
+    connect(
+        m_api.get(), &UupDumpApi::languagesFetched, this, &WindowsISODownloader::languagesFetched);
+    connect(
+        m_api.get(), &UupDumpApi::editionsFetched, this, &WindowsISODownloader::editionsFetched);
+    connect(m_api.get(), &UupDumpApi::filesFetched, this, &WindowsISODownloader::onFilesFetched);
+    connect(m_api.get(), &UupDumpApi::apiError, this, &WindowsISODownloader::onApiError);
 
     // Forward builder signals
-    connect(m_builder.get(), &UupIsoBuilder::phaseChanged,
-            this, &WindowsISODownloader::phaseChanged);
-    connect(m_builder.get(), &UupIsoBuilder::progressUpdated,
-            this, &WindowsISODownloader::progressUpdated);
-    connect(m_builder.get(), &UupIsoBuilder::speedUpdated,
-            this, &WindowsISODownloader::speedUpdated);
-    connect(m_builder.get(), &UupIsoBuilder::buildCompleted,
-            this, &WindowsISODownloader::downloadComplete);
-    connect(m_builder.get(), &UupIsoBuilder::buildError,
-            this, &WindowsISODownloader::downloadError);
+    connect(
+        m_builder.get(), &UupIsoBuilder::phaseChanged, this, &WindowsISODownloader::phaseChanged);
+    connect(m_builder.get(),
+            &UupIsoBuilder::progressUpdated,
+            this,
+            &WindowsISODownloader::progressUpdated);
+    connect(
+        m_builder.get(), &UupIsoBuilder::speedUpdated, this, &WindowsISODownloader::speedUpdated);
+    connect(m_builder.get(),
+            &UupIsoBuilder::buildCompleted,
+            this,
+            &WindowsISODownloader::downloadComplete);
+    connect(
+        m_builder.get(), &UupIsoBuilder::buildError, this, &WindowsISODownloader::downloadError);
 
     sak::logInfo("WindowsISODownloader initialized (UUP dump backend)");
 }
 
-WindowsISODownloader::~WindowsISODownloader()
-{
+WindowsISODownloader::~WindowsISODownloader() {
     cancel();
 }
 
@@ -59,9 +59,7 @@ WindowsISODownloader::~WindowsISODownloader()
 // Step 1: Fetch Builds
 // ============================================================================
 
-void WindowsISODownloader::fetchBuilds(const QString& arch,
-                                       UupDumpApi::ReleaseChannel channel)
-{
+void WindowsISODownloader::fetchBuilds(const QString& arch, UupDumpApi::ReleaseChannel channel) {
     Q_EMIT statusMessage(QString("Fetching available %1 builds (%2)...")
                              .arg(arch)
                              .arg(UupDumpApi::channelToDisplayName(channel)));
@@ -72,8 +70,7 @@ void WindowsISODownloader::fetchBuilds(const QString& arch,
 // Step 2: Fetch Languages
 // ============================================================================
 
-void WindowsISODownloader::fetchLanguages(const QString& updateId)
-{
+void WindowsISODownloader::fetchLanguages(const QString& updateId) {
     Q_EMIT statusMessage("Fetching available languages...");
     m_api->listLanguages(updateId);
 }
@@ -82,9 +79,7 @@ void WindowsISODownloader::fetchLanguages(const QString& updateId)
 // Step 3: Fetch Editions
 // ============================================================================
 
-void WindowsISODownloader::fetchEditions(const QString& updateId,
-                                         const QString& lang)
-{
+void WindowsISODownloader::fetchEditions(const QString& updateId, const QString& lang) {
     Q_EMIT statusMessage("Fetching available editions...");
     m_api->listEditions(updateId, lang);
 }
@@ -96,8 +91,7 @@ void WindowsISODownloader::fetchEditions(const QString& updateId,
 void WindowsISODownloader::startDownload(const QString& updateId,
                                          const QString& lang,
                                          const QString& edition,
-                                         const QString& savePath)
-{
+                                         const QString& savePath) {
     if (isDownloading()) {
         Q_EMIT downloadError("A download is already in progress");
         return;
@@ -110,28 +104,27 @@ void WindowsISODownloader::startDownload(const QString& updateId,
     m_downloadRequested = true;
 
     Q_EMIT statusMessage("Fetching download links from Microsoft...");
-    sak::logInfo("Requesting UUP file links for build " +
-                  updateId.toStdString() + " (" + lang.toStdString() +
-                  ", " + edition.toStdString() + ")");
+    sak::logInfo("Requesting UUP file links for build " + updateId.toStdString() + " (" +
+                 lang.toStdString() + ", " + edition.toStdString() + ")");
 
     m_api->getFiles(updateId, lang, edition);
 }
 
 void WindowsISODownloader::onFilesFetched(const QString& updateName,
-                                          const QList<UupDumpApi::FileInfo>& files)
-{
+                                          const QList<UupDumpApi::FileInfo>& files) {
     // Forward the signal for informational purposes
     Q_EMIT filesFetched(updateName, files);
 
     if (!m_downloadRequested) {
-        return; // Files were fetched for informational purposes only
+        return;  // Files were fetched for informational purposes only
     }
 
     m_downloadRequested = false;
 
     if (files.isEmpty()) {
-        Q_EMIT downloadError("No download files returned for selected build. "
-                            "The build may no longer be available.");
+        Q_EMIT downloadError(
+            "No download files returned for selected build. "
+            "The build may no longer be available.");
         return;
     }
 
@@ -141,20 +134,19 @@ void WindowsISODownloader::onFilesFetched(const QString& updateName,
         totalBytes += file.size;
     }
 
-    sak::logInfo("Starting UUP download: " + std::to_string(files.size()) +
-                  " files, " + std::to_string(totalBytes / sak::kBytesPerMB) + " MB");
+    sak::logInfo("Starting UUP download: " + std::to_string(files.size()) + " files, " +
+                 std::to_string(totalBytes / sak::kBytesPerMB) + " MB");
 
     Q_EMIT downloadStarted(files.size(), totalBytes);
     Q_EMIT statusMessage(QString("Downloading %1 files (%2 GB)...")
                              .arg(files.size())
                              .arg(totalBytes / sak::kBytesPerGBf, 0, 'f', 2));
 
-    m_builder->startBuild(files, m_pendingSavePath, m_pendingEdition, m_pendingLang,
-        m_pendingUpdateId);
+    m_builder->startBuild(
+        files, m_pendingSavePath, m_pendingEdition, m_pendingLang, m_pendingUpdateId);
 }
 
-void WindowsISODownloader::onApiError(const QString& error)
-{
+void WindowsISODownloader::onApiError(const QString& error) {
     m_downloadRequested = false;
     Q_EMIT downloadError(error);
 }
@@ -163,8 +155,7 @@ void WindowsISODownloader::onApiError(const QString& error)
 // Cancel
 // ============================================================================
 
-void WindowsISODownloader::cancel()
-{
+void WindowsISODownloader::cancel() {
     m_downloadRequested = false;
     m_api->cancelAll();
     m_builder->cancel();
@@ -174,24 +165,14 @@ void WindowsISODownloader::cancel()
 // State Queries
 // ============================================================================
 
-bool WindowsISODownloader::isDownloading() const
-{
+bool WindowsISODownloader::isDownloading() const {
     return m_builder->isRunning() || m_downloadRequested;
 }
 
-QStringList WindowsISODownloader::availableArchitectures()
-{
+QStringList WindowsISODownloader::availableArchitectures() {
     return {"amd64", "arm64"};
 }
 
-QList<UupDumpApi::ReleaseChannel> WindowsISODownloader::availableChannels()
-{
+QList<UupDumpApi::ReleaseChannel> WindowsISODownloader::availableChannels() {
     return UupDumpApi::allChannels();
 }
-
-
-
-
-
-
-

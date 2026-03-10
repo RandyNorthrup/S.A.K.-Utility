@@ -5,6 +5,7 @@
 /// @brief Utility for scanning Windows WiFi profiles via netsh
 
 #include "sak/wifi_profile_scanner.h"
+
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
 
@@ -17,8 +18,9 @@ namespace {
 constexpr int kKillWaitMs = 2000;
 
 /// @brief Run a netsh command with timeout, returning its stdout
-QString runNetsh(const QStringList& args, int timeout_ms,
-                 const WifiScanLogger& logger) {
+QString runNetsh(const QStringList& args, int timeout_ms, const WifiScanLogger& logger) {
+    Q_ASSERT(!args.isEmpty());
+    Q_ASSERT(timeout_ms >= 0);
     QProcess process;
     process.start("netsh", args);
     if (!process.waitForStarted(sak::kTimeoutProcessStartMs)) {
@@ -40,9 +42,10 @@ QString runNetsh(const QStringList& args, int timeout_ms,
     return QString::fromLocal8Bit(process.readAllStandardOutput());
 }
 
-} // namespace
+}  // namespace
 
 QStringList parseWifiProfileNames(const QString& output) {
+    Q_ASSERT(!output.isEmpty());
     QStringList names;
     for (const QString& line : output.split('\n')) {
         const int colon_idx = line.indexOf(':');
@@ -61,6 +64,7 @@ QStringList parseWifiProfileNames(const QString& output) {
 }
 
 QString parseWifiSecurityType(const QString& detail_output) {
+    Q_ASSERT(!detail_output.isEmpty());
     for (const QString& line : detail_output.split('\n')) {
         if (!line.contains("Authentication", Qt::CaseInsensitive)) {
             continue;
@@ -75,9 +79,8 @@ QString parseWifiSecurityType(const QString& detail_output) {
 }
 
 QVector<WifiProfileInfo> scanAllWifiProfiles(const WifiScanLogger& logger) {
-
-    const QString list_output = runNetsh(
-        {"wlan", "show", "profiles"}, kTimeoutNetworkReadMs, logger);
+    const QString list_output =
+        runNetsh({"wlan", "show", "profiles"}, kTimeoutNetworkReadMs, logger);
     if (list_output.isEmpty()) {
         return {};
     }
@@ -91,16 +94,16 @@ QVector<WifiProfileInfo> scanAllWifiProfiles(const WifiScanLogger& logger) {
         info.profile_name = name;
         info.selected = true;
 
-        const QString detail = runNetsh(
-            {"wlan", "show", "profile", "name=" + name},
-            kTimeoutWifiProfileMs, logger);
+        const QString detail =
+            runNetsh({"wlan", "show", "profile", "name=" + name}, kTimeoutWifiProfileMs, logger);
         if (!detail.isEmpty()) {
             info.security_type = parseWifiSecurityType(detail);
         }
 
-        const QString xml_output = runNetsh(
-            {"wlan", "show", "profile", "name=" + name, "key=clear"},
-            kTimeoutWifiProfileMs, logger);
+        const QString xml_output =
+            runNetsh({"wlan", "show", "profile", "name=" + name, "key=clear"},
+                     kTimeoutWifiProfileMs,
+                     logger);
         info.xml_data = xml_output;
 
         profiles.append(info);
@@ -109,4 +112,4 @@ QVector<WifiProfileInfo> scanAllWifiProfiles(const WifiScanLogger& logger) {
     return profiles;
 }
 
-} // namespace sak
+}  // namespace sak

@@ -3,11 +3,13 @@
 
 #pragma once
 
-#include "worker_base.h"
 #include "image_source.h"
-#include <QString>
-#include <QMutex>
+#include "worker_base.h"
+
 #include <QList>
+#include <QMutex>
+#include <QString>
+
 #include <windows.h>
 
 namespace sak {
@@ -16,52 +18,52 @@ namespace sak {
  * @brief Validation modes for verification
  */
 enum class ValidationMode {
-    Full,      ///< Read and verify every byte (most reliable)
-    Sample,    ///< Verify random samples (faster, less thorough)
-    Skip       ///< No verification (fastest)
+    Full,    ///< Read and verify every byte (most reliable)
+    Sample,  ///< Verify random samples (faster, less thorough)
+    Skip     ///< No verification (fastest)
 };
 
 /**
  * @brief Result of verification operation
  */
 struct ValidationResult {
-    bool passed = false;                  ///< Overall success/failure
-    QString sourceChecksum;               ///< Expected checksum (SHA-512)
-    QString targetChecksum;               ///< Actual checksum from device
-    QList<QString> errors;                ///< Detailed error messages
-    qint64 mismatchOffset = -1;          ///< First mismatch byte position (-1 if none)
-    int corruptedBlocks = 0;             ///< Number of blocks with errors
-    double verificationSpeed = 0.0;       ///< MB/s read speed during verify
+    bool passed = false;             ///< Overall success/failure
+    QString sourceChecksum;          ///< Expected checksum (SHA-512)
+    QString targetChecksum;          ///< Actual checksum from device
+    QList<QString> errors;           ///< Detailed error messages
+    qint64 mismatchOffset = -1;      ///< First mismatch byte position (-1 if none)
+    int corruptedBlocks = 0;         ///< Number of blocks with errors
+    double verificationSpeed = 0.0;  ///< MB/s read speed during verify
 };
 
-} // namespace sak
+}  // namespace sak
 
 /**
  * @brief Flash Worker - Writes image to a single drive
- * 
+ *
  * Worker thread that writes an image source to a physical drive.
  * Handles low-level Windows API operations including opening device,
  * locking volume, writing sectors, and verification.
- * 
+ *
  * Based on Etcher SDK's flash worker with Windows-specific optimizations.
- * 
+ *
  * Features:
  * - Sector-aligned writes with FILE_FLAG_NO_BUFFERING
  * - Progress tracking with speed calculation
  * - SHA-512 verification via read-back
  * - Automatic retry on transient errors
  * - Graceful cancellation
- * 
+ *
  * Thread-Safety: All methods are thread-safe. Run() executes on worker thread.
- * 
+ *
  * Example:
  * @code
  * auto imageSource = std::make_unique<FileImageSource>("image.iso");
  * FlashWorker worker(std::move(imageSource), "\\.\PhysicalDrive1");
- * 
- * connect(&worker, &FlashWorker::progressUpdated, 
+ *
+ * connect(&worker, &FlashWorker::progressUpdated,
  *         [](double pct) { qDebug() << pct << "%"; });
- * 
+ *
  * worker.start();
  * @endcode
  */
@@ -76,8 +78,8 @@ public:
      * @param parent Parent object
      */
     explicit FlashWorker(std::unique_ptr<ImageSource> imageSource,
-                        const QString& targetDevice,
-                        QObject* parent = nullptr);
+                         const QString& targetDevice,
+                         QObject* parent = nullptr);
     ~FlashWorker() override;
 
     // Disable copy and move
@@ -109,7 +111,7 @@ public:
      * @param enabled true to verify after writing
      */
     void setVerificationEnabled(bool enabled);
-    
+
     /**
      * @brief Set validation mode
      * @param mode Validation mode (Full, Sample, or Skip)
@@ -129,7 +131,7 @@ Q_SIGNALS:
      * @param bytesWritten Total bytes written so far
      */
     void progressUpdated(double percentage, qint64 bytesWritten);
-    
+
     /**
      * @brief Emitted periodically during verification
      * @param percentage Progress 0-100
@@ -148,7 +150,7 @@ Q_SIGNALS:
      * @param bytesWritten Total bytes written
      */
     void writeCompleted(qint64 bytesWritten);
-    
+
     /**
      * @brief Emitted on error
      * @param error Error message
@@ -167,7 +169,7 @@ private:
     bool lockVolume();
     bool unlockVolume();
     bool dismountVolume();
-    
+
     bool writeImage();
     bool prepareSourceChecksum();
     bool padBufferToSectorSize(QByteArray& buffer, qint64& bytesRead);
@@ -177,26 +179,30 @@ private:
     sak::ValidationResult verifySample();
     /// @brief Verify individual sample blocks against the target device
     /// @return Number of blocks successfully verified
-    int verifySampleBlocks(sak::ValidationResult& result, int numSamples,
-                           qint64 blockSize, qint64 totalBlocks, qint64 sampleSize,
-                           QByteArray& sourceBuffer, QByteArray& targetBuffer);
-    
+    int verifySampleBlocks(sak::ValidationResult& result,
+                           int numSamples,
+                           qint64 blockSize,
+                           qint64 totalBlocks,
+                           qint64 sampleSize,
+                           QByteArray& sourceBuffer,
+                           QByteArray& targetBuffer);
+
     void updateProgress(qint64 bytesWritten);
     void updateSpeed(qint64 bytesWritten);
     void updateVerificationProgress(qint64 bytesVerified, qint64 totalBytes);
-    
+
     std::unique_ptr<ImageSource> m_imageSource;
     QString m_targetDevice;
     QString m_sourceChecksum;  // Cached source checksum
     HANDLE m_deviceHandle;
-    
+
     qint64 m_bytesWritten;
     qint64 m_totalBytes;
     double m_speedMBps;
     qint64 m_bufferSize;
     bool m_verificationEnabled;
     sak::ValidationMode m_validationMode;
-    
+
     QMutex m_mutex;
     qint64 m_lastProgressUpdate;
     qint64 m_lastSpeedUpdate;

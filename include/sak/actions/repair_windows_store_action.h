@@ -4,13 +4,14 @@
 #pragma once
 
 #include "sak/quick_action.h"
+
 #include <QString>
 
 namespace sak {
 
 /**
  * @brief Repair Windows Store Action
- * 
+ *
  * Resets Windows Store app and re-registers all UWP apps.
  */
 class RepairWindowsStoreAction : public QuickAction {
@@ -38,7 +39,7 @@ private:
         bool is_installed;
         bool is_registered;
     };
-    
+
     StorePackageInfo checkStorePackage();
     bool resetWindowsStoreCache();
     bool resetStorePackage();
@@ -47,14 +48,21 @@ private:
     int checkStoreEventLogs();
 
     /// @brief Build the diagnostic report string from repair phase results
-    QString buildRepairReport(const StorePackageInfo& before_info, int error_count,
-                              bool cache_reset, bool package_reset,
-                              bool reregistered, bool services_restarted,
-                              const StorePackageInfo& after_info, int post_error_count);
-    void finalizeRepairResult(bool cache_reset, bool package_reset, bool reregistered,
-                              bool services_restarted, const StorePackageInfo& after_info,
-                              const QString& report, const QDateTime& start_time);
+    QString buildRepairReport(const StorePackageInfo& before_info,
+                              int error_count,
+                              bool cache_reset,
+                              bool package_reset,
+                              bool reregistered,
+                              bool services_restarted,
+                              const StorePackageInfo& after_info,
+                              int post_error_count);
+    void finalizeRepairResult(bool cache_reset,
+                              bool package_reset,
+                              bool reregistered,
+                              bool services_restarted,
+                              const StorePackageInfo& after_info,
+                              const QString& report,
+                              const QDateTime& start_time);
 };
 
-} // namespace sak
-
+}  // namespace sak

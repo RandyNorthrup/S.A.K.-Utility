@@ -2,14 +2,16 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "sak/chocolatey_manager.h"
+
 #include "sak/action_constants.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
+
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
-#include <QThread>
 #include <QRegularExpression>
+#include <QThread>
 
 namespace sak {
 
@@ -18,9 +20,7 @@ ChocolateyManager::ChocolateyManager(QObject* parent)
     , m_initialized(false)
     , m_default_timeout_seconds(kChocoTimeoutDefaultSec)
     , m_auto_confirm(true)
-    , m_current_process(nullptr)
-{
-}
+    , m_current_process(nullptr) {}
 
 ChocolateyManager::~ChocolateyManager() {
     if (m_current_process && m_current_process->state() != QProcess::NotRunning) {
@@ -30,14 +30,13 @@ ChocolateyManager::~ChocolateyManager() {
 }
 
 bool ChocolateyManager::initialize(const QString& choco_portable_path) {
+    Q_ASSERT(!choco_portable_path.isEmpty());
     m_choco_dir = choco_portable_path;
 
     // Look for choco.exe in common locations within portable directory
-    QStringList possible_paths = {
-        QDir(m_choco_dir).filePath("choco.exe"),
-        QDir(m_choco_dir).filePath("bin/choco.exe"),
-        QDir(m_choco_dir).filePath("chocolatey/bin/choco.exe")
-    };
+    QStringList possible_paths = {QDir(m_choco_dir).filePath("choco.exe"),
+                                  QDir(m_choco_dir).filePath("bin/choco.exe"),
+                                  QDir(m_choco_dir).filePath("chocolatey/bin/choco.exe")};
 
     for (const QString& path : possible_paths) {
         if (QFile::exists(path)) {
@@ -48,7 +47,7 @@ bool ChocolateyManager::initialize(const QString& choco_portable_path) {
 
     if (m_choco_path.isEmpty()) {
         sak::logWarning("[ChocolateyManager] choco.exe not found in {}",
-            choco_portable_path.toStdString());
+                        choco_portable_path.toStdString());
         return false;
     }
 
@@ -76,7 +75,7 @@ bool ChocolateyManager::verifyIntegrity() {
     // Check if choco.exe still exists
     if (!QFile::exists(m_choco_path)) {
         sak::logWarning("[ChocolateyManager] choco.exe no longer exists at: {}",
-            m_choco_path.toStdString());
+                        m_choco_path.toStdString());
         m_initialized = false;
         return false;
     }
@@ -147,9 +146,8 @@ ChocolateyManager::Result ChocolateyManager::installPackage(const InstallConfig&
     }
 
     // Execute with timeout
-    int timeout_ms =
-        config.timeout_seconds > 0 ? config
-            .timeout_seconds * 1000 : m_default_timeout_seconds * 1000;
+    int timeout_ms = config.timeout_seconds > 0 ? config.timeout_seconds * 1000
+                                                : m_default_timeout_seconds * 1000;
     Result result = executeChoco(args, timeout_ms);
 
     if (result.success) {
@@ -158,14 +156,15 @@ ChocolateyManager::Result ChocolateyManager::installPackage(const InstallConfig&
     } else {
         Q_EMIT installFailed(config.package_name, result.error_message);
         sak::logWarning("[ChocolateyManager] Failed to install {}: {}",
-            config.package_name.toStdString(), result.error_message.toStdString());
+                        config.package_name.toStdString(),
+                        result.error_message.toStdString());
     }
 
     return result;
 }
 
 ChocolateyManager::Result ChocolateyManager::uninstallPackage(const QString& package_name,
-    bool auto_confirm) {
+                                                              bool auto_confirm) {
     if (!m_initialized) {
         return {false, "", "ChocolateyManager not initialized", -1};
     }
@@ -184,7 +183,7 @@ ChocolateyManager::Result ChocolateyManager::uninstallPackage(const QString& pac
 }
 
 ChocolateyManager::Result ChocolateyManager::upgradePackage(const QString& package_name,
-    bool auto_confirm) {
+                                                            bool auto_confirm) {
     if (!m_initialized) {
         return {false, "", "ChocolateyManager not initialized", -1};
     }
@@ -203,6 +202,8 @@ ChocolateyManager::Result ChocolateyManager::upgradePackage(const QString& packa
 }
 
 ChocolateyManager::Result ChocolateyManager::searchPackage(const QString& query, int max_results) {
+    Q_ASSERT(!query.isEmpty());
+    Q_ASSERT(max_results >= 0);
     if (!m_initialized) {
         return {false, "", "ChocolateyManager not initialized", -1};
     }
@@ -215,7 +216,7 @@ ChocolateyManager::Result ChocolateyManager::searchPackage(const QString& query,
         args << "--page-size" << QString::number(max_results);
     }
 
-    Result result = executeChoco(args, 30000);  // 30 second timeout for search
+    Result result = executeChoco(args, 30'000);  // 30 second timeout for search
 
     if (result.success) {
         auto packages = parseSearchResults(result.output);
@@ -260,18 +261,19 @@ bool ChocolateyManager::isPackageInstalled(const QString& package_name) {
     }
 
     QStringList args = {"list", "--local-only", package_name, "--exact", "--limit-output"};
-    Result result = executeChoco(args, 10000);
+    Result result = executeChoco(args, 10'000);
 
     return result.success && result.output.contains(package_name);
 }
 
 QString ChocolateyManager::getInstalledVersion(const QString& package_name) {
+    Q_ASSERT(!package_name.isEmpty());
     if (!m_initialized) {
         return QString();
     }
 
     QStringList args = {"list", "--local-only", package_name, "--exact", "--limit-output"};
-    Result result = executeChoco(args, 10000);
+    Result result = executeChoco(args, 10'000);
 
     if (!result.success) {
         return QString();
@@ -293,6 +295,7 @@ QString ChocolateyManager::getInstalledVersion(const QString& package_name) {
 }
 
 bool ChocolateyManager::isPackageAvailable(const QString& package_name) {
+    Q_ASSERT(!package_name.isEmpty());
     if (!m_initialized) {
         return false;
     }
@@ -320,7 +323,7 @@ QStringList ChocolateyManager::getOutdatedPackages() {
         return outdated;
     }
 
-    auto result = executeChoco({"outdated", "-r"}, 30000);
+    auto result = executeChoco({"outdated", "-r"}, 30'000);
     if (!result.success) {
         return outdated;
     }
@@ -329,18 +332,16 @@ QStringList ChocolateyManager::getOutdatedPackages() {
     for (const QString& line : lines) {
         QStringList parts = line.split('|');
         if (parts.size() >= 3) {
-            outdated.append(parts[0]); // Package name
+            outdated.append(parts[0]);  // Package name
         }
     }
 
     return outdated;
 }
 
-ChocolateyManager::Result ChocolateyManager::installWithRetry(
-    const InstallConfig& config,
-    int max_attempts,
-    int delay_seconds)
-{
+ChocolateyManager::Result ChocolateyManager::installWithRetry(const InstallConfig& config,
+                                                              int max_attempts,
+                                                              int delay_seconds) {
     Result last_result;
 
     for (int attempt = 1; attempt <= max_attempts; ++attempt) {
@@ -384,6 +385,8 @@ bool ChocolateyManager::getAutoConfirm() const {
 }
 
 ChocolateyManager::Result ChocolateyManager::executeChoco(const QStringList& args, int timeout_ms) {
+    Q_ASSERT(!args.isEmpty());
+    Q_ASSERT(timeout_ms >= 0);
     QProcess process;
 
     // Set up environment
@@ -451,6 +454,7 @@ bool ChocolateyManager::parseExitCode(int exit_code) const {
 }
 
 QString ChocolateyManager::extractErrorMessage(const QString& output) const {
+    Q_ASSERT(!output.isEmpty());
     // Look for common error patterns in Chocolatey output
     QStringList lines = output.split('\n');
 
@@ -476,10 +480,16 @@ QString ChocolateyManager::extractErrorMessage(const QString& output) const {
 }
 
 bool ChocolateyManager::isNetworkError(const QString& output) const {
-    QStringList network_keywords = {
-        "network", "timeout", "connection", "unreachable",
-        "dns", "proxy", "ssl", "certificate", "tls"
-    };
+    Q_ASSERT(!output.isEmpty());
+    QStringList network_keywords = {"network",
+                                    "timeout",
+                                    "connection",
+                                    "unreachable",
+                                    "dns",
+                                    "proxy",
+                                    "ssl",
+                                    "certificate",
+                                    "tls"};
 
     QString lower_output = output.toLower();
     for (const QString& keyword : network_keywords) {
@@ -523,4 +533,4 @@ bool ChocolateyManager::validateVersion(const QString& version) const {
     return valid_version.match(version).hasMatch();
 }
 
-} // namespace sak
+}  // namespace sak

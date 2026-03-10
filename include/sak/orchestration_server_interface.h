@@ -3,12 +3,11 @@
 
 #pragma once
 
-#include <QObject>
-#include <QString>
-
 #include "sak/orchestration_types.h"
 
 #include <QJsonObject>
+#include <QObject>
+#include <QString>
 
 namespace sak {
 
@@ -24,7 +23,7 @@ public:
     virtual void stop() = 0;
     virtual void sendHealthCheck(const QString& destination_id) = 0;
     virtual void sendDeploymentAssignment(const QString& destination_id,
-        const DeploymentAssignment& assignment) = 0;
+                                          const DeploymentAssignment& assignment) = 0;
     virtual void sendAssignmentPause(const QString& destination_id,
                                      const QString& deployment_id,
                                      const QString& job_id) = 0;
@@ -44,4 +43,4 @@ Q_SIGNALS:
     void connectionError(const QString& message);
 };
 
-} // namespace sak
+}  // namespace sak

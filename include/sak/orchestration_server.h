@@ -3,12 +3,12 @@
 
 #pragma once
 
-#include <QObject>
-#include <QMap>
-#include <QTimer>
-
 #include "sak/orchestration_protocol.h"
 #include "sak/orchestration_server_interface.h"
+
+#include <QMap>
+#include <QObject>
+#include <QTimer>
 
 class QTcpServer;
 class QTcpSocket;
@@ -30,7 +30,7 @@ public:
 
     void sendHealthCheck(const QString& destination_id) override;
     void sendDeploymentAssignment(const QString& destination_id,
-        const DeploymentAssignment& assignment) override;
+                                  const DeploymentAssignment& assignment) override;
     void sendAssignmentPause(const QString& destination_id,
                              const QString& deployment_id,
                              const QString& job_id) override;
@@ -65,7 +65,7 @@ private:
     QMap<QString, QTcpSocket*> m_destinationSockets;
     QMap<QTcpSocket*, QString> m_socketDestinations;
     QTimer* m_healthTimer{nullptr};
-    int m_healthIntervalMs{10000};
+    int m_healthIntervalMs{10'000};
 };
 
-} // namespace sak
+}  // namespace sak

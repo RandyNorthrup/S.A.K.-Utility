@@ -4,38 +4,35 @@
 /// @file test_organizer_worker.cpp
 /// @brief Unit tests for OrganizerWorker file categorization (TST-11)
 
-#include <QtTest/QtTest>
-#include <QTemporaryDir>
-#include <QFile>
-#include <QDir>
 #include "sak/organizer_worker.h"
+
+#include <QDir>
+#include <QFile>
+#include <QTemporaryDir>
+#include <QtTest/QtTest>
 
 class OrganizerWorkerTests : public QObject {
     Q_OBJECT
 
 private:
-    void createDummyFile(const QString& dir, const QString& name,
-                         const QByteArray& content = "test")
-    {
+    void createDummyFile(const QString& dir,
+                         const QString& name,
+                         const QByteArray& content = "test") {
         QFile f(QDir(dir).filePath(name));
         QVERIFY(f.open(QIODevice::WriteOnly));
         f.write(content);
     }
 
     /// @brief Build a default category mapping for common extensions
-    static QMap<QString, QStringList> defaultCategoryMapping()
-    {
-        return {
-            {"Images",    {"jpg", "jpeg", "png", "gif", "bmp", "svg", "webp"}},
-            {"Documents", {"pdf", "doc", "docx", "txt", "csv", "xls", "xlsx", "odt"}},
-            {"Audio",     {"mp3", "wav", "flac", "aac", "ogg", "wma"}},
-            {"Video",     {"mp4", "avi", "mkv", "mov", "wmv", "flv"}}
-        };
+    static QMap<QString, QStringList> defaultCategoryMapping() {
+        return {{"Images", {"jpg", "jpeg", "png", "gif", "bmp", "svg", "webp"}},
+                {"Documents", {"pdf", "doc", "docx", "txt", "csv", "xls", "xlsx", "odt"}},
+                {"Audio", {"mp3", "wav", "flac", "aac", "ogg", "wma"}},
+                {"Video", {"mp4", "avi", "mkv", "mov", "wmv", "flv"}}};
     }
 
 private Q_SLOTS:
-    void previewModeDoesNotMoveFiles()
-    {
+    void previewModeDoesNotMoveFiles() {
         QTemporaryDir tmpDir;
         QVERIFY(tmpDir.isValid());
 
@@ -60,8 +57,7 @@ private Q_SLOTS:
         QVERIFY(QFile::exists(QDir(tmpDir.path()).filePath("song.mp3")));
     }
 
-    void movesModeOrganizesFiles()
-    {
+    void movesModeOrganizesFiles() {
         QTemporaryDir tmpDir;
         QVERIFY(tmpDir.isValid());
 
@@ -88,8 +84,7 @@ private Q_SLOTS:
         QVERIFY(QFile::exists(QDir(tmpDir.path()).filePath("Documents/notes.txt")));
     }
 
-    void cancellationFlag()
-    {
+    void cancellationFlag() {
         OrganizerWorker::Config config;
         config.target_directory = "C:\\nonexistent";
         OrganizerWorker worker(config);

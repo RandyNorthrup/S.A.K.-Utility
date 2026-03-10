@@ -147,18 +147,18 @@ private:
 
 /// AdvancedSearchController must inherit QObject.
 static_assert(std::is_base_of_v<QObject, AdvancedSearchController>,
-    "AdvancedSearchController must inherit QObject.");
+              "AdvancedSearchController must inherit QObject.");
 
 /// AdvancedSearchController must not be copyable.
 static_assert(!std::is_copy_constructible_v<AdvancedSearchController>,
-    "AdvancedSearchController must not be copy-constructible.");
+              "AdvancedSearchController must not be copy-constructible.");
 
 /// AdvancedSearchController must not be movable.
 static_assert(!std::is_move_constructible_v<AdvancedSearchController>,
-    "AdvancedSearchController must not be move-constructible.");
+              "AdvancedSearchController must not be move-constructible.");
 
 /// AdvancedSearchController must not be copyable.
 static_assert(!std::is_copy_constructible_v<AdvancedSearchController>,
-    "AdvancedSearchController must not be copy-constructible.");
+              "AdvancedSearchController must not be copy-constructible.");
 
-} // namespace sak
+}  // namespace sak

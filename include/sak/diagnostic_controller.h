@@ -12,8 +12,8 @@
 #include <QObject>
 #include <QString>
 
-#include <memory>
 #include <atomic>
+#include <memory>
 
 namespace sak {
 
@@ -236,7 +236,7 @@ private:
     // State
     SuiteState m_suite_state{SuiteState::Idle};
     std::atomic<bool> m_running_suite{false};
-    std::atomic<bool> m_skipping_step{false};       ///< Guards skipCurrentStep from double-advance
+    std::atomic<bool> m_skipping_step{false};  ///< Guards skipCurrentStep from double-advance
     DiagnosticReportData m_report_data;
 
     // Async operation futures (prevent fire-and-forget)
@@ -248,4 +248,4 @@ private:
     DiskBenchmarkConfig m_suite_disk_config;
 };
 
-} // namespace sak
+}  // namespace sak

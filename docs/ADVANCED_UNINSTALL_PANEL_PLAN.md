@@ -292,21 +292,21 @@ struct ProgramInfo {
     QString publisher;              ///< Publisher/vendor
     QString displayVersion;         ///< Installed version string
     QString installDate;            ///< Installation date (YYYYMMDD or localized)
-    
+
     // Paths
     QString installLocation;        ///< Installation directory
     QString uninstallString;        ///< Uninstall command line
     QString quietUninstallString;   ///< Silent uninstall command (if available)
     QString modifyPath;             ///< Modify/repair command
     QString displayIcon;            ///< Path to icon resource
-    
+
     // Registry
     QString registryKeyPath;        ///< Full registry key path (for forced uninstall)
-    
+
     // Metadata
     qint64 estimatedSizeKB = 0;     ///< Estimated size from registry (in KB)
     qint64 actualSizeBytes = 0;     ///< Calculated actual disk usage (bytes)
-    
+
     // Classification
     enum class Source {
         RegistryHKLM,               ///< HKEY_LOCAL_MACHINE\...\Uninstall
@@ -316,16 +316,16 @@ struct ProgramInfo {
         Provisioned                 ///< Provisioned UWP (all-users)
     };
     Source source = Source::RegistryHKLM;
-    
+
     // UWP-specific
     QString packageFamilyName;      ///< UWP package family name (for removal)
     QString packageFullName;        ///< UWP full package name
-    
+
     // Status
     bool isSystemComponent = false; ///< WindowsInstaller SystemComponent flag
     bool isOrphaned = false;        ///< Install directory missing or uninstaller gone
     bool isBloatware = false;       ///< Matched bloatware pattern database
-    
+
     // Icon cache
     QIcon cachedIcon;               ///< Extracted program icon
 };
@@ -350,20 +350,20 @@ struct LeftoverItem {
         StartupEntry,
         ShellExtension
     };
-    
+
     enum class RiskLevel {
         Safe,       ///< Green — clearly belongs to the uninstalled app
         Review,     ///< Yellow — likely belongs, but shared component possible
         Risky       ///< Red — may be shared or system-related
     };
-    
+
     Type type;
     RiskLevel risk = RiskLevel::Safe;
     QString path;               ///< File path or registry key path
     QString description;        ///< Human-readable description
     qint64 sizeBytes = 0;       ///< Size for files/folders; 0 for registry
     bool selected = false;      ///< User selection state (Safe = pre-selected)
-    
+
     // Registry-specific
     QString registryValueName;  ///< Non-empty for RegistryValue type
     QString registryValueData;  ///< Display data for the value
@@ -374,15 +374,15 @@ struct UninstallReport {
     QString programName;
     QString programVersion;
     QString programPublisher;
-    
+
     // Timing
     QDateTime startTime;
     QDateTime endTime;
-    
+
     // Restore
     bool restorePointCreated = false;
     QString restorePointName;
-    
+
     // Uninstall phase
     enum class UninstallResult {
         Success,
@@ -392,11 +392,11 @@ struct UninstallReport {
     };
     UninstallResult uninstallResult = UninstallResult::Success;
     int nativeExitCode = 0;
-    
+
     // Leftover scan phase
     ScanLevel scanLevel = ScanLevel::Moderate;
     QVector<LeftoverItem> foundLeftovers;
-    
+
     // Cleanup phase
     int filesDeleted = 0;
     int foldersDeleted = 0;
@@ -408,7 +408,7 @@ struct UninstallReport {
     int startupEntriesRemoved = 0;
     int failedDeletions = 0;
     qint64 totalSpaceRecovered = 0;
-    
+
     QStringList errorLog;       ///< Errors encountered during cleanup
 };
 
@@ -417,7 +417,7 @@ struct UninstallQueueItem {
     ProgramInfo program;
     ScanLevel scanLevel = ScanLevel::Moderate;
     bool autoCleanSafeLeftovers = true;  ///< Auto-delete green items
-    
+
     // Post-process state
     enum class Status {
         Queued,
@@ -441,7 +441,7 @@ class ProgramEnumerator : public QObject {
 public:
     explicit ProgramEnumerator(QObject* parent = nullptr);
     ~ProgramEnumerator() override;
-    
+
     ProgramEnumerator(const ProgramEnumerator&) = delete;
     ProgramEnumerator& operator=(const ProgramEnumerator&) = delete;
     ProgramEnumerator(ProgramEnumerator&&) = delete;
@@ -449,57 +449,57 @@ public:
 
     /// @brief Start async enumeration of all installed programs
     void enumerateAll();
-    
+
     /// @brief Get the last enumeration result (cached)
     [[nodiscard]] QVector<ProgramInfo> programs() const;
-    
+
     /// @brief Detect orphaned entries (install path or uninstaller missing)
     void detectOrphaned(QVector<ProgramInfo>& programs);
-    
+
     /// @brief Mark known bloatware using pattern database
     void markBloatware(QVector<ProgramInfo>& programs);
-    
+
     /// @brief Calculate actual disk usage for a program's install directory
     [[nodiscard]] static qint64 calculateDirSize(const QString& path);
-    
+
 Q_SIGNALS:
     void enumerationStarted();
     void enumerationProgress(int current, int total);
     void enumerationFinished(QVector<ProgramInfo> programs);
     void enumerationFailed(const QString& error);
-    
+
 private:
     /// @brief Scan Win32 programs from registry
     QVector<ProgramInfo> scanRegistryPrograms();
-    
+
     /// @brief Scan single registry hive
     QVector<ProgramInfo> scanRegistryHive(HKEY hive, const QString& subkey,
                                            ProgramInfo::Source source);
-    
+
     /// @brief Read a single registry string value
     [[nodiscard]] QString readRegString(HKEY key, const wchar_t* valueName);
-    
+
     /// @brief Read a single registry DWORD value
     [[nodiscard]] DWORD readRegDword(HKEY key, const wchar_t* valueName);
-    
+
     /// @brief Scan UWP/AppX packages via PowerShell
     QVector<ProgramInfo> scanUwpPackages();
-    
+
     /// @brief Scan provisioned (all-users) UWP packages
     QVector<ProgramInfo> scanProvisionedPackages();
-    
+
     /// @brief Extract icon from executable file
     [[nodiscard]] static QIcon extractIcon(const QString& path);
-    
+
     /// @brief Check if entry is a system component (filter out)
     [[nodiscard]] static bool isSystemComponent(HKEY key);
-    
+
     // Registry paths
     static constexpr const wchar_t* kUninstallKey64 =
         L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall";
     static constexpr const wchar_t* kUninstallKeyWow64 =
         L"SOFTWARE\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall";
-    
+
     QVector<ProgramInfo> m_cachedPrograms;
 };
 ```
@@ -536,11 +536,11 @@ public:
         UwpRemove,      ///< Remove UWP package via PowerShell
         RegistryOnly    ///< Only remove the registry uninstall entry (orphaned cleanup)
     };
-    
+
     explicit UninstallWorker(const ProgramInfo& program, Mode mode,
                              ScanLevel scanLevel, QObject* parent = nullptr);
     ~UninstallWorker() override = default;
-    
+
     UninstallWorker(const UninstallWorker&) = delete;
     UninstallWorker& operator=(const UninstallWorker&) = delete;
     UninstallWorker(UninstallWorker&&) = delete;
@@ -549,25 +549,25 @@ public:
 Q_SIGNALS:
     /// @brief Native uninstaller has been launched — waiting for completion
     void nativeUninstallerStarted(const QString& programName);
-    
+
     /// @brief Native uninstaller completed
     void nativeUninstallerFinished(int exitCode);
-    
+
     /// @brief Registry snapshot captured (before state)
     void registrySnapshotCaptured();
-    
+
     /// @brief Restore point created
     void restorePointCreated(const QString& name);
-    
+
     /// @brief Leftover scan started
     void leftoverScanStarted(ScanLevel level);
-    
+
     /// @brief Leftover scan progress
     void leftoverScanProgress(const QString& currentPath, int found);
-    
+
     /// @brief Leftover scan complete
     void leftoverScanFinished(QVector<LeftoverItem> leftovers);
-    
+
     /// @brief Full uninstall pipeline complete
     void uninstallComplete(UninstallReport report);
 
@@ -578,7 +578,7 @@ private:
     ProgramInfo m_program;
     Mode m_mode;
     ScanLevel m_scanLevel;
-    
+
     // Pipeline stages
     [[nodiscard]] bool createRestorePoint();
     [[nodiscard]] bool captureRegistrySnapshot();
@@ -586,10 +586,10 @@ private:
     [[nodiscard]] QVector<LeftoverItem> scanLeftovers();
     [[nodiscard]] bool removeUwpPackage();
     [[nodiscard]] bool removeRegistryEntry();
-    
+
     // Registry snapshot data
     QSet<QString> m_registrySnapshotBefore;
-    
+
     // Helpers
     [[nodiscard]] bool isMsiInstaller() const;
     [[nodiscard]] QString buildMsiUninstallCommand() const;
@@ -607,7 +607,7 @@ auto UninstallWorker::execute() -> std::expected<void, sak::error_code> {
     report.programPublisher = m_program.publisher;
     report.startTime = QDateTime::currentDateTime();
     report.scanLevel = m_scanLevel;
-    
+
     // Phase 1: Create restore point
     reportProgress(0, 100, "Creating system restore point...");
     if (createRestorePoint()) {
@@ -615,9 +615,9 @@ auto UninstallWorker::execute() -> std::expected<void, sak::error_code> {
         report.restorePointName = QString("SAK: Before uninstall %1").arg(m_program.displayName);
         emit restorePointCreated(report.restorePointName);
     }
-    
+
     if (checkStop()) return {};
-    
+
     // Phase 2: Handle by mode
     switch (m_mode) {
     case Mode::Standard: {
@@ -625,30 +625,30 @@ auto UninstallWorker::execute() -> std::expected<void, sak::error_code> {
         reportProgress(10, 100, "Capturing registry snapshot...");
         captureRegistrySnapshot();
         emit registrySnapshotCaptured();
-        
+
         if (checkStop()) return {};
-        
+
         // 2b: Run native uninstaller and wait for exit
         reportProgress(20, 100, "Running native uninstaller...");
         emit nativeUninstallerStarted(m_program.displayName);
-        
+
         if (!runNativeUninstaller()) {
             report.uninstallResult = UninstallReport::UninstallResult::Failed;
             report.endTime = QDateTime::currentDateTime();
             emit uninstallComplete(report);
             return std::unexpected(sak::error_code::operation_failed);
         }
-        
+
         report.uninstallResult = UninstallReport::UninstallResult::Success;
         emit nativeUninstallerFinished(report.nativeExitCode);
         break;
     }
-    
+
     case Mode::ForcedUninstall:
         report.uninstallResult = UninstallReport::UninstallResult::Skipped;
         captureRegistrySnapshot();  // Still capture for diff, even without native uninstall
         break;
-    
+
     case Mode::UwpRemove:
         reportProgress(20, 100, "Removing UWP package...");
         if (!removeUwpPackage()) {
@@ -661,7 +661,7 @@ auto UninstallWorker::execute() -> std::expected<void, sak::error_code> {
         report.endTime = QDateTime::currentDateTime();
         emit uninstallComplete(report);
         return {};  // UWP — no leftover scan needed
-    
+
     case Mode::RegistryOnly:
         reportProgress(50, 100, "Removing orphaned registry entry...");
         if (!removeRegistryEntry()) {
@@ -673,21 +673,21 @@ auto UninstallWorker::execute() -> std::expected<void, sak::error_code> {
         emit uninstallComplete(report);
         return {};
     }
-    
+
     if (checkStop()) return {};
-    
+
     // Phase 3: Leftover scanning
     reportProgress(40, 100, "Scanning for leftovers...");
     emit leftoverScanStarted(m_scanLevel);
-    
+
     auto leftovers = scanLeftovers();
     report.foundLeftovers = leftovers;
-    
+
     emit leftoverScanFinished(leftovers);
-    
+
     report.endTime = QDateTime::currentDateTime();
     emit uninstallComplete(report);
-    
+
     return {};
 }
 ```
@@ -700,7 +700,7 @@ auto UninstallWorker::execute() -> std::expected<void, sak::error_code> {
 class LeftoverScanner {
 public:
     explicit LeftoverScanner(const ProgramInfo& program, ScanLevel level);
-    
+
     /// @brief Run the full leftover scan
     /// @param registrySnapshotBefore Registry keys captured before uninstall
     /// @param stopRequested Atomic flag for cancellation
@@ -713,41 +713,41 @@ public:
 private:
     ProgramInfo m_program;
     ScanLevel m_level;
-    
+
     // Search patterns derived from program info
     QStringList m_namePatterns;     ///< Program name variations for matching
     QStringList m_publisherPatterns;///< Publisher name variations
     QString m_installDirName;       ///< Last component of install path
-    
+
     /// @brief Generate search patterns from program info
     void buildSearchPatterns();
-    
+
     // File system scanning
     QVector<LeftoverItem> scanFileSystem();
     QVector<LeftoverItem> scanDirectory(const QString& basePath,
                                          LeftoverItem::RiskLevel defaultRisk);
-    
+
     // Registry scanning
     QVector<LeftoverItem> scanRegistry();
     QVector<LeftoverItem> scanRegistryHive(HKEY hive, const QString& subkey,
                                             const QString& hiveName);
     QVector<LeftoverItem> diffRegistry(const QSet<QString>& snapshotBefore);
-    
+
     // System object scanning (Advanced level)
     QVector<LeftoverItem> scanServices();
     QVector<LeftoverItem> scanScheduledTasks();
     QVector<LeftoverItem> scanFirewallRules();
     QVector<LeftoverItem> scanStartupEntries();
-    
+
     // Safety classification
     LeftoverItem::RiskLevel classifyRisk(const QString& path,
                                           LeftoverItem::Type type) const;
     bool isProtectedPath(const QString& path) const;
     bool matchesProgram(const QString& name) const;
-    
+
     // Protected system paths that should NEVER be deleted
     static const QStringList kProtectedPaths;
-    
+
     /// @brief Calculate directory size recursively
     [[nodiscard]] static qint64 calculateSize(const QString& path);
 };
@@ -807,7 +807,7 @@ public:
     explicit CleanupWorker(const QVector<LeftoverItem>& selectedItems,
                            QObject* parent = nullptr);
     ~CleanupWorker() override = default;
-    
+
     CleanupWorker(const CleanupWorker&) = delete;
     CleanupWorker& operator=(const CleanupWorker&) = delete;
     CleanupWorker(CleanupWorker&&) = delete;
@@ -822,7 +822,7 @@ protected:
 
 private:
     QVector<LeftoverItem> m_items;
-    
+
     [[nodiscard]] bool deleteFile(const QString& path);
     [[nodiscard]] bool deleteFolder(const QString& path);
     [[nodiscard]] bool deleteRegistryKey(const QString& fullKeyPath);
@@ -842,18 +842,18 @@ class RestorePointManager : public QObject {
     Q_OBJECT
 public:
     explicit RestorePointManager(QObject* parent = nullptr);
-    
+
     /// @brief Check if System Restore is enabled on the system drive
     [[nodiscard]] bool isSystemRestoreEnabled() const;
-    
+
     /// @brief Create a system restore point
     /// @param description Description for the restore point
     /// @return true if created successfully
     [[nodiscard]] bool createRestorePoint(const QString& description);
-    
+
     /// @brief Get list of existing restore points
     [[nodiscard]] QVector<QPair<QDateTime, QString>> listRestorePoints() const;
-    
+
 Q_SIGNALS:
     void restorePointCreated(const QString& description);
     void restorePointFailed(const QString& error);
@@ -874,19 +874,19 @@ bool RestorePointManager::createRestorePoint(const QString& description) {
             .arg(description.left(64))  // Max 64 chars for description
     });
     powershell.start();
-    
+
     // Wait up to 60 seconds for restore point creation
     if (!powershell.waitForFinished(60000)) {
         emit restorePointFailed("Timeout creating restore point");
         return false;
     }
-    
+
     if (powershell.exitCode() != 0) {
         const QString err = QString::fromUtf8(powershell.readAllStandardError());
         emit restorePointFailed(err);
         return false;
     }
-    
+
     emit restorePointCreated(description);
     return true;
 }
@@ -901,7 +901,7 @@ bool RestorePointManager::isSystemRestoreEnabled() const {
     });
     powershell.start();
     powershell.waitForFinished(10000);
-    
+
     // If it returns without error, System Restore is enabled
     return powershell.exitCode() == 0;
 }
@@ -917,7 +917,7 @@ public:
     /// @brief Capture a snapshot of registry keys under monitored paths
     /// @return Set of full key paths (e.g., "HKLM\SOFTWARE\CompanyName\Product")
     [[nodiscard]] static QSet<QString> captureSnapshot();
-    
+
     /// @brief Diff two snapshots to find removed keys (leftover candidates)
     /// @param before Snapshot before uninstall
     /// @param after Snapshot after uninstall  
@@ -927,13 +927,13 @@ public:
     [[nodiscard]] static QVector<LeftoverItem> diffSnapshots(
         const QSet<QString>& before, const QSet<QString>& after,
         const QStringList& programNamePatterns);
-    
+
 private:
     /// @brief Enumerate all subkeys under a registry path
     static void enumerateKeys(HKEY hive, const QString& subkey,
                                const QString& hiveName, QSet<QString>& output,
                                int maxDepth = 3);
-    
+
     // Monitored paths for snapshot
     static const QStringList kMonitoredPaths;
 };
@@ -946,10 +946,10 @@ const QStringList RegistrySnapshotEngine::kMonitoredPaths = {
     "HKLM\\SOFTWARE",
     "HKLM\\SOFTWARE\\WOW6432Node",
     "HKLM\\SYSTEM\\CurrentControlSet\\Services",
-    
+
     // HKCU paths
     "HKCU\\Software",
-    
+
     // HKCR paths (file associations, shell extensions)
     "HKCR",
 };

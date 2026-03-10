@@ -7,16 +7,18 @@
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
-#include <winsock2.h>
-#include <ws2tcpip.h>
-#include <windows.h>
-#include <iphlpapi.h>
-
 #include "sak/network_adapter_inspector.h"
 
 #include <QCoreApplication>
 
 #include <memory>
+
+#include <winsock2.h>
+#include <ws2tcpip.h>
+
+#include <windows.h>
+
+#include <iphlpapi.h>
 
 // Link against IP Helper API
 #pragma comment(lib, "iphlpapi.lib")
@@ -24,17 +26,15 @@
 
 namespace {
 
-constexpr unsigned long kInitialBufferSize = 15000;
-constexpr int kMacAddrLen                  = 6;
-constexpr uint64_t kGigabit                = 1'000'000'000ULL;
-constexpr uint64_t kMegabit                = 1'000'000ULL;
-constexpr uint64_t kKilobit                = 1'000ULL;
+constexpr unsigned long kInitialBufferSize = 15'000;
+constexpr int kMacAddrLen = 6;
+constexpr uint64_t kGigabit = 1'000'000'000ULL;
+constexpr uint64_t kMegabit = 1'000'000ULL;
+constexpr uint64_t kKilobit = 1000ULL;
 
-constexpr ULONG kGetAdapterFlags = GAA_FLAG_INCLUDE_PREFIX
-                               | GAA_FLAG_INCLUDE_GATEWAYS;
+constexpr ULONG kGetAdapterFlags = GAA_FLAG_INCLUDE_PREFIX | GAA_FLAG_INCLUDE_GATEWAYS;
 
-bool tryIpv4String(const sockaddr* sa, QString& out)
-{
+bool tryIpv4String(const sockaddr* sa, QString& out) {
     if (sa == nullptr || sa->sa_family != AF_INET) {
         return false;
     }
@@ -46,8 +46,7 @@ bool tryIpv4String(const sockaddr* sa, QString& out)
     return true;
 }
 
-bool tryIpv6String(const sockaddr* sa, QString& out)
-{
+bool tryIpv6String(const sockaddr* sa, QString& out) {
     if (sa == nullptr || sa->sa_family != AF_INET6) {
         return false;
     }
@@ -59,8 +58,7 @@ bool tryIpv6String(const sockaddr* sa, QString& out)
     return true;
 }
 
-QString subnetMaskFromPrefixLength(ULONG prefixLength)
-{
+QString subnetMaskFromPrefixLength(ULONG prefixLength) {
     if (prefixLength > 32) {
         return {};
     }
@@ -70,13 +68,11 @@ QString subnetMaskFromPrefixLength(ULONG prefixLength)
         mask = ~((1U << (32U - prefixLength)) - 1U);
     }
 
-    return QString::asprintf("%u.%u.%u.%u",
-        (mask >> 24) & 0xFF, (mask >> 16) & 0xFF,
-        (mask >> 8) & 0xFF, mask & 0xFF);
+    return QString::asprintf(
+        "%u.%u.%u.%u", (mask >> 24) & 0xFF, (mask >> 16) & 0xFF, (mask >> 8) & 0xFF, mask & 0xFF);
 }
 
-QString adapterTypeFromIfType(ULONG ifType)
-{
+QString adapterTypeFromIfType(ULONG ifType) {
     switch (ifType) {
     case IF_TYPE_ETHERNET_CSMACD:
         return QStringLiteral("Ethernet");
@@ -94,27 +90,23 @@ QString adapterTypeFromIfType(ULONG ifType)
 
 bool tryQueryAdapterAddresses(std::unique_ptr<uint8_t[]>& buffer,
                               PIP_ADAPTER_ADDRESSES& addresses,
-                              ULONG& result)
-{
+                              ULONG& result) {
     ULONG bufferSize = kInitialBufferSize;
     buffer = std::make_unique<uint8_t[]>(bufferSize);
     addresses = reinterpret_cast<PIP_ADAPTER_ADDRESSES>(buffer.get());
 
-    result = GetAdaptersAddresses(AF_UNSPEC, kGetAdapterFlags, nullptr,
-                                 addresses, &bufferSize);
+    result = GetAdaptersAddresses(AF_UNSPEC, kGetAdapterFlags, nullptr, addresses, &bufferSize);
     if (result != ERROR_BUFFER_OVERFLOW) {
         return true;
     }
 
     buffer = std::make_unique<uint8_t[]>(bufferSize);
     addresses = reinterpret_cast<PIP_ADAPTER_ADDRESSES>(buffer.get());
-    result = GetAdaptersAddresses(AF_UNSPEC, kGetAdapterFlags, nullptr,
-                                 addresses, &bufferSize);
+    result = GetAdaptersAddresses(AF_UNSPEC, kGetAdapterFlags, nullptr, addresses, &bufferSize);
     return true;
 }
 
-void populateDhcpInfo(const IP_ADAPTER_ADDRESSES* addr, sak::NetworkAdapterInfo& info)
-{
+void populateDhcpInfo(const IP_ADAPTER_ADDRESSES* addr, sak::NetworkAdapterInfo& info) {
     info.dhcpEnabled = ((addr->Flags & IP_ADAPTER_DHCP_ENABLED) != 0);
     if (!info.dhcpEnabled || addr->Dhcpv4Server.lpSockaddr == nullptr) {
         return;
@@ -126,8 +118,8 @@ void populateDhcpInfo(const IP_ADAPTER_ADDRESSES* addr, sak::NetworkAdapterInfo&
     }
 }
 
-void populateUnicastAddresses(const IP_ADAPTER_ADDRESSES* addr, sak::NetworkAdapterInfo& info)
-{
+void populateUnicastAddresses(const IP_ADAPTER_ADDRESSES* addr, sak::NetworkAdapterInfo& info) {
+    Q_ASSERT(addr);
     for (auto* ua = addr->FirstUnicastAddress; ua != nullptr; ua = ua->Next) {
         const auto* sa = ua->Address.lpSockaddr;
 
@@ -148,8 +140,7 @@ void populateUnicastAddresses(const IP_ADAPTER_ADDRESSES* addr, sak::NetworkAdap
     }
 }
 
-void populateGateways(const IP_ADAPTER_ADDRESSES* addr, sak::NetworkAdapterInfo& info)
-{
+void populateGateways(const IP_ADAPTER_ADDRESSES* addr, sak::NetworkAdapterInfo& info) {
     for (auto* gw = addr->FirstGatewayAddress; gw != nullptr; gw = gw->Next) {
         const auto* sa = gw->Address.lpSockaddr;
 
@@ -164,8 +155,7 @@ void populateGateways(const IP_ADAPTER_ADDRESSES* addr, sak::NetworkAdapterInfo&
     }
 }
 
-void populateDnsServers(const IP_ADAPTER_ADDRESSES* addr, sak::NetworkAdapterInfo& info)
-{
+void populateDnsServers(const IP_ADAPTER_ADDRESSES* addr, sak::NetworkAdapterInfo& info) {
     for (auto* dns = addr->FirstDnsServerAddress; dns != nullptr; dns = dns->Next) {
         const auto* sa = dns->Address.lpSockaddr;
 
@@ -180,24 +170,23 @@ void populateDnsServers(const IP_ADAPTER_ADDRESSES* addr, sak::NetworkAdapterInf
     }
 }
 
-void populateIfStats(ULONG ifIndex, sak::NetworkAdapterInfo& info)
-{
+void populateIfStats(ULONG ifIndex, sak::NetworkAdapterInfo& info) {
     MIB_IF_ROW2 ifRow{};
     ifRow.InterfaceIndex = ifIndex;
     if (GetIfEntry2(&ifRow) != NO_ERROR) {
         return;
     }
 
-    info.bytesReceived   = ifRow.InOctets;
-    info.bytesSent       = ifRow.OutOctets;
+    info.bytesReceived = ifRow.InOctets;
+    info.bytesSent = ifRow.OutOctets;
     info.packetsReceived = ifRow.InUcastPkts + ifRow.InNUcastPkts;
-    info.packetsSent     = ifRow.OutUcastPkts + ifRow.OutNUcastPkts;
-    info.errorsReceived  = ifRow.InErrors;
-    info.errorsSent      = ifRow.OutErrors;
+    info.packetsSent = ifRow.OutUcastPkts + ifRow.OutNUcastPkts;
+    info.errorsReceived = ifRow.InErrors;
+    info.errorsSent = ifRow.OutErrors;
 }
 
-sak::NetworkAdapterInfo buildAdapterInfo(const IP_ADAPTER_ADDRESSES* addr)
-{
+sak::NetworkAdapterInfo buildAdapterInfo(const IP_ADAPTER_ADDRESSES* addr) {
+    Q_ASSERT(addr);
     sak::NetworkAdapterInfo info;
 
     // ── Identity ──
@@ -216,7 +205,7 @@ sak::NetworkAdapterInfo buildAdapterInfo(const IP_ADAPTER_ADDRESSES* addr)
     info.isConnected = (addr->OperStatus == IfOperStatusUp);
     info.linkSpeedBps = addr->TransmitLinkSpeed;
     info.mediaState = info.isConnected ? QStringLiteral("Connected")
-                                      : QStringLiteral("Disconnected");
+                                       : QStringLiteral("Disconnected");
 
     // ── DHCP ──
     populateDhcpInfo(addr, info);
@@ -235,48 +224,40 @@ sak::NetworkAdapterInfo buildAdapterInfo(const IP_ADAPTER_ADDRESSES* addr)
     return info;
 }
 
-} // namespace
+}  // namespace
 
 namespace sak {
 
-NetworkAdapterInspector::NetworkAdapterInspector(QObject* parent)
-    : QObject(parent)
-{
-}
+NetworkAdapterInspector::NetworkAdapterInspector(QObject* parent) : QObject(parent) {}
 
-void NetworkAdapterInspector::scan()
-{
+void NetworkAdapterInspector::scan() {
     auto adapters = enumerateAdapters();
     Q_EMIT scanComplete(adapters);
 }
 
-void NetworkAdapterInspector::refresh()
-{
+void NetworkAdapterInspector::refresh() {
     scan();
 }
 
-QString NetworkAdapterInspector::formatLinkSpeed(uint64_t bps)
-{
+QString NetworkAdapterInspector::formatLinkSpeed(uint64_t bps) {
     if (bps == 0) {
         return QStringLiteral("N/A");
     }
     if (bps >= kGigabit) {
         const double gbps = static_cast<double>(bps) / static_cast<double>(kGigabit);
-        return QString::number(gbps, 'f', (gbps == static_cast<int>(gbps)) ? 0 : 1)
-               + QStringLiteral(" Gbps");
+        return QString::number(gbps, 'f', (gbps == static_cast<int>(gbps)) ? 0 : 1) +
+               QStringLiteral(" Gbps");
     }
     if (bps >= kMegabit) {
         const double mbps = static_cast<double>(bps) / static_cast<double>(kMegabit);
-        return QString::number(mbps, 'f', (mbps == static_cast<int>(mbps)) ? 0 : 1)
-               + QStringLiteral(" Mbps");
+        return QString::number(mbps, 'f', (mbps == static_cast<int>(mbps)) ? 0 : 1) +
+               QStringLiteral(" Mbps");
     }
     const double kbps = static_cast<double>(bps) / static_cast<double>(kKilobit);
     return QString::number(kbps, 'f', 0) + QStringLiteral(" Kbps");
 }
 
-QString NetworkAdapterInspector::formatMacAddress(const unsigned char* addr,
-                                                   unsigned long length)
-{
+QString NetworkAdapterInspector::formatMacAddress(const unsigned char* addr, unsigned long length) {
     if (addr == nullptr || length == 0) {
         return {};
     }
@@ -290,8 +271,7 @@ QString NetworkAdapterInspector::formatMacAddress(const unsigned char* addr,
     return mac;
 }
 
-QVector<NetworkAdapterInfo> NetworkAdapterInspector::enumerateAdapters()
-{
+QVector<NetworkAdapterInfo> NetworkAdapterInspector::enumerateAdapters() {
     QVector<NetworkAdapterInfo> adapters;
 
     std::unique_ptr<uint8_t[]> buffer;
@@ -301,8 +281,7 @@ QVector<NetworkAdapterInfo> NetworkAdapterInspector::enumerateAdapters()
 
     if (result != NO_ERROR) {
         Q_EMIT errorOccurred(
-            QStringLiteral("GetAdaptersAddresses failed with error %1")
-                .arg(result));
+            QStringLiteral("GetAdaptersAddresses failed with error %1").arg(result));
         return adapters;
     }
 
@@ -313,4 +292,4 @@ QVector<NetworkAdapterInfo> NetworkAdapterInspector::enumerateAdapters()
     return adapters;
 }
 
-} // namespace sak
+}  // namespace sak

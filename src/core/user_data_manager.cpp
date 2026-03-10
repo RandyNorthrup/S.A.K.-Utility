@@ -2,26 +2,30 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "sak/user_data_manager.h"
+
 #include "sak/encryption.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
-#include <QtGlobal>
+
 #include <QDir>
+#include <QDirIterator>
 #include <QFile>
 #include <QFileInfo>
-#include <QStandardPaths>
-#include <QDirIterator>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
-#include <QJsonArray>
 #include <QProcess>
+#include <QStandardPaths>
 #include <QTemporaryFile>
+#include <QtGlobal>
+
 #include <optional>
 
 namespace {
 
 /// @brief Append paths that exist for the given name variants in a base directory.
-void appendExistingVariants(QStringList& paths, const QString& base_dir,
+void appendExistingVariants(QStringList& paths,
+                            const QString& base_dir,
                             const QStringList& variants) {
     for (const auto& variant : variants) {
         QString path = QDir(base_dir).filePath(variant);
@@ -31,20 +35,17 @@ void appendExistingVariants(QStringList& paths, const QString& base_dir,
     }
 }
 
-} // namespace
+}  // namespace
 
 namespace sak {
 
-UserDataManager::UserDataManager(QObject* parent)
-    : QObject(parent)
-{
-}
+UserDataManager::UserDataManager(QObject* parent) : QObject(parent) {}
 
-std::optional<UserDataManager::BackupEntry> UserDataManager::backupAppData(const QString& app_name,
-                                     const QStringList& source_paths,
-                                     const QString& backup_dir,
-                                     const BackupConfig& config)
-{
+std::optional<UserDataManager::BackupEntry> UserDataManager::backupAppData(
+    const QString& app_name,
+    const QStringList& source_paths,
+    const QString& backup_dir,
+    const BackupConfig& config) {
     Q_ASSERT_X(!app_name.isEmpty(), "backupAppData", "app_name must not be empty");
     Q_ASSERT_X(!backup_dir.isEmpty(), "backupAppData", "backup_dir must not be empty");
     Q_EMIT operationStarted(app_name, "backup");
@@ -108,11 +109,10 @@ std::optional<UserDataManager::BackupEntry> UserDataManager::backupAppData(const
 }
 
 UserDataManager::BackupEntry UserDataManager::buildBackupResult(const QString& app_name,
-                                                                 const QStringList& source_paths,
-                                                                 const QString& archive_path,
-                                                                 qint64 total_size,
-                                                                 const BackupConfig& config)
-{
+                                                                const QStringList& source_paths,
+                                                                const QString& archive_path,
+                                                                qint64 total_size,
+                                                                const BackupConfig& config) {
     BackupEntry entry;
     entry.app_name = app_name;
     entry.source_paths = source_paths;
@@ -134,8 +134,7 @@ UserDataManager::BackupEntry UserDataManager::buildBackupResult(const QString& a
 
 bool UserDataManager::backupMultipleApps(const QStringList& app_names,
                                          const QString& backup_dir,
-                                         const BackupConfig& config)
-{
+                                         const BackupConfig& config) {
     Q_ASSERT_X(!app_names.isEmpty(), "backupMultipleApps", "app_names must not be empty");
     Q_ASSERT_X(!backup_dir.isEmpty(), "backupMultipleApps", "backup_dir must not be empty");
     bool all_success = true;
@@ -161,8 +160,7 @@ bool UserDataManager::backupMultipleApps(const QStringList& app_names,
 
 bool UserDataManager::restoreAppData(const QString& backup_path,
                                      const QString& restore_dir,
-                                     const RestoreConfig& config)
-{
+                                     const RestoreConfig& config) {
     Q_ASSERT_X(!backup_path.isEmpty(), "restoreAppData", "backup_path must not be empty");
     Q_ASSERT_X(!restore_dir.isEmpty(), "restoreAppData", "restore_dir must not be empty");
     // Read metadata
@@ -190,7 +188,7 @@ bool UserDataManager::restoreAppData(const QString& backup_path,
         QDir restore(restore_dir);
         if (restore.exists()) {
             QString backup_name = "backup_" +
-                QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss");
+                                  QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss");
             QString backup_existing = restore.filePath("../" + backup_name);
             if (!copyDirectory(restore_dir, backup_existing, {})) {
                 sak::logWarning("[UserDataManager] Failed to backup existing data");
@@ -213,8 +211,7 @@ bool UserDataManager::restoreAppData(const QString& backup_path,
 
 bool UserDataManager::restoreMultipleApps(const QStringList& backup_paths,
                                           const QString& restore_dir,
-                                          const RestoreConfig& config)
-{
+                                          const RestoreConfig& config) {
     Q_ASSERT_X(!backup_paths.isEmpty(), "restoreMultipleApps", "backup_paths must not be empty");
     Q_ASSERT_X(!restore_dir.isEmpty(), "restoreMultipleApps", "restore_dir must not be empty");
     bool all_success = true;
@@ -228,8 +225,7 @@ bool UserDataManager::restoreMultipleApps(const QStringList& backup_paths,
     return all_success;
 }
 
-QStringList UserDataManager::discoverAppDataPaths(const QString& app_name) const
-{
+QStringList UserDataManager::discoverAppDataPaths(const QString& app_name) const {
     Q_ASSERT_X(!app_name.isEmpty(), "discoverAppDataPaths", "app_name must not be empty");
     QStringList paths;
     QStringList base_dirs = getStandardDataPaths();
@@ -239,12 +235,7 @@ QStringList UserDataManager::discoverAppDataPaths(const QString& app_name) const
     nospace.replace(" ", "");
     QString underscore = app_name;
     underscore.replace(" ", "_");
-    QStringList name_variants = {
-        app_name,
-        app_name.toLower(),
-        nospace,
-        underscore
-    };
+    QStringList name_variants = {app_name, app_name.toLower(), nospace, underscore};
 
     // Search in standard locations
     for (const auto& base : base_dirs) {
@@ -254,8 +245,7 @@ QStringList UserDataManager::discoverAppDataPaths(const QString& app_name) const
     return paths;
 }
 
-std::vector<UserDataManager::DataLocation> UserDataManager::getCommonDataLocations() const
-{
+std::vector<UserDataManager::DataLocation> UserDataManager::getCommonDataLocations() const {
     std::vector<DataLocation> locations;
 
     QString appdata_local = QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation);
@@ -263,38 +253,29 @@ std::vector<UserDataManager::DataLocation> UserDataManager::getCommonDataLocatio
     QString documents = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
 
     // Chrome
-    locations.push_back({
-        "Google Chrome",
-        {appdata_local + "/../Google/Chrome/User Data"},
-        "Browser profile, history, bookmarks, extensions"
-    });
+    locations.push_back({"Google Chrome",
+                         {appdata_local + "/../Google/Chrome/User Data"},
+                         "Browser profile, history, bookmarks, extensions"});
 
     // Firefox
-    locations.push_back({
-        "Mozilla Firefox",
-        {appdata_roaming + "/../Mozilla/Firefox/Profiles"},
-        "Browser profile, history, bookmarks, extensions"
-    });
+    locations.push_back({"Mozilla Firefox",
+                         {appdata_roaming + "/../Mozilla/Firefox/Profiles"},
+                         "Browser profile, history, bookmarks, extensions"});
 
     // VS Code
-    locations.push_back({
-        "Visual Studio Code",
-        {appdata_roaming + "/../Code/User"},
-        "Settings, keybindings, extensions, snippets"
-    });
+    locations.push_back({"Visual Studio Code",
+                         {appdata_roaming + "/../Code/User"},
+                         "Settings, keybindings, extensions, snippets"});
 
     // BitLocker Recovery Keys (sentinel path — handled specially by backup wizard)
-    locations.push_back({
-        "BitLocker Recovery Keys",
-        {"bitlocker://recovery-keys"},
-        "BitLocker recovery keys for all encrypted volumes"
-    });
+    locations.push_back({"BitLocker Recovery Keys",
+                         {"bitlocker://recovery-keys"},
+                         "BitLocker recovery keys for all encrypted volumes"});
 
     return locations;
 }
 
-QStringList UserDataManager::scanForAppData(const QString& app_name) const
-{
+QStringList UserDataManager::scanForAppData(const QString& app_name) const {
     Q_ASSERT_X(!app_name.isEmpty(), "scanForAppData", "app_name must not be empty");
     QStringList found_paths;
     QStringList search_dirs = getStandardDataPaths();
@@ -313,8 +294,7 @@ QStringList UserDataManager::scanForAppData(const QString& app_name) const
 }
 
 std::vector<UserDataManager::BackupEntry> UserDataManager::listBackups(
-    const QString& backup_dir) const
-{
+    const QString& backup_dir) const {
     Q_ASSERT_X(!backup_dir.isEmpty(), "listBackups", "backup_dir must not be empty");
     std::vector<BackupEntry> backups;
 
@@ -324,7 +304,9 @@ std::vector<UserDataManager::BackupEntry> UserDataManager::listBackups(
 
     for (const auto& file : files) {
         QString metadata_path = dir.filePath(file) + ".json";
-        if (!QFile::exists(metadata_path)) continue;
+        if (!QFile::exists(metadata_path)) {
+            continue;
+        }
 
         auto entry = readMetadata(metadata_path);
         if (entry.has_value()) {
@@ -335,15 +317,13 @@ std::vector<UserDataManager::BackupEntry> UserDataManager::listBackups(
     return backups;
 }
 
-UserDataManager::BackupEntry UserDataManager::getBackupInfo(const QString& backup_path) const
-{
+UserDataManager::BackupEntry UserDataManager::getBackupInfo(const QString& backup_path) const {
     Q_ASSERT_X(!backup_path.isEmpty(), "getBackupInfo", "backup_path must not be empty");
     auto entry = readMetadata(backup_path + ".json");
     return entry.value_or(BackupEntry{});
 }
 
-bool UserDataManager::deleteBackup(const QString& backup_path)
-{
+bool UserDataManager::deleteBackup(const QString& backup_path) {
     Q_ASSERT_X(!backup_path.isEmpty(), "deleteBackup", "backup_path must not be empty");
     bool success = true;
 
@@ -361,8 +341,7 @@ bool UserDataManager::deleteBackup(const QString& backup_path)
     return success;
 }
 
-bool UserDataManager::verifyBackup(const QString& backup_path)
-{
+bool UserDataManager::verifyBackup(const QString& backup_path) {
     Q_ASSERT_X(!backup_path.isEmpty(), "verifyBackup", "backup_path must not be empty");
     auto entry = readMetadata(backup_path + ".json");
     if (!entry.has_value()) {
@@ -370,15 +349,15 @@ bool UserDataManager::verifyBackup(const QString& backup_path)
     }
 
     if (entry->checksum.isEmpty()) {
-        return true; // No checksum to verify
+        return true;  // No checksum to verify
     }
 
     QString current = generateChecksum(backup_path);
     return current == entry->checksum;
 }
 
-qint64 UserDataManager::calculateSize(const QStringList& paths) const
-{
+qint64 UserDataManager::calculateSize(const QStringList& paths) const {
+    Q_ASSERT(!paths.isEmpty());
     qint64 total = 0;
 
     for (const auto& path : paths) {
@@ -397,38 +376,34 @@ qint64 UserDataManager::calculateSize(const QStringList& paths) const
     return total;
 }
 
-QString UserDataManager::generateChecksum(const QString& file_path) const
-{
+QString UserDataManager::generateChecksum(const QString& file_path) const {
     Q_ASSERT_X(!file_path.isEmpty(), "generateChecksum", "file_path must not be empty");
     return calculateSHA256(file_path);
 }
 
-bool UserDataManager::compareChecksums(const QString& file1, const QString& file2) const
-{
+bool UserDataManager::compareChecksums(const QString& file1, const QString& file2) const {
     Q_ASSERT_X(!file1.isEmpty(), "compareChecksums", "file1 must not be empty");
     Q_ASSERT_X(!file2.isEmpty(), "compareChecksums", "file2 must not be empty");
     return generateChecksum(file1) == generateChecksum(file2);
 }
 
-QString UserDataManager::mapCompressionLevel(int level)
-{
+QString UserDataManager::mapCompressionLevel(int level) {
     if (level == 0) {
         return QStringLiteral("NoCompression");
     }
     if (level <= 3) {
         return QStringLiteral("Fastest");
     }
-    return QStringLiteral("Optimal"); // PowerShell doesn't have higher levels
+    return QStringLiteral("Optimal");  // PowerShell doesn't have higher levels
 }
 
 bool UserDataManager::encryptArchiveInPlace(const QString& archive_path,
-                                            const BackupConfig& config)
-{
+                                            const BackupConfig& config) {
     // Read original archive
     QFile archive(archive_path);
     if (!archive.open(QIODevice::ReadOnly)) {
         sak::logError("[UserDataManager] Failed to open archive for reading: {}",
-            archive_path.toStdString());
+                      archive_path.toStdString());
         return false;
     }
     QByteArray data = archive.readAll();
@@ -438,7 +413,7 @@ bool UserDataManager::encryptArchiveInPlace(const QString& archive_path,
     auto encrypted = sak::encryptData(data, config.password);
     if (!encrypted) {
         sak::logWarning("[UserDataManager] Encryption failed: {}",
-            static_cast<int>(encrypted.error()));
+                        static_cast<int>(encrypted.error()));
         QFile::remove(archive_path);
         return false;
     }
@@ -458,8 +433,7 @@ bool UserDataManager::encryptArchiveInPlace(const QString& archive_path,
 
 bool UserDataManager::createArchive(const QStringList& source_paths,
                                     const QString& archive_path,
-                                    const BackupConfig& config)
-{
+                                    const BackupConfig& config) {
     Q_ASSERT_X(!source_paths.isEmpty(), "createArchive", "source_paths must not be empty");
     Q_ASSERT_X(!archive_path.isEmpty(), "createArchive", "archive_path must not be empty");
 
@@ -474,11 +448,12 @@ bool UserDataManager::createArchive(const QStringList& source_paths,
     for (const auto& path : source_paths) {
         escaped_sources << QString(path).replace("'", "''");
     }
-    QString sources = escaped_sources.join("','" );
+    QString sources = escaped_sources.join("','");
     QString safe_archive = QString(archive_path).replace("'", "''");
-    QString command = QString("Compress-Archive -Path '%1' -DestinationPath '%2' -CompressionLevel "
-                              "%3 -Force")
-                        .arg(sources, safe_archive, compressionLevel);
+    QString command = QString(
+                          "Compress-Archive -Path '%1' -DestinationPath '%2' -CompressionLevel "
+                          "%3 -Force")
+                          .arg(sources, safe_archive, compressionLevel);
 
     args << command;
 
@@ -490,7 +465,7 @@ bool UserDataManager::createArchive(const QStringList& source_paths,
         return false;
     }
 
-    if (!process.waitForFinished(sak::kTimeoutArchiveMs)) { // 5 minute timeout
+    if (!process.waitForFinished(sak::kTimeoutArchiveMs)) {  // 5 minute timeout
         sak::logError("Archive compression timed out after 5 minutes — killing process");
         process.kill();
         return false;
@@ -498,7 +473,8 @@ bool UserDataManager::createArchive(const QStringList& source_paths,
 
     if (process.exitCode() != 0 || !QFile::exists(archive_path)) {
         sak::logError("Archive compression failed: exit code {}, archive exists: {}",
-                      process.exitCode(), QFile::exists(archive_path));
+                      process.exitCode(),
+                      QFile::exists(archive_path));
         return false;
     }
 
@@ -513,13 +489,12 @@ bool UserDataManager::createArchive(const QStringList& source_paths,
 }
 
 QString UserDataManager::decryptArchiveToTempFile(const QString& archive_path,
-    const QString& password)
-{
+                                                  const QString& password) {
     // Read encrypted archive
     QFile archive(archive_path);
     if (!archive.open(QIODevice::ReadOnly)) {
         sak::logError("[UserDataManager] Failed to open encrypted archive for reading: {}",
-            archive_path.toStdString());
+                      archive_path.toStdString());
         return {};
     }
     QByteArray encrypted_data = archive.readAll();
@@ -529,7 +504,7 @@ QString UserDataManager::decryptArchiveToTempFile(const QString& archive_path,
     auto decrypted = sak::decryptData(encrypted_data, password);
     if (!decrypted) {
         sak::logWarning("[UserDataManager] Decryption failed: {}",
-            static_cast<int>(decrypted.error()));
+                        static_cast<int>(decrypted.error()));
         return {};
     }
 
@@ -557,8 +532,7 @@ QString UserDataManager::decryptArchiveToTempFile(const QString& archive_path,
 
 bool UserDataManager::extractArchive(const QString& archive_path,
                                      const QString& destination,
-                                     const RestoreConfig& config)
-{
+                                     const RestoreConfig& config) {
     Q_ASSERT_X(!archive_path.isEmpty(), "extractArchive", "archive_path must not be empty");
     Q_ASSERT_X(!destination.isEmpty(), "extractArchive", "destination must not be empty");
     QString file_to_extract = archive_path;
@@ -585,7 +559,7 @@ bool UserDataManager::extractArchive(const QString& archive_path,
     QString safe_source = QString(file_to_extract).replace("'", "''");
     QString safe_dest = QString(destination).replace("'", "''");
     QString command = QString("Expand-Archive -Path '%1' -DestinationPath '%2' -Force")
-                        .arg(safe_source, safe_dest);
+                          .arg(safe_source, safe_dest);
 
     args << command;
 
@@ -594,13 +568,17 @@ bool UserDataManager::extractArchive(const QString& archive_path,
 
     if (!process.waitForStarted()) {
         // Ensure decrypted plaintext never lingers on disk after failure.
-        if (!temp_decrypted.isEmpty()) QFile::remove(temp_decrypted);
+        if (!temp_decrypted.isEmpty()) {
+            QFile::remove(temp_decrypted);
+        }
         return false;
     }
 
-    if (!process.waitForFinished(sak::kTimeoutArchiveMs)) { // 5 minute timeout
+    if (!process.waitForFinished(sak::kTimeoutArchiveMs)) {  // 5 minute timeout
         process.kill();
-        if (!temp_decrypted.isEmpty()) QFile::remove(temp_decrypted);
+        if (!temp_decrypted.isEmpty()) {
+            QFile::remove(temp_decrypted);
+        }
         return false;
     }
 
@@ -612,8 +590,7 @@ bool UserDataManager::extractArchive(const QString& archive_path,
     return process.exitCode() == 0;
 }
 
-bool UserDataManager::isExcluded(const QString& path, const QStringList& patterns) const
-{
+bool UserDataManager::isExcluded(const QString& path, const QStringList& patterns) const {
     for (const auto& pattern : patterns) {
         QRegularExpression re(QRegularExpression::wildcardToRegularExpression(pattern));
         if (re.match(path).hasMatch()) {
@@ -623,8 +600,7 @@ bool UserDataManager::isExcluded(const QString& path, const QStringList& pattern
     return false;
 }
 
-QStringList UserDataManager::getStandardDataPaths() const
-{
+QStringList UserDataManager::getStandardDataPaths() const {
     QStringList paths;
 
     // AppData Local
@@ -646,9 +622,8 @@ QStringList UserDataManager::getStandardDataPaths() const
 }
 
 bool UserDataManager::copySourcesToDest(const QStringList& source_paths,
-                                         const QString& dest_dir,
-                                         const QStringList& exclude_patterns)
-{
+                                        const QString& dest_dir,
+                                        const QStringList& exclude_patterns) {
     for (const auto& source : source_paths) {
         if (!copyDirectory(source, dest_dir, exclude_patterns)) {
             return false;
@@ -659,8 +634,7 @@ bool UserDataManager::copySourcesToDest(const QStringList& source_paths,
 
 bool UserDataManager::copyDirectory(const QString& source,
                                     const QString& destination,
-                                    const QStringList& exclude_patterns)
-{
+                                    const QStringList& exclude_patterns) {
     Q_ASSERT_X(!source.isEmpty(), "copyDirectory", "source must not be empty");
     Q_ASSERT_X(!destination.isEmpty(), "copyDirectory", "destination must not be empty");
     QDir source_dir(source);
@@ -704,8 +678,7 @@ bool UserDataManager::copyDirectory(const QString& source,
     return true;
 }
 
-QString UserDataManager::calculateSHA256(const QString& file_path) const
-{
+QString UserDataManager::calculateSHA256(const QString& file_path) const {
     Q_ASSERT_X(!file_path.isEmpty(), "calculateSHA256", "file_path must not be empty");
     QFile file(file_path);
     if (!file.open(QIODevice::ReadOnly)) {
@@ -715,7 +688,7 @@ QString UserDataManager::calculateSHA256(const QString& file_path) const
     QCryptographicHash hash(QCryptographicHash::Sha256);
 
     // Read in chunks to handle large files
-    const qint64 chunk_size = 1024 * 1024; // 1 MB
+    const qint64 chunk_size = 1024 * 1024;  // 1 MB
     while (!file.atEnd()) {
         hash.addData(file.read(chunk_size));
     }
@@ -723,8 +696,7 @@ QString UserDataManager::calculateSHA256(const QString& file_path) const
     return QString(hash.result().toHex());
 }
 
-bool UserDataManager::writeMetadata(const BackupEntry& entry, const QString& metadata_path)
-{
+bool UserDataManager::writeMetadata(const BackupEntry& entry, const QString& metadata_path) {
     Q_ASSERT_X(!metadata_path.isEmpty(), "writeMetadata", "metadata_path must not be empty");
     Q_ASSERT_X(!entry.app_name.isEmpty(), "writeMetadata", "app_name must not be empty");
     QJsonObject json;
@@ -765,8 +737,7 @@ bool UserDataManager::writeMetadata(const BackupEntry& entry, const QString& met
 }
 
 std::optional<UserDataManager::BackupEntry> UserDataManager::readMetadata(
-    const QString& metadata_path) const
-{
+    const QString& metadata_path) const {
     Q_ASSERT_X(!metadata_path.isEmpty(), "readMetadata", "metadata_path must not be empty");
     QFile file(metadata_path);
     if (!file.open(QIODevice::ReadOnly)) {
@@ -804,4 +775,4 @@ std::optional<UserDataManager::BackupEntry> UserDataManager::readMetadata(
     return entry;
 }
 
-} // namespace sak
+}  // namespace sak

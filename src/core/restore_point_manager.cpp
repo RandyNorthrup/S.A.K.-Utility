@@ -5,6 +5,7 @@
 /// @brief System Restore point creation and availability checking
 
 #include "sak/restore_point_manager.h"
+
 #include "sak/elevation_manager.h"
 
 #include <QJsonArray>
@@ -18,37 +19,32 @@
 
 namespace sak {
 
-RestorePointManager::RestorePointManager(QObject* parent)
-    : QObject(parent)
-{
-}
+RestorePointManager::RestorePointManager(QObject* parent) : QObject(parent) {}
 
-bool RestorePointManager::isSystemRestoreEnabled() const
-{
+bool RestorePointManager::isSystemRestoreEnabled() const {
     QProcess ps;
     ps.setProgram("powershell.exe");
-    ps.setArguments({
-        "-NoProfile", "-NonInteractive", "-Command",
-        "try { "
-        "  $status = Get-ComputerRestorePoint -ErrorAction Stop; "
-        "  Write-Output 'ENABLED'; "
-        "} catch { "
-        "  try { "
-        "    $vss = Get-Service -Name VSS -ErrorAction Stop; "
-        "    if ($vss.Status -eq 'Running' -or $vss.StartType -ne 'Disabled') { "
-        "      Write-Output 'ENABLED'; "
-        "    } else { "
-        "      Write-Output 'DISABLED'; "
-        "    } "
-        "  } catch { "
-        "    Write-Output 'DISABLED'; "
-        "  } "
-        "}"
-    });
+    ps.setArguments({"-NoProfile",
+                     "-NonInteractive",
+                     "-Command",
+                     "try { "
+                     "  $status = Get-ComputerRestorePoint -ErrorAction Stop; "
+                     "  Write-Output 'ENABLED'; "
+                     "} catch { "
+                     "  try { "
+                     "    $vss = Get-Service -Name VSS -ErrorAction Stop; "
+                     "    if ($vss.Status -eq 'Running' -or $vss.StartType -ne 'Disabled') { "
+                     "      Write-Output 'ENABLED'; "
+                     "    } else { "
+                     "      Write-Output 'DISABLED'; "
+                     "    } "
+                     "  } catch { "
+                     "    Write-Output 'DISABLED'; "
+                     "  } "
+                     "}"});
     ps.start();
 
-    if (!ps.waitForStarted(kCheckTimeoutMs)
-        || !ps.waitForFinished(kCheckTimeoutMs)) {
+    if (!ps.waitForStarted(kCheckTimeoutMs) || !ps.waitForFinished(kCheckTimeoutMs)) {
         return false;
     }
 
@@ -56,8 +52,8 @@ bool RestorePointManager::isSystemRestoreEnabled() const
     return output.contains("ENABLED");
 }
 
-bool RestorePointManager::createRestorePoint(const QString& description)
-{
+bool RestorePointManager::createRestorePoint(const QString& description) {
+    Q_ASSERT(!description.isEmpty());
     if (!isElevated()) {
         Q_EMIT restorePointFailed("Creating restore points requires administrator privileges.");
         return false;
@@ -71,20 +67,19 @@ bool RestorePointManager::createRestorePoint(const QString& description)
 
     QProcess ps;
     ps.setProgram("powershell.exe");
-    ps.setArguments({
-        "-NoProfile", "-NonInteractive", "-Command",
-        QString(
-            "try { "
-            "  Checkpoint-Computer -Description '%1' "
-            "    -RestorePointType 'APPLICATION_UNINSTALL' "
-            "    -ErrorAction Stop; "
-            "  Write-Output 'SUCCESS'; "
-            "} catch { "
-            "  Write-Error $_.Exception.Message; "
-            "  exit 1; "
-            "}"
-        ).arg(safe_desc)
-    });
+    ps.setArguments({"-NoProfile",
+                     "-NonInteractive",
+                     "-Command",
+                     QString("try { "
+                             "  Checkpoint-Computer -Description '%1' "
+                             "    -RestorePointType 'APPLICATION_UNINSTALL' "
+                             "    -ErrorAction Stop; "
+                             "  Write-Output 'SUCCESS'; "
+                             "} catch { "
+                             "  Write-Error $_.Exception.Message; "
+                             "  exit 1; "
+                             "}")
+                         .arg(safe_desc)});
     ps.start();
 
     if (!ps.waitForStarted(kCreateTimeoutMs)) {
@@ -104,14 +99,13 @@ bool RestorePointManager::createRestorePoint(const QString& description)
         }
 
         // Check for throttle (Windows only allows one per 24h in some configs)
-        if (err.contains("frequency", Qt::CaseInsensitive)
-            || err.contains("1440", Qt::CaseInsensitive)) {
+        if (err.contains("frequency", Qt::CaseInsensitive) ||
+            err.contains("1440", Qt::CaseInsensitive)) {
             Q_EMIT restorePointFailed(
                 "Windows limits restore point creation to once per 24 hours. "
                 "A recent restore point already exists.");
         } else {
-            Q_EMIT restorePointFailed(
-                QString("Failed to create restore point: %1").arg(err));
+            Q_EMIT restorePointFailed(QString("Failed to create restore point: %1").arg(err));
         }
         return false;
     }
@@ -120,24 +114,22 @@ bool RestorePointManager::createRestorePoint(const QString& description)
     return true;
 }
 
-QVector<QPair<QDateTime, QString>> RestorePointManager::listRestorePoints() const
-{
+QVector<QPair<QDateTime, QString>> RestorePointManager::listRestorePoints() const {
     QVector<QPair<QDateTime, QString>> points;
 
     QProcess ps;
     ps.setProgram("powershell.exe");
-    ps.setArguments({
-        "-NoProfile", "-NonInteractive", "-Command",
-        "Get-ComputerRestorePoint -ErrorAction SilentlyContinue | "
-        "Select-Object @{N='Date';E={$_.ConvertToDateTime($_.CreationTime)}}, "
-        "Description | "
-        "Sort-Object Date -Descending | "
-        "ConvertTo-Json -Compress"
-    });
+    ps.setArguments({"-NoProfile",
+                     "-NonInteractive",
+                     "-Command",
+                     "Get-ComputerRestorePoint -ErrorAction SilentlyContinue | "
+                     "Select-Object @{N='Date';E={$_.ConvertToDateTime($_.CreationTime)}}, "
+                     "Description | "
+                     "Sort-Object Date -Descending | "
+                     "ConvertTo-Json -Compress"});
     ps.start();
 
-    if (!ps.waitForStarted(kCheckTimeoutMs)
-        || !ps.waitForFinished(kCheckTimeoutMs)) {
+    if (!ps.waitForStarted(kCheckTimeoutMs) || !ps.waitForFinished(kCheckTimeoutMs)) {
         return points;
     }
 
@@ -179,9 +171,8 @@ QVector<QPair<QDateTime, QString>> RestorePointManager::listRestorePoints() cons
     return points;
 }
 
-bool RestorePointManager::isElevated()
-{
+bool RestorePointManager::isElevated() {
     return ElevationManager::isElevated();
 }
 
-} // namespace sak
+}  // namespace sak

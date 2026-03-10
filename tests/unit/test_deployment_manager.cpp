@@ -4,12 +4,11 @@
 /// @file test_deployment_manager.cpp
 /// @brief Unit tests for deployment queue management
 
-#include <QtTest/QtTest>
-
 #include "sak/deployment_manager.h"
 #include "sak/orchestration_types.h"
 
 #include <QSignalSpy>
+#include <QtTest/QtTest>
 
 class DeploymentManagerTests : public QObject {
     Q_OBJECT
@@ -41,8 +40,7 @@ private Q_SLOTS:
 };
 
 // Helper to create a test assignment
-static sak::DeploymentAssignment makeAssignment(const QString& id)
-{
+static sak::DeploymentAssignment makeAssignment(const QString& id) {
     sak::DeploymentAssignment assignment;
     assignment.deployment_id = id;
     assignment.source_user = "test_user";
@@ -53,8 +51,7 @@ static sak::DeploymentAssignment makeAssignment(const QString& id)
 // Constructor
 // ============================================================================
 
-void DeploymentManagerTests::constructor_emptyQueue()
-{
+void DeploymentManagerTests::constructor_emptyQueue() {
     sak::DeploymentManager mgr;
     QVERIFY(!mgr.hasPending());
     QCOMPARE(mgr.pendingCount(), 0);
@@ -64,8 +61,7 @@ void DeploymentManagerTests::constructor_emptyQueue()
 // Enqueue / Dequeue
 // ============================================================================
 
-void DeploymentManagerTests::enqueue_incrementsCount()
-{
+void DeploymentManagerTests::enqueue_incrementsCount() {
     sak::DeploymentManager mgr;
     mgr.enqueue(makeAssignment("dest1"));
     QCOMPARE(mgr.pendingCount(), 1);
@@ -74,8 +70,7 @@ void DeploymentManagerTests::enqueue_incrementsCount()
     QCOMPARE(mgr.pendingCount(), 2);
 }
 
-void DeploymentManagerTests::dequeue_decrementsCount()
-{
+void DeploymentManagerTests::dequeue_decrementsCount() {
     sak::DeploymentManager mgr;
     mgr.enqueue(makeAssignment("dest1"));
     mgr.enqueue(makeAssignment("dest2"));
@@ -87,8 +82,7 @@ void DeploymentManagerTests::dequeue_decrementsCount()
     QCOMPARE(mgr.pendingCount(), 0);
 }
 
-void DeploymentManagerTests::dequeue_fifoOrder()
-{
+void DeploymentManagerTests::dequeue_fifoOrder() {
     sak::DeploymentManager mgr;
     mgr.enqueue(makeAssignment("first"));
     mgr.enqueue(makeAssignment("second"));
@@ -104,29 +98,26 @@ void DeploymentManagerTests::dequeue_fifoOrder()
     QCOMPARE(a3.deployment_id, QString("third"));
 }
 
-void DeploymentManagerTests::peek_doesNotRemove()
-{
+void DeploymentManagerTests::peek_doesNotRemove() {
     sak::DeploymentManager mgr;
     mgr.enqueue(makeAssignment("peek_test"));
 
     sak::DeploymentAssignment peeked;
     QVERIFY(mgr.peek(&peeked));
     QCOMPARE(peeked.deployment_id, QString("peek_test"));
-    QCOMPARE(mgr.pendingCount(), 1); // Still in queue
+    QCOMPARE(mgr.pendingCount(), 1);  // Still in queue
 }
 
 // ============================================================================
 // hasPending
 // ============================================================================
 
-void DeploymentManagerTests::hasPending_emptyFalse()
-{
+void DeploymentManagerTests::hasPending_emptyFalse() {
     sak::DeploymentManager mgr;
     QVERIFY(!mgr.hasPending());
 }
 
-void DeploymentManagerTests::hasPending_withItemTrue()
-{
+void DeploymentManagerTests::hasPending_withItemTrue() {
     sak::DeploymentManager mgr;
     mgr.enqueue(makeAssignment("item"));
     QVERIFY(mgr.hasPending());
@@ -136,8 +127,7 @@ void DeploymentManagerTests::hasPending_withItemTrue()
 // Signals
 // ============================================================================
 
-void DeploymentManagerTests::enqueue_emitsSignal()
-{
+void DeploymentManagerTests::enqueue_emitsSignal() {
     sak::DeploymentManager mgr;
     QSignalSpy spy(&mgr, &sak::DeploymentManager::deploymentQueued);
     QVERIFY(spy.isValid());
@@ -146,8 +136,7 @@ void DeploymentManagerTests::enqueue_emitsSignal()
     QCOMPARE(spy.count(), 1);
 }
 
-void DeploymentManagerTests::dequeue_emitsSignal()
-{
+void DeploymentManagerTests::dequeue_emitsSignal() {
     sak::DeploymentManager mgr;
     mgr.enqueue(makeAssignment("deq_signal"));
 
@@ -162,29 +151,29 @@ void DeploymentManagerTests::dequeue_emitsSignal()
 // enqueueForDestination with Readiness Check
 // ============================================================================
 
-void DeploymentManagerTests::enqueueForDestination_withReadinessCheck()
-{
+void DeploymentManagerTests::enqueueForDestination_withReadinessCheck() {
     sak::DeploymentManager mgr;
     mgr.setReadinessCheck([](const QString&, qint64, QString*) -> bool {
-        return true; // Always ready
+        return true;  // Always ready
     });
 
     mgr.enqueueForDestination(makeAssignment("ready_dest"), "ready_dest", 1024);
     QCOMPARE(mgr.pendingCount(), 1);
 }
 
-void DeploymentManagerTests::enqueueForDestination_rejected()
-{
+void DeploymentManagerTests::enqueueForDestination_rejected() {
     sak::DeploymentManager mgr;
     mgr.setReadinessCheck([](const QString&, qint64, QString* reason) -> bool {
-        if (reason) *reason = "Not enough space";
+        if (reason) {
+            *reason = "Not enough space";
+        }
         return false;
     });
 
     QSignalSpy spy(&mgr, &sak::DeploymentManager::deploymentRejected);
     QVERIFY(spy.isValid());
 
-    mgr.enqueueForDestination(makeAssignment("rejected_dest"), "rejected_dest", 999999);
+    mgr.enqueueForDestination(makeAssignment("rejected_dest"), "rejected_dest", 999'999);
     QCOMPARE(mgr.pendingCount(), 0);
     QCOMPARE(spy.count(), 1);
 }
@@ -193,8 +182,7 @@ void DeploymentManagerTests::enqueueForDestination_rejected()
 // Readiness Check
 // ============================================================================
 
-void DeploymentManagerTests::setReadinessCheck_usedOnEnqueue()
-{
+void DeploymentManagerTests::setReadinessCheck_usedOnEnqueue() {
     sak::DeploymentManager mgr;
     bool checkCalled = false;
     mgr.setReadinessCheck([&checkCalled](const QString&, qint64, QString*) -> bool {

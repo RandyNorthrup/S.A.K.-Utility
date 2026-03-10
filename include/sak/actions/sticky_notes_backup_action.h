@@ -5,6 +5,7 @@
 
 #include "sak/quick_action.h"
 #include "sak/user_profile_types.h"
+
 #include <QString>
 #include <QVector>
 
@@ -12,7 +13,7 @@ namespace sak {
 
 /**
  * @brief Sticky Notes Backup Action
- * 
+ *
  * Backs up Windows Sticky Notes database (plum.sqlite).
  */
 class StickyNotesBackupAction : public QuickAction {
@@ -40,5 +41,4 @@ private:
     QString findStickyNotesDatabase();
 };
 
-} // namespace sak
-
+}  // namespace sak

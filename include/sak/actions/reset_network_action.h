@@ -4,6 +4,7 @@
 #pragma once
 
 #include "sak/quick_action.h"
+
 #include <QDateTime>
 #include <QString>
 #include <QStringList>
@@ -12,7 +13,7 @@ namespace sak {
 
 /**
  * @brief Reset Network Settings Action
- * 
+ *
  * Resets network adapters, TCP/IP stack, DNS cache, and Winsock catalog.
  */
 class ResetNetworkAction : public QuickAction {
@@ -59,5 +60,4 @@ private:
     void executeBuildReport(const QStringList& errors, const QDateTime& start_time);
 };
 
-} // namespace sak
-
+}  // namespace sak

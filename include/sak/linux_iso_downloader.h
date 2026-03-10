@@ -5,13 +5,14 @@
 
 #include "sak/linux_distro_catalog.h"
 
-#include <QObject>
-#include <QString>
-#include <QProcess>
-#include <QTimer>
 #include <QCryptographicHash>
-#include <memory>
+#include <QObject>
+#include <QProcess>
+#include <QString>
+#include <QTimer>
+
 #include <atomic>
+#include <memory>
 
 /**
  * @brief Orchestrator for downloading Linux ISO images
@@ -37,12 +38,12 @@ class LinuxISODownloader : public QObject {
 public:
     /// @brief Download pipeline phase
     enum class Phase {
-        Idle,                ///< No download in progress
-        ResolvingVersion,    ///< Checking GitHub API for latest version
-        Downloading,         ///< aria2c is downloading the ISO
-        VerifyingChecksum,   ///< Computing and comparing SHA256/SHA1
-        Completed,           ///< Download and verification succeeded
-        Failed               ///< An error occurred
+        Idle,               ///< No download in progress
+        ResolvingVersion,   ///< Checking GitHub API for latest version
+        Downloading,        ///< aria2c is downloading the ISO
+        VerifyingChecksum,  ///< Computing and comparing SHA256/SHA1
+        Completed,          ///< Download and verification succeeded
+        Failed              ///< An error occurred
     };
     Q_ENUM(Phase)
 
@@ -82,9 +83,9 @@ public:
     /**
      * @brief Check if a download is currently in progress
      */
-    bool isDownloading() const { return m_phase != Phase::Idle &&
-                                        m_phase != Phase::Completed &&
-                                        m_phase != Phase::Failed; }
+    bool isDownloading() const {
+        return m_phase != Phase::Idle && m_phase != Phase::Completed && m_phase != Phase::Failed;
+    }
 
     /**
      * @brief Get the current download phase
@@ -141,9 +142,10 @@ private Q_SLOTS:
 
 private:
     void setPhase(Phase phase, const QString& description);
-    void startAria2cDownload(const QString& url, const QString& savePath,
-                             const QString& fileName);
-    QStringList buildAria2cArguments(const QString& url, const QString& outDir,
+    void startAria2cDownload(const QString& url, const QString& savePath, const QString& fileName);
+    static QString aria2cExitCodeMessage(int exit_code);
+    QStringList buildAria2cArguments(const QString& url,
+                                     const QString& outDir,
                                      const QString& outFile) const;
     void verifyChecksum();
     void onChecksumReplyFinished(QNetworkReply* reply, QNetworkAccessManager* nam);

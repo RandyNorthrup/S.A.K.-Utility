@@ -5,9 +5,7 @@
 
 namespace sak {
 
-DeploymentManager::DeploymentManager(QObject* parent)
-    : QObject(parent) {
-}
+DeploymentManager::DeploymentManager(QObject* parent) : QObject(parent) {}
 
 void DeploymentManager::enqueue(const DeploymentAssignment& assignment) {
     m_queue.enqueue(assignment);
@@ -58,4 +56,4 @@ void DeploymentManager::setReadinessCheck(readiness_check checker) {
     m_readinessCheck = std::move(checker);
 }
 
-} // namespace sak
+}  // namespace sak

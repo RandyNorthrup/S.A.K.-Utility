@@ -24,7 +24,7 @@ jobs:
     permissions:
       contents: write
       id-token: write
-    
+
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
@@ -39,7 +39,7 @@ jobs:
         Write-Host "Detected version: $ver"
         "APP_VERSION=$ver" | Out-File -Append $env:GITHUB_ENV
         "version=$ver" | Out-File -Append $env:GITHUB_OUTPUT
-    
+
     - name: Install Qt
       uses: jurplel/install-qt-action@v4
       with:
@@ -48,12 +48,12 @@ jobs:
         target: 'desktop'
         arch: 'win64_msvc2019_64'
         cache: true
-    
+
     - name: Setup MSVC
       uses: microsoft/setup-msbuild@v2
       with:
         vs-version: '17'
-    
+
     - name: Cache vcpkg
       uses: actions/cache@v4
       with:
@@ -64,12 +64,12 @@ jobs:
         key: ${{ runner.os }}-vcpkg-${{ hashFiles('**/CMakeLists.txt') }}
         restore-keys: |
           ${{ runner.os }}-vcpkg-
-    
+
     - name: Install vcpkg dependencies
       run: |
         vcpkg install zlib:x64-windows bzip2:x64-windows liblzma:x64-windows
         vcpkg integrate install
-    
+
     - name: Cache CMake build
       uses: actions/cache@v4
       with:
@@ -81,7 +81,7 @@ jobs:
         key: ${{ runner.os }}-cmake-${{ hashFiles('**/CMakeLists.txt', 'src/**', 'include/**') }}
         restore-keys: |
           ${{ runner.os }}-cmake-
-    
+
     - name: Bundle smartmontools
       shell: pwsh
       run: |
@@ -109,37 +109,37 @@ jobs:
           -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} `
           -DCMAKE_PREFIX_PATH="${{ env.Qt6_DIR }}" `
           -DCMAKE_TOOLCHAIN_FILE="C:/vcpkg/scripts/buildsystems/vcpkg.cmake"
-    
+
     - name: Build
       run: cmake --build build --config ${{ env.BUILD_TYPE }} --parallel
-    
+
     - name: Verify build output
       working-directory: build/Release
       shell: pwsh
       run: |
         Write-Host "=== Build Output Verification ==="
-        
+
         # Executable must exist
         if (!(Test-Path "sak_utility.exe")) {
           Write-Error "FATAL: sak_utility.exe not found"
           exit 1
         }
         Write-Host "OK  sak_utility.exe"
-        
+
         # Splash screen must exist (copied by CMake POST_BUILD)
         if (!(Test-Path "sak_splash.png")) {
           Write-Error "FATAL: sak_splash.png not found — CMake POST_BUILD copy failed"
           exit 1
         }
         Write-Host "OK  sak_splash.png"
-        
+
         # Icon must exist
         if (!(Test-Path "icon.ico")) {
           Write-Warning "icon.ico not found (non-fatal, embedded in exe via .rc)"
         } else {
           Write-Host "OK  icon.ico"
         }
-        
+
         # Qt plugin directories (deployed by windeployqt POST_BUILD)
         $requiredDirs = @("platforms", "styles", "imageformats", "iconengines", "tls")
         foreach ($dir in $requiredDirs) {
@@ -150,7 +150,7 @@ jobs:
           $count = (Get-ChildItem $dir -Filter "*.dll" | Measure-Object).Count
           Write-Host "OK  $dir/ ($count plugins)"
         }
-        
+
         # Qt DLLs
         $requiredDlls = @("Qt6Core.dll", "Qt6Gui.dll", "Qt6Widgets.dll", "Qt6Network.dll", "Qt6Concurrent.dll")
         foreach ($dll in $requiredDlls) {
@@ -160,7 +160,7 @@ jobs:
           }
           Write-Host "OK  $dll"
         }
-        
+
         # MSVC runtime DLLs
         $runtimeDlls = @("vcruntime140.dll", "vcruntime140_1.dll", "msvcp140.dll", "concrt140.dll")
         foreach ($dll in $runtimeDlls) {
@@ -170,14 +170,14 @@ jobs:
             Write-Host "OK  $dll"
           }
         }
-        
+
         # Tools directory
         if (!(Test-Path "tools")) {
           Write-Warning "tools/ directory not found"
         } else {
           Write-Host "OK  tools/"
         }
-        
+
         # smartctl.exe (bundled for SMART diagnostics)
         if (!(Test-Path "tools/smartmontools/smartctl.exe")) {
           Write-Warning "tools/smartmontools/smartctl.exe not found — SMART diagnostics unavailable"
@@ -185,7 +185,7 @@ jobs:
           $smartVer = & .\tools\smartmontools\smartctl.exe --version 2>&1 | Select-Object -First 1
           Write-Host "OK  tools/smartmontools/smartctl.exe ($smartVer)"
         }
-        
+
         # aria2c.exe (bundled for ISO downloads)
         if (!(Test-Path "tools/uup/aria2c.exe")) {
           Write-Error "FATAL: tools/uup/aria2c.exe not found — ISO downloads will be broken"
@@ -194,7 +194,7 @@ jobs:
           $aria2Ver = & .\tools\uup\aria2c.exe --version 2>&1 | Select-Object -First 1
           Write-Host "OK  tools/uup/aria2c.exe ($aria2Ver)"
         }
-        
+
         # uup-converter-wimlib (bundled for UUP-to-ISO conversion)
         if (!(Test-Path "tools/uup/converter/convert-UUP.cmd")) {
           Write-Error "FATAL: tools/uup/converter/convert-UUP.cmd not found — UUP conversion will be broken"
@@ -208,7 +208,7 @@ jobs:
         } else {
           Write-Host "OK  tools/uup/converter/bin/wimlib-imagex.exe"
         }
-        
+
         # UUP Media Creator (bundled for UUP-to-ISO conversion)
         if (!(Test-Path "tools/uup/uupmc/UUPMediaConverter.exe")) {
           Write-Error "FATAL: tools/uup/uupmc/UUPMediaConverter.exe not found — UUP conversion will be broken"
@@ -222,7 +222,7 @@ jobs:
         } else {
           Write-Host "OK  tools/uup/uupmc/UUPDownload.exe"
         }
-        
+
         Write-Host ""
         Write-Host "=== Verification complete ==="
 
@@ -264,15 +264,15 @@ jobs:
         # Skip GUI tests in CI (they require user interaction)
         $guiTests = @(
           "test_app_installation_panel.exe",
-          "test_backup_wizard.exe", 
+          "test_backup_wizard.exe",
           "test_restore_wizard.exe"
         )
-        
+
         # Run non-GUI tests only
-        $tests = Get-ChildItem -Filter "test_*.exe" | Where-Object { 
-          $guiTests -notcontains $_.Name 
+        $tests = Get-ChildItem -Filter "test_*.exe" | Where-Object {
+          $guiTests -notcontains $_.Name
         }
-        
+
         $passed = 0
         $failed = 0
         foreach ($test in $tests) {
@@ -285,18 +285,18 @@ jobs:
             $passed++
           }
         }
-        
+
         Write-Host ""
         Write-Host "=== Test Summary ==="
         Write-Host "Passed: $passed"
         Write-Host "Failed: $failed"
         Write-Host "Skipped (GUI): $($guiTests.Count)"
-        
+
         if ($failed -gt 0) {
           Write-Warning "$failed test(s) failed"
         }
       continue-on-error: true
-    
+
     - name: Package Application
       working-directory: build/Release
       shell: pwsh
@@ -304,18 +304,18 @@ jobs:
         $version = $env:APP_VERSION
         $pkgName = "SAK-Utility-v$version"
         $zipName = "$pkgName-Windows-x64.zip"
-        
+
         Write-Host "Packaging $pkgName ..."
-        
+
         # Clean any previous packaging artifacts
         if (Test-Path $pkgName) { Remove-Item -Recurse -Force $pkgName }
         if (Test-Path $zipName) { Remove-Item -Force $zipName }
         if (Test-Path "SHA256SUMS.txt") { Remove-Item -Force "SHA256SUMS.txt" }
         New-Item -ItemType Directory -Force -Path $pkgName | Out-Null
-        
+
         # ── Executable ──────────────────────────────────────────────
         Copy-Item "sak_utility.exe" "$pkgName/"
-        
+
         # ── Splash screen & icon (copied to build dir by CMake POST_BUILD) ──
         if (Test-Path "sak_splash.png") {
           Copy-Item "sak_splash.png" "$pkgName/"
@@ -327,7 +327,7 @@ jobs:
           Copy-Item "icon.ico" "$pkgName/"
           Write-Host "  Bundled: icon.ico"
         }
-        
+
         # ── Qt plugin directories (deployed by windeployqt POST_BUILD) ──
         # Copy ALL plugin dirs that windeployqt placed here instead of
         # maintaining a fragile hardcoded list.
@@ -347,7 +347,7 @@ jobs:
             Write-Host "  Bundled: $dir/ ($count plugins)"
           }
         }
-        
+
         # ── Qt runtime DLLs ─────────────────────────────────────────
         $qtDlls = Get-ChildItem -Filter "Qt6*.dll" -ErrorAction SilentlyContinue
         foreach ($dll in $qtDlls) {
@@ -363,7 +363,7 @@ jobs:
           Copy-Item $dll.FullName "$pkgName/"
         }
         Write-Host "  Bundled: $($qtDlls.Count) Qt DLL(s)"
-        
+
         # ── OpenGL / D3D DLLs ────────────────────────────────────────
         foreach ($dll in @("opengl32sw.dll", "D3Dcompiler_47.dll")) {
           if (Test-Path $dll) {
@@ -371,7 +371,7 @@ jobs:
             Write-Host "  Bundled: $dll"
           }
         }
-        
+
         # ── MSVC runtime DLLs (vcruntime, msvcp, concrt) ────────────
         $msvcPatterns = @("vcruntime*.dll", "msvcp*.dll", "concrt*.dll")
         foreach ($pattern in $msvcPatterns) {
@@ -381,7 +381,7 @@ jobs:
             Write-Host "  Bundled: $($dll.Name)"
           }
         }
-        
+
         # ── vcpkg DLLs (zlib, bzip2, liblzma) ───────────────────────
         $vcpkgBin = "C:\vcpkg\installed\x64-windows\bin"
         if (Test-Path $vcpkgBin) {
@@ -395,7 +395,7 @@ jobs:
             }
           }
         }
-        
+
         # ── Embedded tools (Chocolatey, UUP) ─────────────────────────
         if (Test-Path "tools") {
           Copy-Item -Recurse "tools" "$pkgName/"
@@ -408,7 +408,7 @@ jobs:
             Write-Host "  Bundled: tools/chocolatey/ (with scaffolding)"
           }
         }
-        
+
         # ── Documentation & portable marker ──────────────────────────
         Copy-Item "../../README.md" "$pkgName/"
         Copy-Item "../../LICENSE" "$pkgName/"
@@ -419,7 +419,7 @@ jobs:
           Copy-Item "../../THIRD_PARTY_LICENSES.md" "$pkgName/"
         }
         New-Item -ItemType File -Path "$pkgName/portable.ini" -Force | Out-Null
-        
+
         # ── Manifest: list everything we packaged ────────────────────
         Write-Host ""
         Write-Host "=== Package Contents ==="
@@ -433,10 +433,10 @@ jobs:
         Write-Host ""
         Write-Host "Total files: $($files.Count)"
         Write-Host "Total size:  $([math]::Round($totalSize / 1MB, 1)) MB"
-        
+
         # ── Create ZIP ───────────────────────────────────────────────
         Compress-Archive -Path "$pkgName\*" -DestinationPath $zipName -Force
-        
+
         # ── SHA256 checksums ─────────────────────────────────────────
         $exeHash = (Get-FileHash "$pkgName\sak_utility.exe" -Algorithm SHA256).Hash
         $zipHash = (Get-FileHash $zipName -Algorithm SHA256).Hash
@@ -444,14 +444,14 @@ jobs:
         Write-Host "=== SHA256 Checksums ==="
         Write-Host "sak_utility.exe : $exeHash"
         Write-Host "ZIP             : $zipHash"
-        
+
         @"
         SHA256 Checksums
         ================
         sak_utility.exe:  $exeHash
         $($zipName):  $zipHash
         "@ | Out-File "SHA256SUMS.txt" -Encoding UTF8
-        
+
         # ── Final sanity checks ──────────────────────────────────────
         $critical = @("sak_utility.exe", "sak_splash.png", "Qt6Core.dll",
                       "Qt6Widgets.dll", "platforms/qwindows.dll")
@@ -462,14 +462,14 @@ jobs:
         }
         Write-Host ""
         Write-Host "Package created successfully: $zipName"
-    
+
     - name: Upload ZIP artifact
       uses: actions/upload-artifact@v4
       with:
         name: SAK-Utility-Windows-x64
         path: build/Release/SAK-Utility-v${{ steps.version.outputs.version }}/*
         retention-days: 90
-    
+
     - name: Create Release
       if: startsWith(github.ref, 'refs/tags/v')
       uses: softprops/action-gh-release@v2
@@ -479,11 +479,11 @@ jobs:
           build/Release/SHA256SUMS.txt
         body: |
           # S.A.K. Utility v${{ steps.version.outputs.version }}
-          
+
           **Windows System Administration Kit — Swiss Army Knife Utility**
-          
+
           ## Highlights
-          - 40+ Quick Actions for common admin tasks
+          - Quick Actions for common admin tasks
           - Diagnostics & Benchmarking (CPU, disk, memory, stress tests, SMART health)
           - BitLocker recovery key backup
           - Network peer-to-peer file transfer
@@ -491,7 +491,7 @@ jobs:
           - Application migration with embedded Chocolatey
           - User profile backup & restore with AES-256 encryption
           - Streaming compression (gzip, bzip2, xz)
-          
+
           ## Core Features
           - Diagnostics & Benchmarking with SMART analysis, stress testing, and report export
           - Application Migration with embedded Chocolatey
@@ -500,32 +500,32 @@ jobs:
           - Directory Organizer
           - Duplicate File Finder
           - License Key Scanner
-          - Quick Actions panel (40+ one-click admin tasks)
+          - Quick Actions panel (one-click admin tasks)
           - Windows Maintenance tools
-          
+
           ## Installation
           1. Download `SAK-Utility-v${{ steps.version.outputs.version }}-Windows-x64.zip`
           2. Extract to your preferred location
           3. Run `sak_utility.exe`
           4. `portable.ini` is included for portable operation
-          
+
           ### Code Signing
           This release is digitally signed via Azure Trusted Signing.
           Windows SmartScreen and Defender should recognize the signature automatically.
-          
+
           You can verify the signature by right-clicking `sak_utility.exe` → Properties → Digital Signatures.
-          
+
           100% open source, built via GitHub Actions, no telemetry.
-          
+
           ## Requirements
           - Windows 10/11 x64
           - Administrator privileges (for admin tasks, migration, etc.)
-          
+
           ## Build Info
           - Commit: `${{ github.sha }}`
           - Built with: C++23, Qt ${{ env.QT_VERSION }}, MSVC 2022
           - All dependencies included
-          
+
           See [README](https://github.com/${{ github.repository }}/blob/main/README.md) for full documentation.
         draft: false
         prerelease: false
@@ -535,13 +535,13 @@ jobs:
   build-info:
     name: Build Information
     runs-on: ubuntu-latest
-    
+
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
       with:
         fetch-depth: 0
-    
+
     - name: Display Build Info
       run: |
         VERSION=$(cat VERSION | tr -d '[:space:]')

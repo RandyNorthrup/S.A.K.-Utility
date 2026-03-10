@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "sak/orchestration_types.h"
+
 #include "sak/network_constants.h"
 
 namespace sak {
@@ -130,4 +131,4 @@ DeploymentCompletion DeploymentCompletion::fromJson(const QJsonObject& json) {
     return completion;
 }
 
-} // namespace sak
+}  // namespace sak

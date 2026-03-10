@@ -50,9 +50,9 @@ private:
     ScanLevel m_level;
 
     // Search patterns derived from program info
-    QStringList m_namePatterns;      ///< Program name variations
-    QStringList m_publisherPatterns; ///< Publisher name variations
-    QString m_installDirName;        ///< Last component of install path
+    QStringList m_namePatterns;       ///< Program name variations
+    QStringList m_publisherPatterns;  ///< Publisher name variations
+    QString m_installDirName;         ///< Last component of install path
 
     /// @brief Generate search patterns from program info
     void buildSearchPatterns();
@@ -65,7 +65,8 @@ private:
     // Registry scanning
 #ifdef Q_OS_WIN
     QVector<LeftoverItem> scanRegistry(const std::atomic<bool>& stopRequested);
-    QVector<LeftoverItem> scanRegistryHive(HKEY hive, const QString& subkey,
+    QVector<LeftoverItem> scanRegistryHive(HKEY hive,
+                                           const QString& subkey,
                                            const QString& hiveName,
                                            const std::atomic<bool>& stopRequested);
 #endif
@@ -76,9 +77,15 @@ private:
     QVector<LeftoverItem> scanFirewallRules(const std::atomic<bool>& stopRequested);
     QVector<LeftoverItem> scanStartupEntries(const std::atomic<bool>& stopRequested);
 
+    void scanFirewallDirection(const QStringList& netsh_args,
+                               const QString& description,
+                               const std::atomic<bool>& stopRequested,
+                               QVector<LeftoverItem>& items);
+    void scanStartupFolder(const std::atomic<bool>& stopRequested,
+                            QVector<LeftoverItem>& items);
+
     // Safety classification
-    LeftoverItem::RiskLevel classifyRisk(const QString& path,
-                                         LeftoverItem::Type type) const;
+    LeftoverItem::RiskLevel classifyRisk(const QString& path, LeftoverItem::Type type) const;
     [[nodiscard]] bool isProtectedPath(const QString& path) const;
     [[nodiscard]] bool matchesProgram(const QString& name) const;
 
@@ -92,6 +99,6 @@ private:
 // ── Compile-Time Invariants ─────────────────────────────────────────────────
 
 static_assert(!std::is_copy_constructible_v<LeftoverScanner>,
-    "LeftoverScanner must not be copy-constructible.");
+              "LeftoverScanner must not be copy-constructible.");
 
-} // namespace sak
+}  // namespace sak

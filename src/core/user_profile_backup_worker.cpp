@@ -2,25 +2,25 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "sak/user_profile_backup_worker.h"
-#include <QtGlobal>
+
+#include "sak/layout_constants.h"
+#include "sak/logger.h"
+
+#include <QDateTime>
 #include <QDir>
+#include <QDirIterator>
 #include <QFile>
 #include <QFileInfo>
-#include <QDateTime>
-#include <QDirIterator>
-#include <QStorageInfo>
 #include <QJsonDocument>
-#include "sak/logger.h"
-#include "sak/layout_constants.h"
+#include <QStorageInfo>
+#include <QtGlobal>
 
 namespace sak {
 
 UserProfileBackupWorker::UserProfileBackupWorker(QObject* parent)
     : QThread(parent)
     , m_fileFilter(new SmartFileFilter())
-    , m_permissionManager(new PermissionManager())
-{
-}
+    , m_permissionManager(new PermissionManager()) {}
 
 UserProfileBackupWorker::~UserProfileBackupWorker() {
     if (isRunning()) {
@@ -39,8 +39,9 @@ void UserProfileBackupWorker::startBackup(const BackupManifest& manifest,
                                           const QString& password) {
     Q_ASSERT_X(!users.isEmpty(), "startBackup", "users must not be empty");
     Q_ASSERT_X(!destinationPath.isEmpty(), "startBackup", "destinationPath must not be empty");
-    Q_ASSERT_X(compressionLevel >= 0 && compressionLevel <= 9, "startBackup",
-        "compressionLevel must be 0-9");
+    Q_ASSERT_X(compressionLevel >= 0 && compressionLevel <= 9,
+               "startBackup",
+               "compressionLevel must be 0-9");
     if (m_running) {
         Q_EMIT logMessage(tr("Backup already in progress"), true);
         return;
@@ -75,6 +76,8 @@ void UserProfileBackupWorker::cancel() {
 }
 
 void UserProfileBackupWorker::run() {
+    Q_ASSERT(!m_users.empty());
+    Q_ASSERT(!m_users.isEmpty());
     m_running = true;
 
     Q_EMIT logMessage(tr("=== Backup Started ==="), false);
@@ -98,8 +101,9 @@ void UserProfileBackupWorker::run() {
     // Calculate total size for progress
     Q_EMIT logMessage(tr("Calculating total size..."), false);
     m_totalBytesToCopy = calculateTotalSize();
-    Q_EMIT logMessage(tr("Total estimated size: %1 GB").arg(m_totalBytesToCopy / sak::kBytesPerGBf,
-        0, 'f', 2), false);
+    Q_EMIT logMessage(
+        tr("Total estimated size: %1 GB").arg(m_totalBytesToCopy / sak::kBytesPerGBf, 0, 'f', 2),
+        false);
 
     // Create backup directory structure
     if (!createBackupStructure()) {
@@ -118,6 +122,8 @@ void UserProfileBackupWorker::run() {
 }
 
 void UserProfileBackupWorker::backupAllUsers() {
+    Q_ASSERT(!m_users.empty());
+    Q_ASSERT(!m_users.isEmpty());
     int userIndex = 0;
     for (const auto& user : m_users) {
         if (m_cancelled) {
@@ -155,10 +161,10 @@ void UserProfileBackupWorker::emitBackupSummary() {
     // Complete
     QString summary = tr("Backup complete!\nFiles copied: %1\nFiles skipped: %2\nErrors: %3\nTotal "
                          "size: %4 MB")
-        .arg(m_filesCopied)
-        .arg(m_filesSkipped)
-        .arg(m_filesErrored)
-        .arg(m_bytesCopied / sak::kBytesPerMBf, 0, 'f', 1);
+                          .arg(m_filesCopied)
+                          .arg(m_filesSkipped)
+                          .arg(m_filesErrored)
+                          .arg(m_bytesCopied / sak::kBytesPerMBf, 0, 'f', 1);
 
     Q_EMIT logMessage(tr("=== Backup Complete ==="), false);
     Q_EMIT logMessage(summary, false);
@@ -166,6 +172,7 @@ void UserProfileBackupWorker::emitBackupSummary() {
 }
 
 bool UserProfileBackupWorker::backupUser(const UserProfile& user, const QString& userBackupPath) {
+    Q_ASSERT(!userBackupPath.isEmpty());
     // Create user backup directory
     QDir dir;
     if (!dir.mkpath(userBackupPath)) {
@@ -175,7 +182,9 @@ bool UserProfileBackupWorker::backupUser(const UserProfile& user, const QString&
 
     // Backup each selected folder
     for (const auto& folder : user.folder_selections) {
-        if (m_cancelled) return false;
+        if (m_cancelled) {
+            return false;
+        }
 
         if (!folder.selected) {
             continue;
@@ -188,7 +197,7 @@ bool UserProfileBackupWorker::backupUser(const UserProfile& user, const QString&
 
         if (!backupFolder(folder, sourcePath, destPath)) {
             Q_EMIT logMessage(tr("Warning: Failed to backup folder: %1").arg(folder.display_name),
-                true);
+                              true);
             // Continue with other folders
         }
     }
@@ -219,8 +228,8 @@ bool UserProfileBackupWorker::backupFolder(const FolderSelection& folder,
 }
 
 bool UserProfileBackupWorker::copyDirectory(const QString& sourceDir,
-                                           const QString& destDir,
-                                           const FolderSelection& folderConfig) {
+                                            const QString& destDir,
+                                            const FolderSelection& folderConfig) {
     Q_ASSERT_X(!sourceDir.isEmpty(), "copyDirectory", "sourceDir must not be empty");
     Q_ASSERT_X(!destDir.isEmpty(), "copyDirectory", "destDir must not be empty");
     // Check if folder should be excluded
@@ -231,7 +240,7 @@ bool UserProfileBackupWorker::copyDirectory(const QString& sourceDir,
         QString reason = m_fileFilter->getExclusionReason(sourceDirInfo);
         Q_EMIT logMessage(tr("Skipping folder: %1 (%2)").arg(sourceDir, reason), false);
         m_filesSkipped++;
-        return true; // Not an error, just skipped
+        return true;  // Not an error, just skipped
     }
 
     // Create destination directory
@@ -241,10 +250,12 @@ bool UserProfileBackupWorker::copyDirectory(const QString& sourceDir,
 
     // Iterate through directory contents
     QDirIterator it(sourceDir,
-        QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Hidden | QDir::System);
+                    QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Hidden | QDir::System);
 
     while (it.hasNext()) {
-        if (m_cancelled) return false;
+        if (m_cancelled) {
+            return false;
+        }
 
         QString sourceItem = it.next();
         QFileInfo itemInfo(sourceItem);
@@ -276,13 +287,15 @@ bool UserProfileBackupWorker::copyFileWithFiltering(const QString& sourcePath,
         QString reason = m_fileFilter->getExclusionReason(sourceInfo);
         Q_EMIT logMessage(tr("Skipping file: %1 (%2)").arg(sourceInfo.fileName(), reason), false);
         m_filesSkipped++;
-        return true; // Not an error
+        return true;  // Not an error
     }
 
     // Check size limit
     if (m_fileFilter->exceedsSizeLimit(fileSize)) {
-        Q_EMIT logMessage(tr("Skipping large file: %1 (%2 MB)").arg(sourceInfo.fileName())
-            .arg(fileSize / sak::kBytesPerMBf, 0, 'f', 1), true);
+        Q_EMIT logMessage(tr("Skipping large file: %1 (%2 MB)")
+                              .arg(sourceInfo.fileName())
+                              .arg(fileSize / sak::kBytesPerMBf, 0, 'f', 1),
+                          true);
         m_filesSkipped++;
         return true;
     }
@@ -314,24 +327,26 @@ bool UserProfileBackupWorker::copyFileWithFiltering(const QString& sourcePath,
 }
 
 bool UserProfileBackupWorker::applyPermissions(const QString& filePath) {
+    Q_ASSERT(m_permissionManager);
+    Q_ASSERT(!filePath.isEmpty());
     switch (m_permissionMode) {
-        case PermissionMode::StripAll:
+    case PermissionMode::StripAll:
+        return m_permissionManager->stripPermissions(filePath);
+
+    case PermissionMode::PreserveOriginal:
+        // Do nothing, keep original permissions
+        return true;
+
+    case PermissionMode::AssignToDestination:
+        // This would be done during restore, not backup
+        return true;
+
+    case PermissionMode::Hybrid:
+        // Try to preserve, fall back to strip on error
+        if (!m_permissionManager->stripPermissions(filePath)) {
             return m_permissionManager->stripPermissions(filePath);
-
-        case PermissionMode::PreserveOriginal:
-            // Do nothing, keep original permissions
-            return true;
-
-        case PermissionMode::AssignToDestination:
-            // This would be done during restore, not backup
-            return true;
-
-        case PermissionMode::Hybrid:
-            // Try to preserve, fall back to strip on error
-            if (!m_permissionManager->stripPermissions(filePath)) {
-                return m_permissionManager->stripPermissions(filePath);
-            }
-            return true;
+        }
+        return true;
     }
 
     return true;
@@ -358,7 +373,9 @@ bool UserProfileBackupWorker::saveManifest() {
     // Add user data to manifest
     m_manifest.users.clear();
     for (const auto& user : m_users) {
-        if (!user.is_selected) continue;
+        if (!user.is_selected) {
+            continue;
+        }
 
         BackupUserData userData;
         userData.username = user.username;
@@ -378,7 +395,9 @@ bool UserProfileBackupWorker::saveManifest() {
 qint64 UserProfileBackupWorker::accumulateUserFolderSizes(const UserProfile& user) {
     qint64 size = 0;
     for (const auto& folder : user.folder_selections) {
-        if (!folder.selected) continue;
+        if (!folder.selected) {
+            continue;
+        }
         size += folder.size_bytes;
         m_totalFilesToCopy += folder.file_count;
     }
@@ -390,7 +409,9 @@ qint64 UserProfileBackupWorker::calculateTotalSize() {
     m_totalFilesToCopy = 0;
 
     for (const auto& user : m_users) {
-        if (!user.is_selected) continue;
+        if (!user.is_selected) {
+            continue;
+        }
         totalSize += accumulateUserFolderSizes(user);
     }
 
@@ -412,6 +433,7 @@ void UserProfileBackupWorker::countSelectedUsers(int& currentUser, int& totalUse
 }
 
 void UserProfileBackupWorker::updateProgress(qint64 bytesAdded) {
+    Q_ASSERT(bytesAdded >= 0);
     m_bytesCopied += bytesAdded;
 
     // Emit progress every 100 files or 100MB
@@ -420,7 +442,6 @@ void UserProfileBackupWorker::updateProgress(qint64 bytesAdded) {
 
     if (m_filesCopied - lastFileCount >= 100 ||
         m_bytesCopied - lastByteCount >= 100 * sak::kBytesPerMB) {
-
         int currentUser = 0, totalUsers = 0;
         countSelectedUsers(currentUser, totalUsers);
 
@@ -443,7 +464,9 @@ bool UserProfileBackupWorker::createDirectory(const QString& path) {
 
 bool UserProfileBackupWorker::validateSourcePaths() {
     for (const auto& user : m_users) {
-        if (!user.is_selected) continue;
+        if (!user.is_selected) {
+            continue;
+        }
 
         QDir profileDir(user.profile_path);
         if (!profileDir.exists()) {
@@ -474,8 +497,9 @@ bool UserProfileBackupWorker::checkDiskSpace() {
         double requiredGB = requiredBytes / sak::kBytesPerGBf;
 
         Q_EMIT logMessage(tr("Insufficient disk space. Available: %1 GB, Required: %2 GB")
-            .arg(availableGB, 0, 'f', 1)
-            .arg(requiredGB, 0, 'f', 1), true);
+                              .arg(availableGB, 0, 'f', 1)
+                              .arg(requiredGB, 0, 'f', 1),
+                          true);
         return false;
     }
 
@@ -483,4 +507,4 @@ bool UserProfileBackupWorker::checkDiskSpace() {
     return true;
 }
 
-} // namespace sak
+}  // namespace sak

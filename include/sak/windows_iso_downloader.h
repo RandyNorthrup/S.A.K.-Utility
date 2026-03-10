@@ -6,10 +6,11 @@
 #include "sak/uup_dump_api.h"
 #include "sak/uup_iso_builder.h"
 
+#include <QMap>
 #include <QObject>
 #include <QString>
 #include <QStringList>
-#include <QMap>
+
 #include <memory>
 
 /**
@@ -119,14 +120,11 @@ Q_SIGNALS:
     void buildsFetched(const QList<UupDumpApi::BuildInfo>& builds);
 
     // ---- Language/Edition selection ----
-    void languagesFetched(const QStringList& langCodes,
-                          const QMap<QString, QString>& langNames);
-    void editionsFetched(const QStringList& editions,
-                         const QMap<QString, QString>& editionNames);
+    void languagesFetched(const QStringList& langCodes, const QMap<QString, QString>& langNames);
+    void editionsFetched(const QStringList& editions, const QMap<QString, QString>& editionNames);
 
     // ---- Download/Build progress ----
-    void filesFetched(const QString& updateName,
-                      const QList<UupDumpApi::FileInfo>& files);
+    void filesFetched(const QString& updateName, const QList<UupDumpApi::FileInfo>& files);
     void downloadStarted(int fileCount, qint64 totalBytes);
     void phaseChanged(UupIsoBuilder::Phase phase, const QString& description);
     void progressUpdated(int overallPercent, const QString& detail);
@@ -138,8 +136,7 @@ Q_SIGNALS:
     void statusMessage(const QString& message);
 
 private Q_SLOTS:
-    void onFilesFetched(const QString& updateName,
-                        const QList<UupDumpApi::FileInfo>& files);
+    void onFilesFetched(const QString& updateName, const QList<UupDumpApi::FileInfo>& files);
     void onApiError(const QString& error);
 
 private:

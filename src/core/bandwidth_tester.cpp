@@ -5,16 +5,17 @@
 /// @brief LAN bandwidth via iPerf3 and HTTP-based internet speed testing
 
 #include "sak/bandwidth_tester.h"
+
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
 
 #include <QCoreApplication>
 #include <QDir>
+#include <QEventLoop>
 #include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
-#include <QEventLoop>
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QNetworkRequest>
@@ -26,18 +27,18 @@
 namespace sak {
 
 namespace {
-constexpr int kProcessTimeout       = 120000; // 2 minutes max for iPerf3
-constexpr int kServerStartTimeout   = 3000;
-constexpr int kSpeedTestChunkBytes  = 1048576; // 1 MB
-constexpr int kSpeedTestDurationMs  = 10000;   // 10 seconds
-constexpr double kBitsPerByte       = 8.0;
-constexpr double kMegabit           = 1'000'000.0;
+constexpr int kProcessTimeout = 120'000;         // 2 minutes max for iPerf3
+constexpr int kServerStartTimeout = 3000;
+constexpr int kSpeedTestChunkBytes = 1'048'576;  // 1 MB
+constexpr int kSpeedTestDurationMs = 10'000;     // 10 seconds
+constexpr double kBitsPerByte = 8.0;
+constexpr double kMegabit = 1'000'000.0;
 
 const auto kIperf3Exe = QStringLiteral("iperf3.exe");
 const auto kFirewallRuleName = QStringLiteral("SAK_Utility_iPerf3");
 
-QStringList extractAcceptedClientLines(const QString& rawText)
-{
+QStringList extractAcceptedClientLines(const QString& rawText) {
+    Q_ASSERT(!rawText.isEmpty());
     const auto text = rawText.trimmed();
     if (!text.contains(QStringLiteral("accepted connection"))) {
         return {};
@@ -56,10 +57,9 @@ QStringList extractAcceptedClientLines(const QString& rawText)
 }
 
 bool waitForIperfWithProgress(QProcess& proc,
-                             std::atomic<bool>& cancelled,
-                             int durationSec,
-                             BandwidthTester* tester)
-{
+                              std::atomic<bool>& cancelled,
+                              int durationSec,
+                              BandwidthTester* tester) {
     auto elapsed = 0.0;
     while (proc.state() == QProcess::Running && !cancelled.load()) {
         proc.waitForReadyRead(500);
@@ -84,8 +84,8 @@ struct HttpSample {
     double timeMs = 0.0;
 };
 
-HttpSample downloadHttpSample(const QString& url)
-{
+HttpSample downloadHttpSample(const QString& url) {
+    Q_ASSERT(!url.isEmpty());
     QNetworkAccessManager manager;
     QNetworkRequest request{QUrl(url)};
     request.setTransferTimeout(kSpeedTestDurationMs);
@@ -110,8 +110,9 @@ HttpSample downloadHttpSample(const QString& url)
     return sample;
 }
 
-HttpSample uploadHttpSample(const QString& url, int payloadBytes)
-{
+HttpSample uploadHttpSample(const QString& url, int payloadBytes) {
+    Q_ASSERT(!url.isEmpty());
+    Q_ASSERT(payloadBytes >= 0);
     QNetworkAccessManager manager;
     QNetworkRequest request{QUrl(url)};
     request.setTransferTimeout(kSpeedTestDurationMs);
@@ -139,8 +140,9 @@ HttpSample uploadHttpSample(const QString& url, int payloadBytes)
     return sample;
 }
 
-double measureHttpHeadLatencyMs(const QString& url, int timeoutMs)
-{
+double measureHttpHeadLatencyMs(const QString& url, int timeoutMs) {
+    Q_ASSERT(!url.isEmpty());
+    Q_ASSERT(timeoutMs >= 0);
     QNetworkAccessManager manager;
     QNetworkRequest request{QUrl(url)};
     request.setTransferTimeout(timeoutMs);
@@ -157,37 +159,29 @@ double measureHttpHeadLatencyMs(const QString& url, int timeoutMs)
     reply->deleteLater();
     return std::chrono::duration<double, std::milli>(end - start).count();
 }
-} // namespace
+}  // namespace
 
 BandwidthTester::BandwidthTester(QObject* parent)
-    : QObject(parent)
-    , m_iperf3Path(findIperf3Path())
-{
-}
+    : QObject(parent), m_iperf3Path(findIperf3Path()) {}
 
-BandwidthTester::~BandwidthTester()
-{
+BandwidthTester::~BandwidthTester() {
     stopIperfServer();
 }
 
-void BandwidthTester::cancel()
-{
+void BandwidthTester::cancel() {
     m_cancelled.store(true);
 }
 
-bool BandwidthTester::isIperf3Available() const
-{
+bool BandwidthTester::isIperf3Available() const {
     return !m_iperf3Path.isEmpty() && QFileInfo::exists(m_iperf3Path);
 }
 
-bool BandwidthTester::isServerRunning() const
-{
-    return m_serverProcess != nullptr
-        && m_serverProcess->state() == QProcess::Running;
+bool BandwidthTester::isServerRunning() const {
+    Q_ASSERT(m_serverProcess);
+    return m_serverProcess != nullptr && m_serverProcess->state() == QProcess::Running;
 }
 
-QString BandwidthTester::findIperf3Path() const
-{
+QString BandwidthTester::findIperf3Path() const {
     const QString appDir = QCoreApplication::applicationDirPath();
     const QStringList candidates = {
         appDir + QStringLiteral("/tools/iperf3/") + kIperf3Exe,
@@ -204,8 +198,8 @@ QString BandwidthTester::findIperf3Path() const
     return {};
 }
 
-void BandwidthTester::startIperfServer(uint16_t port)
-{
+void BandwidthTester::startIperfServer(uint16_t port) {
+    Q_ASSERT(m_serverProcess);
     if (!isIperf3Available()) {
         Q_EMIT errorOccurred(QStringLiteral("iPerf3 not found. Place iperf3.exe in tools/iperf3/"));
         return;
@@ -222,7 +216,8 @@ void BandwidthTester::startIperfServer(uint16_t port)
     m_serverProcess->setProgram(m_iperf3Path);
     m_serverProcess->setArguments({
         QStringLiteral("-s"),
-        QStringLiteral("-p"), QString::number(port),
+        QStringLiteral("-p"),
+        QString::number(port),
         QStringLiteral("--one-off"),
         QStringLiteral("-J"),
     });
@@ -234,12 +229,13 @@ void BandwidthTester::startIperfServer(uint16_t port)
         }
     });
 
-    connect(m_serverProcess, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
-            this, [this]([[maybe_unused]] int exitCode,
-                         [[maybe_unused]] QProcess::ExitStatus status) {
-        removeFirewallRule();
-        Q_EMIT serverStopped();
-    });
+    connect(m_serverProcess,
+            QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+            this,
+            [this]([[maybe_unused]] int exitCode, [[maybe_unused]] QProcess::ExitStatus status) {
+                removeFirewallRule();
+                Q_EMIT serverStopped();
+            });
 
     m_serverProcess->start();
     if (!m_serverProcess->waitForStarted(kServerStartTimeout)) {
@@ -253,8 +249,8 @@ void BandwidthTester::startIperfServer(uint16_t port)
     Q_EMIT serverStarted(port);
 }
 
-void BandwidthTester::stopIperfServer()
-{
+void BandwidthTester::stopIperfServer() {
+    Q_ASSERT(m_serverProcess);
     if (m_serverProcess == nullptr) {
         return;
     }
@@ -272,8 +268,30 @@ void BandwidthTester::stopIperfServer()
     m_serverProcess = nullptr;
 }
 
-void BandwidthTester::runIperfTest(const IperfConfig& config)
-{
+static QStringList buildIperfClientArgs(const BandwidthTester::IperfConfig& config) {
+    QStringList args = {
+        QStringLiteral("-c"),
+        config.serverAddress,
+        QStringLiteral("-p"),
+        QString::number(config.port),
+        QStringLiteral("-t"),
+        QString::number(config.durationSec),
+        QStringLiteral("-P"),
+        QString::number(config.parallelStreams),
+        QStringLiteral("-J"),
+    };
+    if (config.bidirectional) {
+        args.append(QStringLiteral("--bidir"));
+    }
+    if (config.udpMode) {
+        args.append(QStringLiteral("-u"));
+        args.append(QStringLiteral("-b"));
+        args.append(QStringLiteral("%1M").arg(config.udpBandwidthMbps));
+    }
+    return args;
+}
+
+void BandwidthTester::runIperfTest(const IperfConfig& config) {
     m_cancelled.store(false);
 
     if (!isIperf3Available()) {
@@ -288,23 +306,7 @@ void BandwidthTester::runIperfTest(const IperfConfig& config)
 
     Q_EMIT testStarted(config.serverAddress);
 
-    QStringList args = {
-        QStringLiteral("-c"), config.serverAddress,
-        QStringLiteral("-p"), QString::number(config.port),
-        QStringLiteral("-t"), QString::number(config.durationSec),
-        QStringLiteral("-P"), QString::number(config.parallelStreams),
-        QStringLiteral("-J"),  // JSON output
-    };
-
-    if (config.bidirectional) {
-        args.append(QStringLiteral("--bidir"));
-    }
-
-    if (config.udpMode) {
-        args.append(QStringLiteral("-u"));
-        args.append(QStringLiteral("-b"));
-        args.append(QStringLiteral("%1M").arg(config.udpBandwidthMbps));
-    }
+    QStringList args = buildIperfClientArgs(config);
 
     QProcess proc;
     proc.setProgram(m_iperf3Path);
@@ -312,8 +314,8 @@ void BandwidthTester::runIperfTest(const IperfConfig& config)
     proc.start();
 
     if (!proc.waitForStarted(kServerStartTimeout)) {
-        Q_EMIT errorOccurred(QStringLiteral("Failed to start iPerf3 client: %1")
-                                 .arg(proc.errorString()));
+        Q_EMIT errorOccurred(
+            QStringLiteral("Failed to start iPerf3 client: %1").arg(proc.errorString()));
         return;
     }
 
@@ -350,8 +352,8 @@ void BandwidthTester::runIperfTest(const IperfConfig& config)
     Q_EMIT testComplete(result);
 }
 
-BandwidthTestResult BandwidthTester::parseIperfJson(const QByteArray& json)
-{
+BandwidthTestResult BandwidthTester::parseIperfJson(const QByteArray& json) {
+    Q_ASSERT(!json.isEmpty());
     BandwidthTestResult result;
 
     QJsonParseError parseErr;
@@ -395,31 +397,30 @@ BandwidthTestResult BandwidthTester::parseIperfJson(const QByteArray& json)
     if (end.contains(QStringLiteral("sum"))) {
         const auto udpSum = end.value(QStringLiteral("sum")).toObject();
         result.jitterMs = udpSum.value(QStringLiteral("jitter_ms")).toDouble();
-        result.packetLossPercent =
-            udpSum.value(QStringLiteral("lost_percent")).toDouble();
+        result.packetLossPercent = udpSum.value(QStringLiteral("lost_percent")).toDouble();
     }
 
     return result;
 }
 
-void BandwidthTester::runHttpSpeedTest()
-{
+void BandwidthTester::runHttpSpeedTest() {
     m_cancelled.store(false);
 
     // Cloudflare speed test endpoints (HTTPS, globally available)
-    constexpr int kDownloadBytes = 10'000'000; // 10 MB
-    constexpr int kUploadBytes   = 2'000'000;  // 2 MB
+    constexpr int kDownloadBytes = 10'000'000;  // 10 MB
+    constexpr int kUploadBytes = 2'000'000;     // 2 MB
 
     const QString downloadUrl =
         QStringLiteral("https://speed.cloudflare.com/__down?bytes=%1").arg(kDownloadBytes);
-    const QString uploadUrl =
-        QStringLiteral("https://speed.cloudflare.com/__up");
+    const QString uploadUrl = QStringLiteral("https://speed.cloudflare.com/__up");
 
     // ── Latency ──
     double latencyMs = measureHttpHeadLatencyMs(
         QStringLiteral("https://speed.cloudflare.com/__down?bytes=0"), 5000);
 
-    if (m_cancelled.load()) return;
+    if (m_cancelled.load()) {
+        return;
+    }
 
     // ── Download ──
     double dlTotalBytes = 0.0;
@@ -427,7 +428,9 @@ void BandwidthTester::runHttpSpeedTest()
     constexpr int kDownloadSamples = 2;
 
     for (int i = 0; i < kDownloadSamples; ++i) {
-        if (m_cancelled.load()) return;
+        if (m_cancelled.load()) {
+            return;
+        }
         const auto sample = downloadHttpSample(downloadUrl);
         dlTotalBytes += sample.bytes;
         dlTotalTimeMs += sample.timeMs;
@@ -435,13 +438,14 @@ void BandwidthTester::runHttpSpeedTest()
 
     double downloadMbps = 0.0;
     if (dlTotalTimeMs > 0.0) {
-        downloadMbps =
-            (dlTotalBytes * kBitsPerByte) / (dlTotalTimeMs / 1000.0) / kMegabit;
+        downloadMbps = (dlTotalBytes * kBitsPerByte) / (dlTotalTimeMs / 1000.0) / kMegabit;
     }
 
     Q_EMIT httpSpeedTestProgress(downloadMbps, 0.0);
 
-    if (m_cancelled.load()) return;
+    if (m_cancelled.load()) {
+        return;
+    }
 
     // ── Upload ──
     double ulTotalBytes = 0.0;
@@ -449,7 +453,9 @@ void BandwidthTester::runHttpSpeedTest()
     constexpr int kUploadSamples = 2;
 
     for (int i = 0; i < kUploadSamples; ++i) {
-        if (m_cancelled.load()) return;
+        if (m_cancelled.load()) {
+            return;
+        }
         const auto sample = uploadHttpSample(uploadUrl, kUploadBytes);
         ulTotalBytes += sample.bytes;
         ulTotalTimeMs += sample.timeMs;
@@ -457,8 +463,7 @@ void BandwidthTester::runHttpSpeedTest()
 
     double uploadMbps = 0.0;
     if (ulTotalTimeMs > 0.0) {
-        uploadMbps =
-            (ulTotalBytes * kBitsPerByte) / (ulTotalTimeMs / 1000.0) / kMegabit;
+        uploadMbps = (ulTotalBytes * kBitsPerByte) / (ulTotalTimeMs / 1000.0) / kMegabit;
     }
 
     if (dlTotalTimeMs > 0.0 || ulTotalTimeMs > 0.0) {
@@ -468,12 +473,13 @@ void BandwidthTester::runHttpSpeedTest()
     }
 }
 
-void BandwidthTester::createFirewallRule(uint16_t port)
-{
+void BandwidthTester::createFirewallRule(uint16_t port) {
     QProcess proc;
     proc.start(QStringLiteral("netsh"),
-               {QStringLiteral("advfirewall"), QStringLiteral("firewall"),
-                QStringLiteral("add"), QStringLiteral("rule"),
+               {QStringLiteral("advfirewall"),
+                QStringLiteral("firewall"),
+                QStringLiteral("add"),
+                QStringLiteral("rule"),
                 QStringLiteral("name=%1").arg(kFirewallRuleName),
                 QStringLiteral("dir=in"),
                 QStringLiteral("action=allow"),
@@ -493,12 +499,13 @@ void BandwidthTester::createFirewallRule(uint16_t port)
     }
 }
 
-void BandwidthTester::removeFirewallRule()
-{
+void BandwidthTester::removeFirewallRule() {
     QProcess proc;
     proc.start(QStringLiteral("netsh"),
-               {QStringLiteral("advfirewall"), QStringLiteral("firewall"),
-                QStringLiteral("delete"), QStringLiteral("rule"),
+               {QStringLiteral("advfirewall"),
+                QStringLiteral("firewall"),
+                QStringLiteral("delete"),
+                QStringLiteral("rule"),
                 QStringLiteral("name=%1").arg(kFirewallRuleName)});
     if (!proc.waitForStarted(sak::kTimeoutProcessStartMs)) {
         sak::logWarning("Failed to start netsh for firewall rule removal");
@@ -514,4 +521,4 @@ void BandwidthTester::removeFirewallRule()
     }
 }
 
-} // namespace sak
+}  // namespace sak

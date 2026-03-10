@@ -3,16 +3,16 @@
 
 #pragma once
 
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QList>
+#include <QMap>
+#include <QNetworkAccessManager>
+#include <QNetworkReply>
 #include <QObject>
 #include <QString>
 #include <QStringList>
-#include <QMap>
-#include <QList>
-#include <QNetworkAccessManager>
-#include <QNetworkReply>
-#include <QJsonDocument>
-#include <QJsonObject>
-#include <QJsonArray>
 
 #include <optional>
 
@@ -46,31 +46,31 @@ class UupDumpApi : public QObject {
 public:
     /// @brief Information about an available Windows build
     struct BuildInfo {
-        QString uuid;       ///< Unique update identifier (used for subsequent API calls)
-        QString title;      ///< Human-readable title
-            ///< (e.g., "Windows 11, version 24H2 (26100.3194)")
-        QString build;      ///< Build number (e.g., "26100.3194")
-        QString arch;       ///< Architecture (e.g., "amd64", "arm64")
-        qint64  created;    ///< Unix timestamp of when the build was added to the database
+        QString uuid;   ///< Unique update identifier (used for subsequent API calls)
+        QString title;  ///< Human-readable title
+                        ///< (e.g., "Windows 11, version 24H2 (26100.3194)")
+        QString build;   ///< Build number (e.g., "26100.3194")
+        QString arch;    ///< Architecture (e.g., "amd64", "arm64")
+        qint64 created;  ///< Unix timestamp of when the build was added to the database
     };
 
     /// @brief Information about a downloadable UUP file
     struct FileInfo {
-        QString fileName;   ///< File name (e.g., "core_en-us.esd")
-        QString sha1;       ///< SHA-1 checksum for integrity verification
-        qint64  size;       ///< File size in bytes
-        QString url;        ///< Direct download URL (Microsoft CDN, time-limited)
-        QString uuid;       ///< File UUID
-        QString expire;     ///< URL expiration timestamp
+        QString fileName;  ///< File name (e.g., "core_en-us.esd")
+        QString sha1;      ///< SHA-1 checksum for integrity verification
+        qint64 size;       ///< File size in bytes
+        QString url;       ///< Direct download URL (Microsoft CDN, time-limited)
+        QString uuid;      ///< File UUID
+        QString expire;    ///< URL expiration timestamp
     };
 
     /// @brief Supported release channels
     enum class ReleaseChannel {
-        Retail,             ///< Latest public release (stable)
-        ReleasePreview,     ///< Release Preview channel
-        Beta,               ///< Beta channel
-        Dev,                ///< Dev channel
-        Canary              ///< Canary channel (most experimental)
+        Retail,          ///< Latest public release (stable)
+        ReleasePreview,  ///< Release Preview channel
+        Beta,            ///< Beta channel
+        Dev,             ///< Dev channel
+        Canary           ///< Canary channel (most experimental)
     };
 
     explicit UupDumpApi(QObject* parent = nullptr);
@@ -152,24 +152,21 @@ Q_SIGNALS:
      * @param langNames Map of language code to friendly name (e.g.,
          "en-us" → "English (United States)")
      */
-    void languagesFetched(const QStringList& langCodes,
-                          const QMap<QString, QString>& langNames);
+    void languagesFetched(const QStringList& langCodes, const QMap<QString, QString>& langNames);
 
     /**
      * @brief Emitted when editions for a build/language are available
      * @param editions List of edition codes (e.g., "PROFESSIONAL", "CORE")
      * @param editionNames Map of edition code to friendly name
      */
-    void editionsFetched(const QStringList& editions,
-                         const QMap<QString, QString>& editionNames);
+    void editionsFetched(const QStringList& editions, const QMap<QString, QString>& editionNames);
 
     /**
      * @brief Emitted when download file list is ready
      * @param updateName Human-readable build name
      * @param files List of files with download URLs and checksums
      */
-    void filesFetched(const QString& updateName,
-                      const QList<UupDumpApi::FileInfo>& files);
+    void filesFetched(const QString& updateName, const QList<UupDumpApi::FileInfo>& files);
 
     /**
      * @brief Emitted when an API request fails
@@ -184,8 +181,7 @@ private Q_SLOTS:
     void onFilesReply();
 
 private:
-    QNetworkReply* sendApiRequest(const QString& endpoint,
-                                 const QMap<QString, QString>& params);
+    QNetworkReply* sendApiRequest(const QString& endpoint, const QMap<QString, QString>& params);
     bool checkApiError(const QJsonObject& response, const QString& context);
     QString buildSearchQuery(const QString& arch, ReleaseChannel channel) const;
 
@@ -195,7 +191,7 @@ private:
     /// @brief Parse and validate a single file entry from the API response
     /// @return FileInfo if valid, std::nullopt if rejected
     std::optional<FileInfo> parseAndValidateFileEntry(const QString& key,
-                                                     const QJsonObject& fileObj);
+                                                      const QJsonObject& fileObj);
 
     QNetworkAccessManager* m_networkManager;
     QList<QNetworkReply*> m_pendingReplies;

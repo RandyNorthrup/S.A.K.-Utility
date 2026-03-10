@@ -11,41 +11,53 @@ namespace sak {
 
 QString actionStatusToString(QuickAction::ActionStatus status) {
     switch (status) {
-        case QuickAction::ActionStatus::Idle:
-            return "Idle";
-        case QuickAction::ActionStatus::Scanning:
-            return "Scanning";
-        case QuickAction::ActionStatus::Ready:
-            return "Ready";
-        case QuickAction::ActionStatus::Running:
-            return "Running";
-        case QuickAction::ActionStatus::Success:
-            return "Success";
-        case QuickAction::ActionStatus::Failed:
-            return "Failed";
-        case QuickAction::ActionStatus::Cancelled:
-            return "Cancelled";
+    case QuickAction::ActionStatus::Idle:
+        return "Idle";
+    case QuickAction::ActionStatus::Scanning:
+        return "Scanning";
+    case QuickAction::ActionStatus::Ready:
+        return "Ready";
+    case QuickAction::ActionStatus::Running:
+        return "Running";
+    case QuickAction::ActionStatus::Success:
+        return "Success";
+    case QuickAction::ActionStatus::Failed:
+        return "Failed";
+    case QuickAction::ActionStatus::Cancelled:
+        return "Cancelled";
     }
 
     return "Idle";
 }
 
 QuickAction::ActionStatus actionStatusFromString(const QString& status) {
+    Q_ASSERT(!status.isEmpty());
     const QString normalized = status.trimmed().toLower();
-    if (normalized == "scanning") return QuickAction::ActionStatus::Scanning;
-    if (normalized == "ready") return QuickAction::ActionStatus::Ready;
-    if (normalized == "running") return QuickAction::ActionStatus::Running;
-    if (normalized == "success") return QuickAction::ActionStatus::Success;
-    if (normalized == "failed") return QuickAction::ActionStatus::Failed;
-    if (normalized == "cancelled") return QuickAction::ActionStatus::Cancelled;
+    if (normalized == "scanning") {
+        return QuickAction::ActionStatus::Scanning;
+    }
+    if (normalized == "ready") {
+        return QuickAction::ActionStatus::Ready;
+    }
+    if (normalized == "running") {
+        return QuickAction::ActionStatus::Running;
+    }
+    if (normalized == "success") {
+        return QuickAction::ActionStatus::Success;
+    }
+    if (normalized == "failed") {
+        return QuickAction::ActionStatus::Failed;
+    }
+    if (normalized == "cancelled") {
+        return QuickAction::ActionStatus::Cancelled;
+    }
     return QuickAction::ActionStatus::Idle;
 }
 
-bool writeExecutionResultFile(
-    const QString& file_path,
-    const QuickAction::ExecutionResult& result,
-    QuickAction::ActionStatus status,
-    QString* error_message) {
+bool writeExecutionResultFile(const QString& file_path,
+                              const QuickAction::ExecutionResult& result,
+                              QuickAction::ActionStatus status,
+                              QString* error_message) {
     QJsonObject json;
     json.insert("success", result.success);
     json.insert("message", result.message);
@@ -76,11 +88,10 @@ bool writeExecutionResultFile(
     return true;
 }
 
-bool readExecutionResultFile(
-    const QString& file_path,
-    QuickAction::ExecutionResult* result,
-    QuickAction::ActionStatus* status,
-    QString* error_message) {
+bool readExecutionResultFile(const QString& file_path,
+                             QuickAction::ExecutionResult* result,
+                             QuickAction::ActionStatus* status,
+                             QString* error_message) {
     QFile file(file_path);
     if (!file.open(QIODevice::ReadOnly)) {
         if (error_message) {
@@ -117,4 +128,4 @@ bool readExecutionResultFile(
     return true;
 }
 
-} // namespace sak
+}  // namespace sak

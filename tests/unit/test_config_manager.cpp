@@ -4,11 +4,10 @@
 /// @file test_config_manager.cpp
 /// @brief Unit tests for ConfigManager singleton â€” load, save, defaults, signals
 
-#include <QtTest/QtTest>
-
 #include "sak/config_manager.h"
 
 #include <QSignalSpy>
+#include <QtTest/QtTest>
 #include <QVariant>
 
 class ConfigManagerTests : public QObject {
@@ -58,8 +57,7 @@ private Q_SLOTS:
     void clear_removesAllKeys();
 };
 
-void ConfigManagerTests::cleanup()
-{
+void ConfigManagerTests::cleanup() {
     // Reset to defaults after each test to avoid cross-contamination
     sak::ConfigManager::instance().resetToDefaults();
 }
@@ -68,8 +66,7 @@ void ConfigManagerTests::cleanup()
 // Singleton
 // ============================================================================
 
-void ConfigManagerTests::instance_returnsSameObject()
-{
+void ConfigManagerTests::instance_returnsSameObject() {
     auto& a = sak::ConfigManager::instance();
     auto& b = sak::ConfigManager::instance();
     QCOMPARE(&a, &b);
@@ -79,35 +76,30 @@ void ConfigManagerTests::instance_returnsSameObject()
 // Basic Key-Value Operations
 // ============================================================================
 
-void ConfigManagerTests::setValue_getValue()
-{
+void ConfigManagerTests::setValue_getValue() {
     auto& mgr = sak::ConfigManager::instance();
     mgr.setValue("test/custom_key", 42);
     QCOMPARE(mgr.getValue("test/custom_key").toInt(), 42);
 }
 
-void ConfigManagerTests::getValue_defaultValue()
-{
+void ConfigManagerTests::getValue_defaultValue() {
     auto& mgr = sak::ConfigManager::instance();
     auto val = mgr.getValue("test/nonexistent_key_xyz", QVariant(999));
     QCOMPARE(val.toInt(), 999);
 }
 
-void ConfigManagerTests::contains_existingKey()
-{
+void ConfigManagerTests::contains_existingKey() {
     auto& mgr = sak::ConfigManager::instance();
     mgr.setValue("test/exists", true);
     QVERIFY(mgr.contains("test/exists"));
 }
 
-void ConfigManagerTests::contains_nonExistentKey()
-{
+void ConfigManagerTests::contains_nonExistentKey() {
     auto& mgr = sak::ConfigManager::instance();
     QVERIFY(!mgr.contains("test/definitely_not_here"));
 }
 
-void ConfigManagerTests::remove_key()
-{
+void ConfigManagerTests::remove_key() {
     auto& mgr = sak::ConfigManager::instance();
     mgr.setValue("test/to_remove", "value");
     QVERIFY(mgr.contains("test/to_remove"));
@@ -119,8 +111,7 @@ void ConfigManagerTests::remove_key()
 // Defaults
 // ============================================================================
 
-void ConfigManagerTests::resetToDefaults_restoresValues()
-{
+void ConfigManagerTests::resetToDefaults_restoresValues() {
     auto& mgr = sak::ConfigManager::instance();
 
     // Override a known default
@@ -140,8 +131,7 @@ void ConfigManagerTests::resetToDefaults_restoresValues()
 // Signal
 // ============================================================================
 
-void ConfigManagerTests::setValue_emitsSignal()
-{
+void ConfigManagerTests::setValue_emitsSignal() {
     auto& mgr = sak::ConfigManager::instance();
     QSignalSpy spy(&mgr, &sak::ConfigManager::settingChanged);
     QVERIFY(spy.isValid());
@@ -158,15 +148,13 @@ void ConfigManagerTests::setValue_emitsSignal()
 // Typed Accessors â€” Backup
 // ============================================================================
 
-void ConfigManagerTests::backupThreadCount_setGet()
-{
+void ConfigManagerTests::backupThreadCount_setGet() {
     auto& mgr = sak::ConfigManager::instance();
     mgr.setBackupThreadCount(8);
     QCOMPARE(mgr.getBackupThreadCount(), 8);
 }
 
-void ConfigManagerTests::backupVerifyMD5_setGet()
-{
+void ConfigManagerTests::backupVerifyMD5_setGet() {
     auto& mgr = sak::ConfigManager::instance();
     mgr.setBackupVerifyMD5(true);
     QVERIFY(mgr.getBackupVerifyMD5());
@@ -174,8 +162,7 @@ void ConfigManagerTests::backupVerifyMD5_setGet()
     QVERIFY(!mgr.getBackupVerifyMD5());
 }
 
-void ConfigManagerTests::lastBackupLocation_setGet()
-{
+void ConfigManagerTests::lastBackupLocation_setGet() {
     auto& mgr = sak::ConfigManager::instance();
     mgr.setLastBackupLocation("C:/Backups/test");
     QCOMPARE(mgr.getLastBackupLocation(), QString("C:/Backups/test"));
@@ -185,8 +172,7 @@ void ConfigManagerTests::lastBackupLocation_setGet()
 // Typed Accessors â€” Organizer
 // ============================================================================
 
-void ConfigManagerTests::organizerPreviewMode_setGet()
-{
+void ConfigManagerTests::organizerPreviewMode_setGet() {
     auto& mgr = sak::ConfigManager::instance();
     mgr.setOrganizerPreviewMode(true);
     QVERIFY(mgr.getOrganizerPreviewMode());
@@ -196,15 +182,13 @@ void ConfigManagerTests::organizerPreviewMode_setGet()
 // Typed Accessors â€” Duplicate Finder
 // ============================================================================
 
-void ConfigManagerTests::duplicateMinFileSize_setGet()
-{
+void ConfigManagerTests::duplicateMinFileSize_setGet() {
     auto& mgr = sak::ConfigManager::instance();
     mgr.setDuplicateMinimumFileSize(1024);
     QCOMPARE(mgr.getDuplicateMinimumFileSize(), qint64{1024});
 }
 
-void ConfigManagerTests::duplicateKeepStrategy_setGet()
-{
+void ConfigManagerTests::duplicateKeepStrategy_setGet() {
     auto& mgr = sak::ConfigManager::instance();
     mgr.setDuplicateKeepStrategy("newest");
     QCOMPARE(mgr.getDuplicateKeepStrategy(), QString("newest"));
@@ -214,15 +198,13 @@ void ConfigManagerTests::duplicateKeepStrategy_setGet()
 // Typed Accessors â€” Image Flasher
 // ============================================================================
 
-void ConfigManagerTests::imageFlasherValidationMode_setGet()
-{
+void ConfigManagerTests::imageFlasherValidationMode_setGet() {
     auto& mgr = sak::ConfigManager::instance();
     mgr.setImageFlasherValidationMode("full");
     QCOMPARE(mgr.getImageFlasherValidationMode(), QString("full"));
 }
 
-void ConfigManagerTests::imageFlasherBufferSize_setGet()
-{
+void ConfigManagerTests::imageFlasherBufferSize_setGet() {
     auto& mgr = sak::ConfigManager::instance();
     mgr.setImageFlasherBufferSize(2048);
     QCOMPARE(mgr.getImageFlasherBufferSize(), 2048);
@@ -232,22 +214,19 @@ void ConfigManagerTests::imageFlasherBufferSize_setGet()
 // Typed Accessors â€” Network
 // ============================================================================
 
-void ConfigManagerTests::networkTransferEnabled_setGet()
-{
+void ConfigManagerTests::networkTransferEnabled_setGet() {
     auto& mgr = sak::ConfigManager::instance();
     mgr.setNetworkTransferEnabled(true);
     QVERIFY(mgr.getNetworkTransferEnabled());
 }
 
-void ConfigManagerTests::networkTransferDiscoveryPort_setGet()
-{
+void ConfigManagerTests::networkTransferDiscoveryPort_setGet() {
     auto& mgr = sak::ConfigManager::instance();
     mgr.setNetworkTransferDiscoveryPort(9999);
     QCOMPARE(mgr.getNetworkTransferDiscoveryPort(), 9999);
 }
 
-void ConfigManagerTests::networkTransferEncryption_setGet()
-{
+void ConfigManagerTests::networkTransferEncryption_setGet() {
     auto& mgr = sak::ConfigManager::instance();
     mgr.setNetworkTransferEncryptionEnabled(true);
     QVERIFY(mgr.getNetworkTransferEncryptionEnabled());
@@ -257,8 +236,7 @@ void ConfigManagerTests::networkTransferEncryption_setGet()
 // Clear
 // ============================================================================
 
-void ConfigManagerTests::clear_removesAllKeys()
-{
+void ConfigManagerTests::clear_removesAllKeys() {
     auto& mgr = sak::ConfigManager::instance();
     mgr.setValue("test/clear_me", "value");
     QVERIFY(mgr.contains("test/clear_me"));

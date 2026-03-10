@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-#include <QtTest/QtTest>
-
 #include "sak/orchestration_protocol.h"
+
+#include <QtTest/QtTest>
 
 using namespace sak;
 
@@ -27,7 +27,7 @@ void OrchestrationProtocolTests::encodeDecodeRoundtrip() {
     QCOMPARE(messages.size(), 1);
     QCOMPARE(messages[0].value("message_type").toString(), QString("DESTINATION_REGISTER"));
     QCOMPARE(messages[0].value("destination_info").toObject().value("hostname").toString(),
-        QString("TEST-PC"));
+             QString("TEST-PC"));
 }
 
 QTEST_MAIN(OrchestrationProtocolTests)

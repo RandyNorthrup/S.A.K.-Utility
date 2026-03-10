@@ -5,6 +5,7 @@
 /// @brief Real-time thermal sensor monitoring implementation
 
 #include "sak/thermal_monitor.h"
+
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
 
@@ -17,15 +18,12 @@ namespace sak {
 // Construction / Destruction
 // ============================================================================
 
-ThermalMonitor::ThermalMonitor(QObject* parent)
-    : QObject(parent)
-{
+ThermalMonitor::ThermalMonitor(QObject* parent) : QObject(parent) {
     m_timer.setSingleShot(true);
     connect(&m_timer, &QTimer::timeout, this, &ThermalMonitor::onTimerTick);
 }
 
-ThermalMonitor::~ThermalMonitor()
-{
+ThermalMonitor::~ThermalMonitor() {
     stop();
 }
 
@@ -33,8 +31,7 @@ ThermalMonitor::~ThermalMonitor()
 // Public API
 // ============================================================================
 
-void ThermalMonitor::start(int interval_ms)
-{
+void ThermalMonitor::start(int interval_ms) {
     if (m_timer.isActive()) {
         m_timer.stop();
     }
@@ -46,49 +43,37 @@ void ThermalMonitor::start(int interval_ms)
     onTimerTick();
 }
 
-void ThermalMonitor::stop()
-{
+void ThermalMonitor::stop() {
     if (m_timer.isActive()) {
         m_timer.stop();
         logInfo("Thermal monitor stopped");
     }
 }
 
-bool ThermalMonitor::isRunning() const
-{
+bool ThermalMonitor::isRunning() const {
     return m_timer.isActive();
 }
 
-QVector<ThermalReading> ThermalMonitor::pollOnce()
-{
+QVector<ThermalReading> ThermalMonitor::pollOnce() {
     QVector<ThermalReading> readings;
     const QDateTime now = QDateTime::currentDateTime();
 
     // CPU temperature
     const double cpu_temp = queryCpuTemperature();
     if (cpu_temp > 0) {
-        readings.append({
-            "CPU Package",
-            cpu_temp,
-            now
-        });
+        readings.append({"CPU Package", cpu_temp, now});
     }
 
     // GPU temperature
     const double gpu_temp = queryGpuTemperature();
     if (gpu_temp > 0) {
-        readings.append({
-            "GPU",
-            gpu_temp,
-            now
-        });
+        readings.append({"GPU", gpu_temp, now});
     }
 
     return readings;
 }
 
-void ThermalMonitor::clearHistory()
-{
+void ThermalMonitor::clearHistory() {
     m_history.clear();
 }
 
@@ -96,8 +81,9 @@ void ThermalMonitor::clearHistory()
 // Timer Callback
 // ============================================================================
 
-void ThermalMonitor::onTimerTick()
-{
+void ThermalMonitor::onTimerTick() {
+    Q_ASSERT(!m_history.empty());
+    Q_ASSERT(!m_history.isEmpty());
     const auto readings = pollOnce();
 
     // Store in history
@@ -135,15 +121,15 @@ void ThermalMonitor::onTimerTick()
 // Temperature Queries
 // ============================================================================
 
-double ThermalMonitor::queryCpuTemperature()
-{
+double ThermalMonitor::queryCpuTemperature() {
     QProcess ps;
     ps.setProcessChannelMode(QProcess::MergedChannels);
-    ps.start("powershell.exe", {
-        "-NoProfile", "-NoLogo", "-Command",
-        "Get-CimInstance -Namespace root/WMI -ClassName MSAcpi_ThermalZoneTemperature "
-        "| Select-Object -First 1 -ExpandProperty CurrentTemperature"
-    });
+    ps.start("powershell.exe",
+             {"-NoProfile",
+              "-NoLogo",
+              "-Command",
+              "Get-CimInstance -Namespace root/WMI -ClassName MSAcpi_ThermalZoneTemperature "
+              "| Select-Object -First 1 -ExpandProperty CurrentTemperature"});
 
     if (!ps.waitForStarted(sak::kTimeoutProcessStartMs)) {
         return -1.0;
@@ -168,15 +154,11 @@ double ThermalMonitor::queryCpuTemperature()
     return (raw_value / 10.0) - 273.15;
 }
 
-double ThermalMonitor::queryGpuTemperature()
-{
+double ThermalMonitor::queryGpuTemperature() {
     // Try NVIDIA first via nvidia-smi (commonly available on NVIDIA systems)
     QProcess nv;
     nv.setProcessChannelMode(QProcess::MergedChannels);
-    nv.start("nvidia-smi", {
-        "--query-gpu=temperature.gpu",
-        "--format=csv,noheader,nounits"
-    });
+    nv.start("nvidia-smi", {"--query-gpu=temperature.gpu", "--format=csv,noheader,nounits"});
 
     if (!nv.waitForStarted(sak::kTimeoutProcessStartMs)) {
         // nvidia-smi not available — fall through to fallback
@@ -194,4 +176,4 @@ double ThermalMonitor::queryGpuTemperature()
     return -1.0;
 }
 
-} // namespace sak
+}  // namespace sak

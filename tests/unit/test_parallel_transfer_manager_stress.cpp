@@ -1,10 +1,10 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-#include <QtTest/QtTest>
-#include <QTimer>
-
 #include "sak/parallel_transfer_manager.h"
+
+#include <QTimer>
+#include <QtTest/QtTest>
 
 using namespace sak;
 
@@ -27,7 +27,7 @@ DestinationPC makeDest(const QString& id) {
     dest.health.free_disk_bytes = 1024 * 1024 * 1024;
     return dest;
 }
-}
+}  // namespace
 
 class ParallelTransferManagerStressTests : public QObject {
     Q_OBJECT
@@ -51,14 +51,15 @@ void ParallelTransferManagerStressTests::handlesManyJobs() {
     QStringList startedJobs;
     QSignalSpy completedSpy(&manager, &ParallelTransferManager::deploymentComplete);
 
-    connect(&manager, &ParallelTransferManager::jobStartRequested, this,
-        [&manager, &startedJobs](const QString& jobId, const MappingEngine::SourceProfile&,
-            const DestinationPC&) {
-            startedJobs.append(jobId);
-            QTimer::singleShot(5, [&manager, jobId]() {
-                manager.markJobComplete(jobId, true);
+    connect(&manager,
+            &ParallelTransferManager::jobStartRequested,
+            this,
+            [&manager, &startedJobs](
+                const QString& jobId, const MappingEngine::SourceProfile&, const DestinationPC&) {
+                startedJobs.append(jobId);
+                QTimer::singleShot(5,
+                                   [&manager, jobId]() { manager.markJobComplete(jobId, true); });
             });
-        });
 
     manager.startDeployment(mapping);
 

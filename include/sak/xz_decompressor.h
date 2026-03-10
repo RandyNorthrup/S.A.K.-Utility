@@ -4,6 +4,7 @@
 #pragma once
 
 #include "sak/streaming_decompressor.h"
+
 #include <lzma.h>
 
 namespace sak {
@@ -36,4 +37,4 @@ private:
     lzma_stream m_lzmaStream{};
 };
 
-} // namespace sak
+}  // namespace sak

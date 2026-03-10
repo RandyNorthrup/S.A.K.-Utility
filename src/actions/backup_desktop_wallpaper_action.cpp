@@ -5,26 +5,26 @@
 /// @brief Implements desktop wallpaper backup for all user profiles
 
 #include "sak/actions/backup_desktop_wallpaper_action.h"
-#include "sak/windows_user_scanner.h"
-#include "sak/process_runner.h"
+
 #include "sak/logger.h"
+#include "sak/process_runner.h"
+#include "sak/windows_user_scanner.h"
+
+#include <QDir>
 #include <QFile>
 #include <QFileInfo>
-#include <QDir>
 
 namespace sak {
 
 BackupDesktopWallpaperAction::BackupDesktopWallpaperAction(const QString& backup_location,
-    QObject* parent)
-    : QuickAction(parent)
-    , m_backup_location(backup_location)
-{
-}
+                                                           QObject* parent)
+    : QuickAction(parent), m_backup_location(backup_location) {}
 
 QString BackupDesktopWallpaperAction::findTranscodedWallpaper(const QString& profile_path) {
+    Q_ASSERT(!profile_path.isEmpty());
     // Location: %AppData%\Microsoft\Windows\Themes\TranscodedWallpaper
     QString wallpaper_path = profile_path +
-        "/AppData/Roaming/Microsoft/Windows/Themes/TranscodedWallpaper";
+                             "/AppData/Roaming/Microsoft/Windows/Themes/TranscodedWallpaper";
 
     if (QFile::exists(wallpaper_path)) {
         return wallpaper_path;
@@ -34,16 +34,16 @@ QString BackupDesktopWallpaperAction::findTranscodedWallpaper(const QString& pro
 }
 
 bool BackupDesktopWallpaperAction::backupRegistrySettings(const QString& dest_folder) {
+    Q_ASSERT(!dest_folder.isEmpty());
     // Export registry key for wallpaper settings
     // HKEY_CURRENT_USER\Software\Microsoft\Internet Explorer\Desktop\General\WallpaperSource
     QString reg_file = dest_folder + "/wallpaper_registry.reg";
 
-    ProcessResult proc = runProcess("reg.exe", QStringList()
-        << "export"
-        << "HKEY_CURRENT_USER\\Control Panel\\Desktop"
-        << reg_file
-        << "/y",
-        5000);
+    ProcessResult proc = runProcess("reg.exe",
+                                    QStringList() << "export"
+                                                  << "HKEY_CURRENT_USER\\Control Panel\\Desktop"
+                                                  << reg_file << "/y",
+                                    5000);
     return proc.succeeded();
 }
 
@@ -156,4 +156,4 @@ QString BackupDesktopWallpaperAction::prepareWallpaperDirectory() {
     return wallpaper_folder;
 }
 
-} // namespace sak
+}  // namespace sak

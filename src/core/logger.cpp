@@ -5,6 +5,7 @@
 /// @brief Implementation of thread-safe logging system
 
 #include "sak/logger.h"
+
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
@@ -24,39 +25,36 @@ logger::~logger() {
     flush();
 }
 
-auto logger::initialize(
-    const std::filesystem::path& log_dir,
-    std::string_view prefix) -> std::expected<void, error_code> {
-    
+auto logger::initialize(const std::filesystem::path& log_dir, std::string_view prefix)
+    -> std::expected<void, error_code> {
     {
         std::lock_guard lock(m_mutex);
-        
+
         // Ensure log directory exists
         if (auto result = ensureLogDirectory(log_dir); !result) {
             return std::unexpected(result.error());
         }
-        
+
         m_log_dir = log_dir;
         m_prefix = prefix;
-        
+
         // Generate log file path with timestamp
-        auto timestamp = std::format("{:%Y-%m-%d_%H-%M-%S}",
-                                     std::chrono::system_clock::now());
+        auto timestamp = std::format("{:%Y-%m-%d_%H-%M-%S}", std::chrono::system_clock::now());
         m_log_file = m_log_dir / std::format("{}_{}.log", m_prefix, timestamp);
-        
+
         // Open log file
         m_file_stream.open(m_log_file, std::ios::out | std::ios::app);
         if (!m_file_stream.is_open()) {
             return std::unexpected(error_code::write_error);
         }
-        
+
         m_initialized.store(true, std::memory_order_release);
         m_bytes_written.store(0, std::memory_order_relaxed);
     }
-    
+
     // Write initialization message (outside lock — writeEntryToFile acquires it)
     logInfo("Logger initialized: {}", m_log_file.string());
-    
+
     return {};
 }
 
@@ -88,11 +86,9 @@ bool logger::isInitialized() const noexcept {
     return m_initialized.load(std::memory_order_acquire);
 }
 
-void logger::logInternal(
-    log_level level,
-    std::string_view message,
-    const std::source_location& loc) noexcept {
-    
+void logger::logInternal(log_level level,
+                         std::string_view message,
+                         const std::source_location& loc) noexcept {
     if (!isInitialized()) {
         // Fallback to console if not initialized
         if (m_console_output.load(std::memory_order_relaxed)) {
@@ -100,26 +96,24 @@ void logger::logInternal(
         }
         return;
     }
-    
+
     try {
         // Format log entry
         auto timestamp = getTimestamp();
         auto level_str = to_string(level);
         auto filename = std::filesystem::path(loc.file_name()).filename().string();
-        
-        auto log_entry = std::format(
-            "[{}] [{}] [{}:{}:{}] {}\n",
-            timestamp,
-            level_str,
-            filename,
-            loc.line(),
-            loc.function_name(),
-            message
-        );
-        
+
+        auto log_entry = std::format("[{}] [{}] [{}:{}:{}] {}\n",
+                                     timestamp,
+                                     level_str,
+                                     filename,
+                                     loc.line(),
+                                     loc.function_name(),
+                                     message);
+
         writeEntryToFile(log_entry, level);
         writeEntryToConsole(log_entry, level);
-        
+
     } catch (const std::exception& e) {
         // Logger itself cannot recurse — fall back to stderr
         std::fprintf(stderr, "SAK Logger: logInternal failed: %s\n", e.what());
@@ -129,37 +123,31 @@ void logger::logInternal(
     }
 }
 
-void logger::writeEntryToFile(
-    std::string_view log_entry,
-    log_level level) noexcept {
-    
+void logger::writeEntryToFile(std::string_view log_entry, log_level level) noexcept {
     std::lock_guard lock(m_mutex);
-    
+
     if (needsRotation()) {
         rotateLog();
     }
-    
+
     if (!m_file_stream.is_open()) {
         return;
     }
-    
+
     m_file_stream << log_entry;
     m_bytes_written.fetch_add(log_entry.size(), std::memory_order_relaxed);
-    
+
     // Flush immediately for error and critical messages
     if (level >= log_level::error) {
         m_file_stream.flush();
     }
 }
 
-void logger::writeEntryToConsole(
-    std::string_view log_entry,
-    log_level level) noexcept {
-    
+void logger::writeEntryToConsole(std::string_view log_entry, log_level level) noexcept {
     if (!m_console_output.load(std::memory_order_relaxed)) {
         return;
     }
-    
+
     if (level >= log_level::error) {
         std::print(std::cerr, "{}", log_entry);
         return;
@@ -167,18 +155,17 @@ void logger::writeEntryToConsole(
     std::print("{}", log_entry);
 }
 
-auto logger::ensureLogDirectory(
-    const std::filesystem::path& dir) -> std::expected<void, error_code> {
-    
+auto logger::ensureLogDirectory(const std::filesystem::path& dir)
+    -> std::expected<void, error_code> {
     try {
         if (!std::filesystem::exists(dir)) {
             std::filesystem::create_directories(dir);
         }
-        
+
         if (!std::filesystem::is_directory(dir)) {
             return std::unexpected(error_code::not_a_directory);
         }
-        
+
         // Check write permission
         auto test_file = dir / ".test_write";
         std::ofstream test(test_file);
@@ -187,9 +174,9 @@ auto logger::ensureLogDirectory(
         }
         test.close();
         std::filesystem::remove(test_file);
-        
+
         return {};
-        
+
     } catch (const std::filesystem::filesystem_error&) {
         return std::unexpected(error_code::permission_denied);
     } catch (...) {
@@ -220,31 +207,28 @@ void logger::rotateLog() noexcept {
         if (m_file_stream.is_open()) {
             m_file_stream.close();
         }
-        
+
         // Find existing log files
         auto log_files = collectRotationCandidates();
-        
+
         // Sort by modification time (oldest first)
-        std::sort(log_files.begin(), log_files.end(),
-            [](const auto& a, const auto& b) {
-                return std::filesystem::last_write_time(a) <
-                       std::filesystem::last_write_time(b);
-            });
-        
+        std::sort(log_files.begin(), log_files.end(), [](const auto& a, const auto& b) {
+            return std::filesystem::last_write_time(a) < std::filesystem::last_write_time(b);
+        });
+
         // Remove oldest files if we exceed MAX_LOG_FILES
         while (log_files.size() >= MAX_LOG_FILES) {
             std::filesystem::remove(log_files.front());
             log_files.erase(log_files.begin());
         }
-        
+
         // Create new log file
-        auto timestamp = std::format("{:%Y-%m-%d_%H-%M-%S}",
-                                     std::chrono::system_clock::now());
+        auto timestamp = std::format("{:%Y-%m-%d_%H-%M-%S}", std::chrono::system_clock::now());
         m_log_file = m_log_dir / std::format("{}_{}.log", m_prefix, timestamp);
-        
+
         m_file_stream.open(m_log_file, std::ios::out | std::ios::app);
         m_bytes_written.store(0, std::memory_order_relaxed);
-        
+
     } catch (const std::exception& e) {
         // Logger cannot use logError (infinite recursion), fall back to stderr
         std::fprintf(stderr, "SAK Logger: Log rotation failed: %s\n", e.what());
@@ -257,26 +241,30 @@ void logger::rotateLog() noexcept {
 std::vector<std::filesystem::path> logger::collectRotationCandidates() const {
     std::vector<std::filesystem::path> log_files;
     for (const auto& entry : std::filesystem::directory_iterator(m_log_dir)) {
-        if (!entry.is_regular_file()) continue;
-        if (entry.path().extension() != ".log") continue;
-        if (!entry.path().stem().string().starts_with(m_prefix)) continue;
+        if (!entry.is_regular_file()) {
+            continue;
+        }
+        if (entry.path().extension() != ".log") {
+            continue;
+        }
+        if (!entry.path().stem().string().starts_with(m_prefix)) {
+            continue;
+        }
         log_files.push_back(entry.path());
     }
     return log_files;
 }
 
-void logger::log(
-    log_level level,
-    std::string_view format,
-    const std::source_location& loc) noexcept {
-    
+void logger::log(log_level level,
+                 std::string_view format,
+                 const std::source_location& loc) noexcept {
     // Early exit if level is below minimum
     if (level < m_min_level.load(std::memory_order_relaxed)) {
         return;
     }
-    
+
     // For no-args, just log the format string directly
     logInternal(level, std::string(format), loc);
 }
 
-} // namespace sak
+}  // namespace sak

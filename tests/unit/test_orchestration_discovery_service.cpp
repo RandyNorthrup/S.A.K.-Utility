@@ -1,11 +1,11 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+#include "sak/orchestration_discovery_service.h"
+
+#include <QHostAddress>
 #include <QtTest/QtTest>
 #include <QUdpSocket>
-#include <QHostAddress>
-
-#include "sak/orchestration_discovery_service.h"
 
 using namespace sak;
 
@@ -19,7 +19,7 @@ quint16 pickFreeUdpPort() {
     socket.close();
     return port;
 }
-}
+}  // namespace
 
 class OrchestrationDiscoveryServiceTests : public QObject {
     Q_OBJECT
@@ -37,8 +37,8 @@ void OrchestrationDiscoveryServiceTests::destinationRespondsToDiscovery() {
     DestinationPC info;
     info.destination_id = "dest-test";
     info.hostname = "DEST-TEST";
-    info.control_port = 54322;
-    info.data_port = 54323;
+    info.control_port = 54'322;
+    info.data_port = 54'323;
     info.status = "ready";
     destination.setDestinationInfo(info);
     destination.setPort(port);
@@ -52,7 +52,7 @@ void OrchestrationDiscoveryServiceTests::destinationRespondsToDiscovery() {
     QJsonObject payload;
     payload["message_type"] = "ORCH_DISCOVERY";
     payload["protocol_version"] = "1.0";
-    payload["orchestrator_port"] = 54322;
+    payload["orchestrator_port"] = 54'322;
 
     QJsonDocument doc(payload);
     probeSocket.writeDatagram(doc.toJson(QJsonDocument::Compact), QHostAddress::LocalHost, port);
@@ -75,8 +75,8 @@ void OrchestrationDiscoveryServiceTests::orchestratorReceivesAnnouncement() {
     DestinationPC info;
     info.destination_id = "dest-announce";
     info.hostname = "DEST-ANNOUNCE";
-    info.control_port = 54322;
-    info.data_port = 54323;
+    info.control_port = 54'322;
+    info.data_port = 54'323;
     info.status = "ready";
     destination.setDestinationInfo(info);
     destination.setPort(port);

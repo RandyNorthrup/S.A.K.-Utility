@@ -6,6 +6,7 @@
 #include <QByteArray>
 #include <QJsonObject>
 #include <QList>
+
 #include <optional>
 
 class QTcpSocket;
@@ -49,4 +50,4 @@ public:
     static QList<QJsonObject> readMessages(QByteArray& buffer, const QByteArray& incoming);
 };
 
-} // namespace sak
+}  // namespace sak

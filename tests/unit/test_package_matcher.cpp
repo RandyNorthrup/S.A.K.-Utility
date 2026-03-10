@@ -4,12 +4,11 @@
 /// @file test_package_matcher.cpp
 /// @brief Unit tests for package name matching and fuzzy search
 
-#include <QtTest/QtTest>
-
 #include "sak/package_matcher.h"
 
-#include <QTemporaryDir>
 #include <QFile>
+#include <QTemporaryDir>
+#include <QtTest/QtTest>
 
 class PackageMatcherTests : public QObject {
     Q_OBJECT
@@ -43,8 +42,7 @@ private:
     sak::AppScanner::AppInfo makeAppInfo(const QString& name) const;
 };
 
-sak::AppScanner::AppInfo PackageMatcherTests::makeAppInfo(const QString& name) const
-{
+sak::AppScanner::AppInfo PackageMatcherTests::makeAppInfo(const QString& name) const {
     sak::AppScanner::AppInfo info;
     info.name = name;
     return info;
@@ -54,8 +52,7 @@ sak::AppScanner::AppInfo PackageMatcherTests::makeAppInfo(const QString& name) c
 // Constructor
 // ============================================================================
 
-void PackageMatcherTests::constructor_initializesCommonMappings()
-{
+void PackageMatcherTests::constructor_initializesCommonMappings() {
     sak::PackageMatcher matcher;
     // Should have some built-in mappings
     QVERIFY(matcher.getMappingCount() > 0);
@@ -65,16 +62,14 @@ void PackageMatcherTests::constructor_initializesCommonMappings()
 // Mapping Management
 // ============================================================================
 
-void PackageMatcherTests::addMapping_canRetrieve()
-{
+void PackageMatcherTests::addMapping_canRetrieve() {
     sak::PackageMatcher matcher;
     matcher.addMapping("Test App", "test-app-choco");
     QVERIFY(matcher.hasMapping("Test App"));
     QCOMPARE(matcher.getMapping("Test App"), QString("test-app-choco"));
 }
 
-void PackageMatcherTests::removeMapping_noLongerFound()
-{
+void PackageMatcherTests::removeMapping_noLongerFound() {
     sak::PackageMatcher matcher;
     matcher.addMapping("ToRemove", "remove-pkg");
     QVERIFY(matcher.hasMapping("ToRemove"));
@@ -83,21 +78,18 @@ void PackageMatcherTests::removeMapping_noLongerFound()
     QVERIFY(!matcher.hasMapping("ToRemove"));
 }
 
-void PackageMatcherTests::hasMapping_existingKey()
-{
+void PackageMatcherTests::hasMapping_existingKey() {
     sak::PackageMatcher matcher;
     matcher.addMapping("ExistingApp", "existing-pkg");
     QVERIFY(matcher.hasMapping("ExistingApp"));
 }
 
-void PackageMatcherTests::hasMapping_nonExistentKey()
-{
+void PackageMatcherTests::hasMapping_nonExistentKey() {
     sak::PackageMatcher matcher;
     QVERIFY(!matcher.hasMapping("NonExistentApp_xyz_12345"));
 }
 
-void PackageMatcherTests::getMappingCount_afterAdd()
-{
+void PackageMatcherTests::getMappingCount_afterAdd() {
     sak::PackageMatcher matcher;
     int initial = matcher.getMappingCount();
 
@@ -111,8 +103,7 @@ void PackageMatcherTests::getMappingCount_afterAdd()
 // Export / Import
 // ============================================================================
 
-void PackageMatcherTests::exportImport_roundTrip()
-{
+void PackageMatcherTests::exportImport_roundTrip() {
     QTemporaryDir tempDir;
     QVERIFY(tempDir.isValid());
     QString exportPath = tempDir.filePath("mappings.json");
@@ -135,8 +126,7 @@ void PackageMatcherTests::exportImport_roundTrip()
 // findMatch Tests
 // ============================================================================
 
-void PackageMatcherTests::findMatch_exactMapping()
-{
+void PackageMatcherTests::findMatch_exactMapping() {
     sak::PackageMatcher matcher;
     matcher.addMapping("My Test Application", "my-test-app");
 
@@ -153,8 +143,7 @@ void PackageMatcherTests::findMatch_exactMapping()
     QVERIFY(result->confidence > 0.9);
 }
 
-void PackageMatcherTests::findMatch_noResult()
-{
+void PackageMatcherTests::findMatch_noResult() {
     sak::PackageMatcher matcher;
 
     sak::PackageMatcher::MatchConfig cfg;
@@ -172,8 +161,7 @@ void PackageMatcherTests::findMatch_noResult()
 // Match Config
 // ============================================================================
 
-void PackageMatcherTests::matchConfig_defaults()
-{
+void PackageMatcherTests::matchConfig_defaults() {
     sak::PackageMatcher::MatchConfig cfg;
     QVERIFY(cfg.use_exact_mappings);
     QVERIFY(cfg.use_fuzzy_matching);
@@ -181,8 +169,7 @@ void PackageMatcherTests::matchConfig_defaults()
     QVERIFY(cfg.min_confidence >= 0.0 && cfg.min_confidence <= 1.0);
 }
 
-void PackageMatcherTests::matchConfig_exactOnly()
-{
+void PackageMatcherTests::matchConfig_exactOnly() {
     sak::PackageMatcher::MatchConfig cfg;
     cfg.use_exact_mappings = true;
     cfg.use_fuzzy_matching = false;
@@ -197,8 +184,7 @@ void PackageMatcherTests::matchConfig_exactOnly()
 // Stats
 // ============================================================================
 
-void PackageMatcherTests::stats_initiallyZero()
-{
+void PackageMatcherTests::stats_initiallyZero() {
     sak::PackageMatcher matcher;
     QCOMPARE(matcher.getExactMatchCount(), 0);
     QCOMPARE(matcher.getFuzzyMatchCount(), 0);

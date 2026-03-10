@@ -5,8 +5,9 @@
 
 #include <QString>
 #include <QStringList>
-#include <vector>
+
 #include <expected>
+#include <vector>
 
 namespace sak {
 
@@ -22,28 +23,38 @@ class AppScanner {
 public:
     /// @brief Information about a discovered installed application
     struct AppInfo {
-        QString name;               // Application name
-        QString version;            // Installed version
-        QString publisher;          // Publisher/vendor
-        QString install_date;       // Installation date
-        QString install_location;   // Install path
-        QString uninstall_string;   // Uninstall command
-        QString registry_key;       // Registry location
-        
+        QString name;              // Application name
+        QString version;           // Installed version
+        QString publisher;         // Publisher/vendor
+        QString install_date;      // Installation date
+        QString install_location;  // Install path
+        QString uninstall_string;  // Uninstall command
+        QString registry_key;      // Registry location
+
         // To be populated later by PackageMatcher
-        QString choco_package;      // Matched Chocolatey package name
-        bool choco_available{false}; // Is available in Chocolatey?
-        
-        enum class Confidence { High, Medium, Low, Manual, Unknown };
+        QString choco_package;        // Matched Chocolatey package name
+        bool choco_available{false};  // Is available in Chocolatey?
+
+        enum class Confidence {
+            High,
+            Medium,
+            Low,
+            Manual,
+            Unknown
+        };
         Confidence match_confidence{Confidence::Unknown};
-        
-        enum class Source { Registry, AppX, Chocolatey };
+
+        enum class Source {
+            Registry,
+            AppX,
+            Chocolatey
+        };
         Source source{Source::Registry};
-        
+
         // Version locking (for migration)
-        bool version_locked{false};        // Lock to specific version for restore
-        QString locked_version;            // The version to install (defaults to current version)
-        
+        bool version_locked{false};  // Lock to specific version for restore
+        QString locked_version;      // The version to install (defaults to current version)
+
         // User data (populated by UserDataManager)
         bool has_user_data{false};
         qint64 estimated_data_size{0};
@@ -103,4 +114,4 @@ private:
     std::vector<AppInfo> parseAppXPackages();
 };
 
-} // namespace sak
+}  // namespace sak

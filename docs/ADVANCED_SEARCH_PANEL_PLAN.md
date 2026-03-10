@@ -275,7 +275,7 @@ struct SearchMatch {
 struct SearchConfig {
     QString rootPath;           ///< Directory or file to search
     QString pattern;            ///< Search pattern (text or regex)
-    
+
     // Search mode flags
     bool caseSensitive = false;
     bool useRegex = false;
@@ -284,14 +284,14 @@ struct SearchConfig {
     bool searchFileMetadata = false;    ///< PDF/Office/audio/video metadata
     bool searchInArchives = false;      ///< Search inside ZIP/EPUB
     bool hexSearch = false;             ///< Binary/hex search mode
-    
+
     // Filtering
     QStringList fileExtensions;         ///< Empty = all files
     QStringList excludePatterns = {     ///< Exclusion regex patterns
         R"(\.git)", R"(\.svn)", R"(__pycache__)", R"(node_modules)",
         R"(\.pyc$)", R"(\.exe$)", R"(\.dll$)", R"(\.so$)", R"(\.bin$)"
     };
-    
+
     // Limits
     int contextLines = 2;              ///< Lines of context (0-10)
     int maxResults = 0;                ///< 0 = unlimited
@@ -325,9 +325,9 @@ class AdvancedSearchWorker : public WorkerBase {
     Q_OBJECT
 public:
     explicit AdvancedSearchWorker(const SearchConfig& config, QObject* parent = nullptr);
-    
+
     ~AdvancedSearchWorker() override = default;
-    
+
     // Disable copy/move (inherited from WorkerBase)
     AdvancedSearchWorker(const AdvancedSearchWorker&) = delete;
     AdvancedSearchWorker& operator=(const AdvancedSearchWorker&) = delete;
@@ -337,7 +337,7 @@ public:
 Q_SIGNALS:
     /// @brief Emitted with accumulated results (batch updates for performance)
     void resultsReady(QVector<SearchMatch> matches);
-    
+
     /// @brief Emitted per-file as search progresses
     void fileSearched(const QString& filePath, int matchCount);
 
@@ -347,43 +347,43 @@ protected:
 
 private:
     SearchConfig m_config;
-    
+
     /// @brief Check if path should be excluded
     [[nodiscard]] bool isExcluded(const QString& path) const;
-    
+
     /// @brief Search a single file for the pattern
-    [[nodiscard]] QVector<SearchMatch> searchFile(const QString& filePath, 
+    [[nodiscard]] QVector<SearchMatch> searchFile(const QString& filePath,
                                                     const QRegularExpression& regex) const;
-    
+
     /// @brief Search file text content line-by-line
     [[nodiscard]] QVector<SearchMatch> searchTextContent(const QString& filePath,
                                                           const QRegularExpression& regex) const;
-    
+
     /// @brief Search image metadata (EXIF, GPS, PNG)
     [[nodiscard]] QVector<SearchMatch> searchImageMetadata(const QString& filePath,
                                                             const QRegularExpression& regex) const;
-    
+
     /// @brief Search file metadata (PDF, Office, audio, video, etc.)
     [[nodiscard]] QVector<SearchMatch> searchFileMetadata(const QString& filePath,
                                                            const QRegularExpression& regex) const;
-    
+
     /// @brief Search inside archive files (ZIP, EPUB)
     [[nodiscard]] QVector<SearchMatch> searchArchive(const QString& filePath,
                                                       const QRegularExpression& regex) const;
-    
+
     /// @brief Search binary file for hex/text patterns
     [[nodiscard]] QVector<SearchMatch> searchBinary(const QString& filePath,
                                                      const QRegularExpression& regex) const;
-    
+
     /// @brief Check if path is a UNC network path
     [[nodiscard]] bool isNetworkPath(const QString& path) const;
-    
+
     /// @brief Check network path accessibility with timeout
     [[nodiscard]] bool checkNetworkPathAccessible(const QString& path) const;
-    
+
     /// @brief Compile the search regex from config
     [[nodiscard]] std::expected<QRegularExpression, QString> compileRegex() const;
-    
+
     // File type classification
     static const QSet<QString> kImageExtensions;
     static const QSet<QString> kFileMetadataExtensions;
@@ -399,16 +399,16 @@ auto AdvancedSearchWorker::execute() -> std::expected<void, sak::error_code> {
         return std::unexpected(sak::error_code::invalid_parameter);
     }
     const auto& regex = regexResult.value();
-    
+
     QVector<SearchMatch> allMatches;
-    
+
     // Check network accessibility
     if (isNetworkPath(m_config.rootPath)) {
         if (!checkNetworkPathAccessible(m_config.rootPath)) {
             return std::unexpected(sak::error_code::network_error);
         }
     }
-    
+
     // Single file search
     if (QFileInfo(m_config.rootPath).isFile()) {
         if (!isExcluded(m_config.rootPath)) {
@@ -418,25 +418,25 @@ auto AdvancedSearchWorker::execute() -> std::expected<void, sak::error_code> {
         emit resultsReady(allMatches);
         return {};
     }
-    
+
     // Directory recursive search
     QDirIterator it(m_config.rootPath, QDir::Files | QDir::NoDotAndDotDot,
                     QDirIterator::Subdirectories);
-    
+
     int batchCount = 0;
     constexpr int kBatchSize = 50;  // Emit results every 50 files
     QVector<SearchMatch> batchMatches;
-    
+
     while (it.hasNext()) {
         if (checkStop()) {
             return {};  // Cancelled — WorkerBase handles cancelled signal
         }
-        
+
         const QString filePath = it.next();
-        
+
         // Skip excluded paths
         if (isExcluded(filePath)) continue;
-        
+
         // Check file extension filter
         if (!m_config.fileExtensions.isEmpty()) {
             const QString ext = QFileInfo(filePath).suffix().toLower();
@@ -449,7 +449,7 @@ auto AdvancedSearchWorker::execute() -> std::expected<void, sak::error_code> {
             }
             if (!matched) continue;
         }
-        
+
         // Search the file
         auto matches = searchFile(filePath, regex);
         if (!matches.isEmpty()) {
@@ -457,24 +457,24 @@ auto AdvancedSearchWorker::execute() -> std::expected<void, sak::error_code> {
             batchMatches.append(matches);
             allMatches.append(matches);
         }
-        
+
         // Check max results limit
         if (m_config.maxResults > 0 && allMatches.size() >= m_config.maxResults) {
             break;
         }
-        
+
         // Batch emit for UI responsiveness
         if (++batchCount % kBatchSize == 0 && !batchMatches.isEmpty()) {
             emit resultsReady(batchMatches);
             batchMatches.clear();
         }
     }
-    
+
     // Emit remaining batch
     if (!batchMatches.isEmpty()) {
         emit resultsReady(batchMatches);
     }
-    
+
     return {};
 }
 ```
@@ -501,33 +501,33 @@ public:
     /// @param filePath Path to image file
     /// @return Map of key-value metadata pairs
     [[nodiscard]] static QMap<QString, QString> extract(const QString& filePath);
-    
+
 private:
     /// @brief Parse EXIF data from JPEG APP1 marker
     [[nodiscard]] static QMap<QString, QString> parseExif(QIODevice& device);
-    
+
     /// @brief Parse TIFF IFD (Image File Directory) entries
-    [[nodiscard]] static QMap<QString, QString> parseIFD(QDataStream& stream, 
+    [[nodiscard]] static QMap<QString, QString> parseIFD(QDataStream& stream,
                                                           quint32 ifdOffset,
                                                           bool bigEndian);
-    
+
     /// @brief Parse GPS IFD sub-directory
     [[nodiscard]] static QMap<QString, QString> parseGpsIFD(QDataStream& stream,
                                                              quint32 ifdOffset,
                                                              bool bigEndian);
-    
+
     /// @brief Parse PNG text chunks
     [[nodiscard]] static QMap<QString, QString> parsePngChunks(QIODevice& device);
-    
+
     /// @brief Convert EXIF tag ID to human-readable name
     [[nodiscard]] static QString exifTagName(quint16 tagId);
-    
+
     /// @brief Convert GPS tag ID to human-readable name
     [[nodiscard]] static QString gpsTagName(quint16 tagId);
-    
+
     /// @brief Format EXIF rational value (numerator/denominator)
     [[nodiscard]] static QString formatRational(quint32 num, quint32 den);
-    
+
     // EXIF tag constants
     static constexpr quint16 kTagMake = 0x010F;
     static constexpr quint16 kTagModel = 0x0110;
@@ -547,10 +547,10 @@ class FileMetadataExtractor {
 public:
     /// @brief Extract metadata from any supported file type
     [[nodiscard]] static QMap<QString, QString> extract(const QString& filePath);
-    
+
     /// @brief Check if file type is supported for metadata extraction
     [[nodiscard]] static bool isSupported(const QString& extension);
-    
+
 private:
     // Document formats
     [[nodiscard]] static QMap<QString, QString> extractPdfMetadata(const QString& filePath);
@@ -559,22 +559,22 @@ private:
     [[nodiscard]] static QMap<QString, QString> extractPptxMetadata(const QString& filePath);
     [[nodiscard]] static QMap<QString, QString> extractOdfMetadata(const QString& filePath);
     [[nodiscard]] static QMap<QString, QString> extractRtfMetadata(const QString& filePath);
-    
+
     // eBook / archive formats
     [[nodiscard]] static QMap<QString, QString> extractEpubMetadata(const QString& filePath);
     [[nodiscard]] static QMap<QString, QString> extractZipMetadata(const QString& filePath);
-    
+
     // Structured data
     [[nodiscard]] static QMap<QString, QString> extractCsvMetadata(const QString& filePath);
     [[nodiscard]] static QMap<QString, QString> extractJsonMetadata(const QString& filePath);
     [[nodiscard]] static QMap<QString, QString> extractXmlMetadata(const QString& filePath);
-    
+
     // Database
     [[nodiscard]] static QMap<QString, QString> extractSqliteMetadata(const QString& filePath);
-    
+
     // Audio/Video (using taglib or custom parser)
     [[nodiscard]] static QMap<QString, QString> extractAudioMetadata(const QString& filePath);
-    
+
     // Screenwriting formats
     [[nodiscard]] static QMap<QString, QString> extractFdxMetadata(const QString& filePath);
     [[nodiscard]] static QMap<QString, QString> extractFountainMetadata(const QString& filePath);
@@ -589,12 +589,12 @@ All modern Office formats are ZIP archives containing XML files. Metadata lives 
 ```cpp
 QMap<QString, QString> FileMetadataExtractor::extractDocxMetadata(const QString& filePath) {
     QMap<QString, QString> metadata;
-    
+
     QuaZip zip(filePath);
     if (!zip.open(QuaZip::mdUnzip)) {
         return metadata;
     }
-    
+
     // Read core properties (docProps/core.xml)
     if (zip.setCurrentFile("docProps/core.xml")) {
         QuaZipFile file(&zip);
@@ -605,7 +605,7 @@ QMap<QString, QString> FileMetadataExtractor::extractDocxMetadata(const QString&
                 if (xml.isStartElement()) {
                     const QString tag = xml.name().toString();
                     if (tag == "title" || tag == "creator" || tag == "subject" ||
-                        tag == "description" || tag == "keywords" || 
+                        tag == "description" || tag == "keywords" ||
                         tag == "category" || tag == "created" || tag == "modified") {
                         const QString value = xml.readElementText().left(200);
                         if (!value.isEmpty()) {
@@ -618,7 +618,7 @@ QMap<QString, QString> FileMetadataExtractor::extractDocxMetadata(const QString&
             file.close();
         }
     }
-    
+
     // Count paragraphs/sheets from content
     if (zip.setCurrentFile("word/document.xml")) {
         QuaZipFile file(&zip);
@@ -635,7 +635,7 @@ QMap<QString, QString> FileMetadataExtractor::extractDocxMetadata(const QString&
             file.close();
         }
     }
-    
+
     zip.close();
     return metadata;
 }
@@ -646,25 +646,25 @@ QMap<QString, QString> FileMetadataExtractor::extractDocxMetadata(const QString&
 ```cpp
 QMap<QString, QString> FileMetadataExtractor::extractPdfMetadata(const QString& filePath) {
     QMap<QString, QString> metadata;
-    
+
     QFile file(filePath);
     if (!file.open(QIODevice::ReadOnly)) return metadata;
-    
+
     // PDF metadata is in the /Info dictionary
     // Read last 1KB to find xref table and trailer
     const qint64 readSize = qMin(file.size(), qint64(4096));
     file.seek(file.size() - readSize);
     QByteArray tail = file.read(readSize);
-    
+
     // Find "startxref" to locate cross-reference table
     // Then find /Info reference in trailer dictionary
     // Follow object reference to /Info dictionary
     // Extract /Title, /Author, /Subject, /Keywords, /Creator, /Producer, /CreationDate
-    
+
     // Also count pages by finding /Type /Page entries
     file.seek(0);
     QByteArray content = file.readAll();
-    
+
     // Simple regex-based metadata extraction from PDF text
     static const QRegularExpression infoPattern(R"(/(\w+)\s*\(([^)]*)\))");
     auto it = infoPattern.globalMatch(content);
@@ -678,13 +678,13 @@ QMap<QString, QString> FileMetadataExtractor::extractPdfMetadata(const QString& 
             metadata[QString("PDF_%1").arg(key)] = value;
         }
     }
-    
+
     // Count pages
     const int pageCount = content.count("/Type /Page") - content.count("/Type /Pages");
     if (pageCount > 0) {
         metadata["PDF_Pages"] = QString::number(pageCount);
     }
-    
+
     file.close();
     return metadata;
 }
@@ -695,19 +695,19 @@ QMap<QString, QString> FileMetadataExtractor::extractPdfMetadata(const QString& 
 ```cpp
 QMap<QString, QString> FileMetadataExtractor::extractSqliteMetadata(const QString& filePath) {
     QMap<QString, QString> metadata;
-    
+
     // Use a unique connection name to avoid conflicts
     const QString connName = QString("sak_advsearch_%1").arg(quintptr(QThread::currentThread()));
-    
+
     {
         QSqlDatabase db = QSqlDatabase::addDatabase("QSQLITE", connName);
         db.setDatabaseName(filePath);
         db.setConnectOptions("QSQLITE_OPEN_READONLY");
-        
+
         if (!db.open()) return metadata;
-        
+
         QSqlQuery query(db);
-        
+
         // Get table names
         query.exec("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name");
         QStringList tables;
@@ -716,7 +716,7 @@ QMap<QString, QString> FileMetadataExtractor::extractSqliteMetadata(const QStrin
         }
         metadata["Tables"] = tables.join(", ");
         metadata["Table Count"] = QString::number(tables.size());
-        
+
         // Schema info for first 5 tables
         for (int i = 0; i < qMin(tables.size(), 5); ++i) {
             query.exec(QString("PRAGMA table_info(%1)").arg(tables[i]));
@@ -725,17 +725,17 @@ QMap<QString, QString> FileMetadataExtractor::extractSqliteMetadata(const QStrin
                 columns.append(query.value(1).toString());
             }
             metadata[QString("Table_%1_Columns").arg(tables[i])] = columns.join(", ");
-            
+
             query.exec(QString("SELECT COUNT(*) FROM %1").arg(tables[i]));
             if (query.next()) {
                 metadata[QString("Table_%1_Rows").arg(tables[i])] = query.value(0).toString();
             }
         }
-        
+
         db.close();
     }
     QSqlDatabase::removeDatabase(connName);
-    
+
     return metadata;
 }
 ```
@@ -751,48 +751,48 @@ class RegexPatternLibrary : public QObject {
     Q_OBJECT
 public:
     explicit RegexPatternLibrary(QObject* parent = nullptr);
-    
+
     /// @brief Get all built-in patterns
     [[nodiscard]] QVector<RegexPatternInfo> builtinPatterns() const;
-    
+
     /// @brief Get all custom user patterns
     [[nodiscard]] QVector<RegexPatternInfo> customPatterns() const;
-    
+
     /// @brief Add a custom pattern
     void addCustomPattern(const QString& name, const QString& label, const QString& pattern);
-    
+
     /// @brief Remove a custom pattern by key
     void removeCustomPattern(const QString& key);
-    
+
     /// @brief Update a custom pattern
     void updateCustomPattern(const QString& key, const QString& label, const QString& pattern);
-    
+
     /// @brief Set enabled state for a pattern (builtin or custom)
     void setPatternEnabled(const QString& key, bool enabled);
-    
+
     /// @brief Get combined regex string for all enabled patterns
     [[nodiscard]] QString combinedPattern() const;
-    
+
     /// @brief Get count of active patterns
     [[nodiscard]] int activeCount() const;
-    
+
     /// @brief Clear all enabled patterns
     void clearAll();
-    
+
     /// @brief Load custom patterns from persistent storage
     void loadCustomPatterns();
-    
+
     /// @brief Save custom patterns to persistent storage
     void saveCustomPatterns();
-    
+
 Q_SIGNALS:
     void patternsChanged();
-    
+
 private:
     QVector<RegexPatternInfo> m_builtinPatterns;
     QVector<RegexPatternInfo> m_customPatterns;
     QString m_storageFile;
-    
+
     void initBuiltinPatterns();
 };
 ```
@@ -828,31 +828,31 @@ public:
         Searching,
         Cancelled
     };
-    
+
     explicit AdvancedSearchController(QObject* parent = nullptr);
     ~AdvancedSearchController() override;
-    
+
     // Search operations
     void startSearch(const SearchConfig& config);
     void cancelSearch();
-    
+
     // State
     [[nodiscard]] State currentState() const;
-    
+
     // Search history
     void addToHistory(const QString& pattern);
     void clearHistory();
     [[nodiscard]] QStringList searchHistory() const;
-    
+
     // Preferences
     void setPreferences(const SearchPreferences& prefs);
     [[nodiscard]] SearchPreferences preferences() const;
     void loadPreferences();
     void savePreferences();
-    
+
     // Regex pattern library
     [[nodiscard]] RegexPatternLibrary* patternLibrary() const;
-    
+
 Q_SIGNALS:
     void stateChanged(State newState);
     void searchStarted(const QString& pattern);
@@ -861,18 +861,18 @@ Q_SIGNALS:
     void searchFinished(int totalMatches, int totalFiles);
     void searchFailed(const QString& error);
     void searchCancelled();
-    
+
     void statusMessage(const QString& message, int timeout);
     void progressUpdate(int current, int maximum);
-    
+
 private:
     State m_state = State::Idle;
     std::unique_ptr<AdvancedSearchWorker> m_worker;
     std::unique_ptr<RegexPatternLibrary> m_patternLibrary;
-    
+
     QStringList m_searchHistory;
     SearchPreferences m_preferences;
-    
+
     static constexpr int kMaxHistorySize = 50;
 };
 ```
@@ -1707,7 +1707,7 @@ target_link_libraries(sak_utility PRIVATE Qt6::Sql)
 
 QMap<QString, QString> FileMetadataExtractor::extractAudioMetadata(const QString& filePath) {
     QMap<QString, QString> metadata;
-    
+
 #ifdef SAK_HAVE_TAGLIB
     TagLib::FileRef f(filePath.toStdWString().c_str());
     if (!f.isNull() && f.tag()) {
@@ -1729,7 +1729,7 @@ QMap<QString, QString> FileMetadataExtractor::extractAudioMetadata(const QString
     Q_UNUSED(filePath);
     // Audio metadata search requires TagLib — disabled in this build
 #endif
-    
+
     return metadata;
 }
 ```

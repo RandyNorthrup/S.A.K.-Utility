@@ -5,28 +5,30 @@
 /// @brief Implements the application installation panel UI for software reinstallation
 
 #include "sak/app_installation_panel.h"
-#include "sak/chocolatey_manager.h"
+
 #include "sak/app_installation_worker.h"
-#include "sak/migration_report.h"
+#include "sak/chocolatey_manager.h"
 #include "sak/detachable_log_window.h"
+#include "sak/migration_report.h"
 #include "sak/style_constants.h"
 #include "sak/widget_helpers.h"
 
-#include <QVBoxLayout>
+#include <QApplication>
+#include <QGroupBox>
 #include <QHBoxLayout>
 #include <QHeaderView>
-#include <QApplication>
-#include <QSplitter>
-#include <QGroupBox>
 #include <QScrollArea>
+#include <QSplitter>
 #include <QStyle>
+#include <QVBoxLayout>
+
 #include <memory>
 
 using sak::AppInstallationPanel;
-using sak::ChocolateyManager;
 using sak::AppInstallationWorker;
-using sak::MigrationReport;
+using sak::ChocolateyManager;
 using sak::MigrationJob;
+using sak::MigrationReport;
 using sak::MigrationStatus;
 
 // Results table columns
@@ -41,8 +43,7 @@ enum ResultColumn {
 AppInstallationPanel::AppInstallationPanel(QWidget* parent)
     : QWidget(parent)
     , m_choco_manager(std::make_shared<ChocolateyManager>())
-    , m_worker(std::make_shared<AppInstallationWorker>(m_choco_manager))
-{
+    , m_worker(std::make_shared<AppInstallationWorker>(m_choco_manager)) {
     setupUi();
     setupConnections();
 
@@ -64,8 +65,7 @@ AppInstallationPanel::~AppInstallationPanel() {
     }
 }
 
-void AppInstallationPanel::setupUi()
-{
+void AppInstallationPanel::setupUi() {
     Q_ASSERT(!objectName().isEmpty() || true);  // widget valid
     auto* rootLayout = new QVBoxLayout(this);
     rootLayout->setContentsMargins(0, 0, 0, 0);
@@ -77,8 +77,10 @@ void AppInstallationPanel::setupUi()
     auto* contentWidget = new QWidget(scrollArea);
     auto* mainLayout = new QVBoxLayout(contentWidget);
     mainLayout->setSpacing(sak::ui::kSpacingDefault);
-    mainLayout->setContentsMargins(sak::ui::kMarginMedium, sak::ui::kMarginMedium,
-                                   sak::ui::kMarginMedium, sak::ui::kMarginMedium);
+    mainLayout->setContentsMargins(sak::ui::kMarginMedium,
+                                   sak::ui::kMarginMedium,
+                                   sak::ui::kMarginMedium,
+                                   sak::ui::kMarginMedium);
 
     scrollArea->setWidget(contentWidget);
     rootLayout->addWidget(scrollArea);
@@ -98,8 +100,10 @@ void AppInstallationPanel::setupUi()
     setupUi_bottomBar(mainLayout);
 }
 
-void AppInstallationPanel::setupUi_searchBar(QVBoxLayout* mainLayout)
-{
+void AppInstallationPanel::setupUi_searchBar(QVBoxLayout* mainLayout) {
+    Q_ASSERT(m_searchButton);
+    Q_ASSERT(m_searchEdit);
+    Q_ASSERT(m_categoryCombo);
     auto* searchGroup = new QGroupBox(tr("Search Packages"), this);
     auto* searchLayout = new QHBoxLayout(searchGroup);
 
@@ -111,16 +115,14 @@ void AppInstallationPanel::setupUi_searchBar(QVBoxLayout* mainLayout)
     searchLayout->addWidget(m_searchEdit, 1);
 
     m_categoryCombo = new QComboBox(this);
-    m_categoryCombo->addItems({
-        tr("All"),
-        tr("Browsers"),
-        tr("Development"),
-        tr("Media"),
-        tr("Utilities"),
-        tr("Security"),
-        tr("Productivity"),
-        tr("Communication")
-    });
+    m_categoryCombo->addItems({tr("All"),
+                               tr("Browsers"),
+                               tr("Development"),
+                               tr("Media"),
+                               tr("Utilities"),
+                               tr("Security"),
+                               tr("Productivity"),
+                               tr("Communication")});
     m_categoryCombo->setAccessibleName(QStringLiteral("Package Category"));
     m_categoryCombo->setToolTip(tr("Select a category to browse"));
     searchLayout->addWidget(m_categoryCombo);
@@ -133,8 +135,11 @@ void AppInstallationPanel::setupUi_searchBar(QVBoxLayout* mainLayout)
     mainLayout->addWidget(searchGroup);
 }
 
-void AppInstallationPanel::setupUi_packageTable(QSplitter* splitter)
-{
+void AppInstallationPanel::setupUi_packageTable(QSplitter* splitter) {
+    Q_ASSERT(m_addToQueueButton);
+    Q_ASSERT(splitter);
+    Q_ASSERT(m_resultsModel);
+    Q_ASSERT(m_resultsTable);
     auto* resultsWidget = new QWidget(this);
     auto* resultsLayout = new QVBoxLayout(resultsWidget);
     resultsLayout->setContentsMargins(0, 0, 8, 0);
@@ -145,8 +150,8 @@ void AppInstallationPanel::setupUi_packageTable(QSplitter* splitter)
 
     m_resultsTable = new QTableView(this);
     m_resultsModel = new QStandardItemModel(0, RColCount, this);
-    m_resultsModel->setHorizontalHeaderLabels({tr(""), tr("Package"), tr("Version"),
-        tr("Publisher")});
+    m_resultsModel->setHorizontalHeaderLabels(
+        {tr(""), tr("Package"), tr("Version"), tr("Publisher")});
 
     m_resultsTable->setModel(m_resultsModel);
     m_resultsTable->setSelectionBehavior(QAbstractItemView::SelectRows);
@@ -166,12 +171,13 @@ void AppInstallationPanel::setupUi_packageTable(QSplitter* splitter)
 
     m_resultsTable->setStyleSheet(
         QString("QTableView::indicator { width: 16px; height: 16px; border: 1px solid %1; "
-            "border-radius: 4px; background: %2; }"
-            "QTableView::indicator:checked { background: %3; border: 1px solid %4; }"
-            "QTableView::indicator:unchecked { background: %2; border: 1px solid %1; }")
-        .arg(sak::ui::kColorBorderMuted, sak::ui::kColorBgSurface,
-             sak::ui::kColorPrimary, sak::ui::kColorPrimaryDark)
-    );
+                "border-radius: 4px; background: %2; }"
+                "QTableView::indicator:checked { background: %3; border: 1px solid %4; }"
+                "QTableView::indicator:unchecked { background: %2; border: 1px solid %1; }")
+            .arg(sak::ui::kColorBorderMuted,
+                 sak::ui::kColorBgSurface,
+                 sak::ui::kColorPrimary,
+                 sak::ui::kColorPrimaryDark));
 
     resultsLayout->addWidget(m_resultsTable, 1);
 
@@ -184,8 +190,11 @@ void AppInstallationPanel::setupUi_packageTable(QSplitter* splitter)
     splitter->addWidget(resultsWidget);
 }
 
-void AppInstallationPanel::setupUi_queueSection(QSplitter* splitter)
-{
+void AppInstallationPanel::setupUi_queueSection(QSplitter* splitter) {
+    Q_ASSERT(m_clearQueueButton);
+    Q_ASSERT(m_installButton);
+    Q_ASSERT(m_queueList);
+    Q_ASSERT(m_removeFromQueueButton);
     auto* queueWidget = new QWidget(this);
     auto* queueLayout = new QVBoxLayout(queueWidget);
     queueLayout->setContentsMargins(8, 0, 0, 0);
@@ -233,8 +242,8 @@ void AppInstallationPanel::setupUi_queueSection(QSplitter* splitter)
     auto* saveLoadLayout = new QHBoxLayout();
     m_saveQueueButton = new QPushButton(tr("Save List"), this);
     m_saveQueueButton->setAccessibleName(QStringLiteral("Save Install List"));
-    m_saveQueueButton->setToolTip(tr(
-        "Save the current install queue to a JSON file for later use"));
+    m_saveQueueButton->setToolTip(
+        tr("Save the current install queue to a JSON file for later use"));
     m_saveQueueButton->setEnabled(false);
     connect(m_saveQueueButton, &QPushButton::clicked, this, &AppInstallationPanel::saveQueueToFile);
     saveLoadLayout->addWidget(m_saveQueueButton);
@@ -249,8 +258,7 @@ void AppInstallationPanel::setupUi_queueSection(QSplitter* splitter)
     splitter->addWidget(queueWidget);
 }
 
-void AppInstallationPanel::setupUi_bottomBar(QVBoxLayout* mainLayout)
-{
+void AppInstallationPanel::setupUi_bottomBar(QVBoxLayout* mainLayout) {
     m_logToggle = new sak::LogToggleSwitch(tr("Log"), this);
     auto* bottomLayout = new QHBoxLayout();
     bottomLayout->setContentsMargins(0, 4, 0, 0);
@@ -259,24 +267,26 @@ void AppInstallationPanel::setupUi_bottomBar(QVBoxLayout* mainLayout)
     mainLayout->addLayout(bottomLayout);
 }
 
-void AppInstallationPanel::setupConnections()
-{
+void AppInstallationPanel::setupConnections() {
     setupSearchAndQueueConnections();
     setupWorkerConnections();
 }
 
-void AppInstallationPanel::setupSearchAndQueueConnections()
-{
+void AppInstallationPanel::setupSearchAndQueueConnections() {
     // Search
     connect(m_searchButton, &QPushButton::clicked, this, &AppInstallationPanel::onSearch);
     connect(m_searchEdit, &QLineEdit::returnPressed, this, &AppInstallationPanel::onSearch);
-    connect(m_categoryCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
-            this, &AppInstallationPanel::onCategoryChanged);
+    connect(m_categoryCombo,
+            QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this,
+            &AppInstallationPanel::onCategoryChanged);
 
     // Queue management
     connect(m_addToQueueButton, &QPushButton::clicked, this, &AppInstallationPanel::onAddToQueue);
-    connect(m_removeFromQueueButton, &QPushButton::clicked, this,
-        &AppInstallationPanel::onRemoveFromQueue);
+    connect(m_removeFromQueueButton,
+            &QPushButton::clicked,
+            this,
+            &AppInstallationPanel::onRemoveFromQueue);
     connect(m_clearQueueButton, &QPushButton::clicked, this, &AppInstallationPanel::onClearQueue);
 
     // Install
@@ -286,57 +296,65 @@ void AppInstallationPanel::setupSearchAndQueueConnections()
     // Queue selection
     connect(m_queueList, &QListWidget::itemSelectionChanged, this, [this]() {
         m_removeFromQueueButton->setEnabled(!m_queueList->selectedItems().isEmpty() &&
-            !m_install_in_progress);
+                                            !m_install_in_progress);
     });
 
     // Results selection
     connect(m_resultsModel, &QStandardItemModel::itemChanged, this, [this](QStandardItem* item) {
-        if (item && item->column() == RColCheck) {
-            // Check if any items are checked
-            bool anyChecked = false;
-            for (int i = 0; i < m_resultsModel->rowCount(); ++i) {
-                auto* checkItem = m_resultsModel->item(i, RColCheck);
-                if (checkItem && checkItem->checkState() == Qt::Checked) {
-                    anyChecked = true;
-                    break;
-                }
-            }
-            m_addToQueueButton->setEnabled(anyChecked && !m_install_in_progress);
+        Q_ASSERT(m_resultsModel);
+        Q_ASSERT(m_addToQueueButton);
+        if (!item || item->column() != RColCheck) {
+            return;
         }
+        bool anyChecked = false;
+        for (int i = 0; i < m_resultsModel->rowCount(); ++i) {
+            auto* checkItem = m_resultsModel->item(i, RColCheck);
+            if (checkItem && checkItem->checkState() == Qt::Checked) {
+                anyChecked = true;
+                break;
+            }
+        }
+        m_addToQueueButton->setEnabled(anyChecked && !m_install_in_progress);
     });
 }
 
-void AppInstallationPanel::setupWorkerConnections()
-{
+void AppInstallationPanel::setupWorkerConnections() {
+    Q_ASSERT(m_installButton);
+    Q_ASSERT(m_worker);
+    Q_ASSERT(m_cancelButton);
     connect(m_worker.get(), &AppInstallationWorker::migrationStarted, this, [this](int totalJobs) {
         Q_EMIT progressUpdated(0, totalJobs);
         Q_EMIT statusMessage("App Installation: Installing packages...", 0);
         Q_EMIT logOutput(QString("Installation started: %1 package(s)").arg(totalJobs));
     });
 
-    connect(m_worker.get(), &AppInstallationWorker::jobProgress, this,
+    connect(m_worker.get(),
+            &AppInstallationWorker::jobProgress,
+            this,
             [this](int entryIndex, const QString& message) {
                 Q_UNUSED(entryIndex);
                 Q_EMIT logOutput(message);
                 Q_EMIT statusMessage(message, 0);
             });
 
-    connect(m_worker.get(), &AppInstallationWorker::jobStatusChanged, this,
+    connect(m_worker.get(),
+            &AppInstallationWorker::jobStatusChanged,
+            this,
             [this](int entryIndex, const MigrationJob& job) {
                 Q_UNUSED(entryIndex);
                 switch (job.status) {
-                    case MigrationStatus::Installing:
-                        Q_EMIT statusMessage(tr("Installing %1...").arg(job.packageId), 0);
-                        break;
-                    case MigrationStatus::Success:
-                        Q_EMIT logOutput(QString("✓ %1 installed successfully").arg(job.packageId));
-                        break;
-                    case MigrationStatus::Failed:
-                        Q_EMIT logOutput(QString("✗ %1 failed: %2").arg(job.packageId,
-                            job.errorMessage));
-                        break;
-                    default:
-                        break;
+                case MigrationStatus::Installing:
+                    Q_EMIT statusMessage(tr("Installing %1...").arg(job.packageId), 0);
+                    break;
+                case MigrationStatus::Success:
+                    Q_EMIT logOutput(QString("✓ %1 installed successfully").arg(job.packageId));
+                    break;
+                case MigrationStatus::Failed:
+                    Q_EMIT logOutput(
+                        QString("✗ %1 failed: %2").arg(job.packageId, job.errorMessage));
+                    break;
+                default:
+                    break;
                 }
 
                 auto stats = m_worker->getStats();
@@ -344,13 +362,19 @@ void AppInstallationPanel::setupWorkerConnections()
                 Q_EMIT progressUpdated(completed, stats.total);
             });
 
-    connect(m_worker.get(), &AppInstallationWorker::migrationCompleted, this,
+    connect(m_worker.get(),
+            &AppInstallationWorker::migrationCompleted,
+            this,
             [this](const AppInstallationWorker::Stats& stats) {
                 Q_EMIT logOutput(QString("Installation complete: %1 succeeded, %2 failed, %3 "
                                          "skipped")
-                    .arg(stats.success).arg(stats.failed).arg(stats.skipped));
+                                     .arg(stats.success)
+                                     .arg(stats.failed)
+                                     .arg(stats.skipped));
                 Q_EMIT statusMessage(QString("App Installation: %1 succeeded, %2 failed")
-                    .arg(stats.success).arg(stats.failed), 5000);
+                                         .arg(stats.success)
+                                         .arg(stats.failed),
+                                     5000);
 
                 Q_EMIT statusMessage(tr("Installation complete"), 5000);
                 m_install_in_progress = false;
@@ -360,4 +384,3 @@ void AppInstallationPanel::setupWorkerConnections()
                 enableControls(true);
             });
 }
-

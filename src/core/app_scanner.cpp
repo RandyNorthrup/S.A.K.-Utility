@@ -2,14 +2,16 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "sak/app_scanner.h"
+
 #include "sak/bundled_tools_manager.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
-#include <QProcess>
-#include <QStandardPaths>
+
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
-#include <QJsonArray>
+#include <QProcess>
+#include <QStandardPaths>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -55,33 +57,30 @@ std::vector<AppScanner::AppInfo> AppScanner::scanRegistry() {
 
     // Scan HKEY_LOCAL_MACHINE (system-wide apps)
     auto hklm_apps = scanRegistryHive(HKEY_LOCAL_MACHINE,
-        QString::fromWCharArray(REGISTRY_UNINSTALL_HKLM));
+                                      QString::fromWCharArray(REGISTRY_UNINSTALL_HKLM));
     apps.insert(apps.end(), hklm_apps.begin(), hklm_apps.end());
 
     // Scan HKEY_LOCAL_MACHINE WOW6432Node (32-bit apps on 64-bit Windows)
     auto wow64_apps = scanRegistryHive(HKEY_LOCAL_MACHINE,
-        QString::fromWCharArray(REGISTRY_UNINSTALL_WOW64));
+                                       QString::fromWCharArray(REGISTRY_UNINSTALL_WOW64));
     apps.insert(apps.end(), wow64_apps.begin(), wow64_apps.end());
 
     // Scan HKEY_CURRENT_USER (user-specific apps)
     auto hkcu_apps = scanRegistryHive(HKEY_CURRENT_USER,
-        QString::fromWCharArray(REGISTRY_UNINSTALL_HKCU));
+                                      QString::fromWCharArray(REGISTRY_UNINSTALL_HKCU));
     apps.insert(apps.end(), hkcu_apps.begin(), hkcu_apps.end());
 
     return apps;
 }
 
 std::vector<AppScanner::AppInfo> AppScanner::scanRegistryHive(void* hive, const QString& subkey) {
+    Q_ASSERT(hive);
+    Q_ASSERT(!subkey.isEmpty());
     std::vector<AppInfo> apps;
 
     HKEY hKey;
-    LONG result = RegOpenKeyExW(
-        static_cast<HKEY>(hive),
-        subkey.toStdWString().c_str(),
-        0,
-        KEY_READ,
-        &hKey
-    );
+    LONG result =
+        RegOpenKeyExW(static_cast<HKEY>(hive), subkey.toStdWString().c_str(), 0, KEY_READ, &hKey);
 
     if (result != ERROR_SUCCESS) {
         sak::logWarning("AppScanner: Failed to open registry key: {}", subkey.toStdString());
@@ -93,8 +92,9 @@ std::vector<AppScanner::AppInfo> AppScanner::scanRegistryHive(void* hive, const 
     wchar_t subKeyName[256];
     DWORD subKeyNameSize = 256;
 
-    while (RegEnumKeyExW(hKey, index, subKeyName, &subKeyNameSize, nullptr, nullptr, nullptr,
-        nullptr) == ERROR_SUCCESS) {
+    while (RegEnumKeyExW(
+               hKey, index, subKeyName, &subKeyNameSize, nullptr, nullptr, nullptr, nullptr) ==
+           ERROR_SUCCESS) {
         index++;
         subKeyNameSize = 256;
 
@@ -129,19 +129,19 @@ std::vector<AppScanner::AppInfo> AppScanner::scanRegistryHive(void* hive, const 
 }
 
 QString AppScanner::readRegistryValue(void* key, const QString& valueName) {
+    Q_ASSERT(key);
+    Q_ASSERT(!valueName.isEmpty());
     HKEY hKey = static_cast<HKEY>(key);
     wchar_t buffer[1024];
     DWORD bufferSize = sizeof(buffer);
     DWORD type;
 
-    LONG result = RegQueryValueExW(
-        hKey,
-        valueName.toStdWString().c_str(),
-        nullptr,
-        &type,
-        reinterpret_cast<LPBYTE>(buffer),
-        &bufferSize
-    );
+    LONG result = RegQueryValueExW(hKey,
+                                   valueName.toStdWString().c_str(),
+                                   nullptr,
+                                   &type,
+                                   reinterpret_cast<LPBYTE>(buffer),
+                                   &bufferSize);
 
     if (result == ERROR_SUCCESS && (type == REG_SZ || type == REG_EXPAND_SZ)) {
         return QString::fromWCharArray(buffer);
@@ -151,19 +151,13 @@ QString AppScanner::readRegistryValue(void* key, const QString& valueName) {
 }
 
 bool AppScanner::isSystemComponent(const QString& name) {
-    return name.startsWith("KB") ||
-           name.startsWith("Security Update") ||
-           name.startsWith("Update for") ||
-           name.startsWith("Hotfix") ||
-           name.contains("(KB") ||
-           name.contains("Redistributable") ||
-           name.contains("Microsoft .NET") ||
-           name.contains("Windows SDK") ||
-           name.contains("Windows Driver Kit") ||
-           name.contains("Windows Assessment") ||
-           name.contains("Microsoft Visual C++") ||
-           name.startsWith("vs_") ||
-           name.startsWith("Microsoft DCF") ||
+    Q_ASSERT(!name.isEmpty());
+    return name.startsWith("KB") || name.startsWith("Security Update") ||
+           name.startsWith("Update for") || name.startsWith("Hotfix") || name.contains("(KB") ||
+           name.contains("Redistributable") || name.contains("Microsoft .NET") ||
+           name.contains("Windows SDK") || name.contains("Windows Driver Kit") ||
+           name.contains("Windows Assessment") || name.contains("Microsoft Visual C++") ||
+           name.startsWith("vs_") || name.startsWith("Microsoft DCF") ||
            name.startsWith("Microsoft Help") ||
            (name.startsWith("Microsoft SQL Server") && !name.contains("Management Studio"));
 }
@@ -174,11 +168,10 @@ std::vector<AppScanner::AppInfo> AppScanner::scanAppX() {
     // Use PowerShell to enumerate AppX packages
     QProcess process;
     process.setProgram("powershell.exe");
-    process.setArguments({
-        "-NoProfile",
-        "-Command",
-        "Get-AppxPackage | Select-Object Name,Version,Publisher,InstallLocation | ConvertTo-Json"
-    });
+    process.setArguments({"-NoProfile",
+                          "-Command",
+                          "Get-AppxPackage | Select-Object Name,Version,Publisher,InstallLocation "
+                          "| ConvertTo-Json"});
 
     process.start();
     if (!process.waitForStarted(sak::kTimeoutProcessStartMs)) {
@@ -196,7 +189,7 @@ std::vector<AppScanner::AppInfo> AppScanner::scanAppX() {
     QJsonDocument doc = QJsonDocument::fromJson(output.toUtf8(), &error);
     if (error.error != QJsonParseError::NoError) {
         sak::logWarning("AppScanner: Failed to parse AppX JSON {}",
-            error.errorString().toStdString());
+                        error.errorString().toStdString());
         return apps;
     }
 
@@ -232,7 +225,7 @@ std::vector<AppScanner::AppInfo> AppScanner::scanChocolatey() {
 
     // Prefer bundled portable choco, fall back to system PATH
     QString choco_path;
-    auto& tools = BundledToolsManager::instance();
+    const auto& tools = BundledToolsManager::instance();
     if (tools.toolExists(QStringLiteral("chocolatey"), QStringLiteral("choco.exe"))) {
         choco_path = tools.toolPath(QStringLiteral("chocolatey"), QStringLiteral("choco.exe"));
     } else {
@@ -253,8 +246,9 @@ std::vector<AppScanner::AppInfo> AppScanner::scanChocolatey() {
         return apps;
     }
     if (!process.waitForFinished(sak::kTimeoutProcessMediumMs)) {
-        sak::logWarning("Chocolatey package scan timed out after 10s — choco may not be installed "
-                        "or is unresponsive");
+        sak::logWarning(
+            "Chocolatey package scan timed out after 10s — choco may not be installed "
+            "or is unresponsive");
         process.kill();
         return apps;
     }
@@ -283,4 +277,4 @@ std::vector<AppScanner::AppInfo> AppScanner::scanChocolatey() {
     return apps;
 }
 
-} // namespace sak
+}  // namespace sak

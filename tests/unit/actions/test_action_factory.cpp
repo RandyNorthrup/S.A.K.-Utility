@@ -1,10 +1,11 @@
 // Copyright (c) 2025-2026 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-#include <QTest>
-#include <QSet>
 #include "sak/actions/action_factory.h"
 #include "sak/quick_action.h"
+
+#include <QSet>
+#include <QTest>
 
 using namespace sak;
 
@@ -49,8 +50,7 @@ private:
     int countByCategory(QuickAction::ActionCategory cat) const;
 };
 
-void TestActionFactory::initTestCase()
-{
+void TestActionFactory::initTestCase() {
     m_actions = ActionFactory::createAllActions(QStringLiteral("C:/SAK_Test_Backups"));
 }
 
@@ -58,23 +58,20 @@ void TestActionFactory::initTestCase()
 // Factory completeness
 // ============================================================================
 
-void TestActionFactory::testFactoryCreatesActions()
-{
+void TestActionFactory::testFactoryCreatesActions() {
     // Factory must produce a non-trivial set of actions
     QVERIFY2(!m_actions.empty(), "ActionFactory returned zero actions");
     QVERIFY2(m_actions.size() > 10, "ActionFactory returned suspiciously few actions");
 }
 
-void TestActionFactory::testNoNullActions()
-{
+void TestActionFactory::testNoNullActions() {
     for (size_t i = 0; i < m_actions.size(); ++i) {
         QVERIFY2(m_actions[i] != nullptr,
                  qPrintable(QStringLiteral("Action at index %1 is null").arg(i)));
     }
 }
 
-void TestActionFactory::testNoDuplicateNames()
-{
+void TestActionFactory::testNoDuplicateNames() {
     QSet<QString> names;
     for (const auto& action : m_actions) {
         const QString n = action->name();
@@ -89,40 +86,35 @@ void TestActionFactory::testNoDuplicateNames()
 // Metadata validity
 // ============================================================================
 
-void TestActionFactory::testAllNamesNonEmpty()
-{
+void TestActionFactory::testAllNamesNonEmpty() {
     for (const auto& action : m_actions) {
-        QVERIFY2(!action->name().isEmpty(),
-                 "Action has empty name()");
+        QVERIFY2(!action->name().isEmpty(), "Action has empty name()");
     }
 }
 
-void TestActionFactory::testAllDescriptionsNonEmpty()
-{
+void TestActionFactory::testAllDescriptionsNonEmpty() {
     for (const auto& action : m_actions) {
         QVERIFY2(!action->description().isEmpty(),
-                 qPrintable(QStringLiteral("Action '%1' has empty description()")
-                            .arg(action->name())));
+                 qPrintable(
+                     QStringLiteral("Action '%1' has empty description()").arg(action->name())));
     }
 }
 
-void TestActionFactory::testAllCategoriesValid()
-{
+void TestActionFactory::testAllCategoriesValid() {
     for (const auto& action : m_actions) {
         const auto cat = action->category();
-        QVERIFY2(cat == QuickAction::ActionCategory::SystemOptimization
-              || cat == QuickAction::ActionCategory::QuickBackup
-              || cat == QuickAction::ActionCategory::Maintenance
-              || cat == QuickAction::ActionCategory::Troubleshooting
-              || cat == QuickAction::ActionCategory::EmergencyRecovery,
+        QVERIFY2(cat == QuickAction::ActionCategory::SystemOptimization ||
+                     cat == QuickAction::ActionCategory::QuickBackup ||
+                     cat == QuickAction::ActionCategory::Maintenance ||
+                     cat == QuickAction::ActionCategory::Troubleshooting ||
+                     cat == QuickAction::ActionCategory::EmergencyRecovery,
                  qPrintable(QStringLiteral("Action '%1' has unknown category %2")
-                            .arg(action->name())
-                            .arg(static_cast<int>(cat))));
+                                .arg(action->name())
+                                .arg(static_cast<int>(cat))));
     }
 }
 
-void TestActionFactory::testRequiresAdminIsBool()
-{
+void TestActionFactory::testRequiresAdminIsBool() {
     // Ensure every action returns a definitive bool (no crash / UB)
     for (const auto& action : m_actions) {
         const bool val = action->requiresAdmin();
@@ -134,8 +126,7 @@ void TestActionFactory::testRequiresAdminIsBool()
 // Category distribution
 // ============================================================================
 
-int TestActionFactory::countByCategory(QuickAction::ActionCategory cat) const
-{
+int TestActionFactory::countByCategory(QuickAction::ActionCategory cat) const {
     int count = 0;
     for (const auto& action : m_actions) {
         if (action->category() == cat) {
@@ -145,8 +136,7 @@ int TestActionFactory::countByCategory(QuickAction::ActionCategory cat) const
     return count;
 }
 
-void TestActionFactory::testAllCategoriesPopulated()
-{
+void TestActionFactory::testAllCategoriesPopulated() {
     // Every defined category must have at least one registered action.
     // No hardcoded counts — the factory is the source of truth.
     const std::vector<QuickAction::ActionCategory> categories = {
@@ -161,8 +151,8 @@ void TestActionFactory::testAllCategoriesPopulated()
     for (const auto cat : categories) {
         const int n = countByCategory(cat);
         QVERIFY2(n > 0,
-                 qPrintable(QStringLiteral("Category %1 has zero actions")
-                            .arg(static_cast<int>(cat))));
+                 qPrintable(
+                     QStringLiteral("Category %1 has zero actions").arg(static_cast<int>(cat))));
         categorized_total += n;
     }
 
@@ -174,30 +164,28 @@ void TestActionFactory::testAllCategoriesPopulated()
 // Initial state
 // ============================================================================
 
-void TestActionFactory::testInitialStatusIsIdle()
-{
+void TestActionFactory::testInitialStatusIsIdle() {
     for (const auto& action : m_actions) {
         QVERIFY2(action->status() == QuickAction::ActionStatus::Idle,
-                 qPrintable(QStringLiteral("Action '%1' initial status is not Idle")
-                            .arg(action->name())));
+                 qPrintable(
+                     QStringLiteral("Action '%1' initial status is not Idle").arg(action->name())));
     }
 }
 
-void TestActionFactory::testInitialScanResultNotApplicable()
-{
+void TestActionFactory::testInitialScanResultNotApplicable() {
     for (const auto& action : m_actions) {
-        QVERIFY2(!action->lastScanResult().applicable,
-                 qPrintable(QStringLiteral("Action '%1' initial scan claims applicable")
-                            .arg(action->name())));
+        QVERIFY2(
+            !action->lastScanResult().applicable,
+            qPrintable(
+                QStringLiteral("Action '%1' initial scan claims applicable").arg(action->name())));
     }
 }
 
-void TestActionFactory::testInitialExecutionResultNotSuccess()
-{
+void TestActionFactory::testInitialExecutionResultNotSuccess() {
     for (const auto& action : m_actions) {
         QVERIFY2(!action->lastExecutionResult().success,
                  qPrintable(QStringLiteral("Action '%1' initial execution claims success")
-                            .arg(action->name())));
+                                .arg(action->name())));
     }
 }
 
@@ -205,8 +193,7 @@ void TestActionFactory::testInitialExecutionResultNotSuccess()
 // Cleanup
 // ============================================================================
 
-void TestActionFactory::cleanupTestCase()
-{
+void TestActionFactory::cleanupTestCase() {
     m_actions.clear();
 }
 

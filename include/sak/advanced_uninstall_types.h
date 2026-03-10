@@ -26,21 +26,21 @@ struct ProgramInfo {
     QString displayName;
     QString publisher;
     QString displayVersion;
-    QString installDate;        ///< YYYYMMDD or localized
+    QString installDate;  ///< YYYYMMDD or localized
 
     // Paths
     QString installLocation;
     QString uninstallString;
     QString quietUninstallString;
     QString modifyPath;
-    QString displayIcon;        ///< Path to icon resource
+    QString displayIcon;  ///< Path to icon resource
 
     // Registry
-    QString registryKeyPath;    ///< Full registry key path
+    QString registryKeyPath;  ///< Full registry key path
 
     // Metadata
-    qint64 estimatedSizeKB = 0; ///< From registry EstimatedSize
-    qint64 actualSizeBytes = 0; ///< Calculated disk usage
+    qint64 estimatedSizeKB = 0;  ///< From registry EstimatedSize
+    qint64 actualSizeBytes = 0;  ///< Calculated disk usage
 
     // Classification
     enum class Source {
@@ -69,9 +69,9 @@ struct ProgramInfo {
 
 /// @brief Scan level for leftover detection
 enum class ScanLevel {
-    Safe,       ///< Only obvious leftovers in known locations (fast)
-    Moderate,   ///< Extended scanning with pattern matching (recommended)
-    Advanced    ///< Deep scan including services, tasks, firewall, shell extensions
+    Safe,      ///< Only obvious leftovers in known locations (fast)
+    Moderate,  ///< Extended scanning with pattern matching (recommended)
+    Advanced   ///< Deep scan including services, tasks, firewall, shell extensions
 };
 
 // ── LeftoverItem ────────────────────────────────────────────────────────────
@@ -91,9 +91,9 @@ struct LeftoverItem {
     };
 
     enum class RiskLevel {
-        Safe,       ///< Green — clearly belongs to the uninstalled app
-        Review,     ///< Yellow — likely belongs, but shared component possible
-        Risky       ///< Red — may be shared or system-related
+        Safe,    ///< Green — clearly belongs to the uninstalled app
+        Review,  ///< Yellow — likely belongs, but shared component possible
+        Risky    ///< Red — may be shared or system-related
     };
 
     Type type = Type::File;
@@ -129,7 +129,7 @@ struct UninstallReport {
         Success,
         Failed,
         Cancelled,
-        Skipped     ///< Forced uninstall — no native uninstaller run
+        Skipped  ///< Forced uninstall — no native uninstaller run
     };
     UninstallResult uninstallResult = UninstallResult::Success;
     int nativeExitCode = 0;
@@ -194,7 +194,7 @@ static_assert(std::is_copy_constructible_v<UninstallReport>);
 static_assert(std::is_default_constructible_v<UninstallQueueItem>);
 static_assert(std::is_copy_constructible_v<UninstallQueueItem>);
 
-} // namespace sak
+}  // namespace sak
 
 Q_DECLARE_METATYPE(sak::ProgramInfo)
 Q_DECLARE_METATYPE(sak::LeftoverItem)

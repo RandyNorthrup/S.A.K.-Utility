@@ -4,9 +4,9 @@
 /// @file test_diagnostic_types.cpp
 /// @brief Unit tests for diagnostic data structures â€” defaults, construction, value semantics
 
-#include <QtTest/QtTest>
-
 #include "sak/diagnostic_types.h"
+
+#include <QtTest/QtTest>
 
 using namespace sak;
 
@@ -28,8 +28,7 @@ private Q_SLOTS:
     void smartHealthStatus_enum();
 };
 
-void DiagnosticTypesTests::cpuBenchmarkResult_defaults()
-{
+void DiagnosticTypesTests::cpuBenchmarkResult_defaults() {
     CpuBenchmarkResult r;
     QCOMPARE(r.prime_sieve_time_ms, 0.0);
     QCOMPARE(r.matrix_multiply_time_ms, 0.0);
@@ -39,8 +38,7 @@ void DiagnosticTypesTests::cpuBenchmarkResult_defaults()
     QVERIFY(!r.thermal_throttle_detected);
 }
 
-void DiagnosticTypesTests::diskBenchmarkConfig_defaults()
-{
+void DiagnosticTypesTests::diskBenchmarkConfig_defaults() {
     DiskBenchmarkConfig c;
     QVERIFY(c.drive_path.isEmpty());
     QCOMPARE(c.test_file_size_mb, uint64_t(1024));
@@ -50,8 +48,7 @@ void DiagnosticTypesTests::diskBenchmarkConfig_defaults()
     QCOMPARE(c.random_duration_sec, 30);
 }
 
-void DiagnosticTypesTests::diskBenchmarkResult_defaults()
-{
+void DiagnosticTypesTests::diskBenchmarkResult_defaults() {
     DiskBenchmarkResult r;
     QCOMPARE(r.seq_read_mbps, 0.0);
     QCOMPARE(r.seq_write_mbps, 0.0);
@@ -60,8 +57,7 @@ void DiagnosticTypesTests::diskBenchmarkResult_defaults()
     QCOMPARE(r.overall_score, 0);
 }
 
-void DiagnosticTypesTests::memoryBenchmarkResult_defaults()
-{
+void DiagnosticTypesTests::memoryBenchmarkResult_defaults() {
     MemoryBenchmarkResult r;
     QCOMPARE(r.read_bandwidth_gbps, 0.0);
     QCOMPARE(r.write_bandwidth_gbps, 0.0);
@@ -69,8 +65,7 @@ void DiagnosticTypesTests::memoryBenchmarkResult_defaults()
     QCOMPARE(r.overall_score, 0);
 }
 
-void DiagnosticTypesTests::stressTestConfig_defaults()
-{
+void DiagnosticTypesTests::stressTestConfig_defaults() {
     StressTestConfig c;
     QVERIFY(c.stress_cpu);
     QVERIFY(c.stress_memory);
@@ -81,8 +76,7 @@ void DiagnosticTypesTests::stressTestConfig_defaults()
     QVERIFY(c.abort_on_error);
 }
 
-void DiagnosticTypesTests::stressTestResult_defaults()
-{
+void DiagnosticTypesTests::stressTestResult_defaults() {
     StressTestResult r;
     QVERIFY(!r.passed);
     QCOMPARE(r.duration_seconds, 0);
@@ -92,8 +86,7 @@ void DiagnosticTypesTests::stressTestResult_defaults()
     QVERIFY(r.abort_reason.isEmpty());
 }
 
-void DiagnosticTypesTests::thermalReading_construction()
-{
+void DiagnosticTypesTests::thermalReading_construction() {
     ThermalReading reading;
     reading.component = "CPU Package";
     reading.temperature_celsius = 65.5;
@@ -104,8 +97,7 @@ void DiagnosticTypesTests::thermalReading_construction()
     QVERIFY(reading.timestamp.isValid());
 }
 
-void DiagnosticTypesTests::hardwareInventory_defaults()
-{
+void DiagnosticTypesTests::hardwareInventory_defaults() {
     HardwareInventory inv;
     QVERIFY(inv.cpu.name.isEmpty());
     QCOMPARE(inv.cpu.cores, 0u);
@@ -116,8 +108,7 @@ void DiagnosticTypesTests::hardwareInventory_defaults()
     QCOMPARE(inv.uptime_seconds, uint64_t(0));
 }
 
-void DiagnosticTypesTests::smartReport_defaults()
-{
+void DiagnosticTypesTests::smartReport_defaults() {
     SmartReport r;
     QCOMPARE(r.overall_health, SmartHealthStatus::Unknown);
     QCOMPARE(r.power_on_hours, int64_t(0));
@@ -127,8 +118,7 @@ void DiagnosticTypesTests::smartReport_defaults()
     QVERIFY(r.recommendations.isEmpty());
 }
 
-void DiagnosticTypesTests::reportData_defaults()
-{
+void DiagnosticTypesTests::reportData_defaults() {
     DiagnosticReportData d;
     QCOMPARE(d.overall_status, DiagnosticStatus::AllPassed);
     QVERIFY(d.critical_issues.isEmpty());
@@ -140,14 +130,12 @@ void DiagnosticTypesTests::reportData_defaults()
     QVERIFY(!d.stress_test.has_value());
 }
 
-void DiagnosticTypesTests::diagnosticStatus_enum()
-{
+void DiagnosticTypesTests::diagnosticStatus_enum() {
     QVERIFY(DiagnosticStatus::AllPassed != DiagnosticStatus::Warnings);
     QVERIFY(DiagnosticStatus::Warnings != DiagnosticStatus::CriticalIssues);
 }
 
-void DiagnosticTypesTests::smartHealthStatus_enum()
-{
+void DiagnosticTypesTests::smartHealthStatus_enum() {
     QVERIFY(SmartHealthStatus::Healthy != SmartHealthStatus::Warning);
     QVERIFY(SmartHealthStatus::Warning != SmartHealthStatus::Critical);
     QVERIFY(SmartHealthStatus::Critical != SmartHealthStatus::Unknown);

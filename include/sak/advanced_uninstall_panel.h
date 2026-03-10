@@ -156,6 +156,8 @@ private:
     // ── Table Population ──
     void populateProgramTable(const QVector<ProgramInfo>& programs);
     void populateLeftoverTable(const QVector<LeftoverItem>& leftovers);
+    void populateLeftoverRow(int row, const LeftoverItem& item);
+    QString leftoverTypeText(LeftoverItem::Type type) const;
     void clearLeftoverTable();
 
     // ── Filtering & Sorting ──
@@ -206,9 +208,9 @@ private:
     LogToggleSwitch* m_log_toggle{nullptr};
 
     // ── Data ──
-    QVector<ProgramInfo> m_allPrograms;      ///< Full unfiltered list
-    QVector<ProgramInfo> m_filteredPrograms;  ///< Currently displayed programs
-    QVector<LeftoverItem> m_currentLeftovers; ///< Current leftover scan results
+    QVector<ProgramInfo> m_allPrograms;        ///< Full unfiltered list
+    QVector<ProgramInfo> m_filteredPrograms;   ///< Currently displayed programs
+    QVector<LeftoverItem> m_currentLeftovers;  ///< Current leftover scan results
     QString m_searchFilter;
     ViewFilter m_viewFilter = ViewFilter::All;
 
@@ -233,8 +235,8 @@ private:
 // ── Compile-Time Invariants ─────────────────────────────────────────────────
 
 static_assert(std::is_base_of_v<QWidget, AdvancedUninstallPanel>,
-    "AdvancedUninstallPanel must inherit QWidget.");
+              "AdvancedUninstallPanel must inherit QWidget.");
 static_assert(!std::is_copy_constructible_v<AdvancedUninstallPanel>,
-    "AdvancedUninstallPanel must not be copy-constructible.");
+              "AdvancedUninstallPanel must not be copy-constructible.");
 
-} // namespace sak
+}  // namespace sak

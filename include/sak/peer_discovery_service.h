@@ -3,16 +3,17 @@
 
 #pragma once
 
-#include <QObject>
-#include <QUdpSocket>
-#include <QTimer>
 #include <QHostAddress>
+#include <QObject>
+#include <QTimer>
+#include <QUdpSocket>
+
 #include <atomic>
 
 class QNetworkInterface;
 
-#include "sak/network_transfer_types.h"
 #include "sak/network_constants.h"
+#include "sak/network_transfer_types.h"
 
 namespace sak {
 
@@ -49,4 +50,4 @@ private:
     std::atomic<bool> m_running{false};
 };
 
-} // namespace sak
+}  // namespace sak

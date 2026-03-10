@@ -3,19 +3,22 @@
 
 #pragma once
 
-#include <QWidget>
-#include <QPushButton>
-#include <QLabel>
 #include <QCheckBox>
-#include <QTextEdit>
-#include <QTableView>
-#include <QStandardItemModel>
-#include <QLineEdit>
 #include <QComboBox>
+#include <QLabel>
+#include <QLineEdit>
+#include <QPushButton>
 #include <QSpinBox>
+#include <QStandardItemModel>
+#include <QTableView>
+#include <QTextEdit>
 #include <QVBoxLayout>
+#include <QWidget>
+
 #include <memory>
 #include <vector>
+
+class QFrame;
 
 namespace sak {
 class UserDataManager;
@@ -23,14 +26,14 @@ class LogToggleSwitch;
 
 /**
  * @brief Windows User Migration Panel
- * 
+ *
  * Provides comprehensive user profile migration and restore functionality:
  * - User-friendly backup wizard with automatic profile scanning
  * - Intelligent folder selection (Documents, Desktop, Pictures, etc.)
  * - Permission handling and elevation when needed
  * - Restore wizard with user mapping and conflict resolution
  * - Detailed operation logging and progress tracking
- * 
+ *
  * Similar to Application Installation panel but for user data.
  */
 class UserMigrationPanel : public QWidget {
@@ -70,6 +73,16 @@ private Q_SLOTS:
 private:
     void setupUi();
     void createMigrationCards(QWidget* parent, QVBoxLayout* layout);
+    QFrame* createMigrationCard(QWidget* parent,
+                                 const QString& card_style,
+                                 const QString& icon,
+                                 const QString& title,
+                                 const QString& desc,
+                                 QPushButton*& btn,
+                                 const QString& btn_text,
+                                 const QString& btn_style,
+                                 const QString& tip,
+                                 const QString& acc);
     void setupConnections();
     void appendLog(const QString& message);
 
@@ -77,9 +90,9 @@ private:
     QPushButton* m_backupButton{nullptr};
     QPushButton* m_restoreButton{nullptr};
     LogToggleSwitch* m_logToggle{nullptr};
-    
+
     // Data
     std::shared_ptr<UserDataManager> m_dataManager;
 };
 
-} // namespace sak
+}  // namespace sak

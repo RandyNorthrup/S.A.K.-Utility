@@ -4,9 +4,9 @@
 /// @file test_thermal_monitor.cpp
 /// @brief Unit tests for ThermalMonitor timer behavior and polling
 
-#include <QtTest/QtTest>
-
 #include "sak/thermal_monitor.h"
+
+#include <QtTest/QtTest>
 
 using namespace sak;
 
@@ -21,15 +21,13 @@ private Q_SLOTS:
     void singleShotTimerBehavior();
 };
 
-void ThermalMonitorTests::initialState()
-{
+void ThermalMonitorTests::initialState() {
     ThermalMonitor monitor;
     QVERIFY(!monitor.isRunning());
     QVERIFY(monitor.history().isEmpty());
 }
 
-void ThermalMonitorTests::startStop()
-{
+void ThermalMonitorTests::startStop() {
     ThermalMonitor monitor;
     monitor.start(500);  // 500ms interval
 
@@ -40,8 +38,7 @@ void ThermalMonitorTests::startStop()
     QVERIFY(!monitor.isRunning());
 }
 
-void ThermalMonitorTests::pollOnceReturnsReadings()
-{
+void ThermalMonitorTests::pollOnceReturnsReadings() {
     ThermalMonitor monitor;
     // pollOnce should return without crashing even if WMI is unavailable
     // (returns -1.0 for unavailable sensors, which are filtered out)
@@ -51,8 +48,7 @@ void ThermalMonitorTests::pollOnceReturnsReadings()
     QVERIFY(true);
 }
 
-void ThermalMonitorTests::clearHistory()
-{
+void ThermalMonitorTests::clearHistory() {
     ThermalMonitor monitor;
     // Start briefly to accumulate some history
     monitor.start(100);
@@ -64,8 +60,7 @@ void ThermalMonitorTests::clearHistory()
     QVERIFY(monitor.history().isEmpty());
 }
 
-void ThermalMonitorTests::singleShotTimerBehavior()
-{
+void ThermalMonitorTests::singleShotTimerBehavior() {
     // Verify the timer doesn't accumulate concurrent polls.
     // Start with short interval, wait, then verify history grows linearly.
     ThermalMonitor monitor;

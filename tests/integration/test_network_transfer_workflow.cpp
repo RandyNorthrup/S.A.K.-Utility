@@ -1,20 +1,20 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-#include <QtTest/QtTest>
-#include <QTemporaryDir>
+#include "sak/file_hash.h"
+#include "sak/network_transfer_controller.h"
+#include "sak/network_transfer_types.h"
+
 #include <QDir>
+#include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
 #include <QSignalSpy>
 #include <QTcpServer>
-#include <QElapsedTimer>
+#include <QTemporaryDir>
+#include <QtTest/QtTest>
 
 #include <optional>
-
-#include "sak/network_transfer_controller.h"
-#include "sak/network_transfer_types.h"
-#include "sak/file_hash.h"
 
 using namespace sak;
 
@@ -47,8 +47,7 @@ QByteArray makeRepeatedData(const QByteArray& seed, int repeatCount) {
     return data;
 }
 
-TransferPeerInfo makeLocalDestinationPeer(quint16 controlPort, quint16 dataPort)
-{
+TransferPeerInfo makeLocalDestinationPeer(quint16 controlPort, quint16 dataPort) {
     TransferPeerInfo peer;
     peer.ip_address = "127.0.0.1";
     peer.control_port = controlPort;
@@ -57,9 +56,10 @@ TransferPeerInfo makeLocalDestinationPeer(quint16 controlPort, quint16 dataPort)
     return peer;
 }
 
-TransferSettings makeBasicSettings(quint16 controlPort, quint16 dataPort,
-    bool resumeEnabled, int maxBandwidthKbps = 0)
-{
+TransferSettings makeBasicSettings(quint16 controlPort,
+                                   quint16 dataPort,
+                                   bool resumeEnabled,
+                                   int maxBandwidthKbps = 0) {
     TransferSettings settings;
     settings.encryption_enabled = true;
     settings.compression_enabled = false;
@@ -72,28 +72,24 @@ TransferSettings makeBasicSettings(quint16 controlPort, quint16 dataPort,
     return settings;
 }
 
-BackupUserData makeTestUserData()
-{
+BackupUserData makeTestUserData() {
     BackupUserData user;
     user.username = "TestUser";
     user.permissions_mode = PermissionMode::StripAll;
     return user;
 }
 
-std::optional<QString> computeSha256(const QString& absolutePath)
-{
+std::optional<QString> computeSha256(const QString& absolutePath) {
     file_hasher hasher(hash_algorithm::sha256);
-    auto hashResult = hasher.calculateHash(
-        std::filesystem::path(absolutePath.toStdString()));
+    auto hashResult = hasher.calculateHash(std::filesystem::path(absolutePath.toStdString()));
     if (!hashResult.has_value()) {
         return std::nullopt;
     }
     return QString::fromStdString(*hashResult);
 }
 
-std::optional<TransferFileEntry> makeEntryForFile(
-    const QString& absolutePath, const QString& relativePath)
-{
+std::optional<TransferFileEntry> makeEntryForFile(const QString& absolutePath,
+                                                  const QString& relativePath) {
     const auto checksum = computeSha256(absolutePath);
     if (!checksum.has_value()) {
         return std::nullopt;
@@ -108,8 +104,7 @@ std::optional<TransferFileEntry> makeEntryForFile(
     return entry;
 }
 
-TransferManifest makeTestManifest(const QVector<TransferFileEntry>& entries, qint64 totalBytes)
-{
+TransferManifest makeTestManifest(const QVector<TransferFileEntry>& entries, qint64 totalBytes) {
     TransferManifest manifest;
     manifest.transfer_id = QUuid::createUuid().toString(QUuid::WithoutBraces);
     manifest.source_hostname = "TEST-SOURCE";
@@ -129,9 +124,11 @@ struct GeneratedEntries {
 };
 
 std::optional<GeneratedEntries> generateTextEntries(const QString& sourceDirPath,
-    const QString& userRoot, const QString& fileStem, int count, int width,
-    const QByteArray& dataPrefix)
-{
+                                                    const QString& userRoot,
+                                                    const QString& fileStem,
+                                                    int count,
+                                                    int width,
+                                                    const QByteArray& dataPrefix) {
     GeneratedEntries out;
     QDir sourceRoot(sourceDirPath);
     if (!sourceRoot.mkpath(userRoot)) {
@@ -142,10 +139,8 @@ std::optional<GeneratedEntries> generateTextEntries(const QString& sourceDirPath
     out.entries.reserve(count);
 
     for (int i = 0; i < count; ++i) {
-        const QString rel = QString("%1/%2_%3.txt")
-            .arg(userRoot)
-            .arg(fileStem)
-            .arg(i, width, 10, QLatin1Char('0'));
+        const QString rel =
+            QString("%1/%2_%3.txt").arg(userRoot).arg(fileStem).arg(i, width, 10, QLatin1Char('0'));
         out.relativePaths.append(rel);
 
         const QString sourcePath = QDir(sourceDirPath).filePath(rel);
@@ -175,13 +170,12 @@ struct TransferEndpoints {
     explicit TransferEndpoints(const TransferSettings& settings)
         : manifestSpy(&destination, &NetworkTransferController::manifestReceived)
         , destCompletedSpy(&destination, &NetworkTransferController::transferCompleted)
-        , sourceCompletedSpy(&source, &NetworkTransferController::transferCompleted)
-    {
+        , sourceCompletedSpy(&source, &NetworkTransferController::transferCompleted) {
         destination.configure(settings);
         source.configure(settings);
     }
 };
-}
+}  // namespace
 
 class NetworkTransferWorkflowTests : public QObject {
     Q_OBJECT
@@ -238,13 +232,15 @@ void NetworkTransferWorkflowTests::transferEncryptedFiles() {
 
     source.startSource(manifest, {entry}, peer, passphrase);
 
-    QVERIFY(manifestSpy.wait(15000));
+    QVERIFY(manifestSpy.wait(15'000));
     destination.approveTransfer(true);
 
     QTRY_VERIFY2_WITH_TIMEOUT(destCompletedSpy.count() >= 1,
-        "Destination transfer should complete", 30000);
-    QTRY_VERIFY2_WITH_TIMEOUT(sourceCompletedSpy.count() >= 1, "Source transfer should complete",
-        30000);
+                              "Destination transfer should complete",
+                              30'000);
+    QTRY_VERIFY2_WITH_TIMEOUT(sourceCompletedSpy.count() >= 1,
+                              "Source transfer should complete",
+                              30'000);
 
     const auto destArgs = destCompletedSpy.takeFirst();
     QVERIFY(destArgs.at(0).toBool());
@@ -269,8 +265,8 @@ void NetworkTransferWorkflowTests::transferMultipleFiles() {
     QVERIFY(destDir.isValid());
 
     const QString userRoot = "TestUser/Documents";
-    const auto generated = generateTextEntries(
-        sourceDir.path(), userRoot, "file", 25, 3, QByteArray("data:"));
+    const auto generated =
+        generateTextEntries(sourceDir.path(), userRoot, "file", 25, 3, QByteArray("data:"));
     QVERIFY(generated.has_value());
 
     const QStringList relativePaths = generated->relativePaths;
@@ -303,13 +299,15 @@ void NetworkTransferWorkflowTests::transferMultipleFiles() {
 
     source.startSource(manifest, entries, peer, passphrase);
 
-    QVERIFY(manifestSpy.wait(15000));
+    QVERIFY(manifestSpy.wait(15'000));
     destination.approveTransfer(true);
 
     QTRY_VERIFY2_WITH_TIMEOUT(destCompletedSpy.count() >= 1,
-        "Destination transfer should complete", 60000);
-    QTRY_VERIFY2_WITH_TIMEOUT(sourceCompletedSpy.count() >= 1, "Source transfer should complete",
-        60000);
+                              "Destination transfer should complete",
+                              60'000);
+    QTRY_VERIFY2_WITH_TIMEOUT(sourceCompletedSpy.count() >= 1,
+                              "Source transfer should complete",
+                              60'000);
 
     const auto destArgs = destCompletedSpy.takeFirst();
     QVERIFY(destArgs.at(0).toBool());
@@ -336,8 +334,8 @@ void NetworkTransferWorkflowTests::transferManySmallFiles() {
     QVERIFY(destDir.isValid());
 
     const QString userRoot = "TestUser/Documents";
-    const auto generated = generateTextEntries(
-        sourceDir.path(), userRoot, "small", 200, 4, QByteArray("s"));
+    const auto generated =
+        generateTextEntries(sourceDir.path(), userRoot, "small", 200, 4, QByteArray("s"));
     QVERIFY(generated.has_value());
 
     const QStringList relativePaths = generated->relativePaths;
@@ -368,13 +366,15 @@ void NetworkTransferWorkflowTests::transferManySmallFiles() {
 
     source.startSource(manifest, entries, peer, passphrase);
 
-    QVERIFY(manifestSpy.wait(15000));
+    QVERIFY(manifestSpy.wait(15'000));
     destination.approveTransfer(true);
 
     QTRY_VERIFY2_WITH_TIMEOUT(destCompletedSpy.count() >= 1,
-        "Destination transfer should complete", 60000);
-    QTRY_VERIFY2_WITH_TIMEOUT(sourceCompletedSpy.count() >= 1, "Source transfer should complete",
-        60000);
+                              "Destination transfer should complete",
+                              60'000);
+    QTRY_VERIFY2_WITH_TIMEOUT(sourceCompletedSpy.count() >= 1,
+                              "Source transfer should complete",
+                              60'000);
 
     const auto destArgs = destCompletedSpy.takeFirst();
     QVERIFY(destArgs.at(0).toBool());
@@ -394,14 +394,16 @@ void NetworkTransferWorkflowTests::transferManySmallFiles() {
 
 void NetworkTransferWorkflowTests::resumeInterruptedTransfer() {
     QTemporaryDir sourceDir, destDir;
-    QVERIFY(sourceDir.isValid()); QVERIFY(destDir.isValid());
+    QVERIFY(sourceDir.isValid());
+    QVERIFY(destDir.isValid());
 
     const QString relativePath = "TestUser/Documents/large.bin";
     const QString sourcePath = QDir(sourceDir.path()).filePath(relativePath);
 
-    QDir sourceRoot(sourceDir.path()); QVERIFY(sourceRoot.mkpath("TestUser/Documents"));
+    QDir sourceRoot(sourceDir.path());
+    QVERIFY(sourceRoot.mkpath("TestUser/Documents"));
 
-    const QByteArray payload = makeRepeatedData("SAK", 200000); // ~600 KB
+    const QByteArray payload = makeRepeatedData("SAK", 200'000);  // ~600 KB
     QVERIFY(writeFile(sourcePath, payload));
 
     const auto entryOpt = makeEntryForFile(sourcePath, relativePath);
@@ -410,7 +412,8 @@ void NetworkTransferWorkflowTests::resumeInterruptedTransfer() {
     const TransferManifest manifest = makeTestManifest({entry}, entry.size_bytes);
 
     const quint16 controlPort = pickFreePort(), dataPort = pickFreePort();
-    QVERIFY(controlPort != 0); QVERIFY(dataPort != 0);
+    QVERIFY(controlPort != 0);
+    QVERIFY(dataPort != 0);
 
     TransferSettings settings = makeBasicSettings(controlPort, dataPort, true, 32);
 
@@ -422,11 +425,11 @@ void NetworkTransferWorkflowTests::resumeInterruptedTransfer() {
     const TransferPeerInfo peer = makeLocalDestinationPeer(controlPort, dataPort);
     endpoints.source.startSource(manifest, {entry}, peer, passphrase);
 
-    QVERIFY(endpoints.manifestSpy.wait(15000));
+    QVERIFY(endpoints.manifestSpy.wait(15'000));
     endpoints.destination.approveTransfer(true);
 
-    QTRY_VERIFY2_WITH_TIMEOUT(progressSpy.count() >= 1, "Should receive progress update", 15000);
-    QTest::qWait(3000); // Wait enough for resume timer (2s interval) to save state
+    QTRY_VERIFY2_WITH_TIMEOUT(progressSpy.count() >= 1, "Should receive progress update", 15'000);
+    QTest::qWait(3000);  // Wait enough for resume timer (2s interval) to save state
     endpoints.source.stop();
     endpoints.destination.stop();
 
@@ -435,18 +438,20 @@ void NetworkTransferWorkflowTests::resumeInterruptedTransfer() {
     QVERIFY(QFileInfo::exists(partialPath));
     QVERIFY(QFileInfo::exists(resumePath));
 
-    settings.max_bandwidth_kbps = 0; // No throttle for resume transfer
+    settings.max_bandwidth_kbps = 0;  // No throttle for resume transfer
     TransferEndpoints resumeEndpoints(settings);
     resumeEndpoints.destination.startDestination(passphrase, destDir.path());
     resumeEndpoints.source.startSource(manifest, {entry}, peer, passphrase);
 
-    QVERIFY(resumeEndpoints.manifestSpy.wait(15000));
+    QVERIFY(resumeEndpoints.manifestSpy.wait(15'000));
     resumeEndpoints.destination.approveTransfer(true);
 
     QTRY_VERIFY2_WITH_TIMEOUT(resumeEndpoints.destCompletedSpy.count() >= 1,
-        "Destination resume transfer should complete", 60000);
+                              "Destination resume transfer should complete",
+                              60'000);
     QTRY_VERIFY2_WITH_TIMEOUT(resumeEndpoints.sourceCompletedSpy.count() >= 1,
-        "Source resume transfer should complete", 60000);
+                              "Source resume transfer should complete",
+                              60'000);
 
     const auto destArgs = resumeEndpoints.destCompletedSpy.takeFirst();
     QVERIFY2(destArgs.at(0).toBool(), "Destination must report success after resume");
@@ -475,7 +480,7 @@ void NetworkTransferWorkflowTests::throttledTransferRespectsLimit() {
     QDir sourceRoot(sourceDir.path());
     QVERIFY(sourceRoot.mkpath("TestUser/Documents"));
 
-    const QByteArray payload = makeRepeatedData("THROTTLE", 20000); // ~160 KB
+    const QByteArray payload = makeRepeatedData("THROTTLE", 20'000);  // ~160 KB
     QVERIFY(writeFile(sourcePath, payload));
 
     const auto entryOpt = makeEntryForFile(sourcePath, relativePath);
@@ -502,13 +507,15 @@ void NetworkTransferWorkflowTests::throttledTransferRespectsLimit() {
 
     endpoints.source.startSource(manifest, {entry}, peer, passphrase);
 
-    QVERIFY(endpoints.manifestSpy.wait(15000));
+    QVERIFY(endpoints.manifestSpy.wait(15'000));
     endpoints.destination.approveTransfer(true);
 
     QTRY_VERIFY2_WITH_TIMEOUT(endpoints.destCompletedSpy.count() >= 1,
-        "Destination throttled transfer should complete", 60000);
+                              "Destination throttled transfer should complete",
+                              60'000);
     QTRY_VERIFY2_WITH_TIMEOUT(endpoints.sourceCompletedSpy.count() >= 1,
-        "Source throttled transfer should complete", 60000);
+                              "Source throttled transfer should complete",
+                              60'000);
 
     const auto destArgs = endpoints.destCompletedSpy.takeFirst();
     QVERIFY(destArgs.at(0).toBool());

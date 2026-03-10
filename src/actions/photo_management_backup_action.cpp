@@ -5,20 +5,19 @@
 /// @brief Implements photo library catalog backup for management applications
 
 #include "sak/actions/photo_management_backup_action.h"
+
+#include "sak/layout_constants.h"
+#include "sak/logger.h"
 #include "sak/windows_user_scanner.h"
+
 #include <QDir>
 #include <QDirIterator>
-#include "sak/logger.h"
-#include "sak/layout_constants.h"
 
 namespace sak {
 
 PhotoManagementBackupAction::PhotoManagementBackupAction(const QString& backup_location,
-    QObject* parent)
-    : QuickAction(parent)
-    , m_backup_location(backup_location)
-{
-}
+                                                         QObject* parent)
+    : QuickAction(parent), m_backup_location(backup_location) {}
 
 void PhotoManagementBackupAction::scanLightroomCatalogs() {
     for (const UserProfile& user : m_user_profiles) {
@@ -27,17 +26,19 @@ void PhotoManagementBackupAction::scanLightroomCatalogs() {
 }
 
 void PhotoManagementBackupAction::scanLightroomCatalogsForUser(const UserProfile& user) {
-    QStringList search_paths = {
-        user.profile_path + "/Pictures/Lightroom",
-        user.profile_path + "/Documents/Lightroom"
-    };
+    Q_ASSERT(!m_photo_data.empty());
+    Q_ASSERT(!m_photo_data.isEmpty());
+    QStringList search_paths = {user.profile_path + "/Pictures/Lightroom",
+                                user.profile_path + "/Documents/Lightroom"};
 
     for (const QString& path : search_paths) {
         QDir dir(path);
-        if (!dir.exists()) continue;
+        if (!dir.exists()) {
+            continue;
+        }
 
-        QDirIterator it(path, QStringList() << "*.lrcat", QDir::Files,
-            QDirIterator::Subdirectories);
+        QDirIterator it(
+            path, QStringList() << "*.lrcat", QDir::Files, QDirIterator::Subdirectories);
         while (it.hasNext()) {
             it.next();
             PhotoSoftwareData data;
@@ -59,14 +60,20 @@ void PhotoManagementBackupAction::scanPhotoshopSettings() {
 }
 
 void PhotoManagementBackupAction::scanPhotoshopSettingsForUser(const UserProfile& user) {
+    Q_ASSERT(!m_photo_data.empty());
+    Q_ASSERT(!m_photo_data.isEmpty());
     QString ps_path = user.profile_path + "/AppData/Roaming/Adobe/Adobe Photoshop";
-    if (!QDir(ps_path).exists()) return;
+    if (!QDir(ps_path).exists()) {
+        return;
+    }
 
     QDirIterator it(ps_path, QDir::Dirs | QDir::NoDotAndDotDot);
     while (it.hasNext()) {
         it.next();
         QString presets = it.filePath() + "/Presets";
-        if (!QDir(presets).exists()) continue;
+        if (!QDir(presets).exists()) {
+            continue;
+        }
 
         PhotoSoftwareData data;
         data.software_name = "Photoshop";
@@ -95,11 +102,15 @@ void PhotoManagementBackupAction::scanCaptureOne() {
 }
 
 void PhotoManagementBackupAction::scanCaptureOneForUser(const UserProfile& user) {
+    Q_ASSERT(!m_photo_data.empty());
+    Q_ASSERT(!m_photo_data.isEmpty());
     QString c1_path = user.profile_path + "/Pictures/Capture One";
-    if (!QDir(c1_path).exists()) return;
+    if (!QDir(c1_path).exists()) {
+        return;
+    }
 
-    QDirIterator it(c1_path, QStringList() << "*.cosessiondb",
-                  QDir::Files, QDirIterator::Subdirectories);
+    QDirIterator it(
+        c1_path, QStringList() << "*.cosessiondb", QDir::Files, QDirIterator::Subdirectories);
     while (it.hasNext()) {
         it.next();
         PhotoSoftwareData data;
@@ -135,8 +146,8 @@ void PhotoManagementBackupAction::scan() {
 
     if (m_photo_data.count() > 0) {
         result.summary = QString("Found %1 photo software item(s) - %2 MB")
-            .arg(m_photo_data.count())
-            .arg(m_total_size / sak::kBytesPerMB);
+                             .arg(m_photo_data.count())
+                             .arg(m_total_size / sak::kBytesPerMB);
     } else {
         result.summary = "No photo management software data found";
     }
@@ -174,12 +185,14 @@ void PhotoManagementBackupAction::execute() {
         }
 
         auto [ok, copied] = backupPhotoItem(data, backup_dir);
-        if (ok) processed++;
+        if (ok) {
+            processed++;
+        }
         bytes_copied += copied;
 
-        Q_EMIT executionProgress(QString("Backing up %1 %2...").arg(data.software_name,
-            data.data_type),
-                             (processed * 100) / m_photo_data.count());
+        Q_EMIT executionProgress(
+            QString("Backing up %1 %2...").arg(data.software_name, data.data_type),
+            (processed * 100) / m_photo_data.count());
     }
 
     ExecutionResult result;
@@ -188,23 +201,20 @@ void PhotoManagementBackupAction::execute() {
     result.duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
     result.files_processed = processed;
     result.bytes_processed = bytes_copied;
-    result.message = processed > 0
-        ? QString("Backed up %1 photo software item(s)").arg(processed)
-        : "No photo software data was backed up";
+    result.message = processed > 0 ? QString("Backed up %1 photo software item(s)").arg(processed)
+                                   : "No photo software data was backed up";
     result.output_path = backup_dir.absolutePath();
 
     finishWithResult(result, processed > 0 ? ActionStatus::Success : ActionStatus::Failed);
 }
 
-QPair<bool, qint64> PhotoManagementBackupAction::backupPhotoItem(
-        const PhotoSoftwareData& data, const QDir& backup_dir)
-{
+QPair<bool, qint64> PhotoManagementBackupAction::backupPhotoItem(const PhotoSoftwareData& data,
+                                                                 const QDir& backup_dir) {
     QString safe_dir = sanitizePathForBackup(data.path);
-    QString dest_path = backup_dir.filePath(data.software_name + "/" + data.data_type + "/" +
-        safe_dir);
+    QString dest_path =
+        backup_dir.filePath(data.software_name + "/" + data.data_type + "/" + safe_dir);
     if (!QDir().mkpath(dest_path)) {
-        sak::logWarning("Failed to create photo backup subdirectory: {}",
-                        dest_path.toStdString());
+        sak::logWarning("Failed to create photo backup subdirectory: {}", dest_path.toStdString());
     }
 
     QFileInfo src_info(data.path);
@@ -218,14 +228,13 @@ QPair<bool, qint64> PhotoManagementBackupAction::backupPhotoItem(
     return {false, 0};
 }
 
-QPair<bool, qint64> PhotoManagementBackupAction::backupSingleFile(
-        const PhotoSoftwareData& data, const QString& dest_path)
-{
+QPair<bool, qint64> PhotoManagementBackupAction::backupSingleFile(const PhotoSoftwareData& data,
+                                                                  const QString& dest_path) {
     QFileInfo src_info(data.path);
     QString dest_file = dest_path + "/" + src_info.fileName();
     if (QFile::exists(dest_file)) {
-        dest_file = generateUniqueFilename(dest_path,
-            src_info.completeBaseName(), src_info.suffix());
+        dest_file =
+            generateUniqueFilename(dest_path, src_info.completeBaseName(), src_info.suffix());
     }
     if (QFile::copy(data.path, dest_file)) {
         return {true, data.size};
@@ -233,9 +242,9 @@ QPair<bool, qint64> PhotoManagementBackupAction::backupSingleFile(
     return {false, 0};
 }
 
-QString PhotoManagementBackupAction::generateUniqueFilename(
-        const QString& dest_path, const QString& base_name, const QString& ext)
-{
+QString PhotoManagementBackupAction::generateUniqueFilename(const QString& dest_path,
+                                                            const QString& base_name,
+                                                            const QString& ext) {
     int suffix = 1;
     QString candidate;
     do {
@@ -245,9 +254,8 @@ QString PhotoManagementBackupAction::generateUniqueFilename(
     return candidate;
 }
 
-QPair<bool, qint64> PhotoManagementBackupAction::backupDirectory(
-        const QString& src_path, const QString& dest_path)
-{
+QPair<bool, qint64> PhotoManagementBackupAction::backupDirectory(const QString& src_path,
+                                                                 const QString& dest_path) {
     qint64 bytes_copied = 0;
     QDirIterator it(src_path, QDir::Files, QDirIterator::Subdirectories);
     while (it.hasNext()) {
@@ -264,4 +272,4 @@ QPair<bool, qint64> PhotoManagementBackupAction::backupDirectory(
     return {true, bytes_copied};
 }
 
-} // namespace sak
+}  // namespace sak

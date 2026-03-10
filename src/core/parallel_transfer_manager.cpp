@@ -2,27 +2,25 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "sak/parallel_transfer_manager.h"
+
 #include "sak/layout_constants.h"
 
-#include <QUuid>
 #include <QTimer>
+#include <QUuid>
 
 namespace sak {
 
-ParallelTransferManager::ParallelTransferManager(QObject* parent)
-    : QObject(parent) {
+ParallelTransferManager::ParallelTransferManager(QObject* parent) : QObject(parent) {
     m_retryTimer = new QTimer(this);
     m_retryTimer->setInterval(sak::kTimerRetryBaseMs);
-    connect(m_retryTimer, &QTimer::timeout, this, [this]() {
-        startNextJobs();
-    });
+    connect(m_retryTimer, &QTimer::timeout, this, [this]() { startNextJobs(); });
 }
 
 void ParallelTransferManager::startDeployment(const MappingEngine::DeploymentMapping& mapping) {
     reset();
-    m_currentDeploymentId =
-        mapping.deployment_id.isEmpty() ? QUuid::createUuid().toString(QUuid::WithoutBraces)
-                                                            : mapping.deployment_id;
+    m_currentDeploymentId = mapping.deployment_id.isEmpty()
+                                ? QUuid::createUuid().toString(QUuid::WithoutBraces)
+                                : mapping.deployment_id;
 
     if (mapping.type == MappingEngine::MappingType::OneToMany) {
         if (mapping.sources.isEmpty()) {
@@ -68,6 +66,8 @@ void ParallelTransferManager::resumeDeployment() {
 }
 
 void ParallelTransferManager::cancelDeployment() {
+    Q_ASSERT(!m_jobs.isEmpty());
+    Q_ASSERT(!m_activeJobs.isEmpty());
     for (const auto& jobId : m_activeJobs) {
         Q_EMIT jobCancelRequested(jobId);
     }
@@ -102,6 +102,8 @@ void ParallelTransferManager::resumeJob(const QString& job_id) {
 }
 
 void ParallelTransferManager::retryJob(const QString& job_id) {
+    Q_ASSERT(!m_jobs.empty());
+    Q_ASSERT(!job_id.isEmpty());
     if (!m_jobs.contains(job_id)) {
         return;
     }
@@ -127,6 +129,8 @@ void ParallelTransferManager::retryJob(const QString& job_id) {
 }
 
 void ParallelTransferManager::cancelJob(const QString& job_id) {
+    Q_ASSERT(!m_jobs.empty());
+    Q_ASSERT(!job_id.isEmpty());
     if (!m_jobs.contains(job_id)) {
         return;
     }
@@ -236,8 +240,9 @@ void ParallelTransferManager::updateJobProgress(const QString& job_id,
     updateDeploymentProgress();
 }
 
-void ParallelTransferManager::markJobComplete(const QString& job_id, bool success,
-    const QString& error_message) {
+void ParallelTransferManager::markJobComplete(const QString& job_id,
+                                              bool success,
+                                              const QString& error_message) {
     if (!m_jobs.contains(job_id)) {
         return;
     }
@@ -277,7 +282,7 @@ void ParallelTransferManager::reset() {
 }
 
 void ParallelTransferManager::enqueueJob(const MappingEngine::SourceProfile& source,
-    const DestinationPC& destination) {
+                                         const DestinationPC& destination) {
     TransferJob job;
     job.job_id = QUuid::createUuid().toString(QUuid::WithoutBraces);
     job.source = source;
@@ -307,6 +312,8 @@ void ParallelTransferManager::enqueueCustomMappingJobs(
 }
 
 void ParallelTransferManager::startNextJobs() {
+    Q_ASSERT(!m_queue.isEmpty());
+    Q_ASSERT(!m_activeJobs.isEmpty());
     if (m_deploymentPaused) {
         return;
     }
@@ -342,17 +349,25 @@ void ParallelTransferManager::startNextJobs() {
 }
 
 int ParallelTransferManager::findBestCandidateIndex() const {
+    Q_ASSERT(!m_queue.isEmpty());
+    Q_ASSERT(!m_jobs.isEmpty());
     const auto now = QDateTime::currentDateTimeUtc();
     int bestIndex = -1;
     int bestScore = -1;
 
     for (int i = 0; i < m_queue.size(); ++i) {
         const auto& jobId = m_queue.at(i);
-        if (!m_jobs.contains(jobId)) continue;
+        if (!m_jobs.contains(jobId)) {
+            continue;
+        }
 
         const auto& job = m_jobs.value(jobId);
-        if (job.status == "canceled") continue;
-        if (m_retrySchedule.contains(jobId) && m_retrySchedule.value(jobId) > now) continue;
+        if (job.status == "canceled") {
+            continue;
+        }
+        if (m_retrySchedule.contains(jobId) && m_retrySchedule.value(jobId) > now) {
+            continue;
+        }
 
         const int score = priorityScore(job.priority);
         if (score > bestScore) {
@@ -380,6 +395,8 @@ bool ParallelTransferManager::isDeploymentComplete() const {
 }
 
 void ParallelTransferManager::updateRetryTimer() {
+    Q_ASSERT(!m_retrySchedule.isEmpty());
+    Q_ASSERT(m_retryTimer);
     if (m_retrySchedule.isEmpty()) {
         m_retryTimer->stop();
         return;
@@ -405,6 +422,8 @@ int ParallelTransferManager::priorityScore(JobPriority priority) const {
 }
 
 void ParallelTransferManager::rebalanceBandwidth() {
+    Q_ASSERT(!m_activeJobs.empty());
+    Q_ASSERT(!m_activeJobs.isEmpty());
     if (m_globalBandwidthLimitMbps <= 0 || m_activeJobs.isEmpty()) {
         return;
     }
@@ -415,9 +434,8 @@ void ParallelTransferManager::rebalanceBandwidth() {
     }
 
     const int totalKbps = m_globalBandwidthLimitMbps * sak::kBytesPerKB;
-    const int perJobCapKbps = m_perJobBandwidthLimitMbps > 0
-        ? m_perJobBandwidthLimitMbps * 1024
-        : totalKbps;
+    const int perJobCapKbps = m_perJobBandwidthLimitMbps > 0 ? m_perJobBandwidthLimitMbps * 1024
+                                                             : totalKbps;
 
     auto allocations = buildInitialAllocations(totalKbps, perJobCapKbps);
 
@@ -438,6 +456,8 @@ void ParallelTransferManager::rebalanceBandwidth() {
 
 QVector<ParallelTransferManager::BandwidthAllocation>
 ParallelTransferManager::buildInitialAllocations(int totalKbps, int perJobCapKbps) {
+    Q_ASSERT(totalKbps >= 0);
+    Q_ASSERT(perJobCapKbps >= 0);
     QVector<BandwidthAllocation> allocations;
     allocations.reserve(m_activeJobs.size());
 
@@ -457,18 +477,20 @@ ParallelTransferManager::buildInitialAllocations(int totalKbps, int perJobCapKbp
     }
 
     for (auto& alloc : allocations) {
-        const int desired = qMax(1, static_cast<int>(
-            (static_cast<long long>(totalKbps) * alloc.weight) / totalWeight));
+        const int desired = qMax(
+            1, static_cast<int>((static_cast<long long>(totalKbps) * alloc.weight) / totalWeight));
         alloc.assigned = qMin(alloc.cap, desired);
     }
 
     return allocations;
 }
 
-void ParallelTransferManager::distributeExcessBandwidth(
-    QVector<BandwidthAllocation>& allocations, int remaining) {
+void ParallelTransferManager::distributeExcessBandwidth(QVector<BandwidthAllocation>& allocations,
+                                                        int remaining) {
     for (int iter = 0; iter < 1000 && remaining > 0; ++iter) {
-        if (!distributeOneBandwidthPass(allocations, remaining)) break;
+        if (!distributeOneBandwidthPass(allocations, remaining)) {
+            break;
+        }
     }
 }
 
@@ -483,26 +505,34 @@ int ParallelTransferManager::computeUncappedWeightSum(
     return weightSum;
 }
 
-bool ParallelTransferManager::distributeOneBandwidthPass(
-    QVector<BandwidthAllocation>& allocations, int& remaining) {
+bool ParallelTransferManager::distributeOneBandwidthPass(QVector<BandwidthAllocation>& allocations,
+                                                         int& remaining) {
     const int weightSum = computeUncappedWeightSum(allocations);
-    if (weightSum <= 0) return false;
+    if (weightSum <= 0) {
+        return false;
+    }
 
     bool progress = false;
     for (auto& alloc : allocations) {
-        if (alloc.assigned >= alloc.cap) continue;
+        if (alloc.assigned >= alloc.cap) {
+            continue;
+        }
 
-        const int slice = qMax(1, static_cast<int>(
-            (static_cast<long long>(remaining) * alloc.weight) / weightSum));
+        const int slice = qMax(
+            1, static_cast<int>((static_cast<long long>(remaining) * alloc.weight) / weightSum));
         const int delta = qMin(slice, alloc.cap - alloc.assigned);
-        if (delta <= 0) continue;
+        if (delta <= 0) {
+            continue;
+        }
 
         alloc.assigned += delta;
         remaining -= delta;
         progress = true;
-        if (remaining <= 0) break;
+        if (remaining <= 0) {
+            break;
+        }
     }
     return progress;
 }
 
-} // namespace sak
+}  // namespace sak

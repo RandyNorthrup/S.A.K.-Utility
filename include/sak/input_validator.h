@@ -8,13 +8,14 @@
 #pragma once
 
 #include "error_codes.h"
-#include <filesystem>
-#include <expected>
-#include <string>
-#include <string_view>
-#include <span>
+
 #include <cstddef>
 #include <cstdint>
+#include <expected>
+#include <filesystem>
+#include <span>
+#include <string>
+#include <string_view>
 
 namespace sak {
 
@@ -23,7 +24,7 @@ struct validation_result {
     bool is_valid;
     error_code error;
     std::string error_message;
-    
+
     explicit operator bool() const noexcept { return is_valid; }
 };
 
@@ -36,7 +37,7 @@ struct path_validation_config {
     bool must_be_file = false;
     bool check_read_permission = false;
     bool check_write_permission = false;
-    std::size_t max_path_length = 260;  // Windows MAX_PATH default
+    std::size_t max_path_length = 260;     // Windows MAX_PATH default
     std::filesystem::path base_directory;  // For path traversal checks
 };
 
@@ -52,7 +53,7 @@ struct string_validation_config {
 };
 
 /// @brief Numeric validation configuration
-template<typename T>
+template <typename T>
 struct numeric_validation_config {
     T min_value = (std::numeric_limits<T>::min)();
     T max_value = (std::numeric_limits<T>::max)();
@@ -66,187 +67,170 @@ public:
     // ============================================
     // Path Validation (Path Traversal Prevention)
     // ============================================
-    
+
     /// @brief Validate a filesystem path against security criteria
     /// @param path Path to validate
     /// @param config Validation configuration
     /// @return Validation result with detailed error information
-    [[nodiscard]] static validation_result validatePath(
-        const std::filesystem::path& path,
-        const path_validation_config& config = {});
-    
+    [[nodiscard]] static validation_result validatePath(const std::filesystem::path& path,
+                                                        const path_validation_config& config = {});
+
     /// @brief Check if path contains traversal sequences (../, ..\, etc.)
     /// @param path Path to check
     /// @return True if path contains potentially dangerous traversal sequences
     [[nodiscard]] static bool containsTraversalSequences(
         const std::filesystem::path& path) noexcept;
-    
+
     /// @brief Ensure path is within allowed base directory
     /// @param path Path to validate
     /// @param base_dir Base directory that path must be within
     /// @return Validation result
     [[nodiscard]] static validation_result validatePathWithinBase(
-        const std::filesystem::path& path,
-        const std::filesystem::path& base_dir);
-    
+        const std::filesystem::path& path, const std::filesystem::path& base_dir);
+
     /// @brief Check if path contains suspicious patterns
     /// @param path Path to check
     /// @return True if path contains suspicious patterns (UNC paths, device names, etc.)
     [[nodiscard]] static bool containsSuspiciousPatterns(
         const std::filesystem::path& path) noexcept;
-    
+
     // ============================================
     // String Validation (Injection Prevention)
     // ============================================
-    
+
     /// @brief Validate a string against security criteria
     /// @param str String to validate
     /// @param config Validation configuration
     /// @return Validation result
     [[nodiscard]] static validation_result validateString(
-        std::string_view str,
-        const string_validation_config& config = {});
-    
+        std::string_view str, const string_validation_config& config = {});
+
     /// @brief Check for null bytes in string (common injection technique)
     /// @param str String to check
     /// @return True if null bytes found
-    [[nodiscard]] static bool containsNullBytes(
-        std::string_view str) noexcept;
-    
+    [[nodiscard]] static bool containsNullBytes(std::string_view str) noexcept;
+
     /// @brief Check for control characters in string
     /// @param str String to check
     /// @return True if control characters found
-    [[nodiscard]] static bool containsControlChars(
-        std::string_view str) noexcept;
-    
+    [[nodiscard]] static bool containsControlChars(std::string_view str) noexcept;
+
     /// @brief Validate UTF-8 encoding
     /// @param str String to validate
     /// @return True if valid UTF-8
-    [[nodiscard]] static bool isValidUtf8(
-        std::string_view str) noexcept;
-    
+    [[nodiscard]] static bool isValidUtf8(std::string_view str) noexcept;
+
     /// @brief Sanitize string by removing dangerous characters
     /// @param str String to sanitize
     /// @param allow_unicode If false, removes non-ASCII characters
     /// @return Sanitized string
-    [[nodiscard]] static std::string sanitizeString(
-        std::string_view str,
-        bool allow_unicode = true);
-    
+    [[nodiscard]] static std::string sanitizeString(std::string_view str,
+                                                    bool allow_unicode = true);
+
     // ============================================
     // Numeric Validation (Overflow Prevention)
     // ============================================
-    
+
     /// @brief Validate numeric value against range
     /// @tparam T Numeric type
     /// @param value Value to validate
     /// @param config Validation configuration
     /// @return Validation result
-    template<typename T>
+    template <typename T>
     [[nodiscard]] static validation_result validateNumeric(
-        T value,
-        const numeric_validation_config<T>& config = {});
-    
+        T value, const numeric_validation_config<T>& config = {});
+
     /// @brief Safe addition with overflow check
     /// @tparam T Numeric type
     /// @param a First operand
     /// @param b Second operand
     /// @return Expected containing result or overflow error
-    template<typename T>
+    template <typename T>
     [[nodiscard]] static std::expected<T, error_code> safeAdd(T a, T b);
-    
+
     /// @brief Safe multiplication with overflow check
     /// @tparam T Numeric type
     /// @param a First operand
     /// @param b Second operand
     /// @return Expected containing result or overflow error
-    template<typename T>
+    template <typename T>
     [[nodiscard]] static std::expected<T, error_code> safeMultiply(T a, T b);
-    
+
     /// @brief Safe cast between numeric types with overflow check
     /// @tparam To Target type
     /// @tparam From Source type
     /// @param value Value to cast
     /// @return Expected containing casted value or overflow error
-    template<typename To, typename From>
+    template <typename To, typename From>
     [[nodiscard]] static std::expected<To, error_code> safeCast(From value);
-    
+
     // ============================================
     // Buffer Validation (Buffer Overflow Prevention)
     // ============================================
-    
+
     /// @brief Validate buffer size against limits
     /// @param buffer_size Size of buffer
     /// @param max_size Maximum allowed size
     /// @param required_size Required minimum size (0 = no minimum)
     /// @return Validation result
-    [[nodiscard]] static validation_result validateBufferSize(
-        std::size_t buffer_size,
-        std::size_t max_size,
-        std::size_t required_size = 0);
-    
+    [[nodiscard]] static validation_result validateBufferSize(std::size_t buffer_size,
+                                                              std::size_t max_size,
+                                                              std::size_t required_size = 0);
+
     /// @brief Validate span against expected size
     /// @tparam T Element type
     /// @param data Span to validate
     /// @param expected_size Expected size
     /// @return Validation result
-    template<typename T>
-    [[nodiscard]] static validation_result validateSpan(
-        std::span<const T> data,
-        std::size_t expected_size);
-    
+    template <typename T>
+    [[nodiscard]] static validation_result validateSpan(std::span<const T> data,
+                                                        std::size_t expected_size);
+
     // ============================================
     // Resource Validation
     // ============================================
-    
+
     /// @brief Check available disk space
     /// @param path Path to check (file or directory)
     /// @param required_bytes Required space in bytes
     /// @return Validation result
-    [[nodiscard]] static validation_result validate_disk_space(
-        const std::filesystem::path& path,
-        std::uintmax_t required_bytes);
-    
+    [[nodiscard]] static validation_result validate_disk_space(const std::filesystem::path& path,
+                                                               std::uintmax_t required_bytes);
+
     /// @brief Check available memory
     /// @param required_bytes Required memory in bytes
     /// @return Validation result
-    [[nodiscard]] static validation_result validate_available_memory(
-        std::size_t required_bytes);
-    
+    [[nodiscard]] static validation_result validate_available_memory(std::size_t required_bytes);
+
     /// @brief Validate file descriptor/handle limits
     /// @return Validation result (warns if approaching limits)
     [[nodiscard]] static validation_result validate_file_descriptor_limit();
-    
+
     /// @brief Validate thread count against system limits
     /// @param requested_threads Number of threads requested
     /// @return Validation result
-    [[nodiscard]] static validation_result validate_thread_count(
-        std::size_t requested_threads);
-    
+    [[nodiscard]] static validation_result validate_thread_count(std::size_t requested_threads);
+
     // ============================================
     // Helper Functions
     // ============================================
-    
+
     /// @brief Create a successful validation result
     [[nodiscard]] static validation_result success() noexcept;
-    
+
     /// @brief Create a failed validation result
     /// @param err Error code
     /// @param message Error message
-    [[nodiscard]] static validation_result failure(
-        error_code err,
-        std::string_view message);
+    [[nodiscard]] static validation_result failure(error_code err, std::string_view message);
 
 private:
     /// @brief Validate file/directory existence and type constraints
     [[nodiscard]] static validation_result validatePathExistence(
-        const std::filesystem::path& path,
-        const path_validation_config& config);
+        const std::filesystem::path& path, const path_validation_config& config);
 
     /// @brief Platform-specific permission checks
     [[nodiscard]] static validation_result validatePathPermissions(
-        const std::filesystem::path& path,
-        const path_validation_config& config);
+        const std::filesystem::path& path, const path_validation_config& config);
 
     // Platform-specific helpers
     static std::uintmax_t get_available_memory_impl();
@@ -258,25 +242,21 @@ private:
 // Template Implementations
 // ============================================
 
-template<typename T>
-validation_result input_validator::validateNumeric(
-    T value,
-    const numeric_validation_config<T>& config) {
-    
+template <typename T>
+validation_result input_validator::validateNumeric(T value,
+                                                   const numeric_validation_config<T>& config) {
     if (value < config.min_value) {
-        return failure(error_code::validation_failed,
-                      "Value below minimum allowed");
+        return failure(error_code::validation_failed, "Value below minimum allowed");
     }
-    
+
     if (value > config.max_value) {
-        return failure(error_code::validation_failed,
-                      "Value exceeds maximum allowed");
+        return failure(error_code::validation_failed, "Value exceeds maximum allowed");
     }
-    
+
     return success();
 }
 
-template<typename T>
+template <typename T>
 std::expected<T, error_code> input_validator::safeAdd(T a, T b) {
     // Check for overflow
     if constexpr (std::is_unsigned_v<T>) {
@@ -294,13 +274,13 @@ std::expected<T, error_code> input_validator::safeAdd(T a, T b) {
     return a + b;
 }
 
-template<typename T>
+template <typename T>
 std::expected<T, error_code> input_validator::safeMultiply(T a, T b) {
     // Check for overflow
     if (a == 0 || b == 0) {
         return T{0};
     }
-    
+
     if constexpr (std::is_unsigned_v<T>) {
         if (a > (std::numeric_limits<T>::max)() / b) {
             return std::unexpected(error_code::integer_overflow);
@@ -325,7 +305,7 @@ std::expected<T, error_code> input_validator::safeMultiply(T a, T b) {
     return a * b;
 }
 
-template<typename To, typename From>
+template <typename To, typename From>
 std::expected<To, error_code> input_validator::safeCast(From value) {
     // Check if cast would overflow or underflow
     if constexpr (std::is_integral_v<To> && std::is_integral_v<From>) {
@@ -337,18 +317,14 @@ std::expected<To, error_code> input_validator::safeCast(From value) {
     return static_cast<To>(value);
 }
 
-template<typename T>
-validation_result input_validator::validateSpan(
-    std::span<const T> data,
-    std::size_t expected_size) {
-    
+template <typename T>
+validation_result input_validator::validateSpan(std::span<const T> data,
+                                                std::size_t expected_size) {
     if (data.size() != expected_size) {
-        return failure(error_code::validation_failed,
-                      "Span size does not match expected size");
+        return failure(error_code::validation_failed, "Span size does not match expected size");
     }
-    
+
     return success();
 }
 
-} // namespace sak
-
+}  // namespace sak

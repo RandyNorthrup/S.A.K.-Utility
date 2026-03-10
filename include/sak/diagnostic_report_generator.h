@@ -147,4 +147,4 @@ private:
     DiagnosticReportData m_data;
 };
 
-} // namespace sak
+}  // namespace sak

@@ -1,10 +1,10 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-#include <QtTest/QtTest>
-#include <QNetworkInterface>
-
 #include "sak/peer_discovery_service.h"
+
+#include <QNetworkInterface>
+#include <QtTest/QtTest>
 
 using namespace sak;
 
@@ -24,7 +24,9 @@ void PeerDiscoveryTests::discoverPeer() {
                 break;
             }
         }
-        if (hasBroadcast) break;
+        if (hasBroadcast) {
+            break;
+        }
     }
 
     if (!hasBroadcast) {
@@ -44,7 +46,7 @@ void PeerDiscoveryTests::discoverPeer() {
     infoB.hostname = "B";
     infoB.mode = "destination";
 
-    const quint16 port = 54321;
+    const quint16 port = 54'321;
     a.setPort(port);
     b.setPort(port);
     a.setPeerInfo(infoA);

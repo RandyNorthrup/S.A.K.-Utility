@@ -4,6 +4,7 @@
 #pragma once
 
 #include "sak/quick_action.h"
+
 #include <QDateTime>
 #include <QString>
 #include <QVector>
@@ -35,8 +36,10 @@ public:
     explicit BackupBitlockerKeysAction(const QString& backup_location, QObject* parent = nullptr);
 
     QString name() const override { return "BitLocker Key Backup"; }
-    QString description() const override { return "Backup BitLocker recovery keys for all "
-                                                  "encrypted volumes"; }
+    QString description() const override {
+        return "Backup BitLocker recovery keys for all "
+               "encrypted volumes";
+    }
     QIcon icon() const override { return QIcon(); }
     ActionCategory category() const override { return ActionCategory::EmergencyRecovery; }
     bool requiresAdmin() const override { return true; }
@@ -49,25 +52,25 @@ private:
      * @brief Information about a BitLocker key protector
      */
     struct KeyProtectorInfo {
-        QString protector_id;            // Key protector GUID
-        QString protector_type;          // RecoveryPassword, ExternalKey, TPM, etc.
-        QString recovery_password;       // 48-digit numerical recovery password
-        QString key_file_name;           // External key file name (if applicable)
+        QString protector_id;       // Key protector GUID
+        QString protector_type;     // RecoveryPassword, ExternalKey, TPM, etc.
+        QString recovery_password;  // 48-digit numerical recovery password
+        QString key_file_name;      // External key file name (if applicable)
     };
 
     /**
      * @brief Information about a BitLocker-protected volume
      */
     struct VolumeInfo {
-        QString drive_letter;            // e.g., "C:"
-        QString volume_label;            // User-assigned label
-        QString device_id;               // WMI device ID
-        QString protection_status;       // On, Off, Unknown
-        QString encryption_method;       // XTS-AES-128, XTS-AES-256, etc.
-        QString encryption_percentage;   // Encryption progress (0-100%)
-        QString lock_status;             // Locked, Unlocked
-        QString volume_type;             // OperatingSystem, FixedData, Removable
-        qint64 volume_size_bytes{0};     // Total volume size
+        QString drive_letter;           // e.g., "C:"
+        QString volume_label;           // User-assigned label
+        QString device_id;              // WMI device ID
+        QString protection_status;      // On, Off, Unknown
+        QString encryption_method;      // XTS-AES-128, XTS-AES-256, etc.
+        QString encryption_percentage;  // Encryption progress (0-100%)
+        QString lock_status;            // Locked, Unlocked
+        QString volume_type;            // OperatingSystem, FixedData, Removable
+        qint64 volume_size_bytes{0};    // Total volume size
         QVector<KeyProtectorInfo> key_protectors;
     };
 
@@ -152,13 +155,19 @@ private:
 
     // TigerStyle helpers for execute() decomposition
     bool executeDiscoverVolumes(const QDateTime& start_time);
-    bool executeExtractKeys(const QDateTime& start_time, int& total_keys_found,
+    bool executeExtractKeys(const QDateTime& start_time,
+                            int& total_keys_found,
                             int& total_recovery_passwords);
-    bool executeSaveKeyFiles(const QDateTime& start_time, QString& backup_dir_path,
-                             int& key_files_written, bool& permissions_set);
-    void executeBuildReport(const QDateTime& start_time, int total_keys_found,
-                            int total_recovery_passwords, const QString& backup_dir_path,
-                            int key_files_written, bool permissions_set);
+    bool executeSaveKeyFiles(const QDateTime& start_time,
+                             QString& backup_dir_path,
+                             int& key_files_written,
+                             bool& permissions_set);
+    void executeBuildReport(const QDateTime& start_time,
+                            int total_keys_found,
+                            int total_recovery_passwords,
+                            const QString& backup_dir_path,
+                            int key_files_written,
+                            bool permissions_set);
     bool writeJsonBackup(const QString& backup_dir_path);
 
     /// @brief Count recovery passwords in a protector list
@@ -173,4 +182,4 @@ private:
     QJsonObject buildVolumeJson(const VolumeInfo& vol) const;
 };
 
-} // namespace sak
+}  // namespace sak

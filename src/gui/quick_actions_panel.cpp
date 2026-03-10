@@ -5,61 +5,76 @@
 /// @brief Implements the quick actions panel UI for system maintenance tasks
 
 #include "sak/quick_actions_panel.h"
-#include "sak/format_utils.h"
-#include "sak/quick_action_controller.h"
+
 #include "sak/actions/action_factory.h"
 #include "sak/detachable_log_window.h"
+#include "sak/format_utils.h"
 #include "sak/info_button.h"
-#include "sak/style_constants.h"
-#include "sak/widget_helpers.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
+#include "sak/quick_action_controller.h"
+#include "sak/style_constants.h"
+#include "sak/widget_helpers.h"
 
-#include <QVBoxLayout>
-#include <QHBoxLayout>
-#include <QGridLayout>
-#include <QScrollArea>
-#include <QGroupBox>
-#include <QPushButton>
-#include <QLabel>
-#include <QLineEdit>
 #include <QCheckBox>
-#include <QProgressBar>
-#include <QTextEdit>
-#include <QFileDialog>
-#include <QDialog>
-#include <QDialogButtonBox>
-#include <QMessageBox>
-#include <QSettings>
 #include <QDateTime>
 #include <QDesktopServices>
+#include <QDialog>
+#include <QDialogButtonBox>
+#include <QFileDialog>
 #include <QFileInfo>
-#include <QUrl>
+#include <QGridLayout>
+#include <QGroupBox>
+#include <QHBoxLayout>
+#include <QLabel>
+#include <QLineEdit>
+#include <QMessageBox>
+#include <QProgressBar>
+#include <QPushButton>
+#include <QScrollArea>
+#include <QScrollBar>
+#include <QSettings>
+#include <QTextEdit>
 #include <QTimer>
 #include <QToolButton>
-#include <QScrollBar>
+#include <QUrl>
+#include <QVBoxLayout>
 
 namespace sak {
 
 QuickActionsPanel::QuickActionsPanel(QWidget* parent)
-    : QWidget(parent)
-    , m_controller(new QuickActionController(this)) {
+    : QWidget(parent), m_controller(new QuickActionController(this)) {
     Q_ASSERT(m_controller);
     setupUi();
     loadSettings();
     createActions();
 
     // Connect controller signals
-    connect(m_controller, &QuickActionController::actionScanComplete,
-            this, &QuickActionsPanel::onActionScanComplete, Qt::QueuedConnection);
-    connect(m_controller, &QuickActionController::actionExecutionProgress,
-            this, &QuickActionsPanel::onActionProgress, Qt::QueuedConnection);
-    connect(m_controller, &QuickActionController::actionExecutionComplete,
-            this, &QuickActionsPanel::onActionComplete, Qt::QueuedConnection);
-    connect(m_controller, &QuickActionController::actionError,
-            this, &QuickActionsPanel::onActionError, Qt::QueuedConnection);
-    connect(m_controller, &QuickActionController::logMessage,
-            this, &QuickActionsPanel::appendLog, Qt::QueuedConnection);
+    connect(m_controller,
+            &QuickActionController::actionScanComplete,
+            this,
+            &QuickActionsPanel::onActionScanComplete,
+            Qt::QueuedConnection);
+    connect(m_controller,
+            &QuickActionController::actionExecutionProgress,
+            this,
+            &QuickActionsPanel::onActionProgress,
+            Qt::QueuedConnection);
+    connect(m_controller,
+            &QuickActionController::actionExecutionComplete,
+            this,
+            &QuickActionsPanel::onActionComplete,
+            Qt::QueuedConnection);
+    connect(m_controller,
+            &QuickActionController::actionError,
+            this,
+            &QuickActionsPanel::onActionError,
+            Qt::QueuedConnection);
+    connect(m_controller,
+            &QuickActionController::logMessage,
+            this,
+            &QuickActionsPanel::appendLog,
+            Qt::QueuedConnection);
 
     // Note: Scans only triggered by user clicking Refresh or individual action buttons
     // Not all actions apply to every PC, so no auto-scan on startup
@@ -70,6 +85,7 @@ QuickActionsPanel::~QuickActionsPanel() {
 }
 
 void QuickActionsPanel::setupUi_statusSection(QVBoxLayout* main_layout) {
+    Q_ASSERT(main_layout);
     auto* status_group = new QGroupBox("Status");
     auto* status_layout = new QVBoxLayout(status_group);
 
@@ -95,6 +111,8 @@ void QuickActionsPanel::setupUi_statusSection(QVBoxLayout* main_layout) {
 }
 
 void QuickActionsPanel::setupUi_bottomRow(QVBoxLayout* main_layout) {
+    Q_ASSERT(m_open_folder_button);
+    Q_ASSERT(main_layout);
     auto* bottomLayout = new QHBoxLayout();
 
     auto* settingsBtn = new QPushButton(tr("Settings"), this);
@@ -106,8 +124,8 @@ void QuickActionsPanel::setupUi_bottomRow(QVBoxLayout* main_layout) {
     m_open_folder_button = new QPushButton("Open Output Folder");
     m_open_folder_button->setEnabled(false);
     m_open_folder_button->setAccessibleName(QStringLiteral("Open Output Folder"));
-    m_open_folder_button->setToolTip(QStringLiteral(
-        "Open the last output folder in file explorer"));
+    m_open_folder_button->setToolTip(
+        QStringLiteral("Open the last output folder in file explorer"));
     connect(m_open_folder_button, &QPushButton::clicked, this, [this]() {
         if (!m_last_output_path.isEmpty()) {
             const QFileInfo fi(m_last_output_path);
@@ -125,15 +143,18 @@ void QuickActionsPanel::setupUi_bottomRow(QVBoxLayout* main_layout) {
 }
 
 void QuickActionsPanel::setupUi() {
+    Q_ASSERT(m_backup_location_edit);
     Q_ASSERT(!objectName().isEmpty() || true);  // widget valid
     auto* main_layout = new QVBoxLayout(this);
     main_layout->setContentsMargins(12, 12, 12, 12);
     main_layout->setSpacing(10);
 
     // Panel header — consistent title + muted subtitle
-    sak::createPanelHeader(this, QStringLiteral(":/icons/icons/panel_quick_actions.svg"),
-        tr("Quick Actions"),
-        tr("One-click technician tools for common maintenance tasks"), main_layout);
+    sak::createPanelHeader(this,
+                           QStringLiteral(":/icons/icons/panel_quick_actions.svg"),
+                           tr("Quick Actions"),
+                           tr("One-click technician tools for common maintenance tasks"),
+                           main_layout);
 
     // Backup Location row at the top
     auto* backupLocRow = new QHBoxLayout();
@@ -146,8 +167,8 @@ void QuickActionsPanel::setupUi() {
     m_browse_button = new QPushButton(tr("Browse..."), this);
     m_browse_button->setAccessibleName(QStringLiteral("Browse Backup Folder"));
     m_browse_button->setToolTip(QStringLiteral("Browse for a backup output directory"));
-    connect(m_browse_button, &QPushButton::clicked, this,
-        &QuickActionsPanel::onBrowseBackupLocation);
+    connect(
+        m_browse_button, &QPushButton::clicked, this, &QuickActionsPanel::onBrowseBackupLocation);
     backupLocRow->addWidget(m_browse_button);
     main_layout->addLayout(backupLocRow);
 
@@ -187,6 +208,7 @@ void QuickActionsPanel::setupUi() {
 }
 
 void QuickActionsPanel::createActions() {
+    Q_ASSERT(m_backup_location_edit);
     Q_ASSERT(m_controller);
     QString backup_location = m_backup_location_edit->text();
     if (backup_location.isEmpty()) {
@@ -205,6 +227,8 @@ void QuickActionsPanel::createActions() {
 }
 
 void QuickActionsPanel::createCategorySections() {
+    Q_ASSERT(m_controller);
+    Q_ASSERT(m_actions_layout);
     struct CategoryInfo {
         QuickAction::ActionCategory category;
         QString title;
@@ -226,8 +250,7 @@ void QuickActionsPanel::createCategorySections() {
          tr("Diagnostic reports, bloatware detection, network tests, and repair tools")},
         {QuickAction::ActionCategory::EmergencyRecovery,
          tr("Emergency Recovery"),
-         tr("Create restore points, export licenses, and backup critical system settings")}
-    };
+         tr("Create restore points, export licenses, and backup critical system settings")}};
 
     auto* cardsGrid = new QGridLayout();
     cardsGrid->setSpacing(sak::ui::kSpacingLarge);
@@ -236,11 +259,14 @@ void QuickActionsPanel::createCategorySections() {
     const int cols = 3;
     for (const auto& cat_info : categories) {
         auto actions = m_controller->getActionsByCategory(cat_info.category);
-        if (actions.empty()) continue;
+        if (actions.empty()) {
+            continue;
+        }
 
-        auto* card = createCategoryCard(cat_info.category, cat_info.title,
-                                         cat_info.description,
-                                         static_cast<int>(actions.size()));
+        auto* card = createCategoryCard(cat_info.category,
+                                        cat_info.title,
+                                        cat_info.description,
+                                        static_cast<int>(actions.size()));
         cardsGrid->addWidget(card, idx / cols, idx % cols);
         idx++;
     }
@@ -249,48 +275,44 @@ void QuickActionsPanel::createCategorySections() {
     m_actions_layout->insertLayout(m_actions_layout->count() - 1, cardsGrid);
 }
 
-QFrame* QuickActionsPanel::createCategoryCard(
-    QuickAction::ActionCategory category,
-    const QString& title,
-    const QString& description,
-    int actionCount)
-{
+QFrame* QuickActionsPanel::createCategoryCard(QuickAction::ActionCategory category,
+                                              const QString& title,
+                                              const QString& description,
+                                              int actionCount) {
     auto* card = new QFrame(this);
     card->setFrameShape(QFrame::StyledPanel);
     card->setCursor(Qt::PointingHandCursor);
     card->setMinimumHeight(120);
     card->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
-    card->setStyleSheet(
-        QString(
-            "QFrame#categoryCard {"
-            "  background-color: %1;"
-            "  border: 1px solid %2;"
-            "  border-radius: 10px;"
-            "  padding: %3px;"
-            "}"
-            "QFrame#categoryCard:hover {"
-            "  border-color: %4;"
-            "  background-color: %5;"
-            "}")
-            .arg(sak::ui::kColorBgWhite)
-            .arg(sak::ui::kColorBorderDefault)
-            .arg(sak::ui::kMarginMedium)
-            .arg(sak::ui::kColorPrimary)
-            .arg(sak::ui::kColorBgSurface)
-    );
+    card->setStyleSheet(QString("QFrame#categoryCard {"
+                                "  background-color: %1;"
+                                "  border: 1px solid %2;"
+                                "  border-radius: 10px;"
+                                "  padding: %3px;"
+                                "}"
+                                "QFrame#categoryCard:hover {"
+                                "  border-color: %4;"
+                                "  background-color: %5;"
+                                "}")
+                            .arg(sak::ui::kColorBgWhite)
+                            .arg(sak::ui::kColorBorderDefault)
+                            .arg(sak::ui::kMarginMedium)
+                            .arg(sak::ui::kColorPrimary)
+                            .arg(sak::ui::kColorBgSurface));
     card->setObjectName("categoryCard");
 
     auto* cardLayout = new QVBoxLayout(card);
-    cardLayout->setContentsMargins(sak::ui::kMarginMedium, sak::ui::kMarginMedium,
-                                    sak::ui::kMarginMedium, sak::ui::kMarginMedium);
+    cardLayout->setContentsMargins(sak::ui::kMarginMedium,
+                                   sak::ui::kMarginMedium,
+                                   sak::ui::kMarginMedium,
+                                   sak::ui::kMarginMedium);
     cardLayout->setSpacing(sak::ui::kSpacingSmall);
 
     auto* titleLabel = new QLabel(title, card);
-    titleLabel->setStyleSheet(
-        QString("font-size: %1pt; font-weight: 700; color: %2;"
-                " border: none; background: transparent;")
-            .arg(sak::ui::kFontSizeSection)
-            .arg(sak::ui::kColorTextHeading));
+    titleLabel->setStyleSheet(QString("font-size: %1pt; font-weight: 700; color: %2;"
+                                      " border: none; background: transparent;")
+                                  .arg(sak::ui::kFontSizeSection)
+                                  .arg(sak::ui::kColorTextHeading));
     cardLayout->addWidget(titleLabel);
 
     auto* descLabel = new QLabel(description, card);
@@ -304,11 +326,10 @@ QFrame* QuickActionsPanel::createCategoryCard(
     cardLayout->addStretch();
 
     auto* countLabel = new QLabel(tr("%1 action(s)").arg(actionCount), card);
-    countLabel->setStyleSheet(
-        QString("font-size: %1pt; color: %2; font-weight: 600;"
-                " border: none; background: transparent;")
-            .arg(sak::ui::kFontSizeSmall)
-            .arg(sak::ui::kColorTextMuted));
+    countLabel->setStyleSheet(QString("font-size: %1pt; color: %2; font-weight: 600;"
+                                      " border: none; background: transparent;")
+                                  .arg(sak::ui::kFontSizeSmall)
+                                  .arg(sak::ui::kColorTextMuted));
     cardLayout->addWidget(countLabel);
 
     // Click handler — show category library dialog
@@ -320,58 +341,54 @@ QFrame* QuickActionsPanel::createCategoryCard(
 }
 
 void QuickActionsPanel::updateActionCardStatus(QLabel* label, QuickAction* action) {
+    Q_ASSERT(label);
+    Q_ASSERT(action);
     switch (action->status()) {
-        case QuickAction::ActionStatus::Ready:
-            label->setText(tr("Ready"));
-            label->setStyleSheet(
-                label->styleSheet() +
-                QString(" color: %1;").arg(sak::ui::kColorSuccess));
-            break;
-        case QuickAction::ActionStatus::Scanning:
-            label->setText(tr("Scanning..."));
-            label->setStyleSheet(
-                label->styleSheet() +
-                QString(" color: %1;").arg(sak::ui::kColorWarning));
-            break;
-        case QuickAction::ActionStatus::Running:
-            label->setText(tr("Running..."));
-            label->setStyleSheet(
-                label->styleSheet() +
-                QString(" color: %1;").arg(sak::ui::kColorPrimary));
-            break;
-        case QuickAction::ActionStatus::Success:
-            label->setText(tr("Complete"));
-            label->setStyleSheet(
-                label->styleSheet() +
-                QString(" color: %1;").arg(sak::ui::kColorSuccess));
-            break;
-        case QuickAction::ActionStatus::Failed:
-            label->setText(tr("Error"));
-            label->setStyleSheet(
-                label->styleSheet() +
-                QString(" color: %1;").arg(sak::ui::kColorError));
-            break;
-        case QuickAction::ActionStatus::Cancelled:
-            label->setText(tr("Cancelled"));
-            label->setStyleSheet(
-                label->styleSheet() +
-                QString(" color: %1;").arg(sak::ui::kColorTextMuted));
-            break;
-        default:
-            label->setText(tr("Idle"));
-            label->setStyleSheet(
-                label->styleSheet() +
-                QString(" color: %1;").arg(sak::ui::kColorTextMuted));
-            break;
+    case QuickAction::ActionStatus::Ready:
+        label->setText(tr("Ready"));
+        label->setStyleSheet(label->styleSheet() +
+                             QString(" color: %1;").arg(sak::ui::kColorSuccess));
+        break;
+    case QuickAction::ActionStatus::Scanning:
+        label->setText(tr("Scanning..."));
+        label->setStyleSheet(label->styleSheet() +
+                             QString(" color: %1;").arg(sak::ui::kColorWarning));
+        break;
+    case QuickAction::ActionStatus::Running:
+        label->setText(tr("Running..."));
+        label->setStyleSheet(label->styleSheet() +
+                             QString(" color: %1;").arg(sak::ui::kColorPrimary));
+        break;
+    case QuickAction::ActionStatus::Success:
+        label->setText(tr("Complete"));
+        label->setStyleSheet(label->styleSheet() +
+                             QString(" color: %1;").arg(sak::ui::kColorSuccess));
+        break;
+    case QuickAction::ActionStatus::Failed:
+        label->setText(tr("Error"));
+        label->setStyleSheet(label->styleSheet() +
+                             QString(" color: %1;").arg(sak::ui::kColorError));
+        break;
+    case QuickAction::ActionStatus::Cancelled:
+        label->setText(tr("Cancelled"));
+        label->setStyleSheet(label->styleSheet() +
+                             QString(" color: %1;").arg(sak::ui::kColorTextMuted));
+        break;
+    default:
+        label->setText(tr("Idle"));
+        label->setStyleSheet(label->styleSheet() +
+                             QString(" color: %1;").arg(sak::ui::kColorTextMuted));
+        break;
     }
 }
 
 bool QuickActionsPanel::eventFilter(QObject* obj, QEvent* event) {
+    Q_ASSERT(obj);
     if (event->type() == QEvent::MouseButtonRelease) {
         auto* frame = qobject_cast<QFrame*>(obj);
         if (frame && frame->property("sak_category").isValid()) {
-            auto category = static_cast<QuickAction::ActionCategory>(
-                frame->property("sak_category").toInt());
+            auto category =
+                static_cast<QuickAction::ActionCategory>(frame->property("sak_category").toInt());
             QString title = frame->property("sak_title").toString();
             showCategoryDialog(category, title);
             return true;
@@ -381,9 +398,11 @@ bool QuickActionsPanel::eventFilter(QObject* obj, QEvent* event) {
 }
 
 void QuickActionsPanel::showCategoryDialog(QuickAction::ActionCategory category,
-    const QString& title) {
+                                           const QString& title) {
     auto actions = m_controller->getActionsByCategory(category);
-    if (actions.empty()) return;
+    if (actions.empty()) {
+        return;
+    }
 
     QDialog dialog(this);
     dialog.setWindowTitle(title);
@@ -392,16 +411,15 @@ void QuickActionsPanel::showCategoryDialog(QuickAction::ActionCategory category,
         QString("QDialog { background-color: %1; }").arg(sak::ui::kColorBgSurface));
 
     auto* layout = new QVBoxLayout(&dialog);
-    layout->setContentsMargins(sak::ui::kMarginLarge, sak::ui::kMarginLarge,
-                                sak::ui::kMarginLarge, sak::ui::kMarginLarge);
+    layout->setContentsMargins(
+        sak::ui::kMarginLarge, sak::ui::kMarginLarge, sak::ui::kMarginLarge, sak::ui::kMarginLarge);
     layout->setSpacing(sak::ui::kSpacingLarge);
 
     // Header
     auto* headerLabel = new QLabel(title, &dialog);
-    headerLabel->setStyleSheet(
-        QString("font-size: %1pt; font-weight: 700; color: %2;")
-            .arg(sak::ui::kFontSizeSection + 2)
-            .arg(sak::ui::kColorTextHeading));
+    headerLabel->setStyleSheet(QString("font-size: %1pt; font-weight: 700; color: %2;")
+                                   .arg(sak::ui::kFontSizeSection + 2)
+                                   .arg(sak::ui::kColorTextHeading));
     layout->addWidget(headerLabel);
 
     // Scrollable action area
@@ -421,36 +439,34 @@ void QuickActionsPanel::showCategoryDialog(QuickAction::ActionCategory category,
         actionCard->setFrameShape(QFrame::StyledPanel);
         actionCard->setCursor(Qt::PointingHandCursor);
         actionCard->setObjectName("actionCard");
-        actionCard->setStyleSheet(
-            QString(
-                "QFrame#actionCard {"
-                "  background-color: %1;"
-                "  border: 1px solid %2;"
-                "  border-radius: 8px;"
-                "  padding: %3px;"
-                "}"
-                "QFrame#actionCard:hover {"
-                "  border-color: %4;"
-                "  background-color: %5;"
-                "}")
-                .arg(sak::ui::kColorBgWhite)
-                .arg(sak::ui::kColorBorderDefault)
-                .arg(sak::ui::kSpacingMedium)
-                .arg(sak::ui::kColorPrimaryDark)
-                .arg(sak::ui::kColorBgInfoPanel)
-        );
+        actionCard->setStyleSheet(QString("QFrame#actionCard {"
+                                          "  background-color: %1;"
+                                          "  border: 1px solid %2;"
+                                          "  border-radius: 8px;"
+                                          "  padding: %3px;"
+                                          "}"
+                                          "QFrame#actionCard:hover {"
+                                          "  border-color: %4;"
+                                          "  background-color: %5;"
+                                          "}")
+                                      .arg(sak::ui::kColorBgWhite)
+                                      .arg(sak::ui::kColorBorderDefault)
+                                      .arg(sak::ui::kSpacingMedium)
+                                      .arg(sak::ui::kColorPrimaryDark)
+                                      .arg(sak::ui::kColorBgInfoPanel));
 
         auto* cardLayout = new QVBoxLayout(actionCard);
-        cardLayout->setContentsMargins(sak::ui::kMarginSmall, sak::ui::kMarginSmall,
-                                        sak::ui::kMarginSmall, sak::ui::kMarginSmall);
+        cardLayout->setContentsMargins(sak::ui::kMarginSmall,
+                                       sak::ui::kMarginSmall,
+                                       sak::ui::kMarginSmall,
+                                       sak::ui::kMarginSmall);
         cardLayout->setSpacing(sak::ui::kSpacingTight);
 
         auto* nameLabel = new QLabel(action->name(), actionCard);
-        nameLabel->setStyleSheet(
-            QString("font-size: %1pt; font-weight: 600; color: %2;"
-                    " border: none; background: transparent;")
-                .arg(sak::ui::kFontSizeBody + 1)
-                .arg(sak::ui::kColorTextBody));
+        nameLabel->setStyleSheet(QString("font-size: %1pt; font-weight: 600; color: %2;"
+                                         " border: none; background: transparent;")
+                                     .arg(sak::ui::kFontSizeBody + 1)
+                                     .arg(sak::ui::kColorTextBody));
         cardLayout->addWidget(nameLabel);
 
         auto* descriptionLabel = new QLabel(action->description(), actionCard);
@@ -508,6 +524,7 @@ void QuickActionsPanel::showCategoryDialog(QuickAction::ActionCategory category,
 }
 
 QPushButton* QuickActionsPanel::createActionButton(QuickAction* action) {
+    Q_ASSERT(action);
     auto* button = new QPushButton();
     button->setMinimumHeight(sak::kButtonHeightStd);
     button->setMinimumWidth(sak::kButtonWidthLarge);
@@ -517,13 +534,9 @@ QPushButton* QuickActionsPanel::createActionButton(QuickAction* action) {
     button->setText(action->name());
     button->setToolTip(action->description());
     // Use app theme styling — only override alignment and padding
-    button->setStyleSheet(
-        "QPushButton { text-align: center; padding: 8px 14px; }"
-    );
+    button->setStyleSheet("QPushButton { text-align: center; padding: 8px 14px; }");
 
-    connect(button, &QPushButton::clicked, this, [this, action]() {
-        onActionClicked(action);
-    });
+    connect(button, &QPushButton::clicked, this, [this, action]() { onActionClicked(action); });
 
     updateActionButton(action);
     return button;
@@ -541,33 +554,32 @@ void QuickActionsPanel::updateActionButton(QuickAction* action) {
     // Build button text with status indicator and scan results
     QString status_icon;
     switch (action->status()) {
-        case QuickAction::ActionStatus::Idle:
-            status_icon = "[Idle]";
-            break;
-        case QuickAction::ActionStatus::Scanning:
-            status_icon = "[Scanning...]";
-            break;
-        case QuickAction::ActionStatus::Ready:
-            status_icon = action->lastScanResult().applicable ? "[Ready]" : "[N/A]";
-            break;
-        case QuickAction::ActionStatus::Running:
-            status_icon = "[Running]";
-            button->setEnabled(false);
-            break;
-        case QuickAction::ActionStatus::Success:
-            status_icon = "[Success]";
-            break;
-        case QuickAction::ActionStatus::Failed:
-            status_icon = "[Failed]";
-            break;
-        case QuickAction::ActionStatus::Cancelled:
-            status_icon = "[Cancelled]";
-            break;
+    case QuickAction::ActionStatus::Idle:
+        status_icon = "[Idle]";
+        break;
+    case QuickAction::ActionStatus::Scanning:
+        status_icon = "[Scanning...]";
+        break;
+    case QuickAction::ActionStatus::Ready:
+        status_icon = action->lastScanResult().applicable ? "[Ready]" : "[N/A]";
+        break;
+    case QuickAction::ActionStatus::Running:
+        status_icon = "[Running]";
+        button->setEnabled(false);
+        break;
+    case QuickAction::ActionStatus::Success:
+        status_icon = "[Success]";
+        break;
+    case QuickAction::ActionStatus::Failed:
+        status_icon = "[Failed]";
+        break;
+    case QuickAction::ActionStatus::Cancelled:
+        status_icon = "[Cancelled]";
+        break;
     }
 
     // Build button text — use short format to avoid cutoff
-    QString text = QString("%1 %2")
-                      .arg(status_icon, action->name());
+    QString text = QString("%1 %2").arg(status_icon, action->name());
 
     // Build tooltip with scan details
     QString tip = action->description();
@@ -589,6 +601,8 @@ void QuickActionsPanel::updateActionButton(QuickAction* action) {
 }
 
 void QuickActionsPanel::onActionClicked(QuickAction* action) {
+    Q_ASSERT(m_confirm_checkbox);
+    Q_ASSERT(m_controller);
     if (!action) {
         return;
     }
@@ -621,15 +635,14 @@ void QuickActionsPanel::onActionScanComplete(QuickAction* action) {
 
     if (m_logging_checkbox->isChecked()) {
         const auto& result = action->lastScanResult();
-        Q_EMIT statusMessage(
-            QString("%1 scan complete: %2").arg(action->name(), result.summary),
-            3000
-        );
+        Q_EMIT statusMessage(QString("%1 scan complete: %2").arg(action->name(), result.summary),
+                             3000);
     }
 }
 
-void QuickActionsPanel::onActionProgress(QuickAction* action, const QString& message,
-    int progress) {
+void QuickActionsPanel::onActionProgress(QuickAction* action,
+                                         const QString& message,
+                                         int progress) {
     Q_ASSERT(action);
     Q_ASSERT(progress >= 0 && progress <= 100);
     if (action != m_current_action) {
@@ -649,6 +662,7 @@ void QuickActionsPanel::onActionProgress(QuickAction* action, const QString& mes
 }
 
 void QuickActionsPanel::onActionComplete(QuickAction* action) {
+    Q_ASSERT(m_status_label);
     Q_ASSERT(action);
     if (action == m_current_action) {
         m_current_action = nullptr;
@@ -670,10 +684,8 @@ void QuickActionsPanel::onActionComplete(QuickAction* action) {
     // Show notification
     if (m_notifications_checkbox->isChecked()) {
         QString title = result.success ? "Action Complete" : "Action Failed";
-        Q_EMIT statusMessage(
-            QString("%1: %2").arg(action->name(), result.message),
-            sak::kTimerStatusDefaultMs
-        );
+        Q_EMIT statusMessage(QString("%1: %2").arg(action->name(), result.message),
+                             sak::kTimerStatusDefaultMs);
     }
 
     // Reset after delay
@@ -687,22 +699,25 @@ void QuickActionsPanel::onActionComplete(QuickAction* action) {
 void QuickActionsPanel::onActionError(QuickAction* action, const QString& error_message) {
     Q_ASSERT(action);
     Q_ASSERT(!error_message.isEmpty());
-    sak::logError("Action '{}' failed: {}", action->name().toStdString(),
+    sak::logError("Action '{}' failed: {}",
+                  action->name().toStdString(),
                   error_message.toStdString());
-    QMessageBox::critical(this, "Action Error",
-                         QString("%1 failed:\n\n%2").arg(action->name(), error_message));
+    QMessageBox::critical(this,
+                          "Action Error",
+                          QString("%1 failed:\n\n%2").arg(action->name(), error_message));
 
     m_status_label->setText(QString("Status: Error - %1").arg(error_message));
     updateActionButton(action);
 }
 
 void QuickActionsPanel::onBrowseBackupLocation() {
-    QString dir = QFileDialog::getExistingDirectory(
-        this,
-        "Select Backup Location",
-        m_backup_location_edit->text(),
-        QFileDialog::ShowDirsOnly | QFileDialog::DontResolveSymlinks
-    );
+    Q_ASSERT(m_backup_location_edit);
+    Q_ASSERT(m_controller);
+    QString dir = QFileDialog::getExistingDirectory(this,
+                                                    "Select Backup Location",
+                                                    m_backup_location_edit->text(),
+                                                    QFileDialog::ShowDirsOnly |
+                                                        QFileDialog::DontResolveSymlinks);
 
     if (!dir.isEmpty()) {
         m_backup_location_edit->setText(dir);
@@ -719,6 +734,7 @@ void QuickActionsPanel::refreshAllScans() {
 }
 
 void QuickActionsPanel::loadSettings() {
+    Q_ASSERT(m_backup_location_edit);
     Q_ASSERT(m_controller);
     QSettings settings("SAK", "QuickActions");
 
@@ -741,6 +757,7 @@ void QuickActionsPanel::loadSettings() {
 }
 
 void QuickActionsPanel::saveSettings() {
+    Q_ASSERT(m_backup_location_edit);
     Q_ASSERT(m_controller);
     QSettings settings("SAK", "QuickActions");
 
@@ -799,6 +816,8 @@ void QuickActionsPanel::onSettingChanged() {
 }
 
 void QuickActionsPanel::showSettingsDialog() {
+    Q_ASSERT(m_confirm_checkbox);
+    Q_ASSERT(m_notifications_checkbox);
     QDialog dialog(this);
     dialog.setWindowTitle(tr("Quick Actions Settings"));
     dialog.setMinimumWidth(400);
@@ -810,7 +829,7 @@ void QuickActionsPanel::showSettingsDialog() {
     confirmRow->addWidget(confirmCheck);
     confirmRow->addWidget(new sak::InfoButton(
         tr("Show a confirmation dialog before each action runs to prevent accidental execution"),
-            &dialog));
+        &dialog));
     confirmRow->addStretch();
     layout->addLayout(confirmRow);
 
@@ -838,7 +857,7 @@ void QuickActionsPanel::showSettingsDialog() {
     compressRow->addWidget(compressCheck);
     compressRow->addWidget(new sak::InfoButton(
         tr("Use ZIP compression for backup output files — slower but uses less disk space"),
-            &dialog));
+        &dialog));
     compressRow->addStretch();
     layout->addLayout(compressRow);
 
@@ -860,4 +879,4 @@ void QuickActionsPanel::onViewLog() {
     // Log is now always visible — no toggle needed
 }
 
-} // namespace sak
+}  // namespace sak

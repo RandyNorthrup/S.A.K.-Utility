@@ -2,11 +2,15 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "sak/network_transfer_security.h"
+
 #include "sak/logger.h"
 #include "sak/secure_memory.h"
 
 #ifdef _WIN32
+#include <QtGlobal>
+
 #include <windows.h>
+
 #include <bcrypt.h>
 #pragma comment(lib, "bcrypt.lib")
 #endif
@@ -14,9 +18,10 @@
 namespace sak {
 
 QByteArray TransferSecurityManager::generateRandomBytes(int size) {
+    Q_ASSERT(size >= 0);
     if (size <= 0) {
         logWarning("TransferSecurityManager::generateRandomBytes called with non-positive size {}",
-            size);
+                   size);
         return {};
     }
     QByteArray result(size, 0);
@@ -26,8 +31,8 @@ QByteArray TransferSecurityManager::generateRandomBytes(int size) {
         return {};
     }
 
-    if (BCryptGenRandom(hAlg, reinterpret_cast<PUCHAR>(result.data()), static_cast<ULONG>(size),
-        0) != 0) {
+    if (BCryptGenRandom(
+            hAlg, reinterpret_cast<PUCHAR>(result.data()), static_cast<ULONG>(size), 0) != 0) {
         BCryptCloseAlgorithmProvider(hAlg, 0);
         return {};
     }
@@ -40,32 +45,34 @@ QByteArray TransferSecurityManager::generateRandomBytes(int size) {
 #endif
 }
 
-std::expected<QByteArray, error_code> TransferSecurityManager::deriveKey(
-    const QString& passphrase,
-    const QByteArray& salt,
-    int iterations,
-    int key_length) {
+std::expected<QByteArray, error_code> TransferSecurityManager::deriveKey(const QString& passphrase,
+                                                                         const QByteArray& salt,
+                                                                         int iterations,
+                                                                         int key_length) {
 #ifdef _WIN32
     if (passphrase.isEmpty() || salt.isEmpty()) {
         return std::unexpected(error_code::invalid_argument);
     }
 
     BCRYPT_ALG_HANDLE hAlg = nullptr;
-    if (BCryptOpenAlgorithmProvider(&hAlg, BCRYPT_SHA256_ALGORITHM, nullptr,
-        BCRYPT_ALG_HANDLE_HMAC_FLAG) != 0) {
+    if (BCryptOpenAlgorithmProvider(
+            &hAlg, BCRYPT_SHA256_ALGORITHM, nullptr, BCRYPT_ALG_HANDLE_HMAC_FLAG) != 0) {
         return std::unexpected(error_code::crypto_error);
     }
 
     QByteArray pwd_bytes = passphrase.toUtf8();
     QByteArray derived_key(key_length, 0);
 
-    NTSTATUS status = BCryptDeriveKeyPBKDF2(
-        hAlg,
-        reinterpret_cast<PUCHAR>(pwd_bytes.data()), pwd_bytes.size(),
-        reinterpret_cast<PUCHAR>(const_cast<char*>(salt.data())), salt.size(),
-        iterations,
-        reinterpret_cast<PUCHAR>(derived_key.data()), key_length,
-        0);
+    NTSTATUS status =
+        BCryptDeriveKeyPBKDF2(hAlg,
+                              reinterpret_cast<PUCHAR>(pwd_bytes.data()),
+                              pwd_bytes.size(),
+                              reinterpret_cast<PUCHAR>(const_cast<char*>(salt.data())),
+                              salt.size(),
+                              iterations,
+                              reinterpret_cast<PUCHAR>(derived_key.data()),
+                              key_length,
+                              0);
 
     BCryptCloseAlgorithmProvider(hAlg, 0);
 
@@ -87,9 +94,7 @@ std::expected<QByteArray, error_code> TransferSecurityManager::deriveKey(
 }
 
 std::expected<EncryptedPayload, error_code> TransferSecurityManager::encryptAesGcm(
-    const QByteArray& plaintext,
-    const QByteArray& key,
-    const QByteArray& aad) {
+    const QByteArray& plaintext, const QByteArray& key, const QByteArray& aad) {
 #ifdef _WIN32
     EncryptedPayload payload;
 
@@ -100,16 +105,22 @@ std::expected<EncryptedPayload, error_code> TransferSecurityManager::encryptAesG
         return std::unexpected(error_code::crypto_error);
     }
 
-    if (BCryptSetProperty(hAlg, BCRYPT_CHAINING_MODE,
+    if (BCryptSetProperty(hAlg,
+                          BCRYPT_CHAINING_MODE,
                           reinterpret_cast<PUCHAR>(const_cast<wchar_t*>(BCRYPT_CHAIN_MODE_GCM)),
-                          sizeof(BCRYPT_CHAIN_MODE_GCM), 0) != 0) {
+                          sizeof(BCRYPT_CHAIN_MODE_GCM),
+                          0) != 0) {
         BCryptCloseAlgorithmProvider(hAlg, 0);
         return std::unexpected(error_code::crypto_error);
     }
 
-    if (BCryptGenerateSymmetricKey(hAlg, &hKey, nullptr, 0,
+    if (BCryptGenerateSymmetricKey(hAlg,
+                                   &hKey,
+                                   nullptr,
+                                   0,
                                    reinterpret_cast<PUCHAR>(const_cast<char*>(key.data())),
-                                   key.size(), 0) != 0) {
+                                   key.size(),
+                                   0) != 0) {
         BCryptCloseAlgorithmProvider(hAlg, 0);
         return std::unexpected(error_code::crypto_error);
     }
@@ -131,17 +142,16 @@ std::expected<EncryptedPayload, error_code> TransferSecurityManager::encryptAesG
     }
 
     DWORD ciphertext_len = 0;
-    NTSTATUS status = BCryptEncrypt(
-        hKey,
-        reinterpret_cast<PUCHAR>(const_cast<char*>(plaintext.data())),
-        plaintext.size(),
-        &auth_info,
-        nullptr,
-        0,
-        nullptr,
-        0,
-        &ciphertext_len,
-        0);
+    NTSTATUS status = BCryptEncrypt(hKey,
+                                    reinterpret_cast<PUCHAR>(const_cast<char*>(plaintext.data())),
+                                    plaintext.size(),
+                                    &auth_info,
+                                    nullptr,
+                                    0,
+                                    nullptr,
+                                    0,
+                                    &ciphertext_len,
+                                    0);
 
     if (status != 0) {
         BCryptDestroyKey(hKey);
@@ -150,17 +160,16 @@ std::expected<EncryptedPayload, error_code> TransferSecurityManager::encryptAesG
     }
 
     payload.ciphertext.resize(ciphertext_len);
-    status = BCryptEncrypt(
-        hKey,
-        reinterpret_cast<PUCHAR>(const_cast<char*>(plaintext.data())),
-        plaintext.size(),
-        &auth_info,
-        nullptr,
-        0,
-        reinterpret_cast<PUCHAR>(payload.ciphertext.data()),
-        ciphertext_len,
-        &ciphertext_len,
-        0);
+    status = BCryptEncrypt(hKey,
+                           reinterpret_cast<PUCHAR>(const_cast<char*>(plaintext.data())),
+                           plaintext.size(),
+                           &auth_info,
+                           nullptr,
+                           0,
+                           reinterpret_cast<PUCHAR>(payload.ciphertext.data()),
+                           ciphertext_len,
+                           &ciphertext_len,
+                           0);
 
     if (status != 0) {
         BCryptDestroyKey(hKey);
@@ -183,9 +192,7 @@ std::expected<EncryptedPayload, error_code> TransferSecurityManager::encryptAesG
 }
 
 std::expected<QByteArray, error_code> TransferSecurityManager::decryptAesGcm(
-    const EncryptedPayload& payload,
-    const QByteArray& key,
-    const QByteArray& aad) {
+    const EncryptedPayload& payload, const QByteArray& key, const QByteArray& aad) {
 #ifdef _WIN32
     BCRYPT_ALG_HANDLE hAlg = nullptr;
     BCRYPT_KEY_HANDLE hKey = nullptr;
@@ -194,16 +201,22 @@ std::expected<QByteArray, error_code> TransferSecurityManager::decryptAesGcm(
         return std::unexpected(error_code::crypto_error);
     }
 
-    if (BCryptSetProperty(hAlg, BCRYPT_CHAINING_MODE,
+    if (BCryptSetProperty(hAlg,
+                          BCRYPT_CHAINING_MODE,
                           reinterpret_cast<PUCHAR>(const_cast<wchar_t*>(BCRYPT_CHAIN_MODE_GCM)),
-                          sizeof(BCRYPT_CHAIN_MODE_GCM), 0) != 0) {
+                          sizeof(BCRYPT_CHAIN_MODE_GCM),
+                          0) != 0) {
         BCryptCloseAlgorithmProvider(hAlg, 0);
         return std::unexpected(error_code::crypto_error);
     }
 
-    if (BCryptGenerateSymmetricKey(hAlg, &hKey, nullptr, 0,
+    if (BCryptGenerateSymmetricKey(hAlg,
+                                   &hKey,
+                                   nullptr,
+                                   0,
                                    reinterpret_cast<PUCHAR>(const_cast<char*>(key.data())),
-                                   key.size(), 0) != 0) {
+                                   key.size(),
+                                   0) != 0) {
         BCryptCloseAlgorithmProvider(hAlg, 0);
         return std::unexpected(error_code::crypto_error);
     }
@@ -222,17 +235,17 @@ std::expected<QByteArray, error_code> TransferSecurityManager::decryptAesGcm(
     }
 
     DWORD plaintext_len = 0;
-    NTSTATUS status = BCryptDecrypt(
-        hKey,
-        reinterpret_cast<PUCHAR>(const_cast<char*>(payload.ciphertext.data())),
-        payload.ciphertext.size(),
-        &auth_info,
-        nullptr,
-        0,
-        nullptr,
-        0,
-        &plaintext_len,
-        0);
+    NTSTATUS status =
+        BCryptDecrypt(hKey,
+                      reinterpret_cast<PUCHAR>(const_cast<char*>(payload.ciphertext.data())),
+                      payload.ciphertext.size(),
+                      &auth_info,
+                      nullptr,
+                      0,
+                      nullptr,
+                      0,
+                      &plaintext_len,
+                      0);
 
     if (status != 0) {
         BCryptDestroyKey(hKey);
@@ -241,17 +254,16 @@ std::expected<QByteArray, error_code> TransferSecurityManager::decryptAesGcm(
     }
 
     QByteArray plaintext(plaintext_len, 0);
-    status = BCryptDecrypt(
-        hKey,
-        reinterpret_cast<PUCHAR>(const_cast<char*>(payload.ciphertext.data())),
-        payload.ciphertext.size(),
-        &auth_info,
-        nullptr,
-        0,
-        reinterpret_cast<PUCHAR>(plaintext.data()),
-        plaintext_len,
-        &plaintext_len,
-        0);
+    status = BCryptDecrypt(hKey,
+                           reinterpret_cast<PUCHAR>(const_cast<char*>(payload.ciphertext.data())),
+                           payload.ciphertext.size(),
+                           &auth_info,
+                           nullptr,
+                           0,
+                           reinterpret_cast<PUCHAR>(plaintext.data()),
+                           plaintext_len,
+                           &plaintext_len,
+                           0);
 
     if (status != 0) {
         BCryptDestroyKey(hKey);
@@ -273,4 +285,4 @@ std::expected<QByteArray, error_code> TransferSecurityManager::decryptAesGcm(
 #endif
 }
 
-} // namespace sak
+}  // namespace sak

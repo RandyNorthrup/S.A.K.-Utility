@@ -2,17 +2,21 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "sak/migration_report.h"
+
 #include "sak/logger.h"
+
 #include <QFile>
-#include <QTextStream>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
-#include <QJsonArray>
 #include <QSysInfo>
+#include <QTextStream>
+
 #include <algorithm>
 
 #ifdef Q_OS_WIN
 #include <windows.h>
+
 #include <lmcons.h>
 #endif
 
@@ -28,10 +32,8 @@ MigrationReport::MigrationReport() {
     m_metadata.report_version = "1.0";
 }
 
-void MigrationReport::generateReport(
-    const std::vector<AppScanner::AppInfo>& apps,
-    const std::vector<PackageMatcher::MatchResult>& matches)
-{
+void MigrationReport::generateReport(const std::vector<AppScanner::AppInfo>& apps,
+                                     const std::vector<PackageMatcher::MatchResult>& matches) {
     m_entries.clear();
 
     // Create a map of app names to match results for quick lookup
@@ -78,8 +80,7 @@ void MigrationReport::generateReport(
 void MigrationReport::populateMatchFields(
     MigrationEntry& entry,
     const QMap<QString, PackageMatcher::MatchResult>& match_map,
-    const QString& app_name)
-{
+    const QString& app_name) {
     QString normalized_name = app_name;
     normalized_name.remove(QRegularExpression("[\\(\\)\\[\\]]"));
 
@@ -163,6 +164,7 @@ void MigrationReport::selectByConfidence(double min_confidence) {
 }
 
 bool MigrationReport::exportToJson(const QString& file_path) const {
+    Q_ASSERT(!file_path.isEmpty());
     QJsonObject root;
 
     // Metadata
@@ -215,7 +217,7 @@ bool MigrationReport::exportToJson(const QString& file_path) const {
     QFile file(file_path);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
         sak::logWarning("[MigrationReport] Failed to open file for writing: {}",
-            file_path.toStdString());
+                        file_path.toStdString());
         return false;
     }
 
@@ -227,10 +229,11 @@ bool MigrationReport::exportToJson(const QString& file_path) const {
 }
 
 bool MigrationReport::exportToCsv(const QString& file_path) const {
+    Q_ASSERT(!file_path.isEmpty());
     QFile file(file_path);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
         sak::logWarning("[MigrationReport] Failed to open file for writing: {}",
-            file_path.toStdString());
+                        file_path.toStdString());
         return false;
     }
 
@@ -243,22 +246,15 @@ bool MigrationReport::exportToCsv(const QString& file_path) const {
 
     // Entries
     for (const auto& entry : m_entries) {
-        out << escapeCsvField(entry.app_name) << ","
-            << escapeCsvField(entry.app_version) << ","
-            << escapeCsvField(entry.app_publisher) << ","
-            << escapeCsvField(entry.install_location) << ","
-            << escapeCsvField(entry.install_date.toString(Qt::ISODate)) << ","
+        out << escapeCsvField(entry.app_name) << "," << escapeCsvField(entry.app_version) << ","
+            << escapeCsvField(entry.app_publisher) << "," << escapeCsvField(entry.install_location)
+            << "," << escapeCsvField(entry.install_date.toString(Qt::ISODate)) << ","
             << escapeCsvField(entry.choco_package) << ","
-            << QString::number(entry.confidence, 'f', 2) << ","
-            << entry.match_type << ","
-            << (entry.available ? "Yes" : "No") << ","
-            << escapeCsvField(entry.available_version) << ","
-            << (entry.selected ? "Yes" : "No") << ","
-            << (entry.version_lock ? "Yes" : "No") << ","
-            << escapeCsvField(entry.locked_version) << ","
-            << escapeCsvField(entry.notes) << ","
-            << entry.status << ","
-            << escapeCsvField(entry.error_message) << "\n";
+            << QString::number(entry.confidence, 'f', 2) << "," << entry.match_type << ","
+            << (entry.available ? "Yes" : "No") << "," << escapeCsvField(entry.available_version)
+            << "," << (entry.selected ? "Yes" : "No") << "," << (entry.version_lock ? "Yes" : "No")
+            << "," << escapeCsvField(entry.locked_version) << "," << escapeCsvField(entry.notes)
+            << "," << entry.status << "," << escapeCsvField(entry.error_message) << "\n";
     }
 
     file.close();
@@ -266,10 +262,11 @@ bool MigrationReport::exportToCsv(const QString& file_path) const {
 }
 
 bool MigrationReport::exportToHtml(const QString& file_path) const {
+    Q_ASSERT(!file_path.isEmpty());
     QFile file(file_path);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
         sak::logWarning("[MigrationReport] Failed to open file for writing: {}",
-            file_path.toStdString());
+                        file_path.toStdString());
         return false;
     }
 
@@ -281,10 +278,12 @@ bool MigrationReport::exportToHtml(const QString& file_path) const {
 }
 
 bool MigrationReport::importFromJson(const QString& file_path) {
+    Q_ASSERT(!m_entries.empty());
+    Q_ASSERT(!file_path.isEmpty());
     QFile file(file_path);
     if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
         sak::logWarning("[MigrationReport] Failed to open file for reading: {}",
-            file_path.toStdString());
+                        file_path.toStdString());
         return false;
     }
 
@@ -307,7 +306,7 @@ bool MigrationReport::importFromJson(const QString& file_path) {
         m_metadata.source_os_version = metadata["source_os_version"].toString();
         m_metadata.created_by = metadata["created_by"].toString();
         m_metadata.created_at = QDateTime::fromString(metadata["created_at"].toString(),
-            Qt::ISODate);
+                                                      Qt::ISODate);
         m_metadata.total_apps = metadata["total_apps"].toInt();
         m_metadata.matched_apps = metadata["matched_apps"].toInt();
         m_metadata.selected_apps = metadata["selected_apps"].toInt();
@@ -357,13 +356,15 @@ MigrationReport::MigrationEntry MigrationReport::parseEntryFromJson(const QJsonO
 }
 
 int MigrationReport::getSelectedCount() const {
-    return static_cast<int>(std::count_if(m_entries.begin(), m_entries.end(),
-        [](const MigrationEntry& e) { return e.selected; }));
+    return static_cast<int>(std::count_if(
+        m_entries.begin(), m_entries.end(), [](const MigrationEntry& e) { return e.selected; }));
 }
 
 int MigrationReport::getMatchedCount() const {
-    return static_cast<int>(std::count_if(m_entries.begin(), m_entries.end(),
-        [](const MigrationEntry& e) { return !e.choco_package.isEmpty(); }));
+    return static_cast<int>(
+        std::count_if(m_entries.begin(), m_entries.end(), [](const MigrationEntry& e) {
+            return !e.choco_package.isEmpty();
+        }));
 }
 
 int MigrationReport::getUnmatchedCount() const {
@@ -371,7 +372,9 @@ int MigrationReport::getUnmatchedCount() const {
 }
 
 double MigrationReport::getMatchRate() const {
-    if (m_entries.empty()) return 0.0;
+    if (m_entries.empty()) {
+        return 0.0;
+    }
     return static_cast<double>(getMatchedCount()) / static_cast<double>(m_entries.size());
 }
 
@@ -385,15 +388,19 @@ QMap<QString, int> MigrationReport::getMatchTypeDistribution() const {
 
 std::vector<MigrationReport::MigrationEntry> MigrationReport::getSelectedEntries() const {
     std::vector<MigrationEntry> selected;
-    std::copy_if(m_entries.begin(), m_entries.end(), std::back_inserter(selected),
-        [](const MigrationEntry& e) { return e.selected; });
+    std::copy_if(m_entries.begin(),
+                 m_entries.end(),
+                 std::back_inserter(selected),
+                 [](const MigrationEntry& e) { return e.selected; });
     return selected;
 }
 
 std::vector<MigrationReport::MigrationEntry> MigrationReport::getUnmatchedEntries() const {
     std::vector<MigrationEntry> unmatched;
-    std::copy_if(m_entries.begin(), m_entries.end(), std::back_inserter(unmatched),
-        [](const MigrationEntry& e) { return e.choco_package.isEmpty(); });
+    std::copy_if(m_entries.begin(),
+                 m_entries.end(),
+                 std::back_inserter(unmatched),
+                 [](const MigrationEntry& e) { return e.choco_package.isEmpty(); });
     return unmatched;
 }
 
@@ -470,8 +477,8 @@ QString MigrationReport::formatHtmlReport() const {
     out << "<div class=\"stat-box\"><div class=\"stat-value\">" << m_metadata.selected_apps
         << "</div><div class=\"stat-label\">Selected Apps</div></div>\n";
     out << "<div class=\"stat-box\"><div class=\"stat-value\">"
-        << QString::number(m_metadata.match_rate * 100, 'f',
-            1) << "%</div><div class=\"stat-label\">Match Rate</div></div>\n";
+        << QString::number(m_metadata.match_rate * 100, 'f', 1)
+        << "%</div><div class=\"stat-label\">Match Rate</div></div>\n";
     out << "</div>\n</div>\n";
 
     // Entries table
@@ -535,17 +542,19 @@ void MigrationReport::buildHtmlEntryRows(QTextStream& out) const {
         out << "<td>" << entry.app_name << "</td>\n";
         out << "<td>" << entry.app_version << "</td>\n";
         out << "<td>" << entry.app_publisher << "</td>\n";
-        out << "<td>" << (entry.choco_package.isEmpty() ? "<span class=\"unmatched\">No "
-                                                          "match</span>" : entry
-                                                              .choco_package) << "</td>\n";
-        out << "<td class=\"confidence\">" << QString::number(entry.confidence * 100, 'f',
-            0) << "%</td>\n";
+        out << "<td>"
+            << (entry.choco_package.isEmpty() ? "<span class=\"unmatched\">No "
+                                                "match</span>"
+                                              : entry.choco_package)
+            << "</td>\n";
+        out << "<td class=\"confidence\">" << QString::number(entry.confidence * 100, 'f', 0)
+            << "%</td>\n";
         out << "<td>" << entry.match_type << "</td>\n";
         out << "<td>"
             << (entry.selected ? "<span class=\"selected\">\xe2\x9c\x93 Yes</span>" : "No")
-                << "</td>\n";
+            << "</td>\n";
         out << "</tr>\n";
     }
 }
 
-} // namespace sak
+}  // namespace sak

@@ -3,11 +3,11 @@
 
 #pragma once
 
-#include <QObject>
-#include <QMap>
-#include <QTimer>
-
 #include "sak/orchestration_types.h"
+
+#include <QMap>
+#include <QObject>
+#include <QTimer>
 
 namespace sak {
 
@@ -27,8 +27,9 @@ public:
     QVector<DestinationPC> destinations() const;
     bool contains(const QString& destination_id) const;
 
-    static bool checkReadiness(const DestinationPC& destination, qint64 required_free_bytes,
-        QString* reason = nullptr);
+    static bool checkReadiness(const DestinationPC& destination,
+                               qint64 required_free_bytes,
+                               QString* reason = nullptr);
 
 Q_SIGNALS:
     void destinationRegistered(const DestinationPC& destination);
@@ -44,4 +45,4 @@ private:
     int m_staleTimeoutSeconds{30};
 };
 
-} // namespace sak
+}  // namespace sak

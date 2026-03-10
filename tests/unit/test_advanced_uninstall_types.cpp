@@ -4,9 +4,9 @@
 /// @file test_advanced_uninstall_types.cpp
 /// @brief Unit tests for Advanced Uninstall shared data types
 
-#include <QtTest/QtTest>
-
 #include "sak/advanced_uninstall_types.h"
+
+#include <QtTest/QtTest>
 
 #include <type_traits>
 
@@ -50,8 +50,7 @@ private Q_SLOTS:
 
 // ── ProgramInfo ─────────────────────────────────────────────────────────────
 
-void AdvancedUninstallTypesTests::programInfo_defaultConstruction()
-{
+void AdvancedUninstallTypesTests::programInfo_defaultConstruction() {
     sak::ProgramInfo info;
 
     QVERIFY(info.displayName.isEmpty());
@@ -75,8 +74,7 @@ void AdvancedUninstallTypesTests::programInfo_defaultConstruction()
     QVERIFY(info.cachedImage.isNull());
 }
 
-void AdvancedUninstallTypesTests::programInfo_valueSemantics()
-{
+void AdvancedUninstallTypesTests::programInfo_valueSemantics() {
     sak::ProgramInfo original;
     original.displayName = "Test App";
     original.publisher = "Test Publisher";
@@ -86,7 +84,7 @@ void AdvancedUninstallTypesTests::programInfo_valueSemantics()
     original.uninstallString = "C:\\uninst.exe";
     original.registryKeyPath = "HKLM\\SOFTWARE\\TestApp";
     original.estimatedSizeKB = 1024;
-    original.actualSizeBytes = 1048576;
+    original.actualSizeBytes = 1'048'576;
     original.source = sak::ProgramInfo::Source::UWP;
     original.packageFamilyName = "TestApp_abc123";
     original.isSystemComponent = true;
@@ -116,8 +114,7 @@ void AdvancedUninstallTypesTests::programInfo_valueSemantics()
     QCOMPARE(assigned.source, sak::ProgramInfo::Source::UWP);
 }
 
-void AdvancedUninstallTypesTests::programInfo_moveSemantics()
-{
+void AdvancedUninstallTypesTests::programInfo_moveSemantics() {
     sak::ProgramInfo original;
     original.displayName = "MovableApp";
     original.estimatedSizeKB = 512;
@@ -127,8 +124,7 @@ void AdvancedUninstallTypesTests::programInfo_moveSemantics()
     QCOMPARE(moved.estimatedSizeKB, 512);
 }
 
-void AdvancedUninstallTypesTests::programInfo_sourceEnum()
-{
+void AdvancedUninstallTypesTests::programInfo_sourceEnum() {
     QCOMPARE(static_cast<int>(sak::ProgramInfo::Source::RegistryHKLM), 0);
     QCOMPARE(static_cast<int>(sak::ProgramInfo::Source::RegistryHKLM_WOW64), 1);
     QCOMPARE(static_cast<int>(sak::ProgramInfo::Source::RegistryHKCU), 2);
@@ -138,8 +134,7 @@ void AdvancedUninstallTypesTests::programInfo_sourceEnum()
 
 // ── ScanLevel ───────────────────────────────────────────────────────────────
 
-void AdvancedUninstallTypesTests::scanLevel_enumValues()
-{
+void AdvancedUninstallTypesTests::scanLevel_enumValues() {
     QCOMPARE(static_cast<int>(sak::ScanLevel::Safe), 0);
     QCOMPARE(static_cast<int>(sak::ScanLevel::Moderate), 1);
     QCOMPARE(static_cast<int>(sak::ScanLevel::Advanced), 2);
@@ -147,8 +142,7 @@ void AdvancedUninstallTypesTests::scanLevel_enumValues()
 
 // ── LeftoverItem ────────────────────────────────────────────────────────────
 
-void AdvancedUninstallTypesTests::leftoverItem_defaultConstruction()
-{
+void AdvancedUninstallTypesTests::leftoverItem_defaultConstruction() {
     sak::LeftoverItem item;
 
     QCOMPARE(item.type, sak::LeftoverItem::Type::File);
@@ -161,8 +155,7 @@ void AdvancedUninstallTypesTests::leftoverItem_defaultConstruction()
     QVERIFY(item.registryValueData.isEmpty());
 }
 
-void AdvancedUninstallTypesTests::leftoverItem_typeEnum()
-{
+void AdvancedUninstallTypesTests::leftoverItem_typeEnum() {
     // Verify all type values are distinct
     QSet<int> values;
     values.insert(static_cast<int>(sak::LeftoverItem::Type::File));
@@ -177,15 +170,13 @@ void AdvancedUninstallTypesTests::leftoverItem_typeEnum()
     QCOMPARE(values.size(), 9);
 }
 
-void AdvancedUninstallTypesTests::leftoverItem_riskEnum()
-{
+void AdvancedUninstallTypesTests::leftoverItem_riskEnum() {
     QCOMPARE(static_cast<int>(sak::LeftoverItem::RiskLevel::Safe), 0);
     QCOMPARE(static_cast<int>(sak::LeftoverItem::RiskLevel::Review), 1);
     QCOMPARE(static_cast<int>(sak::LeftoverItem::RiskLevel::Risky), 2);
 }
 
-void AdvancedUninstallTypesTests::leftoverItem_valueSemantics()
-{
+void AdvancedUninstallTypesTests::leftoverItem_valueSemantics() {
     sak::LeftoverItem original;
     original.type = sak::LeftoverItem::Type::RegistryKey;
     original.risk = sak::LeftoverItem::RiskLevel::Risky;
@@ -215,8 +206,7 @@ void AdvancedUninstallTypesTests::leftoverItem_valueSemantics()
 
 // ── UninstallReport ─────────────────────────────────────────────────────────
 
-void AdvancedUninstallTypesTests::uninstallReport_defaultConstruction()
-{
+void AdvancedUninstallTypesTests::uninstallReport_defaultConstruction() {
     sak::UninstallReport report;
 
     QVERIFY(report.programName.isEmpty());
@@ -241,16 +231,14 @@ void AdvancedUninstallTypesTests::uninstallReport_defaultConstruction()
     QVERIFY(report.errorLog.isEmpty());
 }
 
-void AdvancedUninstallTypesTests::uninstallReport_resultEnum()
-{
+void AdvancedUninstallTypesTests::uninstallReport_resultEnum() {
     QCOMPARE(static_cast<int>(sak::UninstallReport::UninstallResult::Success), 0);
     QCOMPARE(static_cast<int>(sak::UninstallReport::UninstallResult::Failed), 1);
     QCOMPARE(static_cast<int>(sak::UninstallReport::UninstallResult::Cancelled), 2);
     QCOMPARE(static_cast<int>(sak::UninstallReport::UninstallResult::Skipped), 3);
 }
 
-void AdvancedUninstallTypesTests::uninstallReport_valueSemantics()
-{
+void AdvancedUninstallTypesTests::uninstallReport_valueSemantics() {
     sak::UninstallReport original;
     original.programName = "TestProg";
     original.programVersion = "2.0";
@@ -261,7 +249,7 @@ void AdvancedUninstallTypesTests::uninstallReport_valueSemantics()
     original.scanLevel = sak::ScanLevel::Advanced;
     original.filesDeleted = 10;
     original.foldersDeleted = 3;
-    original.totalSpaceRecovered = 999999;
+    original.totalSpaceRecovered = 999'999;
     original.errorLog.append("some error");
 
     sak::LeftoverItem leftover;
@@ -275,7 +263,7 @@ void AdvancedUninstallTypesTests::uninstallReport_valueSemantics()
     QCOMPARE(copy.uninstallResult, sak::UninstallReport::UninstallResult::Skipped);
     QCOMPARE(copy.nativeExitCode, 42);
     QCOMPARE(copy.filesDeleted, 10);
-    QCOMPARE(copy.totalSpaceRecovered, 999999);
+    QCOMPARE(copy.totalSpaceRecovered, 999'999);
     QCOMPARE(copy.foundLeftovers.size(), 1);
     QCOMPARE(copy.foundLeftovers[0].path, "C:\\test");
     QCOMPARE(copy.errorLog.size(), 1);
@@ -283,8 +271,7 @@ void AdvancedUninstallTypesTests::uninstallReport_valueSemantics()
 
 // ── UninstallQueueItem ──────────────────────────────────────────────────────
 
-void AdvancedUninstallTypesTests::queueItem_defaultConstruction()
-{
+void AdvancedUninstallTypesTests::queueItem_defaultConstruction() {
     sak::UninstallQueueItem item;
 
     QVERIFY(item.program.displayName.isEmpty());
@@ -293,8 +280,7 @@ void AdvancedUninstallTypesTests::queueItem_defaultConstruction()
     QCOMPARE(item.status, sak::UninstallQueueItem::Status::Queued);
 }
 
-void AdvancedUninstallTypesTests::queueItem_statusEnum()
-{
+void AdvancedUninstallTypesTests::queueItem_statusEnum() {
     QSet<int> values;
     values.insert(static_cast<int>(sak::UninstallQueueItem::Status::Queued));
     values.insert(static_cast<int>(sak::UninstallQueueItem::Status::InProgress));
@@ -304,8 +290,7 @@ void AdvancedUninstallTypesTests::queueItem_statusEnum()
     QCOMPARE(values.size(), 5);
 }
 
-void AdvancedUninstallTypesTests::queueItem_valueSemantics()
-{
+void AdvancedUninstallTypesTests::queueItem_valueSemantics() {
     sak::UninstallQueueItem original;
     original.program.displayName = "Queued App";
     original.scanLevel = sak::ScanLevel::Advanced;
@@ -323,8 +308,7 @@ void AdvancedUninstallTypesTests::queueItem_valueSemantics()
 
 // ── ViewFilter ──────────────────────────────────────────────────────────────
 
-void AdvancedUninstallTypesTests::viewFilter_enumValues()
-{
+void AdvancedUninstallTypesTests::viewFilter_enumValues() {
     QCOMPARE(static_cast<int>(sak::ViewFilter::All), 0);
     QCOMPARE(static_cast<int>(sak::ViewFilter::Win32Only), 1);
     QCOMPARE(static_cast<int>(sak::ViewFilter::UwpOnly), 2);
@@ -334,24 +318,21 @@ void AdvancedUninstallTypesTests::viewFilter_enumValues()
 
 // ── Compile-Time Invariants ─────────────────────────────────────────────────
 
-void AdvancedUninstallTypesTests::staticAsserts_defaultConstructible()
-{
+void AdvancedUninstallTypesTests::staticAsserts_defaultConstructible() {
     QVERIFY(std::is_default_constructible_v<sak::ProgramInfo>);
     QVERIFY(std::is_default_constructible_v<sak::LeftoverItem>);
     QVERIFY(std::is_default_constructible_v<sak::UninstallReport>);
     QVERIFY(std::is_default_constructible_v<sak::UninstallQueueItem>);
 }
 
-void AdvancedUninstallTypesTests::staticAsserts_copyConstructible()
-{
+void AdvancedUninstallTypesTests::staticAsserts_copyConstructible() {
     QVERIFY(std::is_copy_constructible_v<sak::ProgramInfo>);
     QVERIFY(std::is_copy_constructible_v<sak::LeftoverItem>);
     QVERIFY(std::is_copy_constructible_v<sak::UninstallReport>);
     QVERIFY(std::is_copy_constructible_v<sak::UninstallQueueItem>);
 }
 
-void AdvancedUninstallTypesTests::staticAsserts_movable()
-{
+void AdvancedUninstallTypesTests::staticAsserts_movable() {
     QVERIFY(std::is_move_constructible_v<sak::ProgramInfo>);
     QVERIFY(std::is_move_constructible_v<sak::LeftoverItem>);
     QVERIFY(std::is_move_constructible_v<sak::UninstallReport>);

@@ -9,14 +9,14 @@
 /// All tests share a single initialization performed in initTestCase().
 /// Each test uses unique marker strings for content verification.
 
+#include "sak/error_codes.h"
+#include "sak/logger.h"
+
+#include <QDir>
+#include <QFile>
+#include <QTemporaryDir>
 #include <QtTest/QtTest>
 
-#include "sak/logger.h"
-#include "sak/error_codes.h"
-
-#include <QTemporaryDir>
-#include <QFile>
-#include <QDir>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -72,8 +72,7 @@ private:
 // Setup â€” single initialization for the entire test run
 // ============================================================================
 
-void LoggerTests::initTestCase()
-{
+void LoggerTests::initTestCase() {
     QVERIFY(m_logDir.isValid());
 
     // Use a subdirectory that doesn't exist yet â€” verifies initialize creates it
@@ -87,39 +86,33 @@ void LoggerTests::initTestCase()
     log.setConsoleOutput(false);
 }
 
-std::string LoggerTests::readLogContent()
-{
+std::string LoggerTests::readLogContent() {
     auto& log = sak::logger::instance();
     log.flush();
     auto logFile = log.getLogFile();
     std::ifstream file(logFile);
-    return std::string((std::istreambuf_iterator<char>(file)),
-                       std::istreambuf_iterator<char>());
+    return std::string((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
 }
 
 // ============================================================================
 // Initialization
 // ============================================================================
 
-void LoggerTests::initialize_validDir()
-{
+void LoggerTests::initialize_validDir() {
     auto& log = sak::logger::instance();
     QVERIFY(log.isInitialized());
 }
 
-void LoggerTests::initialize_createsDir()
-{
+void LoggerTests::initialize_createsDir() {
     // The subdirectory should have been created during initTestCase
     QVERIFY(std::filesystem::exists(m_logSubDir));
     QVERIFY(std::filesystem::is_directory(m_logSubDir));
 }
 
-void LoggerTests::initialize_reInitFails()
-{
+void LoggerTests::initialize_reInitFails() {
     // Re-initializing a singleton logger should fail gracefully
     auto& log = sak::logger::instance();
-    auto result = log.initialize(
-        std::filesystem::path("Z:\\InvalidDrive\\NoDir"), "reinit");
+    auto result = log.initialize(std::filesystem::path("Z:\\InvalidDrive\\NoDir"), "reinit");
     QVERIFY(!result.has_value());
     // Original initialization should still be active
     QVERIFY(log.isInitialized());
@@ -129,8 +122,7 @@ void LoggerTests::initialize_reInitFails()
 // Level Control
 // ============================================================================
 
-void LoggerTests::setLevel_getLevel()
-{
+void LoggerTests::setLevel_getLevel() {
     auto& log = sak::logger::instance();
     log.setLevel(sak::log_level::warning);
     QCOMPARE(log.getLevel(), sak::log_level::warning);
@@ -139,8 +131,7 @@ void LoggerTests::setLevel_getLevel()
     QCOMPARE(log.getLevel(), sak::log_level::debug);
 }
 
-void LoggerTests::levelFiltering_belowMinNotWritten()
-{
+void LoggerTests::levelFiltering_belowMinNotWritten() {
     auto& log = sak::logger::instance();
     log.setLevel(sak::log_level::error);
 
@@ -157,8 +148,7 @@ void LoggerTests::levelFiltering_belowMinNotWritten()
     log.setLevel(sak::log_level::debug);
 }
 
-void LoggerTests::levelFiltering_atMinWritten()
-{
+void LoggerTests::levelFiltering_atMinWritten() {
     auto& log = sak::logger::instance();
     log.setLevel(sak::log_level::warning);
 
@@ -176,8 +166,7 @@ void LoggerTests::levelFiltering_atMinWritten()
 // Log Output
 // ============================================================================
 
-void LoggerTests::log_writesToFile()
-{
+void LoggerTests::log_writesToFile() {
     auto& log = sak::logger::instance();
     log.log(sak::log_level::info, "WRITE_TEST_ENTRY_UNIQUE_98765");
 
@@ -185,8 +174,7 @@ void LoggerTests::log_writesToFile()
     QVERIFY(content.find("WRITE_TEST_ENTRY_UNIQUE_98765") != std::string::npos);
 }
 
-void LoggerTests::log_multipleMessages()
-{
+void LoggerTests::log_multipleMessages() {
     auto& log = sak::logger::instance();
 
     for (int i = 0; i < 10; ++i) {
@@ -208,20 +196,18 @@ void LoggerTests::log_multipleMessages()
 // Console Output
 // ============================================================================
 
-void LoggerTests::consoleOutput_toggle()
-{
+void LoggerTests::consoleOutput_toggle() {
     auto& log = sak::logger::instance();
     log.setConsoleOutput(true);
     log.setConsoleOutput(false);
-    QVERIFY(true); // No crash
+    QVERIFY(true);  // No crash
 }
 
 // ============================================================================
 // Flush
 // ============================================================================
 
-void LoggerTests::flush_writesData()
-{
+void LoggerTests::flush_writesData() {
     auto& log = sak::logger::instance();
     log.log(sak::log_level::info, "FLUSH_VERIFY_MARKER");
     log.flush();
@@ -234,8 +220,7 @@ void LoggerTests::flush_writesData()
 // getLogFile
 // ============================================================================
 
-void LoggerTests::getLogFile_afterInit()
-{
+void LoggerTests::getLogFile_afterInit() {
     auto& log = sak::logger::instance();
     auto logFile = log.getLogFile();
     QVERIFY(!logFile.empty());
@@ -246,8 +231,7 @@ void LoggerTests::getLogFile_afterInit()
 // isInitialized
 // ============================================================================
 
-void LoggerTests::isInitialized_afterInit()
-{
+void LoggerTests::isInitialized_afterInit() {
     auto& log = sak::logger::instance();
     QVERIFY(log.isInitialized());
 }
@@ -256,8 +240,7 @@ void LoggerTests::isInitialized_afterInit()
 // Thread Safety
 // ============================================================================
 
-void LoggerTests::concurrentWrites_noCorruption()
-{
+void LoggerTests::concurrentWrites_noCorruption() {
     auto& log = sak::logger::instance();
 
     constexpr int THREADS = 4;
@@ -272,8 +255,9 @@ void LoggerTests::concurrentWrites_noCorruption()
         });
     }
 
-    for (auto& t : threads)
+    for (auto& t : threads) {
         t.join();
+    }
 
     std::string content = readLogContent();
 
@@ -290,8 +274,7 @@ void LoggerTests::concurrentWrites_noCorruption()
 // to_string
 // ============================================================================
 
-void LoggerTests::logLevel_toString()
-{
+void LoggerTests::logLevel_toString() {
     QCOMPARE(sak::to_string(sak::log_level::debug), std::string_view("DEBUG"));
     QCOMPARE(sak::to_string(sak::log_level::info), std::string_view("INFO"));
     QCOMPARE(sak::to_string(sak::log_level::warning), std::string_view("WARNING"));

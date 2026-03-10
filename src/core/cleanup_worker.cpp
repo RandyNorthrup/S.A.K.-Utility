@@ -5,6 +5,7 @@
 /// @brief Deletes selected leftover items safely on a background thread
 
 #include "sak/cleanup_worker.h"
+
 #include "sak/layout_constants.h"
 
 #include <QDir>
@@ -14,6 +15,7 @@
 
 #ifdef Q_OS_WIN
 #include <windows.h>
+
 #include <shellapi.h>
 #endif
 
@@ -22,14 +24,9 @@ namespace sak {
 CleanupWorker::CleanupWorker(const QVector<LeftoverItem>& selectedItems,
                              bool useRecycleBin,
                              QObject* parent)
-    : WorkerBase(parent)
-    , m_items(selectedItems)
-    , m_useRecycleBin(useRecycleBin)
-{
-}
+    : WorkerBase(parent), m_items(selectedItems), m_useRecycleBin(useRecycleBin) {}
 
-auto CleanupWorker::execute() -> std::expected<void, sak::error_code>
-{
+auto CleanupWorker::execute() -> std::expected<void, sak::error_code> {
     int succeeded = 0;
     int failed = 0;
     qint64 bytes_recovered = 0;
@@ -47,8 +44,7 @@ auto CleanupWorker::execute() -> std::expected<void, sak::error_code>
             continue;
         }
 
-        reportProgress(i, total,
-                       QString("Cleaning: %1").arg(item.path));
+        reportProgress(i, total, QString("Cleaning: %1").arg(item.path));
 
         bool ok = false;
 
@@ -115,8 +111,9 @@ auto CleanupWorker::execute() -> std::expected<void, sak::error_code>
     return {};
 }
 
-bool CleanupWorker::deleteFile(const QString& path)
-{
+bool CleanupWorker::deleteFile(const QString& path) {
+    Q_ASSERT(!path.isEmpty());
+    Q_ASSERT(!m_rebootPendingPaths.isEmpty());
     QFileInfo info(path);
     if (!info.exists()) {
         return true;  // Already gone
@@ -150,8 +147,9 @@ bool CleanupWorker::deleteFile(const QString& path)
     return false;
 }
 
-bool CleanupWorker::deleteFolder(const QString& path)
-{
+bool CleanupWorker::deleteFolder(const QString& path) {
+    Q_ASSERT(!path.isEmpty());
+    Q_ASSERT(!m_rebootPendingPaths.isEmpty());
     QDir dir(path);
     if (!dir.exists()) {
         return true;  // Already gone
@@ -172,8 +170,7 @@ bool CleanupWorker::deleteFolder(const QString& path)
     // scheduling locked ones for reboot removal
     bool allHandled = true;
     const auto entries = dir.entryInfoList(
-        QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Hidden | QDir::System,
-        QDir::DirsLast);
+        QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Hidden | QDir::System, QDir::DirsLast);
 
     for (const auto& entry : entries) {
         const QString entryPath = entry.absoluteFilePath();
@@ -208,8 +205,7 @@ bool CleanupWorker::deleteFolder(const QString& path)
     return allHandled;
 }
 
-bool CleanupWorker::sendToRecycleBin(const QString& path)
-{
+bool CleanupWorker::sendToRecycleBin(const QString& path) {
 #ifdef Q_OS_WIN
     // SHFileOperationW requires double-null terminated string
     std::wstring widePath = path.toStdWString();
@@ -227,23 +223,21 @@ bool CleanupWorker::sendToRecycleBin(const QString& path)
 #endif
 }
 
-bool CleanupWorker::scheduleRebootRemoval(const QString& path)
-{
+bool CleanupWorker::scheduleRebootRemoval(const QString& path) {
 #ifdef Q_OS_WIN
     // MoveFileExW with MOVEFILE_DELAY_UNTIL_REBOOT schedules the file
     // for deletion when Windows restarts (independent of this application)
-    return MoveFileExW(
-        reinterpret_cast<LPCWSTR>(path.utf16()),
-        nullptr,
-        MOVEFILE_DELAY_UNTIL_REBOOT) != 0;
+    return MoveFileExW(reinterpret_cast<LPCWSTR>(path.utf16()),
+                       nullptr,
+                       MOVEFILE_DELAY_UNTIL_REBOOT) != 0;
 #else
     Q_UNUSED(path)
     return false;
 #endif
 }
 
-bool CleanupWorker::deleteRegistryKey(const QString& fullKeyPath)
-{
+bool CleanupWorker::deleteRegistryKey(const QString& fullKeyPath) {
+Q_ASSERT(!fullKeyPath.isEmpty());
 #ifdef Q_OS_WIN
     QString path = fullKeyPath;
     HKEY hive = nullptr;
@@ -262,8 +256,7 @@ bool CleanupWorker::deleteRegistryKey(const QString& fullKeyPath)
     }
 
     // RegDeleteTree deletes the key and ALL subkeys
-    LONG rc = RegDeleteTreeW(hive,
-                             reinterpret_cast<LPCWSTR>(path.utf16()));
+    LONG rc = RegDeleteTreeW(hive, reinterpret_cast<LPCWSTR>(path.utf16()));
 
     return rc == ERROR_SUCCESS || rc == ERROR_FILE_NOT_FOUND;
 #else
@@ -272,9 +265,9 @@ bool CleanupWorker::deleteRegistryKey(const QString& fullKeyPath)
 #endif
 }
 
-bool CleanupWorker::deleteRegistryValue(const QString& keyPath,
-                                         const QString& valueName)
-{
+bool CleanupWorker::deleteRegistryValue(const QString& keyPath, const QString& valueName) {
+Q_ASSERT(!keyPath.isEmpty());
+Q_ASSERT(!valueName.isEmpty());
 #ifdef Q_OS_WIN
     QString path = keyPath;
     HKEY hive = nullptr;
@@ -293,15 +286,12 @@ bool CleanupWorker::deleteRegistryValue(const QString& keyPath,
     }
 
     HKEY key = nullptr;
-    LONG rc = RegOpenKeyExW(hive,
-                            reinterpret_cast<LPCWSTR>(path.utf16()),
-                            0, KEY_SET_VALUE, &key);
+    LONG rc = RegOpenKeyExW(hive, reinterpret_cast<LPCWSTR>(path.utf16()), 0, KEY_SET_VALUE, &key);
     if (rc != ERROR_SUCCESS) {
         return false;
     }
 
-    rc = RegDeleteValueW(key,
-                         reinterpret_cast<LPCWSTR>(valueName.utf16()));
+    rc = RegDeleteValueW(key, reinterpret_cast<LPCWSTR>(valueName.utf16()));
     RegCloseKey(key);
 
     return rc == ERROR_SUCCESS || rc == ERROR_FILE_NOT_FOUND;
@@ -312,15 +302,15 @@ bool CleanupWorker::deleteRegistryValue(const QString& keyPath,
 #endif
 }
 
-bool CleanupWorker::removeService(const QString& serviceName)
-{
+bool CleanupWorker::removeService(const QString& serviceName) {
+    Q_ASSERT(!serviceName.isEmpty());
     // Stop the service first
     QProcess stop_proc;
     stop_proc.setProgram("sc.exe");
     stop_proc.setArguments({"stop", serviceName});
     stop_proc.start();
     if (stop_proc.waitForStarted(sak::kTimeoutProcessStartMs)) {
-        stop_proc.waitForFinished(10000);
+        stop_proc.waitForFinished(10'000);
     }
 
     // Wait a moment for it to stop
@@ -332,43 +322,39 @@ bool CleanupWorker::removeService(const QString& serviceName)
     del_proc.setArguments({"delete", serviceName});
     del_proc.start();
 
-    if (!del_proc.waitForStarted(sak::kTimeoutProcessStartMs)
-        || !del_proc.waitForFinished(10000)) {
+    if (!del_proc.waitForStarted(sak::kTimeoutProcessStartMs) ||
+        !del_proc.waitForFinished(10'000)) {
         return false;
     }
 
     return del_proc.exitCode() == 0;
 }
 
-bool CleanupWorker::removeScheduledTask(const QString& taskName)
-{
+bool CleanupWorker::removeScheduledTask(const QString& taskName) {
     QProcess proc;
     proc.setProgram("schtasks.exe");
     proc.setArguments({"/delete", "/tn", taskName, "/f"});
     proc.start();
 
-    if (!proc.waitForStarted(sak::kTimeoutProcessStartMs)
-        || !proc.waitForFinished(10000)) {
+    if (!proc.waitForStarted(sak::kTimeoutProcessStartMs) || !proc.waitForFinished(10'000)) {
         return false;
     }
 
     return proc.exitCode() == 0;
 }
 
-bool CleanupWorker::removeFirewallRule(const QString& ruleName)
-{
+bool CleanupWorker::removeFirewallRule(const QString& ruleName) {
     QProcess proc;
     proc.setProgram("netsh.exe");
-    proc.setArguments({"advfirewall", "firewall", "delete", "rule",
-                       QString("name=%1").arg(ruleName)});
+    proc.setArguments(
+        {"advfirewall", "firewall", "delete", "rule", QString("name=%1").arg(ruleName)});
     proc.start();
 
-    if (!proc.waitForStarted(sak::kTimeoutProcessStartMs)
-        || !proc.waitForFinished(10000)) {
+    if (!proc.waitForStarted(sak::kTimeoutProcessStartMs) || !proc.waitForFinished(10'000)) {
         return false;
     }
 
     return proc.exitCode() == 0;
 }
 
-} // namespace sak
+}  // namespace sak

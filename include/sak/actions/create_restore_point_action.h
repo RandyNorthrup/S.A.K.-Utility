@@ -4,14 +4,16 @@
 #pragma once
 
 #include "sak/quick_action.h"
+
 #include <QString>
+
 #include <utility>
 
 namespace sak {
 
 /**
  * @brief Create Restore Point Action
- * 
+ *
  * Creates Windows System Restore point using WMI.
  */
 class CreateRestorePointAction : public QuickAction {
@@ -65,5 +67,4 @@ private:
     QString buildManagementReport(const QString& final_count) const;
 };
 
-} // namespace sak
-
+}  // namespace sak

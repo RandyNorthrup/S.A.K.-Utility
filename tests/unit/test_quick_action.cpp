@@ -4,8 +4,9 @@
 /// @file test_quick_action.cpp
 /// @brief Unit tests for QuickAction static helpers and base class (TST-10)
 
-#include <QtTest/QtTest>
 #include "sak/quick_action.h"
+
+#include <QtTest/QtTest>
 
 using namespace sak;
 
@@ -50,71 +51,60 @@ class QuickActionTests : public QObject {
 private Q_SLOTS:
     // --- formatFileSize ---
 
-    void formatFileSizeZero()
-    {
+    void formatFileSizeZero() {
         QCOMPARE(StubAction::formatFileSize(0), QStringLiteral("0 bytes"));
     }
 
-    void formatFileSizeBytes()
-    {
+    void formatFileSizeBytes() {
         QString result = StubAction::formatFileSize(512);
         QVERIFY(result.contains("512"));
         QVERIFY(result.contains("bytes"));
     }
 
-    void formatFileSizeKilobytes()
-    {
-        QString result = StubAction::formatFileSize(1536); // 1.5 KB
+    void formatFileSizeKilobytes() {
+        QString result = StubAction::formatFileSize(1536);  // 1.5 KB
         QVERIFY(result.contains("KB") || result.contains("kB"));
     }
 
-    void formatFileSizeMegabytes()
-    {
+    void formatFileSizeMegabytes() {
         QString result = StubAction::formatFileSize(5 * 1024 * 1024);
         QVERIFY(result.contains("MB"));
     }
 
-    void formatFileSizeGigabytes()
-    {
+    void formatFileSizeGigabytes() {
         QString result = StubAction::formatFileSize(Q_INT64_C(2'500'000'000));
         QVERIFY(result.contains("GB"));
     }
 
-    void formatFileSizeTerabytes()
-    {
+    void formatFileSizeTerabytes() {
         QString result = StubAction::formatFileSize(Q_INT64_C(1'500'000'000'000));
         QVERIFY(result.contains("TB"));
     }
 
     // --- sanitizePathForBackup ---
 
-    void sanitizeSimplePath()
-    {
+    void sanitizeSimplePath() {
         QCOMPARE(StubAction::sanitizePathForBackup("C:\\Users\\Test"),
                  QStringLiteral("C__Users_Test"));
     }
 
-    void sanitizeForwardSlashes()
-    {
+    void sanitizeForwardSlashes() {
         QCOMPARE(StubAction::sanitizePathForBackup("home/user/docs"),
                  QStringLiteral("home_user_docs"));
     }
 
-    void sanitizeColonAndSlashes()
-    {
+    void sanitizeColonAndSlashes() {
         QCOMPARE(StubAction::sanitizePathForBackup("D:/Program Files/App"),
                  QStringLiteral("D__Program Files_App"));
     }
 
-    void sanitizeEmptyPath()
-    {
+    void sanitizeEmptyPath() {
         QCOMPARE(StubAction::sanitizePathForBackup(""), QStringLiteral(""));
     }
 
     // --- formatLogBox ---
 
-    void formatLogBoxBasic()
-    {
+    void formatLogBoxBasic() {
         QStringList lines = {"Line 1", "Line 2"};
         QString result = StubAction::formatLogBox("TITLE", lines);
         QVERIFY(result.contains("TITLE"));
@@ -122,8 +112,7 @@ private Q_SLOTS:
         QVERIFY(result.contains("Line 2"));
     }
 
-    void formatLogBoxWithDuration()
-    {
+    void formatLogBoxWithDuration() {
         QStringList lines = {"Result: OK"};
         QString result = StubAction::formatLogBox("TEST", lines, 1500);
         QVERIFY(result.contains("TEST"));
@@ -132,8 +121,7 @@ private Q_SLOTS:
         QVERIFY(result.contains("1.5") || result.contains("1500") || result.contains("1 s"));
     }
 
-    void formatLogBoxEmptyLines()
-    {
+    void formatLogBoxEmptyLines() {
         QStringList lines;
         QString result = StubAction::formatLogBox("EMPTY", lines);
         QVERIFY(result.contains("EMPTY"));
@@ -141,14 +129,12 @@ private Q_SLOTS:
 
     // --- Base class state management ---
 
-    void initialStatusIsIdle()
-    {
+    void initialStatusIsIdle() {
         StubAction action;
         QCOMPARE(action.status(), QuickAction::ActionStatus::Idle);
     }
 
-    void scanUpdatesStatus()
-    {
+    void scanUpdatesStatus() {
         StubAction action;
         action.scan();
         QCOMPARE(action.status(), QuickAction::ActionStatus::Ready);
@@ -156,16 +142,14 @@ private Q_SLOTS:
         QCOMPARE(action.lastScanResult().bytes_affected, qint64(1024));
     }
 
-    void executeUpdatesStatus()
-    {
+    void executeUpdatesStatus() {
         StubAction action;
         action.execute();
         QCOMPARE(action.status(), QuickAction::ActionStatus::Success);
         QVERIFY(action.lastExecutionResult().success);
     }
 
-    void cancelSetsFlag()
-    {
+    void cancelSetsFlag() {
         StubAction action;
         action.cancel();
         // Can't directly test isCancelled() since it's protected,
@@ -173,8 +157,7 @@ private Q_SLOTS:
         QVERIFY(true);
     }
 
-    void applyExecutionResult()
-    {
+    void applyExecutionResult() {
         StubAction action;
         QuickAction::ExecutionResult result;
         result.success = true;
@@ -186,8 +169,7 @@ private Q_SLOTS:
         QCOMPARE(action.lastExecutionResult().bytes_processed, qint64(4096));
     }
 
-    void updateStatusEmitsSignal()
-    {
+    void updateStatusEmitsSignal() {
         StubAction action;
         QSignalSpy spy(&action, &QuickAction::statusChanged);
         action.updateStatus(QuickAction::ActionStatus::Running);

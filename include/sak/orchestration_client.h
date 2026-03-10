@@ -3,12 +3,12 @@
 
 #pragma once
 
-#include <QObject>
-#include <QHostAddress>
-#include <QTimer>
-
 #include "sak/orchestration_protocol.h"
 #include "sak/orchestration_types.h"
+
+#include <QHostAddress>
+#include <QObject>
+#include <QTimer>
 
 class QTcpSocket;
 
@@ -58,4 +58,4 @@ private:
     bool m_autoReconnect{true};
 };
 
-} // namespace sak
+}  // namespace sak

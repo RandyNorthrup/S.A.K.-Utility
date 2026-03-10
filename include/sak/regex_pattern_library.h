@@ -88,14 +88,14 @@ private:
 
 /// RegexPatternLibrary must inherit QObject.
 static_assert(std::is_base_of_v<QObject, RegexPatternLibrary>,
-    "RegexPatternLibrary must inherit QObject.");
+              "RegexPatternLibrary must inherit QObject.");
 
 /// RegexPatternLibrary must not be copyable.
 static_assert(!std::is_copy_constructible_v<RegexPatternLibrary>,
-    "RegexPatternLibrary must not be copy-constructible.");
+              "RegexPatternLibrary must not be copy-constructible.");
 
 /// RegexPatternLibrary must not be movable.
 static_assert(!std::is_move_constructible_v<RegexPatternLibrary>,
-    "RegexPatternLibrary must not be move-constructible.");
+              "RegexPatternLibrary must not be move-constructible.");
 
-} // namespace sak
+}  // namespace sak

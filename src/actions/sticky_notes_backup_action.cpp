@@ -5,20 +5,19 @@
 /// @brief Implements Windows Sticky Notes database backup
 
 #include "sak/actions/sticky_notes_backup_action.h"
-#include "sak/windows_user_scanner.h"
+
 #include "sak/logger.h"
+#include "sak/windows_user_scanner.h"
+
+#include <QDir>
 #include <QFile>
 #include <QFileInfo>
-#include <QDir>
 #include <QStandardPaths>
 
 namespace sak {
 
 StickyNotesBackupAction::StickyNotesBackupAction(const QString& backup_location, QObject* parent)
-    : QuickAction(parent)
-    , m_backup_location(backup_location)
-{
-}
+    : QuickAction(parent), m_backup_location(backup_location) {}
 
 QString StickyNotesBackupAction::findStickyNotesDatabase() {
     // Scan ALL user profiles for Sticky Notes databases
@@ -26,11 +25,12 @@ QString StickyNotesBackupAction::findStickyNotesDatabase() {
     QVector<UserProfile> users = scanner.scanUsers();
 
     for (const UserProfile& user : users) {
-        QString local_packages = user.profile_path +
+        QString local_packages =
+            user.profile_path +
             "/AppData/Local/Packages/Microsoft.MicrosoftStickyNotes_8wekyb3d8bbwe/LocalState";
         QDir dir(QDir::cleanPath(local_packages));
         if (dir.exists("plum.sqlite")) {
-            return dir.filePath("plum.sqlite"); // Return first found
+            return dir.filePath("plum.sqlite");  // Return first found
         }
     }
 
@@ -45,16 +45,15 @@ void StickyNotesBackupAction::scan() {
 
     // Check for Sticky Notes database
     QString local_app = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation);
-    QString sticky_path = local_app +
-        "/../Local/Packages/Microsoft.MicrosoftStickyNotes_8wekyb3d8bbwe/LocalState";
+    QString sticky_path =
+        local_app + "/../Local/Packages/Microsoft.MicrosoftStickyNotes_8wekyb3d8bbwe/LocalState";
 
     bool sticky_notes_found = QDir(sticky_path).exists();
 
     ScanResult result;
     result.applicable = true;
-    result.summary = sticky_notes_found
-        ? "Sticky Notes database detected - ready to backup"
-        : "Ready to scan for Sticky Notes data";
+    result.summary = sticky_notes_found ? "Sticky Notes database detected - ready to backup"
+                                        : "Ready to scan for Sticky Notes data";
     Q_ASSERT(!result.summary.isEmpty());
     setScanResult(result);
     setStatus(ActionStatus::Ready);
@@ -79,8 +78,8 @@ void StickyNotesBackupAction::execute() {
 
     if (!found) {
         emitFailedResult("No Sticky Notes database found",
-                        "Sticky Notes may not be installed or never used on this system",
-                        start_time);
+                         "Sticky Notes may not be installed or never used on this system",
+                         start_time);
         return;
     }
 
@@ -119,8 +118,8 @@ void StickyNotesBackupAction::execute() {
         result.files_processed = 1;
         result.bytes_processed = file_size;
         result.output_path = backup_dir.absolutePath();
-        result.message = QString("Backed up Sticky Notes database (%1)")
-            .arg(formatFileSize(file_size));
+        result.message =
+            QString("Backed up Sticky Notes database (%1)").arg(formatFileSize(file_size));
         result.log = QString("Saved to: %1").arg(dest_path);
         Q_ASSERT(result.duration_ms >= 0);
         finishWithResult(result, ActionStatus::Success);
@@ -132,4 +131,4 @@ void StickyNotesBackupAction::execute() {
     }
 }
 
-} // namespace sak
+}  // namespace sak

@@ -85,4 +85,4 @@ private:
     double m_matrix_gflops{0.0};
 };
 
-} // namespace sak
+}  // namespace sak

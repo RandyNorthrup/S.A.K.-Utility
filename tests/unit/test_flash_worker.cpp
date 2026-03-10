@@ -15,13 +15,14 @@
  * logic that fires before raw disk writes.
  */
 
-#include <QtTest>
-#include <QSignalSpy>
-#include <QEventLoop>
-#include <QTimer>
-#include <memory>
-
 #include "sak/flash_worker.h"
+
+#include <QEventLoop>
+#include <QSignalSpy>
+#include <QTimer>
+#include <QtTest>
+
+#include <memory>
 
 // ===========================================================================
 // Mock Image Source — always‐failing or configurable
@@ -49,10 +50,10 @@ public:
 
     sak::ImageMetadata metadata() const override {
         sak::ImageMetadata md;
-        md.name   = QStringLiteral("mock.iso");
-        md.path   = QStringLiteral("/mock/mock.iso");
+        md.name = QStringLiteral("mock.iso");
+        md.path = QStringLiteral("/mock/mock.iso");
         md.format = sak::ImageFormat::ISO;
-        md.size   = m_fakeSize;
+        md.size = m_fakeSize;
         return md;
     }
 
@@ -63,7 +64,7 @@ public:
 private:
     bool m_shouldOpen;
     bool m_open;
-    qint64 m_fakeSize = 1024 * 1024; // 1 MiB
+    qint64 m_fakeSize = 1024 * 1024;  // 1 MiB
 };
 
 // ===========================================================================
@@ -114,8 +115,7 @@ private slots:
 // ValidationResult struct
 // ===========================================================================
 
-void FlashWorkerTests::validationResultDefaults()
-{
+void FlashWorkerTests::validationResultDefaults() {
     sak::ValidationResult vr;
     QCOMPARE(vr.passed, false);
     QCOMPARE(vr.mismatchOffset, static_cast<qint64>(-1));
@@ -126,15 +126,14 @@ void FlashWorkerTests::validationResultDefaults()
     QVERIFY(vr.errors.isEmpty());
 }
 
-void FlashWorkerTests::validationResultFieldAssignment()
-{
+void FlashWorkerTests::validationResultFieldAssignment() {
     sak::ValidationResult vr;
-    vr.passed             = true;
-    vr.sourceChecksum     = QStringLiteral("abc123");
-    vr.targetChecksum     = QStringLiteral("abc123");
-    vr.mismatchOffset     = 0;
-    vr.corruptedBlocks    = 5;
-    vr.verificationSpeed  = 123.45;
+    vr.passed = true;
+    vr.sourceChecksum = QStringLiteral("abc123");
+    vr.targetChecksum = QStringLiteral("abc123");
+    vr.mismatchOffset = 0;
+    vr.corruptedBlocks = 5;
+    vr.verificationSpeed = 123.45;
     vr.errors << QStringLiteral("block 7 mismatch");
 
     QCOMPARE(vr.passed, true);
@@ -151,50 +150,45 @@ void FlashWorkerTests::validationResultFieldAssignment()
 // ValidationMode enum
 // ===========================================================================
 
-void FlashWorkerTests::validationModeEnumValues()
-{
+void FlashWorkerTests::validationModeEnumValues() {
     // All three values must exist and be distinct.
-    QVERIFY(sak::ValidationMode::Full   != sak::ValidationMode::Sample);
+    QVERIFY(sak::ValidationMode::Full != sak::ValidationMode::Sample);
     QVERIFY(sak::ValidationMode::Sample != sak::ValidationMode::Skip);
-    QVERIFY(sak::ValidationMode::Full   != sak::ValidationMode::Skip);
+    QVERIFY(sak::ValidationMode::Full != sak::ValidationMode::Skip);
 }
 
 // ===========================================================================
 // ImageMetadata::isValid()
 // ===========================================================================
 
-void FlashWorkerTests::imageMetadataEmptyPathInvalid()
-{
+void FlashWorkerTests::imageMetadataEmptyPathInvalid() {
     sak::ImageMetadata md;
-    md.path   = QString();
-    md.size   = 1024;
+    md.path = QString();
+    md.size = 1024;
     md.format = sak::ImageFormat::ISO;
     QVERIFY(!md.isValid());
 }
 
-void FlashWorkerTests::imageMetadataZeroSizeInvalid()
-{
+void FlashWorkerTests::imageMetadataZeroSizeInvalid() {
     sak::ImageMetadata md;
-    md.path   = QStringLiteral("/some/path.iso");
-    md.size   = 0;
+    md.path = QStringLiteral("/some/path.iso");
+    md.size = 0;
     md.format = sak::ImageFormat::ISO;
     QVERIFY(!md.isValid());
 }
 
-void FlashWorkerTests::imageMetadataUnknownFormatInvalid()
-{
+void FlashWorkerTests::imageMetadataUnknownFormatInvalid() {
     sak::ImageMetadata md;
-    md.path   = QStringLiteral("/some/path.iso");
-    md.size   = 1024;
+    md.path = QStringLiteral("/some/path.iso");
+    md.size = 1024;
     md.format = sak::ImageFormat::Unknown;
     QVERIFY(!md.isValid());
 }
 
-void FlashWorkerTests::imageMetadataValidReturnsTrue()
-{
+void FlashWorkerTests::imageMetadataValidReturnsTrue() {
     sak::ImageMetadata md;
-    md.path   = QStringLiteral("/some/path.iso");
-    md.size   = 1024;
+    md.path = QStringLiteral("/some/path.iso");
+    md.size = 1024;
     md.format = sak::ImageFormat::ISO;
     QVERIFY(md.isValid());
 }
@@ -203,22 +197,19 @@ void FlashWorkerTests::imageMetadataValidReturnsTrue()
 // FlashWorker construction & getters
 // ===========================================================================
 
-void FlashWorkerTests::constructorStoresTargetDevice()
-{
+void FlashWorkerTests::constructorStoresTargetDevice() {
     auto src = std::make_unique<MockImageSource>(false);
     FlashWorker worker(std::move(src), QStringLiteral("\\\\.\\PhysicalDrive99"));
     QCOMPARE(worker.targetDevice(), QStringLiteral("\\\\.\\PhysicalDrive99"));
 }
 
-void FlashWorkerTests::constructorDefaultBytesWritten()
-{
+void FlashWorkerTests::constructorDefaultBytesWritten() {
     auto src = std::make_unique<MockImageSource>(false);
     FlashWorker worker(std::move(src), QStringLiteral("\\\\.\\PhysicalDrive99"));
     QCOMPARE(worker.bytesWritten(), static_cast<qint64>(0));
 }
 
-void FlashWorkerTests::constructorDefaultSpeed()
-{
+void FlashWorkerTests::constructorDefaultSpeed() {
     auto src = std::make_unique<MockImageSource>(false);
     FlashWorker worker(std::move(src), QStringLiteral("\\\\.\\PhysicalDrive99"));
     QCOMPARE(worker.speedMBps(), 0.0);
@@ -228,8 +219,7 @@ void FlashWorkerTests::constructorDefaultSpeed()
 // Setters
 // ===========================================================================
 
-void FlashWorkerTests::setValidationModeFull()
-{
+void FlashWorkerTests::setValidationModeFull() {
     auto src = std::make_unique<MockImageSource>(false);
     FlashWorker worker(std::move(src), QStringLiteral("X"));
     worker.setValidationMode(sak::ValidationMode::Full);
@@ -237,24 +227,21 @@ void FlashWorkerTests::setValidationModeFull()
     QVERIFY(true);
 }
 
-void FlashWorkerTests::setValidationModeSample()
-{
+void FlashWorkerTests::setValidationModeSample() {
     auto src = std::make_unique<MockImageSource>(false);
     FlashWorker worker(std::move(src), QStringLiteral("X"));
     worker.setValidationMode(sak::ValidationMode::Sample);
     QVERIFY(true);
 }
 
-void FlashWorkerTests::setValidationModeSkip()
-{
+void FlashWorkerTests::setValidationModeSkip() {
     auto src = std::make_unique<MockImageSource>(false);
     FlashWorker worker(std::move(src), QStringLiteral("X"));
     worker.setValidationMode(sak::ValidationMode::Skip);
     QVERIFY(true);
 }
 
-void FlashWorkerTests::setVerificationEnabledToggle()
-{
+void FlashWorkerTests::setVerificationEnabledToggle() {
     auto src = std::make_unique<MockImageSource>(false);
     FlashWorker worker(std::move(src), QStringLiteral("X"));
     worker.setVerificationEnabled(false);
@@ -262,11 +249,10 @@ void FlashWorkerTests::setVerificationEnabledToggle()
     QVERIFY(true);
 }
 
-void FlashWorkerTests::setBufferSizeCustom()
-{
+void FlashWorkerTests::setBufferSizeCustom() {
     auto src = std::make_unique<MockImageSource>(false);
     FlashWorker worker(std::move(src), QStringLiteral("X"));
-    worker.setBufferSize(128 * 1024 * 1024); // 128 MiB
+    worker.setBufferSize(128 * 1024 * 1024);  // 128 MiB
     QVERIFY(true);
 }
 
@@ -274,8 +260,7 @@ void FlashWorkerTests::setBufferSizeCustom()
 // Cancellation
 // ===========================================================================
 
-void FlashWorkerTests::requestStopSetsFlag()
-{
+void FlashWorkerTests::requestStopSetsFlag() {
     auto src = std::make_unique<MockImageSource>(false);
     FlashWorker worker(std::move(src), QStringLiteral("X"));
 
@@ -284,8 +269,7 @@ void FlashWorkerTests::requestStopSetsFlag()
     QVERIFY(worker.stopRequested());
 }
 
-void FlashWorkerTests::stopRequestedFalseByDefault()
-{
+void FlashWorkerTests::stopRequestedFalseByDefault() {
     auto src = std::make_unique<MockImageSource>(false);
     FlashWorker worker(std::move(src), QStringLiteral("X"));
     QVERIFY(!worker.stopRequested());
@@ -295,8 +279,7 @@ void FlashWorkerTests::stopRequestedFalseByDefault()
 // Early-exit failure paths
 // ===========================================================================
 
-void FlashWorkerTests::executeFailsWhenImageOpenFails()
-{
+void FlashWorkerTests::executeFailsWhenImageOpenFails() {
     // Mock that returns false from open().
     auto src = std::make_unique<MockImageSource>(false);
     FlashWorker worker(std::move(src), QStringLiteral("\\\\.\\PhysicalDrive99"));
@@ -318,8 +301,7 @@ void FlashWorkerTests::executeFailsWhenImageOpenFails()
              "Expected failed() signal when ImageSource::open() returns false");
 }
 
-void FlashWorkerTests::executeFailsWhenDeviceInvalid()
-{
+void FlashWorkerTests::executeFailsWhenDeviceInvalid() {
     // Mock that opens successfully, but the device path is bogus.
     auto src = std::make_unique<MockImageSource>(true);
     FlashWorker worker(std::move(src), QStringLiteral("\\\\.\\PhysicalDrive999"));
@@ -334,8 +316,7 @@ void FlashWorkerTests::executeFailsWhenDeviceInvalid()
     QVERIFY2(stopped, "Worker thread did not stop within 5 seconds");
 
     // DeviceIoControl / CreateFileW should fail → failed() emitted.
-    QVERIFY2(failedSpy.count() >= 1,
-             "Expected failed() signal when device path is invalid");
+    QVERIFY2(failedSpy.count() >= 1, "Expected failed() signal when device path is invalid");
 }
 
 // ===========================================================================

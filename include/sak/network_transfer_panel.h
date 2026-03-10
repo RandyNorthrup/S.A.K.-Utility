@@ -3,22 +3,23 @@
 
 #pragma once
 
-#include <QWidget>
-#include <QVector>
-#include <QMap>
-#include <QSet>
-#include <QQueue>
-#include <memory>
-#include <filesystem>
-
-#include "sak/user_profile_types.h"
-#include "sak/network_transfer_types.h"
-#include "sak/network_transfer_report.h"
-#include "sak/user_profile_restore_worker.h"
-#include "sak/mapping_engine.h"
+#include "sak/assignment_queue_store.h"
 #include "sak/deployment_history.h"
 #include "sak/deployment_summary_report.h"
-#include "sak/assignment_queue_store.h"
+#include "sak/mapping_engine.h"
+#include "sak/network_transfer_report.h"
+#include "sak/network_transfer_types.h"
+#include "sak/user_profile_restore_worker.h"
+#include "sak/user_profile_types.h"
+
+#include <QMap>
+#include <QQueue>
+#include <QSet>
+#include <QVector>
+#include <QWidget>
+
+#include <filesystem>
+#include <memory>
 
 class QTableWidget;
 class QPushButton;
@@ -171,6 +172,7 @@ private:
     /** @brief Build Destination page: connection setup, orchestrator link, and
      *         restore checkbox */
     void setupUi_destinationSection(QVBoxLayout* destLayout);
+    void setupUi_orchestratorGroup(QVBoxLayout* destInfoLayout);
     /** @brief Build Destination page: incoming manifest + assignment queue tables */
     void setupUi_destinationIncoming(QVBoxLayout* destLayout);
     /** @brief Build Orchestrator server group (listen port, start button, status) */
@@ -202,10 +204,12 @@ private:
     void setupConnections_destinationSignals();
     /** @brief Connect orchestrator-tab widget and backend signals */
     void setupConnections_orchestratorSignals();
+    void setupConnections_orchestratorObject();
     /** @brief Connect core controller and parallel-manager signals */
     void setupConnections_controllerSignals();
     /** @brief Connect parallel transfer manager pause/resume/cancel signals */
     void setupConnections_parallelManager();
+    void setupConnections_parallelJobActions();
     /** @brief Load persisted transfer settings from QSettings */
     void loadSettings();
     /** @brief Initialize the deployment history manager from persisted path */
@@ -220,13 +224,13 @@ private:
     QVector<TransferFileEntry> buildFileList();
     /** @brief Process a single scanned file and append to transfer file list */
     void processScannedFile(QVector<TransferFileEntry>& files,
-                           const std::filesystem::path& fsPath,
-                           const QString& username,
-                           const QString& profilePath,
-                           SmartFileFilter& smartFilter,
-                           PermissionManager& permissionManager,
-                           file_hasher& hasher,
-                           PermissionMode permMode);
+                            const std::filesystem::path& fsPath,
+                            const QString& username,
+                            const QString& profilePath,
+                            SmartFileFilter& smartFilter,
+                            PermissionManager& permissionManager,
+                            file_hasher& hasher,
+                            PermissionMode permMode);
     /** @brief Collect files from all selected folders for a single user */
     void collectUserFiles(QVector<TransferFileEntry>& files, const UserProfile& user);
     /** @brief Enumerate files for a specific set of user profiles */
@@ -452,4 +456,4 @@ private:
     QString m_loadedTemplatePath;
 };
 
-} // namespace sak
+}  // namespace sak

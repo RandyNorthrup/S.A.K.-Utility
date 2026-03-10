@@ -2,32 +2,28 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "sak/image_source.h"
-#include "sak/logger.h"
-#include "sak/file_hash.h"
-#include "sak/streaming_decompressor.h"
+
 #include "sak/decompressor_factory.h"
+#include "sak/file_hash.h"
+#include "sak/logger.h"
+#include "sak/streaming_decompressor.h"
+
+#include <QCryptographicHash>
 #include <QFile>
 #include <QFileInfo>
-#include <QCryptographicHash>
 
 // ============================================================================
 // ImageSource Base Class
 // ============================================================================
 
-ImageSource::ImageSource(QObject* parent)
-    : QObject(parent)
-{
-}
+ImageSource::ImageSource(QObject* parent) : QObject(parent) {}
 
 // ============================================================================
 // FileImageSource Implementation
 // ============================================================================
 
 FileImageSource::FileImageSource(const QString& filePath, QObject* parent)
-    : ImageSource(parent)
-    , m_filePath(filePath)
-    , m_device(nullptr)
-{
+    : ImageSource(parent), m_filePath(filePath), m_device(nullptr) {
     m_metadata.name = QFileInfo(filePath).fileName();
     m_metadata.path = filePath;
     m_metadata.format = detectFormat(filePath);
@@ -41,22 +37,24 @@ FileImageSource::~FileImageSource() {
 }
 
 bool FileImageSource::open() {
+    Q_ASSERT(m_device);
     if (m_device && m_device->isOpen()) {
         return true;
     }
-    
+
     auto file = std::make_unique<QFile>(m_filePath);
     if (!file->open(QIODevice::ReadOnly)) {
         sak::logError(QString("Failed to open file: %1").arg(m_filePath).toStdString());
         Q_EMIT readError(QString("Failed to open file: %1").arg(file->errorString()));
         return false;
     }
-    
+
     m_device = std::move(file);
     sak::logInfo(QString("Opened image: %1 (%2 bytes)")
-        .arg(m_metadata.name)
-        .arg(m_metadata.size).toStdString());
-    
+                     .arg(m_metadata.name)
+                     .arg(m_metadata.size)
+                     .toStdString());
+
     return true;
 }
 
@@ -72,17 +70,20 @@ bool FileImageSource::isOpen() const {
 }
 
 qint64 FileImageSource::read(char* data, qint64 maxSize) {
+    Q_ASSERT(m_device);
+    Q_ASSERT(data);
     if (!isOpen()) {
         return -1;
     }
-    
+
     qint64 bytesRead = m_device->read(data, maxSize);
     if (bytesRead < 0) {
-        sak::logError(QString("Read error: %1").arg(
-            static_cast<QFile*>(m_device.get())->errorString()).toStdString());
+        sak::logError(QString("Read error: %1")
+                          .arg(static_cast<QFile*>(m_device.get())->errorString())
+                          .toStdString());
         Q_EMIT readError("Read error");
     }
-    
+
     return bytesRead;
 }
 
@@ -116,66 +117,92 @@ sak::ImageMetadata FileImageSource::metadata() const {
 }
 
 QString FileImageSource::calculateChecksum() {
+    Q_ASSERT(m_device);
     if (!isOpen()) {
         if (!open()) {
             return QString();
         }
     }
-    
+
     // Save current position
     qint64 oldPos = position();
     m_device->seek(0);
-    
+
     // Calculate SHA-512
     QCryptographicHash hash(QCryptographicHash::Sha512);
-    
-    const qint64 bufferSize = 64 * 1024 * 1024; // 64MB
+
+    const qint64 bufferSize = 64 * 1024 * 1024;  // 64MB
     QByteArray buffer(bufferSize, 0);
     qint64 totalRead = 0;
-    
+
     while (!atEnd()) {
         qint64 bytesRead = read(buffer.data(), bufferSize);
         if (bytesRead < 0) {
             sak::logError("Error reading file for checksum");
             return QString();
         }
-        
+
         hash.addData(buffer.data(), bytesRead);
         totalRead += bytesRead;
-        
+
         int percentage = static_cast<int>((totalRead * 100) / size());
         Q_EMIT checksumProgress(percentage);
     }
-    
+
     // Restore position
     m_device->seek(oldPos);
-    
+
     QString checksum = hash.result().toHex();
     m_metadata.checksum = checksum;
-    
+
     sak::logInfo(QString("Calculated checksum: %1").arg(checksum).toStdString());
     return checksum;
 }
 
 sak::ImageFormat FileImageSource::detectFormat(const QString& filePath) {
+    Q_ASSERT(!filePath.isEmpty());
     QString ext = QFileInfo(filePath).suffix().toLower();
-    
-    if (ext == "iso") return sak::ImageFormat::ISO;
-    if (ext == "img") return sak::ImageFormat::IMG;
-    if (ext == "wic") return sak::ImageFormat::WIC;
-    if (ext == "zip") return sak::ImageFormat::ZIP;
-    if (ext == "gz") return sak::ImageFormat::GZIP;
-    if (ext == "bz2") return sak::ImageFormat::BZIP2;
-    if (ext == "xz") return sak::ImageFormat::XZ;
-    if (ext == "dmg") return sak::ImageFormat::DMG;
-    if (ext == "dsk") return sak::ImageFormat::DSK;
-    
+
+    if (ext == "iso") {
+        return sak::ImageFormat::ISO;
+    }
+    if (ext == "img") {
+        return sak::ImageFormat::IMG;
+    }
+    if (ext == "wic") {
+        return sak::ImageFormat::WIC;
+    }
+    if (ext == "zip") {
+        return sak::ImageFormat::ZIP;
+    }
+    if (ext == "gz") {
+        return sak::ImageFormat::GZIP;
+    }
+    if (ext == "bz2") {
+        return sak::ImageFormat::BZIP2;
+    }
+    if (ext == "xz") {
+        return sak::ImageFormat::XZ;
+    }
+    if (ext == "dmg") {
+        return sak::ImageFormat::DMG;
+    }
+    if (ext == "dsk") {
+        return sak::ImageFormat::DSK;
+    }
+
     // Check for double extensions like .img.gz
     QString fullExt = QFileInfo(filePath).completeSuffix().toLower();
-    if (fullExt.endsWith(".gz")) return sak::ImageFormat::GZIP;
-    if (fullExt.endsWith(".bz2")) return sak::ImageFormat::BZIP2;
-    if (fullExt.endsWith(".xz")) return sak::ImageFormat::XZ;
-    
+    if (fullExt.endsWith(".gz")) {
+        return sak::ImageFormat::GZIP;
+    }
+    if (fullExt.endsWith(".bz2")) {
+        return sak::ImageFormat::BZIP2;
+    }
+    if (fullExt.endsWith(".xz")) {
+        return sak::ImageFormat::XZ;
+    }
+
     return sak::ImageFormat::Unknown;
 }
 
@@ -184,23 +211,24 @@ sak::ImageFormat FileImageSource::detectFormat(const QString& filePath) {
 // ============================================================================
 
 CompressedImageSource::CompressedImageSource(const QString& filePath, QObject* parent)
-    : ImageSource(parent)
-    , m_filePath(filePath)
-    , m_decompressor(nullptr)
-    , m_totalDecompressed(0)
-{
+    : ImageSource(parent), m_filePath(filePath), m_decompressor(nullptr), m_totalDecompressed(0) {
     m_metadata.name = QFileInfo(filePath).fileName();
     m_metadata.path = filePath;
     m_metadata.format = FileImageSource::detectFormat(filePath);
     m_metadata.size = QFileInfo(filePath).size();
     m_metadata.isCompressed = true;
-    
+
     // Determine compression type
     QString ext = QFileInfo(filePath).suffix().toLower();
-    if (ext == "gz") m_metadata.compressionType = "gzip";
-    else if (ext == "bz2") m_metadata.compressionType = "bzip2";
-    else if (ext == "xz") m_metadata.compressionType = "xz";
-    else if (ext == "zip") m_metadata.compressionType = "zip";
+    if (ext == "gz") {
+        m_metadata.compressionType = "gzip";
+    } else if (ext == "bz2") {
+        m_metadata.compressionType = "bzip2";
+    } else if (ext == "xz") {
+        m_metadata.compressionType = "xz";
+    } else if (ext == "zip") {
+        m_metadata.compressionType = "zip";
+    }
 }
 
 CompressedImageSource::~CompressedImageSource() {
@@ -208,11 +236,12 @@ CompressedImageSource::~CompressedImageSource() {
 }
 
 bool CompressedImageSource::open() {
+    Q_ASSERT(m_decompressor);
     if (m_decompressor) {
         sak::logWarning("CompressedImageSource already open");
         return true;
     }
-    
+
     // Create decompressor using factory
     m_decompressor = sak::DecompressorFactory::create(m_filePath);
     if (!m_decompressor) {
@@ -221,7 +250,7 @@ bool CompressedImageSource::open() {
         Q_EMIT readError(error);
         return false;
     }
-    
+
     // Open the decompressor
     if (!m_decompressor->open(m_filePath)) {
         QString error = QString("Failed to open compressed file: %1").arg(m_filePath);
@@ -230,24 +259,26 @@ bool CompressedImageSource::open() {
         m_decompressor.reset();
         return false;
     }
-    
+
     // Connect progress signals
-    connect(m_decompressor.get(), &sak::StreamingDecompressor::progressUpdated,
-            this, [this](qint64 compressedBytes, qint64 decompressedBytes) {
+    connect(m_decompressor.get(),
+            &sak::StreamingDecompressor::progressUpdated,
+            this,
+            [this](qint64 compressedBytes, qint64 decompressedBytes) {
                 Q_UNUSED(decompressedBytes);
-                
+
                 // Calculate percentage based on compressed file size
                 if (m_metadata.size > 0) {
                     int percentage = static_cast<int>((compressedBytes * 100) / m_metadata.size);
                     Q_EMIT decompressionProgress(percentage);
                 }
             });
-    
+
     sak::logInfo(QString("Opened compressed image: %1 (format: %2)")
-                  .arg(m_filePath)
-                  .arg(m_decompressor->formatName())
-                  .toStdString());
-    
+                     .arg(m_filePath)
+                     .arg(m_decompressor->formatName())
+                     .toStdString());
+
     return true;
 }
 
@@ -264,16 +295,18 @@ bool CompressedImageSource::isOpen() const {
 }
 
 qint64 CompressedImageSource::read(char* data, qint64 maxSize) {
+    Q_ASSERT(m_decompressor);
+    Q_ASSERT(data);
     if (!isOpen()) {
         sak::logError("Cannot read from closed CompressedImageSource");
         return -1;
     }
-    
+
     qint64 bytesRead = m_decompressor->read(data, maxSize);
     if (bytesRead > 0) {
         m_totalDecompressed += bytesRead;
     }
-    
+
     return bytesRead;
 }
 
@@ -309,25 +342,25 @@ QString CompressedImageSource::calculateChecksum() {
         sak::logError("Cannot calculate checksum on closed CompressedImageSource");
         return QString();
     }
-    
+
     // Save current position
     qint64 savedPos = m_totalDecompressed;
     // Note: Position restoration not possible for compressed streams
     // Must reopen to reset decompression state
     Q_UNUSED(savedPos);
-    
+
     // Close and reopen to reset decompression stream
     close();
     if (!open()) {
         sak::logError("Failed to reopen CompressedImageSource for checksum calculation");
         return QString();
     }
-    
+
     // Calculate checksum while reading
     QCryptographicHash hash(QCryptographicHash::Sha512);
-    constexpr qint64 bufferSize = 1024 * 1024; // 1MB buffer
+    constexpr qint64 bufferSize = 1024 * 1024;  // 1MB buffer
     std::vector<char> buffer(bufferSize);
-    
+
     while (!atEnd()) {
         qint64 bytesRead = read(buffer.data(), bufferSize);
         if (bytesRead < 0) {
@@ -338,14 +371,14 @@ QString CompressedImageSource::calculateChecksum() {
             hash.addData(buffer.data(), bytesRead);
         }
     }
-    
+
     // Close and reopen to reset
     close();
     open();
-    
+
     // Cannot restore position for compressed streams, user must re-read from start
     sak::logWarning("Checksum calculation reset decompression stream to beginning");
-    
+
     return QString::fromLatin1(hash.result().toHex());
 }
 
@@ -353,10 +386,3 @@ bool CompressedImageSource::isCompressed(const QString& filePath) {
     QString ext = QFileInfo(filePath).suffix().toLower();
     return (ext == "gz" || ext == "bz2" || ext == "xz" || ext == "zip");
 }
-
-
-
-
-
-
-

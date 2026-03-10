@@ -253,7 +253,7 @@
 - **Issue:** Uses `enum PageId { ... }` instead of `enum class PageId { ... }`. Only old-style enum in the codebase.
 - **Fix:** Change to `enum class PageId` and update all references
 
-### LO-03: Magic Number Timeouts (40+ instances)
+### LO-03: Magic Number Timeouts
 - [ ] **Status:** DEFERRED — Broad pattern; partially addressed in test_network_speed_action.cpp
 - **Issue:** Hardcoded timeout values throughout the codebase (e.g., `QThread::msleep(2000)`, `waitForFinished(30000)`, timer intervals)
 - **Fix:** Extract to named `constexpr` constants near usage or in a shared constants header. Example:

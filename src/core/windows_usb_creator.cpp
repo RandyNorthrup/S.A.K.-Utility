@@ -5,28 +5,28 @@
 /// @brief Implements Windows USB installation media creation
 
 #include "sak/windows_usb_creator.h"
-#include "sak/logger.h"
+
 #include "sak/layout_constants.h"
+#include "sak/logger.h"
+
 #include <QCoreApplication>
-#include <QMutexLocker>
-#include <QProcess>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
-#include <QTemporaryFile>
-#include <QThread>
+#include <QMutexLocker>
+#include <QProcess>
 #include <QRegularExpression>
 #include <QStorageInfo>
+#include <QTemporaryFile>
+#include <QThread>
 
-WindowsUSBCreator::WindowsUSBCreator(QObject* parent)
-    : QObject(parent)
-{
-}
+WindowsUSBCreator::WindowsUSBCreator(QObject* parent) : QObject(parent) {}
 
-WindowsUSBCreator::~WindowsUSBCreator() {
-}
+WindowsUSBCreator::~WindowsUSBCreator() {}
 
 bool WindowsUSBCreator::createBootableUSB(const QString& isoPath, const QString& diskNumber) {
+    Q_ASSERT(!isoPath.isEmpty());
+    Q_ASSERT(!diskNumber.isEmpty());
     m_cancelled = false;
     setError({});
     m_diskNumber = diskNumber;
@@ -87,6 +87,8 @@ bool WindowsUSBCreator::createBootableUSB(const QString& isoPath, const QString&
 }
 
 bool WindowsUSBCreator::validateUSBInputs(const QString& isoPath, const QString& diskNumber) {
+    Q_ASSERT(!isoPath.isEmpty());
+    Q_ASSERT(!diskNumber.isEmpty());
     // Validate diskNumber is a pure integer to prevent command injection (BUG-09).
     static const QRegularExpression diskNumRegex(QStringLiteral("^\\d{1,3}$"));
     if (!diskNumRegex.match(diskNumber).hasMatch()) {
@@ -97,8 +99,9 @@ bool WindowsUSBCreator::validateUSBInputs(const QString& isoPath, const QString&
     }
 
     sak::logInfo(QString("========================================").toStdString());
-    sak::logInfo(QString("Creating Windows bootable USB: %1 -> Disk %2").arg(isoPath,
-        diskNumber).toStdString());
+    sak::logInfo(QString("Creating Windows bootable USB: %1 -> Disk %2")
+                     .arg(isoPath, diskNumber)
+                     .toStdString());
     sak::logInfo(QString("========================================").toStdString());
 
     // Verify ISO file exists
@@ -113,6 +116,7 @@ bool WindowsUSBCreator::validateUSBInputs(const QString& isoPath, const QString&
 }
 
 QString WindowsUSBCreator::formatAndVerifyDrive(const QString& diskNumber) {
+    Q_ASSERT(!diskNumber.isEmpty());
     Q_EMIT progressUpdated(0);
     Q_EMIT statusChanged("Step 1/5: Formatting drive as NTFS...");
     sak::logInfo("STEP 1: Formatting disk...");
@@ -131,14 +135,17 @@ QString WindowsUSBCreator::formatAndVerifyDrive(const QString& diskNumber) {
     // Wait with progress updates
     for (int i = 0; i < 30; ++i) {
         QThread::msleep(sak::kTimerPollingFastMs);
-        Q_EMIT progressUpdated(5 + (i * 5 / 30)); // 5% to 10%
-        if (m_cancelled) break;
+        Q_EMIT progressUpdated(5 + (i * 5 / 30));  // 5% to 10%
+        if (m_cancelled) {
+            break;
+        }
     }
 
     QString driveLetter = getDriveLetterFromDiskNumber();
     if (driveLetter.isEmpty()) {
         setError(QString("STEP 1 VERIFICATION FAILED: No drive letter found for disk %1 after "
-                        "format").arg(diskNumber));
+                         "format")
+                     .arg(diskNumber));
         sak::logError(lastError().toStdString());
         Q_EMIT failed(lastError());
         return {};
@@ -147,32 +154,7 @@ QString WindowsUSBCreator::formatAndVerifyDrive(const QString& diskNumber) {
     Q_EMIT progressUpdated(10);
     Q_EMIT statusChanged("Verifying NTFS filesystem...");
 
-    // Verify NTFS format
-    QProcess checkFS;
-    QString checkCmd = QString("(Get-Volume -DriveLetter %1).FileSystem").arg(driveLetter);
-    checkFS.start("powershell", QStringList() << "-NoProfile" << "-Command" << checkCmd);
-    if (!checkFS.waitForStarted(sak::kTimeoutProcessStartMs)) {
-        setError(QString("STEP 1 VERIFICATION FAILED: PowerShell failed to start for filesystem check"));
-        sak::logError(lastError().toStdString());
-        Q_EMIT failed(lastError());
-        return {};
-    }
-    if (checkFS.waitForFinished(sak::kTimeoutProcessShortMs)) {
-        QString fs = QString(checkFS.readAllStandardOutput()).trimmed();
-        if (fs != "NTFS") {
-            setError(QString("STEP 1 VERIFICATION FAILED: Drive is %1, expected NTFS").arg(fs));
-            sak::logError(lastError().toStdString());
-            Q_EMIT failed(lastError());
-            return {};
-        }
-        sak::logInfo(QString("✓ STEP 1 VERIFIED: Drive %1: formatted as NTFS")
-            .arg(driveLetter).toStdString());
-    } else {
-        checkFS.kill();
-        setError(QString("STEP 1 VERIFICATION FAILED: Filesystem check timed out for drive %1")
-            .arg(driveLetter));
-        sak::logError(lastError().toStdString());
-        Q_EMIT failed(lastError());
+    if (!verifyNtfsFilesystem(driveLetter)) {
         return {};
     }
 
@@ -182,7 +164,53 @@ QString WindowsUSBCreator::formatAndVerifyDrive(const QString& diskNumber) {
     return driveLetter;
 }
 
+bool WindowsUSBCreator::verifyNtfsFilesystem(const QString& driveLetter) {
+    Q_ASSERT(!driveLetter.isEmpty());
+    Q_ASSERT(driveLetter.length() == 1);
+
+    QProcess checkFS;
+    QString checkCmd = QString("(Get-Volume -DriveLetter %1).FileSystem").arg(driveLetter);
+    checkFS.start("powershell",
+                  QStringList() << "-NoProfile"
+                                << "-Command" << checkCmd);
+    if (!checkFS.waitForStarted(sak::kTimeoutProcessStartMs)) {
+        setError(
+            QStringLiteral("STEP 1 VERIFICATION FAILED: "
+                           "PowerShell failed to start for "
+                           "filesystem check"));
+        sak::logError(lastError().toStdString());
+        Q_EMIT failed(lastError());
+        return false;
+    }
+    if (!checkFS.waitForFinished(sak::kTimeoutProcessShortMs)) {
+        checkFS.kill();
+        setError(QString("STEP 1 VERIFICATION FAILED: "
+                         "Filesystem check timed out for drive %1")
+                     .arg(driveLetter));
+        sak::logError(lastError().toStdString());
+        Q_EMIT failed(lastError());
+        return false;
+    }
+
+    QString fs = QString(checkFS.readAllStandardOutput()).trimmed();
+    if (fs != "NTFS") {
+        setError(QString("STEP 1 VERIFICATION FAILED: "
+                         "Drive is %1, expected NTFS")
+                     .arg(fs));
+        sak::logError(lastError().toStdString());
+        Q_EMIT failed(lastError());
+        return false;
+    }
+    sak::logInfo(QString("✓ STEP 1 VERIFIED: "
+                         "Drive %1: formatted as NTFS")
+                     .arg(driveLetter)
+                     .toStdString());
+    return true;
+}
+
 bool WindowsUSBCreator::extractAndVerifyFiles(const QString& isoPath, const QString& driveLetter) {
+    Q_ASSERT(!isoPath.isEmpty());
+    Q_ASSERT(!driveLetter.isEmpty());
     // ==================== STEP 2: EXTRACT ====================
     Q_EMIT statusChanged("Step 2/5: Extracting Windows installation files...");
     sak::logInfo("STEP 2: Extracting ISO contents...");
@@ -203,8 +231,7 @@ bool WindowsUSBCreator::extractAndVerifyFiles(const QString& isoPath, const QStr
     for (const QString& file : criticalFiles) {
         QString fullPath = basePath + file;
         if (!QFile::exists(fullPath)) {
-            setError(QString("STEP 2 VERIFICATION FAILED: Missing critical file: %1")
-                .arg(file));
+            setError(QString("STEP 2 VERIFICATION FAILED: Missing critical file: %1").arg(file));
             sak::logError(lastError().toStdString());
             Q_EMIT failed(lastError());
             return false;
@@ -215,7 +242,7 @@ bool WindowsUSBCreator::extractAndVerifyFiles(const QString& isoPath, const QStr
 
     // Check for install image
     bool hasInstall = QFile::exists(basePath + "sources\\install.wim") ||
-        QFile::exists(basePath + "sources\\install.esd");
+                      QFile::exists(basePath + "sources\\install.esd");
     if (!hasInstall) {
         setError("STEP 2 VERIFICATION FAILED: No install.wim or install.esd found");
         sak::logError(lastError().toStdString());
@@ -229,10 +256,8 @@ bool WindowsUSBCreator::extractAndVerifyFiles(const QString& isoPath, const QStr
     return true;
 }
 
-bool WindowsUSBCreator::setAndVerifyBootFlag(
-    const QString& diskNumber,
-    const QString& driveLetter)
-{
+bool WindowsUSBCreator::setAndVerifyBootFlag(const QString& diskNumber,
+                                             const QString& driveLetter) {
     Q_EMIT statusChanged("Step 4/5: Setting bootable flag...");
     sak::logInfo("STEP 4: Setting bootable flag...");
 
@@ -245,10 +270,10 @@ bool WindowsUSBCreator::setAndVerifyBootFlag(
     }
 
     QString diskpartScript = QString(
-        "select disk %1\\n"
-        "select partition 1\\n"
-        "active\\n"
-    ).arg(diskNumber);
+                                 "select disk %1\\n"
+                                 "select partition 1\\n"
+                                 "active\\n")
+                                 .arg(diskNumber);
 
     const QByteArray script_bytes = diskpartScript.toLocal8Bit();
     if (scriptFile.write(script_bytes) != script_bytes.size()) {
@@ -261,12 +286,11 @@ bool WindowsUSBCreator::setAndVerifyBootFlag(
 
     QProcess diskpart;
     diskpart.start("cmd.exe",
-        QStringList() << "/c" << "diskpart"
-                      << "/s" << scriptFile.fileName());
+                   QStringList() << "/c" << "diskpart"
+                                 << "/s" << scriptFile.fileName());
 
-    if (!diskpart.waitForStarted(sak::kTimeoutProcessStartMs)
-        || !diskpart.waitForFinished(sak::kTimeoutProcessLongMs))
-    {
+    if (!diskpart.waitForStarted(sak::kTimeoutProcessStartMs) ||
+        !diskpart.waitForFinished(sak::kTimeoutProcessLongMs)) {
         setError("STEP 4 FAILED: Diskpart failed to set active flag");
         sak::logError(lastError().toStdString());
         Q_EMIT failed(lastError());
@@ -283,14 +307,13 @@ bool WindowsUSBCreator::setAndVerifyBootFlag(
         return false;
     }
 
-    sak::logInfo(
-        "✓ STEP 4 VERIFIED: Bootable flag is set (Active)");
+    sak::logInfo("✓ STEP 4 VERIFIED: Bootable flag is set (Active)");
     Q_EMIT progressUpdated(85);
     return true;
 }
 
 bool WindowsUSBCreator::configureBootAndVerify(const QString& diskNumber,
-    const QString& driveLetter) {
+                                               const QString& driveLetter) {
     // ==================== STEP 3: MAKE BOOTABLE ====================
     Q_EMIT progressUpdated(62);
     Q_EMIT statusChanged("Step 3/5: Making drive bootable...");
@@ -326,14 +349,15 @@ QString WindowsUSBCreator::lastError() const {
 }
 
 bool WindowsUSBCreator::cleanAndPartitionDisk(const QString& diskNumber) {
+    Q_ASSERT(!diskNumber.isEmpty());
     QString diskpartScript = QString(
-        "select disk %1\n"
-        "clean\n"
-        "create partition primary\n"
-        "select partition 1\n"
-        "active\n"
-        "exit\n"
-    ).arg(diskNumber);
+                                 "select disk %1\n"
+                                 "clean\n"
+                                 "create partition primary\n"
+                                 "select partition 1\n"
+                                 "active\n"
+                                 "exit\n")
+                                 .arg(diskNumber);
 
     QTemporaryFile scriptFile;
     if (!scriptFile.open()) {
@@ -378,7 +402,8 @@ bool WindowsUSBCreator::cleanAndPartitionDisk(const QString& diskNumber) {
 
     if (diskpart.exitCode() != 0) {
         setError(QString("Diskpart failed with exit code %1. Ensure you are running as "
-                        "Administrator.").arg(diskpart.exitCode()));
+                         "Administrator.")
+                     .arg(diskpart.exitCode()));
         sak::logError(lastError().toStdString());
         return false;
     }
@@ -394,17 +419,18 @@ bool WindowsUSBCreator::cleanAndPartitionDisk(const QString& diskNumber) {
 }
 
 bool WindowsUSBCreator::formatPartitionNTFS(const QString& diskNumber) {
+    Q_ASSERT(!diskNumber.isEmpty());
     sak::logInfo("Waiting for Windows to recognize partition...");
     Q_EMIT statusChanged("Formatting partition as NTFS...");
     QThread::msleep(sak::kTimerStatusMessageMs);
 
     QString formatCmd = QString("format FS=NTFS QUICK label=\"BOOT\"");
     QString formatScript = QString(
-        "select disk %1\n"
-        "select partition 1\n"
-        "%2\n"
-        "exit\n"
-    ).arg(diskNumber, formatCmd);
+                               "select disk %1\n"
+                               "select partition 1\n"
+                               "%2\n"
+                               "exit\n")
+                               .arg(diskNumber, formatCmd);
 
     QTemporaryFile formatScriptFile;
     if (!formatScriptFile.open()) {
@@ -425,7 +451,7 @@ bool WindowsUSBCreator::formatPartitionNTFS(const QString& diskNumber) {
 
     QProcess format;
     format.start("cmd.exe",
-        QStringList() << "/c" << "diskpart" << "/s" << formatScriptFile.fileName());
+                 QStringList() << "/c" << "diskpart" << "/s" << formatScriptFile.fileName());
 
     if (!format.waitForStarted(sak::kTimeoutProcessStartMs)) {
         setError("Failed to start format");
@@ -461,6 +487,7 @@ bool WindowsUSBCreator::formatPartitionNTFS(const QString& diskNumber) {
 }
 
 bool WindowsUSBCreator::formatDriveNTFS(const QString& diskNumber) {
+    Q_ASSERT(!diskNumber.isEmpty());
     // Use the official Microsoft method: diskpart clean, then format command
     // Based on Windows Server USB creation documentation and Rufus implementation
 
@@ -482,6 +509,7 @@ bool WindowsUSBCreator::formatDriveNTFS(const QString& diskNumber) {
 }
 
 QString WindowsUSBCreator::getDriveLetterFromDiskNumber() {
+    Q_ASSERT(!m_diskNumber.isEmpty());
     if (m_diskNumber.isEmpty()) {
         setError("Cannot query drive letter: No disk number set");
         sak::logError(lastError().toStdString());
@@ -500,13 +528,16 @@ QString WindowsUSBCreator::getDriveLetterFromDiskNumber() {
     sak::logInfo(QString("Querying drive letter for disk %1").arg(m_diskNumber).toStdString());
 
     QProcess getDrive;
-    QString cmd = QString("(Get-Partition -DiskNumber %1 | Get-Volume | Where-Object "
-                          "{$_.DriveLetter -ne $null} | Select-Object -First 1).DriveLetter")
-                              .arg(m_diskNumber);
+    QString cmd = QString(
+                      "(Get-Partition -DiskNumber %1 | Get-Volume | Where-Object "
+                      "{$_.DriveLetter -ne $null} | Select-Object -First 1).DriveLetter")
+                      .arg(m_diskNumber);
     getDrive.start("powershell", QStringList() << "-NoProfile" << "-Command" << cmd);
 
     if (!getDrive.waitForStarted(sak::kTimeoutProcessStartMs)) {
-        setError(QString("PowerShell failed to start for drive letter query on disk %1").arg(m_diskNumber));
+        setError(QString("PowerShell failed to start for drive letter "
+                         "query on disk %1")
+                     .arg(m_diskNumber));
         sak::logError(lastError().toStdString());
         return QString();
     }
@@ -523,30 +554,38 @@ QString WindowsUSBCreator::getDriveLetterFromDiskNumber() {
         return QString();
     }
 
-    QString driveLetter = QString(getDrive.readAllStandardOutput()).trimmed();
-
-    // Validate drive letter format (single character A-Z)
+    QString driveLetter = validateDriveLetter(QString(getDrive.readAllStandardOutput()).trimmed());
     if (driveLetter.isEmpty()) {
+        return {};
+    }
+
+    sak::logInfo(QString("✓ Successfully mapped disk %1 "
+                         "to drive letter %2")
+                     .arg(m_diskNumber, driveLetter)
+                     .toStdString());
+    return driveLetter;
+}
+
+QString WindowsUSBCreator::validateDriveLetter(const QString& rawLetter) {
+    Q_ASSERT(!rawLetter.isEmpty());
+    Q_ASSERT(!m_diskNumber.isEmpty());
+
+    if (rawLetter.isEmpty()) {
         setError(QString("No drive letter assigned to disk %1. "
-                        "Drive may not be formatted or "
-                        "partition not recognized.")
+                         "Drive may not be formatted or "
+                         "partition not recognized.")
                      .arg(m_diskNumber));
         sak::logError(lastError().toStdString());
-        return QString();
+        return {};
     }
 
-    if (driveLetter.length() != 1 || !driveLetter[0].isLetter()) {
+    if (rawLetter.length() != 1 || !rawLetter[0].isLetter()) {
         setError(QString("Invalid drive letter from PowerShell: "
-                        "'%1' (expected single A-Z character)")
-                     .arg(driveLetter));
+                         "'%1' (expected single A-Z character)")
+                     .arg(rawLetter));
         sak::logError(lastError().toStdString());
-        return QString();
+        return {};
     }
 
-    // Normalize to uppercase
-    driveLetter = driveLetter.toUpper();
-
-    sak::logInfo(QString("✓ Successfully mapped disk %1 to drive letter %2").arg(m_diskNumber,
-        driveLetter).toStdString());
-    return driveLetter;
+    return rawLetter.toUpper();
 }

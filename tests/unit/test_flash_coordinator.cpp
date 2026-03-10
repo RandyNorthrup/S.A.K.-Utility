@@ -1,9 +1,10 @@
 // Copyright (c) 2025-2026 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-#include <QTest>
-#include <QSignalSpy>
 #include "sak/flash_coordinator.h"
+
+#include <QSignalSpy>
+#include <QTest>
 
 /**
  * @brief Unit tests for FlashCoordinator.
@@ -56,10 +57,8 @@ void TestFlashCoordinator::testInitialProgress() {
     auto p = m_coord->progress();
     QCOMPARE(p.state, sak::FlashState::Idle);
     QCOMPARE(p.percentage, 0.0);
-    QCOMPARE(p.bytesWritten,
-             static_cast<qint64>(0));
-    QCOMPARE(p.totalBytes,
-             static_cast<qint64>(0));
+    QCOMPARE(p.bytesWritten, static_cast<qint64>(0));
+    QCOMPARE(p.totalBytes, static_cast<qint64>(0));
     QCOMPARE(p.speedMBps, 0.0);
     QCOMPARE(p.activeDrives, 0);
     QCOMPARE(p.failedDrives, 0);
@@ -109,11 +108,9 @@ void TestFlashCoordinator::testStateWhenIdle() {
 // ============================================================================
 
 void TestFlashCoordinator::testStartFlashEmptyDrives() {
-    QSignalSpy spy(m_coord.get(),
-                   &FlashCoordinator::flashError);
+    QSignalSpy spy(m_coord.get(), &FlashCoordinator::flashError);
 
-    bool result = m_coord->startFlash(
-        "C:/test.iso", QStringList{});
+    bool result = m_coord->startFlash("C:/test.iso", QStringList{});
     QVERIFY(!result);
     QVERIFY(spy.count() >= 1);
 }

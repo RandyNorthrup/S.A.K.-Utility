@@ -3,14 +3,15 @@
 
 #pragma once
 
-#include <QObject>
-#include <QUdpSocket>
-#include <QTimer>
-#include <QHostAddress>
-#include <atomic>
-
-#include "sak/orchestration_types.h"
 #include "sak/network_constants.h"
+#include "sak/orchestration_types.h"
+
+#include <QHostAddress>
+#include <QObject>
+#include <QTimer>
+#include <QUdpSocket>
+
+#include <atomic>
 
 class QNetworkInterface;
 
@@ -48,8 +49,9 @@ private:
     void sendBroadcastDiscovery();
     void sendDestinationAnnounce(const QHostAddress& address, quint16 port);
     bool sendBroadcastOnInterface(const QNetworkInterface& iface, const QByteArray& datagram);
-    void processDiscoveryDatagram(const QJsonObject& obj, const QHostAddress& sender,
-        quint16 senderPort);
+    void processDiscoveryDatagram(const QJsonObject& obj,
+                                  const QHostAddress& sender,
+                                  quint16 senderPort);
 
     QUdpSocket* m_socket{nullptr};
     QTimer* m_broadcastTimer{nullptr};
@@ -60,4 +62,4 @@ private:
     bool m_roleOrchestrator{true};
 };
 
-} // namespace sak
+}  // namespace sak

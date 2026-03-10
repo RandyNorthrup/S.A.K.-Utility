@@ -4,11 +4,13 @@
 #pragma once
 
 #include "sak/user_profile_types.h"
-#include <QThread>
-#include <QString>
-#include <QVector>
-#include <QMutex>
+
 #include <QFileInfo>
+#include <QMutex>
+#include <QString>
+#include <QThread>
+#include <QVector>
+
 #include <atomic>
 
 namespace sak {
@@ -43,11 +45,11 @@ public:
      * @param verify Verify file integrity after restore
      */
     void startRestore(const QString& backupPath,
-                     const BackupManifest& manifest,
-                     const QVector<UserMapping>& mappings,
-                     ConflictResolution conflictMode,
-                     PermissionMode permMode,
-                     bool verify);
+                      const BackupManifest& manifest,
+                      const QVector<UserMapping>& mappings,
+                      ConflictResolution conflictMode,
+                      PermissionMode permMode,
+                      bool verify);
 
     /**
      * @brief Cancel the restore operation
@@ -105,13 +107,16 @@ private:
     bool restoreUser(const UserMapping& mapping);
     /// @brief Resolve the destination profile directory based on merge mode
     bool resolveDestinationProfilePath(const UserMapping& mapping, QString& destProfilePath);
-    bool restoreFolder(const FolderSelection& folder, const QString& sourcePath,
-        const QString& destPath);
+    bool restoreFolder(const FolderSelection& folder,
+                       const QString& sourcePath,
+                       const QString& destPath);
     bool copyFileWithConflictResolution(const QString& source, const QString& dest, qint64 size);
     /// @brief Resolve file conflict according to m_conflictMode
     /// @return true if copy should proceed, false if file was skipped
-    bool resolveFileConflict(const QString& source, const QFileInfo& destInfo,
-                              qint64 size, QString& finalDestPath);
+    bool resolveFileConflict(const QString& source,
+                             const QFileInfo& destInfo,
+                             qint64 size,
+                             QString& finalDestPath);
     bool applyPermissions(const QString& filePath, const QString& destinationUser);
 
     // Helpers
@@ -125,8 +130,9 @@ private:
     void updateProgress(qint64 bytesAdded);
     bool verifyFile(const QString& filePath);
     QString resolveConflict(const QString& sourcePath, const QString& destPath);
-    bool copyDirectory(const QString& sourceDir, const QString& destDir,
-        const FolderSelection& folderConfig);
+    bool copyDirectory(const QString& sourceDir,
+                       const QString& destDir,
+                       const FolderSelection& folderConfig);
 
     // Data
     QString m_backupPath;
@@ -153,4 +159,4 @@ private:
     PermissionManager* m_permissionManager;
 };
 
-} // namespace sak
+}  // namespace sak

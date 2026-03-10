@@ -3,15 +3,15 @@
 
 #pragma once
 
-#include <QObject>
-#include <QTimer>
-#include <QMap>
-#include <QSet>
-
-#include "sak/destination_registry.h"
 #include "sak/deployment_manager.h"
+#include "sak/destination_registry.h"
 #include "sak/mapping_engine.h"
 #include "sak/orchestration_server_interface.h"
+
+#include <QMap>
+#include <QObject>
+#include <QSet>
+#include <QTimer>
 
 namespace sak {
 
@@ -80,7 +80,7 @@ private:
     /// @brief Connect orchestration server signals (progress, completion)
     void connectServerSignals();
     QString selectDestinationFor(const DeploymentAssignment& assignment,
-        qint64 required_free_bytes);
+                                 qint64 required_free_bytes);
     bool dispatchAssignment(const QString& destination_id, const DeploymentAssignment& assignment);
     void handleAssignmentCompletion(const QString& destination_id);
 
@@ -103,4 +103,4 @@ private:
     quint16 m_listenPort{0};
 };
 
-} // namespace sak
+}  // namespace sak

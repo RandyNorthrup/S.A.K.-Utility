@@ -6,9 +6,10 @@
 #include "sak/quick_action.h"
 
 #include <QObject>
-#include <QThread>
-#include <QString>
 #include <QQueue>
+#include <QString>
+#include <QThread>
+
 #include <memory>
 #include <vector>
 
@@ -16,14 +17,14 @@ namespace sak {
 
 /**
  * @brief Controls quick action execution and threading
- * 
+ *
  * Manages the lifecycle of quick actions including:
  * - Thread pool for background execution
  * - Action queue for sequential operations
  * - Admin privilege escalation
  * - Logging and error handling
  * - Progress aggregation
- * 
+ *
  * Thread-Safety: Thread-safe for action submission
  */
 class QuickActionController : public QObject {
@@ -240,4 +241,4 @@ private:
     QString m_backup_location;
 };
 
-} // namespace sak
+}  // namespace sak

@@ -3,18 +3,20 @@
 
 #pragma once
 
-#include "sak/user_profile_types.h"
-#include "sak/smart_file_filter.h"
 #include "sak/permission_manager.h"
-#include <QThread>
+#include "sak/smart_file_filter.h"
+#include "sak/user_profile_types.h"
+
 #include <QMutex>
+#include <QThread>
+
 #include <atomic>
 
 namespace sak {
 
 /**
  * @brief Background worker for backing up user profiles
- * 
+ *
  * Copies selected user profile files/folders to backup destination
  * with smart filtering, permission handling, and progress reporting.
  */
@@ -24,7 +26,7 @@ class UserProfileBackupWorker : public QThread {
 public:
     explicit UserProfileBackupWorker(QObject* parent = nullptr);
     ~UserProfileBackupWorker() override;
-    
+
     /**
      * @brief Start backup operation
      * @param manifest Backup configuration and metadata
@@ -44,12 +46,12 @@ public:
                      int compressionLevel = 6,
                      bool encrypt = false,
                      const QString& password = QString());
-    
+
     /**
      * @brief Cancel the backup operation
      */
     void cancel();
-    
+
     /**
      * @brief Check if backup is currently running
      */
@@ -64,28 +66,28 @@ Q_SIGNALS:
      * @param totalBytes Estimated total bytes to copy
      */
     void overallProgress(int currentUser, int totalUsers, qint64 bytesCopied, qint64 totalBytes);
-    
+
     /**
      * @brief Current file/folder progress
      * @param currentFile Index of current file
      * @param totalFiles Total files in current operation
      */
     void fileProgress(int currentFile, int totalFiles);
-    
+
     /**
      * @brief Current operation status
      * @param username Current user being backed up
      * @param operation Description of current operation
      */
     void statusUpdate(const QString& username, const QString& operation);
-    
+
     /**
      * @brief Log message for detailed tracking
      * @param message Log message
      * @param isWarning true if warning, false for info
      */
     void logMessage(const QString& message, bool isWarning = false);
-    
+
     /**
      * @brief Backup completed (success or failure)
      * @param success true if completed successfully
@@ -104,14 +106,12 @@ private:
     /// @brief Compose and emit the final backup summary
     void emitBackupSummary();
     bool backupUser(const UserProfile& user, const QString& userBackupPath);
-    bool backupFolder(const FolderSelection& folder, 
-                     const QString& sourcePath,
-                     const QString& destPath);
-    bool copyFileWithFiltering(const QString& sourcePath, 
-                              const QString& destPath,
-                              qint64 fileSize);
+    bool backupFolder(const FolderSelection& folder,
+                      const QString& sourcePath,
+                      const QString& destPath);
+    bool copyFileWithFiltering(const QString& sourcePath, const QString& destPath, qint64 fileSize);
     bool applyPermissions(const QString& filePath);
-    
+
     // Helper functions
     bool createBackupStructure();
     bool saveManifest();
@@ -121,17 +121,17 @@ private:
     void updateProgress(qint64 bytesAdded);
     /// @brief Count selected users for progress tracking
     void countSelectedUsers(int& currentUser, int& totalUsers) const;
-    
+
     // Directory operations
-    bool copyDirectory(const QString& sourceDir, 
-                      const QString& destDir,
-                      const FolderSelection& folderConfig);
+    bool copyDirectory(const QString& sourceDir,
+                       const QString& destDir,
+                       const FolderSelection& folderConfig);
     bool createDirectory(const QString& path);
-    
+
     // Validation
     bool validateSourcePaths();
     bool checkDiskSpace();
-    
+
     // Configuration
     BackupManifest m_manifest;
     QVector<UserProfile> m_users;
@@ -141,22 +141,22 @@ private:
     int m_compressionLevel{6};
     bool m_encrypt{false};
     QString m_password;
-    
+
     // Progress tracking
     std::atomic<bool> m_cancelled{false};
     std::atomic<bool> m_running{false};
     QMutex m_mutex;
-    
+
     qint64 m_totalBytesToCopy{0};
     qint64 m_bytesCopied{0};
     int m_totalFilesToCopy{0};
     int m_filesCopied{0};
     int m_filesSkipped{0};
     int m_filesErrored{0};
-    
+
     // Instances for operations
     SmartFileFilter* m_fileFilter{nullptr};
     PermissionManager* m_permissionManager{nullptr};
 };
 
-} // namespace sak
+}  // namespace sak

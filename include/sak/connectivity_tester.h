@@ -25,28 +25,28 @@ class ConnectivityTester : public QObject {
 public:
     struct PingConfig {
         QString target;
-        int count          = netdiag::kDefaultPingCount;
-        int intervalMs     = netdiag::kDefaultPingIntervalMs;
-        int timeoutMs      = netdiag::kDefaultPingTimeoutMs;
+        int count = netdiag::kDefaultPingCount;
+        int intervalMs = netdiag::kDefaultPingIntervalMs;
+        int timeoutMs = netdiag::kDefaultPingTimeoutMs;
         int packetSizeBytes = netdiag::kDefaultPingPacketSize;
-        int ttl            = netdiag::kDefaultPingTtl;
+        int ttl = netdiag::kDefaultPingTtl;
         bool resolveHostnames = true;
     };
 
     struct TracerouteConfig {
         QString target;
-        int maxHops          = netdiag::kDefaultTracerouteMaxHops;
-        int timeoutMs        = netdiag::kDefaultTracerouteTimeout;
-        int probesPerHop     = netdiag::kDefaultTracerouteProbes;
+        int maxHops = netdiag::kDefaultTracerouteMaxHops;
+        int timeoutMs = netdiag::kDefaultTracerouteTimeout;
+        int probesPerHop = netdiag::kDefaultTracerouteProbes;
         bool resolveHostnames = true;
     };
 
     struct MtrConfig {
         QString target;
-        int cycles     = netdiag::kDefaultMtrCycles;
+        int cycles = netdiag::kDefaultMtrCycles;
         int intervalMs = netdiag::kDefaultPingIntervalMs;
-        int maxHops    = netdiag::kDefaultTracerouteMaxHops;
-        int timeoutMs  = netdiag::kDefaultTracerouteTimeout;
+        int maxHops = netdiag::kDefaultTracerouteMaxHops;
+        int timeoutMs = netdiag::kDefaultTracerouteTimeout;
     };
 
     explicit ConnectivityTester(QObject* parent = nullptr);
@@ -83,16 +83,17 @@ private:
 
     /// @brief Resolve target to IPv4, emitting an error message on failure
     [[nodiscard]] QString resolveTargetIpOrEmitError(const QString& target,
-                                                    const QString& operation);
+                                                     const QString& operation);
 
     /// @brief Send single ICMP echo
-    [[nodiscard]] PingReply sendIcmpEcho(const QString& targetIP, int timeoutMs,
-                                         int packetSize, int ttl);
+    [[nodiscard]] PingReply sendIcmpEcho(const QString& targetIP,
+                                         int timeoutMs,
+                                         int packetSize,
+                                         int ttl);
 
     /// @brief Probe a single hop for traceroute
-    [[nodiscard]] TracerouteHop probeHop(const QString& targetIP, int ttl,
-                                          int timeoutMs, int probes,
-                                          bool resolveHostnames);
+    [[nodiscard]] TracerouteHop probeHop(
+        const QString& targetIP, int ttl, int timeoutMs, int probes, bool resolveHostnames);
 
     /// @brief Resolve hostname to IPv4 address
     [[nodiscard]] static QString resolveHostname(const QString& hostname);
@@ -101,7 +102,7 @@ private:
     [[nodiscard]] static QString reverseResolve(const QString& ip);
 };
 
-} // namespace sak
+}  // namespace sak
 
 static_assert(!std::is_copy_constructible_v<sak::ConnectivityTester>,
-    "ConnectivityTester must not be copyable.");
+              "ConnectivityTester must not be copyable.");

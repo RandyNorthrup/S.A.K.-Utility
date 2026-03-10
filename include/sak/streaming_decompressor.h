@@ -6,6 +6,7 @@
 #include <QFile>
 #include <QObject>
 #include <QString>
+
 #include <cstdint>
 
 namespace sak {
@@ -71,7 +72,11 @@ Q_SIGNALS:
 
 protected:
     /// @brief Result from one decompression step
-    enum class StepResult { ok, stream_end, error };
+    enum class StepResult {
+        ok,
+        stream_end,
+        error
+    };
 
     // ---- Library-specific hooks (derived classes implement) ----
 
@@ -117,4 +122,4 @@ private:
     qint64 m_decompressedBytesProduced{0};
 };
 
-} // namespace sak
+}  // namespace sak

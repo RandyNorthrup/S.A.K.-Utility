@@ -5,31 +5,31 @@
 /// @brief Implements Windows Update cache cleanup to free disk space
 
 #include "sak/actions/clear_windows_update_cache_action.h"
+
+#include "sak/layout_constants.h"
 #include "sak/path_utils.h"
 #include "sak/process_runner.h"
-#include "sak/layout_constants.h"
+
 #include <QDir>
 #include <QThread>
 
 namespace sak {
 
 ClearWindowsUpdateCacheAction::ClearWindowsUpdateCacheAction(QObject* parent)
-    : QuickAction(parent)
-{
-}
+    : QuickAction(parent) {}
 
 bool ClearWindowsUpdateCacheAction::stopWindowsUpdateService() {
     Q_EMIT executionProgress("Stopping Windows Update service...", 20);
-    ProcessResult result = runProcess("net", QStringList() << "stop" << "wuauserv",
-        sak::kTimeoutNetworkReadMs);
+    ProcessResult result =
+        runProcess("net", QStringList() << "stop" << "wuauserv", sak::kTimeoutNetworkReadMs);
     QThread::msleep(sak::kTimerServiceDelayMs);
     return result.succeeded();
 }
 
 bool ClearWindowsUpdateCacheAction::startWindowsUpdateService() {
     Q_EMIT executionProgress("Starting Windows Update service...", 80);
-    ProcessResult result = runProcess("net", QStringList() << "start" << "wuauserv",
-        sak::kTimeoutNetworkReadMs);
+    ProcessResult result =
+        runProcess("net", QStringList() << "start" << "wuauserv", sak::kTimeoutNetworkReadMs);
     return result.succeeded();
 }
 
@@ -49,13 +49,10 @@ void ClearWindowsUpdateCacheAction::scan() {
 
     Q_EMIT scanProgress("Calculating Windows Update cache size...");
 
-    const QString sysRoot =
-        qEnvironmentVariable("SystemRoot", QStringLiteral("C:\\Windows"));
-    QStringList paths = {
-        sysRoot + QStringLiteral("/SoftwareDistribution/Download"),
-        sysRoot + QStringLiteral("/SoftwareDistribution/DataStore"),
-        sysRoot + QStringLiteral("/System32/catroot2")
-    };
+    const QString sysRoot = qEnvironmentVariable("SystemRoot", QStringLiteral("C:\\Windows"));
+    QStringList paths = {sysRoot + QStringLiteral("/SoftwareDistribution/Download"),
+                         sysRoot + QStringLiteral("/SoftwareDistribution/DataStore"),
+                         sysRoot + QStringLiteral("/System32/catroot2")};
 
     qint64 total_size = 0;
     int total_files = 0;
@@ -73,9 +70,9 @@ void ClearWindowsUpdateCacheAction::scan() {
     result.applicable = total_size > 0;
     result.bytes_affected = total_size;
     result.files_count = total_files;
-    result.summary = total_size > 0
-        ? QString("Cache size: %1 MB").arg(total_size / sak::kBytesPerMBf, 0, 'f', 1)
-        : "Windows Update cache is already minimal";
+    result.summary =
+        total_size > 0 ? QString("Cache size: %1 MB").arg(total_size / sak::kBytesPerMBf, 0, 'f', 1)
+                       : "Windows Update cache is already minimal";
     result.details = "Clearing cache stops update services briefly";
 
     Q_ASSERT(!result.summary.isEmpty());
@@ -92,15 +89,15 @@ void ClearWindowsUpdateCacheAction::execute() {
     Q_ASSERT(start_time.isValid());
 
     Q_EMIT executionProgress("╔════════════════════════════════════════════════════════════════╗",
-        0);
+                             0);
     Q_EMIT executionProgress("║   WINDOWS UPDATE CACHE CLEARING - ENTERPRISE MODE            ║", 0);
     Q_EMIT executionProgress("╠════════════════════════════════════════════════════════════════╣",
-        0);
+                             0);
 
     QString ps_script = buildCacheCleanupScript();
 
     Q_EMIT executionProgress("║ Checking Windows Update service status...                    ║",
-        20);
+                             20);
     Q_EMIT executionProgress("║ Stopping wuauserv, bits, and cryptsvc services...           ║", 40);
 
     ProcessResult ps_result = runPowerShell(ps_script, sak::kTimeoutDismCheckMs);
@@ -115,13 +112,13 @@ void ClearWindowsUpdateCacheAction::execute() {
     }
 
     Q_EMIT executionProgress("║ Clearing SoftwareDistribution and catroot2...                ║",
-        60);
+                             60);
 
     qint64 duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
     CacheCleanupResult parsed = parseCacheCleanupOutput(ps_result.std_out, ps_result.std_err);
 
     Q_EMIT executionProgress("╠════════════════════════════════════════════════════════════════╣",
-        80);
+                             80);
 
     ExecutionResult result;
     Q_ASSERT(!result.success);  // verify default init
@@ -132,7 +129,7 @@ void ClearWindowsUpdateCacheAction::execute() {
     if (parsed.services_stopped == 3 && parsed.services_started == 3 && parsed.paths_cleared > 0) {
         result.success = true;
         result.message = QString("Cleared %1 from Windows Update cache")
-            .arg(formatFileSize(parsed.total_cleared));
+                             .arg(formatFileSize(parsed.total_cleared));
         result.log = buildSuccessLog(parsed, duration_ms);
         Q_ASSERT(result.duration_ms >= 0);
         finishWithResult(result, ActionStatus::Success);
@@ -148,13 +145,11 @@ void ClearWindowsUpdateCacheAction::execute() {
 // Private Helpers
 // ============================================================================
 
-QString ClearWindowsUpdateCacheAction::buildCacheCleanupScript() const
-{
+QString ClearWindowsUpdateCacheAction::buildCacheCleanupScript() const {
     return buildServiceStopScript() + buildCachePurgeScript() + buildServiceStartScript();
 }
 
-QString ClearWindowsUpdateCacheAction::buildServiceStopScript() const
-{
+QString ClearWindowsUpdateCacheAction::buildServiceStopScript() const {
     return QString(
         "$ErrorActionPreference = 'Continue'\n"
         "$results = @{}\n"
@@ -203,12 +198,10 @@ QString ClearWindowsUpdateCacheAction::buildServiceStopScript() const
         "    $results[\"${pathName}_Before\"] = $size\n"
         "    $totalBefore += $size\n"
         "}\n"
-        "$results['TotalBefore'] = $totalBefore\n"
-    );
+        "$results['TotalBefore'] = $totalBefore\n");
 }
 
-QString ClearWindowsUpdateCacheAction::buildCachePurgeScript() const
-{
+QString ClearWindowsUpdateCacheAction::buildCachePurgeScript() const {
     return QString(
         "\n"
         "# Stop services\n"
@@ -258,12 +251,10 @@ QString ClearWindowsUpdateCacheAction::buildCachePurgeScript() const
         "        }\n"
         "    }\n"
         "}\n"
-        "$results['ClearedPaths'] = $clearedPaths\n"
-    );
+        "$results['ClearedPaths'] = $clearedPaths\n");
 }
 
-QString ClearWindowsUpdateCacheAction::buildServiceStartScript() const
-{
+QString ClearWindowsUpdateCacheAction::buildServiceStartScript() const {
     return QString(
         "\n"
         "# Start services\n"
@@ -306,7 +297,8 @@ QString ClearWindowsUpdateCacheAction::buildServiceStartScript() const
         "\n"
         "foreach ($svc in $services) {\n"
         "    Write-Output "
-        "\"SERVICE:$svc|$($results[\"${svc}_InitialStatus\"])|$($results[\"${svc}_Stopped\"])|$($results[\"${svc}_Started\"])\"\n"  // NOLINT(line-length)
+        "\"SERVICE:$svc|$($results[\"${svc}_InitialStatus\"])|$($results[\"${svc}_Stopped\"])|$($"
+        "results[\"${svc}_Started\"])\"\n"  // NOLINT(line-length)
         "}\n"
         "\n"
         "foreach ($path in $paths) {\n"
@@ -315,15 +307,14 @@ QString ClearWindowsUpdateCacheAction::buildServiceStartScript() const
         "    $after = $results[\"${pathName}_After\"]\n"
         "    $cleared = $before - $after\n"
         "    Write-Output "
-        "\"PATH:$pathName|$(Format-Bytes $before)|$(Format-Bytes $cleared)|$($results[\"${pathName}_Cleared\"])\"\n"  // NOLINT(line-length)
-        "}\n"
-    );
+        "\"PATH:$pathName|$(Format-Bytes $before)|$(Format-Bytes "
+        "$cleared)|$($results[\"${pathName}_Cleared\"])\"\n"  // NOLINT(line-length)
+        "}\n");
 }
 
 ClearWindowsUpdateCacheAction::CacheCleanupResult
 ClearWindowsUpdateCacheAction::parseCacheCleanupOutput(const QString& output,
-    const QString& std_err) const
-{
+                                                       const QString& std_err) const {
     CacheCleanupResult parsed;
     parsed.total_before = 0;
     parsed.total_cleared = 0;
@@ -361,25 +352,27 @@ ClearWindowsUpdateCacheAction::parseCacheCleanupOutput(const QString& output,
 }
 
 QString ClearWindowsUpdateCacheAction::buildSuccessLog(const CacheCleanupResult& parsed,
-    qint64 duration_ms) const
-{
+                                                       qint64 duration_ms) const {
     const QString size_str = formatFileSize(parsed.total_cleared);
 
-    QString log = "╔════════════════════════════════════════════════════════════════╗\n"
-                  "║   WINDOWS UPDATE CACHE CLEARING - RESULTS                    ║\n"
-                  "╠════════════════════════════════════════════════════════════════╣\n";
+    QString log =
+        "╔════════════════════════════════════════════════════════════════╗\n"
+        "║   WINDOWS UPDATE CACHE CLEARING - RESULTS                    ║\n"
+        "╠════════════════════════════════════════════════════════════════╣\n";
 
     log += QString("║ Total Space Freed: %1\n").arg(size_str).leftJustified(66) + "║\n";
     log += QString("║ Cache Paths Cleared: %1/3\n").arg(parsed.paths_cleared).leftJustified(66) +
-        "║\n";
+           "║\n";
     log += "╠════════════════════════════════════════════════════════════════╣\n";
     log += "║ SERVICES MANAGED:                                              ║\n";
 
     for (const QString& svc_detail : parsed.service_details) {
         const QStringList parts = svc_detail.split('|');
         if (parts.size() >= 4) {
-            log += QString("║ • %1: %2 → Stopped → Restarted\n").arg(parts[0],
-                parts[1]).leftJustified(66) + "║\n";
+            log += QString("║ • %1: %2 → Stopped → Restarted\n")
+                       .arg(parts[0], parts[1])
+                       .leftJustified(66) +
+                   "║\n";
         }
     }
 
@@ -389,31 +382,33 @@ QString ClearWindowsUpdateCacheAction::buildSuccessLog(const CacheCleanupResult&
     for (const QString& path_detail : parsed.path_details) {
         const QStringList parts = path_detail.split('|');
         if (parts.size() >= 4 && parts[3] == "True") {
-            log += QString("║ • %1: %2 cleared\n").arg(parts[0],
-                parts[2]).leftJustified(66) + "║\n";
+            log += QString("║ • %1: %2 cleared\n").arg(parts[0], parts[2]).leftJustified(66) +
+                   "║\n";
         }
     }
 
     log += "╠════════════════════════════════════════════════════════════════╣\n";
-    log += QString("║ Completed in: %1 seconds\n").arg(duration_ms / 1000.0, 0, 'f',
-        2).leftJustified(66) + "║\n";
+    log += QString("║ Completed in: %1 seconds\n")
+               .arg(duration_ms / 1000.0, 0, 'f', 2)
+               .leftJustified(66) +
+           "║\n";
     log += "╚════════════════════════════════════════════════════════════════╝\n";
 
     return log;
 }
 
-QString ClearWindowsUpdateCacheAction::buildFailureLog(const CacheCleanupResult& parsed) const
-{
-    QString log = "╔════════════════════════════════════════════════════════════════╗\n"
-                  "║   WINDOWS UPDATE CACHE CLEARING - RESULTS                    ║\n"
-                  "╠════════════════════════════════════════════════════════════════╣\n";
+QString ClearWindowsUpdateCacheAction::buildFailureLog(const CacheCleanupResult& parsed) const {
+    QString log =
+        "╔════════════════════════════════════════════════════════════════╗\n"
+        "║   WINDOWS UPDATE CACHE CLEARING - RESULTS                    ║\n"
+        "╠════════════════════════════════════════════════════════════════╣\n";
 
     log += "║ Status: Operation Failed                                       ║\n";
     log += "╠════════════════════════════════════════════════════════════════╣\n";
     log += QString("║ Services Stopped: %1/3\n").arg(parsed.services_stopped).leftJustified(66) +
-        "║\n";
+           "║\n";
     log += QString("║ Services Started: %1/3\n").arg(parsed.services_started).leftJustified(66) +
-        "║\n";
+           "║\n";
     log += QString("║ Paths Cleared: %1/3\n").arg(parsed.paths_cleared).leftJustified(66) + "║\n";
 
     if (!parsed.errors.isEmpty()) {
@@ -431,4 +426,4 @@ QString ClearWindowsUpdateCacheAction::buildFailureLog(const CacheCleanupResult&
     return log;
 }
 
-} // namespace sak
+}  // namespace sak

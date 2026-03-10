@@ -3,14 +3,14 @@
 
 #pragma once
 
+#include <QJsonObject>
+#include <QList>
+#include <QMap>
+#include <QNetworkAccessManager>
+#include <QNetworkReply>
 #include <QObject>
 #include <QString>
 #include <QStringList>
-#include <QList>
-#include <QMap>
-#include <QJsonObject>
-#include <QNetworkAccessManager>
-#include <QNetworkReply>
 
 /**
  * @brief Catalog of downloadable Linux distributions with version discovery
@@ -34,40 +34,40 @@ class LinuxDistroCatalog : public QObject {
 public:
     /// @brief Distro use-case category for UI filtering
     enum class Category {
-        GeneralPurpose,   ///< Desktop/server Linux distributions
-        Security,         ///< Security auditing and penetration testing
-        SystemRecovery,   ///< System rescue and recovery environments
-        DiskTools,        ///< Disk cloning, partitioning, secure erasure
-        Utilities         ///< Multi-boot tools, memory testing, etc.
+        GeneralPurpose,  ///< Desktop/server Linux distributions
+        Security,        ///< Security auditing and penetration testing
+        SystemRecovery,  ///< System rescue and recovery environments
+        DiskTools,       ///< Disk cloning, partitioning, secure erasure
+        Utilities        ///< Multi-boot tools, memory testing, etc.
     };
 
     /// @brief How the download URL is resolved
     enum class SourceType {
-        DirectURL,        ///< Static URL with version substitution
-        GitHubRelease,    ///< Resolved via GitHub Releases API
-        SourceForge       ///< SourceForge mirror redirect
+        DirectURL,      ///< Static URL with version substitution
+        GitHubRelease,  ///< Resolved via GitHub Releases API
+        SourceForge     ///< SourceForge mirror redirect
     };
 
     /// @brief Complete metadata for a downloadable distribution
     struct DistroInfo {
-        QString id;                ///< Unique identifier (e.g., "ubuntu-desktop")
-        QString name;              ///< Display name (e.g., "Ubuntu Desktop")
-        QString version;           ///< Current known version (e.g., "24.04.4")
-        QString versionLabel;      ///< Optional label (e.g., "Noble Numbat", "LTS")
-        QString description;       ///< Short description for UI
-        Category category;         ///< Use-case category
-        SourceType sourceType;     ///< How the URL is resolved
-        QString downloadUrl;       ///< Direct URL or URL template ({version} placeholder)
-        QString checksumUrl;       ///< URL to checksum file (SHA256SUMS, .sha256, etc.)
-        QString checksumType;      ///< "sha256" or "sha1"
-        QString fileName;          ///< Expected filename (with {version} placeholder)
-        qint64 approximateSize;    ///< Approximate size in bytes (for UI display)
-        QString homepage;          ///< Project homepage URL
+        QString id;              ///< Unique identifier (e.g., "ubuntu-desktop")
+        QString name;            ///< Display name (e.g., "Ubuntu Desktop")
+        QString version;         ///< Current known version (e.g., "24.04.4")
+        QString versionLabel;    ///< Optional label (e.g., "Noble Numbat", "LTS")
+        QString description;     ///< Short description for UI
+        Category category;       ///< Use-case category
+        SourceType sourceType;   ///< How the URL is resolved
+        QString downloadUrl;     ///< Direct URL or URL template ({version} placeholder)
+        QString checksumUrl;     ///< URL to checksum file (SHA256SUMS, .sha256, etc.)
+        QString checksumType;    ///< "sha256" or "sha1"
+        QString fileName;        ///< Expected filename (with {version} placeholder)
+        qint64 approximateSize;  ///< Approximate size in bytes (for UI display)
+        QString homepage;        ///< Project homepage URL
 
         // GitHub-specific fields (only used when sourceType == GitHubRelease)
-        QString githubOwner;       ///< GitHub repository owner
-        QString githubRepo;        ///< GitHub repository name
-        QString githubAssetPattern;///< Regex pattern to match the ISO asset filename
+        QString githubOwner;         ///< GitHub repository owner
+        QString githubRepo;          ///< GitHub repository name
+        QString githubAssetPattern;  ///< Regex pattern to match the ISO asset filename
     };
 
     explicit LinuxDistroCatalog(QObject* parent = nullptr);
@@ -176,13 +176,15 @@ private:
     void addDistro(const DistroInfo& distro);
     QString substituteVersion(const QString& pattern, const QString& version) const;
     void parseGitHubRelease(const QString& distroId, const QJsonObject& release);
-    bool resolveGitHubAsset(const QString& distroId, DistroInfo& distro,
-                           const QJsonArray& assets, QString& matchedName);
+    bool resolveGitHubAsset(const QString& distroId,
+                            DistroInfo& distro,
+                            const QJsonArray& assets,
+                            QString& matchedName);
 
     QList<DistroInfo> m_distros;
-    QMap<QString, int> m_distroIndex; ///< Maps distro ID to index in m_distros
-    QMap<QString, QString> m_githubAssetUrls; ///< Cached GitHub asset URLs
-    QMap<QString, qint64> m_githubAssetSizes; ///< Cached GitHub asset sizes
+    QMap<QString, int> m_distroIndex;          ///< Maps distro ID to index in m_distros
+    QMap<QString, QString> m_githubAssetUrls;  ///< Cached GitHub asset URLs
+    QMap<QString, qint64> m_githubAssetSizes;  ///< Cached GitHub asset sizes
     QNetworkAccessManager* m_networkManager;
     QList<QNetworkReply*> m_pendingReplies;
 };

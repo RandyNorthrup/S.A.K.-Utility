@@ -4,6 +4,7 @@
 #pragma once
 
 #include "sak/quick_action.h"
+
 #include <QString>
 
 namespace sak {
@@ -63,9 +64,9 @@ private:
     bool saveReport(const QString& report, const QString& filepath);
 
     /// @brief Save the report file and emit the final ExecutionResult
-    void saveReportAndFinish(const QString& report, const QString& filepath,
-        const QDateTime& start_time);
+    void saveReportAndFinish(const QString& report,
+                             const QString& filepath,
+                             const QDateTime& start_time);
 };
 
-} // namespace sak
-
+}  // namespace sak

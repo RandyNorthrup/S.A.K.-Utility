@@ -2,25 +2,28 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "sak/network_connection_manager.h"
+
 #include "sak/logger.h"
+
+#include <QtGlobal>
 
 namespace sak {
 
 NetworkConnectionManager::NetworkConnectionManager(QObject* parent)
-    : QObject(parent)
-    , m_server(new QTcpServer(this))
-{
+    : QObject(parent), m_server(new QTcpServer(this)) {
     connect(m_server, &QTcpServer::newConnection, this, &NetworkConnectionManager::onNewConnection);
 }
 
 void NetworkConnectionManager::startServer(quint16 port) {
+    Q_ASSERT(m_server);
     if (m_server->isListening()) {
         return;
     }
 
     if (!m_server->listen(QHostAddress::AnyIPv4, port)) {
-        logError("NetworkConnectionManager listen failed on port {}: {}", port,
-            m_server->errorString().toStdString());
+        logError("NetworkConnectionManager listen failed on port {}: {}",
+                 port,
+                 m_server->errorString().toStdString());
         Q_EMIT connectionError(tr("Failed to listen on port %1").arg(port));
         return;
     }
@@ -36,6 +39,7 @@ void NetworkConnectionManager::stopServer() {
 }
 
 void NetworkConnectionManager::connectToHost(const QHostAddress& host, quint16 port) {
+    Q_ASSERT(m_socket);
     if (m_socket) {
         m_socket->disconnectFromHost();
         m_socket->deleteLater();
@@ -44,8 +48,8 @@ void NetworkConnectionManager::connectToHost(const QHostAddress& host, quint16 p
 
     m_socket = new QTcpSocket(this);
     connect(m_socket, &QTcpSocket::connected, this, &NetworkConnectionManager::connected);
-    connect(m_socket, &QTcpSocket::disconnected, this,
-        &NetworkConnectionManager::onSocketDisconnected);
+    connect(
+        m_socket, &QTcpSocket::disconnected, this, &NetworkConnectionManager::onSocketDisconnected);
     connect(m_socket, &QTcpSocket::readyRead, this, &NetworkConnectionManager::onSocketReadyRead);
     connect(m_socket, &QTcpSocket::errorOccurred, this, [this](QAbstractSocket::SocketError) {
         Q_EMIT connectionError(m_socket->errorString());
@@ -74,6 +78,8 @@ quint16 NetworkConnectionManager::serverPort() const {
 }
 
 void NetworkConnectionManager::onNewConnection() {
+    Q_ASSERT(m_socket);
+    Q_ASSERT(m_server);
     if (m_socket) {
         // Disconnect all signals from old socket before replacing it to
         // prevent stale callbacks from firing after the socket is deleted.
@@ -85,8 +91,8 @@ void NetworkConnectionManager::onNewConnection() {
 
     m_socket = m_server->nextPendingConnection();
     connect(m_socket, &QTcpSocket::readyRead, this, &NetworkConnectionManager::onSocketReadyRead);
-    connect(m_socket, &QTcpSocket::disconnected, this,
-        &NetworkConnectionManager::onSocketDisconnected);
+    connect(
+        m_socket, &QTcpSocket::disconnected, this, &NetworkConnectionManager::onSocketDisconnected);
     connect(m_socket, &QTcpSocket::errorOccurred, this, [this](QAbstractSocket::SocketError) {
         // Capture a local copy of the error string — m_socket may be replaced by the
         // time this lambda executes in a queued connection.
@@ -101,8 +107,8 @@ void NetworkConnectionManager::onNewConnection() {
     });
 
     logInfo("NetworkConnectionManager accepted connection from {}:{}",
-             m_socket->peerAddress().toString().toStdString(),
-             m_socket->peerPort());
+            m_socket->peerAddress().toString().toStdString(),
+            m_socket->peerPort());
 
     Q_EMIT connected();
 }
@@ -119,4 +125,4 @@ void NetworkConnectionManager::onSocketDisconnected() {
     Q_EMIT disconnected();
 }
 
-} // namespace sak
+}  // namespace sak

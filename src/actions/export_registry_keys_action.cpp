@@ -5,26 +5,27 @@
 /// @brief Implements Windows registry key export and backup
 
 #include "sak/actions/export_registry_keys_action.h"
+
 #include "sak/layout_constants.h"
-#include "sak/process_runner.h"
 #include "sak/logger.h"
-#include <QDir>
+#include "sak/process_runner.h"
+
 #include <QDateTime>
+#include <QDir>
 #include <QRegularExpression>
 
 namespace sak {
 
 ExportRegistryKeysAction::ExportRegistryKeysAction(const QString& backup_location, QObject* parent)
-    : QuickAction(parent)
-    , m_backup_location(backup_location)
-{
-}
+    : QuickAction(parent), m_backup_location(backup_location) {}
 
 void ExportRegistryKeysAction::exportKey(const QString& key_path, const QString& filename) {
+    Q_ASSERT(!key_path.isEmpty());
+    Q_ASSERT(!filename.isEmpty());
     QString output_file = m_backup_location + "/Registry/" + filename;
     ProcessResult proc = runProcess("reg",
-        QStringList() << "export" << key_path << output_file << "/y",
-        sak::kTimeoutProcessMediumMs);
+                                    QStringList() << "export" << key_path << output_file << "/y",
+                                    sak::kTimeoutProcessMediumMs);
     if (!proc.succeeded()) {
         Q_EMIT logMessage("Registry export warning: " + proc.std_err.trimmed());
     }
@@ -52,77 +53,77 @@ void ExportRegistryKeysAction::scan() {
 }
 
 QString ExportRegistryKeysAction::buildRegistryBackupScript(const QString& backup_path,
-                                                              const QString& timestamp) const {
+                                                            const QString& timestamp) const {
     return QString(
-        "# Enterprise Registry Backup Script\n"
-        "$ErrorActionPreference = 'Continue'; \n"
-        "$backupPath = '%1'; \n"
-        "$timestamp = '%2'; \n"
-        "$keysExported = 0; \n"
-        "$totalSize = 0; \n"
-        "\n"
-        "# Define comprehensive registry keys to backup\n"
-        "$registryKeys = @(\n"
-        "    @{Path='HKLM\\SOFTWARE'; Name='HKLM_SOFTWARE'},\n"
-        "    @{Path='HKLM\\SYSTEM'; Name='HKLM_SYSTEM'},\n"
-        "    @{Path='HKLM\\SAM'; Name='HKLM_SAM'},\n"
-        "    @{Path='HKLM\\SECURITY'; Name='HKLM_SECURITY'},\n"
-        "    @{Path='HKCU\\Software'; Name='HKCU_Software'},\n"
-        "    @{Path='HKCU\\Control Panel'; Name='HKCU_ControlPanel'},\n"
-        "    @{Path='HKCU\\Environment'; Name='HKCU_Environment'},\n"
-        "    @{Path='HKU\\.DEFAULT'; Name='HKU_DEFAULT'}\n"
-        "); \n"
-        "\n"
-        "foreach ($key in $registryKeys) { \n"
-        "    $outputFile = Join-Path $backupPath (\"$($key.Name)_$timestamp.reg\"); \n"
-        "    Write-Output \"Exporting $($key.Path)...\"; \n"
-        "    \n"
-        "    try { \n"
-        "        # Use reg.exe for reliable export\n"
-        "        $process = Start-Process -FilePath 'reg.exe' -ArgumentList @('export', $key.Path, "
-        "$outputFile, '/y') -NoNewWindow -Wait -PassThru; \n"
-        "        \n"
-        "        if ($process.ExitCode -eq 0 -and (Test-Path $outputFile)) { \n"
-        "            $fileInfo = Get-Item $outputFile; \n"
-        "            $totalSize += $fileInfo.Length; \n"
-        "            $keysExported++; \n"
-        "            Write-Output \"SUCCESS: $($key.Name) - "
-        "$([math]::Round($fileInfo.Length/1MB, 2)) MB\"; \n"
-        "        } else { \n"
-        "            Write-Warning \"FAILED: $($key.Path) - Exit code $($process.ExitCode)\"; \n"
-        "        } \n"
-        "    } catch { \n"
-        "        Write-Warning \"ERROR exporting $($key.Path): $_\"; \n"
-        "    } \n"
-        "} \n"
-        "\n"
-        "# Create backup manifest\n"
-        "$manifest = @{\n"
-        "    BackupDate = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss'); \n"
-        "    ComputerName = $env:COMPUTERNAME; \n"
-        "    UserName = $env:USERNAME; \n"
-        "    KeysExported = $keysExported; \n"
-        "    TotalSizeMB = [math]::Round($totalSize/1MB, 2); \n"
-        "    WindowsVersion = [System.Environment]::OSVersion.VersionString\n"
-        "}; \n"
-        "\n"
-        "$manifestPath = Join-Path $backupPath \"backup_manifest_$timestamp.json\"; \n"
-        "$manifest | ConvertTo-Json | Out-File $manifestPath -Encoding UTF8; \n"
-        "\n"
-        "Write-Output \"TOTAL_KEYS:$keysExported\"; \n"
-        "Write-Output \"TOTAL_SIZE:$totalSize\"; \n"
-        "Write-Output \"MANIFEST:$manifestPath\""
-    ).arg(backup_path, timestamp);
+               "# Enterprise Registry Backup Script\n"
+               "$ErrorActionPreference = 'Continue'; \n"
+               "$backupPath = '%1'; \n"
+               "$timestamp = '%2'; \n"
+               "$keysExported = 0; \n"
+               "$totalSize = 0; \n"
+               "\n"
+               "# Define comprehensive registry keys to backup\n"
+               "$registryKeys = @(\n"
+               "    @{Path='HKLM\\SOFTWARE'; Name='HKLM_SOFTWARE'},\n"
+               "    @{Path='HKLM\\SYSTEM'; Name='HKLM_SYSTEM'},\n"
+               "    @{Path='HKLM\\SAM'; Name='HKLM_SAM'},\n"
+               "    @{Path='HKLM\\SECURITY'; Name='HKLM_SECURITY'},\n"
+               "    @{Path='HKCU\\Software'; Name='HKCU_Software'},\n"
+               "    @{Path='HKCU\\Control Panel'; Name='HKCU_ControlPanel'},\n"
+               "    @{Path='HKCU\\Environment'; Name='HKCU_Environment'},\n"
+               "    @{Path='HKU\\.DEFAULT'; Name='HKU_DEFAULT'}\n"
+               "); \n"
+               "\n"
+               "foreach ($key in $registryKeys) { \n"
+               "    $outputFile = Join-Path $backupPath (\"$($key.Name)_$timestamp.reg\"); \n"
+               "    Write-Output \"Exporting $($key.Path)...\"; \n"
+               "    \n"
+               "    try { \n"
+               "        # Use reg.exe for reliable export\n"
+               "        $process = Start-Process -FilePath 'reg.exe' -ArgumentList @('export', "
+               "$key.Path, "
+               "$outputFile, '/y') -NoNewWindow -Wait -PassThru; \n"
+               "        \n"
+               "        if ($process.ExitCode -eq 0 -and (Test-Path $outputFile)) { \n"
+               "            $fileInfo = Get-Item $outputFile; \n"
+               "            $totalSize += $fileInfo.Length; \n"
+               "            $keysExported++; \n"
+               "            Write-Output \"SUCCESS: $($key.Name) - "
+               "$([math]::Round($fileInfo.Length/1MB, 2)) MB\"; \n"
+               "        } else { \n"
+               "            Write-Warning \"FAILED: $($key.Path) - Exit code "
+               "$($process.ExitCode)\"; \n"
+               "        } \n"
+               "    } catch { \n"
+               "        Write-Warning \"ERROR exporting $($key.Path): $_\"; \n"
+               "    } \n"
+               "} \n"
+               "\n"
+               "# Create backup manifest\n"
+               "$manifest = @{\n"
+               "    BackupDate = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss'); \n"
+               "    ComputerName = $env:COMPUTERNAME; \n"
+               "    UserName = $env:USERNAME; \n"
+               "    KeysExported = $keysExported; \n"
+               "    TotalSizeMB = [math]::Round($totalSize/1MB, 2); \n"
+               "    WindowsVersion = [System.Environment]::OSVersion.VersionString\n"
+               "}; \n"
+               "\n"
+               "$manifestPath = Join-Path $backupPath \"backup_manifest_$timestamp.json\"; \n"
+               "$manifest | ConvertTo-Json | Out-File $manifestPath -Encoding UTF8; \n"
+               "\n"
+               "Write-Output \"TOTAL_KEYS:$keysExported\"; \n"
+               "Write-Output \"TOTAL_SIZE:$totalSize\"; \n"
+               "Write-Output \"MANIFEST:$manifestPath\"")
+        .arg(backup_path, timestamp);
 }
 
-void ExportRegistryKeysAction::finalizeRegistryExportResult(
-    const QDateTime& start_time,
-    const QDir& backup_dir,
-    int keys_exported,
-    qint64 total_size,
-    const QString& manifest_path,
-    const QString& accumulated_output)
-{
+void ExportRegistryKeysAction::finalizeRegistryExportResult(const QDateTime& start_time,
+                                                            const QDir& backup_dir,
+                                                            int keys_exported,
+                                                            qint64 total_size,
+                                                            const QString& manifest_path,
+                                                            const QString& accumulated_output) {
     Q_EMIT executionProgress("Backup complete", 100);
 
     qint64 duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
@@ -138,17 +139,17 @@ void ExportRegistryKeysAction::finalizeRegistryExportResult(
         result.success = true;
         double size_mb = total_size / sak::kBytesPerMBf;
         result.message = QString("Exported %1 registry hive(s) - %2 MB")
-            .arg(keys_exported)
-            .arg(size_mb, 0, 'f', 2);
+                             .arg(keys_exported)
+                             .arg(size_mb, 0, 'f', 2);
         result.log = QString("Backup location: %1\nManifest: %2\n\nDetails:\n%3")
-                        .arg(backup_dir.absolutePath())
-                        .arg(manifest_path)
-                        .arg(accumulated_output);
+                         .arg(backup_dir.absolutePath())
+                         .arg(manifest_path)
+                         .arg(accumulated_output);
     } else {
         result.success = false;
         result.message = "Failed to export registry keys";
         result.log = QString("No registry keys were successfully exported\n\nOutput:\n%1")
-            .arg(accumulated_output);
+                         .arg(accumulated_output);
     }
 
     finishWithResult(result, result.success ? ActionStatus::Success : ActionStatus::Failed);
@@ -196,14 +197,20 @@ void ExportRegistryKeysAction::execute() {
     QRegularExpressionMatch sizeMatch = totalSizeRe.match(accumulated_output);
     QRegularExpressionMatch manifestMatch = manifestRe.match(accumulated_output);
 
-    if (keysMatch.hasMatch()) keys_exported = keysMatch.captured(1).toInt();
-    if (sizeMatch.hasMatch()) total_size = sizeMatch.captured(1).toLongLong();
+    if (keysMatch.hasMatch()) {
+        keys_exported = keysMatch.captured(1).toInt();
+    }
+    if (sizeMatch.hasMatch()) {
+        total_size = sizeMatch.captured(1).toLongLong();
+    }
 
     QString manifest_path;
-    if (manifestMatch.hasMatch()) manifest_path = manifestMatch.captured(1).trimmed();
+    if (manifestMatch.hasMatch()) {
+        manifest_path = manifestMatch.captured(1).trimmed();
+    }
 
-    finalizeRegistryExportResult(start_time, backup_dir, keys_exported,
-                                  total_size, manifest_path, accumulated_output);
+    finalizeRegistryExportResult(
+        start_time, backup_dir, keys_exported, total_size, manifest_path, accumulated_output);
 }
 
-} // namespace sak
+}  // namespace sak

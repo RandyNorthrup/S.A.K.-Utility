@@ -3,12 +3,12 @@
 
 #pragma once
 
-#include <QString>
+#include "sak/network_constants.h"
+
 #include <QDateTime>
 #include <QJsonObject>
+#include <QString>
 #include <QVector>
-
-#include "sak/network_constants.h"
 
 namespace sak {
 
@@ -83,7 +83,7 @@ struct DeploymentCompletion {
     static DeploymentCompletion fromJson(const QJsonObject& json);
 };
 
-} // namespace sak
+}  // namespace sak
 
 Q_DECLARE_METATYPE(sak::DeploymentAssignment)
 Q_DECLARE_METATYPE(sak::DeploymentProgress)

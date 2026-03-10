@@ -4,14 +4,14 @@
 /// @file test_file_scanner.cpp
 /// @brief Unit tests for recursive file scanning with filtering
 
+#include "sak/error_codes.h"
+#include "sak/file_scanner.h"
+
+#include <QDir>
+#include <QFile>
+#include <QTemporaryDir>
 #include <QtTest/QtTest>
 
-#include "sak/file_scanner.h"
-#include "sak/error_codes.h"
-
-#include <QTemporaryDir>
-#include <QFile>
-#include <QDir>
 #include <filesystem>
 #include <stop_token>
 
@@ -58,8 +58,7 @@ private:
     std::filesystem::path m_rootPath;
 };
 
-void FileScannerTests::initTestCase()
-{
+void FileScannerTests::initTestCase() {
     QVERIFY(m_tempDir.isValid());
     m_rootPath = m_tempDir.path().toStdWString();
 
@@ -75,20 +74,19 @@ void FileScannerTests::initTestCase()
         f.close();
     };
 
-    writeFile("file1.txt", "hello");                          // 5 bytes
-    writeFile("file2.cpp", "int main() {}");                  // 13 bytes
-    writeFile("dir_a/data.json", R"({"key":"val"})");         // 14 bytes
-    writeFile("dir_a/readme.md", "# Title");                  // 7 bytes
-    writeFile("dir_b/image.png", QByteArray(100, 'P'));       // 100 bytes
-    writeFile("dir_b/nested/deep.log", "log entry");          // 9 bytes
+    writeFile("file1.txt", "hello");                     // 5 bytes
+    writeFile("file2.cpp", "int main() {}");             // 13 bytes
+    writeFile("dir_a/data.json", R"({"key":"val"})");    // 14 bytes
+    writeFile("dir_a/readme.md", "# Title");             // 7 bytes
+    writeFile("dir_b/image.png", QByteArray(100, 'P'));  // 100 bytes
+    writeFile("dir_b/nested/deep.log", "log entry");     // 9 bytes
 }
 
 // ============================================================================
 // Basic Scanning
 // ============================================================================
 
-void FileScannerTests::scan_normalDirectory()
-{
+void FileScannerTests::scan_normalDirectory() {
     sak::file_scanner scanner;
     sak::scan_options opts;
 
@@ -99,8 +97,7 @@ void FileScannerTests::scan_normalDirectory()
     QVERIFY(result.value().total_size > 0);
 }
 
-void FileScannerTests::scan_emptyDirectory()
-{
+void FileScannerTests::scan_emptyDirectory() {
     QDir(m_tempDir.path()).mkpath("empty_dir");
     auto emptyPath = m_rootPath / "empty_dir";
 
@@ -112,8 +109,7 @@ void FileScannerTests::scan_emptyDirectory()
     QCOMPARE(result.value().files_found, std::size_t{0});
 }
 
-void FileScannerTests::scan_nonExistentDir()
-{
+void FileScannerTests::scan_nonExistentDir() {
     sak::file_scanner scanner;
     sak::scan_options opts;
 
@@ -126,8 +122,7 @@ void FileScannerTests::scan_nonExistentDir()
 // scanAndCollect
 // ============================================================================
 
-void FileScannerTests::scanAndCollect_returnsAllFiles()
-{
+void FileScannerTests::scanAndCollect_returnsAllFiles() {
     sak::file_scanner scanner;
     sak::scan_options opts;
     // Note: files_only type_filter prevents directory recursion in shouldProcessEntry,
@@ -139,8 +134,7 @@ void FileScannerTests::scanAndCollect_returnsAllFiles()
     QCOMPARE(result.value().size(), std::size_t{2});
 }
 
-void FileScannerTests::scanAndCollect_respectsFilters()
-{
+void FileScannerTests::scanAndCollect_respectsFilters() {
     sak::file_scanner scanner;
     sak::scan_options opts;
     opts.include_patterns = {"*.txt"};
@@ -157,8 +151,7 @@ void FileScannerTests::scanAndCollect_respectsFilters()
 // Filter Tests
 // ============================================================================
 
-void FileScannerTests::includePattern_onlyMatching()
-{
+void FileScannerTests::includePattern_onlyMatching() {
     sak::file_scanner scanner;
     sak::scan_options opts;
     opts.include_patterns = {"*.cpp", "*.txt"};
@@ -168,19 +161,17 @@ void FileScannerTests::includePattern_onlyMatching()
     QCOMPARE(result.value().files_found, std::size_t{2});
 }
 
-void FileScannerTests::excludePattern_skipsMatching()
-{
+void FileScannerTests::excludePattern_skipsMatching() {
     sak::file_scanner scanner;
     sak::scan_options opts;
     opts.exclude_patterns = {"*.log"};
 
     auto result = scanner.scan(m_rootPath, opts);
     QVERIFY(result.has_value());
-    QCOMPARE(result.value().files_found, std::size_t{5}); // 6 total minus 1 .log
+    QCOMPARE(result.value().files_found, std::size_t{5});  // 6 total minus 1 .log
 }
 
-void FileScannerTests::excludeDir_skipsDirectory()
-{
+void FileScannerTests::excludeDir_skipsDirectory() {
     sak::file_scanner scanner;
     sak::scan_options opts;
     opts.exclude_dirs = {"dir_b"};
@@ -191,8 +182,7 @@ void FileScannerTests::excludeDir_skipsDirectory()
     QCOMPARE(result.value().files_found, std::size_t{4});
 }
 
-void FileScannerTests::fileSizeFilter_minMax()
-{
+void FileScannerTests::fileSizeFilter_minMax() {
     sak::file_scanner scanner;
     sak::scan_options opts;
     opts.min_file_size = 10;
@@ -204,11 +194,10 @@ void FileScannerTests::fileSizeFilter_minMax()
     QVERIFY(result.value().files_found >= std::size_t{2});
 }
 
-void FileScannerTests::maxDepth_limitsRecursion()
-{
+void FileScannerTests::maxDepth_limitsRecursion() {
     sak::file_scanner scanner;
     sak::scan_options opts;
-    opts.max_depth = 1; // Only root and immediate children
+    opts.max_depth = 1;  // Only root and immediate children
 
     auto result = scanner.scan(m_rootPath, opts);
     QVERIFY(result.has_value());
@@ -216,8 +205,7 @@ void FileScannerTests::maxDepth_limitsRecursion()
     QCOMPARE(result.value().files_found, std::size_t{2});
 }
 
-void FileScannerTests::typeFilter_filesOnly()
-{
+void FileScannerTests::typeFilter_filesOnly() {
     sak::file_scanner scanner;
     sak::scan_options opts;
     opts.type_filter = sak::file_type_filter::files_only;
@@ -230,8 +218,7 @@ void FileScannerTests::typeFilter_filesOnly()
     QCOMPARE(result.value().files_found, std::size_t{2});
 }
 
-void FileScannerTests::typeFilter_dirsOnly()
-{
+void FileScannerTests::typeFilter_dirsOnly() {
     sak::file_scanner scanner;
     sak::scan_options opts;
     opts.type_filter = sak::file_type_filter::directories_only;
@@ -246,8 +233,7 @@ void FileScannerTests::typeFilter_dirsOnly()
 // Cancellation
 // ============================================================================
 
-void FileScannerTests::cancellation_stopsScan()
-{
+void FileScannerTests::cancellation_stopsScan() {
     std::stop_source stopSource;
     stopSource.request_stop();
 
@@ -263,8 +249,7 @@ void FileScannerTests::cancellation_stopsScan()
 // Static Convenience Functions
 // ============================================================================
 
-void FileScannerTests::listFiles_recursive()
-{
+void FileScannerTests::listFiles_recursive() {
     auto result = sak::file_scanner::listFiles(m_rootPath, true);
     QVERIFY(result.has_value());
     // listFiles uses files_only internally, which prevents directory recursion.
@@ -272,15 +257,13 @@ void FileScannerTests::listFiles_recursive()
     QCOMPARE(result.value().size(), std::size_t{2});
 }
 
-void FileScannerTests::listFiles_nonRecursive()
-{
+void FileScannerTests::listFiles_nonRecursive() {
     auto result = sak::file_scanner::listFiles(m_rootPath, false);
     QVERIFY(result.has_value());
-    QCOMPARE(result.value().size(), std::size_t{2}); // file1.txt, file2.cpp
+    QCOMPARE(result.value().size(), std::size_t{2});  // file1.txt, file2.cpp
 }
 
-void FileScannerTests::findFiles_byPattern()
-{
+void FileScannerTests::findFiles_byPattern() {
     auto result = sak::file_scanner::findFiles(m_rootPath, {"*.json"}, true);
     QVERIFY(result.has_value());
     // findFiles uses files_only internally, preventing directory recursion.
@@ -292,14 +275,13 @@ void FileScannerTests::findFiles_byPattern()
 // Callback Tests
 // ============================================================================
 
-void FileScannerTests::callback_falseStopsScan()
-{
+void FileScannerTests::callback_falseStopsScan() {
     int filesProcessed = 0;
     sak::file_scanner scanner;
     sak::scan_options opts;
     opts.callback = [&filesProcessed](const std::filesystem::path&, bool) -> bool {
         ++filesProcessed;
-        return filesProcessed < 3; // Stop after 2
+        return filesProcessed < 3;  // Stop after 2
     };
 
     auto result = scanner.scan(m_rootPath, opts);
@@ -311,8 +293,7 @@ void FileScannerTests::callback_falseStopsScan()
 // Progress Callback
 // ============================================================================
 
-void FileScannerTests::progress_callbackInvoked()
-{
+void FileScannerTests::progress_callbackInvoked() {
     int progressCalls = 0;
     sak::file_scanner scanner;
     sak::scan_options opts;

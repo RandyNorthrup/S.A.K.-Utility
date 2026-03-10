@@ -5,13 +5,12 @@
 /// @brief Unit tests for LeftoverScanner — pattern matching, risk classification,
 ///        protected paths, file system scanning, and cancellation support
 
-#include <QtTest/QtTest>
-
 #include "sak/leftover_scanner.h"
 
 #include <QDir>
 #include <QFile>
 #include <QTemporaryDir>
+#include <QtTest/QtTest>
 
 #include <atomic>
 #include <type_traits>
@@ -65,8 +64,7 @@ namespace {
 /// Create a program info suitable for testing
 ProgramInfo makeTestProgram(const QString& name,
                             const QString& publisher = {},
-                            const QString& installLoc = {})
-{
+                            const QString& installLoc = {}) {
     ProgramInfo prog;
     prog.displayName = name;
     prog.publisher = publisher;
@@ -75,33 +73,29 @@ ProgramInfo makeTestProgram(const QString& name,
     return prog;
 }
 
-} // namespace
+}  // namespace
 
 // ── Construction ────────────────────────────────────────────────────────────
 
-void LeftoverScannerTests::construction_safe()
-{
+void LeftoverScannerTests::construction_safe() {
     ProgramInfo prog = makeTestProgram("TestApp");
     LeftoverScanner scanner(prog, ScanLevel::Safe);
     Q_UNUSED(scanner);
 }
 
-void LeftoverScannerTests::construction_moderate()
-{
+void LeftoverScannerTests::construction_moderate() {
     ProgramInfo prog = makeTestProgram("TestApp");
     LeftoverScanner scanner(prog, ScanLevel::Moderate);
     Q_UNUSED(scanner);
 }
 
-void LeftoverScannerTests::construction_advanced()
-{
+void LeftoverScannerTests::construction_advanced() {
     ProgramInfo prog = makeTestProgram("TestApp");
     LeftoverScanner scanner(prog, ScanLevel::Advanced);
     Q_UNUSED(scanner);
 }
 
-void LeftoverScannerTests::construction_notCopyable()
-{
+void LeftoverScannerTests::construction_notCopyable() {
     QVERIFY(!std::is_copy_constructible_v<LeftoverScanner>);
     QVERIFY(!std::is_copy_assignable_v<LeftoverScanner>);
     // Move is allowed
@@ -110,8 +104,7 @@ void LeftoverScannerTests::construction_notCopyable()
 
 // ── File System Scanning ────────────────────────────────────────────────────
 
-void LeftoverScannerTests::scan_findsMatchingFolder()
-{
+void LeftoverScannerTests::scan_findsMatchingFolder() {
     QTemporaryDir tempDir;
     QVERIFY(tempDir.isValid());
 
@@ -132,8 +125,7 @@ void LeftoverScannerTests::scan_findsMatchingFolder()
     QVERIFY(results.size() >= 0);
 }
 
-void LeftoverScannerTests::scan_findsMatchingFile()
-{
+void LeftoverScannerTests::scan_findsMatchingFile() {
     QTemporaryDir tempDir;
     QVERIFY(tempDir.isValid());
 
@@ -154,8 +146,7 @@ void LeftoverScannerTests::scan_findsMatchingFile()
     QVERIFY(results.size() >= 0);
 }
 
-void LeftoverScannerTests::scan_ignoresNonMatchingFolder()
-{
+void LeftoverScannerTests::scan_ignoresNonMatchingFolder() {
     ProgramInfo prog = makeTestProgram("UniqueXYZ123456");
 
     LeftoverScanner scanner(prog, ScanLevel::Safe);
@@ -168,8 +159,7 @@ void LeftoverScannerTests::scan_ignoresNonMatchingFolder()
     QVERIFY(results.size() >= 0);  // No crash, results should be minimal
 }
 
-void LeftoverScannerTests::scan_safeLevelSkipsRegistry()
-{
+void LeftoverScannerTests::scan_safeLevelSkipsRegistry() {
     ProgramInfo prog = makeTestProgram("TestRegSkip12345");
 
     LeftoverScanner scanner(prog, ScanLevel::Safe);
@@ -185,8 +175,7 @@ void LeftoverScannerTests::scan_safeLevelSkipsRegistry()
     }
 }
 
-void LeftoverScannerTests::scan_cancellationStopsScan()
-{
+void LeftoverScannerTests::scan_cancellationStopsScan() {
     ProgramInfo prog = makeTestProgram("TestCancel12345");
 
     LeftoverScanner scanner(prog, ScanLevel::Advanced);
@@ -198,8 +187,7 @@ void LeftoverScannerTests::scan_cancellationStopsScan()
     QVERIFY(results.isEmpty());
 }
 
-void LeftoverScannerTests::scan_progressCallbackInvoked()
-{
+void LeftoverScannerTests::scan_progressCallbackInvoked() {
     ProgramInfo prog = makeTestProgram("Notepad");
 
     LeftoverScanner scanner(prog, ScanLevel::Moderate);
@@ -219,8 +207,7 @@ void LeftoverScannerTests::scan_progressCallbackInvoked()
     }
 }
 
-void LeftoverScannerTests::scan_preSelectsSafeItems()
-{
+void LeftoverScannerTests::scan_preSelectsSafeItems() {
     // Create a program name that might match something on the system
     ProgramInfo prog = makeTestProgram("Notepad");
 
@@ -240,8 +227,7 @@ void LeftoverScannerTests::scan_preSelectsSafeItems()
 
 // ── Pattern Matching ────────────────────────────────────────────────────────
 
-void LeftoverScannerTests::scan_matchesProgramNameExact()
-{
+void LeftoverScannerTests::scan_matchesProgramNameExact() {
     // Use a program name that DOES exist in common system directories
     // The "VLC" or "Notepad" test verifies exact matching behavior
     ProgramInfo prog = makeTestProgram("VLC media player");
@@ -254,8 +240,7 @@ void LeftoverScannerTests::scan_matchesProgramNameExact()
     QVERIFY(results.size() >= 0);
 }
 
-void LeftoverScannerTests::scan_matchesProgramNameCaseInsensitive()
-{
+void LeftoverScannerTests::scan_matchesProgramNameCaseInsensitive() {
     // Scanner should do case-insensitive matching
     ProgramInfo prog1 = makeTestProgram("TESTAPPUPPER");
     ProgramInfo prog2 = makeTestProgram("testappupper");
@@ -271,8 +256,7 @@ void LeftoverScannerTests::scan_matchesProgramNameCaseInsensitive()
     QCOMPARE(results1.size(), results2.size());
 }
 
-void LeftoverScannerTests::scan_matchesConcatenatedName()
-{
+void LeftoverScannerTests::scan_matchesConcatenatedName() {
     // "VLC Media Player" should also match "vlcmediaplayer" (concatenated)
     ProgramInfo prog = makeTestProgram("Test App XYZ");
 
@@ -284,8 +268,7 @@ void LeftoverScannerTests::scan_matchesConcatenatedName()
     QVERIFY(results.size() >= 0);
 }
 
-void LeftoverScannerTests::scan_skipsCommonWords()
-{
+void LeftoverScannerTests::scan_skipsCommonWords() {
     // Common words like "the", "media", "player" should be excluded
     // to reduce false positives. A program named only with common words
     // should have fewer matches than expected.
@@ -301,8 +284,7 @@ void LeftoverScannerTests::scan_skipsCommonWords()
     QVERIFY(results.size() >= 0);
 }
 
-void LeftoverScannerTests::scan_matchesInstallDirName()
-{
+void LeftoverScannerTests::scan_matchesInstallDirName() {
     ProgramInfo prog = makeTestProgram("MySpecialApp");
     prog.installLocation = "C:\\Program Files\\SpecialAppDir";
 
@@ -316,8 +298,7 @@ void LeftoverScannerTests::scan_matchesInstallDirName()
 
 // ── Risk Classification ─────────────────────────────────────────────────────
 
-void LeftoverScannerTests::scan_safeInAppData()
-{
+void LeftoverScannerTests::scan_safeInAppData() {
     // Items found in AppData directories should be classified as Safe
     ProgramInfo prog = makeTestProgram("Notepad");
 
@@ -329,16 +310,14 @@ void LeftoverScannerTests::scan_safeInAppData()
     for (const auto& item : results) {
         if (item.path.toLower().contains("appdata")) {
             // File/folder items in AppData matching program name should be Safe
-            if (item.type == LeftoverItem::Type::File
-                || item.type == LeftoverItem::Type::Folder) {
+            if (item.type == LeftoverItem::Type::File || item.type == LeftoverItem::Type::Folder) {
                 QCOMPARE(item.risk, LeftoverItem::RiskLevel::Safe);
             }
         }
     }
 }
 
-void LeftoverScannerTests::scan_safeInProgramFiles()
-{
+void LeftoverScannerTests::scan_safeInProgramFiles() {
     ProgramInfo prog = makeTestProgram("Notepad");
 
     LeftoverScanner scanner(prog, ScanLevel::Moderate);
@@ -348,16 +327,14 @@ void LeftoverScannerTests::scan_safeInProgramFiles()
 
     for (const auto& item : results) {
         if (item.path.toLower().contains("program files")) {
-            if (item.type == LeftoverItem::Type::File
-                || item.type == LeftoverItem::Type::Folder) {
+            if (item.type == LeftoverItem::Type::File || item.type == LeftoverItem::Type::Folder) {
                 QCOMPARE(item.risk, LeftoverItem::RiskLevel::Safe);
             }
         }
     }
 }
 
-void LeftoverScannerTests::scan_registryKeySafe()
-{
+void LeftoverScannerTests::scan_registryKeySafe() {
     ProgramInfo prog = makeTestProgram("Notepad");
 
     LeftoverScanner scanner(prog, ScanLevel::Moderate);
@@ -368,14 +345,13 @@ void LeftoverScannerTests::scan_registryKeySafe()
     for (const auto& item : results) {
         if (item.type == LeftoverItem::Type::RegistryKey) {
             // Registry keys matching program name patterns should be Safe
-            QVERIFY(item.risk == LeftoverItem::RiskLevel::Safe
-                    || item.risk == LeftoverItem::RiskLevel::Review);
+            QVERIFY(item.risk == LeftoverItem::RiskLevel::Safe ||
+                    item.risk == LeftoverItem::RiskLevel::Review);
         }
     }
 }
 
-void LeftoverScannerTests::scan_serviceScanAtAdvanced()
-{
+void LeftoverScannerTests::scan_serviceScanAtAdvanced() {
     // Services are only scanned at Advanced level
     ProgramInfo prog = makeTestProgram("TestSvcScan12345");
 
@@ -410,8 +386,7 @@ void LeftoverScannerTests::scan_serviceScanAtAdvanced()
 
 // ── Empty Program ───────────────────────────────────────────────────────────
 
-void LeftoverScannerTests::scan_emptyProgram_noResults()
-{
+void LeftoverScannerTests::scan_emptyProgram_noResults() {
     ProgramInfo prog;  // All fields empty
 
     LeftoverScanner scanner(prog, ScanLevel::Safe);
@@ -423,8 +398,7 @@ void LeftoverScannerTests::scan_emptyProgram_noResults()
     QVERIFY(results.isEmpty());
 }
 
-void LeftoverScannerTests::scan_emptyPublisher_noPublisherPatterns()
-{
+void LeftoverScannerTests::scan_emptyPublisher_noPublisherPatterns() {
     ProgramInfo prog = makeTestProgram("UniqueTestApp99999");
     // publisher left empty
 

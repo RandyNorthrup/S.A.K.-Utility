@@ -1,0 +1,89 @@
+# =============================================================================
+# S.A.K. Utility — Pre-commit Hook Configuration
+# Strictest settings: every check must pass, zero tolerance for violations.
+#
+# Install:  pre-commit install --install-hooks
+# Run all:  pre-commit run --all-files
+# Update:   pre-commit autoupdate
+# =============================================================================
+
+default_language_version:
+  python: python3
+
+# Fail fast: stop on first hook failure (strictest)
+fail_fast: true
+
+repos:
+  # =========================================================================
+  # Standard pre-commit hooks (fast, universal checks)
+  # =========================================================================
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+        args: [--markdown-linebreak-ext=md]
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-json
+      - id: check-added-large-files
+        args: [--maxkb=500]
+      - id: check-merge-conflict
+      - id: check-case-conflict
+
+  # =========================================================================
+  # Local hooks — C++ static analysis (strictest settings)
+  # =========================================================================
+  - repo: local
+    hooks:
+      # -------------------------------------------------------------------
+      # 1. clang-format — Zero formatting deviations allowed
+      # -------------------------------------------------------------------
+      - id: clang-format
+        name: "clang-format (strict)"
+        description: "Enforce .clang-format style on all C++ files"
+        entry: powershell.exe -NoProfile -NonInteractive -Command
+          "& 'C:/Program Files/Microsoft Visual Studio/2022/Community/VC/Tools/Llvm/bin/clang-format.exe' --dry-run -Werror --"
+        language: system
+        types_or: [c, c++]
+        files: \.(cpp|h|hpp|cxx|cc|hxx)$
+        exclude: (third_party|3rdparty|external)/
+
+      # -------------------------------------------------------------------
+      # 2. TigerStyle lint — S.A.K. coding discipline
+      #    --strict: warnings become errors
+      # -------------------------------------------------------------------
+      - id: tigerstyle-lint
+        name: "TigerStyle lint (strict)"
+        description: "Function length ≤70, nesting ≤3, line length ≤100, assertions ≥2"
+        entry: python scripts/lint_tigerstyle.py --strict
+        language: system
+        types_or: [c, c++]
+        files: \.(cpp|h|hpp|cxx|cc|hxx)$
+        exclude: (third_party|3rdparty|external)/
+
+      # -------------------------------------------------------------------
+      # 3. Lizard — Cyclomatic complexity & function metrics
+      #    CCN ≤ 10, length ≤ 70, params ≤ 5
+      # -------------------------------------------------------------------
+      - id: lizard-complexity
+        name: "Lizard complexity (strict)"
+        description: "CCN ≤10, function length ≤70, parameters ≤5"
+        entry: python scripts/run_lizard.py
+        language: system
+        types_or: [c, c++]
+        files: \.(cpp|h|hpp|cxx|cc|hxx)$
+        exclude: (third_party|3rdparty|external)/
+
+      # -------------------------------------------------------------------
+      # 4. cppcheck — Deep static analysis
+      #    All checks, exhaustive level, inconclusive, C++23
+      # -------------------------------------------------------------------
+      - id: cppcheck
+        name: "cppcheck (exhaustive)"
+        description: "Static analysis: all checks enabled, exhaustive depth, C++23"
+        entry: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
+          -File scripts/run_cppcheck.ps1 -Files
+        language: system
+        types_or: [c, c++]
+        files: \.(cpp|h|hpp|cxx|cc|hxx)$
+        exclude: (third_party|3rdparty|external)/

@@ -4,13 +4,14 @@
 #pragma once
 
 #include "sak/quick_action.h"
+
 #include <QString>
 
 namespace sak {
 
 /**
  * @brief Rebuild Icon Cache Action
- * 
+ *
  * Deletes and rebuilds Windows icon cache to fix missing/corrupted icons.
  */
 class RebuildIconCacheAction : public QuickAction {
@@ -35,7 +36,7 @@ private:
         qint64 size_bytes;
         bool exists;
     };
-    
+
     QVector<CacheFileInfo> enumerateCacheFiles();
     bool stopExplorer();
     int deleteCacheFiles(const QVector<CacheFileInfo>& files);
@@ -44,12 +45,14 @@ private:
 
     /// @brief Build the header portion of the icon cache report
     QString buildIconCacheReportHeader(const QVector<CacheFileInfo>& cache_files,
-                                        qint64 total_size) const;
+                                       qint64 total_size) const;
     /// @brief Build the execution result and finish the action
-    void buildAndFinishIconCacheResult(int deleted_count, qint64 total_size,
-                                       bool explorer_stopped, bool explorer_started,
-                                       const QString& report, qint64 duration_ms);
+    void buildAndFinishIconCacheResult(int deleted_count,
+                                       qint64 total_size,
+                                       bool explorer_stopped,
+                                       bool explorer_started,
+                                       const QString& report,
+                                       qint64 duration_ms);
 };
 
-} // namespace sak
-
+}  // namespace sak

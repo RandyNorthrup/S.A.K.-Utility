@@ -3,12 +3,12 @@
 
 #pragma once
 
+#include "sak/orchestration_types.h"
+
 #include <QObject>
 #include <QQueue>
 
 #include <functional>
-
-#include "sak/orchestration_types.h"
 
 namespace sak {
 
@@ -34,9 +34,8 @@ Q_SIGNALS:
     void deploymentRejected(const QString& destination_id, const QString& reason);
 
 public:
-    using readiness_check = std::function<bool(const QString& destination_id,
-                                               qint64 required_free_bytes,
-                                               QString* reason)>;
+    using readiness_check = std::function<bool(
+        const QString& destination_id, qint64 required_free_bytes, QString* reason)>;
     void setReadinessCheck(readiness_check checker);
 
 private:
@@ -44,4 +43,4 @@ private:
     readiness_check m_readinessCheck;
 };
 
-} // namespace sak
+}  // namespace sak

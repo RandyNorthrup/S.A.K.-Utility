@@ -4,13 +4,14 @@
 #pragma once
 
 #include "sak/quick_action.h"
+
 #include <QString>
 
 namespace sak {
 
 /**
  * @brief Fix Audio Issues Action
- * 
+ *
  * Restarts audio services, resets audio devices, and checks for driver issues.
  */
 class FixAudioIssuesAction : public QuickAction {
@@ -35,7 +36,7 @@ private:
         QString status;
         bool isExecuting;
     };
-    
+
     AudioServiceStatus checkAudioService(const QString& service_name);
     bool restartAudioService();
     bool restartAudioEndpointBuilder();
@@ -45,9 +46,10 @@ private:
     /// @brief Build the box-drawing diagnostic report from service/device results
     QString buildDiagnosticReport(const AudioServiceStatus& audiosrv,
                                   const AudioServiceStatus& endpoint_builder,
-                                  bool audiosrv_restarted, bool endpoint_restarted,
-                                  int device_count, const QString& usb_info);
+                                  bool audiosrv_restarted,
+                                  bool endpoint_restarted,
+                                  int device_count,
+                                  const QString& usb_info);
 };
 
-} // namespace sak
-
+}  // namespace sak

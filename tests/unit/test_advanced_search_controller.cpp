@@ -5,8 +5,6 @@
 /// @brief Unit tests for AdvancedSearchController — state machine, history,
 ///        preferences, worker lifecycle
 
-#include <QtTest/QtTest>
-
 #include "sak/advanced_search_controller.h"
 #include "sak/advanced_search_types.h"
 #include "sak/config_manager.h"
@@ -15,6 +13,7 @@
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QTemporaryFile>
+#include <QtTest/QtTest>
 
 using sak::AdvancedSearchController;
 using sak::SearchConfig;
@@ -59,8 +58,7 @@ private:
     QTemporaryDir m_temp_dir;
 };
 
-void AdvancedSearchControllerTests::initTestCase()
-{
+void AdvancedSearchControllerTests::initTestCase() {
     QVERIFY(m_temp_dir.isValid());
 
     // Create a test file for search operations
@@ -72,28 +70,24 @@ void AdvancedSearchControllerTests::initTestCase()
 
 // ── Initial State ───────────────────────────────────────────────────────────
 
-void AdvancedSearchControllerTests::initialState_isIdle()
-{
+void AdvancedSearchControllerTests::initialState_isIdle() {
     AdvancedSearchController ctrl;
     QCOMPARE(ctrl.currentState(), AdvancedSearchController::State::Idle);
 }
 
-void AdvancedSearchControllerTests::patternLibrary_notNull()
-{
+void AdvancedSearchControllerTests::patternLibrary_notNull() {
     AdvancedSearchController ctrl;
     QVERIFY(ctrl.patternLibrary() != nullptr);
 }
 
-void AdvancedSearchControllerTests::patternLibrary_hasBuiiltins()
-{
+void AdvancedSearchControllerTests::patternLibrary_hasBuiiltins() {
     AdvancedSearchController ctrl;
     QCOMPARE(ctrl.patternLibrary()->builtinPatterns().size(), 8);
 }
 
 // ── Search Lifecycle ────────────────────────────────────────────────────────
 
-void AdvancedSearchControllerTests::startSearch_changesState()
-{
+void AdvancedSearchControllerTests::startSearch_changesState() {
     AdvancedSearchController ctrl;
     QSignalSpy stateSpy(&ctrl, &AdvancedSearchController::stateChanged);
 
@@ -115,8 +109,7 @@ void AdvancedSearchControllerTests::startSearch_changesState()
     QCOMPARE(ctrl.currentState(), AdvancedSearchController::State::Idle);
 }
 
-void AdvancedSearchControllerTests::startSearch_emitsSignals()
-{
+void AdvancedSearchControllerTests::startSearch_emitsSignals() {
     AdvancedSearchController ctrl;
     QSignalSpy startedSpy(&ctrl, &AdvancedSearchController::searchStarted);
     QSignalSpy resultsSpy(&ctrl, &AdvancedSearchController::resultsReceived);
@@ -144,8 +137,7 @@ void AdvancedSearchControllerTests::startSearch_emitsSignals()
     QVERIFY(totalFiles >= 1);
 }
 
-void AdvancedSearchControllerTests::cancelSearch_changesState()
-{
+void AdvancedSearchControllerTests::cancelSearch_changesState() {
     AdvancedSearchController ctrl;
 
     // Create many files so the search runs long enough to cancel
@@ -180,8 +172,7 @@ void AdvancedSearchControllerTests::cancelSearch_changesState()
     QCOMPARE(ctrl.currentState(), AdvancedSearchController::State::Idle);
 }
 
-void AdvancedSearchControllerTests::cancelSearch_emitsSignal()
-{
+void AdvancedSearchControllerTests::cancelSearch_emitsSignal() {
     AdvancedSearchController ctrl;
     QSignalSpy cancelledSpy(&ctrl, &AdvancedSearchController::searchCancelled);
 
@@ -202,8 +193,7 @@ void AdvancedSearchControllerTests::cancelSearch_emitsSignal()
     QCOMPARE(ctrl.currentState(), AdvancedSearchController::State::Idle);
 }
 
-void AdvancedSearchControllerTests::searchComplete_returnsToIdle()
-{
+void AdvancedSearchControllerTests::searchComplete_returnsToIdle() {
     AdvancedSearchController ctrl;
     QSignalSpy finishedSpy(&ctrl, &AdvancedSearchController::searchFinished);
 
@@ -220,15 +210,13 @@ void AdvancedSearchControllerTests::searchComplete_returnsToIdle()
 
 // ── Search History ──────────────────────────────────────────────────────────
 
-void AdvancedSearchControllerTests::history_initiallyEmpty()
-{
+void AdvancedSearchControllerTests::history_initiallyEmpty() {
     AdvancedSearchController ctrl;
     ctrl.clearHistory();
     QVERIFY(ctrl.searchHistory().isEmpty());
 }
 
-void AdvancedSearchControllerTests::history_addedOnSearch()
-{
+void AdvancedSearchControllerTests::history_addedOnSearch() {
     AdvancedSearchController ctrl;
     ctrl.clearHistory();
 
@@ -245,8 +233,7 @@ void AdvancedSearchControllerTests::history_addedOnSearch()
     QVERIFY(history.contains("unique_search_term"));
 }
 
-void AdvancedSearchControllerTests::history_preventsDuplicates()
-{
+void AdvancedSearchControllerTests::history_preventsDuplicates() {
     AdvancedSearchController ctrl;
     ctrl.clearHistory();
 
@@ -256,8 +243,7 @@ void AdvancedSearchControllerTests::history_preventsDuplicates()
     QCOMPARE(ctrl.searchHistory().count("dup_test"), 1);
 }
 
-void AdvancedSearchControllerTests::history_maxSize()
-{
+void AdvancedSearchControllerTests::history_maxSize() {
     AdvancedSearchController ctrl;
     ctrl.clearHistory();
 
@@ -271,19 +257,17 @@ void AdvancedSearchControllerTests::history_maxSize()
     QCOMPARE(ctrl.searchHistory().first(), "search_59");
 }
 
-void AdvancedSearchControllerTests::history_emptyPatternNotAdded()
-{
+void AdvancedSearchControllerTests::history_emptyPatternNotAdded() {
     AdvancedSearchController ctrl;
     ctrl.clearHistory();
 
     ctrl.addToHistory("");
-    ctrl.addToHistory("   "); // Whitespace-only
+    ctrl.addToHistory("   ");  // Whitespace-only
 
     QVERIFY(ctrl.searchHistory().isEmpty());
 }
 
-void AdvancedSearchControllerTests::history_clearHistory()
-{
+void AdvancedSearchControllerTests::history_clearHistory() {
     AdvancedSearchController ctrl;
     ctrl.addToHistory("item1");
     ctrl.addToHistory("item2");
@@ -294,8 +278,7 @@ void AdvancedSearchControllerTests::history_clearHistory()
 
 // ── Preferences ─────────────────────────────────────────────────────────────
 
-void AdvancedSearchControllerTests::preferences_defaultValues()
-{
+void AdvancedSearchControllerTests::preferences_defaultValues() {
     AdvancedSearchController ctrl;
     const auto prefs = ctrl.preferences();
 
@@ -308,8 +291,7 @@ void AdvancedSearchControllerTests::preferences_defaultValues()
     QVERIFY(prefs.context_lines <= 10);
 }
 
-void AdvancedSearchControllerTests::preferences_setAndGet()
-{
+void AdvancedSearchControllerTests::preferences_setAndGet() {
     AdvancedSearchController ctrl;
 
     SearchPreferences newPrefs;
@@ -329,13 +311,12 @@ void AdvancedSearchControllerTests::preferences_setAndGet()
     QCOMPARE(readBack.context_lines, 5);
 }
 
-void AdvancedSearchControllerTests::preferences_clampedValues()
-{
+void AdvancedSearchControllerTests::preferences_clampedValues() {
     AdvancedSearchController ctrl;
 
     // Set extreme values
     SearchPreferences newPrefs;
-    newPrefs.max_results = 1000000; // No clamp on this (0=unlimited)
+    newPrefs.max_results = 1'000'000;  // No clamp on this (0=unlimited)
     newPrefs.max_preview_file_size_mb = 999;
     newPrefs.max_search_file_size_mb = 999;
     newPrefs.max_cache_size = 999;
@@ -355,8 +336,7 @@ void AdvancedSearchControllerTests::preferences_clampedValues()
 
 // ── Worker Double-Start ─────────────────────────────────────────────────────
 
-void AdvancedSearchControllerTests::doubleStart_cancelsFirst()
-{
+void AdvancedSearchControllerTests::doubleStart_cancelsFirst() {
     AdvancedSearchController ctrl;
 
     SearchConfig config1;

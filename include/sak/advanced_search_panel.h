@@ -13,8 +13,8 @@
 
 #include "sak/advanced_search_types.h"
 
-#include <QComboBox>
 #include <QCheckBox>
+#include <QComboBox>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMenu>
@@ -114,10 +114,8 @@ private:
     void sortResults();
 
     // ── Preview Helpers ──
-    void showFilePreview(const QString& filePath,
-                         const QVector<SearchMatch>& matches);
-    void showMetadataPreview(const QString& filePath,
-                              const QVector<SearchMatch>& matches);
+    void showFilePreview(const QString& filePath, const QVector<SearchMatch>& matches);
+    void showMetadataPreview(const QString& filePath, const QVector<SearchMatch>& matches);
     void highlightMatches();
     void navigateToMatch(int matchIndex);
     void updateMatchCounter();
@@ -187,10 +185,10 @@ private:
 
 /// AdvancedSearchPanel must inherit QWidget.
 static_assert(std::is_base_of_v<QWidget, AdvancedSearchPanel>,
-    "AdvancedSearchPanel must inherit QWidget.");
+              "AdvancedSearchPanel must inherit QWidget.");
 
 /// AdvancedSearchPanel must not be copyable.
 static_assert(!std::is_copy_constructible_v<AdvancedSearchPanel>,
-    "AdvancedSearchPanel must not be copy-constructible.");
+              "AdvancedSearchPanel must not be copy-constructible.");
 
-} // namespace sak
+}  // namespace sak

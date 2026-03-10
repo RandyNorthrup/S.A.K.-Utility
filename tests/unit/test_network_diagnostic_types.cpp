@@ -7,9 +7,9 @@
 /// Validates default construction, value/move semantics, enum values,
 /// and compile-time invariants for all network diagnostic structs.
 
-#include <QtTest/QtTest>
-
 #include "sak/network_diagnostic_types.h"
+
+#include <QtTest/QtTest>
 
 #include <algorithm>
 #include <type_traits>
@@ -117,8 +117,7 @@ private Q_SLOTS:
 // netdiag Constants
 // ════════════════════════════════════════════════════════════════════════════
 
-void NetworkDiagnosticTypesTests::constants_pingDefaults()
-{
+void NetworkDiagnosticTypesTests::constants_pingDefaults() {
     QCOMPARE(netdiag::kDefaultPingCount, 10);
     QCOMPARE(netdiag::kDefaultPingIntervalMs, 1000);
     QCOMPARE(netdiag::kDefaultPingTimeoutMs, 4000);
@@ -126,59 +125,53 @@ void NetworkDiagnosticTypesTests::constants_pingDefaults()
     QCOMPARE(netdiag::kDefaultPingTtl, 128);
 }
 
-void NetworkDiagnosticTypesTests::constants_tracerouteDefaults()
-{
+void NetworkDiagnosticTypesTests::constants_tracerouteDefaults() {
     QCOMPARE(netdiag::kDefaultTracerouteMaxHops, 30);
     QCOMPARE(netdiag::kDefaultTracerouteTimeout, 5000);
     QCOMPARE(netdiag::kDefaultTracerouteProbes, 3);
     QCOMPARE(netdiag::kDefaultMtrCycles, 100);
 }
 
-void NetworkDiagnosticTypesTests::constants_portScanDefaults()
-{
+void NetworkDiagnosticTypesTests::constants_portScanDefaults() {
     QCOMPARE(netdiag::kDefaultPortScanTimeoutMs, 3000);
     QCOMPARE(netdiag::kDefaultMaxConcurrent, 50);
     QCOMPARE(netdiag::kBannerGrabTimeoutMs, 2000);
     QCOMPARE(netdiag::kBannerMaxBytes, 512);
 }
 
-void NetworkDiagnosticTypesTests::constants_bandwidthDefaults()
-{
+void NetworkDiagnosticTypesTests::constants_bandwidthDefaults() {
     QCOMPARE(netdiag::kDefaultBandwidthDuration, 10);
     QCOMPARE(netdiag::kDefaultIperfPort, static_cast<uint16_t>(5201));
 }
 
-void NetworkDiagnosticTypesTests::constants_wifiDefaults()
-{
+void NetworkDiagnosticTypesTests::constants_wifiDefaults() {
     QCOMPARE(netdiag::kDefaultWifiScanIntervalMs, 5000);
     QCOMPARE(netdiag::kDefaultConnRefreshMs, 2000);
 }
 
-void NetworkDiagnosticTypesTests::constants_frequencyBoundaries()
-{
+void NetworkDiagnosticTypesTests::constants_frequencyBoundaries() {
     // 2.4 GHz band
-    QCOMPARE(netdiag::kFreq2GHzStart, 2412000u);
-    QCOMPARE(netdiag::kFreq2GHzEnd,   2484000u);
+    QCOMPARE(netdiag::kFreq2GHzStart, 2'412'000u);
+    QCOMPARE(netdiag::kFreq2GHzEnd, 2'484'000u);
 
     // 5 GHz band
-    QCOMPARE(netdiag::kFreq5GHzStart, 5170000u);
-    QCOMPARE(netdiag::kFreq5GHzEnd,   5835000u);
+    QCOMPARE(netdiag::kFreq5GHzStart, 5'170'000u);
+    QCOMPARE(netdiag::kFreq5GHzEnd, 5'835'000u);
 
     // 6 GHz band
-    QCOMPARE(netdiag::kFreq6GHzStart, 5955000u);
-    QCOMPARE(netdiag::kFreq6GHzEnd,   7115000u);
+    QCOMPARE(netdiag::kFreq6GHzStart, 5'955'000u);
+    QCOMPARE(netdiag::kFreq6GHzEnd, 7'115'000u);
 
     // Bands must be non-overlapping
     QVERIFY(netdiag::kFreq2GHzEnd < netdiag::kFreq5GHzStart);
     QVERIFY(netdiag::kFreq5GHzEnd < netdiag::kFreq6GHzStart);
 }
 
-void NetworkDiagnosticTypesTests::constants_signalThresholds()
-{
+void NetworkDiagnosticTypesTests::constants_signalThresholds() {
     QCOMPARE(netdiag::kSignalExcellent, -50);
-    QCOMPARE(netdiag::kSignalGood,      -60);
-    QCOMPARE(netdiag::kSignalFair,      -70);
-    QCOMPARE(netdiag::kSignalWeak,      -80);
+    QCOMPARE(netdiag::kSignalGood, -60);
+    QCOMPARE(netdiag::kSignalFair, -70);
+    QCOMPARE(netdiag::kSignalWeak, -80);
 
     // Must be in descending order (stronger → weaker)
     QVERIFY(netdiag::kSignalExcellent > netdiag::kSignalGood);
@@ -190,8 +183,7 @@ void NetworkDiagnosticTypesTests::constants_signalThresholds()
 // NetworkAdapterInfo
 // ════════════════════════════════════════════════════════════════════════════
 
-void NetworkDiagnosticTypesTests::adapterInfo_defaultConstruction()
-{
+void NetworkDiagnosticTypesTests::adapterInfo_defaultConstruction() {
     NetworkAdapterInfo info;
 
     QVERIFY(info.name.isEmpty());
@@ -210,8 +202,7 @@ void NetworkDiagnosticTypesTests::adapterInfo_defaultConstruction()
     QCOMPARE(info.linkSpeedBps, static_cast<uint64_t>(0));
 }
 
-void NetworkDiagnosticTypesTests::adapterInfo_valueSemantics()
-{
+void NetworkDiagnosticTypesTests::adapterInfo_valueSemantics() {
     NetworkAdapterInfo original;
     original.name = QStringLiteral("eth0");
     original.description = QStringLiteral("Ethernet Adapter");
@@ -226,7 +217,7 @@ void NetworkDiagnosticTypesTests::adapterInfo_valueSemantics()
     original.dhcpEnabled = true;
     original.isConnected = true;
     original.interfaceIndex = 1;
-    original.linkSpeedBps = 1000000000;
+    original.linkSpeedBps = 1'000'000'000;
 
     // Copy
     NetworkAdapterInfo copy = original;
@@ -242,8 +233,7 @@ void NetworkDiagnosticTypesTests::adapterInfo_valueSemantics()
     QCOMPARE(original.name, QStringLiteral("eth0"));
 }
 
-void NetworkDiagnosticTypesTests::adapterInfo_moveSemantics()
-{
+void NetworkDiagnosticTypesTests::adapterInfo_moveSemantics() {
     NetworkAdapterInfo original;
     original.name = QStringLiteral("wlan0");
     original.macAddress = QStringLiteral("11:22:33:44:55:66");
@@ -257,8 +247,7 @@ void NetworkDiagnosticTypesTests::adapterInfo_moveSemantics()
 // PingReply / PingResult
 // ════════════════════════════════════════════════════════════════════════════
 
-void NetworkDiagnosticTypesTests::pingReply_defaultConstruction()
-{
+void NetworkDiagnosticTypesTests::pingReply_defaultConstruction() {
     PingReply reply;
 
     QCOMPARE(reply.rttMs, 0.0);
@@ -268,8 +257,7 @@ void NetworkDiagnosticTypesTests::pingReply_defaultConstruction()
     QVERIFY(reply.errorMessage.isEmpty());
 }
 
-void NetworkDiagnosticTypesTests::pingReply_valueSemantics()
-{
+void NetworkDiagnosticTypesTests::pingReply_valueSemantics() {
     PingReply original;
     original.rttMs = 12.5;
     original.ttl = 64;
@@ -282,8 +270,7 @@ void NetworkDiagnosticTypesTests::pingReply_valueSemantics()
     QCOMPARE(copy.replyFrom, QStringLiteral("8.8.8.8"));
 }
 
-void NetworkDiagnosticTypesTests::pingResult_defaultConstruction()
-{
+void NetworkDiagnosticTypesTests::pingResult_defaultConstruction() {
     PingResult result;
 
     QVERIFY(result.target.isEmpty());
@@ -298,8 +285,7 @@ void NetworkDiagnosticTypesTests::pingResult_defaultConstruction()
     QVERIFY(result.replies.isEmpty());
 }
 
-void NetworkDiagnosticTypesTests::pingResult_valueSemantics()
-{
+void NetworkDiagnosticTypesTests::pingResult_valueSemantics() {
     PingResult original;
     original.target = QStringLiteral("google.com");
     original.resolvedIP = QStringLiteral("8.8.8.8");
@@ -327,8 +313,7 @@ void NetworkDiagnosticTypesTests::pingResult_valueSemantics()
 // TracerouteHop / TracerouteResult
 // ════════════════════════════════════════════════════════════════════════════
 
-void NetworkDiagnosticTypesTests::tracerouteHop_defaultConstruction()
-{
+void NetworkDiagnosticTypesTests::tracerouteHop_defaultConstruction() {
     TracerouteHop hop;
 
     QCOMPARE(hop.hopNumber, 0);
@@ -341,8 +326,7 @@ void NetworkDiagnosticTypesTests::tracerouteHop_defaultConstruction()
     QVERIFY(!hop.timedOut);
 }
 
-void NetworkDiagnosticTypesTests::tracerouteHop_valueSemantics()
-{
+void NetworkDiagnosticTypesTests::tracerouteHop_valueSemantics() {
     TracerouteHop original;
     original.hopNumber = 3;
     original.ipAddress = QStringLiteral("10.0.0.1");
@@ -354,8 +338,7 @@ void NetworkDiagnosticTypesTests::tracerouteHop_valueSemantics()
     QCOMPARE(copy.ipAddress, QStringLiteral("10.0.0.1"));
 }
 
-void NetworkDiagnosticTypesTests::tracerouteResult_defaultConstruction()
-{
+void NetworkDiagnosticTypesTests::tracerouteResult_defaultConstruction() {
     TracerouteResult result;
 
     QVERIFY(result.target.isEmpty());
@@ -369,8 +352,7 @@ void NetworkDiagnosticTypesTests::tracerouteResult_defaultConstruction()
 // MtrHopStats / MtrResult
 // ════════════════════════════════════════════════════════════════════════════
 
-void NetworkDiagnosticTypesTests::mtrHopStats_defaultConstruction()
-{
+void NetworkDiagnosticTypesTests::mtrHopStats_defaultConstruction() {
     MtrHopStats stats;
 
     QCOMPARE(stats.hopNumber, 0);
@@ -385,8 +367,7 @@ void NetworkDiagnosticTypesTests::mtrHopStats_defaultConstruction()
     QCOMPARE(stats.jitterMs, 0.0);
 }
 
-void NetworkDiagnosticTypesTests::mtrHopStats_valueSemantics()
-{
+void NetworkDiagnosticTypesTests::mtrHopStats_valueSemantics() {
     MtrHopStats original;
     original.hopNumber = 5;
     original.ipAddress = QStringLiteral("172.16.0.1");
@@ -404,8 +385,7 @@ void NetworkDiagnosticTypesTests::mtrHopStats_valueSemantics()
     QCOMPARE(copy.lossPercent, 5.0);
 }
 
-void NetworkDiagnosticTypesTests::mtrResult_defaultConstruction()
-{
+void NetworkDiagnosticTypesTests::mtrResult_defaultConstruction() {
     MtrResult result;
 
     QVERIFY(result.target.isEmpty());
@@ -417,8 +397,7 @@ void NetworkDiagnosticTypesTests::mtrResult_defaultConstruction()
 // DnsQueryResult / DnsServerComparison
 // ════════════════════════════════════════════════════════════════════════════
 
-void NetworkDiagnosticTypesTests::dnsQueryResult_defaultConstruction()
-{
+void NetworkDiagnosticTypesTests::dnsQueryResult_defaultConstruction() {
     DnsQueryResult result;
 
     QVERIFY(result.queryName.isEmpty());
@@ -429,8 +408,7 @@ void NetworkDiagnosticTypesTests::dnsQueryResult_defaultConstruction()
     QVERIFY(!result.success);
 }
 
-void NetworkDiagnosticTypesTests::dnsQueryResult_valueSemantics()
-{
+void NetworkDiagnosticTypesTests::dnsQueryResult_valueSemantics() {
     DnsQueryResult original;
     original.queryName = QStringLiteral("example.com");
     original.recordType = QStringLiteral("A");
@@ -445,8 +423,7 @@ void NetworkDiagnosticTypesTests::dnsQueryResult_valueSemantics()
     QCOMPARE(copy.responseTimeMs, 25.0);
 }
 
-void NetworkDiagnosticTypesTests::dnsComparison_defaultConstruction()
-{
+void NetworkDiagnosticTypesTests::dnsComparison_defaultConstruction() {
     DnsServerComparison comparison;
 
     QVERIFY(comparison.queryName.isEmpty());
@@ -459,8 +436,7 @@ void NetworkDiagnosticTypesTests::dnsComparison_defaultConstruction()
 // PortScanResult / PortPreset
 // ════════════════════════════════════════════════════════════════════════════
 
-void NetworkDiagnosticTypesTests::portScanResult_defaultConstruction()
-{
+void NetworkDiagnosticTypesTests::portScanResult_defaultConstruction() {
     PortScanResult result;
 
     QCOMPARE(result.port, static_cast<uint16_t>(0));
@@ -470,8 +446,7 @@ void NetworkDiagnosticTypesTests::portScanResult_defaultConstruction()
     QCOMPARE(result.responseTimeMs, 0.0);
 }
 
-void NetworkDiagnosticTypesTests::portScanResult_stateEnum()
-{
+void NetworkDiagnosticTypesTests::portScanResult_stateEnum() {
     // Verify all states are distinct
     QVERIFY(PortScanResult::State::Open != PortScanResult::State::Closed);
     QVERIFY(PortScanResult::State::Closed != PortScanResult::State::Filtered);
@@ -484,8 +459,7 @@ void NetworkDiagnosticTypesTests::portScanResult_stateEnum()
     QCOMPARE(result.state, PortScanResult::State::Filtered);
 }
 
-void NetworkDiagnosticTypesTests::portScanResult_valueSemantics()
-{
+void NetworkDiagnosticTypesTests::portScanResult_valueSemantics() {
     PortScanResult original;
     original.port = 443;
     original.state = PortScanResult::State::Open;
@@ -500,15 +474,13 @@ void NetworkDiagnosticTypesTests::portScanResult_valueSemantics()
     QCOMPARE(copy.banner, QStringLiteral("nginx/1.25"));
 }
 
-void NetworkDiagnosticTypesTests::portPreset_defaultConstruction()
-{
+void NetworkDiagnosticTypesTests::portPreset_defaultConstruction() {
     PortPreset preset;
     QVERIFY(preset.name.isEmpty());
     QVERIFY(preset.ports.isEmpty());
 }
 
-void NetworkDiagnosticTypesTests::portPreset_valueSemantics()
-{
+void NetworkDiagnosticTypesTests::portPreset_valueSemantics() {
     PortPreset original;
     original.name = QStringLiteral("Web");
     original.ports = {80, 443, 8080};
@@ -523,8 +495,7 @@ void NetworkDiagnosticTypesTests::portPreset_valueSemantics()
 // BandwidthTestResult
 // ════════════════════════════════════════════════════════════════════════════
 
-void NetworkDiagnosticTypesTests::bandwidthResult_defaultConstruction()
-{
+void NetworkDiagnosticTypesTests::bandwidthResult_defaultConstruction() {
     BandwidthTestResult result;
 
     QCOMPARE(result.downloadMbps, 0.0);
@@ -536,14 +507,11 @@ void NetworkDiagnosticTypesTests::bandwidthResult_defaultConstruction()
     QVERIFY(result.target.isEmpty());
 }
 
-void NetworkDiagnosticTypesTests::bandwidthResult_testModeEnum()
-{
-    QVERIFY(BandwidthTestResult::TestMode::LanIperf3 !=
-            BandwidthTestResult::TestMode::WanHttp);
+void NetworkDiagnosticTypesTests::bandwidthResult_testModeEnum() {
+    QVERIFY(BandwidthTestResult::TestMode::LanIperf3 != BandwidthTestResult::TestMode::WanHttp);
 }
 
-void NetworkDiagnosticTypesTests::bandwidthResult_intervalData()
-{
+void NetworkDiagnosticTypesTests::bandwidthResult_intervalData() {
     BandwidthTestResult::IntervalData interval;
     QCOMPARE(interval.startSec, 0.0);
     QCOMPARE(interval.endSec, 0.0);
@@ -552,7 +520,7 @@ void NetworkDiagnosticTypesTests::bandwidthResult_intervalData()
 
     interval.startSec = 0.0;
     interval.endSec = 1.0;
-    interval.bitsPerSecond = 1000000000.0; // 1 Gbps
+    interval.bitsPerSecond = 1000000000.0;  // 1 Gbps
     interval.retransmits = 5;
 
     BandwidthTestResult result;
@@ -565,8 +533,7 @@ void NetworkDiagnosticTypesTests::bandwidthResult_intervalData()
 // WiFiNetworkInfo / WiFiChannelUtilization
 // ════════════════════════════════════════════════════════════════════════════
 
-void NetworkDiagnosticTypesTests::wifiNetworkInfo_defaultConstruction()
-{
+void NetworkDiagnosticTypesTests::wifiNetworkInfo_defaultConstruction() {
     WiFiNetworkInfo info;
 
     QVERIFY(info.ssid.isEmpty());
@@ -581,14 +548,13 @@ void NetworkDiagnosticTypesTests::wifiNetworkInfo_defaultConstruction()
     QVERIFY(!info.isConnected);
 }
 
-void NetworkDiagnosticTypesTests::wifiNetworkInfo_valueSemantics()
-{
+void NetworkDiagnosticTypesTests::wifiNetworkInfo_valueSemantics() {
     WiFiNetworkInfo original;
     original.ssid = QStringLiteral("TestNet");
     original.bssid = QStringLiteral("AA:BB:CC:DD:EE:FF");
     original.rssiDbm = -65;
     original.signalQuality = 70;
-    original.channelFrequencyKHz = 2412000;
+    original.channelFrequencyKHz = 2'412'000;
     original.channelNumber = 1;
     original.band = QStringLiteral("2.4 GHz");
     original.authentication = QStringLiteral("WPA3");
@@ -601,8 +567,7 @@ void NetworkDiagnosticTypesTests::wifiNetworkInfo_valueSemantics()
     QCOMPARE(copy.isConnected, true);
 }
 
-void NetworkDiagnosticTypesTests::wifiChannelUtil_defaultConstruction()
-{
+void NetworkDiagnosticTypesTests::wifiChannelUtil_defaultConstruction() {
     WiFiChannelUtilization util;
 
     QCOMPARE(util.channelNumber, 0);
@@ -617,8 +582,7 @@ void NetworkDiagnosticTypesTests::wifiChannelUtil_defaultConstruction()
 // ConnectionInfo
 // ════════════════════════════════════════════════════════════════════════════
 
-void NetworkDiagnosticTypesTests::connectionInfo_defaultConstruction()
-{
+void NetworkDiagnosticTypesTests::connectionInfo_defaultConstruction() {
     ConnectionInfo info;
 
     QCOMPARE(info.protocol, ConnectionInfo::Protocol::TCP);
@@ -631,8 +595,7 @@ void NetworkDiagnosticTypesTests::connectionInfo_defaultConstruction()
     QCOMPARE(info.processId, 0u);
 }
 
-void NetworkDiagnosticTypesTests::connectionInfo_protocolEnum()
-{
+void NetworkDiagnosticTypesTests::connectionInfo_protocolEnum() {
     QVERIFY(ConnectionInfo::Protocol::TCP != ConnectionInfo::Protocol::UDP);
 
     ConnectionInfo info;
@@ -644,8 +607,7 @@ void NetworkDiagnosticTypesTests::connectionInfo_protocolEnum()
 // FirewallRule
 // ════════════════════════════════════════════════════════════════════════════
 
-void NetworkDiagnosticTypesTests::firewallRule_defaultConstruction()
-{
+void NetworkDiagnosticTypesTests::firewallRule_defaultConstruction() {
     FirewallRule rule;
 
     QVERIFY(rule.name.isEmpty());
@@ -661,18 +623,15 @@ void NetworkDiagnosticTypesTests::firewallRule_defaultConstruction()
     QVERIFY(rule.applicationPath.isEmpty());
 }
 
-void NetworkDiagnosticTypesTests::firewallRule_directionEnum()
-{
+void NetworkDiagnosticTypesTests::firewallRule_directionEnum() {
     QVERIFY(FirewallRule::Direction::Inbound != FirewallRule::Direction::Outbound);
 }
 
-void NetworkDiagnosticTypesTests::firewallRule_actionEnum()
-{
+void NetworkDiagnosticTypesTests::firewallRule_actionEnum() {
     QVERIFY(FirewallRule::Action::Allow != FirewallRule::Action::Block);
 }
 
-void NetworkDiagnosticTypesTests::firewallRule_protocolEnum()
-{
+void NetworkDiagnosticTypesTests::firewallRule_protocolEnum() {
     // All values must be distinct
     const auto tcp = FirewallRule::Protocol::TCP;
     const auto udp = FirewallRule::Protocol::UDP;
@@ -687,8 +646,7 @@ void NetworkDiagnosticTypesTests::firewallRule_protocolEnum()
     QVERIFY(tcp != any);
 }
 
-void NetworkDiagnosticTypesTests::firewallRule_profileEnum()
-{
+void NetworkDiagnosticTypesTests::firewallRule_profileEnum() {
     QVERIFY(FirewallRule::Profile::Domain != FirewallRule::Profile::Private);
     QVERIFY(FirewallRule::Profile::Private != FirewallRule::Profile::Public);
     // Profile is a bitmask: Domain=1, Private=2, Public=4
@@ -701,22 +659,19 @@ void NetworkDiagnosticTypesTests::firewallRule_profileEnum()
 // FirewallConflict / FirewallGap
 // ════════════════════════════════════════════════════════════════════════════
 
-void NetworkDiagnosticTypesTests::firewallConflict_defaultConstruction()
-{
+void NetworkDiagnosticTypesTests::firewallConflict_defaultConstruction() {
     FirewallConflict conflict;
 
     QVERIFY(conflict.conflictDescription.isEmpty());
     QCOMPARE(conflict.severity, FirewallConflict::Severity::Info);
 }
 
-void NetworkDiagnosticTypesTests::firewallConflict_severityEnum()
-{
+void NetworkDiagnosticTypesTests::firewallConflict_severityEnum() {
     QVERIFY(FirewallConflict::Severity::Critical != FirewallConflict::Severity::Warning);
     QVERIFY(FirewallConflict::Severity::Warning != FirewallConflict::Severity::Info);
 }
 
-void NetworkDiagnosticTypesTests::firewallGap_defaultConstruction()
-{
+void NetworkDiagnosticTypesTests::firewallGap_defaultConstruction() {
     FirewallGap gap;
 
     QVERIFY(gap.description.isEmpty());
@@ -724,8 +679,7 @@ void NetworkDiagnosticTypesTests::firewallGap_defaultConstruction()
     QCOMPARE(gap.severity, FirewallGap::Severity::Info);
 }
 
-void NetworkDiagnosticTypesTests::firewallGap_severityEnum()
-{
+void NetworkDiagnosticTypesTests::firewallGap_severityEnum() {
     QVERIFY(FirewallGap::Severity::Warning != FirewallGap::Severity::Info);
 }
 
@@ -733,8 +687,7 @@ void NetworkDiagnosticTypesTests::firewallGap_severityEnum()
 // NetworkShareInfo
 // ════════════════════════════════════════════════════════════════════════════
 
-void NetworkDiagnosticTypesTests::shareInfo_defaultConstruction()
-{
+void NetworkDiagnosticTypesTests::shareInfo_defaultConstruction() {
     NetworkShareInfo info;
 
     QVERIFY(info.shareName.isEmpty());
@@ -744,8 +697,7 @@ void NetworkDiagnosticTypesTests::shareInfo_defaultConstruction()
     QVERIFY(!info.canWrite);
 }
 
-void NetworkDiagnosticTypesTests::shareInfo_shareTypeEnum()
-{
+void NetworkDiagnosticTypesTests::shareInfo_shareTypeEnum() {
     QVERIFY(NetworkShareInfo::ShareType::Disk != NetworkShareInfo::ShareType::Printer);
     QVERIFY(NetworkShareInfo::ShareType::Printer != NetworkShareInfo::ShareType::Device);
     QVERIFY(NetworkShareInfo::ShareType::Device != NetworkShareInfo::ShareType::IPC);
@@ -756,8 +708,7 @@ void NetworkDiagnosticTypesTests::shareInfo_shareTypeEnum()
 // Compile-Time Invariants
 // ════════════════════════════════════════════════════════════════════════════
 
-void NetworkDiagnosticTypesTests::staticAsserts_defaultConstructible()
-{
+void NetworkDiagnosticTypesTests::staticAsserts_defaultConstructible() {
     QVERIFY(std::is_default_constructible_v<NetworkAdapterInfo>);
     QVERIFY(std::is_default_constructible_v<PingReply>);
     QVERIFY(std::is_default_constructible_v<PingResult>);
@@ -780,8 +731,7 @@ void NetworkDiagnosticTypesTests::staticAsserts_defaultConstructible()
     QVERIFY(std::is_default_constructible_v<NetworkShareInfo>);
 }
 
-void NetworkDiagnosticTypesTests::staticAsserts_copyConstructible()
-{
+void NetworkDiagnosticTypesTests::staticAsserts_copyConstructible() {
     QVERIFY(std::is_copy_constructible_v<NetworkAdapterInfo>);
     QVERIFY(std::is_copy_constructible_v<PingReply>);
     QVERIFY(std::is_copy_constructible_v<PingResult>);
@@ -803,8 +753,7 @@ void NetworkDiagnosticTypesTests::staticAsserts_copyConstructible()
     QVERIFY(std::is_copy_constructible_v<NetworkShareInfo>);
 }
 
-void NetworkDiagnosticTypesTests::staticAsserts_movable()
-{
+void NetworkDiagnosticTypesTests::staticAsserts_movable() {
     QVERIFY(std::is_move_constructible_v<NetworkAdapterInfo>);
     QVERIFY(std::is_move_constructible_v<PingReply>);
     QVERIFY(std::is_move_constructible_v<PingResult>);

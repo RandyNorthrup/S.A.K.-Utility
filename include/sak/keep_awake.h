@@ -4,6 +4,7 @@
 #pragma once
 
 #include "sak/error_codes.h"
+
 #include <expected>
 
 #ifdef _WIN32
@@ -12,10 +13,10 @@ namespace sak {
 
 /**
  * @brief Windows power management utility
- * 
+ *
  * Prevents system from entering sleep mode during long-running operations.
  * Uses SetThreadExecutionState API to request system stay awake.
- * 
+ *
  * Thread-Safety: Can be used from any thread
  */
 class KeepAwake {
@@ -24,9 +25,9 @@ public:
      * @brief Power request flags
      */
     enum class PowerRequest {
-        System = 0x01,           ///< Keep system awake
-        Display = 0x02,          ///< Keep display awake
-        Both = 0x03              ///< Keep both system and display awake
+        System = 0x01,   ///< Keep system awake
+        Display = 0x02,  ///< Keep display awake
+        Both = 0x03      ///< Keep both system and display awake
     };
 
     /**
@@ -35,8 +36,8 @@ public:
      * @param reason Optional reason string for logging
      * @return Success or error code
      */
-    static auto start(PowerRequest request = PowerRequest::System, 
-                     const char* reason = "SAK Utility operation in progress")
+    static auto start(PowerRequest request = PowerRequest::System,
+                      const char* reason = "SAK Utility operation in progress")
         -> std::expected<void, sak::error_code>;
 
     /**
@@ -57,7 +58,7 @@ private:
 
 /**
  * @brief RAII wrapper for KeepAwake
- * 
+ *
  * Automatically enables keep awake on construction and disables on destruction.
  * Perfect for use within long-running operations.
  */
@@ -68,9 +69,8 @@ public:
      * @param request Type of power request
      * @param reason Optional reason string
      */
-    explicit KeepAwakeGuard(
-        KeepAwake::PowerRequest request = KeepAwake::PowerRequest::System,
-        const char* reason = "SAK Utility operation in progress");
+    explicit KeepAwakeGuard(KeepAwake::PowerRequest request = KeepAwake::PowerRequest::System,
+                            const char* reason = "SAK Utility operation in progress");
 
     /**
      * @brief Destructor - stops keep awake
@@ -93,6 +93,6 @@ private:
     bool m_is_active{false};
 };
 
-} // namespace sak
+}  // namespace sak
 
-#endif // _WIN32
+#endif  // _WIN32

@@ -4,36 +4,36 @@
 /// @file main.cpp
 /// @brief SAK Utility main entry point
 
-#include "sak/version.h"
-#include "sak/logger.h"
+#include "sak/actions/action_factory.h"
 #include "sak/error_codes.h"
+#include "sak/logger.h"
 #include "sak/main_window.h"
 #include "sak/quick_action_controller.h"
-#include "sak/actions/action_factory.h"
 #include "sak/quick_action_result_io.h"
-#include "sak/windows11_theme.h"
 #include "sak/splash_screen.h"
+#include "sak/version.h"
+#include "sak/windows11_theme.h"
+
 #include <QApplication>
 #include <QCoreApplication>
-#include <QMessageBox>
 #include <QFileInfo>
 #include <QIcon>
+#include <QMessageBox>
 #include <QStandardPaths>
+
 #include <filesystem>
-#include <print>
 #include <iostream>
 #include <memory>
+#include <print>
 
 namespace {
 
 QString findSplashPath() {
     const QString app_dir = QCoreApplication::applicationDirPath();
-    const QStringList candidates = {
-        app_dir + "/sak_splash.png",
-        app_dir + "/resources/sak_splash.png",
-        app_dir + "/../resources/sak_splash.png",
-        app_dir + "/../sak_splash.png"
-    };
+    const QStringList candidates = {app_dir + "/sak_splash.png",
+                                    app_dir + "/resources/sak_splash.png",
+                                    app_dir + "/../resources/sak_splash.png",
+                                    app_dir + "/../sak_splash.png"};
 
     for (const auto& path : candidates) {
         if (QFileInfo::exists(path)) {
@@ -46,11 +46,9 @@ QString findSplashPath() {
 
 QString findIconPath() {
     const QString app_dir = QCoreApplication::applicationDirPath();
-    const QStringList candidates = {
-        app_dir + "/icon.ico",
-        app_dir + "/resources/icon.ico",
-        app_dir + "/../resources/icon.ico"
-    };
+    const QStringList candidates = {app_dir + "/icon.ico",
+                                    app_dir + "/resources/icon.ico",
+                                    app_dir + "/../resources/icon.ico"};
 
     for (const auto& path : candidates) {
         if (QFileInfo::exists(path)) {
@@ -84,10 +82,9 @@ int runElevatedQuickAction(QApplication& app,
     sak::QuickActionController controller;
     controller.setBackupLocation(backup_location);
 
-    QObject::connect(&controller, &sak::QuickActionController::logMessage,
-        [](const QString& message) {
-        sak::logInfo("{}", message.toStdString());
-    });
+    QObject::connect(&controller,
+                     &sak::QuickActionController::logMessage,
+                     [](const QString& message) { sak::logInfo("{}", message.toStdString()); });
 
     auto actions = sak::ActionFactory::createAllActions(backup_location);
     for (auto& action : actions) {
@@ -104,15 +101,19 @@ int runElevatedQuickAction(QApplication& app,
         return 1;
     }
 
-    QObject::connect(&controller, &sak::QuickActionController::actionExecutionComplete,
-                     &app, [&app, action, result_file](sak::QuickAction* completed) {
-        if (completed != action) {
-            return;
-        }
-        writeResultIfNeeded(result_file, action->lastExecutionResult(), action->status());
-        const int exit_code = action->lastExecutionResult().success ? 0 : 2;
-        app.exit(exit_code);
-    }, Qt::QueuedConnection);
+    QObject::connect(
+        &controller,
+        &sak::QuickActionController::actionExecutionComplete,
+        &app,
+        [&app, action, result_file](sak::QuickAction* completed) {
+            if (completed != action) {
+                return;
+            }
+            writeResultIfNeeded(result_file, action->lastExecutionResult(), action->status());
+            const int exit_code = action->lastExecutionResult().success ? 0 : 2;
+            app.exit(exit_code);
+        },
+        Qt::QueuedConnection);
 
     controller.executeAction(action->name(), false);
     return app.exec();
@@ -148,8 +149,7 @@ bool initializeLogger() {
             nullptr,
             "Initialization Error",
             QString("Failed to initialize logger: %1")
-                .arg(QString::fromStdString(
-                    std::string(sak::to_string(result.error())))));
+                .arg(QString::fromStdString(std::string(sak::to_string(result.error())))));
         return false;
     }
 
@@ -176,8 +176,8 @@ void logStartupBanner() {
 /// @brief Parsed command-line arguments.
 struct CommandLineArgs {
     QString action_to_run;
-    QString backup_location = QStandardPaths::writableLocation(
-        QStandardPaths::AppDataLocation) + QStringLiteral("/SAK_Backups");
+    QString backup_location = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) +
+                              QStringLiteral("/SAK_Backups");
     QString result_file;
 };
 
@@ -228,7 +228,7 @@ int showMainWindow(QApplication& app) {
     return result;
 }
 
-} // namespace
+}  // namespace
 
 /// @brief Main application entry point
 /// @param argc Argument count
@@ -256,18 +256,14 @@ int main(int argc, char* argv[]) {
     } catch (const std::exception& e) {
         sak::logError("Fatal error: {}", e.what());
         std::println(std::cerr, "Fatal error: {}", e.what());
-        QMessageBox::critical(
-            nullptr,
-            "Fatal Error",
-            QString("Unhandled exception: %1").arg(e.what()));
+        QMessageBox::critical(nullptr,
+                              "Fatal Error",
+                              QString("Unhandled exception: %1").arg(e.what()));
         return 1;
     } catch (...) {  // Final safety net: re-throw in debug, exit in release
         sak::logError("Unknown fatal error");
         std::println(std::cerr, "Unknown fatal error");
-        QMessageBox::critical(
-            nullptr,
-            "Fatal Error",
-            "Unknown unhandled exception");
+        QMessageBox::critical(nullptr, "Fatal Error", "Unknown unhandled exception");
 #ifndef NDEBUG
         throw;
 #endif

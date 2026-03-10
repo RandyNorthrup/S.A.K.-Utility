@@ -2,16 +2,19 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "sak/decompressor_factory.h"
-#include "sak/gzip_decompressor.h"
+
 #include "sak/bzip2_decompressor.h"
-#include "sak/xz_decompressor.h"
+#include "sak/gzip_decompressor.h"
 #include "sak/logger.h"
-#include <QFileInfo>
+#include "sak/xz_decompressor.h"
+
 #include <QFile>
+#include <QFileInfo>
 
 namespace sak {
 
 std::unique_ptr<StreamingDecompressor> DecompressorFactory::create(const QString& filePath) {
+    Q_ASSERT(!filePath.isEmpty());
     QString format = detectFormat(filePath);
 
     if (format.isEmpty()) {
@@ -19,8 +22,8 @@ std::unique_ptr<StreamingDecompressor> DecompressorFactory::create(const QString
         return nullptr;
     }
 
-    sak::logInfo(QString("Creating %1 decompressor for %2")
-        .arg(format).arg(filePath).toStdString());
+    sak::logInfo(
+        QString("Creating %1 decompressor for %2").arg(format).arg(filePath).toStdString());
 
     if (format == "gzip") {
         return std::make_unique<GzipDecompressor>();
@@ -50,6 +53,7 @@ QString DecompressorFactory::detectFormat(const QString& filePath) {
 }
 
 QString DecompressorFactory::detectByExtension(const QString& filePath) {
+    Q_ASSERT(!filePath.isEmpty());
     QFileInfo fileInfo(filePath);
     QString suffix = fileInfo.suffix().toLower();
 
@@ -70,6 +74,7 @@ QString DecompressorFactory::detectByExtension(const QString& filePath) {
 }
 
 QString DecompressorFactory::detectByMagicNumber(const QString& filePath) {
+    Q_ASSERT(!filePath.isEmpty());
     unsigned char magic[16];
     if (!readMagicNumber(filePath, magic, sizeof(magic))) {
         return QString();
@@ -86,8 +91,8 @@ QString DecompressorFactory::detectByMagicNumber(const QString& filePath) {
     }
 
     // XZ: FD 37 7A 58 5A 00
-    if (magic[0] == 0xFD && magic[1] == 0x37 && magic[2] == 0x7A &&
-        magic[3] == 0x58 && magic[4] == 0x5A && magic[5] == 0x00) {
+    if (magic[0] == 0xFD && magic[1] == 0x37 && magic[2] == 0x7A && magic[3] == 0x58 &&
+        magic[4] == 0x5A && magic[5] == 0x00) {
         return "xz";
     }
 
@@ -104,8 +109,9 @@ QString DecompressorFactory::detectByMagicNumber(const QString& filePath) {
     return QString();
 }
 
-bool DecompressorFactory::readMagicNumber(const QString& filePath, unsigned char* buffer,
-    int size) {
+bool DecompressorFactory::readMagicNumber(const QString& filePath,
+                                          unsigned char* buffer,
+                                          int size) {
     QFile file(filePath);
     if (!file.open(QIODevice::ReadOnly)) {
         return false;
@@ -117,4 +123,4 @@ bool DecompressorFactory::readMagicNumber(const QString& filePath, unsigned char
     return bytesRead == size;
 }
 
-} // namespace sak
+}  // namespace sak

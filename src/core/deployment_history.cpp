@@ -38,8 +38,7 @@ DeploymentHistoryEntry DeploymentHistoryEntry::fromJson(const QJsonObject& json)
 }
 
 DeploymentHistoryManager::DeploymentHistoryManager(const QString& historyPath)
-    : m_historyPath(historyPath) {
-}
+    : m_historyPath(historyPath) {}
 
 QString DeploymentHistoryManager::historyPath() const {
     return m_historyPath;
@@ -97,6 +96,7 @@ bool DeploymentHistoryManager::appendEntry(const DeploymentHistoryEntry& entry) 
 }
 
 bool DeploymentHistoryManager::exportCsv(const QString& filePath) const {
+    Q_ASSERT(!filePath.isEmpty());
     const auto entries = loadEntries();
     QSaveFile file(filePath);
     if (!file.open(QIODevice::WriteOnly)) {
@@ -104,16 +104,15 @@ bool DeploymentHistoryManager::exportCsv(const QString& filePath) const {
     }
 
     QTextStream stream(&file);
-    stream
-        << "deployment_id,started_at,completed_at,"
-           "total_jobs,completed_jobs,failed_jobs,"
-           "status,template_path\n";
+    stream << "deployment_id,started_at,completed_at,"
+              "total_jobs,completed_jobs,failed_jobs,"
+              "status,template_path\n";
     for (const auto& entry : entries) {
         stream << '"' << entry.deployment_id << "\",";
         stream << '"' << entry.started_at.toString(Qt::ISODate) << "\",";
         stream << '"' << entry.completed_at.toString(Qt::ISODate) << "\",";
         stream << entry.total_jobs << ',' << entry.completed_jobs << ',' << entry.failed_jobs
-            << ',';
+               << ',';
         stream << '"' << entry.status << "\",";
         stream << '"' << entry.template_path << "\"\n";
     }
@@ -122,4 +121,4 @@ bool DeploymentHistoryManager::exportCsv(const QString& filePath) const {
     return file.commit();
 }
 
-} // namespace sak
+}  // namespace sak

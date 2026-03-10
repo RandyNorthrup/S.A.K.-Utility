@@ -91,7 +91,7 @@ Thank you for your interest in contributing to S.A.K. Utility! This document pro
    git add .
    git commit -m "feat: Add awesome feature"
    ```
-   
+
    Use conventional commit messages:
    - `feat:` - New feature
    - `fix:` - Bug fix
@@ -159,21 +159,21 @@ namespace sak {
 
 class Example : public QWidget {
     Q_OBJECT
-    
+
 public:
     explicit Example(QWidget* parent = nullptr);
     ~Example() override;
-    
+
 Q_SIGNALS:
     void dataChanged();
-    
+
 private Q_SLOTS:
     void onButtonClicked();
-    
+
 private:
     void setupUi();
     void setupConnections();
-    
+
     QWidget* m_widget;
 };
 
@@ -292,7 +292,7 @@ cmake --build build --config Release
 void testAppScanner() {
     AppScanner scanner;
     auto apps = scanner.scanInstalledApplications();
-    
+
     assert(!apps.empty() && "Should find installed apps");
     assert(apps[0].name.length() > 0 && "App name should not be empty");
 }

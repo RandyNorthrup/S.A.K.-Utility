@@ -2,9 +2,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "sak/peer_discovery_service.h"
-#include "sak/network_transfer_protocol.h"
+
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
+#include "sak/network_transfer_protocol.h"
 
 #include <QJsonDocument>
 #include <QNetworkInterface>
@@ -12,10 +13,7 @@
 namespace sak {
 
 PeerDiscoveryService::PeerDiscoveryService(QObject* parent)
-    : QObject(parent)
-    , m_socket(new QUdpSocket(this))
-    , m_broadcastTimer(new QTimer(this))
-{
+    : QObject(parent), m_socket(new QUdpSocket(this)), m_broadcastTimer(new QTimer(this)) {
     m_broadcastTimer->setInterval(sak::kTimerBroadcastMs);
     connect(m_broadcastTimer, &QTimer::timeout, this, &PeerDiscoveryService::sendAnnouncement);
     connect(m_socket, &QUdpSocket::readyRead, this, &PeerDiscoveryService::onReadyRead);
@@ -30,14 +28,18 @@ void PeerDiscoveryService::setPort(quint16 port) {
 }
 
 void PeerDiscoveryService::start() {
+    Q_ASSERT(m_socket);
+    Q_ASSERT(m_broadcastTimer);
     if (m_running) {
         return;
     }
 
-    if (!m_socket->bind(QHostAddress::AnyIPv4, m_port,
-        QUdpSocket::ShareAddress | QUdpSocket::ReuseAddressHint)) {
-        logError("PeerDiscoveryService bind failed on port {}: {}", m_port,
-            m_socket->errorString().toStdString());
+    if (!m_socket->bind(QHostAddress::AnyIPv4,
+                        m_port,
+                        QUdpSocket::ShareAddress | QUdpSocket::ReuseAddressHint)) {
+        logError("PeerDiscoveryService bind failed on port {}: {}",
+                 m_port,
+                 m_socket->errorString().toStdString());
         Q_EMIT discoveryError(tr("Failed to bind discovery port %1").arg(m_port));
         return;
     }
@@ -90,8 +92,9 @@ void PeerDiscoveryService::sendAnnouncement() {
 }
 
 void PeerDiscoveryService::onReadyRead() {
+    Q_ASSERT(m_socket);
     // Maximum acceptable datagram size (64 KB) to prevent resource exhaustion.
-    constexpr qint64 kMaxDatagramSize = 65536;
+    constexpr qint64 kMaxDatagramSize = 65'536;
 
     while (m_socket->hasPendingDatagrams()) {
         const qint64 datagramSize = m_socket->pendingDatagramSize();
@@ -100,7 +103,7 @@ void PeerDiscoveryService::onReadyRead() {
             QByteArray discard(static_cast<int>(datagramSize), 0);
             m_socket->readDatagram(discard.data(), discard.size());
             logWarning("PeerDiscoveryService discarded oversized datagram ({} bytes)",
-                datagramSize);
+                       datagramSize);
             continue;
         }
 
@@ -147,11 +150,13 @@ void PeerDiscoveryService::onReadyRead() {
     }
 }
 
-bool PeerDiscoveryService::broadcastOnInterface(
-    const QByteArray& datagram, const QNetworkInterface& iface) {
+bool PeerDiscoveryService::broadcastOnInterface(const QByteArray& datagram,
+                                                const QNetworkInterface& iface) {
     bool sent = false;
     for (const auto& entry : iface.addressEntries()) {
-        if (entry.broadcast().isNull()) continue;
+        if (entry.broadcast().isNull()) {
+            continue;
+        }
         m_socket->writeDatagram(datagram, entry.broadcast(), m_port);
         sent = true;
     }
@@ -159,6 +164,7 @@ bool PeerDiscoveryService::broadcastOnInterface(
 }
 
 void PeerDiscoveryService::sendResponse(const QHostAddress& address, quint16 port) {
+    Q_ASSERT(m_socket);
     QJsonObject payload;
     payload["message_type"] = "DISCOVERY_REPLY";
     payload["protocol_version"] = "1.0";
@@ -170,4 +176,4 @@ void PeerDiscoveryService::sendResponse(const QHostAddress& address, quint16 por
     m_socket->writeDatagram(datagram, address, port);
 }
 
-} // namespace sak
+}  // namespace sak

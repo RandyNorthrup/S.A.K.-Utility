@@ -5,15 +5,16 @@
 /// @brief Implements application configuration persistence and settings management
 
 #include "sak/config_manager.h"
+
 #include "sak/logger.h"
 #include "sak/network_constants.h"
-#include <QtGlobal>
+
 #include <QCoreApplication>
+#include <QtGlobal>
 
 namespace sak {
 
-ConfigManager& ConfigManager::instance()
-{
+ConfigManager& ConfigManager::instance() {
     static ConfigManager instance;
     return instance;
 }
@@ -21,27 +22,20 @@ ConfigManager& ConfigManager::instance()
 ConfigManager::ConfigManager(QObject* parent)
     : QObject(parent)
     , m_settings(std::make_unique<QSettings>(
-        QSettings::IniFormat,
-        QSettings::UserScope,
-        "SAK",
-        "Utility"
-    ))
-{
+          QSettings::IniFormat, QSettings::UserScope, "SAK", "Utility")) {
     Q_ASSERT(m_settings != nullptr);
     logInfo("ConfigManager initialized: {}", m_settings->fileName().toStdString());
     initializeDefaults();
 }
 
-void ConfigManager::initializeDefaults()
-{
+void ConfigManager::initializeDefaults() {
     initializeBackupAndOrganizerDefaults();
     initializeFlasherDefaults();
     initializeNetworkDefaults();
     initializeUiDefaults();
 }
 
-void ConfigManager::initializeBackupAndOrganizerDefaults()
-{
+void ConfigManager::initializeBackupAndOrganizerDefaults() {
     // Only set defaults if keys don't exist
     if (!contains("backup/thread_count")) {
         setValue("backup/thread_count", 4);
@@ -60,8 +54,7 @@ void ConfigManager::initializeBackupAndOrganizerDefaults()
     }
 }
 
-void ConfigManager::initializeFlasherDefaults()
-{
+void ConfigManager::initializeFlasherDefaults() {
     if (!contains("image_flasher/validation_mode")) {
         setValue("image_flasher/validation_mode", "full");
     }
@@ -88,8 +81,7 @@ void ConfigManager::initializeFlasherDefaults()
     }
 }
 
-void ConfigManager::initializeNetworkDefaults()
-{
+void ConfigManager::initializeNetworkDefaults() {
     if (!contains("network_transfer/enabled")) {
         setValue("network_transfer/enabled", true);
     }
@@ -127,356 +119,296 @@ void ConfigManager::initializeNetworkDefaults()
     }
 }
 
-void ConfigManager::initializeUiDefaults()
-{
+void ConfigManager::initializeUiDefaults() {
     if (!contains("ui/restore_window_geometry")) {
         setValue("ui/restore_window_geometry", true);
     }
 }
 
-QVariant ConfigManager::getValue(const QString& key, const QVariant& default_value) const
-{
+QVariant ConfigManager::getValue(const QString& key, const QVariant& default_value) const {
     Q_ASSERT_X(!key.isEmpty(), "ConfigManager::getValue", "key must not be empty");
     return m_settings->value(key, default_value);
 }
 
-void ConfigManager::setValue(const QString& key, const QVariant& value)
-{
+void ConfigManager::setValue(const QString& key, const QVariant& value) {
     Q_ASSERT_X(!key.isEmpty(), "ConfigManager::setValue", "key must not be empty");
     m_settings->setValue(key, value);
     Q_EMIT settingChanged(key, value);
 }
 
-bool ConfigManager::contains(const QString& key) const
-{
+bool ConfigManager::contains(const QString& key) const {
     Q_ASSERT_X(!key.isEmpty(), "ConfigManager::contains", "key must not be empty");
     return m_settings->contains(key);
 }
 
-void ConfigManager::remove(const QString& key)
-{
+void ConfigManager::remove(const QString& key) {
     Q_ASSERT_X(!key.isEmpty(), "ConfigManager::remove", "key must not be empty");
     m_settings->remove(key);
 }
 
-void ConfigManager::clear()
-{
+void ConfigManager::clear() {
     m_settings->clear();
     logInfo("All settings cleared");
 }
 
-void ConfigManager::resetToDefaults()
-{
+void ConfigManager::resetToDefaults() {
     clear();
     initializeDefaults();
     logInfo("Settings reset to defaults");
 }
 
-void ConfigManager::sync()
-{
+void ConfigManager::sync() {
     m_settings->sync();
 }
 
 // Backup settings
-int ConfigManager::getBackupThreadCount() const
-{
+int ConfigManager::getBackupThreadCount() const {
     return getValue("backup/thread_count", 4).toInt();
 }
 
-void ConfigManager::setBackupThreadCount(int count)
-{
+void ConfigManager::setBackupThreadCount(int count) {
     Q_ASSERT_X(count > 0, "setBackupThreadCount", "count must be positive");
     setValue("backup/thread_count", count);
 }
 
-bool ConfigManager::getBackupVerifyMD5() const
-{
+bool ConfigManager::getBackupVerifyMD5() const {
     return getValue("backup/verify_md5", true).toBool();
 }
 
-void ConfigManager::setBackupVerifyMD5(bool verify)
-{
+void ConfigManager::setBackupVerifyMD5(bool verify) {
     setValue("backup/verify_md5", verify);
 }
 
-QString ConfigManager::getLastBackupLocation() const
-{
+QString ConfigManager::getLastBackupLocation() const {
     return getValue("backup/last_location", QString()).toString();
 }
 
-void ConfigManager::setLastBackupLocation(const QString& path)
-{
+void ConfigManager::setLastBackupLocation(const QString& path) {
     setValue("backup/last_location", path);
 }
 
 // Organizer settings
-bool ConfigManager::getOrganizerPreviewMode() const
-{
+bool ConfigManager::getOrganizerPreviewMode() const {
     return getValue("organizer/preview_mode", true).toBool();
 }
 
-void ConfigManager::setOrganizerPreviewMode(bool preview)
-{
+void ConfigManager::setOrganizerPreviewMode(bool preview) {
     setValue("organizer/preview_mode", preview);
 }
 
 // Duplicate finder settings
-qint64 ConfigManager::getDuplicateMinimumFileSize() const
-{
+qint64 ConfigManager::getDuplicateMinimumFileSize() const {
     return getValue("duplicate/minimum_file_size", 0).toLongLong();
 }
 
-void ConfigManager::setDuplicateMinimumFileSize(qint64 size)
-{
+void ConfigManager::setDuplicateMinimumFileSize(qint64 size) {
     Q_ASSERT_X(size >= 0, "setDuplicateMinimumFileSize", "size must be non-negative");
     setValue("duplicate/minimum_file_size", size);
 }
 
-QString ConfigManager::getDuplicateKeepStrategy() const
-{
+QString ConfigManager::getDuplicateKeepStrategy() const {
     return getValue("duplicate/keep_strategy", "oldest").toString();
 }
 
-void ConfigManager::setDuplicateKeepStrategy(const QString& strategy)
-{
+void ConfigManager::setDuplicateKeepStrategy(const QString& strategy) {
     Q_ASSERT_X(!strategy.isEmpty(), "setDuplicateKeepStrategy", "strategy must not be empty");
     setValue("duplicate/keep_strategy", strategy);
 }
 
 // Image Flasher settings
-QString ConfigManager::getImageFlasherValidationMode() const
-{
+QString ConfigManager::getImageFlasherValidationMode() const {
     return getValue("image_flasher/validation_mode", "full").toString();
 }
 
-void ConfigManager::setImageFlasherValidationMode(const QString& mode)
-{
+void ConfigManager::setImageFlasherValidationMode(const QString& mode) {
     Q_ASSERT_X(!mode.isEmpty(), "setImageFlasherValidationMode", "mode must not be empty");
     setValue("image_flasher/validation_mode", mode);
 }
 
-int ConfigManager::getImageFlasherBufferSize() const
-{
+int ConfigManager::getImageFlasherBufferSize() const {
     return getValue("image_flasher/buffer_size", static_cast<int>(sak::kBufferAlignment)).toInt();
 }
 
-void ConfigManager::setImageFlasherBufferSize(int size)
-{
+void ConfigManager::setImageFlasherBufferSize(int size) {
     Q_ASSERT_X(size > 0, "setImageFlasherBufferSize", "size must be positive");
     setValue("image_flasher/buffer_size", size);
 }
 
-bool ConfigManager::getImageFlasherUnmountOnCompletion() const
-{
+bool ConfigManager::getImageFlasherUnmountOnCompletion() const {
     return getValue("image_flasher/unmount_on_completion", true).toBool();
 }
 
-void ConfigManager::setImageFlasherUnmountOnCompletion(bool unmount)
-{
+void ConfigManager::setImageFlasherUnmountOnCompletion(bool unmount) {
     setValue("image_flasher/unmount_on_completion", unmount);
 }
 
-bool ConfigManager::getImageFlasherShowSystemDriveWarning() const
-{
+bool ConfigManager::getImageFlasherShowSystemDriveWarning() const {
     return getValue("image_flasher/show_system_drive_warning", true).toBool();
 }
 
-void ConfigManager::setImageFlasherShowSystemDriveWarning(bool show)
-{
+void ConfigManager::setImageFlasherShowSystemDriveWarning(bool show) {
     setValue("image_flasher/show_system_drive_warning", show);
 }
 
-bool ConfigManager::getImageFlasherShowLargeDriveWarning() const
-{
+bool ConfigManager::getImageFlasherShowLargeDriveWarning() const {
     return getValue("image_flasher/show_large_drive_warning", true).toBool();
 }
 
-void ConfigManager::setImageFlasherShowLargeDriveWarning(bool show)
-{
+void ConfigManager::setImageFlasherShowLargeDriveWarning(bool show) {
     setValue("image_flasher/show_large_drive_warning", show);
 }
 
-int ConfigManager::getImageFlasherLargeDriveThreshold() const
-{
+int ConfigManager::getImageFlasherLargeDriveThreshold() const {
     return getValue("image_flasher/large_drive_threshold", 128).toInt();
 }
 
-void ConfigManager::setImageFlasherLargeDriveThreshold(int threshold)
-{
+void ConfigManager::setImageFlasherLargeDriveThreshold(int threshold) {
     Q_ASSERT_X(threshold > 0, "setImageFlasherLargeDriveThreshold", "threshold must be positive");
     setValue("image_flasher/large_drive_threshold", threshold);
 }
 
-int ConfigManager::getImageFlasherMaxConcurrentWrites() const
-{
+int ConfigManager::getImageFlasherMaxConcurrentWrites() const {
     return getValue("image_flasher/max_concurrent_writes", 1).toInt();
 }
 
-void ConfigManager::setImageFlasherMaxConcurrentWrites(int max)
-{
+void ConfigManager::setImageFlasherMaxConcurrentWrites(int max) {
     Q_ASSERT_X(max > 0, "setImageFlasherMaxConcurrentWrites", "max must be positive");
     setValue("image_flasher/max_concurrent_writes", max);
 }
 
-bool ConfigManager::getImageFlasherEnableNotifications() const
-{
+bool ConfigManager::getImageFlasherEnableNotifications() const {
     return getValue("image_flasher/enable_notifications", true).toBool();
 }
 
-void ConfigManager::setImageFlasherEnableNotifications(bool enable)
-{
+void ConfigManager::setImageFlasherEnableNotifications(bool enable) {
     setValue("image_flasher/enable_notifications", enable);
 }
 
-bool ConfigManager::getNetworkTransferEnabled() const
-{
+bool ConfigManager::getNetworkTransferEnabled() const {
     return getValue("network_transfer/enabled", true).toBool();
 }
 
-void ConfigManager::setNetworkTransferEnabled(bool enabled)
-{
+void ConfigManager::setNetworkTransferEnabled(bool enabled) {
     setValue("network_transfer/enabled", enabled);
 }
 
-int ConfigManager::getNetworkTransferDiscoveryPort() const
-{
+int ConfigManager::getNetworkTransferDiscoveryPort() const {
     return getValue("network_transfer/discovery_port", sak::kPortDiscovery).toInt();
 }
 
-void ConfigManager::setNetworkTransferDiscoveryPort(int port)
-{
-    Q_ASSERT_X(port > 0 && port <= sak::kPortRangeMax, "setNetworkTransferDiscoveryPort",
-        "port must be in range [1, 65535]");
+void ConfigManager::setNetworkTransferDiscoveryPort(int port) {
+    Q_ASSERT_X(port > 0 && port <= sak::kPortRangeMax,
+               "setNetworkTransferDiscoveryPort",
+               "port must be in range [1, 65535]");
     setValue("network_transfer/discovery_port", port);
 }
 
-int ConfigManager::getNetworkTransferControlPort() const
-{
+int ConfigManager::getNetworkTransferControlPort() const {
     return getValue("network_transfer/control_port", sak::kPortControl).toInt();
 }
 
-void ConfigManager::setNetworkTransferControlPort(int port)
-{
-    Q_ASSERT_X(port > 0 && port <= sak::kPortRangeMax, "setNetworkTransferControlPort",
-        "port must be in range [1, 65535]");
+void ConfigManager::setNetworkTransferControlPort(int port) {
+    Q_ASSERT_X(port > 0 && port <= sak::kPortRangeMax,
+               "setNetworkTransferControlPort",
+               "port must be in range [1, 65535]");
     setValue("network_transfer/control_port", port);
 }
 
-int ConfigManager::getNetworkTransferDataPort() const
-{
+int ConfigManager::getNetworkTransferDataPort() const {
     return getValue("network_transfer/data_port", sak::kPortData).toInt();
 }
 
-void ConfigManager::setNetworkTransferDataPort(int port)
-{
-    Q_ASSERT_X(port > 0 && port <= sak::kPortRangeMax, "setNetworkTransferDataPort",
-        "port must be in range [1, 65535]");
+void ConfigManager::setNetworkTransferDataPort(int port) {
+    Q_ASSERT_X(port > 0 && port <= sak::kPortRangeMax,
+               "setNetworkTransferDataPort",
+               "port must be in range [1, 65535]");
     setValue("network_transfer/data_port", port);
 }
 
-bool ConfigManager::getNetworkTransferEncryptionEnabled() const
-{
+bool ConfigManager::getNetworkTransferEncryptionEnabled() const {
     return getValue("network_transfer/encryption", true).toBool();
 }
 
-void ConfigManager::setNetworkTransferEncryptionEnabled(bool enabled)
-{
+void ConfigManager::setNetworkTransferEncryptionEnabled(bool enabled) {
     setValue("network_transfer/encryption", enabled);
 }
 
-bool ConfigManager::getNetworkTransferCompressionEnabled() const
-{
+bool ConfigManager::getNetworkTransferCompressionEnabled() const {
     return getValue("network_transfer/compression", true).toBool();
 }
 
-void ConfigManager::setNetworkTransferCompressionEnabled(bool enabled)
-{
+void ConfigManager::setNetworkTransferCompressionEnabled(bool enabled) {
     setValue("network_transfer/compression", enabled);
 }
 
-bool ConfigManager::getNetworkTransferResumeEnabled() const
-{
+bool ConfigManager::getNetworkTransferResumeEnabled() const {
     return getValue("network_transfer/resume", true).toBool();
 }
 
-void ConfigManager::setNetworkTransferResumeEnabled(bool enabled)
-{
+void ConfigManager::setNetworkTransferResumeEnabled(bool enabled) {
     setValue("network_transfer/resume", enabled);
 }
 
-int ConfigManager::getNetworkTransferMaxBandwidth() const
-{
+int ConfigManager::getNetworkTransferMaxBandwidth() const {
     return getValue("network_transfer/max_bandwidth", 0).toInt();
 }
 
-void ConfigManager::setNetworkTransferMaxBandwidth(int bandwidth)
-{
-    Q_ASSERT_X(bandwidth >= 0, "setNetworkTransferMaxBandwidth",
-        "bandwidth must be non-negative (0 = unlimited)");
+void ConfigManager::setNetworkTransferMaxBandwidth(int bandwidth) {
+    Q_ASSERT_X(bandwidth >= 0,
+               "setNetworkTransferMaxBandwidth",
+               "bandwidth must be non-negative (0 = unlimited)");
     setValue("network_transfer/max_bandwidth", bandwidth);
 }
 
-bool ConfigManager::getNetworkTransferAutoDiscoveryEnabled() const
-{
+bool ConfigManager::getNetworkTransferAutoDiscoveryEnabled() const {
     return getValue("network_transfer/auto_discovery", true).toBool();
 }
 
-void ConfigManager::setNetworkTransferAutoDiscoveryEnabled(bool enabled)
-{
+void ConfigManager::setNetworkTransferAutoDiscoveryEnabled(bool enabled) {
     setValue("network_transfer/auto_discovery", enabled);
 }
 
-int ConfigManager::getNetworkTransferChunkSize() const
-{
-    return getValue("network_transfer/chunk_size",
-        static_cast<int>(sak::kBufferChunkDefault)).toInt();
+int ConfigManager::getNetworkTransferChunkSize() const {
+    return getValue("network_transfer/chunk_size", static_cast<int>(sak::kBufferChunkDefault))
+        .toInt();
 }
 
-void ConfigManager::setNetworkTransferChunkSize(int size)
-{
+void ConfigManager::setNetworkTransferChunkSize(int size) {
     Q_ASSERT_X(size > 0, "setNetworkTransferChunkSize", "size must be positive");
     setValue("network_transfer/chunk_size", size);
 }
 
-QString ConfigManager::getNetworkTransferRelayServer() const
-{
+QString ConfigManager::getNetworkTransferRelayServer() const {
     return getValue("network_transfer/relay_server", QString()).toString();
 }
 
-void ConfigManager::setNetworkTransferRelayServer(const QString& server)
-{
+void ConfigManager::setNetworkTransferRelayServer(const QString& server) {
     setValue("network_transfer/relay_server", server);
 }
 
 // UI settings
-bool ConfigManager::getRestoreWindowGeometry() const
-{
+bool ConfigManager::getRestoreWindowGeometry() const {
     return getValue("ui/restore_window_geometry", true).toBool();
 }
 
-void ConfigManager::setRestoreWindowGeometry(bool restore)
-{
+void ConfigManager::setRestoreWindowGeometry(bool restore) {
     setValue("ui/restore_window_geometry", restore);
 }
 
-QByteArray ConfigManager::getWindowGeometry() const
-{
+QByteArray ConfigManager::getWindowGeometry() const {
     return getValue("ui/window_geometry", QByteArray()).toByteArray();
 }
 
-void ConfigManager::setWindowGeometry(const QByteArray& geometry)
-{
+void ConfigManager::setWindowGeometry(const QByteArray& geometry) {
     setValue("ui/window_geometry", geometry);
 }
 
-QByteArray ConfigManager::getWindowState() const
-{
+QByteArray ConfigManager::getWindowState() const {
     return getValue("ui/window_state", QByteArray()).toByteArray();
 }
 
-void ConfigManager::setWindowState(const QByteArray& state)
-{
+void ConfigManager::setWindowState(const QByteArray& state) {
     setValue("ui/window_state", state);
 }
 
-} // namespace sak
+}  // namespace sak

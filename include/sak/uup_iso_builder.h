@@ -5,13 +5,14 @@
 
 #include "sak/uup_dump_api.h"
 
-#include <QObject>
-#include <QThread>
-#include <QString>
-#include <QProcess>
-#include <QElapsedTimer>
-#include <QTimer>
 #include <QDir>
+#include <QElapsedTimer>
+#include <QObject>
+#include <QProcess>
+#include <QString>
+#include <QThread>
+#include <QTimer>
+
 #include <atomic>
 #include <memory>
 
@@ -106,8 +107,9 @@ public:
     /**
      * @brief Check if a build is currently in progress
      */
-    bool isRunning() const { return m_phase != Phase::Idle && m_phase != Phase::Completed &&
-        m_phase != Phase::Failed; }
+    bool isRunning() const {
+        return m_phase != Phase::Idle && m_phase != Phase::Completed && m_phase != Phase::Failed;
+    }
 
 Q_SIGNALS:
     /**
@@ -166,8 +168,10 @@ private:
     QStringList buildAria2Arguments(const QString& inputFile, const QString& downloadDir) const;
     void executeConversion();
     /// @brief Validate admin privileges, create directories, and locate converter
-    bool prepareConversionEnvironment(QString& uupsDir, QString& nativeConversionTempDir,
-                                       QString& outputIsoPath, QString& uupMediaConverter);
+    bool prepareConversionEnvironment(QString& uupsDir,
+                                      QString& nativeConversionTempDir,
+                                      QString& outputIsoPath,
+                                      QString& uupMediaConverter);
     /// @brief Connect QProcess signals for the converter process
     void connectConverterSignals();
     void finalizeBuild();
@@ -188,7 +192,7 @@ private:
 
     // Check if a file is already fully downloaded and verified
     bool isFileAlreadyDownloaded(const UupDumpApi::FileInfo& fileInfo,
-                                const QString& downloadDir) const;
+                                 const QString& downloadDir) const;
 
     // Check if process is running with administrator privileges
     static bool isRunningAsAdmin();

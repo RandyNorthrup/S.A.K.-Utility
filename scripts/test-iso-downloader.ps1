@@ -42,15 +42,15 @@ if ($Build -or (-not $Run)) {
 
 if ($Run -or $All) {
     Write-Host "`nRunning tests..." -ForegroundColor Yellow
-    
+
     $TestExe = "$BuildDir\Release\Release\$TestName.exe"
     if (-not (Test-Path $TestExe)) {
         Write-Host "Test executable not found: $TestExe" -ForegroundColor Red
         exit 1
     }
-    
+
     & $TestExe -v2
-    
+
     if ($LASTEXITCODE -eq 0) {
         Write-Host "`nAll tests passed!" -ForegroundColor Green
     } else {
@@ -70,7 +70,7 @@ Usage:
 Examples:
   # Quick iteration (already built):
   .\scripts\test-iso-downloader.ps1 -Run
-  
+
   # Full cycle:
   .\scripts\test-iso-downloader.ps1 -All
 "@ -ForegroundColor Gray

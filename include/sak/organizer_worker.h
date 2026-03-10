@@ -4,18 +4,20 @@
 #pragma once
 
 #include "sak/worker_base.h"
+
+#include <QMap>
 #include <QString>
 #include <QStringList>
-#include <QMap>
+
 #include <filesystem>
 #include <vector>
 
 /**
  * @brief Worker thread for directory organization operations
- * 
+ *
  * Organizes files by extension into categorized subdirectories.
  * Provides preview mode for dry-run testing and collision handling.
- * 
+ *
  * Thread-Safety: All signals are emitted from worker thread and should
  * be connected with Qt::QueuedConnection.
  */
@@ -37,11 +39,11 @@ public:
      * @brief Configuration for organization operation
      */
     struct Config {
-        QString target_directory;                      ///< Directory to organize
-        QMap<QString, QStringList> category_mapping;   ///< Category -> extensions
-        bool preview_mode{false};                      ///< Dry run without moving
-        bool create_subdirectories{true};              ///< Create category folders
-        QString collision_strategy{"rename"};          ///< rename/skip/overwrite
+        QString target_directory;                     ///< Directory to organize
+        QMap<QString, QStringList> category_mapping;  ///< Category -> extensions
+        bool preview_mode{false};                     ///< Dry run without moving
+        bool create_subdirectories{true};             ///< Create category folders
+        QString collision_strategy{"rename"};         ///< rename/skip/overwrite
     };
 
     /**

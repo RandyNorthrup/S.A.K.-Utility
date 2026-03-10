@@ -17,9 +17,9 @@ namespace sak {
 
 /// @brief Stores a snapshot of an Ethernet adapter's IP configuration
 struct EthernetConfigSnapshot {
-    QString adapterName;            ///< Windows adapter name (e.g. "Ethernet")
-    QString description;            ///< Adapter description (e.g. "Intel I219-V")
-    QString macAddress;             ///< Physical address for identification
+    QString adapterName;  ///< Windows adapter name (e.g. "Ethernet")
+    QString description;  ///< Adapter description (e.g. "Intel I219-V")
+    QString macAddress;   ///< Physical address for identification
 
     // IPv4 settings
     bool dhcpEnabled = false;
@@ -29,8 +29,8 @@ struct EthernetConfigSnapshot {
     QStringList ipv4DnsServers;
 
     // Metadata
-    QString backupTimestamp;        ///< ISO 8601 timestamp of backup
-    QString computerName;           ///< Name of the machine this was backed up from
+    QString backupTimestamp;  ///< ISO 8601 timestamp of backup
+    QString computerName;     ///< Name of the machine this was backed up from
 
     /// @brief Serialize to JSON
     [[nodiscard]] QJsonObject toJson() const;
@@ -62,21 +62,18 @@ public:
     /// @brief Capture current settings of a named adapter
     /// @param adapterName  The Windows adapter name (e.g. "Ethernet")
     /// @return Snapshot of the adapter's IP configuration, or invalid snapshot on failure
-    [[nodiscard]] EthernetConfigSnapshot captureSettings(
-        const QString& adapterName);
+    [[nodiscard]] EthernetConfigSnapshot captureSettings(const QString& adapterName);
 
     /// @brief Save a snapshot to a JSON file
     /// @param snapshot  The configuration to save
     /// @param filePath  Destination file path
     /// @return true on success
-    [[nodiscard]] bool saveToFile(const EthernetConfigSnapshot& snapshot,
-                                  const QString& filePath);
+    [[nodiscard]] bool saveToFile(const EthernetConfigSnapshot& snapshot, const QString& filePath);
 
     /// @brief Load a snapshot from a JSON file
     /// @param filePath  Source file path
     /// @return Loaded snapshot, or invalid snapshot on failure
-    [[nodiscard]] EthernetConfigSnapshot loadFromFile(
-        const QString& filePath);
+    [[nodiscard]] EthernetConfigSnapshot loadFromFile(const QString& filePath);
 
     /// @brief Restore adapter settings from a snapshot
     /// @param snapshot     The configuration to apply
@@ -100,17 +97,17 @@ private:
     [[nodiscard]] QString runNetsh(const QStringList& args);
 
     /// @brief Parse the output of `netsh interface ip show config` for an adapter
-    [[nodiscard]] static EthernetConfigSnapshot parseNetshConfig(
-        const QString& output, const QString& adapterName);
+    [[nodiscard]] static EthernetConfigSnapshot parseNetshConfig(const QString& output,
+                                                                 const QString& adapterName);
 };
 
 // ── Compile-Time Invariants ─────────────────────────────────────────────────
 
 static_assert(std::is_default_constructible_v<EthernetConfigSnapshot>,
-    "EthernetConfigSnapshot must be default-constructible.");
+              "EthernetConfigSnapshot must be default-constructible.");
 static_assert(std::is_copy_constructible_v<EthernetConfigSnapshot>,
-    "EthernetConfigSnapshot must be copy-constructible.");
+              "EthernetConfigSnapshot must be copy-constructible.");
 static_assert(!std::is_copy_constructible_v<EthernetConfigManager>,
-    "EthernetConfigManager must not be copy-constructible.");
+              "EthernetConfigManager must not be copy-constructible.");
 
-} // namespace sak
+}  // namespace sak

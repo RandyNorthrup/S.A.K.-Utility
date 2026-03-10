@@ -5,30 +5,30 @@
 /// @brief Implements startup program management and disabling
 
 #include "sak/actions/disable_startup_programs_action.h"
-#include "sak/process_runner.h"
-#include <QSettings>
-#include <QDir>
-#include <QProcess>
-#include <QStandardPaths>
-#include <QMessageBox>
-#include <QJsonDocument>
-#include <QJsonArray>
-#include <QJsonObject>
+
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
+#include "sak/process_runner.h"
+
+#include <QDir>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QMessageBox>
+#include <QProcess>
+#include <QSettings>
+#include <QStandardPaths>
 
 namespace sak {
 
-DisableStartupProgramsAction::DisableStartupProgramsAction(QObject* parent)
-    : QuickAction(parent)
-{
-}
+DisableStartupProgramsAction::DisableStartupProgramsAction(QObject* parent) : QuickAction(parent) {}
 
 void DisableStartupProgramsAction::scanRegistryStartup() {
+    Q_ASSERT(!m_startup_items.empty());
+    Q_ASSERT(!m_startup_items.isEmpty());
     QStringList reg_paths = {
         "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run",
-        "HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run"
-    };
+        "HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run"};
 
     for (const QString& path : reg_paths) {
         QSettings settings(path, QSettings::NativeFormat);
@@ -39,7 +39,7 @@ void DisableStartupProgramsAction::scanRegistryStartup() {
             item.command = settings.value(key).toString();
             item.location = path;
             item.is_enabled = true;
-            item.impact = "Medium"; // Default
+            item.impact = "Medium";  // Default
 
             m_startup_items.append(item);
         }
@@ -47,8 +47,10 @@ void DisableStartupProgramsAction::scanRegistryStartup() {
 }
 
 void DisableStartupProgramsAction::scanStartupFolder() {
-    QString startup_path = QStandardPaths::writableLocation(QStandardPaths::ApplicationsLocation)
-                          + "/../Microsoft/Windows/Start Menu/Programs/Startup";
+    Q_ASSERT(!m_startup_items.empty());
+    Q_ASSERT(!m_startup_items.isEmpty());
+    QString startup_path = QStandardPaths::writableLocation(QStandardPaths::ApplicationsLocation) +
+                           "/../Microsoft/Windows/Start Menu/Programs/Startup";
 
     QDir startup_dir(startup_path);
     if (startup_dir.exists()) {
@@ -66,8 +68,11 @@ void DisableStartupProgramsAction::scanStartupFolder() {
 }
 
 void DisableStartupProgramsAction::scanTaskScheduler() {
-    ProcessResult proc = runProcess("schtasks", QStringList() << "/Query" << "/FO" << "CSV",
-        sak::kTimeoutProcessShortMs);
+    Q_ASSERT(!m_startup_items.empty());
+    Q_ASSERT(!m_startup_items.isEmpty());
+    ProcessResult proc = runProcess("schtasks",
+                                    QStringList() << "/Query" << "/FO" << "CSV",
+                                    sak::kTimeoutProcessShortMs);
     if (!proc.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("Scheduled task scan warning: " + proc.std_err.trimmed());
     }
@@ -75,9 +80,13 @@ void DisableStartupProgramsAction::scanTaskScheduler() {
     QStringList lines = output.split('\n');
 
     for (const QString& line : lines) {
-        if (!line.contains("Ready") || !line.contains("\\Microsoft\\Windows")) continue;
+        if (!line.contains("Ready") || !line.contains("\\Microsoft\\Windows")) {
+            continue;
+        }
         QStringList parts = line.split(',');
-        if (parts.isEmpty()) continue;
+        if (parts.isEmpty()) {
+            continue;
+        }
 
         StartupItem item;
         item.name = parts[0].trimmed().remove('"');
@@ -103,8 +112,8 @@ void DisableStartupProgramsAction::scan() {
     result.applicable = !m_startup_items.isEmpty();
     result.files_count = m_startup_items.size();
     result.summary = result.applicable
-        ? QString("Startup items found: %1").arg(m_startup_items.size())
-        : "No startup items detected";
+                         ? QString("Startup items found: %1").arg(m_startup_items.size())
+                         : "No startup items detected";
     result.details = "Run analysis to review and disable non-essential items";
 
     Q_ASSERT(!result.summary.isEmpty());
@@ -127,31 +136,33 @@ void DisableStartupProgramsAction::execute() {
 
     QString startup_output;
     int startup_count = 0;
-    if (!executeScanRegistry(start_time, startup_output, startup_count)) return;
+    if (!executeScanRegistry(start_time, startup_output, startup_count)) {
+        return;
+    }
 
     QString task_output;
     int task_count = 0;
-    if (!executeScanTaskScheduler(start_time, task_output, task_count)) return;
+    if (!executeScanTaskScheduler(start_time, task_output, task_count)) {
+        return;
+    }
 
     QString report;
     bool tm_launched = false;
-    executeDisableEntries(start_time, startup_output, startup_count,
-                          task_output, task_count, report, tm_launched);
+    executeDisableEntries(
+        start_time, startup_output, startup_count, task_output, task_count, report, tm_launched);
 
     executeBuildReport(start_time, startup_count, task_count, report, tm_launched);
 }
 
 bool DisableStartupProgramsAction::executeScanRegistry(const QDateTime& start_time,
-                                                        QString& startup_output,
-                                                        int& startup_count)
-{
+                                                       QString& startup_output,
+                                                       int& startup_count) {
     Q_UNUSED(start_time)
     Q_EMIT executionProgress("Phase 1: Scanning startup programs...", 10);
 
-    QString startup_scan_cmd =
-        R"(Get-CimInstance Win32_StartupCommand )"
-        R"(| Select-Object Name, Command, Location, User )"
-        R"(| ConvertTo-Json)";
+    QString startup_scan_cmd = R"(Get-CimInstance Win32_StartupCommand )"
+                               R"(| Select-Object Name, Command, Location, User )"
+                               R"(| ConvertTo-Json)";
 
     ProcessResult startup_proc = runPowerShell(startup_scan_cmd, sak::kTimeoutChocoListMs);
     if (!startup_proc.std_err.trimmed().isEmpty()) {
@@ -171,18 +182,16 @@ bool DisableStartupProgramsAction::executeScanRegistry(const QDateTime& start_ti
 }
 
 bool DisableStartupProgramsAction::executeScanTaskScheduler(const QDateTime& start_time,
-                                                             QString& task_output,
-                                                             int& task_count)
-{
+                                                            QString& task_output,
+                                                            int& task_count) {
     Q_UNUSED(start_time)
     Q_EMIT executionProgress("Phase 2: Scanning scheduled tasks at startup...", 35);
 
-    QString task_scan_cmd =
-        R"(Get-ScheduledTask | Where-Object )"
-        R"({$_.Triggers.CimClass.CimClassName -match )"
-        R"('MSFT_TaskLogonTrigger|MSFT_TaskBootTrigger'} )"
-        R"(| Select-Object TaskName, State, TaskPath )"
-        R"(| ConvertTo-Json)";
+    QString task_scan_cmd = R"(Get-ScheduledTask | Where-Object )"
+                            R"({$_.Triggers.CimClass.CimClassName -match )"
+                            R"('MSFT_TaskLogonTrigger|MSFT_TaskBootTrigger'} )"
+                            R"(| Select-Object TaskName, State, TaskPath )"
+                            R"(| ConvertTo-Json)";
 
     ProcessResult task_proc = runPowerShell(task_scan_cmd, sak::kTimeoutChocoListMs);
     if (!task_proc.std_err.trimmed().isEmpty()) {
@@ -203,13 +212,15 @@ bool DisableStartupProgramsAction::executeScanTaskScheduler(const QDateTime& sta
 }
 
 QString DisableStartupProgramsAction::formatStartupProgramsSection(const QString& startup_output,
-                                                                     int startup_count) const
-{
-    if (startup_count <= 0) return {};
+                                                                   int startup_count) const {
+    if (startup_count <= 0) {
+        return {};
+    }
 
     QString section;
-    section += QString::fromUtf8("║                         STARTUP PROGRAMS                       "
-                                 "            ║\n");
+    section += QString::fromUtf8(
+        "║                         STARTUP PROGRAMS                       "
+        "            ║\n");
     section += QString::fromUtf8(
         "╠════════════════════════════════════════════════════════════════════════════╣\n");
 
@@ -218,7 +229,9 @@ QString DisableStartupProgramsAction::formatStartupProgramsSection(const QString
 
     int displayed = 0;
     for (const QJsonValue& value : programs) {
-        if (displayed >= 15) break; // Limit to first 15 for readability
+        if (displayed >= 15) {
+            break;  // Limit to first 15 for readability
+        }
         QJsonObject program = value.toObject();
         QString name = program["Name"].toString().left(50);
         QString location = program["Location"].toString();
@@ -226,28 +239,29 @@ QString DisableStartupProgramsAction::formatStartupProgramsSection(const QString
         // Determine location type for icon
         QString icon = QString::fromUtf8("●");
         if (location.contains("HKLM", Qt::CaseInsensitive)) {
-            icon = QString::fromUtf8("■"); // System-wide
+            icon = QString::fromUtf8("■");  // System-wide
         } else if (location.contains("HKCU", Qt::CaseInsensitive)) {
-            icon = QString::fromUtf8("□"); // User-specific
+            icon = QString::fromUtf8("□");  // User-specific
         } else if (location.contains("Startup", Qt::CaseInsensitive)) {
-            icon = QString::fromUtf8("▸"); // Startup folder
+            icon = QString::fromUtf8("▸");  // Startup folder
         }
 
-        section += QString::fromUtf8("║ %1 %2").arg(icon).arg(name).leftJustified(73,
-            ' ') + QString::fromUtf8("║\n");
+        section += QString::fromUtf8("║ %1 %2").arg(icon).arg(name).leftJustified(73, ' ') +
+                   QString::fromUtf8("║\n");
 
         QString loc_short = location.left(60);
         if (!loc_short.isEmpty()) {
-            section += QString::fromUtf8("║   Location: %1").arg(loc_short).leftJustified(73,
-                ' ') + QString::fromUtf8("║\n");
+            section += QString::fromUtf8("║   Location: %1").arg(loc_short).leftJustified(73, ' ') +
+                       QString::fromUtf8("║\n");
         }
         displayed++;
     }
 
     if (programs.size() > 15) {
-        section += QString::fromUtf8("║   ... and %1 more startup program(s)                       "
-                                     "               ║\n")
-                     .arg(programs.size() - 15);
+        section += QString::fromUtf8(
+                       "║   ... and %1 more startup program(s)                       "
+                       "               ║\n")
+                       .arg(programs.size() - 15);
     }
     section += QString::fromUtf8(
         "╠════════════════════════════════════════════════════════════════════════════╣\n");
@@ -255,13 +269,15 @@ QString DisableStartupProgramsAction::formatStartupProgramsSection(const QString
 }
 
 QString DisableStartupProgramsAction::formatStartupTasksSection(const QString& task_output,
-                                                                  int task_count) const
-{
-    if (task_count <= 0) return {};
+                                                                int task_count) const {
+    if (task_count <= 0) {
+        return {};
+    }
 
     QString section;
-    section += QString::fromUtf8("║                         STARTUP TASKS                          "
-                                 "            ║\n");
+    section += QString::fromUtf8(
+        "║                         STARTUP TASKS                          "
+        "            ║\n");
     section += QString::fromUtf8(
         "╠════════════════════════════════════════════════════════════════════════════╣\n");
 
@@ -275,24 +291,27 @@ QString DisableStartupProgramsAction::formatStartupTasksSection(const QString& t
 
     int displayed = 0;
     for (const QJsonValue& value : tasks) {
-        if (displayed >= 10) break;
+        if (displayed >= 10) {
+            break;
+        }
         QJsonObject task = value.toObject();
         QString name = task["TaskName"].toString().left(50);
         QString state = task["State"].toString();
 
         QString state_icon = (state == "Ready") ? QString::fromUtf8("✓") : QString::fromUtf8("◯");
 
-        section += QString::fromUtf8("║ %1 %2").arg(state_icon).arg(name).leftJustified(73,
-            ' ') + QString::fromUtf8("║\n");
-        section += QString::fromUtf8("║   State: %1").arg(state).leftJustified(73,
-            ' ') + QString::fromUtf8("║\n");
+        section += QString::fromUtf8("║ %1 %2").arg(state_icon).arg(name).leftJustified(73, ' ') +
+                   QString::fromUtf8("║\n");
+        section += QString::fromUtf8("║   State: %1").arg(state).leftJustified(73, ' ') +
+                   QString::fromUtf8("║\n");
         displayed++;
     }
 
     if (tasks.size() > 10) {
-        section += QString::fromUtf8("║   ... and %1 more startup task(s)                          "
-                                     "               ║\n")
-                     .arg(tasks.size() - 10);
+        section += QString::fromUtf8(
+                       "║   ... and %1 more startup task(s)                          "
+                       "               ║\n")
+                       .arg(tasks.size() - 10);
     }
     section += QString::fromUtf8(
         "╠════════════════════════════════════════════════════════════════════════════╣\n");
@@ -300,13 +319,12 @@ QString DisableStartupProgramsAction::formatStartupTasksSection(const QString& t
 }
 
 void DisableStartupProgramsAction::executeDisableEntries(const QDateTime& start_time,
-                                                          const QString& startup_output,
-                                                          int startup_count,
-                                                          const QString& task_output,
-                                                          int task_count,
-                                                          QString& report,
-                                                          bool& tm_launched)
-{
+                                                         const QString& startup_output,
+                                                         int startup_count,
+                                                         const QString& task_output,
+                                                         int task_count,
+                                                         QString& report,
+                                                         bool& tm_launched) {
     Q_UNUSED(start_time)
     Q_EMIT executionProgress("Phase 3: Analyzing impact and generating report...", 60);
 
@@ -315,13 +333,19 @@ void DisableStartupProgramsAction::executeDisableEntries(const QDateTime& start_
     report += "║                    STARTUP PROGRAMS ANALYSIS REPORT                        ║\n";
     report += "╠════════════════════════════════════════════════════════════════════════════╣\n";
     report += QString("║ Scan Time:              %1                               ║\n")
-        .arg(QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss"));
-    report += QString("║ Startup Programs Found: %1                                                "
-                      " ║\n").arg(startup_count);
-    report += QString("║ Startup Tasks Found:    %1                                                "
-                      "  ║\n").arg(task_count);
-    report += QString("║ Total Startup Items:    %1                                                "
-                      " ║\n").arg(startup_count + task_count);
+                  .arg(QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss"));
+    report += QString(
+                  "║ Startup Programs Found: %1                                                "
+                  " ║\n")
+                  .arg(startup_count);
+    report += QString(
+                  "║ Startup Tasks Found:    %1                                                "
+                  "  ║\n")
+                  .arg(task_count);
+    report += QString(
+                  "║ Total Startup Items:    %1                                                "
+                  " ║\n")
+                  .arg(startup_count + task_count);
     report += "╠════════════════════════════════════════════════════════════════════════════╣\n";
 
     // Parse and display startup programs
@@ -366,11 +390,10 @@ void DisableStartupProgramsAction::executeDisableEntries(const QDateTime& start_
 }
 
 void DisableStartupProgramsAction::executeBuildReport(const QDateTime& start_time,
-                                                       int startup_count,
-                                                       int task_count,
-                                                       const QString& report,
-                                                       bool tm_launched)
-{
+                                                      int startup_count,
+                                                      int task_count,
+                                                      const QString& report,
+                                                      bool tm_launched) {
     Q_EMIT executionProgress("Analysis complete", 100);
 
     qint64 duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
@@ -397,4 +420,4 @@ void DisableStartupProgramsAction::executeBuildReport(const QDateTime& start_tim
     finishWithResult(result, ActionStatus::Success);
 }
 
-} // namespace sak
+}  // namespace sak

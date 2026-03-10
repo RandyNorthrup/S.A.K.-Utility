@@ -5,16 +5,15 @@
 /// @brief Unit tests for AdvancedSearchWorker — regex compilation, text search,
 ///        metadata, archive, binary, dispatch logic, cancellation
 
-#include <QtTest/QtTest>
-
-#include "sak/advanced_search_worker.h"
 #include "sak/advanced_search_types.h"
+#include "sak/advanced_search_worker.h"
 #include "sak/error_codes.h"
 
 #include <QDir>
 #include <QFile>
 #include <QSignalSpy>
 #include <QTemporaryDir>
+#include <QtTest/QtTest>
 
 #include <zlib.h>
 
@@ -99,12 +98,10 @@ private:
     void createSubDir(const QString& name);
 
     /// @brief Create a minimal valid ZIP file with one stored text entry
-    QByteArray createMinimalZip(const QString& entryName,
-                                 const QByteArray& entryData);
+    QByteArray createMinimalZip(const QString& entryName, const QByteArray& entryData);
 
     /// @brief Create a minimal valid ZIP file with one deflate-compressed entry
-    QByteArray createDeflateZip(const QString& entryName,
-                                const QByteArray& entryData);
+    QByteArray createDeflateZip(const QString& entryName, const QByteArray& entryData);
 
     /// @brief Run a worker synchronously and return results
     QVector<SearchMatch> runWorker(const SearchConfig& config);
@@ -116,34 +113,32 @@ private:
 // Setup / Teardown
 // ============================================================================
 
-void AdvancedSearchWorkerTests::initTestCase()
-{
+void AdvancedSearchWorkerTests::initTestCase() {
     QVERIFY(m_temp_dir.isValid());
 
     // Create test file structure
     createTestFile("hello.txt",
-        "Hello World\n"
-        "This is line 2\n"
-        "Hello again on line 3\n"
-        "Line 4 has no match\n"
-        "Final Hello on line 5\n");
+                   "Hello World\n"
+                   "This is line 2\n"
+                   "Hello again on line 3\n"
+                   "Line 4 has no match\n"
+                   "Final Hello on line 5\n");
 
     createTestFile("code.cpp",
-        "#include <iostream>\n"
-        "int main() {\n"
-        "    std::cout << \"Hello\" << std::endl;\n"
-        "    return 0;\n"
-        "}\n");
+                   "#include <iostream>\n"
+                   "int main() {\n"
+                   "    std::cout << \"Hello\" << std::endl;\n"
+                   "    return 0;\n"
+                   "}\n");
 
     createTestFile("data.csv",
-        "name,email,phone\n"
-        "Alice,alice@example.com,555-1234\n"
-        "Bob,bob@test.org,555-5678\n");
+                   "name,email,phone\n"
+                   "Alice,alice@example.com,555-1234\n"
+                   "Bob,bob@test.org,555-5678\n");
 
     createTestFile("empty.txt", "");
 
-    createTestFile("large_match.txt",
-        QString("prefix target suffix\n").repeated(100));
+    createTestFile("large_match.txt", QString("prefix target suffix\n").repeated(100));
 
     // Create a subdirectory with files
     createSubDir("subdir");
@@ -154,14 +149,15 @@ void AdvancedSearchWorkerTests::initTestCase()
     createTestFile(".git/config", "git config file\nHello inside git\n");
 
     // Create a non-text file (fake binary with some text)
-    createTestFile("fake.bin", QString(QByteArray(100, '\0')) + "hidden_text_marker" +
-                   QString(QByteArray(100, '\0')));
+    createTestFile("fake.bin",
+                   QString(QByteArray(100, '\0')) + "hidden_text_marker" +
+                       QString(QByteArray(100, '\0')));
 
     // Create a file with special regex characters in content
     createTestFile("special.txt",
-        "File has dots: config.ini\n"
-        "And parens: func(arg)\n"
-        "Plus stars: rating***\n");
+                   "File has dots: config.ini\n"
+                   "And parens: func(arg)\n"
+                   "Plus stars: rating***\n");
 
     // Create a small PNG-like file (just for metadata testing with filesystem info)
     createTestFile("test.png", "Not a real PNG but has the extension");
@@ -187,8 +183,7 @@ void AdvancedSearchWorkerTests::initTestCase()
     }
 }
 
-void AdvancedSearchWorkerTests::cleanupTestCase()
-{
+void AdvancedSearchWorkerTests::cleanupTestCase() {
     // QTemporaryDir auto-cleans
 }
 
@@ -196,9 +191,7 @@ void AdvancedSearchWorkerTests::cleanupTestCase()
 // Helper Methods
 // ============================================================================
 
-void AdvancedSearchWorkerTests::createTestFile(const QString& name,
-                                                    const QString& content)
-{
+void AdvancedSearchWorkerTests::createTestFile(const QString& name, const QString& content) {
     const QString path = m_temp_dir.path() + "/" + name;
     QFile file(path);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
@@ -208,15 +201,13 @@ void AdvancedSearchWorkerTests::createTestFile(const QString& name,
     file.close();
 }
 
-void AdvancedSearchWorkerTests::createSubDir(const QString& name)
-{
+void AdvancedSearchWorkerTests::createSubDir(const QString& name) {
     const QString path = m_temp_dir.path() + "/" + name;
     QDir().mkpath(path);
 }
 
 QByteArray AdvancedSearchWorkerTests::createMinimalZip(const QString& entryName,
-                                                         const QByteArray& entryData)
-{
+                                                       const QByteArray& entryData) {
     QByteArray zip;
     const QByteArray nameBytes = entryName.toUtf8();
 
@@ -296,18 +287,16 @@ QByteArray AdvancedSearchWorkerTests::createMinimalZip(const QString& entryName,
     return zip;
 }
 
-QByteArray AdvancedSearchWorkerTests::createDeflateZip(
-    const QString& entryName,
-    const QByteArray& entryData)
-{
+QByteArray AdvancedSearchWorkerTests::createDeflateZip(const QString& entryName,
+                                                       const QByteArray& entryData) {
     // Compress the entry data with raw deflate (no zlib header)
     QByteArray compressed;
     compressed.resize(compressBound(static_cast<uLong>(entryData.size())));
 
     z_stream strm{};
-    strm.next_in  = reinterpret_cast<Bytef*>(const_cast<char*>(entryData.constData()));
+    strm.next_in = reinterpret_cast<Bytef*>(const_cast<char*>(entryData.constData()));
     strm.avail_in = static_cast<uInt>(entryData.size());
-    strm.next_out  = reinterpret_cast<Bytef*>(compressed.data());
+    strm.next_out = reinterpret_cast<Bytef*>(compressed.data());
     strm.avail_out = static_cast<uInt>(compressed.size());
 
     // -MAX_WBITS → raw deflate (what ZIP uses)
@@ -317,10 +306,9 @@ QByteArray AdvancedSearchWorkerTests::createDeflateZip(
     compressed.resize(static_cast<qsizetype>(strm.total_out));
 
     // Compute CRC-32
-    quint32 crc = static_cast<quint32>(
-        crc32(crc32(0, Z_NULL, 0),
-              reinterpret_cast<const Bytef*>(entryData.constData()),
-              static_cast<uInt>(entryData.size())));
+    quint32 crc = static_cast<quint32>(crc32(crc32(0, Z_NULL, 0),
+                                             reinterpret_cast<const Bytef*>(entryData.constData()),
+                                             static_cast<uInt>(entryData.size())));
 
     const QByteArray nameBytes = entryName.toUtf8();
     quint16 nameLen = static_cast<quint16>(nameBytes.size());
@@ -330,31 +318,31 @@ QByteArray AdvancedSearchWorkerTests::createDeflateZip(
     QByteArray zip;
 
     // ── Local File Header ──
-    zip.append("\x50\x4B\x03\x04", 4);    // Signature
-    zip.append("\x14\x00", 2);              // Version needed (2.0)
-    zip.append("\x00\x00", 2);              // Flags
-    zip.append("\x08\x00", 2);              // Compression: deflate (8)
-    zip.append("\x00\x00\x00\x00", 4);      // Time, Date
+    zip.append("\x50\x4B\x03\x04", 4);  // Signature
+    zip.append("\x14\x00", 2);          // Version needed (2.0)
+    zip.append("\x00\x00", 2);          // Flags
+    zip.append("\x08\x00", 2);          // Compression: deflate (8)
+    zip.append("\x00\x00\x00\x00", 4);  // Time, Date
     zip.append(reinterpret_cast<const char*>(&crc), 4);
     zip.append(reinterpret_cast<const char*>(&compSize), 4);
     zip.append(reinterpret_cast<const char*>(&uncompSize), 4);
     zip.append(reinterpret_cast<const char*>(&nameLen), 2);
-    zip.append("\x00\x00", 2);              // Extra field length
+    zip.append("\x00\x00", 2);  // Extra field length
     zip.append(nameBytes);
     zip.append(compressed);
 
     // ── Central Directory Header ──
     zip.append("\x50\x4B\x01\x02", 4);
-    zip.append("\x14\x00", 2);              // Version made by
-    zip.append("\x14\x00", 2);              // Version needed
-    zip.append("\x00\x00", 2);              // Flags
-    zip.append("\x08\x00", 2);              // Compression: deflate (8)
-    zip.append("\x00\x00\x00\x00", 4);      // Time, Date
+    zip.append("\x14\x00", 2);          // Version made by
+    zip.append("\x14\x00", 2);          // Version needed
+    zip.append("\x00\x00", 2);          // Flags
+    zip.append("\x08\x00", 2);          // Compression: deflate (8)
+    zip.append("\x00\x00\x00\x00", 4);  // Time, Date
     zip.append(reinterpret_cast<const char*>(&crc), 4);
     zip.append(reinterpret_cast<const char*>(&compSize), 4);
     zip.append(reinterpret_cast<const char*>(&uncompSize), 4);
     zip.append(reinterpret_cast<const char*>(&nameLen), 2);
-    zip.append(QByteArray(12, '\0'));         // Extra, Comment, Disk, attrs
+    zip.append(QByteArray(12, '\0'));                     // Extra, Comment, Disk, attrs
     quint32 zero = 0;
     zip.append(reinterpret_cast<const char*>(&zero), 4);  // Local header offset
     zip.append(nameBytes);
@@ -367,24 +355,21 @@ QByteArray AdvancedSearchWorkerTests::createDeflateZip(
     zip.append("\x01\x00\x01\x00", 4);  // Total entries
     zip.append(reinterpret_cast<const char*>(&cdSize), 4);
     zip.append(reinterpret_cast<const char*>(&cdOffset), 4);
-    zip.append("\x00\x00", 2);          // Comment length
+    zip.append("\x00\x00", 2);  // Comment length
 
     return zip;
 }
 
-QVector<SearchMatch> AdvancedSearchWorkerTests::runWorker(const SearchConfig& config)
-{
+QVector<SearchMatch> AdvancedSearchWorkerTests::runWorker(const SearchConfig& config) {
     QVector<SearchMatch> allMatches;
     AdvancedSearchWorker worker(config);
 
     QSignalSpy resultsSpy(&worker, &AdvancedSearchWorker::resultsReady);
-    QSignalSpy finishedSpy(&worker,
-        qOverload<>(&WorkerBase::finished));
-    QSignalSpy failedSpy(&worker,
-        &WorkerBase::failed);
+    QSignalSpy finishedSpy(&worker, qOverload<>(&WorkerBase::finished));
+    QSignalSpy failedSpy(&worker, &WorkerBase::failed);
 
     worker.start();
-    worker.wait(10000); // 10s timeout
+    worker.wait(10'000);  // 10s timeout
 
     for (int i = 0; i < resultsSpy.count(); ++i) {
         const auto matches = resultsSpy[i][0].value<QVector<SearchMatch>>();
@@ -398,8 +383,7 @@ QVector<SearchMatch> AdvancedSearchWorkerTests::runWorker(const SearchConfig& co
 // Regex Compilation Tests
 // ============================================================================
 
-void AdvancedSearchWorkerTests::emptyPattern_returnsError()
-{
+void AdvancedSearchWorkerTests::emptyPattern_returnsError() {
     SearchConfig config;
     config.root_path = m_temp_dir.path() + "/hello.txt";
     config.pattern = "";
@@ -411,23 +395,20 @@ void AdvancedSearchWorkerTests::emptyPattern_returnsError()
     QVERIFY(worker.wait(5000));
 
     QCOMPARE(failSpy.count(), 1);
-    QCOMPARE(failSpy[0][0].toInt(),
-        static_cast<int>(sak::error_code::invalid_argument));
+    QCOMPARE(failSpy[0][0].toInt(), static_cast<int>(sak::error_code::invalid_argument));
 }
 
-void AdvancedSearchWorkerTests::plainText_findsMatch()
-{
+void AdvancedSearchWorkerTests::plainText_findsMatch() {
     SearchConfig config;
     config.root_path = m_temp_dir.path() + "/hello.txt";
     config.pattern = "Hello";
     config.exclude_patterns.clear();
 
     auto matches = runWorker(config);
-    QVERIFY(matches.size() >= 3); // "Hello" appears 3 times
+    QVERIFY(matches.size() >= 3);  // "Hello" appears 3 times
 }
 
-void AdvancedSearchWorkerTests::plainText_caseInsensitive()
-{
+void AdvancedSearchWorkerTests::plainText_caseInsensitive() {
     SearchConfig config;
     config.root_path = m_temp_dir.path() + "/hello.txt";
     config.pattern = "hello";
@@ -435,23 +416,21 @@ void AdvancedSearchWorkerTests::plainText_caseInsensitive()
     config.exclude_patterns.clear();
 
     auto matches = runWorker(config);
-    QVERIFY(matches.size() >= 3); // Case-insensitive should find all "Hello"
+    QVERIFY(matches.size() >= 3);  // Case-insensitive should find all "Hello"
 }
 
-void AdvancedSearchWorkerTests::plainText_caseSensitive()
-{
+void AdvancedSearchWorkerTests::plainText_caseSensitive() {
     SearchConfig config;
     config.root_path = m_temp_dir.path() + "/hello.txt";
-    config.pattern = "hello"; // lowercase
+    config.pattern = "hello";  // lowercase
     config.case_sensitive = true;
     config.exclude_patterns.clear();
 
     auto matches = runWorker(config);
-    QCOMPARE(matches.size(), 0); // No lowercase "hello" in file
+    QCOMPARE(matches.size(), 0);  // No lowercase "hello" in file
 }
 
-void AdvancedSearchWorkerTests::wholeWord_matchesBoundary()
-{
+void AdvancedSearchWorkerTests::wholeWord_matchesBoundary() {
     SearchConfig config;
     config.root_path = m_temp_dir.path() + "/hello.txt";
     config.pattern = "Hello";
@@ -462,20 +441,18 @@ void AdvancedSearchWorkerTests::wholeWord_matchesBoundary()
     QVERIFY(matches.size() >= 3);
 }
 
-void AdvancedSearchWorkerTests::wholeWord_rejectsPartial()
-{
+void AdvancedSearchWorkerTests::wholeWord_rejectsPartial() {
     SearchConfig config;
     config.root_path = m_temp_dir.path() + "/hello.txt";
-    config.pattern = "Hell"; // Partial word
+    config.pattern = "Hell";  // Partial word
     config.whole_word = true;
     config.exclude_patterns.clear();
 
     auto matches = runWorker(config);
-    QCOMPARE(matches.size(), 0); // "Hell" is not a whole word in the file
+    QCOMPARE(matches.size(), 0);  // "Hell" is not a whole word in the file
 }
 
-void AdvancedSearchWorkerTests::regexMode_specialChars()
-{
+void AdvancedSearchWorkerTests::regexMode_specialChars() {
     SearchConfig config;
     config.root_path = m_temp_dir.path() + "/hello.txt";
     config.pattern = "Hello.*line";
@@ -486,11 +463,10 @@ void AdvancedSearchWorkerTests::regexMode_specialChars()
     QVERIFY(matches.size() >= 2);
 }
 
-void AdvancedSearchWorkerTests::regexEscape_literalDots()
-{
+void AdvancedSearchWorkerTests::regexEscape_literalDots() {
     SearchConfig config;
     config.root_path = m_temp_dir.path() + "/special.txt";
-    config.pattern = "config.ini"; // Non-regex: dots should be literal
+    config.pattern = "config.ini";  // Non-regex: dots should be literal
     config.use_regex = false;
     config.exclude_patterns.clear();
 
@@ -502,8 +478,7 @@ void AdvancedSearchWorkerTests::regexEscape_literalDots()
 // Text Content Search Tests
 // ============================================================================
 
-void AdvancedSearchWorkerTests::textSearch_singleMatch()
-{
+void AdvancedSearchWorkerTests::textSearch_singleMatch() {
     SearchConfig config;
     config.root_path = m_temp_dir.path() + "/code.cpp";
     config.pattern = "iostream";
@@ -514,8 +489,7 @@ void AdvancedSearchWorkerTests::textSearch_singleMatch()
     QVERIFY(matches[0].line_content.contains("iostream"));
 }
 
-void AdvancedSearchWorkerTests::textSearch_multipleMatches()
-{
+void AdvancedSearchWorkerTests::textSearch_multipleMatches() {
     SearchConfig config;
     config.root_path = m_temp_dir.path() + "/hello.txt";
     config.pattern = "Hello";
@@ -525,8 +499,7 @@ void AdvancedSearchWorkerTests::textSearch_multipleMatches()
     QCOMPARE(matches.size(), 3);
 }
 
-void AdvancedSearchWorkerTests::textSearch_contextLines()
-{
+void AdvancedSearchWorkerTests::textSearch_contextLines() {
     SearchConfig config;
     config.root_path = m_temp_dir.path() + "/hello.txt";
     config.pattern = "line 2";
@@ -539,8 +512,7 @@ void AdvancedSearchWorkerTests::textSearch_contextLines()
     QVERIFY(matches[0].context_after.size() <= 1);
 }
 
-void AdvancedSearchWorkerTests::textSearch_lineNumbers()
-{
+void AdvancedSearchWorkerTests::textSearch_lineNumbers() {
     SearchConfig config;
     config.root_path = m_temp_dir.path() + "/hello.txt";
     config.pattern = "line 2";
@@ -548,11 +520,10 @@ void AdvancedSearchWorkerTests::textSearch_lineNumbers()
 
     auto matches = runWorker(config);
     QCOMPARE(matches.size(), 1);
-    QCOMPARE(matches[0].line_number, 2); // "This is line 2" is on line 2
+    QCOMPARE(matches[0].line_number, 2);  // "This is line 2" is on line 2
 }
 
-void AdvancedSearchWorkerTests::textSearch_noMatchReturnsEmpty()
-{
+void AdvancedSearchWorkerTests::textSearch_noMatchReturnsEmpty() {
     SearchConfig config;
     config.root_path = m_temp_dir.path() + "/hello.txt";
     config.pattern = "nonexistent_pattern_xyz";
@@ -562,8 +533,7 @@ void AdvancedSearchWorkerTests::textSearch_noMatchReturnsEmpty()
     QCOMPARE(matches.size(), 0);
 }
 
-void AdvancedSearchWorkerTests::textSearch_binaryFileSkipped()
-{
+void AdvancedSearchWorkerTests::textSearch_binaryFileSkipped() {
     // Image extensions should be skipped for text content search
     SearchConfig config;
     config.root_path = m_temp_dir.path() + "/test.png";
@@ -575,8 +545,7 @@ void AdvancedSearchWorkerTests::textSearch_binaryFileSkipped()
     QCOMPARE(matches.size(), 0);
 }
 
-void AdvancedSearchWorkerTests::textSearch_maxResults()
-{
+void AdvancedSearchWorkerTests::textSearch_maxResults() {
     SearchConfig config;
     config.root_path = m_temp_dir.path() + "/large_match.txt";
     config.pattern = "target";
@@ -592,8 +561,7 @@ void AdvancedSearchWorkerTests::textSearch_maxResults()
 // File Extension Filter Tests
 // ============================================================================
 
-void AdvancedSearchWorkerTests::extensionFilter_matchesIncluded()
-{
+void AdvancedSearchWorkerTests::extensionFilter_matchesIncluded() {
     SearchConfig config;
     config.root_path = m_temp_dir.path();
     config.pattern = "Hello";
@@ -604,13 +572,12 @@ void AdvancedSearchWorkerTests::extensionFilter_matchesIncluded()
     // All matches should be from .txt files
     for (const auto& m : matches) {
         QVERIFY2(m.file_path.endsWith(".txt"),
-            qPrintable(QString("Unexpected file: %1").arg(m.file_path)));
+                 qPrintable(QString("Unexpected file: %1").arg(m.file_path)));
     }
     QVERIFY(!matches.isEmpty());
 }
 
-void AdvancedSearchWorkerTests::extensionFilter_excludesOthers()
-{
+void AdvancedSearchWorkerTests::extensionFilter_excludesOthers() {
     SearchConfig config;
     config.root_path = m_temp_dir.path();
     config.pattern = "Hello";
@@ -621,16 +588,15 @@ void AdvancedSearchWorkerTests::extensionFilter_excludesOthers()
     // Should only find matches in .cpp files
     for (const auto& m : matches) {
         QVERIFY2(m.file_path.endsWith(".cpp"),
-            qPrintable(QString("Unexpected file: %1").arg(m.file_path)));
+                 qPrintable(QString("Unexpected file: %1").arg(m.file_path)));
     }
 }
 
-void AdvancedSearchWorkerTests::extensionFilter_emptyMatchesAll()
-{
+void AdvancedSearchWorkerTests::extensionFilter_emptyMatchesAll() {
     SearchConfig config;
     config.root_path = m_temp_dir.path();
     config.pattern = "Hello";
-    config.file_extensions.clear(); // No filter
+    config.file_extensions.clear();  // No filter
     config.exclude_patterns.clear();
 
     auto matches = runWorker(config);
@@ -639,15 +605,14 @@ void AdvancedSearchWorkerTests::extensionFilter_emptyMatchesAll()
     for (const auto& m : matches) {
         extensions.insert(QFileInfo(m.file_path).suffix());
     }
-    QVERIFY(extensions.size() >= 2); // At least .txt and .cpp
+    QVERIFY(extensions.size() >= 2);  // At least .txt and .cpp
 }
 
 // ============================================================================
 // Exclusion Tests
 // ============================================================================
 
-void AdvancedSearchWorkerTests::excludePatterns_gitExcluded()
-{
+void AdvancedSearchWorkerTests::excludePatterns_gitExcluded() {
     SearchConfig config;
     config.root_path = m_temp_dir.path();
     config.pattern = "Hello";
@@ -656,12 +621,11 @@ void AdvancedSearchWorkerTests::excludePatterns_gitExcluded()
     auto matches = runWorker(config);
     for (const auto& m : matches) {
         QVERIFY2(!m.file_path.contains(".git"),
-            qPrintable(QString("Should exclude .git: %1").arg(m.file_path)));
+                 qPrintable(QString("Should exclude .git: %1").arg(m.file_path)));
     }
 }
 
-void AdvancedSearchWorkerTests::excludePatterns_customExclude()
-{
+void AdvancedSearchWorkerTests::excludePatterns_customExclude() {
     SearchConfig config;
     config.root_path = m_temp_dir.path();
     config.pattern = "target";
@@ -670,7 +634,7 @@ void AdvancedSearchWorkerTests::excludePatterns_customExclude()
     auto matches = runWorker(config);
     for (const auto& m : matches) {
         QVERIFY2(!m.file_path.contains("subdir"),
-            qPrintable(QString("Should exclude subdir: %1").arg(m.file_path)));
+                 qPrintable(QString("Should exclude subdir: %1").arg(m.file_path)));
     }
 }
 
@@ -678,14 +642,13 @@ void AdvancedSearchWorkerTests::excludePatterns_customExclude()
 // File Size Limit Tests
 // ============================================================================
 
-void AdvancedSearchWorkerTests::fileSizeLimit_skipsOversized()
-{
+void AdvancedSearchWorkerTests::fileSizeLimit_skipsOversized() {
     // max_file_size is only enforced in directory-recursive search,
     // so search the temp dir (not a single file) to exercise the limit.
     SearchConfig config;
     config.root_path = m_temp_dir.path();
     config.pattern = "Hello";
-    config.max_file_size = 1;          // 1 byte — every file is too large
+    config.max_file_size = 1;  // 1 byte — every file is too large
     config.exclude_patterns.clear();
 
     auto matches = runWorker(config);
@@ -696,8 +659,7 @@ void AdvancedSearchWorkerTests::fileSizeLimit_skipsOversized()
 // Single File Search Tests
 // ============================================================================
 
-void AdvancedSearchWorkerTests::singleFileSearch_worksWithFilePath()
-{
+void AdvancedSearchWorkerTests::singleFileSearch_worksWithFilePath() {
     // Case-sensitive so "Alice" does NOT also match "alice" in the email field.
     SearchConfig config;
     config.root_path = m_temp_dir.path() + "/data.csv";
@@ -714,8 +676,7 @@ void AdvancedSearchWorkerTests::singleFileSearch_worksWithFilePath()
 // Batch Emission Tests
 // ============================================================================
 
-void AdvancedSearchWorkerTests::batchEmission_emitsResults()
-{
+void AdvancedSearchWorkerTests::batchEmission_emitsResults() {
     SearchConfig config;
     config.root_path = m_temp_dir.path();
     config.pattern = "Hello";
@@ -725,7 +686,7 @@ void AdvancedSearchWorkerTests::batchEmission_emitsResults()
     QSignalSpy resultsSpy(&worker, &AdvancedSearchWorker::resultsReady);
 
     worker.start();
-    QVERIFY(worker.wait(10000));
+    QVERIFY(worker.wait(10'000));
 
     // Should have emitted at least one batch
     QVERIFY(resultsSpy.count() >= 1);
@@ -741,8 +702,7 @@ void AdvancedSearchWorkerTests::batchEmission_emitsResults()
 // Hex/Binary Search Tests
 // ============================================================================
 
-void AdvancedSearchWorkerTests::hexSearch_findsPattern()
-{
+void AdvancedSearchWorkerTests::hexSearch_findsPattern() {
     SearchConfig config;
     config.root_path = m_temp_dir.path() + "/fake.bin";
     config.pattern = "hidden_text_marker";
@@ -753,8 +713,7 @@ void AdvancedSearchWorkerTests::hexSearch_findsPattern()
     QVERIFY(matches.size() >= 1);
 }
 
-void AdvancedSearchWorkerTests::hexSearch_exclusiveMode()
-{
+void AdvancedSearchWorkerTests::hexSearch_exclusiveMode() {
     // When hex_search is on, text search should NOT run
     SearchConfig config;
     config.root_path = m_temp_dir.path() + "/hello.txt";
@@ -784,11 +743,10 @@ void AdvancedSearchWorkerTests::hexSearch_exclusiveMode()
 // Image Metadata Search Tests
 // ============================================================================
 
-void AdvancedSearchWorkerTests::imageMetadataSearch_findsFileInfo()
-{
+void AdvancedSearchWorkerTests::imageMetadataSearch_findsFileInfo() {
     SearchConfig config;
     config.root_path = m_temp_dir.path() + "/test.png";
-    config.pattern = "png"; // Should match FileName or FileType metadata
+    config.pattern = "png";  // Should match FileName or FileType metadata
     config.search_image_metadata = true;
     config.exclude_patterns.clear();
 
@@ -811,14 +769,13 @@ void AdvancedSearchWorkerTests::imageMetadataSearch_findsFileInfo()
 // File Metadata Search Tests
 // ============================================================================
 
-void AdvancedSearchWorkerTests::fileMetadataSearch_findsFileInfo()
-{
+void AdvancedSearchWorkerTests::fileMetadataSearch_findsFileInfo() {
     // Create a test file with a metadata extension
     createTestFile("test_meta.json", R"({"key": "value"})");
 
     SearchConfig config;
     config.root_path = m_temp_dir.path() + "/test_meta.json";
-    config.pattern = "json"; // Should match FileName or FileType
+    config.pattern = "json";  // Should match FileName or FileType
     config.search_file_metadata = true;
     config.exclude_patterns.clear();
 
@@ -831,8 +788,7 @@ void AdvancedSearchWorkerTests::fileMetadataSearch_findsFileInfo()
 // Archive Search Tests
 // ============================================================================
 
-void AdvancedSearchWorkerTests::archiveSearch_validZip()
-{
+void AdvancedSearchWorkerTests::archiveSearch_validZip() {
     SearchConfig config;
     config.root_path = m_temp_dir.path() + "/test.zip";
     config.pattern = "Hello";
@@ -851,15 +807,13 @@ void AdvancedSearchWorkerTests::archiveSearch_validZip()
             break;
         }
     }
-    QVERIFY2(hasArchivePath,
-        "Archive matches should use path!/entry format");
+    QVERIFY2(hasArchivePath, "Archive matches should use path!/entry format");
 }
 
-void AdvancedSearchWorkerTests::archiveSearch_zipEntryNames()
-{
+void AdvancedSearchWorkerTests::archiveSearch_zipEntryNames() {
     SearchConfig config;
     config.root_path = m_temp_dir.path() + "/test.zip";
-    config.pattern = "readme"; // Should match the entry filename
+    config.pattern = "readme";  // Should match the entry filename
     config.search_in_archives = true;
     config.exclude_patterns.clear();
 
@@ -874,12 +828,10 @@ void AdvancedSearchWorkerTests::archiveSearch_zipEntryNames()
             break;
         }
     }
-    QVERIFY2(hasEntryMatch,
-        "Should match archive entry filenames");
+    QVERIFY2(hasEntryMatch, "Should match archive entry filenames");
 }
 
-void AdvancedSearchWorkerTests::archiveSearch_deflateCompressed()
-{
+void AdvancedSearchWorkerTests::archiveSearch_deflateCompressed() {
     SearchConfig config;
     config.root_path = m_temp_dir.path() + "/deflate_test.zip";
     config.pattern = "SearchableToken";
@@ -888,8 +840,7 @@ void AdvancedSearchWorkerTests::archiveSearch_deflateCompressed()
 
     auto matches = runWorker(config);
     // The deflate-compressed ZIP contains "SearchableToken" inside compressed.txt
-    QVERIFY2(matches.size() >= 1,
-        "Deflate-compressed ZIP entry content should be searchable");
+    QVERIFY2(matches.size() >= 1, "Deflate-compressed ZIP entry content should be searchable");
 
     // Verify it found the match inside the archive
     bool foundInArchive = false;
@@ -899,22 +850,19 @@ void AdvancedSearchWorkerTests::archiveSearch_deflateCompressed()
             break;
         }
     }
-    QVERIFY2(foundInArchive,
-        "Should find content match inside deflate-compressed archive entry");
+    QVERIFY2(foundInArchive, "Should find content match inside deflate-compressed archive entry");
 }
 
 // ============================================================================
 // Cancellation Tests
 // ============================================================================
 
-void AdvancedSearchWorkerTests::cancellation_stopsEarly()
-{
+void AdvancedSearchWorkerTests::cancellation_stopsEarly() {
     // Create many files to ensure search takes a while
     createSubDir("cancel_test");
     for (int i = 0; i < 100; ++i) {
         createTestFile(QString("cancel_test/file_%1.txt").arg(i),
-            QString("Content for cancel test file %1\nWith some target text\n")
-                .arg(i));
+                       QString("Content for cancel test file %1\nWith some target text\n").arg(i));
     }
 
     SearchConfig config;
@@ -941,19 +889,17 @@ void AdvancedSearchWorkerTests::cancellation_stopsEarly()
 // Progress Tests
 // ============================================================================
 
-void AdvancedSearchWorkerTests::progress_emitsProgressSignal()
-{
+void AdvancedSearchWorkerTests::progress_emitsProgressSignal() {
     SearchConfig config;
     config.root_path = m_temp_dir.path();
     config.pattern = "target";
     config.exclude_patterns.clear();
 
     AdvancedSearchWorker worker(config);
-    QSignalSpy progressSpy(&worker,
-        &WorkerBase::progress);
+    QSignalSpy progressSpy(&worker, &WorkerBase::progress);
 
     worker.start();
-    QVERIFY(worker.wait(10000));
+    QVERIFY(worker.wait(10'000));
 
     // Progress should be reported (at least the final report)
     QVERIFY(progressSpy.count() >= 1);

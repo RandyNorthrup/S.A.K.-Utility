@@ -14,7 +14,7 @@ else()
 endif()
 
 # Project definition
-project(SAK_Utility 
+project(SAK_Utility
     VERSION 0.8.8
     DESCRIPTION "Swiss Army Knife Utility - PC technician's toolkit for Windows migration and maintenance"
     LANGUAGES CXX
@@ -22,6 +22,14 @@ project(SAK_Utility
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+
+# Platform defines (apply to all targets)
+if(WIN32)
+    add_compile_definitions(
+        WIN32_LEAN_AND_MEAN  # Exclude rarely-used Windows headers
+        NOMINMAX             # Prevent Windows min/max macro conflicts
+    )
+endif()
 
 # Export compile commands for IDE integration
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
@@ -58,7 +66,7 @@ endif()
 if(MSVC)
     # Static Runtime Linking - Embed MSVC runtime (fixes MSVCP140.DLL, VCRUNTIME140.DLL, VCRUNTIME140_1.DLL errors)
     # NOTE: CMAKE_MSVC_RUNTIME_LIBRARY is now set in cmake/SAK_BuildConfig.cmake
-    
+
     # Warning Level 4, Warnings as Errors, Strict Conformance
     add_compile_options(
         /W4                 # Warning level 4
@@ -74,22 +82,22 @@ if(MSVC)
         /external:W0        # Disable warnings for external headers
         # Static runtime is set via CMAKE_MSVC_RUNTIME_LIBRARY in cmake/SAK_BuildConfig.cmake
     )
-    
+
     # Release optimizations
     if(CMAKE_BUILD_TYPE STREQUAL "Release")
         add_compile_options(/O2 /Ob2 /Oi /Ot /GL)
         add_link_options(/LTCG /OPT:REF /OPT:ICF)
     endif()
-    
+
     # Debug settings
     if(CMAKE_BUILD_TYPE STREQUAL "Debug")
         add_compile_options(/Od /Zi /RTC1)
     endif()
-    
+
     # Security features
     add_compile_options(/guard:cf)  # Control Flow Guard
     add_link_options(/guard:cf /DYNAMICBASE /NXCOMPAT /HIGHENTROPYVA)
-    
+
 # Clang/GCC Compiler Flags
 elseif(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
     # Comprehensive warning flags
@@ -110,56 +118,98 @@ elseif(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
         -Wdouble-promotion      # Float to double promotion
         -Wformat=2              # Format string vulnerabilities
     )
-    
+
     # Release optimizations
     if(CMAKE_BUILD_TYPE STREQUAL "Release")
         add_compile_options(-O3 -march=native -flto)
         add_link_options(-flto)
     endif()
-    
+
     # Debug settings
     if(CMAKE_BUILD_TYPE STREQUAL "Debug")
         add_compile_options(-O0 -g3)
     endif()
-    
+
     # Security features
     add_compile_options(-fstack-protector-strong -D_FORTIFY_SOURCE=2)
     add_link_options(-Wl,-z,relro -Wl,-z,now)
 endif()
 
 # ============================================================================
-# Sanitizers - Mandatory for Debug and Testing
+# Sanitizers — Strictest Settings for Debug and Testing
+# ============================================================================
+#
+# MSVC supports:  ASan only (/fsanitize=address)
+# Clang/GCC:      ASan, UBSan, TSan (TSan mutually exclusive with ASan)
+#
+# Debug build:    cmake -B build -DCMAKE_BUILD_TYPE=Debug
+# ASan + UBSan:   cmake -B build -DCMAKE_BUILD_TYPE=Debug (default)
+# TSan only:      cmake -B build -DCMAKE_BUILD_TYPE=Debug -DENABLE_TSAN=ON -DENABLE_ASAN=OFF
+#
+# Runtime env vars (set before running the executable):
+#   ASAN_OPTIONS=strict_string_checks=1:detect_stack_use_after_return=1:check_initialization_order=1:strict_init_order=1:detect_odr_violation=2:halt_on_error=1
+#   UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1
+#   TSAN_OPTIONS=halt_on_error=1:second_deadlock_stack=1
 # ============================================================================
 
-option(ENABLE_ASAN "Enable Address Sanitizer" ON)
-option(ENABLE_UBSAN "Enable Undefined Behavior Sanitizer" ON)
-option(ENABLE_TSAN "Enable Thread Sanitizer" OFF)  # Mutually exclusive with ASAN
+option(ENABLE_ASAN "Enable Address Sanitizer (Debug builds)" ON)
+option(ENABLE_UBSAN "Enable Undefined Behavior Sanitizer (Clang/GCC Debug)" ON)
+option(ENABLE_TSAN "Enable Thread Sanitizer (mutually exclusive with ASan)" OFF)
+
+if(ENABLE_TSAN AND ENABLE_ASAN)
+    message(WARNING "TSan and ASan are mutually exclusive. Disabling ASan in favor of TSan.")
+    set(ENABLE_ASAN OFF)
+endif()
 
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
     if(MSVC)
-        # MSVC Address Sanitizer
-        if(ENABLE_ASAN AND NOT ENABLE_TSAN)
+        # MSVC Address Sanitizer — strictest configuration
+        if(ENABLE_ASAN)
             add_compile_options(/fsanitize=address)
-            message(STATUS "Address Sanitizer: ENABLED (MSVC)")
+            # /Zi for full debug info with ASan stack traces
+            add_compile_options(/Zi)
+            message(STATUS "Address Sanitizer:  ENABLED (MSVC /fsanitize=address)")
+        endif()
+        # Note: MSVC does not support UBSan or TSan.
+        # Use clang-cl or GCC for UBSan/TSan coverage.
+        if(ENABLE_UBSAN)
+            message(STATUS "UBSan:              SKIPPED (MSVC does not support UBSan)")
+        endif()
+        if(ENABLE_TSAN)
+            message(STATUS "TSan:               SKIPPED (MSVC does not support TSan)")
         endif()
     elseif(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
-        # GCC/Clang Sanitizers
-        if(ENABLE_ASAN AND NOT ENABLE_TSAN)
-            add_compile_options(-fsanitize=address -fno-omit-frame-pointer)
+        # GCC/Clang Sanitizers — strictest flags
+        if(ENABLE_ASAN)
+            add_compile_options(
+                -fsanitize=address
+                -fno-omit-frame-pointer
+                -fno-optimize-sibling-calls   # Better stack traces
+            )
             add_link_options(-fsanitize=address)
-            message(STATUS "Address Sanitizer: ENABLED")
+            message(STATUS "Address Sanitizer:  ENABLED")
         endif()
-        
+
         if(ENABLE_UBSAN)
-            add_compile_options(-fsanitize=undefined -fno-omit-frame-pointer)
+            add_compile_options(
+                -fsanitize=undefined
+                -fsanitize=float-divide-by-zero
+                -fsanitize=float-cast-overflow
+                -fsanitize=integer
+                -fno-sanitize-recover=all     # Strictest: abort on any UB
+                -fno-omit-frame-pointer
+            )
             add_link_options(-fsanitize=undefined)
-            message(STATUS "Undefined Behavior Sanitizer: ENABLED")
+            message(STATUS "UBSan:              ENABLED (strictest — no recovery)")
         endif()
-        
+
         if(ENABLE_TSAN)
-            add_compile_options(-fsanitize=thread -fno-omit-frame-pointer)
+            add_compile_options(
+                -fsanitize=thread
+                -fno-omit-frame-pointer
+            )
             add_link_options(-fsanitize=thread)
-            message(STATUS "Thread Sanitizer: ENABLED")
+            message(STATUS "Thread Sanitizer:   ENABLED")
         endif()
     endif()
 endif()
@@ -521,7 +571,7 @@ set(QUICK_ACTIONS_SOURCES
     # Factory
     src/actions/action_factory.cpp
     include/sak/actions/action_factory.h
-    
+
     # System Optimization
     src/actions/disk_cleanup_action.cpp
     src/actions/clear_browser_cache_action.cpp
@@ -531,7 +581,7 @@ set(QUICK_ACTIONS_SOURCES
     src/actions/clear_event_logs_action.cpp
     src/actions/optimize_power_settings_action.cpp
     src/actions/disable_visual_effects_action.cpp
-    
+
     # Quick Backups
     src/actions/quickbooks_backup_action.cpp
     src/actions/browser_profile_backup_action.cpp
@@ -542,7 +592,7 @@ set(QUICK_ACTIONS_SOURCES
     src/actions/photo_management_backup_action.cpp
     src/actions/development_configs_backup_action.cpp
     src/actions/backup_known_networks_action.cpp
-    
+
     # Maintenance
     src/actions/update_all_apps_action.cpp
     src/actions/windows_update_action.cpp
@@ -551,7 +601,7 @@ set(QUICK_ACTIONS_SOURCES
     src/actions/rebuild_icon_cache_action.cpp
     src/actions/reset_network_action.cpp
     src/actions/clear_print_spooler_action.cpp
-    
+
     # Troubleshooting
     src/actions/generate_system_report_action.cpp
     src/actions/check_bloatware_action.cpp
@@ -559,7 +609,7 @@ set(QUICK_ACTIONS_SOURCES
     src/actions/scan_malware_action.cpp
     src/actions/repair_windows_store_action.cpp
     src/actions/fix_audio_issues_action.cpp
-    
+
     # Emergency Recovery
     src/actions/create_restore_point_action.cpp
     src/actions/export_registry_keys_action.cpp
@@ -567,7 +617,7 @@ set(QUICK_ACTIONS_SOURCES
     src/actions/backup_desktop_wallpaper_action.cpp
     src/actions/backup_printer_settings_action.cpp
     src/actions/backup_bitlocker_keys_action.cpp
-    
+
     # Headers for all actions
     include/sak/actions/disk_cleanup_action.h
     include/sak/actions/clear_browser_cache_action.h
@@ -744,14 +794,14 @@ if(PLATFORM_WINDOWS)
     if(CMAKE_BUILD_TYPE STREQUAL "Release")
         set_target_properties(sak_utility PROPERTIES WIN32_EXECUTABLE TRUE)
     endif()
-    
+
     # Manifest is embedded via the RC file; suppress linker-generated manifest to avoid conflict
     if(MSVC)
         set_target_properties(sak_utility PROPERTIES
             LINK_FLAGS "/MANIFEST:NO"
         )
     endif()
-    
+
     # Copy icon to resources
     if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../icon.ico")
         configure_file(
@@ -771,7 +821,7 @@ if(PLATFORM_MACOS)
         MACOSX_BUNDLE_BUNDLE_VERSION ${PROJECT_VERSION}
         MACOSX_BUNDLE_SHORT_VERSION_STRING ${PROJECT_VERSION}
     )
-    
+
     # Copy icon to resources
     if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../icon.icns")
         configure_file(
@@ -815,12 +865,12 @@ if(PLATFORM_WINDOWS)
             COMMENT "Running windeployqt..."
         )
     endif()
-    
+
     # Bundle MSVC runtime DLLs (required by Qt DLLs)
     # Find and copy the runtime DLLs to the output directory
     set(CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS_SKIP TRUE)
     include(InstallRequiredSystemLibraries)
-    
+
     if(CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS)
         foreach(lib ${CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS})
             add_custom_command(TARGET sak_utility POST_BUILD
@@ -837,13 +887,13 @@ if(PLATFORM_WINDOWS)
         list(SORT MSVC_VERSIONS)
         list(REVERSE MSVC_VERSIONS)
         list(GET MSVC_VERSIONS 0 LATEST_MSVC)
-        
+
         set(MSVC_DLLS
             "${LATEST_MSVC}/x64/Microsoft.VC143.CRT/msvcp140.dll"
             "${LATEST_MSVC}/x64/Microsoft.VC143.CRT/vcruntime140.dll"
             "${LATEST_MSVC}/x64/Microsoft.VC143.CRT/vcruntime140_1.dll"
         )
-        
+
         foreach(dll ${MSVC_DLLS})
             if(EXISTS "${dll}")
                 add_custom_command(TARGET sak_utility POST_BUILD
@@ -877,7 +927,7 @@ if(SAK_CODE_SIGN AND PLATFORM_WINDOWS)
     if(NOT POWERSHELL_EXE)
         find_program(POWERSHELL_EXE powershell)
     endif()
-    
+
     set(SIGN_SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/scripts/sign-exe.ps1")
     if(POWERSHELL_EXE AND EXISTS "${SIGN_SCRIPT}")
         add_custom_command(TARGET sak_utility POST_BUILD
@@ -895,31 +945,99 @@ else()
 endif()
 
 # ============================================================================
-# Static Analysis Integration
+# Static Analysis Integration — Strictest Settings
+# ============================================================================
+#
+# Enable during build:   cmake -B build -DENABLE_CLANG_TIDY=ON -DENABLE_CPPCHECK=ON
+# Standalone scripts:    python scripts/run_lizard.py
+#                        powershell scripts/run_cppcheck.ps1
+# Pre-commit hooks:      pre-commit run --all-files
 # ============================================================================
 
-option(ENABLE_CLANG_TIDY "Enable clang-tidy analysis" OFF)
+option(ENABLE_CLANG_TIDY "Enable clang-tidy analysis during build" OFF)
 
 if(ENABLE_CLANG_TIDY)
     find_program(CLANG_TIDY clang-tidy)
     if(CLANG_TIDY)
-        set(CMAKE_CXX_CLANG_TIDY ${CLANG_TIDY} --warnings-as-errors=*)
-        message(STATUS "clang-tidy: ENABLED")
+        set(CMAKE_CXX_CLANG_TIDY
+            ${CLANG_TIDY}
+            --warnings-as-errors=*
+            --header-filter=include/sak/.*\.h$
+        )
+        message(STATUS "clang-tidy:         ENABLED (warnings-as-errors)")
     else()
         message(WARNING "clang-tidy not found")
     endif()
 endif()
 
-option(ENABLE_CPPCHECK "Enable cppcheck analysis" OFF)
+option(ENABLE_CPPCHECK "Enable cppcheck analysis during build" OFF)
 
 if(ENABLE_CPPCHECK)
-    find_program(CPPCHECK cppcheck)
+    find_program(CPPCHECK cppcheck HINTS "C:/Program Files/Cppcheck")
     if(CPPCHECK)
-        set(CMAKE_CXX_CPPCHECK ${CPPCHECK} --enable=all --error-exitcode=1 --suppress=missingInclude)
-        message(STATUS "cppcheck: ENABLED")
+        set(CMAKE_CXX_CPPCHECK
+            ${CPPCHECK}
+            --enable=all
+            --check-level=exhaustive
+            --inconclusive
+            --std=c++23
+            --error-exitcode=1
+            --force
+            --inline-suppr
+            --platform=win64
+            --quiet
+            --suppressions-list=${CMAKE_CURRENT_SOURCE_DIR}/cppcheck_suppressions.txt
+        )
+        message(STATUS "cppcheck:           ENABLED (exhaustive, all checks, C++23)")
     else()
-        message(WARNING "cppcheck not found")
+        message(WARNING "cppcheck not found — install from https://cppcheck.sourceforge.io/")
     endif()
+endif()
+
+# ---------------------------------------------------------------------------
+# Custom analysis targets (run independently of build)
+# ---------------------------------------------------------------------------
+
+# Lizard complexity analysis
+find_program(LIZARD_EXE lizard HINTS "${CMAKE_CURRENT_SOURCE_DIR}/.venv/Scripts")
+if(LIZARD_EXE)
+    add_custom_target(lizard
+        COMMAND ${LIZARD_EXE}
+            -l cpp
+            -C10            # CCN threshold (strict)
+            -L70            # Function length (TigerStyle)
+            -a5             # Parameter count (strict)
+            -w              # Warnings-only output
+            -i 0            # Zero tolerance
+            -x "*/third_party/*"
+            -x "*/3rdparty/*"
+            -x "*/build/*"
+            ${CMAKE_CURRENT_SOURCE_DIR}/src
+            ${CMAKE_CURRENT_SOURCE_DIR}/include
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+        COMMENT "Running Lizard complexity analysis (CCN<=10, length<=70, params<=5)..."
+        VERBATIM
+    )
+endif()
+
+# TigerStyle lint
+find_program(PYTHON_EXE python3 python)
+if(PYTHON_EXE)
+    add_custom_target(tigerstyle
+        COMMAND ${PYTHON_EXE} scripts/lint_tigerstyle.py --strict src include
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+        COMMENT "Running TigerStyle lint (strict)..."
+        VERBATIM
+    )
+endif()
+
+# Full static analysis target (runs all tools)
+if(LIZARD_EXE AND PYTHON_EXE)
+    add_custom_target(analyze
+        COMMENT "Running full static analysis suite..."
+        VERBATIM
+    )
+    add_dependencies(analyze lizard tigerstyle)
 endif()
 
 # ============================================================================
@@ -937,5 +1055,19 @@ message(STATUS "Compiler:          ${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER
 message(STATUS "Platform:          ${CMAKE_SYSTEM_NAME}")
 message(STATUS "Qt Version:        ${Qt6_VERSION}")
 message(STATUS "Build Testing:     ${BUILD_TESTING}")
+message(STATUS "ASan:              ${ENABLE_ASAN}")
+message(STATUS "UBSan:             ${ENABLE_UBSAN}")
+message(STATUS "TSan:              ${ENABLE_TSAN}")
+if(LIZARD_EXE)
+    message(STATUS "Lizard:            AVAILABLE (cmake --build build --target lizard)")
+endif()
+if(CPPCHECK)
+    message(STATUS "cppcheck:          AVAILABLE")
+endif()
+if(CLANG_TIDY)
+    message(STATUS "clang-tidy:        AVAILABLE")
+endif()
+message(STATUS "========================================")
+message(STATUS "Analysis targets:  lizard, tigerstyle, analyze")
 message(STATUS "========================================")
 message(STATUS "")

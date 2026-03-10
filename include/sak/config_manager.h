@@ -3,13 +3,15 @@
 
 #pragma once
 
+#include "sak/error_codes.h"
+
 #include <QObject>
 #include <QSettings>
 #include <QString>
 #include <QVariant>
-#include <memory>
+
 #include <expected>
-#include "sak/error_codes.h"
+#include <memory>
 
 namespace sak {
 
@@ -45,7 +47,7 @@ public:
      * @return Configuration value
      */
     [[nodiscard]] QVariant getValue(const QString& key,
-        const QVariant& default_value = QVariant()) const;
+                                    const QVariant& default_value = QVariant()) const;
 
     /**
      * @brief Set configuration value
@@ -193,4 +195,4 @@ private:
     std::unique_ptr<QSettings> m_settings;
 };
 
-} // namespace sak
+}  // namespace sak

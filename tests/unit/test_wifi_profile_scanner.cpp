@@ -4,9 +4,9 @@
 /// @file test_wifi_profile_scanner.cpp
 /// @brief Unit tests for WiFi profile parsing utilities
 
-#include <QtTest/QtTest>
-
 #include "sak/wifi_profile_scanner.h"
+
+#include <QtTest/QtTest>
 
 class TestWifiProfileScanner : public QObject {
     Q_OBJECT
@@ -30,8 +30,7 @@ private Q_SLOTS:
 // parseWifiProfileNames Tests
 // ============================================================================
 
-void TestWifiProfileScanner::parseNames_typicalOutput()
-{
+void TestWifiProfileScanner::parseNames_typicalOutput() {
     const QString output =
         "Profiles on interface Wi-Fi:\r\n"
         "\r\n"
@@ -50,14 +49,12 @@ void TestWifiProfileScanner::parseNames_typicalOutput()
     QCOMPARE(names.at(1), QStringLiteral("OfficeWifi"));
 }
 
-void TestWifiProfileScanner::parseNames_emptyOutput()
-{
+void TestWifiProfileScanner::parseNames_emptyOutput() {
     const QStringList names = sak::parseWifiProfileNames(QString());
     QVERIFY(names.isEmpty());
 }
 
-void TestWifiProfileScanner::parseNames_noProfiles()
-{
+void TestWifiProfileScanner::parseNames_noProfiles() {
     const QString output =
         "Profiles on interface Wi-Fi:\r\n"
         "\r\n"
@@ -73,8 +70,7 @@ void TestWifiProfileScanner::parseNames_noProfiles()
     QVERIFY(names.isEmpty());
 }
 
-void TestWifiProfileScanner::parseNames_multipleProfiles()
-{
+void TestWifiProfileScanner::parseNames_multipleProfiles() {
     const QString output =
         "    All User Profile     : Network1\r\n"
         "    All User Profile     : Network2\r\n"
@@ -87,10 +83,8 @@ void TestWifiProfileScanner::parseNames_multipleProfiles()
     QCOMPARE(names.at(4), QStringLiteral("Network5"));
 }
 
-void TestWifiProfileScanner::parseNames_profileWithSpaces()
-{
-    const QString output =
-        "    All User Profile     : My Home WiFi Network\r\n";
+void TestWifiProfileScanner::parseNames_profileWithSpaces() {
+    const QString output = "    All User Profile     : My Home WiFi Network\r\n";
 
     const QStringList names = sak::parseWifiProfileNames(output);
     QCOMPARE(names.size(), 1);
@@ -101,8 +95,7 @@ void TestWifiProfileScanner::parseNames_profileWithSpaces()
 // parseWifiSecurityType Tests
 // ============================================================================
 
-void TestWifiProfileScanner::parseSecurity_wpa2Personal()
-{
+void TestWifiProfileScanner::parseSecurity_wpa2Personal() {
     const QString detail =
         "Profile MyNetwork on interface Wi-Fi:\r\n"
         "=======================================================================\r\n"
@@ -134,8 +127,7 @@ void TestWifiProfileScanner::parseSecurity_wpa2Personal()
     QCOMPARE(security_type, QStringLiteral("WPA2-Personal"));
 }
 
-void TestWifiProfileScanner::parseSecurity_open()
-{
+void TestWifiProfileScanner::parseSecurity_open() {
     const QString detail =
         "Security settings\r\n"
         "-----------------\r\n"
@@ -146,8 +138,7 @@ void TestWifiProfileScanner::parseSecurity_open()
     QCOMPARE(security_type, QStringLiteral("Open"));
 }
 
-void TestWifiProfileScanner::parseSecurity_noAuthLine()
-{
+void TestWifiProfileScanner::parseSecurity_noAuthLine() {
     const QString detail =
         "Profile information\r\n"
         "-------------------\r\n"
@@ -158,8 +149,7 @@ void TestWifiProfileScanner::parseSecurity_noAuthLine()
     QVERIFY(security_type.isEmpty());
 }
 
-void TestWifiProfileScanner::parseSecurity_emptyOutput()
-{
+void TestWifiProfileScanner::parseSecurity_emptyOutput() {
     const QString security_type = sak::parseWifiSecurityType(QString());
     QVERIFY(security_type.isEmpty());
 }

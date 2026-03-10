@@ -23,45 +23,45 @@ namespace sak {
 
 /// @brief Partition information for a storage device
 struct PartitionInfo {
-    QString drive_letter;          ///< "C:" or empty for non-mounted
-    QString label;                 ///< Volume label
-    QString file_system;           ///< "NTFS" / "FAT32" / "exFAT"
-    uint64_t total_bytes{0};       ///< Total partition size
-    uint64_t free_bytes{0};        ///< Free space
-    bool is_boot{false};           ///< Active/boot partition
+    QString drive_letter;     ///< "C:" or empty for non-mounted
+    QString label;            ///< Volume label
+    QString file_system;      ///< "NTFS" / "FAT32" / "exFAT"
+    uint64_t total_bytes{0};  ///< Total partition size
+    uint64_t free_bytes{0};   ///< Free space
+    bool is_boot{false};      ///< Active/boot partition
 };
 
 /// @brief CPU information from WMI Win32_Processor
 struct CpuInfo {
-    QString name;                  ///< "Intel Core i7-13700K"
-    QString manufacturer;          ///< "Intel" / "AMD"
-    uint32_t cores{0};             ///< Physical cores
-    uint32_t threads{0};           ///< Logical processors
-    uint32_t base_clock_mhz{0};    ///< Base frequency
-    uint32_t max_clock_mhz{0};     ///< Max turbo frequency
-    uint32_t l2_cache_kb{0};       ///< L2 cache size
-    uint32_t l3_cache_kb{0};       ///< L3 cache size
-    QString socket;                ///< "LGA1700"
-    QString architecture;          ///< "x64"
-    double cpu_usage_percent{0.0}; ///< Current utilization
+    QString name;                   ///< "Intel Core i7-13700K"
+    QString manufacturer;           ///< "Intel" / "AMD"
+    uint32_t cores{0};              ///< Physical cores
+    uint32_t threads{0};            ///< Logical processors
+    uint32_t base_clock_mhz{0};     ///< Base frequency
+    uint32_t max_clock_mhz{0};      ///< Max turbo frequency
+    uint32_t l2_cache_kb{0};        ///< L2 cache size
+    uint32_t l3_cache_kb{0};        ///< L3 cache size
+    QString socket;                 ///< "LGA1700"
+    QString architecture;           ///< "x64"
+    double cpu_usage_percent{0.0};  ///< Current utilization
 };
 
 /// @brief Individual memory module from WMI Win32_PhysicalMemory
 struct MemoryModuleInfo {
-    QString manufacturer;          ///< "Samsung"
-    QString part_number;           ///< "M471A1K43DB1-CWE"
-    uint64_t capacity_bytes{0};    ///< Per-module capacity
-    uint32_t speed_mhz{0};         ///< 3200
-    QString memory_type;           ///< "DDR4" / "DDR5"
-    QString form_factor;           ///< "DIMM" / "SODIMM"
-    uint32_t slot{0};              ///< Physical slot number
+    QString manufacturer;        ///< "Samsung"
+    QString part_number;         ///< "M471A1K43DB1-CWE"
+    uint64_t capacity_bytes{0};  ///< Per-module capacity
+    uint32_t speed_mhz{0};       ///< 3200
+    QString memory_type;         ///< "DDR4" / "DDR5"
+    QString form_factor;         ///< "DIMM" / "SODIMM"
+    uint32_t slot{0};            ///< Physical slot number
     QString serial_number;
 };
 
 /// @brief Aggregate memory information
 struct MemorySummary {
-    uint64_t total_bytes{0};       ///< Total installed RAM
-    uint64_t available_bytes{0};   ///< Currently available
+    uint64_t total_bytes{0};      ///< Total installed RAM
+    uint64_t available_bytes{0};  ///< Currently available
     uint32_t slots_used{0};
     uint32_t slots_total{0};
     QVector<MemoryModuleInfo> modules;
@@ -69,33 +69,33 @@ struct MemorySummary {
 
 /// @brief Storage device information
 struct StorageDeviceInfo {
-    QString model;                 ///< "Samsung SSD 980 PRO 1TB"
+    QString model;            ///< "Samsung SSD 980 PRO 1TB"
     QString serial_number;
-    uint64_t size_bytes{0};        ///< Total capacity
-    QString interface_type;        ///< "NVMe" / "SATA" / "USB"
-    QString media_type;            ///< "SSD" / "HDD" / "Unknown"
+    uint64_t size_bytes{0};   ///< Total capacity
+    QString interface_type;   ///< "NVMe" / "SATA" / "USB"
+    QString media_type;       ///< "SSD" / "HDD" / "Unknown"
     QString firmware_version;
-    uint32_t disk_number{0};       ///< Windows disk number
-    double temperature{0.0};       ///< Current temp (if available)
+    uint32_t disk_number{0};  ///< Windows disk number
+    double temperature{0.0};  ///< Current temp (if available)
     QVector<PartitionInfo> partitions;
 };
 
 /// @brief GPU information from DXGI + WMI
 struct GpuInfo {
-    QString name;                  ///< "NVIDIA GeForce RTX 4090"
-    QString manufacturer;          ///< "NVIDIA" / "AMD" / "Intel"
-    uint64_t vram_bytes{0};        ///< Dedicated VRAM
-    QString driver_version;        ///< "546.33"
-    QString driver_date;           ///< "2024-01-15"
-    uint32_t current_res_x{0};     ///< Current horizontal resolution
-    uint32_t current_res_y{0};     ///< Current vertical resolution
-    uint32_t refresh_rate{0};      ///< Hz
+    QString name;               ///< "NVIDIA GeForce RTX 4090"
+    QString manufacturer;       ///< "NVIDIA" / "AMD" / "Intel"
+    uint64_t vram_bytes{0};     ///< Dedicated VRAM
+    QString driver_version;     ///< "546.33"
+    QString driver_date;        ///< "2024-01-15"
+    uint32_t current_res_x{0};  ///< Current horizontal resolution
+    uint32_t current_res_y{0};  ///< Current vertical resolution
+    uint32_t refresh_rate{0};   ///< Hz
 };
 
 /// @brief Motherboard information from WMI Win32_BaseBoard + Win32_BIOS
 struct MotherboardInfo {
-    QString manufacturer;          ///< "ASUS"
-    QString product;               ///< "ROG STRIX Z790-E"
+    QString manufacturer;  ///< "ASUS"
+    QString product;       ///< "ROG STRIX Z790-E"
     QString serial_number;
     QString bios_version;
     QString bios_date;
@@ -125,11 +125,11 @@ struct HardwareInventory {
     BatteryInfo battery;
 
     // OS information
-    QString os_name;               ///< "Windows 11 Pro"
-    QString os_version;            ///< "23H2"
-    QString os_build;              ///< "22631.3007"
-    QString os_architecture;       ///< "64-bit"
-    uint64_t uptime_seconds{0};    ///< System uptime
+    QString os_name;             ///< "Windows 11 Pro"
+    QString os_version;          ///< "23H2"
+    QString os_build;            ///< "22631.3007"
+    QString os_architecture;     ///< "64-bit"
+    uint64_t uptime_seconds{0};  ///< System uptime
 
     QDateTime scan_timestamp;
 };
@@ -141,26 +141,26 @@ struct HardwareInventory {
 /// @brief Single SMART attribute with health assessment
 struct SmartAttribute {
     uint8_t id{0};
-    QString name;                  ///< "Reallocated_Sector_Ct"
-    int64_t raw_value{0};          ///< Raw value
-    uint8_t current_value{0};      ///< Normalized (0-253)
-    uint8_t worst_value{0};        ///< Worst-ever normalized value
-    uint8_t threshold{0};          ///< Failure threshold
-    QString flags;                 ///< "PO-R--"
-    bool failing{false};           ///< currentValue <= threshold
+    QString name;              ///< "Reallocated_Sector_Ct"
+    int64_t raw_value{0};      ///< Raw value
+    uint8_t current_value{0};  ///< Normalized (0-253)
+    uint8_t worst_value{0};    ///< Worst-ever normalized value
+    uint8_t threshold{0};      ///< Failure threshold
+    QString flags;             ///< "PO-R--"
+    bool failing{false};       ///< currentValue <= threshold
 };
 
 /// @brief NVMe-specific health log data
 struct NvmeHealthInfo {
-    uint8_t percentage_used{0};            ///< Endurance used (0-100+)
-    uint64_t data_units_read{0};           ///< 512-byte units
+    uint8_t percentage_used{0};   ///< Endurance used (0-100+)
+    uint64_t data_units_read{0};  ///< 512-byte units
     uint64_t data_units_written{0};
     uint64_t power_on_hours{0};
     uint32_t unsafe_shutdowns{0};
     uint32_t media_errors{0};
     uint32_t error_log_entries{0};
-    int16_t temperature{0};                ///< Celsius
-    uint16_t available_spare{0};           ///< Available spare NVM (%)
+    int16_t temperature{0};       ///< Celsius
+    uint16_t available_spare{0};  ///< Available spare NVM (%)
     uint16_t available_spare_threshold{0};
 };
 
@@ -174,16 +174,16 @@ enum class SmartHealthStatus {
 
 /// @brief Per-drive SMART report
 struct SmartReport {
-    QString device_path;           ///< "\\\\.\\PhysicalDrive0"
+    QString device_path;  ///< "\\\\.\\PhysicalDrive0"
     QString model;
     QString serial_number;
     QString firmware_version;
     uint64_t size_bytes{0};
-    QString interface_type;        ///< "SATA" / "NVMe"
+    QString interface_type;  ///< "SATA" / "NVMe"
 
     // Overall assessment
     SmartHealthStatus overall_health{SmartHealthStatus::Unknown};
-    QString smart_status;          ///< "PASSED" / "FAILED"
+    QString smart_status;  ///< "PASSED" / "FAILED"
 
     // SATA attributes
     QVector<SmartAttribute> attributes;
@@ -194,9 +194,9 @@ struct SmartReport {
     // Unified key metrics (for both SATA and NVMe)
     int64_t power_on_hours{0};
     double temperature_celsius{0.0};
-    int64_t reallocated_sectors{0};    ///< SATA: attr 5
-    int64_t pending_sectors{0};        ///< SATA: attr 197
-    double wear_level_percent{0.0};    ///< NVMe: percentageUsed
+    int64_t reallocated_sectors{0};  ///< SATA: attr 5
+    int64_t pending_sectors{0};      ///< SATA: attr 197
+    double wear_level_percent{0.0};  ///< NVMe: percentageUsed
 
     // Recommendations
     QStringList warnings;
@@ -218,8 +218,8 @@ struct CpuBenchmarkResult {
     double aes_encryption_time_ms{0.0};
 
     // Throughput metrics
-    double zlib_throughput_mbps{0.0};   ///< MB/s compressed
-    double aes_throughput_mbps{0.0};    ///< MB/s encrypted
+    double zlib_throughput_mbps{0.0};  ///< MB/s compressed
+    double aes_throughput_mbps{0.0};   ///< MB/s encrypted
     double matrix_gflops{0.0};         ///< GFLOPS
 
     // Composite scores (normalized: i5-12400 = 1000)
@@ -237,12 +237,12 @@ struct CpuBenchmarkResult {
 
 /// @brief Disk benchmark configuration
 struct DiskBenchmarkConfig {
-    QString drive_path;                    ///< "C:\\" or "D:\\"
-    uint64_t test_file_size_mb{1024};      ///< 1 GB test file
-    int sequential_block_size_kb{1024};    ///< 1 MB blocks
-    int random_block_size_kb{4};           ///< 4 KB blocks
-    int sequential_passes{3};              ///< Average over 3 passes
-    int random_duration_sec{30};           ///< 30 seconds per random test
+    QString drive_path;                  ///< "C:\\" or "D:\\"
+    uint64_t test_file_size_mb{1024};    ///< 1 GB test file
+    int sequential_block_size_kb{1024};  ///< 1 MB blocks
+    int random_block_size_kb{4};         ///< 4 KB blocks
+    int sequential_passes{3};            ///< Average over 3 passes
+    int random_duration_sec{30};         ///< 30 seconds per random test
     int queue_depth_low{1};
     int queue_depth_high{32};
 };
@@ -251,7 +251,7 @@ struct DiskBenchmarkConfig {
 struct DiskBenchmarkResult {
     QString drive_path;
     QString drive_model;
-    QString drive_type;                ///< "NVMe SSD" / "SATA SSD" / "HDD"
+    QString drive_type;  ///< "NVMe SSD" / "SATA SSD" / "HDD"
     uint64_t drive_capacity_bytes{0};
 
     // Sequential (MB/s)
@@ -314,11 +314,11 @@ struct StressTestConfig {
     bool stress_gpu{false};
 
     int duration_minutes{10};
-    int cpu_threads{0};                    ///< 0 = all logical processors
-    double memory_usage_percent{80.0};     ///< Use 80% of available RAM
+    int cpu_threads{0};                 ///< 0 = all logical processors
+    double memory_usage_percent{80.0};  ///< Use 80% of available RAM
     QString disk_test_drive{"C:\\"};
 
-    double thermal_limit_celsius{95.0};    ///< Auto-abort temperature
+    double thermal_limit_celsius{95.0};  ///< Auto-abort temperature
     bool abort_on_error{true};
 };
 
@@ -343,10 +343,10 @@ struct StressTestResult {
     int disk_errors{0};
 
     // GPU stress results
-    uint64_t gpu_operations{0};        ///< Number of compute dispatches completed
-    int gpu_errors{0};                 ///< GPU errors detected
+    uint64_t gpu_operations{0};  ///< Number of compute dispatches completed
+    int gpu_errors{0};           ///< GPU errors detected
 
-    QString abort_reason;              ///< Empty if completed normally
+    QString abort_reason;        ///< Empty if completed normally
     QDateTime start_time;
     QDateTime end_time;
 };
@@ -357,7 +357,7 @@ struct StressTestResult {
 
 /// @brief Single thermal sensor reading
 struct ThermalReading {
-    QString component;             ///< "CPU Package" / "GPU" / "Disk 0"
+    QString component;  ///< "CPU Package" / "GPU" / "Disk 0"
     double temperature_celsius{0.0};
     QDateTime timestamp;
 };
@@ -395,4 +395,4 @@ struct DiagnosticReportData {
     QDateTime report_timestamp;
 };
 
-} // namespace sak
+}  // namespace sak

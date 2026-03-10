@@ -4,13 +4,12 @@
 /// @file test_permission_manager.cpp
 /// @brief Unit tests for ACL/permission management
 
-#include <QtTest/QtTest>
-
 #include "sak/permission_manager.h"
 #include "sak/user_profile_types.h"
 
-#include <QTemporaryDir>
 #include <QFile>
+#include <QTemporaryDir>
+#include <QtTest/QtTest>
 
 class PermissionManagerTests : public QObject {
     Q_OBJECT
@@ -50,8 +49,7 @@ private:
     QString m_testFile;
 };
 
-void PermissionManagerTests::initTestCase()
-{
+void PermissionManagerTests::initTestCase() {
     QVERIFY(m_tempDir.isValid());
     m_testFile = m_tempDir.filePath("perm_test.txt");
 
@@ -65,27 +63,24 @@ void PermissionManagerTests::initTestCase()
 // Constructor
 // ============================================================================
 
-void PermissionManagerTests::constructor_defaults()
-{
+void PermissionManagerTests::constructor_defaults() {
     sak::PermissionManager mgr;
-    QVERIFY(true); // No crash
+    QVERIFY(true);  // No crash
 }
 
 // ============================================================================
 // canModifyPermissions
 // ============================================================================
 
-void PermissionManagerTests::canModifyPermissions_existingFile()
-{
+void PermissionManagerTests::canModifyPermissions_existingFile() {
     sak::PermissionManager mgr;
     // May or may not return true depending on elevation status
     bool canModify = mgr.canModifyPermissions(m_testFile);
-    Q_UNUSED(canModify); // Just verify no crash
+    Q_UNUSED(canModify);  // Just verify no crash
     QVERIFY(true);
 }
 
-void PermissionManagerTests::canModifyPermissions_nonExistentFile()
-{
+void PermissionManagerTests::canModifyPermissions_nonExistentFile() {
     sak::PermissionManager mgr;
     bool canModify = mgr.canModifyPermissions(m_tempDir.filePath("nonexistent.txt"));
     QVERIFY(!canModify);
@@ -95,16 +90,14 @@ void PermissionManagerTests::canModifyPermissions_nonExistentFile()
 // getOwner
 // ============================================================================
 
-void PermissionManagerTests::getOwner_existingFile()
-{
+void PermissionManagerTests::getOwner_existingFile() {
     sak::PermissionManager mgr;
     QString owner = mgr.getOwner(m_testFile);
     // Should return a SID or username string
     QVERIFY(!owner.isEmpty());
 }
 
-void PermissionManagerTests::getOwner_nonExistentFile()
-{
+void PermissionManagerTests::getOwner_nonExistentFile() {
     sak::PermissionManager mgr;
     QString owner = mgr.getOwner(m_tempDir.filePath("nonexistent.txt"));
     QVERIFY(owner.isEmpty());
@@ -114,8 +107,7 @@ void PermissionManagerTests::getOwner_nonExistentFile()
 // Security Descriptor
 // ============================================================================
 
-void PermissionManagerTests::getSecurityDescriptorSddl_existingFile()
-{
+void PermissionManagerTests::getSecurityDescriptorSddl_existingFile() {
     sak::PermissionManager mgr;
     QString sddl = mgr.getSecurityDescriptorSddl(m_testFile);
     // SDDL string should be non-empty for a file we own
@@ -124,8 +116,7 @@ void PermissionManagerTests::getSecurityDescriptorSddl_existingFile()
     QVERIFY(sddl.contains("D:") || sddl.contains("O:"));
 }
 
-void PermissionManagerTests::getSecurityDescriptorSddl_nonExistentFile()
-{
+void PermissionManagerTests::getSecurityDescriptorSddl_nonExistentFile() {
     sak::PermissionManager mgr;
     QString sddl = mgr.getSecurityDescriptorSddl(m_tempDir.filePath("nonexistent.txt"));
     QVERIFY(sddl.isEmpty());
@@ -135,8 +126,7 @@ void PermissionManagerTests::getSecurityDescriptorSddl_nonExistentFile()
 // stripPermissions
 // ============================================================================
 
-void PermissionManagerTests::stripPermissions_existingFile()
-{
+void PermissionManagerTests::stripPermissions_existingFile() {
     sak::PermissionManager mgr;
     // Create a separate file for this test to avoid affecting other tests
     QString stripFile = m_tempDir.filePath("strip_test.txt");
@@ -155,8 +145,7 @@ void PermissionManagerTests::stripPermissions_existingFile()
 // applyPermissionStrategy
 // ============================================================================
 
-void PermissionManagerTests::applyStrategy_stripAll()
-{
+void PermissionManagerTests::applyStrategy_stripAll() {
     sak::PermissionManager mgr;
     QString stratFile = m_tempDir.filePath("strategy_test.txt");
     QFile f(stratFile);
@@ -174,19 +163,17 @@ void PermissionManagerTests::applyStrategy_stripAll()
 // isRunningAsAdmin
 // ============================================================================
 
-void PermissionManagerTests::isRunningAsAdmin_returnsBoolean()
-{
+void PermissionManagerTests::isRunningAsAdmin_returnsBoolean() {
     bool isAdmin = sak::PermissionManager::isRunningAsAdmin();
     Q_UNUSED(isAdmin);
-    QVERIFY(true); // Just verify it returns without crashing
+    QVERIFY(true);  // Just verify it returns without crashing
 }
 
 // ============================================================================
 // getLastError
 // ============================================================================
 
-void PermissionManagerTests::getLastError_initiallyEmpty()
-{
+void PermissionManagerTests::getLastError_initiallyEmpty() {
     sak::PermissionManager mgr;
     // On a fresh instance, last error should be empty
     QVERIFY(mgr.getLastError().isEmpty());

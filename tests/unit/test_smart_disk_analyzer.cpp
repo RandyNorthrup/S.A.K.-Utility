@@ -4,14 +4,13 @@
 /// @file test_smart_disk_analyzer.cpp
 /// @brief Unit tests for SMART disk health analysis â€” JSON parsing and assessment
 
-#include <QtTest/QtTest>
-
-#include "sak/smart_disk_analyzer.h"
 #include "sak/diagnostic_types.h"
+#include "sak/smart_disk_analyzer.h"
 
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
-#include <QJsonArray>
+#include <QtTest/QtTest>
 
 class SmartDiskAnalyzerTests : public QObject {
     Q_OBJECT
@@ -43,8 +42,7 @@ private Q_SLOTS:
 // Constructor
 // ============================================================================
 
-void SmartDiskAnalyzerTests::constructor_defaults()
-{
+void SmartDiskAnalyzerTests::constructor_defaults() {
     sak::SmartDiskAnalyzer analyzer;
     QVERIFY(analyzer.reports().isEmpty());
 }
@@ -53,8 +51,7 @@ void SmartDiskAnalyzerTests::constructor_defaults()
 // smartctl Availability
 // ============================================================================
 
-void SmartDiskAnalyzerTests::isSmartctlAvailable_returnsBoolean()
-{
+void SmartDiskAnalyzerTests::isSmartctlAvailable_returnsBoolean() {
     sak::SmartDiskAnalyzer analyzer;
     // Just verify it doesn't crash â€” result depends on bundled tools
     bool available = analyzer.isSmartctlAvailable();
@@ -68,8 +65,7 @@ void SmartDiskAnalyzerTests::isSmartctlAvailable_returnsBoolean()
 // structure from known JSON formats
 // ============================================================================
 
-void SmartDiskAnalyzerTests::parseOutput_validSataJson()
-{
+void SmartDiskAnalyzerTests::parseOutput_validSataJson() {
     // This tests the expected structure of SmartReport
     // We can't easily call parseSmartctlOutput directly (private),
     // but we verify the data structures work correctly
@@ -78,12 +74,12 @@ void SmartDiskAnalyzerTests::parseOutput_validSataJson()
     report.model = "Samsung SSD 860 EVO";
     report.serial_number = "S5XXXXX";
     report.firmware_version = "RVT04B6Q";
-    report.size_bytes = 500107862016;
+    report.size_bytes = 500'107'862'016;
     report.interface_type = "SATA";
     report.overall_health = sak::SmartHealthStatus::Healthy;
     report.smart_status = "PASSED";
     report.temperature_celsius = 35.0;
-    report.power_on_hours = 12000;
+    report.power_on_hours = 12'000;
 
     QCOMPARE(report.model, QString("Samsung SSD 860 EVO"));
     QCOMPARE(report.temperature_celsius, 35.0);
@@ -91,8 +87,7 @@ void SmartDiskAnalyzerTests::parseOutput_validSataJson()
     QCOMPARE(report.smart_status, QString("PASSED"));
 }
 
-void SmartDiskAnalyzerTests::parseOutput_validNvmeJson()
-{
+void SmartDiskAnalyzerTests::parseOutput_validNvmeJson() {
     sak::SmartReport report;
     report.device_path = "\\\\.\\PhysicalDrive1";
     report.model = "Samsung 970 EVO Plus";
@@ -106,8 +101,7 @@ void SmartDiskAnalyzerTests::parseOutput_validNvmeJson()
     QVERIFY(report.temperature_celsius <= 70.0);
 }
 
-void SmartDiskAnalyzerTests::parseOutput_emptyJson()
-{
+void SmartDiskAnalyzerTests::parseOutput_emptyJson() {
     // An empty SmartReport should have safe default values
     sak::SmartReport report;
     QVERIFY(report.model.isEmpty());
@@ -115,8 +109,7 @@ void SmartDiskAnalyzerTests::parseOutput_emptyJson()
     QCOMPARE(report.temperature_celsius, 0.0);
 }
 
-void SmartDiskAnalyzerTests::parseOutput_missingFields()
-{
+void SmartDiskAnalyzerTests::parseOutput_missingFields() {
     // SmartReport with partial data should still be valid
     sak::SmartReport report;
     report.model = "Unknown Drive";
@@ -126,8 +119,7 @@ void SmartDiskAnalyzerTests::parseOutput_missingFields()
     QVERIFY(report.serial_number.isEmpty());
 }
 
-void SmartDiskAnalyzerTests::parseOutput_malformedJson()
-{
+void SmartDiskAnalyzerTests::parseOutput_malformedJson() {
     // Verify that SmartReport default-constructs safely
     sak::SmartReport report;
     QCOMPARE(report.power_on_hours, 0);
@@ -139,8 +131,7 @@ void SmartDiskAnalyzerTests::parseOutput_malformedJson()
 // Health Assessment
 // ============================================================================
 
-void SmartDiskAnalyzerTests::healthAssessment_healthy()
-{
+void SmartDiskAnalyzerTests::healthAssessment_healthy() {
     sak::SmartReport report;
     report.overall_health = sak::SmartHealthStatus::Healthy;
     report.smart_status = "PASSED";
@@ -152,18 +143,16 @@ void SmartDiskAnalyzerTests::healthAssessment_healthy()
     QVERIFY(report.temperature_celsius < 70.0);
 }
 
-void SmartDiskAnalyzerTests::healthAssessment_warning()
-{
+void SmartDiskAnalyzerTests::healthAssessment_warning() {
     sak::SmartReport report;
     report.overall_health = sak::SmartHealthStatus::Warning;
-    report.temperature_celsius = 65.0; // Getting warm
-    report.power_on_hours = 50000;     // Heavy use
+    report.temperature_celsius = 65.0;  // Getting warm
+    report.power_on_hours = 50'000;     // Heavy use
 
     QVERIFY(report.temperature_celsius >= 60.0);
 }
 
-void SmartDiskAnalyzerTests::healthAssessment_critical()
-{
+void SmartDiskAnalyzerTests::healthAssessment_critical() {
     sak::SmartReport report;
     report.overall_health = sak::SmartHealthStatus::Critical;
     report.smart_status = "FAILED";
@@ -176,8 +165,7 @@ void SmartDiskAnalyzerTests::healthAssessment_critical()
 // Cancel
 // ============================================================================
 
-void SmartDiskAnalyzerTests::cancel_stopsAnalysis()
-{
+void SmartDiskAnalyzerTests::cancel_stopsAnalysis() {
     sak::SmartDiskAnalyzer analyzer;
     // Cancel before starting â€” should be safe
     analyzer.cancel();

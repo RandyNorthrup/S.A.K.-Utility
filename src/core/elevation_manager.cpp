@@ -9,9 +9,11 @@
 #ifdef _WIN32
 
 #include "sak/logger.h"
+
 #include <windows.h>
-#include <shellapi.h>
+
 #include <sddl.h>
+#include <shellapi.h>
 // Undefine Windows macros that conflict with Qt
 #undef emit
 #undef signals
@@ -21,20 +23,22 @@
 
 namespace sak {
 
-bool ElevationManager::isElevated() noexcept
-{
+bool ElevationManager::isElevated() noexcept {
     BOOL is_admin = FALSE;
     PSID administrators_group = nullptr;
     SID_IDENTIFIER_AUTHORITY nt_authority = SECURITY_NT_AUTHORITY;
 
-    if (AllocateAndInitializeSid(
-            &nt_authority,
-            2,
-            SECURITY_BUILTIN_DOMAIN_RID,
-            DOMAIN_ALIAS_RID_ADMINS,
-            0, 0, 0, 0, 0, 0,
-            &administrators_group)) {
-
+    if (AllocateAndInitializeSid(&nt_authority,
+                                 2,
+                                 SECURITY_BUILTIN_DOMAIN_RID,
+                                 DOMAIN_ALIAS_RID_ADMINS,
+                                 0,
+                                 0,
+                                 0,
+                                 0,
+                                 0,
+                                 0,
+                                 &administrators_group)) {
         CheckTokenMembership(nullptr, administrators_group, &is_admin);
         FreeSid(administrators_group);
     }
@@ -42,13 +46,12 @@ bool ElevationManager::isElevated() noexcept
     return is_admin == TRUE;
 }
 
-bool ElevationManager::canElevate() noexcept
-{
+bool ElevationManager::canElevate() noexcept {
     // On Windows Vista+, UAC is available
     OSVERSIONINFOEX osvi;
     ZeroMemory(&osvi, sizeof(OSVERSIONINFOEX));
     osvi.dwOSVersionInfoSize = sizeof(OSVERSIONINFOEX);
-    osvi.dwMajorVersion = 6; // Windows Vista+
+    osvi.dwMajorVersion = 6;  // Windows Vista+
 
     DWORDLONG condition_mask = 0;
     VER_SET_CONDITION(condition_mask, VER_MAJORVERSION, VER_GREATER_EQUAL);
@@ -56,14 +59,11 @@ bool ElevationManager::canElevate() noexcept
     return VerifyVersionInfo(&osvi, VER_MAJORVERSION, condition_mask) != FALSE;
 }
 
-bool ElevationManager::isUserAdmin() noexcept
-{
+bool ElevationManager::isUserAdmin() noexcept {
     return isElevated();
 }
 
-auto ElevationManager::get_executable_path()
-    -> std::expected<std::wstring, sak::error_code>
-{
+auto ElevationManager::get_executable_path() -> std::expected<std::wstring, sak::error_code> {
     wchar_t path[MAX_PATH];
     DWORD result = GetModuleFileNameW(nullptr, path, MAX_PATH);
 
@@ -76,8 +76,7 @@ auto ElevationManager::get_executable_path()
     return std::wstring(path);
 }
 
-std::wstring ElevationManager::get_command_line_args()
-{
+std::wstring ElevationManager::get_command_line_args() {
     LPWSTR cmd_line = GetCommandLineW();
 
     // Skip the executable name (first argument)
@@ -85,7 +84,9 @@ std::wstring ElevationManager::get_command_line_args()
     LPWSTR* argv = CommandLineToArgvW(cmd_line, &argc);
 
     if (!argv || argc <= 1) {
-        if (argv) LocalFree(argv);
+        if (argv) {
+            LocalFree(argv);
+        }
         return {};
     }
 
@@ -109,9 +110,7 @@ std::wstring ElevationManager::get_command_line_args()
     return args;
 }
 
-auto ElevationManager::restartElevated(bool wait_for_exit)
-    -> std::expected<void, sak::error_code>
-{
+auto ElevationManager::restartElevated(bool wait_for_exit) -> std::expected<void, sak::error_code> {
     if (isElevated()) {
         sak::logInfo("Already running with administrator privileges");
         return {};
@@ -125,25 +124,28 @@ auto ElevationManager::restartElevated(bool wait_for_exit)
     std::wstring args = get_command_line_args();
 
     // Log using narrow-string conversion for log output
-    int logLen = WideCharToMultiByte(CP_UTF8, 0, exe_path_result.value().c_str(), -1, nullptr, 0,
-        nullptr, nullptr);
+    int logLen = WideCharToMultiByte(
+        CP_UTF8, 0, exe_path_result.value().c_str(), -1, nullptr, 0, nullptr, nullptr);
     std::string logPath(logLen > 0 ? static_cast<size_t>(logLen - 1) : 0, '\0');
     if (logLen > 0) {
-        WideCharToMultiByte(CP_UTF8, 0, exe_path_result.value().c_str(), -1, logPath.data(),
-            logLen, nullptr, nullptr);
+        WideCharToMultiByte(CP_UTF8,
+                            0,
+                            exe_path_result.value().c_str(),
+                            -1,
+                            logPath.data(),
+                            logLen,
+                            nullptr,
+                            nullptr);
     }
     sak::logInfo("Restarting with elevation: {}", logPath);
 
     return executeElevated(exe_path_result.value(), args, wait_for_exit);
 }
 
-auto ElevationManager::executeElevated(
-    const std::wstring& executable,
-    const std::wstring& arguments,
-    bool wait_for_exit)
-    -> std::expected<void, sak::error_code>
-{
-    SHELLEXECUTEINFOW sei = { sizeof(SHELLEXECUTEINFOW) };
+auto ElevationManager::executeElevated(const std::wstring& executable,
+                                       const std::wstring& arguments,
+                                       bool wait_for_exit) -> std::expected<void, sak::error_code> {
+    SHELLEXECUTEINFOW sei = {sizeof(SHELLEXECUTEINFOW)};
     sei.lpVerb = L"runas";  // Request elevation
     sei.lpFile = executable.c_str();
     sei.lpParameters = arguments.empty() ? nullptr : arguments.c_str();
@@ -158,8 +160,7 @@ auto ElevationManager::executeElevated(
             return std::unexpected(sak::error_code::operation_cancelled);
         }
 
-        sak::logError("Failed to execute with elevation: {}",
-                      getElevationErrorMessage(error));
+        sak::logError("Failed to execute with elevation: {}", getElevationErrorMessage(error));
         return std::unexpected(sak::error_code::elevation_failed);
     }
 
@@ -185,19 +186,17 @@ auto ElevationManager::executeElevated(
     return {};
 }
 
-std::string ElevationManager::getElevationErrorMessage(unsigned long error_code)
-{
+std::string ElevationManager::getElevationErrorMessage(unsigned long error_code) {
     char* message_buffer = nullptr;
 
-    DWORD size = FormatMessageA(
-        FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
-        nullptr,
-        error_code,
-        MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
-        reinterpret_cast<LPSTR>(&message_buffer),
-        0,
-        nullptr
-    );
+    DWORD size = FormatMessageA(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM |
+                                    FORMAT_MESSAGE_IGNORE_INSERTS,
+                                nullptr,
+                                error_code,
+                                MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
+                                reinterpret_cast<LPSTR>(&message_buffer),
+                                0,
+                                nullptr);
 
     std::string message;
     if (size > 0 && message_buffer) {
@@ -214,6 +213,6 @@ std::string ElevationManager::getElevationErrorMessage(unsigned long error_code)
     return message;
 }
 
-} // namespace sak
+}  // namespace sak
 
-#endif // _WIN32
+#endif  // _WIN32

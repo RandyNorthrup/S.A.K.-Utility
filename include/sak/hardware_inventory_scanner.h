@@ -112,7 +112,7 @@ private:
     /// @return Vector of property maps, one per WMI instance
     QVector<QVariantMap> wmiQuery(const QString& wmi_class,
                                   const QStringList& properties,
-                                  int timeout_ms = 30000);
+                                  int timeout_ms = 30'000);
 };
 
-} // namespace sak
+}  // namespace sak

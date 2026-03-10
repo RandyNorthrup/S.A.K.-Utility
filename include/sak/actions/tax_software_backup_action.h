@@ -5,6 +5,7 @@
 
 #include "sak/quick_action.h"
 #include "sak/user_profile_types.h"
+
 #include <QString>
 #include <QVector>
 
@@ -12,7 +13,7 @@ namespace sak {
 
 /**
  * @brief Tax Software Data Backup Action
- * 
+ *
  * Backs up TurboTax, H&R Block, and other tax software data files.
  */
 class TaxSoftwareBackupAction : public QuickAction {
@@ -53,5 +54,4 @@ private:
     static QString resolveUniqueDestPath(const QString& dest);
 };
 
-} // namespace sak
-
+}  // namespace sak

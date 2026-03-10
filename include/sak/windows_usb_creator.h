@@ -3,10 +3,11 @@
 
 #pragma once
 
+#include <QMutex>
 #include <QObject>
 #include <QPair>
 #include <QString>
-#include <QMutex>
+
 #include <atomic>
 
 class QProcess;
@@ -87,6 +88,12 @@ private:
     /// @brief Format drive, wait for partition, and verify NTFS filesystem (Step 1)
     QString formatAndVerifyDrive(const QString& diskNumber);
 
+    /// @brief Verify formatted drive is NTFS filesystem
+    bool verifyNtfsFilesystem(const QString& driveLetter);
+
+    /// @brief Validate and normalize raw drive letter from PowerShell
+    QString validateDriveLetter(const QString& rawLetter);
+
     /// @brief Extract ISO contents and verify critical files (Step 2)
     bool extractAndVerifyFiles(const QString& isoPath, const QString& driveLetter);
 
@@ -146,8 +153,9 @@ private:
      * @param cleanDest Normalized destination path
      * @return true if extraction succeeded
      */
-    bool copyISO_runExtraction(const QString& sevenZipPath, const QString& sourcePath,
-        const QString& cleanDest);
+    bool copyISO_runExtraction(const QString& sevenZipPath,
+                               const QString& sourcePath,
+                               const QString& cleanDest);
 
     /**
      * @brief Monitor a running 7z extraction process for progress and cancellation
@@ -163,8 +171,10 @@ private:
      * @param processedBytes [in/out] Processed bytes reported by 7z
      * @param lastProgressPercent [in/out] Last emitted progress percentage
      */
-    void copyISO_parseExtractionProgress(const QString& output, qint64& totalBytes,
-        qint64& processedBytes, int& lastProgressPercent);
+    void copyISO_parseExtractionProgress(const QString& output,
+                                         qint64& totalBytes,
+                                         qint64& processedBytes,
+                                         int& lastProgressPercent);
 
     /**
      * @brief Log 7z extraction result and check exit code
@@ -219,8 +229,7 @@ private:
     bool verifyBootableFlag(const QString& driveLetter);
 
     /// @brief Set the active/bootable flag on partition 1 and verify
-    bool setAndVerifyBootFlag(const QString& diskNumber,
-        const QString& driveLetter);
+    bool setAndVerifyBootFlag(const QString& diskNumber, const QString& driveLetter);
 
     /// @brief Run diskpart to check if the partition on the given disk is active/bootable
     bool checkPartitionActive(const QString& diskNumber);
@@ -232,8 +241,9 @@ private:
      * @param sevenZipPath Path to 7z.exe executable
      * @return true if all critical files match in size and presence
      */
-    bool verifyExtractionIntegrity(const QString& isoPath, const QString& destPath,
-        const QString& sevenZipPath);
+    bool verifyExtractionIntegrity(const QString& isoPath,
+                                   const QString& destPath,
+                                   const QString& sevenZipPath);
 
     /// @brief Check if a file path matches a critical Windows installation file
     bool isCriticalWindowsFile(const QString& path) const;
@@ -271,8 +281,8 @@ private:
     }
 
     std::atomic<bool> m_cancelled{false};
-    mutable QMutex m_errorMutex;          ///< Guards m_lastError for cross-thread access
-    QString m_lastError;                  ///< Protected by m_errorMutex
-    QString m_volumeLabel;  // Volume label extracted from ISO
-    QString m_diskNumber;   // Hardware disk number (e.g., "1" for PhysicalDrive1)
+    mutable QMutex m_errorMutex;  ///< Guards m_lastError for cross-thread access
+    QString m_lastError;          ///< Protected by m_errorMutex
+    QString m_volumeLabel;        // Volume label extracted from ISO
+    QString m_diskNumber;         // Hardware disk number (e.g., "1" for PhysicalDrive1)
 };

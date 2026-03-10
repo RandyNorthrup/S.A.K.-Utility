@@ -3,13 +3,14 @@
 
 #pragma once
 
+#include <QDateTime>
+#include <QIcon>
 #include <QObject>
 #include <QString>
-#include <QIcon>
-#include <QDateTime>
-#include <memory>
-#include <expected>
+
 #include <atomic>
+#include <expected>
+#include <memory>
 
 namespace sak {
 
@@ -46,13 +47,13 @@ public:
      * @brief Current status of the action
      */
     enum class ActionStatus {
-        Idle,          // Not started
-        Scanning,      // Pre-scanning to determine scope
-        Ready,         // Scan complete, ready to execute
-        Running,       // Currently executing
-        Success,       // Completed successfully
-        Failed,        // Failed with error
-        Cancelled      // Cancelled by user
+        Idle,      // Not started
+        Scanning,  // Pre-scanning to determine scope
+        Ready,     // Scan complete, ready to execute
+        Running,   // Currently executing
+        Success,   // Completed successfully
+        Failed,    // Failed with error
+        Cancelled  // Cancelled by user
     };
     Q_ENUM(ActionStatus)
 
@@ -60,13 +61,13 @@ public:
      * @brief Scan result from pre-execution scan
      */
     struct ScanResult {
-        bool applicable{false};        // Is this action applicable?
-        QString summary;               // e.g., "Frees: 2.3 GB"
-        QString details;               // Additional details
-        qint64 bytes_affected{0};      // Total bytes to process
-        qint64 files_count{0};         // Number of files
-        qint64 estimated_duration_ms{0}; // Estimated time
-        QString warning;               // Optional warning message
+        bool applicable{false};           // Is this action applicable?
+        QString summary;                  // e.g., "Frees: 2.3 GB"
+        QString details;                  // Additional details
+        qint64 bytes_affected{0};         // Total bytes to process
+        qint64 files_count{0};            // Number of files
+        qint64 estimated_duration_ms{0};  // Estimated time
+        QString warning;                  // Optional warning message
     };
 
     /**
@@ -74,12 +75,12 @@ public:
      */
     struct ExecutionResult {
         bool success{false};
-        QString message;               // Success or error message
-        qint64 bytes_processed{0};     // Actual bytes processed
-        qint64 files_processed{0};     // Actual files processed
-        qint64 duration_ms{0};         // Actual duration
-        QString output_path;           // Path to backup/report (if applicable)
-        QString log;                   // Detailed operation log
+        QString message;            // Success or error message
+        qint64 bytes_processed{0};  // Actual bytes processed
+        qint64 files_processed{0};  // Actual files processed
+        qint64 duration_ms{0};      // Actual duration
+        QString output_path;        // Path to backup/report (if applicable)
+        QString log;                // Detailed operation log
     };
 
     /**
@@ -307,8 +308,9 @@ protected:
      * @param duration_ms Optional duration to append in footer (-1 to omit)
      * @return Formatted string with ╔═╗║╚═╝ box-drawing characters
      */
-    static QString formatLogBox(const QString& title, const QStringList& content_lines,
-        qint64 duration_ms = -1);
+    static QString formatLogBox(const QString& title,
+                                const QStringList& content_lines,
+                                qint64 duration_ms = -1);
 
     /**
      * @brief Sanitize a filesystem path for use as a backup subdirectory name
@@ -324,4 +326,4 @@ private:
     std::atomic<bool> m_cancelled{false};
 };
 
-} // namespace sak
+}  // namespace sak

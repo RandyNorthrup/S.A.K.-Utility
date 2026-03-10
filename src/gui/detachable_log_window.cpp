@@ -2,21 +2,22 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "sak/detachable_log_window.h"
+
 #include "sak/layout_constants.h"
 #include "sak/style_constants.h"
 
-#include <QVBoxLayout>
-#include <QHBoxLayout>
-#include <QPainter>
-#include <QDateTime>
-#include <QMoveEvent>
-#include <QShowEvent>
-#include <QCloseEvent>
-#include <QTimer>
-#include <QScreen>
 #include <QApplication>
+#include <QCloseEvent>
+#include <QDateTime>
+#include <QHBoxLayout>
 #include <QMainWindow>
+#include <QMoveEvent>
+#include <QPainter>
 #include <QPushButton>
+#include <QScreen>
+#include <QShowEvent>
+#include <QTimer>
+#include <QVBoxLayout>
 
 namespace sak {
 
@@ -25,15 +26,14 @@ namespace sak {
 // ============================================================================
 
 DetachableLogWindow::DetachableLogWindow(const QString& title, QWidget* parent)
-    : QWidget(parent, Qt::Tool)
-{
+    : QWidget(parent, Qt::Tool) {
     setWindowTitle(title);
     setMinimumSize(sak::kDetachLogMinW, sak::kDetachLogMinH);
     resize(sak::kDetachLogInitW, sak::kDetachLogInitH);
 
     auto* layout = new QVBoxLayout(this);
-    layout->setContentsMargins(sak::ui::kMarginTight, sak::ui::kMarginTight,
-        sak::ui::kMarginTight, sak::ui::kMarginTight);
+    layout->setContentsMargins(
+        sak::ui::kMarginTight, sak::ui::kMarginTight, sak::ui::kMarginTight, sak::ui::kMarginTight);
     layout->setSpacing(4);
 
     // Log text area (uses app theme — no custom dark style)
@@ -69,7 +69,7 @@ void DetachableLogWindow::clearLog() {
 
 void DetachableLogWindow::setLogVisible(bool visible) {
     if (visible) {
-        m_anchored = true;   // Always snap on toggle-open
+        m_anchored = true;  // Always snap on toggle-open
         show();
         snapToMainWindow();
         raise();
@@ -112,7 +112,9 @@ void DetachableLogWindow::moveEvent(QMoveEvent* event) {
 
     // If user drags window, check whether it's still close to main window
     auto* mainWin = findMainWindow();
-    if (!mainWin) return;
+    if (!mainWin) {
+        return;
+    }
 
     const QRect mainFrame = mainWin->frameGeometry();
     const int snapThreshold = 40;
@@ -129,7 +131,9 @@ void DetachableLogWindow::moveEvent(QMoveEvent* event) {
 
 void DetachableLogWindow::snapToMainWindow() {
     auto* mainWin = findMainWindow();
-    if (!mainWin) return;
+    if (!mainWin) {
+        return;
+    }
 
     m_programmaticMove = true;
 
@@ -160,9 +164,7 @@ QWidget* DetachableLogWindow::findMainWindow() const {
 // ============================================================================
 
 LogToggleSwitch::LogToggleSwitch(const QString& label, QWidget* parent)
-    : QWidget(parent)
-    , m_label(label)
-{
+    : QWidget(parent), m_label(label) {
     setFixedSize(sak::kSnapButtonW, sak::kSnapButtonH);
     setCursor(Qt::PointingHandCursor);
     setToolTip(tr("Toggle log window"));
@@ -213,4 +215,4 @@ void LogToggleSwitch::mousePressEvent(QMouseEvent* event) {
     setChecked(!m_checked);
 }
 
-} // namespace sak
+}  // namespace sak

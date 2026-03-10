@@ -44,14 +44,17 @@ public:
     /// @param programNamePatterns Patterns to match against key names
     /// @return Leftover items for keys that match program patterns
     [[nodiscard]] static QVector<LeftoverItem> diffSnapshots(
-        const QSet<QString>& before, const QSet<QString>& after,
+        const QSet<QString>& before,
+        const QSet<QString>& after,
         const QStringList& programNamePatterns);
 
 private:
 #ifdef Q_OS_WIN
     /// @brief Enumerate all subkeys under a registry path
-    static void enumerateKeys(HKEY hive, const QString& subkey,
-                              const QString& hiveName, QSet<QString>& output,
+    static void enumerateKeys(HKEY hive,
+                              const QString& subkey,
+                              const QString& hiveName,
+                              QSet<QString>& output,
                               int maxDepth = 3);
 #endif
 
@@ -65,6 +68,6 @@ private:
 // ── Compile-Time Invariants ─────────────────────────────────────────────────
 
 static_assert(!std::is_copy_constructible_v<RegistrySnapshotEngine>,
-    "RegistrySnapshotEngine must not be copy-constructible.");
+              "RegistrySnapshotEngine must not be copy-constructible.");
 
-} // namespace sak
+}  // namespace sak

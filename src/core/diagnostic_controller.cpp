@@ -5,6 +5,7 @@
 /// @brief Orchestrates all diagnostic workers and the full suite sequence
 
 #include "sak/diagnostic_controller.h"
+
 #include "sak/cpu_benchmark_worker.h"
 #include "sak/diagnostic_report_generator.h"
 #include "sak/disk_benchmark_worker.h"
@@ -35,98 +36,137 @@ DiagnosticController::DiagnosticController(QObject* parent)
     , m_memory_benchmark(std::make_unique<MemoryBenchmarkWorker>(this))
     , m_stress_test(std::make_unique<StressTestWorker>(this))
     , m_thermal_monitor(std::make_unique<ThermalMonitor>(this))
-    , m_report_generator(std::make_unique<DiagnosticReportGenerator>(this))
-{
+    , m_report_generator(std::make_unique<DiagnosticReportGenerator>(this)) {
     // ── Hardware Scanner Connections ────────────────────────────
-    connect(m_hardware_scanner.get(), &HardwareInventoryScanner::scanComplete,
-            this, &DiagnosticController::onHardwareScanComplete);
-    connect(m_hardware_scanner.get(), &HardwareInventoryScanner::scanProgress,
-            this, [this](int percent, const QString& msg) {
-                Q_EMIT operationProgress(percent, msg);
-            });
-    connect(m_hardware_scanner.get(), &HardwareInventoryScanner::errorOccurred,
-            this, &DiagnosticController::errorOccurred);
+    connect(m_hardware_scanner.get(),
+            &HardwareInventoryScanner::scanComplete,
+            this,
+            &DiagnosticController::onHardwareScanComplete);
+    connect(m_hardware_scanner.get(),
+            &HardwareInventoryScanner::scanProgress,
+            this,
+            [this](int percent, const QString& msg) { Q_EMIT operationProgress(percent, msg); });
+    connect(m_hardware_scanner.get(),
+            &HardwareInventoryScanner::errorOccurred,
+            this,
+            &DiagnosticController::errorOccurred);
 
     // ── SMART Analyzer Connections ──────────────────────────────
-    connect(m_smart_analyzer.get(), &SmartDiskAnalyzer::analysisComplete,
-            this, &DiagnosticController::onSmartAnalysisComplete);
-    connect(m_smart_analyzer.get(), &SmartDiskAnalyzer::analysisProgress,
-            this, [this](int percent, const QString& msg) {
-                Q_EMIT operationProgress(percent, msg);
-            });
-    connect(m_smart_analyzer.get(), &SmartDiskAnalyzer::errorOccurred,
-            this, &DiagnosticController::errorOccurred);
+    connect(m_smart_analyzer.get(),
+            &SmartDiskAnalyzer::analysisComplete,
+            this,
+            &DiagnosticController::onSmartAnalysisComplete);
+    connect(m_smart_analyzer.get(),
+            &SmartDiskAnalyzer::analysisProgress,
+            this,
+            [this](int percent, const QString& msg) { Q_EMIT operationProgress(percent, msg); });
+    connect(m_smart_analyzer.get(),
+            &SmartDiskAnalyzer::errorOccurred,
+            this,
+            &DiagnosticController::errorOccurred);
 
     // ── CPU Benchmark Connections ───────────────────────────────
-    connect(m_cpu_benchmark.get(), &CpuBenchmarkWorker::benchmarkComplete,
-            this, &DiagnosticController::onCpuBenchmarkComplete);
-    connect(m_cpu_benchmark.get(), &WorkerBase::progress,
-            this, [this](int current, int total, const QString& msg) {
+    connect(m_cpu_benchmark.get(),
+            &CpuBenchmarkWorker::benchmarkComplete,
+            this,
+            &DiagnosticController::onCpuBenchmarkComplete);
+    connect(m_cpu_benchmark.get(),
+            &WorkerBase::progress,
+            this,
+            [this](int current, int total, const QString& msg) {
                 const int percent = total > 0 ? (current * 100 / total) : 0;
                 Q_EMIT operationProgress(percent, msg);
             });
-    connect(m_cpu_benchmark.get(), &WorkerBase::failed,
-            this, [this](int /*code*/, const QString& msg) {
-                Q_EMIT errorOccurred(QString("CPU benchmark failed: %1").arg(msg));
-                if (m_running_suite) advanceSuiteStep();
-            });
+    connect(
+        m_cpu_benchmark.get(), &WorkerBase::failed, this, [this](int /*code*/, const QString& msg) {
+            Q_EMIT errorOccurred(QString("CPU benchmark failed: %1").arg(msg));
+            if (m_running_suite) {
+                advanceSuiteStep();
+            }
+        });
 
     // ── Disk Benchmark Connections ──────────────────────────────
-    connect(m_disk_benchmark.get(), &DiskBenchmarkWorker::benchmarkComplete,
-            this, &DiagnosticController::onDiskBenchmarkComplete);
-    connect(m_disk_benchmark.get(), &WorkerBase::progress,
-            this, [this](int current, int total, const QString& msg) {
+    connect(m_disk_benchmark.get(),
+            &DiskBenchmarkWorker::benchmarkComplete,
+            this,
+            &DiagnosticController::onDiskBenchmarkComplete);
+    connect(m_disk_benchmark.get(),
+            &WorkerBase::progress,
+            this,
+            [this](int current, int total, const QString& msg) {
                 const int percent = total > 0 ? (current * 100 / total) : 0;
                 Q_EMIT operationProgress(percent, msg);
             });
-    connect(m_disk_benchmark.get(), &WorkerBase::failed,
-            this, [this](int /*code*/, const QString& msg) {
+    connect(m_disk_benchmark.get(),
+            &WorkerBase::failed,
+            this,
+            [this](int /*code*/, const QString& msg) {
                 Q_EMIT errorOccurred(QString("Disk benchmark failed: %1").arg(msg));
-                if (m_running_suite) advanceSuiteStep();
+                if (m_running_suite) {
+                    advanceSuiteStep();
+                }
             });
 
     // ── Memory Benchmark Connections ────────────────────────────
-    connect(m_memory_benchmark.get(), &MemoryBenchmarkWorker::benchmarkComplete,
-            this, &DiagnosticController::onMemoryBenchmarkComplete);
-    connect(m_memory_benchmark.get(), &WorkerBase::progress,
-            this, [this](int current, int total, const QString& msg) {
+    connect(m_memory_benchmark.get(),
+            &MemoryBenchmarkWorker::benchmarkComplete,
+            this,
+            &DiagnosticController::onMemoryBenchmarkComplete);
+    connect(m_memory_benchmark.get(),
+            &WorkerBase::progress,
+            this,
+            [this](int current, int total, const QString& msg) {
                 const int percent = total > 0 ? (current * 100 / total) : 0;
                 Q_EMIT operationProgress(percent, msg);
             });
-    connect(m_memory_benchmark.get(), &WorkerBase::failed,
-            this, [this](int /*code*/, const QString& msg) {
+    connect(m_memory_benchmark.get(),
+            &WorkerBase::failed,
+            this,
+            [this](int /*code*/, const QString& msg) {
                 Q_EMIT errorOccurred(QString("Memory benchmark failed: %1").arg(msg));
-                if (m_running_suite) advanceSuiteStep();
+                if (m_running_suite) {
+                    advanceSuiteStep();
+                }
             });
 
     // ── Stress Test Connections ─────────────────────────────────
-    connect(m_stress_test.get(), &StressTestWorker::stressTestComplete,
-            this, &DiagnosticController::onStressTestComplete);
-    connect(m_stress_test.get(), &StressTestWorker::stressTestStatus,
-            this, &DiagnosticController::stressTestStatus);
-    connect(m_stress_test.get(), &WorkerBase::failed,
-            this, [this](int /*code*/, const QString& msg) {
-                Q_EMIT errorOccurred(QString("Stress test failed: %1").arg(msg));
-                if (m_running_suite) advanceSuiteStep();
-            });
-    connect(m_stress_test.get(), &WorkerBase::cancelled,
-            this, [this]() {
-                // Thermal abort calls requestStop() → emitted as cancelled().
-                // Treat as completion so the suite advances.
-                if (m_running_suite) advanceSuiteStep();
-            });
+    connect(m_stress_test.get(),
+            &StressTestWorker::stressTestComplete,
+            this,
+            &DiagnosticController::onStressTestComplete);
+    connect(m_stress_test.get(),
+            &StressTestWorker::stressTestStatus,
+            this,
+            &DiagnosticController::stressTestStatus);
+    connect(
+        m_stress_test.get(), &WorkerBase::failed, this, [this](int /*code*/, const QString& msg) {
+            Q_EMIT errorOccurred(QString("Stress test failed: %1").arg(msg));
+            if (m_running_suite) {
+                advanceSuiteStep();
+            }
+        });
+    connect(m_stress_test.get(), &WorkerBase::cancelled, this, [this]() {
+        // Thermal abort calls requestStop() → emitted as cancelled().
+        // Treat as completion so the suite advances.
+        if (m_running_suite) {
+            advanceSuiteStep();
+        }
+    });
 
     // ── Thermal Monitor Connections ─────────────────────────────
-    connect(m_thermal_monitor.get(), &ThermalMonitor::readingsUpdated,
-            this, &DiagnosticController::thermalReadingsUpdated);
+    connect(m_thermal_monitor.get(),
+            &ThermalMonitor::readingsUpdated,
+            this,
+            &DiagnosticController::thermalReadingsUpdated);
 
     // ── Report Generator Connections ────────────────────────────
-    connect(m_report_generator.get(), &DiagnosticReportGenerator::errorOccurred,
-            this, &DiagnosticController::errorOccurred);
+    connect(m_report_generator.get(),
+            &DiagnosticReportGenerator::errorOccurred,
+            this,
+            &DiagnosticController::errorOccurred);
 }
 
-DiagnosticController::~DiagnosticController()
-{
+DiagnosticController::~DiagnosticController() {
     cancelCurrent();
     m_thermal_monitor->stop();
 }
@@ -135,34 +175,28 @@ DiagnosticController::~DiagnosticController()
 // Individual Operations
 // ============================================================================
 
-void DiagnosticController::runHardwareScan()
-{
+void DiagnosticController::runHardwareScan() {
     logInfo("Starting hardware inventory scan");
     // Run on a background thread to avoid blocking the UI
-    m_hw_scan_future = QtConcurrent::run([scanner = m_hardware_scanner.get()]() {
-        scanner->scan();
-    });
+    m_hw_scan_future =
+        QtConcurrent::run([scanner = m_hardware_scanner.get()]() { scanner->scan(); });
 }
 
-void DiagnosticController::runSmartAnalysis()
-{
+void DiagnosticController::runSmartAnalysis() {
     logInfo("Starting SMART disk analysis");
     // Run on a background thread to avoid blocking the UI
-    m_smart_analysis_future = QtConcurrent::run([analyzer = m_smart_analyzer.get()]() {
-        analyzer->analyzeAll();
-    });
+    m_smart_analysis_future =
+        QtConcurrent::run([analyzer = m_smart_analyzer.get()]() { analyzer->analyzeAll(); });
 }
 
-void DiagnosticController::runCpuBenchmark()
-{
+void DiagnosticController::runCpuBenchmark() {
     logInfo("Starting CPU benchmark");
     if (!m_cpu_benchmark->isRunning()) {
         m_cpu_benchmark->start();
     }
 }
 
-void DiagnosticController::runDiskBenchmark(const DiskBenchmarkConfig& config)
-{
+void DiagnosticController::runDiskBenchmark(const DiskBenchmarkConfig& config) {
     logInfo("Starting disk benchmark on {}", config.drive_path.toStdString());
     m_disk_benchmark->setConfig(config);
     if (!m_disk_benchmark->isRunning()) {
@@ -170,16 +204,14 @@ void DiagnosticController::runDiskBenchmark(const DiskBenchmarkConfig& config)
     }
 }
 
-void DiagnosticController::runMemoryBenchmark()
-{
+void DiagnosticController::runMemoryBenchmark() {
     logInfo("Starting memory benchmark");
     if (!m_memory_benchmark->isRunning()) {
         m_memory_benchmark->start();
     }
 }
 
-void DiagnosticController::runStressTest(const StressTestConfig& config)
-{
+void DiagnosticController::runStressTest(const StressTestConfig& config) {
     logInfo("Starting stress test ({} minutes)", config.duration_minutes);
     m_stress_test->setConfig(config);
     if (!m_stress_test->isRunning()) {
@@ -191,10 +223,8 @@ void DiagnosticController::runStressTest(const StressTestConfig& config)
 // Full Suite
 // ============================================================================
 
-void DiagnosticController::runFullSuite(
-    const StressTestConfig& stress_config,
-    const DiskBenchmarkConfig& disk_config)
-{
+void DiagnosticController::runFullSuite(const StressTestConfig& stress_config,
+                                        const DiskBenchmarkConfig& disk_config) {
     if (m_running_suite) {
         logWarning("Full suite already running — ignoring request");
         return;
@@ -213,8 +243,9 @@ void DiagnosticController::runFullSuite(
     runHardwareScan();
 }
 
-void DiagnosticController::cancelCurrent()
-{
+void DiagnosticController::cancelCurrent() {
+    Q_ASSERT(m_hardware_scanner);
+    Q_ASSERT(m_smart_analyzer);
     logInfo("Cancelling current diagnostic operation");
 
     m_hardware_scanner->cancel();
@@ -251,53 +282,64 @@ void DiagnosticController::cancelCurrent()
     Q_EMIT suiteStateChanged(m_suite_state);
 }
 
-void DiagnosticController::stopStressTest()
-{
+void DiagnosticController::stopStressTest() {
     logInfo("Stopping stress test");
     if (m_stress_test->isRunning()) {
         m_stress_test->requestStop();
     }
 }
 
-void DiagnosticController::skipCurrentStep()
-{
-    if (!m_running_suite || m_skipping_step) return;
+void DiagnosticController::skipCurrentStep() {
+    Q_ASSERT(m_hardware_scanner);
+    Q_ASSERT(m_smart_analyzer);
+    if (!m_running_suite || m_skipping_step) {
+        return;
+    }
     m_skipping_step = true;
 
     logInfo("Skipping current suite step: {}", static_cast<int>(m_suite_state));
 
     // Cancel the current worker
     switch (m_suite_state) {
-        case SuiteState::HardwareScan:   m_hardware_scanner->cancel(); break;
-        case SuiteState::SmartAnalysis:  m_smart_analyzer->cancel(); break;
-        case SuiteState::CpuBenchmark:   m_cpu_benchmark->requestStop(); break;
-        case SuiteState::DiskBenchmark:  m_disk_benchmark->requestStop(); break;
-        case SuiteState::MemoryBenchmark: m_memory_benchmark->requestStop(); break;
-        case SuiteState::StressTest:     m_stress_test->requestStop(); break;
-        default: break;
+    case SuiteState::HardwareScan:
+        m_hardware_scanner->cancel();
+        break;
+    case SuiteState::SmartAnalysis:
+        m_smart_analyzer->cancel();
+        break;
+    case SuiteState::CpuBenchmark:
+        m_cpu_benchmark->requestStop();
+        break;
+    case SuiteState::DiskBenchmark:
+        m_disk_benchmark->requestStop();
+        break;
+    case SuiteState::MemoryBenchmark:
+        m_memory_benchmark->requestStop();
+        break;
+    case SuiteState::StressTest:
+        m_stress_test->requestStop();
+        break;
+    default:
+        break;
     }
 
     // Advance to the next step after a brief delay for cleanup
-    QMetaObject::invokeMethod(this, &DiagnosticController::advanceSuiteStep,
-                              Qt::QueuedConnection);
+    QMetaObject::invokeMethod(this, &DiagnosticController::advanceSuiteStep, Qt::QueuedConnection);
 }
 
 // ============================================================================
 // Thermal Monitor
 // ============================================================================
 
-void DiagnosticController::startThermalMonitoring(int interval_ms)
-{
+void DiagnosticController::startThermalMonitoring(int interval_ms) {
     m_thermal_monitor->start(interval_ms);
 }
 
-void DiagnosticController::stopThermalMonitoring()
-{
+void DiagnosticController::stopThermalMonitoring() {
     m_thermal_monitor->stop();
 }
 
-ThermalMonitor* DiagnosticController::thermalMonitor() const
-{
+ThermalMonitor* DiagnosticController::thermalMonitor() const {
     return m_thermal_monitor.get();
 }
 
@@ -305,25 +347,22 @@ ThermalMonitor* DiagnosticController::thermalMonitor() const
 // Report Generation
 // ============================================================================
 
-void DiagnosticController::generateReport(
-    const QString& output_dir,
-    const QString& technician,
-    const QString& ticket,
-    const QString& notes,
-    const QString& formats)
-{
+void DiagnosticController::generateReport(const QString& output_dir,
+                                          const QString& technician,
+                                          const QString& ticket,
+                                          const QString& notes,
+                                          const QString& formats) {
     aggregateResults();
 
-    m_report_data.technician_name  = technician;
-    m_report_data.ticket_number    = ticket;
-    m_report_data.notes            = notes;
+    m_report_data.technician_name = technician;
+    m_report_data.ticket_number = ticket;
+    m_report_data.notes = notes;
     m_report_data.report_timestamp = QDateTime::currentDateTime();
 
     m_report_generator->setReportData(m_report_data);
 
     if (!QDir().mkpath(output_dir)) {
-        sak::logWarning("Failed to create report output directory: {}",
-                        output_dir.toStdString());
+        sak::logWarning("Failed to create report output directory: {}", output_dir.toStdString());
     }
     const QString timestamp = QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss");
     const QString base_name = QString("%1/SAK_Diagnostic_%2").arg(output_dir, timestamp);
@@ -353,8 +392,7 @@ void DiagnosticController::generateReport(
 // Completion Handlers
 // ============================================================================
 
-void DiagnosticController::onHardwareScanComplete(const HardwareInventory& inventory)
-{
+void DiagnosticController::onHardwareScanComplete(const HardwareInventory& inventory) {
     m_report_data.inventory = inventory;
     Q_EMIT hardwareScanComplete(inventory);
 
@@ -363,8 +401,7 @@ void DiagnosticController::onHardwareScanComplete(const HardwareInventory& inven
     }
 }
 
-void DiagnosticController::onSmartAnalysisComplete(const QVector<SmartReport>& reports)
-{
+void DiagnosticController::onSmartAnalysisComplete(const QVector<SmartReport>& reports) {
     m_report_data.smart_reports = reports;
     Q_EMIT smartAnalysisComplete(reports);
 
@@ -373,8 +410,7 @@ void DiagnosticController::onSmartAnalysisComplete(const QVector<SmartReport>& r
     }
 }
 
-void DiagnosticController::onCpuBenchmarkComplete(const CpuBenchmarkResult& result)
-{
+void DiagnosticController::onCpuBenchmarkComplete(const CpuBenchmarkResult& result) {
     m_report_data.cpu_benchmark = result;
     Q_EMIT cpuBenchmarkComplete(result);
 
@@ -383,8 +419,7 @@ void DiagnosticController::onCpuBenchmarkComplete(const CpuBenchmarkResult& resu
     }
 }
 
-void DiagnosticController::onDiskBenchmarkComplete(const DiskBenchmarkResult& result)
-{
+void DiagnosticController::onDiskBenchmarkComplete(const DiskBenchmarkResult& result) {
     m_report_data.disk_benchmark = result;
     Q_EMIT diskBenchmarkComplete(result);
 
@@ -393,8 +428,7 @@ void DiagnosticController::onDiskBenchmarkComplete(const DiskBenchmarkResult& re
     }
 }
 
-void DiagnosticController::onMemoryBenchmarkComplete(const MemoryBenchmarkResult& result)
-{
+void DiagnosticController::onMemoryBenchmarkComplete(const MemoryBenchmarkResult& result) {
     m_report_data.memory_benchmark = result;
     Q_EMIT memoryBenchmarkComplete(result);
 
@@ -403,8 +437,7 @@ void DiagnosticController::onMemoryBenchmarkComplete(const MemoryBenchmarkResult
     }
 }
 
-void DiagnosticController::onStressTestComplete(const StressTestResult& result)
-{
+void DiagnosticController::onStressTestComplete(const StressTestResult& result) {
     m_report_data.stress_test = result;
     Q_EMIT stressTestComplete(result);
 
@@ -417,61 +450,47 @@ void DiagnosticController::onStressTestComplete(const StressTestResult& result)
 // Suite State Machine
 // ============================================================================
 
-void DiagnosticController::advanceSuiteStep()
-{
+void DiagnosticController::advanceSuiteStep() {
     m_skipping_step = false;  // Reset skip guard
 
     // State transition table: HW → SMART → CPU → Disk → Memory → Stress → Report → Complete
     switch (m_suite_state) {
-        case SuiteState::HardwareScan:
-            m_suite_state = SuiteState::SmartAnalysis;
+    case SuiteState::HardwareScan:
+        m_suite_state = SuiteState::SmartAnalysis;
+        Q_EMIT suiteStateChanged(m_suite_state);
+        Q_EMIT suiteProgress(14, "Analyzing disk health...");
+        runSmartAnalysis();
+        break;
+
+    case SuiteState::SmartAnalysis:
+        m_suite_state = SuiteState::CpuBenchmark;
+        Q_EMIT suiteStateChanged(m_suite_state);
+        Q_EMIT suiteProgress(28, "Running CPU benchmark...");
+        runCpuBenchmark();
+        break;
+
+    case SuiteState::CpuBenchmark:
+        m_suite_state = SuiteState::DiskBenchmark;
+        Q_EMIT suiteStateChanged(m_suite_state);
+        Q_EMIT suiteProgress(42, "Running disk benchmark...");
+        runDiskBenchmark(m_suite_disk_config);
+        break;
+
+    case SuiteState::DiskBenchmark:
+        m_suite_state = SuiteState::MemoryBenchmark;
+        Q_EMIT suiteStateChanged(m_suite_state);
+        Q_EMIT suiteProgress(56, "Running memory benchmark...");
+        runMemoryBenchmark();
+        break;
+
+    case SuiteState::MemoryBenchmark:
+        if (m_suite_stress_config.duration_minutes > 0) {
+            m_suite_state = SuiteState::StressTest;
             Q_EMIT suiteStateChanged(m_suite_state);
-            Q_EMIT suiteProgress(14, "Analyzing disk health...");
-            runSmartAnalysis();
-            break;
-
-        case SuiteState::SmartAnalysis:
-            m_suite_state = SuiteState::CpuBenchmark;
-            Q_EMIT suiteStateChanged(m_suite_state);
-            Q_EMIT suiteProgress(28, "Running CPU benchmark...");
-            runCpuBenchmark();
-            break;
-
-        case SuiteState::CpuBenchmark:
-            m_suite_state = SuiteState::DiskBenchmark;
-            Q_EMIT suiteStateChanged(m_suite_state);
-            Q_EMIT suiteProgress(42, "Running disk benchmark...");
-            runDiskBenchmark(m_suite_disk_config);
-            break;
-
-        case SuiteState::DiskBenchmark:
-            m_suite_state = SuiteState::MemoryBenchmark;
-            Q_EMIT suiteStateChanged(m_suite_state);
-            Q_EMIT suiteProgress(56, "Running memory benchmark...");
-            runMemoryBenchmark();
-            break;
-
-        case SuiteState::MemoryBenchmark:
-            if (m_suite_stress_config.duration_minutes > 0) {
-                m_suite_state = SuiteState::StressTest;
-                Q_EMIT suiteStateChanged(m_suite_state);
-                Q_EMIT suiteProgress(70, "Running stress test...");
-                runStressTest(m_suite_stress_config);
-            } else {
-                // Skip stress test
-                m_suite_state = SuiteState::ReportGeneration;
-                Q_EMIT suiteStateChanged(m_suite_state);
-                Q_EMIT suiteProgress(90, "Generating report...");
-                aggregateResults();
-                m_suite_state = SuiteState::Complete;
-                Q_EMIT suiteStateChanged(m_suite_state);
-                Q_EMIT suiteProgress(100, "Suite complete");
-                m_running_suite = false;
-                Q_EMIT suiteComplete();
-            }
-            break;
-
-        case SuiteState::StressTest:
+            Q_EMIT suiteProgress(70, "Running stress test...");
+            runStressTest(m_suite_stress_config);
+        } else {
+            // Skip stress test
             m_suite_state = SuiteState::ReportGeneration;
             Q_EMIT suiteStateChanged(m_suite_state);
             Q_EMIT suiteProgress(90, "Generating report...");
@@ -481,11 +500,24 @@ void DiagnosticController::advanceSuiteStep()
             Q_EMIT suiteProgress(100, "Suite complete");
             m_running_suite = false;
             Q_EMIT suiteComplete();
-            break;
+        }
+        break;
 
-        default:
-            m_running_suite = false;
-            break;
+    case SuiteState::StressTest:
+        m_suite_state = SuiteState::ReportGeneration;
+        Q_EMIT suiteStateChanged(m_suite_state);
+        Q_EMIT suiteProgress(90, "Generating report...");
+        aggregateResults();
+        m_suite_state = SuiteState::Complete;
+        Q_EMIT suiteStateChanged(m_suite_state);
+        Q_EMIT suiteProgress(100, "Suite complete");
+        m_running_suite = false;
+        Q_EMIT suiteComplete();
+        break;
+
+    default:
+        m_running_suite = false;
+        break;
     }
 }
 
@@ -493,8 +525,7 @@ void DiagnosticController::advanceSuiteStep()
 // Result Aggregation
 // ============================================================================
 
-void DiagnosticController::aggregateResults()
-{
+void DiagnosticController::aggregateResults() {
     m_report_data.overall_status = DiagnosticStatus::AllPassed;
     m_report_data.critical_issues.clear();
     m_report_data.warnings.clear();
@@ -504,9 +535,8 @@ void DiagnosticController::aggregateResults()
     for (const auto& report : m_report_data.smart_reports) {
         if (report.overall_health == SmartHealthStatus::Critical) {
             m_report_data.overall_status = DiagnosticStatus::CriticalIssues;
-            m_report_data.critical_issues.append(
-                QString("Drive %1 (%2): CRITICAL health status")
-                    .arg(report.device_path, report.model));
+            m_report_data.critical_issues.append(QString("Drive %1 (%2): CRITICAL health status")
+                                                     .arg(report.device_path, report.model));
         }
 
         const bool is_warning = (report.overall_health == SmartHealthStatus::Warning);
@@ -514,9 +544,8 @@ void DiagnosticController::aggregateResults()
             m_report_data.overall_status = DiagnosticStatus::Warnings;
         }
         if (is_warning) {
-            m_report_data.warnings.append(
-                QString("Drive %1 (%2): Warning health status")
-                    .arg(report.device_path, report.model));
+            m_report_data.warnings.append(QString("Drive %1 (%2): Warning health status")
+                                              .arg(report.device_path, report.model));
         }
 
         // Carry over per-drive recommendations
@@ -543,8 +572,7 @@ void DiagnosticController::aggregateResults()
         }
         if (st.thermal_throttle_events > 0) {
             m_report_data.warnings.append(
-                QString("Thermal throttling detected (%1 events)")
-                    .arg(st.thermal_throttle_events));
+                QString("Thermal throttling detected (%1 events)").arg(st.thermal_throttle_events));
             m_report_data.recommendations.append(
                 "Improve system cooling — check thermal paste, fans, and airflow");
         }
@@ -565,4 +593,4 @@ void DiagnosticController::aggregateResults()
             m_report_data.warnings.size());
 }
 
-} // namespace sak
+}  // namespace sak

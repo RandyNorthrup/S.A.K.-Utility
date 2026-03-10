@@ -3,15 +3,17 @@
 
 #pragma once
 
-#include "image_source.h"
 #include "drive_scanner.h"
+#include "image_source.h"
+
+#include <QMutex>
 #include <QObject>
 #include <QString>
 #include <QStringList>
-#include <QMutex>
+
+#include <atomic>
 #include <memory>
 #include <vector>
-#include <atomic>
 
 class FlashWorker;
 
@@ -25,14 +27,14 @@ struct ValidationResult;
  */
 enum class FlashState {
     Idle,
-    Validating,      // Validating image and drives
-    Unmounting,      // Unmounting volumes
-    Decompressing,   // Decompressing image (if needed)
-    Flashing,        // Writing to drives
-    Verifying,       // Verifying writes
-    Completed,       // Successfully completed
-    Failed,          // Failed with error
-    Cancelled        // User cancelled
+    Validating,     // Validating image and drives
+    Unmounting,     // Unmounting volumes
+    Decompressing,  // Decompressing image (if needed)
+    Flashing,       // Writing to drives
+    Verifying,      // Verifying writes
+    Completed,      // Successfully completed
+    Failed,         // Failed with error
+    Cancelled       // User cancelled
 };
 
 /**
@@ -41,16 +43,18 @@ enum class FlashState {
 struct FlashProgress {
     FlashState state;
     double percentage;         // Overall progress 0-100
-    qint64 bytesWritten;      // Total bytes written across all drives
-    qint64 totalBytes;        // Total bytes to write
-    double speedMBps;         // Current write speed in MB/s
-    int activeDrives;         // Number of drives currently being written
-    int failedDrives;         // Number of drives that failed
-    int completedDrives;      // Number of drives completed
-    QString currentOperation; // Human-readable description
-    
+    qint64 bytesWritten;       // Total bytes written across all drives
+    qint64 totalBytes;         // Total bytes to write
+    double speedMBps;          // Current write speed in MB/s
+    int activeDrives;          // Number of drives currently being written
+    int failedDrives;          // Number of drives that failed
+    int completedDrives;       // Number of drives completed
+    QString currentOperation;  // Human-readable description
+
     double getOverallProgress() const {
-        if (totalBytes == 0) return 0.0;
+        if (totalBytes == 0) {
+            return 0.0;
+        }
         return (static_cast<double>(bytesWritten) / totalBytes) * 100.0;
     }
 };
@@ -66,22 +70,22 @@ struct FlashResult {
     QStringList failedDrives;
     QStringList errorMessages;
     QString sourceChecksum;
-    
+
     bool hasErrors() const { return !failedDrives.isEmpty(); }
     int totalDrives() const { return successfulDrives.size() + failedDrives.size(); }
 };
 
-} // namespace sak
+}  // namespace sak
 
 /**
  * @brief Flash Coordinator - Orchestrates multi-drive flash operations
- * 
+ *
  * Manages the complete flash workflow including validation, unmounting,
  * decompression (if needed), writing, and verification. Supports writing
  * to multiple drives in parallel.
- * 
+ *
  * Based on Etcher SDK's multiWrite pattern with Windows-specific optimizations.
- * 
+ *
  * Features:
  * - Parallel writes to multiple drives
  * - Automatic decompression
@@ -90,7 +94,7 @@ struct FlashResult {
  * - Automatic unmounting and remounting
  * - Error recovery and retry logic
  * - Memory-efficient buffering
- * 
+ *
  * Workflow:
  * 1. Validate image and target drives
  * 2. Unmount all target volumes
@@ -99,18 +103,18 @@ struct FlashResult {
  * 5. Write image to all drives in parallel
  * 6. Verify each drive
  * 7. Report results
- * 
+ *
  * Thread-Safety: Methods can be called from any thread.
  * Signals are emitted on the calling thread.
- * 
+ *
  * Example:
  * @code
  * FlashCoordinator coordinator;
- * connect(&coordinator, &FlashCoordinator::progressUpdated, 
+ * connect(&coordinator, &FlashCoordinator::progressUpdated,
  *         [](const FlashProgress& progress) {
  *     qDebug() << "Progress:" << progress.percentage << "%";
  * });
- * 
+ *
  * coordinator.startFlash("C:/image.iso", {"\\.\PhysicalDrive1", "\\.\PhysicalDrive2"});
  * @endcode
  */
@@ -236,20 +240,20 @@ private:
     bool unmountVolumes(const QStringList& targetDrives);
     void updateProgress();
     void cleanupWorkers();
-    
+
     std::unique_ptr<ImageSource> m_imageSource;
     std::vector<std::unique_ptr<FlashWorker>> m_workers;
-    
-    mutable QMutex m_mutex;           ///< Guards m_state, m_progress, m_result
-    sak::FlashState m_state;          // Protected by m_mutex
-    sak::FlashProgress m_progress;    // Protected by m_mutex
-    sak::FlashResult m_result;        // Protected by m_mutex
-    
+
+    mutable QMutex m_mutex;         ///< Guards m_state, m_progress, m_result
+    sak::FlashState m_state;        // Protected by m_mutex
+    sak::FlashProgress m_progress;  // Protected by m_mutex
+    sak::FlashResult m_result;      // Protected by m_mutex
+
     bool m_verificationEnabled;
     qint64 m_bufferSize;
     int m_bufferCount;
     std::atomic<bool> m_isCancelled;
-    
+
     QStringList m_targetDrives;
     QString m_sourceChecksum;
 };

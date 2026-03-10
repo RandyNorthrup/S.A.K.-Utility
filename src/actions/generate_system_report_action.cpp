@@ -5,23 +5,22 @@
 /// @brief Implements system information report generation
 
 #include "sak/actions/generate_system_report_action.h"
+
 #include "sak/layout_constants.h"
-#include "sak/process_runner.h"
 #include "sak/logger.h"
-#include <QDir>
+#include "sak/process_runner.h"
+
 #include <QDateTime>
+#include <QDir>
 #include <QFileInfo>
-#include <QSysInfo>
 #include <QStorageInfo>
+#include <QSysInfo>
 
 namespace sak {
 
 GenerateSystemReportAction::GenerateSystemReportAction(const QString& output_location,
-    QObject* parent)
-    : QuickAction(parent)
-    , m_output_location(output_location)
-{
-}
+                                                       QObject* parent)
+    : QuickAction(parent), m_output_location(output_location) {}
 
 void GenerateSystemReportAction::scan() {
     setStatus(ActionStatus::Scanning);
@@ -58,26 +57,34 @@ void GenerateSystemReportAction::execute() {
     // Phase 2: OS and hardware
     Q_EMIT executionProgress("Collecting OS and hardware information...", 15);
     report += gatherOsAndHardwareInfo();
-    if (isCancelled()) { emitCancelledResult(QStringLiteral("System report generation cancelled"),
-        start_time); return; }
+    if (isCancelled()) {
+        emitCancelledResult(QStringLiteral("System report generation cancelled"), start_time);
+        return;
+    }
 
     // Phase 3: Storage
     Q_EMIT executionProgress("Collecting storage information...", 40);
     report += gatherStorageInfo();
-    if (isCancelled()) { emitCancelledResult(QStringLiteral("System report generation cancelled"),
-        start_time); return; }
+    if (isCancelled()) {
+        emitCancelledResult(QStringLiteral("System report generation cancelled"), start_time);
+        return;
+    }
 
     // Phase 4: Network
     Q_EMIT executionProgress("Collecting network configuration...", 60);
     report += gatherNetworkInfo();
-    if (isCancelled()) { emitCancelledResult(QStringLiteral("System report generation cancelled"),
-        start_time); return; }
+    if (isCancelled()) {
+        emitCancelledResult(QStringLiteral("System report generation cancelled"), start_time);
+        return;
+    }
 
     // Phase 5: Qt/Volume info
     Q_EMIT executionProgress("Adding supplemental system data...", 80);
     report += gatherQtAndVolumeInfo();
-    if (isCancelled()) { emitCancelledResult(QStringLiteral("System report generation cancelled"),
-        start_time); return; }
+    if (isCancelled()) {
+        emitCancelledResult(QStringLiteral("System report generation cancelled"), start_time);
+        return;
+    }
 
     // Phase 6: Save
     Q_EMIT executionProgress("Saving report...", 95);
@@ -91,19 +98,19 @@ void GenerateSystemReportAction::execute() {
     }
 
     QString filename = QString("SystemReport_%1.txt")
-        .arg(QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss"));
+                           .arg(QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss"));
     QString filepath = output_dir.filePath(filename);
 
     report += QString("─").repeated(78) + "\n";
     report += QString("Report completed in %1 seconds\n")
-        .arg(start_time.msecsTo(QDateTime::currentDateTime()) / 1000.0, 0, 'f', 1);
+                  .arg(start_time.msecsTo(QDateTime::currentDateTime()) / 1000.0, 0, 'f', 1);
 
     saveReportAndFinish(report, filepath, start_time);
 }
 
-void GenerateSystemReportAction::saveReportAndFinish(
-        const QString& report, const QString& filepath, const QDateTime& start_time)
-{
+void GenerateSystemReportAction::saveReportAndFinish(const QString& report,
+                                                     const QString& filepath,
+                                                     const QDateTime& start_time) {
     bool save_success = saveReport(report, filepath);
 
     Q_EMIT executionProgress("Report complete", 100);
@@ -118,12 +125,12 @@ void GenerateSystemReportAction::saveReportAndFinish(
     if (save_success) {
         result.success = true;
         result.message = QString("Comprehensive system report generated: %1")
-            .arg(QFileInfo(filepath).fileName());
+                             .arg(QFileInfo(filepath).fileName());
         result.output_path = filepath;
         result.log = QString("Report saved to: %1\nSize: %2 KB\nDuration: %3 seconds")
-            .arg(filepath)
-            .arg(report.size() / sak::kBytesPerKBf, 0, 'f', 1)
-            .arg(duration_ms / 1000.0, 0, 'f', 1);
+                         .arg(filepath)
+                         .arg(report.size() / sak::kBytesPerKBf, 0, 'f', 1)
+                         .arg(duration_ms / 1000.0, 0, 'f', 1);
     } else {
         result.success = false;
         result.message = "Failed to save system report";
@@ -137,106 +144,103 @@ void GenerateSystemReportAction::saveReportAndFinish(
 // Private Helpers
 // ============================================================================
 
-QString GenerateSystemReportAction::buildReportHeader() const
-{
+QString GenerateSystemReportAction::buildReportHeader() const {
     QString header;
     header += "╔" + QString("═").repeated(78) + "╗\n";
     header += "║" + QString(" COMPREHENSIVE SYSTEM DIAGNOSTIC REPORT").leftJustified(78) + "║\n";
     header += "╚" + QString("═").repeated(78) + "╝\n\n";
-    header += QString("Generated: %1\n\n").arg(QDateTime::currentDateTime().toString("yyyy-MM-dd "
-                                                                                     "HH:mm:ss"));
+    header += QString("Generated: %1\n\n")
+                  .arg(QDateTime::currentDateTime().toString("yyyy-MM-dd "
+                                                             "HH:mm:ss"));
     return header;
 }
 
-QString GenerateSystemReportAction::buildOsInfoScript() const
-{
-    return
-        "$info = Get-ComputerInfo\n"
-        "\n"
-        "Write-Output \"=== OPERATING SYSTEM ===\"\n"
-        "Write-Output \"OS Name: $($info.OsName)\"\n"
-        "Write-Output \"OS Version: $($info.OsVersion)\"\n"
-        "Write-Output \"OS Build: $($info.OsBuildNumber)\"\n"
-        "Write-Output \"OS Architecture: $($info.OsArchitecture)\"\n"
-        "Write-Output \"OS Install Date: $($info.OsInstallDate)\"\n"
-        "Write-Output \"OS Last Boot Time: $($info.OsLastBootUpTime)\"\n"
-        "Write-Output \"OS Uptime: $($info.OsUptime)\"\n"
-        "Write-Output \"Windows Directory: $($info.WindowsDirectory)\"\n"
-        "Write-Output \"System Drive: $($info.WindowsSystemRoot)\"\n"
-        "Write-Output \"\"\n"
-        "\n"
-        "Write-Output \"=== COMPUTER SYSTEM ===\"\n"
-        "Write-Output \"Computer Name: $($info.CsName)\"\n"
-        "Write-Output \"Domain: $($info.CsDomain)\"\n"
-        "Write-Output \"Workgroup: $($info.CsWorkgroup)\"\n"
-        "Write-Output \"Part of Domain: $($info.CsPartOfDomain)\"\n"
-        "Write-Output \"System Type: $($info.CsSystemType)\"\n"
-        "Write-Output \"PC System Type: $($info.CsPCSystemType)\"\n"
-        "Write-Output \"Manufacturer: $($info.CsManufacturer)\"\n"
-        "Write-Output \"Model: $($info.CsModel)\"\n"
-        "Write-Output \"System Family: $($info.CsSystemFamily)\"\n"
-        "Write-Output \"System SKU: $($info.CsSystemSKUNumber)\"\n"
-        "Write-Output \"\"\n"
-        "\n"
-        "Write-Output \"=== PROCESSOR ===\"\n"
-        "Write-Output \"Number of Processors: $($info.CsNumberOfProcessors)\"\n"
-        "Write-Output \"Number of Logical Processors: $($info.CsNumberOfLogicalProcessors)\"\n"
-        "Write-Output \"Processor Name: $($info.CsProcessors[0].Name)\"\n"
-        "Write-Output \"Processor Description: $($info.CsProcessors[0].Description)\"\n"
-        "Write-Output \"Max Clock Speed: $($info.CsProcessors[0].MaxClockSpeed) MHz\"\n"
-        "Write-Output \"Current Clock Speed: $($info.CsProcessors[0].CurrentClockSpeed) MHz\"\n"
-        "Write-Output \"Address Width: $($info.CsProcessors[0].AddressWidth) bit\"\n"
-        "Write-Output \"\"\n";
+QString GenerateSystemReportAction::buildOsInfoScript() const {
+    return "$info = Get-ComputerInfo\n"
+           "\n"
+           "Write-Output \"=== OPERATING SYSTEM ===\"\n"
+           "Write-Output \"OS Name: $($info.OsName)\"\n"
+           "Write-Output \"OS Version: $($info.OsVersion)\"\n"
+           "Write-Output \"OS Build: $($info.OsBuildNumber)\"\n"
+           "Write-Output \"OS Architecture: $($info.OsArchitecture)\"\n"
+           "Write-Output \"OS Install Date: $($info.OsInstallDate)\"\n"
+           "Write-Output \"OS Last Boot Time: $($info.OsLastBootUpTime)\"\n"
+           "Write-Output \"OS Uptime: $($info.OsUptime)\"\n"
+           "Write-Output \"Windows Directory: $($info.WindowsDirectory)\"\n"
+           "Write-Output \"System Drive: $($info.WindowsSystemRoot)\"\n"
+           "Write-Output \"\"\n"
+           "\n"
+           "Write-Output \"=== COMPUTER SYSTEM ===\"\n"
+           "Write-Output \"Computer Name: $($info.CsName)\"\n"
+           "Write-Output \"Domain: $($info.CsDomain)\"\n"
+           "Write-Output \"Workgroup: $($info.CsWorkgroup)\"\n"
+           "Write-Output \"Part of Domain: $($info.CsPartOfDomain)\"\n"
+           "Write-Output \"System Type: $($info.CsSystemType)\"\n"
+           "Write-Output \"PC System Type: $($info.CsPCSystemType)\"\n"
+           "Write-Output \"Manufacturer: $($info.CsManufacturer)\"\n"
+           "Write-Output \"Model: $($info.CsModel)\"\n"
+           "Write-Output \"System Family: $($info.CsSystemFamily)\"\n"
+           "Write-Output \"System SKU: $($info.CsSystemSKUNumber)\"\n"
+           "Write-Output \"\"\n"
+           "\n"
+           "Write-Output \"=== PROCESSOR ===\"\n"
+           "Write-Output \"Number of Processors: $($info.CsNumberOfProcessors)\"\n"
+           "Write-Output \"Number of Logical Processors: $($info.CsNumberOfLogicalProcessors)\"\n"
+           "Write-Output \"Processor Name: $($info.CsProcessors[0].Name)\"\n"
+           "Write-Output \"Processor Description: $($info.CsProcessors[0].Description)\"\n"
+           "Write-Output \"Max Clock Speed: $($info.CsProcessors[0].MaxClockSpeed) MHz\"\n"
+           "Write-Output \"Current Clock Speed: $($info.CsProcessors[0].CurrentClockSpeed) MHz\"\n"
+           "Write-Output \"Address Width: $($info.CsProcessors[0].AddressWidth) bit\"\n"
+           "Write-Output \"\"\n";
 }
 
-QString GenerateSystemReportAction::buildHardwareInfoScript() const
-{
-    return
-        "\n"
-        "Write-Output \"=== MEMORY ===\"\n"
-        "Write-Output \"Total Physical Memory: "
-        "$([math]::Round($info.CsTotalPhysicalMemory / 1GB, 2)) GB\"\n"
-        "Write-Output \"Free Physical Memory: "
-        "$([math]::Round($info.OsFreePhysicalMemory / 1MB, 2)) MB\"\n"
-        "Write-Output \"Total Virtual Memory: "
-        "$([math]::Round($info.OsTotalVirtualMemorySize / 1MB, 2)) MB\"\n"
-        "Write-Output \"Free Virtual Memory: $([math]::Round($info.OsFreeVirtualMemory / 1MB, 2)) "
-        "MB\"\n"
-        "Write-Output \"Page File Size: $([math]::Round($info.OsSizeStoredInPagingFiles / 1MB, 2)) "
-        "MB\"\n"
-        "Write-Output \"\"\n"
-        "\n"
-        "Write-Output \"=== BIOS ===\"\n"
-        "Write-Output \"BIOS Version: $($info.BiosVersion)\"\n"
-        "Write-Output \"BIOS Manufacturer: $($info.BiosManufacturer)\"\n"
-        "Write-Output \"BIOS Release Date: $($info.BiosReleaseDate)\"\n"
-        "Write-Output \"BIOS Serial Number: $($info.BiosSeralNumber)\"\n"
-        "Write-Output \"BIOS UEFI: $($info.BiosFirmwareType)\"\n"
-        "Write-Output \"\"\n"
-        "\n"
-        "Write-Output \"=== TIME ZONE & LOCALE ===\"\n"
-        "Write-Output \"Time Zone: $($info.TimeZone)\"\n"
-        "Write-Output \"Locale: $($info.OsLocale)\"\n"
-        "Write-Output \"UI Language: $($info.OsMuiLanguages -join ', ')\"\n"
-        "Write-Output \"Keyboard Layout: $($info.KeyboardLayout)\"\n"
-        "Write-Output \"\"\n"
-        "\n"
-        "Write-Output \"=== NETWORK ===\"\n"
-        "Write-Output \"Network Adapters: $($info.CsNetworkAdapters.Count)\"\n"
-        "Write-Output \"DNS Host Name: $($info.CsDNSHostName)\"\n"
-        "Write-Output \"Primary Owner Name: $($info.CsPrimaryOwnerName)\"\n"
-        "Write-Output \"\"\n"
-        "\n"
-        "Write-Output \"=== WINDOWS ACTIVATION ===\"\n"
-        "Write-Output \"Product Name: $($info.WindowsProductName)\"\n"
-        "Write-Output \"Product ID: $($info.WindowsProductId)\"\n"
-        "Write-Output \"Edition ID: $($info.WindowsEditionId)\"\n"
-        "Write-Output \"Registered Owner: $($info.WindowsRegisteredOwner)\"\n"
-        "Write-Output \"Registered Organization: $($info.WindowsRegisteredOrganization)\"";
+QString GenerateSystemReportAction::buildHardwareInfoScript() const {
+    return "\n"
+           "Write-Output \"=== MEMORY ===\"\n"
+           "Write-Output \"Total Physical Memory: "
+           "$([math]::Round($info.CsTotalPhysicalMemory / 1GB, 2)) GB\"\n"
+           "Write-Output \"Free Physical Memory: "
+           "$([math]::Round($info.OsFreePhysicalMemory / 1MB, 2)) MB\"\n"
+           "Write-Output \"Total Virtual Memory: "
+           "$([math]::Round($info.OsTotalVirtualMemorySize / 1MB, 2)) MB\"\n"
+           "Write-Output \"Free Virtual Memory: $([math]::Round($info.OsFreeVirtualMemory / 1MB, "
+           "2)) "
+           "MB\"\n"
+           "Write-Output \"Page File Size: $([math]::Round($info.OsSizeStoredInPagingFiles / 1MB, "
+           "2)) "
+           "MB\"\n"
+           "Write-Output \"\"\n"
+           "\n"
+           "Write-Output \"=== BIOS ===\"\n"
+           "Write-Output \"BIOS Version: $($info.BiosVersion)\"\n"
+           "Write-Output \"BIOS Manufacturer: $($info.BiosManufacturer)\"\n"
+           "Write-Output \"BIOS Release Date: $($info.BiosReleaseDate)\"\n"
+           "Write-Output \"BIOS Serial Number: $($info.BiosSeralNumber)\"\n"
+           "Write-Output \"BIOS UEFI: $($info.BiosFirmwareType)\"\n"
+           "Write-Output \"\"\n"
+           "\n"
+           "Write-Output \"=== TIME ZONE & LOCALE ===\"\n"
+           "Write-Output \"Time Zone: $($info.TimeZone)\"\n"
+           "Write-Output \"Locale: $($info.OsLocale)\"\n"
+           "Write-Output \"UI Language: $($info.OsMuiLanguages -join ', ')\"\n"
+           "Write-Output \"Keyboard Layout: $($info.KeyboardLayout)\"\n"
+           "Write-Output \"\"\n"
+           "\n"
+           "Write-Output \"=== NETWORK ===\"\n"
+           "Write-Output \"Network Adapters: $($info.CsNetworkAdapters.Count)\"\n"
+           "Write-Output \"DNS Host Name: $($info.CsDNSHostName)\"\n"
+           "Write-Output \"Primary Owner Name: $($info.CsPrimaryOwnerName)\"\n"
+           "Write-Output \"\"\n"
+           "\n"
+           "Write-Output \"=== WINDOWS ACTIVATION ===\"\n"
+           "Write-Output \"Product Name: $($info.WindowsProductName)\"\n"
+           "Write-Output \"Product ID: $($info.WindowsProductId)\"\n"
+           "Write-Output \"Edition ID: $($info.WindowsEditionId)\"\n"
+           "Write-Output \"Registered Owner: $($info.WindowsRegisteredOwner)\"\n"
+           "Write-Output \"Registered Organization: $($info.WindowsRegisteredOrganization)\"";
 }
 
-QString GenerateSystemReportAction::gatherOsAndHardwareInfo()
-{
+QString GenerateSystemReportAction::gatherOsAndHardwareInfo() {
     QString ps_cmd_info = buildOsInfoScript() + buildHardwareInfoScript();
 
     ProcessResult proc_info = runPowerShell(ps_cmd_info, sak::kTimeoutChocoListMs);
@@ -250,8 +254,7 @@ QString GenerateSystemReportAction::gatherOsAndHardwareInfo()
     return "=== OPERATING SYSTEM ===\nTimeout gathering system info\n\n";
 }
 
-QString GenerateSystemReportAction::gatherStorageInfo()
-{
+QString GenerateSystemReportAction::gatherStorageInfo() {
     QString ps_cmd_storage =
         "Write-Output \"=== STORAGE DEVICES ===\"\n"
         "$disks = Get-PhysicalDisk\n"
@@ -288,8 +291,7 @@ QString GenerateSystemReportAction::gatherStorageInfo()
     return QString();
 }
 
-QString GenerateSystemReportAction::gatherNetworkInfo()
-{
+QString GenerateSystemReportAction::gatherNetworkInfo() {
     QString ps_cmd_network =
         "Write-Output \"=== NETWORK ADAPTERS ===\"\n"
         "$adapters = Get-NetAdapter | Where-Object {$_.Status -eq 'Up'}\n"
@@ -323,8 +325,7 @@ QString GenerateSystemReportAction::gatherNetworkInfo()
     return QString();
 }
 
-QString GenerateSystemReportAction::gatherQtAndVolumeInfo() const
-{
+QString GenerateSystemReportAction::gatherQtAndVolumeInfo() const {
     QString section;
 
     section += "=== QT SYSTEM INFORMATION ===\n\n";
@@ -338,28 +339,32 @@ QString GenerateSystemReportAction::gatherQtAndVolumeInfo() const
 
     section += "=== VOLUME INFORMATION ===\n\n";
     for (const QStorageInfo& storage : QStorageInfo::mountedVolumes()) {
-        if (!storage.isValid() || !storage.isReady()) continue;
+        if (!storage.isValid() || !storage.isReady()) {
+            continue;
+        }
 
         section += QString("Volume: %1\n").arg(storage.rootPath());
         section += QString("  Name: %1\n").arg(storage.name());
         section += QString("  File System: %1\n").arg(QString::fromUtf8(storage.fileSystemType()));
         section += QString("  Device: %1\n").arg(QString::fromUtf8(storage.device()));
-        section += QString("  Total: %1 GB\n").arg(storage.bytesTotal() / sak::kBytesPerGBf, 0,
-            'f', 2);
-        section += QString("  Free: %1 GB\n").arg(storage.bytesFree() / sak::kBytesPerGBf, 0, 'f',
-            2);
+        section +=
+            QString("  Total: %1 GB\n").arg(storage.bytesTotal() / sak::kBytesPerGBf, 0, 'f', 2);
+        section +=
+            QString("  Free: %1 GB\n").arg(storage.bytesFree() / sak::kBytesPerGBf, 0, 'f', 2);
         section += QString("  Available: %1 GB\n")
-            .arg(storage.bytesAvailable() / sak::kBytesPerGBf, 0, 'f', 2);
+                       .arg(storage.bytesAvailable() / sak::kBytesPerGBf, 0, 'f', 2);
         section += QString("  Used: %1%%\n\n")
-            .arg(100.0 * (1.0 - static_cast<double>(storage.bytesFree()) / storage
-                .bytesTotal()), 0, 'f', 1);
+                       .arg(100.0 * (1.0 - static_cast<double>(storage.bytesFree()) /
+                                               storage.bytesTotal()),
+                            0,
+                            'f',
+                            1);
     }
 
     return section;
 }
 
-bool GenerateSystemReportAction::saveReport(const QString& report, const QString& filepath)
-{
+bool GenerateSystemReportAction::saveReport(const QString& report, const QString& filepath) {
     QFile file(filepath);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
         return false;
@@ -372,4 +377,4 @@ bool GenerateSystemReportAction::saveReport(const QString& report, const QString
     return true;
 }
 
-} // namespace sak
+}  // namespace sak

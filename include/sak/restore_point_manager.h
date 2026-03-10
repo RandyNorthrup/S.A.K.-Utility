@@ -53,15 +53,15 @@ Q_SIGNALS:
 
 private:
     static constexpr int kMaxDescriptionLength = 64;
-    static constexpr int kCreateTimeoutMs = 120000;  ///< 2 min timeout
-    static constexpr int kCheckTimeoutMs = 10000;    ///< 10 sec timeout
+    static constexpr int kCreateTimeoutMs = 120'000;  ///< 2 min timeout
+    static constexpr int kCheckTimeoutMs = 10'000;    ///< 10 sec timeout
 };
 
 // ── Compile-Time Invariants ─────────────────────────────────────────────────
 
 static_assert(std::is_base_of_v<QObject, RestorePointManager>,
-    "RestorePointManager must inherit QObject.");
+              "RestorePointManager must inherit QObject.");
 static_assert(!std::is_copy_constructible_v<RestorePointManager>,
-    "RestorePointManager must not be copy-constructible.");
+              "RestorePointManager must not be copy-constructible.");
 
-} // namespace sak
+}  // namespace sak

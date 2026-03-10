@@ -16,9 +16,9 @@
  *   - Tests run without admin privileges.
  */
 
-#include <QtTest>
 #include <QSignalSpy>
 #include <QTemporaryDir>
+#include <QtTest>
 
 #ifdef Q_OS_WIN
 #include <windows.h>
@@ -32,8 +32,7 @@
 // the files we planted in the temp backup directory.
 // ---------------------------------------------------------------------------
 static sak::BackupManifest buildManifest(const QString& username,
-                                         const QVector<sak::FolderSelection>& folders)
-{
+                                         const QVector<sak::FolderSelection>& folders) {
     sak::BackupManifest manifest;
     manifest.version = QStringLiteral("1.0");
     manifest.source_machine = QStringLiteral("TEST-PC");
@@ -56,9 +55,7 @@ static sak::BackupManifest buildManifest(const QString& username,
 // ---------------------------------------------------------------------------
 // Helper: create a standard UserMapping using CreateNewUser (no WinAPI calls).
 // ---------------------------------------------------------------------------
-static sak::UserMapping makeMapping(const QString& srcUser,
-                                    const QString& dstUser = {})
-{
+static sak::UserMapping makeMapping(const QString& srcUser, const QString& dstUser = {}) {
     sak::UserMapping m;
     m.source_username = srcUser;
     m.destination_username = dstUser.isEmpty() ? srcUser : dstUser;
@@ -75,8 +72,7 @@ static sak::FolderSelection makeFolder(sak::FolderType type,
                                        const QString& name,
                                        const QString& relPath,
                                        qint64 sizeBytes,
-                                       int fileCount)
-{
+                                       int fileCount) {
     sak::FolderSelection f;
     f.type = type;
     f.display_name = name;
@@ -90,12 +86,13 @@ static sak::FolderSelection makeFolder(sak::FolderType type,
 // ---------------------------------------------------------------------------
 // Helper: write a text file into an existing directory tree.
 // ---------------------------------------------------------------------------
-static bool writeFile(const QString& path, const QByteArray& content)
-{
+static bool writeFile(const QString& path, const QByteArray& content) {
     QFileInfo info(path);
     QDir().mkpath(info.absolutePath());
     QFile f(path);
-    if (!f.open(QIODevice::WriteOnly)) return false;
+    if (!f.open(QIODevice::WriteOnly)) {
+        return false;
+    }
     f.write(content);
     f.close();
     return true;
@@ -148,13 +145,11 @@ private slots:
 // Setup / Teardown
 // ===========================================================================
 
-void UserProfileRestoreWorkerTests::initTestCase()
-{
+void UserProfileRestoreWorkerTests::initTestCase() {
     m_savedSystemDrive = qgetenv("SystemDrive");
 }
 
-void UserProfileRestoreWorkerTests::cleanupTestCase()
-{
+void UserProfileRestoreWorkerTests::cleanupTestCase() {
     // Restore original SystemDrive
     if (m_savedSystemDrive.isEmpty()) {
         qunsetenv("SystemDrive");
@@ -165,12 +160,10 @@ void UserProfileRestoreWorkerTests::cleanupTestCase()
 
 // ---------------------------------------------------------------------------
 
-void UserProfileRestoreWorkerTests::createBackupTree(
-    QTemporaryDir& backupDir,
-    const QString& username,
-    const QStringList& relativePaths,
-    const QByteArray& fileContent)
-{
+void UserProfileRestoreWorkerTests::createBackupTree(QTemporaryDir& backupDir,
+                                                     const QString& username,
+                                                     const QStringList& relativePaths,
+                                                     const QByteArray& fileContent) {
     // Write manifest.json (content doesn't matter, only existence).
     writeFile(backupDir.path() + QStringLiteral("/manifest.json"), "{}");
 
@@ -185,8 +178,7 @@ void UserProfileRestoreWorkerTests::createBackupTree(
 // Tests — Validation
 // ===========================================================================
 
-void UserProfileRestoreWorkerTests::invalidBackupNoManifest()
-{
+void UserProfileRestoreWorkerTests::invalidBackupNoManifest() {
     QTemporaryDir backupDir;
     QVERIFY(backupDir.isValid());
     // No manifest.json ⇒ should fail immediately.
@@ -202,19 +194,21 @@ void UserProfileRestoreWorkerTests::invalidBackupNoManifest()
     QSignalSpy completeSpy(&worker, &sak::UserProfileRestoreWorker::restoreComplete);
     QVERIFY(completeSpy.isValid());
 
-    worker.startRestore(backupDir.path(), manifest, {mapping},
+    worker.startRestore(backupDir.path(),
+                        manifest,
+                        {mapping},
                         sak::ConflictResolution::SkipDuplicate,
-                        sak::PermissionMode::PreserveOriginal, false);
+                        sak::PermissionMode::PreserveOriginal,
+                        false);
 
     QVERIFY(completeSpy.wait(5000));
     QCOMPARE(completeSpy.count(), 1);
-    QCOMPARE(completeSpy.first().at(0).toBool(), false); // failure
+    QCOMPARE(completeSpy.first().at(0).toBool(), false);  // failure
 }
 
 // ---------------------------------------------------------------------------
 
-void UserProfileRestoreWorkerTests::emptyMappingsCompleteSuccessfully()
-{
+void UserProfileRestoreWorkerTests::emptyMappingsCompleteSuccessfully() {
     QTemporaryDir backupDir;
     QVERIFY(backupDir.isValid());
     writeFile(backupDir.path() + "/manifest.json", "{}");
@@ -230,24 +224,27 @@ void UserProfileRestoreWorkerTests::emptyMappingsCompleteSuccessfully()
     QSignalSpy completeSpy(&worker, &sak::UserProfileRestoreWorker::restoreComplete);
     QVERIFY(completeSpy.isValid());
 
-    worker.startRestore(backupDir.path(), manifest, {},
+    worker.startRestore(backupDir.path(),
+                        manifest,
+                        {},
                         sak::ConflictResolution::SkipDuplicate,
-                        sak::PermissionMode::PreserveOriginal, false);
+                        sak::PermissionMode::PreserveOriginal,
+                        false);
 
     QVERIFY(completeSpy.wait(5000));
     QCOMPARE(completeSpy.count(), 1);
-    QCOMPARE(completeSpy.first().at(0).toBool(), true); // success
+    QCOMPARE(completeSpy.first().at(0).toBool(), true);  // success
 }
 
 // ===========================================================================
 // Tests — Core restore flow
 // ===========================================================================
 
-void UserProfileRestoreWorkerTests::singleFileRestoreSucceeds()
-{
+void UserProfileRestoreWorkerTests::singleFileRestoreSucceeds() {
     QTemporaryDir backupDir;
     QVERIFY(backupDir.isValid());
-    createBackupTree(backupDir, QStringLiteral("TestUser"),
+    createBackupTree(backupDir,
+                     QStringLiteral("TestUser"),
                      {QStringLiteral("Documents/hello.txt")},
                      "hello from backup");
 
@@ -255,8 +252,11 @@ void UserProfileRestoreWorkerTests::singleFileRestoreSucceeds()
     QVERIFY(destDir.isValid());
     qputenv("SystemDrive", destDir.path().toLocal8Bit());
 
-    auto folder = makeFolder(sak::FolderType::Documents, QStringLiteral("Documents"),
-                             QStringLiteral("Documents"), 18, 1);
+    auto folder = makeFolder(sak::FolderType::Documents,
+                             QStringLiteral("Documents"),
+                             QStringLiteral("Documents"),
+                             18,
+                             1);
     auto manifest = buildManifest(QStringLiteral("TestUser"), {folder});
     auto mapping = makeMapping(QStringLiteral("TestUser"));
 
@@ -264,9 +264,12 @@ void UserProfileRestoreWorkerTests::singleFileRestoreSucceeds()
     QSignalSpy completeSpy(&worker, &sak::UserProfileRestoreWorker::restoreComplete);
     QVERIFY(completeSpy.isValid());
 
-    worker.startRestore(backupDir.path(), manifest, {mapping},
+    worker.startRestore(backupDir.path(),
+                        manifest,
+                        {mapping},
                         sak::ConflictResolution::SkipDuplicate,
-                        sak::PermissionMode::PreserveOriginal, false);
+                        sak::PermissionMode::PreserveOriginal,
+                        false);
 
     QVERIFY(completeSpy.wait(5000));
     QCOMPARE(completeSpy.first().at(0).toBool(), true);
@@ -281,30 +284,36 @@ void UserProfileRestoreWorkerTests::singleFileRestoreSucceeds()
 
 // ---------------------------------------------------------------------------
 
-void UserProfileRestoreWorkerTests::unselectedMappingSkipped()
-{
+void UserProfileRestoreWorkerTests::unselectedMappingSkipped() {
     QTemporaryDir backupDir;
     QVERIFY(backupDir.isValid());
-    createBackupTree(backupDir, QStringLiteral("SkippedUser"),
+    createBackupTree(backupDir,
+                     QStringLiteral("SkippedUser"),
                      {QStringLiteral("Documents/file.txt")});
 
     QTemporaryDir destDir;
     QVERIFY(destDir.isValid());
     qputenv("SystemDrive", destDir.path().toLocal8Bit());
 
-    auto folder = makeFolder(sak::FolderType::Documents, QStringLiteral("Documents"),
-                             QStringLiteral("Documents"), 14, 1);
+    auto folder = makeFolder(sak::FolderType::Documents,
+                             QStringLiteral("Documents"),
+                             QStringLiteral("Documents"),
+                             14,
+                             1);
     auto manifest = buildManifest(QStringLiteral("SkippedUser"), {folder});
     auto mapping = makeMapping(QStringLiteral("SkippedUser"));
-    mapping.selected = false; // NOT selected
+    mapping.selected = false;  // NOT selected
 
     sak::UserProfileRestoreWorker worker;
     QSignalSpy completeSpy(&worker, &sak::UserProfileRestoreWorker::restoreComplete);
     QVERIFY(completeSpy.isValid());
 
-    worker.startRestore(backupDir.path(), manifest, {mapping},
+    worker.startRestore(backupDir.path(),
+                        manifest,
+                        {mapping},
                         sak::ConflictResolution::SkipDuplicate,
-                        sak::PermissionMode::PreserveOriginal, false);
+                        sak::PermissionMode::PreserveOriginal,
+                        false);
 
     QVERIFY(completeSpy.wait(5000));
     QCOMPARE(completeSpy.first().at(0).toBool(), true);
@@ -316,8 +325,7 @@ void UserProfileRestoreWorkerTests::unselectedMappingSkipped()
 
 // ---------------------------------------------------------------------------
 
-void UserProfileRestoreWorkerTests::sourceUserNotInManifest()
-{
+void UserProfileRestoreWorkerTests::sourceUserNotInManifest() {
     QTemporaryDir backupDir;
     QVERIFY(backupDir.isValid());
     writeFile(backupDir.path() + "/manifest.json", "{}");
@@ -327,8 +335,8 @@ void UserProfileRestoreWorkerTests::sourceUserNotInManifest()
     qputenv("SystemDrive", destDir.path().toLocal8Bit());
 
     // Manifest has "Alice", mapping asks for "Bob".
-    auto folder = makeFolder(sak::FolderType::Documents, QStringLiteral("Documents"),
-                             QStringLiteral("Documents"), 0, 0);
+    auto folder = makeFolder(
+        sak::FolderType::Documents, QStringLiteral("Documents"), QStringLiteral("Documents"), 0, 0);
     auto manifest = buildManifest(QStringLiteral("Alice"), {folder});
     auto mapping = makeMapping(QStringLiteral("Bob"));
 
@@ -337,9 +345,12 @@ void UserProfileRestoreWorkerTests::sourceUserNotInManifest()
     QSignalSpy logSpy(&worker, &sak::UserProfileRestoreWorker::logMessage);
     QVERIFY(completeSpy.isValid());
 
-    worker.startRestore(backupDir.path(), manifest, {mapping},
+    worker.startRestore(backupDir.path(),
+                        manifest,
+                        {mapping},
                         sak::ConflictResolution::SkipDuplicate,
-                        sak::PermissionMode::PreserveOriginal, false);
+                        sak::PermissionMode::PreserveOriginal,
+                        false);
 
     QVERIFY(completeSpy.wait(5000));
     // Still completes (loops through all mappings), but logs a warning.
@@ -359,11 +370,11 @@ void UserProfileRestoreWorkerTests::sourceUserNotInManifest()
 
 // ---------------------------------------------------------------------------
 
-void UserProfileRestoreWorkerTests::multipleFoldersRestored()
-{
+void UserProfileRestoreWorkerTests::multipleFoldersRestored() {
     QTemporaryDir backupDir;
     QVERIFY(backupDir.isValid());
-    createBackupTree(backupDir, QStringLiteral("MultiUser"),
+    createBackupTree(backupDir,
+                     QStringLiteral("MultiUser"),
                      {QStringLiteral("Documents/doc.txt"),
                       QStringLiteral("Desktop/shortcut.txt"),
                       QStringLiteral("Pictures/photo.jpg")});
@@ -373,12 +384,15 @@ void UserProfileRestoreWorkerTests::multipleFoldersRestored()
     qputenv("SystemDrive", destDir.path().toLocal8Bit());
 
     QVector<sak::FolderSelection> folders;
-    folders.append(makeFolder(sak::FolderType::Documents, QStringLiteral("Documents"),
-                              QStringLiteral("Documents"), 14, 1));
-    folders.append(makeFolder(sak::FolderType::Desktop, QStringLiteral("Desktop"),
-                              QStringLiteral("Desktop"), 14, 1));
-    folders.append(makeFolder(sak::FolderType::Pictures, QStringLiteral("Pictures"),
-                              QStringLiteral("Pictures"), 14, 1));
+    folders.append(makeFolder(sak::FolderType::Documents,
+                              QStringLiteral("Documents"),
+                              QStringLiteral("Documents"),
+                              14,
+                              1));
+    folders.append(makeFolder(
+        sak::FolderType::Desktop, QStringLiteral("Desktop"), QStringLiteral("Desktop"), 14, 1));
+    folders.append(makeFolder(
+        sak::FolderType::Pictures, QStringLiteral("Pictures"), QStringLiteral("Pictures"), 14, 1));
 
     auto manifest = buildManifest(QStringLiteral("MultiUser"), folders);
     auto mapping = makeMapping(QStringLiteral("MultiUser"));
@@ -387,9 +401,12 @@ void UserProfileRestoreWorkerTests::multipleFoldersRestored()
     QSignalSpy completeSpy(&worker, &sak::UserProfileRestoreWorker::restoreComplete);
     QVERIFY(completeSpy.isValid());
 
-    worker.startRestore(backupDir.path(), manifest, {mapping},
+    worker.startRestore(backupDir.path(),
+                        manifest,
+                        {mapping},
                         sak::ConflictResolution::SkipDuplicate,
-                        sak::PermissionMode::PreserveOriginal, false);
+                        sak::PermissionMode::PreserveOriginal,
+                        false);
 
     QVERIFY(completeSpy.wait(5000));
     QCOMPARE(completeSpy.first().at(0).toBool(), true);
@@ -405,11 +422,11 @@ void UserProfileRestoreWorkerTests::multipleFoldersRestored()
 // Tests — Conflict resolution
 // ===========================================================================
 
-void UserProfileRestoreWorkerTests::conflictSkipDuplicate()
-{
+void UserProfileRestoreWorkerTests::conflictSkipDuplicate() {
     QTemporaryDir backupDir;
     QVERIFY(backupDir.isValid());
-    createBackupTree(backupDir, QStringLiteral("CUser"),
+    createBackupTree(backupDir,
+                     QStringLiteral("CUser"),
                      {QStringLiteral("Documents/existing.txt")},
                      "from-backup");
 
@@ -421,8 +438,11 @@ void UserProfileRestoreWorkerTests::conflictSkipDuplicate()
     const QString destFile = destDir.path() + "/Users/CUser/Documents/existing.txt";
     QVERIFY(writeFile(destFile, "original-content"));
 
-    auto folder = makeFolder(sak::FolderType::Documents, QStringLiteral("Documents"),
-                             QStringLiteral("Documents"), 11, 1);
+    auto folder = makeFolder(sak::FolderType::Documents,
+                             QStringLiteral("Documents"),
+                             QStringLiteral("Documents"),
+                             11,
+                             1);
     auto manifest = buildManifest(QStringLiteral("CUser"), {folder});
     auto mapping = makeMapping(QStringLiteral("CUser"));
 
@@ -430,9 +450,12 @@ void UserProfileRestoreWorkerTests::conflictSkipDuplicate()
     QSignalSpy completeSpy(&worker, &sak::UserProfileRestoreWorker::restoreComplete);
     QVERIFY(completeSpy.isValid());
 
-    worker.startRestore(backupDir.path(), manifest, {mapping},
+    worker.startRestore(backupDir.path(),
+                        manifest,
+                        {mapping},
                         sak::ConflictResolution::SkipDuplicate,
-                        sak::PermissionMode::PreserveOriginal, false);
+                        sak::PermissionMode::PreserveOriginal,
+                        false);
 
     QVERIFY(completeSpy.wait(5000));
     QCOMPARE(completeSpy.first().at(0).toBool(), true);
@@ -445,11 +468,11 @@ void UserProfileRestoreWorkerTests::conflictSkipDuplicate()
 
 // ---------------------------------------------------------------------------
 
-void UserProfileRestoreWorkerTests::conflictRenameWithSuffix()
-{
+void UserProfileRestoreWorkerTests::conflictRenameWithSuffix() {
     QTemporaryDir backupDir;
     QVERIFY(backupDir.isValid());
-    createBackupTree(backupDir, QStringLiteral("RUser"),
+    createBackupTree(backupDir,
+                     QStringLiteral("RUser"),
                      {QStringLiteral("Documents/report.txt")},
                      "backup-version");
 
@@ -460,8 +483,11 @@ void UserProfileRestoreWorkerTests::conflictRenameWithSuffix()
     const QString destBase = destDir.path() + "/Users/RUser/Documents/";
     QVERIFY(writeFile(destBase + "report.txt", "existing-version"));
 
-    auto folder = makeFolder(sak::FolderType::Documents, QStringLiteral("Documents"),
-                             QStringLiteral("Documents"), 14, 1);
+    auto folder = makeFolder(sak::FolderType::Documents,
+                             QStringLiteral("Documents"),
+                             QStringLiteral("Documents"),
+                             14,
+                             1);
     auto manifest = buildManifest(QStringLiteral("RUser"), {folder});
     auto mapping = makeMapping(QStringLiteral("RUser"));
 
@@ -469,9 +495,12 @@ void UserProfileRestoreWorkerTests::conflictRenameWithSuffix()
     QSignalSpy completeSpy(&worker, &sak::UserProfileRestoreWorker::restoreComplete);
     QVERIFY(completeSpy.isValid());
 
-    worker.startRestore(backupDir.path(), manifest, {mapping},
+    worker.startRestore(backupDir.path(),
+                        manifest,
+                        {mapping},
                         sak::ConflictResolution::RenameWithSuffix,
-                        sak::PermissionMode::PreserveOriginal, false);
+                        sak::PermissionMode::PreserveOriginal,
+                        false);
 
     QVERIFY(completeSpy.wait(5000));
     QCOMPARE(completeSpy.first().at(0).toBool(), true);
@@ -491,11 +520,11 @@ void UserProfileRestoreWorkerTests::conflictRenameWithSuffix()
 
 // ---------------------------------------------------------------------------
 
-void UserProfileRestoreWorkerTests::conflictKeepNewer()
-{
+void UserProfileRestoreWorkerTests::conflictKeepNewer() {
     QTemporaryDir backupDir;
     QVERIFY(backupDir.isValid());
-    createBackupTree(backupDir, QStringLiteral("NUser"),
+    createBackupTree(backupDir,
+                     QStringLiteral("NUser"),
                      {QStringLiteral("Documents/data.txt")},
                      "newer-from-backup");
 
@@ -519,10 +548,13 @@ void UserProfileRestoreWorkerTests::conflictKeepNewer()
     // be *newer*. Let's backdate the dest file instead.
 #ifdef Q_OS_WIN
     {
-        HANDLE hFile = CreateFileW(
-            reinterpret_cast<LPCWSTR>(destFile.utf16()),
-            FILE_WRITE_ATTRIBUTES, FILE_SHARE_READ, nullptr,
-            OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        HANDLE hFile = CreateFileW(reinterpret_cast<LPCWSTR>(destFile.utf16()),
+                                   FILE_WRITE_ATTRIBUTES,
+                                   FILE_SHARE_READ,
+                                   nullptr,
+                                   OPEN_EXISTING,
+                                   FILE_ATTRIBUTE_NORMAL,
+                                   nullptr);
         if (hFile != INVALID_HANDLE_VALUE) {
             // Set to 2020-01-01 00:00:00 UTC
             FILETIME ft;
@@ -534,8 +566,11 @@ void UserProfileRestoreWorkerTests::conflictKeepNewer()
     }
 #endif
 
-    auto folder = makeFolder(sak::FolderType::Documents, QStringLiteral("Documents"),
-                             QStringLiteral("Documents"), 17, 1);
+    auto folder = makeFolder(sak::FolderType::Documents,
+                             QStringLiteral("Documents"),
+                             QStringLiteral("Documents"),
+                             17,
+                             1);
     auto manifest = buildManifest(QStringLiteral("NUser"), {folder});
     auto mapping = makeMapping(QStringLiteral("NUser"));
 
@@ -543,9 +578,12 @@ void UserProfileRestoreWorkerTests::conflictKeepNewer()
     QSignalSpy completeSpy(&worker, &sak::UserProfileRestoreWorker::restoreComplete);
     QVERIFY(completeSpy.isValid());
 
-    worker.startRestore(backupDir.path(), manifest, {mapping},
+    worker.startRestore(backupDir.path(),
+                        manifest,
+                        {mapping},
                         sak::ConflictResolution::KeepNewer,
-                        sak::PermissionMode::PreserveOriginal, false);
+                        sak::PermissionMode::PreserveOriginal,
+                        false);
 
     QVERIFY(completeSpy.wait(5000));
     QCOMPARE(completeSpy.first().at(0).toBool(), true);
@@ -558,12 +596,12 @@ void UserProfileRestoreWorkerTests::conflictKeepNewer()
 
 // ---------------------------------------------------------------------------
 
-void UserProfileRestoreWorkerTests::conflictKeepLarger()
-{
+void UserProfileRestoreWorkerTests::conflictKeepLarger() {
     QTemporaryDir backupDir;
     QVERIFY(backupDir.isValid());
     // Backup has a LARGE file.
-    createBackupTree(backupDir, QStringLiteral("LUser"),
+    createBackupTree(backupDir,
+                     QStringLiteral("LUser"),
                      {QStringLiteral("Documents/big.dat")},
                      QByteArray(5000, 'X'));
 
@@ -575,8 +613,11 @@ void UserProfileRestoreWorkerTests::conflictKeepLarger()
     const QString destFile = destDir.path() + "/Users/LUser/Documents/big.dat";
     QVERIFY(writeFile(destFile, "tiny"));
 
-    auto folder = makeFolder(sak::FolderType::Documents, QStringLiteral("Documents"),
-                             QStringLiteral("Documents"), 5000, 1);
+    auto folder = makeFolder(sak::FolderType::Documents,
+                             QStringLiteral("Documents"),
+                             QStringLiteral("Documents"),
+                             5000,
+                             1);
     auto manifest = buildManifest(QStringLiteral("LUser"), {folder});
     auto mapping = makeMapping(QStringLiteral("LUser"));
 
@@ -584,9 +625,12 @@ void UserProfileRestoreWorkerTests::conflictKeepLarger()
     QSignalSpy completeSpy(&worker, &sak::UserProfileRestoreWorker::restoreComplete);
     QVERIFY(completeSpy.isValid());
 
-    worker.startRestore(backupDir.path(), manifest, {mapping},
+    worker.startRestore(backupDir.path(),
+                        manifest,
+                        {mapping},
                         sak::ConflictResolution::KeepLarger,
-                        sak::PermissionMode::PreserveOriginal, false);
+                        sak::PermissionMode::PreserveOriginal,
+                        false);
 
     QVERIFY(completeSpy.wait(5000));
     QCOMPARE(completeSpy.first().at(0).toBool(), true);
@@ -601,11 +645,11 @@ void UserProfileRestoreWorkerTests::conflictKeepLarger()
 
 // ---------------------------------------------------------------------------
 
-void UserProfileRestoreWorkerTests::conflictPromptUserAutoRenames()
-{
+void UserProfileRestoreWorkerTests::conflictPromptUserAutoRenames() {
     QTemporaryDir backupDir;
     QVERIFY(backupDir.isValid());
-    createBackupTree(backupDir, QStringLiteral("PUser"),
+    createBackupTree(backupDir,
+                     QStringLiteral("PUser"),
                      {QStringLiteral("Documents/notes.txt")},
                      "backup-notes");
 
@@ -616,8 +660,11 @@ void UserProfileRestoreWorkerTests::conflictPromptUserAutoRenames()
     const QString destBase = destDir.path() + "/Users/PUser/Documents/";
     QVERIFY(writeFile(destBase + "notes.txt", "existing-notes"));
 
-    auto folder = makeFolder(sak::FolderType::Documents, QStringLiteral("Documents"),
-                             QStringLiteral("Documents"), 12, 1);
+    auto folder = makeFolder(sak::FolderType::Documents,
+                             QStringLiteral("Documents"),
+                             QStringLiteral("Documents"),
+                             12,
+                             1);
     auto manifest = buildManifest(QStringLiteral("PUser"), {folder});
     auto mapping = makeMapping(QStringLiteral("PUser"));
 
@@ -625,9 +672,12 @@ void UserProfileRestoreWorkerTests::conflictPromptUserAutoRenames()
     QSignalSpy completeSpy(&worker, &sak::UserProfileRestoreWorker::restoreComplete);
     QVERIFY(completeSpy.isValid());
 
-    worker.startRestore(backupDir.path(), manifest, {mapping},
+    worker.startRestore(backupDir.path(),
+                        manifest,
+                        {mapping},
                         sak::ConflictResolution::PromptUser,
-                        sak::PermissionMode::PreserveOriginal, false);
+                        sak::PermissionMode::PreserveOriginal,
+                        false);
 
     QVERIFY(completeSpy.wait(5000));
     QCOMPARE(completeSpy.first().at(0).toBool(), true);
@@ -649,8 +699,7 @@ void UserProfileRestoreWorkerTests::conflictPromptUserAutoRenames()
 // Tests — Cancellation
 // ===========================================================================
 
-void UserProfileRestoreWorkerTests::cancelBeforeRestoreEmitsCancel()
-{
+void UserProfileRestoreWorkerTests::cancelBeforeRestoreEmitsCancel() {
     QTemporaryDir backupDir;
     QVERIFY(backupDir.isValid());
     writeFile(backupDir.path() + "/manifest.json", "{}");
@@ -658,8 +707,8 @@ void UserProfileRestoreWorkerTests::cancelBeforeRestoreEmitsCancel()
     // Create many files to increase the chance cancellation takes effect.
     const QString username = QStringLiteral("CancelUser");
     for (int i = 0; i < 100; ++i) {
-        writeFile(backupDir.path() + "/" + username + "/Documents/file" +
-                  QString::number(i) + ".txt",
+        writeFile(backupDir.path() + "/" + username + "/Documents/file" + QString::number(i) +
+                      ".txt",
                   QByteArray(1024, 'A'));
     }
 
@@ -667,8 +716,11 @@ void UserProfileRestoreWorkerTests::cancelBeforeRestoreEmitsCancel()
     QVERIFY(destDir.isValid());
     qputenv("SystemDrive", destDir.path().toLocal8Bit());
 
-    auto folder = makeFolder(sak::FolderType::Documents, QStringLiteral("Documents"),
-                             QStringLiteral("Documents"), 102400, 100);
+    auto folder = makeFolder(sak::FolderType::Documents,
+                             QStringLiteral("Documents"),
+                             QStringLiteral("Documents"),
+                             102'400,
+                             100);
     auto manifest = buildManifest(username, {folder});
     auto mapping = makeMapping(username);
 
@@ -676,9 +728,12 @@ void UserProfileRestoreWorkerTests::cancelBeforeRestoreEmitsCancel()
     QSignalSpy completeSpy(&worker, &sak::UserProfileRestoreWorker::restoreComplete);
     QVERIFY(completeSpy.isValid());
 
-    worker.startRestore(backupDir.path(), manifest, {mapping},
+    worker.startRestore(backupDir.path(),
+                        manifest,
+                        {mapping},
                         sak::ConflictResolution::SkipDuplicate,
-                        sak::PermissionMode::PreserveOriginal, false);
+                        sak::PermissionMode::PreserveOriginal,
+                        false);
 
     // Immediately cancel.
     worker.cancel();
@@ -698,19 +753,21 @@ void UserProfileRestoreWorkerTests::cancelBeforeRestoreEmitsCancel()
 // Tests — Signals
 // ===========================================================================
 
-void UserProfileRestoreWorkerTests::restoreCompleteSignalEmitted()
-{
+void UserProfileRestoreWorkerTests::restoreCompleteSignalEmitted() {
     QTemporaryDir backupDir;
     QVERIFY(backupDir.isValid());
-    createBackupTree(backupDir, QStringLiteral("SigUser"),
-                     {QStringLiteral("Documents/sig.txt")}, "signal-test");
+    createBackupTree(
+        backupDir, QStringLiteral("SigUser"), {QStringLiteral("Documents/sig.txt")}, "signal-test");
 
     QTemporaryDir destDir;
     QVERIFY(destDir.isValid());
     qputenv("SystemDrive", destDir.path().toLocal8Bit());
 
-    auto folder = makeFolder(sak::FolderType::Documents, QStringLiteral("Documents"),
-                             QStringLiteral("Documents"), 11, 1);
+    auto folder = makeFolder(sak::FolderType::Documents,
+                             QStringLiteral("Documents"),
+                             QStringLiteral("Documents"),
+                             11,
+                             1);
     auto manifest = buildManifest(QStringLiteral("SigUser"), {folder});
     auto mapping = makeMapping(QStringLiteral("SigUser"));
 
@@ -720,16 +777,19 @@ void UserProfileRestoreWorkerTests::restoreCompleteSignalEmitted()
     QVERIFY(completeSpy.isValid());
     QVERIFY(statusSpy.isValid());
 
-    worker.startRestore(backupDir.path(), manifest, {mapping},
+    worker.startRestore(backupDir.path(),
+                        manifest,
+                        {mapping},
                         sak::ConflictResolution::SkipDuplicate,
-                        sak::PermissionMode::PreserveOriginal, false);
+                        sak::PermissionMode::PreserveOriginal,
+                        false);
 
     QVERIFY(completeSpy.wait(5000));
     QCOMPARE(completeSpy.count(), 1);
 
     auto args = completeSpy.first();
     QCOMPARE(args.at(0).toBool(), true);
-    QVERIFY(!args.at(1).toString().isEmpty()); // summary message
+    QVERIFY(!args.at(1).toString().isEmpty());  // summary message
 
     // statusUpdate should have been emitted at least once.
     QVERIFY(statusSpy.count() >= 1);
@@ -737,19 +797,18 @@ void UserProfileRestoreWorkerTests::restoreCompleteSignalEmitted()
 
 // ---------------------------------------------------------------------------
 
-void UserProfileRestoreWorkerTests::logMessageSignalEmitted()
-{
+void UserProfileRestoreWorkerTests::logMessageSignalEmitted() {
     QTemporaryDir backupDir;
     QVERIFY(backupDir.isValid());
-    createBackupTree(backupDir, QStringLiteral("LogUser"),
-                     {QStringLiteral("Documents/log.txt")}, "log-test");
+    createBackupTree(
+        backupDir, QStringLiteral("LogUser"), {QStringLiteral("Documents/log.txt")}, "log-test");
 
     QTemporaryDir destDir;
     QVERIFY(destDir.isValid());
     qputenv("SystemDrive", destDir.path().toLocal8Bit());
 
-    auto folder = makeFolder(sak::FolderType::Documents, QStringLiteral("Documents"),
-                             QStringLiteral("Documents"), 8, 1);
+    auto folder = makeFolder(
+        sak::FolderType::Documents, QStringLiteral("Documents"), QStringLiteral("Documents"), 8, 1);
     auto manifest = buildManifest(QStringLiteral("LogUser"), {folder});
     auto mapping = makeMapping(QStringLiteral("LogUser"));
 
@@ -759,9 +818,12 @@ void UserProfileRestoreWorkerTests::logMessageSignalEmitted()
     QVERIFY(completeSpy.isValid());
     QVERIFY(logSpy.isValid());
 
-    worker.startRestore(backupDir.path(), manifest, {mapping},
+    worker.startRestore(backupDir.path(),
+                        manifest,
+                        {mapping},
                         sak::ConflictResolution::SkipDuplicate,
-                        sak::PermissionMode::PreserveOriginal, false);
+                        sak::PermissionMode::PreserveOriginal,
+                        false);
 
     QVERIFY(completeSpy.wait(5000));
 

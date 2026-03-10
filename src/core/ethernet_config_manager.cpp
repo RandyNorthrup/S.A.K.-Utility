@@ -20,18 +20,17 @@ namespace sak {
 
 // ── EthernetConfigSnapshot ──────────────────────────────────────────────────
 
-QJsonObject EthernetConfigSnapshot::toJson() const
-{
+QJsonObject EthernetConfigSnapshot::toJson() const {
     QJsonObject obj;
-    obj["adapterName"]    = adapterName;
-    obj["description"]    = description;
-    obj["macAddress"]     = macAddress;
-    obj["dhcpEnabled"]    = dhcpEnabled;
-    obj["ipv4Address"]    = ipv4Address;
+    obj["adapterName"] = adapterName;
+    obj["description"] = description;
+    obj["macAddress"] = macAddress;
+    obj["dhcpEnabled"] = dhcpEnabled;
+    obj["ipv4Address"] = ipv4Address;
     obj["ipv4SubnetMask"] = ipv4SubnetMask;
-    obj["ipv4Gateway"]    = ipv4Gateway;
+    obj["ipv4Gateway"] = ipv4Gateway;
     obj["backupTimestamp"] = backupTimestamp;
-    obj["computerName"]   = computerName;
+    obj["computerName"] = computerName;
 
     QJsonArray dnsArray;
     for (const auto& dns : ipv4DnsServers) {
@@ -42,18 +41,18 @@ QJsonObject EthernetConfigSnapshot::toJson() const
     return obj;
 }
 
-EthernetConfigSnapshot EthernetConfigSnapshot::fromJson(const QJsonObject& obj)
-{
+EthernetConfigSnapshot EthernetConfigSnapshot::fromJson(const QJsonObject& obj) {
+    Q_ASSERT(!obj.isEmpty());
     EthernetConfigSnapshot snap;
-    snap.adapterName    = obj["adapterName"].toString();
-    snap.description    = obj["description"].toString();
-    snap.macAddress     = obj["macAddress"].toString();
-    snap.dhcpEnabled    = obj["dhcpEnabled"].toBool();
-    snap.ipv4Address    = obj["ipv4Address"].toString();
+    snap.adapterName = obj["adapterName"].toString();
+    snap.description = obj["description"].toString();
+    snap.macAddress = obj["macAddress"].toString();
+    snap.dhcpEnabled = obj["dhcpEnabled"].toBool();
+    snap.ipv4Address = obj["ipv4Address"].toString();
     snap.ipv4SubnetMask = obj["ipv4SubnetMask"].toString();
-    snap.ipv4Gateway    = obj["ipv4Gateway"].toString();
+    snap.ipv4Gateway = obj["ipv4Gateway"].toString();
     snap.backupTimestamp = obj["backupTimestamp"].toString();
-    snap.computerName   = obj["computerName"].toString();
+    snap.computerName = obj["computerName"].toString();
 
     const auto dnsArray = obj["ipv4DnsServers"].toArray();
     for (const auto& val : dnsArray) {
@@ -63,25 +62,20 @@ EthernetConfigSnapshot EthernetConfigSnapshot::fromJson(const QJsonObject& obj)
     return snap;
 }
 
-bool EthernetConfigSnapshot::isValid() const
-{
+bool EthernetConfigSnapshot::isValid() const {
     return !adapterName.isEmpty() && !backupTimestamp.isEmpty();
 }
 
 // ── EthernetConfigManager ───────────────────────────────────────────────────
 
-EthernetConfigManager::EthernetConfigManager(QObject* parent)
-    : QObject(parent)
-{
-}
+EthernetConfigManager::EthernetConfigManager(QObject* parent) : QObject(parent) {}
 
-EthernetConfigSnapshot EthernetConfigManager::captureSettings(
-    const QString& adapterName)
-{
+EthernetConfigSnapshot EthernetConfigManager::captureSettings(const QString& adapterName) {
+    Q_ASSERT(!adapterName.isEmpty());
     Q_EMIT logOutput(QString("Capturing settings for adapter: %1").arg(adapterName));
 
-    QString output = runNetsh({"interface", "ip", "show", "config",
-                               QString("name=%1").arg(adapterName)});
+    QString output =
+        runNetsh({"interface", "ip", "show", "config", QString("name=%1").arg(adapterName)});
 
     if (output.isEmpty()) {
         Q_EMIT errorOccurred(
@@ -94,8 +88,8 @@ EthernetConfigSnapshot EthernetConfigManager::captureSettings(
     snapshot.computerName = QSysInfo::machineHostName();
 
     // Get MAC address via separate netsh call
-    QString macOutput = runNetsh({"interface", "show", "interface",
-                                  QString("name=%1").arg(adapterName)});
+    QString macOutput =
+        runNetsh({"interface", "show", "interface", QString("name=%1").arg(adapterName)});
     // MAC is typically available from getmac or adapter inspector
     // We'll use the adapter name as the identifier instead
     if (snapshot.adapterName.isEmpty()) {
@@ -111,10 +105,8 @@ EthernetConfigSnapshot EthernetConfigManager::captureSettings(
     return snapshot;
 }
 
-bool EthernetConfigManager::saveToFile(
-    const EthernetConfigSnapshot& snapshot,
-    const QString& filePath)
-{
+bool EthernetConfigManager::saveToFile(const EthernetConfigSnapshot& snapshot,
+                                       const QString& filePath) {
     if (!snapshot.isValid()) {
         Q_EMIT errorOccurred("Cannot save invalid snapshot.");
         return false;
@@ -122,16 +114,14 @@ bool EthernetConfigManager::saveToFile(
 
     QFile file(filePath);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
-        Q_EMIT errorOccurred(
-            QString("Cannot write to file: %1").arg(filePath));
+        Q_EMIT errorOccurred(QString("Cannot write to file: %1").arg(filePath));
         return false;
     }
 
     QJsonDocument doc(snapshot.toJson());
     const QByteArray data = doc.toJson(QJsonDocument::Indented);
     if (file.write(data) != data.size()) {
-        Q_EMIT errorOccurred(
-            QString("Incomplete write to file: %1").arg(filePath));
+        Q_EMIT errorOccurred(QString("Incomplete write to file: %1").arg(filePath));
         return false;
     }
     file.close();
@@ -140,13 +130,11 @@ bool EthernetConfigManager::saveToFile(
     return true;
 }
 
-EthernetConfigSnapshot EthernetConfigManager::loadFromFile(
-    const QString& filePath)
-{
+EthernetConfigSnapshot EthernetConfigManager::loadFromFile(const QString& filePath) {
+    Q_ASSERT(!filePath.isEmpty());
     QFile file(filePath);
     if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        Q_EMIT errorOccurred(
-            QString("Cannot read file: %1").arg(filePath));
+        Q_EMIT errorOccurred(QString("Cannot read file: %1").arg(filePath));
         return {};
     }
 
@@ -172,32 +160,31 @@ EthernetConfigSnapshot EthernetConfigManager::loadFromFile(
     }
 
     Q_EMIT logOutput(QString("Loaded backup from: %1 (captured on %2 at %3)")
-                         .arg(filePath, snapshot.computerName,
-                              snapshot.backupTimestamp));
+                         .arg(filePath, snapshot.computerName, snapshot.backupTimestamp));
     return snapshot;
 }
 
-bool EthernetConfigManager::restoreSettings(
-    const EthernetConfigSnapshot& snapshot,
-    const QString& adapterName)
-{
+bool EthernetConfigManager::restoreSettings(const EthernetConfigSnapshot& snapshot,
+                                            const QString& adapterName) {
     if (!snapshot.isValid()) {
         Q_EMIT errorOccurred("Cannot restore from invalid snapshot.");
         return false;
     }
 
     Q_EMIT logOutput(QString("Restoring settings to adapter: %1").arg(adapterName));
-    Q_EMIT logOutput(QString("Source: %1 (backed up from %2 on %3)")
-                         .arg(snapshot.adapterName,
-                              snapshot.computerName,
-                              snapshot.backupTimestamp));
+    Q_EMIT logOutput(
+        QString("Source: %1 (backed up from %2 on %3)")
+            .arg(snapshot.adapterName, snapshot.computerName, snapshot.backupTimestamp));
 
     bool allSucceeded = true;
 
     if (snapshot.dhcpEnabled) {
         // Restore DHCP mode
         Q_EMIT logOutput("Setting adapter to DHCP mode...");
-        QString result = runNetsh({"interface", "ip", "set", "address",
+        QString result = runNetsh({"interface",
+                                   "ip",
+                                   "set",
+                                   "address",
                                    QString("name=%1").arg(adapterName),
                                    "source=dhcp"});
         if (result.contains("error", Qt::CaseInsensitive)) {
@@ -206,25 +193,29 @@ bool EthernetConfigManager::restoreSettings(
         }
 
         // Also set DNS to DHCP
-        static_cast<void>(runNetsh({"interface", "ip", "set", "dnsservers",
+        static_cast<void>(runNetsh({"interface",
+                                    "ip",
+                                    "set",
+                                    "dnsservers",
                                     QString("name=%1").arg(adapterName),
                                     "source=dhcp"}));
     } else {
         // Restore static IP configuration
-        Q_EMIT logOutput(QString("Setting static IP: %1 / %2 / %3")
-                             .arg(snapshot.ipv4Address,
-                                  snapshot.ipv4SubnetMask,
-                                  snapshot.ipv4Gateway));
+        Q_EMIT logOutput(
+            QString("Setting static IP: %1 / %2 / %3")
+                .arg(snapshot.ipv4Address, snapshot.ipv4SubnetMask, snapshot.ipv4Gateway));
 
-        QStringList addressArgs = {"interface", "ip", "set", "address",
+        QStringList addressArgs = {"interface",
+                                   "ip",
+                                   "set",
+                                   "address",
                                    QString("name=%1").arg(adapterName),
                                    "source=static",
                                    QString("addr=%1").arg(snapshot.ipv4Address),
                                    QString("mask=%1").arg(snapshot.ipv4SubnetMask)};
 
         if (!snapshot.ipv4Gateway.isEmpty()) {
-            addressArgs << QString("gateway=%1").arg(snapshot.ipv4Gateway)
-                        << "gwmetric=0";
+            addressArgs << QString("gateway=%1").arg(snapshot.ipv4Gateway) << "gwmetric=0";
         }
 
         QString result = runNetsh(addressArgs);
@@ -237,10 +228,12 @@ bool EthernetConfigManager::restoreSettings(
     // Restore DNS servers
     if (!snapshot.ipv4DnsServers.isEmpty()) {
         // Set primary DNS
-        Q_EMIT logOutput(QString("Setting primary DNS: %1")
-                             .arg(snapshot.ipv4DnsServers.first()));
+        Q_EMIT logOutput(QString("Setting primary DNS: %1").arg(snapshot.ipv4DnsServers.first()));
 
-        QString result = runNetsh({"interface", "ip", "set", "dnsservers",
+        QString result = runNetsh({"interface",
+                                   "ip",
+                                   "set",
+                                   "dnsservers",
                                    QString("name=%1").arg(adapterName),
                                    "source=static",
                                    QString("addr=%1").arg(snapshot.ipv4DnsServers.first()),
@@ -252,17 +245,18 @@ bool EthernetConfigManager::restoreSettings(
 
         // Add additional DNS servers
         for (int i = 1; i < snapshot.ipv4DnsServers.size(); ++i) {
-            Q_EMIT logOutput(QString("Adding DNS server: %1")
-                                 .arg(snapshot.ipv4DnsServers[i]));
+            Q_EMIT logOutput(QString("Adding DNS server: %1").arg(snapshot.ipv4DnsServers[i]));
 
-            result = runNetsh({"interface", "ip", "add", "dnsservers",
+            result = runNetsh({"interface",
+                               "ip",
+                               "add",
+                               "dnsservers",
                                QString("name=%1").arg(adapterName),
                                QString("addr=%1").arg(snapshot.ipv4DnsServers[i]),
                                QString("index=%1").arg(i + 1)});
             if (result.contains("error", Qt::CaseInsensitive)) {
-                Q_EMIT errorOccurred(
-                    QString("Failed to add DNS server %1: %2")
-                        .arg(snapshot.ipv4DnsServers[i], result));
+                Q_EMIT errorOccurred(QString("Failed to add DNS server %1: %2")
+                                         .arg(snapshot.ipv4DnsServers[i], result));
                 allSucceeded = false;
             }
         }
@@ -277,8 +271,7 @@ bool EthernetConfigManager::restoreSettings(
     return allSucceeded;
 }
 
-QStringList EthernetConfigManager::listEthernetAdapters()
-{
+QStringList EthernetConfigManager::listEthernetAdapters() {
     QStringList adapters;
 
     QString output = runNetsh({"interface", "show", "interface"});
@@ -297,7 +290,9 @@ QStringList EthernetConfigManager::listEthernetAdapters()
             pastHeader = true;
             continue;
         }
-        if (!pastHeader) continue;
+        if (!pastHeader) {
+            continue;
+        }
 
         // Parse columns — name is the last field, may contain spaces
         // Format: "Enabled  Connected  Dedicated  Ethernet"
@@ -320,22 +315,20 @@ QStringList EthernetConfigManager::listEthernetAdapters()
 
 // ── Private ─────────────────────────────────────────────────────────────────
 
-QString EthernetConfigManager::runNetsh(const QStringList& args)
-{
+QString EthernetConfigManager::runNetsh(const QStringList& args) {
+    Q_ASSERT(!args.isEmpty());
     QProcess proc;
     proc.setProgram("netsh.exe");
     proc.setArguments(args);
     proc.start();
 
     if (!proc.waitForStarted(5000)) {
-        Q_EMIT errorOccurred(
-            QString("Failed to start netsh: netsh %1").arg(args.join(' ')));
+        Q_EMIT errorOccurred(QString("Failed to start netsh: netsh %1").arg(args.join(' ')));
         return {};
     }
 
-    if (!proc.waitForFinished(10000)) {
-        Q_EMIT errorOccurred(
-            QString("netsh command timed out: netsh %1").arg(args.join(' ')));
+    if (!proc.waitForFinished(10'000)) {
+        Q_EMIT errorOccurred(QString("netsh command timed out: netsh %1").arg(args.join(' ')));
         return {};
     }
 
@@ -349,9 +342,8 @@ QString EthernetConfigManager::runNetsh(const QStringList& args)
     return QString::fromLocal8Bit(proc.readAllStandardOutput());
 }
 
-EthernetConfigSnapshot EthernetConfigManager::parseNetshConfig(
-    const QString& output, const QString& adapterName)
-{
+EthernetConfigSnapshot EthernetConfigManager::parseNetshConfig(const QString& output,
+                                                               const QString& adapterName) {
     EthernetConfigSnapshot snap;
     snap.adapterName = adapterName;
 
@@ -373,10 +365,8 @@ EthernetConfigSnapshot EthernetConfigManager::parseNetshConfig(
             }
         } else if (line.startsWith("Default Gateway:", Qt::CaseInsensitive)) {
             snap.ipv4Gateway = line.mid(line.indexOf(':') + 1).trimmed();
-        } else if (line.startsWith("Statically Configured DNS Servers:",
-                                    Qt::CaseInsensitive)
-                   || line.startsWith("DNS Servers configured through DHCP:",
-                                       Qt::CaseInsensitive)) {
+        } else if (line.startsWith("Statically Configured DNS Servers:", Qt::CaseInsensitive) ||
+                   line.startsWith("DNS Servers configured through DHCP:", Qt::CaseInsensitive)) {
             QString dns = line.mid(line.indexOf(':') + 1).trimmed();
             if (!dns.isEmpty()) {
                 snap.ipv4DnsServers.append(dns);
@@ -411,4 +401,4 @@ EthernetConfigSnapshot EthernetConfigManager::parseNetshConfig(
     return snap;
 }
 
-} // namespace sak
+}  // namespace sak

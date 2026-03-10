@@ -11,33 +11,31 @@
  */
 
 #include "sak/linux_iso_download_dialog.h"
-#include "sak/format_utils.h"
-#include "sak/linux_iso_downloader.h"
-#include "sak/style_constants.h"
-#include "sak/layout_constants.h"
-#include "sak/logger.h"
 
-#include <QVBoxLayout>
-#include <QHBoxLayout>
+#include "sak/format_utils.h"
+#include "sak/layout_constants.h"
+#include "sak/linux_iso_downloader.h"
+#include "sak/logger.h"
+#include "sak/style_constants.h"
+
+#include <QDesktopServices>
+#include <QDir>
+#include <QFileDialog>
 #include <QGridLayout>
 #include <QGroupBox>
-#include <QSplitter>
-#include <QFileDialog>
-#include <QStandardPaths>
+#include <QHBoxLayout>
 #include <QMessageBox>
-#include <QDir>
-#include <QDesktopServices>
+#include <QSplitter>
+#include <QStandardPaths>
 #include <QUrl>
+#include <QVBoxLayout>
 
 // ============================================================================
 // Construction
 // ============================================================================
 
-LinuxISODownloadDialog::LinuxISODownloadDialog(LinuxISODownloader* downloader,
-                                               QWidget* parent)
-    : QDialog(parent)
-    , m_downloader(downloader)
-{
+LinuxISODownloadDialog::LinuxISODownloadDialog(LinuxISODownloader* downloader, QWidget* parent)
+    : QDialog(parent), m_downloader(downloader) {
     setWindowTitle("Download Linux ISO");
     setModal(true);
     resize(sak::kIsoDialogWidthLin, sak::kIsoDialogHeightLin);
@@ -55,16 +53,18 @@ LinuxISODownloadDialog::~LinuxISODownloadDialog() = default;
 // UI Setup
 // ============================================================================
 
-void LinuxISODownloadDialog::setupUi()
-{
+void LinuxISODownloadDialog::setupUi() {
     Q_ASSERT(!objectName().isEmpty() || true);  // widget valid
     auto* mainLayout = new QVBoxLayout(this);
     setupUi_selectionGroup(mainLayout);
     setupUi_progressAndButtons(mainLayout);
 }
 
-void LinuxISODownloadDialog::setupUi_selectionGroup(QVBoxLayout* mainLayout)
-{
+void LinuxISODownloadDialog::setupUi_selectionGroup(QVBoxLayout* mainLayout) {
+    Q_ASSERT(m_distroDescriptionLabel);
+    Q_ASSERT(m_distroVersionLabel);
+    Q_ASSERT(m_categoryCombo);
+    Q_ASSERT(m_distroListWidget);
     // ---- Distribution Selection ----
     auto* selectionGroup = new QGroupBox("Select Distribution", this);
     auto* selectionLayout = new QVBoxLayout(selectionGroup);
@@ -124,8 +124,11 @@ void LinuxISODownloadDialog::setupUi_selectionGroup(QVBoxLayout* mainLayout)
     mainLayout->addWidget(selectionGroup);
 }
 
-void LinuxISODownloadDialog::setupUi_progressAndButtons(QVBoxLayout* mainLayout)
-{
+void LinuxISODownloadDialog::setupUi_progressAndButtons(QVBoxLayout* mainLayout) {
+    Q_ASSERT(m_progressBar);
+    Q_ASSERT(m_startButton);
+    Q_ASSERT(m_saveLocationEdit);
+    Q_ASSERT(m_phaseLabel);
     // ---- Save Location ----
     auto* saveGroup = new QGroupBox("Save Location", this);
     auto* saveLayout = new QHBoxLayout(saveGroup);
@@ -188,50 +191,66 @@ void LinuxISODownloadDialog::setupUi_progressAndButtons(QVBoxLayout* mainLayout)
 // Signal Connections
 // ============================================================================
 
-void LinuxISODownloadDialog::connectSignals()
-{
+void LinuxISODownloadDialog::connectSignals() {
     // UI actions
-    connect(m_categoryCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
-            this, &LinuxISODownloadDialog::onCategoryChanged);
-    connect(m_distroListWidget, &QListWidget::currentRowChanged,
-            this, [this](int) { onDistroSelected(); });
-    connect(m_browseSaveButton, &QPushButton::clicked,
-            this, &LinuxISODownloadDialog::onBrowseSaveLocation);
-    connect(m_startButton, &QPushButton::clicked,
-            this, &LinuxISODownloadDialog::onStartDownload);
-    connect(m_cancelButton, &QPushButton::clicked,
-            this, &LinuxISODownloadDialog::onCancelDownload);
-    connect(m_closeButton, &QPushButton::clicked,
-            this, &QDialog::reject);
-    connect(m_saveLocationEdit, &QLineEdit::textChanged,
-            this, [this](const QString&) { updateStartButton(); });
+    connect(m_categoryCombo,
+            QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this,
+            &LinuxISODownloadDialog::onCategoryChanged);
+    connect(m_distroListWidget, &QListWidget::currentRowChanged, this, [this](int) {
+        onDistroSelected();
+    });
+    connect(m_browseSaveButton,
+            &QPushButton::clicked,
+            this,
+            &LinuxISODownloadDialog::onBrowseSaveLocation);
+    connect(m_startButton, &QPushButton::clicked, this, &LinuxISODownloadDialog::onStartDownload);
+    connect(m_cancelButton, &QPushButton::clicked, this, &LinuxISODownloadDialog::onCancelDownload);
+    connect(m_closeButton, &QPushButton::clicked, this, &QDialog::reject);
+    connect(m_saveLocationEdit, &QLineEdit::textChanged, this, [this](const QString&) {
+        updateStartButton();
+    });
 
     // Downloader signals
-    connect(m_downloader, &LinuxISODownloader::phaseChanged,
-            this, &LinuxISODownloadDialog::onPhaseChanged);
-    connect(m_downloader, &LinuxISODownloader::progressUpdated,
-            this, &LinuxISODownloadDialog::onProgressUpdated);
-    connect(m_downloader, &LinuxISODownloader::speedUpdated,
-            this, &LinuxISODownloadDialog::onSpeedUpdated);
-    connect(m_downloader, &LinuxISODownloader::downloadComplete,
-            this, &LinuxISODownloadDialog::onDownloadComplete);
-    connect(m_downloader, &LinuxISODownloader::downloadError,
-            this, &LinuxISODownloadDialog::onDownloadError);
-    connect(m_downloader, &LinuxISODownloader::statusMessage,
-            this, &LinuxISODownloadDialog::onStatusMessage);
+    connect(m_downloader,
+            &LinuxISODownloader::phaseChanged,
+            this,
+            &LinuxISODownloadDialog::onPhaseChanged);
+    connect(m_downloader,
+            &LinuxISODownloader::progressUpdated,
+            this,
+            &LinuxISODownloadDialog::onProgressUpdated);
+    connect(m_downloader,
+            &LinuxISODownloader::speedUpdated,
+            this,
+            &LinuxISODownloadDialog::onSpeedUpdated);
+    connect(m_downloader,
+            &LinuxISODownloader::downloadComplete,
+            this,
+            &LinuxISODownloadDialog::onDownloadComplete);
+    connect(m_downloader,
+            &LinuxISODownloader::downloadError,
+            this,
+            &LinuxISODownloadDialog::onDownloadError);
+    connect(m_downloader,
+            &LinuxISODownloader::statusMessage,
+            this,
+            &LinuxISODownloadDialog::onStatusMessage);
 }
 
 // ============================================================================
 // Category & Distro Selection
 // ============================================================================
 
-void LinuxISODownloadDialog::onCategoryChanged(int /*index*/)
-{
+void LinuxISODownloadDialog::onCategoryChanged(int /*index*/) {
     populateDistroList();
 }
 
-void LinuxISODownloadDialog::populateDistroList()
-{
+void LinuxISODownloadDialog::populateDistroList() {
+    Q_ASSERT(m_downloader);
+    Q_ASSERT(m_distroDescriptionLabel);
+    Q_ASSERT(m_distroListWidget);
+    Q_ASSERT(m_categoryCombo);
     m_distroListWidget->clear();
     m_currentDistros.clear();
 
@@ -246,9 +265,11 @@ void LinuxISODownloadDialog::populateDistroList()
     }
 
     for (const auto& distro : m_currentDistros) {
-        QString label = QString("%1  —  %2").arg(distro.name, distro.versionLabel.isEmpty()
-            ? distro.version
-            : QString("%1 (%2)").arg(distro.version, distro.versionLabel));
+        QString label = QString("%1  —  %2")
+                            .arg(distro.name,
+                                 distro.versionLabel.isEmpty()
+                                     ? distro.version
+                                     : QString("%1 (%2)").arg(distro.version, distro.versionLabel));
         m_distroListWidget->addItem(label);
     }
 
@@ -263,8 +284,9 @@ void LinuxISODownloadDialog::populateDistroList()
     updateStartButton();
 }
 
-void LinuxISODownloadDialog::onDistroSelected()
-{
+void LinuxISODownloadDialog::onDistroSelected() {
+    Q_ASSERT(m_distroListWidget);
+    Q_ASSERT(m_downloader);
     int row = m_distroListWidget->currentRow();
     if (row < 0 || row >= m_currentDistros.size()) {
         m_selectedDistroId.clear();
@@ -280,18 +302,24 @@ void LinuxISODownloadDialog::onDistroSelected()
     // Set default save path using the distro's expected filename
     QString fileName = m_downloader->catalog()->resolveFileName(distro);
     if (!fileName.isEmpty()) {
+        Q_ASSERT(m_saveLocationEdit);
         m_saveLocationEdit->setText(getDefaultSavePath(fileName));
     }
 
     updateStartButton();
 }
 
-void LinuxISODownloadDialog::updateDistroDetails()
-{
-    if (m_selectedDistroId.isEmpty()) return;
+void LinuxISODownloadDialog::updateDistroDetails() {
+    Q_ASSERT(m_downloader);
+    Q_ASSERT(m_distroDescriptionLabel);
+    if (m_selectedDistroId.isEmpty()) {
+        return;
+    }
 
     auto distro = m_downloader->catalog()->distroById(m_selectedDistroId);
-    if (distro.id.isEmpty()) return;
+    if (distro.id.isEmpty()) {
+        return;
+    }
 
     m_distroDescriptionLabel->setText(distro.description);
 
@@ -304,12 +332,11 @@ void LinuxISODownloadDialog::updateDistroDetails()
     }
     m_distroVersionLabel->setText(versionText);
 
-    m_distroSizeLabel->setText(QString("Approximate size: %1")
-        .arg(formatSize(distro.approximateSize)));
+    m_distroSizeLabel->setText(
+        QString("Approximate size: %1").arg(formatSize(distro.approximateSize)));
 
     if (!distro.homepage.isEmpty()) {
-        m_distroHomepageLabel->setText(
-            QString("<a href=\"%1\">%1</a>").arg(distro.homepage));
+        m_distroHomepageLabel->setText(QString("<a href=\"%1\">%1</a>").arg(distro.homepage));
     } else {
         m_distroHomepageLabel->clear();
     }
@@ -319,8 +346,8 @@ void LinuxISODownloadDialog::updateDistroDetails()
 // Save Location
 // ============================================================================
 
-void LinuxISODownloadDialog::onBrowseSaveLocation()
-{
+void LinuxISODownloadDialog::onBrowseSaveLocation() {
+    Q_ASSERT(m_saveLocationEdit);
     QString current = m_saveLocationEdit->text();
     if (current.isEmpty()) {
         current = getDefaultSavePath("linux.iso");
@@ -329,10 +356,10 @@ void LinuxISODownloadDialog::onBrowseSaveLocation()
     // Determine file filter based on selected distro
     QString filter = "ISO Files (*.iso);;Compressed Images (*.iso.gz *.img);;All Files (*.*)";
 
-    QString filePath = QFileDialog::getSaveFileName(
-        this, "Save Linux ISO", current, filter);
+    QString filePath = QFileDialog::getSaveFileName(this, "Save Linux ISO", current, filter);
 
     if (!filePath.isEmpty()) {
+        Q_ASSERT(m_saveLocationEdit);
         m_saveLocationEdit->setText(filePath);
     }
 }
@@ -341,36 +368,40 @@ void LinuxISODownloadDialog::onBrowseSaveLocation()
 // Start Download
 // ============================================================================
 
-void LinuxISODownloadDialog::onStartDownload()
-{
+void LinuxISODownloadDialog::onStartDownload() {
+    Q_ASSERT(m_saveLocationEdit);
+    Q_ASSERT(m_startButton);
     if (m_selectedDistroId.isEmpty()) {
-        QMessageBox::warning(this, "No Distribution Selected",
+        QMessageBox::warning(this,
+                             "No Distribution Selected",
                              "Please select a distribution to download.");
         return;
     }
 
     QString savePath = m_saveLocationEdit->text().trimmed();
     if (savePath.isEmpty()) {
-        QMessageBox::warning(this, "No Save Path",
-                             "Please specify where to save the ISO.");
+        QMessageBox::warning(this, "No Save Path", "Please specify where to save the ISO.");
         return;
     }
 
     // Ensure parent directory exists
     const QString save_dir = QFileInfo(savePath).absolutePath();
     if (!QDir().mkpath(save_dir)) {
-        sak::logWarning("Failed to create download directory: {}",
-                        save_dir.toStdString());
+        sak::logWarning("Failed to create download directory: {}", save_dir.toStdString());
     }
 
     // Check for existing file
     if (QFile::exists(savePath)) {
-        auto reply = QMessageBox::question(this, "File Exists",
-            QString("The file already exists:\n\n%1\n\n"
-                    "Do you want to overwrite it?").arg(savePath),
-            QMessageBox::Yes | QMessageBox::No);
+        auto reply = QMessageBox::question(this,
+                                           "File Exists",
+                                           QString("The file already exists:\n\n%1\n\n"
+                                                   "Do you want to overwrite it?")
+                                               .arg(savePath),
+                                           QMessageBox::Yes | QMessageBox::No);
 
-        if (reply != QMessageBox::Yes) return;
+        if (reply != QMessageBox::Yes) {
+            return;
+        }
     }
 
     m_isDownloading = true;
@@ -389,34 +420,33 @@ void LinuxISODownloadDialog::onStartDownload()
 // ============================================================================
 
 void LinuxISODownloadDialog::onPhaseChanged(LinuxISODownloader::Phase phase,
-                                            const QString& description)
-{
+                                            const QString& description) {
     // A11Y: prefix phase text so status is conveyed without relying on color alone
     switch (phase) {
     case LinuxISODownloader::Phase::ResolvingVersion:
-        m_phaseLabel->setStyleSheet(QString("font-weight: bold; color: %1;")
-            .arg(sak::ui::kColorAccentPurple));
-        m_phaseLabel->setText(QStringLiteral("\u2699 ") + description); // ⚙
+        m_phaseLabel->setStyleSheet(
+            QString("font-weight: bold; color: %1;").arg(sak::ui::kColorAccentPurple));
+        m_phaseLabel->setText(QStringLiteral("\u2699 ") + description);  // ⚙
         break;
     case LinuxISODownloader::Phase::Downloading:
-        m_phaseLabel->setStyleSheet(QString("font-weight: bold; color: %1;")
-            .arg(sak::ui::kColorAccentEmerald));
-        m_phaseLabel->setText(QStringLiteral("\u2B07 ") + description); // ⬇
+        m_phaseLabel->setStyleSheet(
+            QString("font-weight: bold; color: %1;").arg(sak::ui::kColorAccentEmerald));
+        m_phaseLabel->setText(QStringLiteral("\u2B07 ") + description);  // ⬇
         break;
     case LinuxISODownloader::Phase::VerifyingChecksum:
-        m_phaseLabel->setStyleSheet(QString("font-weight: bold; color: %1;")
-            .arg(sak::ui::kStatusColorWarning));
-        m_phaseLabel->setText(QStringLiteral("\u23F3 ") + description); // ⏳
+        m_phaseLabel->setStyleSheet(
+            QString("font-weight: bold; color: %1;").arg(sak::ui::kStatusColorWarning));
+        m_phaseLabel->setText(QStringLiteral("\u23F3 ") + description);  // ⏳
         break;
     case LinuxISODownloader::Phase::Completed:
-        m_phaseLabel->setStyleSheet(QString("font-weight: bold; color: %1;")
-            .arg(sak::ui::kStatusColorSuccess));
-        m_phaseLabel->setText(QStringLiteral("\u2714 ") + description); // ✔
+        m_phaseLabel->setStyleSheet(
+            QString("font-weight: bold; color: %1;").arg(sak::ui::kStatusColorSuccess));
+        m_phaseLabel->setText(QStringLiteral("\u2714 ") + description);  // ✔
         break;
     case LinuxISODownloader::Phase::Failed:
-        m_phaseLabel->setStyleSheet(QString("font-weight: bold; color: %1;")
-            .arg(sak::ui::kStatusColorError));
-        m_phaseLabel->setText(QStringLiteral("\u2718 ") + description); // ✘
+        m_phaseLabel->setStyleSheet(
+            QString("font-weight: bold; color: %1;").arg(sak::ui::kStatusColorError));
+        m_phaseLabel->setText(QStringLiteral("\u2718 ") + description);  // ✘
         break;
     default:
         m_phaseLabel->setStyleSheet("font-weight: bold;");
@@ -424,22 +454,20 @@ void LinuxISODownloadDialog::onPhaseChanged(LinuxISODownloader::Phase phase,
     }
 }
 
-void LinuxISODownloadDialog::onProgressUpdated(int percent, const QString& detail)
-{
+void LinuxISODownloadDialog::onProgressUpdated(int percent, const QString& detail) {
     m_progressBar->setValue(percent);
     m_detailLabel->setText(detail);
 }
 
-void LinuxISODownloadDialog::onSpeedUpdated(double speedMBps)
-{
+void LinuxISODownloadDialog::onSpeedUpdated(double speedMBps) {
     if (speedMBps > 0.01) {
         m_speedLabel->setText(QString("%1 MB/s").arg(speedMBps, 0, 'f', 1));
     }
 }
 
-void LinuxISODownloadDialog::onDownloadComplete(const QString& isoPath,
-                                                qint64 fileSize)
-{
+void LinuxISODownloadDialog::onDownloadComplete(const QString& isoPath, qint64 fileSize) {
+    Q_ASSERT(m_progressBar);
+    Q_ASSERT(m_speedLabel);
     m_downloadedFilePath = isoPath;
     m_isDownloading = false;
 
@@ -451,21 +479,23 @@ void LinuxISODownloadDialog::onDownloadComplete(const QString& isoPath,
     QString sizeStr = formatSize(fileSize);
     m_statusLabel->setText(QString("Download complete! (%1)").arg(sizeStr));
     m_phaseLabel->setText("Complete!");
-    m_phaseLabel->setStyleSheet(QString("font-weight: bold; color: %1;")
-        .arg(sak::ui::kStatusColorSuccess));
+    m_phaseLabel->setStyleSheet(
+        QString("font-weight: bold; color: %1;").arg(sak::ui::kStatusColorSuccess));
 
-    QMessageBox::information(this, "Download Complete",
-        QString("Linux ISO downloaded successfully!\n\n"
-                "Saved to: %1\nSize: %2\n\n"
-                "Click OK to use this image.")
-            .arg(isoPath, sizeStr));
+    QMessageBox::information(this,
+                             "Download Complete",
+                             QString("Linux ISO downloaded successfully!\n\n"
+                                     "Saved to: %1\nSize: %2\n\n"
+                                     "Click OK to use this image.")
+                                 .arg(isoPath, sizeStr));
 
     Q_EMIT downloadCompleted(isoPath);
     accept();
 }
 
-void LinuxISODownloadDialog::onDownloadError(const QString& error)
-{
+void LinuxISODownloadDialog::onDownloadError(const QString& error) {
+    Q_ASSERT(m_statusLabel);
+    Q_ASSERT(m_cancelButton);
     m_isDownloading = false;
 
     m_statusLabel->setText(QString("Error: %1").arg(error));
@@ -473,16 +503,16 @@ void LinuxISODownloadDialog::onDownloadError(const QString& error)
     setInputsEnabled(true);
     updateStartButton();
 
-    sak::logError("Linux ISO download failed: {}",
-                  error.toStdString());
-    QMessageBox::critical(this, "Download Error",
-        QString("Failed to download Linux ISO:\n\n%1\n\n"
-                "Please check your internet connection and try again.")
-            .arg(error));
+    sak::logError("Linux ISO download failed: {}", error.toStdString());
+    QMessageBox::critical(this,
+                          "Download Error",
+                          QString("Failed to download Linux ISO:\n\n%1\n\n"
+                                  "Please check your internet connection and try again.")
+                              .arg(error));
 }
 
-void LinuxISODownloadDialog::onStatusMessage(const QString& message)
-{
+void LinuxISODownloadDialog::onStatusMessage(const QString& message) {
+    Q_ASSERT(m_statusLabel);
     m_statusLabel->setText(message);
 }
 
@@ -490,12 +520,14 @@ void LinuxISODownloadDialog::onStatusMessage(const QString& message)
 // Cancel
 // ============================================================================
 
-void LinuxISODownloadDialog::onCancelDownload()
-{
-    auto reply = QMessageBox::question(this, "Cancel Download",
-        "Are you sure you want to cancel the download? "
-        "Partial files will be removed.",
-        QMessageBox::Yes | QMessageBox::No);
+void LinuxISODownloadDialog::onCancelDownload() {
+    Q_ASSERT(m_downloader);
+    Q_ASSERT(m_statusLabel);
+    auto reply = QMessageBox::question(this,
+                                       "Cancel Download",
+                                       "Are you sure you want to cancel the download? "
+                                       "Partial files will be removed.",
+                                       QMessageBox::Yes | QMessageBox::No);
 
     if (reply == QMessageBox::Yes) {
         m_downloader->cancel();
@@ -515,31 +547,27 @@ void LinuxISODownloadDialog::onCancelDownload()
 // Helpers
 // ============================================================================
 
-void LinuxISODownloadDialog::updateStartButton()
-{
-    bool ready = !m_isDownloading
-                 && !m_selectedDistroId.isEmpty()
-                 && !m_saveLocationEdit->text().trimmed().isEmpty();
+void LinuxISODownloadDialog::updateStartButton() {
+    bool ready = !m_isDownloading && !m_selectedDistroId.isEmpty() &&
+                 !m_saveLocationEdit->text().trimmed().isEmpty();
     m_startButton->setEnabled(ready);
 }
 
-void LinuxISODownloadDialog::setInputsEnabled(bool enabled)
-{
+void LinuxISODownloadDialog::setInputsEnabled(bool enabled) {
     m_categoryCombo->setEnabled(enabled);
     m_distroListWidget->setEnabled(enabled);
     m_saveLocationEdit->setEnabled(enabled);
     m_browseSaveButton->setEnabled(enabled);
 }
 
-QString LinuxISODownloadDialog::getDefaultSavePath(const QString& fileName) const
-{
-    QString downloads =
-        QStandardPaths::writableLocation(QStandardPaths::DownloadLocation);
+QString LinuxISODownloadDialog::getDefaultSavePath(const QString& fileName) const {
+    QString downloads = QStandardPaths::writableLocation(QStandardPaths::DownloadLocation);
     return QDir(downloads).filePath(fileName);
 }
 
-QString LinuxISODownloadDialog::formatSize(qint64 bytes)
-{
-    if (bytes <= 0) return QStringLiteral("Unknown");
+QString LinuxISODownloadDialog::formatSize(qint64 bytes) {
+    if (bytes <= 0) {
+        return QStringLiteral("Unknown");
+    }
     return sak::formatBytes(bytes);
 }

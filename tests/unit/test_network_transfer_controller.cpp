@@ -16,10 +16,10 @@
  * side-effects via QSignalSpy.
  */
 
-#include <QtTest>
-#include <QSignalSpy>
-
 #include "sak/network_transfer_controller.h"
+
+#include <QSignalSpy>
+#include <QtTest>
 
 using Mode = sak::NetworkTransferController::Mode;
 
@@ -73,14 +73,12 @@ private slots:
 // Initial state
 // ===========================================================================
 
-void NetworkTransferControllerTests::defaultModeIsIdle()
-{
+void NetworkTransferControllerTests::defaultModeIsIdle() {
     sak::NetworkTransferController ctrl;
     QCOMPARE(ctrl.mode(), Mode::Idle);
 }
 
-void NetworkTransferControllerTests::defaultSettingsAreEmpty()
-{
+void NetworkTransferControllerTests::defaultSettingsAreEmpty() {
     sak::NetworkTransferController ctrl;
     const auto s = ctrl.settings();
     // Default-constructed TransferSettings — verify defaults are set appropriately.
@@ -92,33 +90,31 @@ void NetworkTransferControllerTests::defaultSettingsAreEmpty()
 // Configuration
 // ===========================================================================
 
-void NetworkTransferControllerTests::configureRoundTrip()
-{
+void NetworkTransferControllerTests::configureRoundTrip() {
     sak::NetworkTransferController ctrl;
 
     sak::TransferSettings ts;
-    ts.encryption_enabled   = true;
-    ts.compression_enabled  = true;
-    ts.control_port         = 12345;
-    ts.data_port            = 12346;
-    ts.discovery_port       = 12347;
-    ts.max_bandwidth_kbps   = 5000;
+    ts.encryption_enabled = true;
+    ts.compression_enabled = true;
+    ts.control_port = 12'345;
+    ts.data_port = 12'346;
+    ts.discovery_port = 12'347;
+    ts.max_bandwidth_kbps = 5000;
     ts.auto_discovery_enabled = false;
 
     ctrl.configure(ts);
     const auto out = ctrl.settings();
 
-    QCOMPARE(out.encryption_enabled,    true);
-    QCOMPARE(out.compression_enabled,   true);
-    QCOMPARE(out.control_port,          static_cast<quint16>(12345));
-    QCOMPARE(out.data_port,             static_cast<quint16>(12346));
-    QCOMPARE(out.discovery_port,        static_cast<quint16>(12347));
-    QCOMPARE(out.max_bandwidth_kbps,    5000);
+    QCOMPARE(out.encryption_enabled, true);
+    QCOMPARE(out.compression_enabled, true);
+    QCOMPARE(out.control_port, static_cast<quint16>(12'345));
+    QCOMPARE(out.data_port, static_cast<quint16>(12'346));
+    QCOMPARE(out.discovery_port, static_cast<quint16>(12'347));
+    QCOMPARE(out.max_bandwidth_kbps, 5000);
     QCOMPARE(out.auto_discovery_enabled, false);
 }
 
-void NetworkTransferControllerTests::configureOverwrite()
-{
+void NetworkTransferControllerTests::configureOverwrite() {
     sak::NetworkTransferController ctrl;
 
     sak::TransferSettings ts1;
@@ -139,16 +135,14 @@ void NetworkTransferControllerTests::configureOverwrite()
 // stop()
 // ===========================================================================
 
-void NetworkTransferControllerTests::stopFromIdleIsNoOp()
-{
+void NetworkTransferControllerTests::stopFromIdleIsNoOp() {
     sak::NetworkTransferController ctrl;
     // Should not crash or produce signals when already Idle.
     ctrl.stop();
     QCOMPARE(ctrl.mode(), Mode::Idle);
 }
 
-void NetworkTransferControllerTests::stopIsIdempotent()
-{
+void NetworkTransferControllerTests::stopIsIdempotent() {
     sak::NetworkTransferController ctrl;
     ctrl.stop();
     ctrl.stop();
@@ -160,8 +154,7 @@ void NetworkTransferControllerTests::stopIsIdempotent()
 // approveTransfer() guard
 // ===========================================================================
 
-void NetworkTransferControllerTests::approveTransferWrongModeIsNoOp()
-{
+void NetworkTransferControllerTests::approveTransferWrongModeIsNoOp() {
     sak::NetworkTransferController ctrl;
 
     // No crash, no error when called in Idle mode.
@@ -180,8 +173,7 @@ void NetworkTransferControllerTests::approveTransferWrongModeIsNoOp()
 // pauseTransfer / resumeTransfer
 // ===========================================================================
 
-void NetworkTransferControllerTests::pauseEmitsStatus()
-{
+void NetworkTransferControllerTests::pauseEmitsStatus() {
     sak::NetworkTransferController ctrl;
     QSignalSpy statusSpy(&ctrl, &sak::NetworkTransferController::statusMessage);
     QVERIFY(statusSpy.isValid());
@@ -192,20 +184,18 @@ void NetworkTransferControllerTests::pauseEmitsStatus()
     QVERIFY(statusSpy.first().at(0).toString().contains("paused", Qt::CaseInsensitive));
 }
 
-void NetworkTransferControllerTests::pauseIsIdempotent()
-{
+void NetworkTransferControllerTests::pauseIsIdempotent() {
     sak::NetworkTransferController ctrl;
     QSignalSpy statusSpy(&ctrl, &sak::NetworkTransferController::statusMessage);
     QVERIFY(statusSpy.isValid());
 
     ctrl.pauseTransfer();
-    ctrl.pauseTransfer();  // Second call should be a no-op.
+    ctrl.pauseTransfer();            // Second call should be a no-op.
 
     QCOMPARE(statusSpy.count(), 1);  // Only one "paused" message.
 }
 
-void NetworkTransferControllerTests::resumeWhenNotPausedIsNoOp()
-{
+void NetworkTransferControllerTests::resumeWhenNotPausedIsNoOp() {
     sak::NetworkTransferController ctrl;
     QSignalSpy statusSpy(&ctrl, &sak::NetworkTransferController::statusMessage);
     QVERIFY(statusSpy.isValid());
@@ -219,8 +209,7 @@ void NetworkTransferControllerTests::resumeWhenNotPausedIsNoOp()
 // cancelTransfer
 // ===========================================================================
 
-void NetworkTransferControllerTests::cancelFromIdleIsNoOp()
-{
+void NetworkTransferControllerTests::cancelFromIdleIsNoOp() {
     sak::NetworkTransferController ctrl;
     QSignalSpy statusSpy(&ctrl, &sak::NetworkTransferController::statusMessage);
     QVERIFY(statusSpy.isValid());
@@ -236,33 +225,29 @@ void NetworkTransferControllerTests::cancelFromIdleIsNoOp()
 // updateBandwidthLimit
 // ===========================================================================
 
-void NetworkTransferControllerTests::bandwidthLimitClampsNegative()
-{
+void NetworkTransferControllerTests::bandwidthLimitClampsNegative() {
     sak::NetworkTransferController ctrl;
     ctrl.updateBandwidthLimit(-500);
     QCOMPARE(ctrl.settings().max_bandwidth_kbps, 0);
 }
 
-void NetworkTransferControllerTests::bandwidthLimitAcceptsZero()
-{
+void NetworkTransferControllerTests::bandwidthLimitAcceptsZero() {
     sak::NetworkTransferController ctrl;
     ctrl.updateBandwidthLimit(0);
     QCOMPARE(ctrl.settings().max_bandwidth_kbps, 0);
 }
 
-void NetworkTransferControllerTests::bandwidthLimitAcceptsPositive()
-{
+void NetworkTransferControllerTests::bandwidthLimitAcceptsPositive() {
     sak::NetworkTransferController ctrl;
-    ctrl.updateBandwidthLimit(10000);
-    QCOMPARE(ctrl.settings().max_bandwidth_kbps, 10000);
+    ctrl.updateBandwidthLimit(10'000);
+    QCOMPARE(ctrl.settings().max_bandwidth_kbps, 10'000);
 }
 
 // ===========================================================================
 // mode() accessor
 // ===========================================================================
 
-void NetworkTransferControllerTests::modeReturnsIdle()
-{
+void NetworkTransferControllerTests::modeReturnsIdle() {
     sak::NetworkTransferController ctrl;
     QCOMPARE(ctrl.mode(), Mode::Idle);
 }
@@ -271,18 +256,17 @@ void NetworkTransferControllerTests::modeReturnsIdle()
 // startDestination integration
 // ===========================================================================
 
-void NetworkTransferControllerTests::startDestinationSetsModeAndEmitsStatus()
-{
+void NetworkTransferControllerTests::startDestinationSetsModeAndEmitsStatus() {
     sak::NetworkTransferController ctrl;
 
     // Use high port numbers to avoid conflicts, disable auto-discovery
     // to prevent UDP broadcasts during tests.
     sak::TransferSettings ts;
-    ts.control_port           = 49200;
-    ts.data_port              = 49201;
-    ts.discovery_port         = 49202;
+    ts.control_port = 49'200;
+    ts.data_port = 49'201;
+    ts.discovery_port = 49'202;
     ts.auto_discovery_enabled = false;
-    ts.encryption_enabled     = false;
+    ts.encryption_enabled = false;
     ctrl.configure(ts);
 
     QSignalSpy statusSpy(&ctrl, &sak::NetworkTransferController::statusMessage);
@@ -307,16 +291,15 @@ void NetworkTransferControllerTests::startDestinationSetsModeAndEmitsStatus()
     QCOMPARE(ctrl.mode(), Mode::Idle);
 }
 
-void NetworkTransferControllerTests::startDestinationThenStopReturnsToIdle()
-{
+void NetworkTransferControllerTests::startDestinationThenStopReturnsToIdle() {
     sak::NetworkTransferController ctrl;
 
     sak::TransferSettings ts;
-    ts.control_port           = 49210;
-    ts.data_port              = 49211;
-    ts.discovery_port         = 49212;
+    ts.control_port = 49'210;
+    ts.data_port = 49'211;
+    ts.discovery_port = 49'212;
     ts.auto_discovery_enabled = false;
-    ts.encryption_enabled     = false;
+    ts.encryption_enabled = false;
     ctrl.configure(ts);
 
     ctrl.startDestination(QStringLiteral("pass"), QDir::tempPath());
@@ -330,16 +313,15 @@ void NetworkTransferControllerTests::startDestinationThenStopReturnsToIdle()
 // cancelTransfer in Destination mode
 // ===========================================================================
 
-void NetworkTransferControllerTests::cancelTransferInDestinationClearsState()
-{
+void NetworkTransferControllerTests::cancelTransferInDestinationClearsState() {
     sak::NetworkTransferController ctrl;
 
     sak::TransferSettings ts;
-    ts.control_port           = 49220;
-    ts.data_port              = 49221;
-    ts.discovery_port         = 49222;
+    ts.control_port = 49'220;
+    ts.data_port = 49'221;
+    ts.discovery_port = 49'222;
     ts.auto_discovery_enabled = false;
-    ts.encryption_enabled     = false;
+    ts.encryption_enabled = false;
     ctrl.configure(ts);
 
     ctrl.startDestination(QStringLiteral("pass"), QDir::tempPath());
@@ -370,8 +352,7 @@ void NetworkTransferControllerTests::cancelTransferInDestinationClearsState()
 // pauseTransfer + resumeTransfer round-trip
 // ===========================================================================
 
-void NetworkTransferControllerTests::pauseThenResumeEmitsBothSignals()
-{
+void NetworkTransferControllerTests::pauseThenResumeEmitsBothSignals() {
     sak::NetworkTransferController ctrl;
 
     QSignalSpy statusSpy(&ctrl, &sak::NetworkTransferController::statusMessage);
@@ -387,8 +368,12 @@ void NetworkTransferControllerTests::pauseThenResumeEmitsBothSignals()
     bool resumeFound = false;
     for (const auto& args : statusSpy) {
         const QString msg = args.at(0).toString();
-        if (msg.contains("paused", Qt::CaseInsensitive)) pauseFound = true;
-        if (msg.contains("resumed", Qt::CaseInsensitive)) resumeFound = true;
+        if (msg.contains("paused", Qt::CaseInsensitive)) {
+            pauseFound = true;
+        }
+        if (msg.contains("resumed", Qt::CaseInsensitive)) {
+            resumeFound = true;
+        }
     }
     QVERIFY2(pauseFound, "Expected 'paused' status message");
     QVERIFY2(resumeFound, "Expected 'resumed' status message");

@@ -3,20 +3,21 @@
 
 #pragma once
 
-#include <QObject>
-#include <QThread>
-#include <QMutex>
-#include <QWaitCondition>
-#include <QQueue>
-#include <QFuture>
 #include <QDateTime>
-#include <memory>
+#include <QFuture>
+#include <QMutex>
+#include <QObject>
+#include <QQueue>
+#include <QThread>
+#include <QWaitCondition>
+
 #include <atomic>
+#include <memory>
 
 // Include full definitions needed for shared_ptr usage
+#include "sak/action_constants.h"
 #include "sak/chocolatey_manager.h"
 #include "sak/migration_report.h"
-#include "sak/action_constants.h"
 #include "sak/network_constants.h"
 
 namespace sak {
@@ -25,28 +26,28 @@ namespace sak {
  * @brief Status of a migration job
  */
 enum class MigrationStatus {
-    Pending,      ///< Not yet started
-    Queued,       ///< In queue waiting for worker thread
-    Installing,   ///< Currently installing
-    Success,      ///< Successfully installed
-    Failed,       ///< Installation failed
-    Skipped,      ///< Skipped by user
-    Cancelled     ///< Cancelled by user
+    Pending,     ///< Not yet started
+    Queued,      ///< In queue waiting for worker thread
+    Installing,  ///< Currently installing
+    Success,     ///< Successfully installed
+    Failed,      ///< Installation failed
+    Skipped,     ///< Skipped by user
+    Cancelled    ///< Cancelled by user
 };
 
 /**
  * @brief Installation job for a single package
  */
 struct MigrationJob {
-    int entryIndex{-1};                    ///< Index in MigrationReport entries
-    QString appName;                   ///< Application display name
-    QString packageId;                 ///< Chocolatey package ID
-    QString version;                   ///< Requested version (empty = latest)
+    int entryIndex{-1};    ///< Index in MigrationReport entries
+    QString appName;       ///< Application display name
+    QString packageId;     ///< Chocolatey package ID
+    QString version;       ///< Requested version (empty = latest)
     MigrationStatus status = MigrationStatus::Pending;
-    QString errorMessage;              ///< Error details if failed
-    QDateTime startTime;               ///< When installation started
-    QDateTime endTime;                 ///< When installation completed
-    int retryCount = 0;                ///< Number of retry attempts
+    QString errorMessage;  ///< Error details if failed
+    QDateTime startTime;   ///< When installation started
+    QDateTime endTime;     ///< When installation completed
+    int retryCount = 0;    ///< Number of retry attempts
 };
 
 /**
@@ -69,7 +70,7 @@ public:
      * @param parent Parent QObject
      */
     explicit AppInstallationWorker(std::shared_ptr<ChocolateyManager> chocoManager,
-                                QObject* parent = nullptr);
+                                   QObject* parent = nullptr);
 
     ~AppInstallationWorker();
 
@@ -80,7 +81,7 @@ public:
      * @return Number of jobs queued
      */
     int startMigration(std::shared_ptr<MigrationReport> report,
-        int maxConcurrent = kMaxConcurrentTransfers);
+                       int maxConcurrent = kMaxConcurrentTransfers);
 
     /**
      * @brief Pause migration
@@ -113,14 +114,14 @@ public:
      * @brief Get current job statistics
      */
     struct Stats {
-        int total = 0;        ///< Total jobs
-        int pending = 0;      ///< Not started
-        int queued = 0;       ///< In queue
-        int installing = 0;   ///< Currently running
-        int success = 0;      ///< Completed successfully
-        int failed = 0;       ///< Failed
-        int skipped = 0;      ///< Skipped
-        int cancelled = 0;    ///< Cancelled
+        int total = 0;       ///< Total jobs
+        int pending = 0;     ///< Not started
+        int queued = 0;      ///< In queue
+        int installing = 0;  ///< Currently running
+        int success = 0;     ///< Completed successfully
+        int failed = 0;      ///< Failed
+        int skipped = 0;     ///< Skipped
+        int cancelled = 0;   ///< Cancelled
     };
     Stats getStats() const;
 
@@ -216,11 +217,11 @@ private:
     std::shared_ptr<MigrationReport> m_report;
 
     QVector<MigrationJob> m_jobs;
-    QQueue<int> m_jobQueue;              ///< Indices of pending jobs
+    QQueue<int> m_jobQueue;  ///< Indices of pending jobs
     QFuture<void> m_processFuture;
 
-    mutable QMutex m_mutex;              ///< Protects job data
-    QWaitCondition m_waitCondition;      ///< For pause/resume
+    mutable QMutex m_mutex;          ///< Protects job data
+    QWaitCondition m_waitCondition;  ///< For pause/resume
 
     std::atomic<bool> m_running{false};
     std::atomic<bool> m_paused{false};
@@ -229,5 +230,4 @@ private:
     int m_activeJobs = 0;
 };
 
-} // namespace sak
-
+}  // namespace sak

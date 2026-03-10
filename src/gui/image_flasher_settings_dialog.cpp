@@ -2,27 +2,27 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "sak/image_flasher_settings_dialog.h"
+
 #include "sak/config_manager.h"
 #include "sak/info_button.h"
-#include "sak/logger.h"
-#include "sak/style_constants.h"
-#include "sak/network_constants.h"
 #include "sak/layout_constants.h"
-#include <QVBoxLayout>
-#include <QHBoxLayout>
-#include <QGridLayout>
-#include <QGroupBox>
-#include <QLabel>
-#include <QPushButton>
+#include "sak/logger.h"
+#include "sak/network_constants.h"
+#include "sak/style_constants.h"
+
 #include <QDialogButtonBox>
-#include <QMessageBox>
-#include <QStandardPaths>
 #include <QDir>
 #include <QDirIterator>
+#include <QGridLayout>
+#include <QGroupBox>
+#include <QHBoxLayout>
+#include <QLabel>
+#include <QMessageBox>
+#include <QPushButton>
+#include <QStandardPaths>
+#include <QVBoxLayout>
 
-ImageFlasherSettingsDialog::ImageFlasherSettingsDialog(QWidget* parent)
-    : QDialog(parent)
-{
+ImageFlasherSettingsDialog::ImageFlasherSettingsDialog(QWidget* parent) : QDialog(parent) {
     setWindowTitle("Image Flasher Settings");
     setModal(true);
     resize(sak::kFlasherSettingsW, sak::kFlasherSettingsH);
@@ -42,6 +42,8 @@ void ImageFlasherSettingsDialog::setupUi() {
 }
 
 void ImageFlasherSettingsDialog::setupUi_generalSection(QVBoxLayout* mainLayout) {
+    Q_ASSERT(m_validationModeCombo);
+    Q_ASSERT(m_bufferSizeSpin);
     // Verification group
     auto* verificationGroup = new QGroupBox("Verification", this);
     auto* verificationLayout = new QGridLayout(verificationGroup);
@@ -62,11 +64,11 @@ void ImageFlasherSettingsDialog::setupUi_generalSection(QVBoxLayout* mainLayout)
         "Full verification reads every byte back from the drive. "
         "Quick check samples random blocks for faster validation. "
         "No verification writes only without checking.",
-        verificationGroup
-    );
+        verificationGroup);
     validationNote->setWordWrap(true);
     validationNote->setStyleSheet(QString("color: %1; font-size: %2pt;")
-        .arg(sak::ui::kColorTextMuted).arg(sak::ui::kFontSizeNote));
+                                      .arg(sak::ui::kColorTextMuted)
+                                      .arg(sak::ui::kFontSizeNote));
     verificationLayout->addWidget(validationNote, 1, 0, 1, 2);
 
     mainLayout->addWidget(verificationGroup);
@@ -99,17 +101,19 @@ void ImageFlasherSettingsDialog::setupUi_generalSection(QVBoxLayout* mainLayout)
     auto* performanceNote = new QLabel(
         "Larger buffer sizes may improve performance but use more memory. "
         "Concurrent writes allow flashing to multiple drives simultaneously.",
-        performanceGroup
-    );
+        performanceGroup);
     performanceNote->setWordWrap(true);
     performanceNote->setStyleSheet(QString("color: %1; font-size: %2pt;")
-        .arg(sak::ui::kColorTextMuted).arg(sak::ui::kFontSizeNote));
+                                       .arg(sak::ui::kColorTextMuted)
+                                       .arg(sak::ui::kFontSizeNote));
     performanceLayout->addWidget(performanceNote, 2, 0, 1, 2);
 
     mainLayout->addWidget(performanceGroup);
 }
 
 void ImageFlasherSettingsDialog::setupUi_advancedSection(QVBoxLayout* mainLayout) {
+    Q_ASSERT(m_largeDriveThresholdSpin);
+    Q_ASSERT(mainLayout);
     // Safety group
     auto* safetyGroup = new QGroupBox("Safety", this);
     auto* safetyLayout = new QVBoxLayout(safetyGroup);
@@ -127,7 +131,7 @@ void ImageFlasherSettingsDialog::setupUi_advancedSection(QVBoxLayout* mainLayout
     lgRow->addWidget(m_showLargeDriveWarningCheck);
     lgRow->addWidget(new sak::InfoButton(
         "Warns when a drive exceeds the threshold below \u2014 large drives are rarely USB sticks",
-            safetyGroup));
+        safetyGroup));
     lgRow->addStretch();
     safetyLayout->addLayout(lgRow);
 
@@ -172,13 +176,16 @@ void ImageFlasherSettingsDialog::setupUi_advancedSection(QVBoxLayout* mainLayout
 }
 
 void ImageFlasherSettingsDialog::setupUi_buttonBar(QVBoxLayout* mainLayout) {
+    Q_ASSERT(m_cacheInfoLabel);
+    Q_ASSERT(mainLayout);
     // Storage group
     auto* storageGroup = new QGroupBox("Storage", this);
     auto* storageLayout = new QVBoxLayout(storageGroup);
 
     m_cacheInfoLabel = new QLabel(storageGroup);
     m_cacheInfoLabel->setStyleSheet(QString("color: %1; font-size: %2pt;")
-        .arg(sak::ui::kColorTextMuted).arg(sak::ui::kFontSizeNote));
+                                        .arg(sak::ui::kColorTextMuted)
+                                        .arg(sak::ui::kFontSizeNote));
     storageLayout->addWidget(m_cacheInfoLabel);
 
     m_clearCacheButton = new QPushButton("Clear Download Caches", storageGroup);
@@ -186,10 +193,13 @@ void ImageFlasherSettingsDialog::setupUi_buttonBar(QVBoxLayout* mainLayout) {
     cacheInfoRow->addWidget(m_clearCacheButton);
     cacheInfoRow->addWidget(new sak::InfoButton(
         "Removes all cached Windows UUP download files from the temp directory.\n"
-        "Use this to free disk space or force a fresh download.", storageGroup));
+        "Use this to free disk space or force a fresh download.",
+        storageGroup));
     cacheInfoRow->addStretch();
-    connect(m_clearCacheButton, &QPushButton::clicked,
-            this, &ImageFlasherSettingsDialog::onClearDownloadCaches);
+    connect(m_clearCacheButton,
+            &QPushButton::clicked,
+            this,
+            &ImageFlasherSettingsDialog::onClearDownloadCaches);
     storageLayout->addLayout(cacheInfoRow);
 
     mainLayout->addWidget(storageGroup);
@@ -200,19 +210,21 @@ void ImageFlasherSettingsDialog::setupUi_buttonBar(QVBoxLayout* mainLayout) {
 
     // Buttons
     auto* buttonBox = new QDialogButtonBox(
-        QDialogButtonBox::Ok | QDialogButtonBox::Cancel | QDialogButtonBox::RestoreDefaults,
-        this
-    );
+        QDialogButtonBox::Ok | QDialogButtonBox::Cancel | QDialogButtonBox::RestoreDefaults, this);
 
     connect(buttonBox, &QDialogButtonBox::accepted, this, &ImageFlasherSettingsDialog::onAccept);
     connect(buttonBox, &QDialogButtonBox::rejected, this, &QDialog::reject);
-    connect(buttonBox->button(QDialogButtonBox::RestoreDefaults), &QPushButton::clicked,
-            this, &ImageFlasherSettingsDialog::onResetDefaults);
+    connect(buttonBox->button(QDialogButtonBox::RestoreDefaults),
+            &QPushButton::clicked,
+            this,
+            &ImageFlasherSettingsDialog::onResetDefaults);
 
     mainLayout->addWidget(buttonBox);
 }
 
 void ImageFlasherSettingsDialog::loadSettings() {
+    Q_ASSERT(m_validationModeCombo);
+    Q_ASSERT(m_bufferSizeSpin);
     auto& config = sak::ConfigManager::instance();
 
     // Validation mode
@@ -239,6 +251,8 @@ void ImageFlasherSettingsDialog::loadSettings() {
 }
 
 void ImageFlasherSettingsDialog::saveSettings() {
+    Q_ASSERT(m_validationModeCombo);
+    Q_ASSERT(m_bufferSizeSpin);
     auto& config = sak::ConfigManager::instance();
 
     // Validation mode
@@ -268,7 +282,7 @@ void ImageFlasherSettingsDialog::onAccept() {
 }
 
 void ImageFlasherSettingsDialog::onResetDefaults() {
-    m_validationModeCombo->setCurrentIndex(0); // Full
+    m_validationModeCombo->setCurrentIndex(0);  // Full
     m_bufferSizeSpin->setValue(static_cast<int>(sak::kBufferAlignment));
     m_maxConcurrentWritesSpin->setValue(1);
     m_showSystemDriveWarningCheck->setChecked(true);
@@ -282,8 +296,7 @@ void ImageFlasherSettingsDialog::onResetDefaults() {
 // Cache Management
 // ============================================================================
 
-QStringList ImageFlasherSettingsDialog::findCacheDirectories()
-{
+QStringList ImageFlasherSettingsDialog::findCacheDirectories() {
     QStringList dirs;
     QString tempBase = QStandardPaths::writableLocation(QStandardPaths::TempLocation);
     QDir tempDir(tempBase);
@@ -294,8 +307,7 @@ QStringList ImageFlasherSettingsDialog::findCacheDirectories()
     return dirs;
 }
 
-qint64 ImageFlasherSettingsDialog::calculateCacheSize()
-{
+qint64 ImageFlasherSettingsDialog::calculateCacheSize() {
     qint64 totalBytes = 0;
     for (const auto& dirPath : findCacheDirectories()) {
         QDirIterator it(dirPath, QDir::Files, QDirIterator::Subdirectories);
@@ -307,8 +319,9 @@ qint64 ImageFlasherSettingsDialog::calculateCacheSize()
     return totalBytes;
 }
 
-void ImageFlasherSettingsDialog::updateCacheInfo()
-{
+void ImageFlasherSettingsDialog::updateCacheInfo() {
+    Q_ASSERT(m_cacheInfoLabel);
+    Q_ASSERT(m_clearCacheButton);
     QStringList dirs = findCacheDirectories();
     qint64 totalBytes = 0;
     for (const auto& dirPath : dirs) {
@@ -331,18 +344,16 @@ void ImageFlasherSettingsDialog::updateCacheInfo()
         } else {
             sizeStr = QString("%1 GB").arg(totalBytes / sak::kBytesPerGBf, 0, 'f', 2);
         }
-        m_cacheInfoLabel->setText(QString("%1 cached download folder(s) using %2.")
-            .arg(dirs.size()).arg(sizeStr));
+        m_cacheInfoLabel->setText(
+            QString("%1 cached download folder(s) using %2.").arg(dirs.size()).arg(sizeStr));
         m_clearCacheButton->setEnabled(true);
     }
 }
 
-void ImageFlasherSettingsDialog::onClearDownloadCaches()
-{
+void ImageFlasherSettingsDialog::onClearDownloadCaches() {
     QStringList dirs = findCacheDirectories();
     if (dirs.isEmpty()) {
-        QMessageBox::information(this, "Clear Download Caches",
-                                 "No cached downloads to clear.");
+        QMessageBox::information(this, "Clear Download Caches", "No cached downloads to clear.");
         return;
     }
 
@@ -354,16 +365,21 @@ void ImageFlasherSettingsDialog::onClearDownloadCaches()
         sizeStr = QString("%1 GB").arg(totalBytes / sak::kBytesPerGBf, 0, 'f', 2);
     }
 
-    auto reply = QMessageBox::question(this, "Clear Download Caches",
-        QString("This will delete %1 cached download folder(s) (%2) "
-                "from the temp directory.\n\n"
-                "Any in-progress downloads should be cancelled first.\n\n"
-                "Continue?")
-            .arg(dirs.size()).arg(sizeStr),
-        QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+    auto reply =
+        QMessageBox::question(this,
+                              "Clear Download Caches",
+                              QString("This will delete %1 cached download folder(s) (%2) "
+                                      "from the temp directory.\n\n"
+                                      "Any in-progress downloads should be cancelled first.\n\n"
+                                      "Continue?")
+                                  .arg(dirs.size())
+                                  .arg(sizeStr),
+                              QMessageBox::Yes | QMessageBox::No,
+                              QMessageBox::No);
 
-    if (reply != QMessageBox::Yes)
+    if (reply != QMessageBox::Yes) {
         return;
+    }
 
     int removedCount = 0;
     int failedCount = 0;
@@ -381,15 +397,23 @@ void ImageFlasherSettingsDialog::onClearDownloadCaches()
     updateCacheInfo();
 
     if (failedCount == 0) {
-        QMessageBox::information(this, "Clear Download Caches",
+        QMessageBox::information(
+            this,
+            "Clear Download Caches",
             QString("Successfully cleared %1 cached download folder(s) (%2 freed).")
-                .arg(removedCount).arg(sizeStr));
+                .arg(removedCount)
+                .arg(sizeStr));
     } else {
-        sak::logWarning("Cache clear partially failed: cleared {} folder(s), {} could not be removed",
-                        removedCount, failedCount);
-        QMessageBox::warning(this, "Clear Download Caches",
-            QString("Cleared %1 folder(s), but %2 could not be removed.\n"
-                    "They may be in use by an active download.")
-                .arg(removedCount).arg(failedCount));
+        sak::logWarning(
+            "Cache clear partially failed: "
+            "cleared {} folder(s), {} could not be removed",
+            removedCount,
+            failedCount);
+        QMessageBox::warning(this,
+                             "Clear Download Caches",
+                             QString("Cleared %1 folder(s), but %2 could not be removed.\n"
+                                     "They may be in use by an active download.")
+                                 .arg(removedCount)
+                                 .arg(failedCount));
     }
 }

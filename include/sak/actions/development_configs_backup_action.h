@@ -5,6 +5,7 @@
 
 #include "sak/quick_action.h"
 #include "sak/user_profile_types.h"
+
 #include <QString>
 #include <QVector>
 
@@ -20,7 +21,7 @@ class DevelopmentConfigsBackupAction : public QuickAction {
 
 public:
     explicit DevelopmentConfigsBackupAction(const QString& backup_location,
-        QObject* parent = nullptr);
+                                            QObject* parent = nullptr);
 
     QString name() const override { return "Development Configs Backup"; }
     QString description() const override { return "Backup Git, SSH keys, IDE settings"; }
@@ -37,7 +38,7 @@ private:
         QString name;
         QString path;
         qint64 size;
-        bool is_sensitive; // True for SSH keys
+        bool is_sensitive;  // True for SSH keys
     };
 
     QString m_backup_location;
@@ -58,5 +59,4 @@ private:
     qint64 copyDirectoryContents(const QString& src_path, const QString& dest_path);
 };
 
-} // namespace sak
-
+}  // namespace sak

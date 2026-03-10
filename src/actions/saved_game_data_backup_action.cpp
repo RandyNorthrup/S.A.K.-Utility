@@ -5,20 +5,19 @@
 /// @brief Implements saved game data backup across user profiles
 
 #include "sak/actions/saved_game_data_backup_action.h"
+
+#include "sak/layout_constants.h"
+#include "sak/logger.h"
 #include "sak/windows_user_scanner.h"
+
 #include <QDir>
 #include <QDirIterator>
-#include "sak/logger.h"
-#include "sak/layout_constants.h"
 
 namespace sak {
 
 SavedGameDataBackupAction::SavedGameDataBackupAction(const QString& backup_location,
-    QObject* parent)
-    : QuickAction(parent)
-    , m_backup_location(backup_location)
-{
-}
+                                                     QObject* parent)
+    : QuickAction(parent), m_backup_location(backup_location) {}
 
 void SavedGameDataBackupAction::scanSteamSaves() {
     for (const UserProfile& user : m_user_profiles) {
@@ -27,17 +26,16 @@ void SavedGameDataBackupAction::scanSteamSaves() {
 }
 
 void SavedGameDataBackupAction::scanSteamSavesForUser(const UserProfile& user) {
-    const QString programFilesX86 =
-        qEnvironmentVariable("ProgramFiles(x86)",
-            QStringLiteral("C:\\Program Files (x86)"));
-    QStringList steam_paths = {
-        user.profile_path + QStringLiteral("/AppData/Roaming/Steam"),
-        programFilesX86 + QStringLiteral("/Steam/userdata")
-    };
+    const QString programFilesX86 = qEnvironmentVariable("ProgramFiles(x86)",
+                                                         QStringLiteral("C:\\Program Files (x86)"));
+    QStringList steam_paths = {user.profile_path + QStringLiteral("/AppData/Roaming/Steam"),
+                               programFilesX86 + QStringLiteral("/Steam/userdata")};
 
     for (const QString& path : steam_paths) {
         QDir dir(path);
-        if (!dir.exists()) continue;
+        if (!dir.exists()) {
+            continue;
+        }
         collectSteamRemoteDirs(path);
     }
 }
@@ -46,12 +44,16 @@ void SavedGameDataBackupAction::collectSteamRemoteDirs(const QString& path) {
     QDirIterator it(path, QDir::Dirs | QDir::NoDotAndDotDot, QDirIterator::Subdirectories);
     while (it.hasNext()) {
         it.next();
-        if (it.fileName() != "remote") continue;
+        if (it.fileName() != "remote") {
+            continue;
+        }
         addSaveLocation("Steam", it.filePath());
     }
 }
 
 void SavedGameDataBackupAction::addSaveLocation(const QString& platform, const QString& dir_path) {
+    Q_ASSERT(!platform.isEmpty());
+    Q_ASSERT(!dir_path.isEmpty());
     GameSaveLocation loc;
     loc.platform = platform;
     loc.path = dir_path;
@@ -70,7 +72,9 @@ void SavedGameDataBackupAction::addSaveLocation(const QString& platform, const Q
 void SavedGameDataBackupAction::scanEpicSaves() {
     for (const UserProfile& user : m_user_profiles) {
         QString epic_path = user.profile_path + "/AppData/Local/EpicGamesLauncher/Saved";
-        if (!QDir(epic_path).exists()) continue;
+        if (!QDir(epic_path).exists()) {
+            continue;
+        }
         addSaveLocation("Epic Games", epic_path);
     }
 }
@@ -78,7 +82,9 @@ void SavedGameDataBackupAction::scanEpicSaves() {
 void SavedGameDataBackupAction::scanGOGSaves() {
     for (const UserProfile& user : m_user_profiles) {
         QString gog_path = user.profile_path + "/AppData/Local/GOG.com";
-        if (!QDir(gog_path).exists()) continue;
+        if (!QDir(gog_path).exists()) {
+            continue;
+        }
         addSaveLocation("GOG", gog_path);
     }
 }
@@ -86,7 +92,9 @@ void SavedGameDataBackupAction::scanGOGSaves() {
 void SavedGameDataBackupAction::scanDocumentsSaves() {
     for (const UserProfile& user : m_user_profiles) {
         QString my_games = user.profile_path + "/Documents/My Games";
-        if (!QDir(my_games).exists()) continue;
+        if (!QDir(my_games).exists()) {
+            continue;
+        }
         addSaveLocation("Documents", my_games);
     }
 }
@@ -115,8 +123,8 @@ void SavedGameDataBackupAction::scan() {
 
     if (m_save_locations.count() > 0) {
         result.summary = QString("Found %1 game save location(s) - %2 MB")
-            .arg(m_save_locations.count())
-            .arg(m_total_size / sak::kBytesPerMB);
+                             .arg(m_save_locations.count())
+                             .arg(m_total_size / sak::kBytesPerMB);
     } else {
         result.summary = "No game save data found";
     }
@@ -155,12 +163,11 @@ void SavedGameDataBackupAction::execute() {
 
         QString safe_dir = sanitizePathForBackup(loc.path);
         QString dest = backup_dir.filePath(loc.platform + "/" + safe_dir);
-    if (!QDir().mkpath(dest)) {
-        sak::logWarning("Failed to create game save subdirectory: {}",
-                        dest.toStdString());
-    }
+        if (!QDir().mkpath(dest)) {
+            sak::logWarning("Failed to create game save subdirectory: {}", dest.toStdString());
+        }
         Q_EMIT executionProgress(QString("Backing up %1...").arg(loc.platform),
-                             (processed * 100) / m_save_locations.count());
+                                 (processed * 100) / m_save_locations.count());
 
         bytes_copied += copyDirectoryRecursive(loc.path, dest);
 
@@ -174,15 +181,15 @@ void SavedGameDataBackupAction::execute() {
     result.files_processed = processed;
     result.bytes_processed = bytes_copied;
     result.message = processed > 0
-        ? QString("Backed up game saves from %1 location(s)").arg(processed)
-        : "No game save locations were backed up";
+                         ? QString("Backed up game saves from %1 location(s)").arg(processed)
+                         : "No game save locations were backed up";
     result.output_path = backup_dir.absolutePath();
 
     finishWithResult(result, processed > 0 ? ActionStatus::Success : ActionStatus::Failed);
 }
 
 qint64 SavedGameDataBackupAction::copyDirectoryRecursive(const QString& src_path,
-    const QString& dest_path) {
+                                                         const QString& dest_path) {
     qint64 bytes_copied = 0;
     QDirIterator it(src_path, QDir::Files, QDirIterator::Subdirectories);
     while (it.hasNext()) {
@@ -199,4 +206,4 @@ qint64 SavedGameDataBackupAction::copyDirectoryRecursive(const QString& src_path
     return bytes_copied;
 }
 
-} // namespace sak
+}  // namespace sak

@@ -3,12 +3,13 @@
 
 #pragma once
 
-#include <QWidget>
-#include <QPushButton>
-#include <QLabel>
-#include <QStackedWidget>
-#include <QListWidget>
 #include <QCheckBox>
+#include <QLabel>
+#include <QListWidget>
+#include <QPushButton>
+#include <QStackedWidget>
+#include <QWidget>
+
 #include <memory>
 
 // Forward declarations
@@ -21,17 +22,17 @@ class QThread;
 class WindowsUSBCreator;
 
 namespace sak {
-    struct FlashResult;
-    struct FlashProgress;
-    enum class FlashState;
-    class LogToggleSwitch;
+struct FlashResult;
+struct FlashProgress;
+enum class FlashState;
+class LogToggleSwitch;
 
 /**
  * @brief Image Flasher Panel
- * 
+ *
  * Provides comprehensive UI for flashing disk images to USB drives and SD cards.
  * Based on balena.io Etcher functionality with Windows-specific optimizations.
- * 
+ *
  * Features:
  * - Select image files (ISO, IMG, WIC, ZIP, GZ, BZ2, XZ, DMG, DSK)
  * - Automatic image decompression
@@ -42,12 +43,12 @@ namespace sak {
  * - Download Linux distribution ISOs
  * - Real-time progress tracking
  * - System drive protection
- * 
+ *
  * Workflow:
  * 1. Select Image - Choose file or download Windows 11
  * 2. Select Target(s) - Choose one or more drives
  * 3. Flash! - Write with progress and verification
- * 
+ *
  * Thread-Safety: UI updates occur on main thread.
  * Flash operations use separate threads with signal/slot communication.
  */
@@ -126,12 +127,16 @@ private:
     void createImageSelectionPage();
     /** @brief Create download cards and select-file button */
     void createDownloadCards(QVBoxLayout* pageLayout);
+    void createSelectImageButton(QVBoxLayout* pageLayout);
     /** @brief Build a single ISO download card */
     QFrame* buildIsoDownloadCard(QWidget* parent,
-        const QString& iconPath, const QString& title,
-        const QString& description, QPushButton*& buttonOut,
-        const QString& buttonText, const QString& accessName,
-        const QString& tip);
+                                 const QString& iconPath,
+                                 const QString& title,
+                                 const QString& description,
+                                 QPushButton*& buttonOut,
+                                 const QString& buttonText,
+                                 const QString& accessName,
+                                 const QString& tip);
     /** @brief Build the drive-selection wizard page */
     void createDriveSelectionPage();
     /** @brief Build the flash-progress wizard page */
@@ -169,7 +174,7 @@ private:
 
     // UI Components
     QStackedWidget* m_stackedWidget;
-    
+
     // Step 1: Image Selection
     QWidget* m_imageSelectionPage;
     QPushButton* m_selectImageButton;
@@ -179,37 +184,37 @@ private:
     QLabel* m_imagePathLabel;
     QLabel* m_imageSizeLabel;
     QLabel* m_imageFormatLabel;
-    
+
     // Step 2: Drive Selection
     QWidget* m_driveSelectionPage;
     QListWidget* m_driveListWidget;
     QLabel* m_driveCountLabel;
     QCheckBox* m_showAllDrivesCheckBox;
-    
+
     // Step 3: Flash Progress
     QWidget* m_flashProgressPage;
     QLabel* m_flashStateLabel;
     QLabel* m_flashDetailsLabel;
     QLabel* m_flashSpeedLabel;
     QPushButton* m_cancelButton;
-    
+
     // Step 4: Completion
     QWidget* m_completionPage;
     QLabel* m_completionMessageLabel;
     QLabel* m_completionDetailsLabel;
     QPushButton* m_flashAnotherButton;
-    
+
     // Navigation
     QPushButton* m_backButton;
     QPushButton* m_nextButton;
     QPushButton* m_flashButton;
-    
+
     // Core components
     std::unique_ptr<DriveScanner> m_driveScanner;
     std::unique_ptr<FlashCoordinator> m_flashCoordinator;
     std::unique_ptr<WindowsISODownloader> m_isoDownloader;
     std::unique_ptr<LinuxISODownloader> m_linuxIsoDownloader;
-    
+
     // State
     QString m_selectedImagePath;
     qint64 m_imageSize;
@@ -219,4 +224,4 @@ private:
     LogToggleSwitch* m_logToggle{nullptr};
 };
 
-} // namespace sak
+}  // namespace sak

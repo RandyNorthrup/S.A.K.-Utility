@@ -13,9 +13,7 @@
 
 namespace sak {
 
-MappingEngine::MappingEngine(QObject* parent)
-    : QObject(parent) {
-}
+MappingEngine::MappingEngine(QObject* parent) : QObject(parent) {}
 
 void MappingEngine::setStrategy(Strategy strategy) {
     m_strategy = strategy;
@@ -26,8 +24,7 @@ MappingEngine::Strategy MappingEngine::strategy() const {
 }
 
 MappingEngine::DeploymentMapping MappingEngine::createOneToMany(
-    const SourceProfile& source,
-    const QVector<DestinationPC>& destinations) {
+    const SourceProfile& source, const QVector<DestinationPC>& destinations) {
     DeploymentMapping mapping;
     mapping.type = MappingType::OneToMany;
     mapping.sources = {source};
@@ -44,8 +41,7 @@ MappingEngine::DeploymentMapping MappingEngine::createOneToMany(
 }
 
 MappingEngine::DeploymentMapping MappingEngine::createManyToMany(
-    const QVector<SourceProfile>& sources,
-    const QVector<DestinationPC>& destinations) {
+    const QVector<SourceProfile>& sources, const QVector<DestinationPC>& destinations) {
     DeploymentMapping mapping;
     mapping.type = MappingType::ManyToMany;
     mapping.sources = sources;
@@ -82,7 +78,7 @@ MappingEngine::DeploymentMapping MappingEngine::createCustomMapping(
 }
 
 bool MappingEngine::validateCustomMappingRules(const DeploymentMapping& mapping,
-    QString& errorMessage) const {
+                                               QString& errorMessage) const {
     if (mapping.custom_rules.isEmpty()) {
         errorMessage = tr("Custom mapping rules are empty");
         return false;
@@ -115,6 +111,7 @@ bool MappingEngine::validateCustomMappingRules(const DeploymentMapping& mapping,
 }
 
 bool MappingEngine::validateMapping(const DeploymentMapping& mapping, QString& errorMessage) const {
+    Q_ASSERT(!errorMessage.isEmpty());
     if (mapping.sources.isEmpty()) {
         errorMessage = tr("No source profiles selected");
         return false;
@@ -207,6 +204,7 @@ bool MappingEngine::checkDestinationReadiness(const DeploymentMapping& mapping) 
 }
 
 bool MappingEngine::saveTemplate(const DeploymentMapping& mapping, const QString& filePath) const {
+    Q_ASSERT(!filePath.isEmpty());
     QJsonObject root;
     root["deployment_id"] = mapping.deployment_id;
     root["type"] = mappingTypeToString(mapping.type);
@@ -239,8 +237,7 @@ bool MappingEngine::saveTemplate(const DeploymentMapping& mapping, const QString
         return false;
     }
 
-    const QByteArray json_bytes =
-        QJsonDocument(root).toJson(QJsonDocument::Indented);
+    const QByteArray json_bytes = QJsonDocument(root).toJson(QJsonDocument::Indented);
     if (file.write(json_bytes) != json_bytes.size()) {
         return false;
     }
@@ -248,6 +245,7 @@ bool MappingEngine::saveTemplate(const DeploymentMapping& mapping, const QString
 }
 
 MappingEngine::DeploymentMapping MappingEngine::loadTemplate(const QString& filePath) {
+    Q_ASSERT(!filePath.isEmpty());
     QFile file(filePath);
     if (!file.open(QIODevice::ReadOnly)) {
         Q_EMIT validationError(tr("Unable to open template"));
@@ -367,4 +365,4 @@ MappingEngine::MappingType MappingEngine::mappingTypeFromString(const QString& v
     return MappingType::OneToMany;
 }
 
-} // namespace sak
+}  // namespace sak

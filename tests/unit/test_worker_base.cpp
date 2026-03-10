@@ -4,10 +4,10 @@
 /// @file test_worker_base.cpp
 /// @brief Unit tests for WorkerBase thread lifecycle, exception safety, and cancellation
 
-#include <QtTest/QtTest>
-
-#include "sak/worker_base.h"
 #include "sak/error_codes.h"
+#include "sak/worker_base.h"
+
+#include <QtTest/QtTest>
 
 #include <stdexcept>
 
@@ -22,10 +22,7 @@ public:
     using WorkerBase::WorkerBase;
 
 protected:
-    auto execute() -> std::expected<void, sak::error_code> override
-    {
-        return {};
-    }
+    auto execute() -> std::expected<void, sak::error_code> override { return {}; }
 };
 
 /// @brief Worker that returns an error
@@ -35,8 +32,7 @@ public:
     using WorkerBase::WorkerBase;
 
 protected:
-    auto execute() -> std::expected<void, sak::error_code> override
-    {
+    auto execute() -> std::expected<void, sak::error_code> override {
         return std::unexpected(sak::error_code::internal_error);
     }
 };
@@ -48,8 +44,7 @@ public:
     using WorkerBase::WorkerBase;
 
 protected:
-    auto execute() -> std::expected<void, sak::error_code> override
-    {
+    auto execute() -> std::expected<void, sak::error_code> override {
         throw std::runtime_error("deliberate test exception");
     }
 };
@@ -61,10 +56,7 @@ public:
     using WorkerBase::WorkerBase;
 
 protected:
-    auto execute() -> std::expected<void, sak::error_code> override
-    {
-        throw std::bad_alloc();
-    }
+    auto execute() -> std::expected<void, sak::error_code> override { throw std::bad_alloc(); }
 };
 
 /// @brief Worker that throws a non-std exception (int)
@@ -74,10 +66,7 @@ public:
     using WorkerBase::WorkerBase;
 
 protected:
-    auto execute() -> std::expected<void, sak::error_code> override
-    {
-        throw 42;
-    }
+    auto execute() -> std::expected<void, sak::error_code> override { throw 42; }
 };
 
 /// @brief Worker that sleeps until cancelled
@@ -87,8 +76,7 @@ public:
     using WorkerBase::WorkerBase;
 
 protected:
-    auto execute() -> std::expected<void, sak::error_code> override
-    {
+    auto execute() -> std::expected<void, sak::error_code> override {
         while (!checkStop()) {
             QThread::msleep(10);
         }
@@ -103,8 +91,7 @@ public:
     using WorkerBase::WorkerBase;
 
 protected:
-    auto execute() -> std::expected<void, sak::error_code> override
-    {
+    auto execute() -> std::expected<void, sak::error_code> override {
         for (int i = 0; i <= 100; i += 25) {
             reportProgress(i, 100, QString("Step %1").arg(i));
         }
@@ -131,8 +118,7 @@ private Q_SLOTS:
     void destructorStopsThread();
 };
 
-void WorkerBaseTests::successfulExecution()
-{
+void WorkerBaseTests::successfulExecution() {
     SuccessWorker worker;
     QSignalSpy started_spy(&worker, &WorkerBase::started);
     QSignalSpy finished_spy(&worker, &WorkerBase::finished);
@@ -146,8 +132,7 @@ void WorkerBaseTests::successfulExecution()
     QCOMPARE(failed_spy.count(), 0);
 }
 
-void WorkerBaseTests::failedExecution()
-{
+void WorkerBaseTests::failedExecution() {
     FailWorker worker;
     QSignalSpy finished_spy(&worker, &WorkerBase::finished);
     QSignalSpy failed_spy(&worker, &WorkerBase::failed);
@@ -162,8 +147,7 @@ void WorkerBaseTests::failedExecution()
     QCOMPARE(args[0].toInt(), static_cast<int>(sak::error_code::internal_error));
 }
 
-void WorkerBaseTests::exceptionSafety_stdException()
-{
+void WorkerBaseTests::exceptionSafety_stdException() {
     ThrowWorker worker;
     QSignalSpy failed_spy(&worker, &WorkerBase::failed);
 
@@ -178,8 +162,7 @@ void WorkerBaseTests::exceptionSafety_stdException()
     QVERIFY(args[1].toString().contains("deliberate test exception"));
 }
 
-void WorkerBaseTests::exceptionSafety_badAlloc()
-{
+void WorkerBaseTests::exceptionSafety_badAlloc() {
     OOMWorker worker;
     QSignalSpy failed_spy(&worker, &WorkerBase::failed);
 
@@ -192,8 +175,7 @@ void WorkerBaseTests::exceptionSafety_badAlloc()
     QVERIFY(args[1].toString().contains("exception"));
 }
 
-void WorkerBaseTests::exceptionSafety_unknownException()
-{
+void WorkerBaseTests::exceptionSafety_unknownException() {
     UnknownThrowWorker worker;
     QSignalSpy failed_spy(&worker, &WorkerBase::failed);
 
@@ -206,8 +188,7 @@ void WorkerBaseTests::exceptionSafety_unknownException()
     QVERIFY(args[1].toString().contains("unknown"));
 }
 
-void WorkerBaseTests::cancellation()
-{
+void WorkerBaseTests::cancellation() {
     CancellableWorker worker;
     QSignalSpy cancelled_spy(&worker, &WorkerBase::cancelled);
     QSignalSpy finished_spy(&worker, &WorkerBase::finished);
@@ -224,8 +205,7 @@ void WorkerBaseTests::cancellation()
     QVERIFY(!worker.isExecuting());
 }
 
-void WorkerBaseTests::progressReporting()
-{
+void WorkerBaseTests::progressReporting() {
     ProgressWorker worker;
     QSignalSpy progress_spy(&worker, &WorkerBase::progress);
 
@@ -237,8 +217,7 @@ void WorkerBaseTests::progressReporting()
     QCOMPARE(progress_spy[4][0].toInt(), 100);
 }
 
-void WorkerBaseTests::isExecutingFlag()
-{
+void WorkerBaseTests::isExecutingFlag() {
     CancellableWorker worker;
     QVERIFY(!worker.isExecuting());
 
@@ -251,8 +230,7 @@ void WorkerBaseTests::isExecutingFlag()
     QVERIFY(!worker.isExecuting());
 }
 
-void WorkerBaseTests::destructorStopsThread()
-{
+void WorkerBaseTests::destructorStopsThread() {
     // Test that destructor properly cleans up
     {
         CancellableWorker worker;

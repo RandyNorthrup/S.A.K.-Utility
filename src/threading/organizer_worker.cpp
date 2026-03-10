@@ -5,22 +5,22 @@
 /// @brief Implements the background worker thread for file organization operations
 
 #include "sak/organizer_worker.h"
+
 #include "sak/input_validator.h"
 #include "sak/logger.h"
+
+#include <QFile>
 #include <QtGlobal>
 #include <QVector>
-#include <QFile>
 
 OrganizerWorker::OrganizerWorker(const Config& config, QObject* parent)
-    : WorkerBase(parent)
-    , m_config(config)
-{
-    Q_ASSERT_X(!config.target_directory.isEmpty(), "OrganizerWorker",
-        "target_directory must not be empty");
+    : WorkerBase(parent), m_config(config) {
+    Q_ASSERT_X(!config.target_directory.isEmpty(),
+               "OrganizerWorker",
+               "target_directory must not be empty");
 }
 
-auto OrganizerWorker::execute() -> std::expected<void, sak::error_code>
-{
+auto OrganizerWorker::execute() -> std::expected<void, sak::error_code> {
     sak::logInfo("Starting directory organization: {}", m_config.target_directory.toStdString());
 
     // Validate target directory path
@@ -57,14 +57,15 @@ auto OrganizerWorker::execute() -> std::expected<void, sak::error_code>
 
         const auto& file = files[i];
         auto category = categorizeFile(file);
-        
+
         if (!category.isEmpty()) {
             auto operation = planMove(file, category);
             m_planned_operations.push_back(operation);
         }
 
-        Q_EMIT fileProgress(static_cast<int>(i + 1), static_cast<int>(files.size()), 
-                           QString::fromStdString(file.string()));
+        Q_EMIT fileProgress(static_cast<int>(i + 1),
+                            static_cast<int>(files.size()),
+                            QString::fromStdString(file.string()));
     }
 
     sak::logInfo("Planned {} move operations", m_planned_operations.size());
@@ -81,8 +82,7 @@ auto OrganizerWorker::execute() -> std::expected<void, sak::error_code>
     return executePlannedMoves();
 }
 
-auto OrganizerWorker::executePlannedMoves() -> std::expected<void, sak::error_code>
-{
+auto OrganizerWorker::executePlannedMoves() -> std::expected<void, sak::error_code> {
     const size_t op_count = m_planned_operations.size();
     for (size_t i = 0; i < op_count; ++i) {
         if (checkStop()) {
@@ -96,17 +96,17 @@ auto OrganizerWorker::executePlannedMoves() -> std::expected<void, sak::error_co
             return result;
         }
 
-        Q_EMIT fileProgress(static_cast<int>(i + 1), static_cast<int>(m_planned_operations.size()),
-                           QString::fromStdString(operation.source.string()));
+        Q_EMIT fileProgress(static_cast<int>(i + 1),
+                            static_cast<int>(m_planned_operations.size()),
+                            QString::fromStdString(operation.source.string()));
     }
 
     sak::logInfo("Directory organization complete");
     return {};
 }
 
-auto OrganizerWorker::scanDirectory() 
-    -> std::expected<std::vector<std::filesystem::path>, sak::error_code>
-{
+auto OrganizerWorker::scanDirectory()
+    -> std::expected<std::vector<std::filesystem::path>, sak::error_code> {
     std::vector<std::filesystem::path> files;
     std::filesystem::path target_path(m_config.target_directory.toStdString());
 
@@ -143,8 +143,7 @@ auto OrganizerWorker::scanDirectory()
     return files;
 }
 
-auto OrganizerWorker::categorizeFile(const std::filesystem::path& file_path) -> QString
-{
+auto OrganizerWorker::categorizeFile(const std::filesystem::path& file_path) -> QString {
     auto extension = file_path.extension().string();
     if (extension.empty()) {
         return QString();
@@ -154,8 +153,9 @@ auto OrganizerWorker::categorizeFile(const std::filesystem::path& file_path) -> 
     if (extension[0] == '.') {
         extension = extension.substr(1);
     }
-    std::transform(extension.begin(), extension.end(), extension.begin(), 
-                   [](unsigned char c) { return std::tolower(c); });
+    std::transform(extension.begin(), extension.end(), extension.begin(), [](unsigned char c) {
+        return std::tolower(c);
+    });
 
     QString ext_lower = QString::fromStdString(extension);
 
@@ -170,9 +170,8 @@ auto OrganizerWorker::categorizeFile(const std::filesystem::path& file_path) -> 
     return QString();
 }
 
-auto OrganizerWorker::planMove(const std::filesystem::path& file_path, const QString& category) 
-    -> MoveOperation
-{
+auto OrganizerWorker::planMove(const std::filesystem::path& file_path, const QString& category)
+    -> MoveOperation {
     MoveOperation op;
     op.source = file_path;
     op.category = category;
@@ -188,9 +187,8 @@ auto OrganizerWorker::planMove(const std::filesystem::path& file_path, const QSt
     return op;
 }
 
-auto OrganizerWorker::executeMove(const MoveOperation& operation) 
-    -> std::expected<void, sak::error_code>
-{
+auto OrganizerWorker::executeMove(const MoveOperation& operation)
+    -> std::expected<void, sak::error_code> {
     try {
         // Create category directory if needed (create_directories is a no-op if it exists)
         if (m_config.create_subdirectories) {
@@ -215,15 +213,13 @@ auto OrganizerWorker::executeMove(const MoveOperation& operation)
     }
 }
 
-auto OrganizerWorker::handleCollision(const MoveOperation& operation) 
-    -> std::filesystem::path
-{
+auto OrganizerWorker::handleCollision(const MoveOperation& operation) -> std::filesystem::path {
     if (m_config.collision_strategy == "skip") {
-        return operation.source; // Don't move
+        return operation.source;  // Don't move
     }
-    
+
     if (m_config.collision_strategy == "overwrite") {
-        return operation.destination; // Use original destination
+        return operation.destination;  // Use original destination
     }
 
     // Default: rename with counter
@@ -242,8 +238,7 @@ auto OrganizerWorker::handleCollision(const MoveOperation& operation)
     return dest;
 }
 
-auto OrganizerWorker::generatePreviewSummary() -> QString
-{
+auto OrganizerWorker::generatePreviewSummary() -> QString {
     QString summary;
     summary += "Preview Results:\n\n";
     summary += QString("Total files to organize: %1\n\n").arg(m_planned_operations.size());
@@ -271,4 +266,3 @@ auto OrganizerWorker::generatePreviewSummary() -> QString
 
     return summary;
 }
-

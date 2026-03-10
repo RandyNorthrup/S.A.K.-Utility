@@ -6,30 +6,29 @@
 ///        registry entries after program uninstallation
 
 #include "sak/leftover_scanner.h"
-#include "sak/registry_snapshot_engine.h"
-#include "sak/layout_constants.h"
 
-#include <QRegularExpression>
+#include "sak/layout_constants.h"
+#include "sak/registry_snapshot_engine.h"
 
 #include <QDir>
 #include <QDirIterator>
 #include <QFileInfo>
 #include <QProcess>
+#include <QRegularExpression>
 #include <QStandardPaths>
 
 namespace sak {
 
 namespace {
-constexpr int kPowerShellTimeoutMs       = 15000;
-constexpr DWORD kMaxRegistryKeyNameLen   = 256;
+constexpr int kPowerShellTimeoutMs = 15'000;
+constexpr DWORD kMaxRegistryKeyNameLen = 256;
 constexpr DWORD kMaxRegistryValueNameLen = 256;
 constexpr DWORD kMaxRegistryValueDataLen = 1024;
 
 template <typename ReportFn>
 void appendAndReportItems(QVector<LeftoverItem>& out,
                           const QVector<LeftoverItem>& items,
-                          ReportFn report)
-{
+                          ReportFn report) {
     for (const auto& item : items) {
         report(item.path);
     }
@@ -56,21 +55,20 @@ const QStringList LeftoverScanner::kProtectedPaths = {
 };
 
 LeftoverScanner::LeftoverScanner(const ProgramInfo& program, ScanLevel level)
-    : m_program(program)
-    , m_level(level)
-{
+    : m_program(program), m_level(level) {
     buildSearchPatterns();
 }
 
-void LeftoverScanner::buildSearchPatterns()
-{
+void LeftoverScanner::buildSearchPatterns() {
+    Q_ASSERT(!m_namePatterns.isEmpty());
+    Q_ASSERT(!m_publisherPatterns.isEmpty());
     // Common words to exclude from pattern matching to reduce false positives
     static const QSet<QString> kExcludedWords = {
-        "the", "for", "and", "pro", "app", "new", "all", "one", "free",
-        "media", "player", "viewer", "editor", "manager", "service",
-        "system", "update", "setup", "install", "windows", "microsoft",
-        "tools", "tool", "software", "portable", "lite", "plus", "studio",
-        "home", "server", "client", "web", "desktop", "data", "file",
+        "the",     "for",    "and",      "pro",      "app",     "new",     "all",
+        "one",     "free",   "media",    "player",   "viewer",  "editor",  "manager",
+        "service", "system", "update",   "setup",    "install", "windows", "microsoft",
+        "tools",   "tool",   "software", "portable", "lite",    "plus",    "studio",
+        "home",    "server", "client",   "web",      "desktop", "data",    "file",
     };
 
     // Build name patterns from display name
@@ -79,11 +77,10 @@ void LeftoverScanner::buildSearchPatterns()
 
         // Split on spaces and add individual words (>= 3 chars)
         // Skip common English words that cause too many false matches
-        const QStringList words = m_program.displayName.split(
-            QRegularExpression("[\\s\\-_]+"), Qt::SkipEmptyParts);
+        const QStringList words = m_program.displayName.split(QRegularExpression("[\\s\\-_]+"),
+                                                              Qt::SkipEmptyParts);
         for (const auto& word : words) {
-            if (word.length() >= 3
-                && !kExcludedWords.contains(word.toLower())) {
+            if (word.length() >= 3 && !kExcludedWords.contains(word.toLower())) {
                 m_namePatterns.append(word.toLower());
             }
         }
@@ -101,13 +98,12 @@ void LeftoverScanner::buildSearchPatterns()
         m_publisherPatterns.append(m_program.publisher.toLower());
 
         // Split publisher name
-        const QStringList words = m_program.publisher.split(
-            QRegularExpression("[\\s\\-_,\\.]+"), Qt::SkipEmptyParts);
+        const QStringList words = m_program.publisher.split(QRegularExpression("[\\s\\-_,\\.]+"),
+                                                            Qt::SkipEmptyParts);
         for (const auto& word : words) {
-            if (word.length() >= 3
-                && word.toLower() != "inc" && word.toLower() != "ltd"
-                && word.toLower() != "llc" && word.toLower() != "corp"
-                && word.toLower() != "gmbh" && word.toLower() != "the") {
+            if (word.length() >= 3 && word.toLower() != "inc" && word.toLower() != "ltd" &&
+                word.toLower() != "llc" && word.toLower() != "corp" && word.toLower() != "gmbh" &&
+                word.toLower() != "the") {
                 m_publisherPatterns.append(word.toLower());
             }
         }
@@ -129,8 +125,7 @@ void LeftoverScanner::buildSearchPatterns()
 
 QVector<LeftoverItem> LeftoverScanner::scan(
     const std::atomic<bool>& stopRequested,
-    std::function<void(const QString&, int)> progressCallback)
-{
+    std::function<void(const QString&, int)> progressCallback) {
     QVector<LeftoverItem> all_leftovers;
     int found_count = 0;
 
@@ -147,8 +142,8 @@ QVector<LeftoverItem> LeftoverScanner::scan(
     }
 
     // Phase 2: Registry scanning (Moderate and Advanced)
-    if (!stopRequested.load()
-        && (m_level == ScanLevel::Moderate || m_level == ScanLevel::Advanced)) {
+    if (!stopRequested.load() &&
+        (m_level == ScanLevel::Moderate || m_level == ScanLevel::Advanced)) {
 #ifdef Q_OS_WIN
         appendAndReportItems(all_leftovers, scanRegistry(stopRequested), report);
 #endif
@@ -180,58 +175,68 @@ QVector<LeftoverItem> LeftoverScanner::scan(
     return all_leftovers;
 }
 
-QVector<LeftoverItem> LeftoverScanner::scanFileSystem(
-    const std::atomic<bool>& stopRequested)
-{
+QVector<LeftoverItem> LeftoverScanner::scanFileSystem(const std::atomic<bool>& stopRequested) {
     QVector<LeftoverItem> items;
 
     // Common scan locations
     QStringList scan_dirs;
 
     // Program Files directories (all levels)
-    QString program_files = QDir::toNativeSeparators(
-        qEnvironmentVariable("ProgramFiles"));
-    QString program_files_x86 = QDir::toNativeSeparators(
-        qEnvironmentVariable("ProgramFiles(x86)"));
+    QString program_files = QDir::toNativeSeparators(qEnvironmentVariable("ProgramFiles"));
+    QString program_files_x86 = QDir::toNativeSeparators(qEnvironmentVariable("ProgramFiles(x86)"));
 
-    if (!program_files.isEmpty()) scan_dirs.append(program_files);
-    if (!program_files_x86.isEmpty()) scan_dirs.append(program_files_x86);
+    if (!program_files.isEmpty()) {
+        scan_dirs.append(program_files);
+    }
+    if (!program_files_x86.isEmpty()) {
+        scan_dirs.append(program_files_x86);
+    }
 
     // AppData directories (all levels)
     // AppData paths from environment variables (more reliable than QStandardPaths)
-    QString roaming = QDir::toNativeSeparators(
-        qEnvironmentVariable("APPDATA"));
-    QString local = QDir::toNativeSeparators(
-        qEnvironmentVariable("LOCALAPPDATA"));
-    QString program_data = QDir::toNativeSeparators(
-        qEnvironmentVariable("ProgramData"));
+    QString roaming = QDir::toNativeSeparators(qEnvironmentVariable("APPDATA"));
+    QString local = QDir::toNativeSeparators(qEnvironmentVariable("LOCALAPPDATA"));
+    QString program_data = QDir::toNativeSeparators(qEnvironmentVariable("ProgramData"));
 
-    if (!roaming.isEmpty()) scan_dirs.append(roaming);
-    if (!local.isEmpty()) scan_dirs.append(local);
-    if (!program_data.isEmpty()) scan_dirs.append(program_data);
+    if (!roaming.isEmpty()) {
+        scan_dirs.append(roaming);
+    }
+    if (!local.isEmpty()) {
+        scan_dirs.append(local);
+    }
+    if (!program_data.isEmpty()) {
+        scan_dirs.append(program_data);
+    }
 
     // Temp directories (all levels)
     QString temp = QDir::toNativeSeparators(qEnvironmentVariable("TEMP"));
-    if (!temp.isEmpty()) scan_dirs.append(temp);
+    if (!temp.isEmpty()) {
+        scan_dirs.append(temp);
+    }
 
     // Start Menu and Desktop (all levels)
-    QString start_menu = QStandardPaths::writableLocation(
-        QStandardPaths::ApplicationsLocation);
-    QString desktop = QStandardPaths::writableLocation(
-        QStandardPaths::DesktopLocation);
-    if (!start_menu.isEmpty()) scan_dirs.append(start_menu);
-    if (!desktop.isEmpty()) scan_dirs.append(desktop);
+    QString start_menu = QStandardPaths::writableLocation(QStandardPaths::ApplicationsLocation);
+    QString desktop = QStandardPaths::writableLocation(QStandardPaths::DesktopLocation);
+    if (!start_menu.isEmpty()) {
+        scan_dirs.append(start_menu);
+    }
+    if (!desktop.isEmpty()) {
+        scan_dirs.append(desktop);
+    }
 
     // Common Files (Advanced only)
     if (m_level == ScanLevel::Advanced) {
-        QString common = QDir::toNativeSeparators(
-            qEnvironmentVariable("CommonProgramFiles"));
-        if (!common.isEmpty()) scan_dirs.append(common);
+        QString common = QDir::toNativeSeparators(qEnvironmentVariable("CommonProgramFiles"));
+        if (!common.isEmpty()) {
+            scan_dirs.append(common);
+        }
     }
 
     // Scan each directory
     for (const auto& dir : scan_dirs) {
-        if (stopRequested.load()) break;
+        if (stopRequested.load()) {
+            break;
+        }
 
         auto dir_items = scanDirectory(dir, stopRequested);
         items.append(dir_items);
@@ -240,10 +245,8 @@ QVector<LeftoverItem> LeftoverScanner::scanFileSystem(
     return items;
 }
 
-QVector<LeftoverItem> LeftoverScanner::scanDirectory(
-    const QString& basePath,
-    const std::atomic<bool>& stopRequested)
-{
+QVector<LeftoverItem> LeftoverScanner::scanDirectory(const QString& basePath,
+                                                     const std::atomic<bool>& stopRequested) {
     QVector<LeftoverItem> items;
 
     QDir base(basePath);
@@ -254,7 +257,9 @@ QVector<LeftoverItem> LeftoverScanner::scanDirectory(
     // Scan top-level directories for matching names
     const auto entries = base.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot);
     for (const auto& entry : entries) {
-        if (stopRequested.load()) break;
+        if (stopRequested.load()) {
+            break;
+        }
 
         QString dir_name = entry.fileName();
         if (matchesProgram(dir_name)) {
@@ -271,7 +276,9 @@ QVector<LeftoverItem> LeftoverScanner::scanDirectory(
     // Also check for matching files (shortcuts, configs) in the directory
     const auto files = base.entryInfoList(QDir::Files);
     for (const auto& file : files) {
-        if (stopRequested.load()) break;
+        if (stopRequested.load()) {
+            break;
+        }
 
         QString file_name = file.fileName();
         if (matchesProgram(file_name)) {
@@ -290,51 +297,58 @@ QVector<LeftoverItem> LeftoverScanner::scanDirectory(
 
 #ifdef Q_OS_WIN
 
-QVector<LeftoverItem> LeftoverScanner::scanRegistry(
-    const std::atomic<bool>& stopRequested)
-{
+QVector<LeftoverItem> LeftoverScanner::scanRegistry(const std::atomic<bool>& stopRequested) {
     QVector<LeftoverItem> items;
 
     // Scan HKCU\Software for matching keys
-    auto hkcu = scanRegistryHive(HKEY_CURRENT_USER, "Software",
-                                  "HKCU", stopRequested);
+    auto hkcu = scanRegistryHive(HKEY_CURRENT_USER, "Software", "HKCU", stopRequested);
     items.append(hkcu);
 
-    if (stopRequested.load()) return items;
+    if (stopRequested.load()) {
+        return items;
+    }
 
     // Scan HKLM\SOFTWARE for matching keys
-    auto hklm = scanRegistryHive(HKEY_LOCAL_MACHINE, "SOFTWARE",
-                                  "HKLM", stopRequested);
+    auto hklm = scanRegistryHive(HKEY_LOCAL_MACHINE, "SOFTWARE", "HKLM", stopRequested);
     items.append(hklm);
 
     return items;
 }
 
-QVector<LeftoverItem> LeftoverScanner::scanRegistryHive(
-    HKEY hive, const QString& subkey, const QString& hiveName,
-    const std::atomic<bool>& stopRequested)
-{
+QVector<LeftoverItem> LeftoverScanner::scanRegistryHive(HKEY hive,
+                                                        const QString& subkey,
+                                                        const QString& hiveName,
+                                                        const std::atomic<bool>& stopRequested) {
     QVector<LeftoverItem> items;
 
     HKEY key = nullptr;
-    LONG rc = RegOpenKeyExW(hive,
-                            reinterpret_cast<LPCWSTR>(subkey.utf16()),
-                            0, KEY_READ, &key);
+    LONG rc = RegOpenKeyExW(hive, reinterpret_cast<LPCWSTR>(subkey.utf16()), 0, KEY_READ, &key);
     if (rc != ERROR_SUCCESS) {
         return items;
     }
 
     DWORD subkey_count = 0;
-    RegQueryInfoKeyW(key, nullptr, nullptr, nullptr, &subkey_count,
-                     nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr);
+    RegQueryInfoKeyW(key,
+                     nullptr,
+                     nullptr,
+                     nullptr,
+                     &subkey_count,
+                     nullptr,
+                     nullptr,
+                     nullptr,
+                     nullptr,
+                     nullptr,
+                     nullptr,
+                     nullptr);
 
     wchar_t subkey_name[kMaxRegistryKeyNameLen];
     for (DWORD i = 0; i < subkey_count; ++i) {
-        if (stopRequested.load()) break;
+        if (stopRequested.load()) {
+            break;
+        }
 
         DWORD name_len = kMaxRegistryKeyNameLen;
-        rc = RegEnumKeyExW(key, i, subkey_name, &name_len,
-                           nullptr, nullptr, nullptr, nullptr);
+        rc = RegEnumKeyExW(key, i, subkey_name, &name_len, nullptr, nullptr, nullptr, nullptr);
         if (rc != ERROR_SUCCESS) {
             continue;
         }
@@ -342,17 +356,16 @@ QVector<LeftoverItem> LeftoverScanner::scanRegistryHive(
         QString child_name = QString::fromWCharArray(subkey_name, name_len);
 
         // Skip Microsoft's own keys
-        if (child_name.startsWith("Microsoft", Qt::CaseInsensitive)
-            || child_name.startsWith("Windows", Qt::CaseInsensitive)
-            || child_name.startsWith("Classes", Qt::CaseInsensitive)) {
+        if (child_name.startsWith("Microsoft", Qt::CaseInsensitive) ||
+            child_name.startsWith("Windows", Qt::CaseInsensitive) ||
+            child_name.startsWith("Classes", Qt::CaseInsensitive)) {
             continue;
         }
 
         if (matchesProgram(child_name)) {
             LeftoverItem item;
             item.type = LeftoverItem::Type::RegistryKey;
-            item.path = QString("%1\\%2\\%3")
-                .arg(hiveName, subkey, child_name);
+            item.path = QString("%1\\%2\\%3").arg(hiveName, subkey, child_name);
             item.description = "Leftover registry key";
             item.risk = classifyRisk(item.path, item.type);
             items.append(item);
@@ -363,11 +376,9 @@ QVector<LeftoverItem> LeftoverScanner::scanRegistryHive(
     return items;
 }
 
-#endif // Q_OS_WIN
+#endif  // Q_OS_WIN
 
-QVector<LeftoverItem> LeftoverScanner::scanServices(
-    const std::atomic<bool>& stopRequested)
-{
+QVector<LeftoverItem> LeftoverScanner::scanServices(const std::atomic<bool>& stopRequested) {
     QVector<LeftoverItem> items;
 
     QProcess proc;
@@ -375,8 +386,8 @@ QVector<LeftoverItem> LeftoverScanner::scanServices(
     proc.setArguments({"query", "type=", "service", "state=", "all"});
     proc.start();
 
-    if (!proc.waitForStarted(sak::kTimeoutProcessStartMs)
-        || !proc.waitForFinished(kPowerShellTimeoutMs)) {
+    if (!proc.waitForStarted(sak::kTimeoutProcessStartMs) ||
+        !proc.waitForFinished(kPowerShellTimeoutMs)) {
         return items;
     }
 
@@ -387,7 +398,9 @@ QVector<LeftoverItem> LeftoverScanner::scanServices(
     QString current_display;
 
     for (const auto& line : lines) {
-        if (stopRequested.load()) break;
+        if (stopRequested.load()) {
+            break;
+        }
 
         QString trimmed = line.trimmed();
 
@@ -397,13 +410,11 @@ QVector<LeftoverItem> LeftoverScanner::scanServices(
             current_display = trimmed.mid(14).trimmed();
 
             // Check if service matches our program
-            if (matchesProgram(current_service)
-                || matchesProgram(current_display)) {
+            if (matchesProgram(current_service) || matchesProgram(current_display)) {
                 LeftoverItem item;
                 item.type = LeftoverItem::Type::Service;
                 item.path = current_service;
-                item.description = QString("Windows service: %1")
-                    .arg(current_display);
+                item.description = QString("Windows service: %1").arg(current_display);
                 item.risk = LeftoverItem::RiskLevel::Risky;
                 items.append(item);
             }
@@ -413,9 +424,7 @@ QVector<LeftoverItem> LeftoverScanner::scanServices(
     return items;
 }
 
-QVector<LeftoverItem> LeftoverScanner::scanScheduledTasks(
-    const std::atomic<bool>& stopRequested)
-{
+QVector<LeftoverItem> LeftoverScanner::scanScheduledTasks(const std::atomic<bool>& stopRequested) {
     QVector<LeftoverItem> items;
 
     QProcess proc;
@@ -423,8 +432,8 @@ QVector<LeftoverItem> LeftoverScanner::scanScheduledTasks(
     proc.setArguments({"/query", "/fo", "CSV", "/nh"});
     proc.start();
 
-    if (!proc.waitForStarted(sak::kTimeoutProcessStartMs)
-        || !proc.waitForFinished(kPowerShellTimeoutMs)) {
+    if (!proc.waitForStarted(sak::kTimeoutProcessStartMs) ||
+        !proc.waitForFinished(kPowerShellTimeoutMs)) {
         return items;
     }
 
@@ -432,14 +441,20 @@ QVector<LeftoverItem> LeftoverScanner::scanScheduledTasks(
     QStringList lines = output.split('\n');
 
     for (const auto& line : lines) {
-        if (stopRequested.load()) break;
+        if (stopRequested.load()) {
+            break;
+        }
 
         QString trimmed = line.trimmed();
-        if (trimmed.isEmpty()) continue;
+        if (trimmed.isEmpty()) {
+            continue;
+        }
 
         // CSV format: "TaskName","Next Run Time","Status"
         QStringList fields = trimmed.split(',');
-        if (fields.isEmpty()) continue;
+        if (fields.isEmpty()) {
+            continue;
+        }
 
         QString task_name = fields[0];
         task_name.remove('"');
@@ -457,83 +472,63 @@ QVector<LeftoverItem> LeftoverScanner::scanScheduledTasks(
     return items;
 }
 
-QVector<LeftoverItem> LeftoverScanner::scanFirewallRules(
-    const std::atomic<bool>& stopRequested)
-{
-    QVector<LeftoverItem> items;
-
+void LeftoverScanner::scanFirewallDirection(const QStringList& netsh_args,
+                                            const QString& description,
+                                            const std::atomic<bool>& stopRequested,
+                                            QVector<LeftoverItem>& items) {
     QProcess proc;
     proc.setProgram("netsh.exe");
-    proc.setArguments({"advfirewall", "firewall", "show", "rule",
-                       "name=all", "dir=in"});
+    proc.setArguments(netsh_args);
     proc.start();
 
-    if (!proc.waitForStarted(sak::kTimeoutProcessStartMs)
-        || !proc.waitForFinished(kPowerShellTimeoutMs)) {
-        return items;
+    if (!proc.waitForStarted(sak::kTimeoutProcessStartMs) ||
+        !proc.waitForFinished(kPowerShellTimeoutMs)) {
+        return;
     }
 
-    QString output = QString::fromLocal8Bit(proc.readAllStandardOutput());
-    QStringList lines = output.split('\n');
-
-    QString current_rule;
+    const QString output = QString::fromLocal8Bit(proc.readAllStandardOutput());
+    const QStringList lines = output.split('\n');
 
     for (const auto& line : lines) {
-        if (stopRequested.load()) break;
-
-        QString trimmed = line.trimmed();
-
-        if (trimmed.startsWith("Rule Name:", Qt::CaseInsensitive)) {
-            current_rule = trimmed.mid(10).trimmed();
-
-            if (matchesProgram(current_rule)) {
-                LeftoverItem item;
-                item.type = LeftoverItem::Type::FirewallRule;
-                item.path = current_rule;
-                item.description = "Windows Firewall rule";
-                item.risk = LeftoverItem::RiskLevel::Review;
-                items.append(item);
-            }
+        if (stopRequested.load()) {
+            break;
         }
+        const QString trimmed = line.trimmed();
+        if (!trimmed.startsWith("Rule Name:", Qt::CaseInsensitive)) {
+            continue;
+        }
+        const QString rule_name = trimmed.mid(10).trimmed();
+        if (!matchesProgram(rule_name)) {
+            continue;
+        }
+        LeftoverItem item;
+        item.type = LeftoverItem::Type::FirewallRule;
+        item.path = rule_name;
+        item.description = description;
+        item.risk = LeftoverItem::RiskLevel::Review;
+        items.append(item);
     }
+}
 
-    // Also scan outbound rules
-    QProcess proc2;
-    proc2.setProgram("netsh.exe");
-    proc2.setArguments({"advfirewall", "firewall", "show", "rule",
-                        "name=all", "dir=out"});
-    proc2.start();
+QVector<LeftoverItem> LeftoverScanner::scanFirewallRules(const std::atomic<bool>& stopRequested) {
+    QVector<LeftoverItem> items;
 
-    if (proc2.waitForStarted(sak::kTimeoutProcessStartMs)
-        && proc2.waitForFinished(kPowerShellTimeoutMs)) {
-        output = QString::fromLocal8Bit(proc2.readAllStandardOutput());
-        lines = output.split('\n');
+    scanFirewallDirection({"advfirewall", "firewall", "show", "rule", "name=all", "dir=in"},
+                          "Windows Firewall rule",
+                          stopRequested,
+                          items);
 
-        for (const auto& line : lines) {
-            if (stopRequested.load()) break;
-
-            QString trimmed = line.trimmed();
-            if (trimmed.startsWith("Rule Name:", Qt::CaseInsensitive)) {
-                current_rule = trimmed.mid(10).trimmed();
-
-                if (matchesProgram(current_rule)) {
-                    LeftoverItem item;
-                    item.type = LeftoverItem::Type::FirewallRule;
-                    item.path = current_rule;
-                    item.description = "Windows Firewall rule (outbound)";
-                    item.risk = LeftoverItem::RiskLevel::Review;
-                    items.append(item);
-                }
-            }
-        }
+    if (!stopRequested.load()) {
+        scanFirewallDirection({"advfirewall", "firewall", "show", "rule", "name=all", "dir=out"},
+                              "Windows Firewall rule (outbound)",
+                              stopRequested,
+                              items);
     }
 
     return items;
 }
 
-QVector<LeftoverItem> LeftoverScanner::scanStartupEntries(
-    const std::atomic<bool>& stopRequested)
-{
+QVector<LeftoverItem> LeftoverScanner::scanStartupEntries(const std::atomic<bool>& stopRequested) {
     QVector<LeftoverItem> items;
 
 #ifdef Q_OS_WIN
@@ -541,41 +536,53 @@ QVector<LeftoverItem> LeftoverScanner::scanStartupEntries(
     auto scanRunKey = [&](HKEY hive, const wchar_t* subkey, const QString& hiveName) {
         HKEY key = nullptr;
         LONG rc = RegOpenKeyExW(hive, subkey, 0, KEY_READ, &key);
-        if (rc != ERROR_SUCCESS) return;
+        if (rc != ERROR_SUCCESS) {
+            return;
+        }
 
         DWORD value_count = 0;
-        RegQueryInfoKeyW(key, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
-                         &value_count, nullptr, nullptr, nullptr, nullptr);
+        RegQueryInfoKeyW(key,
+                         nullptr,
+                         nullptr,
+                         nullptr,
+                         nullptr,
+                         nullptr,
+                         nullptr,
+                         &value_count,
+                         nullptr,
+                         nullptr,
+                         nullptr,
+                         nullptr);
 
         wchar_t value_name[kMaxRegistryValueNameLen];
         BYTE value_data[kMaxRegistryValueDataLen];
 
         for (DWORD i = 0; i < value_count; ++i) {
-            if (stopRequested.load()) break;
+            if (stopRequested.load()) {
+                break;
+            }
 
             DWORD name_len = kMaxRegistryValueNameLen;
             DWORD data_len = kMaxRegistryValueDataLen;
             DWORD type = 0;
 
-            rc = RegEnumValueW(key, i, value_name, &name_len, nullptr,
-                               &type, value_data, &data_len);
-            if (rc != ERROR_SUCCESS) continue;
+            rc =
+                RegEnumValueW(key, i, value_name, &name_len, nullptr, &type, value_data, &data_len);
+            if (rc != ERROR_SUCCESS) {
+                continue;
+            }
 
             QString name = QString::fromWCharArray(value_name, name_len);
             QString data;
-            if ((type == REG_SZ || type == REG_EXPAND_SZ)
-                && data_len >= sizeof(wchar_t)) {
-                data = QString::fromWCharArray(
-                    reinterpret_cast<wchar_t*>(value_data),
-                    data_len / sizeof(wchar_t) - 1);
+            if ((type == REG_SZ || type == REG_EXPAND_SZ) && data_len >= sizeof(wchar_t)) {
+                data = QString::fromWCharArray(reinterpret_cast<wchar_t*>(value_data),
+                                               data_len / sizeof(wchar_t) - 1);
             }
 
             if (matchesProgram(name) || matchesProgram(data)) {
                 LeftoverItem item;
                 item.type = LeftoverItem::Type::StartupEntry;
-                item.path = QString("%1\\%2")
-                    .arg(hiveName,
-                         QString::fromWCharArray(subkey));
+                item.path = QString("%1\\%2").arg(hiveName, QString::fromWCharArray(subkey));
                 item.registryValueName = name;
                 item.registryValueData = data;
                 item.description = QString("Startup entry: %1").arg(name);
@@ -587,48 +594,55 @@ QVector<LeftoverItem> LeftoverScanner::scanStartupEntries(
         RegCloseKey(key);
     };
 
-    scanRunKey(HKEY_CURRENT_USER,
-               L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run", "HKCU");
-    scanRunKey(HKEY_CURRENT_USER,
-               L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\RunOnce", "HKCU");
+    scanRunKey(HKEY_CURRENT_USER, L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run", "HKCU");
+    scanRunKey(HKEY_CURRENT_USER, L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\RunOnce", "HKCU");
 
     if (!stopRequested.load()) {
         scanRunKey(HKEY_LOCAL_MACHINE,
-                   L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run", "HKLM");
+                   L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run",
+                   "HKLM");
         scanRunKey(HKEY_LOCAL_MACHINE,
-                   L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\RunOnce", "HKLM");
+                   L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\RunOnce",
+                   "HKLM");
     }
 #endif
 
     // Also check Startup folder
     if (!stopRequested.load()) {
-        QString startup_folder = QStandardPaths::writableLocation(
-            QStandardPaths::ApplicationsLocation) + "/Startup";
-        if (QDir(startup_folder).exists()) {
-            QDir dir(startup_folder);
-            const auto files = dir.entryInfoList(QDir::Files);
-            for (const auto& file : files) {
-                if (stopRequested.load()) break;
-                if (matchesProgram(file.fileName())) {
-                    LeftoverItem item;
-                    item.type = LeftoverItem::Type::StartupEntry;
-                    item.path = QDir::toNativeSeparators(
-                        file.absoluteFilePath());
-                    item.description = "Startup shortcut";
-                    item.sizeBytes = file.size();
-                    item.risk = LeftoverItem::RiskLevel::Safe;
-                    items.append(item);
-                }
-            }
-        }
+        scanStartupFolder(stopRequested, items);
     }
 
     return items;
 }
 
-LeftoverItem::RiskLevel LeftoverScanner::classifyRisk(
-    const QString& path, LeftoverItem::Type type) const
-{
+void LeftoverScanner::scanStartupFolder(const std::atomic<bool>& stopRequested,
+                                         QVector<LeftoverItem>& items) {
+    const QString startup_folder =
+        QStandardPaths::writableLocation(QStandardPaths::ApplicationsLocation) + "/Startup";
+    if (!QDir(startup_folder).exists()) {
+        return;
+    }
+    QDir dir(startup_folder);
+    const auto files = dir.entryInfoList(QDir::Files);
+    for (const auto& file : files) {
+        if (stopRequested.load()) {
+            break;
+        }
+        if (!matchesProgram(file.fileName())) {
+            continue;
+        }
+        LeftoverItem item;
+        item.type = LeftoverItem::Type::StartupEntry;
+        item.path = QDir::toNativeSeparators(file.absoluteFilePath());
+        item.description = "Startup shortcut";
+        item.sizeBytes = file.size();
+        item.risk = LeftoverItem::RiskLevel::Safe;
+        items.append(item);
+    }
+}
+
+LeftoverItem::RiskLevel LeftoverScanner::classifyRisk(const QString& path,
+                                                      LeftoverItem::Type type) const {
     // Protected paths are always Risky
     if (isProtectedPath(path)) {
         return LeftoverItem::RiskLevel::Risky;
@@ -643,8 +657,7 @@ LeftoverItem::RiskLevel LeftoverScanner::classifyRisk(
     // File/Folder: check if in Program Files with exact match
     if (type == LeftoverItem::Type::File || type == LeftoverItem::Type::Folder) {
         // Check for exact install directory match
-        if (!m_installDirName.isEmpty()
-            && path_lower.contains(m_installDirName)) {
+        if (!m_installDirName.isEmpty() && path_lower.contains(m_installDirName)) {
             return LeftoverItem::RiskLevel::Safe;
         }
 
@@ -684,8 +697,7 @@ LeftoverItem::RiskLevel LeftoverScanner::classifyRisk(
     }
 
     // Registry keys
-    if (type == LeftoverItem::Type::RegistryKey
-        || type == LeftoverItem::Type::RegistryValue) {
+    if (type == LeftoverItem::Type::RegistryKey || type == LeftoverItem::Type::RegistryValue) {
         for (const auto& pattern : m_namePatterns) {
             if (path_lower.contains(pattern)) {
                 return LeftoverItem::RiskLevel::Safe;
@@ -703,21 +715,20 @@ LeftoverItem::RiskLevel LeftoverScanner::classifyRisk(
         return LeftoverItem::RiskLevel::Risky;
     }
 
-    if (type == LeftoverItem::Type::ScheduledTask
-        || type == LeftoverItem::Type::FirewallRule
-        || type == LeftoverItem::Type::StartupEntry) {
+    if (type == LeftoverItem::Type::ScheduledTask || type == LeftoverItem::Type::FirewallRule ||
+        type == LeftoverItem::Type::StartupEntry) {
         return LeftoverItem::RiskLevel::Review;
     }
 
     return LeftoverItem::RiskLevel::Review;
 }
 
-bool LeftoverScanner::isProtectedPath(const QString& path) const
-{
+bool LeftoverScanner::isProtectedPath(const QString& path) const {
+    Q_ASSERT(!path.isEmpty());
     const QString path_native = QDir::toNativeSeparators(path);
     const QString install_native = m_program.installLocation.isEmpty()
-                                      ? QString{}
-                                      : QDir::toNativeSeparators(m_program.installLocation);
+                                       ? QString{}
+                                       : QDir::toNativeSeparators(m_program.installLocation);
     for (const auto& protected_path : kProtectedPaths) {
         if (!path_native.startsWith(protected_path, Qt::CaseInsensitive)) {
             continue;
@@ -725,14 +736,14 @@ bool LeftoverScanner::isProtectedPath(const QString& path) const
 
         const int protectedLen = protected_path.length();
         const bool directMatch = (path_native.length() == protectedLen);
-        const bool directChild = (path_native.length() > protectedLen
-                                  && path_native[protectedLen] == '\\');
+        const bool directChild = (path_native.length() > protectedLen &&
+                                  path_native[protectedLen] == '\\');
         if (!directMatch && !directChild) {
             continue;
         }
 
-        if (!install_native.isEmpty()
-            && path_native.startsWith(install_native, Qt::CaseInsensitive)) {
+        if (!install_native.isEmpty() &&
+            path_native.startsWith(install_native, Qt::CaseInsensitive)) {
             return false;
         }
 
@@ -741,8 +752,8 @@ bool LeftoverScanner::isProtectedPath(const QString& path) const
     return false;
 }
 
-bool LeftoverScanner::matchesProgram(const QString& name) const
-{
+bool LeftoverScanner::matchesProgram(const QString& name) const {
+    Q_ASSERT(!name.isEmpty());
     if (name.isEmpty()) {
         return false;
     }
@@ -766,15 +777,15 @@ bool LeftoverScanner::matchesProgram(const QString& name) const
     return false;
 }
 
-qint64 LeftoverScanner::calculateSize(const QString& path)
-{
+qint64 LeftoverScanner::calculateSize(const QString& path) {
     QFileInfo info(path);
     if (info.isFile()) {
         return info.size();
     }
 
     qint64 total = 0;
-    QDirIterator it(path, QDir::Files | QDir::Hidden | QDir::NoSymLinks,
+    QDirIterator it(path,
+                    QDir::Files | QDir::Hidden | QDir::NoSymLinks,
                     QDirIterator::Subdirectories);
     while (it.hasNext()) {
         it.next();
@@ -783,4 +794,4 @@ qint64 LeftoverScanner::calculateSize(const QString& path)
     return total;
 }
 
-} // namespace sak
+}  // namespace sak

@@ -5,9 +5,10 @@
 /// @brief Memory bandwidth and latency benchmark implementation
 
 #include "sak/memory_benchmark_worker.h"
+
 #include "sak/aligned_buffer.h"
-#include "sak/logger.h"
 #include "sak/layout_constants.h"
+#include "sak/logger.h"
 
 #include <QElapsedTimer>
 
@@ -40,72 +41,81 @@ constexpr size_t kLatencyArrayElements = 8 * 1024 * 1024;
 constexpr size_t kLatencyChases = 10'000'000;
 
 /// Reference scores (DDR4-3200 dual-channel baseline = 1000)
-constexpr double kRefReadGbps   = 38.0;
-constexpr double kRefWriteGbps  = 35.0;
-constexpr double kRefCopyGbps   = 33.0;
-constexpr double kRefLatencyNs  = 75.0;
+constexpr double kRefReadGbps = 38.0;
+constexpr double kRefWriteGbps = 35.0;
+constexpr double kRefCopyGbps = 33.0;
+constexpr double kRefLatencyNs = 75.0;
 
-} // anonymous namespace
+}  // anonymous namespace
 
 // ============================================================================
 // Construction
 // ============================================================================
 
-MemoryBenchmarkWorker::MemoryBenchmarkWorker(QObject* parent)
-    : WorkerBase(parent)
-{
-}
+MemoryBenchmarkWorker::MemoryBenchmarkWorker(QObject* parent) : WorkerBase(parent) {}
 
 // ============================================================================
 // WorkerBase Override
 // ============================================================================
 
-auto MemoryBenchmarkWorker::execute() -> std::expected<void, sak::error_code>
-{
+auto MemoryBenchmarkWorker::execute() -> std::expected<void, sak::error_code> {
     logInfo("Starting memory benchmark suite");
     m_result = MemoryBenchmarkResult{};
 
     // Read bandwidth
     reportProgress(0, 5, "Measuring read bandwidth...");
-    if (checkStop()) return std::unexpected(sak::error_code::operation_cancelled);
+    if (checkStop()) {
+        return std::unexpected(sak::error_code::operation_cancelled);
+    }
     m_result.read_bandwidth_gbps = runReadBandwidth();
 
     // Write bandwidth
     reportProgress(1, 5, "Measuring write bandwidth...");
-    if (checkStop()) return std::unexpected(sak::error_code::operation_cancelled);
+    if (checkStop()) {
+        return std::unexpected(sak::error_code::operation_cancelled);
+    }
     m_result.write_bandwidth_gbps = runWriteBandwidth();
 
     // Copy bandwidth
     reportProgress(2, 5, "Measuring copy bandwidth...");
-    if (checkStop()) return std::unexpected(sak::error_code::operation_cancelled);
+    if (checkStop()) {
+        return std::unexpected(sak::error_code::operation_cancelled);
+    }
     m_result.copy_bandwidth_gbps = runCopyBandwidth();
 
     // Random latency
     reportProgress(3, 5, "Measuring random access latency...");
-    if (checkStop()) return std::unexpected(sak::error_code::operation_cancelled);
+    if (checkStop()) {
+        return std::unexpected(sak::error_code::operation_cancelled);
+    }
     m_result.random_latency_ns = runRandomLatency();
 
     // Allocation stress
     reportProgress(4, 5, "Running allocation stress test...");
-    if (checkStop()) return std::unexpected(sak::error_code::operation_cancelled);
+    if (checkStop()) {
+        return std::unexpected(sak::error_code::operation_cancelled);
+    }
     runAllocationStress();
 
     // Calculate overall score
-    const double read_score  = (m_result.read_bandwidth_gbps / kRefReadGbps) * 0.25;
+    const double read_score = (m_result.read_bandwidth_gbps / kRefReadGbps) * 0.25;
     const double write_score = (m_result.write_bandwidth_gbps / kRefWriteGbps) * 0.25;
-    const double copy_score  = (m_result.copy_bandwidth_gbps / kRefCopyGbps) * 0.25;
+    const double copy_score = (m_result.copy_bandwidth_gbps / kRefCopyGbps) * 0.25;
     // Latency: lower is better, so invert
-    const double lat_score   = (kRefLatencyNs / std::max(m_result.random_latency_ns, 1.0)) * 0.25;
+    const double lat_score = (kRefLatencyNs / std::max(m_result.random_latency_ns, 1.0)) * 0.25;
 
-    m_result.overall_score = static_cast<int>((read_score + write_score + copy_score +
-        lat_score) * 1000.0);
+    m_result.overall_score =
+        static_cast<int>((read_score + write_score + copy_score + lat_score) * 1000.0);
     m_result.timestamp = QDateTime::currentDateTime();
 
-    logInfo("Memory benchmark complete — R: {:.1f} GB/s, W: {:.1f} GB/s, "
-            "Copy: {:.1f} GB/s, Latency: {:.1f} ns, Score: {}",
-            m_result.read_bandwidth_gbps, m_result.write_bandwidth_gbps,
-            m_result.copy_bandwidth_gbps, m_result.random_latency_ns,
-            m_result.overall_score);
+    logInfo(
+        "Memory benchmark complete — R: {:.1f} GB/s, W: {:.1f} GB/s, "
+        "Copy: {:.1f} GB/s, Latency: {:.1f} ns, Score: {}",
+        m_result.read_bandwidth_gbps,
+        m_result.write_bandwidth_gbps,
+        m_result.copy_bandwidth_gbps,
+        m_result.random_latency_ns,
+        m_result.overall_score);
 
     Q_EMIT benchmarkComplete(m_result);
     return {};
@@ -115,8 +125,7 @@ auto MemoryBenchmarkWorker::execute() -> std::expected<void, sak::error_code>
 // Bandwidth Tests
 // ============================================================================
 
-double MemoryBenchmarkWorker::runReadBandwidth()
-{
+double MemoryBenchmarkWorker::runReadBandwidth() {
     VirtualBuffer buf(kBandwidthBufferSize);
     if (!buf.valid()) {
         logError("Failed to allocate {} MB for read bandwidth test",
@@ -150,8 +159,8 @@ double MemoryBenchmarkWorker::runReadBandwidth()
         }
 
         const double elapsed_sec = timer.nsecsElapsed() / 1'000'000'000.0;
-        const double gbps =
-            static_cast<double>(buf.size()) / (1024.0 * 1024.0 * 1024.0) / elapsed_sec;
+        const double gbps = static_cast<double>(buf.size()) / (1024.0 * 1024.0 * 1024.0) /
+                            elapsed_sec;
         best_gbps = std::max(best_gbps, gbps);
 
         // Prevent optimization from eliding reads
@@ -163,10 +172,11 @@ double MemoryBenchmarkWorker::runReadBandwidth()
     return best_gbps;
 }
 
-double MemoryBenchmarkWorker::runWriteBandwidth()
-{
+double MemoryBenchmarkWorker::runWriteBandwidth() {
     VirtualBuffer buf(kBandwidthBufferSize);
-    if (!buf.valid()) return 0.0;
+    if (!buf.valid()) {
+        return 0.0;
+    }
 
     // Force page commit
     std::memset(buf.data(), 0, buf.size());
@@ -180,9 +190,9 @@ double MemoryBenchmarkWorker::runWriteBandwidth()
         QElapsedTimer timer;
         timer.start();
 
-        const uint64_t pattern = 0xDEADBEEFCAFEBABEULL;
+        const uint64_t pattern = 0xDE'AD'BE'EF'CA'FE'BA'BEULL;
         for (size_t i = 0; i < count; i += 8) {
-            data[i]     = pattern;
+            data[i] = pattern;
             data[i + 1] = pattern;
             data[i + 2] = pattern;
             data[i + 3] = pattern;
@@ -193,8 +203,8 @@ double MemoryBenchmarkWorker::runWriteBandwidth()
         }
 
         const double elapsed_sec = timer.nsecsElapsed() / 1'000'000'000.0;
-        const double gbps =
-            static_cast<double>(buf.size()) / (1024.0 * 1024.0 * 1024.0) / elapsed_sec;
+        const double gbps = static_cast<double>(buf.size()) / (1024.0 * 1024.0 * 1024.0) /
+                            elapsed_sec;
         best_gbps = std::max(best_gbps, gbps);
     }
 
@@ -202,11 +212,12 @@ double MemoryBenchmarkWorker::runWriteBandwidth()
     return best_gbps;
 }
 
-double MemoryBenchmarkWorker::runCopyBandwidth()
-{
+double MemoryBenchmarkWorker::runCopyBandwidth() {
     VirtualBuffer src(kBandwidthBufferSize);
     VirtualBuffer dst(kBandwidthBufferSize);
-    if (!src.valid() || !dst.valid()) return 0.0;
+    if (!src.valid() || !dst.valid()) {
+        return 0.0;
+    }
 
     // Initialize
     std::memset(src.data(), 0xAA, src.size());
@@ -222,8 +233,8 @@ double MemoryBenchmarkWorker::runCopyBandwidth()
 
         const double elapsed_sec = timer.nsecsElapsed() / 1'000'000'000.0;
         // Copy touches both read and write = 2× buffer size
-        const double gbps =
-            static_cast<double>(src.size()) / (1024.0 * 1024.0 * 1024.0) / elapsed_sec;
+        const double gbps = static_cast<double>(src.size()) / (1024.0 * 1024.0 * 1024.0) /
+                            elapsed_sec;
         best_gbps = std::max(best_gbps, gbps);
     }
 
@@ -235,15 +246,16 @@ double MemoryBenchmarkWorker::runCopyBandwidth()
 // Latency Test
 // ============================================================================
 
-double MemoryBenchmarkWorker::runRandomLatency()
-{
+double MemoryBenchmarkWorker::runRandomLatency() {
     // Pointer-chase: create a randomized linked list in memory.
     // Each element points to a random other element. Sequential
     // prefetchers cannot predict the next access → measures true latency.
 
     const size_t element_count = kLatencyArrayElements;
     VirtualBuffer buf(element_count * sizeof(size_t));
-    if (!buf.valid()) return 0.0;
+    if (!buf.valid()) {
+        return 0.0;
+    }
 
     auto* arr = buf.as<size_t>();
 
@@ -252,7 +264,7 @@ double MemoryBenchmarkWorker::runRandomLatency()
     std::iota(indices.begin(), indices.end(), 0);
 
     // Fisher-Yates shuffle with fixed seed
-    std::mt19937_64 rng(0xC0FFEE);
+    std::mt19937_64 rng(0xC0'FF'EE);
     for (size_t i = element_count - 1; i > 0; --i) {
         std::uniform_int_distribution<size_t> dist(0, i);
         std::swap(indices[i], indices[dist(rng)]);
@@ -262,7 +274,7 @@ double MemoryBenchmarkWorker::runRandomLatency()
     for (size_t i = 0; i < element_count - 1; ++i) {
         arr[indices[i]] = indices[i + 1];
     }
-    arr[indices[element_count - 1]] = indices[0]; // Close the loop
+    arr[indices[element_count - 1]] = indices[0];  // Close the loop
 
     // Warm up
     size_t idx = 0;
@@ -293,12 +305,11 @@ double MemoryBenchmarkWorker::runRandomLatency()
 // Allocation Stress
 // ============================================================================
 
-void MemoryBenchmarkWorker::runAllocationStress()
-{
+void MemoryBenchmarkWorker::runAllocationStress() {
     // Test how fast the system can allocate and free memory blocks
 
-    constexpr size_t kAllocSize = 64 * 1024; // 64 KB blocks
-    constexpr int kAllocOps = 10000;
+    constexpr size_t kAllocSize = 64 * 1024;  // 64 KB blocks
+    constexpr int kAllocOps = 10'000;
 
     QElapsedTimer timer;
     timer.start();
@@ -317,7 +328,7 @@ void MemoryBenchmarkWorker::runAllocationStress()
     m_result.alloc_dealloc_ops_per_sec = static_cast<double>(kAllocOps) / elapsed_sec;
 
     // Find max contiguous allocation
-    size_t test_size = 1024ULL * 1024 * 1024; // Start at 1 GB
+    size_t test_size = 1024ULL * 1024 * 1024;  // Start at 1 GB
     while (test_size >= sak::kBytesPerMB) {
         void* ptr = std::malloc(test_size);
         if (ptr) {
@@ -331,7 +342,8 @@ void MemoryBenchmarkWorker::runAllocationStress()
     m_result.max_contiguous_alloc_mb = max_contiguous;
 
     logInfo("Allocation stress: {:.0f} ops/s, max contiguous: {} MB",
-            m_result.alloc_dealloc_ops_per_sec, max_contiguous);
+            m_result.alloc_dealloc_ops_per_sec,
+            max_contiguous);
 }
 
-} // namespace sak
+}  // namespace sak

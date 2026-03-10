@@ -5,7 +5,7 @@
 param(
     [Parameter(Mandatory=$true)]
     [string]$Version,
-    
+
     [Parameter(Mandatory=$false)]
     [string]$Message = "Release version $Version"
 )

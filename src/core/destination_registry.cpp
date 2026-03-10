@@ -2,14 +2,13 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "sak/destination_registry.h"
+
 #include "sak/layout_constants.h"
 
 namespace sak {
 
 DestinationRegistry::DestinationRegistry(QObject* parent)
-    : QObject(parent)
-    , m_pruneTimer(new QTimer(this))
-{
+    : QObject(parent), m_pruneTimer(new QTimer(this)) {
     m_pruneTimer->setInterval(sak::kTimerRefreshMs);
     connect(m_pruneTimer, &QTimer::timeout, this, &DestinationRegistry::pruneStale);
     m_pruneTimer->start();
@@ -38,7 +37,7 @@ void DestinationRegistry::registerDestination(const DestinationPC& destination) 
 }
 
 void DestinationRegistry::updateHealth(const QString& destination_id,
-    const DestinationHealth& health) {
+                                       const DestinationHealth& health) {
     if (!m_destinations.contains(destination_id)) {
         return;
     }
@@ -58,7 +57,8 @@ bool DestinationRegistry::contains(const QString& destination_id) const {
 }
 
 bool DestinationRegistry::checkReadiness(const DestinationPC& destination,
-    qint64 required_free_bytes, QString* reason) {
+                                         qint64 required_free_bytes,
+                                         QString* reason) {
     if (!destination.health.admin_rights) {
         if (reason) {
             *reason = QObject::tr("Admin rights required");
@@ -113,4 +113,4 @@ void DestinationRegistry::pruneStale() {
     }
 }
 
-} // namespace sak
+}  // namespace sak

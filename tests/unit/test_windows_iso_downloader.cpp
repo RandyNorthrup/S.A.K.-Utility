@@ -6,10 +6,11 @@
  * @brief Tests for UUP dump-based Windows ISO downloader
  */
 
-#include <QtTest/QtTest>
-#include "sak/windows_iso_downloader.h"
 #include "sak/uup_dump_api.h"
+#include "sak/windows_iso_downloader.h"
+
 #include <QSignalSpy>
+#include <QtTest/QtTest>
 
 class WindowsISODownloaderTests : public QObject {
     Q_OBJECT
@@ -40,24 +41,20 @@ private:
     UupDumpApi* api = nullptr;
 };
 
-void WindowsISODownloaderTests::initTestCase()
-{
+void WindowsISODownloaderTests::initTestCase() {
     qInfo() << "=== Windows ISO Downloader Tests (UUP dump) ===";
 }
 
-void WindowsISODownloaderTests::cleanupTestCase()
-{
+void WindowsISODownloaderTests::cleanupTestCase() {
     qInfo() << "=== All tests completed ===";
 }
 
-void WindowsISODownloaderTests::init()
-{
+void WindowsISODownloaderTests::init() {
     downloader = new WindowsISODownloader(this);
     api = new UupDumpApi(this);
 }
 
-void WindowsISODownloaderTests::cleanup()
-{
+void WindowsISODownloaderTests::cleanup() {
     if (downloader) {
         downloader->cancel();
         delete downloader;
@@ -74,8 +71,7 @@ void WindowsISODownloaderTests::cleanup()
  * Test availableArchitectures()
  * Should return amd64 and arm64.
  */
-void WindowsISODownloaderTests::testAvailableArchitectures()
-{
+void WindowsISODownloaderTests::testAvailableArchitectures() {
     auto archs = WindowsISODownloader::availableArchitectures();
     QCOMPARE(archs.size(), 2);
     QVERIFY(archs.contains("amd64"));
@@ -86,8 +82,7 @@ void WindowsISODownloaderTests::testAvailableArchitectures()
  * Test availableChannels()
  * Should return 5 channels.
  */
-void WindowsISODownloaderTests::testAvailableChannels()
-{
+void WindowsISODownloaderTests::testAvailableChannels() {
     auto channels = WindowsISODownloader::availableChannels();
     QCOMPARE(channels.size(), 5);
 }
@@ -96,15 +91,14 @@ void WindowsISODownloaderTests::testAvailableChannels()
  * Test fetchBuilds() with real network call to UUP dump API.
  * Should emit buildsFetched with at least one result.
  */
-void WindowsISODownloaderTests::testFetchBuilds()
-{
+void WindowsISODownloaderTests::testFetchBuilds() {
     QSignalSpy buildsSpy(downloader, &WindowsISODownloader::buildsFetched);
     QSignalSpy errorSpy(downloader, &WindowsISODownloader::downloadError);
 
     downloader->fetchBuilds("amd64", UupDumpApi::ReleaseChannel::Retail);
 
     // Wait up to 15 seconds for API response
-    bool ok = buildsSpy.wait(15000) || errorSpy.count() > 0;
+    bool ok = buildsSpy.wait(15'000) || errorSpy.count() > 0;
 
     if (errorSpy.count() > 0) {
         qWarning() << "API error:" << errorSpy.at(0).at(0).toString();
@@ -128,8 +122,7 @@ void WindowsISODownloaderTests::testFetchBuilds()
 /**
  * Test cancel() does not crash.
  */
-void WindowsISODownloaderTests::testCancel()
-{
+void WindowsISODownloaderTests::testCancel() {
     downloader->fetchBuilds("amd64", UupDumpApi::ReleaseChannel::Retail);
     QTest::qWait(500);
     downloader->cancel();
@@ -140,13 +133,11 @@ void WindowsISODownloaderTests::testCancel()
 /**
  * Test channel display names are non-empty.
  */
-void WindowsISODownloaderTests::testChannelDisplayNames()
-{
+void WindowsISODownloaderTests::testChannelDisplayNames() {
     for (auto ch : UupDumpApi::allChannels()) {
         QString name = UupDumpApi::channelToDisplayName(ch);
         QVERIFY2(!name.isEmpty(),
-                 qPrintable(QString("Empty name for channel %1")
-                                .arg(static_cast<int>(ch))));
+                 qPrintable(QString("Empty name for channel %1").arg(static_cast<int>(ch))));
     }
 }
 
@@ -154,15 +145,14 @@ void WindowsISODownloaderTests::testChannelDisplayNames()
  * Test getFiles() returns non-empty file list.
  * Verifies the URL validation logic accepts Microsoft CDN HTTP URLs.
  */
-void WindowsISODownloaderTests::testGetFilesReturnsResults()
-{
+void WindowsISODownloaderTests::testGetFilesReturnsResults() {
     // First fetch a build UUID from the API
     QSignalSpy buildsSpy(api, &UupDumpApi::buildsFetched);
     QSignalSpy buildErrorSpy(api, &UupDumpApi::apiError);
 
     api->fetchAvailableBuilds("amd64", UupDumpApi::ReleaseChannel::Retail);
 
-    bool ok = buildsSpy.wait(15000) || buildErrorSpy.count() > 0;
+    bool ok = buildsSpy.wait(15'000) || buildErrorSpy.count() > 0;
     if (buildErrorSpy.count() > 0 || !ok) {
         QSKIP("UUP dump API unreachable - skipping network test");
     }
@@ -179,7 +169,7 @@ void WindowsISODownloaderTests::testGetFilesReturnsResults()
 
     api->getFiles(uuid, "en-us", "PROFESSIONAL");
 
-    ok = filesSpy.wait(15000) || fileErrorSpy.count() > 0;
+    ok = filesSpy.wait(15'000) || fileErrorSpy.count() > 0;
     if (fileErrorSpy.count() > 0) {
         qWarning() << "API error:" << fileErrorSpy.at(0).at(0).toString();
         QSKIP("getFiles API call failed - skipping");
@@ -199,15 +189,14 @@ void WindowsISODownloaderTests::testGetFilesReturnsResults()
  * Test that file URLs from getFiles() are well-formed.
  * Verifies filenames are safe (no path traversal) and URLs are valid.
  */
-void WindowsISODownloaderTests::testFileUrlsAreValid()
-{
+void WindowsISODownloaderTests::testFileUrlsAreValid() {
     // First fetch a build UUID
     QSignalSpy buildsSpy(api, &UupDumpApi::buildsFetched);
     QSignalSpy buildErrorSpy(api, &UupDumpApi::apiError);
 
     api->fetchAvailableBuilds("amd64", UupDumpApi::ReleaseChannel::Retail);
 
-    bool ok = buildsSpy.wait(15000) || buildErrorSpy.count() > 0;
+    bool ok = buildsSpy.wait(15'000) || buildErrorSpy.count() > 0;
     if (buildErrorSpy.count() > 0 || !ok) {
         QSKIP("UUP dump API unreachable - skipping network test");
     }
@@ -223,7 +212,7 @@ void WindowsISODownloaderTests::testFileUrlsAreValid()
 
     api->getFiles(uuid, "en-us", "PROFESSIONAL");
 
-    ok = filesSpy.wait(15000) || fileErrorSpy.count() > 0;
+    ok = filesSpy.wait(15'000) || fileErrorSpy.count() > 0;
     if (fileErrorSpy.count() > 0 || !ok) {
         QSKIP("getFiles API call failed - skipping");
     }
@@ -250,16 +239,14 @@ void WindowsISODownloaderTests::testFileUrlsAreValid()
                  qPrintable("Unexpected scheme " + scheme + " for: " + f.fileName));
 
         // SHA-1 checksum must be present
-        QVERIFY2(!f.sha1.isEmpty(),
-                 qPrintable("Missing SHA-1 for: " + f.fileName));
+        QVERIFY2(!f.sha1.isEmpty(), qPrintable("Missing SHA-1 for: " + f.fileName));
     }
 
     qInfo() << "Validated" << files.size() << "file URLs successfully";
 }
 
 #include <QApplication>
-int main(int argc, char* argv[])
-{
+int main(int argc, char* argv[]) {
     QApplication app(argc, argv);
     WindowsISODownloaderTests tc;
     QTEST_SET_MAIN_SOURCE_PATH
@@ -267,4 +254,3 @@ int main(int argc, char* argv[])
 }
 
 #include "test_windows_iso_downloader.moc"
-

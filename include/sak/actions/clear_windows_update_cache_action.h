@@ -4,13 +4,14 @@
 #pragma once
 
 #include "sak/quick_action.h"
+
 #include <QString>
 
 namespace sak {
 
 /**
  * @brief Clear Windows Update Cache Action
- * 
+ *
  * Stops Windows Update service, clears SoftwareDistribution folder,
  * and restarts the service to free up disk space.
  */
@@ -71,5 +72,4 @@ private:
     qint64 calculateDirectorySize(const QString& path, int& file_count);
 };
 
-} // namespace sak
-
+}  // namespace sak

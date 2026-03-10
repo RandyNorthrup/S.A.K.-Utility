@@ -5,8 +5,11 @@
 /// @brief Implementation of recursive directory scanner
 
 #include "sak/file_scanner.h"
+
 #include "sak/logger.h"
+
 #include <QtGlobal>
+
 #include <algorithm>
 
 #ifdef _WIN32
@@ -21,10 +24,9 @@
 
 namespace sak {
 
-auto file_scanner::scan(
-    const std::filesystem::path& root_path,
-    const scan_options& options,
-    std::stop_token stop_token) -> std::expected<scan_statistics, error_code> {
+auto file_scanner::scan(const std::filesystem::path& root_path,
+                        const scan_options& options,
+                        std::stop_token stop_token) -> std::expected<scan_statistics, error_code> {
     Q_ASSERT_X(!root_path.empty(), "file_scanner::scan", "root_path must not be empty");
 
     // Validate root path
@@ -59,29 +61,31 @@ auto file_scanner::scan(
     }
 
     logInfo("Directory scan complete: {} files, {} dirs, {} errors",
-             stats.files_found, stats.directories_found, stats.errors_encountered);
+            stats.files_found,
+            stats.directories_found,
+            stats.errors_encountered);
 
     // Postcondition: stats counters must be consistent
     Q_ASSERT_X(stats.files_found + stats.directories_found + stats.skipped_by_filter +
-        stats.errors_encountered > 0
-               || stats.files_found == 0,
-               "file_scanner::scan", "scan stats must be consistent");
+                           stats.errors_encountered >
+                       0 ||
+                   stats.files_found == 0,
+               "file_scanner::scan",
+               "scan stats must be consistent");
 
     return stats;
 }
 
-auto file_scanner::scanAndCollect(
-    const std::filesystem::path& root_path,
-    const scan_options& options,
-    std::stop_token stop_token) -> std::expected<std::vector<std::filesystem::path>, error_code> {
-
+auto file_scanner::scanAndCollect(const std::filesystem::path& root_path,
+                                  const scan_options& options,
+                                  std::stop_token stop_token)
+    -> std::expected<std::vector<std::filesystem::path>, error_code> {
     std::vector<std::filesystem::path> collected_paths;
 
     // Create modified options with collection callback
     scan_options modified_options = options;
-    modified_options.callback = [&collected_paths, &options](
-        const std::filesystem::path& path, bool is_directory) -> bool {
-
+    modified_options.callback = [&collected_paths, &options](const std::filesystem::path& path,
+                                                             bool is_directory) -> bool {
         // Add to collection
         collected_paths.push_back(path);
 
@@ -102,9 +106,8 @@ auto file_scanner::scanAndCollect(
     return collected_paths;
 }
 
-auto file_scanner::listFiles(
-    const std::filesystem::path& root_path,
-    bool recursive) -> std::expected<std::vector<std::filesystem::path>, error_code> {
+auto file_scanner::listFiles(const std::filesystem::path& root_path, bool recursive)
+    -> std::expected<std::vector<std::filesystem::path>, error_code> {
     Q_ASSERT_X(!root_path.empty(), "file_scanner::listFiles", "root_path must not be empty");
 
     scan_options options;
@@ -115,10 +118,10 @@ auto file_scanner::listFiles(
     return scanner.scanAndCollect(root_path, options);
 }
 
-auto file_scanner::findFiles(
-    const std::filesystem::path& root_path,
-    const std::vector<std::string>& patterns,
-    bool recursive) -> std::expected<std::vector<std::filesystem::path>, error_code> {
+auto file_scanner::findFiles(const std::filesystem::path& root_path,
+                             const std::vector<std::string>& patterns,
+                             bool recursive)
+    -> std::expected<std::vector<std::filesystem::path>, error_code> {
     Q_ASSERT_X(!root_path.empty(), "file_scanner::findFiles", "root_path must not be empty");
     Q_ASSERT_X(!patterns.empty(), "file_scanner::findFiles", "patterns must not be empty");
 
@@ -131,11 +134,9 @@ auto file_scanner::findFiles(
     return scanner.scanAndCollect(root_path, options);
 }
 
-bool file_scanner::shouldProcessEntry(
-    const std::filesystem::directory_entry& entry,
-    const scan_options& options,
-    std::size_t current_depth) const noexcept {
-
+bool file_scanner::shouldProcessEntry(const std::filesystem::directory_entry& entry,
+                                      const scan_options& options,
+                                      std::size_t current_depth) const noexcept {
     try {
         const auto& path = entry.path();
 
@@ -154,21 +155,25 @@ bool file_scanner::shouldProcessEntry(
 
         // Check type filter
         switch (options.type_filter) {
-            case file_type_filter::files_only:
-                if (!is_file) return false;
-                break;
-            case file_type_filter::directories_only:
-                if (!is_dir) return false;
-                break;
-            case file_type_filter::all:
-                break;
+        case file_type_filter::files_only:
+            if (!is_file) {
+                return false;
+            }
+            break;
+        case file_type_filter::directories_only:
+            if (!is_dir) {
+                return false;
+            }
+            break;
+        case file_type_filter::all:
+            break;
         }
 
         // Check excluded directories
         if (is_dir) {
             const auto dir_name = path.filename().string();
             if (std::ranges::any_of(options.exclude_dirs,
-                    [&dir_name](const auto& excl) { return dir_name == excl; })) {
+                                    [&dir_name](const auto& excl) { return dir_name == excl; })) {
                 return false;
             }
         }
@@ -190,20 +195,19 @@ bool file_scanner::shouldProcessEntry(
     }
 }
 
-bool file_scanner::shouldIncludeFile(
-    const std::filesystem::directory_entry& entry,
-    const std::filesystem::path& path,
-    const scan_options& options) const noexcept {
+bool file_scanner::shouldIncludeFile(const std::filesystem::directory_entry& entry,
+                                     const std::filesystem::path& path,
+                                     const scan_options& options) const noexcept {
     try {
         // Check exclude patterns
-        if (!options.exclude_patterns.empty()
-            && path_utils::matchesPattern(path, options.exclude_patterns)) {
+        if (!options.exclude_patterns.empty() &&
+            path_utils::matchesPattern(path, options.exclude_patterns)) {
             return false;
         }
 
         // Check include patterns (if specified, must match at least one)
-        if (!options.include_patterns.empty()
-            && !path_utils::matchesPattern(path, options.include_patterns)) {
+        if (!options.include_patterns.empty() &&
+            !path_utils::matchesPattern(path, options.include_patterns)) {
             return false;
         }
 
@@ -233,6 +237,7 @@ bool file_scanner::shouldIncludeFile(
 }
 
 bool file_scanner::isHidden(const std::filesystem::path& path) noexcept {
+    Q_ASSERT(!path.empty());
     try {
         auto filename = path.filename().string();
 
@@ -261,13 +266,12 @@ bool file_scanner::isHidden(const std::filesystem::path& path) noexcept {
     }
 }
 
-auto file_scanner::processScannedEntry(
-    const std::filesystem::directory_entry& entry,
-    const scan_options& options,
-    scan_statistics& stats,
-    std::size_t current_depth,
-    std::stop_token stop_token) -> std::expected<void, error_code> {
-
+auto file_scanner::processScannedEntry(const std::filesystem::directory_entry& entry,
+                                       const scan_options& options,
+                                       scan_statistics& stats,
+                                       std::size_t current_depth,
+                                       std::stop_token stop_token)
+    -> std::expected<void, error_code> {
     if (!shouldProcessEntry(entry, options, current_depth)) {
         stats.skipped_by_filter++;
         return {};
@@ -292,10 +296,8 @@ auto file_scanner::processScannedEntry(
         m_files_processed.fetch_add(1, std::memory_order_relaxed);
 
         if (options.progress_callback) {
-            options.progress_callback(
-                m_files_processed.load(std::memory_order_relaxed),
-                m_size_processed.load(std::memory_order_relaxed)
-            );
+            options.progress_callback(m_files_processed.load(std::memory_order_relaxed),
+                                      m_size_processed.load(std::memory_order_relaxed));
         }
     } else if (is_dir) {
         stats.directories_found++;
@@ -310,8 +312,8 @@ auto file_scanner::processScannedEntry(
 
     // Recurse into subdirectories
     if (is_dir && options.recursive) {
-        auto recurse_result = scanDirectoryRecursive(
-            entry.path(), options, stats, current_depth + 1, stop_token);
+        auto recurse_result =
+            scanDirectoryRecursive(entry.path(), options, stats, current_depth + 1, stop_token);
 
         if (!recurse_result) {
             if (recurse_result.error() == error_code::operation_cancelled) {
@@ -324,12 +326,12 @@ auto file_scanner::processScannedEntry(
     return {};
 }
 
-auto file_scanner::processEntryWithErrorHandling(
-    const std::filesystem::directory_entry& entry,
-    const scan_options& options,
-    scan_statistics& stats,
-    std::size_t current_depth,
-    std::stop_token stop_token) -> std::expected<void, error_code> {
+auto file_scanner::processEntryWithErrorHandling(const std::filesystem::directory_entry& entry,
+                                                 const scan_options& options,
+                                                 scan_statistics& stats,
+                                                 std::size_t current_depth,
+                                                 std::stop_token stop_token)
+    -> std::expected<void, error_code> {
     try {
         return processScannedEntry(entry, options, stats, current_depth, stop_token);
     } catch (const std::filesystem::filesystem_error& e) {
@@ -343,12 +345,12 @@ auto file_scanner::processEntryWithErrorHandling(
     }
 }
 
-auto file_scanner::scanDirectoryRecursive(
-    const std::filesystem::path& current_path,
-    const scan_options& options,
-    scan_statistics& stats,
-    std::size_t current_depth,
-    std::stop_token stop_token) -> std::expected<void, error_code> {
+auto file_scanner::scanDirectoryRecursive(const std::filesystem::path& current_path,
+                                          const scan_options& options,
+                                          scan_statistics& stats,
+                                          std::size_t current_depth,
+                                          std::stop_token stop_token)
+    -> std::expected<void, error_code> {
     Q_ASSERT_X(!current_path.empty(), "scanDirectoryRecursive", "current_path must not be empty");
 
     if (stop_token.stop_requested()) {
@@ -367,7 +369,7 @@ auto file_scanner::scanDirectoryRecursive(
         if (ec) {
             logWarning("Failed to open directory: {} - {}", current_path.string(), ec.message());
             stats.errors_encountered++;
-            return {}; // Continue with other directories
+            return {};  // Continue with other directories
         }
 
         for (const auto& entry : dir_it) {
@@ -375,8 +377,8 @@ auto file_scanner::scanDirectoryRecursive(
                 return std::unexpected(error_code::operation_cancelled);
             }
 
-            auto result = processEntryWithErrorHandling(entry, options, stats, current_depth,
-                stop_token);
+            auto result =
+                processEntryWithErrorHandling(entry, options, stats, current_depth, stop_token);
             if (!result) {
                 return result;
             }
@@ -393,4 +395,4 @@ auto file_scanner::scanDirectoryRecursive(
     }
 }
 
-} // namespace sak
+}  // namespace sak

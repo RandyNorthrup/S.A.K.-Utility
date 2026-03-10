@@ -27,10 +27,10 @@ public:
         QString target;
         QVector<uint16_t> ports;
         uint16_t portRangeStart = 0;
-        uint16_t portRangeEnd   = 0;
-        int timeoutMs           = netdiag::kDefaultPortScanTimeoutMs;
-        int maxConcurrent       = netdiag::kDefaultMaxConcurrent;
-        bool grabBanners        = true;
+        uint16_t portRangeEnd = 0;
+        int timeoutMs = netdiag::kDefaultPortScanTimeoutMs;
+        int maxConcurrent = netdiag::kDefaultMaxConcurrent;
+        bool grabBanners = true;
     };
 
     explicit PortScanner(QObject* parent = nullptr);
@@ -62,16 +62,18 @@ Q_SIGNALS:
 private:
     std::atomic<bool> m_cancelled{false};
 
-    [[nodiscard]] PortScanResult scanPort(const QString& target, uint16_t port,
-                                           int timeoutMs, bool grabBanner);
+    [[nodiscard]] PortScanResult scanPort(const QString& target,
+                                          uint16_t port,
+                                          int timeoutMs,
+                                          bool grabBanner);
     [[nodiscard]] static QString grabBannerData(const QString& target,
-                                                 uint16_t port, int timeoutMs);
+                                                uint16_t port,
+                                                int timeoutMs);
 
     /// @brief Well-known port → service name map
     [[nodiscard]] static const QHash<uint16_t, QString>& serviceDatabase();
 };
 
-} // namespace sak
+}  // namespace sak
 
-static_assert(!std::is_copy_constructible_v<sak::PortScanner>,
-    "PortScanner must not be copyable.");
+static_assert(!std::is_copy_constructible_v<sak::PortScanner>, "PortScanner must not be copyable.");

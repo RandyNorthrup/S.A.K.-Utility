@@ -23,39 +23,39 @@ namespace sak {
 namespace netdiag {
 
 // ── Default configuration values ──
-constexpr int kDefaultPingCount          = 10;
-constexpr int kDefaultPingIntervalMs     = 1000;
-constexpr int kDefaultPingTimeoutMs      = 4000;
-constexpr int kDefaultPingPacketSize     = 32;
-constexpr int kDefaultPingTtl            = 128;
-constexpr int kDefaultTracerouteMaxHops  = 30;
-constexpr int kDefaultTracerouteTimeout  = 5000;
-constexpr int kDefaultTracerouteProbes   = 3;
-constexpr int kDefaultMtrCycles          = 100;
-constexpr int kDefaultPortScanTimeoutMs  = 3000;
-constexpr int kDefaultMaxConcurrent      = 50;
-constexpr int kDefaultBandwidthDuration  = 10;
-constexpr uint16_t kDefaultIperfPort     = 5201;
+constexpr int kDefaultPingCount = 10;
+constexpr int kDefaultPingIntervalMs = 1000;
+constexpr int kDefaultPingTimeoutMs = 4000;
+constexpr int kDefaultPingPacketSize = 32;
+constexpr int kDefaultPingTtl = 128;
+constexpr int kDefaultTracerouteMaxHops = 30;
+constexpr int kDefaultTracerouteTimeout = 5000;
+constexpr int kDefaultTracerouteProbes = 3;
+constexpr int kDefaultMtrCycles = 100;
+constexpr int kDefaultPortScanTimeoutMs = 3000;
+constexpr int kDefaultMaxConcurrent = 50;
+constexpr int kDefaultBandwidthDuration = 10;
+constexpr uint16_t kDefaultIperfPort = 5201;
 constexpr int kDefaultWifiScanIntervalMs = 5000;
-constexpr int kDefaultConnRefreshMs      = 2000;
-constexpr int kBannerGrabTimeoutMs       = 2000;
-constexpr int kBannerMaxBytes            = 512;
+constexpr int kDefaultConnRefreshMs = 2000;
+constexpr int kBannerGrabTimeoutMs = 2000;
+constexpr int kBannerMaxBytes = 512;
 
 // ── WiFi frequency boundaries (kHz) ──
-constexpr uint32_t kFreq2GHzStart = 2412000;
-constexpr uint32_t kFreq2GHzEnd   = 2484000;
-constexpr uint32_t kFreq5GHzStart = 5170000;
-constexpr uint32_t kFreq5GHzEnd   = 5835000;
-constexpr uint32_t kFreq6GHzStart = 5955000;
-constexpr uint32_t kFreq6GHzEnd   = 7115000;
+constexpr uint32_t kFreq2GHzStart = 2'412'000;
+constexpr uint32_t kFreq2GHzEnd = 2'484'000;
+constexpr uint32_t kFreq5GHzStart = 5'170'000;
+constexpr uint32_t kFreq5GHzEnd = 5'835'000;
+constexpr uint32_t kFreq6GHzStart = 5'955'000;
+constexpr uint32_t kFreq6GHzEnd = 7'115'000;
 
 // ── Signal quality thresholds (dBm) ──
 constexpr int kSignalExcellent = -50;
-constexpr int kSignalGood      = -60;
-constexpr int kSignalFair      = -70;
-constexpr int kSignalWeak      = -80;
+constexpr int kSignalGood = -60;
+constexpr int kSignalFair = -70;
+constexpr int kSignalWeak = -80;
 
-} // namespace netdiag
+}  // namespace netdiag
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Network Adapter Types
@@ -66,7 +66,7 @@ struct NetworkAdapterInfo {
     // Identity
     QString name;
     QString description;
-    QString adapterType;    ///< "Ethernet" / "WiFi" / "VPN" / "Loopback" / "Other"
+    QString adapterType;  ///< "Ethernet" / "WiFi" / "VPN" / "Loopback" / "Other"
     QString macAddress;
     uint32_t interfaceIndex = 0;
 
@@ -96,12 +96,12 @@ struct NetworkAdapterInfo {
     QString driverDate;
 
     // Statistics
-    uint64_t bytesReceived   = 0;
-    uint64_t bytesSent       = 0;
+    uint64_t bytesReceived = 0;
+    uint64_t bytesSent = 0;
     uint64_t packetsReceived = 0;
-    uint64_t packetsSent     = 0;
-    uint64_t errorsReceived  = 0;
-    uint64_t errorsSent      = 0;
+    uint64_t packetsSent = 0;
+    uint64_t errorsReceived = 0;
+    uint64_t errorsSent = 0;
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -111,9 +111,9 @@ struct NetworkAdapterInfo {
 /// @brief Single ICMP echo reply
 struct PingReply {
     int sequenceNumber = 0;
-    bool success       = false;
-    double rttMs       = 0.0;
-    int ttl            = 0;
+    bool success = false;
+    double rttMs = 0.0;
+    int ttl = 0;
     QString replyFrom;
     QString errorMessage;
 };
@@ -125,14 +125,14 @@ struct PingResult {
     QVector<PingReply> replies;
 
     // Statistics
-    int sent         = 0;
-    int received     = 0;
-    int lost         = 0;
+    int sent = 0;
+    int received = 0;
+    int lost = 0;
     double lossPercent = 0.0;
-    double minRtt    = 0.0;
-    double maxRtt    = 0.0;
-    double avgRtt    = 0.0;
-    double jitter    = 0.0;
+    double minRtt = 0.0;
+    double maxRtt = 0.0;
+    double avgRtt = 0.0;
+    double jitter = 0.0;
 };
 
 /// @brief Single traceroute hop
@@ -140,11 +140,11 @@ struct TracerouteHop {
     int hopNumber = 0;
     QString ipAddress;
     QString hostname;
-    double rtt1Ms   = 0.0;
-    double rtt2Ms   = 0.0;
-    double rtt3Ms   = 0.0;
+    double rtt1Ms = 0.0;
+    double rtt2Ms = 0.0;
+    double rtt3Ms = 0.0;
     double avgRttMs = 0.0;
-    bool timedOut   = false;
+    bool timedOut = false;
 };
 
 /// @brief Complete traceroute result
@@ -153,7 +153,7 @@ struct TracerouteResult {
     QString resolvedIP;
     QVector<TracerouteHop> hops;
     bool reachedTarget = false;
-    int totalHops      = 0;
+    int totalHops = 0;
 };
 
 /// @brief MTR hop statistics (continuous ping+traceroute)
@@ -161,14 +161,14 @@ struct MtrHopStats {
     int hopNumber = 0;
     QString ipAddress;
     QString hostname;
-    int sent         = 0;
-    int received     = 0;
+    int sent = 0;
+    int received = 0;
     double lossPercent = 0.0;
     double lastRttMs = 0.0;
-    double avgRttMs  = 0.0;
+    double avgRttMs = 0.0;
     double bestRttMs = 0.0;
     double worstRttMs = 0.0;
-    double jitterMs  = 0.0;
+    double jitterMs = 0.0;
 };
 
 /// @brief Complete MTR result
@@ -221,7 +221,12 @@ struct PortScanResult {
     QString target;
     uint16_t port = 0;
 
-    enum class State { Open, Closed, Filtered, Error };
+    enum class State {
+        Open,
+        Closed,
+        Filtered,
+        Error
+    };
     State state = State::Error;
 
     double responseTimeMs = 0.0;
@@ -244,32 +249,35 @@ struct PortPreset {
 
 /// @brief Bandwidth test result (iPerf3 or HTTP)
 struct BandwidthTestResult {
-    enum class TestMode { LanIperf3, WanHttp };
+    enum class TestMode {
+        LanIperf3,
+        WanHttp
+    };
     TestMode mode = TestMode::LanIperf3;
 
     QString target;
 
     double downloadMbps = 0.0;
-    double uploadMbps   = 0.0;
+    double uploadMbps = 0.0;
 
     // iPerf3 specific
-    double tcpWindowSize     = 0.0;
-    double retransmissions   = 0.0;
-    double jitterMs          = 0.0;
+    double tcpWindowSize = 0.0;
+    double retransmissions = 0.0;
+    double jitterMs = 0.0;
     double packetLossPercent = 0.0;
 
     // Per-interval data for graphing
     struct IntervalData {
-        double startSec      = 0.0;
-        double endSec        = 0.0;
+        double startSec = 0.0;
+        double endSec = 0.0;
         double bitsPerSecond = 0.0;
-        int retransmits      = 0;
+        int retransmits = 0;
     };
     QVector<IntervalData> intervals;
 
-    int durationSec      = 0;
-    int parallelStreams   = 0;
-    bool reverseMode     = false;
+    int durationSec = 0;
+    int parallelStreams = 0;
+    bool reverseMode = false;
 
     QDateTime timestamp;
 };
@@ -284,12 +292,12 @@ struct WiFiNetworkInfo {
     QString bssid;
 
     int signalQuality = 0;
-    int rssiDbm       = 0;
+    int rssiDbm = 0;
 
     uint32_t channelFrequencyKHz = 0;
-    int channelNumber            = 0;
+    int channelNumber = 0;
     QString band;
-    int channelWidthMHz          = 20;
+    int channelWidthMHz = 20;
 
     QString authentication;
     QString encryption;
@@ -303,11 +311,11 @@ struct WiFiNetworkInfo {
 
 /// @brief Channel utilization analysis
 struct WiFiChannelUtilization {
-    int channelNumber      = 0;
+    int channelNumber = 0;
     QString band;
-    int networkCount       = 0;
+    int networkCount = 0;
     QVector<QString> ssids;
-    double averageSignalDbm  = 0.0;
+    double averageSignalDbm = 0.0;
     double interferenceScore = 0.0;
 };
 
@@ -317,7 +325,10 @@ struct WiFiChannelUtilization {
 
 /// @brief Active network connection info
 struct ConnectionInfo {
-    enum class Protocol { TCP, UDP };
+    enum class Protocol {
+        TCP,
+        UDP
+    };
     Protocol protocol = Protocol::TCP;
 
     QString localAddress;
@@ -345,13 +356,25 @@ struct FirewallRule {
     QString description;
     bool enabled = false;
 
-    enum class Direction { Inbound, Outbound };
+    enum class Direction {
+        Inbound,
+        Outbound
+    };
     Direction direction = Direction::Inbound;
 
-    enum class Action { Allow, Block };
+    enum class Action {
+        Allow,
+        Block
+    };
     Action action = Action::Allow;
 
-    enum class Protocol { TCP, UDP, ICMPv4, ICMPv6, Any };
+    enum class Protocol {
+        TCP,
+        UDP,
+        ICMPv4,
+        ICMPv6,
+        Any
+    };
     Protocol protocol = Protocol::Any;
 
     QString localPorts;
@@ -362,7 +385,11 @@ struct FirewallRule {
     QString applicationPath;
     QString serviceName;
 
-    enum class Profile : int { Domain = 1, Private = 2, Public = 4 };
+    enum class Profile : int {
+        Domain = 1,
+        Private = 2,
+        Public = 4
+    };
     int profiles = 0;
 
     QString grouping;
@@ -374,7 +401,11 @@ struct FirewallConflict {
     FirewallRule ruleB;
     QString conflictDescription;
 
-    enum class Severity { Info, Warning, Critical };
+    enum class Severity {
+        Info,
+        Warning,
+        Critical
+    };
     Severity severity = Severity::Info;
 };
 
@@ -383,7 +414,10 @@ struct FirewallGap {
     QString description;
     QString recommendation;
 
-    enum class Severity { Info, Warning };
+    enum class Severity {
+        Info,
+        Warning
+    };
     Severity severity = Severity::Info;
 };
 
@@ -397,20 +431,26 @@ struct NetworkShareInfo {
     QString shareName;
     QString uncPath;
 
-    enum class ShareType { Disk, Printer, Device, IPC, Special };
+    enum class ShareType {
+        Disk,
+        Printer,
+        Device,
+        IPC,
+        Special
+    };
     ShareType type = ShareType::Disk;
 
     QString remark;
 
-    bool canRead      = false;
-    bool canWrite     = false;
+    bool canRead = false;
+    bool canWrite = false;
     bool requiresAuth = false;
     QString accessError;
 
     QDateTime discovered;
 };
 
-} // namespace sak
+}  // namespace sak
 
 // ═══════════════════════════════════════════════════════════════════════════
 // LAN File Transfer Speed Test
@@ -420,20 +460,20 @@ namespace sak {
 
 /// @brief Result of a LAN file transfer speed test between two local devices
 struct LanTransferResult {
-    QString remoteAddress;         ///< IP address of the peer
-    uint16_t port{0};              ///< Port used for transfer
-    qint64 bytesTransferred{0};    ///< Total bytes transferred
-    double durationSec{0.0};       ///< Total transfer time in seconds
-    double avgSpeedMbps{0.0};      ///< Average speed in Mbps
-    double peakSpeedMbps{0.0};     ///< Peak observed speed in Mbps
-    bool isUpload{true};           ///< True = sent data, false = received
+    QString remoteAddress;       ///< IP address of the peer
+    uint16_t port{0};            ///< Port used for transfer
+    qint64 bytesTransferred{0};  ///< Total bytes transferred
+    double durationSec{0.0};     ///< Total transfer time in seconds
+    double avgSpeedMbps{0.0};    ///< Average speed in Mbps
+    double peakSpeedMbps{0.0};   ///< Peak observed speed in Mbps
+    bool isUpload{true};         ///< True = sent data, false = received
     QDateTime timestamp;
 
     /// @brief Per-second speed samples for graphing
     QVector<double> speedSamplesMbps;
 };
 
-} // namespace sak
+}  // namespace sak
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Qt Metatype Registration
@@ -474,24 +514,24 @@ Q_DECLARE_METATYPE(sak::LanTransferResult)
 // ═══════════════════════════════════════════════════════════════════════════
 
 static_assert(std::is_default_constructible_v<sak::NetworkAdapterInfo>,
-    "NetworkAdapterInfo must be default-constructible for signal transport.");
+              "NetworkAdapterInfo must be default-constructible for signal transport.");
 static_assert(std::is_copy_constructible_v<sak::PingResult>,
-    "PingResult must be copyable for signal transport.");
+              "PingResult must be copyable for signal transport.");
 static_assert(std::is_copy_constructible_v<sak::TracerouteResult>,
-    "TracerouteResult must be copyable for signal transport.");
+              "TracerouteResult must be copyable for signal transport.");
 static_assert(std::is_copy_constructible_v<sak::DnsQueryResult>,
-    "DnsQueryResult must be copyable for signal transport.");
+              "DnsQueryResult must be copyable for signal transport.");
 static_assert(std::is_copy_constructible_v<sak::PortScanResult>,
-    "PortScanResult must be copyable for signal transport.");
+              "PortScanResult must be copyable for signal transport.");
 static_assert(std::is_copy_constructible_v<sak::BandwidthTestResult>,
-    "BandwidthTestResult must be copyable for signal transport.");
+              "BandwidthTestResult must be copyable for signal transport.");
 static_assert(std::is_copy_constructible_v<sak::WiFiNetworkInfo>,
-    "WiFiNetworkInfo must be copyable for signal transport.");
+              "WiFiNetworkInfo must be copyable for signal transport.");
 static_assert(std::is_copy_constructible_v<sak::ConnectionInfo>,
-    "ConnectionInfo must be copyable for signal transport.");
+              "ConnectionInfo must be copyable for signal transport.");
 static_assert(std::is_copy_constructible_v<sak::FirewallRule>,
-    "FirewallRule must be copyable for signal transport.");
+              "FirewallRule must be copyable for signal transport.");
 static_assert(std::is_copy_constructible_v<sak::NetworkShareInfo>,
-    "NetworkShareInfo must be copyable for signal transport.");
+              "NetworkShareInfo must be copyable for signal transport.");
 static_assert(std::is_copy_constructible_v<sak::LanTransferResult>,
-    "LanTransferResult must be copyable for signal transport.");
+              "LanTransferResult must be copyable for signal transport.");

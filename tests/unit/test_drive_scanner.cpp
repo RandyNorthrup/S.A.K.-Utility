@@ -4,11 +4,10 @@
 /// @file test_drive_scanner.cpp
 /// @brief Unit tests for drive enumeration and removable detection
 
-#include <QtTest/QtTest>
-
 #include "sak/drive_scanner.h"
 
 #include <QSignalSpy>
+#include <QtTest/QtTest>
 
 class DriveScannerTests : public QObject {
     Q_OBJECT
@@ -40,29 +39,26 @@ private Q_SLOTS:
 // Constructor
 // ============================================================================
 
-void DriveScannerTests::constructor_defaults()
-{
+void DriveScannerTests::constructor_defaults() {
     DriveScanner scanner;
     // Initially may have no drives until refresh is called
-    QVERIFY(true); // No crash
+    QVERIFY(true);  // No crash
 }
 
 // ============================================================================
 // DriveInfo Struct
 // ============================================================================
 
-void DriveScannerTests::driveInfo_defaultInvalid()
-{
+void DriveScannerTests::driveInfo_defaultInvalid() {
     sak::DriveInfo info;
     QVERIFY(!info.isValid());
 }
 
-void DriveScannerTests::driveInfo_validWhenPopulated()
-{
+void DriveScannerTests::driveInfo_validWhenPopulated() {
     sak::DriveInfo info;
     info.devicePath = "\\\\.\\PhysicalDrive0";
     info.name = "Test Drive";
-    info.size = 500107862016;
+    info.size = 500'107'862'016;
     info.blockSize = 512;
     QVERIFY(info.isValid());
 }
@@ -71,8 +67,7 @@ void DriveScannerTests::driveInfo_validWhenPopulated()
 // Drive Enumeration
 // ============================================================================
 
-void DriveScannerTests::getDrives_returnsNonEmpty()
-{
+void DriveScannerTests::getDrives_returnsNonEmpty() {
     DriveScanner scanner;
     scanner.refresh();
 
@@ -81,8 +76,7 @@ void DriveScannerTests::getDrives_returnsNonEmpty()
     QVERIFY(!drives.isEmpty());
 }
 
-void DriveScannerTests::getRemovableDrives_subset()
-{
+void DriveScannerTests::getRemovableDrives_subset() {
     DriveScanner scanner;
     scanner.refresh();
 
@@ -93,8 +87,7 @@ void DriveScannerTests::getRemovableDrives_subset()
     QVERIFY(removable.size() <= all.size());
 }
 
-void DriveScannerTests::isSystemDrive_systemDriveDetected()
-{
+void DriveScannerTests::isSystemDrive_systemDriveDetected() {
     DriveScanner scanner;
     scanner.refresh();
 
@@ -106,18 +99,17 @@ void DriveScannerTests::isSystemDrive_systemDriveDetected()
             foundSystem = true;
         }
     }
-    QVERIFY(foundSystem); // Should always have a system drive
+    QVERIFY(foundSystem);  // Should always have a system drive
 }
 
 // ============================================================================
 // Refresh
 // ============================================================================
 
-void DriveScannerTests::refresh_doesNotCrash()
-{
+void DriveScannerTests::refresh_doesNotCrash() {
     DriveScanner scanner;
     scanner.refresh();
-    scanner.refresh(); // Double refresh should be safe
+    scanner.refresh();  // Double refresh should be safe
     QVERIFY(true);
 }
 
@@ -125,21 +117,19 @@ void DriveScannerTests::refresh_doesNotCrash()
 // Start / Stop
 // ============================================================================
 
-void DriveScannerTests::startStop_lifecycle()
-{
+void DriveScannerTests::startStop_lifecycle() {
     DriveScanner scanner;
     scanner.start();
-    QTest::qWait(100); // Let it run briefly
+    QTest::qWait(100);  // Let it run briefly
     scanner.stop();
-    QVERIFY(true); // No crash
+    QVERIFY(true);      // No crash
 }
 
 // ============================================================================
 // getDriveInfo
 // ============================================================================
 
-void DriveScannerTests::getDriveInfo_nonExistentDrive()
-{
+void DriveScannerTests::getDriveInfo_nonExistentDrive() {
     DriveScanner scanner;
     scanner.refresh();
 

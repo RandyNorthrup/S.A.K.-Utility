@@ -3,18 +3,18 @@
 
 #pragma once
 
-#include <QDialog>
 #include <QCheckBox>
-#include <QLabel>
-#include <QSpinBox>
 #include <QComboBox>
+#include <QDialog>
+#include <QLabel>
 #include <QPushButton>
+#include <QSpinBox>
 
 class QVBoxLayout;
 
 /**
  * @brief Settings dialog for Image Flasher configuration
- * 
+ *
  * Allows users to configure Image Flasher behavior including
  * verification mode, buffer size, and other options.
  */

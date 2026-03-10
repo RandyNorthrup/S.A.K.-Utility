@@ -7,6 +7,8 @@
 
 #pragma once
 
+#include "style_constants.h"
+
 #include <QColor>
 #include <QFont>
 #include <QHBoxLayout>
@@ -17,8 +19,6 @@
 #include <QTableWidgetItem>
 #include <QVBoxLayout>
 #include <QWidget>
-
-#include "style_constants.h"
 
 namespace sak {
 
@@ -34,10 +34,12 @@ namespace sak {
 /// @param title    The panel title text (e.g. "Quick Actions").
 /// @param subtitle A one-line description of the panel's purpose.
 /// @param layout   The QVBoxLayout to which the labels are appended.
-inline void createPanelHeader(QWidget* parent, const QString& title,
-                              const QString& subtitle, QVBoxLayout* layout) {
+inline void createPanelHeader(QWidget* parent,
+                              const QString& title,
+                              const QString& subtitle,
+                              QVBoxLayout* layout) {
     auto* title_label = new QLabel(title, parent);
-    QFont title_font  = title_label->font();
+    QFont title_font = title_label->font();
     title_font.setPointSize(ui::kFontSizeSection);
     title_font.setBold(true);
     title_label->setFont(title_font);
@@ -62,8 +64,10 @@ inline void createPanelHeader(QWidget* parent, const QString& title,
 /// @param title    The panel title text.
 /// @param subtitle A one-line description of the panel's purpose.
 /// @param layout   The QVBoxLayout to which the header row is appended.
-inline void createPanelHeader(QWidget* parent, const QString& iconPath,
-                              const QString& title, const QString& subtitle,
+inline void createPanelHeader(QWidget* parent,
+                              const QString& iconPath,
+                              const QString& title,
+                              const QString& subtitle,
                               QVBoxLayout* layout) {
     constexpr int kPanelIconSize = 48;
 
@@ -72,14 +76,13 @@ inline void createPanelHeader(QWidget* parent, const QString& iconPath,
 
     auto* iconLabel = new QLabel(parent);
     iconLabel->setFixedSize(kPanelIconSize, kPanelIconSize);
-    iconLabel->setPixmap(
-        QIcon(iconPath).pixmap(kPanelIconSize, kPanelIconSize));
+    iconLabel->setPixmap(QIcon(iconPath).pixmap(kPanelIconSize, kPanelIconSize));
     iconLabel->setAccessibleName(title + QStringLiteral(" icon"));
     headerRow->addWidget(iconLabel);
 
     auto* titleLayout = new QVBoxLayout();
     auto* title_label = new QLabel(title, parent);
-    QFont title_font  = title_label->font();
+    QFont title_font = title_label->font();
     title_font.setPointSize(ui::kFontSizeSection);
     title_font.setBold(true);
     title_label->setFont(title_font);
@@ -109,10 +112,11 @@ struct PanelHeaderWidgets {
 
 /// @brief Create a panel header whose icon, title, and subtitle can be updated
 ///        at runtime (e.g. when switching sub-tabs inside a composite panel).
-[[nodiscard]] inline PanelHeaderWidgets createDynamicPanelHeader(
-        QWidget* parent, const QString& iconPath,
-        const QString& title, const QString& subtitle,
-        QVBoxLayout* layout) {
+[[nodiscard]] inline PanelHeaderWidgets createDynamicPanelHeader(QWidget* parent,
+                                                                 const QString& iconPath,
+                                                                 const QString& title,
+                                                                 const QString& subtitle,
+                                                                 QVBoxLayout* layout) {
     constexpr int kPanelIconSize = 48;
 
     auto* headerRow = new QHBoxLayout();
@@ -120,14 +124,13 @@ struct PanelHeaderWidgets {
 
     auto* iconLabel = new QLabel(parent);
     iconLabel->setFixedSize(kPanelIconSize, kPanelIconSize);
-    iconLabel->setPixmap(
-        QIcon(iconPath).pixmap(kPanelIconSize, kPanelIconSize));
+    iconLabel->setPixmap(QIcon(iconPath).pixmap(kPanelIconSize, kPanelIconSize));
     iconLabel->setAccessibleName(title + QStringLiteral(" icon"));
     headerRow->addWidget(iconLabel);
 
     auto* titleLayout = new QVBoxLayout();
     auto* title_label = new QLabel(title, parent);
-    QFont title_font  = title_label->font();
+    QFont title_font = title_label->font();
     title_font.setPointSize(ui::kFontSizeSection);
     title_font.setBold(true);
     title_label->setFont(title_font);
@@ -155,8 +158,7 @@ inline void updatePanelHeader(const PanelHeaderWidgets& hw,
                               const QString& subtitle) {
     constexpr int kPanelIconSize = 48;
     if (hw.iconLabel) {
-        hw.iconLabel->setPixmap(
-            QIcon(iconPath).pixmap(kPanelIconSize, kPanelIconSize));
+        hw.iconLabel->setPixmap(QIcon(iconPath).pixmap(kPanelIconSize, kPanelIconSize));
         hw.iconLabel->setAccessibleName(title + QStringLiteral(" icon"));
     }
     if (hw.titleLabel) {
@@ -179,9 +181,10 @@ inline void updatePanelHeader(const PanelHeaderWidgets& hw,
 /// @param widget The target widget (null-safe).
 /// @param name   Short accessible name (read by screen readers).
 /// @param description Optional longer description for context.
-inline void setAccessible(QWidget* widget, const QString& name,
-                          const QString& description = {}) {
-    if (!widget) return;
+inline void setAccessible(QWidget* widget, const QString& name, const QString& description = {}) {
+    if (!widget) {
+        return;
+    }
     widget->setAccessibleName(name);
     if (!description.isEmpty()) {
         widget->setAccessibleDescription(description);
@@ -212,8 +215,12 @@ inline void setAccessible(QWidget* widget, const QString& name,
 /// @param percent Progress value (0-100+)
 /// @return Green for 100%+, Orange for in-progress, Gray for 0%
 [[nodiscard]] inline QColor progressColor(int percent) {
-    if (percent >= 100) return QColor(ui::kStatusColorSuccess);
-    if (percent > 0) return QColor(ui::kStatusColorWarning);
+    if (percent >= 100) {
+        return QColor(ui::kStatusColorSuccess);
+    }
+    if (percent > 0) {
+        return QColor(ui::kStatusColorWarning);
+    }
     return QColor(ui::kStatusColorIdle);
 }
 
@@ -221,9 +228,11 @@ inline void setAccessible(QWidget* widget, const QString& name,
 /// @param item The table widget item to style (null-safe)
 /// @param color The background color to apply (foreground set to white)
 inline void applyStatusColors(QTableWidgetItem* item, const QColor& color) {
-    if (!item) return;
+    if (!item) {
+        return;
+    }
     item->setBackground(color);
     item->setForeground(Qt::white);
 }
 
-} // namespace sak
+}  // namespace sak

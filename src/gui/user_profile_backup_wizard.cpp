@@ -2,15 +2,17 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "sak/user_profile_backup_wizard.h"
-#include "sak/style_constants.h"
+
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
-#include <QVBoxLayout>
+#include "sak/style_constants.h"
+
+#include <QDir>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QMessageBox>
-#include <QDir>
 #include <QTimer>
+#include <QVBoxLayout>
 
 namespace sak {
 
@@ -18,9 +20,7 @@ namespace sak {
 // UserProfileBackupWizard
 // ============================================================================
 
-UserProfileBackupWizard::UserProfileBackupWizard(QWidget* parent)
-    : QWizard(parent)
-{
+UserProfileBackupWizard::UserProfileBackupWizard(QWidget* parent) : QWizard(parent) {
     setWindowTitle(tr("User Profile Backup Wizard"));
     setWizardStyle(QWizard::ModernStyle);
     setOption(QWizard::HaveHelpButton, false);
@@ -72,9 +72,7 @@ QString UserProfileBackupWizard::getEncryptionPassword() const {
 // UserProfileBackupWelcomePage
 // ============================================================================
 
-UserProfileBackupWelcomePage::UserProfileBackupWelcomePage(QWidget* parent)
-    : QWizardPage(parent)
-{
+UserProfileBackupWelcomePage::UserProfileBackupWelcomePage(QWidget* parent) : QWizardPage(parent) {
     setTitle(tr("Welcome to User Profile Backup"));
     setSubTitle(tr("This wizard will guide you through backing up Windows user profiles"));
 
@@ -123,8 +121,7 @@ void UserProfileBackupWelcomePage::setupUi() {
         "<li>Multi-user merge capability</li>"
         "</ul>"
 
-        "<p><b>Click Next to begin scanning for Windows user accounts.</b></p>"
-    ));
+        "<p><b>Click Next to begin scanning for Windows user accounts.</b></p>"));
 
     layout->addWidget(welcomeLabel);
     layout->addStretch();
@@ -135,19 +132,18 @@ void UserProfileBackupWelcomePage::setupUi() {
 // ============================================================================
 
 UserProfileBackupSelectUsersPage::UserProfileBackupSelectUsersPage(QVector<UserProfile>& users,
-    QWidget* parent)
-    : QWizardPage(parent)
-    , m_users(users)
-    , m_scanner(new WindowsUserScanner(this))
-{
+                                                                   QWidget* parent)
+    : QWizardPage(parent), m_users(users), m_scanner(new WindowsUserScanner(this)) {
     setTitle(tr("Select Users to Backup"));
     setSubTitle(tr("Scan and select which user profiles to include in the backup"));
 
     setupUi();
 
     // Connect scanner signals
-    connect(m_scanner, &WindowsUserScanner::userFound, this,
-        &UserProfileBackupSelectUsersPage::onUserScanned);
+    connect(m_scanner,
+            &WindowsUserScanner::userFound,
+            this,
+            &UserProfileBackupSelectUsersPage::onUserScanned);
     connect(m_scanner, &WindowsUserScanner::scanProgress, this, [this](int current, int total) {
         m_scanProgress->setMaximum(total);
         m_scanProgress->setValue(current);
@@ -155,13 +151,14 @@ UserProfileBackupSelectUsersPage::UserProfileBackupSelectUsersPage(QVector<UserP
 }
 
 void UserProfileBackupSelectUsersPage::setupUi() {
+    Q_ASSERT(m_scanButton);
+    Q_ASSERT(m_scanProgress);
     auto* layout = new QVBoxLayout(this);
-
     // Instructions
-    auto* instructionLabel = new QLabel(tr(
-        "Click <b>Scan Users</b> to detect all Windows user accounts on this computer. "
-        "Then select which users you want to backup."
-    ), this);
+    auto* instructionLabel = new QLabel(
+        tr("Click <b>Scan Users</b> to detect all Windows user accounts on this computer. "
+           "Then select which users you want to backup."),
+        this);
     instructionLabel->setWordWrap(true);
     layout->addWidget(instructionLabel);
 
@@ -169,8 +166,8 @@ void UserProfileBackupSelectUsersPage::setupUi() {
     auto* scanLayout = new QHBoxLayout();
     m_scanButton = new QPushButton(tr("Scan Users"), this);
     m_scanButton->setIcon(QIcon::fromTheme("view-refresh"));
-    connect(m_scanButton, &QPushButton::clicked, this,
-        &UserProfileBackupSelectUsersPage::onScanUsers);
+    connect(
+        m_scanButton, &QPushButton::clicked, this, &UserProfileBackupSelectUsersPage::onScanUsers);
     scanLayout->addWidget(m_scanButton);
 
     m_statusLabel = new QLabel(tr("Click Scan Users to begin"), this);
@@ -184,8 +181,8 @@ void UserProfileBackupSelectUsersPage::setupUi() {
 
     // User table (4 columns: checkbox, username, profile path, size)
     m_userTable = new QTableWidget(0, 4, this);
-    m_userTable->setHorizontalHeaderLabels({tr("?"), tr("Username"), tr("Profile Path"),
-        tr("Est. Size")});
+    m_userTable->setHorizontalHeaderLabels(
+        {tr("?"), tr("Username"), tr("Profile Path"), tr("Est. Size")});
     m_userTable->horizontalHeader()->setStretchLastSection(false);
     m_userTable->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
     m_userTable->horizontalHeader()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
@@ -195,22 +192,28 @@ void UserProfileBackupSelectUsersPage::setupUi() {
     m_userTable->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_userTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
     m_userTable->setEnabled(false);
-    connect(m_userTable, &QTableWidget::itemChanged, this,
-        &UserProfileBackupSelectUsersPage::updateSummary);
+    connect(m_userTable,
+            &QTableWidget::itemChanged,
+            this,
+            &UserProfileBackupSelectUsersPage::updateSummary);
     layout->addWidget(m_userTable);
 
     // Selection buttons
     auto* buttonLayout = new QHBoxLayout();
     m_selectAllButton = new QPushButton(tr("Select All"), this);
     m_selectAllButton->setEnabled(false);
-    connect(m_selectAllButton, &QPushButton::clicked, this,
-        &UserProfileBackupSelectUsersPage::onSelectAll);
+    connect(m_selectAllButton,
+            &QPushButton::clicked,
+            this,
+            &UserProfileBackupSelectUsersPage::onSelectAll);
     buttonLayout->addWidget(m_selectAllButton);
 
     m_selectNoneButton = new QPushButton(tr("Select None"), this);
     m_selectNoneButton->setEnabled(false);
-    connect(m_selectNoneButton, &QPushButton::clicked, this,
-        &UserProfileBackupSelectUsersPage::onSelectNone);
+    connect(m_selectNoneButton,
+            &QPushButton::clicked,
+            this,
+            &UserProfileBackupSelectUsersPage::onSelectNone);
     buttonLayout->addWidget(m_selectNoneButton);
     buttonLayout->addStretch();
     layout->addLayout(buttonLayout);
@@ -219,7 +222,7 @@ void UserProfileBackupSelectUsersPage::setupUi() {
     m_summaryLabel = new QLabel(this);
     m_summaryLabel->setStyleSheet(QString("QLabel { padding: 10px; background-color: %1; "
                                           "border-radius: 10px; }")
-                                              .arg(sak::ui::kColorBgInfoPanel));
+                                      .arg(sak::ui::kColorBgInfoPanel));
     layout->addWidget(m_summaryLabel);
     updateSummary();
 }
@@ -239,10 +242,12 @@ bool UserProfileBackupSelectUsersPage::isComplete() const {
 }
 
 void UserProfileBackupSelectUsersPage::onScanUsers() {
+    Q_ASSERT(m_scanButton);
+    Q_ASSERT(m_statusLabel);
     m_scanButton->setEnabled(false);
     m_statusLabel->setText(tr("Scanning Windows user accounts..."));
     m_scanProgress->setVisible(true);
-    m_scanProgress->setRange(0, 0); // Indeterminate
+    m_scanProgress->setRange(0, 0);  // Indeterminate
     m_userTable->setRowCount(0);
     m_users.clear();
 
@@ -260,7 +265,9 @@ void UserProfileBackupSelectUsersPage::onScanUsers() {
     if (m_users.isEmpty()) {
         m_statusLabel->setText(tr("No user accounts found"));
         sak::logWarning("No Windows user accounts detected during backup scan");
-        QMessageBox::warning(this, tr("No Users"),
+        QMessageBox::warning(
+            this,
+            tr("No Users"),
             tr("No Windows user accounts were detected. Make sure you have permission to scan "
                "users."));
         return;
@@ -277,6 +284,8 @@ void UserProfileBackupSelectUsersPage::onUserScanned(const QString& username) {
 }
 
 void UserProfileBackupSelectUsersPage::populateTable() {
+    Q_ASSERT(!m_users.isEmpty());
+    Q_ASSERT(m_userTable);
     m_userTable->blockSignals(true);
     m_userTable->setRowCount(m_users.size());
 
@@ -338,6 +347,8 @@ void UserProfileBackupSelectUsersPage::onSelectNone() {
 }
 
 void UserProfileBackupSelectUsersPage::updateSummary() {
+    Q_ASSERT(m_userTable);
+    Q_ASSERT(m_summaryLabel);
     // Update is_selected state from checkboxes
     for (int i = 0; i < m_userTable->rowCount(); ++i) {
         m_users[i].is_selected = (m_userTable->item(i, 0)->checkState() == Qt::Checked);
@@ -359,13 +370,12 @@ void UserProfileBackupSelectUsersPage::updateSummary() {
         m_summaryLabel->setText(tr("No users selected"));
     } else {
         m_summaryLabel->setText(tr("%1 user(s) selected | Estimated total size: %2 GB")
-            .arg(selectedCount)
-            .arg(totalGB, 0, 'f', 1));
+                                    .arg(selectedCount)
+                                    .arg(totalGB, 0, 'f', 1));
     }
 
     // Notify wizard that completion state may have changed
     Q_EMIT completeChanged();
 }
 
-} // namespace sak
-
+}  // namespace sak

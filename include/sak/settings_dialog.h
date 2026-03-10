@@ -3,12 +3,13 @@
 
 #pragma once
 
-#include <QDialog>
-#include <QTabWidget>
-#include <QSpinBox>
 #include <QCheckBox>
+#include <QDialog>
 #include <QLineEdit>
 #include <QPushButton>
+#include <QSpinBox>
+#include <QTabWidget>
+
 #include <memory>
 
 class QGroupBox;
@@ -19,7 +20,7 @@ class ConfigManager;
 
 /**
  * @brief Settings dialog for application configuration
- * 
+ *
  * Provides GUI interface to ConfigManager with:
  * - Tabbed interface for different setting categories
  * - Real-time validation
@@ -78,4 +79,4 @@ private:
     bool m_settingsModified{false};
 };
 
-} // namespace sak
+}  // namespace sak

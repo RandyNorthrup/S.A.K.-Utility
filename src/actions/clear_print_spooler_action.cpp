@@ -5,23 +5,21 @@
 /// @brief Implements print spooler queue clearing and service restart
 
 #include "sak/actions/clear_print_spooler_action.h"
-#include "sak/process_runner.h"
+
 #include "sak/layout_constants.h"
-#include <QThread>
+#include "sak/process_runner.h"
+
 #include <QDir>
 #include <QDirIterator>
+#include <QThread>
 
 namespace sak {
 
-ClearPrintSpoolerAction::ClearPrintSpoolerAction(QObject* parent)
-    : QuickAction(parent)
-{
-}
+ClearPrintSpoolerAction::ClearPrintSpoolerAction(QObject* parent) : QuickAction(parent) {}
 
 int ClearPrintSpoolerAction::countSpoolFiles() {
-    const QString spool_path =
-        qEnvironmentVariable("SystemRoot", QStringLiteral("C:\\Windows"))
-        + QStringLiteral("/System32/spool/PRINTERS");
+    const QString spool_path = qEnvironmentVariable("SystemRoot", QStringLiteral("C:\\Windows")) +
+                               QStringLiteral("/System32/spool/PRINTERS");
     QDir spool_dir(spool_path);
 
     if (!spool_dir.exists()) {
@@ -33,8 +31,8 @@ int ClearPrintSpoolerAction::countSpoolFiles() {
 
 void ClearPrintSpoolerAction::stopSpooler() {
     Q_EMIT executionProgress("Stopping print spooler service...", 20);
-    ProcessResult proc = runProcess("net", QStringList() << "stop" << "spooler",
-        sak::kTimeoutNetworkReadMs);
+    ProcessResult proc =
+        runProcess("net", QStringList() << "stop" << "spooler", sak::kTimeoutNetworkReadMs);
     if (!proc.succeeded()) {
         Q_EMIT logMessage("Stop spooler warning: " + proc.std_err.trimmed());
     }
@@ -44,9 +42,8 @@ void ClearPrintSpoolerAction::stopSpooler() {
 void ClearPrintSpoolerAction::clearSpoolFolder() {
     Q_EMIT executionProgress("Clearing spool folder...", 50);
 
-    const QString spool_path =
-        qEnvironmentVariable("SystemRoot", QStringLiteral("C:\\Windows"))
-        + QStringLiteral("/System32/spool/PRINTERS");
+    const QString spool_path = qEnvironmentVariable("SystemRoot", QStringLiteral("C:\\Windows")) +
+                               QStringLiteral("/System32/spool/PRINTERS");
     QDir spool_dir(spool_path);
 
     if (spool_dir.exists()) {
@@ -58,8 +55,8 @@ void ClearPrintSpoolerAction::clearSpoolFolder() {
 
 void ClearPrintSpoolerAction::startSpooler() {
     Q_EMIT executionProgress("Starting print spooler service...", 80);
-    ProcessResult proc = runProcess("net", QStringList() << "start" << "spooler",
-        sak::kTimeoutNetworkReadMs);
+    ProcessResult proc =
+        runProcess("net", QStringList() << "start" << "spooler", sak::kTimeoutNetworkReadMs);
     if (!proc.succeeded()) {
         Q_EMIT logMessage("Start spooler warning: " + proc.std_err.trimmed());
     }
@@ -74,9 +71,8 @@ void ClearPrintSpoolerAction::scan() {
     ScanResult result;
     result.applicable = files > 0;
     result.files_count = files;
-    result.summary = files > 0
-        ? QString("Spool files queued: %1").arg(files)
-        : "No spool files detected";
+    result.summary = files > 0 ? QString("Spool files queued: %1").arg(files)
+                               : "No spool files detected";
     result.details = "Clearing spooler will restart Print Spooler service";
 
     Q_ASSERT(!result.summary.isEmpty());
@@ -97,17 +93,17 @@ void ClearPrintSpoolerAction::execute() {
     Q_ASSERT(start_time.isValid());
 
     Q_EMIT executionProgress("╔════════════════════════════════════════════════════════════════╗",
-        0);
+                             0);
     Q_EMIT executionProgress("║     PRINT SPOOLER CLEARING - ENTERPRISE MODE                  ║",
-        0);
+                             0);
     Q_EMIT executionProgress("╠════════════════════════════════════════════════════════════════╣",
-        0);
+                             0);
 
     Q_EMIT executionProgress("║ Checking Print Spooler service status...                     ║",
-        20);
+                             20);
     ProcessResult ps = runPowerShell(buildSpoolerScript(), sak::kTimeoutProcessVeryLongMs);
     Q_EMIT executionProgress("║ Stopping service with Stop-Service...                        ║",
-        40);
+                             40);
 
     if (isCancelled()) {
         emitCancelledResult("Spooler clearing cancelled", start_time);
@@ -119,7 +115,7 @@ void ClearPrintSpoolerAction::execute() {
     }
 
     Q_EMIT executionProgress("║ Clearing spool files and restarting...                       ║",
-        60);
+                             60);
 
     if (!ps.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("Spooler clear warning: " + ps.std_err.trimmed());
@@ -129,7 +125,7 @@ void ClearPrintSpoolerAction::execute() {
     qint64 duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
 
     Q_EMIT executionProgress("╠════════════════════════════════════════════════════════════════╣",
-        80);
+                             80);
 
     ExecutionResult result;
     Q_ASSERT(!result.success);  // verify default init
@@ -140,8 +136,8 @@ void ClearPrintSpoolerAction::execute() {
     if (spooler.start_success && spooler.stop_success) {
         result.success = true;
         result.message = spooler.files_before > 0
-            ? QString("Cleared %1 stuck print job(s)").arg(spooler.cleared)
-            : "Print spooler refreshed (no stuck jobs)";
+                             ? QString("Cleared %1 stuck print job(s)").arg(spooler.cleared)
+                             : "Print spooler refreshed (no stuck jobs)";
         result.log = buildSuccessLog(spooler, duration_ms);
         Q_ASSERT(result.duration_ms >= 0);
         finishWithResult(result, ActionStatus::Success);
@@ -223,8 +219,7 @@ QString ClearPrintSpoolerAction::buildSpoolerScriptPreamble() const {
         "    } catch {\n"
         "        $results['ClearError'] = $_.Exception.Message\n"
         "    }\n"
-        "}\n"
-    );
+        "}\n");
 }
 
 QString ClearPrintSpoolerAction::buildSpoolerScriptRestart() const {
@@ -266,8 +261,7 @@ QString ClearPrintSpoolerAction::buildSpoolerScriptRestart() const {
         "Write-Output \"CLEARED:$($results['Cleared'])\"\n"
         "Write-Output \"START_SUCCESS:$($results['StartSuccess'])\"\n"
         "Write-Output \"FINAL_STATUS:$($results['FinalStatus'])\"\n"
-        "Write-Output \"FILES_AFTER:$($results['FilesAfter'])\"\n"
-    );
+        "Write-Output \"FILES_AFTER:$($results['FilesAfter'])\"\n");
 }
 
 ClearPrintSpoolerAction::SpoolerResult ClearPrintSpoolerAction::parseSpoolerOutput(
@@ -302,7 +296,7 @@ ClearPrintSpoolerAction::SpoolerResult ClearPrintSpoolerAction::parseSpoolerOutp
 }
 
 QString ClearPrintSpoolerAction::buildSuccessLog(const SpoolerResult& spooler,
-    qint64 duration_ms) const {
+                                                 qint64 duration_ms) const {
     QString log;
     log += "╔════════════════════════════════════════════════════════════════╗\n";
     log += "║     PRINT SPOOLER CLEARING - RESULTS                          ║\n";
@@ -311,26 +305,32 @@ QString ClearPrintSpoolerAction::buildSuccessLog(const SpoolerResult& spooler,
     if (spooler.files_before > 0) {
         log += QString("║ Print Jobs Cleared: %1\n").arg(spooler.cleared).leftJustified(66) + "║\n";
         log += QString("║ Space Freed: %1\n")
-            .arg(formatFileSize(spooler.size_before)).leftJustified(66) + "║\n";
+                   .arg(formatFileSize(spooler.size_before))
+                   .leftJustified(66) +
+               "║\n";
     } else {
         log += QString("║ Status: No stuck jobs found                                    ║\n");
     }
 
     log += "╠════════════════════════════════════════════════════════════════╣\n";
-    log += QString("║ Service Status: %1 → %2\n").arg(spooler.initial_status,
-        spooler.final_status).leftJustified(66) + "║\n";
+    log += QString("║ Service Status: %1 → %2\n")
+               .arg(spooler.initial_status, spooler.final_status)
+               .leftJustified(66) +
+           "║\n";
     log += QString("║ Service Stopped: Successfully\n").leftJustified(66) + "║\n";
     log += QString("║ Service Started: Successfully\n").leftJustified(66) + "║\n";
     log += "╠════════════════════════════════════════════════════════════════╣\n";
-    log += QString("║ Completed in: %1 seconds\n").arg(duration_ms / 1000.0, 0, 'f',
-        2).leftJustified(66) + "║\n";
+    log += QString("║ Completed in: %1 seconds\n")
+               .arg(duration_ms / 1000.0, 0, 'f', 2)
+               .leftJustified(66) +
+           "║\n";
     log += "╚════════════════════════════════════════════════════════════════╝\n";
 
     return log;
 }
 
 QString ClearPrintSpoolerAction::buildFailureLog(const SpoolerResult& spooler,
-    qint64 duration_ms) const {
+                                                 qint64 duration_ms) const {
     Q_UNUSED(duration_ms)
     QString log;
     log += "╔════════════════════════════════════════════════════════════════╗\n";
@@ -350,8 +350,9 @@ QString ClearPrintSpoolerAction::buildFailureLog(const SpoolerResult& spooler,
     }
 
     log += QString("║ Final Service Status: %1\n")
-        .arg(spooler.final_status.isEmpty() ? "Unknown" : spooler.final_status)
-            .leftJustified(66) + "║\n";
+               .arg(spooler.final_status.isEmpty() ? "Unknown" : spooler.final_status)
+               .leftJustified(66) +
+           "║\n";
 
     if (!spooler.errors.isEmpty()) {
         log += "╠════════════════════════════════════════════════════════════════╣\n";
@@ -368,4 +369,4 @@ QString ClearPrintSpoolerAction::buildFailureLog(const SpoolerResult& spooler,
     return log;
 }
 
-} // namespace sak
+}  // namespace sak

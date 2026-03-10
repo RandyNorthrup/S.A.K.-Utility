@@ -53,7 +53,7 @@ that prioritizes **safety → performance → developer experience**, in that or
 | Assertions per public function | ≥2 | `Q_ASSERT` preconditions + postconditions |
 | `catch(...)` | Must have explanatory comment | Only in logger (exempt) |
 | Magic numbers | Named `constexpr` constants | Only 0, 1, −1 are acceptable bare literals |
-| Single-letter variables | Forbidden | Except tiny lambda predicates (`c` in `[](QChar c)`) |
+| Single-letter variables | Forbidden | Except tiny lambda predicates (`c` in `\[\](QChar c)`) |
 | `else` after `return` | Forbidden | Use early-return guard clauses |
 | Nested ternary | Forbidden | Use `if`/`else` or helper function |
 | TODO / FIXME / HACK in code | Forbidden | Track in issue tracker instead |
@@ -276,8 +276,8 @@ cmake/                — CMake modules and build config
 
 ## Reference Documents
 
-- [TIGERSTYLE_COMPLIANCE_PLAN.md](docs/TIGERSTYLE_COMPLIANCE_PLAN.md) — Full
+- [TIGERSTYLE_COMPLIANCE_PLAN.md](../docs/TIGERSTYLE_COMPLIANCE_PLAN.md) — Full
   principle-by-principle analysis and compliance status.
-- [CONTRIBUTING.md](CONTRIBUTING.md) — Contributor setup and PR process.
-- [ENTERPRISE_HARDENING_TRACKER.md](docs/ENTERPRISE_HARDENING_TRACKER.md) —
+- [CONTRIBUTING.md](../CONTRIBUTING.md) — Contributor setup and PR process.
+- [ENTERPRISE_HARDENING_TRACKER.md](../docs/ENTERPRISE_HARDENING_TRACKER.md) —
   Security hardening checklist.

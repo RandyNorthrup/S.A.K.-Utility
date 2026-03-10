@@ -4,14 +4,14 @@
 /// @file test_file_hash.cpp
 /// @brief Unit tests for file hashing (MD5, SHA-256) and verification
 
-#include <QtTest/QtTest>
-
-#include "sak/file_hash.h"
 #include "sak/error_codes.h"
+#include "sak/file_hash.h"
 
+#include <QFile>
 #include <QTemporaryDir>
 #include <QTemporaryFile>
-#include <QFile>
+#include <QtTest/QtTest>
+
 #include <filesystem>
 
 class FileHashTests : public QObject {
@@ -65,8 +65,7 @@ private:
     std::filesystem::path m_binaryFile;
 };
 
-void FileHashTests::initTestCase()
-{
+void FileHashTests::initTestCase() {
     QVERIFY(m_tempDir.isValid());
 
     // Create a file with known content: "Hello, World!\n"
@@ -90,15 +89,15 @@ void FileHashTests::initTestCase()
     QVERIFY(b.open(QIODevice::WriteOnly));
     QByteArray data;
     data.resize(256);
-    for (int i = 0; i < 256; ++i)
+    for (int i = 0; i < 256; ++i) {
         data[i] = static_cast<char>(i);
+    }
     b.write(data);
     b.close();
     m_binaryFile = binaryPath.toStdWString();
 }
 
-void FileHashTests::cleanupTestCase()
-{
+void FileHashTests::cleanupTestCase() {
     // QTemporaryDir auto-cleans
 }
 
@@ -106,15 +105,13 @@ void FileHashTests::cleanupTestCase()
 // Constructor Tests
 // ============================================================================
 
-void FileHashTests::constructor_defaultValues()
-{
+void FileHashTests::constructor_defaultValues() {
     sak::file_hasher hasher;
     QCOMPARE(hasher.getAlgorithm(), sak::hash_algorithm::md5);
     QCOMPARE(hasher.getChunkSize(), sak::file_hasher::DEFAULT_CHUNK_SIZE);
 }
 
-void FileHashTests::constructor_customValues()
-{
+void FileHashTests::constructor_customValues() {
     sak::file_hasher hasher(sak::hash_algorithm::sha256, 4096);
     QCOMPARE(hasher.getAlgorithm(), sak::hash_algorithm::sha256);
     QCOMPARE(hasher.getChunkSize(), std::size_t{4096});
@@ -124,8 +121,7 @@ void FileHashTests::constructor_customValues()
 // MD5 File Hashing
 // ============================================================================
 
-void FileHashTests::md5_knownContent()
-{
+void FileHashTests::md5_knownContent() {
     sak::file_hasher hasher(sak::hash_algorithm::md5);
     auto result = hasher.calculateHash(m_knownFile);
     QVERIFY2(result.has_value(), "MD5 hash calculation should succeed");
@@ -138,8 +134,7 @@ void FileHashTests::md5_knownContent()
     }
 }
 
-void FileHashTests::md5_emptyFile()
-{
+void FileHashTests::md5_emptyFile() {
     sak::file_hasher hasher(sak::hash_algorithm::md5);
     auto result = hasher.calculateHash(m_emptyFile);
     QVERIFY(result.has_value());
@@ -148,8 +143,7 @@ void FileHashTests::md5_emptyFile()
              QString("d41d8cd98f00b204e9800998ecf8427e"));
 }
 
-void FileHashTests::md5_binaryFile()
-{
+void FileHashTests::md5_binaryFile() {
     sak::file_hasher hasher(sak::hash_algorithm::md5);
     auto result = hasher.calculateHash(m_binaryFile);
     QVERIFY(result.has_value());
@@ -160,8 +154,7 @@ void FileHashTests::md5_binaryFile()
 // SHA-256 File Hashing
 // ============================================================================
 
-void FileHashTests::sha256_knownContent()
-{
+void FileHashTests::sha256_knownContent() {
     sak::file_hasher hasher(sak::hash_algorithm::sha256);
     auto result = hasher.calculateHash(m_knownFile);
     QVERIFY(result.has_value());
@@ -169,8 +162,7 @@ void FileHashTests::sha256_knownContent()
     QCOMPARE(result.value().length(), std::size_t{64});
 }
 
-void FileHashTests::sha256_emptyFile()
-{
+void FileHashTests::sha256_emptyFile() {
     sak::file_hasher hasher(sak::hash_algorithm::sha256);
     auto result = hasher.calculateHash(m_emptyFile);
     QVERIFY(result.has_value());
@@ -183,30 +175,23 @@ void FileHashTests::sha256_emptyFile()
 // In-Memory Hashing
 // ============================================================================
 
-void FileHashTests::md5_inMemory()
-{
-    const std::byte data[] = {
-        std::byte{'H'}, std::byte{'i'}
-    };
+void FileHashTests::md5_inMemory() {
+    const std::byte data[] = {std::byte{'H'}, std::byte{'i'}};
     sak::file_hasher hasher(sak::hash_algorithm::md5);
     auto result = hasher.calculateHash(std::span<const std::byte>(data, 2));
     QVERIFY(result.has_value());
     QCOMPARE(result.value().length(), std::size_t{32});
 }
 
-void FileHashTests::sha256_inMemory()
-{
-    const std::byte data[] = {
-        std::byte{'H'}, std::byte{'i'}
-    };
+void FileHashTests::sha256_inMemory() {
+    const std::byte data[] = {std::byte{'H'}, std::byte{'i'}};
     sak::file_hasher hasher(sak::hash_algorithm::sha256);
     auto result = hasher.calculateHash(std::span<const std::byte>(data, 2));
     QVERIFY(result.has_value());
     QCOMPARE(result.value().length(), std::size_t{64});
 }
 
-void FileHashTests::inMemory_emptySpan()
-{
+void FileHashTests::inMemory_emptySpan() {
     sak::file_hasher hasher(sak::hash_algorithm::md5);
     auto result = hasher.calculateHash(std::span<const std::byte>{});
     QVERIFY(result.has_value());
@@ -219,8 +204,7 @@ void FileHashTests::inMemory_emptySpan()
 // Hash Verification
 // ============================================================================
 
-void FileHashTests::verifyHash_correct()
-{
+void FileHashTests::verifyHash_correct() {
     sak::file_hasher hasher(sak::hash_algorithm::md5);
     auto hash_result = hasher.calculateHash(m_knownFile);
     QVERIFY(hash_result.has_value());
@@ -230,23 +214,23 @@ void FileHashTests::verifyHash_correct()
     QVERIFY(verify.value());
 }
 
-void FileHashTests::verifyHash_incorrect()
-{
+void FileHashTests::verifyHash_incorrect() {
     sak::file_hasher hasher(sak::hash_algorithm::md5);
     auto verify = hasher.verifyHash(m_knownFile, "00000000000000000000000000000000");
     QVERIFY(verify.has_value());
     QVERIFY(!verify.value());
 }
 
-void FileHashTests::verifyHash_caseInsensitive()
-{
+void FileHashTests::verifyHash_caseInsensitive() {
     sak::file_hasher hasher(sak::hash_algorithm::md5);
     auto hash_result = hasher.calculateHash(m_knownFile);
     QVERIFY(hash_result.has_value());
 
     // Convert to uppercase for comparison
     std::string upper_hash = hash_result.value();
-    for (auto& c : upper_hash) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+    for (auto& c : upper_hash) {
+        c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+    }
 
     auto verify = hasher.verifyHash(m_knownFile, upper_hash);
     QVERIFY(verify.has_value());
@@ -257,16 +241,14 @@ void FileHashTests::verifyHash_caseInsensitive()
 // Error Paths
 // ============================================================================
 
-void FileHashTests::hashNonExistentFile()
-{
+void FileHashTests::hashNonExistentFile() {
     sak::file_hasher hasher;
     auto result = hasher.calculateHash(std::filesystem::path("nonexistent_file_12345.txt"));
     QVERIFY(!result.has_value());
     QCOMPARE(result.error(), sak::error_code::file_not_found);
 }
 
-void FileHashTests::hashDirectory()
-{
+void FileHashTests::hashDirectory() {
     sak::file_hasher hasher;
     auto result = hasher.calculateHash(m_tempDir.path().toStdWString());
     QVERIFY(!result.has_value());
@@ -276,24 +258,22 @@ void FileHashTests::hashDirectory()
 // Progress Callback
 // ============================================================================
 
-void FileHashTests::progressCallback_invoked()
-{
+void FileHashTests::progressCallback_invoked() {
     // Create a file larger than chunk size to trigger progress
     QString bigPath = m_tempDir.filePath("big.bin");
     QFile f(bigPath);
     QVERIFY(f.open(QIODevice::WriteOnly));
     QByteArray chunk(1024, 'A');
-    for (int i = 0; i < 100; ++i) // 100 KB
+    for (int i = 0; i < 100; ++i) {  // 100 KB
         f.write(chunk);
+    }
     f.close();
 
     int callbackCount = 0;
-    sak::file_hasher hasher(sak::hash_algorithm::md5, 8192); // Small chunk for more callbacks
+    sak::file_hasher hasher(sak::hash_algorithm::md5, 8192);  // Small chunk for more callbacks
     auto result = hasher.calculateHash(
         bigPath.toStdWString(),
-        [&callbackCount](std::size_t /*processed*/, std::size_t /*total*/) {
-            ++callbackCount;
-        });
+        [&callbackCount](std::size_t /*processed*/, std::size_t /*total*/) { ++callbackCount; });
     QVERIFY(result.has_value());
     QVERIFY(callbackCount > 0);
 }
@@ -302,15 +282,15 @@ void FileHashTests::progressCallback_invoked()
 // Cancellation
 // ============================================================================
 
-void FileHashTests::cancellation_stopsHashing()
-{
+void FileHashTests::cancellation_stopsHashing() {
     // Create a reasonably large file
     QString largePath = m_tempDir.filePath("large_cancel.bin");
     QFile f(largePath);
     QVERIFY(f.open(QIODevice::WriteOnly));
-    QByteArray chunk(1024 * 1024, 'B'); // 1 MB chunks
-    for (int i = 0; i < 10; ++i)
+    QByteArray chunk(1024 * 1024, 'B');  // 1 MB chunks
+    for (int i = 0; i < 10; ++i) {
         f.write(chunk);
+    }
     f.close();
 
     std::stop_source stopSource;
@@ -328,15 +308,13 @@ void FileHashTests::cancellation_stopsHashing()
 // Convenience Functions
 // ============================================================================
 
-void FileHashTests::md5File_convenience()
-{
+void FileHashTests::md5File_convenience() {
     auto result = sak::md5File(m_knownFile);
     QVERIFY(result.has_value());
     QCOMPARE(result.value().length(), std::size_t{32});
 }
 
-void FileHashTests::sha256File_convenience()
-{
+void FileHashTests::sha256File_convenience() {
     auto result = sak::sha256File(m_knownFile);
     QVERIFY(result.has_value());
     QCOMPARE(result.value().length(), std::size_t{64});

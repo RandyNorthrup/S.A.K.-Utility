@@ -7,8 +7,10 @@
 #pragma once
 
 #include "sak/user_profile_types.h"
-#include <QVector>
+
 #include <QString>
+#include <QVector>
+
 #include <functional>
 
 namespace sak {
@@ -29,7 +31,6 @@ using WifiScanLogger = std::function<void(const QString&)>;
 /// @brief Scan all Windows WiFi profiles using netsh wlan commands
 /// @param logger Optional callback for progress/error messages
 /// @return Vector of discovered WiFi profile info (with XML data)
-[[nodiscard]] QVector<WifiProfileInfo> scanAllWifiProfiles(
-    const WifiScanLogger& logger = nullptr);
+[[nodiscard]] QVector<WifiProfileInfo> scanAllWifiProfiles(const WifiScanLogger& logger = nullptr);
 
-} // namespace sak
+}  // namespace sak

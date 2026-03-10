@@ -49,4 +49,4 @@ public:
                           const QVector<DeploymentDestinationSummary>& destinations);
 };
 
-} // namespace sak
+}  // namespace sak

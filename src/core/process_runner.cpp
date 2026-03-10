@@ -2,15 +2,18 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "sak/process_runner.h"
+
 #include "sak/layout_constants.h"
 
-#include <QProcess>
 #include <QElapsedTimer>
+#include <QProcess>
 
 namespace sak {
 
-ProcessResult runProcess(const QString& program, const QStringList& args, int timeout_ms,
-    const CancelCheck& should_cancel) {
+ProcessResult runProcess(const QString& program,
+                         const QStringList& args,
+                         int timeout_ms,
+                         const CancelCheck& should_cancel) {
     QProcess proc;
     proc.start(program, args);
 
@@ -18,8 +21,8 @@ ProcessResult runProcess(const QString& program, const QStringList& args, int ti
     if (!proc.waitForStarted(sak::kTimeoutProcessStartMs)) {
         ProcessResult result;
         result.exit_code = -1;
-        result.std_err = QStringLiteral("Failed to start process: %1")
-            .arg(proc.errorString()).toUtf8();
+        result.std_err =
+            QStringLiteral("Failed to start process: %1").arg(proc.errorString()).toUtf8();
         return result;
     }
 
@@ -54,8 +57,11 @@ ProcessResult runProcess(const QString& program, const QStringList& args, int ti
     return result;
 }
 
-ProcessResult runPowerShell(const QString& script, int timeout_ms, bool no_profile,
-    bool bypass_policy, const CancelCheck& should_cancel) {
+ProcessResult runPowerShell(const QString& script,
+                            int timeout_ms,
+                            bool no_profile,
+                            bool bypass_policy,
+                            const CancelCheck& should_cancel) {
     QStringList args;
     if (no_profile) {
         args << "-NoProfile";
@@ -68,4 +74,4 @@ ProcessResult runPowerShell(const QString& script, int timeout_ms, bool no_profi
     return runProcess("powershell.exe", args, timeout_ms, should_cancel);
 }
 
-} // namespace sak
+}  // namespace sak

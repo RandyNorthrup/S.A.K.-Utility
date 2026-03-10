@@ -53,7 +53,7 @@ param(
 )
 
   Write-FunctionCallLogMessage -Invocation $MyInvocation -Parameters $PSBoundParameters
- 
+
   try{
 	if (test-path($targetFilePath)) {
 		$verb = "Pin To Taskbar"

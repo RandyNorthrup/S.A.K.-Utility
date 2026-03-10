@@ -131,7 +131,7 @@ private:
     void appendNetworkSharesJson(QJsonObject& root) const;
 };
 
-} // namespace sak
+}  // namespace sak
 
 static_assert(!std::is_copy_constructible_v<sak::NetworkDiagnosticReportGenerator>,
-    "NetworkDiagnosticReportGenerator must not be copyable.");
+              "NetworkDiagnosticReportGenerator must not be copyable.");

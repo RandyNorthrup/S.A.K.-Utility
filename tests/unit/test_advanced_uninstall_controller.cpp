@@ -5,14 +5,13 @@
 /// @brief Unit tests for AdvancedUninstallController — state machine, queue,
 ///        settings, input validation, accessor/mutator pairs
 
-#include <QtTest/QtTest>
-
 #include "sak/advanced_uninstall_controller.h"
 #include "sak/advanced_uninstall_types.h"
 #include "sak/config_manager.h"
 #include "sak/restore_point_manager.h"
 
 #include <QSignalSpy>
+#include <QtTest/QtTest>
 
 using sak::AdvancedUninstallController;
 using sak::ProgramInfo;
@@ -72,28 +71,24 @@ private Q_SLOTS:
 
 // ── Initial State ───────────────────────────────────────────────────────────
 
-void AdvancedUninstallControllerTests::initialState_isIdle()
-{
+void AdvancedUninstallControllerTests::initialState_isIdle() {
     AdvancedUninstallController ctrl;
     QCOMPARE(ctrl.currentState(), AdvancedUninstallController::State::Idle);
 }
 
-void AdvancedUninstallControllerTests::initialPrograms_empty()
-{
+void AdvancedUninstallControllerTests::initialPrograms_empty() {
     AdvancedUninstallController ctrl;
     QVERIFY(ctrl.programs().isEmpty());
 }
 
-void AdvancedUninstallControllerTests::initialQueue_empty()
-{
+void AdvancedUninstallControllerTests::initialQueue_empty() {
     AdvancedUninstallController ctrl;
     QVERIFY(ctrl.queue().isEmpty());
 }
 
 // ── Accessor / Mutator Pairs ────────────────────────────────────────────────
 
-void AdvancedUninstallControllerTests::autoRestorePoint_setAndGet()
-{
+void AdvancedUninstallControllerTests::autoRestorePoint_setAndGet() {
     AdvancedUninstallController ctrl;
 
     ctrl.setAutoRestorePoint(false);
@@ -103,8 +98,7 @@ void AdvancedUninstallControllerTests::autoRestorePoint_setAndGet()
     QVERIFY(ctrl.autoRestorePoint());
 }
 
-void AdvancedUninstallControllerTests::autoCleanSafe_setAndGet()
-{
+void AdvancedUninstallControllerTests::autoCleanSafe_setAndGet() {
     AdvancedUninstallController ctrl;
 
     ctrl.setAutoCleanSafe(false);
@@ -114,8 +108,7 @@ void AdvancedUninstallControllerTests::autoCleanSafe_setAndGet()
     QVERIFY(ctrl.autoCleanSafe());
 }
 
-void AdvancedUninstallControllerTests::defaultScanLevel_setAndGet()
-{
+void AdvancedUninstallControllerTests::defaultScanLevel_setAndGet() {
     AdvancedUninstallController ctrl;
 
     ctrl.setDefaultScanLevel(ScanLevel::Safe);
@@ -128,8 +121,7 @@ void AdvancedUninstallControllerTests::defaultScanLevel_setAndGet()
     QCOMPARE(ctrl.defaultScanLevel(), ScanLevel::Moderate);
 }
 
-void AdvancedUninstallControllerTests::showSystemComponents_setAndGet()
-{
+void AdvancedUninstallControllerTests::showSystemComponents_setAndGet() {
     AdvancedUninstallController ctrl;
 
     ctrl.setShowSystemComponents(true);
@@ -139,8 +131,7 @@ void AdvancedUninstallControllerTests::showSystemComponents_setAndGet()
     QVERIFY(!ctrl.showSystemComponents());
 }
 
-void AdvancedUninstallControllerTests::defaultScanLevel_allValues()
-{
+void AdvancedUninstallControllerTests::defaultScanLevel_allValues() {
     AdvancedUninstallController ctrl;
 
     // Verify all ScanLevel values work correctly
@@ -153,16 +144,14 @@ void AdvancedUninstallControllerTests::defaultScanLevel_allValues()
 
 // ── Restore Point Manager ───────────────────────────────────────────────────
 
-void AdvancedUninstallControllerTests::restorePointManager_notNull()
-{
+void AdvancedUninstallControllerTests::restorePointManager_notNull() {
     AdvancedUninstallController ctrl;
     QVERIFY(ctrl.restorePointManager() != nullptr);
 }
 
 // ── Queue Management ────────────────────────────────────────────────────────
 
-void AdvancedUninstallControllerTests::addToQueue_appendsItem()
-{
+void AdvancedUninstallControllerTests::addToQueue_appendsItem() {
     AdvancedUninstallController ctrl;
 
     ProgramInfo prog;
@@ -176,8 +165,7 @@ void AdvancedUninstallControllerTests::addToQueue_appendsItem()
     QCOMPARE(ctrl.queue()[0].status, UninstallQueueItem::Status::Queued);
 }
 
-void AdvancedUninstallControllerTests::addToQueue_multipleItems()
-{
+void AdvancedUninstallControllerTests::addToQueue_multipleItems() {
     AdvancedUninstallController ctrl;
 
     ProgramInfo prog1;
@@ -201,8 +189,7 @@ void AdvancedUninstallControllerTests::addToQueue_multipleItems()
     QVERIFY(!ctrl.queue()[0].autoCleanSafeLeftovers);
 }
 
-void AdvancedUninstallControllerTests::addToQueue_emptyNameRejected()
-{
+void AdvancedUninstallControllerTests::addToQueue_emptyNameRejected() {
     AdvancedUninstallController ctrl;
 
     QSignalSpy statusSpy(&ctrl, &AdvancedUninstallController::statusMessage);
@@ -218,8 +205,7 @@ void AdvancedUninstallControllerTests::addToQueue_emptyNameRejected()
     QCOMPARE(statusSpy.count(), 1);
 }
 
-void AdvancedUninstallControllerTests::removeFromQueue_valid()
-{
+void AdvancedUninstallControllerTests::removeFromQueue_valid() {
     AdvancedUninstallController ctrl;
 
     ProgramInfo prog1;
@@ -241,8 +227,7 @@ void AdvancedUninstallControllerTests::removeFromQueue_valid()
     QCOMPARE(ctrl.queue()[1].program.displayName, "Keep Too");
 }
 
-void AdvancedUninstallControllerTests::removeFromQueue_invalidNegative()
-{
+void AdvancedUninstallControllerTests::removeFromQueue_invalidNegative() {
     AdvancedUninstallController ctrl;
 
     ProgramInfo prog;
@@ -255,8 +240,7 @@ void AdvancedUninstallControllerTests::removeFromQueue_invalidNegative()
     QCOMPARE(ctrl.queue().size(), 1);
 }
 
-void AdvancedUninstallControllerTests::removeFromQueue_invalidTooLarge()
-{
+void AdvancedUninstallControllerTests::removeFromQueue_invalidTooLarge() {
     AdvancedUninstallController ctrl;
 
     ProgramInfo prog;
@@ -269,8 +253,7 @@ void AdvancedUninstallControllerTests::removeFromQueue_invalidTooLarge()
     QCOMPARE(ctrl.queue().size(), 1);
 }
 
-void AdvancedUninstallControllerTests::clearQueue_emptiesQueue()
-{
+void AdvancedUninstallControllerTests::clearQueue_emptiesQueue() {
     AdvancedUninstallController ctrl;
 
     for (int i = 0; i < 5; ++i) {
@@ -284,8 +267,7 @@ void AdvancedUninstallControllerTests::clearQueue_emptiesQueue()
     QVERIFY(ctrl.queue().isEmpty());
 }
 
-void AdvancedUninstallControllerTests::queueItem_defaultStatus()
-{
+void AdvancedUninstallControllerTests::queueItem_defaultStatus() {
     AdvancedUninstallController ctrl;
 
     ProgramInfo prog;
@@ -298,8 +280,7 @@ void AdvancedUninstallControllerTests::queueItem_defaultStatus()
 
 // ── State Guards ────────────────────────────────────────────────────────────
 
-void AdvancedUninstallControllerTests::uninstallProgram_rejectsWhenBusy()
-{
+void AdvancedUninstallControllerTests::uninstallProgram_rejectsWhenBusy() {
     AdvancedUninstallController ctrl;
 
     // Start an enumeration to leave Idle
@@ -322,8 +303,7 @@ void AdvancedUninstallControllerTests::uninstallProgram_rejectsWhenBusy()
     ctrl.cancelOperation();
 }
 
-void AdvancedUninstallControllerTests::forceUninstall_rejectsWhenBusy()
-{
+void AdvancedUninstallControllerTests::forceUninstall_rejectsWhenBusy() {
     AdvancedUninstallController ctrl;
 
     ctrl.refreshPrograms();
@@ -341,8 +321,7 @@ void AdvancedUninstallControllerTests::forceUninstall_rejectsWhenBusy()
     ctrl.cancelOperation();
 }
 
-void AdvancedUninstallControllerTests::removeRegistryEntry_rejectsWhenBusy()
-{
+void AdvancedUninstallControllerTests::removeRegistryEntry_rejectsWhenBusy() {
     AdvancedUninstallController ctrl;
 
     ctrl.refreshPrograms();
@@ -360,8 +339,7 @@ void AdvancedUninstallControllerTests::removeRegistryEntry_rejectsWhenBusy()
     ctrl.cancelOperation();
 }
 
-void AdvancedUninstallControllerTests::startBatch_rejectsEmptyQueue()
-{
+void AdvancedUninstallControllerTests::startBatch_rejectsEmptyQueue() {
     AdvancedUninstallController ctrl;
     QVERIFY(ctrl.queue().isEmpty());
 
@@ -376,8 +354,7 @@ void AdvancedUninstallControllerTests::startBatch_rejectsEmptyQueue()
 
 // ── Input Validation ────────────────────────────────────────────────────────
 
-void AdvancedUninstallControllerTests::uninstallProgram_rejectsEmptyName()
-{
+void AdvancedUninstallControllerTests::uninstallProgram_rejectsEmptyName() {
     AdvancedUninstallController ctrl;
 
     QSignalSpy statusSpy(&ctrl, &AdvancedUninstallController::statusMessage);
@@ -391,8 +368,7 @@ void AdvancedUninstallControllerTests::uninstallProgram_rejectsEmptyName()
     QCOMPARE(ctrl.currentState(), AdvancedUninstallController::State::Idle);
 }
 
-void AdvancedUninstallControllerTests::forceUninstall_rejectsEmptyName()
-{
+void AdvancedUninstallControllerTests::forceUninstall_rejectsEmptyName() {
     AdvancedUninstallController ctrl;
 
     QSignalSpy statusSpy(&ctrl, &AdvancedUninstallController::statusMessage);
@@ -404,8 +380,7 @@ void AdvancedUninstallControllerTests::forceUninstall_rejectsEmptyName()
     QCOMPARE(ctrl.currentState(), AdvancedUninstallController::State::Idle);
 }
 
-void AdvancedUninstallControllerTests::removeRegistryEntry_rejectsEmptyKeyPath()
-{
+void AdvancedUninstallControllerTests::removeRegistryEntry_rejectsEmptyKeyPath() {
     AdvancedUninstallController ctrl;
 
     QSignalSpy statusSpy(&ctrl, &AdvancedUninstallController::statusMessage);
@@ -421,8 +396,7 @@ void AdvancedUninstallControllerTests::removeRegistryEntry_rejectsEmptyKeyPath()
 
 // ── Settings Persistence ────────────────────────────────────────────────────
 
-void AdvancedUninstallControllerTests::saveAndLoadSettings_roundTrip()
-{
+void AdvancedUninstallControllerTests::saveAndLoadSettings_roundTrip() {
     // Set non-default values and save
     {
         AdvancedUninstallController ctrl;
@@ -456,8 +430,7 @@ void AdvancedUninstallControllerTests::saveAndLoadSettings_roundTrip()
 
 // ── State Machine ───────────────────────────────────────────────────────────
 
-void AdvancedUninstallControllerTests::stateChanged_emitsSignal()
-{
+void AdvancedUninstallControllerTests::stateChanged_emitsSignal() {
     AdvancedUninstallController ctrl;
 
     QSignalSpy stateSpy(&ctrl, &AdvancedUninstallController::stateChanged);
@@ -472,8 +445,7 @@ void AdvancedUninstallControllerTests::stateChanged_emitsSignal()
     ctrl.cancelOperation();
 }
 
-void AdvancedUninstallControllerTests::refreshPrograms_changesState()
-{
+void AdvancedUninstallControllerTests::refreshPrograms_changesState() {
     AdvancedUninstallController ctrl;
     QCOMPARE(ctrl.currentState(), AdvancedUninstallController::State::Idle);
 
@@ -485,8 +457,7 @@ void AdvancedUninstallControllerTests::refreshPrograms_changesState()
 
 // ── Cancel When Idle ────────────────────────────────────────────────────────
 
-void AdvancedUninstallControllerTests::cancelOperation_whenIdle_noOp()
-{
+void AdvancedUninstallControllerTests::cancelOperation_whenIdle_noOp() {
     AdvancedUninstallController ctrl;
     QCOMPARE(ctrl.currentState(), AdvancedUninstallController::State::Idle);
 

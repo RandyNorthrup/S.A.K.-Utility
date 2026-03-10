@@ -4,9 +4,9 @@
 /// @file test_diagnostic_controller.cpp
 /// @brief Unit tests for DiagnosticController suite state machine, skip guard, and error handling
 
-#include <QtTest/QtTest>
-
 #include "sak/diagnostic_controller.h"
+
+#include <QtTest/QtTest>
 
 using namespace sak;
 
@@ -21,43 +21,33 @@ private Q_SLOTS:
     void reportDataAccess();
 };
 
-void DiagnosticControllerTests::initialState()
-{
+void DiagnosticControllerTests::initialState() {
     DiagnosticController controller;
 
     QCOMPARE(controller.currentState(), DiagnosticController::SuiteState::Idle);
 }
 
-void DiagnosticControllerTests::suiteStateEnum()
-{
+void DiagnosticControllerTests::suiteStateEnum() {
     // Verify all suite states are distinct values
-    QVERIFY(
-        DiagnosticController::SuiteState::Idle != DiagnosticController::SuiteState::HardwareScan);
-    QVERIFY(
-        DiagnosticController::SuiteState::HardwareScan
-            != DiagnosticController::SuiteState::SmartAnalysis);
-    QVERIFY(
-        DiagnosticController::SuiteState::SmartAnalysis
-            != DiagnosticController::SuiteState::CpuBenchmark);
-    QVERIFY(
-        DiagnosticController::SuiteState::CpuBenchmark
-            != DiagnosticController::SuiteState::DiskBenchmark);
-    QVERIFY(
-        DiagnosticController::SuiteState::DiskBenchmark
-            != DiagnosticController::SuiteState::MemoryBenchmark);
-    QVERIFY(
-        DiagnosticController::SuiteState::MemoryBenchmark
-            != DiagnosticController::SuiteState::StressTest);
-    QVERIFY(
-        DiagnosticController::SuiteState::StressTest
-            != DiagnosticController::SuiteState::ReportGeneration);
-    QVERIFY(
-        DiagnosticController::SuiteState::ReportGeneration
-            != DiagnosticController::SuiteState::Complete);
+    QVERIFY(DiagnosticController::SuiteState::Idle !=
+            DiagnosticController::SuiteState::HardwareScan);
+    QVERIFY(DiagnosticController::SuiteState::HardwareScan !=
+            DiagnosticController::SuiteState::SmartAnalysis);
+    QVERIFY(DiagnosticController::SuiteState::SmartAnalysis !=
+            DiagnosticController::SuiteState::CpuBenchmark);
+    QVERIFY(DiagnosticController::SuiteState::CpuBenchmark !=
+            DiagnosticController::SuiteState::DiskBenchmark);
+    QVERIFY(DiagnosticController::SuiteState::DiskBenchmark !=
+            DiagnosticController::SuiteState::MemoryBenchmark);
+    QVERIFY(DiagnosticController::SuiteState::MemoryBenchmark !=
+            DiagnosticController::SuiteState::StressTest);
+    QVERIFY(DiagnosticController::SuiteState::StressTest !=
+            DiagnosticController::SuiteState::ReportGeneration);
+    QVERIFY(DiagnosticController::SuiteState::ReportGeneration !=
+            DiagnosticController::SuiteState::Complete);
 }
 
-void DiagnosticControllerTests::cancelCurrentResetsState()
-{
+void DiagnosticControllerTests::cancelCurrentResetsState() {
     DiagnosticController controller;
     QSignalSpy state_spy(&controller, &DiagnosticController::suiteStateChanged);
 
@@ -70,15 +60,13 @@ void DiagnosticControllerTests::cancelCurrentResetsState()
     QCOMPARE(controller.currentState(), DiagnosticController::SuiteState::Idle);
 }
 
-void DiagnosticControllerTests::thermalMonitorAccess()
-{
+void DiagnosticControllerTests::thermalMonitorAccess() {
     DiagnosticController controller;
     auto* monitor = controller.thermalMonitor();
     QVERIFY(monitor != nullptr);
 }
 
-void DiagnosticControllerTests::reportDataAccess()
-{
+void DiagnosticControllerTests::reportDataAccess() {
     DiagnosticController controller;
     const auto& data = controller.reportData();
     QCOMPARE(data.overall_status, DiagnosticStatus::AllPassed);

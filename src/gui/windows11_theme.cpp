@@ -3,8 +3,8 @@
 
 #include "sak/windows11_theme.h"
 
-#include <QAction>
 #include <QAbstractButton>
+#include <QAction>
 #include <QComboBox>
 #include <QEvent>
 #include <QGraphicsDropShadowEffect>
@@ -36,8 +36,7 @@ QString inferTooltip(QWidget* widget) {
     // Don't auto-generate tooltips for buttons/labels/groups — their visible
     // text IS the description.  Only set tooltips on these when the code
     // explicitly provides one (handled elsewhere).
-    if (qobject_cast<QAbstractButton*>(widget) ||
-        qobject_cast<QLabel*>(widget) ||
+    if (qobject_cast<QAbstractButton*>(widget) || qobject_cast<QLabel*>(widget) ||
         qobject_cast<QGroupBox*>(widget)) {
         return {};
     }
@@ -114,11 +113,11 @@ void applyShadow(QWidget* widget) {
         return;
     }
 
-    const bool should_shadow = qobject_cast<QGroupBox*>(widget)
-        || widget->property("sakElevated").toBool()
-        || widget->property("sakCard").toBool()
-        || (widget->styleSheet().contains("border-radius") &&
-            widget->styleSheet().contains("background-color"));
+    const bool should_shadow = qobject_cast<QGroupBox*>(widget) ||
+                               widget->property("sakElevated").toBool() ||
+                               widget->property("sakCard").toBool() ||
+                               (widget->styleSheet().contains("border-radius") &&
+                                widget->styleSheet().contains("background-color"));
 
     if (should_shadow) {
         auto* shadow = new QGraphicsDropShadowEffect(widget);
@@ -134,6 +133,7 @@ public:
     using QObject::QObject;
 
     bool eventFilter(QObject* watched, QEvent* event) override {
+        Q_ASSERT(watched);
         if (!watched || !event) {
             return QObject::eventFilter(watched, event);
         }
@@ -495,15 +495,11 @@ QString themeScrollBarStyles() {
     )");
 }
 
-} // namespace
+}  // namespace
 
 QString windows11ThemeStyleSheet() {
-    return themeBaseAndChromeStyles()
-         + themeTabAndButtonStyles()
-         + themeInputAndIndicatorStyles()
-         + themeContainerAndTableStyles()
-         + themeSliderStyles()
-         + themeScrollBarStyles();
+    return themeBaseAndChromeStyles() + themeTabAndButtonStyles() + themeInputAndIndicatorStyles() +
+           themeContainerAndTableStyles() + themeSliderStyles() + themeScrollBarStyles();
 }
 
 void applyWindows11Theme(QApplication& app) {
@@ -514,4 +510,4 @@ void installTooltipHelper(QApplication& app) {
     app.installEventFilter(new TooltipEventFilter(&app));
 }
 
-} // namespace sak::ui
+}  // namespace sak::ui

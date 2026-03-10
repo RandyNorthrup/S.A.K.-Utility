@@ -7,6 +7,7 @@
 
 #include <QString>
 #include <QStringList>
+
 #include <vector>
 
 class QDir;
@@ -15,18 +16,18 @@ namespace sak {
 
 /**
  * @brief Backup QuickBooks company files
- * 
+ *
  * Scans for QuickBooks data files:
  * - .QBW (company files)
  * - .QBB (backup files)
  * - .TLG (transaction logs)
  * - .ND (network data files)
- * 
+ *
  * Searches common locations:
  * - C:\Users\Public\Documents\Intuit\QuickBooks
  * - Documents\QuickBooks
  * - Network shares
- * 
+ *
  * Category: Quick Backups
  */
 class QuickBooksBackupAction : public QuickAction {
@@ -99,19 +100,24 @@ private:
     bool isQuickBooksRunning();
 
     /// @brief Copy discovered QuickBooks files to backup directory
-    void executeCopyFiles(const QDir& backup_dir, const QDateTime& start_time,
-                          int& files_copied, int& files_skipped_open,
-                          qint64& bytes_copied, QStringList& copied_files);
+    void executeCopyFiles(const QDir& backup_dir,
+                          const QDateTime& start_time,
+                          int& files_copied,
+                          int& files_skipped_open,
+                          qint64& bytes_copied,
+                          QStringList& copied_files);
 
     /// @brief Build and emit the final execution result
-    void executeBuildResult(const QDateTime& start_time, const QDir& backup_dir,
-                            int files_copied, int files_skipped_open,
-                            qint64 bytes_copied, const QStringList& copied_files);
+    void executeBuildResult(const QDateTime& start_time,
+                            const QDir& backup_dir,
+                            int files_copied,
+                            int files_skipped_open,
+                            qint64 bytes_copied,
+                            const QStringList& copied_files);
 
     QString m_backup_location;
     std::vector<QuickBooksFile> m_found_files;
     qint64 m_total_bytes{0};
 };
 
-} // namespace sak
-
+}  // namespace sak

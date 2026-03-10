@@ -215,7 +215,7 @@ private:
 
     // ── Full Suite Widgets ──────────────────────────────────────
     QLabel* m_suite_step_labels[7]{nullptr};
-    QString m_suite_step_names[7];            ///< Stored for safe label reconstruction
+    QString m_suite_step_names[7];  ///< Stored for safe label reconstruction
     QLabel* m_suite_status_label{nullptr};
     QPushButton* m_suite_run_button{nullptr};
     QPushButton* m_suite_cancel_button{nullptr};
@@ -238,4 +238,4 @@ private:
     bool m_suite_running{false};
 };
 
-} // namespace sak
+}  // namespace sak

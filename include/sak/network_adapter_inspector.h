@@ -42,8 +42,7 @@ public:
     [[nodiscard]] static QString formatLinkSpeed(uint64_t bps);
 
     /// @brief Format MAC address bytes to colon-separated string
-    [[nodiscard]] static QString formatMacAddress(const unsigned char* addr,
-                                                   unsigned long length);
+    [[nodiscard]] static QString formatMacAddress(const unsigned char* addr, unsigned long length);
 
 Q_SIGNALS:
     void scanComplete(QVector<sak::NetworkAdapterInfo> adapters);
@@ -53,7 +52,7 @@ private:
     [[nodiscard]] QVector<NetworkAdapterInfo> enumerateAdapters();
 };
 
-} // namespace sak
+}  // namespace sak
 
 static_assert(!std::is_copy_constructible_v<sak::NetworkAdapterInspector>,
-    "NetworkAdapterInspector must not be copyable.");
+              "NetworkAdapterInspector must not be copyable.");

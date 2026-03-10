@@ -127,14 +127,14 @@ if (Test-Path 'C:\Qt\6.5.3\msvc2019_64') {
 if ($FullClean) {
     Write-Host ""
     Write-Host "[6/7] Performing full clean build..." -ForegroundColor Yellow
-    
+
     if (Test-Path "build") {
         Remove-Item -Path "build" -Recurse -Force
         Write-Host "  [OK] Build directory removed" -ForegroundColor Green
     }
-    
+
     & cmake -B build -G "Visual Studio 17 2022" -A x64
-    
+
     if ($LASTEXITCODE -eq 0) {
         Write-Host "  [OK] CMake configuration successful" -ForegroundColor Green
     } else {
@@ -149,9 +149,9 @@ if ($FullClean) {
 if (-not $SkipBuild -and (Test-Path "build")) {
     Write-Host ""
     Write-Host "[7/7] Building main executable..." -ForegroundColor Yellow
-    
+
     & cmake --build build --config Release --target sak_utility --parallel
-    
+
     if ($LASTEXITCODE -eq 0) {
         Write-Host "  [OK] Build successful" -ForegroundColor Green
     } else {

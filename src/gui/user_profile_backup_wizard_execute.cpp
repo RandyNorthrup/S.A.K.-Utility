@@ -1,17 +1,18 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-#include "sak/user_profile_backup_wizard.h"
-#include "sak/user_profile_backup_worker.h"
+#include "sak/layout_constants.h"
 #include "sak/logger.h"
 #include "sak/style_constants.h"
-#include "sak/layout_constants.h"
-#include <QVBoxLayout>
+#include "sak/user_profile_backup_wizard.h"
+#include "sak/user_profile_backup_worker.h"
+
 #include <QDateTime>
-#include <QJsonDocument>
-#include <QJsonArray>
-#include <QJsonObject>
 #include <QFile>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QVBoxLayout>
 
 namespace sak {
 
@@ -20,14 +21,13 @@ namespace sak {
 // ============================================================================
 
 UserProfileBackupExecutePage::UserProfileBackupExecutePage(BackupManifest& manifest,
-                                     const QVector<UserProfile>& users,
-                                     const QString& destinationPath,
-                                     QWidget* parent)
+                                                           const QVector<UserProfile>& users,
+                                                           const QString& destinationPath,
+                                                           QWidget* parent)
     : QWizardPage(parent)
     , m_manifest(manifest)
     , m_users(users)
-    , m_destinationPath(destinationPath)
-{
+    , m_destinationPath(destinationPath) {
     setTitle(tr("Execute Backup"));
     setSubTitle(tr("Backup in progress..."));
 
@@ -35,13 +35,14 @@ UserProfileBackupExecutePage::UserProfileBackupExecutePage(BackupManifest& manif
 }
 
 void UserProfileBackupExecutePage::setupUi() {
+    Q_ASSERT(m_statusLabel);
     Q_ASSERT(!objectName().isEmpty() || true);  // widget valid
     auto* layout = new QVBoxLayout(this);
 
     // Status label
     m_statusLabel = new QLabel(tr("Ready to start backup"), this);
-    m_statusLabel->setStyleSheet(QString("QLabel { font-weight: 600; color: %1; }")
-        .arg(sak::ui::kColorTextHeading));
+    m_statusLabel->setStyleSheet(
+        QString("QLabel { font-weight: 600; color: %1; }").arg(sak::ui::kColorTextHeading));
     layout->addWidget(m_statusLabel);
 
     // Current user being backed up
@@ -71,8 +72,8 @@ void UserProfileBackupExecutePage::setupUi() {
     m_startButton = new QPushButton(tr("Start Backup"), this);
     m_startButton->setIcon(QIcon::fromTheme("media-playback-start"));
     m_startButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
-    connect(m_startButton, &QPushButton::clicked, this,
-        &UserProfileBackupExecutePage::onStartBackup);
+    connect(
+        m_startButton, &QPushButton::clicked, this, &UserProfileBackupExecutePage::onStartBackup);
     layout->addWidget(m_startButton);
 
     layout->addStretch();
@@ -88,7 +89,11 @@ bool UserProfileBackupExecutePage::isComplete() const {
 }
 
 void UserProfileBackupExecutePage::onStartBackup() {
-    if (m_started) return;
+    Q_ASSERT(m_startButton);
+    Q_ASSERT(m_statusLabel);
+    if (m_started) {
+        return;
+    }
 
     m_started = true;
     m_startButton->setEnabled(false);
@@ -112,10 +117,11 @@ void UserProfileBackupExecutePage::onStartBackup() {
     bool encrypt = wiz->isEncryptionEnabled();
     QString password = wiz->getEncryptionPassword();
 
-    appendLog(tr("Compression: %1").arg(
-        compressionLevel == 0 ? tr("None") :
-        compressionLevel <= 3 ? tr("Fast") :
-        compressionLevel <= 6 ? tr("Balanced") : tr("Maximum")));
+    appendLog(tr("Compression: %1")
+                  .arg(compressionLevel == 0   ? tr("None")
+                       : compressionLevel <= 3 ? tr("Fast")
+                       : compressionLevel <= 6 ? tr("Balanced")
+                                               : tr("Maximum")));
 
     if (encrypt) {
         appendLog(tr("Encryption: Enabled (AES-256)"));
@@ -125,13 +131,14 @@ void UserProfileBackupExecutePage::onStartBackup() {
     saveWifiProfilesToBackup(wiz->wifiProfiles());
     saveEthernetConfigsToBackup(wiz->ethernetConfigs());
     saveAppDataSourcesToBackup(wiz->appDataSources());
-    connectAndStartBackupWorker(smartFilter, permissionMode,
-                                compressionLevel, encrypt, password);
+    connectAndStartBackupWorker(smartFilter, permissionMode, compressionLevel, encrypt, password);
 }
 
 void UserProfileBackupExecutePage::saveInstalledAppsToBackup(
     const QVector<InstalledAppInfo>& installedApps) {
-    if (installedApps.isEmpty()) return;
+    if (installedApps.isEmpty()) {
+        return;
+    }
 
     QJsonArray appsArray;
     for (const auto& app : installedApps) {
@@ -155,20 +162,27 @@ void UserProfileBackupExecutePage::saveInstalledAppsToBackup(
         appsFile.close();
         appendLog(tr("Saved %1 installed application(s) to backup").arg(installedApps.size()));
     } else {
-        sak::logError("Could not save installed apps list: {}", appsFile.errorString().toStdString());
+        sak::logError("Could not save installed apps list: {}",
+                      appsFile.errorString().toStdString());
         appendLog(tr("WARNING: Could not save installed applications list"));
     }
 }
 
 void UserProfileBackupExecutePage::saveWifiProfilesToBackup(
     const QVector<WifiProfileInfo>& profiles) {
-    if (profiles.isEmpty()) return;
+    if (profiles.isEmpty()) {
+        return;
+    }
 
     QJsonArray arr;
     for (const auto& p : profiles) {
-        if (p.selected) arr.append(p.toJson());
+        if (p.selected) {
+            arr.append(p.toJson());
+        }
     }
-    if (arr.isEmpty()) return;
+    if (arr.isEmpty()) {
+        return;
+    }
 
     QJsonDocument doc(arr);
     QFile file(m_destinationPath + "/wifi_profiles.json");
@@ -188,13 +202,19 @@ void UserProfileBackupExecutePage::saveWifiProfilesToBackup(
 
 void UserProfileBackupExecutePage::saveEthernetConfigsToBackup(
     const QVector<EthernetConfigInfo>& configs) {
-    if (configs.isEmpty()) return;
+    if (configs.isEmpty()) {
+        return;
+    }
 
     QJsonArray arr;
     for (const auto& c : configs) {
-        if (c.selected) arr.append(c.toJson());
+        if (c.selected) {
+            arr.append(c.toJson());
+        }
     }
-    if (arr.isEmpty()) return;
+    if (arr.isEmpty()) {
+        return;
+    }
 
     QJsonDocument doc(arr);
     QFile file(m_destinationPath + "/ethernet_configs.json");
@@ -214,13 +234,19 @@ void UserProfileBackupExecutePage::saveEthernetConfigsToBackup(
 
 void UserProfileBackupExecutePage::saveAppDataSourcesToBackup(
     const QVector<AppDataSourceInfo>& sources) {
-    if (sources.isEmpty()) return;
+    if (sources.isEmpty()) {
+        return;
+    }
 
     QJsonArray arr;
     for (const auto& s : sources) {
-        if (s.selected) arr.append(s.toJson());
+        if (s.selected) {
+            arr.append(s.toJson());
+        }
     }
-    if (arr.isEmpty()) return;
+    if (arr.isEmpty()) {
+        return;
+    }
 
     QJsonDocument doc(arr);
     QFile file(m_destinationPath + "/app_data_sources.json");
@@ -238,36 +264,54 @@ void UserProfileBackupExecutePage::saveAppDataSourcesToBackup(
     }
 }
 
-void UserProfileBackupExecutePage::connectAndStartBackupWorker(
-    SmartFilter smartFilter, PermissionMode permissionMode,
-    int compressionLevel, bool encrypt, const QString& password) {
+void UserProfileBackupExecutePage::connectAndStartBackupWorker(SmartFilter smartFilter,
+                                                               PermissionMode permissionMode,
+                                                               int compressionLevel,
+                                                               bool encrypt,
+                                                               const QString& password) {
     auto worker = new UserProfileBackupWorker(this);
 
-    connect(worker, &UserProfileBackupWorker::overallProgress,
-            this, &UserProfileBackupExecutePage::onBackupProgress);
-    connect(worker, &UserProfileBackupWorker::logMessage,
-            this, [this](const QString& message, bool isWarning) {
+    connect(worker,
+            &UserProfileBackupWorker::overallProgress,
+            this,
+            &UserProfileBackupExecutePage::onBackupProgress);
+    connect(worker,
+            &UserProfileBackupWorker::logMessage,
+            this,
+            [this](const QString& message, bool isWarning) {
                 appendLog(isWarning ? QString("[WARNING] %1").arg(message) : message);
             });
-    connect(worker, &UserProfileBackupWorker::statusUpdate,
-            this, [this](const QString& username, const QString& operation) {
+    connect(worker,
+            &UserProfileBackupWorker::statusUpdate,
+            this,
+            [this](const QString& username, const QString& operation) {
                 m_statusLabel->setText(tr("Backing up %1: %2").arg(username, operation));
             });
-    connect(worker, &UserProfileBackupWorker::backupComplete,
-            this, [this, worker](bool success, const QString& message, const BackupManifest&) {
+    connect(worker,
+            &UserProfileBackupWorker::backupComplete,
+            this,
+            [this, worker](bool success, const QString& message, const BackupManifest&) {
                 onBackupComplete(success, message);
                 worker->deleteLater();
             });
 
-    worker->startBackup(m_manifest, m_users, m_destinationPath, smartFilter, permissionMode,
-                       compressionLevel, encrypt, password);
+    worker->startBackup(m_manifest,
+                        m_users,
+                        m_destinationPath,
+                        smartFilter,
+                        permissionMode,
+                        compressionLevel,
+                        encrypt,
+                        password);
 
     m_overallProgress->setRange(0, m_users.size());
     m_currentProgress->setRange(0, 0);
 }
 
-void UserProfileBackupExecutePage::onBackupProgress(int current, int total, qint64 bytes,
-    qint64 totalBytes) {
+void UserProfileBackupExecutePage::onBackupProgress(int current,
+                                                    int total,
+                                                    qint64 bytes,
+                                                    qint64 totalBytes) {
     (void)bytes;
     (void)totalBytes;
     m_overallProgress->setMaximum(total);
@@ -291,4 +335,4 @@ void UserProfileBackupExecutePage::appendLog(const QString& message) {
     m_logEdit->append(QString("[%1] %2").arg(timestamp, message));
 }
 
-} // namespace sak
+}  // namespace sak

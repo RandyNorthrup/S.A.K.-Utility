@@ -4,6 +4,7 @@
 #pragma once
 
 #include "sak/quick_action.h"
+
 #include <QDateTime>
 #include <QDir>
 #include <QString>
@@ -26,8 +27,10 @@ public:
     explicit BrowserProfileBackupAction(const QString& backup_location, QObject* parent = nullptr);
 
     QString name() const override { return "Browser Profile Backup"; }
-    QString description() const override { return "Backup browser profiles with bookmarks and "
-                                                  "passwords"; }
+    QString description() const override {
+        return "Backup browser profiles with bookmarks and "
+               "passwords";
+    }
     QIcon icon() const override { return QIcon(); }
     ActionCategory category() const override { return ActionCategory::QuickBackup; }
     bool requiresAdmin() const override { return false; }
@@ -40,23 +43,31 @@ private:
 
     /// @brief Backup browser profiles for all users
     /// @return false if cancelled, true if completed
-    bool backupAllBrowserProfiles(const QVector<UserProfile>& users, const QDir& backup_dir,
+    bool backupAllBrowserProfiles(const QVector<UserProfile>& users,
+                                  const QDir& backup_dir,
                                   const QDateTime& start_time,
-                                  int& profile_count, int& files_copied, qint64& bytes_copied);
+                                  int& profile_count,
+                                  int& files_copied,
+                                  qint64& bytes_copied);
 
     /// @brief Backup all browser profiles for a single user
     /// @return false if cancelled
-    bool backupUserBrowserProfiles(const UserProfile& user, const QDir& backup_dir,
+    bool backupUserBrowserProfiles(const UserProfile& user,
+                                   const QDir& backup_dir,
                                    const QDateTime& start_time,
-                                   int user_idx, int total_users,
-                                   int& profile_count, int& files_copied, qint64& bytes_copied);
+                                   int user_idx,
+                                   int total_users,
+                                   int& profile_count,
+                                   int& files_copied,
+                                   qint64& bytes_copied);
 
     /// @brief Copy all files from a single browser profile directory
     /// @return false if cancelled
-    bool copyProfileFiles(const QString& src_root, const QString& dest_root,
+    bool copyProfileFiles(const QString& src_root,
+                          const QString& dest_root,
                           const QDateTime& start_time,
-                          int& files_copied, qint64& bytes_copied);
+                          int& files_copied,
+                          qint64& bytes_copied);
 };
 
-} // namespace sak
-
+}  // namespace sak

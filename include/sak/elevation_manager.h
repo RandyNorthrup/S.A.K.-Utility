@@ -4,6 +4,7 @@
 #pragma once
 
 #include "sak/error_codes.h"
+
 #include <expected>
 #include <string>
 
@@ -13,11 +14,11 @@ namespace sak {
 
 /**
  * @brief Windows UAC elevation helper
- * 
+ *
  * Provides utilities for checking and requesting administrator privileges
  * on Windows systems using UAC (User Account Control).
  * Uses wide-char (W) Win32 APIs internally to support Unicode paths.
- * 
+ *
  * Thread-Safety: Can be used from any thread
  */
 class ElevationManager {
@@ -38,11 +39,10 @@ public:
      * @brief Restart current process with administrator privileges
      * @param wait_for_exit If true, wait for elevated process to exit
      * @return Success or error code
-     * 
+     *
      * @note This will terminate the current process if successful
      */
-    static auto restartElevated(bool wait_for_exit = false)
-        -> std::expected<void, sak::error_code>;
+    static auto restartElevated(bool wait_for_exit = false) -> std::expected<void, sak::error_code>;
 
     /**
      * @brief Execute command with administrator privileges
@@ -51,11 +51,9 @@ public:
      * @param wait_for_exit If true, wait for process to complete
      * @return Success or error code
      */
-    static auto executeElevated(
-        const std::wstring& executable,
-        const std::wstring& arguments = L"",
-        bool wait_for_exit = true)
-        -> std::expected<void, sak::error_code>;
+    static auto executeElevated(const std::wstring& executable,
+                                const std::wstring& arguments = L"",
+                                bool wait_for_exit = true) -> std::expected<void, sak::error_code>;
 
     /**
      * @brief Get elevation error message
@@ -75,8 +73,7 @@ private:
      * @brief Get current executable path (wide-char for Unicode support)
      * @return Executable path or error
      */
-    [[nodiscard]] static auto get_executable_path()
-        -> std::expected<std::wstring, sak::error_code>;
+    [[nodiscard]] static auto get_executable_path() -> std::expected<std::wstring, sak::error_code>;
 
     /**
      * @brief Get command line arguments (wide-char for Unicode support)
@@ -85,6 +82,6 @@ private:
     [[nodiscard]] static std::wstring get_command_line_args();
 };
 
-} // namespace sak
+}  // namespace sak
 
-#endif // _WIN32
+#endif  // _WIN32

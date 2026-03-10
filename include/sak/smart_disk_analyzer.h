@@ -98,7 +98,7 @@ private:
     /// @param disk_number The drive number being parsed
     /// @return Populated SmartReport
     [[nodiscard]] SmartReport parseSmartctlOutput(const QByteArray& json_data,
-                                                   uint32_t disk_number);
+                                                  uint32_t disk_number);
 
     /// @brief Parse SATA SMART attributes from the JSON object
     /// @param ata_smart_obj JSON object containing ata_smart_attributes
@@ -137,4 +137,4 @@ private:
     std::atomic<bool> m_cancelled{false};
 };
 
-} // namespace sak
+}  // namespace sak

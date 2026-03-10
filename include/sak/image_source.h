@@ -4,9 +4,11 @@
 #pragma once
 
 #include "sak/streaming_decompressor.h"
+
+#include <QIODevice>
 #include <QObject>
 #include <QString>
-#include <QIODevice>
+
 #include <memory>
 
 namespace sak {
@@ -16,46 +18,46 @@ namespace sak {
  */
 enum class ImageFormat {
     Unknown,
-    ISO,      // ISO 9660 CD/DVD image
-    IMG,      // Raw disk image
-    WIC,      // Windows Imaging Format
-    ZIP,      // ZIP archive containing image
-    GZIP,     // GZIP compressed image
-    BZIP2,    // BZIP2 compressed image
-    XZ,       // XZ compressed image
-    DMG,      // Apple Disk Image
-    DSK       // Generic disk image
+    ISO,    // ISO 9660 CD/DVD image
+    IMG,    // Raw disk image
+    WIC,    // Windows Imaging Format
+    ZIP,    // ZIP archive containing image
+    GZIP,   // GZIP compressed image
+    BZIP2,  // BZIP2 compressed image
+    XZ,     // XZ compressed image
+    DMG,    // Apple Disk Image
+    DSK     // Generic disk image
 };
 
 /**
  * @brief Metadata about an image file
  */
 struct ImageMetadata {
-    QString name;              // Filename
-    QString path;              // Full path
-    ImageFormat format;        // Detected format
+    QString name;             // Filename
+    QString path;             // Full path
+    ImageFormat format;       // Detected format
     qint64 size;              // File size in bytes
     qint64 uncompressedSize;  // Size after decompression (0 if not compressed)
-    bool isCompressed;         // True if compressed format
-    QString checksum;          // SHA-512 hash (if calculated)
-    QString compressionType;   // "gzip", "bzip2", "xz", etc.
-    
+    bool isCompressed;        // True if compressed format
+    QString checksum;         // SHA-512 hash (if calculated)
+    QString compressionType;  // "gzip", "bzip2", "xz", etc.
+
     bool isValid() const { return !path.isEmpty() && size > 0 && format != ImageFormat::Unknown; }
 };
 
-} // namespace sak
+}  // namespace sak
 
 /**
  * @brief Abstract base class for image sources
- * 
+ *
  * Provides a unified interface for reading disk images, with support for
  * compressed formats. Based on Etcher SDK's SourceDestination abstraction.
- * 
+ *
  * Implementations:
  * - FileImageSource: Regular file on disk
  * - CompressedImageSource: Compressed file with streaming decompression
  * - HTTPImageSource: Downloaded file (future)
- * 
+ *
  * Thread-Safety: Not thread-safe. Create separate instances per thread.
  */
 class ImageSource : public QObject {
@@ -101,7 +103,7 @@ public:
      * @return Position in bytes
      */
     virtual qint64 position() const = 0;
-    
+
     /**
      * @brief Seek to position
      * @param pos Position to seek to
@@ -178,7 +180,7 @@ private:
 
 /**
  * @brief Image source with automatic decompression
- * 
+ *
  * Supports streaming decompression of gzip, bzip2, and xz formats.
  * Uses streaming decompression without temporary files.
  */

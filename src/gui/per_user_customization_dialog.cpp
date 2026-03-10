@@ -2,25 +2,25 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "sak/per_user_customization_dialog.h"
+
 #include "sak/format_utils.h"
+#include "sak/layout_constants.h"
 #include "sak/logger.h"
 #include "sak/style_constants.h"
-#include "sak/layout_constants.h"
-#include <QVBoxLayout>
+
+#include <QDir>
+#include <QFileDialog>
+#include <QFileInfo>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QMessageBox>
-#include <QFileDialog>
-#include <QDir>
-#include <QFileInfo>
 #include <QTreeWidgetItem>
+#include <QVBoxLayout>
 
 namespace sak {
 
 PerUserCustomizationDialog::PerUserCustomizationDialog(UserProfile& profile, QWidget* parent)
-    : QDialog(parent)
-    , m_profile(profile)
-{
+    : QDialog(parent), m_profile(profile) {
     setupUi();
     populateTree();
     updateSummary();
@@ -30,11 +30,12 @@ PerUserCustomizationDialog::PerUserCustomizationDialog(UserProfile& profile, QWi
 }
 
 void PerUserCustomizationDialog::setupUi() {
+    Q_ASSERT(m_profilePathLabel);
     Q_ASSERT(!objectName().isEmpty() || true);  // widget valid
     auto* mainLayout = new QVBoxLayout(this);
     mainLayout->setSpacing(10);
-    mainLayout->setContentsMargins(sak::ui::kMarginLarge, sak::ui::kMarginLarge,
-        sak::ui::kMarginLarge, sak::ui::kMarginLarge);
+    mainLayout->setContentsMargins(
+        sak::ui::kMarginLarge, sak::ui::kMarginLarge, sak::ui::kMarginLarge, sak::ui::kMarginLarge);
 
     // User info header
     auto* headerLayout = new QVBoxLayout();
@@ -59,6 +60,8 @@ void PerUserCustomizationDialog::setupUi() {
 }
 
 void PerUserCustomizationDialog::setupUi_foldersSection(QVBoxLayout* mainLayout) {
+    Q_ASSERT(m_selectRecommendedButton);
+    Q_ASSERT(m_folderTree);
     // Standard folders section
     auto* foldersGroup = new QGroupBox("Standard Folders");
     auto* foldersLayout = new QVBoxLayout(foldersGroup);
@@ -87,7 +90,7 @@ void PerUserCustomizationDialog::setupUi_foldersSection(QVBoxLayout* mainLayout)
     m_folderTree->setAlternatingRowColors(true);
     m_folderTree->setSelectionMode(QAbstractItemView::NoSelection);
     m_folderTree->setRootIsDecorated(true);  // Show expand/collapse arrows
-    m_folderTree->setIndentation(20);      // Normal indentation
+    m_folderTree->setIndentation(20);        // Normal indentation
     m_folderTree->header()->setStretchLastSection(false);
     m_folderTree->header()->setSectionResizeMode(0, QHeaderView::Stretch);
 
@@ -98,8 +101,8 @@ void PerUserCustomizationDialog::setupUi_foldersSection(QVBoxLayout* mainLayout)
     auto* expandAllBtn = new QPushButton("Expand All");
     auto* collapseAllBtn = new QPushButton("Collapse All");
     connect(expandAllBtn, &QPushButton::clicked, this, &PerUserCustomizationDialog::onExpandAll);
-    connect(collapseAllBtn, &QPushButton::clicked, this,
-        &PerUserCustomizationDialog::onCollapseAll);
+    connect(
+        collapseAllBtn, &QPushButton::clicked, this, &PerUserCustomizationDialog::onCollapseAll);
     treeButtonsLayout->addWidget(expandAllBtn);
     treeButtonsLayout->addWidget(collapseAllBtn);
     treeButtonsLayout->addStretch();
@@ -121,6 +124,8 @@ void PerUserCustomizationDialog::setupUi_foldersSection(QVBoxLayout* mainLayout)
 }
 
 void PerUserCustomizationDialog::setupUi_appDataSection(QVBoxLayout* mainLayout) {
+    Q_ASSERT(m_browserBookmarksCheck);
+    Q_ASSERT(m_vsCodeSettingsCheck);
     // Application data section
     m_appDataGroup = new QGroupBox("Application Data (Selective)");
     auto* appDataLayout = new QVBoxLayout(m_appDataGroup);
@@ -136,19 +141,18 @@ void PerUserCustomizationDialog::setupUi_appDataSection(QVBoxLayout* mainLayout)
     appDataLayout->addWidget(m_officeTemplatesCheck);
 
     m_vsCodeSettingsCheck = new QCheckBox("VS Code Settings");
-    m_vsCodeSettingsCheck->setToolTip("Includes settings.json, keybindings.json, and snippets (no "
-                                      "extensions)");
+    m_vsCodeSettingsCheck->setToolTip(
+        "Includes settings.json, keybindings.json, and snippets (no "
+        "extensions)");
     appDataLayout->addWidget(m_vsCodeSettingsCheck);
 
     auto* warningLabel = new QLabel(
         "⚠ Warning: Full AppData backup is NOT recommended. "
-        "It contains machine-specific files that can corrupt profiles."
-    );
+        "It contains machine-specific files that can corrupt profiles.");
     warningLabel->setWordWrap(true);
     warningLabel->setStyleSheet(QString("color: %1; padding: 8px; background-color: %2; "
                                         "border-radius: 10px;")
-                                            .arg(sak::ui::kColorErrorText,
-                                                sak::ui::kColorBgErrorPanel));
+                                    .arg(sak::ui::kColorErrorText, sak::ui::kColorBgErrorPanel));
     appDataLayout->addWidget(warningLabel);
 
     mainLayout->addWidget(m_appDataGroup);
@@ -156,11 +160,14 @@ void PerUserCustomizationDialog::setupUi_appDataSection(QVBoxLayout* mainLayout)
     // Summary
     m_summaryLabel = new QLabel();
     m_summaryLabel->setStyleSheet(QString("padding: 10px; background-color: %1; border-radius: "
-                                          "10px;").arg(sak::ui::kColorBgInfoPanel));
+                                          "10px;")
+                                      .arg(sak::ui::kColorBgInfoPanel));
     mainLayout->addWidget(m_summaryLabel);
 }
 
 void PerUserCustomizationDialog::setupUi_dialogButtons(QVBoxLayout* mainLayout) {
+    Q_ASSERT(m_okButton);
+    Q_ASSERT(m_cancelButton);
     // Separator
     auto* separator2 = new QFrame();
     separator2->setFrameShape(QFrame::HLine);
@@ -184,34 +191,49 @@ void PerUserCustomizationDialog::setupUi_dialogButtons(QVBoxLayout* mainLayout) 
     mainLayout->addLayout(buttonLayout);
 
     // Connections
-    connect(m_selectAllButton, &QPushButton::clicked, this,
-        &PerUserCustomizationDialog::onSelectAll);
-    connect(m_selectNoneButton, &QPushButton::clicked, this,
-        &PerUserCustomizationDialog::onSelectNone);
-    connect(m_selectRecommendedButton, &QPushButton::clicked, this,
-        &PerUserCustomizationDialog::onSelectRecommended);
-    connect(m_addCustomButton, &QPushButton::clicked, this,
-        &PerUserCustomizationDialog::onAddCustomFolder);
-    connect(m_removeButton, &QPushButton::clicked, this,
-        &PerUserCustomizationDialog::onRemoveFolder);
+    connect(
+        m_selectAllButton, &QPushButton::clicked, this, &PerUserCustomizationDialog::onSelectAll);
+    connect(
+        m_selectNoneButton, &QPushButton::clicked, this, &PerUserCustomizationDialog::onSelectNone);
+    connect(m_selectRecommendedButton,
+            &QPushButton::clicked,
+            this,
+            &PerUserCustomizationDialog::onSelectRecommended);
+    connect(m_addCustomButton,
+            &QPushButton::clicked,
+            this,
+            &PerUserCustomizationDialog::onAddCustomFolder);
+    connect(
+        m_removeButton, &QPushButton::clicked, this, &PerUserCustomizationDialog::onRemoveFolder);
 
-    connect(m_folderTree, &QTreeWidget::itemChanged, this,
-        &PerUserCustomizationDialog::onTreeItemChanged);
+    connect(m_folderTree,
+            &QTreeWidget::itemChanged,
+            this,
+            &PerUserCustomizationDialog::onTreeItemChanged);
 
-    connect(m_browserBookmarksCheck, &QCheckBox::stateChanged, this,
-        &PerUserCustomizationDialog::updateSummary);
-    connect(m_emailSignaturesCheck, &QCheckBox::stateChanged, this,
-        &PerUserCustomizationDialog::updateSummary);
-    connect(m_officeTemplatesCheck, &QCheckBox::stateChanged, this,
-        &PerUserCustomizationDialog::updateSummary);
-    connect(m_vsCodeSettingsCheck, &QCheckBox::stateChanged, this,
-        &PerUserCustomizationDialog::updateSummary);
+    connect(m_browserBookmarksCheck,
+            &QCheckBox::stateChanged,
+            this,
+            &PerUserCustomizationDialog::updateSummary);
+    connect(m_emailSignaturesCheck,
+            &QCheckBox::stateChanged,
+            this,
+            &PerUserCustomizationDialog::updateSummary);
+    connect(m_officeTemplatesCheck,
+            &QCheckBox::stateChanged,
+            this,
+            &PerUserCustomizationDialog::updateSummary);
+    connect(m_vsCodeSettingsCheck,
+            &QCheckBox::stateChanged,
+            this,
+            &PerUserCustomizationDialog::updateSummary);
 
     connect(m_okButton, &QPushButton::clicked, this, &QDialog::accept);
     connect(m_cancelButton, &QPushButton::clicked, this, &QDialog::reject);
 }
 
 void PerUserCustomizationDialog::populateTree() {
+    Q_ASSERT(m_folderTree);
     m_folderTree->clear();
     m_folderTree->setUpdatesEnabled(false);
 
@@ -228,9 +250,9 @@ void PerUserCustomizationDialog::populateTree() {
 }
 
 void PerUserCustomizationDialog::addFolderToTree(const FolderSelection& selection,
-    QTreeWidgetItem* parent) {
-    QTreeWidgetItem* folderItem =
-        parent ? new QTreeWidgetItem(parent) : new QTreeWidgetItem(m_folderTree);
+                                                 QTreeWidgetItem* parent) {
+    QTreeWidgetItem* folderItem = parent ? new QTreeWidgetItem(parent)
+                                         : new QTreeWidgetItem(m_folderTree);
 
     // Get absolute path
     QDir profileDir(m_profile.profile_path);
@@ -239,14 +261,14 @@ void PerUserCustomizationDialog::addFolderToTree(const FolderSelection& selectio
 
     if (!dir.exists()) {
         // Folder doesn't exist, just add placeholder
-        folderItem->setFlags(folderItem->flags(
-            ) | Qt::ItemIsUserCheckable | Qt::ItemIsAutoTristate);
+        folderItem->setFlags(folderItem->flags() | Qt::ItemIsUserCheckable |
+                             Qt::ItemIsAutoTristate);
         folderItem->setCheckState(0, selection.selected ? Qt::Checked : Qt::Unchecked);
         folderItem->setText(0, selection.display_name);
         folderItem->setText(1, "Not Found");
         folderItem->setText(2, "-");
         folderItem->setData(0, Qt::UserRole, selection.relative_path);
-        folderItem->setData(0, Qt::UserRole + 1, true); // Mark as folder
+        folderItem->setData(0, Qt::UserRole + 1, true);  // Mark as folder
         return;
     }
 
@@ -257,12 +279,12 @@ void PerUserCustomizationDialog::addFolderToTree(const FolderSelection& selectio
     // Column 0 also contains folder name
     folderItem->setText(0, QString("[FOLDER] %1").arg(selection.display_name));
     folderItem->setData(0, Qt::UserRole, selection.relative_path);
-    folderItem->setData(0, Qt::UserRole + 1, true); // Mark as folder
+    folderItem->setData(0, Qt::UserRole + 1, true);  // Mark as folder
 
     // Recursively add subdirectories and files (with depth limit and lazy loading)
     qint64 totalSize = 0;
     int totalFiles = 0;
-    const int MAX_DEPTH = 2; // Only scan 2 levels deep initially
+    const int MAX_DEPTH = 2;  // Only scan 2 levels deep initially
     addDirectoryContents(dir, folderItem, totalSize, totalFiles, selection.selected, 0, MAX_DEPTH);
 
     // Column 2: Size
@@ -308,6 +330,7 @@ void PerUserCustomizationDialog::onSelectNone() {
 }
 
 void PerUserCustomizationDialog::onSelectRecommended() {
+    Q_ASSERT(m_folderTree);
     // Documents, Desktop, Pictures, Downloads
     QStringList recommended = {"Documents", "Desktop", "Pictures", "Downloads"};
 
@@ -324,12 +347,11 @@ void PerUserCustomizationDialog::onSelectRecommended() {
 }
 
 void PerUserCustomizationDialog::onAddCustomFolder() {
-    QString folderPath = QFileDialog::getExistingDirectory(
-        this,
-        "Select Custom Folder to Backup",
-        m_profile.profile_path,
-        QFileDialog::ShowDirsOnly | QFileDialog::DontResolveSymlinks
-    );
+    QString folderPath = QFileDialog::getExistingDirectory(this,
+                                                           "Select Custom Folder to Backup",
+                                                           m_profile.profile_path,
+                                                           QFileDialog::ShowDirsOnly |
+                                                               QFileDialog::DontResolveSymlinks);
 
     if (folderPath.isEmpty()) {
         return;
@@ -342,8 +364,9 @@ void PerUserCustomizationDialog::onAddCustomFolder() {
     // Check if already exists
     for (const auto& sel : m_profile.folder_selections) {
         if (sel.relative_path == relativePath) {
-            QMessageBox::warning(this, "Duplicate Folder",
-                "This folder is already in the backup list.");
+            QMessageBox::warning(this,
+                                 "Duplicate Folder",
+                                 "This folder is already in the backup list.");
             return;
         }
     }
@@ -352,7 +375,7 @@ void PerUserCustomizationDialog::onAddCustomFolder() {
     QDir dir(folderPath);
     qint64 totalSize = 0;
     int fileCount = 0;
-    const int MAX_SCAN_DEPTH = 10; // Scan deeper for custom folders
+    const int MAX_SCAN_DEPTH = 10;  // Scan deeper for custom folders
     calculateDirectorySize(dir, totalSize, fileCount, 0, MAX_SCAN_DEPTH);
 
     // Create new selection
@@ -371,6 +394,7 @@ void PerUserCustomizationDialog::onAddCustomFolder() {
 }
 
 void PerUserCustomizationDialog::onRemoveFolder() {
+    Q_ASSERT(m_folderTree);
     QTreeWidgetItem* currentItem = m_folderTree->currentItem();
     if (!currentItem) {
         QMessageBox::information(this, "Remove Folder", "Please select a folder to remove.");
@@ -383,18 +407,19 @@ void PerUserCustomizationDialog::onRemoveFolder() {
 
     // Only allow removal of top-level custom folders
     if (relativePath.isEmpty() || currentItem->parent() != nullptr) {
-        QMessageBox::information(this, "Remove Folder",
-            "Only top-level custom folders can be removed.\n"
-            "Standard folders (Documents, Desktop, etc.) cannot be removed.");
+        QMessageBox::information(this,
+                                 "Remove Folder",
+                                 "Only top-level custom folders can be removed.\n"
+                                 "Standard folders (Documents, Desktop, etc.) cannot be removed.");
         return;
     }
 
     // Find the folder selection
     auto it = std::find_if(m_profile.folder_selections.begin(),
-                          m_profile.folder_selections.end(),
-                          [&relativePath](const FolderSelection& sel) {
-                              return sel.relative_path == relativePath;
-                          });
+                           m_profile.folder_selections.end(),
+                           [&relativePath](const FolderSelection& sel) {
+                               return sel.relative_path == relativePath;
+                           });
 
     if (it == m_profile.folder_selections.end()) {
         sak::logWarning("Attempted to remove folder not found in profile: {}",
@@ -405,14 +430,18 @@ void PerUserCustomizationDialog::onRemoveFolder() {
 
     // Only allow removal of custom folders
     if (it->type != FolderType::Custom) {
-        QMessageBox::information(this, "Remove Folder",
+        QMessageBox::information(
+            this,
+            "Remove Folder",
             "Only custom folders can be removed.\n"
             "Standard folders (Documents, Desktop, etc.) are part of the default profile.");
         return;
     }
 
     // Confirm removal
-    auto reply = QMessageBox::question(this, "Confirm Removal",
+    auto reply = QMessageBox::question(
+        this,
+        "Confirm Removal",
         QString("Remove folder \"%1\" from backup?\n\nThis will not delete the actual folder from "
                 "disk.")
             .arg(displayText),
@@ -434,7 +463,11 @@ void PerUserCustomizationDialog::onRemoveFolder() {
 }
 
 void PerUserCustomizationDialog::onTreeItemChanged(QTreeWidgetItem* item, int column) {
-    if (column != 0) return;
+    Q_ASSERT(m_folderTree);
+    Q_ASSERT(item);
+    if (column != 0) {
+        return;
+    }
 
     // Manually propagate state changes from parent to children
     // Qt's AutoTristate updates parents based on children, but not the reverse
@@ -472,8 +505,12 @@ QString PerUserCustomizationDialog::formatFileSize(qint64 bytes) {
 }
 
 void PerUserCustomizationDialog::addDirectoryChildItem(const QFileInfo& entry,
-    QTreeWidgetItem* parent, qint64& totalSize, int& totalFiles, bool checked, int depth,
-        int maxDepth) {
+                                                       QTreeWidgetItem* parent,
+                                                       qint64& totalSize,
+                                                       int& totalFiles,
+                                                       bool checked,
+                                                       int depth,
+                                                       int maxDepth) {
     QTreeWidgetItem* childItem = new QTreeWidgetItem(parent);
 
     if (entry.isDir()) {
@@ -498,8 +535,8 @@ void PerUserCustomizationDialog::addDirectoryChildItem(const QFileInfo& entry,
         qint64 subDirSize = 0;
         int subDirFiles = 0;
         QDir subDir(entry.filePath());
-        addDirectoryContents(subDir, childItem, subDirSize, subDirFiles, checked, depth + 1,
-            maxDepth);
+        addDirectoryContents(
+            subDir, childItem, subDirSize, subDirFiles, checked, depth + 1, maxDepth);
 
         totalSize += subDirSize;
         totalFiles += subDirFiles;
@@ -522,8 +559,13 @@ void PerUserCustomizationDialog::addDirectoryChildItem(const QFileInfo& entry,
     }
 }
 
-void PerUserCustomizationDialog::addDirectoryContents(const QDir& dir, QTreeWidgetItem* parent,
-    qint64& totalSize, int& totalFiles, bool checked, int depth, int maxDepth) {
+void PerUserCustomizationDialog::addDirectoryContents(const QDir& dir,
+                                                      QTreeWidgetItem* parent,
+                                                      qint64& totalSize,
+                                                      int& totalFiles,
+                                                      bool checked,
+                                                      int depth,
+                                                      int maxDepth) {
     // Depth limit to prevent stack overflow
     if (depth >= maxDepth) {
         return;
@@ -533,10 +575,11 @@ void PerUserCustomizationDialog::addDirectoryContents(const QDir& dir, QTreeWidg
     QFileInfoList entries;
     try {
         entries = dir.entryInfoList(QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Readable,
-            QDir::Name | QDir::DirsFirst);
+                                    QDir::Name | QDir::DirsFirst);
     } catch (const std::exception& e) {
         sak::logWarning("Failed to list directory contents: {} ({})",
-            dir.absolutePath().toStdString(), e.what());
+                        dir.absolutePath().toStdString(),
+                        e.what());
         return;
     }
 
@@ -561,15 +604,15 @@ void PerUserCustomizationDialog::addDirectoryContents(const QDir& dir, QTreeWidg
     }
 }
 
-void PerUserCustomizationDialog::calculateDirectorySize(const QDir& dir, qint64& totalSize,
-    int& fileCount, int depth, int maxDepth) {
+void PerUserCustomizationDialog::calculateDirectorySize(
+    const QDir& dir, qint64& totalSize, int& fileCount, int depth, int maxDepth) {
     // Prevent excessive recursion
     if (depth >= maxDepth) {
         return;
     }
 
     // Limit total file count for performance
-    const int MAX_FILE_COUNT = 50000;
+    const int MAX_FILE_COUNT = 50'000;
     if (fileCount >= MAX_FILE_COUNT) {
         return;
     }
@@ -579,13 +622,18 @@ void PerUserCustomizationDialog::calculateDirectorySize(const QDir& dir, qint64&
         entries = dir.entryInfoList(QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Readable);
     } catch (const std::exception& e) {
         sak::logWarning("Failed to enumerate directory for size calculation: {} ({})",
-            dir.absolutePath().toStdString(), e.what());
+                        dir.absolutePath().toStdString(),
+                        e.what());
         return;
     }
 
     for (const QFileInfo& entry : entries) {
-        if (!entry.isReadable()) continue;
-        if (fileCount >= MAX_FILE_COUNT) return;
+        if (!entry.isReadable()) {
+            continue;
+        }
+        if (fileCount >= MAX_FILE_COUNT) {
+            return;
+        }
 
         if (entry.isDir() && !entry.isSymLink()) {
             QDir subDir(entry.filePath());
@@ -598,11 +646,15 @@ void PerUserCustomizationDialog::calculateDirectorySize(const QDir& dir, qint64&
 }
 
 void PerUserCustomizationDialog::setChildrenCheckState(QTreeWidgetItem* item,
-    Qt::CheckState state) {
-    if (!item) return;
+                                                       Qt::CheckState state) {
+    if (!item) {
+        return;
+    }
 
     // Only propagate Checked or Unchecked states (not PartiallyChecked)
-    if (state == Qt::PartiallyChecked) return;
+    if (state == Qt::PartiallyChecked) {
+        return;
+    }
 
     for (int i = 0; i < item->childCount(); ++i) {
         QTreeWidgetItem* child = item->child(i);
@@ -612,13 +664,18 @@ void PerUserCustomizationDialog::setChildrenCheckState(QTreeWidgetItem* item,
 }
 
 void PerUserCustomizationDialog::updateParentCheckState(QTreeWidgetItem* item) {
-    if (!item) return;
+    Q_ASSERT(item);
+    if (!item) {
+        return;
+    }
 
     int checkedCount = 0;
     int uncheckedCount = 0;
     int childCount = item->childCount();
 
-    if (childCount == 0) return;
+    if (childCount == 0) {
+        return;
+    }
 
     for (int i = 0; i < childCount; ++i) {
         Qt::CheckState childState = item->child(i)->checkState(0);
@@ -642,8 +699,11 @@ void PerUserCustomizationDialog::updateParentCheckState(QTreeWidgetItem* item) {
 }
 
 void PerUserCustomizationDialog::updateFolderCheckStates(QTreeWidgetItem* item) {
+    Q_ASSERT(item);
     // Tri-state checkbox logic for parent/child relationships
-    if (!item) return;
+    if (!item) {
+        return;
+    }
 
     // Update children when parent changes
     Qt::CheckState parentState = item->checkState(0);
@@ -653,15 +713,20 @@ void PerUserCustomizationDialog::updateFolderCheckStates(QTreeWidgetItem* item) 
 
     // Update parent based on children
     QTreeWidgetItem* parent = item->parent();
-    if (!parent) return;
+    if (!parent) {
+        return;
+    }
 
     int checkedCount = 0;
     int uncheckedCount = 0;
 
     for (int i = 0; i < parent->childCount(); ++i) {
         Qt::CheckState childState = parent->child(i)->checkState(0);
-        if (childState == Qt::Checked) checkedCount++;
-        else if (childState == Qt::Unchecked) uncheckedCount++;
+        if (childState == Qt::Checked) {
+            checkedCount++;
+        } else if (childState == Qt::Unchecked) {
+            uncheckedCount++;
+        }
     }
 
     if (checkedCount == parent->childCount()) {
@@ -674,6 +739,8 @@ void PerUserCustomizationDialog::updateFolderCheckStates(QTreeWidgetItem* item) 
 }
 
 void PerUserCustomizationDialog::updateSummary() {
+    Q_ASSERT(m_browserBookmarksCheck);
+    Q_ASSERT(m_emailSignaturesCheck);
     qint64 totalSize = calculateTotalSize();
     int selectedCount = 0;
 
@@ -685,14 +752,20 @@ void PerUserCustomizationDialog::updateSummary() {
 
     // Add app data items
     int appDataItems = 0;
-    if (m_browserBookmarksCheck->isChecked()) appDataItems++;
-    if (m_emailSignaturesCheck->isChecked()) appDataItems++;
-    if (m_officeTemplatesCheck->isChecked()) appDataItems++;
-    if (m_vsCodeSettingsCheck->isChecked()) appDataItems++;
+    if (m_browserBookmarksCheck->isChecked()) {
+        appDataItems++;
+    }
+    if (m_emailSignaturesCheck->isChecked()) {
+        appDataItems++;
+    }
+    if (m_officeTemplatesCheck->isChecked()) {
+        appDataItems++;
+    }
+    if (m_vsCodeSettingsCheck->isChecked()) {
+        appDataItems++;
+    }
 
-    QString summary = QString(
-        "<b>Backup Summary:</b> %1 folders selected"
-    ).arg(selectedCount);
+    QString summary = QString("<b>Backup Summary:</b> %1 folders selected").arg(selectedCount);
 
     if (appDataItems > 0) {
         summary += QString(" + %1 app data item(s)").arg(appDataItems);
@@ -717,6 +790,8 @@ qint64 PerUserCustomizationDialog::calculateTotalSize() const {
 }
 
 QVector<FolderSelection> PerUserCustomizationDialog::getFolderSelections() const {
+    Q_ASSERT(m_browserBookmarksCheck);
+    Q_ASSERT(m_emailSignaturesCheck);
     // Return updated selections from tree
     QVector<FolderSelection> selections = m_profile.folder_selections;
 
@@ -730,11 +805,9 @@ QVector<FolderSelection> PerUserCustomizationDialog::getFolderSelections() const
         bookmarks.display_name = "Browser Bookmarks";
         bookmarks.relative_path = "AppData\\Roaming";
         bookmarks.selected = true;
-        bookmarks.include_patterns = QStringList{
-            "*/Google/Chrome/User Data/*/Bookmarks",
-            "*/Microsoft/Edge/User Data/*/Bookmarks",
-            "*/Mozilla/Firefox/Profiles/*/places.sqlite"
-        };
+        bookmarks.include_patterns = QStringList{"*/Google/Chrome/User Data/*/Bookmarks",
+                                                 "*/Microsoft/Edge/User Data/*/Bookmarks",
+                                                 "*/Mozilla/Firefox/Profiles/*/places.sqlite"};
         selections.append(bookmarks);
     }
 
@@ -744,9 +817,7 @@ QVector<FolderSelection> PerUserCustomizationDialog::getFolderSelections() const
         signatures.display_name = "Email Signatures";
         signatures.relative_path = "AppData\\Roaming";
         signatures.selected = true;
-        signatures.include_patterns = QStringList{
-            "*/Microsoft/Signatures/*"
-        };
+        signatures.include_patterns = QStringList{"*/Microsoft/Signatures/*"};
         selections.append(signatures);
     }
 
@@ -756,9 +827,7 @@ QVector<FolderSelection> PerUserCustomizationDialog::getFolderSelections() const
         templates.display_name = "Office Templates";
         templates.relative_path = "AppData\\Roaming";
         templates.selected = true;
-        templates.include_patterns = QStringList{
-            "*/Microsoft/Templates/*"
-        };
+        templates.include_patterns = QStringList{"*/Microsoft/Templates/*"};
         selections.append(templates);
     }
 
@@ -768,15 +837,13 @@ QVector<FolderSelection> PerUserCustomizationDialog::getFolderSelections() const
         vscode.display_name = "VS Code Settings";
         vscode.relative_path = "AppData\\Roaming";
         vscode.selected = true;
-        vscode.include_patterns = QStringList{
-            "*/Code/User/settings.json",
-            "*/Code/User/keybindings.json",
-            "*/Code/User/snippets/*"
-        };
+        vscode.include_patterns = QStringList{"*/Code/User/settings.json",
+                                              "*/Code/User/keybindings.json",
+                                              "*/Code/User/snippets/*"};
         selections.append(vscode);
     }
 
     return selections;
 }
 
-} // namespace sak
+}  // namespace sak

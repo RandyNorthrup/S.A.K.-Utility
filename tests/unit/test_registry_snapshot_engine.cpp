@@ -5,11 +5,10 @@
 /// @brief Unit tests for RegistrySnapshotEngine — diff logic, pattern matching,
 ///        snapshot capture smoke test
 
-#include <QtTest/QtTest>
-
 #include "sak/registry_snapshot_engine.h"
 
 #include <QSet>
+#include <QtTest/QtTest>
 
 #include <type_traits>
 
@@ -63,24 +62,21 @@ private Q_SLOTS:
 
 // ── Compile-Time Invariants ─────────────────────────────────────────────────
 
-void RegistrySnapshotEngineTests::staticAsserts_notCopyable()
-{
+void RegistrySnapshotEngineTests::staticAsserts_notCopyable() {
     QVERIFY(!std::is_copy_constructible_v<RegistrySnapshotEngine>);
     QVERIFY(!std::is_copy_assignable_v<RegistrySnapshotEngine>);
 }
 
-void RegistrySnapshotEngineTests::staticAsserts_moveConstructible()
-{
+void RegistrySnapshotEngineTests::staticAsserts_moveConstructible() {
     QVERIFY(std::is_move_constructible_v<RegistrySnapshotEngine>);
     QVERIFY(std::is_default_constructible_v<RegistrySnapshotEngine>);
 }
 
 // ── diffSnapshots — Survived Keys ───────────────────────────────────────────
 
-void RegistrySnapshotEngineTests::diff_survivedKey_matchesPattern()
-{
+void RegistrySnapshotEngineTests::diff_survivedKey_matchesPattern() {
     QSet<QString> before = {"HKLM\\SOFTWARE\\TestApp", "HKLM\\SOFTWARE\\Other"};
-    QSet<QString> after  = {"HKLM\\SOFTWARE\\TestApp", "HKLM\\SOFTWARE\\Other"};
+    QSet<QString> after = {"HKLM\\SOFTWARE\\TestApp", "HKLM\\SOFTWARE\\Other"};
 
     QStringList patterns = {"testapp"};
 
@@ -90,10 +86,9 @@ void RegistrySnapshotEngineTests::diff_survivedKey_matchesPattern()
     QCOMPARE(results[0].path, "HKLM\\SOFTWARE\\TestApp");
 }
 
-void RegistrySnapshotEngineTests::diff_survivedKey_noMatch()
-{
+void RegistrySnapshotEngineTests::diff_survivedKey_noMatch() {
     QSet<QString> before = {"HKLM\\SOFTWARE\\UnrelatedApp"};
-    QSet<QString> after  = {"HKLM\\SOFTWARE\\UnrelatedApp"};
+    QSet<QString> after = {"HKLM\\SOFTWARE\\UnrelatedApp"};
 
     QStringList patterns = {"testapp"};
 
@@ -102,10 +97,9 @@ void RegistrySnapshotEngineTests::diff_survivedKey_noMatch()
     QVERIFY(results.isEmpty());
 }
 
-void RegistrySnapshotEngineTests::diff_survivedKey_caseInsensitive()
-{
+void RegistrySnapshotEngineTests::diff_survivedKey_caseInsensitive() {
     QSet<QString> before = {"HKLM\\SOFTWARE\\TESTAPP"};
-    QSet<QString> after  = {"HKLM\\SOFTWARE\\TESTAPP"};
+    QSet<QString> after = {"HKLM\\SOFTWARE\\TESTAPP"};
 
     QStringList patterns = {"testapp"};
 
@@ -114,18 +108,13 @@ void RegistrySnapshotEngineTests::diff_survivedKey_caseInsensitive()
     QCOMPARE(results.size(), 1);
 }
 
-void RegistrySnapshotEngineTests::diff_survivedKey_multiplePatterns()
-{
-    QSet<QString> before = {
-        "HKLM\\SOFTWARE\\AppOne",
-        "HKLM\\SOFTWARE\\AppTwo",
-        "HKLM\\SOFTWARE\\Unrelated"
-    };
-    QSet<QString> after = {
-        "HKLM\\SOFTWARE\\AppOne",
-        "HKLM\\SOFTWARE\\AppTwo",
-        "HKLM\\SOFTWARE\\Unrelated"
-    };
+void RegistrySnapshotEngineTests::diff_survivedKey_multiplePatterns() {
+    QSet<QString> before = {"HKLM\\SOFTWARE\\AppOne",
+                            "HKLM\\SOFTWARE\\AppTwo",
+                            "HKLM\\SOFTWARE\\Unrelated"};
+    QSet<QString> after = {"HKLM\\SOFTWARE\\AppOne",
+                           "HKLM\\SOFTWARE\\AppTwo",
+                           "HKLM\\SOFTWARE\\Unrelated"};
 
     QStringList patterns = {"appone", "apptwo"};
 
@@ -136,8 +125,7 @@ void RegistrySnapshotEngineTests::diff_survivedKey_multiplePatterns()
 
 // ── diffSnapshots — Added Keys ──────────────────────────────────────────────
 
-void RegistrySnapshotEngineTests::diff_addedKey_matchesPattern()
-{
+void RegistrySnapshotEngineTests::diff_addedKey_matchesPattern() {
     QSet<QString> before;  // Empty
     QSet<QString> after = {"HKCU\\Software\\NewTestApp"};
 
@@ -150,8 +138,7 @@ void RegistrySnapshotEngineTests::diff_addedKey_matchesPattern()
     QVERIFY(results[0].description.contains("added"));
 }
 
-void RegistrySnapshotEngineTests::diff_addedKey_noMatch()
-{
+void RegistrySnapshotEngineTests::diff_addedKey_noMatch() {
     QSet<QString> before;
     QSet<QString> after = {"HKCU\\Software\\SomethingElse"};
 
@@ -162,8 +149,7 @@ void RegistrySnapshotEngineTests::diff_addedKey_noMatch()
     QVERIFY(results.isEmpty());
 }
 
-void RegistrySnapshotEngineTests::diff_addedKey_caseInsensitive()
-{
+void RegistrySnapshotEngineTests::diff_addedKey_caseInsensitive() {
     QSet<QString> before;
     QSet<QString> after = {"HKCU\\Software\\MYAPP"};
 
@@ -176,8 +162,7 @@ void RegistrySnapshotEngineTests::diff_addedKey_caseInsensitive()
 
 // ── diffSnapshots — Removed Keys ────────────────────────────────────────────
 
-void RegistrySnapshotEngineTests::diff_removedKeyBefore_notDetected()
-{
+void RegistrySnapshotEngineTests::diff_removedKeyBefore_notDetected() {
     // Keys in 'before' but not in 'after' = properly uninstalled, not leftovers
     QSet<QString> before = {"HKLM\\SOFTWARE\\RemovedApp"};
     QSet<QString> after;
@@ -192,8 +177,7 @@ void RegistrySnapshotEngineTests::diff_removedKeyBefore_notDetected()
 
 // ── diffSnapshots — Empty Inputs ────────────────────────────────────────────
 
-void RegistrySnapshotEngineTests::diff_bothEmpty_noResults()
-{
+void RegistrySnapshotEngineTests::diff_bothEmpty_noResults() {
     QSet<QString> before;
     QSet<QString> after;
     QStringList patterns = {"testapp"};
@@ -203,8 +187,7 @@ void RegistrySnapshotEngineTests::diff_bothEmpty_noResults()
     QVERIFY(results.isEmpty());
 }
 
-void RegistrySnapshotEngineTests::diff_emptyBefore_findsAdded()
-{
+void RegistrySnapshotEngineTests::diff_emptyBefore_findsAdded() {
     QSet<QString> before;
     QSet<QString> after = {"HKLM\\SOFTWARE\\TestApp"};
     QStringList patterns = {"testapp"};
@@ -215,8 +198,7 @@ void RegistrySnapshotEngineTests::diff_emptyBefore_findsAdded()
     QVERIFY(results[0].description.contains("added"));
 }
 
-void RegistrySnapshotEngineTests::diff_emptyAfter_noResults()
-{
+void RegistrySnapshotEngineTests::diff_emptyAfter_noResults() {
     QSet<QString> before = {"HKLM\\SOFTWARE\\TestApp"};
     QSet<QString> after;
     QStringList patterns = {"testapp"};
@@ -226,10 +208,9 @@ void RegistrySnapshotEngineTests::diff_emptyAfter_noResults()
     QVERIFY(results.isEmpty());
 }
 
-void RegistrySnapshotEngineTests::diff_emptyPatterns_noResults()
-{
+void RegistrySnapshotEngineTests::diff_emptyPatterns_noResults() {
     QSet<QString> before = {"HKLM\\SOFTWARE\\TestApp"};
-    QSet<QString> after  = {"HKLM\\SOFTWARE\\TestApp"};
+    QSet<QString> after = {"HKLM\\SOFTWARE\\TestApp"};
     QStringList patterns;  // Empty
 
     auto results = RegistrySnapshotEngine::diffSnapshots(before, after, patterns);
@@ -239,10 +220,9 @@ void RegistrySnapshotEngineTests::diff_emptyPatterns_noResults()
 
 // ── diffSnapshots — Item Properties ─────────────────────────────────────────
 
-void RegistrySnapshotEngineTests::diff_itemType_isRegistryKey()
-{
+void RegistrySnapshotEngineTests::diff_itemType_isRegistryKey() {
     QSet<QString> before = {"HKLM\\SOFTWARE\\TestApp"};
-    QSet<QString> after  = {"HKLM\\SOFTWARE\\TestApp"};
+    QSet<QString> after = {"HKLM\\SOFTWARE\\TestApp"};
     QStringList patterns = {"testapp"};
 
     auto results = RegistrySnapshotEngine::diffSnapshots(before, after, patterns);
@@ -251,10 +231,9 @@ void RegistrySnapshotEngineTests::diff_itemType_isRegistryKey()
     QCOMPARE(results[0].type, LeftoverItem::Type::RegistryKey);
 }
 
-void RegistrySnapshotEngineTests::diff_itemDescription_survived()
-{
+void RegistrySnapshotEngineTests::diff_itemDescription_survived() {
     QSet<QString> before = {"HKLM\\SOFTWARE\\TestApp"};
-    QSet<QString> after  = {"HKLM\\SOFTWARE\\TestApp"};
+    QSet<QString> after = {"HKLM\\SOFTWARE\\TestApp"};
     QStringList patterns = {"testapp"};
 
     auto results = RegistrySnapshotEngine::diffSnapshots(before, after, patterns);
@@ -263,8 +242,7 @@ void RegistrySnapshotEngineTests::diff_itemDescription_survived()
     QVERIFY(results[0].description.contains("survived"));
 }
 
-void RegistrySnapshotEngineTests::diff_itemDescription_added()
-{
+void RegistrySnapshotEngineTests::diff_itemDescription_added() {
     QSet<QString> before;
     QSet<QString> after = {"HKLM\\SOFTWARE\\TestApp"};
     QStringList patterns = {"testapp"};
@@ -275,10 +253,9 @@ void RegistrySnapshotEngineTests::diff_itemDescription_added()
     QVERIFY(results[0].description.contains("added"));
 }
 
-void RegistrySnapshotEngineTests::diff_itemRisk_isReview()
-{
+void RegistrySnapshotEngineTests::diff_itemRisk_isReview() {
     QSet<QString> before = {"HKLM\\SOFTWARE\\TestApp"};
-    QSet<QString> after  = {"HKLM\\SOFTWARE\\TestApp"};
+    QSet<QString> after = {"HKLM\\SOFTWARE\\TestApp"};
     QStringList patterns = {"testapp"};
 
     auto results = RegistrySnapshotEngine::diffSnapshots(before, after, patterns);
@@ -287,10 +264,9 @@ void RegistrySnapshotEngineTests::diff_itemRisk_isReview()
     QCOMPARE(results[0].risk, LeftoverItem::RiskLevel::Review);
 }
 
-void RegistrySnapshotEngineTests::diff_itemSelected_isFalse()
-{
+void RegistrySnapshotEngineTests::diff_itemSelected_isFalse() {
     QSet<QString> before = {"HKLM\\SOFTWARE\\TestApp"};
-    QSet<QString> after  = {"HKLM\\SOFTWARE\\TestApp"};
+    QSet<QString> after = {"HKLM\\SOFTWARE\\TestApp"};
     QStringList patterns = {"testapp"};
 
     auto results = RegistrySnapshotEngine::diffSnapshots(before, after, patterns);
@@ -301,16 +277,12 @@ void RegistrySnapshotEngineTests::diff_itemSelected_isFalse()
 
 // ── diffSnapshots — Complex Scenarios ───────────────────────────────────────
 
-void RegistrySnapshotEngineTests::diff_mixedSurvivedAndAdded()
-{
-    QSet<QString> before = {
-        "HKLM\\SOFTWARE\\TestApp\\Settings",
-        "HKLM\\SOFTWARE\\Other"
-    };
+void RegistrySnapshotEngineTests::diff_mixedSurvivedAndAdded() {
+    QSet<QString> before = {"HKLM\\SOFTWARE\\TestApp\\Settings", "HKLM\\SOFTWARE\\Other"};
     QSet<QString> after = {
-        "HKLM\\SOFTWARE\\TestApp\\Settings",    // Survived
-        "HKLM\\SOFTWARE\\TestApp\\Cache",        // Added
-        "HKLM\\SOFTWARE\\Other"                  // Survived but doesn't match
+        "HKLM\\SOFTWARE\\TestApp\\Settings",  // Survived
+        "HKLM\\SOFTWARE\\TestApp\\Cache",     // Added
+        "HKLM\\SOFTWARE\\Other"               // Survived but doesn't match
     };
 
     QStringList patterns = {"testapp"};
@@ -324,15 +296,18 @@ void RegistrySnapshotEngineTests::diff_mixedSurvivedAndAdded()
     bool found_survived = false;
     bool found_added = false;
     for (const auto& item : results) {
-        if (item.description.contains("survived")) found_survived = true;
-        if (item.description.contains("added")) found_added = true;
+        if (item.description.contains("survived")) {
+            found_survived = true;
+        }
+        if (item.description.contains("added")) {
+            found_added = true;
+        }
     }
     QVERIFY(found_survived);
     QVERIFY(found_added);
 }
 
-void RegistrySnapshotEngineTests::diff_largeSnapshot()
-{
+void RegistrySnapshotEngineTests::diff_largeSnapshot() {
     QSet<QString> before;
     QSet<QString> after;
     QStringList patterns = {"target"};
@@ -353,10 +328,9 @@ void RegistrySnapshotEngineTests::diff_largeSnapshot()
     QCOMPARE(results[0].path, "HKLM\\SOFTWARE\\TargetApp");
 }
 
-void RegistrySnapshotEngineTests::diff_patternPartialMatch()
-{
+void RegistrySnapshotEngineTests::diff_patternPartialMatch() {
     QSet<QString> before = {"HKLM\\SOFTWARE\\MyTestAppPro"};
-    QSet<QString> after  = {"HKLM\\SOFTWARE\\MyTestAppPro"};
+    QSet<QString> after = {"HKLM\\SOFTWARE\\MyTestAppPro"};
 
     // Pattern is a substring of the key name
     QStringList patterns = {"testapp"};
@@ -369,15 +343,13 @@ void RegistrySnapshotEngineTests::diff_patternPartialMatch()
 
 // ── captureSnapshot ─────────────────────────────────────────────────────────
 
-void RegistrySnapshotEngineTests::captureSnapshot_returnsNonEmpty()
-{
+void RegistrySnapshotEngineTests::captureSnapshot_returnsNonEmpty() {
     // On a Windows system, the snapshot should contain entries
     auto snapshot = RegistrySnapshotEngine::captureSnapshot();
     QVERIFY(!snapshot.isEmpty());
 }
 
-void RegistrySnapshotEngineTests::captureSnapshot_idempotent()
-{
+void RegistrySnapshotEngineTests::captureSnapshot_idempotent() {
     // Two consecutive captures should return the same set
     // (assuming no other processes are modifying registry)
     auto snapshot1 = RegistrySnapshotEngine::captureSnapshot();

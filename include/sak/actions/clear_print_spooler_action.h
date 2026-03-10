@@ -4,13 +4,14 @@
 #pragma once
 
 #include "sak/quick_action.h"
+
 #include <QString>
 
 namespace sak {
 
 /**
  * @brief Clear Print Spooler Action
- * 
+ *
  * Stops spooler service, clears stuck print jobs, restarts service.
  */
 class ClearPrintSpoolerAction : public QuickAction {
@@ -60,5 +61,4 @@ private:
     QString buildFailureLog(const SpoolerResult& spooler, qint64 duration_ms) const;
 };
 
-} // namespace sak
-
+}  // namespace sak

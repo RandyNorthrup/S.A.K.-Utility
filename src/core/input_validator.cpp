@@ -5,15 +5,19 @@
 /// @brief Implementation of input validation utilities
 
 #include "sak/input_validator.h"
+
 #include "sak/logger.h"
 #include "sak/path_utils.h"
+
 #include <QtGlobal>
+
 #include <algorithm>
 #include <cctype>
 #include <regex>
 
 #ifdef _WIN32
 #include <windows.h>
+
 #include <psapi.h>
 // Undefine Windows macros that conflict with Qt
 #undef emit
@@ -32,150 +36,138 @@ namespace {
 /// @brief Check and return the byte count of a multi-byte UTF-8 sequence
 /// @return Number of bytes in the sequence (2-4), or 0 if invalid
 int checkMultiByteUtf8(std::string_view str, std::size_t pos) noexcept {
+    Q_ASSERT(!str.empty());
+    Q_ASSERT(pos < str.size());
     unsigned char c = static_cast<unsigned char>(str[pos]);
 
     if ((c & 0xE0) == 0xC0) {
         if (c < 0xC2 || pos + 1 >= str.length() ||
-            (static_cast<unsigned char>(str[pos + 1]) & 0xC0) != 0x80) return 0;
+            (static_cast<unsigned char>(str[pos + 1]) & 0xC0) != 0x80) {
+            return 0;
+        }
         return 2;
     }
     if ((c & 0xF0) == 0xE0) {
-        if (pos + 2 >= str.length() ||
-            (static_cast<unsigned char>(str[pos + 1]) & 0xC0) != 0x80 ||
-            (static_cast<unsigned char>(str[pos + 2]) & 0xC0) != 0x80) return 0;
+        if (pos + 2 >= str.length() || (static_cast<unsigned char>(str[pos + 1]) & 0xC0) != 0x80 ||
+            (static_cast<unsigned char>(str[pos + 2]) & 0xC0) != 0x80) {
+            return 0;
+        }
         return 3;
     }
     if ((c & 0xF8) == 0xF0) {
-        if (pos + 3 >= str.length() ||
-            (static_cast<unsigned char>(str[pos + 1]) & 0xC0) != 0x80 ||
+        if (pos + 3 >= str.length() || (static_cast<unsigned char>(str[pos + 1]) & 0xC0) != 0x80 ||
             (static_cast<unsigned char>(str[pos + 2]) & 0xC0) != 0x80 ||
-            (static_cast<unsigned char>(str[pos + 3]) & 0xC0) != 0x80) return 0;
+            (static_cast<unsigned char>(str[pos + 3]) & 0xC0) != 0x80) {
+            return 0;
+        }
         return 4;
     }
     return 0;
 }
 
-} // anonymous namespace
+}  // anonymous namespace
 
 // ============================================
 // Path Validation
 // ============================================
 
-validation_result input_validator::validatePathExistence(
-    const std::filesystem::path& path,
-    const path_validation_config& config) {
-    
+validation_result input_validator::validatePathExistence(const std::filesystem::path& path,
+                                                         const path_validation_config& config) {
     std::error_code ec;
     const bool exists = std::filesystem::exists(path, ec);
-    
+
     if (config.must_exist && !exists) {
-        return failure(error_code::file_not_found,
-                      "Path must exist but does not");
+        return failure(error_code::file_not_found, "Path must exist but does not");
     }
-    
+
     if (!exists) {
         return success();
     }
-    
+
     // Check symlink requirement
     const bool is_symlink = std::filesystem::is_symlink(path, ec);
     if (is_symlink && !config.allow_symlinks) {
-        return failure(error_code::invalid_path,
-                      "Symbolic links are not allowed");
+        return failure(error_code::invalid_path, "Symbolic links are not allowed");
     }
-    
+
     // Check directory requirement
     const bool is_dir = std::filesystem::is_directory(path, ec);
     if (config.must_be_directory && !is_dir) {
-        return failure(error_code::not_a_directory,
-                      "Path must be a directory");
+        return failure(error_code::not_a_directory, "Path must be a directory");
     }
-    
+
     // Check file requirement
     const bool is_file = std::filesystem::is_regular_file(path, ec);
     if (config.must_be_file && !is_file) {
-        return failure(error_code::invalid_file,
-                      "Path must be a regular file");
+        return failure(error_code::invalid_file, "Path must be a regular file");
     }
-    
+
     return success();
 }
 
-validation_result input_validator::validatePathPermissions(
-    const std::filesystem::path& path,
-    const path_validation_config& config) {
-    
+validation_result input_validator::validatePathPermissions(const std::filesystem::path& path,
+                                                           const path_validation_config& config) {
 #ifdef _WIN32
     // Windows permission checks via GetFileAttributes
     DWORD attrs = GetFileAttributesW(path.wstring().c_str());
     if (attrs == INVALID_FILE_ATTRIBUTES) {
         if (config.check_read_permission || config.check_write_permission) {
-            return failure(error_code::permission_denied,
-                          "Cannot check file permissions");
+            return failure(error_code::permission_denied, "Cannot check file permissions");
         }
     }
-    
+
     if (config.check_write_permission && (attrs & FILE_ATTRIBUTE_READONLY)) {
-        return failure(error_code::permission_denied,
-                      "Path is read-only");
+        return failure(error_code::permission_denied, "Path is read-only");
     }
 #else
     // Unix permission checks via access()
     if (config.check_read_permission && access(path.c_str(), R_OK) != 0) {
-        return failure(error_code::permission_denied,
-                      "Path is not readable");
+        return failure(error_code::permission_denied, "Path is not readable");
     }
-    
+
     if (config.check_write_permission && access(path.c_str(), W_OK) != 0) {
-        return failure(error_code::permission_denied,
-                      "Path is not writable");
+        return failure(error_code::permission_denied, "Path is not writable");
     }
 #endif
-    
+
     return success();
 }
 
-validation_result input_validator::validatePath(
-    const std::filesystem::path& path,
-    const path_validation_config& config) {
-    
+validation_result input_validator::validatePath(const std::filesystem::path& path,
+                                                const path_validation_config& config) {
     // Check path length
     const auto path_str = path.string();
     if (path_str.length() > config.max_path_length) {
-        return failure(error_code::path_too_long,
-                      "Path exceeds maximum allowed length");
+        return failure(error_code::path_too_long, "Path exceeds maximum allowed length");
     }
-    
+
     // Check for null bytes
     if (path_str.find('\0') != std::string::npos) {
-        return failure(error_code::invalid_path,
-                      "Path contains null bytes");
+        return failure(error_code::invalid_path, "Path contains null bytes");
     }
-    
+
     // Check for suspicious patterns
     if (containsSuspiciousPatterns(path)) {
-        return failure(error_code::invalid_path,
-                      "Path contains suspicious patterns");
+        return failure(error_code::invalid_path, "Path contains suspicious patterns");
     }
-    
+
     // Check for traversal sequences
     if (containsTraversalSequences(path)) {
         return failure(error_code::path_traversal_attempt,
-                      "Path contains directory traversal sequences");
+                       "Path contains directory traversal sequences");
     }
-    
+
     // Check relative path requirement
     if (!config.allow_relative_paths && path.is_relative()) {
-        return failure(error_code::invalid_path,
-                      "Relative paths are not allowed");
+        return failure(error_code::invalid_path, "Relative paths are not allowed");
     }
-    
+
     // Check existence and type constraints
     auto existence_result = validatePathExistence(path, config);
     if (!existence_result) {
         return existence_result;
     }
-    
+
     // Check permissions (only if path exists)
     std::error_code ec;
     if (std::filesystem::exists(path, ec)) {
@@ -184,7 +176,7 @@ validation_result input_validator::validatePath(
             return perm_result;
         }
     }
-    
+
     // Check base directory constraint
     if (!config.base_directory.empty()) {
         auto within_base = validatePathWithinBase(path, config.base_directory);
@@ -192,26 +184,25 @@ validation_result input_validator::validatePath(
             return within_base;
         }
     }
-    
+
     return success();
 }
 
-bool input_validator::containsTraversalSequences(
-    const std::filesystem::path& path) noexcept {
-    
+bool input_validator::containsTraversalSequences(const std::filesystem::path& path) noexcept {
+    Q_ASSERT(!path.empty());
     const auto path_str = path.string();
-    
+
     // Check for common traversal patterns
     if (path_str.find("..") != std::string::npos) {
         return true;
     }
-    
+
     // Check for encoded traversal attempts
-    if (path_str.find("%2e%2e") != std::string::npos ||  // URL encoded ..
+    if (path_str.find("%2e%2e") != std::string::npos ||      // URL encoded ..
         path_str.find("%252e%252e") != std::string::npos) {  // Double encoded
         return true;
     }
-    
+
     // Check each path component
     for (const auto& component : path) {
         const auto comp_str = component.string();
@@ -219,81 +210,73 @@ bool input_validator::containsTraversalSequences(
             return true;
         }
     }
-    
+
     return false;
 }
 
-validation_result input_validator::validatePathWithinBase(
-    const std::filesystem::path& path,
-    const std::filesystem::path& base_dir) {
-    
+validation_result input_validator::validatePathWithinBase(const std::filesystem::path& path,
+                                                          const std::filesystem::path& base_dir) {
     try {
         // Canonicalize both paths
         std::error_code ec;
         auto canonical_path = std::filesystem::weakly_canonical(path, ec);
         if (ec) {
-            return failure(error_code::invalid_path,
-                          "Cannot canonicalize path");
+            return failure(error_code::invalid_path, "Cannot canonicalize path");
         }
-        
+
         auto canonical_base = std::filesystem::weakly_canonical(base_dir, ec);
         if (ec) {
-            return failure(error_code::invalid_path,
-                          "Cannot canonicalize base directory");
+            return failure(error_code::invalid_path, "Cannot canonicalize base directory");
         }
-        
+
         // Check if path starts with base (case-insensitive on Windows)
         auto path_str = canonical_path.string();
         auto base_str = canonical_base.string();
-        
+
 #ifdef _WIN32
         // Windows filesystem is case-insensitive
         std::transform(path_str.begin(), path_str.end(), path_str.begin(), ::tolower);
         std::transform(base_str.begin(), base_str.end(), base_str.begin(), ::tolower);
 #endif
-        
+
         if (path_str.find(base_str) != 0) {
             return failure(error_code::path_traversal_attempt,
-                          "Path is outside allowed base directory");
+                           "Path is outside allowed base directory");
         }
-        
+
         return success();
-        
+
     } catch (const std::exception& e) {
         sak::logWarning("Exception during path validation: {}", e.what());
-        return failure(error_code::unknown_error,
-                      "Exception during path validation");
+        return failure(error_code::unknown_error, "Exception during path validation");
     }
 }
 
-bool input_validator::containsSuspiciousPatterns(
-    const std::filesystem::path& path) noexcept {
-    
+bool input_validator::containsSuspiciousPatterns(const std::filesystem::path& path) noexcept {
+    Q_ASSERT(!path.empty());
     const auto path_str = path.string();
-    
+
     // Windows device names (CON, PRN, AUX, NUL, COM1-9, LPT1-9)
-    static const std::regex device_pattern(
-        R"((^|[/\\])(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(\.|$))",
-        std::regex::icase);
-    
+    static const std::regex device_pattern(R"((^|[/\\])(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(\.|$))",
+                                           std::regex::icase);
+
     if (std::regex_search(path_str, device_pattern)) {
         return true;
     }
-    
+
     // UNC paths (Windows network paths)
 #ifdef _WIN32
     if (path_str.starts_with("\\\\") || path_str.starts_with("//")) {
         return true;
     }
 #endif
-    
+
     // Unusual characters that might indicate injection
-    if (path_str.find('\0') != std::string::npos ||
-        path_str.find('\n') != std::string::npos ||
+    if (path_str.find('\0') != std::string::npos || path_str.find('\n') != std::string::npos ||
         path_str.find('\r') != std::string::npos) {
         return true;
     }
-    
+
     return false;
 }
 
@@ -301,57 +284,47 @@ bool input_validator::containsSuspiciousPatterns(
 // String Validation
 // ============================================
 
-validation_result input_validator::validateString(
-    std::string_view str,
-    const string_validation_config& config) {
-    
+validation_result input_validator::validateString(std::string_view str,
+                                                  const string_validation_config& config) {
     // Check length
     if (str.length() < config.min_length) {
-        return failure(error_code::validation_failed,
-                      "String is too short");
+        return failure(error_code::validation_failed, "String is too short");
     }
-    
+
     if (str.length() > config.max_length) {
-        return failure(error_code::validation_failed,
-                      "String is too long");
+        return failure(error_code::validation_failed, "String is too long");
     }
-    
+
     // Check for null bytes
     if (!config.allow_null_bytes && containsNullBytes(str)) {
-        return failure(error_code::validation_failed,
-                      "String contains null bytes");
+        return failure(error_code::validation_failed, "String contains null bytes");
     }
-    
+
     // Check for control characters
     if (!config.allow_control_chars && containsControlChars(str)) {
-        return failure(error_code::validation_failed,
-                      "String contains control characters");
+        return failure(error_code::validation_failed, "String contains control characters");
     }
-    
+
     // Check printability
     if (config.require_printable) {
-        if (!std::all_of(str.begin(), str.end(), 
-                        [](unsigned char c) { return std::isprint(c); })) {
+        if (!std::all_of(str.begin(), str.end(), [](unsigned char c) { return std::isprint(c); })) {
             return failure(error_code::validation_failed,
-                          "String contains non-printable characters");
+                           "String contains non-printable characters");
         }
     }
-    
+
     // Check ASCII
     if (config.require_ascii) {
-        if (!std::all_of(str.begin(), str.end(),
-                        [](unsigned char c) { return c < 128; })) {
-            return failure(error_code::validation_failed,
-                          "String contains non-ASCII characters");
+        if (!std::all_of(str.begin(), str.end(), [](unsigned char c) { return c < 128; })) {
+            return failure(error_code::validation_failed, "String contains non-ASCII characters");
         }
     }
-    
+
     // Check UTF-8
     if (config.require_utf8 && !isValidUtf8(str)) {
-        return failure(error_code::validation_failed,
-                      "String is not valid UTF-8");
+        return failure(error_code::validation_failed, "String is not valid UTF-8");
     }
-    
+
     return success();
 }
 
@@ -360,54 +333,56 @@ bool input_validator::containsNullBytes(std::string_view str) noexcept {
 }
 
 bool input_validator::containsControlChars(std::string_view str) noexcept {
-    return std::any_of(str.begin(), str.end(),
-                      [](unsigned char c) {
-                          return std::iscntrl(c) && c != '\n' && c != '\r' && c != '\t';
-                      });
+    return std::any_of(str.begin(), str.end(), [](unsigned char c) {
+        return std::iscntrl(c) && c != '\n' && c != '\r' && c != '\t';
+    });
 }
 
 bool input_validator::isValidUtf8(std::string_view str) noexcept {
+    Q_ASSERT(!str.empty());
+    Q_ASSERT(str.data());
     std::size_t i = 0;
-    
+
     while (i < str.length()) {
         unsigned char c = static_cast<unsigned char>(str[i]);
-        
+
         if (c < 0x80) {
             i++;
             continue;
         }
-        
+
         int seq_len = checkMultiByteUtf8(str, i);
-        if (seq_len == 0) return false;
+        if (seq_len == 0) {
+            return false;
+        }
         i += seq_len;
     }
-    
+
     return true;
 }
 
-std::string input_validator::sanitizeString(
-    std::string_view str,
-    bool allow_unicode) {
-    
+std::string input_validator::sanitizeString(std::string_view str, bool allow_unicode) {
+    Q_ASSERT(!str.empty());
+    Q_ASSERT(str.data());
     std::string result;
     result.reserve(str.length());
-    
+
     for (unsigned char c : str) {
         if (c == '\0') {
             continue;
         }
-        
+
         if (std::iscntrl(c) && c != '\n' && c != '\r' && c != '\t') {
             continue;
         }
-        
+
         if (c >= 128 && !allow_unicode) {
             continue;
         }
-        
+
         result.push_back(static_cast<char>(c));
     }
-    
+
     return result;
 }
 
@@ -415,22 +390,19 @@ std::string input_validator::sanitizeString(
 // Buffer Validation
 // ============================================
 
-validation_result input_validator::validateBufferSize(
-    std::size_t buffer_size,
-    std::size_t max_size,
-    std::size_t required_size) {
+validation_result input_validator::validateBufferSize(std::size_t buffer_size,
+                                                      std::size_t max_size,
+                                                      std::size_t required_size) {
     Q_ASSERT_X(max_size > 0, "validateBufferSize", "max_size must be positive");
-    
+
     if (required_size > 0 && buffer_size < required_size) {
-        return failure(error_code::validation_failed,
-                      "Buffer is too small");
+        return failure(error_code::validation_failed, "Buffer is too small");
     }
-    
+
     if (buffer_size > max_size) {
-        return failure(error_code::validation_failed,
-                      "Buffer exceeds maximum allowed size");
+        return failure(error_code::validation_failed, "Buffer exceeds maximum allowed size");
     }
-    
+
     return success();
 }
 
@@ -438,101 +410,92 @@ validation_result input_validator::validateBufferSize(
 // Resource Validation
 // ============================================
 
-validation_result input_validator::validate_disk_space(
-    const std::filesystem::path& path,
-    std::uintmax_t required_bytes) {
+validation_result input_validator::validate_disk_space(const std::filesystem::path& path,
+                                                       std::uintmax_t required_bytes) {
     Q_ASSERT_X(!path.empty(), "validate_disk_space", "path must not be empty");
     Q_ASSERT_X(required_bytes > 0, "validate_disk_space", "required_bytes must be positive");
-    
+
     try {
         std::error_code ec;
         auto space_info = std::filesystem::space(path, ec);
-        
+
         if (ec) {
-            return failure(error_code::filesystem_error,
-                          "Cannot determine available disk space");
+            return failure(error_code::filesystem_error, "Cannot determine available disk space");
         }
-        
+
         if (space_info.available < required_bytes) {
             return failure(error_code::insufficient_disk_space,
-                          "Insufficient disk space available");
+                           "Insufficient disk space available");
         }
-        
+
         return success();
-        
+
     } catch (const std::exception& e) {
         sak::logWarning("Exception during disk space validation: {}", e.what());
-        return failure(error_code::unknown_error,
-                      "Exception during disk space validation");
+        return failure(error_code::unknown_error, "Exception during disk space validation");
     }
 }
 
-validation_result input_validator::validate_available_memory(
-    std::size_t required_bytes) {
-    Q_ASSERT_X(required_bytes > 0, "validate_available_memory",
-        "required_bytes must be positive");
-    
+validation_result input_validator::validate_available_memory(std::size_t required_bytes) {
+    Q_ASSERT_X(required_bytes > 0, "validate_available_memory", "required_bytes must be positive");
+
     const auto available = get_available_memory_impl();
-    
+
     if (available == 0) {
-        return failure(error_code::unknown_error,
-                      "Cannot determine available memory");
+        return failure(error_code::unknown_error, "Cannot determine available memory");
     }
-    
+
     if (available < required_bytes) {
-        return failure(error_code::insufficient_memory,
-                      "Insufficient memory available");
+        return failure(error_code::insufficient_memory, "Insufficient memory available");
     }
-    
+
     return success();
 }
 
 validation_result input_validator::validate_file_descriptor_limit() {
     const auto current_count = get_file_descriptor_count_impl();
     const auto limit = get_file_descriptor_limit_impl();
-    
+
     if (limit == 0) {
         return success();  // Cannot determine, assume OK
     }
-    
+
     // Warn if using more than 80% of limit
     if (current_count > (limit * 4 / 5)) {
         logWarning("Approaching file descriptor limit: {}/{}", current_count, limit);
-        return failure(error_code::resource_limit_reached,
-                      "Approaching file descriptor limit");
+        return failure(error_code::resource_limit_reached, "Approaching file descriptor limit");
     }
-    
+
     return success();
 }
 
-validation_result input_validator::validate_thread_count(
-    std::size_t requested_threads) {
-    Q_ASSERT_X(requested_threads > 0, "validate_thread_count",
-        "requested_threads must be positive");
-    
+validation_result input_validator::validate_thread_count(std::size_t requested_threads) {
+    Q_ASSERT_X(requested_threads > 0,
+               "validate_thread_count",
+               "requested_threads must be positive");
+
     const auto hardware_threads = std::thread::hardware_concurrency();
-    
+
     if (hardware_threads == 0) {
         // Cannot determine, allow up to reasonable limit
         if (requested_threads > 64) {
-            return failure(error_code::validation_failed,
-                          "Thread count exceeds reasonable limit");
+            return failure(error_code::validation_failed, "Thread count exceeds reasonable limit");
         }
         return success();
     }
-    
+
     // Warn if requesting more than 2x hardware threads
     if (requested_threads > hardware_threads * 2) {
         logWarning("Requested threads ({}) exceeds 2x hardware threads ({})",
-                   requested_threads, hardware_threads);
+                   requested_threads,
+                   hardware_threads);
     }
-    
+
     // Reject if requesting more than 4x hardware threads
     if (requested_threads > hardware_threads * 4) {
-        return failure(error_code::validation_failed,
-                      "Thread count exceeds 4x hardware threads");
+        return failure(error_code::validation_failed, "Thread count exceeds 4x hardware threads");
     }
-    
+
     return success();
 }
 
@@ -544,10 +507,7 @@ validation_result input_validator::success() noexcept {
     return validation_result{true, error_code::success, ""};
 }
 
-validation_result input_validator::failure(
-    error_code err,
-    std::string_view message) {
-    
+validation_result input_validator::failure(error_code err, std::string_view message) {
     return validation_result{false, err, std::string(message)};
 }
 
@@ -606,4 +566,4 @@ std::size_t input_validator::get_file_descriptor_limit_impl() {
 #endif
 }
 
-} // namespace sak
+}  // namespace sak

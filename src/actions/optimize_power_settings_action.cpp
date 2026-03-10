@@ -5,24 +5,23 @@
 /// @brief Implements Windows power plan optimization for performance
 
 #include "sak/actions/optimize_power_settings_action.h"
-#include "sak/process_runner.h"
+
 #include "sak/layout_constants.h"
+#include "sak/process_runner.h"
+
 #include <QRegularExpression>
 #include <QTextStream>
 
 namespace sak {
 
-OptimizePowerSettingsAction::OptimizePowerSettingsAction(QObject* parent)
-    : QuickAction(parent)
-{
-}
+OptimizePowerSettingsAction::OptimizePowerSettingsAction(QObject* parent) : QuickAction(parent) {}
 
 // ENTERPRISE-GRADE: Enumerate all power plans using powercfg -LIST
 QVector<OptimizePowerSettingsAction::PowerPlan> OptimizePowerSettingsAction::enumeratePowerPlans() {
     QVector<PowerPlan> plans;
 
-    ProcessResult proc = runProcess("powercfg", QStringList() << "-LIST",
-        sak::kTimeoutProcessShortMs);
+    ProcessResult proc =
+        runProcess("powercfg", QStringList() << "-LIST", sak::kTimeoutProcessShortMs);
     if (!proc.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("Power plan list warning: " + proc.std_err.trimmed());
     }
@@ -38,7 +37,7 @@ QVector<OptimizePowerSettingsAction::PowerPlan> OptimizePowerSettingsAction::enu
         PowerPlan plan;
         plan.guid = match.captured(1);
         plan.name = match.captured(2).trimmed();
-        plan.isActive = !match.captured(3).isEmpty(); // * indicates active
+        plan.isActive = !match.captured(3).isEmpty();  // * indicates active
         plans.append(plan);
     }
 
@@ -52,8 +51,8 @@ OptimizePowerSettingsAction::PowerPlan OptimizePowerSettingsAction::queryPowerPl
     plan.guid = guid;
     plan.isActive = false;
 
-    ProcessResult proc = runProcess("powercfg", QStringList() << "-QUERY" << guid,
-        sak::kTimeoutProcessMediumMs);
+    ProcessResult proc =
+        runProcess("powercfg", QStringList() << "-QUERY" << guid, sak::kTimeoutProcessMediumMs);
     if (!proc.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("Power plan query warning: " + proc.std_err.trimmed());
     }
@@ -73,8 +72,8 @@ OptimizePowerSettingsAction::PowerPlan OptimizePowerSettingsAction::queryPowerPl
 bool OptimizePowerSettingsAction::setPowerPlan(const QString& guid) {
     Q_EMIT executionProgress("Activating power plan...", 60);
 
-    ProcessResult proc = runProcess("powercfg", QStringList() << "-SETACTIVE" << guid,
-        sak::kTimeoutProcessShortMs);
+    ProcessResult proc =
+        runProcess("powercfg", QStringList() << "-SETACTIVE" << guid, sak::kTimeoutProcessShortMs);
     if (!proc.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("Power plan activate warning: " + proc.std_err.trimmed());
     }
@@ -85,8 +84,8 @@ bool OptimizePowerSettingsAction::setPowerPlan(const QString& guid) {
 OptimizePowerSettingsAction::PowerPlan OptimizePowerSettingsAction::getActivePowerPlan() {
     PowerPlan active_plan;
 
-    ProcessResult proc = runProcess("powercfg", QStringList() << "-GETACTIVESCHEME",
-        sak::kTimeoutProcessShortMs);
+    ProcessResult proc =
+        runProcess("powercfg", QStringList() << "-GETACTIVESCHEME", sak::kTimeoutProcessShortMs);
     if (!proc.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("Power plan active query warning: " + proc.std_err.trimmed());
     }
@@ -121,11 +120,11 @@ OptimizePowerSettingsAction::PowerPlan OptimizePowerSettingsAction::findPowerPla
 // ENTERPRISE-GRADE: Standard power scheme GUIDs
 QString OptimizePowerSettingsAction::getStandardPowerPlanGuid(const QString& plan_type) {
     if (plan_type == "High Performance" || plan_type == "high") {
-        return "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c"; // SCHEME_MIN (High Performance)
+        return "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c";  // SCHEME_MIN (High Performance)
     } else if (plan_type == "Balanced") {
-        return "381b4222-f694-41f0-9685-ff5bb260df2e"; // SCHEME_BALANCED
+        return "381b4222-f694-41f0-9685-ff5bb260df2e";  // SCHEME_BALANCED
     } else if (plan_type == "Power Saver") {
-        return "a1841308-3541-4fab-bc81-f71556f20b4a"; // SCHEME_MAX (Power Saver)
+        return "a1841308-3541-4fab-bc81-f71556f20b4a";  // SCHEME_MAX (Power Saver)
     }
     return QString();
 }
@@ -139,8 +138,8 @@ void OptimizePowerSettingsAction::scan() {
     ScanResult result;
     result.applicable = true;
     result.summary = current_plan.name.isEmpty()
-        ? "Power plan detected"
-        : QString("Active plan: %1").arg(current_plan.name);
+                         ? "Power plan detected"
+                         : QString("Active plan: %1").arg(current_plan.name);
     result.details = "Optimization will switch to High Performance if available";
 
     Q_ASSERT(!result.summary.isEmpty());
@@ -151,23 +150,21 @@ void OptimizePowerSettingsAction::scan() {
 }
 
 QString OptimizePowerSettingsAction::buildPowerPlanListReport(
-    const PowerPlan& current_plan,
-    const QVector<PowerPlan>& all_plans) const
-{
+    const PowerPlan& current_plan, const QVector<PowerPlan>& all_plans) const {
     QString report = "╔════════════════════════════════════════════════════════════════╗\n";
     report += "║             POWER PLAN OPTIMIZATION REPORT                   ║\n";
     report += "╠════════════════════════════════════════════════════════════════╣\n";
     report += QString("║ Current Plan: %1\n").arg(current_plan.name).leftJustified(67, ' ') + "║\n";
     report += QString("║ Current GUID: %1\n").arg(current_plan.guid).leftJustified(67, ' ') + "║\n";
     report += "╠════════════════════════════════════════════════════════════════╣\n";
-    report += QString("║ Available Power Plans: %1\n").arg(all_plans.size()).leftJustified(67,
-        ' ') + "║\n";
+    report +=
+        QString("║ Available Power Plans: %1\n").arg(all_plans.size()).leftJustified(67, ' ') +
+        "║\n";
 
     // List all plans
     for (const PowerPlan& plan : all_plans) {
-        QString plan_line = QString("║   %1 %2\n")
-                               .arg(plan.isActive ? "[ACTIVE]" : "        ")
-                               .arg(plan.name);
+        QString plan_line =
+            QString("║   %1 %2\n").arg(plan.isActive ? "[ACTIVE]" : "        ").arg(plan.name);
         report += plan_line.leftJustified(67, ' ') + "║\n";
     }
 
@@ -175,14 +172,12 @@ QString OptimizePowerSettingsAction::buildPowerPlanListReport(
     return report;
 }
 
-void OptimizePowerSettingsAction::finalizePowerOptimizationResult(
-    const QDateTime& start_time,
-    const QString& report,
-    const QString& previous_plan_name,
-    const QString& high_perf_guid,
-    bool already_optimized,
-    bool success)
-{
+void OptimizePowerSettingsAction::finalizePowerOptimizationResult(const QDateTime& start_time,
+                                                                  const QString& report,
+                                                                  const QString& previous_plan_name,
+                                                                  const QString& high_perf_guid,
+                                                                  bool already_optimized,
+                                                                  bool success) {
     Q_EMIT executionProgress("Power optimization complete", 100);
 
     qint64 duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
@@ -216,17 +211,15 @@ void OptimizePowerSettingsAction::finalizePowerOptimizationResult(
         result.log = report;
         result.log += "\nFailed to change power plan - administrative privileges may be required\n";
         result.log += "Try running as Administrator or use: powercfg -SETACTIVE " + high_perf_guid +
-            "\n";
+                      "\n";
     }
 
     finishWithResult(result, result.success ? ActionStatus::Success : ActionStatus::Failed);
 }
 
-bool OptimizePowerSettingsAction::activateHighPerformancePlan(
-    const PowerPlan& high_perf_plan,
-    const QString& current_plan_name,
-    QString& report)
-{
+bool OptimizePowerSettingsAction::activateHighPerformancePlan(const PowerPlan& high_perf_plan,
+                                                              const QString& current_plan_name,
+                                                              QString& report) {
     bool success = setPowerPlan(high_perf_plan.guid);
 
     if (success) {
@@ -234,18 +227,20 @@ bool OptimizePowerSettingsAction::activateHighPerformancePlan(
         PowerPlan new_active = getActivePowerPlan();
 
         success = (new_active.guid == high_perf_plan.guid) ||
-                 new_active.name.contains("High Performance", Qt::CaseInsensitive);
+                  new_active.name.contains("High Performance", Qt::CaseInsensitive);
 
         if (success) {
-            report += QString("║ Status:       Power plan activated\n").leftJustified(67,
-                ' ') + "║\n";
-            report += QString("║ Previous:     %1\n").arg(current_plan_name).leftJustified(67,
-                ' ') + "║\n";
-            report += QString("║ Current:      %1\n").arg(new_active.name).leftJustified(67,
-                ' ') + "║\n";
+            report += QString("║ Status:       Power plan activated\n").leftJustified(67, ' ') +
+                      "║\n";
+            report +=
+                QString("║ Previous:     %1\n").arg(current_plan_name).leftJustified(67, ' ') +
+                "║\n";
+            report += QString("║ Current:      %1\n").arg(new_active.name).leftJustified(67, ' ') +
+                      "║\n";
         } else {
-            report += QString("║ Status:       Activation verification FAILED\n").leftJustified(67,
-                ' ') + "║\n";
+            report +=
+                QString("║ Status:       Activation verification FAILED\n").leftJustified(67, ' ') +
+                "║\n";
         }
     } else {
         report += "║ Status:       Activation FAILED                             ║\n";
@@ -275,34 +270,37 @@ void OptimizePowerSettingsAction::execute() {
 
     Q_EMIT executionProgress("Locating High Performance plan...", 40);
     PowerPlan high_perf_plan = findPowerPlanByName("High Performance");
-    if (high_perf_plan.guid.isEmpty())
+    if (high_perf_plan.guid.isEmpty()) {
         high_perf_plan = findPowerPlanByName("Ultimate Performance");
+    }
     if (high_perf_plan.guid.isEmpty()) {
         high_perf_plan.guid = getStandardPowerPlanGuid("High Performance");
         high_perf_plan.name = "High Performance (Standard)";
     }
 
-    report += QString("║ Target Plan:  %1\n").arg(high_perf_plan.name).leftJustified(67,
-        ' ') + "║\n";
-    report += QString("║ Target GUID:  %1\n").arg(high_perf_plan.guid).leftJustified(67,
-        ' ') + "║\n";
+    report += QString("║ Target Plan:  %1\n").arg(high_perf_plan.name).leftJustified(67, ' ') +
+              "║\n";
+    report += QString("║ Target GUID:  %1\n").arg(high_perf_plan.guid).leftJustified(67, ' ') +
+              "║\n";
     report += "╠════════════════════════════════════════════════════════════════╣\n";
 
     bool already_optimized = current_plan.name.contains("High Performance", Qt::CaseInsensitive) ||
-                            current_plan.name.contains("Ultimate Performance", Qt::CaseInsensitive);
+                             current_plan.name.contains("Ultimate Performance",
+                                                        Qt::CaseInsensitive);
     bool success = true;
 
     if (already_optimized) {
-        report += QString("║ Status:       Already using High Performance\n").leftJustified(67,
-            ' ') + "║\n";
+        report +=
+            QString("║ Status:       Already using High Performance\n").leftJustified(67, ' ') +
+            "║\n";
         report += QString("║ Action:       No change needed\n").leftJustified(67, ' ') + "║\n";
     } else {
         success = activateHighPerformancePlan(high_perf_plan, current_plan.name, report);
     }
 
     report += "╚════════════════════════════════════════════════════════════════╝\n";
-    finalizePowerOptimizationResult(start_time, report, current_plan.name,
-                                     high_perf_plan.guid, already_optimized, success);
+    finalizePowerOptimizationResult(
+        start_time, report, current_plan.name, high_perf_plan.guid, already_optimized, success);
 }
 
-} // namespace sak
+}  // namespace sak

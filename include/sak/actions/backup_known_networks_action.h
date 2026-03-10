@@ -4,8 +4,9 @@
 #pragma once
 
 #include "sak/quick_action.h"
-#include <QString>
+
 #include <QList>
+#include <QString>
 
 namespace sak {
 
@@ -23,14 +24,16 @@ class BackupKnownNetworksAction : public QuickAction {
 public:
     explicit BackupKnownNetworksAction(const QString& backup_location, QObject* parent = nullptr);
 
-    QString name()        const override { return "Backup Known Networks"; }
-    QString description() const override { return "Export all known WiFi profiles to a JSON file "
-                                                  "loadable in WiFi Manager"; }
-    QIcon   icon()        const override { return QIcon(); }
-    ActionCategory category()     const override { return ActionCategory::QuickBackup; }
-    bool   requiresAdmin()        const override { return false; }
+    QString name() const override { return "Backup Known Networks"; }
+    QString description() const override {
+        return "Export all known WiFi profiles to a JSON file "
+               "loadable in WiFi Manager";
+    }
+    QIcon icon() const override { return QIcon(); }
+    ActionCategory category() const override { return ActionCategory::QuickBackup; }
+    bool requiresAdmin() const override { return false; }
 
-    void scan()    override;
+    void scan() override;
     void execute() override;
 
 private:
@@ -38,24 +41,23 @@ private:
         QString ssid;
         QString password;
         QString security;
-        bool    hidden{false};
+        bool hidden{false};
     };
 
-    QString              m_backup_location;
-    QList<NetworkEntry>  m_entries;  // populated during scan, reused in execute
+    QString m_backup_location;
+    QList<NetworkEntry> m_entries;  // populated during scan, reused in execute
 
     /** Collect all known WiFi profile details via netsh */
     QList<NetworkEntry> collectProfiles() const;
 
     /** Fetch detail for a single WiFi profile and populate a NetworkEntry */
-    NetworkEntry fetchProfileDetail(
-        const QString& name,
-        const QRegularExpression& keyRe,
-        const QRegularExpression& authRe,
-        const QRegularExpression& nbRe) const;
+    NetworkEntry fetchProfileDetail(const QString& name,
+                                    const QRegularExpression& keyRe,
+                                    const QRegularExpression& authRe,
+                                    const QRegularExpression& nbRe) const;
 
     /// @brief Build JSON from collected profiles and write to backup file
     void buildAndWriteBackup(const QList<NetworkEntry>& entries, const QDateTime& startTime);
 };
 
-} // namespace sak
+}  // namespace sak

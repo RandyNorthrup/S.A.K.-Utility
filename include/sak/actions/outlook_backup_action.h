@@ -5,6 +5,7 @@
 
 #include "sak/quick_action.h"
 #include "sak/user_profile_types.h"
+
 #include <QDir>
 #include <QString>
 #include <QVector>
@@ -13,7 +14,7 @@ namespace sak {
 
 /**
  * @brief Outlook Email Backup Action
- * 
+ *
  * Backs up Outlook PST/OST files and account configuration.
  * Detects running Outlook process and warns user.
  */
@@ -37,7 +38,7 @@ private:
     struct OutlookFile {
         QString path;
         QString filename;
-        QString type; // PST or OST
+        QString type;  // PST or OST
         qint64 size;
         bool is_open;
     };
@@ -55,11 +56,14 @@ private:
     /// @brief Scan all user profiles for Outlook PST/OST data files
     void discoverOutlookFiles(QVector<OutlookFile>& found_files, qint64& total_size);
     /// @brief Copy discovered Outlook files to the backup directory
-    bool copyOutlookFilesToBackup(const QVector<OutlookFile>& found_files, const QDir& backup_dir,
-                                   int& files_copied, qint64& bytes_copied);
-    void finalizeOutlookResult(int files_copied, qint64 bytes_copied,
-                               const QDir& backup_dir, const QDateTime& start_time);
+    bool copyOutlookFilesToBackup(const QVector<OutlookFile>& found_files,
+                                  const QDir& backup_dir,
+                                  int& files_copied,
+                                  qint64& bytes_copied);
+    void finalizeOutlookResult(int files_copied,
+                               qint64 bytes_copied,
+                               const QDir& backup_dir,
+                               const QDateTime& start_time);
 };
 
-} // namespace sak
-
+}  // namespace sak

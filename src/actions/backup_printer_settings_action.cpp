@@ -5,26 +5,27 @@
 /// @brief Implements printer configuration backup via Windows print management
 
 #include "sak/actions/backup_printer_settings_action.h"
-#include "sak/process_runner.h"
-#include "sak/logger.h"
+
 #include "sak/layout_constants.h"
-#include <QFile>
-#include <QDir>
+#include "sak/logger.h"
+#include "sak/process_runner.h"
+
 #include <QDateTime>
+#include <QDir>
+#include <QFile>
 
 namespace sak {
 
 BackupPrinterSettingsAction::BackupPrinterSettingsAction(const QString& backup_location,
-    QObject* parent)
-    : QuickAction(parent)
-    , m_backup_location(backup_location)
-{
-}
+                                                         QObject* parent)
+    : QuickAction(parent), m_backup_location(backup_location) {}
 
 int BackupPrinterSettingsAction::countInstalledPrinters() {
     // Count installed printers via PowerShell
-    ProcessResult proc = runPowerShell("Get-Printer | Measure-Object | Select-Object "
-                                       "-ExpandProperty Count", sak::kTimeoutProcessShortMs);
+    ProcessResult proc = runPowerShell(
+        "Get-Printer | Measure-Object | Select-Object "
+        "-ExpandProperty Count",
+        sak::kTimeoutProcessShortMs);
     if (!proc.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("Printer scan warning: " + proc.std_err.trimmed());
     }
@@ -33,14 +34,15 @@ int BackupPrinterSettingsAction::countInstalledPrinters() {
 }
 
 bool BackupPrinterSettingsAction::exportPrinterRegistry(const QString& dest_file) {
+    Q_ASSERT(!dest_file.isEmpty());
     // Export printer registry settings
     // HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Print\Printers
-    ProcessResult proc = runProcess("reg.exe", QStringList()
-        << "export"
-        << "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Print\\Printers"
-        << dest_file
-        << "/y",
-        10000);
+    ProcessResult proc = runProcess(
+        "reg.exe",
+        QStringList() << "export"
+                      << "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Print\\Printers"
+                      << dest_file << "/y",
+        10'000);
     return proc.succeeded() && QFile::exists(dest_file);
 }
 
@@ -106,18 +108,20 @@ void BackupPrinterSettingsAction::execute() {
         result.bytes_processed = info.size();
         result.output_path = m_backup_location;
         result.message = QString("Backed up %1 printer configuration(s)").arg(m_printers_found);
-        result.log = QString("Registry exported to: %1\n"
-                            "To restore: Double-click the .reg file or use 'reg import'")
-                            .arg(reg_file);
+        result.log = QString(
+                         "Registry exported to: %1\n"
+                         "To restore: Double-click the .reg file or use 'reg import'")
+                         .arg(reg_file);
         Q_ASSERT(result.duration_ms >= 0);
         finishWithResult(result, ActionStatus::Success);
     } else {
         result.success = false;
         result.message = "Failed to export printer registry";
-        result.log = "Check administrator privileges - registry export requires elevated "
-                     "permissions";
+        result.log =
+            "Check administrator privileges - registry export requires elevated "
+            "permissions";
         finishWithResult(result, ActionStatus::Failed);
     }
 }
 
-} // namespace sak
+}  // namespace sak

@@ -3,19 +3,19 @@
 
 #pragma once
 
-#include <QWidget>
-#include <QGroupBox>
-#include <QLineEdit>
-#include <QComboBox>
 #include <QCheckBox>
+#include <QComboBox>
+#include <QGroupBox>
+#include <QImage>
+#include <QLineEdit>
+#include <QList>
+#include <QModelIndex>
 #include <QPushButton>
-#include <QToolButton>
+#include <QString>
 #include <QTableWidget>
 #include <QTableWidgetItem>
-#include <QImage>
-#include <QModelIndex>
-#include <QString>
-#include <QList>
+#include <QToolButton>
+#include <QWidget>
 
 class QLabel;
 class QStackedWidget;
@@ -94,7 +94,7 @@ private:
         QString ssid;
         QString password;
         QString security;
-        bool    hidden{false};
+        bool hidden{false};
     };
 
     // -------------------------------------------------------------------------
@@ -123,29 +123,29 @@ private:
     // -------------------------------------------------------------------------
     /** Bundle of widget pointers shared between QR-wizard page builders */
     struct QrWizardControls {
-        QLabel*           previewLabel{};
-        QCheckBox*        chkPng{};
-        QCheckBox*        chkPdf{};
-        QCheckBox*        chkJpg{};
-        QCheckBox*        chkBmp{};
-        LogToggleSwitch*  headerToggle{};
-        QPushButton*      btnCancel0{};
-        QPushButton*      btnNext{};
-        QLineEdit*        dirEdit{};
-        QLabel*           subLabel{};
-        QPushButton*      btnBack{};
-        QPushButton*      btnCancel1{};
-        QPushButton*      btnBrowse{};
-        QPushButton*      btnGenerate{};
+        QLabel* previewLabel{};
+        QCheckBox* chkPng{};
+        QCheckBox* chkPdf{};
+        QCheckBox* chkJpg{};
+        QCheckBox* chkBmp{};
+        LogToggleSwitch* headerToggle{};
+        QPushButton* btnCancel0{};
+        QPushButton* btnNext{};
+        QLineEdit* dirEdit{};
+        QLabel* subLabel{};
+        QPushButton* btnBack{};
+        QPushButton* btnCancel1{};
+        QPushButton* btnBrowse{};
+        QPushButton* btnGenerate{};
     };
 
     /** Render a QR image with an optional location header banner */
     static QImage renderQrWithHeader(const QString& payload,
-                                     const QString& location, bool showHeader);
+                                     const QString& location,
+                                     bool showHeader);
 
     /** Write a QR image as a full-page A4 PDF; returns true on success */
-    static bool exportQrToPdf(const QImage& image, const QString& path,
-                              const QString& title);
+    static bool exportQrToPdf(const QImage& image, const QString& path, const QString& title);
 
     /** Show a QR dialog for a single WiFi network */
     void showSingleNetworkQrDialog(const WifiConfig& cfg);
@@ -157,30 +157,42 @@ private:
     void showSingleQrWizard(const WifiConfig& cfg);
 
     /** Build wizard page 0 (format + header selection) */
-    QWidget* buildQrFormatPage(const QString& payload, const QString& location,
+    QWidget* buildQrFormatPage(const QString& payload,
+                               const QString& location,
                                QrWizardControls& ctl);
 
     /** Build wizard page 1 (output directory selection) */
     QWidget* buildQrOutputPage(QrWizardControls& ctl);
 
     /** Wire all signals for the single-network QR wizard */
-    void connectSingleQrWizard(QDialog* dlg, QStackedWidget* stack,
+    void connectSingleQrWizard(QDialog* dlg,
+                               QStackedWidget* stack,
                                QrWizardControls ctl,
-                               const QString& payload, const QString& ssid,
-                               const QString& location, const QString& subName);
+                               const QString& payload,
+                               const QString& ssid,
+                               const QString& location,
+                               const QString& subName);
 
     /** Execute the single-network QR export (save selected formats) */
-    void executeSingleQrExport(QDialog* dlg, QrWizardControls ctl,
-                               const QString& payload, const QString& ssid,
-                               const QString& location, const QString& subName);
+    void executeSingleQrExport(QDialog* dlg,
+                               QrWizardControls ctl,
+                               const QString& payload,
+                               const QString& ssid,
+                               const QString& location,
+                               const QString& subName);
 
     /** Show the batch (multi-network) QR export dialog */
     void showBatchQrDialog(const QList<WifiConfig>& sources);
 
     /** Execute the batch QR export loop for selected formats */
-    void executeBatchQrExport(QDialog* dlg, const QList<WifiConfig>& sources,
-                              const QString& baseDir, bool showHeader,
-                              bool png, bool pdf, bool jpg, bool bmp);
+    void executeBatchQrExport(QDialog* dlg,
+                              const QList<WifiConfig>& sources,
+                              const QString& baseDir,
+                              bool showHeader,
+                              bool png,
+                              bool pdf,
+                              bool jpg,
+                              bool bmp);
 
     // -----------------------------------------------------------------
     // Export helpers
@@ -235,25 +247,25 @@ private:
     // =========================================================================
 
     // -- Form group --
-    QGroupBox*   m_form_group{nullptr};
-    QLineEdit*   m_location_input{nullptr};
-    QLineEdit*   m_ssid_input{nullptr};
-    QLineEdit*   m_password_input{nullptr};
+    QGroupBox* m_form_group{nullptr};
+    QLineEdit* m_location_input{nullptr};
+    QLineEdit* m_ssid_input{nullptr};
+    QLineEdit* m_password_input{nullptr};
     QToolButton* m_password_toggle_btn{nullptr};
-    QComboBox*   m_security_combo{nullptr};
-    QCheckBox*   m_hidden_checkbox{nullptr};
+    QComboBox* m_security_combo{nullptr};
+    QCheckBox* m_hidden_checkbox{nullptr};
 
     // -- Table group --
-    QGroupBox*    m_table_group{nullptr};
+    QGroupBox* m_table_group{nullptr};
     QTableWidget* m_network_table{nullptr};
-    QLineEdit*    m_search_input{nullptr};
-    QToolButton*  m_search_up_btn{nullptr};
-    QToolButton*  m_search_down_btn{nullptr};
-    QPushButton*  m_add_table_btn{nullptr};
-    QPushButton*  m_delete_selected_btn{nullptr};
-    QPushButton*  m_add_to_windows_btn{nullptr};
-    QPushButton*  m_save_table_btn{nullptr};
-    QPushButton*  m_load_table_btn{nullptr};
+    QLineEdit* m_search_input{nullptr};
+    QToolButton* m_search_up_btn{nullptr};
+    QToolButton* m_search_down_btn{nullptr};
+    QPushButton* m_add_table_btn{nullptr};
+    QPushButton* m_delete_selected_btn{nullptr};
+    QPushButton* m_add_to_windows_btn{nullptr};
+    QPushButton* m_save_table_btn{nullptr};
+    QPushButton* m_load_table_btn{nullptr};
 
     // -- Action buttons --
     QPushButton* m_generate_qr_btn{nullptr};
@@ -266,8 +278,8 @@ private:
     // State
     // =========================================================================
     QList<int> m_search_matches;
-    int        m_search_index{-1};
-    QString    m_save_path;
+    int m_search_index{-1};
+    QString m_save_path;
     LogToggleSwitch* m_logToggle{nullptr};
 };
 

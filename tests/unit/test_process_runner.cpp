@@ -4,9 +4,9 @@
 /// @file test_process_runner.cpp
 /// @brief Unit tests for process execution utilities
 
-#include <QtTest/QtTest>
-
 #include "sak/process_runner.h"
+
+#include <QtTest/QtTest>
 
 class ProcessRunnerTests : public QObject {
     Q_OBJECT
@@ -30,10 +30,8 @@ private Q_SLOTS:
 // runProcess Tests
 // ============================================================================
 
-void ProcessRunnerTests::runProcess_echoCommand()
-{
-    auto result = sak::runProcess(
-        "cmd.exe", {"/C", "echo Hello World"}, 10000);
+void ProcessRunnerTests::runProcess_echoCommand() {
+    auto result = sak::runProcess("cmd.exe", {"/C", "echo Hello World"}, 10'000);
 
     QCOMPARE(result.exit_code, 0);
     QVERIFY(!result.timed_out);
@@ -41,28 +39,22 @@ void ProcessRunnerTests::runProcess_echoCommand()
     QVERIFY(result.std_out.trimmed().contains("Hello World"));
 }
 
-void ProcessRunnerTests::runProcess_exitCode()
-{
-    auto result = sak::runProcess(
-        "cmd.exe", {"/C", "exit /b 42"}, 10000);
+void ProcessRunnerTests::runProcess_exitCode() {
+    auto result = sak::runProcess("cmd.exe", {"/C", "exit /b 42"}, 10'000);
 
     QCOMPARE(result.exit_code, 42);
     QVERIFY(!result.timed_out);
 }
 
-void ProcessRunnerTests::runProcess_stderrCapture()
-{
-    auto result = sak::runProcess(
-        "cmd.exe", {"/C", "echo error message 1>&2"}, 10000);
+void ProcessRunnerTests::runProcess_stderrCapture() {
+    auto result = sak::runProcess("cmd.exe", {"/C", "echo error message 1>&2"}, 10'000);
 
     // stderr should contain the error message
     QVERIFY(result.std_err.contains("error message"));
 }
 
-void ProcessRunnerTests::runProcess_nonExistentProgram()
-{
-    auto result = sak::runProcess(
-        "nonexistent_program_xyz_12345.exe", {}, 5000);
+void ProcessRunnerTests::runProcess_nonExistentProgram() {
+    auto result = sak::runProcess("nonexistent_program_xyz_12345.exe", {}, 5000);
 
     // After BUG-13 fix: waitForStarted() detects launch failure immediately.
     // exit_code should be -1 and std_err should contain an error message.
@@ -70,21 +62,19 @@ void ProcessRunnerTests::runProcess_nonExistentProgram()
     QVERIFY(!result.std_err.isEmpty());
 }
 
-void ProcessRunnerTests::runProcess_timeout()
-{
+void ProcessRunnerTests::runProcess_timeout() {
     // Start a long-running process with a short timeout
-    auto result = sak::runProcess(
-        "cmd.exe", {"/C", "ping -n 3 127.0.0.1"}, 1000);
+    auto result = sak::runProcess("cmd.exe", {"/C", "ping -n 3 127.0.0.1"}, 1000);
 
     QVERIFY(result.timed_out);
 }
 
-void ProcessRunnerTests::runProcess_cancellation()
-{
+void ProcessRunnerTests::runProcess_cancellation() {
     bool shouldCancel = true;
-    auto result = sak::runProcess(
-        "cmd.exe", {"/C", "ping -n 3 127.0.0.1"}, 10000,
-        [&shouldCancel]() -> bool { return shouldCancel; });
+    auto result = sak::runProcess("cmd.exe",
+                                  {"/C", "ping -n 3 127.0.0.1"},
+                                  10'000,
+                                  [&shouldCancel]() -> bool { return shouldCancel; });
 
     QVERIFY(result.cancelled);
 }
@@ -93,31 +83,27 @@ void ProcessRunnerTests::runProcess_cancellation()
 // runPowerShell Tests
 // ============================================================================
 
-void ProcessRunnerTests::runPowerShell_simpleScript()
-{
-    auto result = sak::runPowerShell(
-        "Write-Output 'PowerShell Test'", 10000);
+void ProcessRunnerTests::runPowerShell_simpleScript() {
+    auto result = sak::runPowerShell("Write-Output 'PowerShell Test'", 10'000);
 
     QCOMPARE(result.exit_code, 0);
     QVERIFY(!result.timed_out);
     QVERIFY(result.std_out.contains("PowerShell Test"));
 }
 
-void ProcessRunnerTests::runPowerShell_withNoProfile()
-{
-    auto result = sak::runPowerShell(
-        "Write-Output $PSVersionTable.PSVersion.Major", 10000,
-        true,  // no_profile
-        true); // bypass_policy
+void ProcessRunnerTests::runPowerShell_withNoProfile() {
+    auto result = sak::runPowerShell("Write-Output $PSVersionTable.PSVersion.Major",
+                                     10'000,
+                                     true,   // no_profile
+                                     true);  // bypass_policy
 
     QCOMPARE(result.exit_code, 0);
     QVERIFY(!result.std_out.trimmed().isEmpty());
 }
 
-void ProcessRunnerTests::runPowerShell_scriptError()
-{
-    auto result = sak::runPowerShell(
-        "Get-Item 'C:\\NonExistent_xyz_12345' -ErrorAction Stop", 10000);
+void ProcessRunnerTests::runPowerShell_scriptError() {
+    auto result = sak::runPowerShell("Get-Item 'C:\\NonExistent_xyz_12345' -ErrorAction Stop",
+                                     10'000);
 
     // Should fail with non-zero exit code
     QVERIFY(result.exit_code != 0);

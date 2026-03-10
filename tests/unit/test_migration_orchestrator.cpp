@@ -1,10 +1,10 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-#include <QtTest/QtTest>
-
 #include "sak/migration_orchestrator.h"
 #include "sak/orchestration_types.h"
+
+#include <QtTest/QtTest>
 
 using namespace sak;
 
@@ -23,7 +23,7 @@ public:
     }
 
     void sendDeploymentAssignment(const QString& destination_id,
-        const DeploymentAssignment& assignment) override {
+                                  const DeploymentAssignment& assignment) override {
         sentAssignments.append({destination_id, assignment.deployment_id});
     }
 
@@ -31,9 +31,7 @@ public:
     void sendAssignmentResume(const QString&, const QString&, const QString&) override {}
     void sendAssignmentCancel(const QString&, const QString&, const QString&) override {}
 
-    void emitProgress(const DeploymentProgress& progress) {
-        Q_EMIT progressUpdated(progress);
-    }
+    void emitProgress(const DeploymentProgress& progress) { Q_EMIT progressUpdated(progress); }
 
     void emitCompletion(const DeploymentCompletion& completion) {
         Q_EMIT deploymentCompleted(completion);

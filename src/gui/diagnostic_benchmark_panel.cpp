@@ -5,13 +5,14 @@
 /// @brief UI panel implementation for diagnostics, benchmarking, and reporting
 
 #include "sak/diagnostic_benchmark_panel.h"
+
+#include "sak/detachable_log_window.h"
 #include "sak/diagnostic_controller.h"
 #include "sak/format_utils.h"
+#include "sak/layout_constants.h"
 #include "sak/logger.h"
-#include "sak/detachable_log_window.h"
 #include "sak/style_constants.h"
 #include "sak/widget_helpers.h"
-#include "sak/layout_constants.h"
 
 #include <QApplication>
 #include <QCheckBox>
@@ -42,9 +43,7 @@ namespace sak {
 // ============================================================================
 
 DiagnosticBenchmarkPanel::DiagnosticBenchmarkPanel(QWidget* parent)
-    : QWidget(parent)
-    , m_controller(std::make_unique<DiagnosticController>(this))
-{
+    : QWidget(parent), m_controller(std::make_unique<DiagnosticController>(this)) {
     setupUi();
     connectController();
 
@@ -52,8 +51,7 @@ DiagnosticBenchmarkPanel::DiagnosticBenchmarkPanel(QWidget* parent)
     m_controller->startThermalMonitoring(2000);
 }
 
-DiagnosticBenchmarkPanel::~DiagnosticBenchmarkPanel()
-{
+DiagnosticBenchmarkPanel::~DiagnosticBenchmarkPanel() {
     m_controller->cancelCurrent();
     m_controller->stopThermalMonitoring();
 }
@@ -62,8 +60,7 @@ DiagnosticBenchmarkPanel::~DiagnosticBenchmarkPanel()
 // UI Construction
 // ============================================================================
 
-void DiagnosticBenchmarkPanel::setupUi()
-{
+void DiagnosticBenchmarkPanel::setupUi() {
     Q_ASSERT(!objectName().isEmpty() || true);  // widget valid
     // Root: zero margin ? scroll area
     auto* root_layout = new QVBoxLayout(this);
@@ -75,17 +72,21 @@ void DiagnosticBenchmarkPanel::setupUi()
 
     auto* content_widget = new QWidget(scroll_area);
     auto* main_layout = new QVBoxLayout(content_widget);
-    main_layout->setContentsMargins(sak::ui::kMarginMedium, sak::ui::kMarginMedium,
-                                     sak::ui::kMarginMedium, sak::ui::kMarginMedium);
+    main_layout->setContentsMargins(sak::ui::kMarginMedium,
+                                    sak::ui::kMarginMedium,
+                                    sak::ui::kMarginMedium,
+                                    sak::ui::kMarginMedium);
     main_layout->setSpacing(sak::ui::kSpacingDefault);
 
     scroll_area->setWidget(content_widget);
     root_layout->addWidget(scroll_area);
 
     // Panel header — consistent title + muted subtitle
-    sak::createPanelHeader(content_widget, QStringLiteral(":/icons/icons/panel_diagnostic.svg"),
-        tr("Diagnostics"),
-        tr("Hardware inventory, SMART analysis, benchmarks, and stress tests"), main_layout);
+    sak::createPanelHeader(content_widget,
+                           QStringLiteral(":/icons/icons/panel_diagnostic.svg"),
+                           tr("Diagnostics"),
+                           tr("Hardware inventory, SMART analysis, benchmarks, and stress tests"),
+                           main_layout);
 
     // ── Sections ────────────────────────────────────────────────
     main_layout->addWidget(createHardwareSection());
@@ -115,8 +116,9 @@ void DiagnosticBenchmarkPanel::setupUi()
 // Section: Hardware Inventory
 // ============================================================================
 
-QGroupBox* DiagnosticBenchmarkPanel::createHardwareSection()
-{
+QGroupBox* DiagnosticBenchmarkPanel::createHardwareSection() {
+    Q_ASSERT(m_hw_rescan_button);
+    Q_ASSERT(m_hw_copy_button);
     auto* group = new QGroupBox("Hardware Inventory", this);
     auto* layout = new QVBoxLayout(group);
 
@@ -160,10 +162,14 @@ QGroupBox* DiagnosticBenchmarkPanel::createHardwareSection()
 
     layout->addLayout(button_layout);
 
-    connect(m_hw_rescan_button, &QPushButton::clicked,
-            this, &DiagnosticBenchmarkPanel::onRescanHardwareClicked);
-    connect(m_hw_copy_button, &QPushButton::clicked,
-            this, &DiagnosticBenchmarkPanel::onCopyInventoryClicked);
+    connect(m_hw_rescan_button,
+            &QPushButton::clicked,
+            this,
+            &DiagnosticBenchmarkPanel::onRescanHardwareClicked);
+    connect(m_hw_copy_button,
+            &QPushButton::clicked,
+            this,
+            &DiagnosticBenchmarkPanel::onCopyInventoryClicked);
 
     return group;
 }
@@ -172,18 +178,17 @@ QGroupBox* DiagnosticBenchmarkPanel::createHardwareSection()
 // Section: SMART Health
 // ============================================================================
 
-QGroupBox* DiagnosticBenchmarkPanel::createSmartSection()
-{
+QGroupBox* DiagnosticBenchmarkPanel::createSmartSection() {
+    Q_ASSERT(m_smart_table);
+    Q_ASSERT(m_smart_warnings_label);
     auto* group = new QGroupBox("Storage Health (S.M.A.R.T.)", this);
     auto* layout = new QVBoxLayout(group);
 
     // Table
     m_smart_table = new QTableWidget(0, 6, this);
-    m_smart_table->setHorizontalHeaderLabels(
-        {"Drive", "Type", "Health", "Temp", "Hours", "Wear"});
+    m_smart_table->setHorizontalHeaderLabels({"Drive", "Type", "Health", "Temp", "Hours", "Wear"});
     m_smart_table->horizontalHeader()->setStretchLastSection(true);
-    m_smart_table->horizontalHeader()->setSectionResizeMode(
-        0, QHeaderView::Stretch);
+    m_smart_table->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Stretch);
     m_smart_table->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_smart_table->setEditTriggers(QAbstractItemView::NoEditTriggers);
     m_smart_table->setMaximumHeight(sak::kListAreaMaxH);
@@ -195,8 +200,7 @@ QGroupBox* DiagnosticBenchmarkPanel::createSmartSection()
     // Warnings label
     m_smart_warnings_label = new QLabel("", this);
     m_smart_warnings_label->setWordWrap(true);
-    m_smart_warnings_label->setStyleSheet(
-        QString("color: %1;").arg(sak::ui::kColorWarning));
+    m_smart_warnings_label->setStyleSheet(QString("color: %1;").arg(sak::ui::kColorWarning));
     layout->addWidget(m_smart_warnings_label);
 
     // Button
@@ -205,13 +209,16 @@ QGroupBox* DiagnosticBenchmarkPanel::createSmartSection()
     m_smart_rescan_button = new QPushButton("Scan SMART", this);
     m_smart_rescan_button->setMinimumWidth(sak::kButtonWidthLarge);
     m_smart_rescan_button->setAccessibleName(QStringLiteral("Scan SMART Health"));
-    m_smart_rescan_button->setToolTip(QStringLiteral("Scan storage drives for S.M.A.R.T. health "
-                                                     "data"));
+    m_smart_rescan_button->setToolTip(
+        QStringLiteral("Scan storage drives for S.M.A.R.T. health "
+                       "data"));
     button_layout->addWidget(m_smart_rescan_button);
     layout->addLayout(button_layout);
 
-    connect(m_smart_rescan_button, &QPushButton::clicked,
-            this, &DiagnosticBenchmarkPanel::onRescanSmartClicked);
+    connect(m_smart_rescan_button,
+            &QPushButton::clicked,
+            this,
+            &DiagnosticBenchmarkPanel::onRescanSmartClicked);
 
     return group;
 }
@@ -220,8 +227,7 @@ QGroupBox* DiagnosticBenchmarkPanel::createSmartSection()
 // Section: Benchmarks
 // ============================================================================
 
-QGroupBox* DiagnosticBenchmarkPanel::createBenchmarkSection()
-{
+QGroupBox* DiagnosticBenchmarkPanel::createBenchmarkSection() {
     auto* group = new QGroupBox("Benchmarks", this);
     auto* layout = new QVBoxLayout(group);
 
@@ -229,18 +235,25 @@ QGroupBox* DiagnosticBenchmarkPanel::createBenchmarkSection()
     layout->addWidget(createDiskBenchmarkGroup());
     layout->addWidget(createMemoryBenchmarkGroup());
 
-    connect(m_cpu_benchmark_button, &QPushButton::clicked,
-            this, &DiagnosticBenchmarkPanel::onRunCpuBenchmarkClicked);
-    connect(m_disk_benchmark_button, &QPushButton::clicked,
-            this, &DiagnosticBenchmarkPanel::onRunDiskBenchmarkClicked);
-    connect(m_mem_benchmark_button, &QPushButton::clicked,
-            this, &DiagnosticBenchmarkPanel::onRunMemoryBenchmarkClicked);
+    connect(m_cpu_benchmark_button,
+            &QPushButton::clicked,
+            this,
+            &DiagnosticBenchmarkPanel::onRunCpuBenchmarkClicked);
+    connect(m_disk_benchmark_button,
+            &QPushButton::clicked,
+            this,
+            &DiagnosticBenchmarkPanel::onRunDiskBenchmarkClicked);
+    connect(m_mem_benchmark_button,
+            &QPushButton::clicked,
+            this,
+            &DiagnosticBenchmarkPanel::onRunMemoryBenchmarkClicked);
 
     return group;
 }
 
-QGroupBox* DiagnosticBenchmarkPanel::createCpuBenchmarkGroup()
-{
+QGroupBox* DiagnosticBenchmarkPanel::createCpuBenchmarkGroup() {
+    Q_ASSERT(m_cpu_single_score_label);
+    Q_ASSERT(m_cpu_multi_score_label);
     auto* cpu_group = new QGroupBox("CPU Benchmark", this);
     auto* cpu_layout = new QVBoxLayout(cpu_group);
 
@@ -262,17 +275,19 @@ QGroupBox* DiagnosticBenchmarkPanel::createCpuBenchmarkGroup()
     m_cpu_score_bar->setTextVisible(true);
     m_cpu_score_bar->setFormat("Score: %v / 3000 (baseline i5-12400 = 1000)");
     m_cpu_score_bar->setAccessibleName(QStringLiteral("CPU Benchmark Score"));
-    m_cpu_score_bar->setAccessibleDescription(QStringLiteral("Displays the CPU benchmark score out "
-                                                             "of 3000"));
-    m_cpu_score_bar->setToolTip(QStringLiteral("CPU benchmark score relative to an i5-12400 "
-                                               "baseline"));
+    m_cpu_score_bar->setAccessibleDescription(
+        QStringLiteral("Displays the CPU benchmark score out "
+                       "of 3000"));
+    m_cpu_score_bar->setToolTip(
+        QStringLiteral("CPU benchmark score relative to an i5-12400 "
+                       "baseline"));
     cpu_layout->addWidget(m_cpu_score_bar);
 
     m_cpu_details_label = new QLabel("", this);
     m_cpu_details_label->setWordWrap(true);
-    m_cpu_details_label->setStyleSheet(
-        QString("color: %1; font-size: %2pt;").arg(
-            sak::ui::kColorTextSecondary).arg(sak::ui::kFontSizeStatus));
+    m_cpu_details_label->setStyleSheet(QString("color: %1; font-size: %2pt;")
+                                           .arg(sak::ui::kColorTextSecondary)
+                                           .arg(sak::ui::kFontSizeStatus));
     cpu_layout->addWidget(m_cpu_details_label);
 
     auto* cpu_btn_layout = new QHBoxLayout();
@@ -280,16 +295,18 @@ QGroupBox* DiagnosticBenchmarkPanel::createCpuBenchmarkGroup()
     m_cpu_benchmark_button = new QPushButton("Run CPU Benchmark", this);
     m_cpu_benchmark_button->setMinimumWidth(sak::kButtonWidthXLarge);
     m_cpu_benchmark_button->setAccessibleName(QStringLiteral("Run CPU Benchmark"));
-    m_cpu_benchmark_button->setToolTip(QStringLiteral("Run a single and multi-threaded CPU "
-                                                      "performance test"));
+    m_cpu_benchmark_button->setToolTip(
+        QStringLiteral("Run a single and multi-threaded CPU "
+                       "performance test"));
     cpu_btn_layout->addWidget(m_cpu_benchmark_button);
     cpu_layout->addLayout(cpu_btn_layout);
 
     return cpu_group;
 }
 
-QGroupBox* DiagnosticBenchmarkPanel::createDiskBenchmarkGroup()
-{
+QGroupBox* DiagnosticBenchmarkPanel::createDiskBenchmarkGroup() {
+    Q_ASSERT(m_disk_drive_combo);
+    Q_ASSERT(m_disk_seq_label);
     auto* disk_group = new QGroupBox("Disk I/O Benchmark", this);
     auto* disk_layout = new QVBoxLayout(disk_group);
 
@@ -323,16 +340,18 @@ QGroupBox* DiagnosticBenchmarkPanel::createDiskBenchmarkGroup()
     m_disk_benchmark_button = new QPushButton("Run Disk Benchmark", this);
     m_disk_benchmark_button->setMinimumWidth(sak::kButtonWidthXLarge);
     m_disk_benchmark_button->setAccessibleName(QStringLiteral("Run Disk Benchmark"));
-    m_disk_benchmark_button->setToolTip(QStringLiteral("Measure sequential and random I/O "
-                                                       "performance"));
+    m_disk_benchmark_button->setToolTip(
+        QStringLiteral("Measure sequential and random I/O "
+                       "performance"));
     disk_btn_layout->addWidget(m_disk_benchmark_button);
     disk_layout->addLayout(disk_btn_layout);
 
     return disk_group;
 }
 
-QGroupBox* DiagnosticBenchmarkPanel::createMemoryBenchmarkGroup()
-{
+QGroupBox* DiagnosticBenchmarkPanel::createMemoryBenchmarkGroup() {
+    Q_ASSERT(m_mem_bandwidth_label);
+    Q_ASSERT(m_mem_score_label);
     auto* mem_group = new QGroupBox("Memory Benchmark", this);
     auto* mem_layout = new QVBoxLayout(mem_group);
 
@@ -365,8 +384,8 @@ QGroupBox* DiagnosticBenchmarkPanel::createMemoryBenchmarkGroup()
 // Section: Stress Test
 // ============================================================================
 
-QGroupBox* DiagnosticBenchmarkPanel::createStressTestSection()
-{
+QGroupBox* DiagnosticBenchmarkPanel::createStressTestSection() {
+    Q_ASSERT(m_stress_status_label);
     auto* group = new QGroupBox("Stress Testing", this);
     auto* layout = new QVBoxLayout(group);
 
@@ -399,8 +418,9 @@ QGroupBox* DiagnosticBenchmarkPanel::createStressTestSection()
     return group;
 }
 
-QHBoxLayout* DiagnosticBenchmarkPanel::createStressConfigRow()
-{
+QHBoxLayout* DiagnosticBenchmarkPanel::createStressConfigRow() {
+    Q_ASSERT(m_stress_cpu_check);
+    Q_ASSERT(m_stress_memory_check);
     auto* config_row = new QHBoxLayout();
     config_row->addWidget(new QLabel("Components:", this));
 
@@ -441,16 +461,18 @@ QHBoxLayout* DiagnosticBenchmarkPanel::createStressConfigRow()
     m_stress_thermal_limit_spin->setRange(60, 110);
     m_stress_thermal_limit_spin->setValue(95);
     m_stress_thermal_limit_spin->setAccessibleName(QStringLiteral("Thermal Limit"));
-    m_stress_thermal_limit_spin->setToolTip(QStringLiteral("Maximum temperature before the stress "
-                                                           "test is paused"));
+    m_stress_thermal_limit_spin->setToolTip(
+        QStringLiteral("Maximum temperature before the stress "
+                       "test is paused"));
     config_row->addWidget(m_stress_thermal_limit_spin);
 
     config_row->addStretch();
     return config_row;
 }
 
-QHBoxLayout* DiagnosticBenchmarkPanel::createStressButtonRow()
-{
+QHBoxLayout* DiagnosticBenchmarkPanel::createStressButtonRow() {
+    Q_ASSERT(m_stress_start_button);
+    Q_ASSERT(m_stress_stop_button);
     auto* button_layout = new QHBoxLayout();
     button_layout->addStretch();
 
@@ -467,10 +489,14 @@ QHBoxLayout* DiagnosticBenchmarkPanel::createStressButtonRow()
     m_stress_stop_button->setToolTip(QStringLiteral("Stop the running stress test"));
     button_layout->addWidget(m_stress_stop_button);
 
-    connect(m_stress_start_button, &QPushButton::clicked,
-            this, &DiagnosticBenchmarkPanel::onStartStressTestClicked);
-    connect(m_stress_stop_button, &QPushButton::clicked,
-            this, &DiagnosticBenchmarkPanel::onStopStressTestClicked);
+    connect(m_stress_start_button,
+            &QPushButton::clicked,
+            this,
+            &DiagnosticBenchmarkPanel::onStartStressTestClicked);
+    connect(m_stress_stop_button,
+            &QPushButton::clicked,
+            this,
+            &DiagnosticBenchmarkPanel::onStopStressTestClicked);
 
     return button_layout;
 }
@@ -479,36 +505,36 @@ QHBoxLayout* DiagnosticBenchmarkPanel::createStressButtonRow()
 // Section: Thermal Monitor
 // ============================================================================
 
-QGroupBox* DiagnosticBenchmarkPanel::createThermalSection()
-{
+QGroupBox* DiagnosticBenchmarkPanel::createThermalSection() {
     auto* group = new QGroupBox("Thermal Monitor", this);
     auto* layout = new QVBoxLayout(group);
 
-    auto add_thermal_row = [&](const QString& name, QLabel*& label,
-                               QProgressBar*& bar, int max_temp) {
-        auto* row = new QHBoxLayout();
-        auto* name_label = new QLabel(name, this);
-        name_label->setFixedWidth(100);
-        name_label->setStyleSheet("font-weight: 600;");
-        row->addWidget(name_label);
+    auto add_thermal_row =
+        [&](const QString& name, QLabel*& label, QProgressBar*& bar, int max_temp) {
+            auto* row = new QHBoxLayout();
+            auto* name_label = new QLabel(name, this);
+            name_label->setFixedWidth(100);
+            name_label->setStyleSheet("font-weight: 600;");
+            row->addWidget(name_label);
 
-        label = new QLabel("0\u00B0C", this);
-        label->setFixedWidth(60);
-        row->addWidget(label);
+            label = new QLabel("0\u00B0C", this);
+            label->setFixedWidth(60);
+            row->addWidget(label);
 
-        bar = new QProgressBar(this);
-        bar->setRange(0, max_temp);
-        bar->setValue(0);
-        bar->setTextVisible(true);
-        bar->setFormat("%v / %m \u00B0C");
-        bar->setAccessibleName(name.chopped(1) + QStringLiteral(" Temperature"));
-        bar->setAccessibleDescription(QStringLiteral("Current temperature reading in degrees "
-                                                     "Celsius"));
-        bar->setToolTip(QStringLiteral("Current temperature for this component"));
-        row->addWidget(bar, 1);
+            bar = new QProgressBar(this);
+            bar->setRange(0, max_temp);
+            bar->setValue(0);
+            bar->setTextVisible(true);
+            bar->setFormat("%v / %m \u00B0C");
+            bar->setAccessibleName(name.chopped(1) + QStringLiteral(" Temperature"));
+            bar->setAccessibleDescription(
+                QStringLiteral("Current temperature reading in degrees "
+                               "Celsius"));
+            bar->setToolTip(QStringLiteral("Current temperature for this component"));
+            row->addWidget(bar, 1);
 
-        layout->addLayout(row);
-    };
+            layout->addLayout(row);
+        };
 
     add_thermal_row("CPU:", m_thermal_cpu_label, m_thermal_cpu_bar, 100);
     add_thermal_row("GPU:", m_thermal_gpu_label, m_thermal_gpu_bar, 100);
@@ -521,8 +547,9 @@ QGroupBox* DiagnosticBenchmarkPanel::createThermalSection()
 // Section: Full Suite
 // ============================================================================
 
-QGroupBox* DiagnosticBenchmarkPanel::createSuiteSection()
-{
+QGroupBox* DiagnosticBenchmarkPanel::createSuiteSection() {
+    Q_ASSERT(m_suite_status_label);
+    Q_ASSERT(m_suite_run_button);
     auto* group = new QGroupBox("Full Diagnostic Suite", this);
     auto* layout = new QVBoxLayout(group);
 
@@ -536,8 +563,8 @@ QGroupBox* DiagnosticBenchmarkPanel::createSuiteSection()
     m_suite_step_names[6] = "Generate Report";
 
     for (int i = 0; i < 7; ++i) {
-        m_suite_step_labels[i] = new QLabel(
-            QString("  %1  %2").arg(QChar(0x23F3)).arg(m_suite_step_names[i]), this);
+        m_suite_step_labels[i] =
+            new QLabel(QString("  %1  %2").arg(QChar(0x23F3)).arg(m_suite_step_names[i]), this);
         m_suite_step_labels[i]->setStyleSheet(
             QString("color: %1;").arg(sak::ui::kColorTextDisabled));
         layout->addWidget(m_suite_step_labels[i]);
@@ -555,8 +582,8 @@ QGroupBox* DiagnosticBenchmarkPanel::createSuiteSection()
     m_suite_run_button = new QPushButton("Run Full Suite", this);
     m_suite_run_button->setMinimumWidth(sak::kButtonWidthLarge);
     m_suite_run_button->setAccessibleName(QStringLiteral("Run Full Suite"));
-    m_suite_run_button->setToolTip(QStringLiteral(
-        "Run the complete diagnostic and benchmark suite"));
+    m_suite_run_button->setToolTip(
+        QStringLiteral("Run the complete diagnostic and benchmark suite"));
     m_suite_run_button->setStyleSheet(sak::ui::kPrimaryButtonStyle);
     button_layout->addWidget(m_suite_run_button);
 
@@ -576,12 +603,18 @@ QGroupBox* DiagnosticBenchmarkPanel::createSuiteSection()
 
     layout->addLayout(button_layout);
 
-    connect(m_suite_run_button, &QPushButton::clicked,
-            this, &DiagnosticBenchmarkPanel::onRunFullSuiteClicked);
-    connect(m_suite_cancel_button, &QPushButton::clicked,
-            this, &DiagnosticBenchmarkPanel::onCancelSuiteClicked);
-    connect(m_suite_skip_button, &QPushButton::clicked,
-            this, &DiagnosticBenchmarkPanel::onSkipStepClicked);
+    connect(m_suite_run_button,
+            &QPushButton::clicked,
+            this,
+            &DiagnosticBenchmarkPanel::onRunFullSuiteClicked);
+    connect(m_suite_cancel_button,
+            &QPushButton::clicked,
+            this,
+            &DiagnosticBenchmarkPanel::onCancelSuiteClicked);
+    connect(m_suite_skip_button,
+            &QPushButton::clicked,
+            this,
+            &DiagnosticBenchmarkPanel::onSkipStepClicked);
 
     return group;
 }
@@ -590,8 +623,7 @@ QGroupBox* DiagnosticBenchmarkPanel::createSuiteSection()
 // Section: Report
 // ============================================================================
 
-QGroupBox* DiagnosticBenchmarkPanel::createReportSection()
-{
+QGroupBox* DiagnosticBenchmarkPanel::createReportSection() {
     auto* group = new QGroupBox("Report Generation", this);
     auto* layout = new QVBoxLayout(group);
 
@@ -601,16 +633,18 @@ QGroupBox* DiagnosticBenchmarkPanel::createReportSection()
     return group;
 }
 
-void DiagnosticBenchmarkPanel::createReportInfoFields(QVBoxLayout* layout)
-{
+void DiagnosticBenchmarkPanel::createReportInfoFields(QVBoxLayout* layout) {
+    Q_ASSERT(m_report_technician_edit);
+    Q_ASSERT(m_report_ticket_edit);
     // Technician / Ticket row
     auto* info_row = new QHBoxLayout();
     info_row->addWidget(new QLabel("Technician:", this));
     m_report_technician_edit = new QLineEdit(this);
     m_report_technician_edit->setPlaceholderText("Name");
     m_report_technician_edit->setAccessibleName(QStringLiteral("Technician Name"));
-    m_report_technician_edit->setToolTip(QStringLiteral("Name of the technician generating the "
-                                                        "report"));
+    m_report_technician_edit->setToolTip(
+        QStringLiteral("Name of the technician generating the "
+                       "report"));
     info_row->addWidget(m_report_technician_edit);
 
     info_row->addSpacing(20);
@@ -633,8 +667,9 @@ void DiagnosticBenchmarkPanel::createReportInfoFields(QVBoxLayout* layout)
     layout->addLayout(notes_row);
 }
 
-void DiagnosticBenchmarkPanel::createReportExportButtons(QVBoxLayout* layout)
-{
+void DiagnosticBenchmarkPanel::createReportExportButtons(QVBoxLayout* layout) {
+    Q_ASSERT(m_report_html_button);
+    Q_ASSERT(m_report_json_button);
     auto* export_layout = new QHBoxLayout();
     export_layout->addStretch();
 
@@ -658,30 +693,28 @@ void DiagnosticBenchmarkPanel::createReportExportButtons(QVBoxLayout* layout)
 
     layout->addLayout(export_layout);
 
-    connect(m_report_html_button, &QPushButton::clicked,
-            this, &DiagnosticBenchmarkPanel::onGenerateReportClicked);
+    connect(m_report_html_button,
+            &QPushButton::clicked,
+            this,
+            &DiagnosticBenchmarkPanel::onGenerateReportClicked);
     connect(m_report_json_button, &QPushButton::clicked, this, [this]() {
-        const auto dir = QFileDialog::getExistingDirectory(
-            this, "Select Output Directory");
+        const auto dir = QFileDialog::getExistingDirectory(this, "Select Output Directory");
         if (!dir.isEmpty()) {
-            m_controller->generateReport(
-                dir,
-                m_report_technician_edit->text(),
-                m_report_ticket_edit->text(),
-                m_report_notes_edit->toPlainText(),
-                "json");
+            m_controller->generateReport(dir,
+                                         m_report_technician_edit->text(),
+                                         m_report_ticket_edit->text(),
+                                         m_report_notes_edit->toPlainText(),
+                                         "json");
         }
     });
     connect(m_report_csv_button, &QPushButton::clicked, this, [this]() {
-        const auto dir = QFileDialog::getExistingDirectory(
-            this, "Select Output Directory");
+        const auto dir = QFileDialog::getExistingDirectory(this, "Select Output Directory");
         if (!dir.isEmpty()) {
-            m_controller->generateReport(
-                dir,
-                m_report_technician_edit->text(),
-                m_report_ticket_edit->text(),
-                m_report_notes_edit->toPlainText(),
-                "csv");
+            m_controller->generateReport(dir,
+                                         m_report_technician_edit->text(),
+                                         m_report_ticket_edit->text(),
+                                         m_report_notes_edit->toPlainText(),
+                                         "csv");
         }
     });
 }
@@ -690,58 +723,86 @@ void DiagnosticBenchmarkPanel::createReportExportButtons(QVBoxLayout* layout)
 // Controller Signal Connections
 // ============================================================================
 
-void DiagnosticBenchmarkPanel::connectController()
-{
+void DiagnosticBenchmarkPanel::connectController() {
     Q_ASSERT(m_controller);
     // Hardware scan
-    connect(m_controller.get(), &DiagnosticController::hardwareScanComplete,
-            this, &DiagnosticBenchmarkPanel::onHardwareScanComplete);
+    connect(m_controller.get(),
+            &DiagnosticController::hardwareScanComplete,
+            this,
+            &DiagnosticBenchmarkPanel::onHardwareScanComplete);
 
     // SMART analysis
-    connect(m_controller.get(), &DiagnosticController::smartAnalysisComplete,
-            this, &DiagnosticBenchmarkPanel::onSmartAnalysisComplete);
+    connect(m_controller.get(),
+            &DiagnosticController::smartAnalysisComplete,
+            this,
+            &DiagnosticBenchmarkPanel::onSmartAnalysisComplete);
 
     // Benchmarks
-    connect(m_controller.get(), &DiagnosticController::cpuBenchmarkComplete,
-            this, &DiagnosticBenchmarkPanel::onCpuBenchmarkComplete);
-    connect(m_controller.get(), &DiagnosticController::diskBenchmarkComplete,
-            this, &DiagnosticBenchmarkPanel::onDiskBenchmarkComplete);
-    connect(m_controller.get(), &DiagnosticController::memoryBenchmarkComplete,
-            this, &DiagnosticBenchmarkPanel::onMemoryBenchmarkComplete);
+    connect(m_controller.get(),
+            &DiagnosticController::cpuBenchmarkComplete,
+            this,
+            &DiagnosticBenchmarkPanel::onCpuBenchmarkComplete);
+    connect(m_controller.get(),
+            &DiagnosticController::diskBenchmarkComplete,
+            this,
+            &DiagnosticBenchmarkPanel::onDiskBenchmarkComplete);
+    connect(m_controller.get(),
+            &DiagnosticController::memoryBenchmarkComplete,
+            this,
+            &DiagnosticBenchmarkPanel::onMemoryBenchmarkComplete);
 
     // Stress test
-    connect(m_controller.get(), &DiagnosticController::stressTestComplete,
-            this, &DiagnosticBenchmarkPanel::onStressTestComplete);
-    connect(m_controller.get(), &DiagnosticController::stressTestStatus,
-            this, &DiagnosticBenchmarkPanel::onStressTestStatus);
+    connect(m_controller.get(),
+            &DiagnosticController::stressTestComplete,
+            this,
+            &DiagnosticBenchmarkPanel::onStressTestComplete);
+    connect(m_controller.get(),
+            &DiagnosticController::stressTestStatus,
+            this,
+            &DiagnosticBenchmarkPanel::onStressTestStatus);
 
     // Suite
-    connect(m_controller.get(), &DiagnosticController::suiteStateChanged,
-            this, &DiagnosticBenchmarkPanel::onSuiteStateChanged);
-    connect(m_controller.get(), &DiagnosticController::suiteProgress,
-            this, &DiagnosticBenchmarkPanel::onSuiteProgress);
-    connect(m_controller.get(), &DiagnosticController::suiteComplete,
-            this, &DiagnosticBenchmarkPanel::onSuiteComplete);
+    connect(m_controller.get(),
+            &DiagnosticController::suiteStateChanged,
+            this,
+            &DiagnosticBenchmarkPanel::onSuiteStateChanged);
+    connect(m_controller.get(),
+            &DiagnosticController::suiteProgress,
+            this,
+            &DiagnosticBenchmarkPanel::onSuiteProgress);
+    connect(m_controller.get(),
+            &DiagnosticController::suiteComplete,
+            this,
+            &DiagnosticBenchmarkPanel::onSuiteComplete);
 
     // Thermal
-    connect(m_controller.get(), &DiagnosticController::thermalReadingsUpdated,
-            this, &DiagnosticBenchmarkPanel::onThermalReadingsUpdated);
+    connect(m_controller.get(),
+            &DiagnosticController::thermalReadingsUpdated,
+            this,
+            &DiagnosticBenchmarkPanel::onThermalReadingsUpdated);
 
     // Progress & errors
-    connect(m_controller.get(), &DiagnosticController::operationProgress,
-            this, &DiagnosticBenchmarkPanel::onOperationProgress);
-    connect(m_controller.get(), &DiagnosticController::errorOccurred,
-            this, &DiagnosticBenchmarkPanel::onErrorOccurred);
-    connect(m_controller.get(), &DiagnosticController::reportsGenerated,
-            this, &DiagnosticBenchmarkPanel::onReportsGenerated);
+    connect(m_controller.get(),
+            &DiagnosticController::operationProgress,
+            this,
+            &DiagnosticBenchmarkPanel::onOperationProgress);
+    connect(m_controller.get(),
+            &DiagnosticController::errorOccurred,
+            this,
+            &DiagnosticBenchmarkPanel::onErrorOccurred);
+    connect(m_controller.get(),
+            &DiagnosticController::reportsGenerated,
+            this,
+            &DiagnosticBenchmarkPanel::onReportsGenerated);
 }
 
 // ============================================================================
 // Helpers
 // ============================================================================
 
-void DiagnosticBenchmarkPanel::setOperationRunning(bool running)
-{
+void DiagnosticBenchmarkPanel::setOperationRunning(bool running) {
+    Q_ASSERT(m_hw_rescan_button);
+    Q_ASSERT(m_smart_rescan_button);
     m_operation_running = running;
 
     m_hw_rescan_button->setEnabled(!running);
@@ -763,34 +824,31 @@ void DiagnosticBenchmarkPanel::setOperationRunning(bool running)
     }
 }
 
-void DiagnosticBenchmarkPanel::logMessage(const QString& message)
-{
+void DiagnosticBenchmarkPanel::logMessage(const QString& message) {
     Q_ASSERT(!message.isEmpty());
     Q_EMIT logOutput(message);
 }
 
-QString DiagnosticBenchmarkPanel::formatBytes(uint64_t bytes)
-{
+QString DiagnosticBenchmarkPanel::formatBytes(uint64_t bytes) {
     return sak::formatBytes(bytes);
 }
 
-QString DiagnosticBenchmarkPanel::formatUptime(uint64_t seconds)
-{
-    const uint64_t days = seconds / 86400;
-    const uint64_t hours = (seconds % 86400) / 3600;
+QString DiagnosticBenchmarkPanel::formatUptime(uint64_t seconds) {
+    const uint64_t days = seconds / 86'400;
+    const uint64_t hours = (seconds % 86'400) / 3600;
     const uint64_t minutes = (seconds % 3600) / 60;
 
     if (days > 0) {
         return QString("%1 day%2, %3 hour%4")
-            .arg(days).arg(days != 1 ? "s" : "")
-            .arg(hours).arg(hours != 1 ? "s" : "");
+            .arg(days)
+            .arg(days != 1 ? "s" : "")
+            .arg(hours)
+            .arg(hours != 1 ? "s" : "");
     }
     if (hours > 0) {
-        return QString("%1 hour%2, %3 min")
-            .arg(hours).arg(hours != 1 ? "s" : "")
-            .arg(minutes);
+        return QString("%1 hour%2, %3 min").arg(hours).arg(hours != 1 ? "s" : "").arg(minutes);
     }
     return QString("%1 min").arg(minutes);
 }
 
-} // namespace sak
+}  // namespace sak

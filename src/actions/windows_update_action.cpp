@@ -5,6 +5,7 @@
 /// @brief Implements Windows Update checking and installation
 
 #include "sak/actions/windows_update_action.h"
+
 #include "sak/layout_constants.h"
 #include "sak/process_runner.h"
 
@@ -28,12 +29,9 @@ int queryPendingUpdateCount() {
     int count = proc.std_out.trimmed().toInt(&ok);
     return ok ? count : -1;
 }
-}
+}  // namespace
 
-WindowsUpdateAction::WindowsUpdateAction(QObject* parent)
-    : QuickAction(parent)
-{
-}
+WindowsUpdateAction::WindowsUpdateAction(QObject* parent) : QuickAction(parent) {}
 
 bool WindowsUpdateAction::isPSWindowsUpdateInstalled() {
     QString ps_cmd = "Get-Module -ListAvailable -Name PSWindowsUpdate";
@@ -64,7 +62,7 @@ void WindowsUpdateAction::checkForUpdates() {
     QString output = proc.std_out;
     QStringList lines = output.split('\n', Qt::SkipEmptyParts);
 
-    m_available_updates = lines.count() - 2; // Subtract header lines
+    m_available_updates = lines.count() - 2;  // Subtract header lines
 }
 
 void WindowsUpdateAction::installUpdates() {
@@ -106,16 +104,17 @@ void WindowsUpdateAction::scan() {
     if (output.contains("COUNT:")) {
         bool ok = false;
         count = output.mid(output.indexOf("COUNT:") + 6).trimmed().toInt(&ok);
-        if (!ok) count = -1;
+        if (!ok) {
+            count = -1;
+        }
     }
 
     ScanResult result;
     if (count >= 0) {
         result.applicable = true;
         result.files_count = count;
-        result.summary = count > 0
-            ? QString("Updates available: %1").arg(count)
-            : "Windows is up to date";
+        result.summary = count > 0 ? QString("Updates available: %1").arg(count)
+                                   : "Windows is up to date";
         result.details = "Run update to download and install available patches";
     } else {
         result.applicable = false;
@@ -147,13 +146,14 @@ void WindowsUpdateAction::execute() {
     QString accumulated_output;
     QString errors;
     int exit_code = 0;
-    if (!executeSearchUpdates(start_time, ps_script, accumulated_output, errors, exit_code)) return;
+    if (!executeSearchUpdates(start_time, ps_script, accumulated_output, errors, exit_code)) {
+        return;
+    }
 
     executeBuildReport(start_time, accumulated_output, errors, exit_code);
 }
 
-void WindowsUpdateAction::executeInitSession(const QDateTime& start_time, QString& ps_script)
-{
+void WindowsUpdateAction::executeInitSession(const QDateTime& start_time, QString& ps_script) {
     Q_UNUSED(start_time)
     Q_EMIT executionProgress("Initiating Windows Update scan...", 5);
 
@@ -164,115 +164,113 @@ void WindowsUpdateAction::executeInitSession(const QDateTime& start_time, QStrin
     ps_script = buildUpdateScanScript() + buildUpdateInstallScript();
 }
 
-QString WindowsUpdateAction::buildUpdateScanScript()
-{
-    return
-        "# Enterprise Windows Update using UsoClient\n"
-        "Write-Output 'Starting update scan via UsoClient...'; \n"
-        "$usoClient = Join-Path $env:SystemRoot 'System32\\UsoClient.exe'; \n"
-        "\n"
-        "# Step 1: Scan for updates\n"
-        "if (Test-Path $usoClient) { \n"
-        "  try { \n"
-        "    Start-Process -FilePath $usoClient -ArgumentList 'StartScan' -NoNewWindow -Wait; \n"
-        "    Write-Output 'Scan initiated'; \n"
-        "    Start-Sleep -Seconds 10; \n"
-        "  } catch { \n"
-        "    Write-Error \"Scan failed: $_\"; \n"
-        "    exit 1; \n"
-        "  } \n"
-        "} else { \n"
-        "  Write-Error 'UsoClient not found'; \n"
-        "  exit 1; \n"
-        "} \n"
-        "\n"
-        "# Check for available updates using Windows Update API\n"
-        "Write-Output 'Checking update status...'; \n"
-        "try { \n"
-        "  $updateSession = New-Object -ComObject Microsoft.Update.Session; \n"
-        "  $updateSearcher = $updateSession.CreateUpdateSearcher(); \n"
-        "  $searchResult = $updateSearcher.Search('IsInstalled=0 and Type=\'Software\' and "
-        "IsHidden=0'); \n"
-        "  $updateCount = $searchResult.Updates.Count; \n"
-        "  Write-Output \"Found $updateCount update(s)\"; \n"
-        "  \n"
-        "  if ($updateCount -eq 0) { \n"
-        "    Write-Output 'No updates available'; \n"
-        "    exit 0; \n"
-        "  } \n"
-        "  \n"
-        "  # List update titles\n"
-        "  foreach ($update in $searchResult.Updates) { \n"
-        "    Write-Output \"  - $($update.Title)\"; \n"
-        "  } \n"
-        "} catch { \n"
-        "  Write-Warning \"Could not query updates: $_\"; \n"
-        "  # Continue anyway - UsoClient will handle\n"
-        "} \n"
-        "\n";
+QString WindowsUpdateAction::buildUpdateScanScript() {
+    return "# Enterprise Windows Update using UsoClient\n"
+           "Write-Output 'Starting update scan via UsoClient...'; \n"
+           "$usoClient = Join-Path $env:SystemRoot 'System32\\UsoClient.exe'; \n"
+           "\n"
+           "# Step 1: Scan for updates\n"
+           "if (Test-Path $usoClient) { \n"
+           "  try { \n"
+           "    Start-Process -FilePath $usoClient -ArgumentList 'StartScan' -NoNewWindow -Wait; \n"
+           "    Write-Output 'Scan initiated'; \n"
+           "    Start-Sleep -Seconds 10; \n"
+           "  } catch { \n"
+           "    Write-Error \"Scan failed: $_\"; \n"
+           "    exit 1; \n"
+           "  } \n"
+           "} else { \n"
+           "  Write-Error 'UsoClient not found'; \n"
+           "  exit 1; \n"
+           "} \n"
+           "\n"
+           "# Check for available updates using Windows Update API\n"
+           "Write-Output 'Checking update status...'; \n"
+           "try { \n"
+           "  $updateSession = New-Object -ComObject Microsoft.Update.Session; \n"
+           "  $updateSearcher = $updateSession.CreateUpdateSearcher(); \n"
+           "  $searchResult = $updateSearcher.Search('IsInstalled=0 and Type=\'Software\' and "
+           "IsHidden=0'); \n"
+           "  $updateCount = $searchResult.Updates.Count; \n"
+           "  Write-Output \"Found $updateCount update(s)\"; \n"
+           "  \n"
+           "  if ($updateCount -eq 0) { \n"
+           "    Write-Output 'No updates available'; \n"
+           "    exit 0; \n"
+           "  } \n"
+           "  \n"
+           "  # List update titles\n"
+           "  foreach ($update in $searchResult.Updates) { \n"
+           "    Write-Output \"  - $($update.Title)\"; \n"
+           "  } \n"
+           "} catch { \n"
+           "  Write-Warning \"Could not query updates: $_\"; \n"
+           "  # Continue anyway - UsoClient will handle\n"
+           "} \n"
+           "\n";
 }
 
-QString WindowsUpdateAction::buildUpdateInstallScript()
-{
-    return
-        "# Step 2: Download updates\n"
-        "Write-Output 'Starting download via UsoClient...'; \n"
-        "try { \n"
-        "  Start-Process -FilePath $usoClient -ArgumentList 'StartDownload' -NoNewWindow -Wait; \n"
-        "  Write-Output 'Download initiated'; \n"
-        "  Start-Sleep -Seconds 15; \n"
-        "} catch { \n"
-        "  Write-Error \"Download failed: $_\"; \n"
-        "  exit 1; \n"
-        "} \n"
-        "\n"
-        "# Step 3: Install updates\n"
-        "Write-Output 'Starting installation via UsoClient...'; \n"
-        "try { \n"
-        "  Start-Process -FilePath $usoClient -ArgumentList 'StartInstall' -NoNewWindow -Wait; \n"
-        "  Write-Output 'Installation initiated'; \n"
-        "  Start-Sleep -Seconds 20; \n"
-        "} catch { \n"
-        "  Write-Error \"Installation failed: $_\"; \n"
-        "  exit 1; \n"
-        "} \n"
-        "\n"
-        "# Check if reboot required\n"
-        "$rebootRequired = $false; \n"
-        "try { \n"
-        "  $systemInfo = New-Object -ComObject Microsoft.Update.SystemInfo; \n"
-        "  $rebootRequired = $systemInfo.RebootRequired; \n"
-        "} catch { \n"
-        "  # Also check registry\n"
-        "  $regPath = 'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\WindowsUpdate\\Auto "
-        "Update\\RebootRequired'; \n"
-        "  if (Test-Path $regPath) { \n"
-        "    $rebootRequired = $true; \n"
-        "  } \n"
-        "} \n"
-        "\n"
-        "if ($rebootRequired) { \n"
-        "  Write-Output 'REBOOT_REQUIRED'; \n"
-        "} else { \n"
-        "  Write-Output 'Installation completed successfully'; \n"
-        "} \n"
-        "\n"
-        "exit 0";
+QString WindowsUpdateAction::buildUpdateInstallScript() {
+    return "# Step 2: Download updates\n"
+           "Write-Output 'Starting download via UsoClient...'; \n"
+           "try { \n"
+           "  Start-Process -FilePath $usoClient -ArgumentList 'StartDownload' -NoNewWindow -Wait; "
+           "\n"
+           "  Write-Output 'Download initiated'; \n"
+           "  Start-Sleep -Seconds 15; \n"
+           "} catch { \n"
+           "  Write-Error \"Download failed: $_\"; \n"
+           "  exit 1; \n"
+           "} \n"
+           "\n"
+           "# Step 3: Install updates\n"
+           "Write-Output 'Starting installation via UsoClient...'; \n"
+           "try { \n"
+           "  Start-Process -FilePath $usoClient -ArgumentList 'StartInstall' -NoNewWindow -Wait; "
+           "\n"
+           "  Write-Output 'Installation initiated'; \n"
+           "  Start-Sleep -Seconds 20; \n"
+           "} catch { \n"
+           "  Write-Error \"Installation failed: $_\"; \n"
+           "  exit 1; \n"
+           "} \n"
+           "\n"
+           "# Check if reboot required\n"
+           "$rebootRequired = $false; \n"
+           "try { \n"
+           "  $systemInfo = New-Object -ComObject Microsoft.Update.SystemInfo; \n"
+           "  $rebootRequired = $systemInfo.RebootRequired; \n"
+           "} catch { \n"
+           "  # Also check registry\n"
+           "  $regPath = 'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\WindowsUpdate\\Auto "
+           "Update\\RebootRequired'; \n"
+           "  if (Test-Path $regPath) { \n"
+           "    $rebootRequired = $true; \n"
+           "  } \n"
+           "} \n"
+           "\n"
+           "if ($rebootRequired) { \n"
+           "  Write-Output 'REBOOT_REQUIRED'; \n"
+           "} else { \n"
+           "  Write-Output 'Installation completed successfully'; \n"
+           "} \n"
+           "\n"
+           "exit 0";
 }
 
 bool WindowsUpdateAction::executeSearchUpdates(const QDateTime& start_time,
-                                                 const QString& ps_script,
-                                                 QString& accumulated_output,
-                                                 QString& errors,
-                                                 int& exit_code)
-{
+                                               const QString& ps_script,
+                                               QString& accumulated_output,
+                                               QString& errors,
+                                               int& exit_code) {
     Q_EMIT executionProgress("Scanning for updates...", 20);
     Q_EMIT executionProgress("Preparing download...", 35);
     Q_EMIT executionProgress("Downloading updates...", 50);
     Q_EMIT executionProgress("Installing updates...", 70);
 
-    ProcessResult ps = runPowerShell(ps_script, sak::kTimeoutSystemRepairMs, true, true,
-        [this]() { return isCancelled(); });
+    ProcessResult ps = runPowerShell(ps_script, sak::kTimeoutSystemRepairMs, true, true, [this]() {
+        return isCancelled();
+    });
 
     if (ps.cancelled) {
         emitCancelledResult(QStringLiteral("Windows Update cancelled"), start_time);
@@ -280,10 +278,9 @@ bool WindowsUpdateAction::executeSearchUpdates(const QDateTime& start_time,
     }
 
     if (ps.timed_out) {
-        emitFailedResult(
-            QStringLiteral("Operation timed out after 30 minutes"),
-            QString(),
-            start_time);
+        emitFailedResult(QStringLiteral("Operation timed out after 30 minutes"),
+                         QString(),
+                         start_time);
         return false;
     }
 
@@ -301,10 +298,9 @@ bool WindowsUpdateAction::executeSearchUpdates(const QDateTime& start_time,
 }
 
 void WindowsUpdateAction::executeBuildReport(const QDateTime& start_time,
-                                               const QString& accumulated_output,
-                                               const QString& errors,
-                                               int exit_code)
-{
+                                             const QString& accumulated_output,
+                                             const QString& errors,
+                                             int exit_code) {
     qint64 duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
 
     ExecutionResult result;
@@ -323,17 +319,18 @@ void WindowsUpdateAction::executeBuildReport(const QDateTime& start_time,
     if (exit_code != 0) {
         result.success = false;
         result.message = "Windows Update failed";
-        result.log = QString("Exit code: %1\n%2\nErrors:\n%3").arg(exit_code)
-            .arg(accumulated_output).arg(errors);
+        result.log = QString("Exit code: %1\n%2\nErrors:\n%3")
+                         .arg(exit_code)
+                         .arg(accumulated_output)
+                         .arg(errors);
         finishWithResult(result, ActionStatus::Failed);
         return;
     }
 
     result.success = true;
     bool reboot_required = accumulated_output.contains("REBOOT_REQUIRED", Qt::CaseInsensitive);
-    result.message = reboot_required ?
-        "Updates installed successfully - REBOOT REQUIRED" :
-        "Updates installed successfully";
+    result.message = reboot_required ? "Updates installed successfully - REBOOT REQUIRED"
+                                     : "Updates installed successfully";
     result.log = accumulated_output;
 
     int remaining = queryPendingUpdateCount();
@@ -351,4 +348,4 @@ void WindowsUpdateAction::executeBuildReport(const QDateTime& start_time,
     finishWithResult(result, ActionStatus::Success);
 }
 
-} // namespace sak
+}  // namespace sak

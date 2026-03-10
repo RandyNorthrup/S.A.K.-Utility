@@ -5,18 +5,19 @@
 
 #include "sak/quick_action.h"
 
-#include <QWidget>
+#include <QCheckBox>
+#include <QEvent>
 #include <QFrame>
 #include <QGroupBox>
-#include <QPushButton>
-#include <QLabel>
-#include <QTextEdit>
-#include <QLineEdit>
-#include <QCheckBox>
-#include <QScrollArea>
-#include <QVBoxLayout>
 #include <QHash>
-#include <QEvent>
+#include <QLabel>
+#include <QLineEdit>
+#include <QPushButton>
+#include <QScrollArea>
+#include <QTextEdit>
+#include <QVBoxLayout>
+#include <QWidget>
+
 #include <memory>
 #include <vector>
 
@@ -28,18 +29,18 @@ class LogToggleSwitch;
 
 /**
  * @brief Quick Actions Panel - One-click technician operations
- * 
+ *
  * Provides instant access to common maintenance, backup, and troubleshooting
  * tasks without complex wizards. Actions are organized into collapsible
  * categories with real-time scanning to show size estimates before execution.
- * 
+ *
  * Features:
  * - System Optimization (cleanup, startup management, performance)
  * - Quick Backups (QuickBooks, browsers, email, game saves)
  * - Maintenance Tasks (disk health, updates, system repair)
  * - Troubleshooting (reports, bloatware detection, diagnostics)
  * - Emergency Recovery (rapid backup, restore points, license export)
- * 
+ *
  * Thread-Safety: All UI operations on main thread, actions run on workers
  */
 class QuickActionsPanel : public QWidget {
@@ -190,8 +191,7 @@ private:
      * @param category Action category enum
      * @param title Category title text
      */
-    void showCategoryDialog(QuickAction::ActionCategory category,
-                            const QString& title);
+    void showCategoryDialog(QuickAction::ActionCategory category, const QString& title);
 
     /**
      * @brief Update an action card status label
@@ -291,4 +291,4 @@ private:
     QString m_last_output_path;
 };
 
-} // namespace sak
+}  // namespace sak

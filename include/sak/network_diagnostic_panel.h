@@ -122,8 +122,8 @@ private Q_SLOTS:
     // Firewall
     void onAuditFirewall();
     void onFirewallAuditComplete(QVector<sak::FirewallRule> rules,
-                                  QVector<sak::FirewallConflict> conflicts,
-                                  QVector<sak::FirewallGap> gaps);
+                                 QVector<sak::FirewallConflict> conflicts,
+                                 QVector<sak::FirewallGap> gaps);
 
     // Shares
     void onDiscoverShares();
@@ -193,6 +193,7 @@ private:
     void connectControllerDnsPortSignals();
     void connectControllerBandwidthSignals();
     void connectControllerWifiConnectionsFirewallSharesSignals();
+    void connectReportAndEthernetSignals();
     void connectFirewallFilterSignals();
 
     // ── Controller ──
@@ -203,135 +204,136 @@ private:
     // They are destroyed automatically when this panel is destroyed.
 
     // ── Adapter UI ──
-    QTableWidget* m_adapterTable  = nullptr;
-    QLabel* m_detailIdentity      = nullptr;  ///< Name / Description / MAC
-    QLabel* m_detailAddressing     = nullptr;  ///< IPv4 / IPv6
-    QLabel* m_detailGatewayDns    = nullptr;  ///< Gateways / DNS
-    QLabel* m_detailStatus        = nullptr;  ///< DHCP / Speed / Status
-    QPushButton* m_refreshBtn     = nullptr;
-    QPushButton* m_copyConfigBtn  = nullptr;
-    QPushButton* m_backupEthernetBtn  = nullptr;
+    QTableWidget* m_adapterTable = nullptr;
+    QLabel* m_detailIdentity = nullptr;    ///< Name / Description / MAC
+    QLabel* m_detailAddressing = nullptr;  ///< IPv4 / IPv6
+    QLabel* m_detailGatewayDns = nullptr;  ///< Gateways / DNS
+    QLabel* m_detailStatus = nullptr;      ///< DHCP / Speed / Status
+    QPushButton* m_refreshBtn = nullptr;
+    QPushButton* m_copyConfigBtn = nullptr;
+    QPushButton* m_backupEthernetBtn = nullptr;
     QPushButton* m_restoreEthernetBtn = nullptr;
 
     // ── Tool Tabs ──
     QTabWidget* m_toolTabs = nullptr;
 
     // ── Ping UI ──
-    QLineEdit* m_pingTarget       = nullptr;
-    QSpinBox* m_pingCount         = nullptr;
-    QSpinBox* m_pingTimeout       = nullptr;
-    QSpinBox* m_pingInterval      = nullptr;
-    QSpinBox* m_pingPacketSize    = nullptr;
-    QTableWidget* m_pingTable     = nullptr;
-    QLabel* m_pingStatsLabel      = nullptr;
-    QPushButton* m_pingStartBtn   = nullptr;
-    QPushButton* m_pingStopBtn    = nullptr;
+    QLineEdit* m_pingTarget = nullptr;
+    QSpinBox* m_pingCount = nullptr;
+    QSpinBox* m_pingTimeout = nullptr;
+    QSpinBox* m_pingInterval = nullptr;
+    QSpinBox* m_pingPacketSize = nullptr;
+    QTableWidget* m_pingTable = nullptr;
+    QLabel* m_pingStatsLabel = nullptr;
+    QPushButton* m_pingStartBtn = nullptr;
+    QPushButton* m_pingStopBtn = nullptr;
 
     // ── Traceroute UI ──
-    QLineEdit* m_traceTarget      = nullptr;
-    QSpinBox* m_traceMaxHops      = nullptr;
-    QTableWidget* m_traceTable    = nullptr;
-    QLabel* m_traceStatusLabel    = nullptr;
-    QPushButton* m_traceStartBtn  = nullptr;
-    QPushButton* m_traceStopBtn   = nullptr;
+    QLineEdit* m_traceTarget = nullptr;
+    QSpinBox* m_traceMaxHops = nullptr;
+    QTableWidget* m_traceTable = nullptr;
+    QLabel* m_traceStatusLabel = nullptr;
+    QPushButton* m_traceStartBtn = nullptr;
+    QPushButton* m_traceStopBtn = nullptr;
 
     // ── MTR UI ──
-    QLineEdit* m_mtrTarget        = nullptr;
-    QSpinBox* m_mtrCycles         = nullptr;
-    QTableWidget* m_mtrTable      = nullptr;
-    QLabel* m_mtrStatusLabel      = nullptr;
-    QPushButton* m_mtrStartBtn    = nullptr;
-    QPushButton* m_mtrStopBtn     = nullptr;
+    QLineEdit* m_mtrTarget = nullptr;
+    QSpinBox* m_mtrCycles = nullptr;
+    QTableWidget* m_mtrTable = nullptr;
+    QLabel* m_mtrStatusLabel = nullptr;
+    QPushButton* m_mtrStartBtn = nullptr;
+    QPushButton* m_mtrStopBtn = nullptr;
 
     // ── DNS UI ──
-    QLineEdit* m_dnsHostname      = nullptr;
-    QComboBox* m_dnsRecordType    = nullptr;
-    QComboBox* m_dnsServer        = nullptr;
-    QTableWidget* m_dnsTable      = nullptr;
-    QLabel* m_dnsStatusLabel      = nullptr;
-    QPushButton* m_dnsQueryBtn    = nullptr;  ///< Owned by layout hierarchy
-    QPushButton* m_dnsReverseBtn  = nullptr;  ///< Owned by layout hierarchy
-    QPushButton* m_dnsCompareBtn  = nullptr;  ///< Owned by layout hierarchy
-    QPushButton* m_dnsFlushBtn    = nullptr;  ///< Owned by layout hierarchy
+    QLineEdit* m_dnsHostname = nullptr;
+    QComboBox* m_dnsRecordType = nullptr;
+    QComboBox* m_dnsServer = nullptr;
+    QTableWidget* m_dnsTable = nullptr;
+    QLabel* m_dnsStatusLabel = nullptr;
+    QPushButton* m_dnsQueryBtn = nullptr;    ///< Owned by layout hierarchy
+    QPushButton* m_dnsReverseBtn = nullptr;  ///< Owned by layout hierarchy
+    QPushButton* m_dnsCompareBtn = nullptr;  ///< Owned by layout hierarchy
+    QPushButton* m_dnsFlushBtn = nullptr;    ///< Owned by layout hierarchy
 
     // ── Port Scanner UI ──
-    QLineEdit* m_portTarget       = nullptr;
-    QComboBox* m_portPreset       = nullptr;
-    QLineEdit* m_portCustomRange  = nullptr;
-    QSpinBox* m_portTimeout       = nullptr;
-    QSpinBox* m_portConcurrent    = nullptr;
-    QCheckBox* m_portBannerGrab   = nullptr;
-    QTableWidget* m_portTable     = nullptr;
-    QProgressBar* m_portProgress  = nullptr;
-    QLabel* m_portSummaryLabel    = nullptr;
-    QPushButton* m_portStartBtn   = nullptr;
-    QPushButton* m_portStopBtn    = nullptr;
+    QLineEdit* m_portTarget = nullptr;
+    QComboBox* m_portPreset = nullptr;
+    QLineEdit* m_portCustomRange = nullptr;
+    QSpinBox* m_portTimeout = nullptr;
+    QSpinBox* m_portConcurrent = nullptr;
+    QCheckBox* m_portBannerGrab = nullptr;
+    QTableWidget* m_portTable = nullptr;
+    QProgressBar* m_portProgress = nullptr;
+    QLabel* m_portSummaryLabel = nullptr;
+    QPushButton* m_portStartBtn = nullptr;
+    QPushButton* m_portStopBtn = nullptr;
 
     // ── Bandwidth UI ──
-    QLineEdit* m_bwServerAddr     = nullptr;
-    QSpinBox* m_bwPort            = nullptr;
-    QSpinBox* m_bwDuration        = nullptr;
-    QSpinBox* m_bwStreams         = nullptr;
-    QCheckBox* m_bwBidirectional  = nullptr;
-    QLabel* m_bwResultLabel       = nullptr;
-    QPushButton* m_bwTestBtn      = nullptr;
+    QLineEdit* m_bwServerAddr = nullptr;
+    QSpinBox* m_bwPort = nullptr;
+    QSpinBox* m_bwDuration = nullptr;
+    QSpinBox* m_bwStreams = nullptr;
+    QCheckBox* m_bwBidirectional = nullptr;
+    QLabel* m_bwResultLabel = nullptr;
+    QPushButton* m_bwTestBtn = nullptr;
     QPushButton* m_bwServerStartBtn = nullptr;
-    QPushButton* m_bwServerStopBtn  = nullptr;
-    QLabel* m_bwServerStatus      = nullptr;
-    QLabel* m_httpSpeedLabel      = nullptr;
-    QPushButton* m_httpSpeedBtn    = nullptr;  ///< Owned by layout hierarchy
+    QPushButton* m_bwServerStopBtn = nullptr;
+    QLabel* m_bwServerStatus = nullptr;
+    QLabel* m_httpSpeedLabel = nullptr;
+    QPushButton* m_httpSpeedBtn = nullptr;  ///< Owned by layout hierarchy
 
     // ── WiFi UI ──
-    QTableWidget* m_wifiTable     = nullptr;
-    QLabel* m_wifiChannelLabel    = nullptr;
-    QPushButton* m_wifiScanBtn    = nullptr;
-    QPushButton* m_wifiContBtn    = nullptr;
-    QPushButton* m_wifiStopBtn    = nullptr;
+    QTableWidget* m_wifiTable = nullptr;
+    QLabel* m_wifiChannelLabel = nullptr;
+    QPushButton* m_wifiScanBtn = nullptr;
+    QPushButton* m_wifiContBtn = nullptr;
+    QPushButton* m_wifiStopBtn = nullptr;
 
     // ── Connection UI ──
-    QTableWidget* m_connTable     = nullptr;
-    QCheckBox* m_connShowTcp      = nullptr;
-    QCheckBox* m_connShowUdp      = nullptr;
+    QTableWidget* m_connTable = nullptr;
+    QCheckBox* m_connShowTcp = nullptr;
+    QCheckBox* m_connShowUdp = nullptr;
     QLineEdit* m_connProcessFilter = nullptr;
-    QSpinBox* m_connRefreshRate   = nullptr;
-    QLabel* m_connSummaryLabel    = nullptr;
-    QPushButton* m_connStartBtn   = nullptr;
-    QPushButton* m_connStopBtn    = nullptr;
+    QSpinBox* m_connRefreshRate = nullptr;
+    QLabel* m_connSummaryLabel = nullptr;
+    QPushButton* m_connStartBtn = nullptr;
+    QPushButton* m_connStopBtn = nullptr;
 
     // ── Firewall UI ──
-    QTableWidget* m_fwRuleTable   = nullptr;
-    QLineEdit* m_fwSearchBox      = nullptr;
-    QComboBox* m_fwDirFilter      = nullptr;
-    QComboBox* m_fwActionFilter   = nullptr;
-    QLabel* m_fwSummaryLabel      = nullptr;
-    QPushButton* m_fwAuditBtn      = nullptr;  ///< Owned by layout hierarchy
-    QTextEdit* m_fwConflictText   = nullptr;
-    QTextEdit* m_fwGapText        = nullptr;
+    QTableWidget* m_fwRuleTable = nullptr;
+    QLineEdit* m_fwSearchBox = nullptr;
+    QComboBox* m_fwDirFilter = nullptr;
+    QComboBox* m_fwActionFilter = nullptr;
+    QLabel* m_fwSummaryLabel = nullptr;
+    QPushButton* m_fwAuditBtn = nullptr;  ///< Owned by layout hierarchy
+    QTextEdit* m_fwConflictText = nullptr;
+    QTextEdit* m_fwGapText = nullptr;
     QVector<FirewallRule> m_cachedFwRules;  ///< Cached for local filtering
 
     void filterFirewallRules();
+    void populateFirewallTable(const QVector<FirewallRule>& rules);
 
     // ── Shares UI ──
-    QLineEdit* m_shareHostname    = nullptr;
-    QTableWidget* m_shareTable    = nullptr;
+    QLineEdit* m_shareHostname = nullptr;
+    QTableWidget* m_shareTable = nullptr;
     QPushButton* m_shareDiscoverBtn = nullptr;  ///< Owned by layout hierarchy
 
     // ── LAN Transfer UI ──
-    QLineEdit* m_lanTarget        = nullptr;
-    QSpinBox* m_lanPort           = nullptr;
-    QSpinBox* m_lanDuration       = nullptr;
-    QSpinBox* m_lanBlockSize      = nullptr;
-    QLabel* m_lanResultLabel      = nullptr;
-    QPushButton* m_lanTestBtn     = nullptr;
+    QLineEdit* m_lanTarget = nullptr;
+    QSpinBox* m_lanPort = nullptr;
+    QSpinBox* m_lanDuration = nullptr;
+    QSpinBox* m_lanBlockSize = nullptr;
+    QLabel* m_lanResultLabel = nullptr;
+    QPushButton* m_lanTestBtn = nullptr;
     QPushButton* m_lanServerStartBtn = nullptr;
-    QPushButton* m_lanServerStopBtn  = nullptr;
-    QLabel* m_lanServerStatus     = nullptr;
+    QPushButton* m_lanServerStopBtn = nullptr;
+    QLabel* m_lanServerStatus = nullptr;
 
     // Cached data for UI
     QVector<NetworkAdapterInfo> m_adapters;
 };
 
-} // namespace sak
+}  // namespace sak
 
 static_assert(!std::is_copy_constructible_v<sak::NetworkDiagnosticPanel>,
-    "NetworkDiagnosticPanel must not be copyable.");
+              "NetworkDiagnosticPanel must not be copyable.");

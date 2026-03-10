@@ -3,17 +3,19 @@
 
 #pragma once
 
-#include "sak/quick_action.h"
 #include "sak/chocolatey_manager.h"
+#include "sak/quick_action.h"
+
 #include <QString>
 #include <QVector>
+
 #include <memory>
 
 namespace sak {
 
 /**
  * @brief Update All Apps Action
- * 
+ *
  * Updates all Chocolatey packages using existing ChocolateyManager.
  */
 class UpdateAllAppsAction : public QuickAction {
@@ -58,5 +60,4 @@ private:
     void buildUpdateReport(UpdateSummary& summary, qint64 duration_ms) const;
 };
 
-} // namespace sak
-
+}  // namespace sak

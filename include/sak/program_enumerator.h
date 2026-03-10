@@ -71,7 +71,8 @@ private:
     QVector<ProgramInfo> scanRegistryPrograms();
 
     /// @brief Scan a single registry hive's Uninstall key
-    QVector<ProgramInfo> scanRegistryHive(HKEY hive, const wchar_t* subkey,
+    QVector<ProgramInfo> scanRegistryHive(HKEY hive,
+                                          const wchar_t* subkey,
                                           ProgramInfo::Source source);
 
     /// @brief Read a single registry string value
@@ -96,6 +97,9 @@ private:
     /// @brief Deduplicate programs from multiple sources
     void deduplicatePrograms(QVector<ProgramInfo>& programs);
 
+    /// @brief Extract icons and calculate sizes for enumerated programs
+    [[nodiscard]] bool enrichWithIconsAndSizes(QVector<ProgramInfo>& programs);
+
 #ifdef Q_OS_WIN
     // Registry paths
     static constexpr const wchar_t* kUninstallKey64 =
@@ -113,8 +117,8 @@ private:
 // ── Compile-Time Invariants ─────────────────────────────────────────────────
 
 static_assert(std::is_base_of_v<QObject, ProgramEnumerator>,
-    "ProgramEnumerator must inherit QObject.");
+              "ProgramEnumerator must inherit QObject.");
 static_assert(!std::is_copy_constructible_v<ProgramEnumerator>,
-    "ProgramEnumerator must not be copy-constructible.");
+              "ProgramEnumerator must not be copy-constructible.");
 
-} // namespace sak
+}  // namespace sak

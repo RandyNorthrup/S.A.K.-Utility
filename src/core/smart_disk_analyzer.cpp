@@ -5,6 +5,7 @@
 /// @brief SMART disk health analysis implementation via bundled smartctl
 
 #include "sak/smart_disk_analyzer.h"
+
 #include "sak/bundled_tools_manager.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
@@ -33,46 +34,44 @@ namespace {
 struct SmartThreshold {
     uint8_t id;
     const char* name;
-    int64_t warning_raw;         ///< Raw value triggering a warning
-    int64_t critical_raw;        ///< Raw value triggering critical status
+    int64_t warning_raw;   ///< Raw value triggering a warning
+    int64_t critical_raw;  ///< Raw value triggering critical status
 };
 
 /// Key SATA attributes monitored for health assessment
 constexpr SmartThreshold kSataThresholds[] = {
-    {  5, "Reallocated_Sector_Ct",       1,     50},
-    { 10, "Spin_Retry_Count",            1,     10},
-    {187, "Reported_Uncorrect",          1,     10},
-    {188, "Command_Timeout",             5,     50},
-    {196, "Reallocated_Event_Count",     1,     50},
-    {197, "Current_Pending_Sector",      1,     10},
-    {198, "Offline_Uncorrectable",       1,     10},
-    {199, "UDMA_CRC_Error_Count",       10,    100},
+    {5, "Reallocated_Sector_Ct", 1, 50},
+    {10, "Spin_Retry_Count", 1, 10},
+    {187, "Reported_Uncorrect", 1, 10},
+    {188, "Command_Timeout", 5, 50},
+    {196, "Reallocated_Event_Count", 1, 50},
+    {197, "Current_Pending_Sector", 1, 10},
+    {198, "Offline_Uncorrectable", 1, 10},
+    {199, "UDMA_CRC_Error_Count", 10, 100},
 };
 
 /// @brief NVMe percentage_used threshold values
-constexpr uint8_t kNvmeWearWarningPercent  = 80;
+constexpr uint8_t kNvmeWearWarningPercent = 80;
 constexpr uint8_t kNvmeWearCriticalPercent = 95;
 constexpr uint32_t kNvmeMediaErrorWarning = 1;
 
-constexpr int kSmartctlTimeoutMs = 30000;  // 30 seconds per drive
+constexpr int kSmartctlTimeoutMs = 30'000;  // 30 seconds per drive
 
-} // anonymous namespace
+}  // anonymous namespace
 
 // ============================================================================
 // Construction
 // ============================================================================
 
-SmartDiskAnalyzer::SmartDiskAnalyzer(QObject* parent)
-    : QObject(parent)
-{
-}
+SmartDiskAnalyzer::SmartDiskAnalyzer(QObject* parent) : QObject(parent) {}
 
 // ============================================================================
 // Public API
 // ============================================================================
 
-void SmartDiskAnalyzer::analyzeAll()
-{
+void SmartDiskAnalyzer::analyzeAll() {
+    Q_ASSERT(!m_reports.empty());
+    Q_ASSERT(!m_reports.isEmpty());
     m_cancelled.store(false, std::memory_order_relaxed);
     m_reports.clear();
 
@@ -101,8 +100,10 @@ void SmartDiskAnalyzer::analyzeAll()
 
         const int percent = static_cast<int>((i * 100) / drives.size());
         Q_EMIT analysisProgress(percent,
-            QString("Analyzing drive %1 (%2 of %3)...")
-                .arg(drives[i]).arg(i + 1).arg(drives.size()));
+                                QString("Analyzing drive %1 (%2 of %3)...")
+                                    .arg(drives[i])
+                                    .arg(i + 1)
+                                    .arg(drives.size()));
 
         analyzeDrive(drives[i]);
     }
@@ -112,8 +113,7 @@ void SmartDiskAnalyzer::analyzeAll()
     logInfo("SMART analysis complete — {} report(s) generated", m_reports.size());
 }
 
-void SmartDiskAnalyzer::analyzeDrive(uint32_t disk_number)
-{
+void SmartDiskAnalyzer::analyzeDrive(uint32_t disk_number) {
     const QByteArray json_data = runSmartctl(disk_number);
     if (json_data.isEmpty()) {
         Q_EMIT errorOccurred(
@@ -132,14 +132,12 @@ void SmartDiskAnalyzer::analyzeDrive(uint32_t disk_number)
     Q_EMIT driveAnalyzed(report);
 }
 
-void SmartDiskAnalyzer::cancel()
-{
+void SmartDiskAnalyzer::cancel() {
     m_cancelled.store(true, std::memory_order_relaxed);
     logInfo("SMART analysis cancellation requested");
 }
 
-bool SmartDiskAnalyzer::isSmartctlAvailable() const
-{
+bool SmartDiskAnalyzer::isSmartctlAvailable() const {
     const QString path = resolveSmartctlPath();
     if (path.isEmpty()) {
         return false;
@@ -157,8 +155,7 @@ bool SmartDiskAnalyzer::isSmartctlAvailable() const
 // Private Implementation
 // ============================================================================
 
-QString SmartDiskAnalyzer::resolveSmartctlPath() const
-{
+QString SmartDiskAnalyzer::resolveSmartctlPath() const {
     auto& tools = BundledToolsManager::instance();
 
     // Try the dedicated smartmontools category first
@@ -175,8 +172,7 @@ QString SmartDiskAnalyzer::resolveSmartctlPath() const
     return {};
 }
 
-QByteArray SmartDiskAnalyzer::runSmartctl(uint32_t disk_number)
-{
+QByteArray SmartDiskAnalyzer::runSmartctl(uint32_t disk_number) {
     const QString smartctl_path = resolveSmartctlPath();
     if (smartctl_path.isEmpty()) {
         return {};
@@ -187,11 +183,10 @@ QByteArray SmartDiskAnalyzer::runSmartctl(uint32_t disk_number)
     // Request all SMART info in JSON format
     QProcess proc;
     proc.setProcessChannelMode(QProcess::SeparateChannels);
-    proc.start(smartctl_path, {
-        "-a",           // All SMART info
-        "--json=c",     // Compact JSON output
-        device_path
-    });
+    proc.start(smartctl_path,
+               {"-a",        // All SMART info
+                "--json=c",  // Compact JSON output
+                device_path});
 
     if (!proc.waitForStarted(sak::kTimeoutProcessStartMs)) {
         logError("smartctl failed to start for drive {}", disk_number);
@@ -217,17 +212,17 @@ QByteArray SmartDiskAnalyzer::runSmartctl(uint32_t disk_number)
     if (exit_code & 0x07) {
         const QString stderr_text = QString::fromUtf8(proc.readAllStandardError());
         logError("smartctl failed for drive {} (exit {}): {}",
-                 disk_number, exit_code, stderr_text.toStdString());
+                 disk_number,
+                 exit_code,
+                 stderr_text.toStdString());
         return {};
     }
 
     return proc.readAllStandardOutput();
 }
 
-SmartReport SmartDiskAnalyzer::parseSmartctlOutput(
-    const QByteArray& json_data,
-    uint32_t disk_number)
-{
+SmartReport SmartDiskAnalyzer::parseSmartctlOutput(const QByteArray& json_data,
+                                                   uint32_t disk_number) {
     SmartReport report;
     report.device_path = QString("\\\\.\\PhysicalDrive%1").arg(disk_number);
 
@@ -235,7 +230,8 @@ SmartReport SmartDiskAnalyzer::parseSmartctlOutput(
     const QJsonDocument doc = QJsonDocument::fromJson(json_data, &parse_error);
     if (parse_error.error != QJsonParseError::NoError) {
         logError("Failed to parse smartctl JSON for drive {}: {}",
-                 disk_number, parse_error.errorString().toStdString());
+                 disk_number,
+                 parse_error.errorString().toStdString());
         return report;
     }
 
@@ -297,10 +293,8 @@ SmartReport SmartDiskAnalyzer::parseSmartctlOutput(
     return report;
 }
 
-void SmartDiskAnalyzer::parseSataAttributes(
-    const QJsonObject& ata_smart_obj,
-    SmartReport& report)
-{
+void SmartDiskAnalyzer::parseSataAttributes(const QJsonObject& ata_smart_obj, SmartReport& report) {
+    Q_ASSERT(!ata_smart_obj.isEmpty());
     const QJsonArray table = ata_smart_obj.value("table").toArray();
 
     report.attributes.reserve(table.size());
@@ -309,11 +303,11 @@ void SmartDiskAnalyzer::parseSataAttributes(
         const QJsonObject attr_obj = entry.toObject();
 
         SmartAttribute attr;
-        attr.id            = static_cast<uint8_t>(attr_obj.value("id").toInt());
-        attr.name          = attr_obj.value("name").toString();
+        attr.id = static_cast<uint8_t>(attr_obj.value("id").toInt());
+        attr.name = attr_obj.value("name").toString();
         attr.current_value = static_cast<uint8_t>(attr_obj.value("value").toInt());
-        attr.worst_value   = static_cast<uint8_t>(attr_obj.value("worst").toInt());
-        attr.threshold     = static_cast<uint8_t>(attr_obj.value("thresh").toInt());
+        attr.worst_value = static_cast<uint8_t>(attr_obj.value("worst").toInt());
+        attr.threshold = static_cast<uint8_t>(attr_obj.value("thresh").toInt());
 
         // Flags
         const auto flags = attr_obj.value("flags").toObject();
@@ -332,43 +326,43 @@ void SmartDiskAnalyzer::parseSataAttributes(
 
         // Extract key metrics
         switch (attr.id) {
-            case 5:   report.reallocated_sectors = attr.raw_value; break;
-            case 197: report.pending_sectors     = attr.raw_value; break;
-            default: break;
+        case 5:
+            report.reallocated_sectors = attr.raw_value;
+            break;
+        case 197:
+            report.pending_sectors = attr.raw_value;
+            break;
+        default:
+            break;
         }
     }
 }
 
-void SmartDiskAnalyzer::parseNvmeHealth(
-    const QJsonObject& nvme_obj,
-    SmartReport& report)
-{
+void SmartDiskAnalyzer::parseNvmeHealth(const QJsonObject& nvme_obj, SmartReport& report) {
+    Q_ASSERT(!nvme_obj.isEmpty());
     NvmeHealthInfo nvme;
 
-    nvme.percentage_used      = static_cast<uint8_t>(nvme_obj.value("percentage_used").toInt());
-    nvme.data_units_read      =
-        static_cast<uint64_t>(nvme_obj.value("data_units_read").toInteger());
-    nvme.data_units_written   =
+    nvme.percentage_used = static_cast<uint8_t>(nvme_obj.value("percentage_used").toInt());
+    nvme.data_units_read = static_cast<uint64_t>(nvme_obj.value("data_units_read").toInteger());
+    nvme.data_units_written =
         static_cast<uint64_t>(nvme_obj.value("data_units_written").toInteger());
-    nvme.power_on_hours       = static_cast<uint64_t>(nvme_obj.value("power_on_hours").toInteger());
-    nvme.unsafe_shutdowns     = static_cast<uint32_t>(nvme_obj.value("unsafe_shutdowns").toInt());
-    nvme.media_errors         = static_cast<uint32_t>(nvme_obj.value("media_errors").toInt());
-    nvme.error_log_entries    =
-        static_cast<uint32_t>(nvme_obj.value("num_err_log_entries").toInt());
-    nvme.temperature          = static_cast<int16_t>(nvme_obj.value("temperature").toInt());
-    nvme.available_spare      = static_cast<uint16_t>(nvme_obj.value("available_spare").toInt());
+    nvme.power_on_hours = static_cast<uint64_t>(nvme_obj.value("power_on_hours").toInteger());
+    nvme.unsafe_shutdowns = static_cast<uint32_t>(nvme_obj.value("unsafe_shutdowns").toInt());
+    nvme.media_errors = static_cast<uint32_t>(nvme_obj.value("media_errors").toInt());
+    nvme.error_log_entries = static_cast<uint32_t>(nvme_obj.value("num_err_log_entries").toInt());
+    nvme.temperature = static_cast<int16_t>(nvme_obj.value("temperature").toInt());
+    nvme.available_spare = static_cast<uint16_t>(nvme_obj.value("available_spare").toInt());
     nvme.available_spare_threshold =
         static_cast<uint16_t>(nvme_obj.value("available_spare_threshold").toInt());
 
-    report.nvme_health         = nvme;
-    report.wear_level_percent  = static_cast<double>(nvme.percentage_used);
-    report.power_on_hours      = static_cast<int64_t>(nvme.power_on_hours);
+    report.nvme_health = nvme;
+    report.wear_level_percent = static_cast<double>(nvme.percentage_used);
+    report.power_on_hours = static_cast<int64_t>(nvme.power_on_hours);
     report.temperature_celsius = static_cast<double>(nvme.temperature);
 }
 
 SmartHealthStatus SmartDiskAnalyzer::checkAttributeAgainstThresholds(
-    const SmartAttribute& attr) const
-{
+    const SmartAttribute& attr) const {
     for (const auto& thresh : kSataThresholds) {
         if (attr.id != thresh.id) {
             continue;
@@ -383,8 +377,7 @@ SmartHealthStatus SmartDiskAnalyzer::checkAttributeAgainstThresholds(
     return SmartHealthStatus::Healthy;
 }
 
-void SmartDiskAnalyzer::assessHealth(SmartReport& report)
-{
+void SmartDiskAnalyzer::assessHealth(SmartReport& report) {
     // Default to Healthy
     report.overall_health = SmartHealthStatus::Healthy;
 
@@ -419,8 +412,7 @@ void SmartDiskAnalyzer::assessHealth(SmartReport& report)
     if (report.nvme_health.has_value()) {
         const auto& nvme = report.nvme_health.value();
 
-        if (nvme.percentage_used >= kNvmeWearCriticalPercent ||
-            nvme.media_errors > 0 ||
+        if (nvme.percentage_used >= kNvmeWearCriticalPercent || nvme.media_errors > 0 ||
             nvme.available_spare < nvme.available_spare_threshold) {
             report.overall_health = SmartHealthStatus::Critical;
             return;
@@ -432,8 +424,7 @@ void SmartDiskAnalyzer::assessHealth(SmartReport& report)
     }
 }
 
-void SmartDiskAnalyzer::generateSataRecommendations(SmartReport& report)
-{
+void SmartDiskAnalyzer::generateSataRecommendations(SmartReport& report) {
     if (report.reallocated_sectors > 0) {
         report.warnings.append(
             QString("Reallocated sectors detected: %1").arg(report.reallocated_sectors));
@@ -458,16 +449,13 @@ void SmartDiskAnalyzer::generateSataRecommendations(SmartReport& report)
     // Check for CRC errors (attribute 199)
     for (const auto& attr : report.attributes) {
         if (attr.id == 199 && attr.raw_value > 0) {
-            report.warnings.append(
-                QString("UDMA CRC errors detected: %1").arg(attr.raw_value));
-            report.recommendations.append(
-                "Check SATA cable connections or replace SATA cable");
+            report.warnings.append(QString("UDMA CRC errors detected: %1").arg(attr.raw_value));
+            report.recommendations.append("Check SATA cable connections or replace SATA cable");
         }
     }
 }
 
-void SmartDiskAnalyzer::generateNvmeRecommendations(SmartReport& report)
-{
+void SmartDiskAnalyzer::generateNvmeRecommendations(SmartReport& report) {
     if (!report.nvme_health.has_value()) {
         return;
     }
@@ -476,20 +464,16 @@ void SmartDiskAnalyzer::generateNvmeRecommendations(SmartReport& report)
 
     if (nvme.percentage_used >= kNvmeWearCriticalPercent) {
         report.warnings.append(
-            QString("NVMe drive endurance at %1% — nearing end of life")
-                .arg(nvme.percentage_used));
+            QString("NVMe drive endurance at %1% — nearing end of life").arg(nvme.percentage_used));
         report.recommendations.append(
             "CRITICAL: Plan drive replacement — SSD endurance nearly exhausted");
     } else if (nvme.percentage_used >= kNvmeWearWarningPercent) {
-        report.warnings.append(
-            QString("NVMe drive endurance at %1%").arg(nvme.percentage_used));
-        report.recommendations.append(
-            "Consider planning drive replacement in the near future");
+        report.warnings.append(QString("NVMe drive endurance at %1%").arg(nvme.percentage_used));
+        report.recommendations.append("Consider planning drive replacement in the near future");
     }
 
     if (nvme.media_errors > 0) {
-        report.warnings.append(
-            QString("NVMe media errors detected: %1").arg(nvme.media_errors));
+        report.warnings.append(QString("NVMe media errors detected: %1").arg(nvme.media_errors));
         report.recommendations.append(
             "Media errors indicate flash cell failure — back up data and monitor closely");
     }
@@ -503,23 +487,19 @@ void SmartDiskAnalyzer::generateNvmeRecommendations(SmartReport& report)
 
     if (nvme.available_spare < nvme.available_spare_threshold) {
         report.warnings.append("Available spare NVM below threshold");
-        report.recommendations.append(
-            "Drive spare capacity is low — plan for replacement");
+        report.recommendations.append("Drive spare capacity is low — plan for replacement");
     }
 }
 
-void SmartDiskAnalyzer::generateRecommendations(SmartReport& report)
-{
+void SmartDiskAnalyzer::generateRecommendations(SmartReport& report) {
     report.warnings.clear();
     report.recommendations.clear();
 
     // ── Temperature warnings ────────────────────────────────────
     if (report.temperature_celsius > 55.0) {
-        report.warnings.append(
-            QString("Drive temperature is elevated (%1°C)")
-                .arg(report.temperature_celsius, 0, 'f', 0));
-        report.recommendations.append(
-            "Check case airflow and ensure drive has adequate cooling");
+        report.warnings.append(QString("Drive temperature is elevated (%1°C)")
+                                   .arg(report.temperature_celsius, 0, 'f', 0));
+        report.recommendations.append("Check case airflow and ensure drive has adequate cooling");
     }
 
     // ── SATA-specific recommendations ───────────────────────────
@@ -529,11 +509,10 @@ void SmartDiskAnalyzer::generateRecommendations(SmartReport& report)
     generateNvmeRecommendations(report);
 
     // ── Power-on hours advisory ─────────────────────────────────
-    if (report.power_on_hours > 50000) {
-        report.warnings.append(
-            QString("Drive has %1 power-on hours (~%2 years)")
-                .arg(report.power_on_hours)
-                .arg(report.power_on_hours / 8760));
+    if (report.power_on_hours > 50'000) {
+        report.warnings.append(QString("Drive has %1 power-on hours (~%2 years)")
+                                   .arg(report.power_on_hours)
+                                   .arg(report.power_on_hours / 8760));
         report.recommendations.append(
             "High usage drive — consider proactive replacement for critical workloads");
     }
@@ -552,22 +531,20 @@ void SmartDiskAnalyzer::generateRecommendations(SmartReport& report)
     }
 }
 
-QVector<uint32_t> SmartDiskAnalyzer::enumerateDrives()
-{
+QVector<uint32_t> SmartDiskAnalyzer::enumerateDrives() {
     QVector<uint32_t> drives;
 
 #ifdef SAK_PLATFORM_WINDOWS
     // Probe PhysicalDrive0..15
     for (uint32_t i = 0; i < 16; ++i) {
         const QString dev_path = QString("\\\\.\\PhysicalDrive%1").arg(i);
-        HANDLE h = CreateFileW(
-            reinterpret_cast<LPCWSTR>(dev_path.utf16()),
-            0,  // No read/write access needed — just checking existence
-            FILE_SHARE_READ | FILE_SHARE_WRITE,
-            nullptr,
-            OPEN_EXISTING,
-            0,
-            nullptr);
+        HANDLE h = CreateFileW(reinterpret_cast<LPCWSTR>(dev_path.utf16()),
+                               0,  // No read/write access needed — just checking existence
+                               FILE_SHARE_READ | FILE_SHARE_WRITE,
+                               nullptr,
+                               OPEN_EXISTING,
+                               0,
+                               nullptr);
 
         if (h != INVALID_HANDLE_VALUE) {
             CloseHandle(h);
@@ -580,4 +557,4 @@ QVector<uint32_t> SmartDiskAnalyzer::enumerateDrives()
     return drives;
 }
 
-} // namespace sak
+}  // namespace sak

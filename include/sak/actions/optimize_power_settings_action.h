@@ -4,6 +4,7 @@
 #pragma once
 
 #include "sak/quick_action.h"
+
 #include <QDateTime>
 #include <QString>
 
@@ -11,7 +12,7 @@ namespace sak {
 
 /**
  * @brief Optimize Power Settings Action
- * 
+ *
  * Switches Windows power plan to High Performance mode for maximum performance.
  */
 class OptimizePowerSettingsAction : public QuickAction {
@@ -36,7 +37,7 @@ private:
         QString name;
         bool isActive;
     };
-    
+
     QVector<PowerPlan> enumeratePowerPlans();
     PowerPlan queryPowerPlan(const QString& guid);
     PowerPlan getActivePowerPlan();
@@ -46,17 +47,18 @@ private:
 
     /// @brief Activate the High Performance plan, verify, and append status to report
     bool activateHighPerformancePlan(const PowerPlan& high_perf_plan,
-                                      const QString& current_plan_name,
-                                      QString& report);
+                                     const QString& current_plan_name,
+                                     QString& report);
     /// @brief Build the report header listing current and available power plans
     QString buildPowerPlanListReport(const PowerPlan& current_plan,
-                                      const QVector<PowerPlan>& all_plans) const;
+                                     const QVector<PowerPlan>& all_plans) const;
     /// @brief Create and emit the final execution result with recommendations
-    void finalizePowerOptimizationResult(const QDateTime& start_time, const QString& report,
-                                          const QString& previous_plan_name,
-                                          const QString& high_perf_guid,
-                                          bool already_optimized, bool success);
+    void finalizePowerOptimizationResult(const QDateTime& start_time,
+                                         const QString& report,
+                                         const QString& previous_plan_name,
+                                         const QString& high_perf_guid,
+                                         bool already_optimized,
+                                         bool success);
 };
 
-} // namespace sak
-
+}  // namespace sak

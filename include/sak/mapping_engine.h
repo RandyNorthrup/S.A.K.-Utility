@@ -3,13 +3,13 @@
 
 #pragma once
 
-#include <QObject>
+#include "sak/orchestration_types.h"
+
 #include <QMap>
+#include <QObject>
 #include <QSet>
 #include <QString>
 #include <QVector>
-
-#include "sak/orchestration_types.h"
 
 namespace sak {
 
@@ -86,4 +86,4 @@ private:
     int m_roundRobinIndex{0};
 };
 
-} // namespace sak
+}  // namespace sak

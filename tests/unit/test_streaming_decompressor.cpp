@@ -4,13 +4,12 @@
 /// @file test_streaming_decompressor.cpp
 /// @brief Unit tests for StreamingDecompressor and DecompressorFactory lifecycle
 
-#include <QtTest/QtTest>
-
 #include "sak/decompressor_factory.h"
 #include "sak/streaming_decompressor.h"
 
-#include <QTemporaryDir>
 #include <QFile>
+#include <QTemporaryDir>
+#include <QtTest/QtTest>
 
 class StreamingDecompressorTests : public QObject {
     Q_OBJECT
@@ -47,8 +46,7 @@ private:
     QString filePath(const QString& name) const;
 };
 
-void StreamingDecompressorTests::initTestCase()
-{
+void StreamingDecompressorTests::initTestCase() {
     QVERIFY(m_tempDir.isValid());
 
     // Write files with correct magic bytes but invalid compressed content
@@ -80,16 +78,14 @@ void StreamingDecompressorTests::initTestCase()
     writeFile("test.xz", xzData);
 }
 
-void StreamingDecompressorTests::writeFile(const QString& name, const QByteArray& content)
-{
+void StreamingDecompressorTests::writeFile(const QString& name, const QByteArray& content) {
     QFile f(m_tempDir.filePath(name));
     QVERIFY(f.open(QIODevice::WriteOnly));
     f.write(content);
     f.close();
 }
 
-QString StreamingDecompressorTests::filePath(const QString& name) const
-{
+QString StreamingDecompressorTests::filePath(const QString& name) const {
     return m_tempDir.filePath(name);
 }
 
@@ -97,8 +93,7 @@ QString StreamingDecompressorTests::filePath(const QString& name) const
 // Factory + Open/Close Lifecycle
 // ============================================================================
 
-void StreamingDecompressorTests::gzipDecompressor_openClose()
-{
+void StreamingDecompressorTests::gzipDecompressor_openClose() {
     auto decomp = sak::DecompressorFactory::create(filePath("test.gz"));
     QVERIFY(decomp != nullptr);
 
@@ -111,8 +106,7 @@ void StreamingDecompressorTests::gzipDecompressor_openClose()
     }
 }
 
-void StreamingDecompressorTests::bzip2Decompressor_openClose()
-{
+void StreamingDecompressorTests::bzip2Decompressor_openClose() {
     auto decomp = sak::DecompressorFactory::create(filePath("test.bz2"));
     QVERIFY(decomp != nullptr);
 
@@ -123,8 +117,7 @@ void StreamingDecompressorTests::bzip2Decompressor_openClose()
     }
 }
 
-void StreamingDecompressorTests::xzDecompressor_openClose()
-{
+void StreamingDecompressorTests::xzDecompressor_openClose() {
     auto decomp = sak::DecompressorFactory::create(filePath("test.xz"));
     QVERIFY(decomp != nullptr);
 
@@ -139,8 +132,7 @@ void StreamingDecompressorTests::xzDecompressor_openClose()
 // Open Non-Existent
 // ============================================================================
 
-void StreamingDecompressorTests::open_nonExistentFile()
-{
+void StreamingDecompressorTests::open_nonExistentFile() {
     auto decomp = sak::DecompressorFactory::create(filePath("test.gz"));
     if (decomp) {
         bool opened = decomp->open(filePath("nonexistent_file.gz"));
@@ -152,8 +144,7 @@ void StreamingDecompressorTests::open_nonExistentFile()
 // Read Before Open
 // ============================================================================
 
-void StreamingDecompressorTests::read_beforeOpen()
-{
+void StreamingDecompressorTests::read_beforeOpen() {
     auto decomp = sak::DecompressorFactory::create(filePath("test.gz"));
     if (decomp) {
         char buffer[64];
@@ -166,22 +157,19 @@ void StreamingDecompressorTests::read_beforeOpen()
 // Format Names
 // ============================================================================
 
-void StreamingDecompressorTests::gzip_formatName()
-{
+void StreamingDecompressorTests::gzip_formatName() {
     auto decomp = sak::DecompressorFactory::create(filePath("test.gz"));
     QVERIFY(decomp != nullptr);
     QCOMPARE(decomp->formatName().toLower(), QString("gzip"));
 }
 
-void StreamingDecompressorTests::bzip2_formatName()
-{
+void StreamingDecompressorTests::bzip2_formatName() {
     auto decomp = sak::DecompressorFactory::create(filePath("test.bz2"));
     QVERIFY(decomp != nullptr);
     QCOMPARE(decomp->formatName().toLower(), QString("bzip2"));
 }
 
-void StreamingDecompressorTests::xz_formatName()
-{
+void StreamingDecompressorTests::xz_formatName() {
     auto decomp = sak::DecompressorFactory::create(filePath("test.xz"));
     QVERIFY(decomp != nullptr);
     QCOMPARE(decomp->formatName().toLower(), QString("xz"));
@@ -191,8 +179,7 @@ void StreamingDecompressorTests::xz_formatName()
 // Compressed Bytes Tracking
 // ============================================================================
 
-void StreamingDecompressorTests::compressedBytesRead_initiallyZero()
-{
+void StreamingDecompressorTests::compressedBytesRead_initiallyZero() {
     auto decomp = sak::DecompressorFactory::create(filePath("test.gz"));
     if (decomp) {
         QCOMPARE(decomp->compressedBytesRead(), qint64{0});
@@ -204,8 +191,7 @@ void StreamingDecompressorTests::compressedBytesRead_initiallyZero()
 // atEnd
 // ============================================================================
 
-void StreamingDecompressorTests::atEnd_beforeOpen()
-{
+void StreamingDecompressorTests::atEnd_beforeOpen() {
     auto decomp = sak::DecompressorFactory::create(filePath("test.gz"));
     if (decomp) {
         // Before open, behavior is implementation-dependent

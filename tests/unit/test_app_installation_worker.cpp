@@ -17,10 +17,10 @@ class AppInstallationWorkerTests : public QObject {
 
 private:
     /// Create a MigrationReport with configurable entries for testing
-    static std::shared_ptr<sak::MigrationReport> createTestReport(
-        int selectedAvailable, int selectedUnavailable,
-        int unselected, int noPackage)
-    {
+    static std::shared_ptr<sak::MigrationReport> createTestReport(int selectedAvailable,
+                                                                  int selectedUnavailable,
+                                                                  int unselected,
+                                                                  int noPackage) {
         auto report = std::make_shared<sak::MigrationReport>();
 
         // Selected + available + has choco package → should become jobs
@@ -72,8 +72,7 @@ private:
 
 private Q_SLOTS:
     /// startMigration should only create jobs for selected+available entries with a choco package
-    void jobFilteringOnlySelectedAvailable()
-    {
+    void jobFilteringOnlySelectedAvailable() {
         auto chocoMgr = std::make_shared<sak::ChocolateyManager>();
         sak::AppInstallationWorker worker(chocoMgr);
 
@@ -98,8 +97,7 @@ private Q_SLOTS:
     }
 
     /// startMigration with no valid entries should return 0
-    void noValidEntriesReturnsZero()
-    {
+    void noValidEntriesReturnsZero() {
         auto chocoMgr = std::make_shared<sak::ChocolateyManager>();
         sak::AppInstallationWorker worker(chocoMgr);
 
@@ -109,8 +107,7 @@ private Q_SLOTS:
     }
 
     /// Initial state should be not-running, not-paused
-    void initialStateCorrect()
-    {
+    void initialStateCorrect() {
         auto chocoMgr = std::make_shared<sak::ChocolateyManager>();
         sak::AppInstallationWorker worker(chocoMgr);
 
@@ -125,8 +122,7 @@ private Q_SLOTS:
     }
 
     /// getStats should reflect job counts correctly after startMigration
-    void statsReflectJobCounts()
-    {
+    void statsReflectJobCounts() {
         auto chocoMgr = std::make_shared<sak::ChocolateyManager>();
         sak::AppInstallationWorker worker(chocoMgr);
 
@@ -142,8 +138,7 @@ private Q_SLOTS:
     }
 
     /// cancel should emit migrationCancelled and eventually stop the worker
-    void cancelMarksJobsCancelled()
-    {
+    void cancelMarksJobsCancelled() {
         auto chocoMgr = std::make_shared<sak::ChocolateyManager>();
         sak::AppInstallationWorker worker(chocoMgr);
 
@@ -161,8 +156,7 @@ private Q_SLOTS:
     }
 
     /// pause/resume toggle state correctly
-    void pauseResumeToggles()
-    {
+    void pauseResumeToggles() {
         auto chocoMgr = std::make_shared<sak::ChocolateyManager>();
         sak::AppInstallationWorker worker(chocoMgr);
 
@@ -184,8 +178,7 @@ private Q_SLOTS:
     }
 
     /// Version lock fields should be captured in jobs
-    void versionLockCaptured()
-    {
+    void versionLockCaptured() {
         auto chocoMgr = std::make_shared<sak::ChocolateyManager>();
         sak::AppInstallationWorker worker(chocoMgr);
 
@@ -211,8 +204,7 @@ private Q_SLOTS:
     }
 
     /// migrationStarted signal should be emitted with correct count
-    void migrationStartedSignalEmitted()
-    {
+    void migrationStartedSignalEmitted() {
         auto chocoMgr = std::make_shared<sak::ChocolateyManager>();
         sak::AppInstallationWorker worker(chocoMgr);
 

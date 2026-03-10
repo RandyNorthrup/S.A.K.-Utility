@@ -1,0 +1,46 @@
+// S.A.K. Utility — cppcheck suppressions
+// Only suppress verified false positives. Every suppression must have a comment.
+//
+// Format: <check-id>:<filename>:<line>
+//     or: <check-id>    (global suppression)
+
+// ---------------------------------------------------------------------------
+// cppcheck tool limitations (not real findings)
+// ---------------------------------------------------------------------------
+
+// Standard library headers are not available to cppcheck.
+// These are information messages, not bugs.
+missingInclude
+missingIncludeSystem
+
+// cppcheck cannot determine 'unused' across translation units without a full
+// compilation database. Single-file analysis reports nearly every function
+// as unused. Trust the linker for dead-code detection instead.
+unusedFunction
+
+// Suppress noise from suppression-file mechanics.
+unmatchedSuppression
+
+// ---------------------------------------------------------------------------
+// Qt framework false positives
+// ---------------------------------------------------------------------------
+
+// Qt's implicit sharing (QList, QString, etc.) triggers passedByValue warnings
+// on types that are internally reference-counted and cheap to copy.
+// Only suppress in headers where Qt types are used in signal/slot signatures.
+passedByValue:*/include/sak/*.h
+
+// ---------------------------------------------------------------------------
+// Excluded directories (not under our control)
+// ---------------------------------------------------------------------------
+
+// Third-party code
+*:*/third_party/*
+*:*/3rdparty/*
+*:*/external/*
+
+// Build-generated files
+*:*/build/*
+*:*/moc_*.cpp
+*:*/qrc_*.cpp
+*:*/ui_*.h

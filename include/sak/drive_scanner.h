@@ -3,12 +3,14 @@
 
 #pragma once
 
+#include <QList>
 #include <QObject>
 #include <QString>
-#include <QList>
 #include <QTimer>
-#include <memory>
+
 #include <atomic>
+#include <memory>
+
 #include <windows.h>
 
 namespace sak {
@@ -17,32 +19,32 @@ namespace sak {
  * @brief Information about a physical drive
  */
 struct DriveInfo {
-    QString devicePath;        // e.g., "\\.\PhysicalDrive1"
-    QString name;              // e.g., "Generic USB Flash Disk"
-    QString description;       // Additional info
-    qint64 size;              // Size in bytes
-    quint32 blockSize;        // Block size in bytes (usually 512 or 4096)
-    bool isSystem;            // True if contains Windows installation
-    bool isRemovable;         // True if removable media
-    bool isReadOnly;          // True if write-protected
-    QString busType;          // USB, SATA, NVMe, SD, etc.
-    
+    QString devicePath;   // e.g., "\\.\PhysicalDrive1"
+    QString name;         // e.g., "Generic USB Flash Disk"
+    QString description;  // Additional info
+    qint64 size;          // Size in bytes
+    quint32 blockSize;    // Block size in bytes (usually 512 or 4096)
+    bool isSystem;        // True if contains Windows installation
+    bool isRemovable;     // True if removable media
+    bool isReadOnly;      // True if write-protected
+    QString busType;      // USB, SATA, NVMe, SD, etc.
+
     // Volume information (if mounted)
     QStringList mountPoints;  // e.g., ["E:\\", "F:\\"]
     QString volumeLabel;      // Volume label if any
-    
+
     bool isValid() const { return !devicePath.isEmpty() && size > 0; }
 };
 
-} // namespace sak
+}  // namespace sak
 
 /**
  * @brief Drive Scanner - Detects physical drives with hot-plug support
- * 
+ *
  * Monitors system for physical drives (USB, SD cards, etc.) and provides
  * real-time notifications when drives are attached or removed.
  * Based on Etcher SDK's Scanner/BlockDeviceAdapter pattern.
- * 
+ *
  * Features:
  * - Enumerate physical drives via WMI
  * - Filter system/removable drives
@@ -50,9 +52,9 @@ struct DriveInfo {
  * - Drive property queries (size, block size, bus type)
  * - Volume mount point detection
  * - Read-only/write-protection detection
- * 
+ *
  * Thread-Safety: All methods are thread-safe. Signals emitted on main thread.
- * 
+ *
  * Example:
  * @code
  * DriveScanner scanner;
@@ -151,7 +153,7 @@ private:
     void scanDrives();
     void registerDeviceNotification();
     void unregisterDeviceNotification();
-    
+
     sak::DriveInfo queryDriveInfo(int driveNumber);
     QString getDriveName(int driveNumber);
     qint64 getDriveSize(HANDLE hDrive);
@@ -164,14 +166,16 @@ private:
     bool containsWindowsInstallation(int driveNumber);
     void collectMountPaths(wchar_t* volumeName, size_t nameLen, QStringList& mountPoints);
 
-    static LRESULT CALLBACK deviceNotificationProc(HWND hwnd, UINT message, 
-                                                   WPARAM wParam, LPARAM lParam);
+    static LRESULT CALLBACK deviceNotificationProc(HWND hwnd,
+                                                   UINT message,
+                                                   WPARAM wParam,
+                                                   LPARAM lParam);
 
     QList<sak::DriveInfo> m_drives;
     QTimer* m_refreshTimer;
     HWND m_notificationWindow;
     HDEVNOTIFY m_deviceNotify;
     std::atomic<bool> m_isScanning;
-    
-    static DriveScanner* s_instance; // For static callback
+
+    static DriveScanner* s_instance;  // For static callback
 };

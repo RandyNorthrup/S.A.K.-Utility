@@ -3,21 +3,22 @@
 
 #pragma once
 
+#include "sak/smart_file_filter.h"
 #include "sak/user_profile_types.h"
 #include "sak/windows_user_scanner.h"
-#include "sak/smart_file_filter.h"
+
+#include <QCheckBox>
+#include <QComboBox>
+#include <QLabel>
+#include <QLineEdit>
+#include <QProgressBar>
+#include <QPushButton>
+#include <QSpinBox>
+#include <QTableWidget>
+#include <QTextEdit>
+#include <QTreeWidget>
 #include <QWizard>
 #include <QWizardPage>
-#include <QLabel>
-#include <QTableWidget>
-#include <QTreeWidget>
-#include <QPushButton>
-#include <QLineEdit>
-#include <QCheckBox>
-#include <QSpinBox>
-#include <QComboBox>
-#include <QTextEdit>
-#include <QProgressBar>
 
 class QVBoxLayout;
 
@@ -94,11 +95,15 @@ public:
 
     /** @brief Get/set ethernet configs selected for backup */
     QVector<EthernetConfigInfo> ethernetConfigs() const { return m_ethernetConfigs; }
-    void setEthernetConfigs(const QVector<EthernetConfigInfo>& configs) { m_ethernetConfigs = configs; }
+    void setEthernetConfigs(const QVector<EthernetConfigInfo>& configs) {
+        m_ethernetConfigs = configs;
+    }
 
     /** @brief Get/set app data sources selected for backup */
     QVector<AppDataSourceInfo> appDataSources() const { return m_appDataSources; }
-    void setAppDataSources(const QVector<AppDataSourceInfo>& sources) { m_appDataSources = sources; }
+    void setAppDataSources(const QVector<AppDataSourceInfo>& sources) {
+        m_appDataSources = sources;
+    }
 
 private:
     BackupManifest m_manifest;
@@ -131,7 +136,7 @@ class UserProfileBackupSelectUsersPage : public QWizardPage {
 
 public:
     explicit UserProfileBackupSelectUsersPage(QVector<UserProfile>& users,
-        QWidget* parent = nullptr);
+                                              QWidget* parent = nullptr);
 
     void initializePage() override;
     bool isComplete() const override;
@@ -169,7 +174,7 @@ class UserProfileBackupCustomizeDataPage : public QWizardPage {
 
 public:
     explicit UserProfileBackupCustomizeDataPage(QVector<UserProfile>& users,
-        QWidget* parent = nullptr);
+                                                QWidget* parent = nullptr);
 
     void initializePage() override;
     bool isComplete() const override;
@@ -377,9 +382,9 @@ class UserProfileBackupExecutePage : public QWizardPage {
 
 public:
     explicit UserProfileBackupExecutePage(BackupManifest& manifest,
-                               const QVector<UserProfile>& users,
-                               const QString& destinationPath,
-                               QWidget* parent = nullptr);
+                                          const QVector<UserProfile>& users,
+                                          const QString& destinationPath,
+                                          QWidget* parent = nullptr);
 
     void initializePage() override;
     bool isComplete() const override;
@@ -407,8 +412,11 @@ private:
     void saveAppDataSourcesToBackup(const QVector<AppDataSourceInfo>& sources);
 
     /// @brief Create, connect, and start the backup worker
-    void connectAndStartBackupWorker(SmartFilter smartFilter, PermissionMode permissionMode,
-                                     int compressionLevel, bool encrypt, const QString& password);
+    void connectAndStartBackupWorker(SmartFilter smartFilter,
+                                     PermissionMode permissionMode,
+                                     int compressionLevel,
+                                     bool encrypt,
+                                     const QString& password);
 
     BackupManifest& m_manifest;
     const QVector<UserProfile>& m_users;
@@ -469,4 +477,4 @@ private:
     bool m_scanned{false};
 };
 
-} // namespace sak
+}  // namespace sak

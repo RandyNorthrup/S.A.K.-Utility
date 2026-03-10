@@ -3,35 +3,37 @@
 
 #pragma once
 
-#include <QString>
-#include <QStringList>
+#include "sak/action_constants.h"
+
 #include <QMap>
 #include <QObject>
-#include <windows.h>
+#include <QString>
+#include <QStringList>
+
 #include <functional>
 
-#include "sak/action_constants.h"
+#include <windows.h>
 
 /**
  * @brief Drive Unmounter - Windows-specific drive preparation
- * 
+ *
  * Handles safe unmounting and preparation of drives for raw writing.
  * Based on Etcher SDK patterns for drive preparation.
- * 
+ *
  * Operations:
  * 1. Enumerate all volumes on the physical drive
  * 2. Lock each volume for exclusive access
  * 3. Dismount all volumes
  * 4. Close all file handles
  * 5. Prevent Windows auto-mount during operation
- * 
+ *
  * Retry Strategy:
  * - Exponential backoff: 100ms, 200ms, 400ms, 800ms, 1600ms
  * - Maximum retry attempts: 5
  * - Fail gracefully if locked by another process
- * 
+ *
  * Thread-Safety: Methods are NOT thread-safe. Use from single thread.
- * 
+ *
  * Example:
  * @code
  * DriveUnmounter unmounter;
@@ -144,9 +146,8 @@ private:
      * @param dwSession Active Restart Manager session handle
      * @param mountPoints Volume GUID paths to process
      */
-    void shutdownHandlesViaRestartManager(DWORD dwSession,
-                                          const QStringList& mountPoints);
+    void shutdownHandlesViaRestartManager(DWORD dwSession, const QStringList& mountPoints);
 
-    QString m_lastError;                     // Last error message
-    QMap<QString, HANDLE> m_lockedVolumes;   // Volume path -> handle mapping
+    QString m_lastError;                    // Last error message
+    QMap<QString, HANDLE> m_lockedVolumes;  // Volume path -> handle mapping
 };

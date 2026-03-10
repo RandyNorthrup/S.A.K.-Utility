@@ -7,50 +7,50 @@
 #include "sak/actions/action_factory.h"
 
 // System Optimization Actions
-#include "sak/actions/disk_cleanup_action.h"
 #include "sak/actions/clear_browser_cache_action.h"
-#include "sak/actions/defragment_drives_action.h"
-#include "sak/actions/clear_windows_update_cache_action.h"
-#include "sak/actions/disable_startup_programs_action.h"
 #include "sak/actions/clear_event_logs_action.h"
-#include "sak/actions/optimize_power_settings_action.h"
+#include "sak/actions/clear_windows_update_cache_action.h"
+#include "sak/actions/defragment_drives_action.h"
+#include "sak/actions/disable_startup_programs_action.h"
 #include "sak/actions/disable_visual_effects_action.h"
+#include "sak/actions/disk_cleanup_action.h"
+#include "sak/actions/optimize_power_settings_action.h"
 
 // Quick Backup Actions
-#include "sak/actions/quickbooks_backup_action.h"
-#include "sak/actions/browser_profile_backup_action.h"
-#include "sak/actions/outlook_backup_action.h"
-#include "sak/actions/sticky_notes_backup_action.h"
-#include "sak/actions/saved_game_data_backup_action.h"
-#include "sak/actions/tax_software_backup_action.h"
-#include "sak/actions/photo_management_backup_action.h"
-#include "sak/actions/development_configs_backup_action.h"
 #include "sak/actions/backup_known_networks_action.h"
+#include "sak/actions/browser_profile_backup_action.h"
+#include "sak/actions/development_configs_backup_action.h"
+#include "sak/actions/outlook_backup_action.h"
+#include "sak/actions/photo_management_backup_action.h"
+#include "sak/actions/quickbooks_backup_action.h"
+#include "sak/actions/saved_game_data_backup_action.h"
+#include "sak/actions/sticky_notes_backup_action.h"
+#include "sak/actions/tax_software_backup_action.h"
 
 // Maintenance Actions
-#include "sak/actions/update_all_apps_action.h"
-#include "sak/actions/windows_update_action.h"
-#include "sak/actions/verify_system_files_action.h"
 #include "sak/actions/check_disk_errors_action.h"
+#include "sak/actions/clear_print_spooler_action.h"
 #include "sak/actions/rebuild_icon_cache_action.h"
 #include "sak/actions/reset_network_action.h"
-#include "sak/actions/clear_print_spooler_action.h"
+#include "sak/actions/update_all_apps_action.h"
+#include "sak/actions/verify_system_files_action.h"
+#include "sak/actions/windows_update_action.h"
 
 // Troubleshooting Actions
-#include "sak/actions/generate_system_report_action.h"
 #include "sak/actions/check_bloatware_action.h"
-#include "sak/actions/test_network_speed_action.h"
-#include "sak/actions/scan_malware_action.h"
-#include "sak/actions/repair_windows_store_action.h"
 #include "sak/actions/fix_audio_issues_action.h"
+#include "sak/actions/generate_system_report_action.h"
+#include "sak/actions/repair_windows_store_action.h"
+#include "sak/actions/scan_malware_action.h"
+#include "sak/actions/test_network_speed_action.h"
 
 // Emergency Recovery Actions
+#include "sak/actions/backup_bitlocker_keys_action.h"
+#include "sak/actions/backup_desktop_wallpaper_action.h"
+#include "sak/actions/backup_printer_settings_action.h"
 #include "sak/actions/create_restore_point_action.h"
 #include "sak/actions/export_registry_keys_action.h"
 #include "sak/actions/screenshot_settings_action.h"
-#include "sak/actions/backup_desktop_wallpaper_action.h"
-#include "sak/actions/backup_printer_settings_action.h"
-#include "sak/actions/backup_bitlocker_keys_action.h"
 
 #include <memory>
 #include <vector>
@@ -111,4 +111,4 @@ std::vector<std::unique_ptr<QuickAction>> ActionFactory::createAllActions(
     return actions;
 }
 
-} // namespace sak
+}  // namespace sak

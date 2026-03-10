@@ -5,6 +5,7 @@
 
 #include "sak/quick_action.h"
 #include "sak/user_profile_types.h"
+
 #include <QString>
 #include <QVector>
 
@@ -12,7 +13,7 @@ namespace sak {
 
 /**
  * @brief Saved Game Data Backup Action
- * 
+ *
  * Backs up game saves from Steam, Epic Games, GOG, and common save locations.
  */
 class SavedGameDataBackupAction : public QuickAction {
@@ -33,7 +34,7 @@ public:
 private:
     /// @brief Represents a discovered game save data location for a specific platform
     struct GameSaveLocation {
-        QString platform; // Steam, Epic, GOG, Documents
+        QString platform;  // Steam, Epic, GOG, Documents
         QString path;
         qint64 size;
         int file_count;
@@ -59,5 +60,4 @@ private:
     qint64 copyDirectoryRecursive(const QString& src_path, const QString& dest_path);
 };
 
-} // namespace sak
-
+}  // namespace sak

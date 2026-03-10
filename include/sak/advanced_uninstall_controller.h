@@ -68,9 +68,7 @@ public:
                           bool autoCleanSafe);
 
     /// @brief Force uninstall a program (skip native uninstaller)
-    void forceUninstall(const ProgramInfo& program,
-                        ScanLevel scanLevel,
-                        bool createRestorePoint);
+    void forceUninstall(const ProgramInfo& program, ScanLevel scanLevel, bool createRestorePoint);
 
     /// @brief Remove a UWP package
     void removeUwpPackage(const ProgramInfo& program);
@@ -87,8 +85,7 @@ public:
     // ── Batch Uninstall ──
 
     /// @brief Add a program to the batch queue
-    void addToQueue(const ProgramInfo& program, ScanLevel scanLevel,
-                    bool autoCleanSafe);
+    void addToQueue(const ProgramInfo& program, ScanLevel scanLevel, bool autoCleanSafe);
 
     /// @brief Remove an item from the batch queue
     void removeFromQueue(int index);
@@ -266,8 +263,8 @@ private:
 // ── Compile-Time Invariants ─────────────────────────────────────────────────
 
 static_assert(std::is_base_of_v<QObject, AdvancedUninstallController>,
-    "AdvancedUninstallController must inherit QObject.");
+              "AdvancedUninstallController must inherit QObject.");
 static_assert(!std::is_copy_constructible_v<AdvancedUninstallController>,
-    "AdvancedUninstallController must not be copy-constructible.");
+              "AdvancedUninstallController must not be copy-constructible.");
 
-} // namespace sak
+}  // namespace sak

@@ -6,6 +6,7 @@
 #include "sak/quick_action.h"
 
 #include <QString>
+
 #include <vector>
 
 namespace sak {
@@ -43,8 +44,10 @@ public:
     ~ClearBrowserCacheAction() override = default;
 
     QString name() const override { return "Clear Browser Cache"; }
-    QString description() const override { return "Clear cache from Chrome, Edge, Firefox, Brave, "
-                                                  "Opera, and Vivaldi"; }
+    QString description() const override {
+        return "Clear cache from Chrome, Edge, Firefox, Brave, "
+               "Opera, and Vivaldi";
+    }
     QIcon icon() const override { return QIcon(); }
     ActionCategory category() const override { return ActionCategory::SystemOptimization; }
     bool requiresAdmin() const override { return false; }
@@ -87,13 +90,13 @@ private:
 
     /// @brief Builds the box-drawing success log.
     /// @return Formatted success log string.
-    QString buildSuccessLog(const BrowserCacheResult& parsed, const QString& stderr_output,
-        qint64 duration_ms) const;
+    QString buildSuccessLog(const BrowserCacheResult& parsed,
+                            const QString& stderr_output,
+                            qint64 duration_ms) const;
 
     /// @brief Builds the box-drawing failure/blocked log.
     /// @return Formatted failure log string.
     QString buildFailureLog(const BrowserCacheResult& parsed) const;
 };
 
-} // namespace sak
-
+}  // namespace sak

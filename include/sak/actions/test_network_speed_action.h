@@ -4,15 +4,17 @@
 #pragma once
 
 #include "sak/quick_action.h"
+
 #include <QDateTime>
 #include <QString>
+
 #include <utility>
 
 namespace sak {
 
 /**
  * @brief Test Network Speed Action
- * 
+ *
  * Tests internet download/upload speed using PowerShell and speedtest-cli.
  */
 class TestNetworkSpeedAction : public QuickAction {
@@ -37,14 +39,14 @@ private:
     double m_upload_speed{0.0};
     int m_download_tests_successful{0};
     bool m_upload_test_successful{false};
-    
+
     // Latency metrics
     int m_latency{0};
     int m_min_latency{0};
     int m_max_latency{0};
     double m_jitter{0.0};
     double m_packet_loss{0.0};
-    
+
     // Connection info
     bool m_has_internet{false};
     QString m_public_ip;
@@ -65,9 +67,11 @@ private:
     std::pair<QString, QString> assessConnectionQuality() const;
     /// @brief Build the complete speed test report string from collected metrics
     QString buildSpeedTestReport() const;
+    void appendConnectionInfo(QString& report) const;
+    void appendSpeedResults(QString& report) const;
+    void appendLatencyResults(QString& report) const;
     /// @brief Create and emit the final execution result
     void finalizeSpeedTestResult(const QDateTime& start_time, const QString& report);
 };
 
-} // namespace sak
-
+}  // namespace sak

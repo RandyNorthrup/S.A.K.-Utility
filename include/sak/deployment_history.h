@@ -40,4 +40,4 @@ private:
     QString m_historyPath;
 };
 
-} // namespace sak
+}  // namespace sak

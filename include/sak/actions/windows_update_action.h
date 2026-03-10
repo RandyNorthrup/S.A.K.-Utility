@@ -4,6 +4,7 @@
 #pragma once
 
 #include "sak/quick_action.h"
+
 #include <QDateTime>
 #include <QString>
 
@@ -11,7 +12,7 @@ namespace sak {
 
 /**
  * @brief Windows Update Action
- * 
+ *
  * Checks for and installs Windows Updates using PowerShell PSWindowsUpdate module.
  */
 class WindowsUpdateAction : public QuickAction {
@@ -44,11 +45,15 @@ private:
     void executeInitSession(const QDateTime& start_time, QString& ps_script);
     static QString buildUpdateScanScript();
     static QString buildUpdateInstallScript();
-    bool executeSearchUpdates(const QDateTime& start_time, const QString& ps_script,
-                              QString& accumulated_output, QString& errors, int& exit_code);
-    void executeBuildReport(const QDateTime& start_time, const QString& accumulated_output,
-                            const QString& errors, int exit_code);
+    bool executeSearchUpdates(const QDateTime& start_time,
+                              const QString& ps_script,
+                              QString& accumulated_output,
+                              QString& errors,
+                              int& exit_code);
+    void executeBuildReport(const QDateTime& start_time,
+                            const QString& accumulated_output,
+                            const QString& errors,
+                            int exit_code);
 };
 
-} // namespace sak
-
+}  // namespace sak

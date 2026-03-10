@@ -46,16 +46,14 @@ public:
     void cancel();
 
     /// @brief Find rules matching a specific port
-    [[nodiscard]] QVector<FirewallRule> findRulesByPort(
-        uint16_t port, FirewallRule::Direction direction) const;
+    [[nodiscard]] QVector<FirewallRule> findRulesByPort(uint16_t port,
+                                                        FirewallRule::Direction direction) const;
 
     /// @brief Find rules matching an application path
-    [[nodiscard]] QVector<FirewallRule> findRulesByApplication(
-        const QString& appPath) const;
+    [[nodiscard]] QVector<FirewallRule> findRulesByApplication(const QString& appPath) const;
 
     /// @brief Find rules matching a name filter
-    [[nodiscard]] QVector<FirewallRule> findRulesByName(
-        const QString& nameFilter) const;
+    [[nodiscard]] QVector<FirewallRule> findRulesByName(const QString& nameFilter) const;
 
 Q_SIGNALS:
     void rulesEnumerated(QVector<sak::FirewallRule> rules);
@@ -71,10 +69,15 @@ private:
     std::atomic<bool> m_cancelled{false};
 
     [[nodiscard]] QVector<FirewallRule> enumerateViaCOM();
-    [[nodiscard]] QVector<FirewallConflict> findConflicts(
-        const QVector<FirewallRule>& rules) const;
-    [[nodiscard]] QVector<FirewallGap> findGaps(
-        const QVector<FirewallRule>& rules) const;
+    [[nodiscard]] QVector<FirewallConflict> findConflicts(const QVector<FirewallRule>& rules) const;
+    [[nodiscard]] QVector<FirewallGap> findGaps(const QVector<FirewallRule>& rules) const;
+
+    void checkRdpGap(const QVector<FirewallRule>& rules, QVector<FirewallGap>& gaps) const;
+    void checkIcmpGap(const QVector<FirewallRule>& rules, QVector<FirewallGap>& gaps) const;
+    void checkWildcardGap(const QVector<FirewallRule>& rules, QVector<FirewallGap>& gaps) const;
+    void checkSmbGap(const QVector<FirewallRule>& rules, QVector<FirewallGap>& gaps) const;
+    void checkDisabledBlockGap(const QVector<FirewallRule>& rules,
+                                QVector<FirewallGap>& gaps) const;
 
     /// @brief Parse port range string to list of ports
     [[nodiscard]] static QVector<uint16_t> parsePorts(const QString& portStr);
@@ -83,7 +86,7 @@ private:
     [[nodiscard]] static bool portsOverlap(const QString& a, const QString& b);
 };
 
-} // namespace sak
+}  // namespace sak
 
 static_assert(!std::is_copy_constructible_v<sak::FirewallRuleAuditor>,
-    "FirewallRuleAuditor must not be copyable.");
+              "FirewallRuleAuditor must not be copyable.");

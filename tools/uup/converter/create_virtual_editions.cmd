@@ -504,7 +504,7 @@ echo.
 echo Enter chosen edition number, or zero '0' to return
 echo %_ln1%
 echo.
-set /p _single= ^> Enter your option and press "Enter": 
+set /p _single= ^> Enter your option and press "Enter":
 if not defined _single (set _Debug=1&goto :QUIT)
 if "%_single%"=="0" (set "_single="&goto :MULTIMENU)
 call :chkinp %_single%
@@ -524,7 +524,7 @@ echo Enter chosen editions numbers, space-separated, or zero '0' to return
 echo examples: 1 3 4 or 5 1 or 4 2 10
 echo %_ln1%
 echo.
-set /p _index= ^> Enter your option and press "Enter": 
+set /p _index= ^> Enter your option and press "Enter":
 if not defined _index (set _Debug=1&goto :QUIT)
 if "%_index%"=="0" (set "_index="&goto :MULTIMENU)
 for %%# in (%_index%) do (

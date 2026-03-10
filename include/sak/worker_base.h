@@ -4,19 +4,21 @@
 #pragma once
 
 #include "sak/error_codes.h"
+
 #include <QThread>
+
 #include <atomic>
 #include <expected>
-#include <stop_token>
 #include <functional>
+#include <stop_token>
 #include <type_traits>
 
 /**
  * @brief Base class for worker threads
- * 
+ *
  * Provides a Qt-integrated worker thread with C++23 features including
  * std::stop_token for cancellation and std::expected for error handling.
- * 
+ *
  * Thread-Safety: This class is thread-safe. Signals are emitted from
  * worker thread and should be connected with Qt::QueuedConnection.
  */
@@ -29,7 +31,7 @@ public:
      * @param parent Parent QObject
      */
     explicit WorkerBase(QObject* parent = nullptr);
-    
+
     /**
      * @brief Destructor - ensures thread is stopped
      */
@@ -92,10 +94,10 @@ Q_SIGNALS:
 protected:
     /**
      * @brief Main worker execution - override in derived classes
-     * 
+     *
      * This method runs in the worker thread. Use checkStop() to
      * check for cancellation requests and emit progress() for updates.
-     * 
+     *
      * @return Expected containing success or error code
      */
     virtual auto execute() -> std::expected<void, sak::error_code> = 0;
@@ -127,15 +129,13 @@ private:
 // ── Compile-Time Invariants (TigerStyle) ────────────────────────────────────
 
 /// WorkerBase must inherit QThread (which inherits QObject).
-static_assert(std::is_base_of_v<QThread, WorkerBase>,
-    "WorkerBase must inherit QThread.");
+static_assert(std::is_base_of_v<QThread, WorkerBase>, "WorkerBase must inherit QThread.");
 
 /// WorkerBase must be abstract (pure virtual execute()).
-static_assert(std::is_abstract_v<WorkerBase>,
-    "WorkerBase must be abstract.");
+static_assert(std::is_abstract_v<WorkerBase>, "WorkerBase must be abstract.");
 
 /// WorkerBase must not be copyable or movable.
 static_assert(!std::is_copy_constructible_v<WorkerBase>,
-    "WorkerBase must not be copy-constructible.");
+              "WorkerBase must not be copy-constructible.");
 static_assert(!std::is_move_constructible_v<WorkerBase>,
-    "WorkerBase must not be move-constructible.");
+              "WorkerBase must not be move-constructible.");

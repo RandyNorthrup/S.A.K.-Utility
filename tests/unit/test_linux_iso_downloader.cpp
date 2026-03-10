@@ -16,16 +16,16 @@
  *   - Network-based version checking (skippable)
  */
 
-#include <QtTest/QtTest>
-#include <QtTest/QSignalSpy>
+#include "sak/linux_distro_catalog.h"
+#include "sak/linux_iso_downloader.h"
+
+#include <QCoreApplication>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
-#include <QJsonArray>
 #include <QTemporaryDir>
-#include <QCoreApplication>
-
-#include "sak/linux_iso_downloader.h"
-#include "sak/linux_distro_catalog.h"
+#include <QtTest/QSignalSpy>
+#include <QtTest/QtTest>
 
 class LinuxISODownloaderTests : public QObject {
     Q_OBJECT
@@ -119,15 +119,13 @@ private:
 // Setup / Teardown
 // ============================================================================
 
-void LinuxISODownloaderTests::initTestCase()
-{
+void LinuxISODownloaderTests::initTestCase() {
     qInfo() << "=== Linux ISO Downloader & Catalog Tests ===";
     m_catalog = new LinuxDistroCatalog(this);
     m_downloader = new LinuxISODownloader(this);
 }
 
-void LinuxISODownloaderTests::cleanupTestCase()
-{
+void LinuxISODownloaderTests::cleanupTestCase() {
     delete m_downloader;
     m_downloader = nullptr;
     delete m_catalog;
@@ -139,30 +137,21 @@ void LinuxISODownloaderTests::cleanupTestCase()
 // Catalog: Population & Completeness
 // ============================================================================
 
-void LinuxISODownloaderTests::testCatalogPopulated()
-{
+void LinuxISODownloaderTests::testCatalogPopulated() {
     auto all = m_catalog->allDistros();
     // Should have at least 8 distributions
-    QVERIFY2(all.size() >= 8,
-             qPrintable(QString("Expected >= 8 distros, got %1").arg(all.size())));
+    QVERIFY2(all.size() >= 8, qPrintable(QString("Expected >= 8 distros, got %1").arg(all.size())));
 }
 
-void LinuxISODownloaderTests::testAllDistrosHaveRequiredFields()
-{
+void LinuxISODownloaderTests::testAllDistrosHaveRequiredFields() {
     auto all = m_catalog->allDistros();
     for (const auto& d : all) {
-        QVERIFY2(!d.id.isEmpty(),
-                 "Distro has empty id");
-        QVERIFY2(!d.name.isEmpty(),
-                 qPrintable("Distro " + d.id + " has empty name"));
-        QVERIFY2(!d.version.isEmpty(),
-                 qPrintable("Distro " + d.id + " has empty version"));
-        QVERIFY2(!d.description.isEmpty(),
-                 qPrintable("Distro " + d.id + " has empty description"));
-        QVERIFY2(!d.homepage.isEmpty(),
-                 qPrintable("Distro " + d.id + " has empty homepage"));
-        QVERIFY2(d.approximateSize > 0,
-                 qPrintable("Distro " + d.id + " has zero approximateSize"));
+        QVERIFY2(!d.id.isEmpty(), "Distro has empty id");
+        QVERIFY2(!d.name.isEmpty(), qPrintable("Distro " + d.id + " has empty name"));
+        QVERIFY2(!d.version.isEmpty(), qPrintable("Distro " + d.id + " has empty version"));
+        QVERIFY2(!d.description.isEmpty(), qPrintable("Distro " + d.id + " has empty description"));
+        QVERIFY2(!d.homepage.isEmpty(), qPrintable("Distro " + d.id + " has empty homepage"));
+        QVERIFY2(d.approximateSize > 0, qPrintable("Distro " + d.id + " has zero approximateSize"));
 
         // DirectURL and SourceForge must have downloadUrl template
         if (d.sourceType == LinuxDistroCatalog::SourceType::DirectURL ||
@@ -185,19 +174,16 @@ void LinuxISODownloaderTests::testAllDistrosHaveRequiredFields()
     }
 }
 
-void LinuxISODownloaderTests::testUniqueDistroIds()
-{
+void LinuxISODownloaderTests::testUniqueDistroIds() {
     auto all = m_catalog->allDistros();
     QSet<QString> ids;
     for (const auto& d : all) {
-        QVERIFY2(!ids.contains(d.id),
-                 qPrintable("Duplicate distro id: " + d.id));
+        QVERIFY2(!ids.contains(d.id), qPrintable("Duplicate distro id: " + d.id));
         ids.insert(d.id);
     }
 }
 
-void LinuxISODownloaderTests::testAllCategoriesRepresented()
-{
+void LinuxISODownloaderTests::testAllCategoriesRepresented() {
     using Cat = LinuxDistroCatalog::Category;
     QSet<int> categories;
     for (const auto& d : m_catalog->allDistros()) {
@@ -211,8 +197,7 @@ void LinuxISODownloaderTests::testAllCategoriesRepresented()
     QVERIFY(categories.contains(static_cast<int>(Cat::Utilities)));
 }
 
-void LinuxISODownloaderTests::testCategoryNames()
-{
+void LinuxISODownloaderTests::testCategoryNames() {
     auto names = LinuxDistroCatalog::categoryNames();
     QVERIFY(names.size() >= 5);
     QVERIFY(!names[LinuxDistroCatalog::Category::GeneralPurpose].isEmpty());
@@ -226,35 +211,32 @@ void LinuxISODownloaderTests::testCategoryNames()
 // Catalog: Lookups
 // ============================================================================
 
-void LinuxISODownloaderTests::testDistroByIdFound()
-{
+void LinuxISODownloaderTests::testDistroByIdFound() {
     auto d = m_catalog->distroById("ubuntu-desktop");
     QVERIFY(!d.id.isEmpty());
     QCOMPARE(d.id, QString("ubuntu-desktop"));
     QCOMPARE(d.name, QString("Ubuntu Desktop"));
 }
 
-void LinuxISODownloaderTests::testDistroByIdNotFound()
-{
+void LinuxISODownloaderTests::testDistroByIdNotFound() {
     auto d = m_catalog->distroById("nonexistent-distro-xyz");
     QVERIFY(d.id.isEmpty());
 }
 
-void LinuxISODownloaderTests::testDistrosByCategory()
-{
-    auto general = m_catalog->distrosByCategory(
-        LinuxDistroCatalog::Category::GeneralPurpose);
-    QVERIFY(general.size() >= 2); // Ubuntu Desktop + Server + Mint
+void LinuxISODownloaderTests::testDistrosByCategory() {
+    auto general = m_catalog->distrosByCategory(LinuxDistroCatalog::Category::GeneralPurpose);
+    QVERIFY(general.size() >= 2);  // Ubuntu Desktop + Server + Mint
 
     bool foundUbuntu = false;
     for (const auto& d : general) {
-        if (d.id == "ubuntu-desktop") foundUbuntu = true;
+        if (d.id == "ubuntu-desktop") {
+            foundUbuntu = true;
+        }
     }
     QVERIFY(foundUbuntu);
 }
 
-void LinuxISODownloaderTests::testDistrosByCategoryCount()
-{
+void LinuxISODownloaderTests::testDistrosByCategoryCount() {
     int total = 0;
     auto catNames = LinuxDistroCatalog::categoryNames();
     for (auto it = catNames.constBegin(); it != catNames.constEnd(); ++it) {
@@ -268,22 +250,16 @@ void LinuxISODownloaderTests::testDistrosByCategoryCount()
 // Catalog: URL Resolution — DirectURL
 // ============================================================================
 
-void LinuxISODownloaderTests::testResolveDirectUrl_Ubuntu()
-{
+void LinuxISODownloaderTests::testResolveDirectUrl_Ubuntu() {
     auto d = m_catalog->distroById("ubuntu-desktop");
     QString url = m_catalog->resolveDownloadUrl(d);
-    QVERIFY2(url.contains("releases.ubuntu.com"),
-             qPrintable("URL: " + url));
-    QVERIFY2(url.contains(d.version),
-             qPrintable("URL missing version: " + url));
-    QVERIFY2(url.endsWith(".iso"),
-             qPrintable("URL doesn't end with .iso: " + url));
-    QVERIFY2(!url.contains("{version}"),
-             qPrintable("Unresolved {version} placeholder: " + url));
+    QVERIFY2(url.contains("releases.ubuntu.com"), qPrintable("URL: " + url));
+    QVERIFY2(url.contains(d.version), qPrintable("URL missing version: " + url));
+    QVERIFY2(url.endsWith(".iso"), qPrintable("URL doesn't end with .iso: " + url));
+    QVERIFY2(!url.contains("{version}"), qPrintable("Unresolved {version} placeholder: " + url));
 }
 
-void LinuxISODownloaderTests::testResolveDirectUrl_Kali()
-{
+void LinuxISODownloaderTests::testResolveDirectUrl_Kali() {
     auto d = m_catalog->distroById("kali-linux");
     QString url = m_catalog->resolveDownloadUrl(d);
     QVERIFY(url.contains("cdimage.kali.org"));
@@ -295,38 +271,30 @@ void LinuxISODownloaderTests::testResolveDirectUrl_Kali()
 // Catalog: URL Resolution — SourceForge
 // ============================================================================
 
-void LinuxISODownloaderTests::testResolveSourceForgeUrl_SystemRescue()
-{
+void LinuxISODownloaderTests::testResolveSourceForgeUrl_SystemRescue() {
     auto d = m_catalog->distroById("systemrescue");
     QCOMPARE(d.sourceType, LinuxDistroCatalog::SourceType::SourceForge);
 
     QString url = m_catalog->resolveDownloadUrl(d);
-    QVERIFY2(url.contains("sourceforge.net"),
-             qPrintable("URL: " + url));
-    QVERIFY2(url.contains("systemrescuecd"),
-             qPrintable("URL should contain project name: " + url));
-    QVERIFY2(url.contains(d.version),
-             qPrintable("URL missing version: " + url));
+    QVERIFY2(url.contains("sourceforge.net"), qPrintable("URL: " + url));
+    QVERIFY2(url.contains("systemrescuecd"), qPrintable("URL should contain project name: " + url));
+    QVERIFY2(url.contains(d.version), qPrintable("URL missing version: " + url));
     QVERIFY2(url.endsWith("/download"),
              qPrintable("SourceForge URL must end with /download: " + url));
 }
 
-void LinuxISODownloaderTests::testResolveSourceForgeUrl_Clonezilla()
-{
+void LinuxISODownloaderTests::testResolveSourceForgeUrl_Clonezilla() {
     auto d = m_catalog->distroById("clonezilla");
     QCOMPARE(d.sourceType, LinuxDistroCatalog::SourceType::SourceForge);
 
     QString url = m_catalog->resolveDownloadUrl(d);
-    QVERIFY2(url.contains("sourceforge.net"),
-             qPrintable("URL: " + url));
-    QVERIFY2(url.contains(d.version),
-             qPrintable("URL missing version: " + url));
+    QVERIFY2(url.contains("sourceforge.net"), qPrintable("URL: " + url));
+    QVERIFY2(url.contains(d.version), qPrintable("URL missing version: " + url));
     QVERIFY2(url.endsWith("/download"),
              qPrintable("SourceForge URL must end with /download: " + url));
 }
 
-void LinuxISODownloaderTests::testResolveSourceForgeUrl_GParted()
-{
+void LinuxISODownloaderTests::testResolveSourceForgeUrl_GParted() {
     auto d = m_catalog->distroById("gparted-live");
     QCOMPARE(d.sourceType, LinuxDistroCatalog::SourceType::SourceForge);
 
@@ -340,8 +308,7 @@ void LinuxISODownloaderTests::testResolveSourceForgeUrl_GParted()
 // Catalog: URL Resolution — GitHub
 // ============================================================================
 
-void LinuxISODownloaderTests::testResolveGitHubUrl_NoCache()
-{
+void LinuxISODownloaderTests::testResolveGitHubUrl_NoCache() {
     auto d = m_catalog->distroById("shredos");
     QCOMPARE(d.sourceType, LinuxDistroCatalog::SourceType::GitHubRelease);
 
@@ -352,8 +319,7 @@ void LinuxISODownloaderTests::testResolveGitHubUrl_NoCache()
     QVERIFY(url.isEmpty());
 }
 
-void LinuxISODownloaderTests::testResolveGitHubUrl_WithFallback()
-{
+void LinuxISODownloaderTests::testResolveGitHubUrl_WithFallback() {
     auto d = m_catalog->distroById("ventoy");
     QCOMPARE(d.sourceType, LinuxDistroCatalog::SourceType::GitHubRelease);
 
@@ -372,34 +338,30 @@ void LinuxISODownloaderTests::testResolveGitHubUrl_WithFallback()
 // Catalog: Checksum URL Resolution
 // ============================================================================
 
-void LinuxISODownloaderTests::testResolveChecksumUrl_Ubuntu()
-{
+void LinuxISODownloaderTests::testResolveChecksumUrl_Ubuntu() {
     auto d = m_catalog->distroById("ubuntu-desktop");
     QString url = m_catalog->resolveChecksumUrl(d);
     QVERIFY(!url.isEmpty());
     QVERIFY(url.contains("SHA256SUMS"));
 }
 
-void LinuxISODownloaderTests::testResolveChecksumUrl_NoChecksum_SystemRescue()
-{
+void LinuxISODownloaderTests::testResolveChecksumUrl_NoChecksum_SystemRescue() {
     auto d = m_catalog->distroById("systemrescue");
     QString url = m_catalog->resolveChecksumUrl(d);
-    QVERIFY(url.isEmpty()); // SourceForge distros have no separate checksum URL
+    QVERIFY(url.isEmpty());  // SourceForge distros have no separate checksum URL
 }
 
-void LinuxISODownloaderTests::testResolveChecksumUrl_NoChecksum_Clonezilla()
-{
+void LinuxISODownloaderTests::testResolveChecksumUrl_NoChecksum_Clonezilla() {
     auto d = m_catalog->distroById("clonezilla");
     QString url = m_catalog->resolveChecksumUrl(d);
-    QVERIFY(url.isEmpty()); // SourceForge distros have no checksum URL
+    QVERIFY(url.isEmpty());  // SourceForge distros have no checksum URL
 }
 
 // ============================================================================
 // Catalog: Filename Resolution
 // ============================================================================
 
-void LinuxISODownloaderTests::testResolveFileName_Direct()
-{
+void LinuxISODownloaderTests::testResolveFileName_Direct() {
     auto d = m_catalog->distroById("ubuntu-desktop");
     QString filename = m_catalog->resolveFileName(d);
     QVERIFY(!filename.isEmpty());
@@ -408,8 +370,7 @@ void LinuxISODownloaderTests::testResolveFileName_Direct()
     QVERIFY(!filename.contains("{version}"));
 }
 
-void LinuxISODownloaderTests::testResolveFileName_SourceForge()
-{
+void LinuxISODownloaderTests::testResolveFileName_SourceForge() {
     auto d = m_catalog->distroById("gparted-live");
     QString filename = m_catalog->resolveFileName(d);
     QVERIFY(!filename.isEmpty());
@@ -417,8 +378,7 @@ void LinuxISODownloaderTests::testResolveFileName_SourceForge()
     QVERIFY(filename.endsWith(".iso"));
 }
 
-void LinuxISODownloaderTests::testResolveFileName_GitHubFallback()
-{
+void LinuxISODownloaderTests::testResolveFileName_GitHubFallback() {
     auto d = m_catalog->distroById("ventoy");
     QString filename = m_catalog->resolveFileName(d);
     // Should fall back to fileName template with version substitution
@@ -431,8 +391,7 @@ void LinuxISODownloaderTests::testResolveFileName_GitHubFallback()
 // Catalog: Version Substitution
 // ============================================================================
 
-void LinuxISODownloaderTests::testVersionSubstitution()
-{
+void LinuxISODownloaderTests::testVersionSubstitution() {
     auto d = m_catalog->distroById("ubuntu-server");
     QString url = m_catalog->resolveDownloadUrl(d);
     // {version} should be replaced with actual version
@@ -440,8 +399,7 @@ void LinuxISODownloaderTests::testVersionSubstitution()
     QVERIFY(url.contains(d.version));
 }
 
-void LinuxISODownloaderTests::testVersionSubstitutionNoPlaceholder()
-{
+void LinuxISODownloaderTests::testVersionSubstitutionNoPlaceholder() {
     // Distros without {version} in URL should still resolve fine
     auto all = m_catalog->allDistros();
     for (const auto& d : all) {
@@ -457,14 +415,11 @@ void LinuxISODownloaderTests::testVersionSubstitutionNoPlaceholder()
 // GitHub API Parsing
 // ============================================================================
 
-void LinuxISODownloaderTests::testGitHubVersionCheck_Success()
-{
+void LinuxISODownloaderTests::testGitHubVersionCheck_Success() {
     // Create a separate catalog for isolated testing
     LinuxDistroCatalog catalog;
-    QSignalSpy completedSpy(&catalog,
-                            &LinuxDistroCatalog::versionCheckCompleted);
-    QSignalSpy failedSpy(&catalog,
-                         &LinuxDistroCatalog::versionCheckFailed);
+    QSignalSpy completedSpy(&catalog, &LinuxDistroCatalog::versionCheckCompleted);
+    QSignalSpy failedSpy(&catalog, &LinuxDistroCatalog::versionCheckFailed);
 
     // Simulate a GitHub release JSON for Ventoy
     QJsonObject release;
@@ -474,7 +429,7 @@ void LinuxISODownloaderTests::testGitHubVersionCheck_Success()
     isoAsset["name"] = "ventoy-1.2.0-livecd.iso";
     isoAsset["browser_download_url"] =
         "https://github.com/ventoy/Ventoy/releases/download/v1.2.0/ventoy-1.2.0-livecd.iso";
-    isoAsset["size"] = 200000000;
+    isoAsset["size"] = 200'000'000;
     assets.append(isoAsset);
     release["assets"] = assets;
 
@@ -486,19 +441,16 @@ void LinuxISODownloaderTests::testGitHubVersionCheck_Success()
     QVERIFY(!d.githubAssetPattern.isEmpty());
 
     // Verify the asset pattern regex compiles and matches
-    QRegularExpression assetRegex(d.githubAssetPattern,
-                                 QRegularExpression::CaseInsensitiveOption);
+    QRegularExpression assetRegex(d.githubAssetPattern, QRegularExpression::CaseInsensitiveOption);
     QVERIFY(assetRegex.isValid());
     QVERIFY(assetRegex.match("ventoy-1.2.0-livecd.iso").hasMatch());
     QVERIFY(!assetRegex.match("ventoy-1.2.0-windows.zip").hasMatch());
 }
 
-void LinuxISODownloaderTests::testGitHubVersionCheck_NoMatchingAsset()
-{
+void LinuxISODownloaderTests::testGitHubVersionCheck_NoMatchingAsset() {
     // Verify ShredOS pattern doesn't match non-ISO files
     auto d = m_catalog->distroById("shredos");
-    QRegularExpression regex(d.githubAssetPattern,
-                             QRegularExpression::CaseInsensitiveOption);
+    QRegularExpression regex(d.githubAssetPattern, QRegularExpression::CaseInsensitiveOption);
     QVERIFY(regex.isValid());
     QVERIFY(!regex.match("shredos-source.tar.gz").hasMatch());
     QVERIFY(!regex.match("README.md").hasMatch());
@@ -507,12 +459,10 @@ void LinuxISODownloaderTests::testGitHubVersionCheck_NoMatchingAsset()
     QVERIFY(regex.match("shredos-v2025.11_28_x86-64_0.40.iso").hasMatch());
 }
 
-void LinuxISODownloaderTests::testGitHubVersionCheck_EmptyTag()
-{
+void LinuxISODownloaderTests::testGitHubVersionCheck_EmptyTag() {
     // Verify Memtest86+ asset pattern matches .iso.gz
     auto d = m_catalog->distroById("memtest86plus");
-    QRegularExpression regex(d.githubAssetPattern,
-                             QRegularExpression::CaseInsensitiveOption);
+    QRegularExpression regex(d.githubAssetPattern, QRegularExpression::CaseInsensitiveOption);
     QVERIFY(regex.isValid());
     QVERIFY(regex.match("memtest86plus-7.20.iso.gz").hasMatch());
     QVERIFY(!regex.match("memtest86plus-7.20.bin.gz").hasMatch());
@@ -522,15 +472,13 @@ void LinuxISODownloaderTests::testGitHubVersionCheck_EmptyTag()
 // Downloader: Construction & State
 // ============================================================================
 
-void LinuxISODownloaderTests::testDownloaderConstruction()
-{
+void LinuxISODownloaderTests::testDownloaderConstruction() {
     LinuxISODownloader downloader;
     QVERIFY(downloader.catalog() != nullptr);
     QVERIFY(!downloader.isDownloading());
 }
 
-void LinuxISODownloaderTests::testDownloaderInitialState()
-{
+void LinuxISODownloaderTests::testDownloaderInitialState() {
     LinuxISODownloader downloader;
     QCOMPARE(downloader.currentPhase(), LinuxISODownloader::Phase::Idle);
     QVERIFY(!downloader.isDownloading());
@@ -540,8 +488,7 @@ void LinuxISODownloaderTests::testDownloaderInitialState()
 // Downloader: Input Validation
 // ============================================================================
 
-void LinuxISODownloaderTests::testStartDownload_UnknownDistro()
-{
+void LinuxISODownloaderTests::testStartDownload_UnknownDistro() {
     LinuxISODownloader downloader;
     QSignalSpy errorSpy(&downloader, &LinuxISODownloader::downloadError);
 
@@ -551,8 +498,7 @@ void LinuxISODownloaderTests::testStartDownload_UnknownDistro()
     QVERIFY(errorSpy.at(0).at(0).toString().contains("Unknown"));
 }
 
-void LinuxISODownloaderTests::testStartDownload_WhileDownloading()
-{
+void LinuxISODownloaderTests::testStartDownload_WhileDownloading() {
     // We can't easily simulate a download in progress without aria2c,
     // but we can verify the guard logic exists by checking the phase
     LinuxISODownloader downloader;
@@ -568,8 +514,7 @@ void LinuxISODownloaderTests::testStartDownload_WhileDownloading()
 // Downloader: Phase Management
 // ============================================================================
 
-void LinuxISODownloaderTests::testPhaseTransitions()
-{
+void LinuxISODownloaderTests::testPhaseTransitions() {
     LinuxISODownloader downloader;
 
     // Initial state
@@ -585,8 +530,7 @@ void LinuxISODownloaderTests::testPhaseTransitions()
 // Downloader: Cancel
 // ============================================================================
 
-void LinuxISODownloaderTests::testCancelFromIdle()
-{
+void LinuxISODownloaderTests::testCancelFromIdle() {
     LinuxISODownloader downloader;
     QSignalSpy statusSpy(&downloader, &LinuxISODownloader::statusMessage);
 
@@ -599,13 +543,10 @@ void LinuxISODownloaderTests::testCancelFromIdle()
 // Network Tests
 // ============================================================================
 
-void LinuxISODownloaderTests::testGitHubVersionCheck_Network()
-{
+void LinuxISODownloaderTests::testGitHubVersionCheck_Network() {
     LinuxDistroCatalog catalog;
-    QSignalSpy completedSpy(&catalog,
-                            &LinuxDistroCatalog::versionCheckCompleted);
-    QSignalSpy failedSpy(&catalog,
-                         &LinuxDistroCatalog::versionCheckFailed);
+    QSignalSpy completedSpy(&catalog, &LinuxDistroCatalog::versionCheckCompleted);
+    QSignalSpy failedSpy(&catalog, &LinuxDistroCatalog::versionCheckFailed);
 
     catalog.checkLatestVersion("ventoy");
 
@@ -613,8 +554,9 @@ void LinuxISODownloaderTests::testGitHubVersionCheck_Network()
     bool gotResponse = false;
     for (int i = 0; i < 150 && !gotResponse; ++i) {
         QCoreApplication::processEvents(QEventLoop::AllEvents, 100);
-        if (completedSpy.count() > 0 || failedSpy.count() > 0)
+        if (completedSpy.count() > 0 || failedSpy.count() > 0) {
             gotResponse = true;
+        }
     }
 
     if (!gotResponse) {
@@ -634,12 +576,11 @@ void LinuxISODownloaderTests::testGitHubVersionCheck_Network()
     auto d = catalog.distroById("ventoy");
     QString url = catalog.resolveDownloadUrl(d);
     QVERIFY2(!url.isEmpty(), "Download URL should be resolved after version check");
-    QVERIFY2(url.startsWith("https://"),
-             qPrintable("Download URL should be HTTPS: " + url));
+    QVERIFY2(url.startsWith("https://"), qPrintable("Download URL should be HTTPS: " + url));
 }
 
-void LinuxISODownloaderTests::testDirectUrlReachable_Ubuntu()
-{
+void LinuxISODownloaderTests::testDirectUrlReachable_Ubuntu() {
+    Q_ASSERT(m_catalog);
     // Quick HEAD request to verify Ubuntu URL is reachable
     auto d = m_catalog->distroById("ubuntu-server");
     QString url = m_catalog->resolveDownloadUrl(d);
@@ -652,52 +593,45 @@ void LinuxISODownloaderTests::testDirectUrlReachable_Ubuntu()
     auto* reply = nam.head(request);
     QSignalSpy finishedSpy(reply, &QNetworkReply::finished);
 
-    bool ok = finishedSpy.wait(15000);
+    bool ok = finishedSpy.wait(15'000);
     if (!ok) {
         reply->deleteLater();
         QSKIP("Network timeout — skipping URL reachability test");
     }
 
-    int statusCode = reply->attribute(
-        QNetworkRequest::HttpStatusCodeAttribute).toInt();
+    int statusCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
     reply->deleteLater();
 
     // Accept 200 (OK) or 302/301 (redirect) as valid
     QVERIFY2(statusCode == 200 || statusCode == 301 || statusCode == 302,
-             qPrintable(QString("Unexpected HTTP status %1 for %2")
-                        .arg(statusCode).arg(url)));
+             qPrintable(QString("Unexpected HTTP status %1 for %2").arg(statusCode).arg(url)));
 }
 
-void LinuxISODownloaderTests::testSourceForgeUrlStructure_AllDistros()
-{
+void LinuxISODownloaderTests::testSourceForgeUrlStructure_AllDistros() {
     // Verify all SourceForge distros have properly formed URLs
     auto all = m_catalog->allDistros();
     for (const auto& d : all) {
-        if (d.sourceType != LinuxDistroCatalog::SourceType::SourceForge)
+        if (d.sourceType != LinuxDistroCatalog::SourceType::SourceForge) {
             continue;
+        }
 
         QString url = m_catalog->resolveDownloadUrl(d);
 
         QVERIFY2(url.startsWith("https://sourceforge.net/projects/"),
-                 qPrintable("SF URL must start with https://sourceforge.net/projects/: "
-                            + d.id + " → " + url));
+                 qPrintable("SF URL must start with https://sourceforge.net/projects/: " + d.id +
+                            " → " + url));
         QVERIFY2(url.endsWith("/download"),
-                 qPrintable("SF URL must end with /download: "
-                            + d.id + " → " + url));
+                 qPrintable("SF URL must end with /download: " + d.id + " → " + url));
         QVERIFY2(url.contains(d.version),
-                 qPrintable("SF URL must contain version: "
-                            + d.id + " → " + url));
+                 qPrintable("SF URL must contain version: " + d.id + " → " + url));
         QVERIFY2(!url.contains("{version}"),
-                 qPrintable("Unresolved {version} placeholder: "
-                            + d.id + " → " + url));
+                 qPrintable("Unresolved {version} placeholder: " + d.id + " → " + url));
 
         // Verify filename resolution
         QString filename = m_catalog->resolveFileName(d);
-        QVERIFY2(!filename.isEmpty(),
-                 qPrintable("SF distro " + d.id + " has empty filename"));
+        QVERIFY2(!filename.isEmpty(), qPrintable("SF distro " + d.id + " has empty filename"));
         QVERIFY2(filename.contains(d.version),
-                 qPrintable("SF filename missing version: "
-                            + d.id + " → " + filename));
+                 qPrintable("SF filename missing version: " + d.id + " → " + filename));
     }
 }
 

@@ -3,8 +3,8 @@
 
 #include "sak/app_installation_panel.h"
 #include "sak/chocolatey_manager.h"
-#include "sak/logger.h"
 #include "sak/layout_constants.h"
+#include "sak/logger.h"
 
 #include <QApplication>
 #include <QFileDialog>
@@ -97,8 +97,8 @@ QHash<QString, QString> AppInstallationPanel::s_publisherMap = {
 // Publisher lookup
 // ============================================================================
 
-QIcon AppInstallationPanel::publisherIcon(const QString& packageId) const
-{
+QIcon AppInstallationPanel::publisherIcon(const QString& packageId) const {
+    Q_ASSERT(!packageId.isEmpty());
     // Look up the publisher from the known map
     QString lowerPkg = packageId.toLower();
 
@@ -133,9 +133,7 @@ QIcon AppInstallationPanel::publisherIcon(const QString& packageId) const
     return QApplication::style()->standardIcon(QStyle::SP_FileIcon);
 }
 
-static QString lookupPublisher(const QString& packageId,
-                               const QHash<QString, QString>& map)
-{
+static QString lookupPublisher(const QString& packageId, const QHash<QString, QString>& map) {
     QString lower = packageId.toLower();
     if (map.contains(lower)) {
         return map[lower];
@@ -152,8 +150,10 @@ static QString lookupPublisher(const QString& packageId,
 // Results Table
 // ============================================================================
 
-void AppInstallationPanel::updateResultsFromSearch(const QString& output)
-{
+void AppInstallationPanel::updateResultsFromSearch(const QString& output) {
+    Q_ASSERT(m_resultsModel);
+    Q_ASSERT(m_choco_manager);
+    Q_ASSERT(m_resultsTable);
     auto packages = m_choco_manager->parseSearchResults(output);
 
     // Disable sorting during population
@@ -208,8 +208,11 @@ void AppInstallationPanel::updateResultsFromSearch(const QString& output)
 // Queue Display
 // ============================================================================
 
-void AppInstallationPanel::updateQueueDisplay()
-{
+void AppInstallationPanel::updateQueueDisplay() {
+    Q_ASSERT(m_installButton);
+    Q_ASSERT(m_saveQueueButton);
+    Q_ASSERT(m_queueList);
+    Q_ASSERT(m_clearQueueButton);
     m_queueList->clear();
 
     for (const auto& entry : m_installQueue) {
@@ -235,8 +238,7 @@ void AppInstallationPanel::updateQueueDisplay()
 // Controls
 // ============================================================================
 
-void AppInstallationPanel::enableControls(bool enabled)
-{
+void AppInstallationPanel::enableControls(bool enabled) {
     m_searchButton->setEnabled(enabled);
     m_searchEdit->setEnabled(enabled);
     m_categoryCombo->setEnabled(enabled);
@@ -250,24 +252,28 @@ void AppInstallationPanel::enableControls(bool enabled)
 // Save / Load Queue
 // ============================================================================
 
-void AppInstallationPanel::saveQueueToFile()
-{
+void AppInstallationPanel::saveQueueToFile() {
+    Q_ASSERT(!m_installQueue.empty());
+    Q_ASSERT(!m_installQueue.isEmpty());
     if (m_installQueue.isEmpty()) {
-        QMessageBox::information(this, tr("Save App List"),
-            tr("The install queue is empty. Add packages before saving."));
+        QMessageBox::information(this,
+                                 tr("Save App List"),
+                                 tr("The install queue is empty. Add packages before saving."));
         return;
     }
 
     QString filePath = QFileDialog::getSaveFileName(
         this, tr("Save App List"), QString(), tr("JSON Files (*.json)"));
-    if (filePath.isEmpty()) return;
+    if (filePath.isEmpty()) {
+        return;
+    }
 
     QJsonArray arr;
     for (const auto& entry : m_installQueue) {
         QJsonObject obj;
         obj["package_id"] = entry.package_id;
-        obj["version"]    = entry.version;
-        obj["publisher"]  = entry.publisher;
+        obj["version"] = entry.version;
+        obj["publisher"] = entry.publisher;
         arr.append(obj);
     }
 
@@ -275,8 +281,9 @@ void AppInstallationPanel::saveQueueToFile()
     QFile file(filePath);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
         sak::logWarning(("Save Failed: Could not write to file: " + filePath).toStdString());
-        QMessageBox::warning(this, tr("Save Failed"),
-            tr("Could not write to file:\n%1").arg(filePath));
+        QMessageBox::warning(this,
+                             tr("Save Failed"),
+                             tr("Could not write to file:\n%1").arg(filePath));
         return;
     }
     const QByteArray json_bytes = doc.toJson(QJsonDocument::Indented);
@@ -285,24 +292,23 @@ void AppInstallationPanel::saveQueueToFile()
     }
     file.close();
 
-    Q_EMIT logOutput(QString("Saved %1 package(s) to %2")
-                         .arg(m_installQueue.size())
-                         .arg(filePath));
-    Q_EMIT statusMessage(
-        QString("App list saved (%1 packages)").arg(m_installQueue.size()), 3000);
+    Q_EMIT logOutput(QString("Saved %1 package(s) to %2").arg(m_installQueue.size()).arg(filePath));
+    Q_EMIT statusMessage(QString("App list saved (%1 packages)").arg(m_installQueue.size()), 3000);
 }
 
-void AppInstallationPanel::loadQueueFromFile()
-{
+void AppInstallationPanel::loadQueueFromFile() {
+    Q_ASSERT(!m_installQueue.empty());
+    Q_ASSERT(!m_installQueue.isEmpty());
     QString filePath = QFileDialog::getOpenFileName(
         this, tr("Load App List"), QString(), tr("JSON Files (*.json)"));
-    if (filePath.isEmpty()) return;
+    if (filePath.isEmpty()) {
+        return;
+    }
 
     QFile file(filePath);
     if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
         sak::logWarning(("Load Failed: Could not read file: " + filePath).toStdString());
-        QMessageBox::warning(this, tr("Load Failed"),
-            tr("Could not read file:\n%1").arg(filePath));
+        QMessageBox::warning(this, tr("Load Failed"), tr("Could not read file:\n%1").arg(filePath));
         return;
     }
 
@@ -312,15 +318,15 @@ void AppInstallationPanel::loadQueueFromFile()
 
     if (parseError.error != QJsonParseError::NoError) {
         sak::logWarning(("Load Failed: Invalid JSON: " + parseError.errorString()).toStdString());
-        QMessageBox::warning(this, tr("Load Failed"),
-            tr("Invalid JSON:\n%1").arg(parseError.errorString()));
+        QMessageBox::warning(this,
+                             tr("Load Failed"),
+                             tr("Invalid JSON:\n%1").arg(parseError.errorString()));
         return;
     }
 
     if (!doc.isArray()) {
         sak::logWarning("Load Failed: Expected a JSON array of packages.");
-        QMessageBox::warning(this, tr("Load Failed"),
-            tr("Expected a JSON array of packages."));
+        QMessageBox::warning(this, tr("Load Failed"), tr("Expected a JSON array of packages."));
         return;
     }
 
@@ -328,10 +334,14 @@ void AppInstallationPanel::loadQueueFromFile()
     int skipped = 0;
     const QJsonArray arr = doc.array();
     for (const auto& val : arr) {
-        if (!val.isObject()) continue;
+        if (!val.isObject()) {
+            continue;
+        }
         QJsonObject obj = val.toObject();
         QString pkgId = obj["package_id"].toString().trimmed();
-        if (pkgId.isEmpty()) continue;
+        if (pkgId.isEmpty()) {
+            continue;
+        }
 
         // Skip duplicates
         bool duplicate = false;
@@ -348,8 +358,8 @@ void AppInstallationPanel::loadQueueFromFile()
 
         QueueEntry entry;
         entry.package_id = pkgId;
-        entry.version    = obj["version"].toString();
-        entry.publisher  = obj["publisher"].toString();
+        entry.version = obj["version"].toString();
+        entry.publisher = obj["publisher"].toString();
         m_installQueue.append(entry);
         added++;
     }

@@ -278,12 +278,12 @@ protected:
         QString filename;
         qint64 size;
     };
-    
+
     // Subclasses implement these
     virtual QString backupSubdirectory() const = 0;
     virtual QVector<BackupFileInfo> discoverFiles() = 0;
     virtual bool isApplicationRunning() { return false; }
-    
+
     // Template method handles the common flow
     void executeBackup();
 };

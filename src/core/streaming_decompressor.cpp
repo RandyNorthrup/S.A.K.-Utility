@@ -2,23 +2,21 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "sak/streaming_decompressor.h"
-#include "sak/logger.h"
+
 #include "sak/layout_constants.h"
+#include "sak/logger.h"
+#include <QtGlobal>
 
 namespace sak {
 
-StreamingDecompressor::StreamingDecompressor(QObject* parent)
-    : QObject(parent)
-{
-}
+StreamingDecompressor::StreamingDecompressor(QObject* parent) : QObject(parent) {}
 
-StreamingDecompressor::~StreamingDecompressor()
-{
+StreamingDecompressor::~StreamingDecompressor() {
     close();
 }
 
-bool StreamingDecompressor::open(const QString& filePath)
-{
+bool StreamingDecompressor::open(const QString& filePath) {
+    Q_ASSERT(!filePath.isEmpty());
     close();
 
     m_file.setFileName(filePath);
@@ -41,8 +39,7 @@ bool StreamingDecompressor::open(const QString& filePath)
     return true;
 }
 
-void StreamingDecompressor::close()
-{
+void StreamingDecompressor::close() {
     if (m_initialized) {
         cleanupStream();
         m_initialized = false;
@@ -53,13 +50,13 @@ void StreamingDecompressor::close()
     m_eof = false;
 }
 
-bool StreamingDecompressor::isOpen() const
-{
+bool StreamingDecompressor::isOpen() const {
     return m_file.isOpen() && m_initialized;
 }
 
-qint64 StreamingDecompressor::read(char* data, qint64 maxSize)
-{
+qint64 StreamingDecompressor::read(char* data, qint64 maxSize) {
+    Q_ASSERT(data);
+    Q_ASSERT(maxSize >= 0);
     if (!isOpen()) {
         m_lastError = "Decompressor not open";
         return -1;
@@ -71,8 +68,12 @@ qint64 StreamingDecompressor::read(char* data, qint64 maxSize)
     setOutput(data, static_cast<size_t>(maxSize));
 
     while (outputRemaining() > 0 && !m_eof) {
-        if (!tryRefillInput()) return -1;
-        if (m_eof) break;
+        if (!tryRefillInput()) {
+            return -1;
+        }
+        if (m_eof) {
+            break;
+        }
 
         StepResult result = decompressStep();
         if (result == StepResult::stream_end) {
@@ -96,25 +97,25 @@ qint64 StreamingDecompressor::read(char* data, qint64 maxSize)
     return bytesProduced;
 }
 
-bool StreamingDecompressor::atEnd() const
-{
+bool StreamingDecompressor::atEnd() const {
     return m_eof;
 }
 
-qint64 StreamingDecompressor::compressedBytesRead() const
-{
+qint64 StreamingDecompressor::compressedBytesRead() const {
     return m_compressedBytesRead;
 }
 
-qint64 StreamingDecompressor::decompressedBytesProduced() const
-{
+qint64 StreamingDecompressor::decompressedBytesProduced() const {
     return m_decompressedBytesProduced;
 }
 
-bool StreamingDecompressor::tryRefillInput()
-{
-    if (!inputEmpty()) return true;
-    if (fillInputBuffer()) return true;
+bool StreamingDecompressor::tryRefillInput() {
+    if (!inputEmpty()) {
+        return true;
+    }
+    if (fillInputBuffer()) {
+        return true;
+    }
     if (m_file.atEnd()) {
         m_eof = true;
         return true;
@@ -122,8 +123,7 @@ bool StreamingDecompressor::tryRefillInput()
     return false;
 }
 
-bool StreamingDecompressor::fillInputBuffer()
-{
+bool StreamingDecompressor::fillInputBuffer() {
     qint64 bytesRead = m_file.read(reinterpret_cast<char*>(m_inputBuffer), CHUNK_SIZE);
     if (bytesRead < 0) {
         m_lastError = QString("File read error: %1").arg(m_file.errorString());
@@ -138,4 +138,4 @@ bool StreamingDecompressor::fillInputBuffer()
     return true;
 }
 
-} // namespace sak
+}  // namespace sak

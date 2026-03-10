@@ -7,14 +7,18 @@
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
+#include "sak/active_connections_monitor.h"
+
+#include <QtGlobal>
+
 #include <winsock2.h>
 #include <ws2tcpip.h>
+
 #include <windows.h>
+
 #include <iphlpapi.h>
 #include <psapi.h>
 #include <tlhelp32.h>
-
-#include "sak/active_connections_monitor.h"
 
 #pragma comment(lib, "iphlpapi.lib")
 #pragma comment(lib, "ws2_32.lib")
@@ -22,11 +26,10 @@
 namespace sak {
 
 namespace {
-constexpr DWORD kInitialBufferSize = 32768;
-constexpr int kMaxHostnameLen      = 256;
+constexpr DWORD kInitialBufferSize = 32'768;
+constexpr int kMaxHostnameLen = 256;
 
-[[nodiscard]] QString ipv4ToString(DWORD addr)
-{
+[[nodiscard]] QString ipv4ToString(DWORD addr) {
     IN_ADDR in;
     in.S_un.S_addr = addr;
     char buf[INET_ADDRSTRLEN] = {};
@@ -34,38 +37,46 @@ constexpr int kMaxHostnameLen      = 256;
     return QString::fromLatin1(buf);
 }
 
-[[nodiscard]] QString tcpStateToString(DWORD state)
-{
+[[nodiscard]] QString tcpStateToString(DWORD state) {
     switch (state) {
-    case MIB_TCP_STATE_CLOSED:       return QStringLiteral("CLOSED");
-    case MIB_TCP_STATE_LISTEN:       return QStringLiteral("LISTEN");
-    case MIB_TCP_STATE_SYN_SENT:     return QStringLiteral("SYN_SENT");
-    case MIB_TCP_STATE_SYN_RCVD:     return QStringLiteral("SYN_RCVD");
-    case MIB_TCP_STATE_ESTAB:        return QStringLiteral("ESTABLISHED");
-    case MIB_TCP_STATE_FIN_WAIT1:    return QStringLiteral("FIN_WAIT1");
-    case MIB_TCP_STATE_FIN_WAIT2:    return QStringLiteral("FIN_WAIT2");
-    case MIB_TCP_STATE_CLOSE_WAIT:   return QStringLiteral("CLOSE_WAIT");
-    case MIB_TCP_STATE_CLOSING:      return QStringLiteral("CLOSING");
-    case MIB_TCP_STATE_LAST_ACK:     return QStringLiteral("LAST_ACK");
-    case MIB_TCP_STATE_TIME_WAIT:    return QStringLiteral("TIME_WAIT");
-    case MIB_TCP_STATE_DELETE_TCB:   return QStringLiteral("DELETE_TCB");
-    default:                         return QStringLiteral("UNKNOWN");
+    case MIB_TCP_STATE_CLOSED:
+        return QStringLiteral("CLOSED");
+    case MIB_TCP_STATE_LISTEN:
+        return QStringLiteral("LISTEN");
+    case MIB_TCP_STATE_SYN_SENT:
+        return QStringLiteral("SYN_SENT");
+    case MIB_TCP_STATE_SYN_RCVD:
+        return QStringLiteral("SYN_RCVD");
+    case MIB_TCP_STATE_ESTAB:
+        return QStringLiteral("ESTABLISHED");
+    case MIB_TCP_STATE_FIN_WAIT1:
+        return QStringLiteral("FIN_WAIT1");
+    case MIB_TCP_STATE_FIN_WAIT2:
+        return QStringLiteral("FIN_WAIT2");
+    case MIB_TCP_STATE_CLOSE_WAIT:
+        return QStringLiteral("CLOSE_WAIT");
+    case MIB_TCP_STATE_CLOSING:
+        return QStringLiteral("CLOSING");
+    case MIB_TCP_STATE_LAST_ACK:
+        return QStringLiteral("LAST_ACK");
+    case MIB_TCP_STATE_TIME_WAIT:
+        return QStringLiteral("TIME_WAIT");
+    case MIB_TCP_STATE_DELETE_TCB:
+        return QStringLiteral("DELETE_TCB");
+    default:
+        return QStringLiteral("UNKNOWN");
     }
 }
-} // namespace
+}  // namespace
 
-ActiveConnectionsMonitor::ActiveConnectionsMonitor(QObject* parent)
-    : QObject(parent)
-{
-}
+ActiveConnectionsMonitor::ActiveConnectionsMonitor(QObject* parent) : QObject(parent) {}
 
-ActiveConnectionsMonitor::~ActiveConnectionsMonitor()
-{
+ActiveConnectionsMonitor::~ActiveConnectionsMonitor() {
     stopMonitoring();
 }
 
-void ActiveConnectionsMonitor::startMonitoring(const MonitorConfig& config)
-{
+void ActiveConnectionsMonitor::startMonitoring(const MonitorConfig& config) {
+    Q_ASSERT(m_refreshTimer);
     stopMonitoring();
     m_config = config;
     m_monitoring.store(true);
@@ -78,8 +89,7 @@ void ActiveConnectionsMonitor::startMonitoring(const MonitorConfig& config)
     refreshNow();
 }
 
-void ActiveConnectionsMonitor::stopMonitoring()
-{
+void ActiveConnectionsMonitor::stopMonitoring() {
     m_monitoring.store(false);
     if (m_refreshTimer != nullptr) {
         m_refreshTimer->stop();
@@ -88,8 +98,7 @@ void ActiveConnectionsMonitor::stopMonitoring()
     }
 }
 
-void ActiveConnectionsMonitor::refreshNow()
-{
+void ActiveConnectionsMonitor::refreshNow() {
     QVector<ConnectionInfo> connections;
 
     if (m_config.showTcp) {
@@ -106,27 +115,23 @@ void ActiveConnectionsMonitor::refreshNow()
     Q_EMIT connectionsUpdated(connections);
 }
 
-QVector<ConnectionInfo> ActiveConnectionsMonitor::getCurrentConnections() const
-{
+QVector<ConnectionInfo> ActiveConnectionsMonitor::getCurrentConnections() const {
     return m_lastConnections;
 }
 
-QVector<ConnectionInfo> ActiveConnectionsMonitor::enumerateTcpConnections()
-{
+QVector<ConnectionInfo> ActiveConnectionsMonitor::enumerateTcpConnections() {
     QVector<ConnectionInfo> connections;
 
     DWORD bufferSize = kInitialBufferSize;
     auto buffer = std::make_unique<BYTE[]>(bufferSize);
 
-    DWORD result = GetExtendedTcpTable(
-        buffer.get(), &bufferSize, TRUE, AF_INET,
-        TCP_TABLE_OWNER_PID_ALL, 0);
+    DWORD result =
+        GetExtendedTcpTable(buffer.get(), &bufferSize, TRUE, AF_INET, TCP_TABLE_OWNER_PID_ALL, 0);
 
     if (result == ERROR_INSUFFICIENT_BUFFER) {
         buffer = std::make_unique<BYTE[]>(bufferSize);
         result = GetExtendedTcpTable(
-            buffer.get(), &bufferSize, TRUE, AF_INET,
-            TCP_TABLE_OWNER_PID_ALL, 0);
+            buffer.get(), &bufferSize, TRUE, AF_INET, TCP_TABLE_OWNER_PID_ALL, 0);
     }
 
     if (result != NO_ERROR) {
@@ -152,8 +157,7 @@ QVector<ConnectionInfo> ActiveConnectionsMonitor::enumerateTcpConnections()
             info.processPath = getProcessPath(row.dwOwningPid);
         }
 
-        if (m_config.resolveHostnames &&
-            info.remoteAddress != QStringLiteral("0.0.0.0") &&
+        if (m_config.resolveHostnames && info.remoteAddress != QStringLiteral("0.0.0.0") &&
             info.remoteAddress != QStringLiteral("127.0.0.1")) {
             info.remoteHostname = resolveHostname(info.remoteAddress);
         }
@@ -164,22 +168,19 @@ QVector<ConnectionInfo> ActiveConnectionsMonitor::enumerateTcpConnections()
     return connections;
 }
 
-QVector<ConnectionInfo> ActiveConnectionsMonitor::enumerateUdpListeners()
-{
+QVector<ConnectionInfo> ActiveConnectionsMonitor::enumerateUdpListeners() {
     QVector<ConnectionInfo> connections;
 
     DWORD bufferSize = kInitialBufferSize;
     auto buffer = std::make_unique<BYTE[]>(bufferSize);
 
-    DWORD result = GetExtendedUdpTable(
-        buffer.get(), &bufferSize, TRUE, AF_INET,
-        UDP_TABLE_OWNER_PID, 0);
+    DWORD result =
+        GetExtendedUdpTable(buffer.get(), &bufferSize, TRUE, AF_INET, UDP_TABLE_OWNER_PID, 0);
 
     if (result == ERROR_INSUFFICIENT_BUFFER) {
         buffer = std::make_unique<BYTE[]>(bufferSize);
-        result = GetExtendedUdpTable(
-            buffer.get(), &bufferSize, TRUE, AF_INET,
-            UDP_TABLE_OWNER_PID, 0);
+        result =
+            GetExtendedUdpTable(buffer.get(), &bufferSize, TRUE, AF_INET, UDP_TABLE_OWNER_PID, 0);
     }
 
     if (result != NO_ERROR) {
@@ -209,8 +210,7 @@ QVector<ConnectionInfo> ActiveConnectionsMonitor::enumerateUdpListeners()
     return connections;
 }
 
-QString ActiveConnectionsMonitor::getProcessName(uint32_t pid)
-{
+QString ActiveConnectionsMonitor::getProcessName(uint32_t pid) {
     if (pid == 0) {
         return QStringLiteral("System Idle");
     }
@@ -241,8 +241,7 @@ QString ActiveConnectionsMonitor::getProcessName(uint32_t pid)
     return name;
 }
 
-QString ActiveConnectionsMonitor::getProcessPath(uint32_t pid)
-{
+QString ActiveConnectionsMonitor::getProcessPath(uint32_t pid) {
     if (pid == 0 || pid == 4) {
         return {};
     }
@@ -264,19 +263,20 @@ QString ActiveConnectionsMonitor::getProcessPath(uint32_t pid)
     return result;
 }
 
-QString ActiveConnectionsMonitor::resolveHostname(const QString& ip)
-{
+QString ActiveConnectionsMonitor::resolveHostname(const QString& ip) {
+    Q_ASSERT(!ip.isEmpty());
     sockaddr_in addr{};
     addr.sin_family = AF_INET;
     inet_pton(AF_INET, ip.toLatin1().constData(), &addr.sin_addr);
 
     char host[kMaxHostnameLen] = {};
-    const int result = getnameinfo(
-        reinterpret_cast<sockaddr*>(&addr),
-        sizeof(addr),
-        host, sizeof(host),
-        nullptr, 0,
-        NI_NAMEREQD);
+    const int result = getnameinfo(reinterpret_cast<sockaddr*>(&addr),
+                                   sizeof(addr),
+                                   host,
+                                   sizeof(host),
+                                   nullptr,
+                                   0,
+                                   NI_NAMEREQD);
 
     if (result == 0) {
         return QString::fromLatin1(host);
@@ -284,33 +284,33 @@ QString ActiveConnectionsMonitor::resolveHostname(const QString& ip)
     return {};
 }
 
-void ActiveConnectionsMonitor::applyFilters(QVector<ConnectionInfo>& connections) const
-{
+void ActiveConnectionsMonitor::applyFilters(QVector<ConnectionInfo>& connections) const {
+    Q_ASSERT(!connections.isEmpty());
     if (m_config.filterProcessName.isEmpty() && m_config.filterPort == 0) {
         return;
     }
 
-    connections.erase(
-        std::remove_if(connections.begin(), connections.end(),
-                        [this](const ConnectionInfo& c) {
-                            if (!m_config.filterProcessName.isEmpty() &&
-                                !c.processName.contains(m_config.filterProcessName,
-                                                         Qt::CaseInsensitive)) {
-                                return true;
-                            }
-                            if (m_config.filterPort != 0 &&
-                                c.localPort != m_config.filterPort &&
-                                c.remotePort != m_config.filterPort) {
-                                return true;
-                            }
-                            return false;
-                        }),
-        connections.end());
+    connections.erase(std::remove_if(connections.begin(),
+                                     connections.end(),
+                                     [this](const ConnectionInfo& c) {
+                                         if (!m_config.filterProcessName.isEmpty() &&
+                                             !c.processName.contains(m_config.filterProcessName,
+                                                                     Qt::CaseInsensitive)) {
+                                             return true;
+                                         }
+                                         if (m_config.filterPort != 0 &&
+                                             c.localPort != m_config.filterPort &&
+                                             c.remotePort != m_config.filterPort) {
+                                             return true;
+                                         }
+                                         return false;
+                                     }),
+                      connections.end());
 }
 
-void ActiveConnectionsMonitor::detectChanges(
-    const QVector<ConnectionInfo>& current)
-{
+void ActiveConnectionsMonitor::detectChanges(const QVector<ConnectionInfo>& current) {
+    Q_ASSERT(!current.isEmpty());
+    Q_ASSERT(!m_lastConnections.isEmpty());
     if (m_lastConnections.isEmpty()) {
         return;
     }
@@ -350,4 +350,4 @@ void ActiveConnectionsMonitor::detectChanges(
     }
 }
 
-} // namespace sak
+}  // namespace sak

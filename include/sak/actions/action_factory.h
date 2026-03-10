@@ -4,7 +4,9 @@
 #pragma once
 
 #include "sak/quick_action.h"
+
 #include <QString>
+
 #include <memory>
 #include <vector>
 
@@ -26,5 +28,4 @@ public:
         const QString& backup_location);
 };
 
-} // namespace sak
-
+}  // namespace sak

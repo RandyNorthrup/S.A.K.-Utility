@@ -4,13 +4,14 @@
 #pragma once
 
 #include "sak/quick_action.h"
+
 #include <QString>
 
 namespace sak {
 
 /**
  * @brief Printer Settings Backup Action
- * 
+ *
  * Backs up Windows printer configurations from registry.
  */
 class BackupPrinterSettingsAction : public QuickAction {
@@ -36,4 +37,4 @@ private:
     bool exportPrinterRegistry(const QString& dest_file);
 };
 
-} // namespace sak
+}  // namespace sak

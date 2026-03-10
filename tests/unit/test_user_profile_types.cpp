@@ -4,9 +4,10 @@
 /// @file test_user_profile_types.cpp
 /// @brief Unit tests for user profile type serialization (TST-05)
 
-#include <QtTest/QtTest>
-#include <QTemporaryFile>
 #include "sak/user_profile_types.h"
+
+#include <QTemporaryFile>
+#include <QtTest/QtTest>
 
 using namespace sak;
 
@@ -16,8 +17,7 @@ class UserProfileTypesTests : public QObject {
 private Q_SLOTS:
     // --- Enum-string round-trips ---
 
-    void folderTypeRoundTrip_data()
-    {
+    void folderTypeRoundTrip_data() {
         QTest::addColumn<int>("type");
         QTest::addColumn<QString>("expected");
 
@@ -29,8 +29,7 @@ private Q_SLOTS:
         QTest::newRow("Downloads") << static_cast<int>(FolderType::Downloads) << "Downloads";
     }
 
-    void folderTypeRoundTrip()
-    {
+    void folderTypeRoundTrip() {
         QFETCH(int, type);
         QFETCH(QString, expected);
 
@@ -42,16 +41,14 @@ private Q_SLOTS:
         QCOMPARE(back, ft);
     }
 
-    void unknownFolderTypeReturnsCustom()
-    {
+    void unknownFolderTypeReturnsCustom() {
         FolderType result = stringToFolderType("NonExistent");
         QCOMPARE(result, FolderType::Custom);
     }
 
     // --- FolderSelection JSON round-trip ---
 
-    void folderSelectionSerialize()
-    {
+    void folderSelectionSerialize() {
         FolderSelection fs;
         fs.type = FolderType::Documents;
         fs.relative_path = "Documents";
@@ -69,8 +66,7 @@ private Q_SLOTS:
 
     // --- UserProfile JSON round-trip ---
 
-    void userProfileSerialize()
-    {
+    void userProfileSerialize() {
         UserProfile profile;
         profile.username = "TestUser";
         profile.sid = "S-1-5-21-123456789";
@@ -88,16 +84,14 @@ private Q_SLOTS:
 
     // --- SmartFilter ---
 
-    void smartFilterDefaults()
-    {
+    void smartFilterDefaults() {
         SmartFilter filter;
         filter.initializeDefaults();
         // Should have populated exclude patterns
         QVERIFY(!filter.exclude_patterns.isEmpty());
     }
 
-    void smartFilterSerialize()
-    {
+    void smartFilterSerialize() {
         SmartFilter filter;
         filter.initializeDefaults();
 
@@ -109,8 +103,7 @@ private Q_SLOTS:
 
     // --- BackupManifest ---
 
-    void backupManifestSerialize()
-    {
+    void backupManifestSerialize() {
         BackupManifest manifest;
         manifest.version = "1.0";
         manifest.created = QDateTime::currentDateTime();
@@ -130,8 +123,7 @@ private Q_SLOTS:
         QCOMPARE(restored.users.first().username, QStringLiteral("Admin"));
     }
 
-    void backupManifestFileRoundTrip()
-    {
+    void backupManifestFileRoundTrip() {
         BackupManifest manifest;
         manifest.version = "1.0";
         manifest.source_machine = "TEST-PC";
@@ -150,17 +142,15 @@ private Q_SLOTS:
 
     // --- PermissionMode string conversion ---
 
-    void permissionModeToStringValid()
-    {
+    void permissionModeToStringValid() {
         QCOMPARE(permissionModeToString(PermissionMode::StripAll), QStringLiteral("StripAll"));
         QCOMPARE(permissionModeToString(PermissionMode::PreserveOriginal),
-            QStringLiteral("PreserveOriginal"));
+                 QStringLiteral("PreserveOriginal"));
     }
 
     // --- BackupUserData round-trip ---
 
-    void backupUserDataSerialize()
-    {
+    void backupUserDataSerialize() {
         BackupUserData data;
         data.username = "John";
         data.sid = "S-1-5-21-999";

@@ -5,6 +5,7 @@
 /// @brief Implements directory-recursive file content search on a worker thread
 
 #include "sak/advanced_search_worker.h"
+
 #include "sak/logger.h"
 
 #include <QDir>
@@ -14,10 +15,10 @@
 #include <QImageReader>
 #include <QTextStream>
 
-#include <zlib.h>
-
 #include <algorithm>
 #include <cstring>
+
+#include <zlib.h>
 
 namespace sak {
 
@@ -27,10 +28,8 @@ namespace sak {
 /// @param compressedData  The raw deflated bytes from the ZIP entry.
 /// @param expectedSize    The uncompressed size from the ZIP header.
 /// @return The decompressed bytes, or an empty QByteArray on failure.
-[[nodiscard]] static QByteArray inflateZipEntry(
-    const QByteArray& compressedData,
-    uint32_t expectedSize)
-{
+[[nodiscard]] static QByteArray inflateZipEntry(const QByteArray& compressedData,
+                                                uint32_t expectedSize) {
     if (compressedData.isEmpty() || expectedSize == 0) {
         return {};
     }
@@ -45,10 +44,9 @@ namespace sak {
     output.resize(static_cast<qsizetype>(expectedSize));
 
     z_stream strm{};
-    strm.next_in  = reinterpret_cast<Bytef*>(
-        const_cast<char*>(compressedData.constData()));
+    strm.next_in = reinterpret_cast<Bytef*>(const_cast<char*>(compressedData.constData()));
     strm.avail_in = static_cast<uInt>(compressedData.size());
-    strm.next_out  = reinterpret_cast<Bytef*>(output.data());
+    strm.next_out = reinterpret_cast<Bytef*>(output.data());
     strm.avail_out = static_cast<uInt>(expectedSize);
 
     // -MAX_WBITS → raw deflate (no zlib/gzip header), which is what ZIP uses
@@ -71,16 +69,11 @@ namespace sak {
 // ── Construction ────────────────────────────────────────────────────────────
 
 AdvancedSearchWorker::AdvancedSearchWorker(SearchConfig config, QObject* parent)
-    : WorkerBase(parent)
-    , m_config(std::move(config))
-{
-}
+    : WorkerBase(parent), m_config(std::move(config)) {}
 
 // ── Regex Compilation ───────────────────────────────────────────────────────
 
-auto AdvancedSearchWorker::compileRegex() const
-    -> std::expected<QRegularExpression, QString>
-{
+auto AdvancedSearchWorker::compileRegex() const -> std::expected<QRegularExpression, QString> {
     if (m_config.pattern.isEmpty()) {
         return std::unexpected(QStringLiteral("Search pattern is empty"));
     }
@@ -97,8 +90,7 @@ auto AdvancedSearchWorker::compileRegex() const
         regexPattern = QString(R"(\b%1\b)").arg(regexPattern);
     }
 
-    QRegularExpression::PatternOptions opts =
-        QRegularExpression::DontCaptureOption;
+    QRegularExpression::PatternOptions opts = QRegularExpression::DontCaptureOption;
 
     if (!m_config.case_sensitive) {
         opts |= QRegularExpression::CaseInsensitiveOption;
@@ -107,10 +99,9 @@ auto AdvancedSearchWorker::compileRegex() const
     QRegularExpression regex(regexPattern, opts);
 
     if (!regex.isValid()) {
-        return std::unexpected(
-            QString("Invalid regex: %1 at offset %2")
-                .arg(regex.errorString())
-                .arg(regex.patternErrorOffset()));
+        return std::unexpected(QString("Invalid regex: %1 at offset %2")
+                                   .arg(regex.errorString())
+                                   .arg(regex.patternErrorOffset()));
     }
 
     return regex;
@@ -118,8 +109,7 @@ auto AdvancedSearchWorker::compileRegex() const
 
 // ── Exclusion & Filtering ───────────────────────────────────────────────────
 
-bool AdvancedSearchWorker::isExcluded(const QString& path) const
-{
+bool AdvancedSearchWorker::isExcluded(const QString& path) const {
     for (const auto& excludeRegex : m_compiled_excludes) {
         if (excludeRegex.match(path).hasMatch()) {
             return true;
@@ -128,10 +118,10 @@ bool AdvancedSearchWorker::isExcluded(const QString& path) const
     return false;
 }
 
-bool AdvancedSearchWorker::matchesExtensionFilter(const QString& filePath) const
-{
+bool AdvancedSearchWorker::matchesExtensionFilter(const QString& filePath) const {
+    Q_ASSERT(!filePath.isEmpty());
     if (m_config.file_extensions.isEmpty()) {
-        return true; // No filter = accept all
+        return true;  // No filter = accept all
     }
 
     const QString ext = QFileInfo(filePath).suffix().toLower();
@@ -149,13 +139,11 @@ bool AdvancedSearchWorker::matchesExtensionFilter(const QString& filePath) const
 
 // ── Network Path Detection ──────────────────────────────────────────────────
 
-bool AdvancedSearchWorker::isNetworkPath(const QString& path) const
-{
+bool AdvancedSearchWorker::isNetworkPath(const QString& path) const {
     return path.startsWith("\\\\") || path.startsWith("//");
 }
 
-bool AdvancedSearchWorker::checkNetworkPathAccessible(const QString& path) const
-{
+bool AdvancedSearchWorker::checkNetworkPathAccessible(const QString& path) const {
     // Simple accessibility check — try to list directory contents
     const QFileInfo info(path);
     return info.exists() && info.isReadable();
@@ -164,23 +152,21 @@ bool AdvancedSearchWorker::checkNetworkPathAccessible(const QString& path) const
 // ── Main Search Execution ───────────────────────────────────────────────────
 
 auto AdvancedSearchWorker::prepareSearchConfig()
-    -> std::expected<QRegularExpression, sak::error_code>
-{
+    -> std::expected<QRegularExpression, sak::error_code> {
     auto regexResult = compileRegex();
     if (!regexResult) {
-        logError("AdvancedSearchWorker: regex compilation "
-                 "failed: {}",
-                 regexResult.error().toStdString());
-        return std::unexpected(
-            sak::error_code::invalid_argument);
+        logError(
+            "AdvancedSearchWorker: regex compilation "
+            "failed: {}",
+            regexResult.error().toStdString());
+        return std::unexpected(sak::error_code::invalid_argument);
     }
     const auto& regex = regexResult.value();
 
     // Compile exclusion patterns once
     m_compiled_excludes.clear();
     for (const auto& pattern : m_config.exclude_patterns) {
-        QRegularExpression excl(
-            pattern, QRegularExpression::CaseInsensitiveOption);
+        QRegularExpression excl(pattern, QRegularExpression::CaseInsensitiveOption);
         if (excl.isValid()) {
             m_compiled_excludes.append(excl);
         }
@@ -193,18 +179,16 @@ auto AdvancedSearchWorker::prepareSearchConfig()
                 "AdvancedSearchWorker: network path "
                 "not accessible: {}",
                 m_config.root_path.toStdString());
-            return std::unexpected(
-                sak::error_code::network_unavailable);
+            return std::unexpected(sak::error_code::network_unavailable);
         }
     }
 
     return regex;
 }
 
-void AdvancedSearchWorker::runDirectorySearch(
-    const QRegularExpression& regex,
-    int& total_matches, int& total_files)
-{
+void AdvancedSearchWorker::runDirectorySearch(const QRegularExpression& regex,
+                                              int& total_matches,
+                                              int& total_files) {
     QDirIterator it(m_config.root_path,
                     QDir::Files | QDir::NoDotAndDotDot,
                     QDirIterator::Subdirectories);
@@ -214,19 +198,24 @@ void AdvancedSearchWorker::runDirectorySearch(
 
     while (it.hasNext()) {
         if (checkStop()) {
-            logInfo("AdvancedSearchWorker: search cancelled "
-                    "after {} files", fileCount);
+            logInfo(
+                "AdvancedSearchWorker: search cancelled "
+                "after {} files",
+                fileCount);
             return;
         }
 
         const QString filePath = it.next();
 
-        if (isExcluded(filePath)) { continue; }
-        if (!matchesExtensionFilter(filePath)) { continue; }
+        if (isExcluded(filePath)) {
+            continue;
+        }
+        if (!matchesExtensionFilter(filePath)) {
+            continue;
+        }
 
         const QFileInfo fileInfo(filePath);
-        if (m_config.max_file_size > 0
-            && fileInfo.size() > m_config.max_file_size) {
+        if (m_config.max_file_size > 0 && fileInfo.size() > m_config.max_file_size) {
             continue;
         }
 
@@ -240,25 +229,27 @@ void AdvancedSearchWorker::runDirectorySearch(
 
         fileCount++;
 
-        if (m_config.max_results > 0
-            && total_matches >= m_config.max_results) {
-            logInfo("AdvancedSearchWorker: max results limit "
-                    "({}) reached", m_config.max_results);
+        if (m_config.max_results > 0 && total_matches >= m_config.max_results) {
+            logInfo(
+                "AdvancedSearchWorker: max results limit "
+                "({}) reached",
+                m_config.max_results);
             break;
         }
 
-        if (fileCount % kBatchSize == 0
-            && !batchMatches.isEmpty()) {
+        if (fileCount % kBatchSize == 0 && !batchMatches.isEmpty()) {
             Q_EMIT resultsReady(batchMatches);
             batchMatches.clear();
         }
 
         constexpr int kProgressInterval = 100;
         if (fileCount % kProgressInterval == 0) {
-            reportProgress(fileCount, 0,
-                QString("Searching... %1 files scanned, "
-                        "%2 matches found")
-                    .arg(fileCount).arg(total_matches));
+            reportProgress(fileCount,
+                           0,
+                           QString("Searching... %1 files scanned, "
+                                   "%2 matches found")
+                               .arg(fileCount)
+                               .arg(total_matches));
         }
     }
 
@@ -266,14 +257,16 @@ void AdvancedSearchWorker::runDirectorySearch(
         Q_EMIT resultsReady(batchMatches);
     }
 
-    reportProgress(fileCount, fileCount,
-        QString("Search complete: %1 matches in %2 files "
-                "(%3 files scanned)")
-            .arg(total_matches).arg(total_files).arg(fileCount));
+    reportProgress(fileCount,
+                   fileCount,
+                   QString("Search complete: %1 matches in %2 files "
+                           "(%3 files scanned)")
+                       .arg(total_matches)
+                       .arg(total_files)
+                       .arg(fileCount));
 }
 
-auto AdvancedSearchWorker::execute() -> std::expected<void, sak::error_code>
-{
+auto AdvancedSearchWorker::execute() -> std::expected<void, sak::error_code> {
     logInfo("AdvancedSearchWorker: starting search for '{}' in '{}'",
             m_config.pattern.toStdString(),
             m_config.root_path.toStdString());
@@ -298,27 +291,28 @@ auto AdvancedSearchWorker::execute() -> std::expected<void, sak::error_code>
                 Q_EMIT resultsReady(matches);
             }
         }
-        reportProgress(1, 1,
-            QString("Search complete: %1 matches in %2 files")
-                .arg(totalMatches).arg(totalFiles));
+        reportProgress(
+            1,
+            1,
+            QString("Search complete: %1 matches in %2 files").arg(totalMatches).arg(totalFiles));
         return {};
     }
 
     runDirectorySearch(regex, totalMatches, totalFiles);
 
-    logInfo("AdvancedSearchWorker: search complete — "
-            "{} matches in {} files",
-            totalMatches, totalFiles);
+    logInfo(
+        "AdvancedSearchWorker: search complete — "
+        "{} matches in {} files",
+        totalMatches,
+        totalFiles);
 
     return {};
 }
 
 // ── File Search Dispatcher ──────────────────────────────────────────────────
 
-QVector<SearchMatch> AdvancedSearchWorker::searchFile(
-    const QString& filePath,
-    const QRegularExpression& regex)
-{
+QVector<SearchMatch> AdvancedSearchWorker::searchFile(const QString& filePath,
+                                                      const QRegularExpression& regex) {
     QVector<SearchMatch> matches;
     const QString ext = QFileInfo(filePath).suffix().toLower();
 
@@ -353,8 +347,7 @@ QVector<SearchMatch> AdvancedSearchWorker::searchFile(
     if (!handledAsSpecial || !kArchiveExtensions.contains(ext)) {
         // Skip text search on pure binary image formats
         static const QSet<QString> kBinaryImageExts = {
-            "jpg", "jpeg", "png", "tiff", "tif", "gif", "bmp", "webp"
-        };
+            "jpg", "jpeg", "png", "tiff", "tif", "gif", "bmp", "webp"};
         if (!kBinaryImageExts.contains(ext)) {
             matches.append(searchTextContent(filePath, regex));
         }
@@ -365,10 +358,8 @@ QVector<SearchMatch> AdvancedSearchWorker::searchFile(
 
 // ── Text Content Search ─────────────────────────────────────────────────────
 
-QVector<SearchMatch> AdvancedSearchWorker::searchTextContent(
-    const QString& filePath,
-    const QRegularExpression& regex)
-{
+QVector<SearchMatch> AdvancedSearchWorker::searchTextContent(const QString& filePath,
+                                                             const QRegularExpression& regex) {
     QVector<SearchMatch> matches;
 
     QFile file(filePath);
@@ -385,7 +376,7 @@ QVector<SearchMatch> AdvancedSearchWorker::searchTextContent(
         lines.append(stream.readLine());
 
         // Safety limit: skip very large files that somehow passed the size check
-        if (lines.size() > 500000) {
+        if (lines.size() > 500'000) {
             logWarning("AdvancedSearchWorker: file '{}' exceeds 500k lines, skipping",
                        filePath.toStdString());
             return matches;
@@ -406,7 +397,7 @@ QVector<SearchMatch> AdvancedSearchWorker::searchTextContent(
 
             SearchMatch match;
             match.file_path = filePath;
-            match.line_number = i + 1; // 1-based
+            match.line_number = i + 1;  // 1-based
             match.line_content = line;
             match.match_start = static_cast<int>(regexMatch.capturedStart());
             match.match_end = static_cast<int>(regexMatch.capturedEnd());
@@ -442,96 +433,124 @@ QVector<SearchMatch> AdvancedSearchWorker::searchTextContent(
 namespace {
 
 /// @brief Read a 16-bit big-endian unsigned integer from raw bytes
-[[nodiscard]] inline uint16_t readBE16(const char* data)
-{
-    return static_cast<uint16_t>(
-        (static_cast<uint8_t>(data[0]) << 8) |
-         static_cast<uint8_t>(data[1]));
+[[nodiscard]] inline uint16_t readBE16(const char* data) {
+    return static_cast<uint16_t>((static_cast<uint8_t>(data[0]) << 8) |
+                                 static_cast<uint8_t>(data[1]));
 }
 
 /// @brief Read a 32-bit unsigned integer respecting byte order
-[[nodiscard]] inline uint32_t readU32(const char* data, bool littleEndian)
-{
+[[nodiscard]] inline uint32_t readU32(const char* data, bool littleEndian) {
     if (littleEndian) {
-        return static_cast<uint32_t>(static_cast<uint8_t>(data[0]))
-             | (static_cast<uint32_t>(static_cast<uint8_t>(data[1])) <<  8)
-             | (static_cast<uint32_t>(static_cast<uint8_t>(data[2])) << 16)
-             | (static_cast<uint32_t>(static_cast<uint8_t>(data[3])) << 24);
+        return static_cast<uint32_t>(static_cast<uint8_t>(data[0])) |
+               (static_cast<uint32_t>(static_cast<uint8_t>(data[1])) << 8) |
+               (static_cast<uint32_t>(static_cast<uint8_t>(data[2])) << 16) |
+               (static_cast<uint32_t>(static_cast<uint8_t>(data[3])) << 24);
     }
-    return (static_cast<uint32_t>(static_cast<uint8_t>(data[0])) << 24)
-         | (static_cast<uint32_t>(static_cast<uint8_t>(data[1])) << 16)
-         | (static_cast<uint32_t>(static_cast<uint8_t>(data[2])) <<  8)
-         |  static_cast<uint32_t>(static_cast<uint8_t>(data[3]));
+    return (static_cast<uint32_t>(static_cast<uint8_t>(data[0])) << 24) |
+           (static_cast<uint32_t>(static_cast<uint8_t>(data[1])) << 16) |
+           (static_cast<uint32_t>(static_cast<uint8_t>(data[2])) << 8) |
+           static_cast<uint32_t>(static_cast<uint8_t>(data[3]));
 }
 
 /// @brief Read a 16-bit unsigned integer respecting byte order
-[[nodiscard]] inline uint16_t readU16(const char* data, bool littleEndian)
-{
+[[nodiscard]] inline uint16_t readU16(const char* data, bool littleEndian) {
     if (littleEndian) {
-        return static_cast<uint16_t>(
-            static_cast<uint8_t>(data[0]) |
-            (static_cast<uint8_t>(data[1]) << 8));
+        return static_cast<uint16_t>(static_cast<uint8_t>(data[0]) |
+                                     (static_cast<uint8_t>(data[1]) << 8));
     }
-    return static_cast<uint16_t>(
-        (static_cast<uint8_t>(data[0]) << 8) |
-         static_cast<uint8_t>(data[1]));
+    return static_cast<uint16_t>((static_cast<uint8_t>(data[0]) << 8) |
+                                 static_cast<uint8_t>(data[1]));
 }
 
 /// @brief EXIF tag ID → human-readable name mapping
-[[nodiscard]] QString exifTagName(uint16_t tag)
-{
+[[nodiscard]] QString exifTagName(uint16_t tag) {
     switch (tag) {
-        case 0x010E: return QStringLiteral("ImageDescription");
-        case 0x010F: return QStringLiteral("CameraMake");
-        case 0x0110: return QStringLiteral("CameraModel");
-        case 0x0112: return QStringLiteral("Orientation");
-        case 0x011A: return QStringLiteral("XResolution");
-        case 0x011B: return QStringLiteral("YResolution");
-        case 0x0128: return QStringLiteral("ResolutionUnit");
-        case 0x0131: return QStringLiteral("Software");
-        case 0x0132: return QStringLiteral("DateTime");
-        case 0x013B: return QStringLiteral("Artist");
-        case 0x0213: return QStringLiteral("YCbCrPositioning");
-        case 0x8298: return QStringLiteral("Copyright");
-        case 0x8769: return QStringLiteral("ExifOffset");
-        case 0x8825: return QStringLiteral("GPSInfo");
-        case 0x829A: return QStringLiteral("ExposureTime");
-        case 0x829D: return QStringLiteral("FNumber");
-        case 0x8827: return QStringLiteral("ISOSpeed");
-        case 0x9000: return QStringLiteral("ExifVersion");
-        case 0x9003: return QStringLiteral("DateTimeOriginal");
-        case 0x9004: return QStringLiteral("DateTimeDigitized");
-        case 0x9209: return QStringLiteral("Flash");
-        case 0x920A: return QStringLiteral("FocalLength");
-        case 0xA001: return QStringLiteral("ColorSpace");
-        case 0xA002: return QStringLiteral("PixelXDimension");
-        case 0xA003: return QStringLiteral("PixelYDimension");
-        case 0xA405: return QStringLiteral("FocalLengthIn35mm");
-        case 0xA420: return QStringLiteral("ImageUniqueID");
-        default:     return QString("Tag_0x%1").arg(tag, 4, 16, QChar('0'));
+    case 0x010E:
+        return QStringLiteral("ImageDescription");
+    case 0x010F:
+        return QStringLiteral("CameraMake");
+    case 0x0110:
+        return QStringLiteral("CameraModel");
+    case 0x0112:
+        return QStringLiteral("Orientation");
+    case 0x011A:
+        return QStringLiteral("XResolution");
+    case 0x011B:
+        return QStringLiteral("YResolution");
+    case 0x0128:
+        return QStringLiteral("ResolutionUnit");
+    case 0x0131:
+        return QStringLiteral("Software");
+    case 0x0132:
+        return QStringLiteral("DateTime");
+    case 0x013B:
+        return QStringLiteral("Artist");
+    case 0x0213:
+        return QStringLiteral("YCbCrPositioning");
+    case 0x8298:
+        return QStringLiteral("Copyright");
+    case 0x8769:
+        return QStringLiteral("ExifOffset");
+    case 0x8825:
+        return QStringLiteral("GPSInfo");
+    case 0x829A:
+        return QStringLiteral("ExposureTime");
+    case 0x829D:
+        return QStringLiteral("FNumber");
+    case 0x8827:
+        return QStringLiteral("ISOSpeed");
+    case 0x9000:
+        return QStringLiteral("ExifVersion");
+    case 0x9003:
+        return QStringLiteral("DateTimeOriginal");
+    case 0x9004:
+        return QStringLiteral("DateTimeDigitized");
+    case 0x9209:
+        return QStringLiteral("Flash");
+    case 0x920A:
+        return QStringLiteral("FocalLength");
+    case 0xA001:
+        return QStringLiteral("ColorSpace");
+    case 0xA002:
+        return QStringLiteral("PixelXDimension");
+    case 0xA003:
+        return QStringLiteral("PixelYDimension");
+    case 0xA405:
+        return QStringLiteral("FocalLengthIn35mm");
+    case 0xA420:
+        return QStringLiteral("ImageUniqueID");
+    default:
+        return QString("Tag_0x%1").arg(tag, 4, 16, QChar('0'));
     }
 }
 
 /// @brief Parse EXIF IFD entries from TIFF data and collect key-value pairs
-void parseExifIFD(const QByteArray& tiffData, uint32_t ifdOffset,
-                  bool littleEndian, QMap<QString, QString>& metadata,
-                  int depth = 0)
-{
+void parseExifIFD(const QByteArray& tiffData,
+                  uint32_t ifdOffset,
+                  bool littleEndian,
+                  QMap<QString, QString>& metadata,
+                  int depth = 0) {
     // Guard against infinite recursion from malformed data
-    if (depth > 4) return;
+    if (depth > 4) {
+        return;
+    }
 
     const int dataSize = tiffData.size();
-    if (static_cast<int>(ifdOffset + 2) > dataSize) return;
+    if (static_cast<int>(ifdOffset + 2) > dataSize) {
+        return;
+    }
 
     const char* base = tiffData.constData();
     const uint16_t entryCount = readU16(base + ifdOffset, littleEndian);
 
     for (uint16_t i = 0; i < entryCount; ++i) {
         const uint32_t entryOffset = ifdOffset + 2 + (i * 12);
-        if (static_cast<int>(entryOffset + 12) > dataSize) break;
+        if (static_cast<int>(entryOffset + 12) > dataSize) {
+            break;
+        }
 
         const char* entry = base + entryOffset;
-        const uint16_t tag  = readU16(entry, littleEndian);
+        const uint16_t tag = readU16(entry, littleEndian);
         const uint16_t type = readU16(entry + 2, littleEndian);
         const uint32_t count = readU32(entry + 4, littleEndian);
 
@@ -540,14 +559,30 @@ void parseExifIFD(const QByteArray& tiffData, uint32_t ifdOffset,
         // Calculate data size based on type
         int unitSize = 0;
         switch (type) {
-            case 1: case 7: unitSize = 1; break;  // BYTE, UNDEFINED
-            case 2:         unitSize = 1; break;  // ASCII
-            case 3:         unitSize = 2; break;  // SHORT
-            case 4:         unitSize = 4; break;  // LONG
-            case 5:         unitSize = 8; break;  // RATIONAL
-            case 9:         unitSize = 4; break;  // SLONG
-            case 10:        unitSize = 8; break;  // SRATIONAL
-            default:        continue;
+        case 1:
+        case 7:
+            unitSize = 1;
+            break;  // BYTE, UNDEFINED
+        case 2:
+            unitSize = 1;
+            break;  // ASCII
+        case 3:
+            unitSize = 2;
+            break;  // SHORT
+        case 4:
+            unitSize = 4;
+            break;  // LONG
+        case 5:
+            unitSize = 8;
+            break;  // RATIONAL
+        case 9:
+            unitSize = 4;
+            break;  // SLONG
+        case 10:
+            unitSize = 8;
+            break;  // SRATIONAL
+        default:
+            continue;
         }
 
         const uint32_t totalBytes = count * static_cast<uint32_t>(unitSize);
@@ -557,7 +592,9 @@ void parseExifIFD(const QByteArray& tiffData, uint32_t ifdOffset,
             valuePtr = entry + 8;
         } else {
             const uint32_t offset = readU32(entry + 8, littleEndian);
-            if (static_cast<int>(offset + totalBytes) > dataSize) continue;
+            if (static_cast<int>(offset + totalBytes) > dataSize) {
+                continue;
+            }
             valuePtr = base + offset;
         }
 
@@ -571,36 +608,36 @@ void parseExifIFD(const QByteArray& tiffData, uint32_t ifdOffset,
         // Extract value as string
         QString value;
         switch (type) {
-            case 2: // ASCII
-                value = QString::fromLatin1(valuePtr, static_cast<int>(count - 1)).trimmed();
-                break;
-            case 3: // SHORT
-                if (count == 1) {
-                    value = QString::number(readU16(valuePtr, littleEndian));
-                }
-                break;
-            case 4: // LONG
-                if (count == 1) {
-                    value = QString::number(readU32(valuePtr, littleEndian));
-                }
-                break;
-            case 5: { // RATIONAL
-                if (count == 1) {
-                    const uint32_t num = readU32(valuePtr, littleEndian);
-                    const uint32_t den = readU32(valuePtr + 4, littleEndian);
-                    if (den != 0) {
-                        value = QString("%1/%2").arg(num).arg(den);
-                    }
-                }
-                break;
+        case 2:  // ASCII
+            value = QString::fromLatin1(valuePtr, static_cast<int>(count - 1)).trimmed();
+            break;
+        case 3:  // SHORT
+            if (count == 1) {
+                value = QString::number(readU16(valuePtr, littleEndian));
             }
-            case 7: // UNDEFINED — show as version string for small counts
-                if (count <= 8) {
-                    value = QString::fromLatin1(valuePtr, static_cast<int>(count)).trimmed();
+            break;
+        case 4:  // LONG
+            if (count == 1) {
+                value = QString::number(readU32(valuePtr, littleEndian));
+            }
+            break;
+        case 5: {  // RATIONAL
+            if (count == 1) {
+                const uint32_t num = readU32(valuePtr, littleEndian);
+                const uint32_t den = readU32(valuePtr + 4, littleEndian);
+                if (den != 0) {
+                    value = QString("%1/%2").arg(num).arg(den);
                 }
-                break;
-            default:
-                break;
+            }
+            break;
+        }
+        case 7:  // UNDEFINED — show as version string for small counts
+            if (count <= 8) {
+                value = QString::fromLatin1(valuePtr, static_cast<int>(count)).trimmed();
+            }
+            break;
+        default:
+            break;
         }
 
         if (!value.isEmpty()) {
@@ -610,27 +647,31 @@ void parseExifIFD(const QByteArray& tiffData, uint32_t ifdOffset,
 }
 
 /// @brief Extract EXIF metadata from a JPEG file
-[[nodiscard]] QMap<QString, QString> extractJpegExif(const QByteArray& fileData)
-{
+[[nodiscard]] QMap<QString, QString> extractJpegExif(const QByteArray& fileData) {
     QMap<QString, QString> metadata;
 
-    if (fileData.size() < 4) return metadata;
+    if (fileData.size() < 4) {
+        return metadata;
+    }
 
     // Check JPEG SOI marker (0xFF 0xD8)
-    if (static_cast<uint8_t>(fileData[0]) != 0xFF ||
-        static_cast<uint8_t>(fileData[1]) != 0xD8) {
+    if (static_cast<uint8_t>(fileData[0]) != 0xFF || static_cast<uint8_t>(fileData[1]) != 0xD8) {
         return metadata;
     }
 
     // Scan for APP1 marker (0xFF 0xE1)
     int offset = 2;
     while (offset + 4 < fileData.size()) {
-        if (static_cast<uint8_t>(fileData[offset]) != 0xFF) break;
+        if (static_cast<uint8_t>(fileData[offset]) != 0xFF) {
+            break;
+        }
 
         const uint8_t marker = static_cast<uint8_t>(fileData[offset + 1]);
 
         // End markers
-        if (marker == 0xDA || marker == 0xD9) break;
+        if (marker == 0xDA || marker == 0xD9) {
+            break;
+        }
 
         const uint16_t segLen = readBE16(fileData.constData() + offset + 2);
 
@@ -652,7 +693,7 @@ void parseExifIFD(const QByteArray& tiffData, uint32_t ifdOffset,
                     parseExifIFD(tiffData, ifd0Offset, littleEndian, metadata);
                 }
             }
-            break; // Only process first APP1
+            break;  // Only process first APP1
         }
 
         offset += 2 + segLen;
@@ -662,19 +703,22 @@ void parseExifIFD(const QByteArray& tiffData, uint32_t ifdOffset,
 }
 
 /// @brief Extract PNG text metadata chunks (tEXt, iTXt, zTXt)
-[[nodiscard]] QMap<QString, QString> extractPngMetadata(const QByteArray& fileData)
-{
+[[nodiscard]] QMap<QString, QString> extractPngMetadata(const QByteArray& fileData) {
     QMap<QString, QString> metadata;
 
     // PNG signature: 0x89 P N G \r \n 0x1A \n
-    if (fileData.size() < 8) return metadata;
+    if (fileData.size() < 8) {
+        return metadata;
+    }
     static const char kPngSig[] = "\x89PNG\r\n\x1A\n";
-    if (std::memcmp(fileData.constData(), kPngSig, 8) != 0) return metadata;
+    if (std::memcmp(fileData.constData(), kPngSig, 8) != 0) {
+        return metadata;
+    }
 
     int offset = 8;
     while (offset + 12 <= fileData.size()) {
         // Each chunk: 4-byte length (BE) + 4-byte type + data + 4-byte CRC
-        const uint32_t chunkLen = readBE16(fileData.constData() + offset) * 65536u +
+        const uint32_t chunkLen = readBE16(fileData.constData() + offset) * 65'536u +
                                   readBE16(fileData.constData() + offset + 2);
         const QByteArray chunkType = fileData.mid(offset + 4, 4);
 
@@ -696,10 +740,11 @@ void parseExifIFD(const QByteArray& tiffData, uint32_t ifdOffset,
                 // iTXt has compression flag + method + lang + translated keyword + text
                 // For simplicity, extract text after the 3rd null byte
                 int textStart = nullPos + 1;
-                for (int nullCount = 0;
-                     nullCount < 3 && textStart < chunkData.size();
+                for (int nullCount = 0; nullCount < 3 && textStart < chunkData.size();
                      ++textStart) {
-                    if (chunkData[textStart] == '\0') ++nullCount;
+                    if (chunkData[textStart] == '\0') {
+                        ++nullCount;
+                    }
                 }
                 if (textStart < chunkData.size()) {
                     const QString val = QString::fromUtf8(chunkData.mid(textStart));
@@ -710,7 +755,7 @@ void parseExifIFD(const QByteArray& tiffData, uint32_t ifdOffset,
             break;
         }
 
-        offset += 8 + static_cast<int>(chunkLen) + 4; // length + type + data + CRC
+        offset += 8 + static_cast<int>(chunkLen) + 4;  // length + type + data + CRC
     }
 
     return metadata;
@@ -724,8 +769,7 @@ void parseExifIFD(const QByteArray& tiffData, uint32_t ifdOffset,
                                             const QString& value,
                                             const QRegularExpressionMatch& regexMatch,
                                             int fieldIndex,
-                                            bool matchInKey = false)
-{
+                                            bool matchInKey = false) {
     SearchMatch match;
     match.file_path = filePath;
     match.line_number = fieldIndex;
@@ -733,7 +777,7 @@ void parseExifIFD(const QByteArray& tiffData, uint32_t ifdOffset,
 
     if (matchInKey) {
         // Match is within the key — offset from "[Metadata] " prefix (11 chars)
-        constexpr int kMetadataPrefix = 11; // "[Metadata] ".length()
+        constexpr int kMetadataPrefix = 11;  // "[Metadata] ".length()
         match.match_start = kMetadataPrefix + static_cast<int>(regexMatch.capturedStart());
         match.match_end = kMetadataPrefix + static_cast<int>(regexMatch.capturedEnd());
     } else {
@@ -746,12 +790,10 @@ void parseExifIFD(const QByteArray& tiffData, uint32_t ifdOffset,
     return match;
 }
 
-} // anonymous namespace
+}  // anonymous namespace
 
-QVector<SearchMatch> AdvancedSearchWorker::searchImageMetadata(
-    const QString& filePath,
-    const QRegularExpression& regex)
-{
+QVector<SearchMatch> AdvancedSearchWorker::searchImageMetadata(const QString& filePath,
+                                                               const QRegularExpression& regex) {
     QVector<SearchMatch> matches;
 
     QFile file(filePath);
@@ -764,7 +806,9 @@ QVector<SearchMatch> AdvancedSearchWorker::searchImageMetadata(
     const QByteArray fileData = file.read(std::min(file.size(), kMaxMetadataRead));
     file.close();
 
-    if (checkStop()) return matches;
+    if (checkStop()) {
+        return matches;
+    }
 
     const QString ext = QFileInfo(filePath).suffix().toLower();
     QMap<QString, QString> metadata;
@@ -793,7 +837,7 @@ QVector<SearchMatch> AdvancedSearchWorker::searchImageMetadata(
             metadata.insert("Width", QString::number(imgSize.width()));
             metadata.insert("Height", QString::number(imgSize.height()));
             metadata.insert("Dimensions",
-                QString("%1x%2").arg(imgSize.width()).arg(imgSize.height()));
+                            QString("%1x%2").arg(imgSize.width()).arg(imgSize.height()));
         }
     }
 
@@ -801,26 +845,27 @@ QVector<SearchMatch> AdvancedSearchWorker::searchImageMetadata(
     {
         const QFileInfo info(filePath);
         metadata.insert("FileName", info.fileName());
-        metadata.insert("FileSize",
-            QString("%1 bytes").arg(info.size()));
-        metadata.insert("LastModified",
-            info.lastModified().toString(Qt::ISODate));
+        metadata.insert("FileSize", QString("%1 bytes").arg(info.size()));
+        metadata.insert("LastModified", info.lastModified().toString(Qt::ISODate));
     }
 
-    if (checkStop()) return matches;
+    if (checkStop()) {
+        return matches;
+    }
 
     // Search all metadata fields against the regex
     int fieldIndex = 1;
     for (auto it = metadata.constBegin(); it != metadata.constEnd(); ++it) {
-        if (checkStop()) return matches;
+        if (checkStop()) {
+            return matches;
+        }
 
         const QString& value = it.value();
         auto matchIter = regex.globalMatch(value);
 
         while (matchIter.hasNext()) {
             auto regexMatch = matchIter.next();
-            matches.append(
-                makeMetadataMatch(filePath, it.key(), value, regexMatch, fieldIndex));
+            matches.append(makeMetadataMatch(filePath, it.key(), value, regexMatch, fieldIndex));
 
             if (m_config.max_results > 0 && matches.size() >= m_config.max_results) {
                 return matches;
@@ -862,18 +907,12 @@ namespace {
 /// ODF documents store metadata in meta.xml.
 ///
 /// We parse ZIP Local File Headers to find and extract these specific entries.
-[[nodiscard]] QMap<QString, QString> extractZipXmlMetadata(const QByteArray& fileData)
-{
+[[nodiscard]] QMap<QString, QString> extractZipXmlMetadata(const QByteArray& fileData) {
     QMap<QString, QString> metadata;
 
     // Target files we want to extract
     static const QStringList kMetadataFiles = {
-        "docprops/core.xml",
-        "docprops/app.xml",
-        "meta.xml",
-        "content.opf",
-        "oebps/content.opf"
-    };
+        "docprops/core.xml", "docprops/app.xml", "meta.xml", "content.opf", "oebps/content.opf"};
 
     // Scan for Local File Headers (signature 0x04034b50)
     int offset = 0;
@@ -881,11 +920,11 @@ namespace {
 
     while (offset + 30 < dataSize) {
         // Check Local File Header signature (little-endian: 50 4B 03 04)
-        if (static_cast<uint8_t>(fileData[offset])     != 0x50 ||
+        if (static_cast<uint8_t>(fileData[offset]) != 0x50 ||
             static_cast<uint8_t>(fileData[offset + 1]) != 0x4B ||
             static_cast<uint8_t>(fileData[offset + 2]) != 0x03 ||
             static_cast<uint8_t>(fileData[offset + 3]) != 0x04) {
-            break; // No more local file headers
+            break;  // No more local file headers
         }
 
         const uint16_t nameLen = readU16(fileData.constData() + offset + 26, true);
@@ -893,10 +932,11 @@ namespace {
         const uint32_t compSize = readU32(fileData.constData() + offset + 18, true);
         const uint16_t compMethod = readU16(fileData.constData() + offset + 8, true);
 
-        if (offset + 30 + nameLen > dataSize) break;
+        if (offset + 30 + nameLen > dataSize) {
+            break;
+        }
 
-        const QString entryName = QString::fromLatin1(
-            fileData.constData() + offset + 30, nameLen);
+        const QString entryName = QString::fromLatin1(fileData.constData() + offset + 30, nameLen);
 
         const int dataStart = offset + 30 + nameLen + extraLen;
         const int entrySize = static_cast<int>(compSize);
@@ -911,17 +951,14 @@ namespace {
             }
         }
 
-        if (isTarget && (compMethod == 0 || compMethod == 8)
-            && dataStart + entrySize <= dataSize) {
+        if (isTarget && (compMethod == 0 || compMethod == 8) && dataStart + entrySize <= dataSize) {
             // Extract entry data — decompress if deflated
             QByteArray xmlData;
             if (compMethod == 0) {
                 xmlData = fileData.mid(dataStart, entrySize);
             } else {
-                const uint32_t uncompSize = readU32(
-                    fileData.constData() + offset + 22, true);
-                xmlData = inflateZipEntry(
-                    fileData.mid(dataStart, entrySize), uncompSize);
+                const uint32_t uncompSize = readU32(fileData.constData() + offset + 22, true);
+                xmlData = inflateZipEntry(fileData.mid(dataStart, entrySize), uncompSize);
                 if (xmlData.isEmpty()) {
                     offset = dataStart + entrySize;
                     continue;
@@ -959,15 +996,13 @@ namespace {
 
 /// @brief Extract basic metadata from a PDF file
 ///        Parses the PDF /Info dictionary for Title, Author, Subject, etc.
-[[nodiscard]] QMap<QString, QString> extractPdfMetadata(const QByteArray& fileData)
-{
+[[nodiscard]] QMap<QString, QString> extractPdfMetadata(const QByteArray& fileData) {
     QMap<QString, QString> metadata;
 
     // PDF Info dictionary entries look like: /Title (Some Title)
     // or /Title <hex string>
-    static const QRegularExpression infoPattern(
-        R"(/(\w+)\s*\(([^)]{0,500})\))",
-        QRegularExpression::MultilineOption);
+    static const QRegularExpression infoPattern(R"(/(\w+)\s*\(([^)]{0,500})\))",
+                                                QRegularExpression::MultilineOption);
 
     // Only scan the last 4KB of the file (xref/trailer area) plus first 4KB
     // to find the Info dictionary reference, then search relevant sections
@@ -983,10 +1018,14 @@ namespace {
         const QString value = m.captured(2).trimmed();
 
         // Only capture known PDF info keys
-        static const QSet<QString> kPdfInfoKeys = {
-            "Title", "Author", "Subject", "Keywords", "Creator",
-            "Producer", "CreationDate", "ModDate"
-        };
+        static const QSet<QString> kPdfInfoKeys = {"Title",
+                                                   "Author",
+                                                   "Subject",
+                                                   "Keywords",
+                                                   "Creator",
+                                                   "Producer",
+                                                   "CreationDate",
+                                                   "ModDate"};
 
         if (kPdfInfoKeys.contains(key) && !value.isEmpty()) {
             metadata.insert(key, value);
@@ -997,11 +1036,12 @@ namespace {
 }
 
 /// @brief Extract ID3v2 metadata from MP3 files
-[[nodiscard]] QMap<QString, QString> extractMp3Metadata(const QByteArray& fileData)
-{
+[[nodiscard]] QMap<QString, QString> extractMp3Metadata(const QByteArray& fileData) {
     QMap<QString, QString> metadata;
 
-    if (fileData.size() < 10) return metadata;
+    if (fileData.size() < 10) {
+        return metadata;
+    }
 
     // Check ID3v2 header: "ID3"
     if (fileData[0] != 'I' || fileData[1] != 'D' || fileData[2] != '3') {
@@ -1012,8 +1052,8 @@ namespace {
     const uint32_t tagSize =
         (static_cast<uint32_t>(static_cast<uint8_t>(fileData[6]) & 0x7F) << 21) |
         (static_cast<uint32_t>(static_cast<uint8_t>(fileData[7]) & 0x7F) << 14) |
-        (static_cast<uint32_t>(static_cast<uint8_t>(fileData[8]) & 0x7F) <<  7) |
-         static_cast<uint32_t>(static_cast<uint8_t>(fileData[9]) & 0x7F);
+        (static_cast<uint32_t>(static_cast<uint8_t>(fileData[8]) & 0x7F) << 7) |
+        static_cast<uint32_t>(static_cast<uint8_t>(fileData[9]) & 0x7F);
 
     const auto tagSizeBytes = static_cast<qsizetype>(tagSize + 10);
     const qsizetype maxOffsetBytes = std::min(tagSizeBytes, fileData.size());
@@ -1021,13 +1061,18 @@ namespace {
     int offset = 10;
 
     // ID3v2 frame mapping
-    static const QMap<QByteArray, QString> kFrameNames = {
-        {"TIT2", "Title"},    {"TPE1", "Artist"},   {"TALB", "Album"},
-        {"TYER", "Year"},     {"TDRC", "RecordingDate"},
-        {"TRCK", "Track"},    {"TCON", "Genre"},    {"COMM", "Comment"},
-        {"TPE2", "AlbumArtist"}, {"TCOM", "Composer"},
-        {"TPUB", "Publisher"}, {"TCOP", "Copyright"}
-    };
+    static const QMap<QByteArray, QString> kFrameNames = {{"TIT2", "Title"},
+                                                          {"TPE1", "Artist"},
+                                                          {"TALB", "Album"},
+                                                          {"TYER", "Year"},
+                                                          {"TDRC", "RecordingDate"},
+                                                          {"TRCK", "Track"},
+                                                          {"TCON", "Genre"},
+                                                          {"COMM", "Comment"},
+                                                          {"TPE2", "AlbumArtist"},
+                                                          {"TCOM", "Composer"},
+                                                          {"TPUB", "Publisher"},
+                                                          {"TCOP", "Copyright"}};
 
     while (offset + 10 < maxOffset) {
         const QByteArray frameId = fileData.mid(offset, 4);
@@ -1036,35 +1081,38 @@ namespace {
         const uint32_t frameSize =
             (static_cast<uint32_t>(static_cast<uint8_t>(fileData[offset + 4])) << 24) |
             (static_cast<uint32_t>(static_cast<uint8_t>(fileData[offset + 5])) << 16) |
-            (static_cast<uint32_t>(static_cast<uint8_t>(fileData[offset + 6])) <<  8) |
-             static_cast<uint32_t>(static_cast<uint8_t>(fileData[offset + 7]));
+            (static_cast<uint32_t>(static_cast<uint8_t>(fileData[offset + 6])) << 8) |
+            static_cast<uint32_t>(static_cast<uint8_t>(fileData[offset + 7]));
 
-        if (frameSize == 0 || frameId[0] == '\0') break;
-        if (offset + 10 + static_cast<int>(frameSize) > maxOffset) break;
+        if (frameSize == 0 || frameId[0] == '\0') {
+            break;
+        }
+        if (offset + 10 + static_cast<int>(frameSize) > maxOffset) {
+            break;
+        }
 
         if (kFrameNames.contains(frameId) && frameSize > 1 && frameSize < 1000) {
             // First byte is encoding: 0=ISO-8859-1, 1=UTF-16, 2=UTF-16BE, 3=UTF-8
             const uint8_t encoding = static_cast<uint8_t>(fileData[offset + 10]);
-            const QByteArray frameData = fileData.mid(offset + 11,
-                static_cast<int>(frameSize - 1));
+            const QByteArray frameData = fileData.mid(offset + 11, static_cast<int>(frameSize - 1));
 
             QString value;
             switch (encoding) {
-                case 0:
-                    value = QString::fromLatin1(frameData).trimmed();
-                    break;
-                case 1: // UTF-16 with BOM
-                case 2: // UTF-16BE
-                    value = QString::fromUtf16(
-                        reinterpret_cast<const char16_t*>(frameData.constData()),
-                        frameData.size() / 2).trimmed();
-                    break;
-                case 3:
-                    value = QString::fromUtf8(frameData).trimmed();
-                    break;
-                default:
-                    value = QString::fromLatin1(frameData).trimmed();
-                    break;
+            case 0:
+                value = QString::fromLatin1(frameData).trimmed();
+                break;
+            case 1:  // UTF-16 with BOM
+            case 2:  // UTF-16BE
+                value = QString::fromUtf16(reinterpret_cast<const char16_t*>(frameData.constData()),
+                                           frameData.size() / 2)
+                            .trimmed();
+                break;
+            case 3:
+                value = QString::fromUtf8(frameData).trimmed();
+                break;
+            default:
+                value = QString::fromLatin1(frameData).trimmed();
+                break;
             }
 
             // Remove null terminators
@@ -1081,12 +1129,10 @@ namespace {
     return metadata;
 }
 
-} // anonymous namespace
+}  // anonymous namespace
 
-QVector<SearchMatch> AdvancedSearchWorker::searchFileMetadata(
-    const QString& filePath,
-    const QRegularExpression& regex)
-{
+QVector<SearchMatch> AdvancedSearchWorker::searchFileMetadata(const QString& filePath,
+                                                              const QRegularExpression& regex) {
     QVector<SearchMatch> matches;
 
     QFile file(filePath);
@@ -1095,11 +1141,13 @@ QVector<SearchMatch> AdvancedSearchWorker::searchFileMetadata(
     }
 
     // Limit read size for metadata extraction
-    constexpr qint64 kMaxMetadataRead = 512 * 1024; // 512 KB for metadata
+    constexpr qint64 kMaxMetadataRead = 512 * 1024;  // 512 KB for metadata
     const QByteArray fileData = file.read(std::min(file.size(), kMaxMetadataRead));
     file.close();
 
-    if (checkStop()) return matches;
+    if (checkStop()) {
+        return matches;
+    }
 
     const QString ext = QFileInfo(filePath).suffix().toLower();
     QMap<QString, QString> metadata;
@@ -1107,13 +1155,12 @@ QVector<SearchMatch> AdvancedSearchWorker::searchFileMetadata(
     // Format-specific metadata extraction
     if (ext == "pdf") {
         metadata = extractPdfMetadata(fileData);
-    } else if (ext == "docx" || ext == "xlsx" || ext == "pptx"
-            || ext == "odt" || ext == "ods" || ext == "odp"
-            || ext == "epub") {
+    } else if (ext == "docx" || ext == "xlsx" || ext == "pptx" || ext == "odt" || ext == "ods" ||
+               ext == "odp" || ext == "epub") {
         // Re-read full file for ZIP-based formats (central directory at end)
         QFile fullFile(filePath);
         if (fullFile.open(QIODevice::ReadOnly)) {
-            const qint64 maxZip = 10LL * 1024 * 1024; // 10 MB limit for archive parsing
+            const qint64 maxZip = 10LL * 1024 * 1024;  // 10 MB limit for archive parsing
             if (fullFile.size() <= maxZip) {
                 metadata = extractZipXmlMetadata(fullFile.readAll());
             }
@@ -1133,20 +1180,23 @@ QVector<SearchMatch> AdvancedSearchWorker::searchFileMetadata(
         metadata.insert("Created", info.birthTime().toString(Qt::ISODate));
     }
 
-    if (checkStop()) return matches;
+    if (checkStop()) {
+        return matches;
+    }
 
     // Search all metadata fields against the regex
     int fieldIndex = 1;
     for (auto it = metadata.constBegin(); it != metadata.constEnd(); ++it) {
-        if (checkStop()) return matches;
+        if (checkStop()) {
+            return matches;
+        }
 
         const QString& value = it.value();
         auto matchIter = regex.globalMatch(value);
 
         while (matchIter.hasNext()) {
             auto regexMatch = matchIter.next();
-            matches.append(
-                makeMetadataMatch(filePath, it.key(), value, regexMatch, fieldIndex));
+            matches.append(makeMetadataMatch(filePath, it.key(), value, regexMatch, fieldIndex));
 
             if (m_config.max_results > 0 && matches.size() >= m_config.max_results) {
                 return matches;
@@ -1173,10 +1223,8 @@ QVector<SearchMatch> AdvancedSearchWorker::searchFileMetadata(
 
 // ── Archive Content Search ───────────────────────────────────────────────────
 
-QVector<SearchMatch> AdvancedSearchWorker::searchArchive(
-    const QString& filePath,
-    const QRegularExpression& regex)
-{
+QVector<SearchMatch> AdvancedSearchWorker::searchArchive(const QString& filePath,
+                                                         const QRegularExpression& regex) {
     QVector<SearchMatch> matches;
 
     QFile file(filePath);
@@ -1185,17 +1233,20 @@ QVector<SearchMatch> AdvancedSearchWorker::searchArchive(
     }
 
     // Size limit for archive parsing
-    constexpr qint64 kMaxArchiveSize = 100LL * 1024 * 1024; // 100 MB
+    constexpr qint64 kMaxArchiveSize = 100LL * 1024 * 1024;  // 100 MB
     if (file.size() > kMaxArchiveSize) {
         logWarning("AdvancedSearchWorker: archive '{}' too large ({} bytes), skipping",
-                   filePath.toStdString(), file.size());
+                   filePath.toStdString(),
+                   file.size());
         return matches;
     }
 
     const QByteArray archiveData = file.readAll();
     file.close();
 
-    if (checkStop()) return matches;
+    if (checkStop()) {
+        return matches;
+    }
 
     // Parse ZIP Local File Headers to extract and search entry contents
     // We look for the PK\x03\x04 signature (Local File Header)
@@ -1204,19 +1255,20 @@ QVector<SearchMatch> AdvancedSearchWorker::searchArchive(
 
     // Text extensions worth searching inside archives
     static const QSet<QString> kArchiveTextExts = {
-        "txt", "md", "csv", "json", "xml", "html", "htm", "css", "js",
-        "py", "cpp", "c", "h", "hpp", "java", "rs", "go", "ts", "tsx",
-        "jsx", "rb", "pl", "sh", "bat", "ps1", "yaml", "yml", "toml",
-        "ini", "cfg", "conf", "log", "sql", "xhtml", "svg", "opf", "ncx"
-    };
+        "txt",  "md",  "csv", "json",  "xml",  "html", "htm", "css",  "js",  "py",
+        "cpp",  "c",   "h",   "hpp",   "java", "rs",   "go",  "ts",   "tsx", "jsx",
+        "rb",   "pl",  "sh",  "bat",   "ps1",  "yaml", "yml", "toml", "ini", "cfg",
+        "conf", "log", "sql", "xhtml", "svg",  "opf",  "ncx"};
 
     int entryIndex = 0;
 
     while (offset + 30 < dataSize) {
-        if (checkStop()) return matches;
+        if (checkStop()) {
+            return matches;
+        }
 
         // Check Local File Header signature: PK\x03\x04
-        if (static_cast<uint8_t>(archiveData[offset])     != 0x50 ||
+        if (static_cast<uint8_t>(archiveData[offset]) != 0x50 ||
             static_cast<uint8_t>(archiveData[offset + 1]) != 0x4B ||
             static_cast<uint8_t>(archiveData[offset + 2]) != 0x03 ||
             static_cast<uint8_t>(archiveData[offset + 3]) != 0x04) {
@@ -1224,15 +1276,16 @@ QVector<SearchMatch> AdvancedSearchWorker::searchArchive(
         }
 
         const uint16_t compMethod = readU16(archiveData.constData() + offset + 8, true);
-        const uint32_t compSize   = readU32(archiveData.constData() + offset + 18, true);
+        const uint32_t compSize = readU32(archiveData.constData() + offset + 18, true);
         const uint32_t uncompSize = readU32(archiveData.constData() + offset + 22, true);
-        const uint16_t nameLen    = readU16(archiveData.constData() + offset + 26, true);
-        const uint16_t extraLen   = readU16(archiveData.constData() + offset + 28, true);
+        const uint16_t nameLen = readU16(archiveData.constData() + offset + 26, true);
+        const uint16_t extraLen = readU16(archiveData.constData() + offset + 28, true);
 
-        if (offset + 30 + nameLen > dataSize) break;
+        if (offset + 30 + nameLen > dataSize) {
+            break;
+        }
 
-        const QString entryName = QString::fromUtf8(
-            archiveData.constData() + offset + 30, nameLen);
+        const QString entryName = QString::fromUtf8(archiveData.constData() + offset + 30, nameLen);
 
         const int dataStart = offset + 30 + nameLen + extraLen;
         const int entrySize = static_cast<int>(compSize);
@@ -1250,10 +1303,10 @@ QVector<SearchMatch> AdvancedSearchWorker::searchArchive(
                 match.file_path = archivePath;
                 match.line_number = 0;
                 match.line_content = QString("[Archive Entry] %1").arg(entryName);
-                match.match_start = QString("[Archive Entry] ").length()
-                    + static_cast<int>(regexMatch.capturedStart());
-                match.match_end = QString("[Archive Entry] ").length()
-                    + static_cast<int>(regexMatch.capturedEnd());
+                match.match_start = QString("[Archive Entry] ").length() +
+                                    static_cast<int>(regexMatch.capturedStart());
+                match.match_end = QString("[Archive Entry] ").length() +
+                                  static_cast<int>(regexMatch.capturedEnd());
 
                 matches.append(match);
 
@@ -1265,17 +1318,13 @@ QVector<SearchMatch> AdvancedSearchWorker::searchArchive(
 
         // For stored or deflate-compressed text files, search the content
         const QString entryExt = QFileInfo(entryName).suffix().toLower();
-        if ((compMethod == 0 || compMethod == 8)
-            && kArchiveTextExts.contains(entryExt)
-            && dataStart + entrySize <= dataSize
-            && uncompSize > 0 && uncompSize < 10 * 1024 * 1024) {
-
+        if ((compMethod == 0 || compMethod == 8) && kArchiveTextExts.contains(entryExt) &&
+            dataStart + entrySize <= dataSize && uncompSize > 0 && uncompSize < 10 * 1024 * 1024) {
             QByteArray entryData;
             if (compMethod == 0) {
                 entryData = archiveData.mid(dataStart, entrySize);
             } else {
-                entryData = inflateZipEntry(
-                    archiveData.mid(dataStart, entrySize), uncompSize);
+                entryData = inflateZipEntry(archiveData.mid(dataStart, entrySize), uncompSize);
                 if (entryData.isEmpty()) {
                     offset = dataStart + entrySize;
                     continue;
@@ -1286,7 +1335,9 @@ QVector<SearchMatch> AdvancedSearchWorker::searchArchive(
             // Search line-by-line
             const QStringList lines = textContent.split('\n');
             for (int lineIdx = 0; lineIdx < lines.size(); ++lineIdx) {
-                if (checkStop()) return matches;
+                if (checkStop()) {
+                    return matches;
+                }
 
                 const QString& line = lines[lineIdx];
                 auto matchIter = regex.globalMatch(line);
@@ -1302,21 +1353,18 @@ QVector<SearchMatch> AdvancedSearchWorker::searchArchive(
                     match.match_end = static_cast<int>(regexMatch.capturedEnd());
 
                     // Context lines
-                    for (int j = std::max(0, lineIdx - m_config.context_lines);
-                         j < lineIdx; ++j) {
+                    for (int j = std::max(0, lineIdx - m_config.context_lines); j < lineIdx; ++j) {
                         match.context_before.append(lines[j]);
                     }
-                    for (int j = lineIdx + 1;
-                         j <= std::min(static_cast<int>(lines.size()) - 1,
-                                       lineIdx + m_config.context_lines);
+                    for (int j = lineIdx + 1; j <= std::min(static_cast<int>(lines.size()) - 1,
+                                                            lineIdx + m_config.context_lines);
                          ++j) {
                         match.context_after.append(lines[j]);
                     }
 
                     matches.append(match);
 
-                    if (m_config.max_results > 0
-                        && matches.size() >= m_config.max_results) {
+                    if (m_config.max_results > 0 && matches.size() >= m_config.max_results) {
                         return matches;
                     }
                 }
@@ -1330,10 +1378,8 @@ QVector<SearchMatch> AdvancedSearchWorker::searchArchive(
     return matches;
 }
 
-QVector<SearchMatch> AdvancedSearchWorker::searchBinary(
-    const QString& filePath,
-    const QRegularExpression& regex)
-{
+QVector<SearchMatch> AdvancedSearchWorker::searchBinary(const QString& filePath,
+                                                        const QRegularExpression& regex) {
     QVector<SearchMatch> matches;
 
     QFile file(filePath);
@@ -1343,11 +1389,12 @@ QVector<SearchMatch> AdvancedSearchWorker::searchBinary(
 
     // Size guard — refuse to load extremely large files into memory
     const qint64 maxBinarySize = m_config.max_file_size > 0
-        ? m_config.max_file_size
-        : (100LL * 1024 * 1024); // 100 MB fallback
+                                     ? m_config.max_file_size
+                                     : (100LL * 1024 * 1024);  // 100 MB fallback
     if (file.size() > maxBinarySize) {
         logWarning("AdvancedSearchWorker: binary file '{}' exceeds size limit ({} bytes), skipping",
-                   filePath.toStdString(), file.size());
+                   filePath.toStdString(),
+                   file.size());
         return matches;
     }
 
@@ -1364,7 +1411,7 @@ QVector<SearchMatch> AdvancedSearchWorker::searchBinary(
 
         SearchMatch match;
         match.file_path = filePath;
-        match.line_number = static_cast<int>(regexMatch.capturedStart()); // byte offset
+        match.line_number = static_cast<int>(regexMatch.capturedStart());  // byte offset
         match.line_content = regexMatch.captured();
         match.match_start = 0;
         match.match_end = static_cast<int>(regexMatch.capturedLength());
@@ -1372,10 +1419,9 @@ QVector<SearchMatch> AdvancedSearchWorker::searchBinary(
         // Provide hex context (16 bytes before and after)
         const int start = std::max(0, static_cast<int>(regexMatch.capturedStart()) - 16);
         const int end = std::min(static_cast<int>(content.size()),
-            static_cast<int>(regexMatch.capturedEnd()) + 16);
+                                 static_cast<int>(regexMatch.capturedEnd()) + 16);
         const QByteArray context = content.mid(start, end - start);
-        match.context_before.append(
-            QString("Hex: %1").arg(QString(context.toHex(' '))));
+        match.context_before.append(QString("Hex: %1").arg(QString(context.toHex(' '))));
 
         matches.append(match);
 
@@ -1387,4 +1433,4 @@ QVector<SearchMatch> AdvancedSearchWorker::searchBinary(
     return matches;
 }
 
-} // namespace sak
+}  // namespace sak

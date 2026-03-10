@@ -4,13 +4,14 @@
 #pragma once
 
 #include "sak/quick_action.h"
+
 #include <QString>
 
 namespace sak {
 
 /**
  * @brief Verify System Files Action
- * 
+ *
  * Runs SFC (System File Checker) and DISM to repair Windows system files.
  */
 class VerifySystemFilesAction : public QuickAction {
@@ -51,5 +52,4 @@ private:
     void parseResults(const QString& output);
 };
 
-} // namespace sak
-
+}  // namespace sak

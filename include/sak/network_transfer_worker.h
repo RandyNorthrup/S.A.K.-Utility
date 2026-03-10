@@ -3,18 +3,19 @@
 
 #pragma once
 
-#include <QObject>
-#include <QHostAddress>
 #include <QElapsedTimer>
+#include <QHostAddress>
+#include <QObject>
 #include <QVector>
+
 #include <atomic>
 #include <memory>
 
 class QTcpSocket;
 class QFile;
 
-#include "sak/network_transfer_types.h"
 #include "sak/network_constants.h"
+#include "sak/network_transfer_types.h"
 
 namespace sak {
 
@@ -40,8 +41,8 @@ public:
         QByteArray salt;
         QString destination_base;
         qint64 total_bytes{0};
-        QMap<QString, PermissionMode> permission_modes; // username -> mode
-        QMap<QString, QString> acl_overrides; // relative_path -> SDDL
+        QMap<QString, PermissionMode> permission_modes;  // username -> mode
+        QMap<QString, QString> acl_overrides;            // relative_path -> SDDL
     };
 
     explicit NetworkTransferWorker(QObject* parent = nullptr);
@@ -51,9 +52,7 @@ public:
                      quint16 port,
                      const DataOptions& options);
 
-    void startReceiver(const QHostAddress& listenAddress,
-                       quint16 port,
-                       const DataOptions& options);
+    void startReceiver(const QHostAddress& listenAddress, quint16 port, const DataOptions& options);
 
     void stop();
     void updateBandwidthLimit(int max_kbps);
@@ -70,7 +69,7 @@ Q_SIGNALS:
 private:
     /// @brief Binary frame header for chunked data transfer
     struct FrameHeader {
-        quint32 magic{0x53414B4E}; // SAKN
+        quint32 magic{0x53'41'4B'4E};  // SAKN
         quint8 version{1};
         quint8 frame_type{0};
         quint16 flags{0};
@@ -85,34 +84,46 @@ private:
         FrameDataChunk = 2,
         FrameFileEnd = 3,
         FrameTransferEnd = 4,
-        FrameResumeInfo = 5
-        ,FrameFileAck = 6
+        FrameResumeInfo = 5,
+        FrameFileAck = 6
     };
 
     QByteArray serializeHeader(const FrameHeader& header) const;
     bool readHeader(QTcpSocket* socket, FrameHeader& header);
     QByteArray readExact(QTcpSocket* socket, qint64 size);
 
-    bool sendFrame(QTcpSocket* socket, FrameType type, quint16 flags, quint32 chunkId,
-                   const QByteArray& payload, quint32 plainSize, quint32 crc32);
+    bool sendFrame(QTcpSocket* socket,
+                   FrameType type,
+                   quint16 flags,
+                   quint32 chunkId,
+                   const QByteArray& payload,
+                   quint32 plainSize,
+                   quint32 crc32);
 
-    bool handleSender(QTcpSocket* socket, const QVector<TransferFileEntry>& files,
-        const DataOptions& options);
+    bool handleSender(QTcpSocket* socket,
+                      const QVector<TransferFileEntry>& files,
+                      const DataOptions& options);
     bool handleReceiver(QTcpSocket* socket, const DataOptions& options);
 
     /// @brief Sends the JSON file header frame for a single file.
     /// @return True if header was sent successfully.
-    bool sendFileHeader(QTcpSocket* socket, const TransferFileEntry& file,
-        const DataOptions& options);
+    bool sendFileHeader(QTcpSocket* socket,
+                        const TransferFileEntry& file,
+                        const DataOptions& options);
 
     /// @brief Sends all data chunks for a single file
     /// with compression, encryption, and bandwidth throttling.
     /// @return True if all chunks were sent successfully.
-    bool sendFileChunks(QTcpSocket* socket, QFile& source, const TransferFileEntry& file,
-                       const DataOptions& options, const QByteArray& key,
-                       const QVector<QPair<int, int>>& resumeRanges,
-                       qint64& bytesSent, qint64 totalBytes,
-                       QElapsedTimer& rateTimer, qint64& rateBytesSent);
+    bool sendFileChunks(QTcpSocket* socket,
+                        QFile& source,
+                        const TransferFileEntry& file,
+                        const DataOptions& options,
+                        const QByteArray& key,
+                        const QVector<QPair<int, int>>& resumeRanges,
+                        qint64& bytesSent,
+                        qint64 totalBytes,
+                        QElapsedTimer& rateTimer,
+                        qint64& rateBytesSent);
 
     /// @brief Waits for and validates a file ACK frame from the receiver.
     /// @return True if ACK indicates success, false to retry or fail.
@@ -138,29 +149,40 @@ private:
         QVector<QPair<int, int>> current_ranges;
     };
 
-    bool processFileHeader(QTcpSocket* socket, const QByteArray& payload,
-                           const DataOptions& options, ReceiverState& state);
-    bool processDataChunk(QTcpSocket* socket, const FrameHeader& header,
-                          const QByteArray& payload, const DataOptions& options,
+    bool processFileHeader(QTcpSocket* socket,
+                           const QByteArray& payload,
+                           const DataOptions& options,
+                           ReceiverState& state);
+    bool processDataChunk(QTcpSocket* socket,
+                          const FrameHeader& header,
+                          const QByteArray& payload,
+                          const DataOptions& options,
                           ReceiverState& state);
-    bool processFileEnd(QTcpSocket* socket, const DataOptions& options,
-                        ReceiverState& state);
+    bool processFileEnd(QTcpSocket* socket, const DataOptions& options, ReceiverState& state);
 
     /// @brief Derive encryption key for the receiver from passphrase/salt
     bool deriveReceiverKey(const DataOptions& options, ReceiverState& state);
     /// @brief Emit progress signals and save resume info if needed
-    void emitReceiverProgress(const DataOptions& options, ReceiverState& state,
+    void emitReceiverProgress(const DataOptions& options,
+                              ReceiverState& state,
                               QElapsedTimer& resumeTimer);
 
     /// @brief Attempt to send a single file (one try, no retry loop).
-    bool trySendSingleFile(QTcpSocket* socket, const TransferFileEntry& file,
-                           const DataOptions& options, const QByteArray& key,
-                           qint64& bytesSent, qint64 totalBytes,
-                           QElapsedTimer& rateTimer, qint64& rateBytesSent);
+    bool trySendSingleFile(QTcpSocket* socket,
+                           const TransferFileEntry& file,
+                           const DataOptions& options,
+                           const QByteArray& key,
+                           qint64& bytesSent,
+                           qint64 totalBytes,
+                           QElapsedTimer& rateTimer,
+                           qint64& rateBytesSent);
 
     /// @brief Encrypt payload in-place if encryption is enabled.
-    bool encryptPayloadIfNeeded(QByteArray& payload, quint16& flags, const QByteArray& key,
-                                const DataOptions& options, const QString& relativePath);
+    bool encryptPayloadIfNeeded(QByteArray& payload,
+                                quint16& flags,
+                                const QByteArray& key,
+                                const DataOptions& options,
+                                const QString& relativePath);
 
     /// @brief Apply bandwidth throttling between chunks.
     void throttleBandwidth(qint64 chunkSize, QElapsedTimer& rateTimer, qint64& rateBytesSent);
@@ -171,9 +193,12 @@ private:
     /// @brief Dispatch a received frame to the appropriate handler.
     /// @param done Set to true when FrameTransferEnd is received.
     /// @return false on fatal error, true to continue.
-    bool dispatchReceiverFrame(QTcpSocket* socket, const FrameHeader& header,
-                               const QByteArray& payload, const DataOptions& options,
-                               ReceiverState& state, QElapsedTimer& resumeTimer,
+    bool dispatchReceiverFrame(QTcpSocket* socket,
+                               const FrameHeader& header,
+                               const QByteArray& payload,
+                               const DataOptions& options,
+                               ReceiverState& state,
+                               QElapsedTimer& resumeTimer,
                                bool& done);
 
     QByteArray compressData(const QByteArray& data) const;
@@ -181,12 +206,13 @@ private:
 
     quint32 computeCrc32(const QByteArray& data) const;
 
-    QByteArray buildResumePayload(const QString& fileId, const QVector<QPair<int,int>>& ranges,
-        int totalChunks) const;
-    QVector<QPair<int,int>> parseResumePayload(const QByteArray& payload, int& totalChunks) const;
+    QByteArray buildResumePayload(const QString& fileId,
+                                  const QVector<QPair<int, int>>& ranges,
+                                  int totalChunks) const;
+    QVector<QPair<int, int>> parseResumePayload(const QByteArray& payload, int& totalChunks) const;
 
     std::atomic<bool> m_stopRequested{false};
     std::atomic<int> m_dynamicMaxBandwidthKbps{0};
 };
 
-} // namespace sak
+}  // namespace sak

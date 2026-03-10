@@ -4,9 +4,10 @@
 #pragma once
 
 #include "sak/quick_action.h"
+
 #include <QDateTime>
-#include <QString>
 #include <QProcess>
+#include <QString>
 
 namespace sak {
 
@@ -35,7 +36,7 @@ private:
     /// @brief Information about a drive including type, capacity, and fragmentation level
     struct DriveInfo {
         QString letter;
-        QString type; // HDD, SSD, Removable
+        QString type;  // HDD, SSD, Removable
         qint64 total_space;
         qint64 free_space;
         int fragmentation_percent;
@@ -56,8 +57,9 @@ private:
 
     QString executeEnumerateVolumes() const;
     void executeDefrag(const QString& script, const QDateTime& start_time);
-    void executeBuildReport(const QString& accumulated_output, const QString& std_err,
-        const QDateTime& start_time);
+    void executeBuildReport(const QString& accumulated_output,
+                            const QString& std_err,
+                            const QDateTime& start_time);
 
     /// @brief Parse OPTIMIZING/DRIVE_TYPE/SUCCESS/TOTAL tags from PowerShell output
     OptimizationSummary parseOptimizationOutput(const QString& output) const;
@@ -66,5 +68,4 @@ private:
     int analyzeFragmentation(const QString& drive_letter);
 };
 
-} // namespace sak
-
+}  // namespace sak

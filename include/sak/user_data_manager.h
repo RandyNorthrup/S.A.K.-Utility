@@ -3,23 +3,24 @@
 
 #pragma once
 
+#include <QCryptographicHash>
+#include <QDateTime>
 #include <QObject>
 #include <QString>
 #include <QStringList>
-#include <QDateTime>
-#include <QCryptographicHash>
-#include <vector>
+
 #include <optional>
+#include <vector>
 
 namespace sak {
 
 /**
  * @brief UserDataManager - Backup and restore application user data
- * 
+ *
  * Manages backup and restore operations for application user data folders.
  * Supports selective backup, compression, integrity verification, and
  * automatic detection of common app data locations.
- * 
+ *
  * Key Features:
  * - Auto-detect common app data paths (AppData, ProgramData, Documents)
  * - Selective file/folder backup
@@ -41,69 +42,71 @@ public:
     struct BackupEntry {
         QString app_name;
         QString app_version;
-        QStringList source_paths;      // Source directories/files
-        QString backup_path;           // Archive file path
+        QStringList source_paths;         // Source directories/files
+        QString backup_path;              // Archive file path
         QDateTime backup_date;
-        qint64 total_size_bytes{0};             // Total bytes
-        qint64 compressed_size_bytes{0};        // Archive size
-        QString checksum;              // SHA256 of archive
-        bool encrypted{false};                // Future: encryption support
-        QStringList excluded_patterns; // Excluded files (*.log, *.tmp)
+        qint64 total_size_bytes{0};       // Total bytes
+        qint64 compressed_size_bytes{0};  // Archive size
+        QString checksum;                 // SHA256 of archive
+        bool encrypted{false};            // Future: encryption support
+        QStringList excluded_patterns;    // Excluded files (*.log, *.tmp)
     };
 
     /**
      * @brief Backup configuration
      */
     struct BackupConfig {
-        bool compress = true;              // Create zip archive
-        bool verify_checksum = true;       // Verify after backup
-        bool include_registry = false;     // Future: backup registry keys
-        QStringList exclude_patterns = {   // Default exclusions
-            "*.log", "*.tmp", "cache/*", "temp/*"
-        };
-        int compression_level = 6;         // 0-9 (0=none, 9=max)
-        bool encrypt = false;              // Enable AES-256 encryption
-        QString password;                  // Encryption password
+        bool compress = true;           // Create zip archive
+        bool verify_checksum = true;    // Verify after backup
+        bool include_registry = false;  // Future: backup registry keys
+        QStringList exclude_patterns = {// Default exclusions
+                                        "*.log",
+                                        "*.tmp",
+                                        "cache/*",
+                                        "temp/*"};
+        int compression_level = 6;  // 0-9 (0=none, 9=max)
+        bool encrypt = false;       // Enable AES-256 encryption
+        QString password;           // Encryption password
     };
 
     /**
      * @brief Restore configuration
      */
     struct RestoreConfig {
-        bool verify_checksum = true;       // Verify before restore
-        bool create_backup = true;         // Backup existing data
-        bool overwrite_existing = false;   // Overwrite without prompt
-        bool restore_timestamps = true;    // Preserve file dates
-        QString password;                  // Decryption password (if encrypted)
+        bool verify_checksum = true;      // Verify before restore
+        bool create_backup = true;        // Backup existing data
+        bool overwrite_existing = false;  // Overwrite without prompt
+        bool restore_timestamps = true;   // Preserve file dates
+        QString password;                 // Decryption password (if encrypted)
     };
 
     /**
      * @brief Data location patterns for common apps
      */
     struct DataLocation {
-        QString pattern;          // Name pattern (e.g., "Google Chrome")
-        QStringList paths;        // Possible data paths
-        QString description;      // User-friendly description
+        QString pattern;      // Name pattern (e.g., "Google Chrome")
+        QStringList paths;    // Possible data paths
+        QString description;  // User-friendly description
     };
 
     // Backup operations
     std::optional<BackupEntry> backupAppData(const QString& app_name,
-                      const QStringList& source_paths,
-                      const QString& backup_dir,
-                      const BackupConfig& config = BackupConfig());
+                                             const QStringList& source_paths,
+                                             const QString& backup_dir,
+                                             const BackupConfig& config = BackupConfig());
 
     bool backupMultipleApps(const QStringList& app_names,
-                           const QString& backup_dir,
-                           const BackupConfig& config = BackupConfig());
+                            const QString& backup_dir,
+                            const BackupConfig& config = BackupConfig());
 
     // Restore operations
     bool restoreAppData(const QString& backup_path,
-                       const QString& restore_dir,
-                       const RestoreConfig& config = RestoreConfig());
+                        const QString& restore_dir,
+                        const RestoreConfig& config = RestoreConfig());
 
     bool restoreMultipleApps(const QStringList& backup_paths,
-                            const QString& restore_dir,
-                            const RestoreConfig& config = RestoreConfig());
+                             const QString& restore_dir,
+                             const RestoreConfig& config = RestoreConfig());
 
     // Data discovery
     QStringList discoverAppDataPaths(const QString& app_name) const;
@@ -150,8 +153,8 @@ private:
      * @brief Create zip archive from paths
      */
     bool createArchive(const QStringList& source_paths,
-                      const QString& archive_path,
-                      const BackupConfig& config);
+                       const QString& archive_path,
+                       const BackupConfig& config);
 
     /// @brief Map BackupConfig compression_level to PowerShell CompressionLevel name
     static QString mapCompressionLevel(int level);
@@ -162,8 +165,8 @@ private:
      * @brief Extract zip archive
      */
     bool extractArchive(const QString& archive_path,
-                       const QString& destination,
-                       const RestoreConfig& config);
+                        const QString& destination,
+                        const RestoreConfig& config);
 
     /// @brief Decrypt archive to a temporary file for extraction
     /// @return Path to temporary decrypted file, or empty string on failure
@@ -183,11 +186,12 @@ private:
      * @brief Recursively copy directory
      */
     bool copyDirectory(const QString& source,
-                      const QString& destination,
-                      const QStringList& exclude_patterns);
+                       const QString& destination,
+                       const QStringList& exclude_patterns);
 
     /// @brief Copy all source paths into a single destination directory
-    bool copySourcesToDest(const QStringList& source_paths, const QString& dest_dir,
+    bool copySourcesToDest(const QStringList& source_paths,
+                           const QString& dest_dir,
                            const QStringList& exclude_patterns);
 
     /**
@@ -206,9 +210,11 @@ private:
     std::optional<BackupEntry> readMetadata(const QString& metadata_path) const;
 
     /// @brief Build a BackupEntry from completed backup and write metadata
-    BackupEntry buildBackupResult(const QString& app_name, const QStringList& source_paths,
-                                  const QString& archive_path, qint64 total_size,
+    BackupEntry buildBackupResult(const QString& app_name,
+                                  const QStringList& source_paths,
+                                  const QString& archive_path,
+                                  qint64 total_size,
                                   const BackupConfig& config);
 };
 
-} // namespace sak
+}  // namespace sak

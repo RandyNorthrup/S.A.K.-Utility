@@ -4,11 +4,12 @@
 /// @file test_user_data_manager.cpp
 /// @brief Unit tests for UserDataManager data locations and checksums (TST-04)
 
-#include <QtTest/QtTest>
+#include "sak/user_data_manager.h"
+
+#include <QFile>
 #include <QTemporaryDir>
 #include <QTemporaryFile>
-#include <QFile>
-#include "sak/user_data_manager.h"
+#include <QtTest/QtTest>
 
 using namespace sak;
 
@@ -16,15 +17,13 @@ class UserDataManagerTests : public QObject {
     Q_OBJECT
 
 private Q_SLOTS:
-    void commonDataLocationsNotEmpty()
-    {
+    void commonDataLocationsNotEmpty() {
         UserDataManager mgr;
         auto locations = mgr.getCommonDataLocations();
         QVERIFY(!locations.empty());
     }
 
-    void commonDataLocationsHaveDescriptions()
-    {
+    void commonDataLocationsHaveDescriptions() {
         UserDataManager mgr;
         auto locations = mgr.getCommonDataLocations();
         for (const auto& loc : locations) {
@@ -33,8 +32,7 @@ private Q_SLOTS:
         }
     }
 
-    void checksumDeterministic()
-    {
+    void checksumDeterministic() {
         QTemporaryFile tmp;
         QVERIFY(tmp.open());
         tmp.write("hello world checksum test");
@@ -48,8 +46,7 @@ private Q_SLOTS:
         QCOMPARE(hash1, hash2);
     }
 
-    void checksumDifferentForDifferentContent()
-    {
+    void checksumDifferentForDifferentContent() {
         QTemporaryFile tmp1, tmp2;
         QVERIFY(tmp1.open());
         QVERIFY(tmp2.open());
@@ -67,8 +64,7 @@ private Q_SLOTS:
         QVERIFY(hash1 != hash2);
     }
 
-    void compareChecksumsMatch()
-    {
+    void compareChecksumsMatch() {
         QTemporaryFile tmp1, tmp2;
         QVERIFY(tmp1.open());
         QVERIFY(tmp2.open());
@@ -82,8 +78,7 @@ private Q_SLOTS:
         QVERIFY(mgr.compareChecksums(tmp1.fileName(), tmp2.fileName()));
     }
 
-    void compareChecksumsDoNotMatch()
-    {
+    void compareChecksumsDoNotMatch() {
         QTemporaryFile tmp1, tmp2;
         QVERIFY(tmp1.open());
         QVERIFY(tmp2.open());
@@ -96,15 +91,13 @@ private Q_SLOTS:
         QVERIFY(!mgr.compareChecksums(tmp1.fileName(), tmp2.fileName()));
     }
 
-    void checksumNonexistentFileReturnsEmpty()
-    {
+    void checksumNonexistentFileReturnsEmpty() {
         UserDataManager mgr;
         QString hash = mgr.generateChecksum("C:\\nonexistent\\path\\file.dat");
         QVERIFY(hash.isEmpty());
     }
 
-    void calculateSizeOnTempFiles()
-    {
+    void calculateSizeOnTempFiles() {
         QTemporaryDir tmpDir;
         QVERIFY(tmpDir.isValid());
 
@@ -126,8 +119,7 @@ private Q_SLOTS:
         QVERIFY(size >= 300);
     }
 
-    void listBackupsOnEmptyDir()
-    {
+    void listBackupsOnEmptyDir() {
         QTemporaryDir tmpDir;
         QVERIFY(tmpDir.isValid());
 

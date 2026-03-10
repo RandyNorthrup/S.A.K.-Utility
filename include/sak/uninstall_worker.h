@@ -27,13 +27,14 @@ class UninstallWorker : public WorkerBase {
 public:
     /// @brief Uninstall mode
     enum class Mode {
-        Standard,        ///< Run native uninstaller + leftover scan
-        ForcedUninstall, ///< Skip native uninstaller, scan + remove all traces
-        UwpRemove,       ///< Remove UWP package via PowerShell
-        RegistryOnly     ///< Only remove the registry uninstall entry (orphaned)
+        Standard,         ///< Run native uninstaller + leftover scan
+        ForcedUninstall,  ///< Skip native uninstaller, scan + remove all traces
+        UwpRemove,        ///< Remove UWP package via PowerShell
+        RegistryOnly      ///< Only remove the registry uninstall entry (orphaned)
     };
 
-    explicit UninstallWorker(const ProgramInfo& program, Mode mode,
+    explicit UninstallWorker(const ProgramInfo& program,
+                             Mode mode,
                              ScanLevel scanLevel,
                              bool createRestorePoint = true,
                              QObject* parent = nullptr);
@@ -87,16 +88,13 @@ private:
     [[nodiscard]] bool removeRegistryEntry();
 
     /// @brief Execute the standard uninstall flow (registry snapshot + native uninstaller)
-    [[nodiscard]] std::expected<void, sak::error_code>
-        executeStandardMode(UninstallReport& report);
+    [[nodiscard]] std::expected<void, sak::error_code> executeStandardMode(UninstallReport& report);
 
     /// @brief Execute UWP package removal (complete + early return)
-    [[nodiscard]] std::expected<void, sak::error_code>
-        executeUwpMode(UninstallReport& report);
+    [[nodiscard]] std::expected<void, sak::error_code> executeUwpMode(UninstallReport& report);
 
     /// @brief Execute registry-only cleanup (complete + early return)
-    [[nodiscard]] std::expected<void, sak::error_code>
-        executeRegistryMode(UninstallReport& report);
+    [[nodiscard]] std::expected<void, sak::error_code> executeRegistryMode(UninstallReport& report);
 
     // Registry snapshot data
     QSet<QString> m_registrySnapshotBefore;
@@ -113,10 +111,10 @@ private:
 // ── Compile-Time Invariants ─────────────────────────────────────────────────
 
 static_assert(std::is_base_of_v<WorkerBase, UninstallWorker>,
-    "UninstallWorker must inherit WorkerBase.");
+              "UninstallWorker must inherit WorkerBase.");
 static_assert(!std::is_copy_constructible_v<UninstallWorker>,
-    "UninstallWorker must not be copy-constructible.");
+              "UninstallWorker must not be copy-constructible.");
 
-} // namespace sak
+}  // namespace sak
 
 Q_DECLARE_METATYPE(sak::UninstallWorker::Mode)

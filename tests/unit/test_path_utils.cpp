@@ -4,13 +4,13 @@
 /// @file test_path_utils.cpp
 /// @brief Unit tests for path manipulation and validation utilities
 
+#include "sak/error_codes.h"
+#include "sak/path_utils.h"
+
+#include <QFile>
+#include <QTemporaryDir>
 #include <QtTest/QtTest>
 
-#include "sak/path_utils.h"
-#include "sak/error_codes.h"
-
-#include <QTemporaryDir>
-#include <QFile>
 #include <filesystem>
 
 class PathUtilsTests : public QObject {
@@ -56,8 +56,7 @@ private:
     std::filesystem::path m_basePath;
 };
 
-void PathUtilsTests::initTestCase()
-{
+void PathUtilsTests::initTestCase() {
     QVERIFY(m_tempDir.isValid());
     m_basePath = m_tempDir.path().toStdWString();
 
@@ -82,31 +81,26 @@ void PathUtilsTests::initTestCase()
     f3.close();
 }
 
-void PathUtilsTests::cleanupTestCase()
-{
-}
+void PathUtilsTests::cleanupTestCase() {}
 
 // ============================================================================
 // isSafePath Tests
 // ============================================================================
 
-void PathUtilsTests::isSafePath_validSubpath()
-{
+void PathUtilsTests::isSafePath_validSubpath() {
     auto subPath = m_basePath / "subdir" / "file2.log";
     auto result = sak::path_utils::isSafePath(subPath, m_basePath);
     QVERIFY(result.has_value());
     QVERIFY(result.value());
 }
 
-void PathUtilsTests::isSafePath_exactBase()
-{
+void PathUtilsTests::isSafePath_exactBase() {
     auto result = sak::path_utils::isSafePath(m_basePath, m_basePath);
     QVERIFY(result.has_value());
     QVERIFY(result.value());
 }
 
-void PathUtilsTests::isSafePath_traversalDotDot()
-{
+void PathUtilsTests::isSafePath_traversalDotDot() {
     auto maliciousPath = m_basePath / "subdir" / ".." / ".." / "etc" / "passwd";
     auto result = sak::path_utils::isSafePath(maliciousPath, m_basePath);
     if (result.has_value()) {
@@ -115,8 +109,7 @@ void PathUtilsTests::isSafePath_traversalDotDot()
     // error_code is also acceptable
 }
 
-void PathUtilsTests::isSafePath_embeddedTraversal()
-{
+void PathUtilsTests::isSafePath_embeddedTraversal() {
     auto path = m_basePath / "subdir" / ".." / ".." / "Windows" / "System32";
     auto result = sak::path_utils::isSafePath(path, m_basePath);
     if (result.has_value()) {
@@ -124,8 +117,7 @@ void PathUtilsTests::isSafePath_embeddedTraversal()
     }
 }
 
-void PathUtilsTests::isSafePath_caseInsensitiveOnWindows()
-{
+void PathUtilsTests::isSafePath_caseInsensitiveOnWindows() {
 #ifdef _WIN32
     // On Windows, paths should be case-insensitive
     auto upperBase = std::filesystem::path(m_tempDir.path().toUpper().toStdWString());
@@ -139,8 +131,7 @@ void PathUtilsTests::isSafePath_caseInsensitiveOnWindows()
 #endif
 }
 
-void PathUtilsTests::isSafePath_outsideBase()
-{
+void PathUtilsTests::isSafePath_outsideBase() {
     auto outsidePath = std::filesystem::path("C:\\Windows\\System32\\cmd.exe");
     auto result = sak::path_utils::isSafePath(outsidePath, m_basePath);
     if (result.has_value()) {
@@ -148,8 +139,7 @@ void PathUtilsTests::isSafePath_outsideBase()
     }
 }
 
-void PathUtilsTests::isSafePath_absolutePathDifferentDrive()
-{
+void PathUtilsTests::isSafePath_absolutePathDifferentDrive() {
 #ifdef _WIN32
     // A path on D: should not be safe under a C: base
     auto baseDriveC = std::filesystem::path("C:\\TestBase");
@@ -167,42 +157,36 @@ void PathUtilsTests::isSafePath_absolutePathDifferentDrive()
 // matchesPattern Tests
 // ============================================================================
 
-void PathUtilsTests::matchesPattern_starWildcard()
-{
+void PathUtilsTests::matchesPattern_starWildcard() {
     std::vector<std::string> patterns = {"*.txt"};
     QVERIFY(sak::path_utils::matchesPattern("test.txt", patterns));
     QVERIFY(!sak::path_utils::matchesPattern("test.log", patterns));
 }
 
-void PathUtilsTests::matchesPattern_questionWildcard()
-{
+void PathUtilsTests::matchesPattern_questionWildcard() {
     std::vector<std::string> patterns = {"file?.txt"};
     QVERIFY(sak::path_utils::matchesPattern("file1.txt", patterns));
     QVERIFY(sak::path_utils::matchesPattern("fileA.txt", patterns));
     QVERIFY(!sak::path_utils::matchesPattern("file12.txt", patterns));
 }
 
-void PathUtilsTests::matchesPattern_exactMatch()
-{
+void PathUtilsTests::matchesPattern_exactMatch() {
     std::vector<std::string> patterns = {"readme.md"};
     QVERIFY(sak::path_utils::matchesPattern("readme.md", patterns));
     QVERIFY(!sak::path_utils::matchesPattern("README.MD", patterns));
 }
 
-void PathUtilsTests::matchesPattern_noMatch()
-{
+void PathUtilsTests::matchesPattern_noMatch() {
     std::vector<std::string> patterns = {"*.cpp", "*.h"};
     QVERIFY(!sak::path_utils::matchesPattern("data.json", patterns));
 }
 
-void PathUtilsTests::matchesPattern_emptyPatternList()
-{
+void PathUtilsTests::matchesPattern_emptyPatternList() {
     std::vector<std::string> patterns;
     QVERIFY(!sak::path_utils::matchesPattern("anything.txt", patterns));
 }
 
-void PathUtilsTests::matchesPattern_multiplePatterns()
-{
+void PathUtilsTests::matchesPattern_multiplePatterns() {
     std::vector<std::string> patterns = {"*.cpp", "*.h", "*.hpp"};
     QVERIFY(sak::path_utils::matchesPattern("main.cpp", patterns));
     QVERIFY(sak::path_utils::matchesPattern("header.h", patterns));
@@ -214,8 +198,7 @@ void PathUtilsTests::matchesPattern_multiplePatterns()
 // getDirectorySizeAndCount Tests
 // ============================================================================
 
-void PathUtilsTests::dirSizeAndCount_normalDir()
-{
+void PathUtilsTests::dirSizeAndCount_normalDir() {
     auto result = sak::path_utils::getDirectorySizeAndCount(m_basePath);
     QVERIFY(result.has_value());
     // We created 3 files: "Hello"(5), "World!!"(7), "DeepData123"(11) = 23 bytes
@@ -223,8 +206,7 @@ void PathUtilsTests::dirSizeAndCount_normalDir()
     QCOMPARE(result.value().total_bytes, std::uintmax_t{23});
 }
 
-void PathUtilsTests::dirSizeAndCount_emptyDir()
-{
+void PathUtilsTests::dirSizeAndCount_emptyDir() {
     QDir(m_tempDir.path()).mkpath("empty_subdir");
     auto emptyDir = m_basePath / "empty_subdir";
     auto result = sak::path_utils::getDirectorySizeAndCount(emptyDir);
@@ -233,15 +215,13 @@ void PathUtilsTests::dirSizeAndCount_emptyDir()
     QCOMPARE(result.value().total_bytes, std::uintmax_t{0});
 }
 
-void PathUtilsTests::dirSizeAndCount_nonExistentDir()
-{
+void PathUtilsTests::dirSizeAndCount_nonExistentDir() {
     auto result = sak::path_utils::getDirectorySizeAndCount(m_basePath / "nonexistent_999");
     QVERIFY(!result.has_value());
     QCOMPARE(result.error(), sak::error_code::file_not_found);
 }
 
-void PathUtilsTests::dirSizeAndCount_fileNotDir()
-{
+void PathUtilsTests::dirSizeAndCount_fileNotDir() {
     auto result = sak::path_utils::getDirectorySizeAndCount(m_basePath / "file1.txt");
     QVERIFY(!result.has_value());
     QCOMPARE(result.error(), sak::error_code::not_a_directory);
@@ -251,20 +231,18 @@ void PathUtilsTests::dirSizeAndCount_fileNotDir()
 // getAvailableSpace Tests
 // ============================================================================
 
-void PathUtilsTests::availableSpace_validPath()
-{
+void PathUtilsTests::availableSpace_validPath() {
     auto result = sak::path_utils::getAvailableSpace(m_basePath);
     QVERIFY(result.has_value());
-    QVERIFY(result.value() > 0); // Should have some free space
+    QVERIFY(result.value() > 0);  // Should have some free space
 }
 
-void PathUtilsTests::availableSpace_invalidPath()
-{
+void PathUtilsTests::availableSpace_invalidPath() {
     auto result =
         sak::path_utils::getAvailableSpace(std::filesystem::path("Z:\\NonExistent\\Path"));
     // May fail with error on most systems (Z: doesn't exist)
     if (!result.has_value()) {
-        QVERIFY(true); // Expected failure
+        QVERIFY(true);  // Expected failure
     }
 }
 
@@ -272,16 +250,14 @@ void PathUtilsTests::availableSpace_invalidPath()
 // makeRelative Tests
 // ============================================================================
 
-void PathUtilsTests::makeRelative_validSubpath()
-{
+void PathUtilsTests::makeRelative_validSubpath() {
     auto subPath = m_basePath / "subdir" / "file2.log";
     auto result = sak::path_utils::makeRelative(subPath, m_basePath);
     QVERIFY(result.has_value());
     QCOMPARE(result.value(), std::filesystem::path("subdir") / "file2.log");
 }
 
-void PathUtilsTests::makeRelative_sameDir()
-{
+void PathUtilsTests::makeRelative_sameDir() {
     auto result = sak::path_utils::makeRelative(m_basePath / "file1.txt", m_basePath);
     QVERIFY(result.has_value());
     QCOMPARE(result.value(), std::filesystem::path("file1.txt"));

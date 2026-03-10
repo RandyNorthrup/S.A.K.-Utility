@@ -14,40 +14,45 @@
  */
 
 #include "sak/linux_iso_downloader.h"
+
 #include "sak/bundled_tools_manager.h"
 #include "sak/format_utils.h"
 #include "sak/layout_constants.h"
-#include "sak/network_constants.h"
 #include "sak/logger.h"
+#include "sak/network_constants.h"
 
 #include <QCoreApplication>
 #include <QDir>
 #include <QDirIterator>
 #include <QFile>
 #include <QFileInfo>
+#include <QFutureWatcher>
+#include <QNetworkReply>
+#include <QNetworkRequest>
 #include <QRegularExpression>
 #include <QStandardPaths>
 #include <QtConcurrent/QtConcurrentRun>
-#include <QFutureWatcher>
-#include <QNetworkRequest>
-#include <QNetworkReply>
 
 namespace {
-QString formatSize(qint64 bytes) { return sak::formatBytes(bytes); }
+QString formatSize(qint64 bytes) {
+    return sak::formatBytes(bytes);
+}
 
 /// @brief Parse aria2c speed string (e.g. "2.3MiB", "512KiB") to MB/s
-double parseAria2cSpeedMBps(const QString& dlSpeedStr)
-{
-    if (dlSpeedStr.endsWith("MiB"))
+double parseAria2cSpeedMBps(const QString& dlSpeedStr) {
+    if (dlSpeedStr.endsWith("MiB")) {
         return dlSpeedStr.chopped(3).toDouble();
-    if (dlSpeedStr.endsWith("KiB"))
+    }
+    if (dlSpeedStr.endsWith("KiB")) {
         return dlSpeedStr.chopped(3).toDouble() / 1024.0;
-    if (dlSpeedStr.endsWith("GiB"))
+    }
+    if (dlSpeedStr.endsWith("GiB")) {
         return dlSpeedStr.chopped(3).toDouble() * 1024.0;
+    }
     // Fallback: raw bytes/sec
     return dlSpeedStr.toDouble() / (1024.0 * 1024.0);
 }
-} // anonymous namespace
+}  // anonymous namespace
 
 // ============================================================================
 // Construction / Destruction
@@ -56,23 +61,24 @@ double parseAria2cSpeedMBps(const QString& dlSpeedStr)
 LinuxISODownloader::LinuxISODownloader(QObject* parent)
     : QObject(parent)
     , m_catalog(std::make_unique<LinuxDistroCatalog>(this))
-    , m_progressTimer(new QTimer(this))
-{
-    m_progressTimer->setInterval(sak::kTimerProgressPollMs); // 1-second progress polling
-    connect(m_progressTimer, &QTimer::timeout,
-            this, &LinuxISODownloader::onProgressPollTimer);
+    , m_progressTimer(new QTimer(this)) {
+    m_progressTimer->setInterval(sak::kTimerProgressPollMs);  // 1-second progress polling
+    connect(m_progressTimer, &QTimer::timeout, this, &LinuxISODownloader::onProgressPollTimer);
 
     // Connect catalog signals for GitHub version checking
-    connect(m_catalog.get(), &LinuxDistroCatalog::versionCheckCompleted,
-            this, &LinuxISODownloader::onVersionCheckCompleted);
-    connect(m_catalog.get(), &LinuxDistroCatalog::versionCheckFailed,
-            this, &LinuxISODownloader::onVersionCheckFailed);
+    connect(m_catalog.get(),
+            &LinuxDistroCatalog::versionCheckCompleted,
+            this,
+            &LinuxISODownloader::onVersionCheckCompleted);
+    connect(m_catalog.get(),
+            &LinuxDistroCatalog::versionCheckFailed,
+            this,
+            &LinuxISODownloader::onVersionCheckFailed);
 
     sak::logInfo("LinuxISODownloader initialized");
 }
 
-LinuxISODownloader::~LinuxISODownloader()
-{
+LinuxISODownloader::~LinuxISODownloader() {
     cancel();
 }
 
@@ -80,9 +86,9 @@ LinuxISODownloader::~LinuxISODownloader()
 // Download Entry Point
 // ============================================================================
 
-void LinuxISODownloader::startDownload(const QString& distroId,
-                                       const QString& savePath)
-{
+void LinuxISODownloader::startDownload(const QString& distroId, const QString& savePath) {
+    Q_ASSERT(m_catalog);
+    Q_ASSERT(!distroId.isEmpty());
     if (isDownloading()) {
         Q_EMIT downloadError("A download is already in progress");
         return;
@@ -98,8 +104,8 @@ void LinuxISODownloader::startDownload(const QString& distroId,
         return;
     }
 
-    sak::logInfo("Starting Linux ISO download: " + distro.name.toStdString() +
-                  " " + distro.version.toStdString());
+    sak::logInfo("Starting Linux ISO download: " + distro.name.toStdString() + " " +
+                 distro.version.toStdString());
 
     // For GitHub-hosted distros, check latest version first
     if (distro.sourceType == LinuxDistroCatalog::SourceType::GitHubRelease) {
@@ -128,12 +134,12 @@ void LinuxISODownloader::startDownload(const QString& distroId,
 // Version Check Callbacks
 // ============================================================================
 
-void LinuxISODownloader::onVersionCheckCompleted(
-    const QString& distroId,
-    const LinuxDistroCatalog::DistroInfo& distro,
-    bool changed)
-{
-    if (distroId != m_currentDistroId || m_cancelled) return;
+void LinuxISODownloader::onVersionCheckCompleted(const QString& distroId,
+                                                 const LinuxDistroCatalog::DistroInfo& distro,
+                                                 bool changed) {
+    if (distroId != m_currentDistroId || m_cancelled) {
+        return;
+    }
 
     if (changed) {
         Q_EMIT statusMessage(QString("Found latest version: %1").arg(distro.version));
@@ -149,7 +155,7 @@ void LinuxISODownloader::onVersionCheckCompleted(
     if (m_downloadUrl.isEmpty()) {
         setPhase(Phase::Failed, "Download URL not available");
         Q_EMIT downloadError("Could not resolve download URL for " + distro.name +
-                            ". The GitHub release may not contain an ISO asset.");
+                             ". The GitHub release may not contain an ISO asset.");
         return;
     }
 
@@ -157,15 +163,17 @@ void LinuxISODownloader::onVersionCheckCompleted(
     startAria2cDownload(m_downloadUrl, m_savePath, m_expectedFileName);
 }
 
-void LinuxISODownloader::onVersionCheckFailed(const QString& distroId,
-                                               const QString& error)
-{
-    if (distroId != m_currentDistroId || m_cancelled) return;
+void LinuxISODownloader::onVersionCheckFailed(const QString& distroId, const QString& error) {
+    Q_ASSERT(m_catalog);
+    Q_ASSERT(!distroId.isEmpty());
+    if (distroId != m_currentDistroId || m_cancelled) {
+        return;
+    }
 
     // Fall back to hardcoded version
     auto distro = m_catalog->distroById(distroId);
-    sak::logWarning("Version check failed for " + distroId.toStdString() +
-                    ": " + error.toStdString() + " — using hardcoded version");
+    sak::logWarning("Version check failed for " + distroId.toStdString() + ": " +
+                    error.toStdString() + " — using hardcoded version");
 
     Q_EMIT statusMessage("Version check failed — using known version " + distro.version);
 
@@ -192,9 +200,10 @@ void LinuxISODownloader::onVersionCheckFailed(const QString& distroId,
 
 void LinuxISODownloader::startAria2cDownload(const QString& url,
                                              const QString& savePath,
-                                             const QString& fileName)
-{
-    if (m_cancelled) return;
+                                             const QString& fileName) {
+    if (m_cancelled) {
+        return;
+    }
 
     // Find aria2c
     QString aria2Path = findAria2c();
@@ -224,8 +233,7 @@ void LinuxISODownloader::startAria2cDownload(const QString& url,
 
     // Create output directory if needed
     if (!QDir().mkpath(outDir)) {
-        sak::logWarning("Failed to create ISO download directory: {}",
-                        outDir.toStdString());
+        sak::logWarning("Failed to create ISO download directory: {}", outDir.toStdString());
     }
 
     // Clean up any previous QProcess to prevent leaks
@@ -239,12 +247,12 @@ void LinuxISODownloader::startAria2cDownload(const QString& url,
 
     connect(m_aria2cProcess,
             QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
-            this, &LinuxISODownloader::onAria2cFinished);
+            this,
+            &LinuxISODownloader::onAria2cFinished);
 
     QStringList args = buildAria2cArguments(url, outDir, outFile);
 
-    sak::logInfo("Starting aria2c: " + aria2Path.toStdString() +
-                  " → " + savePath.toStdString());
+    sak::logInfo("Starting aria2c: " + aria2Path.toStdString() + " → " + savePath.toStdString());
 
     m_aria2cProcess->start(aria2Path, args);
 
@@ -259,75 +267,95 @@ void LinuxISODownloader::startAria2cDownload(const QString& url,
 }
 
 QStringList LinuxISODownloader::buildAria2cArguments(const QString& url,
-                                                      const QString& outDir,
-                                                      const QString& outFile) const
-{
+                                                     const QString& outDir,
+                                                     const QString& outFile) const {
     QStringList args;
-    args << url
-         << "--dir=" + outDir
-         << "--out=" + outFile;
+    args << url << "--dir=" + outDir << "--out=" + outFile;
 
     // SourceForge URLs redirect through mirror selection and may serve
     // from HTTP mirrors. Use single-connection mode to avoid mirror
     // inconsistencies and allow HTTP redirects from the initial HTTPS URL.
-    const bool isSourceForge = url.contains("sourceforge.net",
-                                            Qt::CaseInsensitive);
+    const bool isSourceForge = url.contains("sourceforge.net", Qt::CaseInsensitive);
     if (isSourceForge) {
         // ── SourceForge-specific settings ──
         args << "--max-connection-per-server=" + QString::number(sak::kAria2SingleConn)
-             << "--split=" + QString::number(sak::kAria2SingleSplit)
-             << "--min-split-size=20M"
-             << "--check-certificate=true"    // Always verify TLS certificates
-             << "--follow-metalink=mem"        // SF may serve metalink responses
+             << "--split=" + QString::number(sak::kAria2SingleSplit) << "--min-split-size=20M"
+             << "--check-certificate=true"  // Always verify TLS certificates
+             << "--follow-metalink=mem"     // SF may serve metalink responses
              << "--follow-torrent=false"
              << "--max-tries=" +
-                 QString::number(
-                     sak::kAria2MaxTriesHigh)              // More retries for mirror selection
+                    QString::number(sak::kAria2MaxTriesHigh)  // More retries for mirror selection
              << "--retry-wait=" + QString::number(sak::kAria2RetryWaitLongSec)
              << "--connect-timeout=" + QString::number(sak::kAria2ConnectTimeoutLongSec)
              << "--timeout=" + QString::number(sak::kAria2TimeoutLongSec)
              << "--max-file-not-found=5"
-             << "--lowest-speed-limit=10K";   // Lenient speed limit for SF
+             << "--lowest-speed-limit=10K";  // Lenient speed limit for SF
     } else {
         // ── Standard multi-connection settings ──
         args << "--max-connection-per-server=" + QString::number(sak::kAria2MaxConnsPerServer)
-             << "--split=" + QString::number(sak::kAria2Split)
-             << "--min-split-size=1M"
+             << "--split=" + QString::number(sak::kAria2Split) << "--min-split-size=1M"
              << "--check-certificate=true"
              << "--lowest-speed-limit=50K"
              << "--max-tries=" + QString::number(sak::kAria2MaxTries)
              << "--retry-wait=" + QString::number(sak::kAria2RetryWaitSec)
              << "--connect-timeout=" + QString::number(sak::kAria2ConnectTimeoutSec)
-             << "--timeout=" + QString::number(sak::kAria2TimeoutSec)
-             << "--max-file-not-found=3";
+             << "--timeout=" + QString::number(sak::kAria2TimeoutSec) << "--max-file-not-found=3";
     }
 
     // ── Common settings ──
-    args // ── User-Agent (critical: many CDNs/SourceForge block
-         //    aria2c's default UA string) ──
-         << "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/131.0.0.0 Safari/537.36"
-         // ── Resumability ──
-         << "--continue=true"
-         << "--auto-file-renaming=false"
-         << "--allow-overwrite=true"
-         // ── Performance tuning ──
-         << "--file-allocation=none"
-         << "--disk-cache=64M"
-         << "--piece-length=1M"
-         // ── Output formatting ──
-         << "--summary-interval=1"
-         << "--human-readable=false"
-         << "--enable-color=false"
-         << "--console-log-level=notice";
+    args  // ── User-Agent (critical: many CDNs/SourceForge block
+          //    aria2c's default UA string) ──
+        << "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+           "AppleWebKit/537.36 (KHTML, like Gecko) "
+           "Chrome/131.0.0.0 Safari/537.36"
+        // ── Resumability ──
+        << "--continue=true"
+        << "--auto-file-renaming=false"
+        << "--allow-overwrite=true"
+        // ── Performance tuning ──
+        << "--file-allocation=none"
+        << "--disk-cache=64M"
+        << "--piece-length=1M"
+        // ── Output formatting ──
+        << "--summary-interval=1"
+        << "--human-readable=false"
+        << "--enable-color=false"
+        << "--console-log-level=notice";
 
     return args;
 }
 
-void LinuxISODownloader::onAria2cFinished(int exitCode,
-                                          QProcess::ExitStatus exitStatus)
-{
+QString LinuxISODownloader::aria2cExitCodeMessage(int exit_code) {
+    Q_ASSERT(exit_code >= 0);
+    switch (exit_code) {
+    case 1:
+        return QStringLiteral("Unknown error occurred");
+    case 2:
+        return QStringLiteral("Connection timed out");
+    case 3:
+        return QStringLiteral("Resource not found (404)");
+    case 4:
+        return QStringLiteral("Max retries reached — check your internet connection");
+    case 5:
+        return QStringLiteral("Download speed too slow");
+    case 6:
+        return QStringLiteral("Network error");
+    case 7:
+        return QStringLiteral("Download incomplete — some files could not be finished");
+    case 9:
+        return QStringLiteral("Disk space insufficient");
+    case 13:
+        return QStringLiteral("File already exists and could not be overwritten");
+    case 24:
+        return QStringLiteral("DNS resolution failed");
+    default:
+        return QString("aria2c exited with code %1").arg(exit_code);
+    }
+}
+
+void LinuxISODownloader::onAria2cFinished(int exitCode, QProcess::ExitStatus exitStatus) {
+    Q_ASSERT(m_progressTimer);
+    Q_ASSERT(m_aria2cProcess);
     m_progressTimer->stop();
 
     // Read any remaining output
@@ -350,21 +378,7 @@ void LinuxISODownloader::onAria2cFinished(int exitCode,
     }
 
     if (exitCode != 0) {
-        QString errorMsg;
-        switch (exitCode) {
-        case 1:  errorMsg = "Unknown error occurred"; break;
-        case 2:  errorMsg = "Connection timed out"; break;
-        case 3:  errorMsg = "Resource not found (404)"; break;
-        case 4:  errorMsg = "Max retries reached — check your internet connection"; break;
-        case 5:  errorMsg = "Download speed too slow"; break;
-        case 6:  errorMsg = "Network error"; break;
-        case 7:  errorMsg = "Download incomplete — some files could not be finished"; break;
-        case 9:  errorMsg = "Disk space insufficient"; break;
-        case 13: errorMsg = "File already exists and could not be overwritten"; break;
-        case 24: errorMsg = "DNS resolution failed"; break;
-        default: errorMsg = QString("aria2c exited with code %1").arg(exitCode); break;
-        }
-
+        const QString errorMsg = aria2cExitCodeMessage(exitCode);
         sak::logError("aria2c failed: " + errorMsg.toStdString());
         setPhase(Phase::Failed, errorMsg);
         Q_EMIT downloadError(errorMsg);
@@ -375,13 +389,14 @@ void LinuxISODownloader::onAria2cFinished(int exitCode,
     QFileInfo downloadedFile(m_savePath);
     if (!downloadedFile.exists() || downloadedFile.size() == 0) {
         setPhase(Phase::Failed, "Downloaded file is missing or empty");
-        Q_EMIT downloadError("The downloaded file could not be found after aria2c completed. "
-                            "The server may have returned an error page instead of the ISO.");
+        Q_EMIT downloadError(
+            "The downloaded file could not be found after aria2c completed. "
+            "The server may have returned an error page instead of the ISO.");
         return;
     }
 
-    sak::logInfo("Download complete: " + m_savePath.toStdString() +
-                  " (" + std::to_string(downloadedFile.size() / sak::kBytesPerMB) + " MB)");
+    sak::logInfo("Download complete: " + m_savePath.toStdString() + " (" +
+                 std::to_string(downloadedFile.size() / sak::kBytesPerMB) + " MB)");
 
     // Proceed to checksum verification if available
     if (!m_checksumUrl.isEmpty() && !m_checksumType.isEmpty()) {
@@ -398,19 +413,24 @@ void LinuxISODownloader::onAria2cFinished(int exitCode,
 // Progress Polling
 // ============================================================================
 
-void LinuxISODownloader::onProgressPollTimer()
-{
-    if (m_phase != Phase::Downloading) return;
+void LinuxISODownloader::onProgressPollTimer() {
+    Q_ASSERT(m_aria2cProcess);
+    if (m_phase != Phase::Downloading) {
+        return;
+    }
 
     // Read aria2c stdout for progress info
-    if (!m_aria2cProcess) return;
+    if (!m_aria2cProcess) {
+        return;
+    }
 
     QByteArray data = m_aria2cProcess->readAllStandardOutput();
-    if (data.isEmpty()) return;
+    if (data.isEmpty()) {
+        return;
+    }
 
     QString output = QString::fromUtf8(data);
-    QStringList lines = output.split(QRegularExpression("[\r\n]"),
-                                     Qt::SkipEmptyParts);
+    QStringList lines = output.split(QRegularExpression("[\r\n]"), Qt::SkipEmptyParts);
 
     for (const QString& rawLine : lines) {
         QString line = rawLine.trimmed();
@@ -419,8 +439,7 @@ void LinuxISODownloader::onProgressPollTimer()
         // [#abcdef 1234567/9876543(12%) CN:16 DL:45.2MiB]
         // or in human-readable=false mode:
         // [#abcdef 1234567/9876543(12%) CN:16 DL:47394816]
-        static QRegularExpression progressRegex(
-            R"(\[#\w+\s+(\d+)/(\d+)\((\d+)%\).*DL:(\S+)\])");
+        static QRegularExpression progressRegex(R"(\[#\w+\s+(\d+)/(\d+)\((\d+)%\).*DL:(\S+)\])");
 
         auto match = progressRegex.match(line);
         if (match.hasMatch()) {
@@ -429,8 +448,7 @@ void LinuxISODownloader::onProgressPollTimer()
             int percent = match.captured(3).toInt();
             double speedMBps = parseAria2cSpeedMBps(match.captured(4));
 
-            QString detail = QString("%1 / %2")
-                .arg(formatSize(downloaded), formatSize(total));
+            QString detail = QString("%1 / %2").arg(formatSize(downloaded), formatSize(total));
 
             Q_EMIT progressUpdated(percent, detail);
             Q_EMIT speedUpdated(speedMBps);
@@ -450,17 +468,17 @@ void LinuxISODownloader::onProgressPollTimer()
 // ============================================================================
 
 QString LinuxISODownloader::parseExpectedHash(const QString& checksumData,
-    const QString& expectedFileName) const
-{
+                                              const QString& expectedFileName) const {
     QStringList checksumLines = checksumData.split('\n', Qt::SkipEmptyParts);
 
     for (const QString& line : checksumLines) {
         QString trimmed = line.trimmed();
-        if (trimmed.isEmpty() || trimmed.startsWith('#')) continue;
+        if (trimmed.isEmpty() || trimmed.startsWith('#')) {
+            continue;
+        }
 
         // Split on whitespace (hash  filename OR hash *filename)
-        QStringList parts = trimmed.split(QRegularExpression("\\s+"),
-                                          Qt::SkipEmptyParts);
+        QStringList parts = trimmed.split(QRegularExpression("\\s+"), Qt::SkipEmptyParts);
         // Single hash in file — assume it's for our file
         if (parts.size() == 1) {
             return parts.first().toLower();
@@ -482,8 +500,9 @@ QString LinuxISODownloader::parseExpectedHash(const QString& checksumData,
     return {};
 }
 
-void LinuxISODownloader::onChecksumReplyFinished(QNetworkReply* reply, QNetworkAccessManager* nam)
-{
+void LinuxISODownloader::onChecksumReplyFinished(QNetworkReply* reply, QNetworkAccessManager* nam) {
+    Q_ASSERT(reply);
+    Q_ASSERT(nam);
     reply->deleteLater();
     nam->deleteLater();
 
@@ -503,7 +522,7 @@ void LinuxISODownloader::onChecksumReplyFinished(QNetworkReply* reply, QNetworkA
 
     if (expectedHash.isEmpty()) {
         sak::logWarning("Could not find matching hash in checksum file for: " +
-                       expectedFileName.toStdString());
+                        expectedFileName.toStdString());
         Q_EMIT statusMessage("Checksum verification skipped (no matching entry found)");
 
         QFileInfo fileInfo(m_savePath);
@@ -516,13 +535,11 @@ void LinuxISODownloader::onChecksumReplyFinished(QNetworkReply* reply, QNetworkA
     Q_EMIT statusMessage("Computing " + m_checksumType.toUpper() + " checksum...");
     Q_EMIT progressUpdated(97, "Computing checksum...");
 
-    auto algorithm = (m_checksumType == "sha1")
-        ? QCryptographicHash::Sha1
-        : QCryptographicHash::Sha256;
+    auto algorithm = (m_checksumType == "sha1") ? QCryptographicHash::Sha1
+                                                : QCryptographicHash::Sha256;
 
     auto* watcher = new QFutureWatcher<QString>(this);
-    connect(watcher, &QFutureWatcher<QString>::finished, this,
-            [this, watcher, expectedHash]() {
+    connect(watcher, &QFutureWatcher<QString>::finished, this, [this, watcher, expectedHash]() {
         QString actualHash = watcher->result();
         watcher->deleteLater();
         onChecksumVerified(actualHash == expectedHash, expectedHash, actualHash);
@@ -535,7 +552,7 @@ void LinuxISODownloader::onChecksumReplyFinished(QNetworkReply* reply, QNetworkA
         }
 
         QCryptographicHash hash(algorithm);
-        const qint64 bufferSize = 8 * 1024 * 1024; // 8 MB chunks
+        const qint64 bufferSize = 8 * 1024 * 1024;  // 8 MB chunks
         while (!file.atEnd()) {
             hash.addData(file.read(bufferSize));
         }
@@ -545,8 +562,7 @@ void LinuxISODownloader::onChecksumReplyFinished(QNetworkReply* reply, QNetworkA
     watcher->setFuture(future);
 }
 
-void LinuxISODownloader::verifyChecksum()
-{
+void LinuxISODownloader::verifyChecksum() {
     setPhase(Phase::VerifyingChecksum, "Verifying checksum...");
     Q_EMIT statusMessage("Downloading checksum file...");
     Q_EMIT progressUpdated(95, "Verifying integrity...");
@@ -565,8 +581,7 @@ void LinuxISODownloader::verifyChecksum()
 
 void LinuxISODownloader::onChecksumVerified(bool match,
                                             const QString& expected,
-                                            const QString& actual)
-{
+                                            const QString& actual) {
     QFileInfo fileInfo(m_savePath);
 
     if (actual.isEmpty()) {
@@ -590,13 +605,12 @@ void LinuxISODownloader::onChecksumVerified(bool match,
         // Remove the corrupted file
         QFile::remove(m_savePath);
 
-        Q_EMIT downloadError(
-            QString("Checksum verification failed!\n\n"
-                    "Expected: %1\n"
-                    "Actual:   %2\n\n"
-                    "The downloaded file has been removed. "
-                    "Please try downloading again.")
-                .arg(expected, actual));
+        Q_EMIT downloadError(QString("Checksum verification failed!\n\n"
+                                     "Expected: %1\n"
+                                     "Actual:   %2\n\n"
+                                     "The downloaded file has been removed. "
+                                     "Please try downloading again.")
+                                 .arg(expected, actual));
     }
 }
 
@@ -604,8 +618,10 @@ void LinuxISODownloader::onChecksumVerified(bool match,
 // Cancel
 // ============================================================================
 
-void LinuxISODownloader::cancel()
-{
+void LinuxISODownloader::cancel() {
+    Q_ASSERT(m_aria2cProcess);
+    Q_ASSERT(m_progressTimer);
+    Q_ASSERT(m_catalog);
     m_cancelled = true;
     m_progressTimer->stop();
     m_catalog->cancelAll();
@@ -623,28 +639,28 @@ void LinuxISODownloader::cancel()
 // Helpers
 // ============================================================================
 
-void LinuxISODownloader::setPhase(Phase phase, const QString& description)
-{
+void LinuxISODownloader::setPhase(Phase phase, const QString& description) {
     m_phase = phase;
     Q_EMIT phaseChanged(phase, description);
 }
 
-QString LinuxISODownloader::findAria2c() const
-{
+QString LinuxISODownloader::findAria2c() const {
     auto& tools = sak::BundledToolsManager::instance();
 
     // Primary location: tools/uup/aria2c.exe
     QString path = tools.toolPath("uup", "aria2c.exe");
-    if (QFileInfo::exists(path))
+    if (QFileInfo::exists(path)) {
         return path;
+    }
 
     // Fallback: recursive search in tools/uup/
     QDir uupDir(tools.toolsPath() + "/uup");
     if (uupDir.exists()) {
-        QDirIterator it(uupDir.absolutePath(), {"aria2c.exe"},
-                        QDir::Files, QDirIterator::Subdirectories);
-        if (it.hasNext())
+        QDirIterator it(
+            uupDir.absolutePath(), {"aria2c.exe"}, QDir::Files, QDirIterator::Subdirectories);
+        if (it.hasNext()) {
             return it.next();
+        }
     }
 
     // Secondary fallback: check alongside the executable
@@ -654,8 +670,9 @@ QString LinuxISODownloader::findAria2c() const
         appDir + "/aria2c.exe",
     };
     for (const auto& search_path : searchPaths) {
-        if (QFileInfo::exists(search_path))
+        if (QFileInfo::exists(search_path)) {
             return search_path;
+        }
     }
 
     // Check PATH environment variable
@@ -669,13 +686,13 @@ QString LinuxISODownloader::findAria2c() const
         }
     }
 
-    sak::logError("aria2c.exe not found in any known location. "
-                  "Run scripts/bundle_uup_tools.ps1 to install it.");
+    sak::logError(
+        "aria2c.exe not found in any known location. "
+        "Run scripts/bundle_uup_tools.ps1 to install it.");
     return {};
 }
 
-void LinuxISODownloader::cleanupPartialFiles()
-{
+void LinuxISODownloader::cleanupPartialFiles() {
     // Remove .aria2 control file
     QString aria2ControlFile = m_savePath + ".aria2";
     if (QFile::exists(aria2ControlFile)) {

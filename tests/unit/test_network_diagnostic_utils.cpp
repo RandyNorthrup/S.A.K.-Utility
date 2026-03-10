@@ -7,12 +7,12 @@
 /// Tests WiFi frequency conversion, vendor lookup, channel utilization,
 /// port scanner presets and service names, and DNS server/record type lists.
 
-#include <QtTest/QtTest>
-
-#include "sak/wifi_analyzer.h"
-#include "sak/port_scanner.h"
 #include "sak/dns_diagnostic_tool.h"
 #include "sak/network_diagnostic_types.h"
+#include "sak/port_scanner.h"
+#include "sak/wifi_analyzer.h"
+
+#include <QtTest/QtTest>
 
 #include <algorithm>
 
@@ -92,69 +92,57 @@ private Q_SLOTS:
 // WiFi: frequencyToChannel
 // ════════════════════════════════════════════════════════════════════════════
 
-void NetworkDiagnosticUtilsTests::wifi_freqToChannel_2_4GHz_channel1()
-{
-    QCOMPARE(WiFiAnalyzer::frequencyToChannel(2412000), 1);
+void NetworkDiagnosticUtilsTests::wifi_freqToChannel_2_4GHz_channel1() {
+    QCOMPARE(WiFiAnalyzer::frequencyToChannel(2'412'000), 1);
 }
 
-void NetworkDiagnosticUtilsTests::wifi_freqToChannel_2_4GHz_channel6()
-{
-    QCOMPARE(WiFiAnalyzer::frequencyToChannel(2437000), 6);
+void NetworkDiagnosticUtilsTests::wifi_freqToChannel_2_4GHz_channel6() {
+    QCOMPARE(WiFiAnalyzer::frequencyToChannel(2'437'000), 6);
 }
 
-void NetworkDiagnosticUtilsTests::wifi_freqToChannel_2_4GHz_channel11()
-{
-    QCOMPARE(WiFiAnalyzer::frequencyToChannel(2462000), 11);
+void NetworkDiagnosticUtilsTests::wifi_freqToChannel_2_4GHz_channel11() {
+    QCOMPARE(WiFiAnalyzer::frequencyToChannel(2'462'000), 11);
 }
 
-void NetworkDiagnosticUtilsTests::wifi_freqToChannel_2_4GHz_channel13()
-{
-    QCOMPARE(WiFiAnalyzer::frequencyToChannel(2472000), 13);
+void NetworkDiagnosticUtilsTests::wifi_freqToChannel_2_4GHz_channel13() {
+    QCOMPARE(WiFiAnalyzer::frequencyToChannel(2'472'000), 13);
 }
 
-void NetworkDiagnosticUtilsTests::wifi_freqToChannel_2_4GHz_channel14()
-{
-    QCOMPARE(WiFiAnalyzer::frequencyToChannel(2484000), 14);
+void NetworkDiagnosticUtilsTests::wifi_freqToChannel_2_4GHz_channel14() {
+    QCOMPARE(WiFiAnalyzer::frequencyToChannel(2'484'000), 14);
 }
 
-void NetworkDiagnosticUtilsTests::wifi_freqToChannel_5GHz_channel36()
-{
+void NetworkDiagnosticUtilsTests::wifi_freqToChannel_5GHz_channel36() {
     // 5180 MHz = channel 36
-    QCOMPARE(WiFiAnalyzer::frequencyToChannel(5180000), 36);
+    QCOMPARE(WiFiAnalyzer::frequencyToChannel(5'180'000), 36);
 }
 
-void NetworkDiagnosticUtilsTests::wifi_freqToChannel_5GHz_channel44()
-{
+void NetworkDiagnosticUtilsTests::wifi_freqToChannel_5GHz_channel44() {
     // 5220 MHz = channel 44
-    QCOMPARE(WiFiAnalyzer::frequencyToChannel(5220000), 44);
+    QCOMPARE(WiFiAnalyzer::frequencyToChannel(5'220'000), 44);
 }
 
-void NetworkDiagnosticUtilsTests::wifi_freqToChannel_5GHz_channel149()
-{
+void NetworkDiagnosticUtilsTests::wifi_freqToChannel_5GHz_channel149() {
     // 5745 MHz = channel 149
-    QCOMPARE(WiFiAnalyzer::frequencyToChannel(5745000), 149);
+    QCOMPARE(WiFiAnalyzer::frequencyToChannel(5'745'000), 149);
 }
 
-void NetworkDiagnosticUtilsTests::wifi_freqToChannel_6GHz_channel1()
-{
+void NetworkDiagnosticUtilsTests::wifi_freqToChannel_6GHz_channel1() {
     // 5955 MHz = 6 GHz channel 1
-    QCOMPARE(WiFiAnalyzer::frequencyToChannel(5955000), 1);
+    QCOMPARE(WiFiAnalyzer::frequencyToChannel(5'955'000), 1);
 }
 
-void NetworkDiagnosticUtilsTests::wifi_freqToChannel_6GHz_channel5()
-{
+void NetworkDiagnosticUtilsTests::wifi_freqToChannel_6GHz_channel5() {
     // 5975 MHz = 6 GHz channel 5
-    QCOMPARE(WiFiAnalyzer::frequencyToChannel(5975000), 5);
+    QCOMPARE(WiFiAnalyzer::frequencyToChannel(5'975'000), 5);
 }
 
-void NetworkDiagnosticUtilsTests::wifi_freqToChannel_unknown()
-{
+void NetworkDiagnosticUtilsTests::wifi_freqToChannel_unknown() {
     // Out-of-band frequency
-    QCOMPARE(WiFiAnalyzer::frequencyToChannel(900000), 0);
+    QCOMPARE(WiFiAnalyzer::frequencyToChannel(900'000), 0);
 }
 
-void NetworkDiagnosticUtilsTests::wifi_freqToChannel_zero()
-{
+void NetworkDiagnosticUtilsTests::wifi_freqToChannel_zero() {
     QCOMPARE(WiFiAnalyzer::frequencyToChannel(0), 0);
 }
 
@@ -162,57 +150,45 @@ void NetworkDiagnosticUtilsTests::wifi_freqToChannel_zero()
 // WiFi: frequencyToBand
 // ════════════════════════════════════════════════════════════════════════════
 
-void NetworkDiagnosticUtilsTests::wifi_freqToBand_2_4GHz()
-{
-    QCOMPARE(WiFiAnalyzer::frequencyToBand(2412000), QStringLiteral("2.4 GHz"));
-    QCOMPARE(WiFiAnalyzer::frequencyToBand(2437000), QStringLiteral("2.4 GHz"));
-    QCOMPARE(WiFiAnalyzer::frequencyToBand(2484000), QStringLiteral("2.4 GHz"));
+void NetworkDiagnosticUtilsTests::wifi_freqToBand_2_4GHz() {
+    QCOMPARE(WiFiAnalyzer::frequencyToBand(2'412'000), QStringLiteral("2.4 GHz"));
+    QCOMPARE(WiFiAnalyzer::frequencyToBand(2'437'000), QStringLiteral("2.4 GHz"));
+    QCOMPARE(WiFiAnalyzer::frequencyToBand(2'484'000), QStringLiteral("2.4 GHz"));
 }
 
-void NetworkDiagnosticUtilsTests::wifi_freqToBand_5GHz()
-{
-    QCOMPARE(WiFiAnalyzer::frequencyToBand(5180000), QStringLiteral("5 GHz"));
-    QCOMPARE(WiFiAnalyzer::frequencyToBand(5745000), QStringLiteral("5 GHz"));
+void NetworkDiagnosticUtilsTests::wifi_freqToBand_5GHz() {
+    QCOMPARE(WiFiAnalyzer::frequencyToBand(5'180'000), QStringLiteral("5 GHz"));
+    QCOMPARE(WiFiAnalyzer::frequencyToBand(5'745'000), QStringLiteral("5 GHz"));
 }
 
-void NetworkDiagnosticUtilsTests::wifi_freqToBand_6GHz()
-{
-    QCOMPARE(WiFiAnalyzer::frequencyToBand(5955000), QStringLiteral("6 GHz"));
-    QCOMPARE(WiFiAnalyzer::frequencyToBand(7000000), QStringLiteral("6 GHz"));
-    QCOMPARE(WiFiAnalyzer::frequencyToBand(7115000), QStringLiteral("6 GHz"));
+void NetworkDiagnosticUtilsTests::wifi_freqToBand_6GHz() {
+    QCOMPARE(WiFiAnalyzer::frequencyToBand(5'955'000), QStringLiteral("6 GHz"));
+    QCOMPARE(WiFiAnalyzer::frequencyToBand(7'000'000), QStringLiteral("6 GHz"));
+    QCOMPARE(WiFiAnalyzer::frequencyToBand(7'115'000), QStringLiteral("6 GHz"));
 }
 
-void NetworkDiagnosticUtilsTests::wifi_freqToBand_unknown()
-{
-    QCOMPARE(WiFiAnalyzer::frequencyToBand(900000), QStringLiteral("Unknown"));
+void NetworkDiagnosticUtilsTests::wifi_freqToBand_unknown() {
+    QCOMPARE(WiFiAnalyzer::frequencyToBand(900'000), QStringLiteral("Unknown"));
     QCOMPARE(WiFiAnalyzer::frequencyToBand(0), QStringLiteral("Unknown"));
 }
 
-void NetworkDiagnosticUtilsTests::wifi_freqToBand_boundaries()
-{
+void NetworkDiagnosticUtilsTests::wifi_freqToBand_boundaries() {
     // Start boundaries
-    QCOMPARE(WiFiAnalyzer::frequencyToBand(netdiag::kFreq2GHzStart),
-             QStringLiteral("2.4 GHz"));
-    QCOMPARE(WiFiAnalyzer::frequencyToBand(netdiag::kFreq5GHzStart),
-             QStringLiteral("5 GHz"));
-    QCOMPARE(WiFiAnalyzer::frequencyToBand(netdiag::kFreq6GHzStart),
-             QStringLiteral("6 GHz"));
+    QCOMPARE(WiFiAnalyzer::frequencyToBand(netdiag::kFreq2GHzStart), QStringLiteral("2.4 GHz"));
+    QCOMPARE(WiFiAnalyzer::frequencyToBand(netdiag::kFreq5GHzStart), QStringLiteral("5 GHz"));
+    QCOMPARE(WiFiAnalyzer::frequencyToBand(netdiag::kFreq6GHzStart), QStringLiteral("6 GHz"));
 
     // End boundaries
-    QCOMPARE(WiFiAnalyzer::frequencyToBand(netdiag::kFreq2GHzEnd),
-             QStringLiteral("2.4 GHz"));
-    QCOMPARE(WiFiAnalyzer::frequencyToBand(netdiag::kFreq5GHzEnd),
-             QStringLiteral("5 GHz"));
-    QCOMPARE(WiFiAnalyzer::frequencyToBand(netdiag::kFreq6GHzEnd),
-             QStringLiteral("6 GHz"));
+    QCOMPARE(WiFiAnalyzer::frequencyToBand(netdiag::kFreq2GHzEnd), QStringLiteral("2.4 GHz"));
+    QCOMPARE(WiFiAnalyzer::frequencyToBand(netdiag::kFreq5GHzEnd), QStringLiteral("5 GHz"));
+    QCOMPARE(WiFiAnalyzer::frequencyToBand(netdiag::kFreq6GHzEnd), QStringLiteral("6 GHz"));
 }
 
 // ════════════════════════════════════════════════════════════════════════════
 // WiFi: lookupVendor
 // ════════════════════════════════════════════════════════════════════════════
 
-void NetworkDiagnosticUtilsTests::wifi_lookupVendor_knownOui()
-{
+void NetworkDiagnosticUtilsTests::wifi_lookupVendor_knownOui() {
     // The OUI database should contain major manufacturers
     // We can verify that *some* well-known OUI returns a non-empty string
     // without depending on the exact vendor name
@@ -221,27 +197,23 @@ void NetworkDiagnosticUtilsTests::wifi_lookupVendor_knownOui()
     Q_UNUSED(result);
 }
 
-void NetworkDiagnosticUtilsTests::wifi_lookupVendor_unknownOui()
-{
+void NetworkDiagnosticUtilsTests::wifi_lookupVendor_unknownOui() {
     const auto result = WiFiAnalyzer::lookupVendor(QStringLiteral("00:00:00:00:00:00"));
     // Unknown OUI should return empty or a valid string (no crash)
     Q_UNUSED(result);
 }
 
-void NetworkDiagnosticUtilsTests::wifi_lookupVendor_tooShort()
-{
+void NetworkDiagnosticUtilsTests::wifi_lookupVendor_tooShort() {
     const auto result = WiFiAnalyzer::lookupVendor(QStringLiteral("AA:BB"));
     QVERIFY(result.isEmpty());
 }
 
-void NetworkDiagnosticUtilsTests::wifi_lookupVendor_empty()
-{
+void NetworkDiagnosticUtilsTests::wifi_lookupVendor_empty() {
     const auto result = WiFiAnalyzer::lookupVendor(QString());
     QVERIFY(result.isEmpty());
 }
 
-void NetworkDiagnosticUtilsTests::wifi_lookupVendor_caseInsensitive()
-{
+void NetworkDiagnosticUtilsTests::wifi_lookupVendor_caseInsensitive() {
     // Both upper and lower should produce the same result
     const auto upper = WiFiAnalyzer::lookupVendor(QStringLiteral("AA:BB:CC:DD:EE:FF"));
     const auto lower = WiFiAnalyzer::lookupVendor(QStringLiteral("aa:bb:cc:dd:ee:ff"));
@@ -252,15 +224,13 @@ void NetworkDiagnosticUtilsTests::wifi_lookupVendor_caseInsensitive()
 // WiFi: calculateChannelUtilization
 // ════════════════════════════════════════════════════════════════════════════
 
-void NetworkDiagnosticUtilsTests::wifi_channelUtil_emptyInput()
-{
+void NetworkDiagnosticUtilsTests::wifi_channelUtil_emptyInput() {
     QVector<WiFiNetworkInfo> empty;
     const auto result = WiFiAnalyzer::calculateChannelUtilization(empty);
     QVERIFY(result.isEmpty());
 }
 
-void NetworkDiagnosticUtilsTests::wifi_channelUtil_singleNetwork()
-{
+void NetworkDiagnosticUtilsTests::wifi_channelUtil_singleNetwork() {
     QVector<WiFiNetworkInfo> networks;
     WiFiNetworkInfo net;
     net.ssid = QStringLiteral("TestNet");
@@ -277,8 +247,7 @@ void NetworkDiagnosticUtilsTests::wifi_channelUtil_singleNetwork()
     QCOMPARE(result[0].ssids[0], QStringLiteral("TestNet"));
 }
 
-void NetworkDiagnosticUtilsTests::wifi_channelUtil_multipleOnSameChannel()
-{
+void NetworkDiagnosticUtilsTests::wifi_channelUtil_multipleOnSameChannel() {
     QVector<WiFiNetworkInfo> networks;
 
     WiFiNetworkInfo net1;
@@ -302,8 +271,7 @@ void NetworkDiagnosticUtilsTests::wifi_channelUtil_multipleOnSameChannel()
     QCOMPARE(result[0].ssids.size(), 2);
 }
 
-void NetworkDiagnosticUtilsTests::wifi_channelUtil_multipleChannels()
-{
+void NetworkDiagnosticUtilsTests::wifi_channelUtil_multipleChannels() {
     QVector<WiFiNetworkInfo> networks;
 
     WiFiNetworkInfo net1;
@@ -331,8 +299,7 @@ void NetworkDiagnosticUtilsTests::wifi_channelUtil_multipleChannels()
     QCOMPARE(result.size(), 3);
 }
 
-void NetworkDiagnosticUtilsTests::wifi_channelUtil_sortedByChannel()
-{
+void NetworkDiagnosticUtilsTests::wifi_channelUtil_sortedByChannel() {
     QVector<WiFiNetworkInfo> networks;
 
     // Add networks in reverse channel order
@@ -360,8 +327,7 @@ void NetworkDiagnosticUtilsTests::wifi_channelUtil_sortedByChannel()
     QCOMPARE(result[2].channelNumber, 11);
 }
 
-void NetworkDiagnosticUtilsTests::wifi_channelUtil_averageSignal()
-{
+void NetworkDiagnosticUtilsTests::wifi_channelUtil_averageSignal() {
     QVector<WiFiNetworkInfo> networks;
 
     WiFiNetworkInfo net1;
@@ -380,8 +346,7 @@ void NetworkDiagnosticUtilsTests::wifi_channelUtil_averageSignal()
     QCOMPARE(result[0].averageSignalDbm, -60.0);
 }
 
-void NetworkDiagnosticUtilsTests::wifi_channelUtil_interferenceNonNegative()
-{
+void NetworkDiagnosticUtilsTests::wifi_channelUtil_interferenceNonNegative() {
     QVector<WiFiNetworkInfo> networks;
 
     // Very weak signals (weaker than kSignalWeak = -80)
@@ -399,24 +364,20 @@ void NetworkDiagnosticUtilsTests::wifi_channelUtil_interferenceNonNegative()
 // PortScanner: getPresets
 // ════════════════════════════════════════════════════════════════════════════
 
-void NetworkDiagnosticUtilsTests::port_presets_notEmpty()
-{
+void NetworkDiagnosticUtilsTests::port_presets_notEmpty() {
     const auto presets = PortScanner::getPresets();
     QVERIFY(!presets.isEmpty());
     QVERIFY(presets.size() >= 5);  // At least we expect several presets
 }
 
-void NetworkDiagnosticUtilsTests::port_presets_haveNames()
-{
+void NetworkDiagnosticUtilsTests::port_presets_haveNames() {
     const auto presets = PortScanner::getPresets();
     for (const auto& p : presets) {
-        QVERIFY2(!p.name.isEmpty(),
-                 qPrintable(QStringLiteral("Preset has empty name")));
+        QVERIFY2(!p.name.isEmpty(), qPrintable(QStringLiteral("Preset has empty name")));
     }
 }
 
-void NetworkDiagnosticUtilsTests::port_presets_havePorts()
-{
+void NetworkDiagnosticUtilsTests::port_presets_havePorts() {
     const auto presets = PortScanner::getPresets();
     for (const auto& p : presets) {
         QVERIFY2(!p.ports.isEmpty(),
@@ -424,8 +385,7 @@ void NetworkDiagnosticUtilsTests::port_presets_havePorts()
     }
 }
 
-void NetworkDiagnosticUtilsTests::port_presets_commonServices()
-{
+void NetworkDiagnosticUtilsTests::port_presets_commonServices() {
     const auto presets = PortScanner::getPresets();
 
     // Find "Common Services" preset
@@ -443,8 +403,7 @@ void NetworkDiagnosticUtilsTests::port_presets_commonServices()
     QVERIFY2(found, "Could not find 'Common Services' preset");
 }
 
-void NetworkDiagnosticUtilsTests::port_presets_top100HasExpectedPorts()
-{
+void NetworkDiagnosticUtilsTests::port_presets_top100HasExpectedPorts() {
     const auto presets = PortScanner::getPresets();
 
     bool found = false;
@@ -455,7 +414,7 @@ void NetworkDiagnosticUtilsTests::port_presets_top100HasExpectedPorts()
             QVERIFY(p.ports.contains(80));
             QVERIFY(p.ports.contains(443));
             QVERIFY(p.ports.contains(22));
-            QVERIFY(p.ports.contains(3389)); // RDP
+            QVERIFY(p.ports.contains(3389));  // RDP
             break;
         }
     }
@@ -466,52 +425,45 @@ void NetworkDiagnosticUtilsTests::port_presets_top100HasExpectedPorts()
 // PortScanner: getServiceName
 // ════════════════════════════════════════════════════════════════════════════
 
-void NetworkDiagnosticUtilsTests::port_serviceName_http()
-{
+void NetworkDiagnosticUtilsTests::port_serviceName_http() {
     const auto name = PortScanner::getServiceName(80);
     QVERIFY(!name.isEmpty());
     QVERIFY(name.contains(QStringLiteral("HTTP"), Qt::CaseInsensitive));
 }
 
-void NetworkDiagnosticUtilsTests::port_serviceName_https()
-{
+void NetworkDiagnosticUtilsTests::port_serviceName_https() {
     const auto name = PortScanner::getServiceName(443);
     QVERIFY(!name.isEmpty());
     QVERIFY(name.contains(QStringLiteral("HTTPS"), Qt::CaseInsensitive));
 }
 
-void NetworkDiagnosticUtilsTests::port_serviceName_ssh()
-{
+void NetworkDiagnosticUtilsTests::port_serviceName_ssh() {
     const auto name = PortScanner::getServiceName(22);
     QVERIFY(!name.isEmpty());
     QVERIFY(name.contains(QStringLiteral("SSH"), Qt::CaseInsensitive));
 }
 
-void NetworkDiagnosticUtilsTests::port_serviceName_ftp()
-{
+void NetworkDiagnosticUtilsTests::port_serviceName_ftp() {
     const auto name = PortScanner::getServiceName(21);
     QVERIFY(!name.isEmpty());
     QVERIFY(name.contains(QStringLiteral("FTP"), Qt::CaseInsensitive));
 }
 
-void NetworkDiagnosticUtilsTests::port_serviceName_dns()
-{
+void NetworkDiagnosticUtilsTests::port_serviceName_dns() {
     const auto name = PortScanner::getServiceName(53);
     QVERIFY(!name.isEmpty());
     QVERIFY(name.contains(QStringLiteral("DNS"), Qt::CaseInsensitive));
 }
 
-void NetworkDiagnosticUtilsTests::port_serviceName_rdp()
-{
+void NetworkDiagnosticUtilsTests::port_serviceName_rdp() {
     const auto name = PortScanner::getServiceName(3389);
     QVERIFY(!name.isEmpty());
     QVERIFY(name.contains(QStringLiteral("RDP"), Qt::CaseInsensitive));
 }
 
-void NetworkDiagnosticUtilsTests::port_serviceName_unknown()
-{
+void NetworkDiagnosticUtilsTests::port_serviceName_unknown() {
     // Very high ephemeral port unlikely to be in the database
-    const auto name = PortScanner::getServiceName(65432);
+    const auto name = PortScanner::getServiceName(65'432);
     QVERIFY(name.isEmpty());
 }
 
@@ -519,24 +471,20 @@ void NetworkDiagnosticUtilsTests::port_serviceName_unknown()
 // DNS: wellKnownDnsServers
 // ════════════════════════════════════════════════════════════════════════════
 
-void NetworkDiagnosticUtilsTests::dns_servers_notEmpty()
-{
+void NetworkDiagnosticUtilsTests::dns_servers_notEmpty() {
     const auto servers = DnsDiagnosticTool::wellKnownDnsServers();
     QVERIFY(!servers.isEmpty());
     QVERIFY(servers.size() >= 5);
 }
 
-void NetworkDiagnosticUtilsTests::dns_servers_haveNames()
-{
+void NetworkDiagnosticUtilsTests::dns_servers_haveNames() {
     const auto servers = DnsDiagnosticTool::wellKnownDnsServers();
     for (const auto& s : servers) {
-        QVERIFY2(!s.first.isEmpty(),
-                 qPrintable(QStringLiteral("DNS server has empty name")));
+        QVERIFY2(!s.first.isEmpty(), qPrintable(QStringLiteral("DNS server has empty name")));
     }
 }
 
-void NetworkDiagnosticUtilsTests::dns_servers_includeGoogle()
-{
+void NetworkDiagnosticUtilsTests::dns_servers_includeGoogle() {
     const auto servers = DnsDiagnosticTool::wellKnownDnsServers();
     bool found = false;
     for (const auto& s : servers) {
@@ -549,8 +497,7 @@ void NetworkDiagnosticUtilsTests::dns_servers_includeGoogle()
     QVERIFY2(found, "Google DNS (8.8.8.8) not found in server list");
 }
 
-void NetworkDiagnosticUtilsTests::dns_servers_includeCloudflare()
-{
+void NetworkDiagnosticUtilsTests::dns_servers_includeCloudflare() {
     const auto servers = DnsDiagnosticTool::wellKnownDnsServers();
     bool found = false;
     for (const auto& s : servers) {
@@ -563,15 +510,14 @@ void NetworkDiagnosticUtilsTests::dns_servers_includeCloudflare()
     QVERIFY2(found, "Cloudflare DNS (1.1.1.1) not found in server list");
 }
 
-void NetworkDiagnosticUtilsTests::dns_servers_includeSystemDefault()
-{
+void NetworkDiagnosticUtilsTests::dns_servers_includeSystemDefault() {
     const auto servers = DnsDiagnosticTool::wellKnownDnsServers();
     bool found = false;
     for (const auto& s : servers) {
         if (s.second.isEmpty()) {
             found = true;
-            QVERIFY(s.first.contains(QStringLiteral("Default"), Qt::CaseInsensitive)
-                 || s.first.contains(QStringLiteral("System"), Qt::CaseInsensitive));
+            QVERIFY(s.first.contains(QStringLiteral("Default"), Qt::CaseInsensitive) ||
+                    s.first.contains(QStringLiteral("System"), Qt::CaseInsensitive));
             break;
         }
     }
@@ -582,14 +528,12 @@ void NetworkDiagnosticUtilsTests::dns_servers_includeSystemDefault()
 // DNS: supportedRecordTypes
 // ════════════════════════════════════════════════════════════════════════════
 
-void NetworkDiagnosticUtilsTests::dns_recordTypes_notEmpty()
-{
+void NetworkDiagnosticUtilsTests::dns_recordTypes_notEmpty() {
     const auto types = DnsDiagnosticTool::supportedRecordTypes();
     QVERIFY(!types.isEmpty());
 }
 
-void NetworkDiagnosticUtilsTests::dns_recordTypes_includeCommon()
-{
+void NetworkDiagnosticUtilsTests::dns_recordTypes_includeCommon() {
     const auto types = DnsDiagnosticTool::supportedRecordTypes();
     QVERIFY(types.contains(QStringLiteral("A")));
     QVERIFY(types.contains(QStringLiteral("AAAA")));
@@ -597,8 +541,7 @@ void NetworkDiagnosticUtilsTests::dns_recordTypes_includeCommon()
     QVERIFY(types.contains(QStringLiteral("CNAME")));
 }
 
-void NetworkDiagnosticUtilsTests::dns_recordTypes_includeAll()
-{
+void NetworkDiagnosticUtilsTests::dns_recordTypes_includeAll() {
     const auto types = DnsDiagnosticTool::supportedRecordTypes();
     QVERIFY(types.contains(QStringLiteral("TXT")));
     QVERIFY(types.contains(QStringLiteral("SOA")));

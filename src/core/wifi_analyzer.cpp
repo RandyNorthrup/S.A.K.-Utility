@@ -7,14 +7,7 @@
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
-#include <winsock2.h>
-#include <windows.h>
-#include <wlanapi.h>
-
 #include "sak/wifi_analyzer.h"
-
-#include <algorithm>
-#include <memory>
 
 #include <QCoreApplication>
 #include <QDir>
@@ -23,25 +16,33 @@
 #include <QTextStream>
 #include <QThread>
 
+#include <algorithm>
+#include <memory>
+
+#include <winsock2.h>
+
+#include <windows.h>
+
+#include <wlanapi.h>
+
 #pragma comment(lib, "wlanapi.lib")
 
 namespace sak {
 
 namespace {
-constexpr int kWlanClientVersion       = 2;
-constexpr int kMacAddrLen              = 6;
-constexpr uint32_t kFreq2_4GHzBase     = 2412000;
-constexpr uint32_t kFreq2_4GHzStep     = 5000;
-constexpr uint32_t kFreq2_4GHzCh14     = 2484000;
-constexpr uint32_t kFreq5GHzBase       = 5000000;
-constexpr int kChannel2_4GHzBase       = 1;
-constexpr int kChannel14               = 14;
-constexpr int kSignalQualityToDbmBase  = -100;
-constexpr double kSignalQualityFactor  = 0.5;
-constexpr int kMaxOuiPrefixLen         = 8;
+constexpr int kWlanClientVersion = 2;
+constexpr int kMacAddrLen = 6;
+constexpr uint32_t kFreq2_4GHzBase = 2'412'000;
+constexpr uint32_t kFreq2_4GHzStep = 5000;
+constexpr uint32_t kFreq2_4GHzCh14 = 2'484'000;
+constexpr uint32_t kFreq5GHzBase = 5'000'000;
+constexpr int kChannel2_4GHzBase = 1;
+constexpr int kChannel14 = 14;
+constexpr int kSignalQualityToDbmBase = -100;
+constexpr double kSignalQualityFactor = 0.5;
+constexpr int kMaxOuiPrefixLen = 8;
 
-void wlanFreeMemory(void* p)
-{
+void wlanFreeMemory(void* p) {
     if (p != nullptr) {
         WlanFreeMemory(p);
     }
@@ -50,15 +51,12 @@ void wlanFreeMemory(void* p)
 template <typename T>
 using WlanPtr = std::unique_ptr<T, void (*)(void*)>;
 
-[[nodiscard]] QString ssidFromDot11Ssid(const DOT11_SSID& ssid)
-{
-    return QString::fromUtf8(
-        reinterpret_cast<const char*>(ssid.ucSSID),
-        static_cast<int>(ssid.uSSIDLength));
+[[nodiscard]] QString ssidFromDot11Ssid(const DOT11_SSID& ssid) {
+    return QString::fromUtf8(reinterpret_cast<const char*>(ssid.ucSSID),
+                             static_cast<int>(ssid.uSSIDLength));
 }
 
-[[nodiscard]] int signalQualityFromRssi(int rssiDbm)
-{
+[[nodiscard]] int signalQualityFromRssi(int rssiDbm) {
     if (rssiDbm >= -50) {
         return 100;
     }
@@ -68,8 +66,7 @@ using WlanPtr = std::unique_ptr<T, void (*)(void*)>;
     return 2 * (rssiDbm + 100);
 }
 
-[[nodiscard]] QString bssTypeString(DOT11_BSS_TYPE type)
-{
+[[nodiscard]] QString bssTypeString(DOT11_BSS_TYPE type) {
     switch (type) {
     case dot11_BSS_type_infrastructure:
         return QStringLiteral("Infrastructure");
@@ -80,8 +77,7 @@ using WlanPtr = std::unique_ptr<T, void (*)(void*)>;
     }
 }
 
-[[nodiscard]] QString formatMacAddressString(const unsigned char* addr, int length)
-{
+[[nodiscard]] QString formatMacAddressString(const unsigned char* addr, int length) {
     if (addr == nullptr || length <= 0) {
         return {};
     }
@@ -96,8 +92,7 @@ using WlanPtr = std::unique_ptr<T, void (*)(void*)>;
     return mac;
 }
 
-[[nodiscard]] WiFiNetworkInfo networkFromBssEntry(const WLAN_BSS_ENTRY& bss)
-{
+[[nodiscard]] WiFiNetworkInfo networkFromBssEntry(const WLAN_BSS_ENTRY& bss) {
     WiFiNetworkInfo info;
 
     info.ssid = ssidFromDot11Ssid(bss.dot11Ssid);
@@ -115,16 +110,14 @@ using WlanPtr = std::unique_ptr<T, void (*)(void*)>;
     return info;
 }
 
-void appendBssNetworks(const WLAN_BSS_LIST& bssList, QVector<WiFiNetworkInfo>& networks)
-{
+void appendBssNetworks(const WLAN_BSS_LIST& bssList, QVector<WiFiNetworkInfo>& networks) {
     for (DWORD j = 0; j < bssList.dwNumberOfItems; ++j) {
         const auto& bss = bssList.wlanBssEntries[j];
         networks.append(networkFromBssEntry(bss));
     }
 }
 
-void applyAuthAndEncryption(const WLAN_AVAILABLE_NETWORK& net, WiFiNetworkInfo& info)
-{
+void applyAuthAndEncryption(const WLAN_AVAILABLE_NETWORK& net, WiFiNetworkInfo& info) {
     switch (net.dot11DefaultAuthAlgorithm) {
     case DOT11_AUTH_ALGO_80211_OPEN:
         info.authentication = QStringLiteral("Open");
@@ -179,9 +172,7 @@ void applyAuthAndEncryption(const WLAN_AVAILABLE_NETWORK& net, WiFiNetworkInfo& 
     }
 }
 
-void applyAvailableNetwork(const WLAN_AVAILABLE_NETWORK& net,
-                           QVector<WiFiNetworkInfo>& networks)
-{
+void applyAvailableNetwork(const WLAN_AVAILABLE_NETWORK& net, QVector<WiFiNetworkInfo>& networks) {
     const QString ssid = ssidFromDot11Ssid(net.dot11Ssid);
     const bool isConnected = (net.dwFlags & WLAN_AVAILABLE_NETWORK_CONNECTED) != 0;
 
@@ -198,8 +189,7 @@ void applyAvailableNetwork(const WLAN_AVAILABLE_NETWORK& net,
 }
 
 void applyAvailableNetworkList(const WLAN_AVAILABLE_NETWORK_LIST& netList,
-                               QVector<WiFiNetworkInfo>& networks)
-{
+                               QVector<WiFiNetworkInfo>& networks) {
     for (DWORD k = 0; k < netList.dwNumberOfItems; ++k) {
         applyAvailableNetwork(netList.Network[k], networks);
     }
@@ -208,8 +198,7 @@ void applyAvailableNetworkList(const WLAN_AVAILABLE_NETWORK_LIST& netList,
 void scanInterface(HANDLE handle,
                    const WLAN_INTERFACE_INFO& ifInfo,
                    bool triggerScan,
-                   QVector<WiFiNetworkInfo>& networks)
-{
+                   QVector<WiFiNetworkInfo>& networks) {
     if (triggerScan) {
         WlanScan(handle, &ifInfo.InterfaceGuid, nullptr, nullptr, nullptr);
         QThread::msleep(500);
@@ -217,13 +206,7 @@ void scanInterface(HANDLE handle,
 
     PWLAN_BSS_LIST rawBssList = nullptr;
     DWORD result = WlanGetNetworkBssList(
-        handle,
-        &ifInfo.InterfaceGuid,
-        nullptr,
-        dot11_BSS_type_any,
-        FALSE,
-        nullptr,
-        &rawBssList);
+        handle, &ifInfo.InterfaceGuid, nullptr, dot11_BSS_type_any, FALSE, nullptr, &rawBssList);
 
     WlanPtr<WLAN_BSS_LIST> bssList(rawBssList, &wlanFreeMemory);
     if (result == ERROR_SUCCESS && bssList != nullptr) {
@@ -231,8 +214,7 @@ void scanInterface(HANDLE handle,
     }
 
     PWLAN_AVAILABLE_NETWORK_LIST rawNetList = nullptr;
-    result = WlanGetAvailableNetworkList(
-        handle, &ifInfo.InterfaceGuid, 0, nullptr, &rawNetList);
+    result = WlanGetAvailableNetworkList(handle, &ifInfo.InterfaceGuid, 0, nullptr, &rawNetList);
     WlanPtr<WLAN_AVAILABLE_NETWORK_LIST> netList(rawNetList, &wlanFreeMemory);
 
     if (result == ERROR_SUCCESS && netList != nullptr) {
@@ -241,8 +223,7 @@ void scanInterface(HANDLE handle,
 }
 
 /// @brief Cached OUI database for vendor lookups
-[[nodiscard]] const QHash<QString, QString>& ouiDatabase()
-{
+[[nodiscard]] const QHash<QString, QString>& ouiDatabase() {
     static QHash<QString, QString> db;
     static bool loaded = false;
 
@@ -305,30 +286,25 @@ void scanInterface(HANDLE handle,
     }
     return db;
 }
-} // namespace
+}  // namespace
 
-WiFiAnalyzer::WiFiAnalyzer(QObject* parent)
-    : QObject(parent)
-{
+WiFiAnalyzer::WiFiAnalyzer(QObject* parent) : QObject(parent) {
     initializeWlan();
 }
 
-WiFiAnalyzer::~WiFiAnalyzer()
-{
+WiFiAnalyzer::~WiFiAnalyzer() {
     stopContinuousScan();
     cleanupWlan();
 }
 
-bool WiFiAnalyzer::initializeWlan()
-{
+bool WiFiAnalyzer::initializeWlan() {
     if (m_wlanInitialized.load()) {
         return true;
     }
 
     DWORD negotiatedVersion = 0;
     HANDLE handle = nullptr;
-    const DWORD result = WlanOpenHandle(
-        kWlanClientVersion, nullptr, &negotiatedVersion, &handle);
+    const DWORD result = WlanOpenHandle(kWlanClientVersion, nullptr, &negotiatedVersion, &handle);
 
     if (result != ERROR_SUCCESS) {
         return false;
@@ -339,8 +315,7 @@ bool WiFiAnalyzer::initializeWlan()
     return true;
 }
 
-void WiFiAnalyzer::cleanupWlan()
-{
+void WiFiAnalyzer::cleanupWlan() {
     if (m_wlanHandle != nullptr) {
         WlanCloseHandle(m_wlanHandle, nullptr);
         m_wlanHandle = nullptr;
@@ -348,13 +323,11 @@ void WiFiAnalyzer::cleanupWlan()
     }
 }
 
-bool WiFiAnalyzer::isWiFiAvailable() const
-{
+bool WiFiAnalyzer::isWiFiAvailable() const {
     return m_wlanInitialized.load();
 }
 
-void WiFiAnalyzer::scan()
-{
+void WiFiAnalyzer::scan() {
     if (!m_wlanInitialized.load()) {
         Q_EMIT errorOccurred(QStringLiteral("WiFi adapter not available"));
         return;
@@ -369,14 +342,17 @@ void WiFiAnalyzer::scan()
     Q_EMIT channelUtilizationUpdated(channels);
 }
 
-void WiFiAnalyzer::startContinuousScan(int intervalMs)
-{
+void WiFiAnalyzer::startContinuousScan(int intervalMs) {
+    Q_ASSERT(intervalMs >= 0);
+    Q_ASSERT(m_scanTimer);
     stopContinuousScan();
 
     m_scanTimer = new QTimer(this);
     connect(m_scanTimer, &QTimer::timeout, this, [this]() {
         // Continuous scans skip WlanScan + Sleep to avoid blocking the GUI
-        if (!m_wlanInitialized.load()) return;
+        if (!m_wlanInitialized.load()) {
+            return;
+        }
         auto networks = performWlanScan(false);
         m_lastScan = networks;
         Q_EMIT scanComplete(networks);
@@ -389,8 +365,7 @@ void WiFiAnalyzer::startContinuousScan(int intervalMs)
     scan();
 }
 
-void WiFiAnalyzer::stopContinuousScan()
-{
+void WiFiAnalyzer::stopContinuousScan() {
     if (m_scanTimer != nullptr) {
         m_scanTimer->stop();
         delete m_scanTimer;
@@ -398,13 +373,11 @@ void WiFiAnalyzer::stopContinuousScan()
     }
 }
 
-QVector<WiFiNetworkInfo> WiFiAnalyzer::getLastScanResults() const
-{
+QVector<WiFiNetworkInfo> WiFiAnalyzer::getLastScanResults() const {
     return m_lastScan;
 }
 
-QVector<WiFiNetworkInfo> WiFiAnalyzer::performWlanScan(bool triggerScan)
-{
+QVector<WiFiNetworkInfo> WiFiAnalyzer::performWlanScan(bool triggerScan) {
     QVector<WiFiNetworkInfo> networks;
 
     if (m_wlanHandle == nullptr) {
@@ -426,8 +399,7 @@ QVector<WiFiNetworkInfo> WiFiAnalyzer::performWlanScan(bool triggerScan)
     return networks;
 }
 
-WiFiNetworkInfo WiFiAnalyzer::getCurrentConnection() const
-{
+WiFiNetworkInfo WiFiAnalyzer::getCurrentConnection() const {
     // Return the connected network from last scan
     for (const auto& net : m_lastScan) {
         if (net.isConnected) {
@@ -437,12 +409,10 @@ WiFiNetworkInfo WiFiAnalyzer::getCurrentConnection() const
     return {};
 }
 
-int WiFiAnalyzer::frequencyToChannel(uint32_t freqKHz)
-{
+int WiFiAnalyzer::frequencyToChannel(uint32_t freqKHz) {
     // 2.4 GHz band: channels 1-13 (2412 MHz to 2472 MHz, 5 MHz spacing)
     if (freqKHz >= kFreq2_4GHzBase && freqKHz < kFreq2_4GHzCh14) {
-        return kChannel2_4GHzBase +
-               static_cast<int>((freqKHz - kFreq2_4GHzBase) / kFreq2_4GHzStep);
+        return kChannel2_4GHzBase + static_cast<int>((freqKHz - kFreq2_4GHzBase) / kFreq2_4GHzStep);
     }
 
     // Channel 14 (Japan only): 2484 MHz
@@ -463,8 +433,7 @@ int WiFiAnalyzer::frequencyToChannel(uint32_t freqKHz)
     return 0;
 }
 
-QString WiFiAnalyzer::frequencyToBand(uint32_t freqKHz)
-{
+QString WiFiAnalyzer::frequencyToBand(uint32_t freqKHz) {
     if (freqKHz >= netdiag::kFreq6GHzStart && freqKHz <= netdiag::kFreq6GHzEnd) {
         return QStringLiteral("6 GHz");
     }
@@ -477,8 +446,7 @@ QString WiFiAnalyzer::frequencyToBand(uint32_t freqKHz)
     return QStringLiteral("Unknown");
 }
 
-QString WiFiAnalyzer::lookupVendor(const QString& bssid)
-{
+QString WiFiAnalyzer::lookupVendor(const QString& bssid) {
     if (bssid.length() < kMaxOuiPrefixLen) {
         return {};
     }
@@ -494,8 +462,7 @@ QString WiFiAnalyzer::lookupVendor(const QString& bssid)
 }
 
 QVector<WiFiChannelUtilization> WiFiAnalyzer::calculateChannelUtilization(
-    const QVector<WiFiNetworkInfo>& networks)
-{
+    const QVector<WiFiNetworkInfo>& networks) {
     QHash<int, WiFiChannelUtilization> channelMap;
 
     for (const auto& net : networks) {
@@ -524,13 +491,13 @@ QVector<WiFiChannelUtilization> WiFiAnalyzer::calculateChannelUtilization(
         util.interferenceScore =
             static_cast<double>(util.networkCount) *
             std::max(0.0,
-                     1.0 - (util.averageSignalDbm
-                            / static_cast<double>(netdiag::kSignalWeak)));
+                     1.0 - (util.averageSignalDbm / static_cast<double>(netdiag::kSignalWeak)));
         result.append(util);
     }
 
     // Sort by channel number
-    std::sort(result.begin(), result.end(),
+    std::sort(result.begin(),
+              result.end(),
               [](const WiFiChannelUtilization& a, const WiFiChannelUtilization& b) {
                   return a.channelNumber < b.channelNumber;
               });
@@ -538,9 +505,8 @@ QVector<WiFiChannelUtilization> WiFiAnalyzer::calculateChannelUtilization(
     return result;
 }
 
-QString WiFiAnalyzer::formatMacAddress(const unsigned char* addr, int length)
-{
+QString WiFiAnalyzer::formatMacAddress(const unsigned char* addr, int length) {
     return formatMacAddressString(addr, length);
 }
 
-} // namespace sak
+}  // namespace sak

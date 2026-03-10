@@ -4,9 +4,9 @@
 /// @file test_elevation_manager.cpp
 /// @brief Unit tests for ElevationManager â€” non-UAC-triggering operations only
 
-#include <QtTest/QtTest>
-
 #include "sak/elevation_manager.h"
+
+#include <QtTest/QtTest>
 
 #ifdef _WIN32
 
@@ -31,8 +31,7 @@ private Q_SLOTS:
 // isElevated
 // ============================================================================
 
-void ElevationManagerTests::isElevated_returnsConsistently()
-{
+void ElevationManagerTests::isElevated_returnsConsistently() {
     bool first = sak::ElevationManager::isElevated();
     bool second = sak::ElevationManager::isElevated();
     QCOMPARE(first, second);
@@ -42,47 +41,39 @@ void ElevationManagerTests::isElevated_returnsConsistently()
 // canElevate
 // ============================================================================
 
-void ElevationManagerTests::canElevate_returnsBoolean()
-{
+void ElevationManagerTests::canElevate_returnsBoolean() {
     bool result = sak::ElevationManager::canElevate();
     Q_UNUSED(result);
-    QVERIFY(true); // Just verify no crash
+    QVERIFY(true);  // Just verify no crash
 }
 
 // ============================================================================
 // getElevationErrorMessage
 // ============================================================================
 
-void ElevationManagerTests::errorMessage_knownCode()
-{
+void ElevationManagerTests::errorMessage_knownCode() {
     // ERROR_ACCESS_DENIED = 5
-    QString msg = QString::fromStdString(
-        sak::ElevationManager::getElevationErrorMessage(5));
+    QString msg = QString::fromStdString(sak::ElevationManager::getElevationErrorMessage(5));
     QVERIFY(!msg.isEmpty());
 }
 
-void ElevationManagerTests::errorMessage_unknownCode()
-{
+void ElevationManagerTests::errorMessage_unknownCode() {
     // A very unlikely error code
-    QString msg = QString::fromStdString(
-        sak::ElevationManager::getElevationErrorMessage(99999999));
-    QVERIFY(!msg.isEmpty()); // Should have fallback format
+    QString msg =
+        QString::fromStdString(sak::ElevationManager::getElevationErrorMessage(99'999'999));
+    QVERIFY(!msg.isEmpty());  // Should have fallback format
 }
 
-void ElevationManagerTests::errorMessage_accessDenied()
-{
+void ElevationManagerTests::errorMessage_accessDenied() {
     // ERROR_ACCESS_DENIED = 5
-    QString msg = QString::fromStdString(
-        sak::ElevationManager::getElevationErrorMessage(5));
+    QString msg = QString::fromStdString(sak::ElevationManager::getElevationErrorMessage(5));
     // On Windows, this should produce a meaningful message
     QVERIFY(msg.length() > 5);
 }
 
-void ElevationManagerTests::errorMessage_operationCancelled()
-{
+void ElevationManagerTests::errorMessage_operationCancelled() {
     // ERROR_CANCELLED = 1223
-    QString msg = QString::fromStdString(
-        sak::ElevationManager::getElevationErrorMessage(1223));
+    QString msg = QString::fromStdString(sak::ElevationManager::getElevationErrorMessage(1223));
     QVERIFY(!msg.isEmpty());
 }
 

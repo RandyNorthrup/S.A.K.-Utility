@@ -14,22 +14,21 @@
  */
 
 #include "sak/uup_dump_api.h"
-#include "sak/logger.h"
-#include "sak/layout_constants.h"
 
-#include <QNetworkRequest>
-#include <QUrlQuery>
+#include "sak/layout_constants.h"
+#include "sak/logger.h"
+
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
-#include <QJsonArray>
+#include <QNetworkRequest>
 #include <QSslConfiguration>
+#include <QUrlQuery>
 
 // ─── Construction / Destruction ──────────────────────────────────────────────
 
 UupDumpApi::UupDumpApi(QObject* parent)
-    : QObject(parent)
-    , m_networkManager(new QNetworkAccessManager(this))
-{
+    : QObject(parent), m_networkManager(new QNetworkAccessManager(this)) {
     sak::logInfo("UupDumpApi initialized");
 }
 
@@ -40,8 +39,10 @@ UupDumpApi::~UupDumpApi() {
 // ─── Public API Methods ─────────────────────────────────────────────────────
 
 void UupDumpApi::fetchAvailableBuilds(const QString& arch, ReleaseChannel channel) {
+    Q_ASSERT(!arch.isEmpty());
     sak::logInfo(QString("Fetching available builds for arch=%1, channel=%2")
-        .arg(arch, channelToDisplayName(channel)).toStdString());
+                     .arg(arch, channelToDisplayName(channel))
+                     .toStdString());
 
     // Use listid.php to search for builds matching architecture and channel
     QString searchQuery = buildSearchQuery(arch, channel);
@@ -57,6 +58,7 @@ void UupDumpApi::fetchAvailableBuilds(const QString& arch, ReleaseChannel channe
 }
 
 void UupDumpApi::listLanguages(const QString& updateId) {
+    Q_ASSERT(!updateId.isEmpty());
     sak::logInfo(QString("Fetching languages for build %1").arg(updateId).toStdString());
 
     QMap<QString, QString> params;
@@ -69,8 +71,10 @@ void UupDumpApi::listLanguages(const QString& updateId) {
 }
 
 void UupDumpApi::listEditions(const QString& updateId, const QString& lang) {
-    sak::logInfo(QString("Fetching editions for build %1, lang=%2")
-        .arg(updateId, lang).toStdString());
+    Q_ASSERT(!updateId.isEmpty());
+    Q_ASSERT(!lang.isEmpty());
+    sak::logInfo(
+        QString("Fetching editions for build %1, lang=%2").arg(updateId, lang).toStdString());
 
     QMap<QString, QString> params;
     params["id"] = updateId;
@@ -83,8 +87,11 @@ void UupDumpApi::listEditions(const QString& updateId, const QString& lang) {
 }
 
 void UupDumpApi::getFiles(const QString& updateId, const QString& lang, const QString& edition) {
+    Q_ASSERT(!updateId.isEmpty());
+    Q_ASSERT(!lang.isEmpty());
     sak::logInfo(QString("Fetching download files for build %1, lang=%2, edition=%3")
-        .arg(updateId, lang, edition).toStdString());
+                     .arg(updateId, lang, edition)
+                     .toStdString());
 
     QMap<QString, QString> params;
     params["id"] = updateId;
@@ -111,34 +118,42 @@ void UupDumpApi::cancelAll() {
 
 QString UupDumpApi::channelToRing(ReleaseChannel channel) {
     switch (channel) {
-        case ReleaseChannel::Retail:         return "Retail";
-        case ReleaseChannel::ReleasePreview: return "ReleasePreview";
-        case ReleaseChannel::Beta:           return "Beta";
-        case ReleaseChannel::Dev:            return "Dev";
-        case ReleaseChannel::Canary:         return "Canary";
+    case ReleaseChannel::Retail:
+        return "Retail";
+    case ReleaseChannel::ReleasePreview:
+        return "ReleasePreview";
+    case ReleaseChannel::Beta:
+        return "Beta";
+    case ReleaseChannel::Dev:
+        return "Dev";
+    case ReleaseChannel::Canary:
+        return "Canary";
     }
     return "Retail";
 }
 
 QString UupDumpApi::channelToDisplayName(ReleaseChannel channel) {
     switch (channel) {
-        case ReleaseChannel::Retail:         return "Public Release";
-        case ReleaseChannel::ReleasePreview: return "Release Preview";
-        case ReleaseChannel::Beta:           return "Beta Channel";
-        case ReleaseChannel::Dev:            return "Dev Channel";
-        case ReleaseChannel::Canary:         return "Canary Channel";
+    case ReleaseChannel::Retail:
+        return "Public Release";
+    case ReleaseChannel::ReleasePreview:
+        return "Release Preview";
+    case ReleaseChannel::Beta:
+        return "Beta Channel";
+    case ReleaseChannel::Dev:
+        return "Dev Channel";
+    case ReleaseChannel::Canary:
+        return "Canary Channel";
     }
     return "Public Release";
 }
 
 QList<UupDumpApi::ReleaseChannel> UupDumpApi::allChannels() {
-    return {
-        ReleaseChannel::Retail,
-        ReleaseChannel::ReleasePreview,
-        ReleaseChannel::Beta,
-        ReleaseChannel::Dev,
-        ReleaseChannel::Canary
-    };
+    return {ReleaseChannel::Retail,
+            ReleaseChannel::ReleasePreview,
+            ReleaseChannel::Beta,
+            ReleaseChannel::Dev,
+            ReleaseChannel::Canary};
 }
 
 // ─── Reply Handlers ─────────────────────────────────────────────────────────
@@ -187,7 +202,7 @@ void UupDumpApi::onBuildsFetchReply() {
         // The uuid is inside the build object, not the key (key is a numeric index)
         info.uuid = buildObj["uuid"].toString();
         if (info.uuid.isEmpty()) {
-            info.uuid = it.key(); // fallback
+            info.uuid = it.key();  // fallback
         }
         info.title = buildObj["title"].toString();
         info.build = buildObj["build"].toString();
@@ -225,8 +240,8 @@ void UupDumpApi::onLanguagesReply() {
     reply->deleteLater();
 
     if (reply->error() != QNetworkReply::NoError) {
-        QString errorMsg = QString("Network error fetching languages: %1")
-            .arg(reply->errorString());
+        QString errorMsg =
+            QString("Network error fetching languages: %1").arg(reply->errorString());
         sak::logError(errorMsg.toStdString());
         Q_EMIT apiError(errorMsg);
         return;
@@ -237,8 +252,8 @@ void UupDumpApi::onLanguagesReply() {
     QJsonDocument doc = QJsonDocument::fromJson(data, &parseError);
 
     if (parseError.error != QJsonParseError::NoError) {
-        QString errorMsg = QString("JSON parse error in languages response: %1")
-            .arg(parseError.errorString());
+        QString errorMsg =
+            QString("JSON parse error in languages response: %1").arg(parseError.errorString());
         sak::logError(errorMsg.toStdString());
         Q_EMIT apiError(errorMsg);
         return;
@@ -304,8 +319,8 @@ void UupDumpApi::onEditionsReply() {
     QJsonDocument doc = QJsonDocument::fromJson(data, &parseError);
 
     if (parseError.error != QJsonParseError::NoError) {
-        QString errorMsg = QString("JSON parse error in editions response: %1")
-            .arg(parseError.errorString());
+        QString errorMsg =
+            QString("JSON parse error in editions response: %1").arg(parseError.errorString());
         sak::logError(errorMsg.toStdString());
         Q_EMIT apiError(errorMsg);
         return;
@@ -370,8 +385,8 @@ void UupDumpApi::onFilesReply() {
     QJsonDocument doc = QJsonDocument::fromJson(data, &parseError);
 
     if (parseError.error != QJsonParseError::NoError) {
-        QString errorMsg = QString("JSON parse error in files response: %1")
-            .arg(parseError.errorString());
+        QString errorMsg =
+            QString("JSON parse error in files response: %1").arg(parseError.errorString());
         sak::logError(errorMsg.toStdString());
         Q_EMIT apiError(errorMsg);
         return;
@@ -401,7 +416,9 @@ void UupDumpApi::onFilesReply() {
 
     double totalSizeGB = totalSize / sak::kBytesPerGBf;
     sak::logInfo(QString("Fetched %1 downloadable files (%2 GB total)")
-        .arg(files.size()).arg(totalSizeGB, 0, 'f', 2).toStdString());
+                     .arg(files.size())
+                     .arg(totalSizeGB, 0, 'f', 2)
+                     .toStdString());
 
     Q_EMIT filesFetched(updateName, files);
 }
@@ -409,8 +426,7 @@ void UupDumpApi::onFilesReply() {
 // ─── Private Helpers ────────────────────────────────────────────────────────
 
 std::optional<UupDumpApi::FileInfo> UupDumpApi::parseAndValidateFileEntry(
-    const QString& key, const QJsonObject& fileObj)
-{
+    const QString& key, const QJsonObject& fileObj) {
     FileInfo info;
     info.fileName = key;
     info.sha1 = fileObj["sha1"].toString();
@@ -453,7 +469,7 @@ std::optional<UupDumpApi::FileInfo> UupDumpApi::parseAndValidateFileEntry(
 }
 
 QNetworkReply* UupDumpApi::sendApiRequest(const QString& endpoint,
-                                           const QMap<QString, QString>& params) {
+                                          const QMap<QString, QString>& params) {
     QUrl url(QString("%1%2").arg(API_BASE_URL, endpoint));
     QUrlQuery query;
 
@@ -491,6 +507,7 @@ bool UupDumpApi::checkApiError(const QJsonObject& response, const QString& conte
 }
 
 QString UupDumpApi::buildSearchQuery(const QString& arch, ReleaseChannel channel) const {
+    Q_ASSERT(!arch.isEmpty());
     // Build a search query that filters builds by architecture and channel
     // The listid.php endpoint does text search on build titles
     QString query;
@@ -504,23 +521,23 @@ QString UupDumpApi::buildSearchQuery(const QString& arch, ReleaseChannel channel
 
     // Add channel-specific search terms
     switch (channel) {
-        case ReleaseChannel::Retail:
-            // Retail builds have version numbers like "24H2", "23H2" in their titles
-            // Search for the latest Windows 11 release
-            query = "windows 11 " + query;
-            break;
-        case ReleaseChannel::ReleasePreview:
-            query = "Release Preview " + query;
-            break;
-        case ReleaseChannel::Beta:
-            query = "Beta " + query;
-            break;
-        case ReleaseChannel::Dev:
-            query = "Dev " + query;
-            break;
-        case ReleaseChannel::Canary:
-            query = "Canary " + query;
-            break;
+    case ReleaseChannel::Retail:
+        // Retail builds have version numbers like "24H2", "23H2" in their titles
+        // Search for the latest Windows 11 release
+        query = "windows 11 " + query;
+        break;
+    case ReleaseChannel::ReleasePreview:
+        query = "Release Preview " + query;
+        break;
+    case ReleaseChannel::Beta:
+        query = "Beta " + query;
+        break;
+    case ReleaseChannel::Dev:
+        query = "Dev " + query;
+        break;
+    case ReleaseChannel::Canary:
+        query = "Canary " + query;
+        break;
     }
 
     return query.trimmed();

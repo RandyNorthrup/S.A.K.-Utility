@@ -1,22 +1,25 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-#include "sak/windows_usb_creator.h"
-#include "sak/logger.h"
 #include "sak/layout_constants.h"
+#include "sak/logger.h"
+#include "sak/windows_usb_creator.h"
+
 #include <QCoreApplication>
-#include <QProcess>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
-#include <QTemporaryFile>
-#include <QThread>
+#include <QProcess>
 #include <QRegularExpression>
 #include <QStorageInfo>
+#include <QTemporaryFile>
+#include <QThread>
 
 bool WindowsUSBCreator::copyISOContents(const QString& sourcePath, const QString& destPath) {
-    sak::logInfo(QString("Extracting ISO contents: %1 -> %2").arg(sourcePath,
-        destPath).toStdString());
+    Q_ASSERT(!sourcePath.isEmpty());
+    Q_ASSERT(!destPath.isEmpty());
+    sak::logInfo(
+        QString("Extracting ISO contents: %1 -> %2").arg(sourcePath, destPath).toStdString());
 
     // Verify source ISO exists
     if (!QFile::exists(sourcePath)) {
@@ -38,12 +41,24 @@ bool WindowsUSBCreator::copyISOContents(const QString& sourcePath, const QString
     copyISO_extractVolumeLabel(sevenZipPath, sourcePath);
 
     QString cleanDest;
-    if (!copyISO_normalizeDestination(destPath, cleanDest)) return false;
-    if (!copyISO_checkDiskSpace(cleanDest, sourcePath)) return false;
-    if (!copyISO_runExtraction(sevenZipPath, sourcePath, cleanDest)) return false;
-    if (!copyISO_verifyDestination(cleanDest)) return false;
-    if (!copyISO_findSetupExe(cleanDest)) return false;
-    if (!copyISO_verifyBootFiles(cleanDest)) return false;
+    if (!copyISO_normalizeDestination(destPath, cleanDest)) {
+        return false;
+    }
+    if (!copyISO_checkDiskSpace(cleanDest, sourcePath)) {
+        return false;
+    }
+    if (!copyISO_runExtraction(sevenZipPath, sourcePath, cleanDest)) {
+        return false;
+    }
+    if (!copyISO_verifyDestination(cleanDest)) {
+        return false;
+    }
+    if (!copyISO_findSetupExe(cleanDest)) {
+        return false;
+    }
+    if (!copyISO_verifyBootFiles(cleanDest)) {
+        return false;
+    }
 
     copyISO_setVolumeLabel(cleanDest);
 
@@ -62,7 +77,9 @@ bool WindowsUSBCreator::copyISOContents(const QString& sourcePath, const QString
 QString WindowsUSBCreator::parseVolumeLabelFromOutput(const QString& output) {
     QStringList lines = output.split('\n');
     for (const QString& line : lines) {
-        if (!line.startsWith("Comment = ")) continue;
+        if (!line.startsWith("Comment = ")) {
+            continue;
+        }
         QString label = line.mid(10).trimmed();
         sak::logInfo(QString("ISO volume label: %1").arg(label).toStdString());
         return label;
@@ -71,17 +88,18 @@ QString WindowsUSBCreator::parseVolumeLabelFromOutput(const QString& output) {
 }
 
 void WindowsUSBCreator::copyISO_extractVolumeLabel(const QString& sevenZipPath,
-    const QString& sourcePath) {
+                                                   const QString& sourcePath) {
     QProcess labelExtract;
     QStringList labelArgs;
-    labelArgs << "l" << "-slt" << sourcePath; // List with technical info
+    labelArgs << "l" << "-slt" << sourcePath;  // List with technical info
 
     labelExtract.start(sevenZipPath, labelArgs);
     if (!labelExtract.waitForStarted(sak::kTimeoutProcessStartMs)) {
         sak::logWarning("7z process failed to start for label extraction");
     } else if (!labelExtract.waitForFinished(sak::kTimeoutProcessMediumMs)) {
-        sak::logWarning("7z label extraction timed out after 10s \xe2\x80\x94 will use default "
-                        "label");
+        sak::logWarning(
+            "7z label extraction timed out after 10s \xe2\x80\x94 will use default "
+            "label");
         labelExtract.kill();
     } else {
         m_volumeLabel = parseVolumeLabelFromOutput(labelExtract.readAllStandardOutput());
@@ -95,6 +113,8 @@ void WindowsUSBCreator::copyISO_extractVolumeLabel(const QString& sevenZipPath,
 }
 
 bool WindowsUSBCreator::copyISO_normalizeDestination(const QString& destPath, QString& cleanDest) {
+    Q_ASSERT(!destPath.isEmpty());
+    Q_ASSERT(!cleanDest.isEmpty());
     // Normalize drive letter to full path format (e.g., "E" -> "E:\")
     cleanDest = destPath.trimmed();
 
@@ -105,8 +125,8 @@ bool WindowsUSBCreator::copyISO_normalizeDestination(const QString& destPath, QS
 
     // Should now have just the drive letter
     if (cleanDest.length() != 1 || !cleanDest[0].isLetter()) {
-        m_lastError = QString("Invalid drive letter format: '%1' (expected single letter A-Z)")
-            .arg(destPath);
+        m_lastError =
+            QString("Invalid drive letter format: '%1' (expected single letter A-Z)").arg(destPath);
         sak::logError(m_lastError.toStdString());
         return false;
     }
@@ -119,7 +139,7 @@ bool WindowsUSBCreator::copyISO_normalizeDestination(const QString& destPath, QS
 }
 
 bool WindowsUSBCreator::copyISO_checkDiskSpace(const QString& cleanDest,
-    const QString& sourcePath) {
+                                               const QString& sourcePath) {
     QStorageInfo storage(cleanDest);
     if (!storage.isValid() || !storage.isReady()) {
         m_lastError = QString("Cannot access destination drive %1").arg(cleanDest);
@@ -136,33 +156,35 @@ bool WindowsUSBCreator::copyISO_checkDiskSpace(const QString& cleanDest,
 
     if (availableSpace < requiredSpace) {
         m_lastError = QString("Insufficient disk space: need %1 GB, have %2 GB")
-            .arg(requiredSpace / sak::kBytesPerGBf, 0, 'f', 2)
-            .arg(availableSpace / sak::kBytesPerGBf, 0, 'f', 2);
+                          .arg(requiredSpace / sak::kBytesPerGBf, 0, 'f', 2)
+                          .arg(availableSpace / sak::kBytesPerGBf, 0, 'f', 2);
         sak::logError(m_lastError.toStdString());
         return false;
     }
 
     sak::logInfo(QString("Disk space check: %1 GB available, %2 GB required")
-        .arg(availableSpace / sak::kBytesPerGBf, 0, 'f', 2)
-        .arg(requiredSpace / sak::kBytesPerGBf, 0, 'f', 2).toStdString());
+                     .arg(availableSpace / sak::kBytesPerGBf, 0, 'f', 2)
+                     .arg(requiredSpace / sak::kBytesPerGBf, 0, 'f', 2)
+                     .toStdString());
     return true;
 }
 
 bool WindowsUSBCreator::copyISO_runExtraction(const QString& sevenZipPath,
-    const QString& sourcePath, const QString& cleanDest) {
-    sak::logInfo(QString("Using 7z.exe to extract ISO directly to %1")
-        .arg(cleanDest).toStdString());
+                                              const QString& sourcePath,
+                                              const QString& cleanDest) {
+    sak::logInfo(
+        QString("Using 7z.exe to extract ISO directly to %1").arg(cleanDest).toStdString());
     Q_EMIT statusChanged("Extracting Windows installation files...");
 
     // 7z x = extract with full paths, -aoa = overwrite all, -bsp2 = detailed progress to stdout
     QProcess extract;
     QStringList args;
-    args << "x"; // Extract with full paths
-    args << "-aoa"; // Overwrite all existing files
-    args << "-bsp2"; // Detailed progress (bytes) redirected to stdout
-    args << "-y"; // Assume Yes on all queries
+    args << "x";                             // Extract with full paths
+    args << "-aoa";                          // Overwrite all existing files
+    args << "-bsp2";                         // Detailed progress (bytes) redirected to stdout
+    args << "-y";                            // Assume Yes on all queries
     args << sourcePath;
-    args << QString("-o%1").arg(cleanDest); // Output directory
+    args << QString("-o%1").arg(cleanDest);  // Output directory
 
     sak::logInfo(QString("7z command: %1 %2").arg(sevenZipPath, args.join(" ")).toStdString());
     sak::logInfo(QString("Extracting to absolute path: %1").arg(cleanDest).toStdString());
@@ -177,13 +199,15 @@ bool WindowsUSBCreator::copyISO_runExtraction(const QString& sevenZipPath,
     sak::logInfo("7z process started, extracting ISO (this may take several minutes)...");
     Q_EMIT statusChanged("Extracting Windows files...");
 
-    if (!copyISO_monitorExtraction(extract)) return false;
+    if (!copyISO_monitorExtraction(extract)) {
+        return false;
+    }
     return copyISO_logExtractionResult(extract);
 }
 
 bool WindowsUSBCreator::copyISO_monitorExtraction(QProcess& extract) {
-    const int checkIntervalMs = 200; // Check every 200ms for smoother progress
-    const int maxWaitMs = 900000; // 15 minutes total
+    const int checkIntervalMs = 200;  // Check every 200ms for smoother progress
+    const int maxWaitMs = 900'000;    // 15 minutes total
     int totalWaitedMs = 0;
     int lastProgressPercent = 15;
     qint64 totalBytes = 0;
@@ -201,8 +225,8 @@ bool WindowsUSBCreator::copyISO_monitorExtraction(QProcess& extract) {
         // Read any new output from 7z
         if (extract.waitForReadyRead(checkIntervalMs)) {
             QString newOutput = QString::fromLocal8Bit(extract.readAllStandardOutput());
-            copyISO_parseExtractionProgress(newOutput, totalBytes, processedBytes,
-                lastProgressPercent);
+            copyISO_parseExtractionProgress(
+                newOutput, totalBytes, processedBytes, lastProgressPercent);
             totalWaitedMs += checkIntervalMs;
         } else {
             totalWaitedMs += checkIntervalMs;
@@ -220,9 +244,10 @@ bool WindowsUSBCreator::copyISO_monitorExtraction(QProcess& extract) {
     return true;
 }
 
-void WindowsUSBCreator::copyISO_parseExtractionProgress(
-        const QString& output, qint64& totalBytes, qint64& processedBytes,
-            int& lastProgressPercent) {
+void WindowsUSBCreator::copyISO_parseExtractionProgress(const QString& output,
+                                                        qint64& totalBytes,
+                                                        qint64& processedBytes,
+                                                        int& lastProgressPercent) {
     // Parse 7z -bsp2 output format: "bytes_processed + bytes_total"
     // Format example: "123456789 + 987654321" or percentage "12%"
     QRegularExpression bytesRegex(R"((\d+)\s*\+\s*(\d+))");
@@ -232,11 +257,15 @@ void WindowsUSBCreator::copyISO_parseExtractionProgress(
         // Fallback: Try to parse percentage if bytes format not found
         QRegularExpression percentRegex(R"(\s+(\d+)%)");
         QRegularExpressionMatch percentMatch = percentRegex.match(output);
-        if (!percentMatch.hasMatch()) return;
+        if (!percentMatch.hasMatch()) {
+            return;
+        }
 
         int extractPercent = percentMatch.captured(1).toInt();
         int totalProgress = 15 + (extractPercent * 35 / 100);
-        if (totalProgress <= lastProgressPercent) return;
+        if (totalProgress <= lastProgressPercent) {
+            return;
+        }
 
         lastProgressPercent = totalProgress;
         Q_EMIT progressUpdated(totalProgress);
@@ -248,12 +277,18 @@ void WindowsUSBCreator::copyISO_parseExtractionProgress(
     // Bytes format matched
     processedBytes = bytesMatch.captured(1).toLongLong();
     qint64 newTotal = bytesMatch.captured(2).toLongLong();
-    if (newTotal > totalBytes) totalBytes = newTotal;
-    if (totalBytes <= 0) return;
+    if (newTotal > totalBytes) {
+        totalBytes = newTotal;
+    }
+    if (totalBytes <= 0) {
+        return;
+    }
 
     int extractPercent = static_cast<int>((processedBytes * 100) / totalBytes);
     int totalProgress = 15 + (extractPercent * 35 / 100);
-    if (totalProgress <= lastProgressPercent) return;
+    if (totalProgress <= lastProgressPercent) {
+        return;
+    }
 
     lastProgressPercent = totalProgress;
     Q_EMIT progressUpdated(totalProgress);
@@ -262,14 +297,15 @@ void WindowsUSBCreator::copyISO_parseExtractionProgress(
     double totalMB = totalBytes / sak::kBytesPerMBf;
 
     Q_EMIT statusChanged(QString("Extracting Windows files... %1 MB / %2 MB (%3%)")
-        .arg(processedMB, 0, 'f', 1)
-        .arg(totalMB, 0, 'f', 1)
-        .arg(extractPercent));
+                             .arg(processedMB, 0, 'f', 1)
+                             .arg(totalMB, 0, 'f', 1)
+                             .arg(extractPercent));
 
     sak::logInfo(QString("Extraction progress: %1 MB / %2 MB (%3%)")
-        .arg(processedMB, 0, 'f', 1)
-        .arg(totalMB, 0, 'f', 1)
-        .arg(extractPercent).toStdString());
+                     .arg(processedMB, 0, 'f', 1)
+                     .arg(totalMB, 0, 'f', 1)
+                     .arg(extractPercent)
+                     .toStdString());
 }
 
 bool WindowsUSBCreator::copyISO_logExtractionResult(QProcess& extract) {
@@ -303,6 +339,7 @@ bool WindowsUSBCreator::copyISO_logExtractionResult(QProcess& extract) {
 }
 
 bool WindowsUSBCreator::copyISO_verifyDestination(const QString& cleanDest) {
+    Q_ASSERT(!cleanDest.isEmpty());
     // Wait a moment for filesystem to settle after extraction
     sak::logInfo("Waiting for filesystem to settle after extraction...");
     QThread::msleep(sak::kTimerServiceDelayMs);
@@ -330,7 +367,7 @@ bool WindowsUSBCreator::copyISO_verifyDestination(const QString& cleanDest) {
 
     // Show ALL files/folders extracted with their types
     sak::logInfo("Complete listing of extracted items:");
-    for (const QString &item : destFiles) {
+    for (const QString& item : destFiles) {
         QFileInfo info(checkDest.absoluteFilePath(item));
         QString type = info.isDir() ? "DIR" : QString("FILE (%1 bytes)").arg(info.size());
         sak::logInfo(QString("  %1 - %2").arg(item, type).toStdString());
@@ -340,6 +377,7 @@ bool WindowsUSBCreator::copyISO_verifyDestination(const QString& cleanDest) {
 }
 
 bool WindowsUSBCreator::copyISO_findSetupExe(const QString& cleanDest) {
+    Q_ASSERT(!cleanDest.isEmpty());
     QDir checkDest(cleanDest);
     QString setupPath = checkDest.absoluteFilePath("setup.exe");
 
@@ -355,7 +393,9 @@ bool WindowsUSBCreator::copyISO_findSetupExe(const QString& cleanDest) {
     sak::logWarning("setup.exe not found with exact case, searching case-insensitively...");
     QStringList rootFiles = checkDest.entryList(QDir::Files | QDir::NoDotAndDotDot);
     for (const QString& file : rootFiles) {
-        if (file.toLower() != "setup.exe") continue;
+        if (file.toLower() != "setup.exe") {
+            continue;
+        }
         setupPath = cleanDest + file;
         sak::logInfo(QString("Found setup file with different case: %1").arg(file).toStdString());
         sak::logInfo(QString("\xe2\x9c\x93 setup.exe found at: %1").arg(setupPath).toStdString());
@@ -373,20 +413,15 @@ bool WindowsUSBCreator::copyISO_findSetupExe(const QString& cleanDest) {
 }
 
 bool WindowsUSBCreator::copyISO_verifyBootFiles(const QString& cleanDest) {
+    Q_ASSERT(!cleanDest.isEmpty());
     // Verify other critical Windows boot files - REQUIRED for bootable USB
-    QStringList criticalFiles = {
-        "sources/boot.wim",
-        "bootmgr"
-    };
+    QStringList criticalFiles = {"sources/boot.wim", "bootmgr"};
 
     // At least one of these must exist (different Windows versions have different structures)
-    QStringList alternateFiles = {
-        "sources/install.wim",
-        "sources/install.esd"
-    };
+    QStringList alternateFiles = {"sources/install.wim", "sources/install.esd"};
 
     QStringList foundFiles;
-    foundFiles << "setup.exe"; // Already verified above
+    foundFiles << "setup.exe";  // Already verified above
 
     // Check required critical files
     for (const QString& file : criticalFiles) {
@@ -415,33 +450,39 @@ bool WindowsUSBCreator::copyISO_verifyBootFiles(const QString& cleanDest) {
     }
 
     if (!hasInstallImage) {
-        m_lastError = "CRITICAL: No Windows install image found (install.wim or install.esd "
-                      "required)";
+        m_lastError =
+            "CRITICAL: No Windows install image found (install.wim or install.esd "
+            "required)";
         sak::logError(m_lastError.toStdString());
         sak::logError("Windows installation incomplete - USB will not be able to install Windows");
         return false;
     }
 
     sak::logInfo(QString("\xe2\x9c\x93 All critical files verified: %1 core files found")
-        .arg(foundFiles.count()).toStdString());
+                     .arg(foundFiles.count())
+                     .toStdString());
     return true;
 }
 
 void WindowsUSBCreator::copyISO_setVolumeLabel(const QString& cleanDest) {
-    if (m_volumeLabel.isEmpty()) return;
+    Q_ASSERT(!m_volumeLabel.isEmpty());
+    Q_ASSERT(!cleanDest.isEmpty());
+    if (m_volumeLabel.isEmpty()) {
+        return;
+    }
 
     sak::logInfo(QString("Setting volume label to: %1").arg(m_volumeLabel).toStdString());
     // Extract single drive letter from normalized path ("E:\\" -> "E")
     QString driveLetter = cleanDest.left(1);
     if (driveLetter.isEmpty() || !driveLetter[0].isLetter()) {
-        sak::logWarning(QString("Invalid drive letter for volume label: '%1'")
-            .arg(cleanDest).toStdString());
+        sak::logWarning(
+            QString("Invalid drive letter for volume label: '%1'").arg(cleanDest).toStdString());
         return;
     }
 
     QProcess labelProcess;
     QString labelCmd = QString("Set-Volume -DriveLetter %1 -NewFileSystemLabel '%2'")
-        .arg(driveLetter, m_volumeLabel);
+                           .arg(driveLetter, m_volumeLabel);
     labelProcess.start("powershell.exe", QStringList() << "-NoProfile" << "-Command" << labelCmd);
     if (!labelProcess.waitForStarted(sak::kTimeoutProcessStartMs)) {
         sak::logWarning("PowerShell failed to start for volume label command");
@@ -461,6 +502,7 @@ void WindowsUSBCreator::copyISO_setVolumeLabel(const QString& cleanDest) {
 }
 
 bool WindowsUSBCreator::makeBootable(const QString& driveLetter) {
+    Q_ASSERT(!driveLetter.isEmpty());
     sak::logInfo(QString("Configuring boot files on %1").arg(driveLetter).toStdString());
 
     // Normalize drive letter to single character
@@ -473,8 +515,8 @@ bool WindowsUSBCreator::makeBootable(const QString& driveLetter) {
 
     // Validate we have a single letter
     if (cleanDrive.length() != 1 || !cleanDrive[0].isLetter()) {
-        m_lastError = QString("Invalid drive letter format for boot configuration: '%1'")
-            .arg(driveLetter);
+        m_lastError =
+            QString("Invalid drive letter format for boot configuration: '%1'").arg(driveLetter);
         sak::logError(m_lastError.toStdString());
         return false;
     }
@@ -494,30 +536,33 @@ bool WindowsUSBCreator::makeBootable(const QString& driveLetter) {
     }
 
     sak::logInfo(QString("Configuring boot environment using bcdboot from %1")
-        .arg(bcdbootPath).toStdString());
+                     .arg(bcdbootPath)
+                     .toStdString());
 
     return runBcdboot(bcdbootPath, cleanDrive);
 }
 
 bool WindowsUSBCreator::runBcdboot(const QString& bcdbootPath, const QString& cleanDrive) {
+    Q_ASSERT(!bcdbootPath.isEmpty());
+    Q_ASSERT(!cleanDrive.isEmpty());
     // Run bcdboot to configure boot files
     QProcess bcdboot;
     QStringList args;
     args << QString("%1:\\").arg(cleanDrive);
     args << "/s" << QString("%1:").arg(cleanDrive);
-    args << "/f" << "BIOS"; // Standard BIOS boot
+    args << "/f" << "BIOS";  // Standard BIOS boot
 
     bcdboot.start(bcdbootPath, args);
 
     if (!bcdboot.waitForStarted()) {
         sak::logWarning("Failed to start bcdboot - boot may still work via extracted files");
-        return true; // Not critical
+        return true;  // Not critical
     }
 
     if (!bcdboot.waitForFinished(sak::kTimeoutProcessLongMs)) {
         sak::logWarning("bcdboot timed out - boot may still work");
         bcdboot.kill();
-        return true; // Not critical
+        return true;  // Not critical
     }
 
     QString output = bcdboot.readAllStandardOutput();
@@ -529,8 +574,10 @@ bool WindowsUSBCreator::runBcdboot(const QString& bcdbootPath, const QString& cl
 
     if (bcdboot.exitCode() != 0) {
         sak::logWarning(QString("bcdboot returned code %1 - boot may still work: %2")
-            .arg(bcdboot.exitCode()).arg(errors).toStdString());
-        return true; // Not critical
+                            .arg(bcdboot.exitCode())
+                            .arg(errors)
+                            .toStdString());
+        return true;  // Not critical
     }
 
     sak::logInfo("Boot configuration completed successfully");
@@ -538,12 +585,13 @@ bool WindowsUSBCreator::runBcdboot(const QString& bcdbootPath, const QString& cl
 }
 
 bool WindowsUSBCreator::checkPartitionActive(const QString& diskNumber) {
+    Q_ASSERT(!diskNumber.isEmpty());
     // Use diskpart to check if partition is active
     QString diskpartScript = QString(
-        "select disk %1\n"
-        "select partition 1\n"
-        "detail partition\n"
-    ).arg(diskNumber);
+                                 "select disk %1\n"
+                                 "select partition 1\n"
+                                 "detail partition\n")
+                                 .arg(diskNumber);
 
     QTemporaryFile scriptFile;
     if (!scriptFile.open()) {
@@ -590,6 +638,7 @@ bool WindowsUSBCreator::checkPartitionActive(const QString& diskNumber) {
 }
 
 bool WindowsUSBCreator::verifyBootableFlag(const QString& driveLetter) {
+    Q_ASSERT(!driveLetter.isEmpty());
     Q_EMIT statusChanged("Verifying bootable flag...");
     sak::logInfo(QString("Verifying bootable flag on drive %1").arg(driveLetter).toStdString());
 
@@ -603,8 +652,8 @@ bool WindowsUSBCreator::verifyBootableFlag(const QString& driveLetter) {
 
     // Validate format
     if (cleanDrive.length() != 1 || !cleanDrive[0].isLetter()) {
-        m_lastError = QString("Invalid drive letter format for verification: '%1'")
-            .arg(driveLetter);
+        m_lastError =
+            QString("Invalid drive letter format for verification: '%1'").arg(driveLetter);
         sak::logError(m_lastError.toStdString());
         return false;
     }
@@ -617,30 +666,31 @@ bool WindowsUSBCreator::verifyBootableFlag(const QString& driveLetter) {
 
     if (!getDisk.waitForFinished(sak::kTimeoutProcessMediumMs)) {
         sak::logWarning("Could not get disk number for verification");
-        return true; // Not critical
+        return true;  // Not critical
     }
 
     QString diskNumber = QString(getDisk.readAllStandardOutput()).trimmed();
     if (diskNumber.isEmpty()) {
         sak::logWarning("Could not determine disk number");
-        return true; // Not critical
+        return true;  // Not critical
     }
 
     return checkPartitionActive(diskNumber);
 }
 
-bool WindowsUSBCreator::verifyExtractionIntegrity(const QString& isoPath, const QString& destPath,
-    const QString& sevenZipPath) {
+bool WindowsUSBCreator::verifyExtractionIntegrity(const QString& isoPath,
+                                                  const QString& destPath,
+                                                  const QString& sevenZipPath) {
     sak::logInfo("Starting extraction integrity verification...");
     Q_EMIT statusChanged("Verifying extraction integrity...");
 
     // Get detailed file list from ISO with sizes
     QProcess listISO;
     QStringList listArgs;
-    listArgs << "l" << "-slt" << isoPath; // List with technical info
+    listArgs << "l" << "-slt" << isoPath;  // List with technical info
 
     listISO.start(sevenZipPath, listArgs);
-    if (!listISO.waitForFinished(sak::kTimeoutProcessVeryLongMs)) { // 1 minute timeout
+    if (!listISO.waitForFinished(sak::kTimeoutProcessVeryLongMs)) {  // 1 minute timeout
         m_lastError = "Verification failed: Could not list ISO contents";
         sak::logError(m_lastError.toStdString());
         return false;
@@ -657,18 +707,17 @@ bool WindowsUSBCreator::verifyExtractionIntegrity(const QString& isoPath, const 
         return false;
     }
 
-    sak::logInfo(QString("Verifying %1 critical files...")
-        .arg(criticalFiles.count()).toStdString());
+    sak::logInfo(
+        QString("Verifying %1 critical files...").arg(criticalFiles.count()).toStdString());
 
     return verifyCriticalFilesOnDisk(criticalFiles, destPath);
 }
 
 bool WindowsUSBCreator::isCriticalWindowsFile(const QString& path) const {
+    Q_ASSERT(!path.isEmpty());
     QString lowerPath = path.toLower();
-    return lowerPath.contains("setup.exe") ||
-           lowerPath.contains("bootmgr") ||
-           lowerPath.contains("sources/boot.wim") ||
-           lowerPath.contains("sources\\\\boot.wim") ||
+    return lowerPath.contains("setup.exe") || lowerPath.contains("bootmgr") ||
+           lowerPath.contains("sources/boot.wim") || lowerPath.contains("sources\\\\boot.wim") ||
            lowerPath.contains("sources/install.wim") ||
            lowerPath.contains("sources\\\\install.wim") ||
            lowerPath.contains("sources/install.esd") ||
@@ -676,6 +725,7 @@ bool WindowsUSBCreator::isCriticalWindowsFile(const QString& path) const {
 }
 
 QList<QPair<QString, qint64>> WindowsUSBCreator::parseIsoCriticalFiles(const QStringList& lines) {
+    Q_ASSERT(!lines.isEmpty());
     QList<QPair<QString, qint64>> criticalFiles;
     QString currentPath;
     qint64 currentSize = 0;
@@ -690,14 +740,18 @@ QList<QPair<QString, qint64>> WindowsUSBCreator::parseIsoCriticalFiles(const QSt
         if (trimmed.startsWith("Size = ")) {
             bool ok = false;
             currentSize = trimmed.mid(7).toLongLong(&ok);
-            if (!ok) currentSize = 0;
+            if (!ok) {
+                currentSize = 0;
+            }
             continue;
         }
         if (trimmed.startsWith("Folder = ")) {
             isFolder = (trimmed.mid(9).trimmed() == "+");
             continue;
         }
-        if (!trimmed.isEmpty() || currentPath.isEmpty()) continue;
+        if (!trimmed.isEmpty() || currentPath.isEmpty()) {
+            continue;
+        }
 
         // End of entry — add if it's a critical file (not a folder)
         if (!isFolder && isCriticalWindowsFile(currentPath)) {
@@ -711,9 +765,8 @@ QList<QPair<QString, qint64>> WindowsUSBCreator::parseIsoCriticalFiles(const QSt
     return criticalFiles;
 }
 
-bool WindowsUSBCreator::verifyCriticalFilesOnDisk(const QList<QPair<QString,
-    qint64>>& criticalFiles,
-                                                   const QString& destPath) {
+bool WindowsUSBCreator::verifyCriticalFilesOnDisk(
+    const QList<QPair<QString, qint64>>& criticalFiles, const QString& destPath) {
     int verifiedCount = 0;
     int failedCount = 0;
 
@@ -740,7 +793,10 @@ bool WindowsUSBCreator::verifyCriticalFilesOnDisk(const QList<QPair<QString,
         qint64 destSize = destFileInfo.size();
         if (destSize != fileInfo.second) {
             sak::logError(QString("✗ Size mismatch: %1 (ISO: %2 bytes, USB: %3 bytes)")
-                .arg(fileInfo.first).arg(fileInfo.second).arg(destSize).toStdString());
+                              .arg(fileInfo.first)
+                              .arg(fileInfo.second)
+                              .arg(destSize)
+                              .toStdString());
             failedCount++;
             continue;
         }
@@ -749,18 +805,22 @@ bool WindowsUSBCreator::verifyCriticalFilesOnDisk(const QList<QPair<QString,
     }
 
     sak::logInfo(QString("Verification complete: %1 files verified, %2 failures")
-        .arg(verifiedCount).arg(failedCount).toStdString());
+                     .arg(verifiedCount)
+                     .arg(failedCount)
+                     .toStdString());
 
     if (verifiedCount < 3) {
-        m_lastError = QString("Verification failed: Only %1 critical files verified (minimum 3 "
-                              "required)").arg(verifiedCount);
+        m_lastError = QString(
+                          "Verification failed: Only %1 critical files verified (minimum 3 "
+                          "required)")
+                          .arg(verifiedCount);
         sak::logError(m_lastError.toStdString());
         return false;
     }
 
     if (failedCount > 0) {
         m_lastError = QString("Extraction verification failed: %1 files missing or incorrect size")
-            .arg(failedCount);
+                          .arg(failedCount);
         sak::logError(m_lastError.toStdString());
         return false;
     }
@@ -770,12 +830,9 @@ bool WindowsUSBCreator::verifyCriticalFilesOnDisk(const QList<QPair<QString,
 }
 
 bool WindowsUSBCreator::verifyBootAndInstallFiles(const QString& cleanDrive) {
+    Q_ASSERT(!cleanDrive.isEmpty());
     // Verification 1: Check that critical boot files exist
-    QStringList requiredFiles = {
-        "setup.exe",
-        "sources/boot.wim",
-        "bootmgr"
-    };
+    QStringList requiredFiles = {"setup.exe", "sources/boot.wim", "bootmgr"};
 
     sak::logInfo("Checking required files:");
     for (const QString& file : requiredFiles) {
@@ -813,6 +870,7 @@ bool WindowsUSBCreator::verifyBootAndInstallFiles(const QString& cleanDrive) {
 }
 
 void WindowsUSBCreator::logFinalVerificationSuccess(int fileCount) {
+    Q_ASSERT(fileCount >= 0);
     sak::logInfo("========================================");
     sak::logInfo("SUCCESS: ALL FINAL VERIFICATIONS PASSED");
     sak::logInfo("- Critical files: VERIFIED");
@@ -829,6 +887,7 @@ void WindowsUSBCreator::logFinalVerificationSuccess(int fileCount) {
 }
 
 bool WindowsUSBCreator::finalVerification(const QString& driveLetter) {
+    Q_ASSERT(!driveLetter.isEmpty());
     sak::logInfo("========================================");
     sak::logInfo("FINAL VERIFICATION - This is the ONLY path to success");
     sak::logInfo("========================================");
@@ -844,7 +903,7 @@ bool WindowsUSBCreator::finalVerification(const QString& driveLetter) {
     // Validate we have exactly one letter
     if (cleanDrive.length() != 1 || !cleanDrive[0].isLetter()) {
         m_lastError = QString("FINAL VERIFICATION FAILED: Invalid drive letter format: '%1'")
-            .arg(driveLetter);
+                          .arg(driveLetter);
         sak::logError(m_lastError.toStdString());
         return false;
     }
@@ -874,12 +933,12 @@ bool WindowsUSBCreator::finalVerification(const QString& driveLetter) {
 
     // Verification 4: Count total files to ensure extraction wasn't empty
     QDir checkDest(cleanDrive);
-    int fileCount = checkDest.entryList(QDir::Files | QDir::Dirs | QDir::NoDotAndDotDot,
-        QDir::Name).count();
+    int fileCount =
+        checkDest.entryList(QDir::Files | QDir::Dirs | QDir::NoDotAndDotDot, QDir::Name).count();
 
     if (fileCount < 10) {
         m_lastError = QString("FINAL VERIFICATION FAILED: Only %1 files found (expected hundreds)")
-            .arg(fileCount);
+                          .arg(fileCount);
         sak::logError(m_lastError.toStdString());
         return false;
     }

@@ -3,12 +3,12 @@
 
 #pragma once
 
-#include <QString>
-#include <QDateTime>
-#include <QStringList>
-#include <QJsonObject>
-
 #include "sak/network_transfer_types.h"
+
+#include <QDateTime>
+#include <QJsonObject>
+#include <QString>
+#include <QStringList>
 
 namespace sak {
 
@@ -17,7 +17,7 @@ struct TransferReport {
     QString transfer_id;
     QString source_host;
     QString destination_host;
-    QString status; // success/failed/cancelled
+    QString status;  // success/failed/cancelled
     QDateTime started_at;
     QDateTime completed_at;
     qint64 total_bytes{0};
@@ -30,4 +30,4 @@ struct TransferReport {
     bool saveToFile(const QString& path) const;
 };
 
-} // namespace sak
+}  // namespace sak

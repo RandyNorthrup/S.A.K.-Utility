@@ -3,15 +3,15 @@
 
 #pragma once
 
-#include <QString>
-#include <QDir>
 #include <QCoreApplication>
+#include <QDir>
+#include <QString>
 
 namespace sak {
 
 /**
  * @brief Manages access to bundled tools and scripts
- * 
+ *
  * Provides paths to bundled PowerShell modules, scripts, and executables
  * that are included in the application distribution.
  */
@@ -83,4 +83,4 @@ private:
     QString m_base_path;
 };
 
-} // namespace sak
+}  // namespace sak

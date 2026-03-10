@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-#include <QtTest/QtTest>
-
 #include "sak/destination_registry.h"
+
+#include <QtTest/QtTest>
 
 using namespace sak;
 

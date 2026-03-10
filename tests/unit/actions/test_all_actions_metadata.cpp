@@ -1,11 +1,12 @@
 // Copyright (c) 2025-2026 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-#include <QTest>
-#include <QMap>
-#include <QSignalSpy>
 #include "sak/actions/action_factory.h"
 #include "sak/quick_action.h"
+
+#include <QMap>
+#include <QSignalSpy>
+#include <QTest>
 
 using namespace sak;
 
@@ -80,21 +81,18 @@ private:
 
     QuickAction* findByName(const QString& name) const;
 
-    void verifyAction(
-        const QString& expectedName,
-        const QString& descSubstring,
-        QuickAction::ActionCategory expectedCat,
-        bool expectedAdmin);
+    void verifyAction(const QString& expectedName,
+                      const QString& descSubstring,
+                      QuickAction::ActionCategory expectedCat,
+                      bool expectedAdmin);
 };
 
 void TestAllActionsMetadata::initTestCase() {
-    m_actions = ActionFactory::createAllActions(
-        QStringLiteral("C:/SAK_Test_Backups"));
+    m_actions = ActionFactory::createAllActions(QStringLiteral("C:/SAK_Test_Backups"));
     QVERIFY(!m_actions.empty());
 }
 
-QuickAction* TestAllActionsMetadata::findByName(
-    const QString& name) const {
+QuickAction* TestAllActionsMetadata::findByName(const QString& name) const {
     for (const auto& a : m_actions) {
         if (a->name() == name) {
             return a.get();
@@ -103,30 +101,20 @@ QuickAction* TestAllActionsMetadata::findByName(
     return nullptr;
 }
 
-void TestAllActionsMetadata::verifyAction(
-    const QString& expectedName,
-    const QString& descSubstring,
-    QuickAction::ActionCategory expectedCat,
-    bool expectedAdmin) {
-
+void TestAllActionsMetadata::verifyAction(const QString& expectedName,
+                                          const QString& descSubstring,
+                                          QuickAction::ActionCategory expectedCat,
+                                          bool expectedAdmin) {
     auto* action = findByName(expectedName);
-    QVERIFY2(action != nullptr,
-             qPrintable("Action not found: "
-                        + expectedName));
+    QVERIFY2(action != nullptr, qPrintable("Action not found: " + expectedName));
 
     QCOMPARE(action->name(), expectedName);
-    QVERIFY2(
-        action->description().contains(
-            descSubstring, Qt::CaseInsensitive),
-        qPrintable(
-            "Description of '" + expectedName
-            + "' doesn't contain '"
-            + descSubstring + "': "
-            + action->description()));
+    QVERIFY2(action->description().contains(descSubstring, Qt::CaseInsensitive),
+             qPrintable("Description of '" + expectedName + "' doesn't contain '" + descSubstring +
+                        "': " + action->description()));
     QCOMPARE(action->category(), expectedCat);
     QCOMPARE(action->requiresAdmin(), expectedAdmin);
-    QCOMPARE(action->status(),
-             QuickAction::ActionStatus::Idle);
+    QCOMPARE(action->status(), QuickAction::ActionStatus::Idle);
 }
 
 // ============================================================================
@@ -134,21 +122,17 @@ void TestAllActionsMetadata::verifyAction(
 // ============================================================================
 
 void TestAllActionsMetadata::testDiskCleanup() {
-    verifyAction("Disk Cleanup", "temporary",
-                 QuickAction::ActionCategory::SystemOptimization,
-                 true);
+    verifyAction(
+        "Disk Cleanup", "temporary", QuickAction::ActionCategory::SystemOptimization, true);
 }
 
 void TestAllActionsMetadata::testClearBrowserCache() {
-    verifyAction("Clear Browser Cache", "cache",
-                 QuickAction::ActionCategory::SystemOptimization,
-                 false);
+    verifyAction(
+        "Clear Browser Cache", "cache", QuickAction::ActionCategory::SystemOptimization, false);
 }
 
 void TestAllActionsMetadata::testDefragmentDrives() {
-    verifyAction("Defragment Drives", "HDD",
-                 QuickAction::ActionCategory::SystemOptimization,
-                 true);
+    verifyAction("Defragment Drives", "HDD", QuickAction::ActionCategory::SystemOptimization, true);
 }
 
 void TestAllActionsMetadata::testClearWindowsUpdateCache() {
@@ -166,17 +150,13 @@ void TestAllActionsMetadata::testDisableStartupPrograms() {
 }
 
 void TestAllActionsMetadata::testClearEventLogs() {
-    verifyAction("Clear Event Logs",
-                 "Event Log",
-                 QuickAction::ActionCategory::SystemOptimization,
-                 true);
+    verifyAction(
+        "Clear Event Logs", "Event Log", QuickAction::ActionCategory::SystemOptimization, true);
 }
 
 void TestAllActionsMetadata::testOptimizePowerSettings() {
-    verifyAction("Optimize Power Settings",
-                 "power",
-                 QuickAction::ActionCategory::SystemOptimization,
-                 false);
+    verifyAction(
+        "Optimize Power Settings", "power", QuickAction::ActionCategory::SystemOptimization, false);
 }
 
 void TestAllActionsMetadata::testDisableVisualEffects() {
@@ -191,79 +171,56 @@ void TestAllActionsMetadata::testDisableVisualEffects() {
 // ============================================================================
 
 void TestAllActionsMetadata::testQuickBooksBackup() {
-    verifyAction("QuickBooks Backup", "QuickBooks",
-                 QuickAction::ActionCategory::QuickBackup,
-                 false);
+    verifyAction(
+        "QuickBooks Backup", "QuickBooks", QuickAction::ActionCategory::QuickBackup, false);
 }
 
 void TestAllActionsMetadata::testBrowserProfileBackup() {
-    verifyAction("Browser Profile Backup",
-                 "browser",
-                 QuickAction::ActionCategory::QuickBackup,
-                 false);
+    verifyAction(
+        "Browser Profile Backup", "browser", QuickAction::ActionCategory::QuickBackup, false);
 }
 
 void TestAllActionsMetadata::testOutlookBackup() {
-    verifyAction("Outlook Email Backup",
-                 "Outlook",
-                 QuickAction::ActionCategory::QuickBackup,
-                 false);
+    verifyAction(
+        "Outlook Email Backup", "Outlook", QuickAction::ActionCategory::QuickBackup, false);
 }
 
 void TestAllActionsMetadata::testStickyNotesBackup() {
-    verifyAction("Sticky Notes Backup",
-                 "Sticky Notes",
-                 QuickAction::ActionCategory::QuickBackup,
-                 false);
+    verifyAction(
+        "Sticky Notes Backup", "Sticky Notes", QuickAction::ActionCategory::QuickBackup, false);
 }
 
 void TestAllActionsMetadata::testSavedGameDataBackup() {
-    verifyAction("Saved Game Data Backup",
-                 "game",
-                 QuickAction::ActionCategory::QuickBackup,
-                 false);
+    verifyAction("Saved Game Data Backup", "game", QuickAction::ActionCategory::QuickBackup, false);
 }
 
 void TestAllActionsMetadata::testTaxSoftwareBackup() {
-    verifyAction("Tax Software Data Backup",
-                 "Tax",
-                 QuickAction::ActionCategory::QuickBackup,
-                 false);
+    verifyAction(
+        "Tax Software Data Backup", "Tax", QuickAction::ActionCategory::QuickBackup, false);
 }
 
 void TestAllActionsMetadata::testPhotoManagementBackup() {
-    verifyAction("Photo Management Backup",
-                 "Lightroom",
-                 QuickAction::ActionCategory::QuickBackup,
-                 false);
+    verifyAction(
+        "Photo Management Backup", "Lightroom", QuickAction::ActionCategory::QuickBackup, false);
 }
 
 void TestAllActionsMetadata::testDevelopmentConfigsBackup() {
-    verifyAction("Development Configs Backup",
-                 "Git",
-                 QuickAction::ActionCategory::QuickBackup,
-                 false);
+    verifyAction(
+        "Development Configs Backup", "Git", QuickAction::ActionCategory::QuickBackup, false);
 }
 
 void TestAllActionsMetadata::testBackupKnownNetworks() {
-    verifyAction("Backup Known Networks",
-                 "WiFi",
-                 QuickAction::ActionCategory::QuickBackup,
-                 false);
+    verifyAction("Backup Known Networks", "WiFi", QuickAction::ActionCategory::QuickBackup, false);
 }
 
 void TestAllActionsMetadata::testBackupDesktopWallpaper() {
-    verifyAction("Desktop Wallpaper Backup",
-                 "wallpaper",
-                 QuickAction::ActionCategory::QuickBackup,
-                 false);
+    verifyAction(
+        "Desktop Wallpaper Backup", "wallpaper", QuickAction::ActionCategory::QuickBackup, false);
 }
 
 void TestAllActionsMetadata::testBackupPrinterSettings() {
-    verifyAction("Printer Settings Backup",
-                 "printer",
-                 QuickAction::ActionCategory::QuickBackup,
-                 true);
+    verifyAction(
+        "Printer Settings Backup", "printer", QuickAction::ActionCategory::QuickBackup, true);
 }
 
 // ============================================================================
@@ -271,48 +228,33 @@ void TestAllActionsMetadata::testBackupPrinterSettings() {
 // ============================================================================
 
 void TestAllActionsMetadata::testUpdateAllApps() {
-    verifyAction("Update All Apps", "Chocolatey",
-                 QuickAction::ActionCategory::Maintenance,
-                 true);
+    verifyAction("Update All Apps", "Chocolatey", QuickAction::ActionCategory::Maintenance, true);
 }
 
 void TestAllActionsMetadata::testWindowsUpdate() {
-    verifyAction("Windows Update",
-                 "Windows Update",
-                 QuickAction::ActionCategory::Maintenance,
-                 true);
+    verifyAction(
+        "Windows Update", "Windows Update", QuickAction::ActionCategory::Maintenance, true);
 }
 
 void TestAllActionsMetadata::testVerifySystemFiles() {
-    verifyAction("Verify System Files", "SFC",
-                 QuickAction::ActionCategory::Maintenance,
-                 true);
+    verifyAction("Verify System Files", "SFC", QuickAction::ActionCategory::Maintenance, true);
 }
 
 void TestAllActionsMetadata::testCheckDiskErrors() {
-    verifyAction("Check Disk Errors", "CHKDSK",
-                 QuickAction::ActionCategory::Maintenance,
-                 true);
+    verifyAction("Check Disk Errors", "CHKDSK", QuickAction::ActionCategory::Maintenance, true);
 }
 
 void TestAllActionsMetadata::testRebuildIconCache() {
-    verifyAction("Rebuild Icon Cache", "icon",
-                 QuickAction::ActionCategory::Maintenance,
-                 false);
+    verifyAction("Rebuild Icon Cache", "icon", QuickAction::ActionCategory::Maintenance, false);
 }
 
 void TestAllActionsMetadata::testResetNetwork() {
-    verifyAction("Reset Network Settings",
-                 "TCP/IP",
-                 QuickAction::ActionCategory::Maintenance,
-                 true);
+    verifyAction(
+        "Reset Network Settings", "TCP/IP", QuickAction::ActionCategory::Maintenance, true);
 }
 
 void TestAllActionsMetadata::testClearPrintSpooler() {
-    verifyAction("Clear Print Spooler",
-                 "print",
-                 QuickAction::ActionCategory::Maintenance,
-                 true);
+    verifyAction("Clear Print Spooler", "print", QuickAction::ActionCategory::Maintenance, true);
 }
 
 // ============================================================================
@@ -327,38 +269,27 @@ void TestAllActionsMetadata::testGenerateSystemReport() {
 }
 
 void TestAllActionsMetadata::testCheckBloatware() {
-    verifyAction("Check for Bloatware",
-                 "bloatware",
-                 QuickAction::ActionCategory::Troubleshooting,
-                 true);
+    verifyAction(
+        "Check for Bloatware", "bloatware", QuickAction::ActionCategory::Troubleshooting, true);
 }
 
 void TestAllActionsMetadata::testTestNetworkSpeed() {
-    verifyAction("Test Network Speed",
-                 "speed",
-                 QuickAction::ActionCategory::Troubleshooting,
-                 false);
+    verifyAction(
+        "Test Network Speed", "speed", QuickAction::ActionCategory::Troubleshooting, false);
 }
 
 void TestAllActionsMetadata::testScanMalware() {
-    verifyAction("Scan for Malware",
-                 "Defender",
-                 QuickAction::ActionCategory::Troubleshooting,
-                 true);
+    verifyAction(
+        "Scan for Malware", "Defender", QuickAction::ActionCategory::Troubleshooting, true);
 }
 
 void TestAllActionsMetadata::testRepairWindowsStore() {
-    verifyAction("Repair Windows Store",
-                 "Store",
-                 QuickAction::ActionCategory::Troubleshooting,
-                 false);
+    verifyAction(
+        "Repair Windows Store", "Store", QuickAction::ActionCategory::Troubleshooting, false);
 }
 
 void TestAllActionsMetadata::testFixAudioIssues() {
-    verifyAction("Fix Audio Issues",
-                 "audio",
-                 QuickAction::ActionCategory::Troubleshooting,
-                 true);
+    verifyAction("Fix Audio Issues", "audio", QuickAction::ActionCategory::Troubleshooting, true);
 }
 
 // ============================================================================
@@ -366,31 +297,23 @@ void TestAllActionsMetadata::testFixAudioIssues() {
 // ============================================================================
 
 void TestAllActionsMetadata::testCreateRestorePoint() {
-    verifyAction("Create Restore Point",
-                 "Restore",
-                 QuickAction::ActionCategory::EmergencyRecovery,
-                 true);
+    verifyAction(
+        "Create Restore Point", "Restore", QuickAction::ActionCategory::EmergencyRecovery, true);
 }
 
 void TestAllActionsMetadata::testExportRegistryKeys() {
-    verifyAction("Export Registry Keys",
-                 "registry",
-                 QuickAction::ActionCategory::EmergencyRecovery,
-                 false);
+    verifyAction(
+        "Export Registry Keys", "registry", QuickAction::ActionCategory::EmergencyRecovery, false);
 }
 
 void TestAllActionsMetadata::testScreenshotSettings() {
-    verifyAction("Screenshot Settings",
-                 "screenshot",
-                 QuickAction::ActionCategory::EmergencyRecovery,
-                 false);
+    verifyAction(
+        "Screenshot Settings", "screenshot", QuickAction::ActionCategory::EmergencyRecovery, false);
 }
 
 void TestAllActionsMetadata::testBackupBitlockerKeys() {
-    verifyAction("BitLocker Key Backup",
-                 "BitLocker",
-                 QuickAction::ActionCategory::EmergencyRecovery,
-                 true);
+    verifyAction(
+        "BitLocker Key Backup", "BitLocker", QuickAction::ActionCategory::EmergencyRecovery, true);
 }
 
 // ============================================================================
@@ -401,25 +324,18 @@ void TestAllActionsMetadata::testCancelAllActionsWhenIdle() {
     for (const auto& action : m_actions) {
         // Cancel when idle should not crash or change state
         action->cancel();
-        QVERIFY2(
-            action->status()
-                == QuickAction::ActionStatus::Idle
-            || action->status()
-                == QuickAction::ActionStatus::Cancelled,
-            qPrintable(
-                "After cancel, '" + action->name()
-                + "' has unexpected status"));
+        QVERIFY2(action->status() == QuickAction::ActionStatus::Idle ||
+                     action->status() == QuickAction::ActionStatus::Cancelled,
+                 qPrintable("After cancel, '" + action->name() + "' has unexpected status"));
     }
 }
 
 void TestAllActionsMetadata::testStatusAfterCancel() {
     // Fresh set of actions for clean state
-    auto fresh = ActionFactory::createAllActions(
-        QStringLiteral("C:/SAK_Test_Backups"));
+    auto fresh = ActionFactory::createAllActions(QStringLiteral("C:/SAK_Test_Backups"));
 
     for (const auto& action : fresh) {
-        QCOMPARE(action->status(),
-                 QuickAction::ActionStatus::Idle);
+        QCOMPARE(action->status(), QuickAction::ActionStatus::Idle);
     }
 }
 

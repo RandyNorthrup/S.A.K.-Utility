@@ -3,16 +3,16 @@
 
 #pragma once
 
-#include <QWidget>
-#include <QTextBrowser>
-#include <QPushButton>
 #include <QCheckBox>
-#include <QLineEdit>
 #include <QComboBox>
+#include <QLineEdit>
+#include <QPushButton>
+#include <QTextBrowser>
+#include <QWidget>
 
 /**
  * @brief Log viewer widget with filtering and export
- * 
+ *
  * Features:
  * - Syntax highlighting for log levels
  * - Auto-scroll option

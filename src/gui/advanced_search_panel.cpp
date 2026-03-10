@@ -5,13 +5,14 @@
 /// @brief Implements the three-panel Advanced Search UI
 
 #include "sak/advanced_search_panel.h"
+
 #include "sak/advanced_search_controller.h"
-#include "sak/regex_pattern_library.h"
 #include "sak/detachable_log_window.h"
+#include "sak/layout_constants.h"
 #include "sak/logger.h"
+#include "sak/regex_pattern_library.h"
 #include "sak/style_constants.h"
 #include "sak/widget_helpers.h"
-#include "sak/layout_constants.h"
 
 #include <QApplication>
 #include <QClipboard>
@@ -46,8 +47,9 @@ struct SearchBarRow1Ui {
     QPushButton* stop_button = nullptr;
 };
 
-SearchBarRow1Ui buildSearchBarRow1(AdvancedSearchPanel* panel, QHBoxLayout* row)
-{
+SearchBarRow1Ui buildSearchBarRow1(AdvancedSearchPanel* panel, QHBoxLayout* row) {
+    Q_ASSERT(panel);
+    Q_ASSERT(row);
     SearchBarRow1Ui ui;
 
     auto* searchLabel = new QLabel(QObject::tr("Search for:"), panel);
@@ -58,8 +60,9 @@ SearchBarRow1Ui buildSearchBarRow1(AdvancedSearchPanel* panel, QHBoxLayout* row)
     ui.search_combo->setInsertPolicy(QComboBox::NoInsert);
     ui.search_combo->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
     ui.search_combo->setToolTip(QObject::tr("Enter search pattern (text or regex)"));
-    setAccessible(ui.search_combo, QObject::tr("Search pattern"),
-        QObject::tr("Enter text or regex pattern to search for"));
+    setAccessible(ui.search_combo,
+                  QObject::tr("Search pattern"),
+                  QObject::tr("Enter text or regex pattern to search for"));
     row->addWidget(ui.search_combo);
 
     ui.search_button = new QPushButton(QObject::tr("Search"), panel);
@@ -87,9 +90,9 @@ struct SearchBarRow2Ui {
     QCheckBox* image_metadata_check = nullptr;
 };
 
-SearchBarRow2Ui buildSearchBarRow2(AdvancedSearchPanel* panel, QHBoxLayout* row,
-    int defaultContextLines)
-{
+SearchBarRow2Ui buildSearchBarRow2(AdvancedSearchPanel* panel,
+                                   QHBoxLayout* row,
+                                   int defaultContextLines) {
     SearchBarRow2Ui ui;
 
     auto* contextLabel = new QLabel(QObject::tr("Context:"), panel);
@@ -106,8 +109,7 @@ SearchBarRow2Ui buildSearchBarRow2(AdvancedSearchPanel* panel, QHBoxLayout* row,
     row->addWidget(ui.context_lines_combo);
 
     ui.regex_patterns_button = new QPushButton(QObject::tr("Regex Patterns"), panel);
-    ui.regex_patterns_button->setToolTip(
-        QObject::tr("Select built-in or custom regex patterns"));
+    ui.regex_patterns_button->setToolTip(QObject::tr("Select built-in or custom regex patterns"));
     setAccessible(ui.regex_patterns_button, QObject::tr("Regex pattern library"));
     row->addWidget(ui.regex_patterns_button);
 
@@ -120,14 +122,12 @@ SearchBarRow2Ui buildSearchBarRow2(AdvancedSearchPanel* panel, QHBoxLayout* row,
     row->addWidget(ui.whole_word_check);
 
     ui.use_regex_check = new QCheckBox(QObject::tr("Regex"), panel);
-    ui.use_regex_check->setToolTip(
-        QObject::tr("Interpret search pattern as a regular expression"));
+    ui.use_regex_check->setToolTip(QObject::tr("Interpret search pattern as a regular expression"));
     setAccessible(ui.use_regex_check, QObject::tr("Use regex search"));
     row->addWidget(ui.use_regex_check);
 
     ui.image_metadata_check = new QCheckBox(QObject::tr("Image metadata"), panel);
-    ui.image_metadata_check->setToolTip(
-        QObject::tr("Search EXIF/GPS metadata in image files"));
+    ui.image_metadata_check->setToolTip(QObject::tr("Search EXIF/GPS metadata in image files"));
     setAccessible(ui.image_metadata_check, QObject::tr("Search image metadata"));
     row->addWidget(ui.image_metadata_check);
 
@@ -144,8 +144,9 @@ struct SearchBarRow3Ui {
     QPushButton* preferences_button = nullptr;
 };
 
-SearchBarRow3Ui buildSearchBarRow3(AdvancedSearchPanel* panel, QHBoxLayout* row)
-{
+SearchBarRow3Ui buildSearchBarRow3(AdvancedSearchPanel* panel, QHBoxLayout* row) {
+    Q_ASSERT(panel);
+    Q_ASSERT(row);
     SearchBarRow3Ui ui;
 
     auto* extLabel = new QLabel(QObject::tr("Extensions:"), panel);
@@ -153,8 +154,8 @@ SearchBarRow3Ui buildSearchBarRow3(AdvancedSearchPanel* panel, QHBoxLayout* row)
 
     ui.extensions_edit = new QLineEdit(panel);
     ui.extensions_edit->setPlaceholderText(QObject::tr(".py,.txt,.js,.cpp"));
-    ui.extensions_edit->setToolTip(QObject::tr(
-        "Comma-separated file extensions to include (empty = all files)"));
+    ui.extensions_edit->setToolTip(
+        QObject::tr("Comma-separated file extensions to include (empty = all files)"));
     ui.extensions_edit->setMaximumWidth(200);
     setAccessible(ui.extensions_edit, QObject::tr("File extension filter"));
     row->addWidget(ui.extensions_edit);
@@ -189,8 +190,7 @@ struct PreferencesDialogUi {
     QSpinBox* cacheSizeSpin = nullptr;
 };
 
-PreferencesDialogUi buildPreferencesDialog(QWidget* parent, const SearchPreferences& prefs)
-{
+PreferencesDialogUi buildPreferencesDialog(QWidget* parent, const SearchPreferences& prefs) {
     PreferencesDialogUi ui;
 
     ui.dialog = new QDialog(parent);
@@ -203,7 +203,7 @@ PreferencesDialogUi buildPreferencesDialog(QWidget* parent, const SearchPreferen
     form->setSpacing(ui::kSpacingSmall);
 
     ui.maxResultsSpin = new QSpinBox(ui.dialog);
-    ui.maxResultsSpin->setRange(0, 1000000);
+    ui.maxResultsSpin->setRange(0, 1'000'000);
     ui.maxResultsSpin->setSpecialValueText(QObject::tr("Unlimited"));
     ui.maxResultsSpin->setValue(prefs.max_results);
     ui.maxResultsSpin->setToolTip(QObject::tr("Maximum total matches (0 = unlimited)"));
@@ -226,8 +226,7 @@ PreferencesDialogUi buildPreferencesDialog(QWidget* parent, const SearchPreferen
     ui.contextLinesSpin = new QSpinBox(ui.dialog);
     ui.contextLinesSpin->setRange(0, 10);
     ui.contextLinesSpin->setValue(prefs.context_lines);
-    ui.contextLinesSpin->setToolTip(
-        QObject::tr("Default context lines before/after matches"));
+    ui.contextLinesSpin->setToolTip(QObject::tr("Default context lines before/after matches"));
     form->addRow(QObject::tr("Default context lines:"), ui.contextLinesSpin);
 
     ui.cacheSizeSpin = new QSpinBox(ui.dialog);
@@ -238,8 +237,8 @@ PreferencesDialogUi buildPreferencesDialog(QWidget* parent, const SearchPreferen
 
     layout->addLayout(form);
 
-    auto* buttons = new QDialogButtonBox(
-        QDialogButtonBox::Ok | QDialogButtonBox::Cancel, ui.dialog);
+    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel,
+                                         ui.dialog);
     layout->addWidget(buttons);
 
     QObject::connect(buttons, &QDialogButtonBox::accepted, ui.dialog, &QDialog::accept);
@@ -248,8 +247,7 @@ PreferencesDialogUi buildPreferencesDialog(QWidget* parent, const SearchPreferen
     return ui;
 }
 
-SearchPreferences preferencesFromDialogUi(const PreferencesDialogUi& ui)
-{
+SearchPreferences preferencesFromDialogUi(const PreferencesDialogUi& ui) {
     SearchPreferences newPrefs;
     newPrefs.max_results = ui.maxResultsSpin->value();
     newPrefs.max_preview_file_size_mb = ui.previewSizeSpin->value();
@@ -266,14 +264,12 @@ struct FileSortEntry {
     QDateTime lastModified;
 };
 
-QVector<FileSortEntry> buildSortedFileEntries(
-    const QMap<QString, QVector<SearchMatch>>& allResults,
-    int sortMode)
-{
+QVector<FileSortEntry> buildSortedFileEntries(const QMap<QString, QVector<SearchMatch>>& allResults,
+                                              int sortMode) {
     QVector<FileSortEntry> sortedFiles;
     sortedFiles.reserve(allResults.size());
 
-    const bool needsFileInfo = (sortMode >= 4); // Size or Date sorts
+    const bool needsFileInfo = (sortMode >= 4);  // Size or Date sorts
 
     for (auto it = allResults.constBegin(); it != allResults.constEnd(); ++it) {
         FileSortEntry entry;
@@ -289,42 +285,42 @@ QVector<FileSortEntry> buildSortedFileEntries(
         sortedFiles.append(std::move(entry));
     }
 
-    std::sort(sortedFiles.begin(), sortedFiles.end(),
-        [sortMode](const FileSortEntry& a, const FileSortEntry& b) {
-            switch (sortMode) {
-                case 0: // Path A-Z
-                    return a.path.compare(b.path, Qt::CaseInsensitive) < 0;
-                case 1: // Path Z-A
-                    return a.path.compare(b.path, Qt::CaseInsensitive) > 0;
-                case 2: // Match Count High
-                    return a.matches.size() > b.matches.size();
-                case 3: // Match Count Low
-                    return a.matches.size() < b.matches.size();
-                case 4: // File Size Large
-                    return a.fileSize > b.fileSize;
-                case 5: // File Size Small
-                    return a.fileSize < b.fileSize;
-                case 6: // Date Modified Newest
-                    return a.lastModified > b.lastModified;
-                case 7: // Date Modified Oldest
-                    return a.lastModified < b.lastModified;
-                default:
-                    return a.path < b.path;
-            }
-        });
+    std::sort(sortedFiles.begin(),
+              sortedFiles.end(),
+              [sortMode](const FileSortEntry& a, const FileSortEntry& b) {
+                  switch (sortMode) {
+                  case 0:  // Path A-Z
+                      return a.path.compare(b.path, Qt::CaseInsensitive) < 0;
+                  case 1:  // Path Z-A
+                      return a.path.compare(b.path, Qt::CaseInsensitive) > 0;
+                  case 2:  // Match Count High
+                      return a.matches.size() > b.matches.size();
+                  case 3:  // Match Count Low
+                      return a.matches.size() < b.matches.size();
+                  case 4:  // File Size Large
+                      return a.fileSize > b.fileSize;
+                  case 5:  // File Size Small
+                      return a.fileSize < b.fileSize;
+                  case 6:  // Date Modified Newest
+                      return a.lastModified > b.lastModified;
+                  case 7:  // Date Modified Oldest
+                      return a.lastModified < b.lastModified;
+                  default:
+                      return a.path < b.path;
+                  }
+              });
 
     return sortedFiles;
 }
 
-void populateSortedResultsTree(QTreeWidget* tree, QWidget* iconSource,
-    const QVector<FileSortEntry>& sortedFiles)
-{
+void populateSortedResultsTree(QTreeWidget* tree,
+                               QWidget* iconSource,
+                               const QVector<FileSortEntry>& sortedFiles) {
     for (const auto& entry : sortedFiles) {
         auto* fileItem = new QTreeWidgetItem(tree);
-        fileItem->setText(0, QString("%1  (%2)")
-            .arg(entry.path).arg(entry.matches.size()));
+        fileItem->setText(0, QString("%1  (%2)").arg(entry.path).arg(entry.matches.size()));
         fileItem->setData(0, Qt::UserRole, entry.path);
-        fileItem->setData(0, Qt::UserRole + 1, -1); // Not a specific match
+        fileItem->setData(0, Qt::UserRole + 1, -1);  // Not a specific match
         fileItem->setIcon(0, iconSource->style()->standardIcon(QStyle::SP_FileIcon));
 
         for (int i = 0; i < entry.matches.size(); ++i) {
@@ -332,60 +328,68 @@ void populateSortedResultsTree(QTreeWidget* tree, QWidget* iconSource,
             auto* matchItem = new QTreeWidgetItem(fileItem);
 
             const QString truncated = match.line_content.left(80).trimmed();
-            matchItem->setText(0, QString("Line %1: %2")
-                .arg(match.line_number).arg(truncated));
+            matchItem->setText(0, QString("Line %1: %2").arg(match.line_number).arg(truncated));
             matchItem->setData(0, Qt::UserRole, entry.path);
-            matchItem->setData(0, Qt::UserRole + 1, i); // Match index
+            matchItem->setData(0, Qt::UserRole + 1, i);  // Match index
         }
     }
 }
 
-} // namespace
+}  // namespace
 
 // ── Construction / Destruction ──────────────────────────────────────────────
 
 AdvancedSearchPanel::AdvancedSearchPanel(QWidget* parent)
-    : QWidget(parent)
-    , m_controller(std::make_unique<AdvancedSearchController>(this))
-{
+    : QWidget(parent), m_controller(std::make_unique<AdvancedSearchController>(this)) {
     setupUi();
 
     // Connect controller signals
-    connect(m_controller.get(), &AdvancedSearchController::searchStarted,
-            this, &AdvancedSearchPanel::onSearchStarted);
-    connect(m_controller.get(), &AdvancedSearchController::resultsReceived,
-            this, &AdvancedSearchPanel::onResultsReceived);
+    connect(m_controller.get(),
+            &AdvancedSearchController::searchStarted,
+            this,
+            &AdvancedSearchPanel::onSearchStarted);
+    connect(m_controller.get(),
+            &AdvancedSearchController::resultsReceived,
+            this,
+            &AdvancedSearchPanel::onResultsReceived);
     // fileSearched is handled internally by the controller for counting;
     // results are delivered via resultsReceived — no panel slot needed.
-    connect(m_controller.get(), &AdvancedSearchController::searchFinished,
-            this, &AdvancedSearchPanel::onSearchFinished);
-    connect(m_controller.get(), &AdvancedSearchController::searchFailed,
-            this, &AdvancedSearchPanel::onSearchFailed);
-    connect(m_controller.get(), &AdvancedSearchController::searchCancelled,
-            this, &AdvancedSearchPanel::onSearchCancelled);
-    connect(m_controller.get(), &AdvancedSearchController::statusMessage,
-            this, &AdvancedSearchPanel::statusMessage);
-    connect(m_controller.get(), &AdvancedSearchController::progressUpdate,
-            this, &AdvancedSearchPanel::progressUpdate);
+    connect(m_controller.get(),
+            &AdvancedSearchController::searchFinished,
+            this,
+            &AdvancedSearchPanel::onSearchFinished);
+    connect(m_controller.get(),
+            &AdvancedSearchController::searchFailed,
+            this,
+            &AdvancedSearchPanel::onSearchFailed);
+    connect(m_controller.get(),
+            &AdvancedSearchController::searchCancelled,
+            this,
+            &AdvancedSearchPanel::onSearchCancelled);
+    connect(m_controller.get(),
+            &AdvancedSearchController::statusMessage,
+            this,
+            &AdvancedSearchPanel::statusMessage);
+    connect(m_controller.get(),
+            &AdvancedSearchController::progressUpdate,
+            this,
+            &AdvancedSearchPanel::progressUpdate);
 
     // Populate search history (dropdown only — don't pre-fill the edit field)
     m_search_combo->addItems(m_controller->searchHistory());
     m_search_combo->setCurrentIndex(-1);
-    m_search_combo->lineEdit()->setPlaceholderText(
-        tr("Enter search pattern..."));
+    m_search_combo->lineEdit()->setPlaceholderText(tr("Enter search pattern..."));
 
     logInfo("AdvancedSearchPanel initialized");
 }
 
-AdvancedSearchPanel::~AdvancedSearchPanel()
-{
+AdvancedSearchPanel::~AdvancedSearchPanel() {
     logInfo("AdvancedSearchPanel destroyed");
 }
 
 // ── UI Setup ────────────────────────────────────────────────────────────────
 
-void AdvancedSearchPanel::setupUi()
-{
+void AdvancedSearchPanel::setupUi() {
     auto* rootLayout = new QVBoxLayout(this);
     rootLayout->setContentsMargins(0, 0, 0, 0);
     rootLayout->setSpacing(0);
@@ -393,8 +397,7 @@ void AdvancedSearchPanel::setupUi()
     auto* contentWidget = new QWidget(this);
     auto* mainLayout = new QVBoxLayout(contentWidget);
     mainLayout->setContentsMargins(
-        ui::kMarginMedium, ui::kMarginMedium,
-        ui::kMarginMedium, ui::kMarginMedium);
+        ui::kMarginMedium, ui::kMarginMedium, ui::kMarginMedium, ui::kMarginMedium);
     mainLayout->setSpacing(ui::kSpacingDefault);
 
     rootLayout->addWidget(contentWidget);
@@ -405,8 +408,9 @@ void AdvancedSearchPanel::setupUi()
     createRegexPatternMenu();
 }
 
-void AdvancedSearchPanel::createSearchBar(QVBoxLayout* layout)
-{
+void AdvancedSearchPanel::createSearchBar(QVBoxLayout* layout) {
+    Q_ASSERT(m_controller);
+    Q_ASSERT(m_search_combo);
     auto* searchGroup = new QGroupBox(tr("Search"), this);
     auto* searchLayout = new QVBoxLayout(searchGroup);
     searchLayout->setSpacing(ui::kSpacingSmall);
@@ -429,8 +433,8 @@ void AdvancedSearchPanel::createSearchBar(QVBoxLayout* layout)
     row2->setSpacing(ui::kSpacingMedium);
 
     {
-        const SearchBarRow2Ui ui = buildSearchBarRow2(
-            this, row2, m_controller->preferences().context_lines);
+        const SearchBarRow2Ui ui =
+            buildSearchBarRow2(this, row2, m_controller->preferences().context_lines);
         m_context_lines_combo = ui.context_lines_combo;
         m_regex_patterns_button = ui.regex_patterns_button;
         m_case_sensitive_check = ui.case_sensitive_check;
@@ -457,20 +461,23 @@ void AdvancedSearchPanel::createSearchBar(QVBoxLayout* layout)
     layout->addWidget(searchGroup);
 
     // Connect search actions
-    connect(m_search_button, &QPushButton::clicked,
-            this, &AdvancedSearchPanel::onSearchClicked);
-    connect(m_stop_button, &QPushButton::clicked,
-            this, &AdvancedSearchPanel::onStopClicked);
-    connect(m_regex_patterns_button, &QPushButton::clicked,
-            this, &AdvancedSearchPanel::onRegexPatternsClicked);
+    connect(m_search_button, &QPushButton::clicked, this, &AdvancedSearchPanel::onSearchClicked);
+    connect(m_stop_button, &QPushButton::clicked, this, &AdvancedSearchPanel::onStopClicked);
+    connect(m_regex_patterns_button,
+            &QPushButton::clicked,
+            this,
+            &AdvancedSearchPanel::onRegexPatternsClicked);
 
     // Enter key triggers search
-    connect(m_search_combo->lineEdit(), &QLineEdit::returnPressed,
-            this, &AdvancedSearchPanel::onSearchClicked);
+    connect(m_search_combo->lineEdit(),
+            &QLineEdit::returnPressed,
+            this,
+            &AdvancedSearchPanel::onSearchClicked);
 }
 
-void AdvancedSearchPanel::createThreePanelSplitter(QVBoxLayout* layout)
-{
+void AdvancedSearchPanel::createThreePanelSplitter(QVBoxLayout* layout) {
+    Q_ASSERT(m_splitter);
+    Q_ASSERT(m_file_explorer);
     m_splitter = new QSplitter(Qt::Horizontal, this);
     m_splitter->setChildrenCollapsible(false);
 
@@ -485,11 +492,11 @@ void AdvancedSearchPanel::createThreePanelSplitter(QVBoxLayout* layout)
     // Default proportions: 250 : 350 : 600
     m_splitter->setSizes({250, 350, 600});
 
-    layout->addWidget(m_splitter, 1); // stretch = 1 to fill space
+    layout->addWidget(m_splitter, 1);  // stretch = 1 to fill space
 }
 
-void AdvancedSearchPanel::createFileExplorer()
-{
+void AdvancedSearchPanel::createFileExplorer() {
+    Q_ASSERT(m_file_explorer);
     auto* container = new QWidget(this);
     auto* containerLayout = new QVBoxLayout(container);
     containerLayout->setContentsMargins(0, 0, 0, 0);
@@ -505,23 +512,31 @@ void AdvancedSearchPanel::createFileExplorer()
     m_file_explorer->setHeaderHidden(true);
     m_file_explorer->setContextMenuPolicy(Qt::CustomContextMenu);
     m_file_explorer->setToolTip(tr("Select a directory to search"));
-    setAccessible(m_file_explorer, tr("File explorer tree"),
-        tr("Navigate and select directories to search"));
+    setAccessible(m_file_explorer,
+                  tr("File explorer tree"),
+                  tr("Navigate and select directories to search"));
     containerLayout->addWidget(m_file_explorer);
 
     // Connect file explorer signals
-    connect(m_file_explorer, &QTreeWidget::itemClicked,
-            this, &AdvancedSearchPanel::onFileExplorerItemClicked);
-    connect(m_file_explorer, &QTreeWidget::itemExpanded,
-            this, &AdvancedSearchPanel::onFileExplorerItemExpanded);
-    connect(m_file_explorer, &QTreeWidget::customContextMenuRequested,
-            this, &AdvancedSearchPanel::onFileExplorerContextMenu);
+    connect(m_file_explorer,
+            &QTreeWidget::itemClicked,
+            this,
+            &AdvancedSearchPanel::onFileExplorerItemClicked);
+    connect(m_file_explorer,
+            &QTreeWidget::itemExpanded,
+            this,
+            &AdvancedSearchPanel::onFileExplorerItemExpanded);
+    connect(m_file_explorer,
+            &QTreeWidget::customContextMenuRequested,
+            this,
+            &AdvancedSearchPanel::onFileExplorerContextMenu);
 
     populateFileExplorerRoot();
 }
 
-void AdvancedSearchPanel::createResultsTree()
-{
+void AdvancedSearchPanel::createResultsTree() {
+    Q_ASSERT(m_results_count_label);
+    Q_ASSERT(m_sort_combo);
     auto* container = new QWidget(this);
     auto* containerLayout = new QVBoxLayout(container);
     containerLayout->setContentsMargins(0, 0, 0, 0);
@@ -536,8 +551,7 @@ void AdvancedSearchPanel::createResultsTree()
     headerRow->addWidget(headerLabel);
 
     m_results_count_label = new QLabel(container);
-    m_results_count_label->setStyleSheet(
-        QString("color: %1;").arg(ui::kColorTextMuted));
+    m_results_count_label->setStyleSheet(QString("color: %1;").arg(ui::kColorTextMuted));
     headerRow->addWidget(m_results_count_label);
 
     headerRow->addStretch();
@@ -546,16 +560,14 @@ void AdvancedSearchPanel::createResultsTree()
     headerRow->addWidget(sortLabel);
 
     m_sort_combo = new QComboBox(container);
-    m_sort_combo->addItems({
-        tr("Path (A-Z)"),
-        tr("Path (Z-A)"),
-        tr("Match Count (High)"),
-        tr("Match Count (Low)"),
-        tr("File Size (Large)"),
-        tr("File Size (Small)"),
-        tr("Date Modified (Newest)"),
-        tr("Date Modified (Oldest)")
-    });
+    m_sort_combo->addItems({tr("Path (A-Z)"),
+                            tr("Path (Z-A)"),
+                            tr("Match Count (High)"),
+                            tr("Match Count (Low)"),
+                            tr("File Size (Large)"),
+                            tr("File Size (Small)"),
+                            tr("Date Modified (Newest)"),
+                            tr("Date Modified (Oldest)")});
     m_sort_combo->setToolTip(tr("Sort search results"));
     setAccessible(m_sort_combo, tr("Result sort order"));
     headerRow->addWidget(m_sort_combo);
@@ -567,23 +579,31 @@ void AdvancedSearchPanel::createResultsTree()
     m_results_tree->setContextMenuPolicy(Qt::CustomContextMenu);
     m_results_tree->setRootIsDecorated(true);
     m_results_tree->setToolTip(tr("Click a result to preview, double-click to open"));
-    setAccessible(m_results_tree, tr("Search results tree"),
-        tr("Click results to preview, double-click to open in editor"));
+    setAccessible(m_results_tree,
+                  tr("Search results tree"),
+                  tr("Click results to preview, double-click to open in editor"));
     containerLayout->addWidget(m_results_tree);
 
     // Connect results signals
-    connect(m_results_tree, &QTreeWidget::itemClicked,
-            this, &AdvancedSearchPanel::onResultItemClicked);
-    connect(m_results_tree, &QTreeWidget::itemDoubleClicked,
-            this, &AdvancedSearchPanel::onResultItemDoubleClicked);
-    connect(m_results_tree, &QTreeWidget::customContextMenuRequested,
-            this, &AdvancedSearchPanel::onResultContextMenu);
-    connect(m_sort_combo, QOverload<int>::of(&QComboBox::currentIndexChanged),
-            this, &AdvancedSearchPanel::onSortChanged);
+    connect(
+        m_results_tree, &QTreeWidget::itemClicked, this, &AdvancedSearchPanel::onResultItemClicked);
+    connect(m_results_tree,
+            &QTreeWidget::itemDoubleClicked,
+            this,
+            &AdvancedSearchPanel::onResultItemDoubleClicked);
+    connect(m_results_tree,
+            &QTreeWidget::customContextMenuRequested,
+            this,
+            &AdvancedSearchPanel::onResultContextMenu);
+    connect(m_sort_combo,
+            QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this,
+            &AdvancedSearchPanel::onSortChanged);
 }
 
-void AdvancedSearchPanel::createPreviewPane()
-{
+void AdvancedSearchPanel::createPreviewPane() {
+    Q_ASSERT(m_preview_header_label);
+    Q_ASSERT(m_prev_match_button);
     auto* container = new QWidget(this);
     auto* containerLayout = new QVBoxLayout(container);
     containerLayout->setContentsMargins(0, 0, 0, 0);
@@ -600,7 +620,7 @@ void AdvancedSearchPanel::createPreviewPane()
 
     headerRow->addStretch();
 
-    m_prev_match_button = new QPushButton(QStringLiteral("\u25C4"), container); // ◄
+    m_prev_match_button = new QPushButton(QStringLiteral("\u25C4"), container);  // ◄
     m_prev_match_button->setFixedSize(28, 28);
     m_prev_match_button->setToolTip(tr("Previous match"));
     m_prev_match_button->setEnabled(false);
@@ -612,7 +632,7 @@ void AdvancedSearchPanel::createPreviewPane()
     m_match_counter_label->setAlignment(Qt::AlignCenter);
     headerRow->addWidget(m_match_counter_label);
 
-    m_next_match_button = new QPushButton(QStringLiteral("\u25BA"), container); // ►
+    m_next_match_button = new QPushButton(QStringLiteral("\u25BA"), container);  // ►
     m_next_match_button->setFixedSize(28, 28);
     m_next_match_button->setToolTip(tr("Next match"));
     m_next_match_button->setEnabled(false);
@@ -630,19 +650,20 @@ void AdvancedSearchPanel::createPreviewPane()
             .arg(ui::kColorBgWhite)
             .arg(ui::kColorTextBody)
             .arg(ui::kColorBorderDefault));
-    setAccessible(m_preview_edit, tr("File preview pane"),
-        tr("Shows file content with highlighted search matches"));
+    setAccessible(m_preview_edit,
+                  tr("File preview pane"),
+                  tr("Shows file content with highlighted search matches"));
     containerLayout->addWidget(m_preview_edit);
 
     // Connect navigation buttons
-    connect(m_prev_match_button, &QPushButton::clicked,
-            this, &AdvancedSearchPanel::onPreviousMatch);
-    connect(m_next_match_button, &QPushButton::clicked,
-            this, &AdvancedSearchPanel::onNextMatch);
+    connect(
+        m_prev_match_button, &QPushButton::clicked, this, &AdvancedSearchPanel::onPreviousMatch);
+    connect(m_next_match_button, &QPushButton::clicked, this, &AdvancedSearchPanel::onNextMatch);
 }
 
-void AdvancedSearchPanel::createStatusBar(QVBoxLayout* layout)
-{
+void AdvancedSearchPanel::createStatusBar(QVBoxLayout* layout) {
+    Q_ASSERT(layout);
+    Q_ASSERT(m_preferences_button);
     auto* statusRow = new QHBoxLayout();
     statusRow->setContentsMargins(0, 4, 0, 0);
 
@@ -652,20 +673,22 @@ void AdvancedSearchPanel::createStatusBar(QVBoxLayout* layout)
 
     // Settings button next to log toggle
     m_preferences_button = new QPushButton(tr("Settings"), this);
-    m_preferences_button->setToolTip(
-        tr("Search settings (max results, file sizes, etc.)"));
+    m_preferences_button->setToolTip(tr("Search settings (max results, file sizes, etc.)"));
     m_preferences_button->setAccessibleName(tr("Search settings"));
     statusRow->addWidget(m_preferences_button);
-    connect(m_preferences_button, &QPushButton::clicked,
-            this, &AdvancedSearchPanel::onPreferencesClicked);
+    connect(m_preferences_button,
+            &QPushButton::clicked,
+            this,
+            &AdvancedSearchPanel::onPreferencesClicked);
 
     statusRow->addStretch();
 
     layout->addLayout(statusRow);
 }
 
-void AdvancedSearchPanel::createRegexPatternMenu()
-{
+void AdvancedSearchPanel::createRegexPatternMenu() {
+    Q_ASSERT(m_controller);
+    Q_ASSERT(m_regex_menu);
     m_regex_menu = new QMenu(this);
 
     auto* library = m_controller->patternLibrary();
@@ -677,11 +700,10 @@ void AdvancedSearchPanel::createRegexPatternMenu()
         action->setChecked(pattern.enabled);
         action->setData(pattern.key);
 
-        connect(action, &QAction::toggled, this,
-            [this, key = pattern.key](bool checked) {
-                m_controller->patternLibrary()->setPatternEnabled(key, checked);
-                updateRegexPatternsButton();
-            });
+        connect(action, &QAction::toggled, this, [this, key = pattern.key](bool checked) {
+            m_controller->patternLibrary()->setPatternEnabled(key, checked);
+            updateRegexPatternsButton();
+        });
     }
 
     // Separator before custom patterns
@@ -698,11 +720,10 @@ void AdvancedSearchPanel::createRegexPatternMenu()
             action->setChecked(pattern.enabled);
             action->setData(pattern.key);
 
-            connect(action, &QAction::toggled, this,
-                [this, key = pattern.key](bool checked) {
-                    m_controller->patternLibrary()->setPatternEnabled(key, checked);
-                    updateRegexPatternsButton();
-                });
+            connect(action, &QAction::toggled, this, [this, key = pattern.key](bool checked) {
+                m_controller->patternLibrary()->setPatternEnabled(key, checked);
+                updateRegexPatternsButton();
+            });
         }
     }
 
@@ -722,15 +743,14 @@ void AdvancedSearchPanel::createRegexPatternMenu()
 
 // ── File Explorer Population ────────────────────────────────────────────────
 
-void AdvancedSearchPanel::populateFileExplorerRoot()
-{
+void AdvancedSearchPanel::populateFileExplorerRoot() {
+    Q_ASSERT(m_file_explorer);
     m_file_explorer->clear();
 
     // Add home directory
     const QString homePath = QDir::homePath();
     auto* homeItem = new QTreeWidgetItem(m_file_explorer);
-    homeItem->setText(0, tr("Home (%1)")
-        .arg(QFileInfo(homePath).fileName()));
+    homeItem->setText(0, tr("Home (%1)").arg(QFileInfo(homePath).fileName()));
     homeItem->setData(0, Qt::UserRole, homePath);
     homeItem->setIcon(0, style()->standardIcon(QStyle::SP_DirHomeIcon));
     addPlaceholderChild(homeItem);
@@ -749,8 +769,7 @@ void AdvancedSearchPanel::populateFileExplorerRoot()
         }
 
         auto* driveItem = new QTreeWidgetItem(m_file_explorer);
-        driveItem->setText(0, QString("%1 (%2)")
-            .arg(label, rootPath.left(2)));
+        driveItem->setText(0, QString("%1 (%2)").arg(label, rootPath.left(2)));
         driveItem->setData(0, Qt::UserRole, rootPath);
         driveItem->setIcon(0, style()->standardIcon(QStyle::SP_DriveHDIcon));
         addPlaceholderChild(driveItem);
@@ -761,17 +780,15 @@ void AdvancedSearchPanel::populateFileExplorerRoot()
 }
 
 void AdvancedSearchPanel::populateDirectoryChildren(QTreeWidgetItem* parentItem,
-                                                      const QString& dirPath)
-{
+                                                    const QString& dirPath) {
     const QDir dir(dirPath);
     if (!dir.exists()) {
         return;
     }
 
     // Get directories first, then files
-    const auto entries = dir.entryInfoList(
-        QDir::Dirs | QDir::NoDotAndDotDot | QDir::Files,
-        QDir::DirsFirst | QDir::IgnoreCase | QDir::Name);
+    const auto entries = dir.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot | QDir::Files,
+                                           QDir::DirsFirst | QDir::IgnoreCase | QDir::Name);
 
     for (const auto& entry : entries) {
         auto* item = new QTreeWidgetItem(parentItem);
@@ -780,22 +797,20 @@ void AdvancedSearchPanel::populateDirectoryChildren(QTreeWidgetItem* parentItem,
 
         if (entry.isDir()) {
             item->setIcon(0, style()->standardIcon(QStyle::SP_DirIcon));
-            addPlaceholderChild(item); // Enable expansion
+            addPlaceholderChild(item);  // Enable expansion
         } else {
             item->setIcon(0, style()->standardIcon(QStyle::SP_FileIcon));
         }
     }
 }
 
-void AdvancedSearchPanel::addPlaceholderChild(QTreeWidgetItem* parentItem)
-{
+void AdvancedSearchPanel::addPlaceholderChild(QTreeWidgetItem* parentItem) {
     auto* placeholder = new QTreeWidgetItem(parentItem);
     placeholder->setText(0, kPlaceholderText);
     placeholder->setFlags(Qt::NoItemFlags);
 }
 
-void AdvancedSearchPanel::removePlaceholderChildren(QTreeWidgetItem* parentItem)
-{
+void AdvancedSearchPanel::removePlaceholderChildren(QTreeWidgetItem* parentItem) {
     for (int i = parentItem->childCount() - 1; i >= 0; --i) {
         auto* child = parentItem->child(i);
         if (child->text(0) == kPlaceholderText) {
@@ -806,8 +821,8 @@ void AdvancedSearchPanel::removePlaceholderChildren(QTreeWidgetItem* parentItem)
 
 // ── Search Controls ─────────────────────────────────────────────────────────
 
-void AdvancedSearchPanel::onSearchClicked()
-{
+void AdvancedSearchPanel::onSearchClicked() {
+    Q_ASSERT(m_controller);
     const SearchConfig config = buildSearchConfig();
 
     if (config.pattern.isEmpty() && config.root_path.isEmpty()) {
@@ -829,21 +844,20 @@ void AdvancedSearchPanel::onSearchClicked()
     m_controller->startSearch(config);
 }
 
-void AdvancedSearchPanel::onStopClicked()
-{
+void AdvancedSearchPanel::onStopClicked() {
     m_controller->cancelSearch();
 }
 
-void AdvancedSearchPanel::onRegexPatternsClicked()
-{
+void AdvancedSearchPanel::onRegexPatternsClicked() {
     if (m_regex_menu) {
-        m_regex_menu->popup(m_regex_patterns_button->mapToGlobal(
-            QPoint(0, m_regex_patterns_button->height())));
+        m_regex_menu->popup(
+            m_regex_patterns_button->mapToGlobal(QPoint(0, m_regex_patterns_button->height())));
     }
 }
 
-void AdvancedSearchPanel::onPreferencesClicked()
-{
+void AdvancedSearchPanel::onPreferencesClicked() {
+    Q_ASSERT(m_controller);
+    Q_ASSERT(m_context_lines_combo);
     const auto prefs = m_controller->preferences();
     const PreferencesDialogUi ui = buildPreferencesDialog(this, prefs);
 
@@ -857,8 +871,9 @@ void AdvancedSearchPanel::onPreferencesClicked()
     ui.dialog->deleteLater();
 }
 
-SearchConfig AdvancedSearchPanel::buildSearchConfig() const
-{
+SearchConfig AdvancedSearchPanel::buildSearchConfig() const {
+    Q_ASSERT(m_file_explorer);
+    Q_ASSERT(m_controller);
     SearchConfig config;
 
     // Get selected directory from file explorer
@@ -871,7 +886,7 @@ SearchConfig AdvancedSearchPanel::buildSearchConfig() const
     const auto* library = m_controller->patternLibrary();
     if (library->activeCount() > 0) {
         config.pattern = library->combinedPattern();
-        config.use_regex = true; // Pattern library always produces regex
+        config.use_regex = true;  // Pattern library always produces regex
     } else {
         config.pattern = m_search_combo->currentText().trimmed();
         config.use_regex = m_use_regex_check->isChecked();
@@ -904,8 +919,7 @@ SearchConfig AdvancedSearchPanel::buildSearchConfig() const
 
 // ── Controller Signal Handlers ──────────────────────────────────────────────
 
-void AdvancedSearchPanel::onSearchStarted(const QString& pattern)
-{
+void AdvancedSearchPanel::onSearchStarted(const QString& pattern) {
     setSearchRunning(true);
     Q_EMIT statusMessage(tr("Searching for: %1").arg(pattern), 0);
     logMessage(tr("Search started: %1").arg(pattern));
@@ -916,8 +930,9 @@ void AdvancedSearchPanel::onSearchStarted(const QString& pattern)
     }
 }
 
-void AdvancedSearchPanel::onResultsReceived(QVector<sak::SearchMatch> matches)
-{
+void AdvancedSearchPanel::onResultsReceived(QVector<sak::SearchMatch> matches) {
+    Q_ASSERT(!matches.isEmpty());
+    Q_ASSERT(m_results_tree);
     // Group new matches by file and incrementally update the tree
     // instead of rebuilding the entire tree on every batch
     for (const auto& match : matches) {
@@ -949,13 +964,11 @@ void AdvancedSearchPanel::onResultsReceived(QVector<sak::SearchMatch> matches)
             while (fileItem->childCount() > 0) {
                 delete fileItem->takeChild(0);
             }
-            fileItem->setText(0, QString("%1  (%2)")
-                .arg(filePath).arg(fileMatches.size()));
+            fileItem->setText(0, QString("%1  (%2)").arg(filePath).arg(fileMatches.size()));
         } else {
             // New file — add top-level item
             fileItem = new QTreeWidgetItem(m_results_tree);
-            fileItem->setText(0, QString("%1  (%2)")
-                .arg(filePath).arg(fileMatches.size()));
+            fileItem->setText(0, QString("%1  (%2)").arg(filePath).arg(fileMatches.size()));
             fileItem->setData(0, Qt::UserRole, filePath);
             fileItem->setData(0, Qt::UserRole + 1, -1);
             fileItem->setIcon(0, style()->standardIcon(QStyle::SP_FileIcon));
@@ -967,49 +980,41 @@ void AdvancedSearchPanel::onResultsReceived(QVector<sak::SearchMatch> matches)
             auto* matchItem = new QTreeWidgetItem(fileItem);
 
             const QString truncated = m.line_content.left(80).trimmed();
-            matchItem->setText(0, QString("Line %1: %2")
-                .arg(m.line_number).arg(truncated));
+            matchItem->setText(0, QString("Line %1: %2").arg(m.line_number).arg(truncated));
             matchItem->setData(0, Qt::UserRole, filePath);
             matchItem->setData(0, Qt::UserRole + 1, i);
         }
     }
 }
 
-void AdvancedSearchPanel::onSearchFinished(int totalMatches, int totalFiles)
-{
+void AdvancedSearchPanel::onSearchFinished(int totalMatches, int totalFiles) {
+    Q_ASSERT(m_results_count_label);
     setSearchRunning(false);
-    Q_EMIT statusMessage(
-        tr("Found %1 matches in %2 files").arg(totalMatches).arg(totalFiles),
-        sak::kTimerStatusDefaultMs);
+    Q_EMIT statusMessage(tr("Found %1 matches in %2 files").arg(totalMatches).arg(totalFiles),
+                         sak::kTimerStatusDefaultMs);
     Q_EMIT progressUpdate(totalMatches, totalMatches);
-    m_results_count_label->setText(
-        tr("(%1 matches, %2 files)").arg(totalMatches).arg(totalFiles));
-    logMessage(tr("Search complete: %1 matches in %2 files")
-        .arg(totalMatches).arg(totalFiles));
+    m_results_count_label->setText(tr("(%1 matches, %2 files)").arg(totalMatches).arg(totalFiles));
+    logMessage(tr("Search complete: %1 matches in %2 files").arg(totalMatches).arg(totalFiles));
 }
 
-void AdvancedSearchPanel::onSearchFailed(const QString& error)
-{
+void AdvancedSearchPanel::onSearchFailed(const QString& error) {
     setSearchRunning(false);
-    Q_EMIT statusMessage(tr("Search failed: %1").arg(error),
-        sak::kTimerStatusDefaultMs);
+    Q_EMIT statusMessage(tr("Search failed: %1").arg(error), sak::kTimerStatusDefaultMs);
     logMessage(tr("Search failed: %1").arg(error));
 }
 
-void AdvancedSearchPanel::onSearchCancelled()
-{
+void AdvancedSearchPanel::onSearchCancelled() {
     setSearchRunning(false);
-    Q_EMIT statusMessage(tr("Search cancelled"),
-        sak::kTimerStatusDefaultMs);
+    Q_EMIT statusMessage(tr("Search cancelled"), sak::kTimerStatusDefaultMs);
     logMessage(tr("Search cancelled"));
 }
 
 // ── File Explorer Handlers ──────────────────────────────────────────────────
 
-void AdvancedSearchPanel::onFileExplorerItemClicked(QTreeWidgetItem* item,
-                                                      int /*column*/)
-{
-    if (!item) return;
+void AdvancedSearchPanel::onFileExplorerItemClicked(QTreeWidgetItem* item, int /*column*/) {
+    if (!item) {
+        return;
+    }
 
     const QString path = item->data(0, Qt::UserRole).toString();
     if (!path.isEmpty()) {
@@ -1017,14 +1022,13 @@ void AdvancedSearchPanel::onFileExplorerItemClicked(QTreeWidgetItem* item,
     }
 }
 
-void AdvancedSearchPanel::onFileExplorerItemExpanded(QTreeWidgetItem* item)
-{
-    if (!item) return;
+void AdvancedSearchPanel::onFileExplorerItemExpanded(QTreeWidgetItem* item) {
+    if (!item) {
+        return;
+    }
 
     // Check if placeholder child exists (lazy loading)
-    if (item->childCount() == 1 &&
-        item->child(0)->text(0) == kPlaceholderText) {
-
+    if (item->childCount() == 1 && item->child(0)->text(0) == kPlaceholderText) {
         removePlaceholderChildren(item);
 
         const QString dirPath = item->data(0, Qt::UserRole).toString();
@@ -1032,10 +1036,12 @@ void AdvancedSearchPanel::onFileExplorerItemExpanded(QTreeWidgetItem* item)
     }
 }
 
-void AdvancedSearchPanel::onFileExplorerContextMenu(const QPoint& pos)
-{
+void AdvancedSearchPanel::onFileExplorerContextMenu(const QPoint& pos) {
+    Q_ASSERT(m_file_explorer);
     auto* item = m_file_explorer->itemAt(pos);
-    if (!item) return;
+    if (!item) {
+        return;
+    }
 
     const QString path = item->data(0, Qt::UserRole).toString();
 
@@ -1043,8 +1049,8 @@ void AdvancedSearchPanel::onFileExplorerContextMenu(const QPoint& pos)
 
     auto* openDirAction = menu.addAction(tr("Open in Explorer"));
     connect(openDirAction, &QAction::triggered, this, [path]() {
-        QDesktopServices::openUrl(QUrl::fromLocalFile(
-            QFileInfo(path).isDir() ? path : QFileInfo(path).absolutePath()));
+        QDesktopServices::openUrl(
+            QUrl::fromLocalFile(QFileInfo(path).isDir() ? path : QFileInfo(path).absolutePath()));
     });
 
     auto* copyPathAction = menu.addAction(tr("Copy Path"));
@@ -1057,12 +1063,16 @@ void AdvancedSearchPanel::onFileExplorerContextMenu(const QPoint& pos)
 
 // ── Results Tree Handlers ───────────────────────────────────────────────────
 
-void AdvancedSearchPanel::onResultItemClicked(QTreeWidgetItem* item, int /*column*/)
-{
-    if (!item) return;
+void AdvancedSearchPanel::onResultItemClicked(QTreeWidgetItem* item, int /*column*/) {
+    Q_ASSERT(item);
+    if (!item) {
+        return;
+    }
 
     const QString filePath = item->data(0, Qt::UserRole).toString();
-    if (filePath.isEmpty()) return;
+    if (filePath.isEmpty()) {
+        return;
+    }
 
     const auto it = m_all_results.constFind(filePath);
     if (it != m_all_results.constEnd()) {
@@ -1076,10 +1086,10 @@ void AdvancedSearchPanel::onResultItemClicked(QTreeWidgetItem* item, int /*colum
     }
 }
 
-void AdvancedSearchPanel::onResultItemDoubleClicked(QTreeWidgetItem* item,
-                                                      int /*column*/)
-{
-    if (!item) return;
+void AdvancedSearchPanel::onResultItemDoubleClicked(QTreeWidgetItem* item, int /*column*/) {
+    if (!item) {
+        return;
+    }
 
     const QString filePath = item->data(0, Qt::UserRole).toString();
     if (!filePath.isEmpty()) {
@@ -1087,10 +1097,12 @@ void AdvancedSearchPanel::onResultItemDoubleClicked(QTreeWidgetItem* item,
     }
 }
 
-void AdvancedSearchPanel::onResultContextMenu(const QPoint& pos)
-{
+void AdvancedSearchPanel::onResultContextMenu(const QPoint& pos) {
+    Q_ASSERT(m_results_tree);
     auto* item = m_results_tree->itemAt(pos);
-    if (!item) return;
+    if (!item) {
+        return;
+    }
 
     const QString filePath = item->data(0, Qt::UserRole).toString();
 
@@ -1103,8 +1115,7 @@ void AdvancedSearchPanel::onResultContextMenu(const QPoint& pos)
 
     auto* openDirAction = menu.addAction(tr("Open Directory"));
     connect(openDirAction, &QAction::triggered, this, [filePath]() {
-        QDesktopServices::openUrl(
-            QUrl::fromLocalFile(QFileInfo(filePath).absolutePath()));
+        QDesktopServices::openUrl(QUrl::fromLocalFile(QFileInfo(filePath).absolutePath()));
     });
 
     auto* copyPathAction = menu.addAction(tr("Copy Path"));
@@ -1115,15 +1126,15 @@ void AdvancedSearchPanel::onResultContextMenu(const QPoint& pos)
     menu.exec(m_results_tree->viewport()->mapToGlobal(pos));
 }
 
-void AdvancedSearchPanel::onSortChanged(int /*index*/)
-{
+void AdvancedSearchPanel::onSortChanged(int /*index*/) {
     sortResults();
 }
 
 // ── Results Management ──────────────────────────────────────────────────────
 
-void AdvancedSearchPanel::clearResults()
-{
+void AdvancedSearchPanel::clearResults() {
+    Q_ASSERT(m_results_tree);
+    Q_ASSERT(m_preview_edit);
     m_results_tree->clear();
     m_all_results.clear();
     m_preview_edit->clear();
@@ -1137,21 +1148,18 @@ void AdvancedSearchPanel::clearResults()
     m_next_match_button->setEnabled(false);
 }
 
-void AdvancedSearchPanel::sortResults()
-{
+void AdvancedSearchPanel::sortResults() {
     m_results_tree->clear();
 
     const int sortMode = m_sort_combo->currentIndex();
-    const QVector<FileSortEntry> sortedFiles =
-        buildSortedFileEntries(m_all_results, sortMode);
+    const QVector<FileSortEntry> sortedFiles = buildSortedFileEntries(m_all_results, sortMode);
     populateSortedResultsTree(m_results_tree, this, sortedFiles);
 }
 
 // ── Preview ─────────────────────────────────────────────────────────────────
 
 void AdvancedSearchPanel::showFilePreview(const QString& filePath,
-                                           const QVector<SearchMatch>& matches)
-{
+                                          const QVector<SearchMatch>& matches) {
     m_current_preview_file = filePath;
     m_current_matches = matches;
     m_current_match_index = matches.isEmpty() ? -1 : 0;
@@ -1168,13 +1176,11 @@ void AdvancedSearchPanel::showFilePreview(const QString& filePath,
 
     // Check file size limit
     const auto prefs = m_controller->preferences();
-    const qint64 maxSize = static_cast<qint64>(prefs.max_preview_file_size_mb)
-                           * 1024 * 1024;
+    const qint64 maxSize = static_cast<qint64>(prefs.max_preview_file_size_mb) * 1024 * 1024;
     if (file.size() > maxSize) {
-        m_preview_edit->setPlainText(
-            tr("File too large for preview (%1 MB, limit: %2 MB)")
-                .arg(file.size() / (1024.0 * 1024.0), 0, 'f', 1)
-                .arg(prefs.max_preview_file_size_mb));
+        m_preview_edit->setPlainText(tr("File too large for preview (%1 MB, limit: %2 MB)")
+                                         .arg(file.size() / (1024.0 * 1024.0), 0, 'f', 1)
+                                         .arg(prefs.max_preview_file_size_mb));
         return;
     }
 
@@ -1190,19 +1196,15 @@ void AdvancedSearchPanel::showFilePreview(const QString& filePath,
     QString previewText;
     previewText += tr("File: %1\n").arg(filePath);
     previewText += tr("Total matches: %1\n").arg(matches.size());
-    previewText += QString(50, QChar(0x2550)) + "\n\n"; // ═ separator
+    previewText += QString(50, QChar(0x2550)) + "\n\n";  // ═ separator
 
     int lineNum = 0;
     while (!stream.atEnd()) {
         ++lineNum;
         const QString line = stream.readLine();
 
-        const QString prefix = matchLines.contains(lineNum)
-            ? ">>> " : "    ";
-        previewText += QString("%1%2 | %3\n")
-            .arg(prefix)
-            .arg(lineNum, 5)
-            .arg(line);
+        const QString prefix = matchLines.contains(lineNum) ? ">>> " : "    ";
+        previewText += QString("%1%2 | %3\n").arg(prefix).arg(lineNum, 5).arg(line);
     }
 
     file.close();
@@ -1225,15 +1227,17 @@ void AdvancedSearchPanel::showFilePreview(const QString& filePath,
 }
 
 void AdvancedSearchPanel::showMetadataPreview(const QString& filePath,
-                                                const QVector<SearchMatch>& matches)
-{
+                                              const QVector<SearchMatch>& matches) {
     // For now, use the same text preview — metadata results display as key: value
     showFilePreview(filePath, matches);
 }
 
-void AdvancedSearchPanel::highlightMatches()
-{
-    if (m_current_matches.isEmpty()) return;
+void AdvancedSearchPanel::highlightMatches() {
+    Q_ASSERT(!m_current_matches.isEmpty());
+    Q_ASSERT(m_preview_edit);
+    if (m_current_matches.isEmpty()) {
+        return;
+    }
 
     // Find lines with matches and highlight them in the preview
     QTextDocument* doc = m_preview_edit->document();
@@ -1248,38 +1252,44 @@ void AdvancedSearchPanel::highlightMatches()
 
         // Move to that line in the document
         QTextBlock block = doc->findBlockByLineNumber(previewLine);
-        if (!block.isValid()) continue;
+        if (!block.isValid()) {
+            continue;
+        }
 
         // Find the match text within the line
         // The line format is: ">>> NNNNN | content" or "    NNNNN | content"
         // The actual content starts after "| "
         const QString blockText = block.text();
         const int pipeIdx = blockText.indexOf('|');
-        if (pipeIdx < 0) continue;
+        if (pipeIdx < 0) {
+            continue;
+        }
 
-        const int contentOffset = pipeIdx + 2; // After "| "
+        const int contentOffset = pipeIdx + 2;  // After "| "
         const int highlightStart = contentOffset + match.match_start;
         const int highlightLen = match.match_end - match.match_start;
 
         cursor.setPosition(block.position() + highlightStart);
-        cursor.movePosition(QTextCursor::Right, QTextCursor::KeepAnchor,
-                            highlightLen);
+        cursor.movePosition(QTextCursor::Right, QTextCursor::KeepAnchor, highlightLen);
 
         QTextCharFormat fmt;
         if (i == m_current_match_index) {
             // Current match: orange highlight
-            fmt.setBackground(QColor(255, 165, 0)); // Orange
+            fmt.setBackground(QColor(255, 165, 0));  // Orange
         } else {
             // Other matches: yellow highlight
-            fmt.setBackground(QColor(255, 255, 0)); // Yellow
+            fmt.setBackground(QColor(255, 255, 0));  // Yellow
         }
         cursor.setCharFormat(fmt);
     }
 }
 
-void AdvancedSearchPanel::navigateToMatch(int matchIndex)
-{
-    if (matchIndex < 0 || matchIndex >= m_current_matches.size()) return;
+void AdvancedSearchPanel::navigateToMatch(int matchIndex) {
+    Q_ASSERT(matchIndex >= 0);
+    Q_ASSERT(m_preview_edit);
+    if (matchIndex < 0 || matchIndex >= m_current_matches.size()) {
+        return;
+    }
 
     m_current_match_index = matchIndex;
 
@@ -1308,45 +1318,46 @@ void AdvancedSearchPanel::navigateToMatch(int matchIndex)
     updateMatchCounter();
 }
 
-void AdvancedSearchPanel::onPreviousMatch()
-{
-    if (m_current_matches.isEmpty()) return;
+void AdvancedSearchPanel::onPreviousMatch() {
+    if (m_current_matches.isEmpty()) {
+        return;
+    }
 
     int newIndex = m_current_match_index - 1;
     if (newIndex < 0) {
-        newIndex = m_current_matches.size() - 1; // Wrap around
+        newIndex = m_current_matches.size() - 1;  // Wrap around
     }
     navigateToMatch(newIndex);
 }
 
-void AdvancedSearchPanel::onNextMatch()
-{
-    if (m_current_matches.isEmpty()) return;
+void AdvancedSearchPanel::onNextMatch() {
+    if (m_current_matches.isEmpty()) {
+        return;
+    }
 
     int newIndex = m_current_match_index + 1;
     if (newIndex >= m_current_matches.size()) {
-        newIndex = 0; // Wrap around
+        newIndex = 0;  // Wrap around
     }
     navigateToMatch(newIndex);
 }
 
-void AdvancedSearchPanel::updateMatchCounter()
-{
+void AdvancedSearchPanel::updateMatchCounter() {
+    Q_ASSERT(m_match_counter_label);
     if (m_current_matches.isEmpty()) {
         m_match_counter_label->clear();
         return;
     }
 
     m_match_counter_label->setText(
-        QString("%1/%2")
-            .arg(m_current_match_index + 1)
-            .arg(m_current_matches.size()));
+        QString("%1/%2").arg(m_current_match_index + 1).arg(m_current_matches.size()));
 }
 
 // ── Utility ─────────────────────────────────────────────────────────────────
 
-void AdvancedSearchPanel::setSearchRunning(bool running)
-{
+void AdvancedSearchPanel::setSearchRunning(bool running) {
+    Q_ASSERT(m_search_button);
+    Q_ASSERT(m_stop_button);
     m_search_button->setEnabled(!running);
     m_stop_button->setEnabled(running);
     m_search_combo->setEnabled(!running);
@@ -1362,20 +1373,17 @@ void AdvancedSearchPanel::setSearchRunning(bool running)
     m_context_lines_combo->setEnabled(!running);
 }
 
-void AdvancedSearchPanel::logMessage(const QString& message)
-{
+void AdvancedSearchPanel::logMessage(const QString& message) {
     Q_EMIT logOutput(message);
 }
 
-void AdvancedSearchPanel::updateRegexPatternsButton()
-{
+void AdvancedSearchPanel::updateRegexPatternsButton() {
     const int count = m_controller->patternLibrary()->activeCount();
     if (count > 0) {
-        m_regex_patterns_button->setText(
-            tr("Regex Patterns (%1)").arg(count));
+        m_regex_patterns_button->setText(tr("Regex Patterns (%1)").arg(count));
     } else {
         m_regex_patterns_button->setText(tr("Regex Patterns"));
     }
 }
 
-} // namespace sak
+}  // namespace sak

@@ -2,18 +2,21 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "sak/windows_user_scanner.h"
+
 #include <QDir>
 #include <QDirIterator>
-#include <QStandardPaths>
 #include <QProcess>
+#include <QStandardPaths>
 
 #ifdef Q_OS_WIN
+#include "sak/logger.h"
+
 #include <windows.h>
+
 #include <lm.h>
 #include <sddl.h>
 #include <userenv.h>
 #include <wtsapi32.h>
-#include "sak/logger.h"
 #pragma comment(lib, "netapi32.lib")
 #pragma comment(lib, "userenv.lib")
 #pragma comment(lib, "wtsapi32.lib")
@@ -21,10 +24,7 @@
 
 namespace sak {
 
-WindowsUserScanner::WindowsUserScanner(QObject* parent)
-    : QObject(parent)
-{
-}
+WindowsUserScanner::WindowsUserScanner(QObject* parent) : QObject(parent) {}
 
 QVector<UserProfile> WindowsUserScanner::scanUsers() {
     QVector<UserProfile> profiles;
@@ -38,21 +38,20 @@ QVector<UserProfile> WindowsUserScanner::scanUsers() {
 
 #ifdef Q_OS_WIN
 bool WindowsUserScanner::enumerateWindowsUsers(QVector<UserProfile>& profiles) {
+    Q_ASSERT(!profiles.isEmpty());
     LPUSER_INFO_3 userInfo = nullptr;
     DWORD entriesRead = 0;
     DWORD totalEntries = 0;
     DWORD resumeHandle = 0;
 
-    NET_API_STATUS status = NetUserEnum(
-        nullptr,                    // local computer
-        3,                          // level 3 (detailed info)
-        FILTER_NORMAL_ACCOUNT,      // normal user accounts only
-        reinterpret_cast<LPBYTE*>(&userInfo),
-        MAX_PREFERRED_LENGTH,
-        &entriesRead,
-        &totalEntries,
-        &resumeHandle
-    );
+    NET_API_STATUS status = NetUserEnum(nullptr,                // local computer
+                                        3,                      // level 3 (detailed info)
+                                        FILTER_NORMAL_ACCOUNT,  // normal user accounts only
+                                        reinterpret_cast<LPBYTE*>(&userInfo),
+                                        MAX_PREFERRED_LENGTH,
+                                        &entriesRead,
+                                        &totalEntries,
+                                        &resumeHandle);
 
     if (status != NERR_Success && status != ERROR_MORE_DATA) {
         return false;
@@ -109,6 +108,7 @@ QString WindowsUserScanner::getCurrentUsername() {
 }
 
 QString WindowsUserScanner::getUserSID(const QString& username) {
+    Q_ASSERT(!username.isEmpty());
 #ifdef Q_OS_WIN
     // Try to lookup SID using LookupAccountName
     wchar_t* usernameW = (wchar_t*)username.utf16();
@@ -156,6 +156,7 @@ namespace {
 
 /// @brief Expand a registry path value, handling REG_EXPAND_SZ environment variables
 QString expandRegistryPath(const wchar_t* profileDir, DWORD valueType) {
+    Q_ASSERT(profileDir);
     if (valueType != REG_EXPAND_SZ) {
         return QString::fromWCharArray(profileDir);
     }
@@ -169,13 +170,12 @@ QString expandRegistryPath(const wchar_t* profileDir, DWORD valueType) {
 
 /// @brief Look up a user's profile path from the registry using their SID
 QString lookupRegistryProfilePath(const QString& sid) {
-    QString regPath = QString("SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\ProfileList\\%1")
-        .arg(sid);
+    Q_ASSERT(!sid.isEmpty());
+    QString regPath =
+        QString("SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\ProfileList\\%1").arg(sid);
     HKEY hKey = nullptr;
     LONG result = RegOpenKeyExW(
-        HKEY_LOCAL_MACHINE,
-        reinterpret_cast<LPCWSTR>(regPath.utf16()),
-        0, KEY_READ, &hKey);
+        HKEY_LOCAL_MACHINE, reinterpret_cast<LPCWSTR>(regPath.utf16()), 0, KEY_READ, &hKey);
 
     if (result != ERROR_SUCCESS) {
         return {};
@@ -185,13 +185,12 @@ QString lookupRegistryProfilePath(const QString& sid) {
     DWORD bufferSize = sizeof(profileDir);
     DWORD valueType = 0;
 
-    result = RegQueryValueExW(
-        hKey,
-        L"ProfileImagePath",
-        nullptr,
-        &valueType,
-        reinterpret_cast<LPBYTE>(profileDir),
-        &bufferSize);
+    result = RegQueryValueExW(hKey,
+                              L"ProfileImagePath",
+                              nullptr,
+                              &valueType,
+                              reinterpret_cast<LPBYTE>(profileDir),
+                              &bufferSize);
 
     RegCloseKey(hKey);
 
@@ -209,9 +208,10 @@ QString lookupRegistryProfilePath(const QString& sid) {
     return {};
 }
 
-} // anonymous namespace
+}  // anonymous namespace
 
 QString WindowsUserScanner::getProfilePath(const QString& username) {
+    Q_ASSERT(!username.isEmpty());
     // First try standard location using SystemDrive environment variable
     QString systemDrive = QString::fromLocal8Bit(qgetenv("SystemDrive"));
     if (systemDrive.isEmpty()) {
@@ -235,6 +235,7 @@ QString WindowsUserScanner::getProfilePath(const QString& username) {
 }
 
 bool WindowsUserScanner::isUserLoggedIn(const QString& username) {
+    Q_ASSERT(!username.isEmpty());
 #ifdef Q_OS_WIN
     // Enumerate active sessions using WTS API
     PWTS_SESSION_INFOW pSessionInfo = nullptr;
@@ -257,12 +258,11 @@ bool WindowsUserScanner::isUserLoggedIn(const QString& username) {
         LPWSTR pUserName = nullptr;
         DWORD bytesReturned = 0;
 
-        if (!WTSQuerySessionInformationW(
-                WTS_CURRENT_SERVER_HANDLE,
-                pSessionInfo[i].SessionId,
-                WTSUserName,
-                &pUserName,
-                &bytesReturned)) {
+        if (!WTSQuerySessionInformationW(WTS_CURRENT_SERVER_HANDLE,
+                                         pSessionInfo[i].SessionId,
+                                         WTSUserName,
+                                         &pUserName,
+                                         &bytesReturned)) {
             continue;
         }
 
@@ -285,6 +285,7 @@ bool WindowsUserScanner::isUserLoggedIn(const QString& username) {
 }
 
 qint64 WindowsUserScanner::estimateProfileSize(const QString& profilePath) {
+    Q_ASSERT(!profilePath.isEmpty());
     qint64 totalSize = 0;
 
     // Quick estimate by scanning main folders (non-recursive)
@@ -298,7 +299,7 @@ qint64 WindowsUserScanner::estimateProfileSize(const QString& profilePath) {
 
         QDirIterator it(folderPath, QDir::Files, QDirIterator::Subdirectories);
         int fileCount = 0;
-        while (it.hasNext() && fileCount < 1000) { // Limit for speed
+        while (it.hasNext() && fileCount < 1000) {  // Limit for speed
             it.next();
             totalSize += it.fileInfo().size();
             fileCount++;
@@ -316,8 +317,10 @@ QVector<FolderSelection> WindowsUserScanner::getDefaultFolderSelections(
     const QString& profilePath) {
     QVector<FolderSelection> selections;
 
-    auto createSelection = [&](FolderType type, const QString& displayName,
-                               const QString& relativePath, bool selected) {
+    auto createSelection = [&](FolderType type,
+                               const QString& displayName,
+                               const QString& relativePath,
+                               bool selected) {
         FolderSelection sel;
         sel.type = type;
         sel.display_name = displayName;
@@ -334,7 +337,7 @@ QVector<FolderSelection> WindowsUserScanner::getDefaultFolderSelections(
             sel.size_bytes = WindowsUserScanner::estimateProfileSize(fullPath);
             // Quick file count
             QDirIterator it(fullPath, QDir::Files, QDirIterator::Subdirectories);
-            while (it.hasNext() && sel.file_count < 10000) {
+            while (it.hasNext() && sel.file_count < 10'000) {
                 it.next();
                 sel.file_count++;
             }
@@ -362,12 +365,18 @@ QVector<FolderSelection> WindowsUserScanner::getDefaultFolderSelections(
 }
 
 qint64 WindowsUserScanner::quickSizeEstimate(const QString& path, int maxDepth) {
-    if (maxDepth <= 0) return 0;
+    Q_ASSERT(!path.isEmpty());
+    Q_ASSERT(maxDepth >= 0);
+    if (maxDepth <= 0) {
+        return 0;
+    }
 
     qint64 size_bytes = 0;
     QDir dir(path);
 
-    if (!dir.exists()) return 0;
+    if (!dir.exists()) {
+        return 0;
+    }
 
     // Get files in current directory
     QFileInfoList files = dir.entryInfoList(QDir::Files | QDir::NoDotAndDotDot);
@@ -386,4 +395,4 @@ qint64 WindowsUserScanner::quickSizeEstimate(const QString& path, int maxDepth) 
     return size_bytes;
 }
 
-} // namespace sak
+}  // namespace sak

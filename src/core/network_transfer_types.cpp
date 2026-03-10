@@ -2,11 +2,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "sak/network_transfer_types.h"
+
 #include "sak/network_constants.h"
 
+#include <QCryptographicHash>
 #include <QJsonArray>
 #include <QJsonDocument>
-#include <QCryptographicHash>
 
 namespace sak {
 
@@ -30,6 +31,7 @@ QJsonObject TransferPeerInfo::toJson() const {
 }
 
 TransferPeerInfo TransferPeerInfo::fromJson(const QJsonObject& json) {
+    Q_ASSERT(!json.isEmpty());
     TransferPeerInfo info;
     info.peer_id = json.value("peer_id").toString();
     info.hostname = json.value("hostname").toString();
@@ -133,6 +135,7 @@ QJsonObject TransferManifest::toJson(bool include_files) const {
 }
 
 TransferManifest TransferManifest::fromJson(const QJsonObject& json) {
+    Q_ASSERT(!json.isEmpty());
     TransferManifest manifest;
     manifest.protocol_version = json.value("protocol_version").toString("1.0");
     manifest.transfer_id = json.value("transfer_id").toString();
@@ -175,4 +178,4 @@ TransferManifest TransferManifest::fromJson(const QJsonObject& json) {
     return manifest;
 }
 
-} // namespace sak
+}  // namespace sak

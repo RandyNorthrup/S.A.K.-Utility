@@ -3,8 +3,8 @@
 
 #pragma once
 
-#include <QWidget>
 #include <QTextEdit>
+#include <QWidget>
 
 class QTimer;
 
@@ -85,4 +85,4 @@ private:
     QString m_label;
 };
 
-} // namespace sak
+}  // namespace sak

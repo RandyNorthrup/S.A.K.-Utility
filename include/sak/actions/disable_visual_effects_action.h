@@ -4,6 +4,7 @@
 #pragma once
 
 #include "sak/quick_action.h"
+
 #include <QJsonObject>
 #include <QString>
 
@@ -58,16 +59,19 @@ private:
 
     /// @brief Builds the optimization summary section of the report.
     /// @return Report section with summary, restart notice, and optimizations list.
-    QString buildSummaryReport(int settings_total, int settings_changed,
-        const QString& fx_mode) const;
+    QString buildSummaryReport(int settings_total,
+                               int settings_changed,
+                               const QString& fx_mode) const;
 
     /// @brief Run apply-settings script and parse CHANGES/TOTAL counts.
     void applyVisualEffectsSettings(QString& report, int& settings_changed, int& settings_total);
     /// @brief Build structured output and finalize the ExecutionResult.
-    void buildAndFinishVisualEffectsResult(const QString& report, int settings_total,
-                                           int settings_changed, bool notification_success,
-                                           const QString& fx_mode, const QDateTime& start_time);
+    void buildAndFinishVisualEffectsResult(const QString& report,
+                                           int settings_total,
+                                           int settings_changed,
+                                           bool notification_success,
+                                           const QString& fx_mode,
+                                           const QDateTime& start_time);
 };
 
-} // namespace sak
-
+}  // namespace sak

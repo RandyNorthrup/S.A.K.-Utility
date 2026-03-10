@@ -5,25 +5,29 @@
 /// @brief Implements the background worker thread for USB image flashing operations
 
 #include "sak/flash_worker.h"
+
 #include "sak/keep_awake.h"
-#include "sak/logger.h"
 #include "sak/layout_constants.h"
-#include <QtGlobal>
-#include <QObject>
-#include <QElapsedTimer>
+#include "sak/logger.h"
+
 #include <QCryptographicHash>
 #include <QDateTime>
+#include <QElapsedTimer>
+#include <QObject>
 #include <QRandomGenerator>
+#include <QtGlobal>
+
 #include <windows.h>
+
 #include <winioctl.h>
 
 #pragma comment(lib, "setupapi.lib")
 
 namespace {
-constexpr qint64 kFlashBufferSize   = 64LL * 1024 * 1024;  // 64 MB
-constexpr qint64 kVerifySampleMax   = 100LL * 1024 * 1024;  // 100 MB
-constexpr qint64 kVerifyBlockSize   = 1024LL * 1024;        // 1 MB
-} // namespace
+constexpr qint64 kFlashBufferSize = 64LL * 1024 * 1024;   // 64 MB
+constexpr qint64 kVerifySampleMax = 100LL * 1024 * 1024;  // 100 MB
+constexpr qint64 kVerifyBlockSize = 1024LL * 1024;        // 1 MB
+}  // namespace
 
 FlashWorker::FlashWorker(std::unique_ptr<ImageSource> imageSource,
                          const QString& targetDevice,
@@ -41,12 +45,9 @@ FlashWorker::FlashWorker(std::unique_ptr<ImageSource> imageSource,
     , m_lastProgressUpdate(0)
     , m_lastSpeedUpdate(0)
     , m_lastSpeedBytes(0)
-    , m_lastVerifyUpdate(0)
-{
-    Q_ASSERT_X(m_imageSource != nullptr, "FlashWorker",
-        "imageSource must not be null");
-    Q_ASSERT_X(!m_targetDevice.isEmpty(), "FlashWorker",
-        "targetDevice must not be empty");
+    , m_lastVerifyUpdate(0) {
+    Q_ASSERT_X(m_imageSource != nullptr, "FlashWorker", "imageSource must not be null");
+    Q_ASSERT_X(!m_targetDevice.isEmpty(), "FlashWorker", "targetDevice must not be empty");
 }
 
 FlashWorker::~FlashWorker() {
@@ -139,15 +140,13 @@ void FlashWorker::cleanupFlashResources() {
 }
 
 bool FlashWorker::openDevice() {
-    m_deviceHandle = CreateFileW(
-        reinterpret_cast<LPCWSTR>(m_targetDevice.utf16()),
-        GENERIC_READ | GENERIC_WRITE,
-        FILE_SHARE_READ | FILE_SHARE_WRITE,
-        nullptr,
-        OPEN_EXISTING,
-        FILE_FLAG_NO_BUFFERING | FILE_FLAG_WRITE_THROUGH,
-        nullptr
-    );
+    m_deviceHandle = CreateFileW(reinterpret_cast<LPCWSTR>(m_targetDevice.utf16()),
+                                 GENERIC_READ | GENERIC_WRITE,
+                                 FILE_SHARE_READ | FILE_SHARE_WRITE,
+                                 nullptr,
+                                 OPEN_EXISTING,
+                                 FILE_FLAG_NO_BUFFERING | FILE_FLAG_WRITE_THROUGH,
+                                 nullptr);
 
     if (m_deviceHandle == INVALID_HANDLE_VALUE) {
         DWORD error = GetLastError();
@@ -168,13 +167,7 @@ void FlashWorker::closeDevice() {
 bool FlashWorker::lockVolume() {
     DWORD bytesReturned = 0;
     if (!DeviceIoControl(
-        m_deviceHandle,
-        FSCTL_LOCK_VOLUME,
-        nullptr, 0,
-        nullptr, 0,
-        &bytesReturned,
-        nullptr))
-    {
+            m_deviceHandle, FSCTL_LOCK_VOLUME, nullptr, 0, nullptr, 0, &bytesReturned, nullptr)) {
         sak::logWarning("Failed to lock volume (may not be mounted)");
         // Not a critical error - drive might not have volumes
     }
@@ -184,26 +177,20 @@ bool FlashWorker::lockVolume() {
 bool FlashWorker::unlockVolume() {
     DWORD bytesReturned = 0;
     DeviceIoControl(
-        m_deviceHandle,
-        FSCTL_UNLOCK_VOLUME,
-        nullptr, 0,
-        nullptr, 0,
-        &bytesReturned,
-        nullptr
-    );
+        m_deviceHandle, FSCTL_UNLOCK_VOLUME, nullptr, 0, nullptr, 0, &bytesReturned, nullptr);
     return true;
 }
 
 bool FlashWorker::dismountVolume() {
     DWORD bytesReturned = 0;
-    if (!DeviceIoControl(
-        m_deviceHandle,
-        FSCTL_DISMOUNT_VOLUME,
-        nullptr, 0,
-        nullptr, 0,
-        &bytesReturned,
-        nullptr))
-    {
+    if (!DeviceIoControl(m_deviceHandle,
+                         FSCTL_DISMOUNT_VOLUME,
+                         nullptr,
+                         0,
+                         nullptr,
+                         0,
+                         &bytesReturned,
+                         nullptr)) {
         sak::logWarning("Failed to dismount volume (may not be mounted)");
         // Not a critical error
     }
@@ -211,6 +198,8 @@ bool FlashWorker::dismountVolume() {
 }
 
 bool FlashWorker::prepareSourceChecksum() {
+    Q_ASSERT(!m_sourceChecksum.isEmpty());
+    Q_ASSERT(m_imageSource);
     if (!m_verificationEnabled || !m_sourceChecksum.isEmpty()) {
         return true;
     }
@@ -233,6 +222,7 @@ bool FlashWorker::prepareSourceChecksum() {
 }
 
 bool FlashWorker::padBufferToSectorSize(QByteArray& buffer, qint64& bytesRead) {
+    Q_ASSERT(!buffer.isEmpty());
     if (bytesRead % 512 == 0) {
         return true;
     }
@@ -255,7 +245,9 @@ bool FlashWorker::padBufferToSectorSize(QByteArray& buffer, qint64& bytesRead) {
     // Verify resize succeeded
     if (buffer.size() != paddedSize) {
         sak::logError(QString("Buffer resize failed: expected %1, got %2")
-            .arg(paddedSize).arg(buffer.size()).toStdString());
+                          .arg(paddedSize)
+                          .arg(buffer.size())
+                          .toStdString());
         return false;
     }
 
@@ -268,6 +260,7 @@ bool FlashWorker::padBufferToSectorSize(QByteArray& buffer, qint64& bytesRead) {
 }
 
 bool FlashWorker::writeImage() {
+    Q_ASSERT(m_imageSource);
     sak::logInfo("Writing image");
 
     if (!prepareSourceChecksum()) {
@@ -304,13 +297,11 @@ bool FlashWorker::writeImage() {
         }
 
         DWORD bytesWrittenThisTime = 0;
-        if (!WriteFile(
-            m_deviceHandle,
-            buffer.data(),
-            static_cast<DWORD>(bytesRead),
-            &bytesWrittenThisTime,
-            nullptr))
-        {
+        if (!WriteFile(m_deviceHandle,
+                       buffer.data(),
+                       static_cast<DWORD>(bytesRead),
+                       &bytesWrittenThisTime,
+                       nullptr)) {
             DWORD error = GetLastError();
             sak::logError(QString("WriteFile failed with error %1").arg(error).toStdString());
             return false;
@@ -326,8 +317,8 @@ bool FlashWorker::writeImage() {
     // Flush buffers and check for failure to prevent silent data loss.
     if (!FlushFileBuffers(m_deviceHandle)) {
         DWORD flushError = GetLastError();
-        sak::logError(QString("FlushFileBuffers failed with error %1")
-            .arg(flushError).toStdString());
+        sak::logError(
+            QString("FlushFileBuffers failed with error %1").arg(flushError).toStdString());
         return false;
     }
 
@@ -378,9 +369,12 @@ sak::ValidationResult FlashWorker::verifyFull() {
     if (result.sourceChecksum != result.targetChecksum) {
         result.passed = false;
         result.errors.append(QString("Checksum mismatch - Source: %1, Target: %2")
-            .arg(result.sourceChecksum).arg(result.targetChecksum));
+                                 .arg(result.sourceChecksum)
+                                 .arg(result.targetChecksum));
         sak::logError(QString("Checksum mismatch - Source: %1, Target: %2")
-            .arg(result.sourceChecksum).arg(result.targetChecksum).toStdString());
+                          .arg(result.sourceChecksum)
+                          .arg(result.targetChecksum)
+                          .toStdString());
     } else {
         result.passed = true;
         sak::logInfo("Verification passed - checksums match");
@@ -396,6 +390,7 @@ sak::ValidationResult FlashWorker::verifyFull() {
 }
 
 sak::ValidationResult FlashWorker::verifySample() {
+    Q_ASSERT(m_imageSource);
     sak::logInfo("Starting sample verification");
 
     sak::ValidationResult result;
@@ -411,7 +406,9 @@ sak::ValidationResult FlashWorker::verifySample() {
     }
 
     sak::logInfo(QString("Verifying %1 sample blocks (%2 MB)")
-        .arg(numSamples).arg(sampleSize / sak::kBytesPerMB).toStdString());
+                     .arg(numSamples)
+                     .arg(sampleSize / sak::kBytesPerMB)
+                     .toStdString());
 
     QElapsedTimer timer;
     timer.start();
@@ -437,8 +434,7 @@ sak::ValidationResult FlashWorker::verifySample() {
     }
 
     int samplesVerified = verifySampleBlocks(
-        result, numSamples, blockSize, totalBlocks, sampleSize,
-        sourceBuffer, targetBuffer);
+        result, numSamples, blockSize, totalBlocks, sampleSize, sourceBuffer, targetBuffer);
 
     // Calculate speed
     qint64 elapsed_ms = timer.elapsed();
@@ -447,16 +443,21 @@ sak::ValidationResult FlashWorker::verifySample() {
     }
 
     sak::logInfo(QString("Sample verification complete - %1/%2 blocks verified, %3 mismatches")
-        .arg(samplesVerified).arg(numSamples).arg(result.corruptedBlocks).toStdString());
+                     .arg(samplesVerified)
+                     .arg(numSamples)
+                     .arg(result.corruptedBlocks)
+                     .toStdString());
 
     return result;
 }
 
-int FlashWorker::verifySampleBlocks(
-    sak::ValidationResult& result, int numSamples,
-    qint64 blockSize, qint64 totalBlocks, qint64 sampleSize,
-    QByteArray& sourceBuffer, QByteArray& targetBuffer)
-{
+int FlashWorker::verifySampleBlocks(sak::ValidationResult& result,
+                                    int numSamples,
+                                    qint64 blockSize,
+                                    qint64 totalBlocks,
+                                    qint64 sampleSize,
+                                    QByteArray& sourceBuffer,
+                                    QByteArray& targetBuffer) {
     int samplesVerified = 0;
 
     for (int i = 0; i < numSamples && !stopRequested(); ++i) {
@@ -487,10 +488,13 @@ int FlashWorker::verifySampleBlocks(
         }
 
         DWORD bytesReadFromDevice = 0;
-        if (!ReadFile(m_deviceHandle, targetBuffer.data(),
-                     static_cast<DWORD>(bytesRead), &bytesReadFromDevice, nullptr)) {
-            result.errors.append(QString("Failed to read from device at offset %1")
-                .arg(offset_bytes));
+        if (!ReadFile(m_deviceHandle,
+                      targetBuffer.data(),
+                      static_cast<DWORD>(bytesRead),
+                      &bytesReadFromDevice,
+                      nullptr)) {
+            result.errors.append(
+                QString("Failed to read from device at offset %1").arg(offset_bytes));
             continue;
         }
 
@@ -511,6 +515,7 @@ int FlashWorker::verifySampleBlocks(
 }
 
 QString FlashWorker::calculateChecksum(HANDLE handle, qint64 size) {
+    Q_ASSERT(size >= 0);
     sak::logInfo("Calculating device checksum");
 
     // Seek to beginning
@@ -559,6 +564,8 @@ QString FlashWorker::calculateChecksum(HANDLE handle, qint64 size) {
 }
 
 void FlashWorker::updateVerificationProgress(qint64 bytesVerified, qint64 totalBytes) {
+    Q_ASSERT(bytesVerified >= 0);
+    Q_ASSERT(totalBytes >= 0);
     qint64 now = QDateTime::currentMSecsSinceEpoch();
 
     // Throttle updates to once per 100ms
@@ -577,6 +584,7 @@ void FlashWorker::updateVerificationProgress(qint64 bytesVerified, qint64 totalB
 }
 
 void FlashWorker::updateProgress(qint64 bytesWritten) {
+    Q_ASSERT(bytesWritten >= 0);
     qint64 now = QDateTime::currentMSecsSinceEpoch();
 
     // Throttle updates to once per 100ms
@@ -595,6 +603,7 @@ void FlashWorker::updateProgress(qint64 bytesWritten) {
 }
 
 void FlashWorker::updateSpeed(qint64 bytesWritten) {
+    Q_ASSERT(bytesWritten >= 0);
     qint64 now = QDateTime::currentMSecsSinceEpoch();
 
     // Calculate speed every second
@@ -613,13 +622,3 @@ void FlashWorker::updateSpeed(qint64 bytesWritten) {
     m_lastSpeedUpdate = now;
     m_lastSpeedBytes = m_bytesWritten;
 }
-
-
-
-
-
-
-
-
-
-

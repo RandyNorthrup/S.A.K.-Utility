@@ -5,17 +5,18 @@
 /// @brief Diagnostic report generation implementation (HTML, JSON, CSV)
 
 #include "sak/diagnostic_report_generator.h"
-#include "sak/format_utils.h"
-#include "sak/logger.h"
-#include "sak/layout_constants.h"
 
-#include <QtGlobal>
+#include "sak/format_utils.h"
+#include "sak/layout_constants.h"
+#include "sak/logger.h"
+
 #include <QDir>
 #include <QFile>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QTextStream>
+#include <QtGlobal>
 
 namespace sak {
 
@@ -24,8 +25,7 @@ namespace {
 /// @brief Escape a value for CSV output (RFC 4180 compliant)
 /// If the value contains commas, quotes, or newlines, wrap in quotes and
 /// double any embedded quotes.
-QString csvEscape(const QString& value)
-{
+QString csvEscape(const QString& value) {
     if (value.contains(QLatin1Char(',')) || value.contains(QLatin1Char('"')) ||
         value.contains(QLatin1Char('\n'))) {
         QString escaped = value;
@@ -35,23 +35,20 @@ QString csvEscape(const QString& value)
     return value;
 }
 
-} // anonymous namespace
+}  // anonymous namespace
 
 // ============================================================================
 // Construction
 // ============================================================================
 
-DiagnosticReportGenerator::DiagnosticReportGenerator(QObject* parent)
-    : QObject(parent)
-{
-}
+DiagnosticReportGenerator::DiagnosticReportGenerator(QObject* parent) : QObject(parent) {}
 
 // ============================================================================
 // Public API
 // ============================================================================
 
-bool DiagnosticReportGenerator::generateHtml(const QString& output_path)
-{
+bool DiagnosticReportGenerator::generateHtml(const QString& output_path) {
+    Q_ASSERT(!output_path.isEmpty());
     Q_ASSERT_X(!output_path.isEmpty(), "generateHtml", "output_path must not be empty");
     const QString html = renderHtml();
     if (html.isEmpty()) {
@@ -67,8 +64,8 @@ bool DiagnosticReportGenerator::generateHtml(const QString& output_path)
 
     QFile file(output_path);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
-        const QString err = QString("Failed to open %1 for writing: %2")
-                                .arg(output_path, file.errorString());
+        const QString err =
+            QString("Failed to open %1 for writing: %2").arg(output_path, file.errorString());
         Q_EMIT errorOccurred(err);
         logError("{}", err.toStdString());
         return false;
@@ -84,8 +81,8 @@ bool DiagnosticReportGenerator::generateHtml(const QString& output_path)
     return true;
 }
 
-bool DiagnosticReportGenerator::generateJson(const QString& output_path)
-{
+bool DiagnosticReportGenerator::generateJson(const QString& output_path) {
+    Q_ASSERT(!output_path.isEmpty());
     Q_ASSERT_X(!output_path.isEmpty(), "generateJson", "output_path must not be empty");
     QJsonObject root;
 
@@ -100,9 +97,9 @@ bool DiagnosticReportGenerator::generateJson(const QString& output_path)
 
     // OS
     QJsonObject os;
-    os["name"]         = m_data.inventory.os_name;
-    os["version"]      = m_data.inventory.os_version;
-    os["build"]        = m_data.inventory.os_build;
+    os["name"] = m_data.inventory.os_name;
+    os["version"] = m_data.inventory.os_version;
+    os["build"] = m_data.inventory.os_build;
     os["architecture"] = m_data.inventory.os_architecture;
     hw["os"] = os;
 
@@ -114,23 +111,29 @@ bool DiagnosticReportGenerator::generateJson(const QString& output_path)
     if (m_data.stress_test.has_value()) {
         const auto& st = m_data.stress_test.value();
         QJsonObject stress;
-        stress["passed"]           = st.passed;
+        stress["passed"] = st.passed;
         stress["duration_seconds"] = st.duration_seconds;
-        stress["errors"]           = st.errors_detected;
-        stress["max_cpu_temp"]     = st.max_cpu_temp;
-        stress["throttle_events"]  = st.thermal_throttle_events;
-        stress["abort_reason"]     = st.abort_reason;
+        stress["errors"] = st.errors_detected;
+        stress["max_cpu_temp"] = st.max_cpu_temp;
+        stress["throttle_events"] = st.thermal_throttle_events;
+        stress["abort_reason"] = st.abort_reason;
         root["stress_test"] = stress;
     }
 
     // Issues and recommendations
     QJsonArray critical_arr, warn_arr, rec_arr;
-    for (const auto& issue : m_data.critical_issues) critical_arr.append(issue);
-    for (const auto& warning : m_data.warnings) warn_arr.append(warning);
-    for (const auto& recommendation : m_data.recommendations) rec_arr.append(recommendation);
-    root["critical_issues"]  = critical_arr;
-    root["warnings"]         = warn_arr;
-    root["recommendations"]  = rec_arr;
+    for (const auto& issue : m_data.critical_issues) {
+        critical_arr.append(issue);
+    }
+    for (const auto& warning : m_data.warnings) {
+        warn_arr.append(warning);
+    }
+    for (const auto& recommendation : m_data.recommendations) {
+        rec_arr.append(recommendation);
+    }
+    root["critical_issues"] = critical_arr;
+    root["warnings"] = warn_arr;
+    root["recommendations"] = rec_arr;
 
     // Write to file
     const QString json_dir = QFileInfo(output_path).absolutePath();
@@ -159,104 +162,98 @@ bool DiagnosticReportGenerator::generateJson(const QString& output_path)
 // JSON Section Serializers
 // ============================================================================
 
-QJsonObject DiagnosticReportGenerator::serializeMetadataSection() const
-{
+QJsonObject DiagnosticReportGenerator::serializeMetadataSection() const {
     QJsonObject meta;
     meta["generated_at"] = m_data.report_timestamp.toString(Qt::ISODate);
-    meta["technician"]   = m_data.technician_name;
-    meta["ticket"]       = m_data.ticket_number;
-    meta["notes"]        = m_data.notes;
-    meta["overall_status"] = (m_data.overall_status == DiagnosticStatus::AllPassed)
-                                 ? "PASSED"
-                                 : (m_data.overall_status == DiagnosticStatus::Warnings)
-                                       ? "WARNINGS"
-                                       : "CRITICAL";
+    meta["technician"] = m_data.technician_name;
+    meta["ticket"] = m_data.ticket_number;
+    meta["notes"] = m_data.notes;
+    meta["overall_status"] = (m_data.overall_status == DiagnosticStatus::AllPassed)  ? "PASSED"
+                             : (m_data.overall_status == DiagnosticStatus::Warnings) ? "WARNINGS"
+                                                                                     : "CRITICAL";
     return meta;
 }
 
-QJsonObject DiagnosticReportGenerator::serializeCpuSection() const
-{
+QJsonObject DiagnosticReportGenerator::serializeCpuSection() const {
     const auto& inv = m_data.inventory;
     QJsonObject cpu;
-    cpu["name"]         = inv.cpu.name;
+    cpu["name"] = inv.cpu.name;
     cpu["manufacturer"] = inv.cpu.manufacturer;
-    cpu["cores"]        = static_cast<int>(inv.cpu.cores);
-    cpu["threads"]      = static_cast<int>(inv.cpu.threads);
-    cpu["base_clock_mhz"]  = static_cast<int>(inv.cpu.base_clock_mhz);
-    cpu["max_clock_mhz"]   = static_cast<int>(inv.cpu.max_clock_mhz);
-    cpu["l2_cache_kb"]     = static_cast<int>(inv.cpu.l2_cache_kb);
-    cpu["l3_cache_kb"]     = static_cast<int>(inv.cpu.l3_cache_kb);
-    cpu["architecture"]    = inv.cpu.architecture;
+    cpu["cores"] = static_cast<int>(inv.cpu.cores);
+    cpu["threads"] = static_cast<int>(inv.cpu.threads);
+    cpu["base_clock_mhz"] = static_cast<int>(inv.cpu.base_clock_mhz);
+    cpu["max_clock_mhz"] = static_cast<int>(inv.cpu.max_clock_mhz);
+    cpu["l2_cache_kb"] = static_cast<int>(inv.cpu.l2_cache_kb);
+    cpu["l3_cache_kb"] = static_cast<int>(inv.cpu.l3_cache_kb);
+    cpu["architecture"] = inv.cpu.architecture;
     return cpu;
 }
 
-QJsonObject DiagnosticReportGenerator::serializeMemorySection() const
-{
+QJsonObject DiagnosticReportGenerator::serializeMemorySection() const {
     const auto& inv = m_data.inventory;
     QJsonObject mem;
     mem["total_gb"] = static_cast<double>(inv.memory.total_bytes) / sak::kBytesPerGBf;
-    mem["slots_used"]  = static_cast<int>(inv.memory.slots_used);
+    mem["slots_used"] = static_cast<int>(inv.memory.slots_used);
     mem["slots_total"] = static_cast<int>(inv.memory.slots_total);
 
     QJsonArray modules;
     for (const auto& mod : inv.memory.modules) {
         QJsonObject m;
         m["manufacturer"] = mod.manufacturer;
-        m["part_number"]  = mod.part_number;
-        m["capacity_gb"]  = static_cast<double>(mod.capacity_bytes) / sak::kBytesPerGBf;
-        m["speed_mhz"]    = static_cast<int>(mod.speed_mhz);
-        m["type"]         = mod.memory_type;
-        m["form_factor"]  = mod.form_factor;
+        m["part_number"] = mod.part_number;
+        m["capacity_gb"] = static_cast<double>(mod.capacity_bytes) / sak::kBytesPerGBf;
+        m["speed_mhz"] = static_cast<int>(mod.speed_mhz);
+        m["type"] = mod.memory_type;
+        m["form_factor"] = mod.form_factor;
         modules.append(m);
     }
     mem["modules"] = modules;
     return mem;
 }
 
-QJsonArray DiagnosticReportGenerator::serializeStorageSection() const
-{
+QJsonArray DiagnosticReportGenerator::serializeStorageSection() const {
     QJsonArray storage_arr;
     for (const auto& dev : m_data.inventory.storage) {
         QJsonObject d;
-        d["model"]       = dev.model;
-        d["serial"]      = dev.serial_number;
-        d["size_gb"]     = static_cast<double>(dev.size_bytes) / sak::kBytesPerGBf;
-        d["interface"]   = dev.interface_type;
-        d["media_type"]  = dev.media_type;
-        d["firmware"]    = dev.firmware_version;
+        d["model"] = dev.model;
+        d["serial"] = dev.serial_number;
+        d["size_gb"] = static_cast<double>(dev.size_bytes) / sak::kBytesPerGBf;
+        d["interface"] = dev.interface_type;
+        d["media_type"] = dev.media_type;
+        d["firmware"] = dev.firmware_version;
         storage_arr.append(d);
     }
     return storage_arr;
 }
 
-QJsonArray DiagnosticReportGenerator::serializeGpuSection() const
-{
+QJsonArray DiagnosticReportGenerator::serializeGpuSection() const {
     QJsonArray gpu_arr;
     for (const auto& gpu : m_data.inventory.gpus) {
         QJsonObject g;
-        g["name"]           = gpu.name;
-        g["manufacturer"]   = gpu.manufacturer;
-        g["vram_gb"]        = static_cast<double>(gpu.vram_bytes) / sak::kBytesPerGBf;
+        g["name"] = gpu.name;
+        g["manufacturer"] = gpu.manufacturer;
+        g["vram_gb"] = static_cast<double>(gpu.vram_bytes) / sak::kBytesPerGBf;
         g["driver_version"] = gpu.driver_version;
         gpu_arr.append(g);
     }
     return gpu_arr;
 }
 
-QJsonArray DiagnosticReportGenerator::serializeSmartSection() const
-{
+QJsonArray DiagnosticReportGenerator::serializeSmartSection() const {
     QJsonArray smart_arr;
     for (const auto& report : m_data.smart_reports) {
         QJsonObject s;
-        s["device"]    = report.device_path;
-        s["model"]     = report.model;
-        s["serial"]    = report.serial_number;
-        s["status"]    = healthStatusText(report.overall_health);
-        s["temp_c"]    = report.temperature_celsius;
+        s["device"] = report.device_path;
+        s["model"] = report.model;
+        s["serial"] = report.serial_number;
+        s["status"] = healthStatusText(report.overall_health);
+        s["temp_c"] = report.temperature_celsius;
         s["power_on_hours"] = static_cast<qint64>(report.power_on_hours);
 
         QJsonArray warnings;
-        for (const auto& warning : report.warnings) warnings.append(warning);
+        for (const auto& warning : report.warnings) {
+            warnings.append(warning);
+        }
         s["warnings"] = warnings;
 
         smart_arr.append(s);
@@ -264,49 +261,48 @@ QJsonArray DiagnosticReportGenerator::serializeSmartSection() const
     return smart_arr;
 }
 
-QJsonObject DiagnosticReportGenerator::serializeBenchmarkSection() const
-{
+QJsonObject DiagnosticReportGenerator::serializeBenchmarkSection() const {
     QJsonObject benchmarks;
     if (m_data.cpu_benchmark.has_value()) {
         const auto& cb = m_data.cpu_benchmark.value();
         QJsonObject cpu_bench;
         cpu_bench["single_thread_score"] = cb.single_thread_score;
-        cpu_bench["multi_thread_score"]  = cb.multi_thread_score;
-        cpu_bench["thread_scaling"]      = cb.thread_scaling_efficiency;
-        cpu_bench["prime_sieve_ms"]      = cb.prime_sieve_time_ms;
-        cpu_bench["matrix_multiply_ms"]  = cb.matrix_multiply_time_ms;
-        cpu_bench["zlib_mbps"]           = cb.zlib_throughput_mbps;
-        cpu_bench["aes_mbps"]            = cb.aes_throughput_mbps;
+        cpu_bench["multi_thread_score"] = cb.multi_thread_score;
+        cpu_bench["thread_scaling"] = cb.thread_scaling_efficiency;
+        cpu_bench["prime_sieve_ms"] = cb.prime_sieve_time_ms;
+        cpu_bench["matrix_multiply_ms"] = cb.matrix_multiply_time_ms;
+        cpu_bench["zlib_mbps"] = cb.zlib_throughput_mbps;
+        cpu_bench["aes_mbps"] = cb.aes_throughput_mbps;
         benchmarks["cpu"] = cpu_bench;
     }
 
     if (m_data.disk_benchmark.has_value()) {
         const auto& db = m_data.disk_benchmark.value();
         QJsonObject disk_bench;
-        disk_bench["drive"]            = db.drive_path;
-        disk_bench["seq_read_mbps"]    = db.seq_read_mbps;
-        disk_bench["seq_write_mbps"]   = db.seq_write_mbps;
-        disk_bench["rand_4k_read_iops"]  = db.rand_4k_read_iops;
+        disk_bench["drive"] = db.drive_path;
+        disk_bench["seq_read_mbps"] = db.seq_read_mbps;
+        disk_bench["seq_write_mbps"] = db.seq_write_mbps;
+        disk_bench["rand_4k_read_iops"] = db.rand_4k_read_iops;
         disk_bench["rand_4k_write_iops"] = db.rand_4k_write_iops;
-        disk_bench["score"]            = db.overall_score;
+        disk_bench["score"] = db.overall_score;
         benchmarks["disk"] = disk_bench;
     }
 
     if (m_data.memory_benchmark.has_value()) {
         const auto& mb = m_data.memory_benchmark.value();
         QJsonObject mem_bench;
-        mem_bench["read_gbps"]     = mb.read_bandwidth_gbps;
-        mem_bench["write_gbps"]    = mb.write_bandwidth_gbps;
-        mem_bench["copy_gbps"]     = mb.copy_bandwidth_gbps;
-        mem_bench["latency_ns"]    = mb.random_latency_ns;
-        mem_bench["score"]         = mb.overall_score;
+        mem_bench["read_gbps"] = mb.read_bandwidth_gbps;
+        mem_bench["write_gbps"] = mb.write_bandwidth_gbps;
+        mem_bench["copy_gbps"] = mb.copy_bandwidth_gbps;
+        mem_bench["latency_ns"] = mb.random_latency_ns;
+        mem_bench["score"] = mb.overall_score;
         benchmarks["memory"] = mem_bench;
     }
     return benchmarks;
 }
 
-bool DiagnosticReportGenerator::generateCsv(const QString& output_path)
-{
+bool DiagnosticReportGenerator::generateCsv(const QString& output_path) {
+    Q_ASSERT(!output_path.isEmpty());
     Q_ASSERT_X(!output_path.isEmpty(), "generateCsv", "output_path must not be empty");
     const QString csv_dir = QFileInfo(output_path).absolutePath();
     if (!QDir().mkpath(csv_dir)) {
@@ -335,8 +331,7 @@ bool DiagnosticReportGenerator::generateCsv(const QString& output_path)
 // CSV Section Writers (TigerStyle decomposition)
 // ============================================================================
 
-void DiagnosticReportGenerator::writeCsvHardwareSummary(QTextStream& out) const
-{
+void DiagnosticReportGenerator::writeCsvHardwareSummary(QTextStream& out) const {
     out << "Section,Property,Value\n";
     out << "CPU,Name," << csvEscape(m_data.inventory.cpu.name) << "\n";
     out << "CPU,Cores," << m_data.inventory.cpu.cores << "\n";
@@ -345,8 +340,8 @@ void DiagnosticReportGenerator::writeCsvHardwareSummary(QTextStream& out) const
     out << "CPU,Max Clock (MHz)," << m_data.inventory.cpu.max_clock_mhz << "\n";
 
     out << "Memory,Total (GB),"
-        << QString::number(static_cast<double>(m_data.inventory.memory.total_bytes) /
-                           sak::kBytesPerGBf, 'f', 1)
+        << QString::number(
+               static_cast<double>(m_data.inventory.memory.total_bytes) / sak::kBytesPerGBf, 'f', 1)
         << "\n";
     out << "Memory,Slots Used," << m_data.inventory.memory.slots_used << "\n";
     out << "Memory,Slots Total," << m_data.inventory.memory.slots_total << "\n";
@@ -372,21 +367,17 @@ void DiagnosticReportGenerator::writeCsvHardwareSummary(QTextStream& out) const
     out << "OS,Build," << csvEscape(m_data.inventory.os_build) << "\n";
 }
 
-void DiagnosticReportGenerator::writeCsvSmartHealth(QTextStream& out) const
-{
+void DiagnosticReportGenerator::writeCsvSmartHealth(QTextStream& out) const {
     out << "\nSMART Health\n";
     out << "Device,Model,Status,Temperature (C),Power-On Hours\n";
     for (const auto& report : m_data.smart_reports) {
-        out << csvEscape(report.device_path) << ","
-            << csvEscape(report.model) << ","
-            << healthStatusText(report.overall_health) << ","
-            << report.temperature_celsius << ","
+        out << csvEscape(report.device_path) << "," << csvEscape(report.model) << ","
+            << healthStatusText(report.overall_health) << "," << report.temperature_celsius << ","
             << report.power_on_hours << "\n";
     }
 }
 
-void DiagnosticReportGenerator::writeCsvBenchmarks(QTextStream& out) const
-{
+void DiagnosticReportGenerator::writeCsvBenchmarks(QTextStream& out) const {
     out << "\nBenchmark Results\n";
     if (m_data.cpu_benchmark.has_value()) {
         const auto& cb = m_data.cpu_benchmark.value();
@@ -425,10 +416,9 @@ void DiagnosticReportGenerator::writeCsvBenchmarks(QTextStream& out) const
 // HTML Rendering
 // ============================================================================
 
-QString DiagnosticReportGenerator::renderHtml() const
-{
+QString DiagnosticReportGenerator::renderHtml() const {
     QString html;
-    html.reserve(32768);
+    html.reserve(32'768);
 
     html += buildHtmlHeader();
     html += "<body>\n";
@@ -452,16 +442,15 @@ QString DiagnosticReportGenerator::renderHtml() const
     // Overall status banner
     const QString status_class = (m_data.overall_status == DiagnosticStatus::AllPassed)
                                      ? "status-healthy"
-                                     : (m_data.overall_status == DiagnosticStatus::Warnings)
-                                           ? "status-warning"
-                                           : "status-critical";
+                                 : (m_data.overall_status == DiagnosticStatus::Warnings)
+                                     ? "status-warning"
+                                     : "status-critical";
     const QString status_text = (m_data.overall_status == DiagnosticStatus::AllPassed)
                                     ? "ALL TESTS PASSED"
-                                    : (m_data.overall_status == DiagnosticStatus::Warnings)
-                                          ? "WARNINGS DETECTED"
-                                          : "CRITICAL ISSUES FOUND";
-    html += QString("<div class=\"overall-status %1\">%2</div>\n")
-                .arg(status_class, status_text);
+                                : (m_data.overall_status == DiagnosticStatus::Warnings)
+                                    ? "WARNINGS DETECTED"
+                                    : "CRITICAL ISSUES FOUND";
+    html += QString("<div class=\"overall-status %1\">%2</div>\n").arg(status_class, status_text);
 
     html += buildHardwareSection();
     html += buildSmartSection();
@@ -481,8 +470,7 @@ QString DiagnosticReportGenerator::renderHtml() const
     return html;
 }
 
-QString DiagnosticReportGenerator::buildHtmlHeader() const
-{
+QString DiagnosticReportGenerator::buildHtmlHeader() const {
     return R"(<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -522,8 +510,7 @@ QString DiagnosticReportGenerator::buildHtmlHeader() const
 )";
 }
 
-QString DiagnosticReportGenerator::buildHardwareSection() const
-{
+QString DiagnosticReportGenerator::buildHardwareSection() const {
     const auto& inv = m_data.inventory;
     QString html;
 
@@ -532,17 +519,21 @@ QString DiagnosticReportGenerator::buildHardwareSection() const
     html += "<tr><th colspan=\"2\">CPU</th></tr>\n";
     html += QString("<tr><td>Model</td><td>%1</td></tr>\n").arg(inv.cpu.name.toHtmlEscaped());
     html += QString("<tr><td>Cores / Threads</td><td>%1 / %2</td></tr>\n")
-                .arg(inv.cpu.cores).arg(inv.cpu.threads);
+                .arg(inv.cpu.cores)
+                .arg(inv.cpu.threads);
     html += QString("<tr><td>Clock Speed</td><td>%1 MHz (max %2 MHz)</td></tr>\n")
-                .arg(inv.cpu.base_clock_mhz).arg(inv.cpu.max_clock_mhz);
+                .arg(inv.cpu.base_clock_mhz)
+                .arg(inv.cpu.max_clock_mhz);
     html += QString("<tr><td>Cache</td><td>L2: %1 KB | L3: %2 KB</td></tr>\n")
-                .arg(inv.cpu.l2_cache_kb).arg(inv.cpu.l3_cache_kb);
+                .arg(inv.cpu.l2_cache_kb)
+                .arg(inv.cpu.l3_cache_kb);
 
     html += "<tr><th colspan=\"2\">Memory</th></tr>\n";
-    html += QString("<tr><td>Total</td><td>%1</td></tr>\n")
-                .arg(formatBytes(inv.memory.total_bytes));
+    html +=
+        QString("<tr><td>Total</td><td>%1</td></tr>\n").arg(formatBytes(inv.memory.total_bytes));
     html += QString("<tr><td>Slots</td><td>%1 of %2 used</td></tr>\n")
-                .arg(inv.memory.slots_used).arg(inv.memory.slots_total);
+                .arg(inv.memory.slots_used)
+                .arg(inv.memory.slots_total);
 
     for (const auto& mod : inv.memory.modules) {
         html += QString("<tr><td>Slot %1</td><td>%2 %3 %4 @ %5 MHz</td></tr>\n")
@@ -572,7 +563,8 @@ QString DiagnosticReportGenerator::buildHardwareSection() const
 
     html += "<tr><th colspan=\"2\">System</th></tr>\n";
     html += QString("<tr><td>OS</td><td>%1 (Build %2)</td></tr>\n")
-                .arg(inv.os_name.toHtmlEscaped()).arg(inv.os_build);
+                .arg(inv.os_name.toHtmlEscaped())
+                .arg(inv.os_build);
     html += QString("<tr><td>Motherboard</td><td>%1 %2</td></tr>\n")
                 .arg(inv.motherboard.manufacturer.toHtmlEscaped())
                 .arg(inv.motherboard.product.toHtmlEscaped());
@@ -581,9 +573,10 @@ QString DiagnosticReportGenerator::buildHardwareSection() const
     return html;
 }
 
-QString DiagnosticReportGenerator::buildSmartSection() const
-{
-    if (m_data.smart_reports.isEmpty()) return {};
+QString DiagnosticReportGenerator::buildSmartSection() const {
+    if (m_data.smart_reports.isEmpty()) {
+        return {};
+    }
 
     QString html;
     html += "<h2>Disk Health (SMART)</h2>\n";
@@ -592,9 +585,10 @@ QString DiagnosticReportGenerator::buildSmartSection() const
 
     for (const auto& report : m_data.smart_reports) {
         const QString badge_class = "badge " + healthStatusCssClass(report.overall_health);
-        html += QString("<tr><td>%1</td><td>%2</td>"
-                        "<td><span class=\"%3\">%4</span></td>"
-                        "<td>%5°C</td><td>%6 hrs</td></tr>\n")
+        html += QString(
+                    "<tr><td>%1</td><td>%2</td>"
+                    "<td><span class=\"%3\">%4</span></td>"
+                    "<td>%5°C</td><td>%6 hrs</td></tr>\n")
                     .arg(report.device_path.toHtmlEscaped())
                     .arg(report.model.toHtmlEscaped())
                     .arg(badge_class)
@@ -608,8 +602,8 @@ QString DiagnosticReportGenerator::buildSmartSection() const
     // Warnings from SMART
     for (const auto& report : m_data.smart_reports) {
         if (!report.warnings.isEmpty()) {
-            html += QString("<p><strong>%1:</strong></p>\n<ul>\n")
-                        .arg(report.model.toHtmlEscaped());
+            html +=
+                QString("<p><strong>%1:</strong></p>\n<ul>\n").arg(report.model.toHtmlEscaped());
             for (const auto& warning : report.warnings) {
                 html += QString("<li>%1</li>\n").arg(warning.toHtmlEscaped());
             }
@@ -620,14 +614,14 @@ QString DiagnosticReportGenerator::buildSmartSection() const
     return html;
 }
 
-QString DiagnosticReportGenerator::buildBenchmarkSection() const
-{
+QString DiagnosticReportGenerator::buildBenchmarkSection() const {
     QString html;
 
-    bool has_any = m_data.cpu_benchmark.has_value() ||
-                   m_data.disk_benchmark.has_value() ||
+    bool has_any = m_data.cpu_benchmark.has_value() || m_data.disk_benchmark.has_value() ||
                    m_data.memory_benchmark.has_value();
-    if (!has_any) return {};
+    if (!has_any) {
+        return {};
+    }
 
     html += "<h2>Benchmark Results</h2>\n";
 
@@ -661,8 +655,8 @@ QString DiagnosticReportGenerator::buildBenchmarkSection() const
                     .arg(db.rand_4k_read_iops, 0, 'f', 0);
         html += QString("<tr><td>Random 4K Write (QD1)</td><td>%1 IOPS</td></tr>\n")
                     .arg(db.rand_4k_write_iops, 0, 'f', 0);
-        html += QString("<tr><td>Score</td><td class=\"score\">%1</td></tr>\n")
-                    .arg(db.overall_score);
+        html +=
+            QString("<tr><td>Score</td><td class=\"score\">%1</td></tr>\n").arg(db.overall_score);
         html += "</table>\n";
     }
 
@@ -678,17 +672,18 @@ QString DiagnosticReportGenerator::buildBenchmarkSection() const
                     .arg(mb.copy_bandwidth_gbps, 0, 'f', 1);
         html += QString("<tr><td>Random Latency</td><td>%1 ns</td></tr>\n")
                     .arg(mb.random_latency_ns, 0, 'f', 1);
-        html += QString("<tr><td>Score</td><td class=\"score\">%1</td></tr>\n")
-                    .arg(mb.overall_score);
+        html +=
+            QString("<tr><td>Score</td><td class=\"score\">%1</td></tr>\n").arg(mb.overall_score);
         html += "</table>\n";
     }
 
     return html;
 }
 
-QString DiagnosticReportGenerator::buildStressTestSection() const
-{
-    if (!m_data.stress_test.has_value()) return {};
+QString DiagnosticReportGenerator::buildStressTestSection() const {
+    if (!m_data.stress_test.has_value()) {
+        return {};
+    }
 
     const auto& st = m_data.stress_test.value();
     QString html;
@@ -696,7 +691,7 @@ QString DiagnosticReportGenerator::buildStressTestSection() const
     html += "<h2>Stress Test Results</h2>\n";
 
     const QString result_class = st.passed ? "status-healthy" : "status-critical";
-    const QString result_text  = st.passed ? "PASSED" : "FAILED";
+    const QString result_text = st.passed ? "PASSED" : "FAILED";
     html += QString("<div class=\"overall-status %1\">Stress Test: %2</div>\n")
                 .arg(result_class, result_text);
 
@@ -717,10 +712,8 @@ QString DiagnosticReportGenerator::buildStressTestSection() const
     return html;
 }
 
-QString DiagnosticReportGenerator::buildRecommendationsSection() const
-{
-    if (m_data.critical_issues.isEmpty() &&
-        m_data.warnings.isEmpty() &&
+QString DiagnosticReportGenerator::buildRecommendationsSection() const {
+    if (m_data.critical_issues.isEmpty() && m_data.warnings.isEmpty() &&
         m_data.recommendations.isEmpty()) {
         return {};
     }
@@ -759,31 +752,36 @@ QString DiagnosticReportGenerator::buildRecommendationsSection() const
 // Helpers
 // ============================================================================
 
-QString DiagnosticReportGenerator::healthStatusCssClass(SmartHealthStatus status)
-{
+QString DiagnosticReportGenerator::healthStatusCssClass(SmartHealthStatus status) {
     switch (status) {
-        case SmartHealthStatus::Healthy:  return "badge-healthy";
-        case SmartHealthStatus::Warning:  return "badge-warning";
-        case SmartHealthStatus::Critical: return "badge-critical";
-        case SmartHealthStatus::Unknown:  return "badge-unknown";
+    case SmartHealthStatus::Healthy:
+        return "badge-healthy";
+    case SmartHealthStatus::Warning:
+        return "badge-warning";
+    case SmartHealthStatus::Critical:
+        return "badge-critical";
+    case SmartHealthStatus::Unknown:
+        return "badge-unknown";
     }
     return "badge-unknown";
 }
 
-QString DiagnosticReportGenerator::healthStatusText(SmartHealthStatus status)
-{
+QString DiagnosticReportGenerator::healthStatusText(SmartHealthStatus status) {
     switch (status) {
-        case SmartHealthStatus::Healthy:  return "Healthy";
-        case SmartHealthStatus::Warning:  return "Warning";
-        case SmartHealthStatus::Critical: return "Critical";
-        case SmartHealthStatus::Unknown:  return "Unknown";
+    case SmartHealthStatus::Healthy:
+        return "Healthy";
+    case SmartHealthStatus::Warning:
+        return "Warning";
+    case SmartHealthStatus::Critical:
+        return "Critical";
+    case SmartHealthStatus::Unknown:
+        return "Unknown";
     }
     return "Unknown";
 }
 
-QString DiagnosticReportGenerator::formatBytes(uint64_t bytes)
-{
+QString DiagnosticReportGenerator::formatBytes(uint64_t bytes) {
     return sak::formatBytes(bytes);
 }
 
-} // namespace sak
+}  // namespace sak

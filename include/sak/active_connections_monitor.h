@@ -26,13 +26,13 @@ class ActiveConnectionsMonitor : public QObject {
 
 public:
     struct MonitorConfig {
-        int refreshIntervalMs      = netdiag::kDefaultConnRefreshMs;
-        bool resolveHostnames      = false;
-        bool resolveProcessNames   = true;
-        bool showTcp               = true;
-        bool showUdp               = true;
+        int refreshIntervalMs = netdiag::kDefaultConnRefreshMs;
+        bool resolveHostnames = false;
+        bool resolveProcessNames = true;
+        bool showTcp = true;
+        bool showUdp = true;
         QString filterProcessName;
-        uint16_t filterPort        = 0;
+        uint16_t filterPort = 0;
     };
 
     explicit ActiveConnectionsMonitor(QObject* parent = nullptr);
@@ -77,7 +77,7 @@ private:
     void detectChanges(const QVector<ConnectionInfo>& current);
 };
 
-} // namespace sak
+}  // namespace sak
 
 static_assert(!std::is_copy_constructible_v<sak::ActiveConnectionsMonitor>,
-    "ActiveConnectionsMonitor must not be copyable.");
+              "ActiveConnectionsMonitor must not be copyable.");

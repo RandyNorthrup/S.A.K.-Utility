@@ -71,7 +71,7 @@ Q_SIGNALS:
 
 private:
     QVector<WiFiNetworkInfo> m_lastScan;
-    void* m_wlanHandle = nullptr;  ///< HANDLE (opaque to avoid Windows header)
+    void* m_wlanHandle = nullptr;   ///< HANDLE (opaque to avoid Windows header)
     QTimer* m_scanTimer = nullptr;  ///< Owned; QObject parent = this
     std::atomic<bool> m_wlanInitialized{false};
 
@@ -80,11 +80,10 @@ private:
     [[nodiscard]] QVector<WiFiNetworkInfo> performWlanScan(bool triggerScan = true);
 
     /// @brief Format MAC address bytes to colon-separated string
-    [[nodiscard]] static QString formatMacAddress(const unsigned char* addr,
-                                                   int length);
+    [[nodiscard]] static QString formatMacAddress(const unsigned char* addr, int length);
 };
 
-} // namespace sak
+}  // namespace sak
 
 static_assert(!std::is_copy_constructible_v<sak::WiFiAnalyzer>,
-    "WiFiAnalyzer must not be copyable.");
+              "WiFiAnalyzer must not be copyable.");

@@ -4,6 +4,7 @@
 #pragma once
 
 #include "sak/quick_action.h"
+
 #include <QDateTime>
 #include <QString>
 #include <QStringList>
@@ -12,7 +13,7 @@ namespace sak {
 
 /**
  * @brief Clear Event Logs Action
- * 
+ *
  * Archives and clears Windows Event Logs (Application, System, Security).
  * Creates backup .evtx files before clearing.
  */
@@ -44,17 +45,30 @@ private:
     bool executeEnumerateLogs(const QDateTime& start_time, QString& ps_script);
     QString buildLogScriptInit() const;
     QString buildLogScriptLoop() const;
-    bool executeClearLogs(const QDateTime& start_time, const QString& ps_script,
-                          int& total_logs, int& cleared_logs, int& total_entries,
-                          int& backed_up, QString& backup_path, QStringList& details);
-    void executeBuildReport(const QDateTime& start_time, int total_logs, int cleared_logs,
-                            int total_entries, int backed_up, const QString& backup_path,
+    bool executeClearLogs(const QDateTime& start_time,
+                          const QString& ps_script,
+                          int& total_logs,
+                          int& cleared_logs,
+                          int& total_entries,
+                          int& backed_up,
+                          QString& backup_path,
+                          QStringList& details);
+    void executeBuildReport(const QDateTime& start_time,
+                            int total_logs,
+                            int cleared_logs,
+                            int total_entries,
+                            int backed_up,
+                            const QString& backup_path,
                             const QStringList& details);
-    void appendSuccessReport(QString& log_output, int total_logs, int cleared_logs,
-                             int total_entries, int backed_up, const QString& backup_path,
-                             const QStringList& details, qint64 duration_ms);
+    void appendSuccessReport(QString& log_output,
+                             int total_logs,
+                             int cleared_logs,
+                             int total_entries,
+                             int backed_up,
+                             const QString& backup_path,
+                             const QStringList& details,
+                             qint64 duration_ms);
     void appendFailureReport(QString& log_output, const QStringList& details);
 };
 
-} // namespace sak
-
+}  // namespace sak

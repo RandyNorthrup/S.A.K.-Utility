@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "sak/bundled_tools_manager.h"
+
 #include <QFileInfo>
 
 namespace sak {
@@ -11,10 +12,8 @@ BundledToolsManager& BundledToolsManager::instance() {
     return instance;
 }
 
-BundledToolsManager::BundledToolsManager() {
-    // Get application directory
-    m_base_path = QCoreApplication::applicationDirPath();
-}
+BundledToolsManager::BundledToolsManager()
+    : m_base_path(QCoreApplication::applicationDirPath()) {}
 
 QString BundledToolsManager::toolsPath() const {
     return m_base_path + "/tools";
@@ -56,4 +55,4 @@ QString BundledToolsManager::getModuleImportCommand(const QString& moduleName) c
     return QString("Import-Module '%1' -Force").arg(modulePath);
 }
 
-} // namespace sak
+}  // namespace sak

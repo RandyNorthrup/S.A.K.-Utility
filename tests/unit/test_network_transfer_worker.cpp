@@ -17,15 +17,15 @@
  * No admin privileges required.  Loopback tests use ephemeral ports.
  */
 
-#include <QtTest>
+#include "sak/network_transfer_worker.h"
+
+#include <QEventLoop>
 #include <QSignalSpy>
 #include <QTcpServer>
 #include <QTcpSocket>
 #include <QThread>
 #include <QTimer>
-#include <QEventLoop>
-
-#include "sak/network_transfer_worker.h"
+#include <QtTest>
 
 using Worker = sak::NetworkTransferWorker;
 using DataOptions = Worker::DataOptions;
@@ -43,9 +43,7 @@ public:
     DataOptions options;
 
 protected:
-    void run() override {
-        worker->startReceiver(address, port, options);
-    }
+    void run() override { worker->startReceiver(address, port, options); }
 };
 
 // ===========================================================================
@@ -87,14 +85,13 @@ private slots:
 // DataOptions struct
 // ===========================================================================
 
-void NetworkTransferWorkerTests::dataOptionsDefaults()
-{
+void NetworkTransferWorkerTests::dataOptionsDefaults() {
     DataOptions opts;
 
     QCOMPARE(opts.encryption_enabled, true);
     QCOMPARE(opts.compression_enabled, true);
     QCOMPARE(opts.resume_enabled, true);
-    QCOMPARE(opts.chunk_size, 65536);
+    QCOMPARE(opts.chunk_size, 65'536);
     QCOMPARE(opts.max_bandwidth_kbps, 0);
     QCOMPARE(opts.total_bytes, static_cast<qint64>(0));
     QVERIFY(opts.transfer_id.isEmpty());
@@ -105,38 +102,36 @@ void NetworkTransferWorkerTests::dataOptionsDefaults()
     QVERIFY(opts.acl_overrides.isEmpty());
 }
 
-void NetworkTransferWorkerTests::dataOptionsFieldAssignment()
-{
+void NetworkTransferWorkerTests::dataOptionsFieldAssignment() {
     DataOptions opts;
-    opts.transfer_id         = QStringLiteral("xfer-001");
-    opts.encryption_enabled  = false;
+    opts.transfer_id = QStringLiteral("xfer-001");
+    opts.encryption_enabled = false;
     opts.compression_enabled = false;
-    opts.resume_enabled      = false;
-    opts.chunk_size           = 131072;
-    opts.max_bandwidth_kbps  = 2000;
-    opts.passphrase          = QStringLiteral("secret");
-    opts.salt                = QByteArray(16, 'A');
-    opts.destination_base    = QStringLiteral("C:/Temp");
-    opts.total_bytes         = 1024 * 1024;
+    opts.resume_enabled = false;
+    opts.chunk_size = 131'072;
+    opts.max_bandwidth_kbps = 2000;
+    opts.passphrase = QStringLiteral("secret");
+    opts.salt = QByteArray(16, 'A');
+    opts.destination_base = QStringLiteral("C:/Temp");
+    opts.total_bytes = 1024 * 1024;
 
-    QCOMPARE(opts.transfer_id,         QStringLiteral("xfer-001"));
-    QCOMPARE(opts.encryption_enabled,  false);
+    QCOMPARE(opts.transfer_id, QStringLiteral("xfer-001"));
+    QCOMPARE(opts.encryption_enabled, false);
     QCOMPARE(opts.compression_enabled, false);
-    QCOMPARE(opts.resume_enabled,      false);
-    QCOMPARE(opts.chunk_size,          131072);
-    QCOMPARE(opts.max_bandwidth_kbps,  2000);
-    QCOMPARE(opts.passphrase,          QStringLiteral("secret"));
-    QCOMPARE(opts.salt.size(),         16);
-    QCOMPARE(opts.destination_base,    QStringLiteral("C:/Temp"));
-    QCOMPARE(opts.total_bytes,         static_cast<qint64>(1024 * 1024));
+    QCOMPARE(opts.resume_enabled, false);
+    QCOMPARE(opts.chunk_size, 131'072);
+    QCOMPARE(opts.max_bandwidth_kbps, 2000);
+    QCOMPARE(opts.passphrase, QStringLiteral("secret"));
+    QCOMPARE(opts.salt.size(), 16);
+    QCOMPARE(opts.destination_base, QStringLiteral("C:/Temp"));
+    QCOMPARE(opts.total_bytes, static_cast<qint64>(1024 * 1024));
 }
 
 // ===========================================================================
 // Construction
 // ===========================================================================
 
-void NetworkTransferWorkerTests::constructorCreatesObject()
-{
+void NetworkTransferWorkerTests::constructorCreatesObject() {
     Worker worker;
     // Constructor shouldn't crash; object should be valid.
     QVERIFY(worker.metaObject() != nullptr);
@@ -146,8 +141,7 @@ void NetworkTransferWorkerTests::constructorCreatesObject()
 // stop() / updateBandwidthLimit
 // ===========================================================================
 
-void NetworkTransferWorkerTests::stopDoesNotCrash()
-{
+void NetworkTransferWorkerTests::stopDoesNotCrash() {
     Worker worker;
     // Calling stop before any transfer should be safe.
     worker.stop();
@@ -155,12 +149,11 @@ void NetworkTransferWorkerTests::stopDoesNotCrash()
     QVERIFY(true);
 }
 
-void NetworkTransferWorkerTests::updateBandwidthDoesNotCrash()
-{
+void NetworkTransferWorkerTests::updateBandwidthDoesNotCrash() {
     Worker worker;
     worker.updateBandwidthLimit(0);
     worker.updateBandwidthLimit(-100);
-    worker.updateBandwidthLimit(50000);
+    worker.updateBandwidthLimit(50'000);
     QVERIFY(true);
 }
 
@@ -168,8 +161,7 @@ void NetworkTransferWorkerTests::updateBandwidthDoesNotCrash()
 // Sender: connection refused
 // ===========================================================================
 
-void NetworkTransferWorkerTests::senderConnectionRefused()
-{
+void NetworkTransferWorkerTests::senderConnectionRefused() {
     Worker worker;
     QSignalSpy errorSpy(&worker, &Worker::errorOccurred);
     QSignalSpy completedSpy(&worker, &Worker::transferCompleted);
@@ -177,13 +169,13 @@ void NetworkTransferWorkerTests::senderConnectionRefused()
     QVERIFY(completedSpy.isValid());
 
     DataOptions opts;
-    opts.encryption_enabled  = false;
+    opts.encryption_enabled = false;
     opts.compression_enabled = false;
-    opts.resume_enabled      = false;
+    opts.resume_enabled = false;
 
     // Connect to a port that nothing is listening on.
     QVector<sak::TransferFileEntry> files;
-    worker.startSender(files, QHostAddress::LocalHost, 49999, opts);
+    worker.startSender(files, QHostAddress::LocalHost, 49'999, opts);
 
     // startSender is synchronous, so signals are emitted before return.
     QVERIFY2(completedSpy.count() >= 1,
@@ -195,8 +187,7 @@ void NetworkTransferWorkerTests::senderConnectionRefused()
 // Receiver: port already in use
 // ===========================================================================
 
-void NetworkTransferWorkerTests::receiverListenFailsPortInUse()
-{
+void NetworkTransferWorkerTests::receiverListenFailsPortInUse() {
     // Bind a QTcpServer to a port first, so the worker's listen fails.
     QTcpServer blocker;
     QVERIFY(blocker.listen(QHostAddress::LocalHost, 0));
@@ -209,14 +200,13 @@ void NetworkTransferWorkerTests::receiverListenFailsPortInUse()
     QVERIFY(completedSpy.isValid());
 
     DataOptions opts;
-    opts.encryption_enabled  = false;
+    opts.encryption_enabled = false;
     opts.compression_enabled = false;
 
     // Try to listen on the already-bound port.
     worker.startReceiver(QHostAddress::LocalHost, port, opts);
 
-    QVERIFY2(completedSpy.count() >= 1,
-             "Expected transferCompleted(false) when port is in use");
+    QVERIFY2(completedSpy.count() >= 1, "Expected transferCompleted(false) when port is in use");
     QCOMPARE(completedSpy.first().at(0).toBool(), false);
 
     blocker.close();
@@ -226,14 +216,13 @@ void NetworkTransferWorkerTests::receiverListenFailsPortInUse()
 // Receiver: stop before connection
 // ===========================================================================
 
-void NetworkTransferWorkerTests::receiverStopBeforeConnection()
-{
+void NetworkTransferWorkerTests::receiverStopBeforeConnection() {
     Worker worker;
     QSignalSpy completedSpy(&worker, &Worker::transferCompleted);
     QVERIFY(completedSpy.isValid());
 
     DataOptions opts;
-    opts.encryption_enabled  = false;
+    opts.encryption_enabled = false;
     opts.compression_enabled = false;
 
     // Call stop() immediately so the receiver exits its wait loop.
@@ -241,15 +230,15 @@ void NetworkTransferWorkerTests::receiverStopBeforeConnection()
 
     // Run receiver on a background thread.
     ReceiverThread thread;
-    thread.worker  = &worker;
+    thread.worker = &worker;
     thread.address = QHostAddress::LocalHost;
-    thread.port    = 0; // OS-assigned port
+    thread.port = 0;  // OS-assigned port
     thread.options = opts;
     thread.start();
 
     // Wait (up to 70s for the 60s timeout + margin, but stop was called
     // so it should finish quickly if stop is checked in the wait loop).
-    bool finished = thread.wait(65000);
+    bool finished = thread.wait(65'000);
     QVERIFY2(finished, "Receiver thread did not exit after stop()");
 
     // Should have completed with failure (either timeout or stop).
@@ -261,8 +250,7 @@ void NetworkTransferWorkerTests::receiverStopBeforeConnection()
 // Receiver: invalid magic via loopback
 // ===========================================================================
 
-void NetworkTransferWorkerTests::receiverRejectsInvalidMagic()
-{
+void NetworkTransferWorkerTests::receiverRejectsInvalidMagic() {
     Worker worker;
     QSignalSpy errorSpy(&worker, &Worker::errorOccurred);
     QSignalSpy completedSpy(&worker, &Worker::transferCompleted);
@@ -270,9 +258,9 @@ void NetworkTransferWorkerTests::receiverRejectsInvalidMagic()
     QVERIFY(completedSpy.isValid());
 
     DataOptions opts;
-    opts.encryption_enabled  = false;
+    opts.encryption_enabled = false;
     opts.compression_enabled = false;
-    opts.destination_base    = QDir::tempPath();
+    opts.destination_base = QDir::tempPath();
 
     // Find a free port.
     QTcpServer probe;
@@ -282,9 +270,9 @@ void NetworkTransferWorkerTests::receiverRejectsInvalidMagic()
 
     // Start receiver on a background thread.
     ReceiverThread thread;
-    thread.worker  = &worker;
+    thread.worker = &worker;
     thread.address = QHostAddress::LocalHost;
-    thread.port    = port;
+    thread.port = port;
     thread.options = opts;
     thread.start();
 
@@ -312,7 +300,7 @@ void NetworkTransferWorkerTests::receiverRejectsInvalidMagic()
     client.flush();
 
     // Wait for the receiver to process and exit.
-    bool finished = thread.wait(10000);
+    bool finished = thread.wait(10'000);
 
     // Disconnect client.
     client.disconnectFromHost();
@@ -330,8 +318,7 @@ void NetworkTransferWorkerTests::receiverRejectsInvalidMagic()
 // Receiver: oversized payload via loopback
 // ===========================================================================
 
-void NetworkTransferWorkerTests::receiverRejectsOversizedPayload()
-{
+void NetworkTransferWorkerTests::receiverRejectsOversizedPayload() {
     Worker worker;
     QSignalSpy errorSpy(&worker, &Worker::errorOccurred);
     QSignalSpy completedSpy(&worker, &Worker::transferCompleted);
@@ -339,9 +326,9 @@ void NetworkTransferWorkerTests::receiverRejectsOversizedPayload()
     QVERIFY(completedSpy.isValid());
 
     DataOptions opts;
-    opts.encryption_enabled  = false;
+    opts.encryption_enabled = false;
     opts.compression_enabled = false;
-    opts.destination_base    = QDir::tempPath();
+    opts.destination_base = QDir::tempPath();
 
     // Find a free port.
     QTcpServer probe;
@@ -351,9 +338,9 @@ void NetworkTransferWorkerTests::receiverRejectsOversizedPayload()
 
     // Start receiver on a background thread.
     ReceiverThread thread;
-    thread.worker  = &worker;
+    thread.worker = &worker;
     thread.address = QHostAddress::LocalHost;
-    thread.port    = port;
+    thread.port = port;
     thread.options = opts;
     thread.start();
 
@@ -379,24 +366,30 @@ void NetworkTransferWorkerTests::receiverRejectsOversizedPayload()
     oversizedFrame[6] = 0;
     oversizedFrame[7] = 0;
     // chunk_id = 0
-    oversizedFrame[8] = 0;  oversizedFrame[9] = 0;
-    oversizedFrame[10] = 0; oversizedFrame[11] = 0;
+    oversizedFrame[8] = 0;
+    oversizedFrame[9] = 0;
+    oversizedFrame[10] = 0;
+    oversizedFrame[11] = 0;
     // payload_size = 0x20000000 (512 MB) > kMaxPayloadSize (256 MB)
     oversizedFrame[12] = static_cast<char>(0x20);
     oversizedFrame[13] = 0;
     oversizedFrame[14] = 0;
     oversizedFrame[15] = 0;
     // plain_size = 0
-    oversizedFrame[16] = 0; oversizedFrame[17] = 0;
-    oversizedFrame[18] = 0; oversizedFrame[19] = 0;
+    oversizedFrame[16] = 0;
+    oversizedFrame[17] = 0;
+    oversizedFrame[18] = 0;
+    oversizedFrame[19] = 0;
     // crc32 = 0
-    oversizedFrame[20] = 0; oversizedFrame[21] = 0;
-    oversizedFrame[22] = 0; oversizedFrame[23] = 0;
+    oversizedFrame[20] = 0;
+    oversizedFrame[21] = 0;
+    oversizedFrame[22] = 0;
+    oversizedFrame[23] = 0;
 
     client.write(oversizedFrame);
     client.flush();
 
-    bool finished = thread.wait(10000);
+    bool finished = thread.wait(10'000);
     client.disconnectFromHost();
 
     QVERIFY2(finished, "Receiver did not exit after oversized payload");

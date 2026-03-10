@@ -7,42 +7,41 @@
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
+// clang-format off
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <windows.h>
 #include <iphlpapi.h>
 #include <icmpapi.h>
-
+// clang-format on
 #include "sak/connectivity_tester.h"
 
 #include <QThread>
+#include <QUrl>
 
 #include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <numeric>
 
-#include <QUrl>
-
 #pragma comment(lib, "iphlpapi.lib")
 #pragma comment(lib, "ws2_32.lib")
 
 namespace {
 
-constexpr int kFillByte       = 0x41;  // 'A'
-constexpr int kReplyExtraSize = 8;     // Extra bytes for ICMP_ECHO_REPLY
+constexpr int kFillByte = 0x41;     // 'A'
+constexpr int kReplyExtraSize = 8;  // Extra bytes for ICMP_ECHO_REPLY
 
-} // namespace
+}  // namespace
 
 namespace sak {
 
 namespace {
-void computePingStats(PingResult& result, const QVector<double>& rtts)
-{
+void computePingStats(PingResult& result, const QVector<double>& rtts) {
+    Q_ASSERT(!rtts.isEmpty());
     result.lost = result.sent - result.received;
-    result.lossPercent = (result.sent > 0)
-        ? (static_cast<double>(result.lost) / result.sent) * 100.0
-        : 0.0;
+    result.lossPercent =
+        (result.sent > 0) ? (static_cast<double>(result.lost) / result.sent) * 100.0 : 0.0;
 
     if (rtts.isEmpty()) {
         return;
@@ -50,8 +49,8 @@ void computePingStats(PingResult& result, const QVector<double>& rtts)
 
     result.minRtt = *std::min_element(rtts.begin(), rtts.end());
     result.maxRtt = *std::max_element(rtts.begin(), rtts.end());
-    result.avgRtt = std::accumulate(rtts.begin(), rtts.end(), 0.0)
-                    / static_cast<double>(rtts.size());
+    result.avgRtt = std::accumulate(rtts.begin(), rtts.end(), 0.0) /
+                    static_cast<double>(rtts.size());
 
     // Jitter = standard deviation of RTT
     if (rtts.size() <= 1) {
@@ -66,8 +65,7 @@ void computePingStats(PingResult& result, const QVector<double>& rtts)
     result.jitter = std::sqrt(sumSqDiff / static_cast<double>(rtts.size() - 1));
 }
 
-[[nodiscard]] QVector<MtrHopStats> initHopStats(int maxHops)
-{
+[[nodiscard]] QVector<MtrHopStats> initHopStats(int maxHops) {
     QVector<MtrHopStats> hopStats(maxHops);
     for (int i = 0; i < maxHops; ++i) {
         hopStats[i].hopNumber = i + 1;
@@ -78,8 +76,7 @@ void computePingStats(PingResult& result, const QVector<double>& rtts)
 }
 
 [[nodiscard]] QVector<MtrHopStats> visibleHopStats(const QVector<MtrHopStats>& hopStats,
-                                                  int maxDiscoveredHop)
-{
+                                                   int maxDiscoveredHop) {
     QVector<MtrHopStats> visibleHops;
     const int hopCount = static_cast<int>(hopStats.size());
     const int limit = std::min(maxDiscoveredHop, hopCount);
@@ -89,8 +86,7 @@ void computePingStats(PingResult& result, const QVector<double>& rtts)
     return visibleHops;
 }
 
-void finalizeHopStats(QVector<MtrHopStats>& hopStats)
-{
+void finalizeHopStats(QVector<MtrHopStats>& hopStats) {
     for (auto& stats : hopStats) {
         if (stats.received > 1) {
             stats.jitterMs = stats.worstRttMs - stats.bestRttMs;
@@ -104,37 +100,29 @@ void finalizeHopStats(QVector<MtrHopStats>& hopStats)
 void populateMtrResult(MtrResult& result,
                        const QVector<MtrHopStats>& hopStats,
                        int maxDiscoveredHop,
-                       bool cancelled)
-{
+                       bool cancelled) {
     result.hops.clear();
     const int hopCount = static_cast<int>(hopStats.size());
     const int limit = std::min(maxDiscoveredHop, hopCount);
     for (int i = 0; i < limit; ++i) {
         result.hops.append(hopStats[i]);
     }
-    result.totalCycles = cancelled
-        ? 0
-        : static_cast<int>(result.hops.isEmpty() ? 0 : result.hops.first().sent);
+    result.totalCycles =
+        cancelled ? 0 : static_cast<int>(result.hops.isEmpty() ? 0 : result.hops.first().sent);
 }
-} // namespace
+}  // namespace
 
-ConnectivityTester::ConnectivityTester(QObject* parent)
-    : QObject(parent)
-{
-}
+ConnectivityTester::ConnectivityTester(QObject* parent) : QObject(parent) {}
 
-void ConnectivityTester::cancel()
-{
+void ConnectivityTester::cancel() {
     m_cancelled.store(true);
 }
 
 QString ConnectivityTester::resolveTargetIpOrEmitError(const QString& target,
-                                                       const QString& operation)
-{
+                                                       const QString& operation) {
     const QString trimmed = target.trimmed();
     if (trimmed.isEmpty()) {
-        Q_EMIT errorOccurred(QStringLiteral("%1 target cannot be empty")
-                                 .arg(operation));
+        Q_EMIT errorOccurred(QStringLiteral("%1 target cannot be empty").arg(operation));
         return {};
     }
 
@@ -148,13 +136,12 @@ QString ConnectivityTester::resolveTargetIpOrEmitError(const QString& target,
         return trimmed;
     }
 
-    Q_EMIT errorOccurred(QStringLiteral("Could not resolve hostname: %1")
-                             .arg(trimmed));
+    Q_EMIT errorOccurred(QStringLiteral("Could not resolve hostname: %1").arg(trimmed));
     return {};
 }
 
-QString ConnectivityTester::resolveHostname(const QString& hostname)
-{
+QString ConnectivityTester::resolveHostname(const QString& hostname) {
+    Q_ASSERT(!hostname.isEmpty());
     // ── Normalise user input ───────────────────────────────────────────
     // Users often paste full URLs ("https://example.com/path") or include
     // a port ("example.com:443").  Strip everything down to the bare host
@@ -216,15 +203,14 @@ QString ConnectivityTester::resolveHostname(const QString& hostname)
     return ip;
 }
 
-QString ConnectivityTester::reverseResolve(const QString& ip)
-{
+QString ConnectivityTester::reverseResolve(const QString& ip) {
     struct sockaddr_in sa{};
     sa.sin_family = AF_INET;
     inet_pton(AF_INET, ip.toLatin1().constData(), &sa.sin_addr);
 
     char host[NI_MAXHOST] = {};
-    if (getnameinfo(reinterpret_cast<sockaddr*>(&sa), sizeof(sa),
-                    host, sizeof(host), nullptr, 0, 0) == 0) {
+    if (getnameinfo(
+            reinterpret_cast<sockaddr*>(&sa), sizeof(sa), host, sizeof(host), nullptr, 0, 0) == 0) {
         QString result = QString::fromUtf8(host);
         if (result != ip) {
             return result;
@@ -234,9 +220,9 @@ QString ConnectivityTester::reverseResolve(const QString& ip)
 }
 
 PingReply ConnectivityTester::sendIcmpEcho(const QString& targetIP,
-                                            int timeoutMs, int packetSize,
-                                            int ttl)
-{
+                                           int timeoutMs,
+                                           int packetSize,
+                                           int ttl) {
     PingReply reply;
     reply.success = false;
 
@@ -248,8 +234,7 @@ PingReply ConnectivityTester::sendIcmpEcho(const QString& targetIP,
 
     // Resolve target IP
     IN_ADDR destAddr{};
-    if (inet_pton(AF_INET, targetIP.toLatin1().constData(),
-                  &destAddr) != 1) {
+    if (inet_pton(AF_INET, targetIP.toLatin1().constData(), &destAddr) != 1) {
         IcmpCloseHandle(hIcmp);
         reply.errorMessage = QStringLiteral("Invalid IP address: ") + targetIP;
         return reply;
@@ -260,32 +245,32 @@ PingReply ConnectivityTester::sendIcmpEcho(const QString& targetIP,
     options.Ttl = static_cast<UCHAR>(ttl);
 
     // Send buffer
-    const auto sendSize = static_cast<size_t>(
-        std::max(packetSize, 1));
+    const auto sendSize = static_cast<size_t>(std::max(packetSize, 1));
     auto sendData = std::make_unique<char[]>(sendSize);
     std::fill_n(sendData.get(), sendSize, static_cast<char>(kFillByte));
 
     // Reply buffer
-    const DWORD replySize = static_cast<DWORD>(sizeof(ICMP_ECHO_REPLY))
-                          + static_cast<DWORD>(sendSize)
-                          + kReplyExtraSize;
+    const DWORD replySize = static_cast<DWORD>(sizeof(ICMP_ECHO_REPLY)) +
+                            static_cast<DWORD>(sendSize) + kReplyExtraSize;
     auto replyBuffer = std::make_unique<char[]>(replySize);
 
     const auto start = std::chrono::high_resolution_clock::now();
 
-    const DWORD numReplies = IcmpSendEcho(
-        hIcmp, destAddr.S_un.S_addr,
-        sendData.get(), static_cast<WORD>(sendSize),
-        &options, replyBuffer.get(), replySize,
-        static_cast<DWORD>(timeoutMs));
+    const DWORD numReplies = IcmpSendEcho(hIcmp,
+                                          destAddr.S_un.S_addr,
+                                          sendData.get(),
+                                          static_cast<WORD>(sendSize),
+                                          &options,
+                                          replyBuffer.get(),
+                                          replySize,
+                                          static_cast<DWORD>(timeoutMs));
 
     const auto end = std::chrono::high_resolution_clock::now();
 
     IcmpCloseHandle(hIcmp);
 
     if (numReplies > 0) {
-        auto* echoReply = reinterpret_cast<PICMP_ECHO_REPLY>(
-            replyBuffer.get());
+        auto* echoReply = reinterpret_cast<PICMP_ECHO_REPLY>(replyBuffer.get());
 
         if (echoReply->Status == IP_SUCCESS) {
             reply.success = true;
@@ -311,13 +296,11 @@ PingReply ConnectivityTester::sendIcmpEcho(const QString& targetIP,
             reply.errorMessage = QStringLiteral("TTL expired");
         } else {
             reply.success = false;
-            reply.errorMessage = QStringLiteral("ICMP error status %1")
-                                     .arg(echoReply->Status);
+            reply.errorMessage = QStringLiteral("ICMP error status %1").arg(echoReply->Status);
         }
     } else {
         reply.success = false;
-        const double elapsed =
-            std::chrono::duration<double, std::milli>(end - start).count();
+        const double elapsed = std::chrono::duration<double, std::milli>(end - start).count();
         reply.rttMs = elapsed;
         reply.errorMessage = QStringLiteral("Request timed out");
     }
@@ -325,8 +308,7 @@ PingReply ConnectivityTester::sendIcmpEcho(const QString& targetIP,
     return reply;
 }
 
-void ConnectivityTester::ping(const PingConfig& config)
-{
+void ConnectivityTester::ping(const PingConfig& config) {
     m_cancelled.store(false);
 
     const QString targetIP = resolveTargetIpOrEmitError(config.target, "Ping");
@@ -346,8 +328,8 @@ void ConnectivityTester::ping(const PingConfig& config)
             break;
         }
 
-        PingReply reply = sendIcmpEcho(targetIP, config.timeoutMs,
-                                        config.packetSizeBytes, config.ttl);
+        PingReply reply =
+            sendIcmpEcho(targetIP, config.timeoutMs, config.packetSizeBytes, config.ttl);
         reply.sequenceNumber = i + 1;
 
         if (reply.success) {
@@ -369,10 +351,8 @@ void ConnectivityTester::ping(const PingConfig& config)
     Q_EMIT pingComplete(result);
 }
 
-TracerouteHop ConnectivityTester::probeHop(const QString& targetIP, int ttl,
-                                            int timeoutMs, int probes,
-                                            bool resolveHostnames)
-{
+TracerouteHop ConnectivityTester::probeHop(
+    const QString& targetIP, int ttl, int timeoutMs, int probes, bool resolveHostnames) {
     TracerouteHop hop;
     hop.hopNumber = ttl;
     hop.timedOut = true;
@@ -381,8 +361,7 @@ TracerouteHop ConnectivityTester::probeHop(const QString& targetIP, int ttl,
     QString hopIP;
 
     for (int p = 0; p < probes; ++p) {
-        PingReply reply = sendIcmpEcho(targetIP, timeoutMs,
-                                        netdiag::kDefaultPingPacketSize, ttl);
+        PingReply reply = sendIcmpEcho(targetIP, timeoutMs, netdiag::kDefaultPingPacketSize, ttl);
 
         double rtt = reply.rttMs;
         if (reply.success || reply.errorMessage == QStringLiteral("TTL expired")) {
@@ -392,18 +371,25 @@ TracerouteHop ConnectivityTester::probeHop(const QString& targetIP, int ttl,
         }
 
         switch (p) {
-        case 0: hop.rtt1Ms = reply.success || !reply.replyFrom.isEmpty() ? rtt : -1.0; break;
-        case 1: hop.rtt2Ms = reply.success || !reply.replyFrom.isEmpty() ? rtt : -1.0; break;
-        case 2: hop.rtt3Ms = reply.success || !reply.replyFrom.isEmpty() ? rtt : -1.0; break;
-        default: break;
+        case 0:
+            hop.rtt1Ms = reply.success || !reply.replyFrom.isEmpty() ? rtt : -1.0;
+            break;
+        case 1:
+            hop.rtt2Ms = reply.success || !reply.replyFrom.isEmpty() ? rtt : -1.0;
+            break;
+        case 2:
+            hop.rtt3Ms = reply.success || !reply.replyFrom.isEmpty() ? rtt : -1.0;
+            break;
+        default:
+            break;
         }
     }
 
     if (!hop.timedOut) {
         hop.ipAddress = hopIP;
         hop.avgRttMs = rtts.isEmpty() ? 0.0
-            : std::accumulate(rtts.begin(), rtts.end(), 0.0)
-              / static_cast<double>(rtts.size());
+                                      : std::accumulate(rtts.begin(), rtts.end(), 0.0) /
+                                            static_cast<double>(rtts.size());
 
         if (resolveHostnames && !hopIP.isEmpty()) {
             hop.hostname = reverseResolve(hopIP);
@@ -413,8 +399,7 @@ TracerouteHop ConnectivityTester::probeHop(const QString& targetIP, int ttl,
     return hop;
 }
 
-void ConnectivityTester::traceroute(const TracerouteConfig& config)
-{
+void ConnectivityTester::traceroute(const TracerouteConfig& config) {
     m_cancelled.store(false);
 
     const QString targetIP = resolveTargetIpOrEmitError(config.target, "Traceroute");
@@ -432,9 +417,8 @@ void ConnectivityTester::traceroute(const TracerouteConfig& config)
             break;
         }
 
-        TracerouteHop hop = probeHop(targetIP, ttl, config.timeoutMs,
-                                      config.probesPerHop,
-                                      config.resolveHostnames);
+        TracerouteHop hop =
+            probeHop(targetIP, ttl, config.timeoutMs, config.probesPerHop, config.resolveHostnames);
         result.hops.append(hop);
         Q_EMIT tracerouteHop(hop);
 
@@ -448,8 +432,7 @@ void ConnectivityTester::traceroute(const TracerouteConfig& config)
     Q_EMIT tracerouteComplete(result);
 }
 
-void ConnectivityTester::mtr(const MtrConfig& config)
-{
+void ConnectivityTester::mtr(const MtrConfig& config) {
     m_cancelled.store(false);
 
     const QString targetIP = resolveTargetIpOrEmitError(config.target, "MTR");
@@ -466,20 +449,22 @@ void ConnectivityTester::mtr(const MtrConfig& config)
     int maxDiscoveredHop = 0;
 
     for (int cycle = 0; cycle < config.cycles; ++cycle) {
-        if (m_cancelled.load()) break;
+        if (m_cancelled.load()) {
+            break;
+        }
 
         for (int ttl = 1; ttl <= config.maxHops; ++ttl) {
-            if (m_cancelled.load()) break;
+            if (m_cancelled.load()) {
+                break;
+            }
 
-            PingReply reply = sendIcmpEcho(targetIP, config.timeoutMs,
-                                            netdiag::kDefaultPingPacketSize,
-                                            ttl);
+            PingReply reply =
+                sendIcmpEcho(targetIP, config.timeoutMs, netdiag::kDefaultPingPacketSize, ttl);
 
             auto& stats = hopStats[ttl - 1];
             stats.sent++;
 
-            if (reply.success ||
-                reply.errorMessage == QStringLiteral("TTL expired")) {
+            if (reply.success || reply.errorMessage == QStringLiteral("TTL expired")) {
                 stats.received++;
                 stats.ipAddress = reply.replyFrom;
                 stats.lastRttMs = reply.rttMs;
@@ -487,17 +472,16 @@ void ConnectivityTester::mtr(const MtrConfig& config)
                 stats.worstRttMs = std::max(stats.worstRttMs, reply.rttMs);
 
                 // Running average
-                stats.avgRttMs = stats.avgRttMs
-                    + (reply.rttMs - stats.avgRttMs)
-                      / static_cast<double>(stats.received);
+                stats.avgRttMs = stats.avgRttMs + (reply.rttMs - stats.avgRttMs) /
+                                                      static_cast<double>(stats.received);
 
                 maxDiscoveredHop = std::max(maxDiscoveredHop, ttl);
             }
 
-            stats.lossPercent = (stats.sent > 0)
-                ? (1.0 - static_cast<double>(stats.received)
-                         / static_cast<double>(stats.sent)) * 100.0
-                : 0.0;
+            stats.lossPercent = (stats.sent > 0) ? (1.0 - static_cast<double>(stats.received) /
+                                                              static_cast<double>(stats.sent)) *
+                                                       100.0
+                                                 : 0.0;
 
             // Reached target
             if (reply.success && reply.replyFrom == targetIP) {
@@ -507,8 +491,9 @@ void ConnectivityTester::mtr(const MtrConfig& config)
 
         Q_EMIT mtrUpdate(visibleHopStats(hopStats, maxDiscoveredHop), cycle + 1);
 
-        if (!m_cancelled.load() && cycle < config.cycles - 1)
+        if (!m_cancelled.load() && cycle < config.cycles - 1) {
             QThread::msleep(static_cast<unsigned long>(config.intervalMs));
+        }
     }
 
     finalizeHopStats(hopStats);
@@ -518,4 +503,4 @@ void ConnectivityTester::mtr(const MtrConfig& config)
     Q_EMIT mtrComplete(result);
 }
 
-} // namespace sak
+}  // namespace sak

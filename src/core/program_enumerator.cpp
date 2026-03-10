@@ -5,6 +5,7 @@
 /// @brief Enumerates all installed Win32 and UWP programs with rich metadata
 
 #include "sak/program_enumerator.h"
+
 #include "sak/layout_constants.h"
 
 #include <QDir>
@@ -26,8 +27,7 @@
 namespace sak {
 
 namespace {
-[[nodiscard]] QString normalizeUninstallExePath(QString uninstallString)
-{
+[[nodiscard]] QString normalizeUninstallExePath(QString uninstallString) {
     QString exePath = std::move(uninstallString);
 
     if (exePath.startsWith('"')) {
@@ -45,8 +45,7 @@ namespace {
     return exePath;
 }
 
-[[nodiscard]] QJsonArray jsonDocToArray(const QJsonDocument& doc)
-{
+[[nodiscard]] QJsonArray jsonDocToArray(const QJsonDocument& doc) {
     if (doc.isArray()) {
         return doc.array();
     }
@@ -60,27 +59,21 @@ const auto kUwpPackagesCommand = QStringLiteral(
     "Get-AppxPackage | Select-Object Name, PackageFamilyName, "
     "PackageFullName, Publisher, Version, InstallLocation, "
     "IsFramework, SignatureKind | ConvertTo-Json -Compress");
-} // namespace
+}  // namespace
 
-ProgramEnumerator::ProgramEnumerator(QObject* parent)
-    : QObject(parent)
-{
-}
+ProgramEnumerator::ProgramEnumerator(QObject* parent) : QObject(parent) {}
 
 ProgramEnumerator::~ProgramEnumerator() = default;
 
-void ProgramEnumerator::requestCancel()
-{
+void ProgramEnumerator::requestCancel() {
     m_cancelRequested.store(true, std::memory_order_release);
 }
 
-void ProgramEnumerator::resetCancel()
-{
+void ProgramEnumerator::resetCancel() {
     m_cancelRequested.store(false, std::memory_order_release);
 }
 
-void ProgramEnumerator::enumerateAll()
-{
+void ProgramEnumerator::enumerateAll() {
     if (m_cancelRequested.load(std::memory_order_acquire)) {
         Q_EMIT enumerationFailed("Enumeration cancelled.");
         return;
@@ -130,34 +123,8 @@ void ProgramEnumerator::enumerateAll()
         Q_EMIT enumerationProgress(95, 100);
 
         // Phase 7: Extract icons and calculate sizes
-        for (int i = 0; i < all_programs.size(); ++i) {
-            if (m_cancelRequested.load(std::memory_order_acquire)) {
-                Q_EMIT enumerationFailed("Enumeration cancelled.");
-                return;
-            }
-            auto& prog = all_programs[i];
-
-            // Extract icon
-            if (!prog.displayIcon.isEmpty()) {
-                prog.cachedImage = extractIcon(prog.displayIcon);
-            }
-
-            if (prog.cachedImage.isNull() && !prog.installLocation.isEmpty()) {
-                QDir dir(prog.installLocation);
-                const auto exes = dir.entryList({"*.exe"}, QDir::Files, QDir::Name);
-                const QString exe = exes.value(0);
-                prog.cachedImage = exe.isEmpty()
-                                     ? QImage{}
-                                     : extractIcon(dir.filePath(exe));
-            }
-
-            // Calculate actual size if install location exists
-            if (!prog.installLocation.isEmpty()
-                && QDir(prog.installLocation).exists()) {
-                prog.actualSizeBytes = calculateDirSize(prog.installLocation);
-            } else if (prog.estimatedSizeKB > 0) {
-                prog.actualSizeBytes = prog.estimatedSizeKB * 1024;
-            }
+        if (!enrichWithIconsAndSizes(all_programs)) {
+            return;
         }
 
         Q_EMIT enumerationProgress(100, 100);
@@ -169,21 +136,49 @@ void ProgramEnumerator::enumerateAll()
     }
 }
 
-QVector<ProgramInfo> ProgramEnumerator::programs() const
-{
+QVector<ProgramInfo> ProgramEnumerator::programs() const {
     return m_cachedPrograms;
 }
 
-void ProgramEnumerator::detectOrphaned(QVector<ProgramInfo>& programs)
-{
+bool ProgramEnumerator::enrichWithIconsAndSizes(QVector<ProgramInfo>& programs) {
+    Q_ASSERT(!programs.isEmpty());
+    for (int i = 0; i < programs.size(); ++i) {
+        if (m_cancelRequested.load(std::memory_order_acquire)) {
+            Q_EMIT enumerationFailed("Enumeration cancelled.");
+            return false;
+        }
+        auto& prog = programs[i];
+
+        if (!prog.displayIcon.isEmpty()) {
+            prog.cachedImage = extractIcon(prog.displayIcon);
+        }
+
+        if (prog.cachedImage.isNull() && !prog.installLocation.isEmpty()) {
+            QDir dir(prog.installLocation);
+            const auto exes = dir.entryList({"*.exe"}, QDir::Files, QDir::Name);
+            const QString exe = exes.value(0);
+            prog.cachedImage = exe.isEmpty() ? QImage{} : extractIcon(dir.filePath(exe));
+        }
+
+        if (!prog.installLocation.isEmpty() && QDir(prog.installLocation).exists()) {
+            prog.actualSizeBytes = calculateDirSize(prog.installLocation);
+        } else if (prog.estimatedSizeKB > 0) {
+            prog.actualSizeBytes = prog.estimatedSizeKB * 1024;
+        }
+    }
+    return true;
+}
+
+void ProgramEnumerator::detectOrphaned(QVector<ProgramInfo>& programs) {
+    Q_ASSERT(!programs.isEmpty());
     for (auto& prog : programs) {
-        if (prog.source == ProgramInfo::Source::UWP
-            || prog.source == ProgramInfo::Source::Provisioned) {
+        if (prog.source == ProgramInfo::Source::UWP ||
+            prog.source == ProgramInfo::Source::Provisioned) {
             continue;  // UWP apps are always "installed"
         }
 
-        const bool installMissing = !prog.installLocation.isEmpty()
-                                  && !QDir(prog.installLocation).exists();
+        const bool installMissing = !prog.installLocation.isEmpty() &&
+                                    !QDir(prog.installLocation).exists();
         if (installMissing) {
             prog.isOrphaned = true;
             continue;
@@ -204,21 +199,46 @@ void ProgramEnumerator::detectOrphaned(QVector<ProgramInfo>& programs)
     }
 }
 
-void ProgramEnumerator::markBloatware(QVector<ProgramInfo>& programs)
-{
+void ProgramEnumerator::markBloatware(QVector<ProgramInfo>& programs) {
+    Q_ASSERT(!programs.isEmpty());
     // Bloatware patterns from CheckBloatwareAction database
-    static const QStringList kBloatwarePatterns = {
-        "CandyCrush", "FarmVille", "BubbleWitch", "MarchofEmpires",
-        "Minecraft", "Solitaire", "Xbox", "Zune",
-        "BingNews", "BingWeather", "BingSports", "BingFinance",
-        "SkypeApp", "YourPhone", "PhoneLink", "Messaging",
-        "GetHelp", "Getstarted", "MicrosoftOfficeHub", "WindowsMaps",
-        "WindowsAlarms", "WindowsSoundRecorder", "WindowsFeedbackHub", "Wallet",
-        "Microsoft3DViewer", "Print3D", "MixedReality",
-        "People", "OneConnect",
-        "ActiproSoftware", "king.com", "Facebook", "Twitter",
-        "LinkedIn", "Netflix", "Spotify", "Disney"
-    };
+    static const QStringList kBloatwarePatterns = {"CandyCrush",
+                                                   "FarmVille",
+                                                   "BubbleWitch",
+                                                   "MarchofEmpires",
+                                                   "Minecraft",
+                                                   "Solitaire",
+                                                   "Xbox",
+                                                   "Zune",
+                                                   "BingNews",
+                                                   "BingWeather",
+                                                   "BingSports",
+                                                   "BingFinance",
+                                                   "SkypeApp",
+                                                   "YourPhone",
+                                                   "PhoneLink",
+                                                   "Messaging",
+                                                   "GetHelp",
+                                                   "Getstarted",
+                                                   "MicrosoftOfficeHub",
+                                                   "WindowsMaps",
+                                                   "WindowsAlarms",
+                                                   "WindowsSoundRecorder",
+                                                   "WindowsFeedbackHub",
+                                                   "Wallet",
+                                                   "Microsoft3DViewer",
+                                                   "Print3D",
+                                                   "MixedReality",
+                                                   "People",
+                                                   "OneConnect",
+                                                   "ActiproSoftware",
+                                                   "king.com",
+                                                   "Facebook",
+                                                   "Twitter",
+                                                   "LinkedIn",
+                                                   "Netflix",
+                                                   "Spotify",
+                                                   "Disney"};
 
     for (auto& prog : programs) {
         const QString name_lower = prog.displayName.toLower();
@@ -234,10 +254,11 @@ void ProgramEnumerator::markBloatware(QVector<ProgramInfo>& programs)
     }
 }
 
-qint64 ProgramEnumerator::calculateDirSize(const QString& path)
-{
+qint64 ProgramEnumerator::calculateDirSize(const QString& path) {
+    Q_ASSERT(!path.isEmpty());
     qint64 total = 0;
-    QDirIterator it(path, QDir::Files | QDir::Hidden | QDir::NoSymLinks,
+    QDirIterator it(path,
+                    QDir::Files | QDir::Hidden | QDir::NoSymLinks,
                     QDirIterator::Subdirectories);
     while (it.hasNext()) {
         it.next();
@@ -248,31 +269,31 @@ qint64 ProgramEnumerator::calculateDirSize(const QString& path)
 
 #ifdef Q_OS_WIN
 
-QVector<ProgramInfo> ProgramEnumerator::scanRegistryPrograms()
-{
+QVector<ProgramInfo> ProgramEnumerator::scanRegistryPrograms() {
     QVector<ProgramInfo> all;
 
     // HKLM 64-bit
-    auto hklm64 = scanRegistryHive(HKEY_LOCAL_MACHINE, kUninstallKey64,
-                                    ProgramInfo::Source::RegistryHKLM);
+    auto hklm64 =
+        scanRegistryHive(HKEY_LOCAL_MACHINE, kUninstallKey64, ProgramInfo::Source::RegistryHKLM);
     all.append(hklm64);
 
     // HKLM WOW64 (32-bit apps on 64-bit Windows)
-    auto wow64 = scanRegistryHive(HKEY_LOCAL_MACHINE, kUninstallKeyWow64,
-                                   ProgramInfo::Source::RegistryHKLM_WOW64);
+    auto wow64 = scanRegistryHive(HKEY_LOCAL_MACHINE,
+                                  kUninstallKeyWow64,
+                                  ProgramInfo::Source::RegistryHKLM_WOW64);
     all.append(wow64);
 
     // HKCU
-    auto hkcu = scanRegistryHive(HKEY_CURRENT_USER, kUninstallKeyHKCU,
-                                  ProgramInfo::Source::RegistryHKCU);
+    auto hkcu =
+        scanRegistryHive(HKEY_CURRENT_USER, kUninstallKeyHKCU, ProgramInfo::Source::RegistryHKCU);
     all.append(hkcu);
 
     return all;
 }
 
-QVector<ProgramInfo> ProgramEnumerator::scanRegistryHive(
-    HKEY hive, const wchar_t* subkey, ProgramInfo::Source source)
-{
+QVector<ProgramInfo> ProgramEnumerator::scanRegistryHive(HKEY hive,
+                                                         const wchar_t* subkey,
+                                                         ProgramInfo::Source source) {
     QVector<ProgramInfo> results;
 
     HKEY uninstall_key = nullptr;
@@ -282,14 +303,24 @@ QVector<ProgramInfo> ProgramEnumerator::scanRegistryHive(
     }
 
     DWORD subkey_count = 0;
-    RegQueryInfoKeyW(uninstall_key, nullptr, nullptr, nullptr, &subkey_count,
-                     nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr);
+    RegQueryInfoKeyW(uninstall_key,
+                     nullptr,
+                     nullptr,
+                     nullptr,
+                     &subkey_count,
+                     nullptr,
+                     nullptr,
+                     nullptr,
+                     nullptr,
+                     nullptr,
+                     nullptr,
+                     nullptr);
 
     wchar_t subkey_name[256];
     for (DWORD i = 0; i < subkey_count; ++i) {
         DWORD name_len = 256;
-        rc = RegEnumKeyExW(uninstall_key, i, subkey_name, &name_len,
-                           nullptr, nullptr, nullptr, nullptr);
+        rc = RegEnumKeyExW(
+            uninstall_key, i, subkey_name, &name_len, nullptr, nullptr, nullptr, nullptr);
         if (rc != ERROR_SUCCESS) {
             continue;
         }
@@ -314,12 +345,15 @@ QVector<ProgramInfo> ProgramEnumerator::scanRegistryHive(
 
                 // Build registry key path
                 QString hive_name;
-                if (hive == HKEY_LOCAL_MACHINE) hive_name = "HKLM";
-                else if (hive == HKEY_CURRENT_USER) hive_name = "HKCU";
+                if (hive == HKEY_LOCAL_MACHINE) {
+                    hive_name = "HKLM";
+                } else if (hive == HKEY_CURRENT_USER) {
+                    hive_name = "HKCU";
+                }
                 prog.registryKeyPath = QString("%1\\%2\\%3")
-                    .arg(hive_name,
-                         QString::fromWCharArray(subkey),
-                         QString::fromWCharArray(subkey_name));
+                                           .arg(hive_name,
+                                                QString::fromWCharArray(subkey),
+                                                QString::fromWCharArray(subkey_name));
 
                 results.append(prog);
             }
@@ -352,12 +386,15 @@ QVector<ProgramInfo> ProgramEnumerator::scanRegistryHive(
 
         // Build registry key path
         QString hive_name;
-        if (hive == HKEY_LOCAL_MACHINE) hive_name = "HKLM";
-        else if (hive == HKEY_CURRENT_USER) hive_name = "HKCU";
+        if (hive == HKEY_LOCAL_MACHINE) {
+            hive_name = "HKLM";
+        } else if (hive == HKEY_CURRENT_USER) {
+            hive_name = "HKCU";
+        }
         prog.registryKeyPath = QString("%1\\%2\\%3")
-            .arg(hive_name,
-                 QString::fromWCharArray(subkey),
-                 QString::fromWCharArray(subkey_name));
+                                   .arg(hive_name,
+                                        QString::fromWCharArray(subkey),
+                                        QString::fromWCharArray(subkey_name));
 
         RegCloseKey(app_key);
         results.append(prog);
@@ -367,8 +404,8 @@ QVector<ProgramInfo> ProgramEnumerator::scanRegistryHive(
     return results;
 }
 
-QString ProgramEnumerator::readRegString(HKEY key, const wchar_t* valueName)
-{
+QString ProgramEnumerator::readRegString(HKEY key, const wchar_t* valueName) {
+    Q_ASSERT(valueName);
     DWORD type = 0;
     DWORD size = 0;
 
@@ -379,8 +416,8 @@ QString ProgramEnumerator::readRegString(HKEY key, const wchar_t* valueName)
 
     // Allocate buffer
     std::vector<wchar_t> buffer(size / sizeof(wchar_t) + 1, L'\0');
-    rc = RegQueryValueExW(key, valueName, nullptr, nullptr,
-                          reinterpret_cast<LPBYTE>(buffer.data()), &size);
+    rc = RegQueryValueExW(
+        key, valueName, nullptr, nullptr, reinterpret_cast<LPBYTE>(buffer.data()), &size);
     if (rc != ERROR_SUCCESS) {
         return {};
     }
@@ -388,44 +425,39 @@ QString ProgramEnumerator::readRegString(HKEY key, const wchar_t* valueName)
     return QString::fromWCharArray(buffer.data()).trimmed();
 }
 
-DWORD ProgramEnumerator::readRegDword(HKEY key, const wchar_t* valueName)
-{
+DWORD ProgramEnumerator::readRegDword(HKEY key, const wchar_t* valueName) {
+    Q_ASSERT(valueName);
     DWORD value = 0;
     DWORD size = sizeof(DWORD);
     DWORD type = 0;
 
-    LONG rc = RegQueryValueExW(key, valueName, nullptr, &type,
-                               reinterpret_cast<LPBYTE>(&value), &size);
+    LONG rc =
+        RegQueryValueExW(key, valueName, nullptr, &type, reinterpret_cast<LPBYTE>(&value), &size);
     if (rc != ERROR_SUCCESS || type != REG_DWORD) {
         return 0;
     }
     return value;
 }
 
-bool ProgramEnumerator::isSystemComponent(HKEY key)
-{
+bool ProgramEnumerator::isSystemComponent(HKEY key) {
     DWORD sys_comp = readRegDword(key, L"SystemComponent");
     return sys_comp == 1;
 }
 
-#endif // Q_OS_WIN
+#endif  // Q_OS_WIN
 
-QVector<ProgramInfo> ProgramEnumerator::scanUwpPackages()
-{
+QVector<ProgramInfo> ProgramEnumerator::scanUwpPackages() {
     QVector<ProgramInfo> results;
 
     QProcess ps;
     ps.setProgram("powershell.exe");
-    ps.setArguments({
-        "-NoProfile", "-NonInteractive", "-Command",
-        kUwpPackagesCommand
-    });
+    ps.setArguments({"-NoProfile", "-NonInteractive", "-Command", kUwpPackagesCommand});
     ps.start();
 
     if (!ps.waitForStarted(sak::kTimeoutProcessStartMs)) {
         return results;
     }
-    if (!ps.waitForFinished(30000)) {
+    if (!ps.waitForFinished(30'000)) {
         return results;
     }
 
@@ -465,8 +497,7 @@ QVector<ProgramInfo> ProgramEnumerator::scanUwpPackages()
         }
 
         // Calculate size if install location exists
-        if (!prog.installLocation.isEmpty()
-            && QDir(prog.installLocation).exists()) {
+        if (!prog.installLocation.isEmpty() && QDir(prog.installLocation).exists()) {
             prog.actualSizeBytes = calculateDirSize(prog.installLocation);
         }
 
@@ -478,24 +509,23 @@ QVector<ProgramInfo> ProgramEnumerator::scanUwpPackages()
     return results;
 }
 
-QVector<ProgramInfo> ProgramEnumerator::scanProvisionedPackages()
-{
+QVector<ProgramInfo> ProgramEnumerator::scanProvisionedPackages() {
     QVector<ProgramInfo> results;
 
     QProcess ps;
     ps.setProgram("powershell.exe");
-    ps.setArguments({
-        "-NoProfile", "-NonInteractive", "-Command",
-        "Get-AppxProvisionedPackage -Online -ErrorAction SilentlyContinue | "
-        "Select-Object DisplayName, PackageName, Version | "
-        "ConvertTo-Json -Compress"
-    });
+    ps.setArguments({"-NoProfile",
+                     "-NonInteractive",
+                     "-Command",
+                     "Get-AppxProvisionedPackage -Online -ErrorAction SilentlyContinue | "
+                     "Select-Object DisplayName, PackageName, Version | "
+                     "ConvertTo-Json -Compress"});
     ps.start();
 
     if (!ps.waitForStarted(sak::kTimeoutProcessStartMs)) {
         return results;
     }
-    if (!ps.waitForFinished(30000)) {
+    if (!ps.waitForFinished(30'000)) {
         return results;
     }
 
@@ -534,8 +564,8 @@ QVector<ProgramInfo> ProgramEnumerator::scanProvisionedPackages()
     return results;
 }
 
-QImage ProgramEnumerator::extractIcon(const QString& path)
-{
+QImage ProgramEnumerator::extractIcon(const QString& path) {
+    Q_ASSERT(!path.isEmpty());
     if (path.isEmpty()) {
         return {};
     }
@@ -562,9 +592,11 @@ QImage ProgramEnumerator::extractIcon(const QString& path)
     }
 
     SHFILEINFOW sfi{};
-    DWORD_PTR result = SHGetFileInfoW(
-        reinterpret_cast<LPCWSTR>(icon_path.utf16()),
-        0, &sfi, sizeof(sfi), SHGFI_ICON | SHGFI_SMALLICON);
+    DWORD_PTR result = SHGetFileInfoW(reinterpret_cast<LPCWSTR>(icon_path.utf16()),
+                                      0,
+                                      &sfi,
+                                      sizeof(sfi),
+                                      SHGFI_ICON | SHGFI_SMALLICON);
 
     if (result && sfi.hIcon) {
         QImage image = QImage::fromHICON(sfi.hIcon);
@@ -580,16 +612,15 @@ QImage ProgramEnumerator::extractIcon(const QString& path)
     return {};
 }
 
-void ProgramEnumerator::deduplicatePrograms(QVector<ProgramInfo>& programs)
-{
+void ProgramEnumerator::deduplicatePrograms(QVector<ProgramInfo>& programs) {
+    Q_ASSERT(!programs.isEmpty());
     QSet<QString> seen;
     QVector<ProgramInfo> unique;
     unique.reserve(programs.size());
 
     for (const auto& prog : programs) {
         // Use display name + publisher as dedup key
-        QString key = prog.displayName.toLower() + "|"
-                    + prog.publisher.toLower();
+        QString key = prog.displayName.toLower() + "|" + prog.publisher.toLower();
 
         if (!seen.contains(key)) {
             seen.insert(key);
@@ -600,4 +631,4 @@ void ProgramEnumerator::deduplicatePrograms(QVector<ProgramInfo>& programs)
     programs = unique;
 }
 
-} // namespace sak
+}  // namespace sak

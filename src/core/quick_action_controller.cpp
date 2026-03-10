@@ -2,32 +2,32 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "sak/quick_action_controller.h"
-#include "sak/elevation_manager.h"
-#include "sak/quick_action_result_io.h"
-#include "sak/logger.h"
 
-#include <QDateTime>
-#include <QFile>
-#include <QTextStream>
-#include <QStandardPaths>
-#include <QDir>
+#include "sak/elevation_manager.h"
+#include "sak/logger.h"
+#include "sak/quick_action_result_io.h"
+
 #include <QCoreApplication>
+#include <QDateTime>
+#include <QDir>
+#include <QFile>
+#include <QStandardPaths>
+#include <QTextStream>
 #include <QUuid>
 
 #ifdef _WIN32
 #include <windows.h>
+
 #include <shellapi.h>
 #endif
 
 namespace sak {
 
-QuickActionController::QuickActionController(QObject* parent)
-    : QObject(parent) {
+QuickActionController::QuickActionController(QObject* parent) : QObject(parent) {
     // Setup log file path
     QString log_dir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
     if (!QDir().mkpath(log_dir)) {
-        sak::logWarning("Failed to create quick actions log directory: {}",
-                        log_dir.toStdString());
+        sak::logWarning("Failed to create quick actions log directory: {}", log_dir.toStdString());
     }
     m_log_file_path = log_dir + "/quick_actions.log";
 }
@@ -43,10 +43,12 @@ QuickActionController::~QuickActionController() {
 
     // Gracefully shut down threads — use deleteLater for safe cleanup
     auto cleanupThread = [](QThread*& thread) {
-        if (!thread) return;
+        if (!thread) {
+            return;
+        }
         if (thread->isRunning()) {
             thread->quit();
-            if (!thread->wait(10000)) {
+            if (!thread->wait(10'000)) {
                 sak::logError("QuickAction thread did not stop within 10s");
             }
         }
@@ -67,6 +69,8 @@ void QuickActionController::setBackupLocation(const QString& backup_location) {
 }
 
 QString QuickActionController::registerAction(std::unique_ptr<QuickAction> action) {
+    Q_ASSERT(!m_actions.empty());
+    Q_ASSERT(action);
     if (!action) {
         return QString();
     }
@@ -85,23 +89,25 @@ QString QuickActionController::registerAction(std::unique_ptr<QuickAction> actio
         }
     });
 
-    connect(action_ptr, &QuickAction::scanProgress, this, [this,
-        action_ptr](const QString& message) {
-        logOperation(action_ptr, QString("Scanning: %1").arg(message));
-    });
+    connect(
+        action_ptr, &QuickAction::scanProgress, this, [this, action_ptr](const QString& message) {
+            logOperation(action_ptr, QString("Scanning: %1").arg(message));
+        });
 
-    connect(action_ptr, &QuickAction::executionProgress, this, [this,
-        action_ptr](const QString& msg, int prog) {
-        QString message = QString("%1 - %2%").arg(msg).arg(prog);
-        Q_EMIT actionExecutionProgress(action_ptr, message, prog);
-        logOperation(action_ptr, message);
-    });
+    connect(action_ptr,
+            &QuickAction::executionProgress,
+            this,
+            [this, action_ptr](const QString& msg, int prog) {
+                QString message = QString("%1 - %2%").arg(msg).arg(prog);
+                Q_EMIT actionExecutionProgress(action_ptr, message, prog);
+                logOperation(action_ptr, message);
+            });
 
-    connect(action_ptr, &QuickAction::errorOccurred, this, [this,
-        action_ptr](const QString& error) {
-        Q_EMIT actionError(action_ptr, error);
-        logOperation(action_ptr, QString("ERROR: %1").arg(error));
-    });
+    connect(
+        action_ptr, &QuickAction::errorOccurred, this, [this, action_ptr](const QString& error) {
+            Q_EMIT actionError(action_ptr, error);
+            logOperation(action_ptr, QString("ERROR: %1").arg(error));
+        });
 
     logOperation(action_ptr, "Action registered");
     return action_name;
@@ -136,6 +142,7 @@ bool QuickActionController::hasAdminPrivileges() {
 }
 
 bool QuickActionController::requestAdminElevation(const QString& reason) {
+    Q_ASSERT(!reason.isEmpty());
 #ifdef _WIN32
     // Show elevation prompt with reason
     QString app_path = QCoreApplication::applicationFilePath();
@@ -169,6 +176,7 @@ bool QuickActionController::requestAdminElevation(const QString& reason) {
 }
 
 void QuickActionController::scanAction(const QString& action_name) {
+    Q_ASSERT(!action_name.isEmpty());
     QuickAction* action = getAction(action_name);
     if (!action) {
         Q_EMIT logMessage(QString("Action not found: %1").arg(action_name));
@@ -193,6 +201,7 @@ void QuickActionController::scanAction(const QString& action_name) {
 }
 
 void QuickActionController::executeAction(const QString& action_name, bool require_confirmation) {
+    Q_ASSERT(!action_name.isEmpty());
     QuickAction* action = getAction(action_name);
     if (!action) {
         Q_EMIT logMessage(QString("Action not found: %1").arg(action_name));
@@ -220,6 +229,8 @@ void QuickActionController::executeAction(const QString& action_name, bool requi
 }
 
 void QuickActionController::executeElevatedAction(QuickAction* action, const QString& action_name) {
+    Q_ASSERT(action);
+    Q_ASSERT(!action_name.isEmpty());
     if (m_current_execution_action) {
         m_action_queue.enqueue(action_name);
         Q_EMIT logMessage(QString("Action queued: %1").arg(action_name));
@@ -234,33 +245,33 @@ void QuickActionController::executeElevatedAction(QuickAction* action, const QSt
 
     QString temp_dir = QStandardPaths::writableLocation(QStandardPaths::TempLocation);
     if (!QDir().mkpath(temp_dir)) {
-        sak::logWarning("Failed to create temp directory: {}",
-                        temp_dir.toStdString());
+        sak::logWarning("Failed to create temp directory: {}", temp_dir.toStdString());
     }
     QString safe_name = action->name();
     safe_name.replace(' ', '_');
-    QString result_file = QDir(temp_dir).filePath(
-        QString("sak_quick_action_%1_%2.json")
-            .arg(safe_name, QUuid::createUuid().toString(QUuid::Id128)));
+    QString result_file =
+        QDir(temp_dir).filePath(QString("sak_quick_action_%1_%2.json")
+                                    .arg(safe_name, QUuid::createUuid().toString(QUuid::Id128)));
 
     QString backup_location = m_backup_location.isEmpty() ? "C:/SAK_Backups" : m_backup_location;
 
     QStringList args;
-    args << "--run-quick-action" << action->name()
-         << "--backup-location" << backup_location
+    args << "--run-quick-action" << action->name() << "--backup-location" << backup_location
          << "--result-file" << result_file;
 
     QString arg_string;
     for (const auto& arg : args) {
-        if (!arg_string.isEmpty()) arg_string += ' ';
+        if (!arg_string.isEmpty()) {
+            arg_string += ' ';
+        }
         QString escaped = arg;
         escaped.replace('"', "\\\"");
         arg_string += escaped.contains(' ') ? QString("\"%1\"").arg(escaped) : escaped;
     }
 
     const QString exe_path = QCoreApplication::applicationFilePath();
-    auto elevation_result = ElevationManager::executeElevated(
-        exe_path.toStdWString(), arg_string.toStdWString(), true);
+    auto elevation_result =
+        ElevationManager::executeElevated(exe_path.toStdWString(), arg_string.toStdWString(), true);
 
     QuickAction::ExecutionResult result;
     QuickAction::ActionStatus status = QuickAction::ActionStatus::Failed;
@@ -309,6 +320,8 @@ void QuickActionController::cancelCurrentAction() {
 }
 
 void QuickActionController::onScanComplete() {
+    Q_ASSERT(!m_scan_queue.isEmpty());
+    Q_ASSERT(m_scan_thread);
     if (!m_current_scan_action) {
         return;
     }
@@ -335,6 +348,8 @@ void QuickActionController::onScanComplete() {
 }
 
 void QuickActionController::onExecutionComplete() {
+    Q_ASSERT(!m_action_queue.isEmpty());
+    Q_ASSERT(m_execution_thread);
     if (!m_current_execution_action) {
         return;
     }
@@ -346,10 +361,11 @@ void QuickActionController::onExecutionComplete() {
 
     const auto& result = action->lastExecutionResult();
     qint64 duration_sec = result.duration_ms / 1000;
-    QString log_msg = result.success
-        ? QString("Execution complete: %1 (%2 bytes in %3s)")
-            .arg(result.message).arg(result.bytes_processed).arg(duration_sec)
-        : QString("Execution failed: %1").arg(result.message);
+    QString log_msg = result.success ? QString("Execution complete: %1 (%2 bytes in %3s)")
+                                           .arg(result.message)
+                                           .arg(result.bytes_processed)
+                                           .arg(duration_sec)
+                                     : QString("Execution failed: %1").arg(result.message);
     logOperation(action, log_msg);
 
     // Cleanup thread
@@ -368,8 +384,8 @@ void QuickActionController::onExecutionComplete() {
 }
 
 void QuickActionController::onWorkerError(const QString& error) {
-    QuickAction* action =
-        m_current_execution_action ? m_current_execution_action : m_current_scan_action;
+    QuickAction* action = m_current_execution_action ? m_current_execution_action
+                                                     : m_current_scan_action;
     if (action) {
         Q_EMIT actionError(action, error);
         logOperation(action, QString("ERROR: %1").arg(error));
@@ -377,6 +393,8 @@ void QuickActionController::onWorkerError(const QString& error) {
 }
 
 void QuickActionController::startScanWorker(QuickAction* action) {
+    Q_ASSERT(m_scan_thread);
+    Q_ASSERT(action);
     m_current_scan_action = action;
     Q_EMIT actionScanStarted(action);
     logOperation(action, "Scan started");
@@ -386,11 +404,11 @@ void QuickActionController::startScanWorker(QuickAction* action) {
     action->moveToThread(m_scan_thread);
 
     // Connect completion
-    connect(action, &QuickAction::scanComplete, this,
-        [this](const QuickAction::ScanResult& result) {
-        Q_UNUSED(result);
-        onScanComplete();
-    });
+    connect(
+        action, &QuickAction::scanComplete, this, [this](const QuickAction::ScanResult& result) {
+            Q_UNUSED(result);
+            onScanComplete();
+        });
     connect(m_scan_thread, &QThread::finished, action, [action]() {
         auto* app_thread = QCoreApplication::instance()->thread();
         if (action->thread() != app_thread) {
@@ -403,6 +421,8 @@ void QuickActionController::startScanWorker(QuickAction* action) {
 }
 
 void QuickActionController::startExecutionWorker(QuickAction* action) {
+    Q_ASSERT(m_execution_thread);
+    Q_ASSERT(action);
     m_current_execution_action = action;
     Q_EMIT actionExecutionStarted(action);
     logOperation(action, "Execution started");
@@ -412,11 +432,13 @@ void QuickActionController::startExecutionWorker(QuickAction* action) {
     action->moveToThread(m_execution_thread);
 
     // Connect completion
-    connect(action, &QuickAction::executionComplete, this,
-        [this](const QuickAction::ExecutionResult& result) {
-        Q_UNUSED(result);
-        onExecutionComplete();
-    });
+    connect(action,
+            &QuickAction::executionComplete,
+            this,
+            [this](const QuickAction::ExecutionResult& result) {
+                Q_UNUSED(result);
+                onExecutionComplete();
+            });
     connect(m_execution_thread, &QThread::finished, action, [action]() {
         auto* app_thread = QCoreApplication::instance()->thread();
         if (action->thread() != app_thread) {
@@ -429,6 +451,8 @@ void QuickActionController::startExecutionWorker(QuickAction* action) {
 }
 
 void QuickActionController::logOperation(QuickAction* action, const QString& message) {
+    Q_ASSERT(action);
+    Q_ASSERT(!message.isEmpty());
     if (!m_logging_enabled) {
         return;
     }
@@ -446,4 +470,4 @@ void QuickActionController::logOperation(QuickAction* action, const QString& mes
     }
 }
 
-} // namespace sak
+}  // namespace sak

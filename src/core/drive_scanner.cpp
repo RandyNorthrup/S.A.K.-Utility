@@ -2,15 +2,18 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "sak/drive_scanner.h"
+
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
-#include <QtGlobal>
+
 #include <QDir>
-#include <dbt.h>
-#include <setupapi.h>
+#include <QtGlobal>
+
 #include <cfgmgr32.h>
-#include <winioctl.h>
+#include <dbt.h>
 #include <ntddscsi.h>
+#include <setupapi.h>
+#include <winioctl.h>
 
 #pragma comment(lib, "setupapi.lib")
 
@@ -18,11 +21,13 @@ namespace {
 /// @brief Check if any drive in the list has the given devicePath
 bool containsDevicePath(const QList<sak::DriveInfo>& drives, const QString& devicePath) {
     for (const auto& drive : drives) {
-        if (drive.devicePath == devicePath) return true;
+        if (drive.devicePath == devicePath) {
+            return true;
+        }
     }
     return false;
 }
-} // anonymous namespace
+}  // anonymous namespace
 
 DriveScanner* DriveScanner::s_instance = nullptr;
 
@@ -31,8 +36,7 @@ DriveScanner::DriveScanner(QObject* parent)
     , m_refreshTimer(new QTimer(this))
     , m_notificationWindow(nullptr)
     , m_deviceNotify(nullptr)
-    , m_isScanning(false)
-{
+    , m_isScanning(false) {
     Q_ASSERT_X(s_instance == nullptr, "DriveScanner", "Only one DriveScanner instance is allowed");
     s_instance = this;
 
@@ -47,6 +51,7 @@ DriveScanner::~DriveScanner() {
 }
 
 void DriveScanner::start() {
+    Q_ASSERT(m_refreshTimer);
     sak::logInfo("Starting drive scanner");
 
     // Initial scan
@@ -91,7 +96,7 @@ sak::DriveInfo DriveScanner::getDriveInfo(const QString& devicePath) const {
             return drive;
         }
     }
-    return sak::DriveInfo{}; // Return invalid info
+    return sak::DriveInfo{};  // Return invalid info
 }
 
 bool DriveScanner::isSystemDrive(const QString& devicePath) const {
@@ -124,7 +129,9 @@ void DriveScanner::scanDrives() {
 
     // Find removed drives
     for (const auto& oldDrive : m_drives) {
-        if (containsDevicePath(newDrives, oldDrive.devicePath)) continue;
+        if (containsDevicePath(newDrives, oldDrive.devicePath)) {
+            continue;
+        }
         sak::logInfo(QString("Drive detached: %1").arg(oldDrive.devicePath).toStdString());
         Q_EMIT driveDetached(oldDrive.devicePath);
         hasChanges = true;
@@ -132,9 +139,12 @@ void DriveScanner::scanDrives() {
 
     // Find new drives
     for (const auto& newDrive : newDrives) {
-        if (containsDevicePath(m_drives, newDrive.devicePath)) continue;
-        sak::logInfo(QString("Drive attached: %1 (%2)").arg(newDrive.devicePath,
-            newDrive.name).toStdString());
+        if (containsDevicePath(m_drives, newDrive.devicePath)) {
+            continue;
+        }
+        sak::logInfo(QString("Drive attached: %1 (%2)")
+                         .arg(newDrive.devicePath, newDrive.name)
+                         .toStdString());
         Q_EMIT driveAttached(newDrive);
         hasChanges = true;
     }
@@ -149,23 +159,22 @@ void DriveScanner::scanDrives() {
 }
 
 sak::DriveInfo DriveScanner::queryDriveInfo(int driveNumber) {
+    Q_ASSERT(driveNumber >= 0);
     Q_ASSERT_X(driveNumber >= 0, "queryDriveInfo", "driveNumber must be non-negative");
     sak::DriveInfo info;
     info.devicePath = QString("\\\\.\\PhysicalDrive%1").arg(driveNumber);
 
     // Try to open drive
-    HANDLE hDrive = CreateFileW(
-        reinterpret_cast<LPCWSTR>(info.devicePath.utf16()),
-        0, // No access needed for query
-        FILE_SHARE_READ | FILE_SHARE_WRITE,
-        nullptr,
-        OPEN_EXISTING,
-        0,
-        nullptr
-    );
+    HANDLE hDrive = CreateFileW(reinterpret_cast<LPCWSTR>(info.devicePath.utf16()),
+                                0,  // No access needed for query
+                                FILE_SHARE_READ | FILE_SHARE_WRITE,
+                                nullptr,
+                                OPEN_EXISTING,
+                                0,
+                                nullptr);
 
     if (hDrive == INVALID_HANDLE_VALUE) {
-        return sak::DriveInfo{}; // Drive doesn't exist or can't be accessed
+        return sak::DriveInfo{};  // Drive doesn't exist or can't be accessed
     }
 
     // Get drive geometry and size
@@ -188,17 +197,16 @@ sak::DriveInfo DriveScanner::queryDriveInfo(int driveNumber) {
 }
 
 QString DriveScanner::getDriveName(int driveNumber) {
+    Q_ASSERT(driveNumber >= 0);
     Q_ASSERT_X(driveNumber >= 0, "getDriveName", "driveNumber must be non-negative");
     QString devicePath = QString("\\\\.\\PhysicalDrive%1").arg(driveNumber);
-    HANDLE hDrive = CreateFileW(
-        reinterpret_cast<LPCWSTR>(devicePath.utf16()),
-        0,
-        FILE_SHARE_READ | FILE_SHARE_WRITE,
-        nullptr,
-        OPEN_EXISTING,
-        0,
-        nullptr
-    );
+    HANDLE hDrive = CreateFileW(reinterpret_cast<LPCWSTR>(devicePath.utf16()),
+                                0,
+                                FILE_SHARE_READ | FILE_SHARE_WRITE,
+                                nullptr,
+                                OPEN_EXISTING,
+                                0,
+                                nullptr);
 
     if (hDrive == INVALID_HANDLE_VALUE) {
         return QString("Physical Drive %1").arg(driveNumber);
@@ -211,25 +219,27 @@ QString DriveScanner::getDriveName(int driveNumber) {
     BYTE buffer[1024] = {};
     DWORD bytesReturned = 0;
 
-    if (DeviceIoControl(
-        hDrive,
-        IOCTL_STORAGE_QUERY_PROPERTY,
-        &query, sizeof(query),
-        buffer, sizeof(buffer),
-        &bytesReturned,
-        nullptr))
-    {
+    if (DeviceIoControl(hDrive,
+                        IOCTL_STORAGE_QUERY_PROPERTY,
+                        &query,
+                        sizeof(query),
+                        buffer,
+                        sizeof(buffer),
+                        &bytesReturned,
+                        nullptr)) {
         auto* desc = reinterpret_cast<STORAGE_DEVICE_DESCRIPTOR*>(buffer);
 
         QString vendor;
         QString product;
         if (desc->VendorIdOffset != 0) {
-            vendor = QString::fromLatin1(reinterpret_cast<const char*>(buffer +
-                desc->VendorIdOffset)).trimmed();
+            vendor =
+                QString::fromLatin1(reinterpret_cast<const char*>(buffer + desc->VendorIdOffset))
+                    .trimmed();
         }
         if (desc->ProductIdOffset != 0) {
-            product = QString::fromLatin1(reinterpret_cast<const char*>(buffer +
-                desc->ProductIdOffset)).trimmed();
+            product =
+                QString::fromLatin1(reinterpret_cast<const char*>(buffer + desc->ProductIdOffset))
+                    .trimmed();
         }
 
         CloseHandle(hDrive);
@@ -249,19 +259,18 @@ QString DriveScanner::getDriveName(int driveNumber) {
 }
 
 qint64 DriveScanner::getDriveSize(HANDLE hDrive) {
-    Q_ASSERT_X(hDrive != INVALID_HANDLE_VALUE, "getDriveSize",
-        "hDrive must be a valid handle");
+    Q_ASSERT_X(hDrive != INVALID_HANDLE_VALUE, "getDriveSize", "hDrive must be a valid handle");
     DISK_GEOMETRY_EX geometry = {};
     DWORD bytesReturned = 0;
 
-    if (DeviceIoControl(
-        hDrive,
-        IOCTL_DISK_GET_DRIVE_GEOMETRY_EX,
-        nullptr, 0,
-        &geometry, sizeof(geometry),
-        &bytesReturned,
-        nullptr))
-    {
+    if (DeviceIoControl(hDrive,
+                        IOCTL_DISK_GET_DRIVE_GEOMETRY_EX,
+                        nullptr,
+                        0,
+                        &geometry,
+                        sizeof(geometry),
+                        &bytesReturned,
+                        nullptr)) {
         return geometry.DiskSize.QuadPart;
     }
 
@@ -269,28 +278,26 @@ qint64 DriveScanner::getDriveSize(HANDLE hDrive) {
 }
 
 quint32 DriveScanner::getBlockSize(HANDLE hDrive) {
-    Q_ASSERT_X(hDrive != INVALID_HANDLE_VALUE, "getBlockSize",
-        "hDrive must be a valid handle");
+    Q_ASSERT_X(hDrive != INVALID_HANDLE_VALUE, "getBlockSize", "hDrive must be a valid handle");
     DISK_GEOMETRY geometry = {};
     DWORD bytesReturned = 0;
 
-    if (DeviceIoControl(
-        hDrive,
-        IOCTL_DISK_GET_DRIVE_GEOMETRY,
-        nullptr, 0,
-        &geometry, sizeof(geometry),
-        &bytesReturned,
-        nullptr))
-    {
+    if (DeviceIoControl(hDrive,
+                        IOCTL_DISK_GET_DRIVE_GEOMETRY,
+                        nullptr,
+                        0,
+                        &geometry,
+                        sizeof(geometry),
+                        &bytesReturned,
+                        nullptr)) {
         return geometry.BytesPerSector;
     }
 
-    return 512; // Default
+    return 512;  // Default
 }
 
 QString DriveScanner::getBusType(HANDLE hDrive) {
-    Q_ASSERT_X(hDrive != INVALID_HANDLE_VALUE, "getBusType",
-        "hDrive must be a valid handle");
+    Q_ASSERT_X(hDrive != INVALID_HANDLE_VALUE, "getBusType", "hDrive must be a valid handle");
     STORAGE_PROPERTY_QUERY query = {};
     query.PropertyId = StorageDeviceProperty;
     query.QueryType = PropertyStandardQuery;
@@ -298,24 +305,31 @@ QString DriveScanner::getBusType(HANDLE hDrive) {
     BYTE buffer[1024] = {};
     DWORD bytesReturned = 0;
 
-    if (DeviceIoControl(
-        hDrive,
-        IOCTL_STORAGE_QUERY_PROPERTY,
-        &query, sizeof(query),
-        buffer, sizeof(buffer),
-        &bytesReturned,
-        nullptr))
-    {
+    if (DeviceIoControl(hDrive,
+                        IOCTL_STORAGE_QUERY_PROPERTY,
+                        &query,
+                        sizeof(query),
+                        buffer,
+                        sizeof(buffer),
+                        &bytesReturned,
+                        nullptr)) {
         auto* desc = reinterpret_cast<STORAGE_DEVICE_DESCRIPTOR*>(buffer);
 
         switch (desc->BusType) {
-            case BusTypeUsb: return "USB";
-            case BusTypeAta: return "ATA";
-            case BusTypeSata: return "SATA";
-            case BusTypeNvme: return "NVMe";
-            case BusTypeSd: return "SD";
-            case BusTypeMmc: return "MMC";
-            default: return "Unknown";
+        case BusTypeUsb:
+            return "USB";
+        case BusTypeAta:
+            return "ATA";
+        case BusTypeSata:
+            return "SATA";
+        case BusTypeNvme:
+            return "NVMe";
+        case BusTypeSd:
+            return "SD";
+        case BusTypeMmc:
+            return "MMC";
+        default:
+            return "Unknown";
         }
     }
 
@@ -323,18 +337,17 @@ QString DriveScanner::getBusType(HANDLE hDrive) {
 }
 
 bool DriveScanner::isDriveRemovable(int driveNumber) {
+    Q_ASSERT(driveNumber >= 0);
     Q_ASSERT_X(driveNumber >= 0, "isDriveRemovable", "driveNumber must be non-negative");
     // Use IOCTL_STORAGE_QUERY_PROPERTY to check both RemovableMedia flag and BusType
     QString devicePath = QString("\\\\.\\PhysicalDrive%1").arg(driveNumber);
-    HANDLE hDrive = CreateFileW(
-        reinterpret_cast<LPCWSTR>(devicePath.utf16()),
-        0,
-        FILE_SHARE_READ | FILE_SHARE_WRITE,
-        nullptr,
-        OPEN_EXISTING,
-        0,
-        nullptr
-    );
+    HANDLE hDrive = CreateFileW(reinterpret_cast<LPCWSTR>(devicePath.utf16()),
+                                0,
+                                FILE_SHARE_READ | FILE_SHARE_WRITE,
+                                nullptr,
+                                OPEN_EXISTING,
+                                0,
+                                nullptr);
 
     if (hDrive == INVALID_HANDLE_VALUE) {
         return false;
@@ -349,14 +362,14 @@ bool DriveScanner::isDriveRemovable(int driveNumber) {
 
     bool removable = false;
 
-    if (DeviceIoControl(
-        hDrive,
-        IOCTL_STORAGE_QUERY_PROPERTY,
-        &query, sizeof(query),
-        buffer, sizeof(buffer),
-        &bytesReturned,
-        nullptr))
-    {
+    if (DeviceIoControl(hDrive,
+                        IOCTL_STORAGE_QUERY_PROPERTY,
+                        &query,
+                        sizeof(query),
+                        buffer,
+                        sizeof(buffer),
+                        &bytesReturned,
+                        nullptr)) {
         auto* desc = reinterpret_cast<STORAGE_DEVICE_DESCRIPTOR*>(buffer);
 
         // Primary: use the RemovableMedia flag from the device descriptor
@@ -366,14 +379,14 @@ bool DriveScanner::isDriveRemovable(int driveNumber) {
 
         // Secondary: certain bus types are inherently removable
         switch (desc->BusType) {
-            case BusTypeUsb:
-            case BusTypeSd:
-            case BusTypeMmc:
-            case BusType1394:  // FireWire
-                removable = true;
-                break;
-            default:
-                break;
+        case BusTypeUsb:
+        case BusTypeSd:
+        case BusTypeMmc:
+        case BusType1394:  // FireWire
+            removable = true;
+            break;
+        default:
+            break;
         }
     }
 
@@ -382,19 +395,12 @@ bool DriveScanner::isDriveRemovable(int driveNumber) {
 }
 
 bool DriveScanner::isDriveReadOnly(HANDLE hDrive) {
-    Q_ASSERT_X(hDrive != INVALID_HANDLE_VALUE, "isDriveReadOnly",
-        "hDrive must be a valid handle");
+    Q_ASSERT_X(hDrive != INVALID_HANDLE_VALUE, "isDriveReadOnly", "hDrive must be a valid handle");
     DISK_GEOMETRY geometry = {};
     DWORD bytesReturned = 0;
 
     if (DeviceIoControl(
-        hDrive,
-        IOCTL_DISK_IS_WRITABLE,
-        nullptr, 0,
-        nullptr, 0,
-        &bytesReturned,
-        nullptr))
-    {
+            hDrive, IOCTL_DISK_IS_WRITABLE, nullptr, 0, nullptr, 0, &bytesReturned, nullptr)) {
         return false;
     }
 
@@ -404,14 +410,14 @@ bool DriveScanner::isDriveReadOnly(HANDLE hDrive) {
     }
 
     GET_LENGTH_INFORMATION lengthInfo = {};
-    if (DeviceIoControl(
-        hDrive,
-        IOCTL_DISK_GET_LENGTH_INFO,
-        nullptr, 0,
-        &lengthInfo, sizeof(lengthInfo),
-        &bytesReturned,
-        nullptr))
-    {
+    if (DeviceIoControl(hDrive,
+                        IOCTL_DISK_GET_LENGTH_INFO,
+                        nullptr,
+                        0,
+                        &lengthInfo,
+                        sizeof(lengthInfo),
+                        &bytesReturned,
+                        nullptr)) {
         if (lengthInfo.Length.QuadPart == 0) {
             return true;
         }
@@ -421,6 +427,7 @@ bool DriveScanner::isDriveReadOnly(HANDLE hDrive) {
 }
 
 QStringList DriveScanner::getMountPoints(int driveNumber) {
+    Q_ASSERT(driveNumber >= 0);
     Q_ASSERT_X(driveNumber >= 0, "getMountPoints", "driveNumber must be non-negative");
     QStringList mountPoints;
 
@@ -438,28 +445,24 @@ QStringList DriveScanner::getMountPoints(int driveNumber) {
         }
 
         HANDLE hVolume = CreateFileW(
-            volumeName,
-            0,
-            FILE_SHARE_READ | FILE_SHARE_WRITE,
-            nullptr,
-            OPEN_EXISTING,
-            0,
-            nullptr
-        );
+            volumeName, 0, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
 
-        if (hVolume == INVALID_HANDLE_VALUE) continue;
+        if (hVolume == INVALID_HANDLE_VALUE) {
+            continue;
+        }
 
         STORAGE_DEVICE_NUMBER deviceNumber = {};
         DWORD bytesReturned = 0;
 
-        bool isMatch = DeviceIoControl(
-            hVolume,
-            IOCTL_STORAGE_GET_DEVICE_NUMBER,
-            nullptr, 0,
-            &deviceNumber, sizeof(deviceNumber),
-            &bytesReturned,
-            nullptr)
-            && static_cast<int>(deviceNumber.DeviceNumber) == driveNumber;
+        bool isMatch = DeviceIoControl(hVolume,
+                                       IOCTL_STORAGE_GET_DEVICE_NUMBER,
+                                       nullptr,
+                                       0,
+                                       &deviceNumber,
+                                       sizeof(deviceNumber),
+                                       &bytesReturned,
+                                       nullptr) &&
+                       static_cast<int>(deviceNumber.DeviceNumber) == driveNumber;
 
         if (!isMatch) {
             CloseHandle(hVolume);
@@ -474,14 +477,15 @@ QStringList DriveScanner::getMountPoints(int driveNumber) {
     return mountPoints;
 }
 
-void DriveScanner::collectMountPaths(wchar_t* volumeName, size_t nameLen,
-    QStringList& mountPoints) {
+void DriveScanner::collectMountPaths(wchar_t* volumeName,
+                                     size_t nameLen,
+                                     QStringList& mountPoints) {
     volumeName[nameLen - 1] = L'\\';
 
     wchar_t pathNames[MAX_PATH * 4];
     DWORD pathLen = 0;
-    if (!GetVolumePathNamesForVolumeNameW(volumeName, pathNames,
-        sizeof(pathNames) / sizeof(wchar_t), &pathLen)) {
+    if (!GetVolumePathNamesForVolumeNameW(
+            volumeName, pathNames, sizeof(pathNames) / sizeof(wchar_t), &pathLen)) {
         volumeName[nameLen - 1] = L'\0';
         return;
     }
@@ -495,15 +499,18 @@ void DriveScanner::collectMountPaths(wchar_t* volumeName, size_t nameLen,
 }
 
 QString DriveScanner::getVolumeLabel(const QString& mountPoint) {
+    Q_ASSERT(!mountPoint.isEmpty());
     Q_ASSERT_X(!mountPoint.isEmpty(), "getVolumeLabel", "mountPoint must not be empty");
     wchar_t volumeLabel[MAX_PATH + 1] = {};
 
-    if (GetVolumeInformationW(
-        reinterpret_cast<LPCWSTR>(mountPoint.utf16()),
-        volumeLabel, MAX_PATH,
-        nullptr, nullptr, nullptr,
-        nullptr, 0))
-    {
+    if (GetVolumeInformationW(reinterpret_cast<LPCWSTR>(mountPoint.utf16()),
+                              volumeLabel,
+                              MAX_PATH,
+                              nullptr,
+                              nullptr,
+                              nullptr,
+                              nullptr,
+                              0)) {
         return QString::fromWCharArray(volumeLabel);
     }
 
@@ -511,8 +518,8 @@ QString DriveScanner::getVolumeLabel(const QString& mountPoint) {
 }
 
 bool DriveScanner::containsWindowsInstallation(int driveNumber) {
-    Q_ASSERT_X(driveNumber >= 0, "containsWindowsInstallation",
-        "driveNumber must be non-negative");
+    Q_ASSERT(driveNumber >= 0);
+    Q_ASSERT_X(driveNumber >= 0, "containsWindowsInstallation", "driveNumber must be non-negative");
     QStringList mountPoints = getMountPoints(driveNumber);
 
     for (const QString& mountPoint : mountPoints) {
@@ -537,8 +544,7 @@ bool DriveScanner::containsWindowsInstallation(int driveNumber) {
         }
 
         // Check for EFI boot files with Windows
-        if (mountDir.exists("EFI/Microsoft/Boot/bootmgfw.efi") &&
-            mountDir.exists("Windows")) {
+        if (mountDir.exists("EFI/Microsoft/Boot/bootmgfw.efi") && mountDir.exists("Windows")) {
             return true;
         }
     }
@@ -572,16 +578,18 @@ void DriveScanner::registerDeviceNotification() {
         return;
     }
 
-    m_notificationWindow = CreateWindowExW(
-        0,
-        className,
-        L"DriveScanner",
-        0, 0, 0, 0, 0,
-        HWND_MESSAGE,
-        nullptr,
-        GetModuleHandleW(nullptr),
-        nullptr
-    );
+    m_notificationWindow = CreateWindowExW(0,
+                                           className,
+                                           L"DriveScanner",
+                                           0,
+                                           0,
+                                           0,
+                                           0,
+                                           0,
+                                           HWND_MESSAGE,
+                                           nullptr,
+                                           GetModuleHandleW(nullptr),
+                                           nullptr);
 
     if (!m_notificationWindow) {
         sak::logError("Failed to create notification window");
@@ -592,11 +600,10 @@ void DriveScanner::registerDeviceNotification() {
     notificationFilter.dbcc_size = sizeof(notificationFilter);
     notificationFilter.dbcc_devicetype = DBT_DEVTYP_DEVICEINTERFACE;
 
-    m_deviceNotify = RegisterDeviceNotificationW(
-        m_notificationWindow,
-        &notificationFilter,
-        DEVICE_NOTIFY_WINDOW_HANDLE | DEVICE_NOTIFY_ALL_INTERFACE_CLASSES
-    );
+    m_deviceNotify = RegisterDeviceNotificationW(m_notificationWindow,
+                                                 &notificationFilter,
+                                                 DEVICE_NOTIFY_WINDOW_HANDLE |
+                                                     DEVICE_NOTIFY_ALL_INTERFACE_CLASSES);
 
     if (!m_deviceNotify) {
         sak::logError("Failed to register device notification");
@@ -619,20 +626,14 @@ void DriveScanner::unregisterDeviceNotification() {
     }
 }
 
-LRESULT CALLBACK DriveScanner::deviceNotificationProc(HWND hwnd, UINT message,
-                                                     WPARAM wParam, LPARAM lParam)
-{
-    if (message == WM_DEVICECHANGE
-        && (wParam == DBT_DEVICEARRIVAL || wParam == DBT_DEVICEREMOVECOMPLETE)
-        && s_instance) {
+LRESULT CALLBACK DriveScanner::deviceNotificationProc(HWND hwnd,
+                                                      UINT message,
+                                                      WPARAM wParam,
+                                                      LPARAM lParam) {
+    if (message == WM_DEVICECHANGE &&
+        (wParam == DBT_DEVICEARRIVAL || wParam == DBT_DEVICEREMOVECOMPLETE) && s_instance) {
         s_instance->refresh();
     }
 
     return DefWindowProc(hwnd, message, wParam, lParam);
 }
-
-
-
-
-
-

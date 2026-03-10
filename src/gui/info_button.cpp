@@ -2,8 +2,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "sak/info_button.h"
-#include "sak/style_constants.h"
+
 #include "sak/layout_constants.h"
+#include "sak/style_constants.h"
 
 #include <QApplication>
 #include <QFrame>
@@ -21,8 +22,8 @@ namespace sak {
 // Icon rendering
 // ============================================================================
 
-QIcon InfoButton::createInfoIcon(int size)
-{
+QIcon InfoButton::createInfoIcon(int size) {
+    Q_ASSERT(size >= 0);
     QPixmap pixmap(size, size);
     pixmap.fill(Qt::transparent);
 
@@ -56,9 +57,7 @@ QIcon InfoButton::createInfoIcon(int size)
 // ============================================================================
 
 InfoButton::InfoButton(const QString& infoText, QWidget* parent)
-    : QToolButton(parent)
-    , m_infoText(infoText)
-{
+    : QToolButton(parent), m_infoText(infoText) {
     static const QIcon s_icon = createInfoIcon(32);
     setIcon(s_icon);
     setIconSize(QSize(16, 16));
@@ -74,8 +73,7 @@ InfoButton::InfoButton(const QString& infoText, QWidget* parent)
     setStyleSheet(
         "QToolButton { background: transparent; border: none; padding: 0; }"
         "QToolButton:hover { background: rgba(0, 120, 212, 0.08); border-radius: 10px; }"
-        "QToolButton:pressed { background: rgba(0, 120, 212, 0.15); border-radius: 10px; }"
-    );
+        "QToolButton:pressed { background: rgba(0, 120, 212, 0.15); border-radius: 10px; }");
 
     connect(this, &QToolButton::clicked, this, &InfoButton::togglePopup);
 }
@@ -84,8 +82,8 @@ InfoButton::InfoButton(const QString& infoText, QWidget* parent)
 // Popup
 // ============================================================================
 
-void InfoButton::togglePopup()
-{
+void InfoButton::togglePopup() {
+    Q_ASSERT(m_popup);
     // If popup already visible, close it
     if (m_popup) {
         m_popup->close();
@@ -97,14 +95,13 @@ void InfoButton::togglePopup()
     auto* popup = new QFrame(this, Qt::Popup | Qt::FramelessWindowHint);
     popup->setAttribute(Qt::WA_DeleteOnClose);
     popup->setObjectName("sakInfoPopup");
-    popup->setStyleSheet(
-        QString("#sakInfoPopup {"
-        "  background-color: rgba(255, 255, 255, 0.97);"
-        "  border: 1px solid %1;"
-        "  border-radius: 8px;"
-        "  padding: 0px;"
-        "}").arg(sak::ui::kColorBorderDefault)
-    );
+    popup->setStyleSheet(QString("#sakInfoPopup {"
+                                 "  background-color: rgba(255, 255, 255, 0.97);"
+                                 "  border: 1px solid %1;"
+                                 "  border-radius: 8px;"
+                                 "  padding: 0px;"
+                                 "}")
+                             .arg(sak::ui::kColorBorderDefault));
 
     auto* layout = new QVBoxLayout(popup);
     layout->setContentsMargins(14, 10, 14, 10);
@@ -112,15 +109,14 @@ void InfoButton::togglePopup()
     auto* label = new QLabel(m_infoText, popup);
     label->setWordWrap(true);
     label->setMaximumWidth(sak::kTooltipMaxW);
-    label->setStyleSheet(
-        QString("QLabel {"
-        "  color: %1;"
-        "  font-size: 9pt;"
-        "  background: transparent;"
-        "  border: none;"
-        "  padding: 0px;"
-        "}").arg(sak::ui::kColorTextPrimary)
-    );
+    label->setStyleSheet(QString("QLabel {"
+                                 "  color: %1;"
+                                 "  font-size: 9pt;"
+                                 "  background: transparent;"
+                                 "  border: none;"
+                                 "  padding: 0px;"
+                                 "}")
+                             .arg(sak::ui::kColorTextPrimary));
     layout->addWidget(label);
 
     // Drop shadow
@@ -155,8 +151,7 @@ void InfoButton::togglePopup()
 
 QWidget* InfoButton::createInfoLabel(const QString& labelText,
                                      const QString& infoText,
-                                     QWidget* parent)
-{
+                                     QWidget* parent) {
     auto* container = new QWidget(parent);
     auto* layout = new QHBoxLayout(container);
     layout->setContentsMargins(0, 0, 0, 0);
@@ -172,4 +167,4 @@ QWidget* InfoButton::createInfoLabel(const QString& labelText,
     return container;
 }
 
-} // namespace sak
+}  // namespace sak

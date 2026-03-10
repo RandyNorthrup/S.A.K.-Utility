@@ -2,37 +2,31 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "sak/quick_action.h"
+
 #include "sak/format_utils.h"
 
 #include <QDateTime>
 
 namespace sak {
 
-QuickAction::QuickAction(QObject* parent)
-    : QObject(parent)
-{
-}
+QuickAction::QuickAction(QObject* parent) : QObject(parent) {}
 
-void QuickAction::setStatus(ActionStatus status)
-{
+void QuickAction::setStatus(ActionStatus status) {
     if (m_status != status) {
         m_status = status;
         Q_EMIT statusChanged(status);
     }
 }
 
-void QuickAction::setScanResult(const ScanResult& result)
-{
+void QuickAction::setScanResult(const ScanResult& result) {
     m_scan_result = result;
 }
 
-void QuickAction::setExecutionResult(const ExecutionResult& result)
-{
+void QuickAction::setExecutionResult(const ExecutionResult& result) {
     m_execution_result = result;
 }
 
-void QuickAction::cancel()
-{
+void QuickAction::cancel() {
     m_cancelled = true;
 
     if (m_status == ActionStatus::Scanning || m_status == ActionStatus::Running) {
@@ -42,8 +36,7 @@ void QuickAction::cancel()
 
 // === Shared helpers ===
 
-void QuickAction::emitCancelledResult(const QString& message)
-{
+void QuickAction::emitCancelledResult(const QString& message) {
     ExecutionResult result;
     result.success = false;
     result.message = message;
@@ -52,8 +45,7 @@ void QuickAction::emitCancelledResult(const QString& message)
     Q_EMIT executionComplete(result);
 }
 
-void QuickAction::emitCancelledResult(const QString& message, const QDateTime& start_time)
-{
+void QuickAction::emitCancelledResult(const QString& message, const QDateTime& start_time) {
     ExecutionResult result;
     result.success = false;
     result.message = message;
@@ -63,9 +55,9 @@ void QuickAction::emitCancelledResult(const QString& message, const QDateTime& s
     Q_EMIT executionComplete(result);
 }
 
-void QuickAction::emitFailedResult(const QString& message, const QString& log,
-    const QDateTime& start_time)
-{
+void QuickAction::emitFailedResult(const QString& message,
+                                   const QString& log,
+                                   const QDateTime& start_time) {
     ExecutionResult result;
     result.success = false;
     result.message = message;
@@ -76,24 +68,22 @@ void QuickAction::emitFailedResult(const QString& message, const QString& log,
     Q_EMIT executionComplete(result);
 }
 
-void QuickAction::finishWithResult(const ExecutionResult& result, ActionStatus status)
-{
+void QuickAction::finishWithResult(const ExecutionResult& result, ActionStatus status) {
     setExecutionResult(result);
     setStatus(status);
     Q_EMIT executionComplete(result);
 }
 
-QString QuickAction::formatFileSize(qint64 bytes)
-{
+QString QuickAction::formatFileSize(qint64 bytes) {
     return sak::formatBytes(bytes);
 }
 
-QString QuickAction::formatLogBox(const QString& title, const QStringList& content_lines,
-    qint64 duration_ms)
-{
-    const QString top    =
+QString QuickAction::formatLogBox(const QString& title,
+                                  const QStringList& content_lines,
+                                  qint64 duration_ms) {
+    const QString top =
         QStringLiteral("╔════════════════════════════════════════════════════════════════╗\n");
-    const QString sep    =
+    const QString sep =
         QStringLiteral("╠════════════════════════════════════════════════════════════════╣\n");
     const QString bottom =
         QStringLiteral("╚════════════════════════════════════════════════════════════════╝\n");
@@ -113,16 +103,16 @@ QString QuickAction::formatLogBox(const QString& title, const QStringList& conte
     if (duration_ms >= 0) {
         box += sep;
         box += QString("║ Completed in: %1 seconds%2║\n")
-            .arg(duration_ms / 1000.0, 0, 'f', 2)
-            .arg(QString(65 - 15 - QString::number(duration_ms / 1000.0, 'f', 2).length(), ' '));
+                   .arg(duration_ms / 1000.0, 0, 'f', 2)
+                   .arg(QString(65 - 15 - QString::number(duration_ms / 1000.0, 'f', 2).length(),
+                                ' '));
     }
 
     box += bottom;
     return box;
 }
 
-QString QuickAction::sanitizePathForBackup(const QString& path)
-{
+QString QuickAction::sanitizePathForBackup(const QString& path) {
     QString safe = path;
     safe.replace(':', '_');
     safe.replace('\\', '_');
@@ -130,4 +120,4 @@ QString QuickAction::sanitizePathForBackup(const QString& path)
     return safe;
 }
 
-} // namespace sak
+}  // namespace sak

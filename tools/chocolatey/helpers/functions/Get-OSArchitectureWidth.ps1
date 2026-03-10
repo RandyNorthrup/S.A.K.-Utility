@@ -57,10 +57,10 @@ param(
     $bits = 64
   } elseif ([System.IntPtr]::Size -eq 4) {
     $bits = 32
-  } 
+  }
 
-  # ARM64 has a x86 32bit emulator, so we need to select 32 bit if we detect 
-  # ARM64 - According to Microsoft on 2019 APR 18 (jkunkee), there are no 
+  # ARM64 has a x86 32bit emulator, so we need to select 32 bit if we detect
+  # ARM64 - According to Microsoft on 2019 APR 18 (jkunkee), there are no
   # current plans to ship 64-bit emulation for ARM64.
   $processorArchitecture = $env:PROCESSOR_ARCHITECTURE
   if ($processorArchitecture -and $processorArchitecture -eq 'ARM64') {

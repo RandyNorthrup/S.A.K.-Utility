@@ -4,13 +4,12 @@
 /// @file test_decompressor_factory.cpp
 /// @brief Unit tests for decompressor factory pattern and format detection
 
-#include <QtTest/QtTest>
-
 #include "sak/decompressor_factory.h"
 #include "sak/streaming_decompressor.h"
 
-#include <QTemporaryDir>
 #include <QFile>
+#include <QTemporaryDir>
+#include <QtTest/QtTest>
 
 class DecompressorFactoryTests : public QObject {
     Q_OBJECT
@@ -49,21 +48,18 @@ private:
     QString filePath(const QString& name) const;
 };
 
-void DecompressorFactoryTests::initTestCase()
-{
+void DecompressorFactoryTests::initTestCase() {
     QVERIFY(m_tempDir.isValid());
 }
 
-void DecompressorFactoryTests::writeFile(const QString& name, const QByteArray& content)
-{
+void DecompressorFactoryTests::writeFile(const QString& name, const QByteArray& content) {
     QFile f(m_tempDir.filePath(name));
     QVERIFY(f.open(QIODevice::WriteOnly));
     f.write(content);
     f.close();
 }
 
-QString DecompressorFactoryTests::filePath(const QString& name) const
-{
+QString DecompressorFactoryTests::filePath(const QString& name) const {
     return m_tempDir.filePath(name);
 }
 
@@ -71,43 +67,37 @@ QString DecompressorFactoryTests::filePath(const QString& name) const
 // Format Detection by Extension
 // ============================================================================
 
-void DecompressorFactoryTests::detectFormat_gzExtension()
-{
+void DecompressorFactoryTests::detectFormat_gzExtension() {
     writeFile("test.gz", "dummy");
     QString fmt = sak::DecompressorFactory::detectFormat(filePath("test.gz"));
     QCOMPARE(fmt.toLower(), QString("gzip"));
 }
 
-void DecompressorFactoryTests::detectFormat_bz2Extension()
-{
+void DecompressorFactoryTests::detectFormat_bz2Extension() {
     writeFile("test.bz2", "dummy");
     QString fmt = sak::DecompressorFactory::detectFormat(filePath("test.bz2"));
     QCOMPARE(fmt.toLower(), QString("bzip2"));
 }
 
-void DecompressorFactoryTests::detectFormat_xzExtension()
-{
+void DecompressorFactoryTests::detectFormat_xzExtension() {
     writeFile("test.xz", "dummy");
     QString fmt = sak::DecompressorFactory::detectFormat(filePath("test.xz"));
     QCOMPARE(fmt.toLower(), QString("xz"));
 }
 
-void DecompressorFactoryTests::detectFormat_tarGzExtension()
-{
+void DecompressorFactoryTests::detectFormat_tarGzExtension() {
     writeFile("archive.tar.gz", "dummy");
     QString fmt = sak::DecompressorFactory::detectFormat(filePath("archive.tar.gz"));
     QCOMPARE(fmt.toLower(), QString("gzip"));
 }
 
-void DecompressorFactoryTests::detectFormat_unknownExtension()
-{
+void DecompressorFactoryTests::detectFormat_unknownExtension() {
     writeFile("file.txt", "plain text");
     QString fmt = sak::DecompressorFactory::detectFormat(filePath("file.txt"));
     QVERIFY(fmt.isEmpty() || fmt.toLower() == "unknown");
 }
 
-void DecompressorFactoryTests::detectFormat_caseInsensitive()
-{
+void DecompressorFactoryTests::detectFormat_caseInsensitive() {
     writeFile("test.GZ", "dummy");
     QString fmt = sak::DecompressorFactory::detectFormat(filePath("test.GZ"));
     QCOMPARE(fmt.toLower(), QString("gzip"));
@@ -117,20 +107,17 @@ void DecompressorFactoryTests::detectFormat_caseInsensitive()
 // isCompressed
 // ============================================================================
 
-void DecompressorFactoryTests::isCompressed_gzFile()
-{
+void DecompressorFactoryTests::isCompressed_gzFile() {
     writeFile("compressed.gz", "dummy");
     QVERIFY(sak::DecompressorFactory::isCompressed(filePath("compressed.gz")));
 }
 
-void DecompressorFactoryTests::isCompressed_txtFile()
-{
+void DecompressorFactoryTests::isCompressed_txtFile() {
     writeFile("plain.txt", "not compressed");
     QVERIFY(!sak::DecompressorFactory::isCompressed(filePath("plain.txt")));
 }
 
-void DecompressorFactoryTests::isCompressed_nonExistent()
-{
+void DecompressorFactoryTests::isCompressed_nonExistent() {
     // isCompressed checks extension first, so a .gz file that doesn't exist
     // is still detected as compressed based on extension alone
     QVERIFY(sak::DecompressorFactory::isCompressed(filePath("no_such_file.gz")));
@@ -140,8 +127,7 @@ void DecompressorFactoryTests::isCompressed_nonExistent()
 // Factory Create
 // ============================================================================
 
-void DecompressorFactoryTests::create_gzReturnsDecompressor()
-{
+void DecompressorFactoryTests::create_gzReturnsDecompressor() {
     // Write a file with gzip magic bytes (but not a valid gzip stream)
     QByteArray gzMagic;
     gzMagic.append(static_cast<char>(0x1F));
@@ -154,15 +140,13 @@ void DecompressorFactoryTests::create_gzReturnsDecompressor()
     QCOMPARE(decomp->formatName().toLower(), QString("gzip"));
 }
 
-void DecompressorFactoryTests::create_unknownReturnsNull()
-{
+void DecompressorFactoryTests::create_unknownReturnsNull() {
     writeFile("mystery.xyz", "unknown format data");
     auto decomp = sak::DecompressorFactory::create(filePath("mystery.xyz"));
     QVERIFY(decomp == nullptr);
 }
 
-void DecompressorFactoryTests::create_nonExistentReturnsNull()
-{
+void DecompressorFactoryTests::create_nonExistentReturnsNull() {
     // create() detects format by extension and creates a decompressor
     // even for non-existent files (deferred open pattern)
     auto decomp = sak::DecompressorFactory::create(filePath("does_not_exist.gz"));
@@ -173,8 +157,7 @@ void DecompressorFactoryTests::create_nonExistentReturnsNull()
 // Magic Number Detection
 // ============================================================================
 
-void DecompressorFactoryTests::detectFormat_gzipMagic()
-{
+void DecompressorFactoryTests::detectFormat_gzipMagic() {
     // Gzip magic: 1F 8B
     QByteArray data;
     data.append(static_cast<char>(0x1F));
@@ -186,8 +169,7 @@ void DecompressorFactoryTests::detectFormat_gzipMagic()
     QCOMPARE(fmt.toLower(), QString("gzip"));
 }
 
-void DecompressorFactoryTests::detectFormat_bzip2Magic()
-{
+void DecompressorFactoryTests::detectFormat_bzip2Magic() {
     // BZip2 magic: 42 5A 68
     QByteArray data;
     data.append('B').append('Z').append('h');
@@ -198,8 +180,7 @@ void DecompressorFactoryTests::detectFormat_bzip2Magic()
     QCOMPARE(fmt.toLower(), QString("bzip2"));
 }
 
-void DecompressorFactoryTests::detectFormat_xzMagic()
-{
+void DecompressorFactoryTests::detectFormat_xzMagic() {
     // XZ magic: FD 37 7A 58 5A 00
     QByteArray data;
     data.append(static_cast<char>(0xFD));
@@ -215,8 +196,7 @@ void DecompressorFactoryTests::detectFormat_xzMagic()
     QCOMPARE(fmt.toLower(), QString("xz"));
 }
 
-void DecompressorFactoryTests::detectFormat_noMagicNoExtension()
-{
+void DecompressorFactoryTests::detectFormat_noMagicNoExtension() {
     writeFile("plain_data.bin", "Just some plain text data");
     QString fmt = sak::DecompressorFactory::detectFormat(filePath("plain_data.bin"));
     QVERIFY(fmt.isEmpty() || fmt.toLower() == "unknown");

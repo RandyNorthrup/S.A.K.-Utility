@@ -3,16 +3,16 @@
 
 #pragma once
 
+#include "sak/network_constants.h"
+#include "sak/user_profile_types.h"
+
+#include <QDateTime>
+#include <QHostAddress>
+#include <QJsonObject>
 #include <QString>
 #include <QStringList>
-#include <QDateTime>
-#include <QVector>
-#include <QJsonObject>
-#include <QHostAddress>
 #include <QUuid>
-
-#include "sak/user_profile_types.h"
-#include "sak/network_constants.h"
+#include <QVector>
 
 namespace sak {
 
@@ -25,7 +25,7 @@ struct TransferPeerInfo {
     QString ip_address;
     quint16 control_port{sak::kPortControl};
     quint16 data_port{sak::kPortData};
-    QString mode; // "source" or "destination"
+    QString mode;  // "source" or "destination"
     QStringList capabilities;
     QDateTime last_seen;
 
@@ -36,11 +36,11 @@ struct TransferPeerInfo {
 /// @brief Metadata for a single file in a transfer manifest
 struct TransferFileEntry {
     QString file_id;
-    QString absolute_path;   // source only, not serialized to destination
-    QString relative_path;   // relative to destination base
+    QString absolute_path;  // source only, not serialized to destination
+    QString relative_path;  // relative to destination base
     qint64 size_bytes{0};
     QString checksum_sha256;
-    QString acl_sddl;        // optional SDDL for ACL preservation
+    QString acl_sddl;  // optional SDDL for ACL preservation
 
     QJsonObject toJson() const;
     static TransferFileEntry fromJson(const QJsonObject& json);
@@ -62,7 +62,7 @@ struct TransferManifest {
     QVector<AppDataSourceInfo> app_data_sources;
     qint64 total_bytes{0};
     int total_files{0};
-    QString checksum_sha256; // manifest checksum
+    QString checksum_sha256;  // manifest checksum
 
     QJsonObject toJson(bool include_files = true) const;
     static TransferManifest fromJson(const QJsonObject& json);
@@ -79,7 +79,7 @@ struct TransferSettings {
     quint16 discovery_port{sak::kPortDiscovery};
     quint16 control_port{sak::kPortControl};
     quint16 data_port{sak::kPortData};
-    QString relay_server; // Phase 2
+    QString relay_server;  // Phase 2
 };
 
-} // namespace sak
+}  // namespace sak

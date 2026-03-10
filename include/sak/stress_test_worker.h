@@ -7,8 +7,8 @@
 #pragma once
 
 #include "sak/diagnostic_types.h"
-#include "sak/worker_base.h"
 #include "sak/thermal_monitor.h"
+#include "sak/worker_base.h"
 
 #include <QElapsedTimer>
 #include <QObject>
@@ -109,8 +109,10 @@ private:
     void runGpuDispatchLoop(GpuStressContext& ctx);
 
     /// @brief Write a single stress-test file, returning error count
-    int writeDiskStressFile(void* file_handle, const uint8_t* buf,
-                            size_t blockSize, size_t fileSize,
+    int writeDiskStressFile(void* file_handle,
+                            const uint8_t* buf,
+                            size_t blockSize,
+                            size_t fileSize,
                             uint64_t& total_bytes_written);
 
     /// @brief Check if a number is prime (with periodic cancellation check)
@@ -144,8 +146,7 @@ private:
     std::atomic<bool> m_stop_children{false};
 
     /// @brief Check if child threads should stop
-    [[nodiscard]] bool childrenShouldStop() const noexcept
-    {
+    [[nodiscard]] bool childrenShouldStop() const noexcept {
         return m_stop_children.load(std::memory_order_acquire) || stopRequested();
     }
 
@@ -155,4 +156,4 @@ private:
     QElapsedTimer m_elapsed_timer;
 };
 
-} // namespace sak
+}  // namespace sak

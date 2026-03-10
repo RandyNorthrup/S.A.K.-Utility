@@ -2,9 +2,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "sak/user_profile_types.h"
-#include <QJsonDocument>
-#include <QJsonArray>
+
 #include <QFile>
+#include <QJsonArray>
+#include <QJsonDocument>
 
 namespace sak {
 
@@ -46,30 +47,26 @@ InstalledAppInfo InstalledAppInfo::fromJson(const QJsonObject& json) {
 
 void SmartFilter::initializeDefaults() {
     // Dangerous files that MUST be excluded
-    dangerous_files = {
-        "NTUSER.DAT",
-        "NTUSER.DAT.LOG1",
-        "NTUSER.DAT.LOG2",
-        "ntuser.ini",
-        "UsrClass.dat",
-        "UsrClass.dat.LOG1",
-        "UsrClass.dat.LOG2"
-    };
+    dangerous_files = {"NTUSER.DAT",
+                       "NTUSER.DAT.LOG1",
+                       "NTUSER.DAT.LOG2",
+                       "ntuser.ini",
+                       "UsrClass.dat",
+                       "UsrClass.dat.LOG1",
+                       "UsrClass.dat.LOG2"};
 
     // Pattern exclusions (case-insensitive)
-    exclude_patterns = {
-        ".*\\.tmp$",
-        ".*\\.temp$",
-        ".*\\.cache$",
-        ".*\\.lock$",
-        ".*\\.lck$",
-        ".*~$",
-        ".*\\.crdownload$",
-        ".*\\.part$",
-        "desktop\\.ini$",
-        "thumbs\\.db$",
-        "\\.DS_Store$"
-    };
+    exclude_patterns = {".*\\.tmp$",
+                        ".*\\.temp$",
+                        ".*\\.cache$",
+                        ".*\\.lock$",
+                        ".*\\.lck$",
+                        ".*~$",
+                        ".*\\.crdownload$",
+                        ".*\\.part$",
+                        "desktop\\.ini$",
+                        "thumbs\\.db$",
+                        "\\.DS_Store$"};
 
     // Folder exclusions
     exclude_folders = {
@@ -103,6 +100,7 @@ QJsonObject SmartFilter::toJson() const {
 }
 
 SmartFilter SmartFilter::fromJson(const QJsonObject& json) {
+    Q_ASSERT(!json.isEmpty());
     SmartFilter filter;
     filter.enable_file_size_limit = json.value("enable_file_size_limit").toBool(false);
     filter.enable_folder_size_limit = json.value("enable_folder_size_limit").toBool(false);
@@ -138,6 +136,7 @@ QJsonObject FolderSelection::toJson() const {
 }
 
 FolderSelection FolderSelection::fromJson(const QJsonObject& json) {
+    Q_ASSERT(!json.isEmpty());
     FolderSelection sel;
     sel.type = stringToFolderType(json["type"].toString());
     sel.display_name = json["display_name"].toString();
@@ -214,6 +213,7 @@ QJsonObject BackupUserData::toJson() const {
 }
 
 BackupUserData BackupUserData::fromJson(const QJsonObject& json) {
+    Q_ASSERT(!json.isEmpty());
     BackupUserData data;
     data.username = json["username"].toString();
     data.sid = json["sid"].toString();
@@ -226,11 +226,15 @@ BackupUserData BackupUserData::fromJson(const QJsonObject& json) {
 
     // Parse permission mode
     QString permMode = json["permissions_mode"].toString();
-    if (permMode == "PreserveOriginal") data.permissions_mode = PermissionMode::PreserveOriginal;
-    else if (permMode == "AssignToDestination") data.permissions_mode =
-        PermissionMode::AssignToDestination;
-    else if (permMode == "Hybrid") data.permissions_mode = PermissionMode::Hybrid;
-    else data.permissions_mode = PermissionMode::StripAll;
+    if (permMode == "PreserveOriginal") {
+        data.permissions_mode = PermissionMode::PreserveOriginal;
+    } else if (permMode == "AssignToDestination") {
+        data.permissions_mode = PermissionMode::AssignToDestination;
+    } else if (permMode == "Hybrid") {
+        data.permissions_mode = PermissionMode::Hybrid;
+    } else {
+        data.permissions_mode = PermissionMode::StripAll;
+    }
 
     data.encrypted = json["encrypted"].toBool();
     data.compression = json["compression"].toString();
@@ -264,24 +268,31 @@ QJsonObject BackupManifest::toJson() const {
     for (const auto& w : wifi_profiles) {
         wifiArray.append(w.toJson());
     }
-    if (!wifiArray.isEmpty()) obj["wifi_profiles"] = wifiArray;
+    if (!wifiArray.isEmpty()) {
+        obj["wifi_profiles"] = wifiArray;
+    }
 
     QJsonArray ethArray;
     for (const auto& e : ethernet_configs) {
         ethArray.append(e.toJson());
     }
-    if (!ethArray.isEmpty()) obj["ethernet_configs"] = ethArray;
+    if (!ethArray.isEmpty()) {
+        obj["ethernet_configs"] = ethArray;
+    }
 
     QJsonArray appDataArray;
     for (const auto& a : app_data_sources) {
         appDataArray.append(a.toJson());
     }
-    if (!appDataArray.isEmpty()) obj["app_data_sources"] = appDataArray;
+    if (!appDataArray.isEmpty()) {
+        obj["app_data_sources"] = appDataArray;
+    }
 
     return obj;
 }
 
 BackupManifest BackupManifest::fromJson(const QJsonObject& json) {
+    Q_ASSERT(!json.isEmpty());
     BackupManifest manifest;
 
     QJsonObject metadata = json["backup_metadata"].toObject();
@@ -317,6 +328,7 @@ BackupManifest BackupManifest::fromJson(const QJsonObject& json) {
 }
 
 bool BackupManifest::saveToFile(const QString& path) const {
+    Q_ASSERT(!path.isEmpty());
     QFile file(path);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
         return false;
@@ -353,61 +365,105 @@ QString OperationResult::getSummary() const {
 // Helper functions
 QString folderTypeToString(FolderType type) {
     switch (type) {
-        case FolderType::Documents: return "Documents";
-        case FolderType::Desktop: return "Desktop";
-        case FolderType::Pictures: return "Pictures";
-        case FolderType::Videos: return "Videos";
-        case FolderType::Music: return "Music";
-        case FolderType::Downloads: return "Downloads";
-        case FolderType::AppData_Roaming: return "AppData_Roaming";
-        case FolderType::AppData_Local: return "AppData_Local";
-        case FolderType::Favorites: return "Favorites";
-        case FolderType::StartMenu: return "StartMenu";
-        case FolderType::Custom: return "Custom";
+    case FolderType::Documents:
+        return "Documents";
+    case FolderType::Desktop:
+        return "Desktop";
+    case FolderType::Pictures:
+        return "Pictures";
+    case FolderType::Videos:
+        return "Videos";
+    case FolderType::Music:
+        return "Music";
+    case FolderType::Downloads:
+        return "Downloads";
+    case FolderType::AppData_Roaming:
+        return "AppData_Roaming";
+    case FolderType::AppData_Local:
+        return "AppData_Local";
+    case FolderType::Favorites:
+        return "Favorites";
+    case FolderType::StartMenu:
+        return "StartMenu";
+    case FolderType::Custom:
+        return "Custom";
     }
     return "Unknown";
 }
 
 FolderType stringToFolderType(const QString& str) {
-    if (str == "Documents") return FolderType::Documents;
-    if (str == "Desktop") return FolderType::Desktop;
-    if (str == "Pictures") return FolderType::Pictures;
-    if (str == "Videos") return FolderType::Videos;
-    if (str == "Music") return FolderType::Music;
-    if (str == "Downloads") return FolderType::Downloads;
-    if (str == "AppData_Roaming") return FolderType::AppData_Roaming;
-    if (str == "AppData_Local") return FolderType::AppData_Local;
-    if (str == "Favorites") return FolderType::Favorites;
-    if (str == "StartMenu") return FolderType::StartMenu;
+    Q_ASSERT(!str.isEmpty());
+    if (str == "Documents") {
+        return FolderType::Documents;
+    }
+    if (str == "Desktop") {
+        return FolderType::Desktop;
+    }
+    if (str == "Pictures") {
+        return FolderType::Pictures;
+    }
+    if (str == "Videos") {
+        return FolderType::Videos;
+    }
+    if (str == "Music") {
+        return FolderType::Music;
+    }
+    if (str == "Downloads") {
+        return FolderType::Downloads;
+    }
+    if (str == "AppData_Roaming") {
+        return FolderType::AppData_Roaming;
+    }
+    if (str == "AppData_Local") {
+        return FolderType::AppData_Local;
+    }
+    if (str == "Favorites") {
+        return FolderType::Favorites;
+    }
+    if (str == "StartMenu") {
+        return FolderType::StartMenu;
+    }
     return FolderType::Custom;
 }
 
 QString permissionModeToString(PermissionMode mode) {
     switch (mode) {
-        case PermissionMode::StripAll: return "StripAll";
-        case PermissionMode::PreserveOriginal: return "PreserveOriginal";
-        case PermissionMode::AssignToDestination: return "AssignToDestination";
-        case PermissionMode::Hybrid: return "Hybrid";
+    case PermissionMode::StripAll:
+        return "StripAll";
+    case PermissionMode::PreserveOriginal:
+        return "PreserveOriginal";
+    case PermissionMode::AssignToDestination:
+        return "AssignToDestination";
+    case PermissionMode::Hybrid:
+        return "Hybrid";
     }
     return "StripAll";
 }
 
 QString mergeModeToString(MergeMode mode) {
     switch (mode) {
-        case MergeMode::ReplaceDestination: return "Replace";
-        case MergeMode::MergeIntoDestination: return "Merge";
-        case MergeMode::CreateNewUser: return "Create New";
+    case MergeMode::ReplaceDestination:
+        return "Replace";
+    case MergeMode::MergeIntoDestination:
+        return "Merge";
+    case MergeMode::CreateNewUser:
+        return "Create New";
     }
     return "Replace";
 }
 
 QString conflictResolutionToString(ConflictResolution mode) {
     switch (mode) {
-        case ConflictResolution::SkipDuplicate: return "Skip";
-        case ConflictResolution::RenameWithSuffix: return "Rename";
-        case ConflictResolution::KeepNewer: return "Keep Newer";
-        case ConflictResolution::KeepLarger: return "Keep Larger";
-        case ConflictResolution::PromptUser: return "Ask Me";
+    case ConflictResolution::SkipDuplicate:
+        return "Skip";
+    case ConflictResolution::RenameWithSuffix:
+        return "Rename";
+    case ConflictResolution::KeepNewer:
+        return "Keep Newer";
+    case ConflictResolution::KeepLarger:
+        return "Keep Larger";
+    case ConflictResolution::PromptUser:
+        return "Ask Me";
     }
     return "Rename";
 }
@@ -480,4 +536,4 @@ AppDataSourceInfo AppDataSourceInfo::fromJson(const QJsonObject& json) {
     return info;
 }
 
-} // namespace sak
+}  // namespace sak

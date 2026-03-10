@@ -1,8 +1,9 @@
 // Copyright (c) 2025-2026 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-#include <QTest>
 #include "sak/uup_iso_builder.h"
+
+#include <QTest>
 
 /**
  * @brief Unit tests for UupIsoBuilder.
@@ -29,8 +30,7 @@ private Q_SLOTS:
 
 void TestUupIsoBuilder::testInitialPhase() {
     UupIsoBuilder builder;
-    QCOMPARE(builder.currentPhase(),
-             UupIsoBuilder::Phase::Idle);
+    QCOMPARE(builder.currentPhase(), UupIsoBuilder::Phase::Idle);
 }
 
 void TestUupIsoBuilder::testNotRunningInitially() {
@@ -45,8 +45,7 @@ void TestUupIsoBuilder::testNotRunningInitially() {
 void TestUupIsoBuilder::testCancelWhenIdle() {
     UupIsoBuilder builder;
     builder.cancel();
-    QCOMPARE(builder.currentPhase(),
-             UupIsoBuilder::Phase::Idle);
+    QCOMPARE(builder.currentPhase(), UupIsoBuilder::Phase::Idle);
 }
 
 QTEST_MAIN(TestUupIsoBuilder)

@@ -2,23 +2,26 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "sak/flash_coordinator.h"
-#include "sak/flash_worker.h"
+
 #include "sak/drive_unmounter.h"
+#include "sak/flash_worker.h"
 #include "sak/input_validator.h"
 #include "sak/logger.h"
-#include <QThread>
+
 #include <QMutexLocker>
+#include <QThread>
+
 #include <windows.h>
+
 #include <winioctl.h>
 
 FlashCoordinator::FlashCoordinator(QObject* parent)
     : QObject(parent)
     , m_state(sak::FlashState::Idle)
     , m_verificationEnabled(true)
-    , m_bufferSize(256 * 1024 * 1024) // 256MB for better performance
+    , m_bufferSize(256 * 1024 * 1024)  // 256MB for better performance
     , m_bufferCount(16)
-    , m_isCancelled(false)
-{
+    , m_isCancelled(false) {
     m_progress.state = sak::FlashState::Idle;
     m_progress.percentage = 0.0;
     m_progress.bytesWritten = 0;
@@ -37,6 +40,8 @@ FlashCoordinator::~FlashCoordinator() {
 }
 
 bool FlashCoordinator::startFlash(const QString& imagePath, const QStringList& targetDrives) {
+    Q_ASSERT(m_imageSource);
+    Q_ASSERT(!imagePath.isEmpty());
     if (isFlashing()) {
         sak::logError("Flash already in progress");
         return false;
@@ -49,7 +54,9 @@ bool FlashCoordinator::startFlash(const QString& imagePath, const QStringList& t
     }
 
     sak::logInfo(QString("Starting flash: %1 to %2 drives")
-        .arg(imagePath).arg(targetDrives.size()).toStdString());
+                     .arg(imagePath)
+                     .arg(targetDrives.size())
+                     .toStdString());
 
     if (!validateImagePath(imagePath)) {
         return false;
@@ -85,24 +92,27 @@ bool FlashCoordinator::startFlash(const QString& imagePath, const QStringList& t
 }
 
 bool FlashCoordinator::validateImagePath(const QString& imagePath) {
+    Q_ASSERT(!imagePath.isEmpty());
     sak::path_validation_config img_cfg;
     img_cfg.must_exist = true;
     img_cfg.must_be_file = true;
     img_cfg.check_read_permission = true;
-    auto path_result = sak::input_validator::validatePath(
-        std::filesystem::path(imagePath.toStdString()), img_cfg);
+    auto path_result =
+        sak::input_validator::validatePath(std::filesystem::path(imagePath.toStdString()), img_cfg);
     if (!path_result) {
         sak::logError("Image path validation failed: {}", path_result.error_message);
         m_state = sak::FlashState::Failed;
         Q_EMIT stateChanged(m_state, "Invalid image path");
-        Q_EMIT flashError(QString::fromStdString(
-            "Image path validation failed: " + path_result.error_message));
+        Q_EMIT flashError(
+            QString::fromStdString("Image path validation failed: " + path_result.error_message));
         return false;
     }
     return true;
 }
 
 bool FlashCoordinator::prepareImageSource(const QString& imagePath) {
+    Q_ASSERT(m_imageSource);
+    Q_ASSERT(!imagePath.isEmpty());
     if (CompressedImageSource::isCompressed(imagePath)) {
         m_imageSource = std::make_unique<CompressedImageSource>(imagePath);
     } else {
@@ -120,6 +130,8 @@ bool FlashCoordinator::prepareImageSource(const QString& imagePath) {
 }
 
 bool FlashCoordinator::unmountAndFlash(const QString& imagePath, const QStringList& targetDrives) {
+    Q_ASSERT(!imagePath.isEmpty());
+    Q_ASSERT(!targetDrives.isEmpty());
     m_state = sak::FlashState::Unmounting;
     Q_EMIT stateChanged(m_state, "Unmounting volumes...");
 
@@ -142,22 +154,23 @@ bool FlashCoordinator::unmountAndFlash(const QString& imagePath, const QStringLi
         worker->setVerificationEnabled(m_verificationEnabled);
         worker->setBufferSize(m_bufferSize);
 
-        connect(worker.get(), &FlashWorker::progressUpdated,
-                this, &FlashCoordinator::onWorkerProgress);
-        connect(worker.get(), &FlashWorker::verificationCompleted,
-                this, &FlashCoordinator::onWorkerCompleted);
-        connect(worker.get(), &FlashWorker::error,
-                this, &FlashCoordinator::onWorkerFailed);
+        connect(
+            worker.get(), &FlashWorker::progressUpdated, this, &FlashCoordinator::onWorkerProgress);
+        connect(worker.get(),
+                &FlashWorker::verificationCompleted,
+                this,
+                &FlashCoordinator::onWorkerCompleted);
+        connect(worker.get(), &FlashWorker::error, this, &FlashCoordinator::onWorkerFailed);
 
         // When verification is disabled, verificationCompleted never fires.
         // Use writeCompleted as the completion signal in that case.
         if (!m_verificationEnabled) {
-            connect(worker.get(), &FlashWorker::writeCompleted,
-                    this, [this](qint64 /*bytesWritten*/) {
-                sak::ValidationResult result;
-                result.passed = true;
-                onWorkerCompleted(result);
-            });
+            connect(
+                worker.get(), &FlashWorker::writeCompleted, this, [this](qint64 /*bytesWritten*/) {
+                    sak::ValidationResult result;
+                    result.passed = true;
+                    onWorkerCompleted(result);
+                });
         }
 
         worker->start();
@@ -189,8 +202,7 @@ void FlashCoordinator::cancel() {
 
 bool FlashCoordinator::isFlashing() const {
     QMutexLocker locker(&m_mutex);
-    return m_state == sak::FlashState::Flashing ||
-           m_state == sak::FlashState::Verifying ||
+    return m_state == sak::FlashState::Flashing || m_state == sak::FlashState::Verifying ||
            m_state == sak::FlashState::Decompressing;
 }
 
@@ -227,6 +239,8 @@ void FlashCoordinator::onWorkerProgress(double percentage, qint64 bytesWritten) 
 }
 
 void FlashCoordinator::onWorkerCompleted(const sak::ValidationResult& result) {
+    Q_ASSERT(!m_targetDrives.empty());
+    Q_ASSERT(!m_targetDrives.isEmpty());
     FlashWorker* worker = qobject_cast<FlashWorker*>(sender());
     if (!worker) {
         return;
@@ -244,9 +258,7 @@ void FlashCoordinator::onWorkerCompleted(const sak::ValidationResult& result) {
         sak::logError(QString("Verification failed for drive: %1").arg(devicePath).toStdString());
         m_progress.failedDrives++;
         m_result.failedDrives.append(devicePath);
-        QString errorMsg = result.errors.isEmpty()
-            ? "Verification failed"
-            : result.errors.first();
+        QString errorMsg = result.errors.isEmpty() ? "Verification failed" : result.errors.first();
         m_result.errorMessages.append(QString("%1: %2").arg(devicePath).arg(errorMsg));
         Q_EMIT driveFailed(devicePath, errorMsg);
     } else {
@@ -259,9 +271,10 @@ void FlashCoordinator::onWorkerCompleted(const sak::ValidationResult& result) {
         m_state = sak::FlashState::Completed;
         m_result.success = m_progress.failedDrives == 0;
 
-        Q_EMIT stateChanged(m_state, QString("Completed: %1 successful, %2 failed")
-            .arg(m_result.successfulDrives.size())
-            .arg(m_result.failedDrives.size()));
+        Q_EMIT stateChanged(m_state,
+                            QString("Completed: %1 successful, %2 failed")
+                                .arg(m_result.successfulDrives.size())
+                                .arg(m_result.failedDrives.size()));
 
         Q_EMIT flashCompleted(m_result);
 
@@ -270,6 +283,8 @@ void FlashCoordinator::onWorkerCompleted(const sak::ValidationResult& result) {
 }
 
 void FlashCoordinator::onWorkerFailed(const QString& error) {
+    Q_ASSERT(!m_targetDrives.empty());
+    Q_ASSERT(!error.isEmpty());
     FlashWorker* worker = qobject_cast<FlashWorker*>(sender());
     if (!worker) {
         return;
@@ -292,9 +307,10 @@ void FlashCoordinator::onWorkerFailed(const QString& error) {
         m_state = sak::FlashState::Failed;
         m_result.success = false;
 
-        Q_EMIT stateChanged(m_state, QString("Failed: %1 successful, %2 failed")
-            .arg(m_result.successfulDrives.size())
-            .arg(m_result.failedDrives.size()));
+        Q_EMIT stateChanged(m_state,
+                            QString("Failed: %1 successful, %2 failed")
+                                .arg(m_result.successfulDrives.size())
+                                .arg(m_result.failedDrives.size()));
 
         Q_EMIT flashCompleted(m_result);
 
@@ -303,43 +319,47 @@ void FlashCoordinator::onWorkerFailed(const QString& error) {
 }
 
 bool FlashCoordinator::validateTargets(const QStringList& targetDrives) {
+    Q_ASSERT(!targetDrives.isEmpty());
     for (const QString& devicePath : targetDrives) {
         // Open device handle to verify it exists and is accessible
-        HANDLE hDevice = CreateFileW(
-            reinterpret_cast<LPCWSTR>(devicePath.utf16()),
-            GENERIC_READ,
-            FILE_SHARE_READ | FILE_SHARE_WRITE,
-            nullptr,
-            OPEN_EXISTING,
-            0,
-            nullptr);
+        HANDLE hDevice = CreateFileW(reinterpret_cast<LPCWSTR>(devicePath.utf16()),
+                                     GENERIC_READ,
+                                     FILE_SHARE_READ | FILE_SHARE_WRITE,
+                                     nullptr,
+                                     OPEN_EXISTING,
+                                     0,
+                                     nullptr);
 
         if (hDevice == INVALID_HANDLE_VALUE) {
             DWORD error = GetLastError();
             sak::logError(QString("Failed to open device %1: Error %2")
-                .arg(devicePath).arg(error).toStdString());
-            Q_EMIT flashError(QString("Cannot access device %1. Error: %2")
-                .arg(devicePath).arg(error));
+                              .arg(devicePath)
+                              .arg(error)
+                              .toStdString());
+            Q_EMIT flashError(
+                QString("Cannot access device %1. Error: %2").arg(devicePath).arg(error));
             return false;
         }
 
         // Get device geometry to verify it's a valid disk
         DISK_GEOMETRY geometry;
         DWORD bytesReturned = 0;
-        if (!DeviceIoControl(
-            hDevice,
-            IOCTL_DISK_GET_DRIVE_GEOMETRY,
-            nullptr, 0,
-            &geometry, sizeof(geometry),
-            &bytesReturned,
-            nullptr))
-        {
+        if (!DeviceIoControl(hDevice,
+                             IOCTL_DISK_GET_DRIVE_GEOMETRY,
+                             nullptr,
+                             0,
+                             &geometry,
+                             sizeof(geometry),
+                             &bytesReturned,
+                             nullptr)) {
             DWORD error = GetLastError();
             CloseHandle(hDevice);
             sak::logError(QString("Failed to get geometry for %1: Error %2")
-                .arg(devicePath).arg(error).toStdString());
-            Q_EMIT flashError(QString("Device %1 is not a valid disk. Error: %2")
-                .arg(devicePath).arg(error));
+                              .arg(devicePath)
+                              .arg(error)
+                              .toStdString());
+            Q_EMIT flashError(
+                QString("Device %1 is not a valid disk. Error: %2").arg(devicePath).arg(error));
             return false;
         }
 
@@ -351,6 +371,7 @@ bool FlashCoordinator::validateTargets(const QStringList& targetDrives) {
 }
 
 bool FlashCoordinator::unmountVolumes(const QStringList& targetDrives) {
+    Q_ASSERT(!targetDrives.isEmpty());
     DriveUnmounter unmounter;
 
     for (const QString& devicePath : targetDrives) {
@@ -364,16 +385,18 @@ bool FlashCoordinator::unmountVolumes(const QStringList& targetDrives) {
 
         if (!ok || driveNumber < 0 || driveNumber > 99) {
             sak::logError(QString("Invalid device path format or drive number out of range: %1")
-                .arg(devicePath).toStdString());
+                              .arg(devicePath)
+                              .toStdString());
             Q_EMIT flashError(QString("Invalid device path format: %1").arg(devicePath));
             return false;
         }
 
         if (!unmounter.unmountDrive(driveNumber)) {
             sak::logError(QString("Failed to unmount volumes on %1").arg(devicePath).toStdString());
-            Q_EMIT flashError(QString("Failed to unmount volumes on %1. "
-                "Please close any applications using this drive and try again.")
-                .arg(devicePath));
+            Q_EMIT flashError(
+                QString("Failed to unmount volumes on %1. "
+                        "Please close any applications using this drive and try again.")
+                    .arg(devicePath));
             return false;
         }
 
@@ -401,6 +424,8 @@ void FlashCoordinator::updateProgress() {
 }
 
 void FlashCoordinator::cleanupWorkers() {
+    Q_ASSERT(!m_workers.empty());
+    Q_ASSERT(m_imageSource);
     // Wait for all workers to finish with cooperative stop
     for (auto& worker : m_workers) {
         if (!worker->isRunning()) {
@@ -409,7 +434,7 @@ void FlashCoordinator::cleanupWorkers() {
         sak::logInfo("Requesting worker thread to stop...");
         worker->requestStop();
 
-        if (!worker->wait(15000)) {
+        if (!worker->wait(15'000)) {
             sak::logError("Worker thread did not stop within 15s — potential resource leak");
         } else {
             sak::logInfo("Worker thread stopped gracefully");
@@ -423,12 +448,3 @@ void FlashCoordinator::cleanupWorkers() {
         m_imageSource.reset();
     }
 }
-
-
-
-
-
-
-
-
-

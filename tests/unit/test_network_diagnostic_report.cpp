@@ -7,13 +7,12 @@
 /// Tests HTML/JSON report generation with various data combinations,
 /// section inclusion/exclusion, metadata, and edge cases.
 
-#include <QtTest/QtTest>
-
 #include "sak/network_diagnostic_report_generator.h"
 #include "sak/network_diagnostic_types.h"
 
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QtTest/QtTest>
 
 using namespace sak;
 
@@ -66,16 +65,14 @@ private Q_SLOTS:
 // Construction
 // ════════════════════════════════════════════════════════════════════════════
 
-void NetworkDiagnosticReportTests::construction_default()
-{
+void NetworkDiagnosticReportTests::construction_default() {
     NetworkDiagnosticReportGenerator gen;
     // Should produce valid (empty) HTML without crashing
     const auto html = gen.toHtml();
     QVERIFY(!html.isEmpty());
 }
 
-void NetworkDiagnosticReportTests::construction_nonCopyable()
-{
+void NetworkDiagnosticReportTests::construction_nonCopyable() {
     QVERIFY(!std::is_copy_constructible_v<NetworkDiagnosticReportGenerator>);
     QVERIFY(!std::is_copy_assignable_v<NetworkDiagnosticReportGenerator>);
 }
@@ -84,8 +81,7 @@ void NetworkDiagnosticReportTests::construction_nonCopyable()
 // Section Enum
 // ════════════════════════════════════════════════════════════════════════════
 
-void NetworkDiagnosticReportTests::sectionEnum_allDistinct()
-{
+void NetworkDiagnosticReportTests::sectionEnum_allDistinct() {
     using S = NetworkDiagnosticReportGenerator::Section;
     const QSet<int> values = {
         static_cast<int>(S::AdapterConfig),
@@ -106,8 +102,7 @@ void NetworkDiagnosticReportTests::sectionEnum_allDistinct()
 // HTML: Empty Report
 // ════════════════════════════════════════════════════════════════════════════
 
-void NetworkDiagnosticReportTests::html_emptyReport_containsStructure()
-{
+void NetworkDiagnosticReportTests::html_emptyReport_containsStructure() {
     NetworkDiagnosticReportGenerator gen;
     const auto html = gen.toHtml();
 
@@ -117,36 +112,32 @@ void NetworkDiagnosticReportTests::html_emptyReport_containsStructure()
     QVERIFY(html.contains(QStringLiteral("</body>"), Qt::CaseInsensitive));
 }
 
-void NetworkDiagnosticReportTests::html_emptyReport_containsDoctype()
-{
+void NetworkDiagnosticReportTests::html_emptyReport_containsDoctype() {
     NetworkDiagnosticReportGenerator gen;
     const auto html = gen.toHtml();
-    QVERIFY(html.contains(QStringLiteral("<!DOCTYPE"), Qt::CaseInsensitive)
-         || html.contains(QStringLiteral("<html"), Qt::CaseInsensitive));
+    QVERIFY(html.contains(QStringLiteral("<!DOCTYPE"), Qt::CaseInsensitive) ||
+            html.contains(QStringLiteral("<html"), Qt::CaseInsensitive));
 }
 
 // ════════════════════════════════════════════════════════════════════════════
 // HTML: Metadata
 // ════════════════════════════════════════════════════════════════════════════
 
-void NetworkDiagnosticReportTests::html_metadata_technicianName()
-{
+void NetworkDiagnosticReportTests::html_metadata_technicianName() {
     NetworkDiagnosticReportGenerator gen;
     gen.setTechnicianName(QStringLiteral("John Doe"));
     const auto html = gen.toHtml();
     QVERIFY(html.contains(QStringLiteral("John Doe")));
 }
 
-void NetworkDiagnosticReportTests::html_metadata_ticketNumber()
-{
+void NetworkDiagnosticReportTests::html_metadata_ticketNumber() {
     NetworkDiagnosticReportGenerator gen;
     gen.setTicketNumber(QStringLiteral("TICKET-12345"));
     const auto html = gen.toHtml();
     QVERIFY(html.contains(QStringLiteral("TICKET-12345")));
 }
 
-void NetworkDiagnosticReportTests::html_metadata_notes()
-{
+void NetworkDiagnosticReportTests::html_metadata_notes() {
     NetworkDiagnosticReportGenerator gen;
     gen.setNotes(QStringLiteral("Customer reports intermittent connectivity"));
     const auto html = gen.toHtml();
@@ -157,8 +148,7 @@ void NetworkDiagnosticReportTests::html_metadata_notes()
 // HTML: Sections
 // ════════════════════════════════════════════════════════════════════════════
 
-void NetworkDiagnosticReportTests::html_section_adapterConfig()
-{
+void NetworkDiagnosticReportTests::html_section_adapterConfig() {
     NetworkDiagnosticReportGenerator gen;
     gen.setIncludedSections({NetworkDiagnosticReportGenerator::Section::AdapterConfig});
 
@@ -175,8 +165,7 @@ void NetworkDiagnosticReportTests::html_section_adapterConfig()
     QVERIFY(html.contains(QStringLiteral("192.168.1.100")));
 }
 
-void NetworkDiagnosticReportTests::html_section_pingResults()
-{
+void NetworkDiagnosticReportTests::html_section_pingResults() {
     NetworkDiagnosticReportGenerator gen;
     gen.setIncludedSections({NetworkDiagnosticReportGenerator::Section::PingResults});
 
@@ -195,8 +184,7 @@ void NetworkDiagnosticReportTests::html_section_pingResults()
     QVERIFY(html.contains(QStringLiteral("google.com")));
 }
 
-void NetworkDiagnosticReportTests::html_section_dnsResults()
-{
+void NetworkDiagnosticReportTests::html_section_dnsResults() {
     NetworkDiagnosticReportGenerator gen;
     gen.setIncludedSections({NetworkDiagnosticReportGenerator::Section::DnsResults});
 
@@ -214,8 +202,7 @@ void NetworkDiagnosticReportTests::html_section_dnsResults()
     QVERIFY(html.contains(QStringLiteral("93.184.216.34")));
 }
 
-void NetworkDiagnosticReportTests::html_section_portScanResults()
-{
+void NetworkDiagnosticReportTests::html_section_portScanResults() {
     NetworkDiagnosticReportGenerator gen;
     gen.setIncludedSections({NetworkDiagnosticReportGenerator::Section::PortScanResults});
 
@@ -230,8 +217,7 @@ void NetworkDiagnosticReportTests::html_section_portScanResults()
     QVERIFY(html.contains(QStringLiteral("HTTPS")));
 }
 
-void NetworkDiagnosticReportTests::html_section_bandwidthResults()
-{
+void NetworkDiagnosticReportTests::html_section_bandwidthResults() {
     NetworkDiagnosticReportGenerator gen;
     gen.setIncludedSections({NetworkDiagnosticReportGenerator::Section::BandwidthResults});
 
@@ -245,8 +231,7 @@ void NetworkDiagnosticReportTests::html_section_bandwidthResults()
     QVERIFY(html.contains(QStringLiteral("100")) || html.contains(QStringLiteral("100.2")));
 }
 
-void NetworkDiagnosticReportTests::html_section_wifiAnalysis()
-{
+void NetworkDiagnosticReportTests::html_section_wifiAnalysis() {
     NetworkDiagnosticReportGenerator gen;
     gen.setIncludedSections({NetworkDiagnosticReportGenerator::Section::WiFiAnalysis});
 
@@ -261,8 +246,7 @@ void NetworkDiagnosticReportTests::html_section_wifiAnalysis()
     QVERIFY(html.contains(QStringLiteral("TestNetwork")));
 }
 
-void NetworkDiagnosticReportTests::html_section_firewallAudit()
-{
+void NetworkDiagnosticReportTests::html_section_firewallAudit() {
     NetworkDiagnosticReportGenerator gen;
     gen.setIncludedSections({NetworkDiagnosticReportGenerator::Section::FirewallAudit});
 
@@ -282,15 +266,14 @@ void NetworkDiagnosticReportTests::html_section_firewallAudit()
     QVERIFY(html.contains(QStringLiteral("Total Rules: 1")));
 }
 
-void NetworkDiagnosticReportTests::html_section_connectionMonitor()
-{
+void NetworkDiagnosticReportTests::html_section_connectionMonitor() {
     NetworkDiagnosticReportGenerator gen;
     gen.setIncludedSections({NetworkDiagnosticReportGenerator::Section::ActiveConnections});
 
     ConnectionInfo conn;
     conn.protocol = ConnectionInfo::Protocol::TCP;
     conn.localAddress = QStringLiteral("192.168.1.100");
-    conn.localPort = 54321;
+    conn.localPort = 54'321;
     conn.remoteAddress = QStringLiteral("8.8.8.8");
     conn.remotePort = 443;
     conn.state = QStringLiteral("ESTABLISHED");
@@ -298,12 +281,11 @@ void NetworkDiagnosticReportTests::html_section_connectionMonitor()
     gen.setConnectionData({conn});
 
     const auto html = gen.toHtml();
-    QVERIFY(html.contains(QStringLiteral("ESTABLISHED"))
-         || html.contains(QStringLiteral("chrome.exe")));
+    QVERIFY(html.contains(QStringLiteral("ESTABLISHED")) ||
+            html.contains(QStringLiteral("chrome.exe")));
 }
 
-void NetworkDiagnosticReportTests::html_section_networkShares()
-{
+void NetworkDiagnosticReportTests::html_section_networkShares() {
     NetworkDiagnosticReportGenerator gen;
     gen.setIncludedSections({NetworkDiagnosticReportGenerator::Section::NetworkShares});
 
@@ -319,8 +301,7 @@ void NetworkDiagnosticReportTests::html_section_networkShares()
     QVERIFY(html.contains(QStringLiteral("SharedFolder")));
 }
 
-void NetworkDiagnosticReportTests::html_sectionExclusion_onlyIncluded()
-{
+void NetworkDiagnosticReportTests::html_sectionExclusion_onlyIncluded() {
     NetworkDiagnosticReportGenerator gen;
     // Only include Ping section
     gen.setIncludedSections({NetworkDiagnosticReportGenerator::Section::PingResults});
@@ -344,8 +325,7 @@ void NetworkDiagnosticReportTests::html_sectionExclusion_onlyIncluded()
 // JSON
 // ════════════════════════════════════════════════════════════════════════════
 
-void NetworkDiagnosticReportTests::json_emptyReport_validJson()
-{
+void NetworkDiagnosticReportTests::json_emptyReport_validJson() {
     NetworkDiagnosticReportGenerator gen;
     const auto json = gen.toJson();
     QVERIFY(!json.isEmpty());
@@ -355,8 +335,7 @@ void NetworkDiagnosticReportTests::json_emptyReport_validJson()
     QVERIFY(doc.isObject());
 }
 
-void NetworkDiagnosticReportTests::json_metadata_included()
-{
+void NetworkDiagnosticReportTests::json_metadata_included() {
     NetworkDiagnosticReportGenerator gen;
     gen.setTechnicianName(QStringLiteral("Jane Smith"));
     gen.setTicketNumber(QStringLiteral("INC-99999"));
@@ -370,8 +349,7 @@ void NetworkDiagnosticReportTests::json_metadata_included()
     QVERIFY(json.contains(QStringLiteral("Test notes")));
 }
 
-void NetworkDiagnosticReportTests::json_pingData_serialized()
-{
+void NetworkDiagnosticReportTests::json_pingData_serialized() {
     NetworkDiagnosticReportGenerator gen;
     gen.setIncludedSections({NetworkDiagnosticReportGenerator::Section::PingResults});
 
@@ -386,8 +364,7 @@ void NetworkDiagnosticReportTests::json_pingData_serialized()
     QVERIFY(json.contains(QStringLiteral("example.org")));
 }
 
-void NetworkDiagnosticReportTests::json_dnsData_serialized()
-{
+void NetworkDiagnosticReportTests::json_dnsData_serialized() {
     NetworkDiagnosticReportGenerator gen;
     gen.setIncludedSections({NetworkDiagnosticReportGenerator::Section::DnsResults});
 
@@ -401,8 +378,7 @@ void NetworkDiagnosticReportTests::json_dnsData_serialized()
     QVERIFY(json.contains(QStringLiteral("test.example.com")));
 }
 
-void NetworkDiagnosticReportTests::json_portScanData_serialized()
-{
+void NetworkDiagnosticReportTests::json_portScanData_serialized() {
     NetworkDiagnosticReportGenerator gen;
     gen.setIncludedSections({NetworkDiagnosticReportGenerator::Section::PortScanResults});
 
@@ -416,8 +392,7 @@ void NetworkDiagnosticReportTests::json_portScanData_serialized()
     QVERIFY(json.contains(QStringLiteral("8080")));
 }
 
-void NetworkDiagnosticReportTests::json_wifiData_serialized()
-{
+void NetworkDiagnosticReportTests::json_wifiData_serialized() {
     NetworkDiagnosticReportGenerator gen;
     gen.setIncludedSections({NetworkDiagnosticReportGenerator::Section::WiFiAnalysis});
 
@@ -430,8 +405,7 @@ void NetworkDiagnosticReportTests::json_wifiData_serialized()
     QVERIFY(json.contains(QStringLiteral("JsonTestNet")));
 }
 
-void NetworkDiagnosticReportTests::json_firewallData_serialized()
-{
+void NetworkDiagnosticReportTests::json_firewallData_serialized() {
     NetworkDiagnosticReportGenerator gen;
     gen.setIncludedSections({NetworkDiagnosticReportGenerator::Section::FirewallAudit});
 
@@ -445,8 +419,7 @@ void NetworkDiagnosticReportTests::json_firewallData_serialized()
     QVERIFY(json.contains(QStringLiteral("totalRules")));
 }
 
-void NetworkDiagnosticReportTests::json_shareData_serialized()
-{
+void NetworkDiagnosticReportTests::json_shareData_serialized() {
     NetworkDiagnosticReportGenerator gen;
     gen.setIncludedSections({NetworkDiagnosticReportGenerator::Section::NetworkShares});
 

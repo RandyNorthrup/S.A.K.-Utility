@@ -34,14 +34,16 @@ public:
     DnsDiagnosticTool& operator=(DnsDiagnosticTool&&) = delete;
 
     /// @brief Query a hostname (blocking)
-    void query(const QString& hostname, const QString& recordType = "A",
+    void query(const QString& hostname,
+               const QString& recordType = "A",
                const QString& dnsServer = "");
 
     /// @brief Reverse lookup — IP to hostname (blocking)
     void reverseLookup(const QString& ipAddress, const QString& dnsServer = "");
 
     /// @brief Compare same query across multiple DNS servers (blocking)
-    void compareServers(const QString& hostname, const QString& recordType,
+    void compareServers(const QString& hostname,
+                        const QString& recordType,
                         const QStringList& dnsServers);
 
     /// @brief Inspect the local DNS cache (blocking)
@@ -69,11 +71,11 @@ private:
     std::atomic<bool> m_cancelled{false};
 
     [[nodiscard]] DnsQueryResult performQuery(const QString& hostname,
-                                               const QString& recordType,
-                                               const QString& dnsServer);
+                                              const QString& recordType,
+                                              const QString& dnsServer);
 };
 
-} // namespace sak
+}  // namespace sak
 
 static_assert(!std::is_copy_constructible_v<sak::DnsDiagnosticTool>,
-    "DnsDiagnosticTool must not be copyable.");
+              "DnsDiagnosticTool must not be copyable.");

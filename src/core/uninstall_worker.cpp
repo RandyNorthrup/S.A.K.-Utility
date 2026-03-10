@@ -5,6 +5,7 @@
 /// @brief Executes the uninstall pipeline on a background thread
 
 #include "sak/uninstall_worker.h"
+
 #include "sak/leftover_scanner.h"
 #include "sak/registry_snapshot_engine.h"
 #include "sak/restore_point_manager.h"
@@ -20,19 +21,18 @@
 namespace sak {
 
 namespace {
-constexpr int kProcessStartTimeoutMs  = 10000;
-constexpr int kCancellationPollMs      = 1000;
-constexpr int kProcessKillWaitMs       = 5000;
-constexpr int kUwpRemovalTimeoutMs     = 60000;
-constexpr int kMsiRebootRequiredCode   = 3010;
+constexpr int kProcessStartTimeoutMs = 10'000;
+constexpr int kCancellationPollMs = 1000;
+constexpr int kProcessKillWaitMs = 5000;
+constexpr int kUwpRemovalTimeoutMs = 60'000;
+constexpr int kMsiRebootRequiredCode = 3010;
 
 struct ParsedCommand {
     QString exe;
     QStringList args;
 };
 
-[[nodiscard]] QStringList splitArgsRespectingQuotes(const QString& remainder)
-{
+[[nodiscard]] QStringList splitArgsRespectingQuotes(const QString& remainder) {
     const auto trimmed = remainder.trimmed();
     if (trimmed.isEmpty()) {
         return {};
@@ -48,8 +48,7 @@ struct ParsedCommand {
     return args;
 }
 
-[[nodiscard]] ParsedCommand parseUninstallCommand(const QString& cmd)
-{
+[[nodiscard]] ParsedCommand parseUninstallCommand(const QString& cmd) {
     ParsedCommand parsed;
     if (cmd.isEmpty()) {
         return parsed;
@@ -76,9 +75,10 @@ struct ParsedCommand {
     return parsed;
 }
 
-} // namespace
+}  // namespace
 
-UninstallWorker::UninstallWorker(const ProgramInfo& program, Mode mode,
+UninstallWorker::UninstallWorker(const ProgramInfo& program,
+                                 Mode mode,
                                  ScanLevel scanLevel,
                                  bool createRestorePoint,
                                  QObject* parent)
@@ -86,13 +86,10 @@ UninstallWorker::UninstallWorker(const ProgramInfo& program, Mode mode,
     , m_program(program)
     , m_mode(mode)
     , m_scanLevel(scanLevel)
-    , m_createRestorePoint(createRestorePoint)
-{
-}
+    , m_createRestorePoint(createRestorePoint) {}
 
 auto UninstallWorker::executeStandardMode(UninstallReport& report)
-    -> std::expected<void, sak::error_code>
-{
+    -> std::expected<void, sak::error_code> {
     reportProgress(10, 100, "Capturing registry snapshot...");
     [[maybe_unused]] auto snap_ok = captureRegistrySnapshot();
     Q_EMIT registrySnapshotCaptured();
@@ -105,59 +102,49 @@ auto UninstallWorker::executeStandardMode(UninstallReport& report)
     Q_EMIT nativeUninstallerStarted(m_program.displayName);
 
     if (!runNativeUninstaller()) {
-        report.uninstallResult =
-            UninstallReport::UninstallResult::Failed;
+        report.uninstallResult = UninstallReport::UninstallResult::Failed;
         report.endTime = QDateTime::currentDateTime();
         Q_EMIT uninstallComplete(report);
         return std::unexpected(sak::error_code::execution_failed);
     }
 
-    report.uninstallResult =
-        UninstallReport::UninstallResult::Success;
+    report.uninstallResult = UninstallReport::UninstallResult::Success;
     Q_EMIT nativeUninstallerFinished(report.nativeExitCode);
     return {};
 }
 
 auto UninstallWorker::executeUwpMode(UninstallReport& report)
-    -> std::expected<void, sak::error_code>
-{
+    -> std::expected<void, sak::error_code> {
     reportProgress(20, 100, "Removing UWP package...");
     if (!removeUwpPackage()) {
-        report.uninstallResult =
-            UninstallReport::UninstallResult::Failed;
+        report.uninstallResult = UninstallReport::UninstallResult::Failed;
         report.endTime = QDateTime::currentDateTime();
         Q_EMIT uninstallComplete(report);
         return std::unexpected(sak::error_code::execution_failed);
     }
-    report.uninstallResult =
-        UninstallReport::UninstallResult::Success;
+    report.uninstallResult = UninstallReport::UninstallResult::Success;
     report.endTime = QDateTime::currentDateTime();
     Q_EMIT uninstallComplete(report);
     return {};
 }
 
 auto UninstallWorker::executeRegistryMode(UninstallReport& report)
-    -> std::expected<void, sak::error_code>
-{
-    reportProgress(50, 100,
-                   "Removing orphaned registry entry...");
+    -> std::expected<void, sak::error_code> {
+    reportProgress(50, 100, "Removing orphaned registry entry...");
     if (!removeRegistryEntry()) {
-        report.uninstallResult =
-            UninstallReport::UninstallResult::Failed;
+        report.uninstallResult = UninstallReport::UninstallResult::Failed;
         report.endTime = QDateTime::currentDateTime();
         Q_EMIT uninstallComplete(report);
         return std::unexpected(sak::error_code::execution_failed);
     }
-    report.uninstallResult =
-        UninstallReport::UninstallResult::Success;
+    report.uninstallResult = UninstallReport::UninstallResult::Success;
     report.registryKeysDeleted = 1;
     report.endTime = QDateTime::currentDateTime();
     Q_EMIT uninstallComplete(report);
     return {};
 }
 
-auto UninstallWorker::execute() -> std::expected<void, sak::error_code>
-{
+auto UninstallWorker::execute() -> std::expected<void, sak::error_code> {
     UninstallReport report;
     report.programName = m_program.displayName;
     report.programVersion = m_program.displayVersion;
@@ -171,31 +158,28 @@ auto UninstallWorker::execute() -> std::expected<void, sak::error_code>
         if (createRestorePoint()) {
             report.restorePointCreated = true;
             report.restorePointName =
-                QString("SAK: Before uninstall %1")
-                    .arg(m_program.displayName);
+                QString("SAK: Before uninstall %1").arg(m_program.displayName);
             Q_EMIT restorePointCreated(report.restorePointName);
         }
     }
 
     if (checkStop()) {
-        return std::unexpected(
-            sak::error_code::operation_cancelled);
+        return std::unexpected(sak::error_code::operation_cancelled);
     }
 
     // Phase 2: Handle by mode
     switch (m_mode) {
     case Mode::Standard: {
         auto result = executeStandardMode(report);
-        if (!result) { return result; }
+        if (!result) {
+            return result;
+        }
         break;
     }
     case Mode::ForcedUninstall: {
-        report.uninstallResult =
-            UninstallReport::UninstallResult::Skipped;
-        reportProgress(10, 100,
-                       "Capturing registry snapshot...");
-        [[maybe_unused]] auto snap_ok =
-            captureRegistrySnapshot();
+        report.uninstallResult = UninstallReport::UninstallResult::Skipped;
+        reportProgress(10, 100, "Capturing registry snapshot...");
+        [[maybe_unused]] auto snap_ok = captureRegistrySnapshot();
         Q_EMIT registrySnapshotCaptured();
         break;
     }
@@ -206,8 +190,7 @@ auto UninstallWorker::execute() -> std::expected<void, sak::error_code>
     }
 
     if (checkStop()) {
-        return std::unexpected(
-            sak::error_code::operation_cancelled);
+        return std::unexpected(sak::error_code::operation_cancelled);
     }
 
     // Phase 3: Leftover scanning
@@ -225,22 +208,18 @@ auto UninstallWorker::execute() -> std::expected<void, sak::error_code>
     return {};
 }
 
-bool UninstallWorker::createRestorePoint()
-{
+bool UninstallWorker::createRestorePoint() {
     RestorePointManager mgr;
-    QString desc = QString("SAK: Before uninstall %1")
-        .arg(m_program.displayName.left(40));
+    QString desc = QString("SAK: Before uninstall %1").arg(m_program.displayName.left(40));
     return mgr.createRestorePoint(desc);
 }
 
-bool UninstallWorker::captureRegistrySnapshot()
-{
+bool UninstallWorker::captureRegistrySnapshot() {
     m_registrySnapshotBefore = RegistrySnapshotEngine::captureSnapshot();
     return !m_registrySnapshotBefore.isEmpty();
 }
 
-bool UninstallWorker::runNativeUninstaller()
-{
+bool UninstallWorker::runNativeUninstaller() {
     QString cmd = m_program.uninstallString;
     if (cmd.isEmpty()) {
         return false;
@@ -272,12 +251,13 @@ bool UninstallWorker::runNativeUninstaller()
         }
     }
 
-    return proc.exitStatus() == QProcess::NormalExit
-        && (proc.exitCode() == 0 || proc.exitCode() == kMsiRebootRequiredCode);
+    return proc.exitStatus() == QProcess::NormalExit &&
+           (proc.exitCode() == 0 || proc.exitCode() == kMsiRebootRequiredCode);
 }
 
-QVector<LeftoverItem> UninstallWorker::scanLeftovers()
-{
+QVector<LeftoverItem> UninstallWorker::scanLeftovers() {
+    Q_ASSERT(!m_registrySnapshotBefore.empty());
+    Q_ASSERT(!m_registrySnapshotBefore.isEmpty());
     LeftoverScanner scanner(m_program, m_scanLevel);
 
     // Capture after-snapshot for diff
@@ -308,8 +288,9 @@ QVector<LeftoverItem> UninstallWorker::scanLeftovers()
             patterns.append(m_program.publisher);
         }
 
-        auto diff_items = RegistrySnapshotEngine::diffSnapshots(
-            m_registrySnapshotBefore, snapshot_after, patterns);
+        auto diff_items = RegistrySnapshotEngine::diffSnapshots(m_registrySnapshotBefore,
+                                                                snapshot_after,
+                                                                patterns);
 
         // Deduplicate: only add diff items not already found by scanner
         QSet<QString> existing_paths;
@@ -326,8 +307,7 @@ QVector<LeftoverItem> UninstallWorker::scanLeftovers()
     return results;
 }
 
-bool UninstallWorker::removeUwpPackage()
-{
+bool UninstallWorker::removeUwpPackage() {
     if (m_program.packageFullName.isEmpty()) {
         return false;
     }
@@ -337,19 +317,19 @@ bool UninstallWorker::removeUwpPackage()
 
     if (m_program.source == ProgramInfo::Source::Provisioned) {
         // Remove provisioned package (all-users)
-        ps.setArguments({
-            "-NoProfile", "-NonInteractive", "-Command",
-            QString("Remove-AppxProvisionedPackage -Online "
-                    "-PackageName '%1' -ErrorAction Stop")
-                .arg(m_program.packageFullName)
-        });
+        ps.setArguments({"-NoProfile",
+                         "-NonInteractive",
+                         "-Command",
+                         QString("Remove-AppxProvisionedPackage -Online "
+                                 "-PackageName '%1' -ErrorAction Stop")
+                             .arg(m_program.packageFullName)});
     } else {
         // Remove per-user package
-        ps.setArguments({
-            "-NoProfile", "-NonInteractive", "-Command",
-            QString("Remove-AppxPackage -Package '%1' -ErrorAction Stop")
-                .arg(m_program.packageFullName)
-        });
+        ps.setArguments({"-NoProfile",
+                         "-NonInteractive",
+                         "-Command",
+                         QString("Remove-AppxPackage -Package '%1' -ErrorAction Stop")
+                             .arg(m_program.packageFullName)});
     }
 
     ps.start();
@@ -364,8 +344,7 @@ bool UninstallWorker::removeUwpPackage()
     return ps.exitCode() == 0;
 }
 
-bool UninstallWorker::removeRegistryEntry()
-{
+bool UninstallWorker::removeRegistryEntry() {
 #ifdef Q_OS_WIN
     if (m_program.registryKeyPath.isEmpty()) {
         return false;
@@ -385,9 +364,7 @@ bool UninstallWorker::removeRegistryEntry()
         return false;
     }
 
-    LONG rc = RegDeleteKeyExW(hive,
-                              reinterpret_cast<LPCWSTR>(path.utf16()),
-                              KEY_WOW64_64KEY, 0);
+    LONG rc = RegDeleteKeyExW(hive, reinterpret_cast<LPCWSTR>(path.utf16()), KEY_WOW64_64KEY, 0);
 
     return rc == ERROR_SUCCESS;
 #else
@@ -395,19 +372,16 @@ bool UninstallWorker::removeRegistryEntry()
 #endif
 }
 
-bool UninstallWorker::isMsiInstaller() const
-{
+bool UninstallWorker::isMsiInstaller() const {
     if (m_program.uninstallString.isEmpty()) {
         return false;
     }
 
     const QString lower = m_program.uninstallString.toLower();
-    return lower.contains("msiexec")
-        || lower.contains("msiexec.exe");
+    return lower.contains("msiexec") || lower.contains("msiexec.exe");
 }
 
-QString UninstallWorker::buildMsiUninstallCommand() const
-{
+QString UninstallWorker::buildMsiUninstallCommand() const {
     QString guid = extractGuidFromUninstallString();
     if (guid.isEmpty()) {
         return m_program.uninstallString;  // fallback to original
@@ -416,8 +390,7 @@ QString UninstallWorker::buildMsiUninstallCommand() const
     return QString("msiexec.exe /x %1 /norestart").arg(guid);
 }
 
-QString UninstallWorker::extractGuidFromUninstallString() const
-{
+QString UninstallWorker::extractGuidFromUninstallString() const {
     // Look for {GUID} pattern in uninstall string
     static const QRegularExpression guid_re(R"(\{[0-9A-Fa-f\-]{36}\})");
     auto match = guid_re.match(m_program.uninstallString);
@@ -428,4 +401,4 @@ QString UninstallWorker::extractGuidFromUninstallString() const
     return {};
 }
 
-} // namespace sak
+}  // namespace sak

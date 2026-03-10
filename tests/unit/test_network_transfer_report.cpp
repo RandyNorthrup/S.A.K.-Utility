@@ -4,12 +4,11 @@
 /// @file test_network_transfer_report.cpp
 /// @brief Unit tests for TransferReport serialization
 
-#include <QtTest/QtTest>
-
 #include "sak/network_transfer_report.h"
 
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QtTest/QtTest>
 
 class TestNetworkTransferReport : public QObject {
     Q_OBJECT
@@ -27,18 +26,15 @@ private Q_SLOTS:
 // Helper
 // ============================================================================
 
-static sak::TransferReport makeBasicReport()
-{
+static sak::TransferReport makeBasicReport() {
     sak::TransferReport report;
     report.transfer_id = QStringLiteral("xfer-001");
     report.source_host = QStringLiteral("SOURCE-PC");
     report.destination_host = QStringLiteral("DEST-PC");
     report.status = QStringLiteral("success");
-    report.started_at = QDateTime(QDate(2025, 6, 15),
-                                  QTime(10, 30, 0), QTimeZone::UTC);
-    report.completed_at = QDateTime(QDate(2025, 6, 15),
-                                    QTime(10, 45, 0), QTimeZone::UTC);
-    report.total_bytes = 1048576;
+    report.started_at = QDateTime(QDate(2025, 6, 15), QTime(10, 30, 0), QTimeZone::UTC);
+    report.completed_at = QDateTime(QDate(2025, 6, 15), QTime(10, 45, 0), QTimeZone::UTC);
+    report.total_bytes = 1'048'576;
     report.total_files = 42;
     return report;
 }
@@ -47,8 +43,7 @@ static sak::TransferReport makeBasicReport()
 // Tests
 // ============================================================================
 
-void TestNetworkTransferReport::toJson_emptyReport()
-{
+void TestNetworkTransferReport::toJson_emptyReport() {
     const sak::TransferReport report;
     const QJsonObject json = report.toJson();
 
@@ -60,29 +55,22 @@ void TestNetworkTransferReport::toJson_emptyReport()
     QCOMPARE(json["total_files"].toInt(), 0);
 }
 
-void TestNetworkTransferReport::toJson_populatedReport()
-{
+void TestNetworkTransferReport::toJson_populatedReport() {
     const sak::TransferReport report = makeBasicReport();
     const QJsonObject json = report.toJson();
 
-    QCOMPARE(json["transfer_id"].toString(),
-             QStringLiteral("xfer-001"));
-    QCOMPARE(json["source_host"].toString(),
-             QStringLiteral("SOURCE-PC"));
-    QCOMPARE(json["destination_host"].toString(),
-             QStringLiteral("DEST-PC"));
-    QCOMPARE(json["status"].toString(),
-             QStringLiteral("success"));
-    QCOMPARE(json["total_bytes"].toInteger(), qint64(1048576));
+    QCOMPARE(json["transfer_id"].toString(), QStringLiteral("xfer-001"));
+    QCOMPARE(json["source_host"].toString(), QStringLiteral("SOURCE-PC"));
+    QCOMPARE(json["destination_host"].toString(), QStringLiteral("DEST-PC"));
+    QCOMPARE(json["status"].toString(), QStringLiteral("success"));
+    QCOMPARE(json["total_bytes"].toInteger(), qint64(1'048'576));
     QCOMPARE(json["total_files"].toInt(), 42);
 }
 
-void TestNetworkTransferReport::toJson_withErrors()
-{
+void TestNetworkTransferReport::toJson_withErrors() {
     sak::TransferReport report = makeBasicReport();
     report.status = QStringLiteral("failed");
-    report.errors << QStringLiteral("Disk full")
-                  << QStringLiteral("Permission denied");
+    report.errors << QStringLiteral("Disk full") << QStringLiteral("Permission denied");
     report.warnings << QStringLiteral("Slow network");
 
     const QJsonObject json = report.toJson();
@@ -90,17 +78,14 @@ void TestNetworkTransferReport::toJson_withErrors()
     const QJsonArray errors = json["errors"].toArray();
     QCOMPARE(errors.size(), 2);
     QCOMPARE(errors.at(0).toString(), QStringLiteral("Disk full"));
-    QCOMPARE(errors.at(1).toString(),
-             QStringLiteral("Permission denied"));
+    QCOMPARE(errors.at(1).toString(), QStringLiteral("Permission denied"));
 
     const QJsonArray warnings = json["warnings"].toArray();
     QCOMPARE(warnings.size(), 1);
-    QCOMPARE(warnings.at(0).toString(),
-             QStringLiteral("Slow network"));
+    QCOMPARE(warnings.at(0).toString(), QStringLiteral("Slow network"));
 }
 
-void TestNetworkTransferReport::toJson_withManifest()
-{
+void TestNetworkTransferReport::toJson_withManifest() {
     sak::TransferReport report = makeBasicReport();
     report.manifest.protocol_version = QStringLiteral("1.0");
     report.manifest.transfer_id = report.transfer_id;
@@ -112,14 +97,11 @@ void TestNetworkTransferReport::toJson_withManifest()
 
     QVERIFY(json.contains("manifest"));
     const QJsonObject manifest = json["manifest"].toObject();
-    QCOMPARE(manifest["protocol_version"].toString(),
-             QStringLiteral("1.0"));
-    QCOMPARE(manifest["source_hostname"].toString(),
-             QStringLiteral("SOURCE-PC"));
+    QCOMPARE(manifest["protocol_version"].toString(), QStringLiteral("1.0"));
+    QCOMPARE(manifest["source_hostname"].toString(), QStringLiteral("SOURCE-PC"));
 }
 
-void TestNetworkTransferReport::toJson_roundTripTimestamps()
-{
+void TestNetworkTransferReport::toJson_roundTripTimestamps() {
     const sak::TransferReport report = makeBasicReport();
     const QJsonObject json = report.toJson();
 
@@ -127,8 +109,7 @@ void TestNetworkTransferReport::toJson_roundTripTimestamps()
     const qint64 completed_epoch = json["completed_at"].toInteger();
 
     QCOMPARE(started_epoch, report.started_at.toSecsSinceEpoch());
-    QCOMPARE(completed_epoch,
-             report.completed_at.toSecsSinceEpoch());
+    QCOMPARE(completed_epoch, report.completed_at.toSecsSinceEpoch());
     QVERIFY(completed_epoch > started_epoch);
 }
 

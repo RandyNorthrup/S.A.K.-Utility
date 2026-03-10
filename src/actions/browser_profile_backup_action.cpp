@@ -5,8 +5,10 @@
 /// @brief Implements browser profile data backup for major web browsers
 
 #include "sak/actions/browser_profile_backup_action.h"
-#include "sak/windows_user_scanner.h"
+
 #include "sak/logger.h"
+#include "sak/windows_user_scanner.h"
+
 #include <QDir>
 #include <QDirIterator>
 #include <QFile>
@@ -18,21 +20,16 @@ struct BrowserPath {
     QString display_name;
 };
 
-const QList<BrowserPath> kBrowserPaths = {
-    {"AppData/Local/Google/Chrome/User Data",     "Chrome"},
-    {"AppData/Local/Microsoft/Edge/User Data",    "Edge"},
-    {"AppData/Roaming/Mozilla/Firefox/Profiles",  "Firefox"}
-};
-} // namespace
+const QList<BrowserPath> kBrowserPaths = {{"AppData/Local/Google/Chrome/User Data", "Chrome"},
+                                          {"AppData/Local/Microsoft/Edge/User Data", "Edge"},
+                                          {"AppData/Roaming/Mozilla/Firefox/Profiles", "Firefox"}};
+}  // namespace
 
 namespace sak {
 
 BrowserProfileBackupAction::BrowserProfileBackupAction(const QString& backup_location,
-    QObject* parent)
-    : QuickAction(parent)
-    , m_backup_location(backup_location)
-{
-}
+                                                       QObject* parent)
+    : QuickAction(parent), m_backup_location(backup_location) {}
 
 void BrowserProfileBackupAction::scan() {
     setStatus(ActionStatus::Scanning);
@@ -42,15 +39,15 @@ void BrowserProfileBackupAction::scan() {
 
     // Quick scan for browser profile directories
     QString user_profile = QDir::homePath();
-    QStringList profile_checks = {
-        user_profile + "/AppData/Local/Google/Chrome/User Data/Default",
-        user_profile + "/AppData/Local/Microsoft/Edge/User Data/Default",
-        user_profile + "/AppData/Roaming/Mozilla/Firefox/Profiles"
-    };
+    QStringList profile_checks = {user_profile + "/AppData/Local/Google/Chrome/User Data/Default",
+                                  user_profile + "/AppData/Local/Microsoft/Edge/User Data/Default",
+                                  user_profile + "/AppData/Roaming/Mozilla/Firefox/Profiles"};
 
     int profiles_found = 0;
     for (const QString& path : profile_checks) {
-        if (QDir(path).exists()) profiles_found++;
+        if (QDir(path).exists()) {
+            profiles_found++;
+        }
     }
 
     ScanResult result;
@@ -85,12 +82,12 @@ void BrowserProfileBackupAction::execute() {
     }
 
     int profile_count = 0;
-    int files_copied  = 0;
+    int files_copied = 0;
     qint64 bytes_copied = 0;
 
-    if (!backupAllBrowserProfiles(users, backup_dir, start_time,
-                                  profile_count, files_copied, bytes_copied)) {
-        return; // Cancelled
+    if (!backupAllBrowserProfiles(
+            users, backup_dir, start_time, profile_count, files_copied, bytes_copied)) {
+        return;  // Cancelled
     }
 
     Q_EMIT executionProgress("Backup complete", 100);
@@ -99,34 +96,37 @@ void BrowserProfileBackupAction::execute() {
 
     ExecutionResult result;
     Q_ASSERT(!result.success);  // verify default init
-    result.duration_ms    = duration_ms;
+    result.duration_ms = duration_ms;
     result.files_processed = files_copied;
     result.bytes_processed = bytes_copied;
 
     if (profile_count > 0) {
-        result.success      = true;
-        result.output_path  = backup_dir.absolutePath();
-        result.message      = QString("Backed up %1 browser profile(s) (%2 files)")
-                                  .arg(profile_count).arg(files_copied);
-        result.log          = QString("Profiles: %1 | Files: %2 | Size: %3\nSaved to: %4")
-                                  .arg(profile_count).arg(files_copied)
-                                  .arg(formatFileSize(bytes_copied))
-                                  .arg(backup_dir.absolutePath());
+        result.success = true;
+        result.output_path = backup_dir.absolutePath();
+        result.message = QString("Backed up %1 browser profile(s) (%2 files)")
+                             .arg(profile_count)
+                             .arg(files_copied);
+        result.log = QString("Profiles: %1 | Files: %2 | Size: %3\nSaved to: %4")
+                         .arg(profile_count)
+                         .arg(files_copied)
+                         .arg(formatFileSize(bytes_copied))
+                         .arg(backup_dir.absolutePath());
         Q_ASSERT(result.duration_ms >= 0);
         finishWithResult(result, ActionStatus::Success);
     } else {
-        result.success  = false;
-        result.message  = "No browser profiles found";
-        result.log      = "No Chrome, Edge, or Firefox profiles detected on this system";
+        result.success = false;
+        result.message = "No browser profiles found";
+        result.log = "No Chrome, Edge, or Firefox profiles detected on this system";
         finishWithResult(result, ActionStatus::Failed);
     }
 }
 
-bool BrowserProfileBackupAction::backupAllBrowserProfiles(
-    const QVector<UserProfile>& users, const QDir& backup_dir,
-    const QDateTime& start_time,
-    int& profile_count, int& files_copied, qint64& bytes_copied)
-{
+bool BrowserProfileBackupAction::backupAllBrowserProfiles(const QVector<UserProfile>& users,
+                                                          const QDir& backup_dir,
+                                                          const QDateTime& start_time,
+                                                          int& profile_count,
+                                                          int& files_copied,
+                                                          qint64& bytes_copied) {
     const int total_users = users.size();
     int user_idx = 0;
 
@@ -137,20 +137,28 @@ bool BrowserProfileBackupAction::backupAllBrowserProfiles(
             return false;
         }
 
-        if (!backupUserBrowserProfiles(user, backup_dir, start_time,
-                                       user_idx, total_users,
-                                       profile_count, files_copied, bytes_copied)) {
+        if (!backupUserBrowserProfiles(user,
+                                       backup_dir,
+                                       start_time,
+                                       user_idx,
+                                       total_users,
+                                       profile_count,
+                                       files_copied,
+                                       bytes_copied)) {
             return false;
         }
     }
     return true;
 }
 
-bool BrowserProfileBackupAction::backupUserBrowserProfiles(
-    const UserProfile& user, const QDir& backup_dir, const QDateTime& start_time,
-    int user_idx, int total_users,
-    int& profile_count, int& files_copied, qint64& bytes_copied)
-{
+bool BrowserProfileBackupAction::backupUserBrowserProfiles(const UserProfile& user,
+                                                           const QDir& backup_dir,
+                                                           const QDateTime& start_time,
+                                                           int user_idx,
+                                                           int total_users,
+                                                           int& profile_count,
+                                                           int& files_copied,
+                                                           qint64& bytes_copied) {
     const QString user_name = QFileInfo(user.profile_path).fileName();
 
     for (const BrowserPath& bp : kBrowserPaths) {
@@ -160,7 +168,9 @@ bool BrowserProfileBackupAction::backupUserBrowserProfiles(
         }
 
         const QString src_root = QDir::cleanPath(user.profile_path + "/" + bp.rel_path);
-        if (!QDir(src_root).exists()) continue;
+        if (!QDir(src_root).exists()) {
+            continue;
+        }
 
         ++profile_count;
         const QString dest_root = backup_dir.filePath(user_name + "/" + bp.display_name);
@@ -176,11 +186,11 @@ bool BrowserProfileBackupAction::backupUserBrowserProfiles(
     return true;
 }
 
-bool BrowserProfileBackupAction::copyProfileFiles(
-    const QString& src_root, const QString& dest_root,
-    const QDateTime& start_time,
-    int& files_copied, qint64& bytes_copied)
-{
+bool BrowserProfileBackupAction::copyProfileFiles(const QString& src_root,
+                                                  const QString& dest_root,
+                                                  const QDateTime& start_time,
+                                                  int& files_copied,
+                                                  qint64& bytes_copied) {
     QDirIterator it(src_root, QDir::Files, QDirIterator::Subdirectories);
     while (it.hasNext()) {
         if (isCancelled()) {
@@ -188,7 +198,7 @@ bool BrowserProfileBackupAction::copyProfileFiles(
             return false;
         }
         it.next();
-        const QString rel       = QDir(src_root).relativeFilePath(it.filePath());
+        const QString rel = QDir(src_root).relativeFilePath(it.filePath());
         const QString dest_file = dest_root + "/" + rel;
         if (!QDir().mkpath(QFileInfo(dest_file).absolutePath())) {
             sak::logWarning("Failed to create directory for browser profile file");
@@ -201,4 +211,4 @@ bool BrowserProfileBackupAction::copyProfileFiles(
     return true;
 }
 
-} // namespace sak
+}  // namespace sak

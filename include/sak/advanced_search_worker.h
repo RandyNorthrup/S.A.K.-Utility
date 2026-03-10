@@ -9,8 +9,8 @@
 
 #pragma once
 
-#include "sak/worker_base.h"
 #include "sak/advanced_search_types.h"
+#include "sak/worker_base.h"
 
 #include <QRegularExpression>
 #include <QSet>
@@ -61,27 +61,27 @@ private:
 
     /// @brief Search a single file for the pattern (dispatches by type)
     [[nodiscard]] QVector<SearchMatch> searchFile(const QString& filePath,
-                                                   const QRegularExpression& regex);
+                                                  const QRegularExpression& regex);
 
     /// @brief Search file text content line-by-line with context extraction
     [[nodiscard]] QVector<SearchMatch> searchTextContent(const QString& filePath,
-                                                          const QRegularExpression& regex);
+                                                         const QRegularExpression& regex);
 
     /// @brief Search image metadata (EXIF, GPS, PNG) for the pattern
     [[nodiscard]] QVector<SearchMatch> searchImageMetadata(const QString& filePath,
-                                                            const QRegularExpression& regex);
+                                                           const QRegularExpression& regex);
 
     /// @brief Search file metadata (PDF, Office, audio, video) for the pattern
     [[nodiscard]] QVector<SearchMatch> searchFileMetadata(const QString& filePath,
-                                                           const QRegularExpression& regex);
+                                                          const QRegularExpression& regex);
 
     /// @brief Search inside archive files (ZIP, EPUB)
     [[nodiscard]] QVector<SearchMatch> searchArchive(const QString& filePath,
-                                                      const QRegularExpression& regex);
+                                                     const QRegularExpression& regex);
 
     /// @brief Search binary file for hex/text patterns
     [[nodiscard]] QVector<SearchMatch> searchBinary(const QString& filePath,
-                                                     const QRegularExpression& regex);
+                                                    const QRegularExpression& regex);
 
     /// @brief Check if path is a UNC network path
     [[nodiscard]] bool isNetworkPath(const QString& path) const;
@@ -96,12 +96,10 @@ private:
     [[nodiscard]] bool matchesExtensionFilter(const QString& filePath) const;
 
     /// @brief Prepare regex + exclusion patterns before search
-    [[nodiscard]] std::expected<QRegularExpression, sak::error_code>
-        prepareSearchConfig();
+    [[nodiscard]] std::expected<QRegularExpression, sak::error_code> prepareSearchConfig();
 
     /// @brief Run directory-recursive search loop
-    void runDirectorySearch(const QRegularExpression& regex,
-        int& total_matches, int& total_files);
+    void runDirectorySearch(const QRegularExpression& regex, int& total_matches, int& total_files);
 
     SearchConfig m_config;
 
@@ -116,14 +114,14 @@ private:
 
 /// AdvancedSearchWorker must inherit WorkerBase.
 static_assert(std::is_base_of_v<WorkerBase, AdvancedSearchWorker>,
-    "AdvancedSearchWorker must inherit WorkerBase.");
+              "AdvancedSearchWorker must inherit WorkerBase.");
 
 /// AdvancedSearchWorker must not be copyable.
 static_assert(!std::is_copy_constructible_v<AdvancedSearchWorker>,
-    "AdvancedSearchWorker must not be copy-constructible.");
+              "AdvancedSearchWorker must not be copy-constructible.");
 
 /// AdvancedSearchWorker must not be movable.
 static_assert(!std::is_move_constructible_v<AdvancedSearchWorker>,
-    "AdvancedSearchWorker must not be move-constructible.");
+              "AdvancedSearchWorker must not be move-constructible.");
 
-} // namespace sak
+}  // namespace sak

@@ -23,4 +23,4 @@ void applyWindows11Theme(QApplication& app);
 /// @param app Reference to the QApplication instance
 void installTooltipHelper(QApplication& app);
 
-} // namespace sak::ui
+}  // namespace sak::ui

@@ -5,6 +5,7 @@
 
 #include "sak/quick_action.h"
 #include "sak/user_profile_types.h"
+
 #include <QString>
 #include <QVector>
 
@@ -20,7 +21,7 @@ class BackupDesktopWallpaperAction : public QuickAction {
 
 public:
     explicit BackupDesktopWallpaperAction(const QString& backup_location,
-        QObject* parent = nullptr);
+                                          QObject* parent = nullptr);
 
     QString name() const override { return "Desktop Wallpaper Backup"; }
     QString description() const override { return "Backup desktop wallpaper settings"; }
@@ -41,4 +42,4 @@ private:
     QString prepareWallpaperDirectory();
 };
 
-} // namespace sak
+}  // namespace sak

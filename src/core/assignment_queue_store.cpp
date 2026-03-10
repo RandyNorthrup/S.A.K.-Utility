@@ -11,9 +11,7 @@
 
 namespace sak {
 
-AssignmentQueueStore::AssignmentQueueStore(const QString& filePath)
-    : m_filePath(filePath) {
-}
+AssignmentQueueStore::AssignmentQueueStore(const QString& filePath) : m_filePath(filePath) {}
 
 QString AssignmentQueueStore::filePath() const {
     return m_filePath;
@@ -104,4 +102,4 @@ bool AssignmentQueueStore::load(DeploymentAssignment& active,
     return true;
 }
 
-} // namespace sak
+}  // namespace sak

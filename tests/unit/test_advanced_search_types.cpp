@@ -4,9 +4,9 @@
 /// @file test_advanced_search_types.cpp
 /// @brief Unit tests for Advanced Search shared data types
 
-#include <QtTest/QtTest>
-
 #include "sak/advanced_search_types.h"
+
+#include <QtTest/QtTest>
 
 #include <type_traits>
 
@@ -45,8 +45,7 @@ private Q_SLOTS:
 
 // ── SearchMatch ─────────────────────────────────────────────────────────────
 
-void AdvancedSearchTypesTests::searchMatch_defaultConstruction()
-{
+void AdvancedSearchTypesTests::searchMatch_defaultConstruction() {
     sak::SearchMatch match;
 
     QVERIFY(match.file_path.isEmpty());
@@ -58,8 +57,7 @@ void AdvancedSearchTypesTests::searchMatch_defaultConstruction()
     QVERIFY(match.context_after.isEmpty());
 }
 
-void AdvancedSearchTypesTests::searchMatch_valueSemantics()
-{
+void AdvancedSearchTypesTests::searchMatch_valueSemantics() {
     sak::SearchMatch original;
     original.file_path = "/test/file.cpp";
     original.line_number = 42;
@@ -85,8 +83,7 @@ void AdvancedSearchTypesTests::searchMatch_valueSemantics()
     QCOMPARE(moved.line_number, original.line_number);
 }
 
-void AdvancedSearchTypesTests::searchMatch_contextLines()
-{
+void AdvancedSearchTypesTests::searchMatch_contextLines() {
     sak::SearchMatch match;
     match.context_before = {"line 1", "line 2", "line 3"};
     match.context_after = {"line 5", "line 6"};
@@ -99,8 +96,7 @@ void AdvancedSearchTypesTests::searchMatch_contextLines()
 
 // ── SearchConfig ────────────────────────────────────────────────────────────
 
-void AdvancedSearchTypesTests::searchConfig_defaultValues()
-{
+void AdvancedSearchTypesTests::searchConfig_defaultValues() {
     sak::SearchConfig config;
 
     QVERIFY(config.root_path.isEmpty());
@@ -119,8 +115,7 @@ void AdvancedSearchTypesTests::searchConfig_defaultValues()
     QCOMPARE(config.network_timeout_sec, 5);
 }
 
-void AdvancedSearchTypesTests::searchConfig_defaultExcludes()
-{
+void AdvancedSearchTypesTests::searchConfig_defaultExcludes() {
     sak::SearchConfig config;
 
     // Default exclusion patterns should be non-empty
@@ -130,15 +125,18 @@ void AdvancedSearchTypesTests::searchConfig_defaultExcludes()
     bool hasGit = false;
     bool hasNodeModules = false;
     for (const auto& pattern : config.exclude_patterns) {
-        if (pattern.contains("git")) hasGit = true;
-        if (pattern.contains("node_modules")) hasNodeModules = true;
+        if (pattern.contains("git")) {
+            hasGit = true;
+        }
+        if (pattern.contains("node_modules")) {
+            hasNodeModules = true;
+        }
     }
     QVERIFY2(hasGit, "Default excludes should contain .git");
     QVERIFY2(hasNodeModules, "Default excludes should contain node_modules");
 }
 
-void AdvancedSearchTypesTests::searchConfig_valueSemantics()
-{
+void AdvancedSearchTypesTests::searchConfig_valueSemantics() {
     sak::SearchConfig config;
     config.root_path = "/search/root";
     config.pattern = "test_pattern";
@@ -156,8 +154,7 @@ void AdvancedSearchTypesTests::searchConfig_valueSemantics()
 
 // ── SearchPreferences ───────────────────────────────────────────────────────
 
-void AdvancedSearchTypesTests::searchPreferences_defaultValues()
-{
+void AdvancedSearchTypesTests::searchPreferences_defaultValues() {
     sak::SearchPreferences prefs;
 
     QCOMPARE(prefs.max_results, 0);
@@ -167,8 +164,7 @@ void AdvancedSearchTypesTests::searchPreferences_defaultValues()
     QCOMPARE(prefs.context_lines, 2);
 }
 
-void AdvancedSearchTypesTests::searchPreferences_copyable()
-{
+void AdvancedSearchTypesTests::searchPreferences_copyable() {
     sak::SearchPreferences prefs;
     prefs.max_results = 1000;
     prefs.max_preview_file_size_mb = 20;
@@ -180,8 +176,7 @@ void AdvancedSearchTypesTests::searchPreferences_copyable()
 
 // ── RegexPatternInfo ────────────────────────────────────────────────────────
 
-void AdvancedSearchTypesTests::regexPatternInfo_defaultConstruction()
-{
+void AdvancedSearchTypesTests::regexPatternInfo_defaultConstruction() {
     sak::RegexPatternInfo info;
 
     QVERIFY(info.key.isEmpty());
@@ -190,8 +185,7 @@ void AdvancedSearchTypesTests::regexPatternInfo_defaultConstruction()
     QCOMPARE(info.enabled, false);
 }
 
-void AdvancedSearchTypesTests::regexPatternInfo_copyable()
-{
+void AdvancedSearchTypesTests::regexPatternInfo_copyable() {
     sak::RegexPatternInfo info;
     info.key = "emails";
     info.label = "Email addresses";
@@ -207,8 +201,7 @@ void AdvancedSearchTypesTests::regexPatternInfo_copyable()
 
 // ── Extension Sets ──────────────────────────────────────────────────────────
 
-void AdvancedSearchTypesTests::imageExtensions_containsExpected()
-{
+void AdvancedSearchTypesTests::imageExtensions_containsExpected() {
     QVERIFY(sak::kImageExtensions.contains("jpg"));
     QVERIFY(sak::kImageExtensions.contains("jpeg"));
     QVERIFY(sak::kImageExtensions.contains("png"));
@@ -218,16 +211,14 @@ void AdvancedSearchTypesTests::imageExtensions_containsExpected()
     QVERIFY(sak::kImageExtensions.contains("webp"));
 }
 
-void AdvancedSearchTypesTests::imageExtensions_doesNotContainWrong()
-{
+void AdvancedSearchTypesTests::imageExtensions_doesNotContainWrong() {
     QVERIFY(!sak::kImageExtensions.contains("cpp"));
     QVERIFY(!sak::kImageExtensions.contains("txt"));
     QVERIFY(!sak::kImageExtensions.contains("pdf"));
     QVERIFY(!sak::kImageExtensions.contains("zip"));
 }
 
-void AdvancedSearchTypesTests::fileMetadataExtensions_containsExpected()
-{
+void AdvancedSearchTypesTests::fileMetadataExtensions_containsExpected() {
     QVERIFY(sak::kFileMetadataExtensions.contains("pdf"));
     QVERIFY(sak::kFileMetadataExtensions.contains("docx"));
     QVERIFY(sak::kFileMetadataExtensions.contains("xlsx"));
@@ -239,8 +230,7 @@ void AdvancedSearchTypesTests::fileMetadataExtensions_containsExpected()
     QVERIFY(sak::kFileMetadataExtensions.contains("csv"));
 }
 
-void AdvancedSearchTypesTests::archiveExtensions_containsExpected()
-{
+void AdvancedSearchTypesTests::archiveExtensions_containsExpected() {
     QVERIFY(sak::kArchiveExtensions.contains("zip"));
     QVERIFY(sak::kArchiveExtensions.contains("epub"));
     QVERIFY(!sak::kArchiveExtensions.contains("tar"));
@@ -249,16 +239,14 @@ void AdvancedSearchTypesTests::archiveExtensions_containsExpected()
 
 // ── Compile-Time Invariants Verification ────────────────────────────────────
 
-void AdvancedSearchTypesTests::staticAsserts_defaultConstructible()
-{
+void AdvancedSearchTypesTests::staticAsserts_defaultConstructible() {
     QVERIFY(std::is_default_constructible_v<sak::SearchMatch>);
     QVERIFY(std::is_default_constructible_v<sak::SearchConfig>);
     QVERIFY(std::is_default_constructible_v<sak::SearchPreferences>);
     QVERIFY(std::is_default_constructible_v<sak::RegexPatternInfo>);
 }
 
-void AdvancedSearchTypesTests::staticAsserts_copyConstructible()
-{
+void AdvancedSearchTypesTests::staticAsserts_copyConstructible() {
     QVERIFY(std::is_copy_constructible_v<sak::SearchMatch>);
     QVERIFY(std::is_copy_constructible_v<sak::SearchConfig>);
     QVERIFY(std::is_copy_constructible_v<sak::SearchPreferences>);

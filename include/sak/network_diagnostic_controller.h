@@ -75,33 +75,38 @@ public:
     void scanAdapters();
 
     // ── Connectivity ──
-    void ping(const QString& target, int count, int intervalMs, int timeoutMs,
-              int packetSize, int ttl);
-    void traceroute(const QString& target, int maxHops, int timeoutMs,
-                    int probesPerHop, bool resolveHostnames);
-    void mtr(const QString& target, int cycles, int intervalMs, int maxHops,
-             int timeoutMs);
+    void ping(
+        const QString& target, int count, int intervalMs, int timeoutMs, int packetSize, int ttl);
+    void traceroute(
+        const QString& target, int maxHops, int timeoutMs, int probesPerHop, bool resolveHostnames);
+    void mtr(const QString& target, int cycles, int intervalMs, int maxHops, int timeoutMs);
 
     // ── DNS ──
-    void dnsQuery(const QString& hostname, const QString& recordType,
-                  const QString& dnsServer);
+    void dnsQuery(const QString& hostname, const QString& recordType, const QString& dnsServer);
     void dnsReverseLookup(const QString& ipAddress, const QString& dnsServer);
-    void dnsCompare(const QString& hostname, const QString& recordType,
-                    const QStringList& servers);
+    void dnsCompare(const QString& hostname, const QString& recordType, const QStringList& servers);
     void dnsInspectCache();
     void dnsFlushCache();
 
     // ── Port Scanning ──
-    void scanPorts(const QString& target, const QVector<uint16_t>& ports,
-                   uint16_t rangeStart, uint16_t rangeEnd,
-                   int timeoutMs, int maxConcurrent, bool grabBanners);
+    void scanPorts(const QString& target,
+                   const QVector<uint16_t>& ports,
+                   uint16_t rangeStart,
+                   uint16_t rangeEnd,
+                   int timeoutMs,
+                   int maxConcurrent,
+                   bool grabBanners);
 
     // ── Bandwidth ──
     void startIperfServer(uint16_t port);
     void stopIperfServer();
     [[nodiscard]] bool isIperfServerRunning() const;
-    void runBandwidthTest(const QString& serverAddr, uint16_t port,
-                          int durationSec, int streams, bool bidir, bool udp);
+    void runBandwidthTest(const QString& serverAddr,
+                          uint16_t port,
+                          int durationSec,
+                          int streams,
+                          bool bidir,
+                          bool udp);
     void runHttpSpeedTest();
 
     // ── WiFi ──
@@ -111,8 +116,11 @@ public:
     [[nodiscard]] bool isWiFiAvailable() const;
 
     // ── Connections ──
-    void startConnectionMonitor(int refreshMs, bool showTcp, bool showUdp,
-                                const QString& processFilter, uint16_t portFilter);
+    void startConnectionMonitor(int refreshMs,
+                                bool showTcp,
+                                bool showUdp,
+                                const QString& processFilter,
+                                uint16_t portFilter);
     void stopConnectionMonitor();
 
     // ── Firewall ──
@@ -133,25 +141,27 @@ public:
     [[nodiscard]] bool isLanTransferServerRunning() const;
 
     /// @brief Run a LAN transfer speed test as a client sending data to a server
-    void runLanTransferTest(const QString& targetAddr, uint16_t port,
-                            int durationSec, int blockSizeKB);
+    void runLanTransferTest(const QString& targetAddr,
+                            uint16_t port,
+                            int durationSec,
+                            int blockSizeKB);
 
     // ── Ethernet Config ──
 
     /// @brief Backup the current Ethernet adapter settings to a JSON file
-    void backupEthernetSettings(const QString& adapterName,
-                                const QString& filePath);
+    void backupEthernetSettings(const QString& adapterName, const QString& filePath);
 
     /// @brief Restore Ethernet adapter settings from a JSON backup file
-    void restoreEthernetSettings(const QString& filePath,
-                                 const QString& targetAdapter);
+    void restoreEthernetSettings(const QString& filePath, const QString& targetAdapter);
 
     /// @brief List available Ethernet adapter names
     [[nodiscard]] QStringList listEthernetAdapters() const;
 
     // ── Report ──
-    void generateReport(const QString& outputPath, const QString& format,
-                        const QString& technician, const QString& ticket,
+    void generateReport(const QString& outputPath,
+                        const QString& format,
+                        const QString& technician,
+                        const QString& ticket,
                         const QString& notes);
 
     // ── Cancel ──
@@ -186,8 +196,8 @@ Q_SIGNALS:
     void wifiChannelUtilization(QVector<sak::WiFiChannelUtilization> channels);
     void connectionsUpdated(QVector<sak::ConnectionInfo> connections);
     void firewallAuditComplete(QVector<sak::FirewallRule> rules,
-                                QVector<sak::FirewallConflict> conflicts,
-                                QVector<sak::FirewallGap> gaps);
+                               QVector<sak::FirewallConflict> conflicts,
+                               QVector<sak::FirewallGap> gaps);
     void sharesDiscovered(QVector<sak::NetworkShareInfo> shares);
     void lanTransferServerStarted(uint16_t port);
     void lanTransferServerStopped();
@@ -242,6 +252,24 @@ private:
     /// @brief Handle an incoming LAN transfer client connection
     void handleLanClientConnection(QTcpSocket* socket);
 
+    /// @brief Handle LAN transfer client disconnect and emit results
+    void handleLanClientDisconnected(QTcpSocket* socket,
+                                     QElapsedTimer* timer,
+                                     qint64* totalReceived,
+                                     double* peakMbps,
+                                     qint64* lastReportTime,
+                                     qint64* lastReportBytes,
+                                     QVector<double>* speedSamples);
+
+    /// @brief Finalize LAN transfer: disconnect socket, emit results
+    void finalizeLanTransfer(QTcpSocket& socket,
+                             const QString& targetAddr,
+                             uint16_t port,
+                             qint64 totalSent,
+                             qint64 elapsedMs,
+                             double peakMbps,
+                             const QVector<double>& speedSamples);
+
     void connectAdapterInspectorSignals();
     void connectConnectivityTesterSignals();
     void connectDnsToolSignals();
@@ -255,7 +283,7 @@ private:
     void connectEthernetConfigManagerSignals();
 };
 
-} // namespace sak
+}  // namespace sak
 
 static_assert(!std::is_copy_constructible_v<sak::NetworkDiagnosticController>,
-    "NetworkDiagnosticController must not be copyable.");
+              "NetworkDiagnosticController must not be copyable.");

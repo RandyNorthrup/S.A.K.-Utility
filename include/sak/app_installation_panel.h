@@ -3,21 +3,22 @@
 
 #pragma once
 
-#include <QWidget>
-#include <QTableView>
-#include <QPushButton>
-#include <QLabel>
 #include <QComboBox>
-#include <QLineEdit>
-#include <QListWidget>
-#include <QStandardItemModel>
-#include <QSplitter>
-#include <QGroupBox>
 #include <QFuture>
+#include <QGroupBox>
 #include <QHash>
 #include <QIcon>
-#include <memory>
+#include <QLabel>
+#include <QLineEdit>
+#include <QListWidget>
+#include <QPushButton>
+#include <QSplitter>
+#include <QStandardItemModel>
+#include <QTableView>
+#include <QWidget>
+
 #include <atomic>
+#include <memory>
 
 class QVBoxLayout;
 
@@ -160,6 +161,6 @@ private:
     std::atomic<bool> m_search_in_progress{false};
     bool m_install_in_progress{false};
 
-}; // class AppInstallationPanel
+};  // class AppInstallationPanel
 
-} // namespace sak
+}  // namespace sak

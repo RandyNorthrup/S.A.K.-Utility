@@ -5,9 +5,9 @@
 
 #include "sak/logger.h"
 
+#include <QFile>
 #include <QJsonArray>
 #include <QJsonDocument>
-#include <QFile>
 
 namespace sak {
 
@@ -39,21 +39,20 @@ QJsonObject TransferReport::toJson() const {
 }
 
 bool TransferReport::saveToFile(const QString& path) const {
+    Q_ASSERT(!path.isEmpty());
     QFile file(path);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-        logError("Failed to open transfer report for writing: {}",
-                 path.toStdString());
+        logError("Failed to open transfer report for writing: {}", path.toStdString());
         return false;
     }
     QJsonDocument doc(toJson());
     const QByteArray data = doc.toJson(QJsonDocument::Indented);
     qint64 written = file.write(data);
     if (written != data.size()) {
-        logError("Failed to write transfer report: {}",
-                 path.toStdString());
+        logError("Failed to write transfer report: {}", path.toStdString());
         return false;
     }
     return true;
 }
 
-} // namespace sak
+}  // namespace sak

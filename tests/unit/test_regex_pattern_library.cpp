@@ -4,13 +4,12 @@
 /// @file test_regex_pattern_library.cpp
 /// @brief Unit tests for RegexPatternLibrary built-in and custom pattern management
 
-#include <QtTest/QtTest>
-
 #include "sak/regex_pattern_library.h"
 
 #include <QSignalSpy>
 #include <QStandardPaths>
 #include <QTemporaryDir>
+#include <QtTest/QtTest>
 
 class RegexPatternLibraryTests : public QObject {
     Q_OBJECT
@@ -71,29 +70,25 @@ private Q_SLOTS:
 
 // ── Per-test Cleanup ─────────────────────────────────────────────────────────
 
-void RegexPatternLibraryTests::init()
-{
+void RegexPatternLibraryTests::init() {
     // Remove any persisted custom patterns file before each test to avoid
     // cross-contamination between test methods.  Mirror the same path logic
     // that RegexPatternLibrary's constructor uses.
     const QString appDir = QCoreApplication::applicationDirPath();
     QFile::remove(appDir + "/custom_regex_patterns.json");
 
-    const QString dataDir = QStandardPaths::writableLocation(
-        QStandardPaths::AppLocalDataLocation);
+    const QString dataDir = QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation);
     QFile::remove(dataDir + "/custom_regex_patterns.json");
 }
 
 // ── Built-in Patterns ───────────────────────────────────────────────────────
 
-void RegexPatternLibraryTests::builtinPatterns_count()
-{
+void RegexPatternLibraryTests::builtinPatterns_count() {
     sak::RegexPatternLibrary lib(nullptr);
     QCOMPARE(lib.builtinPatterns().size(), 8);
 }
 
-void RegexPatternLibraryTests::builtinPatterns_haveExpectedKeys()
-{
+void RegexPatternLibraryTests::builtinPatterns_haveExpectedKeys() {
     sak::RegexPatternLibrary lib(nullptr);
     const auto patterns = lib.builtinPatterns();
 
@@ -112,34 +107,30 @@ void RegexPatternLibraryTests::builtinPatterns_haveExpectedKeys()
     QVERIFY(keys.contains("words"));
 }
 
-void RegexPatternLibraryTests::builtinPatterns_startDisabled()
-{
+void RegexPatternLibraryTests::builtinPatterns_startDisabled() {
     sak::RegexPatternLibrary lib(nullptr);
     const auto patterns = lib.builtinPatterns();
 
     for (const auto& p : patterns) {
-        QVERIFY2(!p.enabled,
-            qPrintable(QString("Built-in '%1' should start disabled").arg(p.key)));
+        QVERIFY2(!p.enabled, qPrintable(QString("Built-in '%1' should start disabled").arg(p.key)));
     }
 }
 
-void RegexPatternLibraryTests::builtinPatterns_validRegex()
-{
+void RegexPatternLibraryTests::builtinPatterns_validRegex() {
     sak::RegexPatternLibrary lib(nullptr);
     const auto patterns = lib.builtinPatterns();
 
     for (const auto& p : patterns) {
         QRegularExpression regex(p.pattern);
         QVERIFY2(regex.isValid(),
-            qPrintable(QString("Built-in '%1' pattern should be valid regex: %2")
-                .arg(p.key, regex.errorString())));
+                 qPrintable(QString("Built-in '%1' pattern should be valid regex: %2")
+                                .arg(p.key, regex.errorString())));
     }
 }
 
 // ── Enable / Disable ────────────────────────────────────────────────────────
 
-void RegexPatternLibraryTests::setPatternEnabled_builtin()
-{
+void RegexPatternLibraryTests::setPatternEnabled_builtin() {
     sak::RegexPatternLibrary lib(nullptr);
 
     lib.setPatternEnabled("emails", true);
@@ -154,8 +145,7 @@ void RegexPatternLibraryTests::setPatternEnabled_builtin()
     }
 }
 
-void RegexPatternLibraryTests::setPatternEnabled_emitsSignal()
-{
+void RegexPatternLibraryTests::setPatternEnabled_emitsSignal() {
     sak::RegexPatternLibrary lib(nullptr);
     QSignalSpy spy(&lib, &sak::RegexPatternLibrary::patternsChanged);
 
@@ -164,8 +154,7 @@ void RegexPatternLibraryTests::setPatternEnabled_emitsSignal()
     QCOMPARE(spy.count(), 1);
 }
 
-void RegexPatternLibraryTests::setPatternEnabled_unknownKeyNoOp()
-{
+void RegexPatternLibraryTests::setPatternEnabled_unknownKeyNoOp() {
     sak::RegexPatternLibrary lib(nullptr);
     QSignalSpy spy(&lib, &sak::RegexPatternLibrary::patternsChanged);
 
@@ -177,14 +166,12 @@ void RegexPatternLibraryTests::setPatternEnabled_unknownKeyNoOp()
 
 // ── Combined Pattern ────────────────────────────────────────────────────────
 
-void RegexPatternLibraryTests::combinedPattern_emptyWhenNoneActive()
-{
+void RegexPatternLibraryTests::combinedPattern_emptyWhenNoneActive() {
     sak::RegexPatternLibrary lib(nullptr);
     QVERIFY(lib.combinedPattern().isEmpty());
 }
 
-void RegexPatternLibraryTests::combinedPattern_singleActive()
-{
+void RegexPatternLibraryTests::combinedPattern_singleActive() {
     sak::RegexPatternLibrary lib(nullptr);
     lib.setPatternEnabled("emails", true);
 
@@ -198,15 +185,14 @@ void RegexPatternLibraryTests::combinedPattern_singleActive()
     QVERIFY(regex.isValid());
 }
 
-void RegexPatternLibraryTests::combinedPattern_multipleActive()
-{
+void RegexPatternLibraryTests::combinedPattern_multipleActive() {
     sak::RegexPatternLibrary lib(nullptr);
     lib.setPatternEnabled("emails", true);
     lib.setPatternEnabled("urls", true);
 
     const QString combined = lib.combinedPattern();
     QVERIFY(!combined.isEmpty());
-    QVERIFY(combined.contains('|')); // Combined with alternation
+    QVERIFY(combined.contains('|'));  // Combined with alternation
 
     QRegularExpression regex(combined);
     QVERIFY(regex.isValid());
@@ -214,14 +200,12 @@ void RegexPatternLibraryTests::combinedPattern_multipleActive()
 
 // ── Active Count ────────────────────────────────────────────────────────────
 
-void RegexPatternLibraryTests::activeCount_initiallyZero()
-{
+void RegexPatternLibraryTests::activeCount_initiallyZero() {
     sak::RegexPatternLibrary lib(nullptr);
     QCOMPARE(lib.activeCount(), 0);
 }
 
-void RegexPatternLibraryTests::activeCount_increments()
-{
+void RegexPatternLibraryTests::activeCount_increments() {
     sak::RegexPatternLibrary lib(nullptr);
 
     lib.setPatternEnabled("emails", true);
@@ -231,8 +215,7 @@ void RegexPatternLibraryTests::activeCount_increments()
     QCOMPARE(lib.activeCount(), 2);
 }
 
-void RegexPatternLibraryTests::activeCount_decrements()
-{
+void RegexPatternLibraryTests::activeCount_decrements() {
     sak::RegexPatternLibrary lib(nullptr);
 
     lib.setPatternEnabled("emails", true);
@@ -245,8 +228,7 @@ void RegexPatternLibraryTests::activeCount_decrements()
 
 // ── Clear All ───────────────────────────────────────────────────────────────
 
-void RegexPatternLibraryTests::clearAll_disablesEverything()
-{
+void RegexPatternLibraryTests::clearAll_disablesEverything() {
     sak::RegexPatternLibrary lib(nullptr);
 
     lib.setPatternEnabled("emails", true);
@@ -259,8 +241,7 @@ void RegexPatternLibraryTests::clearAll_disablesEverything()
     QVERIFY(lib.combinedPattern().isEmpty());
 }
 
-void RegexPatternLibraryTests::clearAll_emitsSignal()
-{
+void RegexPatternLibraryTests::clearAll_emitsSignal() {
     sak::RegexPatternLibrary lib(nullptr);
     QSignalSpy spy(&lib, &sak::RegexPatternLibrary::patternsChanged);
 
@@ -271,8 +252,7 @@ void RegexPatternLibraryTests::clearAll_emitsSignal()
 
 // ── Custom Pattern CRUD ─────────────────────────────────────────────────────
 
-void RegexPatternLibraryTests::addCustomPattern_basic()
-{
+void RegexPatternLibraryTests::addCustomPattern_basic() {
     sak::RegexPatternLibrary lib(nullptr);
 
     lib.addCustomPattern("test_custom", "Test Custom", R"(\btest\b)");
@@ -282,11 +262,10 @@ void RegexPatternLibraryTests::addCustomPattern_basic()
     QCOMPARE(customs[0].key, "test_custom");
     QCOMPARE(customs[0].label, "Test Custom");
     QCOMPARE(customs[0].pattern, R"(\btest\b)");
-    QCOMPARE(customs[0].enabled, false); // Starts disabled
+    QCOMPARE(customs[0].enabled, false);  // Starts disabled
 }
 
-void RegexPatternLibraryTests::addCustomPattern_duplicateKeyRejected()
-{
+void RegexPatternLibraryTests::addCustomPattern_duplicateKeyRejected() {
     sak::RegexPatternLibrary lib(nullptr);
 
     lib.addCustomPattern("my_pattern", "Pattern 1", R"(abc)");
@@ -297,8 +276,7 @@ void RegexPatternLibraryTests::addCustomPattern_duplicateKeyRejected()
     QCOMPARE(lib.customPatterns()[0].label, "Pattern 1");
 }
 
-void RegexPatternLibraryTests::addCustomPattern_builtinKeyConflictRejected()
-{
+void RegexPatternLibraryTests::addCustomPattern_builtinKeyConflictRejected() {
     sak::RegexPatternLibrary lib(nullptr);
 
     // "emails" is a built-in key
@@ -307,8 +285,7 @@ void RegexPatternLibraryTests::addCustomPattern_builtinKeyConflictRejected()
     QCOMPARE(lib.customPatterns().size(), 0);
 }
 
-void RegexPatternLibraryTests::addCustomPattern_invalidRegexRejected()
-{
+void RegexPatternLibraryTests::addCustomPattern_invalidRegexRejected() {
     sak::RegexPatternLibrary lib(nullptr);
 
     // Unmatched parenthesis is invalid regex
@@ -324,7 +301,7 @@ void RegexPatternLibraryTests::addCustomPattern_invalidRegexRejected()
     QRegularExpression testRe(R"((unclosed)");
     if (testRe.isValid()) {
         // If the regex library considers it valid, adjust expectations
-        QVERIFY(lib.customPatterns().size() >= 0); // May or may not be added
+        QVERIFY(lib.customPatterns().size() >= 0);  // May or may not be added
     }
 
     // "[invalid" is definitely invalid
@@ -332,8 +309,7 @@ void RegexPatternLibraryTests::addCustomPattern_invalidRegexRejected()
     QVERIFY(!testRe2.isValid());
 }
 
-void RegexPatternLibraryTests::addCustomPattern_emitsSignal()
-{
+void RegexPatternLibraryTests::addCustomPattern_emitsSignal() {
     sak::RegexPatternLibrary lib(nullptr);
     QSignalSpy spy(&lib, &sak::RegexPatternLibrary::patternsChanged);
 
@@ -342,8 +318,7 @@ void RegexPatternLibraryTests::addCustomPattern_emitsSignal()
     QCOMPARE(spy.count(), 1);
 }
 
-void RegexPatternLibraryTests::removeCustomPattern_existing()
-{
+void RegexPatternLibraryTests::removeCustomPattern_existing() {
     sak::RegexPatternLibrary lib(nullptr);
     lib.addCustomPattern("removable", "Removable", R"(remove)");
 
@@ -354,8 +329,7 @@ void RegexPatternLibraryTests::removeCustomPattern_existing()
     QCOMPARE(lib.customPatterns().size(), 0);
 }
 
-void RegexPatternLibraryTests::removeCustomPattern_nonExistent()
-{
+void RegexPatternLibraryTests::removeCustomPattern_nonExistent() {
     sak::RegexPatternLibrary lib(nullptr);
 
     // Should not crash or emit
@@ -365,8 +339,7 @@ void RegexPatternLibraryTests::removeCustomPattern_nonExistent()
     QCOMPARE(spy.count(), 0);
 }
 
-void RegexPatternLibraryTests::removeCustomPattern_emitsSignal()
-{
+void RegexPatternLibraryTests::removeCustomPattern_emitsSignal() {
     sak::RegexPatternLibrary lib(nullptr);
     lib.addCustomPattern("to_remove", "To Remove", R"(test)");
 
@@ -376,8 +349,7 @@ void RegexPatternLibraryTests::removeCustomPattern_emitsSignal()
     QCOMPARE(spy.count(), 1);
 }
 
-void RegexPatternLibraryTests::updateCustomPattern_existing()
-{
+void RegexPatternLibraryTests::updateCustomPattern_existing() {
     sak::RegexPatternLibrary lib(nullptr);
     lib.addCustomPattern("updatable", "Original", R"(original)");
 
@@ -389,8 +361,7 @@ void RegexPatternLibraryTests::updateCustomPattern_existing()
     QCOMPARE(customs[0].pattern, R"(updated)");
 }
 
-void RegexPatternLibraryTests::updateCustomPattern_invalidRegexRejected()
-{
+void RegexPatternLibraryTests::updateCustomPattern_invalidRegexRejected() {
     sak::RegexPatternLibrary lib(nullptr);
     lib.addCustomPattern("stable", "Stable", R"(valid)");
 
@@ -402,8 +373,7 @@ void RegexPatternLibraryTests::updateCustomPattern_invalidRegexRejected()
     QCOMPARE(customs[0].pattern, R"(valid)");
 }
 
-void RegexPatternLibraryTests::updateCustomPattern_nonExistent()
-{
+void RegexPatternLibraryTests::updateCustomPattern_nonExistent() {
     sak::RegexPatternLibrary lib(nullptr);
     QSignalSpy spy(&lib, &sak::RegexPatternLibrary::patternsChanged);
 
@@ -413,8 +383,7 @@ void RegexPatternLibraryTests::updateCustomPattern_nonExistent()
     QCOMPARE(spy.count(), 0);
 }
 
-void RegexPatternLibraryTests::updateCustomPattern_emitsSignal()
-{
+void RegexPatternLibraryTests::updateCustomPattern_emitsSignal() {
     sak::RegexPatternLibrary lib(nullptr);
     lib.addCustomPattern("emitter", "Emitter", R"(emit)");
 
@@ -426,8 +395,7 @@ void RegexPatternLibraryTests::updateCustomPattern_emitsSignal()
 
 // ── Custom Pattern Enable/Disable ───────────────────────────────────────────
 
-void RegexPatternLibraryTests::customPattern_enableDisable()
-{
+void RegexPatternLibraryTests::customPattern_enableDisable() {
     sak::RegexPatternLibrary lib(nullptr);
     lib.addCustomPattern("toggleable", "Toggleable", R"(toggle)");
 
@@ -440,8 +408,7 @@ void RegexPatternLibraryTests::customPattern_enableDisable()
     QCOMPARE(lib.activeCount(), 0);
 }
 
-void RegexPatternLibraryTests::customPattern_inCombinedPattern()
-{
+void RegexPatternLibraryTests::customPattern_inCombinedPattern() {
     sak::RegexPatternLibrary lib(nullptr);
     lib.addCustomPattern("custom_active", "Custom Active", R"(custom_match)");
 
@@ -457,8 +424,7 @@ void RegexPatternLibraryTests::customPattern_inCombinedPattern()
 
 // ── Pattern Validation Helpers ──────────────────────────────────────────────
 
-void RegexPatternLibraryTests::builtinEmailPattern_matchesEmail()
-{
+void RegexPatternLibraryTests::builtinEmailPattern_matchesEmail() {
     sak::RegexPatternLibrary lib(nullptr);
     const auto patterns = lib.builtinPatterns();
 
@@ -477,8 +443,7 @@ void RegexPatternLibraryTests::builtinEmailPattern_matchesEmail()
     QVERIFY(!regex.match("not-an-email").hasMatch());
 }
 
-void RegexPatternLibraryTests::builtinUrlPattern_matchesUrl()
-{
+void RegexPatternLibraryTests::builtinUrlPattern_matchesUrl() {
     sak::RegexPatternLibrary lib(nullptr);
     const auto patterns = lib.builtinPatterns();
 
@@ -497,8 +462,7 @@ void RegexPatternLibraryTests::builtinUrlPattern_matchesUrl()
     QVERIFY(!regex.match("ftp://files.net").hasMatch());
 }
 
-void RegexPatternLibraryTests::builtinIpv4Pattern_matchesIp()
-{
+void RegexPatternLibraryTests::builtinIpv4Pattern_matchesIp() {
     sak::RegexPatternLibrary lib(nullptr);
     const auto patterns = lib.builtinPatterns();
 

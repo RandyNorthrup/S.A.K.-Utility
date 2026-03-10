@@ -5,6 +5,7 @@
 /// @brief Implements built-in and custom regex pattern management
 
 #include "sak/regex_pattern_library.h"
+
 #include "sak/logger.h"
 
 #include <QCoreApplication>
@@ -19,9 +20,7 @@ namespace sak {
 
 // ── Construction ────────────────────────────────────────────────────────────
 
-RegexPatternLibrary::RegexPatternLibrary(QObject* parent)
-    : QObject(parent)
-{
+RegexPatternLibrary::RegexPatternLibrary(QObject* parent) : QObject(parent) {
     initBuiltinPatterns();
 
     // Determine storage file location
@@ -33,11 +32,10 @@ RegexPatternLibrary::RegexPatternLibrary(QObject* parent)
         m_storage_file = appDir + "/custom_regex_patterns.json";
     } else {
         // Installed mode: use standard app data location
-        const QString dataDir = QStandardPaths::writableLocation(
-            QStandardPaths::AppLocalDataLocation);
+        const QString dataDir =
+            QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation);
         if (!QDir().mkpath(dataDir)) {
-            sak::logWarning("Failed to create app data directory: {}",
-                            dataDir.toStdString());
+            sak::logWarning("Failed to create app data directory: {}", dataDir.toStdString());
         }
         m_storage_file = dataDir + "/custom_regex_patterns.json";
     }
@@ -47,53 +45,47 @@ RegexPatternLibrary::RegexPatternLibrary(QObject* parent)
 
 // ── Built-in Patterns ───────────────────────────────────────────────────────
 
-void RegexPatternLibrary::initBuiltinPatterns()
-{
+void RegexPatternLibrary::initBuiltinPatterns() {
     m_builtin_patterns = {
-        {"emails",  "Email addresses",
-         R"(\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b)", false},
+        {"emails",
+         "Email addresses",
+         R"(\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b)",
+         false},
 
-        {"urls",    "URLs (http/https)",
-         R"(https?://[^\s]+)", false},
+        {"urls", "URLs (http/https)", R"(https?://[^\s]+)", false},
 
-        {"ipv4",    "IPv4 addresses",
-         R"(\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b)", false},
+        {"ipv4", "IPv4 addresses", R"(\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b)", false},
 
-        {"phone",   "Phone numbers",
-         R"(\b(?:\+?1[-.]?)?(?:\(?[0-9]{3}\)?[-.]?)?[0-9]{3}[-.]?[0-9]{4}\b)", false},
+        {"phone",
+         "Phone numbers",
+         R"(\b(?:\+?1[-.]?)?(?:\(?[0-9]{3}\)?[-.]?)?[0-9]{3}[-.]?[0-9]{4}\b)",
+         false},
 
-        {"dates",   "Dates (various)",
-         R"(\b\d{1,4}[-/.]\d{1,2}[-/.]\d{1,4}\b)", false},
+        {"dates", "Dates (various)", R"(\b\d{1,4}[-/.]\d{1,2}[-/.]\d{1,4}\b)", false},
 
-        {"numbers", "Numbers",
-         R"(\b\d+\b)", false},
+        {"numbers", "Numbers", R"(\b\d+\b)", false},
 
-        {"hex",     "Hex values",
-         R"(\b0x[0-9A-Fa-f]+\b|#[0-9A-Fa-f]{6}\b)", false},
+        {"hex", "Hex values", R"(\b0x[0-9A-Fa-f]+\b|#[0-9A-Fa-f]{6}\b)", false},
 
-        {"words",   "Words/identifiers",
-         R"(\b[A-Za-z_]\w*\b)", false},
+        {"words", "Words/identifiers", R"(\b[A-Za-z_]\w*\b)", false},
     };
 }
 
 // ── Accessors ───────────────────────────────────────────────────────────────
 
-QVector<RegexPatternInfo> RegexPatternLibrary::builtinPatterns() const
-{
+QVector<RegexPatternInfo> RegexPatternLibrary::builtinPatterns() const {
     return m_builtin_patterns;
 }
 
-QVector<RegexPatternInfo> RegexPatternLibrary::customPatterns() const
-{
+QVector<RegexPatternInfo> RegexPatternLibrary::customPatterns() const {
     return m_custom_patterns;
 }
 
 // ── Pattern Management ──────────────────────────────────────────────────────
 
 void RegexPatternLibrary::addCustomPattern(const QString& key,
-                                            const QString& label,
-                                            const QString& pattern)
-{
+                                           const QString& label,
+                                           const QString& pattern) {
     // Check for duplicate keys in both built-in and custom patterns
     for (const auto& p : m_builtin_patterns) {
         if (p.key == key) {
@@ -114,7 +106,8 @@ void RegexPatternLibrary::addCustomPattern(const QString& key,
     QRegularExpression testRegex(pattern);
     if (!testRegex.isValid()) {
         logWarning("RegexPatternLibrary: pattern '{}' is invalid regex: {}",
-                   pattern.toStdString(), testRegex.errorString().toStdString());
+                   pattern.toStdString(),
+                   testRegex.errorString().toStdString());
         return;
     }
 
@@ -129,10 +122,10 @@ void RegexPatternLibrary::addCustomPattern(const QString& key,
     Q_EMIT patternsChanged();
 }
 
-void RegexPatternLibrary::removeCustomPattern(const QString& key)
-{
-    auto it = std::remove_if(m_custom_patterns.begin(), m_custom_patterns.end(),
-        [&key](const RegexPatternInfo& p) { return p.key == key; });
+void RegexPatternLibrary::removeCustomPattern(const QString& key) {
+    auto it = std::remove_if(m_custom_patterns.begin(),
+                             m_custom_patterns.end(),
+                             [&key](const RegexPatternInfo& p) { return p.key == key; });
 
     if (it != m_custom_patterns.end()) {
         m_custom_patterns.erase(it, m_custom_patterns.end());
@@ -142,14 +135,14 @@ void RegexPatternLibrary::removeCustomPattern(const QString& key)
 }
 
 void RegexPatternLibrary::updateCustomPattern(const QString& key,
-                                               const QString& label,
-                                               const QString& pattern)
-{
+                                              const QString& label,
+                                              const QString& pattern) {
     // Validate regex before accepting update
     QRegularExpression testRegex(pattern);
     if (!testRegex.isValid()) {
         logWarning("RegexPatternLibrary: updated pattern '{}' is invalid regex: {}",
-                   pattern.toStdString(), testRegex.errorString().toStdString());
+                   pattern.toStdString(),
+                   testRegex.errorString().toStdString());
         return;
     }
 
@@ -166,8 +159,8 @@ void RegexPatternLibrary::updateCustomPattern(const QString& key,
     logWarning("RegexPatternLibrary: key '{}' not found for update", key.toStdString());
 }
 
-void RegexPatternLibrary::setPatternEnabled(const QString& key, bool enabled)
-{
+void RegexPatternLibrary::setPatternEnabled(const QString& key, bool enabled) {
+    Q_ASSERT(!key.isEmpty());
     // Check built-in patterns first
     for (auto& p : m_builtin_patterns) {
         if (p.key == key) {
@@ -187,8 +180,7 @@ void RegexPatternLibrary::setPatternEnabled(const QString& key, bool enabled)
     }
 }
 
-QString RegexPatternLibrary::combinedPattern() const
-{
+QString RegexPatternLibrary::combinedPattern() const {
     QStringList activePatterns;
 
     for (const auto& p : m_builtin_patterns) {
@@ -206,20 +198,22 @@ QString RegexPatternLibrary::combinedPattern() const
     return activePatterns.join('|');
 }
 
-int RegexPatternLibrary::activeCount() const
-{
+int RegexPatternLibrary::activeCount() const {
     int count = 0;
     for (const auto& p : m_builtin_patterns) {
-        if (p.enabled) { ++count; }
+        if (p.enabled) {
+            ++count;
+        }
     }
     for (const auto& p : m_custom_patterns) {
-        if (p.enabled) { ++count; }
+        if (p.enabled) {
+            ++count;
+        }
     }
     return count;
 }
 
-void RegexPatternLibrary::clearAll()
-{
+void RegexPatternLibrary::clearAll() {
     for (auto& p : m_builtin_patterns) {
         p.enabled = false;
     }
@@ -231,8 +225,9 @@ void RegexPatternLibrary::clearAll()
 
 // ── Persistence ─────────────────────────────────────────────────────────────
 
-void RegexPatternLibrary::loadCustomPatterns()
-{
+void RegexPatternLibrary::loadCustomPatterns() {
+    Q_ASSERT(!m_custom_patterns.empty());
+    Q_ASSERT(!m_custom_patterns.isEmpty());
     QFile file(m_storage_file);
     if (!file.exists()) {
         return;
@@ -265,19 +260,19 @@ void RegexPatternLibrary::loadCustomPatterns()
         info.key = obj["key"].toString();
         info.label = obj["label"].toString();
         info.pattern = obj["pattern"].toString();
-        info.enabled = false; // Always start disabled
+        info.enabled = false;  // Always start disabled
 
         if (!info.key.isEmpty() && !info.pattern.isEmpty()) {
             m_custom_patterns.append(info);
         }
     }
 
-    logInfo("RegexPatternLibrary: loaded {} custom patterns",
-            m_custom_patterns.size());
+    logInfo("RegexPatternLibrary: loaded {} custom patterns", m_custom_patterns.size());
 }
 
-void RegexPatternLibrary::saveCustomPatterns()
-{
+void RegexPatternLibrary::saveCustomPatterns() {
+    Q_ASSERT(!m_custom_patterns.empty());
+    Q_ASSERT(!m_custom_patterns.isEmpty());
     QJsonArray arr;
 
     for (const auto& p : m_custom_patterns) {
@@ -304,8 +299,7 @@ void RegexPatternLibrary::saveCustomPatterns()
     }
     file.close();
 
-    logInfo("RegexPatternLibrary: saved {} custom patterns",
-            m_custom_patterns.size());
+    logInfo("RegexPatternLibrary: saved {} custom patterns", m_custom_patterns.size());
 }
 
-} // namespace sak
+}  // namespace sak
