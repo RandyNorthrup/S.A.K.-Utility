@@ -73,6 +73,12 @@ $CppcheckArgs += @(
     "-D_WINDOWS"
     "-DUNICODE"
     "-D_UNICODE"
+    # Qt macros that cppcheck doesn't understand natively
+    "-DQ_OBJECT="
+    "-DQ_SLOTS="
+    "-DQ_SIGNALS=protected"
+    "-DQ_EMIT="
+    "-DQTEST_SET_MAIN_SOURCE_PATH="
 )
 
 # ---------------------------------------------------------------------------

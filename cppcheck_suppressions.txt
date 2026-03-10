@@ -30,6 +30,10 @@ unmatchedSuppression
 // Only suppress in headers where Qt types are used in signal/slot signatures.
 passedByValue:*/include/sak/*.h
 
+// cppcheck's single-file analysis cannot see member usage across translation
+// units, so it flags all private members in headers as unused.
+unusedStructMember:*main_window.h
+
 // ---------------------------------------------------------------------------
 // Excluded directories (not under our control)
 // ---------------------------------------------------------------------------

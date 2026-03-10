@@ -9,7 +9,7 @@
 [![Qt 6.5+](https://img.shields.io/badge/Qt-6.5%2B-41cd52.svg)](https://www.qt.io/)
 [![Windows 10/11](https://img.shields.io/badge/Windows-10%20%7C%2011-0078d4.svg)](https://www.microsoft.com/windows)
 [![Build](https://github.com/RandyNorthrup/S.A.K.-Utility/actions/workflows/build-release.yml/badge.svg)](https://github.com/RandyNorthrup/S.A.K.-Utility/actions)
-[![Version](https://img.shields.io/badge/Version-0.8.8-orange.svg)](VERSION)
+[![Version](https://img.shields.io/badge/Version-0.9.0-orange.svg)](VERSION)
 [![TigerStyle](https://img.shields.io/badge/code%20style-TigerStyle-f80.svg)](docs/TIGERSTYLE_COMPLIANCE_PLAN.md)
 
 Migration · Maintenance · Recovery · Imaging · Deployment — one portable EXE.
@@ -18,7 +18,14 @@ Migration · Maintenance · Recovery · Imaging · Deployment — one portable E
 
 ---
 
-## What's New in v0.8.8
+## What's New in v0.9.0
+
+- **UUP converter rewrite** — Rewrote `UupIsoBuilder` to drive the bundled `UUPMediaConverter.exe` directly via QProcess, replacing the ConvertConfig.ini generation and batch-script pipeline introduced in v0.6.2. Removed 7-Zip dependency, retry/fallback logic, and broken cancel path. Added `classifyConverterFailure()` for structured error diagnostics and converter output analysis.
+- **TigerStyle compliance** — Assertion-density audit (≥2 per public function), function length / complexity refactoring, magic number extraction, nesting depth reduction across the codebase.
+- **Updated licenses & credits** — THIRD_PARTY_LICENSES.md, README acknowledgments, and about dialog updated to reference UUPMediaCreator/OSTooling and bundled wimlib/libwim.
+- **Build quality** — Clean MSVC `/W4 /WX` build, 79 automated tests (all passing).
+
+### v0.8.8
 
 - **Network transfer reliability fix** — Fixed `sendFrame()` using `socket->flush()` instead of `waitForBytesWritten()`, causing spurious transfer failures under TCP backpressure during unthrottled resume transfers. Added stop-request guard to sender retry loop to prevent pointless retries on cancelled transfers.
 - **Error handling hardening** — Added `sak::logError()` to transfer report write failures, clarified best-effort banner probe in port scanner.

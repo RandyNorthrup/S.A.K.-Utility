@@ -1,25 +1,24 @@
-// Copyright (c) 2025 Randy Northrup. All rights reserved.
+// Copyright (c) 2025-2026 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 /**
  * @file test_uup_conversion_pipeline.cpp
  * @brief Integration tests for UUP-to-ISO conversion pipeline
  *
- * Tests that the converter is invoked correctly and doesn't fork/detach
- * from the QProcess handle. Uses the real bundled converter scripts
- * but without actual UUP files; verifies that the process stays attached
- * and exits cleanly (with expected error about missing ESD files).
+ * Tests that the bundled UUPMediaConverter.exe is present, launches
+ * without forking from the QProcess handle, shows help output, and
+ * exits cleanly when given a non-existent UUP directory.
  */
 
 #include <QCoreApplication>
 #include <QDir>
-#include <QDirIterator>
 #include <QElapsedTimer>
-#include <QFile>
+#include <QFileInfo>
 #include <QProcess>
 #include <QTemporaryDir>
-#include <QTextStream>
 #include <QtTest/QtTest>
+
+#include <algorithm>
 
 class UupConversionPipelineTest : public QObject {
     Q_OBJECT
@@ -28,48 +27,49 @@ private Q_SLOTS:
     void initTestCase();
     void cleanupTestCase();
 
-    // Core process-attachment tests
+    void testConverterExecutableExists();
     void testConverterLaunchesWithoutForking();
-    void testConverterReadsConvertConfig();
-    void testConverterDetectsMissingEsdFiles();
-    void testConverterExitsOnClosedStdin();
-    void testConvertConfigIniFormat();
+    void testConverterShowsHelpOutput();
+    void testConverterExitsOnMissingUupDir();
+    void testConverterExitsOnEmptyUupDir();
 
 private:
-    QString m_converterDir;  // Path to bundled converter
+    QString m_converterPath;
     bool m_converterAvailable = false;
 
-    /// Create a temporary work directory with converter files copied in
-    bool setupWorkDir(QTemporaryDir& tmpDir);
-    /// Write a ConvertConfig.ini matching our app's format
-    void writeConvertConfig(const QString& dir);
+    /// Locate UUPMediaConverter.exe relative to the test executable
+    QString findConverter() const;
 };
+
+QString UupConversionPipelineTest::findConverter() const {
+    const QString appDir = QCoreApplication::applicationDirPath();
+
+    // Candidate paths relative to the test executable location
+    const QStringList candidates = {
+        appDir + "/tools/uup/uupmc/UUPMediaConverter.exe",
+        appDir + "/../../tools/uup/uupmc/UUPMediaConverter.exe",
+        appDir + "/../../../tools/uup/uupmc/UUPMediaConverter.exe",
+    };
+
+    auto found = std::find_if(candidates.begin(), candidates.end(), [](const QString& path) {
+        return QFileInfo::exists(path);
+    });
+    if (found != candidates.end()) {
+        return QDir(*found).absolutePath();
+    }
+    return {};
+}
 
 void UupConversionPipelineTest::initTestCase() {
     qInfo() << "=== UUP Conversion Pipeline Integration Tests ===";
 
-    // Locate bundled converter relative to the test executable
-    // In build: build/Release/test_uup_conversion_pipeline.exe
-    // Converter: tools/uup/converter/convert-UUP.cmd (from source tree)
-    QString appDir = QCoreApplication::applicationDirPath();
+    m_converterPath = findConverter();
+    m_converterAvailable = !m_converterPath.isEmpty();
 
-    // Try: appDir/tools/uup/converter (deployed build)
-    m_converterDir = appDir + "/tools/uup/converter";
-    if (!QFileInfo::exists(m_converterDir + "/convert-UUP.cmd")) {
-        // Try: source tree relative to build dir
-        m_converterDir = appDir + "/../../tools/uup/converter";
-    }
-    if (!QFileInfo::exists(m_converterDir + "/convert-UUP.cmd")) {
-        // Try: workspace root
-        m_converterDir = appDir + "/../../../tools/uup/converter";
-    }
-
-    m_converterAvailable = QFileInfo::exists(m_converterDir + "/convert-UUP.cmd");
     if (m_converterAvailable) {
-        m_converterDir = QDir(m_converterDir).absolutePath();
-        qInfo() << "Converter found at:" << m_converterDir;
+        qInfo() << "UUPMediaConverter found at:" << m_converterPath;
     } else {
-        qWarning() << "Converter not found - some tests will be skipped";
+        qWarning() << "UUPMediaConverter.exe not found - some tests will be skipped";
     }
 }
 
@@ -77,353 +77,155 @@ void UupConversionPipelineTest::cleanupTestCase() {
     qInfo() << "=== Conversion pipeline tests completed ===";
 }
 
-bool UupConversionPipelineTest::setupWorkDir(QTemporaryDir& tmpDir) {
-    if (!m_converterAvailable) {
-        return false;
-    }
-
-    // Copy all converter files to the temp directory
-    QDir srcDir(m_converterDir);
-    QDirIterator it(srcDir.absolutePath(),
-                    QDir::Files | QDir::NoDotAndDotDot,
-                    QDirIterator::Subdirectories);
-
-    int copied = 0;
-    while (it.hasNext()) {
-        QString srcPath = it.next();
-        QString relPath = srcDir.relativeFilePath(srcPath);
-        QString destPath = tmpDir.filePath(relPath);
-
-        QFileInfo destInfo(destPath);
-        QDir().mkpath(destInfo.absolutePath());
-
-        if (QFile::copy(srcPath, destPath)) {
-            copied++;
-        }
-    }
-
-    qInfo() << "Copied" << copied << "converter files to" << tmpDir.path();
-
-    // Create UUPs subdirectory (empty - no actual UUP files)
-    QDir(tmpDir.path()).mkpath("UUPs");
-
-    return copied > 0;
-}
-
-void UupConversionPipelineTest::writeConvertConfig(const QString& dir) {
-    Q_ASSERT(!dir.isEmpty());
-    QFile configFile(QDir(dir).filePath("ConvertConfig.ini"));
-    QVERIFY(configFile.open(QIODevice::WriteOnly | QIODevice::Text));
-
-    QTextStream cfg(&configFile);
-    cfg << "[convert-UUP]\n"
-        << "AutoStart  =1\n"
-        << "AddUpdates =1\n"
-        << "Cleanup    =1\n"
-        << "ResetBase  =0\n"
-        << "NetFx3     =0\n"
-        << "StartVirtual=0\n"
-        << "wim2esd    =0\n"
-        << "wim2swm    =0\n"
-        << "SkipISO    =0\n"
-        << "SkipWinRE  =0\n"
-        << "ForceDism  =0\n"
-        << "RefESD     =0\n"
-        << "UpdtBootFiles=1\n"
-        << "AutoExit   =1\n"
-        << "SkipEdge   =0\n";
-    configFile.close();
+/// Verify the bundled UUPMediaConverter.exe is present.
+void UupConversionPipelineTest::testConverterExecutableExists() {
+    QVERIFY2(m_converterAvailable, "UUPMediaConverter.exe must be bundled in tools/uup/uupmc/");
+    QVERIFY(QFileInfo(m_converterPath).isExecutable());
 }
 
 /**
- * CRITICAL TEST: Verify converter doesn't fork a new process.
+ * CRITICAL TEST: Verify converter stays attached to QProcess.
  *
- * The convert-UUP.cmd script has a QuickEdit-disable feature that
- * re-launches itself through PowerShell. Without the -qedit flag,
- * the script exits immediately (exit /b) after spawning a detached
- * process, orphaning our QProcess handle.
- *
- * This test verifies that with -qedit -elevated, the process stays
- * attached and QProcess can track it to completion.
+ * UUPMediaConverter.exe is a self-contained .NET 8 executable.
+ * This test ensures it does not fork or detach; QProcess should
+ * be able to track the process to completion.
  */
 void UupConversionPipelineTest::testConverterLaunchesWithoutForking() {
     if (!m_converterAvailable) {
-        QSKIP("Converter not found");
+        QSKIP("UUPMediaConverter.exe not found");
     }
 
-    QTemporaryDir tmpDir;
-    QVERIFY(tmpDir.isValid());
-    QVERIFY(setupWorkDir(tmpDir));
-    writeConvertConfig(tmpDir.path());
-
-    QString convertCmd = QDir(tmpDir.path()).filePath("convert-UUP.cmd");
-    QVERIFY(QFileInfo::exists(convertCmd));
-
     QProcess process;
-    process.setWorkingDirectory(tmpDir.path());
+    process.setWorkingDirectory(QFileInfo(m_converterPath).absolutePath());
     process.setProcessChannelMode(QProcess::MergedChannels);
 
+    // Invoke with --help; process should print usage and exit
     QStringList args;
-    args << "/c" << convertCmd << "-qedit" << "-elevated";
+    args << "--help";
 
     QElapsedTimer timer;
     timer.start();
 
-    process.start("cmd.exe", args);
-    QVERIFY2(process.waitForStarted(10'000), "Failed to start converter");
+    process.start(m_converterPath, args);
+    QVERIFY2(process.waitForStarted(10'000), "Failed to start UUPMediaConverter");
 
-    // Close stdin so script doesn't hang at prompts
-    process.closeWriteChannel();
-
-    // The process should run for at least a few seconds (not exit instantly)
-    // and should complete within a reasonable time.
-    // Without -qedit, it would exit in <1 second (just the fork + exit /b)
-    bool finished = process.waitForFinished(120'000);  // 2 minute timeout
-
-    qint64 elapsed = timer.elapsed();
-    QString output = QString::fromUtf8(process.readAllStandardOutput());
+    bool finished = process.waitForFinished(30'000);
+    const qint64 elapsed = timer.elapsed();
+    const QString output = QString::fromUtf8(process.readAllStandardOutput());
 
     qInfo() << "Converter ran for" << elapsed << "ms";
     qInfo() << "Exit code:" << process.exitCode();
     qInfo() << "Output length:" << output.length() << "chars";
 
-    // Log first/last parts of output for debugging
-    if (output.length() > 200) {
-        qInfo() << "Output (first 500):" << output.left(500);
-        qInfo() << "Output (last 500):" << output.right(500);
-    } else {
-        qInfo() << "Output:" << output;
-    }
+    QVERIFY2(finished, "UUPMediaConverter timed out (may have forked)");
 
-    QVERIFY2(finished, "Converter process timed out (may have forked)");
-
-    // If the script forked (QuickEdit re-launch), it would exit almost
-    // instantly with code 0 and very little output. A proper run should
-    // produce more than a trivial amount of output.
-
-    // The script should have attempted to process UUP files and found
-    // none, producing error output. Key indicators:
-    // - "UUP -> ISO" in the title (proves it didn't exit early)
-    // - OR error messages about missing files
-    // - OR the script ran for more than 1 second
-    bool processRanProperly = (elapsed > 1000) || output.contains("edition", Qt::CaseInsensitive) ||
-                              output.contains("UUP", Qt::CaseInsensitive) ||
-                              output.contains("ERROR", Qt::CaseInsensitive) ||
-                              output.contains("Detecting", Qt::CaseInsensitive) ||
-                              output.contains("bin", Qt::CaseInsensitive);
-
-    QVERIFY2(processRanProperly,
-             qPrintable(QString("Converter appears to have forked: exited in %1ms "
-                                "with minimal output. Output: %2")
-                            .arg(elapsed)
-                            .arg(output.left(200))));
+    // The process must exit quickly for a --help invocation
+    QVERIFY2(elapsed < 15'000,
+             qPrintable(QString("--help took %1 ms; expected < 15s").arg(elapsed)));
 }
 
-/**
- * Verify ConvertConfig.ini is read by the converter script.
- *
- * We set AutoStart=1 and AutoExit=1 in the config. If the script
- * reads the config, it should NOT show the interactive menu.
- */
-void UupConversionPipelineTest::testConverterReadsConvertConfig() {
+/// Verify --help produces recognizable usage text.
+void UupConversionPipelineTest::testConverterShowsHelpOutput() {
     if (!m_converterAvailable) {
-        QSKIP("Converter not found");
+        QSKIP("UUPMediaConverter.exe not found");
+    }
+
+    QProcess process;
+    process.setWorkingDirectory(QFileInfo(m_converterPath).absolutePath());
+    process.setProcessChannelMode(QProcess::MergedChannels);
+
+    process.start(m_converterPath, {"--help"});
+    QVERIFY(process.waitForStarted(10'000));
+    QVERIFY(process.waitForFinished(30'000));
+
+    const QString output = QString::fromUtf8(process.readAllStandardOutput());
+    qInfo() << "Help output:" << output.left(500);
+
+    // Should mention desktop-convert or usage or help keywords
+    const bool has_usage = output.contains("desktop-convert", Qt::CaseInsensitive) ||
+                           output.contains("usage", Qt::CaseInsensitive) ||
+                           output.contains("help", Qt::CaseInsensitive) ||
+                           output.contains("convert", Qt::CaseInsensitive);
+
+    QVERIFY2(has_usage, qPrintable("Expected help/usage output but got: " + output.left(300)));
+}
+
+/// Verify converter exits cleanly with an error when the UUP directory is missing.
+void UupConversionPipelineTest::testConverterExitsOnMissingUupDir() {
+    if (!m_converterAvailable) {
+        QSKIP("UUPMediaConverter.exe not found");
     }
 
     QTemporaryDir tmpDir;
     QVERIFY(tmpDir.isValid());
-    QVERIFY(setupWorkDir(tmpDir));
 
-    // Write our custom config (this will overwrite the bundled one)
-    writeConvertConfig(tmpDir.path());
+    const QString bogus_uups = tmpDir.filePath("nonexistent_uups");
+    const QString bogus_iso = tmpDir.filePath("output.iso");
 
-    // Verify it exists
-    QString configPath = QDir(tmpDir.path()).filePath("ConvertConfig.ini");
-    QVERIFY(QFileInfo::exists(configPath));
-
-    // Read it back and verify format
-    QFile configFile(configPath);
-    QVERIFY(configFile.open(QIODevice::ReadOnly));
-    QString content = configFile.readAll();
-    configFile.close();
-
-    QVERIFY2(content.contains("[convert-UUP]"), "Config must contain [convert-UUP] section header");
-    QVERIFY2(content.contains("AutoStart"), "Config must contain AutoStart setting");
-    QVERIFY2(content.contains("AutoExit"), "Config must contain AutoExit setting");
-
-    // Run converter — it should NOT prompt for input (AutoStart=1, AutoExit=1)
     QProcess process;
-    process.setWorkingDirectory(tmpDir.path());
+    process.setWorkingDirectory(QFileInfo(m_converterPath).absolutePath());
     process.setProcessChannelMode(QProcess::MergedChannels);
 
     QStringList args;
-    args << "/c" << QDir(tmpDir.path()).filePath("convert-UUP.cmd") << "-qedit" << "-elevated";
+    args << "desktop-convert"
+         << "-u" << bogus_uups << "-i" << bogus_iso << "-l" << "en-us"
+         << "--no-key-prompt";
 
-    process.start("cmd.exe", args);
+    process.start(m_converterPath, args);
     QVERIFY(process.waitForStarted(10'000));
-    process.closeWriteChannel();
 
-    bool finished = process.waitForFinished(120'000);
-    QVERIFY2(finished, "Process should finish without prompting");
+    const bool finished = process.waitForFinished(60'000);
+    const QString output = QString::fromUtf8(process.readAllStandardOutput());
 
-    QString output = QString::fromUtf8(process.readAllStandardOutput());
-
-    // The script should NOT show "Enter the path" prompt
-    // (AutoStart=1 means it auto-processes; if _UUP is set, it skips the prompt;
-    // if _UUP is not set and AutoStart is set, it still goes to :check)
-    QVERIFY2(!output.contains("Enter the path to UUP source"),
-             "Script prompted for path despite AutoStart=1");
-}
-
-/**
- * Verify converter handles missing ESD files gracefully.
- *
- * With empty UUPs/ directory, the script should exit with an error
- * about missing edition files, not hang.
- */
-void UupConversionPipelineTest::testConverterDetectsMissingEsdFiles() {
-    if (!m_converterAvailable) {
-        QSKIP("Converter not found");
-    }
-
-    QTemporaryDir tmpDir;
-    QVERIFY(tmpDir.isValid());
-    QVERIFY(setupWorkDir(tmpDir));
-    writeConvertConfig(tmpDir.path());
-
-    // UUPs/ directory is empty — no .esd files
-
-    QProcess process;
-    process.setWorkingDirectory(tmpDir.path());
-    process.setProcessChannelMode(QProcess::MergedChannels);
-
-    QStringList args;
-    args << "/c" << QDir(tmpDir.path()).filePath("convert-UUP.cmd") << "-qedit" << "-elevated";
-
-    process.start("cmd.exe", args);
-    QVERIFY(process.waitForStarted(10'000));
-    process.closeWriteChannel();
-
-    bool finished = process.waitForFinished(60'000);
-    QString output = QString::fromUtf8(process.readAllStandardOutput());
-
-    QVERIFY2(finished, "Process should exit cleanly when no ESD files found");
-
-    // Script should have detected missing files and exited
-    // (not hung waiting for input)
     qInfo() << "Exit code:" << process.exitCode();
     qInfo() << "Output:" << output.left(500);
+
+    QVERIFY2(finished, "Converter should exit when UUP directory does not exist");
+    QVERIFY2(process.exitCode() != 0,
+             "Converter should return non-zero exit code for missing UUP dir");
 }
 
-/**
- * Verify that closing stdin causes the converter to exit gracefully
- * if it reaches a prompt.
- */
-void UupConversionPipelineTest::testConverterExitsOnClosedStdin() {
+/// Verify converter exits cleanly when the UUP directory is empty (no ESD files).
+void UupConversionPipelineTest::testConverterExitsOnEmptyUupDir() {
     if (!m_converterAvailable) {
-        QSKIP("Converter not found");
+        QSKIP("UUPMediaConverter.exe not found");
     }
 
     QTemporaryDir tmpDir;
     QVERIFY(tmpDir.isValid());
-    QVERIFY(setupWorkDir(tmpDir));
 
-    // Write config with AutoStart=0 to force the interactive menu
-    QFile configFile(QDir(tmpDir.path()).filePath("ConvertConfig.ini"));
-    QVERIFY(configFile.open(QIODevice::WriteOnly | QIODevice::Text));
-    QTextStream cfg(&configFile);
-    cfg << "[convert-UUP]\n"
-        << "AutoStart  =0\n"
-        << "AutoExit   =1\n";
-    configFile.close();
+    const QString empty_uups = tmpDir.filePath("UUPs");
+    QDir().mkpath(empty_uups);
+    QVERIFY(QFileInfo::exists(empty_uups));
+
+    const QString bogus_iso = tmpDir.filePath("output.iso");
 
     QProcess process;
-    process.setWorkingDirectory(tmpDir.path());
+    process.setWorkingDirectory(QFileInfo(m_converterPath).absolutePath());
     process.setProcessChannelMode(QProcess::MergedChannels);
 
     QStringList args;
-    args << "/c" << QDir(tmpDir.path()).filePath("convert-UUP.cmd") << "-qedit" << "-elevated";
+    args << "desktop-convert"
+         << "-u" << empty_uups << "-i" << bogus_iso << "-l" << "en-us"
+         << "--no-key-prompt";
 
-    process.start("cmd.exe", args);
+    process.start(m_converterPath, args);
     QVERIFY(process.waitForStarted(10'000));
 
-    // Close stdin immediately — script should not hang
-    process.closeWriteChannel();
+    const bool finished = process.waitForFinished(60'000);
+    const QString output = QString::fromUtf8(process.readAllStandardOutput());
 
-    bool finished = process.waitForFinished(30'000);
-    QVERIFY2(finished, "Converter should exit within 30s when stdin is closed");
-}
+    qInfo() << "Exit code:" << process.exitCode();
+    qInfo() << "Output:" << output.left(500);
 
-/**
- * Verify our ConvertConfig.ini format is parseable by findstr /b /i
- * (the method the script uses to read settings).
- */
-void UupConversionPipelineTest::testConvertConfigIniFormat() {
-    QTemporaryDir tmpDir;
-    QVERIFY(tmpDir.isValid());
-    writeConvertConfig(tmpDir.path());
-
-    QString configPath = QDir(tmpDir.path()).filePath("ConvertConfig.ini");
-
-    // Use findstr to verify each option is parseable (same as the script does)
-    QStringList options = {"AutoStart",
-                           "AddUpdates",
-                           "Cleanup",
-                           "ResetBase",
-                           "NetFx3",
-                           "StartVirtual",
-                           "wim2esd",
-                           "wim2swm",
-                           "SkipISO",
-                           "SkipWinRE",
-                           "ForceDism",
-                           "RefESD",
-                           "UpdtBootFiles",
-                           "AutoExit",
-                           "SkipEdge"};
-
-    for (const QString& opt : options) {
-        QProcess findstr;
-        findstr.setWorkingDirectory(tmpDir.path());
-        findstr.start("findstr.exe", {"/b", "/i", opt, "ConvertConfig.ini"});
-        QVERIFY(findstr.waitForFinished(5000));
-
-        QString output = findstr.readAllStandardOutput().trimmed();
-        QVERIFY2(findstr.exitCode() == 0,
-                 qPrintable(
-                     QString("findstr /b /i %1 failed — option not found in config").arg(opt)));
-        QVERIFY2(!output.isEmpty(), qPrintable(QString("findstr found no output for %1").arg(opt)));
-
-        // Verify the value can be extracted by split on '='
-        QStringList parts = output.split('=');
-        QVERIFY2(parts.size() >= 2,
-                 qPrintable(QString("Option %1 line has no '=': %2").arg(opt, output)));
-
-        QString value = parts.at(1).trimmed();
-        QVERIFY2(!value.isEmpty(),
-                 qPrintable(QString("Option %1 has empty value: %2").arg(opt, output)));
-
-        bool ok;
-        int intVal = value.toInt(&ok);
-        Q_UNUSED(intVal);
-        QVERIFY2(
-            ok, qPrintable(QString("Option %1 value '%2' is not a valid integer").arg(opt, value)));
-    }
-
-    // Verify [convert-UUP] section header is detected
-    QProcess findSection;
-    findSection.setWorkingDirectory(tmpDir.path());
-    findSection.start("findstr.exe", {"/i", "\\[convert-UUP\\]", "ConvertConfig.ini"});
-    QVERIFY(findSection.waitForFinished(5000));
-    QCOMPARE(findSection.exitCode(), 0);
-
-    qInfo() << "All" << options.size() << "config options verified parseable";
+    QVERIFY2(finished, "Converter should exit when UUP directory is empty");
 }
 
 #include <QApplication>
 int main(int argc, char* argv[]) {
     QApplication app(argc, argv);
     UupConversionPipelineTest tc;
+    // cppcheck-suppress unknownMacro
     QTEST_SET_MAIN_SOURCE_PATH
     return QTest::qExec(&tc, argc, argv);
 }

@@ -20,14 +20,14 @@
  *   1. Browse available Windows builds from UUP dump
  *   2. Select language, edition, and target path
  *   3. Download UUP files from Microsoft CDN via aria2c
- *   4. Convert UUP files to a bootable ISO via wimlib converter
+ *   4. Convert UUP files to a bootable ISO via UUPMediaConverter
  *
  * This class owns a UupDumpApi (network client) and a UupIsoBuilder
  * (background download + conversion engine). It exposes a clean,
  * step-by-step API that the download dialog drives.
  *
- * All bundled tools (aria2c, converter, wimlib) must be present at
- * build time. Only actual Windows UUP files are fetched at runtime
+ * All bundled tools (aria2c.exe, UUPMediaConverter.exe) must be present
+ * at build time. Only actual Windows UUP files are fetched at runtime
  * when the user initiates a download.
  *
  * Thread-Safety: Must be constructed on the GUI thread.

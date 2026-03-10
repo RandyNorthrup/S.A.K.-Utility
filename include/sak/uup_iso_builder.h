@@ -10,6 +10,7 @@
 #include <QObject>
 #include <QProcess>
 #include <QString>
+#include <QTextStream>
 #include <QThread>
 #include <QTimer>
 
@@ -178,6 +179,9 @@ private:
 
     // aria2c input file generation
     bool generateAria2InputFile(const QString& outputPath);
+    void writeAria2Entry(QTextStream& stream, const UupDumpApi::FileInfo& fileInfo);
+    void logAria2SkippedFiles(int skippedFiles, qint64 skippedBytes);
+    void collectConverterError(const QString& line);
 
     // Check if a file is already fully downloaded and verified
     bool isFileAlreadyDownloaded(const UupDumpApi::FileInfo& fileInfo,

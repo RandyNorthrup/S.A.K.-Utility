@@ -14,6 +14,7 @@
 
 #include <memory>
 
+class QFrame;
 class QHBoxLayout;
 
 // Forward declarations for feature panels (in global namespace)
@@ -142,6 +143,13 @@ private:
                                                 const QString& titleStyle,
                                                 const QString& descStyle,
                                                 const QString& logoStyle);
+
+    /// @brief Build the Discord community card
+    QFrame* createCommunityCard(QWidget* parent,
+                                const QString& cardStyle,
+                                const QString& titleStyle,
+                                const QString& descStyle,
+                                const QString& logoStyle);
 
     /// @brief Load splash screen icon into the About panel header
     void loadAboutPanelIcon(QLabel* iconLabel);

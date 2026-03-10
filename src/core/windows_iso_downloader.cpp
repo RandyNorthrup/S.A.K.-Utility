@@ -3,7 +3,7 @@
 
 /**
  * @file windows_iso_downloader.cpp
- * @brief Windows ISO downloader using UUP dump API + aria2c + wimlib converter
+ * @brief Windows ISO downloader using UUP dump API + aria2c + UUPMediaConverter
  *
  * Orchestrates the complete pipeline: browse builds → select language/edition →
  * download UUP files → convert to bootable ISO. All tools are bundled at build

@@ -178,7 +178,7 @@ cmake --build build --target run_integration_tests
 | Test | Workflow | Coverage |
 |---|---|---|
 | test_network_transfer_workflow | Network Transfer | End-to-end peer discovery → connect → transfer → verify |
-| test_uup_conversion_pipeline | UUP-to-ISO | Converter process attachment, config parsing, missing files, stdin close, exit handling |
+| test_uup_conversion_pipeline | UUP-to-ISO | UUPMediaConverter exe existence, process attachment (no fork), help output, missing UUP dir, empty UUP dir |
 
 ## Writing New Tests
 

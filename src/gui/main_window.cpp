@@ -137,7 +137,7 @@ GNU Affero General Public License for more details.</p>
 along with this program. If not, see
 <a href="https://www.gnu.org/licenses/">https://www.gnu.org/licenses/</a>.</p>
 <p><b>Note:</b> This application uses Qt Framework (LGPL v3), Chocolatey (Apache 2.0),
-smartmontools (GPLv2), aria2 (GPLv2), wimlib (LGPL v3), 7-Zip (LGPL v2.1),
+smartmontools (GPLv2), aria2 (GPLv2), UUPMediaCreator (MIT), 7-Zip (LGPL v2.1),
 qrcodegen (MIT), and additional open-source libraries. See the Credits tab
 for the full list.</p>
 )SAKLICENSE";
@@ -179,16 +179,16 @@ constexpr char kCreditsTabHtml[] = R"SAKCREDITS(
     <span class="desc">Multi-connection download manager for ISO downloads</span>
 </div>
 <div class="dep">
-    <b><a href="https://wimlib.net/">wimlib</a></b> &mdash; LGPL v3 (Eric Biggers)<br/>
-    <span class="desc">WIM image library for UUP-to-ISO conversion</span>
+    <b><a href="https://github.com/OSTooling/UUPMediaCreator">UUPMediaCreator</a></b> &mdash; MIT (OSTooling)<br/>
+    <span class="desc">UUP-to-ISO converter (patched build, AppX provisioning skipped)</span>
+</div>
+<div class="dep">
+    <b><a href="https://wimlib.net/">wimlib / libwim</a></b> &mdash; LGPL v3 (Eric Biggers)<br/>
+    <span class="desc">WIM image library (bundled with UUPMediaConverter)</span>
 </div>
 <div class="dep">
     <b><a href="https://www.7-zip.org/">7-Zip</a></b> &mdash; LGPL v2.1 (Igor Pavlov)<br/>
     <span class="desc">Archive tool for ISO extraction and compression</span>
-</div>
-<div class="dep">
-    <b><a href="https://github.com/abbodi1406">uup-converter-wimlib</a></b> &mdash; abbodi1406<br/>
-    <span class="desc">UUP-to-ISO converter scripts</span>
 </div>
 <div class="dep">
     <b><a href="https://www.zlib.net/">zlib</a></b> &mdash; zlib License<br/>
@@ -222,6 +222,29 @@ constexpr char kTooltipImageFlasher[] = "Flash ISO images to USB drives (Ctrl+6)
 constexpr char kTooltipDiagnostics[] = "System diagnostics, benchmarks, and stress tests (Ctrl+7)";
 constexpr char kTooltipNetworkManagement[] =
     "Network diagnostics, WiFi management, and connectivity tools (Ctrl+8)";
+
+const QString kDiscordBtnStyle = QStringLiteral(
+    "QPushButton {"
+    "  background: qlineargradient(x1:0, y1:0, x2:0, y2:1,"
+    "    stop:0 rgba(108, 117, 252, 0.92),"
+    "    stop:0.5 rgba(88, 101, 242, 0.90),"
+    "    stop:1 rgba(71, 82, 196, 0.88));"
+    "  color: white; font-weight: 600;"
+    "  padding: 8px 14px; border-radius: 10px;"
+    "  border: 1px solid rgba(71, 82, 196, 0.7);"
+    "}"
+    "QPushButton:hover {"
+    "  background: qlineargradient(x1:0, y1:0, x2:0, y2:1,"
+    "    stop:0 rgba(128, 137, 253, 0.95),"
+    "    stop:0.5 rgba(109, 120, 247, 0.93),"
+    "    stop:1 rgba(88, 101, 242, 0.90));"
+    "}"
+    "QPushButton:pressed {"
+    "  background: qlineargradient(x1:0, y1:0, x2:0, y2:1,"
+    "    stop:0 rgba(71, 82, 196, 0.95),"
+    "    stop:0.5 rgba(57, 66, 164, 0.93),"
+    "    stop:1 rgba(45, 52, 140, 0.92));"
+    "}");
 
 constexpr int kTabIconSize = 20;
 
@@ -357,6 +380,7 @@ void MainWindow::createToolPanels() {
 
 void MainWindow::createSimplePanels() {
     Q_ASSERT(m_organizer_panel);
+    Q_ASSERT(m_tab_widget);
     // ── 1. Quick Actions ────────────────────────────────────────────────
     m_quick_actions_panel = std::make_unique<QuickActionsPanel>(this);
     AddTabWithTooltip(m_tab_widget,
@@ -411,6 +435,8 @@ void MainWindow::createSimplePanels() {
 }
 
 void MainWindow::createAppManagementPanel() {
+    Q_ASSERT(m_tab_widget);
+    Q_ASSERT(!m_app_installation_panel);
     m_app_installation_panel = std::make_unique<AppInstallationPanel>(this);
     m_advanced_uninstall_panel = std::make_unique<AdvancedUninstallPanel>(this);
 
@@ -464,6 +490,8 @@ void MainWindow::createAppManagementPanel() {
 }
 
 void MainWindow::createNetworkManagementPanel() {
+    Q_ASSERT(m_tab_widget);
+    Q_ASSERT(!m_network_diagnostic_panel);
     m_network_diagnostic_panel = std::make_unique<NetworkDiagnosticPanel>(this);
     m_wifi_manager_panel = std::make_unique<WifiManagerPanel>(this);
     connect(m_wifi_manager_panel.get(),
@@ -526,6 +554,7 @@ void MainWindow::createNetworkManagementPanel() {
 
 void MainWindow::loadAboutPanelIcon(QLabel* iconLabel) {
     Q_ASSERT(iconLabel);
+    Q_ASSERT(!QCoreApplication::applicationDirPath().isEmpty());
     const QString appDir = QCoreApplication::applicationDirPath();
     const QStringList splashCandidates = {appDir + "/sak_splash.png",
                                           appDir + "/resources/sak_splash.png",
@@ -550,6 +579,7 @@ void MainWindow::loadAboutPanelIcon(QLabel* iconLabel) {
 
 void MainWindow::createAboutPanel() {
     Q_ASSERT(m_tab_widget);
+    Q_ASSERT(!QCoreApplication::applicationVersion().isEmpty());
     auto* aboutPanel = new QWidget(this);
     auto* aboutLayout = new QVBoxLayout(aboutPanel);
     aboutLayout->setSpacing(12);
@@ -596,6 +626,7 @@ void MainWindow::createAboutPanel() {
 
 void MainWindow::createHelpPanel() {
     Q_ASSERT(m_tab_widget);
+    Q_ASSERT(!QCoreApplication::applicationName().isEmpty());
 
     auto* helpPanel = new QWidget(this);
     auto* helpLayout = new QVBoxLayout(helpPanel);
@@ -747,6 +778,8 @@ QHBoxLayout* MainWindow::createHelpRow_wikiAndCommunity(QWidget* parent,
                                                         const QString& titleStyle,
                                                         const QString& descStyle,
                                                         const QString& logoStyle) {
+    Q_ASSERT(parent);
+    Q_ASSERT(!cardStyle.isEmpty());
     constexpr int kLogoSize = 48;
 
     auto makeCard = [&](const QString& iconPath,
@@ -800,7 +833,20 @@ QHBoxLayout* MainWindow::createHelpRow_wikiAndCommunity(QWidget* parent,
                             tr("Browse the wiki for guides, FAQ, and troubleshooting."),
                             wikiBtn));
 
-    // Community card — two-button layout (Discord)
+    row->addWidget(createCommunityCard(parent, cardStyle, titleStyle, descStyle, logoStyle));
+
+    return row;
+}
+
+QFrame* MainWindow::createCommunityCard(QWidget* parent,
+                                        const QString& cardStyle,
+                                        const QString& titleStyle,
+                                        const QString& descStyle,
+                                        const QString& logoStyle) {
+    Q_ASSERT(parent);
+    Q_ASSERT(!cardStyle.isEmpty());
+    constexpr int kLogoSize = 48;
+
     auto* communityCard = new QFrame(parent);
     communityCard->setStyleSheet(cardStyle);
     auto* communityLayout = new QVBoxLayout(communityCard);
@@ -829,32 +875,9 @@ QHBoxLayout* MainWindow::createHelpRow_wikiAndCommunity(QWidget* parent,
 
     communityLayout->addStretch();
 
-    const QString discordBtnStyle = QString(
-        "QPushButton {"
-        "  background: qlineargradient(x1:0, y1:0, x2:0, y2:1,"
-        "    stop:0 rgba(108, 117, 252, 0.92),"
-        "    stop:0.5 rgba(88, 101, 242, 0.90),"
-        "    stop:1 rgba(71, 82, 196, 0.88));"
-        "  color: white; font-weight: 600;"
-        "  padding: 8px 14px; border-radius: 10px;"
-        "  border: 1px solid rgba(71, 82, 196, 0.7);"
-        "}"
-        "QPushButton:hover {"
-        "  background: qlineargradient(x1:0, y1:0, x2:0, y2:1,"
-        "    stop:0 rgba(128, 137, 253, 0.95),"
-        "    stop:0.5 rgba(109, 120, 247, 0.93),"
-        "    stop:1 rgba(88, 101, 242, 0.90));"
-        "}"
-        "QPushButton:pressed {"
-        "  background: qlineargradient(x1:0, y1:0, x2:0, y2:1,"
-        "    stop:0 rgba(71, 82, 196, 0.95),"
-        "    stop:0.5 rgba(57, 66, 164, 0.93),"
-        "    stop:1 rgba(45, 52, 140, 0.92));"
-        "}");
-
     auto* discordBtn = new QPushButton(tr("Join Discord"), communityCard);
     discordBtn->setMinimumHeight(sak::kButtonHeightTall);
-    discordBtn->setStyleSheet(discordBtnStyle);
+    discordBtn->setStyleSheet(kDiscordBtnStyle);
     discordBtn->setAccessibleName(QStringLiteral("Join S.A.K. Utility Discord server"));
     discordBtn->setToolTip(QStringLiteral("Opens the general discussion Discord channel"));
     communityLayout->addWidget(discordBtn);
@@ -862,9 +885,7 @@ QHBoxLayout* MainWindow::createHelpRow_wikiAndCommunity(QWidget* parent,
         QDesktopServices::openUrl(QUrl(QStringLiteral("https://discord.gg/pMh2n9kSK3")));
     });
 
-    row->addWidget(communityCard);
-
-    return row;
+    return communityCard;
 }
 
 void MainWindow::connectPanelSignals() {
@@ -1231,6 +1252,7 @@ void MainWindow::resizeEvent(QResizeEvent* event) {
 
 void MainWindow::applyTabBarChevrons() {
     Q_ASSERT(m_tab_widget);
+    Q_ASSERT(m_tab_widget->tabBar());
     if (!m_tab_widget) {
         return;
     }

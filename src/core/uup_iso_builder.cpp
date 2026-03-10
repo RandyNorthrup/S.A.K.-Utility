@@ -23,6 +23,24 @@
 #endif
 
 // ============================================================================
+// File-scope regex patterns (kept outside functions for Lizard compatibility)
+// ============================================================================
+
+static const QRegularExpression kAria2SpeedPattern(R"(\[DL:(\d+)\])");
+static const QRegularExpression kAria2HrSpeedPattern(R"(DL:([0-9.]+)\s*(KiB|MiB|GiB))");
+
+/// Convert a human-readable aria2 speed value+unit to MB/s.
+static double convertHrSpeedToMBps(double value, const QString& unit) {
+    if (unit == QLatin1String("KiB")) {
+        return value / sak::kBytesPerKBf;
+    }
+    if (unit == QLatin1String("GiB")) {
+        return value * sak::kBytesPerKBf;
+    }
+    return value;  // MiB
+}
+
+// ============================================================================
 // Construction / Destruction
 // ============================================================================
 
@@ -62,8 +80,7 @@ void UupIsoBuilder::startBuild(const QList<UupDumpApi::FileInfo>& files,
     m_downloadedBytes = 0;
     m_allFilesAlreadyDownloaded = false;
     m_converterOutputTail.clear();
-    m_conversionRetryCount = 0;
-    m_skipAppxOnRetry = false;
+    m_converterErrors.clear();
 
     // Calculate total download size
     m_totalDownloadBytes = 0;
@@ -79,9 +96,8 @@ void UupIsoBuilder::startBuild(const QList<UupDumpApi::FileInfo>& files,
 }
 
 void UupIsoBuilder::cancel() {
-    Q_ASSERT(m_converterProcess);
     Q_ASSERT(m_progressPollTimer);
-    Q_ASSERT(m_aria2Process);
+    Q_ASSERT(!m_updateId.isEmpty());
     m_cancelled = true;
     m_progressPollTimer->stop();
 
@@ -106,6 +122,8 @@ void UupIsoBuilder::cancel() {
 
 QString UupIsoBuilder::findAria2Path() const {
     auto& tools = sak::BundledToolsManager::instance();
+    Q_ASSERT(!tools.toolsPath().isEmpty());
+    Q_ASSERT(QDir(tools.toolsPath()).exists());
 
     // Primary location: tools/uup/aria2c.exe
     QString path = tools.toolPath("uup", "aria2c.exe");
@@ -127,53 +145,10 @@ QString UupIsoBuilder::findAria2Path() const {
     return {};
 }
 
-QString UupIsoBuilder::findConverterDir() const {
-    auto& tools = sak::BundledToolsManager::instance();
-
-    // Primary location: tools/uup/converter/
-    QString converterDir = tools.toolsPath() + "/uup/converter";
-    if (QDir(converterDir).exists() && QFileInfo::exists(converterDir + "/convert-UUP.cmd")) {
-        return converterDir;
-    }
-
-    // Fallback: find convert-UUP.cmd anywhere under tools/uup/
-    QDir uupDir(tools.toolsPath() + "/uup");
-    if (uupDir.exists()) {
-        QDirIterator it(
-            uupDir.absolutePath(), {"convert-UUP.cmd"}, QDir::Files, QDirIterator::Subdirectories);
-        if (it.hasNext()) {
-            QFileInfo fi(it.next());
-            return fi.absolutePath();
-        }
-    }
-
-    sak::logError("UUP converter (convert-UUP.cmd) not found in bundled tools");
-    return {};
-}
-
-QString UupIsoBuilder::find7zPath() const {
-    auto& tools = sak::BundledToolsManager::instance();
-
-    // Check chocolatey tools first (already bundled)
-    QString path = tools.toolPath("chocolatey/tools", "7z.exe");
-    if (QFileInfo::exists(path)) {
-        return path;
-    }
-
-    // Check uup tools for 7zr.exe
-    path = tools.toolPath("uup", "7zr.exe");
-    if (QFileInfo::exists(path)) {
-        return path;
-    }
-
-    sak::logWarning(
-        "7z.exe/7zr.exe not found in bundled tools. "
-        "Ensure tools/chocolatey/tools/ or tools/uup/ contains a 7-Zip executable.");
-    return {};
-}
-
 QString UupIsoBuilder::findUupMediaConverterPath() const {
     auto& tools = sak::BundledToolsManager::instance();
+    Q_ASSERT(!tools.toolsPath().isEmpty());
+    Q_ASSERT(QDir(tools.toolsPath()).exists());
 
     // Preferred location if bundled explicitly.
     QString path = tools.toolPath("uup", "UUPMediaConverter.exe");
@@ -210,6 +185,8 @@ QString UupIsoBuilder::findUupMediaConverterPath() const {
 // ============================================================================
 
 void UupIsoBuilder::executePreparation() {
+    Q_ASSERT(!m_files.isEmpty());
+    Q_ASSERT(!m_updateId.isEmpty());
     m_phase = Phase::PreparingDownload;
     Q_EMIT phaseChanged(Phase::PreparingDownload, "Preparing download environment...");
     Q_EMIT progressUpdated(0, "Validating bundled tools...");
@@ -224,11 +201,6 @@ void UupIsoBuilder::executePreparation() {
         return;
     }
 
-    validateDownloads();
-    if (m_phase == Phase::Failed || m_cancelled) {
-        return;
-    }
-
     Q_EMIT progressUpdated(PHASE_PREPARE_WEIGHT, "Preparation complete");
     sak::logInfo("UUP build preparation complete");
 
@@ -238,6 +210,7 @@ void UupIsoBuilder::executePreparation() {
 
 void UupIsoBuilder::prepareWorkspace() {
     Q_ASSERT(!m_updateId.isEmpty());
+    Q_ASSERT(!m_lang.isEmpty());
     // ---- Validate required tools ----
     QString aria2Path = findAria2Path();
     if (aria2Path.isEmpty()) {
@@ -248,16 +221,6 @@ void UupIsoBuilder::prepareWorkspace() {
         return;
     }
     sak::logInfo("Found aria2c: " + aria2Path.toStdString());
-
-    QString converterDir = findConverterDir();
-    if (converterDir.isEmpty()) {
-        m_phase = Phase::Failed;
-        Q_EMIT buildError(
-            "UUP converter tools (convert-UUP.cmd) not found in bundled tools. "
-            "Run scripts/bundle_uup_tools.ps1 and rebuild the application.");
-        return;
-    }
-    sak::logInfo("Found converter: " + converterDir.toStdString());
 
     // ---- Create work directory (deterministic name for resume support) ----
     Q_EMIT progressUpdated(1, "Creating work directory...");
@@ -292,6 +255,8 @@ void UupIsoBuilder::prepareWorkspace() {
 }
 
 void UupIsoBuilder::checkResumedDownloads() {
+    Q_ASSERT(!m_workDir.isEmpty());
+    Q_ASSERT(QDir(m_workDir).exists());
     QDir workDir(m_workDir);
     QString downloadDir = workDir.filePath("UUPs");
     QDir dlDir(downloadDir);
@@ -317,7 +282,7 @@ void UupIsoBuilder::checkResumedDownloads() {
     }
 
     double existingGB = existingBytes / sak::kBytesPerGBf;
-    sak::logInfo("Resuming download — found " + std::to_string(existingFiles) +
+    sak::logInfo("Resuming download ΓÇö found " + std::to_string(existingFiles) +
                  " existing files (" + std::to_string(static_cast<int>(existingGB * 100) / 100) +
                  " GB) in work directory");
     Q_EMIT progressUpdated(1,
@@ -342,85 +307,6 @@ void UupIsoBuilder::downloadPackages() {
     // Check if the aria2 input file is empty (all files already downloaded)
     QFileInfo aria2FileInfo(aria2InputPath);
     m_allFilesAlreadyDownloaded = (aria2FileInfo.size() == 0);
-
-    // ---- Generate ConvertConfig.ini ----
-    Q_EMIT progressUpdated(3, "Creating converter configuration...");
-
-    QString configPath = workDir.filePath("ConvertConfig.ini");
-    QFile configFile(configPath);
-    if (!configFile.open(QIODevice::WriteOnly | QIODevice::Text)) {
-        m_phase = Phase::Failed;
-        Q_EMIT buildError("Failed to create ConvertConfig.ini");
-        return;
-    }
-
-    {
-        QTextStream cfg(&configFile);
-        cfg << "[convert-UUP]\n"
-            << "AutoStart  =1\n"  // 1 = create ISO with install.wim
-            << "AddUpdates =1\n"
-            << "Cleanup    =1\n"
-            << "ResetBase  =0\n"
-            << "NetFx3     =0\n"
-            << "StartVirtual=0\n"
-            << "wim2esd    =0\n"
-            << "wim2swm    =0\n"
-            << "SkipISO    =0\n"
-            << "SkipWinRE  =0\n"
-            << "ForceDism  =0\n"
-            << "RefESD     =0\n"
-            << "UpdtBootFiles=1\n"
-            << "AutoExit   =1\n"  // Exit without waiting for keypress
-            << "SkipEdge   =0\n"
-            << "\n[Store_Apps]\n"
-            << "SkipApps   =0\n"
-            << "AppsLevel  =0\n"
-            << "CustomList =0\n";
-    }
-    configFile.close();
-}
-
-void UupIsoBuilder::validateDownloads() {
-    // ---- Copy converter files to work directory ----
-    Q_EMIT progressUpdated(4, "Setting up converter tools...");
-
-    QString converterDir = findConverterDir();
-    QDir srcDir(converterDir);
-    QDir workDir(m_workDir);
-
-    QDirIterator converterIt(srcDir.absolutePath(),
-                             QDir::Files | QDir::NoDotAndDotDot,
-                             QDirIterator::Subdirectories);
-    int copiedCount = 0;
-    int skippedConverterFiles = 0;
-    while (converterIt.hasNext()) {
-        QString srcPath = converterIt.next();
-        QString relativePath = srcDir.relativeFilePath(srcPath);
-        QString destPath = workDir.filePath(relativePath);
-
-        QFileInfo destInfo(destPath);
-        if (!QDir().mkpath(destInfo.absolutePath())) {
-            sak::logWarning("Failed to create directory for converter file: " +
-                            destInfo.absolutePath().toStdString());
-        }
-
-        // Skip files already present (resume scenario)
-        if (destInfo.exists()) {
-            skippedConverterFiles++;
-            continue;
-        }
-
-        if (QFile::copy(srcPath, destPath)) {
-            copiedCount++;
-        } else {
-            sak::logWarning("Failed to copy converter file: " + relativePath.toStdString());
-        }
-    }
-    if (skippedConverterFiles > 0) {
-        sak::logInfo("Skipped " + std::to_string(skippedConverterFiles) +
-                     " converter files already in work directory");
-    }
-    sak::logInfo("Copied " + std::to_string(copiedCount) + " converter files to work directory");
 }
 
 bool UupIsoBuilder::isFileAlreadyDownloaded(const UupDumpApi::FileInfo& fileInfo,
@@ -431,7 +317,7 @@ bool UupIsoBuilder::isFileAlreadyDownloaded(const UupDumpApi::FileInfo& fileInfo
         return false;
     }
 
-    // Size check — must match expected size (if known)
+    // Size check ΓÇö must match expected size (if known)
     if (fileInfo.size > 0 && localFile.size() != fileInfo.size) {
         return false;
     }
@@ -458,8 +344,28 @@ bool UupIsoBuilder::isFileAlreadyDownloaded(const UupDumpApi::FileInfo& fileInfo
     return true;
 }
 
+void UupIsoBuilder::writeAria2Entry(QTextStream& stream, const UupDumpApi::FileInfo& fileInfo) {
+    Q_ASSERT(!fileInfo.url.isEmpty());
+    Q_ASSERT(!fileInfo.fileName.isEmpty());
+    stream << fileInfo.url << "\n";
+    stream << "  out=" << fileInfo.fileName << "\n";
+
+    if (!fileInfo.sha1.isEmpty()) {
+        stream << "  checksum=sha-1=" << fileInfo.sha1 << "\n";
+    }
+
+    // Smaller files don't benefit from many connections; save slots for large files
+    if (fileInfo.size > 0 && fileInfo.size < 5 * sak::kBytesPerMB) {
+        stream << "  split=" << sak::kAria2SingleSplit << "\n";
+        stream << "  max-connection-per-server=" << sak::kAria2SingleConn << "\n";
+    }
+
+    stream << "\n";
+}
+
 bool UupIsoBuilder::generateAria2InputFile(const QString& outputPath) {
     Q_ASSERT(!outputPath.isEmpty());
+    Q_ASSERT(!m_workDir.isEmpty());
     QFile file(outputPath);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
         return false;
@@ -469,8 +375,6 @@ bool UupIsoBuilder::generateAria2InputFile(const QString& outputPath) {
     int validFiles = 0;
     int skippedFiles = 0;
     qint64 skippedBytes = 0;
-
-    // Determine the download directory (UUPs subfolder of work dir)
     QString downloadDir = QDir(m_workDir).filePath("UUPs");
 
     for (const auto& fileInfo : m_files) {
@@ -479,7 +383,6 @@ bool UupIsoBuilder::generateAria2InputFile(const QString& outputPath) {
             continue;
         }
 
-        // Check if file is already fully downloaded and verified
         if (isFileAlreadyDownloaded(fileInfo, downloadDir)) {
             skippedFiles++;
             skippedBytes += fileInfo.size;
@@ -487,46 +390,32 @@ bool UupIsoBuilder::generateAria2InputFile(const QString& outputPath) {
             continue;
         }
 
-        stream << fileInfo.url << "\n";
-        stream << "  out=" << fileInfo.fileName << "\n";
-
-        if (!fileInfo.sha1.isEmpty()) {
-            stream << "  checksum=sha-1=" << fileInfo.sha1 << "\n";
-        }
-
-        // Smaller files don't benefit from many connections; save slots for large files
-        if (fileInfo.size > 0 && fileInfo.size < 5 * sak::kBytesPerMB) {
-            stream << "  split=" << sak::kAria2SingleSplit << "\n";
-            stream << "  max-connection-per-server=" << sak::kAria2SingleConn << "\n";
-        }
-
-        stream << "\n";
+        writeAria2Entry(stream, fileInfo);
         validFiles++;
     }
 
     file.close();
-
-    if (skippedFiles > 0) {
-        double skippedMB = skippedBytes / sak::kBytesPerMBf;
-        sak::logInfo("Resume: skipped " + std::to_string(skippedFiles) +
-                     " already-downloaded files (" + std::to_string(static_cast<int>(skippedMB)) +
-                     " MB)");
-        Q_EMIT progressUpdated(2,
-                               QString("Skipped %1 already-downloaded files (%2 MB)")
-                                   .arg(skippedFiles)
-                                   .arg(skippedMB, 0, 'f', 0));
-    }
+    logAria2SkippedFiles(skippedFiles, skippedBytes);
 
     sak::logInfo("Generated aria2c input file: " + std::to_string(validFiles) +
                  " files to download, " + std::to_string(skippedFiles) + " already complete");
 
-    // If all files are already downloaded, no need to run aria2c
-    if (validFiles == 0 && skippedFiles > 0) {
-        sak::logInfo("All files already downloaded — skipping aria2c");
-        return true;  // Still return true; caller should check if file has content
-    }
+    return (validFiles > 0) || (skippedFiles > 0);
+}
 
-    return validFiles > 0;
+void UupIsoBuilder::logAria2SkippedFiles(int skippedFiles, qint64 skippedBytes) {
+    Q_ASSERT(skippedFiles >= 0);
+    Q_ASSERT(skippedBytes >= 0);
+    if (skippedFiles <= 0) {
+        return;
+    }
+    double skippedMB = skippedBytes / sak::kBytesPerMBf;
+    sak::logInfo("Resume: skipped " + std::to_string(skippedFiles) + " already-downloaded files (" +
+                 std::to_string(static_cast<int>(skippedMB)) + " MB)");
+    Q_EMIT progressUpdated(2,
+                           QString("Skipped %1 already-downloaded files (%2 MB)")
+                               .arg(skippedFiles)
+                               .arg(skippedMB, 0, 'f', 0));
 }
 
 // ============================================================================
@@ -534,11 +423,11 @@ bool UupIsoBuilder::generateAria2InputFile(const QString& outputPath) {
 // ============================================================================
 
 void UupIsoBuilder::executeDownload() {
-    Q_ASSERT(m_aria2Process);
-    Q_ASSERT(m_progressPollTimer);
     if (m_cancelled) {
         return;
     }
+    Q_ASSERT(!m_workDir.isEmpty());
+    Q_ASSERT(m_progressPollTimer);
 
     m_phase = Phase::DownloadingFiles;
     Q_EMIT phaseChanged(Phase::DownloadingFiles, "Downloading Windows UUP files...");
@@ -546,9 +435,9 @@ void UupIsoBuilder::executeDownload() {
 
     // If all files were already downloaded and verified, skip aria2c entirely
     if (m_allFilesAlreadyDownloaded) {
-        sak::logInfo("All UUP files already present — skipping download phase");
+        sak::logInfo("All UUP files already present ΓÇö skipping download phase");
         Q_EMIT progressUpdated(PHASE_PREPARE_WEIGHT + PHASE_DOWNLOAD_WEIGHT,
-                               "All files already downloaded — proceeding to conversion");
+                               "All files already downloaded ΓÇö proceeding to conversion");
         executeConversion();
         return;
     }
@@ -589,36 +478,36 @@ QStringList UupIsoBuilder::buildAria2Arguments(const QString& inputFile,
                                                const QString& downloadDir) const {
     return {"--input-file=" + inputFile,
             "--dir=" + downloadDir,
-            // ── User-Agent (critical: Microsoft CDN may block aria2c UA) ──
+            // ΓöÇΓöÇ User-Agent (critical: Microsoft CDN may block aria2c UA) ΓöÇΓöÇ
             QStringLiteral("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                            "AppleWebKit/537.36 (KHTML, like Gecko) "
                            "Chrome/131.0.0.0 Safari/537.36"),
-            // ── Parallelism ──
+            // ΓöÇΓöÇ Parallelism ΓöÇΓöÇ
             "--max-connection-per-server=" + QString::number(sak::kAria2MaxConnsPerServer),
             "--split=" + QString::number(sak::kAria2Split),
             "--min-split-size=1M",
             "--max-concurrent-downloads=" + QString::number(sak::kMaxConcurrentScrape),
-            // ── Resumability & integrity ──
+            // ΓöÇΓöÇ Resumability & integrity ΓöÇΓöÇ
             "--continue=true",
             "--check-integrity=true",
             "--auto-file-renaming=false",
             "--allow-overwrite=true",
-            // ── Performance tuning ──
+            // ΓöÇΓöÇ Performance tuning ΓöÇΓöÇ
             "--file-allocation=none",
             "--disk-cache=64M",
             "--optimize-concurrent-downloads=true",
             "--stream-piece-selector=inorder",
             "--piece-length=1M",
-            // ── Stall & retry handling ──
+            // ΓöÇΓöÇ Stall & retry handling ΓöÇΓöÇ
             "--lowest-speed-limit=50K",
             "--max-tries=" + QString::number(sak::kAria2MaxTries),
             "--retry-wait=" + QString::number(sak::kAria2RetryWaitSec),
             "--connect-timeout=" + QString::number(sak::kAria2ConnectTimeoutSec),
             "--timeout=" + QString::number(sak::kAria2TimeoutSec),
             "--max-file-not-found=3",
-            // ── Security ──
+            // ΓöÇΓöÇ Security ΓöÇΓöÇ
             "--check-certificate=true",
-            // ── Output formatting ──
+            // ΓöÇΓöÇ Output formatting ΓöÇΓöÇ
             "--summary-interval=1",
             "--human-readable=false",
             "--enable-color=false",
@@ -642,13 +531,13 @@ void UupIsoBuilder::onAria2ReadyRead() {
 
 void UupIsoBuilder::parseAria2Progress(const QString& line) {
     Q_ASSERT(!line.isEmpty());
+    Q_ASSERT(m_phase == Phase::DownloadingFiles);
     if (line.isEmpty()) {
         return;
     }
 
     // Parse download speed: [DL:12345678] (bytes/sec with --human-readable=false)
-    static const QRegularExpression speedPattern(R"(\[DL:(\d+)\])");
-    QRegularExpressionMatch speedMatch = speedPattern.match(line);
+    QRegularExpressionMatch speedMatch = kAria2SpeedPattern.match(line);
     if (speedMatch.hasMatch()) {
         qint64 bytesPerSec = speedMatch.captured(1).toLongLong();
         m_currentSpeedMBps = bytesPerSec / sak::kBytesPerMBf;
@@ -657,15 +546,10 @@ void UupIsoBuilder::parseAria2Progress(const QString& line) {
 
     // Parse human-readable speed fallback: DL:50MiB or DL:1.2GiB
     if (!speedMatch.hasMatch()) {
-        static const QRegularExpression hrSpeedPattern(R"(DL:([0-9.]+)\s*(KiB|MiB|GiB))");
-        QRegularExpressionMatch hrMatch = hrSpeedPattern.match(line);
+        QRegularExpressionMatch hrMatch = kAria2HrSpeedPattern.match(line);
         if (hrMatch.hasMatch()) {
-            double val = hrMatch.captured(1).toDouble();
-            const QString unit = hrMatch.captured(2);
-            const double multiplier = (unit == "KiB")   ? (1.0 / sak::kBytesPerKBf)
-                                      : (unit == "GiB") ? sak::kBytesPerKBf
-                                                        : 1.0;  // MiB
-            m_currentSpeedMBps = val * multiplier;
+            m_currentSpeedMBps = convertHrSpeedToMBps(hrMatch.captured(1).toDouble(),
+                                                      hrMatch.captured(2));
             Q_EMIT speedUpdated(m_currentSpeedMBps);
         }
     }
@@ -693,6 +577,8 @@ void UupIsoBuilder::onProgressPollTimer() {
 }
 
 void UupIsoBuilder::pollDownloadProgress() {
+    Q_ASSERT(!m_workDir.isEmpty());
+    Q_ASSERT(m_totalDownloadBytes > 0);
     // Scan download directory to compute actual overall progress
     QString downloadDir = QDir(m_workDir).filePath("UUPs");
     QDir dir(downloadDir);
@@ -733,6 +619,7 @@ void UupIsoBuilder::pollDownloadProgress() {
 
 void UupIsoBuilder::pollConversionProgress() {
     Q_ASSERT(m_converterProcess);
+    Q_ASSERT(m_phase == Phase::ConvertingToISO);
     // Watchdog: if converter has already exited but finished() was not
     // observed yet, finalize through the normal completion handler.
     if (m_converterProcess && m_converterProcess->state() == QProcess::NotRunning) {
@@ -824,7 +711,7 @@ void UupIsoBuilder::onAria2Finished(int exitCode, QProcess::ExitStatus exitStatu
 }
 
 // ============================================================================
-// Phase 3: UUP → ISO Conversion
+// Phase 3: UUP ΓåÆ ISO Conversion
 // ============================================================================
 
 bool UupIsoBuilder::prepareConversionEnvironment(QString& uupsDir,
@@ -857,12 +744,11 @@ bool UupIsoBuilder::prepareConversionEnvironment(QString& uupsDir,
 
     uupMediaConverter = findUupMediaConverterPath();
     outputIsoPath = QDir::toNativeSeparators(QFileInfo(m_outputIsoPath).absoluteFilePath());
-    m_usingUupMediaConverter = QFileInfo::exists(uupMediaConverter);
-    if (!m_usingUupMediaConverter) {
+    if (!QFileInfo::exists(uupMediaConverter)) {
         m_phase = Phase::Failed;
         Q_EMIT buildError(
             "UUPMediaConverter.exe was not found in bundled tools. "
-            "Conversion is configured to use UUPMediaConverter only.");
+            "Run scripts/bundle_uup_tools.ps1 and rebuild.");
         return false;
     }
 
@@ -884,6 +770,7 @@ bool UupIsoBuilder::prepareConversionEnvironment(QString& uupsDir,
 
 void UupIsoBuilder::connectConverterSignals() {
     Q_ASSERT(m_converterProcess);
+    Q_ASSERT(m_progressPollTimer);
     connect(m_converterProcess.get(),
             &QProcess::readyReadStandardOutput,
             this,
@@ -931,11 +818,11 @@ void UupIsoBuilder::connectConverterSignals() {
 }
 
 void UupIsoBuilder::executeConversion() {
-    Q_ASSERT(m_converterProcess);
-    Q_ASSERT(m_progressPollTimer);
     if (m_cancelled) {
         return;
     }
+    Q_ASSERT(!m_workDir.isEmpty());
+    Q_ASSERT(!m_outputIsoPath.isEmpty());
 
     m_phase = Phase::ConvertingToISO;
     Q_EMIT phaseChanged(Phase::ConvertingToISO, "Converting UUP files to bootable ISO...");
@@ -957,9 +844,6 @@ void UupIsoBuilder::executeConversion() {
     // Set environment for non-interactive execution
     QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
     env.insert("UUP_AUTOMATIC", "1");
-    if (m_skipAppxOnRetry) {
-        env.insert("SKIP_APPS", "1");
-    }
     m_converterProcess->setProcessEnvironment(env);
 
     // UUPMediaConverter desktop-convert -u <UUPs> -i <ISO> -l <lang> -e <edition>
@@ -969,11 +853,6 @@ void UupIsoBuilder::executeConversion() {
          << nativeConversionTempDir << "--no-key-prompt";
     if (!m_edition.isEmpty()) {
         args << "-e" << m_edition;
-    }
-    if (m_skipAppxOnRetry) {
-        args << "--skip-appx";
-        sak::logInfo("Retrying conversion with --skip-appx (attempt " +
-                     std::to_string(m_conversionRetryCount) + ")");
     }
 
     sak::logInfo("Starting UUPMediaConverter: " + uupMediaConverter.toStdString() +
@@ -992,8 +871,8 @@ void UupIsoBuilder::executeConversion() {
 }
 
 void UupIsoBuilder::onConverterReadyRead() {
-    Q_ASSERT(!m_converterOutputTail.isEmpty());
     Q_ASSERT(m_converterProcess);
+    Q_ASSERT(m_phase == Phase::ConvertingToISO);
     if (!m_converterProcess) {
         return;
     }
@@ -1017,6 +896,7 @@ void UupIsoBuilder::onConverterReadyRead() {
 
 void UupIsoBuilder::parseConverterProgress(const QString& line) {
     Q_ASSERT(!line.isEmpty());
+    Q_ASSERT(m_phase == Phase::ConvertingToISO);
     if (line.isEmpty()) {
         return;
     }
@@ -1039,12 +919,7 @@ void UupIsoBuilder::parseConverterProgress(const QString& line) {
         detail = QString("Building Windows ISO... (%1%)").arg(visiblePercent);
     }
 
-    // Log warnings/errors
-    if (line.contains("error", Qt::CaseInsensitive) &&
-        !line.contains("errorlevel", Qt::CaseInsensitive) &&
-        !line.contains("if error", Qt::CaseInsensitive)) {
-        sak::logWarning("Converter: " + line.toStdString());
-    }
+    collectConverterError(line);
 
     if (!detail.isEmpty()) {
         int conversionProgress = m_conversionPercent;
@@ -1054,6 +929,21 @@ void UupIsoBuilder::parseConverterProgress(const QString& line) {
         int overall = PHASE_PREPARE_WEIGHT + PHASE_DOWNLOAD_WEIGHT +
                       (conversionProgress * PHASE_CONVERT_WEIGHT / 100);
         Q_EMIT progressUpdated(overall, detail);
+    }
+}
+
+void UupIsoBuilder::collectConverterError(const QString& line) {
+    Q_ASSERT(!line.isEmpty());
+    Q_ASSERT(m_phase == Phase::ConvertingToISO);
+    constexpr int kMaxTrackedErrors = 50;
+
+    if (line.contains("error", Qt::CaseInsensitive) &&
+        !line.contains("errorlevel", Qt::CaseInsensitive) &&
+        !line.contains("if error", Qt::CaseInsensitive)) {
+        sak::logWarning("Converter: " + line.toStdString());
+        if (m_converterErrors.size() < kMaxTrackedErrors) {
+            m_converterErrors.append(line);
+        }
     }
 }
 
@@ -1137,28 +1027,6 @@ void UupIsoBuilder::parseConverterFallbackPatterns(const QString& line,
     }
 }
 
-bool UupIsoBuilder::tryAppxRetry() {
-    Q_ASSERT(!m_converterOutputTail.isEmpty());
-    bool isAppxFailure = m_converterOutputTail.contains("appx", Qt::CaseInsensitive) ||
-                         m_converterOutputTail.contains("provisioning", Qt::CaseInsensitive) ||
-                         m_converterOutputTail.contains("external tool for appx",
-                                                        Qt::CaseInsensitive);
-
-    if (!isAppxFailure || m_conversionRetryCount >= 1) {
-        return false;
-    }
-
-    m_conversionRetryCount++;
-    m_skipAppxOnRetry = true;
-    m_converterOutputTail.clear();
-    sak::logWarning("AppX provisioning failed — retrying without Store app integration");
-    Q_EMIT progressUpdated(PHASE_PREPARE_WEIGHT + PHASE_DOWNLOAD_WEIGHT,
-                           "AppX provisioning failed \u2014 retrying without Store apps...");
-    updateConvertConfigSkipApps();
-    executeConversion();
-    return true;
-}
-
 void UupIsoBuilder::onConverterFinished(int exitCode, QProcess::ExitStatus exitStatus) {
     Q_ASSERT(m_progressPollTimer);
     Q_ASSERT(m_converterProcess);
@@ -1175,10 +1043,6 @@ void UupIsoBuilder::onConverterFinished(int exitCode, QProcess::ExitStatus exitS
     }
 
     if (exitCode != 0) {
-        if (tryAppxRetry()) {
-            return;
-        }
-
         m_phase = Phase::Failed;
         QString errorDetail = m_converterOutputTail.trimmed();
         if (errorDetail.isEmpty() && m_converterProcess) {
@@ -1192,32 +1056,13 @@ void UupIsoBuilder::onConverterFinished(int exitCode, QProcess::ExitStatus exitS
         return;
     }
 
-    sak::logInfo("UUP converter finished successfully");
+    sak::logInfo("UUP converter process exited with code 0");
 
     QFileInfo finalInfo(m_outputIsoPath);
     if (!finalInfo.exists() || finalInfo.size() <= 0) {
-        if (tryAppxRetry()) {
-            return;
-        }
-
-        QString tail = m_converterOutputTail.trimmed();
-        if (tail.length() > 2000) {
-            tail = tail.right(2000);
-        }
-
-        bool isAppxFailure = m_converterOutputTail.contains("appx", Qt::CaseInsensitive) ||
-                             m_converterOutputTail.contains("provisioning", Qt::CaseInsensitive);
-        QString appxHint;
-        if (isAppxFailure) {
-            appxHint =
-                "\n\nDetected AppX provisioning failure. The retry with "
-                "--skip-appx also failed. Ensure S.A.K. Utility is running "
-                "as Administrator and try again.";
-        }
-
         m_phase = Phase::Failed;
-        Q_EMIT buildError("UUPMediaConverter reported success but no output ISO was created: " +
-                          m_outputIsoPath + appxHint + "\n\nLast output:\n" + tail);
+        QString classified = classifyConverterFailure();
+        Q_EMIT buildError(classified);
         return;
     }
 
@@ -1232,116 +1077,16 @@ void UupIsoBuilder::onConverterFinished(int exitCode, QProcess::ExitStatus exitS
 }
 
 // ============================================================================
-// Phase 4: Finalization
+// Admin Check & Cleanup
 // ============================================================================
-
-QString UupIsoBuilder::findLargestGeneratedIso() const {
-    QDir workDir(m_workDir);
-    QStringList isoFiles;
-    QDirIterator it(
-        workDir.absolutePath(), {"*.iso", "*.ISO"}, QDir::Files, QDirIterator::Subdirectories);
-    while (it.hasNext()) {
-        isoFiles.append(it.next());
-    }
-
-    if (isoFiles.isEmpty()) {
-        return {};
-    }
-
-    QString sourceIso;
-    qint64 largestSize = 0;
-    for (const QString& isoPath : isoFiles) {
-        QFileInfo fi(isoPath);
-        if (fi.size() > largestSize) {
-            largestSize = fi.size();
-            sourceIso = isoPath;
-        }
-    }
-
-    sak::logInfo("Found generated ISO: " + sourceIso.toStdString() + " (" +
-                 std::to_string(largestSize / sak::kBytesPerMB) + " MB)");
-    return sourceIso;
-}
-
-bool UupIsoBuilder::moveIsoToDestination(const QString& sourceIso) {
-    Q_ASSERT(!sourceIso.isEmpty());
-    // Ensure output directory exists
-    QFileInfo outputInfo(m_outputIsoPath);
-    if (!QDir().mkpath(outputInfo.absolutePath())) {
-        sak::logWarning("Failed to create output directory: " +
-                        outputInfo.absolutePath().toStdString());
-    }
-
-    // Remove existing output file if present
-    if (QFile::exists(m_outputIsoPath)) {
-        if (!QFile::remove(m_outputIsoPath)) {
-            sak::logWarning("Failed to remove existing output file: " +
-                            m_outputIsoPath.toStdString());
-        }
-    }
-
-    // Try rename first (fast, same-volume), fall back to copy (cross-volume)
-    bool moved = QFile::rename(sourceIso, m_outputIsoPath);
-    if (!moved) {
-        sak::logInfo("Cross-volume move detected, copying ISO file...");
-        Q_EMIT progressUpdated(99, "Copying ISO to destination (this may take a moment)...");
-
-        if (!QFile::copy(sourceIso, m_outputIsoPath)) {
-            m_phase = Phase::Failed;
-            Q_EMIT buildError(
-                QString("Failed to copy ISO to destination: %1").arg(m_outputIsoPath));
-            return false;
-        }
-        QFile::remove(sourceIso);
-    }
-    return true;
-}
-
-void UupIsoBuilder::finalizeBuild() {
-    if (m_cancelled) {
-        return;
-    }
-
-    Q_EMIT progressUpdated(98, "Locating generated ISO file...");
-
-    QString sourceIso = findLargestGeneratedIso();
-    if (sourceIso.isEmpty()) {
-        m_phase = Phase::Failed;
-        Q_EMIT buildError(
-            "No ISO file was created by the converter. "
-            "The conversion may have failed silently. Check that the "
-            "UUP files are valid and compatible with the selected edition.");
-        return;
-    }
-
-    Q_EMIT progressUpdated(99, "Moving ISO to destination...");
-
-    if (!moveIsoToDestination(sourceIso)) {
-        return;
-    }
-
-    // Get final file info
-    QFileInfo finalInfo(m_outputIsoPath);
-    qint64 fileSize = finalInfo.size();
-
-    // Clean up work directory (removes several GB of temp files)
-    cleanupWorkDir();
-
-    // Success!
-    m_phase = Phase::Completed;
-    Q_EMIT phaseChanged(Phase::Completed, "ISO build complete!");
-    Q_EMIT progressUpdated(100, "ISO build complete!");
-    Q_EMIT buildCompleted(m_outputIsoPath, fileSize);
-
-    sak::logInfo("UUP ISO build complete: " + m_outputIsoPath.toStdString() + " (" +
-                 std::to_string(fileSize / sak::kBytesPerMB) + " MB)");
-}
 
 bool UupIsoBuilder::isRunningAsAdmin() {
 #ifdef Q_OS_WIN
     BOOL isAdmin = FALSE;
     PSID adminGroup = nullptr;
     SID_IDENTIFIER_AUTHORITY ntAuthority = SECURITY_NT_AUTHORITY;
+    Q_ASSERT(adminGroup == nullptr);
+    Q_ASSERT(isAdmin == FALSE);
 
     if (AllocateAndInitializeSid(&ntAuthority,
                                  2,
@@ -1365,6 +1110,7 @@ bool UupIsoBuilder::isRunningAsAdmin() {
 
 void UupIsoBuilder::cleanupWorkDir() {
     Q_ASSERT(!m_workDir.isEmpty());
+    Q_ASSERT(m_phase != Phase::Idle);
     if (m_workDir.isEmpty()) {
         return;
     }
@@ -1382,43 +1128,78 @@ void UupIsoBuilder::cleanupWorkDir() {
     m_workDir.clear();
 }
 
-void UupIsoBuilder::updateConvertConfigSkipApps() {
-    Q_ASSERT(!m_workDir.isEmpty());
-    if (m_workDir.isEmpty()) {
-        return;
+QString UupIsoBuilder::classifyConverterFailure() const {
+    Q_ASSERT(m_phase == Phase::Failed);
+    Q_ASSERT(!m_outputIsoPath.isEmpty());
+    const QString joined = m_converterErrors.join('\n').toLower();
+
+    if (joined.contains("appx") || joined.contains("msixbundle") ||
+        joined.contains("appx installation")) {
+        return QString(
+                   "The converter failed during AppX provisioning (Microsoft Store "
+                   "components). This is a known issue with some Windows builds.\n\n"
+                   "Possible fixes:\n"
+                   "  1. Re-run the build ΓÇö transient DISM errors sometimes resolve "
+                   "on retry.\n"
+                   "  2. Select a different Windows edition (e.g., Professional N or "
+                   "Enterprise) which skips Store app bundling.\n"
+                   "  3. Run S.A.K. Utility as Administrator on a clean Windows "
+                   "installation (not an insider/preview OS).\n"
+                   "  4. Ensure no antivirus is blocking DISM or the converter.\n\n"
+                   "Detected errors:\n%1")
+            .arg(m_converterErrors.join('\n'));
     }
 
-    QString configPath = QDir(m_workDir).filePath("ConvertConfig.ini");
-    QFile configFile(configPath);
-    if (!configFile.open(QIODevice::WriteOnly | QIODevice::Text)) {
-        sak::logWarning("Failed to rewrite ConvertConfig.ini for AppX skip");
-        return;
+    if (joined.contains("edition plan") || joined.contains("edition")) {
+        return QString(
+                   "The converter could not process the selected Windows edition. "
+                   "The downloaded UUP files may not contain the edition you chose, "
+                   "or the edition name was not recognized by the converter.\n\n"
+                   "Try selecting a different edition, or leave the edition field "
+                   "blank to let the converter auto-detect available editions.\n\n"
+                   "Detected errors:\n%1")
+            .arg(m_converterErrors.join('\n'));
     }
 
-    QTextStream cfg(&configFile);
-    cfg << "[convert-UUP]\n"
-        << "AutoStart  =1\n"
-        << "AddUpdates =1\n"
-        << "Cleanup    =1\n"
-        << "ResetBase  =0\n"
-        << "NetFx3     =0\n"
-        << "StartVirtual=0\n"
-        << "wim2esd    =0\n"
-        << "wim2swm    =0\n"
-        << "SkipISO    =0\n"
-        << "SkipWinRE  =0\n"
-        << "ForceDism  =0\n"
-        << "RefESD     =0\n"
-        << "UpdtBootFiles=1\n"
-        << "AutoExit   =1\n"
-        << "SkipEdge   =0\n"
-        << "\n[Store_Apps]\n"
-        << "SkipApps   =1\n"
-        << "AppsLevel  =0\n"
-        << "CustomList =0\n";
-    configFile.close();
+    if (joined.contains("dism") || joined.contains("deployment image")) {
+        return QString(
+                   "The converter encountered a DISM (Deployment Image Servicing) "
+                   "error. This typically requires Administrator privileges and a "
+                   "clean host environment.\n\n"
+                   "Make sure S.A.K. Utility is running as Administrator and that "
+                   "no other DISM operations are in progress.\n\n"
+                   "Detected errors:\n%1")
+            .arg(m_converterErrors.join('\n'));
+    }
 
-    sak::logInfo("Rewrote ConvertConfig.ini with SkipApps=1 for retry");
+    if (joined.contains("disk space") || joined.contains("not enough") ||
+        joined.contains("insufficient")) {
+        return QString(
+                   "The converter ran out of disk space. UUP-to-ISO conversion "
+                   "requires significant temporary space (typically 10-20 GB).\n\n"
+                   "Free disk space on the system drive and the output drive, then "
+                   "retry.\n\n"
+                   "Detected errors:\n%1")
+            .arg(m_converterErrors.join('\n'));
+    }
+
+    if (!m_converterErrors.isEmpty()) {
+        return QString(
+                   "The converter exited without creating an ISO file. "
+                   "Errors were detected during conversion:\n\n%1")
+            .arg(m_converterErrors.join('\n'));
+    }
+
+    QString tail = m_converterOutputTail.trimmed();
+    constexpr int kMaxTailDisplay = 2000;
+    if (tail.length() > kMaxTailDisplay) {
+        tail = tail.right(kMaxTailDisplay);
+    }
+    return QString(
+               "The converter exited without creating an ISO file and no "
+               "specific error was detected.\n\nOutput path: %1\n\n"
+               "Last output:\n%2")
+        .arg(m_outputIsoPath, tail);
 }
 
 void UupIsoBuilder::updateOverallProgress() {
