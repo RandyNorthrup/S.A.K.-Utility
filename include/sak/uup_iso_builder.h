@@ -21,15 +21,15 @@
  *
  * Orchestrates the complete pipeline of downloading Windows UUP files
  * via aria2c and converting them to a bootable ISO using the bundled
- * uup-converter-wimlib tools. Runs in a background thread with progress
+ * UUPMediaConverter tool. Runs in a background thread with progress
  * reporting back to the GUI thread.
  *
  * Pipeline phases:
  *   1. Preparation  (5%)  - Generate aria2c input file, set up work directory
  *   2. Download     (60%) - Download UUP files via aria2c with integrity checks
- *   3. Conversion   (35%) - Convert UUP → ISO using wimlib converter
+ *   3. Conversion   (35%) - Convert UUP → ISO using UUPMediaConverter
  *
- * All bundled tools (aria2c.exe, converter scripts, wimlib-imagex.exe)
+ * All bundled tools (aria2c.exe, UUPMediaConverter.exe)
  * must be present in the application's tools/uup/ directory at build time.
  * Only actual Windows UUP files are downloaded at runtime.
  *
@@ -155,14 +155,10 @@ private Q_SLOTS:
 private:
     // Phase execution
     void executePreparation();
-    /// @brief Attempt AppX retry on provisioning failure; returns true if retrying
-    bool tryAppxRetry();
     /// @brief Validate bundled tools and create work directory
     void prepareWorkspace();
-    /// @brief Generate aria2c download manifest and converter configuration
+    /// @brief Generate aria2c download manifest
     void downloadPackages();
-    /// @brief Deploy converter tools to work directory
-    void validateDownloads();
     void executeDownload();
     /// @brief Build the full argument list for aria2c download
     QStringList buildAria2Arguments(const QString& inputFile, const QString& downloadDir) const;
@@ -174,17 +170,10 @@ private:
                                       QString& uupMediaConverter);
     /// @brief Connect QProcess signals for the converter process
     void connectConverterSignals();
-    void finalizeBuild();
-    /// @brief Search work directory for generated ISO files and return the largest
-    QString findLargestGeneratedIso() const;
-    /// @brief Move or copy the source ISO to the configured output destination
-    bool moveIsoToDestination(const QString& sourceIso);
     void cleanupWorkDir();
 
     // Tool path resolution
     QString findAria2Path() const;
-    QString findConverterDir() const;
-    QString find7zPath() const;
     QString findUupMediaConverterPath() const;
 
     // aria2c input file generation
@@ -196,9 +185,6 @@ private:
 
     // Check if process is running with administrator privileges
     static bool isRunningAsAdmin();
-
-    /// @brief Rewrite ConvertConfig.ini with SkipApps=1 for AppX retry
-    void updateConvertConfigSkipApps();
 
     // Progress parsing
     /// @brief Poll download-phase progress and emit updates
@@ -234,7 +220,6 @@ private:
     std::unique_ptr<QProcess> m_aria2Process;
     std::unique_ptr<QProcess> m_converterProcess;
     QThread* m_workerThread = nullptr;
-    bool m_usingUupMediaConverter = false;
 
     // Progress tracking
     QElapsedTimer m_phaseTimer;
@@ -244,8 +229,10 @@ private:
     double m_currentSpeedMBps = 0.0;
     qint64 m_downloadedBytes = 0;
     QString m_converterOutputTail;
-    int m_conversionRetryCount = 0;
-    bool m_skipAppxOnRetry = false;
+    QStringList m_converterErrors;
+
+    /// @brief Build a user-facing error message from collected converter errors
+    QString classifyConverterFailure() const;
 
     // Phase weight in overall progress (must sum to 100)
     static constexpr int PHASE_PREPARE_WEIGHT = 5;

@@ -60,9 +60,9 @@ Migration · Maintenance · Recovery · Imaging · Deployment — one portable E
 
 ### v0.6.2
 
-- **Fixed UUP-to-ISO conversion** — Root cause: `convert-UUP.cmd` re-launches itself through PowerShell to disable QuickEdit mode, which detaches from the tracked process and causes the app to report instant success with no ISO output. Fix passes `-qedit -elevated` flags to prevent both the QuickEdit re-launch and UAC self-elevation from orphaning the process. Also corrected ConvertConfig.ini option names, added admin-privilege check, closes stdin to prevent hanging, and sets `AutoExit=1`.
-- **License compliance** — Added complete license notices for all bundled tools (aria2, wimlib, 7-Zip, uup-converter-wimlib, ManagedDism, Microsoft ADK utilities) to THIRD_PARTY_LICENSES.md and README acknowledgments.
-- **New integration tests** — Verifying the converter process stays attached, reads config correctly, handles missing files, and exits cleanly on closed stdin.
+- **Replaced UUP converter** — Switched from `uup-converter-wimlib` batch scripts to a patched build of [UUPMediaCreator](https://github.com/OSTooling/UUPMediaCreator) (OSTooling). AppX provisioning is fully skipped to avoid DISM servicing-stack failures on Professional editions. The converter is bundled as a self-contained .NET 8 executable.
+- **License compliance** — Added complete license notices for all bundled tools (aria2, UUPMediaCreator, wimlib/libwim, 7-Zip, ManagedDism, Microsoft ADK utilities) to THIRD_PARTY_LICENSES.md and README acknowledgments.
+- **New integration tests** — Verifying the converter executable is present, launches without forking, shows help output, and exits cleanly on missing UUP files.
 
 ### v0.6.1
 
@@ -628,9 +628,9 @@ Third-party dependency licenses are documented in [THIRD_PARTY_LICENSES.md](THIR
 - [**Qt**](https://www.qt.io/) — Cross-platform UI framework (LGPL v3)
 - [**qrcodegen**](https://www.nayuki.io/page/qr-code-generator-library) — QR code generator by Project Nayuki (MIT)
 - [**aria2**](https://aria2.github.io/) — Multi-connection download manager (GPLv2)
-- [**wimlib**](https://wimlib.net/) — WIM image library by Eric Biggers (LGPL v3)
+- [**UUPMediaCreator**](https://github.com/OSTooling/UUPMediaCreator) — UUP-to-ISO converter by OSTooling (MIT)
+- [**wimlib / libwim**](https://wimlib.net/) — WIM image library by Eric Biggers (LGPL v3, bundled with UUPMediaConverter)
 - [**7-Zip**](https://www.7-zip.org/) — Archive tool by Igor Pavlov (LGPL v2.1)
-- [**uup-converter-wimlib**](https://github.com/abbodi1406) — UUP-to-ISO converter by abbodi1406
 - [**smartmontools**](https://www.smartmontools.org/) — SMART disk diagnostics (GPLv2)
 - [**Chocolatey**](https://chocolatey.org/) — Windows package manager (Apache 2.0)
 - [**zlib**](https://www.zlib.net/) — Compression library (zlib License)

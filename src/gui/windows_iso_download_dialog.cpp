@@ -582,6 +582,14 @@ void WindowsISODownloadDialog::onDownloadError(const QString& error) {
     if (lower.contains("download") || lower.contains("network") || lower.contains("aria2") ||
         lower.contains("internet")) {
         guidance = "Please check your internet connection and try again.";
+    } else if (lower.contains("appx") || lower.contains("msixbundle")) {
+        guidance =
+            "This is a known issue with AppX provisioning. "
+            "See the suggestions above for possible workarounds.";
+    } else if (lower.contains("administrator") || lower.contains("elevated")) {
+        guidance = "Please restart S.A.K. Utility as Administrator and try again.";
+    } else if (lower.contains("disk space") || lower.contains("not enough")) {
+        guidance = "Free disk space on the system and output drives, then retry.";
     }
 
     sak::logError(("Build Error: Failed to create Windows ISO: " + error).toStdString());

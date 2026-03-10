@@ -1,21 +1,17 @@
 # Copyright (c) 2025 Randy Northrup. All rights reserved.
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
-# bundle_uup_tools.ps1 - Downloads and bundles UUP dump converter tools
+# bundle_uup_tools.ps1 - Downloads and bundles UUP dump support tools
 #
-# This script downloads aria2c, the uup-converter-wimlib package, and
-# UUP Media Creator, then extracts them into tools/uup/ for build-time bundling.
-# These tools enable portable ISO building from UUP files at runtime.
+# This script downloads aria2c and verifies that the patched UUPMediaConverter
+# (checked into the repo) is present. aria2c is the only runtime dependency
+# that must be downloaded; the converter binary ships in tools/uup/uupmc/.
 #
 # Usage: powershell -ExecutionPolicy Bypass -File scripts/bundle_uup_tools.ps1
 #
 # Required tools after bundling:
 #   tools/uup/aria2c.exe              - Multi-connection download manager
-#   tools/uup/converter/              - UUP-to-ISO converter (wimlib-based)
-#     ├── convert-UUP.cmd             - Main conversion script
-#     ├── wimlib-imagex.exe            - WIM image manipulation tool
-#     └── (supporting DLLs/files)
-#   tools/uup/uupmc/                  - UUP Media Creator (gus33000)
+#   tools/uup/uupmc/                  - Patched UUP Media Creator
 #     ├── UUPMediaConverter.exe        - UUP-to-ISO conversion utility
 #     ├── UUPDownload.exe              - UUP download utility
 #     ├── libwim-15.dll                - WIM library
@@ -33,16 +29,6 @@ $ErrorActionPreference = "Stop"
 $Aria2Version = "1.37.0"
 $Aria2Url = "https://github.com/aria2/aria2/releases/download/release-$Aria2Version/aria2-$Aria2Version-win-64bit-build1.zip"
 $Aria2Sha256 = "67D015301EEF0B612191212D564C5BB0A14B5B9C4796B76454276A4D28D9B288"
-
-$ConverterUrl = "https://uupdump.net/misc/uup-converter-wimlib-v120z.7z"
-$ConverterSha256 = "9c03f6153c90859882e507cb727b9963f28c8bbf3e6eca51ff7ed286d5267c4c"
-
-$SevenZrUrl = "https://uupdump.net/misc/7zr.exe"
-$SevenZrSha256 = "72c98287b2e8f85ea7bb87834b6ce1ce7ce7f41a8c97a81b307d4d4bf900922b"
-
-$UupmcVersion = "3.1.9.2"
-$UupmcUrl = "https://github.com/OSTooling/UUPMediaCreator/releases/download/v$UupmcVersion/win-x64-binaries.zip"
-$UupmcSha256 = "CD5475D5405751B25B7CE98BDA9AE4620690E541BB2C24D03EBBAE04A52B9F93"
 
 # --- Functions ---
 
@@ -168,102 +154,27 @@ try {
         Write-Success "aria2c.exe installed to $aria2Exe"
     }
 
-    # --- Step 2: Download 7zr.exe (only if converter needs extraction) ---
-    $sevenZrPath = Join-Path $tempDir "7zr.exe"
-
-    # --- Step 3: Download and extract uup-converter-wimlib ---
-    $converterDir = Join-Path $OutputDir "converter"
-    $converterBinReady = (Test-Path (Join-Path $converterDir "convert-UUP.cmd")) -and
-                         (Test-Path (Join-Path (Join-Path $converterDir "bin") "wimlib-imagex.exe"))
-
-    if ($converterBinReady -and -not $Force) {
-        Write-Status "UUP converter already present. Use -Force to re-download."
-    }
-
-    if (-not $converterBinReady -or $Force) {
-        # Only download 7zr.exe when we actually need it for extraction
-        if (-not (Get-SecureDownload -Url $SevenZrUrl -OutputPath $sevenZrPath -ExpectedSha256 $SevenZrSha256 -Description "7zr.exe")) {
-            throw "Failed to download 7zr.exe"
-        }
-
-        $converter7z = Join-Path $tempDir "uup-converter-wimlib.7z"
-        if (-not (Get-SecureDownload -Url $ConverterUrl -OutputPath $converter7z -ExpectedSha256 $ConverterSha256 -Description "uup-converter-wimlib")) {
-            throw "Failed to download uup-converter-wimlib"
-        }
-
-        Write-Status "Extracting uup-converter-wimlib..."
-        if (Test-Path $converterDir) {
-            Remove-Item $converterDir -Recurse -Force
-        }
-        New-Item -ItemType Directory -Path $converterDir -Force | Out-Null
-
-        $extractTemp = Join-Path $tempDir "converter_extract"
-        New-Item -ItemType Directory -Path $extractTemp -Force | Out-Null
-
-        & $sevenZrPath x $converter7z "-o$extractTemp" -y | Out-Null
-        if ($LASTEXITCODE -ne 0) {
-            throw "Failed to extract uup-converter-wimlib (7zr exit code: $LASTEXITCODE)"
-        }
-
-        # Copy extracted files to converter directory
-        $extractedFiles = Get-ChildItem -Path $extractTemp -Recurse
-        foreach ($file in $extractedFiles) {
-            $relativePath = $file.FullName.Substring($extractTemp.Length + 1)
-            $destPath = Join-Path $converterDir $relativePath
-            if ($file.PSIsContainer) {
-                New-Item -ItemType Directory -Path $destPath -Force | Out-Null
-            }
-            else {
-                $destDir = Split-Path $destPath -Parent
-                if (-not (Test-Path $destDir)) {
-                    New-Item -ItemType Directory -Path $destDir -Force | Out-Null
-                }
-                Copy-Item -Path $file.FullName -Destination $destPath -Force
-            }
-        }
-
-        Write-Success "UUP converter installed to $converterDir"
-    }
-
-    # --- Step 4: Download and extract UUP Media Creator ---
+    # --- Step 2: Verify patched UUPMediaConverter (checked into repo) ---
     $uupmcDir = Join-Path $OutputDir "uupmc"
-    $uupmcExe = Join-Path $uupmcDir "UUPMediaConverter.exe"
-    $uupmcReady = Test-Path $uupmcExe
+    $uupmcCritical = @("UUPMediaConverter.exe", "UUPDownload.exe", "libwim-15.dll")
 
-    if ($uupmcReady -and -not $Force) {
-        Write-Status "UUP Media Creator already present. Use -Force to re-download."
+    Write-Status "Verifying patched UUPMediaConverter..."
+    foreach ($file in $uupmcCritical) {
+        $filePath = Join-Path $uupmcDir $file
+        if (-not (Test-Path $filePath)) {
+            Write-Err "MISSING: $filePath"
+            Write-Err "UUPMediaConverter binaries must be checked into the repo at tools/uup/uupmc/"
+            throw "Patched UUPMediaConverter not found: $file"
+        }
+        $sizeKB = [math]::Round((Get-Item $filePath).Length / 1024, 1)
+        Write-Success "  OK: $file ($sizeKB KB)"
     }
 
-    if (-not $uupmcReady -or $Force) {
-        $uupmcZip = Join-Path $tempDir "uupmc-win-x64.zip"
-        if (-not (Get-SecureDownload -Url $UupmcUrl -OutputPath $uupmcZip -ExpectedSha256 $UupmcSha256 -Description "UUP Media Creator v$UupmcVersion")) {
-            throw "Failed to download UUP Media Creator"
-        }
-
-        Write-Status "Extracting UUP Media Creator..."
-        if (Test-Path $uupmcDir) {
-            Remove-Item $uupmcDir -Recurse -Force
-        }
-
-        Expand-Archive -Path $uupmcZip -DestinationPath $uupmcDir -Force
-
-        # Verify critical files were extracted
-        $uupmcCritical = @("UUPMediaConverter.exe", "UUPDownload.exe")
-        foreach ($file in $uupmcCritical) {
-            if (-not (Test-Path (Join-Path $uupmcDir $file))) {
-                throw "UUP Media Creator extraction failed: $file not found"
-            }
-        }
-
-        Write-Success "UUP Media Creator installed to $uupmcDir"
-    }
-
-    # --- Step 5: Verify installation ---
+    # --- Step 3: Final verification ---
     Write-Status "Verifying installation..."
 
     $requiredFiles = @(
         (Join-Path $OutputDir "aria2c.exe"),
-        (Join-Path $converterDir "convert-UUP.cmd"),
         (Join-Path $uupmcDir "UUPMediaConverter.exe"),
         (Join-Path $uupmcDir "UUPDownload.exe")
     )
@@ -276,17 +187,6 @@ try {
         else {
             Write-Err "  MISSING: $file"
             $allPresent = $false
-        }
-    }
-
-    # List converter contents
-    if (Test-Path $converterDir) {
-        Write-Status "Converter contents:"
-        $converterDirFull = (Resolve-Path $converterDir).Path
-        Get-ChildItem -Path $converterDirFull -Recurse -File | ForEach-Object {
-            $relativePath = $_.FullName.Substring($converterDirFull.Length + 1)
-            $sizeKB = [math]::Round($_.Length / 1024, 1)
-            Write-Status "  $relativePath ($sizeKB KB)"
         }
     }
 

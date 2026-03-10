@@ -107,9 +107,9 @@ bld/
 # EXCEPTION: Keep embedded Chocolatey DLLs and tools
 !tools/chocolatey/**/*.dll
 
-# EXCEPTION: Keep UUP converter binaries (wimlib, 7-Zip, cdimage, etc.)
-!tools/uup/converter/**/*.dll
-!tools/uup/converter/**/*.exe
+# EXCEPTION: Keep UUP Media Creator binaries (patched UUPMediaConverter)
+!tools/uup/uupmc/**/*.dll
+!tools/uup/uupmc/**/*.exe
 
 # Compiled Static libraries
 *.a

@@ -745,11 +745,6 @@ if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/uup/aria2c.exe")
                     "Run 'powershell -File scripts/bundle_uup_tools.ps1' to bundle UUP tools.")
 endif()
 
-if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/uup/converter/convert-UUP.cmd")
-    message(WARNING "uup-converter-wimlib not found! UUP-to-ISO conversion will be unavailable.\n"
-                    "Run 'powershell -File scripts/bundle_uup_tools.ps1' to bundle UUP tools.")
-endif()
-
 if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/uup/uupmc/UUPMediaConverter.exe")
     message(WARNING "UUP Media Creator not found! UUP-to-ISO conversion will be unavailable.\n"
                     "Run 'powershell -File scripts/bundle_uup_tools.ps1' to bundle UUP tools.")
