@@ -320,8 +320,8 @@ void QuickActionController::cancelCurrentAction() {
 }
 
 void QuickActionController::onScanComplete() {
-    Q_ASSERT(!m_scan_queue.isEmpty());
     Q_ASSERT(m_scan_thread);
+    Q_ASSERT(!m_scan_queue.isEmpty());
     if (!m_current_scan_action) {
         return;
     }
@@ -348,8 +348,8 @@ void QuickActionController::onScanComplete() {
 }
 
 void QuickActionController::onExecutionComplete() {
-    Q_ASSERT(!m_action_queue.isEmpty());
     Q_ASSERT(m_execution_thread);
+    Q_ASSERT(!m_action_queue.isEmpty());
     if (!m_current_execution_action) {
         return;
     }

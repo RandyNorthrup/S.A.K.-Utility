@@ -102,7 +102,7 @@ private:
      * @param valueName Name of value to read
      * @return Value as QString, or empty if error
      */
-    QString readRegistryValue(void* key, const QString& valueName);
+    static QString readRegistryValue(void* key, const QString& valueName);
 
     /// @brief Check if app name indicates a system component to filter
     static bool isSystemComponent(const QString& name);

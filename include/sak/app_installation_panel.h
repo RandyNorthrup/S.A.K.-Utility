@@ -120,7 +120,8 @@ private:
     void saveQueueToFile();
     /** @brief Load a previously saved install queue from disk */
     void loadQueueFromFile();
-    /** @brief Return a publisher-specific icon for a Chocolatey package */
+    bool parseQueueFile(const QString& filePath, QJsonArray& out_array);
+    void importQueueEntries(const QJsonArray& arr, int& added, int& skipped);
     QIcon publisherIcon(const QString& packageId) const;
 
     // Publisher icon cache

@@ -32,8 +32,7 @@ SettingsDialog::SettingsDialog(QWidget* parent) : QDialog(parent) {
 }
 
 void SettingsDialog::setupUi() {
-    Q_ASSERT(m_okButton);
-    Q_ASSERT(!objectName().isEmpty() || true);  // widget valid
+    Q_ASSERT(layout() == nullptr);  // setupUi not called twice
     setWindowTitle(tr("Settings"));
     setMinimumSize(sak::kDialogWidthLarge, sak::kDialogHeightMedium);
     resize(sak::kDialogWidthXLarge, sak::kDialogHeightLarge);
@@ -71,6 +70,8 @@ void SettingsDialog::setupUi() {
     buttonLayout->addWidget(m_applyButton);
 
     mainLayout->addLayout(buttonLayout);
+
+    Q_ASSERT(m_okButton);
 }
 
 void SettingsDialog::createBackupTab() {
@@ -153,7 +154,6 @@ QGroupBox* SettingsDialog::createBackupSettingsGroup(QWidget* parent) {
 }
 
 QGroupBox* SettingsDialog::createQuickActionsGroup(QWidget* parent) {
-    Q_ASSERT(m_quickActionsBackupLocation);
     auto* quickActionsGroup = new QGroupBox(tr("Quick Actions"));
     auto* quickActionsLayout = new QFormLayout();
 

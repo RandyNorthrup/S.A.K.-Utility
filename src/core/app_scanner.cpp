@@ -128,7 +128,8 @@ std::vector<AppScanner::AppInfo> AppScanner::scanRegistryHive(void* hive, const 
     return apps;
 }
 
-QString AppScanner::readRegistryValue(void* key, const QString& valueName) {
+QString AppScanner::readRegistryValue(void* key,
+                                      const QString& valueName) {  // NOLINT - static member
     Q_ASSERT(key);
     Q_ASSERT(!valueName.isEmpty());
     HKEY hKey = static_cast<HKEY>(key);
@@ -152,14 +153,37 @@ QString AppScanner::readRegistryValue(void* key, const QString& valueName) {
 
 bool AppScanner::isSystemComponent(const QString& name) {
     Q_ASSERT(!name.isEmpty());
-    return name.startsWith("KB") || name.startsWith("Security Update") ||
-           name.startsWith("Update for") || name.startsWith("Hotfix") || name.contains("(KB") ||
-           name.contains("Redistributable") || name.contains("Microsoft .NET") ||
-           name.contains("Windows SDK") || name.contains("Windows Driver Kit") ||
-           name.contains("Windows Assessment") || name.contains("Microsoft Visual C++") ||
-           name.startsWith("vs_") || name.startsWith("Microsoft DCF") ||
-           name.startsWith("Microsoft Help") ||
-           (name.startsWith("Microsoft SQL Server") && !name.contains("Management Studio"));
+    static constexpr const char* kPrefixes[] = {
+        "KB",
+        "Security Update",
+        "Update for",
+        "Hotfix",
+        "vs_",
+        "Microsoft DCF",
+        "Microsoft Help",
+    };
+    for (const auto* prefix : kPrefixes) {
+        if (name.startsWith(QLatin1String(prefix))) {
+            return true;
+        }
+    }
+
+    static constexpr const char* kContains[] = {
+        "(KB",
+        "Redistributable",
+        "Microsoft .NET",
+        "Windows SDK",
+        "Windows Driver Kit",
+        "Windows Assessment",
+        "Microsoft Visual C++",
+    };
+    for (const auto* substr : kContains) {
+        if (name.contains(QLatin1String(substr))) {
+            return true;
+        }
+    }
+
+    return name.startsWith("Microsoft SQL Server") && !name.contains("Management Studio");
 }
 
 std::vector<AppScanner::AppInfo> AppScanner::scanAppX() {

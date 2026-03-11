@@ -46,11 +46,16 @@ private:
     /// @brief Build the header portion of the icon cache report
     QString buildIconCacheReportHeader(const QVector<CacheFileInfo>& cache_files,
                                        qint64 total_size) const;
+    /// @brief Aggregated icon cache rebuild result data
+    struct IconCacheReport {
+        int deleted_count = 0;
+        qint64 total_size = 0;
+        bool explorer_stopped = false;
+        bool explorer_started = false;
+    };
+
     /// @brief Build the execution result and finish the action
-    void buildAndFinishIconCacheResult(int deleted_count,
-                                       qint64 total_size,
-                                       bool explorer_stopped,
-                                       bool explorer_started,
+    void buildAndFinishIconCacheResult(const IconCacheReport& cache_report,
                                        const QString& report,
                                        qint64 duration_ms);
 };

@@ -75,6 +75,9 @@ public:
     [[nodiscard]] static validation_result validatePath(const std::filesystem::path& path,
                                                         const path_validation_config& config = {});
 
+    [[nodiscard]] static validation_result validatePathSyntax(const std::filesystem::path& path,
+                                                              const path_validation_config& config);
+
     /// @brief Check if path contains traversal sequences (../, ..\, etc.)
     /// @param path Path to check
     /// @return True if path contains potentially dangerous traversal sequences
@@ -275,8 +278,31 @@ std::expected<T, error_code> input_validator::safeAdd(T a, T b) {
 }
 
 template <typename T>
+bool checkPositiveMultiplierOverflow(T positive_a, T b) {
+    if (b > 0 && positive_a > (std::numeric_limits<T>::max)() / b) {
+        return true;
+    }
+    return b < 0 && b < (std::numeric_limits<T>::min)() / positive_a;
+}
+
+template <typename T>
+bool checkNegativeMultiplierOverflow(T negative_a, T b) {
+    if (b > 0 && negative_a < (std::numeric_limits<T>::min)() / b) {
+        return true;
+    }
+    return b < 0 && negative_a != 0 && b < (std::numeric_limits<T>::max)() / negative_a;
+}
+
+template <typename T>
+bool checkSignedMultiplyOverflow(T a, T b) {
+    if (a > 0) {
+        return checkPositiveMultiplierOverflow(a, b);
+    }
+    return checkNegativeMultiplierOverflow(a, b);
+}
+
+template <typename T>
 std::expected<T, error_code> input_validator::safeMultiply(T a, T b) {
-    // Check for overflow
     if (a == 0 || b == 0) {
         return T{0};
     }
@@ -286,20 +312,8 @@ std::expected<T, error_code> input_validator::safeMultiply(T a, T b) {
             return std::unexpected(error_code::integer_overflow);
         }
     } else {
-        if (a > 0) {
-            if (b > 0 && a > (std::numeric_limits<T>::max)() / b) {
-                return std::unexpected(error_code::integer_overflow);
-            }
-            if (b < 0 && b < (std::numeric_limits<T>::min)() / a) {
-                return std::unexpected(error_code::integer_overflow);
-            }
-        } else {
-            if (b > 0 && a < (std::numeric_limits<T>::min)() / b) {
-                return std::unexpected(error_code::integer_overflow);
-            }
-            if (b < 0 && a != 0 && b < (std::numeric_limits<T>::max)() / a) {
-                return std::unexpected(error_code::integer_overflow);
-            }
+        if (checkSignedMultiplyOverflow(a, b)) {
+            return std::unexpected(error_code::integer_overflow);
         }
     }
     return a * b;

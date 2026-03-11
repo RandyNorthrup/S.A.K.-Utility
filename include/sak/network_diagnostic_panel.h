@@ -196,6 +196,12 @@ private:
     void connectReportAndEthernetSignals();
     void connectFirewallFilterSignals();
 
+    // ── Adapter detail formatting ──
+    [[nodiscard]] QString formatAdapterIdentity(const sak::NetworkAdapterInfo& adapter) const;
+    [[nodiscard]] QString formatAdapterAddressing(const sak::NetworkAdapterInfo& adapter) const;
+    [[nodiscard]] QString formatAdapterGatewayDns(const sak::NetworkAdapterInfo& adapter) const;
+    [[nodiscard]] QString formatAdapterStatus(const sak::NetworkAdapterInfo& adapter) const;
+
     // ── Controller ──
     std::unique_ptr<NetworkDiagnosticController> m_controller;
     LogToggleSwitch* m_logToggle = nullptr;  ///< Owned by layout hierarchy

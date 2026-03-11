@@ -9,6 +9,7 @@
 #include "sak/mapping_engine.h"
 #include "sak/network_transfer_report.h"
 #include "sak/network_transfer_types.h"
+#include "sak/parallel_transfer_manager.h"
 #include "sak/user_profile_restore_worker.h"
 #include "sak/user_profile_types.h"
 
@@ -35,16 +36,17 @@ class QFormLayout;
 class QGridLayout;
 class QGroupBox;
 class QVBoxLayout;
+class QFrame;
 class QDragEnterEvent;
 class QDropEvent;
 class QMimeData;
 
 namespace sak {
 
+class ConfigManager;
 class WindowsUserScanner;
 class NetworkTransferController;
 class MigrationOrchestrator;
-class ParallelTransferManager;
 class MappingEngine;
 class DetachableLogWindow;
 class LogToggleSwitch;
@@ -119,6 +121,14 @@ private Q_SLOTS:
     void onJobStartRequested(const QString& job_id,
                              const MappingEngine::SourceProfile& source,
                              const DestinationPC& destination);
+    void registerJobMappings(const QString& job_id,
+                             const DestinationPC& destination,
+                             const DeploymentAssignment& assignment);
+    void failJob(const QString& job_id, const QString& reason);
+    void launchJobTransfer(const QString& job_id,
+                           const UserProfile& user,
+                           const DestinationPC& destination,
+                           const DeploymentAssignment& assignment);
     /** @brief Update the jobs table progress for a running job */
     void onJobUpdated(const QString& job_id, int progress_percent);
     /** @brief Handle a single job completing (success or failure) */
@@ -149,6 +159,10 @@ private Q_SLOTS:
     void onPeerDiscovered(const TransferPeerInfo& peer);
     /** @brief Handle a received transfer manifest from a peer */
     void onManifestReceived(const TransferManifest& manifest);
+    /** @brief Append manifest summary lines (users, files, extras) */
+    void appendManifestSummary(const TransferManifest& manifest);
+    /** @brief Validate manifest checksum and disk space; returns true if valid */
+    bool validateManifestIntegrity(const TransferManifest& manifest);
     /** @brief Update byte-level transfer progress */
     void onTransferProgress(qint64 bytes, qint64 total);
     /** @brief Handle direct peer-to-peer transfer completion */
@@ -159,8 +173,22 @@ private Q_SLOTS:
     void onNetworkSettings();
 
 private:
+    /// @brief Metadata for a single mode card
+    struct CardInfo {
+        const char* icon;
+        const char* title;
+        const char* description;
+        const char* usage;
+    };
+
     /** @brief Build the panel layout with mode selector and stacked pages */
     void setupUi();
+    /** @brief Build the card-based landing page for mode selection */
+    void createModeCards(QVBoxLayout* parentLayout);
+    /** @brief Build a single mode card widget */
+    QFrame* buildModeCard(const CardInfo& info, const QString& card_style, int mode_index);
+    /** @brief Open a dialog showing the full content for the given mode index */
+    void openModeDialog(int modeIndex);
     /** @brief Build Source page: data-selection table and peer-discovery table */
     void setupUi_sourceSection(QVBoxLayout* sourceLayout);
     /** @brief Build additional data scanning section (apps, wifi, ethernet) */
@@ -222,15 +250,20 @@ private:
     void buildManifest();
     /** @brief Enumerate files to transfer for all selected users */
     QVector<TransferFileEntry> buildFileList();
+    /// @brief Context for scanning files into a transfer file list
+    struct FileScanContext {
+        QString username;
+        QString profile_path;
+        SmartFileFilter& smart_filter;
+        PermissionManager& permission_manager;
+        file_hasher& hasher;
+        PermissionMode perm_mode;
+    };
+
     /** @brief Process a single scanned file and append to transfer file list */
     void processScannedFile(QVector<TransferFileEntry>& files,
                             const std::filesystem::path& fsPath,
-                            const QString& username,
-                            const QString& profilePath,
-                            SmartFileFilter& smartFilter,
-                            PermissionManager& permissionManager,
-                            file_hasher& hasher,
-                            PermissionMode permMode);
+                            FileScanContext& context);
     /** @brief Collect files from all selected folders for a single user */
     void collectUserFiles(QVector<TransferFileEntry>& files, const UserProfile& user);
     /** @brief Enumerate files for a specific set of user profiles */
@@ -246,6 +279,10 @@ private:
     void refreshOrchestratorDestinations();
     /** @brief Reload the jobs table from the parallel transfer manager */
     void refreshJobsTable();
+    /** @brief Populate a single row in the jobs table */
+    void populateJobRow(int row, const ParallelTransferManager::TransferJob& job);
+    /** @brief Update the deployment ETA label from aggregated transfer stats */
+    void updateDeploymentEta(qint64 remainingBytes, double totalSpeedMbps);
     /** @brief Build a deployment mapping from the current UI configuration */
     MappingEngine::DeploymentMapping buildDeploymentMapping();
     /** @brief Collect source profiles from checked orchestrator user rows */
@@ -262,7 +299,8 @@ private:
     void refreshAssignmentStatus();
     /** @brief Activate a queued assignment for execution */
     void activateAssignment(const DeploymentAssignment& assignment);
-    /** @brief Save the current assignment queue to persistent storage */
+    void updateAssignmentLabels(const DeploymentAssignment& assignment);
+    void autoStartDestinationIfReady();
     void persistAssignmentQueue() const;
     /** @brief Update UI when orchestrator connection state changes */
     void onConnectionStateChanged(bool connected);
@@ -305,6 +343,8 @@ private:
 
     /** @brief Save accepted network settings from dialog widgets */
     void saveNetworkSettingsFromDialog(QDialog* dialog);
+    void saveCheckboxSettings(QDialog* dialog, ConfigManager& config);
+    void saveSpinBoxSettings(QDialog* dialog, ConfigManager& config);
     /** @brief Save transfer report to disk after transfer completion */
     void saveTransferReport(bool success);
     /** @brief Start automatic profile restore after successful transfer */

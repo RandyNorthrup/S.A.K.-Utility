@@ -517,34 +517,34 @@ QString DriveScanner::getVolumeLabel(const QString& mountPoint) {
     return QString();
 }
 
+namespace {
+
+bool hasWindowsIndicators(const QDir& mountDir) {
+    if (mountDir.exists("Windows/System32") && mountDir.exists("Windows/System32/ntoskrnl.exe")) {
+        return true;
+    }
+    if (mountDir.exists("Windows/explorer.exe") && mountDir.exists("Program Files")) {
+        return true;
+    }
+    // Boot files alone don't mean it's a system drive
+    if ((mountDir.exists("bootmgr") || mountDir.exists("BOOTNXT")) && mountDir.exists("Windows")) {
+        return true;
+    }
+    if (mountDir.exists("EFI/Microsoft/Boot/bootmgfw.efi") && mountDir.exists("Windows")) {
+        return true;
+    }
+    return false;
+}
+
+}  // namespace
+
 bool DriveScanner::containsWindowsInstallation(int driveNumber) {
     Q_ASSERT(driveNumber >= 0);
     Q_ASSERT_X(driveNumber >= 0, "containsWindowsInstallation", "driveNumber must be non-negative");
     QStringList mountPoints = getMountPoints(driveNumber);
 
     for (const QString& mountPoint : mountPoints) {
-        QDir mountDir(mountPoint);
-
-        // Check for Windows system directory
-        if (mountDir.exists("Windows/System32") &&
-            mountDir.exists("Windows/System32/ntoskrnl.exe")) {
-            return true;
-        }
-
-        // Check for Windows installation with explorer
-        if (mountDir.exists("Windows/explorer.exe") && mountDir.exists("Program Files")) {
-            return true;
-        }
-
-        // Check for boot files (but only if other Windows indicators present)
-        // Boot files alone don't mean it's a system drive - recovery/install media has these too
-        if ((mountDir.exists("bootmgr") || mountDir.exists("BOOTNXT")) &&
-            mountDir.exists("Windows")) {
-            return true;
-        }
-
-        // Check for EFI boot files with Windows
-        if (mountDir.exists("EFI/Microsoft/Boot/bootmgfw.efi") && mountDir.exists("Windows")) {
+        if (hasWindowsIndicators(QDir(mountPoint))) {
             return true;
         }
     }
@@ -552,24 +552,29 @@ bool DriveScanner::containsWindowsInstallation(int driveNumber) {
     return false;
 }
 
+LRESULT CALLBACK DriveScanner::deviceChangeWndProc(HWND hwnd,
+                                                   UINT msg,
+                                                   WPARAM wParam,
+                                                   LPARAM lParam) {
+    if (msg != WM_DEVICECHANGE) {
+        return DefWindowProcW(hwnd, msg, wParam, lParam);
+    }
+    if (wParam != DBT_DEVICEARRIVAL && wParam != DBT_DEVICEREMOVECOMPLETE) {
+        return TRUE;
+    }
+    auto* pHdr = reinterpret_cast<DEV_BROADCAST_HDR*>(lParam);
+    if (pHdr && pHdr->dbch_devicetype == DBT_DEVTYP_VOLUME && DriveScanner::s_instance) {
+        QMetaObject::invokeMethod(DriveScanner::s_instance, "scanDrives", Qt::QueuedConnection);
+    }
+    return TRUE;
+}
+
 void DriveScanner::registerDeviceNotification() {
     const wchar_t* className = L"DriveScannerWindowClass";
 
     WNDCLASSEXW wc = {};
     wc.cbSize = sizeof(WNDCLASSEXW);
-    wc.lpfnWndProc = [](HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) -> LRESULT {
-        if (msg != WM_DEVICECHANGE) {
-            return DefWindowProcW(hwnd, msg, wParam, lParam);
-        }
-        if (wParam != DBT_DEVICEARRIVAL && wParam != DBT_DEVICEREMOVECOMPLETE) {
-            return TRUE;
-        }
-        auto* pHdr = reinterpret_cast<DEV_BROADCAST_HDR*>(lParam);
-        if (pHdr && pHdr->dbch_devicetype == DBT_DEVTYP_VOLUME && DriveScanner::s_instance) {
-            QMetaObject::invokeMethod(DriveScanner::s_instance, "scanDrives", Qt::QueuedConnection);
-        }
-        return TRUE;
-    };
+    wc.lpfnWndProc = deviceChangeWndProc;
     wc.hInstance = GetModuleHandleW(nullptr);
     wc.lpszClassName = className;
 

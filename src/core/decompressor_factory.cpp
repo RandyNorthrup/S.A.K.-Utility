@@ -57,17 +57,37 @@ QString DecompressorFactory::detectByExtension(const QString& filePath) {
     QFileInfo fileInfo(filePath);
     QString suffix = fileInfo.suffix().toLower();
 
+    struct ExtEntry {
+        const char* ext;
+        const char* format;
+    };
+    static constexpr ExtEntry kExtensions[] = {
+        {"gz", "gzip"},
+        {"gzip", "gzip"},
+        {"bz2", "bzip2"},
+        {"bzip2", "bzip2"},
+        {"xz", "xz"},
+        {"lzma", "xz"},
+        {"zip", "zip"},
+    };
+
+    for (const auto& entry : kExtensions) {
+        if (suffix == QLatin1String(entry.ext)) {
+            return QLatin1String(entry.format);
+        }
+    }
+
     // Handle compound extensions like .tar.gz
     QString completeSuffix = fileInfo.completeSuffix().toLower();
-
-    if (suffix == "gz" || completeSuffix.endsWith(".gz") || suffix == "gzip") {
-        return "gzip";
-    } else if (suffix == "bz2" || completeSuffix.endsWith(".bz2") || suffix == "bzip2") {
-        return "bzip2";
-    } else if (suffix == "xz" || completeSuffix.endsWith(".xz") || suffix == "lzma") {
-        return "xz";
-    } else if (suffix == "zip") {
-        return "zip";
+    static constexpr ExtEntry kCompound[] = {
+        {".gz", "gzip"},
+        {".bz2", "bzip2"},
+        {".xz", "xz"},
+    };
+    for (const auto& entry : kCompound) {
+        if (completeSuffix.endsWith(QLatin1String(entry.ext))) {
+            return QLatin1String(entry.format);
+        }
     }
 
     return QString();
@@ -80,30 +100,30 @@ QString DecompressorFactory::detectByMagicNumber(const QString& filePath) {
         return QString();
     }
 
-    // Gzip: 1F 8B
-    if (magic[0] == 0x1F && magic[1] == 0x8B) {
-        return "gzip";
-    }
+    struct MagicEntry {
+        const unsigned char bytes[6];
+        int length;
+        const char* format;
+    };
+    static constexpr MagicEntry kMagicTable[] = {
+        {{0xFD, 0x37, 0x7A, 0x58, 0x5A, 0x00}, 6, "xz"},
+        {{0x42, 0x5A, 0x68, 0, 0, 0}, 3, "bzip2"},
+        {{0x5D, 0x00, 0x00, 0, 0, 0}, 3, "xz"},
+        {{0x1F, 0x8B, 0, 0, 0, 0}, 2, "gzip"},
+        {{0x50, 0x4B, 0, 0, 0, 0}, 2, "zip"},
+    };
 
-    // Bzip2: 42 5A 68 ("BZh")
-    if (magic[0] == 0x42 && magic[1] == 0x5A && magic[2] == 0x68) {
-        return "bzip2";
-    }
-
-    // XZ: FD 37 7A 58 5A 00
-    if (magic[0] == 0xFD && magic[1] == 0x37 && magic[2] == 0x7A && magic[3] == 0x58 &&
-        magic[4] == 0x5A && magic[5] == 0x00) {
-        return "xz";
-    }
-
-    // ZIP: 50 4B ("PK")
-    if (magic[0] == 0x50 && magic[1] == 0x4B) {
-        return "zip";
-    }
-
-    // LZMA (old format): 5D 00 00
-    if (magic[0] == 0x5D && magic[1] == 0x00 && magic[2] == 0x00) {
-        return "xz";  // Use xz decompressor for old LZMA format
+    for (const auto& entry : kMagicTable) {
+        bool match = true;
+        for (int i = 0; i < entry.length; ++i) {
+            if (magic[i] != entry.bytes[i]) {
+                match = false;
+                break;
+            }
+        }
+        if (match) {
+            return QLatin1String(entry.format);
+        }
     }
 
     return QString();

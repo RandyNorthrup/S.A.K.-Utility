@@ -24,8 +24,6 @@ namespace sak {
 DisableStartupProgramsAction::DisableStartupProgramsAction(QObject* parent) : QuickAction(parent) {}
 
 void DisableStartupProgramsAction::scanRegistryStartup() {
-    Q_ASSERT(!m_startup_items.empty());
-    Q_ASSERT(!m_startup_items.isEmpty());
     QStringList reg_paths = {
         "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run",
         "HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run"};
@@ -47,8 +45,6 @@ void DisableStartupProgramsAction::scanRegistryStartup() {
 }
 
 void DisableStartupProgramsAction::scanStartupFolder() {
-    Q_ASSERT(!m_startup_items.empty());
-    Q_ASSERT(!m_startup_items.isEmpty());
     QString startup_path = QStandardPaths::writableLocation(QStandardPaths::ApplicationsLocation) +
                            "/../Microsoft/Windows/Start Menu/Programs/Startup";
 
@@ -68,8 +64,6 @@ void DisableStartupProgramsAction::scanStartupFolder() {
 }
 
 void DisableStartupProgramsAction::scanTaskScheduler() {
-    Q_ASSERT(!m_startup_items.empty());
-    Q_ASSERT(!m_startup_items.isEmpty());
     ProcessResult proc = runProcess("schtasks",
                                     QStringList() << "/Query" << "/FO" << "CSV",
                                     sak::kTimeoutProcessShortMs);
@@ -237,7 +231,7 @@ QString DisableStartupProgramsAction::formatStartupProgramsSection(const QString
         QString location = program["Location"].toString();
 
         // Determine location type for icon
-        QString icon = QString::fromUtf8("●");
+        QString icon = QStringLiteral("\u25CF");
         if (location.contains("HKLM", Qt::CaseInsensitive)) {
             icon = QString::fromUtf8("■");  // System-wide
         } else if (location.contains("HKCU", Qt::CaseInsensitive)) {
@@ -298,7 +292,7 @@ QString DisableStartupProgramsAction::formatStartupTasksSection(const QString& t
         QString name = task["TaskName"].toString().left(50);
         QString state = task["State"].toString();
 
-        QString state_icon = (state == "Ready") ? QString::fromUtf8("✓") : QString::fromUtf8("◯");
+        QString state_icon = (state == "Ready") ? QString::fromUtf8("✓") : QStringLiteral("\u25EF");
 
         section += QString::fromUtf8("║ %1 %2").arg(state_icon).arg(name).leftJustified(73, ' ') +
                    QString::fromUtf8("║\n");

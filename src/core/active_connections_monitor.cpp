@@ -38,34 +38,30 @@ constexpr int kMaxHostnameLen = 256;
 }
 
 [[nodiscard]] QString tcpStateToString(DWORD state) {
-    switch (state) {
-    case MIB_TCP_STATE_CLOSED:
-        return QStringLiteral("CLOSED");
-    case MIB_TCP_STATE_LISTEN:
-        return QStringLiteral("LISTEN");
-    case MIB_TCP_STATE_SYN_SENT:
-        return QStringLiteral("SYN_SENT");
-    case MIB_TCP_STATE_SYN_RCVD:
-        return QStringLiteral("SYN_RCVD");
-    case MIB_TCP_STATE_ESTAB:
-        return QStringLiteral("ESTABLISHED");
-    case MIB_TCP_STATE_FIN_WAIT1:
-        return QStringLiteral("FIN_WAIT1");
-    case MIB_TCP_STATE_FIN_WAIT2:
-        return QStringLiteral("FIN_WAIT2");
-    case MIB_TCP_STATE_CLOSE_WAIT:
-        return QStringLiteral("CLOSE_WAIT");
-    case MIB_TCP_STATE_CLOSING:
-        return QStringLiteral("CLOSING");
-    case MIB_TCP_STATE_LAST_ACK:
-        return QStringLiteral("LAST_ACK");
-    case MIB_TCP_STATE_TIME_WAIT:
-        return QStringLiteral("TIME_WAIT");
-    case MIB_TCP_STATE_DELETE_TCB:
-        return QStringLiteral("DELETE_TCB");
-    default:
-        return QStringLiteral("UNKNOWN");
+    struct StateEntry {
+        DWORD code;
+        const char* name;
+    };
+    static constexpr StateEntry kStates[] = {
+        {MIB_TCP_STATE_CLOSED, "CLOSED"},
+        {MIB_TCP_STATE_LISTEN, "LISTEN"},
+        {MIB_TCP_STATE_SYN_SENT, "SYN_SENT"},
+        {MIB_TCP_STATE_SYN_RCVD, "SYN_RCVD"},
+        {MIB_TCP_STATE_ESTAB, "ESTABLISHED"},
+        {MIB_TCP_STATE_FIN_WAIT1, "FIN_WAIT1"},
+        {MIB_TCP_STATE_FIN_WAIT2, "FIN_WAIT2"},
+        {MIB_TCP_STATE_CLOSE_WAIT, "CLOSE_WAIT"},
+        {MIB_TCP_STATE_CLOSING, "CLOSING"},
+        {MIB_TCP_STATE_LAST_ACK, "LAST_ACK"},
+        {MIB_TCP_STATE_TIME_WAIT, "TIME_WAIT"},
+        {MIB_TCP_STATE_DELETE_TCB, "DELETE_TCB"},
+    };
+    for (const auto& entry : kStates) {
+        if (entry.code == state) {
+            return QString::fromLatin1(entry.name);
+        }
     }
+    return QStringLiteral("UNKNOWN");
 }
 }  // namespace
 
@@ -76,7 +72,6 @@ ActiveConnectionsMonitor::~ActiveConnectionsMonitor() {
 }
 
 void ActiveConnectionsMonitor::startMonitoring(const MonitorConfig& config) {
-    Q_ASSERT(m_refreshTimer);
     stopMonitoring();
     m_config = config;
     m_monitoring.store(true);

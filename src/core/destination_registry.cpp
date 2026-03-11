@@ -59,39 +59,29 @@ bool DestinationRegistry::contains(const QString& destination_id) const {
 bool DestinationRegistry::checkReadiness(const DestinationPC& destination,
                                          qint64 required_free_bytes,
                                          QString* reason) {
+    auto fail = [reason](const char* msg) {
+        if (reason) {
+            *reason = QObject::tr(msg);
+        }
+        return false;
+    };
+
     if (!destination.health.admin_rights) {
-        if (reason) {
-            *reason = QObject::tr("Admin rights required");
-        }
-        return false;
+        return fail("Admin rights required");
     }
-
     if (!destination.health.sak_service_running) {
-        if (reason) {
-            *reason = QObject::tr("SAK service not running");
-        }
-        return false;
+        return fail("SAK service not running");
     }
-
     if (required_free_bytes > 0 && destination.health.free_disk_bytes < required_free_bytes) {
-        if (reason) {
-            *reason = QObject::tr("Insufficient disk space");
-        }
-        return false;
+        return fail("Insufficient disk space");
     }
 
-    if (destination.health.cpu_usage_percent >= 90) {
-        if (reason) {
-            *reason = QObject::tr("High CPU usage");
-        }
-        return false;
+    constexpr int kHighUsageThreshold = 90;
+    if (destination.health.cpu_usage_percent >= kHighUsageThreshold) {
+        return fail("High CPU usage");
     }
-
-    if (destination.health.ram_usage_percent >= 90) {
-        if (reason) {
-            *reason = QObject::tr("High memory usage");
-        }
-        return false;
+    if (destination.health.ram_usage_percent >= kHighUsageThreshold) {
+        return fail("High memory usage");
     }
 
     return true;

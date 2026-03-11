@@ -46,9 +46,9 @@ class UupDumpApi : public QObject {
 public:
     /// @brief Information about an available Windows build
     struct BuildInfo {
-        QString uuid;   ///< Unique update identifier (used for subsequent API calls)
-        QString title;  ///< Human-readable title
-                        ///< (e.g., "Windows 11, version 24H2 (26100.3194)")
+        QString uuid;    ///< Unique update identifier (used for subsequent API calls)
+        QString title;   ///< Human-readable title
+                         ///< (e.g., "Windows 11, version 24H2 (26100.3194)")
         QString build;   ///< Build number (e.g., "26100.3194")
         QString arch;    ///< Architecture (e.g., "amd64", "arm64")
         qint64 created;  ///< Unix timestamp of when the build was added to the database
@@ -183,6 +183,8 @@ private Q_SLOTS:
 private:
     QNetworkReply* sendApiRequest(const QString& endpoint, const QMap<QString, QString>& params);
     bool checkApiError(const QJsonObject& response, const QString& context);
+    bool parseApiResponse(const QByteArray& data, const QString& context, QJsonObject& response);
+    [[nodiscard]] QStringList parseEditionList(const QJsonValue& edListVal);
     QString buildSearchQuery(const QString& arch, ReleaseChannel channel) const;
 
     /// @brief Extract langFancyNames from API response into a display-name map

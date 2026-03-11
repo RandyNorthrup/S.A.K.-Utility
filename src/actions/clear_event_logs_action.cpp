@@ -119,25 +119,12 @@ void ClearEventLogsAction::execute() {
         return;
     }
 
-    int total_logs = 0;
-    int cleared_logs = 0;
-    int total_entries = 0;
-    int backed_up = 0;
-    QString backup_path;
-    QStringList details;
-    if (!executeClearLogs(start_time,
-                          ps_script,
-                          total_logs,
-                          cleared_logs,
-                          total_entries,
-                          backed_up,
-                          backup_path,
-                          details)) {
+    ClearLogsResult result;
+    if (!executeClearLogs(start_time, ps_script, result)) {
         return;
     }
 
-    executeBuildReport(
-        start_time, total_logs, cleared_logs, total_entries, backed_up, backup_path, details);
+    executeBuildReport(start_time, result);
 }
 
 bool ClearEventLogsAction::executeEnumerateLogs(const QDateTime& start_time, QString& ps_script) {
@@ -222,14 +209,29 @@ QString ClearEventLogsAction::buildLogScriptLoop() const {
         "}\n");
 }
 
+void ClearEventLogsAction::parseClearLogsOutput(const QStringList& lines,
+                                                ClearLogsResult& result) const {
+    for (const QString& line : lines) {
+        const QString trimmed = line.trimmed();
+        if (trimmed.startsWith("TOTAL_LOGS:")) {
+            result.total_logs = trimmed.mid(11).toInt();
+        } else if (trimmed.startsWith("CLEARED_LOGS:")) {
+            result.cleared_logs = trimmed.mid(13).toInt();
+        } else if (trimmed.startsWith("TOTAL_ENTRIES:")) {
+            result.total_entries = trimmed.mid(14).toInt();
+        } else if (trimmed.startsWith("BACKED_UP:")) {
+            result.backed_up = trimmed.mid(10).toInt();
+        } else if (trimmed.startsWith("BACKUP_PATH:")) {
+            result.backup_path = trimmed.mid(12);
+        } else if (trimmed.startsWith("DETAIL:")) {
+            result.details.append(trimmed.mid(7));
+        }
+    }
+}
+
 bool ClearEventLogsAction::executeClearLogs(const QDateTime& start_time,
                                             const QString& ps_script,
-                                            int& total_logs,
-                                            int& cleared_logs,
-                                            int& total_entries,
-                                            int& backed_up,
-                                            QString& backup_path,
-                                            QStringList& details) {
+                                            ClearLogsResult& result) {
     Q_EMIT executionProgress("║ Enumerating all event logs with Get-EventLog...              ║",
                              20);
 
@@ -259,93 +261,62 @@ bool ClearEventLogsAction::executeClearLogs(const QDateTime& start_time,
 
     // Parse structured output
     QStringList lines = output.split('\n', Qt::SkipEmptyParts);
-
-    for (const QString& line : lines) {
-        QString trimmed = line.trimmed();
-        if (trimmed.startsWith("TOTAL_LOGS:")) {
-            total_logs = trimmed.mid(11).toInt();
-        } else if (trimmed.startsWith("CLEARED_LOGS:")) {
-            cleared_logs = trimmed.mid(13).toInt();
-        } else if (trimmed.startsWith("TOTAL_ENTRIES:")) {
-            total_entries = trimmed.mid(14).toInt();
-        } else if (trimmed.startsWith("BACKED_UP:")) {
-            backed_up = trimmed.mid(10).toInt();
-        } else if (trimmed.startsWith("BACKUP_PATH:")) {
-            backup_path = trimmed.mid(12);
-        } else if (trimmed.startsWith("DETAIL:")) {
-            details.append(trimmed.mid(7));
-        }
-    }
+    parseClearLogsOutput(lines, result);
 
     return true;
 }
 
 void ClearEventLogsAction::executeBuildReport(const QDateTime& start_time,
-                                              int total_logs,
-                                              int cleared_logs,
-                                              int total_entries,
-                                              int backed_up,
-                                              const QString& backup_path,
-                                              const QStringList& details) {
+                                              const ClearLogsResult& result) {
     Q_EMIT executionProgress(boxMid().trimmed(), 90);
 
     qint64 duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
 
-    ExecutionResult result;
-    Q_ASSERT(!result.success);  // verify default init
-    result.duration_ms = duration_ms;
-    result.files_processed = cleared_logs;
-    result.output_path = backup_path;
+    ExecutionResult exec_result;
+    Q_ASSERT(!exec_result.success);  // verify default init
+    exec_result.duration_ms = duration_ms;
+    exec_result.files_processed = result.cleared_logs;
+    exec_result.output_path = result.backup_path;
 
     QString log_output = boxTop();
     log_output += "\u2551        EVENT LOG CLEARING - RESULTS                           \u2551\n";
     log_output += boxMid();
 
-    if (cleared_logs > 0) {
-        result.success = true;
-        result.message = QString("Successfully cleared %1 event log(s)").arg(cleared_logs);
-        appendSuccessReport(log_output,
-                            total_logs,
-                            cleared_logs,
-                            total_entries,
-                            backed_up,
-                            backup_path,
-                            details,
-                            duration_ms);
-        result.log = log_output;
-        Q_ASSERT(result.duration_ms >= 0);
-        finishWithResult(result, ActionStatus::Success);
+    if (result.cleared_logs > 0) {
+        exec_result.success = true;
+        exec_result.message =
+            QString("Successfully cleared %1 event log(s)").arg(result.cleared_logs);
+        appendSuccessReport(log_output, result, duration_ms);
+        exec_result.log = log_output;
+        Q_ASSERT(exec_result.duration_ms >= 0);
+        finishWithResult(exec_result, ActionStatus::Success);
     } else {
-        result.success = false;
-        result.message = "No event logs were cleared";
-        appendFailureReport(log_output, details);
-        result.log = log_output;
-        finishWithResult(result, ActionStatus::Failed);
+        exec_result.success = false;
+        exec_result.message = "No event logs were cleared";
+        appendFailureReport(log_output, result.details);
+        exec_result.log = log_output;
+        finishWithResult(exec_result, ActionStatus::Failed);
     }
 }
 
 void ClearEventLogsAction::appendSuccessReport(QString& log_output,
-                                               int total_logs,
-                                               int cleared_logs,
-                                               int total_entries,
-                                               int backed_up,
-                                               const QString& backup_path,
-                                               const QStringList& details,
+                                               const ClearLogsResult& result,
                                                qint64 duration_ms) {
     log_output += QString("\u2551 Logs Processed: %1/%2\n")
-                      .arg(cleared_logs)
-                      .arg(total_logs)
+                      .arg(result.cleared_logs)
+                      .arg(result.total_logs)
                       .leftJustified(66) +
                   "\u2551\n";
     log_output +=
-        QString("\u2551 Total Entries Cleared: %1\n").arg(total_entries).leftJustified(66) +
+        QString("\u2551 Total Entries Cleared: %1\n").arg(result.total_entries).leftJustified(66) +
         "\u2551\n";
-    log_output += QString("\u2551 Logs Backed Up: %1\n").arg(backed_up).leftJustified(66) +
+    log_output += QString("\u2551 Logs Backed Up: %1\n").arg(result.backed_up).leftJustified(66) +
                   "\u2551\n";
 
-    if (!backup_path.isEmpty()) {
-        log_output += QString("\u2551 Backup Location: %1\n").arg(backup_path).leftJustified(66) +
-                      "\u2551\n";
+    if (!result.backup_path.isEmpty()) {
+        log_output +=
+            QString("\u2551 Backup Location: %1\n").arg(result.backup_path).leftJustified(66) +
+            "\u2551\n";
     }
 
     log_output += boxMid();
@@ -355,16 +326,16 @@ void ClearEventLogsAction::appendSuccessReport(QString& log_output,
 
     // Show first 10 cleared logs
     int shown = 0;
-    for (const QString& detail : details) {
+    for (const QString& detail : result.details) {
         if (detail.contains("Cleared") && shown < 10) {
             log_output += QString("\u2551 \u2022 %1\n").arg(detail).leftJustified(66) + "\u2551\n";
             shown++;
         }
     }
 
-    if (details.size() > 10) {
+    if (result.details.size() > 10) {
         log_output +=
-            QString("\u2551 ... and %1 more\n").arg(details.size() - 10).leftJustified(66) +
+            QString("\u2551 ... and %1 more\n").arg(result.details.size() - 10).leftJustified(66) +
             "\u2551\n";
     }
 

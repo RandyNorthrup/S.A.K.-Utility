@@ -29,6 +29,40 @@
 #include <QTableWidget>
 #include <QVBoxLayout>
 
+namespace {
+
+QString programSourceLabel(sak::ProgramInfo::Source source) {
+    switch (source) {
+    case sak::ProgramInfo::Source::RegistryHKLM:
+        return QObject::tr("Win32 (HKLM)");
+    case sak::ProgramInfo::Source::RegistryHKLM_WOW64:
+        return QObject::tr("Win32 (WOW64)");
+    case sak::ProgramInfo::Source::RegistryHKCU:
+        return QObject::tr("Win32 (HKCU)");
+    case sak::ProgramInfo::Source::UWP:
+        return QObject::tr("UWP App");
+    case sak::ProgramInfo::Source::Provisioned:
+        return QObject::tr("Provisioned UWP");
+    }
+    return {};
+}
+
+QStringList programFlagLabels(const sak::ProgramInfo& program) {
+    QStringList flags;
+    if (program.isSystemComponent) {
+        flags << QObject::tr("System Component");
+    }
+    if (program.isBloatware) {
+        flags << QObject::tr("Potential Bloatware");
+    }
+    if (program.isOrphaned) {
+        flags << QObject::tr("Orphaned");
+    }
+    return flags;
+}
+
+}  // namespace
+
 namespace sak {
 
 // ── Uninstall Confirmation Dialog ───────────────────────────────────────────
@@ -216,43 +250,40 @@ void AdvancedUninstallPanel::populateBatchUninstallQueueList(
     *totalBytesOut = totalBytes;
 }
 
-void AdvancedUninstallPanel::wireBatchUninstallQueueActions(QListWidget* queueList,
-                                                            QLabel* headerLabel,
-                                                            QLabel* totalLabel,
-                                                            QPushButton* removeBtn,
-                                                            QPushButton* clearBtn,
+void AdvancedUninstallPanel::wireBatchUninstallQueueActions(const BatchQueueWidgets& widgets,
                                                             QDialog* dialog) {
-    Q_ASSERT(queueList);
-    Q_ASSERT(headerLabel);
-    Q_ASSERT(totalLabel);
-    Q_ASSERT(removeBtn);
-    Q_ASSERT(clearBtn);
+    Q_ASSERT(widgets.queue_list);
+    Q_ASSERT(widgets.header_label);
+    Q_ASSERT(widgets.total_label);
+    Q_ASSERT(widgets.remove_btn);
+    Q_ASSERT(widgets.clear_btn);
     Q_ASSERT(dialog);
 
-    connect(queueList, &QListWidget::currentRowChanged, removeBtn, [removeBtn](int row) {
-        removeBtn->setEnabled(row >= 0);
-    });
+    connect(widgets.queue_list,
+            &QListWidget::currentRowChanged,
+            widgets.remove_btn,
+            [removeBtn = widgets.remove_btn](int row) { removeBtn->setEnabled(row >= 0); });
 
-    connect(removeBtn, &QPushButton::clicked, dialog, [this, queueList, headerLabel, totalLabel]() {
-        int row = queueList->currentRow();
+    connect(widgets.remove_btn, &QPushButton::clicked, dialog, [this, w = widgets]() {
+        int row = w.queue_list->currentRow();
         if (row < 0) {
             return;
         }
 
         m_controller->removeFromQueue(row);
-        delete queueList->takeItem(row);
+        delete w.queue_list->takeItem(row);
 
-        headerLabel->setText(
-            tr("<b>Batch Uninstall Queue</b> — %1 programs").arg(queueList->count()));
+        w.header_label->setText(
+            tr("<b>Batch Uninstall Queue</b> — %1 programs").arg(w.queue_list->count()));
 
         qint64 newTotal = 0;
         for (const auto& qi : m_controller->queue()) {
             newTotal += qi.program.estimatedSizeKB * 1024;
         }
-        totalLabel->setText(tr("Total size: %1").arg(formatSize(newTotal)));
+        w.total_label->setText(tr("Total size: %1").arg(formatSize(newTotal)));
     });
 
-    connect(clearBtn, &QPushButton::clicked, dialog, [this, dialog]() {
+    connect(widgets.clear_btn, &QPushButton::clicked, dialog, [this, dialog]() {
         m_controller->clearQueue();
         dialog->reject();
     });
@@ -345,8 +376,8 @@ void AdvancedUninstallPanel::showBatchUninstallDialog() {
     auto* restoreCheck = addBatchUninstallOptions(&dialog, layout);
     auto* buttonBox = addBatchUninstallButtons(&dialog, layout);
 
-    wireBatchUninstallQueueActions(
-        queueList, headerLabel, totalLabel, removeBtn, clearBtn, &dialog);
+    wireBatchUninstallQueueActions({queueList, headerLabel, totalLabel, removeBtn, clearBtn},
+                                   &dialog);
 
     connect(buttonBox, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
     connect(buttonBox, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
@@ -399,36 +430,9 @@ void AdvancedUninstallPanel::populateProgramPropertiesForm(const ProgramInfo& pr
         addRow(tr("Estimated Size"), formatSize(program.estimatedSizeKB * 1024));
     }
 
-    QString sourceText;
-    switch (program.source) {
-    case ProgramInfo::Source::RegistryHKLM:
-        sourceText = tr("Win32 (HKLM)");
-        break;
-    case ProgramInfo::Source::RegistryHKLM_WOW64:
-        sourceText = tr("Win32 (WOW64)");
-        break;
-    case ProgramInfo::Source::RegistryHKCU:
-        sourceText = tr("Win32 (HKCU)");
-        break;
-    case ProgramInfo::Source::UWP:
-        sourceText = tr("UWP App");
-        break;
-    case ProgramInfo::Source::Provisioned:
-        sourceText = tr("Provisioned UWP");
-        break;
-    }
-    addRow(tr("Source"), sourceText);
+    addRow(tr("Source"), programSourceLabel(program.source));
 
-    QStringList flags;
-    if (program.isSystemComponent) {
-        flags << tr("System Component");
-    }
-    if (program.isBloatware) {
-        flags << tr("Potential Bloatware");
-    }
-    if (program.isOrphaned) {
-        flags << tr("Orphaned");
-    }
+    const QStringList flags = programFlagLabels(program);
     if (!flags.isEmpty()) {
         addRow(tr("Flags"), flags.join(", "));
     }

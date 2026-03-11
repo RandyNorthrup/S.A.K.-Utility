@@ -15,7 +15,7 @@ endif()
 
 # Project definition
 project(SAK_Utility
-    VERSION 0.9.0
+    VERSION 0.9.0.1
     DESCRIPTION "Swiss Army Knife Utility - PC technician's toolkit for Windows migration and maintenance"
     LANGUAGES CXX
 )# C++23 Standard - Strict compliance required
@@ -325,6 +325,7 @@ set(CORE_SOURCES
     src/core/orchestration_discovery_service.cpp
     src/core/drive_scanner.cpp
     src/core/image_source.cpp
+    src/core/iso_analyzer.cpp
     src/core/flash_coordinator.cpp
     src/core/uup_dump_api.cpp
     src/core/uup_iso_builder.cpp
@@ -368,6 +369,7 @@ set(CORE_SOURCES
     include/sak/app_scanner.h
     include/sak/drive_scanner.h
     include/sak/image_source.h
+    include/sak/iso_analyzer.h
     include/sak/flash_coordinator.h
     include/sak/uup_dump_api.h
     include/sak/uup_iso_builder.h

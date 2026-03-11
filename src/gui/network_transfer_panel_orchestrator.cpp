@@ -317,12 +317,12 @@ void NetworkTransferPanel::onOrchestratorProgress(const DeploymentProgress& prog
     }
 
     if (!jobId.isEmpty() && m_parallelManager) {
-        m_parallelManager->updateJobProgress(jobId,
-                                             progress.progress_percent,
-                                             progress.bytes_transferred,
-                                             progress.bytes_total,
-                                             progress.transfer_speed_mbps,
-                                             progress.current_file);
+        const ParallelTransferManager::TransferProgressUpdate update{progress.progress_percent,
+                                                                     progress.bytes_transferred,
+                                                                     progress.bytes_total,
+                                                                     progress.transfer_speed_mbps,
+                                                                     progress.current_file};
+        m_parallelManager->updateJobProgress(jobId, update);
     }
 
     refreshOrchestratorDestinations();
@@ -362,15 +362,7 @@ void NetworkTransferPanel::onJobStartRequested(const QString& job_id,
         assignment.max_bandwidth_kbps = m_perJobBandwidthSpin->value() * sak::kBytesPerKB;
     }
 
-    m_destinationToJobId.insert(destination.destination_id, job_id);
-    m_jobToDestinationId.insert(job_id, destination.destination_id);
-    m_jobToDeploymentId.insert(job_id, assignment.deployment_id);
-    m_knownJobIds.insert(job_id);
-    if (!destination.destination_id.isEmpty()) {
-        m_destinationStatusHistory[destination.destination_id].append(
-            tr("Job started: %1").arg(job_id));
-    }
-
+    registerJobMappings(job_id, destination, assignment);
     m_orchestrator->assignDeploymentToDestination(destination.destination_id,
                                                   assignment,
                                                   assignment.profile_size_bytes);
@@ -381,24 +373,44 @@ void NetworkTransferPanel::onJobStartRequested(const QString& job_id,
         });
 
     if (it == m_users.end()) {
-        if (m_parallelManager) {
-            m_parallelManager->markJobComplete(job_id, false, tr("Source user not found"));
-        }
-        refreshJobsTable();
+        failJob(job_id, tr("Source user not found"));
         return;
     }
 
     if (m_settings.encryption_enabled && m_passphraseEdit->text().isEmpty()) {
-        if (m_parallelManager) {
-            m_parallelManager->markJobComplete(job_id,
-                                               false,
-                                               tr("Missing passphrase for encrypted transfer"));
-        }
-        refreshJobsTable();
+        failJob(job_id, tr("Missing passphrase for encrypted transfer"));
         return;
     }
 
-    QVector<UserProfile> selectedUsers{*it};
+    launchJobTransfer(job_id, *it, destination, assignment);
+    refreshJobsTable();
+}
+
+void NetworkTransferPanel::registerJobMappings(const QString& job_id,
+                                               const DestinationPC& destination,
+                                               const DeploymentAssignment& assignment) {
+    m_destinationToJobId.insert(destination.destination_id, job_id);
+    m_jobToDestinationId.insert(job_id, destination.destination_id);
+    m_jobToDeploymentId.insert(job_id, assignment.deployment_id);
+    m_knownJobIds.insert(job_id);
+    if (!destination.destination_id.isEmpty()) {
+        m_destinationStatusHistory[destination.destination_id].append(
+            tr("Job started: %1").arg(job_id));
+    }
+}
+
+void NetworkTransferPanel::failJob(const QString& job_id, const QString& reason) {
+    if (m_parallelManager) {
+        m_parallelManager->markJobComplete(job_id, false, reason);
+    }
+    refreshJobsTable();
+}
+
+void NetworkTransferPanel::launchJobTransfer(const QString& job_id,
+                                             const UserProfile& user,
+                                             const DestinationPC& destination,
+                                             const DeploymentAssignment& assignment) {
+    QVector<UserProfile> selectedUsers{user};
     const auto files = buildFileListForUsers(selectedUsers);
     const auto manifest = buildManifestPayloadForUsers(files, selectedUsers);
 
@@ -430,8 +442,6 @@ void NetworkTransferPanel::onJobStartRequested(const QString& job_id,
 
     m_jobSourceControllers.insert(job_id, controller);
     controller->startSource(manifest, files, peer, m_passphraseEdit->text());
-
-    refreshJobsTable();
 }
 
 void NetworkTransferPanel::onJobUpdated(const QString& job_id, int progress_percent) {
@@ -612,12 +622,9 @@ void NetworkTransferPanel::onExportDeploymentSummaryCsv() {
     }
 
     const QDateTime completedAt = QDateTime::currentDateTimeUtc();
-    if (!DeploymentSummaryReport::exportCsv(filePath,
-                                            m_activeDeploymentId,
-                                            m_deploymentStartedAt,
-                                            completedAt,
-                                            jobs,
-                                            destinations)) {
+    const DeploymentSummaryData summary_data{
+        m_activeDeploymentId, m_deploymentStartedAt, completedAt, jobs, destinations};
+    if (!DeploymentSummaryReport::exportCsv(filePath, summary_data)) {
         sak::logWarning("Export Error: Failed to export deployment summary.");
         QMessageBox::warning(this, tr("Export Error"), tr("Failed to export deployment summary."));
         return;
@@ -667,12 +674,9 @@ void NetworkTransferPanel::onExportDeploymentSummaryPdf() {
     }
 
     const QDateTime completedAt = QDateTime::currentDateTimeUtc();
-    if (!DeploymentSummaryReport::exportPdf(filePath,
-                                            m_activeDeploymentId,
-                                            m_deploymentStartedAt,
-                                            completedAt,
-                                            jobs,
-                                            destinations)) {
+    const DeploymentSummaryData summary_data{
+        m_activeDeploymentId, m_deploymentStartedAt, completedAt, jobs, destinations};
+    if (!DeploymentSummaryReport::exportPdf(filePath, summary_data)) {
         sak::logWarning("Export Error: Failed to export deployment summary.");
         QMessageBox::warning(this, tr("Export Error"), tr("Failed to export deployment summary."));
         return;
@@ -808,6 +812,49 @@ void NetworkTransferPanel::refreshOrchestratorDestinations() {
     }
 }
 
+void NetworkTransferPanel::populateJobRow(int row,
+                                          const ParallelTransferManager::TransferJob& job) {
+    m_jobsTable->insertRow(row);
+    m_jobsTable->setItem(row, 0, new QTableWidgetItem(job.job_id));
+    m_jobsTable->setItem(row, 1, new QTableWidgetItem(m_jobToDeploymentId.value(job.job_id)));
+    m_jobsTable->setItem(row, 2, new QTableWidgetItem(job.source.username));
+    m_jobsTable->setItem(row, 3, new QTableWidgetItem(job.destination.destination_id));
+
+    auto* statusItem = new QTableWidgetItem(job.status);
+    applyStatusColors(statusItem, statusColor(job.status));
+    m_jobsTable->setItem(row, 4, statusItem);
+
+    int percent = 0;
+    if (job.total_bytes > 0) {
+        percent = static_cast<int>((job.bytes_transferred * 100) / job.total_bytes);
+    }
+    auto* progressItem = new QTableWidgetItem(QString::number(percent) + "%");
+    applyStatusColors(progressItem, progressColor(percent));
+    m_jobsTable->setItem(row, 5, progressItem);
+
+    auto* errorItem = new QTableWidgetItem(job.error_message);
+    if (!job.error_message.isEmpty()) {
+        applyStatusColors(errorItem, QColor(198, 40, 40));
+    }
+    m_jobsTable->setItem(row, 6, errorItem);
+}
+
+void NetworkTransferPanel::updateDeploymentEta(qint64 remainingBytes, double totalSpeedMbps) {
+    if (!m_deploymentEtaLabel) {
+        return;
+    }
+    if (remainingBytes > 0 && totalSpeedMbps > 0.0) {
+        constexpr double kBitsPerByte = 8.0;
+        const double bytesPerSecond = (totalSpeedMbps * sak::kBytesPerMBf) / kBitsPerByte;
+        const qint64 etaSeconds = static_cast<qint64>(remainingBytes / bytesPerSecond);
+        const QTime etaTime(0, 0, 0);
+        m_deploymentEtaLabel->setText(
+            tr("ETA: %1").arg(etaTime.addSecs(static_cast<int>(etaSeconds)).toString("hh:mm:ss")));
+    } else {
+        m_deploymentEtaLabel->setText(tr("ETA: --"));
+    }
+}
+
 void NetworkTransferPanel::refreshJobsTable() {
     Q_ASSERT(m_jobsTable);
     Q_ASSERT(m_parallelManager);
@@ -824,28 +871,7 @@ void NetworkTransferPanel::refreshJobsTable() {
         if (job.job_id.isEmpty()) {
             continue;
         }
-
-        m_jobsTable->insertRow(row);
-        m_jobsTable->setItem(row, 0, new QTableWidgetItem(job.job_id));
-        m_jobsTable->setItem(row, 1, new QTableWidgetItem(m_jobToDeploymentId.value(jobId)));
-        m_jobsTable->setItem(row, 2, new QTableWidgetItem(job.source.username));
-        m_jobsTable->setItem(row, 3, new QTableWidgetItem(job.destination.destination_id));
-        auto* statusItem = new QTableWidgetItem(job.status);
-        applyStatusColors(statusItem, statusColor(job.status));
-        m_jobsTable->setItem(row, 4, statusItem);
-
-        int percent = 0;
-        if (job.total_bytes > 0) {
-            percent = static_cast<int>((job.bytes_transferred * 100) / job.total_bytes);
-        }
-        auto* progressItem = new QTableWidgetItem(QString::number(percent) + "%");
-        applyStatusColors(progressItem, progressColor(percent));
-        m_jobsTable->setItem(row, 5, progressItem);
-        auto* errorItem = new QTableWidgetItem(job.error_message);
-        if (!job.error_message.isEmpty()) {
-            applyStatusColors(errorItem, QColor(198, 40, 40));
-        }
-        m_jobsTable->setItem(row, 6, errorItem);
+        populateJobRow(row, job);
         row++;
 
         if (job.total_bytes > 0 && job.bytes_transferred < job.total_bytes) {
@@ -856,17 +882,7 @@ void NetworkTransferPanel::refreshJobsTable() {
         }
     }
 
-    if (m_deploymentEtaLabel) {
-        if (remainingBytes > 0 && totalSpeedMbps > 0.0) {
-            const double bytesPerSecond = (totalSpeedMbps * sak::kBytesPerMBf) / 8.0;
-            const qint64 etaSeconds = static_cast<qint64>(remainingBytes / bytesPerSecond);
-            const QTime etaTime(0, 0, 0);
-            m_deploymentEtaLabel->setText(tr("ETA: %1").arg(
-                etaTime.addSecs(static_cast<int>(etaSeconds)).toString("hh:mm:ss")));
-        } else {
-            m_deploymentEtaLabel->setText(tr("ETA: --"));
-        }
-    }
+    updateDeploymentEta(remainingBytes, totalSpeedMbps);
 }
 
 MappingEngine::DeploymentMapping NetworkTransferPanel::buildDeploymentMapping() {
@@ -1062,6 +1078,16 @@ bool NetworkTransferPanel::handleDropEvent(QDropEvent* dropEvent) {
 
 bool NetworkTransferPanel::eventFilter(QObject* obj, QEvent* event) {
     Q_ASSERT(obj);
+
+    // Handle card clicks for mode selection
+    if (event->type() == QEvent::MouseButtonRelease) {
+        QVariant mode_var = obj->property("modeIndex");
+        if (mode_var.isValid()) {
+            openModeDialog(mode_var.toInt());
+            return true;
+        }
+    }
+
     if (obj != m_orchestratorDestTable) {
         return QWidget::eventFilter(obj, event);
     }

@@ -239,6 +239,7 @@ void AdvancedUninstallController::removeUwpPackage(const ProgramInfo& program) {
 
 void AdvancedUninstallController::removeRegistryEntry(const ProgramInfo& program) {
     Q_ASSERT(m_uninstall_worker);
+    Q_ASSERT(!program.displayName.isEmpty());
     if (m_state != State::Idle) {
         Q_EMIT statusMessage("Another operation is already in progress.", kStatusTimeoutShortMs);
         return;
@@ -374,7 +375,6 @@ void AdvancedUninstallController::clearQueue() {
 }
 
 void AdvancedUninstallController::startBatchUninstall(bool createRestorePoint) {
-    Q_ASSERT(!m_queue.isEmpty());
     Q_ASSERT(m_restore_manager);
     if (m_state != State::Idle) {
         Q_EMIT statusMessage("Another operation is already in progress.", kStatusTimeoutShortMs);
@@ -521,7 +521,6 @@ void AdvancedUninstallController::onEnumerationFailed(const QString& error) {
 }
 
 void AdvancedUninstallController::onUninstallComplete(UninstallReport report) {
-    Q_ASSERT(!m_queue.empty());
     Q_ASSERT(!m_queue.isEmpty());
     m_lastReport = report;
 
@@ -563,7 +562,6 @@ void AdvancedUninstallController::onUninstallWorkerFailed(int /*errorCode*/,
 }
 
 void AdvancedUninstallController::onUninstallWorkerCancelled() {
-    Q_ASSERT(!m_queue.empty());
     Q_ASSERT(!m_queue.isEmpty());
     if (m_batchIndex >= 0 && m_batchIndex < m_queue.size()) {
         m_queue[m_batchIndex].status = UninstallQueueItem::Status::Cancelled;

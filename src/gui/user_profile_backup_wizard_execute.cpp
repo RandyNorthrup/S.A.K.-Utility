@@ -35,8 +35,7 @@ UserProfileBackupExecutePage::UserProfileBackupExecutePage(BackupManifest& manif
 }
 
 void UserProfileBackupExecutePage::setupUi() {
-    Q_ASSERT(m_statusLabel);
-    Q_ASSERT(!objectName().isEmpty() || true);  // widget valid
+    Q_ASSERT(layout() == nullptr);  // setupUi not called twice
     auto* layout = new QVBoxLayout(this);
 
     // Status label
@@ -77,6 +76,8 @@ void UserProfileBackupExecutePage::setupUi() {
     layout->addWidget(m_startButton);
 
     layout->addStretch();
+
+    Q_ASSERT(m_statusLabel);
 }
 
 void UserProfileBackupExecutePage::initializePage() {
@@ -295,14 +296,9 @@ void UserProfileBackupExecutePage::connectAndStartBackupWorker(SmartFilter smart
                 worker->deleteLater();
             });
 
-    worker->startBackup(m_manifest,
-                        m_users,
-                        m_destinationPath,
-                        smartFilter,
-                        permissionMode,
-                        compressionLevel,
-                        encrypt,
-                        password);
+    const UserProfileBackupWorker::BackupOptions backup_options{
+        permissionMode, compressionLevel, encrypt, password};
+    worker->startBackup(m_manifest, m_users, m_destinationPath, smartFilter, backup_options);
 
     m_overallProgress->setRange(0, m_users.size());
     m_currentProgress->setRange(0, 0);

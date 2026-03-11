@@ -6,6 +6,7 @@
 
 #pragma once
 
+#include "sak/network_diagnostic_report_generator.h"
 #include "sak/network_diagnostic_types.h"
 
 #include <QObject>
@@ -32,7 +33,6 @@ class WiFiAnalyzer;
 class ActiveConnectionsMonitor;
 class FirewallRuleAuditor;
 class NetworkShareBrowser;
-class NetworkDiagnosticReportGenerator;
 class EthernetConfigManager;
 
 /// @brief Orchestrates all network diagnostic components
@@ -75,8 +75,15 @@ public:
     void scanAdapters();
 
     // ── Connectivity ──
-    void ping(
-        const QString& target, int count, int intervalMs, int timeoutMs, int packetSize, int ttl);
+    struct PingParams {
+        QString target;
+        int count;
+        int interval_ms;
+        int timeout_ms;
+        int packet_size;
+        int ttl;
+    };
+    void ping(const PingParams& params);
     void traceroute(
         const QString& target, int maxHops, int timeoutMs, int probesPerHop, bool resolveHostnames);
     void mtr(const QString& target, int cycles, int intervalMs, int maxHops, int timeoutMs);
@@ -89,24 +96,30 @@ public:
     void dnsFlushCache();
 
     // ── Port Scanning ──
-    void scanPorts(const QString& target,
-                   const QVector<uint16_t>& ports,
-                   uint16_t rangeStart,
-                   uint16_t rangeEnd,
-                   int timeoutMs,
-                   int maxConcurrent,
-                   bool grabBanners);
+    struct PortScanParams {
+        QString target;
+        QVector<uint16_t> ports;
+        uint16_t range_start;
+        uint16_t range_end;
+        int timeout_ms;
+        int max_concurrent;
+        bool grab_banners;
+    };
+    void scanPorts(const PortScanParams& params);
 
     // ── Bandwidth ──
+    struct BandwidthTestParams {
+        QString server_addr;
+        uint16_t port;
+        int duration_sec;
+        int streams;
+        bool bidirectional;
+        bool udp;
+    };
     void startIperfServer(uint16_t port);
     void stopIperfServer();
     [[nodiscard]] bool isIperfServerRunning() const;
-    void runBandwidthTest(const QString& serverAddr,
-                          uint16_t port,
-                          int durationSec,
-                          int streams,
-                          bool bidir,
-                          bool udp);
+    void runBandwidthTest(const BandwidthTestParams& params);
     void runHttpSpeedTest();
 
     // ── WiFi ──
@@ -210,6 +223,10 @@ Q_SIGNALS:
     void logOutput(QString message);
 
 private:
+    QSet<NetworkDiagnosticReportGenerator::Section> populateReportSections();
+    void populateBasicReportSections(QSet<NetworkDiagnosticReportGenerator::Section>& sections);
+    void populateAdvancedReportSections(QSet<NetworkDiagnosticReportGenerator::Section>& sections);
+
     State m_state = State::Idle;
 
     std::unique_ptr<NetworkAdapterInspector> m_adapterInspector;
@@ -252,23 +269,31 @@ private:
     /// @brief Handle an incoming LAN transfer client connection
     void handleLanClientConnection(QTcpSocket* socket);
 
+    /// Context for tracking a LAN client receive session
+    struct LanClientContext {
+        QElapsedTimer timer;
+        qint64 total_received = 0;
+        double peak_mbps = 0.0;
+        qint64 last_report_time = 0;
+        qint64 last_report_bytes = 0;
+        QVector<double> speed_samples;
+    };
+
     /// @brief Handle LAN transfer client disconnect and emit results
-    void handleLanClientDisconnected(QTcpSocket* socket,
-                                     QElapsedTimer* timer,
-                                     qint64* totalReceived,
-                                     double* peakMbps,
-                                     qint64* lastReportTime,
-                                     qint64* lastReportBytes,
-                                     QVector<double>* speedSamples);
+    void handleLanClientDisconnected(QTcpSocket* socket, LanClientContext* ctx);
+
+    /// Transfer result data for finalization
+    struct LanTransferData {
+        QString target_addr;
+        uint16_t port;
+        qint64 total_sent;
+        qint64 elapsed_ms;
+        double peak_mbps;
+        QVector<double> speed_samples;
+    };
 
     /// @brief Finalize LAN transfer: disconnect socket, emit results
-    void finalizeLanTransfer(QTcpSocket& socket,
-                             const QString& targetAddr,
-                             uint16_t port,
-                             qint64 totalSent,
-                             qint64 elapsedMs,
-                             double peakMbps,
-                             const QVector<double>& speedSamples);
+    void finalizeLanTransfer(QTcpSocket& socket, const LanTransferData& data);
 
     void connectAdapterInspectorSignals();
     void connectConnectivityTesterSignals();

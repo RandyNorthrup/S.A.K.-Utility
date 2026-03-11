@@ -45,8 +45,7 @@ UserProfileBackupCustomizeDataPage::UserProfileBackupCustomizeDataPage(QVector<U
 }
 
 void UserProfileBackupCustomizeDataPage::setupUi() {
-    Q_ASSERT(m_instructionLabel);
-    Q_ASSERT(!objectName().isEmpty() || true);  // widget valid
+    Q_ASSERT(layout() == nullptr);  // setupUi not called twice
     auto* layout = new QVBoxLayout(this);
 
     // Instructions
@@ -87,6 +86,8 @@ void UserProfileBackupCustomizeDataPage::setupUi() {
                                           "border-radius: 10px; }")
                                       .arg(sak::ui::kColorBgInfoPanel));
     layout->addWidget(m_summaryLabel);
+
+    Q_ASSERT(m_instructionLabel);
 }
 
 void UserProfileBackupCustomizeDataPage::initializePage() {
@@ -614,8 +615,6 @@ void UserProfileBackupSettingsPage::setupUi_encryptionAndPermissions(QVBoxLayout
 }
 
 void UserProfileBackupSettingsPage::setupUi_summaryAndRegistration(QVBoxLayout* layout) {
-    Q_ASSERT(m_verifyCheck);
-    Q_ASSERT(m_summaryLabel);
     // Verification
     m_verifyCheck = new QCheckBox(tr("Verify files after backup (MD5 checksums)"), this);
     m_verifyCheck->setChecked(true);
@@ -1246,6 +1245,51 @@ static qint64 calculateSourceSize(const QString& path) {
 }
 
 /// @brief Parse netsh "interface ipv4 show config" output
+static QString extractValueAfterColon(const QString& line) {
+    const int idx = line.indexOf(':');
+    if (idx < 0) {
+        return {};
+    }
+    return line.mid(idx + 1).trimmed();
+}
+
+static void appendDnsServer(const QString& dns, EthernetConfigInfo& current) {
+    if (dns.isEmpty()) {
+        return;
+    }
+    if (current.dns_primary.isEmpty()) {
+        current.dns_primary = dns;
+    } else if (current.dns_secondary.isEmpty()) {
+        current.dns_secondary = dns;
+    }
+}
+
+static void parseNetshAdapterField(const QString& trimmed, EthernetConfigInfo& current) {
+    if (trimmed.startsWith("DHCP enabled:", Qt::CaseInsensitive)) {
+        current.dhcp_enabled = trimmed.contains("Yes", Qt::CaseInsensitive);
+        return;
+    }
+    if (trimmed.startsWith("IP Address:", Qt::CaseInsensitive)) {
+        current.ip_address = extractValueAfterColon(trimmed);
+        return;
+    }
+    if (trimmed.startsWith("Subnet Prefix:", Qt::CaseInsensitive) ||
+        trimmed.startsWith("SubnetMask:", Qt::CaseInsensitive)) {
+        current.subnet_mask = extractValueAfterColon(trimmed);
+        return;
+    }
+    if (trimmed.startsWith("Default Gateway:", Qt::CaseInsensitive)) {
+        current.default_gateway = extractValueAfterColon(trimmed);
+        return;
+    }
+
+    bool is_dns = trimmed.contains("DNS Server", Qt::CaseInsensitive) ||
+                  trimmed.startsWith("Statically Configured DNS", Qt::CaseInsensitive);
+    if (is_dns) {
+        appendDnsServer(extractValueAfterColon(trimmed), current);
+    }
+}
+
 static QVector<EthernetConfigInfo> parseNetshEthernetOutput(const QString& output) {
     Q_ASSERT(!output.isEmpty());
     QVector<EthernetConfigInfo> configs;
@@ -1253,15 +1297,15 @@ static QVector<EthernetConfigInfo> parseNetshEthernetOutput(const QString& outpu
     bool inAdapter = false;
 
     for (const QString& line : output.split('\n')) {
-        QString trimmed = line.trimmed();
+        const QString trimmed = line.trimmed();
 
         if (trimmed.startsWith("Configuration for interface")) {
             if (inAdapter && !current.adapter_name.isEmpty()) {
                 configs.append(current);
             }
             current = EthernetConfigInfo();
-            int firstQuote = trimmed.indexOf('"');
-            int lastQuote = trimmed.lastIndexOf('"');
+            const int firstQuote = trimmed.indexOf('"');
+            const int lastQuote = trimmed.lastIndexOf('"');
             if (firstQuote >= 0 && lastQuote > firstQuote) {
                 current.adapter_name = trimmed.mid(firstQuote + 1, lastQuote - firstQuote - 1);
             }
@@ -1272,40 +1316,7 @@ static QVector<EthernetConfigInfo> parseNetshEthernetOutput(const QString& outpu
             continue;
         }
 
-        if (trimmed.startsWith("DHCP enabled:", Qt::CaseInsensitive)) {
-            current.dhcp_enabled = trimmed.contains("Yes", Qt::CaseInsensitive);
-        } else if (trimmed.startsWith("IP Address:", Qt::CaseInsensitive)) {
-            int idx = trimmed.indexOf(':');
-            if (idx >= 0) {
-                current.ip_address = trimmed.mid(idx + 1).trimmed();
-            }
-        } else if (trimmed.startsWith("Subnet Prefix:", Qt::CaseInsensitive) ||
-                   trimmed.startsWith("SubnetMask:", Qt::CaseInsensitive)) {
-            int idx = trimmed.indexOf(':');
-            if (idx >= 0) {
-                current.subnet_mask = trimmed.mid(idx + 1).trimmed();
-            }
-        } else if (trimmed.startsWith("Default Gateway:", Qt::CaseInsensitive)) {
-            int idx = trimmed.indexOf(':');
-            if (idx >= 0) {
-                current.default_gateway = trimmed.mid(idx + 1).trimmed();
-            }
-        } else if (trimmed.contains("DNS Server", Qt::CaseInsensitive) ||
-                   trimmed.startsWith("Statically Configured DNS", Qt::CaseInsensitive)) {
-            int idx = trimmed.indexOf(':');
-            if (idx < 0) {
-                continue;
-            }
-            QString dns = trimmed.mid(idx + 1).trimmed();
-            if (dns.isEmpty()) {
-                continue;
-            }
-            if (current.dns_primary.isEmpty()) {
-                current.dns_primary = dns;
-            } else if (current.dns_secondary.isEmpty()) {
-                current.dns_secondary = dns;
-            }
-        }
+        parseNetshAdapterField(trimmed, current);
     }
     if (inAdapter && !current.adapter_name.isEmpty()) {
         configs.append(current);
@@ -1868,8 +1879,8 @@ void UserProfileBackupKnownNetworksPage::updateNextButtonText() {
 }
 
 void UserProfileBackupKnownNetworksPage::onItemChanged(QTreeWidgetItem* item, int column) {
-    Q_ASSERT(m_networkTree);
     Q_ASSERT(m_summaryLabel);
+    Q_ASSERT(m_networkTree);
     if (column != 0) {
         return;
     }

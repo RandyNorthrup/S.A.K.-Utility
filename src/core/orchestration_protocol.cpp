@@ -8,6 +8,28 @@
 
 namespace sak {
 
+namespace {
+
+struct OrchestrationTypeEntry {
+    OrchestrationMessageType type;
+    const char* name;
+};
+
+static constexpr OrchestrationTypeEntry kOrchestrationTypes[] = {
+    {OrchestrationMessageType::DestinationRegister, "DESTINATION_REGISTER"},
+    {OrchestrationMessageType::HealthCheckRequest, "HEALTH_CHECK_REQUEST"},
+    {OrchestrationMessageType::HealthCheckResponse, "HEALTH_CHECK_RESPONSE"},
+    {OrchestrationMessageType::DeploymentAssign, "DEPLOYMENT_ASSIGN"},
+    {OrchestrationMessageType::AssignmentControl, "ASSIGNMENT_CONTROL"},
+    {OrchestrationMessageType::StartTransfer, "START_TRANSFER"},
+    {OrchestrationMessageType::ProgressUpdate, "PROGRESS_UPDATE"},
+    {OrchestrationMessageType::DeploymentComplete, "DEPLOYMENT_COMPLETE"},
+    {OrchestrationMessageType::Error, "ERROR"},
+    {OrchestrationMessageType::Heartbeat, "HEARTBEAT"},
+};
+
+}  // namespace
+
 QJsonObject OrchestrationProtocol::makeMessage(OrchestrationMessageType type,
                                                const QJsonObject& payload) {
     QJsonObject message = payload;
@@ -18,64 +40,21 @@ QJsonObject OrchestrationProtocol::makeMessage(OrchestrationMessageType type,
 
 std::optional<OrchestrationMessageType> OrchestrationProtocol::parseType(const QString& type) {
     Q_ASSERT(!type.isEmpty());
-    if (type == "DESTINATION_REGISTER") {
-        return OrchestrationMessageType::DestinationRegister;
-    }
-    if (type == "HEALTH_CHECK_REQUEST") {
-        return OrchestrationMessageType::HealthCheckRequest;
-    }
-    if (type == "HEALTH_CHECK_RESPONSE") {
-        return OrchestrationMessageType::HealthCheckResponse;
-    }
-    if (type == "DEPLOYMENT_ASSIGN") {
-        return OrchestrationMessageType::DeploymentAssign;
-    }
-    if (type == "ASSIGNMENT_CONTROL") {
-        return OrchestrationMessageType::AssignmentControl;
-    }
-    if (type == "START_TRANSFER") {
-        return OrchestrationMessageType::StartTransfer;
-    }
-    if (type == "PROGRESS_UPDATE") {
-        return OrchestrationMessageType::ProgressUpdate;
-    }
-    if (type == "DEPLOYMENT_COMPLETE") {
-        return OrchestrationMessageType::DeploymentComplete;
-    }
-    if (type == "ERROR") {
-        return OrchestrationMessageType::Error;
-    }
-    if (type == "HEARTBEAT") {
-        return OrchestrationMessageType::Heartbeat;
+    for (const auto& entry : kOrchestrationTypes) {
+        if (type == QLatin1String(entry.name)) {
+            return entry.type;
+        }
     }
     return std::nullopt;
 }
 
 QString OrchestrationProtocol::typeToString(OrchestrationMessageType type) {
-    switch (type) {
-    case OrchestrationMessageType::DestinationRegister:
-        return "DESTINATION_REGISTER";
-    case OrchestrationMessageType::HealthCheckRequest:
-        return "HEALTH_CHECK_REQUEST";
-    case OrchestrationMessageType::HealthCheckResponse:
-        return "HEALTH_CHECK_RESPONSE";
-    case OrchestrationMessageType::DeploymentAssign:
-        return "DEPLOYMENT_ASSIGN";
-    case OrchestrationMessageType::AssignmentControl:
-        return "ASSIGNMENT_CONTROL";
-    case OrchestrationMessageType::StartTransfer:
-        return "START_TRANSFER";
-    case OrchestrationMessageType::ProgressUpdate:
-        return "PROGRESS_UPDATE";
-    case OrchestrationMessageType::DeploymentComplete:
-        return "DEPLOYMENT_COMPLETE";
-    case OrchestrationMessageType::Error:
-        return "ERROR";
-    case OrchestrationMessageType::Heartbeat:
-        return "HEARTBEAT";
-    default:
-        return "UNKNOWN";
+    for (const auto& entry : kOrchestrationTypes) {
+        if (entry.type == type) {
+            return QString::fromLatin1(entry.name);
+        }
     }
+    return QStringLiteral("UNKNOWN");
 }
 
 QByteArray OrchestrationProtocol::encodeMessage(const QJsonObject& message) {

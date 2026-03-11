@@ -218,25 +218,19 @@ void ParallelTransferManager::setPerJobBandwidthLimit(int mbps) {
 }
 
 void ParallelTransferManager::updateJobProgress(const QString& job_id,
-                                                int progress_percent,
-                                                qint64 bytes_transferred,
-                                                qint64 total_bytes,
-                                                double speed_mbps,
-                                                const QString& current_file) {
+                                                const TransferProgressUpdate& progress) {
     if (!m_jobs.contains(job_id)) {
         return;
     }
 
     auto& job = m_jobs[job_id];
     job.status = "transferring";
-    job.bytes_transferred = bytes_transferred;
-    job.total_bytes = total_bytes;
-    job.speed_mbps = speed_mbps;
+    job.bytes_transferred = progress.bytes_transferred;
+    job.total_bytes = progress.total_bytes;
+    job.speed_mbps = progress.speed_mbps;
     job.updated_at = QDateTime::currentDateTimeUtc();
 
-    Q_UNUSED(current_file);
-
-    Q_EMIT jobUpdated(job_id, progress_percent);
+    Q_EMIT jobUpdated(job_id, progress.progress_percent);
     updateDeploymentProgress();
 }
 

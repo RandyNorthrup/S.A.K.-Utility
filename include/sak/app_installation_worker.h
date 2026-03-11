@@ -180,15 +180,19 @@ private Q_SLOTS:
      */
     void processQueue();
 
-    /**
-     * @brief Handle Chocolatey manager signals
-     */
     void onInstallStarted(const QString& packageId);
     void onInstallSuccess(const QString& packageId);
     void onInstallFailed(const QString& packageId, const QString& error);
     void onInstallRetrying(const QString& packageId, int attempt);
 
 private:
+    enum class QueueAction {
+        Proceed,
+        Wait,
+        Finish
+    };
+    QueueAction checkQueueState();
+
     /**
      * @brief Install a single package
      * @param job Job to process

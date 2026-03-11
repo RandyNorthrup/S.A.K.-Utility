@@ -9,8 +9,8 @@ IDI_ICON1 ICON "@CMAKE_CURRENT_SOURCE_DIR@/resources/icon.ico"
 1 24 "@CMAKE_CURRENT_BINARY_DIR@/sak_utility.manifest"
 
 VS_VERSION_INFO VERSIONINFO
-FILEVERSION    @PROJECT_VERSION_MAJOR@,@PROJECT_VERSION_MINOR@,@PROJECT_VERSION_PATCH@,0
-PRODUCTVERSION @PROJECT_VERSION_MAJOR@,@PROJECT_VERSION_MINOR@,@PROJECT_VERSION_PATCH@,0
+FILEVERSION    @PROJECT_VERSION_MAJOR@,@PROJECT_VERSION_MINOR@,@PROJECT_VERSION_PATCH@,@PROJECT_VERSION_TWEAK@
+PRODUCTVERSION @PROJECT_VERSION_MAJOR@,@PROJECT_VERSION_MINOR@,@PROJECT_VERSION_PATCH@,@PROJECT_VERSION_TWEAK@
 FILEFLAGSMASK  VS_FFI_FILEFLAGSMASK
 FILEFLAGS      0x0L
 FILEOS         VOS_NT_WINDOWS32
@@ -25,7 +25,7 @@ BEGIN
             VALUE "FileDescription",  "S.A.K. Utility - Swiss Army Knife Utility\0"
             VALUE "FileVersion",      "@PROJECT_VERSION@\0"
             VALUE "InternalName",     "sak_utility\0"
-            VALUE "LegalCopyright",   "Copyright (c) 2025 Randy Northrup. All rights reserved.\0"
+            VALUE "LegalCopyright",   "Copyright (c) 2025-2026 Randy Northrup. All rights reserved.\0"
             VALUE "OriginalFilename", "sak_utility.exe\0"
             VALUE "ProductName",      "S.A.K. Utility\0"
             VALUE "ProductVersion",   "@PROJECT_VERSION@\0"

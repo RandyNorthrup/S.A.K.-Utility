@@ -55,6 +55,9 @@ public:
     /// @brief Find rules matching a name filter
     [[nodiscard]] QVector<FirewallRule> findRulesByName(const QString& nameFilter) const;
 
+    /// @brief Check if two port ranges overlap
+    [[nodiscard]] static bool portsOverlap(const QString& a, const QString& b);
+
 Q_SIGNALS:
     void rulesEnumerated(QVector<sak::FirewallRule> rules);
     void conflictsDetected(QVector<sak::FirewallConflict> conflicts);
@@ -77,13 +80,10 @@ private:
     void checkWildcardGap(const QVector<FirewallRule>& rules, QVector<FirewallGap>& gaps) const;
     void checkSmbGap(const QVector<FirewallRule>& rules, QVector<FirewallGap>& gaps) const;
     void checkDisabledBlockGap(const QVector<FirewallRule>& rules,
-                                QVector<FirewallGap>& gaps) const;
+                               QVector<FirewallGap>& gaps) const;
 
     /// @brief Parse port range string to list of ports
     [[nodiscard]] static QVector<uint16_t> parsePorts(const QString& portStr);
-
-    /// @brief Check if two port ranges overlap
-    [[nodiscard]] static bool portsOverlap(const QString& a, const QString& b);
 };
 
 }  // namespace sak

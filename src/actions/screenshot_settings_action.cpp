@@ -114,17 +114,15 @@ void ScreenshotSettingsAction::execute() {
     generateReport(output_dir.absolutePath(), timestamp, monitor_count, capture);
     Q_EMIT executionProgress("Screenshots complete", 100);
 
-    buildExecutionResult(
-        capture, settings_pages.size(), output_dir, monitor_count, timestamp, start_time);
+    const CaptureContext context{
+        static_cast<int>(settings_pages.size()), monitor_count, timestamp, start_time};
+    buildExecutionResult(capture, output_dir, context);
 }
 
 void ScreenshotSettingsAction::buildExecutionResult(const CaptureResult& capture,
-                                                    int total_pages,
                                                     const QDir& output_dir,
-                                                    int monitor_count,
-                                                    const QString& timestamp,
-                                                    const QDateTime& start_time) {
-    qint64 duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
+                                                    const CaptureContext& context) {
+    qint64 duration_ms = context.start_time.msecsTo(QDateTime::currentDateTime());
 
     ExecutionResult result;
     Q_ASSERT(!result.success);  // verify default init
@@ -133,22 +131,22 @@ void ScreenshotSettingsAction::buildExecutionResult(const CaptureResult& capture
     result.output_path = output_dir.absolutePath();
 
     QString structured_log;
-    structured_log += QString("MONITORS_DETECTED:%1\n").arg(monitor_count);
+    structured_log += QString("MONITORS_DETECTED:%1\n").arg(context.monitor_count);
     structured_log += QString("SUCCESSFUL_CAPTURES:%1\n").arg(capture.captured_pages.size());
     structured_log += QString("FAILED_CAPTURES:%1\n").arg(capture.failed_attempts);
-    structured_log += QString("TOTAL_PAGES:%1\n").arg(total_pages);
-    structured_log +=
-        QString("SUCCESS_RATE:%1%\n").arg(capture.captured_pages.size() * 100 / total_pages);
+    structured_log += QString("TOTAL_PAGES:%1\n").arg(context.total_pages);
+    structured_log += QString("SUCCESS_RATE:%1%\n")
+                          .arg(capture.captured_pages.size() * 100 / context.total_pages);
     structured_log +=
         QString("REPORT_PATH:%1\n")
-            .arg(output_dir.filePath(QString("Screenshot_Report_%1.txt").arg(timestamp)));
+            .arg(output_dir.filePath(QString("Screenshot_Report_%1.txt").arg(context.timestamp)));
 
     if (capture.screenshots_taken > 0) {
         result.success = true;
         result.message = QString("Captured %1/%2 settings pages (%3 monitors detected)")
                              .arg(capture.captured_pages.size())
-                             .arg(total_pages)
-                             .arg(monitor_count);
+                             .arg(context.total_pages)
+                             .arg(context.monitor_count);
         result.log = structured_log + QString("\nSaved to: %1").arg(output_dir.absolutePath());
     } else {
         result.success = false;

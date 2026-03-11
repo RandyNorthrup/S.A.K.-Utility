@@ -12,6 +12,8 @@
 #include <QProcess>
 
 #include <atomic>
+#include <functional>
+#include <optional>
 #include <type_traits>
 
 namespace sak {
@@ -80,6 +82,8 @@ private:
 
     [[nodiscard]] QString findIperf3Path() const;
     [[nodiscard]] BandwidthTestResult parseIperfJson(const QByteArray& json);
+    [[nodiscard]] std::optional<double> measureTransferMbps(
+        int sample_count, const std::function<std::pair<double, double>()>& sampler);
     void createFirewallRule(uint16_t port);
     void removeFirewallRule();
 };

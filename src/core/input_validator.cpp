@@ -33,34 +33,38 @@ namespace sak {
 
 namespace {
 
-/// @brief Check and return the byte count of a multi-byte UTF-8 sequence
-/// @return Number of bytes in the sequence (2-4), or 0 if invalid
+constexpr unsigned char kContinuationMask = 0xC0;
+constexpr unsigned char kContinuationTag = 0x80;
+
+bool isContinuationByte(unsigned char byte) noexcept {
+    return (byte & kContinuationMask) == kContinuationTag;
+}
+
+bool hasContinuationBytes(std::string_view str, std::size_t pos, int count) noexcept {
+    if (pos + static_cast<std::size_t>(count) >= str.length()) {
+        return false;
+    }
+    for (int offset = 1; offset <= count; ++offset) {
+        if (!isContinuationByte(static_cast<unsigned char>(str[pos + offset]))) {
+            return false;
+        }
+    }
+    return true;
+}
+
 int checkMultiByteUtf8(std::string_view str, std::size_t pos) noexcept {
     Q_ASSERT(!str.empty());
     Q_ASSERT(pos < str.size());
-    unsigned char c = static_cast<unsigned char>(str[pos]);
+    const unsigned char lead = static_cast<unsigned char>(str[pos]);
 
-    if ((c & 0xE0) == 0xC0) {
-        if (c < 0xC2 || pos + 1 >= str.length() ||
-            (static_cast<unsigned char>(str[pos + 1]) & 0xC0) != 0x80) {
-            return 0;
-        }
-        return 2;
+    if ((lead & 0xE0) == 0xC0) {
+        return (lead >= 0xC2 && hasContinuationBytes(str, pos, 1)) ? 2 : 0;
     }
-    if ((c & 0xF0) == 0xE0) {
-        if (pos + 2 >= str.length() || (static_cast<unsigned char>(str[pos + 1]) & 0xC0) != 0x80 ||
-            (static_cast<unsigned char>(str[pos + 2]) & 0xC0) != 0x80) {
-            return 0;
-        }
-        return 3;
+    if ((lead & 0xF0) == 0xE0) {
+        return hasContinuationBytes(str, pos, 2) ? 3 : 0;
     }
-    if ((c & 0xF8) == 0xF0) {
-        if (pos + 3 >= str.length() || (static_cast<unsigned char>(str[pos + 1]) & 0xC0) != 0x80 ||
-            (static_cast<unsigned char>(str[pos + 2]) & 0xC0) != 0x80 ||
-            (static_cast<unsigned char>(str[pos + 3]) & 0xC0) != 0x80) {
-            return 0;
-        }
-        return 4;
+    if ((lead & 0xF8) == 0xF0) {
+        return hasContinuationBytes(str, pos, 3) ? 4 : 0;
     }
     return 0;
 }
@@ -105,70 +109,85 @@ validation_result input_validator::validatePathExistence(const std::filesystem::
     return success();
 }
 
-validation_result input_validator::validatePathPermissions(const std::filesystem::path& path,
-                                                           const path_validation_config& config) {
+namespace {
+
 #ifdef _WIN32
-    // Windows permission checks via GetFileAttributes
+validation_result checkWindowsPermissions(const std::filesystem::path& path,
+                                          const path_validation_config& config) {
     DWORD attrs = GetFileAttributesW(path.wstring().c_str());
     if (attrs == INVALID_FILE_ATTRIBUTES) {
         if (config.check_read_permission || config.check_write_permission) {
-            return failure(error_code::permission_denied, "Cannot check file permissions");
+            return input_validator::failure(error_code::permission_denied,
+                                            "Cannot check file permissions");
         }
     }
 
     if (config.check_write_permission && (attrs & FILE_ATTRIBUTE_READONLY)) {
-        return failure(error_code::permission_denied, "Path is read-only");
+        return input_validator::failure(error_code::permission_denied, "Path is read-only");
     }
+
+    return input_validator::success();
+}
 #else
-    // Unix permission checks via access()
+validation_result checkUnixPermissions(const std::filesystem::path& path,
+                                       const path_validation_config& config) {
     if (config.check_read_permission && access(path.c_str(), R_OK) != 0) {
-        return failure(error_code::permission_denied, "Path is not readable");
+        return input_validator::failure(error_code::permission_denied, "Path is not readable");
     }
 
     if (config.check_write_permission && access(path.c_str(), W_OK) != 0) {
-        return failure(error_code::permission_denied, "Path is not writable");
+        return input_validator::failure(error_code::permission_denied, "Path is not writable");
     }
+
+    return input_validator::success();
+}
 #endif
 
+}  // namespace
+
+validation_result input_validator::validatePathPermissions(const std::filesystem::path& path,
+                                                           const path_validation_config& config) {
+#ifdef _WIN32
+    return checkWindowsPermissions(path, config);
+#else
+    return checkUnixPermissions(path, config);
+#endif
+}
+
+validation_result input_validator::validatePathSyntax(const std::filesystem::path& path,
+                                                      const path_validation_config& config) {
+    const auto path_str = path.string();
+    if (path_str.length() > config.max_path_length) {
+        return failure(error_code::path_too_long, "Path exceeds maximum allowed length");
+    }
+    if (path_str.find('\0') != std::string::npos) {
+        return failure(error_code::invalid_path, "Path contains null bytes");
+    }
+    if (containsSuspiciousPatterns(path)) {
+        return failure(error_code::invalid_path, "Path contains suspicious patterns");
+    }
+    if (containsTraversalSequences(path)) {
+        return failure(error_code::path_traversal_attempt,
+                       "Path contains directory traversal sequences");
+    }
+    if (!config.allow_relative_paths && path.is_relative()) {
+        return failure(error_code::invalid_path, "Relative paths are not allowed");
+    }
     return success();
 }
 
 validation_result input_validator::validatePath(const std::filesystem::path& path,
                                                 const path_validation_config& config) {
-    // Check path length
-    const auto path_str = path.string();
-    if (path_str.length() > config.max_path_length) {
-        return failure(error_code::path_too_long, "Path exceeds maximum allowed length");
+    auto syntax_result = validatePathSyntax(path, config);
+    if (!syntax_result) {
+        return syntax_result;
     }
 
-    // Check for null bytes
-    if (path_str.find('\0') != std::string::npos) {
-        return failure(error_code::invalid_path, "Path contains null bytes");
-    }
-
-    // Check for suspicious patterns
-    if (containsSuspiciousPatterns(path)) {
-        return failure(error_code::invalid_path, "Path contains suspicious patterns");
-    }
-
-    // Check for traversal sequences
-    if (containsTraversalSequences(path)) {
-        return failure(error_code::path_traversal_attempt,
-                       "Path contains directory traversal sequences");
-    }
-
-    // Check relative path requirement
-    if (!config.allow_relative_paths && path.is_relative()) {
-        return failure(error_code::invalid_path, "Relative paths are not allowed");
-    }
-
-    // Check existence and type constraints
     auto existence_result = validatePathExistence(path, config);
     if (!existence_result) {
         return existence_result;
     }
 
-    // Check permissions (only if path exists)
     std::error_code ec;
     if (std::filesystem::exists(path, ec)) {
         auto perm_result = validatePathPermissions(path, config);
@@ -177,7 +196,6 @@ validation_result input_validator::validatePath(const std::filesystem::path& pat
         }
     }
 
-    // Check base directory constraint
     if (!config.base_directory.empty()) {
         auto within_base = validatePathWithinBase(path, config.base_directory);
         if (!within_base) {

@@ -198,7 +198,6 @@ bool FlashWorker::dismountVolume() {
 }
 
 bool FlashWorker::prepareSourceChecksum() {
-    Q_ASSERT(!m_sourceChecksum.isEmpty());
     Q_ASSERT(m_imageSource);
     if (!m_verificationEnabled || !m_sourceChecksum.isEmpty()) {
         return true;
@@ -434,7 +433,7 @@ sak::ValidationResult FlashWorker::verifySample() {
     }
 
     int samplesVerified = verifySampleBlocks(
-        result, numSamples, blockSize, totalBlocks, sampleSize, sourceBuffer, targetBuffer);
+        result, {numSamples, blockSize, totalBlocks, sampleSize}, sourceBuffer, targetBuffer);
 
     // Calculate speed
     qint64 elapsed_ms = timer.elapsed();
@@ -452,17 +451,14 @@ sak::ValidationResult FlashWorker::verifySample() {
 }
 
 int FlashWorker::verifySampleBlocks(sak::ValidationResult& result,
-                                    int numSamples,
-                                    qint64 blockSize,
-                                    qint64 totalBlocks,
-                                    qint64 sampleSize,
+                                    const VerifyBlocksConfig& config,
                                     QByteArray& sourceBuffer,
                                     QByteArray& targetBuffer) {
     int samplesVerified = 0;
 
-    for (int i = 0; i < numSamples && !stopRequested(); ++i) {
-        qint64 blockIndex = QRandomGenerator::global()->bounded(totalBlocks);
-        qint64 offset_bytes = blockIndex * blockSize;
+    for (int i = 0; i < config.num_samples && !stopRequested(); ++i) {
+        qint64 blockIndex = QRandomGenerator::global()->bounded(config.total_blocks);
+        qint64 offset_bytes = blockIndex * config.block_size;
 
         // Read from source
         if (!m_imageSource->seek(offset_bytes)) {
@@ -470,8 +466,8 @@ int FlashWorker::verifySampleBlocks(sak::ValidationResult& result,
             continue;
         }
 
-        qint64 bytesRead = m_imageSource->read(sourceBuffer.data(), blockSize);
-        if (bytesRead != blockSize) {
+        qint64 bytesRead = m_imageSource->read(sourceBuffer.data(), config.block_size);
+        if (bytesRead != config.block_size) {
             if (bytesRead <= 0) {
                 continue;
             }
@@ -508,7 +504,7 @@ int FlashWorker::verifySampleBlocks(sak::ValidationResult& result,
         }
 
         samplesVerified++;
-        updateVerificationProgress(samplesVerified * blockSize, sampleSize);
+        updateVerificationProgress(samplesVerified * config.block_size, config.sample_size);
     }
 
     return samplesVerified;

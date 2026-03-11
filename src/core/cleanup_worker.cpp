@@ -33,63 +33,20 @@ auto CleanupWorker::execute() -> std::expected<void, sak::error_code> {
 
     const int total = m_items.size();
 
-    for (int i = 0; i < total; ++i) {
+    for (int idx = 0; idx < total; ++idx) {
         if (checkStop()) {
             Q_EMIT cleanupComplete(succeeded, failed, bytes_recovered);
             return {};
         }
 
-        const auto& item = m_items[i];
+        const auto& item = m_items[idx];
         if (!item.selected) {
             continue;
         }
 
-        reportProgress(i, total, QString("Cleaning: %1").arg(item.path));
+        reportProgress(idx, total, QString("Cleaning: %1").arg(item.path));
 
-        bool ok = false;
-
-        switch (item.type) {
-        case LeftoverItem::Type::File:
-            ok = deleteFile(item.path);
-            break;
-
-        case LeftoverItem::Type::Folder:
-            ok = deleteFolder(item.path);
-            break;
-
-        case LeftoverItem::Type::RegistryKey:
-            ok = deleteRegistryKey(item.path);
-            break;
-
-        case LeftoverItem::Type::RegistryValue:
-            ok = deleteRegistryValue(item.path, item.registryValueName);
-            break;
-
-        case LeftoverItem::Type::Service:
-            ok = removeService(item.path);
-            break;
-
-        case LeftoverItem::Type::ScheduledTask:
-            ok = removeScheduledTask(item.path);
-            break;
-
-        case LeftoverItem::Type::FirewallRule:
-            ok = removeFirewallRule(item.path);
-            break;
-
-        case LeftoverItem::Type::StartupEntry:
-            // Could be a file (shortcut) or registry value
-            if (!item.registryValueName.isEmpty()) {
-                ok = deleteRegistryValue(item.path, item.registryValueName);
-            } else {
-                ok = deleteFile(item.path);
-            }
-            break;
-
-        case LeftoverItem::Type::ShellExtension:
-            ok = deleteRegistryKey(item.path);
-            break;
-        }
+        const bool ok = cleanSingleItem(item);
 
         if (ok) {
             ++succeeded;
@@ -109,6 +66,37 @@ auto CleanupWorker::execute() -> std::expected<void, sak::error_code> {
     }
 
     return {};
+}
+
+bool CleanupWorker::cleanSingleItem(const LeftoverItem& item) {
+    switch (item.type) {
+    case LeftoverItem::Type::File:
+        return deleteFile(item.path);
+    case LeftoverItem::Type::Folder:
+        return deleteFolder(item.path);
+    case LeftoverItem::Type::RegistryKey:
+        return deleteRegistryKey(item.path);
+    case LeftoverItem::Type::RegistryValue:
+        return deleteRegistryValue(item.path, item.registryValueName);
+    case LeftoverItem::Type::Service:
+        return removeService(item.path);
+    case LeftoverItem::Type::ScheduledTask:
+        return removeScheduledTask(item.path);
+    case LeftoverItem::Type::FirewallRule:
+        return removeFirewallRule(item.path);
+    case LeftoverItem::Type::StartupEntry:
+        return cleanStartupEntry(item);
+    case LeftoverItem::Type::ShellExtension:
+        return deleteRegistryKey(item.path);
+    }
+    return false;
+}
+
+bool CleanupWorker::cleanStartupEntry(const LeftoverItem& item) {
+    if (!item.registryValueName.isEmpty()) {
+        return deleteRegistryValue(item.path, item.registryValueName);
+    }
+    return deleteFile(item.path);
 }
 
 bool CleanupWorker::deleteFile(const QString& path) {
@@ -152,57 +140,57 @@ bool CleanupWorker::deleteFolder(const QString& path) {
     Q_ASSERT(!m_rebootPendingPaths.isEmpty());
     QDir dir(path);
     if (!dir.exists()) {
-        return true;  // Already gone
+        return true;
     }
 
-    // If recycle bin mode, try sending the entire folder
-    if (m_useRecycleBin) {
-        if (sendToRecycleBin(path)) {
-            return true;
-        }
+    if (m_useRecycleBin && sendToRecycleBin(path)) {
+        return true;
     }
 
     if (dir.removeRecursively()) {
         return true;
     }
 
-    // Folder has locked contents — attempt to remove individual files,
-    // scheduling locked ones for reboot removal
-    bool allHandled = true;
+    bool all_handled = removeFolderContentsForced(dir);
+
+    if (!dir.rmdir(path)) {
+        all_handled = tryScheduleReboot(path) && all_handled;
+    }
+
+    return all_handled;
+}
+
+bool CleanupWorker::removeFolderContentsForced(const QDir& dir) {
+    bool all_handled = true;
     const auto entries = dir.entryInfoList(
         QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Hidden | QDir::System, QDir::DirsLast);
 
     for (const auto& entry : entries) {
-        const QString entryPath = entry.absoluteFilePath();
+        const QString entry_path = entry.absoluteFilePath();
         if (entry.isDir()) {
-            if (!deleteFolder(entryPath)) {
-                allHandled = false;
+            if (!deleteFolder(entry_path)) {
+                all_handled = false;
             }
             continue;
         }
 
-        if (QFile::remove(entryPath)) {
+        if (QFile::remove(entry_path)) {
             continue;
         }
 
-        if (scheduleRebootRemoval(entryPath)) {
-            m_rebootPendingPaths.append(entryPath);
-            continue;
-        }
-
-        allHandled = false;
-    }
-
-    // Try removing the now-possibly-empty directory
-    if (!dir.rmdir(path)) {
-        if (scheduleRebootRemoval(path)) {
-            m_rebootPendingPaths.append(path);
-        } else {
-            allHandled = false;
+        if (!tryScheduleReboot(entry_path)) {
+            all_handled = false;
         }
     }
+    return all_handled;
+}
 
-    return allHandled;
+bool CleanupWorker::tryScheduleReboot(const QString& path) {
+    if (scheduleRebootRemoval(path)) {
+        m_rebootPendingPaths.append(path);
+        return true;
+    }
+    return false;
 }
 
 bool CleanupWorker::sendToRecycleBin(const QString& path) {
@@ -237,7 +225,7 @@ bool CleanupWorker::scheduleRebootRemoval(const QString& path) {
 }
 
 bool CleanupWorker::deleteRegistryKey(const QString& fullKeyPath) {
-Q_ASSERT(!fullKeyPath.isEmpty());
+    Q_ASSERT(!fullKeyPath.isEmpty());
 #ifdef Q_OS_WIN
     QString path = fullKeyPath;
     HKEY hive = nullptr;
@@ -266,8 +254,8 @@ Q_ASSERT(!fullKeyPath.isEmpty());
 }
 
 bool CleanupWorker::deleteRegistryValue(const QString& keyPath, const QString& valueName) {
-Q_ASSERT(!keyPath.isEmpty());
-Q_ASSERT(!valueName.isEmpty());
+    Q_ASSERT(!keyPath.isEmpty());
+    Q_ASSERT(!valueName.isEmpty());
 #ifdef Q_OS_WIN
     QString path = keyPath;
     HKEY hive = nullptr;

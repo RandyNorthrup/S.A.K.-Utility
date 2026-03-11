@@ -13,6 +13,8 @@
 #include <QRegularExpression>
 #include <QThread>
 
+#include <algorithm>
+
 namespace sak {
 
 ChocolateyManager::ChocolateyManager(QObject* parent)
@@ -38,11 +40,11 @@ bool ChocolateyManager::initialize(const QString& choco_portable_path) {
                                   QDir(m_choco_dir).filePath("bin/choco.exe"),
                                   QDir(m_choco_dir).filePath("chocolatey/bin/choco.exe")};
 
-    for (const QString& path : possible_paths) {
-        if (QFile::exists(path)) {
-            m_choco_path = path;
-            break;
-        }
+    const auto it = std::find_if(possible_paths.cbegin(),
+                                 possible_paths.cend(),
+                                 [](const QString& path) { return QFile::exists(path); });
+    if (it != possible_paths.cend()) {
+        m_choco_path = *it;
     }
 
     if (m_choco_path.isEmpty()) {
@@ -107,6 +109,23 @@ QString ChocolateyManager::getChocoVersion() {
     return QString();
 }
 
+QStringList ChocolateyManager::buildInstallArgs(const InstallConfig& config) const {
+    QStringList args = {"install", config.package_name};
+    if (config.version_locked && !config.version.isEmpty()) {
+        args << "--version" << config.version;
+    }
+    if (config.auto_confirm || m_auto_confirm) {
+        args << "-y";
+    }
+    if (config.force) {
+        args << "--force";
+    }
+    if (!config.extra_args.isEmpty()) {
+        args << config.extra_args;
+    }
+    return args;
+}
+
 ChocolateyManager::Result ChocolateyManager::installPackage(const InstallConfig& config) {
     if (!m_initialized) {
         return {false, "", "ChocolateyManager not initialized", -1};
@@ -122,37 +141,14 @@ ChocolateyManager::Result ChocolateyManager::installPackage(const InstallConfig&
 
     Q_EMIT installStarted(config.package_name);
 
-    // Build command arguments
-    QStringList args = {"install", config.package_name};
-
-    // Add version if locked
-    if (config.version_locked && !config.version.isEmpty()) {
-        args << "--version" << config.version;
-    }
-
-    // Add auto-confirm
-    if (config.auto_confirm || m_auto_confirm) {
-        args << "-y";
-    }
-
-    // Add force if specified
-    if (config.force) {
-        args << "--force";
-    }
-
-    // Add extra arguments
-    if (!config.extra_args.isEmpty()) {
-        args << config.extra_args;
-    }
-
-    // Execute with timeout
+    QStringList args = buildInstallArgs(config);
     int timeout_ms = config.timeout_seconds > 0 ? config.timeout_seconds * 1000
                                                 : m_default_timeout_seconds * 1000;
     Result result = executeChoco(args, timeout_ms);
 
     if (result.success) {
-        QString installed_version = config.version_locked ? config.version : "latest";
-        Q_EMIT installSuccess(config.package_name, installed_version);
+        const QString ver = config.version_locked ? config.version : "latest";
+        Q_EMIT installSuccess(config.package_name, ver);
     } else {
         Q_EMIT installFailed(config.package_name, result.error_message);
         sak::logWarning("[ChocolateyManager] Failed to install {}: {}",
@@ -306,13 +302,9 @@ bool ChocolateyManager::isPackageAvailable(const QString& package_name) {
     }
 
     auto packages = parseSearchResults(result.output);
-    for (const auto& pkg : packages) {
-        if (pkg.package_id.compare(package_name, Qt::CaseInsensitive) == 0) {
-            return true;
-        }
-    }
-
-    return false;
+    return std::any_of(packages.cbegin(), packages.cend(), [&package_name](const auto& pkg) {
+        return pkg.package_id.compare(package_name, Qt::CaseInsensitive) == 0;
+    });
 }
 
 QStringList ChocolateyManager::getOutdatedPackages() {
@@ -492,13 +484,11 @@ bool ChocolateyManager::isNetworkError(const QString& output) const {
                                     "tls"};
 
     QString lower_output = output.toLower();
-    for (const QString& keyword : network_keywords) {
-        if (lower_output.contains(keyword)) {
-            return true;
-        }
-    }
-
-    return false;
+    return std::any_of(network_keywords.cbegin(),
+                       network_keywords.cend(),
+                       [&lower_output](const QString& keyword) {
+                           return lower_output.contains(keyword);
+                       });
 }
 
 bool ChocolateyManager::isDependencyError(const QString& output) const {

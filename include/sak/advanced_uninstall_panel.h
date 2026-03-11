@@ -129,12 +129,16 @@ private:
     void populateBatchUninstallQueueList(const QVector<UninstallQueueItem>& queue,
                                          QListWidget* queueList,
                                          qint64* totalBytesOut) const;
-    void wireBatchUninstallQueueActions(QListWidget* queueList,
-                                        QLabel* headerLabel,
-                                        QLabel* totalLabel,
-                                        QPushButton* removeBtn,
-                                        QPushButton* clearBtn,
-                                        QDialog* dialog);
+    /// @brief Widget pointers for batch uninstall queue dialog
+    struct BatchQueueWidgets {
+        QListWidget* queue_list;
+        QLabel* header_label;
+        QLabel* total_label;
+        QPushButton* remove_btn;
+        QPushButton* clear_btn;
+    };
+
+    void wireBatchUninstallQueueActions(const BatchQueueWidgets& widgets, QDialog* dialog);
 
     QCheckBox* addBatchUninstallOptions(QDialog* dialog, QVBoxLayout* layout) const;
     QDialogButtonBox* addBatchUninstallButtons(QDialog* dialog, QVBoxLayout* layout) const;

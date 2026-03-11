@@ -264,32 +264,36 @@ QString ClearPrintSpoolerAction::buildSpoolerScriptRestart() const {
         "Write-Output \"FILES_AFTER:$($results['FilesAfter'])\"\n");
 }
 
+void ClearPrintSpoolerAction::parseSpoolerLine(const QString& trimmed,
+                                               SpoolerResult& spooler) const {
+    if (trimmed.startsWith("INITIAL_STATUS:")) {
+        spooler.initial_status = trimmed.mid(15);
+    } else if (trimmed.startsWith("FILES_BEFORE:")) {
+        spooler.files_before = trimmed.mid(13).toInt();
+    } else if (trimmed.startsWith("SIZE_BEFORE:")) {
+        spooler.size_before = trimmed.mid(12).toLongLong();
+    } else if (trimmed.startsWith("STOP_SUCCESS:")) {
+        spooler.stop_success = (trimmed.mid(13) == "True");
+    } else if (trimmed.startsWith("CLEARED:")) {
+        spooler.cleared = trimmed.mid(8).toInt();
+    } else if (trimmed.startsWith("START_SUCCESS:")) {
+        spooler.start_success = (trimmed.mid(14) == "True");
+    } else if (trimmed.startsWith("FINAL_STATUS:")) {
+        spooler.final_status = trimmed.mid(13);
+    } else if (trimmed.startsWith("FILES_AFTER:")) {
+        spooler.files_after = trimmed.mid(12).toInt();
+    } else if (trimmed.contains("_ERROR:")) {
+        spooler.errors.append(trimmed);
+    }
+}
+
 ClearPrintSpoolerAction::SpoolerResult ClearPrintSpoolerAction::parseSpoolerOutput(
     const QString& output) const {
     SpoolerResult spooler;
     const QStringList lines = output.split('\n', Qt::SkipEmptyParts);
 
     for (const QString& line : lines) {
-        QString trimmed = line.trimmed();
-        if (trimmed.startsWith("INITIAL_STATUS:")) {
-            spooler.initial_status = trimmed.mid(15);
-        } else if (trimmed.startsWith("FILES_BEFORE:")) {
-            spooler.files_before = trimmed.mid(13).toInt();
-        } else if (trimmed.startsWith("SIZE_BEFORE:")) {
-            spooler.size_before = trimmed.mid(12).toLongLong();
-        } else if (trimmed.startsWith("STOP_SUCCESS:")) {
-            spooler.stop_success = (trimmed.mid(13) == "True");
-        } else if (trimmed.startsWith("CLEARED:")) {
-            spooler.cleared = trimmed.mid(8).toInt();
-        } else if (trimmed.startsWith("START_SUCCESS:")) {
-            spooler.start_success = (trimmed.mid(14) == "True");
-        } else if (trimmed.startsWith("FINAL_STATUS:")) {
-            spooler.final_status = trimmed.mid(13);
-        } else if (trimmed.startsWith("FILES_AFTER:")) {
-            spooler.files_after = trimmed.mid(12).toInt();
-        } else if (trimmed.contains("_ERROR:")) {
-            spooler.errors.append(trimmed);
-        }
+        parseSpoolerLine(line.trimmed(), spooler);
     }
 
     return spooler;

@@ -7,6 +7,7 @@
 
 #include <QCoreApplication>
 #include <QDir>
+#include <QDirIterator>
 #include <QFile>
 #include <QFileInfo>
 #include <QProcess>
@@ -785,14 +786,14 @@ bool WindowsUSBCreator::verifyCriticalFilesOnDisk(
 
         QFileInfo destFileInfo(destFile);
         if (!destFileInfo.exists()) {
-            sak::logError(QString("✗ Missing file: %1").arg(fileInfo.first).toStdString());
+            sak::logError(QString("✗— Missing file: %1").arg(fileInfo.first).toStdString());
             failedCount++;
             continue;
         }
 
         qint64 destSize = destFileInfo.size();
         if (destSize != fileInfo.second) {
-            sak::logError(QString("✗ Size mismatch: %1 (ISO: %2 bytes, USB: %3 bytes)")
+            sak::logError(QString("✗— Size mismatch: %1 (ISO: %2 bytes, USB: %3 bytes)")
                               .arg(fileInfo.first)
                               .arg(fileInfo.second)
                               .arg(destSize)
@@ -888,6 +889,7 @@ void WindowsUSBCreator::logFinalVerificationSuccess(int fileCount) {
 
 bool WindowsUSBCreator::finalVerification(const QString& driveLetter) {
     Q_ASSERT(!driveLetter.isEmpty());
+    Q_ASSERT(driveLetter.length() >= 1);
     sak::logInfo("========================================");
     sak::logInfo("FINAL VERIFICATION - This is the ONLY path to success");
     sak::logInfo("========================================");
@@ -932,18 +934,22 @@ bool WindowsUSBCreator::finalVerification(const QString& driveLetter) {
     Q_EMIT progressUpdated(95);
 
     // Verification 4: Count total files to ensure extraction wasn't empty
-    QDir checkDest(cleanDrive);
-    int fileCount =
-        checkDest.entryList(QDir::Files | QDir::Dirs | QDir::NoDotAndDotDot, QDir::Name).count();
+    constexpr int kMinExpectedFileCount = 10;
+    int fileCount = 0;
+    QDirIterator iter(cleanDrive, QDir::Files, QDirIterator::Subdirectories);
+    while (iter.hasNext()) {
+        iter.next();
+        ++fileCount;
+    }
 
-    if (fileCount < 10) {
+    if (fileCount < kMinExpectedFileCount) {
         m_lastError = QString("FINAL VERIFICATION FAILED: Only %1 files found (expected hundreds)")
                           .arg(fileCount);
         sak::logError(m_lastError.toStdString());
         return false;
     }
 
-    sak::logInfo(QString("  ✓ Total files/folders: %1").arg(fileCount).toStdString());
+    sak::logInfo(QString("  \xe2\x9c\x93 Total files: %1").arg(fileCount).toStdString());
 
     Q_EMIT progressUpdated(98);
 

@@ -100,6 +100,12 @@ private:
     [[nodiscard]] SmartReport parseSmartctlOutput(const QByteArray& json_data,
                                                   uint32_t disk_number);
 
+    /// @brief Parse device identity fields (model, serial, interface, capacity)
+    void parseSmartctlDeviceFields(const QJsonObject& root, SmartReport& report);
+
+    /// @brief Parse health/status fields (SMART status, temperature, power-on hours)
+    void parseSmartctlHealthFields(const QJsonObject& root, SmartReport& report);
+
     /// @brief Parse SATA SMART attributes from the JSON object
     /// @param ata_smart_obj JSON object containing ata_smart_attributes
     /// @param report Target report to populate
@@ -113,6 +119,8 @@ private:
     /// @brief Assess overall health based on parsed data
     /// @param report Report to assess (modified in-place)
     void assessHealth(SmartReport& report);
+    void assessSataAttributeHealth(SmartReport& report);
+    void assessNvmeHealth(SmartReport& report);
 
     /// @brief Generate warnings and recommendations for a report
     /// @param report Report to enrich (modified in-place)

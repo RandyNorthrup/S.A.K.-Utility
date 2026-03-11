@@ -114,6 +114,7 @@ private:
     // Execution helpers
     Result executeChoco(const QStringList& args, int timeout_ms = 0);
     QString buildChocoCommand(const QStringList& args) const;
+    QStringList buildInstallArgs(const InstallConfig& config) const;
     bool parseExitCode(int exit_code) const;
 
     // Output parsing

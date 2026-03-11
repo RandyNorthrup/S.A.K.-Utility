@@ -80,7 +80,7 @@ UserProfileBackupWelcomePage::UserProfileBackupWelcomePage(QWidget* parent) : QW
 }
 
 void UserProfileBackupWelcomePage::setupUi() {
-    Q_ASSERT(!objectName().isEmpty() || true);  // widget valid
+    Q_ASSERT(layout() == nullptr);  // setupUi not called twice
     auto* layout = new QVBoxLayout(this);
 
     // Welcome message

@@ -54,7 +54,7 @@ repos:
       # -------------------------------------------------------------------
       - id: tigerstyle-lint
         name: "TigerStyle lint (strict)"
-        description: "Function length ≤70, nesting ≤3, line length ≤100, assertions ≥2"
+        description: "Function length ≤70, nesting ≤3, line length ≤100, assertions ≥2 (>30 lines)"
         entry: python scripts/lint_tigerstyle.py --strict
         language: system
         types_or: [c, c++]

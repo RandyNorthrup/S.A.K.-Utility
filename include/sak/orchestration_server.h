@@ -55,6 +55,10 @@ private Q_SLOTS:
 private:
     QString ensureDestinationId(const DestinationPC& destination, const QTcpSocket* socket) const;
     void handleMessage(QTcpSocket* socket, const QJsonObject& message);
+    void handleProgressMessage(QTcpSocket* socket, const QJsonObject& message);
+    void handleCompletionMessage(QTcpSocket* socket, const QJsonObject& message);
+    void handleDestinationRegister(QTcpSocket* socket, const QJsonObject& message);
+    QString resolveDestinationId(QTcpSocket* socket, const QString& destination_id) const;
     void sendAssignmentControl(const QString& destination_id,
                                const QString& deployment_id,
                                const QString& job_id,

@@ -37,8 +37,7 @@ void DevelopmentConfigsBackupAction::scanGitConfig() {
 }
 
 void DevelopmentConfigsBackupAction::scanSSHKeys() {
-    Q_ASSERT(!m_configs.empty());
-    Q_ASSERT(!m_configs.isEmpty());
+    Q_ASSERT(!m_user_profiles.isEmpty());
     for (const UserProfile& user : m_user_profiles) {
         QString ssh_dir = user.profile_path + "/.ssh";
         QDir dir(ssh_dir);
@@ -61,8 +60,7 @@ void DevelopmentConfigsBackupAction::scanSSHKeys() {
 }
 
 void DevelopmentConfigsBackupAction::scanVSCodeSettings() {
-    Q_ASSERT(!m_configs.empty());
-    Q_ASSERT(!m_configs.isEmpty());
+    Q_ASSERT(!m_user_profiles.isEmpty());
     for (const UserProfile& user : m_user_profiles) {
         QString vscode_dir = user.profile_path + "/AppData/Roaming/Code/User";
         QDir dir(vscode_dir);
@@ -91,8 +89,7 @@ void DevelopmentConfigsBackupAction::scanVSCodeSettings() {
 }
 
 void DevelopmentConfigsBackupAction::scanVisualStudioSettings() {
-    Q_ASSERT(!m_configs.empty());
-    Q_ASSERT(!m_configs.isEmpty());
+    Q_ASSERT(!m_user_profiles.isEmpty());
     for (const UserProfile& user : m_user_profiles) {
         QString vs_path = user.profile_path + "/AppData/Local/Microsoft/VisualStudio";
         QDir dir(vs_path);
@@ -117,8 +114,7 @@ void DevelopmentConfigsBackupAction::scanVisualStudioSettings() {
 }
 
 void DevelopmentConfigsBackupAction::scanIntelliJSettings() {
-    Q_ASSERT(!m_configs.empty());
-    Q_ASSERT(!m_configs.isEmpty());
+    Q_ASSERT(!m_user_profiles.isEmpty());
     for (const UserProfile& user : m_user_profiles) {
         QString intellij_path = user.profile_path + "/AppData/Roaming/JetBrains";
         QDir dir(intellij_path);
@@ -213,28 +209,11 @@ void DevelopmentConfigsBackupAction::execute() {
             emitCancelledResult("Development config backup cancelled", start_time);
             return;
         }
-
-        const QString dest = backup_dir.filePath(cfg.name);
-        QFileInfo src_info(cfg.path);
-
-        if (src_info.isFile()) {
-            if (!QDir().mkpath(QFileInfo(dest).absolutePath())) {
-                sak::logWarning("Failed to create directory for dev config file");
-            }
-            bool ok = QFile::copy(cfg.path, dest);
-            processed += ok ? 1 : 0;
-            bytes_copied += ok ? cfg.size : 0;
-        } else if (src_info.isDir()) {
-            bytes_copied += copyDirectoryContents(cfg.path, dest);
-            processed++;
-        }
-
-        Q_EMIT executionProgress(QString("Backing up %1...").arg(cfg.name),
-                                 (processed * 100) / m_configs.count());
+        backupSingleConfig(cfg, backup_dir, processed, bytes_copied);
     }
 
     ExecutionResult result;
-    Q_ASSERT(!result.success);  // verify default init
+    Q_ASSERT(!result.success);
     result.success = processed > 0;
     result.duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
     result.files_processed = processed;
@@ -244,6 +223,29 @@ void DevelopmentConfigsBackupAction::execute() {
     result.output_path = backup_dir.absolutePath();
 
     finishWithResult(result, processed > 0 ? ActionStatus::Success : ActionStatus::Failed);
+}
+
+void DevelopmentConfigsBackupAction::backupSingleConfig(const DevConfig& cfg,
+                                                        const QDir& backup_dir,
+                                                        int& processed,
+                                                        qint64& bytes_copied) {
+    const QString dest = backup_dir.filePath(cfg.name);
+    QFileInfo src_info(cfg.path);
+
+    if (src_info.isFile()) {
+        if (!QDir().mkpath(QFileInfo(dest).absolutePath())) {
+            sak::logWarning("Failed to create directory for dev config file");
+        }
+        bool ok = QFile::copy(cfg.path, dest);
+        processed += ok ? 1 : 0;
+        bytes_copied += ok ? cfg.size : 0;
+    } else if (src_info.isDir()) {
+        bytes_copied += copyDirectoryContents(cfg.path, dest);
+        processed++;
+    }
+
+    Q_EMIT executionProgress(QString("Backing up %1...").arg(cfg.name),
+                             (processed * 100) / m_configs.count());
 }
 
 qint64 DevelopmentConfigsBackupAction::calculateDirSize(const QString& path) const {

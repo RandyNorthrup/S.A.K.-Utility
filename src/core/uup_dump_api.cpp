@@ -314,38 +314,12 @@ void UupDumpApi::onEditionsReply() {
         return;
     }
 
-    QByteArray data = reply->readAll();
-    QJsonParseError parseError;
-    QJsonDocument doc = QJsonDocument::fromJson(data, &parseError);
-
-    if (parseError.error != QJsonParseError::NoError) {
-        QString errorMsg =
-            QString("JSON parse error in editions response: %1").arg(parseError.errorString());
-        sak::logError(errorMsg.toStdString());
-        Q_EMIT apiError(errorMsg);
+    QJsonObject response;
+    if (!parseApiResponse(reply->readAll(), "editions", response)) {
         return;
     }
 
-    QJsonObject root = doc.object();
-    QJsonObject response = root["response"].toObject();
-
-    if (checkApiError(response, "fetching editions")) {
-        return;
-    }
-
-    // editionList can be a JSON array ["PROFESSIONAL", ...] or object {"PROFESSIONAL": 1, ...}
-    QStringList editions;
-    QJsonValue edListVal = response["editionList"];
-    if (edListVal.isArray()) {
-        for (const QJsonValue& val : edListVal.toArray()) {
-            editions.append(val.toString());
-        }
-    } else if (edListVal.isObject()) {
-        QJsonObject edListObj = edListVal.toObject();
-        for (auto it = edListObj.begin(); it != edListObj.end(); ++it) {
-            editions.append(it.key());
-        }
-    }
+    QStringList editions = parseEditionList(response["editionList"]);
 
     QJsonObject editionFancyNames = response["editionFancyNames"].toObject();
     QMap<QString, QString> editionNames;
@@ -493,6 +467,39 @@ QNetworkReply* UupDumpApi::sendApiRequest(const QString& endpoint,
     QNetworkReply* reply = m_networkManager->get(request);
     m_pendingReplies.append(reply);
     return reply;
+}
+
+bool UupDumpApi::parseApiResponse(const QByteArray& data,
+                                  const QString& context,
+                                  QJsonObject& response) {
+    QJsonParseError parseError;
+    QJsonDocument doc = QJsonDocument::fromJson(data, &parseError);
+
+    if (parseError.error != QJsonParseError::NoError) {
+        QString errorMsg =
+            QString("JSON parse error in %1 response: %2").arg(context, parseError.errorString());
+        sak::logError(errorMsg.toStdString());
+        Q_EMIT apiError(errorMsg);
+        return false;
+    }
+
+    response = doc.object()["response"].toObject();
+    return !checkApiError(response, "fetching " + context);
+}
+
+QStringList UupDumpApi::parseEditionList(const QJsonValue& edListVal) {
+    QStringList editions;
+    if (edListVal.isArray()) {
+        for (const QJsonValue& val : edListVal.toArray()) {
+            editions.append(val.toString());
+        }
+    } else if (edListVal.isObject()) {
+        QJsonObject edListObj = edListVal.toObject();
+        for (auto it = edListObj.begin(); it != edListObj.end(); ++it) {
+            editions.append(it.key());
+        }
+    }
+    return editions;
 }
 
 bool UupDumpApi::checkApiError(const QJsonObject& response, const QString& context) {

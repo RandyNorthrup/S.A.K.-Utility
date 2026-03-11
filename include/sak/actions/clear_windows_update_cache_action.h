@@ -58,6 +58,7 @@ private:
     /// @param std_err Stderr from the PS script.
     /// @return Parsed CacheCleanupResult.
     CacheCleanupResult parseCacheCleanupOutput(const QString& output, const QString& std_err) const;
+    void parseCacheCleanupLine(const QString& trimmed, CacheCleanupResult& parsed) const;
 
     /// @brief Build the success log with box-drawing formatting.
     /// @return Formatted log string.

@@ -100,6 +100,11 @@ private:
     /// @brief Query battery via WMI Win32_Battery + GetSystemPowerStatus
     BatteryInfo queryBattery();
 
+#ifdef SAK_PLATFORM_WINDOWS
+    /// @return false if no battery present (caller should return early)
+    bool queryBatteryPowerStatus(BatteryInfo& info);
+#endif
+
     /// @brief Query OS info via WMI Win32_OperatingSystem
     void queryOsInfo();
 

@@ -47,19 +47,20 @@ private:
     bool resetStoreServices();
     int checkStoreEventLogs();
 
+    struct RepairStepResults {
+        bool cache_reset = false;
+        bool package_reset = false;
+        bool reregistered = false;
+        bool services_restarted = false;
+    };
+
     /// @brief Build the diagnostic report string from repair phase results
     QString buildRepairReport(const StorePackageInfo& before_info,
                               int error_count,
-                              bool cache_reset,
-                              bool package_reset,
-                              bool reregistered,
-                              bool services_restarted,
+                              const RepairStepResults& steps,
                               const StorePackageInfo& after_info,
                               int post_error_count);
-    void finalizeRepairResult(bool cache_reset,
-                              bool package_reset,
-                              bool reregistered,
-                              bool services_restarted,
+    void finalizeRepairResult(const RepairStepResults& steps,
                               const StorePackageInfo& after_info,
                               const QString& report,
                               const QDateTime& start_time);

@@ -9,7 +9,7 @@
 [![Qt 6.5+](https://img.shields.io/badge/Qt-6.5%2B-41cd52.svg)](https://www.qt.io/)
 [![Windows 10/11](https://img.shields.io/badge/Windows-10%20%7C%2011-0078d4.svg)](https://www.microsoft.com/windows)
 [![Build](https://github.com/RandyNorthrup/S.A.K.-Utility/actions/workflows/build-release.yml/badge.svg)](https://github.com/RandyNorthrup/S.A.K.-Utility/actions)
-[![Version](https://img.shields.io/badge/Version-0.9.0-orange.svg)](VERSION)
+[![Version](https://img.shields.io/badge/Version-0.9.0.1-orange.svg)](VERSION)
 [![TigerStyle](https://img.shields.io/badge/code%20style-TigerStyle-f80.svg)](docs/TIGERSTYLE_COMPLIANCE_PLAN.md)
 
 Migration · Maintenance · Recovery · Imaging · Deployment — one portable EXE.
@@ -18,7 +18,17 @@ Migration · Maintenance · Recovery · Imaging · Deployment — one portable E
 
 ---
 
-## What's New in v0.9.0
+## What's New in v0.9.0.1
+
+- **ISO 9660 analyzer** — New `IsoAnalyzer` class parses ISO Primary Volume Descriptors for volume label, publisher, preparer, application, dates, and file count. Automatic Linux distro identification across 74 patterns (Ubuntu, Fedora, Arch, Manjaro, Kali, Pop!_OS, Proxmox, Clonezilla, GParted, Ventoy, FreeBSD, SteamOS, and more) with desktop environment detection. Searches volume label, publisher, preparer, and application metadata fields to maximize detection across different mastering workflows.
+- **Tabbed diagnostics panel** — Diagnostic & Benchmark panel restructured into tabbed interface for better organization and navigation.
+- **Network transfer mode cards** — Replaced mode combo box with visual portrait-style card selector (Source, Destination, Orchestrator) with dedicated SVG icons matching the backup/restore panel pattern.
+- **Image flasher ISO info** — Unified ISO information display with size and format rows integrated into the ISO info group box. Info panel always shown when an image is selected.
+- **Network settings simplified** — Removed redundant "Enabled" master switch from network transfer settings dialog.
+- **Icons8 SVG icons** — Added 6 new SVG icons (benchmark, duplicate, settings help, source, destination, orchestrator) for improved visual consistency across panels.
+- **Build quality** — Clean MSVC `/W4 /WX` build, 79 automated tests (all passing).
+
+### v0.9.0
 
 - **UUP converter rewrite** — Rewrote `UupIsoBuilder` to drive the bundled `UUPMediaConverter.exe` directly via QProcess, replacing the ConvertConfig.ini generation and batch-script pipeline introduced in v0.6.2. Removed 7-Zip dependency, retry/fallback logic, and broken cancel path. Added `classifyConverterFailure()` for structured error diagnostics and converter output analysis.
 - **TigerStyle compliance** — Assertion-density audit (≥2 per public function), function length / complexity refactoring, magic number extraction, nesting depth reduction across the codebase.
@@ -573,7 +583,7 @@ Full license texts: [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md)
 cmake --build build --config Release --target RUN_TESTS
 ```
 
-76 unit and integration tests covering Advanced Search, Advanced Uninstall (types, controller, leftover scanner, registry snapshot engine), Network Diagnostics (types, utils, report generation), network transfer, orchestration, diagnostics, security, encryption, configuration, ISO download, and quick action factory validation.
+79 unit and integration tests covering Advanced Search, Advanced Uninstall (types, controller, leftover scanner, registry snapshot engine), Network Diagnostics (types, utils, report generation), network transfer, orchestration, diagnostics, security, encryption, configuration, ISO download, and quick action factory validation.
 
 ---
 
@@ -637,8 +647,8 @@ Third-party dependency licenses are documented in [THIRD_PARTY_LICENSES.md](THIR
 - [**aria2**](https://aria2.github.io/) — Multi-connection download manager (GPLv2)
 - [**UUPMediaCreator**](https://github.com/OSTooling/UUPMediaCreator) — UUP-to-ISO converter by OSTooling (MIT)
 - [**wimlib / libwim**](https://wimlib.net/) — WIM image library by Eric Biggers (LGPL v3, bundled with UUPMediaConverter)
-- [**7-Zip**](https://www.7-zip.org/) — Archive tool by Igor Pavlov (LGPL v2.1)
 - [**smartmontools**](https://www.smartmontools.org/) — SMART disk diagnostics (GPLv2)
+- [**Icons8**](https://icons8.com/) — UI icons (Icons8 Free License with attribution)
 - [**Chocolatey**](https://chocolatey.org/) — Windows package manager (Apache 2.0)
 - [**zlib**](https://www.zlib.net/) — Compression library (zlib License)
 - [**bzip2**](https://sourceware.org/bzip2/) — Compression library (BSD-style)

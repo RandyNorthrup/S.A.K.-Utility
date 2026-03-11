@@ -6,6 +6,7 @@
 #include "sak/quick_action.h"
 #include "sak/user_profile_types.h"
 
+#include <QDir>
 #include <QString>
 #include <QVector>
 
@@ -55,8 +56,11 @@ private:
 
     /// @brief Calculate total size of all files in a directory recursively
     qint64 calculateDirSize(const QString& path) const;
-    /// @brief Copy all files from a directory to a destination, preserving structure
     qint64 copyDirectoryContents(const QString& src_path, const QString& dest_path);
+    void backupSingleConfig(const DevConfig& cfg,
+                            const QDir& backup_dir,
+                            int& processed,
+                            qint64& bytes_copied);
 };
 
 }  // namespace sak

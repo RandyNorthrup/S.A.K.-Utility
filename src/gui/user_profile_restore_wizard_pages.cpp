@@ -34,8 +34,7 @@ UserProfileRestoreUserMappingPage::UserProfileRestoreUserMappingPage(QWidget* pa
 }
 
 void UserProfileRestoreUserMappingPage::setupUi() {
-    Q_ASSERT(m_autoMapButton);
-    Q_ASSERT(!objectName().isEmpty() || true);  // widget valid
+    Q_ASSERT(layout() == nullptr);  // setupUi not called twice
     auto* layout = new QVBoxLayout(this);
 
     // Instructions
@@ -81,6 +80,8 @@ void UserProfileRestoreUserMappingPage::setupUi() {
             &QTableWidget::cellChanged,
             this,
             &UserProfileRestoreUserMappingPage::onMappingChanged);
+
+    Q_ASSERT(m_autoMapButton);
 }
 
 void UserProfileRestoreUserMappingPage::initializePage() {
@@ -183,8 +184,8 @@ void UserProfileRestoreUserMappingPage::onMappingChanged(int row, int column) {
 }
 
 void UserProfileRestoreUserMappingPage::updateSummary() {
-    Q_ASSERT(m_mappingTable);
     Q_ASSERT(m_summaryLabel);
+    Q_ASSERT(m_mappingTable);
     int totalMappings = m_mappingTable->rowCount();
     int selectedMappings = 0;
     int newUsers = 0;
@@ -392,8 +393,8 @@ void UserProfileRestoreMergeConfigPage::onMergeSettingsChanged(int row, int colu
 }
 
 void UserProfileRestoreMergeConfigPage::updateSummary() {
-    Q_ASSERT(m_mergeTable);
     Q_ASSERT(m_summaryLabel);
+    Q_ASSERT(m_mergeTable);
     int replaceCount = 0;
     int mergeCount = 0;
     int newCount = 0;
@@ -581,8 +582,8 @@ void UserProfileRestoreFolderSelectionPage::onFolderSelectionChanged(int row, in
 }
 
 void UserProfileRestoreFolderSelectionPage::updateSummary() {
-    Q_ASSERT(m_folderTable);
     Q_ASSERT(m_summaryLabel);
+    Q_ASSERT(m_folderTable);
     int totalFolders = m_folderTable->rowCount();
     int selectedFolders = 0;
     qint64 totalSize = 0;
@@ -828,8 +829,8 @@ void UserProfileRestoreAppDataPage::updateParentCheckState(QTreeWidgetItem* pare
 }
 
 void UserProfileRestoreAppDataPage::onItemChanged(QTreeWidgetItem* item, int column) {
-    Q_ASSERT(m_appDataTree);
     Q_ASSERT(m_summaryLabel);
+    Q_ASSERT(m_appDataTree);
     if (column != 0) {
         return;
     }
@@ -1025,8 +1026,8 @@ void UserProfileRestoreNetworksPage::loadNetworkProfiles() {
 }
 
 void UserProfileRestoreNetworksPage::populateTree(const QVector<WifiProfileInfo>& profiles) {
-    Q_ASSERT(m_networkTree);
     Q_ASSERT(m_summaryLabel);
+    Q_ASSERT(m_networkTree);
     m_networkTree->blockSignals(true);
     m_networkTree->clear();
 
@@ -1045,8 +1046,8 @@ void UserProfileRestoreNetworksPage::populateTree(const QVector<WifiProfileInfo>
 }
 
 void UserProfileRestoreNetworksPage::onItemChanged(QTreeWidgetItem* item, int column) {
-    Q_ASSERT(m_networkTree);
     Q_ASSERT(m_summaryLabel);
+    Q_ASSERT(m_networkTree);
     Q_UNUSED(item)
     if (column != 0) {
         return;
@@ -1224,8 +1225,8 @@ void UserProfileRestoreEthernetPage::loadEthernetConfigs() {
 }
 
 void UserProfileRestoreEthernetPage::populateTable(const QVector<EthernetConfigInfo>& configs) {
-    Q_ASSERT(m_ethernetTable);
     Q_ASSERT(m_summaryLabel);
+    Q_ASSERT(m_ethernetTable);
     m_ethernetTable->setRowCount(0);
 
     for (const auto& config : configs) {

@@ -292,8 +292,8 @@ void RebuildIconCacheAction::execute() {
     Q_EMIT executionProgress("Icon cache rebuild complete", 100);
     qint64 duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
 
-    buildAndFinishIconCacheResult(
-        deleted_count, total_size, explorer_stopped, explorer_started, report, duration_ms);
+    IconCacheReport cache_report{deleted_count, total_size, explorer_stopped, explorer_started};
+    buildAndFinishIconCacheResult(cache_report, report, duration_ms);
 }
 
 QString RebuildIconCacheAction::buildIconCacheReportHeader(
@@ -325,34 +325,33 @@ QString RebuildIconCacheAction::buildIconCacheReportHeader(
     return report;
 }
 
-void RebuildIconCacheAction::buildAndFinishIconCacheResult(int deleted_count,
-                                                           qint64 total_size,
-                                                           bool explorer_stopped,
-                                                           bool explorer_started,
+void RebuildIconCacheAction::buildAndFinishIconCacheResult(const IconCacheReport& cache_report,
                                                            const QString& report,
                                                            qint64 duration_ms) {
     ExecutionResult result;
     Q_ASSERT(!result.success);  // verify default init
     result.duration_ms = duration_ms;
-    result.files_processed = deleted_count;
-    result.bytes_processed = total_size;
+    result.files_processed = cache_report.deleted_count;
+    result.bytes_processed = cache_report.total_size;
 
-    bool overall_success = explorer_stopped && (deleted_count > 0) && explorer_started;
+    bool overall_success = cache_report.explorer_stopped && (cache_report.deleted_count > 0) &&
+                           cache_report.explorer_started;
 
     if (overall_success) {
         result.success = true;
         result.message = QString("Icon cache rebuilt: %1 files deleted (%2 KB freed)")
-                             .arg(deleted_count)
-                             .arg(total_size / sak::kBytesPerKB);
+                             .arg(cache_report.deleted_count)
+                             .arg(cache_report.total_size / sak::kBytesPerKB);
         result.log = report;
         result.log += QString("\nCompleted in %1 seconds\n").arg(duration_ms / 1000);
         result.log += "RECOMMENDATIONS:\n";
         result.log += "\u2022 Icons will refresh automatically\n";
         result.log += "\u2022 Thumbnails will regenerate as needed\n";
         result.log += "\u2022 No reboot required\n";
-    } else if (explorer_started) {
+    } else if (cache_report.explorer_started) {
         result.success = true;
-        result.message = QString("Icon cache rebuilt with warnings (%1 files)").arg(deleted_count);
+        result.message =
+            QString("Icon cache rebuilt with warnings (%1 files)").arg(cache_report.deleted_count);
         result.log = report;
         result.log += "\nExplorer restarted but some cache files may not have been deleted\n";
     } else {
@@ -363,7 +362,7 @@ void RebuildIconCacheAction::buildAndFinishIconCacheResult(int deleted_count,
     }
 
     ActionStatus final_status = ActionStatus::Failed;
-    if (deleted_count > 0 && explorer_started) {
+    if (cache_report.deleted_count > 0 && cache_report.explorer_started) {
         final_status = ActionStatus::Success;
     }
     finishWithResult(result, final_status);

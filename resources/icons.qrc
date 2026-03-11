@@ -25,5 +25,11 @@
         <file>icons/panel_uninstall.svg</file>
         <file>icons/panel_wifi.svg</file>
         <file>icons/panel_about.svg</file>
+        <file>icons/icons8-benchmark.svg</file>
+        <file>icons/icons8-duplicate.svg</file>
+        <file>icons/icons8-settings_help.svg</file>
+        <file>icons/icons8-source.svg</file>
+        <file>icons/icons8-destination.svg</file>
+        <file>icons/icons8-orchestrator.svg</file>
     </qresource>
 </RCC>

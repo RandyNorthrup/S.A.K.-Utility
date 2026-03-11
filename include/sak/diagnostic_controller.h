@@ -222,6 +222,8 @@ private:
 
     /// @brief Aggregate all data and determine overall status
     void aggregateResults();
+    void aggregateSmartHealth();
+    void aggregateStressTest();
 
     // Workers (created on-demand)
     std::unique_ptr<HardwareInventoryScanner> m_hardware_scanner;

@@ -95,6 +95,12 @@ private:
     [[nodiscard]] TracerouteHop probeHop(
         const QString& targetIP, int ttl, int timeoutMs, int probes, bool resolveHostnames);
 
+    /// @brief Set final hop stats after probing (IP, avg RTT, hostname)
+    void finalizeHop(TracerouteHop& hop,
+                     const QVector<double>& rtts,
+                     const QString& hopIP,
+                     bool resolveHostnames);
+
     /// @brief Resolve hostname to IPv4 address
     [[nodiscard]] static QString resolveHostname(const QString& hostname);
 

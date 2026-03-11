@@ -123,36 +123,7 @@ QString NetworkDiagnosticReportGenerator::toHtml() const {
     QString html;
     html += buildHtmlHeader();
 
-    if (m_sections.contains(Section::AdapterConfig)) {
-        html += buildAdapterSection();
-    }
-    if (m_sections.contains(Section::PingResults)) {
-        html += buildPingSection();
-    }
-    if (m_sections.contains(Section::TracerouteResults)) {
-        html += buildTracerouteSection();
-    }
-    if (m_sections.contains(Section::DnsResults)) {
-        html += buildDnsSection();
-    }
-    if (m_sections.contains(Section::PortScanResults)) {
-        html += buildPortScanSection();
-    }
-    if (m_sections.contains(Section::BandwidthResults)) {
-        html += buildBandwidthSection();
-    }
-    if (m_sections.contains(Section::WiFiAnalysis)) {
-        html += buildWiFiSection();
-    }
-    if (m_sections.contains(Section::FirewallAudit)) {
-        html += buildFirewallSection();
-    }
-    if (m_sections.contains(Section::ActiveConnections)) {
-        html += buildConnectionSection();
-    }
-    if (m_sections.contains(Section::NetworkShares)) {
-        html += buildShareSection();
-    }
+    appendHtmlSections(html);
 
     html += buildHtmlFooter();
     return html;
@@ -605,35 +576,60 @@ void NetworkDiagnosticReportGenerator::populateRootJson(QJsonObject& root) const
     root[QStringLiteral("ticket")] = m_ticketNumber;
     root[QStringLiteral("notes")] = m_notes;
 
-    if (m_sections.contains(Section::AdapterConfig)) {
-        appendAdapterConfigJson(root);
+    appendJsonSections(root);
+}
+
+void NetworkDiagnosticReportGenerator::appendHtmlSections(QString& html) const {
+    using Builder = QString (NetworkDiagnosticReportGenerator::*)() const;
+    struct SectionBuilder {
+        Section section;
+        Builder builder;
+    };
+    static const SectionBuilder kBuilders[] = {
+        {Section::AdapterConfig, &NetworkDiagnosticReportGenerator::buildAdapterSection},
+        {Section::PingResults, &NetworkDiagnosticReportGenerator::buildPingSection},
+        {Section::TracerouteResults, &NetworkDiagnosticReportGenerator::buildTracerouteSection},
+        {Section::DnsResults, &NetworkDiagnosticReportGenerator::buildDnsSection},
+        {Section::PortScanResults, &NetworkDiagnosticReportGenerator::buildPortScanSection},
+        {Section::BandwidthResults, &NetworkDiagnosticReportGenerator::buildBandwidthSection},
+        {Section::WiFiAnalysis, &NetworkDiagnosticReportGenerator::buildWiFiSection},
+        {Section::FirewallAudit, &NetworkDiagnosticReportGenerator::buildFirewallSection},
+        {Section::ActiveConnections, &NetworkDiagnosticReportGenerator::buildConnectionSection},
+        {Section::NetworkShares, &NetworkDiagnosticReportGenerator::buildShareSection},
+    };
+
+    for (const auto& entry : kBuilders) {
+        if (m_sections.contains(entry.section)) {
+            html += (this->*entry.builder)();
+        }
     }
-    if (m_sections.contains(Section::PingResults)) {
-        appendPingResultsJson(root);
-    }
-    if (m_sections.contains(Section::TracerouteResults)) {
-        appendTracerouteResultsJson(root);
-    }
-    if (m_sections.contains(Section::DnsResults)) {
-        appendDnsResultsJson(root);
-    }
-    if (m_sections.contains(Section::PortScanResults)) {
-        appendPortScanResultsJson(root);
-    }
-    if (m_sections.contains(Section::BandwidthResults)) {
-        appendBandwidthResultsJson(root);
-    }
-    if (m_sections.contains(Section::WiFiAnalysis)) {
-        appendWiFiAnalysisJson(root);
-    }
-    if (m_sections.contains(Section::FirewallAudit)) {
-        appendFirewallAuditJson(root);
-    }
-    if (m_sections.contains(Section::ActiveConnections)) {
-        appendActiveConnectionsJson(root);
-    }
-    if (m_sections.contains(Section::NetworkShares)) {
-        appendNetworkSharesJson(root);
+}
+
+void NetworkDiagnosticReportGenerator::appendJsonSections(QJsonObject& root) const {
+    using Appender = void (NetworkDiagnosticReportGenerator::*)(QJsonObject&) const;
+    struct SectionAppender {
+        Section section;
+        Appender appender;
+    };
+    static const SectionAppender kAppenders[] = {
+        {Section::AdapterConfig, &NetworkDiagnosticReportGenerator::appendAdapterConfigJson},
+        {Section::PingResults, &NetworkDiagnosticReportGenerator::appendPingResultsJson},
+        {Section::TracerouteResults,
+         &NetworkDiagnosticReportGenerator::appendTracerouteResultsJson},
+        {Section::DnsResults, &NetworkDiagnosticReportGenerator::appendDnsResultsJson},
+        {Section::PortScanResults, &NetworkDiagnosticReportGenerator::appendPortScanResultsJson},
+        {Section::BandwidthResults, &NetworkDiagnosticReportGenerator::appendBandwidthResultsJson},
+        {Section::WiFiAnalysis, &NetworkDiagnosticReportGenerator::appendWiFiAnalysisJson},
+        {Section::FirewallAudit, &NetworkDiagnosticReportGenerator::appendFirewallAuditJson},
+        {Section::ActiveConnections,
+         &NetworkDiagnosticReportGenerator::appendActiveConnectionsJson},
+        {Section::NetworkShares, &NetworkDiagnosticReportGenerator::appendNetworkSharesJson},
+    };
+
+    for (const auto& entry : kAppenders) {
+        if (m_sections.contains(entry.section)) {
+            (this->*entry.appender)(root);
+        }
     }
 }
 

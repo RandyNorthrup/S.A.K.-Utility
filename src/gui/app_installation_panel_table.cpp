@@ -1,4 +1,4 @@
-﻿// Copyright (c) 2025 Randy Northrup. All rights reserved.
+// Copyright (c) 2025 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "sak/app_installation_panel.h"
@@ -253,8 +253,8 @@ void AppInstallationPanel::enableControls(bool enabled) {
 // ============================================================================
 
 void AppInstallationPanel::saveQueueToFile() {
-    Q_ASSERT(!m_installQueue.empty());
     Q_ASSERT(!m_installQueue.isEmpty());
+    Q_ASSERT(!m_installQueue.empty());
     if (m_installQueue.isEmpty()) {
         QMessageBox::information(this,
                                  tr("Save App List"),
@@ -297,19 +297,37 @@ void AppInstallationPanel::saveQueueToFile() {
 }
 
 void AppInstallationPanel::loadQueueFromFile() {
-    Q_ASSERT(!m_installQueue.empty());
-    Q_ASSERT(!m_installQueue.isEmpty());
     QString filePath = QFileDialog::getOpenFileName(
         this, tr("Load App List"), QString(), tr("JSON Files (*.json)"));
     if (filePath.isEmpty()) {
         return;
     }
 
+    QJsonArray arr;
+    if (!parseQueueFile(filePath, arr)) {
+        return;
+    }
+
+    int added = 0;
+    int skipped = 0;
+    importQueueEntries(arr, added, skipped);
+
+    updateQueueDisplay();
+
+    QString msg = QString("Loaded %1 package(s)").arg(added);
+    if (skipped > 0) {
+        msg += QString(", %1 duplicate(s) skipped").arg(skipped);
+    }
+    Q_EMIT logOutput(msg + QString(" from %1").arg(filePath));
+    Q_EMIT statusMessage(msg, sak::kTimerStatusMessageMs);
+}
+
+bool AppInstallationPanel::parseQueueFile(const QString& filePath, QJsonArray& out_array) {
     QFile file(filePath);
     if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
         sak::logWarning(("Load Failed: Could not read file: " + filePath).toStdString());
         QMessageBox::warning(this, tr("Load Failed"), tr("Could not read file:\n%1").arg(filePath));
-        return;
+        return false;
     }
 
     QJsonParseError parseError;
@@ -321,18 +339,20 @@ void AppInstallationPanel::loadQueueFromFile() {
         QMessageBox::warning(this,
                              tr("Load Failed"),
                              tr("Invalid JSON:\n%1").arg(parseError.errorString()));
-        return;
+        return false;
     }
 
     if (!doc.isArray()) {
         sak::logWarning("Load Failed: Expected a JSON array of packages.");
         QMessageBox::warning(this, tr("Load Failed"), tr("Expected a JSON array of packages."));
-        return;
+        return false;
     }
 
-    int added = 0;
-    int skipped = 0;
-    const QJsonArray arr = doc.array();
+    out_array = doc.array();
+    return true;
+}
+
+void AppInstallationPanel::importQueueEntries(const QJsonArray& arr, int& added, int& skipped) {
     for (const auto& val : arr) {
         if (!val.isObject()) {
             continue;
@@ -343,7 +363,6 @@ void AppInstallationPanel::loadQueueFromFile() {
             continue;
         }
 
-        // Skip duplicates
         bool duplicate = false;
         for (const auto& existing : m_installQueue) {
             if (existing.package_id == pkgId) {
@@ -363,13 +382,4 @@ void AppInstallationPanel::loadQueueFromFile() {
         m_installQueue.append(entry);
         added++;
     }
-
-    updateQueueDisplay();
-
-    QString msg = QString("Loaded %1 package(s)").arg(added);
-    if (skipped > 0) {
-        msg += QString(", %1 duplicate(s) skipped").arg(skipped);
-    }
-    Q_EMIT logOutput(msg + QString(" from %1").arg(filePath));
-    Q_EMIT statusMessage(msg, sak::kTimerStatusMessageMs);
 }

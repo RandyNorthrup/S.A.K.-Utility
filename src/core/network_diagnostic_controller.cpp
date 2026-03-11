@@ -429,26 +429,25 @@ void NetworkDiagnosticController::scanAdapters() {
     runOnThread([this]() { m_adapterInspector->scan(); }, State::ScanningAdapters);
 }
 
-void NetworkDiagnosticController::ping(
-    const QString& target, int count, int intervalMs, int timeoutMs, int packetSize, int ttl) {
-    if (target.trimmed().isEmpty()) {
+void NetworkDiagnosticController::ping(const PingParams& params) {
+    if (params.target.trimmed().isEmpty()) {
         Q_EMIT errorOccurred(QStringLiteral("Ping target cannot be empty"));
         return;
     }
 
-    Q_EMIT statusMessage(QStringLiteral("Pinging %1...").arg(target), 0);
+    Q_EMIT statusMessage(QStringLiteral("Pinging %1...").arg(params.target), 0);
     Q_EMIT logOutput(QStringLiteral("Starting ping to %1 (%2 packets, %3 ms timeout)")
-                         .arg(target)
-                         .arg(count)
-                         .arg(timeoutMs));
+                         .arg(params.target)
+                         .arg(params.count)
+                         .arg(params.timeout_ms));
 
     ConnectivityTester::PingConfig config;
-    config.target = target;
-    config.count = count;
-    config.intervalMs = intervalMs;
-    config.timeoutMs = timeoutMs;
-    config.packetSizeBytes = packetSize;
-    config.ttl = ttl;
+    config.target = params.target;
+    config.count = params.count;
+    config.intervalMs = params.interval_ms;
+    config.timeoutMs = params.timeout_ms;
+    config.packetSizeBytes = params.packet_size;
+    config.ttl = params.ttl;
 
     runOnThread([this, config]() { m_connectivityTester->ping(config); }, State::RunningPing);
 }
@@ -556,29 +555,23 @@ void NetworkDiagnosticController::dnsFlushCache() {
     runOnThread([this]() { m_dnsTool->flushDnsCache(); }, State::RunningDnsQuery);
 }
 
-void NetworkDiagnosticController::scanPorts(const QString& target,
-                                            const QVector<uint16_t>& ports,
-                                            uint16_t rangeStart,
-                                            uint16_t rangeEnd,
-                                            int timeoutMs,
-                                            int maxConcurrent,
-                                            bool grabBanners) {
-    if (target.trimmed().isEmpty()) {
+void NetworkDiagnosticController::scanPorts(const PortScanParams& params) {
+    if (params.target.trimmed().isEmpty()) {
         Q_EMIT errorOccurred(QStringLiteral("Port scan target cannot be empty"));
         return;
     }
 
     PortScanner::ScanConfig config;
-    config.target = target;
-    config.ports = ports;
-    config.portRangeStart = rangeStart;
-    config.portRangeEnd = rangeEnd;
-    config.timeoutMs = timeoutMs;
-    config.maxConcurrent = maxConcurrent;
-    config.grabBanners = grabBanners;
+    config.target = params.target;
+    config.ports = params.ports;
+    config.portRangeStart = params.range_start;
+    config.portRangeEnd = params.range_end;
+    config.timeoutMs = params.timeout_ms;
+    config.maxConcurrent = params.max_concurrent;
+    config.grabBanners = params.grab_banners;
 
-    Q_EMIT statusMessage(QStringLiteral("Scanning ports on %1...").arg(target), 0);
-    Q_EMIT logOutput(QStringLiteral("Starting port scan on %1").arg(target));
+    Q_EMIT statusMessage(QStringLiteral("Scanning ports on %1...").arg(params.target), 0);
+    Q_EMIT logOutput(QStringLiteral("Starting port scan on %1").arg(params.target));
 
     runOnThread([this, config]() { m_portScanner->scan(config); }, State::ScanningPorts);
 }
@@ -595,27 +588,27 @@ bool NetworkDiagnosticController::isIperfServerRunning() const {
     return m_bandwidthTester->isServerRunning();
 }
 
-void NetworkDiagnosticController::runBandwidthTest(
-    const QString& serverAddr, uint16_t port, int durationSec, int streams, bool bidir, bool udp) {
-    if (serverAddr.trimmed().isEmpty()) {
+void NetworkDiagnosticController::runBandwidthTest(const BandwidthTestParams& params) {
+    if (params.server_addr.trimmed().isEmpty()) {
         Q_EMIT errorOccurred(QStringLiteral("Bandwidth test server address cannot be empty"));
         return;
     }
 
     BandwidthTester::IperfConfig config;
-    config.serverAddress = serverAddr;
-    config.port = port;
-    config.durationSec = durationSec;
-    config.parallelStreams = streams;
-    config.bidirectional = bidir;
-    config.udpMode = udp;
+    config.serverAddress = params.server_addr;
+    config.port = params.port;
+    config.durationSec = params.duration_sec;
+    config.parallelStreams = params.streams;
+    config.bidirectional = params.bidirectional;
+    config.udpMode = params.udp;
 
-    Q_EMIT statusMessage(QStringLiteral("Running bandwidth test against %1...").arg(serverAddr), 0);
+    Q_EMIT statusMessage(
+        QStringLiteral("Running bandwidth test against %1...").arg(params.server_addr), 0);
     Q_EMIT logOutput(QStringLiteral("Starting iPerf3 test to %1:%2 (%3s, %4 streams)")
-                         .arg(serverAddr)
-                         .arg(port)
-                         .arg(durationSec)
-                         .arg(streams));
+                         .arg(params.server_addr)
+                         .arg(params.port)
+                         .arg(params.duration_sec)
+                         .arg(params.streams));
 
     runOnThread([this, config]() { m_bandwidthTester->runIperfTest(config); },
                 State::RunningBandwidthTest);
@@ -730,101 +723,60 @@ void NetworkDiagnosticController::handleLanClientConnection(QTcpSocket* socket) 
     Q_EMIT logOutput(QStringLiteral("LAN transfer: peer connected from %1")
                          .arg(socket->peerAddress().toString()));
 
-    auto* timer = new QElapsedTimer();
-    timer->start();
-    auto* totalReceived = new qint64(0);
-    auto* peakMbps = new double(0.0);
-    auto* lastReportTime = new qint64(0);
-    auto* lastReportBytes = new qint64(0);
-    auto* speedSamples = new QVector<double>();
+    auto* ctx = new LanClientContext();
+    ctx->timer.start();
 
-    connect(socket,
-            &QTcpSocket::readyRead,
-            this,
-            [this,
-             socket,
-             timer,
-             totalReceived,
-             peakMbps,
-             lastReportTime,
-             lastReportBytes,
-             speedSamples]() {
-                qint64 bytes = socket->bytesAvailable();
-                QByteArray received_data = socket->read(bytes);
-                *totalReceived += received_data.size();
+    connect(socket, &QTcpSocket::readyRead, this, [this, socket, ctx]() {
+        qint64 bytes = socket->bytesAvailable();
+        QByteArray received_data = socket->read(bytes);
+        ctx->total_received += received_data.size();
 
-                qint64 elapsed = timer->elapsed();
-                constexpr qint64 kReportIntervalMs = 1000;
-                if (elapsed - *lastReportTime >= kReportIntervalMs) {
-                    qint64 deltaBytes = *totalReceived - *lastReportBytes;
-                    double deltaSec = (elapsed - *lastReportTime) / 1000.0;
-                    double currentMbps = deltaSec > 0 ? (deltaBytes * 8.0 / (deltaSec * 1e6)) : 0.0;
-                    *peakMbps = std::max(*peakMbps, currentMbps);
-                    speedSamples->append(currentMbps);
-                    *lastReportTime = elapsed;
-                    *lastReportBytes = *totalReceived;
+        qint64 elapsed = ctx->timer.elapsed();
+        constexpr qint64 kReportIntervalMs = 1000;
+        if (elapsed - ctx->last_report_time >= kReportIntervalMs) {
+            qint64 deltaBytes = ctx->total_received - ctx->last_report_bytes;
+            double deltaSec = (elapsed - ctx->last_report_time) / 1000.0;
+            double currentMbps = deltaSec > 0 ? (deltaBytes * 8.0 / (deltaSec * 1e6)) : 0.0;
+            ctx->peak_mbps = std::max(ctx->peak_mbps, currentMbps);
+            ctx->speed_samples.append(currentMbps);
+            ctx->last_report_time = elapsed;
+            ctx->last_report_bytes = ctx->total_received;
 
-                    Q_EMIT lanTransferProgress(currentMbps, elapsed / 1000.0, *totalReceived);
-                }
-            });
+            Q_EMIT lanTransferProgress(currentMbps, elapsed / 1000.0, ctx->total_received);
+        }
+    });
 
-    connect(socket,
-            &QTcpSocket::disconnected,
-            this,
-            [this,
-             socket,
-             timer,
-             totalReceived,
-             peakMbps,
-             lastReportTime,
-             lastReportBytes,
-             speedSamples]() {
-                handleLanClientDisconnected(socket,
-                                            timer,
-                                            totalReceived,
-                                            peakMbps,
-                                            lastReportTime,
-                                            lastReportBytes,
-                                            speedSamples);
-            });
+    connect(socket, &QTcpSocket::disconnected, this, [this, socket, ctx]() {
+        handleLanClientDisconnected(socket, ctx);
+    });
 }
 
 void NetworkDiagnosticController::handleLanClientDisconnected(QTcpSocket* socket,
-                                                              QElapsedTimer* timer,
-                                                              qint64* totalReceived,
-                                                              double* peakMbps,
-                                                              qint64* lastReportTime,
-                                                              qint64* lastReportBytes,
-                                                              QVector<double>* speedSamples) {
+                                                              LanClientContext* ctx) {
     Q_ASSERT(socket);
-    Q_ASSERT(timer);
+    Q_ASSERT(ctx);
 
-    double elapsed_sec = timer->elapsed() / 1000.0;
+    double elapsed_sec = ctx->timer.elapsed() / 1000.0;
 
     LanTransferResult result;
     result.remoteAddress = socket->peerAddress().toString();
     result.port = socket->localPort();
-    result.bytesTransferred = *totalReceived;
+    result.bytesTransferred = ctx->total_received;
     result.durationSec = elapsed_sec;
-    result.avgSpeedMbps = elapsed_sec > 0 ? (*totalReceived * 8.0 / (elapsed_sec * 1e6)) : 0.0;
-    result.peakSpeedMbps = *peakMbps;
+    result.avgSpeedMbps = elapsed_sec > 0 ? (ctx->total_received * 8.0 / (elapsed_sec * 1e6)) : 0.0;
+    result.peakSpeedMbps = ctx->peak_mbps;
     result.isUpload = false;
     result.timestamp = QDateTime::currentDateTime();
-    result.speedSamplesMbps = *speedSamples;
+    result.speedSamplesMbps = ctx->speed_samples;
 
     Q_EMIT lanTransferComplete(result);
     Q_EMIT logOutput(QStringLiteral("LAN transfer receive complete: "
                                     "%1 MB in %2s (%3 Mbps avg)")
-                         .arg(*totalReceived / (1024.0 * 1024.0), 0, 'f', 1)
+                         .arg(ctx->total_received / (1024.0 * 1024.0), 0, 'f', 1)
                          .arg(elapsed_sec, 0, 'f', 1)
                          .arg(result.avgSpeedMbps, 0, 'f', 1));
 
-    delete timer;
-    delete totalReceived;
-    delete peakMbps;
-    delete lastReportTime;
-    delete lastReportBytes;
-    delete speedSamples;
+    delete ctx;
     socket->deleteLater();
 }
 
@@ -850,34 +802,10 @@ static QByteArray createPatternBuffer(int blockSizeKB) {
     return buffer;
 }
 
-static LanTransferResult buildLanTransferResult(const QString& addr,
-                                                uint16_t port,
-                                                qint64 totalSent,
-                                                double elapsedSec,
-                                                double peakMbps,
-                                                const QVector<double>& samples) {
-    LanTransferResult result;
-    result.remoteAddress = addr;
-    result.port = port;
-    result.bytesTransferred = totalSent;
-    result.durationSec = elapsedSec;
-    result.avgSpeedMbps = elapsedSec > 0 ? (totalSent * 8.0 / (elapsedSec * 1e6)) : 0.0;
-    result.peakSpeedMbps = peakMbps;
-    result.isUpload = true;
-    result.timestamp = QDateTime::currentDateTime();
-    result.speedSamplesMbps = samples;
-    return result;
-}
-
 void NetworkDiagnosticController::finalizeLanTransfer(QTcpSocket& socket,
-                                                      const QString& targetAddr,
-                                                      uint16_t port,
-                                                      qint64 totalSent,
-                                                      qint64 elapsedMs,
-                                                      double peakMbps,
-                                                      const QVector<double>& speedSamples) {
-    Q_ASSERT(totalSent >= 0);
-    Q_ASSERT(!targetAddr.isEmpty());
+                                                      const LanTransferData& data) {
+    Q_ASSERT(data.total_sent >= 0);
+    Q_ASSERT(!data.target_addr.isEmpty());
 
     socket.waitForBytesWritten(3000);
     socket.disconnectFromHost();
@@ -885,13 +813,23 @@ void NetworkDiagnosticController::finalizeLanTransfer(QTcpSocket& socket,
         socket.waitForDisconnected(3000);
     }
 
-    double elapsed_sec = elapsedMs / 1000.0;
-    auto result =
-        buildLanTransferResult(targetAddr, port, totalSent, elapsed_sec, peakMbps, speedSamples);
+    double elapsed_sec = data.elapsed_ms / 1000.0;
+
+    LanTransferResult result;
+    result.remoteAddress = data.target_addr;
+    result.port = data.port;
+    result.bytesTransferred = data.total_sent;
+    result.durationSec = elapsed_sec;
+    result.avgSpeedMbps = elapsed_sec > 0 ? (data.total_sent * 8.0 / (elapsed_sec * 1e6)) : 0.0;
+    result.peakSpeedMbps = data.peak_mbps;
+    result.isUpload = true;
+    result.timestamp = QDateTime::currentDateTime();
+    result.speedSamplesMbps = data.speed_samples;
+
     Q_EMIT lanTransferComplete(result);
     Q_EMIT logOutput(QStringLiteral("LAN transfer complete: "
                                     "%1 MB in %2s (%3 Mbps avg)")
-                         .arg(totalSent / (1024.0 * 1024.0), 0, 'f', 1)
+                         .arg(data.total_sent / (1024.0 * 1024.0), 0, 'f', 1)
                          .arg(elapsed_sec, 0, 'f', 1)
                          .arg(result.avgSpeedMbps, 0, 'f', 1));
     Q_EMIT statusMessage(QStringLiteral("LAN transfer test complete"), 5000);
@@ -972,9 +910,72 @@ void NetworkDiagnosticController::runLanTransferTest(const QString& targetAddr,
             }
 
             finalizeLanTransfer(
-                socket, targetAddr, port, totalSent, timer.elapsed(), peakMbps, speedSamples);
+                socket, {targetAddr, port, totalSent, timer.elapsed(), peakMbps, speedSamples});
         },
         State::Idle);
+}
+
+QSet<NetworkDiagnosticReportGenerator::Section>
+NetworkDiagnosticController::populateReportSections() {
+    using S = NetworkDiagnosticReportGenerator::Section;
+    QSet<S> sections;
+    populateBasicReportSections(sections);
+    populateAdvancedReportSections(sections);
+    return sections;
+}
+
+void NetworkDiagnosticController::populateBasicReportSections(
+    QSet<NetworkDiagnosticReportGenerator::Section>& sections) {
+    using S = NetworkDiagnosticReportGenerator::Section;
+
+    if (!m_cachedAdapters.isEmpty()) {
+        sections.insert(S::AdapterConfig);
+        m_reportGenerator->setAdapterData(m_cachedAdapters);
+    }
+    if (m_cachedPing.sent > 0) {
+        sections.insert(S::PingResults);
+        m_reportGenerator->setPingData(m_cachedPing);
+    }
+    if (!m_cachedTraceroute.hops.isEmpty()) {
+        sections.insert(S::TracerouteResults);
+        m_reportGenerator->setTracerouteData(m_cachedTraceroute);
+    }
+    if (!m_cachedDns.isEmpty()) {
+        sections.insert(S::DnsResults);
+        m_reportGenerator->setDnsData(m_cachedDns);
+    }
+    if (!m_cachedPortScan.isEmpty()) {
+        sections.insert(S::PortScanResults);
+        m_reportGenerator->setPortScanData(m_cachedPortScan);
+    }
+}
+
+void NetworkDiagnosticController::populateAdvancedReportSections(
+    QSet<NetworkDiagnosticReportGenerator::Section>& sections) {
+    using S = NetworkDiagnosticReportGenerator::Section;
+
+    if (m_cachedBandwidth.downloadMbps > 0 || m_cachedBandwidth.uploadMbps > 0) {
+        sections.insert(S::BandwidthResults);
+        m_reportGenerator->setBandwidthData(m_cachedBandwidth);
+    }
+    if (!m_cachedWifi.isEmpty()) {
+        sections.insert(S::WiFiAnalysis);
+        m_reportGenerator->setWiFiData(m_cachedWifi);
+    }
+    if (!m_cachedFirewallRules.isEmpty()) {
+        sections.insert(S::FirewallAudit);
+        m_reportGenerator->setFirewallData(m_cachedFirewallRules,
+                                           m_cachedFirewallConflicts,
+                                           m_cachedFirewallGaps);
+    }
+    if (!m_cachedConnections.isEmpty()) {
+        sections.insert(S::ActiveConnections);
+        m_reportGenerator->setConnectionData(m_cachedConnections);
+    }
+    if (!m_cachedShares.isEmpty()) {
+        sections.insert(S::NetworkShares);
+        m_reportGenerator->setShareData(m_cachedShares);
+    }
 }
 
 void NetworkDiagnosticController::generateReport(const QString& outputPath,
@@ -987,65 +988,18 @@ void NetworkDiagnosticController::generateReport(const QString& outputPath,
         return;
     }
 
-    // Populate report generator with cached data
     m_reportGenerator->setTechnicianName(technician);
     m_reportGenerator->setTicketNumber(ticket);
     m_reportGenerator->setNotes(notes);
 
-    // Include all sections that have data
-    QSet<NetworkDiagnosticReportGenerator::Section> sections;
-    if (!m_cachedAdapters.isEmpty()) {
-        sections.insert(NetworkDiagnosticReportGenerator::Section::AdapterConfig);
-        m_reportGenerator->setAdapterData(m_cachedAdapters);
-    }
-    if (m_cachedPing.sent > 0) {
-        sections.insert(NetworkDiagnosticReportGenerator::Section::PingResults);
-        m_reportGenerator->setPingData(m_cachedPing);
-    }
-    if (!m_cachedTraceroute.hops.isEmpty()) {
-        sections.insert(NetworkDiagnosticReportGenerator::Section::TracerouteResults);
-        m_reportGenerator->setTracerouteData(m_cachedTraceroute);
-    }
-    if (!m_cachedDns.isEmpty()) {
-        sections.insert(NetworkDiagnosticReportGenerator::Section::DnsResults);
-        m_reportGenerator->setDnsData(m_cachedDns);
-    }
-    if (!m_cachedPortScan.isEmpty()) {
-        sections.insert(NetworkDiagnosticReportGenerator::Section::PortScanResults);
-        m_reportGenerator->setPortScanData(m_cachedPortScan);
-    }
-    if (m_cachedBandwidth.downloadMbps > 0 || m_cachedBandwidth.uploadMbps > 0) {
-        sections.insert(NetworkDiagnosticReportGenerator::Section::BandwidthResults);
-        m_reportGenerator->setBandwidthData(m_cachedBandwidth);
-    }
-    if (!m_cachedWifi.isEmpty()) {
-        sections.insert(NetworkDiagnosticReportGenerator::Section::WiFiAnalysis);
-        m_reportGenerator->setWiFiData(m_cachedWifi);
-    }
-    if (!m_cachedFirewallRules.isEmpty()) {
-        sections.insert(NetworkDiagnosticReportGenerator::Section::FirewallAudit);
-        m_reportGenerator->setFirewallData(m_cachedFirewallRules,
-                                           m_cachedFirewallConflicts,
-                                           m_cachedFirewallGaps);
-    }
-    if (!m_cachedConnections.isEmpty()) {
-        sections.insert(NetworkDiagnosticReportGenerator::Section::ActiveConnections);
-        m_reportGenerator->setConnectionData(m_cachedConnections);
-    }
-    if (!m_cachedShares.isEmpty()) {
-        sections.insert(NetworkDiagnosticReportGenerator::Section::NetworkShares);
-        m_reportGenerator->setShareData(m_cachedShares);
-    }
-
-    m_reportGenerator->setIncludedSections(sections);
+    m_reportGenerator->setIncludedSections(populateReportSections());
 
     Q_EMIT statusMessage(QStringLiteral("Generating report..."), 0);
 
-    // Use runOnThread to avoid blocking the main thread with file I/O
-    const bool isJson = (format.compare(QStringLiteral("json"), Qt::CaseInsensitive) == 0);
+    const bool is_json = (format.compare(QStringLiteral("json"), Qt::CaseInsensitive) == 0);
     runOnThread(
-        [this, outputPath, isJson]() {
-            if (isJson) {
+        [this, outputPath, is_json]() {
+            if (is_json) {
                 m_reportGenerator->generateJson(outputPath);
             } else {
                 m_reportGenerator->generateHtml(outputPath);

@@ -59,6 +59,102 @@ QStringList DnsDiagnosticTool::supportedRecordTypes() {
     };
 }
 
+}  // namespace sak
+
+namespace {
+
+WORD mapRecordType(const QString& recordType) {
+    struct TypeMapping {
+        const char* name;
+        WORD type;
+    };
+    static constexpr TypeMapping kTypes[] = {
+        {"AAAA", DNS_TYPE_AAAA},
+        {"MX", DNS_TYPE_MX},
+        {"CNAME", DNS_TYPE_CNAME},
+        {"TXT", DNS_TYPE_TEXT},
+        {"SOA", DNS_TYPE_SOA},
+        {"NS", DNS_TYPE_NS},
+        {"SRV", DNS_TYPE_SRV},
+        {"PTR", DNS_TYPE_PTR},
+    };
+    for (const auto& entry : kTypes) {
+        if (recordType == QLatin1String(entry.name)) {
+            return entry.type;
+        }
+    }
+    return DNS_TYPE_A;
+}
+
+void appendTxtRecords(DNS_RECORD* rec, sak::DnsQueryResult& result) {
+    for (DWORD i = 0; i < rec->Data.TXT.dwStringCount; ++i) {
+        result.answers.append(QString::fromWCharArray(rec->Data.TXT.pStringArray[i]));
+    }
+}
+
+void extractDnsAnswer(DNS_RECORD* rec, sak::DnsQueryResult& result) {
+    switch (rec->wType) {
+    case DNS_TYPE_A: {
+        IN_ADDR addr;
+        addr.S_un.S_addr = rec->Data.A.IpAddress;
+        char ipBuf[INET_ADDRSTRLEN] = {};
+        inet_ntop(AF_INET, &addr, ipBuf, sizeof(ipBuf));
+        result.answers.append(QString::fromLatin1(ipBuf));
+        break;
+    }
+    case DNS_TYPE_AAAA: {
+        char ipBuf[INET6_ADDRSTRLEN] = {};
+        inet_ntop(AF_INET6, &rec->Data.AAAA.Ip6Address, ipBuf, sizeof(ipBuf));
+        result.answers.append(QString::fromLatin1(ipBuf));
+        break;
+    }
+    case DNS_TYPE_MX: {
+        auto name = QString::fromWCharArray(rec->Data.MX.pNameExchange);
+        result.answers.append(
+            QStringLiteral("%1 (priority %2)").arg(name).arg(rec->Data.MX.wPreference));
+        break;
+    }
+    case DNS_TYPE_CNAME: {
+        result.answers.append(QString::fromWCharArray(rec->Data.CNAME.pNameHost));
+        break;
+    }
+    case DNS_TYPE_TEXT:
+        appendTxtRecords(rec, result);
+        break;
+    case DNS_TYPE_SOA: {
+        auto primary = QString::fromWCharArray(rec->Data.SOA.pNamePrimaryServer);
+        auto admin = QString::fromWCharArray(rec->Data.SOA.pNameAdministrator);
+        result.answers.append(QStringLiteral("Primary: %1, Admin: %2, Serial: %3")
+                                  .arg(primary, admin)
+                                  .arg(rec->Data.SOA.dwSerialNo));
+        break;
+    }
+    case DNS_TYPE_NS: {
+        result.answers.append(QString::fromWCharArray(rec->Data.NS.pNameHost));
+        break;
+    }
+    case DNS_TYPE_SRV: {
+        auto target = QString::fromWCharArray(rec->Data.SRV.pNameTarget);
+        result.answers.append(QStringLiteral("%1:%2 (priority %3, weight %4)")
+                                  .arg(target)
+                                  .arg(rec->Data.SRV.wPort)
+                                  .arg(rec->Data.SRV.wPriority)
+                                  .arg(rec->Data.SRV.wWeight));
+        break;
+    }
+    case DNS_TYPE_PTR: {
+        result.answers.append(QString::fromWCharArray(rec->Data.PTR.pNameHost));
+        break;
+    }
+    default:
+        break;
+    }
+}
+
+}  // namespace
+
+namespace sak {
+
 DnsQueryResult DnsDiagnosticTool::performQuery(const QString& hostname,
                                                const QString& recordType,
                                                const QString& dnsServer) {
@@ -68,25 +164,7 @@ DnsQueryResult DnsDiagnosticTool::performQuery(const QString& hostname,
     result.dnsServer = dnsServer.isEmpty() ? QStringLiteral("System Default") : dnsServer;
     result.queryTimestamp = QDateTime::currentDateTime();
 
-    // Map record type string to DNS_TYPE
-    WORD type = DNS_TYPE_A;
-    if (recordType == QStringLiteral("AAAA")) {
-        type = DNS_TYPE_AAAA;
-    } else if (recordType == QStringLiteral("MX")) {
-        type = DNS_TYPE_MX;
-    } else if (recordType == QStringLiteral("CNAME")) {
-        type = DNS_TYPE_CNAME;
-    } else if (recordType == QStringLiteral("TXT")) {
-        type = DNS_TYPE_TEXT;
-    } else if (recordType == QStringLiteral("SOA")) {
-        type = DNS_TYPE_SOA;
-    } else if (recordType == QStringLiteral("NS")) {
-        type = DNS_TYPE_NS;
-    } else if (recordType == QStringLiteral("SRV")) {
-        type = DNS_TYPE_SRV;
-    } else if (recordType == QStringLiteral("PTR")) {
-        type = DNS_TYPE_PTR;
-    }
+    const WORD type = mapRecordType(recordType);
 
     // Set up custom DNS server if specified
     IP4_ARRAY serverList{};
@@ -120,66 +198,7 @@ DnsQueryResult DnsDiagnosticTool::performQuery(const QString& hostname,
 
         for (auto* rec = dnsRecord; rec != nullptr; rec = rec->pNext) {
             result.ttlSeconds = static_cast<int>(rec->dwTtl);
-
-            switch (rec->wType) {
-            case DNS_TYPE_A: {
-                IN_ADDR addr;
-                addr.S_un.S_addr = rec->Data.A.IpAddress;
-                char ipBuf[INET_ADDRSTRLEN] = {};
-                inet_ntop(AF_INET, &addr, ipBuf, sizeof(ipBuf));
-                result.answers.append(QString::fromLatin1(ipBuf));
-                break;
-            }
-            case DNS_TYPE_AAAA: {
-                char ipBuf[INET6_ADDRSTRLEN] = {};
-                inet_ntop(AF_INET6, &rec->Data.AAAA.Ip6Address, ipBuf, sizeof(ipBuf));
-                result.answers.append(QString::fromLatin1(ipBuf));
-                break;
-            }
-            case DNS_TYPE_MX: {
-                auto name = QString::fromWCharArray(rec->Data.MX.pNameExchange);
-                result.answers.append(
-                    QStringLiteral("%1 (priority %2)").arg(name).arg(rec->Data.MX.wPreference));
-                break;
-            }
-            case DNS_TYPE_CNAME: {
-                result.answers.append(QString::fromWCharArray(rec->Data.CNAME.pNameHost));
-                break;
-            }
-            case DNS_TYPE_TEXT: {
-                for (DWORD i = 0; i < rec->Data.TXT.dwStringCount; ++i) {
-                    result.answers.append(QString::fromWCharArray(rec->Data.TXT.pStringArray[i]));
-                }
-                break;
-            }
-            case DNS_TYPE_SOA: {
-                auto primary = QString::fromWCharArray(rec->Data.SOA.pNamePrimaryServer);
-                auto admin = QString::fromWCharArray(rec->Data.SOA.pNameAdministrator);
-                result.answers.append(QStringLiteral("Primary: %1, Admin: %2, Serial: %3")
-                                          .arg(primary, admin)
-                                          .arg(rec->Data.SOA.dwSerialNo));
-                break;
-            }
-            case DNS_TYPE_NS: {
-                result.answers.append(QString::fromWCharArray(rec->Data.NS.pNameHost));
-                break;
-            }
-            case DNS_TYPE_SRV: {
-                auto target = QString::fromWCharArray(rec->Data.SRV.pNameTarget);
-                result.answers.append(QStringLiteral("%1:%2 (priority %3, weight %4)")
-                                          .arg(target)
-                                          .arg(rec->Data.SRV.wPort)
-                                          .arg(rec->Data.SRV.wPriority)
-                                          .arg(rec->Data.SRV.wWeight));
-                break;
-            }
-            case DNS_TYPE_PTR: {
-                result.answers.append(QString::fromWCharArray(rec->Data.PTR.pNameHost));
-                break;
-            }
-            default:
-                break;
-            }
+            extractDnsAnswer(rec, result);
         }
 
         DnsRecordListFree(dnsRecord, DnsFreeRecordListDeep);
@@ -236,6 +255,23 @@ void DnsDiagnosticTool::reverseLookup(const QString& ipAddress, const QString& d
     Q_EMIT queryComplete(result);
 }
 
+void DnsDiagnosticTool::updateComparisonWithResult(const DnsQueryResult& result,
+                                                   DnsServerComparison& comparison,
+                                                   QVector<QString>& firstAnswers) {
+    comparison.results.append(result);
+
+    if (result.success && result.responseTimeMs < comparison.fastestTimeMs) {
+        comparison.fastestTimeMs = result.responseTimeMs;
+        comparison.fastestServer = result.dnsServer;
+    }
+
+    if (firstAnswers.isEmpty() && result.success) {
+        firstAnswers = result.answers;
+    } else if (result.success && result.answers != firstAnswers) {
+        comparison.allAgree = false;
+    }
+}
+
 void DnsDiagnosticTool::compareServers(const QString& hostname,
                                        const QString& recordType,
                                        const QStringList& dnsServers) {
@@ -258,21 +294,8 @@ void DnsDiagnosticTool::compareServers(const QString& hostname,
         if (m_cancelled.load()) {
             break;
         }
-
         auto result = performQuery(hostname, recordType, server);
-        comparison.results.append(result);
-
-        if (result.success && result.responseTimeMs < comparison.fastestTimeMs) {
-            comparison.fastestTimeMs = result.responseTimeMs;
-            comparison.fastestServer = result.dnsServer;
-        }
-
-        // Check agreement
-        if (firstAnswers.isEmpty() && result.success) {
-            firstAnswers = result.answers;
-        } else if (result.success && result.answers != firstAnswers) {
-            comparison.allAgree = false;
-        }
+        updateComparisonWithResult(result, comparison, firstAnswers);
     }
 
     if (comparison.fastestTimeMs == std::numeric_limits<double>::max()) {

@@ -34,7 +34,7 @@ ImageFlasherSettingsDialog::ImageFlasherSettingsDialog(QWidget* parent) : QDialo
 ImageFlasherSettingsDialog::~ImageFlasherSettingsDialog() = default;
 
 void ImageFlasherSettingsDialog::setupUi() {
-    Q_ASSERT(!objectName().isEmpty() || true);  // widget valid
+    Q_ASSERT(layout() == nullptr);  // setupUi not called twice
     auto* mainLayout = new QVBoxLayout(this);
     setupUi_generalSection(mainLayout);
     setupUi_advancedSection(mainLayout);

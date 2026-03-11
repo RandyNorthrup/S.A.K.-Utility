@@ -363,65 +363,45 @@ QString OperationResult::getSummary() const {
 }
 
 // Helper functions
+
+namespace {
+
+struct FolderTypeEntry {
+    FolderType type;
+    const char* name;
+};
+
+static constexpr FolderTypeEntry kFolderTypes[] = {
+    {FolderType::Documents, "Documents"},
+    {FolderType::Desktop, "Desktop"},
+    {FolderType::Pictures, "Pictures"},
+    {FolderType::Videos, "Videos"},
+    {FolderType::Music, "Music"},
+    {FolderType::Downloads, "Downloads"},
+    {FolderType::AppData_Roaming, "AppData_Roaming"},
+    {FolderType::AppData_Local, "AppData_Local"},
+    {FolderType::Favorites, "Favorites"},
+    {FolderType::StartMenu, "StartMenu"},
+    {FolderType::Custom, "Custom"},
+};
+
+}  // namespace
+
 QString folderTypeToString(FolderType type) {
-    switch (type) {
-    case FolderType::Documents:
-        return "Documents";
-    case FolderType::Desktop:
-        return "Desktop";
-    case FolderType::Pictures:
-        return "Pictures";
-    case FolderType::Videos:
-        return "Videos";
-    case FolderType::Music:
-        return "Music";
-    case FolderType::Downloads:
-        return "Downloads";
-    case FolderType::AppData_Roaming:
-        return "AppData_Roaming";
-    case FolderType::AppData_Local:
-        return "AppData_Local";
-    case FolderType::Favorites:
-        return "Favorites";
-    case FolderType::StartMenu:
-        return "StartMenu";
-    case FolderType::Custom:
-        return "Custom";
+    for (const auto& entry : kFolderTypes) {
+        if (entry.type == type) {
+            return QString::fromLatin1(entry.name);
+        }
     }
-    return "Unknown";
+    return QStringLiteral("Unknown");
 }
 
 FolderType stringToFolderType(const QString& str) {
     Q_ASSERT(!str.isEmpty());
-    if (str == "Documents") {
-        return FolderType::Documents;
-    }
-    if (str == "Desktop") {
-        return FolderType::Desktop;
-    }
-    if (str == "Pictures") {
-        return FolderType::Pictures;
-    }
-    if (str == "Videos") {
-        return FolderType::Videos;
-    }
-    if (str == "Music") {
-        return FolderType::Music;
-    }
-    if (str == "Downloads") {
-        return FolderType::Downloads;
-    }
-    if (str == "AppData_Roaming") {
-        return FolderType::AppData_Roaming;
-    }
-    if (str == "AppData_Local") {
-        return FolderType::AppData_Local;
-    }
-    if (str == "Favorites") {
-        return FolderType::Favorites;
-    }
-    if (str == "StartMenu") {
-        return FolderType::StartMenu;
+    for (const auto& entry : kFolderTypes) {
+        if (str == QLatin1String(entry.name)) {
+            return entry.type;
+        }
     }
     return FolderType::Custom;
 }

@@ -1,4 +1,4 @@
-﻿// Copyright (c) 2025 Randy Northrup. All rights reserved.
+// Copyright (c) 2025 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 /// @file organizer_panel.cpp
@@ -99,7 +99,7 @@ void OrganizerPanel::setupUi() {
             {":/icons/icons/panel_organizer.svg",
              "File Organizer",
              "Organize files into categorized folders"},
-            {":/icons/icons/panel_organizer.svg",
+            {":/icons/icons/icons8-duplicate.svg",
              "Duplicate Finder",
              "Find duplicate files to reclaim disk space"},
             {":/icons/icons/panel_search.svg",
@@ -267,10 +267,8 @@ QWidget* OrganizerPanel::createOrganizerTab() {
 }
 
 void OrganizerPanel::createOrganizerControls(QVBoxLayout* layout, QPushButton*& settingsBtn) {
-    Q_ASSERT(m_cancel_button);
-    Q_ASSERT(layout);
     Q_ASSERT(m_preview_button);
-    Q_ASSERT(m_execute_button);
+    Q_ASSERT(layout);
     auto* row = new QHBoxLayout();
 
     settingsBtn = new QPushButton(tr("Settings"), this);
@@ -349,8 +347,6 @@ QGroupBox* OrganizerPanel::createScanDirectoriesGroup() {
 void OrganizerPanel::createDedupControls(QVBoxLayout* layout, QPushButton*& settingsBtn) {
     Q_ASSERT(layout);
     Q_ASSERT(settingsBtn);
-    Q_ASSERT(m_dedup_scan_button);
-    Q_ASSERT(m_dedup_cancel_button);
     auto* row = new QHBoxLayout();
 
     settingsBtn = new QPushButton(tr("Settings"), this);

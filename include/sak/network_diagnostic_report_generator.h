@@ -119,6 +119,8 @@ private:
 
     // ── JSON section builders ──
     void populateRootJson(QJsonObject& root) const;
+    void appendHtmlSections(QString& html) const;
+    void appendJsonSections(QJsonObject& root) const;
     void appendAdapterConfigJson(QJsonObject& root) const;
     void appendPingResultsJson(QJsonObject& root) const;
     void appendTracerouteResultsJson(QJsonObject& root) const;

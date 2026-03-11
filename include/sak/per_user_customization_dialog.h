@@ -63,20 +63,19 @@ private:
     void setupUi_dialogButtons(QVBoxLayout* layout);
     void populateTree();
     void addFolderToTree(const FolderSelection& selection, QTreeWidgetItem* parent = nullptr);
-    void addDirectoryContents(const QDir& dir,
-                              QTreeWidgetItem* parent,
-                              qint64& totalSize,
-                              int& totalFiles,
-                              bool checked,
-                              int depth = 0,
-                              int maxDepth = 3);
+    /// @brief Accumulated state for recursive directory tree traversal
+    struct DirTraversalState {
+        qint64& total_size;
+        int& total_files;
+        bool checked;
+        int depth;
+        int max_depth;
+    };
+
+    void addDirectoryContents(const QDir& dir, QTreeWidgetItem* parent, DirTraversalState state);
     void addDirectoryChildItem(const QFileInfo& entry,
                                QTreeWidgetItem* parent,
-                               qint64& totalSize,
-                               int& totalFiles,
-                               bool checked,
-                               int depth,
-                               int maxDepth);
+                               DirTraversalState& state);
     static QString formatFileSize(qint64 bytes);
     void calculateDirectorySize(
         const QDir& dir, qint64& totalSize, int& fileCount, int depth = 0, int maxDepth = 10);

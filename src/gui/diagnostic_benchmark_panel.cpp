@@ -1,4 +1,4 @@
-﻿// Copyright (c) 2025 Randy Northrup. All rights reserved.
+// Copyright (c) 2025 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 /// @file diagnostic_benchmark_panel.cpp
@@ -61,44 +61,49 @@ DiagnosticBenchmarkPanel::~DiagnosticBenchmarkPanel() {
 // ============================================================================
 
 void DiagnosticBenchmarkPanel::setupUi() {
-    Q_ASSERT(!objectName().isEmpty() || true);  // widget valid
-    // Root: zero margin ? scroll area
+    Q_ASSERT(layout() == nullptr);  // setupUi not called twice
     auto* root_layout = new QVBoxLayout(this);
-    root_layout->setContentsMargins(0, 0, 0, 0);
-
-    auto* scroll_area = new QScrollArea(this);
-    scroll_area->setWidgetResizable(true);
-    scroll_area->setFrameShape(QFrame::NoFrame);
-
-    auto* content_widget = new QWidget(scroll_area);
-    auto* main_layout = new QVBoxLayout(content_widget);
-    main_layout->setContentsMargins(sak::ui::kMarginMedium,
+    root_layout->setContentsMargins(sak::ui::kMarginMedium,
                                     sak::ui::kMarginMedium,
                                     sak::ui::kMarginMedium,
                                     sak::ui::kMarginMedium);
-    main_layout->setSpacing(sak::ui::kSpacingDefault);
+    root_layout->setSpacing(sak::ui::kSpacingDefault);
 
-    scroll_area->setWidget(content_widget);
-    root_layout->addWidget(scroll_area);
+    // Dynamic panel header — updates when sub-tab changes
+    m_headerWidgets = sak::createDynamicPanelHeader(
+        this,
+        QStringLiteral(":/icons/icons/panel_diagnostic.svg"),
+        tr("Diagnostics"),
+        tr("Hardware inventory, SMART analysis, and thermal monitoring"),
+        root_layout);
 
-    // Panel header — consistent title + muted subtitle
-    sak::createPanelHeader(content_widget,
-                           QStringLiteral(":/icons/icons/panel_diagnostic.svg"),
-                           tr("Diagnostics"),
-                           tr("Hardware inventory, SMART analysis, benchmarks, and stress tests"),
-                           main_layout);
+    // Tabbed content — Diagnostics tab and Benchmark tab
+    m_tabs = new QTabWidget(this);
+    m_tabs->addTab(createDiagnosticsTab(), tr("Diagnostics"));
+    m_tabs->addTab(createBenchmarkTab(), tr("Benchmarks"));
+    root_layout->addWidget(m_tabs, 1);
 
-    // ── Sections ────────────────────────────────────────────────
-    main_layout->addWidget(createHardwareSection());
-    main_layout->addWidget(createSmartSection());
-    main_layout->addWidget(createBenchmarkSection());
-    main_layout->addWidget(createStressTestSection());
-    main_layout->addWidget(createThermalSection());
-    main_layout->addWidget(createSuiteSection());
-    main_layout->addWidget(createReportSection());
-
-    // -- Progress Section --
-
+    // Update header when sub-tab changes
+    connect(m_tabs, &QTabWidget::currentChanged, this, [this](int index) {
+        struct TabMeta {
+            const char* icon;
+            const char* title;
+            const char* subtitle;
+        };
+        static constexpr TabMeta kTabs[] = {
+            {":/icons/icons/panel_diagnostic.svg",
+             "Diagnostics",
+             "Hardware inventory, SMART analysis, and thermal monitoring"},
+            {":/icons/icons/icons8-benchmark.svg",
+             "Benchmarks",
+             "CPU, disk, and memory benchmarks with stress testing"},
+        };
+        if (index >= 0 && index < static_cast<int>(std::size(kTabs))) {
+            const auto& meta = kTabs[index];
+            sak::updatePanelHeader(
+                m_headerWidgets, QString::fromUtf8(meta.icon), tr(meta.title), tr(meta.subtitle));
+        }
+    });
 
     // -- Log Toggle --
     m_logToggle = new sak::LogToggleSwitch(tr("Log"), this);
@@ -106,10 +111,52 @@ void DiagnosticBenchmarkPanel::setupUi() {
     auto* logToggleLayout = new QHBoxLayout();
     logToggleLayout->addWidget(m_logToggle);
     logToggleLayout->addStretch();
-    main_layout->addLayout(logToggleLayout);
+    root_layout->addLayout(logToggleLayout);
+}
 
-    // Final stretch
-    main_layout->addStretch();
+// ============================================================================
+// Tab Builders
+// ============================================================================
+
+QWidget* DiagnosticBenchmarkPanel::createDiagnosticsTab() {
+    auto* scroll_area = new QScrollArea(this);
+    scroll_area->setWidgetResizable(true);
+    scroll_area->setFrameShape(QFrame::NoFrame);
+
+    auto* content_widget = new QWidget(scroll_area);
+    auto* layout = new QVBoxLayout(content_widget);
+    layout->setContentsMargins(
+        sak::ui::kMarginSmall, sak::ui::kMarginSmall, sak::ui::kMarginSmall, sak::ui::kMarginSmall);
+    layout->setSpacing(sak::ui::kSpacingDefault);
+
+    layout->addWidget(createHardwareSection());
+    layout->addWidget(createSmartSection());
+    layout->addWidget(createThermalSection());
+    layout->addStretch();
+
+    scroll_area->setWidget(content_widget);
+    return scroll_area;
+}
+
+QWidget* DiagnosticBenchmarkPanel::createBenchmarkTab() {
+    auto* scroll_area = new QScrollArea(this);
+    scroll_area->setWidgetResizable(true);
+    scroll_area->setFrameShape(QFrame::NoFrame);
+
+    auto* content_widget = new QWidget(scroll_area);
+    auto* layout = new QVBoxLayout(content_widget);
+    layout->setContentsMargins(
+        sak::ui::kMarginSmall, sak::ui::kMarginSmall, sak::ui::kMarginSmall, sak::ui::kMarginSmall);
+    layout->setSpacing(sak::ui::kSpacingDefault);
+
+    layout->addWidget(createBenchmarkSection());
+    layout->addWidget(createStressTestSection());
+    layout->addWidget(createSuiteSection());
+    layout->addWidget(createReportSection());
+    layout->addStretch();
+
+    scroll_area->setWidget(content_widget);
+    return scroll_area;
 }
 
 // ============================================================================
@@ -117,8 +164,6 @@ void DiagnosticBenchmarkPanel::setupUi() {
 // ============================================================================
 
 QGroupBox* DiagnosticBenchmarkPanel::createHardwareSection() {
-    Q_ASSERT(m_hw_rescan_button);
-    Q_ASSERT(m_hw_copy_button);
     auto* group = new QGroupBox("Hardware Inventory", this);
     auto* layout = new QVBoxLayout(group);
 
@@ -171,6 +216,8 @@ QGroupBox* DiagnosticBenchmarkPanel::createHardwareSection() {
             this,
             &DiagnosticBenchmarkPanel::onCopyInventoryClicked);
 
+    Q_ASSERT(group);
+    Q_ASSERT(m_hw_cpu_label);
     return group;
 }
 

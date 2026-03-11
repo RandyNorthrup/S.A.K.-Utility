@@ -9,6 +9,7 @@
 #include "sak/advanced_uninstall_types.h"
 #include "sak/worker_base.h"
 
+#include <QDir>
 #include <QVector>
 
 #include <type_traits>
@@ -57,8 +58,18 @@ private:
     /// @brief Delete a file, falling back to recycle bin or reboot scheduling
     [[nodiscard]] bool deleteFile(const QString& path);
 
+    /// @brief Dispatch cleanup for a single leftover item by type
+    [[nodiscard]] bool cleanSingleItem(const LeftoverItem& item);
+    [[nodiscard]] bool cleanStartupEntry(const LeftoverItem& item);
+
     /// @brief Delete a folder, falling back to reboot scheduling for locked contents
     [[nodiscard]] bool deleteFolder(const QString& path);
+
+    /// @brief Attempt to remove each file in dir, scheduling locked ones
+    [[nodiscard]] bool removeFolderContentsForced(const QDir& dir);
+
+    /// @brief Schedule reboot removal and record the path
+    [[nodiscard]] bool tryScheduleReboot(const QString& path);
 
     /// @brief Send a file to the Windows Recycle Bin
     [[nodiscard]] bool sendToRecycleBin(const QString& path);

@@ -101,6 +101,22 @@ private:
     /// @brief Run directory-recursive search loop
     void runDirectorySearch(const QRegularExpression& regex, int& total_matches, int& total_files);
 
+    /// @brief Process a single file during search, returns false if max results reached
+    bool processSearchFile(const QString& file_path,
+                           const QRegularExpression& regex,
+                           QVector<SearchMatch>& batch_matches,
+                           int& total_matches,
+                           int& total_files);
+
+    /// @brief Check if a file should be skipped (excluded, wrong extension, too large)
+    [[nodiscard]] bool shouldSkipFile(const QString& file_path) const;
+
+    /// @brief Build a SearchMatch with context lines around a regex hit
+    [[nodiscard]] SearchMatch buildContextMatch(const QString& file_path,
+                                                const QStringList& lines,
+                                                int line_index,
+                                                const QRegularExpressionMatch& regex_match) const;
+
     SearchConfig m_config;
 
     /// @brief Compiled exclusion patterns (built once in execute())

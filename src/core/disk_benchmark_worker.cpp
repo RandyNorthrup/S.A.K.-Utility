@@ -426,9 +426,10 @@ void DiskBenchmarkWorker::runRandom4KRead(int queue_depth,
     latencies.reserve(100'000);
     uint64_t total_ops = 0;
     uint64_t total_bytes = 0;
+    RandomIoStats stats{latencies, total_ops, total_bytes};
+    const RandomIoLoopConfig loop_config{queue_depth, max_offset, duration_ms};
 
-    const double elapsed_sec = runRandom4KReadLoop(
-        h, buf.data(), queue_depth, max_offset, duration_ms, latencies, total_ops, total_bytes);
+    const double elapsed_sec = runRandom4KReadLoop(h, buf.data(), loop_config, stats);
 
     CloseHandle(h);
 
@@ -460,13 +461,8 @@ void DiskBenchmarkWorker::runRandom4KRead(int queue_depth,
 }
 
 #ifdef SAK_PLATFORM_WINDOWS
-void DiskBenchmarkWorker::processRandomReadOp(void* file_handle,
-                                              uint8_t* buf_data,
-                                              int queue_index,
-                                              uint64_t offset,
-                                              std::vector<double>& latencies,
-                                              uint64_t& total_ops,
-                                              uint64_t& total_bytes) {
+void DiskBenchmarkWorker::processRandomReadOp(
+    void* file_handle, uint8_t* buf_data, int queue_index, uint64_t offset, RandomIoStats& stats) {
     HANDLE h = static_cast<HANDLE>(file_handle);
 
     LARGE_INTEGER li;
@@ -493,36 +489,31 @@ void DiskBenchmarkWorker::processRandomReadOp(void* file_handle,
         return;
     }
 
-    latencies.push_back(op_timer.nsecsElapsed() / 1000.0);
-    total_bytes += bytes_read;
-    ++total_ops;
+    stats.latencies.push_back(op_timer.nsecsElapsed() / 1000.0);
+    stats.total_bytes += bytes_read;
+    ++stats.total_ops;
 }
 #endif
 
 #ifdef SAK_PLATFORM_WINDOWS
 double DiskBenchmarkWorker::runRandom4KReadLoop(void* file_handle,
                                                 uint8_t* buf_data,
-                                                int queue_depth,
-                                                uint64_t max_offset,
-                                                int duration_ms,
-                                                std::vector<double>& latencies,
-                                                uint64_t& total_ops,
-                                                uint64_t& total_bytes) {
+                                                const RandomIoLoopConfig& config,
+                                                RandomIoStats& stats) {
     std::mt19937_64 rng(654);
-    std::uniform_int_distribution<uint64_t> offset_dist(0, max_offset / kRandomBlockSize);
+    std::uniform_int_distribution<uint64_t> offset_dist(0, config.max_offset / kRandomBlockSize);
 
     QElapsedTimer total_timer;
     total_timer.start();
 
-    while (total_timer.elapsed() < duration_ms) {
+    while (total_timer.elapsed() < config.duration_ms) {
         if (stopRequested()) {
             break;
         }
 
-        for (int queue_index = 0; queue_index < queue_depth; ++queue_index) {
+        for (int queue_index = 0; queue_index < config.queue_depth; ++queue_index) {
             const uint64_t offset = offset_dist(rng) * kRandomBlockSize;
-            processRandomReadOp(
-                file_handle, buf_data, queue_index, offset, latencies, total_ops, total_bytes);
+            processRandomReadOp(file_handle, buf_data, queue_index, offset, stats);
         }
     }
 
@@ -535,9 +526,7 @@ void DiskBenchmarkWorker::processRandomWriteOp(void* file_handle,
                                                const uint8_t* buf_data,
                                                int queue_index,
                                                uint64_t offset,
-                                               std::vector<double>& latencies,
-                                               uint64_t& total_ops,
-                                               uint64_t& total_bytes) {
+                                               RandomIoStats& stats) {
     HANDLE h = static_cast<HANDLE>(file_handle);
 
     LARGE_INTEGER li;
@@ -564,36 +553,31 @@ void DiskBenchmarkWorker::processRandomWriteOp(void* file_handle,
         return;
     }
 
-    latencies.push_back(op_timer.nsecsElapsed() / 1000.0);
-    total_bytes += bytes_written;
-    ++total_ops;
+    stats.latencies.push_back(op_timer.nsecsElapsed() / 1000.0);
+    stats.total_bytes += bytes_written;
+    ++stats.total_ops;
 }
 #endif
 
 #ifdef SAK_PLATFORM_WINDOWS
 double DiskBenchmarkWorker::runRandom4KWriteLoop(void* file_handle,
                                                  const uint8_t* buf_data,
-                                                 int queue_depth,
-                                                 uint64_t max_offset,
-                                                 int duration_ms,
-                                                 std::vector<double>& latencies,
-                                                 uint64_t& total_ops,
-                                                 uint64_t& total_bytes) {
+                                                 const RandomIoLoopConfig& config,
+                                                 RandomIoStats& stats) {
     std::mt19937_64 rng(876);
-    std::uniform_int_distribution<uint64_t> offset_dist(0, max_offset / kRandomBlockSize);
+    std::uniform_int_distribution<uint64_t> offset_dist(0, config.max_offset / kRandomBlockSize);
 
     QElapsedTimer total_timer;
     total_timer.start();
 
-    while (total_timer.elapsed() < duration_ms) {
+    while (total_timer.elapsed() < config.duration_ms) {
         if (stopRequested()) {
             break;
         }
 
-        for (int queue_index = 0; queue_index < queue_depth; ++queue_index) {
+        for (int queue_index = 0; queue_index < config.queue_depth; ++queue_index) {
             const uint64_t offset = offset_dist(rng) * kRandomBlockSize;
-            processRandomWriteOp(
-                file_handle, buf_data, queue_index, offset, latencies, total_ops, total_bytes);
+            processRandomWriteOp(file_handle, buf_data, queue_index, offset, stats);
         }
     }
 
@@ -644,15 +628,12 @@ void DiskBenchmarkWorker::runRandom4KWrite(int queue_depth,
     latencies.reserve(100'000);
     uint64_t total_ops = 0;
     uint64_t total_bytes = 0;
+    RandomIoStats stats{latencies, total_ops, total_bytes};
+    const RandomIoLoopConfig loop_config{queue_depth,
+                                         max_offset,
+                                         m_config.random_duration_sec * 1000};
 
-    const double elapsed_sec = runRandom4KWriteLoop(h,
-                                                    buf.data(),
-                                                    queue_depth,
-                                                    max_offset,
-                                                    m_config.random_duration_sec * 1000,
-                                                    latencies,
-                                                    total_ops,
-                                                    total_bytes);
+    const double elapsed_sec = runRandom4KWriteLoop(h, buf.data(), loop_config, stats);
 
     CloseHandle(h);
     iops = static_cast<double>(total_ops) / elapsed_sec;

@@ -213,48 +213,16 @@ QVector<MigrationJob> AppInstallationWorker::getJobs() const {
 }
 
 void AppInstallationWorker::processQueue() {
-    Q_ASSERT(!m_jobQueue.empty());
     Q_ASSERT(!m_jobQueue.isEmpty());
     while (true) {
-        {
-            QMutexLocker locker(&m_mutex);
-
-            // Check if should stop
-            if (m_cancelled || (!m_running && m_activeJobs == 0)) {
-                m_running = false;
-                locker.unlock();
-
-                auto stats = getStats();
-                Q_EMIT migrationCompleted(stats);
-                return;
-            }
-
-            // Check if paused
-            if (m_paused) {
-                m_waitCondition.wait(&m_mutex);
-                continue;
-            }
-
-            // All jobs complete?
-            if (m_activeJobs == 0 && m_jobQueue.isEmpty()) {
-                m_running = false;
-                locker.unlock();
-
-                auto stats = getStats();
-                Q_EMIT migrationCompleted(stats);
-                return;
-            }
-
-            // Check if can start new job
-            if (m_activeJobs >= m_maxConcurrent || m_jobQueue.isEmpty()) {
-                // Wait for active jobs to finish
-                locker.unlock();
-                QThread::msleep(sak::kTimerPollingFastMs);
-                continue;
-            }
+        auto action = checkQueueState();
+        if (action == QueueAction::Finish) {
+            return;
+        }
+        if (action == QueueAction::Wait) {
+            continue;
         }
 
-        // Get next job under lock, then release for installation
         int jobIndex;
         {
             QMutexLocker locker(&m_mutex);
@@ -262,26 +230,52 @@ void AppInstallationWorker::processQueue() {
             m_activeJobs++;
         }
 
-        // Install package (outside lock)
         MigrationJob& job = m_jobs[jobIndex];
         bool success = installPackage(job);
 
-        {
-            QMutexLocker locker(&m_mutex);
-            m_activeJobs--;
+        QMutexLocker locker(&m_mutex);
+        m_activeJobs--;
+        if (!success && shouldRetry(job)) {
+            int delay_ms = getRetryDelay(job.retryCount);
+            locker.unlock();
+            QThread::msleep(delay_ms);
 
-            // Handle retry logic
-            if (!success && shouldRetry(job)) {
-                int delay_ms = getRetryDelay(job.retryCount);
-                locker.unlock();
-                QThread::msleep(delay_ms);
-
-                QMutexLocker retryLocker(&m_mutex);
-                job.retryCount++;
-                m_jobQueue.enqueue(jobIndex);
-            }
+            QMutexLocker retryLocker(&m_mutex);
+            job.retryCount++;
+            m_jobQueue.enqueue(jobIndex);
         }
     }
+}
+
+AppInstallationWorker::QueueAction AppInstallationWorker::checkQueueState() {
+    QMutexLocker locker(&m_mutex);
+
+    if (m_cancelled || (!m_running && m_activeJobs == 0)) {
+        m_running = false;
+        locker.unlock();
+        Q_EMIT migrationCompleted(getStats());
+        return QueueAction::Finish;
+    }
+
+    if (m_paused) {
+        m_waitCondition.wait(&m_mutex);
+        return QueueAction::Wait;
+    }
+
+    if (m_activeJobs == 0 && m_jobQueue.isEmpty()) {
+        m_running = false;
+        locker.unlock();
+        Q_EMIT migrationCompleted(getStats());
+        return QueueAction::Finish;
+    }
+
+    if (m_activeJobs >= m_maxConcurrent || m_jobQueue.isEmpty()) {
+        locker.unlock();
+        QThread::msleep(sak::kTimerPollingFastMs);
+        return QueueAction::Wait;
+    }
+
+    return QueueAction::Proceed;
 }
 
 bool AppInstallationWorker::installPackage(MigrationJob& job) {

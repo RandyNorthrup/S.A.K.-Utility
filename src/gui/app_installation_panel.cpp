@@ -66,7 +66,7 @@ AppInstallationPanel::~AppInstallationPanel() {
 }
 
 void AppInstallationPanel::setupUi() {
-    Q_ASSERT(!objectName().isEmpty() || true);  // widget valid
+    Q_ASSERT(layout() == nullptr);  // setupUi not called twice
     auto* rootLayout = new QVBoxLayout(this);
     rootLayout->setContentsMargins(0, 0, 0, 0);
 
@@ -101,7 +101,6 @@ void AppInstallationPanel::setupUi() {
 }
 
 void AppInstallationPanel::setupUi_searchBar(QVBoxLayout* mainLayout) {
-    Q_ASSERT(m_searchButton);
     Q_ASSERT(m_searchEdit);
     Q_ASSERT(m_categoryCombo);
     auto* searchGroup = new QGroupBox(tr("Search Packages"), this);
@@ -136,10 +135,8 @@ void AppInstallationPanel::setupUi_searchBar(QVBoxLayout* mainLayout) {
 }
 
 void AppInstallationPanel::setupUi_packageTable(QSplitter* splitter) {
-    Q_ASSERT(m_addToQueueButton);
-    Q_ASSERT(splitter);
     Q_ASSERT(m_resultsModel);
-    Q_ASSERT(m_resultsTable);
+    Q_ASSERT(splitter);
     auto* resultsWidget = new QWidget(this);
     auto* resultsLayout = new QVBoxLayout(resultsWidget);
     resultsLayout->setContentsMargins(0, 0, 8, 0);
@@ -191,8 +188,6 @@ void AppInstallationPanel::setupUi_packageTable(QSplitter* splitter) {
 }
 
 void AppInstallationPanel::setupUi_queueSection(QSplitter* splitter) {
-    Q_ASSERT(m_clearQueueButton);
-    Q_ASSERT(m_installButton);
     Q_ASSERT(m_queueList);
     Q_ASSERT(m_removeFromQueueButton);
     auto* queueWidget = new QWidget(this);

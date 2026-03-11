@@ -201,6 +201,7 @@ void ProgramEnumerator::detectOrphaned(QVector<ProgramInfo>& programs) {
 
 void ProgramEnumerator::markBloatware(QVector<ProgramInfo>& programs) {
     Q_ASSERT(!programs.isEmpty());
+    Q_ASSERT(programs.size() > 0);
     // Bloatware patterns from CheckBloatwareAction database
     static const QStringList kBloatwarePatterns = {"CandyCrush",
                                                    "FarmVille",
@@ -291,6 +292,20 @@ QVector<ProgramInfo> ProgramEnumerator::scanRegistryPrograms() {
     return all;
 }
 
+namespace {
+
+QString hivePrefix(HKEY hive) {
+    if (hive == HKEY_LOCAL_MACHINE) {
+        return QStringLiteral("HKLM");
+    }
+    if (hive == HKEY_CURRENT_USER) {
+        return QStringLiteral("HKCU");
+    }
+    return {};
+}
+
+}  // namespace
+
 QVector<ProgramInfo> ProgramEnumerator::scanRegistryHive(HKEY hive,
                                                          const wchar_t* subkey,
                                                          ProgramInfo::Source source) {
@@ -316,9 +331,12 @@ QVector<ProgramInfo> ProgramEnumerator::scanRegistryHive(HKEY hive,
                      nullptr,
                      nullptr);
 
-    wchar_t subkey_name[256];
+    const QString hive_name = hivePrefix(hive);
+    constexpr DWORD kMaxSubkeyName = 256;
+    wchar_t subkey_name[kMaxSubkeyName];
+
     for (DWORD i = 0; i < subkey_count; ++i) {
-        DWORD name_len = 256;
+        DWORD name_len = kMaxSubkeyName;
         rc = RegEnumKeyExW(
             uninstall_key, i, subkey_name, &name_len, nullptr, nullptr, nullptr, nullptr);
         if (rc != ERROR_SUCCESS) {
@@ -331,77 +349,59 @@ QVector<ProgramInfo> ProgramEnumerator::scanRegistryHive(HKEY hive,
             continue;
         }
 
-        // Skip system components
-        if (isSystemComponent(app_key)) {
-            ProgramInfo prog;
-            prog.isSystemComponent = true;
-            prog.displayName = readRegString(app_key, L"DisplayName");
-            if (!prog.displayName.isEmpty()) {
-                prog.publisher = readRegString(app_key, L"Publisher");
-                prog.displayVersion = readRegString(app_key, L"DisplayVersion");
-                prog.installLocation = readRegString(app_key, L"InstallLocation");
-                prog.uninstallString = readRegString(app_key, L"UninstallString");
-                prog.source = source;
+        const QString reg_path = QString("%1\\%2\\%3")
+                                     .arg(hive_name,
+                                          QString::fromWCharArray(subkey),
+                                          QString::fromWCharArray(subkey_name));
 
-                // Build registry key path
-                QString hive_name;
-                if (hive == HKEY_LOCAL_MACHINE) {
-                    hive_name = "HKLM";
-                } else if (hive == HKEY_CURRENT_USER) {
-                    hive_name = "HKCU";
-                }
-                prog.registryKeyPath = QString("%1\\%2\\%3")
-                                           .arg(hive_name,
-                                                QString::fromWCharArray(subkey),
-                                                QString::fromWCharArray(subkey_name));
-
-                results.append(prog);
-            }
-            RegCloseKey(app_key);
-            continue;
-        }
-
-        // Read DisplayName — required field
-        QString display_name = readRegString(app_key, L"DisplayName");
-        if (display_name.isEmpty()) {
-            RegCloseKey(app_key);
-            continue;
-        }
-
-        ProgramInfo prog;
-        prog.displayName = display_name;
-        prog.publisher = readRegString(app_key, L"Publisher");
-        prog.displayVersion = readRegString(app_key, L"DisplayVersion");
-        prog.installDate = readRegString(app_key, L"InstallDate");
-        prog.installLocation = readRegString(app_key, L"InstallLocation");
-        prog.uninstallString = readRegString(app_key, L"UninstallString");
-        prog.quietUninstallString = readRegString(app_key, L"QuietUninstallString");
-        prog.modifyPath = readRegString(app_key, L"ModifyPath");
-        prog.displayIcon = readRegString(app_key, L"DisplayIcon");
-        prog.source = source;
-
-        // Estimated size (DWORD in KB)
-        DWORD est_size = readRegDword(app_key, L"EstimatedSize");
-        prog.estimatedSizeKB = static_cast<qint64>(est_size);
-
-        // Build registry key path
-        QString hive_name;
-        if (hive == HKEY_LOCAL_MACHINE) {
-            hive_name = "HKLM";
-        } else if (hive == HKEY_CURRENT_USER) {
-            hive_name = "HKCU";
-        }
-        prog.registryKeyPath = QString("%1\\%2\\%3")
-                                   .arg(hive_name,
-                                        QString::fromWCharArray(subkey),
-                                        QString::fromWCharArray(subkey_name));
-
+        parseRegistryEntry(app_key, source, reg_path, results);
         RegCloseKey(app_key);
-        results.append(prog);
     }
 
     RegCloseKey(uninstall_key);
     return results;
+}
+
+void ProgramEnumerator::parseRegistryEntry(HKEY app_key,
+                                           ProgramInfo::Source source,
+                                           const QString& reg_path,
+                                           QVector<ProgramInfo>& results) {
+    if (isSystemComponent(app_key)) {
+        ProgramInfo prog;
+        prog.isSystemComponent = true;
+        prog.displayName = readRegString(app_key, L"DisplayName");
+        if (prog.displayName.isEmpty()) {
+            return;
+        }
+        prog.publisher = readRegString(app_key, L"Publisher");
+        prog.displayVersion = readRegString(app_key, L"DisplayVersion");
+        prog.installLocation = readRegString(app_key, L"InstallLocation");
+        prog.uninstallString = readRegString(app_key, L"UninstallString");
+        prog.source = source;
+        prog.registryKeyPath = reg_path;
+        results.append(prog);
+        return;
+    }
+
+    QString display_name = readRegString(app_key, L"DisplayName");
+    if (display_name.isEmpty()) {
+        return;
+    }
+
+    ProgramInfo prog;
+    prog.displayName = display_name;
+    prog.publisher = readRegString(app_key, L"Publisher");
+    prog.displayVersion = readRegString(app_key, L"DisplayVersion");
+    prog.installDate = readRegString(app_key, L"InstallDate");
+    prog.installLocation = readRegString(app_key, L"InstallLocation");
+    prog.uninstallString = readRegString(app_key, L"UninstallString");
+    prog.quietUninstallString = readRegString(app_key, L"QuietUninstallString");
+    prog.modifyPath = readRegString(app_key, L"ModifyPath");
+    prog.displayIcon = readRegString(app_key, L"DisplayIcon");
+    prog.source = source;
+    prog.estimatedSizeKB = static_cast<qint64>(readRegDword(app_key, L"EstimatedSize"));
+    prog.registryKeyPath = reg_path;
+    results.append(prog);
 }
 
 QString ProgramEnumerator::readRegString(HKEY key, const wchar_t* valueName) {
@@ -446,6 +446,29 @@ bool ProgramEnumerator::isSystemComponent(HKEY key) {
 
 #endif  // Q_OS_WIN
 
+void ProgramEnumerator::parseUwpPackage(const QJsonObject& obj, QVector<ProgramInfo>& results) {
+    if (obj["IsFramework"].toBool(false)) {
+        return;
+    }
+
+    ProgramInfo prog;
+    prog.displayName = obj["Name"].toString();
+    prog.packageFamilyName = obj["PackageFamilyName"].toString();
+    prog.packageFullName = obj["PackageFullName"].toString();
+    prog.publisher = obj["Publisher"].toString();
+    prog.displayVersion = obj["Version"].toString();
+    prog.installLocation = obj["InstallLocation"].toString();
+    prog.source = ProgramInfo::Source::UWP;
+
+    if (!prog.installLocation.isEmpty() && QDir(prog.installLocation).exists()) {
+        prog.actualSizeBytes = calculateDirSize(prog.installLocation);
+    }
+
+    if (!prog.displayName.isEmpty()) {
+        results.append(prog);
+    }
+}
+
 QVector<ProgramInfo> ProgramEnumerator::scanUwpPackages() {
     QVector<ProgramInfo> results;
 
@@ -473,37 +496,8 @@ QVector<ProgramInfo> ProgramEnumerator::scanUwpPackages() {
     }
 
     const QJsonArray arr = jsonDocToArray(doc);
-
     for (const auto& val : arr) {
-        QJsonObject obj = val.toObject();
-
-        // Skip framework packages
-        if (obj["IsFramework"].toBool(false)) {
-            continue;
-        }
-
-        ProgramInfo prog;
-        prog.displayName = obj["Name"].toString();
-        prog.packageFamilyName = obj["PackageFamilyName"].toString();
-        prog.packageFullName = obj["PackageFullName"].toString();
-        prog.publisher = obj["Publisher"].toString();
-        prog.displayVersion = obj["Version"].toString();
-        prog.installLocation = obj["InstallLocation"].toString();
-        prog.source = ProgramInfo::Source::UWP;
-
-        // Clean display name — strip "Microsoft." prefix for readability
-        if (prog.displayName.startsWith("Microsoft.")) {
-            // Keep the original but it will be cleaned up in display
-        }
-
-        // Calculate size if install location exists
-        if (!prog.installLocation.isEmpty() && QDir(prog.installLocation).exists()) {
-            prog.actualSizeBytes = calculateDirSize(prog.installLocation);
-        }
-
-        if (!prog.displayName.isEmpty()) {
-            results.append(prog);
-        }
+        parseUwpPackage(val.toObject(), results);
     }
 
     return results;

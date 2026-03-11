@@ -27,7 +27,6 @@ public:
     /// @param ptr Pointer to memory to wipe
     /// @param size Size of memory region in bytes
     static void wipe(void* ptr, std::size_t size) noexcept {
-        Q_ASSERT(ptr);
         if (ptr == nullptr || size == 0) {
             return;
         }

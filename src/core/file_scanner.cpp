@@ -134,51 +134,74 @@ auto file_scanner::findFiles(const std::filesystem::path& root_path,
     return scanner.scanAndCollect(root_path, options);
 }
 
+namespace {
+
+bool passesTypeFilter(file_type_filter filter, bool is_dir, bool is_file) {
+    switch (filter) {
+    case file_type_filter::files_only:
+        return is_file;
+    case file_type_filter::directories_only:
+        return is_dir;
+    case file_type_filter::all:
+        return true;
+    }
+    return true;
+}
+
+bool isExcludedDirectory(const std::filesystem::path& path,
+                         const std::vector<std::string>& exclude_dirs) {
+    const auto dir_name = path.filename().string();
+    return std::ranges::any_of(exclude_dirs,
+                               [&dir_name](const auto& excl) { return dir_name == excl; });
+}
+
+bool checkSizeFilter(const std::filesystem::directory_entry& entry, const scan_options& options) {
+    std::error_code ec;
+    auto size = entry.file_size(ec);
+    if (ec) {
+        return true;
+    }
+    if (options.min_file_size > 0 && size < options.min_file_size) {
+        return false;
+    }
+    if (options.max_file_size > 0 && size > options.max_file_size) {
+        return false;
+    }
+    return true;
+}
+
+}  // namespace
+
+bool file_scanner::passesDepthAndVisibility(const std::filesystem::path& path,
+                                            const scan_options& options,
+                                            std::size_t current_depth) const {
+    if (options.max_depth > 0 && current_depth >= options.max_depth) {
+        return false;
+    }
+    return !(options.skip_hidden && isHidden(path));
+}
+
 bool file_scanner::shouldProcessEntry(const std::filesystem::directory_entry& entry,
                                       const scan_options& options,
                                       std::size_t current_depth) const noexcept {
     try {
         const auto& path = entry.path();
 
-        // Check depth limit
-        if (options.max_depth > 0 && current_depth >= options.max_depth) {
-            return false;
-        }
-
-        // Check hidden files
-        if (options.skip_hidden && isHidden(path)) {
+        if (!passesDepthAndVisibility(path, options, current_depth)) {
             return false;
         }
 
         bool is_dir = entry.is_directory();
         bool is_file = entry.is_regular_file();
 
-        // Check type filter
-        switch (options.type_filter) {
-        case file_type_filter::files_only:
-            if (!is_file) {
-                return false;
-            }
-            break;
-        case file_type_filter::directories_only:
-            if (!is_dir) {
-                return false;
-            }
-            break;
-        case file_type_filter::all:
-            break;
+        if (!passesTypeFilter(options.type_filter, is_dir, is_file)) {
+            return false;
         }
 
-        // Check excluded directories
-        if (is_dir) {
-            const auto dir_name = path.filename().string();
-            if (std::ranges::any_of(options.exclude_dirs,
-                                    [&dir_name](const auto& excl) { return dir_name == excl; })) {
-                return false;
-            }
+        if (is_dir && isExcludedDirectory(path, options.exclude_dirs)) {
+            return false;
         }
 
-        // For files, check patterns and size filters
         if (is_file && !shouldIncludeFile(entry, path, options)) {
             return false;
         }
@@ -199,30 +222,18 @@ bool file_scanner::shouldIncludeFile(const std::filesystem::directory_entry& ent
                                      const std::filesystem::path& path,
                                      const scan_options& options) const noexcept {
     try {
-        // Check exclude patterns
         if (!options.exclude_patterns.empty() &&
             path_utils::matchesPattern(path, options.exclude_patterns)) {
             return false;
         }
 
-        // Check include patterns (if specified, must match at least one)
         if (!options.include_patterns.empty() &&
             !path_utils::matchesPattern(path, options.include_patterns)) {
             return false;
         }
 
-        // Check file size
-        if (options.calculate_sizes) {
-            std::error_code ec;
-            auto size = entry.file_size(ec);
-
-            if (!ec && options.min_file_size > 0 && size < options.min_file_size) {
-                return false;
-            }
-
-            if (!ec && options.max_file_size > 0 && size > options.max_file_size) {
-                return false;
-            }
+        if (options.calculate_sizes && !checkSizeFilter(entry, options)) {
+            return false;
         }
 
         return true;
@@ -266,6 +277,24 @@ bool file_scanner::isHidden(const std::filesystem::path& path) noexcept {
     }
 }
 
+auto file_scanner::recurseIntoDirectory(const std::filesystem::path& dir_path,
+                                        const scan_options& options,
+                                        scan_statistics& stats,
+                                        std::size_t current_depth,
+                                        std::stop_token stop_token)
+    -> std::expected<void, error_code> {
+    auto recurse_result =
+        scanDirectoryRecursive(dir_path, options, stats, current_depth + 1, stop_token);
+
+    if (!recurse_result && recurse_result.error() == error_code::operation_cancelled) {
+        return recurse_result;
+    }
+    if (!recurse_result) {
+        stats.errors_encountered++;
+    }
+    return {};
+}
+
 auto file_scanner::processScannedEntry(const std::filesystem::directory_entry& entry,
                                        const scan_options& options,
                                        scan_statistics& stats,
@@ -280,50 +309,43 @@ auto file_scanner::processScannedEntry(const std::filesystem::directory_entry& e
     bool is_dir = entry.is_directory();
     bool is_file = entry.is_regular_file();
 
-    // Update statistics
     if (is_file) {
-        stats.files_found++;
-
-        if (options.calculate_sizes) {
-            std::error_code size_ec;
-            auto size = entry.file_size(size_ec);
-            if (!size_ec) {
-                stats.total_size += size;
-                m_size_processed.fetch_add(size, std::memory_order_relaxed);
-            }
-        }
-
-        m_files_processed.fetch_add(1, std::memory_order_relaxed);
-
-        if (options.progress_callback) {
-            options.progress_callback(m_files_processed.load(std::memory_order_relaxed),
-                                      m_size_processed.load(std::memory_order_relaxed));
-        }
+        updateFileStats(entry, options, stats);
     } else if (is_dir) {
         stats.directories_found++;
     }
 
-    // Call user callback
-    if (options.callback) {
-        if (!options.callback(entry.path(), is_dir)) {
-            return std::unexpected(error_code::operation_cancelled);
-        }
+    if (options.callback && !options.callback(entry.path(), is_dir)) {
+        return std::unexpected(error_code::operation_cancelled);
     }
 
-    // Recurse into subdirectories
     if (is_dir && options.recursive) {
-        auto recurse_result =
-            scanDirectoryRecursive(entry.path(), options, stats, current_depth + 1, stop_token);
-
-        if (!recurse_result) {
-            if (recurse_result.error() == error_code::operation_cancelled) {
-                return recurse_result;
-            }
-            stats.errors_encountered++;
-        }
+        return recurseIntoDirectory(entry.path(), options, stats, current_depth, stop_token);
     }
 
     return {};
+}
+
+void file_scanner::updateFileStats(const std::filesystem::directory_entry& entry,
+                                   const scan_options& options,
+                                   scan_statistics& stats) {
+    stats.files_found++;
+
+    if (options.calculate_sizes) {
+        std::error_code size_ec;
+        auto size = entry.file_size(size_ec);
+        if (!size_ec) {
+            stats.total_size += size;
+            m_size_processed.fetch_add(size, std::memory_order_relaxed);
+        }
+    }
+
+    m_files_processed.fetch_add(1, std::memory_order_relaxed);
+
+    if (options.progress_callback) {
+        options.progress_callback(m_files_processed.load(std::memory_order_relaxed),
+                                  m_size_processed.load(std::memory_order_relaxed));
+    }
 }
 
 auto file_scanner::processEntryWithErrorHandling(const std::filesystem::directory_entry& entry,

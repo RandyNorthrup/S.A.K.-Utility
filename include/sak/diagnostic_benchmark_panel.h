@@ -8,7 +8,9 @@
 
 #include "sak/diagnostic_controller.h"
 #include "sak/diagnostic_types.h"
+#include "sak/widget_helpers.h"
 
+#include <QTabWidget>
 #include <QWidget>
 
 #include <memory>
@@ -123,6 +125,8 @@ private:
     void addDiskPartitionsToCombo(const StorageDeviceInfo& disk);
 
     // ── Section Builders ────────────────────────────────────────
+    QWidget* createDiagnosticsTab();
+    QWidget* createBenchmarkTab();
     QGroupBox* createHardwareSection();
     QGroupBox* createSmartSection();
     QGroupBox* createBenchmarkSection();
@@ -153,6 +157,10 @@ private:
 
     // ── Controller ──────────────────────────────────────────────
     std::unique_ptr<DiagnosticController> m_controller;
+
+    // ── Layout ──────────────────────────────────────────────────
+    QTabWidget* m_tabs{nullptr};
+    PanelHeaderWidgets m_headerWidgets;
 
     // ── Hardware Inventory Widgets ──────────────────────────────
     QLabel* m_hw_cpu_label{nullptr};

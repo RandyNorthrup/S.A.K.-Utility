@@ -1,4 +1,4 @@
-﻿// Copyright (c) 2025 Randy Northrup. All rights reserved.
+// Copyright (c) 2025 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 /// @file network_transfer_panel.cpp
@@ -103,8 +103,7 @@ NetworkTransferPanel::NetworkTransferPanel(QWidget* parent)
 NetworkTransferPanel::~NetworkTransferPanel() = default;
 
 void NetworkTransferPanel::setupUi() {
-    Q_ASSERT(m_modeCombo);
-    Q_ASSERT(!objectName().isEmpty() || true);  // widget valid
+    Q_ASSERT(layout() == nullptr);  // setupUi not called twice
     auto* mainLayout = new QVBoxLayout(this);
     mainLayout->setSpacing(sak::ui::kSpacingDefault);
     mainLayout->setContentsMargins(sak::ui::kMarginMedium,
@@ -119,16 +118,12 @@ void NetworkTransferPanel::setupUi() {
                            tr("Transfer files and deploy profiles across machines on your network"),
                            mainLayout);
 
-    auto* modeLayout = new QHBoxLayout();
-    modeLayout->addWidget(new QLabel(tr("Mode:"), this));
+    // Hidden combo for programmatic mode switching (used by connections)
     m_modeCombo = new QComboBox(this);
     m_modeCombo->addItems(
         {tr("Source (Send)"), tr("Destination (Receive)"), tr("Orchestrator (Deploy)")});
     m_modeCombo->setAccessibleName(QStringLiteral("Transfer Mode"));
-    m_modeCombo->setToolTip(QStringLiteral("Select the transfer mode for this machine"));
-    modeLayout->addWidget(m_modeCombo);
-    modeLayout->addStretch();
-    mainLayout->addLayout(modeLayout);
+    m_modeCombo->hide();
 
     m_modeStack = new QStackedWidget(this);
 
@@ -169,9 +164,176 @@ void NetworkTransferPanel::setupUi() {
     m_modeStack->addWidget(wrapScrollable(sourceWidget));
     m_modeStack->addWidget(wrapScrollable(destWidget));
     m_modeStack->addWidget(wrapScrollable(orchestratorWidget));
-    mainLayout->addWidget(m_modeStack, 1);
+
+    // -- Mode Selection Cards (landing page) ---------------------
+    createModeCards(mainLayout);
+
+    // Stacked widget is hidden — content shown in dialogs when cards are clicked
+    m_modeStack->hide();
+    mainLayout->addWidget(m_modeStack);
 
     setupUi_bottomButtons(mainLayout);
+
+    Q_ASSERT(m_modeCombo);
+}
+
+// ============================================================================
+// Mode Selection Cards
+// ============================================================================
+
+namespace {
+
+constexpr auto kModeCardStyle =
+    "QFrame {"
+    "  background-color: %1;"
+    "  border: 1px solid %2;"
+    "  border-radius: 10px;"
+    "  padding: 16px;"
+    "}"
+    "QFrame:hover {"
+    "  border-color: %3;"
+    "  background-color: %4;"
+    "}";
+
+constexpr auto kModeCardTitleStyle =
+    "font-size: 13pt; font-weight: 700; color: %1;"
+    " border: none; background: transparent;";
+
+constexpr auto kModeCardDescStyle =
+    "font-size: 10pt; color: %1;"
+    " border: none; background: transparent;";
+
+constexpr auto kModeCardUsageStyle =
+    "font-size: 9pt; color: %1; font-style: italic;"
+    " border: none; background: transparent;";
+
+}  // anonymous namespace
+
+void NetworkTransferPanel::createModeCards(QVBoxLayout* parentLayout) {
+    Q_ASSERT(parentLayout);
+    Q_ASSERT(parentLayout->count() == 0);
+
+    static constexpr CardInfo kCards[] = {
+        {":/icons/icons/icons8-source.svg",
+         "Source (Send)",
+         "Send user profiles, files, and settings from this PC to another "
+         "machine on your network. Scans local users and lets you select "
+         "exactly what data to transfer.",
+         "Use when: This is the OLD PC you want to migrate data FROM."},
+        {":/icons/icons/icons8-destination.svg",
+         "Destination (Receive)",
+         "Receive incoming data transfers from a source PC or orchestrator. "
+         "Automatically applies user profiles and restores settings to this "
+         "machine after transfer completes.",
+         "Use when: This is the NEW PC you want to migrate data TO."},
+        {":/icons/icons/icons8-orchestrator.svg",
+         "Orchestrator (Deploy)",
+         "Manage large-scale deployments from one source to multiple destination "
+         "PCs simultaneously. Configure mapping rules, set bandwidth limits, "
+         "monitor job progress, and generate deployment reports.",
+         "Use when: You need to roll out profiles to many PCs at once from "
+         "a central control station."},
+    };
+
+    auto* cardsLayout = new QHBoxLayout();
+    cardsLayout->setSpacing(sak::ui::kSpacingLarge);
+
+    QString card_style = QString(kModeCardStyle)
+                             .arg(sak::ui::kColorBgWhite)
+                             .arg(sak::ui::kColorBorderDefault)
+                             .arg(sak::ui::kColorPrimary)
+                             .arg(sak::ui::kColorBgSurface);
+
+    constexpr int kCardCount = 3;
+    for (int card_index = 0; card_index < kCardCount; ++card_index) {
+        const auto& info = kCards[card_index];
+        auto* card = buildModeCard(info, card_style, card_index);
+        cardsLayout->addWidget(card, 1);
+    }
+
+    parentLayout->addLayout(cardsLayout, 1);
+}
+
+QFrame* NetworkTransferPanel::buildModeCard(const CardInfo& info,
+                                            const QString& card_style,
+                                            int mode_index) {
+    auto* card = new QFrame(this);
+    card->setStyleSheet(card_style);
+    card->setCursor(Qt::PointingHandCursor);
+    card->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Expanding);
+    auto* layout = new QVBoxLayout(card);
+    layout->setSpacing(sak::ui::kSpacingMedium);
+
+    constexpr int kCardIconSize = 96;
+    auto* icon_label = new QLabel(card);
+    icon_label->setPixmap(QIcon(info.icon).pixmap(kCardIconSize, kCardIconSize));
+    icon_label->setAlignment(Qt::AlignCenter);
+    icon_label->setStyleSheet("border: none; background: transparent;");
+    layout->addWidget(icon_label);
+
+    auto* title = new QLabel(tr(info.title), card);
+    title->setAlignment(Qt::AlignHCenter);
+    title->setStyleSheet(QString(kModeCardTitleStyle).arg(sak::ui::kColorTextHeading));
+    layout->addWidget(title);
+
+    auto* desc = new QLabel(tr(info.description), card);
+    desc->setWordWrap(true);
+    desc->setAlignment(Qt::AlignHCenter);
+    desc->setStyleSheet(QString(kModeCardDescStyle).arg(sak::ui::kColorTextBody));
+    layout->addWidget(desc);
+
+    auto* usage = new QLabel(tr(info.usage), card);
+    usage->setWordWrap(true);
+    usage->setAlignment(Qt::AlignHCenter);
+    usage->setStyleSheet(QString(kModeCardUsageStyle).arg(sak::ui::kColorTextMuted));
+    layout->addWidget(usage);
+
+    layout->addStretch();
+
+    card->installEventFilter(this);
+    card->setProperty("modeIndex", mode_index);
+
+    Q_ASSERT(card);
+    Q_ASSERT(layout);
+    return card;
+}
+
+void NetworkTransferPanel::openModeDialog(int modeIndex) {
+    Q_ASSERT(modeIndex >= 0);
+    Q_ASSERT(modeIndex < m_modeStack->count());
+
+    static constexpr const char* kDialogTitles[] = {
+        "Source (Send)",
+        "Destination (Receive)",
+        "Orchestrator (Deploy)",
+    };
+    constexpr int kTitleCount = 3;
+    Q_ASSERT(modeIndex < kTitleCount);
+
+    // Set the hidden combo so that connections work correctly
+    m_modeCombo->setCurrentIndex(modeIndex);
+
+    auto* dialog = new QDialog(this);
+    dialog->setWindowTitle(tr(kDialogTitles[modeIndex]));
+    dialog->resize(900, 700);
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+
+    auto* dialog_layout = new QVBoxLayout(dialog);
+    dialog_layout->setContentsMargins(0, 0, 0, 0);
+
+    // Temporarily reparent the stacked widget's page into the dialog
+    QWidget* page = m_modeStack->widget(modeIndex);
+    Q_ASSERT(page);
+
+    dialog_layout->addWidget(page);
+    page->show();
+
+    // When dialog closes, put the page back into the stacked widget
+    connect(dialog, &QDialog::finished, this, [this, page, modeIndex]() {
+        m_modeStack->insertWidget(modeIndex, page);
+    });
+
+    dialog->exec();
 }
 
 void NetworkTransferPanel::setupUi_sourceSection(QVBoxLayout* sourceLayout) {
@@ -707,7 +869,6 @@ void NetworkTransferPanel::setupUi_deploymentTemplateActions(QVBoxLayout* contro
 }
 
 void NetworkTransferPanel::setupUi_customRules(QVBoxLayout* orchestratorLayout) {
-    Q_ASSERT(m_customRulesTable);
     Q_ASSERT(orchestratorLayout);
     auto* customRulesGroup = new QGroupBox(tr("Custom Mapping Rules"), this);
     auto* customRulesLayout = new QVBoxLayout(customRulesGroup);
@@ -1571,15 +1732,6 @@ void NetworkTransferPanel::buildNetworkSettingsToggles(QFormLayout* layout, QDia
     Q_ASSERT(dialog);
     auto& config = ConfigManager::instance();
 
-    auto* enabledCheck = new QCheckBox(dialog);
-    enabledCheck->setObjectName(QStringLiteral("ntEnabled"));
-    enabledCheck->setChecked(config.getNetworkTransferEnabled());
-    layout->addRow(sak::InfoButton::createInfoLabel(
-                       tr("Enabled:"),
-                       tr("Master switch — enable or disable all network transfer functionality"),
-                       dialog),
-                   enabledCheck);
-
     auto* autoDiscCheck = new QCheckBox(dialog);
     autoDiscCheck->setObjectName(QStringLiteral("ntAutoDisc"));
     autoDiscCheck->setChecked(config.getNetworkTransferAutoDiscoveryEnabled());
@@ -1692,13 +1844,7 @@ void NetworkTransferPanel::buildNetworkSettingsPorts(QFormLayout* layout, QDialo
         relaySrv);
 }
 
-void NetworkTransferPanel::saveNetworkSettingsFromDialog(QDialog* dialog) {
-    Q_ASSERT(dialog);
-    auto& config = ConfigManager::instance();
-
-    if (auto* w = dialog->findChild<QCheckBox*>(QStringLiteral("ntEnabled"))) {
-        config.setNetworkTransferEnabled(w->isChecked());
-    }
+void NetworkTransferPanel::saveCheckboxSettings(QDialog* dialog, ConfigManager& config) {
     if (auto* w = dialog->findChild<QCheckBox*>(QStringLiteral("ntAutoDisc"))) {
         config.setNetworkTransferAutoDiscoveryEnabled(w->isChecked());
     }
@@ -1711,6 +1857,9 @@ void NetworkTransferPanel::saveNetworkSettingsFromDialog(QDialog* dialog) {
     if (auto* w = dialog->findChild<QCheckBox*>(QStringLiteral("ntResume"))) {
         config.setNetworkTransferResumeEnabled(w->isChecked());
     }
+}
+
+void NetworkTransferPanel::saveSpinBoxSettings(QDialog* dialog, ConfigManager& config) {
     if (auto* w = dialog->findChild<QSpinBox*>(QStringLiteral("ntDiscoveryPort"))) {
         config.setNetworkTransferDiscoveryPort(w->value());
     }
@@ -1726,6 +1875,15 @@ void NetworkTransferPanel::saveNetworkSettingsFromDialog(QDialog* dialog) {
     if (auto* w = dialog->findChild<QSpinBox*>(QStringLiteral("ntMaxBw"))) {
         config.setNetworkTransferMaxBandwidth(w->value());
     }
+}
+
+void NetworkTransferPanel::saveNetworkSettingsFromDialog(QDialog* dialog) {
+    Q_ASSERT(dialog);
+    auto& config = ConfigManager::instance();
+
+    saveCheckboxSettings(dialog, config);
+    saveSpinBoxSettings(dialog, config);
+
     if (auto* w = dialog->findChild<QLineEdit*>(QStringLiteral("ntRelay"))) {
         config.setNetworkTransferRelayServer(w->text());
     }

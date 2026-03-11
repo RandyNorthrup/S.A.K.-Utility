@@ -177,13 +177,18 @@ private:
     QString calculateChecksum(HANDLE handle, qint64 size);
     sak::ValidationResult verifyFull();
     sak::ValidationResult verifySample();
+    /// @brief Configuration for sample block verification
+    struct VerifyBlocksConfig {
+        int num_samples;
+        qint64 block_size;
+        qint64 total_blocks;
+        qint64 sample_size;
+    };
+
     /// @brief Verify individual sample blocks against the target device
     /// @return Number of blocks successfully verified
     int verifySampleBlocks(sak::ValidationResult& result,
-                           int numSamples,
-                           qint64 blockSize,
-                           qint64 totalBlocks,
-                           qint64 sampleSize,
+                           const VerifyBlocksConfig& config,
                            QByteArray& sourceBuffer,
                            QByteArray& targetBuffer);
 

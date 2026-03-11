@@ -46,6 +46,11 @@ public:
                         const QString& recordType,
                         const QStringList& dnsServers);
 
+    /// @brief Update comparison state with a single query result
+    void updateComparisonWithResult(const DnsQueryResult& result,
+                                    DnsServerComparison& comparison,
+                                    QVector<QString>& firstAnswers);
+
     /// @brief Inspect the local DNS cache (blocking)
     void inspectDnsCache();
 

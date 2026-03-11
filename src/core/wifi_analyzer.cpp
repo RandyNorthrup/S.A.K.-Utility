@@ -117,59 +117,64 @@ void appendBssNetworks(const WLAN_BSS_LIST& bssList, QVector<WiFiNetworkInfo>& n
     }
 }
 
-void applyAuthAndEncryption(const WLAN_AVAILABLE_NETWORK& net, WiFiNetworkInfo& info) {
-    switch (net.dot11DefaultAuthAlgorithm) {
-    case DOT11_AUTH_ALGO_80211_OPEN:
-        info.authentication = QStringLiteral("Open");
-        break;
-    case DOT11_AUTH_ALGO_80211_SHARED_KEY:
-        info.authentication = QStringLiteral("Shared Key");
-        break;
-    case DOT11_AUTH_ALGO_WPA:
-        info.authentication = QStringLiteral("WPA-Enterprise");
-        break;
-    case DOT11_AUTH_ALGO_WPA_PSK:
-        info.authentication = QStringLiteral("WPA-Personal");
-        break;
-    case DOT11_AUTH_ALGO_RSNA:
-        info.authentication = QStringLiteral("WPA2-Enterprise");
-        break;
-    case DOT11_AUTH_ALGO_RSNA_PSK:
-        info.authentication = QStringLiteral("WPA2-Personal");
-        break;
-    default:
-        if (static_cast<int>(net.dot11DefaultAuthAlgorithm) >= 9) {
-            info.authentication = QStringLiteral("WPA3");
-        } else {
-            info.authentication = QStringLiteral("Unknown");
-        }
-        break;
-    }
+struct AuthEntry {
+    DOT11_AUTH_ALGORITHM algo;
+    const char* label;
+};
 
-    switch (net.dot11DefaultCipherAlgorithm) {
-    case DOT11_CIPHER_ALGO_NONE:
-        info.encryption = QStringLiteral("None");
-        info.isSecure = false;
-        break;
-    case DOT11_CIPHER_ALGO_WEP40:
-    case DOT11_CIPHER_ALGO_WEP104:
-    case DOT11_CIPHER_ALGO_WEP:
-        info.encryption = QStringLiteral("WEP");
-        info.isSecure = true;
-        break;
-    case DOT11_CIPHER_ALGO_TKIP:
-        info.encryption = QStringLiteral("TKIP");
-        info.isSecure = true;
-        break;
-    case DOT11_CIPHER_ALGO_CCMP:
-        info.encryption = QStringLiteral("AES-CCMP");
-        info.isSecure = true;
-        break;
-    default:
-        info.encryption = QStringLiteral("Other");
-        info.isSecure = true;
-        break;
+static constexpr AuthEntry kAuthTable[] = {
+    {DOT11_AUTH_ALGO_80211_OPEN, "Open"},
+    {DOT11_AUTH_ALGO_80211_SHARED_KEY, "Shared Key"},
+    {DOT11_AUTH_ALGO_WPA, "WPA-Enterprise"},
+    {DOT11_AUTH_ALGO_WPA_PSK, "WPA-Personal"},
+    {DOT11_AUTH_ALGO_RSNA, "WPA2-Enterprise"},
+    {DOT11_AUTH_ALGO_RSNA_PSK, "WPA2-Personal"},
+};
+
+constexpr int kWpa3AuthThreshold = 9;
+
+QString mapAuthAlgorithm(DOT11_AUTH_ALGORITHM algo) {
+    for (const auto& entry : kAuthTable) {
+        if (entry.algo == algo) {
+            return QString::fromLatin1(entry.label);
+        }
     }
+    if (static_cast<int>(algo) >= kWpa3AuthThreshold) {
+        return QStringLiteral("WPA3");
+    }
+    return QStringLiteral("Unknown");
+}
+
+struct CipherEntry {
+    DOT11_CIPHER_ALGORITHM algo;
+    const char* label;
+    bool secure;
+};
+
+static constexpr CipherEntry kCipherTable[] = {
+    {DOT11_CIPHER_ALGO_NONE, "None", false},
+    {DOT11_CIPHER_ALGO_WEP40, "WEP", true},
+    {DOT11_CIPHER_ALGO_WEP104, "WEP", true},
+    {DOT11_CIPHER_ALGO_WEP, "WEP", true},
+    {DOT11_CIPHER_ALGO_TKIP, "TKIP", true},
+    {DOT11_CIPHER_ALGO_CCMP, "AES-CCMP", true},
+};
+
+void mapCipherAlgorithm(DOT11_CIPHER_ALGORITHM algo, QString& encryption, bool& is_secure) {
+    for (const auto& entry : kCipherTable) {
+        if (entry.algo == algo) {
+            encryption = QString::fromLatin1(entry.label);
+            is_secure = entry.secure;
+            return;
+        }
+    }
+    encryption = QStringLiteral("Other");
+    is_secure = true;
+}
+
+void applyAuthAndEncryption(const WLAN_AVAILABLE_NETWORK& net, WiFiNetworkInfo& info) {
+    info.authentication = mapAuthAlgorithm(net.dot11DefaultAuthAlgorithm);
+    mapCipherAlgorithm(net.dot11DefaultCipherAlgorithm, info.encryption, info.isSecure);
 }
 
 void applyAvailableNetwork(const WLAN_AVAILABLE_NETWORK& net, QVector<WiFiNetworkInfo>& networks) {
@@ -343,8 +348,8 @@ void WiFiAnalyzer::scan() {
 }
 
 void WiFiAnalyzer::startContinuousScan(int intervalMs) {
-    Q_ASSERT(intervalMs >= 0);
     Q_ASSERT(m_scanTimer);
+    Q_ASSERT(intervalMs >= 0);
     stopContinuousScan();
 
     m_scanTimer = new QTimer(this);

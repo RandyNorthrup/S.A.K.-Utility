@@ -10,6 +10,7 @@
 
 #pragma once
 
+#include <algorithm>
 #include <string_view>
 #include <system_error>
 
@@ -118,181 +119,92 @@ enum class error_code {
 /// @param ec Error code to convert
 /// @return String view describing the error
 [[nodiscard]] constexpr std::string_view to_string(error_code ec) noexcept {
-    switch (ec) {
-    case error_code::success:
-        return "Success";
-
-    // File system errors
-    case error_code::file_not_found:
-        return "File not found";
-    case error_code::permission_denied:
-        return "Permission denied";
-    case error_code::path_too_long:
-        return "Path too long";
-    case error_code::invalid_path:
-        return "Invalid path";
-    case error_code::disk_full:
-        return "Disk full";
-    case error_code::file_already_exists:
-        return "File already exists";
-    case error_code::directory_not_empty:
-        return "Directory not empty";
-    case error_code::is_directory:
-        return "Path is a directory";
-    case error_code::not_a_directory:
-        return "Path is not a directory";
-    case error_code::file_too_large:
-        return "File too large";
-    case error_code::invalid_filename:
-        return "Invalid filename";
-    case error_code::circular_reference:
-        return "Circular reference detected";
-    case error_code::symlink_loop:
-        return "Symlink loop detected";
-
-    // I/O errors
-    case error_code::read_error:
-        return "Read error";
-    case error_code::write_error:
-        return "Write error";
-    case error_code::seek_error:
-        return "Seek error";
-    case error_code::truncate_error:
-        return "Truncate error";
-    case error_code::flush_error:
-        return "Flush error";
-    case error_code::lock_error:
-        return "Lock error";
-
-    // Hash/verification errors
-    case error_code::hash_calculation_failed:
-        return "Hash calculation failed";
-    case error_code::hash_mismatch:
-        return "Hash mismatch";
-    case error_code::verification_failed:
-        return "Verification failed";
-    case error_code::corrupted_data:
-        return "Corrupted data";
-
-    // Configuration errors
-    case error_code::invalid_configuration:
-        return "Invalid configuration";
-    case error_code::missing_required_field:
-        return "Missing required field";
-    case error_code::parse_error:
-        return "Parse error";
-    case error_code::unsupported_version:
-        return "Unsupported version";
-
-    // Platform errors
-    case error_code::platform_not_supported:
-        return "Platform not supported";
-    case error_code::permission_update_failed:
-        return "Permission update failed";
-    case error_code::registry_access_denied:
-        return "Registry access denied";
-    case error_code::plist_parse_error:
-        return "Plist parse error";
-    case error_code::elevation_required:
-        return "Elevation required";
-    case error_code::elevation_failed:
-        return "Elevation failed";
-    case error_code::environment_error:
-        return "Environment error";
-    case error_code::execution_failed:
-        return "Execution failed";
-    case error_code::not_found:
-        return "Not found";
-
-    // Threading errors
-    case error_code::thread_creation_failed:
-        return "Thread creation failed";
-    case error_code::operation_cancelled:
-        return "Operation cancelled";
-    case error_code::timeout:
-        return "Operation timed out";
-    case error_code::deadlock_detected:
-        return "Deadlock detected";
-
-    // Memory errors
-    case error_code::out_of_memory:
-        return "Out of memory";
-    case error_code::allocation_failed:
-        return "Allocation failed";
-    case error_code::buffer_overflow:
-        return "Buffer overflow";
-
-    // Scanner/organizer errors
-    case error_code::scan_failed:
-        return "Scan failed";
-    case error_code::organization_failed:
-        return "Organization failed";
-    case error_code::duplicate_resolution_failed:
-        return "Duplicate resolution failed";
-    case error_code::license_scan_failed:
-        return "License scan failed";
-    case error_code::backup_failed:
-        return "Backup failed";
-
-    // Network errors
-    case error_code::network_unavailable:
-        return "Network unavailable";
-    case error_code::connection_failed:
-        return "Connection failed";
-    case error_code::transfer_failed:
-        return "Transfer failed";
-    case error_code::network_timeout:
-        return "Network timeout";
-    case error_code::protocol_error:
-        return "Protocol error";
-    case error_code::authentication_failed:
-        return "Authentication failed";
-
-    // I/O errors (continued)
-    case error_code::invalid_argument:
-        return "Invalid argument";
-
-    // Security/validation errors
-    case error_code::validation_failed:
-        return "Validation failed";
-    case error_code::path_traversal_attempt:
-        return "Path traversal attempt detected";
-    case error_code::invalid_file:
-        return "Invalid file";
-    case error_code::integer_overflow:
-        return "Integer overflow";
-    case error_code::insufficient_disk_space:
-        return "Insufficient disk space";
-    case error_code::insufficient_memory:
-        return "Insufficient memory";
-    case error_code::resource_limit_reached:
-        return "Resource limit reached";
-    case error_code::filesystem_error:
-        return "Filesystem error";
-    case error_code::crypto_error:
-        return "Cryptographic error";
-    case error_code::decrypt_failed:
-        return "Decryption failed";
-    case error_code::invalid_format:
-        return "Invalid format";
-
-    // Generic errors
-    case error_code::unknown_error:
-        return "Unknown error";
-    case error_code::not_implemented:
-        return "Not implemented";
-    case error_code::internal_error:
-        return "Internal error";
-    case error_code::assertion_failed:
-        return "Assertion failed";
-    case error_code::invalid_operation:
-        return "Invalid operation";
-    case error_code::partial_failure:
-        return "Partial failure";
-
-    default:
-        return "Undefined error";
+    struct Mapping {
+        error_code code;
+        std::string_view text;
+    };
+    static constexpr Mapping kTable[] = {
+        {error_code::success, "Success"},
+        {error_code::file_not_found, "File not found"},
+        {error_code::permission_denied, "Permission denied"},
+        {error_code::path_too_long, "Path too long"},
+        {error_code::invalid_path, "Invalid path"},
+        {error_code::disk_full, "Disk full"},
+        {error_code::file_already_exists, "File already exists"},
+        {error_code::directory_not_empty, "Directory not empty"},
+        {error_code::is_directory, "Path is a directory"},
+        {error_code::not_a_directory, "Path is not a directory"},
+        {error_code::file_too_large, "File too large"},
+        {error_code::invalid_filename, "Invalid filename"},
+        {error_code::circular_reference, "Circular reference detected"},
+        {error_code::symlink_loop, "Symlink loop detected"},
+        {error_code::read_error, "Read error"},
+        {error_code::write_error, "Write error"},
+        {error_code::seek_error, "Seek error"},
+        {error_code::truncate_error, "Truncate error"},
+        {error_code::flush_error, "Flush error"},
+        {error_code::lock_error, "Lock error"},
+        {error_code::invalid_argument, "Invalid argument"},
+        {error_code::hash_calculation_failed, "Hash calculation failed"},
+        {error_code::hash_mismatch, "Hash mismatch"},
+        {error_code::verification_failed, "Verification failed"},
+        {error_code::corrupted_data, "Corrupted data"},
+        {error_code::invalid_configuration, "Invalid configuration"},
+        {error_code::missing_required_field, "Missing required field"},
+        {error_code::parse_error, "Parse error"},
+        {error_code::unsupported_version, "Unsupported version"},
+        {error_code::platform_not_supported, "Platform not supported"},
+        {error_code::permission_update_failed, "Permission update failed"},
+        {error_code::registry_access_denied, "Registry access denied"},
+        {error_code::plist_parse_error, "Plist parse error"},
+        {error_code::elevation_required, "Elevation required"},
+        {error_code::elevation_failed, "Elevation failed"},
+        {error_code::environment_error, "Environment error"},
+        {error_code::execution_failed, "Execution failed"},
+        {error_code::not_found, "Not found"},
+        {error_code::thread_creation_failed, "Thread creation failed"},
+        {error_code::operation_cancelled, "Operation cancelled"},
+        {error_code::timeout, "Operation timed out"},
+        {error_code::deadlock_detected, "Deadlock detected"},
+        {error_code::out_of_memory, "Out of memory"},
+        {error_code::allocation_failed, "Allocation failed"},
+        {error_code::buffer_overflow, "Buffer overflow"},
+        {error_code::scan_failed, "Scan failed"},
+        {error_code::organization_failed, "Organization failed"},
+        {error_code::duplicate_resolution_failed, "Duplicate resolution failed"},
+        {error_code::license_scan_failed, "License scan failed"},
+        {error_code::backup_failed, "Backup failed"},
+        {error_code::network_unavailable, "Network unavailable"},
+        {error_code::connection_failed, "Connection failed"},
+        {error_code::transfer_failed, "Transfer failed"},
+        {error_code::network_timeout, "Network timeout"},
+        {error_code::protocol_error, "Protocol error"},
+        {error_code::authentication_failed, "Authentication failed"},
+        {error_code::validation_failed, "Validation failed"},
+        {error_code::path_traversal_attempt, "Path traversal attempt detected"},
+        {error_code::invalid_file, "Invalid file"},
+        {error_code::integer_overflow, "Integer overflow"},
+        {error_code::insufficient_disk_space, "Insufficient disk space"},
+        {error_code::insufficient_memory, "Insufficient memory"},
+        {error_code::resource_limit_reached, "Resource limit reached"},
+        {error_code::filesystem_error, "Filesystem error"},
+        {error_code::crypto_error, "Cryptographic error"},
+        {error_code::decrypt_failed, "Decryption failed"},
+        {error_code::invalid_format, "Invalid format"},
+        {error_code::unknown_error, "Unknown error"},
+        {error_code::not_implemented, "Not implemented"},
+        {error_code::internal_error, "Internal error"},
+        {error_code::assertion_failed, "Assertion failed"},
+        {error_code::invalid_operation, "Invalid operation"},
+        {error_code::partial_failure, "Partial failure"},
+    };
+    const auto it = std::find_if(std::begin(kTable), std::end(kTable), [ec](const auto& entry) {
+        return entry.code == ec;
+    });
+    if (it != std::end(kTable)) {
+        return it->text;
     }
+    return "Undefined error";
 }
 
 // ── Compile-Time Invariants (TigerStyle) ────────────────────────────────────

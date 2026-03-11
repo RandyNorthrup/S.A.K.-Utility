@@ -102,45 +102,45 @@ private:
     /// @return Success or error code (cancellation)
     auto runAllBenchmarks() -> std::expected<void, sak::error_code>;
 
+    /// Accumulated I/O stats for random benchmark loops
+    struct RandomIoStats {
+        std::vector<double>& latencies;
+        uint64_t& total_ops;
+        uint64_t& total_bytes;
+    };
+
+    /// Configuration for a random I/O loop iteration
+    struct RandomIoLoopConfig {
+        int queue_depth;
+        uint64_t max_offset;
+        int duration_ms;
+    };
+
     /// @brief Inner timing loop for random 4K read benchmark
-    /// @return Elapsed time in seconds
     double runRandom4KReadLoop(void* file_handle,
                                uint8_t* buf_data,
-                               int queue_depth,
-                               uint64_t max_offset,
-                               int duration_ms,
-                               std::vector<double>& latencies,
-                               uint64_t& total_ops,
-                               uint64_t& total_bytes);
+                               const RandomIoLoopConfig& config,
+                               RandomIoStats& stats);
 
     /// @brief Inner timing loop for random 4K write benchmark
-    /// @return Elapsed time in seconds
     double runRandom4KWriteLoop(void* file_handle,
                                 const uint8_t* buf_data,
-                                int queue_depth,
-                                uint64_t max_offset,
-                                int duration_ms,
-                                std::vector<double>& latencies,
-                                uint64_t& total_ops,
-                                uint64_t& total_bytes);
+                                const RandomIoLoopConfig& config,
+                                RandomIoStats& stats);
 
     /// @brief Execute a single random 4K read I/O operation
     void processRandomReadOp(void* file_handle,
                              uint8_t* buf_data,
                              int queue_index,
                              uint64_t offset,
-                             std::vector<double>& latencies,
-                             uint64_t& total_ops,
-                             uint64_t& total_bytes);
+                             RandomIoStats& stats);
 
     /// @brief Execute a single random 4K write I/O operation
     void processRandomWriteOp(void* file_handle,
                               const uint8_t* buf_data,
                               int queue_index,
                               uint64_t offset,
-                              std::vector<double>& latencies,
-                              uint64_t& total_ops,
-                              uint64_t& total_bytes);
+                              RandomIoStats& stats);
 
     /// @brief Execute a single sequential read pass
     /// @return Total bytes read in this pass

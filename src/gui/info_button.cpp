@@ -58,7 +58,7 @@ QIcon InfoButton::createInfoIcon(int size) {
 
 InfoButton::InfoButton(const QString& infoText, QWidget* parent)
     : QToolButton(parent), m_infoText(infoText) {
-    static const QIcon s_icon = createInfoIcon(32);
+    static const QIcon s_icon(QStringLiteral(":/icons/icons/icons8-settings_help.svg"));
     setIcon(s_icon);
     setIconSize(QSize(16, 16));
     setCursor(Qt::PointingHandCursor);

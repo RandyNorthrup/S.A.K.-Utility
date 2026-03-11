@@ -93,6 +93,12 @@ Q_SIGNALS:
     void errorOccurred(const QString& error);
 
 private:
+    [[nodiscard]] bool restoreDhcpMode(const QString& adapterName);
+    [[nodiscard]] bool restoreStaticIp(const EthernetConfigSnapshot& snapshot,
+                                       const QString& adapterName);
+    [[nodiscard]] bool restoreDnsServers(const EthernetConfigSnapshot& snapshot,
+                                         const QString& adapterName);
+
     /// @brief Run a netsh command and return stdout
     [[nodiscard]] QString runNetsh(const QStringList& args);
 

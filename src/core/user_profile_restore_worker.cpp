@@ -53,9 +53,7 @@ UserProfileRestoreWorker::~UserProfileRestoreWorker() {
 void UserProfileRestoreWorker::startRestore(const QString& backupPath,
                                             const BackupManifest& manifest,
                                             const QVector<UserMapping>& mappings,
-                                            ConflictResolution conflictMode,
-                                            PermissionMode permMode,
-                                            bool verify) {
+                                            const RestoreConfig& config) {
     Q_ASSERT_X(!backupPath.isEmpty(), "startRestore", "backupPath must not be empty");
     Q_ASSERT_X(!mappings.isEmpty(), "startRestore", "mappings must not be empty");
     if (m_running) {
@@ -68,9 +66,9 @@ void UserProfileRestoreWorker::startRestore(const QString& backupPath,
     m_backupPath = backupPath;
     m_manifest = manifest;
     m_mappings = mappings;
-    m_conflictMode = conflictMode;
-    m_permissionMode = permMode;
-    m_verify = verify;
+    m_conflictMode = config.conflict_mode;
+    m_permissionMode = config.perm_mode;
+    m_verify = config.verify;
 
     m_cancelled = false;
     m_bytesRestored = 0;
@@ -153,6 +151,9 @@ void UserProfileRestoreWorker::run() {
 }
 
 bool UserProfileRestoreWorker::restoreUser(const UserMapping& mapping) {
+    Q_ASSERT(!mapping.source_username.isEmpty());
+    Q_ASSERT(!m_backupPath.isEmpty());
+
     // Find source user data in manifest
     const BackupUserData* sourceUser = findManifestUser(mapping.source_username);
     if (!sourceUser) {
@@ -203,6 +204,45 @@ bool UserProfileRestoreWorker::restoreUser(const UserMapping& mapping) {
     return true;
 }
 
+bool UserProfileRestoreWorker::resolveCreateNewUser(const UserMapping& mapping,
+                                                    const QString& systemDrive,
+                                                    QString& destProfilePath) {
+    const QString destUsername = mapping.destination_username.isEmpty()
+                                     ? mapping.source_username
+                                     : mapping.destination_username;
+    QString baseProfileRoot = systemDrive + "/Users";
+    if (!buildSafePath(baseProfileRoot, destUsername, destProfilePath)) {
+        Q_EMIT logMessage(tr("Invalid destination username: %1").arg(destUsername), true);
+        return false;
+    }
+    if (!QDir().mkpath(destProfilePath)) {
+        Q_EMIT logMessage(tr("Failed to create profile directory: %1").arg(destProfilePath), true);
+        return false;
+    }
+    Q_EMIT logMessage(tr("Created new profile: %1").arg(destProfilePath), false);
+    return true;
+}
+
+bool UserProfileRestoreWorker::resolveExistingUser(const UserMapping& mapping,
+                                                   QString& destProfilePath) {
+    if (mapping.destination_username.isEmpty()) {
+        Q_EMIT logMessage(tr("Destination username not specified"), true);
+        return false;
+    }
+    destProfilePath = WindowsUserScanner::getProfilePath(mapping.destination_username);
+    if (destProfilePath.isEmpty()) {
+        Q_EMIT logMessage(
+            tr("Failed to resolve destination profile path: %1").arg(mapping.destination_username),
+            true);
+        return false;
+    }
+    if (!QDir(destProfilePath).exists()) {
+        Q_EMIT logMessage(tr("Destination profile does not exist: %1").arg(destProfilePath), true);
+        return false;
+    }
+    return true;
+}
+
 bool UserProfileRestoreWorker::resolveDestinationProfilePath(const UserMapping& mapping,
                                                              QString& destProfilePath) {
     QString systemDrive = QString::fromLocal8Bit(qgetenv("SystemDrive"));
@@ -211,43 +251,11 @@ bool UserProfileRestoreWorker::resolveDestinationProfilePath(const UserMapping& 
     }
 
     switch (mapping.mode) {
-    case MergeMode::CreateNewUser: {
-        const QString destUsername = mapping.destination_username.isEmpty()
-                                         ? mapping.source_username
-                                         : mapping.destination_username;
-        QString baseProfileRoot = systemDrive + "/Users";
-        if (!buildSafePath(baseProfileRoot, destUsername, destProfilePath)) {
-            Q_EMIT logMessage(tr("Invalid destination username: %1").arg(destUsername), true);
-            return false;
-        }
-        if (!QDir().mkpath(destProfilePath)) {
-            Q_EMIT logMessage(tr("Failed to create profile directory: %1").arg(destProfilePath),
-                              true);
-            return false;
-        }
-        Q_EMIT logMessage(tr("Created new profile: %1").arg(destProfilePath), false);
-        break;
-    }
+    case MergeMode::CreateNewUser:
+        return resolveCreateNewUser(mapping, systemDrive, destProfilePath);
     case MergeMode::ReplaceDestination:
     case MergeMode::MergeIntoDestination:
-        if (mapping.destination_username.isEmpty()) {
-            Q_EMIT logMessage(tr("Destination username not specified"), true);
-            return false;
-        }
-
-        destProfilePath = WindowsUserScanner::getProfilePath(mapping.destination_username);
-        if (destProfilePath.isEmpty()) {
-            Q_EMIT logMessage(tr("Failed to resolve destination profile path: %1")
-                                  .arg(mapping.destination_username),
-                              true);
-            return false;
-        }
-        if (!QDir(destProfilePath).exists()) {
-            Q_EMIT logMessage(tr("Destination profile does not exist: %1").arg(destProfilePath),
-                              true);
-            return false;
-        }
-        break;
+        return resolveExistingUser(mapping, destProfilePath);
     }
     return true;
 }
@@ -371,6 +379,23 @@ bool UserProfileRestoreWorker::copyFileWithConflictResolution(const QString& sou
     return true;
 }
 
+QString UserProfileRestoreWorker::generateConflictRenamePath(const QFileInfo& destInfo) {
+    QString baseName = destInfo.completeBaseName();
+    QString extension = destInfo.suffix();
+    QString dirPath = destInfo.absolutePath();
+    QString suffix = extension.isEmpty() ? QString() : "." + extension;
+
+    constexpr int kMaxRenameAttempts = 1000;
+    int counter = 1;
+    QString renamed;
+    do {
+        renamed =
+            QString("%1/%2_backup%3%4").arg(dirPath, baseName, QString::number(counter++), suffix);
+    } while (QFileInfo::exists(renamed) && counter < kMaxRenameAttempts);
+
+    return renamed;
+}
+
 bool UserProfileRestoreWorker::resolveFileConflict(const QString& source,
                                                    const QFileInfo& destInfo,
                                                    qint64 size,
@@ -381,24 +406,11 @@ bool UserProfileRestoreWorker::resolveFileConflict(const QString& source,
         m_filesSkipped++;
         return false;
 
-    case ConflictResolution::RenameWithSuffix: {
-        QString baseName = destInfo.completeBaseName();
-        QString extension = destInfo.suffix();
-        QString dirPath = destInfo.absolutePath();
-
-        int counter = 1;
-        do {
-            finalDestPath = QString("%1/%2_backup%3%4")
-                                .arg(dirPath,
-                                     baseName,
-                                     QString::number(counter++),
-                                     extension.isEmpty() ? "" : "." + extension);
-        } while (QFileInfo::exists(finalDestPath) && counter < 1000);
-
+    case ConflictResolution::RenameWithSuffix:
+        finalDestPath = generateConflictRenamePath(destInfo);
         Q_EMIT logMessage(
             tr("Renaming to avoid conflict: %1").arg(QFileInfo(finalDestPath).fileName()), false);
         break;
-    }
 
     case ConflictResolution::KeepNewer: {
         QFileInfo sourceInfo(source);

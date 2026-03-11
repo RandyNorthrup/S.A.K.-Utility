@@ -135,39 +135,27 @@ QString CheckDiskErrorsAction::buildRepairVolumeScript(QChar drive) {
 }
 
 void CheckDiskErrorsAction::parseDriveScanResult(const QString& output,
-                                                 QChar drive,
                                                  QString& report,
                                                  int& drives_scanned,
                                                  int& errors_found,
                                                  int& errors_fixed) {
-    Q_UNUSED(drive)
     QStringList lines = output.split('\n', Qt::SkipEmptyParts);
 
     bool parsing = false;
-    QString drive_letter;
-    QString status;
-    bool has_corrupt = false;
-    bool reboot_needed = false;
-    bool scan_success = false;
+    ParsedDriveState state;
 
     for (const QString& line : lines) {
         QString trimmed = line.trimmed();
 
         if (trimmed == "===SCAN_START===") {
             parsing = true;
+            state = ParsedDriveState{};
             continue;
         }
 
         if (trimmed == "===SCAN_END===") {
             parsing = false;
-            appendDriveScanEntry(drive_letter,
-                                 status,
-                                 has_corrupt,
-                                 scan_success,
-                                 reboot_needed,
-                                 report,
-                                 drives_scanned,
-                                 errors_found);
+            appendDriveScanEntry(state, report, drives_scanned, errors_found);
             continue;
         }
 
@@ -180,40 +168,40 @@ void CheckDiskErrorsAction::parseDriveScanResult(const QString& output,
             continue;
         }
 
-        QString key = parts[0].trimmed();
-        QString value = parts[1].trimmed();
-
-        if (key == "Drive") {
-            drive_letter = value;
-        } else if (key == "OnlineScan" && value == "Success") {
-            scan_success = true;
-        } else if (key == "CorruptFile" && value == "Detected") {
-            has_corrupt = true;
-        } else if (key == "Status") {
-            status = value;
-        } else if (key == "RebootRequired" && value == "Yes") {
-            reboot_needed = true;
-        } else if (key == "OfflineRepair" && value == "Scheduled") {
-            errors_fixed++;
-        }
+        processScanKeyValue(parts[0].trimmed(), parts[1].trimmed(), state, errors_fixed);
     }
 }
 
-void CheckDiskErrorsAction::appendDriveScanEntry(const QString& drive_letter,
-                                                 const QString& status,
-                                                 bool has_corrupt,
-                                                 bool scan_success,
-                                                 bool reboot_needed,
+void CheckDiskErrorsAction::processScanKeyValue(const QString& key,
+                                                const QString& value,
+                                                ParsedDriveState& state,
+                                                int& errors_fixed) {
+    if (key == "Drive") {
+        state.drive_letter = value;
+    } else if (key == "OnlineScan") {
+        state.scan_success = (value == "Success");
+    } else if (key == "CorruptFile") {
+        state.has_corrupt = (value == "Detected");
+    } else if (key == "Status") {
+        state.status = value;
+    } else if (key == "RebootRequired") {
+        state.reboot_needed = (value == "Yes");
+    } else if (key == "OfflineRepair" && value == "Scheduled") {
+        errors_fixed++;
+    }
+}
+
+void CheckDiskErrorsAction::appendDriveScanEntry(const ParsedDriveState& state,
                                                  QString& report,
                                                  int& drives_scanned,
                                                  int& errors_found) {
-    if (scan_success) {
+    if (state.scan_success) {
         drives_scanned++;
 
-        report += QString("Drive %1:\n").arg(drive_letter);
-        report += QString("  Status: %1\n").arg(status);
+        report += QString("Drive %1:\n").arg(state.drive_letter);
+        report += QString("  Status: %1\n").arg(state.status);
 
-        if (has_corrupt) {
+        if (state.has_corrupt) {
             errors_found++;
             report += "  \u26a0 Corruption detected: $corrupt file found\n";
             report += "  \u2139 Offline repair scheduled at next reboot\n";
@@ -221,11 +209,11 @@ void CheckDiskErrorsAction::appendDriveScanEntry(const QString& drive_letter,
             report += "  \u2713 No corruption detected\n";
         }
 
-        if (reboot_needed) {
+        if (state.reboot_needed) {
             report += "  \u26a0 REBOOT REQUIRED to complete repair\n";
         }
     } else {
-        report += QString("Drive %1: - %2\n").arg(drive_letter).arg(status);
+        report += QString("Drive %1: - %2\n").arg(state.drive_letter).arg(state.status);
     }
 
     report += "\n";
@@ -255,8 +243,7 @@ void CheckDiskErrorsAction::executeRunChkdsk(const QVector<QChar>& drives,
                               proc.std_err.trimmed());
         }
 
-        parseDriveScanResult(
-            proc.std_out, drive, report, drives_scanned, errors_found, errors_fixed);
+        parseDriveScanResult(proc.std_out, report, drives_scanned, errors_found, errors_fixed);
     }
 
     Q_EMIT executionProgress("Disk error check complete", 100);

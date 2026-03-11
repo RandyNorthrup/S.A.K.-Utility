@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include "sak/network_transfer_protocol.h"
 #include "sak/network_transfer_types.h"
 #include "sak/orchestration_types.h"
 
@@ -90,9 +91,16 @@ private:
     void startWorkerReceiver();
     /// @brief Wire all signal connections for the receiver worker
     void connectReceiverSignals();
+    /// @brief Wire orchestration client and discovery signals
+    void connectOrchestrationSignals();
+    /// @brief Check if deployment/job IDs match this controller's assignment
+    [[nodiscard]] bool isOrchestrationMatch(const QString& deployment_id,
+                                            const QString& job_id) const;
     void handleHelloMessage(const QJsonObject& message);
     void handleAuthChallengeMessage(const QJsonObject& message);
     void handleAuthResponseMessage(const QJsonObject& message);
+    void dispatchControlMessage(TransferMessageType type, const QJsonObject& message);
+    void handleManifestMessage(const QJsonObject& message);
 
     TransferSettings m_settings;
     Mode m_mode{Mode::Idle};

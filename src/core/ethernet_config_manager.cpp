@@ -164,6 +164,90 @@ EthernetConfigSnapshot EthernetConfigManager::loadFromFile(const QString& filePa
     return snapshot;
 }
 
+bool EthernetConfigManager::restoreDhcpMode(const QString& adapterName) {
+    Q_EMIT logOutput("Setting adapter to DHCP mode...");
+    QString result = runNetsh(
+        {"interface", "ip", "set", "address", QString("name=%1").arg(adapterName), "source=dhcp"});
+    if (result.contains("error", Qt::CaseInsensitive)) {
+        Q_EMIT errorOccurred(QString("Failed to set DHCP: %1").arg(result));
+        return false;
+    }
+
+    static_cast<void>(runNetsh({"interface",
+                                "ip",
+                                "set",
+                                "dnsservers",
+                                QString("name=%1").arg(adapterName),
+                                "source=dhcp"}));
+    return true;
+}
+
+bool EthernetConfigManager::restoreStaticIp(const EthernetConfigSnapshot& snapshot,
+                                            const QString& adapterName) {
+    Q_EMIT logOutput(QString("Setting static IP: %1 / %2 / %3")
+                         .arg(snapshot.ipv4Address, snapshot.ipv4SubnetMask, snapshot.ipv4Gateway));
+
+    QStringList addressArgs = {"interface",
+                               "ip",
+                               "set",
+                               "address",
+                               QString("name=%1").arg(adapterName),
+                               "source=static",
+                               QString("addr=%1").arg(snapshot.ipv4Address),
+                               QString("mask=%1").arg(snapshot.ipv4SubnetMask)};
+
+    if (!snapshot.ipv4Gateway.isEmpty()) {
+        addressArgs << QString("gateway=%1").arg(snapshot.ipv4Gateway) << "gwmetric=0";
+    }
+
+    QString result = runNetsh(addressArgs);
+    if (result.contains("error", Qt::CaseInsensitive)) {
+        Q_EMIT errorOccurred(QString("Failed to set IP address: %1").arg(result));
+        return false;
+    }
+    return true;
+}
+
+bool EthernetConfigManager::restoreDnsServers(const EthernetConfigSnapshot& snapshot,
+                                              const QString& adapterName) {
+    if (snapshot.ipv4DnsServers.isEmpty()) {
+        return true;
+    }
+
+    Q_EMIT logOutput(QString("Setting primary DNS: %1").arg(snapshot.ipv4DnsServers.first()));
+
+    QString result = runNetsh({"interface",
+                               "ip",
+                               "set",
+                               "dnsservers",
+                               QString("name=%1").arg(adapterName),
+                               "source=static",
+                               QString("addr=%1").arg(snapshot.ipv4DnsServers.first()),
+                               "register=primary"});
+    if (result.contains("error", Qt::CaseInsensitive)) {
+        Q_EMIT errorOccurred(QString("Failed to set primary DNS: %1").arg(result));
+        return false;
+    }
+
+    for (int idx = 1; idx < snapshot.ipv4DnsServers.size(); ++idx) {
+        Q_EMIT logOutput(QString("Adding DNS server: %1").arg(snapshot.ipv4DnsServers[idx]));
+
+        result = runNetsh({"interface",
+                           "ip",
+                           "add",
+                           "dnsservers",
+                           QString("name=%1").arg(adapterName),
+                           QString("addr=%1").arg(snapshot.ipv4DnsServers[idx]),
+                           QString("index=%1").arg(idx + 1)});
+        if (result.contains("error", Qt::CaseInsensitive)) {
+            Q_EMIT errorOccurred(QString("Failed to add DNS server %1: %2")
+                                     .arg(snapshot.ipv4DnsServers[idx], result));
+            return false;
+        }
+    }
+    return true;
+}
+
 bool EthernetConfigManager::restoreSettings(const EthernetConfigSnapshot& snapshot,
                                             const QString& adapterName) {
     if (!snapshot.isValid()) {
@@ -176,90 +260,11 @@ bool EthernetConfigManager::restoreSettings(const EthernetConfigSnapshot& snapsh
         QString("Source: %1 (backed up from %2 on %3)")
             .arg(snapshot.adapterName, snapshot.computerName, snapshot.backupTimestamp));
 
-    bool allSucceeded = true;
+    bool allSucceeded = snapshot.dhcpEnabled ? restoreDhcpMode(adapterName)
+                                             : restoreStaticIp(snapshot, adapterName);
 
-    if (snapshot.dhcpEnabled) {
-        // Restore DHCP mode
-        Q_EMIT logOutput("Setting adapter to DHCP mode...");
-        QString result = runNetsh({"interface",
-                                   "ip",
-                                   "set",
-                                   "address",
-                                   QString("name=%1").arg(adapterName),
-                                   "source=dhcp"});
-        if (result.contains("error", Qt::CaseInsensitive)) {
-            Q_EMIT errorOccurred(QString("Failed to set DHCP: %1").arg(result));
-            allSucceeded = false;
-        }
-
-        // Also set DNS to DHCP
-        static_cast<void>(runNetsh({"interface",
-                                    "ip",
-                                    "set",
-                                    "dnsservers",
-                                    QString("name=%1").arg(adapterName),
-                                    "source=dhcp"}));
-    } else {
-        // Restore static IP configuration
-        Q_EMIT logOutput(
-            QString("Setting static IP: %1 / %2 / %3")
-                .arg(snapshot.ipv4Address, snapshot.ipv4SubnetMask, snapshot.ipv4Gateway));
-
-        QStringList addressArgs = {"interface",
-                                   "ip",
-                                   "set",
-                                   "address",
-                                   QString("name=%1").arg(adapterName),
-                                   "source=static",
-                                   QString("addr=%1").arg(snapshot.ipv4Address),
-                                   QString("mask=%1").arg(snapshot.ipv4SubnetMask)};
-
-        if (!snapshot.ipv4Gateway.isEmpty()) {
-            addressArgs << QString("gateway=%1").arg(snapshot.ipv4Gateway) << "gwmetric=0";
-        }
-
-        QString result = runNetsh(addressArgs);
-        if (result.contains("error", Qt::CaseInsensitive)) {
-            Q_EMIT errorOccurred(QString("Failed to set IP address: %1").arg(result));
-            allSucceeded = false;
-        }
-    }
-
-    // Restore DNS servers
-    if (!snapshot.ipv4DnsServers.isEmpty()) {
-        // Set primary DNS
-        Q_EMIT logOutput(QString("Setting primary DNS: %1").arg(snapshot.ipv4DnsServers.first()));
-
-        QString result = runNetsh({"interface",
-                                   "ip",
-                                   "set",
-                                   "dnsservers",
-                                   QString("name=%1").arg(adapterName),
-                                   "source=static",
-                                   QString("addr=%1").arg(snapshot.ipv4DnsServers.first()),
-                                   "register=primary"});
-        if (result.contains("error", Qt::CaseInsensitive)) {
-            Q_EMIT errorOccurred(QString("Failed to set primary DNS: %1").arg(result));
-            allSucceeded = false;
-        }
-
-        // Add additional DNS servers
-        for (int i = 1; i < snapshot.ipv4DnsServers.size(); ++i) {
-            Q_EMIT logOutput(QString("Adding DNS server: %1").arg(snapshot.ipv4DnsServers[i]));
-
-            result = runNetsh({"interface",
-                               "ip",
-                               "add",
-                               "dnsservers",
-                               QString("name=%1").arg(adapterName),
-                               QString("addr=%1").arg(snapshot.ipv4DnsServers[i]),
-                               QString("index=%1").arg(i + 1)});
-            if (result.contains("error", Qt::CaseInsensitive)) {
-                Q_EMIT errorOccurred(QString("Failed to add DNS server %1: %2")
-                                         .arg(snapshot.ipv4DnsServers[i], result));
-                allSucceeded = false;
-            }
-        }
+    if (!restoreDnsServers(snapshot, adapterName)) {
+        allSucceeded = false;
     }
 
     if (allSucceeded) {

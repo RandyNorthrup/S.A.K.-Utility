@@ -76,6 +76,22 @@ TransferFileEntry TransferFileEntry::fromJson(const QJsonObject& json) {
     return entry;
 }
 
+namespace {
+
+template <typename Container>
+void appendJsonArray(QJsonObject& json, const QString& key, const Container& items) {
+    if (items.isEmpty()) {
+        return;
+    }
+    QJsonArray array;
+    for (const auto& item : items) {
+        array.append(item.toJson());
+    }
+    json[key] = array;
+}
+
+}  // namespace
+
 QJsonObject TransferManifest::toJson(bool include_files) const {
     QJsonObject json;
     json["protocol_version"] = protocol_version;
@@ -94,41 +110,13 @@ QJsonObject TransferManifest::toJson(bool include_files) const {
     }
     json["users"] = users_array;
 
-    if (!installed_apps.isEmpty()) {
-        QJsonArray apps_array;
-        for (const auto& app : installed_apps) {
-            apps_array.append(app.toJson());
-        }
-        json["installed_apps"] = apps_array;
-    }
-    if (!wifi_profiles.isEmpty()) {
-        QJsonArray wifi_array;
-        for (const auto& w : wifi_profiles) {
-            wifi_array.append(w.toJson());
-        }
-        json["wifi_profiles"] = wifi_array;
-    }
-    if (!ethernet_configs.isEmpty()) {
-        QJsonArray eth_array;
-        for (const auto& e : ethernet_configs) {
-            eth_array.append(e.toJson());
-        }
-        json["ethernet_configs"] = eth_array;
-    }
-    if (!app_data_sources.isEmpty()) {
-        QJsonArray appdata_array;
-        for (const auto& a : app_data_sources) {
-            appdata_array.append(a.toJson());
-        }
-        json["app_data_sources"] = appdata_array;
-    }
+    appendJsonArray(json, "installed_apps", installed_apps);
+    appendJsonArray(json, "wifi_profiles", wifi_profiles);
+    appendJsonArray(json, "ethernet_configs", ethernet_configs);
+    appendJsonArray(json, "app_data_sources", app_data_sources);
 
     if (include_files) {
-        QJsonArray files_array;
-        for (const auto& file : files) {
-            files_array.append(file.toJson());
-        }
-        json["files"] = files_array;
+        appendJsonArray(json, "files", files);
     }
 
     return json;

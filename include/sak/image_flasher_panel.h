@@ -4,6 +4,8 @@
 #pragma once
 
 #include <QCheckBox>
+#include <QGridLayout>
+#include <QGroupBox>
 #include <QLabel>
 #include <QListWidget>
 #include <QPushButton>
@@ -128,15 +130,20 @@ private:
     /** @brief Create download cards and select-file button */
     void createDownloadCards(QVBoxLayout* pageLayout);
     void createSelectImageButton(QVBoxLayout* pageLayout);
+    /// @brief Configuration for an ISO download card
+    struct IsoCardConfig {
+        QString icon_path;
+        QString title;
+        QString description;
+        QString button_text;
+        QString access_name;
+        QString tip;
+    };
+
     /** @brief Build a single ISO download card */
     QFrame* buildIsoDownloadCard(QWidget* parent,
-                                 const QString& iconPath,
-                                 const QString& title,
-                                 const QString& description,
-                                 QPushButton*& buttonOut,
-                                 const QString& buttonText,
-                                 const QString& accessName,
-                                 const QString& tip);
+                                 const IsoCardConfig& config,
+                                 QPushButton*& buttonOut);
     /** @brief Build the drive-selection wizard page */
     void createDriveSelectionPage();
     /** @brief Build the flash-progress wizard page */
@@ -171,6 +178,8 @@ private:
     QString formatFileSize(qint64 bytes) const;
     /** @brief Format a transfer speed in MB/s */
     QString formatSpeed(double mbps) const;
+    /** @brief Run ISO analysis and populate the info group box */
+    void populateIsoInfo(const QString& imagePath);
 
     // UI Components
     QStackedWidget* m_stackedWidget;
@@ -182,8 +191,21 @@ private:
     QPushButton* m_microsoftWindowsDownloadButton;
     QPushButton* m_downloadLinuxButton;
     QLabel* m_imagePathLabel;
-    QLabel* m_imageSizeLabel;
-    QLabel* m_imageFormatLabel;
+    QString m_detectedFormat;
+
+    // ISO analysis info display
+    QGroupBox* m_isoInfoGroup{nullptr};
+    QGridLayout* m_isoInfoGrid{nullptr};
+    QLabel* m_infoOsLabel{nullptr};
+    QLabel* m_infoArchLabel{nullptr};
+    QLabel* m_infoSizeLabel{nullptr};
+    QLabel* m_infoFormatLabel{nullptr};
+    QLabel* m_infoBootLabel{nullptr};
+    QLabel* m_infoFilesysLabel{nullptr};
+    QLabel* m_infoVolLabel{nullptr};
+    QLabel* m_infoPublisherLabel{nullptr};
+    QLabel* m_infoDateLabel{nullptr};
+    QLabel* m_infoEditionsLabel{nullptr};
 
     // Step 2: Drive Selection
     QWidget* m_driveSelectionPage;
@@ -208,6 +230,7 @@ private:
     QPushButton* m_backButton;
     QPushButton* m_nextButton;
     QPushButton* m_flashButton;
+    QPushButton* m_settingsButton{nullptr};
 
     // Core components
     std::unique_ptr<DriveScanner> m_driveScanner;

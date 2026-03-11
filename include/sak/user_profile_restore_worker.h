@@ -35,21 +35,24 @@ public:
     explicit UserProfileRestoreWorker(QObject* parent = nullptr);
     ~UserProfileRestoreWorker() override;
 
+    /// @brief Configuration for restore operation behavior
+    struct RestoreConfig {
+        ConflictResolution conflict_mode;
+        PermissionMode perm_mode;
+        bool verify;
+    };
+
     /**
      * @brief Start restore operation
      * @param backupPath Path to backup directory
      * @param manifest Backup manifest with source data
      * @param mappings User mappings (source → destination)
-     * @param conflictMode How to handle file conflicts
-     * @param permMode Permission handling strategy
-     * @param verify Verify file integrity after restore
+     * @param config Restore behavior configuration
      */
     void startRestore(const QString& backupPath,
                       const BackupManifest& manifest,
                       const QVector<UserMapping>& mappings,
-                      ConflictResolution conflictMode,
-                      PermissionMode permMode,
-                      bool verify);
+                      const RestoreConfig& config);
 
     /**
      * @brief Cancel the restore operation
@@ -107,6 +110,10 @@ private:
     bool restoreUser(const UserMapping& mapping);
     /// @brief Resolve the destination profile directory based on merge mode
     bool resolveDestinationProfilePath(const UserMapping& mapping, QString& destProfilePath);
+    bool resolveCreateNewUser(const UserMapping& mapping,
+                              const QString& systemDrive,
+                              QString& destProfilePath);
+    bool resolveExistingUser(const UserMapping& mapping, QString& destProfilePath);
     bool restoreFolder(const FolderSelection& folder,
                        const QString& sourcePath,
                        const QString& destPath);
@@ -117,6 +124,7 @@ private:
                              const QFileInfo& destInfo,
                              qint64 size,
                              QString& finalDestPath);
+    QString generateConflictRenamePath(const QFileInfo& destInfo);
     bool applyPermissions(const QString& filePath, const QString& destinationUser);
 
     // Helpers

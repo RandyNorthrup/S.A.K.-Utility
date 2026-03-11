@@ -126,13 +126,37 @@ std::optional<PackageMatcher::MatchResult> PackageMatcher::resolveExactMatch(
     return exact;
 }
 
+std::optional<PackageMatcher::MatchResult> PackageMatcher::tryFuzzyMatch(
+    const QString& base_name, ChocolateyManager* choco_mgr, double min_confidence) {
+    if (!choco_mgr) {
+        return std::nullopt;
+    }
+    auto fuzzy = fuzzyMatch(base_name, choco_mgr);
+    if (fuzzy.has_value() && fuzzy->confidence >= min_confidence) {
+        m_fuzzy_match_count++;
+        return fuzzy;
+    }
+    return std::nullopt;
+}
+
+std::optional<PackageMatcher::MatchResult> PackageMatcher::trySearchMatch(
+    const QString& base_name, ChocolateyManager* choco_mgr, const MatchConfig& config) {
+    if (!choco_mgr) {
+        return std::nullopt;
+    }
+    auto search = searchMatch(base_name, choco_mgr, config.max_search_results);
+    if (search.has_value() && search->confidence >= config.min_confidence) {
+        m_search_match_count++;
+        return search;
+    }
+    return std::nullopt;
+}
+
 std::optional<PackageMatcher::MatchResult> PackageMatcher::findMatch(const AppScanner::AppInfo& app,
                                                                      ChocolateyManager* choco_mgr,
                                                                      const MatchConfig& config) {
-    QString normalized_name = normalizeAppName(app.name);
     QString base_name = extractBaseAppName(app.name);
 
-    // Strategy 1: Exact mapping
     if (config.use_exact_mappings) {
         auto exact = resolveExactMatch(base_name, choco_mgr, config);
         if (exact.has_value()) {
@@ -140,22 +164,15 @@ std::optional<PackageMatcher::MatchResult> PackageMatcher::findMatch(const AppSc
         }
     }
 
-    // Strategy 2: Fuzzy matching
-    if (config.use_fuzzy_matching && choco_mgr) {
-        auto fuzzy = fuzzyMatch(base_name, choco_mgr);
-        if (fuzzy.has_value() && fuzzy->confidence >= config.min_confidence) {
-            m_fuzzy_match_count++;
+    if (config.use_fuzzy_matching) {
+        auto fuzzy = tryFuzzyMatch(base_name, choco_mgr, config.min_confidence);
+        if (fuzzy.has_value()) {
             return fuzzy;
         }
     }
 
-    // Strategy 3: Chocolatey search
-    if (config.use_choco_search && choco_mgr) {
-        auto search = searchMatch(base_name, choco_mgr, config.max_search_results);
-        if (search.has_value() && search->confidence >= config.min_confidence) {
-            m_search_match_count++;
-            return search;
-        }
+    if (config.use_choco_search) {
+        return trySearchMatch(base_name, choco_mgr, config);
     }
 
     return std::nullopt;
@@ -550,6 +567,45 @@ int PackageMatcher::levenshteinDistance(const QString& s1, const QString& s2) co
     return d[len1][len2];
 }
 
+namespace {
+
+int countJaroTranspositions(const QString& str1,
+                            const QString& str2,
+                            const std::vector<bool>& s1_matches,
+                            const std::vector<bool>& s2_matches) {
+    int transpositions = 0;
+    int k_idx = 0;
+    for (int idx = 0; idx < str1.length(); ++idx) {
+        if (!s1_matches[idx]) {
+            continue;
+        }
+        while (!s2_matches[k_idx]) {
+            ++k_idx;
+        }
+        if (str1[idx] != str2[k_idx]) {
+            ++transpositions;
+        }
+        ++k_idx;
+    }
+    return transpositions;
+}
+
+int countCommonPrefix(const QString& str1, const QString& str2) {
+    constexpr int kMaxPrefixLen = 4;
+    const int limit =
+        std::min({static_cast<int>(str1.length()), static_cast<int>(str2.length()), kMaxPrefixLen});
+    int prefix = 0;
+    for (int idx = 0; idx < limit; ++idx) {
+        if (str1[idx] != str2[idx]) {
+            break;
+        }
+        ++prefix;
+    }
+    return prefix;
+}
+
+}  // namespace
+
 double PackageMatcher::jaroWinklerSimilarity(const QString& s1, const QString& s2) const {
     Q_ASSERT(!s1.isEmpty());
     Q_ASSERT(!s2.isEmpty());
@@ -557,9 +613,8 @@ double PackageMatcher::jaroWinklerSimilarity(const QString& s1, const QString& s
         return 1.0;
     }
 
-    int len1 = s1.length();
-    int len2 = s2.length();
-
+    const int len1 = s1.length();
+    const int len2 = s2.length();
     if (len1 == 0 || len2 == 0) {
         return 0.0;
     }
@@ -571,17 +626,14 @@ double PackageMatcher::jaroWinklerSimilarity(const QString& s1, const QString& s
 
     std::vector<bool> s1_matches(len1, false);
     std::vector<bool> s2_matches(len2, false);
-
     int matches = 0;
-    int transpositions = 0;
 
-    // Find matches
-    for (int i = 0; i < len1; ++i) {
-        int j = findJaroMatch(s1, s2, i, match_distance, s2_matches);
-        if (j < 0) {
+    for (int idx = 0; idx < len1; ++idx) {
+        int jdx = findJaroMatch(s1, s2, idx, match_distance, s2_matches);
+        if (jdx < 0) {
             continue;
         }
-        s1_matches[i] = true;
+        s1_matches[idx] = true;
         ++matches;
     }
 
@@ -589,37 +641,16 @@ double PackageMatcher::jaroWinklerSimilarity(const QString& s1, const QString& s
         return 0.0;
     }
 
-    // Count transpositions
-    int k = 0;
-    for (int i = 0; i < len1; ++i) {
-        if (!s1_matches[i]) {
-            continue;
-        }
-        while (!s2_matches[k]) {
-            ++k;
-        }
-        if (s1[i] != s2[k]) {
-            ++transpositions;
-        }
-        ++k;
-    }
+    const int transpositions = countJaroTranspositions(s1, s2, s1_matches, s2_matches);
 
-    double jaro = ((double(matches) / len1) + (double(matches) / len2) +
-                   ((matches - transpositions / 2.0) / matches)) /
-                  3.0;
+    constexpr double kJaroParts = 3.0;
+    const double jaro = ((double(matches) / len1) + (double(matches) / len2) +
+                         ((matches - transpositions / 2.0) / matches)) /
+                        kJaroParts;
 
-    // Jaro-Winkler adjustment
-    int prefix = 0;
-    int min_len = std::min(static_cast<int>(len1), static_cast<int>(len2));
-    for (int i = 0; i < std::min(min_len, 4); ++i) {
-        if (s1[i] == s2[i]) {
-            ++prefix;
-        } else {
-            break;
-        }
-    }
-
-    return jaro + (prefix * 0.1 * (1.0 - jaro));
+    constexpr double kWinklerScaling = 0.1;
+    const int prefix = countCommonPrefix(s1, s2);
+    return jaro + (prefix * kWinklerScaling * (1.0 - jaro));
 }
 
 void PackageMatcher::addMapping(const QString& app_name, const QString& choco_package) {

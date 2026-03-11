@@ -143,8 +143,7 @@ void QuickActionsPanel::setupUi_bottomRow(QVBoxLayout* main_layout) {
 }
 
 void QuickActionsPanel::setupUi() {
-    Q_ASSERT(m_backup_location_edit);
-    Q_ASSERT(!objectName().isEmpty() || true);  // widget valid
+    Q_ASSERT(layout() == nullptr);  // setupUi not called twice
     auto* main_layout = new QVBoxLayout(this);
     main_layout->setContentsMargins(12, 12, 12, 12);
     main_layout->setSpacing(10);
@@ -205,6 +204,8 @@ void QuickActionsPanel::setupUi() {
 
     setupUi_statusSection(main_layout);
     setupUi_bottomRow(main_layout);
+
+    Q_ASSERT(m_backup_location_edit);
 }
 
 void QuickActionsPanel::createActions() {
@@ -542,6 +543,30 @@ QPushButton* QuickActionsPanel::createActionButton(QuickAction* action) {
     return button;
 }
 
+namespace {
+
+QString statusIconLabel(QuickAction::ActionStatus status, bool applicable) {
+    switch (status) {
+    case QuickAction::ActionStatus::Idle:
+        return QStringLiteral("[Idle]");
+    case QuickAction::ActionStatus::Scanning:
+        return QStringLiteral("[Scanning...]");
+    case QuickAction::ActionStatus::Ready:
+        return applicable ? QStringLiteral("[Ready]") : QStringLiteral("[N/A]");
+    case QuickAction::ActionStatus::Running:
+        return QStringLiteral("[Running]");
+    case QuickAction::ActionStatus::Success:
+        return QStringLiteral("[Success]");
+    case QuickAction::ActionStatus::Failed:
+        return QStringLiteral("[Failed]");
+    case QuickAction::ActionStatus::Cancelled:
+        return QStringLiteral("[Cancelled]");
+    }
+    return QStringLiteral("[?]");
+}
+
+}  // namespace
+
 void QuickActionsPanel::updateActionButton(QuickAction* action) {
     Q_ASSERT(action);
     auto* button = m_action_buttons.value(action, nullptr);
@@ -549,46 +574,18 @@ void QuickActionsPanel::updateActionButton(QuickAction* action) {
         return;
     }
 
-    button->setEnabled(true);
+    const auto scan = action->lastScanResult();
+    button->setEnabled(action->status() != QuickAction::ActionStatus::Running);
 
-    // Build button text with status indicator and scan results
-    QString status_icon;
-    switch (action->status()) {
-    case QuickAction::ActionStatus::Idle:
-        status_icon = "[Idle]";
-        break;
-    case QuickAction::ActionStatus::Scanning:
-        status_icon = "[Scanning...]";
-        break;
-    case QuickAction::ActionStatus::Ready:
-        status_icon = action->lastScanResult().applicable ? "[Ready]" : "[N/A]";
-        break;
-    case QuickAction::ActionStatus::Running:
-        status_icon = "[Running]";
-        button->setEnabled(false);
-        break;
-    case QuickAction::ActionStatus::Success:
-        status_icon = "[Success]";
-        break;
-    case QuickAction::ActionStatus::Failed:
-        status_icon = "[Failed]";
-        break;
-    case QuickAction::ActionStatus::Cancelled:
-        status_icon = "[Cancelled]";
-        break;
-    }
-
-    // Build button text — use short format to avoid cutoff
+    QString status_icon = statusIconLabel(action->status(), scan.applicable);
     QString text = QString("%1 %2").arg(status_icon, action->name());
-
-    // Build tooltip with scan details
     QString tip = action->description();
+
     if (action->status() == QuickAction::ActionStatus::Ready) {
-        const auto& scan_result = action->lastScanResult();
-        if (scan_result.applicable) {
-            QString size_text = formatBytes(scan_result.bytes_affected);
-            qint64 est_seconds = scan_result.estimated_duration_ms / 1000;
-            QString time_text = formatDuration(est_seconds);
+        if (scan.applicable) {
+            QString size_text = formatBytes(scan.bytes_affected);
+            constexpr qint64 kMsPerSecond = 1000;
+            QString time_text = formatDuration(scan.estimated_duration_ms / kMsPerSecond);
             tip += QString("\n%1 - %2 est.").arg(size_text, time_text);
         } else {
             text += " (N/A)";

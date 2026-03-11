@@ -44,34 +44,53 @@ private:
     QVector<BloatwareItem> m_bloatware;
     qint64 m_total_size{0};
 
+    /// @brief Accumulated bloatware scan output data
+    struct BloatwareScanResult {
+        QString report;
+        QString structured_output;
+        int bloatware_count = 0;
+        qint64 total_size = 0;
+        int apps_scanned = 0;
+    };
+
+    /// @brief Statistics from bloatware pattern matching
+    struct BloatwareMatchStats {
+        int apps_count = 0;
+        int installed_scanned = 0;
+        int provisioned_scanned = 0;
+        int safe_to_remove = 0;
+    };
+
     QVector<BloatwareItem> scanForBloatware();
+    BloatwareItem buildBloatwareItem(const QString& name,
+                                     const QString& package_full,
+                                     const QString& source,
+                                     double size_mb,
+                                     bool is_safe);
     void scanUWPApps();
     void scanVendorSoftware();
     void scanStartupBloat();
     bool isBloatware(const QString& app_name);
 
+    struct ClassificationState {
+        QSet<QString> seen;
+        int installed_scanned = 0;
+        int provisioned_scanned = 0;
+        int safe_to_remove = 0;
+        QVector<QPair<QString, QPair<QString, double>>> detected_bloatware;
+    };
+
     // TigerStyle helpers for execute() decomposition
     void executeScanApps(const QDateTime& start_time, QString& scan_output, QString& report);
-    void executeMatchBloatware(const QString& scan_output,
-                               QString& report,
-                               QString& structured_output,
-                               int& bloatware_count,
-                               qint64& total_size,
-                               int& apps_scanned);
+    void executeMatchBloatware(const QString& scan_output, BloatwareScanResult& result);
+    void classifyAppEntry(const QJsonObject& app,
+                          const QMap<QString, QPair<QString, bool>>& bloatware_patterns,
+                          ClassificationState& state,
+                          BloatwareScanResult& result);
     void formatBloatwareMatchReport(const QVector<QPair<QString, QPair<QString, double>>>& detected,
-                                    int apps_count,
-                                    int installed_scanned,
-                                    int provisioned_scanned,
-                                    int safe_to_remove,
-                                    int bloatware_count,
-                                    QString& report,
-                                    QString& structured_output);
-    void executeBuildReport(const QDateTime& start_time,
-                            int apps_scanned,
-                            int bloatware_count,
-                            qint64 total_size,
-                            QString& report,
-                            const QString& structured_output);
+                                    const BloatwareMatchStats& stats,
+                                    BloatwareScanResult& result);
+    void executeBuildReport(const QDateTime& start_time, BloatwareScanResult& result);
 };
 
 }  // namespace sak

@@ -79,34 +79,50 @@ constexpr int kPeerColSeen = 4;
 
 QString categorizeApp(const QString& name) {
     Q_ASSERT(!name.isEmpty());
+
+    struct CategoryMapping {
+        const char* keyword;
+        const char* category;
+    };
+    static constexpr CategoryMapping kMappings[] = {
+        {"chrome", "Browsers"},
+        {"firefox", "Browsers"},
+        {"edge", "Browsers"},
+        {"opera", "Browsers"},
+        {"brave", "Browsers"},
+        {"browser", "Browsers"},
+        {"visual studio", "Development"},
+        {"vscode", "Development"},
+        {"jetbrains", "Development"},
+        {"code", "Development"},
+        {"sublime", "Development"},
+        {"notepad++", "Development"},
+        {"office", "Productivity"},
+        {"word", "Productivity"},
+        {"excel", "Productivity"},
+        {"discord", "Communication"},
+        {"slack", "Communication"},
+        {"teams", "Communication"},
+        {"zoom", "Communication"},
+        {"steam", "Gaming"},
+        {"epic games", "Gaming"},
+        {"game", "Gaming"},
+        {"vlc", "Media"},
+        {"spotify", "Media"},
+        {"obs", "Media"},
+        {"7-zip", "Utilities"},
+        {"winrar", "Utilities"},
+        {"ccleaner", "Utilities"},
+        {"nvidia", "Drivers & Hardware"},
+        {"amd", "Drivers & Hardware"},
+        {"driver", "Drivers & Hardware"},
+    };
+
     const QString lower = name.toLower();
-    if (lower.contains("chrome") || lower.contains("firefox") || lower.contains("edge") ||
-        lower.contains("opera") || lower.contains("brave") || lower.contains("browser")) {
-        return QCoreApplication::translate("NetworkTransferPanel", "Browsers");
-    }
-    if (lower.contains("visual studio") || lower.contains("vscode") ||
-        lower.contains("jetbrains") || lower.contains("code") || lower.contains("sublime") ||
-        lower.contains("notepad++")) {
-        return QCoreApplication::translate("NetworkTransferPanel", "Development");
-    }
-    if (lower.contains("office") || lower.contains("word") || lower.contains("excel")) {
-        return QCoreApplication::translate("NetworkTransferPanel", "Productivity");
-    }
-    if (lower.contains("discord") || lower.contains("slack") || lower.contains("teams") ||
-        lower.contains("zoom")) {
-        return QCoreApplication::translate("NetworkTransferPanel", "Communication");
-    }
-    if (lower.contains("steam") || lower.contains("epic games") || lower.contains("game")) {
-        return QCoreApplication::translate("NetworkTransferPanel", "Gaming");
-    }
-    if (lower.contains("vlc") || lower.contains("spotify") || lower.contains("obs")) {
-        return QCoreApplication::translate("NetworkTransferPanel", "Media");
-    }
-    if (lower.contains("7-zip") || lower.contains("winrar") || lower.contains("ccleaner")) {
-        return QCoreApplication::translate("NetworkTransferPanel", "Utilities");
-    }
-    if (lower.contains("nvidia") || lower.contains("amd") || lower.contains("driver")) {
-        return QCoreApplication::translate("NetworkTransferPanel", "Drivers & Hardware");
+    for (const auto& mapping : kMappings) {
+        if (lower.contains(QLatin1String(mapping.keyword))) {
+            return QCoreApplication::translate("NetworkTransferPanel", mapping.category);
+        }
     }
     return QCoreApplication::translate("NetworkTransferPanel", "Other");
 }
@@ -129,6 +145,51 @@ qint64 calculateSourceSize(const QString& path) {
     return size;
 }
 
+QString extractValueAfterColon(const QString& line) {
+    const int idx = line.indexOf(':');
+    if (idx < 0) {
+        return {};
+    }
+    return line.mid(idx + 1).trimmed();
+}
+
+void appendDnsServer(const QString& dns, EthernetConfigInfo& current) {
+    if (dns.isEmpty()) {
+        return;
+    }
+    if (current.dns_primary.isEmpty()) {
+        current.dns_primary = dns;
+    } else if (current.dns_secondary.isEmpty()) {
+        current.dns_secondary = dns;
+    }
+}
+
+void parseNetshAdapterField(const QString& trimmed, EthernetConfigInfo& current) {
+    if (trimmed.startsWith("DHCP enabled:", Qt::CaseInsensitive)) {
+        current.dhcp_enabled = trimmed.contains("Yes", Qt::CaseInsensitive);
+        return;
+    }
+    if (trimmed.startsWith("IP Address:", Qt::CaseInsensitive)) {
+        current.ip_address = extractValueAfterColon(trimmed);
+        return;
+    }
+    if (trimmed.startsWith("Subnet Prefix:", Qt::CaseInsensitive) ||
+        trimmed.startsWith("SubnetMask:", Qt::CaseInsensitive)) {
+        current.subnet_mask = extractValueAfterColon(trimmed);
+        return;
+    }
+    if (trimmed.startsWith("Default Gateway:", Qt::CaseInsensitive)) {
+        current.default_gateway = extractValueAfterColon(trimmed);
+        return;
+    }
+
+    bool is_dns = trimmed.contains("DNS Server", Qt::CaseInsensitive) ||
+                  trimmed.startsWith("Statically Configured DNS", Qt::CaseInsensitive);
+    if (is_dns) {
+        appendDnsServer(extractValueAfterColon(trimmed), current);
+    }
+}
+
 QVector<EthernetConfigInfo> parseNetshEthernetOutput(const QString& output) {
     Q_ASSERT(!output.isEmpty());
     QVector<EthernetConfigInfo> configs;
@@ -136,15 +197,15 @@ QVector<EthernetConfigInfo> parseNetshEthernetOutput(const QString& output) {
     bool inAdapter = false;
 
     for (const QString& line : output.split('\n')) {
-        QString trimmed = line.trimmed();
+        const QString trimmed = line.trimmed();
 
         if (trimmed.startsWith("Configuration for interface")) {
             if (inAdapter && !current.adapter_name.isEmpty()) {
                 configs.append(current);
             }
             current = EthernetConfigInfo();
-            int firstQuote = trimmed.indexOf('"');
-            int lastQuote = trimmed.lastIndexOf('"');
+            const int firstQuote = trimmed.indexOf('"');
+            const int lastQuote = trimmed.lastIndexOf('"');
             if (firstQuote >= 0 && lastQuote > firstQuote) {
                 current.adapter_name = trimmed.mid(firstQuote + 1, lastQuote - firstQuote - 1);
             }
@@ -155,40 +216,7 @@ QVector<EthernetConfigInfo> parseNetshEthernetOutput(const QString& output) {
             continue;
         }
 
-        if (trimmed.startsWith("DHCP enabled:", Qt::CaseInsensitive)) {
-            current.dhcp_enabled = trimmed.contains("Yes", Qt::CaseInsensitive);
-        } else if (trimmed.startsWith("IP Address:", Qt::CaseInsensitive)) {
-            int idx = trimmed.indexOf(':');
-            if (idx >= 0) {
-                current.ip_address = trimmed.mid(idx + 1).trimmed();
-            }
-        } else if (trimmed.startsWith("Subnet Prefix:", Qt::CaseInsensitive) ||
-                   trimmed.startsWith("SubnetMask:", Qt::CaseInsensitive)) {
-            int idx = trimmed.indexOf(':');
-            if (idx >= 0) {
-                current.subnet_mask = trimmed.mid(idx + 1).trimmed();
-            }
-        } else if (trimmed.startsWith("Default Gateway:", Qt::CaseInsensitive)) {
-            int idx = trimmed.indexOf(':');
-            if (idx >= 0) {
-                current.default_gateway = trimmed.mid(idx + 1).trimmed();
-            }
-        } else if (trimmed.contains("DNS Server", Qt::CaseInsensitive) ||
-                   trimmed.startsWith("Statically Configured DNS", Qt::CaseInsensitive)) {
-            int idx = trimmed.indexOf(':');
-            if (idx < 0) {
-                continue;
-            }
-            QString dns = trimmed.mid(idx + 1).trimmed();
-            if (dns.isEmpty()) {
-                continue;
-            }
-            if (current.dns_primary.isEmpty()) {
-                current.dns_primary = dns;
-            } else if (current.dns_secondary.isEmpty()) {
-                current.dns_secondary = dns;
-            }
-        }
+        parseNetshAdapterField(trimmed, current);
     }
     if (inAdapter && !current.adapter_name.isEmpty()) {
         configs.append(current);
@@ -634,13 +662,7 @@ void NetworkTransferPanel::onPeerDiscovered(const TransferPeerInfo& peer) {
     }
 }
 
-void NetworkTransferPanel::onManifestReceived(const TransferManifest& manifest) {
-    Q_ASSERT(m_manifestText);
-    Q_ASSERT(m_controller);
-    m_manifestValidated = false;
-    m_currentManifest = manifest;
-    QJsonDocument doc(manifest.toJson(false));
-    m_manifestText->setText(QString::fromUtf8(doc.toJson(QJsonDocument::Indented)));
+void NetworkTransferPanel::appendManifestSummary(const TransferManifest& manifest) {
     m_manifestText->append(tr("\nSummary: %1 users, %2 files, %3 total")
                                .arg(manifest.users.size())
                                .arg(manifest.total_files)
@@ -658,7 +680,9 @@ void NetworkTransferPanel::onManifestReceived(const TransferManifest& manifest) 
     if (!manifest.ethernet_configs.isEmpty()) {
         m_manifestText->append(tr("  Ethernet Configs: %1").arg(manifest.ethernet_configs.size()));
     }
+}
 
+bool NetworkTransferPanel::validateManifestIntegrity(const TransferManifest& manifest) {
     TransferManifest verifyManifest = manifest;
     verifyManifest.checksum_sha256.clear();
     QJsonDocument verifyDoc(verifyManifest.toJson());
@@ -669,7 +693,7 @@ void NetworkTransferPanel::onManifestReceived(const TransferManifest& manifest) 
         m_manifestText->append(tr("\nWARNING: Manifest checksum mismatch."));
         m_controller->approveTransfer(false);
         m_approveButton->setEnabled(false);
-        return;
+        return false;
     }
 
     auto available =
@@ -678,7 +702,7 @@ void NetworkTransferPanel::onManifestReceived(const TransferManifest& manifest) 
         m_manifestText->append(tr("\nWARNING: Unable to determine available disk space."));
         m_controller->approveTransfer(false);
         m_approveButton->setEnabled(false);
-        return;
+        return false;
     }
 
     if (static_cast<qint64>(*available) < manifest.total_bytes) {
@@ -687,9 +711,25 @@ void NetworkTransferPanel::onManifestReceived(const TransferManifest& manifest) 
                                    .arg(formatBytes(static_cast<qint64>(*available))));
         m_controller->approveTransfer(false);
         m_approveButton->setEnabled(false);
-    } else {
-        m_approveButton->setEnabled(true);
-        m_manifestValidated = true;
+        return false;
+    }
+
+    m_approveButton->setEnabled(true);
+    m_manifestValidated = true;
+    return true;
+}
+
+void NetworkTransferPanel::onManifestReceived(const TransferManifest& manifest) {
+    Q_ASSERT(m_manifestText);
+    Q_ASSERT(m_controller);
+    m_manifestValidated = false;
+    m_currentManifest = manifest;
+    QJsonDocument doc(manifest.toJson(false));
+    m_manifestText->setText(QString::fromUtf8(doc.toJson(QJsonDocument::Indented)));
+    appendManifestSummary(manifest);
+
+    if (!validateManifestIntegrity(manifest)) {
+        return;
     }
 
     if (m_orchestrationAssignmentPending && m_autoApproveOrchestratorCheck &&
@@ -903,12 +943,11 @@ void NetworkTransferPanel::startPostTransferRestore() {
     }
 
     Q_EMIT logOutput(tr("Starting profile restore into system profiles..."));
-    m_restoreWorker->startRestore(destinationBase(),
-                                  backupManifest,
-                                  mappings,
-                                  ConflictResolution::RenameWithSuffix,
-                                  PermissionMode::StripAll,
-                                  true);
+    m_restoreWorker->startRestore(
+        destinationBase(),
+        backupManifest,
+        mappings,
+        {ConflictResolution::RenameWithSuffix, PermissionMode::StripAll, true});
 }
 
 void NetworkTransferPanel::buildManifest() {
@@ -936,36 +975,32 @@ QVector<TransferFileEntry> NetworkTransferPanel::buildFileList() {
 
 void NetworkTransferPanel::processScannedFile(QVector<TransferFileEntry>& files,
                                               const std::filesystem::path& fsPath,
-                                              const QString& username,
-                                              const QString& profilePath,
-                                              SmartFileFilter& smartFilter,
-                                              PermissionManager& permissionManager,
-                                              file_hasher& hasher,
-                                              PermissionMode permMode) {
+                                              FileScanContext& context) {
     if (!std::filesystem::is_regular_file(fsPath)) {
         return;
     }
 
     QFileInfo fileInfo(QString::fromStdString(fsPath.string()));
-    if (smartFilter.shouldExcludeFile(fileInfo, profilePath) ||
-        smartFilter.exceedsSizeLimit(fileInfo.size())) {
+    if (context.smart_filter.shouldExcludeFile(fileInfo, context.profile_path) ||
+        context.smart_filter.exceedsSizeLimit(fileInfo.size())) {
         return;
     }
 
     TransferFileEntry entry;
     entry.file_id = QUuid::createUuid().toString(QUuid::WithoutBraces);
     entry.absolute_path = QString::fromStdString(fsPath.string());
-    auto rel = path_utils::makeRelative(fsPath, std::filesystem::path(profilePath.toStdString()));
+    auto rel = path_utils::makeRelative(fsPath,
+                                        std::filesystem::path(context.profile_path.toStdString()));
     if (!rel) {
         return;
     }
     QString relative = QString::fromStdString(rel->generic_string());
-    entry.relative_path = username + "/" + relative;
+    entry.relative_path = context.username + "/" + relative;
     entry.size_bytes = static_cast<qint64>(std::filesystem::file_size(fsPath));
-    if (permMode == PermissionMode::PreserveOriginal) {
-        entry.acl_sddl = permissionManager.getSecurityDescriptorSddl(entry.absolute_path);
+    if (context.perm_mode == PermissionMode::PreserveOriginal) {
+        entry.acl_sddl = context.permission_manager.getSecurityDescriptorSddl(entry.absolute_path);
     }
-    auto hashResult = hasher.calculateHash(fsPath);
+    auto hashResult = context.hasher.calculateHash(fsPath);
     if (hashResult) {
         entry.checksum_sha256 = QString::fromStdString(*hashResult);
     }
@@ -1003,15 +1038,14 @@ void NetworkTransferPanel::collectUserFiles(QVector<TransferFileEntry>& files,
             continue;
         }
 
+        FileScanContext scan_context{user.username,
+                                     user.profile_path,
+                                     smartFilter,
+                                     permissionManager,
+                                     hasher,
+                                     selectedPermMode};
         for (const auto& path : *result) {
-            processScannedFile(files,
-                               path,
-                               user.username,
-                               user.profile_path,
-                               smartFilter,
-                               permissionManager,
-                               hasher,
-                               selectedPermMode);
+            processScannedFile(files, path, scan_context);
         }
     }
 }
@@ -1127,15 +1161,11 @@ void NetworkTransferPanel::onConnectionStateChanged(bool connected) {
     }
 }
 
-void NetworkTransferPanel::activateAssignment(const DeploymentAssignment& assignment) {
-    Q_ASSERT(m_activeAssignmentLabel);
-    Q_ASSERT(m_assignmentBandwidthLabel);
-    m_activeAssignment = assignment;
+void NetworkTransferPanel::updateAssignmentLabels(const DeploymentAssignment& assignment) {
     if (m_activeAssignmentLabel) {
         m_activeAssignmentLabel->setText(
             tr("Active: %1 (%2)").arg(assignment.source_user, assignment.deployment_id));
     }
-
     if (m_assignmentBandwidthLabel) {
         if (assignment.max_bandwidth_kbps > 0) {
             m_assignmentBandwidthLabel->setText(
@@ -1145,6 +1175,29 @@ void NetworkTransferPanel::activateAssignment(const DeploymentAssignment& assign
             m_assignmentBandwidthLabel->setText(tr("Bandwidth limit: default"));
         }
     }
+}
+
+void NetworkTransferPanel::autoStartDestinationIfReady() {
+    if (!m_controller || m_controller->mode() == NetworkTransferController::Mode::Destination) {
+        return;
+    }
+    const bool has_base = !destinationBase().isEmpty();
+    const bool has_passphrase = !m_settings.encryption_enabled ||
+                                !m_destinationPassphraseEdit->text().isEmpty();
+    if (has_base && has_passphrase) {
+        onStartDestination();
+    } else {
+        Q_EMIT logOutput(
+            tr("Assignment received. Set destination base/passphrase to begin "
+               "listening."));
+    }
+}
+
+void NetworkTransferPanel::activateAssignment(const DeploymentAssignment& assignment) {
+    Q_ASSERT(m_activeAssignmentLabel);
+    Q_ASSERT(m_assignmentBandwidthLabel);
+    m_activeAssignment = assignment;
+    updateAssignmentLabels(assignment);
 
     refreshAssignmentQueue();
     refreshAssignmentStatus();
@@ -1162,18 +1215,7 @@ void NetworkTransferPanel::activateAssignment(const DeploymentAssignment& assign
         m_modeCombo->setCurrentIndex(1);
     }
 
-    if (m_controller && m_controller->mode() != NetworkTransferController::Mode::Destination) {
-        const bool hasDestinationBase = !destinationBase().isEmpty();
-        const bool hasPassphrase = !m_settings.encryption_enabled ||
-                                   !m_destinationPassphraseEdit->text().isEmpty();
-        if (hasDestinationBase && hasPassphrase) {
-            onStartDestination();
-        } else {
-            Q_EMIT logOutput(
-                tr("Assignment received. Set destination base/passphrase to begin "
-                   "listening."));
-        }
-    }
+    autoStartDestinationIfReady();
 }
 
 }  // namespace sak

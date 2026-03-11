@@ -197,16 +197,42 @@ inline void setAccessible(QWidget* widget, const QString& name, const QString& d
 ///     Orange for active/progress, Gray default
 [[nodiscard]] inline QColor statusColor(const QString& status) {
     const QString value = status.trimmed().toLower();
-    if (value.contains("success") || value.contains("complete") || value.contains("ready")) {
-        return QColor(ui::kStatusColorSuccess);
+    struct StatusKeyword {
+        const char* keyword;
+        const char* color;
+    };
+    static constexpr StatusKeyword kSuccess[] = {
+        {"success", nullptr},
+        {"complete", nullptr},
+        {"ready", nullptr},
+    };
+    for (const auto& entry : kSuccess) {
+        if (value.contains(QLatin1String(entry.keyword))) {
+            return QColor(ui::kStatusColorSuccess);
+        }
     }
-    if (value.contains("fail") || value.contains("error") || value.contains("reject") ||
-        value.contains("cancel")) {
-        return QColor(ui::kStatusColorError);
+    static constexpr const char* kError[] = {
+        "fail",
+        "error",
+        "reject",
+        "cancel",
+    };
+    for (const auto* keyword : kError) {
+        if (value.contains(QLatin1String(keyword))) {
+            return QColor(ui::kStatusColorError);
+        }
     }
-    if (value.contains("active") || value.contains("transfer") || value.contains("approved") ||
-        value.contains("queued") || value.contains("progress")) {
-        return QColor(ui::kStatusColorWarning);
+    static constexpr const char* kWarning[] = {
+        "active",
+        "transfer",
+        "approved",
+        "queued",
+        "progress",
+    };
+    for (const auto* keyword : kWarning) {
+        if (value.contains(QLatin1String(keyword))) {
+            return QColor(ui::kStatusColorWarning);
+        }
     }
     return QColor(ui::kStatusColorIdle);
 }

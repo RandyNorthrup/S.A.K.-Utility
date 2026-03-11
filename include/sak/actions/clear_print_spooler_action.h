@@ -57,6 +57,7 @@ private:
     /// @brief Build the restart and output portion of the spooler script
     QString buildSpoolerScriptRestart() const;
     SpoolerResult parseSpoolerOutput(const QString& output) const;
+    void parseSpoolerLine(const QString& trimmed, SpoolerResult& spooler) const;
     QString buildSuccessLog(const SpoolerResult& spooler, qint64 duration_ms) const;
     QString buildFailureLog(const SpoolerResult& spooler, qint64 duration_ms) const;
 };

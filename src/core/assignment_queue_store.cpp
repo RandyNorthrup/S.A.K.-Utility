@@ -55,21 +55,31 @@ bool AssignmentQueueStore::save(const DeploymentAssignment& active,
     return file.commit();
 }
 
+namespace {
+
+void loadJsonStringMap(const QJsonObject& root,
+                       const QString& key,
+                       QMap<QString, QString>& target) {
+    target.clear();
+    const auto obj = root.value(key).toObject();
+    for (auto it = obj.begin(); it != obj.end(); ++it) {
+        target.insert(it.key(), it.value().toString());
+    }
+}
+
+}  // namespace
+
 bool AssignmentQueueStore::load(DeploymentAssignment& active,
                                 QQueue<DeploymentAssignment>& queue,
                                 QMap<QString, QString>& statusByJob,
                                 QMap<QString, QString>& eventByJob) const {
     QFile file(m_filePath);
-    if (!file.exists()) {
-        return false;
-    }
-    if (!file.open(QIODevice::ReadOnly)) {
+    if (!file.exists() || !file.open(QIODevice::ReadOnly)) {
         return false;
     }
 
-    const auto data = file.readAll();
     QJsonParseError error;
-    const auto doc = QJsonDocument::fromJson(data, &error);
+    const auto doc = QJsonDocument::fromJson(file.readAll(), &error);
     if (error.error != QJsonParseError::NoError || !doc.isObject()) {
         return false;
     }
@@ -87,17 +97,8 @@ bool AssignmentQueueStore::load(DeploymentAssignment& active,
         }
     }
 
-    statusByJob.clear();
-    const auto statusObj = root.value("status_by_job").toObject();
-    for (auto it = statusObj.begin(); it != statusObj.end(); ++it) {
-        statusByJob.insert(it.key(), it.value().toString());
-    }
-
-    eventByJob.clear();
-    const auto eventObj = root.value("event_by_job").toObject();
-    for (auto it = eventObj.begin(); it != eventObj.end(); ++it) {
-        eventByJob.insert(it.key(), it.value().toString());
-    }
+    loadJsonStringMap(root, "status_by_job", statusByJob);
+    loadJsonStringMap(root, "event_by_job", eventByJob);
 
     return true;
 }

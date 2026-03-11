@@ -158,6 +158,44 @@ QString OrchestrationServer::ensureDestinationId(const DestinationPC& destinatio
     return QString("%1@%2").arg(destination.hostname, socket->peerAddress().toString());
 }
 
+void OrchestrationServer::handleDestinationRegister(QTcpSocket* socket,
+                                                    const QJsonObject& message) {
+    const auto info = message.value("destination_info").toObject();
+    DestinationPC destination = DestinationPC::fromJson(info);
+    destination.ip_address = socket->peerAddress().toString();
+    destination.destination_id = ensureDestinationId(destination, socket);
+
+    m_destinationSockets.insert(destination.destination_id, socket);
+    m_socketDestinations.insert(socket, destination.destination_id);
+
+    Q_EMIT destinationRegistered(destination);
+    Q_EMIT statusMessage(tr("Destination registered: %1").arg(destination.hostname));
+}
+
+QString OrchestrationServer::resolveDestinationId(QTcpSocket* socket,
+                                                  const QString& destination_id) const {
+    if (!destination_id.isEmpty()) {
+        return destination_id;
+    }
+    return m_socketDestinations.contains(socket) ? m_socketDestinations.value(socket) : QString();
+}
+
+void OrchestrationServer::handleProgressMessage(QTcpSocket* socket, const QJsonObject& message) {
+    DeploymentProgress progress = DeploymentProgress::fromJson(message);
+    if (progress.destination_id.isEmpty() && m_socketDestinations.contains(socket)) {
+        progress.destination_id = m_socketDestinations.value(socket);
+    }
+    Q_EMIT progressUpdated(progress);
+}
+
+void OrchestrationServer::handleCompletionMessage(QTcpSocket* socket, const QJsonObject& message) {
+    DeploymentCompletion completion = DeploymentCompletion::fromJson(message);
+    if (completion.destination_id.isEmpty() && m_socketDestinations.contains(socket)) {
+        completion.destination_id = m_socketDestinations.value(socket);
+    }
+    Q_EMIT deploymentCompleted(completion);
+}
+
 void OrchestrationServer::handleMessage(QTcpSocket* socket, const QJsonObject& message) {
     Q_ASSERT(!message.isEmpty());
     Q_ASSERT(socket);
@@ -167,49 +205,25 @@ void OrchestrationServer::handleMessage(QTcpSocket* socket, const QJsonObject& m
     }
 
     switch (*type) {
-    case OrchestrationMessageType::DestinationRegister: {
-        const auto info = message.value("destination_info").toObject();
-        DestinationPC destination = DestinationPC::fromJson(info);
-        destination.ip_address = socket->peerAddress().toString();
-        destination.destination_id = ensureDestinationId(destination, socket);
-
-        m_destinationSockets.insert(destination.destination_id, socket);
-        m_socketDestinations.insert(socket, destination.destination_id);
-
-        Q_EMIT destinationRegistered(destination);
-        Q_EMIT statusMessage(tr("Destination registered: %1").arg(destination.hostname));
+    case OrchestrationMessageType::DestinationRegister:
+        handleDestinationRegister(socket, message);
         break;
-    }
     case OrchestrationMessageType::HealthCheckResponse: {
-        const QString destination_id = message.value("destination_id").toString();
         const auto healthObj = message.value("health_metrics").toObject();
         const DestinationHealth health = DestinationHealth::fromJson(healthObj);
-
-        const QString resolved = destination_id.isEmpty() && m_socketDestinations.contains(socket)
-                                     ? m_socketDestinations.value(socket)
-                                     : destination_id;
-
+        const QString resolved = resolveDestinationId(socket,
+                                                      message.value("destination_id").toString());
         if (!resolved.isEmpty()) {
             Q_EMIT healthUpdated(resolved, health);
         }
         break;
     }
-    case OrchestrationMessageType::ProgressUpdate: {
-        DeploymentProgress progress = DeploymentProgress::fromJson(message);
-        if (progress.destination_id.isEmpty() && m_socketDestinations.contains(socket)) {
-            progress.destination_id = m_socketDestinations.value(socket);
-        }
-        Q_EMIT progressUpdated(progress);
+    case OrchestrationMessageType::ProgressUpdate:
+        handleProgressMessage(socket, message);
         break;
-    }
-    case OrchestrationMessageType::DeploymentComplete: {
-        DeploymentCompletion completion = DeploymentCompletion::fromJson(message);
-        if (completion.destination_id.isEmpty() && m_socketDestinations.contains(socket)) {
-            completion.destination_id = m_socketDestinations.value(socket);
-        }
-        Q_EMIT deploymentCompleted(completion);
+    case OrchestrationMessageType::DeploymentComplete:
+        handleCompletionMessage(socket, message);
         break;
-    }
     default:
         break;
     }

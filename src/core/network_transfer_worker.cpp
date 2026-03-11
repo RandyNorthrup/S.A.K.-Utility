@@ -220,12 +220,42 @@ void NetworkTransferWorker::startSender(const QVector<TransferFileEntry>& files,
     logInfo("NetworkTransferWorker sender completed transfer");
 }
 
+QTcpSocket* NetworkTransferWorker::waitForIncomingConnection(QTcpServer& server) {
+    constexpr int kPollIntervalMs = 1000;
+    constexpr int kMaxWaitMs = 60'000;
+    bool connected = false;
+    for (int elapsed = 0; elapsed < kMaxWaitMs && !m_stopRequested; elapsed += kPollIntervalMs) {
+        if (server.waitForNewConnection(kPollIntervalMs)) {
+            connected = true;
+            break;
+        }
+    }
+
+    if (!connected) {
+        if (m_stopRequested) {
+            logInfo("NetworkTransferWorker receiver stopped by request");
+            Q_EMIT transferCompleted(false, tr("Stopped"));
+        } else {
+            logError("NetworkTransferWorker receiver timed out waiting for connection");
+            Q_EMIT errorOccurred(tr("No incoming connection"));
+            Q_EMIT transferCompleted(false, tr("No incoming connection"));
+        }
+        return nullptr;
+    }
+
+    QTcpSocket* incoming = server.nextPendingConnection();
+    if (!incoming) {
+        logError("NetworkTransferWorker receiver connection failed: no socket");
+        Q_EMIT transferCompleted(false, tr("Connection failure"));
+    }
+    return incoming;
+}
+
 void NetworkTransferWorker::startReceiver(const QHostAddress& listenAddress,
                                           quint16 port,
                                           const DataOptions& options) {
     Q_ASSERT_X(port > 0, "startReceiver", "port must be positive");
 
-    // If stop() was already called, bail out immediately
     if (m_stopRequested) {
         Q_EMIT transferCompleted(false, tr("Stopped before start"));
         return;
@@ -249,33 +279,8 @@ void NetworkTransferWorker::startReceiver(const QHostAddress& listenAddress,
 
     Q_EMIT transferStarted();
 
-    // Poll for new connections in 1-second intervals so we can respond to stop()
-    constexpr int kPollIntervalMs = 1000;
-    constexpr int kMaxWaitMs = 60'000;
-    bool connected = false;
-    for (int elapsed = 0; elapsed < kMaxWaitMs && !m_stopRequested; elapsed += kPollIntervalMs) {
-        if (server.waitForNewConnection(kPollIntervalMs)) {
-            connected = true;
-            break;
-        }
-    }
-
-    if (!connected) {
-        if (m_stopRequested) {
-            logInfo("NetworkTransferWorker receiver stopped by request");
-            Q_EMIT transferCompleted(false, tr("Stopped"));
-        } else {
-            logError("NetworkTransferWorker receiver timed out waiting for connection");
-            Q_EMIT errorOccurred(tr("No incoming connection"));
-            Q_EMIT transferCompleted(false, tr("No incoming connection"));
-        }
-        return;
-    }
-
-    QTcpSocket* socket = server.nextPendingConnection();
+    QTcpSocket* socket = waitForIncomingConnection(server);
     if (!socket) {
-        logError("NetworkTransferWorker receiver connection failed: no socket");
-        Q_EMIT transferCompleted(false, tr("Connection failure"));
         return;
     }
 
@@ -349,20 +354,16 @@ QByteArray NetworkTransferWorker::readExact(QTcpSocket* socket, qint64 size) {
 }
 
 bool NetworkTransferWorker::sendFrame(QTcpSocket* socket,
-                                      FrameType type,
-                                      quint16 flags,
-                                      quint32 chunkId,
-                                      const QByteArray& payload,
-                                      quint32 plainSize,
-                                      quint32 crc) {
+                                      const FrameMeta& meta,
+                                      const QByteArray& payload) {
     Q_ASSERT_X(socket != nullptr, "sendFrame", "socket must not be null");
     FrameHeader header;
-    header.frame_type = static_cast<quint8>(type);
-    header.flags = flags;
-    header.chunk_id = chunkId;
+    header.frame_type = static_cast<quint8>(meta.type);
+    header.flags = meta.flags;
+    header.chunk_id = meta.chunk_id;
     header.payload_size = payload.size();
-    header.plain_size = plainSize;
-    header.crc32 = crc;
+    header.plain_size = meta.plain_size;
+    header.crc32 = meta.crc32;
 
     QByteArray headerBytes = serializeHeader(header);
     if (socket->write(headerBytes) != headerBytes.size()) {
@@ -427,10 +428,7 @@ bool NetworkTransferWorker::trySendSingleFile(QTcpSocket* socket,
                                               const TransferFileEntry& file,
                                               const DataOptions& options,
                                               const QByteArray& key,
-                                              qint64& bytesSent,
-                                              qint64 totalBytes,
-                                              QElapsedTimer& rateTimer,
-                                              qint64& rateBytesSent) {
+                                              SenderProgress& progress) {
     Q_ASSERT_X(socket != nullptr, "trySendSingleFile", "socket must not be null");
     QFile source(file.absolute_path);
     if (!source.open(QIODevice::ReadOnly)) {
@@ -457,20 +455,12 @@ bool NetworkTransferWorker::trySendSingleFile(QTcpSocket* socket,
         }
     }
 
-    if (!sendFileChunks(socket,
-                        source,
-                        file,
-                        options,
-                        key,
-                        resumeRanges,
-                        bytesSent,
-                        totalBytes,
-                        rateTimer,
-                        rateBytesSent)) {
+    FileChunkContext chunk_ctx{source, file, options, key, resumeRanges};
+    if (!sendFileChunks(socket, chunk_ctx, progress)) {
         return false;
     }
 
-    if (!sendFrame(socket, FrameFileEnd, 0, 0, {}, 0, 0)) {
+    if (!sendFrame(socket, {FrameFileEnd}, {})) {
         logError("NetworkTransferWorker sender failed to finalize file {}",
                  file.relative_path.toStdString());
         Q_EMIT errorOccurred(tr("Failed to finalize file"));
@@ -478,6 +468,27 @@ bool NetworkTransferWorker::trySendSingleFile(QTcpSocket* socket,
     }
 
     return awaitFileAck(socket, file);
+}
+
+bool NetworkTransferWorker::sendFileWithRetries(QTcpSocket* socket,
+                                                const TransferFileEntry& file,
+                                                const DataOptions& options,
+                                                const QByteArray& key,
+                                                SenderProgress& progress) {
+    logInfo("NetworkTransferWorker sender starting file {}", file.relative_path.toStdString());
+
+    constexpr int kMaxRetries = 3;
+    bool sent = false;
+    for (int attempt = 0; attempt < kMaxRetries && !sent && !m_stopRequested; ++attempt) {
+        sent = trySendSingleFile(socket, file, options, key, progress);
+    }
+
+    if (!sent) {
+        logError("NetworkTransferWorker sender failed to transfer file {} after retries",
+                 file.relative_path.toStdString());
+        Q_EMIT errorOccurred(tr("Failed to transfer file after retries"));
+    }
+    return sent;
 }
 
 bool NetworkTransferWorker::handleSender(QTcpSocket* socket,
@@ -508,34 +519,21 @@ bool NetworkTransferWorker::handleSender(QTcpSocket* socket,
         totalBytes += file.size_bytes;
     }
 
-    qint64 bytesSent = 0;
-    QElapsedTimer rateTimer;
-    rateTimer.start();
-    qint64 rateBytesSent = 0;
+    SenderProgress progress;
+    progress.total_bytes = totalBytes;
+    progress.rate_timer.start();
 
     for (const auto& file : files) {
         if (m_stopRequested) {
             return false;
         }
-        logInfo("NetworkTransferWorker sender starting file {}", file.relative_path.toStdString());
-
-        bool sent = false;
-        for (int attempt = 0; attempt < 3 && !sent && !m_stopRequested; ++attempt) {
-            sent = trySendSingleFile(
-                socket, file, options, key, bytesSent, totalBytes, rateTimer, rateBytesSent);
-        }
-
-        if (!sent) {
-            logError("NetworkTransferWorker sender failed to transfer file {} after retries",
-                     file.relative_path.toStdString());
-            Q_EMIT errorOccurred(tr("Failed to transfer file after retries"));
+        if (!sendFileWithRetries(socket, file, options, key, progress)) {
             return false;
         }
-
         Q_EMIT fileCompleted(file.file_id, file.relative_path);
     }
 
-    return sendFrame(socket, FrameTransferEnd, 0, 0, {}, 0, 0);
+    return sendFrame(socket, {FrameTransferEnd}, {});
 }
 
 bool NetworkTransferWorker::sendFileHeader(QTcpSocket* socket,
@@ -553,13 +551,12 @@ bool NetworkTransferWorker::sendFileHeader(QTcpSocket* socket,
     }
 
     QByteArray headerPayload = QJsonDocument(fileHeader).toJson(QJsonDocument::Compact);
-    if (!sendFrame(socket,
-                   FrameFileHeader,
-                   0,
-                   0,
-                   headerPayload,
-                   headerPayload.size(),
-                   computeCrc32(headerPayload))) {
+    const FrameMeta file_header_meta{FrameFileHeader,
+                                     0,
+                                     0,
+                                     static_cast<quint32>(headerPayload.size()),
+                                     computeCrc32(headerPayload)};
+    if (!sendFrame(socket, file_header_meta, headerPayload)) {
         logError("NetworkTransferWorker sender failed to send file header");
         Q_EMIT errorOccurred(tr("Failed to send file header"));
         return false;
@@ -568,32 +565,25 @@ bool NetworkTransferWorker::sendFileHeader(QTcpSocket* socket,
 }
 
 bool NetworkTransferWorker::sendFileChunks(QTcpSocket* socket,
-                                           QFile& source,
-                                           const TransferFileEntry& file,
-                                           const DataOptions& options,
-                                           const QByteArray& key,
-                                           const QVector<QPair<int, int>>& resumeRanges,
-                                           qint64& bytesSent,
-                                           qint64 totalBytes,
-                                           QElapsedTimer& rateTimer,
-                                           qint64& rateBytesSent) {
+                                           FileChunkContext& ctx,
+                                           SenderProgress& progress) {
     Q_ASSERT_X(socket != nullptr, "sendFileChunks", "socket must not be null");
 
     int chunkId = 0;
-    while (!source.atEnd()) {
+    while (!ctx.source.atEnd()) {
         if (m_stopRequested) {
             return false;
         }
 
-        QByteArray chunk = source.read(options.chunk_size);
+        QByteArray chunk = ctx.source.read(ctx.options.chunk_size);
         if (chunk.isEmpty()) {
             break;
         }
 
-        if (options.resume_enabled && isChunkInRanges(chunkId, resumeRanges)) {
-            bytesSent += chunk.size();
-            Q_EMIT fileProgress(file.file_id, bytesSent, file.size_bytes);
-            Q_EMIT overallProgress(bytesSent, totalBytes);
+        if (ctx.options.resume_enabled && isChunkInRanges(chunkId, ctx.resume_ranges)) {
+            progress.bytes_sent += chunk.size();
+            Q_EMIT fileProgress(ctx.file.file_id, progress.bytes_sent, ctx.file.size_bytes);
+            Q_EMIT overallProgress(progress.bytes_sent, progress.total_bytes);
             chunkId++;
             continue;
         }
@@ -601,38 +591,37 @@ bool NetworkTransferWorker::sendFileChunks(QTcpSocket* socket,
         QByteArray payload = chunk;
         quint16 flags = 0;
 
-        if (options.compression_enabled) {
+        if (ctx.options.compression_enabled) {
             payload = compressData(payload);
             flags |= kFlagCompressed;
         }
 
-        if (!encryptPayloadIfNeeded(payload, flags, key, options, file.relative_path)) {
+        if (!encryptPayloadIfNeeded(payload, flags, ctx.key, ctx.options, ctx.file.relative_path)) {
             return false;
         }
 
-        const bool isLast = source.atEnd();
+        const bool isLast = ctx.source.atEnd();
         if (isLast) {
             flags |= kFlagLastChunk;
         }
 
         const quint32 crc = computeCrc32(chunk);
-        if (!sendFrame(socket,
-                       FrameDataChunk,
-                       flags,
-                       static_cast<quint32>(chunkId),
-                       payload,
-                       chunk.size(),
-                       crc)) {
+        const FrameMeta chunk_meta{FrameDataChunk,
+                                   flags,
+                                   static_cast<quint32>(chunkId),
+                                   static_cast<quint32>(chunk.size()),
+                                   crc};
+        if (!sendFrame(socket, chunk_meta, payload)) {
             logError("NetworkTransferWorker sender failed to send data chunk");
             Q_EMIT errorOccurred(tr("Failed to send data chunk"));
             return false;
         }
 
-        bytesSent += chunk.size();
-        Q_EMIT fileProgress(file.file_id, bytesSent, file.size_bytes);
-        Q_EMIT overallProgress(bytesSent, totalBytes);
+        progress.bytes_sent += chunk.size();
+        Q_EMIT fileProgress(ctx.file.file_id, progress.bytes_sent, ctx.file.size_bytes);
+        Q_EMIT overallProgress(progress.bytes_sent, progress.total_bytes);
 
-        throttleBandwidth(chunk.size(), rateTimer, rateBytesSent);
+        throttleBandwidth(chunk.size(), progress.rate_timer, progress.rate_bytes_sent);
 
         chunkId++;
     }
@@ -728,16 +717,46 @@ bool NetworkTransferWorker::deriveReceiverKey(const DataOptions& options, Receiv
     return true;
 }
 
-void NetworkTransferWorker::emitReceiverProgress(const DataOptions& options,
-                                                 ReceiverState& state,
-                                                 QElapsedTimer& resumeTimer) {
-    if (options.resume_enabled && resumeTimer.elapsed() > 2000) {
+void NetworkTransferWorker::emitReceiverProgress(const DataOptions& options, ReceiverState& state) {
+    if (options.resume_enabled && state.resume_timer.elapsed() > 2000) {
         saveResumeInfo(
             state.resume_path, state.current_file_id, state.current_ranges, state.total_chunks);
-        resumeTimer.restart();
+        state.resume_timer.restart();
     }
     Q_EMIT fileProgress(state.current_file_id, state.bytes_received, state.current_size);
     Q_EMIT overallProgress(state.overall_received, options.total_bytes);
+}
+
+NetworkTransferWorker::DispatchResult NetworkTransferWorker::dispatchReceiverFrame(
+    QTcpSocket* socket,
+    const FrameHeader& header,
+    const QByteArray& payload,
+    const DataOptions& options,
+    ReceiverState& state) {
+    switch (static_cast<FrameType>(header.frame_type)) {
+    case FrameFileHeader:
+        if (!processFileHeader(socket, payload, options, state)) {
+            return DispatchResult::Error;
+        }
+        return DispatchResult::Continue;
+
+    case FrameDataChunk:
+        if (!processDataChunk(socket, header, payload, options, state)) {
+            return DispatchResult::Error;
+        }
+        emitReceiverProgress(options, state);
+        return DispatchResult::Continue;
+
+    case FrameFileEnd:
+        processFileEnd(socket, options, state);
+        return DispatchResult::Continue;
+
+    case FrameTransferEnd:
+        return DispatchResult::Done;
+
+    default:
+        return DispatchResult::Continue;
+    }
 }
 
 bool NetworkTransferWorker::handleReceiver(QTcpSocket* socket, const DataOptions& options) {
@@ -758,8 +777,7 @@ bool NetworkTransferWorker::handleReceiver(QTcpSocket* socket, const DataOptions
         return false;
     }
 
-    QElapsedTimer resumeTimer;
-    resumeTimer.start();
+    state.resume_timer.start();
 
     while (!m_stopRequested) {
         FrameHeader header;
@@ -767,7 +785,6 @@ bool NetworkTransferWorker::handleReceiver(QTcpSocket* socket, const DataOptions
             break;
         }
 
-        // Validate payload size before allocating memory (BUG-02: prevent OOM DoS).
         if (header.payload_size > kMaxPayloadSize) {
             logError("NetworkTransferWorker receiver payload size {} exceeds maximum {}",
                      header.payload_size,
@@ -781,31 +798,12 @@ bool NetworkTransferWorker::handleReceiver(QTcpSocket* socket, const DataOptions
             return false;
         }
 
-        switch (static_cast<FrameType>(header.frame_type)) {
-        case FrameFileHeader:
-            if (!processFileHeader(socket, payload, options, state)) {
-                return false;
-            }
-            continue;
-
-        case FrameDataChunk:
-            if (!processDataChunk(socket, header, payload, options, state)) {
-                return false;
-            }
-            emitReceiverProgress(options, state, resumeTimer);
-            continue;
-
-        case FrameFileEnd:
-            if (!processFileEnd(socket, options, state)) {
-                continue;  // retry signaled via ACK
-            }
-            continue;
-
-        case FrameTransferEnd:
+        const auto result = dispatchReceiverFrame(socket, header, payload, options, state);
+        if (result == DispatchResult::Error) {
+            return false;
+        }
+        if (result == DispatchResult::Done) {
             return true;
-
-        default:
-            continue;
         }
     }
 
@@ -912,13 +910,12 @@ void NetworkTransferWorker::initReceiverResume(QTcpSocket* socket,
 
     QByteArray resumePayload =
         buildResumePayload(state.current_file_id, state.current_ranges, state.total_chunks);
-    if (!sendFrame(socket,
-                   FrameResumeInfo,
-                   0,
-                   0,
-                   resumePayload,
-                   resumePayload.size(),
-                   computeCrc32(resumePayload))) {
+    const FrameMeta resume_meta{FrameResumeInfo,
+                                0,
+                                0,
+                                static_cast<quint32>(resumePayload.size()),
+                                computeCrc32(resumePayload)};
+    if (!sendFrame(socket, resume_meta, resumePayload)) {
         logWarning("NetworkTransferWorker failed to send resume info frame");
     }
 }
@@ -995,12 +992,8 @@ bool NetworkTransferWorker::processFileEnd(QTcpSocket* socket,
             Q_EMIT errorOccurred(tr("Checksum mismatch for %1").arg(finalPath));
             ackPayload["status"] = "retry";
             sendFrame(socket,
-                      FrameFileAck,
-                      0,
-                      0,
-                      QJsonDocument(ackPayload).toJson(QJsonDocument::Compact),
-                      0,
-                      0);
+                      {FrameFileAck},
+                      QJsonDocument(ackPayload).toJson(QJsonDocument::Compact));
             QFile::remove(tempPath);
             // Remove stale resume metadata so retries start from scratch
             // instead of skipping chunks that no longer exist on disk.
@@ -1014,13 +1007,7 @@ bool NetworkTransferWorker::processFileEnd(QTcpSocket* socket,
     if (!QFile::rename(tempPath, finalPath)) {
         Q_EMIT errorOccurred(tr("Failed to finalize file"));
         ackPayload["status"] = "retry";
-        sendFrame(socket,
-                  FrameFileAck,
-                  0,
-                  0,
-                  QJsonDocument(ackPayload).toJson(QJsonDocument::Compact),
-                  0,
-                  0);
+        sendFrame(socket, {FrameFileAck}, QJsonDocument(ackPayload).toJson(QJsonDocument::Compact));
         return false;
     }
 
@@ -1039,8 +1026,7 @@ bool NetworkTransferWorker::processFileEnd(QTcpSocket* socket,
     }
 
     ackPayload["status"] = "ok";
-    sendFrame(
-        socket, FrameFileAck, 0, 0, QJsonDocument(ackPayload).toJson(QJsonDocument::Compact), 0, 0);
+    sendFrame(socket, {FrameFileAck}, QJsonDocument(ackPayload).toJson(QJsonDocument::Compact));
 
     if (options.resume_enabled && !state.resume_path.isEmpty()) {
         QFile::remove(state.resume_path);

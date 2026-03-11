@@ -85,10 +85,13 @@ void BrowserProfileBackupAction::execute() {
     int files_copied = 0;
     qint64 bytes_copied = 0;
 
-    if (!backupAllBrowserProfiles(
-            users, backup_dir, start_time, profile_count, files_copied, bytes_copied)) {
+    BackupStats stats;
+    if (!backupAllBrowserProfiles(users, backup_dir, start_time, stats)) {
         return;  // Cancelled
     }
+    profile_count = stats.profile_count;
+    files_copied = stats.files_copied;
+    bytes_copied = stats.bytes_copied;
 
     Q_EMIT executionProgress("Backup complete", 100);
 
@@ -124,9 +127,7 @@ void BrowserProfileBackupAction::execute() {
 bool BrowserProfileBackupAction::backupAllBrowserProfiles(const QVector<UserProfile>& users,
                                                           const QDir& backup_dir,
                                                           const QDateTime& start_time,
-                                                          int& profile_count,
-                                                          int& files_copied,
-                                                          qint64& bytes_copied) {
+                                                          BackupStats& stats) {
     const int total_users = users.size();
     int user_idx = 0;
 
@@ -137,14 +138,8 @@ bool BrowserProfileBackupAction::backupAllBrowserProfiles(const QVector<UserProf
             return false;
         }
 
-        if (!backupUserBrowserProfiles(user,
-                                       backup_dir,
-                                       start_time,
-                                       user_idx,
-                                       total_users,
-                                       profile_count,
-                                       files_copied,
-                                       bytes_copied)) {
+        if (!backupUserBrowserProfiles(
+                user, backup_dir, start_time, UserProgress{user_idx, total_users}, stats)) {
             return false;
         }
     }
@@ -154,11 +149,8 @@ bool BrowserProfileBackupAction::backupAllBrowserProfiles(const QVector<UserProf
 bool BrowserProfileBackupAction::backupUserBrowserProfiles(const UserProfile& user,
                                                            const QDir& backup_dir,
                                                            const QDateTime& start_time,
-                                                           int user_idx,
-                                                           int total_users,
-                                                           int& profile_count,
-                                                           int& files_copied,
-                                                           qint64& bytes_copied) {
+                                                           const UserProgress& progress,
+                                                           BackupStats& stats) {
     const QString user_name = QFileInfo(user.profile_path).fileName();
 
     for (const BrowserPath& bp : kBrowserPaths) {
@@ -172,14 +164,15 @@ bool BrowserProfileBackupAction::backupUserBrowserProfiles(const UserProfile& us
             continue;
         }
 
-        ++profile_count;
+        ++stats.profile_count;
         const QString dest_root = backup_dir.filePath(user_name + "/" + bp.display_name);
 
         Q_EMIT executionProgress(
             QString("Backing up %1 profile for '%2'...").arg(bp.display_name, user_name),
-            5 + (user_idx * 90) / qMax(total_users, 1));
+            5 + (progress.index * 90) / qMax(progress.total, 1));
 
-        if (!copyProfileFiles(src_root, dest_root, start_time, files_copied, bytes_copied)) {
+        if (!copyProfileFiles(
+                src_root, dest_root, start_time, stats.files_copied, stats.bytes_copied)) {
             return false;
         }
     }

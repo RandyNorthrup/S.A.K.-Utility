@@ -264,6 +264,29 @@ struct FileSortEntry {
     QDateTime lastModified;
 };
 
+bool compareFileEntries(const FileSortEntry& a, const FileSortEntry& b, int sortMode) {
+    switch (sortMode) {
+    case 0:  // Path A-Z
+        return a.path.compare(b.path, Qt::CaseInsensitive) < 0;
+    case 1:  // Path Z-A
+        return a.path.compare(b.path, Qt::CaseInsensitive) > 0;
+    case 2:  // Match Count High
+        return a.matches.size() > b.matches.size();
+    case 3:  // Match Count Low
+        return a.matches.size() < b.matches.size();
+    case 4:  // File Size Large
+        return a.fileSize > b.fileSize;
+    case 5:  // File Size Small
+        return a.fileSize < b.fileSize;
+    case 6:  // Date Modified Newest
+        return a.lastModified > b.lastModified;
+    case 7:  // Date Modified Oldest
+        return a.lastModified < b.lastModified;
+    default:
+        return a.path < b.path;
+    }
+}
+
 QVector<FileSortEntry> buildSortedFileEntries(const QMap<QString, QVector<SearchMatch>>& allResults,
                                               int sortMode) {
     QVector<FileSortEntry> sortedFiles;
@@ -288,26 +311,7 @@ QVector<FileSortEntry> buildSortedFileEntries(const QMap<QString, QVector<Search
     std::sort(sortedFiles.begin(),
               sortedFiles.end(),
               [sortMode](const FileSortEntry& a, const FileSortEntry& b) {
-                  switch (sortMode) {
-                  case 0:  // Path A-Z
-                      return a.path.compare(b.path, Qt::CaseInsensitive) < 0;
-                  case 1:  // Path Z-A
-                      return a.path.compare(b.path, Qt::CaseInsensitive) > 0;
-                  case 2:  // Match Count High
-                      return a.matches.size() > b.matches.size();
-                  case 3:  // Match Count Low
-                      return a.matches.size() < b.matches.size();
-                  case 4:  // File Size Large
-                      return a.fileSize > b.fileSize;
-                  case 5:  // File Size Small
-                      return a.fileSize < b.fileSize;
-                  case 6:  // Date Modified Newest
-                      return a.lastModified > b.lastModified;
-                  case 7:  // Date Modified Oldest
-                      return a.lastModified < b.lastModified;
-                  default:
-                      return a.path < b.path;
-                  }
+                  return compareFileEntries(a, b, sortMode);
               });
 
     return sortedFiles;
@@ -476,8 +480,6 @@ void AdvancedSearchPanel::createSearchBar(QVBoxLayout* layout) {
 }
 
 void AdvancedSearchPanel::createThreePanelSplitter(QVBoxLayout* layout) {
-    Q_ASSERT(m_splitter);
-    Q_ASSERT(m_file_explorer);
     m_splitter = new QSplitter(Qt::Horizontal, this);
     m_splitter->setChildrenCollapsible(false);
 
@@ -620,7 +622,7 @@ void AdvancedSearchPanel::createPreviewPane() {
 
     headerRow->addStretch();
 
-    m_prev_match_button = new QPushButton(QStringLiteral("\u25C4"), container);  // ◄
+    m_prev_match_button = new QPushButton(QStringLiteral("\u25C4"), container);
     m_prev_match_button->setFixedSize(28, 28);
     m_prev_match_button->setToolTip(tr("Previous match"));
     m_prev_match_button->setEnabled(false);
@@ -662,8 +664,8 @@ void AdvancedSearchPanel::createPreviewPane() {
 }
 
 void AdvancedSearchPanel::createStatusBar(QVBoxLayout* layout) {
-    Q_ASSERT(layout);
     Q_ASSERT(m_preferences_button);
+    Q_ASSERT(layout);
     auto* statusRow = new QHBoxLayout();
     statusRow->setContentsMargins(0, 4, 0, 0);
 
@@ -687,8 +689,8 @@ void AdvancedSearchPanel::createStatusBar(QVBoxLayout* layout) {
 }
 
 void AdvancedSearchPanel::createRegexPatternMenu() {
-    Q_ASSERT(m_controller);
     Q_ASSERT(m_regex_menu);
+    Q_ASSERT(m_controller);
     m_regex_menu = new QMenu(this);
 
     auto* library = m_controller->patternLibrary();

@@ -41,6 +41,15 @@ private:
         QString statusMessage;
     };
 
+    /// @brief Parsed state from a single drive scan output block
+    struct ParsedDriveState {
+        QString drive_letter;
+        QString status;
+        bool has_corrupt = false;
+        bool scan_success = false;
+        bool reboot_needed = false;
+    };
+
     QVector<DriveCheckResult> m_drive_results;
     QVector<QString> m_drives;
 
@@ -63,16 +72,15 @@ private:
                             int errors_fixed);
     static QString buildRepairVolumeScript(QChar drive);
     void parseDriveScanResult(const QString& output,
-                              QChar drive,
                               QString& report,
                               int& drives_scanned,
                               int& errors_found,
                               int& errors_fixed);
-    void appendDriveScanEntry(const QString& drive_letter,
-                              const QString& status,
-                              bool has_corrupt,
-                              bool scan_success,
-                              bool reboot_needed,
+    static void processScanKeyValue(const QString& key,
+                                    const QString& value,
+                                    ParsedDriveState& state,
+                                    int& errors_fixed);
+    void appendDriveScanEntry(const ParsedDriveState& state,
                               QString& report,
                               int& drives_scanned,
                               int& errors_found);

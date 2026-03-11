@@ -82,40 +82,27 @@ void ConfigManager::initializeFlasherDefaults() {
 }
 
 void ConfigManager::initializeNetworkDefaults() {
-    if (!contains("network_transfer/enabled")) {
-        setValue("network_transfer/enabled", true);
-    }
-    // Default ports for peer-to-peer network transfer (IANA ephemeral range).
-    // Users can override via Settings → Network Transfer.
-    if (!contains("network_transfer/discovery_port")) {
-        setValue("network_transfer/discovery_port", sak::kPortDiscovery);
-    }
-    if (!contains("network_transfer/control_port")) {
-        setValue("network_transfer/control_port", sak::kPortControl);
-    }
-    if (!contains("network_transfer/data_port")) {
-        setValue("network_transfer/data_port", sak::kPortData);
-    }
-    if (!contains("network_transfer/encryption")) {
-        setValue("network_transfer/encryption", true);
-    }
-    if (!contains("network_transfer/compression")) {
-        setValue("network_transfer/compression", true);
-    }
-    if (!contains("network_transfer/resume")) {
-        setValue("network_transfer/resume", true);
-    }
-    if (!contains("network_transfer/max_bandwidth")) {
-        setValue("network_transfer/max_bandwidth", 0);
-    }
-    if (!contains("network_transfer/auto_discovery")) {
-        setValue("network_transfer/auto_discovery", true);
-    }
-    if (!contains("network_transfer/chunk_size")) {
-        setValue("network_transfer/chunk_size", static_cast<int>(sak::kBufferChunkDefault));
-    }
-    if (!contains("network_transfer/relay_server")) {
-        setValue("network_transfer/relay_server", QString());
+    struct DefaultEntry {
+        const char* key;
+        QVariant value;
+    };
+    const DefaultEntry kDefaults[] = {
+        {"network_transfer/enabled", true},
+        {"network_transfer/discovery_port", static_cast<int>(sak::kPortDiscovery)},
+        {"network_transfer/control_port", static_cast<int>(sak::kPortControl)},
+        {"network_transfer/data_port", static_cast<int>(sak::kPortData)},
+        {"network_transfer/encryption", true},
+        {"network_transfer/compression", true},
+        {"network_transfer/resume", true},
+        {"network_transfer/max_bandwidth", 0},
+        {"network_transfer/auto_discovery", true},
+        {"network_transfer/chunk_size", static_cast<int>(sak::kBufferChunkDefault)},
+        {"network_transfer/relay_server", QString()},
+    };
+    for (const auto& entry : kDefaults) {
+        if (!contains(entry.key)) {
+            setValue(entry.key, entry.value);
+        }
     }
 }
 

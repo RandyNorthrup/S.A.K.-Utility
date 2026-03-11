@@ -1,4 +1,4 @@
-﻿// Copyright (c) 2025 Randy Northrup. All rights reserved.
+// Copyright (c) 2025 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 /// @file wifi_manager_panel.cpp
@@ -56,9 +56,9 @@
 #include <QUuid>
 #include <QVBoxLayout>
 
-// ─────────────────────────────────────────────────────────────────────────────
+// -----------------------------------------------------------------------------
 // CheckHeaderView  --  column 0 renders a tri-state "select all" checkbox
-// ─────────────────────────────────────────────────────────────────────────────
+// -----------------------------------------------------------------------------
 namespace {
 class CheckHeaderView : public QHeaderView {
     Q_OBJECT
@@ -149,9 +149,9 @@ private:
 
 namespace sak {
 
-// ─────────────────────────────────────────────────────────────────────────────
+// -----------------------------------------------------------------------------
 // Table column indices
-// ─────────────────────────────────────────────────────────────────────────────
+// -----------------------------------------------------------------------------
 static constexpr int COL_SELECT = 0;  // checkbox
 static constexpr int COL_LOCATION = 1;
 static constexpr int COL_SSID = 2;
@@ -160,9 +160,9 @@ static constexpr int COL_SECURITY = 4;
 static constexpr int COL_HIDDEN = 5;
 static constexpr int COL_COUNT = 6;
 
-// ─────────────────────────────────────────────────────────────────────────────
+// -----------------------------------------------------------------------------
 // Construction / destruction
-// ─────────────────────────────────────────────────────────────────────────────
+// -----------------------------------------------------------------------------
 WifiManagerPanel::WifiManagerPanel(QWidget* parent) : QWidget(parent) {
     setupUi();
     connectSignals();
@@ -170,11 +170,11 @@ WifiManagerPanel::WifiManagerPanel(QWidget* parent) : QWidget(parent) {
 
 WifiManagerPanel::~WifiManagerPanel() = default;
 
-// ─────────────────────────────────────────────────────────────────────────────
+// -----------------------------------------------------------------------------
 // UI setup
-// ─────────────────────────────────────────────────────────────────────────────
+// -----------------------------------------------------------------------------
 void WifiManagerPanel::setupUi() {
-    Q_ASSERT(!objectName().isEmpty() || true);  // widget valid
+    Q_ASSERT(layout() == nullptr);  // setupUi not called twice
     auto* outerLayout = new QVBoxLayout(this);
     outerLayout->setContentsMargins(0, 0, 0, 0);
 
@@ -340,8 +340,8 @@ void WifiManagerPanel::setupTableSearchRow(QVBoxLayout* layout) {
 }
 
 void WifiManagerPanel::setupNetworkTable(QVBoxLayout* layout) {
-    Q_ASSERT(layout);
     Q_ASSERT(m_network_table);
+    Q_ASSERT(layout);
     m_network_table = new QTableWidget(0, COL_COUNT, m_table_group);
     m_network_table->setAccessibleName(QStringLiteral("Saved WiFi Networks Table"));
     auto* checkHeader = new CheckHeaderView(m_table_group);
@@ -513,9 +513,9 @@ void WifiManagerPanel::setAllCheckStates(bool allChecked) {
     onSelectionChanged();
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// -----------------------------------------------------------------------------
 // Slots
-// ─────────────────────────────────────────────────────────────────────────────
+// -----------------------------------------------------------------------------
 
 void WifiManagerPanel::onSecurityChanged(const QString& value) {
     bool hasPassword = !value.contains("None", Qt::CaseInsensitive);
@@ -602,9 +602,9 @@ void WifiManagerPanel::onFindPrev() {
     m_network_table->selectRow(m_search_matches.at(m_search_index));
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// -----------------------------------------------------------------------------
 // QR wizard helpers (TigerStyle decomposition of onGenerateQrClicked)
-// ─────────────────────────────────────────────────────────────────────────────
+// -----------------------------------------------------------------------------
 
 QImage WifiManagerPanel::renderQrWithHeader(const QString& payload,
                                             const QString& location,
@@ -733,13 +733,10 @@ QWidget* WifiManagerPanel::buildQrOutputPage(QrWizardControls& ctl) {
 void WifiManagerPanel::connectSingleQrWizard(QDialog* dlg,
                                              QStackedWidget* stack,
                                              QrWizardControls ctl,
-                                             const QString& payload,
-                                             const QString& ssid,
-                                             const QString& location,
-                                             const QString& subName) {
+                                             const QrExportContent& content) {
     QObject::connect(ctl.headerToggle,
                      &LogToggleSwitch::toggled,
-                     [ctl, payload, location](bool on) {
+                     [ctl, payload = content.payload, location = content.location](bool on) {
                          const QImage updated =
                              renderQrWithHeader(payload, location, on)
                                  .scaled(180, 180, Qt::KeepAspectRatio, Qt::SmoothTransformation);
@@ -756,47 +753,34 @@ void WifiManagerPanel::connectSingleQrWizard(QDialog* dlg,
     });
     QObject::connect(ctl.btnCancel1, &QPushButton::clicked, dlg, &QDialog::reject);
     QObject::connect(ctl.btnBack, &QPushButton::clicked, [stack]() { stack->setCurrentIndex(0); });
-    QObject::connect(ctl.btnBrowse, &QPushButton::clicked, [dlg, ctl, subName]() {
-        const QString start = ctl.dirEdit->text().isEmpty() ? QStandardPaths::writableLocation(
-                                                                  QStandardPaths::DesktopLocation)
-                                                            : ctl.dirEdit->text();
-        const QString chosen =
-            QFileDialog::getExistingDirectory(dlg, "Select Output Directory", start);
-        if (chosen.isEmpty()) {
-            return;
-        }
-        ctl.dirEdit->setText(chosen);
-        ctl.subLabel->setText(QString("Files will be saved to: %1/%2/").arg(chosen, subName));
-        ctl.btnGenerate->setEnabled(true);
+    QObject::connect(
+        ctl.btnBrowse, &QPushButton::clicked, [dlg, ctl, subName = content.sub_name]() {
+            const QString start =
+                ctl.dirEdit->text().isEmpty()
+                    ? QStandardPaths::writableLocation(QStandardPaths::DesktopLocation)
+                    : ctl.dirEdit->text();
+            const QString chosen =
+                QFileDialog::getExistingDirectory(dlg, "Select Output Directory", start);
+            if (chosen.isEmpty()) {
+                return;
+            }
+            ctl.dirEdit->setText(chosen);
+            ctl.subLabel->setText(QString("Files will be saved to: %1/%2/").arg(chosen, subName));
+            ctl.btnGenerate->setEnabled(true);
+        });
+    QObject::connect(ctl.btnGenerate, &QPushButton::clicked, [this, dlg, ctl, content]() {
+        executeSingleQrExport(dlg, ctl, content);
     });
-    QObject::connect(ctl.btnGenerate,
-                     &QPushButton::clicked,
-                     [this, dlg, ctl, payload, ssid, location, subName]() {
-                         executeSingleQrExport(dlg, ctl, payload, ssid, location, subName);
-                     });
 }
 
-void WifiManagerPanel::executeSingleQrExport(QDialog* dlg,
-                                             QrWizardControls ctl,
-                                             const QString& payload,
-                                             const QString& ssid,
-                                             const QString& location,
-                                             const QString& subName) {
-    const QString baseDir = ctl.dirEdit->text();
-    if (baseDir.isEmpty()) {
-        return;
-    }
-    const QString outDir = baseDir + "/" + subName;
-    if (!QDir().mkpath(outDir)) {
-        sak::logWarning(("Could not create output folder: " + outDir).toStdString());
-        QMessageBox::warning(dlg, "Error", "Could not create output folder:\n" + outDir);
-        return;
-    }
-    const bool showHeader = ctl.headerToggle->isChecked();
-    const QImage finalImg = renderQrWithHeader(payload, location, showHeader);
-    QStringList saved;
+void WifiManagerPanel::saveCheckedFormats(QDialog* dlg,
+                                          QrWizardControls ctl,
+                                          const QImage& finalImg,
+                                          const QrExportContent& content,
+                                          QStringList& saved) {
+    const QString outDir = ctl.dirEdit->text() + "/" + content.sub_name;
     auto savePlain = [&](const QString& ext, const QString& fmt) {
-        const QString path = outDir + "/" + subName + "." + ext;
+        const QString path = outDir + "/" + content.sub_name + "." + ext;
         if (!finalImg.save(path, fmt.toUtf8().constData())) {
             sak::logWarning(("Failed to save " + ext.toUpper() + ": " + path).toStdString());
             QMessageBox::warning(dlg,
@@ -816,16 +800,36 @@ void WifiManagerPanel::executeSingleQrExport(QDialog* dlg,
         savePlain("bmp", "BMP");
     }
     if (ctl.chkPdf->isChecked()) {
-        const QString pdfPath = outDir + "/" + subName + ".pdf";
-        const QString title = ssid.isEmpty() ? QStringLiteral("WiFi QR Code")
-                                             : ssid + " WiFi QR Code";
+        const QString pdfPath = outDir + "/" + content.sub_name + ".pdf";
+        const QString title = content.ssid.isEmpty() ? QStringLiteral("WiFi QR Code")
+                                                     : content.ssid + " WiFi QR Code";
         if (exportQrToPdf(finalImg, pdfPath, title)) {
             saved.append("PDF");
         }
     }
+}
+
+void WifiManagerPanel::executeSingleQrExport(QDialog* dlg,
+                                             QrWizardControls ctl,
+                                             const QrExportContent& content) {
+    const QString baseDir = ctl.dirEdit->text();
+    if (baseDir.isEmpty()) {
+        return;
+    }
+    const QString outDir = baseDir + "/" + content.sub_name;
+    if (!QDir().mkpath(outDir)) {
+        sak::logWarning(("Could not create output folder: " + outDir).toStdString());
+        QMessageBox::warning(dlg, "Error", "Could not create output folder:\n" + outDir);
+        return;
+    }
+    const bool showHeader = ctl.headerToggle->isChecked();
+    const QImage finalImg = renderQrWithHeader(content.payload, content.location, showHeader);
+    QStringList saved;
+    saveCheckedFormats(dlg, ctl, finalImg, content, saved);
     dlg->accept();
     if (!saved.isEmpty()) {
-        Q_EMIT statusMessage(QString("Saved %1 to: %2").arg(saved.join(", "), outDir), 6000);
+        Q_EMIT statusMessage(QString("Saved %1 to: %2").arg(saved.join(", "), outDir),
+                             sak::kTimerStatusMessageMs);
     }
 }
 
@@ -854,50 +858,53 @@ void WifiManagerPanel::showSingleQrWizard(const WifiConfig& cfg) {
     const QString rawName = location.isEmpty() ? ssid : location + "_" + ssid;
     const QString subName = QString(rawName).replace(QRegularExpression("[\\\\/:*?\"<>|]"), "_");
 
-    connectSingleQrWizard(&dlg, stack, ctl, payload, ssid, location, subName);
+    connectSingleQrWizard(&dlg, stack, ctl, {payload, ssid, location, subName});
     dlg.exec();
+}
+
+bool WifiManagerPanel::executeSingleQrNetwork(const WifiConfig& cfg,
+                                              const QString& baseDir,
+                                              bool showHeader,
+                                              const QrExportFormats& formats) {
+    const QString cfgPayload = buildWifiPayloadFromConfig(cfg);
+    const QString rawName = cfg.location.isEmpty() ? cfg.ssid : cfg.location + "_" + cfg.ssid;
+    const QString subName = QString(rawName).replace(QRegularExpression("[\\\\/:*?\"<>|]"), "_");
+    const QString outDir = baseDir + "/" + subName;
+    if (!QDir().mkpath(outDir)) {
+        return false;
+    }
+    const QImage img = renderQrWithHeader(cfgPayload, cfg.location, showHeader);
+    bool anySaved = false;
+    if (formats.png && img.save(outDir + "/" + subName + ".png", "PNG")) {
+        anySaved = true;
+    }
+    if (formats.jpg && img.save(outDir + "/" + subName + ".jpg", "JPEG")) {
+        anySaved = true;
+    }
+    if (formats.bmp && img.save(outDir + "/" + subName + ".bmp", "BMP")) {
+        anySaved = true;
+    }
+    if (formats.pdf) {
+        exportQrToPdf(img, outDir + "/" + subName + ".pdf", cfg.ssid + " WiFi QR Code");
+        anySaved = true;
+    }
+    return anySaved;
 }
 
 void WifiManagerPanel::executeBatchQrExport(QDialog* dlg,
                                             const QList<WifiConfig>& sources,
                                             const QString& baseDir,
                                             bool showHeader,
-                                            bool png,
-                                            bool pdf,
-                                            bool jpg,
-                                            bool bmp) {
+                                            const QrExportFormats& formats) {
     Q_ASSERT(!sources.isEmpty());
     Q_ASSERT(!baseDir.isEmpty());
-    int saved = 0, failed = 0;
+    int saved = 0;
+    int failed = 0;
     for (const WifiConfig& cfg : sources) {
         if (cfg.ssid.isEmpty()) {
             continue;
         }
-        const QString cfgPayload = buildWifiPayloadFromConfig(cfg);
-        const QString rawName = cfg.location.isEmpty() ? cfg.ssid : cfg.location + "_" + cfg.ssid;
-        const QString subName = QString(rawName).replace(QRegularExpression("[\\\\/:*?\"<>|]"),
-                                                         "_");
-        const QString outDir = baseDir + "/" + subName;
-        if (!QDir().mkpath(outDir)) {
-            ++failed;
-            continue;
-        }
-        const QImage img = renderQrWithHeader(cfgPayload, cfg.location, showHeader);
-        bool anySaved = false;
-        if (png && img.save(outDir + "/" + subName + ".png", "PNG")) {
-            anySaved = true;
-        }
-        if (jpg && img.save(outDir + "/" + subName + ".jpg", "JPEG")) {
-            anySaved = true;
-        }
-        if (bmp && img.save(outDir + "/" + subName + ".bmp", "BMP")) {
-            anySaved = true;
-        }
-        if (pdf) {
-            exportQrToPdf(img, outDir + "/" + subName + ".pdf", cfg.ssid + " WiFi QR Code");
-            anySaved = true;
-        }
-        anySaved ? ++saved : ++failed;
+        executeSingleQrNetwork(cfg, baseDir, showHeader, formats) ? ++saved : ++failed;
     }
     dlg->accept();
     const QString msg =
@@ -1095,15 +1102,15 @@ void WifiManagerPanel::showBatchQrDialog(const QList<WifiConfig>& sources) {
                              sources,
                              baseDir,
                              ui.headerToggle->isChecked(),
-                             ui.chkPng->isChecked(),
-                             ui.chkPdf->isChecked(),
-                             ui.chkJpg->isChecked(),
-                             ui.chkBmp->isChecked());
+                             {ui.chkPng->isChecked(),
+                              ui.chkPdf->isChecked(),
+                              ui.chkJpg->isChecked(),
+                              ui.chkBmp->isChecked()});
     });
     dlg.exec();
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// -----------------------------------------------------------------------------
 
 void WifiManagerPanel::onGenerateQrClicked() {
     const QList<WifiConfig> sources = [&] {
@@ -1124,7 +1131,6 @@ void WifiManagerPanel::onGenerateQrClicked() {
 }
 
 void WifiManagerPanel::onExportWindowsScriptClicked() {
-    // Multi-modal: operate on checked rows when any are checked, otherwise use form
     const QList<WifiConfig> sources = [&] {
         auto checked = checkedConfigs();
         return checked.isEmpty() ? QList<WifiConfig>{configFromForm()} : checked;
@@ -1136,33 +1142,39 @@ void WifiManagerPanel::onExportWindowsScriptClicked() {
     }
 
     if (sources.size() == 1) {
-        // Single network  --  original save-dialog behavior
-        const WifiConfig& cfg = sources.first();
-        const QString script = buildWindowsScript(cfg.ssid, cfg.password, cfg.security, cfg.hidden);
-        const QString defaultName = cfg.ssid + "_wifi_connect.cmd";
-        const QString path = QFileDialog::getSaveFileName(
-            this,
-            "Save Windows Script",
-            QStandardPaths::writableLocation(QStandardPaths::DesktopLocation) + "/" + defaultName,
-            "Windows Batch Script (*.cmd *.bat)");
-        if (path.isEmpty()) {
-            return;
-        }
+        exportSingleWindowsScript(sources.first());
+    } else {
+        exportMultipleWindowsScripts(sources);
+    }
+}
 
-        QFile file(path);
-        if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
-            sak::logWarning("Export Error: Failed to open file for writing.");
-            QMessageBox::warning(this, "Export Error", "Failed to open file for writing.");
-            return;
-        }
-        QTextStream out(&file);
-        out << script;
-        Q_EMIT statusMessage(QString("Saved Windows script: %1").arg(path),
-                             sak::kTimerStatusDefaultMs);
+void WifiManagerPanel::exportSingleWindowsScript(const WifiConfig& cfg) {
+    const QString script = buildWindowsScript(cfg.ssid, cfg.password, cfg.security, cfg.hidden);
+    const QString defaultName = cfg.ssid + "_wifi_connect.cmd";
+    const QString path = QFileDialog::getSaveFileName(
+        this,
+        "Save Windows Script",
+        QStandardPaths::writableLocation(QStandardPaths::DesktopLocation) + "/" + defaultName,
+        "Windows Batch Script (*.cmd *.bat)");
+    if (path.isEmpty()) {
         return;
     }
 
-    // Multiple networks  --  ask for a folder, save one .cmd per network
+    QFile file(path);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        sak::logWarning("Export Error: Failed to open file for writing.");
+        QMessageBox::warning(this, "Export Error", "Failed to open file for writing.");
+        return;
+    }
+    QTextStream out(&file);
+    out << script;
+    Q_EMIT statusMessage(QString("Saved Windows script: %1").arg(path), sak::kTimerStatusDefaultMs);
+}
+
+void WifiManagerPanel::exportMultipleWindowsScripts(const QList<WifiConfig>& sources) {
+    Q_ASSERT(!sources.isEmpty());
+    Q_ASSERT(sources.size() > 0);
+
     const QString outDir = QFileDialog::getExistingDirectory(
         this,
         "Select Output Folder for Windows Scripts",
@@ -1722,9 +1734,9 @@ bool WifiManagerPanel::installWlanProfile(const QString& xml, int row) {
     return proc.exitCode() == 0;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// -----------------------------------------------------------------------------
 // WiFi payload helpers
-// ─────────────────────────────────────────────────────────────────────────────
+// -----------------------------------------------------------------------------
 // static
 QString WifiManagerPanel::escapeWifiField(const QString& value) {
     QString result;
@@ -1786,12 +1798,12 @@ QString WifiManagerPanel::buildWifiPayloadFromConfig(const WifiConfig& cfg) {
     return payload;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// -----------------------------------------------------------------------------
 // QR generation
-// ─────────────────────────────────────────────────────────────────────────────
-// ─────────────────────────────────────────────────────────────────────────────
-// QR drawing helper (extracted to keep generateQrImage nesting ≤ 3)
-// ─────────────────────────────────────────────────────────────────────────────
+// -----------------------------------------------------------------------------
+// -----------------------------------------------------------------------------
+// QR drawing helper (extracted to keep generateQrImage nesting = 3)
+// -----------------------------------------------------------------------------
 static void drawQrModules(QImage& out, const QString& payload, int imageSize) {
     Q_ASSERT(!payload.isEmpty());
     Q_ASSERT(imageSize >= 0);
@@ -1853,47 +1865,53 @@ QImage WifiManagerPanel::generateQrImage(const QString& payload) {
     return out;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// -----------------------------------------------------------------------------
 // Export script builders
-// ─────────────────────────────────────────────────────────────────────────────
-// static
-QString WifiManagerPanel::buildWindowsScript(const QString& ssid,
-                                             const QString& password,
-                                             const QString& security,
-                                             bool hidden) {
-    Q_ASSERT(!ssid.isEmpty());
-    const QString upper = security.toUpper();
-    QString authType;
-    QString encType;
-    if (upper.contains("WEP")) {
-        authType = "open";
-        encType = "WEP";
-    } else if (upper.contains("NONE") || upper.contains("OPEN")) {
-        authType = "open";
-        encType = "none";
-    } else {
-        authType = "WPA2PSK";
-        encType = "AES";
-    }
+// -----------------------------------------------------------------------------
 
-    const QString hiddenStr = hidden ? "true" : "false";
+namespace {
+
+struct WlanAuthConfig {
+    QString auth_type;
+    QString enc_type;
+};
+
+WlanAuthConfig resolveWlanAuth(const QString& security) {
+    const QString upper = security.toUpper();
+    if (upper.contains("WEP")) {
+        return {"open", "WEP"};
+    }
+    if (upper.contains("NONE") || upper.contains("OPEN")) {
+        return {"open", "none"};
+    }
+    return {"WPA2PSK", "AES"};
+}
+
+QString buildWlanXmlContent(const QString& ssid,
+                            const QString& password,
+                            const WlanAuthConfig& auth,
+                            bool hidden) {
+    const QString escaped_ssid = ssid.toHtmlEscaped();
+    const QString hidden_str = hidden ? "true" : "false";
 
     QString xml;
     xml += "<?xml version=\"1.0\"?>\r\n";
-    xml += "<WLANProfile xmlns=\"http://www.microsoft.com/networking/WLAN/profile/v1\">\r\n";
-    xml += "  <name>" + ssid.toHtmlEscaped() + "</name>\r\n";
+    xml +=
+        "<WLANProfile xmlns=\"http://www.microsoft.com/networking/"
+        "WLAN/profile/v1\">\r\n";
+    xml += "  <name>" + escaped_ssid + "</name>\r\n";
     xml += "  <SSIDConfig>\r\n";
-    xml += "    <SSID><name>" + ssid.toHtmlEscaped() + "</name></SSID>\r\n";
-    xml += "    <nonBroadcast>" + hiddenStr + "</nonBroadcast>\r\n";
+    xml += "    <SSID><name>" + escaped_ssid + "</name></SSID>\r\n";
+    xml += "    <nonBroadcast>" + hidden_str + "</nonBroadcast>\r\n";
     xml += "  </SSIDConfig>\r\n";
     xml += "  <connectionType>ESS</connectionType>\r\n";
     xml += "  <connectionMode>auto</connectionMode>\r\n";
     xml += "  <MSM><security><authEncryption>\r\n";
-    xml += "    <authentication>" + authType + "</authentication>\r\n";
-    xml += "    <encryption>" + encType + "</encryption>\r\n";
+    xml += "    <authentication>" + auth.auth_type + "</authentication>\r\n";
+    xml += "    <encryption>" + auth.enc_type + "</encryption>\r\n";
     xml += "    <useOneX>false</useOneX>\r\n";
     xml += "  </authEncryption>\r\n";
-    if (!password.isEmpty() && authType != "open") {
+    if (!password.isEmpty() && auth.auth_type != "open") {
         xml += "  <sharedKey>\r\n";
         xml += "    <keyType>passPhrase</keyType>\r\n";
         xml += "    <protected>false</protected>\r\n";
@@ -1902,54 +1920,79 @@ QString WifiManagerPanel::buildWindowsScript(const QString& ssid,
     }
     xml += "  </security></MSM>\r\n";
     xml += "</WLANProfile>\r\n";
+    return xml;
+}
 
-    const QString xmlB64 = QString::fromLatin1(xml.toUtf8().toBase64());
-
-    // Escape SSID for safe use in batch scripts — prevent command injection
-    // Batch special chars: & | > < ^ % ! ( ) " need escaping with ^
-    auto escapeBatch = [](const QString& s) {
-        QString result;
-        result.reserve(s.size() * 2);
-        for (const QChar c : s) {
-            if (c == '&' || c == '|' || c == '>' || c == '<' || c == '^' || c == '!' || c == '(' ||
-                c == ')') {
-                result += '^';
-            }
-            result += c;
+// Escape for safe use in batch scripts — prevent command injection
+// Batch special chars: & | > < ^ % ! ( ) " need escaping with ^
+QString escapeBatchString(const QString& text) {
+    QString result;
+    result.reserve(text.size() * 2);
+    for (const QChar c : text) {
+        if (c == '&' || c == '|' || c == '>' || c == '<' || c == '^' || c == '!' || c == '(' ||
+            c == ')') {
+            result += '^';
         }
-        return result;
-    };
-    const QString batchSafeSsid = escapeBatch(ssid);
-    // Always quote the SSID for netsh to handle spaces and special chars
-    const QString quotedSsid = "\"" + batchSafeSsid + "\"";
+        result += c;
+    }
+    return result;
+}
+
+QString buildBatchScript(const QString& ssid, const QString& xml_base64) {
+    const QString safe_ssid = escapeBatchString(ssid);
+    const QString quoted_ssid = "\"" + safe_ssid + "\"";
 
     QString script;
     script += "@echo off\r\n";
     script += "echo S.A.K. Utility - WiFi Network Setup Script\r\n";
-    script += "echo Network: " + batchSafeSsid + "\r\n";
+    script += "echo Network: " + safe_ssid + "\r\n";
     script += "echo.\r\n";
     script += "set PROFILE_XML=%TEMP%\\wifi_profile_sak.xml\r\n";
     script +=
-        "powershell -Command \"[System.Text.Encoding]::UTF8.GetString([System.Convert]::FromB"
-        "ase64String('" +
-        xmlB64 + "')) | Set-Content -Path '%PROFILE_XML%' -Encoding UTF8\"\r\n";
-    script += "netsh wlan add profile filename=\"%PROFILE_XML%\" user=all\r\n";
+        "powershell -Command \"[System.Text.Encoding]::UTF8."
+        "GetString([System.Convert]::FromBase64String('" +
+        xml_base64 +
+        "')) | Set-Content -Path '%PROFILE_XML%'"
+        " -Encoding UTF8\"\r\n";
+    script +=
+        "netsh wlan add profile filename=\"%PROFILE_XML%\""
+        " user=all\r\n";
     script += "if %errorlevel% neq 0 (\r\n";
-    script += "    echo Failed to add WiFi profile. Run as Administrator.\r\n";
+    script +=
+        "    echo Failed to add WiFi profile."
+        " Run as Administrator.\r\n";
     script += "    del \"%PROFILE_XML%\" 2>nul\r\n";
     script += "    pause\r\n";
     script += "    exit /b 1\r\n";
     script += ")\r\n";
     script += "del \"%PROFILE_XML%\" 2>nul\r\n";
-    script += "netsh wlan connect name=" + quotedSsid + "\r\n";
+    script += "netsh wlan connect name=" + quoted_ssid + "\r\n";
     script += "if %errorlevel% neq 0 (\r\n";
-    script += "    echo Network profile added but could not connect immediately.\r\n";
-    script += "    echo The network will connect automatically when in range.\r\n";
+    script +=
+        "    echo Network profile added but could not connect"
+        " immediately.\r\n";
+    script +=
+        "    echo The network will connect automatically"
+        " when in range.\r\n";
     script += ") else (\r\n";
-    script += "    echo Successfully connected to " + batchSafeSsid + "!\r\n";
+    script += "    echo Successfully connected to " + safe_ssid + "!\r\n";
     script += ")\r\n";
     script += "pause\r\n";
     return script;
+}
+
+}  // namespace
+
+// static
+QString WifiManagerPanel::buildWindowsScript(const QString& ssid,
+                                             const QString& password,
+                                             const QString& security,
+                                             bool hidden) {
+    Q_ASSERT(!ssid.isEmpty());
+    const auto auth = resolveWlanAuth(security);
+    const QString xml = buildWlanXmlContent(ssid, password, auth, hidden);
+    const QString xml_base64 = QString::fromLatin1(xml.toUtf8().toBase64());
+    return buildBatchScript(ssid, xml_base64);
 }
 
 // static
@@ -2016,9 +2059,9 @@ QString WifiManagerPanel::buildMacosProfile(const QList<WifiConfig>& networks) {
     return plist;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// -----------------------------------------------------------------------------
 // Table helpers
-// ─────────────────────────────────────────────────────────────────────────────
+// -----------------------------------------------------------------------------
 WifiManagerPanel::WifiConfig WifiManagerPanel::configFromForm() const {
     WifiConfig cfg;
     cfg.location = m_location_input->text().trimmed();
@@ -2137,9 +2180,9 @@ QList<WifiManagerPanel::WifiConfig> WifiManagerPanel::checkedConfigs() const {
     return list;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// -----------------------------------------------------------------------------
 // Search
-// ─────────────────────────────────────────────────────────────────────────────
+// -----------------------------------------------------------------------------
 bool WifiManagerPanel::rowMatchesSearch(int row, const QString& text) const {
     for (int col = COL_LOCATION; col < COL_COUNT; ++col) {
         auto* item = m_network_table->item(row, col);
@@ -2181,9 +2224,9 @@ void WifiManagerPanel::highlightSearchMatches() {
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// -----------------------------------------------------------------------------
 // Persistence
-// ─────────────────────────────────────────────────────────────────────────────
+// -----------------------------------------------------------------------------
 void WifiManagerPanel::saveTableToJson(const QString& path) {
     Q_ASSERT(m_network_table);
     Q_ASSERT(!path.isEmpty());

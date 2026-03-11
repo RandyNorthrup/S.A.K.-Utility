@@ -83,10 +83,9 @@ bool FlashCoordinator::startFlash(const QString& imagePath, const QStringList& t
 
     m_progress.totalBytes = m_imageSource->size() * targetDrives.size();
 
-    if (m_verificationEnabled) {
-        sak::logInfo("Calculating source checksum...");
-        m_sourceChecksum = m_imageSource->calculateChecksum();
-    }
+    // Source checksum is calculated by each FlashWorker on its own
+    // thread, not here on the UI thread (avoids freezing the GUI
+    // for minutes with large images).
 
     return unmountAndFlash(imagePath, targetDrives);
 }
@@ -136,7 +135,10 @@ bool FlashCoordinator::unmountAndFlash(const QString& imagePath, const QStringLi
     Q_EMIT stateChanged(m_state, "Unmounting volumes...");
 
     if (!unmountVolumes(targetDrives)) {
-        sak::logWarning("Some volumes could not be unmounted");
+        // unmountVolumes() already emitted flashError() with details
+        m_state = sak::FlashState::Failed;
+        Q_EMIT stateChanged(m_state, "Failed to unmount target volumes");
+        return false;
     }
 
     m_state = sak::FlashState::Flashing;
@@ -424,7 +426,6 @@ void FlashCoordinator::updateProgress() {
 }
 
 void FlashCoordinator::cleanupWorkers() {
-    Q_ASSERT(!m_workers.empty());
     Q_ASSERT(m_imageSource);
     // Wait for all workers to finish with cooperative stop
     for (auto& worker : m_workers) {

@@ -153,6 +153,15 @@ private:
      */
     static QString backupTimestamp();
 
+    /// @brief Aggregated BitLocker backup result data for report generation
+    struct BitlockerReportData {
+        int total_keys_found = 0;
+        int total_recovery_passwords = 0;
+        QString backup_dir_path;
+        int key_files_written = 0;
+        bool permissions_set = false;
+    };
+
     // TigerStyle helpers for execute() decomposition
     bool executeDiscoverVolumes(const QDateTime& start_time);
     bool executeExtractKeys(const QDateTime& start_time,
@@ -162,12 +171,7 @@ private:
                              QString& backup_dir_path,
                              int& key_files_written,
                              bool& permissions_set);
-    void executeBuildReport(const QDateTime& start_time,
-                            int total_keys_found,
-                            int total_recovery_passwords,
-                            const QString& backup_dir_path,
-                            int key_files_written,
-                            bool permissions_set);
+    void executeBuildReport(const QDateTime& start_time, const BitlockerReportData& data);
     bool writeJsonBackup(const QString& backup_dir_path);
 
     /// @brief Count recovery passwords in a protector list

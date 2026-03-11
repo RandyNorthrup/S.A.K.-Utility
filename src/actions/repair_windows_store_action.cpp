@@ -196,10 +196,11 @@ void RepairWindowsStoreAction::execute() {
     }
 
     // PHASE 2-5: Repair operations
-    bool cache_reset = resetWindowsStoreCache();
-    bool package_reset = resetStorePackage();
-    bool reregistered = reregisterWindowsStore();
-    bool services_restarted = resetStoreServices();
+    RepairStepResults steps;
+    steps.cache_reset = resetWindowsStoreCache();
+    steps.package_reset = resetStorePackage();
+    steps.reregistered = reregisterWindowsStore();
+    steps.services_restarted = resetStoreServices();
 
     if (isCancelled()) {
         emitCancelledResult(QStringLiteral("Windows Store repair cancelled"), start_time);
@@ -211,30 +212,15 @@ void RepairWindowsStoreAction::execute() {
     StorePackageInfo after_info = checkStorePackage();
     int post_error_count = checkStoreEventLogs();
 
-    QString report = buildRepairReport(before_info,
-                                       error_count,
-                                       cache_reset,
-                                       package_reset,
-                                       reregistered,
-                                       services_restarted,
-                                       after_info,
-                                       post_error_count);
+    QString report =
+        buildRepairReport(before_info, error_count, steps, after_info, post_error_count);
 
     Q_EMIT executionProgress("Windows Store repair complete", 100);
 
-    finalizeRepairResult(cache_reset,
-                         package_reset,
-                         reregistered,
-                         services_restarted,
-                         after_info,
-                         report,
-                         start_time);
+    finalizeRepairResult(steps, after_info, report, start_time);
 }
 
-void RepairWindowsStoreAction::finalizeRepairResult(bool cache_reset,
-                                                    bool package_reset,
-                                                    bool reregistered,
-                                                    bool services_restarted,
+void RepairWindowsStoreAction::finalizeRepairResult(const RepairStepResults& steps,
                                                     const StorePackageInfo& after_info,
                                                     const QString& report,
                                                     const QDateTime& start_time) {
@@ -244,8 +230,8 @@ void RepairWindowsStoreAction::finalizeRepairResult(bool cache_reset,
     Q_ASSERT(!result.success);  // verify default init
     result.duration_ms = duration_ms;
 
-    bool overall_success = cache_reset && package_reset && reregistered && services_restarted &&
-                           after_info.is_registered;
+    bool overall_success = steps.cache_reset && steps.package_reset && steps.reregistered &&
+                           steps.services_restarted && after_info.is_registered;
 
     if (overall_success) {
         result.success = true;
@@ -270,10 +256,7 @@ void RepairWindowsStoreAction::finalizeRepairResult(bool cache_reset,
 
 QString RepairWindowsStoreAction::buildRepairReport(const StorePackageInfo& before_info,
                                                     int error_count,
-                                                    bool cache_reset,
-                                                    bool package_reset,
-                                                    bool reregistered,
-                                                    bool services_restarted,
+                                                    const RepairStepResults& steps,
                                                     const StorePackageInfo& after_info,
                                                     int post_error_count) {
     QString report = "╔════════════════════════════════════════════════════════════════╗\n";
@@ -296,19 +279,19 @@ QString RepairWindowsStoreAction::buildRepairReport(const StorePackageInfo& befo
     report += QString("║ Event Errors: %1\n").arg(error_count).leftJustified(67, ' ') + "║\n";
     report += "╠════════════════════════════════════════════════════════════════╣\n";
     report += QString("║ WSReset:     %1\n")
-                  .arg(cache_reset ? "SUCCESS" : "FAILED")
+                  .arg(steps.cache_reset ? "SUCCESS" : "FAILED")
                   .leftJustified(67, ' ') +
               "║\n";
     report += QString("║ Reset Package: %1\n")
-                  .arg(package_reset ? "SUCCESS" : "FAILED")
+                  .arg(steps.package_reset ? "SUCCESS" : "FAILED")
                   .leftJustified(67, ' ') +
               "║\n";
     report += QString("║ Re-register: %1\n")
-                  .arg(reregistered ? "SUCCESS" : "FAILED")
+                  .arg(steps.reregistered ? "SUCCESS" : "FAILED")
                   .leftJustified(67, ' ') +
               "║\n";
     report += QString("║ Services:    %1\n")
-                  .arg(services_restarted ? "SUCCESS" : "FAILED")
+                  .arg(steps.services_restarted ? "SUCCESS" : "FAILED")
                   .leftJustified(67, ' ') +
               "║\n";
     report += "╠════════════════════════════════════════════════════════════════╣\n";

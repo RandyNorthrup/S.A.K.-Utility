@@ -46,10 +46,14 @@ private:
     QString m_cbs_log_path;
 
     void runDISM();
-    void runDismCheckHealth();
+    [[nodiscard]] bool runDismCheckHealth();
+    [[nodiscard]] bool runDismScanHealth();
     void runDismRestoreHealth();
     void runSFC();
     void parseResults(const QString& output);
+    [[nodiscard]] QString buildSfcSummary() const;
+    [[nodiscard]] bool verificationSucceeded() const;
+    [[nodiscard]] ExecutionResult buildVerificationResult(const QDateTime& start_time) const;
 };
 
 }  // namespace sak

@@ -325,32 +325,36 @@ QStringList LinuxISODownloader::buildAria2cArguments(const QString& url,
     return args;
 }
 
+namespace {
+
+struct Aria2cExitEntry {
+    int code;
+    const char* message;
+};
+
+static constexpr Aria2cExitEntry kAria2cExitCodes[] = {
+    {1, "Unknown error occurred"},
+    {2, "Connection timed out"},
+    {3, "Resource not found (404)"},
+    {4, "Max retries reached \xe2\x80\x94 check your internet connection"},
+    {5, "Download speed too slow"},
+    {6, "Network error"},
+    {7, "Download incomplete \xe2\x80\x94 some files could not be finished"},
+    {9, "Disk space insufficient"},
+    {13, "File already exists and could not be overwritten"},
+    {24, "DNS resolution failed"},
+};
+
+}  // namespace
+
 QString LinuxISODownloader::aria2cExitCodeMessage(int exit_code) {
     Q_ASSERT(exit_code >= 0);
-    switch (exit_code) {
-    case 1:
-        return QStringLiteral("Unknown error occurred");
-    case 2:
-        return QStringLiteral("Connection timed out");
-    case 3:
-        return QStringLiteral("Resource not found (404)");
-    case 4:
-        return QStringLiteral("Max retries reached — check your internet connection");
-    case 5:
-        return QStringLiteral("Download speed too slow");
-    case 6:
-        return QStringLiteral("Network error");
-    case 7:
-        return QStringLiteral("Download incomplete — some files could not be finished");
-    case 9:
-        return QStringLiteral("Disk space insufficient");
-    case 13:
-        return QStringLiteral("File already exists and could not be overwritten");
-    case 24:
-        return QStringLiteral("DNS resolution failed");
-    default:
-        return QString("aria2c exited with code %1").arg(exit_code);
+    for (const auto& entry : kAria2cExitCodes) {
+        if (entry.code == exit_code) {
+            return QString::fromUtf8(entry.message);
+        }
     }
+    return QString("aria2c exited with code %1").arg(exit_code);
 }
 
 void LinuxISODownloader::onAria2cFinished(int exitCode, QProcess::ExitStatus exitStatus) {

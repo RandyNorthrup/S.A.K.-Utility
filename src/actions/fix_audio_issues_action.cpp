@@ -187,17 +187,17 @@ void FixAudioIssuesAction::execute() {
 
     // PHASE 2: Restart audio services
     Q_EMIT executionProgress("Restarting audio services...", 20);
-    bool audiosrv_restarted = restartAudioService();
-    bool endpoint_restarted = restartAudioEndpointBuilder();
+    AudioRepairOutcome repair;
+    repair.audiosrv_restarted = restartAudioService();
+    repair.endpoint_restarted = restartAudioEndpointBuilder();
 
     // PHASE 3: Reset audio devices
-    int device_count = resetAudioDevices();
+    repair.device_count = resetAudioDevices();
 
     // PHASE 4: Check USB audio
-    QString usb_info = checkUSBAudioDevices();
+    repair.usb_info = checkUSBAudioDevices();
 
-    QString report = buildDiagnosticReport(
-        audiosrv, endpoint_builder, audiosrv_restarted, endpoint_restarted, device_count, usb_info);
+    QString report = buildDiagnosticReport(audiosrv, endpoint_builder, repair);
 
     Q_EMIT executionProgress("Audio diagnostics complete", 100);
 
@@ -206,14 +206,14 @@ void FixAudioIssuesAction::execute() {
     ExecutionResult result;
     Q_ASSERT(!result.success);  // verify default init
     result.duration_ms = duration_ms;
-    result.files_processed = device_count;
+    result.files_processed = repair.device_count;
 
-    bool overall_success = audiosrv_restarted && endpoint_restarted;
+    bool overall_success = repair.audiosrv_restarted && repair.endpoint_restarted;
 
     if (overall_success) {
         result.success = true;
         result.message = QString("Audio system repaired: %1 devices, %2 services restarted")
-                             .arg(device_count)
+                             .arg(repair.device_count)
                              .arg(2);
         result.log = report;
         result.log += QString("\nCompleted in %1 seconds\n").arg(duration_ms / 1000);
@@ -235,10 +235,7 @@ void FixAudioIssuesAction::execute() {
 
 QString FixAudioIssuesAction::buildDiagnosticReport(const AudioServiceStatus& audiosrv,
                                                     const AudioServiceStatus& endpoint_builder,
-                                                    bool audiosrv_restarted,
-                                                    bool endpoint_restarted,
-                                                    int device_count,
-                                                    const QString& usb_info) {
+                                                    const AudioRepairOutcome& repair) {
     QString report = "╔════════════════════════════════════════════════════════════════╗\n";
     report += "║              AUDIO SYSTEM DIAGNOSTIC REPORT                   ║\n";
     report += "╠════════════════════════════════════════════════════════════════╣\n";
@@ -254,20 +251,21 @@ QString FixAudioIssuesAction::buildDiagnosticReport(const AudioServiceStatus& au
     report += "╠════════════════════════════════════════════════════════════════╣\n";
 
     report += QString("║ AudioSrv Restart:     %1\n")
-                  .arg(audiosrv_restarted ? "SUCCESS" : "FAILED")
+                  .arg(repair.audiosrv_restarted ? "SUCCESS" : "FAILED")
                   .leftJustified(67, ' ') +
               "║\n";
     report += QString("║ Endpoint Restart:     %1\n")
-                  .arg(endpoint_restarted ? "SUCCESS" : "FAILED")
+                  .arg(repair.endpoint_restarted ? "SUCCESS" : "FAILED")
                   .leftJustified(67, ' ') +
               "║\n";
     report += "╠════════════════════════════════════════════════════════════════╣\n";
 
-    report +=
-        QString("║ Audio Devices Reset:  %1 devices\n").arg(device_count).leftJustified(67, ' ') +
-        "║\n";
+    report += QString("║ Audio Devices Reset:  %1 devices\n")
+                  .arg(repair.device_count)
+                  .leftJustified(67, ' ') +
+              "║\n";
 
-    if (!usb_info.trimmed().isEmpty()) {
+    if (!repair.usb_info.trimmed().isEmpty()) {
         report += "║ USB Audio Devices:    Detected                   ║\n";
     }
 

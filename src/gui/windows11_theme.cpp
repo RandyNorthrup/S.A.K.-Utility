@@ -27,6 +27,15 @@ QString normalizeText(const QString& text) {
     return cleaned.trimmed();
 }
 
+template <typename T>
+QString tryPlaceholderText(QWidget* widget) {
+    auto* casted = qobject_cast<T*>(widget);
+    if (casted && !casted->placeholderText().isEmpty()) {
+        return casted->placeholderText();
+    }
+    return {};
+}
+
 QString inferTooltip(QWidget* widget) {
     Q_ASSERT(widget);
     if (!widget) {
@@ -41,25 +50,15 @@ QString inferTooltip(QWidget* widget) {
         return {};
     }
 
-    if (auto* edit = qobject_cast<QLineEdit*>(widget)) {
-        if (!edit->placeholderText().isEmpty()) {
-            return edit->placeholderText();
-        }
+    QString result = tryPlaceholderText<QLineEdit>(widget);
+    if (!result.isEmpty()) {
+        return result;
     }
-
-    if (auto* combo = qobject_cast<QComboBox*>(widget)) {
-        if (!combo->placeholderText().isEmpty()) {
-            return combo->placeholderText();
-        }
+    result = tryPlaceholderText<QComboBox>(widget);
+    if (!result.isEmpty()) {
+        return result;
     }
-
-    if (auto* text = qobject_cast<QTextEdit*>(widget)) {
-        if (!text->placeholderText().isEmpty()) {
-            return text->placeholderText();
-        }
-    }
-
-    return {};
+    return tryPlaceholderText<QTextEdit>(widget);
 }
 
 void applyTabTooltips(QTabWidget* tabs) {

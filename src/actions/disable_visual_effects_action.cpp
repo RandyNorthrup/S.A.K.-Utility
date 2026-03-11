@@ -147,8 +147,8 @@ void DisableVisualEffectsAction::execute() {
     // Phase 4: Summary
     report += buildSummaryReport(settings_total, settings_changed, fx_mode);
 
-    buildAndFinishVisualEffectsResult(
-        report, settings_total, settings_changed, notification_success, fx_mode, start_time);
+    VisualEffectsReport ve_report{settings_total, settings_changed, notification_success, fx_mode};
+    buildAndFinishVisualEffectsResult(report, ve_report, start_time);
 }
 
 void DisableVisualEffectsAction::applyVisualEffectsSettings(QString& report,
@@ -181,31 +181,29 @@ void DisableVisualEffectsAction::applyVisualEffectsSettings(QString& report,
     report += "╠══════════════════════════════════════════════════════════════════════╣\n";
 }
 
-void DisableVisualEffectsAction::buildAndFinishVisualEffectsResult(const QString& report,
-                                                                   int settings_total,
-                                                                   int settings_changed,
-                                                                   bool notification_success,
-                                                                   const QString& fx_mode,
-                                                                   const QDateTime& start_time) {
+void DisableVisualEffectsAction::buildAndFinishVisualEffectsResult(
+    const QString& report, const VisualEffectsReport& ve_report, const QDateTime& start_time) {
     QString structured_output;
-    structured_output += QString("SETTINGS_TOTAL:%1\n").arg(settings_total);
-    structured_output += QString("SETTINGS_CHANGED:%1\n").arg(settings_changed);
-    structured_output += QString("SETTINGS_OPTIMIZED:%1\n").arg(settings_total - settings_changed);
+    structured_output += QString("SETTINGS_TOTAL:%1\n").arg(ve_report.settings_total);
+    structured_output += QString("SETTINGS_CHANGED:%1\n").arg(ve_report.settings_changed);
+    structured_output += QString("SETTINGS_OPTIMIZED:%1\n")
+                             .arg(ve_report.settings_total - ve_report.settings_changed);
     structured_output +=
-        QString("NOTIFICATION_SUCCESS:%1\n").arg(notification_success ? "YES" : "NO");
-    structured_output += QString("RESTART_REQUIRED:%1\n").arg(settings_changed > 0 ? "YES" : "NO");
-    structured_output += QString("VISUAL_FX_MODE:%1\n").arg(fx_mode);
+        QString("NOTIFICATION_SUCCESS:%1\n").arg(ve_report.notification_success ? "YES" : "NO");
+    structured_output +=
+        QString("RESTART_REQUIRED:%1\n").arg(ve_report.settings_changed > 0 ? "YES" : "NO");
+    structured_output += QString("VISUAL_FX_MODE:%1\n").arg(ve_report.fx_mode);
 
     qint64 duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
 
     ExecutionResult result;
     Q_ASSERT(!result.success);  // verify default init
     result.duration_ms = duration_ms;
-    result.success = (settings_total > 0);
-    result.message =
-        settings_changed > 0
-            ? QString("Visual effects optimized (%1 settings changed)").arg(settings_changed)
-            : "Visual effects already optimized for Best Performance";
+    result.success = (ve_report.settings_total > 0);
+    result.message = ve_report.settings_changed > 0
+                         ? QString("Visual effects optimized (%1 settings changed)")
+                               .arg(ve_report.settings_changed)
+                         : "Visual effects already optimized for Best Performance";
     result.log = report + "\n" + structured_output;
 
     finishWithResult(result, result.success ? ActionStatus::Success : ActionStatus::Failed);

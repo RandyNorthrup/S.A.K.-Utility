@@ -28,9 +28,7 @@ LogViewer::LogViewer(QWidget* parent)
 }
 
 void LogViewer::setupUi() {
-    Q_ASSERT(m_search_edit);
-    Q_ASSERT(m_filter_combo);
-    Q_ASSERT(!objectName().isEmpty() || true);  // widget valid
+    Q_ASSERT(layout() == nullptr);  // setupUi not called twice
     auto* main_layout = new QVBoxLayout(this);
     main_layout->setSpacing(8);
     main_layout->setContentsMargins(0, 0, 0, 0);
@@ -83,6 +81,9 @@ void LogViewer::setupUi() {
     m_text_browser->setReadOnly(true);
     m_text_browser->setFont(QFont("Consolas", 9));
     main_layout->addWidget(m_text_browser);
+
+    Q_ASSERT(m_search_edit);
+    Q_ASSERT(m_filter_combo);
 }
 
 void LogViewer::appendLog(const QString& message, LogLevel level) {

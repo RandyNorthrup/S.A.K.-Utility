@@ -18,11 +18,7 @@ static QString escapeCsv(const QString& value) {
 }
 
 bool DeploymentSummaryReport::exportCsv(const QString& filePath,
-                                        const QString& deploymentId,
-                                        const QDateTime& startedAt,
-                                        const QDateTime& completedAt,
-                                        const QVector<DeploymentJobSummary>& jobs,
-                                        const QVector<DeploymentDestinationSummary>& destinations) {
+                                        const DeploymentSummaryData& data) {
     QSaveFile file(filePath);
     if (!file.open(QIODevice::WriteOnly)) {
         return false;
@@ -30,13 +26,13 @@ bool DeploymentSummaryReport::exportCsv(const QString& filePath,
 
     QTextStream stream(&file);
     stream << "Deployment Summary\n";
-    stream << "deployment_id," << escapeCsv(deploymentId) << "\n";
-    stream << "started_at," << escapeCsv(startedAt.toString(Qt::ISODate)) << "\n";
-    stream << "completed_at," << escapeCsv(completedAt.toString(Qt::ISODate)) << "\n";
+    stream << "deployment_id," << escapeCsv(data.deployment_id) << "\n";
+    stream << "started_at," << escapeCsv(data.started_at.toString(Qt::ISODate)) << "\n";
+    stream << "completed_at," << escapeCsv(data.completed_at.toString(Qt::ISODate)) << "\n";
     stream << "\nDestinations\n";
     stream << "destination_id,hostname,ip_address,status,progress_percent,last_seen,events\n";
 
-    for (const auto& destination : destinations) {
+    for (const auto& destination : data.destinations) {
         stream << escapeCsv(destination.destination_id) << ',' << escapeCsv(destination.hostname)
                << ',' << escapeCsv(destination.ip_address) << ',' << escapeCsv(destination.status)
                << ',' << destination.progress_percent << ','
@@ -46,7 +42,7 @@ bool DeploymentSummaryReport::exportCsv(const QString& filePath,
 
     stream << "\nJobs\n";
     stream << "job_id,source_user,destination_id,status,bytes_transferred,total_bytes,error\n";
-    for (const auto& job : jobs) {
+    for (const auto& job : data.jobs) {
         stream << escapeCsv(job.job_id) << ',' << escapeCsv(job.source_user) << ','
                << escapeCsv(job.destination_id) << ',' << escapeCsv(job.status) << ','
                << job.bytes_transferred << ',' << job.total_bytes << ','
@@ -58,28 +54,24 @@ bool DeploymentSummaryReport::exportCsv(const QString& filePath,
 }
 
 bool DeploymentSummaryReport::exportPdf(const QString& filePath,
-                                        const QString& deploymentId,
-                                        const QDateTime& startedAt,
-                                        const QDateTime& completedAt,
-                                        const QVector<DeploymentJobSummary>& jobs,
-                                        const QVector<DeploymentDestinationSummary>& destinations) {
+                                        const DeploymentSummaryData& data) {
     QPdfWriter writer(filePath);
     writer.setPageSize(QPageSize(QPageSize::A4));
-    writer.setTitle(QString("Deployment Summary - %1").arg(deploymentId));
+    writer.setTitle(QString("Deployment Summary - %1").arg(data.deployment_id));
 
     QString html;
     html += QString("<h1>Deployment Summary</h1>");
-    html += QString("<p><b>Deployment ID:</b> %1</p>").arg(deploymentId.toHtmlEscaped());
-    html +=
-        QString("<p><b>Started:</b> %1</p>").arg(startedAt.toString(Qt::ISODate).toHtmlEscaped());
+    html += QString("<p><b>Deployment ID:</b> %1</p>").arg(data.deployment_id.toHtmlEscaped());
+    html += QString("<p><b>Started:</b> %1</p>")
+                .arg(data.started_at.toString(Qt::ISODate).toHtmlEscaped());
     html += QString("<p><b>Completed:</b> %1</p>")
-                .arg(completedAt.toString(Qt::ISODate).toHtmlEscaped());
+                .arg(data.completed_at.toString(Qt::ISODate).toHtmlEscaped());
 
     html += "<h2>Destinations</h2><table border='1' cellspacing='0' cellpadding='4'>";
     html +=
         "<tr><th>ID</th><th>Host</th><th>IP</th><th>Status</th><th>Progress</th><th>Last "
         "Seen</th><th>Events</th></tr>";
-    for (const auto& destination : destinations) {
+    for (const auto& destination : data.destinations) {
         html += QString(
                     "<tr><td>%1</td><td>%2</td><td>%3</td>"
                     "<td>%4</td><td>%5%</td><td>%6</td>"
@@ -100,7 +92,7 @@ bool DeploymentSummaryReport::exportPdf(const QString& filePath,
         "ID</th><th>Source</th><th>Destination</th>"
         "<th>Status</th><th>Transferred</th>"
         "<th>Total</th><th>Error</th></tr>";
-    for (const auto& job : jobs) {
+    for (const auto& job : data.jobs) {
         html += QString(
                     "<tr><td>%1</td><td>%2</td><td>%3</td>"
                     "<td>%4</td><td>%5</td><td>%6</td>"

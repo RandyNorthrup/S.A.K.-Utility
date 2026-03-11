@@ -147,12 +147,17 @@ void UpdateAllAppsAction::execute() {
 
     qint64 duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
     buildUpdateReport(summary, duration_ms);
+    finishWithResult(buildExecutionResult(summary, duration_ms), ActionStatus::Success);
+}
 
+UpdateAllAppsAction::ExecutionResult UpdateAllAppsAction::buildExecutionResult(
+    const UpdateSummary& summary, qint64 duration_ms) const {
     ExecutionResult result;
-    Q_ASSERT(!result.success);  // verify default init
+    Q_ASSERT(!result.success);
     result.duration_ms = duration_ms;
     result.files_processed = summary.total_updated;
     result.success = true;
+
     if (summary.total_updated > 0 || summary.store_updated > 0) {
         result.message = QString("Updated %1 package(s)").arg(summary.total_updated);
         if (summary.store_updated > 0) {
@@ -166,8 +171,7 @@ void UpdateAllAppsAction::execute() {
     result.log = summary.report + "\n" + summary.structured_output;
 
     Q_ASSERT(result.duration_ms >= 0);
-
-    finishWithResult(result, ActionStatus::Success);
+    return result;
 }
 
 // ─── Private Helpers ────────────────────────────────────────────────────────────
@@ -349,6 +353,43 @@ bool UpdateAllAppsAction::runChocoUpdate(UpdateSummary& summary, const QDateTime
     return true;
 }
 
+void UpdateAllAppsAction::appendUpdateStatusSection(UpdateSummary& summary) const {
+    if (summary.total_updated > 0 || summary.store_updated > 0) {
+        summary.report +=
+            "║ ✓ Application updates completed                                      "
+            "║\n";
+        if (summary.total_updated > 0) {
+            summary.report +=
+                "║   Some applications may require restart                           "
+                "   ║\n";
+        }
+    } else if (summary.winget_installed || summary.choco_installed) {
+        summary.report +=
+            "║ ✓ All applications are up to date                                    "
+            "║\n";
+    } else {
+        summary.report +=
+            "║ ⚠ No package managers available                                      "
+            "║\n";
+        summary.report +=
+            "║   Install WinGet or Chocolatey for app update management            "
+            "║\n";
+    }
+}
+
+void UpdateAllAppsAction::appendStructuredOutput(UpdateSummary& summary) const {
+    summary.structured_output +=
+        QString("WINGET_INSTALLED:%1\n").arg(summary.winget_installed ? "YES" : "NO");
+    summary.structured_output += QString("WINGET_AVAILABLE:%1\n").arg(summary.winget_available);
+    summary.structured_output += QString("WINGET_UPDATED:%1\n").arg(summary.winget_updated);
+    summary.structured_output +=
+        QString("STORE_TRIGGERED:%1\n").arg(summary.store_updated > 0 ? "YES" : "NO");
+    summary.structured_output +=
+        QString("CHOCO_INSTALLED:%1\n").arg(summary.choco_installed ? "YES" : "NO");
+    summary.structured_output += QString("CHOCO_UPDATED:%1\n").arg(summary.choco_updated);
+    summary.structured_output += QString("TOTAL_UPDATED:%1\n").arg(summary.total_updated);
+}
+
 void UpdateAllAppsAction::buildUpdateReport(UpdateSummary& summary, qint64 duration_ms) const {
     Q_ASSERT(duration_ms >= 0);
     Q_UNUSED(duration_ms)
@@ -371,27 +412,7 @@ void UpdateAllAppsAction::buildUpdateReport(UpdateSummary& summary, qint64 durat
         QString("║ Total Updates: %1").arg(summary.total_updated).leftJustified(73, ' ') + "║\n";
     summary.report += "║                                                                      ║\n";
 
-    if (summary.total_updated > 0 || summary.store_updated > 0) {
-        summary.report +=
-            "║ ✓ Application updates completed                                      "
-            "║\n";
-        if (summary.total_updated > 0) {
-            summary.report +=
-                "║   Some applications may require restart                           "
-                "   ║\n";
-        }
-    } else if (summary.winget_installed || summary.choco_installed) {
-        summary.report +=
-            "║ ✓ All applications are up to date                                    "
-            "║\n";
-    } else {
-        summary.report +=
-            "║ ⚠ No package managers available                                      "
-            "║\n";
-        summary.report +=
-            "║   Install WinGet or Chocolatey for app update management            "
-            "║\n";
-    }
+    appendUpdateStatusSection(summary);
 
     summary.report += "║                                                                      ║\n";
     summary.report += "║ PACKAGE MANAGERS:                                                    ║\n";
@@ -409,16 +430,7 @@ void UpdateAllAppsAction::buildUpdateReport(UpdateSummary& summary, qint64 durat
                       "║\n";
     summary.report += "╚══════════════════════════════════════════════════════════════════════╝\n";
 
-    summary.structured_output +=
-        QString("WINGET_INSTALLED:%1\n").arg(summary.winget_installed ? "YES" : "NO");
-    summary.structured_output += QString("WINGET_AVAILABLE:%1\n").arg(summary.winget_available);
-    summary.structured_output += QString("WINGET_UPDATED:%1\n").arg(summary.winget_updated);
-    summary.structured_output +=
-        QString("STORE_TRIGGERED:%1\n").arg(summary.store_updated > 0 ? "YES" : "NO");
-    summary.structured_output +=
-        QString("CHOCO_INSTALLED:%1\n").arg(summary.choco_installed ? "YES" : "NO");
-    summary.structured_output += QString("CHOCO_UPDATED:%1\n").arg(summary.choco_updated);
-    summary.structured_output += QString("TOTAL_UPDATED:%1\n").arg(summary.total_updated);
+    appendStructuredOutput(summary);
 }
 
 }  // namespace sak

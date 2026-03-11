@@ -97,6 +97,12 @@ private:
     std::optional<MatchResult> searchMatch(const QString& app_name,
                                            ChocolateyManager* choco_mgr,
                                            int max_results);
+    std::optional<MatchResult> tryFuzzyMatch(const QString& base_name,
+                                             ChocolateyManager* choco_mgr,
+                                             double min_confidence);
+    std::optional<MatchResult> trySearchMatch(const QString& base_name,
+                                              ChocolateyManager* choco_mgr,
+                                              const MatchConfig& config);
 
     /// @brief Resolve an exact match with availability verification.
     std::optional<MatchResult> resolveExactMatch(const QString& base_name,

@@ -1,4 +1,4 @@
-﻿// Copyright (c) 2025 Randy Northrup. All rights reserved.
+// Copyright (c) 2025 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 /// @file user_migration_panel.cpp
@@ -45,7 +45,7 @@ UserMigrationPanel::UserMigrationPanel(QWidget* parent)
 UserMigrationPanel::~UserMigrationPanel() = default;
 
 void UserMigrationPanel::setupUi() {
-    Q_ASSERT(!objectName().isEmpty() || true);  // widget valid
+    Q_ASSERT(layout() == nullptr);  // setupUi not called twice
     auto* rootLayout = new QVBoxLayout(this);
     rootLayout->setContentsMargins(0, 0, 0, 0);
 
@@ -108,44 +108,37 @@ void UserMigrationPanel::createMigrationCards(QWidget* parent, QVBoxLayout* layo
     row->setSpacing(sak::ui::kSpacingLarge);
 
     row->addWidget(createMigrationCard(parent,
-                                        card_style,
+                                       {card_style,
                                         QStringLiteral(":/icons/icons/backup.svg"),
                                         tr("Backup User Profiles"),
                                         tr("Scan and select users, choose folders, configure"
                                            " filters, and create backup packages."),
-                                        m_backupButton,
                                         tr("Start Backup Wizard..."),
                                         sak::ui::kPrimaryButtonStyle,
                                         tr("Step-by-step wizard to select apps, configure"
                                            " options, and create backups"),
-                                        QStringLiteral("Start Backup Wizard")));
+                                        QStringLiteral("Start Backup Wizard")},
+                                       m_backupButton));
 
     row->addWidget(createMigrationCard(parent,
-                                        card_style,
+                                       {card_style,
                                         QStringLiteral(":/icons/icons/restore.svg"),
                                         tr("Restore User Profiles"),
                                         tr("Select backup, map users, configure merge"
                                            " options, and restore data with permissions."),
-                                        m_restoreButton,
                                         tr("Start Restore Wizard..."),
                                         sak::ui::kSecondaryButtonStyle,
                                         tr("Step-by-step wizard to select backups, map"
                                            " users, and restore data"),
-                                        QStringLiteral("Start Restore Wizard")));
+                                        QStringLiteral("Start Restore Wizard")},
+                                       m_restoreButton));
 
     layout->addLayout(row);
 }
 
 QFrame* UserMigrationPanel::createMigrationCard(QWidget* parent,
-                                                 const QString& card_style,
-                                                 const QString& icon,
-                                                 const QString& title,
-                                                 const QString& desc,
-                                                 QPushButton*& btn,
-                                                 const QString& btn_text,
-                                                 const QString& btn_style,
-                                                 const QString& tip,
-                                                 const QString& acc) {
+                                                const MigrationCardConfig& config,
+                                                QPushButton*& btn) {
     const QString title_style = QString(
                                     "font-size: %1pt; font-weight: 700; color: %2;"
                                     " border: none; background: transparent;")
@@ -160,32 +153,32 @@ QFrame* UserMigrationPanel::createMigrationCard(QWidget* parent,
 
     constexpr int kLogoSize = 96;
     auto* card = new QFrame(parent);
-    card->setStyleSheet(card_style);
+    card->setStyleSheet(config.card_style);
     auto* lay = new QVBoxLayout(card);
     lay->setSpacing(sak::ui::kSpacingMedium);
     lay->setContentsMargins(0, 0, 0, 0);
 
     auto* logo = new QLabel(card);
-    logo->setPixmap(QIcon(icon).pixmap(kLogoSize, kLogoSize));
+    logo->setPixmap(QIcon(config.icon).pixmap(kLogoSize, kLogoSize));
     logo->setAlignment(Qt::AlignCenter);
     logo->setStyleSheet(QStringLiteral("border: none; background: transparent;"));
     lay->addWidget(logo);
 
-    auto* title_label = new QLabel(title, card);
+    auto* title_label = new QLabel(config.title, card);
     title_label->setStyleSheet(title_style);
     lay->addWidget(title_label);
 
-    auto* desc_label = new QLabel(desc, card);
+    auto* desc_label = new QLabel(config.desc, card);
     desc_label->setWordWrap(true);
     desc_label->setStyleSheet(desc_style);
     lay->addWidget(desc_label);
 
     lay->addStretch();
-    btn = new QPushButton(btn_text, card);
+    btn = new QPushButton(config.btn_text, card);
     btn->setMinimumHeight(sak::kButtonHeightTall);
-    btn->setStyleSheet(btn_style);
-    btn->setToolTip(tip);
-    btn->setAccessibleName(acc);
+    btn->setStyleSheet(config.btn_style);
+    btn->setToolTip(config.tip);
+    btn->setAccessibleName(config.acc);
     lay->addWidget(btn);
     return card;
 }

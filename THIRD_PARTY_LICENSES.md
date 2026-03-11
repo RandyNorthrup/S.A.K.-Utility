@@ -293,3 +293,17 @@ https://github.com/smartmontools/smartmontools/releases
 **License:** MIT
 **Website:** https://vcpkg.io/
 **Used for:** C++ dependency management (build-time only, not distributed)
+
+---
+
+## Icons8
+
+**License:** Icons8 Free License (attribution required)
+**Website:** https://icons8.com/
+**Used for:** UI icons throughout the application (benchmark, duplicate finder, settings help, source, destination, orchestrator, eye open/closed)
+
+Free icons from Icons8 are used under their free license which requires
+attribution. Attribution is provided in this file, the README, and the
+About panel.
+
+Icons8 License: https://icons8.com/license

@@ -31,22 +31,20 @@ struct DeploymentDestinationSummary {
     QStringList status_events;
 };
 
+/// @brief Aggregated deployment data for report generation
+struct DeploymentSummaryData {
+    QString deployment_id;
+    QDateTime started_at;
+    QDateTime completed_at;
+    QVector<DeploymentJobSummary> jobs;
+    QVector<DeploymentDestinationSummary> destinations;
+};
+
 /// @brief Exports deployment summary reports in CSV and PDF formats
 class DeploymentSummaryReport {
 public:
-    static bool exportCsv(const QString& filePath,
-                          const QString& deploymentId,
-                          const QDateTime& startedAt,
-                          const QDateTime& completedAt,
-                          const QVector<DeploymentJobSummary>& jobs,
-                          const QVector<DeploymentDestinationSummary>& destinations);
-
-    static bool exportPdf(const QString& filePath,
-                          const QString& deploymentId,
-                          const QDateTime& startedAt,
-                          const QDateTime& completedAt,
-                          const QVector<DeploymentJobSummary>& jobs,
-                          const QVector<DeploymentDestinationSummary>& destinations);
+    static bool exportCsv(const QString& filePath, const DeploymentSummaryData& data);
+    static bool exportPdf(const QString& filePath, const DeploymentSummaryData& data);
 };
 
 }  // namespace sak

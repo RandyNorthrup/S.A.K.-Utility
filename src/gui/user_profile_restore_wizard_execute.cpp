@@ -32,8 +32,7 @@ UserProfileRestoreExecutePage::UserProfileRestoreExecutePage(QWidget* parent)
 }
 
 void UserProfileRestoreExecutePage::setupUi() {
-    Q_ASSERT(m_statusLabel);
-    Q_ASSERT(!objectName().isEmpty() || true);  // widget valid
+    Q_ASSERT(layout() == nullptr);  // setupUi not called twice
     auto* layout = new QVBoxLayout(this);
 
     // Status
@@ -83,6 +82,8 @@ void UserProfileRestoreExecutePage::setupUi() {
             &UserProfileRestoreExecutePage::onCancelRestore);
     connect(
         m_viewLogButton, &QPushButton::clicked, this, &UserProfileRestoreExecutePage::onViewLog);
+
+    Q_ASSERT(m_statusLabel);
 }
 
 void UserProfileRestoreExecutePage::initializePage() {
@@ -171,7 +172,7 @@ void UserProfileRestoreExecutePage::onStartRestore() {
             });
 
     // Start restore operation
-    worker->startRestore(backupPath, manifest, mappings, conflictMode, permMode, verify);
+    worker->startRestore(backupPath, manifest, mappings, {conflictMode, permMode, verify});
 
     // Configure progress bars
     m_overallProgressBar->setRange(0, mappings.size());

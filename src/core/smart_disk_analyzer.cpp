@@ -221,6 +221,45 @@ QByteArray SmartDiskAnalyzer::runSmartctl(uint32_t disk_number) {
     return proc.readAllStandardOutput();
 }
 
+void SmartDiskAnalyzer::parseSmartctlDeviceFields(const QJsonObject& root, SmartReport& report) {
+    if (root.contains("device")) {
+        const auto device = root["device"].toObject();
+        report.interface_type = device.value("type").toString().toUpper();
+        if (report.interface_type == "SAT") {
+            report.interface_type = "SATA";
+        }
+    }
+
+    if (root.contains("model_name")) {
+        report.model = root.value("model_name").toString();
+    }
+    if (root.contains("serial_number")) {
+        report.serial_number = root.value("serial_number").toString();
+    }
+    if (root.contains("firmware_version")) {
+        report.firmware_version = root.value("firmware_version").toString();
+    }
+    if (root.contains("user_capacity")) {
+        const auto cap = root["user_capacity"].toObject();
+        report.size_bytes = static_cast<uint64_t>(cap.value("bytes").toInteger());
+    }
+}
+
+void SmartDiskAnalyzer::parseSmartctlHealthFields(const QJsonObject& root, SmartReport& report) {
+    if (root.contains("smart_status")) {
+        const auto status = root["smart_status"].toObject();
+        report.smart_status = status.value("passed").toBool() ? "PASSED" : "FAILED";
+    }
+    if (root.contains("temperature")) {
+        const auto temp = root["temperature"].toObject();
+        report.temperature_celsius = temp.value("current").toDouble();
+    }
+    if (root.contains("power_on_time")) {
+        const auto pot = root["power_on_time"].toObject();
+        report.power_on_hours = pot.value("hours").toInteger();
+    }
+}
+
 SmartReport SmartDiskAnalyzer::parseSmartctlOutput(const QByteArray& json_data,
                                                    uint32_t disk_number) {
     SmartReport report;
@@ -236,56 +275,12 @@ SmartReport SmartDiskAnalyzer::parseSmartctlOutput(const QByteArray& json_data,
     }
 
     const QJsonObject root = doc.object();
+    parseSmartctlDeviceFields(root, report);
+    parseSmartctlHealthFields(root, report);
 
-    // Device info
-    if (root.contains("device")) {
-        const auto device = root["device"].toObject();
-        report.interface_type = device.value("type").toString().toUpper();
-        if (report.interface_type == "SAT") {
-            report.interface_type = "SATA";
-        }
-    }
-
-    // Model / serial / firmware
-    if (root.contains("model_name")) {
-        report.model = root.value("model_name").toString();
-    }
-    if (root.contains("serial_number")) {
-        report.serial_number = root.value("serial_number").toString();
-    }
-    if (root.contains("firmware_version")) {
-        report.firmware_version = root.value("firmware_version").toString();
-    }
-
-    // Capacity
-    if (root.contains("user_capacity")) {
-        const auto cap = root["user_capacity"].toObject();
-        report.size_bytes = static_cast<uint64_t>(cap.value("bytes").toInteger());
-    }
-
-    // SMART overall status
-    if (root.contains("smart_status")) {
-        const auto status = root["smart_status"].toObject();
-        report.smart_status = status.value("passed").toBool() ? "PASSED" : "FAILED";
-    }
-
-    // Temperature
-    if (root.contains("temperature")) {
-        const auto temp = root["temperature"].toObject();
-        report.temperature_celsius = temp.value("current").toDouble();
-    }
-
-    // Power-on hours
-    if (root.contains("power_on_time")) {
-        const auto pot = root["power_on_time"].toObject();
-        report.power_on_hours = pot.value("hours").toInteger();
-    }
-
-    // Parse SATA or NVMe specific data
     if (root.contains("ata_smart_attributes")) {
         parseSataAttributes(root["ata_smart_attributes"].toObject(), report);
     }
-
     if (root.contains("nvme_smart_health_information_log")) {
         parseNvmeHealth(root["nvme_smart_health_information_log"].toObject(), report);
     }
@@ -378,16 +373,13 @@ SmartHealthStatus SmartDiskAnalyzer::checkAttributeAgainstThresholds(
 }
 
 void SmartDiskAnalyzer::assessHealth(SmartReport& report) {
-    // Default to Healthy
     report.overall_health = SmartHealthStatus::Healthy;
 
-    // smartctl overall status: FAILED → Critical
     if (report.smart_status == "FAILED") {
         report.overall_health = SmartHealthStatus::Critical;
         return;
     }
 
-    // Check for failing attributes
     for (const auto& attr : report.attributes) {
         if (attr.failing) {
             report.overall_health = SmartHealthStatus::Critical;
@@ -395,7 +387,11 @@ void SmartDiskAnalyzer::assessHealth(SmartReport& report) {
         }
     }
 
-    // SATA threshold checks
+    assessSataAttributeHealth(report);
+    assessNvmeHealth(report);
+}
+
+void SmartDiskAnalyzer::assessSataAttributeHealth(SmartReport& report) {
     for (const auto& attr : report.attributes) {
         auto status = checkAttributeAgainstThresholds(attr);
         if (status == SmartHealthStatus::Critical) {
@@ -404,23 +400,24 @@ void SmartDiskAnalyzer::assessHealth(SmartReport& report) {
         }
         if (status == SmartHealthStatus::Warning) {
             report.overall_health = SmartHealthStatus::Warning;
-            // Don't return — keep checking for worse conditions
         }
     }
+}
 
-    // NVMe health checks
-    if (report.nvme_health.has_value()) {
-        const auto& nvme = report.nvme_health.value();
+void SmartDiskAnalyzer::assessNvmeHealth(SmartReport& report) {
+    if (!report.nvme_health.has_value()) {
+        return;
+    }
+    const auto& nvme = report.nvme_health.value();
 
-        if (nvme.percentage_used >= kNvmeWearCriticalPercent || nvme.media_errors > 0 ||
-            nvme.available_spare < nvme.available_spare_threshold) {
-            report.overall_health = SmartHealthStatus::Critical;
-            return;
-        }
+    if (nvme.percentage_used >= kNvmeWearCriticalPercent || nvme.media_errors > 0 ||
+        nvme.available_spare < nvme.available_spare_threshold) {
+        report.overall_health = SmartHealthStatus::Critical;
+        return;
+    }
 
-        if (nvme.percentage_used >= kNvmeWearWarningPercent) {
-            report.overall_health = SmartHealthStatus::Warning;
-        }
+    if (nvme.percentage_used >= kNvmeWearWarningPercent) {
+        report.overall_health = SmartHealthStatus::Warning;
     }
 }
 

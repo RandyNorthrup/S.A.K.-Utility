@@ -556,8 +556,8 @@ void AdvancedUninstallPanel::createLeftoverSection(QVBoxLayout* layout) {
 }
 
 void AdvancedUninstallPanel::createStatusBar(QVBoxLayout* layout) {
-    Q_ASSERT(layout);
     Q_ASSERT(m_settings_button);
+    Q_ASSERT(layout);
     auto* statusRow = new QHBoxLayout();
     statusRow->setContentsMargins(0, 4, 0, 0);
 
@@ -1231,49 +1231,49 @@ void AdvancedUninstallPanel::populateLeftoverRow(int row, const LeftoverItem& it
     checkItem->setCheckState(item.selected ? Qt::Checked : Qt::Unchecked);
     m_leftover_table->setItem(row, kLeftoverColCheck, checkItem);
 
-        // Risk level
-        QString riskText;
-        QColor riskColor;
-        switch (item.risk) {
-        case LeftoverItem::RiskLevel::Safe:
-            riskText = tr("Safe");
-            riskColor = QColor(ui::kColorSuccess);
-            break;
-        case LeftoverItem::RiskLevel::Review:
-            riskText = tr("Review");
-            riskColor = QColor(ui::kColorWarning);
-            break;
-        case LeftoverItem::RiskLevel::Risky:
-            riskText = tr("Risky");
-            riskColor = QColor(ui::kColorError);
-            break;
-        }
-        auto* riskItem = new QTableWidgetItem(riskText);
-        riskItem->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable);
-        riskItem->setForeground(riskColor);
-        QFont riskFont = riskItem->font();
-        riskFont.setBold(true);
-        riskItem->setFont(riskFont);
-        m_leftover_table->setItem(row, kLeftoverColRisk, riskItem);
+    // Risk level
+    QString riskText;
+    QColor riskColor;
+    switch (item.risk) {
+    case LeftoverItem::RiskLevel::Safe:
+        riskText = tr("Safe");
+        riskColor = QColor(ui::kColorSuccess);
+        break;
+    case LeftoverItem::RiskLevel::Review:
+        riskText = tr("Review");
+        riskColor = QColor(ui::kColorWarning);
+        break;
+    case LeftoverItem::RiskLevel::Risky:
+        riskText = tr("Risky");
+        riskColor = QColor(ui::kColorError);
+        break;
+    }
+    auto* riskItem = new QTableWidgetItem(riskText);
+    riskItem->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable);
+    riskItem->setForeground(riskColor);
+    QFont riskFont = riskItem->font();
+    riskFont.setBold(true);
+    riskItem->setFont(riskFont);
+    m_leftover_table->setItem(row, kLeftoverColRisk, riskItem);
 
-        // Type
-        auto* typeItem = new QTableWidgetItem(leftoverTypeText(item.type));
-        typeItem->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable);
-        typeItem->setData(kOriginalIndexRole, row);  // Store original index for sort-safe lookup
-        m_leftover_table->setItem(row, kLeftoverColType, typeItem);
+    // Type
+    auto* typeItem = new QTableWidgetItem(leftoverTypeText(item.type));
+    typeItem->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable);
+    typeItem->setData(kOriginalIndexRole, row);  // Store original index for sort-safe lookup
+    m_leftover_table->setItem(row, kLeftoverColType, typeItem);
 
-        // Path
-        auto* pathItem = new QTableWidgetItem(item.path);
-        pathItem->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable);
-        pathItem->setToolTip(item.path);
-        m_leftover_table->setItem(row, kLeftoverColPath, pathItem);
+    // Path
+    auto* pathItem = new QTableWidgetItem(item.path);
+    pathItem->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable);
+    pathItem->setToolTip(item.path);
+    m_leftover_table->setItem(row, kLeftoverColPath, pathItem);
 
-        // Size (uses NumericSortItem for correct numeric sorting)
-        auto* sizeItem = new NumericSortItem(formatSize(item.sizeBytes));
-        sizeItem->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable);
-        sizeItem->setData(Qt::UserRole, item.sizeBytes);
-        sizeItem->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
-        m_leftover_table->setItem(row, kLeftoverColSize, sizeItem);
+    // Size (uses NumericSortItem for correct numeric sorting)
+    auto* sizeItem = new NumericSortItem(formatSize(item.sizeBytes));
+    sizeItem->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable);
+    sizeItem->setData(Qt::UserRole, item.sizeBytes);
+    sizeItem->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    m_leftover_table->setItem(row, kLeftoverColSize, sizeItem);
 }
 
 void AdvancedUninstallPanel::clearLeftoverTable() {
@@ -1300,43 +1300,36 @@ void AdvancedUninstallPanel::applyFilter() {
     m_batch_button->setEnabled(!m_filteredPrograms.isEmpty());
 }
 
+bool passesViewFilter(const ProgramInfo& program, ViewFilter view_filter) {
+    switch (view_filter) {
+    case ViewFilter::All:
+        return true;
+    case ViewFilter::Win32Only:
+        return program.source != ProgramInfo::Source::UWP &&
+               program.source != ProgramInfo::Source::Provisioned;
+    case ViewFilter::UwpOnly:
+        return program.source == ProgramInfo::Source::UWP ||
+               program.source == ProgramInfo::Source::Provisioned;
+    case ViewFilter::BloatwareOnly:
+        return program.isBloatware;
+    case ViewFilter::OrphanedOnly:
+        return program.isOrphaned;
+    }
+    return true;
+}
+
 bool AdvancedUninstallPanel::matchesFilter(const ProgramInfo& program) const {
     Q_ASSERT(!m_searchFilter.isEmpty());
     Q_ASSERT(m_controller);
-    // View filter
-    switch (m_viewFilter) {
-    case ViewFilter::All:
-        break;
-    case ViewFilter::Win32Only:
-        if (program.source == ProgramInfo::Source::UWP ||
-            program.source == ProgramInfo::Source::Provisioned) {
-            return false;
-        }
-        break;
-    case ViewFilter::UwpOnly:
-        if (program.source != ProgramInfo::Source::UWP &&
-            program.source != ProgramInfo::Source::Provisioned) {
-            return false;
-        }
-        break;
-    case ViewFilter::BloatwareOnly:
-        if (!program.isBloatware) {
-            return false;
-        }
-        break;
-    case ViewFilter::OrphanedOnly:
-        if (!program.isOrphaned) {
-            return false;
-        }
-        break;
+
+    if (!passesViewFilter(program, m_viewFilter)) {
+        return false;
     }
 
-    // System components filter
     if (program.isSystemComponent && !m_controller->showSystemComponents()) {
         return false;
     }
 
-    // Text search
     if (!m_searchFilter.isEmpty()) {
         bool matches = program.displayName.contains(m_searchFilter, Qt::CaseInsensitive) ||
                        program.publisher.contains(m_searchFilter, Qt::CaseInsensitive) ||

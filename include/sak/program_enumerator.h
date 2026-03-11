@@ -74,6 +74,10 @@ private:
     QVector<ProgramInfo> scanRegistryHive(HKEY hive,
                                           const wchar_t* subkey,
                                           ProgramInfo::Source source);
+    void parseRegistryEntry(HKEY app_key,
+                            ProgramInfo::Source source,
+                            const QString& reg_path,
+                            QVector<ProgramInfo>& results);
 
     /// @brief Read a single registry string value
     [[nodiscard]] static QString readRegString(HKEY key, const wchar_t* valueName);
@@ -87,6 +91,7 @@ private:
 
     /// @brief Scan UWP/AppX packages via PowerShell
     QVector<ProgramInfo> scanUwpPackages();
+    void parseUwpPackage(const QJsonObject& obj, QVector<ProgramInfo>& results);
 
     /// @brief Scan provisioned (all-users) UWP packages
     QVector<ProgramInfo> scanProvisionedPackages();

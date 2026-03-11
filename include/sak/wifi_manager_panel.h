@@ -97,6 +97,13 @@ private:
         bool hidden{false};
     };
 
+    struct QrExportFormats {
+        bool png{false};
+        bool pdf{false};
+        bool jpg{false};
+        bool bmp{false};
+    };
+
     // -------------------------------------------------------------------------
     // WiFi payload helpers
     // -------------------------------------------------------------------------
@@ -111,6 +118,12 @@ private:
 
     /** Build the WIFI: URI payload from an explicit WifiConfig struct */
     static QString buildWifiPayloadFromConfig(const WifiConfig& cfg);
+
+    // -------------------------------------------------------------------------
+    // Windows script export helpers
+    // -------------------------------------------------------------------------
+    void exportSingleWindowsScript(const WifiConfig& cfg);
+    void exportMultipleWindowsScripts(const QList<WifiConfig>& sources);
 
     // -------------------------------------------------------------------------
     // QR generation
@@ -164,22 +177,28 @@ private:
     /** Build wizard page 1 (output directory selection) */
     QWidget* buildQrOutputPage(QrWizardControls& ctl);
 
+    /// @brief Content parameters for QR code export wizard
+    struct QrExportContent {
+        QString payload;
+        QString ssid;
+        QString location;
+        QString sub_name;
+    };
+
     /** Wire all signals for the single-network QR wizard */
     void connectSingleQrWizard(QDialog* dlg,
                                QStackedWidget* stack,
                                QrWizardControls ctl,
-                               const QString& payload,
-                               const QString& ssid,
-                               const QString& location,
-                               const QString& subName);
+                               const QrExportContent& content);
 
     /** Execute the single-network QR export (save selected formats) */
-    void executeSingleQrExport(QDialog* dlg,
-                               QrWizardControls ctl,
-                               const QString& payload,
-                               const QString& ssid,
-                               const QString& location,
-                               const QString& subName);
+    void executeSingleQrExport(QDialog* dlg, QrWizardControls ctl, const QrExportContent& content);
+
+    void saveCheckedFormats(QDialog* dlg,
+                            QrWizardControls ctl,
+                            const QImage& finalImg,
+                            const QrExportContent& content,
+                            QStringList& saved);
 
     /** Show the batch (multi-network) QR export dialog */
     void showBatchQrDialog(const QList<WifiConfig>& sources);
@@ -189,10 +208,12 @@ private:
                               const QList<WifiConfig>& sources,
                               const QString& baseDir,
                               bool showHeader,
-                              bool png,
-                              bool pdf,
-                              bool jpg,
-                              bool bmp);
+                              const QrExportFormats& formats);
+    /** Export QR images for single network in specified formats */
+    bool executeSingleQrNetwork(const WifiConfig& cfg,
+                                const QString& baseDir,
+                                bool showHeader,
+                                const QrExportFormats& formats);
 
     // -----------------------------------------------------------------
     // Export helpers

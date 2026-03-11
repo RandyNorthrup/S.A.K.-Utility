@@ -65,12 +65,17 @@ private:
 
     /// @brief Run apply-settings script and parse CHANGES/TOTAL counts.
     void applyVisualEffectsSettings(QString& report, int& settings_changed, int& settings_total);
+    /// @brief Aggregated visual effects optimization result data
+    struct VisualEffectsReport {
+        int settings_total = 0;
+        int settings_changed = 0;
+        bool notification_success = false;
+        QString fx_mode;
+    };
+
     /// @brief Build structured output and finalize the ExecutionResult.
     void buildAndFinishVisualEffectsResult(const QString& report,
-                                           int settings_total,
-                                           int settings_changed,
-                                           bool notification_success,
-                                           const QString& fx_mode,
+                                           const VisualEffectsReport& ve_report,
                                            const QDateTime& start_time);
 };
 

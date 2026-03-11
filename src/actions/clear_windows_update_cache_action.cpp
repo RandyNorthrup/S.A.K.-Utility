@@ -298,7 +298,7 @@ QString ClearWindowsUpdateCacheAction::buildServiceStartScript() const {
         "foreach ($svc in $services) {\n"
         "    Write-Output "
         "\"SERVICE:$svc|$($results[\"${svc}_InitialStatus\"])|$($results[\"${svc}_Stopped\"])|$($"
-        "results[\"${svc}_Started\"])\"\n"  // NOLINT(line-length)
+        "results[\"${svc}_Started\"])\"\n"
         "}\n"
         "\n"
         "foreach ($path in $paths) {\n"
@@ -308,8 +308,29 @@ QString ClearWindowsUpdateCacheAction::buildServiceStartScript() const {
         "    $cleared = $before - $after\n"
         "    Write-Output "
         "\"PATH:$pathName|$(Format-Bytes $before)|$(Format-Bytes "
-        "$cleared)|$($results[\"${pathName}_Cleared\"])\"\n"  // NOLINT(line-length)
+        "$cleared)|$($results[\"${pathName}_Cleared\"])\"\n"
         "}\n");
+}
+
+void ClearWindowsUpdateCacheAction::parseCacheCleanupLine(const QString& trimmed,
+                                                          CacheCleanupResult& parsed) const {
+    if (trimmed.startsWith("TOTAL_BEFORE:")) {
+        parsed.total_before = trimmed.mid(13).toLongLong();
+    } else if (trimmed.startsWith("TOTAL_CLEARED:")) {
+        parsed.total_cleared = trimmed.mid(14).toLongLong();
+    } else if (trimmed.startsWith("PATHS_CLEARED:")) {
+        parsed.paths_cleared = trimmed.mid(14).toInt();
+    } else if (trimmed.startsWith("SERVICES_STOPPED:")) {
+        parsed.services_stopped = trimmed.mid(17).toInt();
+    } else if (trimmed.startsWith("SERVICES_STARTED:")) {
+        parsed.services_started = trimmed.mid(17).toInt();
+    } else if (trimmed.startsWith("SERVICE:")) {
+        parsed.service_details.append(trimmed.mid(8));
+    } else if (trimmed.startsWith("PATH:")) {
+        parsed.path_details.append(trimmed.mid(5));
+    } else if (trimmed.contains("_ERROR:")) {
+        parsed.errors.append(trimmed);
+    }
 }
 
 ClearWindowsUpdateCacheAction::CacheCleanupResult
@@ -328,24 +349,7 @@ ClearWindowsUpdateCacheAction::parseCacheCleanupOutput(const QString& output,
 
     const QStringList lines = output.split('\n', Qt::SkipEmptyParts);
     for (const QString& line : lines) {
-        const QString trimmed = line.trimmed();
-        if (trimmed.startsWith("TOTAL_BEFORE:")) {
-            parsed.total_before = trimmed.mid(13).toLongLong();
-        } else if (trimmed.startsWith("TOTAL_CLEARED:")) {
-            parsed.total_cleared = trimmed.mid(14).toLongLong();
-        } else if (trimmed.startsWith("PATHS_CLEARED:")) {
-            parsed.paths_cleared = trimmed.mid(14).toInt();
-        } else if (trimmed.startsWith("SERVICES_STOPPED:")) {
-            parsed.services_stopped = trimmed.mid(17).toInt();
-        } else if (trimmed.startsWith("SERVICES_STARTED:")) {
-            parsed.services_started = trimmed.mid(17).toInt();
-        } else if (trimmed.startsWith("SERVICE:")) {
-            parsed.service_details.append(trimmed.mid(8));
-        } else if (trimmed.startsWith("PATH:")) {
-            parsed.path_details.append(trimmed.mid(5));
-        } else if (trimmed.contains("_ERROR:")) {
-            parsed.errors.append(trimmed);
-        }
+        parseCacheCleanupLine(line.trimmed(), parsed);
     }
 
     return parsed;

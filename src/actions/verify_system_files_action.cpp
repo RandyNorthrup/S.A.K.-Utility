@@ -52,71 +52,66 @@ void VerifySystemFilesAction::runSFC() {
     }
 }
 
-void VerifySystemFilesAction::runDISM() {
-    // Enterprise DISM sequence: CheckHealth → ScanHealth → RestoreHealth
-    // Per Microsoft docs: Use /LimitAccess to prevent Windows Update contact during repair
-
-    Q_EMIT executionProgress("DISM: Checking component store health...", 35);
-
-    // Step 1: CheckHealth - Quick check for corruption
-    QString checkHealthScript =
+bool VerifySystemFilesAction::runDismCheckHealth() {
+    QString script =
         "DISM.exe /Online /Cleanup-Image /CheckHealth; "
         "$LASTEXITCODE";
 
-    ProcessResult checkProc = runPowerShell(checkHealthScript, sak::kTimeoutDismCheckMs);
-    if (!checkProc.std_err.trimmed().isEmpty()) {
-        Q_EMIT logMessage("DISM CheckHealth warning: " + checkProc.std_err.trimmed());
+    ProcessResult proc = runPowerShell(script, sak::kTimeoutDismCheckMs);
+    if (!proc.std_err.trimmed().isEmpty()) {
+        Q_EMIT logMessage("DISM CheckHealth warning: " + proc.std_err.trimmed());
     }
+    return proc.std_out.contains("corruption", Qt::CaseInsensitive);
+}
 
-    if (isCancelled()) {
-        return;
-    }
-
-    QString checkOutput = checkProc.std_out;
-    bool corruption_detected = checkOutput.contains("corruption", Qt::CaseInsensitive);
-
+bool VerifySystemFilesAction::runDismScanHealth() {
     Q_EMIT executionProgress("DISM: Scanning component store...", 50);
+    QString script = "DISM.exe /Online /Cleanup-Image /ScanHealth";
 
-    // Step 2: ScanHealth - Thorough scan for corruption
-    QString scanHealthScript = "DISM.exe /Online /Cleanup-Image /ScanHealth";
+    ProcessResult proc = runPowerShell(script, sak::kTimeoutDismScanMs);
+    if (!proc.std_err.trimmed().isEmpty()) {
+        Q_EMIT logMessage("DISM ScanHealth warning: " + proc.std_err.trimmed());
+    }
+    return proc.std_out.contains("repairable", Qt::CaseInsensitive) ||
+           proc.std_out.contains("corruption", Qt::CaseInsensitive);
+}
 
-    ProcessResult scanProc = runPowerShell(scanHealthScript, sak::kTimeoutDismScanMs);
-    if (!scanProc.std_err.trimmed().isEmpty()) {
-        Q_EMIT logMessage("DISM ScanHealth warning: " + scanProc.std_err.trimmed());
+void VerifySystemFilesAction::runDismRestoreHealth() {
+    Q_EMIT executionProgress("DISM: Repairing component store...", 65);
+    QString script = "DISM.exe /Online /Cleanup-Image /RestoreHealth /LimitAccess";
+
+    Q_EMIT executionProgress("DISM restoring...", 75);
+    ProcessResult proc = runPowerShell(script, sak::kTimeoutSystemRepairMs, true, true, [this]() {
+        return isCancelled();
+    });
+    if (!proc.std_err.trimmed().isEmpty()) {
+        Q_EMIT logMessage("DISM RestoreHealth warning: " + proc.std_err.trimmed());
+    }
+    if (proc.cancelled) {
+        return;
     }
 
+    if (proc.std_out.contains("successfully", Qt::CaseInsensitive)) {
+        m_dism_successful = true;
+        m_dism_repaired_issues = true;
+    }
+}
+
+void VerifySystemFilesAction::runDISM() {
+    Q_EMIT executionProgress("DISM: Checking component store health...", 35);
+
+    bool corruption_detected = runDismCheckHealth();
     if (isCancelled()) {
         return;
     }
 
-    QString scanOutput = scanProc.std_out;
-    bool repair_needed = scanOutput.contains("repairable", Qt::CaseInsensitive) ||
-                         scanOutput.contains("corruption", Qt::CaseInsensitive);
+    bool repair_needed = runDismScanHealth();
+    if (isCancelled()) {
+        return;
+    }
 
     if (corruption_detected || repair_needed) {
-        Q_EMIT executionProgress("DISM: Repairing component store...", 65);
-
-        // Step 3: RestoreHealth - Repair detected corruption
-        // /LimitAccess prevents Windows Update usage (offline mode)
-        QString restoreHealthScript = "DISM.exe /Online /Cleanup-Image /RestoreHealth /LimitAccess";
-
-        Q_EMIT executionProgress("DISM restoring...", 75);
-        ProcessResult restoreProc =
-            runPowerShell(restoreHealthScript, sak::kTimeoutSystemRepairMs, true, true, [this]() {
-                return isCancelled();
-            });
-        if (!restoreProc.std_err.trimmed().isEmpty()) {
-            Q_EMIT logMessage("DISM RestoreHealth warning: " + restoreProc.std_err.trimmed());
-        }
-        if (restoreProc.cancelled) {
-            return;
-        }
-        QString restoreOutput = restoreProc.std_out;
-
-        if (restoreOutput.contains("successfully", Qt::CaseInsensitive)) {
-            m_dism_successful = true;
-            m_dism_repaired_issues = true;
-        }
+        runDismRestoreHealth();
     } else {
         Q_EMIT executionProgress("DISM: No corruption detected", 85);
         m_dism_successful = true;
@@ -134,6 +129,16 @@ void VerifySystemFilesAction::scan() {
     setScanResult(result);
     setStatus(ActionStatus::Ready);
     Q_EMIT scanComplete(result);
+}
+
+QString VerifySystemFilesAction::buildSfcSummary() const {
+    if (!m_sfc_found_issues) {
+        return QStringLiteral("SFC found no integrity violations. ");
+    }
+    if (m_sfc_repaired) {
+        return QStringLiteral("SFC found and repaired corrupt files. ");
+    }
+    return QStringLiteral("SFC found corrupt files but could not repair them. ");
 }
 
 void VerifySystemFilesAction::execute() {
@@ -162,35 +167,33 @@ void VerifySystemFilesAction::execute() {
         return;
     }
 
-    QString message;
-    if (m_sfc_found_issues) {
-        if (m_sfc_repaired) {
-            message = "SFC found and repaired corrupt files. ";
-        } else {
-            message = "SFC found corrupt files but could not repair them. ";
-        }
-    } else {
-        message = "SFC found no integrity violations. ";
-    }
+    finishWithResult(buildVerificationResult(start_time),
+                     verificationSucceeded() ? ActionStatus::Success : ActionStatus::Failed);
+}
 
-    if (m_dism_repaired_issues) {
-        message += "DISM repaired component store issues.";
-    } else {
-        message += "DISM found no issues.";
-    }
+bool VerifySystemFilesAction::verificationSucceeded() const {
+    return m_dism_successful && (!m_sfc_found_issues || m_sfc_repaired);
+}
+
+VerifySystemFilesAction::ExecutionResult VerifySystemFilesAction::buildVerificationResult(
+    const QDateTime& start_time) const {
+    QString message = buildSfcSummary();
+    message += m_dism_repaired_issues ? "DISM repaired component store issues."
+                                      : "DISM found no issues.";
 
     ExecutionResult result;
-    Q_ASSERT(!result.success);  // verify default init
-    result.success = m_dism_successful && (!m_sfc_found_issues || m_sfc_repaired);
+    Q_ASSERT(!result.success);
+    result.success = verificationSucceeded();
     result.message = message;
     result.duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
-    result.log = QString("SFC issues: %1, repaired: %2\nDISM repaired issues: %3\nCBS log: %4")
-                     .arg(m_sfc_found_issues ? "YES" : "NO")
-                     .arg(m_sfc_repaired ? "YES" : "NO")
-                     .arg(m_dism_repaired_issues ? "YES" : "NO")
-                     .arg(m_cbs_log_path.isEmpty() ? "N/A" : m_cbs_log_path);
-
-    finishWithResult(result, result.success ? ActionStatus::Success : ActionStatus::Failed);
+    result.log = QString(
+                     "SFC issues: %1, repaired: %2\n"
+                     "DISM repaired issues: %3\nCBS log: %4")
+                     .arg(m_sfc_found_issues ? "YES" : "NO",
+                          m_sfc_repaired ? "YES" : "NO",
+                          m_dism_repaired_issues ? "YES" : "NO",
+                          m_cbs_log_path.isEmpty() ? "N/A" : m_cbs_log_path);
+    return result;
 }
 
 }  // namespace sak

@@ -57,6 +57,15 @@ private:
     /// @brief Generate search patterns from program info
     void buildSearchPatterns();
 
+    /// @brief Build name/install-dir patterns from display name
+    void buildNamePatterns(const QSet<QString>& excludedWords);
+
+    /// @brief Split text into words, filter, and append to target list
+    void addFilteredWords(const QString& text,
+                          const QString& split_pattern,
+                          QStringList& target,
+                          const QSet<QString>& excludes);
+
     // File system scanning
     QVector<LeftoverItem> scanFileSystem(const std::atomic<bool>& stopRequested);
     QVector<LeftoverItem> scanDirectory(const QString& basePath,
@@ -81,8 +90,12 @@ private:
                                const QString& description,
                                const std::atomic<bool>& stopRequested,
                                QVector<LeftoverItem>& items);
-    void scanStartupFolder(const std::atomic<bool>& stopRequested,
-                            QVector<LeftoverItem>& items);
+    void scanRunKey(HKEY hive,
+                    const wchar_t* subkey,
+                    const QString& hive_name,
+                    const std::atomic<bool>& stopRequested,
+                    QVector<LeftoverItem>& items);
+    void scanStartupFolder(const std::atomic<bool>& stopRequested, QVector<LeftoverItem>& items);
 
     // Safety classification
     LeftoverItem::RiskLevel classifyRisk(const QString& path, LeftoverItem::Type type) const;

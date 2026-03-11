@@ -170,6 +170,7 @@ private:
                                                    UINT message,
                                                    WPARAM wParam,
                                                    LPARAM lParam);
+    static LRESULT CALLBACK deviceChangeWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
     QList<sak::DriveInfo> m_drives;
     QTimer* m_refreshTimer;

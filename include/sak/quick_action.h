@@ -306,7 +306,7 @@ protected:
      * @param title Title for the box header (e.g., "BROWSER CACHE CLEARING - RESULTS")
      * @param content_lines Lines of content to display inside the box
      * @param duration_ms Optional duration to append in footer (-1 to omit)
-     * @return Formatted string with ╔═╗║╚═╝ box-drawing characters
+     * @return Formatted string with box-drawing characters
      */
     static QString formatLogBox(const QString& title,
                                 const QStringList& content_lines,

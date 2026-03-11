@@ -101,6 +101,22 @@ QMap<QString, QPair<QString, bool>>::const_iterator findBloatwareMatch(
 
 CheckBloatwareAction::CheckBloatwareAction(QObject* parent) : QuickAction(parent) {}
 
+CheckBloatwareAction::BloatwareItem CheckBloatwareAction::buildBloatwareItem(
+    const QString& name,
+    const QString& package_full,
+    const QString& source,
+    double size_mb,
+    bool is_safe) {
+    BloatwareItem item;
+    item.name = name.isEmpty() ? package_full : name;
+    item.type = source == "Provisioned" ? "Provisioned App" : "Installed Store App";
+    item.size = static_cast<qint64>(size_mb * sak::kBytesPerMB);
+    item.removal_method = source == "Provisioned" ? "PowerShell Remove-AppxProvisionedPackage"
+                                                  : "PowerShell Remove-AppxPackage";
+    item.is_safe_to_remove = is_safe;
+    return item;
+}
+
 QVector<CheckBloatwareAction::BloatwareItem> CheckBloatwareAction::scanForBloatware() {
     QVector<BloatwareItem> bloatware;
 
@@ -136,9 +152,6 @@ QVector<CheckBloatwareAction::BloatwareItem> CheckBloatwareAction::scanForBloatw
         QJsonObject app = val.toObject();
         const QString name = app["Name"].toString();
         const QString package_full = app["PackageFullName"].toString();
-        const QString source = app["Source"].toString();
-        const double size_mb = app["SizeMB"].toDouble();
-
         const QString dedupe_key = package_full.isEmpty() ? name : package_full;
         if (dedupe_key.isEmpty() || seen.contains(dedupe_key)) {
             continue;
@@ -150,14 +163,11 @@ QVector<CheckBloatwareAction::BloatwareItem> CheckBloatwareAction::scanForBloatw
             continue;
         }
 
-        BloatwareItem item;
-        item.name = name.isEmpty() ? package_full : name;
-        item.type = source == "Provisioned" ? "Provisioned App" : "Installed Store App";
-        item.size = static_cast<qint64>(size_mb * sak::kBytesPerMB);
-        item.removal_method = source == "Provisioned" ? "PowerShell Remove-AppxProvisionedPackage"
-                                                      : "PowerShell Remove-AppxPackage";
-        item.is_safe_to_remove = match.value().second;
-        bloatware.append(item);
+        bloatware.append(buildBloatwareItem(name,
+                                            package_full,
+                                            app["Source"].toString(),
+                                            app["SizeMB"].toDouble(),
+                                            match.value().second));
     }
 
     return bloatware;
@@ -195,18 +205,12 @@ void CheckBloatwareAction::execute() {
     Q_ASSERT(start_time.isValid());
 
     QString scan_output;
-    QString report;
-    executeScanApps(start_time, scan_output, report);
+    BloatwareScanResult result;
+    executeScanApps(start_time, scan_output, result.report);
 
-    QString structured_output;
-    int bloatware_count = 0;
-    qint64 total_size = 0;
-    int apps_scanned = 0;
-    executeMatchBloatware(
-        scan_output, report, structured_output, bloatware_count, total_size, apps_scanned);
+    executeMatchBloatware(scan_output, result);
 
-    executeBuildReport(
-        start_time, apps_scanned, bloatware_count, total_size, report, structured_output);
+    executeBuildReport(start_time, result);
 }
 
 void CheckBloatwareAction::executeScanApps(const QDateTime& start_time,
@@ -243,113 +247,105 @@ void CheckBloatwareAction::executeScanApps(const QDateTime& start_time,
 }
 
 void CheckBloatwareAction::executeMatchBloatware(const QString& scan_output,
-                                                 QString& report,
-                                                 QString& structured_output,
-                                                 int& bloatware_count,
-                                                 qint64& total_size,
-                                                 int& apps_scanned) {
+                                                 BloatwareScanResult& result) {
     Q_EMIT executionProgress("Analyzing detected apps...", 40);
 
-    // Comprehensive bloatware patterns with safety ratings
     const QMap<QString, QPair<QString, bool>> bloatware_patterns = buildBloatwarePatterns();
 
-    // Parse JSON output
     QJsonDocument doc = QJsonDocument::fromJson(scan_output.toUtf8());
     QJsonArray apps = doc.isArray() ? doc.array() : QJsonArray();
     if (apps.isEmpty() && doc.isObject()) {
-        apps.append(doc.object());  // Handle single object response
+        apps.append(doc.object());
     }
-    apps_scanned = apps.size();
+    result.apps_scanned = apps.size();
 
-    QVector<QPair<QString, QPair<QString, double>>> detected_bloatware;
-    int installed_scanned = 0;
-    int provisioned_scanned = 0;
-    int safe_to_remove = 0;
-    QSet<QString> seen;
-
+    ClassificationState state;
     for (const QJsonValue& val : apps) {
-        QJsonObject app = val.toObject();
-        QString name = app["Name"].toString();
-        QString package_full = app["PackageFullName"].toString();
-        QString source = app["Source"].toString();
-        double size_mb = app["SizeMB"].toDouble();
-
-        const QString dedupe_key = package_full.isEmpty() ? name : package_full;
-        if (dedupe_key.isEmpty() || seen.contains(dedupe_key)) {
-            continue;
-        }
-        seen.insert(dedupe_key);
-
-        if (source == "Provisioned") {
-            provisioned_scanned++;
-        } else {
-            installed_scanned++;
-        }
-
-        auto match = findBloatwareMatch(name, package_full, bloatware_patterns);
-        if (match == bloatware_patterns.constEnd()) {
-            continue;
-        }
-
-        bloatware_count++;
-        detected_bloatware.append(qMakePair(name.isEmpty() ? package_full : name,
-                                            qMakePair(match.value().first, size_mb)));
-        total_size += static_cast<qint64>(size_mb * sak::kBytesPerMB);
-        if (match.value().second) {
-            safe_to_remove++;
-        }
+        classifyAppEntry(val.toObject(), bloatware_patterns, state, result);
     }
 
-    formatBloatwareMatchReport(detected_bloatware,
-                               apps.size(),
-                               installed_scanned,
-                               provisioned_scanned,
-                               safe_to_remove,
-                               bloatware_count,
-                               report,
-                               structured_output);
+    BloatwareMatchStats stats{static_cast<int>(apps.size()),
+                              state.installed_scanned,
+                              state.provisioned_scanned,
+                              state.safe_to_remove};
+    formatBloatwareMatchReport(state.detected_bloatware, stats, result);
+}
+
+void CheckBloatwareAction::classifyAppEntry(
+    const QJsonObject& app,
+    const QMap<QString, QPair<QString, bool>>& bloatware_patterns,
+    ClassificationState& state,
+    BloatwareScanResult& result) {
+    QString name = app["Name"].toString();
+    QString package_full = app["PackageFullName"].toString();
+    QString source = app["Source"].toString();
+    double size_mb = app["SizeMB"].toDouble();
+
+    const QString dedupe_key = package_full.isEmpty() ? name : package_full;
+    if (dedupe_key.isEmpty() || state.seen.contains(dedupe_key)) {
+        return;
+    }
+    state.seen.insert(dedupe_key);
+
+    if (source == "Provisioned") {
+        state.provisioned_scanned++;
+    } else {
+        state.installed_scanned++;
+    }
+
+    auto match = findBloatwareMatch(name, package_full, bloatware_patterns);
+    if (match == bloatware_patterns.constEnd()) {
+        return;
+    }
+
+    result.bloatware_count++;
+    state.detected_bloatware.append(
+        qMakePair(name.isEmpty() ? package_full : name, qMakePair(match.value().first, size_mb)));
+    result.total_size += static_cast<qint64>(size_mb * sak::kBytesPerMB);
+    if (match.value().second) {
+        state.safe_to_remove++;
+    }
 }
 
 void CheckBloatwareAction::formatBloatwareMatchReport(
     const QVector<QPair<QString, QPair<QString, double>>>& detected,
-    int apps_count,
-    int installed_scanned,
-    int provisioned_scanned,
-    int safe_to_remove,
-    int bloatware_count,
-    QString& report,
-    QString& structured_output) {
+    const BloatwareMatchStats& stats,
+    BloatwareScanResult& result) {
     Q_EMIT executionProgress("Generating detailed report...", 70);
 
     // Phase 2: Report generation
-    report += QString("\u2551 Apps Scanned: %1").arg(apps_count).leftJustified(73, ' ') +
-              "\u2551\n";
-    report +=
-        QString("\u2551 Installed (All Users): %1").arg(installed_scanned).leftJustified(73, ' ') +
+    result.report +=
+        QString("\u2551 Apps Scanned: %1").arg(stats.apps_count).leftJustified(73, ' ') +
         "\u2551\n";
-    report += QString("\u2551 Provisioned (System Image): %1")
-                  .arg(provisioned_scanned)
-                  .leftJustified(73, ' ') +
-              "\u2551\n";
-    report += QString("\u2551 Bloatware Found: %1").arg(bloatware_count).leftJustified(73, ' ') +
-              "\u2551\n";
-    report += QString("\u2551 Safe to Remove: %1").arg(safe_to_remove).leftJustified(73, ' ') +
-              "\u2551\n";
+    result.report += QString("\u2551 Installed (All Users): %1")
+                         .arg(stats.installed_scanned)
+                         .leftJustified(73, ' ') +
+                     "\u2551\n";
+    result.report += QString("\u2551 Provisioned (System Image): %1")
+                         .arg(stats.provisioned_scanned)
+                         .leftJustified(73, ' ') +
+                     "\u2551\n";
+    result.report +=
+        QString("\u2551 Bloatware Found: %1").arg(result.bloatware_count).leftJustified(73, ' ') +
+        "\u2551\n";
+    result.report +=
+        QString("\u2551 Safe to Remove: %1").arg(stats.safe_to_remove).leftJustified(73, ' ') +
+        "\u2551\n";
     qint64 total_size = 0;
     for (const auto& item : detected) {
         total_size += static_cast<qint64>(item.second.second * sak::kBytesPerMB);
     }
-    report += QString("\u2551 Total Size: %1 MB")
-                  .arg(QString::number(total_size / (1024.0 * 1024.0), 'f', 2))
-                  .leftJustified(73, ' ') +
-              "\u2551\n";
-    report += boxMid69();
+    result.report += QString("\u2551 Total Size: %1 MB")
+                         .arg(QString::number(total_size / (1024.0 * 1024.0), 'f', 2))
+                         .leftJustified(73, ' ') +
+                     "\u2551\n";
+    result.report += boxMid69();
 
-    if (bloatware_count > 0) {
-        report +=
+    if (result.bloatware_count > 0) {
+        result.report +=
             "\u2551 DETECTED BLOATWARE                                                   "
             "\u2551\n";
-        report += boxMid69();
+        result.report += boxMid69();
 
         const int display_limit = qMin(detected.size(), 20);
         for (int i = 0; i < display_limit; ++i) {
@@ -358,90 +354,88 @@ void CheckBloatwareAction::formatBloatwareMatchReport(
             QString category = item.second.first;
             double size_mb = item.second.second;
 
-            report += QString("\u2551 \u2022 %1").arg(name).leftJustified(73, ' ') + "\u2551\n";
-            report += QString("\u2551   Category: %1 | Size: %2 MB")
-                          .arg(category)
-                          .arg(QString::number(size_mb, 'f', 2))
-                          .leftJustified(73, ' ') +
-                      "\u2551\n";
+            result.report += QString("\u2551 \u2022 %1").arg(name).leftJustified(73, ' ') +
+                             "\u2551\n";
+            result.report += QString("\u2551   Category: %1 | Size: %2 MB")
+                                 .arg(category)
+                                 .arg(QString::number(size_mb, 'f', 2))
+                                 .leftJustified(73, ' ') +
+                             "\u2551\n";
         }
 
         if (detected.size() > 20) {
-            report += QString("\u2551   ... and %1 more app(s)")
-                          .arg(detected.size() - 20)
-                          .leftJustified(73, ' ') +
-                      "\u2551\n";
+            result.report += QString("\u2551   ... and %1 more app(s)")
+                                 .arg(detected.size() - 20)
+                                 .leftJustified(73, ' ') +
+                             "\u2551\n";
         }
     } else {
-        report +=
+        result.report +=
             "\u2551 \u2713 No common bloatware detected                                      "
             " \u2551\n";
     }
 
     // Structured output
-    structured_output += QString("APPS_SCANNED:%1\n").arg(apps_count);
-    structured_output += QString("BLOATWARE_FOUND:%1\n").arg(bloatware_count);
-    structured_output += QString("SAFE_TO_REMOVE:%1\n").arg(safe_to_remove);
-    structured_output += QString("INSTALLED_SCANNED:%1\n").arg(installed_scanned);
-    structured_output += QString("PROVISIONED_SCANNED:%1\n").arg(provisioned_scanned);
-    structured_output +=
+    result.structured_output += QString("APPS_SCANNED:%1\n").arg(stats.apps_count);
+    result.structured_output += QString("BLOATWARE_FOUND:%1\n").arg(result.bloatware_count);
+    result.structured_output += QString("SAFE_TO_REMOVE:%1\n").arg(stats.safe_to_remove);
+    result.structured_output += QString("INSTALLED_SCANNED:%1\n").arg(stats.installed_scanned);
+    result.structured_output += QString("PROVISIONED_SCANNED:%1\n").arg(stats.provisioned_scanned);
+    result.structured_output +=
         QString("TOTAL_SIZE_MB:%1\n").arg(QString::number(total_size / (1024.0 * 1024.0), 'f', 2));
-    structured_output += QString("SPACE_RECLAIMABLE_MB:%1\n")
-                             .arg(QString::number(total_size / (1024.0 * 1024.0), 'f', 2));
+    result.structured_output += QString("SPACE_RECLAIMABLE_MB:%1\n")
+                                    .arg(QString::number(total_size / (1024.0 * 1024.0), 'f', 2));
 
     for (int i = 0; i < qMin(detected.size(), 20); ++i) {
-        structured_output += QString("BLOATWARE_%1:%2|%3|%4MB\n")
-                                 .arg(i + 1)
-                                 .arg(detected[i].first)
-                                 .arg(detected[i].second.first)
-                                 .arg(QString::number(detected[i].second.second, 'f', 2));
+        result.structured_output += QString("BLOATWARE_%1:%2|%3|%4MB\n")
+                                        .arg(i + 1)
+                                        .arg(detected[i].first)
+                                        .arg(detected[i].second.first)
+                                        .arg(QString::number(detected[i].second.second, 'f', 2));
     }
 }
 
 void CheckBloatwareAction::executeBuildReport(const QDateTime& start_time,
-                                              int apps_scanned,
-                                              int bloatware_count,
-                                              qint64 total_size,
-                                              QString& report,
-                                              const QString& structured_output) {
-    report += "╠══════════════════════════════════════════════════════════════════════╣\n";
-    report += "║ REMOVAL INFORMATION                                                  ║\n";
-    report += "╠══════════════════════════════════════════════════════════════════════╣\n";
-    report += "║ To remove bloatware apps, use PowerShell:                            ║\n";
-    report += "║                                                                      ║\n";
-    report += "║ Remove for current user:                                             ║\n";
-    report += "║   Get-AppxPackage *AppName* | Remove-AppxPackage                     ║\n";
-    report += "║                                                                      ║\n";
-    report += "║ Remove for all users (requires admin):                               ║\n";
-    report += "║   Get-AppxPackage *AppName* -AllUsers | Remove-AppxPackage -AllUsers ║\n";
-    report += "║                                                                      ║\n";
-    report += "║ Remove provisioning (prevents reinstall):                            ║\n";
-    report += "║   Get-AppxProvisionedPackage -Online | Where {$_.DisplayName -match  ║\n";
-    report += "║   \"AppName\"} | Remove-AppxProvisionedPackage -Online                 ║\n";
-    report += "║                                                                      ║\n";
-    report += "║ ⚠ CAUTION: Some apps may be needed by certain users                  ║\n";
-    report += "║   Always verify before removing system applications                  ║\n";
-    report += "╚══════════════════════════════════════════════════════════════════════╝\n";
+                                              BloatwareScanResult& result) {
+    result.report += "╠══════════════════════════════════════════════════════════════════════╣\n";
+    result.report += "║ REMOVAL INFORMATION                                                  ║\n";
+    result.report += "╠══════════════════════════════════════════════════════════════════════╣\n";
+    result.report += "║ To remove bloatware apps, use PowerShell:                            ║\n";
+    result.report += "║                                                                      ║\n";
+    result.report += "║ Remove for current user:                                             ║\n";
+    result.report += "║   Get-AppxPackage *AppName* | Remove-AppxPackage                     ║\n";
+    result.report += "║                                                                      ║\n";
+    result.report += "║ Remove for all users (requires admin):                               ║\n";
+    result.report += "║   Get-AppxPackage *AppName* -AllUsers | Remove-AppxPackage -AllUsers ║\n";
+    result.report += "║                                                                      ║\n";
+    result.report += "║ Remove provisioning (prevents reinstall):                            ║\n";
+    result.report += "║   Get-AppxProvisionedPackage -Online | Where {$_.DisplayName -match  ║\n";
+    result.report += "║   \"AppName\"} | Remove-AppxProvisionedPackage -Online                 ║\n";
+    result.report += "║                                                                      ║\n";
+    result.report += "║ ⚠ CAUTION: Some apps may be needed by certain users                  ║\n";
+    result.report += "║   Always verify before removing system applications                  ║\n";
+    result.report += "╚══════════════════════════════════════════════════════════════════════╝\n";
 
     Q_EMIT executionProgress("Analysis complete", 100);
 
     qint64 duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
 
-    ExecutionResult result;
-    Q_ASSERT(!result.success);  // verify default init
-    result.duration_ms = duration_ms;
-    result.files_processed = apps_scanned;
-    result.success = true;
-    result.message = bloatware_count > 0
-                         ? QString("Found %1 bloatware app(s) using %2 MB")
-                               .arg(bloatware_count)
-                               .arg(QString::number(total_size / (1024.0 * 1024.0), 'f', 2))
-                         : "No common bloatware detected";
-    result.log = report + "\n" + structured_output;
+    ExecutionResult exec_result;
+    Q_ASSERT(!exec_result.success);  // verify default init
+    exec_result.duration_ms = duration_ms;
+    exec_result.files_processed = result.apps_scanned;
+    exec_result.success = true;
+    exec_result.message =
+        result.bloatware_count > 0
+            ? QString("Found %1 bloatware app(s) using %2 MB")
+                  .arg(result.bloatware_count)
+                  .arg(QString::number(result.total_size / (1024.0 * 1024.0), 'f', 2))
+            : "No common bloatware detected";
+    exec_result.log = result.report + "\n" + result.structured_output;
 
-    Q_ASSERT(result.duration_ms >= 0);
+    Q_ASSERT(exec_result.duration_ms >= 0);
 
-    finishWithResult(result, ActionStatus::Success);
+    finishWithResult(exec_result, ActionStatus::Success);
 }
 
 }  // namespace sak

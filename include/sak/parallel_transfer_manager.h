@@ -71,12 +71,16 @@ public:
     void setGlobalBandwidthLimit(int mbps);
     void setPerJobBandwidthLimit(int mbps);
 
-    void updateJobProgress(const QString& job_id,
-                           int progress_percent,
-                           qint64 bytes_transferred,
-                           qint64 total_bytes,
-                           double speed_mbps,
-                           const QString& current_file);
+    /// @brief Progress data for a single transfer update
+    struct TransferProgressUpdate {
+        int progress_percent{0};
+        qint64 bytes_transferred{0};
+        qint64 total_bytes{0};
+        double speed_mbps{0.0};
+        QString current_file;
+    };
+
+    void updateJobProgress(const QString& job_id, const TransferProgressUpdate& progress);
     void markJobComplete(const QString& job_id,
                          bool success,
                          const QString& error_message = QString());

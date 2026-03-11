@@ -97,7 +97,7 @@ constexpr auto kStatusColorWarning = "#d97706";  ///< amber-600 — caution/slow
 constexpr auto kStatusColorError = "#dc2626";    ///< red-600 — failed/error/critical
 
 /// Emoji prefixes for accessible status text (screen reader + colorblind fallback)
-constexpr auto kStatusPrefixIdle = "\u25CB ";     ///< ○ — idle/pending
+constexpr auto kStatusPrefixIdle = "\u25CB ";     ///< idle/pending
 constexpr auto kStatusPrefixRunning = "\u23F3 ";  ///< ⏳ — in-progress
 constexpr auto kStatusPrefixSuccess = "\u2714 ";  ///< ✔ — completed/passed
 constexpr auto kStatusPrefixWarning = "\u26A0 ";  ///< ⚠ — caution

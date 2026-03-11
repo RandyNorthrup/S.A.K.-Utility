@@ -24,7 +24,7 @@
 
 ## Executive Summary
 
-A comprehensive deep scan of the entire S.A.K. Utility codebase (148 `.cpp`, 105+ `.h`, 76 test files) was performed across 10 audit dimensions. The codebase is clean of TODO/FIXME markers, orphaned files, and deprecated Qt APIs — a testament to previous cleanup passes. However, significant work remains in accessibility, visual consistency, error logging, test coverage, and several critical bugs.
+A comprehensive deep scan of the entire S.A.K. Utility codebase (148 `.cpp`, 105+ `.h`, 79 test files) was performed across 10 audit dimensions. The codebase is clean of TODO/FIXME markers, orphaned files, and deprecated Qt APIs — a testament to previous cleanup passes. However, significant work remains in accessibility, visual consistency, error logging, test coverage, and several critical bugs.
 
 | Area | Findings | Critical | High | Medium | Low |
 |------|----------|----------|------|--------|-----|
@@ -237,7 +237,7 @@ A comprehensive deep scan of the entire S.A.K. Utility codebase (148 `.cpp`, 105
 
 ## Phase 7 — Test Coverage Expansion
 
-**Current state:** 48/107 source files tested (~45%). 76 test executables.
+**Current state:** 48/107 source files tested (~45%). 79 test executables.
 
 ### 🔴 P0 — Critical (Data Loss / Security Risk)
 

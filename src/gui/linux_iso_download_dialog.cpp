@@ -54,15 +54,13 @@ LinuxISODownloadDialog::~LinuxISODownloadDialog() = default;
 // ============================================================================
 
 void LinuxISODownloadDialog::setupUi() {
-    Q_ASSERT(!objectName().isEmpty() || true);  // widget valid
+    Q_ASSERT(layout() == nullptr);  // setupUi not called twice
     auto* mainLayout = new QVBoxLayout(this);
     setupUi_selectionGroup(mainLayout);
     setupUi_progressAndButtons(mainLayout);
 }
 
 void LinuxISODownloadDialog::setupUi_selectionGroup(QVBoxLayout* mainLayout) {
-    Q_ASSERT(m_distroDescriptionLabel);
-    Q_ASSERT(m_distroVersionLabel);
     Q_ASSERT(m_categoryCombo);
     Q_ASSERT(m_distroListWidget);
     // ---- Distribution Selection ----
@@ -125,8 +123,6 @@ void LinuxISODownloadDialog::setupUi_selectionGroup(QVBoxLayout* mainLayout) {
 }
 
 void LinuxISODownloadDialog::setupUi_progressAndButtons(QVBoxLayout* mainLayout) {
-    Q_ASSERT(m_progressBar);
-    Q_ASSERT(m_startButton);
     Q_ASSERT(m_saveLocationEdit);
     Q_ASSERT(m_phaseLabel);
     // ---- Save Location ----

@@ -1,4 +1,4 @@
-﻿// Copyright (c) 2025 Randy Northrup. All rights reserved.
+// Copyright (c) 2025 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 /// @file secure_memory.cpp
@@ -28,6 +28,22 @@
 #endif
 #endif
 
+namespace {
+
+#ifndef _WIN32
+bool readFromDevUrandom(void* buffer, std::size_t size) noexcept {
+    FILE* urandom = fopen("/dev/urandom", "rb");
+    if (!urandom) {
+        return false;
+    }
+    size_t bytes_read = fread(buffer, 1, size, urandom);
+    fclose(urandom);
+    return bytes_read == size;
+}
+#endif
+
+}  // namespace
+
 namespace sak {
 
 bool generateSecureRandom(void* buffer, std::size_t size) noexcept {
@@ -37,62 +53,31 @@ bool generateSecureRandom(void* buffer, std::size_t size) noexcept {
     }
 
 #ifdef _WIN32
-    // Guard against size_t → ULONG truncation
     if (size > static_cast<std::size_t>(MAXDWORD)) {
         return false;
     }
-
-    // Use BCryptGenRandom (modern Windows crypto API)
-    NTSTATUS status = BCryptGenRandom(nullptr,  // Use default provider
+    NTSTATUS status = BCryptGenRandom(nullptr,
                                       static_cast<PUCHAR>(buffer),
                                       static_cast<ULONG>(size),
                                       BCRYPT_USE_SYSTEM_PREFERRED_RNG);
-
     return BCRYPT_SUCCESS(status);
 
 #elif defined(__linux__)
-    // Use getrandom syscall (Linux 3.17+)
     ssize_t result = getrandom(buffer, size, 0);
     if (result < 0) {
-        // Fallback to /dev/urandom
-        FILE* urandom = fopen("/dev/urandom", "rb");
-        if (!urandom) {
-            return false;
-        }
-
-        size_t bytes_read = fread(buffer, 1, size, urandom);
-        fclose(urandom);
-        return bytes_read == size;
+        return readFromDevUrandom(buffer, size);
     }
     return static_cast<std::size_t>(result) == size;
 
 #elif defined(__APPLE__)
-    // Use Security Framework (macOS/iOS)
     int result = SecRandomCopyBytes(kSecRandomDefault, size, static_cast<uint8_t*>(buffer));
-
     if (result != errSecSuccess) {
-        // Fallback to /dev/urandom
-        FILE* urandom = fopen("/dev/urandom", "rb");
-        if (!urandom) {
-            return false;
-        }
-
-        size_t bytes_read = fread(buffer, 1, size, urandom);
-        fclose(urandom);
-        return bytes_read == size;
+        return readFromDevUrandom(buffer, size);
     }
     return true;
 
 #else
-    // Generic Unix fallback - /dev/urandom
-    FILE* urandom = fopen("/dev/urandom", "rb");
-    if (!urandom) {
-        return false;
-    }
-
-    size_t bytes_read = fread(buffer, 1, size, urandom);
-    fclose(urandom);
-    return bytes_read == size;
+    return readFromDevUrandom(buffer, size);
 #endif
 }
 

@@ -33,13 +33,10 @@ void UserProfileBackupWorker::startBackup(const BackupManifest& manifest,
                                           const QVector<UserProfile>& users,
                                           const QString& destinationPath,
                                           const SmartFilter& smartFilter,
-                                          PermissionMode permissionMode,
-                                          int compressionLevel,
-                                          bool encrypt,
-                                          const QString& password) {
+                                          const BackupOptions& options) {
     Q_ASSERT_X(!users.isEmpty(), "startBackup", "users must not be empty");
     Q_ASSERT_X(!destinationPath.isEmpty(), "startBackup", "destinationPath must not be empty");
-    Q_ASSERT_X(compressionLevel >= 0 && compressionLevel <= 9,
+    Q_ASSERT_X(options.compression_level >= 0 && options.compression_level <= 9,
                "startBackup",
                "compressionLevel must be 0-9");
     if (m_running) {
@@ -53,10 +50,10 @@ void UserProfileBackupWorker::startBackup(const BackupManifest& manifest,
     m_users = users;
     m_destinationPath = destinationPath;
     m_smartFilter = smartFilter;
-    m_permissionMode = permissionMode;
-    m_compressionLevel = compressionLevel;
-    m_encrypt = encrypt;
-    m_password = password;
+    m_permissionMode = options.permission_mode;
+    m_compressionLevel = options.compression_level;
+    m_encrypt = options.encrypt;
+    m_password = options.password;
 
     m_cancelled = false;
     m_bytesCopied = 0;

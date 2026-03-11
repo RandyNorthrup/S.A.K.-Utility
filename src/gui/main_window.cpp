@@ -299,7 +299,6 @@ MainWindow::~MainWindow() {
 
 void MainWindow::setupUi() {
     Q_ASSERT(m_tab_widget);
-    Q_ASSERT(!objectName().isEmpty() || true);  // widget valid
     setWindowTitle("S.A.K. Utility - Swiss Army Knife Utility");
     setMinimumSize(sak::kMainWindowMinW, sak::kMainWindowMinH);
     resize(sak::kMainWindowInitW, sak::kMainWindowInitH);
@@ -347,8 +346,6 @@ void MainWindow::createMenuBar() {
 
 
 void MainWindow::createStatusBar() {
-    Q_ASSERT(m_status_label);
-    Q_ASSERT(m_progress_bar);
     // Persistent status label
     m_status_label = new QLabel("Ready", this);
     m_status_label->setContentsMargins(6, 0, 6, 0);

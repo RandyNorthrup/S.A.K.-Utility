@@ -45,28 +45,24 @@ private:
     bool executeEnumerateLogs(const QDateTime& start_time, QString& ps_script);
     QString buildLogScriptInit() const;
     QString buildLogScriptLoop() const;
+
+    /// Bundled result from log clearing operation
+    struct ClearLogsResult {
+        int total_logs = 0;
+        int cleared_logs = 0;
+        int total_entries = 0;
+        int backed_up = 0;
+        QString backup_path;
+        QStringList details;
+    };
+
     bool executeClearLogs(const QDateTime& start_time,
                           const QString& ps_script,
-                          int& total_logs,
-                          int& cleared_logs,
-                          int& total_entries,
-                          int& backed_up,
-                          QString& backup_path,
-                          QStringList& details);
-    void executeBuildReport(const QDateTime& start_time,
-                            int total_logs,
-                            int cleared_logs,
-                            int total_entries,
-                            int backed_up,
-                            const QString& backup_path,
-                            const QStringList& details);
+                          ClearLogsResult& result);
+    void parseClearLogsOutput(const QStringList& lines, ClearLogsResult& result) const;
+    void executeBuildReport(const QDateTime& start_time, const ClearLogsResult& result);
     void appendSuccessReport(QString& log_output,
-                             int total_logs,
-                             int cleared_logs,
-                             int total_entries,
-                             int backed_up,
-                             const QString& backup_path,
-                             const QStringList& details,
+                             const ClearLogsResult& result,
                              qint64 duration_ms);
     void appendFailureReport(QString& log_output, const QStringList& details);
 };

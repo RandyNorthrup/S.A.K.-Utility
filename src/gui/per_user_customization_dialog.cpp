@@ -30,8 +30,7 @@ PerUserCustomizationDialog::PerUserCustomizationDialog(UserProfile& profile, QWi
 }
 
 void PerUserCustomizationDialog::setupUi() {
-    Q_ASSERT(m_profilePathLabel);
-    Q_ASSERT(!objectName().isEmpty() || true);  // widget valid
+    Q_ASSERT(layout() == nullptr);  // setupUi not called twice
     auto* mainLayout = new QVBoxLayout(this);
     mainLayout->setSpacing(10);
     mainLayout->setContentsMargins(
@@ -57,6 +56,8 @@ void PerUserCustomizationDialog::setupUi() {
     setupUi_foldersSection(mainLayout);
     setupUi_appDataSection(mainLayout);
     setupUi_dialogButtons(mainLayout);
+
+    Q_ASSERT(m_profilePathLabel);
 }
 
 void PerUserCustomizationDialog::setupUi_foldersSection(QVBoxLayout* mainLayout) {
@@ -285,7 +286,9 @@ void PerUserCustomizationDialog::addFolderToTree(const FolderSelection& selectio
     qint64 totalSize = 0;
     int totalFiles = 0;
     const int MAX_DEPTH = 2;  // Only scan 2 levels deep initially
-    addDirectoryContents(dir, folderItem, totalSize, totalFiles, selection.selected, 0, MAX_DEPTH);
+    addDirectoryContents(dir,
+                         folderItem,
+                         {totalSize, totalFiles, selection.selected, 0, MAX_DEPTH});
 
     // Column 2: Size
     QString sizeStr;
@@ -506,18 +509,14 @@ QString PerUserCustomizationDialog::formatFileSize(qint64 bytes) {
 
 void PerUserCustomizationDialog::addDirectoryChildItem(const QFileInfo& entry,
                                                        QTreeWidgetItem* parent,
-                                                       qint64& totalSize,
-                                                       int& totalFiles,
-                                                       bool checked,
-                                                       int depth,
-                                                       int maxDepth) {
+                                                       DirTraversalState& state) {
     QTreeWidgetItem* childItem = new QTreeWidgetItem(parent);
 
     if (entry.isDir()) {
         // Skip symbolic links to prevent infinite loops
         if (entry.isSymLink()) {
             childItem->setFlags(childItem->flags() | Qt::ItemIsUserCheckable);
-            childItem->setCheckState(0, checked ? Qt::Checked : Qt::Unchecked);
+            childItem->setCheckState(0, state.checked ? Qt::Checked : Qt::Unchecked);
             childItem->setText(0, QString("[LINK] %1").arg(entry.fileName()));
             childItem->setData(0, Qt::UserRole + 1, true);
             childItem->setText(1, "-");
@@ -527,7 +526,7 @@ void PerUserCustomizationDialog::addDirectoryChildItem(const QFileInfo& entry,
 
         // Directory - add tri-state checkbox
         childItem->setFlags(childItem->flags() | Qt::ItemIsUserCheckable | Qt::ItemIsAutoTristate);
-        childItem->setCheckState(0, checked ? Qt::Checked : Qt::Unchecked);
+        childItem->setCheckState(0, state.checked ? Qt::Checked : Qt::Unchecked);
         childItem->setText(0, QString("[DIR] %1").arg(entry.fileName()));
         childItem->setData(0, Qt::UserRole + 1, true);
 
@@ -536,23 +535,25 @@ void PerUserCustomizationDialog::addDirectoryChildItem(const QFileInfo& entry,
         int subDirFiles = 0;
         QDir subDir(entry.filePath());
         addDirectoryContents(
-            subDir, childItem, subDirSize, subDirFiles, checked, depth + 1, maxDepth);
+            subDir,
+            childItem,
+            {subDirSize, subDirFiles, state.checked, state.depth + 1, state.max_depth});
 
-        totalSize += subDirSize;
-        totalFiles += subDirFiles;
+        state.total_size += subDirSize;
+        state.total_files += subDirFiles;
 
         childItem->setText(1, formatFileSize(subDirSize));
         childItem->setText(2, QString::number(subDirFiles));
 
     } else if (entry.isFile()) {
         childItem->setFlags(childItem->flags() | Qt::ItemIsUserCheckable);
-        childItem->setCheckState(0, checked ? Qt::Checked : Qt::Unchecked);
+        childItem->setCheckState(0, state.checked ? Qt::Checked : Qt::Unchecked);
         childItem->setText(0, entry.fileName());
         childItem->setData(0, Qt::UserRole + 1, false);
 
         qint64 fileSize = entry.size();
-        totalSize += fileSize;
-        totalFiles++;
+        state.total_size += fileSize;
+        state.total_files++;
 
         childItem->setText(2, formatFileSize(fileSize));
         childItem->setText(3, "-");
@@ -561,13 +562,9 @@ void PerUserCustomizationDialog::addDirectoryChildItem(const QFileInfo& entry,
 
 void PerUserCustomizationDialog::addDirectoryContents(const QDir& dir,
                                                       QTreeWidgetItem* parent,
-                                                      qint64& totalSize,
-                                                      int& totalFiles,
-                                                      bool checked,
-                                                      int depth,
-                                                      int maxDepth) {
+                                                      DirTraversalState state) {
     // Depth limit to prevent stack overflow
-    if (depth >= maxDepth) {
+    if (state.depth >= state.max_depth) {
         return;
     }
 
@@ -599,7 +596,7 @@ void PerUserCustomizationDialog::addDirectoryContents(const QDir& dir,
             continue;
         }
 
-        addDirectoryChildItem(entry, parent, totalSize, totalFiles, checked, depth, maxDepth);
+        addDirectoryChildItem(entry, parent, state);
         itemCount++;
     }
 }

@@ -172,12 +172,31 @@ void BandwidthTester::cancel() {
     m_cancelled.store(true);
 }
 
+std::optional<double> BandwidthTester::measureTransferMbps(
+    int sample_count, const std::function<std::pair<double, double>()>& sampler) {
+    double total_bytes = 0.0;
+    double total_time_ms = 0.0;
+
+    for (int idx = 0; idx < sample_count; ++idx) {
+        if (m_cancelled.load()) {
+            return std::nullopt;
+        }
+        const auto [bytes, time_ms] = sampler();
+        total_bytes += bytes;
+        total_time_ms += time_ms;
+    }
+
+    if (total_time_ms <= 0.0) {
+        return 0.0;
+    }
+    return (total_bytes * kBitsPerByte) / (total_time_ms / 1000.0) / kMegabit;
+}
+
 bool BandwidthTester::isIperf3Available() const {
     return !m_iperf3Path.isEmpty() && QFileInfo::exists(m_iperf3Path);
 }
 
 bool BandwidthTester::isServerRunning() const {
-    Q_ASSERT(m_serverProcess);
     return m_serverProcess != nullptr && m_serverProcess->state() == QProcess::Running;
 }
 
@@ -406,7 +425,6 @@ BandwidthTestResult BandwidthTester::parseIperfJson(const QByteArray& json) {
 void BandwidthTester::runHttpSpeedTest() {
     m_cancelled.store(false);
 
-    // Cloudflare speed test endpoints (HTTPS, globally available)
     constexpr int kDownloadBytes = 10'000'000;  // 10 MB
     constexpr int kUploadBytes = 2'000'000;     // 2 MB
 
@@ -414,7 +432,6 @@ void BandwidthTester::runHttpSpeedTest() {
         QStringLiteral("https://speed.cloudflare.com/__down?bytes=%1").arg(kDownloadBytes);
     const QString uploadUrl = QStringLiteral("https://speed.cloudflare.com/__up");
 
-    // ── Latency ──
     double latencyMs = measureHttpHeadLatencyMs(
         QStringLiteral("https://speed.cloudflare.com/__down?bytes=0"), 5000);
 
@@ -422,52 +439,31 @@ void BandwidthTester::runHttpSpeedTest() {
         return;
     }
 
-    // ── Download ──
-    double dlTotalBytes = 0.0;
-    double dlTotalTimeMs = 0.0;
-    constexpr int kDownloadSamples = 2;
-
-    for (int i = 0; i < kDownloadSamples; ++i) {
-        if (m_cancelled.load()) {
-            return;
-        }
-        const auto sample = downloadHttpSample(downloadUrl);
-        dlTotalBytes += sample.bytes;
-        dlTotalTimeMs += sample.timeMs;
+    constexpr int kSampleCount = 2;
+    auto downloadMbps = measureTransferMbps(kSampleCount, [&]() -> std::pair<double, double> {
+        auto sample = downloadHttpSample(downloadUrl);
+        return {sample.bytes, sample.timeMs};
+    });
+    if (!downloadMbps.has_value()) {
+        return;
     }
 
-    double downloadMbps = 0.0;
-    if (dlTotalTimeMs > 0.0) {
-        downloadMbps = (dlTotalBytes * kBitsPerByte) / (dlTotalTimeMs / 1000.0) / kMegabit;
-    }
-
-    Q_EMIT httpSpeedTestProgress(downloadMbps, 0.0);
+    Q_EMIT httpSpeedTestProgress(*downloadMbps, 0.0);
 
     if (m_cancelled.load()) {
         return;
     }
 
-    // ── Upload ──
-    double ulTotalBytes = 0.0;
-    double ulTotalTimeMs = 0.0;
-    constexpr int kUploadSamples = 2;
-
-    for (int i = 0; i < kUploadSamples; ++i) {
-        if (m_cancelled.load()) {
-            return;
-        }
-        const auto sample = uploadHttpSample(uploadUrl, kUploadBytes);
-        ulTotalBytes += sample.bytes;
-        ulTotalTimeMs += sample.timeMs;
+    auto uploadMbps = measureTransferMbps(kSampleCount, [&]() -> std::pair<double, double> {
+        auto sample = uploadHttpSample(uploadUrl, kUploadBytes);
+        return {sample.bytes, sample.timeMs};
+    });
+    if (!uploadMbps.has_value()) {
+        return;
     }
 
-    double uploadMbps = 0.0;
-    if (ulTotalTimeMs > 0.0) {
-        uploadMbps = (ulTotalBytes * kBitsPerByte) / (ulTotalTimeMs / 1000.0) / kMegabit;
-    }
-
-    if (dlTotalTimeMs > 0.0 || ulTotalTimeMs > 0.0) {
-        Q_EMIT httpSpeedTestComplete(downloadMbps, uploadMbps, latencyMs);
+    if (*downloadMbps > 0.0 || *uploadMbps > 0.0) {
+        Q_EMIT httpSpeedTestComplete(*downloadMbps, *uploadMbps, latencyMs);
     } else {
         Q_EMIT errorOccurred(QStringLiteral("HTTP speed test failed: no data transferred"));
     }

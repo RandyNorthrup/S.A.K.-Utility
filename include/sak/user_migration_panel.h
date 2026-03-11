@@ -71,18 +71,23 @@ private Q_SLOTS:
     void onSettingsClicked();
 
 private:
+    /// @brief Configuration for a migration card widget
+    struct MigrationCardConfig {
+        QString card_style;
+        QString icon;
+        QString title;
+        QString desc;
+        QString btn_text;
+        QString btn_style;
+        QString tip;
+        QString acc;
+    };
+
     void setupUi();
     void createMigrationCards(QWidget* parent, QVBoxLayout* layout);
     QFrame* createMigrationCard(QWidget* parent,
-                                 const QString& card_style,
-                                 const QString& icon,
-                                 const QString& title,
-                                 const QString& desc,
-                                 QPushButton*& btn,
-                                 const QString& btn_text,
-                                 const QString& btn_style,
-                                 const QString& tip,
-                                 const QString& acc);
+                                const MigrationCardConfig& config,
+                                QPushButton*& btn);
     void setupConnections();
     void appendLog(const QString& message);
 

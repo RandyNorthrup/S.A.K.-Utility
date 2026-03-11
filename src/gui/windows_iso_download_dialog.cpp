@@ -20,6 +20,19 @@
 
 #include <algorithm>
 
+namespace {
+
+bool matchesAny(const QString& text, std::initializer_list<QLatin1String> keywords) {
+    for (const auto keyword : keywords) {
+        if (text.contains(keyword)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+}  // namespace
+
 // ============================================================================
 // Construction
 // ============================================================================
@@ -44,7 +57,7 @@ WindowsISODownloadDialog::~WindowsISODownloadDialog() = default;
 // ============================================================================
 
 void WindowsISODownloadDialog::setupUi() {
-    Q_ASSERT(!objectName().isEmpty() || true);  // widget valid
+    Q_ASSERT(layout() == nullptr);  // setupUi not called twice
     auto* mainLayout = new QVBoxLayout(this);
     setupUi_formSections(mainLayout);
     setupUi_progressAndButtons(mainLayout);
@@ -55,8 +68,6 @@ void WindowsISODownloadDialog::setupUi() {
 // ----------------------------------------------------------------------------
 
 void WindowsISODownloadDialog::setupUi_formSections(QVBoxLayout* mainLayout) {
-    Q_ASSERT(m_buildListWidget);
-    Q_ASSERT(m_buildInfoLabel);
     Q_ASSERT(m_archCombo);
     Q_ASSERT(m_channelCombo);
     // ---- Step 1: Architecture & Channel ----
@@ -129,8 +140,6 @@ void WindowsISODownloadDialog::setupUi_formSections(QVBoxLayout* mainLayout) {
 }
 
 void WindowsISODownloadDialog::setupUi_progressAndButtons(QVBoxLayout* mainLayout) {
-    Q_ASSERT(m_convertProgressBar);
-    Q_ASSERT(m_startButton);
     Q_ASSERT(m_phaseLabel);
     Q_ASSERT(m_downloadProgressBar);
     // ---- Progress ----
@@ -579,16 +588,19 @@ void WindowsISODownloadDialog::onDownloadError(const QString& error) {
 
     QString guidance = "Please check the detailed converter output and try again.";
     const QString lower = error.toLower();
-    if (lower.contains("download") || lower.contains("network") || lower.contains("aria2") ||
-        lower.contains("internet")) {
+    if (matchesAny(lower,
+                   {QLatin1String("download"),
+                    QLatin1String("network"),
+                    QLatin1String("aria2"),
+                    QLatin1String("internet")})) {
         guidance = "Please check your internet connection and try again.";
-    } else if (lower.contains("appx") || lower.contains("msixbundle")) {
+    } else if (matchesAny(lower, {QLatin1String("appx"), QLatin1String("msixbundle")})) {
         guidance =
             "This is a known issue with AppX provisioning. "
             "See the suggestions above for possible workarounds.";
-    } else if (lower.contains("administrator") || lower.contains("elevated")) {
+    } else if (matchesAny(lower, {QLatin1String("administrator"), QLatin1String("elevated")})) {
         guidance = "Please restart S.A.K. Utility as Administrator and try again.";
-    } else if (lower.contains("disk space") || lower.contains("not enough")) {
+    } else if (matchesAny(lower, {QLatin1String("disk space"), QLatin1String("not enough")})) {
         guidance = "Free disk space on the system and output drives, then retry.";
     }
 

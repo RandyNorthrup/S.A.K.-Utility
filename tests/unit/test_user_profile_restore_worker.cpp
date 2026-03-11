@@ -194,12 +194,11 @@ void UserProfileRestoreWorkerTests::invalidBackupNoManifest() {
     QSignalSpy completeSpy(&worker, &sak::UserProfileRestoreWorker::restoreComplete);
     QVERIFY(completeSpy.isValid());
 
-    worker.startRestore(backupDir.path(),
-                        manifest,
-                        {mapping},
-                        sak::ConflictResolution::SkipDuplicate,
-                        sak::PermissionMode::PreserveOriginal,
-                        false);
+    worker.startRestore(
+        backupDir.path(),
+        manifest,
+        {mapping},
+        {sak::ConflictResolution::SkipDuplicate, sak::PermissionMode::PreserveOriginal, false});
 
     QVERIFY(completeSpy.wait(5000));
     QCOMPARE(completeSpy.count(), 1);
@@ -224,12 +223,11 @@ void UserProfileRestoreWorkerTests::emptyMappingsCompleteSuccessfully() {
     QSignalSpy completeSpy(&worker, &sak::UserProfileRestoreWorker::restoreComplete);
     QVERIFY(completeSpy.isValid());
 
-    worker.startRestore(backupDir.path(),
-                        manifest,
-                        {},
-                        sak::ConflictResolution::SkipDuplicate,
-                        sak::PermissionMode::PreserveOriginal,
-                        false);
+    worker.startRestore(
+        backupDir.path(),
+        manifest,
+        {},
+        {sak::ConflictResolution::SkipDuplicate, sak::PermissionMode::PreserveOriginal, false});
 
     QVERIFY(completeSpy.wait(5000));
     QCOMPARE(completeSpy.count(), 1);
@@ -264,12 +262,11 @@ void UserProfileRestoreWorkerTests::singleFileRestoreSucceeds() {
     QSignalSpy completeSpy(&worker, &sak::UserProfileRestoreWorker::restoreComplete);
     QVERIFY(completeSpy.isValid());
 
-    worker.startRestore(backupDir.path(),
-                        manifest,
-                        {mapping},
-                        sak::ConflictResolution::SkipDuplicate,
-                        sak::PermissionMode::PreserveOriginal,
-                        false);
+    worker.startRestore(
+        backupDir.path(),
+        manifest,
+        {mapping},
+        {sak::ConflictResolution::SkipDuplicate, sak::PermissionMode::PreserveOriginal, false});
 
     QVERIFY(completeSpy.wait(5000));
     QCOMPARE(completeSpy.first().at(0).toBool(), true);
@@ -308,12 +305,11 @@ void UserProfileRestoreWorkerTests::unselectedMappingSkipped() {
     QSignalSpy completeSpy(&worker, &sak::UserProfileRestoreWorker::restoreComplete);
     QVERIFY(completeSpy.isValid());
 
-    worker.startRestore(backupDir.path(),
-                        manifest,
-                        {mapping},
-                        sak::ConflictResolution::SkipDuplicate,
-                        sak::PermissionMode::PreserveOriginal,
-                        false);
+    worker.startRestore(
+        backupDir.path(),
+        manifest,
+        {mapping},
+        {sak::ConflictResolution::SkipDuplicate, sak::PermissionMode::PreserveOriginal, false});
 
     QVERIFY(completeSpy.wait(5000));
     QCOMPARE(completeSpy.first().at(0).toBool(), true);
@@ -345,12 +341,11 @@ void UserProfileRestoreWorkerTests::sourceUserNotInManifest() {
     QSignalSpy logSpy(&worker, &sak::UserProfileRestoreWorker::logMessage);
     QVERIFY(completeSpy.isValid());
 
-    worker.startRestore(backupDir.path(),
-                        manifest,
-                        {mapping},
-                        sak::ConflictResolution::SkipDuplicate,
-                        sak::PermissionMode::PreserveOriginal,
-                        false);
+    worker.startRestore(
+        backupDir.path(),
+        manifest,
+        {mapping},
+        {sak::ConflictResolution::SkipDuplicate, sak::PermissionMode::PreserveOriginal, false});
 
     QVERIFY(completeSpy.wait(5000));
     // Still completes (loops through all mappings), but logs a warning.
@@ -401,12 +396,11 @@ void UserProfileRestoreWorkerTests::multipleFoldersRestored() {
     QSignalSpy completeSpy(&worker, &sak::UserProfileRestoreWorker::restoreComplete);
     QVERIFY(completeSpy.isValid());
 
-    worker.startRestore(backupDir.path(),
-                        manifest,
-                        {mapping},
-                        sak::ConflictResolution::SkipDuplicate,
-                        sak::PermissionMode::PreserveOriginal,
-                        false);
+    worker.startRestore(
+        backupDir.path(),
+        manifest,
+        {mapping},
+        {sak::ConflictResolution::SkipDuplicate, sak::PermissionMode::PreserveOriginal, false});
 
     QVERIFY(completeSpy.wait(5000));
     QCOMPARE(completeSpy.first().at(0).toBool(), true);
@@ -450,12 +444,11 @@ void UserProfileRestoreWorkerTests::conflictSkipDuplicate() {
     QSignalSpy completeSpy(&worker, &sak::UserProfileRestoreWorker::restoreComplete);
     QVERIFY(completeSpy.isValid());
 
-    worker.startRestore(backupDir.path(),
-                        manifest,
-                        {mapping},
-                        sak::ConflictResolution::SkipDuplicate,
-                        sak::PermissionMode::PreserveOriginal,
-                        false);
+    worker.startRestore(
+        backupDir.path(),
+        manifest,
+        {mapping},
+        {sak::ConflictResolution::SkipDuplicate, sak::PermissionMode::PreserveOriginal, false});
 
     QVERIFY(completeSpy.wait(5000));
     QCOMPARE(completeSpy.first().at(0).toBool(), true);
@@ -495,12 +488,11 @@ void UserProfileRestoreWorkerTests::conflictRenameWithSuffix() {
     QSignalSpy completeSpy(&worker, &sak::UserProfileRestoreWorker::restoreComplete);
     QVERIFY(completeSpy.isValid());
 
-    worker.startRestore(backupDir.path(),
-                        manifest,
-                        {mapping},
-                        sak::ConflictResolution::RenameWithSuffix,
-                        sak::PermissionMode::PreserveOriginal,
-                        false);
+    worker.startRestore(
+        backupDir.path(),
+        manifest,
+        {mapping},
+        {sak::ConflictResolution::RenameWithSuffix, sak::PermissionMode::PreserveOriginal, false});
 
     QVERIFY(completeSpy.wait(5000));
     QCOMPARE(completeSpy.first().at(0).toBool(), true);
@@ -578,12 +570,11 @@ void UserProfileRestoreWorkerTests::conflictKeepNewer() {
     QSignalSpy completeSpy(&worker, &sak::UserProfileRestoreWorker::restoreComplete);
     QVERIFY(completeSpy.isValid());
 
-    worker.startRestore(backupDir.path(),
-                        manifest,
-                        {mapping},
-                        sak::ConflictResolution::KeepNewer,
-                        sak::PermissionMode::PreserveOriginal,
-                        false);
+    worker.startRestore(
+        backupDir.path(),
+        manifest,
+        {mapping},
+        {sak::ConflictResolution::KeepNewer, sak::PermissionMode::PreserveOriginal, false});
 
     QVERIFY(completeSpy.wait(5000));
     QCOMPARE(completeSpy.first().at(0).toBool(), true);
@@ -625,12 +616,11 @@ void UserProfileRestoreWorkerTests::conflictKeepLarger() {
     QSignalSpy completeSpy(&worker, &sak::UserProfileRestoreWorker::restoreComplete);
     QVERIFY(completeSpy.isValid());
 
-    worker.startRestore(backupDir.path(),
-                        manifest,
-                        {mapping},
-                        sak::ConflictResolution::KeepLarger,
-                        sak::PermissionMode::PreserveOriginal,
-                        false);
+    worker.startRestore(
+        backupDir.path(),
+        manifest,
+        {mapping},
+        {sak::ConflictResolution::KeepLarger, sak::PermissionMode::PreserveOriginal, false});
 
     QVERIFY(completeSpy.wait(5000));
     QCOMPARE(completeSpy.first().at(0).toBool(), true);
@@ -672,12 +662,11 @@ void UserProfileRestoreWorkerTests::conflictPromptUserAutoRenames() {
     QSignalSpy completeSpy(&worker, &sak::UserProfileRestoreWorker::restoreComplete);
     QVERIFY(completeSpy.isValid());
 
-    worker.startRestore(backupDir.path(),
-                        manifest,
-                        {mapping},
-                        sak::ConflictResolution::PromptUser,
-                        sak::PermissionMode::PreserveOriginal,
-                        false);
+    worker.startRestore(
+        backupDir.path(),
+        manifest,
+        {mapping},
+        {sak::ConflictResolution::PromptUser, sak::PermissionMode::PreserveOriginal, false});
 
     QVERIFY(completeSpy.wait(5000));
     QCOMPARE(completeSpy.first().at(0).toBool(), true);
@@ -728,12 +717,11 @@ void UserProfileRestoreWorkerTests::cancelBeforeRestoreEmitsCancel() {
     QSignalSpy completeSpy(&worker, &sak::UserProfileRestoreWorker::restoreComplete);
     QVERIFY(completeSpy.isValid());
 
-    worker.startRestore(backupDir.path(),
-                        manifest,
-                        {mapping},
-                        sak::ConflictResolution::SkipDuplicate,
-                        sak::PermissionMode::PreserveOriginal,
-                        false);
+    worker.startRestore(
+        backupDir.path(),
+        manifest,
+        {mapping},
+        {sak::ConflictResolution::SkipDuplicate, sak::PermissionMode::PreserveOriginal, false});
 
     // Immediately cancel.
     worker.cancel();
@@ -777,12 +765,11 @@ void UserProfileRestoreWorkerTests::restoreCompleteSignalEmitted() {
     QVERIFY(completeSpy.isValid());
     QVERIFY(statusSpy.isValid());
 
-    worker.startRestore(backupDir.path(),
-                        manifest,
-                        {mapping},
-                        sak::ConflictResolution::SkipDuplicate,
-                        sak::PermissionMode::PreserveOriginal,
-                        false);
+    worker.startRestore(
+        backupDir.path(),
+        manifest,
+        {mapping},
+        {sak::ConflictResolution::SkipDuplicate, sak::PermissionMode::PreserveOriginal, false});
 
     QVERIFY(completeSpy.wait(5000));
     QCOMPARE(completeSpy.count(), 1);
@@ -818,12 +805,11 @@ void UserProfileRestoreWorkerTests::logMessageSignalEmitted() {
     QVERIFY(completeSpy.isValid());
     QVERIFY(logSpy.isValid());
 
-    worker.startRestore(backupDir.path(),
-                        manifest,
-                        {mapping},
-                        sak::ConflictResolution::SkipDuplicate,
-                        sak::PermissionMode::PreserveOriginal,
-                        false);
+    worker.startRestore(
+        backupDir.path(),
+        manifest,
+        {mapping},
+        {sak::ConflictResolution::SkipDuplicate, sak::PermissionMode::PreserveOriginal, false});
 
     QVERIFY(completeSpy.wait(5000));
 

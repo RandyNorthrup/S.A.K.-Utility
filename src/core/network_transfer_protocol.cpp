@@ -8,6 +8,29 @@
 
 namespace sak {
 
+namespace {
+
+struct TransferTypeEntry {
+    TransferMessageType type;
+    const char* name;
+};
+
+static constexpr TransferTypeEntry kTransferTypes[] = {
+    {TransferMessageType::Hello, "HELLO"},
+    {TransferMessageType::AuthChallenge, "AUTH_CHALLENGE"},
+    {TransferMessageType::AuthResponse, "AUTH_RESPONSE"},
+    {TransferMessageType::TransferManifest, "TRANSFER_MANIFEST"},
+    {TransferMessageType::TransferApprove, "TRANSFER_APPROVE"},
+    {TransferMessageType::TransferReject, "TRANSFER_REJECT"},
+    {TransferMessageType::FileTransferStart, "FILE_TRANSFER_START"},
+    {TransferMessageType::FileTransferAck, "FILE_TRANSFER_ACK"},
+    {TransferMessageType::TransferComplete, "TRANSFER_COMPLETE"},
+    {TransferMessageType::Error, "ERROR"},
+    {TransferMessageType::Heartbeat, "HEARTBEAT"},
+};
+
+}  // namespace
+
 QJsonObject TransferProtocol::makeMessage(TransferMessageType type, const QJsonObject& payload) {
     QJsonObject message = payload;
     message["message_type"] = typeToString(type);
@@ -17,69 +40,21 @@ QJsonObject TransferProtocol::makeMessage(TransferMessageType type, const QJsonO
 
 std::optional<TransferMessageType> TransferProtocol::parseType(const QString& type) {
     Q_ASSERT(!type.isEmpty());
-    if (type == "HELLO") {
-        return TransferMessageType::Hello;
-    }
-    if (type == "AUTH_CHALLENGE") {
-        return TransferMessageType::AuthChallenge;
-    }
-    if (type == "AUTH_RESPONSE") {
-        return TransferMessageType::AuthResponse;
-    }
-    if (type == "TRANSFER_MANIFEST") {
-        return TransferMessageType::TransferManifest;
-    }
-    if (type == "TRANSFER_APPROVE") {
-        return TransferMessageType::TransferApprove;
-    }
-    if (type == "TRANSFER_REJECT") {
-        return TransferMessageType::TransferReject;
-    }
-    if (type == "FILE_TRANSFER_START") {
-        return TransferMessageType::FileTransferStart;
-    }
-    if (type == "FILE_TRANSFER_ACK") {
-        return TransferMessageType::FileTransferAck;
-    }
-    if (type == "TRANSFER_COMPLETE") {
-        return TransferMessageType::TransferComplete;
-    }
-    if (type == "ERROR") {
-        return TransferMessageType::Error;
-    }
-    if (type == "HEARTBEAT") {
-        return TransferMessageType::Heartbeat;
+    for (const auto& entry : kTransferTypes) {
+        if (type == QLatin1String(entry.name)) {
+            return entry.type;
+        }
     }
     return std::nullopt;
 }
 
 QString TransferProtocol::typeToString(TransferMessageType type) {
-    switch (type) {
-    case TransferMessageType::Hello:
-        return "HELLO";
-    case TransferMessageType::AuthChallenge:
-        return "AUTH_CHALLENGE";
-    case TransferMessageType::AuthResponse:
-        return "AUTH_RESPONSE";
-    case TransferMessageType::TransferManifest:
-        return "TRANSFER_MANIFEST";
-    case TransferMessageType::TransferApprove:
-        return "TRANSFER_APPROVE";
-    case TransferMessageType::TransferReject:
-        return "TRANSFER_REJECT";
-    case TransferMessageType::FileTransferStart:
-        return "FILE_TRANSFER_START";
-    case TransferMessageType::FileTransferAck:
-        return "FILE_TRANSFER_ACK";
-    case TransferMessageType::TransferComplete:
-        return "TRANSFER_COMPLETE";
-    case TransferMessageType::Error:
-        return "ERROR";
-    case TransferMessageType::Heartbeat:
-        return "HEARTBEAT";
-    default:
-        return "UNKNOWN";
+    for (const auto& entry : kTransferTypes) {
+        if (entry.type == type) {
+            return QString::fromLatin1(entry.name);
+        }
     }
+    return QStringLiteral("UNKNOWN");
 }
 
 QByteArray TransferProtocol::encodeMessage(const QJsonObject& message) {

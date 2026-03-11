@@ -114,6 +114,22 @@ bool RestorePointManager::createRestorePoint(const QString& description) {
     return true;
 }
 
+namespace {
+
+QDateTime parseRestorePointDate(const QString& date_str) {
+    QDateTime dt = QDateTime::fromString(date_str, Qt::ISODateWithMs);
+    if (dt.isValid()) {
+        return dt;
+    }
+    dt = QDateTime::fromString(date_str, Qt::ISODate);
+    if (dt.isValid()) {
+        return dt;
+    }
+    return QDateTime::fromString(date_str, "M/d/yyyy h:mm:ss AP");
+}
+
+}  // namespace
+
 QVector<QPair<QDateTime, QString>> RestorePointManager::listRestorePoints() const {
     QVector<QPair<QDateTime, QString>> points;
 
@@ -153,18 +169,9 @@ QVector<QPair<QDateTime, QString>> RestorePointManager::listRestorePoints() cons
 
     for (const auto& val : arr) {
         QJsonObject obj = val.toObject();
-        // PowerShell ConvertTo-Json may emit ISO 8601 or locale-specific formats
-        QDateTime dt = QDateTime::fromString(obj["Date"].toString(), Qt::ISODateWithMs);
-        if (!dt.isValid()) {
-            dt = QDateTime::fromString(obj["Date"].toString(), Qt::ISODate);
-        }
-        if (!dt.isValid()) {
-            // Try common US locale format from PowerShell
-            dt = QDateTime::fromString(obj["Date"].toString(), "M/d/yyyy h:mm:ss AP");
-        }
-        QString desc = obj["Description"].toString();
+        QDateTime dt = parseRestorePointDate(obj["Date"].toString());
         if (dt.isValid()) {
-            points.append({dt, desc});
+            points.append({dt, obj["Description"].toString()});
         }
     }
 

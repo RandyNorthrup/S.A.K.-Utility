@@ -32,6 +32,31 @@ namespace {
 constexpr int kFillByte = 0x41;     // 'A'
 constexpr int kReplyExtraSize = 8;  // Extra bytes for ICMP_ECHO_REPLY
 
+constexpr double kFullPercent = 100.0;
+
+void updateHopStats(sak::MtrHopStats& stats,
+                    const sak::PingReply& reply,
+                    int ttl,
+                    int& max_discovered) {
+    stats.sent++;
+
+    bool got_response = reply.success || reply.errorMessage == QStringLiteral("TTL expired");
+    if (got_response) {
+        stats.received++;
+        stats.ipAddress = reply.replyFrom;
+        stats.lastRttMs = reply.rttMs;
+        stats.bestRttMs = std::min(stats.bestRttMs, reply.rttMs);
+        stats.worstRttMs = std::max(stats.worstRttMs, reply.rttMs);
+        stats.avgRttMs += (reply.rttMs - stats.avgRttMs) / static_cast<double>(stats.received);
+        max_discovered = std::max(max_discovered, ttl);
+    }
+
+    stats.lossPercent = (stats.sent > 0) ? (1.0 - static_cast<double>(stats.received) /
+                                                      static_cast<double>(stats.sent)) *
+                                               kFullPercent
+                                         : 0.0;
+}
+
 }  // namespace
 
 namespace sak {
@@ -351,6 +376,23 @@ void ConnectivityTester::ping(const PingConfig& config) {
     Q_EMIT pingComplete(result);
 }
 
+void ConnectivityTester::finalizeHop(TracerouteHop& hop,
+                                     const QVector<double>& rtts,
+                                     const QString& hopIP,
+                                     bool resolveHostnames) {
+    if (hop.timedOut) {
+        return;
+    }
+    hop.ipAddress = hopIP;
+    hop.avgRttMs = rtts.isEmpty() ? 0.0
+                                  : std::accumulate(rtts.begin(), rtts.end(), 0.0) /
+                                        static_cast<double>(rtts.size());
+
+    if (resolveHostnames && !hopIP.isEmpty()) {
+        hop.hostname = reverseResolve(hopIP);
+    }
+}
+
 TracerouteHop ConnectivityTester::probeHop(
     const QString& targetIP, int ttl, int timeoutMs, int probes, bool resolveHostnames) {
     TracerouteHop hop;
@@ -360,42 +402,26 @@ TracerouteHop ConnectivityTester::probeHop(
     QVector<double> rtts;
     QString hopIP;
 
-    for (int p = 0; p < probes; ++p) {
+    double* rtt_slots[] = {&hop.rtt1Ms, &hop.rtt2Ms, &hop.rtt3Ms};
+    constexpr int kMaxRttSlots = 3;
+
+    for (int probe_idx = 0; probe_idx < probes; ++probe_idx) {
         PingReply reply = sendIcmpEcho(targetIP, timeoutMs, netdiag::kDefaultPingPacketSize, ttl);
 
-        double rtt = reply.rttMs;
-        if (reply.success || reply.errorMessage == QStringLiteral("TTL expired")) {
+        bool got_response = reply.success || reply.errorMessage == QStringLiteral("TTL expired");
+        if (got_response) {
             hopIP = reply.replyFrom;
             hop.timedOut = false;
-            rtts.append(rtt);
+            rtts.append(reply.rttMs);
         }
 
-        switch (p) {
-        case 0:
-            hop.rtt1Ms = reply.success || !reply.replyFrom.isEmpty() ? rtt : -1.0;
-            break;
-        case 1:
-            hop.rtt2Ms = reply.success || !reply.replyFrom.isEmpty() ? rtt : -1.0;
-            break;
-        case 2:
-            hop.rtt3Ms = reply.success || !reply.replyFrom.isEmpty() ? rtt : -1.0;
-            break;
-        default:
-            break;
+        if (probe_idx < kMaxRttSlots) {
+            bool has_ip = reply.success || !reply.replyFrom.isEmpty();
+            *rtt_slots[probe_idx] = has_ip ? reply.rttMs : -1.0;
         }
     }
 
-    if (!hop.timedOut) {
-        hop.ipAddress = hopIP;
-        hop.avgRttMs = rtts.isEmpty() ? 0.0
-                                      : std::accumulate(rtts.begin(), rtts.end(), 0.0) /
-                                            static_cast<double>(rtts.size());
-
-        if (resolveHostnames && !hopIP.isEmpty()) {
-            hop.hostname = reverseResolve(hopIP);
-        }
-    }
-
+    finalizeHop(hop, rtts, hopIP, resolveHostnames);
     return hop;
 }
 
@@ -461,29 +487,8 @@ void ConnectivityTester::mtr(const MtrConfig& config) {
             PingReply reply =
                 sendIcmpEcho(targetIP, config.timeoutMs, netdiag::kDefaultPingPacketSize, ttl);
 
-            auto& stats = hopStats[ttl - 1];
-            stats.sent++;
+            updateHopStats(hopStats[ttl - 1], reply, ttl, maxDiscoveredHop);
 
-            if (reply.success || reply.errorMessage == QStringLiteral("TTL expired")) {
-                stats.received++;
-                stats.ipAddress = reply.replyFrom;
-                stats.lastRttMs = reply.rttMs;
-                stats.bestRttMs = std::min(stats.bestRttMs, reply.rttMs);
-                stats.worstRttMs = std::max(stats.worstRttMs, reply.rttMs);
-
-                // Running average
-                stats.avgRttMs = stats.avgRttMs + (reply.rttMs - stats.avgRttMs) /
-                                                      static_cast<double>(stats.received);
-
-                maxDiscoveredHop = std::max(maxDiscoveredHop, ttl);
-            }
-
-            stats.lossPercent = (stats.sent > 0) ? (1.0 - static_cast<double>(stats.received) /
-                                                              static_cast<double>(stats.sent)) *
-                                                       100.0
-                                                 : 0.0;
-
-            // Reached target
             if (reply.success && reply.replyFrom == targetIP) {
                 break;
             }

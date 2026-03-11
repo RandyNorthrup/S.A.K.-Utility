@@ -58,6 +58,9 @@ private:
     bool runStoreUpdate(UpdateSummary& summary);
     bool runChocoUpdate(UpdateSummary& summary, const QDateTime& start_time);
     void buildUpdateReport(UpdateSummary& summary, qint64 duration_ms) const;
+    ExecutionResult buildExecutionResult(const UpdateSummary& summary, qint64 duration_ms) const;
+    void appendUpdateStatusSection(UpdateSummary& summary) const;
+    void appendStructuredOutput(UpdateSummary& summary) const;
 };
 
 }  // namespace sak

@@ -525,13 +525,7 @@ void DiagnosticController::advanceSuiteStep() {
 // Result Aggregation
 // ============================================================================
 
-void DiagnosticController::aggregateResults() {
-    m_report_data.overall_status = DiagnosticStatus::AllPassed;
-    m_report_data.critical_issues.clear();
-    m_report_data.warnings.clear();
-    m_report_data.recommendations.clear();
-
-    // SMART health
+void DiagnosticController::aggregateSmartHealth() {
     for (const auto& report : m_report_data.smart_reports) {
         if (report.overall_health == SmartHealthStatus::Critical) {
             m_report_data.overall_status = DiagnosticStatus::CriticalIssues;
@@ -547,50 +541,64 @@ void DiagnosticController::aggregateResults() {
             m_report_data.warnings.append(QString("Drive %1 (%2): Warning health status")
                                               .arg(report.device_path, report.model));
         }
-
-        // Carry over per-drive recommendations
         m_report_data.warnings.append(report.warnings);
         m_report_data.recommendations.append(report.recommendations);
     }
+}
 
-    // Stress test
-    if (m_report_data.stress_test.has_value()) {
-        const auto& st = m_report_data.stress_test.value();
-        if (!st.passed && m_report_data.overall_status != DiagnosticStatus::CriticalIssues) {
+void DiagnosticController::aggregateStressTest() {
+    if (!m_report_data.stress_test.has_value()) {
+        return;
+    }
+    const auto& stress = m_report_data.stress_test.value();
+    if (!stress.passed) {
+        if (m_report_data.overall_status != DiagnosticStatus::CriticalIssues) {
             m_report_data.overall_status = DiagnosticStatus::CriticalIssues;
         }
-        if (!st.passed) {
-            m_report_data.critical_issues.append(
-                QString("Stress test FAILED: %1").arg(st.abort_reason));
-        }
-        if (st.memory_pattern_errors > 0) {
-            m_report_data.critical_issues.append(
-                QString("Memory pattern errors detected: %1 — possible RAM hardware issue")
-                    .arg(st.memory_pattern_errors));
-            m_report_data.recommendations.append(
-                "Run a full memory diagnostic (Windows Memory Diagnostic or MemTest86)");
-        }
-        if (st.thermal_throttle_events > 0) {
-            m_report_data.warnings.append(
-                QString("Thermal throttling detected (%1 events)").arg(st.thermal_throttle_events));
-            m_report_data.recommendations.append(
-                "Improve system cooling — check thermal paste, fans, and airflow");
-        }
+        m_report_data.critical_issues.append(
+            QString("Stress test FAILED: %1").arg(stress.abort_reason));
     }
+    if (stress.memory_pattern_errors > 0) {
+        m_report_data.critical_issues.append(QString("Memory pattern errors detected: %1"
+                                                     " — possible RAM hardware issue")
+                                                 .arg(stress.memory_pattern_errors));
+        m_report_data.recommendations.append(
+            "Run a full memory diagnostic"
+            " (Windows Memory Diagnostic or MemTest86)");
+    }
+    if (stress.thermal_throttle_events > 0) {
+        m_report_data.warnings.append(
+            QString("Thermal throttling detected (%1 events)").arg(stress.thermal_throttle_events));
+        m_report_data.recommendations.append(
+            "Improve system cooling"
+            " — check thermal paste, fans, and airflow");
+    }
+}
 
-    // Battery health
+void DiagnosticController::aggregateResults() {
+    m_report_data.overall_status = DiagnosticStatus::AllPassed;
+    m_report_data.critical_issues.clear();
+    m_report_data.warnings.clear();
+    m_report_data.recommendations.clear();
+
+    aggregateSmartHealth();
+    aggregateStressTest();
+
+    constexpr double kBatteryWarningThreshold = 50.0;
     if (m_report_data.inventory.battery.present &&
-        m_report_data.inventory.battery.health_percent < 50.0) {
+        m_report_data.inventory.battery.health_percent < kBatteryWarningThreshold) {
         m_report_data.warnings.append(
             QString("Battery health is degraded: %1%")
                 .arg(m_report_data.inventory.battery.health_percent, 0, 'f', 1));
         m_report_data.recommendations.append("Consider replacing the battery");
     }
 
-    logInfo("Aggregation complete — status: {}, {} critical, {} warnings",
-            static_cast<int>(m_report_data.overall_status),
-            m_report_data.critical_issues.size(),
-            m_report_data.warnings.size());
+    logInfo(
+        "Aggregation complete — status: {}, {} critical,"
+        " {} warnings",
+        static_cast<int>(m_report_data.overall_status),
+        m_report_data.critical_issues.size(),
+        m_report_data.warnings.size());
 }
 
 }  // namespace sak

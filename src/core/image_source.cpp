@@ -12,6 +12,8 @@
 #include <QFile>
 #include <QFileInfo>
 
+#include <algorithm>
+
 // ============================================================================
 // ImageSource Base Class
 // ============================================================================
@@ -163,44 +165,46 @@ sak::ImageFormat FileImageSource::detectFormat(const QString& filePath) {
     Q_ASSERT(!filePath.isEmpty());
     QString ext = QFileInfo(filePath).suffix().toLower();
 
-    if (ext == "iso") {
-        return sak::ImageFormat::ISO;
-    }
-    if (ext == "img") {
-        return sak::ImageFormat::IMG;
-    }
-    if (ext == "wic") {
-        return sak::ImageFormat::WIC;
-    }
-    if (ext == "zip") {
-        return sak::ImageFormat::ZIP;
-    }
-    if (ext == "gz") {
-        return sak::ImageFormat::GZIP;
-    }
-    if (ext == "bz2") {
-        return sak::ImageFormat::BZIP2;
-    }
-    if (ext == "xz") {
-        return sak::ImageFormat::XZ;
-    }
-    if (ext == "dmg") {
-        return sak::ImageFormat::DMG;
-    }
-    if (ext == "dsk") {
-        return sak::ImageFormat::DSK;
+    struct FormatEntry {
+        const char* ext;
+        sak::ImageFormat format;
+    };
+    static constexpr FormatEntry kFormats[] = {
+        {"iso", sak::ImageFormat::ISO},
+        {"img", sak::ImageFormat::IMG},
+        {"wic", sak::ImageFormat::WIC},
+        {"zip", sak::ImageFormat::ZIP},
+        {"gz", sak::ImageFormat::GZIP},
+        {"bz2", sak::ImageFormat::BZIP2},
+        {"xz", sak::ImageFormat::XZ},
+        {"dmg", sak::ImageFormat::DMG},
+        {"dsk", sak::ImageFormat::DSK},
+    };
+    const auto it =
+        std::find_if(std::begin(kFormats), std::end(kFormats), [&ext](const auto& entry) {
+            return ext == QLatin1String(entry.ext);
+        });
+    if (it != std::end(kFormats)) {
+        return it->format;
     }
 
     // Check for double extensions like .img.gz
+    struct CompoundEntry {
+        const char* suffix;
+        sak::ImageFormat format;
+    };
+    static constexpr CompoundEntry kCompound[] = {
+        {".gz", sak::ImageFormat::GZIP},
+        {".bz2", sak::ImageFormat::BZIP2},
+        {".xz", sak::ImageFormat::XZ},
+    };
     QString fullExt = QFileInfo(filePath).completeSuffix().toLower();
-    if (fullExt.endsWith(".gz")) {
-        return sak::ImageFormat::GZIP;
-    }
-    if (fullExt.endsWith(".bz2")) {
-        return sak::ImageFormat::BZIP2;
-    }
-    if (fullExt.endsWith(".xz")) {
-        return sak::ImageFormat::XZ;
+    const auto cit =
+        std::find_if(std::begin(kCompound), std::end(kCompound), [&fullExt](const auto& entry) {
+            return fullExt.endsWith(QLatin1String(entry.suffix));
+        });
+    if (cit != std::end(kCompound)) {
+        return cit->format;
     }
 
     return sak::ImageFormat::Unknown;
@@ -232,7 +236,10 @@ CompressedImageSource::CompressedImageSource(const QString& filePath, QObject* p
 }
 
 CompressedImageSource::~CompressedImageSource() {
-    close();
+    // Call close() directly to avoid virtual dispatch warning.
+    // At destruction time, the vtable is CompressedImageSource's own,
+    // so this is safe — but we call the qualified name explicitly.
+    CompressedImageSource::close();
 }
 
 bool CompressedImageSource::open() {

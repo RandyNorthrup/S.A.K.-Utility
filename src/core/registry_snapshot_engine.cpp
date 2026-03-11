@@ -56,65 +56,39 @@ QSet<QString> RegistrySnapshotEngine::captureSnapshot() {
     return snapshot;
 }
 
+bool RegistrySnapshotEngine::matchesAnyPattern(const QString& key, const QStringList& patterns) {
+    const QString key_lower = key.toLower();
+    for (const auto& pattern : patterns) {
+        if (key_lower.contains(pattern.toLower())) {
+            return true;
+        }
+    }
+    return false;
+}
+
 QVector<LeftoverItem> RegistrySnapshotEngine::diffSnapshots(
     const QSet<QString>& before,
     const QSet<QString>& after,
     const QStringList& programNamePatterns) {
     QVector<LeftoverItem> leftovers;
 
-    // Keys present in 'after' but not in 'before' = added during uninstall (rare)
-    // Keys present in both = survived uninstall = potential leftovers
-    // We care about keys that survived uninstall AND match program patterns
-
     for (const auto& key : after) {
-        if (before.contains(key)) {
-            // Key existed before AND after uninstall — survived
-            // Check if it matches any program pattern
-            bool matches = false;
-            const QString key_lower = key.toLower();
-
-            for (const auto& pattern : programNamePatterns) {
-                if (key_lower.contains(pattern.toLower())) {
-                    matches = true;
-                    break;
-                }
-            }
-
-            if (matches) {
-                LeftoverItem item;
-                item.type = LeftoverItem::Type::RegistryKey;
-                item.path = key;
-                item.description = "Registry key survived uninstallation";
-                item.risk = LeftoverItem::RiskLevel::Review;
-                item.selected = false;
-                leftovers.append(item);
-            }
+        if (!matchesAnyPattern(key, programNamePatterns)) {
+            continue;
         }
-    }
 
-    // Keys added during uninstall (after but not before) — suspicious
-    for (const auto& key : after) {
-        if (!before.contains(key)) {
-            const QString key_lower = key.toLower();
-            bool matches = false;
+        bool survived = before.contains(key);
+        const QString description =
+            survived ? QStringLiteral("Registry key survived uninstallation")
+                     : QStringLiteral("Registry key added during uninstallation");
 
-            for (const auto& pattern : programNamePatterns) {
-                if (key_lower.contains(pattern.toLower())) {
-                    matches = true;
-                    break;
-                }
-            }
-
-            if (matches) {
-                LeftoverItem item;
-                item.type = LeftoverItem::Type::RegistryKey;
-                item.path = key;
-                item.description = "Registry key added during uninstallation";
-                item.risk = LeftoverItem::RiskLevel::Review;
-                item.selected = false;
-                leftovers.append(item);
-            }
-        }
+        LeftoverItem item;
+        item.type = LeftoverItem::Type::RegistryKey;
+        item.path = key;
+        item.description = description;
+        item.risk = LeftoverItem::RiskLevel::Review;
+        item.selected = false;
+        leftovers.append(item);
     }
 
     return leftovers;

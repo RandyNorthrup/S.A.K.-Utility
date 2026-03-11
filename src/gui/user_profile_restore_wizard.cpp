@@ -29,8 +29,7 @@ UserProfileRestoreWelcomePage::UserProfileRestoreWelcomePage(QWidget* parent)
 }
 
 void UserProfileRestoreWelcomePage::setupUi() {
-    Q_ASSERT(m_infoLabel);
-    Q_ASSERT(!objectName().isEmpty() || true);  // widget valid
+    Q_ASSERT(layout() == nullptr);  // setupUi not called twice
     auto* layout = new QVBoxLayout(this);
 
     // Info section
@@ -100,6 +99,8 @@ void UserProfileRestoreWelcomePage::setupUi() {
             &QLineEdit::textChanged,
             this,
             &UserProfileRestoreWelcomePage::onBackupPathChanged);
+
+    Q_ASSERT(m_infoLabel);
 }
 
 void UserProfileRestoreWelcomePage::onBrowseBackup() {

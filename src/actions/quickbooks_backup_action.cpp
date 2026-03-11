@@ -188,19 +188,13 @@ void QuickBooksBackupAction::execute() {
                         backup_dir.absolutePath().toStdString());
     }
 
-    int files_copied = 0;
-    int files_skipped_open = 0;
-    qint64 bytes_copied = 0;
-    QStringList copied_files;
-
-    executeCopyFiles(
-        backup_dir, start_time, files_copied, files_skipped_open, bytes_copied, copied_files);
+    CopyStats copy_stats;
+    executeCopyFiles(backup_dir, start_time, copy_stats);
     if (isCancelled()) {
         return;
     }
 
-    executeBuildResult(
-        start_time, backup_dir, files_copied, files_skipped_open, bytes_copied, copied_files);
+    executeBuildResult(start_time, backup_dir, copy_stats);
 }
 
 bool QuickBooksBackupAction::isQuickBooksRunning() {
@@ -218,10 +212,7 @@ bool QuickBooksBackupAction::isQuickBooksRunning() {
 
 void QuickBooksBackupAction::executeCopyFiles(const QDir& backup_dir,
                                               const QDateTime& start_time,
-                                              int& files_copied,
-                                              int& files_skipped_open,
-                                              qint64& bytes_copied,
-                                              QStringList& copied_files) {
+                                              CopyStats& stats) {
     for (size_t i = 0; i < m_found_files.size(); ++i) {
         if (isCancelled()) {
             emitCancelledResult("QuickBooks backup cancelled", start_time);
@@ -234,7 +225,7 @@ void QuickBooksBackupAction::executeCopyFiles(const QDir& backup_dir,
         Q_EMIT executionProgress(QString("Backing up %1...").arg(file.filename), progress);
 
         if (file.is_open) {
-            files_skipped_open++;
+            stats.files_skipped_open++;
             continue;
         }
 
@@ -249,19 +240,16 @@ void QuickBooksBackupAction::executeCopyFiles(const QDir& backup_dir,
         QString dest_path = target_dir.filePath(file.filename);
 
         if (copyFileWithProgress(file.path, dest_path)) {
-            files_copied++;
-            bytes_copied += file.size;
-            copied_files << dest_path;
+            stats.files_copied++;
+            stats.bytes_copied += file.size;
+            stats.copied_files << dest_path;
         }
     }
 }
 
 void QuickBooksBackupAction::executeBuildResult(const QDateTime& start_time,
                                                 const QDir& backup_dir,
-                                                int files_copied,
-                                                int files_skipped_open,
-                                                qint64 bytes_copied,
-                                                const QStringList& copied_files) {
+                                                const CopyStats& stats) {
     Q_EMIT executionProgress("Backup complete", 100);
 
     qint64 duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
@@ -269,22 +257,22 @@ void QuickBooksBackupAction::executeBuildResult(const QDateTime& start_time,
     ExecutionResult result;
     Q_ASSERT(!result.success);  // verify default init
     result.duration_ms = duration_ms;
-    result.files_processed = files_copied;
-    result.bytes_processed = bytes_copied;
+    result.files_processed = stats.files_copied;
+    result.bytes_processed = stats.bytes_copied;
     result.output_path = backup_dir.absolutePath();
 
-    if (files_copied > 0) {
+    if (stats.files_copied > 0) {
         result.success = true;
         result.message = QString("Backed up %1 QuickBooks file(s) - %2")
-                             .arg(files_copied)
-                             .arg(formatFileSize(bytes_copied));
+                             .arg(stats.files_copied)
+                             .arg(formatFileSize(stats.bytes_copied));
         result.log = QString("Saved to: %1\nFiles:\n%2")
                          .arg(backup_dir.absolutePath())
-                         .arg(copied_files.join("\n"));
+                         .arg(stats.copied_files.join("\n"));
 
-        if (files_skipped_open > 0) {
+        if (stats.files_skipped_open > 0) {
             result.log +=
-                QString("\n\nSkipped %1 file(s) currently in use").arg(files_skipped_open);
+                QString("\n\nSkipped %1 file(s) currently in use").arg(stats.files_skipped_open);
         }
         Q_ASSERT(result.duration_ms >= 0);
         finishWithResult(result, ActionStatus::Success);

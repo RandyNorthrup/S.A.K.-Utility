@@ -11,6 +11,7 @@
 #include "sak/flash_coordinator.h"
 #include "sak/format_utils.h"
 #include "sak/image_flasher_settings_dialog.h"
+#include "sak/iso_analyzer.h"
 #include "sak/layout_constants.h"
 #include "sak/linux_iso_download_dialog.h"
 #include "sak/linux_iso_downloader.h"
@@ -90,7 +91,7 @@ ImageFlasherPanel::~ImageFlasherPanel() {
 
 void ImageFlasherPanel::setupUi() {
     Q_ASSERT(m_stackedWidget);
-    Q_ASSERT(!objectName().isEmpty() || true);  // widget valid
+    Q_ASSERT(layout() == nullptr);  // setupUi not called twice
     auto* rootLayout = new QVBoxLayout(this);
     rootLayout->setContentsMargins(0, 0, 0, 0);
 
@@ -139,18 +140,18 @@ void ImageFlasherPanel::setupUi() {
 }
 
 void ImageFlasherPanel::setupNavigationButtons(QVBoxLayout* mainLayout) {
-    Q_ASSERT(m_backButton);
+    Q_ASSERT(mainLayout);
     Q_ASSERT(m_stackedWidget);
     auto* buttonLayout = new QHBoxLayout();
 
-    auto* settingsButton = new QPushButton("Settings", this);
-    settingsButton->setAccessibleName(QStringLiteral("Flasher Settings"));
-    settingsButton->setToolTip(QStringLiteral("Configure image flasher settings"));
-    connect(settingsButton, &QPushButton::clicked, this, [this]() {
+    m_settingsButton = new QPushButton("Settings", this);
+    m_settingsButton->setAccessibleName(QStringLiteral("Flasher Settings"));
+    m_settingsButton->setToolTip(QStringLiteral("Configure image flasher settings"));
+    connect(m_settingsButton, &QPushButton::clicked, this, [this]() {
         ImageFlasherSettingsDialog dialog(this);
         dialog.exec();
     });
-    buttonLayout->addWidget(settingsButton);
+    buttonLayout->addWidget(m_settingsButton);
 
     buttonLayout->addStretch();
 
@@ -202,7 +203,6 @@ void ImageFlasherPanel::setupNavigationButtons(QVBoxLayout* mainLayout) {
 }
 
 void ImageFlasherPanel::createImageSelectionPage() {
-    Q_ASSERT(m_imagePathLabel);
     Q_ASSERT(m_stackedWidget);
     m_imageSelectionPage = new QWidget();
     auto* layout = new QVBoxLayout(m_imageSelectionPage);
@@ -216,19 +216,53 @@ void ImageFlasherPanel::createImageSelectionPage() {
 
     createDownloadCards(layout);
 
-    // Image info (below cards)
+    // Selected file indicator
     m_imagePathLabel = new QLabel("No image selected", m_imageSelectionPage);
     m_imagePathLabel->setWordWrap(true);
     layout->addWidget(m_imagePathLabel);
 
-    m_imageSizeLabel = new QLabel("", m_imageSelectionPage);
-    layout->addWidget(m_imageSizeLabel);
+    // ISO detailed info group (hidden until an image is analyzed)
+    m_isoInfoGroup = new QGroupBox("Image Details", m_imageSelectionPage);
+    m_isoInfoGroup->setStyleSheet(QString("QGroupBox { font-weight: 600; color: %1;"
+                                          " border: 1px solid %2; border-radius: 8px;"
+                                          " margin-top: 12px; padding-top: 18px; }"
+                                          "QGroupBox::title { subcontrol-origin: margin;"
+                                          " left: 10px; padding: 0 6px; }")
+                                      .arg(sak::ui::kColorTextHeading)
+                                      .arg(sak::ui::kColorBorderDefault));
+    m_isoInfoGrid = new QGridLayout(m_isoInfoGroup);
+    m_isoInfoGrid->setSpacing(sak::ui::kSpacingSmall);
+    m_isoInfoGrid->setColumnMinimumWidth(0, 100);
 
-    m_imageFormatLabel = new QLabel("", m_imageSelectionPage);
-    layout->addWidget(m_imageFormatLabel);
+    auto addInfoRow = [this](int row, const QString& label_text, QLabel*& value_out) {
+        auto* key = new QLabel(label_text, m_isoInfoGroup);
+        key->setStyleSheet(
+            QString("font-weight: 600; color: %1;").arg(sak::ui::kColorTextSecondary));
+        value_out = new QLabel("-", m_isoInfoGroup);
+        value_out->setWordWrap(true);
+        value_out->setTextInteractionFlags(Qt::TextSelectableByMouse);
+        m_isoInfoGrid->addWidget(key, row, 0, Qt::AlignTop);
+        m_isoInfoGrid->addWidget(value_out, row, 1);
+    };
+
+    int info_row = 0;
+    addInfoRow(info_row++, "OS:", m_infoOsLabel);
+    addInfoRow(info_row++, "Architecture:", m_infoArchLabel);
+    addInfoRow(info_row++, "Size:", m_infoSizeLabel);
+    addInfoRow(info_row++, "Format:", m_infoFormatLabel);
+    addInfoRow(info_row++, "Boot Type:", m_infoBootLabel);
+    addInfoRow(info_row++, "File System:", m_infoFilesysLabel);
+    addInfoRow(info_row++, "Volume Label:", m_infoVolLabel);
+    addInfoRow(info_row++, "Publisher:", m_infoPublisherLabel);
+    addInfoRow(info_row++, "Created:", m_infoDateLabel);
+    addInfoRow(info_row++, "Editions:", m_infoEditionsLabel);
+
+    m_isoInfoGroup->hide();
+    layout->addWidget(m_isoInfoGroup);
 
     layout->addStretch();
 
+    Q_ASSERT(m_imagePathLabel);
     m_stackedWidget->addWidget(m_imageSelectionPage);
 }
 
@@ -272,13 +306,8 @@ constexpr int kCardLogoSize = 48;
 }  // anonymous namespace
 
 QFrame* ImageFlasherPanel::buildIsoDownloadCard(QWidget* parent,
-                                                const QString& iconPath,
-                                                const QString& title,
-                                                const QString& description,
-                                                QPushButton*& buttonOut,
-                                                const QString& buttonText,
-                                                const QString& accessName,
-                                                const QString& tip) {
+                                                const IsoCardConfig& config,
+                                                QPushButton*& buttonOut) {
     auto* card = new QFrame(parent);
     card->setStyleSheet(kCardStyle);
     card->setCursor(Qt::PointingHandCursor);
@@ -287,17 +316,17 @@ QFrame* ImageFlasherPanel::buildIsoDownloadCard(QWidget* parent,
     layout->setContentsMargins(0, 0, 0, 0);
 
     auto* logo = new QLabel(card);
-    logo->setPixmap(QIcon(iconPath).pixmap(kCardLogoSize, kCardLogoSize));
+    logo->setPixmap(QIcon(config.icon_path).pixmap(kCardLogoSize, kCardLogoSize));
     logo->setAlignment(Qt::AlignCenter);
     logo->setStyleSheet(kLogoStyle);
     layout->addWidget(logo);
 
-    auto* titleLabel = new QLabel(title, card);
+    auto* titleLabel = new QLabel(config.title, card);
     titleLabel->setAlignment(Qt::AlignCenter);
     titleLabel->setStyleSheet(kCardTitleStyle);
     layout->addWidget(titleLabel);
 
-    auto* descLabel = new QLabel(description, card);
+    auto* descLabel = new QLabel(config.description, card);
     descLabel->setWordWrap(true);
     descLabel->setAlignment(Qt::AlignCenter);
     descLabel->setStyleSheet(kCardDescStyle);
@@ -305,11 +334,11 @@ QFrame* ImageFlasherPanel::buildIsoDownloadCard(QWidget* parent,
 
     layout->addStretch();
 
-    buttonOut = new QPushButton(buttonText, card);
+    buttonOut = new QPushButton(config.button_text, card);
     buttonOut->setMinimumHeight(sak::kButtonHeightTall);
     buttonOut->setStyleSheet(sak::ui::kSecondaryButtonStyle);
-    buttonOut->setAccessibleName(accessName);
-    buttonOut->setToolTip(tip);
+    buttonOut->setAccessibleName(config.access_name);
+    buttonOut->setToolTip(config.tip);
     layout->addWidget(buttonOut);
 
     return card;
@@ -322,15 +351,15 @@ void ImageFlasherPanel::createDownloadCards(QVBoxLayout* pageLayout) {
 
     // Card 1: Microsoft Windows Download
     auto* msCard = buildIsoDownloadCard(m_imageSelectionPage,
-                                        QStringLiteral(":/icons/icons/microsoft_logo.svg"),
-                                        tr("Windows from Microsoft"),
-                                        tr("Download an official Windows ISO directly"
-                                           " from the Microsoft website."),
-                                        m_microsoftWindowsDownloadButton,
-                                        tr("Open Microsoft Download"),
-                                        QStringLiteral("Microsoft ISO Download"),
-                                        QStringLiteral("Open the official Microsoft Windows ISO"
-                                                       " download page"));
+                                        {QStringLiteral(":/icons/icons/microsoft_logo.svg"),
+                                         tr("Windows from Microsoft"),
+                                         tr("Download an official Windows ISO directly"
+                                            " from the Microsoft website."),
+                                         tr("Open Microsoft Download"),
+                                         QStringLiteral("Microsoft ISO Download"),
+                                         QStringLiteral("Open the official Microsoft Windows ISO"
+                                                        " download page")},
+                                        m_microsoftWindowsDownloadButton);
 
     // Add a tip label to the MS card
     auto* msTip = new QLabel(tr("Tip: Downloading directly from Microsoft is often faster "
@@ -354,14 +383,14 @@ void ImageFlasherPanel::createDownloadCards(QVBoxLayout* pageLayout) {
     // Card 2: UUP Windows Download
     cardRow->addWidget(
         buildIsoDownloadCard(m_imageSelectionPage,
-                             QStringLiteral(":/icons/icons/uup_logo.svg"),
-                             tr("Windows via UUP"),
-                             tr("Build a custom Windows ISO from UUP update"
-                                " packages with edition selection."),
-                             m_downloadWindowsButton,
-                             tr("Download and Build ISO"),
-                             QStringLiteral("Download Windows ISO via UUP"),
-                             QStringLiteral("Download a Windows 11 ISO using UUP dump")));
+                             {QStringLiteral(":/icons/icons/uup_logo.svg"),
+                              tr("Windows via UUP"),
+                              tr("Build a custom Windows ISO from UUP update"
+                                 " packages with edition selection."),
+                              tr("Download and Build ISO"),
+                              QStringLiteral("Download Windows ISO via UUP"),
+                              QStringLiteral("Download a Windows 11 ISO using UUP dump")},
+                             m_downloadWindowsButton));
     connect(m_downloadWindowsButton,
             &QPushButton::clicked,
             this,
@@ -370,14 +399,14 @@ void ImageFlasherPanel::createDownloadCards(QVBoxLayout* pageLayout) {
     // Card 3: Linux ISO Download
     cardRow->addWidget(
         buildIsoDownloadCard(m_imageSelectionPage,
-                             QStringLiteral(":/icons/icons/tux_logo.svg"),
-                             tr("Linux ISO"),
-                             tr("Download a Linux distribution ISO"
-                                " — Ubuntu, Fedora, Debian, and more."),
-                             m_downloadLinuxButton,
-                             tr("Download Linux ISO"),
-                             QStringLiteral("Download Linux ISO"),
-                             QStringLiteral("Download a Linux distribution ISO image")));
+                             {QStringLiteral(":/icons/icons/tux_logo.svg"),
+                              tr("Linux ISO"),
+                              tr("Download a Linux distribution ISO"
+                                 " — Ubuntu, Fedora, Debian, and more."),
+                              tr("Download Linux ISO"),
+                              QStringLiteral("Download Linux ISO"),
+                              QStringLiteral("Download a Linux distribution ISO image")},
+                             m_downloadLinuxButton));
     connect(m_downloadLinuxButton,
             &QPushButton::clicked,
             this,
@@ -608,7 +637,6 @@ void ImageFlasherPanel::onImageSelected(const QString& imagePath) {
     m_imageSize = fileInfo.size();
 
     m_imagePathLabel->setText(QString("Selected: %1").arg(fileInfo.fileName()));
-    m_imageSizeLabel->setText(QString("Size: %1").arg(formatFileSize(m_imageSize)));
 
     ImageFormat format = FileImageSource::detectFormat(imagePath);
     QString formatStr = "Unknown";
@@ -643,7 +671,10 @@ void ImageFlasherPanel::onImageSelected(const QString& imagePath) {
     default:
         break;
     }
-    m_imageFormatLabel->setText(QString("Format: %1").arg(formatStr));
+    m_detectedFormat = formatStr;
+
+    // Run ISO analyzer for detailed info
+    populateIsoInfo(imagePath);
 
     m_nextButton->setEnabled(true);
     updateNavigationButtons();
@@ -732,6 +763,7 @@ void ImageFlasherPanel::onFlashCompleted(const FlashResult& result) {
     Q_ASSERT(m_completionDetailsLabel);
     Q_ASSERT(m_completionMessageLabel);
     m_isFlashing = false;
+    m_settingsButton->setEnabled(true);
 
     if (result.success) {
         m_completionMessageLabel->setText("✓ Flash Completed Successfully!");
@@ -761,6 +793,7 @@ void ImageFlasherPanel::onFlashError(const QString& error) {
     Q_ASSERT(m_stackedWidget);
     Q_ASSERT(!error.isEmpty());
     m_isFlashing = false;
+    m_settingsButton->setEnabled(true);
 
     logError(("Flash Error: " + error).toStdString());
     QMessageBox::critical(this,
@@ -794,6 +827,7 @@ void ImageFlasherPanel::onCancelClicked() {
     if (reply == QMessageBox::Yes) {
         m_flashCoordinator->cancel();
         m_isFlashing = false;
+        m_settingsButton->setEnabled(true);
 
         m_flashStateLabel->setText("Flash cancelled by user");
         m_flashDetailsLabel->clear();
@@ -977,6 +1011,7 @@ void ImageFlasherPanel::showConfirmationDialog() {
     m_isFlashing = true;
     m_flashButton->setEnabled(false);
     m_flashButton->setVisible(false);
+    m_settingsButton->setEnabled(false);
     updateNavigationButtons();
 
     // Switch to progress page
@@ -1124,6 +1159,49 @@ QString ImageFlasherPanel::formatSpeed(double mbps) const {
         return QString("%1 KB/s").arg(mbps * sak::kBytesPerKBf, 0, 'f', 1);
     }
     return QString("%1 MB/s").arg(mbps, 0, 'f', 1);
+}
+
+// ============================================================================
+// ISO Info Population
+// ============================================================================
+
+void ImageFlasherPanel::populateIsoInfo(const QString& imagePath) {
+    Q_ASSERT(!imagePath.isEmpty());
+    Q_ASSERT(m_isoInfoGroup);
+
+    sak::IsoInfo iso = sak::IsoAnalyzer::analyze(imagePath);
+
+    // Always show size and format
+    m_infoSizeLabel->setText(formatFileSize(m_imageSize));
+    m_infoFormatLabel->setText(m_detectedFormat);
+
+    // Populate all fields — show dash for empty fields
+    auto setField = [](QLabel* label, const QString& value) {
+        label->setText(value.isEmpty() ? QStringLiteral("-") : value);
+    };
+
+    setField(m_infoOsLabel, iso.os_name);
+    setField(m_infoArchLabel, iso.architecture);
+
+    QString boot_text;
+    if (iso.is_bootable) {
+        boot_text = iso.boot_type.isEmpty() ? QStringLiteral("Yes") : iso.boot_type;
+    }
+    setField(m_infoBootLabel, boot_text);
+
+    setField(m_infoFilesysLabel, iso.filesystem);
+    setField(m_infoVolLabel, iso.volume_label);
+    setField(m_infoPublisherLabel, iso.publisher);
+    setField(m_infoDateLabel, iso.creation_date);
+    setField(m_infoEditionsLabel, iso.windows_editions.join(", "));
+
+    m_isoInfoGroup->show();
+
+    logInfo(QString("ISO analysis: %1 | Vol: %2 | Boot: %3")
+                .arg(iso.os_name.isEmpty() ? "Unknown OS" : iso.os_name)
+                .arg(iso.volume_label)
+                .arg(iso.is_bootable ? iso.boot_type : "No")
+                .toStdString());
 }
 
 }  // namespace sak

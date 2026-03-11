@@ -67,13 +67,18 @@ private:
                         int monitor_count,
                         const CaptureResult& capture) const;
 
+    /// @brief Context needed to assemble the final execution result
+    struct CaptureContext {
+        int total_pages{0};
+        int monitor_count{0};
+        QString timestamp;
+        QDateTime start_time;
+    };
+
     /// @brief Assemble structured log and ExecutionResult from capture outcome
     void buildExecutionResult(const CaptureResult& capture,
-                              int total_pages,
                               const QDir& output_dir,
-                              int monitor_count,
-                              const QString& timestamp,
-                              const QDateTime& start_time);
+                              const CaptureContext& context);
 };
 
 }  // namespace sak

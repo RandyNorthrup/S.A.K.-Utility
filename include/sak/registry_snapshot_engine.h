@@ -49,6 +49,7 @@ public:
         const QStringList& programNamePatterns);
 
 private:
+    [[nodiscard]] static bool matchesAnyPattern(const QString& key, const QStringList& patterns);
 #ifdef Q_OS_WIN
     /// @brief Enumerate all subkeys under a registry path
     static void enumerateKeys(HKEY hive,

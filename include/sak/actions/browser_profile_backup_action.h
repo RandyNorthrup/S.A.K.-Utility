@@ -24,6 +24,12 @@ class BrowserProfileBackupAction : public QuickAction {
     Q_OBJECT
 
 public:
+    struct BackupStats {
+        int profile_count = 0;
+        int files_copied = 0;
+        qint64 bytes_copied = 0;
+    };
+
     explicit BrowserProfileBackupAction(const QString& backup_location, QObject* parent = nullptr);
 
     QString name() const override { return "Browser Profile Backup"; }
@@ -46,20 +52,20 @@ private:
     bool backupAllBrowserProfiles(const QVector<UserProfile>& users,
                                   const QDir& backup_dir,
                                   const QDateTime& start_time,
-                                  int& profile_count,
-                                  int& files_copied,
-                                  qint64& bytes_copied);
+                                  BackupStats& stats);
+
+    struct UserProgress {
+        int index{0};
+        int total{0};
+    };
 
     /// @brief Backup all browser profiles for a single user
     /// @return false if cancelled
     bool backupUserBrowserProfiles(const UserProfile& user,
                                    const QDir& backup_dir,
                                    const QDateTime& start_time,
-                                   int user_idx,
-                                   int total_users,
-                                   int& profile_count,
-                                   int& files_copied,
-                                   qint64& bytes_copied);
+                                   const UserProgress& progress,
+                                   BackupStats& stats);
 
     /// @brief Copy all files from a single browser profile directory
     /// @return false if cancelled

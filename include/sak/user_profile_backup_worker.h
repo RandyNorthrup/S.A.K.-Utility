@@ -27,25 +27,27 @@ public:
     explicit UserProfileBackupWorker(QObject* parent = nullptr);
     ~UserProfileBackupWorker() override;
 
+    /// @brief Options controlling backup behavior
+    struct BackupOptions {
+        PermissionMode permission_mode{PermissionMode::StripAll};
+        int compression_level{6};
+        bool encrypt{false};
+        QString password;
+    };
+
     /**
      * @brief Start backup operation
      * @param manifest Backup configuration and metadata
      * @param users List of users to backup with folder selections
      * @param destinationPath Where to save the backup
      * @param smartFilter Filter rules for excluding files
-     * @param permissionMode How to handle file permissions
-     * @param compressionLevel Compression level (0-9: 0=none, 3=fast, 6=balanced, 9=max)
-     * @param encrypt Whether to encrypt the backup
-     * @param password Encryption password (if encrypt=true)
+     * @param options Backup behavior options (permissions, compression, encryption)
      */
     void startBackup(const BackupManifest& manifest,
                      const QVector<UserProfile>& users,
                      const QString& destinationPath,
                      const SmartFilter& smartFilter,
-                     PermissionMode permissionMode,
-                     int compressionLevel = 6,
-                     bool encrypt = false,
-                     const QString& password = QString());
+                     const BackupOptions& options);
 
     /**
      * @brief Cancel the backup operation

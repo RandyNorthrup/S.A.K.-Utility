@@ -26,6 +26,39 @@
 #pragma comment(lib, "dxgi.lib")
 #endif
 
+namespace {
+
+QString classifyInterfaceType(const QString& iface, const QString& model) {
+    if (iface.contains("NVMe", Qt::CaseInsensitive) ||
+        model.contains("NVMe", Qt::CaseInsensitive)) {
+        return QStringLiteral("NVMe");
+    }
+    if (iface.contains("SCSI", Qt::CaseInsensitive) || iface.contains("IDE", Qt::CaseInsensitive)) {
+        return QStringLiteral("SATA");
+    }
+    if (iface.contains("USB", Qt::CaseInsensitive)) {
+        return QStringLiteral("USB");
+    }
+    return iface;
+}
+
+QString classifyMediaType(const QString& interface_type,
+                          const QString& model,
+                          const QString& media) {
+    if (interface_type == "NVMe" || model.contains("SSD", Qt::CaseInsensitive) ||
+        media.contains("SSD", Qt::CaseInsensitive) ||
+        media.contains("Solid", Qt::CaseInsensitive)) {
+        return QStringLiteral("SSD");
+    }
+    if (media.contains("Fixed", Qt::CaseInsensitive) ||
+        media.contains("HDD", Qt::CaseInsensitive)) {
+        return QStringLiteral("HDD");
+    }
+    return QStringLiteral("Unknown");
+}
+
+}  // namespace
+
 namespace sak {
 
 // ============================================================================
@@ -394,32 +427,11 @@ QVector<StorageDeviceInfo> HardwareInventoryScanner::queryStorage() {
         dev.firmware_version = disk.value("FirmwareRevision").toString().trimmed();
         dev.disk_number = disk.value("Index").toUInt();
 
-        // Interface type normalization
         const QString iface = disk.value("InterfaceType").toString().trimmed();
-        if (iface.contains("NVMe", Qt::CaseInsensitive) ||
-            dev.model.contains("NVMe", Qt::CaseInsensitive)) {
-            dev.interface_type = "NVMe";
-        } else if (iface.contains("SCSI", Qt::CaseInsensitive) ||
-                   iface.contains("IDE", Qt::CaseInsensitive)) {
-            dev.interface_type = "SATA";
-        } else if (iface.contains("USB", Qt::CaseInsensitive)) {
-            dev.interface_type = "USB";
-        } else {
-            dev.interface_type = iface;
-        }
+        dev.interface_type = classifyInterfaceType(iface, dev.model);
 
-        // Media type heuristic
         const QString media = disk.value("MediaType").toString();
-        if (dev.interface_type == "NVMe" || dev.model.contains("SSD", Qt::CaseInsensitive) ||
-            media.contains("SSD", Qt::CaseInsensitive) ||
-            media.contains("Solid", Qt::CaseInsensitive)) {
-            dev.media_type = "SSD";
-        } else if (media.contains("Fixed", Qt::CaseInsensitive) ||
-                   media.contains("HDD", Qt::CaseInsensitive)) {
-            dev.media_type = "HDD";
-        } else {
-            dev.media_type = "Unknown";
-        }
+        dev.media_type = classifyMediaType(dev.interface_type, dev.model, media);
 
         devices.append(dev);
     }
@@ -512,7 +524,7 @@ QVector<GpuInfo> HardwareInventoryScanner::queryGpu() {
 }
 
 void HardwareInventoryScanner::enumerateDxgiAdapters(QVector<GpuInfo>& gpus) {
-Q_ASSERT(!gpus.isEmpty());
+    Q_ASSERT(!gpus.isEmpty());
 #ifdef SAK_PLATFORM_WINDOWS
     Microsoft::WRL::ComPtr<IDXGIFactory1> factory;
     if (!SUCCEEDED(CreateDXGIFactory1(IID_PPV_ARGS(&factory)))) {
@@ -579,39 +591,50 @@ MotherboardInfo HardwareInventoryScanner::queryMotherboard() {
     return info;
 }
 
+#ifdef SAK_PLATFORM_WINDOWS
+bool HardwareInventoryScanner::queryBatteryPowerStatus(BatteryInfo& info) {
+    SYSTEM_POWER_STATUS power_status{};
+    if (!GetSystemPowerStatus(&power_status)) {
+        return true;
+    }
+
+    constexpr BYTE kNoBatteryFlag = 128;
+    info.present = (power_status.BatteryFlag != kNoBatteryFlag);
+
+    if (!info.present) {
+        logInfo("No battery detected");
+        return false;
+    }
+
+    info.estimated_minutes = (power_status.BatteryLifeTime == static_cast<DWORD>(-1))
+                                 ? 0
+                                 : power_status.BatteryLifeTime / 60;
+
+    switch (power_status.ACLineStatus) {
+    case 0:
+        info.status = "Discharging";
+        break;
+    case 1:
+        info.status = "Charging";
+        break;
+    default:
+        info.status = "Unknown";
+        break;
+    }
+
+    return true;
+}
+#endif
+
 BatteryInfo HardwareInventoryScanner::queryBattery() {
     BatteryInfo info;
 
 #ifdef SAK_PLATFORM_WINDOWS
-    // Quick check with Win32 API
-    SYSTEM_POWER_STATUS power_status{};
-    if (GetSystemPowerStatus(&power_status)) {
-        info.present = (power_status.BatteryFlag != 128);  // 128 = No battery
-
-        if (!info.present) {
-            logInfo("No battery detected");
-            return info;
-        }
-
-        info.estimated_minutes = (power_status.BatteryLifeTime == static_cast<DWORD>(-1))
-                                     ? 0
-                                     : power_status.BatteryLifeTime / 60;
-
-        switch (power_status.ACLineStatus) {
-        case 0:
-            info.status = "Discharging";
-            break;
-        case 1:
-            info.status = "Charging";
-            break;
-        default:
-            info.status = "Unknown";
-            break;
-        }
+    if (!queryBatteryPowerStatus(info)) {
+        return info;
     }
 #endif
 
-    // Detailed info from WMI
     const auto batteries = wmiQuery("Win32_Battery",
                                     {"Name",
                                      "DesignCapacity",

@@ -38,15 +38,19 @@ private:
 
     void exportKey(const QString& key_path, const QString& filename);
 
+    struct RegistryExportOutcome {
+        int keys_exported = 0;
+        qint64 total_size = 0;
+        QString manifest_path;
+        QString accumulated_output;
+    };
+
     /// @brief Build the PowerShell script for comprehensive registry backup
     QString buildRegistryBackupScript(const QString& backup_path, const QString& timestamp) const;
     /// @brief Finalize the registry export result and emit completion signal
     void finalizeRegistryExportResult(const QDateTime& start_time,
                                       const QDir& backup_dir,
-                                      int keys_exported,
-                                      qint64 total_size,
-                                      const QString& manifest_path,
-                                      const QString& accumulated_output);
+                                      const RegistryExportOutcome& outcome);
 };
 
 }  // namespace sak

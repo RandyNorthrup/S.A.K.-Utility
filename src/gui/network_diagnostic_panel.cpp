@@ -181,7 +181,6 @@ void NetworkDiagnosticPanel::setupAdapterToolbar(QGroupBox* group, QVBoxLayout* 
 void NetworkDiagnosticPanel::setupAdapterTable(QGroupBox* group, QVBoxLayout* layout) {
     Q_ASSERT(layout);
     Q_ASSERT(group);
-    Q_ASSERT(m_adapterTable);
     m_adapterTable = new QTableWidget(group);
     m_adapterTable->setColumnCount(6);
     m_adapterTable->setHorizontalHeaderLabels(
@@ -346,7 +345,6 @@ void NetworkDiagnosticPanel::setupPingControls(QWidget* widget, QVBoxLayout* lay
 void NetworkDiagnosticPanel::setupPingResults(QWidget* widget, QVBoxLayout* layout) {
     Q_ASSERT(layout);
     Q_ASSERT(widget);
-    Q_ASSERT(m_pingTable);
     m_pingTable = new QTableWidget(widget);
     m_pingTable->setColumnCount(5);
     m_pingTable->setHorizontalHeaderLabels(
@@ -432,8 +430,8 @@ void NetworkDiagnosticPanel::setupTracerouteControls(QWidget* widget, QVBoxLayou
 }
 
 void NetworkDiagnosticPanel::setupTracerouteResults(QWidget* widget, QVBoxLayout* layout) {
-    Q_ASSERT(widget);
     Q_ASSERT(m_traceTable);
+    Q_ASSERT(widget);
     m_traceTable = new QTableWidget(widget);
     m_traceTable->setColumnCount(7);
     m_traceTable->setHorizontalHeaderLabels({tr("Hop"),
@@ -526,8 +524,8 @@ void NetworkDiagnosticPanel::setupMtrControls(QWidget* widget, QVBoxLayout* layo
 }
 
 void NetworkDiagnosticPanel::setupMtrResults(QWidget* widget, QVBoxLayout* layout) {
-    Q_ASSERT(widget);
     Q_ASSERT(m_mtrTable);
+    Q_ASSERT(widget);
     m_mtrTable = new QTableWidget(widget);
     m_mtrTable->setColumnCount(8);
     m_mtrTable->setHorizontalHeaderLabels({tr("Hop"),
@@ -658,8 +656,8 @@ void NetworkDiagnosticPanel::setupDnsControls(QWidget* widget, QVBoxLayout* layo
 }
 
 void NetworkDiagnosticPanel::setupDnsResults(QWidget* widget, QVBoxLayout* layout) {
-    Q_ASSERT(widget);
     Q_ASSERT(m_dnsTable);
+    Q_ASSERT(widget);
     m_dnsTable = new QTableWidget(widget);
     m_dnsTable->setColumnCount(5);
     m_dnsTable->setHorizontalHeaderLabels(
@@ -915,8 +913,6 @@ void NetworkDiagnosticPanel::setupBandwidthIperfConfig(QWidget* widget, QVBoxLay
 
 void NetworkDiagnosticPanel::setupBandwidthIperfControls(QWidget* widget,
                                                          QVBoxLayout* iperfLayout) {
-    Q_ASSERT(m_bwTestBtn);
-    Q_ASSERT(m_bwServerStartBtn);
     auto* iperfBtnRow = new QHBoxLayout();
     m_bwTestBtn = new QPushButton(tr("Run Test"), widget);
     m_bwTestBtn->setStyleSheet(ui::kPrimaryButtonStyle);
@@ -1132,8 +1128,8 @@ void NetworkDiagnosticPanel::setupConnectionsControls(QWidget* widget, QVBoxLayo
 }
 
 void NetworkDiagnosticPanel::setupConnectionsTable(QWidget* widget, QVBoxLayout* layout) {
-    Q_ASSERT(widget);
     Q_ASSERT(m_connTable);
+    Q_ASSERT(widget);
     m_connTable = new QTableWidget(widget);
     m_connTable->setColumnCount(7);
     m_connTable->setHorizontalHeaderLabels({tr("Protocol"),
@@ -1229,8 +1225,8 @@ void NetworkDiagnosticPanel::setupFirewallToolbar(QWidget* widget, QVBoxLayout* 
 }
 
 void NetworkDiagnosticPanel::setupFirewallRuleTable(QWidget* widget, QVBoxLayout* layout) {
-    Q_ASSERT(widget);
     Q_ASSERT(m_fwRuleTable);
+    Q_ASSERT(widget);
     m_fwRuleTable = new QTableWidget(widget);
     m_fwRuleTable->setColumnCount(8);
     m_fwRuleTable->setHorizontalHeaderLabels({tr("Enabled"),
@@ -1390,8 +1386,6 @@ QGroupBox* NetworkDiagnosticPanel::createLanServerGroup(QWidget* parent) {
 }
 
 QGroupBox* NetworkDiagnosticPanel::createLanClientGroup(QWidget* parent) {
-    Q_ASSERT(m_lanBlockSize);
-    Q_ASSERT(m_lanTestBtn);
     Q_ASSERT(m_lanTarget);
     Q_ASSERT(m_lanDuration);
     auto* group = new QGroupBox(tr("LAN Transfer Client (Sender)"), parent);
@@ -1853,6 +1847,53 @@ void NetworkDiagnosticPanel::onAdaptersScanComplete(QVector<NetworkAdapterInfo> 
     Q_EMIT statusMessage(QStringLiteral("%1 adapters found").arg(adapters.size()), 3000);
 }
 
+QString NetworkDiagnosticPanel::formatAdapterIdentity(const NetworkAdapterInfo& adapter) const {
+    return QStringLiteral("<b>%1</b><br>%2<br>MAC: %3")
+        .arg(adapter.name, adapter.description, adapter.macAddress);
+}
+
+QString NetworkDiagnosticPanel::formatAdapterAddressing(const NetworkAdapterInfo& adapter) const {
+    QString text;
+    if (!adapter.ipv4Addresses.isEmpty()) {
+        text +=
+            QStringLiteral("IPv4: %1<br>").arg(adapter.ipv4Addresses.join(QStringLiteral(", ")));
+    }
+    if (!adapter.ipv6Addresses.isEmpty()) {
+        text += QStringLiteral("IPv6: %1").arg(adapter.ipv6Addresses.join(QStringLiteral(", ")));
+    }
+    return text;
+}
+
+QString NetworkDiagnosticPanel::formatAdapterGatewayDns(const NetworkAdapterInfo& adapter) const {
+    QString text;
+    QStringList gateways;
+    if (!adapter.ipv4Gateway.isEmpty()) {
+        gateways << adapter.ipv4Gateway;
+    }
+    if (!adapter.ipv6Gateway.isEmpty()) {
+        gateways << adapter.ipv6Gateway;
+    }
+    if (!gateways.isEmpty()) {
+        text += QStringLiteral("GW: %1<br>").arg(gateways.join(QStringLiteral(", ")));
+    }
+    QStringList dns;
+    dns << adapter.ipv4DnsServers << adapter.ipv6DnsServers;
+    if (!dns.isEmpty()) {
+        text += QStringLiteral("DNS: %1").arg(dns.join(QStringLiteral(", ")));
+    }
+    return text;
+}
+
+QString NetworkDiagnosticPanel::formatAdapterStatus(const NetworkAdapterInfo& adapter) const {
+    QString text;
+    text +=
+        QStringLiteral("DHCP: %1<br>").arg(adapter.dhcpEnabled ? tr("Enabled") : tr("Disabled"));
+    if (adapter.linkSpeedBps > 0) {
+        text += QStringLiteral("Speed: %1 Mbps").arg(adapter.linkSpeedBps / 1'000'000);
+    }
+    return text;
+}
+
 void NetworkDiagnosticPanel::onAdapterSelectionChanged() {
     Q_ASSERT(m_adapterTable);
     Q_ASSERT(m_copyConfigBtn);
@@ -1868,59 +1909,20 @@ void NetworkDiagnosticPanel::onAdapterSelectionChanged() {
         return;
     }
 
-    // Retrieve original data index from UserRole (survives table sorting)
-    const auto* nameItem = m_adapterTable->item(row, 0);
-    if (nameItem == nullptr) {
+    const auto* name_item = m_adapterTable->item(row, 0);
+    if (name_item == nullptr) {
         return;
     }
-    const int dataIdx = nameItem->data(Qt::UserRole).toInt();
-    if (dataIdx < 0 || dataIdx >= m_adapters.size()) {
+    const int data_idx = name_item->data(Qt::UserRole).toInt();
+    if (data_idx < 0 || data_idx >= m_adapters.size()) {
         return;
     }
 
-    const auto& a = m_adapters[dataIdx];
-
-    // Column 1: Identity
-    QString col1 =
-        QStringLiteral("<b>%1</b><br>%2<br>MAC: %3").arg(a.name, a.description, a.macAddress);
-    m_detailIdentity->setText(col1);
-
-    // Column 2: Addressing
-    QString col2;
-    if (!a.ipv4Addresses.isEmpty()) {
-        col2 += QStringLiteral("IPv4: %1<br>").arg(a.ipv4Addresses.join(QStringLiteral(", ")));
-    }
-    if (!a.ipv6Addresses.isEmpty()) {
-        col2 += QStringLiteral("IPv6: %1").arg(a.ipv6Addresses.join(QStringLiteral(", ")));
-    }
-    m_detailAddressing->setText(col2);
-
-    // Column 3: Gateways / DNS
-    QString col3;
-    if (!a.ipv4Gateway.isEmpty() || !a.ipv6Gateway.isEmpty()) {
-        QStringList gw;
-        if (!a.ipv4Gateway.isEmpty()) {
-            gw << a.ipv4Gateway;
-        }
-        if (!a.ipv6Gateway.isEmpty()) {
-            gw << a.ipv6Gateway;
-        }
-        col3 += QStringLiteral("GW: %1<br>").arg(gw.join(QStringLiteral(", ")));
-    }
-    if (!a.ipv4DnsServers.isEmpty() || !a.ipv6DnsServers.isEmpty()) {
-        QStringList dns;
-        dns << a.ipv4DnsServers << a.ipv6DnsServers;
-        col3 += QStringLiteral("DNS: %1").arg(dns.join(QStringLiteral(", ")));
-    }
-    m_detailGatewayDns->setText(col3);
-
-    // Column 4: Status
-    QString col4;
-    col4 += QStringLiteral("DHCP: %1<br>").arg(a.dhcpEnabled ? tr("Enabled") : tr("Disabled"));
-    if (a.linkSpeedBps > 0) {
-        col4 += QStringLiteral("Speed: %1 Mbps").arg(a.linkSpeedBps / 1'000'000);
-    }
-    m_detailStatus->setText(col4);
+    const auto& adapter = m_adapters[data_idx];
+    m_detailIdentity->setText(formatAdapterIdentity(adapter));
+    m_detailAddressing->setText(formatAdapterAddressing(adapter));
+    m_detailGatewayDns->setText(formatAdapterGatewayDns(adapter));
+    m_detailStatus->setText(formatAdapterStatus(adapter));
 }
 
 void NetworkDiagnosticPanel::onCopyAdapterConfig() {
@@ -2089,12 +2091,12 @@ void NetworkDiagnosticPanel::onStartPing() {
     m_pingStartBtn->setEnabled(false);
     m_pingStopBtn->setEnabled(true);
 
-    m_controller->ping(target,
-                       m_pingCount->value(),
-                       m_pingInterval->value(),
-                       m_pingTimeout->value(),
-                       m_pingPacketSize->value(),
-                       128);  // default TTL
+    m_controller->ping({target,
+                        m_pingCount->value(),
+                        m_pingInterval->value(),
+                        m_pingTimeout->value(),
+                        m_pingPacketSize->value(),
+                        128});  // default TTL
 }
 
 void NetworkDiagnosticPanel::onStopPing() {
@@ -2482,6 +2484,42 @@ void handleParsedRange(QVector<uint16_t>& ports,
     appendPortRange(ports, start, end);
 }
 
+constexpr unsigned int kMaxPortValue = 65'535;
+
+bool parsePortRange(const QString& text, QVector<uint16_t>& ports, PortScanRange& range) {
+    const auto range_parts = text.split('-');
+    if (range_parts.size() != 2) {
+        return false;
+    }
+
+    bool ok_start = false;
+    bool ok_end = false;
+    const auto start_val = range_parts[0].trimmed().toUInt(&ok_start);
+    const auto end_val = range_parts[1].trimmed().toUInt(&ok_end);
+
+    if (!ok_start || !ok_end) {
+        return false;
+    }
+    if (start_val == 0 || end_val == 0 || start_val > kMaxPortValue || end_val > kMaxPortValue ||
+        start_val > end_val) {
+        return false;
+    }
+
+    handleParsedRange(
+        ports, range, static_cast<uint16_t>(start_val), static_cast<uint16_t>(end_val));
+    return true;
+}
+
+bool parseSinglePort(const QString& text, QVector<uint16_t>& ports) {
+    bool ok_port = false;
+    const auto port_val = text.toUInt(&ok_port);
+    if (!ok_port || port_val == 0 || port_val > kMaxPortValue) {
+        return false;
+    }
+    ports.append(static_cast<uint16_t>(port_val));
+    return true;
+}
+
 QVector<uint16_t> parseCustomPorts(const QString& customText, PortScanRange& range) {
     Q_ASSERT(!customText.isEmpty());
     if (customText.isEmpty()) {
@@ -2495,44 +2533,11 @@ QVector<uint16_t> parseCustomPorts(const QString& customText, PortScanRange& ran
         if (trimmed.isEmpty()) {
             continue;
         }
-
         if (trimmed.contains('-')) {
-            const auto rangeParts = trimmed.split('-');
-            if (rangeParts.size() != 2) {
-                continue;
-            }
-
-            bool okStart = false;
-            bool okEnd = false;
-            const auto startVal = rangeParts[0].trimmed().toUInt(&okStart);
-            const auto endVal = rangeParts[1].trimmed().toUInt(&okEnd);
-            if (!okStart || !okEnd) {
-                continue;
-            }
-            if (startVal == 0 || endVal == 0) {
-                continue;
-            }
-            if (startVal > 65'535 || endVal > 65'535) {
-                continue;
-            }
-            if (startVal > endVal) {
-                continue;
-            }
-
-            handleParsedRange(
-                ports, range, static_cast<uint16_t>(startVal), static_cast<uint16_t>(endVal));
-            continue;
+            parsePortRange(trimmed, ports, range);
+        } else {
+            parseSinglePort(trimmed, ports);
         }
-
-        bool okPort = false;
-        const auto portVal = trimmed.toUInt(&okPort);
-        if (!okPort) {
-            continue;
-        }
-        if (portVal == 0 || portVal > 65'535) {
-            continue;
-        }
-        ports.append(static_cast<uint16_t>(portVal));
     }
     return ports;
 }
@@ -2593,13 +2598,13 @@ void NetworkDiagnosticPanel::onStartPortScan() {
         ports = parseCustomPorts(m_portCustomRange->text().trimmed(), range);
     }
 
-    m_controller->scanPorts(target,
-                            ports,
-                            range.start,
-                            range.end,
-                            m_portTimeout->value(),
-                            m_portConcurrent->value(),
-                            m_portBannerGrab->isChecked());
+    m_controller->scanPorts({target,
+                             ports,
+                             range.start,
+                             range.end,
+                             m_portTimeout->value(),
+                             m_portConcurrent->value(),
+                             m_portBannerGrab->isChecked()});
 }
 
 void NetworkDiagnosticPanel::onStopPortScan() {
@@ -2689,12 +2694,12 @@ void NetworkDiagnosticPanel::onStartBandwidthTest() {
     m_bwResultLabel->setText(tr("Running bandwidth test..."));
     m_bwTestBtn->setEnabled(false);
 
-    m_controller->runBandwidthTest(server,
-                                   static_cast<uint16_t>(m_bwPort->value()),
-                                   m_bwDuration->value(),
-                                   m_bwStreams->value(),
-                                   m_bwBidirectional->isChecked(),
-                                   false);  // TCP mode
+    m_controller->runBandwidthTest({server,
+                                    static_cast<uint16_t>(m_bwPort->value()),
+                                    m_bwDuration->value(),
+                                    m_bwStreams->value(),
+                                    m_bwBidirectional->isChecked(),
+                                    false});  // TCP mode
 }
 
 void NetworkDiagnosticPanel::onStartIperfServer() {
@@ -2838,7 +2843,6 @@ void NetworkDiagnosticPanel::onConnectionsUpdated(QVector<ConnectionInfo> connec
     int udpCount = 0;
     int established = 0;
 
-    // Reuse existing items to avoid allocation churn on frequent refreshes
     auto setOrCreate = [this](int row, int col, const QString& text) {
         if (auto* existing = m_connTable->item(row, col)) {
             existing->setText(text);
@@ -2847,48 +2851,34 @@ void NetworkDiagnosticPanel::onConnectionsUpdated(QVector<ConnectionInfo> connec
         }
     };
 
-    for (int i = 0; i < connections.size(); ++i) {
-        const auto& c = connections[i];
-        const auto proto = (c.protocol == ConnectionInfo::Protocol::TCP) ? QStringLiteral("TCP")
-                                                                         : QStringLiteral("UDP");
-        if (c.protocol == ConnectionInfo::Protocol::TCP) {
-            ++tcpCount;
-        } else {
-            ++udpCount;
+    auto stateColor = [](const QString& state) -> QColor {
+        if (state == QStringLiteral("ESTABLISHED")) {
+            return QColor(ui::kColorSuccess);
         }
-        if (c.state == QStringLiteral("ESTABLISHED")) {
+        if (state == QStringLiteral("CLOSE_WAIT") || state == QStringLiteral("TIME_WAIT")) {
+            return QColor(ui::kColorWarning);
+        }
+        return {};
+    };
+
+    for (int i = 0; i < connections.size(); ++i) {
+        const auto& conn = connections[i];
+        const bool is_tcp = (conn.protocol == ConnectionInfo::Protocol::TCP);
+        is_tcp ? ++tcpCount : ++udpCount;
+        if (conn.state == QStringLiteral("ESTABLISHED")) {
             ++established;
         }
 
-        setOrCreate(i, 0, proto);
-        setOrCreate(i, 1, c.localAddress);
-        setOrCreate(i, 2, QString::number(c.localPort));
-        setOrCreate(i, 3, c.remoteAddress);
-        setOrCreate(i, 4, QString::number(c.remotePort));
+        setOrCreate(i, 0, is_tcp ? QStringLiteral("TCP") : QStringLiteral("UDP"));
+        setOrCreate(i, 1, conn.localAddress);
+        setOrCreate(i, 2, QString::number(conn.localPort));
+        setOrCreate(i, 3, conn.remoteAddress);
+        setOrCreate(i, 4, QString::number(conn.remotePort));
 
-        const auto& stateText = c.state;
-        if (auto* existing = m_connTable->item(i, 5)) {
-            existing->setText(stateText);
-            if (stateText == QStringLiteral("ESTABLISHED")) {
-                existing->setForeground(QColor(ui::kColorSuccess));
-            } else if (stateText == QStringLiteral("CLOSE_WAIT") ||
-                       stateText == QStringLiteral("TIME_WAIT")) {
-                existing->setForeground(QColor(ui::kColorWarning));
-            } else {
-                existing->setForeground(QColor());
-            }
-        } else {
-            auto* stateItem = new QTableWidgetItem(stateText);
-            if (stateText == QStringLiteral("ESTABLISHED")) {
-                stateItem->setForeground(QColor(ui::kColorSuccess));
-            } else if (stateText == QStringLiteral("CLOSE_WAIT") ||
-                       stateText == QStringLiteral("TIME_WAIT")) {
-                stateItem->setForeground(QColor(ui::kColorWarning));
-            }
-            m_connTable->setItem(i, 5, stateItem);
-        }
+        setOrCreate(i, 5, conn.state);
+        m_connTable->item(i, 5)->setForeground(stateColor(conn.state));
 
-        setOrCreate(i, 6, c.processName);
+        setOrCreate(i, 6, conn.processName);
     }
 
     m_connTable->setSortingEnabled(true);
@@ -2951,42 +2941,77 @@ void NetworkDiagnosticPanel::onFirewallAuditComplete(QVector<FirewallRule> rules
                                   .arg(gaps.size()));
 }
 
+namespace {
+
+bool matchesDirectionFilter(FirewallRule::Direction direction, int dir_idx) {
+    if (dir_idx == 1 && direction != FirewallRule::Direction::Inbound) {
+        return false;
+    }
+    if (dir_idx == 2 && direction != FirewallRule::Direction::Outbound) {
+        return false;
+    }
+    return true;
+}
+
+bool matchesActionFilter(FirewallRule::Action action, int act_idx) {
+    if (act_idx == 1 && action != FirewallRule::Action::Allow) {
+        return false;
+    }
+    if (act_idx == 2 && action != FirewallRule::Action::Block) {
+        return false;
+    }
+    return true;
+}
+
+bool matchesSearchText(const FirewallRule& rule, const QString& text) {
+    return rule.name.contains(text, Qt::CaseInsensitive) ||
+           rule.applicationPath.contains(text, Qt::CaseInsensitive) ||
+           rule.localPorts.contains(text, Qt::CaseInsensitive) ||
+           rule.remotePorts.contains(text, Qt::CaseInsensitive);
+}
+
+QString protocolToString(FirewallRule::Protocol protocol) {
+    switch (protocol) {
+    case FirewallRule::Protocol::TCP:
+        return QStringLiteral("TCP");
+    case FirewallRule::Protocol::UDP:
+        return QStringLiteral("UDP");
+    case FirewallRule::Protocol::ICMPv4:
+        return QStringLiteral("ICMPv4");
+    case FirewallRule::Protocol::ICMPv6:
+        return QStringLiteral("ICMPv6");
+    case FirewallRule::Protocol::Any:
+        return QStringLiteral("Any");
+    }
+    return QStringLiteral("Unknown");
+}
+
+}  // namespace
+
 void NetworkDiagnosticPanel::filterFirewallRules() {
     Q_ASSERT(m_fwSearchBox);
     Q_ASSERT(m_fwDirFilter);
-    const auto searchText = m_fwSearchBox->text().trimmed();
-    const int dirIdx = m_fwDirFilter->currentIndex();
-    const int actIdx = m_fwActionFilter->currentIndex();
-    // Filter the cached rules
+    const auto search_text = m_fwSearchBox->text().trimmed();
+    const int dir_idx = m_fwDirFilter->currentIndex();
+    const int act_idx = m_fwActionFilter->currentIndex();
+
+    auto matches = [&](const FirewallRule& r) {
+        if (!matchesDirectionFilter(r.direction, dir_idx)) {
+            return false;
+        }
+        if (!matchesActionFilter(r.action, act_idx)) {
+            return false;
+        }
+        if (search_text.isEmpty()) {
+            return true;
+        }
+        return matchesSearchText(r, search_text);
+    };
+
     QVector<FirewallRule> filtered;
     filtered.reserve(m_cachedFwRules.size());
-    for (const auto& r : m_cachedFwRules) {
-        // Direction filter: 0=All, 1=Inbound, 2=Outbound
-        if (dirIdx == 1 && r.direction != FirewallRule::Direction::Inbound) {
-            continue;
-        }
-        if (dirIdx == 2 && r.direction != FirewallRule::Direction::Outbound) {
-            continue;
-        }
-        // Action filter: 0=All, 1=Allow, 2=Block
-        if (actIdx == 1 && r.action != FirewallRule::Action::Allow) {
-            continue;
-        }
-        if (actIdx == 2 && r.action != FirewallRule::Action::Block) {
-            continue;
-        }
-        // Text search
-        if (!searchText.isEmpty()) {
-            const bool matches = r.name.contains(searchText, Qt::CaseInsensitive) ||
-                                 r.applicationPath.contains(searchText, Qt::CaseInsensitive) ||
-                                 r.localPorts.contains(searchText, Qt::CaseInsensitive) ||
-                                 r.remotePorts.contains(searchText, Qt::CaseInsensitive);
-            if (!matches) {
-                continue;
-            }
-        }
-        filtered.append(r);
-    }
+    std::copy_if(
+        m_cachedFwRules.begin(), m_cachedFwRules.end(), std::back_inserter(filtered), matches);
 
     populateFirewallTable(filtered);
 }
@@ -2995,25 +3020,8 @@ void NetworkDiagnosticPanel::populateFirewallTable(const QVector<FirewallRule>& 
     Q_ASSERT(!filtered.isEmpty());
     Q_ASSERT(m_fwRuleTable);
 
-    // Repopulate table with filtered results
     m_fwRuleTable->setSortingEnabled(false);
     m_fwRuleTable->setRowCount(filtered.size());
-
-    auto protocolToString = [](FirewallRule::Protocol p) -> QString {
-        switch (p) {
-        case FirewallRule::Protocol::TCP:
-            return QStringLiteral("TCP");
-        case FirewallRule::Protocol::UDP:
-            return QStringLiteral("UDP");
-        case FirewallRule::Protocol::ICMPv4:
-            return QStringLiteral("ICMPv4");
-        case FirewallRule::Protocol::ICMPv6:
-            return QStringLiteral("ICMPv6");
-        case FirewallRule::Protocol::Any:
-            return QStringLiteral("Any");
-        }
-        return QStringLiteral("Unknown");
-    };
 
     for (int i = 0; i < filtered.size(); ++i) {
         const auto& r = filtered[i];
