@@ -117,18 +117,18 @@ private:
     /// @param options Scan options
     /// @param current_depth Current recursion depth
     /// @return True if should process, false if should skip
-    [[nodiscard]] bool shouldProcessEntry(const std::filesystem::directory_entry& entry,
-                                          const scan_options& options,
-                                          std::size_t current_depth) const noexcept;
+    [[nodiscard]] static bool shouldProcessEntry(const std::filesystem::directory_entry& entry,
+                                                 const scan_options& options,
+                                                 std::size_t current_depth) noexcept;
 
-    [[nodiscard]] bool passesDepthAndVisibility(const std::filesystem::path& path,
+    [[nodiscard]] static bool passesDepthAndVisibility(const std::filesystem::path& path,
                                                 const scan_options& options,
-                                                std::size_t current_depth) const;
+                                                std::size_t current_depth);
 
     /// @brief Check file-specific filters (patterns, size limits)
-    [[nodiscard]] bool shouldIncludeFile(const std::filesystem::directory_entry& entry,
+    [[nodiscard]] static bool shouldIncludeFile(const std::filesystem::directory_entry& entry,
                                          const std::filesystem::path& path,
-                                         const scan_options& options) const noexcept;
+                                         const scan_options& options) noexcept;
 
     /// @brief Update stats counters and progress for a file entry
     void updateFileStats(const std::filesystem::directory_entry& entry,

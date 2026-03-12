@@ -611,7 +611,7 @@ void FirewallRuleAuditor::checkDisabledBlockGap(const QVector<FirewallRule>& rul
     FirewallGap gap;
     gap.description = QStringLiteral("%1 block rules are disabled").arg(disabledBlockRules);
     gap.recommendation =
-        QStringLiteral("Review disabled block rules — they may have been turned off inadvertently");
+        QStringLiteral("Review disabled block rules -- they may have been turned off inadvertently");
     gap.severity = FirewallGap::Severity::Info;
     gaps.append(gap);
 }

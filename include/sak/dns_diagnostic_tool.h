@@ -38,7 +38,7 @@ public:
                const QString& recordType = "A",
                const QString& dnsServer = "");
 
-    /// @brief Reverse lookup — IP to hostname (blocking)
+    /// @brief Reverse lookup -- IP to hostname (blocking)
     void reverseLookup(const QString& ipAddress, const QString& dnsServer = "");
 
     /// @brief Compare same query across multiple DNS servers (blocking)

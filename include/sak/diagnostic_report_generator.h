@@ -84,7 +84,7 @@ Q_SIGNALS:
 
 private:
     /// @brief Build the HTML header with embedded CSS
-    [[nodiscard]] QString buildHtmlHeader() const;
+    [[nodiscard]] static QString buildHtmlHeader();
 
     /// @brief Build the hardware inventory HTML section
     [[nodiscard]] QString buildHardwareSection() const;

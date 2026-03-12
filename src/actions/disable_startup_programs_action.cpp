@@ -1,4 +1,4 @@
-﻿// Copyright (c) 2025 Randy Northrup. All rights reserved.
+// Copyright (c) 2025 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 /// @file disable_startup_programs_action.cpp
@@ -213,10 +213,10 @@ QString DisableStartupProgramsAction::formatStartupProgramsSection(const QString
 
     QString section;
     section += QString::fromUtf8(
-        "║                         STARTUP PROGRAMS                       "
-        "            ║\n");
+        "|                         STARTUP PROGRAMS                       "
+        "            |\n");
     section += QString::fromUtf8(
-        "╠════════════════════════════════════════════════════════════════════════════╣\n");
+        "+============================================================================+\n");
 
     QJsonDocument doc = QJsonDocument::fromJson(startup_output.toUtf8());
     QJsonArray programs = doc.array();
@@ -233,32 +233,32 @@ QString DisableStartupProgramsAction::formatStartupProgramsSection(const QString
         // Determine location type for icon
         QString icon = QStringLiteral("\u25CF");
         if (location.contains("HKLM", Qt::CaseInsensitive)) {
-            icon = QString::fromUtf8("■");  // System-wide
+            icon = QString::fromUtf8("#");  // System-wide
         } else if (location.contains("HKCU", Qt::CaseInsensitive)) {
-            icon = QString::fromUtf8("□");  // User-specific
+            icon = QString::fromUtf8("[ ]");  // User-specific
         } else if (location.contains("Startup", Qt::CaseInsensitive)) {
-            icon = QString::fromUtf8("▸");  // Startup folder
+            icon = QString::fromUtf8(">");  // Startup folder
         }
 
-        section += QString::fromUtf8("║ %1 %2").arg(icon).arg(name).leftJustified(73, ' ') +
-                   QString::fromUtf8("║\n");
+        section += QString::fromUtf8("| %1 %2").arg(icon).arg(name).leftJustified(73, ' ') +
+                   QString::fromUtf8("|\n");
 
         QString loc_short = location.left(60);
         if (!loc_short.isEmpty()) {
-            section += QString::fromUtf8("║   Location: %1").arg(loc_short).leftJustified(73, ' ') +
-                       QString::fromUtf8("║\n");
+            section += QString::fromUtf8("|   Location: %1").arg(loc_short).leftJustified(73, ' ') +
+                       QString::fromUtf8("|\n");
         }
         displayed++;
     }
 
     if (programs.size() > 15) {
         section += QString::fromUtf8(
-                       "║   ... and %1 more startup program(s)                       "
-                       "               ║\n")
+                       "|   ... and %1 more startup program(s)                       "
+                       "               |\n")
                        .arg(programs.size() - 15);
     }
     section += QString::fromUtf8(
-        "╠════════════════════════════════════════════════════════════════════════════╣\n");
+        "+============================================================================+\n");
     return section;
 }
 
@@ -270,10 +270,10 @@ QString DisableStartupProgramsAction::formatStartupTasksSection(const QString& t
 
     QString section;
     section += QString::fromUtf8(
-        "║                         STARTUP TASKS                          "
-        "            ║\n");
+        "|                         STARTUP TASKS                          "
+        "            |\n");
     section += QString::fromUtf8(
-        "╠════════════════════════════════════════════════════════════════════════════╣\n");
+        "+============================================================================+\n");
 
     QJsonDocument doc = QJsonDocument::fromJson(task_output.toUtf8());
     QJsonArray tasks;
@@ -292,23 +292,23 @@ QString DisableStartupProgramsAction::formatStartupTasksSection(const QString& t
         QString name = task["TaskName"].toString().left(50);
         QString state = task["State"].toString();
 
-        QString state_icon = (state == "Ready") ? QString::fromUtf8("✓") : QStringLiteral("\u25EF");
+        QString state_icon = (state == "Ready") ? QString::fromUtf8("[x]") : QStringLiteral("\u25EF");
 
-        section += QString::fromUtf8("║ %1 %2").arg(state_icon).arg(name).leftJustified(73, ' ') +
-                   QString::fromUtf8("║\n");
-        section += QString::fromUtf8("║   State: %1").arg(state).leftJustified(73, ' ') +
-                   QString::fromUtf8("║\n");
+        section += QString::fromUtf8("| %1 %2").arg(state_icon).arg(name).leftJustified(73, ' ') +
+                   QString::fromUtf8("|\n");
+        section += QString::fromUtf8("|   State: %1").arg(state).leftJustified(73, ' ') +
+                   QString::fromUtf8("|\n");
         displayed++;
     }
 
     if (tasks.size() > 10) {
         section += QString::fromUtf8(
-                       "║   ... and %1 more startup task(s)                          "
-                       "               ║\n")
+                       "|   ... and %1 more startup task(s)                          "
+                       "               |\n")
                        .arg(tasks.size() - 10);
     }
     section += QString::fromUtf8(
-        "╠════════════════════════════════════════════════════════════════════════════╣\n");
+        "+============================================================================+\n");
     return section;
 }
 
@@ -323,24 +323,24 @@ void DisableStartupProgramsAction::executeDisableEntries(const QDateTime& start_
     Q_EMIT executionProgress("Phase 3: Analyzing impact and generating report...", 60);
 
     // Generate enterprise box-drawing report
-    report += "╔════════════════════════════════════════════════════════════════════════════╗\n";
-    report += "║                    STARTUP PROGRAMS ANALYSIS REPORT                        ║\n";
-    report += "╠════════════════════════════════════════════════════════════════════════════╣\n";
-    report += QString("║ Scan Time:              %1                               ║\n")
+    report += "+============================================================================+\n";
+    report += "|                    STARTUP PROGRAMS ANALYSIS REPORT                        |\n";
+    report += "+============================================================================+\n";
+    report += QString("| Scan Time:              %1                               |\n")
                   .arg(QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss"));
     report += QString(
-                  "║ Startup Programs Found: %1                                                "
-                  " ║\n")
+                  "| Startup Programs Found: %1                                                "
+                  " |\n")
                   .arg(startup_count);
     report += QString(
-                  "║ Startup Tasks Found:    %1                                                "
-                  "  ║\n")
+                  "| Startup Tasks Found:    %1                                                "
+                  "  |\n")
                   .arg(task_count);
     report += QString(
-                  "║ Total Startup Items:    %1                                                "
-                  " ║\n")
+                  "| Total Startup Items:    %1                                                "
+                  " |\n")
                   .arg(startup_count + task_count);
-    report += "╠════════════════════════════════════════════════════════════════════════════╣\n";
+    report += "+============================================================================+\n";
 
     // Parse and display startup programs
     report += formatStartupProgramsSection(startup_output, startup_count);
@@ -349,32 +349,32 @@ void DisableStartupProgramsAction::executeDisableEntries(const QDateTime& start_
     report += formatStartupTasksSection(task_output, task_count);
 
     // Legend and recommendations
-    report += "║                              LEGEND                                        ║\n";
-    report += "╠════════════════════════════════════════════════════════════════════════════╣\n";
-    report += "║ ■ System-wide (HKLM) - Affects all users                                  ║\n";
-    report += "║ □ User-specific (HKCU) - Current user only                                ║\n";
-    report += "║ ▸ Startup folder - Easily managed                                         ║\n";
-    report += "║ ● Other location                                                          ║\n";
-    report += "╠════════════════════════════════════════════════════════════════════════════╣\n";
-    report += "║                            RECOMMENDATIONS                                 ║\n";
-    report += "╠════════════════════════════════════════════════════════════════════════════╣\n";
+    report += "|                              LEGEND                                        |\n";
+    report += "+============================================================================+\n";
+    report += "| # System-wide (HKLM) - Affects all users                                  |\n";
+    report += "| [ ] User-specific (HKCU) - Current user only                                |\n";
+    report += "| > Startup folder - Easily managed                                         |\n";
+    report += "| * Other location                                                          |\n";
+    report += "+============================================================================+\n";
+    report += "|                            RECOMMENDATIONS                                 |\n";
+    report += "+============================================================================+\n";
 
     if (startup_count + task_count > 15) {
-        report += "║ ⚠ High startup item count detected                                        ║\n";
-        report += "║   Consider disabling unnecessary programs to improve boot time            ║\n";
+        report += "| (!) High startup item count detected                                        |\n";
+        report += "|   Consider disabling unnecessary programs to improve boot time            |\n";
     }
     if (startup_count + task_count > 25) {
-        report += "║ ⚠ Very high startup load - boot performance likely impacted               ║\n";
+        report += "| (!) Very high startup load - boot performance likely impacted               |\n";
     }
 
-    report += "║                                                                            ║\n";
-    report += "║ Management Options:                                                        ║\n";
-    report += "║ • Use Task Manager > Startup tab (Ctrl+Shift+Esc)                         ║\n";
-    report += "║ • Registry: HKEY_CURRENT_USER\\...\\Run                                      ║\n";
-    report += "║ • Registry: HKEY_LOCAL_MACHINE\\...\\Run                                     ║\n";
-    report += "║ • Startup folder: shell:startup                                            ║\n";
-    report += "║ • Task Scheduler: taskschd.msc                                             ║\n";
-    report += "╚════════════════════════════════════════════════════════════════════════════╝\n";
+    report += "|                                                                            |\n";
+    report += "| Management Options:                                                        |\n";
+    report += "| * Use Task Manager > Startup tab (Ctrl+Shift+Esc)                         |\n";
+    report += "| * Registry: HKEY_CURRENT_USER\\...\\Run                                      |\n";
+    report += "| * Registry: HKEY_LOCAL_MACHINE\\...\\Run                                     |\n";
+    report += "| * Startup folder: shell:startup                                            |\n";
+    report += "| * Task Scheduler: taskschd.msc                                             |\n";
+    report += "+============================================================================+\n";
 
     // Launch Task Manager to Startup tab
     Q_EMIT executionProgress("Phase 4: Opening Task Manager...", 85);

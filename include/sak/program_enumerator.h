@@ -119,7 +119,7 @@ private:
     std::atomic<bool> m_cancelRequested{false};
 };
 
-// ── Compile-Time Invariants ─────────────────────────────────────────────────
+// -- Compile-Time Invariants -------------------------------------------------
 
 static_assert(std::is_base_of_v<QObject, ProgramEnumerator>,
               "ProgramEnumerator must inherit QObject.");

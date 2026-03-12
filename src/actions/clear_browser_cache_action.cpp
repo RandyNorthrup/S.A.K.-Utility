@@ -153,21 +153,21 @@ void ClearBrowserCacheAction::execute() {
     QDateTime start_time = QDateTime::currentDateTime();
     Q_ASSERT(start_time.isValid());
 
-    Q_EMIT executionProgress("╔════════════════════════════════════════════════════════════════╗",
+    Q_EMIT executionProgress("+================================================================+",
                              0);
-    Q_EMIT executionProgress("║          BROWSER CACHE CLEARING - ENTERPRISE MODE             ║",
+    Q_EMIT executionProgress("|          BROWSER CACHE CLEARING - ENTERPRISE MODE             |",
                              0);
-    Q_EMIT executionProgress("╠════════════════════════════════════════════════════════════════╣",
+    Q_EMIT executionProgress("+================================================================+",
                              0);
 
     QString ps_script = buildCacheClearingScript();
 
-    Q_EMIT executionProgress("║ Detecting browser processes and cache locations...           ║",
+    Q_EMIT executionProgress("| Detecting browser processes and cache locations...           |",
                              20);
 
     ProcessResult ps = runPowerShell(ps_script, sak::kTimeoutBrowserCacheMs);
 
-    Q_EMIT executionProgress("║ Calculating cache sizes before clearing...                   ║",
+    Q_EMIT executionProgress("| Calculating cache sizes before clearing...                   |",
                              40);
 
     if (isCancelled()) {
@@ -179,13 +179,13 @@ void ClearBrowserCacheAction::execute() {
         return;
     }
 
-    Q_EMIT executionProgress("║ Processing results and generating report...                   ║",
+    Q_EMIT executionProgress("| Processing results and generating report...                   |",
                              80);
 
     qint64 duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
     BrowserCacheResult parsed = parseCacheOutput(ps.std_out);
 
-    Q_EMIT executionProgress("╠════════════════════════════════════════════════════════════════╣",
+    Q_EMIT executionProgress("+================================================================+",
                              90);
 
     ExecutionResult result;
@@ -391,69 +391,69 @@ QString ClearBrowserCacheAction::buildSuccessLog(const BrowserCacheResult& parse
     const QString size_str = formatFileSize(parsed.size_cleared);
 
     QString log =
-        "╔════════════════════════════════════════════════════════════════╗\n"
-        "║          BROWSER CACHE CLEARING - RESULTS                     ║\n"
-        "╠════════════════════════════════════════════════════════════════╣\n";
+        "+================================================================+\n"
+        "|          BROWSER CACHE CLEARING - RESULTS                     |\n"
+        "+================================================================+\n";
 
-    log += QString("║ Total Cleared: %1\n").arg(size_str).leftJustified(66) + "║\n";
-    log += QString("║ Browsers Processed: %1/%2\n")
+    log += QString("| Total Cleared: %1\n").arg(size_str).leftJustified(66) + "|\n";
+    log += QString("| Browsers Processed: %1/%2\n")
                .arg(parsed.cleared_count)
                .arg(parsed.cleared_count + parsed.blocked_count)
                .leftJustified(66) +
-           "║\n";
-    log += "╠════════════════════════════════════════════════════════════════╣\n";
+           "|\n";
+    log += "+================================================================+\n";
 
     for (const QString& detail : parsed.details) {
-        log += QString("║ %1\n").arg(detail).leftJustified(66) + "║\n";
+        log += QString("| %1\n").arg(detail).leftJustified(66) + "|\n";
     }
 
     if (parsed.blocked_count > 0) {
-        log += "╠════════════════════════════════════════════════════════════════╣\n";
-        log += QString("║ Skipped (%1 running): %2\n")
+        log += "+================================================================+\n";
+        log += QString("| Skipped (%1 running): %2\n")
                    .arg(parsed.blocked_count)
                    .arg(parsed.blocked_browsers.join(", "))
                    .leftJustified(66) +
-               "║\n";
+               "|\n";
     }
 
     if (!stderr_output.trimmed().isEmpty()) {
-        log += "╠════════════════════════════════════════════════════════════════╣\n";
-        log += "║ Warnings:                                                       ║\n";
+        log += "+================================================================+\n";
+        log += "| Warnings:                                                       |\n";
         const QStringList warn_lines = stderr_output.split('\n', Qt::SkipEmptyParts);
         const int warn_max = std::min(3, static_cast<int>(warn_lines.size()));
         for (int i = 0; i < warn_max; ++i) {
-            log += QString("║ %1\n").arg(warn_lines[i].left(66)).leftJustified(66) + "║\n";
+            log += QString("| %1\n").arg(warn_lines[i].left(66)).leftJustified(66) + "|\n";
         }
     }
 
-    log += "╠════════════════════════════════════════════════════════════════╣\n";
-    log += QString("║ Completed in: %1 seconds\n")
+    log += "+================================================================+\n";
+    log += QString("| Completed in: %1 seconds\n")
                .arg(duration_ms / 1000.0, 0, 'f', 2)
                .leftJustified(66) +
-           "║\n";
-    log += "╚════════════════════════════════════════════════════════════════╝\n";
+           "|\n";
+    log += "+================================================================+\n";
 
     return log;
 }
 
 QString ClearBrowserCacheAction::buildFailureLog(const BrowserCacheResult& parsed) const {
     QString log =
-        "╔════════════════════════════════════════════════════════════════╗\n"
-        "║          BROWSER CACHE CLEARING - RESULTS                     ║\n"
-        "╠════════════════════════════════════════════════════════════════╣\n";
+        "+================================================================+\n"
+        "|          BROWSER CACHE CLEARING - RESULTS                     |\n"
+        "+================================================================+\n";
 
     if (parsed.blocked_count > 0) {
-        log += "║ Cannot clear cache - browsers running:                       ║\n";
-        log += QString("║ %1\n").arg(parsed.blocked_browsers.join(", ")).leftJustified(66) + "║\n";
-        log += "╠════════════════════════════════════════════════════════════════╣\n";
-        log += "║ Action Required: Close all browsers and retry                ║\n";
+        log += "| Cannot clear cache - browsers running:                       |\n";
+        log += QString("| %1\n").arg(parsed.blocked_browsers.join(", ")).leftJustified(66) + "|\n";
+        log += "+================================================================+\n";
+        log += "| Action Required: Close all browsers and retry                |\n";
     } else {
-        log += "║ No cache directories detected                                  ║\n";
-        log += "╠════════════════════════════════════════════════════════════════╣\n";
-        log += "║ Checked browsers: Chrome, Edge, Firefox, Brave, Opera, Vivaldi ║\n";
+        log += "| No cache directories detected                                  |\n";
+        log += "+================================================================+\n";
+        log += "| Checked browsers: Chrome, Edge, Firefox, Brave, Opera, Vivaldi |\n";
     }
 
-    log += "╚════════════════════════════════════════════════════════════════╝\n";
+    log += "+================================================================+\n";
 
     return log;
 }

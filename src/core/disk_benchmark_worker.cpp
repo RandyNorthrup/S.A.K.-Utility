@@ -91,7 +91,7 @@ auto DiskBenchmarkWorker::execute() -> std::expected<void, sak::error_code> {
 
     m_result.timestamp = QDateTime::currentDateTime();
 
-    logInfo("Disk benchmark complete — Seq R/W: {:.0f}/{:.0f} MB/s, 4K R/W: {:.0f}/{:.0f} IOPS",
+    logInfo("Disk benchmark complete -- Seq R/W: {:.0f}/{:.0f} MB/s, 4K R/W: {:.0f}/{:.0f} IOPS",
             m_result.seq_read_mbps,
             m_result.seq_write_mbps,
             m_result.rand_4k_read_iops,
@@ -138,7 +138,7 @@ auto DiskBenchmarkWorker::runAllBenchmarks() -> std::expected<void, sak::error_c
                      m_result.rand_4k_write_iops,
                      m_result.avg_write_latency_us);
 
-    // Random 4K QD32 — capture raw latencies for P99 calculation
+    // Random 4K QD32 -- capture raw latencies for P99 calculation
     std::vector<double> qd32_read_latencies;
     std::vector<double> qd32_write_latencies;
     double qd32_avg_read_lat = 0.0;
@@ -445,7 +445,7 @@ void DiskBenchmarkWorker::runRandom4KRead(int queue_depth,
         *latencies_out = std::move(latencies);
     }
 
-    logInfo("Random 4K read QD{}: {:.0f} IOPS, {:.1f} MB/s, {:.0f} µs avg",
+    logInfo("Random 4K read QD{}: {:.0f} IOPS, {:.1f} MB/s, {:.0f} us avg",
             queue_depth,
             iops,
             read_mbps,
@@ -648,7 +648,7 @@ void DiskBenchmarkWorker::runRandom4KWrite(int queue_depth,
         *latencies_out = std::move(latencies);
     }
 
-    logInfo("Random 4K write QD{}: {:.0f} IOPS, {:.1f} MB/s, {:.0f} µs avg",
+    logInfo("Random 4K write QD{}: {:.0f} IOPS, {:.1f} MB/s, {:.0f} us avg",
             queue_depth,
             iops,
             write_mbps,

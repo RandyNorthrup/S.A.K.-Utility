@@ -67,7 +67,7 @@ Q_SIGNALS:
 
     /// @brief Emitted periodically with live status
     /// @param elapsed_seconds Seconds elapsed since start
-    /// @param cpu_temp Current CPU temperature (Â°C)
+    /// @param cpu_temp Current CPU temperature ( degC)
     /// @param errors_so_far Errors detected so far
     void stressTestStatus(int elapsed_seconds, double cpu_temp, int errors_so_far);
 

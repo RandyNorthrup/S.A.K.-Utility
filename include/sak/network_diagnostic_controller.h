@@ -71,10 +71,10 @@ public:
     /// @brief Get current controller state
     [[nodiscard]] State currentState() const;
 
-    // ── Adapter Inspection ──
+    // -- Adapter Inspection --
     void scanAdapters();
 
-    // ── Connectivity ──
+    // -- Connectivity --
     struct PingParams {
         QString target;
         int count;
@@ -88,14 +88,14 @@ public:
         const QString& target, int maxHops, int timeoutMs, int probesPerHop, bool resolveHostnames);
     void mtr(const QString& target, int cycles, int intervalMs, int maxHops, int timeoutMs);
 
-    // ── DNS ──
+    // -- DNS --
     void dnsQuery(const QString& hostname, const QString& recordType, const QString& dnsServer);
     void dnsReverseLookup(const QString& ipAddress, const QString& dnsServer);
     void dnsCompare(const QString& hostname, const QString& recordType, const QStringList& servers);
     void dnsInspectCache();
     void dnsFlushCache();
 
-    // ── Port Scanning ──
+    // -- Port Scanning --
     struct PortScanParams {
         QString target;
         QVector<uint16_t> ports;
@@ -107,7 +107,7 @@ public:
     };
     void scanPorts(const PortScanParams& params);
 
-    // ── Bandwidth ──
+    // -- Bandwidth --
     struct BandwidthTestParams {
         QString server_addr;
         uint16_t port;
@@ -122,13 +122,13 @@ public:
     void runBandwidthTest(const BandwidthTestParams& params);
     void runHttpSpeedTest();
 
-    // ── WiFi ──
+    // -- WiFi --
     void scanWiFi();
     void startContinuousWiFiScan(int intervalMs);
     void stopContinuousWiFiScan();
     [[nodiscard]] bool isWiFiAvailable() const;
 
-    // ── Connections ──
+    // -- Connections --
     void startConnectionMonitor(int refreshMs,
                                 bool showTcp,
                                 bool showUdp,
@@ -136,13 +136,13 @@ public:
                                 uint16_t portFilter);
     void stopConnectionMonitor();
 
-    // ── Firewall ──
+    // -- Firewall --
     void auditFirewall();
 
-    // ── Shares ──
+    // -- Shares --
     void discoverShares(const QString& hostname);
 
-    // ── LAN File Transfer Speed Test ──
+    // -- LAN File Transfer Speed Test --
 
     /// @brief Start a TCP server to receive data from a peer for speed measurement
     void startLanTransferServer(uint16_t port);
@@ -159,7 +159,7 @@ public:
                             int durationSec,
                             int blockSizeKB);
 
-    // ── Ethernet Config ──
+    // -- Ethernet Config --
 
     /// @brief Backup the current Ethernet adapter settings to a JSON file
     void backupEthernetSettings(const QString& adapterName, const QString& filePath);
@@ -170,14 +170,14 @@ public:
     /// @brief List available Ethernet adapter names
     [[nodiscard]] QStringList listEthernetAdapters() const;
 
-    // ── Report ──
+    // -- Report --
     void generateReport(const QString& outputPath,
                         const QString& format,
                         const QString& technician,
                         const QString& ticket,
                         const QString& notes);
 
-    // ── Cancel ──
+    // -- Cancel --
     void cancel();
 
 Q_SIGNALS:

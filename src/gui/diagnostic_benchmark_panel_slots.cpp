@@ -109,7 +109,7 @@ void DiagnosticBenchmarkPanel::onHardwareScanComplete(const HardwareInventory& i
     m_hw_uptime_label->setText(formatUptime(inventory.uptime_seconds));
 
     if (inventory.battery.present) {
-        m_hw_battery_label->setText(QString("%1 — %2% health, %3")
+        m_hw_battery_label->setText(QString("%1 -- %2% health, %3")
                                         .arg(inventory.battery.name)
                                         .arg(inventory.battery.health_percent, 0, 'f', 1)
                                         .arg(inventory.battery.status));
@@ -197,16 +197,16 @@ void DiagnosticBenchmarkPanel::onSmartAnalysisComplete(const QVector<SmartReport
         m_smart_table->setItem(row,
                                3,
                                new QTableWidgetItem(
-                                   QString("%1°C").arg(report.temperature_celsius, 0, 'f', 0)));
+                                   QString("%1 degC").arg(report.temperature_celsius, 0, 'f', 0)));
 
         m_smart_table->setItem(row,
                                4,
                                new QTableWidgetItem(QString::number(report.power_on_hours)));
 
-        // Wear level: NVMe percentage or "—" for SATA
+        // Wear level: NVMe percentage or "--" for SATA
         const QString wear = report.nvme_health.has_value()
                                  ? QString("%1%").arg(report.nvme_health->percentage_used)
-                                 : "—";
+                                 : "--";
         m_smart_table->setItem(row, 5, new QTableWidgetItem(wear));
 
         // Collect warnings
@@ -257,7 +257,7 @@ void DiagnosticBenchmarkPanel::onCpuBenchmarkComplete(const CpuBenchmarkResult& 
                                      .arg(result.thread_scaling_efficiency * 100.0, 0, 'f', 1)
                                      .arg(baseline_pct, 0, 'f', 0));
 
-    logMessage(QString("CPU benchmark complete — Score: %1 (ST) / %2 (MT)")
+    logMessage(QString("CPU benchmark complete -- Score: %1 (ST) / %2 (MT)")
                    .arg(result.single_thread_score)
                    .arg(result.multi_thread_score));
     Q_EMIT statusMessage("CPU benchmark complete", sak::kTimerStatusMessageMs);
@@ -271,8 +271,8 @@ void DiagnosticBenchmarkPanel::onRunDiskBenchmarkClicked() {
     Q_ASSERT(m_disk_drive_combo);
     Q_ASSERT(m_controller);
     if (m_disk_drive_combo->count() == 0) {
-        logMessage("No drives available — run Hardware Scan first");
-        Q_EMIT statusMessage("No drives — run Hardware Scan first", sak::kTimerStatusMessageMs);
+        logMessage("No drives available -- run Hardware Scan first");
+        Q_EMIT statusMessage("No drives -- run Hardware Scan first", sak::kTimerStatusMessageMs);
         return;
     }
 
@@ -290,13 +290,13 @@ void DiagnosticBenchmarkPanel::onDiskBenchmarkComplete(const DiskBenchmarkResult
     Q_ASSERT(m_disk_rand_label);
     setOperationRunning(false);
 
-    m_disk_seq_label->setText(QString("Sequential — Read: %1 MB/s | Write: %2 MB/s")
+    m_disk_seq_label->setText(QString("Sequential -- Read: %1 MB/s | Write: %2 MB/s")
                                   .arg(result.seq_read_mbps, 0, 'f', 1)
                                   .arg(result.seq_write_mbps, 0, 'f', 1));
 
     m_disk_rand_label->setText(
-        QString("Random 4K QD1 — R: %1 MB/s (%2 IOPS) | W: %3 MB/s (%4 IOPS)\n"
-                "Random 4K QD32 — R: %5 MB/s (%6 IOPS) | W: %7 MB/s (%8 IOPS)")
+        QString("Random 4K QD1 -- R: %1 MB/s (%2 IOPS) | W: %3 MB/s (%4 IOPS)\n"
+                "Random 4K QD32 -- R: %5 MB/s (%6 IOPS) | W: %7 MB/s (%8 IOPS)")
             .arg(result.rand_4k_read_mbps, 0, 'f', 1)
             .arg(result.rand_4k_read_iops, 0, 'f', 0)
             .arg(result.rand_4k_write_mbps, 0, 'f', 1)
@@ -306,7 +306,7 @@ void DiagnosticBenchmarkPanel::onDiskBenchmarkComplete(const DiskBenchmarkResult
             .arg(result.rand_4k_qd32_write_mbps, 0, 'f', 1)
             .arg(result.rand_4k_qd32_write_iops, 0, 'f', 0));
 
-    m_disk_latency_label->setText(QString("Latency — Read avg: %1 \u03BCs (P99: %2 \u03BCs) | "
+    m_disk_latency_label->setText(QString("Latency -- Read avg: %1 \u03BCs (P99: %2 \u03BCs) | "
                                           "Write avg: %3 \u03BCs (P99: %4 \u03BCs)")
                                       .arg(result.avg_read_latency_us, 0, 'f', 1)
                                       .arg(result.p99_read_latency_us, 0, 'f', 1)
@@ -316,7 +316,7 @@ void DiagnosticBenchmarkPanel::onDiskBenchmarkComplete(const DiskBenchmarkResult
     m_disk_score_label->setText(
         QString("Score: %1 (Samsung 980 PRO = 1000)").arg(result.overall_score));
 
-    logMessage(QString("Disk benchmark complete — Score: %1").arg(result.overall_score));
+    logMessage(QString("Disk benchmark complete -- Score: %1").arg(result.overall_score));
     Q_EMIT statusMessage("Disk benchmark complete", sak::kTimerStatusMessageMs);
 }
 
@@ -350,7 +350,7 @@ void DiagnosticBenchmarkPanel::onMemoryBenchmarkComplete(const MemoryBenchmarkRe
     m_mem_score_label->setText(
         QString("Score: %1 (DDR4-3200 dual-channel = 1000)").arg(result.overall_score));
 
-    logMessage(QString("Memory benchmark complete — Score: %1").arg(result.overall_score));
+    logMessage(QString("Memory benchmark complete -- Score: %1").arg(result.overall_score));
     Q_EMIT statusMessage("Memory benchmark complete", sak::kTimerStatusMessageMs);
 }
 
@@ -410,7 +410,7 @@ void DiagnosticBenchmarkPanel::onStressTestComplete(const StressTestResult& resu
             QString("font-weight: 600; color: %1;").arg(sak::ui::kStatusColorError));
     }
 
-    logMessage(QString("Stress test %1 (%2s, %3 errors, max temp: %4°C)")
+    logMessage(QString("Stress test %1 (%2s, %3 errors, max temp: %4 degC)")
                    .arg(result.passed ? "PASSED" : "FAILED")
                    .arg(result.duration_seconds)
                    .arg(result.errors_detected)
@@ -431,7 +431,7 @@ void DiagnosticBenchmarkPanel::onStressTestStatus(int elapsed_seconds,
     m_stress_elapsed_label->setText(
         QString("Elapsed: %1:%2").arg(min, 2, 10, QChar('0')).arg(sec, 2, 10, QChar('0')));
 
-    m_stress_temp_label->setText(QString("CPU Temp: %1°C").arg(cpu_temp, 0, 'f', 1));
+    m_stress_temp_label->setText(QString("CPU Temp: %1 degC").arg(cpu_temp, 0, 'f', 1));
 
     m_stress_errors_label->setText(QString("Errors: %1").arg(errors));
 
@@ -511,14 +511,14 @@ void DiagnosticBenchmarkPanel::onSuiteStateChanged(DiagnosticController::SuiteSt
 
     const int state_idx = static_cast<int>(state);
     if (state_idx < 0 || state_idx >= static_cast<int>(std::size(state_to_step))) {
-        return;  // Invalid state — ignore
+        return;  // Invalid state -- ignore
     }
     const int step = state_to_step[state_idx];
 
     // Mark completed steps with checkmark, current with arrow icon
     for (int i = 0; i < 7; ++i) {
         if (step >= 0 && i < step) {
-            // Completed — reconstruct label from stored step name
+            // Completed -- reconstruct label from stored step name
             m_suite_step_labels[i]->setText(
                 QString("  %1  %2").arg(QChar(0x2705)).arg(m_suite_step_names[i]));
             m_suite_step_labels[i]->setStyleSheet(
@@ -582,7 +582,7 @@ void DiagnosticBenchmarkPanel::onThermalReadingsUpdated(const QVector<ThermalRea
 
         const QString temp_text = QString(
                                       "<span style='color:%1; font-weight:600;'>"
-                                      "%2°C</span>")
+                                      "%2 degC</span>")
                                       .arg(color)
                                       .arg(temp);
 

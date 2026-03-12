@@ -336,96 +336,96 @@ std::pair<QString, QString> TestNetworkSpeedAction::assessConnectionQuality() co
 
 QString TestNetworkSpeedAction::buildSpeedTestReport() const {
     QString report;
-    report += QString("╔").repeated(1) + QString("═").repeated(78) + QString("╗\n");
-    report += QString("║") + QString(" NETWORK SPEED TEST RESULTS").leftJustified(78) +
-              QString("║\n");
-    report += QString("╠").repeated(1) + QString("═").repeated(78) + QString("╣\n");
+    report += QString("+").repeated(1) + QString("=").repeated(78) + QString("+\n");
+    report += QString("|") + QString(" NETWORK SPEED TEST RESULTS").leftJustified(78) +
+              QString("|\n");
+    report += QString("+").repeated(1) + QString("=").repeated(78) + QString("+\n");
 
     appendConnectionInfo(report);
     appendSpeedResults(report);
     appendLatencyResults(report);
 
-    report += QString("╚").repeated(1) + QString("═").repeated(78) + QString("╝\n");
+    report += QString("+").repeated(1) + QString("=").repeated(78) + QString("+\n");
     return report;
 }
 
 void TestNetworkSpeedAction::appendConnectionInfo(QString& report) const {
     if (!m_public_ip.isEmpty()) {
-        report += QString("║ Public IP:    %1").arg(m_public_ip).leftJustified(79) + QString("║\n");
+        report += QString("| Public IP:    %1").arg(m_public_ip).leftJustified(79) + QString("|\n");
     }
     if (!m_isp.isEmpty()) {
-        report += QString("║ ISP:          %1").arg(m_isp).leftJustified(79) + QString("║\n");
+        report += QString("| ISP:          %1").arg(m_isp).leftJustified(79) + QString("|\n");
     }
     if (!m_city.isEmpty() && !m_country.isEmpty()) {
         QString location = QString("%1, %2, %3").arg(m_city, m_region, m_country);
-        report += QString("║ Location:     %1").arg(location).leftJustified(79) + QString("║\n");
+        report += QString("| Location:     %1").arg(location).leftJustified(79) + QString("|\n");
     }
-    report += QString("╠").repeated(1) + QString("═").repeated(78) + QString("╣\n");
+    report += QString("+").repeated(1) + QString("=").repeated(78) + QString("+\n");
 }
 
 void TestNetworkSpeedAction::appendSpeedResults(QString& report) const {
     Q_ASSERT(!report.isEmpty());
     if (m_download_speed > 0) {
-        report += QString("║ Download Speed (Avg):  %1 Mbps")
+        report += QString("| Download Speed (Avg):  %1 Mbps")
                       .arg(m_download_speed, 0, 'f', 2)
                       .leftJustified(79) +
-                  QString("║\n");
+                  QString("|\n");
         if (m_max_download_speed > 0) {
-            report += QString("║ Download Speed (Max):  %1 Mbps")
+            report += QString("| Download Speed (Max):  %1 Mbps")
                           .arg(m_max_download_speed, 0, 'f', 2)
                           .leftJustified(79) +
-                      QString("║\n");
+                      QString("|\n");
         }
-        report += QString("║ Successful Tests:     %1/3 servers")
+        report += QString("| Successful Tests:     %1/3 servers")
                       .arg(m_download_tests_successful)
                       .leftJustified(79) +
-                  QString("║\n");
+                  QString("|\n");
     } else {
-        report += QString("║ Download Speed:        Test failed (check firewall/connection)")
+        report += QString("| Download Speed:        Test failed (check firewall/connection)")
                       .leftJustified(79) +
-                  QString("║\n");
+                  QString("|\n");
     }
-    report += QString("╠").repeated(1) + QString("═").repeated(78) + QString("╣\n");
+    report += QString("+").repeated(1) + QString("=").repeated(78) + QString("+\n");
     if (m_upload_test_successful && m_upload_speed > 0) {
-        report += QString("║ Upload Speed:          %1 Mbps")
+        report += QString("| Upload Speed:          %1 Mbps")
                       .arg(m_upload_speed, 0, 'f', 2)
                       .leftJustified(79) +
-                  QString("║\n");
+                  QString("|\n");
     } else {
-        report += QString("║ Upload Speed:          Test failed (may require HTTPS access)")
+        report += QString("| Upload Speed:          Test failed (may require HTTPS access)")
                       .leftJustified(79) +
-                  QString("║\n");
+                  QString("|\n");
     }
-    report += QString("╠").repeated(1) + QString("═").repeated(78) + QString("╣\n");
+    report += QString("+").repeated(1) + QString("=").repeated(78) + QString("+\n");
 }
 
 void TestNetworkSpeedAction::appendLatencyResults(QString& report) const {
     Q_ASSERT(!report.isEmpty());
     if (m_latency > 0) {
-        report += QString("║ Latency (Avg):         %1 ms").arg(m_latency).leftJustified(79) +
-                  QString("║\n");
-        report += QString("║ Latency Range:         %1 - %2 ms")
+        report += QString("| Latency (Avg):         %1 ms").arg(m_latency).leftJustified(79) +
+                  QString("|\n");
+        report += QString("| Latency Range:         %1 - %2 ms")
                       .arg(m_min_latency)
                       .arg(m_max_latency)
                       .leftJustified(79) +
-                  QString("║\n");
+                  QString("|\n");
         report +=
-            QString("║ Jitter:                %1 ms").arg(m_jitter, 0, 'f', 2).leftJustified(79) +
-            QString("║\n");
-        report += QString("║ Packet Loss:           %1%")
+            QString("| Jitter:                %1 ms").arg(m_jitter, 0, 'f', 2).leftJustified(79) +
+            QString("|\n");
+        report += QString("| Packet Loss:           %1%")
                       .arg(m_packet_loss, 0, 'f', 2)
                       .leftJustified(79) +
-                  QString("║\n");
-        report += QString("╠").repeated(1) + QString("═").repeated(78) + QString("╣\n");
+                  QString("|\n");
+        report += QString("+").repeated(1) + QString("=").repeated(78) + QString("+\n");
 
         const auto [quality, recommendation] = assessConnectionQuality();
-        report += QString("║ Connection Quality:    %1").arg(quality).leftJustified(79) +
-                  QString("║\n");
-        report += QString("║ Recommendation:        %1").arg(recommendation).leftJustified(79) +
-                  QString("║\n");
+        report += QString("| Connection Quality:    %1").arg(quality).leftJustified(79) +
+                  QString("|\n");
+        report += QString("| Recommendation:        %1").arg(recommendation).leftJustified(79) +
+                  QString("|\n");
     } else {
-        report += QString("║ Latency Test:          Failed to measure latency").leftJustified(79) +
-                  QString("║\n");
+        report += QString("| Latency Test:          Failed to measure latency").leftJustified(79) +
+                  QString("|\n");
     }
 }
 

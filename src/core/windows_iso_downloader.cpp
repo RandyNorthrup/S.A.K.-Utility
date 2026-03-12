@@ -5,8 +5,8 @@
  * @file windows_iso_downloader.cpp
  * @brief Windows ISO downloader using UUP dump API + aria2c + UUPMediaConverter
  *
- * Orchestrates the complete pipeline: browse builds → select language/edition →
- * download UUP files → convert to bootable ISO. All tools are bundled at build
+ * Orchestrates the complete pipeline: browse builds -> select language/edition ->
+ * download UUP files -> convert to bootable ISO. All tools are bundled at build
  * time; only actual Windows UUP files are fetched at runtime.
  */
 

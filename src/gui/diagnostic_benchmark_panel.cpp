@@ -69,7 +69,7 @@ void DiagnosticBenchmarkPanel::setupUi() {
                                     sak::ui::kMarginMedium);
     root_layout->setSpacing(sak::ui::kSpacingDefault);
 
-    // Dynamic panel header — updates when sub-tab changes
+    // Dynamic panel header -- updates when sub-tab changes
     m_headerWidgets = sak::createDynamicPanelHeader(
         this,
         QStringLiteral(":/icons/icons/panel_diagnostic.svg"),
@@ -77,7 +77,7 @@ void DiagnosticBenchmarkPanel::setupUi() {
         tr("Hardware inventory, SMART analysis, and thermal monitoring"),
         root_layout);
 
-    // Tabbed content — Diagnostics tab and Benchmark tab
+    // Tabbed content -- Diagnostics tab and Benchmark tab
     m_tabs = new QTabWidget(this);
     m_tabs->addTab(createDiagnosticsTab(), tr("Diagnostics"));
     m_tabs->addTab(createBenchmarkTab(), tr("Benchmarks"));
@@ -175,7 +175,7 @@ QGroupBox* DiagnosticBenchmarkPanel::createHardwareSection() {
         key_label->setStyleSheet("font-weight: 600;");
         row->addWidget(key_label);
 
-        value_label = new QLabel("—", this);
+        value_label = new QLabel("--", this);
         value_label->setWordWrap(true);
         row->addWidget(value_label, 1);
         layout->addLayout(row);

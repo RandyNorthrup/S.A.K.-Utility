@@ -94,7 +94,7 @@ void NetworkConnectionManager::onNewConnection() {
     connect(
         m_socket, &QTcpSocket::disconnected, this, &NetworkConnectionManager::onSocketDisconnected);
     connect(m_socket, &QTcpSocket::errorOccurred, this, [this](QAbstractSocket::SocketError) {
-        // Capture a local copy of the error string — m_socket may be replaced by the
+        // Capture a local copy of the error string -- m_socket may be replaced by the
         // time this lambda executes in a queued connection.
         if (!m_socket) {
             logError("NetworkConnectionManager socket error on already-released socket");

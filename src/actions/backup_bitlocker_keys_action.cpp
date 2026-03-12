@@ -35,7 +35,7 @@ BackupBitlockerKeysAction::BackupBitlockerKeysAction(const QString& backup_locat
     : QuickAction(parent), m_backup_location(backup_location) {}
 
 // ============================================================================
-// Static Helpers — WMI Enum Formatting
+// Static Helpers -- WMI Enum Formatting
 // ============================================================================
 
 namespace {
@@ -110,7 +110,7 @@ QString BackupBitlockerKeysAction::backupTimestamp() {
 }
 
 // ============================================================================
-// Volume Detection — WMI Queries via PowerShell
+// Volume Detection -- WMI Queries via PowerShell
 // ============================================================================
 
 namespace {
@@ -390,7 +390,7 @@ void BackupBitlockerKeysAction::scan() {
 
         QStringList volume_details;
         for (const auto& vol : m_volumes) {
-            QString detail = QString("%1 (%2) — Protection: %3, Encryption: %4")
+            QString detail = QString("%1 (%2) -- Protection: %3, Encryption: %4")
                                  .arg(vol.drive_letter)
                                  .arg(vol.volume_label.isEmpty() ? "No Label" : vol.volume_label)
                                  .arg(vol.protection_status)
@@ -400,7 +400,7 @@ void BackupBitlockerKeysAction::scan() {
         result.details = volume_details.join("\n");
         result.files_count = m_volumes.size();
         result.estimated_duration_ms = m_volumes.size() * 5000;  // ~5s per volume
-        result.warning = "Recovery keys are sensitive — store the backup securely";
+        result.warning = "Recovery keys are sensitive -- store the backup securely";
     }
 
     Q_ASSERT(!result.summary.isEmpty());
@@ -411,7 +411,7 @@ void BackupBitlockerKeysAction::scan() {
 }
 
 // ============================================================================
-// Execution — Full Key Backup
+// Execution -- Full Key Backup
 // ============================================================================
 
 void BackupBitlockerKeysAction::execute() {
@@ -671,7 +671,7 @@ void BackupBitlockerKeysAction::executeBuildReport(const QDateTime& start_time,
 }
 
 // ============================================================================
-// File Output — Master Recovery Document
+// File Output -- Master Recovery Document
 // ============================================================================
 
 bool BackupBitlockerKeysAction::writeRecoveryDocument(const QString& backup_dir) {
@@ -748,7 +748,7 @@ void BackupBitlockerKeysAction::writeRecoveryDocumentVolumes(QTextStream& out) c
         out << "\n";
 
         if (vol.key_protectors.isEmpty()) {
-            out << "    (No key protectors found — administrator privileges may be required)\n";
+            out << "    (No key protectors found -- administrator privileges may be required)\n";
         }
 
         for (int k = 0; k < vol.key_protectors.size(); ++k) {
@@ -767,15 +767,15 @@ void BackupBitlockerKeysAction::writeRecoveryDocumentFooter(QTextStream& out) co
     out << "\n";
     out << "  To unlock a BitLocker-encrypted volume using a recovery password:\n";
     out << "\n";
-    out << "  Method 1 — BitLocker Recovery Screen (during boot):\n";
+    out << "  Method 1 -- BitLocker Recovery Screen (during boot):\n";
     out << "    1. When prompted, select 'Enter recovery key'\n";
     out << "    2. Type the 48-digit numerical recovery password\n";
     out << "    3. Press Enter to unlock\n";
     out << "\n";
-    out << "  Method 2 — Command Line (from recovery environment):\n";
+    out << "  Method 2 -- Command Line (from recovery environment):\n";
     out << "    manage-bde -unlock C: -RecoveryPassword YOUR-RECOVERY-KEY\n";
     out << "\n";
-    out << "  Method 3 — PowerShell (elevated):\n";
+    out << "  Method 3 -- PowerShell (elevated):\n";
     out << "    Unlock-BitLocker -MountPoint 'C:' -RecoveryPassword 'YOUR-KEY'\n";
     out << "\n";
     out << "  To identify which key to use, match the Key Protector ID shown\n";
@@ -787,7 +787,7 @@ void BackupBitlockerKeysAction::writeRecoveryDocumentFooter(QTextStream& out) co
 }
 
 // ============================================================================
-// File Output — Per-Volume Key Files
+// File Output -- Per-Volume Key Files
 // ============================================================================
 
 int BackupBitlockerKeysAction::writePerVolumeKeyFiles(const QString& backup_dir) {
@@ -843,7 +843,7 @@ int BackupBitlockerKeysAction::writePerVolumeKeyFiles(const QString& backup_dir)
 }
 
 // ============================================================================
-// Security — Restrict File Permissions
+// Security -- Restrict File Permissions
 // ============================================================================
 
 bool BackupBitlockerKeysAction::restrictFilePermissions(const QString& path) {
@@ -897,7 +897,7 @@ try {
 }
 
 // ============================================================================
-// Extracted Helpers — Nesting Reduction
+// Extracted Helpers -- Nesting Reduction
 // ============================================================================
 
 int BackupBitlockerKeysAction::countRecoveryPasswords(const QVector<KeyProtectorInfo>& protectors) {

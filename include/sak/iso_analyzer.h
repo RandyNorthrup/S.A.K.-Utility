@@ -14,13 +14,13 @@ namespace sak {
 
 /// @brief Detailed information extracted from an ISO/IMG file
 struct IsoInfo {
-    // ── Identity ────────────────────────────────────────────────
+    // -- Identity ------------------------------------------------
     QString os_name;       ///< e.g. "Windows 11 Pro" or "Ubuntu 24.04 LTS"
     QString os_version;    ///< e.g. "24H2" or "24.04"
     QString architecture;  ///< e.g. "x64", "ARM64"
     QString os_family;     ///< "Windows", "Linux", "Unknown"
 
-    // ── ISO Metadata ────────────────────────────────────────────
+    // -- ISO Metadata --------------------------------------------
     QString volume_label;   ///< Volume ID from primary volume descriptor
     QString publisher;      ///< Publisher from primary volume descriptor
     QString preparer;       ///< Data preparer from primary volume descriptor
@@ -28,21 +28,21 @@ struct IsoInfo {
     QString creation_date;  ///< Volume creation date
     QString filesystem;     ///< "ISO 9660", "UDF", "ISO 9660 + UDF", "FAT32"
 
-    // ── Boot Info ───────────────────────────────────────────────
+    // -- Boot Info -----------------------------------------------
     bool is_bootable{false};  ///< El Torito boot record found
     QString boot_type;        ///< "UEFI", "Legacy BIOS", "UEFI + Legacy"
 
-    // ── Windows-Specific ────────────────────────────────────────
+    // -- Windows-Specific ----------------------------------------
     QString windows_build;         ///< Build number, e.g. "26100"
     QStringList windows_editions;  ///< Editions in install.wim/esd
 
-    // ── Linux-Specific ──────────────────────────────────────────
+    // -- Linux-Specific ------------------------------------------
     QString distro_name;     ///< e.g. "Ubuntu", "Fedora", "Arch"
     QString distro_version;  ///< e.g. "24.04", "41"
     QString desktop_env;     ///< e.g. "GNOME", "KDE", "XFCE" (if detectable)
     bool is_live{false};     ///< Live-boot capable
 
-    // ── Size ────────────────────────────────────────────────────
+    // -- Size ----------------------------------------------------
     qint64 file_size{0};      ///< File size on disk (bytes)
     uint64_t volume_size{0};  ///< Logical volume size from volume descriptor
 

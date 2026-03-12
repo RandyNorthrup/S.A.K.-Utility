@@ -151,24 +151,24 @@ void OptimizePowerSettingsAction::scan() {
 
 QString OptimizePowerSettingsAction::buildPowerPlanListReport(
     const PowerPlan& current_plan, const QVector<PowerPlan>& all_plans) const {
-    QString report = "╔════════════════════════════════════════════════════════════════╗\n";
-    report += "║             POWER PLAN OPTIMIZATION REPORT                   ║\n";
-    report += "╠════════════════════════════════════════════════════════════════╣\n";
-    report += QString("║ Current Plan: %1\n").arg(current_plan.name).leftJustified(67, ' ') + "║\n";
-    report += QString("║ Current GUID: %1\n").arg(current_plan.guid).leftJustified(67, ' ') + "║\n";
-    report += "╠════════════════════════════════════════════════════════════════╣\n";
+    QString report = "+================================================================+\n";
+    report += "|             POWER PLAN OPTIMIZATION REPORT                   |\n";
+    report += "+================================================================+\n";
+    report += QString("| Current Plan: %1\n").arg(current_plan.name).leftJustified(67, ' ') + "|\n";
+    report += QString("| Current GUID: %1\n").arg(current_plan.guid).leftJustified(67, ' ') + "|\n";
+    report += "+================================================================+\n";
     report +=
-        QString("║ Available Power Plans: %1\n").arg(all_plans.size()).leftJustified(67, ' ') +
-        "║\n";
+        QString("| Available Power Plans: %1\n").arg(all_plans.size()).leftJustified(67, ' ') +
+        "|\n";
 
     // List all plans
     for (const PowerPlan& plan : all_plans) {
         QString plan_line =
-            QString("║   %1 %2\n").arg(plan.isActive ? "[ACTIVE]" : "        ").arg(plan.name);
-        report += plan_line.leftJustified(67, ' ') + "║\n";
+            QString("|   %1 %2\n").arg(plan.isActive ? "[ACTIVE]" : "        ").arg(plan.name);
+        report += plan_line.leftJustified(67, ' ') + "|\n";
     }
 
-    report += "╠════════════════════════════════════════════════════════════════╣\n";
+    report += "+================================================================+\n";
     return report;
 }
 
@@ -192,19 +192,19 @@ void OptimizePowerSettingsAction::finalizePowerOptimizationResult(const QDateTim
         result.log = report;
         result.log += QString("\nCompleted in %1 ms\n").arg(duration_ms);
         result.log += "RECOMMENDATIONS:\n";
-        result.log += "• System already optimized for performance\n";
-        result.log += "• Processor performance boost enabled\n";
-        result.log += "• Minimal power management restrictions\n";
+        result.log += "* System already optimized for performance\n";
+        result.log += "* Processor performance boost enabled\n";
+        result.log += "* Minimal power management restrictions\n";
     } else if (success) {
         result.success = true;
         result.message = QString("Switched to High Performance (was: %1)").arg(previous_plan_name);
         result.log = report;
         result.log += QString("\nCompleted in %1 ms\n").arg(duration_ms);
         result.log += "RECOMMENDATIONS:\n";
-        result.log += "• Performance boost enabled\n";
-        result.log += "• Sleep/hibernate settings unchanged\n";
-        result.log += "• Display timeout settings unchanged\n";
-        result.log += "• Use powercfg -QUERY for detailed settings\n";
+        result.log += "* Performance boost enabled\n";
+        result.log += "* Sleep/hibernate settings unchanged\n";
+        result.log += "* Display timeout settings unchanged\n";
+        result.log += "* Use powercfg -QUERY for detailed settings\n";
     } else {
         result.success = false;
         result.message = "Failed to activate High Performance plan";
@@ -230,21 +230,21 @@ bool OptimizePowerSettingsAction::activateHighPerformancePlan(const PowerPlan& h
                   new_active.name.contains("High Performance", Qt::CaseInsensitive);
 
         if (success) {
-            report += QString("║ Status:       Power plan activated\n").leftJustified(67, ' ') +
-                      "║\n";
+            report += QString("| Status:       Power plan activated\n").leftJustified(67, ' ') +
+                      "|\n";
             report +=
-                QString("║ Previous:     %1\n").arg(current_plan_name).leftJustified(67, ' ') +
-                "║\n";
-            report += QString("║ Current:      %1\n").arg(new_active.name).leftJustified(67, ' ') +
-                      "║\n";
+                QString("| Previous:     %1\n").arg(current_plan_name).leftJustified(67, ' ') +
+                "|\n";
+            report += QString("| Current:      %1\n").arg(new_active.name).leftJustified(67, ' ') +
+                      "|\n";
         } else {
             report +=
-                QString("║ Status:       Activation verification FAILED\n").leftJustified(67, ' ') +
-                "║\n";
+                QString("| Status:       Activation verification FAILED\n").leftJustified(67, ' ') +
+                "|\n";
         }
     } else {
-        report += "║ Status:       Activation FAILED                             ║\n";
-        report += "║ Error:        powercfg command failed                       ║\n";
+        report += "| Status:       Activation FAILED                             |\n";
+        report += "| Error:        powercfg command failed                       |\n";
     }
     return success;
 }
@@ -278,11 +278,11 @@ void OptimizePowerSettingsAction::execute() {
         high_perf_plan.name = "High Performance (Standard)";
     }
 
-    report += QString("║ Target Plan:  %1\n").arg(high_perf_plan.name).leftJustified(67, ' ') +
-              "║\n";
-    report += QString("║ Target GUID:  %1\n").arg(high_perf_plan.guid).leftJustified(67, ' ') +
-              "║\n";
-    report += "╠════════════════════════════════════════════════════════════════╣\n";
+    report += QString("| Target Plan:  %1\n").arg(high_perf_plan.name).leftJustified(67, ' ') +
+              "|\n";
+    report += QString("| Target GUID:  %1\n").arg(high_perf_plan.guid).leftJustified(67, ' ') +
+              "|\n";
+    report += "+================================================================+\n";
 
     bool already_optimized = current_plan.name.contains("High Performance", Qt::CaseInsensitive) ||
                              current_plan.name.contains("Ultimate Performance",
@@ -291,14 +291,14 @@ void OptimizePowerSettingsAction::execute() {
 
     if (already_optimized) {
         report +=
-            QString("║ Status:       Already using High Performance\n").leftJustified(67, ' ') +
-            "║\n";
-        report += QString("║ Action:       No change needed\n").leftJustified(67, ' ') + "║\n";
+            QString("| Status:       Already using High Performance\n").leftJustified(67, ' ') +
+            "|\n";
+        report += QString("| Action:       No change needed\n").leftJustified(67, ' ') + "|\n";
     } else {
         success = activateHighPerformancePlan(high_perf_plan, current_plan.name, report);
     }
 
-    report += "╚════════════════════════════════════════════════════════════════╝\n";
+    report += "+================================================================+\n";
     finalizePowerOptimizationResult(
         start_time, report, current_plan.name, high_perf_plan.guid, already_optimized, success);
 }

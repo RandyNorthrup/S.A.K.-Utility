@@ -26,7 +26,7 @@ namespace sak {
  *
  * Security: Recovery keys are sensitive. The backup is written to the
  * user-specified backup location with restricted file permissions.
- * Keys are never logged to the application log — only key protector IDs
+ * Keys are never logged to the application log -- only key protector IDs
  * are logged for audit purposes.
  */
 class BackupBitlockerKeysAction : public QuickAction {

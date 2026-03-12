@@ -92,17 +92,17 @@ void ClearPrintSpoolerAction::execute() {
     QDateTime start_time = QDateTime::currentDateTime();
     Q_ASSERT(start_time.isValid());
 
-    Q_EMIT executionProgress("╔════════════════════════════════════════════════════════════════╗",
+    Q_EMIT executionProgress("+================================================================+",
                              0);
-    Q_EMIT executionProgress("║     PRINT SPOOLER CLEARING - ENTERPRISE MODE                  ║",
+    Q_EMIT executionProgress("|     PRINT SPOOLER CLEARING - ENTERPRISE MODE                  |",
                              0);
-    Q_EMIT executionProgress("╠════════════════════════════════════════════════════════════════╣",
+    Q_EMIT executionProgress("+================================================================+",
                              0);
 
-    Q_EMIT executionProgress("║ Checking Print Spooler service status...                     ║",
+    Q_EMIT executionProgress("| Checking Print Spooler service status...                     |",
                              20);
     ProcessResult ps = runPowerShell(buildSpoolerScript(), sak::kTimeoutProcessVeryLongMs);
-    Q_EMIT executionProgress("║ Stopping service with Stop-Service...                        ║",
+    Q_EMIT executionProgress("| Stopping service with Stop-Service...                        |",
                              40);
 
     if (isCancelled()) {
@@ -114,7 +114,7 @@ void ClearPrintSpoolerAction::execute() {
         return;
     }
 
-    Q_EMIT executionProgress("║ Clearing spool files and restarting...                       ║",
+    Q_EMIT executionProgress("| Clearing spool files and restarting...                       |",
                              60);
 
     if (!ps.std_err.trimmed().isEmpty()) {
@@ -124,7 +124,7 @@ void ClearPrintSpoolerAction::execute() {
     SpoolerResult spooler = parseSpoolerOutput(ps.std_out);
     qint64 duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
 
-    Q_EMIT executionProgress("╠════════════════════════════════════════════════════════════════╣",
+    Q_EMIT executionProgress("+================================================================+",
                              80);
 
     ExecutionResult result;
@@ -149,7 +149,7 @@ void ClearPrintSpoolerAction::execute() {
     }
 }
 
-// ─── Private Helpers ────────────────────────────────────────────────────────────
+// --- Private Helpers ------------------------------------------------------------
 
 QString ClearPrintSpoolerAction::buildSpoolerScript() const {
     return buildSpoolerScriptPreamble() + buildSpoolerScriptRestart();
@@ -302,33 +302,33 @@ ClearPrintSpoolerAction::SpoolerResult ClearPrintSpoolerAction::parseSpoolerOutp
 QString ClearPrintSpoolerAction::buildSuccessLog(const SpoolerResult& spooler,
                                                  qint64 duration_ms) const {
     QString log;
-    log += "╔════════════════════════════════════════════════════════════════╗\n";
-    log += "║     PRINT SPOOLER CLEARING - RESULTS                          ║\n";
-    log += "╠════════════════════════════════════════════════════════════════╣\n";
+    log += "+================================================================+\n";
+    log += "|     PRINT SPOOLER CLEARING - RESULTS                          |\n";
+    log += "+================================================================+\n";
 
     if (spooler.files_before > 0) {
-        log += QString("║ Print Jobs Cleared: %1\n").arg(spooler.cleared).leftJustified(66) + "║\n";
-        log += QString("║ Space Freed: %1\n")
+        log += QString("| Print Jobs Cleared: %1\n").arg(spooler.cleared).leftJustified(66) + "|\n";
+        log += QString("| Space Freed: %1\n")
                    .arg(formatFileSize(spooler.size_before))
                    .leftJustified(66) +
-               "║\n";
+               "|\n";
     } else {
-        log += QString("║ Status: No stuck jobs found                                    ║\n");
+        log += QString("| Status: No stuck jobs found                                    |\n");
     }
 
-    log += "╠════════════════════════════════════════════════════════════════╣\n";
-    log += QString("║ Service Status: %1 → %2\n")
+    log += "+================================================================+\n";
+    log += QString("| Service Status: %1 -> %2\n")
                .arg(spooler.initial_status, spooler.final_status)
                .leftJustified(66) +
-           "║\n";
-    log += QString("║ Service Stopped: Successfully\n").leftJustified(66) + "║\n";
-    log += QString("║ Service Started: Successfully\n").leftJustified(66) + "║\n";
-    log += "╠════════════════════════════════════════════════════════════════╣\n";
-    log += QString("║ Completed in: %1 seconds\n")
+           "|\n";
+    log += QString("| Service Stopped: Successfully\n").leftJustified(66) + "|\n";
+    log += QString("| Service Started: Successfully\n").leftJustified(66) + "|\n";
+    log += "+================================================================+\n";
+    log += QString("| Completed in: %1 seconds\n")
                .arg(duration_ms / 1000.0, 0, 'f', 2)
                .leftJustified(66) +
-           "║\n";
-    log += "╚════════════════════════════════════════════════════════════════╝\n";
+           "|\n";
+    log += "+================================================================+\n";
 
     return log;
 }
@@ -337,38 +337,38 @@ QString ClearPrintSpoolerAction::buildFailureLog(const SpoolerResult& spooler,
                                                  qint64 duration_ms) const {
     Q_UNUSED(duration_ms)
     QString log;
-    log += "╔════════════════════════════════════════════════════════════════╗\n";
-    log += "║     PRINT SPOOLER CLEARING - RESULTS                          ║\n";
-    log += "╠════════════════════════════════════════════════════════════════╣\n";
-    log += QString("║ Status: Operation Failed                                       ║\n");
-    log += "╠════════════════════════════════════════════════════════════════╣\n";
+    log += "+================================================================+\n";
+    log += "|     PRINT SPOOLER CLEARING - RESULTS                          |\n";
+    log += "+================================================================+\n";
+    log += QString("| Status: Operation Failed                                       |\n");
+    log += "+================================================================+\n";
 
     if (!spooler.stop_success) {
-        log += QString("║ Service Stop: FAILED\n").leftJustified(66) + "║\n";
+        log += QString("| Service Stop: FAILED\n").leftJustified(66) + "|\n";
     } else {
-        log += QString("║ Service Stop: SUCCESS\n").leftJustified(66) + "║\n";
+        log += QString("| Service Stop: SUCCESS\n").leftJustified(66) + "|\n";
     }
 
     if (!spooler.start_success) {
-        log += QString("║ Service Start: FAILED\n").leftJustified(66) + "║\n";
+        log += QString("| Service Start: FAILED\n").leftJustified(66) + "|\n";
     }
 
-    log += QString("║ Final Service Status: %1\n")
+    log += QString("| Final Service Status: %1\n")
                .arg(spooler.final_status.isEmpty() ? "Unknown" : spooler.final_status)
                .leftJustified(66) +
-           "║\n";
+           "|\n";
 
     if (!spooler.errors.isEmpty()) {
-        log += "╠════════════════════════════════════════════════════════════════╣\n";
-        log += QString("║ ERRORS:                                                        ║\n");
+        log += "+================================================================+\n";
+        log += QString("| ERRORS:                                                        |\n");
         for (const QString& error : spooler.errors) {
-            log += QString("║ %1\n").arg(error).leftJustified(66) + "║\n";
+            log += QString("| %1\n").arg(error).leftJustified(66) + "|\n";
         }
     }
 
-    log += "╠════════════════════════════════════════════════════════════════╣\n";
-    log += QString("║ Action Required: Run as Administrator or restart manually      ║\n");
-    log += "╚════════════════════════════════════════════════════════════════╝\n";
+    log += "+================================================================+\n";
+    log += QString("| Action Required: Run as Administrator or restart manually      |\n");
+    log += "+================================================================+\n";
 
     return log;
 }

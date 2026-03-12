@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 /// @file advanced_uninstall_panel.h
-/// @brief Main UI panel for Advanced Uninstall — Revo Uninstaller-style
+/// @brief Main UI panel for Advanced Uninstall -- Revo Uninstaller-style
 ///        deep application removal with leftover scanning and cleanup
 
 #pragma once
@@ -35,9 +35,9 @@ namespace sak {
 class AdvancedUninstallController;
 class LogToggleSwitch;
 
-/// @brief Advanced Uninstall Panel — deep program removal with leftover scanning
+/// @brief Advanced Uninstall Panel -- deep program removal with leftover scanning
 ///
-/// Layout: Toolbar → Program List Table → Leftover Results Table → Status Bar
+/// Layout: Toolbar -> Program List Table -> Leftover Results Table -> Status Bar
 ///
 /// Supports standard uninstall, forced uninstall, UWP removal, batch
 /// uninstall, restore point creation, and multi-level leftover scanning.
@@ -101,14 +101,14 @@ private Q_SLOTS:
     void onDeleteSelectedLeftovers();
 
 private:
-    // ── UI Setup ──
+    // -- UI Setup --
     void setupUi();
     void createToolbar(QVBoxLayout* layout);
     void createProgramTable(QVBoxLayout* layout);
     void createLeftoverSection(QVBoxLayout* layout);
     void createStatusBar(QVBoxLayout* layout);
 
-    // ── Context Menu Actions ──
+    // -- Context Menu Actions --
     void contextUninstall();
     void contextForcedUninstall();
     void contextAddToQueue();
@@ -118,7 +118,7 @@ private:
     void contextShowProperties();
     void contextRemoveRegistryEntry();
 
-    // ── Dialog Helpers ──
+    // -- Dialog Helpers --
     void showUninstallConfirmation(const ProgramInfo& program);
     void showForcedUninstallDialog(const ProgramInfo& program);
     void showBatchUninstallDialog();
@@ -157,19 +157,19 @@ private:
                                    QRadioButton*& advancedRadio) const;
     QCheckBox* addSettingsDisplayGroup(QDialog* dialog, QVBoxLayout* layout) const;
 
-    // ── Table Population ──
+    // -- Table Population --
     void populateProgramTable(const QVector<ProgramInfo>& programs);
     void populateLeftoverTable(const QVector<LeftoverItem>& leftovers);
     void populateLeftoverRow(int row, const LeftoverItem& item);
     QString leftoverTypeText(LeftoverItem::Type type) const;
     void clearLeftoverTable();
 
-    // ── Filtering & Sorting ──
+    // -- Filtering & Sorting --
     void applyFilter();
     [[nodiscard]] bool matchesFilter(const ProgramInfo& program) const;
     [[nodiscard]] QString formatSize(qint64 bytes) const;
 
-    // ── Utility ──
+    // -- Utility --
     void logMessage(const QString& message);
     void setOperationRunning(bool running);
     [[nodiscard]] ProgramInfo selectedProgram() const;
@@ -177,10 +177,10 @@ private:
     [[nodiscard]] QVector<LeftoverItem> selectedLeftovers() const;
     void updateStatusCounts();
 
-    // ── Controller ──
+    // -- Controller --
     std::unique_ptr<AdvancedUninstallController> m_controller;
 
-    // ── Toolbar Widgets ──
+    // -- Toolbar Widgets --
     QLineEdit* m_search_edit{nullptr};
     QComboBox* m_view_filter_combo{nullptr};
     QPushButton* m_refresh_button{nullptr};
@@ -189,12 +189,12 @@ private:
     QPushButton* m_batch_button{nullptr};
     QPushButton* m_settings_button{nullptr};
 
-    // ── Program Table ──
+    // -- Program Table --
     QTableWidget* m_program_table{nullptr};
     QLabel* m_program_count_label{nullptr};
     QLabel* m_total_size_label{nullptr};
 
-    // ── Leftover Section ──
+    // -- Leftover Section --
     QWidget* m_leftover_section{nullptr};
     QTableWidget* m_leftover_table{nullptr};
     QLabel* m_leftover_header_label{nullptr};
@@ -204,21 +204,21 @@ private:
     QPushButton* m_deselect_all_button{nullptr};
     QPushButton* m_delete_selected_button{nullptr};
 
-    // ── Status Bar ──
+    // -- Status Bar --
     int m_cleanup_progress{0};
     int m_cleanup_total{0};
 
-    // ── Log toggle ──
+    // -- Log toggle --
     LogToggleSwitch* m_log_toggle{nullptr};
 
-    // ── Data ──
+    // -- Data --
     QVector<ProgramInfo> m_allPrograms;        ///< Full unfiltered list
     QVector<ProgramInfo> m_filteredPrograms;   ///< Currently displayed programs
     QVector<LeftoverItem> m_currentLeftovers;  ///< Current leftover scan results
     QString m_searchFilter;
     ViewFilter m_viewFilter = ViewFilter::All;
 
-    // ── Table Column Indices ──
+    // -- Table Column Indices --
     static constexpr int kColCheck = 0;
     static constexpr int kColIcon = 1;
     static constexpr int kColName = 2;
@@ -236,7 +236,7 @@ private:
     static constexpr int kLeftoverColumnCount = 5;
 };
 
-// ── Compile-Time Invariants ─────────────────────────────────────────────────
+// -- Compile-Time Invariants -------------------------------------------------
 
 static_assert(std::is_base_of_v<QWidget, AdvancedUninstallPanel>,
               "AdvancedUninstallPanel must inherit QWidget.");

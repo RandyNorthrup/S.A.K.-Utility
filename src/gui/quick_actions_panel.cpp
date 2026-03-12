@@ -148,7 +148,7 @@ void QuickActionsPanel::setupUi() {
     main_layout->setContentsMargins(12, 12, 12, 12);
     main_layout->setSpacing(10);
 
-    // Panel header — consistent title + muted subtitle
+    // Panel header -- consistent title + muted subtitle
     sak::createPanelHeader(this,
                            QStringLiteral(":/icons/icons/panel_quick_actions.svg"),
                            tr("Quick Actions"),
@@ -333,7 +333,7 @@ QFrame* QuickActionsPanel::createCategoryCard(QuickAction::ActionCategory catego
                                   .arg(sak::ui::kColorTextMuted));
     cardLayout->addWidget(countLabel);
 
-    // Click handler — show category library dialog
+    // Click handler -- show category library dialog
     card->installEventFilter(this);
     card->setProperty("sak_category", static_cast<int>(category));
     card->setProperty("sak_title", title);
@@ -531,10 +531,10 @@ QPushButton* QuickActionsPanel::createActionButton(QuickAction* action) {
     button->setMinimumWidth(sak::kButtonWidthLarge);
     button->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
 
-    // Label only — description moved to tooltip
+    // Label only -- description moved to tooltip
     button->setText(action->name());
     button->setToolTip(action->description());
-    // Use app theme styling — only override alignment and padding
+    // Use app theme styling -- only override alignment and padding
     button->setStyleSheet("QPushButton { text-align: center; padding: 8px 14px; }");
 
     connect(button, &QPushButton::clicked, this, [this, action]() { onActionClicked(action); });
@@ -853,7 +853,7 @@ void QuickActionsPanel::showSettingsDialog() {
     auto* compressRow = new QHBoxLayout();
     compressRow->addWidget(compressCheck);
     compressRow->addWidget(new sak::InfoButton(
-        tr("Use ZIP compression for backup output files — slower but uses less disk space"),
+        tr("Use ZIP compression for backup output files -- slower but uses less disk space"),
         &dialog));
     compressRow->addStretch();
     layout->addLayout(compressRow);
@@ -873,7 +873,7 @@ void QuickActionsPanel::showSettingsDialog() {
 }
 
 void QuickActionsPanel::onViewLog() {
-    // Log is now always visible — no toggle needed
+    // Log is now always visible -- no toggle needed
 }
 
 }  // namespace sak

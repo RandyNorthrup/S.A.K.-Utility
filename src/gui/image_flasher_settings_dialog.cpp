@@ -225,7 +225,7 @@ void ImageFlasherSettingsDialog::setupUi_buttonBar(QVBoxLayout* mainLayout) {
 void ImageFlasherSettingsDialog::loadSettings() {
     Q_ASSERT(m_validationModeCombo);
     Q_ASSERT(m_bufferSizeSpin);
-    auto& config = sak::ConfigManager::instance();
+    const auto& config = sak::ConfigManager::instance();
 
     // Validation mode
     QString validationMode = config.getImageFlasherValidationMode();

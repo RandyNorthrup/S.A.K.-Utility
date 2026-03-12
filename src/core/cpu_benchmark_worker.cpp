@@ -27,7 +27,7 @@
 namespace sak {
 
 // ============================================================================
-// Baseline reference times (ms) — Intel i5-12400 single-thread
+// Baseline reference times (ms) -- Intel i5-12400 single-thread
 // ============================================================================
 
 namespace {
@@ -37,7 +37,7 @@ constexpr double kBaselineMatrixMultiplyMs = 350.0;
 constexpr double kBaselineZlibCompressionMs = 280.0;
 constexpr double kBaselineAesEncryptionMs = 180.0;
 
-/// @brief Compute one row of C = A × B (ikj order for cache-friendly B access)
+/// @brief Compute one row of C = A x B (ikj order for cache-friendly B access)
 void multiplyMatrixRow(const std::vector<double>& a,
                        const std::vector<double>& b,
                        std::vector<double>& c,
@@ -88,7 +88,7 @@ auto CpuBenchmarkWorker::execute() -> std::expected<void, sak::error_code> {
     m_result = CpuBenchmarkResult{};
     m_result.thread_count = std::thread::hardware_concurrency();
 
-    // ── Single-thread benchmarks ────────────────────────────────
+    // -- Single-thread benchmarks --------------------------------
     reportProgress(0, 6, "Running prime sieve benchmark...");
     if (checkStop()) {
         return std::unexpected(sak::error_code::operation_cancelled);
@@ -125,7 +125,7 @@ auto CpuBenchmarkWorker::execute() -> std::expected<void, sak::error_code> {
         m_result.matrix_gflops = m_matrix_gflops;
     }
 
-    // ── Multi-thread benchmark ──────────────────────────────────
+    // -- Multi-thread benchmark ----------------------------------
     reportProgress(4, 6, "Running multi-threaded benchmark...");
     if (checkStop()) {
         return std::unexpected(sak::error_code::operation_cancelled);
@@ -143,13 +143,13 @@ auto CpuBenchmarkWorker::execute() -> std::expected<void, sak::error_code> {
                                              static_cast<double>(hw_threads);
     }
 
-    // ── Scoring ─────────────────────────────────────────────────
+    // -- Scoring -------------------------------------------------
     reportProgress(5, 6, "Calculating scores...");
     calculateScores();
 
     m_result.timestamp = QDateTime::currentDateTime();
 
-    logInfo("CPU benchmark complete — ST: {}, MT: {}",
+    logInfo("CPU benchmark complete -- ST: {}, MT: {}",
             m_result.single_thread_score,
             m_result.multi_thread_score);
 
@@ -164,7 +164,7 @@ auto CpuBenchmarkWorker::execute() -> std::expected<void, sak::error_code> {
 
 double CpuBenchmarkWorker::runPrimeSieve(uint64_t limit) {
     Q_ASSERT_X(limit >= 2, "runPrimeSieve", "limit must be >= 2");
-    // Sieve of Eratosthenes — stresses integer arithmetic + memory
+    // Sieve of Eratosthenes -- stresses integer arithmetic + memory
     QElapsedTimer timer;
     timer.start();
 
@@ -193,7 +193,7 @@ double CpuBenchmarkWorker::runPrimeSieve(uint64_t limit) {
 double CpuBenchmarkWorker::runMatrixMultiply(int size) {
     Q_ASSERT(size >= 0);
     Q_ASSERT_X(size > 0, "runMatrixMultiply", "matrix size must be positive");
-    // Dense matrix multiply C = A × B — stresses FP pipeline + cache
+    // Dense matrix multiply C = A x B -- stresses FP pipeline + cache
     const int element_count = size;
     std::vector<double> a(element_count * element_count);
     std::vector<double> b(element_count * element_count);
@@ -203,12 +203,8 @@ double CpuBenchmarkWorker::runMatrixMultiply(int size) {
     std::mt19937 rng(42);
     std::uniform_real_distribution<double> dist(-1.0, 1.0);
 
-    for (auto& val : a) {
-        val = dist(rng);
-    }
-    for (auto& val : b) {
-        val = dist(rng);
-    }
+    std::generate(a.begin(), a.end(), [&]() { return dist(rng); });
+    std::generate(b.begin(), b.end(), [&]() { return dist(rng); });
 
     QElapsedTimer timer;
     timer.start();
@@ -318,9 +314,9 @@ double CpuBenchmarkWorker::runAesEncryption(int data_size_mb) {
     QElapsedTimer timer;
     timer.start();
 
-    // AES-like S-Box substitution with key mixing — representative of
+    // AES-like S-Box substitution with key mixing -- representative of
     // real encryption workload without requiring a full AES implementation.
-    // Processes data in 16-byte blocks, applying SubBytes + AddRoundKey × 10 rounds.
+    // Processes data in 16-byte blocks, applying SubBytes + AddRoundKey x 10 rounds.
     for (size_t block = 0; block + 16 <= data_size; block += 16) {
         for (int round = 0; round < 10; ++round) {
             for (int block_index = 0; block_index < 16; ++block_index) {
@@ -392,13 +388,13 @@ void CpuBenchmarkWorker::calculateScores() {
 
     m_result.single_thread_score = static_cast<int>(geometric_mean * 1000.0);
 
-    // Multi-thread score: single_thread × thread_count × efficiency
+    // Multi-thread score: single_thread x thread_count x efficiency
     const int hw_threads = static_cast<int>(std::thread::hardware_concurrency());
     m_result.multi_thread_score = static_cast<int>(m_result.single_thread_score *
                                                    static_cast<double>(hw_threads) *
                                                    m_result.thread_scaling_efficiency);
 
-    logInfo("Scores — ST: {}, MT: {}, Scaling: {:.1f}%",
+    logInfo("Scores -- ST: {}, MT: {}, Scaling: {:.1f}%",
             m_result.single_thread_score,
             m_result.multi_thread_score,
             m_result.thread_scaling_efficiency * 100.0);

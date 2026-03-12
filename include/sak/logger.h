@@ -130,12 +130,12 @@ private:
     /// @brief Create log directory if it doesn't exist
     /// @param dir Directory path
     /// @return Expected containing success or error code
-    [[nodiscard]] auto ensureLogDirectory(const std::filesystem::path& dir)
+    [[nodiscard]] static auto ensureLogDirectory(const std::filesystem::path& dir)
         -> std::expected<void, error_code>;
 
     /// @brief Generate timestamp string
     /// @return Current timestamp in ISO 8601 format
-    [[nodiscard]] std::string getTimestamp() const noexcept;
+    [[nodiscard]] static std::string getTimestamp() noexcept;
 
     /// @brief Check if log rotation is needed
     /// @return True if rotation needed

@@ -107,7 +107,7 @@ private:
                                                                  const QString& adapterName);
 };
 
-// ── Compile-Time Invariants ─────────────────────────────────────────────────
+// -- Compile-Time Invariants -------------------------------------------------
 
 static_assert(std::is_default_constructible_v<EthernetConfigSnapshot>,
               "EthernetConfigSnapshot must be default-constructible.");

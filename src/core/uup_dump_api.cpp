@@ -25,7 +25,7 @@
 #include <QSslConfiguration>
 #include <QUrlQuery>
 
-// ─── Construction / Destruction ──────────────────────────────────────────────
+// --- Construction / Destruction ----------------------------------------------
 
 UupDumpApi::UupDumpApi(QObject* parent)
     : QObject(parent), m_networkManager(new QNetworkAccessManager(this)) {
@@ -36,7 +36,7 @@ UupDumpApi::~UupDumpApi() {
     cancelAll();
 }
 
-// ─── Public API Methods ─────────────────────────────────────────────────────
+// --- Public API Methods -----------------------------------------------------
 
 void UupDumpApi::fetchAvailableBuilds(const QString& arch, ReleaseChannel channel) {
     Q_ASSERT(!arch.isEmpty());
@@ -114,7 +114,7 @@ void UupDumpApi::cancelAll() {
     m_pendingReplies.clear();
 }
 
-// ─── Static Helpers ─────────────────────────────────────────────────────────
+// --- Static Helpers ---------------------------------------------------------
 
 QString UupDumpApi::channelToRing(ReleaseChannel channel) {
     switch (channel) {
@@ -156,12 +156,12 @@ QList<UupDumpApi::ReleaseChannel> UupDumpApi::allChannels() {
             ReleaseChannel::Canary};
 }
 
-// ─── Reply Handlers ─────────────────────────────────────────────────────────
+// --- Reply Handlers ---------------------------------------------------------
 
 void UupDumpApi::onBuildsFetchReply() {
     QNetworkReply* reply = qobject_cast<QNetworkReply*>(sender());
     if (!reply) {
-        sak::logError("onBuildsFetchReply: sender is not a QNetworkReply — signal/slot mismatch");
+        sak::logError("onBuildsFetchReply: sender is not a QNetworkReply -- signal/slot mismatch");
         return;
     }
 
@@ -232,7 +232,7 @@ QMap<QString, QString> UupDumpApi::parseLangFancyNames(const QJsonObject& respon
 void UupDumpApi::onLanguagesReply() {
     QNetworkReply* reply = qobject_cast<QNetworkReply*>(sender());
     if (!reply) {
-        sak::logError("onLanguagesReply: sender is not a QNetworkReply — signal/slot mismatch");
+        sak::logError("onLanguagesReply: sender is not a QNetworkReply -- signal/slot mismatch");
         return;
     }
 
@@ -300,7 +300,7 @@ void UupDumpApi::onLanguagesReply() {
 void UupDumpApi::onEditionsReply() {
     QNetworkReply* reply = qobject_cast<QNetworkReply*>(sender());
     if (!reply) {
-        sak::logError("onEditionsReply: sender is not a QNetworkReply — signal/slot mismatch");
+        sak::logError("onEditionsReply: sender is not a QNetworkReply -- signal/slot mismatch");
         return;
     }
 
@@ -340,7 +340,7 @@ void UupDumpApi::onEditionsReply() {
 void UupDumpApi::onFilesReply() {
     QNetworkReply* reply = qobject_cast<QNetworkReply*>(sender());
     if (!reply) {
-        sak::logError("onFilesReply: sender is not a QNetworkReply — signal/slot mismatch");
+        sak::logError("onFilesReply: sender is not a QNetworkReply -- signal/slot mismatch");
         return;
     }
 
@@ -397,7 +397,7 @@ void UupDumpApi::onFilesReply() {
     Q_EMIT filesFetched(updateName, files);
 }
 
-// ─── Private Helpers ────────────────────────────────────────────────────────
+// --- Private Helpers --------------------------------------------------------
 
 std::optional<UupDumpApi::FileInfo> UupDumpApi::parseAndValidateFileEntry(
     const QString& key, const QJsonObject& fileObj) {
@@ -409,7 +409,7 @@ std::optional<UupDumpApi::FileInfo> UupDumpApi::parseAndValidateFileEntry(
     info.uuid = fileObj["uuid"].toString();
     info.expire = fileObj["expire"].toString();
 
-    // Sanitize filename — reject path traversal attempts
+    // Sanitize filename -- reject path traversal attempts
     if (info.fileName.contains("..") || info.fileName.contains('/') ||
         info.fileName.contains('\\')) {
         sak::logWarning("Rejected unsafe filename from API: " + info.fileName.toStdString());
@@ -426,7 +426,7 @@ std::optional<UupDumpApi::FileInfo> UupDumpApi::parseAndValidateFileEntry(
     QString scheme = downloadUrl.scheme().toLower();
     QString host = downloadUrl.host().toLower();
     if (scheme == "http" && host.endsWith(".microsoft.com")) {
-        // Microsoft's UUP CDN does not support HTTPS — allow HTTP since
+        // Microsoft's UUP CDN does not support HTTPS -- allow HTTP since
         // every file is integrity-verified via SHA-1 checksums.
         sak::logDebug("Allowing HTTP Microsoft CDN URL for: " + info.fileName.toStdString());
     } else if (scheme != "https") {

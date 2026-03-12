@@ -16,13 +16,13 @@
 
 namespace sak {
 
-// ═══════════════════════════════════════════════════════════════════════════
+// ===========================================================================
 // Named Constants (TigerStyle)
-// ═══════════════════════════════════════════════════════════════════════════
+// ===========================================================================
 
 namespace netdiag {
 
-// ── Default configuration values ──
+// -- Default configuration values --
 constexpr int kDefaultPingCount = 10;
 constexpr int kDefaultPingIntervalMs = 1000;
 constexpr int kDefaultPingTimeoutMs = 4000;
@@ -41,7 +41,7 @@ constexpr int kDefaultConnRefreshMs = 2000;
 constexpr int kBannerGrabTimeoutMs = 2000;
 constexpr int kBannerMaxBytes = 512;
 
-// ── WiFi frequency boundaries (kHz) ──
+// -- WiFi frequency boundaries (kHz) --
 constexpr uint32_t kFreq2GHzStart = 2'412'000;
 constexpr uint32_t kFreq2GHzEnd = 2'484'000;
 constexpr uint32_t kFreq5GHzStart = 5'170'000;
@@ -49,7 +49,7 @@ constexpr uint32_t kFreq5GHzEnd = 5'835'000;
 constexpr uint32_t kFreq6GHzStart = 5'955'000;
 constexpr uint32_t kFreq6GHzEnd = 7'115'000;
 
-// ── Signal quality thresholds (dBm) ──
+// -- Signal quality thresholds (dBm) --
 constexpr int kSignalExcellent = -50;
 constexpr int kSignalGood = -60;
 constexpr int kSignalFair = -70;
@@ -57,9 +57,9 @@ constexpr int kSignalWeak = -80;
 
 }  // namespace netdiag
 
-// ═══════════════════════════════════════════════════════════════════════════
+// ===========================================================================
 // Network Adapter Types
-// ═══════════════════════════════════════════════════════════════════════════
+// ===========================================================================
 
 /// @brief Complete network adapter information
 struct NetworkAdapterInfo {
@@ -104,9 +104,9 @@ struct NetworkAdapterInfo {
     uint64_t errorsSent = 0;
 };
 
-// ═══════════════════════════════════════════════════════════════════════════
+// ===========================================================================
 // Connectivity Testing Types
-// ═══════════════════════════════════════════════════════════════════════════
+// ===========================================================================
 
 /// @brief Single ICMP echo reply
 struct PingReply {
@@ -179,9 +179,9 @@ struct MtrResult {
     int totalCycles = 0;
 };
 
-// ═══════════════════════════════════════════════════════════════════════════
+// ===========================================================================
 // DNS Diagnostic Types
-// ═══════════════════════════════════════════════════════════════════════════
+// ===========================================================================
 
 /// @brief Single DNS query result
 struct DnsQueryResult {
@@ -212,9 +212,9 @@ struct DnsServerComparison {
     double fastestTimeMs = 0.0;
 };
 
-// ═══════════════════════════════════════════════════════════════════════════
+// ===========================================================================
 // Port Scanner Types
-// ═══════════════════════════════════════════════════════════════════════════
+// ===========================================================================
 
 /// @brief Single port scan result
 struct PortScanResult {
@@ -243,9 +243,9 @@ struct PortPreset {
     QVector<uint16_t> ports;
 };
 
-// ═══════════════════════════════════════════════════════════════════════════
+// ===========================================================================
 // Bandwidth Test Types
-// ═══════════════════════════════════════════════════════════════════════════
+// ===========================================================================
 
 /// @brief Bandwidth test result (iPerf3 or HTTP)
 struct BandwidthTestResult {
@@ -282,9 +282,9 @@ struct BandwidthTestResult {
     QDateTime timestamp;
 };
 
-// ═══════════════════════════════════════════════════════════════════════════
+// ===========================================================================
 // WiFi Analyzer Types
-// ═══════════════════════════════════════════════════════════════════════════
+// ===========================================================================
 
 /// @brief WiFi network information from scan
 struct WiFiNetworkInfo {
@@ -319,9 +319,9 @@ struct WiFiChannelUtilization {
     double interferenceScore = 0.0;
 };
 
-// ═══════════════════════════════════════════════════════════════════════════
+// ===========================================================================
 // Active Connection Types
-// ═══════════════════════════════════════════════════════════════════════════
+// ===========================================================================
 
 /// @brief Active network connection info
 struct ConnectionInfo {
@@ -346,9 +346,9 @@ struct ConnectionInfo {
     QString serviceName;
 };
 
-// ═══════════════════════════════════════════════════════════════════════════
+// ===========================================================================
 // Firewall Types
-// ═══════════════════════════════════════════════════════════════════════════
+// ===========================================================================
 
 /// @brief Windows Firewall rule
 struct FirewallRule {
@@ -421,9 +421,9 @@ struct FirewallGap {
     Severity severity = Severity::Info;
 };
 
-// ═══════════════════════════════════════════════════════════════════════════
+// ===========================================================================
 // Network Share Types
-// ═══════════════════════════════════════════════════════════════════════════
+// ===========================================================================
 
 /// @brief Network share information
 struct NetworkShareInfo {
@@ -452,9 +452,9 @@ struct NetworkShareInfo {
 
 }  // namespace sak
 
-// ═══════════════════════════════════════════════════════════════════════════
+// ===========================================================================
 // LAN File Transfer Speed Test
-// ═══════════════════════════════════════════════════════════════════════════
+// ===========================================================================
 
 namespace sak {
 
@@ -475,9 +475,9 @@ struct LanTransferResult {
 
 }  // namespace sak
 
-// ═══════════════════════════════════════════════════════════════════════════
+// ===========================================================================
 // Qt Metatype Registration
-// ═══════════════════════════════════════════════════════════════════════════
+// ===========================================================================
 
 Q_DECLARE_METATYPE(sak::NetworkAdapterInfo)
 Q_DECLARE_METATYPE(QVector<sak::NetworkAdapterInfo>)
@@ -509,9 +509,9 @@ Q_DECLARE_METATYPE(sak::NetworkShareInfo)
 Q_DECLARE_METATYPE(QVector<sak::NetworkShareInfo>)
 Q_DECLARE_METATYPE(sak::LanTransferResult)
 
-// ═══════════════════════════════════════════════════════════════════════════
+// ===========================================================================
 // Compile-Time Invariants (TigerStyle)
-// ═══════════════════════════════════════════════════════════════════════════
+// ===========================================================================
 
 static_assert(std::is_default_constructible_v<sak::NetworkAdapterInfo>,
               "NetworkAdapterInfo must be default-constructible for signal transport.");

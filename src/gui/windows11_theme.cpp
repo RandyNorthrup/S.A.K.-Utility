@@ -42,7 +42,7 @@ QString inferTooltip(QWidget* widget) {
         return {};
     }
 
-    // Don't auto-generate tooltips for buttons/labels/groups — their visible
+    // Don't auto-generate tooltips for buttons/labels/groups -- their visible
     // text IS the description.  Only set tooltips on these when the code
     // explicitly provides one (handled elsewhere).
     if (qobject_cast<QAbstractButton*>(widget) || qobject_cast<QLabel*>(widget) ||
@@ -63,7 +63,7 @@ QString inferTooltip(QWidget* widget) {
 
 void applyTabTooltips(QTabWidget* tabs) {
     Q_ASSERT(tabs);
-    // Tab labels are already visible — don't duplicate them as tooltips.
+    // Tab labels are already visible -- don't duplicate them as tooltips.
     // Only set a tooltip if one is explicitly provided in the code.
     Q_UNUSED(tabs);
 }
@@ -102,7 +102,7 @@ void applyTooltips(QWidget* root) {
             action->statusTip() != normalizeText(action->text())) {
             action->setToolTip(action->statusTip());
         }
-        // Otherwise leave tooltip empty — the menu text is self-describing
+        // Otherwise leave tooltip empty -- the menu text is self-describing
     }
 }
 
@@ -172,7 +172,7 @@ static constexpr const char kThemeBaseAndChromeStyles[] = R"SAK(
         }
 
         /* Leaf widgets & generic frames inherit parent bg
-           — prevents gray-on-white and white-on-gray patches */
+           -- prevents gray-on-white and white-on-gray patches */
         QLabel, QFrame, QCheckBox, QRadioButton {
             background: transparent;
         }

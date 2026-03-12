@@ -82,27 +82,27 @@ QString QuickAction::formatLogBox(const QString& title,
                                   const QStringList& content_lines,
                                   qint64 duration_ms) {
     const QString top =
-        QStringLiteral("╔════════════════════════════════════════════════════════════════╗\n");
+        QStringLiteral("+================================================================+\n");
     const QString sep =
-        QStringLiteral("╠════════════════════════════════════════════════════════════════╣\n");
+        QStringLiteral("+================================================================+\n");
     const QString bottom =
-        QStringLiteral("╚════════════════════════════════════════════════════════════════╝\n");
+        QStringLiteral("+================================================================+\n");
 
     QString box = top;
-    box += QString("║ %1║\n").arg(title.leftJustified(65));
+    box += QString("| %1|\n").arg(title.leftJustified(65));
     box += sep;
 
     for (const QString& line : content_lines) {
         if (line == "---") {
             box += sep;
         } else {
-            box += QString("║ %1║\n").arg(line.leftJustified(65));
+            box += QString("| %1|\n").arg(line.leftJustified(65));
         }
     }
 
     if (duration_ms >= 0) {
         box += sep;
-        box += QString("║ Completed in: %1 seconds%2║\n")
+        box += QString("| Completed in: %1 seconds%2|\n")
                    .arg(duration_ms / 1000.0, 0, 'f', 2)
                    .arg(QString(65 - 15 - QString::number(duration_ms / 1000.0, 'f', 2).length(),
                                 ' '));

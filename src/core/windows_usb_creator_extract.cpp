@@ -628,7 +628,7 @@ bool WindowsUSBCreator::checkPartitionActive(const QString& diskNumber) {
     bool isActive = output.contains("Active", Qt::CaseInsensitive);
 
     if (isActive) {
-        sak::logInfo("✓ Bootable flag verified - partition is active");
+        sak::logInfo("[x] Bootable flag verified - partition is active");
         return true;
     }
 
@@ -754,7 +754,7 @@ QList<QPair<QString, qint64>> WindowsUSBCreator::parseIsoCriticalFiles(const QSt
             continue;
         }
 
-        // End of entry — add if it's a critical file (not a folder)
+        // End of entry -- add if it's a critical file (not a folder)
         if (!isFolder && isCriticalWindowsFile(currentPath)) {
             criticalFiles.append({currentPath, currentSize});
         }
@@ -786,14 +786,14 @@ bool WindowsUSBCreator::verifyCriticalFilesOnDisk(
 
         QFileInfo destFileInfo(destFile);
         if (!destFileInfo.exists()) {
-            sak::logError(QString("✗— Missing file: %1").arg(fileInfo.first).toStdString());
+            sak::logError(QString("[ ]-- Missing file: %1").arg(fileInfo.first).toStdString());
             failedCount++;
             continue;
         }
 
         qint64 destSize = destFileInfo.size();
         if (destSize != fileInfo.second) {
-            sak::logError(QString("✗— Size mismatch: %1 (ISO: %2 bytes, USB: %3 bytes)")
+            sak::logError(QString("[ ]-- Size mismatch: %1 (ISO: %2 bytes, USB: %3 bytes)")
                               .arg(fileInfo.first)
                               .arg(fileInfo.second)
                               .arg(destSize)
@@ -826,7 +826,7 @@ bool WindowsUSBCreator::verifyCriticalFilesOnDisk(
         return false;
     }
 
-    sak::logInfo("✓ Extraction integrity verified - all critical files match ISO");
+    sak::logInfo("[x] Extraction integrity verified - all critical files match ISO");
     return true;
 }
 
@@ -844,7 +844,7 @@ bool WindowsUSBCreator::verifyBootAndInstallFiles(const QString& cleanDrive) {
             return false;
         }
         QFileInfo info(fullPath);
-        sak::logInfo(QString("  ✓ %1 (%2 bytes)").arg(file).arg(info.size()).toStdString());
+        sak::logInfo(QString("  [x] %1 (%2 bytes)").arg(file).arg(info.size()).toStdString());
     }
 
     // Verification 2: Check for install image
@@ -860,11 +860,11 @@ bool WindowsUSBCreator::verifyBootAndInstallFiles(const QString& cleanDrive) {
 
     if (hasInstallWim) {
         QFileInfo info(cleanDrive + "sources/install.wim");
-        sak::logInfo(QString("  ✓ install.wim (%1 bytes)").arg(info.size()).toStdString());
+        sak::logInfo(QString("  [x] install.wim (%1 bytes)").arg(info.size()).toStdString());
     }
     if (hasInstallEsd) {
         QFileInfo info(cleanDrive + "sources/install.esd");
-        sak::logInfo(QString("  ✓ install.esd (%1 bytes)").arg(info.size()).toStdString());
+        sak::logInfo(QString("  [x] install.esd (%1 bytes)").arg(info.size()).toStdString());
     }
 
     return true;
@@ -881,7 +881,7 @@ void WindowsUSBCreator::logFinalVerificationSuccess(int fileCount) {
     sak::logInfo("========================================");
 
     Q_EMIT progressUpdated(100);
-    Q_EMIT statusChanged("✓ USB VERIFIED BOOTABLE - All checks passed");
+    Q_EMIT statusChanged("[x] USB VERIFIED BOOTABLE - All checks passed");
 
     // THIS IS THE ONLY PLACE completed() IS EMITTED
     Q_EMIT completed();

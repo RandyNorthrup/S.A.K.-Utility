@@ -224,7 +224,7 @@ private:
     QByteArray compressData(const QByteArray& data) const;
     QByteArray decompressData(const QByteArray& data) const;
 
-    quint32 computeCrc32(const QByteArray& data) const;
+    static quint32 computeCrc32(const QByteArray& data);
 
     QByteArray buildResumePayload(const QString& fileId,
                                   const QVector<QPair<int, int>>& ranges,

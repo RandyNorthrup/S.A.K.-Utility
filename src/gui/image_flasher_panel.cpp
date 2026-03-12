@@ -107,7 +107,7 @@ void ImageFlasherPanel::setupUi() {
     scrollArea->setWidget(contentWidget);
     rootLayout->addWidget(scrollArea);
 
-    // Panel header — consistent title + muted subtitle
+    // Panel header -- consistent title + muted subtitle
     auto* titleRow = new QHBoxLayout();
     auto* headerWidget = new QWidget(this);
     auto* headerLayout = new QVBoxLayout(headerWidget);
@@ -402,7 +402,7 @@ void ImageFlasherPanel::createDownloadCards(QVBoxLayout* pageLayout) {
                              {QStringLiteral(":/icons/icons/tux_logo.svg"),
                               tr("Linux ISO"),
                               tr("Download a Linux distribution ISO"
-                                 " — Ubuntu, Fedora, Debian, and more."),
+                                 " -- Ubuntu, Fedora, Debian, and more."),
                               tr("Download Linux ISO"),
                               QStringLiteral("Download Linux ISO"),
                               QStringLiteral("Download a Linux distribution ISO image")},
@@ -766,7 +766,7 @@ void ImageFlasherPanel::onFlashCompleted(const FlashResult& result) {
     m_settingsButton->setEnabled(true);
 
     if (result.success) {
-        m_completionMessageLabel->setText("✓ Flash Completed Successfully!");
+        m_completionMessageLabel->setText("[x] Flash Completed Successfully!");
         m_completionMessageLabel->setStyleSheet(QString("color: %1;").arg(sak::ui::kColorSuccess));
     } else {
         m_completionMessageLabel->setText("\u2717 Flash Completed with Errors");
@@ -859,7 +859,7 @@ void ImageFlasherPanel::updateNavigationButtons() {
         m_nextButton->setEnabled(!m_selectedImagePath.isEmpty());
         m_nextButton->setVisible(true);
         break;
-    case 1:  // Drive selection page — use Flash button instead
+    case 1:  // Drive selection page -- use Flash button instead
     case 2:  // Progress page
     case 3:  // Completion page
     default:
@@ -960,7 +960,7 @@ QString ImageFlasherPanel::buildFlashConfirmationMessage(const QStringList& driv
     }
 
     return QString(
-               "⚠  DESTRUCTIVE OPERATION  ⚠\n\n"
+               "(!)  DESTRUCTIVE OPERATION  (!)\n\n"
                "Image: %1\n\n"
                "Target Drive(s):\n%2\n"
                "%3\n\n"
@@ -998,7 +998,7 @@ void ImageFlasherPanel::showConfirmationDialog() {
     QString message = buildFlashConfirmationMessage(driveDetails, isWindowsISO);
 
     auto reply = QMessageBox::warning(this,
-                                      "Confirm Flash — Data Loss Warning",
+                                      "Confirm Flash -- Data Loss Warning",
                                       message,
                                       QMessageBox::Yes | QMessageBox::No,
                                       QMessageBox::No);
@@ -1115,7 +1115,7 @@ void ImageFlasherPanel::createWindowsUSB() {
     // Initialize progress display
     m_flashStateLabel->setText("Initializing...");
 
-    // Create Windows USB creator — no parent, will be moved to worker thread
+    // Create Windows USB creator -- no parent, will be moved to worker thread
     auto* creator = new WindowsUSBCreator();
     auto* thread = new QThread(this);
     creator->moveToThread(thread);
@@ -1175,7 +1175,7 @@ void ImageFlasherPanel::populateIsoInfo(const QString& imagePath) {
     m_infoSizeLabel->setText(formatFileSize(m_imageSize));
     m_infoFormatLabel->setText(m_detectedFormat);
 
-    // Populate all fields — show dash for empty fields
+    // Populate all fields -- show dash for empty fields
     auto setField = [](QLabel* label, const QString& value) {
         label->setText(value.isEmpty() ? QStringLiteral("-") : value);
     };

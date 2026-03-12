@@ -30,7 +30,7 @@ QIcon InfoButton::createInfoIcon(int size) {
     QPainter p(&pixmap);
     p.setRenderHint(QPainter::Antialiasing, true);
 
-    // Filled circle — Windows 11 accent blue
+    // Filled circle -- Windows 11 accent blue
     p.setPen(Qt::NoPen);
     p.setBrush(QColor(0, 120, 212));  // #0078D4
     p.drawEllipse(1, 1, size - 2, size - 2);
@@ -69,7 +69,7 @@ InfoButton::InfoButton(const QString& infoText, QWidget* parent)
     setAccessibleDescription(infoText);
     setToolTip(QStringLiteral("Show more info"));
 
-    // Transparent background — the icon alone is the visual
+    // Transparent background -- the icon alone is the visual
     setStyleSheet(
         "QToolButton { background: transparent; border: none; padding: 0; }"
         "QToolButton:hover { background: rgba(0, 120, 212, 0.08); border-radius: 10px; }"

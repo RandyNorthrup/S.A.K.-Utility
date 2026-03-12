@@ -46,7 +46,7 @@ bool PermissionManager::stripPermissions(const QString& path) {
 
     // Set the DACL
     DWORD result =
-        SetNamedSecurityInfoW((LPWSTR)path.toStdWString().c_str(),
+        SetNamedSecurityInfoW(const_cast<LPWSTR>(path.toStdWString().c_str()),
                               SE_FILE_OBJECT,
                               DACL_SECURITY_INFORMATION | UNPROTECTED_DACL_SECURITY_INFORMATION,
                               nullptr,
@@ -77,13 +77,13 @@ bool PermissionManager::takeOwnership(const QString& path, const QString& userSI
 
     // Convert SID string to PSID
     PSID pSid = nullptr;
-    if (!ConvertStringSidToSidW((LPWSTR)userSID.toStdWString().c_str(), &pSid)) {
+    if (!ConvertStringSidToSidW(const_cast<LPWSTR>(userSID.toStdWString().c_str()), &pSid)) {
         m_lastError = QString("Invalid SID: %1").arg(GetLastError());
         return false;
     }
 
     // Set owner
-    DWORD result = SetNamedSecurityInfoW((LPWSTR)path.toStdWString().c_str(),
+    DWORD result = SetNamedSecurityInfoW(const_cast<LPWSTR>(path.toStdWString().c_str()),
                                          SE_FILE_OBJECT,
                                          OWNER_SECURITY_INFORMATION,
                                          pSid,
@@ -111,7 +111,7 @@ bool PermissionManager::setStandardUserPermissions(const QString& path, const QS
 #ifdef Q_OS_WIN
     // Convert SID
     PSID pSid = nullptr;
-    if (!ConvertStringSidToSidW((LPWSTR)userSID.toStdWString().c_str(), &pSid)) {
+    if (!ConvertStringSidToSidW(const_cast<LPWSTR>(userSID.toStdWString().c_str()), &pSid)) {
         m_lastError = QString("Invalid SID: %1").arg(GetLastError());
         return false;
     }
@@ -124,7 +124,7 @@ bool PermissionManager::setStandardUserPermissions(const QString& path, const QS
     ea.grfAccessMode = SET_ACCESS;
     ea.grfInheritance = SUB_CONTAINERS_AND_OBJECTS_INHERIT;
     ea.Trustee.TrusteeForm = TRUSTEE_IS_SID;
-    ea.Trustee.ptstrName = (LPWSTR)pSid;
+    ea.Trustee.ptstrName = reinterpret_cast<LPWSTR>(pSid);
 
     PACL pNewAcl = nullptr;
     DWORD result = SetEntriesInAclW(1, &ea, nullptr, &pNewAcl);
@@ -136,7 +136,7 @@ bool PermissionManager::setStandardUserPermissions(const QString& path, const QS
     }
 
     // Apply ACL
-    result = SetNamedSecurityInfoW((LPWSTR)path.toStdWString().c_str(),
+    result = SetNamedSecurityInfoW(const_cast<LPWSTR>(path.toStdWString().c_str()),
                                    SE_FILE_OBJECT,
                                    DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
                                    nullptr,
@@ -199,7 +199,7 @@ QString PermissionManager::getOwner(const QString& path) {
     PSID pOwnerSid = nullptr;
     PSECURITY_DESCRIPTOR pSD = nullptr;
 
-    DWORD result = GetNamedSecurityInfoW((LPWSTR)path.toStdWString().c_str(),
+    DWORD result = GetNamedSecurityInfoW(const_cast<LPWSTR>(path.toStdWString().c_str()),
                                          SE_FILE_OBJECT,
                                          OWNER_SECURITY_INFORMATION,
                                          &pOwnerSid,
@@ -230,7 +230,7 @@ QString PermissionManager::getSecurityDescriptorSddl(const QString& path) {
     Q_ASSERT(!path.isEmpty());
 #ifdef Q_OS_WIN
     PSECURITY_DESCRIPTOR pSD = nullptr;
-    DWORD result = GetNamedSecurityInfoW((LPWSTR)path.toStdWString().c_str(),
+    DWORD result = GetNamedSecurityInfoW(const_cast<LPWSTR>(path.toStdWString().c_str()),
                                          SE_FILE_OBJECT,
                                          OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION |
                                              DACL_SECURITY_INFORMATION,
@@ -278,7 +278,7 @@ bool PermissionManager::setSecurityDescriptorSddl(const QString& path, const QSt
 
     PSECURITY_DESCRIPTOR pSD = nullptr;
     if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(
-            (LPWSTR)sddl.toStdWString().c_str(), SDDL_REVISION_1, &pSD, nullptr)) {
+            const_cast<LPWSTR>(sddl.toStdWString().c_str()), SDDL_REVISION_1, &pSD, nullptr)) {
         m_lastError = QString("Failed to parse SDDL: %1").arg(GetLastError());
         return false;
     }
@@ -296,7 +296,7 @@ bool PermissionManager::setSecurityDescriptorSddl(const QString& path, const QSt
     BOOL ownerDefaulted = FALSE;
     GetSecurityDescriptorOwner(pSD, &pOwner, &ownerDefaulted);
 
-    DWORD result = SetNamedSecurityInfoW((LPWSTR)path.toStdWString().c_str(),
+    DWORD result = SetNamedSecurityInfoW(const_cast<LPWSTR>(path.toStdWString().c_str()),
                                          SE_FILE_OBJECT,
                                          OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION |
                                              PROTECTED_DACL_SECURITY_INFORMATION,
@@ -372,20 +372,6 @@ bool PermissionManager::enablePrivilege(const wchar_t* privilegeName) {
     return result;
 }
 
-bool PermissionManager::getSecurityInfo(const QString& path, PSECURITY_DESCRIPTOR* pSD) {
-    Q_ASSERT(pSD);
-    Q_ASSERT(!path.isEmpty());
-    DWORD result = GetNamedSecurityInfoW((LPWSTR)path.toStdWString().c_str(),
-                                         SE_FILE_OBJECT,
-                                         DACL_SECURITY_INFORMATION | OWNER_SECURITY_INFORMATION,
-                                         nullptr,
-                                         nullptr,
-                                         nullptr,
-                                         nullptr,
-                                         pSD);
-
-    return result == ERROR_SUCCESS;
-}
 #endif
 
 }  // namespace sak

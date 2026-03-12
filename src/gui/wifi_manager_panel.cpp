@@ -639,6 +639,9 @@ bool WifiManagerPanel::exportQrToPdf(const QImage& image,
     const int side = std::min(pageRect.width(), pageRect.height());
     const QImage scaled = image.scaled(side, side, Qt::KeepAspectRatio, Qt::SmoothTransformation);
     QPainter painter(&writer);
+    if (!painter.isActive()) {
+        return false;
+    }
     painter.drawImage((pageRect.width() - scaled.width()) / 2, 0, scaled);
     painter.end();
     return true;
@@ -1808,7 +1811,7 @@ static void drawQrModules(QImage& out, const QString& payload, int imageSize) {
     Q_ASSERT(!payload.isEmpty());
     Q_ASSERT(imageSize >= 0);
     constexpr int BORDER = 4;
-    // HIGH ECC trades capacity for resilience — critical because phone cameras
+    // HIGH ECC trades capacity for resilience -- critical because phone cameras
     // often scan QR codes at oblique angles or in poor lighting.
     const qrcodegen::QrCode qr = qrcodegen::QrCode::encodeText(payload.toUtf8().constData(),
                                                                qrcodegen::QrCode::Ecc::HIGH);
@@ -1820,7 +1823,7 @@ static void drawQrModules(QImage& out, const QString& payload, int imageSize) {
     const double cellSize = static_cast<double>(imageSize) / totalModules;
 
     QPainter painter(&out);
-    // Antialiasing must be OFF — sub-pixel blending produces grey edges
+    // Antialiasing must be OFF -- sub-pixel blending produces grey edges
     // that confuse QR decoders.
     painter.setRenderHint(QPainter::Antialiasing, false);
     painter.setBrush(Qt::black);
@@ -1923,7 +1926,7 @@ QString buildWlanXmlContent(const QString& ssid,
     return xml;
 }
 
-// Escape for safe use in batch scripts — prevent command injection
+// Escape for safe use in batch scripts -- prevent command injection
 // Batch special chars: & | > < ^ % ! ( ) " need escaping with ^
 QString escapeBatchString(const QString& text) {
     QString result;

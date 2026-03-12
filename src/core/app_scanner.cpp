@@ -271,7 +271,7 @@ std::vector<AppScanner::AppInfo> AppScanner::scanChocolatey() {
     }
     if (!process.waitForFinished(sak::kTimeoutProcessMediumMs)) {
         sak::logWarning(
-            "Chocolatey package scan timed out after 10s — choco may not be installed "
+            "Chocolatey package scan timed out after 10s -- choco may not be installed "
             "or is unresponsive");
         process.kill();
         return apps;

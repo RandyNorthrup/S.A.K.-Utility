@@ -86,7 +86,7 @@ Q_SIGNALS:
 private:
     /// @brief Resolve the path to the bundled smartctl executable
     /// @return Absolute path to smartctl.exe, or empty string if not found
-    [[nodiscard]] QString resolveSmartctlPath() const;
+    [[nodiscard]] static QString resolveSmartctlPath();
 
     /// @brief Run smartctl and capture JSON output for a specific drive
     /// @param disk_number Physical drive number
@@ -119,8 +119,8 @@ private:
     /// @brief Assess overall health based on parsed data
     /// @param report Report to assess (modified in-place)
     void assessHealth(SmartReport& report);
-    void assessSataAttributeHealth(SmartReport& report);
-    void assessNvmeHealth(SmartReport& report);
+    void assessSataAttributeHealth(SmartReport& report) const;
+    void assessNvmeHealth(SmartReport& report) const;
 
     /// @brief Generate warnings and recommendations for a report
     /// @param report Report to enrich (modified in-place)

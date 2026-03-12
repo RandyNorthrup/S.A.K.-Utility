@@ -64,12 +64,6 @@ public:
 
 private:
     /**
-     * @brief Check if user is in administrators group
-     * @return True if user is admin
-     */
-    [[nodiscard]] static bool isUserAdmin() noexcept;
-
-    /**
      * @brief Get current executable path (wide-char for Unicode support)
      * @return Executable path or error
      */

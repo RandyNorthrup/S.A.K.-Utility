@@ -24,7 +24,7 @@ namespace sak {
 /// interval for UI display and thermal history tracking.
 ///
 /// Note: MSAcpi_ThermalZoneTemperature requires administrator privileges
-/// and is not available on all systems. Unavailable sensors report -1.0°C.
+/// and is not available on all systems. Unavailable sensors report -1.0 degC.
 ///
 /// Usage:
 /// @code
@@ -73,7 +73,7 @@ public:
 
     /// @brief Query CPU thermal zone temperature from WMI
     /// @return Temperature in Celsius, or -1.0 if unavailable
-    /// @note Shared utility — also used by StressTestWorker
+    /// @note Shared utility -- also used by StressTestWorker
     [[nodiscard]] static double queryCpuTemperature();
 
 Q_SIGNALS:
@@ -87,7 +87,7 @@ Q_SIGNALS:
     void temperatureWarning(const QString& component, double temperature);
 
 private Q_SLOTS:
-    /// @brief Timer callback — performs a poll and emits signals
+    /// @brief Timer callback -- performs a poll and emits signals
     void onTimerTick();
 
 private:

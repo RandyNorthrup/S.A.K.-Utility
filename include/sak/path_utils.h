@@ -66,7 +66,7 @@ private:
     /// @brief Normalize a path (resolve .., ., remove redundant separators)
     /// @param path Path to normalize
     /// @return Expected containing normalized path or error code
-    /// @note Internal only — used by isSafePath()
+    /// @note Internal only -- used by isSafePath()
     [[nodiscard]] static auto normalize(const std::filesystem::path& path)
         -> std::expected<std::filesystem::path, error_code>;
 

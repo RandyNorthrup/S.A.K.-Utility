@@ -58,7 +58,7 @@ void UserProfileRestoreUserMappingPage::setupUi() {
     // Mapping table
     m_mappingTable = new QTableWidget(0, 5, this);
     m_mappingTable->setHorizontalHeaderLabels(
-        {tr("Select"), tr("Source User"), tr("→"), tr("Destination User"), tr("Merge Mode")});
+        {tr("Select"), tr("Source User"), tr("->"), tr("Destination User"), tr("Merge Mode")});
     m_mappingTable->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
     m_mappingTable->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_mappingTable->verticalHeader()->setVisible(false);
@@ -118,7 +118,7 @@ void UserProfileRestoreUserMappingPage::loadMappingTable() {
         m_mappingTable->setItem(row, 1, sourceItem);
 
         // Arrow
-        auto* arrowItem = new QTableWidgetItem("→");
+        auto* arrowItem = new QTableWidgetItem("->");
         arrowItem->setFlags(arrowItem->flags() & ~Qt::ItemIsEditable);
         arrowItem->setTextAlignment(Qt::AlignCenter);
         m_mappingTable->setItem(row, 2, arrowItem);
@@ -306,7 +306,7 @@ void UserProfileRestoreMergeConfigPage::setupUi() {
     // Merge table
     m_mergeTable = new QTableWidget(0, 4, this);
     m_mergeTable->setHorizontalHeaderLabels(
-        {tr("Source → Destination"), tr("Merge Mode"), tr("Conflict Resolution"), tr("Status")});
+        {tr("Source -> Destination"), tr("Merge Mode"), tr("Conflict Resolution"), tr("Status")});
     m_mergeTable->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
     m_mergeTable->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_mergeTable->verticalHeader()->setVisible(false);
@@ -348,8 +348,8 @@ void UserProfileRestoreMergeConfigPage::loadMergeTable() {
 
         // Mapping info
         QString mappingText = mapping.destination_username.isEmpty()
-                                  ? tr("%1 → (New User)").arg(mapping.source_username)
-                                  : tr("%1 → %2").arg(mapping.source_username,
+                                  ? tr("%1 -> (New User)").arg(mapping.source_username)
+                                  : tr("%1 -> %2").arg(mapping.source_username,
                                                       mapping.destination_username);
 
         auto* mappingItem = new QTableWidgetItem(mappingText);
@@ -708,7 +708,7 @@ void UserProfileRestoreAppDataPage::initializePage() {
 }
 
 bool UserProfileRestoreAppDataPage::isComplete() const {
-    return true;  // Always complete — app data restore is optional
+    return true;  // Always complete -- app data restore is optional
 }
 
 void UserProfileRestoreAppDataPage::loadAppDataSources() {
@@ -722,7 +722,7 @@ void UserProfileRestoreAppDataPage::loadAppDataSources() {
     QString appDataFilePath = wiz->backupPath() + "/app_data_sources.json";
     QFile file(appDataFilePath);
     if (!file.open(QIODevice::ReadOnly)) {
-        m_statusLabel->setText(tr("No app_data_sources.json found in backup — skipping"));
+        m_statusLabel->setText(tr("No app_data_sources.json found in backup -- skipping"));
         m_summaryLabel->setText(tr("No application data available in this backup"));
         return;
     }
@@ -969,7 +969,7 @@ void UserProfileRestoreNetworksPage::initializePage() {
 }
 
 bool UserProfileRestoreNetworksPage::isComplete() const {
-    return true;  // Always complete — network restore is optional
+    return true;  // Always complete -- network restore is optional
 }
 
 void UserProfileRestoreNetworksPage::loadNetworkProfiles() {
@@ -983,7 +983,7 @@ void UserProfileRestoreNetworksPage::loadNetworkProfiles() {
     QString networksFilePath = wiz->backupPath() + "/wifi_profiles.json";
     QFile file(networksFilePath);
     if (!file.open(QIODevice::ReadOnly)) {
-        m_statusLabel->setText(tr("No wifi_profiles.json found in backup — skipping"));
+        m_statusLabel->setText(tr("No wifi_profiles.json found in backup -- skipping"));
         m_summaryLabel->setText(tr("No WiFi profile data available in this backup"));
         return;
     }
@@ -1163,7 +1163,7 @@ void UserProfileRestoreEthernetPage::initializePage() {
 }
 
 bool UserProfileRestoreEthernetPage::isComplete() const {
-    return true;  // Always complete — ethernet restore is optional
+    return true;  // Always complete -- ethernet restore is optional
 }
 
 void UserProfileRestoreEthernetPage::loadEthernetConfigs() {
@@ -1177,7 +1177,7 @@ void UserProfileRestoreEthernetPage::loadEthernetConfigs() {
     QString ethernetFilePath = wiz->backupPath() + "/ethernet_configs.json";
     QFile file(ethernetFilePath);
     if (!file.open(QIODevice::ReadOnly)) {
-        m_statusLabel->setText(tr("No ethernet_configs.json found in backup — skipping"));
+        m_statusLabel->setText(tr("No ethernet_configs.json found in backup -- skipping"));
         m_summaryLabel->setText(tr("No ethernet configuration data available in this backup"));
         return;
     }
@@ -1407,22 +1407,22 @@ void UserProfileRestorePermissionSettingsPage::updateSummary() {
 
     if (mode == PermissionMode::PreserveOriginal) {
         warning = tr(
-            "⚠️ <b>Warning:</b> Preserving original permissions may cause access issues "
+            "(!) <b>Warning:</b> Preserving original permissions may cause access issues "
             "if SIDs don't match.");
     } else if (mode == PermissionMode::StripAll) {
         warning = tr(
-            "✅ <b>Recommended:</b> Stripping ACLs ensures files inherit safe permissions "
+            "[OK] <b>Recommended:</b> Stripping ACLs ensures files inherit safe permissions "
             "from parent folders.");
     } else if (mode == PermissionMode::AssignToDestination) {
-        warning = tr("ℹ️ <b>Info:</b> Files will be owned by the destination user.");
+        warning = tr("(i) <b>Info:</b> Files will be owned by the destination user.");
     }
 
     QString summary = QString(
                           "<b>Configuration Summary:</b><br>"
-                          "• Permission Mode: %1<br>"
-                          "• Conflict Resolution: %2<br>"
-                          "• Verify Integrity: %3<br>"
-                          "• Backup Existing: %4<br><br>"
+                          "* Permission Mode: %1<br>"
+                          "* Conflict Resolution: %2<br>"
+                          "* Verify Integrity: %3<br>"
+                          "* Backup Existing: %4<br><br>"
                           "%5")
                           .arg(permMode,
                                conflictMode,
@@ -1548,7 +1548,7 @@ void UserProfileRestoreAppRestorePage::initializePage() {
 }
 
 bool UserProfileRestoreAppRestorePage::isComplete() const {
-    // Always complete — app installation is optional
+    // Always complete -- app installation is optional
     return !m_installing;
 }
 
@@ -1563,7 +1563,7 @@ void UserProfileRestoreAppRestorePage::loadApps() {
     QString appsFilePath = wiz->backupPath() + "/installed_apps.json";
     QFile file(appsFilePath);
     if (!file.open(QIODevice::ReadOnly)) {
-        m_statusLabel->setText(tr("No installed_apps.json found in backup — skipping app restore"));
+        m_statusLabel->setText(tr("No installed_apps.json found in backup -- skipping app restore"));
         m_summaryLabel->setText(tr("No application data available in this backup"));
         return;
     }
@@ -1704,7 +1704,7 @@ void UserProfileRestoreAppRestorePage::onItemChanged(QTreeWidgetItem* item, int 
     m_appTree->blockSignals(true);
 
     if (item->childCount() > 0) {
-        // Parent item — propagate to enabled children
+        // Parent item -- propagate to enabled children
         Qt::CheckState state = item->checkState(0);
         for (int i = 0; i < item->childCount(); ++i) {
             auto* child = item->child(i);
@@ -1840,7 +1840,7 @@ void UserProfileRestoreAppRestorePage::onInstallApps() {
 
     m_statusLabel->setText(
         tr("Installation complete: %1 succeeded, %2 failed").arg(installed).arg(failed));
-    m_summaryLabel->setText(tr("App installation finished — %1 installed, %2 failed. Click Next to "
+    m_summaryLabel->setText(tr("App installation finished -- %1 installed, %2 failed. Click Next to "
                                "continue.")
                                 .arg(installed)
                                 .arg(failed));

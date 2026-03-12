@@ -108,7 +108,7 @@ private:
     /// @brief Query OS info via WMI Win32_OperatingSystem
     void queryOsInfo();
 
-    // ── WMI helpers ──────────────────────────────────────────────
+    // -- WMI helpers ----------------------------------------------
 
     /// @brief Execute a PowerShell WMI query and return parsed JSON results
     /// @param wmi_class WMI class name (e.g., "Win32_Processor")

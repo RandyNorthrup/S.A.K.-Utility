@@ -63,9 +63,9 @@ struct FlashProgress {
  * @brief Result of flash operation
  */
 struct FlashResult {
-    bool success;
-    qint64 bytesWritten;
-    double elapsedSeconds;
+    bool success = false;
+    qint64 bytesWritten = 0;
+    double elapsedSeconds = 0.0;
     QStringList successfulDrives;
     QStringList failedDrives;
     QStringList errorMessages;

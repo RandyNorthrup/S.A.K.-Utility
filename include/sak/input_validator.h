@@ -237,8 +237,10 @@ private:
 
     // Platform-specific helpers
     static std::uintmax_t get_available_memory_impl();
+#ifndef _WIN32
     static std::size_t get_file_descriptor_count_impl();
     static std::size_t get_file_descriptor_limit_impl();
+#endif
 };
 
 // ============================================

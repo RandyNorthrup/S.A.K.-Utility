@@ -321,7 +321,7 @@ void WindowsISODownloadDialog::onBuildsFetched(const QList<UupDumpApi::BuildInfo
 }
 
 // ============================================================================
-// Step 2: Build Selected → Fetch Languages
+// Step 2: Build Selected -> Fetch Languages
 // ============================================================================
 
 void WindowsISODownloadDialog::onBuildSelected() {
@@ -375,7 +375,7 @@ void WindowsISODownloadDialog::onLanguagesFetched(const QStringList& langCodes,
 }
 
 // ============================================================================
-// Step 3: Language Selected → Fetch Editions
+// Step 3: Language Selected -> Fetch Editions
 // ============================================================================
 
 void WindowsISODownloadDialog::onLanguageSelected(int index) {
@@ -476,27 +476,27 @@ void WindowsISODownloadDialog::onPhaseChanged(UupIsoBuilder::Phase phase,
     case UupIsoBuilder::Phase::PreparingDownload:
         m_phaseLabel->setStyleSheet(
             QString("font-weight: bold; color: %1;").arg(sak::ui::kStatusColorRunning));
-        m_phaseLabel->setText(QStringLiteral("\u2699 ") + description);  // ⚙
+        m_phaseLabel->setText(QStringLiteral("\u2699 ") + description);  // [*]
         break;
     case UupIsoBuilder::Phase::DownloadingFiles:
         m_phaseLabel->setStyleSheet(
             QString("font-weight: bold; color: %1;").arg(sak::ui::kColorAccentEmerald));
-        m_phaseLabel->setText(QStringLiteral("\u2B07 ") + description);  // ⬇
+        m_phaseLabel->setText(QStringLiteral("\u2B07 ") + description);  // v
         break;
     case UupIsoBuilder::Phase::ConvertingToISO:
         m_phaseLabel->setStyleSheet(
             QString("font-weight: bold; color: %1;").arg(sak::ui::kStatusColorWarning));
-        m_phaseLabel->setText(QStringLiteral("\u23F3 ") + description);  // ⏳
+        m_phaseLabel->setText(QStringLiteral("\u23F3 ") + description);  // [...]
         break;
     case UupIsoBuilder::Phase::Completed:
         m_phaseLabel->setStyleSheet(
             QString("font-weight: bold; color: %1;").arg(sak::ui::kStatusColorSuccess));
-        m_phaseLabel->setText(QStringLiteral("\u2714 ") + description);  // ✔
+        m_phaseLabel->setText(QStringLiteral("\u2714 ") + description);  // [x]
         break;
     case UupIsoBuilder::Phase::Failed:
         m_phaseLabel->setStyleSheet(
             QString("font-weight: bold; color: %1;").arg(sak::ui::kStatusColorError));
-        m_phaseLabel->setText(QStringLiteral("\u2718 ") + description);  // ✘
+        m_phaseLabel->setText(QStringLiteral("\u2718 ") + description);  // [X]
         break;
     default:
         break;

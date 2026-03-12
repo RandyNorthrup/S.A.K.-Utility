@@ -162,7 +162,7 @@ auto file_hasher::calculateSha256(const std::filesystem::path& file_path,
     }
 }
 
-auto file_hasher::calculateMd5(std::span<const std::byte> data) const
+auto file_hasher::calculateMd5(std::span<const std::byte> data)
     -> std::expected<std::string, error_code> {
     try {
         QCryptographicHash hash(QCryptographicHash::Md5);
@@ -177,7 +177,7 @@ auto file_hasher::calculateMd5(std::span<const std::byte> data) const
     }
 }
 
-auto file_hasher::calculateSha256(std::span<const std::byte> data) const
+auto file_hasher::calculateSha256(std::span<const std::byte> data)
     -> std::expected<std::string, error_code> {
     try {
         QCryptographicHash hash(QCryptographicHash::Sha256);
@@ -195,7 +195,7 @@ auto file_hasher::calculateSha256(std::span<const std::byte> data) const
 void file_hasher::hashFileInChunks(QFile& file,
                                    QCryptographicHash& hash,
                                    hash_progress_callback& progress,
-                                   std::stop_token& stop_token) const {
+                                   const std::stop_token& stop_token) const {
     const auto file_size = static_cast<std::size_t>(file.size());
     std::size_t bytes_processed = 0;
 

@@ -22,7 +22,7 @@
 
 namespace sak {
 
-// ── Panel Header Factory ────────────────────────────────────────────────────
+// -- Panel Header Factory ----------------------------------------------------
 
 /// @brief Create a consistent panel header with bold title and muted subtitle.
 ///
@@ -56,7 +56,7 @@ inline void createPanelHeader(QWidget* parent,
 
 /// @brief Create a panel header with an icon to the left of the title/subtitle.
 ///
-/// Mirrors the About panel's icon layout: a 48×48 SVG icon in an HBox
+/// Mirrors the About panel's icon layout: a 48x48 SVG icon in an HBox
 /// alongside the bold title and muted subtitle in a VBox.
 ///
 /// @param parent   The parent widget that owns the labels.
@@ -101,7 +101,7 @@ inline void createPanelHeader(QWidget* parent,
     layout->addLayout(headerRow);
 }
 
-// ── Dynamic Panel Header ────────────────────────────────────────────────────
+// -- Dynamic Panel Header ----------------------------------------------------
 
 /// @brief Pointers returned by createDynamicPanelHeader for runtime updates.
 struct PanelHeaderWidgets {
@@ -171,7 +171,7 @@ inline void updatePanelHeader(const PanelHeaderWidgets& hw,
     }
 }
 
-// ── Accessibility Helpers ───────────────────────────────────────────────────
+// -- Accessibility Helpers ---------------------------------------------------
 
 /// @brief Set accessible name and optional description on any QWidget.
 ///

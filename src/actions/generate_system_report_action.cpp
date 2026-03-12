@@ -101,7 +101,7 @@ void GenerateSystemReportAction::execute() {
                            .arg(QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss"));
     QString filepath = output_dir.filePath(filename);
 
-    report += QString("─").repeated(78) + "\n";
+    report += QString("-").repeated(78) + "\n";
     report += QString("Report completed in %1 seconds\n")
                   .arg(start_time.msecsTo(QDateTime::currentDateTime()) / 1000.0, 0, 'f', 1);
 
@@ -146,9 +146,9 @@ void GenerateSystemReportAction::saveReportAndFinish(const QString& report,
 
 QString GenerateSystemReportAction::buildReportHeader() const {
     QString header;
-    header += "╔" + QString("═").repeated(78) + "╗\n";
-    header += "║" + QString(" COMPREHENSIVE SYSTEM DIAGNOSTIC REPORT").leftJustified(78) + "║\n";
-    header += "╚" + QString("═").repeated(78) + "╝\n\n";
+    header += "+" + QString("=").repeated(78) + "+\n";
+    header += "|" + QString(" COMPREHENSIVE SYSTEM DIAGNOSTIC REPORT").leftJustified(78) + "|\n";
+    header += "+" + QString("=").repeated(78) + "+\n\n";
     header += QString("Generated: %1\n\n")
                   .arg(QDateTime::currentDateTime().toString("yyyy-MM-dd "
                                                              "HH:mm:ss"));
@@ -272,7 +272,7 @@ QString GenerateSystemReportAction::gatherStorageInfo() {
         "    try {\n"
         "        $smart = $disk | Get-StorageReliabilityCounter -ErrorAction SilentlyContinue\n"
         "        if ($smart) {\n"
-        "            Write-Output \"  Temperature: $($smart.Temperature)°C\"\n"
+        "            Write-Output \"  Temperature: $($smart.Temperature) degC\"\n"
         "            Write-Output \"  Power On Hours: $($smart.PowerOnHours)\"\n"
         "            Write-Output \"  Wear: $($smart.Wear)%\"\n"
         "        }\n"

@@ -91,13 +91,9 @@ auto FlashWorker::execute() -> std::expected<void, sak::error_code> {
         return std::unexpected(sak::error_code::file_not_found);
     }
 
-    // Lock and dismount volume
-    if (!lockVolume() || !dismountVolume()) {
-        sak::logError("Failed to prepare device for writing");
-        Q_EMIT error("Failed to prepare device for writing");
-        cleanupFlashResources();
-        return std::unexpected(sak::error_code::operation_cancelled);
-    }
+    // Lock and dismount volume (best-effort; non-critical if drive has no volumes)
+    lockVolume();
+    dismountVolume();
 
     // Write image
     if (!writeImage()) {
@@ -116,7 +112,7 @@ auto FlashWorker::execute() -> std::expected<void, sak::error_code> {
 
         if (!result.passed) {
             sak::logError("Verification failed");
-            // Don't emit error() here — verificationCompleted already carries
+            // Don't emit error() here -- verificationCompleted already carries
             // the failure info, and the coordinator handles it via
             // onWorkerCompleted(). Emitting error() would double-count.
             cleanupFlashResources();
@@ -149,8 +145,8 @@ bool FlashWorker::openDevice() {
                                  nullptr);
 
     if (m_deviceHandle == INVALID_HANDLE_VALUE) {
-        DWORD error = GetLastError();
-        sak::logError(QString("CreateFile failed with error %1").arg(error).toStdString());
+        DWORD last_error = GetLastError();
+        sak::logError(QString("CreateFile failed with error %1").arg(last_error).toStdString());
         return false;
     }
 
@@ -289,7 +285,7 @@ bool FlashWorker::writeImage() {
             return false;
         }
 
-        // Guard against qint64 → DWORD truncation
+        // Guard against qint64 -> DWORD truncation
         if (bytesRead > static_cast<qint64>(MAXDWORD)) {
             sak::logError("Write size exceeds DWORD range");
             return false;
@@ -301,8 +297,8 @@ bool FlashWorker::writeImage() {
                        static_cast<DWORD>(bytesRead),
                        &bytesWrittenThisTime,
                        nullptr)) {
-            DWORD error = GetLastError();
-            sak::logError(QString("WriteFile failed with error %1").arg(error).toStdString());
+            DWORD last_error = GetLastError();
+            sak::logError(QString("WriteFile failed with error %1").arg(last_error).toStdString());
             return false;
         }
 
@@ -425,7 +421,7 @@ sak::ValidationResult FlashWorker::verifySample() {
 
     result.passed = true;
 
-    // Guard against images smaller than one block — nothing to sample.
+    // Guard against images smaller than one block -- nothing to sample.
     const qint64 totalBlocks = m_totalBytes / blockSize;
     if (totalBlocks < 1) {
         sak::logWarning("Image too small for sample verification, skipping");
@@ -534,8 +530,8 @@ QString FlashWorker::calculateChecksum(HANDLE handle, qint64 size) {
 
         DWORD bytesRead = 0;
         if (!ReadFile(handle, buffer.data(), static_cast<DWORD>(toRead), &bytesRead, nullptr)) {
-            DWORD error = GetLastError();
-            sak::logError(QString("ReadFile failed with error %1").arg(error).toStdString());
+            DWORD last_error = GetLastError();
+            sak::logError(QString("ReadFile failed with error %1").arg(last_error).toStdString());
             return QString();
         }
 

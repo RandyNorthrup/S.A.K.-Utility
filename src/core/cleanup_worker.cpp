@@ -126,7 +126,7 @@ bool CleanupWorker::deleteFile(const QString& path) {
         return true;
     }
 
-    // File is locked — schedule removal on next reboot
+    // File is locked -- schedule removal on next reboot
     if (scheduleRebootRemoval(path)) {
         m_rebootPendingPaths.append(path);
         return true;  // Counted as success; actual removal happens on reboot

@@ -1,4 +1,4 @@
-﻿// Copyright (c) 2025 Randy Northrup. All rights reserved.
+// Copyright (c) 2025 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 /// @file quickbooks_backup_action.cpp
@@ -78,9 +78,9 @@
  *
  * RESEARCH VALIDATION:
  * --------------------
- * - Chrome DevTools MCP: ✅ Current web research (2024-2025 sources)
- * - Microsoft Docs: ✅ Official Windows API documentation
- * - Context7: ⚠️ SDK available but N/A for file backup use case
+ * - Chrome DevTools MCP: [OK] Current web research (2024-2025 sources)
+ * - Microsoft Docs: [OK] Official Windows API documentation
+ * - Context7: (!) SDK available but N/A for file backup use case
  */
 
 #include "sak/actions/quickbooks_backup_action.h"

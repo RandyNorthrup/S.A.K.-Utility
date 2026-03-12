@@ -109,7 +109,7 @@ private:
     [[nodiscard]] static qint64 calculateSize(const QString& path);
 };
 
-// ── Compile-Time Invariants ─────────────────────────────────────────────────
+// -- Compile-Time Invariants -------------------------------------------------
 
 static_assert(!std::is_copy_constructible_v<LeftoverScanner>,
               "LeftoverScanner must not be copy-constructible.");

@@ -19,7 +19,7 @@ WorkerBase::~WorkerBase() {
     if (isRunning()) {
         requestStop();
         if (!wait(sak::kTimeoutThreadShutdownMs)) {
-            sak::logError("Worker thread did not stop within 15s — forcing termination");
+            sak::logError("Worker thread did not stop within 15s -- forcing termination");
             terminate();
             wait(sak::kTimeoutThreadTerminateMs);
         }
@@ -74,7 +74,7 @@ void WorkerBase::run() {
     }
 }
 
-bool WorkerBase::checkStop() {
+bool WorkerBase::checkStop() const {
     if (stopRequested()) {
         sak::logInfo("Worker cancellation requested");
         return true;

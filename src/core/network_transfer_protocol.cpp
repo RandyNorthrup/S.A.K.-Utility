@@ -5,6 +5,7 @@
 
 #include <QJsonDocument>
 #include <QTcpSocket>
+#include <algorithm>
 
 namespace sak {
 
@@ -40,19 +41,19 @@ QJsonObject TransferProtocol::makeMessage(TransferMessageType type, const QJsonO
 
 std::optional<TransferMessageType> TransferProtocol::parseType(const QString& type) {
     Q_ASSERT(!type.isEmpty());
-    for (const auto& entry : kTransferTypes) {
-        if (type == QLatin1String(entry.name)) {
-            return entry.type;
-        }
+    auto it = std::find_if(std::begin(kTransferTypes), std::end(kTransferTypes),
+        [&type](const auto& entry) { return type == QLatin1String(entry.name); });
+    if (it != std::end(kTransferTypes)) {
+        return it->type;
     }
     return std::nullopt;
 }
 
 QString TransferProtocol::typeToString(TransferMessageType type) {
-    for (const auto& entry : kTransferTypes) {
-        if (entry.type == type) {
-            return QString::fromLatin1(entry.name);
-        }
+    auto it = std::find_if(std::begin(kTransferTypes), std::end(kTransferTypes),
+        [type](const auto& entry) { return entry.type == type; });
+    if (it != std::end(kTransferTypes)) {
+        return QString::fromLatin1(it->name);
     }
     return QStringLiteral("UNKNOWN");
 }

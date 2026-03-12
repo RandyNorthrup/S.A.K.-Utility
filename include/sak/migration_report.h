@@ -134,10 +134,10 @@ private:
     QString getCurrentUser() const;
 
     QString escapeJsonString(const QString& str) const;
-    QString escapeCsvField(const QString& field) const;
+    static QString escapeCsvField(const QString& field);
     QString formatHtmlReport() const;
-    MigrationEntry parseEntryFromJson(const QJsonObject& obj) const;
-    void populateMatchFields(MigrationEntry& entry,
+    static MigrationEntry parseEntryFromJson(const QJsonObject& obj);
+    static void populateMatchFields(MigrationEntry& entry,
                              const QMap<QString, PackageMatcher::MatchResult>& match_map,
                              const QString& app_name);
     static QString buildHtmlStyles();

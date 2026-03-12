@@ -90,11 +90,11 @@ void DisableVisualEffectsAction::execute() {
 
     // Phase 1: Enumerate current settings
     QString report;
-    report += "╔══════════════════════════════════════════════════════════════════════╗\n";
-    report += "║                   VISUAL EFFECTS OPTIMIZATION                        ║\n";
-    report += "╠══════════════════════════════════════════════════════════════════════╣\n";
-    report += "║ Phase 1: Current Settings Analysis                                  ║\n";
-    report += "╠══════════════════════════════════════════════════════════════════════╣\n";
+    report += "+======================================================================+\n";
+    report += "|                   VISUAL EFFECTS OPTIMIZATION                        |\n";
+    report += "+======================================================================+\n";
+    report += "| Phase 1: Current Settings Analysis                                  |\n";
+    report += "+======================================================================+\n";
 
     ProcessResult ps_check = runPowerShell(buildCheckSettingsScript(),
                                            sak::kTimeoutProcessMediumMs);
@@ -124,8 +124,8 @@ void DisableVisualEffectsAction::execute() {
     Q_EMIT executionProgress("Notifying system of changes...", 70);
 
     // Phase 3: Notify system
-    report += "║ Phase 3: System Notification                                        ║\n";
-    report += "╠══════════════════════════════════════════════════════════════════════╣\n";
+    report += "| Phase 3: System Notification                                        |\n";
+    report += "+======================================================================+\n";
 
     ProcessResult notify_proc =
         runProcess("rundll32.exe",
@@ -136,11 +136,11 @@ void DisableVisualEffectsAction::execute() {
     }
     bool notification_success = notify_proc.succeeded();
 
-    report += QString("║ System Notification: %1")
-                  .arg(notification_success ? "✓ Success" : "✗ Failed")
+    report += QString("| System Notification: %1")
+                  .arg(notification_success ? "[x] Success" : "[ ] Failed")
                   .leftJustified(73, ' ') +
-              "║\n";
-    report += "╠══════════════════════════════════════════════════════════════════════╣\n";
+              "|\n";
+    report += "+======================================================================+\n";
 
     Q_EMIT executionProgress("Optimization complete", 100);
 
@@ -154,8 +154,8 @@ void DisableVisualEffectsAction::execute() {
 void DisableVisualEffectsAction::applyVisualEffectsSettings(QString& report,
                                                             int& settings_changed,
                                                             int& settings_total) {
-    report += "║ Phase 2: Applying Best Performance Settings                         ║\n";
-    report += "╠══════════════════════════════════════════════════════════════════════╣\n";
+    report += "| Phase 2: Applying Best Performance Settings                         |\n";
+    report += "+======================================================================+\n";
 
     ProcessResult ps_apply = runPowerShell(buildApplySettingsScript(),
                                            sak::kTimeoutProcessMediumMs);
@@ -173,12 +173,12 @@ void DisableVisualEffectsAction::applyVisualEffectsSettings(QString& report,
         }
     }
 
-    report += QString("║ Settings Modified: %1 / %2")
+    report += QString("| Settings Modified: %1 / %2")
                   .arg(settings_changed)
                   .arg(settings_total)
                   .leftJustified(73, ' ') +
-              "║\n";
-    report += "╠══════════════════════════════════════════════════════════════════════╣\n";
+              "|\n";
+    report += "+======================================================================+\n";
 }
 
 void DisableVisualEffectsAction::buildAndFinishVisualEffectsResult(
@@ -331,25 +331,25 @@ QString DisableVisualEffectsAction::buildCurrentSettingsReport(
                                          : "Unknown";
 
     QString section;
-    section += QString("║ Current Mode: %1").arg(fx_mode).leftJustified(73, ' ') + "║\n";
-    section += QString("║ VisualFXSetting: %1").arg(visual_fx).leftJustified(73, ' ') + "║\n";
-    section += QString("║ TaskbarAnimations: %1")
+    section += QString("| Current Mode: %1").arg(fx_mode).leftJustified(73, ' ') + "|\n";
+    section += QString("| VisualFXSetting: %1").arg(visual_fx).leftJustified(73, ' ') + "|\n";
+    section += QString("| TaskbarAnimations: %1")
                    .arg(current_settings["TaskbarAnimations"].toInt(-1))
                    .leftJustified(73, ' ') +
-               "║\n";
-    section += QString("║ EnableAeroPeek: %1")
+               "|\n";
+    section += QString("| EnableAeroPeek: %1")
                    .arg(current_settings["EnableAeroPeek"].toInt(-1))
                    .leftJustified(73, ' ') +
-               "║\n";
-    section += QString("║ AlwaysHibernateThumbnails: %1")
+               "|\n";
+    section += QString("| AlwaysHibernateThumbnails: %1")
                    .arg(current_settings["AlwaysHibernateThumbnails"].toInt(-1))
                    .leftJustified(73, ' ') +
-               "║\n";
-    section += QString("║ MinAnimate: %1")
+               "|\n";
+    section += QString("| MinAnimate: %1")
                    .arg(current_settings["MinAnimate"].toString())
                    .leftJustified(73, ' ') +
-               "║\n";
-    section += "╠══════════════════════════════════════════════════════════════════════╣\n";
+               "|\n";
+    section += "+======================================================================+\n";
     return section;
 }
 
@@ -359,40 +359,40 @@ QString DisableVisualEffectsAction::buildSummaryReport(int settings_total,
     Q_UNUSED(fx_mode)
 
     QString section;
-    section += "║ OPTIMIZATION SUMMARY                                                 ║\n";
-    section += "╠══════════════════════════════════════════════════════════════════════╣\n";
-    section += QString("║ Total Settings: %1").arg(settings_total).leftJustified(73, ' ') + "║\n";
-    section += QString("║ Settings Changed: %1").arg(settings_changed).leftJustified(73, ' ') +
-               "║\n";
-    section += QString("║ Settings Already Optimized: %1")
+    section += "| OPTIMIZATION SUMMARY                                                 |\n";
+    section += "+======================================================================+\n";
+    section += QString("| Total Settings: %1").arg(settings_total).leftJustified(73, ' ') + "|\n";
+    section += QString("| Settings Changed: %1").arg(settings_changed).leftJustified(73, ' ') +
+               "|\n";
+    section += QString("| Settings Already Optimized: %1")
                    .arg(settings_total - settings_changed)
                    .leftJustified(73, ' ') +
-               "║\n";
-    section += "║                                                                      ║\n";
+               "|\n";
+    section += "|                                                                      |\n";
 
     if (settings_changed > 0) {
-        section += "║ ⚠ RESTART REQUIRED                                                   ║\n";
-        section += "║   Log off and log back in to apply all visual effects changes.      ║\n";
-        section += "║   Some changes may take effect immediately in new windows.          ║\n";
+        section += "| (!) RESTART REQUIRED                                                   |\n";
+        section += "|   Log off and log back in to apply all visual effects changes.      |\n";
+        section += "|   Some changes may take effect immediately in new windows.          |\n";
     } else {
-        section += "║ ✓ All visual effects already optimized for Best Performance         ║\n";
+        section += "| [x] All visual effects already optimized for Best Performance         |\n";
     }
 
-    section += "║                                                                      ║\n";
-    section += "║ OPTIMIZATIONS APPLIED:                                               ║\n";
-    section += "║  • VisualFXSetting = Best Performance (2)                            ║\n";
-    section += "║  • TaskbarAnimations = Disabled                                      ║\n";
-    section += "║  • EnableAeroPeek = Disabled                                         ║\n";
-    section += "║  • AlwaysHibernateThumbnails = Disabled                              ║\n";
-    section += "║  • MinAnimate (window animations) = Disabled                         ║\n";
-    section += "║  • ListviewAlphaSelect = Disabled                                    ║\n";
-    section += "║  • ListviewShadow = Disabled                                         ║\n";
-    section += "║  • DragFullWindows = Disabled                                        ║\n";
-    section += "║  • FontSmoothing = ClearType (Enabled for readability)               ║\n";
-    section += "║  • UserPreferencesMask = Performance optimized                       ║\n";
-    section += "║  • IconsOnly = Enabled                                               ║\n";
-    section += "║  • ShowInfoTip = Enabled (minimal)                                   ║\n";
-    section += "╚══════════════════════════════════════════════════════════════════════╝\n";
+    section += "|                                                                      |\n";
+    section += "| OPTIMIZATIONS APPLIED:                                               |\n";
+    section += "|  * VisualFXSetting = Best Performance (2)                            |\n";
+    section += "|  * TaskbarAnimations = Disabled                                      |\n";
+    section += "|  * EnableAeroPeek = Disabled                                         |\n";
+    section += "|  * AlwaysHibernateThumbnails = Disabled                              |\n";
+    section += "|  * MinAnimate (window animations) = Disabled                         |\n";
+    section += "|  * ListviewAlphaSelect = Disabled                                    |\n";
+    section += "|  * ListviewShadow = Disabled                                         |\n";
+    section += "|  * DragFullWindows = Disabled                                        |\n";
+    section += "|  * FontSmoothing = ClearType (Enabled for readability)               |\n";
+    section += "|  * UserPreferencesMask = Performance optimized                       |\n";
+    section += "|  * IconsOnly = Enabled                                               |\n";
+    section += "|  * ShowInfoTip = Enabled (minimal)                                   |\n";
+    section += "+======================================================================+\n";
     return section;
 }
 

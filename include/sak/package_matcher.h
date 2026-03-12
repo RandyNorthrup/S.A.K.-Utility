@@ -96,13 +96,13 @@ private:
     std::optional<MatchResult> fuzzyMatch(const QString& app_name, ChocolateyManager* choco_mgr);
     std::optional<MatchResult> searchMatch(const QString& app_name,
                                            ChocolateyManager* choco_mgr,
-                                           int max_results);
+                                           int max_results) const;
     std::optional<MatchResult> tryFuzzyMatch(const QString& base_name,
                                              ChocolateyManager* choco_mgr,
                                              double min_confidence);
     std::optional<MatchResult> trySearchMatch(const QString& base_name,
                                               ChocolateyManager* choco_mgr,
-                                              const MatchConfig& config);
+                                              const MatchConfig& config) const;
 
     /// @brief Resolve an exact match with availability verification.
     std::optional<MatchResult> resolveExactMatch(const QString& base_name,
@@ -127,7 +127,7 @@ private:
                              std::vector<std::pair<int, MatchResult>>& exact_results,
                              std::vector<std::pair<int, AppScanner::AppInfo>>& fuzzy_candidates);
     /// @brief Merge exact and fuzzy/search results in original order; return only matched entries.
-    std::vector<MatchResult> mergeMatchResults(
+    static std::vector<MatchResult> mergeMatchResults(
         size_t total_count,
         const std::vector<std::pair<int, MatchResult>>& exact_results,
         const std::vector<std::pair<int, std::optional<MatchResult>>>& fuzzy_results);
@@ -142,14 +142,14 @@ private:
     void cacheSearch(const QString& keyword, const QString& result);
 
     // String processing
-    QString normalizeAppName(const QString& app_name) const;
-    QString extractBaseAppName(const QString& app_name) const;
-    QStringList extractKeywords(const QString& app_name) const;
+    static QString normalizeAppName(const QString& app_name);
+    static QString extractBaseAppName(const QString& app_name);
+    static QStringList extractKeywords(const QString& app_name);
 
     // Similarity scoring
     double calculateSimilarity(const QString& str1, const QString& str2) const;
     int levenshteinDistance(const QString& s1, const QString& s2) const;
-    double jaroWinklerSimilarity(const QString& s1, const QString& s2) const;
+    static double jaroWinklerSimilarity(const QString& s1, const QString& s2);
 
     // Common mappings database
     void initializeCommonMappings();

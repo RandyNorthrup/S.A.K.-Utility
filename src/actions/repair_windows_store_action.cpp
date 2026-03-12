@@ -239,9 +239,9 @@ void RepairWindowsStoreAction::finalizeRepairResult(const RepairStepResults& ste
         result.log = report;
         result.log += QString("\nCompleted in %1 seconds\n").arg(duration_ms / 1000);
         result.log += "RECOMMENDATIONS:\n";
-        result.log += "• Try opening the Microsoft Store app\n";
-        result.log += "• Sign in with your Microsoft account\n";
-        result.log += "• Check for app updates\n";
+        result.log += "* Try opening the Microsoft Store app\n";
+        result.log += "* Sign in with your Microsoft account\n";
+        result.log += "* Check for app updates\n";
     } else {
         result.success = false;
         result.message = "Windows Store repair completed with warnings";
@@ -259,54 +259,54 @@ QString RepairWindowsStoreAction::buildRepairReport(const StorePackageInfo& befo
                                                     const RepairStepResults& steps,
                                                     const StorePackageInfo& after_info,
                                                     int post_error_count) {
-    QString report = "╔════════════════════════════════════════════════════════════════╗\n";
-    report += "║           WINDOWS STORE DIAGNOSTIC REPORT                    ║\n";
-    report += "╠════════════════════════════════════════════════════════════════╣\n";
+    QString report = "+================================================================+\n";
+    report += "|           WINDOWS STORE DIAGNOSTIC REPORT                    |\n";
+    report += "+================================================================+\n";
 
     if (before_info.is_registered) {
-        report += QString("║ Package:     %1\n").arg(before_info.name).leftJustified(67, ' ') +
-                  "║\n";
-        report += QString("║ Version:     %1\n").arg(before_info.version).leftJustified(67, ' ') +
-                  "║\n";
-        report += QString("║ Status:      %1\n")
+        report += QString("| Package:     %1\n").arg(before_info.name).leftJustified(67, ' ') +
+                  "|\n";
+        report += QString("| Version:     %1\n").arg(before_info.version).leftJustified(67, ' ') +
+                  "|\n";
+        report += QString("| Status:      %1\n")
                       .arg(before_info.status.isEmpty() ? "OK" : before_info.status)
                       .leftJustified(67, ' ') +
-                  "║\n";
+                  "|\n";
     } else {
-        report += "║ Package:     NOT REGISTERED                      ║\n";
+        report += "| Package:     NOT REGISTERED                      |\n";
     }
 
-    report += QString("║ Event Errors: %1\n").arg(error_count).leftJustified(67, ' ') + "║\n";
-    report += "╠════════════════════════════════════════════════════════════════╣\n";
-    report += QString("║ WSReset:     %1\n")
+    report += QString("| Event Errors: %1\n").arg(error_count).leftJustified(67, ' ') + "|\n";
+    report += "+================================================================+\n";
+    report += QString("| WSReset:     %1\n")
                   .arg(steps.cache_reset ? "SUCCESS" : "FAILED")
                   .leftJustified(67, ' ') +
-              "║\n";
-    report += QString("║ Reset Package: %1\n")
+              "|\n";
+    report += QString("| Reset Package: %1\n")
                   .arg(steps.package_reset ? "SUCCESS" : "FAILED")
                   .leftJustified(67, ' ') +
-              "║\n";
-    report += QString("║ Re-register: %1\n")
+              "|\n";
+    report += QString("| Re-register: %1\n")
                   .arg(steps.reregistered ? "SUCCESS" : "FAILED")
                   .leftJustified(67, ' ') +
-              "║\n";
-    report += QString("║ Services:    %1\n")
+              "|\n";
+    report += QString("| Services:    %1\n")
                   .arg(steps.services_restarted ? "SUCCESS" : "FAILED")
                   .leftJustified(67, ' ') +
-              "║\n";
-    report += "╠════════════════════════════════════════════════════════════════╣\n";
+              "|\n";
+    report += "+================================================================+\n";
 
     if (after_info.is_registered) {
-        report += "║ Final Status: REGISTERED                          ║\n";
-        report += QString("║ Version:     %1\n").arg(after_info.version).leftJustified(67, ' ') +
-                  "║\n";
+        report += "| Final Status: REGISTERED                          |\n";
+        report += QString("| Version:     %1\n").arg(after_info.version).leftJustified(67, ' ') +
+                  "|\n";
     } else {
-        report += "║ Final Status: REGISTRATION FAILED                 ║\n";
+        report += "| Final Status: REGISTRATION FAILED                 |\n";
     }
-    report += QString("║ Event Errors (post): %1\n").arg(post_error_count).leftJustified(67, ' ') +
-              "║\n";
+    report += QString("| Event Errors (post): %1\n").arg(post_error_count).leftJustified(67, ' ') +
+              "|\n";
 
-    report += "╚════════════════════════════════════════════════════════════════╝\n";
+    report += "+================================================================+\n";
     return report;
 }
 

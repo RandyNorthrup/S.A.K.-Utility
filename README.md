@@ -9,7 +9,7 @@
 [![Qt 6.5+](https://img.shields.io/badge/Qt-6.5%2B-41cd52.svg)](https://www.qt.io/)
 [![Windows 10/11](https://img.shields.io/badge/Windows-10%20%7C%2011-0078d4.svg)](https://www.microsoft.com/windows)
 [![Build](https://github.com/RandyNorthrup/S.A.K.-Utility/actions/workflows/build-release.yml/badge.svg)](https://github.com/RandyNorthrup/S.A.K.-Utility/actions)
-[![Version](https://img.shields.io/badge/Version-0.9.0.1-orange.svg)](VERSION)
+[![Version](https://img.shields.io/badge/Version-0.9.0.2-orange.svg)](VERSION)
 [![TigerStyle](https://img.shields.io/badge/code%20style-TigerStyle-f80.svg)](docs/TIGERSTYLE_COMPLIANCE_PLAN.md)
 
 Migration · Maintenance · Recovery · Imaging · Deployment — one portable EXE.
@@ -18,7 +18,18 @@ Migration · Maintenance · Recovery · Imaging · Deployment — one portable E
 
 ---
 
-## What's New in v0.9.0.1
+## What's New in v0.9.0.2
+
+- **Comprehensive cppcheck cleanup** — Resolved all actionable cppcheck findings across the codebase with `--enable=all --check-level=exhaustive --inconclusive`.
+- **Non-ASCII encoding fixes** — Fixed encoding in ~140 source files for clean cross-platform compilation.
+- **Static correctness** — Added `static` to 28 functions that don't use member state (`functionStatic`).
+- **STL algorithm adoption** — Converted ~43 raw loops to STL algorithms: `std::any_of`, `std::find_if`, `std::for_each`, `std::generate`, `std::accumulate`, `std::count_if`, `std::copy_if`, `std::transform` (`useStlAlgorithm`).
+- **Const correctness** — Added `const` qualifier to 6 member functions: `searchMatch`, `trySearchMatch`, `assessSataAttributeHealth`, `assessNvmeHealth`, `groupByHash`, `checkStop` (`functionConst`).
+- **Dead code removal** — Removed unused `SmartThreshold::name` field (`unusedStructMember`).
+- **Lizard compliance** — All functions meet CCN < 11 and parameter count < 6.
+- **Build quality** — Clean MSVC `/W4 /WX` build, 79 automated tests (all passing).
+
+### v0.9.0.1
 
 - **ISO 9660 analyzer** — New `IsoAnalyzer` class parses ISO Primary Volume Descriptors for volume label, publisher, preparer, application, dates, and file count. Automatic Linux distro identification across 74 patterns (Ubuntu, Fedora, Arch, Manjaro, Kali, Pop!_OS, Proxmox, Clonezilla, GParted, Ventoy, FreeBSD, SteamOS, and more) with desktop environment detection. Searches volume label, publisher, preparer, and application metadata fields to maximize detection across different mastering workflows.
 - **Tabbed diagnostics panel** — Diagnostic & Benchmark panel restructured into tabbed interface for better organization and navigation.

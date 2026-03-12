@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 /// @file organizer_panel.cpp
-/// @brief Unified file management panel — organizer + duplicate finder in tabs
+/// @brief Unified file management panel -- organizer + duplicate finder in tabs
 
 #include "sak/organizer_panel.h"
 
@@ -60,7 +60,7 @@ OrganizerPanel::~OrganizerPanel() {
 }
 
 // ============================================================================
-// Main setup — panel header, tabbed layout, shared status bar
+// Main setup -- panel header, tabbed layout, shared status bar
 // ============================================================================
 
 void OrganizerPanel::setupUi() {
@@ -70,7 +70,7 @@ void OrganizerPanel::setupUi() {
         ui::kMarginMedium, ui::kMarginMedium, ui::kMarginMedium, ui::kMarginMedium);
     rootLayout->setSpacing(ui::kSpacingDefault);
 
-    // Dynamic panel header — updates when sub-tab changes
+    // Dynamic panel header -- updates when sub-tab changes
     m_headerWidgets =
         sak::createDynamicPanelHeader(this,
                                       QStringLiteral(":/icons/icons/panel_organizer.svg"),
@@ -123,11 +123,11 @@ void OrganizerPanel::setupUi() {
 }
 
 // ============================================================================
-// Tab 1 — File Organizer
+// Tab 1 -- File Organizer
 // ============================================================================
 
 // ============================================================================
-// Organizer Tab — Input Groups
+// Organizer Tab -- Input Groups
 // ============================================================================
 
 QGroupBox* OrganizerPanel::createTargetDirectoryGroup() {
@@ -199,7 +199,7 @@ QGroupBox* OrganizerPanel::createCategoryMappingGroup() {
 }
 
 // ============================================================================
-// Tab 1 — File Organizer
+// Tab 1 -- File Organizer
 // ============================================================================
 
 QWidget* OrganizerPanel::createOrganizerTab() {
@@ -303,7 +303,7 @@ void OrganizerPanel::createOrganizerControls(QVBoxLayout* layout, QPushButton*& 
 }
 
 // ============================================================================
-// Duplicate Finder — Group Builders
+// Duplicate Finder -- Group Builders
 // ============================================================================
 
 QGroupBox* OrganizerPanel::createScanDirectoriesGroup() {
@@ -377,7 +377,7 @@ void OrganizerPanel::createDedupControls(QVBoxLayout* layout, QPushButton*& sett
 }
 
 // ============================================================================
-// Tab 2 — Duplicate Finder
+// Tab 2 -- Duplicate Finder
 // ============================================================================
 
 QWidget* OrganizerPanel::createDuplicateFinderTab() {
@@ -450,7 +450,7 @@ QWidget* OrganizerPanel::createDuplicateFinderTab() {
 }
 
 // ============================================================================
-// File Organizer — logic
+// File Organizer -- logic
 // ============================================================================
 
 void OrganizerPanel::setupDefaultCategories() {
@@ -878,7 +878,7 @@ void OrganizerPanel::onSettingsClicked() {
 }
 
 // ============================================================================
-// Duplicate Finder — logic
+// Duplicate Finder -- logic
 // ============================================================================
 
 void OrganizerPanel::updateDedupDirectorySummary() {

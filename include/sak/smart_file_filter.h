@@ -67,7 +67,7 @@ public:
     /**
      * @brief Check if path is in AppData cache directory
      */
-    bool isInCacheDirectory(const QString& path) const;
+    static bool isInCacheDirectory(const QString& path);
 
     /**
      * @brief Check if file is a dangerous system file

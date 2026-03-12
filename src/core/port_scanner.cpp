@@ -222,7 +222,7 @@ QString PortScanner::grabBannerData(const QString& target, uint16_t port, int ti
 
     // Some services send a banner immediately, others need a nudge
     if (!socket.waitForReadyRead(timeoutMs)) {
-        // Best-effort HTTP probe — failure is non-critical since
+        // Best-effort HTTP probe -- failure is non-critical since
         // we fall back to whatever the server sends on connect.
         socket.write("HEAD / HTTP/1.0\r\nHost: " + target.toLatin1() + "\r\n\r\n");
         socket.flush();

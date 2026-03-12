@@ -1,4 +1,4 @@
-﻿// Copyright (c) 2025 Randy Northrup. All rights reserved.
+// Copyright (c) 2025 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 /// @file tax_software_backup_action.cpp
@@ -97,9 +97,9 @@
  *
  * RESEARCH VALIDATION:
  * --------------------
- * - Chrome DevTools MCP: ✅ Current web research (Dec 2025)
- * - Microsoft Docs: ✅ Official Windows API documentation
- * - Context7: ⚠️ No SDK available (N/A for desktop tax software)
+ * - Chrome DevTools MCP: [OK] Current web research (Dec 2025)
+ * - Microsoft Docs: [OK] Official Windows API documentation
+ * - Context7: (!) No SDK available (N/A for desktop tax software)
  */
 
 #include "sak/actions/tax_software_backup_action.h"

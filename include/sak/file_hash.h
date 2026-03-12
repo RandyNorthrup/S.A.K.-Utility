@@ -106,20 +106,20 @@ private:
     /// @brief Calculate MD5 hash of buffer
     /// @param data Data to hash
     /// @return Expected containing hash string or error code
-    [[nodiscard]] auto calculateMd5(std::span<const std::byte> data) const
+    [[nodiscard]] static auto calculateMd5(std::span<const std::byte> data)
         -> std::expected<std::string, error_code>;
 
     /// @brief Calculate SHA-256 hash of buffer
     /// @param data Data to hash
     /// @return Expected containing hash string or error code
-    [[nodiscard]] auto calculateSha256(std::span<const std::byte> data) const
+    [[nodiscard]] static auto calculateSha256(std::span<const std::byte> data)
         -> std::expected<std::string, error_code>;
 
     /// @brief Hash file content in chunks with progress reporting
     void hashFileInChunks(QFile& file,
                           QCryptographicHash& hash,
                           hash_progress_callback& progress,
-                          std::stop_token& stop_token) const;
+                          const std::stop_token& stop_token) const;
 };
 
 /// @brief Convenience function to calculate MD5 hash of a file

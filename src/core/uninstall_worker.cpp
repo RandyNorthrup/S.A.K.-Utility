@@ -241,7 +241,7 @@ bool UninstallWorker::runNativeUninstaller() {
         return false;
     }
 
-    // Wait indefinitely for uninstaller — user may need to interact with it
+    // Wait indefinitely for uninstaller -- user may need to interact with it
     // Check for cancellation periodically
     while (!proc.waitForFinished(kCancellationPollMs)) {
         if (stopRequested()) {

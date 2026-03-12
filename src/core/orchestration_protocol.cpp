@@ -5,6 +5,7 @@
 
 #include <QJsonDocument>
 #include <QTcpSocket>
+#include <algorithm>
 
 namespace sak {
 
@@ -40,19 +41,21 @@ QJsonObject OrchestrationProtocol::makeMessage(OrchestrationMessageType type,
 
 std::optional<OrchestrationMessageType> OrchestrationProtocol::parseType(const QString& type) {
     Q_ASSERT(!type.isEmpty());
-    for (const auto& entry : kOrchestrationTypes) {
-        if (type == QLatin1String(entry.name)) {
-            return entry.type;
-        }
+    auto it = std::find_if(std::begin(kOrchestrationTypes),
+        std::end(kOrchestrationTypes),
+        [&type](const auto& entry) { return type == QLatin1String(entry.name); });
+    if (it != std::end(kOrchestrationTypes)) {
+        return it->type;
     }
     return std::nullopt;
 }
 
 QString OrchestrationProtocol::typeToString(OrchestrationMessageType type) {
-    for (const auto& entry : kOrchestrationTypes) {
-        if (entry.type == type) {
-            return QString::fromLatin1(entry.name);
-        }
+    auto it = std::find_if(std::begin(kOrchestrationTypes),
+        std::end(kOrchestrationTypes),
+        [type](const auto& entry) { return entry.type == type; });
+    if (it != std::end(kOrchestrationTypes)) {
+        return QString::fromLatin1(it->name);
     }
     return QStringLiteral("UNKNOWN");
 }

@@ -57,7 +57,7 @@ private:
     static constexpr int kCheckTimeoutMs = 10'000;    ///< 10 sec timeout
 };
 
-// ── Compile-Time Invariants ─────────────────────────────────────────────────
+// -- Compile-Time Invariants -------------------------------------------------
 
 static_assert(std::is_base_of_v<QObject, RestorePointManager>,
               "RestorePointManager must inherit QObject.");

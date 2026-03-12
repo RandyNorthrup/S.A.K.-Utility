@@ -48,7 +48,7 @@ public:
     NetworkDiagnosticReportGenerator(NetworkDiagnosticReportGenerator&&) = delete;
     NetworkDiagnosticReportGenerator& operator=(NetworkDiagnosticReportGenerator&&) = delete;
 
-    // ── Data setters ──
+    // -- Data setters --
 
     void setTechnicianName(const QString& name);
     void setTicketNumber(const QString& ticket);
@@ -68,7 +68,7 @@ public:
     void setConnectionData(const QVector<ConnectionInfo>& connections);
     void setShareData(const QVector<NetworkShareInfo>& shares);
 
-    // ── Generation ──
+    // -- Generation --
 
     /// @brief Generate HTML report (blocking)
     void generateHtml(const QString& outputPath);
@@ -103,7 +103,7 @@ private:
     QVector<ConnectionInfo> m_connections;
     QVector<NetworkShareInfo> m_shares;
 
-    // ── HTML section builders ──
+    // -- HTML section builders --
     [[nodiscard]] QString buildHtmlHeader() const;
     [[nodiscard]] QString buildAdapterSection() const;
     [[nodiscard]] QString buildPingSection() const;
@@ -117,7 +117,7 @@ private:
     [[nodiscard]] QString buildShareSection() const;
     [[nodiscard]] QString buildHtmlFooter() const;
 
-    // ── JSON section builders ──
+    // -- JSON section builders --
     void populateRootJson(QJsonObject& root) const;
     void appendHtmlSections(QString& html) const;
     void appendJsonSections(QJsonObject& root) const;

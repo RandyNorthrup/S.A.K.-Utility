@@ -95,9 +95,9 @@ bool CheckDiskErrorsAction::executeEnumerateVolumes(const QDateTime& start_time,
         return false;
     }
 
-    report += "╔" + QString("═").repeated(78) + "╗\n";
-    report += "║" + QString(" DISK ERROR CHECK & REPAIR REPORT").leftJustified(78) + "║\n";
-    report += "╚" + QString("═").repeated(78) + "╝\n\n";
+    report += "+" + QString("=").repeated(78) + "+\n";
+    report += "|" + QString(" DISK ERROR CHECK & REPAIR REPORT").leftJustified(78) + "|\n";
+    report += "+" + QString("=").repeated(78) + "+\n\n";
 
     return true;
 }
@@ -255,7 +255,7 @@ void CheckDiskErrorsAction::executeBuildReport(const QDateTime& start_time,
                                                int errors_found,
                                                int errors_fixed) {
     QString final_report = report;
-    final_report += QString("─").repeated(78) + "\n";
+    final_report += QString("-").repeated(78) + "\n";
     final_report += QString(
                         "Summary: %1 drive(s) scanned, %2 error(s) found, %3 repair(s) "
                         "scheduled\n")
@@ -264,7 +264,7 @@ void CheckDiskErrorsAction::executeBuildReport(const QDateTime& start_time,
                         .arg(errors_fixed);
 
     if (errors_fixed > 0) {
-        final_report += "\n⚠ REBOOT REQUIRED to complete offline disk repair\n";
+        final_report += "\n(!) REBOOT REQUIRED to complete offline disk repair\n";
     }
 
     qint64 duration_ms = start_time.msecsTo(QDateTime::currentDateTime());

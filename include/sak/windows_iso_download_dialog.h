@@ -28,7 +28,7 @@ class WindowsISODownloader;
  *   Step 3: Select language and edition
  *   Step 4: Choose save location and start download + conversion
  *
- * Displays phased progress (download → conversion) with speed and ETA.
+ * Displays phased progress (download -> conversion) with speed and ETA.
  */
 class WindowsISODownloadDialog : public QDialog {
     Q_OBJECT

@@ -228,7 +228,7 @@ void UserProfileBackupSelectUsersPage::setupUi() {
 }
 
 void UserProfileBackupSelectUsersPage::initializePage() {
-    // Don't auto-scan — let the user click Scan Users when ready
+    // Don't auto-scan -- let the user click Scan Users when ready
 }
 
 bool UserProfileBackupSelectUsersPage::isComplete() const {

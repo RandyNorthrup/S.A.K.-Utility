@@ -167,7 +167,7 @@ QString ConnectivityTester::resolveTargetIpOrEmitError(const QString& target,
 
 QString ConnectivityTester::resolveHostname(const QString& hostname) {
     Q_ASSERT(!hostname.isEmpty());
-    // ── Normalise user input ───────────────────────────────────────────
+    // -- Normalise user input -------------------------------------------
     // Users often paste full URLs ("https://example.com/path") or include
     // a port ("example.com:443").  Strip everything down to the bare host
     // so that getaddrinfo receives a resolvable name.
@@ -206,7 +206,7 @@ QString ConnectivityTester::resolveHostname(const QString& hostname) {
         return {};
     }
 
-    // ── DNS resolution ─────────────────────────────────────────────────
+    // -- DNS resolution -------------------------------------------------
     struct addrinfo hints{};
     hints.ai_family = AF_INET;
     hints.ai_socktype = SOCK_STREAM;
@@ -309,7 +309,7 @@ PingReply ConnectivityTester::sendIcmpEcho(const QString& targetIP,
             reply.replyFrom = QString::fromLatin1(ipBuf);
         } else if (echoReply->Status == IP_TTL_EXPIRED_TRANSIT ||
                    echoReply->Status == IP_TTL_EXPIRED_REASSEM) {
-            // TTL expired — used in traceroute
+            // TTL expired -- used in traceroute
             reply.success = false;
             reply.rttMs = static_cast<double>(echoReply->RoundTripTime);
 

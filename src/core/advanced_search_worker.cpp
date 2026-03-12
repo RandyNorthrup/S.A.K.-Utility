@@ -22,7 +22,7 @@
 
 namespace sak {
 
-// ── Zlib Inflate Helper ──────────────────────────────────────────────────────
+// -- Zlib Inflate Helper ------------------------------------------------------
 
 /// @brief Decompress a deflate-compressed (method 8) ZIP entry using zlib.
 /// @param compressedData  The raw deflated bytes from the ZIP entry.
@@ -49,7 +49,7 @@ namespace sak {
     strm.next_out = reinterpret_cast<Bytef*>(output.data());
     strm.avail_out = static_cast<uInt>(expectedSize);
 
-    // -MAX_WBITS → raw deflate (no zlib/gzip header), which is what ZIP uses
+    // -MAX_WBITS -> raw deflate (no zlib/gzip header), which is what ZIP uses
     int ret = inflateInit2(&strm, -MAX_WBITS);
     if (ret != Z_OK) {
         return {};
@@ -66,12 +66,12 @@ namespace sak {
     return output;
 }
 
-// ── Construction ────────────────────────────────────────────────────────────
+// -- Construction ------------------------------------------------------------
 
 AdvancedSearchWorker::AdvancedSearchWorker(SearchConfig config, QObject* parent)
     : WorkerBase(parent), m_config(std::move(config)) {}
 
-// ── Regex Compilation ───────────────────────────────────────────────────────
+// -- Regex Compilation -------------------------------------------------------
 
 auto AdvancedSearchWorker::compileRegex() const -> std::expected<QRegularExpression, QString> {
     if (m_config.pattern.isEmpty()) {
@@ -107,15 +107,13 @@ auto AdvancedSearchWorker::compileRegex() const -> std::expected<QRegularExpress
     return regex;
 }
 
-// ── Exclusion & Filtering ───────────────────────────────────────────────────
+// -- Exclusion & Filtering ---------------------------------------------------
 
 bool AdvancedSearchWorker::isExcluded(const QString& path) const {
-    for (const auto& excludeRegex : m_compiled_excludes) {
-        if (excludeRegex.match(path).hasMatch()) {
-            return true;
-        }
-    }
-    return false;
+    return std::any_of(m_compiled_excludes.begin(), m_compiled_excludes.end(),
+        [&path](const auto& excludeRegex) {
+            return excludeRegex.match(path).hasMatch();
+        });
 }
 
 bool AdvancedSearchWorker::matchesExtensionFilter(const QString& filePath) const {
@@ -125,31 +123,30 @@ bool AdvancedSearchWorker::matchesExtensionFilter(const QString& filePath) const
     }
 
     const QString ext = QFileInfo(filePath).suffix().toLower();
-    for (const auto& filter : m_config.file_extensions) {
-        QString normalized = filter.trimmed().toLower();
-        if (normalized.startsWith('.')) {
-            normalized = normalized.mid(1);
-        }
-        if (ext == normalized) {
-            return true;
-        }
-    }
-    return false;
+    return std::any_of(m_config.file_extensions.begin(),
+        m_config.file_extensions.end(),
+        [&ext](const QString& filter) {
+            QString normalized = filter.trimmed().toLower();
+            if (normalized.startsWith('.')) {
+                normalized = normalized.mid(1);
+            }
+            return ext == normalized;
+        });
 }
 
-// ── Network Path Detection ──────────────────────────────────────────────────
+// -- Network Path Detection --------------------------------------------------
 
-bool AdvancedSearchWorker::isNetworkPath(const QString& path) const {
+bool AdvancedSearchWorker::isNetworkPath(const QString& path) {
     return path.startsWith("\\\\") || path.startsWith("//");
 }
 
 bool AdvancedSearchWorker::checkNetworkPathAccessible(const QString& path) const {
-    // Simple accessibility check — try to list directory contents
+    // Simple accessibility check -- try to list directory contents
     const QFileInfo info(path);
     return info.exists() && info.isReadable();
 }
 
-// ── Main Search Execution ───────────────────────────────────────────────────
+// -- Main Search Execution ---------------------------------------------------
 
 auto AdvancedSearchWorker::prepareSearchConfig()
     -> std::expected<QRegularExpression, sak::error_code> {
@@ -300,7 +297,7 @@ auto AdvancedSearchWorker::execute() -> std::expected<void, sak::error_code> {
     int totalMatches = 0;
     int totalFiles = 0;
 
-    // Single file search — no directory iteration needed
+    // Single file search -- no directory iteration needed
     if (QFileInfo(m_config.root_path).isFile()) {
         if (!isExcluded(m_config.root_path)) {
             auto matches = searchFile(m_config.root_path, regex);
@@ -321,7 +318,7 @@ auto AdvancedSearchWorker::execute() -> std::expected<void, sak::error_code> {
     runDirectorySearch(regex, totalMatches, totalFiles);
 
     logInfo(
-        "AdvancedSearchWorker: search complete — "
+        "AdvancedSearchWorker: search complete -- "
         "{} matches in {} files",
         totalMatches,
         totalFiles);
@@ -329,7 +326,7 @@ auto AdvancedSearchWorker::execute() -> std::expected<void, sak::error_code> {
     return {};
 }
 
-// ── File Search Dispatcher ──────────────────────────────────────────────────
+// -- File Search Dispatcher --------------------------------------------------
 
 bool shouldSearchText(const QString& ext, bool handled_as_special) {
     if (handled_as_special && kArchiveExtensions.contains(ext)) {
@@ -374,7 +371,7 @@ QVector<SearchMatch> AdvancedSearchWorker::searchFile(const QString& filePath,
     return matches;
 }
 
-// ── Text Content Search ─────────────────────────────────────────────────────
+// -- Text Content Search -----------------------------------------------------
 
 SearchMatch AdvancedSearchWorker::buildContextMatch(
     const QString& file_path,
@@ -447,7 +444,7 @@ QVector<SearchMatch> AdvancedSearchWorker::searchTextContent(const QString& file
     return matches;
 }
 
-// ── Image Metadata Search ───────────────────────────────────────────────────
+// -- Image Metadata Search ---------------------------------------------------
 
 namespace {
 
@@ -481,7 +478,7 @@ namespace {
                                  static_cast<uint8_t>(data[1]));
 }
 
-/// @brief EXIF tag ID → human-readable name mapping
+/// @brief EXIF tag ID -> human-readable name mapping
 [[nodiscard]] QString exifTagName(uint16_t tag) {
     struct TagEntry {
         uint16_t tag_id;
@@ -499,10 +496,10 @@ namespace {
         {0xA003, "PixelYDimension"},  {0xA405, "FocalLengthIn35mm"}, {0xA420, "ImageUniqueID"},
     };
 
-    for (const auto& entry : kTags) {
-        if (entry.tag_id == tag) {
-            return QStringLiteral("%1").arg(QLatin1String(entry.name));
-        }
+    auto it = std::find_if(std::begin(kTags), std::end(kTags),
+        [tag](const auto& entry) { return entry.tag_id == tag; });
+    if (it != std::end(kTags)) {
+        return QStringLiteral("%1").arg(QLatin1String(it->name));
     }
     return QString("Tag_0x%1").arg(tag, 4, 16, QChar('0'));
 }
@@ -522,10 +519,10 @@ int exifTypeUnitSize(uint16_t type) {
         {9, 4},
         {10, 8},
     };
-    for (const auto& entry : kSizes) {
-        if (entry.type == type) {
-            return entry.size;
-        }
+    auto it = std::find_if(std::begin(kSizes), std::end(kSizes),
+        [type](const auto& entry) { return entry.type == type; });
+    if (it != std::end(kSizes)) {
+        return it->size;
     }
     return 0;
 }
@@ -912,7 +909,7 @@ QVector<SearchMatch> AdvancedSearchWorker::searchImageMetadata(const QString& fi
     return matches;
 }
 
-// ── File Metadata Search ────────────────────────────────────────────────────
+// -- File Metadata Search ----------------------------------------------------
 
 namespace {
 
@@ -941,12 +938,8 @@ bool isMetadataTarget(const QString& entry_name) {
     static const QStringList kMetadataFiles = {
         "docprops/core.xml", "docprops/app.xml", "meta.xml", "content.opf", "oebps/content.opf"};
     const QString lower = entry_name.toLower();
-    for (const auto& target : kMetadataFiles) {
-        if (lower.endsWith(target)) {
-            return true;
-        }
-    }
-    return false;
+    return std::any_of(kMetadataFiles.begin(), kMetadataFiles.end(),
+        [&lower](const QString& target) { return lower.endsWith(target); });
 }
 
 void extractXmlTags(const QString& xml_text, QMap<QString, QString>& metadata) {
@@ -1241,7 +1234,7 @@ QVector<SearchMatch> AdvancedSearchWorker::searchFileMetadata(const QString& fil
     return matches;
 }
 
-// ── Archive Content Search ───────────────────────────────────────────────────
+// -- Archive Content Search ---------------------------------------------------
 
 QVector<SearchMatch> AdvancedSearchWorker::searchArchive(const QString& filePath,
                                                          const QRegularExpression& regex) {
@@ -1407,7 +1400,7 @@ QVector<SearchMatch> AdvancedSearchWorker::searchBinary(const QString& filePath,
         return matches;
     }
 
-    // Size guard — refuse to load extremely large files into memory
+    // Size guard -- refuse to load extremely large files into memory
     const qint64 maxBinarySize = m_config.max_file_size > 0
                                      ? m_config.max_file_size
                                      : (100LL * 1024 * 1024);  // 100 MB fallback

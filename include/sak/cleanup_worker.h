@@ -84,7 +84,7 @@ private:
     [[nodiscard]] bool removeFirewallRule(const QString& ruleName);
 };
 
-// ── Compile-Time Invariants ─────────────────────────────────────────────────
+// -- Compile-Time Invariants -------------------------------------------------
 
 static_assert(std::is_base_of_v<WorkerBase, CleanupWorker>,
               "CleanupWorker must inherit WorkerBase.");

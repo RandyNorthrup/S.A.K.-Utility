@@ -201,7 +201,7 @@ bool WindowsUSBCreator::verifyNtfsFilesystem(const QString& driveLetter) {
         Q_EMIT failed(lastError());
         return false;
     }
-    sak::logInfo(QString("✓ STEP 1 VERIFIED: "
+    sak::logInfo(QString("[x] STEP 1 VERIFIED: "
                          "Drive %1: formatted as NTFS")
                      .arg(driveLetter)
                      .toStdString());
@@ -237,7 +237,7 @@ bool WindowsUSBCreator::extractAndVerifyFiles(const QString& isoPath, const QStr
             return false;
         }
         QFileInfo info(fullPath);
-        sak::logInfo(QString("  ✓ %1 (%2 bytes)").arg(file).arg(info.size()).toStdString());
+        sak::logInfo(QString("  [x] %1 (%2 bytes)").arg(file).arg(info.size()).toStdString());
     }
 
     // Check for install image
@@ -250,7 +250,7 @@ bool WindowsUSBCreator::extractAndVerifyFiles(const QString& isoPath, const QStr
         return false;
     }
 
-    sak::logInfo("✓ STEP 2 VERIFIED: All critical files extracted");
+    sak::logInfo("[x] STEP 2 VERIFIED: All critical files extracted");
     Q_EMIT progressUpdated(60);
 
     return true;
@@ -307,7 +307,7 @@ bool WindowsUSBCreator::setAndVerifyBootFlag(const QString& diskNumber,
         return false;
     }
 
-    sak::logInfo("✓ STEP 4 VERIFIED: Bootable flag is set (Active)");
+    sak::logInfo("[x] STEP 4 VERIFIED: Bootable flag is set (Active)");
     Q_EMIT progressUpdated(85);
     return true;
 }
@@ -325,7 +325,7 @@ bool WindowsUSBCreator::configureBootAndVerify(const QString& diskNumber,
         return false;
     }
 
-    sak::logInfo("✓ STEP 3 COMPLETED: Boot configuration done");
+    sak::logInfo("[x] STEP 3 COMPLETED: Boot configuration done");
     Q_EMIT progressUpdated(70);
 
     if (m_cancelled) {
@@ -559,7 +559,7 @@ QString WindowsUSBCreator::getDriveLetterFromDiskNumber() {
         return {};
     }
 
-    sak::logInfo(QString("✓ Successfully mapped disk %1 "
+    sak::logInfo(QString("[x] Successfully mapped disk %1 "
                          "to drive letter %2")
                      .arg(m_diskNumber, driveLetter)
                      .toStdString());

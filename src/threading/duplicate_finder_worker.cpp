@@ -15,6 +15,8 @@
 #include <QThreadPool>
 
 #include <thread>
+#include <algorithm>
+#include <iterator>
 
 DuplicateFinderWorker::DuplicateFinderWorker(const Config& config, QObject* parent)
     : WorkerBase(parent), m_config(config), m_hasher(sak::hash_algorithm::md5) {
@@ -206,7 +208,7 @@ auto DuplicateFinderWorker::calculateFileHash(const std::filesystem::path& file_
 
 auto DuplicateFinderWorker::groupByHash(
     const std::vector<std::pair<std::filesystem::path, std::string>>& files)
-    -> std::unordered_map<std::string, std::vector<std::filesystem::path>> {
+    const -> std::unordered_map<std::string, std::vector<std::filesystem::path>> {
     std::unordered_map<std::string, std::vector<std::filesystem::path>> groups;
 
     for (const auto& [path, hash] : files) {
@@ -355,10 +357,9 @@ DuplicateFinderWorker::filterValidResults(
     std::vector<std::pair<std::filesystem::path, std::string>> valid;
     valid.reserve(results.size());
 
-    for (const auto& result : results) {
-        if (!result.first.empty() && !result.second.empty()) {
-            valid.push_back(result);
-        }
-    }
+    std::copy_if(results.begin(), results.end(), std::back_inserter(valid),
+        [](const auto& result) {
+            return !result.first.empty() && !result.second.empty();
+        });
     return valid;
 }

@@ -73,7 +73,7 @@ Q_SIGNALS:
 
 private:
     bool enumerateWindowsUsers(QVector<UserProfile>& profiles);
-    void populateFolderSelections(UserProfile& profile);
+    static void populateFolderSelections(UserProfile& profile);
     qint64 quickSizeEstimate(const QString& path, int maxDepth = 2);
 };
 

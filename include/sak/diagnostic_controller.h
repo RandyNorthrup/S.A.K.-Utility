@@ -73,7 +73,7 @@ public:
     DiagnosticController(DiagnosticController&&) = delete;
     DiagnosticController& operator=(DiagnosticController&&) = delete;
 
-    // ── Individual Operations ───────────────────────────────────
+    // -- Individual Operations -----------------------------------
 
     /// @brief Run hardware inventory scan
     void runHardwareScan();
@@ -95,7 +95,7 @@ public:
     /// @param config Stress test configuration
     void runStressTest(const StressTestConfig& config);
 
-    // ── Full Suite ──────────────────────────────────────────────
+    // -- Full Suite ----------------------------------------------
 
     /// @brief Run the complete diagnostic suite in sequence
     /// @param stress_config Stress test configuration (optional; skipped if duration is 0)
@@ -112,7 +112,7 @@ public:
     /// @brief Skip the current step in the full suite (advance to next)
     void skipCurrentStep();
 
-    // ── Thermal Monitor ─────────────────────────────────────────
+    // -- Thermal Monitor -----------------------------------------
 
     /// @brief Start thermal monitoring
     /// @param interval_ms Poll interval in milliseconds
@@ -121,7 +121,7 @@ public:
     /// @brief Stop thermal monitoring
     void stopThermalMonitoring();
 
-    // ── Report Generation ───────────────────────────────────────
+    // -- Report Generation ---------------------------------------
 
     /// @brief Generate report from all collected data
     /// @param output_dir Directory to save reports
@@ -135,7 +135,7 @@ public:
                         const QString& notes,
                         const QString& formats = "html,json,csv");
 
-    // ── Accessors ───────────────────────────────────────────────
+    // -- Accessors -----------------------------------------------
 
     /// @brief Get the current suite state
     [[nodiscard]] SuiteState currentState() const { return m_suite_state; }
@@ -147,7 +147,7 @@ public:
     [[nodiscard]] ThermalMonitor* thermalMonitor() const;
 
 Q_SIGNALS:
-    // ── Scan / Analysis Results ─────────────────────────────────
+    // -- Scan / Analysis Results ---------------------------------
 
     /// @brief Emitted when hardware scan completes
     void hardwareScanComplete(const sak::HardwareInventory& inventory);
@@ -167,7 +167,7 @@ Q_SIGNALS:
     /// @brief Emitted when stress test completes
     void stressTestComplete(const sak::StressTestResult& result);
 
-    // ── Suite Signals ───────────────────────────────────────────
+    // -- Suite Signals -------------------------------------------
 
     /// @brief Emitted when suite state changes
     void suiteStateChanged(sak::DiagnosticController::SuiteState state);
@@ -180,7 +180,7 @@ Q_SIGNALS:
     /// @brief Emitted when the full suite completes
     void suiteComplete();
 
-    // ── Progress & Status ───────────────────────────────────────
+    // -- Progress & Status ---------------------------------------
 
     /// @brief Progress for the current individual operation
     void operationProgress(int percent, const QString& message);

@@ -32,7 +32,7 @@ public:
     NetworkAdapterInspector(NetworkAdapterInspector&&) = delete;
     NetworkAdapterInspector& operator=(NetworkAdapterInspector&&) = delete;
 
-    /// @brief Enumerate all adapters (blocking — run on worker thread)
+    /// @brief Enumerate all adapters (blocking -- run on worker thread)
     void scan();
 
     /// @brief Re-enumerate adapters (alias for scan)

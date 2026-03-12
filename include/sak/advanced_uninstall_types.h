@@ -18,7 +18,7 @@
 
 namespace sak {
 
-// ── ProgramInfo ─────────────────────────────────────────────────────────────
+// -- ProgramInfo -------------------------------------------------------------
 
 /// @brief Comprehensive information about an installed program
 struct ProgramInfo {
@@ -61,11 +61,11 @@ struct ProgramInfo {
     bool isOrphaned = false;
     bool isBloatware = false;
 
-    // Icon cache — stored as QImage for thread safety (QPixmap is GUI-thread only)
+    // Icon cache -- stored as QImage for thread safety (QPixmap is GUI-thread only)
     QImage cachedImage;
 };
 
-// ── ScanLevel ───────────────────────────────────────────────────────────────
+// -- ScanLevel ---------------------------------------------------------------
 
 /// @brief Scan level for leftover detection
 enum class ScanLevel {
@@ -74,7 +74,7 @@ enum class ScanLevel {
     Advanced   ///< Deep scan including services, tasks, firewall, shell extensions
 };
 
-// ── LeftoverItem ────────────────────────────────────────────────────────────
+// -- LeftoverItem ------------------------------------------------------------
 
 /// @brief A single leftover item found after uninstallation
 struct LeftoverItem {
@@ -91,9 +91,9 @@ struct LeftoverItem {
     };
 
     enum class RiskLevel {
-        Safe,    ///< Green — clearly belongs to the uninstalled app
-        Review,  ///< Yellow — likely belongs, but shared component possible
-        Risky    ///< Red — may be shared or system-related
+        Safe,    ///< Green -- clearly belongs to the uninstalled app
+        Review,  ///< Yellow -- likely belongs, but shared component possible
+        Risky    ///< Red -- may be shared or system-related
     };
 
     Type type = Type::File;
@@ -108,7 +108,7 @@ struct LeftoverItem {
     QString registryValueData;
 };
 
-// ── UninstallReport ─────────────────────────────────────────────────────────
+// -- UninstallReport ---------------------------------------------------------
 
 /// @brief Result of uninstall + leftover scan + cleanup pipeline
 struct UninstallReport {
@@ -129,7 +129,7 @@ struct UninstallReport {
         Success,
         Failed,
         Cancelled,
-        Skipped  ///< Forced uninstall — no native uninstaller run
+        Skipped  ///< Forced uninstall -- no native uninstaller run
     };
     UninstallResult uninstallResult = UninstallResult::Success;
     int nativeExitCode = 0;
@@ -153,7 +153,7 @@ struct UninstallReport {
     QStringList errorLog;
 };
 
-// ── UninstallQueueItem ──────────────────────────────────────────────────────
+// -- UninstallQueueItem ------------------------------------------------------
 
 /// @brief Batch uninstall queue item
 struct UninstallQueueItem {
@@ -172,7 +172,7 @@ struct UninstallQueueItem {
     UninstallReport report;
 };
 
-// ── ViewFilter ──────────────────────────────────────────────────────────────
+// -- ViewFilter --------------------------------------------------------------
 
 /// @brief View filter presets for the program list
 enum class ViewFilter {
@@ -183,7 +183,7 @@ enum class ViewFilter {
     OrphanedOnly
 };
 
-// ── Compile-Time Invariants ─────────────────────────────────────────────────
+// -- Compile-Time Invariants -------------------------------------------------
 
 static_assert(std::is_default_constructible_v<ProgramInfo>);
 static_assert(std::is_copy_constructible_v<ProgramInfo>);

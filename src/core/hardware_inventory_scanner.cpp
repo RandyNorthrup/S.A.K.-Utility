@@ -77,49 +77,49 @@ void HardwareInventoryScanner::scan() {
 
     m_inventory = HardwareInventory{};
 
-    // CPU ─────────────────────────────────────────────────────────
+    // CPU ---------------------------------------------------------
     if (m_cancelled.load(std::memory_order_relaxed)) {
         return;
     }
     Q_EMIT scanProgress(0, "Scanning CPU...");
     m_inventory.cpu = queryCpu();
 
-    // Memory ──────────────────────────────────────────────────────
+    // Memory ------------------------------------------------------
     if (m_cancelled.load(std::memory_order_relaxed)) {
         return;
     }
     Q_EMIT scanProgress(15, "Scanning Memory...");
     m_inventory.memory = queryMemory();
 
-    // Storage ─────────────────────────────────────────────────────
+    // Storage -----------------------------------------------------
     if (m_cancelled.load(std::memory_order_relaxed)) {
         return;
     }
     Q_EMIT scanProgress(30, "Scanning Storage...");
     m_inventory.storage = queryStorage();
 
-    // GPU ─────────────────────────────────────────────────────────
+    // GPU ---------------------------------------------------------
     if (m_cancelled.load(std::memory_order_relaxed)) {
         return;
     }
     Q_EMIT scanProgress(50, "Scanning GPU...");
     m_inventory.gpus = queryGpu();
 
-    // Motherboard ─────────────────────────────────────────────────
+    // Motherboard -------------------------------------------------
     if (m_cancelled.load(std::memory_order_relaxed)) {
         return;
     }
     Q_EMIT scanProgress(65, "Scanning Motherboard...");
     m_inventory.motherboard = queryMotherboard();
 
-    // Battery ─────────────────────────────────────────────────────
+    // Battery -----------------------------------------------------
     if (m_cancelled.load(std::memory_order_relaxed)) {
         return;
     }
     Q_EMIT scanProgress(80, "Scanning Battery...");
     m_inventory.battery = queryBattery();
 
-    // OS info ─────────────────────────────────────────────────────
+    // OS info -----------------------------------------------------
     if (m_cancelled.load(std::memory_order_relaxed)) {
         return;
     }
@@ -656,7 +656,7 @@ BatteryInfo HardwareInventoryScanner::queryBattery() {
     }
 
     if (info.present) {
-        logInfo("Battery: {} — {:.1f}% health", info.name.toStdString(), info.health_percent);
+        logInfo("Battery: {} -- {:.1f}% health", info.name.toStdString(), info.health_percent);
     }
 
     return info;

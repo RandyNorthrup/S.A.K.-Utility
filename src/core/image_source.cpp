@@ -35,7 +35,7 @@ FileImageSource::FileImageSource(const QString& filePath, QObject* parent)
 }
 
 FileImageSource::~FileImageSource() {
-    close();
+    FileImageSource::close();
 }
 
 bool FileImageSource::open() {
@@ -238,7 +238,7 @@ CompressedImageSource::CompressedImageSource(const QString& filePath, QObject* p
 CompressedImageSource::~CompressedImageSource() {
     // Call close() directly to avoid virtual dispatch warning.
     // At destruction time, the vtable is CompressedImageSource's own,
-    // so this is safe — but we call the qualified name explicitly.
+    // so this is safe -- but we call the qualified name explicitly.
     CompressedImageSource::close();
 }
 

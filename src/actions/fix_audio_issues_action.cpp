@@ -218,9 +218,9 @@ void FixAudioIssuesAction::execute() {
         result.log = report;
         result.log += QString("\nCompleted in %1 seconds\n").arg(duration_ms / 1000);
         result.log += "RECOMMENDATIONS:\n";
-        result.log += "• Test audio playback in system settings\n";
-        result.log += "• Reboot if issues persist\n";
-        result.log += "• Check Device Manager for driver errors\n";
+        result.log += "* Test audio playback in system settings\n";
+        result.log += "* Reboot if issues persist\n";
+        result.log += "* Check Device Manager for driver errors\n";
     } else {
         result.success = false;
         result.message = "Audio service restart encountered errors";
@@ -236,40 +236,40 @@ void FixAudioIssuesAction::execute() {
 QString FixAudioIssuesAction::buildDiagnosticReport(const AudioServiceStatus& audiosrv,
                                                     const AudioServiceStatus& endpoint_builder,
                                                     const AudioRepairOutcome& repair) {
-    QString report = "╔════════════════════════════════════════════════════════════════╗\n";
-    report += "║              AUDIO SYSTEM DIAGNOSTIC REPORT                   ║\n";
-    report += "╠════════════════════════════════════════════════════════════════╣\n";
+    QString report = "+================================================================+\n";
+    report += "|              AUDIO SYSTEM DIAGNOSTIC REPORT                   |\n";
+    report += "+================================================================+\n";
 
-    report += QString("║ AudioSrv:             %1\n")
+    report += QString("| AudioSrv:             %1\n")
                   .arg(audiosrv.isExecuting ? "Running" : "STOPPED")
                   .leftJustified(67, ' ') +
-              "║\n";
-    report += QString("║ AudioEndpointBuilder: %1\n")
+              "|\n";
+    report += QString("| AudioEndpointBuilder: %1\n")
                   .arg(endpoint_builder.isExecuting ? "Running" : "STOPPED")
                   .leftJustified(67, ' ') +
-              "║\n";
-    report += "╠════════════════════════════════════════════════════════════════╣\n";
+              "|\n";
+    report += "+================================================================+\n";
 
-    report += QString("║ AudioSrv Restart:     %1\n")
+    report += QString("| AudioSrv Restart:     %1\n")
                   .arg(repair.audiosrv_restarted ? "SUCCESS" : "FAILED")
                   .leftJustified(67, ' ') +
-              "║\n";
-    report += QString("║ Endpoint Restart:     %1\n")
+              "|\n";
+    report += QString("| Endpoint Restart:     %1\n")
                   .arg(repair.endpoint_restarted ? "SUCCESS" : "FAILED")
                   .leftJustified(67, ' ') +
-              "║\n";
-    report += "╠════════════════════════════════════════════════════════════════╣\n";
+              "|\n";
+    report += "+================================================================+\n";
 
-    report += QString("║ Audio Devices Reset:  %1 devices\n")
+    report += QString("| Audio Devices Reset:  %1 devices\n")
                   .arg(repair.device_count)
                   .leftJustified(67, ' ') +
-              "║\n";
+              "|\n";
 
     if (!repair.usb_info.trimmed().isEmpty()) {
-        report += "║ USB Audio Devices:    Detected                   ║\n";
+        report += "| USB Audio Devices:    Detected                   |\n";
     }
 
-    report += "╚════════════════════════════════════════════════════════════════╝\n";
+    report += "+================================================================+\n";
     return report;
 }
 

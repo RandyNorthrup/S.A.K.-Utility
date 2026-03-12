@@ -132,7 +132,7 @@ void PerUserCustomizationDialog::setupUi_appDataSection(QVBoxLayout* mainLayout)
     auto* appDataLayout = new QVBoxLayout(m_appDataGroup);
 
     m_browserBookmarksCheck = new QCheckBox("Browser Bookmarks (Chrome, Edge, Firefox)");
-    m_browserBookmarksCheck->setToolTip("Backs up bookmarks only — no cache, cookies, or history");
+    m_browserBookmarksCheck->setToolTip("Backs up bookmarks only -- no cache, cookies, or history");
     appDataLayout->addWidget(m_browserBookmarksCheck);
 
     m_emailSignaturesCheck = new QCheckBox("Email Signatures (Outlook)");
@@ -148,7 +148,7 @@ void PerUserCustomizationDialog::setupUi_appDataSection(QVBoxLayout* mainLayout)
     appDataLayout->addWidget(m_vsCodeSettingsCheck);
 
     auto* warningLabel = new QLabel(
-        "⚠ Warning: Full AppData backup is NOT recommended. "
+        "(!) Warning: Full AppData backup is NOT recommended. "
         "It contains machine-specific files that can corrupt profiles.");
     warningLabel->setWordWrap(true);
     warningLabel->setStyleSheet(QString("color: %1; padding: 8px; background-color: %2; "

@@ -130,11 +130,11 @@ void ClearEventLogsAction::execute() {
 bool ClearEventLogsAction::executeEnumerateLogs(const QDateTime& start_time, QString& ps_script) {
     Q_ASSERT(!ps_script.isEmpty());
     Q_UNUSED(start_time)
-    Q_EMIT executionProgress("╔════════════════════════════════════════════════════════════════╗",
+    Q_EMIT executionProgress("+================================================================+",
                              0);
-    Q_EMIT executionProgress("║        EVENT LOG CLEARING - ENTERPRISE MODE                   ║",
+    Q_EMIT executionProgress("|        EVENT LOG CLEARING - ENTERPRISE MODE                   |",
                              0);
-    Q_EMIT executionProgress("╠════════════════════════════════════════════════════════════════╣",
+    Q_EMIT executionProgress("+================================================================+",
                              0);
 
     ps_script = buildLogScriptInit() + buildLogScriptLoop();
@@ -232,14 +232,14 @@ void ClearEventLogsAction::parseClearLogsOutput(const QStringList& lines,
 bool ClearEventLogsAction::executeClearLogs(const QDateTime& start_time,
                                             const QString& ps_script,
                                             ClearLogsResult& result) {
-    Q_EMIT executionProgress("║ Enumerating all event logs with Get-EventLog...              ║",
+    Q_EMIT executionProgress("| Enumerating all event logs with Get-EventLog...              |",
                              20);
 
     ProcessResult ps = runPowerShell(ps_script, sak::kTimeoutArchiveMs);
 
-    Q_EMIT executionProgress("║ Backing up logs with wevtutil...                             ║",
+    Q_EMIT executionProgress("| Backing up logs with wevtutil...                             |",
                              40);
-    Q_EMIT executionProgress("║ Clearing event log entries...                                ║",
+    Q_EMIT executionProgress("| Clearing event log entries...                                |",
                              60);
 
     if (isCancelled()) {
@@ -251,7 +251,7 @@ bool ClearEventLogsAction::executeClearLogs(const QDateTime& start_time,
         return false;
     }
 
-    Q_EMIT executionProgress("║ Processing results and generating report...                   ║",
+    Q_EMIT executionProgress("| Processing results and generating report...                   |",
                              80);
 
     if (!ps.std_err.trimmed().isEmpty()) {

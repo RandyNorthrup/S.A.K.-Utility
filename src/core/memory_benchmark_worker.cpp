@@ -28,13 +28,13 @@ namespace sak {
 
 namespace {
 
-/// Buffer size for bandwidth tests (256 MB — large enough to exceed L3 cache)
+/// Buffer size for bandwidth tests (256 MB -- large enough to exceed L3 cache)
 constexpr size_t kBandwidthBufferSize = 256ULL * 1024 * 1024;
 
 /// Number of passes for bandwidth averaging
 constexpr int kBandwidthPasses = 3;
 
-/// Latency test array size (64 MB of pointers — fits in RAM, exceeds L3)
+/// Latency test array size (64 MB of pointers -- fits in RAM, exceeds L3)
 constexpr size_t kLatencyArrayElements = 8 * 1024 * 1024;
 
 /// Number of pointer chases for latency measurement
@@ -109,7 +109,7 @@ auto MemoryBenchmarkWorker::execute() -> std::expected<void, sak::error_code> {
     m_result.timestamp = QDateTime::currentDateTime();
 
     logInfo(
-        "Memory benchmark complete — R: {:.1f} GB/s, W: {:.1f} GB/s, "
+        "Memory benchmark complete -- R: {:.1f} GB/s, W: {:.1f} GB/s, "
         "Copy: {:.1f} GB/s, Latency: {:.1f} ns, Score: {}",
         m_result.read_bandwidth_gbps,
         m_result.write_bandwidth_gbps,
@@ -232,7 +232,7 @@ double MemoryBenchmarkWorker::runCopyBandwidth() {
         std::memcpy(dst.data(), src.data(), src.size());
 
         const double elapsed_sec = timer.nsecsElapsed() / 1'000'000'000.0;
-        // Copy touches both read and write = 2× buffer size
+        // Copy touches both read and write = 2x buffer size
         const double gbps = static_cast<double>(src.size()) / (1024.0 * 1024.0 * 1024.0) /
                             elapsed_sec;
         best_gbps = std::max(best_gbps, gbps);
@@ -249,7 +249,7 @@ double MemoryBenchmarkWorker::runCopyBandwidth() {
 double MemoryBenchmarkWorker::runRandomLatency() {
     // Pointer-chase: create a randomized linked list in memory.
     // Each element points to a random other element. Sequential
-    // prefetchers cannot predict the next access → measures true latency.
+    // prefetchers cannot predict the next access -> measures true latency.
 
     const size_t element_count = kLatencyArrayElements;
     VirtualBuffer buf(element_count * sizeof(size_t));

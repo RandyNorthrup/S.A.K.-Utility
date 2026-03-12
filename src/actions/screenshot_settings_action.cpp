@@ -157,7 +157,7 @@ void ScreenshotSettingsAction::buildExecutionResult(const CaptureResult& capture
     finishWithResult(result, result.success ? ActionStatus::Success : ActionStatus::Failed);
 }
 
-// ─── Private Helpers ────────────────────────────────────────────────────────────
+// --- Private Helpers ------------------------------------------------------------
 
 QMap<QString, QString> ScreenshotSettingsAction::buildSettingsPageMap() {
     return {{"about", "System_About"},
@@ -256,40 +256,40 @@ void ScreenshotSettingsAction::generateReport(const QString& output_dir_path,
     QTextStream report(&report_file);
     report.setEncoding(QStringConverter::Utf8);
 
-    report << "╔══════════════════════════════════════════════════════════════╗\n";
-    report << "║         WINDOWS SETTINGS SCREENSHOT REPORT                   ║\n";
-    report << "╠══════════════════════════════════════════════════════════════╣\n";
-    report << QString("║ Timestamp:         %1                    ║\n")
+    report << "+==============================================================+\n";
+    report << "|         WINDOWS SETTINGS SCREENSHOT REPORT                   |\n";
+    report << "+==============================================================+\n";
+    report << QString("| Timestamp:         %1                    |\n")
                   .arg(QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss"));
-    report << QString("║ Monitors Detected: %1                                       ║\n")
+    report << QString("| Monitors Detected: %1                                       |\n")
                   .arg(monitor_count);
-    report << QString("║ Total Pages:       %1                                      ║\n")
+    report << QString("| Total Pages:       %1                                      |\n")
                   .arg(total_pages);
-    report << QString("║ Successful:        %1                                      ║\n")
+    report << QString("| Successful:        %1                                      |\n")
                   .arg(capture.captured_pages.size());
-    report << QString("║ Failed:            %1                                       ║\n")
+    report << QString("| Failed:            %1                                       |\n")
                   .arg(capture.failed_attempts);
-    report << "╠══════════════════════════════════════════════════════════════╣\n";
-    report << "║                    CAPTURED PAGES                            ║\n";
-    report << "╠══════════════════════════════════════════════════════════════╣\n";
+    report << "+==============================================================+\n";
+    report << "|                    CAPTURED PAGES                            |\n";
+    report << "+==============================================================+\n";
 
     for (const QString& page : capture.captured_pages) {
-        report << QString("║ ✓ %1").arg(page).leftJustified(61, ' ') << "║\n";
+        report << QString("| [x] %1").arg(page).leftJustified(61, ' ') << "|\n";
     }
 
     if (!capture.failed_pages.isEmpty()) {
-        report << "╠══════════════════════════════════════════════════════════════╣\n";
-        report << "║                     FAILED PAGES                             ║\n";
-        report << "╠══════════════════════════════════════════════════════════════╣\n";
+        report << "+==============================================================+\n";
+        report << "|                     FAILED PAGES                             |\n";
+        report << "+==============================================================+\n";
         for (const QString& page : capture.failed_pages) {
-            report << QString("║ ✗ %1").arg(page).leftJustified(61, ' ') << "║\n";
+            report << QString("| [ ] %1").arg(page).leftJustified(61, ' ') << "|\n";
         }
     }
 
-    report << "╠══════════════════════════════════════════════════════════════╣\n";
-    report << QString("║ Output Location: %1").arg(output_dir.absolutePath()).leftJustified(61, ' ')
-           << "║\n";
-    report << "╚══════════════════════════════════════════════════════════════╝\n";
+    report << "+==============================================================+\n";
+    report << QString("| Output Location: %1").arg(output_dir.absolutePath()).leftJustified(61, ' ')
+           << "|\n";
+    report << "+==============================================================+\n";
 
     report_file.close();
 }

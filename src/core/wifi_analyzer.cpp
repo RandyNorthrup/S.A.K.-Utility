@@ -425,7 +425,7 @@ int WiFiAnalyzer::frequencyToChannel(uint32_t freqKHz) {
         return kChannel14;
     }
 
-    // 6 GHz band (5955 MHz – 7115 MHz): channels 1, 5, 9, ... with 5 MHz spacing
+    // 6 GHz band (5955 MHz - 7115 MHz): channels 1, 5, 9, ... with 5 MHz spacing
     if (freqKHz >= netdiag::kFreq6GHzStart) {
         return 1 + static_cast<int>((freqKHz - netdiag::kFreq6GHzStart) / kFreq2_4GHzStep);
     }

@@ -52,7 +52,7 @@ Q_SIGNALS:
     void fileSearched(const QString& filePath, int matchCount);
 
 protected:
-    /// @brief Main search execution — runs on worker thread
+    /// @brief Main search execution -- runs on worker thread
     auto execute() -> std::expected<void, sak::error_code> override;
 
 private:
@@ -84,7 +84,7 @@ private:
                                                     const QRegularExpression& regex);
 
     /// @brief Check if path is a UNC network path
-    [[nodiscard]] bool isNetworkPath(const QString& path) const;
+    [[nodiscard]] static bool isNetworkPath(const QString& path);
 
     /// @brief Check network path accessibility with timeout
     [[nodiscard]] bool checkNetworkPathAccessible(const QString& path) const;
@@ -126,7 +126,7 @@ private:
     static constexpr int kBatchSize = 50;
 };
 
-// ── Compile-Time Invariants (TigerStyle) ────────────────────────────────────
+// -- Compile-Time Invariants (TigerStyle) ------------------------------------
 
 /// AdvancedSearchWorker must inherit WorkerBase.
 static_assert(std::is_base_of_v<WorkerBase, AdvancedSearchWorker>,

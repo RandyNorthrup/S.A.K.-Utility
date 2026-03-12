@@ -70,7 +70,7 @@ private:
                                                 uint16_t port,
                                                 int timeoutMs);
 
-    /// @brief Well-known port → service name map
+    /// @brief Well-known port -> service name map
     [[nodiscard]] static const QHash<uint16_t, QString>& serviceDatabase();
 };
 

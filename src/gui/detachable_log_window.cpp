@@ -36,7 +36,7 @@ DetachableLogWindow::DetachableLogWindow(const QString& title, QWidget* parent)
         sak::ui::kMarginTight, sak::ui::kMarginTight, sak::ui::kMarginTight, sak::ui::kMarginTight);
     layout->setSpacing(4);
 
-    // Log text area (uses app theme — no custom dark style)
+    // Log text area (uses app theme -- no custom dark style)
     m_logEdit = new QTextEdit(this);
     m_logEdit->setReadOnly(true);
     m_logEdit->setPlaceholderText(tr("Operation log will appear here..."));

@@ -33,9 +33,9 @@
 
 namespace sak {
 
-// ═══════════════════════════════════════════════════════════════════
+// ===================================================================
 // Construction / Destruction
-// ═══════════════════════════════════════════════════════════════════
+// ===================================================================
 
 NetworkDiagnosticPanel::NetworkDiagnosticPanel(QWidget* parent)
     : QWidget(parent), m_controller(std::make_unique<NetworkDiagnosticController>(this)) {
@@ -50,13 +50,13 @@ NetworkDiagnosticPanel::NetworkDiagnosticPanel(QWidget* parent)
 
 NetworkDiagnosticPanel::~NetworkDiagnosticPanel() = default;
 
-// ═══════════════════════════════════════════════════════════════════
+// ===================================================================
 // UI Setup
-// ═══════════════════════════════════════════════════════════════════
+// ===================================================================
 
 void NetworkDiagnosticPanel::setupUi() {
     Q_ASSERT(m_toolTabs);
-    // Root layout — compact header, splitter for adapter+tools, report pinned at bottom.
+    // Root layout -- compact header, splitter for adapter+tools, report pinned at bottom.
     auto* rootLayout = new QVBoxLayout(this);
     rootLayout->setContentsMargins(
         ui::kMarginMedium, ui::kMarginMedium, ui::kMarginMedium, ui::kMarginMedium);
@@ -119,7 +119,7 @@ void NetworkDiagnosticPanel::setupKeyboardShortcuts() {
     });
 }
 
-// ── Adapter Section ─────────────────────────────────────────────────────
+// -- Adapter Section -----------------------------------------------------
 
 QWidget* NetworkDiagnosticPanel::createAdapterSection() {
     auto* group = new QGroupBox(tr("Network Adapters"), this);
@@ -168,7 +168,7 @@ void NetworkDiagnosticPanel::setupAdapterToolbar(QGroupBox* group, QVBoxLayout* 
     m_restoreEthernetBtn->setStyleSheet(ui::kSecondaryButtonStyle);
     m_restoreEthernetBtn->setToolTip(
         tr("Restore Ethernet adapter settings from a previously saved "
-           "JSON backup file — works across PCs"));
+           "JSON backup file -- works across PCs"));
     setAccessible(m_restoreEthernetBtn,
                   tr("Restore Ethernet settings"),
                   tr("Load and apply adapter IP configuration from a backup JSON file"));
@@ -246,7 +246,7 @@ void NetworkDiagnosticPanel::setupAdapterDetailLabel(QGroupBox* group, QVBoxLayo
     m_detailIdentity->setText(tr("Select an adapter to view details"));
 }
 
-// ── Ping Tab ────────────────────────────────────────────────────────────
+// -- Ping Tab ------------------------------------------------------------
 
 QWidget* NetworkDiagnosticPanel::createPingTab() {
     auto* widget = new QWidget(this);
@@ -368,7 +368,7 @@ void NetworkDiagnosticPanel::setupPingResults(QWidget* widget, QVBoxLayout* layo
     layout->addWidget(m_pingTable, 1);
 }
 
-// ── Traceroute Tab ──────────────────────────────────────────────────────
+// -- Traceroute Tab ------------------------------------------------------
 
 QWidget* NetworkDiagnosticPanel::createTracerouteTab() {
     auto* widget = new QWidget(this);
@@ -460,7 +460,7 @@ void NetworkDiagnosticPanel::setupTracerouteResults(QWidget* widget, QVBoxLayout
     layout->addWidget(m_traceTable, 1);
 }
 
-// ── MTR Tab ─────────────────────────────────────────────────────────────
+// -- MTR Tab -------------------------------------------------------------
 
 QWidget* NetworkDiagnosticPanel::createMtrTab() {
     auto* widget = new QWidget(this);
@@ -553,7 +553,7 @@ void NetworkDiagnosticPanel::setupMtrResults(QWidget* widget, QVBoxLayout* layou
     layout->addWidget(m_mtrTable, 1);
 }
 
-// ── DNS Tab ─────────────────────────────────────────────────────────────
+// -- DNS Tab -------------------------------------------------------------
 
 QWidget* NetworkDiagnosticPanel::createDnsTab() {
     auto* widget = new QWidget(this);
@@ -681,7 +681,7 @@ void NetworkDiagnosticPanel::setupDnsResults(QWidget* widget, QVBoxLayout* layou
     layout->addWidget(m_dnsTable, 1);
 }
 
-// ── Port Scan Tab ────────────────────────────────────────────────────────
+// -- Port Scan Tab --------------------------------------------------------
 
 QWidget* NetworkDiagnosticPanel::createPortScanTab() {
     auto* widget = new QWidget(this);
@@ -829,7 +829,7 @@ void NetworkDiagnosticPanel::setupPortScanResults(QWidget* widget, QVBoxLayout* 
     layout->addWidget(m_portTable, 1);
 }
 
-// ── Bandwidth Tab ───────────────────────────────────────────────────────
+// -- Bandwidth Tab -------------------------------------------------------
 
 QWidget* NetworkDiagnosticPanel::createBandwidthTab() {
     auto* scrollArea = new QScrollArea(this);
@@ -973,7 +973,7 @@ void NetworkDiagnosticPanel::setupBandwidthHttpSection(QWidget* widget, QVBoxLay
     layout->addWidget(httpGroup);
 }
 
-// ── WiFi Tab ────────────────────────────────────────────────────────────
+// -- WiFi Tab ------------------------------------------------------------
 
 QWidget* NetworkDiagnosticPanel::createWiFiTab() {
     Q_ASSERT(m_wifiScanBtn);
@@ -1050,7 +1050,7 @@ QWidget* NetworkDiagnosticPanel::createWiFiTab() {
     return widget;
 }
 
-// ── Connections Tab ─────────────────────────────────────────────────────
+// -- Connections Tab -----------------------------------------------------
 
 QWidget* NetworkDiagnosticPanel::createConnectionsTab() {
     auto* widget = new QWidget(this);
@@ -1163,7 +1163,7 @@ void NetworkDiagnosticPanel::setupConnectionsTable(QWidget* widget, QVBoxLayout*
     layout->addWidget(m_connTable, 1);
 }
 
-// ── Firewall Tab ────────────────────────────────────────────────────────
+// -- Firewall Tab --------------------------------------------------------
 
 QWidget* NetworkDiagnosticPanel::createFirewallTab() {
     auto* widget = new QWidget(this);
@@ -1291,7 +1291,7 @@ void NetworkDiagnosticPanel::setupFirewallAnalysis(QWidget* widget, QVBoxLayout*
     layout->addLayout(analysisRow);
 }
 
-// ── Shares Tab ──────────────────────────────────────────────────────────
+// -- Shares Tab ----------------------------------------------------------
 
 QWidget* NetworkDiagnosticPanel::createSharesTab() {
     Q_ASSERT(m_shareHostname);
@@ -1344,7 +1344,7 @@ QWidget* NetworkDiagnosticPanel::createSharesTab() {
     return widget;
 }
 
-// ── LAN Transfer Tab — Group Builders ────────────────────────────────────
+// -- LAN Transfer Tab -- Group Builders ------------------------------------
 
 QGroupBox* NetworkDiagnosticPanel::createLanServerGroup(QWidget* parent) {
     Q_ASSERT(m_lanPort);
@@ -1439,7 +1439,7 @@ QGroupBox* NetworkDiagnosticPanel::createLanClientGroup(QWidget* parent) {
     return group;
 }
 
-// ── LAN Transfer Tab ────────────────────────────────────────────────────
+// -- LAN Transfer Tab ----------------------------------------------------
 
 QWidget* NetworkDiagnosticPanel::createLanTransferTab() {
     Q_ASSERT(m_lanResultLabel);
@@ -1477,12 +1477,12 @@ QWidget* NetworkDiagnosticPanel::createLanTransferTab() {
     return scrollArea;
 }
 
-// ── Report Section ──────────────────────────────────────────────────────
+// -- Report Section ------------------------------------------------------
 
 
-// ═══════════════════════════════════════════════════════════════════
+// ===================================================================
 // Signal Connections
-// ═══════════════════════════════════════════════════════════════════
+// ===================================================================
 
 void NetworkDiagnosticPanel::connectSignals() {
     connectUiSignals();
@@ -1495,7 +1495,7 @@ void NetworkDiagnosticPanel::connectSignals() {
 }
 
 void NetworkDiagnosticPanel::connectUiSignals() {
-    // ── Adapter ──
+    // -- Adapter --
     connect(m_refreshBtn, &QPushButton::clicked, this, &NetworkDiagnosticPanel::onRefreshAdapters);
     connect(
         m_copyConfigBtn, &QPushButton::clicked, this, &NetworkDiagnosticPanel::onCopyAdapterConfig);
@@ -1512,24 +1512,24 @@ void NetworkDiagnosticPanel::connectUiSignals() {
             this,
             &NetworkDiagnosticPanel::onAdapterSelectionChanged);
 
-    // ── Ping ──
+    // -- Ping --
     connect(m_pingStartBtn, &QPushButton::clicked, this, &NetworkDiagnosticPanel::onStartPing);
     connect(m_pingStopBtn, &QPushButton::clicked, this, &NetworkDiagnosticPanel::onStopPing);
 
-    // ── Traceroute ──
+    // -- Traceroute --
     connect(
         m_traceStartBtn, &QPushButton::clicked, this, &NetworkDiagnosticPanel::onStartTraceroute);
     connect(m_traceStopBtn, &QPushButton::clicked, this, &NetworkDiagnosticPanel::onStopTraceroute);
 
-    // ── MTR ──
+    // -- MTR --
     connect(m_mtrStartBtn, &QPushButton::clicked, this, &NetworkDiagnosticPanel::onStartMtr);
     connect(m_mtrStopBtn, &QPushButton::clicked, this, &NetworkDiagnosticPanel::onStopMtr);
 
-    // ── Port Scanner ──
+    // -- Port Scanner --
     connect(m_portStartBtn, &QPushButton::clicked, this, &NetworkDiagnosticPanel::onStartPortScan);
     connect(m_portStopBtn, &QPushButton::clicked, this, &NetworkDiagnosticPanel::onStopPortScan);
 
-    // ── Bandwidth ──
+    // -- Bandwidth --
     connect(
         m_bwTestBtn, &QPushButton::clicked, this, &NetworkDiagnosticPanel::onStartBandwidthTest);
     connect(m_bwServerStartBtn,
@@ -1539,14 +1539,14 @@ void NetworkDiagnosticPanel::connectUiSignals() {
     connect(
         m_bwServerStopBtn, &QPushButton::clicked, this, &NetworkDiagnosticPanel::onStopIperfServer);
 
-    // ── WiFi ──
+    // -- WiFi --
     connect(m_wifiScanBtn, &QPushButton::clicked, this, &NetworkDiagnosticPanel::onScanWiFi);
     connect(
         m_wifiContBtn, &QPushButton::clicked, this, &NetworkDiagnosticPanel::onStartContinuousWiFi);
     connect(
         m_wifiStopBtn, &QPushButton::clicked, this, &NetworkDiagnosticPanel::onStopContinuousWiFi);
 
-    // ── Connections ──
+    // -- Connections --
     connect(m_connStartBtn,
             &QPushButton::clicked,
             this,
@@ -1718,7 +1718,7 @@ void NetworkDiagnosticPanel::connectControllerWifiConnectionsFirewallSharesSigna
             this,
             &NetworkDiagnosticPanel::onSharesDiscovered);
 
-    // ── LAN Transfer ──
+    // -- LAN Transfer --
     connect(m_controller.get(),
             &NetworkDiagnosticController::lanTransferServerStarted,
             this,
@@ -1800,11 +1800,11 @@ void NetworkDiagnosticPanel::connectFirewallFilterSignals() {
     });
 }
 
-// ═══════════════════════════════════════════════════════════════════
+// ===================================================================
 // Slot Implementations
-// ═══════════════════════════════════════════════════════════════════
+// ===================================================================
 
-// ── Adapters ──
+// -- Adapters --
 
 void NetworkDiagnosticPanel::onRefreshAdapters() {
     Q_ASSERT(m_controller);
@@ -1833,13 +1833,13 @@ void NetworkDiagnosticPanel::onAdaptersScanComplete(QVector<NetworkAdapterInfo> 
                                                 : QColor(ui::kColorError));
         m_adapterTable->setItem(row, 2, statusItem);
 
-        const auto ip = a.ipv4Addresses.isEmpty() ? QStringLiteral("—") : a.ipv4Addresses.first();
+        const auto ip = a.ipv4Addresses.isEmpty() ? QStringLiteral("--") : a.ipv4Addresses.first();
         m_adapterTable->setItem(row, 3, new QTableWidgetItem(ip));
         m_adapterTable->setItem(row, 4, new QTableWidgetItem(a.macAddress));
 
         const auto speed = a.linkSpeedBps > 0
                                ? QStringLiteral("%1 Mbps").arg(a.linkSpeedBps / 1'000'000)
-                               : QStringLiteral("—");
+                               : QStringLiteral("--");
         m_adapterTable->setItem(row, 5, new QTableWidgetItem(speed));
     }
 
@@ -2075,7 +2075,7 @@ void NetworkDiagnosticPanel::onRestoreEthernetSettings() {
     }
 }
 
-// ── Ping ──
+// -- Ping --
 
 void NetworkDiagnosticPanel::onStartPing() {
     Q_ASSERT(m_pingTarget);
@@ -2122,11 +2122,11 @@ void NetworkDiagnosticPanel::onPingReply(PingReply reply) {
                          3,
                          new QTableWidgetItem(reply.success
                                                   ? QStringLiteral("%1").arg(reply.rttMs, 0, 'f', 1)
-                                                  : QStringLiteral("—")));
+                                                  : QStringLiteral("--")));
     m_pingTable->setItem(row,
                          4,
                          new QTableWidgetItem(reply.success ? QString::number(reply.ttl)
-                                                            : QStringLiteral("—")));
+                                                            : QStringLiteral("--")));
 
     m_pingTable->scrollToBottom();
 }
@@ -2149,10 +2149,10 @@ void NetworkDiagnosticPanel::onPingComplete(PingResult result) {
                                   .arg(result.jitter, 0, 'f', 2));
 
     Q_EMIT statusMessage(
-        QStringLiteral("Ping complete — %1% loss").arg(result.lossPercent, 0, 'f', 1), 5000);
+        QStringLiteral("Ping complete -- %1% loss").arg(result.lossPercent, 0, 'f', 1), 5000);
 }
 
-// ── Traceroute ──
+// -- Traceroute --
 
 void NetworkDiagnosticPanel::onStartTraceroute() {
     Q_ASSERT(m_traceTarget);
@@ -2196,7 +2196,7 @@ void NetworkDiagnosticPanel::onTracerouteHop(TracerouteHop hop) {
         m_traceTable->setItem(row, 1, new QTableWidgetItem(hop.ipAddress));
         m_traceTable->setItem(row,
                               2,
-                              new QTableWidgetItem(hop.hostname.isEmpty() ? QStringLiteral("—")
+                              new QTableWidgetItem(hop.hostname.isEmpty() ? QStringLiteral("--")
                                                                           : hop.hostname));
         m_traceTable->setItem(
             row, 3, new QTableWidgetItem(QStringLiteral("%1").arg(hop.rtt1Ms, 0, 'f', 1)));
@@ -2230,7 +2230,7 @@ void NetworkDiagnosticPanel::onTracerouteComplete(TracerouteResult result) {
     Q_EMIT statusMessage(status, 5000);
 }
 
-// ── MTR ──
+// -- MTR --
 
 void NetworkDiagnosticPanel::onStartMtr() {
     Q_ASSERT(m_mtrTarget);
@@ -2318,7 +2318,7 @@ void NetworkDiagnosticPanel::onMtrComplete(MtrResult result) {
     m_mtrStopBtn->setEnabled(false);
 
     const int hops = static_cast<int>(result.hops.size());
-    const QString status = QStringLiteral("MTR complete — %1 hops, %2 cycles to %3")
+    const QString status = QStringLiteral("MTR complete -- %1 hops, %2 cycles to %3")
                                .arg(hops)
                                .arg(result.totalCycles)
                                .arg(result.target);
@@ -2327,7 +2327,7 @@ void NetworkDiagnosticPanel::onMtrComplete(MtrResult result) {
     Q_EMIT statusMessage(status, 5000);
 }
 
-// ── DNS ──
+// -- DNS --
 
 void NetworkDiagnosticPanel::onDnsQuery() {
     Q_ASSERT(m_dnsHostname);
@@ -2437,10 +2437,10 @@ void NetworkDiagnosticPanel::onDnsComparisonComplete(DnsServerComparison compari
     m_dnsStatusLabel->setText(
         comparison.allAgree
             ? tr("All servers agree")
-            : tr("DNS servers returned different results — possible DNS hijacking or caching"));
+            : tr("DNS servers returned different results -- possible DNS hijacking or caching"));
 }
 
-// ── Port Scanner ──
+// -- Port Scanner --
 
 namespace {
 
@@ -2680,7 +2680,7 @@ void NetworkDiagnosticPanel::onPortScanComplete(QVector<PortScanResult> results)
                                     .arg(filteredCount));
 }
 
-// ── Bandwidth ──
+// -- Bandwidth --
 
 void NetworkDiagnosticPanel::onStartBandwidthTest() {
     Q_ASSERT(m_bwServerAddr);
@@ -2741,7 +2741,7 @@ void NetworkDiagnosticPanel::onHttpSpeedComplete(double down, double up, double 
                                   .arg(latency, 0, 'f', 1));
 }
 
-// ── WiFi ──
+// -- WiFi --
 
 void NetworkDiagnosticPanel::onScanWiFi() {
     if (!m_controller->isWiFiAvailable()) {
@@ -2784,7 +2784,7 @@ void NetworkDiagnosticPanel::onWiFiScanComplete(QVector<WiFiNetworkInfo> network
             QFont f = ssidItem->font();
             f.setBold(true);
             ssidItem->setFont(f);
-            ssidItem->setText(QStringLiteral("%1 ★").arg(net.ssid));
+            ssidItem->setText(QStringLiteral("%1 *").arg(net.ssid));
         }
         m_wifiTable->setItem(row, 0, ssidItem);
 
@@ -2812,7 +2812,7 @@ void NetworkDiagnosticPanel::onWiFiScanComplete(QVector<WiFiNetworkInfo> network
     m_wifiTable->setSortingEnabled(true);
 }
 
-// ── Connections ──
+// -- Connections --
 
 void NetworkDiagnosticPanel::onStartConnectionMonitor() {
     Q_ASSERT(m_connStartBtn);
@@ -2889,7 +2889,7 @@ void NetworkDiagnosticPanel::onConnectionsUpdated(QVector<ConnectionInfo> connec
                                     .arg(established));
 }
 
-// ── Firewall ──
+// -- Firewall --
 
 void NetworkDiagnosticPanel::onAuditFirewall() {
     m_fwAuditBtn->setEnabled(false);
@@ -2929,7 +2929,7 @@ void NetworkDiagnosticPanel::onFirewallAuditComplete(QVector<FirewallRule> rules
     } else {
         QString text;
         for (const auto& g : gaps) {
-            text += QStringLiteral("• %1\n  Recommendation: %2\n\n")
+            text += QStringLiteral("* %1\n  Recommendation: %2\n\n")
                         .arg(g.description, g.recommendation);
         }
         m_fwGapText->setPlainText(text);
@@ -3051,7 +3051,7 @@ void NetworkDiagnosticPanel::populateFirewallTable(const QVector<FirewallRule>& 
     m_fwRuleTable->setSortingEnabled(true);
 }
 
-// ── Shares ──
+// -- Shares --
 
 void NetworkDiagnosticPanel::onDiscoverShares() {
     m_shareDiscoverBtn->setEnabled(false);
@@ -3105,7 +3105,7 @@ void NetworkDiagnosticPanel::onSharesDiscovered(QVector<NetworkShareInfo> shares
     }
 }
 
-// ── LAN Transfer Slots ──
+// -- LAN Transfer Slots --
 
 void NetworkDiagnosticPanel::onStartLanTransferServer() {
     m_lanServerStartBtn->setEnabled(false);
@@ -3160,7 +3160,7 @@ void NetworkDiagnosticPanel::onLanTransferComplete(LanTransferResult result) {
                                   .arg(result.peakSpeedMbps, 0, 'f', 1));
 }
 
-// ── Controller State ──
+// -- Controller State --
 
 void NetworkDiagnosticPanel::onStateChanged(int newState) {
     Q_ASSERT(m_refreshBtn);

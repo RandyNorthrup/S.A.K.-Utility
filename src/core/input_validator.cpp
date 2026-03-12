@@ -222,14 +222,10 @@ bool input_validator::containsTraversalSequences(const std::filesystem::path& pa
     }
 
     // Check each path component
-    for (const auto& component : path) {
+    return std::any_of(path.begin(), path.end(), [](const auto& component) {
         const auto comp_str = component.string();
-        if (comp_str == ".." || comp_str == ".") {
-            return true;
-        }
-    }
-
-    return false;
+        return comp_str == ".." || comp_str == ".";
+    });
 }
 
 validation_result input_validator::validatePathWithinBase(const std::filesystem::path& path,
@@ -471,6 +467,10 @@ validation_result input_validator::validate_available_memory(std::size_t require
 }
 
 validation_result input_validator::validate_file_descriptor_limit() {
+#ifdef _WIN32
+    // Windows has no POSIX file descriptor limit; always succeeds
+    return success();
+#else
     const auto current_count = get_file_descriptor_count_impl();
     const auto limit = get_file_descriptor_limit_impl();
 
@@ -485,6 +485,7 @@ validation_result input_validator::validate_file_descriptor_limit() {
     }
 
     return success();
+#endif
 }
 
 validation_result input_validator::validate_thread_count(std::size_t requested_threads) {
@@ -551,11 +552,8 @@ std::uintmax_t input_validator::get_available_memory_impl() {
 #endif
 }
 
+#ifndef _WIN32
 std::size_t input_validator::get_file_descriptor_count_impl() {
-#ifdef _WIN32
-    // Windows doesn't have a direct equivalent
-    return 0;  // Cannot determine
-#else
     // Count open file descriptors in /proc/self/fd
     std::size_t count = 0;
     try {
@@ -568,20 +566,15 @@ std::size_t input_validator::get_file_descriptor_count_impl() {
         return 0;  // Cannot determine
     }
     return count;
-#endif
 }
 
 std::size_t input_validator::get_file_descriptor_limit_impl() {
-#ifdef _WIN32
-    // Windows doesn't have RLIMIT_NOFILE
-    return 0;  // Cannot determine
-#else
     struct rlimit limit;
     if (getrlimit(RLIMIT_NOFILE, &limit) == 0) {
         return limit.rlim_cur;
     }
     return 0;
-#endif
 }
+#endif
 
 }  // namespace sak

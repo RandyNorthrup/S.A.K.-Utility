@@ -207,7 +207,7 @@ enum class error_code {
     return "Undefined error";
 }
 
-// ── Compile-Time Invariants (TigerStyle) ────────────────────────────────────
+// -- Compile-Time Invariants (TigerStyle) ------------------------------------
 
 /// Verify error_code has int-sized underlying type for ABI stability.
 static_assert(sizeof(error_code) == sizeof(int), "error_code must be int-sized for ABI stability.");

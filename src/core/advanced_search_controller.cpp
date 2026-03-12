@@ -16,7 +16,7 @@
 
 namespace sak {
 
-// ── Construction / Destruction ──────────────────────────────────────────────
+// -- Construction / Destruction ----------------------------------------------
 
 AdvancedSearchController::AdvancedSearchController(QObject* parent)
     : QObject(parent), m_pattern_library(std::make_unique<RegexPatternLibrary>(nullptr)) {
@@ -30,7 +30,7 @@ AdvancedSearchController::~AdvancedSearchController() {
     logInfo("AdvancedSearchController destroyed");
 }
 
-// ── State Management ────────────────────────────────────────────────────────
+// -- State Management --------------------------------------------------------
 
 AdvancedSearchController::State AdvancedSearchController::currentState() const {
     return m_state;
@@ -43,7 +43,7 @@ void AdvancedSearchController::setState(State newState) {
     }
 }
 
-// ── Search Operations ───────────────────────────────────────────────────────
+// -- Search Operations -------------------------------------------------------
 
 void AdvancedSearchController::startSearch(const SearchConfig& config) {
     Q_ASSERT(m_worker);
@@ -117,7 +117,7 @@ void AdvancedSearchController::cleanupWorker() {
     }
 }
 
-// ── Worker Signal Handlers ──────────────────────────────────────────────────
+// -- Worker Signal Handlers --------------------------------------------------
 
 void AdvancedSearchController::onWorkerStarted() {
     Q_EMIT statusMessage(tr("Search started..."), 0);
@@ -132,7 +132,7 @@ void AdvancedSearchController::onWorkerFinished() {
 }
 
 void AdvancedSearchController::onWorkerFailed(int errorCode, const QString& errorMessage) {
-    logError("AdvancedSearchController: search failed ({}) — {}",
+    logError("AdvancedSearchController: search failed ({}) -- {}",
              errorCode,
              errorMessage.toStdString());
     Q_EMIT searchFailed(errorMessage);
@@ -164,7 +164,7 @@ void AdvancedSearchController::onFileSearched(const QString& filePath, int match
     Q_EMIT fileSearched(filePath, matchCount);
 }
 
-// ── Search History ──────────────────────────────────────────────────────────
+// -- Search History ----------------------------------------------------------
 
 void AdvancedSearchController::addToHistory(const QString& pattern) {
     if (pattern.trimmed().isEmpty()) {
@@ -191,7 +191,7 @@ QStringList AdvancedSearchController::searchHistory() const {
     return m_search_history;
 }
 
-// ── Preferences ─────────────────────────────────────────────────────────────
+// -- Preferences -------------------------------------------------------------
 
 void AdvancedSearchController::setPreferences(const SearchPreferences& prefs) {
     m_preferences = prefs;

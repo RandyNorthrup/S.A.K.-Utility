@@ -52,7 +52,7 @@ auto logger::initialize(const std::filesystem::path& log_dir, std::string_view p
         m_bytes_written.store(0, std::memory_order_relaxed);
     }
 
-    // Write initialization message (outside lock — writeEntryToFile acquires it)
+    // Write initialization message (outside lock -- writeEntryToFile acquires it)
     logInfo("Logger initialized: {}", m_log_file.string());
 
     return {};
@@ -115,7 +115,7 @@ void logger::logInternal(log_level level,
         writeEntryToConsole(log_entry, level);
 
     } catch (const std::exception& e) {
-        // Logger itself cannot recurse — fall back to stderr
+        // Logger itself cannot recurse -- fall back to stderr
         std::fprintf(stderr, "SAK Logger: logInternal failed: %s\n", e.what());
     } catch (...) {
         // Intentional: final safety net in noexcept function
@@ -186,7 +186,7 @@ auto logger::ensureLogDirectory(const std::filesystem::path& dir)
     }
 }
 
-std::string logger::getTimestamp() const noexcept {
+std::string logger::getTimestamp() noexcept {
     try {
         auto now = std::chrono::system_clock::now();
         return std::format("{:%Y-%m-%d %H:%M:%S}", now);

@@ -20,6 +20,7 @@
 #include <QtGlobal>
 
 #include <optional>
+#include <algorithm>
 
 namespace {
 
@@ -267,7 +268,7 @@ std::vector<UserDataManager::DataLocation> UserDataManager::getCommonDataLocatio
                          {appdata_roaming + "/../Code/User"},
                          "Settings, keybindings, extensions, snippets"});
 
-    // BitLocker Recovery Keys (sentinel path — handled specially by backup wizard)
+    // BitLocker Recovery Keys (sentinel path -- handled specially by backup wizard)
     locations.push_back({"BitLocker Recovery Keys",
                          {"bitlocker://recovery-keys"},
                          "BitLocker recovery keys for all encrypted volumes"});
@@ -466,7 +467,7 @@ bool UserDataManager::createArchive(const QStringList& source_paths,
     }
 
     if (!process.waitForFinished(sak::kTimeoutArchiveMs)) {  // 5 minute timeout
-        sak::logError("Archive compression timed out after 5 minutes — killing process");
+        sak::logError("Archive compression timed out after 5 minutes -- killing process");
         process.kill();
         return false;
     }
@@ -513,7 +514,7 @@ QString UserDataManager::decryptArchiveToTempFile(const QString& archive_path,
     // plaintext (TOCTOU mitigation).
     QTemporaryFile temp;
     // AutoRemove is disabled because we must keep the file alive until
-    // PowerShell finishes reading it — cleanup is handled manually on
+    // PowerShell finishes reading it -- cleanup is handled manually on
     // every exit path in extractArchive().
     temp.setAutoRemove(false);
     if (!temp.open()) {
@@ -591,13 +592,12 @@ bool UserDataManager::extractArchive(const QString& archive_path,
 }
 
 bool UserDataManager::isExcluded(const QString& path, const QStringList& patterns) const {
-    for (const auto& pattern : patterns) {
-        QRegularExpression re(QRegularExpression::wildcardToRegularExpression(pattern));
-        if (re.match(path).hasMatch()) {
-            return true;
-        }
-    }
-    return false;
+    return std::any_of(patterns.begin(), patterns.end(),
+        [&path](const auto& pattern) {
+            QRegularExpression re(
+                QRegularExpression::wildcardToRegularExpression(pattern));
+            return re.match(path).hasMatch();
+        });
 }
 
 QStringList UserDataManager::getStandardDataPaths() const {
@@ -624,12 +624,10 @@ QStringList UserDataManager::getStandardDataPaths() const {
 bool UserDataManager::copySourcesToDest(const QStringList& source_paths,
                                         const QString& dest_dir,
                                         const QStringList& exclude_patterns) {
-    for (const auto& source : source_paths) {
-        if (!copyDirectory(source, dest_dir, exclude_patterns)) {
-            return false;
-        }
-    }
-    return true;
+    return std::all_of(source_paths.begin(), source_paths.end(),
+        [&](const auto& source) {
+            return copyDirectory(source, dest_dir, exclude_patterns);
+        });
 }
 
 bool UserDataManager::copyDirectory(const QString& source,

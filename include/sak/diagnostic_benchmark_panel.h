@@ -63,16 +63,16 @@ Q_SIGNALS:
     void logOutput(const QString& message);
 
 private Q_SLOTS:
-    // ── Hardware Inventory ──────────────────────────────────────
+    // -- Hardware Inventory --------------------------------------
     void onRescanHardwareClicked();
     void onCopyInventoryClicked();
     void onHardwareScanComplete(const sak::HardwareInventory& inventory);
 
-    // ── SMART Health ────────────────────────────────────────────
+    // -- SMART Health --------------------------------------------
     void onRescanSmartClicked();
     void onSmartAnalysisComplete(const QVector<sak::SmartReport>& reports);
 
-    // ── Benchmarks ──────────────────────────────────────────────
+    // -- Benchmarks ----------------------------------------------
     void onRunCpuBenchmarkClicked();
     void onRunDiskBenchmarkClicked();
     void onRunMemoryBenchmarkClicked();
@@ -80,13 +80,13 @@ private Q_SLOTS:
     void onDiskBenchmarkComplete(const sak::DiskBenchmarkResult& result);
     void onMemoryBenchmarkComplete(const sak::MemoryBenchmarkResult& result);
 
-    // ── Stress Test ─────────────────────────────────────────────
+    // -- Stress Test ---------------------------------------------
     void onStartStressTestClicked();
     void onStopStressTestClicked();
     void onStressTestComplete(const sak::StressTestResult& result);
     void onStressTestStatus(int elapsed_seconds, double cpu_temp, int errors);
 
-    // ── Full Suite ──────────────────────────────────────────────
+    // -- Full Suite ----------------------------------------------
     void onRunFullSuiteClicked();
     void onCancelSuiteClicked();
     void onSkipStepClicked();
@@ -94,14 +94,14 @@ private Q_SLOTS:
     void onSuiteProgress(int percent, const QString& message);
     void onSuiteComplete();
 
-    // ── Thermal ─────────────────────────────────────────────────
+    // -- Thermal -------------------------------------------------
     void onThermalReadingsUpdated(const QVector<sak::ThermalReading>& readings);
 
-    // ── Report ──────────────────────────────────────────────────
+    // -- Report --------------------------------------------------
     void onGenerateReportClicked();
     void onReportsGenerated(const QString& output_dir);
 
-    // ── Common ──────────────────────────────────────────────────
+    // -- Common --------------------------------------------------
     void onOperationProgress(int percent, const QString& message);
     void onErrorOccurred(const QString& message);
 
@@ -124,7 +124,7 @@ private:
     /// @brief Add partitions of a single disk to the disk drive combo
     void addDiskPartitionsToCombo(const StorageDeviceInfo& disk);
 
-    // ── Section Builders ────────────────────────────────────────
+    // -- Section Builders ----------------------------------------
     QWidget* createDiagnosticsTab();
     QWidget* createBenchmarkTab();
     QGroupBox* createHardwareSection();
@@ -155,14 +155,14 @@ private:
     /// @brief Format uptime to "X days, Y hours"
     [[nodiscard]] static QString formatUptime(uint64_t seconds);
 
-    // ── Controller ──────────────────────────────────────────────
+    // -- Controller ----------------------------------------------
     std::unique_ptr<DiagnosticController> m_controller;
 
-    // ── Layout ──────────────────────────────────────────────────
+    // -- Layout --------------------------------------------------
     QTabWidget* m_tabs{nullptr};
     PanelHeaderWidgets m_headerWidgets;
 
-    // ── Hardware Inventory Widgets ──────────────────────────────
+    // -- Hardware Inventory Widgets ------------------------------
     QLabel* m_hw_cpu_label{nullptr};
     QLabel* m_hw_memory_label{nullptr};
     QLabel* m_hw_gpu_label{nullptr};
@@ -173,19 +173,19 @@ private:
     QPushButton* m_hw_rescan_button{nullptr};
     QPushButton* m_hw_copy_button{nullptr};
 
-    // ── SMART Health Widgets ────────────────────────────────────
+    // -- SMART Health Widgets ------------------------------------
     QTableWidget* m_smart_table{nullptr};
     QLabel* m_smart_warnings_label{nullptr};
     QPushButton* m_smart_rescan_button{nullptr};
 
-    // ── CPU Benchmark Widgets ───────────────────────────────────
+    // -- CPU Benchmark Widgets -----------------------------------
     QLabel* m_cpu_single_score_label{nullptr};
     QLabel* m_cpu_multi_score_label{nullptr};
     QLabel* m_cpu_details_label{nullptr};
     QProgressBar* m_cpu_score_bar{nullptr};
     QPushButton* m_cpu_benchmark_button{nullptr};
 
-    // ── Disk Benchmark Widgets ──────────────────────────────────
+    // -- Disk Benchmark Widgets ----------------------------------
     QComboBox* m_disk_drive_combo{nullptr};
     QLabel* m_disk_seq_label{nullptr};
     QLabel* m_disk_rand_label{nullptr};
@@ -193,13 +193,13 @@ private:
     QLabel* m_disk_score_label{nullptr};
     QPushButton* m_disk_benchmark_button{nullptr};
 
-    // ── Memory Benchmark Widgets ────────────────────────────────
+    // -- Memory Benchmark Widgets --------------------------------
     QLabel* m_mem_bandwidth_label{nullptr};
     QLabel* m_mem_latency_label{nullptr};
     QLabel* m_mem_score_label{nullptr};
     QPushButton* m_mem_benchmark_button{nullptr};
 
-    // ── Stress Test Widgets ─────────────────────────────────────
+    // -- Stress Test Widgets -------------------------------------
     QCheckBox* m_stress_cpu_check{nullptr};
     QCheckBox* m_stress_memory_check{nullptr};
     QCheckBox* m_stress_disk_check{nullptr};
@@ -213,7 +213,7 @@ private:
     QPushButton* m_stress_start_button{nullptr};
     QPushButton* m_stress_stop_button{nullptr};
 
-    // ── Thermal Monitor Widgets ─────────────────────────────────
+    // -- Thermal Monitor Widgets ---------------------------------
     QLabel* m_thermal_cpu_label{nullptr};
     QLabel* m_thermal_gpu_label{nullptr};
     QLabel* m_thermal_disk_label{nullptr};
@@ -221,7 +221,7 @@ private:
     QProgressBar* m_thermal_gpu_bar{nullptr};
     QProgressBar* m_thermal_disk_bar{nullptr};
 
-    // ── Full Suite Widgets ──────────────────────────────────────
+    // -- Full Suite Widgets --------------------------------------
     QLabel* m_suite_step_labels[7]{nullptr};
     QString m_suite_step_names[7];  ///< Stored for safe label reconstruction
     QLabel* m_suite_status_label{nullptr};
@@ -229,7 +229,7 @@ private:
     QPushButton* m_suite_cancel_button{nullptr};
     QPushButton* m_suite_skip_button{nullptr};
 
-    // ── Report Widgets ──────────────────────────────────────────
+    // -- Report Widgets ------------------------------------------
     QLineEdit* m_report_technician_edit{nullptr};
     QLineEdit* m_report_ticket_edit{nullptr};
     QTextEdit* m_report_notes_edit{nullptr};
@@ -237,10 +237,10 @@ private:
     QPushButton* m_report_json_button{nullptr};
     QPushButton* m_report_csv_button{nullptr};
 
-    // ── Common Widgets ──────────────────────────────────────────
+    // -- Common Widgets ------------------------------------------
     LogToggleSwitch* m_logToggle{nullptr};
 
-    // ── State ───────────────────────────────────────────────────
+    // -- State ---------------------------------------------------
     bool m_operation_running{false};
     bool m_stress_test_running{false};
     bool m_suite_running{false};

@@ -1,4 +1,4 @@
-﻿// Copyright (c) 2025 Randy Northrup. All rights reserved.
+// Copyright (c) 2025 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 /// @file main_window.cpp
@@ -378,7 +378,7 @@ void MainWindow::createToolPanels() {
 void MainWindow::createSimplePanels() {
     Q_ASSERT(m_organizer_panel);
     Q_ASSERT(m_tab_widget);
-    // ── 1. Quick Actions ────────────────────────────────────────────────
+    // -- 1. Quick Actions ------------------------------------------------
     m_quick_actions_panel = std::make_unique<QuickActionsPanel>(this);
     AddTabWithTooltip(m_tab_widget,
                       m_quick_actions_panel.get(),
@@ -386,7 +386,7 @@ void MainWindow::createSimplePanels() {
                       kTooltipQuickActions,
                       ":/icons/icons/panel_quick_actions.svg");
 
-    // ── 2. Backup and Restore ───────────────────────────────────────────
+    // -- 2. Backup and Restore -------------------------------------------
     m_user_migration_panel = std::make_unique<UserMigrationPanel>(this);
     AddTabWithTooltip(m_tab_widget,
                       m_user_migration_panel.get(),
@@ -394,7 +394,7 @@ void MainWindow::createSimplePanels() {
                       kTooltipUserMigration,
                       ":/icons/icons/panel_backup_restore.svg");
 
-    // ── 3. File Management (Organizer + Duplicate Finder + Advanced Search)
+    // -- 3. File Management (Organizer + Duplicate Finder + Advanced Search)
     m_organizer_panel = std::make_unique<OrganizerPanel>(this);
     m_advanced_search_panel = std::make_unique<AdvancedSearchPanel>(this);
     m_organizer_panel->tabWidget()->addTab(m_advanced_search_panel.get(), tr("Advanced Search"));
@@ -404,7 +404,7 @@ void MainWindow::createSimplePanels() {
                       kTooltipOrganizer,
                       ":/icons/icons/panel_organizer.svg");
 
-    // ── 4. Network Transfer (conditional) ───────────────────────────────
+    // -- 4. Network Transfer (conditional) -------------------------------
     if (ConfigManager::instance().getNetworkTransferEnabled()) {
         m_network_transfer_panel = std::make_unique<NetworkTransferPanel>(this);
         AddTabWithTooltip(m_tab_widget,
@@ -414,7 +414,7 @@ void MainWindow::createSimplePanels() {
                           ":/icons/icons/panel_network_transfer.svg");
     }
 
-    // ── 5. Image Flasher ────────────────────────────────────────────────
+    // -- 5. Image Flasher ------------------------------------------------
     m_image_flasher_panel = std::make_unique<ImageFlasherPanel>(this);
     AddTabWithTooltip(m_tab_widget,
                       m_image_flasher_panel.get(),
@@ -422,7 +422,7 @@ void MainWindow::createSimplePanels() {
                       kTooltipImageFlasher,
                       ":/icons/icons/panel_image_flasher.svg");
 
-    // ── 6. Benchmark and Diagnostics ────────────────────────────────────
+    // -- 6. Benchmark and Diagnostics ------------------------------------
     m_diagnostic_benchmark_panel = std::make_unique<DiagnosticBenchmarkPanel>(this);
     AddTabWithTooltip(m_tab_widget,
                       m_diagnostic_benchmark_panel.get(),
@@ -506,7 +506,7 @@ void MainWindow::createNetworkManagementPanel() {
         netMgmtWrapper,
         QStringLiteral(":/icons/icons/panel_network.svg"),
         tr("Network Diagnostics & Troubleshooting"),
-        tr("Comprehensive network analysis — adapter inspection, connectivity testing, "
+        tr("Comprehensive network analysis -- adapter inspection, connectivity testing, "
            "DNS diagnostics, port scanning, bandwidth, WiFi analysis, firewall auditing, and more"),
         netMgmtLayout);
 
@@ -631,7 +631,7 @@ void MainWindow::createHelpPanel() {
     helpLayout->setContentsMargins(
         ui::kMarginMedium, ui::kMarginMedium, ui::kMarginMedium, ui::kMarginMedium);
 
-    // Panel header — consistent with other panels
+    // Panel header -- consistent with other panels
     auto* headerWidget = new QWidget(helpPanel);
     auto* headerLayout = new QVBoxLayout(headerWidget);
     headerLayout->setContentsMargins(0, 0, 0, 0);
@@ -642,7 +642,7 @@ void MainWindow::createHelpPanel() {
                            headerLayout);
     helpLayout->addWidget(headerWidget);
 
-    // ── Shared card styles ──────────────────────────────────────────────
+    // -- Shared card styles ----------------------------------------------
     const QString cardStyle = QString(
                                   "QFrame {"
                                   "  background-color: %1;"
@@ -688,7 +688,7 @@ void MainWindow::createHelpPanel() {
 }
 
 // ============================================================================
-// Help Panel — Card Row Builders
+// Help Panel -- Card Row Builders
 // ============================================================================
 
 QHBoxLayout* MainWindow::createHelpRow_requestsAndBugs(QWidget* parent,
@@ -1158,7 +1158,7 @@ void MainWindow::createKeyboardShortcuts() {
         });
     }
 
-    // Ctrl+0: switches to tab index 9 (10th tab) — browser convention
+    // Ctrl+0: switches to tab index 9 (10th tab) -- browser convention
     if (tabCount > 9) {
         auto* tab10 = new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_0), this);
         tab10->setContext(Qt::ApplicationShortcut);
@@ -1258,11 +1258,11 @@ void MainWindow::applyTabBarChevrons() {
     for (auto* btn : buttons) {
         btn->setArrowType(Qt::NoArrow);
         btn->setIcon(QIcon());
-        // Use unicode chevron text — inherits the theme's white-on-blue styling
+        // Use unicode chevron text -- inherits the theme's white-on-blue styling
         if (btn == buttons.value(0)) {
-            btn->setText(QStringLiteral("\u276E"));  // ❮
+            btn->setText(QStringLiteral("\u276E"));  // <
         } else {
-            btn->setText(QStringLiteral("\u276F"));  // ❯
+            btn->setText(QStringLiteral("\u276F"));  // >
         }
         btn->setToolButtonStyle(Qt::ToolButtonTextOnly);
     }

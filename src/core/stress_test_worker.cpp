@@ -95,7 +95,7 @@ StressTestWorker::StressTestWorker(QObject* parent) : WorkerBase(parent) {}
 auto StressTestWorker::execute() -> std::expected<void, sak::error_code> {
     sak::KeepAwakeGuard keep_awake(sak::KeepAwake::PowerRequest::System, "Stress test");
 
-    logInfo("Starting stress test — CPU:{} Mem:{} Disk:{} GPU:{} Duration:{}min",
+    logInfo("Starting stress test -- CPU:{} Mem:{} Disk:{} GPU:{} Duration:{}min",
             m_config.stress_cpu,
             m_config.stress_memory,
             m_config.stress_disk,
@@ -112,7 +112,7 @@ auto StressTestWorker::execute() -> std::expected<void, sak::error_code> {
     std::vector<std::future<void>> futures;
     launchStressThreads(futures);
 
-    // Monitor loop — runs in the WorkerBase thread
+    // Monitor loop -- runs in the WorkerBase thread
     const int total_seconds = m_config.duration_minutes * 60;
     monitorStressLoop(total_seconds);
 
@@ -129,7 +129,7 @@ auto StressTestWorker::execute() -> std::expected<void, sak::error_code> {
     m_result.max_cpu_temp = m_max_temp.load(std::memory_order_relaxed);
     m_result.passed = m_result.abort_reason.isEmpty() && m_result.errors_detected == 0;
 
-    logInfo("Stress test {} — {} seconds, {} errors",
+    logInfo("Stress test {} -- {} seconds, {} errors",
             m_result.passed ? "PASSED" : "FAILED",
             m_result.duration_seconds,
             m_result.errors_detected);
@@ -212,10 +212,10 @@ bool StressTestWorker::handleStatusUpdate(int elapsed_sec, int total_seconds) {
 
     // Thermal abort check
     if (temp > 0 && temp >= m_config.thermal_limit_celsius) {
-        logWarning("Thermal limit reached: {:.1f}°C >= {:.1f}°C — aborting",
+        logWarning("Thermal limit reached: {:.1f} degC >= {:.1f} degC -- aborting",
                    temp,
                    m_config.thermal_limit_celsius);
-        m_result.abort_reason = QString("Thermal limit exceeded (%1°C)").arg(temp, 0, 'f', 1);
+        m_result.abort_reason = QString("Thermal limit exceeded (%1 degC)").arg(temp, 0, 'f', 1);
         m_result.thermal_throttle_events++;
         m_stop_children.store(true, std::memory_order_release);
         return true;
@@ -253,6 +253,9 @@ void StressTestWorker::runCpuStress() {
         // Integer workload: check if large random numbers are prime
         const uint64_t candidate = rng() | 1ULL;  // Ensure odd
         [[maybe_unused]] bool is_prime = isPrimeStress(candidate);
+
+        // Re-check after compute-heavy isPrimeStress (atomic; value may change)
+        // cppcheck-suppress oppositeInnerCondition
         if (childrenShouldStop()) {
             return;
         }
@@ -477,7 +480,7 @@ int StressTestWorker::writeDiskStressFile(void* file_handle,
 #endif
 
 // ============================================================================
-// GPU Stress — RAII context and phase helpers
+// GPU Stress -- RAII context and phase helpers
 // ============================================================================
 
 #ifdef SAK_PLATFORM_WINDOWS
@@ -525,7 +528,7 @@ using PFN_D3DCompile = HRESULT(WINAPI*)(LPCVOID,
 
 }  // namespace sak
 
-/// RAII context holding all GPU stress resources — defined outside
+/// RAII context holding all GPU stress resources -- defined outside
 /// namespace sak so the forward declaration in the header resolves.
 struct sak::GpuStressContext {
 #ifdef SAK_PLATFORM_WINDOWS
@@ -569,7 +572,7 @@ bool StressTestWorker::initGpuDevice(GpuStressContext& ctx) {
 #ifdef SAK_PLATFORM_WINDOWS
     ctx.d3d11 = LoadLibraryW(L"d3d11.dll");
     if (!ctx.d3d11) {
-        logWarning("GPU stress: d3d11.dll not available — skipping");
+        logWarning("GPU stress: d3d11.dll not available -- skipping");
         return false;
     }
 

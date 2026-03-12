@@ -10,6 +10,7 @@
 
 #include <QFile>
 #include <QFileInfo>
+#include <algorithm>
 
 namespace sak {
 
@@ -71,10 +72,12 @@ QString DecompressorFactory::detectByExtension(const QString& filePath) {
         {"zip", "zip"},
     };
 
-    for (const auto& entry : kExtensions) {
-        if (suffix == QLatin1String(entry.ext)) {
-            return QLatin1String(entry.format);
-        }
+    auto it = std::find_if(std::begin(kExtensions), std::end(kExtensions),
+        [&suffix](const auto& entry) {
+            return suffix == QLatin1String(entry.ext);
+        });
+    if (it != std::end(kExtensions)) {
+        return QLatin1String(it->format);
     }
 
     // Handle compound extensions like .tar.gz
@@ -84,10 +87,12 @@ QString DecompressorFactory::detectByExtension(const QString& filePath) {
         {".bz2", "bzip2"},
         {".xz", "xz"},
     };
-    for (const auto& entry : kCompound) {
-        if (completeSuffix.endsWith(QLatin1String(entry.ext))) {
-            return QLatin1String(entry.format);
-        }
+    auto compound_it = std::find_if(std::begin(kCompound), std::end(kCompound),
+        [&completeSuffix](const auto& entry) {
+            return completeSuffix.endsWith(QLatin1String(entry.ext));
+        });
+    if (compound_it != std::end(kCompound)) {
+        return QLatin1String(compound_it->format);
     }
 
     return QString();

@@ -31,6 +31,7 @@
 
 #include <algorithm>
 #include <filesystem>
+#include <numeric>
 
 namespace sak {
 
@@ -171,12 +172,10 @@ void mergeChunkRange(QVector<QPair<int, int>>& ranges, int chunkId) {
 }
 
 bool isChunkInRanges(int chunkId, const QVector<QPair<int, int>>& ranges) {
-    for (const auto& range : ranges) {
-        if (chunkId >= range.first && chunkId <= range.second) {
-            return true;
-        }
-    }
-    return false;
+    return std::any_of(ranges.begin(), ranges.end(),
+        [chunkId](const auto& range) {
+            return chunkId >= range.first && chunkId <= range.second;
+        });
 }
 
 }  // namespace
@@ -383,7 +382,7 @@ QByteArray NetworkTransferWorker::decompressData(const QByteArray& data) const {
     return qUncompress(data);
 }
 
-quint32 NetworkTransferWorker::computeCrc32(const QByteArray& data) const {
+quint32 NetworkTransferWorker::computeCrc32(const QByteArray& data) {
     return crc32(data);
 }
 
@@ -514,10 +513,10 @@ bool NetworkTransferWorker::handleSender(QTcpSocket* socket,
         key = *keyResult;
     }
 
-    qint64 totalBytes = 0;
-    for (const auto& file : files) {
-        totalBytes += file.size_bytes;
-    }
+    const qint64 totalBytes = std::accumulate(files.begin(), files.end(),
+        qint64{0}, [](qint64 sum, const auto& file) {
+            return sum + file.size_bytes;
+        });
 
     SenderProgress progress;
     progress.total_bytes = totalBytes;
@@ -565,24 +564,24 @@ bool NetworkTransferWorker::sendFileHeader(QTcpSocket* socket,
 }
 
 bool NetworkTransferWorker::sendFileChunks(QTcpSocket* socket,
-                                           FileChunkContext& ctx,
+                                           FileChunkContext& context,
                                            SenderProgress& progress) {
     Q_ASSERT_X(socket != nullptr, "sendFileChunks", "socket must not be null");
 
     int chunkId = 0;
-    while (!ctx.source.atEnd()) {
+    while (!context.source.atEnd()) {
         if (m_stopRequested) {
             return false;
         }
 
-        QByteArray chunk = ctx.source.read(ctx.options.chunk_size);
+        QByteArray chunk = context.source.read(context.options.chunk_size);
         if (chunk.isEmpty()) {
             break;
         }
 
-        if (ctx.options.resume_enabled && isChunkInRanges(chunkId, ctx.resume_ranges)) {
+        if (context.options.resume_enabled && isChunkInRanges(chunkId, context.resume_ranges)) {
             progress.bytes_sent += chunk.size();
-            Q_EMIT fileProgress(ctx.file.file_id, progress.bytes_sent, ctx.file.size_bytes);
+            Q_EMIT fileProgress(context.file.file_id, progress.bytes_sent, context.file.size_bytes);
             Q_EMIT overallProgress(progress.bytes_sent, progress.total_bytes);
             chunkId++;
             continue;
@@ -591,16 +590,16 @@ bool NetworkTransferWorker::sendFileChunks(QTcpSocket* socket,
         QByteArray payload = chunk;
         quint16 flags = 0;
 
-        if (ctx.options.compression_enabled) {
+        if (context.options.compression_enabled) {
             payload = compressData(payload);
             flags |= kFlagCompressed;
         }
 
-        if (!encryptPayloadIfNeeded(payload, flags, ctx.key, ctx.options, ctx.file.relative_path)) {
+        if (!encryptPayloadIfNeeded(payload, flags, context.key, context.options, context.file.relative_path)) {
             return false;
         }
 
-        const bool isLast = ctx.source.atEnd();
+        const bool isLast = context.source.atEnd();
         if (isLast) {
             flags |= kFlagLastChunk;
         }
@@ -618,7 +617,7 @@ bool NetworkTransferWorker::sendFileChunks(QTcpSocket* socket,
         }
 
         progress.bytes_sent += chunk.size();
-        Q_EMIT fileProgress(ctx.file.file_id, progress.bytes_sent, ctx.file.size_bytes);
+        Q_EMIT fileProgress(context.file.file_id, progress.bytes_sent, context.file.size_bytes);
         Q_EMIT overallProgress(progress.bytes_sent, progress.total_bytes);
 
         throttleBandwidth(chunk.size(), progress.rate_timer, progress.rate_bytes_sent);
@@ -789,7 +788,7 @@ bool NetworkTransferWorker::handleReceiver(QTcpSocket* socket, const DataOptions
             logError("NetworkTransferWorker receiver payload size {} exceeds maximum {}",
                      header.payload_size,
                      kMaxPayloadSize);
-            Q_EMIT errorOccurred(tr("Payload too large — possible protocol violation"));
+            Q_EMIT errorOccurred(tr("Payload too large -- possible protocol violation"));
             return false;
         }
 
@@ -810,7 +809,7 @@ bool NetworkTransferWorker::handleReceiver(QTcpSocket* socket, const DataOptions
     return !m_stopRequested;
 }
 
-// ─── Private Helpers ────────────────────────────────────────────────────────────
+// --- Private Helpers ------------------------------------------------------------
 
 bool NetworkTransferWorker::processFileHeader(QTcpSocket* socket,
                                               const QByteArray& payload,

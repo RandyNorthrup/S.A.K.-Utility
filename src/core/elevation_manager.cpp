@@ -59,10 +59,6 @@ bool ElevationManager::canElevate() noexcept {
     return VerifyVersionInfo(&osvi, VER_MAJORVERSION, condition_mask) != FALSE;
 }
 
-bool ElevationManager::isUserAdmin() noexcept {
-    return isElevated();
-}
-
 auto ElevationManager::get_executable_path() -> std::expected<std::wstring, sak::error_code> {
     wchar_t path[MAX_PATH];
     DWORD result = GetModuleFileNameW(nullptr, path, MAX_PATH);

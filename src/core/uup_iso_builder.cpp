@@ -282,7 +282,7 @@ void UupIsoBuilder::checkResumedDownloads() {
     }
 
     double existingGB = existingBytes / sak::kBytesPerGBf;
-    sak::logInfo("Resuming download ΓÇö found " + std::to_string(existingFiles) +
+    sak::logInfo("Resuming download -- found " + std::to_string(existingFiles) +
                  " existing files (" + std::to_string(static_cast<int>(existingGB * 100) / 100) +
                  " GB) in work directory");
     Q_EMIT progressUpdated(1,
@@ -317,7 +317,7 @@ bool UupIsoBuilder::isFileAlreadyDownloaded(const UupDumpApi::FileInfo& fileInfo
         return false;
     }
 
-    // Size check ΓÇö must match expected size (if known)
+    // Size check -- must match expected size (if known)
     if (fileInfo.size > 0 && localFile.size() != fileInfo.size) {
         return false;
     }
@@ -435,9 +435,9 @@ void UupIsoBuilder::executeDownload() {
 
     // If all files were already downloaded and verified, skip aria2c entirely
     if (m_allFilesAlreadyDownloaded) {
-        sak::logInfo("All UUP files already present ΓÇö skipping download phase");
+        sak::logInfo("All UUP files already present -- skipping download phase");
         Q_EMIT progressUpdated(PHASE_PREPARE_WEIGHT + PHASE_DOWNLOAD_WEIGHT,
-                               "All files already downloaded ΓÇö proceeding to conversion");
+                               "All files already downloaded -- proceeding to conversion");
         executeConversion();
         return;
     }
@@ -478,36 +478,36 @@ QStringList UupIsoBuilder::buildAria2Arguments(const QString& inputFile,
                                                const QString& downloadDir) const {
     return {"--input-file=" + inputFile,
             "--dir=" + downloadDir,
-            // ΓöÇΓöÇ User-Agent (critical: Microsoft CDN may block aria2c UA) ΓöÇΓöÇ
+            // -- User-Agent (critical: Microsoft CDN may block aria2c UA) --
             QStringLiteral("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                            "AppleWebKit/537.36 (KHTML, like Gecko) "
                            "Chrome/131.0.0.0 Safari/537.36"),
-            // ΓöÇΓöÇ Parallelism ΓöÇΓöÇ
+            // -- Parallelism --
             "--max-connection-per-server=" + QString::number(sak::kAria2MaxConnsPerServer),
             "--split=" + QString::number(sak::kAria2Split),
             "--min-split-size=1M",
             "--max-concurrent-downloads=" + QString::number(sak::kMaxConcurrentScrape),
-            // ΓöÇΓöÇ Resumability & integrity ΓöÇΓöÇ
+            // -- Resumability & integrity --
             "--continue=true",
             "--check-integrity=true",
             "--auto-file-renaming=false",
             "--allow-overwrite=true",
-            // ΓöÇΓöÇ Performance tuning ΓöÇΓöÇ
+            // -- Performance tuning --
             "--file-allocation=none",
             "--disk-cache=64M",
             "--optimize-concurrent-downloads=true",
             "--stream-piece-selector=inorder",
             "--piece-length=1M",
-            // ΓöÇΓöÇ Stall & retry handling ΓöÇΓöÇ
+            // -- Stall & retry handling --
             "--lowest-speed-limit=50K",
             "--max-tries=" + QString::number(sak::kAria2MaxTries),
             "--retry-wait=" + QString::number(sak::kAria2RetryWaitSec),
             "--connect-timeout=" + QString::number(sak::kAria2ConnectTimeoutSec),
             "--timeout=" + QString::number(sak::kAria2TimeoutSec),
             "--max-file-not-found=3",
-            // ΓöÇΓöÇ Security ΓöÇΓöÇ
+            // -- Security --
             "--check-certificate=true",
-            // ΓöÇΓöÇ Output formatting ΓöÇΓöÇ
+            // -- Output formatting --
             "--summary-interval=1",
             "--human-readable=false",
             "--enable-color=false",
@@ -711,7 +711,7 @@ void UupIsoBuilder::onAria2Finished(int exitCode, QProcess::ExitStatus exitStatu
 }
 
 // ============================================================================
-// Phase 3: UUP ΓåÆ ISO Conversion
+// Phase 3: UUP -> ISO Conversion
 // ============================================================================
 
 bool UupIsoBuilder::prepareConversionEnvironment(QString& uupsDir,
@@ -1139,7 +1139,7 @@ QString UupIsoBuilder::classifyConverterFailure() const {
                    "The converter failed during AppX provisioning (Microsoft Store "
                    "components). This is a known issue with some Windows builds.\n\n"
                    "Possible fixes:\n"
-                   "  1. Re-run the build ΓÇö transient DISM errors sometimes resolve "
+                   "  1. Re-run the build -- transient DISM errors sometimes resolve "
                    "on retry.\n"
                    "  2. Select a different Windows edition (e.g., Professional N or "
                    "Enterprise) which skips Store app bundling.\n"

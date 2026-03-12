@@ -72,7 +72,7 @@ public:
     template <typename U>
     constexpr secure_allocator(const secure_allocator<U>&) noexcept {}
 
-    [[nodiscard]] T* allocate(std::size_t n) {
+    [[nodiscard]] static T* allocate(std::size_t n) {
         if (n > std::numeric_limits<std::size_t>::max() / sizeof(T)) {
             throw std::bad_alloc();
         }
@@ -85,7 +85,7 @@ public:
         return static_cast<T*>(ptr);
     }
 
-    void deallocate(T* ptr, std::size_t n) noexcept {
+    static void deallocate(T* ptr, std::size_t n) noexcept {
         if (ptr != nullptr && n > 0) {
             // Securely wipe memory before deallocation
             secure_wiper::wipe(ptr, n * sizeof(T));
@@ -325,7 +325,7 @@ public:
                 // be visible during development. Use fprintf to avoid header dependencies
                 // on logger or Windows headers.
                 (void)std::fprintf(
-                    stderr, "SAK: WARNING — VirtualUnlock failed in locked_memory destructor\n");
+                    stderr, "SAK: WARNING -- VirtualUnlock failed in locked_memory destructor\n");
             }
         }
     }

@@ -57,7 +57,7 @@ AdvancedUninstallController::State AdvancedUninstallController::currentState() c
     return m_state;
 }
 
-// ── Program Enumeration ─────────────────────────────────────────────────────
+// -- Program Enumeration -----------------------------------------------------
 
 void AdvancedUninstallController::refreshPrograms() {
     Q_ASSERT(m_enumThread);
@@ -89,7 +89,7 @@ QVector<ProgramInfo> AdvancedUninstallController::programs() const {
     return m_programs;
 }
 
-// ── Uninstall Operations ────────────────────────────────────────────────────
+// -- Uninstall Operations ----------------------------------------------------
 
 void AdvancedUninstallController::uninstallProgram(const ProgramInfo& program,
                                                    ScanLevel scanLevel,
@@ -342,7 +342,7 @@ void AdvancedUninstallController::cancelOperation() {
     }
 }
 
-// ── Batch Uninstall ─────────────────────────────────────────────────────────
+// -- Batch Uninstall ---------------------------------------------------------
 
 void AdvancedUninstallController::addToQueue(const ProgramInfo& program,
                                              ScanLevel scanLevel,
@@ -398,7 +398,7 @@ void AdvancedUninstallController::startBatchUninstall(bool createRestorePoint) {
     processNextQueueItem();
 }
 
-// ── Settings ────────────────────────────────────────────────────────────────
+// -- Settings ----------------------------------------------------------------
 
 void AdvancedUninstallController::loadSettings() {
     auto& cfg = ConfigManager::instance();
@@ -478,7 +478,7 @@ RestorePointManager* AdvancedUninstallController::restorePointManager() const {
     return m_restore_manager.get();
 }
 
-// ── Private Slots ───────────────────────────────────────────────────────────
+// -- Private Slots -----------------------------------------------------------
 
 void AdvancedUninstallController::onEnumerationFinished(QVector<ProgramInfo> programs) {
     // Guard against stale signal after cancelOperation() already cleaned up
@@ -610,7 +610,7 @@ void AdvancedUninstallController::onCleanupWorkerFailed(int /*errorCode*/, const
     Q_EMIT statusMessage(QString("Cleanup failed: %1").arg(message), kStatusTimeoutLongMs);
 }
 
-// ── Private ─────────────────────────────────────────────────────────────────
+// -- Private -----------------------------------------------------------------
 
 void AdvancedUninstallController::setState(State newState) {
     if (m_state != newState) {

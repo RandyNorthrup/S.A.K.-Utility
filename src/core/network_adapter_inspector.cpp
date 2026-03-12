@@ -189,7 +189,7 @@ sak::NetworkAdapterInfo buildAdapterInfo(const IP_ADAPTER_ADDRESSES* addr) {
     Q_ASSERT(addr);
     sak::NetworkAdapterInfo info;
 
-    // ── Identity ──
+    // -- Identity --
     info.name = QString::fromWCharArray(addr->FriendlyName);
     info.description = QString::fromWCharArray(addr->Description);
     info.interfaceIndex = addr->IfIndex;
@@ -201,24 +201,24 @@ sak::NetworkAdapterInfo buildAdapterInfo(const IP_ADAPTER_ADDRESSES* addr) {
             addr->PhysicalAddress, addr->PhysicalAddressLength);
     }
 
-    // ── Status ──
+    // -- Status --
     info.isConnected = (addr->OperStatus == IfOperStatusUp);
     info.linkSpeedBps = addr->TransmitLinkSpeed;
     info.mediaState = info.isConnected ? QStringLiteral("Connected")
                                        : QStringLiteral("Disconnected");
 
-    // ── DHCP ──
+    // -- DHCP --
     populateDhcpInfo(addr, info);
 
-    // ── Addresses ──
+    // -- Addresses --
     populateUnicastAddresses(addr, info);
     populateGateways(addr, info);
     populateDnsServers(addr, info);
 
-    // ── Statistics ──
+    // -- Statistics --
     populateIfStats(addr->IfIndex, info);
 
-    // ── Driver info ── (from adapter description)
+    // -- Driver info -- (from adapter description)
     info.driverName = info.description;
 
     return info;

@@ -18,6 +18,7 @@
 #include <windows.h>
 
 #include <lmcons.h>
+#include <iterator>
 #endif
 
 namespace sak {
@@ -318,38 +319,38 @@ bool MigrationReport::importFromJson(const QString& file_path) {
     m_entries.clear();
     if (root.contains("entries")) {
         QJsonArray entries = root["entries"].toArray();
-        for (const QJsonValue& val : entries) {
-            m_entries.push_back(parseEntryFromJson(val.toObject()));
-        }
+        std::transform(entries.begin(), entries.end(),
+            std::back_inserter(m_entries),
+            [](const QJsonValue& val) { return parseEntryFromJson(val.toObject()); });
     }
 
     return true;
 }
 
-MigrationReport::MigrationEntry MigrationReport::parseEntryFromJson(const QJsonObject& e) const {
+MigrationReport::MigrationEntry MigrationReport::parseEntryFromJson(const QJsonObject& obj) {
     MigrationEntry entry;
-    entry.app_name = e["app_name"].toString();
-    entry.app_version = e["app_version"].toString();
-    entry.app_publisher = e["app_publisher"].toString();
-    entry.install_location = e["install_location"].toString();
-    entry.install_date = QDateTime::fromString(e["install_date"].toString(), Qt::ISODate);
-    entry.registry_key = e["registry_key"].toString();
+    entry.app_name = obj["app_name"].toString();
+    entry.app_version = obj["app_version"].toString();
+    entry.app_publisher = obj["app_publisher"].toString();
+    entry.install_location = obj["install_location"].toString();
+    entry.install_date = QDateTime::fromString(obj["install_date"].toString(), Qt::ISODate);
+    entry.registry_key = obj["registry_key"].toString();
 
-    entry.choco_package = e["choco_package"].toString();
-    entry.confidence = e["confidence"].toDouble();
-    entry.match_type = e["match_type"].toString();
-    entry.available = e["available"].toBool();
-    entry.available_version = e["available_version"].toString();
+    entry.choco_package = obj["choco_package"].toString();
+    entry.confidence = obj["confidence"].toDouble();
+    entry.match_type = obj["match_type"].toString();
+    entry.available = obj["available"].toBool();
+    entry.available_version = obj["available_version"].toString();
 
-    entry.selected = e["selected"].toBool();
-    entry.version_lock = e["version_lock"].toBool();
-    entry.locked_version = e["locked_version"].toString();
-    entry.notes = e["notes"].toString();
+    entry.selected = obj["selected"].toBool();
+    entry.version_lock = obj["version_lock"].toBool();
+    entry.locked_version = obj["locked_version"].toString();
+    entry.notes = obj["notes"].toString();
 
-    entry.status = e["status"].toString();
-    entry.error_message = e["error_message"].toString();
-    if (e.contains("executed_at")) {
-        entry.executed_at = QDateTime::fromString(e["executed_at"].toString(), Qt::ISODate);
+    entry.status = obj["status"].toString();
+    entry.error_message = obj["error_message"].toString();
+    if (obj.contains("executed_at")) {
+        entry.executed_at = QDateTime::fromString(obj["executed_at"].toString(), Qt::ISODate);
     }
 
     return entry;
@@ -434,7 +435,7 @@ QString MigrationReport::getCurrentUser() const {
     return qEnvironmentVariable("USERNAME");
 }
 
-QString MigrationReport::escapeCsvField(const QString& field) const {
+QString MigrationReport::escapeCsvField(const QString& field) {
     if (field.contains(',') || field.contains('"') || field.contains('\n')) {
         QString escaped = field;
         escaped.replace("\"", "\"\"");

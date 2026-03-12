@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 /// @file advanced_uninstall_panel.cpp
-/// @brief Main UI panel for Advanced Uninstall — program list, leftover
+/// @brief Main UI panel for Advanced Uninstall -- program list, leftover
 ///        scanner, and cleanup workflow
 
 #include "sak/advanced_uninstall_panel.h"
@@ -112,7 +112,7 @@ ToolbarUi buildToolbarUi(AdvancedUninstallPanel* panel, QHBoxLayout* toolbar) {
     ui.forced_uninstall_button = new QPushButton(QObject::tr("Forced"), panel);
     ui.forced_uninstall_button->setStyleSheet(ui::kDangerButtonStyle);
     ui.forced_uninstall_button->setToolTip(
-        QObject::tr("Force uninstall — skip native uninstaller, scan and remove all traces"));
+        QObject::tr("Force uninstall -- skip native uninstaller, scan and remove all traces"));
     ui.forced_uninstall_button->setEnabled(false);
     setAccessible(ui.forced_uninstall_button,
                   QObject::tr("Forced uninstall"),
@@ -316,7 +316,7 @@ LeftoverSectionUi buildLeftoverSectionUi(AdvancedUninstallPanel* panel,
 }
 }  // namespace
 
-// ── Construction ────────────────────────────────────────────────────────────
+// -- Construction ------------------------------------------------------------
 
 AdvancedUninstallPanel::AdvancedUninstallPanel(QWidget* parent)
     : QWidget(parent), m_controller(std::make_unique<AdvancedUninstallController>(this)) {
@@ -406,7 +406,7 @@ AdvancedUninstallPanel::~AdvancedUninstallPanel() {
     logMessage("Advanced Uninstall panel destroyed.");
 }
 
-// ── UI Setup ────────────────────────────────────────────────────────────────
+// -- UI Setup ----------------------------------------------------------------
 
 void AdvancedUninstallPanel::setupUi() {
     auto* rootLayout = new QVBoxLayout(this);
@@ -568,7 +568,7 @@ void AdvancedUninstallPanel::createStatusBar(QVBoxLayout* layout) {
     // Settings button next to log toggle
     m_settings_button = new QPushButton(tr("Settings"), this);
     m_settings_button->setToolTip(
-        tr("Configure uninstall preferences — recycle bin, restore points, "
+        tr("Configure uninstall preferences -- recycle bin, restore points, "
            "default scan level, and more"));
     m_settings_button->setAccessibleName(tr("Uninstall settings"));
     statusRow->addWidget(m_settings_button);
@@ -582,7 +582,7 @@ void AdvancedUninstallPanel::createStatusBar(QVBoxLayout* layout) {
     layout->addLayout(statusRow);
 }
 
-// ── Toolbar Slots ───────────────────────────────────────────────────────────
+// -- Toolbar Slots -----------------------------------------------------------
 
 void AdvancedUninstallPanel::onRefreshClicked() {
     logMessage("Refreshing installed programs...");
@@ -637,7 +637,7 @@ void AdvancedUninstallPanel::onViewFilterChanged(int index) {
     applyFilter();
 }
 
-// ── Controller Signal Handlers ──────────────────────────────────────────────
+// -- Controller Signal Handlers ----------------------------------------------
 
 void AdvancedUninstallPanel::onEnumerationStarted() {
     setOperationRunning(true);
@@ -722,7 +722,7 @@ void AdvancedUninstallPanel::onUninstallFinished(UninstallReport report) {
 
     Q_EMIT statusMessage(tr("Uninstall %1: %2").arg(resultStr, report.programName), 5000);
 
-    logMessage(QString("Uninstall complete: %1 — %2 (exit code: %3)")
+    logMessage(QString("Uninstall complete: %1 -- %2 (exit code: %3)")
                    .arg(report.programName, resultStr)
                    .arg(report.nativeExitCode));
     const int totalCleaned = report.filesDeleted + report.foldersDeleted +
@@ -809,12 +809,12 @@ void AdvancedUninstallPanel::onRebootPendingItems(QStringList paths) {
                              tr("Reboot Required"),
                              tr("<b>%1 locked item(s)</b> could not be removed immediately.<br><br>"
                                 "They have been scheduled for automatic removal on the next "
-                                "Windows restart. This is independent of this application — "
+                                "Windows restart. This is independent of this application -- "
                                 "Windows will handle the deletion at boot time.")
                                  .arg(paths.size()));
 }
 
-// ── Program Table Slots ─────────────────────────────────────────────────────
+// -- Program Table Slots -----------------------------------------------------
 
 void AdvancedUninstallPanel::onProgramSelectionChanged() {
     bool hasSelection = m_program_table->currentRow() >= 0;
@@ -884,7 +884,7 @@ void AdvancedUninstallPanel::onProgramContextMenu(const QPoint& pos) {
     menu.exec(m_program_table->viewport()->mapToGlobal(pos));
 }
 
-// ── Leftover Table Slots ────────────────────────────────────────────────────
+// -- Leftover Table Slots ----------------------------------------------------
 
 void AdvancedUninstallPanel::onLeftoverSelectionChanged() {
     Q_ASSERT(m_leftover_table);
@@ -1026,7 +1026,7 @@ void AdvancedUninstallPanel::onDeleteSelectedLeftovers() {
     }
 }
 
-// ── Context Menu Actions ────────────────────────────────────────────────────
+// -- Context Menu Actions ----------------------------------------------------
 
 void AdvancedUninstallPanel::contextUninstall() {
     auto program = selectedProgram();
@@ -1107,7 +1107,7 @@ void AdvancedUninstallPanel::contextRemoveRegistryEntry() {
     }
 }
 
-// ── Table Population ────────────────────────────────────────────────────────
+// -- Table Population --------------------------------------------------------
 
 void AdvancedUninstallPanel::populateProgramTable(const QVector<ProgramInfo>& programs) {
     Q_ASSERT(m_program_table);
@@ -1144,7 +1144,7 @@ void AdvancedUninstallPanel::populateProgramTable(const QVector<ProgramInfo>& pr
         }
         if (prog.isOrphaned) {
             nameItem->setForeground(QColor(ui::kColorError));
-            nameItem->setToolTip(tr("Orphaned — program files not found"));
+            nameItem->setToolTip(tr("Orphaned -- program files not found"));
         }
         m_program_table->setItem(row, kColName, nameItem);
 
@@ -1282,7 +1282,7 @@ void AdvancedUninstallPanel::clearLeftoverTable() {
     m_leftover_count_label->clear();
 }
 
-// ── Filtering ───────────────────────────────────────────────────────────────
+// -- Filtering ---------------------------------------------------------------
 
 void AdvancedUninstallPanel::applyFilter() {
     Q_ASSERT(m_batch_button);
@@ -1342,7 +1342,7 @@ bool AdvancedUninstallPanel::matchesFilter(const ProgramInfo& program) const {
     return true;
 }
 
-// ── Utility ─────────────────────────────────────────────────────────────────
+// -- Utility -----------------------------------------------------------------
 
 QString AdvancedUninstallPanel::formatSize(qint64 bytes) const {
     if (bytes <= 0) {

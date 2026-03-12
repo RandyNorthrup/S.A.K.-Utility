@@ -8,6 +8,7 @@
 #include <QSaveFile>
 #include <QTextDocument>
 #include <QTextStream>
+#include <algorithm>
 
 namespace sak {
 
@@ -71,19 +72,20 @@ bool DeploymentSummaryReport::exportPdf(const QString& filePath,
     html +=
         "<tr><th>ID</th><th>Host</th><th>IP</th><th>Status</th><th>Progress</th><th>Last "
         "Seen</th><th>Events</th></tr>";
-    for (const auto& destination : data.destinations) {
-        html += QString(
-                    "<tr><td>%1</td><td>%2</td><td>%3</td>"
-                    "<td>%4</td><td>%5%</td><td>%6</td>"
-                    "<td>%7</td></tr>")
-                    .arg(destination.destination_id.toHtmlEscaped())
-                    .arg(destination.hostname.toHtmlEscaped())
-                    .arg(destination.ip_address.toHtmlEscaped())
-                    .arg(destination.status.toHtmlEscaped())
-                    .arg(destination.progress_percent)
-                    .arg(destination.last_seen.toString(Qt::ISODate).toHtmlEscaped())
-                    .arg(destination.status_events.join(" | ").toHtmlEscaped());
-    }
+    std::for_each(data.destinations.begin(), data.destinations.end(),
+        [&html](const auto& destination) {
+            html += QString(
+                        "<tr><td>%1</td><td>%2</td><td>%3</td>"
+                        "<td>%4</td><td>%5%</td><td>%6</td>"
+                        "<td>%7</td></tr>")
+                        .arg(destination.destination_id.toHtmlEscaped())
+                        .arg(destination.hostname.toHtmlEscaped())
+                        .arg(destination.ip_address.toHtmlEscaped())
+                        .arg(destination.status.toHtmlEscaped())
+                        .arg(destination.progress_percent)
+                        .arg(destination.last_seen.toString(Qt::ISODate).toHtmlEscaped())
+                        .arg(destination.status_events.join(" | ").toHtmlEscaped());
+        });
     html += "</table>";
 
     html += "<h2>Jobs</h2><table border='1' cellspacing='0' cellpadding='4'>";
@@ -92,19 +94,20 @@ bool DeploymentSummaryReport::exportPdf(const QString& filePath,
         "ID</th><th>Source</th><th>Destination</th>"
         "<th>Status</th><th>Transferred</th>"
         "<th>Total</th><th>Error</th></tr>";
-    for (const auto& job : data.jobs) {
-        html += QString(
-                    "<tr><td>%1</td><td>%2</td><td>%3</td>"
-                    "<td>%4</td><td>%5</td><td>%6</td>"
-                    "<td>%7</td></tr>")
-                    .arg(job.job_id.toHtmlEscaped())
-                    .arg(job.source_user.toHtmlEscaped())
-                    .arg(job.destination_id.toHtmlEscaped())
-                    .arg(job.status.toHtmlEscaped())
-                    .arg(job.bytes_transferred)
-                    .arg(job.total_bytes)
-                    .arg(job.error_message.toHtmlEscaped());
-    }
+    std::for_each(data.jobs.begin(), data.jobs.end(),
+        [&html](const auto& job) {
+            html += QString(
+                        "<tr><td>%1</td><td>%2</td><td>%3</td>"
+                        "<td>%4</td><td>%5</td><td>%6</td>"
+                        "<td>%7</td></tr>")
+                        .arg(job.job_id.toHtmlEscaped())
+                        .arg(job.source_user.toHtmlEscaped())
+                        .arg(job.destination_id.toHtmlEscaped())
+                        .arg(job.status.toHtmlEscaped())
+                        .arg(job.bytes_transferred)
+                        .arg(job.total_bytes)
+                        .arg(job.error_message.toHtmlEscaped());
+        });
     html += "</table>";
 
     QTextDocument doc;

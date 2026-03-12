@@ -56,7 +56,7 @@ public:
     /// @brief Get current controller state
     [[nodiscard]] State currentState() const;
 
-    // ── Search History ──
+    // -- Search History --
 
     /// @brief Add a pattern to search history
     void addToHistory(const QString& pattern);
@@ -67,7 +67,7 @@ public:
     /// @brief Get the search history list
     [[nodiscard]] QStringList searchHistory() const;
 
-    // ── Preferences ──
+    // -- Preferences --
 
     /// @brief Set search preferences
     void setPreferences(const SearchPreferences& prefs);
@@ -81,7 +81,7 @@ public:
     /// @brief Save preferences to persistent storage
     void savePreferences();
 
-    // ── Regex Pattern Library ──
+    // -- Regex Pattern Library --
 
     /// @brief Access the regex pattern library
     [[nodiscard]] RegexPatternLibrary* patternLibrary() const;
@@ -143,7 +143,7 @@ private:
     static constexpr int kMaxHistorySize = 50;
 };
 
-// ── Compile-Time Invariants (TigerStyle) ────────────────────────────────────
+// -- Compile-Time Invariants (TigerStyle) ------------------------------------
 
 /// AdvancedSearchController must inherit QObject.
 static_assert(std::is_base_of_v<QObject, AdvancedSearchController>,

@@ -33,8 +33,8 @@ class LogToggleSwitch;
 /**
  * @brief Unified file management panel with tabbed organizer and duplicate finder
  *
- * Tab 1 — File Organizer: sorts files by extension into categorized subdirectories
- * Tab 2 — Duplicate Finder: scans directories for duplicate files using content hashing
+ * Tab 1 -- File Organizer: sorts files by extension into categorized subdirectories
+ * Tab 2 -- Duplicate Finder: scans directories for duplicate files using content hashing
  */
 class OrganizerPanel : public QWidget {
     Q_OBJECT

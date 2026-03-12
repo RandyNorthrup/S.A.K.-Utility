@@ -161,7 +161,7 @@ double ThermalMonitor::queryGpuTemperature() {
     nv.start("nvidia-smi", {"--query-gpu=temperature.gpu", "--format=csv,noheader,nounits"});
 
     if (!nv.waitForStarted(sak::kTimeoutProcessStartMs)) {
-        // nvidia-smi not available — fall through to fallback
+        // nvidia-smi not available -- fall through to fallback
     } else if (nv.waitForFinished(sak::kTimeoutThermalQueryMs) && nv.exitCode() == 0) {
         const QString output = QString::fromUtf8(nv.readAllStandardOutput()).trimmed();
         bool ok = false;
@@ -172,7 +172,7 @@ double ThermalMonitor::queryGpuTemperature() {
     }
 
     // Fallback: WMI Win32_VideoController doesn't have temperature
-    // For AMD, we'd need radeon-profile or similar — not universally available
+    // For AMD, we'd need radeon-profile or similar -- not universally available
     return -1.0;
 }
 

@@ -261,7 +261,7 @@ void LinuxISODownloadDialog::populateDistroList() {
     }
 
     for (const auto& distro : m_currentDistros) {
-        QString label = QString("%1  —  %2")
+        QString label = QString("%1  --  %2")
                             .arg(distro.name,
                                  distro.versionLabel.isEmpty()
                                      ? distro.version
@@ -422,27 +422,27 @@ void LinuxISODownloadDialog::onPhaseChanged(LinuxISODownloader::Phase phase,
     case LinuxISODownloader::Phase::ResolvingVersion:
         m_phaseLabel->setStyleSheet(
             QString("font-weight: bold; color: %1;").arg(sak::ui::kColorAccentPurple));
-        m_phaseLabel->setText(QStringLiteral("\u2699 ") + description);  // ⚙
+        m_phaseLabel->setText(QStringLiteral("\u2699 ") + description);  // [*]
         break;
     case LinuxISODownloader::Phase::Downloading:
         m_phaseLabel->setStyleSheet(
             QString("font-weight: bold; color: %1;").arg(sak::ui::kColorAccentEmerald));
-        m_phaseLabel->setText(QStringLiteral("\u2B07 ") + description);  // ⬇
+        m_phaseLabel->setText(QStringLiteral("\u2B07 ") + description);  // v
         break;
     case LinuxISODownloader::Phase::VerifyingChecksum:
         m_phaseLabel->setStyleSheet(
             QString("font-weight: bold; color: %1;").arg(sak::ui::kStatusColorWarning));
-        m_phaseLabel->setText(QStringLiteral("\u23F3 ") + description);  // ⏳
+        m_phaseLabel->setText(QStringLiteral("\u23F3 ") + description);  // [...]
         break;
     case LinuxISODownloader::Phase::Completed:
         m_phaseLabel->setStyleSheet(
             QString("font-weight: bold; color: %1;").arg(sak::ui::kStatusColorSuccess));
-        m_phaseLabel->setText(QStringLiteral("\u2714 ") + description);  // ✔
+        m_phaseLabel->setText(QStringLiteral("\u2714 ") + description);  // [x]
         break;
     case LinuxISODownloader::Phase::Failed:
         m_phaseLabel->setStyleSheet(
             QString("font-weight: bold; color: %1;").arg(sak::ui::kStatusColorError));
-        m_phaseLabel->setText(QStringLiteral("\u2718 ") + description);  // ✘
+        m_phaseLabel->setText(QStringLiteral("\u2718 ") + description);  // [X]
         break;
     default:
         m_phaseLabel->setStyleSheet("font-weight: bold;");

@@ -65,9 +65,9 @@
  *
  * RESEARCH VALIDATION:
  * --------------------
- * - Chrome DevTools MCP: ✅ Current web research (Dec 2025)
- * - Microsoft Docs: ✅ Official PowerShell documentation
- * - Context7: ⚠️ N/A (Native Windows feature, no SDK)
+ * - Chrome DevTools MCP: [OK] Current web research (Dec 2025)
+ * - Microsoft Docs: [OK] Official PowerShell documentation
+ * - Context7: (!) N/A (Native Windows feature, no SDK)
  */
 
 #include "sak/actions/create_restore_point_action.h"
@@ -185,22 +185,22 @@ void CreateRestorePointAction::execute() {
     }
 
     QString report;
-    report += "╔══════════════════════════════════════════════════════════════════════╗\n";
-    report += "║              SYSTEM RESTORE POINT CREATION REPORT                    ║\n";
-    report += "╠══════════════════════════════════════════════════════════════════════╣\n";
+    report += "+======================================================================+\n";
+    report += "|              SYSTEM RESTORE POINT CREATION REPORT                    |\n";
+    report += "+======================================================================+\n";
 
     // Phase 1: Check VSS service status
     Q_EMIT executionProgress("Checking System Restore status...", 10);
     QString vss_status = queryVssServiceStatus();
-    report += QString("║ Volume Shadow Copy Service: %1").arg(vss_status.leftJustified(38)) +
-              QString("║\n");
+    report += QString("| Volume Shadow Copy Service: %1").arg(vss_status.leftJustified(38)) +
+              QString("|\n");
 
     // Phase 2: Get existing restore points count
     Q_EMIT executionProgress("Checking existing restore points...", 20);
     QString existing_count = queryRestorePointCount();
-    report += QString("║ Existing Restore Points: %1").arg(existing_count.leftJustified(42)) +
-              QString("║\n");
-    report += "╠══════════════════════════════════════════════════════════════════════╣\n";
+    report += QString("| Existing Restore Points: %1").arg(existing_count.leftJustified(42)) +
+              QString("|\n");
+    report += "+======================================================================+\n";
 
     // Phase 3: Create restore point
     Q_EMIT executionProgress("Creating new restore point...", 30);
@@ -277,16 +277,16 @@ std::pair<bool, QString> CreateRestorePointAction::createAndFormatResult(QString
 
     QString section;
     if (success) {
-        section += "║ ✓ Restore Point Creation:   SUCCESS                                 ║\n";
+        section += "| [x] Restore Point Creation:   SUCCESS                                 |\n";
         QRegularExpression re("Restore point created at (.+)");
         QRegularExpressionMatch match = re.match(create_output);
         if (match.hasMatch()) {
-            section += QString("║   Timestamp: %1").arg(match.captured(1).leftJustified(55)) +
-                       QString("║\n");
+            section += QString("|   Timestamp: %1").arg(match.captured(1).leftJustified(55)) +
+                       QString("|\n");
         }
-        section += "║   Method: Checkpoint-Computer (SystemRestore WMI class)             ║\n";
+        section += "|   Method: Checkpoint-Computer (SystemRestore WMI class)             |\n";
     } else {
-        section += "║ ✗ Restore Point Creation:   FAILED                                  ║\n";
+        section += "| [ ] Restore Point Creation:   FAILED                                  |\n";
 
         QRegularExpression code_re("ERROR_CODE:([A-Z_0-9]+)");
         QRegularExpressionMatch code_match = code_re.match(create_output);
@@ -300,8 +300,8 @@ std::pair<bool, QString> CreateRestorePointAction::createAndFormatResult(QString
             }
             error_msg = line;
             error_msg = error_msg.replace("ERROR:", "").trimmed();
-            section += QString("║   Error: %1").arg(error_msg.left(66).leftJustified(61)) +
-                       QString("║\n");
+            section += QString("|   Error: %1").arg(error_msg.left(66).leftJustified(61)) +
+                       QString("|\n");
             break;
         }
 
@@ -324,11 +324,11 @@ QString CreateRestorePointAction::verifyLatestRestorePoint() {
     QString verify_output = verify_proc.std_out.trimmed();
 
     QString section;
-    section += "╠══════════════════════════════════════════════════════════════════════╣\n";
-    section += "║ Latest Restore Point Verification:                                  ║\n";
+    section += "+======================================================================+\n";
+    section += "| Latest Restore Point Verification:                                  |\n";
 
     if (verify_output.contains("VERIFY_FAILED") || !verify_output.contains("SEQ:")) {
-        section += "║   Unable to verify restore point details                            ║\n";
+        section += "|   Unable to verify restore point details                            |\n";
         return section;
     }
 
@@ -344,9 +344,9 @@ QString CreateRestorePointAction::verifyLatestRestorePoint() {
             time = vline.mid(5).trimmed();
         }
     }
-    section += QString("║   Sequence Number: %1").arg(seq_num.leftJustified(49)) + QString("║\n");
-    section += QString("║   Description: %1").arg(desc.left(53).leftJustified(53)) + QString("║\n");
-    section += QString("║   Creation Time: %1").arg(time.leftJustified(47)) + QString("║\n");
+    section += QString("|   Sequence Number: %1").arg(seq_num.leftJustified(49)) + QString("|\n");
+    section += QString("|   Description: %1").arg(desc.left(53).leftJustified(53)) + QString("|\n");
+    section += QString("|   Creation Time: %1").arg(time.leftJustified(47)) + QString("|\n");
 
     return section;
 }
@@ -378,38 +378,38 @@ QString CreateRestorePointAction::buildCreateScript() const {
 QString CreateRestorePointAction::buildTroubleshootingReport(const QString& error_code) const {
     Q_ASSERT(!error_code.isEmpty());
     QString section;
-    section += "║                                                                      ║\n";
-    section += "║ TROUBLESHOOTING GUIDANCE:                                            ║\n";
+    section += "|                                                                      |\n";
+    section += "| TROUBLESHOOTING GUIDANCE:                                            |\n";
 
     if (error_code == "24HR_LIMIT") {
-        section += "║ Issue: Windows Limitation - 24-Hour Frequency Restriction            ║\n";
-        section += "║   • Windows 8+ allows only ONE restore point per 24-hour period     ║\n";
-        section += "║   • A restore point was already created today                        ║\n";
-        section += "║   • This is a Windows OS protection mechanism                        ║\n";
-        section += "║   • The existing restore point can still be used for recovery       ║\n";
-        section += "║   • Try again tomorrow if another point is needed                    ║\n";
+        section += "| Issue: Windows Limitation - 24-Hour Frequency Restriction            |\n";
+        section += "|   * Windows 8+ allows only ONE restore point per 24-hour period     |\n";
+        section += "|   * A restore point was already created today                        |\n";
+        section += "|   * This is a Windows OS protection mechanism                        |\n";
+        section += "|   * The existing restore point can still be used for recovery       |\n";
+        section += "|   * Try again tomorrow if another point is needed                    |\n";
     } else if (error_code == "DISABLED") {
-        section += "║ Issue: System Restore is Disabled                                    ║\n";
-        section += "║   TO ENABLE SYSTEM RESTORE:                                          ║\n";
-        section += "║   1. Open: System Properties > System Protection tab                 ║\n";
-        section += "║      OR run: SystemPropertiesProtection                              ║\n";
-        section += "║   2. Select C:\\ drive and click 'Configure'                          ║\n";
-        section += "║   3. Choose 'Turn on system protection'                              ║\n";
-        section += "║   4. Set disk space usage (recommended: 5-10%)                       ║\n";
-        section += "║   5. Click OK and then 'Create' to make first restore point         ║\n";
-        section += "║   POWERSHELL METHOD (requires admin):                                ║\n";
-        section += "║     Enable-ComputerRestore -Drive \"C:\\\"                              ║\n";
+        section += "| Issue: System Restore is Disabled                                    |\n";
+        section += "|   TO ENABLE SYSTEM RESTORE:                                          |\n";
+        section += "|   1. Open: System Properties > System Protection tab                 |\n";
+        section += "|      OR run: SystemPropertiesProtection                              |\n";
+        section += "|   2. Select C:\\ drive and click 'Configure'                          |\n";
+        section += "|   3. Choose 'Turn on system protection'                              |\n";
+        section += "|   4. Set disk space usage (recommended: 5-10%)                       |\n";
+        section += "|   5. Click OK and then 'Create' to make first restore point         |\n";
+        section += "|   POWERSHELL METHOD (requires admin):                                |\n";
+        section += "|     Enable-ComputerRestore -Drive \"C:\\\"                              |\n";
     } else if (error_code == "PERMISSION") {
-        section += "║ Issue: Insufficient Permissions                                      ║\n";
-        section += "║   • Creating restore points requires administrator privileges        ║\n";
-        section += "║   • Right-click SAK Utility and select 'Run as administrator'       ║\n";
-        section += "║   • Or run from an elevated PowerShell/Command Prompt               ║\n";
+        section += "| Issue: Insufficient Permissions                                      |\n";
+        section += "|   * Creating restore points requires administrator privileges        |\n";
+        section += "|   * Right-click SAK Utility and select 'Run as administrator'       |\n";
+        section += "|   * Or run from an elevated PowerShell/Command Prompt               |\n";
     } else {
-        section += "║ General Troubleshooting:                                             ║\n";
-        section += "║   • Verify VSS service is running: Get-Service VSS                   ║\n";
-        section += "║   • Check disk space (need at least 300MB free)                      ║\n";
-        section += "║   • Ensure C:\\ drive has System Protection enabled                   ║\n";
-        section += "║   • Check Event Viewer for detailed VSS/SR errors                    ║\n";
+        section += "| General Troubleshooting:                                             |\n";
+        section += "|   * Verify VSS service is running: Get-Service VSS                   |\n";
+        section += "|   * Check disk space (need at least 300MB free)                      |\n";
+        section += "|   * Ensure C:\\ drive has System Protection enabled                   |\n";
+        section += "|   * Check Event Viewer for detailed VSS/SR errors                    |\n";
     }
 
     return section;
@@ -418,32 +418,32 @@ QString CreateRestorePointAction::buildTroubleshootingReport(const QString& erro
 QString CreateRestorePointAction::buildManagementReport(const QString& final_count) const {
     Q_ASSERT(!final_count.isEmpty());
     QString section;
-    section += "╠══════════════════════════════════════════════════════════════════════╣\n";
-    section += QString("║ Total Restore Points Available: %1").arg(final_count.leftJustified(34)) +
-               QString("║\n");
-    section += "║                                                                      ║\n";
-    section += "║ RESTORE POINT MANAGEMENT:                                            ║\n";
-    section += "║   View All Points:                                                   ║\n";
-    section += "║     • GUI: Control Panel > System > System Protection                ║\n";
-    section += "║     • Direct: Run 'rstrui.exe' (System Restore wizard)               ║\n";
-    section += "║     • PowerShell: Get-ComputerRestorePoint | Format-Table            ║\n";
-    section += "║                                                                      ║\n";
-    section += "║   Restore Computer:                                                  ║\n";
-    section += "║     • GUI: rstrui.exe > Choose restore point > Next > Finish         ║\n";
-    section += "║     • PowerShell: Restore-Computer -RestorePoint <SequenceNumber>    ║\n";
-    section += "║                                                                      ║\n";
-    section += "║   Configure Settings:                                                ║\n";
-    section += "║     • Run: SystemPropertiesProtection                                ║\n";
-    section += "║     • Enable: Enable-ComputerRestore -Drive \"C:\\\" (PowerShell)       ║\n";
-    section += "║     • Disable: Disable-ComputerRestore -Drive \"C:\\\" (PowerShell)     ║\n";
-    section += "║                                                                      ║\n";
-    section += "║ TECHNICAL DETAILS:                                                   ║\n";
-    section += "║   • System Restore uses Volume Shadow Copy Service (VSS)             ║\n";
-    section += "║   • Restore points use WMI SystemRestore class                       ║\n";
-    section += "║   • Windows 8+ limit: 1 restore point per 24 hours                   ║\n";
-    section += "║   • Supported: Windows 10, Windows 11 (client OS only)               ║\n";
-    section += "║   • Not available on Windows Server editions                         ║\n";
-    section += "╚══════════════════════════════════════════════════════════════════════╝\n";
+    section += "+======================================================================+\n";
+    section += QString("| Total Restore Points Available: %1").arg(final_count.leftJustified(34)) +
+               QString("|\n");
+    section += "|                                                                      |\n";
+    section += "| RESTORE POINT MANAGEMENT:                                            |\n";
+    section += "|   View All Points:                                                   |\n";
+    section += "|     * GUI: Control Panel > System > System Protection                |\n";
+    section += "|     * Direct: Run 'rstrui.exe' (System Restore wizard)               |\n";
+    section += "|     * PowerShell: Get-ComputerRestorePoint | Format-Table            |\n";
+    section += "|                                                                      |\n";
+    section += "|   Restore Computer:                                                  |\n";
+    section += "|     * GUI: rstrui.exe > Choose restore point > Next > Finish         |\n";
+    section += "|     * PowerShell: Restore-Computer -RestorePoint <SequenceNumber>    |\n";
+    section += "|                                                                      |\n";
+    section += "|   Configure Settings:                                                |\n";
+    section += "|     * Run: SystemPropertiesProtection                                |\n";
+    section += "|     * Enable: Enable-ComputerRestore -Drive \"C:\\\" (PowerShell)       |\n";
+    section += "|     * Disable: Disable-ComputerRestore -Drive \"C:\\\" (PowerShell)     |\n";
+    section += "|                                                                      |\n";
+    section += "| TECHNICAL DETAILS:                                                   |\n";
+    section += "|   * System Restore uses Volume Shadow Copy Service (VSS)             |\n";
+    section += "|   * Restore points use WMI SystemRestore class                       |\n";
+    section += "|   * Windows 8+ limit: 1 restore point per 24 hours                   |\n";
+    section += "|   * Supported: Windows 10, Windows 11 (client OS only)               |\n";
+    section += "|   * Not available on Windows Server editions                         |\n";
+    section += "+======================================================================+\n";
     return section;
 }
 

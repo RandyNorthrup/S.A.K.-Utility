@@ -138,7 +138,7 @@ void UserProfileRestoreWelcomePage::onBackupPathChanged() {
         m_backupPathEdit->setText(fileInfo.absolutePath());
     } else {
         m_manifestInfoLabel->setText(
-            tr("❌ Invalid backup path. Please select a backup directory "
+            tr("[X] Invalid backup path. Please select a backup directory "
                "or manifest.json file."));
         m_manifestInfoLabel->show();
         Q_EMIT completeChanged();
@@ -149,7 +149,7 @@ void UserProfileRestoreWelcomePage::onBackupPathChanged() {
     BackupManifest manifest = BackupManifest::loadFromFile(manifestPath);
     if (manifest.version.isEmpty()) {
         m_manifestInfoLabel->setText(
-            tr("❌ Failed to load backup manifest. The backup may be "
+            tr("[X] Failed to load backup manifest. The backup may be "
                "corrupted."));
         m_manifestInfoLabel->show();
         Q_EMIT completeChanged();
@@ -159,7 +159,7 @@ void UserProfileRestoreWelcomePage::onBackupPathChanged() {
     // Display manifest info
     QString info =
         QString(
-            "<b>✅ Valid Backup Found</b><br>"
+            "<b>[OK] Valid Backup Found</b><br>"
             "<b>Version:</b> %1<br>"
             "<b>Created:</b> %2<br>"
             "<b>Source Machine:</b> %3<br>"

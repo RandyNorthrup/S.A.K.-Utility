@@ -25,7 +25,7 @@ namespace sak {
  *
  *   // Label + info button helper for QFormLayout
  *   formLayout->addRow(InfoButton::createInfoLabel(tr("Setting:"),
- *                      tr("This setting controls …"), parent), widget);
+ *                      tr("This setting controls ..."), parent), widget);
  * @endcode
  */
 class InfoButton : public QToolButton {

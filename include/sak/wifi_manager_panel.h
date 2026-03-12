@@ -1,4 +1,4 @@
-﻿// Copyright (c) 2025 Randy Northrup. All rights reserved.
+// Copyright (c) 2025 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 #pragma once
@@ -107,10 +107,10 @@ private:
     // -------------------------------------------------------------------------
     // WiFi payload helpers
     // -------------------------------------------------------------------------
-    /** Escape special characters per WiFi QR spec: \ ; , : â†’ \\ \; \, \: */
+    /** Escape special characters per WiFi QR spec: \ ; , : -> \\ \; \, \: */
     static QString escapeWifiField(const QString& value);
 
-    /** Normalize security string for QR payload ("WPA/WPA2/WPA3" â†’ "WPA", etc.) */
+    /** Normalize security string for QR payload ("WPA/WPA2/WPA3" -> "WPA", etc.) */
     static QString normalizeSecurityForQr(const QString& security);
 
     /** Build the WIFI: URI payload from the current form values */
@@ -128,7 +128,7 @@ private:
     // -------------------------------------------------------------------------
     // QR generation
     // -------------------------------------------------------------------------
-    /** Render a QR code for @p payload into a 640Ã—640 QImage (white background) */
+    /** Render a QR code for @p payload into a 640x640 QImage (white background) */
     static QImage generateQrImage(const QString& payload);
 
     // ------------------------------------------------------------------------- // QR wizard

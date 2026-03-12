@@ -111,7 +111,7 @@ void NetworkTransferPanel::setupUi() {
                                    sak::ui::kMarginMedium,
                                    sak::ui::kMarginMedium);
 
-    // Panel header — consistent title + muted subtitle
+    // Panel header -- consistent title + muted subtitle
     sak::createPanelHeader(this,
                            QStringLiteral(":/icons/icons/panel_network_transfer.svg"),
                            tr("Network Transfer"),
@@ -168,7 +168,7 @@ void NetworkTransferPanel::setupUi() {
     // -- Mode Selection Cards (landing page) ---------------------
     createModeCards(mainLayout);
 
-    // Stacked widget is hidden — content shown in dialogs when cards are clicked
+    // Stacked widget is hidden -- content shown in dialogs when cards are clicked
     m_modeStack->hide();
     mainLayout->addWidget(m_modeStack);
 
@@ -489,7 +489,7 @@ void NetworkTransferPanel::setupUi_peerDiscovery(QVBoxLayout* sourceLayout) {
 void NetworkTransferPanel::setupUi_securityWidgets() {
     Q_ASSERT(m_encryptCheck);
     Q_ASSERT(m_compressCheck);
-    // Security widgets (hidden — managed via Security Settings dialog)
+    // Security widgets (hidden -- managed via Security Settings dialog)
     m_encryptCheck = new QCheckBox(tr("Encrypt (AES-256-GCM)"), this);
     m_encryptCheck->setAccessibleName(QStringLiteral("Encrypt Transfer"));
     m_encryptCheck->setToolTip(QStringLiteral("Encrypt data using AES-256-GCM during transfer"));
@@ -1757,7 +1757,7 @@ void NetworkTransferPanel::buildNetworkSettingsToggles(QFormLayout* layout, QDia
     layout->addRow(
         sak::InfoButton::createInfoLabel(
             tr("Compression:"),
-            tr("Compress file data before sending — reduces bandwidth but adds CPU overhead"),
+            tr("Compress file data before sending -- reduces bandwidth but adds CPU overhead"),
             dialog),
         compressCheck);
 
@@ -1785,7 +1785,7 @@ void NetworkTransferPanel::buildNetworkSettingsPorts(QFormLayout* layout, QDialo
     layout->addRow(
         sak::InfoButton::createInfoLabel(
             tr("Discovery Port:"),
-            tr("UDP port used for auto-discovery broadcasts — must match on both machines"),
+            tr("UDP port used for auto-discovery broadcasts -- must match on both machines"),
             dialog),
         discoveryPort);
 
@@ -1805,7 +1805,7 @@ void NetworkTransferPanel::buildNetworkSettingsPorts(QFormLayout* layout, QDialo
     dataPort->setValue(config.getNetworkTransferDataPort());
     layout->addRow(sak::InfoButton::createInfoLabel(
                        tr("Data Port:"),
-                       tr("TCP port for actual file data transfer — must be open in your firewall"),
+                       tr("TCP port for actual file data transfer -- must be open in your firewall"),
                        dialog),
                    dataPort);
 
@@ -1817,7 +1817,7 @@ void NetworkTransferPanel::buildNetworkSettingsPorts(QFormLayout* layout, QDialo
     layout->addRow(
         sak::InfoButton::createInfoLabel(
             tr("Chunk Size:"),
-            tr("Size of each data block sent over the network — larger chunks improve throughput "
+            tr("Size of each data block sent over the network -- larger chunks improve throughput "
                "on fast links"),
             dialog),
         chunkSize);

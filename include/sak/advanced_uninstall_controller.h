@@ -24,9 +24,9 @@ class RestorePointManager;
 
 /// @brief Orchestrates the uninstall pipeline and manages application state
 ///
-/// State machine: Idle → Enumerating → Uninstalling → LeftoverScanning →
-/// Cleaning → Idle. Owns all worker threads and coordinates the full
-/// uninstall → scan → cleanup pipeline.
+/// State machine: Idle -> Enumerating -> Uninstalling -> LeftoverScanning ->
+/// Cleaning -> Idle. Owns all worker threads and coordinates the full
+/// uninstall -> scan -> cleanup pipeline.
 class AdvancedUninstallController : public QObject {
     Q_OBJECT
 
@@ -51,7 +51,7 @@ public:
     /// @brief Get current controller state
     [[nodiscard]] State currentState() const;
 
-    // ── Program Enumeration ──
+    // -- Program Enumeration --
 
     /// @brief Start enumerating all installed programs
     void refreshPrograms();
@@ -59,7 +59,7 @@ public:
     /// @brief Get the last enumeration result
     [[nodiscard]] QVector<ProgramInfo> programs() const;
 
-    // ── Uninstall Operations ──
+    // -- Uninstall Operations --
 
     /// @brief Uninstall a single program
     void uninstallProgram(const ProgramInfo& program,
@@ -82,7 +82,7 @@ public:
     /// @brief Cancel the current operation
     void cancelOperation();
 
-    // ── Batch Uninstall ──
+    // -- Batch Uninstall --
 
     /// @brief Add a program to the batch queue
     void addToQueue(const ProgramInfo& program, ScanLevel scanLevel, bool autoCleanSafe);
@@ -99,7 +99,7 @@ public:
     /// @brief Start processing the batch queue
     void startBatchUninstall(bool createRestorePoint);
 
-    // ── Settings ──
+    // -- Settings --
 
     /// @brief Load settings from ConfigManager
     void loadSettings();
@@ -131,7 +131,7 @@ public:
     [[nodiscard]] bool selectAllByDefault() const;
     void setSelectAllByDefault(bool enabled);
 
-    // ── Restore Point Manager ──
+    // -- Restore Point Manager --
 
     /// @brief Access the restore point manager
     [[nodiscard]] RestorePointManager* restorePointManager() const;
@@ -260,7 +260,7 @@ private:
     bool m_selectAllByDefault = false;
 };
 
-// ── Compile-Time Invariants ─────────────────────────────────────────────────
+// -- Compile-Time Invariants -------------------------------------------------
 
 static_assert(std::is_base_of_v<QObject, AdvancedUninstallController>,
               "AdvancedUninstallController must inherit QObject.");

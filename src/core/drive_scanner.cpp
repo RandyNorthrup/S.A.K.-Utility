@@ -227,7 +227,7 @@ QString DriveScanner::getDriveName(int driveNumber) {
                         sizeof(buffer),
                         &bytesReturned,
                         nullptr)) {
-        auto* desc = reinterpret_cast<STORAGE_DEVICE_DESCRIPTOR*>(buffer);
+        const auto* desc = reinterpret_cast<const STORAGE_DEVICE_DESCRIPTOR*>(buffer);
 
         QString vendor;
         QString product;
@@ -313,7 +313,7 @@ QString DriveScanner::getBusType(HANDLE hDrive) {
                         sizeof(buffer),
                         &bytesReturned,
                         nullptr)) {
-        auto* desc = reinterpret_cast<STORAGE_DEVICE_DESCRIPTOR*>(buffer);
+        const auto* desc = reinterpret_cast<const STORAGE_DEVICE_DESCRIPTOR*>(buffer);
 
         switch (desc->BusType) {
         case BusTypeUsb:
@@ -370,7 +370,7 @@ bool DriveScanner::isDriveRemovable(int driveNumber) {
                         sizeof(buffer),
                         &bytesReturned,
                         nullptr)) {
-        auto* desc = reinterpret_cast<STORAGE_DEVICE_DESCRIPTOR*>(buffer);
+        const auto* desc = reinterpret_cast<const STORAGE_DEVICE_DESCRIPTOR*>(buffer);
 
         // Primary: use the RemovableMedia flag from the device descriptor
         if (desc->RemovableMedia) {
@@ -562,7 +562,7 @@ LRESULT CALLBACK DriveScanner::deviceChangeWndProc(HWND hwnd,
     if (wParam != DBT_DEVICEARRIVAL && wParam != DBT_DEVICEREMOVECOMPLETE) {
         return TRUE;
     }
-    auto* pHdr = reinterpret_cast<DEV_BROADCAST_HDR*>(lParam);
+    const auto* pHdr = reinterpret_cast<const DEV_BROADCAST_HDR*>(lParam);
     if (pHdr && pHdr->dbch_devicetype == DBT_DEVTYP_VOLUME && DriveScanner::s_instance) {
         QMetaObject::invokeMethod(DriveScanner::s_instance, "scanDrives", Qt::QueuedConnection);
     }

@@ -6,6 +6,7 @@
 #include <QFile>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <algorithm>
 
 namespace sak {
 
@@ -388,20 +389,20 @@ static constexpr FolderTypeEntry kFolderTypes[] = {
 }  // namespace
 
 QString folderTypeToString(FolderType type) {
-    for (const auto& entry : kFolderTypes) {
-        if (entry.type == type) {
-            return QString::fromLatin1(entry.name);
-        }
+    auto it = std::find_if(std::begin(kFolderTypes), std::end(kFolderTypes),
+        [type](const auto& entry) { return entry.type == type; });
+    if (it != std::end(kFolderTypes)) {
+        return QString::fromLatin1(it->name);
     }
     return QStringLiteral("Unknown");
 }
 
 FolderType stringToFolderType(const QString& str) {
     Q_ASSERT(!str.isEmpty());
-    for (const auto& entry : kFolderTypes) {
-        if (str == QLatin1String(entry.name)) {
-            return entry.type;
-        }
+    auto it = std::find_if(std::begin(kFolderTypes), std::end(kFolderTypes),
+        [&str](const auto& entry) { return str == QLatin1String(entry.name); });
+    if (it != std::end(kFolderTypes)) {
+        return it->type;
     }
     return FolderType::Custom;
 }

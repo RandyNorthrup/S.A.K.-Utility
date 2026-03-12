@@ -10,7 +10,7 @@
  * checksums post-download when available.
  *
  * Unlike the Windows ISO downloader which assembles ISOs from UUP files,
- * Linux ISOs are single-file direct downloads — simpler pipeline.
+ * Linux ISOs are single-file direct downloads -- simpler pipeline.
  */
 
 #include "sak/linux_iso_downloader.h"
@@ -113,7 +113,7 @@ void LinuxISODownloader::startDownload(const QString& distroId, const QString& s
         Q_EMIT statusMessage(QString("Checking latest %1 release...").arg(distro.name));
         m_catalog->checkLatestVersion(distroId);
     } else {
-        // Direct URL / SourceForge — resolve immediately and download
+        // Direct URL / SourceForge -- resolve immediately and download
         m_downloadUrl = m_catalog->resolveDownloadUrl(distro);
         m_checksumUrl = m_catalog->resolveChecksumUrl(distro);
         m_checksumType = distro.checksumType;
@@ -173,9 +173,9 @@ void LinuxISODownloader::onVersionCheckFailed(const QString& distroId, const QSt
     // Fall back to hardcoded version
     auto distro = m_catalog->distroById(distroId);
     sak::logWarning("Version check failed for " + distroId.toStdString() + ": " +
-                    error.toStdString() + " — using hardcoded version");
+                    error.toStdString() + " -- using hardcoded version");
 
-    Q_EMIT statusMessage("Version check failed — using known version " + distro.version);
+    Q_EMIT statusMessage("Version check failed -- using known version " + distro.version);
 
     // Try to construct URL from known version
     m_downloadUrl = m_catalog->resolveDownloadUrl(distro);
@@ -218,7 +218,7 @@ void LinuxISODownloader::startAria2cDownload(const QString& url,
     setPhase(Phase::Downloading, "Downloading ISO...");
     Q_EMIT statusMessage(QString("Downloading %1...").arg(fileName));
 
-    // Validate download URL scheme — only allow HTTPS for the initial request.
+    // Validate download URL scheme -- only allow HTTPS for the initial request.
     QUrl downloadUrl(url);
     if (!downloadUrl.isValid() || downloadUrl.scheme().toLower() != "https") {
         setPhase(Phase::Failed, "Invalid download URL");
@@ -252,7 +252,7 @@ void LinuxISODownloader::startAria2cDownload(const QString& url,
 
     QStringList args = buildAria2cArguments(url, outDir, outFile);
 
-    sak::logInfo("Starting aria2c: " + aria2Path.toStdString() + " → " + savePath.toStdString());
+    sak::logInfo("Starting aria2c: " + aria2Path.toStdString() + " -> " + savePath.toStdString());
 
     m_aria2cProcess->start(aria2Path, args);
 
@@ -277,7 +277,7 @@ QStringList LinuxISODownloader::buildAria2cArguments(const QString& url,
     // inconsistencies and allow HTTP redirects from the initial HTTPS URL.
     const bool isSourceForge = url.contains("sourceforge.net", Qt::CaseInsensitive);
     if (isSourceForge) {
-        // ── SourceForge-specific settings ──
+        // -- SourceForge-specific settings --
         args << "--max-connection-per-server=" + QString::number(sak::kAria2SingleConn)
              << "--split=" + QString::number(sak::kAria2SingleSplit) << "--min-split-size=20M"
              << "--check-certificate=true"  // Always verify TLS certificates
@@ -291,7 +291,7 @@ QStringList LinuxISODownloader::buildAria2cArguments(const QString& url,
              << "--max-file-not-found=5"
              << "--lowest-speed-limit=10K";  // Lenient speed limit for SF
     } else {
-        // ── Standard multi-connection settings ──
+        // -- Standard multi-connection settings --
         args << "--max-connection-per-server=" + QString::number(sak::kAria2MaxConnsPerServer)
              << "--split=" + QString::number(sak::kAria2Split) << "--min-split-size=1M"
              << "--check-certificate=true"
@@ -302,21 +302,21 @@ QStringList LinuxISODownloader::buildAria2cArguments(const QString& url,
              << "--timeout=" + QString::number(sak::kAria2TimeoutSec) << "--max-file-not-found=3";
     }
 
-    // ── Common settings ──
-    args  // ── User-Agent (critical: many CDNs/SourceForge block
-          //    aria2c's default UA string) ──
+    // -- Common settings --
+    args  // -- User-Agent (critical: many CDNs/SourceForge block
+          //    aria2c's default UA string) --
         << "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
            "AppleWebKit/537.36 (KHTML, like Gecko) "
            "Chrome/131.0.0.0 Safari/537.36"
-        // ── Resumability ──
+        // -- Resumability --
         << "--continue=true"
         << "--auto-file-renaming=false"
         << "--allow-overwrite=true"
-        // ── Performance tuning ──
+        // -- Performance tuning --
         << "--file-allocation=none"
         << "--disk-cache=64M"
         << "--piece-length=1M"
-        // ── Output formatting ──
+        // -- Output formatting --
         << "--summary-interval=1"
         << "--human-readable=false"
         << "--enable-color=false"
@@ -389,7 +389,7 @@ void LinuxISODownloader::onAria2cFinished(int exitCode, QProcess::ExitStatus exi
         return;
     }
 
-    // Download succeeded — verify file exists
+    // Download succeeded -- verify file exists
     QFileInfo downloadedFile(m_savePath);
     if (!downloadedFile.exists() || downloadedFile.size() == 0) {
         setPhase(Phase::Failed, "Downloaded file is missing or empty");
@@ -406,9 +406,9 @@ void LinuxISODownloader::onAria2cFinished(int exitCode, QProcess::ExitStatus exi
     if (!m_checksumUrl.isEmpty() && !m_checksumType.isEmpty()) {
         verifyChecksum();
     } else {
-        // No checksum available — complete without verification
+        // No checksum available -- complete without verification
         setPhase(Phase::Completed, "Download complete (no checksum verification available)");
-        Q_EMIT statusMessage("Download complete — no checksum available for this distribution");
+        Q_EMIT statusMessage("Download complete -- no checksum available for this distribution");
         Q_EMIT downloadComplete(m_savePath, downloadedFile.size());
     }
 }
@@ -483,7 +483,7 @@ QString LinuxISODownloader::parseExpectedHash(const QString& checksumData,
 
         // Split on whitespace (hash  filename OR hash *filename)
         QStringList parts = trimmed.split(QRegularExpression("\\s+"), Qt::SkipEmptyParts);
-        // Single hash in file — assume it's for our file
+        // Single hash in file -- assume it's for our file
         if (parts.size() == 1) {
             return parts.first().toLower();
         }
@@ -599,7 +599,7 @@ void LinuxISODownloader::onChecksumVerified(bool match,
     if (match) {
         sak::logInfo("Checksum verified: " + actual.toStdString());
         Q_EMIT statusMessage(m_checksumType.toUpper() + " checksum verified successfully");
-        setPhase(Phase::Completed, "Download complete — checksum verified");
+        setPhase(Phase::Completed, "Download complete -- checksum verified");
         Q_EMIT downloadComplete(m_savePath, fileInfo.size());
     } else {
         sak::logError("Checksum mismatch! Expected: " + expected.toStdString() +

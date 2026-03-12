@@ -749,7 +749,7 @@ bool LeftoverScanner::matchesProgram(const QString& name) const {
         }
     }
 
-    // Check against publisher patterns (less strict — only for full word match)
+    // Check against publisher patterns (less strict -- only for full word match)
     for (const auto& pattern : m_publisherPatterns) {
         if (name_lower == pattern) {
             return true;

@@ -150,7 +150,7 @@ Q_SIGNALS:
      * @brief Emitted when languages for a build are available
      * @param langCodes List of language codes (e.g., "en-us", "de-de")
      * @param langNames Map of language code to friendly name (e.g.,
-         "en-us" → "English (United States)")
+         "en-us" -> "English (United States)")
      */
     void languagesFetched(const QStringList& langCodes, const QMap<QString, QString>& langNames);
 

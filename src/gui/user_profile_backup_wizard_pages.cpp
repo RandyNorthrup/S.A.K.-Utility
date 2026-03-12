@@ -422,7 +422,7 @@ void UserProfileBackupSmartFiltersPage::onViewDangerousList() {
 
     // Header
     auto* headerLabel =
-        new QLabel(tr("<b>🛡 Files and patterns that are always excluded from backups</b>"), dialog);
+        new QLabel(tr("<b>[shield] Files and patterns that are always excluded from backups</b>"), dialog);
     headerLabel->setWordWrap(true);
     headerLabel->setStyleSheet(QString("QLabel { padding: 10px; background-color: %1; "
                                        "border-radius: 8px; font-size: 11pt; }")
@@ -493,7 +493,7 @@ void UserProfileBackupSmartFiltersPage::updateSummary() {
     }
 
     m_summaryLabel->setText(
-        tr("🛡 %1 exclusion rules active | %2").arg(exclusionCount).arg(limitText));
+        tr("[shield] %1 exclusion rules active | %2").arg(exclusionCount).arg(limitText));
 }
 
 // ============================================================================
@@ -538,10 +538,10 @@ void UserProfileBackupSettingsPage::setupUi_destinationAndCompression(QVBoxLayou
     m_compressionCombo->setCurrentIndex(2);  // Default to Balanced
     m_compressionCombo->setToolTip(
         tr("Choose compression level:\n"
-           "• None: No compression, fastest\n"
-           "• Fast: Quick compression, larger files\n"
-           "• Balanced: Good balance (recommended)\n"
-           "• Maximum: Best compression, slower"));
+           "* None: No compression, fastest\n"
+           "* Fast: Quick compression, larger files\n"
+           "* Balanced: Good balance (recommended)\n"
+           "* Maximum: Best compression, slower"));
     compressionLayout->addWidget(m_compressionCombo);
     compressionLayout->addStretch();
     layout->addLayout(compressionLayout);
@@ -554,7 +554,7 @@ void UserProfileBackupSettingsPage::setupUi_encryptionAndPermissions(QVBoxLayout
     auto* encryptionLayout = new QHBoxLayout();
     m_encryptionCheck = new QCheckBox(tr("Encrypt backup"), this);
     m_encryptionCheck->setToolTip(
-        tr("Protects the backup with AES-256 encryption — you'll need "
+        tr("Protects the backup with AES-256 encryption -- you'll need "
            "the password to restore"));
     connect(m_encryptionCheck, &QCheckBox::toggled, this, [this](bool checked) {
         m_passwordEdit->setEnabled(checked);
@@ -604,7 +604,7 @@ void UserProfileBackupSettingsPage::setupUi_encryptionAndPermissions(QVBoxLayout
 
     // Permission explanation
     auto* permExplainLabel =
-        new QLabel(tr("ℹ <b>Strip All:</b> Removes ACLs to prevent permission conflicts (safest). "
+        new QLabel(tr("(i) <b>Strip All:</b> Removes ACLs to prevent permission conflicts (safest). "
                       "<b>Preserve:</b> Keeps original permissions (may cause errors). "
                       "<b>Assign Standard:</b> Sets full control for destination user."),
                    this);
@@ -761,7 +761,7 @@ void UserProfileBackupSettingsPage::updateSummary() {
         permMode = tr("Hybrid");
     }
 
-    m_summaryLabel->setText(tr("💾 Destination: %1 | Permissions: %2 | Verify: %3")
+    m_summaryLabel->setText(tr("[save] Destination: %1 | Permissions: %2 | Verify: %3")
                                 .arg(dest)
                                 .arg(permMode)
                                 .arg(m_verifyCheck->isChecked() ? tr("Yes") : tr("No")));
@@ -855,7 +855,7 @@ void UserProfileBackupInstalledAppsPage::setupUi() {
 }
 
 void UserProfileBackupInstalledAppsPage::initializePage() {
-    // Don't auto-scan — let the user click Scan when ready
+    // Don't auto-scan -- let the user click Scan when ready
     updateNextButtonText();
 }
 
@@ -919,7 +919,7 @@ void UserProfileBackupInstalledAppsPage::updateNextButtonText() {
 }
 
 bool UserProfileBackupInstalledAppsPage::isComplete() const {
-    // Always complete — app selection is optional
+    // Always complete -- app selection is optional
     return true;
 }
 
@@ -1059,7 +1059,7 @@ void UserProfileBackupInstalledAppsPage::onScanApps() {
 
     watcher->setFuture(QtConcurrent::run([]() -> QVector<InstalledAppInfo> {
         // Scan installed apps from registry + AppX (no Chocolatey calls).
-        // Backup only needs name/version/publisher — restore handles Chocolatey matching.
+        // Backup only needs name/version/publisher -- restore handles Chocolatey matching.
         AppScanner scanner;
         auto apps = scanner.scanAll();
 
@@ -1427,7 +1427,7 @@ void UserProfileBackupAppDataPage::setupUi() {
 
     auto* instructionLabel = new QLabel(
         tr("Click <b>Scan App Data</b> to detect application data on selected users. "
-           "This backs up application settings, profiles, and configurations — "
+           "This backs up application settings, profiles, and configurations -- "
            "not the applications themselves (use the Installed Applications step for that)."),
         this);
     instructionLabel->setWordWrap(true);
@@ -1490,7 +1490,7 @@ void UserProfileBackupAppDataPage::initializePage() {
 }
 
 bool UserProfileBackupAppDataPage::isComplete() const {
-    return true;  // Always complete — app data selection is optional
+    return true;  // Always complete -- app data selection is optional
 }
 
 void UserProfileBackupAppDataPage::cleanupPage() {
@@ -1802,7 +1802,7 @@ void UserProfileBackupKnownNetworksPage::initializePage() {
 }
 
 bool UserProfileBackupKnownNetworksPage::isComplete() const {
-    return true;  // Always complete — network backup is optional
+    return true;  // Always complete -- network backup is optional
 }
 
 void UserProfileBackupKnownNetworksPage::cleanupPage() {
@@ -2020,7 +2020,7 @@ void UserProfileBackupEthernetSettingsPage::initializePage() {
 }
 
 bool UserProfileBackupEthernetSettingsPage::isComplete() const {
-    return true;  // Always complete — ethernet backup is optional
+    return true;  // Always complete -- ethernet backup is optional
 }
 
 void UserProfileBackupEthernetSettingsPage::cleanupPage() {

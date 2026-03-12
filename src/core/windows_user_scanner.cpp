@@ -17,6 +17,8 @@
 #include <sddl.h>
 #include <userenv.h>
 #include <wtsapi32.h>
+#include <algorithm>
+#include <numeric>
 #pragma comment(lib, "netapi32.lib")
 #pragma comment(lib, "userenv.lib")
 #pragma comment(lib, "wtsapi32.lib")
@@ -111,7 +113,7 @@ QString WindowsUserScanner::getUserSID(const QString& username) {
     Q_ASSERT(!username.isEmpty());
 #ifdef Q_OS_WIN
     // Try to lookup SID using LookupAccountName
-    wchar_t* usernameW = (wchar_t*)username.utf16();
+    const auto* usernameW = reinterpret_cast<const wchar_t*>(username.utf16());
     PSID sid = nullptr;
     DWORD sidSize = 0;
     wchar_t domain[256];
@@ -125,7 +127,7 @@ QString WindowsUserScanner::getUserSID(const QString& username) {
         return QString();
     }
 
-    sid = (PSID)LocalAlloc(LPTR, sidSize);
+    sid = static_cast<PSID>(LocalAlloc(LPTR, sidSize));
     if (!sid) {
         return QString();
     }
@@ -380,16 +382,16 @@ qint64 WindowsUserScanner::quickSizeEstimate(const QString& path, int maxDepth) 
 
     // Get files in current directory
     QFileInfoList files = dir.entryInfoList(QDir::Files | QDir::NoDotAndDotDot);
-    for (const QFileInfo& file : files) {
-        size_bytes += file.size();
-    }
+    size_bytes += std::accumulate(files.begin(), files.end(), qint64{0},
+        [](qint64 sum, const QFileInfo& file) { return sum + file.size(); });
 
     // Recurse into subdirectories (limited depth)
     if (maxDepth > 1) {
         QFileInfoList dirs = dir.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot);
-        for (const QFileInfo& subdir : dirs) {
-            size_bytes += quickSizeEstimate(subdir.absoluteFilePath(), maxDepth - 1);
-        }
+        std::for_each(dirs.begin(), dirs.end(),
+            [&](const QFileInfo& subdir) {
+                size_bytes += quickSizeEstimate(subdir.absoluteFilePath(), maxDepth - 1);
+            });
     }
 
     return size_bytes;

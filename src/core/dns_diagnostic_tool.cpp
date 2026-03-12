@@ -234,7 +234,7 @@ void DnsDiagnosticTool::reverseLookup(const QString& ipAddress, const QString& d
         return;
     }
 
-    // Convert IP to reverse lookup format (e.g., 1.2.3.4 → 4.3.2.1.in-addr.arpa)
+    // Convert IP to reverse lookup format (e.g., 1.2.3.4 -> 4.3.2.1.in-addr.arpa)
     const auto parts = ipAddress.split(QLatin1Char('.'));
     if (parts.size() != 4) {
         Q_EMIT errorOccurred(QStringLiteral("Invalid IPv4 address format"));

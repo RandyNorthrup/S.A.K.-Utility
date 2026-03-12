@@ -220,11 +220,11 @@ void CheckBloatwareAction::executeScanApps(const QDateTime& start_time,
     Q_EMIT executionProgress("Scanning for bloatware apps...", 10);
 
     // Phase 1: Scan UWP apps with Get-AppxPackage
-    report += "╔══════════════════════════════════════════════════════════════════════╗\n";
-    report += "║                      BLOATWARE ANALYSIS                              ║\n";
-    report += "╠══════════════════════════════════════════════════════════════════════╣\n";
-    report += "║ Phase 1: UWP App Scan (All Users + Provisioned)                     ║\n";
-    report += "╠══════════════════════════════════════════════════════════════════════╣\n";
+    report += "+======================================================================+\n";
+    report += "|                      BLOATWARE ANALYSIS                              |\n";
+    report += "+======================================================================+\n";
+    report += "| Phase 1: UWP App Scan (All Users + Provisioned)                     |\n";
+    report += "+======================================================================+\n";
 
     ProcessResult ps_scan = runPowerShell(
         R"(
@@ -397,24 +397,24 @@ void CheckBloatwareAction::formatBloatwareMatchReport(
 
 void CheckBloatwareAction::executeBuildReport(const QDateTime& start_time,
                                               BloatwareScanResult& result) {
-    result.report += "╠══════════════════════════════════════════════════════════════════════╣\n";
-    result.report += "║ REMOVAL INFORMATION                                                  ║\n";
-    result.report += "╠══════════════════════════════════════════════════════════════════════╣\n";
-    result.report += "║ To remove bloatware apps, use PowerShell:                            ║\n";
-    result.report += "║                                                                      ║\n";
-    result.report += "║ Remove for current user:                                             ║\n";
-    result.report += "║   Get-AppxPackage *AppName* | Remove-AppxPackage                     ║\n";
-    result.report += "║                                                                      ║\n";
-    result.report += "║ Remove for all users (requires admin):                               ║\n";
-    result.report += "║   Get-AppxPackage *AppName* -AllUsers | Remove-AppxPackage -AllUsers ║\n";
-    result.report += "║                                                                      ║\n";
-    result.report += "║ Remove provisioning (prevents reinstall):                            ║\n";
-    result.report += "║   Get-AppxProvisionedPackage -Online | Where {$_.DisplayName -match  ║\n";
-    result.report += "║   \"AppName\"} | Remove-AppxProvisionedPackage -Online                 ║\n";
-    result.report += "║                                                                      ║\n";
-    result.report += "║ ⚠ CAUTION: Some apps may be needed by certain users                  ║\n";
-    result.report += "║   Always verify before removing system applications                  ║\n";
-    result.report += "╚══════════════════════════════════════════════════════════════════════╝\n";
+    result.report += "+======================================================================+\n";
+    result.report += "| REMOVAL INFORMATION                                                  |\n";
+    result.report += "+======================================================================+\n";
+    result.report += "| To remove bloatware apps, use PowerShell:                            |\n";
+    result.report += "|                                                                      |\n";
+    result.report += "| Remove for current user:                                             |\n";
+    result.report += "|   Get-AppxPackage *AppName* | Remove-AppxPackage                     |\n";
+    result.report += "|                                                                      |\n";
+    result.report += "| Remove for all users (requires admin):                               |\n";
+    result.report += "|   Get-AppxPackage *AppName* -AllUsers | Remove-AppxPackage -AllUsers |\n";
+    result.report += "|                                                                      |\n";
+    result.report += "| Remove provisioning (prevents reinstall):                            |\n";
+    result.report += "|   Get-AppxProvisionedPackage -Online | Where {$_.DisplayName -match  |\n";
+    result.report += "|   \"AppName\"} | Remove-AppxProvisionedPackage -Online                 |\n";
+    result.report += "|                                                                      |\n";
+    result.report += "| (!) CAUTION: Some apps may be needed by certain users                  |\n";
+    result.report += "|   Always verify before removing system applications                  |\n";
+    result.report += "+======================================================================+\n";
 
     Q_EMIT executionProgress("Analysis complete", 100);
 

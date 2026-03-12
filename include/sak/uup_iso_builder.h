@@ -28,7 +28,7 @@
  * Pipeline phases:
  *   1. Preparation  (5%)  - Generate aria2c input file, set up work directory
  *   2. Download     (60%) - Download UUP files via aria2c with integrity checks
- *   3. Conversion   (35%) - Convert UUP → ISO using UUPMediaConverter
+ *   3. Conversion   (35%) - Convert UUP -> ISO using UUPMediaConverter
  *
  * All bundled tools (aria2c.exe, UUPMediaConverter.exe)
  * must be present in the application's tools/uup/ directory at build time.

@@ -60,7 +60,7 @@ private Q_SLOTS:
 };
 
 /**
- * @brief Page 2: User mapping (source users → destination users)
+ * @brief Page 2: User mapping (source users -> destination users)
  */
 class UserProfileRestoreUserMappingPage : public QWizardPage {
     Q_OBJECT

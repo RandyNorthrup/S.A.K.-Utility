@@ -174,7 +174,7 @@ bool checkSizeFilter(const std::filesystem::directory_entry& entry, const scan_o
 
 bool file_scanner::passesDepthAndVisibility(const std::filesystem::path& path,
                                             const scan_options& options,
-                                            std::size_t current_depth) const {
+                                            std::size_t current_depth) {
     if (options.max_depth > 0 && current_depth >= options.max_depth) {
         return false;
     }
@@ -183,7 +183,7 @@ bool file_scanner::passesDepthAndVisibility(const std::filesystem::path& path,
 
 bool file_scanner::shouldProcessEntry(const std::filesystem::directory_entry& entry,
                                       const scan_options& options,
-                                      std::size_t current_depth) const noexcept {
+                                      std::size_t current_depth) noexcept {
     try {
         const auto& path = entry.path();
 
@@ -220,7 +220,7 @@ bool file_scanner::shouldProcessEntry(const std::filesystem::directory_entry& en
 
 bool file_scanner::shouldIncludeFile(const std::filesystem::directory_entry& entry,
                                      const std::filesystem::path& path,
-                                     const scan_options& options) const noexcept {
+                                     const scan_options& options) noexcept {
     try {
         if (!options.exclude_patterns.empty() &&
             path_utils::matchesPattern(path, options.exclude_patterns)) {

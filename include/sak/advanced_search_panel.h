@@ -35,9 +35,9 @@ namespace sak {
 class AdvancedSearchController;
 class LogToggleSwitch;
 
-/// @brief Advanced Search Panel — three-panel grep-style file search UI
+/// @brief Advanced Search Panel -- three-panel grep-style file search UI
 ///
-/// Layout: Search Bar → [File Explorer | Results Tree | Preview Pane]
+/// Layout: Search Bar -> [File Explorer | Results Tree | Preview Pane]
 ///
 /// Supports text content, regex, image metadata, file metadata, archive
 /// content, and binary/hex search modes with real-time results and
@@ -93,7 +93,7 @@ private Q_SLOTS:
     void onNextMatch();
 
 private:
-    // ── UI Setup ──
+    // -- UI Setup --
     void setupUi();
     void createSearchBar(QVBoxLayout* layout);
     void createThreePanelSplitter(QVBoxLayout* layout);
@@ -103,33 +103,33 @@ private:
     void createStatusBar(QVBoxLayout* layout);
     void createRegexPatternMenu();
 
-    // ── File Explorer Helpers ──
+    // -- File Explorer Helpers --
     void populateFileExplorerRoot();
     void populateDirectoryChildren(QTreeWidgetItem* parentItem, const QString& dirPath);
     void addPlaceholderChild(QTreeWidgetItem* parentItem);
     void removePlaceholderChildren(QTreeWidgetItem* parentItem);
 
-    // ── Results Helpers ──
+    // -- Results Helpers --
     void clearResults();
     void sortResults();
 
-    // ── Preview Helpers ──
+    // -- Preview Helpers --
     void showFilePreview(const QString& filePath, const QVector<SearchMatch>& matches);
     void showMetadataPreview(const QString& filePath, const QVector<SearchMatch>& matches);
     void highlightMatches();
     void navigateToMatch(int matchIndex);
     void updateMatchCounter();
 
-    // ── Utility ──
+    // -- Utility --
     void setSearchRunning(bool running);
     void logMessage(const QString& message);
     void updateRegexPatternsButton();
     [[nodiscard]] SearchConfig buildSearchConfig() const;
 
-    // ── Controller ──
+    // -- Controller --
     std::unique_ptr<AdvancedSearchController> m_controller;
 
-    // ── Search Bar Widgets ──
+    // -- Search Bar Widgets --
     QComboBox* m_search_combo{nullptr};
     QPushButton* m_search_button{nullptr};
     QPushButton* m_stop_button{nullptr};
@@ -146,42 +146,42 @@ private:
     QCheckBox* m_binary_hex_check{nullptr};
     QMenu* m_regex_menu{nullptr};
 
-    // ── Three-Panel Splitter ──
+    // -- Three-Panel Splitter --
     QSplitter* m_splitter{nullptr};
 
-    // ── File Explorer (Left Panel) ──
+    // -- File Explorer (Left Panel) --
     QTreeWidget* m_file_explorer{nullptr};
 
-    // ── Results Tree (Middle Panel) ──
+    // -- Results Tree (Middle Panel) --
     QTreeWidget* m_results_tree{nullptr};
     QComboBox* m_sort_combo{nullptr};
     QLabel* m_results_count_label{nullptr};
 
-    // ── Preview Pane (Right Panel) ──
+    // -- Preview Pane (Right Panel) --
     QTextEdit* m_preview_edit{nullptr};
     QPushButton* m_prev_match_button{nullptr};
     QPushButton* m_next_match_button{nullptr};
     QLabel* m_match_counter_label{nullptr};
     QLabel* m_preview_header_label{nullptr};
 
-    // ── Status Bar (progress routed via statusMessage/progressUpdate signals) ──
+    // -- Status Bar (progress routed via statusMessage/progressUpdate signals) --
 
-    // ── Preview State ──
+    // -- Preview State --
     QString m_current_preview_file;
     QVector<SearchMatch> m_current_matches;
     int m_current_match_index = -1;
 
-    // ── All results (for sorting) ──
+    // -- All results (for sorting) --
     QMap<QString, QVector<SearchMatch>> m_all_results;
 
-    // ── Log toggle switch ──
+    // -- Log toggle switch --
     LogToggleSwitch* m_log_toggle{nullptr};
 
-    // ── File Explorer placeholder sentinel ──
+    // -- File Explorer placeholder sentinel --
     static constexpr const char* kPlaceholderText = "Loading...";
 };
 
-// ── Compile-Time Invariants (TigerStyle) ────────────────────────────────────
+// -- Compile-Time Invariants (TigerStyle) ------------------------------------
 
 /// AdvancedSearchPanel must inherit QWidget.
 static_assert(std::is_base_of_v<QWidget, AdvancedSearchPanel>,

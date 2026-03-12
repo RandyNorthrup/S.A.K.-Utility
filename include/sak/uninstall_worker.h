@@ -18,8 +18,8 @@ namespace sak {
 
 /// @brief Executes the uninstall pipeline on a background thread
 ///
-/// Pipeline: restore point → registry snapshot → native uninstall →
-/// leftover scan → report. Supports standard, forced, UWP, and
+/// Pipeline: restore point -> registry snapshot -> native uninstall ->
+/// leftover scan -> report. Supports standard, forced, UWP, and
 /// registry-only uninstall modes.
 class UninstallWorker : public WorkerBase {
     Q_OBJECT
@@ -108,7 +108,7 @@ private:
     [[nodiscard]] QString extractGuidFromUninstallString() const;
 };
 
-// ── Compile-Time Invariants ─────────────────────────────────────────────────
+// -- Compile-Time Invariants -------------------------------------------------
 
 static_assert(std::is_base_of_v<WorkerBase, UninstallWorker>,
               "UninstallWorker must inherit WorkerBase.");

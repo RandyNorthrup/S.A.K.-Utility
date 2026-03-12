@@ -79,13 +79,13 @@ public:
      * @brief Scan Windows Store (AppX) packages
      * @return List of AppX packages
      */
-    std::vector<AppInfo> scanAppX();
+    static std::vector<AppInfo> scanAppX();
 
     /**
      * @brief Scan already installed Chocolatey packages
      * @return List of Chocolatey packages
      */
-    std::vector<AppInfo> scanChocolatey();
+    static std::vector<AppInfo> scanChocolatey();
 
 private:
     /**

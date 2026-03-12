@@ -23,9 +23,9 @@ BackupKnownNetworksAction::BackupKnownNetworksAction(const QString& backup_locat
                                                      QObject* parent)
     : QuickAction(parent), m_backup_location(backup_location) {}
 
-// ─────────────────────────────────────────────────────────────────────────────
+// -----------------------------------------------------------------------------
 // Private helpers
-// ─────────────────────────────────────────────────────────────────────────────
+// -----------------------------------------------------------------------------
 
 QList<BackupKnownNetworksAction::NetworkEntry> BackupKnownNetworksAction::collectProfiles() const {
     QList<NetworkEntry> result;
@@ -129,9 +129,9 @@ BackupKnownNetworksAction::NetworkEntry BackupKnownNetworksAction::fetchProfileD
     return entry;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// -----------------------------------------------------------------------------
 // scan
-// ─────────────────────────────────────────────────────────────────────────────
+// -----------------------------------------------------------------------------
 
 void BackupKnownNetworksAction::scan() {
     setStatus(ActionStatus::Scanning);
@@ -189,9 +189,9 @@ void BackupKnownNetworksAction::scan() {
 #endif
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// -----------------------------------------------------------------------------
 // execute
-// ─────────────────────────────────────────────────────────────────────────────
+// -----------------------------------------------------------------------------
 
 void BackupKnownNetworksAction::execute() {
     if (isCancelled()) {

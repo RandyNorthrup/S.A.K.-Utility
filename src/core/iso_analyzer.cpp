@@ -266,7 +266,7 @@ void IsoAnalyzer::readPrimaryVolumeDescriptor(QIODevice& device, IsoInfo& info) 
         }
 
         if (descriptor_type != kVdTypePrimary) {
-            continue;  // Skip boot records and supplementary — we handle boot separately
+            continue;  // Skip boot records and supplementary -- we handle boot separately
         }
 
         // Extract fields from Primary Volume Descriptor

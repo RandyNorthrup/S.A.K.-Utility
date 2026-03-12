@@ -140,7 +140,7 @@ std::optional<PackageMatcher::MatchResult> PackageMatcher::tryFuzzyMatch(
 }
 
 std::optional<PackageMatcher::MatchResult> PackageMatcher::trySearchMatch(
-    const QString& base_name, ChocolateyManager* choco_mgr, const MatchConfig& config) {
+    const QString& base_name, ChocolateyManager* choco_mgr, const MatchConfig& config) const {
     if (!choco_mgr) {
         return std::nullopt;
     }
@@ -394,7 +394,7 @@ std::optional<PackageMatcher::MatchResult> PackageMatcher::fuzzyMatch(
 
 std::optional<PackageMatcher::MatchResult> PackageMatcher::searchMatch(const QString& app_name,
                                                                        ChocolateyManager* choco_mgr,
-                                                                       int max_results) {
+                                                                       int max_results) const {
     QString base_name = extractBaseAppName(app_name);
     QStringList keywords = extractKeywords(base_name);
 
@@ -440,7 +440,7 @@ std::optional<PackageMatcher::MatchResult> PackageMatcher::searchMatch(const QSt
     return std::nullopt;
 }
 
-QString PackageMatcher::normalizeAppName(const QString& app_name) const {
+QString PackageMatcher::normalizeAppName(const QString& app_name) {
     Q_ASSERT(!app_name.isEmpty());
     QString normalized = app_name;
 
@@ -469,7 +469,7 @@ QString PackageMatcher::normalizeAppName(const QString& app_name) const {
     return normalized.trimmed();
 }
 
-QString PackageMatcher::extractBaseAppName(const QString& app_name) const {
+QString PackageMatcher::extractBaseAppName(const QString& app_name) {
     Q_ASSERT(!app_name.isEmpty());
     QString base = normalizeAppName(app_name);
 
@@ -489,7 +489,7 @@ QString PackageMatcher::extractBaseAppName(const QString& app_name) const {
     return base;
 }
 
-QStringList PackageMatcher::extractKeywords(const QString& app_name) const {
+QStringList PackageMatcher::extractKeywords(const QString& app_name) {
     Q_ASSERT(!app_name.isEmpty());
     QString normalized = normalizeAppName(app_name);
 
@@ -606,7 +606,7 @@ int countCommonPrefix(const QString& str1, const QString& str2) {
 
 }  // namespace
 
-double PackageMatcher::jaroWinklerSimilarity(const QString& s1, const QString& s2) const {
+double PackageMatcher::jaroWinklerSimilarity(const QString& s1, const QString& s2) {
     Q_ASSERT(!s1.isEmpty());
     Q_ASSERT(!s2.isEmpty());
     if (s1 == s2) {

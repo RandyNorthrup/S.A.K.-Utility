@@ -124,7 +124,7 @@ QGroupBox* SettingsDialog::createBackupSettingsGroup(QWidget* parent) {
     backupLayout->addRow(
         InfoButton::createInfoLabel(
             tr("Verify MD5:"),
-            tr("Re-read each copied file and verify its MD5 checksum matches the original — slower "
+            tr("Re-read each copied file and verify its MD5 checksum matches the original -- slower "
                "but ensures integrity"),
             parent),
         m_backupVerifyMD5);
@@ -206,7 +206,7 @@ QGroupBox* SettingsDialog::createQuickActionsGroup(QWidget* parent) {
     quickActionsLayout->addRow(
         InfoButton::createInfoLabel(
             QString(),
-            tr("Use ZIP compression for backup output files — slower but uses less disk space"),
+            tr("Use ZIP compression for backup output files -- slower but uses less disk space"),
             parent),
         m_quickActionsCompress);
 
@@ -217,7 +217,7 @@ QGroupBox* SettingsDialog::createQuickActionsGroup(QWidget* parent) {
 void SettingsDialog::loadSettings() {
     Q_ASSERT(m_backupThreadCount);
     Q_ASSERT(m_backupVerifyMD5);
-    auto& config = ConfigManager::instance();
+    const auto& config = ConfigManager::instance();
 
     // Backup
     m_backupThreadCount->setValue(config.getBackupThreadCount());

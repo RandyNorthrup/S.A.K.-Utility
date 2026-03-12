@@ -22,7 +22,7 @@ class PermissionManager;
  * @brief Background worker for restoring user profile backups
  *
  * Handles:
- * - User mapping (source → destination)
+ * - User mapping (source -> destination)
  * - Merge modes (replace, merge, create new)
  * - Conflict resolution
  * - Permission assignment
@@ -46,7 +46,7 @@ public:
      * @brief Start restore operation
      * @param backupPath Path to backup directory
      * @param manifest Backup manifest with source data
-     * @param mappings User mappings (source → destination)
+     * @param mappings User mappings (source -> destination)
      * @param config Restore behavior configuration
      */
     void startRestore(const QString& backupPath,

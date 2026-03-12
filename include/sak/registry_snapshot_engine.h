@@ -23,7 +23,7 @@ namespace sak {
 /// @brief Captures a snapshot of registry keys under monitored paths and diffs them
 ///
 /// Used before and after uninstallation to identify registry keys that survived
-/// the native uninstaller — potential leftovers that should be cleaned.
+/// the native uninstaller -- potential leftovers that should be cleaned.
 class RegistrySnapshotEngine {
 public:
     RegistrySnapshotEngine() = default;
@@ -66,7 +66,7 @@ private:
     static constexpr int kDefaultMaxDepth = 3;
 };
 
-// ── Compile-Time Invariants ─────────────────────────────────────────────────
+// -- Compile-Time Invariants -------------------------------------------------
 
 static_assert(!std::is_copy_constructible_v<RegistrySnapshotEngine>,
               "RegistrySnapshotEngine must not be copy-constructible.");

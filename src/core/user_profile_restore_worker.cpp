@@ -14,6 +14,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QtGlobal>
+#include <algorithm>
 
 namespace sak {
 
@@ -119,7 +120,7 @@ void UserProfileRestoreWorker::run() {
         }
 
         Q_EMIT statusUpdate(mapping.source_username, tr("Starting restore..."));
-        Q_EMIT logMessage(tr("=== Restoring user: %1 → %2 ===")
+        Q_EMIT logMessage(tr("=== Restoring user: %1 -> %2 ===")
                               .arg(mapping.source_username,
                                    mapping.destination_username.isEmpty()
                                        ? tr("(New)")
@@ -439,7 +440,7 @@ bool UserProfileRestoreWorker::resolveFileConflict(const QString& source,
 
     case ConflictResolution::PromptUser:
         finalDestPath = resolveConflict(source, finalDestPath);
-        Q_EMIT logMessage(tr("File exists, auto-renamed: %1 → %2")
+        Q_EMIT logMessage(tr("File exists, auto-renamed: %1 -> %2")
                               .arg(destInfo.fileName(), QFileInfo(finalDestPath).fileName()),
                           false);
         break;
@@ -565,12 +566,9 @@ qint64 UserProfileRestoreWorker::calculateTotalSize() {
 }
 
 const BackupUserData* UserProfileRestoreWorker::findManifestUser(const QString& username) const {
-    for (const auto& user : m_manifest.users) {
-        if (user.username == username) {
-            return &user;
-        }
-    }
-    return nullptr;
+    auto it = std::find_if(m_manifest.users.begin(), m_manifest.users.end(),
+        [&username](const auto& user) { return user.username == username; });
+    return (it != m_manifest.users.end()) ? &(*it) : nullptr;
 }
 
 void UserProfileRestoreWorker::createStandardSubfolders(const QDir& destDir) {

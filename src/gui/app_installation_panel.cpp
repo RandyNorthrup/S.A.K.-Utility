@@ -1,4 +1,4 @@
-﻿// Copyright (c) 2025 Randy Northrup. All rights reserved.
+// Copyright (c) 2025 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 /// @file app_installation_panel.cpp
@@ -342,11 +342,11 @@ void AppInstallationPanel::setupWorkerConnections() {
                     Q_EMIT statusMessage(tr("Installing %1...").arg(job.packageId), 0);
                     break;
                 case MigrationStatus::Success:
-                    Q_EMIT logOutput(QString("✓ %1 installed successfully").arg(job.packageId));
+                    Q_EMIT logOutput(QString("[x] %1 installed successfully").arg(job.packageId));
                     break;
                 case MigrationStatus::Failed:
                     Q_EMIT logOutput(
-                        QString("✗ %1 failed: %2").arg(job.packageId, job.errorMessage));
+                        QString("[ ] %1 failed: %2").arg(job.packageId, job.errorMessage));
                     break;
                 default:
                     break;

@@ -232,9 +232,9 @@ void UserProfileRestoreExecutePage::onRestoreComplete(bool success, const QStrin
     m_restoreSuccess = success;
 
     if (success) {
-        m_statusLabel->setText(tr("✅ Restore completed successfully!"));
+        m_statusLabel->setText(tr("[OK] Restore completed successfully!"));
     } else {
-        m_statusLabel->setText(tr("❌ Restore failed"));
+        m_statusLabel->setText(tr("[X] Restore failed"));
     }
 
     m_logText->append(QString("\n=== RESTORE COMPLETE ===\n%1").arg(message));

@@ -100,7 +100,7 @@ void LinuxDistroCatalog::addGeneralPurposeDistros() {
                /*.versionLabel =*/"Zena",
                /*.description =*/
                "Sleek, modern desktop based on Ubuntu LTS. Familiar Windows-like "
-               "interface — excellent for migrating users from Windows. Includes "
+               "interface -- excellent for migrating users from Windows. Includes "
                "full multimedia codecs.",
                /*.category =*/Category::GeneralPurpose,
                /*.sourceType =*/SourceType::DirectURL,
@@ -254,7 +254,7 @@ void LinuxDistroCatalog::addUtilityDistros() {
                /*.description =*/
                "Multi-boot USB solution. Install Ventoy to a USB drive, then "
                "simply "
-               "copy ISO files to the drive — no reformatting needed. Supports "
+               "copy ISO files to the drive -- no reformatting needed. Supports "
                "110+ OS types including Windows, Linux, and WinPE.",
                /*.category =*/Category::Utilities,
                /*.sourceType =*/SourceType::GitHubRelease,
@@ -274,7 +274,7 @@ void LinuxDistroCatalog::addUtilityDistros() {
                /*.versionLabel =*/{},
                /*.description =*/
                "Comprehensive memory diagnostic tool. Tests RAM for errors using "
-               "multiple test patterns. Boots directly — no OS required. "
+               "multiple test patterns. Boots directly -- no OS required. "
                "Essential "
                "for diagnosing random crashes and blue screens.",
                /*.category =*/Category::Utilities,

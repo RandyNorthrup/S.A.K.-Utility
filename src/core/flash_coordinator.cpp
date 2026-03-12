@@ -436,7 +436,7 @@ void FlashCoordinator::cleanupWorkers() {
         worker->requestStop();
 
         if (!worker->wait(15'000)) {
-            sak::logError("Worker thread did not stop within 15s — potential resource leak");
+            sak::logError("Worker thread did not stop within 15s -- potential resource leak");
         } else {
             sak::logInfo("Worker thread stopped gracefully");
         }

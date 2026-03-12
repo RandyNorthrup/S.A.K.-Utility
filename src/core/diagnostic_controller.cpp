@@ -37,7 +37,7 @@ DiagnosticController::DiagnosticController(QObject* parent)
     , m_stress_test(std::make_unique<StressTestWorker>(this))
     , m_thermal_monitor(std::make_unique<ThermalMonitor>(this))
     , m_report_generator(std::make_unique<DiagnosticReportGenerator>(this)) {
-    // ── Hardware Scanner Connections ────────────────────────────
+    // -- Hardware Scanner Connections ----------------------------
     connect(m_hardware_scanner.get(),
             &HardwareInventoryScanner::scanComplete,
             this,
@@ -51,7 +51,7 @@ DiagnosticController::DiagnosticController(QObject* parent)
             this,
             &DiagnosticController::errorOccurred);
 
-    // ── SMART Analyzer Connections ──────────────────────────────
+    // -- SMART Analyzer Connections ------------------------------
     connect(m_smart_analyzer.get(),
             &SmartDiskAnalyzer::analysisComplete,
             this,
@@ -65,7 +65,7 @@ DiagnosticController::DiagnosticController(QObject* parent)
             this,
             &DiagnosticController::errorOccurred);
 
-    // ── CPU Benchmark Connections ───────────────────────────────
+    // -- CPU Benchmark Connections -------------------------------
     connect(m_cpu_benchmark.get(),
             &CpuBenchmarkWorker::benchmarkComplete,
             this,
@@ -85,7 +85,7 @@ DiagnosticController::DiagnosticController(QObject* parent)
             }
         });
 
-    // ── Disk Benchmark Connections ──────────────────────────────
+    // -- Disk Benchmark Connections ------------------------------
     connect(m_disk_benchmark.get(),
             &DiskBenchmarkWorker::benchmarkComplete,
             this,
@@ -107,7 +107,7 @@ DiagnosticController::DiagnosticController(QObject* parent)
                 }
             });
 
-    // ── Memory Benchmark Connections ────────────────────────────
+    // -- Memory Benchmark Connections ----------------------------
     connect(m_memory_benchmark.get(),
             &MemoryBenchmarkWorker::benchmarkComplete,
             this,
@@ -129,7 +129,7 @@ DiagnosticController::DiagnosticController(QObject* parent)
                 }
             });
 
-    // ── Stress Test Connections ─────────────────────────────────
+    // -- Stress Test Connections ---------------------------------
     connect(m_stress_test.get(),
             &StressTestWorker::stressTestComplete,
             this,
@@ -146,20 +146,20 @@ DiagnosticController::DiagnosticController(QObject* parent)
             }
         });
     connect(m_stress_test.get(), &WorkerBase::cancelled, this, [this]() {
-        // Thermal abort calls requestStop() → emitted as cancelled().
+        // Thermal abort calls requestStop() -> emitted as cancelled().
         // Treat as completion so the suite advances.
         if (m_running_suite) {
             advanceSuiteStep();
         }
     });
 
-    // ── Thermal Monitor Connections ─────────────────────────────
+    // -- Thermal Monitor Connections -----------------------------
     connect(m_thermal_monitor.get(),
             &ThermalMonitor::readingsUpdated,
             this,
             &DiagnosticController::thermalReadingsUpdated);
 
-    // ── Report Generator Connections ────────────────────────────
+    // -- Report Generator Connections ----------------------------
     connect(m_report_generator.get(),
             &DiagnosticReportGenerator::errorOccurred,
             this,
@@ -226,7 +226,7 @@ void DiagnosticController::runStressTest(const StressTestConfig& config) {
 void DiagnosticController::runFullSuite(const StressTestConfig& stress_config,
                                         const DiskBenchmarkConfig& disk_config) {
     if (m_running_suite) {
-        logWarning("Full suite already running — ignoring request");
+        logWarning("Full suite already running -- ignoring request");
         return;
     }
 
@@ -453,7 +453,7 @@ void DiagnosticController::onStressTestComplete(const StressTestResult& result) 
 void DiagnosticController::advanceSuiteStep() {
     m_skipping_step = false;  // Reset skip guard
 
-    // State transition table: HW → SMART → CPU → Disk → Memory → Stress → Report → Complete
+    // State transition table: HW -> SMART -> CPU -> Disk -> Memory -> Stress -> Report -> Complete
     switch (m_suite_state) {
     case SuiteState::HardwareScan:
         m_suite_state = SuiteState::SmartAnalysis;
@@ -560,7 +560,7 @@ void DiagnosticController::aggregateStressTest() {
     }
     if (stress.memory_pattern_errors > 0) {
         m_report_data.critical_issues.append(QString("Memory pattern errors detected: %1"
-                                                     " — possible RAM hardware issue")
+                                                     " -- possible RAM hardware issue")
                                                  .arg(stress.memory_pattern_errors));
         m_report_data.recommendations.append(
             "Run a full memory diagnostic"
@@ -571,7 +571,7 @@ void DiagnosticController::aggregateStressTest() {
             QString("Thermal throttling detected (%1 events)").arg(stress.thermal_throttle_events));
         m_report_data.recommendations.append(
             "Improve system cooling"
-            " — check thermal paste, fans, and airflow");
+            " -- check thermal paste, fans, and airflow");
     }
 }
 
@@ -594,7 +594,7 @@ void DiagnosticController::aggregateResults() {
     }
 
     logInfo(
-        "Aggregation complete — status: {}, {} critical,"
+        "Aggregation complete -- status: {}, {} critical,"
         " {} warnings",
         static_cast<int>(m_report_data.overall_status),
         m_report_data.critical_issues.size(),

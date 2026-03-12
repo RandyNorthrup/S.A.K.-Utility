@@ -27,7 +27,7 @@
 namespace sak {
 
 NetworkDiagnosticController::NetworkDiagnosticController(QObject* parent) : QObject(parent) {
-    // Create all worker objects — they live in this thread initially
+    // Create all worker objects -- they live in this thread initially
     // Long-running operations use runOnThread() to execute on a worker thread.
     m_adapterInspector = std::make_unique<NetworkAdapterInspector>();
     m_connectivityTester = std::make_unique<ConnectivityTester>();
@@ -77,7 +77,7 @@ void NetworkDiagnosticController::runOnThread(std::function<void()> work, State 
     m_workerThread = new QThread(this);
 
     // Move the actual work to a lambda that runs on the new thread.
-    // NOTE: No context object → DirectConnection → runs in emitting thread (worker).
+    // NOTE: No context object -> DirectConnection -> runs in emitting thread (worker).
     // Capture thread pointer locally to avoid racing with cleanupThread().
     QThread* workerThread = m_workerThread;
     QObject::connect(m_workerThread, &QThread::started, [workerThread, work]() {
@@ -420,9 +420,9 @@ void NetworkDiagnosticController::connectEthernetConfigManagerSignals() {
             &NetworkDiagnosticController::errorOccurred);
 }
 
-// ═══════════════════════════════════════════════════════════════════
+// ===================================================================
 // Diagnostic Methods
-// ═══════════════════════════════════════════════════════════════════
+// ===================================================================
 
 void NetworkDiagnosticController::scanAdapters() {
     Q_EMIT statusMessage(QStringLiteral("Scanning network adapters..."), 0);
@@ -684,7 +684,7 @@ void NetworkDiagnosticController::discoverShares(const QString& hostname) {
                 State::BrowsingShares);
 }
 
-// ── LAN File Transfer Speed Test ────────────────────────────────────────────
+// -- LAN File Transfer Speed Test --------------------------------------------
 
 void NetworkDiagnosticController::startLanTransferServer(uint16_t port) {
     Q_ASSERT(m_lanTransferServer);
@@ -863,7 +863,7 @@ void NetworkDiagnosticController::runLanTransferTest(const QString& targetAddr,
             socket.connectToHost(targetAddr, port);
 
             if (!socket.waitForConnected(5000)) {
-                Q_EMIT errorOccurred(QStringLiteral("Failed to connect to %1:%2 — %3. "
+                Q_EMIT errorOccurred(QStringLiteral("Failed to connect to %1:%2 -- %3. "
                                                     "Ensure the remote device is running "
                                                     "the LAN Transfer server.")
                                          .arg(targetAddr)
@@ -1008,7 +1008,7 @@ void NetworkDiagnosticController::generateReport(const QString& outputPath,
         State::GeneratingReport);
 }
 
-// ── Ethernet Config Backup/Restore ──────────────────────────────────────────
+// -- Ethernet Config Backup/Restore ------------------------------------------
 
 void NetworkDiagnosticController::backupEthernetSettings(const QString& adapterName,
                                                          const QString& filePath) {
@@ -1059,7 +1059,7 @@ void NetworkDiagnosticController::restoreEthernetSettings(const QString& filePat
         Q_EMIT statusMessage(QStringLiteral("Ethernet settings restored successfully"), 5000);
     } else {
         Q_EMIT statusMessage(
-            QStringLiteral("Some settings failed to restore — check log for details"), 5000);
+            QStringLiteral("Some settings failed to restore -- check log for details"), 5000);
     }
 }
 

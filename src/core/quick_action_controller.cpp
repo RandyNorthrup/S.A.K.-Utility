@@ -41,7 +41,7 @@ QuickActionController::~QuickActionController() {
         m_current_execution_action->cancel();
     }
 
-    // Gracefully shut down threads — use deleteLater for safe cleanup
+    // Gracefully shut down threads -- use deleteLater for safe cleanup
     auto cleanupThread = [](QThread*& thread) {
         if (!thread) {
             return;

@@ -18,7 +18,7 @@
 
 namespace sak {
 
-// ── EthernetConfigSnapshot ──────────────────────────────────────────────────
+// -- EthernetConfigSnapshot --------------------------------------------------
 
 QJsonObject EthernetConfigSnapshot::toJson() const {
     QJsonObject obj;
@@ -66,7 +66,7 @@ bool EthernetConfigSnapshot::isValid() const {
     return !adapterName.isEmpty() && !backupTimestamp.isEmpty();
 }
 
-// ── EthernetConfigManager ───────────────────────────────────────────────────
+// -- EthernetConfigManager ---------------------------------------------------
 
 EthernetConfigManager::EthernetConfigManager(QObject* parent) : QObject(parent) {}
 
@@ -299,7 +299,7 @@ QStringList EthernetConfigManager::listEthernetAdapters() {
             continue;
         }
 
-        // Parse columns — name is the last field, may contain spaces
+        // Parse columns -- name is the last field, may contain spaces
         // Format: "Enabled  Connected  Dedicated  Ethernet"
         static const QRegularExpression kAdapterLineRe(
             R"(^\s*(Enabled|Disabled)\s+(Connected|Disconnected|Not Present)\s+(\S+)\s+(.+)$)");
@@ -318,7 +318,7 @@ QStringList EthernetConfigManager::listEthernetAdapters() {
     return adapters;
 }
 
-// ── Private ─────────────────────────────────────────────────────────────────
+// -- Private -----------------------------------------------------------------
 
 QString EthernetConfigManager::runNetsh(const QStringList& args) {
     Q_ASSERT(!args.isEmpty());

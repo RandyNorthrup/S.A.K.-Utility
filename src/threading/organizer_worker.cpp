@@ -12,6 +12,7 @@
 #include <QFile>
 #include <QtGlobal>
 #include <QVector>
+#include <algorithm>
 
 OrganizerWorker::OrganizerWorker(const Config& config, QObject* parent)
     : WorkerBase(parent), m_config(config) {
@@ -253,12 +254,9 @@ auto OrganizerWorker::generatePreviewSummary() -> QString {
         summary += QString("  %1: %2 files\n").arg(it.key()).arg(it.value());
     }
 
-    int collisions = 0;
-    for (const auto& op : m_planned_operations) {
-        if (op.would_overwrite) {
-            ++collisions;
-        }
-    }
+    const int collisions = static_cast<int>(std::count_if(
+        m_planned_operations.begin(), m_planned_operations.end(),
+        [](const auto& op) { return op.would_overwrite; }));
 
     if (collisions > 0) {
         summary += QString("\nWarning: %1 file(s) would have collisions\n").arg(collisions);

@@ -19,7 +19,7 @@
 
 namespace sak {
 
-// ── SearchMatch ─────────────────────────────────────────────────────────────
+// -- SearchMatch -------------------------------------------------------------
 
 /// @brief Represents a single search match within a file
 struct SearchMatch {
@@ -32,7 +32,7 @@ struct SearchMatch {
     QStringList context_after;   ///< Lines after the match (0-10)
 };
 
-// ── SearchConfig ────────────────────────────────────────────────────────────
+// -- SearchConfig ------------------------------------------------------------
 
 /// @brief Search configuration / options passed to the search worker
 struct SearchConfig {
@@ -68,7 +68,7 @@ struct SearchConfig {
     int network_timeout_sec = 5;                ///< UNC path timeout
 };
 
-// ── RegexPatternInfo ────────────────────────────────────────────────────────
+// -- RegexPatternInfo --------------------------------------------------------
 
 /// @brief A regex pattern preset (built-in or user-defined)
 struct RegexPatternInfo {
@@ -78,7 +78,7 @@ struct RegexPatternInfo {
     bool enabled = false;  ///< Currently active in combined search
 };
 
-// ── SearchPreferences ───────────────────────────────────────────────────────
+// -- SearchPreferences -------------------------------------------------------
 
 /// @brief Persistent search preferences
 struct SearchPreferences {
@@ -89,7 +89,7 @@ struct SearchPreferences {
     int context_lines = 2;    ///< Default context lines
 };
 
-// ── File type classification sets ───────────────────────────────────────────
+// -- File type classification sets -------------------------------------------
 
 /// @brief Image file extensions supporting metadata extraction
 inline const QSet<QString> kImageExtensions = {
@@ -139,7 +139,7 @@ inline const QSet<QString> kFileMetadataExtensions = {
 /// @brief Archive extensions that can be searched internally
 inline const QSet<QString> kArchiveExtensions = {"zip", "epub"};
 
-// ── Compile-Time Invariants (TigerStyle) ────────────────────────────────────
+// -- Compile-Time Invariants (TigerStyle) ------------------------------------
 
 /// SearchMatch must be default-constructible for QVector usage.
 static_assert(std::is_default_constructible_v<SearchMatch>,

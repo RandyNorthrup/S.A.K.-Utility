@@ -106,7 +106,7 @@ protected:
      * @brief Check if stop requested and emit cancelled if true
      * @return True if stop requested
      */
-    [[nodiscard]] bool checkStop();
+    [[nodiscard]] bool checkStop() const;
 
     /**
      * @brief Report progress to UI thread
@@ -126,7 +126,7 @@ private:
     std::atomic<bool> m_is_running{false};
 };
 
-// ── Compile-Time Invariants (TigerStyle) ────────────────────────────────────
+// -- Compile-Time Invariants (TigerStyle) ------------------------------------
 
 /// WorkerBase must inherit QThread (which inherits QObject).
 static_assert(std::is_base_of_v<QThread, WorkerBase>, "WorkerBase must inherit QThread.");

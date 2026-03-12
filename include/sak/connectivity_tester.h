@@ -63,7 +63,7 @@ public:
     /// @brief Run traceroute (blocking)
     void traceroute(const TracerouteConfig& config);
 
-    /// @brief Run MTR — continuous ping+traceroute (blocking)
+    /// @brief Run MTR -- continuous ping+traceroute (blocking)
     void mtr(const MtrConfig& config);
 
     /// @brief Cancel current operation

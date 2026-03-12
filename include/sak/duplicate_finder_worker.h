@@ -124,7 +124,7 @@ private:
      * @return Map of hash to file paths
      */
     auto groupByHash(const std::vector<std::pair<std::filesystem::path, std::string>>& files)
-        -> std::unordered_map<std::string, std::vector<std::filesystem::path>>;
+        const -> std::unordered_map<std::string, std::vector<std::filesystem::path>>;
 
     /**
      * @brief Generate results summary text

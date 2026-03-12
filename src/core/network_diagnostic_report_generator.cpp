@@ -15,7 +15,7 @@
 namespace sak {
 
 namespace {
-constexpr auto kReportTitle = "S.A.K. Utility — Network Diagnostic Report";
+constexpr auto kReportTitle = "S.A.K. Utility -- Network Diagnostic Report";
 // CSS color tokens for report
 constexpr auto kColorSuccess = "#16a34a";
 constexpr auto kColorWarning = "#d97706";
@@ -194,10 +194,10 @@ QString NetworkDiagnosticReportGenerator::buildAdapterSection() const {
         const auto status = a.isConnected
                                 ? QStringLiteral("<span class=\"success\">Connected</span>")
                                 : QStringLiteral("<span class=\"error\">Disconnected</span>");
-        const auto ip = a.ipv4Addresses.isEmpty() ? QStringLiteral("—") : a.ipv4Addresses.first();
+        const auto ip = a.ipv4Addresses.isEmpty() ? QStringLiteral("--") : a.ipv4Addresses.first();
         const auto speed = a.linkSpeedBps > 0
                                ? QStringLiteral("%1 Mbps").arg(a.linkSpeedBps / 1'000'000)
-                               : QStringLiteral("—");
+                               : QStringLiteral("--");
 
         html += QStringLiteral(
                     "<tr><td>%1</td><td>%2</td><td>%3</td>"
@@ -210,7 +210,7 @@ QString NetworkDiagnosticReportGenerator::buildAdapterSection() const {
 
 QString NetworkDiagnosticReportGenerator::buildPingSection() const {
     QString html;
-    html += QStringLiteral("<h2>Ping Results — %1</h2>\n").arg(m_pingResult.target.toHtmlEscaped());
+    html += QStringLiteral("<h2>Ping Results -- %1</h2>\n").arg(m_pingResult.target.toHtmlEscaped());
 
     const auto lossClass = m_pingResult.lossPercent > 5.0
                                ? QStringLiteral("error")
@@ -239,7 +239,7 @@ QString NetworkDiagnosticReportGenerator::buildPingSection() const {
 QString NetworkDiagnosticReportGenerator::buildTracerouteSection() const {
     QString html;
     html +=
-        QStringLiteral("<h2>Traceroute — %1</h2>\n").arg(m_tracerouteResult.target.toHtmlEscaped());
+        QStringLiteral("<h2>Traceroute -- %1</h2>\n").arg(m_tracerouteResult.target.toHtmlEscaped());
 
     html += QStringLiteral(
         "<table>\n<tr><th>Hop</th><th>IP</th><th>Hostname</th>"
@@ -252,7 +252,7 @@ QString NetworkDiagnosticReportGenerator::buildTracerouteSection() const {
                         "* * * Request timed out</td></tr>\n")
                         .arg(hop.hopNumber);
         } else {
-            const QString host = hop.hostname.isEmpty() ? QStringLiteral("—")
+            const QString host = hop.hostname.isEmpty() ? QStringLiteral("--")
                                                         : hop.hostname.toHtmlEscaped();
             html += QStringLiteral(
                         "<tr><td>%1</td><td>%2</td><td>%3</td>"
@@ -279,7 +279,7 @@ QString NetworkDiagnosticReportGenerator::buildDnsSection() const {
         const auto statusClass = r.success ? QStringLiteral("success") : QStringLiteral("error");
         const auto statusText = r.success ? QStringLiteral("OK") : QStringLiteral("FAILED");
 
-        html += QStringLiteral("<h3>%1 (%2) via %3 — <span class=\"%4\">%5</span> (%6 ms)</h3>\n")
+        html += QStringLiteral("<h3>%1 (%2) via %3 -- <span class=\"%4\">%5</span> (%6 ms)</h3>\n")
                     .arg(r.queryName.toHtmlEscaped(),
                          r.recordType,
                          r.dnsServer.toHtmlEscaped(),
@@ -382,7 +382,7 @@ QString NetworkDiagnosticReportGenerator::buildWiFiSection() const {
                                  : (net.rssiDbm >= -70) ? QStringLiteral("warning")
                                                         : QStringLiteral("error");
 
-        const auto connected = net.isConnected ? QStringLiteral(" ★") : QString();
+        const auto connected = net.isConnected ? QStringLiteral(" *") : QString();
 
         html += QStringLiteral(
                     "<tr><td>%1%2</td><td>%3</td>"
@@ -445,7 +445,7 @@ QString NetworkDiagnosticReportGenerator::buildFirewallSection() const {
     if (!m_firewallGaps.isEmpty()) {
         html += QStringLiteral("<h3>Coverage Gaps (%1)</h3>\n<ul>\n").arg(m_firewallGaps.size());
         for (const auto& g : m_firewallGaps) {
-            html += QStringLiteral("<li><b>%1</b> — %2</li>\n")
+            html += QStringLiteral("<li><b>%1</b> -- %2</li>\n")
                         .arg(g.description.toHtmlEscaped(), g.recommendation.toHtmlEscaped());
         }
         html += QStringLiteral("</ul>\n");
@@ -538,8 +538,8 @@ QString NetworkDiagnosticReportGenerator::buildShareSection() const {
             break;
         }
 
-        const auto readIcon = s.canRead ? QStringLiteral("✓") : QStringLiteral("✗");
-        const auto writeIcon = s.canWrite ? QStringLiteral("✓") : QStringLiteral("✗");
+        const auto readIcon = s.canRead ? QStringLiteral("[x]") : QStringLiteral("[ ]");
+        const auto writeIcon = s.canWrite ? QStringLiteral("[x]") : QStringLiteral("[ ]");
         const auto readClass = s.canRead ? QStringLiteral("success") : QStringLiteral("error");
         const auto writeClass = s.canWrite ? QStringLiteral("success") : QStringLiteral("error");
 
@@ -562,7 +562,7 @@ QString NetworkDiagnosticReportGenerator::buildShareSection() const {
 QString NetworkDiagnosticReportGenerator::buildHtmlFooter() const {
     return QStringLiteral(
         "<hr>\n"
-        "<p class=\"meta\">Generated by S.A.K. Utility — "
+        "<p class=\"meta\">Generated by S.A.K. Utility -- "
         "Network Diagnostics & Troubleshooting</p>\n"
         "</body>\n</html>\n");
 }

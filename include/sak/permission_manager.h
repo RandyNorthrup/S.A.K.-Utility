@@ -55,7 +55,7 @@ public:
      * @param path Path to check
      * @return true if we can modify permissions
      */
-    bool canModifyPermissions(const QString& path);
+    static bool canModifyPermissions(const QString& path);
 
     /**
      * @brief Apply permission strategy to file/folder
@@ -104,8 +104,7 @@ public:
 
 private:
 #ifdef Q_OS_WIN
-    bool getSecurityInfo(const QString& path, PSECURITY_DESCRIPTOR* pSD);
-    bool enablePrivilege(const wchar_t* privilegeName);
+    static bool enablePrivilege(const wchar_t* privilegeName);
 #endif
 
     QString m_lastError;
