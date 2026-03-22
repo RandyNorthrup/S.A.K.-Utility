@@ -552,9 +552,7 @@ void DiagnosticController::aggregateStressTest() {
     }
     const auto& stress = m_report_data.stress_test.value();
     if (!stress.passed) {
-        if (m_report_data.overall_status != DiagnosticStatus::CriticalIssues) {
-            m_report_data.overall_status = DiagnosticStatus::CriticalIssues;
-        }
+        m_report_data.overall_status = DiagnosticStatus::CriticalIssues;
         m_report_data.critical_issues.append(
             QString("Stress test FAILED: %1").arg(stress.abort_reason));
     }

@@ -34,9 +34,6 @@ enum ResultColumn {
 // ============================================================================
 
 void AppInstallationPanel::onSearch() {
-    Q_ASSERT(m_searchButton);
-    Q_ASSERT(m_choco_manager);
-    Q_ASSERT(m_searchEdit);
     if (m_search_in_progress) {
         Q_EMIT logOutput("Search already in progress...");
         return;
@@ -81,16 +78,20 @@ void AppInstallationPanel::onSearchCompleted(bool success,
     m_searchButton->setEnabled(true);
 
     if (success) {
+        sak::logInfo("[AppInstallationPanel] Search completed successfully ({} bytes output)",
+                     output.size());
         updateResultsFromSearch(output);
         return;
     }
+    sak::logWarning("[AppInstallationPanel] Search failed: {}", errorMessage.toStdString());
     Q_EMIT logOutput(QString("Search failed: %1").arg(errorMessage));
     Q_EMIT statusMessage(tr("Search failed"), 3000);
 }
 
 void AppInstallationPanel::onCategoryChanged(int index) {
-    Q_ASSERT(index >= 0);
-    Q_ASSERT(m_searchEdit);
+    if (index < 0) {
+        return;
+    }
     // Map category index to search term
     static const char* const categoryQueries[] = {
         "",           // All
@@ -114,8 +115,6 @@ void AppInstallationPanel::onCategoryChanged(int index) {
 // ============================================================================
 
 void AppInstallationPanel::onAddToQueue() {
-    Q_ASSERT(m_resultsModel);
-    Q_ASSERT(m_addToQueueButton);
     int added = 0;
     for (int i = 0; i < m_resultsModel->rowCount(); ++i) {
         auto* checkItem = m_resultsModel->item(i, RColCheck);
@@ -165,8 +164,6 @@ void AppInstallationPanel::onAddToQueue() {
 }
 
 void AppInstallationPanel::onRemoveFromQueue() {
-    Q_ASSERT(!m_installQueue.isEmpty());
-    Q_ASSERT(m_queueList);
     auto selectedItems = m_queueList->selectedItems();
     if (selectedItems.isEmpty()) {
         return;
@@ -204,10 +201,6 @@ void AppInstallationPanel::onClearQueue() {
 // ============================================================================
 
 void AppInstallationPanel::onInstallAll() {
-    Q_ASSERT(m_installButton);
-    Q_ASSERT(m_cancelButton);
-    Q_ASSERT(m_choco_manager);
-    Q_ASSERT(m_worker);
     if (m_installQueue.isEmpty()) {
         QMessageBox::information(
             this,
@@ -267,6 +260,7 @@ void AppInstallationPanel::onInstallAll() {
     }
 
     int queued = m_worker->startMigration(report, 1);  // Sequential installation
+    sak::logInfo("[AppInstallationPanel] startMigration returned {} queued jobs", queued);
     if (queued == 0) {
         Q_EMIT logOutput("No packages queued for installation.");
         m_install_in_progress = false;

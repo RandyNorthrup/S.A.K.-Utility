@@ -58,7 +58,9 @@ quint32 fromBigEndian(const QByteArray& data, int offset = 0) {
 }
 
 quint32 crc32(const QByteArray& data) {
-    Q_ASSERT(!data.isEmpty());
+    if (data.isEmpty()) {
+        return 0;
+    }
     quint32 crc = 0xFF'FF'FF'FF;
     for (unsigned char byte : data) {
         crc ^= byte;
@@ -172,10 +174,9 @@ void mergeChunkRange(QVector<QPair<int, int>>& ranges, int chunkId) {
 }
 
 bool isChunkInRanges(int chunkId, const QVector<QPair<int, int>>& ranges) {
-    return std::any_of(ranges.begin(), ranges.end(),
-        [chunkId](const auto& range) {
-            return chunkId >= range.first && chunkId <= range.second;
-        });
+    return std::any_of(ranges.begin(), ranges.end(), [chunkId](const auto& range) {
+        return chunkId >= range.first && chunkId <= range.second;
+    });
 }
 
 }  // namespace
@@ -316,7 +317,6 @@ QByteArray NetworkTransferWorker::serializeHeader(const FrameHeader& header) con
 }
 
 bool NetworkTransferWorker::readHeader(QTcpSocket* socket, FrameHeader& header) {
-    Q_ASSERT(socket);
     Q_ASSERT_X(socket != nullptr, "readHeader", "socket must not be null");
     QByteArray headerBytes = readExact(socket, kHeaderSize);
     if (headerBytes.size() != kHeaderSize) {
@@ -513,8 +513,8 @@ bool NetworkTransferWorker::handleSender(QTcpSocket* socket,
         key = *keyResult;
     }
 
-    const qint64 totalBytes = std::accumulate(files.begin(), files.end(),
-        qint64{0}, [](qint64 sum, const auto& file) {
+    const qint64 totalBytes =
+        std::accumulate(files.begin(), files.end(), qint64{0}, [](qint64 sum, const auto& file) {
             return sum + file.size_bytes;
         });
 
@@ -595,7 +595,8 @@ bool NetworkTransferWorker::sendFileChunks(QTcpSocket* socket,
             flags |= kFlagCompressed;
         }
 
-        if (!encryptPayloadIfNeeded(payload, flags, context.key, context.options, context.file.relative_path)) {
+        if (!encryptPayloadIfNeeded(
+                payload, flags, context.key, context.options, context.file.relative_path)) {
             return false;
         }
 
@@ -670,7 +671,6 @@ void NetworkTransferWorker::throttleBandwidth(qint64 chunkSize,
 }
 
 bool NetworkTransferWorker::awaitFileAck(QTcpSocket* socket, const TransferFileEntry& file) {
-    Q_ASSERT(socket);
     Q_ASSERT_X(socket != nullptr, "awaitFileAck", "socket must not be null");
     FrameHeader ackHeader;
     if (!readHeader(socket, ackHeader) || ackHeader.frame_type != FrameFileAck) {
@@ -747,7 +747,11 @@ NetworkTransferWorker::DispatchResult NetworkTransferWorker::dispatchReceiverFra
         return DispatchResult::Continue;
 
     case FrameFileEnd:
-        processFileEnd(socket, options, state);
+        if (!processFileEnd(socket, options, state)) {
+            logWarning(
+                "NetworkTransferWorker receiver file end processing failed, "
+                "awaiting sender retry");
+        }
         return DispatchResult::Continue;
 
     case FrameTransferEnd:
@@ -759,7 +763,6 @@ NetworkTransferWorker::DispatchResult NetworkTransferWorker::dispatchReceiverFra
 }
 
 bool NetworkTransferWorker::handleReceiver(QTcpSocket* socket, const DataOptions& options) {
-    Q_ASSERT(socket);
     Q_ASSERT_X(socket != nullptr, "handleReceiver", "socket must not be null");
     ReceiverState state;
     state.chunk_size = options.chunk_size;
@@ -778,6 +781,7 @@ bool NetworkTransferWorker::handleReceiver(QTcpSocket* socket, const DataOptions
 
     state.resume_timer.start();
 
+    bool received_transfer_end = false;
     while (!m_stopRequested) {
         FrameHeader header;
         if (!readHeader(socket, header)) {
@@ -802,11 +806,12 @@ bool NetworkTransferWorker::handleReceiver(QTcpSocket* socket, const DataOptions
             return false;
         }
         if (result == DispatchResult::Done) {
-            return true;
+            received_transfer_end = true;
+            break;
         }
     }
 
-    return !m_stopRequested;
+    return received_transfer_end;
 }
 
 // --- Private Helpers ------------------------------------------------------------
@@ -894,9 +899,11 @@ void NetworkTransferWorker::initReceiverResume(QTcpSocket* socket,
     if (!resumeFileId.isEmpty() && resumeFileId != state.current_file_id) {
         state.current_ranges.clear();
         QFile::remove(state.resume_path);
+        state.current_file->resize(0);
     } else if (resumeTotalChunks > 0 && resumeTotalChunks != state.total_chunks) {
         state.current_ranges.clear();
         QFile::remove(state.resume_path);
+        state.current_file->resize(0);
     }
 
     if (state.current_ranges.isEmpty()) {
@@ -969,6 +976,34 @@ bool NetworkTransferWorker::processDataChunk(QTcpSocket* /*socket*/,
     return true;
 }
 
+bool NetworkTransferWorker::verifyFileChecksum(const QString& tempPath,
+                                               const ReceiverState& state) const {
+    if (state.current_checksum.isEmpty()) {
+        return true;
+    }
+    file_hasher hasher(hash_algorithm::sha256);
+    auto hashResult = hasher.calculateHash(std::filesystem::path(tempPath.toStdString()));
+    return hashResult && QString::fromStdString(*hashResult) == state.current_checksum;
+}
+
+void NetworkTransferWorker::applyFilePermissions(const QString& finalPath,
+                                                 const DataOptions& options,
+                                                 const ReceiverState& state) {
+    PermissionManager perms;
+    if (!state.current_acl_sddl.isEmpty()) {
+        perms.setSecurityDescriptorSddl(finalPath, state.current_acl_sddl);
+    } else if (options.acl_overrides.contains(state.current_relative_path)) {
+        perms.setSecurityDescriptorSddl(finalPath,
+                                        options.acl_overrides.value(state.current_relative_path));
+    } else if (options.permission_modes.contains(state.current_relative_path.section('/', 0, 0))) {
+        const auto mode =
+            options.permission_modes.value(state.current_relative_path.section('/', 0, 0));
+        perms.applyPermissionStrategy(finalPath, mode);
+    } else {
+        perms.stripPermissions(finalPath);
+    }
+}
+
 bool NetworkTransferWorker::processFileEnd(QTcpSocket* socket,
                                            const DataOptions& options,
                                            ReceiverState& state) {
@@ -984,25 +1019,22 @@ bool NetworkTransferWorker::processFileEnd(QTcpSocket* socket,
     ackPayload["file_id"] = state.current_file_id;
 
     // Verify checksum
-    if (!state.current_checksum.isEmpty()) {
-        file_hasher hasher(hash_algorithm::sha256);
-        auto hashResult = hasher.calculateHash(std::filesystem::path(tempPath.toStdString()));
-        if (!hashResult || QString::fromStdString(*hashResult) != state.current_checksum) {
-            Q_EMIT errorOccurred(tr("Checksum mismatch for %1").arg(finalPath));
-            ackPayload["status"] = "retry";
-            sendFrame(socket,
-                      {FrameFileAck},
-                      QJsonDocument(ackPayload).toJson(QJsonDocument::Compact));
-            QFile::remove(tempPath);
-            // Remove stale resume metadata so retries start from scratch
-            // instead of skipping chunks that no longer exist on disk.
-            QFile::remove(state.resume_path);
-            state.current_ranges.clear();
-            return false;
-        }
+    if (!verifyFileChecksum(tempPath, state)) {
+        Q_EMIT errorOccurred(tr("Checksum mismatch for %1").arg(finalPath));
+        ackPayload["status"] = "retry";
+        sendFrame(socket, {FrameFileAck}, QJsonDocument(ackPayload).toJson(QJsonDocument::Compact));
+        QFile::remove(tempPath);
+        QFile::remove(state.resume_path);
+        state.current_ranges.clear();
+        sak::logWarning("Checksum mismatch for {}: removed temp and resume files",
+                        finalPath.toStdString());
+        return false;
     }
 
-    QFile::remove(finalPath);
+    if (QFile::exists(finalPath) && !QFile::remove(finalPath)) {
+        sak::logWarning("Could not remove existing file before rename: {}",
+                        finalPath.toStdString());
+    }
     if (!QFile::rename(tempPath, finalPath)) {
         Q_EMIT errorOccurred(tr("Failed to finalize file"));
         ackPayload["status"] = "retry";
@@ -1010,25 +1042,16 @@ bool NetworkTransferWorker::processFileEnd(QTcpSocket* socket,
         return false;
     }
 
-    PermissionManager perms;
-    if (!state.current_acl_sddl.isEmpty()) {
-        perms.setSecurityDescriptorSddl(finalPath, state.current_acl_sddl);
-    } else if (options.acl_overrides.contains(state.current_relative_path)) {
-        perms.setSecurityDescriptorSddl(finalPath,
-                                        options.acl_overrides.value(state.current_relative_path));
-    } else if (options.permission_modes.contains(state.current_relative_path.section('/', 0, 0))) {
-        const auto mode =
-            options.permission_modes.value(state.current_relative_path.section('/', 0, 0));
-        perms.applyPermissionStrategy(finalPath, mode);
-    } else {
-        perms.stripPermissions(finalPath);
-    }
+    applyFilePermissions(finalPath, options, state);
 
     ackPayload["status"] = "ok";
     sendFrame(socket, {FrameFileAck}, QJsonDocument(ackPayload).toJson(QJsonDocument::Compact));
 
     if (options.resume_enabled && !state.resume_path.isEmpty()) {
-        QFile::remove(state.resume_path);
+        if (!QFile::remove(state.resume_path)) {
+            sak::logWarning("Failed to clean up resume metadata: {}",
+                            state.resume_path.toStdString());
+        }
     }
 
     Q_EMIT fileCompleted(state.current_file_id, state.current_relative_path);

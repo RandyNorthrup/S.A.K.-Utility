@@ -169,6 +169,7 @@ bool PermissionManager::applyPermissionStrategy(const QString& path,
                                                 const QString& destinationUserSID) {
     switch (mode) {
     case PermissionMode::StripAll:
+        // cppcheck-suppress knownConditionTrueFalse ; Q_OS_WIN guards make this reachable
         return stripPermissions(path);
 
     case PermissionMode::AssignToDestination:
@@ -176,6 +177,7 @@ bool PermissionManager::applyPermissionStrategy(const QString& path,
             m_lastError = "Destination user SID required";
             return false;
         }
+        // cppcheck-suppress knownConditionTrueFalse ; Q_OS_WIN guards make this reachable
         return takeOwnership(path, destinationUserSID) &&
                setStandardUserPermissions(path, destinationUserSID);
 
@@ -185,6 +187,7 @@ bool PermissionManager::applyPermissionStrategy(const QString& path,
 
     case PermissionMode::Hybrid:
         // Strip, then assign to destination user
+        // cppcheck-suppress knownConditionTrueFalse ; Q_OS_WIN guards make this reachable
         return stripPermissions(path) && setStandardUserPermissions(path, destinationUserSID);
 
     default:

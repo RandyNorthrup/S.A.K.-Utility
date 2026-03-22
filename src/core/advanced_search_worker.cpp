@@ -110,10 +110,11 @@ auto AdvancedSearchWorker::compileRegex() const -> std::expected<QRegularExpress
 // -- Exclusion & Filtering ---------------------------------------------------
 
 bool AdvancedSearchWorker::isExcluded(const QString& path) const {
-    return std::any_of(m_compiled_excludes.begin(), m_compiled_excludes.end(),
-        [&path](const auto& excludeRegex) {
-            return excludeRegex.match(path).hasMatch();
-        });
+    return std::any_of(m_compiled_excludes.begin(),
+                       m_compiled_excludes.end(),
+                       [&path](const auto& excludeRegex) {
+                           return excludeRegex.match(path).hasMatch();
+                       });
 }
 
 bool AdvancedSearchWorker::matchesExtensionFilter(const QString& filePath) const {
@@ -124,14 +125,14 @@ bool AdvancedSearchWorker::matchesExtensionFilter(const QString& filePath) const
 
     const QString ext = QFileInfo(filePath).suffix().toLower();
     return std::any_of(m_config.file_extensions.begin(),
-        m_config.file_extensions.end(),
-        [&ext](const QString& filter) {
-            QString normalized = filter.trimmed().toLower();
-            if (normalized.startsWith('.')) {
-                normalized = normalized.mid(1);
-            }
-            return ext == normalized;
-        });
+                       m_config.file_extensions.end(),
+                       [&ext](const QString& filter) {
+                           QString normalized = filter.trimmed().toLower();
+                           if (normalized.startsWith('.')) {
+                               normalized = normalized.mid(1);
+                           }
+                           return ext == normalized;
+                       });
 }
 
 // -- Network Path Detection --------------------------------------------------
@@ -496,8 +497,9 @@ namespace {
         {0xA003, "PixelYDimension"},  {0xA405, "FocalLengthIn35mm"}, {0xA420, "ImageUniqueID"},
     };
 
-    auto it = std::find_if(std::begin(kTags), std::end(kTags),
-        [tag](const auto& entry) { return entry.tag_id == tag; });
+    auto it = std::find_if(std::begin(kTags), std::end(kTags), [tag](const auto& entry) {
+        return entry.tag_id == tag;
+    });
     if (it != std::end(kTags)) {
         return QStringLiteral("%1").arg(QLatin1String(it->name));
     }
@@ -519,8 +521,9 @@ int exifTypeUnitSize(uint16_t type) {
         {9, 4},
         {10, 8},
     };
-    auto it = std::find_if(std::begin(kSizes), std::end(kSizes),
-        [type](const auto& entry) { return entry.type == type; });
+    auto it = std::find_if(std::begin(kSizes), std::end(kSizes), [type](const auto& entry) {
+        return entry.type == type;
+    });
     if (it != std::end(kSizes)) {
         return it->size;
     }
@@ -889,12 +892,14 @@ QVector<SearchMatch> AdvancedSearchWorker::searchImageMetadata(const QString& fi
     supplementWithImageReader(filePath, metadata);
     addFileInfoMetadata(filePath, metadata);
 
+    // cppcheck-suppress knownConditionTrueFalse ; atomic stop flag checked across threads
     if (checkStop()) {
         return matches;
     }
 
     int field_index = 1;
     for (auto it = metadata.constBegin(); it != metadata.constEnd(); ++it) {
+        // cppcheck-suppress knownConditionTrueFalse ; atomic stop flag checked across threads
         if (checkStop()) {
             return matches;
         }
@@ -938,8 +943,9 @@ bool isMetadataTarget(const QString& entry_name) {
     static const QStringList kMetadataFiles = {
         "docprops/core.xml", "docprops/app.xml", "meta.xml", "content.opf", "oebps/content.opf"};
     const QString lower = entry_name.toLower();
-    return std::any_of(kMetadataFiles.begin(), kMetadataFiles.end(),
-        [&lower](const QString& target) { return lower.endsWith(target); });
+    return std::any_of(kMetadataFiles.begin(),
+                       kMetadataFiles.end(),
+                       [&lower](const QString& target) { return lower.endsWith(target); });
 }
 
 void extractXmlTags(const QString& xml_text, QMap<QString, QString>& metadata) {
@@ -1194,6 +1200,7 @@ QVector<SearchMatch> AdvancedSearchWorker::searchFileMetadata(const QString& fil
         metadata.insert("Created", info.birthTime().toString(Qt::ISODate));
     }
 
+    // cppcheck-suppress knownConditionTrueFalse ; atomic stop flag checked across threads
     if (checkStop()) {
         return matches;
     }
@@ -1201,6 +1208,7 @@ QVector<SearchMatch> AdvancedSearchWorker::searchFileMetadata(const QString& fil
     // Search all metadata fields against the regex
     int fieldIndex = 1;
     for (auto it = metadata.constBegin(); it != metadata.constEnd(); ++it) {
+        // cppcheck-suppress knownConditionTrueFalse ; atomic stop flag checked across threads
         if (checkStop()) {
             return matches;
         }

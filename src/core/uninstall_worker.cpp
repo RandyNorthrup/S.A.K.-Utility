@@ -256,55 +256,16 @@ bool UninstallWorker::runNativeUninstaller() {
 }
 
 QVector<LeftoverItem> UninstallWorker::scanLeftovers() {
-    Q_ASSERT(!m_registrySnapshotBefore.empty());
-    Q_ASSERT(!m_registrySnapshotBefore.isEmpty());
-    LeftoverScanner scanner(m_program, m_scanLevel);
+    LeftoverScanner scanner(m_program, m_scanLevel, m_registrySnapshotBefore);
 
-    // Capture after-snapshot for diff
-    QSet<QString> snapshot_after;
-    if (!m_registrySnapshotBefore.isEmpty()) {
-        snapshot_after = RegistrySnapshotEngine::captureSnapshot();
-    }
+    m_scanStopFlag.store(stopRequested());
 
-    // Provide a progress callback that emits our signal
-    // and continuously bridges the WorkerBase stop flag to the scanner
     auto progress_cb = [this](const QString& path, int found) {
         m_scanStopFlag.store(stopRequested());
         Q_EMIT leftoverScanProgress(path, found);
     };
 
-    // Initialize the stop flag from current state
-    m_scanStopFlag.store(stopRequested());
-
-    // Scan leftovers (scanner handles file system + registry pattern search)
-    auto results = scanner.scan(m_scanStopFlag, progress_cb);
-
-    // Add registry diff results from snapshot comparison
-    // (scanner does pattern-based registry search; this adds snapshot-diff items)
-    if (!m_registrySnapshotBefore.isEmpty() && !snapshot_after.isEmpty()) {
-        QStringList patterns;
-        patterns.append(m_program.displayName);
-        if (!m_program.publisher.isEmpty()) {
-            patterns.append(m_program.publisher);
-        }
-
-        auto diff_items = RegistrySnapshotEngine::diffSnapshots(m_registrySnapshotBefore,
-                                                                snapshot_after,
-                                                                patterns);
-
-        // Deduplicate: only add diff items not already found by scanner
-        QSet<QString> existing_paths;
-        for (const auto& r : results) {
-            existing_paths.insert(r.path);
-        }
-        for (const auto& di : diff_items) {
-            if (!existing_paths.contains(di.path)) {
-                results.append(di);
-            }
-        }
-    }
-
-    return results;
+    return scanner.scan(m_scanStopFlag, progress_cb);
 }
 
 bool UninstallWorker::removeUwpPackage() {

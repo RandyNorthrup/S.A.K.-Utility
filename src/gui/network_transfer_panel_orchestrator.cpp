@@ -83,7 +83,6 @@ void NetworkTransferPanel::onOrchestrationAssignment(const DeploymentAssignment&
 
 void NetworkTransferPanel::onStartOrchestratorServer() {
     Q_ASSERT(m_orchestratorListenPortSpin);
-    Q_ASSERT(m_orchestrator);
     if (!m_orchestrator) {
         return;
     }
@@ -140,7 +139,6 @@ void NetworkTransferPanel::onScanOrchestratorUsers() {
 
 void NetworkTransferPanel::onStartDeployment() {
     Q_ASSERT(m_mappingEngine);
-    Q_ASSERT(m_orchestrator);
     if (!m_parallelManager || !m_orchestrator) {
         return;
     }
@@ -303,7 +301,6 @@ void NetworkTransferPanel::onOrchestratorDestinationRemoved(const QString& desti
 }
 
 void NetworkTransferPanel::onOrchestratorProgress(const DeploymentProgress& progress) {
-    Q_ASSERT(!m_destinationProgress.isEmpty());
     Q_ASSERT(m_parallelManager);
     if (!progress.destination_id.isEmpty()) {
         m_destinationProgress.insert(progress.destination_id, progress.progress_percent);
@@ -477,8 +474,6 @@ void NetworkTransferPanel::onParallelDeploymentProgress(int completed, int total
 }
 
 void NetworkTransferPanel::onPauseJob() {
-    Q_ASSERT(m_jobsTable);
-    Q_ASSERT(m_parallelManager);
     if (!m_jobsTable || !m_parallelManager) {
         return;
     }
@@ -498,8 +493,6 @@ void NetworkTransferPanel::onPauseJob() {
 }
 
 void NetworkTransferPanel::onResumeJob() {
-    Q_ASSERT(m_jobsTable);
-    Q_ASSERT(m_parallelManager);
     if (!m_jobsTable || !m_parallelManager) {
         return;
     }
@@ -519,8 +512,6 @@ void NetworkTransferPanel::onResumeJob() {
 }
 
 void NetworkTransferPanel::onRetryJob() {
-    Q_ASSERT(m_jobsTable);
-    Q_ASSERT(m_parallelManager);
     if (!m_jobsTable || !m_parallelManager) {
         return;
     }
@@ -540,8 +531,6 @@ void NetworkTransferPanel::onRetryJob() {
 }
 
 void NetworkTransferPanel::onCancelJob() {
-    Q_ASSERT(m_jobsTable);
-    Q_ASSERT(m_parallelManager);
     if (!m_jobsTable || !m_parallelManager) {
         return;
     }
@@ -561,7 +550,6 @@ void NetworkTransferPanel::onCancelJob() {
 }
 
 void NetworkTransferPanel::onExportDeploymentHistory() {
-    Q_ASSERT(m_historyManager);
     if (!m_historyManager) {
         return;
     }
@@ -582,8 +570,6 @@ void NetworkTransferPanel::onExportDeploymentHistory() {
 }
 
 void NetworkTransferPanel::onExportDeploymentSummaryCsv() {
-    Q_ASSERT(m_orchestrator);
-    Q_ASSERT(m_parallelManager);
     if (!m_parallelManager || !m_orchestrator || !m_orchestrator->registry()) {
         return;
     }
@@ -634,8 +620,6 @@ void NetworkTransferPanel::onExportDeploymentSummaryCsv() {
 }
 
 void NetworkTransferPanel::onExportDeploymentSummaryPdf() {
-    Q_ASSERT(m_orchestrator);
-    Q_ASSERT(m_parallelManager);
     if (!m_parallelManager || !m_orchestrator || !m_orchestrator->registry()) {
         return;
     }
@@ -770,8 +754,6 @@ void NetworkTransferPanel::onParallelDeploymentCompleted(const QString& deployme
 }
 
 void NetworkTransferPanel::refreshOrchestratorDestinations() {
-    Q_ASSERT(m_orchestrator);
-    Q_ASSERT(m_orchestratorDestTable);
     if (!m_orchestrator || !m_orchestrator->registry() || !m_orchestratorDestTable) {
         return;
     }
@@ -856,8 +838,6 @@ void NetworkTransferPanel::updateDeploymentEta(qint64 remainingBytes, double tot
 }
 
 void NetworkTransferPanel::refreshJobsTable() {
-    Q_ASSERT(m_jobsTable);
-    Q_ASSERT(m_parallelManager);
     if (!m_jobsTable || !m_parallelManager) {
         return;
     }
@@ -937,7 +917,6 @@ static QString findLocalIpAddress() {
 }
 
 QVector<MappingEngine::SourceProfile> NetworkTransferPanel::collectSelectedSources() {
-    Q_ASSERT(!m_users.isEmpty());
     Q_ASSERT(m_orchestratorUserTable);
     QVector<MappingEngine::SourceProfile> sources;
 
@@ -1015,7 +994,6 @@ QMap<QString, QString> NetworkTransferPanel::collectCustomMappingRules() {
 }
 
 void NetworkTransferPanel::refreshAssignmentQueue() {
-    Q_ASSERT(m_assignmentQueueTable);
     if (!m_assignmentQueueTable) {
         return;
     }
@@ -1178,7 +1156,6 @@ QString NetworkTransferPanel::extractDraggedUserName(const QMimeData* mime) cons
 }
 
 void NetworkTransferPanel::refreshAssignmentStatus() {
-    Q_ASSERT(m_assignmentStatusTable);
     if (!m_assignmentStatusTable) {
         return;
     }
@@ -1223,8 +1200,6 @@ void NetworkTransferPanel::persistAssignmentQueue() const {
 }
 
 void NetworkTransferPanel::refreshDeploymentHistory() {
-    Q_ASSERT(m_historyManager);
-    Q_ASSERT(m_historyTable);
     if (!m_historyManager || !m_historyTable) {
         return;
     }

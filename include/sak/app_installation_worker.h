@@ -201,6 +201,31 @@ private:
     bool installPackage(MigrationJob& job);
 
     /**
+     * @brief Verify installation via multi-source check
+     *
+     * Checks Chocolatey output, Windows Registry, and AppX packages
+     * to confirm the application was actually installed.
+     *
+     * @param job The migration job with app name and package ID
+     * @param choco_result The result from Chocolatey install
+     * @return True if installation verified or inconclusive, false if definitely failed
+     */
+    bool verifyInstallation(const MigrationJob& job, const ChocolateyManager::Result& choco_result);
+
+    /**
+     * @brief Check if a newer or equal version is already installed
+     *
+     * Scans Windows Registry and AppX packages for the application.
+     * If found with a version >= the requested version, the install
+     * should be skipped.
+     *
+     * @param job The migration job with app name and version
+     * @param[out] installed_version The version found on the system
+     * @return True if a newer or equal version is already present
+     */
+    bool isNewerVersionInstalled(const MigrationJob& job, QString& installed_version);
+
+    /**
      * @brief Update job status (thread-safe)
      */
     void updateJobStatus(int index, MigrationStatus status, const QString& error = QString());
@@ -235,3 +260,7 @@ private:
 };
 
 }  // namespace sak
+
+Q_DECLARE_METATYPE(sak::MigrationJob)
+Q_DECLARE_METATYPE(sak::MigrationStatus)
+Q_DECLARE_METATYPE(sak::AppInstallationWorker::Stats)

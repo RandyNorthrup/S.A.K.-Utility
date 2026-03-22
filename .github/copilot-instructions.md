@@ -29,9 +29,10 @@ that prioritizes **safety → performance → developer experience**, in that or
 1. **Zero technical debt** — Do it right the first time. What we ship is solid.
    No workarounds, no placeholders, no stubs, no "fix later" comments.
 
-2. **Assertions are a force multiplier** — Every public function validates its
-   inputs and outputs. Average ≥2 assertions per public function. Use `Q_ASSERT`
-   for debug-mode checks, `static_assert` for compile-time invariants.
+2. **Assertions are a force multiplier** — Use assertions to validate meaningful
+   preconditions and postconditions. Every assertion should catch a real bug —
+   never add assertions just to hit a density target. Use `Q_ASSERT` for
+   debug-mode checks, `static_assert` for compile-time invariants.
 
 3. **Simplicity is the hardest revision** — The first attempt is never the
    simplest. Refactor until the code reads as obviously correct.
@@ -47,10 +48,10 @@ that prioritizes **safety → performance → developer experience**, in that or
 
 | Rule | Limit | Enforcement |
 |---|---|---|
-| Function body length | ≤70 lines | Code review, `lint_tigerstyle.py` |
+| Function body length | ≤70 lines | Code review, Lizard |
 | Nesting depth | ≤3 levels | Early returns, helper extraction |
 | Line length | ≤100 columns | `.clang-format`, code review |
-| Assertions per public function | ≥2 | `Q_ASSERT` preconditions + postconditions |
+| Assertions | Meaningful preconditions/postconditions | Code review |
 | `catch(...)` | Must have explanatory comment | Only in logger (exempt) |
 | Magic numbers | Named `constexpr` constants | Only 0, 1, −1 are acceptable bare literals |
 | Single-letter variables | Forbidden | Except tiny lambda predicates (`c` in `\[\](QChar c)`) |

@@ -414,7 +414,6 @@ void AdvancedSearchPanel::setupUi() {
 
 void AdvancedSearchPanel::createSearchBar(QVBoxLayout* layout) {
     Q_ASSERT(m_controller);
-    Q_ASSERT(m_search_combo);
     auto* searchGroup = new QGroupBox(tr("Search"), this);
     auto* searchLayout = new QVBoxLayout(searchGroup);
     searchLayout->setSpacing(ui::kSpacingSmall);
@@ -498,7 +497,6 @@ void AdvancedSearchPanel::createThreePanelSplitter(QVBoxLayout* layout) {
 }
 
 void AdvancedSearchPanel::createFileExplorer() {
-    Q_ASSERT(m_file_explorer);
     auto* container = new QWidget(this);
     auto* containerLayout = new QVBoxLayout(container);
     containerLayout->setContentsMargins(0, 0, 0, 0);
@@ -537,8 +535,6 @@ void AdvancedSearchPanel::createFileExplorer() {
 }
 
 void AdvancedSearchPanel::createResultsTree() {
-    Q_ASSERT(m_results_count_label);
-    Q_ASSERT(m_sort_combo);
     auto* container = new QWidget(this);
     auto* containerLayout = new QVBoxLayout(container);
     containerLayout->setContentsMargins(0, 0, 0, 0);
@@ -604,8 +600,6 @@ void AdvancedSearchPanel::createResultsTree() {
 }
 
 void AdvancedSearchPanel::createPreviewPane() {
-    Q_ASSERT(m_preview_header_label);
-    Q_ASSERT(m_prev_match_button);
     auto* container = new QWidget(this);
     auto* containerLayout = new QVBoxLayout(container);
     containerLayout->setContentsMargins(0, 0, 0, 0);
@@ -664,7 +658,6 @@ void AdvancedSearchPanel::createPreviewPane() {
 }
 
 void AdvancedSearchPanel::createStatusBar(QVBoxLayout* layout) {
-    Q_ASSERT(m_preferences_button);
     Q_ASSERT(layout);
     auto* statusRow = new QHBoxLayout();
     statusRow->setContentsMargins(0, 4, 0, 0);
@@ -689,7 +682,6 @@ void AdvancedSearchPanel::createStatusBar(QVBoxLayout* layout) {
 }
 
 void AdvancedSearchPanel::createRegexPatternMenu() {
-    Q_ASSERT(m_regex_menu);
     Q_ASSERT(m_controller);
     m_regex_menu = new QMenu(this);
 
@@ -828,16 +820,19 @@ void AdvancedSearchPanel::onSearchClicked() {
     const SearchConfig config = buildSearchConfig();
 
     if (config.pattern.isEmpty() && config.root_path.isEmpty()) {
+        sak::logWarning("Search: no directory selected and no pattern entered");
         Q_EMIT statusMessage(tr("Please select a directory and enter a search pattern"), 3000);
         return;
     }
 
     if (config.pattern.isEmpty()) {
+        sak::logWarning("Search: empty search pattern");
         Q_EMIT statusMessage(tr("Please enter a search pattern"), 3000);
         return;
     }
 
     if (config.root_path.isEmpty()) {
+        sak::logWarning("Search: no directory selected");
         Q_EMIT statusMessage(tr("Please select a directory to search"), 3000);
         return;
     }
@@ -1235,7 +1230,6 @@ void AdvancedSearchPanel::showMetadataPreview(const QString& filePath,
 }
 
 void AdvancedSearchPanel::highlightMatches() {
-    Q_ASSERT(!m_current_matches.isEmpty());
     Q_ASSERT(m_preview_edit);
     if (m_current_matches.isEmpty()) {
         return;
@@ -1287,7 +1281,6 @@ void AdvancedSearchPanel::highlightMatches() {
 }
 
 void AdvancedSearchPanel::navigateToMatch(int matchIndex) {
-    Q_ASSERT(matchIndex >= 0);
     Q_ASSERT(m_preview_edit);
     if (matchIndex < 0 || matchIndex >= m_current_matches.size()) {
         return;

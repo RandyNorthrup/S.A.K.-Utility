@@ -109,8 +109,6 @@ void UpdateAllAppsAction::execute() {
     setStatus(ActionStatus::Running);
     Q_ASSERT(status() == ActionStatus::Running);
     QDateTime start_time = QDateTime::currentDateTime();
-    Q_ASSERT(start_time.isValid());
-
     UpdateSummary summary;
     summary.report += "+======================================================================+\n";
     summary.report += "|                     APPLICATION UPDATE MANAGER                       |\n";
@@ -169,8 +167,6 @@ UpdateAllAppsAction::ExecutionResult UpdateAllAppsAction::buildExecutionResult(
         result.message = "No package managers available";
     }
     result.log = summary.report + "\n" + summary.structured_output;
-
-    Q_ASSERT(result.duration_ms >= 0);
     return result;
 }
 

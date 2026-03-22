@@ -107,7 +107,6 @@ bool DriveUnmounter::unmountDrive(int driveNumber) {
 }
 
 bool DriveUnmounter::lockAndDismountVolume(const QString& volumePath) {
-    Q_ASSERT(!m_lockedVolumes.empty());
     Q_ASSERT(!volumePath.isEmpty());
     // Delete mount points first
     if (!deleteMountPoints(volumePath)) {
@@ -371,7 +370,6 @@ int DriveUnmounter::getDriveNumberForVolume(const QString& volumePath) const {
 }
 
 bool DriveUnmounter::closeAllHandles(int driveNumber) {
-    Q_ASSERT(!m_lockedVolumes.isEmpty());
     Q_ASSERT(driveNumber >= 0);
     for (auto it = m_lockedVolumes.constBegin(); it != m_lockedVolumes.constEnd(); ++it) {
         if (it.value() != INVALID_HANDLE_VALUE) {

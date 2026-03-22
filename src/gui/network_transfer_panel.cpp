@@ -337,8 +337,8 @@ void NetworkTransferPanel::openModeDialog(int modeIndex) {
 }
 
 void NetworkTransferPanel::setupUi_sourceSection(QVBoxLayout* sourceLayout) {
-    Q_ASSERT(m_scanUsersButton);
-    Q_ASSERT(m_customizeUserButton);
+    Q_ASSERT(!m_scanUsersButton);
+    Q_ASSERT(!m_customizeUserButton);
     auto* dataGroup = new QGroupBox(tr("Data Selection"), this);
     auto* dataLayout = new QVBoxLayout(dataGroup);
 
@@ -378,8 +378,8 @@ void NetworkTransferPanel::setupUi_sourceSection(QVBoxLayout* sourceLayout) {
 }
 
 void NetworkTransferPanel::setupUi_sourceAdditionalData(QVBoxLayout* sourceLayout) {
-    Q_ASSERT(m_scanAppsButton);
-    Q_ASSERT(m_installedAppsLabel);
+    Q_ASSERT(!m_scanAppsButton);
+    Q_ASSERT(!m_installedAppsLabel);
     auto* group = new QGroupBox(tr("Additional Data (Optional)"), this);
     auto* layout = new QVBoxLayout(group);
 
@@ -438,8 +438,8 @@ void NetworkTransferPanel::setupUi_sourceAdditionalData(QVBoxLayout* sourceLayou
 }
 
 void NetworkTransferPanel::setupUi_peerDiscovery(QVBoxLayout* sourceLayout) {
-    Q_ASSERT(m_discoverPeersButton);
-    Q_ASSERT(m_peerTable);
+    Q_ASSERT(!m_discoverPeersButton);
+    Q_ASSERT(!m_peerTable);
     auto* peerGroup = new QGroupBox(tr("Destination Discovery"), this);
     auto* peerLayout = new QVBoxLayout(peerGroup);
 
@@ -482,13 +482,25 @@ void NetworkTransferPanel::setupUi_peerDiscovery(QVBoxLayout* sourceLayout) {
     manualLayout->addWidget(m_manualPortSpin);
     peerLayout->addLayout(manualLayout);
 
+    auto* passphraseLayout = new QHBoxLayout();
+    passphraseLayout->addWidget(new QLabel(tr("Passphrase:"), this));
+    m_passphraseEdit = new QLineEdit(this);
+    m_passphraseEdit->setEchoMode(QLineEdit::Password);
+    m_passphraseEdit->setPlaceholderText(tr("Shared encryption passphrase"));
+    m_passphraseEdit->setAccessibleName(QStringLiteral("Encryption Passphrase"));
+    m_passphraseEdit->setToolTip(
+        QStringLiteral("Passphrase used for transfer encryption. "
+                       "Must match on both source and destination."));
+    passphraseLayout->addWidget(m_passphraseEdit);
+    peerLayout->addLayout(passphraseLayout);
+
     peerGroup->setLayout(peerLayout);
     sourceLayout->addWidget(peerGroup);
 }
 
 void NetworkTransferPanel::setupUi_securityWidgets() {
-    Q_ASSERT(m_encryptCheck);
-    Q_ASSERT(m_compressCheck);
+    Q_ASSERT(!m_encryptCheck);
+    Q_ASSERT(!m_compressCheck);
     // Security widgets (hidden -- managed via Security Settings dialog)
     m_encryptCheck = new QCheckBox(tr("Encrypt (AES-256-GCM)"), this);
     m_encryptCheck->setAccessibleName(QStringLiteral("Encrypt Transfer"));
@@ -527,17 +539,11 @@ void NetworkTransferPanel::setupUi_securityWidgets() {
         QStringLiteral("How file permissions are handled during "
                        "transfer"));
     m_permissionModeCombo->setVisible(false);
-
-    m_passphraseEdit = new QLineEdit(this);
-    m_passphraseEdit->setEchoMode(QLineEdit::Password);
-    m_passphraseEdit->setAccessibleName(QStringLiteral("Encryption Passphrase"));
-    m_passphraseEdit->setToolTip(QStringLiteral("Passphrase used for transfer encryption"));
-    m_passphraseEdit->setVisible(false);
 }
 
 void NetworkTransferPanel::setupUi_destinationSection(QVBoxLayout* destLayout) {
-    Q_ASSERT(m_destinationInfo);
-    Q_ASSERT(m_destinationBaseEdit);
+    Q_ASSERT(!m_destinationInfo);
+    Q_ASSERT(!m_destinationBaseEdit);
     auto* destInfoGroup = new QGroupBox(tr("Destination Setup"), this);
     auto* destInfoLayout = new QVBoxLayout(destInfoGroup);
     m_destinationInfo = new QLabel(this);
@@ -581,8 +587,8 @@ void NetworkTransferPanel::setupUi_destinationSection(QVBoxLayout* destLayout) {
 }
 
 void NetworkTransferPanel::setupUi_orchestratorGroup(QVBoxLayout* destInfoLayout) {
-    Q_ASSERT(m_orchestratorHostEdit);
-    Q_ASSERT(m_orchestratorPortSpin);
+    Q_ASSERT(!m_orchestratorHostEdit);
+    Q_ASSERT(!m_orchestratorPortSpin);
     auto* orchestratorGroup = new QGroupBox(tr("Orchestrator Connection"), this);
     auto* orchestratorConnectionLayout = new QGridLayout(orchestratorGroup);
     orchestratorConnectionLayout->addWidget(new QLabel(tr("Host:"), this), 0, 0);
@@ -614,8 +620,8 @@ void NetworkTransferPanel::setupUi_orchestratorGroup(QVBoxLayout* destInfoLayout
 }
 
 void NetworkTransferPanel::setupUi_destinationIncoming(QVBoxLayout* destLayout) {
-    Q_ASSERT(m_manifestText);
-    Q_ASSERT(m_approveButton);
+    Q_ASSERT(!m_manifestText);
+    Q_ASSERT(!m_approveButton);
     auto* manifestGroup = new QGroupBox(tr("Incoming Manifest"), this);
     auto* manifestLayout = new QVBoxLayout(manifestGroup);
     m_manifestText = new QTextEdit(this);
@@ -680,8 +686,8 @@ void NetworkTransferPanel::setupUi_destinationIncoming(QVBoxLayout* destLayout) 
 }
 
 void NetworkTransferPanel::setupUi_orchestratorServer(QVBoxLayout* orchestratorLayout) {
-    Q_ASSERT(m_orchestratorListenPortSpin);
-    Q_ASSERT(m_orchestratorListenButton);
+    Q_ASSERT(!m_orchestratorListenPortSpin);
+    Q_ASSERT(!m_orchestratorListenButton);
     auto* orchestratorServerGroup = new QGroupBox(tr("Orchestrator Server"), this);
     auto* orchestratorServerLayout = new QHBoxLayout(orchestratorServerGroup);
     orchestratorServerLayout->addWidget(new QLabel(tr("Listen Port:"), this));
@@ -704,8 +710,8 @@ void NetworkTransferPanel::setupUi_orchestratorServer(QVBoxLayout* orchestratorL
 }
 
 void NetworkTransferPanel::setupUi_orchestratorSources(QVBoxLayout* orchestratorLayout) {
-    Q_ASSERT(m_orchestratorScanUsersButton);
-    Q_ASSERT(m_orchestratorUserTable);
+    Q_ASSERT(!m_orchestratorScanUsersButton);
+    Q_ASSERT(!m_orchestratorUserTable);
     auto* orchestratorSourcesGroup = new QGroupBox(tr("Source Profiles"), this);
     auto* orchestratorSourcesLayout = new QVBoxLayout(orchestratorSourcesGroup);
     auto* orchestratorSourceHeader = new QHBoxLayout();
@@ -731,7 +737,7 @@ void NetworkTransferPanel::setupUi_orchestratorSources(QVBoxLayout* orchestrator
 }
 
 void NetworkTransferPanel::setupUi_orchestratorDestinations(QVBoxLayout* orchestratorLayout) {
-    Q_ASSERT(m_orchestratorDestTable);
+    Q_ASSERT(!m_orchestratorDestTable);
     Q_ASSERT(orchestratorLayout);
     auto* orchestratorDestGroup = new QGroupBox(tr("Destinations"), this);
     auto* orchestratorDestLayout = new QVBoxLayout(orchestratorDestGroup);
@@ -775,8 +781,8 @@ void NetworkTransferPanel::setupUi_orchestratorDestinations(QVBoxLayout* orchest
 }
 
 void NetworkTransferPanel::setupUi_deploymentControls(QVBoxLayout* orchestratorLayout) {
-    Q_ASSERT(m_mappingTypeCombo);
-    Q_ASSERT(m_mappingStrategyCombo);
+    Q_ASSERT(!m_mappingTypeCombo);
+    Q_ASSERT(!m_mappingStrategyCombo);
     auto* deploymentControlGroup = new QGroupBox(tr("Deployment Controls"), this);
     auto* deploymentControlLayout = new QVBoxLayout(deploymentControlGroup);
     // Mapping type and strategy
@@ -824,8 +830,8 @@ void NetworkTransferPanel::setupUi_deploymentControls(QVBoxLayout* orchestratorL
 }
 
 void NetworkTransferPanel::setupUi_deploymentTemplateActions(QVBoxLayout* controlLayout) {
-    Q_ASSERT(m_useTemplateCheck);
-    Q_ASSERT(m_saveTemplateButton);
+    Q_ASSERT(!m_useTemplateCheck);
+    Q_ASSERT(!m_saveTemplateButton);
     auto* templateRow = new QHBoxLayout();
     m_useTemplateCheck = new QCheckBox(tr("Use Loaded Template"), this);
     m_useTemplateCheck->setAccessibleName(QStringLiteral("Use Template"));
@@ -883,8 +889,8 @@ void NetworkTransferPanel::setupUi_customRules(QVBoxLayout* orchestratorLayout) 
 }
 
 void NetworkTransferPanel::setupUi_deploymentJobs(QVBoxLayout* orchestratorLayout) {
-    Q_ASSERT(m_jobsTable);
-    Q_ASSERT(m_pauseJobButton);
+    Q_ASSERT(!m_jobsTable);
+    Q_ASSERT(!m_pauseJobButton);
     auto* jobsGroup = new QGroupBox(tr("Deployment Jobs"), this);
     auto* jobsLayout = new QVBoxLayout(jobsGroup);
     m_jobsTable = new QTableWidget(0, 7, this);
@@ -928,8 +934,8 @@ void NetworkTransferPanel::setupUi_deploymentJobs(QVBoxLayout* orchestratorLayou
 }
 
 void NetworkTransferPanel::setupUi_deploymentProgress(QVBoxLayout* orchestratorLayout) {
-    Q_ASSERT(m_exportHistoryButton);
-    Q_ASSERT(m_exportSummaryCsvButton);
+    Q_ASSERT(!m_exportHistoryButton);
+    Q_ASSERT(!m_exportSummaryCsvButton);
     auto* deploymentProgressGroup = new QGroupBox(tr("Deployment Progress"), this);
     auto* deploymentProgressLayout = new QVBoxLayout(deploymentProgressGroup);
     m_deploymentSummaryLabel = new QLabel(tr("0 of 0 complete"), this);
@@ -1016,8 +1022,8 @@ void NetworkTransferPanel::setupUi_statusLegend(QVBoxLayout* orchestratorLayout)
 }
 
 void NetworkTransferPanel::setupUi_bottomButtons(QVBoxLayout* mainLayout) {
-    Q_ASSERT(m_pauseResumeButton);
-    Q_ASSERT(m_transferButton);
+    Q_ASSERT(!m_pauseResumeButton);
+    Q_ASSERT(!m_transferButton);
     // Bottom button row: Settings + Security Settings (left), Start + Stop (right)
     auto* transferBtnLayout = new QHBoxLayout();
 
@@ -1288,8 +1294,7 @@ void NetworkTransferPanel::setupConnections_orchestratorObject() {
 }
 
 void NetworkTransferPanel::setupConnections_controllerSignals() {
-    Q_ASSERT(!m_transferErrors.empty());
-    Q_ASSERT(!m_transferErrors.isEmpty());
+    Q_ASSERT(m_controller);
     connect(m_controller,
             &NetworkTransferController::peerDiscovered,
             this,
@@ -1322,7 +1327,6 @@ void NetworkTransferPanel::setupConnections_controllerSignals() {
 }
 
 void NetworkTransferPanel::setupConnections_parallelManager() {
-    Q_ASSERT(!m_jobSourceControllers.isEmpty());
     Q_ASSERT(m_orchestrator);
     if (!m_parallelManager) {
         return;
@@ -1360,7 +1364,6 @@ void NetworkTransferPanel::setupConnections_parallelManager() {
 
 void NetworkTransferPanel::setupConnections_parallelJobActions() {
     Q_ASSERT(m_orchestrator);
-    Q_ASSERT(!m_jobSourceControllers.isEmpty());
     connect(m_parallelManager,
             &ParallelTransferManager::jobPauseRequested,
             this,
@@ -1507,7 +1510,6 @@ void NetworkTransferPanel::loadSettings_initHistoryManager() {
 }
 
 void NetworkTransferPanel::loadSettings_initAssignmentQueue() {
-    Q_ASSERT(m_assignmentQueueStore);
     Q_ASSERT(m_activeAssignmentLabel);
     if (m_assignmentQueueStore) {
         return;
@@ -1803,11 +1805,12 @@ void NetworkTransferPanel::buildNetworkSettingsPorts(QFormLayout* layout, QDialo
     dataPort->setObjectName(QStringLiteral("ntDataPort"));
     dataPort->setRange(1024, 65'535);
     dataPort->setValue(config.getNetworkTransferDataPort());
-    layout->addRow(sak::InfoButton::createInfoLabel(
-                       tr("Data Port:"),
-                       tr("TCP port for actual file data transfer -- must be open in your firewall"),
-                       dialog),
-                   dataPort);
+    layout->addRow(
+        sak::InfoButton::createInfoLabel(
+            tr("Data Port:"),
+            tr("TCP port for actual file data transfer -- must be open in your firewall"),
+            dialog),
+        dataPort);
 
     auto* chunkSize = new QSpinBox(dialog);
     chunkSize->setObjectName(QStringLiteral("ntChunkSize"));

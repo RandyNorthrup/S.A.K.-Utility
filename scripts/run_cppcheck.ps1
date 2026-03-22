@@ -67,6 +67,7 @@ $CppcheckArgs += "--platform=win64"
 # Preprocessor defines matching our build
 $CppcheckArgs += @(
     "-DSAK_PLATFORM_WINDOWS"
+    "-DQ_OS_WIN"
     "-DQT_NO_KEYWORDS"
     "-DWIN32"
     "-D_WIN64"
@@ -78,6 +79,7 @@ $CppcheckArgs += @(
     "-DQ_SLOTS="
     "-DQ_SIGNALS=protected"
     "-DQ_EMIT="
+    "-DQ_ENUM(x)="
     "-DQTEST_SET_MAIN_SOURCE_PATH="
 )
 
@@ -96,7 +98,9 @@ if ($Files -and $Files.Count -gt 0) {
     }
     $CppcheckArgs += $CppFiles
 } else {
-    # Full project scan
+    # Full project scan — exclude third-party code
+    $CppcheckArgs += "-i"
+    $CppcheckArgs += (Join-Path $ProjectRoot "src" "third_party")
     $CppcheckArgs += (Join-Path $ProjectRoot "src")
     $CppcheckArgs += (Join-Path $ProjectRoot "include")
 }

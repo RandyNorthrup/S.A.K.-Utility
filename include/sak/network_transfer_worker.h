@@ -180,6 +180,10 @@ private:
                           const DataOptions& options,
                           ReceiverState& state);
     bool processFileEnd(QTcpSocket* socket, const DataOptions& options, ReceiverState& state);
+    bool verifyFileChecksum(const QString& tempPath, const ReceiverState& state) const;
+    static void applyFilePermissions(const QString& finalPath,
+                                     const DataOptions& options,
+                                     const ReceiverState& state);
 
     /// @brief Derive encryption key for the receiver from passphrase/salt
     bool deriveReceiverKey(const DataOptions& options, ReceiverState& state);

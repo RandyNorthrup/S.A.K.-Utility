@@ -17,6 +17,8 @@
 #include <QFileInfo>
 #include <QStandardPaths>
 
+#include <algorithm>
+
 namespace sak {
 
 DiskCleanupAction::DiskCleanupAction() : QuickAction(nullptr) {}
@@ -92,8 +94,6 @@ void DiskCleanupAction::execute() {
     setStatus(ActionStatus::Running);
     Q_ASSERT(status() == ActionStatus::Running);
     QDateTime start_time = QDateTime::currentDateTime();
-    Q_ASSERT(start_time.isValid());
-
     QStringList drives;
     QString drives_error;
     if (!executeCalculateSpace(drives, drives_error, start_time)) {
@@ -169,7 +169,6 @@ bool DiskCleanupAction::executeCalculateSpace(QStringList& drives,
     ProcessResult config_result = runPowerShell(ps_config, sak::kTimeoutArchiveMs);
     if (!config_result.succeeded()) {
         ExecutionResult result;
-        Q_ASSERT(!result.success);  // verify default init
         result.success = false;
         result.message = "Failed to configure Disk Cleanup";
         result.duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
@@ -244,7 +243,6 @@ void DiskCleanupAction::executeBuildReport(int drives_processed,
     qint64 duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
 
     ExecutionResult result;
-    Q_ASSERT(!result.success);  // verify default init
     result.duration_ms = duration_ms;
     result.files_processed = drives_processed;
     result.bytes_processed = total_freed;
@@ -282,7 +280,6 @@ void DiskCleanupAction::executeBuildReport(int drives_processed,
 }
 
 void DiskCleanupAction::scanWindowsTemp() {
-    Q_ASSERT(!m_targets.empty());
     const QString system_root = qEnvironmentVariable("SystemRoot", "C:\\Windows");
     QString path = system_root + "\\Temp";
     QDir dir(path);
@@ -305,7 +302,6 @@ void DiskCleanupAction::scanWindowsTemp() {
 }
 
 void DiskCleanupAction::scanUserTemp() {
-    Q_ASSERT(!m_targets.empty());
     QString path = QStandardPaths::writableLocation(QStandardPaths::TempLocation);
     QDir dir(path);
 
@@ -327,7 +323,6 @@ void DiskCleanupAction::scanUserTemp() {
 }
 
 void DiskCleanupAction::scanBrowserCaches() {
-    Q_ASSERT(!m_targets.empty());
     QStringList cache_paths;
 
     // Chrome
@@ -366,7 +361,6 @@ void DiskCleanupAction::scanBrowserCaches() {
 }
 
 void DiskCleanupAction::scanRecycleBin() {
-Q_ASSERT(!m_targets.empty());
 #ifdef _WIN32
     // Scan Recycle Bin on all available drives
     const QFileInfoList drives = QDir::drives();
@@ -394,7 +388,6 @@ Q_ASSERT(!m_targets.empty());
 }
 
 void DiskCleanupAction::scanWindowsUpdate() {
-    Q_ASSERT(!m_targets.empty());
     const QString system_root = qEnvironmentVariable("SystemRoot", "C:\\Windows");
     QString path = system_root + "\\SoftwareDistribution\\Download";
     QDir dir(path);
@@ -417,7 +410,6 @@ void DiskCleanupAction::scanWindowsUpdate() {
 }
 
 void DiskCleanupAction::scanThumbnailCache() {
-    Q_ASSERT(!m_targets.empty());
     QString path = QStandardPaths::writableLocation(QStandardPaths::GenericCacheLocation) +
                    "/IconCache.db";
     QFileInfo file_info(path);
@@ -436,7 +428,7 @@ void DiskCleanupAction::scanThumbnailCache() {
     }
 }
 
-qint64 DiskCleanupAction::calculateDirectorySize(const QString& path, int& file_count) {
+qint64 DiskCleanupAction::calculateDirectorySize(const QString& path, int& file_count) const {
     file_count = 0;
     auto result = path_utils::getDirectorySizeAndCount(path.toStdWString());
     if (!result) {
@@ -503,13 +495,11 @@ bool DiskCleanupAction::isSafeToDelete(const QString& path) const {
                                          system_drive + "\\Users\\Public",
                                          system_drive + "\\ProgramData"};
 
-    for (const QString& dangerous : dangerous_paths) {
-        if (path.startsWith(dangerous, Qt::CaseInsensitive)) {
-            return false;
-        }
-    }
-
-    return true;
+    return std::none_of(dangerous_paths.begin(),
+                        dangerous_paths.end(),
+                        [&path](const QString& dangerous) {
+                            return path.startsWith(dangerous, Qt::CaseInsensitive);
+                        });
 }
 
 }  // namespace sak

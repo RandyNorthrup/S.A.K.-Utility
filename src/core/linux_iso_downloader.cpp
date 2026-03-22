@@ -33,6 +33,8 @@
 #include <QStandardPaths>
 #include <QtConcurrent/QtConcurrentRun>
 
+#include <algorithm>
+
 namespace {
 QString formatSize(qint64 bytes) {
     return sak::formatBytes(bytes);
@@ -349,10 +351,11 @@ static constexpr Aria2cExitEntry kAria2cExitCodes[] = {
 
 QString LinuxISODownloader::aria2cExitCodeMessage(int exit_code) {
     Q_ASSERT(exit_code >= 0);
-    for (const auto& entry : kAria2cExitCodes) {
-        if (entry.code == exit_code) {
-            return QString::fromUtf8(entry.message);
-        }
+    auto it = std::find_if(std::begin(kAria2cExitCodes),
+                           std::end(kAria2cExitCodes),
+                           [exit_code](const auto& e) { return e.code == exit_code; });
+    if (it != std::end(kAria2cExitCodes)) {
+        return QString::fromUtf8(it->message);
     }
     return QString("aria2c exited with code %1").arg(exit_code);
 }
@@ -673,10 +676,11 @@ QString LinuxISODownloader::findAria2c() const {
         appDir + "/tools/uup/aria2c.exe",
         appDir + "/aria2c.exe",
     };
-    for (const auto& search_path : searchPaths) {
-        if (QFileInfo::exists(search_path)) {
-            return search_path;
-        }
+    auto it = std::find_if(searchPaths.begin(), searchPaths.end(), [](const QString& p) {
+        return QFileInfo::exists(p);
+    });
+    if (it != searchPaths.end()) {
+        return *it;
     }
 
     // Check PATH environment variable

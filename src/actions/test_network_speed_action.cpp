@@ -109,7 +109,9 @@ void TestNetworkSpeedAction::testDownloadSpeed() {
 }
 
 void TestNetworkSpeedAction::parseDownloadSpeedOutput(const QString& output) {
-    Q_ASSERT(!output.isEmpty());
+    if (output.isEmpty()) {
+        return;
+    }
     QStringList lines = output.split('\n');
 
     QVector<double> speeds;
@@ -436,7 +438,6 @@ void TestNetworkSpeedAction::finalizeSpeedTestResult(const QDateTime& start_time
     qint64 duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
 
     ExecutionResult result;
-    Q_ASSERT(!result.success);  // verify default init
     result.duration_ms = duration_ms;
     result.success = (m_download_speed > 0 || m_latency > 0);
 
@@ -462,8 +463,6 @@ void TestNetworkSpeedAction::execute() {
     setStatus(ActionStatus::Running);
     Q_ASSERT(status() == ActionStatus::Running);
     QDateTime start_time = QDateTime::currentDateTime();
-    Q_ASSERT(start_time.isValid());
-
     // Phase 1: Get public IP and ISP information
     getPublicIPInfo();
 

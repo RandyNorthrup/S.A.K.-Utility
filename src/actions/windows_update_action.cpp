@@ -138,8 +138,6 @@ void WindowsUpdateAction::execute() {
     setStatus(ActionStatus::Running);
     Q_ASSERT(status() == ActionStatus::Running);
     QDateTime start_time = QDateTime::currentDateTime();
-    Q_ASSERT(start_time.isValid());
-
     QString ps_script;
     executeInitSession(start_time, ps_script);
 
@@ -304,14 +302,12 @@ void WindowsUpdateAction::executeBuildReport(const QDateTime& start_time,
     qint64 duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
 
     ExecutionResult result;
-    Q_ASSERT(!result.success);  // verify default init
     result.duration_ms = duration_ms;
 
     if (accumulated_output.contains("No updates available")) {
         result.success = true;
         result.message = "Windows is up to date";
         result.log = accumulated_output;
-        Q_ASSERT(result.duration_ms >= 0);
         finishWithResult(result, ActionStatus::Success);
         return;
     }
@@ -342,9 +338,6 @@ void WindowsUpdateAction::executeBuildReport(const QDateTime& start_time,
     } else {
         result.log += "\nVerification: Unable to query remaining updates";
     }
-
-    Q_ASSERT(result.duration_ms >= 0);
-
     finishWithResult(result, ActionStatus::Success);
 }
 

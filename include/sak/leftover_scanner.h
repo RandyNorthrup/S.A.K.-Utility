@@ -25,12 +25,14 @@ namespace sak {
 
 /// @brief Scans for leftover files, folders, registry keys, services, and tasks
 ///
-/// Supports three scan levels (Safe/Moderate/Advanced) with increasing depth.
-/// Classifies findings by risk level (Safe/Review/Risky) using pattern matching
-/// and a protected-path list.
+/// Uses a Revo-style targeted approach: scans the known install location,
+/// checks exact-name matches in standard dirs, diffs registry snapshots,
+/// and checks system objects at Advanced level. No substring word-matching.
 class LeftoverScanner {
 public:
-    explicit LeftoverScanner(const ProgramInfo& program, ScanLevel level);
+    explicit LeftoverScanner(const ProgramInfo& program,
+                             ScanLevel level,
+                             const QSet<QString>& registryBefore = {});
     ~LeftoverScanner() = default;
 
     LeftoverScanner(const LeftoverScanner&) = delete;
@@ -38,9 +40,6 @@ public:
     LeftoverScanner(LeftoverScanner&&) = default;
     LeftoverScanner& operator=(LeftoverScanner&&) = default;
 
-    /// @brief Run the full leftover scan
-    /// @param stopRequested Atomic flag for cancellation
-    /// @param progressCallback Called with (currentPath, foundCount)
     [[nodiscard]] QVector<LeftoverItem> scan(
         const std::atomic<bool>& stopRequested,
         std::function<void(const QString&, int)> progressCallback = {});
@@ -48,39 +47,33 @@ public:
 private:
     ProgramInfo m_program;
     ScanLevel m_level;
+    QSet<QString> m_registryBefore;
 
-    // Search patterns derived from program info
-    QStringList m_namePatterns;       ///< Program name variations
-    QStringList m_publisherPatterns;  ///< Publisher name variations
-    QString m_installDirName;         ///< Last component of install path
+    QStringList m_exactNames;     ///< Exact names for directory/file matching (lowercase)
+    QString m_installDirName;     ///< Last component of install path (lowercase)
+    QString m_installParentName;  ///< Parent dir of install path (lowercase)
+    QString m_concatenatedName;   ///< Display name without separators (lowercase)
 
-    /// @brief Generate search patterns from program info
-    void buildSearchPatterns();
+    void buildExactNames();
 
-    /// @brief Build name/install-dir patterns from display name
-    void buildNamePatterns(const QSet<QString>& excludedWords);
+    // Phase 1: Remaining files at known install location
+    QVector<LeftoverItem> scanInstallLocation(const std::atomic<bool>& stopRequested);
 
-    /// @brief Split text into words, filter, and append to target list
-    void addFilteredWords(const QString& text,
-                          const QString& split_pattern,
-                          QStringList& target,
-                          const QSet<QString>& excludes);
-
-    // File system scanning
-    QVector<LeftoverItem> scanFileSystem(const std::atomic<bool>& stopRequested);
-    QVector<LeftoverItem> scanDirectory(const QString& basePath,
-                                        const std::atomic<bool>& stopRequested);
-
-    // Registry scanning
-#ifdef Q_OS_WIN
-    QVector<LeftoverItem> scanRegistry(const std::atomic<bool>& stopRequested);
-    QVector<LeftoverItem> scanRegistryHive(HKEY hive,
-                                           const QString& subkey,
-                                           const QString& hiveName,
+    // Phase 2: Known application directories
+    QVector<LeftoverItem> scanKnownPaths(const std::atomic<bool>& stopRequested);
+    QVector<LeftoverItem> scanStandardDirs(const QString& basePath,
                                            const std::atomic<bool>& stopRequested);
+    QVector<LeftoverItem> scanStandardFiles(const QString& basePath,
+                                            const std::atomic<bool>& stopRequested);
+
+    // Phase 3: Registry (snapshot diff + known paths)
+#ifdef Q_OS_WIN
+    QVector<LeftoverItem> scanRegistryDiff(const std::atomic<bool>& stopRequested);
+    QVector<LeftoverItem> scanKnownRegistryPaths(const std::atomic<bool>& stopRequested);
+    [[nodiscard]] bool registryKeyMatchesProgram(const QString& keyPath) const;
 #endif
 
-    // System object scanning (Advanced level)
+    // Phase 4: System objects (Advanced only)
     QVector<LeftoverItem> scanServices(const std::atomic<bool>& stopRequested);
     QVector<LeftoverItem> scanScheduledTasks(const std::atomic<bool>& stopRequested);
     QVector<LeftoverItem> scanFirewallRules(const std::atomic<bool>& stopRequested);
@@ -90,22 +83,26 @@ private:
                                const QString& description,
                                const std::atomic<bool>& stopRequested,
                                QVector<LeftoverItem>& items);
+#ifdef Q_OS_WIN
     void scanRunKey(HKEY hive,
                     const wchar_t* subkey,
                     const QString& hive_name,
                     const std::atomic<bool>& stopRequested,
                     QVector<LeftoverItem>& items);
+#endif
     void scanStartupFolder(const std::atomic<bool>& stopRequested, QVector<LeftoverItem>& items);
 
-    // Safety classification
+    // Classification and matching
     LeftoverItem::RiskLevel classifyRisk(const QString& path, LeftoverItem::Type type) const;
+    LeftoverItem::RiskLevel classifyFileRisk(const QString& path_lower) const;
+    LeftoverItem::RiskLevel classifyTypeRisk(LeftoverItem::Type type) const;
+    void extractInstallDirNames();
     [[nodiscard]] bool isProtectedPath(const QString& path) const;
-    [[nodiscard]] bool matchesProgram(const QString& name) const;
+    [[nodiscard]] bool matchesProgramExact(const QString& nameLower) const;
+    [[nodiscard]] bool matchesProgramStrict(const QString& text) const;
+    [[nodiscard]] bool isPublisherDir(const QString& dirNameLower) const;
 
-    // Protected system paths that should NEVER be deleted
     static const QStringList kProtectedPaths;
-
-    /// @brief Calculate directory size recursively
     [[nodiscard]] static qint64 calculateSize(const QString& path);
 };
 

@@ -17,6 +17,9 @@
 #include <QTreeWidgetItem>
 #include <QVBoxLayout>
 
+#include <algorithm>
+#include <numeric>
+
 namespace sak {
 
 PerUserCustomizationDialog::PerUserCustomizationDialog(UserProfile& profile, QWidget* parent)
@@ -61,8 +64,6 @@ void PerUserCustomizationDialog::setupUi() {
 }
 
 void PerUserCustomizationDialog::setupUi_foldersSection(QVBoxLayout* mainLayout) {
-    Q_ASSERT(m_selectRecommendedButton);
-    Q_ASSERT(m_folderTree);
     // Standard folders section
     auto* foldersGroup = new QGroupBox("Standard Folders");
     auto* foldersLayout = new QVBoxLayout(foldersGroup);
@@ -125,8 +126,6 @@ void PerUserCustomizationDialog::setupUi_foldersSection(QVBoxLayout* mainLayout)
 }
 
 void PerUserCustomizationDialog::setupUi_appDataSection(QVBoxLayout* mainLayout) {
-    Q_ASSERT(m_browserBookmarksCheck);
-    Q_ASSERT(m_vsCodeSettingsCheck);
     // Application data section
     m_appDataGroup = new QGroupBox("Application Data (Selective)");
     auto* appDataLayout = new QVBoxLayout(m_appDataGroup);
@@ -167,8 +166,6 @@ void PerUserCustomizationDialog::setupUi_appDataSection(QVBoxLayout* mainLayout)
 }
 
 void PerUserCustomizationDialog::setupUi_dialogButtons(QVBoxLayout* mainLayout) {
-    Q_ASSERT(m_okButton);
-    Q_ASSERT(m_cancelButton);
     // Separator
     auto* separator2 = new QFrame();
     separator2->setFrameShape(QFrame::HLine);
@@ -365,13 +362,17 @@ void PerUserCustomizationDialog::onAddCustomFolder() {
     QString relativePath = profileDir.relativeFilePath(folderPath);
 
     // Check if already exists
-    for (const auto& sel : m_profile.folder_selections) {
-        if (sel.relative_path == relativePath) {
-            QMessageBox::warning(this,
-                                 "Duplicate Folder",
-                                 "This folder is already in the backup list.");
-            return;
-        }
+    bool duplicate =
+        std::any_of(m_profile.folder_selections.begin(),
+                    m_profile.folder_selections.end(),
+                    [&relativePath](const auto& sel) { return sel.relative_path == relativePath; });
+    if (duplicate) {
+        sak::logWarning("Duplicate folder rejected in backup profile: {}",
+                        relativePath.toStdString());
+        QMessageBox::warning(this,
+                             "Duplicate Folder",
+                             "This folder is already in the backup list.");
+        return;
     }
 
     // Calculate actual size and file count (with reasonable limits)
@@ -643,7 +644,7 @@ void PerUserCustomizationDialog::calculateDirectorySize(
 }
 
 void PerUserCustomizationDialog::setChildrenCheckState(QTreeWidgetItem* item,
-                                                       Qt::CheckState state) {
+                                                       Qt::CheckState state) const {
     if (!item) {
         return;
     }
@@ -661,7 +662,6 @@ void PerUserCustomizationDialog::setChildrenCheckState(QTreeWidgetItem* item,
 }
 
 void PerUserCustomizationDialog::updateParentCheckState(QTreeWidgetItem* item) {
-    Q_ASSERT(item);
     if (!item) {
         return;
     }
@@ -696,7 +696,6 @@ void PerUserCustomizationDialog::updateParentCheckState(QTreeWidgetItem* item) {
 }
 
 void PerUserCustomizationDialog::updateFolderCheckStates(QTreeWidgetItem* item) {
-    Q_ASSERT(item);
     // Tri-state checkbox logic for parent/child relationships
     if (!item) {
         return;
@@ -739,13 +738,10 @@ void PerUserCustomizationDialog::updateSummary() {
     Q_ASSERT(m_browserBookmarksCheck);
     Q_ASSERT(m_emailSignaturesCheck);
     qint64 totalSize = calculateTotalSize();
-    int selectedCount = 0;
-
-    for (const auto& sel : m_profile.folder_selections) {
-        if (sel.selected) {
-            selectedCount++;
-        }
-    }
+    int selectedCount =
+        static_cast<int>(std::count_if(m_profile.folder_selections.begin(),
+                                       m_profile.folder_selections.end(),
+                                       [](const auto& sel) { return sel.selected; }));
 
     // Add app data items
     int appDataItems = 0;
@@ -777,13 +773,12 @@ void PerUserCustomizationDialog::updateSummary() {
 }
 
 qint64 PerUserCustomizationDialog::calculateTotalSize() const {
-    qint64 total = 0;
-    for (const auto& sel : m_profile.folder_selections) {
-        if (sel.selected) {
-            total += sel.size_bytes;
-        }
-    }
-    return total;
+    return std::accumulate(m_profile.folder_selections.begin(),
+                           m_profile.folder_selections.end(),
+                           qint64{0},
+                           [](qint64 acc, const auto& sel) {
+                               return sel.selected ? acc + sel.size_bytes : acc;
+                           });
 }
 
 QVector<FolderSelection> PerUserCustomizationDialog::getFolderSelections() const {

@@ -175,7 +175,7 @@ private:
     /** @brief Find the display text for a drive by matching its device path in the list widget */
     QString findDriveDisplayText(const QString& devicePath) const;
     /** @brief Format a byte count as a human-readable string */
-    QString formatFileSize(qint64 bytes) const;
+    static QString formatFileSize(qint64 bytes);
     /** @brief Format a transfer speed in MB/s */
     QString formatSpeed(double mbps) const;
     /** @brief Run ISO analysis and populate the info group box */

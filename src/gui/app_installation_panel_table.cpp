@@ -14,6 +14,8 @@
 #include <QMessageBox>
 #include <QStyle>
 
+#include <algorithm>
+
 using sak::AppInstallationPanel;
 using sak::ChocolateyManager;
 
@@ -97,35 +99,33 @@ QHash<QString, QString> AppInstallationPanel::s_publisherMap = {
 // Publisher lookup
 // ============================================================================
 
+namespace {
+QIcon iconForPublisher(const QString& publisher) {
+    if (publisher == "Microsoft") {
+        return QApplication::style()->standardIcon(QStyle::SP_ComputerIcon);
+    }
+    if (publisher == "Google" || publisher == "Mozilla") {
+        return QApplication::style()->standardIcon(QStyle::SP_DriveNetIcon);
+    }
+    return QApplication::style()->standardIcon(QStyle::SP_FileIcon);
+}
+}  // namespace
+
 QIcon AppInstallationPanel::publisherIcon(const QString& packageId) const {
-    Q_ASSERT(!packageId.isEmpty());
-    // Look up the publisher from the known map
+    if (packageId.isEmpty()) {
+        return QApplication::style()->standardIcon(QStyle::SP_FileIcon);
+    }
     QString lowerPkg = packageId.toLower();
 
     // Try exact match first
     if (s_publisherMap.contains(lowerPkg)) {
-        // Use themed icons for major publishers
-        const QString& pub = s_publisherMap[lowerPkg];
-        if (pub == "Microsoft") {
-            return QApplication::style()->standardIcon(QStyle::SP_ComputerIcon);
-        }
-        if (pub == "Google" || pub == "Mozilla") {
-            return QApplication::style()->standardIcon(QStyle::SP_DriveNetIcon);
-        }
+        return iconForPublisher(s_publisherMap[lowerPkg]);
     }
 
     // Try prefix match
     for (auto it = s_publisherMap.constBegin(); it != s_publisherMap.constEnd(); ++it) {
         if (lowerPkg.startsWith(it.key())) {
-            const QString& pub = it.value();
-            if (pub == "Microsoft") {
-                return QApplication::style()->standardIcon(QStyle::SP_ComputerIcon);
-            }
-            if (pub == "Google" || pub == "Mozilla") {
-                return QApplication::style()->standardIcon(QStyle::SP_DriveNetIcon);
-            }
-            // Known publisher but no special icon
-            return QApplication::style()->standardIcon(QStyle::SP_FileIcon);
+            return iconForPublisher(it.value());
         }
     }
 
@@ -151,9 +151,6 @@ static QString lookupPublisher(const QString& packageId, const QHash<QString, QS
 // ============================================================================
 
 void AppInstallationPanel::updateResultsFromSearch(const QString& output) {
-    Q_ASSERT(m_resultsModel);
-    Q_ASSERT(m_choco_manager);
-    Q_ASSERT(m_resultsTable);
     auto packages = m_choco_manager->parseSearchResults(output);
 
     // Disable sorting during population
@@ -209,10 +206,6 @@ void AppInstallationPanel::updateResultsFromSearch(const QString& output) {
 // ============================================================================
 
 void AppInstallationPanel::updateQueueDisplay() {
-    Q_ASSERT(m_installButton);
-    Q_ASSERT(m_saveQueueButton);
-    Q_ASSERT(m_queueList);
-    Q_ASSERT(m_clearQueueButton);
     m_queueList->clear();
 
     for (const auto& entry : m_installQueue) {
@@ -253,8 +246,6 @@ void AppInstallationPanel::enableControls(bool enabled) {
 // ============================================================================
 
 void AppInstallationPanel::saveQueueToFile() {
-    Q_ASSERT(!m_installQueue.isEmpty());
-    Q_ASSERT(!m_installQueue.empty());
     if (m_installQueue.isEmpty()) {
         QMessageBox::information(this,
                                  tr("Save App List"),
@@ -363,13 +354,10 @@ void AppInstallationPanel::importQueueEntries(const QJsonArray& arr, int& added,
             continue;
         }
 
-        bool duplicate = false;
-        for (const auto& existing : m_installQueue) {
-            if (existing.package_id == pkgId) {
-                duplicate = true;
-                break;
-            }
-        }
+        bool duplicate =
+            std::any_of(m_installQueue.begin(),
+                        m_installQueue.end(),
+                        [&pkgId](const auto& existing) { return existing.package_id == pkgId; });
         if (duplicate) {
             skipped++;
             continue;

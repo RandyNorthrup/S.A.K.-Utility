@@ -15,6 +15,8 @@
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
 
+#include <numeric>
+
 // ============================================================================
 // Construction / Destruction
 // ============================================================================
@@ -129,10 +131,10 @@ void WindowsISODownloader::onFilesFetched(const QString& updateName,
     }
 
     // Calculate total download size
-    qint64 totalBytes = 0;
-    for (const auto& file : files) {
-        totalBytes += file.size;
-    }
+    qint64 totalBytes =
+        std::accumulate(files.begin(), files.end(), qint64{0}, [](qint64 acc, const auto& file) {
+            return acc + file.size;
+        });
 
     sak::logInfo("Starting UUP download: " + std::to_string(files.size()) + " files, " +
                  std::to_string(totalBytes / sak::kBytesPerMB) + " MB");

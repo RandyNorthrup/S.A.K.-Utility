@@ -55,8 +55,8 @@ private:
         int total_skipped{0};
     };
 
-    QString executeEnumerateVolumes() const;
-    void executeDefrag(const QString& script, const QDateTime& start_time);
+    static QString executeEnumerateVolumes();
+    void executeDefrag(const QString& ps_script, const QDateTime& start_time);
     void executeBuildReport(const QString& accumulated_output,
                             const QString& std_err,
                             const QDateTime& start_time);

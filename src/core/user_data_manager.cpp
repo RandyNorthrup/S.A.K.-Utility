@@ -19,8 +19,8 @@
 #include <QTemporaryFile>
 #include <QtGlobal>
 
-#include <optional>
 #include <algorithm>
+#include <optional>
 
 namespace {
 
@@ -415,7 +415,10 @@ bool UserDataManager::encryptArchiveInPlace(const QString& archive_path,
     if (!encrypted) {
         sak::logWarning("[UserDataManager] Encryption failed: {}",
                         static_cast<int>(encrypted.error()));
-        QFile::remove(archive_path);
+        if (!QFile::remove(archive_path)) {
+            sak::logError("[UserDataManager] Failed to remove archive after encryption failure: {}",
+                          archive_path.toStdString());
+        }
         return false;
     }
 
@@ -592,12 +595,10 @@ bool UserDataManager::extractArchive(const QString& archive_path,
 }
 
 bool UserDataManager::isExcluded(const QString& path, const QStringList& patterns) const {
-    return std::any_of(patterns.begin(), patterns.end(),
-        [&path](const auto& pattern) {
-            QRegularExpression re(
-                QRegularExpression::wildcardToRegularExpression(pattern));
-            return re.match(path).hasMatch();
-        });
+    return std::any_of(patterns.begin(), patterns.end(), [&path](const auto& pattern) {
+        QRegularExpression re(QRegularExpression::wildcardToRegularExpression(pattern));
+        return re.match(path).hasMatch();
+    });
 }
 
 QStringList UserDataManager::getStandardDataPaths() const {
@@ -624,10 +625,9 @@ QStringList UserDataManager::getStandardDataPaths() const {
 bool UserDataManager::copySourcesToDest(const QStringList& source_paths,
                                         const QString& dest_dir,
                                         const QStringList& exclude_patterns) {
-    return std::all_of(source_paths.begin(), source_paths.end(),
-        [&](const auto& source) {
-            return copyDirectory(source, dest_dir, exclude_patterns);
-        });
+    return std::all_of(source_paths.begin(), source_paths.end(), [&](const auto& source) {
+        return copyDirectory(source, dest_dir, exclude_patterns);
+    });
 }
 
 bool UserDataManager::copyDirectory(const QString& source,

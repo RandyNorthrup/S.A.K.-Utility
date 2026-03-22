@@ -70,7 +70,7 @@ private:
 
     bool stopWindowsUpdateService();
     bool startWindowsUpdateService();
-    qint64 calculateDirectorySize(const QString& path, int& file_count);
+    qint64 calculateDirectorySize(const QString& path, int& file_count) const;
 };
 
 }  // namespace sak

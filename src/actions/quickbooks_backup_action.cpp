@@ -97,6 +97,8 @@
 #include <QFileInfo>
 #include <QStandardPaths>
 
+#include <algorithm>
+
 namespace sak {
 
 QuickBooksBackupAction::QuickBooksBackupAction(const QString& backup_location)
@@ -130,12 +132,8 @@ void QuickBooksBackupAction::scan() {
     double mb = m_total_bytes / sak::kBytesPerMBf;
     result.summary = QString("Found %1 files (%2 MB)").arg(result.files_count).arg(mb, 0, 'f', 1);
 
-    int open_files = 0;
-    for (const auto& file : m_found_files) {
-        if (file.is_open) {
-            open_files++;
-        }
-    }
+    int open_files = static_cast<int>(std::count_if(
+        m_found_files.begin(), m_found_files.end(), [](const auto& file) { return file.is_open; }));
 
     if (open_files > 0) {
         result.warning = QString("%1 file(s) appear to be in use. Close QuickBooks before backup.")
@@ -156,8 +154,6 @@ void QuickBooksBackupAction::execute() {
     setStatus(ActionStatus::Running);
     Q_ASSERT(status() == ActionStatus::Running);
     QDateTime start_time = QDateTime::currentDateTime();
-    Q_ASSERT(start_time.isValid());
-
     Q_EMIT executionProgress("Checking if QuickBooks is running...", 5);
 
     if (isQuickBooksRunning()) {
@@ -255,7 +251,6 @@ void QuickBooksBackupAction::executeBuildResult(const QDateTime& start_time,
     qint64 duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
 
     ExecutionResult result;
-    Q_ASSERT(!result.success);  // verify default init
     result.duration_ms = duration_ms;
     result.files_processed = stats.files_copied;
     result.bytes_processed = stats.bytes_copied;
@@ -274,7 +269,6 @@ void QuickBooksBackupAction::executeBuildResult(const QDateTime& start_time,
             result.log +=
                 QString("\n\nSkipped %1 file(s) currently in use").arg(stats.files_skipped_open);
         }
-        Q_ASSERT(result.duration_ms >= 0);
         finishWithResult(result, ActionStatus::Success);
     } else {
         result.success = false;
@@ -316,7 +310,6 @@ void QuickBooksBackupAction::scanCommonLocations() {
 }
 
 void QuickBooksBackupAction::scanDirectory(const QString& dir_path) {
-    Q_ASSERT(!m_found_files.empty());
     Q_ASSERT(!dir_path.isEmpty());
     QDir dir(dir_path);
     if (!dir.exists()) {

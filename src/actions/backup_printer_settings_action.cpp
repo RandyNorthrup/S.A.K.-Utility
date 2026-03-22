@@ -72,8 +72,6 @@ void BackupPrinterSettingsAction::execute() {
     setStatus(ActionStatus::Running);
     Q_ASSERT(status() == ActionStatus::Running);
     QDateTime start_time = QDateTime::currentDateTime();
-    Q_ASSERT(start_time.isValid());
-
     Q_EMIT executionProgress("Backing up printer settings...", 30);
 
     if (isCancelled()) {
@@ -98,7 +96,6 @@ void BackupPrinterSettingsAction::execute() {
     qint64 duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
 
     ExecutionResult result;
-    Q_ASSERT(!result.success);  // verify default init
     result.duration_ms = duration_ms;
 
     if (success) {
@@ -112,7 +109,6 @@ void BackupPrinterSettingsAction::execute() {
                          "Registry exported to: %1\n"
                          "To restore: Double-click the .reg file or use 'reg import'")
                          .arg(reg_file);
-        Q_ASSERT(result.duration_ms >= 0);
         finishWithResult(result, ActionStatus::Success);
     } else {
         result.success = false;

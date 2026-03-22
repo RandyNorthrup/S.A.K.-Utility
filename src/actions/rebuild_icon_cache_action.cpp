@@ -15,6 +15,8 @@
 #include <QStandardPaths>
 #include <QThread>
 
+#include <numeric>
+
 namespace sak {
 
 namespace {
@@ -122,7 +124,6 @@ bool RebuildIconCacheAction::stopExplorer() {
 
 // ENTERPRISE-GRADE: Delete cache files with verification
 int RebuildIconCacheAction::deleteCacheFiles(const QVector<CacheFileInfo>& files) {
-    Q_ASSERT(!files.isEmpty());
     Q_EMIT executionProgress("Deleting icon and thumbnail cache files...", 45);
 
     int deleted_count = 0;
@@ -209,10 +210,12 @@ void RebuildIconCacheAction::scan() {
     Q_ASSERT(status() == ActionStatus::Scanning);
 
     QVector<CacheFileInfo> cache_files = enumerateCacheFiles();
-    qint64 total_size = 0;
-    for (const CacheFileInfo& info : cache_files) {
-        total_size += info.size_bytes;
-    }
+    qint64 total_size = std::accumulate(cache_files.begin(),
+                                        cache_files.end(),
+                                        qint64{0},
+                                        [](qint64 acc, const CacheFileInfo& info) {
+                                            return acc + info.size_bytes;
+                                        });
 
     ScanResult result;
     result.applicable = !cache_files.isEmpty();
@@ -240,17 +243,17 @@ void RebuildIconCacheAction::execute() {
     setStatus(ActionStatus::Running);
     Q_ASSERT(status() == ActionStatus::Running);
     QDateTime start_time = QDateTime::currentDateTime();
-    Q_ASSERT(start_time.isValid());
-
     Q_EMIT executionProgress("Enumerating cache files...", 5);
 
     // PHASE 1: Enumerate cache files
     QVector<CacheFileInfo> cache_files = enumerateCacheFiles();
 
-    qint64 total_size = 0;
-    for (const CacheFileInfo& info : cache_files) {
-        total_size += info.size_bytes;
-    }
+    qint64 total_size = std::accumulate(cache_files.begin(),
+                                        cache_files.end(),
+                                        qint64{0},
+                                        [](qint64 acc, const CacheFileInfo& info) {
+                                            return acc + info.size_bytes;
+                                        });
 
     QString report = buildIconCacheReportHeader(cache_files, total_size);
 
@@ -329,7 +332,6 @@ void RebuildIconCacheAction::buildAndFinishIconCacheResult(const IconCacheReport
                                                            const QString& report,
                                                            qint64 duration_ms) {
     ExecutionResult result;
-    Q_ASSERT(!result.success);  // verify default init
     result.duration_ms = duration_ms;
     result.files_processed = cache_report.deleted_count;
     result.bytes_processed = cache_report.total_size;

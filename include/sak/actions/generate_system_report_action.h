@@ -43,9 +43,9 @@ private:
     QString gatherOsAndHardwareInfo();
 
     /// @brief Builds the PowerShell script for OS and computer system info sections.
-    QString buildOsInfoScript() const;
+    static QString buildOsInfoScript();
     /// @brief Builds the PowerShell script for hardware, BIOS, network, and activation sections.
-    QString buildHardwareInfoScript() const;
+    static QString buildHardwareInfoScript();
 
     /// @brief Gathers physical disk and SMART info via Get-PhysicalDisk.
     /// @return Report section text.

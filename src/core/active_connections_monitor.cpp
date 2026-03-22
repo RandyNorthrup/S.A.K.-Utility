@@ -280,7 +280,6 @@ QString ActiveConnectionsMonitor::resolveHostname(const QString& ip) {
 }
 
 void ActiveConnectionsMonitor::applyFilters(QVector<ConnectionInfo>& connections) const {
-    Q_ASSERT(!connections.isEmpty());
     if (m_config.filterProcessName.isEmpty() && m_config.filterPort == 0) {
         return;
     }
@@ -304,8 +303,6 @@ void ActiveConnectionsMonitor::applyFilters(QVector<ConnectionInfo>& connections
 }
 
 void ActiveConnectionsMonitor::detectChanges(const QVector<ConnectionInfo>& current) {
-    Q_ASSERT(!current.isEmpty());
-    Q_ASSERT(!m_lastConnections.isEmpty());
     if (m_lastConnections.isEmpty()) {
         return;
     }

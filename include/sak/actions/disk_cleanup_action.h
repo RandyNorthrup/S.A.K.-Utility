@@ -107,7 +107,7 @@ private:
      * @param file_count Output: number of files
      * @return Total size in bytes
      */
-    qint64 calculateDirectorySize(const QString& path, int& file_count);
+    qint64 calculateDirectorySize(const QString& path, int& file_count) const;
 
     /**
      * @brief Delete directory contents recursively

@@ -14,6 +14,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QtGlobal>
+
 #include <algorithm>
 
 namespace sak {
@@ -306,6 +307,7 @@ bool UserProfileRestoreWorker::copyDirectory(const QString& sourceDir,
     QFileInfoList entries =
         dir.entryInfoList(QDir::Files | QDir::Dirs | QDir::NoDotAndDotDot | QDir::Hidden);
 
+    // cppcheck-suppress useStlAlgorithm ; loop has side effects (file copy, cancellation)
     for (const QFileInfo& entry : entries) {
         if (m_cancelled) {
             return false;
@@ -422,7 +424,12 @@ bool UserProfileRestoreWorker::resolveFileConflict(const QString& source,
             return false;
         }
         Q_EMIT logMessage(tr("Replacing with newer file: %1").arg(destInfo.fileName()), false);
-        QFile::remove(finalDestPath);
+        if (!QFile::remove(finalDestPath)) {
+            sak::logError("Failed to remove existing file for replacement: {}",
+                          finalDestPath.toStdString());
+            m_filesErrored++;
+            return false;
+        }
         break;
     }
 
@@ -434,7 +441,12 @@ bool UserProfileRestoreWorker::resolveFileConflict(const QString& source,
             return false;
         }
         Q_EMIT logMessage(tr("Replacing with larger file: %1").arg(destInfo.fileName()), false);
-        QFile::remove(finalDestPath);
+        if (!QFile::remove(finalDestPath)) {
+            sak::logError("Failed to remove existing file for replacement: {}",
+                          finalDestPath.toStdString());
+            m_filesErrored++;
+            return false;
+        }
         break;
     }
 
@@ -566,8 +578,9 @@ qint64 UserProfileRestoreWorker::calculateTotalSize() {
 }
 
 const BackupUserData* UserProfileRestoreWorker::findManifestUser(const QString& username) const {
-    auto it = std::find_if(m_manifest.users.begin(), m_manifest.users.end(),
-        [&username](const auto& user) { return user.username == username; });
+    auto it = std::find_if(m_manifest.users.begin(),
+                           m_manifest.users.end(),
+                           [&username](const auto& user) { return user.username == username; });
     return (it != m_manifest.users.end()) ? &(*it) : nullptr;
 }
 

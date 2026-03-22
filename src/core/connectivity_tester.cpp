@@ -63,7 +63,6 @@ namespace sak {
 
 namespace {
 void computePingStats(PingResult& result, const QVector<double>& rtts) {
-    Q_ASSERT(!rtts.isEmpty());
     result.lost = result.sent - result.received;
     result.lossPercent =
         (result.sent > 0) ? (static_cast<double>(result.lost) / result.sent) * 100.0 : 0.0;

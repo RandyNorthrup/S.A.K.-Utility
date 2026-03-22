@@ -12,6 +12,7 @@
 #include "sak/orchestration_client.h"
 #include "sak/orchestration_discovery_service.h"
 #include "sak/peer_discovery_service.h"
+#include "sak/secure_memory.h"
 
 #include <QCryptographicHash>
 #include <QDateTime>
@@ -384,11 +385,12 @@ void NetworkTransferController::cancelTransfer() {
 void NetworkTransferController::updateBandwidthLimit(int max_kbps) {
     m_settings.max_bandwidth_kbps = qMax(0, max_kbps);
     if (m_worker) {
+        const int limit = m_settings.max_bandwidth_kbps;
         QMetaObject::invokeMethod(
             m_worker,
-            [this]() {
+            [this, limit]() {
                 if (m_worker) {
-                    m_worker->updateBandwidthLimit(m_settings.max_bandwidth_kbps);
+                    m_worker->updateBandwidthLimit(limit);
                 }
             },
             Qt::QueuedConnection);
@@ -569,6 +571,8 @@ void NetworkTransferController::handleAuthChallengeMessage(const QJsonObject& me
     }
     QByteArray authData = nonce + *keyResult;
     QByteArray digest = QCryptographicHash::hash(authData, QCryptographicHash::Sha256);
+    sak::secure_wiper::wipe(keyResult->data(), static_cast<size_t>(keyResult->size()));
+    sak::secure_wiper::wipe(authData.data(), static_cast<size_t>(authData.size()));
 
     QJsonObject response;
     response["response"] = QString::fromUtf8(digest.toBase64());
@@ -611,6 +615,7 @@ void NetworkTransferController::handleAuthResponseMessage(const QJsonObject& mes
         }
         QByteArray expected = QCryptographicHash::hash(m_auth_nonce + *keyResult,
                                                        QCryptographicHash::Sha256);
+        sak::secure_wiper::wipe(keyResult->data(), static_cast<size_t>(keyResult->size()));
 
         if (response != expected) {
             const QJsonObject payload{{"error", "Authentication failed"}};
@@ -646,12 +651,12 @@ void NetworkTransferController::resetWorker() {
 }
 
 void NetworkTransferController::startWorkerSender() {
-    Q_ASSERT(m_worker);
-    Q_ASSERT(m_workerThread);
     resetWorker();
 
     m_workerThread = new QThread(this);
     m_worker = new NetworkTransferWorker();
+    Q_ASSERT(m_worker);
+    Q_ASSERT(m_workerThread);
     m_worker->moveToThread(m_workerThread);
 
     connect(m_workerThread, &QThread::finished, m_worker, &QObject::deleteLater);
@@ -683,9 +688,12 @@ void NetworkTransferController::startWorkerSender() {
 
     QMetaObject::invokeMethod(
         m_worker,
-        [this, options]() {
-            m_worker->startSender(
-                m_files, QHostAddress(m_selectedPeer.ip_address), m_settings.data_port, options);
+        [this,
+         options,
+         files = m_files,
+         peerIp = m_selectedPeer.ip_address,
+         dataPort = m_settings.data_port]() {
+            m_worker->startSender(files, QHostAddress(peerIp), dataPort, options);
         },
         Qt::QueuedConnection);
 }
@@ -758,12 +766,12 @@ void NetworkTransferController::connectReceiverSignals() {
 }
 
 void NetworkTransferController::startWorkerReceiver() {
-    Q_ASSERT(m_worker);
-    Q_ASSERT(m_workerThread);
     resetWorker();
 
     m_workerThread = new QThread(this);
     m_worker = new NetworkTransferWorker();
+    Q_ASSERT(m_worker);
+    Q_ASSERT(m_workerThread);
     m_worker->moveToThread(m_workerThread);
 
     connectReceiverSignals();
@@ -792,8 +800,8 @@ void NetworkTransferController::startWorkerReceiver() {
 
     QMetaObject::invokeMethod(
         m_worker,
-        [this, options]() {
-            m_worker->startReceiver(QHostAddress::AnyIPv4, m_settings.data_port, options);
+        [this, options, dataPort = m_settings.data_port]() {
+            m_worker->startReceiver(QHostAddress::AnyIPv4, dataPort, options);
         },
         Qt::QueuedConnection);
 }

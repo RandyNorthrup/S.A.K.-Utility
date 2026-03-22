@@ -38,7 +38,6 @@ const auto kIperf3Exe = QStringLiteral("iperf3.exe");
 const auto kFirewallRuleName = QStringLiteral("SAK_Utility_iPerf3");
 
 QStringList extractAcceptedClientLines(const QString& rawText) {
-    Q_ASSERT(!rawText.isEmpty());
     const auto text = rawText.trimmed();
     if (!text.contains(QStringLiteral("accepted connection"))) {
         return {};

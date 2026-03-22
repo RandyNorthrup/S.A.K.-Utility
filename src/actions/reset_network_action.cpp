@@ -113,8 +113,6 @@ void ResetNetworkAction::execute() {
     setStatus(ActionStatus::Running);
     Q_ASSERT(status() == ActionStatus::Running);
     QDateTime start_time = QDateTime::currentDateTime();
-    Q_ASSERT(start_time.isValid());
-
     m_requires_reboot = false;
     QStringList errors;
 
@@ -135,7 +133,6 @@ void ResetNetworkAction::execute() {
 }
 
 bool ResetNetworkAction::executeFlushDns(QStringList& errors) {
-    Q_ASSERT(!errors.isEmpty());
     // Step 1: Backup current Winsock configuration
     Q_EMIT executionProgress("Backing up Winsock catalog...", 5);
 
@@ -176,7 +173,6 @@ bool ResetNetworkAction::executeFlushDns(QStringList& errors) {
 }
 
 bool ResetNetworkAction::executeResetWinsock(QStringList& errors) {
-    Q_ASSERT(!errors.isEmpty());
     // Step 3: Reset Winsock catalog
     Q_EMIT executionProgress("Resetting Winsock catalog...", 30);
     {
@@ -221,7 +217,6 @@ bool ResetNetworkAction::executeResetWinsock(QStringList& errors) {
 }
 
 bool ResetNetworkAction::executeResetIpStack(QStringList& errors) {
-    Q_ASSERT(!errors.isEmpty());
     // Step 5: Release and renew IP addresses
     Q_EMIT executionProgress("Releasing IP addresses...", 60);
     {
@@ -272,7 +267,6 @@ bool ResetNetworkAction::executeResetIpStack(QStringList& errors) {
 }
 
 bool ResetNetworkAction::executeResetAdaptersAndCache(QStringList& errors) {
-    Q_ASSERT(!errors.isEmpty());
     // Step 7: Reset network adapter settings
     Q_EMIT executionProgress("Resetting network adapters...", 85);
     QString resetAdapterScript =
@@ -339,7 +333,6 @@ void ResetNetworkAction::executeBuildReport(const QStringList& errors,
     qint64 duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
 
     ExecutionResult result;
-    Q_ASSERT(!result.success);  // verify default init
     result.duration_ms = duration_ms;
     result.success = errors.isEmpty();
     result.message = errors.isEmpty()

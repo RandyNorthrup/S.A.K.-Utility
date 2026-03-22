@@ -42,8 +42,6 @@ void ImageFlasherSettingsDialog::setupUi() {
 }
 
 void ImageFlasherSettingsDialog::setupUi_generalSection(QVBoxLayout* mainLayout) {
-    Q_ASSERT(m_validationModeCombo);
-    Q_ASSERT(m_bufferSizeSpin);
     // Verification group
     auto* verificationGroup = new QGroupBox("Verification", this);
     auto* verificationLayout = new QGridLayout(verificationGroup);
@@ -112,7 +110,6 @@ void ImageFlasherSettingsDialog::setupUi_generalSection(QVBoxLayout* mainLayout)
 }
 
 void ImageFlasherSettingsDialog::setupUi_advancedSection(QVBoxLayout* mainLayout) {
-    Q_ASSERT(m_largeDriveThresholdSpin);
     Q_ASSERT(mainLayout);
     // Safety group
     auto* safetyGroup = new QGroupBox("Safety", this);
@@ -176,7 +173,6 @@ void ImageFlasherSettingsDialog::setupUi_advancedSection(QVBoxLayout* mainLayout
 }
 
 void ImageFlasherSettingsDialog::setupUi_buttonBar(QVBoxLayout* mainLayout) {
-    Q_ASSERT(m_cacheInfoLabel);
     Q_ASSERT(mainLayout);
     // Storage group
     auto* storageGroup = new QGroupBox("Storage", this);

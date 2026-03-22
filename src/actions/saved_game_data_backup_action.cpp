@@ -144,8 +144,6 @@ void SavedGameDataBackupAction::execute() {
     setStatus(ActionStatus::Running);
     Q_ASSERT(status() == ActionStatus::Running);
     QDateTime start_time = QDateTime::currentDateTime();
-    Q_ASSERT(start_time.isValid());
-
     QDir backup_dir(m_backup_location + "/GameSaves");
     if (!backup_dir.mkpath(".")) {
         sak::logWarning("Failed to create game saves backup directory: {}",
@@ -175,7 +173,6 @@ void SavedGameDataBackupAction::execute() {
     }
 
     ExecutionResult result;
-    Q_ASSERT(!result.success);  // verify default init
     result.success = processed > 0;
     result.duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
     result.files_processed = processed;

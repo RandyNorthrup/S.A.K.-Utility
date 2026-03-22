@@ -62,6 +62,7 @@ void DiagnosticBenchmarkPanel::onCopyInventoryClicked() {
                 .arg(inv.memory.slots_used)
                 .arg(inv.memory.slots_total);
     for (const auto& gpu : inv.gpus) {
+        // cppcheck-suppress useStlAlgorithm ; string formatting not suited for std::accumulate
         text += QString("GPU: %1 (%2)\n").arg(gpu.name, formatBytes(gpu.vram_bytes));
     }
     text +=
@@ -370,6 +371,7 @@ void DiagnosticBenchmarkPanel::onStartStressTestClicked() {
     config.thermal_limit_celsius = m_stress_thermal_limit_spin->value();
 
     if (!config.stress_cpu && !config.stress_memory && !config.stress_disk && !config.stress_gpu) {
+        sak::logWarning("Stress test started with no components selected");
         logMessage("Select at least one component for stress testing");
         return;
     }

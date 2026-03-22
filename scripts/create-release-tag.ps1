@@ -12,9 +12,9 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-# Validate version format
-if ($Version -notmatch '^\d+\.\d+\.\d+$') {
-    Write-Error "Invalid version format. Expected: X.Y.Z (e.g., 0.5.0)"
+# Validate version format (supports X.Y.Z and X.Y.Z.W)
+if ($Version -notmatch '^\d+\.\d+\.\d+(\.\d+)?$') {
+    Write-Error "Invalid version format. Expected: X.Y.Z or X.Y.Z.W (e.g., 0.9.0 or 0.9.0.3)"
     exit 1
 }
 

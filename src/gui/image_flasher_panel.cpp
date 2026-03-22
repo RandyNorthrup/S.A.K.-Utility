@@ -418,7 +418,6 @@ void ImageFlasherPanel::createDownloadCards(QVBoxLayout* pageLayout) {
 }
 
 void ImageFlasherPanel::createSelectImageButton(QVBoxLayout* pageLayout) {
-    Q_ASSERT(m_selectImageButton);
     Q_ASSERT(pageLayout);
     auto* selectRow = new QHBoxLayout();
     selectRow->addStretch();
@@ -439,8 +438,6 @@ void ImageFlasherPanel::createSelectImageButton(QVBoxLayout* pageLayout) {
 }
 
 void ImageFlasherPanel::createDriveSelectionPage() {
-    Q_ASSERT(m_driveListWidget);
-    Q_ASSERT(m_showAllDrivesCheckBox);
     m_driveSelectionPage = new QWidget();
     auto* layout = new QVBoxLayout(m_driveSelectionPage);
 
@@ -473,8 +470,6 @@ void ImageFlasherPanel::createDriveSelectionPage() {
 }
 
 void ImageFlasherPanel::createFlashProgressPage() {
-    Q_ASSERT(m_flashStateLabel);
-    Q_ASSERT(m_cancelButton);
     m_flashProgressPage = new QWidget();
     auto* layout = new QVBoxLayout(m_flashProgressPage);
 
@@ -506,8 +501,6 @@ void ImageFlasherPanel::createFlashProgressPage() {
 }
 
 void ImageFlasherPanel::createCompletionPage() {
-    Q_ASSERT(m_completionMessageLabel);
-    Q_ASSERT(m_completionDetailsLabel);
     m_completionPage = new QWidget();
     auto* layout = new QVBoxLayout(m_completionPage);
 
@@ -1150,7 +1143,7 @@ bool ImageFlasherPanel::isSystemDrive(const QString& devicePath) const {
     return m_driveScanner->isSystemDrive(devicePath);
 }
 
-QString ImageFlasherPanel::formatFileSize(qint64 bytes) const {
+QString ImageFlasherPanel::formatFileSize(qint64 bytes) {
     return formatBytes(bytes);
 }
 

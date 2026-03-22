@@ -39,7 +39,6 @@ void NetworkConnectionManager::stopServer() {
 }
 
 void NetworkConnectionManager::connectToHost(const QHostAddress& host, quint16 port) {
-    Q_ASSERT(m_socket);
     if (m_socket) {
         m_socket->disconnectFromHost();
         m_socket->deleteLater();
@@ -78,7 +77,6 @@ quint16 NetworkConnectionManager::serverPort() const {
 }
 
 void NetworkConnectionManager::onNewConnection() {
-    Q_ASSERT(m_socket);
     Q_ASSERT(m_server);
     if (m_socket) {
         // Disconnect all signals from old socket before replacing it to

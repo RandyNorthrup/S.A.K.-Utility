@@ -45,7 +45,7 @@ private:
 
     int detectMonitorCount();
     bool isProcessRunning(const QString& process_name);
-    void openSettingsAndCapture(const QString& page, const QString& filename);
+    void openSettingsAndCapture(const QString& uri, const QString& name);
     void captureScreen(const QString& filename);
     void openSettings(const QString& page);
     void captureScreen();

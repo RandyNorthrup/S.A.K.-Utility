@@ -335,7 +335,6 @@ LinuxDistroCatalog::DistroInfo LinuxDistroCatalog::distroById(const QString& id)
 // ============================================================================
 
 QString LinuxDistroCatalog::resolveDownloadUrl(const DistroInfo& distro) const {
-    Q_ASSERT(!m_githubAssetUrls.empty());
     if (distro.sourceType == SourceType::GitHubRelease) {
         // Use cached GitHub asset URL if available
         auto it = m_githubAssetUrls.find(distro.id);
@@ -368,7 +367,6 @@ QString LinuxDistroCatalog::resolveChecksumUrl(const DistroInfo& distro) const {
 }
 
 QString LinuxDistroCatalog::resolveFileName(const DistroInfo& distro) const {
-    Q_ASSERT(!m_githubAssetUrls.empty());
     // For GitHub releases, check cached filename first
     if (distro.sourceType == SourceType::GitHubRelease) {
         auto url = m_githubAssetUrls.find(distro.id);

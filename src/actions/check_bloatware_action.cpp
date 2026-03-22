@@ -202,8 +202,6 @@ void CheckBloatwareAction::execute() {
     setStatus(ActionStatus::Running);
     Q_ASSERT(status() == ActionStatus::Running);
     QDateTime start_time = QDateTime::currentDateTime();
-    Q_ASSERT(start_time.isValid());
-
     QString scan_output;
     BloatwareScanResult result;
     executeScanApps(start_time, scan_output, result.report);
@@ -421,7 +419,6 @@ void CheckBloatwareAction::executeBuildReport(const QDateTime& start_time,
     qint64 duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
 
     ExecutionResult exec_result;
-    Q_ASSERT(!exec_result.success);  // verify default init
     exec_result.duration_ms = duration_ms;
     exec_result.files_processed = result.apps_scanned;
     exec_result.success = true;
@@ -432,9 +429,6 @@ void CheckBloatwareAction::executeBuildReport(const QDateTime& start_time,
                   .arg(QString::number(result.total_size / (1024.0 * 1024.0), 'f', 2))
             : "No common bloatware detected";
     exec_result.log = result.report + "\n" + result.structured_output;
-
-    Q_ASSERT(exec_result.duration_ms >= 0);
-
     finishWithResult(exec_result, ActionStatus::Success);
 }
 

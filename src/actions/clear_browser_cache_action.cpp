@@ -52,7 +52,9 @@ void ClearBrowserCacheAction::scan() {
 }
 
 qint64 ClearBrowserCacheAction::calculateDirectorySize(const QString& path, qint64& files) {
-    Q_ASSERT(!path.isEmpty());
+    if (path.isEmpty()) {
+        return 0;
+    }
     QDir dir(path);
     if (!dir.exists()) {
         return 0;
@@ -151,8 +153,6 @@ void ClearBrowserCacheAction::execute() {
     setStatus(ActionStatus::Running);
     Q_ASSERT(status() == ActionStatus::Running);
     QDateTime start_time = QDateTime::currentDateTime();
-    Q_ASSERT(start_time.isValid());
-
     Q_EMIT executionProgress("+================================================================+",
                              0);
     Q_EMIT executionProgress("|          BROWSER CACHE CLEARING - ENTERPRISE MODE             |",
@@ -189,14 +189,12 @@ void ClearBrowserCacheAction::execute() {
                              90);
 
     ExecutionResult result;
-    Q_ASSERT(!result.success);  // verify default init
     result.duration_ms = duration_ms;
 
     if (parsed.cleared_count > 0) {
         result.success = true;
         result.message = QString("Successfully cleared %1 browser(s)").arg(parsed.cleared_count);
         result.log = buildSuccessLog(parsed, ps.std_err, duration_ms);
-        Q_ASSERT(result.duration_ms >= 0);
         finishWithResult(result, ActionStatus::Success);
     } else {
         result.success = false;
@@ -359,8 +357,10 @@ QString ClearBrowserCacheAction::buildScriptFirefoxAndOutput() const {
 
 ClearBrowserCacheAction::BrowserCacheResult ClearBrowserCacheAction::parseCacheOutput(
     const QString& output) const {
-    Q_ASSERT(!output.isEmpty());
     BrowserCacheResult parsed;
+    if (output.isEmpty()) {
+        return parsed;
+    }
     const QStringList lines = output.split('\n', Qt::SkipEmptyParts);
 
     for (const QString& line : lines) {
@@ -404,6 +404,7 @@ QString ClearBrowserCacheAction::buildSuccessLog(const BrowserCacheResult& parse
     log += "+================================================================+\n";
 
     for (const QString& detail : parsed.details) {
+        // cppcheck-suppress useStlAlgorithm ; string formatting not suited for std::accumulate
         log += QString("| %1\n").arg(detail).leftJustified(66) + "|\n";
     }
 

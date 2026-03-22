@@ -252,7 +252,7 @@ QString LogViewer::getLevelColor(LogLevel level) const {
     }
 }
 
-QString LogViewer::getLevelText(LogLevel level) const {
+QString LogViewer::getLevelText(LogLevel level) {
     switch (level) {
     case LogLevel::Info:
         return "INFO";

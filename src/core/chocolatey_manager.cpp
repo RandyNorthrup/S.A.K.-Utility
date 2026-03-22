@@ -32,7 +32,10 @@ ChocolateyManager::~ChocolateyManager() {
 }
 
 bool ChocolateyManager::initialize(const QString& choco_portable_path) {
-    Q_ASSERT(!choco_portable_path.isEmpty());
+    if (choco_portable_path.isEmpty()) {
+        sak::logError("[ChocolateyManager] initialize: choco_portable_path is empty");
+        return false;
+    }
     m_choco_dir = choco_portable_path;
 
     // Look for choco.exe in common locations within portable directory
@@ -198,8 +201,12 @@ ChocolateyManager::Result ChocolateyManager::upgradePackage(const QString& packa
 }
 
 ChocolateyManager::Result ChocolateyManager::searchPackage(const QString& query, int max_results) {
-    Q_ASSERT(!query.isEmpty());
-    Q_ASSERT(max_results >= 0);
+    if (query.isEmpty()) {
+        return {false, "", "Search query is empty", -1};
+    }
+    if (max_results < 0) {
+        max_results = 0;
+    }
     if (!m_initialized) {
         return {false, "", "ChocolateyManager not initialized", -1};
     }
@@ -263,7 +270,9 @@ bool ChocolateyManager::isPackageInstalled(const QString& package_name) {
 }
 
 QString ChocolateyManager::getInstalledVersion(const QString& package_name) {
-    Q_ASSERT(!package_name.isEmpty());
+    if (package_name.isEmpty()) {
+        return {};
+    }
     if (!m_initialized) {
         return QString();
     }
@@ -291,7 +300,9 @@ QString ChocolateyManager::getInstalledVersion(const QString& package_name) {
 }
 
 bool ChocolateyManager::isPackageAvailable(const QString& package_name) {
-    Q_ASSERT(!package_name.isEmpty());
+    if (package_name.isEmpty()) {
+        return false;
+    }
     if (!m_initialized) {
         return false;
     }
@@ -377,8 +388,12 @@ bool ChocolateyManager::getAutoConfirm() const {
 }
 
 ChocolateyManager::Result ChocolateyManager::executeChoco(const QStringList& args, int timeout_ms) {
-    Q_ASSERT(!args.isEmpty());
-    Q_ASSERT(timeout_ms >= 0);
+    if (args.isEmpty()) {
+        return {false, "", "No arguments provided to Chocolatey", -1};
+    }
+    if (timeout_ms < 0) {
+        timeout_ms = 0;
+    }
     QProcess process;
 
     // Set up environment
@@ -446,7 +461,9 @@ bool ChocolateyManager::parseExitCode(int exit_code) const {
 }
 
 QString ChocolateyManager::extractErrorMessage(const QString& output) const {
-    Q_ASSERT(!output.isEmpty());
+    if (output.isEmpty()) {
+        return "Unknown error";
+    }
     // Look for common error patterns in Chocolatey output
     QStringList lines = output.split('\n');
 
@@ -472,7 +489,9 @@ QString ChocolateyManager::extractErrorMessage(const QString& output) const {
 }
 
 bool ChocolateyManager::isNetworkError(const QString& output) const {
-    Q_ASSERT(!output.isEmpty());
+    if (output.isEmpty()) {
+        return false;
+    }
     QStringList network_keywords = {"network",
                                     "timeout",
                                     "connection",

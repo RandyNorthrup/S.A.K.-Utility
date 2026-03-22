@@ -199,5 +199,6 @@ static_assert(std::is_copy_constructible_v<UninstallQueueItem>);
 Q_DECLARE_METATYPE(sak::ProgramInfo)
 Q_DECLARE_METATYPE(sak::LeftoverItem)
 Q_DECLARE_METATYPE(sak::UninstallReport)
+Q_DECLARE_METATYPE(sak::ScanLevel)
 Q_DECLARE_METATYPE(QVector<sak::ProgramInfo>)
 Q_DECLARE_METATYPE(QVector<sak::LeftoverItem>)

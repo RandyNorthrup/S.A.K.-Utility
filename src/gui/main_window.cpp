@@ -298,7 +298,6 @@ MainWindow::~MainWindow() {
 }
 
 void MainWindow::setupUi() {
-    Q_ASSERT(m_tab_widget);
     setWindowTitle("S.A.K. Utility - Swiss Army Knife Utility");
     setMinimumSize(sak::kMainWindowMinW, sak::kMainWindowMinH);
     resize(sak::kMainWindowInitW, sak::kMainWindowInitH);
@@ -351,10 +350,10 @@ void MainWindow::createStatusBar() {
     m_status_label->setContentsMargins(6, 0, 6, 0);
     statusBar()->addWidget(m_status_label, 1);
 
-    // Progress bar (hidden by default)
+    // Progress bar (hidden by default, fixed size to prevent resizing)
     m_progress_bar = new QProgressBar(this);
-    m_progress_bar->setMaximumWidth(sak::kProgressBarMaxW);
-    m_progress_bar->setMaximumHeight(sak::kProgressBarMaxH);
+    m_progress_bar->setFixedWidth(sak::kProgressBarMaxW);
+    m_progress_bar->setFixedHeight(sak::kProgressBarMaxH);
     m_progress_bar->setTextVisible(true);
     m_progress_bar->setVisible(false);
     statusBar()->addPermanentWidget(m_progress_bar);
@@ -376,7 +375,6 @@ void MainWindow::createToolPanels() {
 }
 
 void MainWindow::createSimplePanels() {
-    Q_ASSERT(m_organizer_panel);
     Q_ASSERT(m_tab_widget);
     // -- 1. Quick Actions ------------------------------------------------
     m_quick_actions_panel = std::make_unique<QuickActionsPanel>(this);

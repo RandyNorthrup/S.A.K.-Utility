@@ -37,7 +37,6 @@ void DevelopmentConfigsBackupAction::scanGitConfig() {
 }
 
 void DevelopmentConfigsBackupAction::scanSSHKeys() {
-    Q_ASSERT(!m_user_profiles.isEmpty());
     for (const UserProfile& user : m_user_profiles) {
         QString ssh_dir = user.profile_path + "/.ssh";
         QDir dir(ssh_dir);
@@ -60,7 +59,6 @@ void DevelopmentConfigsBackupAction::scanSSHKeys() {
 }
 
 void DevelopmentConfigsBackupAction::scanVSCodeSettings() {
-    Q_ASSERT(!m_user_profiles.isEmpty());
     for (const UserProfile& user : m_user_profiles) {
         QString vscode_dir = user.profile_path + "/AppData/Roaming/Code/User";
         QDir dir(vscode_dir);
@@ -89,7 +87,6 @@ void DevelopmentConfigsBackupAction::scanVSCodeSettings() {
 }
 
 void DevelopmentConfigsBackupAction::scanVisualStudioSettings() {
-    Q_ASSERT(!m_user_profiles.isEmpty());
     for (const UserProfile& user : m_user_profiles) {
         QString vs_path = user.profile_path + "/AppData/Local/Microsoft/VisualStudio";
         QDir dir(vs_path);
@@ -114,7 +111,6 @@ void DevelopmentConfigsBackupAction::scanVisualStudioSettings() {
 }
 
 void DevelopmentConfigsBackupAction::scanIntelliJSettings() {
-    Q_ASSERT(!m_user_profiles.isEmpty());
     for (const UserProfile& user : m_user_profiles) {
         QString intellij_path = user.profile_path + "/AppData/Roaming/JetBrains";
         QDir dir(intellij_path);
@@ -193,8 +189,6 @@ void DevelopmentConfigsBackupAction::execute() {
     setStatus(ActionStatus::Running);
     Q_ASSERT(status() == ActionStatus::Running);
     QDateTime start_time = QDateTime::currentDateTime();
-    Q_ASSERT(start_time.isValid());
-
     QDir backup_dir(m_backup_location + "/DevConfigs");
     if (!backup_dir.mkpath(".")) {
         sak::logWarning("Failed to create dev configs backup directory: {}",

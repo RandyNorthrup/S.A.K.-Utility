@@ -27,6 +27,14 @@ AdvancedUninstallController::AdvancedUninstallController(QObject* parent)
     : QObject(parent)
     , m_enumerator(std::make_unique<ProgramEnumerator>())
     , m_restore_manager(std::make_unique<RestorePointManager>(this)) {
+    // Register custom types for cross-thread signal delivery
+    qRegisterMetaType<sak::ProgramInfo>("sak::ProgramInfo");
+    qRegisterMetaType<sak::LeftoverItem>("sak::LeftoverItem");
+    qRegisterMetaType<sak::UninstallReport>("sak::UninstallReport");
+    qRegisterMetaType<sak::ScanLevel>("sak::ScanLevel");
+    qRegisterMetaType<QVector<sak::ProgramInfo>>("QVector<sak::ProgramInfo>");
+    qRegisterMetaType<QVector<sak::LeftoverItem>>("QVector<sak::LeftoverItem>");
+
     // Wire enumerator signals
     connect(m_enumerator.get(),
             &ProgramEnumerator::enumerationStarted,
@@ -60,8 +68,6 @@ AdvancedUninstallController::State AdvancedUninstallController::currentState() c
 // -- Program Enumeration -----------------------------------------------------
 
 void AdvancedUninstallController::refreshPrograms() {
-    Q_ASSERT(m_enumThread);
-    Q_ASSERT(m_enumerator);
     if (m_state != State::Idle) {
         Q_EMIT statusMessage("Cannot refresh while another operation is in progress.",
                              kStatusTimeoutShortMs);
@@ -238,8 +244,6 @@ void AdvancedUninstallController::removeUwpPackage(const ProgramInfo& program) {
 }
 
 void AdvancedUninstallController::removeRegistryEntry(const ProgramInfo& program) {
-    Q_ASSERT(m_uninstall_worker);
-    Q_ASSERT(!program.displayName.isEmpty());
     if (m_state != State::Idle) {
         Q_EMIT statusMessage("Another operation is already in progress.", kStatusTimeoutShortMs);
         return;
@@ -269,8 +273,11 @@ void AdvancedUninstallController::removeRegistryEntry(const ProgramInfo& program
 }
 
 void AdvancedUninstallController::cleanLeftovers(const QVector<LeftoverItem>& selectedItems) {
-    Q_ASSERT(m_cleanup_worker);
-    Q_ASSERT(!selectedItems.isEmpty());
+    if (selectedItems.isEmpty()) {
+        Q_EMIT statusMessage("No leftover items selected.", kStatusTimeoutShortMs);
+        return;
+    }
+
     if (m_state != State::Idle && m_state != State::Uninstalling) {
         Q_EMIT statusMessage("Cannot clean while another operation is in progress.",
                              kStatusTimeoutShortMs);
@@ -318,8 +325,6 @@ void AdvancedUninstallController::cleanLeftovers(const QVector<LeftoverItem>& se
 }
 
 void AdvancedUninstallController::cancelOperation() {
-    Q_ASSERT(m_enumerator);
-    Q_ASSERT(m_enumThread);
     // Cancel enumeration if running
     if (m_state == State::Enumerating && m_enumerator) {
         m_enumerator->requestCancel();
@@ -375,7 +380,6 @@ void AdvancedUninstallController::clearQueue() {
 }
 
 void AdvancedUninstallController::startBatchUninstall(bool createRestorePoint) {
-    Q_ASSERT(m_restore_manager);
     if (m_state != State::Idle) {
         Q_EMIT statusMessage("Another operation is already in progress.", kStatusTimeoutShortMs);
         return;
@@ -501,8 +505,6 @@ void AdvancedUninstallController::onEnumerationFinished(QVector<ProgramInfo> pro
 }
 
 void AdvancedUninstallController::onEnumerationFailed(const QString& error) {
-    Q_ASSERT(m_enumerator);
-    Q_ASSERT(m_enumThread);
     // Guard against stale signal after cancelOperation() already cleaned up
     if (m_state != State::Enumerating) {
         return;
@@ -521,7 +523,6 @@ void AdvancedUninstallController::onEnumerationFailed(const QString& error) {
 }
 
 void AdvancedUninstallController::onUninstallComplete(UninstallReport report) {
-    Q_ASSERT(!m_queue.isEmpty());
     m_lastReport = report;
 
     // If in batch mode, process next
@@ -562,7 +563,6 @@ void AdvancedUninstallController::onUninstallWorkerFailed(int /*errorCode*/,
 }
 
 void AdvancedUninstallController::onUninstallWorkerCancelled() {
-    Q_ASSERT(!m_queue.isEmpty());
     if (m_batchIndex >= 0 && m_batchIndex < m_queue.size()) {
         m_queue[m_batchIndex].status = UninstallQueueItem::Status::Cancelled;
         // Count batch results so far
@@ -620,8 +620,6 @@ void AdvancedUninstallController::setState(State newState) {
 }
 
 void AdvancedUninstallController::cleanupWorkers() {
-    Q_ASSERT(m_enumerator);
-    Q_ASSERT(m_enumThread);
     // Clean up enumeration thread
     if (m_enumThread) {
         m_enumerator->requestCancel();
@@ -657,8 +655,10 @@ void AdvancedUninstallController::cleanupWorkers() {
 }
 
 void AdvancedUninstallController::processNextQueueItem() {
-    Q_ASSERT(!m_queue.isEmpty());
-    Q_ASSERT(m_uninstall_worker);
+    if (m_queue.isEmpty()) {
+        return;
+    }
+
     ++m_batchIndex;
 
     if (m_batchIndex >= m_queue.size()) {

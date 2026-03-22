@@ -9,6 +9,8 @@
 #include <QDir>
 #include <QtGlobal>
 
+#include <algorithm>
+
 #include <cfgmgr32.h>
 #include <dbt.h>
 #include <ntddscsi.h>
@@ -20,12 +22,9 @@
 namespace {
 /// @brief Check if any drive in the list has the given devicePath
 bool containsDevicePath(const QList<sak::DriveInfo>& drives, const QString& devicePath) {
-    for (const auto& drive : drives) {
-        if (drive.devicePath == devicePath) {
-            return true;
-        }
-    }
-    return false;
+    return std::any_of(drives.begin(), drives.end(), [&devicePath](const auto& drive) {
+        return drive.devicePath == devicePath;
+    });
 }
 }  // anonymous namespace
 
@@ -91,12 +90,10 @@ QList<sak::DriveInfo> DriveScanner::getRemovableDrives() const {
 }
 
 sak::DriveInfo DriveScanner::getDriveInfo(const QString& devicePath) const {
-    for (const auto& drive : m_drives) {
-        if (drive.devicePath == devicePath) {
-            return drive;
-        }
-    }
-    return sak::DriveInfo{};  // Return invalid info
+    auto it = std::find_if(m_drives.begin(), m_drives.end(), [&devicePath](const auto& d) {
+        return d.devicePath == devicePath;
+    });
+    return it != m_drives.end() ? *it : sak::DriveInfo{};
 }
 
 bool DriveScanner::isSystemDrive(const QString& devicePath) const {
@@ -543,13 +540,9 @@ bool DriveScanner::containsWindowsInstallation(int driveNumber) {
     Q_ASSERT_X(driveNumber >= 0, "containsWindowsInstallation", "driveNumber must be non-negative");
     QStringList mountPoints = getMountPoints(driveNumber);
 
-    for (const QString& mountPoint : mountPoints) {
-        if (hasWindowsIndicators(QDir(mountPoint))) {
-            return true;
-        }
-    }
-
-    return false;
+    return std::any_of(mountPoints.begin(), mountPoints.end(), [this](const QString& mp) {
+        return hasWindowsIndicators(QDir(mp));
+    });
 }
 
 LRESULT CALLBACK DriveScanner::deviceChangeWndProc(HWND hwnd,

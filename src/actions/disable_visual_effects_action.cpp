@@ -84,8 +84,6 @@ void DisableVisualEffectsAction::execute() {
     setStatus(ActionStatus::Running);
     Q_ASSERT(status() == ActionStatus::Running);
     QDateTime start_time = QDateTime::currentDateTime();
-    Q_ASSERT(start_time.isValid());
-
     Q_EMIT executionProgress("Analyzing current visual effects settings...", 10);
 
     // Phase 1: Enumerate current settings
@@ -197,7 +195,6 @@ void DisableVisualEffectsAction::buildAndFinishVisualEffectsResult(
     qint64 duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
 
     ExecutionResult result;
-    Q_ASSERT(!result.success);  // verify default init
     result.duration_ms = duration_ms;
     result.success = (ve_report.settings_total > 0);
     result.message = ve_report.settings_changed > 0
@@ -213,7 +210,7 @@ void DisableVisualEffectsAction::buildAndFinishVisualEffectsResult(
 // Private Helpers
 // ============================================================================
 
-QString DisableVisualEffectsAction::buildCheckSettingsScript() const {
+QString DisableVisualEffectsAction::buildCheckSettingsScript() {
     return R"(
             $settings = @{
                 VisualFXSetting = (Get-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects' -Name 'VisualFXSetting' -ErrorAction SilentlyContinue).VisualFXSetting
@@ -230,7 +227,7 @@ QString DisableVisualEffectsAction::buildCheckSettingsScript() const {
         )";
 }
 
-QString DisableVisualEffectsAction::buildApplyScriptPerformanceChecks() const {
+QString DisableVisualEffectsAction::buildApplyScriptPerformanceChecks() {
     return R"(
             # VisualFXSetting: 2 = Best Performance
             $total++
@@ -271,7 +268,7 @@ QString DisableVisualEffectsAction::buildApplyScriptPerformanceChecks() const {
             )";
 }
 
-QString DisableVisualEffectsAction::buildApplyScriptDesktopChecks() const {
+QString DisableVisualEffectsAction::buildApplyScriptDesktopChecks() {
     return R"(
             $total++
             if ((Get-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced' -Name 'ListviewShadow' -ErrorAction SilentlyContinue).ListviewShadow -ne 0) {
@@ -316,7 +313,7 @@ QString DisableVisualEffectsAction::buildApplyScriptDesktopChecks() const {
             )";
 }
 
-QString DisableVisualEffectsAction::buildApplySettingsScript() const {
+QString DisableVisualEffectsAction::buildApplySettingsScript() {
     return "\n            $changes = 0\n            $total = 0\n" +
            buildApplyScriptPerformanceChecks() + buildApplyScriptDesktopChecks();
 }

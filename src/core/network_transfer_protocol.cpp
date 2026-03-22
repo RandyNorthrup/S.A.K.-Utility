@@ -5,6 +5,7 @@
 
 #include <QJsonDocument>
 #include <QTcpSocket>
+
 #include <algorithm>
 
 namespace sak {
@@ -40,9 +41,13 @@ QJsonObject TransferProtocol::makeMessage(TransferMessageType type, const QJsonO
 }
 
 std::optional<TransferMessageType> TransferProtocol::parseType(const QString& type) {
-    Q_ASSERT(!type.isEmpty());
-    auto it = std::find_if(std::begin(kTransferTypes), std::end(kTransferTypes),
-        [&type](const auto& entry) { return type == QLatin1String(entry.name); });
+    if (type.isEmpty()) {
+        return std::nullopt;
+    }
+    auto it =
+        std::find_if(std::begin(kTransferTypes),
+                     std::end(kTransferTypes),
+                     [&type](const auto& entry) { return type == QLatin1String(entry.name); });
     if (it != std::end(kTransferTypes)) {
         return it->type;
     }
@@ -50,8 +55,9 @@ std::optional<TransferMessageType> TransferProtocol::parseType(const QString& ty
 }
 
 QString TransferProtocol::typeToString(TransferMessageType type) {
-    auto it = std::find_if(std::begin(kTransferTypes), std::end(kTransferTypes),
-        [type](const auto& entry) { return entry.type == type; });
+    auto it = std::find_if(std::begin(kTransferTypes),
+                           std::end(kTransferTypes),
+                           [type](const auto& entry) { return entry.type == type; });
     if (it != std::end(kTransferTypes)) {
         return QString::fromLatin1(it->name);
     }
@@ -83,8 +89,9 @@ bool TransferProtocol::writeMessage(QTcpSocket* socket, const QJsonObject& messa
 }
 
 QList<QJsonObject> TransferProtocol::readMessages(QByteArray& buffer, const QByteArray& incoming) {
-    Q_ASSERT(!buffer.isEmpty());
-    Q_ASSERT(!incoming.isEmpty());
+    if (incoming.isEmpty()) {
+        return {};
+    }
     buffer.append(incoming);
     QList<QJsonObject> messages;
 
@@ -93,6 +100,12 @@ QList<QJsonObject> TransferProtocol::readMessages(QByteArray& buffer, const QByt
                                (static_cast<quint8>(buffer[1]) << 16) |
                                (static_cast<quint8>(buffer[2]) << 8) |
                                static_cast<quint8>(buffer[3]);
+
+        constexpr quint32 kMaxControlMessageSize = 16 * 1024 * 1024;
+        if (length > kMaxControlMessageSize) {
+            buffer.clear();
+            break;
+        }
 
         if (buffer.size() < 4 + static_cast<int>(length)) {
             break;

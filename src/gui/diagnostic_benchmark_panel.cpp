@@ -226,8 +226,6 @@ QGroupBox* DiagnosticBenchmarkPanel::createHardwareSection() {
 // ============================================================================
 
 QGroupBox* DiagnosticBenchmarkPanel::createSmartSection() {
-    Q_ASSERT(m_smart_table);
-    Q_ASSERT(m_smart_warnings_label);
     auto* group = new QGroupBox("Storage Health (S.M.A.R.T.)", this);
     auto* layout = new QVBoxLayout(group);
 
@@ -299,8 +297,6 @@ QGroupBox* DiagnosticBenchmarkPanel::createBenchmarkSection() {
 }
 
 QGroupBox* DiagnosticBenchmarkPanel::createCpuBenchmarkGroup() {
-    Q_ASSERT(m_cpu_single_score_label);
-    Q_ASSERT(m_cpu_multi_score_label);
     auto* cpu_group = new QGroupBox("CPU Benchmark", this);
     auto* cpu_layout = new QVBoxLayout(cpu_group);
 
@@ -352,8 +348,6 @@ QGroupBox* DiagnosticBenchmarkPanel::createCpuBenchmarkGroup() {
 }
 
 QGroupBox* DiagnosticBenchmarkPanel::createDiskBenchmarkGroup() {
-    Q_ASSERT(m_disk_drive_combo);
-    Q_ASSERT(m_disk_seq_label);
     auto* disk_group = new QGroupBox("Disk I/O Benchmark", this);
     auto* disk_layout = new QVBoxLayout(disk_group);
 
@@ -397,8 +391,6 @@ QGroupBox* DiagnosticBenchmarkPanel::createDiskBenchmarkGroup() {
 }
 
 QGroupBox* DiagnosticBenchmarkPanel::createMemoryBenchmarkGroup() {
-    Q_ASSERT(m_mem_bandwidth_label);
-    Q_ASSERT(m_mem_score_label);
     auto* mem_group = new QGroupBox("Memory Benchmark", this);
     auto* mem_layout = new QVBoxLayout(mem_group);
 
@@ -432,7 +424,6 @@ QGroupBox* DiagnosticBenchmarkPanel::createMemoryBenchmarkGroup() {
 // ============================================================================
 
 QGroupBox* DiagnosticBenchmarkPanel::createStressTestSection() {
-    Q_ASSERT(m_stress_status_label);
     auto* group = new QGroupBox("Stress Testing", this);
     auto* layout = new QVBoxLayout(group);
 
@@ -466,8 +457,6 @@ QGroupBox* DiagnosticBenchmarkPanel::createStressTestSection() {
 }
 
 QHBoxLayout* DiagnosticBenchmarkPanel::createStressConfigRow() {
-    Q_ASSERT(m_stress_cpu_check);
-    Q_ASSERT(m_stress_memory_check);
     auto* config_row = new QHBoxLayout();
     config_row->addWidget(new QLabel("Components:", this));
 
@@ -518,8 +507,6 @@ QHBoxLayout* DiagnosticBenchmarkPanel::createStressConfigRow() {
 }
 
 QHBoxLayout* DiagnosticBenchmarkPanel::createStressButtonRow() {
-    Q_ASSERT(m_stress_start_button);
-    Q_ASSERT(m_stress_stop_button);
     auto* button_layout = new QHBoxLayout();
     button_layout->addStretch();
 
@@ -595,8 +582,6 @@ QGroupBox* DiagnosticBenchmarkPanel::createThermalSection() {
 // ============================================================================
 
 QGroupBox* DiagnosticBenchmarkPanel::createSuiteSection() {
-    Q_ASSERT(m_suite_status_label);
-    Q_ASSERT(m_suite_run_button);
     auto* group = new QGroupBox("Full Diagnostic Suite", this);
     auto* layout = new QVBoxLayout(group);
 
@@ -681,8 +666,6 @@ QGroupBox* DiagnosticBenchmarkPanel::createReportSection() {
 }
 
 void DiagnosticBenchmarkPanel::createReportInfoFields(QVBoxLayout* layout) {
-    Q_ASSERT(m_report_technician_edit);
-    Q_ASSERT(m_report_ticket_edit);
     // Technician / Ticket row
     auto* info_row = new QHBoxLayout();
     info_row->addWidget(new QLabel("Technician:", this));
@@ -715,8 +698,6 @@ void DiagnosticBenchmarkPanel::createReportInfoFields(QVBoxLayout* layout) {
 }
 
 void DiagnosticBenchmarkPanel::createReportExportButtons(QVBoxLayout* layout) {
-    Q_ASSERT(m_report_html_button);
-    Q_ASSERT(m_report_json_button);
     auto* export_layout = new QHBoxLayout();
     export_layout->addStretch();
 

@@ -241,9 +241,8 @@ void FlashCoordinator::onWorkerProgress(double percentage, qint64 bytesWritten) 
 }
 
 void FlashCoordinator::onWorkerCompleted(const sak::ValidationResult& result) {
-    Q_ASSERT(!m_targetDrives.empty());
     Q_ASSERT(!m_targetDrives.isEmpty());
-    FlashWorker* worker = qobject_cast<FlashWorker*>(sender());
+    const FlashWorker* worker = qobject_cast<FlashWorker*>(sender());
     if (!worker) {
         return;
     }
@@ -285,9 +284,9 @@ void FlashCoordinator::onWorkerCompleted(const sak::ValidationResult& result) {
 }
 
 void FlashCoordinator::onWorkerFailed(const QString& error) {
-    Q_ASSERT(!m_targetDrives.empty());
+    Q_ASSERT(!m_targetDrives.isEmpty());
     Q_ASSERT(!error.isEmpty());
-    FlashWorker* worker = qobject_cast<FlashWorker*>(sender());
+    const FlashWorker* worker = qobject_cast<FlashWorker*>(sender());
     if (!worker) {
         return;
     }
@@ -322,6 +321,7 @@ void FlashCoordinator::onWorkerFailed(const QString& error) {
 
 bool FlashCoordinator::validateTargets(const QStringList& targetDrives) {
     Q_ASSERT(!targetDrives.isEmpty());
+    // cppcheck-suppress useStlAlgorithm ; early-return with per-device error reporting
     for (const QString& devicePath : targetDrives) {
         // Open device handle to verify it exists and is accessible
         HANDLE hDevice = CreateFileW(reinterpret_cast<LPCWSTR>(devicePath.utf16()),

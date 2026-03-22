@@ -47,8 +47,6 @@ void GenerateSystemReportAction::execute() {
     setStatus(ActionStatus::Running);
     Q_ASSERT(status() == ActionStatus::Running);
     QDateTime start_time = QDateTime::currentDateTime();
-    Q_ASSERT(start_time.isValid());
-
     Q_EMIT executionProgress("Gathering comprehensive system information...", 5);
 
     // Phase 1: Report header
@@ -118,7 +116,6 @@ void GenerateSystemReportAction::saveReportAndFinish(const QString& report,
     qint64 duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
 
     ExecutionResult result;
-    Q_ASSERT(!result.success);  // verify default init
     result.duration_ms = duration_ms;
     result.bytes_processed = report.size();
 
@@ -155,7 +152,7 @@ QString GenerateSystemReportAction::buildReportHeader() const {
     return header;
 }
 
-QString GenerateSystemReportAction::buildOsInfoScript() const {
+QString GenerateSystemReportAction::buildOsInfoScript() {
     return "$info = Get-ComputerInfo\n"
            "\n"
            "Write-Output \"=== OPERATING SYSTEM ===\"\n"
@@ -194,7 +191,7 @@ QString GenerateSystemReportAction::buildOsInfoScript() const {
            "Write-Output \"\"\n";
 }
 
-QString GenerateSystemReportAction::buildHardwareInfoScript() const {
+QString GenerateSystemReportAction::buildHardwareInfoScript() {
     return "\n"
            "Write-Output \"=== MEMORY ===\"\n"
            "Write-Output \"Total Physical Memory: "

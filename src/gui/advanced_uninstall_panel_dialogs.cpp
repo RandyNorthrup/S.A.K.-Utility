@@ -68,7 +68,6 @@ namespace sak {
 // -- Uninstall Confirmation Dialog -------------------------------------------
 
 void AdvancedUninstallPanel::showUninstallConfirmation(const ProgramInfo& program) {
-    Q_ASSERT(m_controller);
     QDialog dialog(this);
     dialog.setWindowTitle(tr("Uninstall Program"));
     dialog.setMinimumWidth(450);
@@ -157,7 +156,6 @@ void AdvancedUninstallPanel::showUninstallConfirmation(const ProgramInfo& progra
 // -- Forced Uninstall Dialog -------------------------------------------------
 
 void AdvancedUninstallPanel::showForcedUninstallDialog(const ProgramInfo& program) {
-    Q_ASSERT(m_controller);
     QDialog dialog(this);
     dialog.setWindowTitle(tr("Forced Uninstall"));
     dialog.setMinimumWidth(480);
@@ -231,9 +229,6 @@ void AdvancedUninstallPanel::showForcedUninstallDialog(const ProgramInfo& progra
 
 void AdvancedUninstallPanel::populateBatchUninstallQueueList(
     const QVector<UninstallQueueItem>& queue, QListWidget* queueList, qint64* totalBytesOut) const {
-    Q_ASSERT(queueList);
-    Q_ASSERT(totalBytesOut);
-
     qint64 totalBytes = 0;
     for (const auto& item : queue) {
         QString text = item.program.displayName;
@@ -252,13 +247,6 @@ void AdvancedUninstallPanel::populateBatchUninstallQueueList(
 
 void AdvancedUninstallPanel::wireBatchUninstallQueueActions(const BatchQueueWidgets& widgets,
                                                             QDialog* dialog) {
-    Q_ASSERT(widgets.queue_list);
-    Q_ASSERT(widgets.header_label);
-    Q_ASSERT(widgets.total_label);
-    Q_ASSERT(widgets.remove_btn);
-    Q_ASSERT(widgets.clear_btn);
-    Q_ASSERT(dialog);
-
     connect(widgets.queue_list,
             &QListWidget::currentRowChanged,
             widgets.remove_btn,
@@ -291,9 +279,6 @@ void AdvancedUninstallPanel::wireBatchUninstallQueueActions(const BatchQueueWidg
 
 QCheckBox* AdvancedUninstallPanel::addBatchUninstallOptions(QDialog* dialog,
                                                             QVBoxLayout* layout) const {
-    Q_ASSERT(dialog);
-    Q_ASSERT(layout);
-
     auto* restoreCheck = new QCheckBox(tr("Create single restore point before batch"), dialog);
     restoreCheck->setChecked(m_controller->autoRestorePoint());
 
@@ -317,9 +302,6 @@ QCheckBox* AdvancedUninstallPanel::addBatchUninstallOptions(QDialog* dialog,
 
 QDialogButtonBox* AdvancedUninstallPanel::addBatchUninstallButtons(QDialog* dialog,
                                                                    QVBoxLayout* layout) const {
-    Q_ASSERT(dialog);
-    Q_ASSERT(layout);
-
     auto* buttonBox = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, dialog);
     auto* startBtn = buttonBox->button(QDialogButtonBox::Ok);
     startBtn->setText(tr("Start Batch Uninstall"));
@@ -329,7 +311,6 @@ QDialogButtonBox* AdvancedUninstallPanel::addBatchUninstallButtons(QDialog* dial
 }
 
 void AdvancedUninstallPanel::showBatchUninstallDialog() {
-    Q_ASSERT(m_controller);
     const auto queue = m_controller->queue();
     if (queue.isEmpty()) {
         Q_EMIT statusMessage(tr("Batch queue is empty."), 3000);
@@ -399,9 +380,6 @@ void AdvancedUninstallPanel::showBatchUninstallDialog() {
 void AdvancedUninstallPanel::populateProgramPropertiesForm(const ProgramInfo& program,
                                                            QWidget* scrollWidget,
                                                            QFormLayout* formLayout) const {
-    Q_ASSERT(scrollWidget);
-    Q_ASSERT(formLayout);
-
     const auto addRow = [&](const QString& label, const QString& value) {
         if (value.isEmpty()) {
             return;
@@ -482,9 +460,6 @@ void AdvancedUninstallPanel::showProgramProperties(const ProgramInfo& program) {
 
 QCheckBox* AdvancedUninstallPanel::addSettingsSelectionGroup(QDialog* dialog,
                                                              QVBoxLayout* layout) const {
-    Q_ASSERT(dialog);
-    Q_ASSERT(layout);
-
     auto* group = new QGroupBox(tr("Leftover Selection"), dialog);
     auto* groupLayout = new QVBoxLayout(group);
 
@@ -502,9 +477,6 @@ QCheckBox* AdvancedUninstallPanel::addSettingsSelectionGroup(QDialog* dialog,
 
 QCheckBox* AdvancedUninstallPanel::addSettingsDeletionGroup(QDialog* dialog,
                                                             QVBoxLayout* layout) const {
-    Q_ASSERT(dialog);
-    Q_ASSERT(layout);
-
     auto* group = new QGroupBox(tr("Deletion Behavior"), dialog);
     auto* groupLayout = new QVBoxLayout(group);
 
@@ -532,9 +504,6 @@ QCheckBox* AdvancedUninstallPanel::addSettingsDeletionGroup(QDialog* dialog,
 
 QCheckBox* AdvancedUninstallPanel::addSettingsRestorePointGroup(QDialog* dialog,
                                                                 QVBoxLayout* layout) const {
-    Q_ASSERT(dialog);
-    Q_ASSERT(layout);
-
     auto* group = new QGroupBox(tr("System Protection"), dialog);
     auto* groupLayout = new QVBoxLayout(group);
 
@@ -561,9 +530,6 @@ void AdvancedUninstallPanel::addSettingsScanLevelGroup(QDialog* dialog,
                                                        QRadioButton*& safeRadio,
                                                        QRadioButton*& moderateRadio,
                                                        QRadioButton*& advancedRadio) const {
-    Q_ASSERT(dialog);
-    Q_ASSERT(layout);
-
     auto* group = new QGroupBox(tr("Default Scan Level"), dialog);
     auto* groupLayout = new QVBoxLayout(group);
 
@@ -571,9 +537,10 @@ void AdvancedUninstallPanel::addSettingsScanLevelGroup(QDialog* dialog,
                                  dialog);
     moderateRadio = new QRadioButton(
         tr("Moderate -- Extended scanning with pattern matching (recommended)"), dialog);
-    advancedRadio = new QRadioButton(tr("Advanced -- Deep scan including services, tasks, firewall, "
-                                        "shell extensions"),
-                                     dialog);
+    advancedRadio =
+        new QRadioButton(tr("Advanced -- Deep scan including services, tasks, firewall, "
+                            "shell extensions"),
+                         dialog);
 
     switch (m_controller->defaultScanLevel()) {
     case ScanLevel::Safe:
@@ -595,9 +562,6 @@ void AdvancedUninstallPanel::addSettingsScanLevelGroup(QDialog* dialog,
 
 QCheckBox* AdvancedUninstallPanel::addSettingsDisplayGroup(QDialog* dialog,
                                                            QVBoxLayout* layout) const {
-    Q_ASSERT(dialog);
-    Q_ASSERT(layout);
-
     auto* group = new QGroupBox(tr("Display"), dialog);
     auto* groupLayout = new QVBoxLayout(group);
 
@@ -614,7 +578,6 @@ QCheckBox* AdvancedUninstallPanel::addSettingsDisplayGroup(QDialog* dialog,
 }
 
 void AdvancedUninstallPanel::showSettingsDialog() {
-    Q_ASSERT(m_controller);
     QDialog dialog(this);
     dialog.setWindowTitle(tr("Advanced Uninstall Settings"));
     dialog.setMinimumWidth(520);

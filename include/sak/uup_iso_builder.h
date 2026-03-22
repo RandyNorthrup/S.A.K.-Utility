@@ -204,7 +204,6 @@ private:
     bool parseConverterStagePercent(const QString& line, bool& hasPercent, QString& detail);
     /// @brief Parse fallback patterns (image export, metadata, done) from converter output
     void parseConverterFallbackPatterns(const QString& line, bool& hasPercent, QString& detail);
-    void updateOverallProgress();
 
     // State
     Phase m_phase = Phase::Idle;

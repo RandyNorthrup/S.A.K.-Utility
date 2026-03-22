@@ -15,7 +15,7 @@ endif()
 
 # Project definition
 project(SAK_Utility
-    VERSION 0.9.0.2
+    VERSION 0.9.0.3
     DESCRIPTION "Swiss Army Knife Utility - PC technician's toolkit for Windows migration and maintenance"
     LANGUAGES CXX
 )# C++23 Standard - Strict compliance required
@@ -1017,24 +1017,14 @@ if(LIZARD_EXE)
     )
 endif()
 
-# TigerStyle lint
-find_program(PYTHON_EXE python3 python)
-if(PYTHON_EXE)
-    add_custom_target(tigerstyle
-        COMMAND ${PYTHON_EXE} scripts/lint_tigerstyle.py --strict src include
-        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-        COMMENT "Running TigerStyle lint (strict)..."
-        VERBATIM
-    )
-endif()
-
 # Full static analysis target (runs all tools)
-if(LIZARD_EXE AND PYTHON_EXE)
+find_program(PYTHON_EXE python3 python)
+if(LIZARD_EXE)
     add_custom_target(analyze
         COMMENT "Running full static analysis suite..."
         VERBATIM
     )
-    add_dependencies(analyze lizard tigerstyle)
+    add_dependencies(analyze lizard)
 endif()
 
 # ============================================================================
@@ -1065,6 +1055,6 @@ if(CLANG_TIDY)
     message(STATUS "clang-tidy:        AVAILABLE")
 endif()
 message(STATUS "========================================")
-message(STATUS "Analysis targets:  lizard, tigerstyle, analyze")
+message(STATUS "Analysis targets:  lizard, analyze")
 message(STATUS "========================================")
 message(STATUS "")

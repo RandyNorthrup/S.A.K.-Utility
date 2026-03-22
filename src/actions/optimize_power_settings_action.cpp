@@ -12,6 +12,8 @@
 #include <QRegularExpression>
 #include <QTextStream>
 
+#include <algorithm>
+
 namespace sak {
 
 OptimizePowerSettingsAction::OptimizePowerSettingsAction(QObject* parent) : QuickAction(parent) {}
@@ -109,12 +111,10 @@ OptimizePowerSettingsAction::PowerPlan OptimizePowerSettingsAction::findPowerPla
     const QString& name) {
     QVector<PowerPlan> plans = enumeratePowerPlans();
 
-    for (const PowerPlan& plan : plans) {
-        if (plan.name.contains(name, Qt::CaseInsensitive)) {
-            return plan;
-        }
-    }
-    return PowerPlan();
+    auto it = std::find_if(plans.begin(), plans.end(), [&name](const PowerPlan& plan) {
+        return plan.name.contains(name, Qt::CaseInsensitive);
+    });
+    return it != plans.end() ? *it : PowerPlan();
 }
 
 // ENTERPRISE-GRADE: Standard power scheme GUIDs
@@ -183,7 +183,6 @@ void OptimizePowerSettingsAction::finalizePowerOptimizationResult(const QDateTim
     qint64 duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
 
     ExecutionResult result;
-    Q_ASSERT(!result.success);  // verify default init
     result.duration_ms = duration_ms;
 
     if (already_optimized) {
@@ -258,8 +257,6 @@ void OptimizePowerSettingsAction::execute() {
     setStatus(ActionStatus::Running);
     Q_ASSERT(status() == ActionStatus::Running);
     QDateTime start_time = QDateTime::currentDateTime();
-    Q_ASSERT(start_time.isValid());
-
     Q_EMIT executionProgress("Enumerating power plans...", 10);
     PowerPlan current_plan = getActivePowerPlan();
 

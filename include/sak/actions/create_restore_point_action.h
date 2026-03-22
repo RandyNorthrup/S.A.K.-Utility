@@ -56,7 +56,7 @@ private:
 
     /// @brief Builds the PowerShell script to create a restore point.
     /// @return Complete PowerShell script string with error handling.
-    QString buildCreateScript() const;
+    static QString buildCreateScript();
 
     /// @brief Builds the troubleshooting guidance section based on the error code.
     /// @return Report section with issue-specific troubleshooting guidance.

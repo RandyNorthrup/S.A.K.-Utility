@@ -23,12 +23,9 @@
 namespace {
 
 bool matchesAny(const QString& text, std::initializer_list<QLatin1String> keywords) {
-    for (const auto keyword : keywords) {
-        if (text.contains(keyword)) {
-            return true;
-        }
-    }
-    return false;
+    return std::any_of(keywords.begin(), keywords.end(), [&text](const auto& kw) {
+        return text.contains(kw);
+    });
 }
 
 }  // namespace
@@ -68,8 +65,6 @@ void WindowsISODownloadDialog::setupUi() {
 // ----------------------------------------------------------------------------
 
 void WindowsISODownloadDialog::setupUi_formSections(QVBoxLayout* mainLayout) {
-    Q_ASSERT(m_archCombo);
-    Q_ASSERT(m_channelCombo);
     // ---- Step 1: Architecture & Channel ----
     auto* configGroup = new QGroupBox("Build Configuration", this);
     auto* configLayout = new QGridLayout(configGroup);
@@ -140,8 +135,6 @@ void WindowsISODownloadDialog::setupUi_formSections(QVBoxLayout* mainLayout) {
 }
 
 void WindowsISODownloadDialog::setupUi_progressAndButtons(QVBoxLayout* mainLayout) {
-    Q_ASSERT(m_phaseLabel);
-    Q_ASSERT(m_downloadProgressBar);
     // ---- Progress ----
     auto* progressGroup = new QGroupBox("Progress", this);
     auto* progressLayout = new QVBoxLayout(progressGroup);

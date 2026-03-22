@@ -46,7 +46,6 @@ void AdvancedSearchController::setState(State newState) {
 // -- Search Operations -------------------------------------------------------
 
 void AdvancedSearchController::startSearch(const SearchConfig& config) {
-    Q_ASSERT(m_worker);
     if (m_state == State::Searching) {
         logWarning("AdvancedSearchController: search already in progress, cancelling first");
         cancelSearch();
@@ -105,7 +104,6 @@ void AdvancedSearchController::cancelSearch() {
 }
 
 void AdvancedSearchController::cleanupWorker() {
-    Q_ASSERT(m_worker);
     if (m_worker) {
         if (m_worker->isRunning()) {
             m_worker->requestStop();
@@ -198,7 +196,7 @@ void AdvancedSearchController::setPreferences(const SearchPreferences& prefs) {
     savePreferences();
 }
 
-SearchPreferences AdvancedSearchController::preferences() const {
+const SearchPreferences& AdvancedSearchController::preferences() const {
     return m_preferences;
 }
 

@@ -14,6 +14,8 @@
 #include <QTimer>
 #include <QVBoxLayout>
 
+#include <algorithm>
+
 namespace sak {
 
 // ============================================================================
@@ -233,12 +235,9 @@ void UserProfileBackupSelectUsersPage::initializePage() {
 
 bool UserProfileBackupSelectUsersPage::isComplete() const {
     // At least one user must be selected
-    for (const auto& user : m_users) {
-        if (user.is_selected) {
-            return true;
-        }
-    }
-    return false;
+    return std::any_of(m_users.begin(), m_users.end(), [](const auto& user) {
+        return user.is_selected;
+    });
 }
 
 void UserProfileBackupSelectUsersPage::onScanUsers() {
@@ -284,7 +283,6 @@ void UserProfileBackupSelectUsersPage::onUserScanned(const QString& username) {
 }
 
 void UserProfileBackupSelectUsersPage::populateTable() {
-    Q_ASSERT(!m_users.isEmpty());
     Q_ASSERT(m_userTable);
     m_userTable->blockSignals(true);
     m_userTable->setRowCount(m_users.size());

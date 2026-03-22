@@ -11,6 +11,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
+#include <QProgressBar>
 #include <QPushButton>
 #include <QSplitter>
 #include <QStandardItemModel>
@@ -145,6 +146,8 @@ private:
     // Install section
     QPushButton* m_installButton{nullptr};
     QPushButton* m_cancelButton{nullptr};
+    QProgressBar* m_progressBar{nullptr};
+    QLabel* m_progressLabel{nullptr};
 
     // Bottom bar
     LogToggleSwitch* m_logToggle{nullptr};

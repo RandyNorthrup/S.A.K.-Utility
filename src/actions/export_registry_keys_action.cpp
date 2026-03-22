@@ -126,7 +126,6 @@ void ExportRegistryKeysAction::finalizeRegistryExportResult(const QDateTime& sta
     qint64 duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
 
     ExecutionResult result;
-    Q_ASSERT(!result.success);  // verify default init
     result.duration_ms = duration_ms;
     result.files_processed = outcome.keys_exported;
     result.bytes_processed = outcome.total_size;
@@ -161,8 +160,6 @@ void ExportRegistryKeysAction::execute() {
     setStatus(ActionStatus::Running);
     Q_ASSERT(status() == ActionStatus::Running);
     QDateTime start_time = QDateTime::currentDateTime();
-    Q_ASSERT(start_time.isValid());
-
     Q_EMIT executionProgress("Preparing enterprise registry backup...", 5);
 
     QDir backup_dir(m_backup_location + "/Registry");

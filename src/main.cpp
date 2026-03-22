@@ -21,6 +21,7 @@
 #include <QMessageBox>
 #include <QStandardPaths>
 
+#include <algorithm>
 #include <filesystem>
 #include <iostream>
 #include <memory>
@@ -35,13 +36,10 @@ QString findSplashPath() {
                                     app_dir + "/../resources/sak_splash.png",
                                     app_dir + "/../sak_splash.png"};
 
-    for (const auto& path : candidates) {
-        if (QFileInfo::exists(path)) {
-            return path;
-        }
-    }
-
-    return {};
+    auto it = std::find_if(candidates.begin(), candidates.end(), [](const QString& p) {
+        return QFileInfo::exists(p);
+    });
+    return it != candidates.end() ? *it : QString{};
 }
 
 QString findIconPath() {
@@ -50,13 +48,10 @@ QString findIconPath() {
                                     app_dir + "/resources/icon.ico",
                                     app_dir + "/../resources/icon.ico"};
 
-    for (const auto& path : candidates) {
-        if (QFileInfo::exists(path)) {
-            return path;
-        }
-    }
-
-    return {};
+    auto it = std::find_if(candidates.begin(), candidates.end(), [](const QString& p) {
+        return QFileInfo::exists(p);
+    });
+    return it != candidates.end() ? *it : QString{};
 }
 
 /// @brief Write an execution result file if a result file path was provided.
@@ -265,8 +260,10 @@ int main(int argc, char* argv[]) {
         std::println(std::cerr, "Unknown fatal error");
         QMessageBox::critical(nullptr, "Fatal Error", "Unknown unhandled exception");
 #ifndef NDEBUG
+        // cppcheck-suppress throwInEntryPoint ; intentional re-throw in debug builds only
         throw;
-#endif
+#else
         return 1;
+#endif
     }
 }

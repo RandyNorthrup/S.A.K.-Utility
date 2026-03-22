@@ -36,7 +36,7 @@ private:
         SFC
     };
 
-    ScanPhase m_current_phase;
+    ScanPhase m_current_phase{ScanPhase::CheckHealth};
     bool m_corruption_detected{false};
     QString m_log_path;
     bool m_sfc_found_issues{false};

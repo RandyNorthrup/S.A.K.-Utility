@@ -116,10 +116,12 @@ private:
         -> std::expected<std::string, error_code>;
 
     /// @brief Hash file content in chunks with progress reporting
-    void hashFileInChunks(QFile& file,
-                          QCryptographicHash& hash,
-                          hash_progress_callback& progress,
-                          const std::stop_token& stop_token) const;
+    void hashFileInChunks(
+        QFile& file,
+        QCryptographicHash& hash,
+        // cppcheck-suppress constParameterReference ; move_only_function has non-const operator()
+        hash_progress_callback& progress,
+        const std::stop_token& stop_token) const;
 };
 
 /// @brief Convenience function to calculate MD5 hash of a file

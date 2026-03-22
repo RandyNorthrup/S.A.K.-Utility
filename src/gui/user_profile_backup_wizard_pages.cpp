@@ -421,8 +421,8 @@ void UserProfileBackupSmartFiltersPage::onViewDangerousList() {
     auto* layout = new QVBoxLayout(dialog);
 
     // Header
-    auto* headerLabel =
-        new QLabel(tr("<b>[shield] Files and patterns that are always excluded from backups</b>"), dialog);
+    auto* headerLabel = new QLabel(
+        tr("<b>[shield] Files and patterns that are always excluded from backups</b>"), dialog);
     headerLabel->setWordWrap(true);
     headerLabel->setStyleSheet(QString("QLabel { padding: 10px; background-color: %1; "
                                        "border-radius: 8px; font-size: 11pt; }")
@@ -603,11 +603,11 @@ void UserProfileBackupSettingsPage::setupUi_encryptionAndPermissions(QVBoxLayout
     layout->addLayout(permLayout);
 
     // Permission explanation
-    auto* permExplainLabel =
-        new QLabel(tr("(i) <b>Strip All:</b> Removes ACLs to prevent permission conflicts (safest). "
-                      "<b>Preserve:</b> Keeps original permissions (may cause errors). "
-                      "<b>Assign Standard:</b> Sets full control for destination user."),
-                   this);
+    auto* permExplainLabel = new QLabel(
+        tr("(i) <b>Strip All:</b> Removes ACLs to prevent permission conflicts (safest). "
+           "<b>Preserve:</b> Keeps original permissions (may cause errors). "
+           "<b>Assign Standard:</b> Sets full control for destination user."),
+        this);
     permExplainLabel->setWordWrap(true);
     permExplainLabel->setStyleSheet(
         QString("QLabel { padding: 6px; color: %1; }").arg(sak::ui::kColorTextMuted));
@@ -663,6 +663,7 @@ bool UserProfileBackupSettingsPage::validatePage() {
     Q_ASSERT(m_encryptionCheck);
     // Check destination path
     if (m_destinationEdit->text().isEmpty()) {
+        sak::logWarning("User profile backup: no destination folder selected");
         QMessageBox::warning(this,
                              tr("No Destination"),
                              tr("Please select a backup destination folder."));
@@ -687,6 +688,7 @@ bool UserProfileBackupSettingsPage::validatePage() {
         QString confirm = m_passwordConfirmEdit->text();
 
         if (password.isEmpty()) {
+            sak::logWarning("User profile backup: encryption password empty");
             QMessageBox::warning(this,
                                  tr("Missing Password"),
                                  tr("Please enter an encryption password."));
@@ -695,6 +697,7 @@ bool UserProfileBackupSettingsPage::validatePage() {
         }
 
         if (password != confirm) {
+            sak::logWarning("User profile backup: encryption passwords do not match");
             QMessageBox::warning(this,
                                  tr("Password Mismatch"),
                                  tr("Passwords do not match. Please re-enter."));
@@ -704,6 +707,7 @@ bool UserProfileBackupSettingsPage::validatePage() {
         }
 
         if (password.length() < 8) {
+            sak::logWarning("User profile backup: encryption password too short");
             QMessageBox::warning(this,
                                  tr("Weak Password"),
                                  tr("Password must be at least 8 characters long."));

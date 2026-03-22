@@ -225,28 +225,26 @@ auto* widget = new QWidget(this);  // 'this' manages lifetime
 
 ### TigerStyle Compliance
 
-This project follows [TigerStyle](https://github.com/tigerbeetle/tigerbeetle/blob/main/docs/TIGER_STYLE.md) coding discipline. All new code **must** comply with these rules:
+This project follows [TigerStyle](https://github.com/tigerbeetle/tigerbeetle/blob/main/docs/TIGER_STYLE.md) coding discipline as a philosophy. All new code **must** comply with these rules:
 
 | Rule | Limit | Enforced By |
 |---|---|---|
-| Function length | ≤70 lines | `lint_tigerstyle.py` |
-| Nesting depth | ≤3 levels | `lint_tigerstyle.py` |
-| Line length | ≤100 columns | `.clang-format` / `lint_tigerstyle.py` |
-| Assertions | ≥2 per public function | `lint_tigerstyle.py` (warning) |
-| `catch(...)` | Must have explanatory comment | `lint_tigerstyle.py` |
+| Function length | ≤70 lines | Lizard, code review |
+| Nesting depth | ≤3 levels | Lizard, code review |
+| Line length | ≤100 columns | `.clang-format` |
+| Assertions | Meaningful preconditions/postconditions | Code review |
+| `catch(...)` | Must have explanatory comment | Code review |
 | Magic numbers | Use named `constexpr` constants | Code review |
 | Naming | No abbreviations, no single-letter vars | Code review |
 
-**Pre-submit checklist for TigerStyle**:
+**Pre-submit checklist**:
 ```powershell
-# Run the linter — must report 0 errors
-python scripts/lint_tigerstyle.py src include
-
 # Verify formatting
 clang-format --dry-run -Werror <changed-files>
-```
 
-See [TIGERSTYLE_COMPLIANCE_PLAN.md](docs/TIGERSTYLE_COMPLIANCE_PLAN.md) for full details.
+# Run pre-commit hooks (format, complexity, cppcheck)
+pre-commit run --all-files
+```
 
 ### CMake Standards
 

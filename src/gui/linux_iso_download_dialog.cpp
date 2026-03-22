@@ -61,8 +61,6 @@ void LinuxISODownloadDialog::setupUi() {
 }
 
 void LinuxISODownloadDialog::setupUi_selectionGroup(QVBoxLayout* mainLayout) {
-    Q_ASSERT(m_categoryCombo);
-    Q_ASSERT(m_distroListWidget);
     // ---- Distribution Selection ----
     auto* selectionGroup = new QGroupBox("Select Distribution", this);
     auto* selectionLayout = new QVBoxLayout(selectionGroup);
@@ -123,8 +121,6 @@ void LinuxISODownloadDialog::setupUi_selectionGroup(QVBoxLayout* mainLayout) {
 }
 
 void LinuxISODownloadDialog::setupUi_progressAndButtons(QVBoxLayout* mainLayout) {
-    Q_ASSERT(m_saveLocationEdit);
-    Q_ASSERT(m_phaseLabel);
     // ---- Save Location ----
     auto* saveGroup = new QGroupBox("Save Location", this);
     auto* saveLayout = new QHBoxLayout(saveGroup);
@@ -368,6 +364,7 @@ void LinuxISODownloadDialog::onStartDownload() {
     Q_ASSERT(m_saveLocationEdit);
     Q_ASSERT(m_startButton);
     if (m_selectedDistroId.isEmpty()) {
+        sak::logWarning("ISO download attempted with no distribution selected");
         QMessageBox::warning(this,
                              "No Distribution Selected",
                              "Please select a distribution to download.");
@@ -376,6 +373,7 @@ void LinuxISODownloadDialog::onStartDownload() {
 
     QString savePath = m_saveLocationEdit->text().trimmed();
     if (savePath.isEmpty()) {
+        sak::logWarning("ISO download attempted with no save path specified");
         QMessageBox::warning(this, "No Save Path", "Please specify where to save the ISO.");
         return;
     }

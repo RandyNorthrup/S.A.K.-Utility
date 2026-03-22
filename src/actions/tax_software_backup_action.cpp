@@ -112,9 +112,6 @@
 #include <QDir>
 #include <QDirIterator>
 #include <QtGlobal>
-#include <QtGlobal>
-#include <QtGlobal>
-#include <QtGlobal>
 
 namespace sak {
 
@@ -122,8 +119,6 @@ TaxSoftwareBackupAction::TaxSoftwareBackupAction(const QString& backup_location,
     : QuickAction(parent), m_backup_location(backup_location) {}
 
 void TaxSoftwareBackupAction::scanTurboTax() {
-    Q_ASSERT(!m_tax_data.empty());
-    Q_ASSERT(!m_tax_data.isEmpty());
     for (const UserProfile& user : m_user_profiles) {
         QString turbotax_path = user.profile_path + "/Documents/TurboTax";
         QDir dir(turbotax_path);
@@ -156,8 +151,6 @@ void TaxSoftwareBackupAction::scanTurboTax() {
 }
 
 void TaxSoftwareBackupAction::scanHRBlock() {
-    Q_ASSERT(!m_tax_data.empty());
-    Q_ASSERT(!m_tax_data.isEmpty());
     for (const UserProfile& user : m_user_profiles) {
         QString hrblock_path = user.profile_path + "/Documents/HRBlock";
         QDir dir(hrblock_path);
@@ -192,8 +185,6 @@ void TaxSoftwareBackupAction::scanHRBlock() {
 }
 
 void TaxSoftwareBackupAction::scanTaxAct() {
-    Q_ASSERT(!m_tax_data.empty());
-    Q_ASSERT(!m_tax_data.isEmpty());
     for (const UserProfile& user : m_user_profiles) {
         QString taxact_path = user.profile_path + "/Documents/TaxACT";
         QDir dir(taxact_path);
@@ -262,8 +253,6 @@ void TaxSoftwareBackupAction::execute() {
     setStatus(ActionStatus::Running);
     Q_ASSERT(status() == ActionStatus::Running);
     QDateTime start_time = QDateTime::currentDateTime();
-    Q_ASSERT(start_time.isValid());
-
     QDir backup_dir(m_backup_location + "/TaxData");
     if (!backup_dir.mkpath(".")) {
         sak::logWarning("Failed to create tax data backup directory: {}",
@@ -300,7 +289,6 @@ void TaxSoftwareBackupAction::execute() {
     }
 
     ExecutionResult result;
-    Q_ASSERT(!result.success);  // verify default init
     result.success = processed > 0;
     result.duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
     result.files_processed = processed;

@@ -149,8 +149,6 @@ void VerifySystemFilesAction::execute() {
     setStatus(ActionStatus::Running);
     Q_ASSERT(status() == ActionStatus::Running);
     QDateTime start_time = QDateTime::currentDateTime();
-    Q_ASSERT(start_time.isValid());
-
     m_sfc_found_issues = false;
     m_sfc_repaired = false;
     m_dism_successful = false;

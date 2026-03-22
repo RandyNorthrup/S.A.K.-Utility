@@ -78,7 +78,9 @@ constexpr int kPeerColCaps = 3;
 constexpr int kPeerColSeen = 4;
 
 QString categorizeApp(const QString& name) {
-    Q_ASSERT(!name.isEmpty());
+    if (name.isEmpty()) {
+        return QCoreApplication::translate("NetworkTransferPanel", "Other");
+    }
 
     struct CategoryMapping {
         const char* keyword;
@@ -190,9 +192,20 @@ void parseNetshAdapterField(const QString& trimmed, EthernetConfigInfo& current)
     }
 }
 
+QString parseAdapterName(const QString& line) {
+    const int firstQuote = line.indexOf('"');
+    const int lastQuote = line.lastIndexOf('"');
+    if (firstQuote >= 0 && lastQuote > firstQuote) {
+        return line.mid(firstQuote + 1, lastQuote - firstQuote - 1);
+    }
+    return {};
+}
+
 QVector<EthernetConfigInfo> parseNetshEthernetOutput(const QString& output) {
-    Q_ASSERT(!output.isEmpty());
     QVector<EthernetConfigInfo> configs;
+    if (output.isEmpty()) {
+        return configs;
+    }
     EthernetConfigInfo current;
     bool inAdapter = false;
 
@@ -204,11 +217,7 @@ QVector<EthernetConfigInfo> parseNetshEthernetOutput(const QString& output) {
                 configs.append(current);
             }
             current = EthernetConfigInfo();
-            const int firstQuote = trimmed.indexOf('"');
-            const int lastQuote = trimmed.lastIndexOf('"');
-            if (firstQuote >= 0 && lastQuote > firstQuote) {
-                current.adapter_name = trimmed.mid(firstQuote + 1, lastQuote - firstQuote - 1);
-            }
+            current.adapter_name = parseAdapterName(trimmed);
             inAdapter = true;
             continue;
         }
@@ -370,10 +379,12 @@ void NetworkTransferPanel::onScanAppData() {
     QVector<AppDataSourceInfo> allSources;
     auto commonSources = getCommonAppDataSources();
 
-    for (const auto& user : m_users) {
-        if (!user.is_selected) {
+    for (int i = 0; i < m_users.size(); ++i) {
+        auto* selectItem = m_userTable->item(i, kUserColSelect);
+        if (!selectItem || selectItem->checkState() != Qt::Checked) {
             continue;
         }
+        const auto& user = m_users[i];
 
         for (auto source : commonSources) {
             QString fullPath = user.profile_path + "/" + source.relative_path;
@@ -463,6 +474,14 @@ void NetworkTransferPanel::onStartSource() {
     Q_ASSERT(m_peerTable);
     Q_ASSERT(m_controller);
     buildManifest();
+
+    if (m_currentFiles.isEmpty()) {
+        sak::logWarning("No files selected for transfer.");
+        QMessageBox::warning(this,
+                             tr("No Files Selected"),
+                             tr("Select at least one user profile to transfer."));
+        return;
+    }
 
     TransferPeerInfo peer;
     if (m_peerTable->currentRow() >= 0) {
@@ -637,7 +656,6 @@ void NetworkTransferPanel::onRejectTransfer() {
 }
 
 void NetworkTransferPanel::onPeerDiscovered(const TransferPeerInfo& peer) {
-    Q_ASSERT(!m_peers.isEmpty());
     Q_ASSERT(m_peerTable);
     if (m_peers.contains(peer.peer_id)) {
         m_peers[peer.peer_id] = peer;
@@ -879,7 +897,6 @@ void NetworkTransferPanel::writeAdditionalDataFiles(const QString& basePath,
 }
 
 void NetworkTransferPanel::startPostTransferRestore() {
-    Q_ASSERT(m_restoreWorker);
     Q_ASSERT(m_userScanner);
     if (m_restoreWorker && m_restoreWorker->isRunning()) {
         Q_EMIT logOutput(tr("Restore already running."));

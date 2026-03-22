@@ -229,8 +229,6 @@ void WifiManagerPanel::setupUi() {
 }
 
 void WifiManagerPanel::setupFormGroup() {
-    Q_ASSERT(m_location_input);
-    Q_ASSERT(m_ssid_input);
     m_form_group = new QGroupBox("Network Details", this);
     auto* layout = new QFormLayout(m_form_group);
     layout->setSpacing(8);
@@ -317,8 +315,6 @@ void WifiManagerPanel::setupTableGroup() {
 }
 
 void WifiManagerPanel::setupTableSearchRow(QVBoxLayout* layout) {
-    Q_ASSERT(m_search_input);
-    Q_ASSERT(m_search_up_btn);
     auto* searchRow = new QHBoxLayout();
     m_search_input = new QLineEdit(m_table_group);
     m_search_input->setPlaceholderText("Search networks\u2026");
@@ -340,7 +336,6 @@ void WifiManagerPanel::setupTableSearchRow(QVBoxLayout* layout) {
 }
 
 void WifiManagerPanel::setupNetworkTable(QVBoxLayout* layout) {
-    Q_ASSERT(m_network_table);
     Q_ASSERT(layout);
     m_network_table = new QTableWidget(0, COL_COUNT, m_table_group);
     m_network_table->setAccessibleName(QStringLiteral("Saved WiFi Networks Table"));
@@ -376,8 +371,6 @@ void WifiManagerPanel::setupNetworkTable(QVBoxLayout* layout) {
 }
 
 void WifiManagerPanel::setupTableActionButtons(QVBoxLayout* layout) {
-    Q_ASSERT(m_delete_selected_btn);
-    Q_ASSERT(m_add_to_windows_btn);
     auto* tableActions = new QHBoxLayout();
     m_delete_selected_btn = new QPushButton("Delete Selected", m_table_group);
     m_delete_selected_btn->setAccessibleName(QStringLiteral("Delete Selected Networks"));
@@ -403,8 +396,6 @@ void WifiManagerPanel::setupTableActionButtons(QVBoxLayout* layout) {
 }
 
 void WifiManagerPanel::setupActionButtons() {
-    Q_ASSERT(m_generate_qr_btn);
-    Q_ASSERT(m_export_script_btn);
     auto* bar = new QHBoxLayout();
 
     m_generate_qr_btn = new QPushButton("Generate QR Code", this);
@@ -1176,7 +1167,6 @@ void WifiManagerPanel::exportSingleWindowsScript(const WifiConfig& cfg) {
 
 void WifiManagerPanel::exportMultipleWindowsScripts(const QList<WifiConfig>& sources) {
     Q_ASSERT(!sources.isEmpty());
-    Q_ASSERT(sources.size() > 0);
 
     const QString outDir = QFileDialog::getExistingDirectory(
         this,
@@ -1256,7 +1246,6 @@ void WifiManagerPanel::onExportMacosProfileClicked() {
 }
 
 void WifiManagerPanel::onSaveTableClicked() {
-    Q_ASSERT(!m_save_path.isEmpty());
     Q_ASSERT(m_network_table);
     // Collect checked rows
     QList<int> checkedRows;

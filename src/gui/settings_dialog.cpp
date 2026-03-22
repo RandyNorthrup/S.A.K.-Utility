@@ -6,6 +6,7 @@
 #include "sak/config_manager.h"
 #include "sak/info_button.h"
 #include "sak/layout_constants.h"
+#include "sak/logger.h"
 #include "sak/style_constants.h"
 
 #include <QFileDialog>
@@ -107,8 +108,6 @@ void SettingsDialog::createBackupTab() {
 }
 
 QGroupBox* SettingsDialog::createBackupSettingsGroup(QWidget* parent) {
-    Q_ASSERT(m_backupThreadCount);
-    Q_ASSERT(m_lastBackupLocation);
     auto* backupGroup = new QGroupBox(tr("Backup Settings"));
     auto* backupLayout = new QFormLayout();
 
@@ -122,11 +121,11 @@ QGroupBox* SettingsDialog::createBackupSettingsGroup(QWidget* parent) {
 
     m_backupVerifyMD5 = new QCheckBox(tr("Verify files using MD5 hash after backup"));
     backupLayout->addRow(
-        InfoButton::createInfoLabel(
-            tr("Verify MD5:"),
-            tr("Re-read each copied file and verify its MD5 checksum matches the original -- slower "
-               "but ensures integrity"),
-            parent),
+        InfoButton::createInfoLabel(tr("Verify MD5:"),
+                                    tr("Re-read each copied file and verify its MD5 checksum "
+                                       "matches the original -- slower "
+                                       "but ensures integrity"),
+                                    parent),
         m_backupVerifyMD5);
 
     auto* locationLayout = new QHBoxLayout();
@@ -280,6 +279,8 @@ bool SettingsDialog::validateSettings() {
     Q_ASSERT(m_tabWidget);
     // Validate thread count
     if (m_backupThreadCount->value() < 1) {
+        sak::logWarning("Invalid setting: backup thread count less than 1 (value: {})",
+                        m_backupThreadCount->value());
         QMessageBox::warning(this, tr("Invalid Setting"), tr("Thread count must be at least 1."));
         m_tabWidget->setCurrentIndex(0);  // Switch to Backup tab
         m_backupThreadCount->setFocus();

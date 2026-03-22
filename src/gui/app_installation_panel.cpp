@@ -9,6 +9,7 @@
 #include "sak/app_installation_worker.h"
 #include "sak/chocolatey_manager.h"
 #include "sak/detachable_log_window.h"
+#include "sak/logger.h"
 #include "sak/migration_report.h"
 #include "sak/style_constants.h"
 #include "sak/widget_helpers.h"
@@ -49,11 +50,16 @@ AppInstallationPanel::AppInstallationPanel(QWidget* parent)
 
     // Initialize Chocolatey on startup
     QString chocoPath = QApplication::applicationDirPath() + "/tools/chocolatey";
+    sak::logInfo("[AppInstallationPanel] Initializing Chocolatey from: {}",
+                 chocoPath.toStdString());
     bool init_success = m_choco_manager->initialize(chocoPath);
     if (!init_success) {
+        sak::logWarning("[AppInstallationPanel] Chocolatey initialization failed");
         Q_EMIT logOutput(QString("WARNING: Chocolatey initialization failed"));
         Q_EMIT logOutput("Package installation will not be available.");
     } else {
+        sak::logInfo("[AppInstallationPanel] Chocolatey initialized successfully (version: {})",
+                     m_choco_manager->getChocoVersion().toStdString());
         Q_EMIT logOutput("Chocolatey initialized successfully");
         Q_EMIT logOutput("Use the search bar to find packages or select a category.");
     }
@@ -101,8 +107,6 @@ void AppInstallationPanel::setupUi() {
 }
 
 void AppInstallationPanel::setupUi_searchBar(QVBoxLayout* mainLayout) {
-    Q_ASSERT(m_searchEdit);
-    Q_ASSERT(m_categoryCombo);
     auto* searchGroup = new QGroupBox(tr("Search Packages"), this);
     auto* searchLayout = new QHBoxLayout(searchGroup);
 
@@ -135,7 +139,6 @@ void AppInstallationPanel::setupUi_searchBar(QVBoxLayout* mainLayout) {
 }
 
 void AppInstallationPanel::setupUi_packageTable(QSplitter* splitter) {
-    Q_ASSERT(m_resultsModel);
     Q_ASSERT(splitter);
     auto* resultsWidget = new QWidget(this);
     auto* resultsLayout = new QVBoxLayout(resultsWidget);
@@ -188,8 +191,6 @@ void AppInstallationPanel::setupUi_packageTable(QSplitter* splitter) {
 }
 
 void AppInstallationPanel::setupUi_queueSection(QSplitter* splitter) {
-    Q_ASSERT(m_queueList);
-    Q_ASSERT(m_removeFromQueueButton);
     auto* queueWidget = new QWidget(this);
     auto* queueLayout = new QVBoxLayout(queueWidget);
     queueLayout->setContentsMargins(8, 0, 0, 0);
@@ -218,6 +219,17 @@ void AppInstallationPanel::setupUi_queueSection(QSplitter* splitter) {
     m_clearQueueButton->setToolTip(QStringLiteral("Remove all packages from the queue"));
     queueButtonLayout->addWidget(m_clearQueueButton);
     queueLayout->addLayout(queueButtonLayout);
+
+    // Progress indicator (hidden until installation starts)
+    m_progressLabel = new QLabel(this);
+    m_progressLabel->setVisible(false);
+    queueLayout->addWidget(m_progressLabel);
+
+    m_progressBar = new QProgressBar(this);
+    m_progressBar->setVisible(false);
+    m_progressBar->setTextVisible(true);
+    m_progressBar->setFormat("%v / %m");
+    queueLayout->addWidget(m_progressBar);
 
     m_installButton = new QPushButton(tr("Install All"), this);
     m_installButton->setEnabled(false);
@@ -296,8 +308,6 @@ void AppInstallationPanel::setupSearchAndQueueConnections() {
 
     // Results selection
     connect(m_resultsModel, &QStandardItemModel::itemChanged, this, [this](QStandardItem* item) {
-        Q_ASSERT(m_resultsModel);
-        Q_ASSERT(m_addToQueueButton);
         if (!item || item->column() != RColCheck) {
             return;
         }
@@ -314,10 +324,12 @@ void AppInstallationPanel::setupSearchAndQueueConnections() {
 }
 
 void AppInstallationPanel::setupWorkerConnections() {
-    Q_ASSERT(m_installButton);
-    Q_ASSERT(m_worker);
-    Q_ASSERT(m_cancelButton);
     connect(m_worker.get(), &AppInstallationWorker::migrationStarted, this, [this](int totalJobs) {
+        m_progressBar->setRange(0, totalJobs);
+        m_progressBar->setValue(0);
+        m_progressBar->setVisible(true);
+        m_progressLabel->setText(tr("Installing 0 of %1...").arg(totalJobs));
+        m_progressLabel->setVisible(true);
         Q_EMIT progressUpdated(0, totalJobs);
         Q_EMIT statusMessage("App Installation: Installing packages...", 0);
         Q_EMIT logOutput(QString("Installation started: %1 package(s)").arg(totalJobs));
@@ -332,35 +344,43 @@ void AppInstallationPanel::setupWorkerConnections() {
                 Q_EMIT statusMessage(message, 0);
             });
 
-    connect(m_worker.get(),
-            &AppInstallationWorker::jobStatusChanged,
-            this,
-            [this](int entryIndex, const MigrationJob& job) {
-                Q_UNUSED(entryIndex);
-                switch (job.status) {
-                case MigrationStatus::Installing:
-                    Q_EMIT statusMessage(tr("Installing %1...").arg(job.packageId), 0);
-                    break;
-                case MigrationStatus::Success:
-                    Q_EMIT logOutput(QString("[x] %1 installed successfully").arg(job.packageId));
-                    break;
-                case MigrationStatus::Failed:
-                    Q_EMIT logOutput(
-                        QString("[ ] %1 failed: %2").arg(job.packageId, job.errorMessage));
-                    break;
-                default:
-                    break;
-                }
+    connect(
+        m_worker.get(),
+        &AppInstallationWorker::jobStatusChanged,
+        this,
+        [this](int entryIndex, const MigrationJob& job) {
+            Q_UNUSED(entryIndex);
+            switch (job.status) {
+            case MigrationStatus::Installing:
+                Q_EMIT statusMessage(tr("Installing %1...").arg(job.packageId), 0);
+                break;
+            case MigrationStatus::Success:
+                Q_EMIT logOutput(QString("[x] %1 installed successfully").arg(job.packageId));
+                break;
+            case MigrationStatus::Failed:
+                Q_EMIT logOutput(QString("[ ] %1 failed: %2").arg(job.packageId, job.errorMessage));
+                break;
+            default:
+                break;
+            }
 
-                auto stats = m_worker->getStats();
-                int completed = stats.success + stats.failed + stats.skipped + stats.cancelled;
-                Q_EMIT progressUpdated(completed, stats.total);
-            });
+            auto stats = m_worker->getStats();
+            int completed = stats.success + stats.failed + stats.skipped + stats.cancelled;
+            m_progressBar->setValue(completed);
+            m_progressLabel->setText(tr("Installing %1 of %2...").arg(completed).arg(stats.total));
+            Q_EMIT progressUpdated(completed, stats.total);
+        });
 
     connect(m_worker.get(),
             &AppInstallationWorker::migrationCompleted,
             this,
             [this](const AppInstallationWorker::Stats& stats) {
+                sak::logInfo(
+                    "[AppInstallationPanel] Installation complete: {} succeeded, "
+                    "{} failed, {} skipped",
+                    stats.success,
+                    stats.failed,
+                    stats.skipped);
                 Q_EMIT logOutput(QString("Installation complete: %1 succeeded, %2 failed, %3 "
                                          "skipped")
                                      .arg(stats.success)
@@ -372,6 +392,8 @@ void AppInstallationPanel::setupWorkerConnections() {
                                      5000);
 
                 Q_EMIT statusMessage(tr("Installation complete"), 5000);
+                m_progressBar->setVisible(false);
+                m_progressLabel->setVisible(false);
                 m_install_in_progress = false;
                 m_cancelButton->setVisible(false);
                 m_cancelButton->setEnabled(false);

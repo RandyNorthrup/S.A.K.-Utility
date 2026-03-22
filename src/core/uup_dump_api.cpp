@@ -487,7 +487,7 @@ bool UupDumpApi::parseApiResponse(const QByteArray& data,
     return !checkApiError(response, "fetching " + context);
 }
 
-QStringList UupDumpApi::parseEditionList(const QJsonValue& edListVal) {
+QStringList UupDumpApi::parseEditionList(const QJsonValue& edListVal) const {
     QStringList editions;
     if (edListVal.isArray()) {
         for (const QJsonValue& val : edListVal.toArray()) {

@@ -124,6 +124,7 @@ private Q_SLOTS:
     /**
      * @brief Handle view log button
      */
+    // cppcheck-suppress functionStatic
     void onViewLog();
 
     /**

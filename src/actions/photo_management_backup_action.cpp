@@ -26,8 +26,6 @@ void PhotoManagementBackupAction::scanLightroomCatalogs() {
 }
 
 void PhotoManagementBackupAction::scanLightroomCatalogsForUser(const UserProfile& user) {
-    Q_ASSERT(!m_photo_data.empty());
-    Q_ASSERT(!m_photo_data.isEmpty());
     QStringList search_paths = {user.profile_path + "/Pictures/Lightroom",
                                 user.profile_path + "/Documents/Lightroom"};
 
@@ -60,8 +58,6 @@ void PhotoManagementBackupAction::scanPhotoshopSettings() {
 }
 
 void PhotoManagementBackupAction::scanPhotoshopSettingsForUser(const UserProfile& user) {
-    Q_ASSERT(!m_photo_data.empty());
-    Q_ASSERT(!m_photo_data.isEmpty());
     QString ps_path = user.profile_path + "/AppData/Roaming/Adobe/Adobe Photoshop";
     if (!QDir(ps_path).exists()) {
         return;
@@ -102,8 +98,6 @@ void PhotoManagementBackupAction::scanCaptureOne() {
 }
 
 void PhotoManagementBackupAction::scanCaptureOneForUser(const UserProfile& user) {
-    Q_ASSERT(!m_photo_data.empty());
-    Q_ASSERT(!m_photo_data.isEmpty());
     QString c1_path = user.profile_path + "/Pictures/Capture One";
     if (!QDir(c1_path).exists()) {
         return;
@@ -167,8 +161,6 @@ void PhotoManagementBackupAction::execute() {
     setStatus(ActionStatus::Running);
     Q_ASSERT(status() == ActionStatus::Running);
     QDateTime start_time = QDateTime::currentDateTime();
-    Q_ASSERT(start_time.isValid());
-
     QDir backup_dir(m_backup_location + "/PhotoSoftware");
     if (!backup_dir.mkpath(".")) {
         sak::logWarning("Failed to create photo backup directory: {}",
@@ -196,7 +188,6 @@ void PhotoManagementBackupAction::execute() {
     }
 
     ExecutionResult result;
-    Q_ASSERT(!result.success);  // verify default init
     result.success = processed > 0;
     result.duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
     result.files_processed = processed;

@@ -55,7 +55,6 @@ NetworkDiagnosticPanel::~NetworkDiagnosticPanel() = default;
 // ===================================================================
 
 void NetworkDiagnosticPanel::setupUi() {
-    Q_ASSERT(m_toolTabs);
     // Root layout -- compact header, splitter for adapter+tools, report pinned at bottom.
     auto* rootLayout = new QVBoxLayout(this);
     rootLayout->setContentsMargins(
@@ -135,8 +134,6 @@ QWidget* NetworkDiagnosticPanel::createAdapterSection() {
 }
 
 void NetworkDiagnosticPanel::setupAdapterToolbar(QGroupBox* group, QVBoxLayout* layout) {
-    Q_ASSERT(m_refreshBtn);
-    Q_ASSERT(m_copyConfigBtn);
     auto* toolbar = new QHBoxLayout();
     m_refreshBtn = new QPushButton(tr("Refresh Adapters"), group);
     m_refreshBtn->setStyleSheet(ui::kPrimaryButtonStyle);
@@ -214,7 +211,6 @@ void NetworkDiagnosticPanel::setupAdapterTable(QGroupBox* group, QVBoxLayout* la
 void NetworkDiagnosticPanel::setupAdapterDetailLabel(QGroupBox* group, QVBoxLayout* layout) {
     Q_ASSERT(layout);
     Q_ASSERT(group);
-    Q_ASSERT(m_detailIdentity);
     const QString labelStyle = QStringLiteral("color: %1; font-size: %2pt;")
                                    .arg(ui::kColorTextMuted)
                                    .arg(ui::kFontSizeSmall);
@@ -263,8 +259,6 @@ QWidget* NetworkDiagnosticPanel::createPingTab() {
 }
 
 void NetworkDiagnosticPanel::setupPingConfig(QWidget* widget, QVBoxLayout* layout) {
-    Q_ASSERT(m_pingTarget);
-    Q_ASSERT(m_pingCount);
     // Row 1: Target
     auto* targetRow = new QHBoxLayout();
     targetRow->addWidget(new QLabel(tr("Target:"), widget));
@@ -319,8 +313,6 @@ void NetworkDiagnosticPanel::setupPingConfig(QWidget* widget, QVBoxLayout* layou
 }
 
 void NetworkDiagnosticPanel::setupPingControls(QWidget* widget, QVBoxLayout* layout) {
-    Q_ASSERT(m_pingStartBtn);
-    Q_ASSERT(m_pingStopBtn);
     auto* btnRow = new QHBoxLayout();
     m_pingStartBtn = new QPushButton(tr("Start Ping"), widget);
     m_pingStartBtn->setStyleSheet(ui::kPrimaryButtonStyle);
@@ -385,8 +377,6 @@ QWidget* NetworkDiagnosticPanel::createTracerouteTab() {
 }
 
 void NetworkDiagnosticPanel::setupTracerouteConfig(QWidget* widget, QVBoxLayout* layout) {
-    Q_ASSERT(m_traceTarget);
-    Q_ASSERT(m_traceMaxHops);
     auto* configRow = new QHBoxLayout();
     configRow->addWidget(new QLabel(tr("Target:"), widget));
     m_traceTarget = new QLineEdit(widget);
@@ -406,8 +396,6 @@ void NetworkDiagnosticPanel::setupTracerouteConfig(QWidget* widget, QVBoxLayout*
 }
 
 void NetworkDiagnosticPanel::setupTracerouteControls(QWidget* widget, QVBoxLayout* layout) {
-    Q_ASSERT(m_traceStartBtn);
-    Q_ASSERT(m_traceStopBtn);
     auto* btnRow = new QHBoxLayout();
     m_traceStartBtn = new QPushButton(tr("Trace Route"), widget);
     m_traceStartBtn->setStyleSheet(ui::kPrimaryButtonStyle);
@@ -430,7 +418,6 @@ void NetworkDiagnosticPanel::setupTracerouteControls(QWidget* widget, QVBoxLayou
 }
 
 void NetworkDiagnosticPanel::setupTracerouteResults(QWidget* widget, QVBoxLayout* layout) {
-    Q_ASSERT(m_traceTable);
     Q_ASSERT(widget);
     m_traceTable = new QTableWidget(widget);
     m_traceTable->setColumnCount(7);
@@ -477,8 +464,6 @@ QWidget* NetworkDiagnosticPanel::createMtrTab() {
 }
 
 void NetworkDiagnosticPanel::setupMtrConfig(QWidget* widget, QVBoxLayout* layout) {
-    Q_ASSERT(m_mtrTarget);
-    Q_ASSERT(m_mtrCycles);
     auto* configRow = new QHBoxLayout();
     configRow->addWidget(new QLabel(tr("Target:"), widget));
     m_mtrTarget = new QLineEdit(widget);
@@ -500,8 +485,6 @@ void NetworkDiagnosticPanel::setupMtrConfig(QWidget* widget, QVBoxLayout* layout
 }
 
 void NetworkDiagnosticPanel::setupMtrControls(QWidget* widget, QVBoxLayout* layout) {
-    Q_ASSERT(m_mtrStartBtn);
-    Q_ASSERT(m_mtrStopBtn);
     auto* btnRow = new QHBoxLayout();
     m_mtrStartBtn = new QPushButton(tr("Start MTR"), widget);
     m_mtrStartBtn->setStyleSheet(ui::kPrimaryButtonStyle);
@@ -524,7 +507,6 @@ void NetworkDiagnosticPanel::setupMtrControls(QWidget* widget, QVBoxLayout* layo
 }
 
 void NetworkDiagnosticPanel::setupMtrResults(QWidget* widget, QVBoxLayout* layout) {
-    Q_ASSERT(m_mtrTable);
     Q_ASSERT(widget);
     m_mtrTable = new QTableWidget(widget);
     m_mtrTable->setColumnCount(8);
@@ -570,8 +552,6 @@ QWidget* NetworkDiagnosticPanel::createDnsTab() {
 }
 
 void NetworkDiagnosticPanel::setupDnsConfig(QWidget* widget, QVBoxLayout* layout) {
-    Q_ASSERT(m_dnsHostname);
-    Q_ASSERT(m_dnsRecordType);
     // Row 1: Hostname + Record type
     auto* queryRow = new QHBoxLayout();
     queryRow->addWidget(new QLabel(tr("Hostname:"), widget));
@@ -615,8 +595,6 @@ void NetworkDiagnosticPanel::setupDnsConfig(QWidget* widget, QVBoxLayout* layout
 }
 
 void NetworkDiagnosticPanel::setupDnsControls(QWidget* widget, QVBoxLayout* layout) {
-    Q_ASSERT(m_dnsQueryBtn);
-    Q_ASSERT(m_dnsReverseBtn);
     auto* btnRow = new QHBoxLayout();
     m_dnsQueryBtn = new QPushButton(tr("Query"), widget);
     m_dnsQueryBtn->setStyleSheet(ui::kPrimaryButtonStyle);
@@ -656,7 +634,6 @@ void NetworkDiagnosticPanel::setupDnsControls(QWidget* widget, QVBoxLayout* layo
 }
 
 void NetworkDiagnosticPanel::setupDnsResults(QWidget* widget, QVBoxLayout* layout) {
-    Q_ASSERT(m_dnsTable);
     Q_ASSERT(widget);
     m_dnsTable = new QTableWidget(widget);
     m_dnsTable->setColumnCount(5);
@@ -698,8 +675,6 @@ QWidget* NetworkDiagnosticPanel::createPortScanTab() {
 }
 
 void NetworkDiagnosticPanel::setupPortScanConfig(QWidget* widget, QVBoxLayout* layout) {
-    Q_ASSERT(m_portTarget);
-    Q_ASSERT(m_portPreset);
     auto* configRow1 = new QHBoxLayout();
     configRow1->addWidget(new QLabel(tr("Target:"), widget));
     m_portTarget = new QLineEdit(widget);
@@ -770,8 +745,6 @@ void NetworkDiagnosticPanel::setupPortScanConfig(QWidget* widget, QVBoxLayout* l
 }
 
 void NetworkDiagnosticPanel::setupPortScanControls(QWidget* widget, QVBoxLayout* layout) {
-    Q_ASSERT(m_portStartBtn);
-    Q_ASSERT(m_portStopBtn);
     auto* btnRow = new QHBoxLayout();
     m_portStartBtn = new QPushButton(tr("Scan Ports"), widget);
     m_portStartBtn->setStyleSheet(ui::kPrimaryButtonStyle);
@@ -794,8 +767,6 @@ void NetworkDiagnosticPanel::setupPortScanControls(QWidget* widget, QVBoxLayout*
 }
 
 void NetworkDiagnosticPanel::setupPortScanResults(QWidget* widget, QVBoxLayout* layout) {
-    Q_ASSERT(m_portProgress);
-    Q_ASSERT(m_portTable);
     m_portProgress = new QProgressBar(widget);
     m_portProgress->setRange(0, 100);
     m_portProgress->setValue(0);
@@ -858,8 +829,6 @@ QWidget* NetworkDiagnosticPanel::createBandwidthTab() {
 }
 
 void NetworkDiagnosticPanel::setupBandwidthIperfConfig(QWidget* widget, QVBoxLayout* iperfLayout) {
-    Q_ASSERT(m_bwServerAddr);
-    Q_ASSERT(m_bwPort);
     // Row 1: Server address + Port
     auto* serverRow = new QHBoxLayout();
     serverRow->addWidget(new QLabel(tr("Server:"), widget));
@@ -950,8 +919,6 @@ void NetworkDiagnosticPanel::setupBandwidthIperfResults(QWidget* widget, QVBoxLa
 }
 
 void NetworkDiagnosticPanel::setupBandwidthHttpSection(QWidget* widget, QVBoxLayout* layout) {
-    Q_ASSERT(m_httpSpeedBtn);
-    Q_ASSERT(m_httpSpeedLabel);
     auto* httpGroup = new QGroupBox(tr("Internet Speed (HTTP)"), widget);
     auto* httpLayout = new QVBoxLayout(httpGroup);
     auto* httpBtnRow = new QHBoxLayout();
@@ -976,8 +943,6 @@ void NetworkDiagnosticPanel::setupBandwidthHttpSection(QWidget* widget, QVBoxLay
 // -- WiFi Tab ------------------------------------------------------------
 
 QWidget* NetworkDiagnosticPanel::createWiFiTab() {
-    Q_ASSERT(m_wifiScanBtn);
-    Q_ASSERT(m_wifiContBtn);
     auto* widget = new QWidget(this);
     auto* layout = new QVBoxLayout(widget);
     layout->setContentsMargins(
@@ -1067,8 +1032,6 @@ QWidget* NetworkDiagnosticPanel::createConnectionsTab() {
 }
 
 void NetworkDiagnosticPanel::setupConnectionsConfig(QWidget* widget, QVBoxLayout* layout) {
-    Q_ASSERT(m_connShowTcp);
-    Q_ASSERT(m_connShowUdp);
     auto* configRow = new QHBoxLayout();
     m_connShowTcp = new QCheckBox(tr("TCP"), widget);
     m_connShowTcp->setChecked(true);
@@ -1104,8 +1067,6 @@ void NetworkDiagnosticPanel::setupConnectionsConfig(QWidget* widget, QVBoxLayout
 }
 
 void NetworkDiagnosticPanel::setupConnectionsControls(QWidget* widget, QVBoxLayout* layout) {
-    Q_ASSERT(m_connStartBtn);
-    Q_ASSERT(m_connStopBtn);
     auto* btnRow = new QHBoxLayout();
     m_connStartBtn = new QPushButton(tr("Start Monitor"), widget);
     m_connStartBtn->setStyleSheet(ui::kPrimaryButtonStyle);
@@ -1128,7 +1089,6 @@ void NetworkDiagnosticPanel::setupConnectionsControls(QWidget* widget, QVBoxLayo
 }
 
 void NetworkDiagnosticPanel::setupConnectionsTable(QWidget* widget, QVBoxLayout* layout) {
-    Q_ASSERT(m_connTable);
     Q_ASSERT(widget);
     m_connTable = new QTableWidget(widget);
     m_connTable->setColumnCount(7);
@@ -1180,8 +1140,6 @@ QWidget* NetworkDiagnosticPanel::createFirewallTab() {
 }
 
 void NetworkDiagnosticPanel::setupFirewallToolbar(QWidget* widget, QVBoxLayout* layout) {
-    Q_ASSERT(m_fwAuditBtn);
-    Q_ASSERT(m_fwSearchBox);
     auto* toolbar = new QHBoxLayout();
     m_fwAuditBtn = new QPushButton(tr("Full Audit"), widget);
     m_fwAuditBtn->setStyleSheet(ui::kPrimaryButtonStyle);
@@ -1225,7 +1183,6 @@ void NetworkDiagnosticPanel::setupFirewallToolbar(QWidget* widget, QVBoxLayout* 
 }
 
 void NetworkDiagnosticPanel::setupFirewallRuleTable(QWidget* widget, QVBoxLayout* layout) {
-    Q_ASSERT(m_fwRuleTable);
     Q_ASSERT(widget);
     m_fwRuleTable = new QTableWidget(widget);
     m_fwRuleTable->setColumnCount(8);
@@ -1264,8 +1221,6 @@ void NetworkDiagnosticPanel::setupFirewallRuleTable(QWidget* widget, QVBoxLayout
 }
 
 void NetworkDiagnosticPanel::setupFirewallAnalysis(QWidget* widget, QVBoxLayout* layout) {
-    Q_ASSERT(m_fwConflictText);
-    Q_ASSERT(m_fwGapText);
     auto* analysisRow = new QHBoxLayout();
 
     auto* conflictGroup = new QGroupBox(tr("Conflicts"), widget);
@@ -1294,8 +1249,6 @@ void NetworkDiagnosticPanel::setupFirewallAnalysis(QWidget* widget, QVBoxLayout*
 // -- Shares Tab ----------------------------------------------------------
 
 QWidget* NetworkDiagnosticPanel::createSharesTab() {
-    Q_ASSERT(m_shareHostname);
-    Q_ASSERT(m_shareDiscoverBtn);
     auto* widget = new QWidget(this);
     auto* layout = new QVBoxLayout(widget);
     layout->setContentsMargins(
@@ -1347,8 +1300,6 @@ QWidget* NetworkDiagnosticPanel::createSharesTab() {
 // -- LAN Transfer Tab -- Group Builders ------------------------------------
 
 QGroupBox* NetworkDiagnosticPanel::createLanServerGroup(QWidget* parent) {
-    Q_ASSERT(m_lanPort);
-    Q_ASSERT(m_lanServerStartBtn);
     auto* group = new QGroupBox(tr("LAN Transfer Server (Receiver)"), parent);
     auto* group_layout = new QVBoxLayout(group);
     auto* row = new QHBoxLayout();
@@ -1386,8 +1337,6 @@ QGroupBox* NetworkDiagnosticPanel::createLanServerGroup(QWidget* parent) {
 }
 
 QGroupBox* NetworkDiagnosticPanel::createLanClientGroup(QWidget* parent) {
-    Q_ASSERT(m_lanTarget);
-    Q_ASSERT(m_lanDuration);
     auto* group = new QGroupBox(tr("LAN Transfer Client (Sender)"), parent);
     auto* group_layout = new QVBoxLayout(group);
 
@@ -1442,7 +1391,6 @@ QGroupBox* NetworkDiagnosticPanel::createLanClientGroup(QWidget* parent) {
 // -- LAN Transfer Tab ----------------------------------------------------
 
 QWidget* NetworkDiagnosticPanel::createLanTransferTab() {
-    Q_ASSERT(m_lanResultLabel);
     auto* scrollArea = new QScrollArea(this);
     scrollArea->setWidgetResizable(true);
     scrollArea->setFrameShape(QFrame::NoFrame);
@@ -1812,7 +1760,6 @@ void NetworkDiagnosticPanel::onRefreshAdapters() {
 }
 
 void NetworkDiagnosticPanel::onAdaptersScanComplete(QVector<NetworkAdapterInfo> adapters) {
-    Q_ASSERT(!adapters.isEmpty());
     Q_ASSERT(m_adapterTable);
     m_adapters = adapters;
     m_adapterTable->setRowCount(0);
@@ -1926,7 +1873,6 @@ void NetworkDiagnosticPanel::onAdapterSelectionChanged() {
 }
 
 void NetworkDiagnosticPanel::onCopyAdapterConfig() {
-    Q_ASSERT(!m_adapters.isEmpty());
     Q_ASSERT(m_adapterTable);
     const int row = m_adapterTable->currentRow();
     if (row < 0) {
@@ -2451,7 +2397,6 @@ struct PortScanRange {
 };
 
 QVector<uint16_t> getPresetPorts(int presetIdx) {
-    Q_ASSERT(presetIdx >= 0);
     if (presetIdx <= 0) {
         return {};
     }
@@ -2474,7 +2419,6 @@ void handleParsedRange(QVector<uint16_t>& ports,
                        PortScanRange& range,
                        uint16_t start,
                        uint16_t end) {
-    Q_ASSERT(!ports.isEmpty());
     if (!range.hasPrimary) {
         range.start = start;
         range.end = end;
@@ -2521,7 +2465,6 @@ bool parseSinglePort(const QString& text, QVector<uint16_t>& ports) {
 }
 
 QVector<uint16_t> parseCustomPorts(const QString& customText, PortScanRange& range) {
-    Q_ASSERT(!customText.isEmpty());
     if (customText.isEmpty()) {
         return {21, 22, 23, 25, 53, 80, 110, 143, 443, 445, 993, 995, 3306, 3389, 5432, 8080, 8443};
     }
@@ -3017,7 +2960,6 @@ void NetworkDiagnosticPanel::filterFirewallRules() {
 }
 
 void NetworkDiagnosticPanel::populateFirewallTable(const QVector<FirewallRule>& filtered) {
-    Q_ASSERT(!filtered.isEmpty());
     Q_ASSERT(m_fwRuleTable);
 
     m_fwRuleTable->setSortingEnabled(false);

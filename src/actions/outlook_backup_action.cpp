@@ -165,7 +165,6 @@ void OutlookBackupAction::execute() {
     setStatus(ActionStatus::Running);
     Q_ASSERT(status() == ActionStatus::Running);
     QDateTime start_time = QDateTime::currentDateTime();
-    Q_ASSERT(start_time.isValid());
     Q_EMIT executionProgress("Checking if Outlook is running...", 5);
     ProcessResult proc = runProcess("tasklist",
                                     QStringList() << "/FI" << "IMAGENAME eq OUTLOOK.EXE",
@@ -218,7 +217,6 @@ void OutlookBackupAction::finalizeOutlookResult(int files_copied,
     qint64 duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
 
     ExecutionResult result;
-    Q_ASSERT(!result.success);  // verify default init
     result.duration_ms = duration_ms;
     result.files_processed = files_copied;
     result.bytes_processed = bytes_copied;
@@ -230,7 +228,6 @@ void OutlookBackupAction::finalizeOutlookResult(int files_copied,
                              .arg(files_copied)
                              .arg(formatFileSize(bytes_copied));
         result.log = QString("Saved to: %1").arg(backup_dir.absolutePath());
-        Q_ASSERT(result.duration_ms >= 0);
         finishWithResult(result, ActionStatus::Success);
     } else {
         result.success = false;
@@ -249,8 +246,9 @@ bool OutlookBackupAction::isOutlookRunning() {
 }
 
 bool OutlookBackupAction::copyFileWithProgress(const QString& source, const QString& dest) {
-    Q_ASSERT(!source.isEmpty());
-    Q_ASSERT(!dest.isEmpty());
+    if (source.isEmpty() || dest.isEmpty()) {
+        return false;
+    }
     QFile source_file(source);
     if (!source_file.open(QIODevice::ReadOnly)) {
         return false;

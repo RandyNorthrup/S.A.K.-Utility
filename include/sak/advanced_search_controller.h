@@ -73,7 +73,7 @@ public:
     void setPreferences(const SearchPreferences& prefs);
 
     /// @brief Get current search preferences
-    [[nodiscard]] SearchPreferences preferences() const;
+    [[nodiscard]] const SearchPreferences& preferences() const;
 
     /// @brief Load preferences from persistent storage
     void loadPreferences();

@@ -3,6 +3,7 @@
 
 #include "sak/chocolatey_manager.h"
 #include "sak/layout_constants.h"
+#include "sak/logger.h"
 #include "sak/style_constants.h"
 #include "sak/user_profile_restore_wizard.h"
 #include "sak/windows_user_scanner.h"
@@ -270,6 +271,7 @@ bool UserProfileRestoreUserMappingPage::validatePage() {
     }
 
     if (mappings.isEmpty()) {
+        sak::logWarning("No users selected for restore operation");
         QMessageBox::warning(this,
                              tr("No Users Selected"),
                              tr("Please select at least one user to restore."));
@@ -347,10 +349,10 @@ void UserProfileRestoreMergeConfigPage::loadMergeTable() {
         m_mergeTable->insertRow(row);
 
         // Mapping info
-        QString mappingText = mapping.destination_username.isEmpty()
-                                  ? tr("%1 -> (New User)").arg(mapping.source_username)
-                                  : tr("%1 -> %2").arg(mapping.source_username,
-                                                      mapping.destination_username);
+        QString mappingText =
+            mapping.destination_username.isEmpty()
+                ? tr("%1 -> (New User)").arg(mapping.source_username)
+                : tr("%1 -> %2").arg(mapping.source_username, mapping.destination_username);
 
         auto* mappingItem = new QTableWidgetItem(mappingText);
         mappingItem->setFlags(mappingItem->flags() & ~Qt::ItemIsEditable);
@@ -621,6 +623,7 @@ bool UserProfileRestoreFolderSelectionPage::validatePage() {
     }
 
     if (selectedCount == 0) {
+        sak::logWarning("No folders selected for restore operation");
         QMessageBox::warning(this,
                              tr("No Folders Selected"),
                              tr("Please select at least one folder to restore."));
@@ -1563,7 +1566,8 @@ void UserProfileRestoreAppRestorePage::loadApps() {
     QString appsFilePath = wiz->backupPath() + "/installed_apps.json";
     QFile file(appsFilePath);
     if (!file.open(QIODevice::ReadOnly)) {
-        m_statusLabel->setText(tr("No installed_apps.json found in backup -- skipping app restore"));
+        m_statusLabel->setText(
+            tr("No installed_apps.json found in backup -- skipping app restore"));
         m_summaryLabel->setText(tr("No application data available in this backup"));
         return;
     }
@@ -1840,10 +1844,11 @@ void UserProfileRestoreAppRestorePage::onInstallApps() {
 
     m_statusLabel->setText(
         tr("Installation complete: %1 succeeded, %2 failed").arg(installed).arg(failed));
-    m_summaryLabel->setText(tr("App installation finished -- %1 installed, %2 failed. Click Next to "
-                               "continue.")
-                                .arg(installed)
-                                .arg(failed));
+    m_summaryLabel->setText(
+        tr("App installation finished -- %1 installed, %2 failed. Click Next to "
+           "continue.")
+            .arg(installed)
+            .arg(failed));
 }
 
 QVector<RestoreAppInfo> UserProfileRestoreAppRestorePage::collectSelectedApps() const {

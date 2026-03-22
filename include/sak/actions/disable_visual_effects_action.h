@@ -35,23 +35,22 @@ public:
 
 private:
     bool m_effects_enabled{false};
-    int m_effects_count{0};
 
     bool areVisualEffectsEnabled();
     bool disableVisualEffects();
 
     /// @brief Builds the PowerShell script to enumerate current visual effects settings.
     /// @return PowerShell script that outputs JSON of current settings.
-    QString buildCheckSettingsScript() const;
+    static QString buildCheckSettingsScript();
 
     /// @brief Builds the PowerShell script to apply Best Performance registry settings.
     /// @return PowerShell script that outputs CHANGES and TOTAL counts.
-    QString buildApplySettingsScript() const;
+    static QString buildApplySettingsScript();
 
     /// @brief Builds the performance-related registry checks (first 6 settings).
-    QString buildApplyScriptPerformanceChecks() const;
+    static QString buildApplyScriptPerformanceChecks();
     /// @brief Builds the desktop/icon registry checks (last 6 settings) and output.
-    QString buildApplyScriptDesktopChecks() const;
+    static QString buildApplyScriptDesktopChecks();
 
     /// @brief Builds the current settings analysis section of the report.
     /// @return Report section with current settings values.

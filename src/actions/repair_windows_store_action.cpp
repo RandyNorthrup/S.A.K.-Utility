@@ -182,8 +182,6 @@ void RepairWindowsStoreAction::execute() {
     setStatus(ActionStatus::Running);
     Q_ASSERT(status() == ActionStatus::Running);
     QDateTime start_time = QDateTime::currentDateTime();
-    Q_ASSERT(start_time.isValid());
-
     Q_EMIT executionProgress("Diagnosing Windows Store...", 5);
 
     // PHASE 1: Check Store package status
@@ -227,7 +225,6 @@ void RepairWindowsStoreAction::finalizeRepairResult(const RepairStepResults& ste
     qint64 duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
 
     ExecutionResult result;
-    Q_ASSERT(!result.success);  // verify default init
     result.duration_ms = duration_ms;
 
     bool overall_success = steps.cache_reset && steps.package_reset && steps.reregistered &&

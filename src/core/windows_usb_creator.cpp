@@ -228,6 +228,7 @@ bool WindowsUSBCreator::extractAndVerifyFiles(const QString& isoPath, const QStr
     QString basePath = driveLetter + ":\\";
     QStringList criticalFiles = {"setup.exe", "sources\\boot.wim", "bootmgr"};
 
+    // cppcheck-suppress useStlAlgorithm ; loop has side effects (per-file error + logging)
     for (const QString& file : criticalFiles) {
         QString fullPath = basePath + file;
         if (!QFile::exists(fullPath)) {

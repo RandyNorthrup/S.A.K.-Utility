@@ -19,6 +19,8 @@
 #include <QTextStream>
 
 #ifdef Q_OS_WIN
+#include <numeric>
+
 #include <windows.h>
 #endif
 
@@ -83,10 +85,10 @@ void UupIsoBuilder::startBuild(const QList<UupDumpApi::FileInfo>& files,
     m_converterErrors.clear();
 
     // Calculate total download size
-    m_totalDownloadBytes = 0;
-    for (const auto& file : m_files) {
-        m_totalDownloadBytes += file.size;
-    }
+    m_totalDownloadBytes = std::accumulate(
+        m_files.begin(), m_files.end(), qint64{0}, [](qint64 acc, const auto& file) {
+            return acc + file.size;
+        });
 
     sak::logInfo("Starting UUP ISO build: " + std::to_string(m_files.size()) + " files, " +
                  std::to_string(m_totalDownloadBytes / sak::kBytesPerMB) + " MB total, edition=" +
@@ -1085,8 +1087,6 @@ bool UupIsoBuilder::isRunningAsAdmin() {
     BOOL isAdmin = FALSE;
     PSID adminGroup = nullptr;
     SID_IDENTIFIER_AUTHORITY ntAuthority = SECURITY_NT_AUTHORITY;
-    Q_ASSERT(adminGroup == nullptr);
-    Q_ASSERT(isAdmin == FALSE);
 
     if (AllocateAndInitializeSid(&ntAuthority,
                                  2,
@@ -1200,24 +1200,4 @@ QString UupIsoBuilder::classifyConverterFailure() const {
                "specific error was detected.\n\nOutput path: %1\n\n"
                "Last output:\n%2")
         .arg(m_outputIsoPath, tail);
-}
-
-void UupIsoBuilder::updateOverallProgress() {
-    int overall = PHASE_PREPARE_WEIGHT;
-
-    if (m_phase == Phase::DownloadingFiles || m_phase == Phase::ConvertingToISO ||
-        m_phase == Phase::Completed) {
-        overall += (m_downloadPercent * PHASE_DOWNLOAD_WEIGHT / 100);
-    }
-
-    if (m_phase == Phase::ConvertingToISO || m_phase == Phase::Completed) {
-        overall += (m_conversionPercent * PHASE_CONVERT_WEIGHT / 100);
-    }
-
-    if (overall > 100) {
-        overall = 100;
-    }
-
-    // This method is used for internal state tracking;
-    // actual emission happens in the specific phase handlers
 }

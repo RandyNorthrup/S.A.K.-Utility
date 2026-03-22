@@ -35,7 +35,7 @@ private:
     struct PowerPlan {
         QString guid;
         QString name;
-        bool isActive;
+        bool isActive{false};
     };
 
     QVector<PowerPlan> enumeratePowerPlans();
@@ -43,7 +43,7 @@ private:
     PowerPlan getActivePowerPlan();
     bool setPowerPlan(const QString& guid);
     PowerPlan findPowerPlanByName(const QString& name);
-    QString getStandardPowerPlanGuid(const QString& plan_name);
+    QString getStandardPowerPlanGuid(const QString& plan_type);
 
     /// @brief Activate the High Performance plan, verify, and append status to report
     bool activateHighPerformancePlan(const PowerPlan& high_perf_plan,

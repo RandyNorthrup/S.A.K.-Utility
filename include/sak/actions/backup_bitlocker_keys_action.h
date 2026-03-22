@@ -110,7 +110,7 @@ private:
     /// @brief Write per-volume key protector sections
     void writeRecoveryDocumentVolumes(QTextStream& out) const;
     /// @brief Write recovery instructions footer
-    void writeRecoveryDocumentFooter(QTextStream& out) const;
+    static void writeRecoveryDocumentFooter(QTextStream& out);
 
     /**
      * @brief Write individual per-volume key files
@@ -181,7 +181,8 @@ private:
     /// @brief Write a single key protector entry to the recovery document
     void writeKeyProtectorEntry(QTextStream& out, const KeyProtectorInfo& kp, int index) const;
     /// @brief Write recovery password entries for a volume
-    void writeVolumeKeyEntries(QTextStream& out, const QVector<KeyProtectorInfo>& protectors) const;
+    static void writeVolumeKeyEntries(QTextStream& out,
+                                      const QVector<KeyProtectorInfo>& protectors);
     /// @brief Build JSON object for a single volume
     QJsonObject buildVolumeJson(const VolumeInfo& vol) const;
 };

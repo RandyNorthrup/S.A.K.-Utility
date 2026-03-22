@@ -126,8 +126,6 @@ void DisableStartupProgramsAction::execute() {
     setStatus(ActionStatus::Running);
     Q_ASSERT(status() == ActionStatus::Running);
     QDateTime start_time = QDateTime::currentDateTime();
-    Q_ASSERT(start_time.isValid());
-
     QString startup_output;
     int startup_count = 0;
     if (!executeScanRegistry(start_time, startup_output, startup_count)) {
@@ -233,11 +231,11 @@ QString DisableStartupProgramsAction::formatStartupProgramsSection(const QString
         // Determine location type for icon
         QString icon = QStringLiteral("\u25CF");
         if (location.contains("HKLM", Qt::CaseInsensitive)) {
-            icon = QString::fromUtf8("#");  // System-wide
+            icon = QString::fromUtf8("#");    // System-wide
         } else if (location.contains("HKCU", Qt::CaseInsensitive)) {
             icon = QString::fromUtf8("[ ]");  // User-specific
         } else if (location.contains("Startup", Qt::CaseInsensitive)) {
-            icon = QString::fromUtf8(">");  // Startup folder
+            icon = QString::fromUtf8(">");    // Startup folder
         }
 
         section += QString::fromUtf8("| %1 %2").arg(icon).arg(name).leftJustified(73, ' ') +
@@ -292,7 +290,8 @@ QString DisableStartupProgramsAction::formatStartupTasksSection(const QString& t
         QString name = task["TaskName"].toString().left(50);
         QString state = task["State"].toString();
 
-        QString state_icon = (state == "Ready") ? QString::fromUtf8("[x]") : QStringLiteral("\u25EF");
+        QString state_icon = (state == "Ready") ? QString::fromUtf8("[x]")
+                                                : QStringLiteral("\u25EF");
 
         section += QString::fromUtf8("| %1 %2").arg(state_icon).arg(name).leftJustified(73, ' ') +
                    QString::fromUtf8("|\n");
@@ -360,11 +359,13 @@ void DisableStartupProgramsAction::executeDisableEntries(const QDateTime& start_
     report += "+============================================================================+\n";
 
     if (startup_count + task_count > 15) {
-        report += "| (!) High startup item count detected                                        |\n";
+        report +=
+            "| (!) High startup item count detected                                        |\n";
         report += "|   Consider disabling unnecessary programs to improve boot time            |\n";
     }
     if (startup_count + task_count > 25) {
-        report += "| (!) Very high startup load - boot performance likely impacted               |\n";
+        report +=
+            "| (!) Very high startup load - boot performance likely impacted               |\n";
     }
 
     report += "|                                                                            |\n";
@@ -394,7 +395,6 @@ void DisableStartupProgramsAction::executeBuildReport(const QDateTime& start_tim
 
     // Structured output for external processing
     ExecutionResult result;
-    Q_ASSERT(!result.success);  // verify default init
     result.duration_ms = duration_ms;
     result.files_processed = startup_count + task_count;
 
@@ -408,9 +408,6 @@ void DisableStartupProgramsAction::executeBuildReport(const QDateTime& start_tim
     result.success = true;
     result.message = QString("Found %1 startup item(s) - Task Manager opened").arg(total_items);
     result.log = structured_log + "\n" + report;
-
-    Q_ASSERT(result.duration_ms >= 0);
-
     finishWithResult(result, ActionStatus::Success);
 }
 

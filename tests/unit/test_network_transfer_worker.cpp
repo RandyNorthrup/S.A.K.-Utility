@@ -174,7 +174,12 @@ void NetworkTransferWorkerTests::senderConnectionRefused() {
     opts.resume_enabled = false;
 
     // Connect to a port that nothing is listening on.
-    QVector<sak::TransferFileEntry> files;
+    sak::TransferFileEntry dummy_entry;
+    dummy_entry.file_id = QStringLiteral("dummy");
+    dummy_entry.absolute_path = QStringLiteral("C:/nonexistent_file.txt");
+    dummy_entry.relative_path = QStringLiteral("nonexistent_file.txt");
+    dummy_entry.size_bytes = 0;
+    QVector<sak::TransferFileEntry> files{dummy_entry};
     worker.startSender(files, QHostAddress::LocalHost, 49'999, opts);
 
     // startSender is synchronous, so signals are emitted before return.
@@ -307,11 +312,9 @@ void NetworkTransferWorkerTests::receiverRejectsInvalidMagic() {
 
     QVERIFY2(finished, "Receiver did not exit after receiving invalid magic");
     QVERIFY(completedSpy.count() >= 1);
-    // Note: The receiver breaks out of the loop on invalid magic (readHeader
-    // returns false) but then returns `!m_stopRequested` which is true,
-    // so it reports success.  This is a defensive no-crash guarantee rather
-    // than a strict rejection; the connection simply ends.
-    // The key assertion is that it does NOT crash or hang.
+    // After the fix, the receiver correctly reports failure when the
+    // connection drops without a valid TransferEnd frame.
+    QCOMPARE(completedSpy.first().at(0).toBool(), false);
 }
 
 // ===========================================================================

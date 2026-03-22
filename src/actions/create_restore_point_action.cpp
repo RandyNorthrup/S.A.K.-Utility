@@ -177,8 +177,6 @@ void CreateRestorePointAction::execute() {
     setStatus(ActionStatus::Running);
     Q_ASSERT(status() == ActionStatus::Running);
     QDateTime start_time = QDateTime::currentDateTime();
-    Q_ASSERT(start_time.isValid());
-
     if (isCancelled()) {
         emitCancelledResult("Restore point creation cancelled", start_time);
         return;
@@ -229,7 +227,6 @@ void CreateRestorePointAction::execute() {
     }
 
     ExecutionResult result;
-    Q_ASSERT(!result.success);  // verify default init
     result.success = success;
     result.message = success ? "Restore point created successfully"
                              : "Restore point creation "
@@ -355,7 +352,7 @@ QString CreateRestorePointAction::verifyLatestRestorePoint() {
 // Private Helpers
 // ============================================================================
 
-QString CreateRestorePointAction::buildCreateScript() const {
+QString CreateRestorePointAction::buildCreateScript() {
     return R"PS(
         try {
             $timestamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
@@ -376,7 +373,9 @@ QString CreateRestorePointAction::buildCreateScript() const {
 }
 
 QString CreateRestorePointAction::buildTroubleshootingReport(const QString& error_code) const {
-    Q_ASSERT(!error_code.isEmpty());
+    if (error_code.isEmpty()) {
+        return {};
+    }
     QString section;
     section += "|                                                                      |\n";
     section += "| TROUBLESHOOTING GUIDANCE:                                            |\n";
@@ -416,10 +415,10 @@ QString CreateRestorePointAction::buildTroubleshootingReport(const QString& erro
 }
 
 QString CreateRestorePointAction::buildManagementReport(const QString& final_count) const {
-    Q_ASSERT(!final_count.isEmpty());
+    QString count_str = final_count.isEmpty() ? QStringLiteral("0") : final_count;
     QString section;
     section += "+======================================================================+\n";
-    section += QString("| Total Restore Points Available: %1").arg(final_count.leftJustified(34)) +
+    section += QString("| Total Restore Points Available: %1").arg(count_str.leftJustified(34)) +
                QString("|\n");
     section += "|                                                                      |\n";
     section += "| RESTORE POINT MANAGEMENT:                                            |\n";

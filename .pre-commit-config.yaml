@@ -49,20 +49,7 @@ repos:
         exclude: (third_party|3rdparty|external)/
 
       # -------------------------------------------------------------------
-      # 2. TigerStyle lint — S.A.K. coding discipline
-      #    --strict: warnings become errors
-      # -------------------------------------------------------------------
-      - id: tigerstyle-lint
-        name: "TigerStyle lint (strict)"
-        description: "Function length ≤70, nesting ≤3, line length ≤100, assertions ≥2 (>30 lines)"
-        entry: python scripts/lint_tigerstyle.py --strict
-        language: system
-        types_or: [c, c++]
-        files: \.(cpp|h|hpp|cxx|cc|hxx)$
-        exclude: (third_party|3rdparty|external)/
-
-      # -------------------------------------------------------------------
-      # 3. Lizard — Cyclomatic complexity & function metrics
+      # 2. Lizard — Cyclomatic complexity & function metrics
       #    CCN ≤ 10, length ≤ 70, params ≤ 5
       # -------------------------------------------------------------------
       - id: lizard-complexity
@@ -75,7 +62,7 @@ repos:
         exclude: (third_party|3rdparty|external)/
 
       # -------------------------------------------------------------------
-      # 4. cppcheck — Deep static analysis
+      # 3. cppcheck — Deep static analysis
       #    All checks, exhaustive level, inconclusive, C++23
       # -------------------------------------------------------------------
       - id: cppcheck

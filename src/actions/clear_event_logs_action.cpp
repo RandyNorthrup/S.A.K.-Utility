@@ -112,8 +112,6 @@ void ClearEventLogsAction::execute() {
     setStatus(ActionStatus::Running);
     Q_ASSERT(status() == ActionStatus::Running);
     QDateTime start_time = QDateTime::currentDateTime();
-    Q_ASSERT(start_time.isValid());
-
     QString ps_script;
     if (!executeEnumerateLogs(start_time, ps_script)) {
         return;
@@ -128,7 +126,6 @@ void ClearEventLogsAction::execute() {
 }
 
 bool ClearEventLogsAction::executeEnumerateLogs(const QDateTime& start_time, QString& ps_script) {
-    Q_ASSERT(!ps_script.isEmpty());
     Q_UNUSED(start_time)
     Q_EMIT executionProgress("+================================================================+",
                              0);
@@ -273,7 +270,6 @@ void ClearEventLogsAction::executeBuildReport(const QDateTime& start_time,
     qint64 duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
 
     ExecutionResult exec_result;
-    Q_ASSERT(!exec_result.success);  // verify default init
     exec_result.duration_ms = duration_ms;
     exec_result.files_processed = result.cleared_logs;
     exec_result.output_path = result.backup_path;
@@ -288,7 +284,6 @@ void ClearEventLogsAction::executeBuildReport(const QDateTime& start_time,
             QString("Successfully cleared %1 event log(s)").arg(result.cleared_logs);
         appendSuccessReport(log_output, result, duration_ms);
         exec_result.log = log_output;
-        Q_ASSERT(exec_result.duration_ms >= 0);
         finishWithResult(exec_result, ActionStatus::Success);
     } else {
         exec_result.success = false;
@@ -348,8 +343,6 @@ void ClearEventLogsAction::appendSuccessReport(QString& log_output,
 }
 
 void ClearEventLogsAction::appendFailureReport(QString& log_output, const QStringList& details) {
-    Q_ASSERT(!log_output.isEmpty());
-    Q_ASSERT(!details.isEmpty());
     log_output += QString(
         "\u2551 Status: No logs processed                                      "
         "\u2551\n");

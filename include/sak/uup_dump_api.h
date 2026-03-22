@@ -184,7 +184,7 @@ private:
     QNetworkReply* sendApiRequest(const QString& endpoint, const QMap<QString, QString>& params);
     bool checkApiError(const QJsonObject& response, const QString& context);
     bool parseApiResponse(const QByteArray& data, const QString& context, QJsonObject& response);
-    [[nodiscard]] QStringList parseEditionList(const QJsonValue& edListVal);
+    [[nodiscard]] QStringList parseEditionList(const QJsonValue& edListVal) const;
     QString buildSearchQuery(const QString& arch, ReleaseChannel channel) const;
 
     /// @brief Extract langFancyNames from API response into a display-name map

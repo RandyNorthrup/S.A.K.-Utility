@@ -52,8 +52,6 @@ void CheckDiskErrorsAction::execute() {
     setStatus(ActionStatus::Running);
     Q_ASSERT(status() == ActionStatus::Running);
     QDateTime start_time = QDateTime::currentDateTime();
-    Q_ASSERT(start_time.isValid());
-
     QVector<QChar> drives;
     QString report;
     if (!executeEnumerateVolumes(start_time, drives, report)) {
@@ -86,7 +84,6 @@ bool CheckDiskErrorsAction::executeEnumerateVolumes(const QDateTime& start_time,
 
     if (drives.isEmpty()) {
         ExecutionResult result;
-        Q_ASSERT(!result.success);  // verify default init
         result.success = false;
         result.message = "No valid drives found for scanning";
         result.log = "Unable to detect any readable, writable volumes";
@@ -270,7 +267,6 @@ void CheckDiskErrorsAction::executeBuildReport(const QDateTime& start_time,
     qint64 duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
 
     ExecutionResult result;
-    Q_ASSERT(!result.success);  // verify default init
     result.duration_ms = duration_ms;
     result.files_processed = drives_scanned;
 

@@ -20,6 +20,8 @@
 #include <QVBoxLayout>
 #include <QWidget>
 
+#include <algorithm>
+
 namespace sak {
 
 // -- Panel Header Factory ----------------------------------------------------
@@ -206,10 +208,10 @@ inline void setAccessible(QWidget* widget, const QString& name, const QString& d
         {"complete", nullptr},
         {"ready", nullptr},
     };
-    for (const auto& entry : kSuccess) {
-        if (value.contains(QLatin1String(entry.keyword))) {
-            return QColor(ui::kStatusColorSuccess);
-        }
+    if (std::any_of(std::begin(kSuccess), std::end(kSuccess), [&value](const StatusKeyword& e) {
+            return value.contains(QLatin1String(e.keyword));
+        })) {
+        return QColor(ui::kStatusColorSuccess);
     }
     static constexpr const char* kError[] = {
         "fail",
@@ -217,10 +219,10 @@ inline void setAccessible(QWidget* widget, const QString& name, const QString& d
         "reject",
         "cancel",
     };
-    for (const auto* keyword : kError) {
-        if (value.contains(QLatin1String(keyword))) {
-            return QColor(ui::kStatusColorError);
-        }
+    if (std::any_of(std::begin(kError), std::end(kError), [&value](const char* kw) {
+            return value.contains(QLatin1String(kw));
+        })) {
+        return QColor(ui::kStatusColorError);
     }
     static constexpr const char* kWarning[] = {
         "active",
@@ -229,10 +231,10 @@ inline void setAccessible(QWidget* widget, const QString& name, const QString& d
         "queued",
         "progress",
     };
-    for (const auto* keyword : kWarning) {
-        if (value.contains(QLatin1String(keyword))) {
-            return QColor(ui::kStatusColorWarning);
-        }
+    if (std::any_of(std::begin(kWarning), std::end(kWarning), [&value](const char* kw) {
+            return value.contains(QLatin1String(kw));
+        })) {
+        return QColor(ui::kStatusColorWarning);
     }
     return QColor(ui::kStatusColorIdle);
 }

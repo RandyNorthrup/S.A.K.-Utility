@@ -55,7 +55,7 @@ private:
     /// @brief Collect Steam remote save directories under the given path
     void collectSteamRemoteDirs(const QString& path);
     /// @brief Measure and append a save location to the list
-    void addSaveLocation(const QString& platform, const QString& path);
+    void addSaveLocation(const QString& platform, const QString& dir_path);
     /// @brief Recursively copy all files from src_path to dest_path
     qint64 copyDirectoryRecursive(const QString& src_path, const QString& dest_path);
 };

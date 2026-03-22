@@ -192,10 +192,12 @@ auto file_hasher::calculateSha256(std::span<const std::byte> data)
     }
 }
 
-void file_hasher::hashFileInChunks(QFile& file,
-                                   QCryptographicHash& hash,
-                                   hash_progress_callback& progress,
-                                   const std::stop_token& stop_token) const {
+void file_hasher::hashFileInChunks(
+    QFile& file,
+    QCryptographicHash& hash,
+    // cppcheck-suppress constParameterReference ; move_only_function has non-const operator()
+    hash_progress_callback& progress,
+    const std::stop_token& stop_token) const {
     const auto file_size = static_cast<std::size_t>(file.size());
     std::size_t bytes_processed = 0;
 

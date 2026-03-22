@@ -524,7 +524,6 @@ QVector<GpuInfo> HardwareInventoryScanner::queryGpu() {
 }
 
 void HardwareInventoryScanner::enumerateDxgiAdapters(QVector<GpuInfo>& gpus) {
-    Q_ASSERT(!gpus.isEmpty());
 #ifdef SAK_PLATFORM_WINDOWS
     Microsoft::WRL::ComPtr<IDXGIFactory1> factory;
     if (!SUCCEEDED(CreateDXGIFactory1(IID_PPV_ARGS(&factory)))) {

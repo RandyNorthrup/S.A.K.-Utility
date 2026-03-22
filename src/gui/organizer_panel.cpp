@@ -64,7 +64,6 @@ OrganizerPanel::~OrganizerPanel() {
 // ============================================================================
 
 void OrganizerPanel::setupUi() {
-    Q_ASSERT(m_tabs);
     auto* rootLayout = new QVBoxLayout(this);
     rootLayout->setContentsMargins(
         ui::kMarginMedium, ui::kMarginMedium, ui::kMarginMedium, ui::kMarginMedium);
@@ -131,8 +130,6 @@ void OrganizerPanel::setupUi() {
 // ============================================================================
 
 QGroupBox* OrganizerPanel::createTargetDirectoryGroup() {
-    Q_ASSERT(m_target_path);
-    Q_ASSERT(m_browse_button);
     auto* group = new QGroupBox(tr("Target Directory"), this);
     auto* group_layout = new QVBoxLayout(group);
 
@@ -160,8 +157,6 @@ QGroupBox* OrganizerPanel::createTargetDirectoryGroup() {
 }
 
 QGroupBox* OrganizerPanel::createCategoryMappingGroup() {
-    Q_ASSERT(m_category_table);
-    Q_ASSERT(m_add_category_button);
     auto* group = new QGroupBox(tr("Category Mapping"), this);
     auto* group_layout = new QVBoxLayout(group);
 
@@ -203,8 +198,6 @@ QGroupBox* OrganizerPanel::createCategoryMappingGroup() {
 // ============================================================================
 
 QWidget* OrganizerPanel::createOrganizerTab() {
-    Q_ASSERT(m_collision_strategy);
-    Q_ASSERT(m_preview_mode_checkbox);
     auto* tab = new QWidget(this);
     auto* scrollArea = new QScrollArea(this);
     scrollArea->setWidgetResizable(true);
@@ -267,7 +260,6 @@ QWidget* OrganizerPanel::createOrganizerTab() {
 }
 
 void OrganizerPanel::createOrganizerControls(QVBoxLayout* layout, QPushButton*& settingsBtn) {
-    Q_ASSERT(m_preview_button);
     Q_ASSERT(layout);
     auto* row = new QHBoxLayout();
 
@@ -307,8 +299,6 @@ void OrganizerPanel::createOrganizerControls(QVBoxLayout* layout, QPushButton*& 
 // ============================================================================
 
 QGroupBox* OrganizerPanel::createScanDirectoriesGroup() {
-    Q_ASSERT(m_dedup_directory_list);
-    Q_ASSERT(m_dedup_add_button);
     auto* group = new QGroupBox(tr("Scan Directories"), this);
     auto* group_layout = new QVBoxLayout(group);
 
@@ -346,7 +336,6 @@ QGroupBox* OrganizerPanel::createScanDirectoriesGroup() {
 
 void OrganizerPanel::createDedupControls(QVBoxLayout* layout, QPushButton*& settingsBtn) {
     Q_ASSERT(layout);
-    Q_ASSERT(settingsBtn);
     auto* row = new QHBoxLayout();
 
     settingsBtn = new QPushButton(tr("Settings"), this);
@@ -381,8 +370,6 @@ void OrganizerPanel::createDedupControls(QVBoxLayout* layout, QPushButton*& sett
 // ============================================================================
 
 QWidget* OrganizerPanel::createDuplicateFinderTab() {
-    Q_ASSERT(m_dedup_min_size);
-    Q_ASSERT(m_dedup_recursive);
     auto* tab = new QWidget(this);
     auto* scrollArea = new QScrollArea(this);
     scrollArea->setWidgetResizable(true);
@@ -540,12 +527,15 @@ void OrganizerPanel::onExecuteClicked() {
     Q_ASSERT(m_target_path);
     Q_ASSERT(m_preview_mode_checkbox);
     if (m_target_path->text().isEmpty()) {
+        sak::logWarning("Organization: no target directory selected");
         QMessageBox::warning(this, tr("Validation Error"), tr("Please select a target directory."));
         return;
     }
 
     QDir targetDir(m_target_path->text());
     if (!targetDir.exists()) {
+        sak::logWarning("Organization: target directory does not exist: {}",
+                        m_target_path->text().toStdString());
         QMessageBox::warning(this, tr("Validation Error"), tr("Target directory does not exist."));
         return;
     }
@@ -775,6 +765,7 @@ void OrganizerPanel::logMessage(const QString& message) {
 bool OrganizerPanel::validateCategoryMapping() const {
     auto mapping = getCategoryMapping();
     if (mapping.isEmpty()) {
+        sak::logWarning("No valid category mappings defined in organizer");
         QMessageBox::warning(
             const_cast<OrganizerPanel*>(this),
             tr("Validation Error"),
@@ -787,6 +778,7 @@ bool OrganizerPanel::validateCategoryMapping() const {
     for (auto it = mapping.cbegin(); it != mapping.cend(); ++it) {
         QString lower = it.key().toLower();
         if (seen.contains(lower)) {
+            sak::logWarning("Duplicate category name in organizer: {}", it.key().toStdString());
             QMessageBox::warning(const_cast<OrganizerPanel*>(this),
                                  tr("Validation Error"),
                                  tr("Duplicate category name: \"%1\".\n"
@@ -986,6 +978,7 @@ void OrganizerPanel::onDedupScanClicked() {
     Q_ASSERT(m_dedup_directory_list);
     Q_ASSERT(m_dedup_min_size);
     if (m_dedup_directory_list->count() == 0) {
+        sak::logWarning("Duplicate scan attempted with no directories selected");
         QMessageBox::warning(this,
                              tr("Validation Error"),
                              tr("Please add at least one directory to scan for duplicates."));

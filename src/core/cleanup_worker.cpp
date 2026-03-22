@@ -7,6 +7,7 @@
 #include "sak/cleanup_worker.h"
 
 #include "sak/layout_constants.h"
+#include "sak/logger.h"
 
 #include <QDir>
 #include <QFile>
@@ -101,7 +102,6 @@ bool CleanupWorker::cleanStartupEntry(const LeftoverItem& item) {
 
 bool CleanupWorker::deleteFile(const QString& path) {
     Q_ASSERT(!path.isEmpty());
-    Q_ASSERT(!m_rebootPendingPaths.isEmpty());
     QFileInfo info(path);
     if (!info.exists()) {
         return true;  // Already gone
@@ -137,7 +137,6 @@ bool CleanupWorker::deleteFile(const QString& path) {
 
 bool CleanupWorker::deleteFolder(const QString& path) {
     Q_ASSERT(!path.isEmpty());
-    Q_ASSERT(!m_rebootPendingPaths.isEmpty());
     QDir dir(path);
     if (!dir.exists()) {
         return true;
@@ -298,7 +297,11 @@ bool CleanupWorker::removeService(const QString& serviceName) {
     stop_proc.setArguments({"stop", serviceName});
     stop_proc.start();
     if (stop_proc.waitForStarted(sak::kTimeoutProcessStartMs)) {
-        stop_proc.waitForFinished(10'000);
+        if (!stop_proc.waitForFinished(10'000)) {
+            sak::logWarning("Service stop timed out for: {}", serviceName.toStdString());
+            stop_proc.kill();
+            stop_proc.waitForFinished(2000);
+        }
     }
 
     // Wait a moment for it to stop

@@ -14,6 +14,8 @@
 #include <QFile>
 #include <QFileInfo>
 
+#include <algorithm>
+
 namespace {
 struct BrowserPath {
     QString rel_path;
@@ -43,12 +45,10 @@ void BrowserProfileBackupAction::scan() {
                                   user_profile + "/AppData/Local/Microsoft/Edge/User Data/Default",
                                   user_profile + "/AppData/Roaming/Mozilla/Firefox/Profiles"};
 
-    int profiles_found = 0;
-    for (const QString& path : profile_checks) {
-        if (QDir(path).exists()) {
-            profiles_found++;
-        }
-    }
+    int profiles_found = static_cast<int>(
+        std::count_if(profile_checks.begin(), profile_checks.end(), [](const QString& path) {
+            return QDir(path).exists();
+        }));
 
     ScanResult result;
     result.applicable = true;
@@ -68,8 +68,6 @@ void BrowserProfileBackupAction::execute() {
     setStatus(ActionStatus::Running);
     Q_ASSERT(status() == ActionStatus::Running);
     QDateTime start_time = QDateTime::currentDateTime();
-    Q_ASSERT(start_time.isValid());
-
     Q_EMIT executionProgress("Scanning for browser profiles...", 5);
 
     WindowsUserScanner scanner;
@@ -98,7 +96,6 @@ void BrowserProfileBackupAction::execute() {
     const qint64 duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
 
     ExecutionResult result;
-    Q_ASSERT(!result.success);  // verify default init
     result.duration_ms = duration_ms;
     result.files_processed = files_copied;
     result.bytes_processed = bytes_copied;
@@ -114,7 +111,6 @@ void BrowserProfileBackupAction::execute() {
                          .arg(files_copied)
                          .arg(formatFileSize(bytes_copied))
                          .arg(backup_dir.absolutePath());
-        Q_ASSERT(result.duration_ms >= 0);
         finishWithResult(result, ActionStatus::Success);
     } else {
         result.success = false;

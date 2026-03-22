@@ -82,7 +82,7 @@ private:
     void applyFilters();
     QString formatLogMessage(const QString& message, LogLevel level) const;
     QString getLevelColor(LogLevel level) const;
-    QString getLevelText(LogLevel level) const;
+    static QString getLevelText(LogLevel level);
 
     QTextBrowser* m_text_browser;
     QPushButton* m_clear_button;

@@ -107,7 +107,7 @@ private:
     void populateFileExplorerRoot();
     void populateDirectoryChildren(QTreeWidgetItem* parentItem, const QString& dirPath);
     void addPlaceholderChild(QTreeWidgetItem* parentItem);
-    void removePlaceholderChildren(QTreeWidgetItem* parentItem);
+    static void removePlaceholderChildren(QTreeWidgetItem* parentItem);
 
     // -- Results Helpers --
     void clearResults();

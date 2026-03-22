@@ -111,7 +111,6 @@ void QuickActionsPanel::setupUi_statusSection(QVBoxLayout* main_layout) {
 }
 
 void QuickActionsPanel::setupUi_bottomRow(QVBoxLayout* main_layout) {
-    Q_ASSERT(m_open_folder_button);
     Q_ASSERT(main_layout);
     auto* bottomLayout = new QHBoxLayout();
 
@@ -872,6 +871,7 @@ void QuickActionsPanel::showSettingsDialog() {
     }
 }
 
+// cppcheck-suppress functionStatic ; Qt slot — must remain non-static member
 void QuickActionsPanel::onViewLog() {
     // Log is now always visible -- no toggle needed
 }
