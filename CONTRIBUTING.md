@@ -122,7 +122,7 @@ Thank you for your interest in contributing to S.A.K. Utility! This document pro
 #### Naming Conventions
 
 ```cpp
-// Classes: PascalCase
+// Classes, structs, enums: PascalCase
 class AppInstallationPanel : public QWidget { };
 
 // Functions/Methods: camelCase
@@ -132,11 +132,14 @@ void updateTableView();
 QTableView* m_tableView;
 QString m_currentPath;
 
-// Constants: k prefix + PascalCase
-const int kMaxThreads = 8;
-const QString kDefaultPath = "C:/";
+// Local variables: snake_case
+QString file_path = getPath();
+int item_count = 0;
 
-// Enums: PascalCase
+// Constants: k prefix + PascalCase
+constexpr int kMaxThreads = 8;
+
+// Enum values: PascalCase
 enum class InstallStatus {
     Pending,
     InProgress,
@@ -151,9 +154,9 @@ enum class InstallStatus {
 // Header file (example.h)
 #pragma once
 
-#include <QWidget>          // Qt headers
-#include <vector>           // STL headers
-#include "sak/types.h"      // Project headers
+#include "sak/types.h"      // Project headers first
+#include <QWidget>           // Qt headers second
+#include <vector>            // STL headers last
 
 namespace sak {
 
@@ -269,31 +272,42 @@ target_include_directories(target_name
 ### Running Tests
 
 ```powershell
-# Build all tests
+# Build
 cmake --build build --config Release
 
-# Run specific test
-.\build\Release\test_app_scanner.exe
-.\build\Release\test_chocolatey_manager.exe
+# Run all tests via CTest
+ctest --test-dir build -C Release --output-on-failure
+
+# Run a single test directly
+.\build\Release\Release\test_email_types.exe
 ```
 
 ### Writing Tests
 
-- Create test files in `tests/` directory
-- Use descriptive test names
+- Create test files in `tests/unit/` (one per component)
+- Use Qt Test framework (`QTest`) — not raw `assert()`
 - Test both success and failure cases
 - Include edge cases
 - Verify cleanup (no leaks, proper RAII)
 
 ```cpp
-// Example test structure
-void testAppScanner() {
-    AppScanner scanner;
-    auto apps = scanner.scanInstalledApplications();
+#include <QTest>
 
-    assert(!apps.empty() && "Should find installed apps");
-    assert(apps[0].name.length() > 0 && "App name should not be empty");
+class TestExample : public QObject {
+    Q_OBJECT
+private Q_SLOTS:
+    void testHappyPath();
+    void testInvalidInput();
+};
+
+void TestExample::testHappyPath() {
+    // Arrange, Act, Assert with QVERIFY / QCOMPARE
+    QVERIFY(!result.isEmpty());
+    QCOMPARE(result.size(), 3);
 }
+
+QTEST_MAIN(TestExample)
+#include "test_example.moc"
 ```
 
 ## 🔄 Pull Request Process

@@ -317,6 +317,8 @@ void DiagnosticBenchmarkPanel::onDiskBenchmarkComplete(const DiskBenchmarkResult
     m_disk_score_label->setText(
         QString("Score: %1 (Samsung 980 PRO = 1000)").arg(result.overall_score));
 
+    m_disk_score_bar->setValue(result.overall_score);
+
     logMessage(QString("Disk benchmark complete -- Score: %1").arg(result.overall_score));
     Q_EMIT statusMessage("Disk benchmark complete", sak::kTimerStatusMessageMs);
 }
@@ -350,6 +352,8 @@ void DiagnosticBenchmarkPanel::onMemoryBenchmarkComplete(const MemoryBenchmarkRe
 
     m_mem_score_label->setText(
         QString("Score: %1 (DDR4-3200 dual-channel = 1000)").arg(result.overall_score));
+
+    m_mem_score_bar->setValue(result.overall_score);
 
     logMessage(QString("Memory benchmark complete -- Score: %1").arg(result.overall_score));
     Q_EMIT statusMessage("Memory benchmark complete", sak::kTimerStatusMessageMs);
@@ -455,12 +459,14 @@ void DiagnosticBenchmarkPanel::onRunFullSuiteClicked() {
     stress_config.stress_cpu = m_stress_cpu_check->isChecked();
     stress_config.stress_memory = m_stress_memory_check->isChecked();
     stress_config.stress_disk = m_stress_disk_check->isChecked();
+    stress_config.stress_gpu = m_stress_gpu_check->isChecked();
     stress_config.duration_minutes = m_stress_duration_spin->value();
     stress_config.thermal_limit_celsius = m_stress_thermal_limit_spin->value();
 
     DiskBenchmarkConfig disk_config;
     if (m_disk_drive_combo->count() > 0) {
         disk_config.drive_path = m_disk_drive_combo->currentData().toString();
+        stress_config.disk_test_drive = disk_config.drive_path;
     } else {
         disk_config.drive_path = "C:\\";
     }
@@ -571,10 +577,16 @@ void DiagnosticBenchmarkPanel::onSuiteComplete() {
 void DiagnosticBenchmarkPanel::onThermalReadingsUpdated(const QVector<ThermalReading>& readings) {
     Q_ASSERT(m_thermal_cpu_label);
     Q_ASSERT(m_thermal_cpu_bar);
+
+    // Track which sensors reported data this poll cycle
+    bool cpu_found = false;
+    bool gpu_found = false;
+    bool disk_found = false;
+
     for (const auto& reading : readings) {
         const int temp = static_cast<int>(reading.temperature_celsius);
 
-        // Color code: green < 60, yellow 60-80, red > 80
+        // Color code: green < 60, yellow 60-80, red >= 80
         QString color = sak::ui::kStatusColorSuccess;
         if (temp >= 80) {
             color = sak::ui::kStatusColorError;
@@ -584,20 +596,38 @@ void DiagnosticBenchmarkPanel::onThermalReadingsUpdated(const QVector<ThermalRea
 
         const QString temp_text = QString(
                                       "<span style='color:%1; font-weight:600;'>"
-                                      "%2 degC</span>")
+                                      "%2 \u00B0C</span>")
                                       .arg(color)
                                       .arg(temp);
 
         if (reading.component.contains("CPU", Qt::CaseInsensitive)) {
             m_thermal_cpu_label->setText(temp_text);
             m_thermal_cpu_bar->setValue(temp);
+            cpu_found = true;
         } else if (reading.component.contains("GPU", Qt::CaseInsensitive)) {
             m_thermal_gpu_label->setText(temp_text);
             m_thermal_gpu_bar->setValue(temp);
+            gpu_found = true;
         } else if (reading.component.contains("Disk", Qt::CaseInsensitive)) {
             m_thermal_disk_label->setText(temp_text);
             m_thermal_disk_bar->setValue(temp);
+            disk_found = true;
         }
+    }
+
+    // Show "N/A" for sensors that returned no data
+    constexpr auto* kNotAvailable = "<span style='color:gray; font-weight:600;'>N/A</span>";
+    if (!cpu_found) {
+        m_thermal_cpu_label->setText(kNotAvailable);
+        m_thermal_cpu_bar->setValue(0);
+    }
+    if (!gpu_found) {
+        m_thermal_gpu_label->setText(kNotAvailable);
+        m_thermal_gpu_bar->setValue(0);
+    }
+    if (!disk_found) {
+        m_thermal_disk_label->setText(kNotAvailable);
+        m_thermal_disk_bar->setValue(0);
     }
 }
 

@@ -791,7 +791,7 @@ TigerStyle compliance does not require any changes to the project's class hierar
 - ✅ Every public method in `src/core/` has ≥1 precondition assertion
 - ✅ Every method returning a computed value has ≥1 postcondition assertion
 - ✅ `static_assert` validates error code size, constant relationships, and type inheritance
-- ✅ 79/79 tests pass (assertions must not trigger on valid test inputs)
+- ✅ 91/91 tests pass (assertions must not trigger on valid test inputs)
 - ✅ Build clean with `/W4 /WX`
 
 ---
@@ -830,7 +830,7 @@ TigerStyle compliance does not require any changes to the project's class hierar
 - ✅ 0 functions exceed 150 lines
 - ✅ No `setupUi()` or `execute()` exceeds 100 lines
 - ✅ All extracted helpers are ≤70 lines
-- ✅ All 79 tests pass
+- ✅ All 91 tests pass
 - ✅ Build clean with `/W4 /WX`
 - ✅ No behavior changes (pure refactoring)
 
@@ -879,7 +879,7 @@ TigerStyle compliance does not require any changes to the project's class hierar
 - ✅ Every timeout, buffer size, and retry count uses a named constant
 - ✅ Every table column index uses an enum
 - ✅ No hardcoded hex colors remain outside `style_constants.h` and `windows11_theme.cpp`
-- ✅ All 79 tests pass
+- ✅ All 91 tests pass
 - ✅ Build clean with `/W4 /WX`
 
 ---
@@ -910,7 +910,7 @@ TigerStyle compliance does not require any changes to the project's class hierar
 - ✅ No code block exceeds nesting depth 3
 - ✅ No `else` appears after an `if` block that ends with `return`
 - ✅ No nested ternary expressions
-- ✅ All 79 tests pass
+- ✅ All 91 tests pass
 - ✅ Build clean with `/W4 /WX`
 
 ---
@@ -959,7 +959,7 @@ TigerStyle compliance does not require any changes to the project's class hierar
 - ✅ 0 single-letter variables outside of `c` in tiny lambda predicates
 - ✅ 0 multi-declaration statements
 - ✅ All timeout/interval variables end with `_ms`
-- ✅ All 79 tests pass
+- ✅ All 91 tests pass
 - ✅ Build clean with `/W4 /WX`
 
 ---
@@ -1031,7 +1031,7 @@ Standard: c++20
 - ✅ 0 lines exceed 100 characters (verified by lint script)
 - ✅ `.clang-format` applies cleanly with no behavior changes
 - ✅ CI lint script runs on every PR
-- ✅ All 79 tests pass
+- ✅ All 91 tests pass
 - ✅ Build clean with `/W4 /WX`
 
 ---
@@ -1059,7 +1059,7 @@ Standard: c++20
 - ✅ Every `setupUi()` has ≥1 assertion (this pointer valid)
 - ✅ Every slot handler has ≥1 assertion (expected widget state)
 - ✅ Total assertion density ≥2 per function across codebase
-- ✅ All 79 tests pass
+- ✅ All 91 tests pass
 - ✅ Build clean with `/W4 /WX`
 
 ---

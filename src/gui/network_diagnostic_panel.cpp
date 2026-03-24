@@ -25,10 +25,15 @@
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QKeySequence>
+#include <QLocale>
+#include <QMenu>
 #include <QMessageBox>
+#include <QProcess>
+#include <QRegularExpressionValidator>
 #include <QScrollArea>
 #include <QShortcut>
-#include <QSplitter>
+#include <QTimer>
+#include <QTreeWidget>
 #include <QVBoxLayout>
 
 namespace sak {
@@ -61,13 +66,10 @@ void NetworkDiagnosticPanel::setupUi() {
         ui::kMarginMedium, ui::kMarginMedium, ui::kMarginMedium, ui::kMarginMedium);
     rootLayout->setSpacing(ui::kSpacingSmall);
 
-    // Splitter: adapter section (top) / tool tabs (bottom)
-    auto* splitter = new QSplitter(Qt::Vertical, this);
-    splitter->setChildrenCollapsible(false);
+    // Adapter section -- exposed via adapterWidget() for outer tab placement
+    m_adapterWidget = createAdapterSection();
 
-    auto* adapterSection = createAdapterSection();
-    splitter->addWidget(adapterSection);
-
+    // Diagnostic tool tabs
     m_toolTabs = new QTabWidget(this);
     m_toolTabs->addTab(createPingTab(), tr("Ping"));
     m_toolTabs->addTab(createTracerouteTab(), tr("Traceroute"));
@@ -83,12 +85,7 @@ void NetworkDiagnosticPanel::setupUi() {
     setAccessible(m_toolTabs,
                   tr("Diagnostic tools"),
                   tr("Tab widget for selecting network diagnostic tools"));
-    splitter->addWidget(m_toolTabs);
-
-    // Give adapter 30% and tool tabs 70% of splitter space
-    splitter->setStretchFactor(0, 3);
-    splitter->setStretchFactor(1, 7);
-    rootLayout->addWidget(splitter, 1);
+    rootLayout->addWidget(m_toolTabs, 1);
 
     // Status bar with log toggle
     auto* statusRow = new QHBoxLayout();
@@ -121,21 +118,30 @@ void NetworkDiagnosticPanel::setupKeyboardShortcuts() {
 // -- Adapter Section -----------------------------------------------------
 
 QWidget* NetworkDiagnosticPanel::createAdapterSection() {
-    auto* group = new QGroupBox(tr("Network Adapters"), this);
-    auto* layout = new QVBoxLayout(group);
-    layout->setContentsMargins(ui::kMarginSmall, 4, ui::kMarginSmall, 4);
-    layout->setSpacing(4);
+    auto* widget = new QWidget(this);
+    auto* layout = new QVBoxLayout(widget);
+    layout->setContentsMargins(
+        ui::kMarginSmall, ui::kMarginSmall, ui::kMarginSmall, ui::kMarginSmall);
+    layout->setSpacing(ui::kSpacingDefault);
 
-    setupAdapterToolbar(group, layout);
-    setupAdapterTable(group, layout);
-    setupAdapterDetailLabel(group, layout);
+    setupAdapterToolbar(widget, layout);
+    setupAdapterTable(widget, layout);
+    setupAdapterDetailLabel(widget, layout);
 
-    return group;
+    // Log toggle for adapter tab
+    auto* statusRow = new QHBoxLayout();
+    statusRow->setContentsMargins(0, 2, 0, 0);
+    m_adapterLogToggle = new LogToggleSwitch(tr("Log"), widget);
+    statusRow->addWidget(m_adapterLogToggle);
+    statusRow->addStretch();
+    layout->addLayout(statusRow);
+
+    return widget;
 }
 
-void NetworkDiagnosticPanel::setupAdapterToolbar(QGroupBox* group, QVBoxLayout* layout) {
+void NetworkDiagnosticPanel::setupAdapterToolbar(QWidget* parent, QVBoxLayout* layout) {
     auto* toolbar = new QHBoxLayout();
-    m_refreshBtn = new QPushButton(tr("Refresh Adapters"), group);
+    m_refreshBtn = new QPushButton(tr("Refresh Adapters"), parent);
     m_refreshBtn->setStyleSheet(ui::kPrimaryButtonStyle);
     m_refreshBtn->setToolTip(tr("Re-scan all network adapters"));
     setAccessible(m_refreshBtn,
@@ -143,14 +149,14 @@ void NetworkDiagnosticPanel::setupAdapterToolbar(QGroupBox* group, QVBoxLayout* 
                   tr("Re-enumerate all network adapters and their configurations"));
     toolbar->addWidget(m_refreshBtn);
 
-    m_copyConfigBtn = new QPushButton(tr("Copy Config"), group);
+    m_copyConfigBtn = new QPushButton(tr("Copy Config"), parent);
     m_copyConfigBtn->setStyleSheet(ui::kSecondaryButtonStyle);
     m_copyConfigBtn->setToolTip(tr("Copy selected adapter configuration to clipboard"));
     m_copyConfigBtn->setEnabled(false);
     setAccessible(m_copyConfigBtn, tr("Copy adapter config"));
     toolbar->addWidget(m_copyConfigBtn);
 
-    m_backupEthernetBtn = new QPushButton(tr("Backup Settings"), group);
+    m_backupEthernetBtn = new QPushButton(tr("Backup Settings"), parent);
     m_backupEthernetBtn->setStyleSheet(ui::kSecondaryButtonStyle);
     m_backupEthernetBtn->setToolTip(
         tr("Backup selected Ethernet adapter IP/DNS settings to a JSON file "
@@ -161,7 +167,7 @@ void NetworkDiagnosticPanel::setupAdapterToolbar(QGroupBox* group, QVBoxLayout* 
     m_backupEthernetBtn->setEnabled(false);
     toolbar->addWidget(m_backupEthernetBtn);
 
-    m_restoreEthernetBtn = new QPushButton(tr("Restore Settings"), group);
+    m_restoreEthernetBtn = new QPushButton(tr("Restore Settings"), parent);
     m_restoreEthernetBtn->setStyleSheet(ui::kSecondaryButtonStyle);
     m_restoreEthernetBtn->setToolTip(
         tr("Restore Ethernet adapter settings from a previously saved "
@@ -175,15 +181,15 @@ void NetworkDiagnosticPanel::setupAdapterToolbar(QGroupBox* group, QVBoxLayout* 
     layout->addLayout(toolbar);
 }
 
-void NetworkDiagnosticPanel::setupAdapterTable(QGroupBox* group, QVBoxLayout* layout) {
+void NetworkDiagnosticPanel::setupAdapterTable(QWidget* parent, QVBoxLayout* layout) {
     Q_ASSERT(layout);
-    Q_ASSERT(group);
-    m_adapterTable = new QTableWidget(group);
+    Q_ASSERT(parent);
+    m_adapterTable = new QTableWidget(parent);
     m_adapterTable->setColumnCount(6);
     m_adapterTable->setHorizontalHeaderLabels(
         {tr("Name"), tr("Type"), tr("Status"), tr("IP Address"), tr("MAC"), tr("Speed")});
     m_adapterTable->setSelectionBehavior(QAbstractItemView::SelectRows);
-    m_adapterTable->setSelectionMode(QAbstractItemView::SingleSelection);
+    m_adapterTable->setSelectionMode(QAbstractItemView::ExtendedSelection);
     m_adapterTable->setAlternatingRowColors(true);
     m_adapterTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
     m_adapterTable->verticalHeader()->setVisible(false);
@@ -205,18 +211,19 @@ void NetworkDiagnosticPanel::setupAdapterTable(QGroupBox* group, QVBoxLayout* la
     setAccessible(m_adapterTable,
                   tr("Network adapters"),
                   tr("List of network adapters with configuration details"));
+    m_adapterTable->setContextMenuPolicy(Qt::CustomContextMenu);
     layout->addWidget(m_adapterTable, 1);
 }
 
-void NetworkDiagnosticPanel::setupAdapterDetailLabel(QGroupBox* group, QVBoxLayout* layout) {
+void NetworkDiagnosticPanel::setupAdapterDetailLabel(QWidget* parent, QVBoxLayout* layout) {
     Q_ASSERT(layout);
-    Q_ASSERT(group);
+    Q_ASSERT(parent);
     const QString labelStyle = QStringLiteral("color: %1; font-size: %2pt;")
                                    .arg(ui::kColorTextMuted)
                                    .arg(ui::kFontSizeSmall);
 
     auto makeColumn = [&](QLabel*& label) -> QLabel* {
-        label = new QLabel(group);
+        label = new QLabel(parent);
         label->setWordWrap(true);
         label->setTextFormat(Qt::RichText);
         label->setAlignment(Qt::AlignTop | Qt::AlignLeft);
@@ -232,7 +239,7 @@ void NetworkDiagnosticPanel::setupAdapterDetailLabel(QGroupBox* group, QVBoxLayo
     detailRow->addWidget(makeColumn(m_detailGatewayDns), 2);
     detailRow->addWidget(makeColumn(m_detailStatus), 1);
 
-    auto* detailWidget = new QWidget(group);
+    auto* detailWidget = new QWidget(parent);
     detailWidget->setLayout(detailRow);
     detailWidget->setMinimumHeight(50);
     detailWidget->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Minimum);
@@ -1459,6 +1466,10 @@ void NetworkDiagnosticPanel::connectUiSignals() {
             &QTableWidget::itemSelectionChanged,
             this,
             &NetworkDiagnosticPanel::onAdapterSelectionChanged);
+    connect(m_adapterTable,
+            &QTableWidget::customContextMenuRequested,
+            this,
+            &NetworkDiagnosticPanel::showAdapterContextMenu);
 
     // -- Ping --
     connect(m_pingStartBtn, &QPushButton::clicked, this, &NetworkDiagnosticPanel::onStartPing);
@@ -2019,6 +2030,943 @@ void NetworkDiagnosticPanel::onRestoreEthernetSettings() {
     if (result == QMessageBox::Yes) {
         m_controller->restoreEthernetSettings(filePath, targetAdapter);
     }
+}
+
+// -- Adapter Context Menu ------------------------------------------------
+
+const NetworkAdapterInfo* NetworkDiagnosticPanel::selectedAdapter() const {
+    Q_ASSERT(m_adapterTable);
+    const int row = m_adapterTable->currentRow();
+    if (row < 0) {
+        return nullptr;
+    }
+    const auto* name_item = m_adapterTable->item(row, 0);
+    if (!name_item) {
+        return nullptr;
+    }
+    const int data_idx = name_item->data(Qt::UserRole).toInt();
+    if (data_idx < 0 || data_idx >= m_adapters.size()) {
+        return nullptr;
+    }
+    return &m_adapters[data_idx];
+}
+
+QVector<const NetworkAdapterInfo*> NetworkDiagnosticPanel::selectedAdapters() const {
+    Q_ASSERT(m_adapterTable);
+    QVector<const NetworkAdapterInfo*> result;
+    const auto selected_rows = m_adapterTable->selectionModel()->selectedRows();
+    for (const auto& index : selected_rows) {
+        const auto* name_item = m_adapterTable->item(index.row(), 0);
+        if (!name_item) {
+            continue;
+        }
+        const int data_idx = name_item->data(Qt::UserRole).toInt();
+        if (data_idx >= 0 && data_idx < m_adapters.size()) {
+            result.append(&m_adapters[data_idx]);
+        }
+    }
+    return result;
+}
+
+bool NetworkDiagnosticPanel::runNetshCommand(const QStringList& args, QString* output) {
+    QProcess process;
+    process.setProgram(QStringLiteral("netsh"));
+    process.setArguments(args);
+    process.start();
+
+    constexpr int kStartTimeoutMs = 5000;
+    constexpr int kFinishTimeoutMs = 15'000;
+
+    if (!process.waitForStarted(kStartTimeoutMs)) {
+        if (output) {
+            *output = tr("Failed to start netsh process");
+        }
+        return false;
+    }
+    if (!process.waitForFinished(kFinishTimeoutMs)) {
+        process.kill();
+        if (output) {
+            *output = tr("netsh command timed out");
+        }
+        return false;
+    }
+
+    const QString stdout_text = QString::fromLocal8Bit(process.readAllStandardOutput());
+    const QString stderr_text = QString::fromLocal8Bit(process.readAllStandardError());
+    if (output) {
+        *output = stdout_text.isEmpty() ? stderr_text : stdout_text;
+    }
+    return process.exitCode() == 0;
+}
+
+namespace {
+bool areBridgeable(const QVector<const NetworkAdapterInfo*>& adapters) {
+    if (adapters.size() <= 1) {
+        return false;
+    }
+    for (const auto* sel : adapters) {
+        const auto& sel_type = sel->adapterType;
+        if (sel_type == QStringLiteral("Loopback") || sel_type == QStringLiteral("VPN")) {
+            return false;
+        }
+    }
+    return true;
+}
+}  // namespace
+
+void NetworkDiagnosticPanel::addTypeSpecificMenuItems(
+    QMenu& menu,
+    const NetworkAdapterInfo& adapter,
+    const QVector<const NetworkAdapterInfo*>& selected) {
+    const auto& type = adapter.adapterType;
+    const bool is_loopback = (type == QStringLiteral("Loopback"));
+    const bool is_vpn = (type == QStringLiteral("VPN"));
+    const bool is_bluetooth = (type == QStringLiteral("Bluetooth"));
+    const bool is_ethernet = (type == QStringLiteral("Ethernet"));
+    const bool is_wifi = (type == QStringLiteral("WiFi"));
+    const bool is_ip_configurable = static_cast<bool>(is_ethernet | is_wifi);
+    const bool can_rename = static_cast<bool>(!is_loopback & !is_vpn);
+
+    if (!is_loopback) {
+        if (adapter.isConnected) {
+            menu.addAction(tr("Disable"), this, &NetworkDiagnosticPanel::onAdapterDisable);
+        } else {
+            menu.addAction(tr("Enable"), this, &NetworkDiagnosticPanel::onAdapterEnable);
+        }
+        menu.addAction(tr("Diagnose"), this, &NetworkDiagnosticPanel::onAdapterDiagnose);
+        menu.addSeparator();
+    }
+
+    if (is_bluetooth) {
+        menu.addAction(tr("View Bluetooth Devices"),
+                       this,
+                       &NetworkDiagnosticPanel::onViewBluetoothDevices);
+        menu.addSeparator();
+    }
+
+    if (is_ip_configurable) {
+        buildIpConfigSubmenu(menu, adapter);
+        menu.addSeparator();
+    }
+
+    if (can_rename) {
+        menu.addAction(tr("Rename..."), this, &NetworkDiagnosticPanel::onAdapterRename);
+    }
+
+    menu.addAction(tr("Copy Configuration"), this, &NetworkDiagnosticPanel::onCopyAdapterConfig);
+    menu.addSeparator();
+
+    if (is_ethernet) {
+        menu.addAction(tr("Backup Settings..."),
+                       this,
+                       &NetworkDiagnosticPanel::onBackupEthernetSettings);
+        menu.addAction(tr("Restore Settings..."),
+                       this,
+                       &NetworkDiagnosticPanel::onRestoreEthernetSettings);
+        menu.addSeparator();
+    }
+
+    if (areBridgeable(selected)) {
+        menu.addAction(tr("Bridge Connections"),
+                       this,
+                       &NetworkDiagnosticPanel::onBridgeConnections);
+        menu.addSeparator();
+    }
+
+    if (!is_loopback) {
+        menu.addAction(tr("Open Adapter Settings"),
+                       this,
+                       &NetworkDiagnosticPanel::onOpenAdapterSettings);
+    }
+}
+
+void NetworkDiagnosticPanel::showAdapterContextMenu(const QPoint& pos) {
+    const auto* adapter = selectedAdapter();
+    if (!adapter) {
+        return;
+    }
+
+    const auto selected = selectedAdapters();
+    QMenu menu(this);
+
+    menu.addAction(tr("Status..."), this, &NetworkDiagnosticPanel::onAdapterStatus);
+    menu.addAction(tr("Properties"), this, &NetworkDiagnosticPanel::onAdapterProperties);
+    menu.addSeparator();
+
+    addTypeSpecificMenuItems(menu, *adapter, selected);
+
+    menu.exec(m_adapterTable->viewport()->mapToGlobal(pos));
+}
+
+void NetworkDiagnosticPanel::buildIpConfigSubmenu(QMenu& parent,
+                                                  const NetworkAdapterInfo& adapter) {
+    auto* ip_menu = parent.addMenu(tr("IP Configuration"));
+    ip_menu->addAction(tr("Set Static IP..."), this, &NetworkDiagnosticPanel::onSetStaticIp);
+    ip_menu->addAction(tr("Set DNS Servers..."), this, &NetworkDiagnosticPanel::onSetDnsServers);
+
+    if (!adapter.dhcpEnabled) {
+        ip_menu->addAction(tr("Enable DHCP"), this, &NetworkDiagnosticPanel::onEnableDhcp);
+    }
+
+    ip_menu->addSeparator();
+
+    if (adapter.dhcpEnabled) {
+        ip_menu->addAction(tr("Release DHCP Lease"),
+                           this,
+                           &NetworkDiagnosticPanel::onReleaseDhcpLease);
+        ip_menu->addAction(tr("Renew DHCP Lease"), this, &NetworkDiagnosticPanel::onRenewDhcpLease);
+    }
+}
+
+// -- Adapter Status Dialog -----------------------------------------------
+
+void NetworkDiagnosticPanel::addStatusCategory(QTreeWidget* tree,
+                                               const QString& category,
+                                               const QVector<QPair<QString, QString>>& items) {
+    auto* node = new QTreeWidgetItem(tree);
+    node->setText(0, category);
+    node->setFlags(node->flags() & ~Qt::ItemIsSelectable);
+    auto font = node->font(0);
+    font.setBold(true);
+    node->setFont(0, font);
+
+    for (const auto& [key, value] : items) {
+        if (!value.isEmpty()) {
+            auto* child = new QTreeWidgetItem(node);
+            child->setText(0, key);
+            child->setText(1, value);
+        }
+    }
+}
+
+void NetworkDiagnosticPanel::populateStatusTree(QTreeWidget* tree,
+                                                const NetworkAdapterInfo& adapter) {
+    addStatusCategory(tree,
+                      tr("General"),
+                      {{tr("Name"), adapter.name},
+                       {tr("Description"), adapter.description},
+                       {tr("Type"), adapter.adapterType},
+                       {tr("MAC Address"), adapter.macAddress},
+                       {tr("Interface Index"), QString::number(adapter.interfaceIndex)}});
+
+    const auto speed_text = adapter.linkSpeedBps > 0
+                                ? QStringLiteral("%1 Mbps").arg(adapter.linkSpeedBps / 1'000'000)
+                                : tr("N/A");
+    addStatusCategory(tree,
+                      tr("Connection"),
+                      {{tr("Status"), adapter.isConnected ? tr("Connected") : tr("Disconnected")},
+                       {tr("Media State"), adapter.mediaState},
+                       {tr("Link Speed"), speed_text}});
+
+    populateStatusIpv4(tree, adapter);
+    populateStatusIpv6(tree, adapter);
+
+    addStatusCategory(tree,
+                      tr("DHCP"),
+                      {{tr("Enabled"), adapter.dhcpEnabled ? tr("Yes") : tr("No")},
+                       {tr("Server"), adapter.dhcpServer},
+                       {tr("Lease Obtained"),
+                        adapter.dhcpLeaseObtained.isValid()
+                            ? QLocale().toString(adapter.dhcpLeaseObtained, QLocale::LongFormat)
+                            : tr("N/A")},
+                       {tr("Lease Expires"),
+                        adapter.dhcpLeaseExpires.isValid()
+                            ? QLocale().toString(adapter.dhcpLeaseExpires, QLocale::LongFormat)
+                            : tr("N/A")}});
+
+    populateStatusStatistics(tree, adapter);
+
+    addStatusCategory(tree,
+                      tr("Driver Information"),
+                      {{tr("Driver Name"), adapter.driverName},
+                       {tr("Driver Version"), adapter.driverVersion},
+                       {tr("Driver Date"), adapter.driverDate}});
+}
+
+void NetworkDiagnosticPanel::populateStatusIpv4(QTreeWidget* tree,
+                                                const NetworkAdapterInfo& adapter) {
+    QVector<QPair<QString, QString>> items;
+    for (int i = 0; i < adapter.ipv4Addresses.size(); ++i) {
+        const auto mask = i < adapter.ipv4SubnetMasks.size() ? adapter.ipv4SubnetMasks[i]
+                                                             : QString();
+        const auto addr_text = mask.isEmpty()
+                                   ? adapter.ipv4Addresses[i]
+                                   : QStringLiteral("%1 / %2").arg(adapter.ipv4Addresses[i], mask);
+        items.append({tr("Address %1").arg(i + 1), addr_text});
+    }
+    items.append({tr("Gateway"), adapter.ipv4Gateway});
+    for (int i = 0; i < adapter.ipv4DnsServers.size(); ++i) {
+        items.append({tr("DNS Server %1").arg(i + 1), adapter.ipv4DnsServers[i]});
+    }
+    addStatusCategory(tree, tr("IPv4 Configuration"), items);
+}
+
+void NetworkDiagnosticPanel::populateStatusIpv6(QTreeWidget* tree,
+                                                const NetworkAdapterInfo& adapter) {
+    QVector<QPair<QString, QString>> items;
+    for (int i = 0; i < adapter.ipv6Addresses.size(); ++i) {
+        items.append({tr("Address %1").arg(i + 1), adapter.ipv6Addresses[i]});
+    }
+    items.append({tr("Gateway"), adapter.ipv6Gateway});
+    for (int i = 0; i < adapter.ipv6DnsServers.size(); ++i) {
+        items.append({tr("DNS Server %1").arg(i + 1), adapter.ipv6DnsServers[i]});
+    }
+    addStatusCategory(tree, tr("IPv6 Configuration"), items);
+}
+
+void NetworkDiagnosticPanel::populateStatusStatistics(QTreeWidget* tree,
+                                                      const NetworkAdapterInfo& adapter) {
+    const auto locale = QLocale();
+    addStatusCategory(tree,
+                      tr("Statistics"),
+                      {{tr("Bytes Received"), locale.toString(adapter.bytesReceived)},
+                       {tr("Bytes Sent"), locale.toString(adapter.bytesSent)},
+                       {tr("Packets Received"), locale.toString(adapter.packetsReceived)},
+                       {tr("Packets Sent"), locale.toString(adapter.packetsSent)},
+                       {tr("Receive Errors"), QString::number(adapter.errorsReceived)},
+                       {tr("Send Errors"), QString::number(adapter.errorsSent)}});
+}
+
+void NetworkDiagnosticPanel::onAdapterStatus() {
+    const auto* adapter = selectedAdapter();
+    if (!adapter) {
+        return;
+    }
+
+    constexpr int kStatusDialogWidth = 520;
+    constexpr int kStatusDialogHeight = 600;
+
+    QDialog dialog(this);
+    dialog.setWindowTitle(tr("Adapter Status \xe2\x80\x94 %1").arg(adapter->name));
+    dialog.setMinimumSize(kStatusDialogWidth, kStatusDialogHeight);
+    auto* layout = new QVBoxLayout(&dialog);
+
+    auto* tree = new QTreeWidget(&dialog);
+    tree->setHeaderLabels(QStringList{tr("Property"), tr("Value")});
+    tree->setAlternatingRowColors(true);
+    tree->setRootIsDecorated(true);
+
+    populateStatusTree(tree, *adapter);
+    tree->expandAll();
+    tree->resizeColumnToContents(0);
+    layout->addWidget(tree);
+
+    auto* button_box = new QDialogButtonBox(QDialogButtonBox::Close, &dialog);
+    connect(button_box, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    layout->addWidget(button_box);
+
+    dialog.exec();
+    Q_EMIT logOutput(tr("Viewed status for adapter '%1'").arg(adapter->name));
+}
+
+// -- Adapter Actions -----------------------------------------------------
+
+void NetworkDiagnosticPanel::onAdapterProperties() {
+    const auto* adapter = selectedAdapter();
+    if (!adapter) {
+        return;
+    }
+
+    // Open type-appropriate Windows Settings page
+    const auto& type = adapter->adapterType;
+    QString settings_uri;
+    if (type == QStringLiteral("Ethernet")) {
+        settings_uri = QStringLiteral("ms-settings:network-ethernet");
+    } else if (type == QStringLiteral("WiFi")) {
+        settings_uri = QStringLiteral("ms-settings:network-wifi");
+    } else if (type == QStringLiteral("Bluetooth")) {
+        settings_uri = QStringLiteral("ms-settings:bluetooth");
+    } else if (type == QStringLiteral("VPN")) {
+        settings_uri = QStringLiteral("ms-settings:network-vpn");
+    } else {
+        settings_uri = QStringLiteral("ms-settings:network");
+    }
+
+    QProcess::startDetached(QStringLiteral("explorer.exe"), {settings_uri});
+    Q_EMIT logOutput(tr("Opened %1 properties for '%2'").arg(type, adapter->name));
+    Q_EMIT statusMessage(tr("Opened %1 settings for '%2'").arg(type, adapter->name), 3000);
+    sak::logInfo("Opened properties for {} adapter '{}'",
+                 type.toStdString(),
+                 adapter->name.toStdString());
+}
+
+void NetworkDiagnosticPanel::onAdapterEnable() {
+    const auto* adapter = selectedAdapter();
+    if (!adapter) {
+        return;
+    }
+
+    Q_EMIT logOutput(tr("Enabling adapter '%1'...").arg(adapter->name));
+
+    QString output;
+    QStringList args = {QStringLiteral("interface"),
+                        QStringLiteral("set"),
+                        QStringLiteral("interface"),
+                        adapter->name,
+                        QStringLiteral("admin=ENABLED")};
+
+    if (runNetshCommand(args, &output)) {
+        Q_EMIT statusMessage(tr("Adapter '%1' enabled").arg(adapter->name), 3000);
+        Q_EMIT logOutput(tr("Adapter '%1' enabled successfully").arg(adapter->name));
+        sak::logInfo("Enabled adapter: {}", adapter->name.toStdString());
+    } else {
+        sak::logError("Failed to enable adapter {}: {}",
+                      adapter->name.toStdString(),
+                      output.toStdString());
+        Q_EMIT logOutput(tr("[ERROR] Failed to enable '%1': %2").arg(adapter->name, output));
+        QMessageBox::warning(this,
+                             tr("Enable Failed"),
+                             tr("Failed to enable adapter.\n\n"
+                                "Administrator privileges may be required.\n\n%1")
+                                 .arg(output));
+    }
+
+    constexpr int kRefreshDelayMs = 2000;
+    QTimer::singleShot(kRefreshDelayMs, this, &NetworkDiagnosticPanel::onRefreshAdapters);
+}
+
+void NetworkDiagnosticPanel::onAdapterDisable() {
+    const auto* adapter = selectedAdapter();
+    if (!adapter) {
+        return;
+    }
+
+    auto confirm = QMessageBox::question(this,
+                                         tr("Disable Adapter"),
+                                         tr("Disable adapter <b>%1</b>?\n\n"
+                                            "You may lose network connectivity.")
+                                             .arg(adapter->name),
+                                         QMessageBox::Yes | QMessageBox::No,
+                                         QMessageBox::No);
+    if (confirm != QMessageBox::Yes) {
+        return;
+    }
+
+    Q_EMIT logOutput(tr("Disabling adapter '%1'...").arg(adapter->name));
+
+    QString output;
+    QStringList args = {QStringLiteral("interface"),
+                        QStringLiteral("set"),
+                        QStringLiteral("interface"),
+                        adapter->name,
+                        QStringLiteral("admin=DISABLED")};
+
+    if (runNetshCommand(args, &output)) {
+        Q_EMIT statusMessage(tr("Adapter '%1' disabled").arg(adapter->name), 3000);
+        Q_EMIT logOutput(tr("Adapter '%1' disabled successfully").arg(adapter->name));
+        sak::logInfo("Disabled adapter: {}", adapter->name.toStdString());
+    } else {
+        sak::logError("Failed to disable adapter {}: {}",
+                      adapter->name.toStdString(),
+                      output.toStdString());
+        Q_EMIT logOutput(tr("[ERROR] Failed to disable '%1': %2").arg(adapter->name, output));
+        QMessageBox::warning(this,
+                             tr("Disable Failed"),
+                             tr("Failed to disable adapter.\n\n"
+                                "Administrator privileges may be required.\n\n%1")
+                                 .arg(output));
+    }
+
+    constexpr int kRefreshDelayMs = 2000;
+    QTimer::singleShot(kRefreshDelayMs, this, &NetworkDiagnosticPanel::onRefreshAdapters);
+}
+
+void NetworkDiagnosticPanel::onAdapterDiagnose() {
+    const auto* adapter = selectedAdapter();
+    if (!adapter) {
+        return;
+    }
+
+    // Use the appropriate troubleshooter for the adapter type
+    const auto& type = adapter->adapterType;
+    QString diagnostic_id;
+    if (type == QStringLiteral("Bluetooth")) {
+        diagnostic_id = QStringLiteral("DeviceDiagnostic");
+    } else if (type == QStringLiteral("VPN")) {
+        diagnostic_id = QStringLiteral("NetworkDiagnosticsWeb");
+    } else {
+        diagnostic_id = QStringLiteral("NetworkDiagnosticsNetworkAdapter");
+    }
+
+    QProcess::startDetached(QStringLiteral("msdt.exe"), {QStringLiteral("/id"), diagnostic_id});
+    Q_EMIT statusMessage(tr("Running %1 diagnostics for '%2'...").arg(type, adapter->name), 3000);
+    Q_EMIT logOutput(tr("Launched %1 diagnostics for '%2'").arg(type, adapter->name));
+    sak::logInfo("Launched diagnostics ({}) for adapter '{}'",
+                 diagnostic_id.toStdString(),
+                 adapter->name.toStdString());
+}
+
+void NetworkDiagnosticPanel::onAdapterRename() {
+    const auto* adapter = selectedAdapter();
+    if (!adapter) {
+        return;
+    }
+
+    constexpr int kRenameDialogWidth = 400;
+
+    QDialog dialog(this);
+    dialog.setWindowTitle(tr("Rename Adapter"));
+    dialog.setMinimumWidth(kRenameDialogWidth);
+    auto* layout = new QVBoxLayout(&dialog);
+
+    layout->addWidget(new QLabel(tr("Current name: <b>%1</b>").arg(adapter->name), &dialog));
+
+    auto* name_edit = new QLineEdit(&dialog);
+    name_edit->setText(adapter->name);
+    name_edit->selectAll();
+    name_edit->setPlaceholderText(tr("Enter new adapter name"));
+    layout->addWidget(name_edit);
+
+    auto* button_box = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel,
+                                            &dialog);
+    connect(button_box, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    connect(button_box, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    layout->addWidget(button_box);
+
+    if (dialog.exec() != QDialog::Accepted) {
+        return;
+    }
+
+    const QString new_name = name_edit->text().trimmed();
+    if (new_name.isEmpty() || new_name == adapter->name) {
+        return;
+    }
+
+    Q_EMIT logOutput(tr("Renaming adapter '%1' to '%2'...").arg(adapter->name, new_name));
+
+    QString output;
+    QStringList args = {QStringLiteral("interface"),
+                        QStringLiteral("set"),
+                        QStringLiteral("interface"),
+                        adapter->name,
+                        QStringLiteral("newname=") + new_name};
+
+    if (runNetshCommand(args, &output)) {
+        Q_EMIT statusMessage(tr("Adapter renamed to '%1'").arg(new_name), 3000);
+        Q_EMIT logOutput(tr("Adapter renamed to '%1'").arg(new_name));
+        sak::logInfo("Renamed adapter '{}' to '{}'",
+                     adapter->name.toStdString(),
+                     new_name.toStdString());
+        onRefreshAdapters();
+    } else {
+        sak::logError("Failed to rename adapter: {}", output.toStdString());
+        Q_EMIT logOutput(tr("[ERROR] Failed to rename: %1").arg(output));
+        QMessageBox::warning(this,
+                             tr("Rename Failed"),
+                             tr("Failed to rename adapter.\n\n"
+                                "Administrator privileges may be required.\n\n%1")
+                                 .arg(output));
+    }
+}
+
+void NetworkDiagnosticPanel::onOpenAdapterSettings() {
+    const auto* adapter = selectedAdapter();
+    if (!adapter) {
+        return;
+    }
+
+    const auto& type = adapter->adapterType;
+    if (type == QStringLiteral("WiFi")) {
+        QProcess::startDetached(QStringLiteral("explorer.exe"),
+                                {QStringLiteral("ms-settings:network-wifi")});
+    } else if (type == QStringLiteral("Bluetooth")) {
+        QProcess::startDetached(QStringLiteral("explorer.exe"),
+                                {QStringLiteral("ms-settings:bluetooth")});
+    } else if (type == QStringLiteral("VPN")) {
+        QProcess::startDetached(QStringLiteral("explorer.exe"),
+                                {QStringLiteral("ms-settings:network-vpn")});
+    } else {
+        QProcess::startDetached(QStringLiteral("control"), {QStringLiteral("ncpa.cpl")});
+    }
+
+    Q_EMIT logOutput(tr("Opened adapter settings for '%1'").arg(adapter->name));
+    Q_EMIT statusMessage(tr("Opened adapter settings for '%1'").arg(adapter->name), 3000);
+}
+
+void NetworkDiagnosticPanel::onViewBluetoothDevices() {
+    QProcess::startDetached(QStringLiteral("explorer.exe"),
+                            {QStringLiteral("ms-settings:bluetooth")});
+    Q_EMIT logOutput(tr("Opened Bluetooth devices settings"));
+    Q_EMIT statusMessage(tr("Opened Bluetooth devices settings"), 3000);
+    sak::logInfo("Opened Bluetooth devices settings");
+}
+
+void NetworkDiagnosticPanel::onBridgeConnections() {
+    const auto selected = selectedAdapters();
+    if (selected.size() < 2) {
+        QMessageBox::information(this,
+                                 tr("Bridge Connections"),
+                                 tr("Select two or more adapters to create a network bridge."));
+        return;
+    }
+
+    QStringList adapter_names;
+    for (const auto* sel : selected) {
+        adapter_names << sel->name;
+    }
+
+    auto confirm = QMessageBox::question(this,
+                                         tr("Bridge Connections"),
+                                         tr("Bridge the following adapters?\n\n%1\n\n"
+                                            "This will open Network Connections where you can "
+                                            "select these adapters and bridge them.")
+                                             .arg(adapter_names.join(QStringLiteral("\n"))),
+                                         QMessageBox::Yes | QMessageBox::No,
+                                         QMessageBox::No);
+    if (confirm != QMessageBox::Yes) {
+        return;
+    }
+
+    QProcess::startDetached(QStringLiteral("control"), {QStringLiteral("ncpa.cpl")});
+    Q_EMIT logOutput(tr("Bridge requested for: %1").arg(adapter_names.join(QStringLiteral(", "))));
+    Q_EMIT statusMessage(
+        tr("Opened Network Connections for bridging %1 adapters").arg(selected.size()), 5000);
+    sak::logInfo("Bridge connection requested for {} adapters", std::to_string(selected.size()));
+}
+
+// -- IP Configuration Actions --------------------------------------------
+
+void NetworkDiagnosticPanel::onSetStaticIp() {
+    const auto* adapter = selectedAdapter();
+    if (!adapter) {
+        return;
+    }
+
+    constexpr int kIpDialogWidth = 420;
+    const QString ip_pattern = QStringLiteral(
+        "^((25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]?\\d)\\.){3}"
+        "(25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]?\\d)$");
+
+    QDialog dialog(this);
+    dialog.setWindowTitle(tr("Set Static IP \xe2\x80\x94 %1").arg(adapter->name));
+    dialog.setMinimumWidth(kIpDialogWidth);
+    auto* layout = new QVBoxLayout(&dialog);
+
+    auto* ip_validator = new QRegularExpressionValidator(QRegularExpression(ip_pattern), &dialog);
+
+    auto make_ip_row = [&](const QString& label,
+                           const QString& prefill,
+                           const QString& placeholder) -> QLineEdit* {
+        auto* row = new QHBoxLayout();
+        row->addWidget(new QLabel(label, &dialog));
+        auto* edit = new QLineEdit(&dialog);
+        edit->setValidator(ip_validator);
+        if (!prefill.isEmpty()) {
+            edit->setText(prefill);
+        }
+        edit->setPlaceholderText(placeholder);
+        row->addWidget(edit, 1);
+        layout->addLayout(row);
+        return edit;
+    };
+
+    const auto current_ip = adapter->ipv4Addresses.isEmpty() ? QString()
+                                                             : adapter->ipv4Addresses.first();
+    const auto current_mask = adapter->ipv4SubnetMasks.isEmpty() ? QString()
+                                                                 : adapter->ipv4SubnetMasks.first();
+
+    auto* ip_edit = make_ip_row(tr("IP Address:"), current_ip, QStringLiteral("192.168.1.100"));
+    auto* mask_edit = make_ip_row(tr("Subnet Mask:"),
+                                  current_mask.isEmpty() ? QStringLiteral("255.255.255.0")
+                                                         : current_mask,
+                                  QStringLiteral("255.255.255.0"));
+    auto* gw_edit =
+        make_ip_row(tr("Gateway:"), adapter->ipv4Gateway, QStringLiteral("192.168.1.1"));
+
+    auto* button_box = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel,
+                                            &dialog);
+    connect(button_box, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    connect(button_box, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    layout->addWidget(button_box);
+
+    if (dialog.exec() != QDialog::Accepted) {
+        return;
+    }
+
+    const QString ip = ip_edit->text().trimmed();
+    const QString mask = mask_edit->text().trimmed();
+    const QString gateway = gw_edit->text().trimmed();
+    if (ip.isEmpty() || mask.isEmpty()) {
+        QMessageBox::warning(this,
+                             tr("Invalid Input"),
+                             tr("IP address and subnet mask are required."));
+        return;
+    }
+
+    applyStaticIp(adapter->name, ip, mask, gateway);
+}
+
+void NetworkDiagnosticPanel::applyStaticIp(const QString& adapter_name,
+                                           const QString& ip,
+                                           const QString& mask,
+                                           const QString& gateway) {
+    QString output;
+    QStringList args = {QStringLiteral("interface"),
+                        QStringLiteral("ipv4"),
+                        QStringLiteral("set"),
+                        QStringLiteral("address"),
+                        adapter_name,
+                        QStringLiteral("static"),
+                        ip,
+                        mask};
+    if (!gateway.isEmpty()) {
+        args << gateway;
+    }
+
+    Q_EMIT logOutput(
+        tr("Setting static IP on '%1': %2 / %3 gw %4").arg(adapter_name, ip, mask, gateway));
+
+    if (runNetshCommand(args, &output)) {
+        Q_EMIT statusMessage(tr("Static IP configured on '%1'").arg(adapter_name), 3000);
+        Q_EMIT logOutput(tr("Static IP configured on '%1'").arg(adapter_name));
+        sak::logInfo("Static IP set on {}: {} / {} gw {}",
+                     adapter_name.toStdString(),
+                     ip.toStdString(),
+                     mask.toStdString(),
+                     gateway.toStdString());
+        onRefreshAdapters();
+    } else {
+        sak::logError("Failed to set static IP: {}", output.toStdString());
+        Q_EMIT logOutput(tr("[ERROR] Failed to set static IP: %1").arg(output));
+        QMessageBox::warning(this,
+                             tr("Failed to Set IP"),
+                             tr("Failed to configure static IP.\n\n"
+                                "Administrator privileges may be required.\n\n%1")
+                                 .arg(output));
+    }
+}
+
+void NetworkDiagnosticPanel::onSetDnsServers() {
+    const auto* adapter = selectedAdapter();
+    if (!adapter) {
+        return;
+    }
+
+    constexpr int kDnsDialogWidth = 420;
+    const QString ip_pattern = QStringLiteral(
+        "^((25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]?\\d)\\.){3}"
+        "(25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]?\\d)$");
+
+    QDialog dialog(this);
+    dialog.setWindowTitle(tr("Set DNS Servers \xe2\x80\x94 %1").arg(adapter->name));
+    dialog.setMinimumWidth(kDnsDialogWidth);
+    auto* layout = new QVBoxLayout(&dialog);
+
+    auto* ip_validator = new QRegularExpressionValidator(QRegularExpression(ip_pattern), &dialog);
+
+    const auto current_primary =
+        adapter->ipv4DnsServers.isEmpty() ? QString() : adapter->ipv4DnsServers.first();
+    const auto current_secondary = adapter->ipv4DnsServers.size() > 1 ? adapter->ipv4DnsServers[1]
+                                                                      : QString();
+
+    auto make_dns_row = [&](const QString& label,
+                            const QString& prefill,
+                            const QString& placeholder) -> QLineEdit* {
+        auto* row = new QHBoxLayout();
+        row->addWidget(new QLabel(label, &dialog));
+        auto* edit = new QLineEdit(&dialog);
+        edit->setValidator(ip_validator);
+        if (!prefill.isEmpty()) {
+            edit->setText(prefill);
+        }
+        edit->setPlaceholderText(placeholder);
+        row->addWidget(edit, 1);
+        layout->addLayout(row);
+        return edit;
+    };
+
+    auto* primary_edit =
+        make_dns_row(tr("Primary DNS:"), current_primary, QStringLiteral("8.8.8.8"));
+    auto* secondary_edit =
+        make_dns_row(tr("Secondary DNS:"), current_secondary, QStringLiteral("8.8.4.4 (optional)"));
+
+    auto* button_box = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel,
+                                            &dialog);
+    connect(button_box, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    connect(button_box, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    layout->addWidget(button_box);
+
+    if (dialog.exec() != QDialog::Accepted) {
+        return;
+    }
+
+    const QString primary = primary_edit->text().trimmed();
+    const QString secondary = secondary_edit->text().trimmed();
+    if (primary.isEmpty()) {
+        QMessageBox::warning(this, tr("Invalid Input"), tr("Primary DNS server is required."));
+        return;
+    }
+
+    applyDnsServers(adapter->name, primary, secondary);
+}
+
+void NetworkDiagnosticPanel::applyDnsServers(const QString& adapter_name,
+                                             const QString& primary,
+                                             const QString& secondary) {
+    QString output;
+
+    // Set primary DNS
+    QStringList args = {QStringLiteral("interface"),
+                        QStringLiteral("ipv4"),
+                        QStringLiteral("set"),
+                        QStringLiteral("dns"),
+                        adapter_name,
+                        QStringLiteral("static"),
+                        primary};
+
+    Q_EMIT logOutput(
+        tr("Setting DNS on '%1': primary=%2 secondary=%3").arg(adapter_name, primary, secondary));
+
+    if (!runNetshCommand(args, &output)) {
+        sak::logError("Failed to set primary DNS: {}", output.toStdString());
+        Q_EMIT logOutput(tr("[ERROR] Failed to set primary DNS: %1").arg(output));
+        QMessageBox::warning(this,
+                             tr("DNS Configuration Failed"),
+                             tr("Failed to set primary DNS server.\n\n"
+                                "Administrator privileges may be required.\n\n%1")
+                                 .arg(output));
+        return;
+    }
+
+    // Add secondary DNS if provided
+    if (!secondary.isEmpty()) {
+        QStringList add_args = {QStringLiteral("interface"),
+                                QStringLiteral("ipv4"),
+                                QStringLiteral("add"),
+                                QStringLiteral("dns"),
+                                adapter_name,
+                                secondary,
+                                QStringLiteral("index=2")};
+
+        if (!runNetshCommand(add_args, &output)) {
+            sak::logWarning("Failed to set secondary DNS: {}", output.toStdString());
+        }
+    }
+
+    Q_EMIT statusMessage(tr("DNS servers configured on '%1'").arg(adapter_name), 3000);
+    Q_EMIT logOutput(tr("DNS configured on '%1'").arg(adapter_name));
+    sak::logInfo("DNS set on {}: primary={} secondary={}",
+                 adapter_name.toStdString(),
+                 primary.toStdString(),
+                 secondary.toStdString());
+    onRefreshAdapters();
+}
+
+void NetworkDiagnosticPanel::onEnableDhcp() {
+    const auto* adapter = selectedAdapter();
+    if (!adapter) {
+        return;
+    }
+
+    auto confirm = QMessageBox::question(this,
+                                         tr("Enable DHCP"),
+                                         tr("Switch adapter <b>%1</b> to DHCP?\n\n"
+                                            "The current static IP configuration will be removed.")
+                                             .arg(adapter->name),
+                                         QMessageBox::Yes | QMessageBox::No,
+                                         QMessageBox::No);
+    if (confirm != QMessageBox::Yes) {
+        return;
+    }
+
+    Q_EMIT logOutput(tr("Enabling DHCP on '%1'...").arg(adapter->name));
+
+    QString output;
+    QStringList args = {QStringLiteral("interface"),
+                        QStringLiteral("ipv4"),
+                        QStringLiteral("set"),
+                        QStringLiteral("address"),
+                        adapter->name,
+                        QStringLiteral("dhcp")};
+
+    if (runNetshCommand(args, &output)) {
+        // Also set DNS to DHCP
+        QStringList dns_args = {QStringLiteral("interface"),
+                                QStringLiteral("ipv4"),
+                                QStringLiteral("set"),
+                                QStringLiteral("dns"),
+                                adapter->name,
+                                QStringLiteral("dhcp")};
+        runNetshCommand(dns_args);
+
+        Q_EMIT statusMessage(tr("DHCP enabled on '%1'").arg(adapter->name), 3000);
+        Q_EMIT logOutput(tr("DHCP enabled on '%1'").arg(adapter->name));
+        sak::logInfo("DHCP enabled on: {}", adapter->name.toStdString());
+        onRefreshAdapters();
+    } else {
+        sak::logError("Failed to enable DHCP: {}", output.toStdString());
+        Q_EMIT logOutput(tr("[ERROR] Failed to enable DHCP: %1").arg(output));
+        QMessageBox::warning(this,
+                             tr("DHCP Failed"),
+                             tr("Failed to enable DHCP.\n\n"
+                                "Administrator privileges may be required.\n\n%1")
+                                 .arg(output));
+    }
+}
+
+void NetworkDiagnosticPanel::onReleaseDhcpLease() {
+    const auto* adapter = selectedAdapter();
+    if (!adapter) {
+        return;
+    }
+
+    Q_EMIT logOutput(tr("Releasing DHCP lease on '%1'...").arg(adapter->name));
+
+    QString output;
+    QStringList args = {QStringLiteral("/release"), adapter->name};
+
+    QProcess process;
+    process.setProgram(QStringLiteral("ipconfig"));
+    process.setArguments(args);
+    process.start();
+
+    constexpr int kIpconfigTimeoutMs = 10'000;
+    process.waitForFinished(kIpconfigTimeoutMs);
+    output = QString::fromLocal8Bit(process.readAllStandardOutput());
+
+    if (process.exitCode() == 0) {
+        Q_EMIT statusMessage(tr("DHCP lease released on '%1'").arg(adapter->name), 3000);
+        Q_EMIT logOutput(tr("DHCP lease released on '%1'").arg(adapter->name));
+        sak::logInfo("DHCP lease released: {}", adapter->name.toStdString());
+    } else {
+        sak::logWarning("DHCP release may have failed: {}", output.toStdString());
+        Q_EMIT logOutput(tr("[WARN] DHCP release may have failed on '%1'").arg(adapter->name));
+    }
+
+    onRefreshAdapters();
+}
+
+void NetworkDiagnosticPanel::onRenewDhcpLease() {
+    const auto* adapter = selectedAdapter();
+    if (!adapter) {
+        return;
+    }
+
+    Q_EMIT statusMessage(tr("Renewing DHCP lease on '%1'...").arg(adapter->name), 0);
+    Q_EMIT logOutput(tr("Renewing DHCP lease on '%1'...").arg(adapter->name));
+
+    QString output;
+    QStringList args = {QStringLiteral("/renew"), adapter->name};
+
+    QProcess process;
+    process.setProgram(QStringLiteral("ipconfig"));
+    process.setArguments(args);
+    process.start();
+
+    constexpr int kIpconfigTimeoutMs = 30'000;
+    process.waitForFinished(kIpconfigTimeoutMs);
+    output = QString::fromLocal8Bit(process.readAllStandardOutput());
+
+    if (process.exitCode() == 0) {
+        Q_EMIT statusMessage(tr("DHCP lease renewed on '%1'").arg(adapter->name), 3000);
+        Q_EMIT logOutput(tr("DHCP lease renewed on '%1'").arg(adapter->name));
+        sak::logInfo("DHCP lease renewed: {}", adapter->name.toStdString());
+    } else {
+        sak::logWarning("DHCP renew may have failed: {}", output.toStdString());
+        Q_EMIT logOutput(tr("[WARN] DHCP renew may have failed on '%1'").arg(adapter->name));
+    }
+
+    onRefreshAdapters();
 }
 
 // -- Ping --

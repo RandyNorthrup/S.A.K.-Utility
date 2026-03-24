@@ -667,16 +667,17 @@ void OrganizerPanel::onWorkerFinished() {
 
 void OrganizerPanel::onWorkerFailed(int errorCode, const QString& errorMessage) {
     Q_ASSERT(m_progress_bar);
-    Q_ASSERT(!errorMessage.isEmpty());
     setOperationRunning(false);
     m_progress_bar->setVisible(false);
+    const QString safe_error = errorMessage.trimmed().isEmpty() ? tr("Unknown error")
+                                                                : errorMessage;
     Q_EMIT statusMessage(tr("Organization failed"), sak::kTimerStatusDefaultMs);
     Q_EMIT progressUpdate(0, 100);
-    logMessage(QString("Organization failed: Error %1: %2").arg(errorCode).arg(errorMessage));
+    logMessage(QString("Organization failed: Error %1: %2").arg(errorCode).arg(safe_error));
     QMessageBox::warning(this,
                          tr("Organization Failed"),
-                         QString("Error %1: %2").arg(errorCode).arg(errorMessage));
-    logError("Organization failed: {}", errorMessage.toStdString());
+                         QString("Error %1: %2").arg(errorCode).arg(safe_error));
+    logError("Organization failed: {}", safe_error.toStdString());
 }
 
 void OrganizerPanel::onWorkerCancelled() {
@@ -758,7 +759,9 @@ void OrganizerPanel::setOperationRunning(bool running) {
 }
 
 void OrganizerPanel::logMessage(const QString& message) {
-    Q_ASSERT(!message.isEmpty());
+    if (message.trimmed().isEmpty()) {
+        return;
+    }
     Q_EMIT logOutput(message);
 }
 
@@ -792,10 +795,10 @@ bool OrganizerPanel::validateCategoryMapping() const {
 }
 
 void OrganizerPanel::showScrollableResultsDialog(const QString& title, const QString& text) {
-    Q_ASSERT(!title.isEmpty());
-    Q_ASSERT(!text.isEmpty());
+    const QString safe_title = title.trimmed().isEmpty() ? tr("Results") : title;
+    const QString safe_text = text.isEmpty() ? tr("No results to display.") : text;
     QDialog dialog(this);
-    dialog.setWindowTitle(title);
+    dialog.setWindowTitle(safe_title);
     dialog.setMinimumSize(sak::kDialogWidthLarge, sak::kDialogHeightMedium);
     dialog.resize(sak::kDialogWidthLarge, sak::kDialogHeightLarge);
 
@@ -803,7 +806,7 @@ void OrganizerPanel::showScrollableResultsDialog(const QString& title, const QSt
 
     auto* textEdit = new QTextEdit(&dialog);
     textEdit->setReadOnly(true);
-    textEdit->setPlainText(text);
+    textEdit->setPlainText(safe_text);
     textEdit->setAccessibleName(QStringLiteral("Scan Results"));
     layout->addWidget(textEdit);
 
@@ -1127,16 +1130,17 @@ void OrganizerPanel::onDedupWorkerFinished() {
 
 void OrganizerPanel::onDedupWorkerFailed(int errorCode, const QString& errorMessage) {
     Q_ASSERT(m_dedup_progress_bar);
-    Q_ASSERT(!errorMessage.isEmpty());
     setDedupRunning(false);
     m_dedup_progress_bar->setVisible(false);
+    const QString safe_error = errorMessage.trimmed().isEmpty() ? tr("Unknown error")
+                                                                : errorMessage;
     Q_EMIT statusMessage(tr("Duplicate scan failed"), sak::kTimerStatusDefaultMs);
     Q_EMIT progressUpdate(0, 100);
-    logMessage(QString("Duplicate scan failed: Error %1: %2").arg(errorCode).arg(errorMessage));
+    logMessage(QString("Duplicate scan failed: Error %1: %2").arg(errorCode).arg(safe_error));
     QMessageBox::warning(this,
                          tr("Scan Failed"),
-                         QString("Error %1: %2").arg(errorCode).arg(errorMessage));
-    logError("Duplicate finder scan failed: {}", errorMessage.toStdString());
+                         QString("Error %1: %2").arg(errorCode).arg(safe_error));
+    logError("Duplicate finder scan failed: {}", safe_error.toStdString());
 }
 
 void OrganizerPanel::onDedupWorkerCancelled() {

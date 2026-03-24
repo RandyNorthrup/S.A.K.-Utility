@@ -195,6 +195,13 @@ sak::NetworkAdapterInfo buildAdapterInfo(const IP_ADAPTER_ADDRESSES* addr) {
     info.interfaceIndex = addr->IfIndex;
     info.adapterType = adapterTypeFromIfType(addr->IfType);
 
+    // Bluetooth PAN adapters report IF_TYPE_ETHERNET_CSMACD but are Bluetooth
+    if (info.adapterType != QStringLiteral("Loopback") &&
+        (info.description.contains(QStringLiteral("Bluetooth"), Qt::CaseInsensitive) ||
+         info.name.contains(QStringLiteral("Bluetooth"), Qt::CaseInsensitive))) {
+        info.adapterType = QStringLiteral("Bluetooth");
+    }
+
     // MAC
     if (addr->PhysicalAddressLength > 0) {
         info.macAddress = sak::NetworkAdapterInspector::formatMacAddress(

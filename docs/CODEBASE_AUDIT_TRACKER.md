@@ -32,7 +32,7 @@
 | **NULL (vs nullptr)** | 0 — Clean |
 | **Raw C Arrays** | 0 — Clean |
 | **Include Guards** | 100% consistent (`#pragma once`) |
-| **Test Count** | 76 (unit + integration) |
+| **Test Count** | 91 (unit + integration) |
 | **Direct Test Coverage** | 29% of source files |
 | **With Indirect Coverage** | 65% of source files |
 | **Critical Issues** | 3 — All Fixed |

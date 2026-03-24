@@ -83,7 +83,6 @@ InfoButton::InfoButton(const QString& infoText, QWidget* parent)
 // ============================================================================
 
 void InfoButton::togglePopup() {
-    Q_ASSERT(m_popup);
     // If popup already visible, close it
     if (m_popup) {
         m_popup->close();

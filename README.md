@@ -9,7 +9,7 @@
 [![Qt 6.5+](https://img.shields.io/badge/Qt-6.5%2B-41cd52.svg)](https://www.qt.io/)
 [![Windows 10/11](https://img.shields.io/badge/Windows-10%20%7C%2011-0078d4.svg)](https://www.microsoft.com/windows)
 [![Build](https://github.com/RandyNorthrup/S.A.K.-Utility/actions/workflows/build-release.yml/badge.svg)](https://github.com/RandyNorthrup/S.A.K.-Utility/actions)
-[![Version](https://img.shields.io/badge/Version-0.9.0.3-orange.svg)](VERSION)
+[![Version](https://img.shields.io/badge/Version-0.9.0.4-orange.svg)](VERSION)
 
 Migration · Maintenance · Recovery · Imaging · Deployment — one portable EXE.
 
@@ -17,12 +17,20 @@ Migration · Maintenance · Recovery · Imaging · Deployment — one portable E
 
 ---
 
-## What's New in v0.9.0.3
+## What's New in v0.9.0.4
+
+- **Email Inspector panel** — Full-featured PST/OST/MBOX email browser with folder tree navigation, item list, HTML/plain-text preview, MAPI property inspector, and attachment viewer. File scanner auto-discovers email archives in common locations. Export to EML, CSV, VCF, ICS, and bulk attachment extraction. Contacts dialog, calendar dialog with event highlighting, and full-text search across all item fields — no Outlook or MAPI libraries required.
+- **Modern email client layout** — Ribbon toolbar with Icons8 Windows 11 Filled icons, side-by-side splitter layout (folder tree | item list | preview), typed folder icons (Inbox, Sent, Drafts, Deleted, Junk, Starred), and responsive preview pane sizing.
+- **PST/OST parser improvements** — Fixed 8-byte property types (PT_SYSTIME, PT_INT64, PT_FLOAT64) truncated to 4 bytes, fixed HTML body display for PT_BINARY properties, added ~50 MAPI property name mappings.
+- **Documentation overhaul** — README updated with Email Inspector feature section, corrected test counts (91), modernized CONTRIBUTING.md (Qt Test examples, CTest commands, corrected naming conventions and include order), updated THIRD_PARTY_LICENSES.md with full Icons8 icon inventory.
+- **Build quality** — Clean MSVC `/W4 /WX` build, 91 automated tests (all passing).
+
+### v0.9.0.3
 
 - **Codebase-wide assertion audit** — Removed ~170+ incorrect assertions left behind by the scrapped TigerStyle linter across 22 source files. Eliminated three dangerous patterns: assert-before-create (asserting a member exists at the top of the function that creates it), contradictory assert+guard (asserting non-null then immediately null-checking), and incorrect state assertions (asserting non-empty on legitimately empty data). 1,487 legitimate assertions verified and retained.
 - **Error logging completeness** — Added ~15 missing `sak::logWarning`/`sak::logError` calls alongside `QMessageBox` displays across backup wizards, restore wizards, organizer panel, and settings dialogs.
 - **Silent error elimination** — Fixed 7 unchecked `QFile::remove()` calls in critical data paths (encryption cleanup, transfer checksum failures, conflict resolution) and 1 unchecked `waitForFinished()` in service removal.
-- **Build quality** — Clean MSVC `/W4 /WX` build, 79 automated tests (all passing).
+- **Build quality** — Clean MSVC `/W4 /WX` build, 91 automated tests (all passing).
 
 ### v0.9.0.2
 
@@ -33,7 +41,7 @@ Migration · Maintenance · Recovery · Imaging · Deployment — one portable E
 - **Const correctness** — Added `const` qualifier to 6 member functions: `searchMatch`, `trySearchMatch`, `assessSataAttributeHealth`, `assessNvmeHealth`, `groupByHash`, `checkStop` (`functionConst`).
 - **Dead code removal** — Removed unused `SmartThreshold::name` field (`unusedStructMember`).
 - **Lizard compliance** — All functions meet CCN < 11 and parameter count < 6.
-- **Build quality** — Clean MSVC `/W4 /WX` build, 79 automated tests (all passing).
+- **Build quality** — Clean MSVC `/W4 /WX` build, 91 automated tests (all passing).
 
 ### v0.9.0.1
 
@@ -43,21 +51,21 @@ Migration · Maintenance · Recovery · Imaging · Deployment — one portable E
 - **Image flasher ISO info** — Unified ISO information display with size and format rows integrated into the ISO info group box. Info panel always shown when an image is selected.
 - **Network settings simplified** — Removed redundant "Enabled" master switch from network transfer settings dialog.
 - **Icons8 SVG icons** — Added 6 new SVG icons (benchmark, duplicate, settings help, source, destination, orchestrator) for improved visual consistency across panels.
-- **Build quality** — Clean MSVC `/W4 /WX` build, 79 automated tests (all passing).
+- **Build quality** — Clean MSVC `/W4 /WX` build, 91 automated tests (all passing).
 
 ### v0.9.0
 
 - **UUP converter rewrite** — Rewrote `UupIsoBuilder` to drive the bundled `UUPMediaConverter.exe` directly via QProcess, replacing the ConvertConfig.ini generation and batch-script pipeline introduced in v0.6.2. Removed 7-Zip dependency, retry/fallback logic, and broken cancel path. Added `classifyConverterFailure()` for structured error diagnostics and converter output analysis.
 - **Code quality audit** — Assertion-density audit, function length / complexity refactoring, magic number extraction, nesting depth reduction across the codebase.
 - **Updated licenses & credits** — THIRD_PARTY_LICENSES.md, README acknowledgments, and about dialog updated to reference UUPMediaCreator/OSTooling and bundled wimlib/libwim.
-- **Build quality** — Clean MSVC `/W4 /WX` build, 79 automated tests (all passing).
+- **Build quality** — Clean MSVC `/W4 /WX` build, 91 automated tests (all passing).
 
 ### v0.8.8
 
 - **Network transfer reliability fix** — Fixed `sendFrame()` using `socket->flush()` instead of `waitForBytesWritten()`, causing spurious transfer failures under TCP backpressure during unthrottled resume transfers. Added stop-request guard to sender retry loop to prevent pointless retries on cancelled transfers.
 - **Error handling hardening** — Added `sak::logError()` to transfer report write failures, clarified best-effort banner probe in port scanner.
 - **Magic number elimination** — Extracted `kTimeoutThreadShutdownMs`, `kTimeoutThreadTerminateMs`, `kTimeoutWorkerResetMs` for worker lifecycle, and `kFlashBufferSize`, `kVerifySampleMax`, `kVerifyBlockSize` for flash operations. All bare numeric literals replaced with named constants.
-- **Build quality** — Clean MSVC `/W4 /WX` build, 79 automated tests (all passing).
+- **Build quality** — Clean MSVC `/W4 /WX` build, 91 automated tests (all passing).
 
 ### v0.8.5
 
@@ -122,6 +130,7 @@ Migration · Maintenance · Recovery · Imaging · Deployment — one portable E
 | **Directory Organizer** | Organize files by extension with duplicate detection, parallel hashing, category validation, and cross-operation safety. |
 | **Advanced Uninstall** | Deep application removal with leftover scanning, recycle bin support, locked-file reboot scheduling, and registry snapshot diffs. |
 | **Network Diagnostics** | 10-tool diagnostic suite (ping, traceroute, MTR, DNS, port scan, bandwidth, WiFi, connections, firewall, shares) with ethernet backup/restore and report export. |
+| **Email Inspector** | Browse PST, OST, and MBOX email archives. Search, export (EML/CSV/VCF/ICS), view contacts, calendar, attachments — no Outlook required. |
 | **BitLocker Key Backup** | Export recovery keys from all encrypted volumes with restricted-permission files. |
 | **Modern UI** | Windows 11-style rounded corners, custom splash screen, and responsive layouts. |
 
@@ -143,6 +152,7 @@ Migration · Maintenance · Recovery · Imaging · Deployment — one portable E
   - [Advanced Search](#advanced-search)
   - [Advanced Uninstall](#advanced-uninstall)
   - [Network Diagnostics](#network-diagnostics)
+  - [Email Inspector](#email-inspector)
   - [Settings](#settings)
 - [Security](#security)
 - [Building from Source](#building-from-source)
@@ -501,6 +511,49 @@ Deep application removal with leftover scanning, cleanup, and system protection.
 
 ---
 
+### Email Inspector
+
+Browse, search, and export data from Outlook PST/OST archives and MBOX mailboxes — no Outlook or MAPI libraries required.
+
+**Supported Formats**
+- **PST** — Outlook Personal Storage (Unicode and ANSI)
+- **OST** — Outlook Offline Storage
+- **MBOX** — RFC 4155 (Thunderbird, Apple Mail, Linux mail clients)
+
+**File Scanner** — Automatically discovers PST/OST/MBOX files in common locations (user home, desktop, recent paths); select which to open.
+
+**Folder Tree** — Navigable hierarchy with typed icons (Inbox, Sent Items, Drafts, Deleted Items, Junk Email, Calendar, Contacts, etc.)
+
+**Item List** — Sortable table with Subject, From, Date, Size, Type, and attachment indicator.
+
+**Preview Pane** — Four tabs:
+
+| Tab | Content |
+|---|---|
+| **Content** | HTML/plain-text email body; contact details; task descriptions; sticky note text |
+| **Headers** | RFC 5322 message headers (monospace) |
+| **Properties** | MAPI property names and values for forensics/analysis |
+| **Attachments** | File list with individual or batch save |
+
+**Search** — Full-text search across subjects, bodies, senders, recipients, and attachment names. Filter by item type, date range, has-attachment, and folder scope.
+
+**Contacts Dialog** — Searchable address book with sortable columns and export to VCF or CSV.
+
+**Calendar Dialog** — Calendar widget with event highlighting, date-based event list, and export to ICS or CSV.
+
+**Export Formats**
+
+| Format | Use Case |
+|---|---|
+| **EML** | RFC 5322 email files (Outlook, Thunderbird compatible) |
+| **CSV** | Emails, contacts, calendar, or tasks as spreadsheet data |
+| **VCF** | vCard 3.0 contact files |
+| **ICS** | iCalendar appointments/events |
+| **TXT** | Plain-text sticky notes |
+| **Attachments** | Batch extract with optional filtering and inline-image skip |
+
+---
+
 ### Settings
 
 Global application settings accessible from the **Edit → Settings** menu (`Ctrl+,`):
@@ -600,7 +653,7 @@ Full license texts: [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md)
 cmake --build build --config Release --target RUN_TESTS
 ```
 
-79 unit and integration tests covering Advanced Search, Advanced Uninstall (types, controller, leftover scanner, registry snapshot engine), Network Diagnostics (types, utils, report generation), network transfer, orchestration, diagnostics, security, encryption, configuration, ISO download, and quick action factory validation.
+91 unit and integration tests covering Advanced Search, Advanced Uninstall (types, controller, leftover scanner, registry snapshot engine), Network Diagnostics (types, utils, report generation), Email Inspector (PST/OST parsing, MBOX parsing, email types, search, export, profile manager, report generator), network transfer, orchestration, diagnostics, security, encryption, configuration, ISO download, and quick action factory validation.
 
 ---
 

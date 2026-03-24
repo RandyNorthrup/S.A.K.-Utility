@@ -15,7 +15,7 @@ endif()
 
 # Project definition
 project(SAK_Utility
-    VERSION 0.9.0.3
+    VERSION 0.9.0.4
     DESCRIPTION "Swiss Army Knife Utility - PC technician's toolkit for Windows migration and maintenance"
     LANGUAGES CXX
 )# C++23 Standard - Strict compliance required
@@ -481,6 +481,23 @@ set(CORE_SOURCES
     include/sak/layout_constants.h
     include/sak/network_constants.h
     include/sak/style_constants.h
+    # Email & PST/OST Inspector core
+    src/core/pst_parser.cpp
+    src/core/mbox_parser.cpp
+    src/core/email_search_worker.cpp
+    src/core/email_export_worker.cpp
+    src/core/email_profile_manager.cpp
+    src/core/email_report_generator.cpp
+    src/core/email_inspector_controller.cpp
+    include/sak/email_constants.h
+    include/sak/email_types.h
+    include/sak/pst_parser.h
+    include/sak/mbox_parser.h
+    include/sak/email_search_worker.h
+    include/sak/email_export_worker.h
+    include/sak/email_profile_manager.h
+    include/sak/email_report_generator.h
+    include/sak/email_inspector_controller.h
 )
 
 # Threading infrastructure
@@ -566,6 +583,15 @@ set(GUI_SOURCES
     # Network Diagnostic panel
     src/gui/network_diagnostic_panel.cpp
     include/sak/network_diagnostic_panel.h
+    # Email & PST/OST Inspector panel
+    src/gui/email_inspector_panel.cpp
+    include/sak/email_inspector_panel.h
+    src/gui/email_file_scanner_dialog.cpp
+    include/sak/email_file_scanner_dialog.h
+    src/gui/email_contacts_dialog.cpp
+    include/sak/email_contacts_dialog.h
+    src/gui/email_calendar_dialog.cpp
+    include/sak/email_calendar_dialog.h
 )
 
 # Quick Actions

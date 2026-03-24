@@ -25,6 +25,8 @@
 class QVBoxLayout;
 class QGroupBox;
 class QCheckBox;
+class QMenu;
+class QTreeWidget;
 
 namespace sak {
 
@@ -52,6 +54,12 @@ public:
     /// @brief Access the log toggle switch for MainWindow connection
     [[nodiscard]] LogToggleSwitch* logToggle() const { return m_logToggle; }
 
+    /// @brief Access the adapter-tab log toggle for MainWindow connection
+    [[nodiscard]] LogToggleSwitch* adapterLogToggle() const { return m_adapterLogToggle; }
+
+    /// @brief Access the adapter section widget for external tab placement
+    [[nodiscard]] QWidget* adapterWidget() const { return m_adapterWidget; }
+
 Q_SIGNALS:
     void statusMessage(const QString& message, int timeout_ms);
     void progressUpdate(int current, int maximum);
@@ -65,6 +73,23 @@ private Q_SLOTS:
     void onCopyAdapterConfig();
     void onBackupEthernetSettings();
     void onRestoreEthernetSettings();
+
+    // Adapter context menu
+    void showAdapterContextMenu(const QPoint& pos);
+    void onAdapterStatus();
+    void onAdapterProperties();
+    void onAdapterEnable();
+    void onAdapterDisable();
+    void onAdapterDiagnose();
+    void onAdapterRename();
+    void onSetStaticIp();
+    void onSetDnsServers();
+    void onEnableDhcp();
+    void onReleaseDhcpLease();
+    void onRenewDhcpLease();
+    void onOpenAdapterSettings();
+    void onViewBluetoothDevices();
+    void onBridgeConnections();
 
     // Ping
     void onStartPing();
@@ -145,9 +170,9 @@ private:
     void setupUi();
     void setupKeyboardShortcuts();
     QWidget* createAdapterSection();
-    void setupAdapterToolbar(QGroupBox* group, QVBoxLayout* layout);
-    void setupAdapterTable(QGroupBox* group, QVBoxLayout* layout);
-    void setupAdapterDetailLabel(QGroupBox* group, QVBoxLayout* layout);
+    void setupAdapterToolbar(QWidget* parent, QVBoxLayout* layout);
+    void setupAdapterTable(QWidget* parent, QVBoxLayout* layout);
+    void setupAdapterDetailLabel(QWidget* parent, QVBoxLayout* layout);
     QWidget* createPingTab();
     void setupPingConfig(QWidget* widget, QVBoxLayout* layout);
     void setupPingControls(QWidget* widget, QVBoxLayout* layout);
@@ -202,14 +227,39 @@ private:
     [[nodiscard]] QString formatAdapterGatewayDns(const sak::NetworkAdapterInfo& adapter) const;
     [[nodiscard]] QString formatAdapterStatus(const sak::NetworkAdapterInfo& adapter) const;
 
+    // -- Adapter context menu helpers --
+    [[nodiscard]] const NetworkAdapterInfo* selectedAdapter() const;
+    [[nodiscard]] QVector<const NetworkAdapterInfo*> selectedAdapters() const;
+    bool runNetshCommand(const QStringList& args, QString* output = nullptr);
+    void addTypeSpecificMenuItems(QMenu& menu,
+                                  const NetworkAdapterInfo& adapter,
+                                  const QVector<const NetworkAdapterInfo*>& selected);
+    void buildIpConfigSubmenu(QMenu& parent, const NetworkAdapterInfo& adapter);
+    void populateStatusTree(QTreeWidget* tree, const NetworkAdapterInfo& adapter);
+    void populateStatusIpv4(QTreeWidget* tree, const NetworkAdapterInfo& adapter);
+    void populateStatusIpv6(QTreeWidget* tree, const NetworkAdapterInfo& adapter);
+    void populateStatusStatistics(QTreeWidget* tree, const NetworkAdapterInfo& adapter);
+    void addStatusCategory(QTreeWidget* tree,
+                           const QString& category,
+                           const QVector<QPair<QString, QString>>& items);
+    void applyStaticIp(const QString& adapter_name,
+                       const QString& ip,
+                       const QString& mask,
+                       const QString& gateway);
+    void applyDnsServers(const QString& adapter_name,
+                         const QString& primary,
+                         const QString& secondary);
+
     // -- Controller --
     std::unique_ptr<NetworkDiagnosticController> m_controller;
-    LogToggleSwitch* m_logToggle = nullptr;  ///< Owned by layout hierarchy
+    LogToggleSwitch* m_logToggle = nullptr;         ///< Owned by layout hierarchy
+    LogToggleSwitch* m_adapterLogToggle = nullptr;  ///< Log toggle on adapter tab
 
     // All widget pointers below are owned by the Qt parent/layout hierarchy.
     // They are destroyed automatically when this panel is destroyed.
 
     // -- Adapter UI --
+    QWidget* m_adapterWidget = nullptr;
     QTableWidget* m_adapterTable = nullptr;
     QLabel* m_detailIdentity = nullptr;    ///< Name / Description / MAC
     QLabel* m_detailAddressing = nullptr;  ///< IPv4 / IPv6

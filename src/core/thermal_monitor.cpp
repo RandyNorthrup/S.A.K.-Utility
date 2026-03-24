@@ -11,6 +11,7 @@
 
 #include <QDateTime>
 #include <QProcess>
+#include <QtConcurrent>
 
 namespace sak {
 
@@ -21,10 +22,17 @@ namespace sak {
 ThermalMonitor::ThermalMonitor(QObject* parent) : QObject(parent) {
     m_timer.setSingleShot(true);
     connect(&m_timer, &QTimer::timeout, this, &ThermalMonitor::onTimerTick);
+    connect(&m_poll_watcher,
+            &QFutureWatcher<QVector<ThermalReading>>::finished,
+            this,
+            &ThermalMonitor::onPollComplete);
 }
 
 ThermalMonitor::~ThermalMonitor() {
     stop();
+    if (m_poll_watcher.isRunning()) {
+        m_poll_watcher.waitForFinished();
+    }
 }
 
 // ============================================================================
@@ -39,7 +47,7 @@ void ThermalMonitor::start(int interval_ms) {
     m_interval_ms = interval_ms;
     logInfo("Thermal monitor started ({}ms interval)", interval_ms);
 
-    // Perform an initial poll immediately, then schedule next via single-shot
+    // Fire initial poll immediately
     onTimerTick();
 }
 
@@ -51,26 +59,24 @@ void ThermalMonitor::stop() {
 }
 
 bool ThermalMonitor::isRunning() const {
-    return m_timer.isActive();
+    return m_timer.isActive() || m_poll_watcher.isRunning();
 }
 
 QVector<ThermalReading> ThermalMonitor::pollOnce() {
-    QVector<ThermalReading> readings;
-    const QDateTime now = QDateTime::currentDateTime();
+    QProcess ps;
+    ps.setProcessChannelMode(QProcess::MergedChannels);
+    ps.start("powershell.exe", {"-NoProfile", "-NoLogo", "-Command", buildCombinedThermalScript()});
 
-    // CPU temperature
-    const double cpu_temp = queryCpuTemperature();
-    if (cpu_temp > 0) {
-        readings.append({"CPU Package", cpu_temp, now});
+    if (!ps.waitForStarted(sak::kTimeoutProcessStartMs)) {
+        return {};
+    }
+    if (!ps.waitForFinished(sak::kTimeoutThermalQueryMs)) {
+        ps.kill();
+        ps.waitForFinished(sak::kTimeoutProcessStartMs);
+        return {};
     }
 
-    // GPU temperature
-    const double gpu_temp = queryGpuTemperature();
-    if (gpu_temp > 0) {
-        readings.append({"GPU", gpu_temp, now});
-    }
-
-    return readings;
+    return parseThermalOutput(QString::fromUtf8(ps.readAllStandardOutput()));
 }
 
 void ThermalMonitor::clearHistory() {
@@ -78,47 +84,128 @@ void ThermalMonitor::clearHistory() {
 }
 
 // ============================================================================
-// Timer Callback
+// Timer Callback (main thread)
 // ============================================================================
 
 void ThermalMonitor::onTimerTick() {
-    Q_ASSERT(!m_history.empty());
-    Q_ASSERT(!m_history.isEmpty());
-    const auto readings = pollOnce();
-
-    // Store in history
-    m_history.append(readings);
-
-    // Trim history to ~30 minutes (at 2-second polling = ~900 readings,
-    // each poll returns up to 2 sensors, so ~1800 entries)
-    constexpr int kMaxHistoryEntries = 1800;
-    if (m_history.size() > kMaxHistoryEntries) {
-        m_history.remove(0, m_history.size() - kMaxHistoryEntries);
+    if (m_poll_watcher.isRunning()) {
+        m_timer.start(m_interval_ms);
+        return;
     }
 
-    // Check warning thresholds
-    for (const auto& reading : readings) {
-        if (reading.component == "CPU Package" &&
-            reading.temperature_celsius >= m_cpu_warning_threshold) {
-            Q_EMIT temperatureWarning(reading.component, reading.temperature_celsius);
-        } else if (reading.component == "GPU" &&
-                   reading.temperature_celsius >= m_gpu_warning_threshold) {
-            Q_EMIT temperatureWarning(reading.component, reading.temperature_celsius);
-        } else if (reading.component.startsWith("Disk") &&
-                   reading.temperature_celsius >= m_disk_warning_threshold) {
-            Q_EMIT temperatureWarning(reading.component, reading.temperature_celsius);
-        }
-    }
+    // Run pollOnce() on the thread pool — no UI blocking
+    m_poll_watcher.setFuture(QtConcurrent::run(&ThermalMonitor::pollOnce));
+}
 
-    Q_EMIT readingsUpdated(readings);
-
-    // Restart single-shot timer after poll completes
-    // (prevents accumulation of concurrent processes)
+void ThermalMonitor::onPollComplete() {
+    processReadings(m_poll_watcher.result());
     m_timer.start(m_interval_ms);
 }
 
 // ============================================================================
-// Temperature Queries
+// Combined Thermal Script
+// ============================================================================
+
+QString ThermalMonitor::buildCombinedThermalScript() {
+    // Single PowerShell invocation that queries CPU, GPU, and all disks.
+    // Output format: key=value lines (e.g. "cpu=52.3", "gpu=61", "disk0=38")
+    return QStringLiteral(
+        "$r=@{};"
+
+        // CPU via WMI ACPI thermal zone (admin required)
+        "try{"
+        "$t=Get-CimInstance -Namespace root/WMI "
+        "-ClassName MSAcpi_ThermalZoneTemperature "
+        "-ErrorAction Stop|Select-Object -First 1;"
+        "if($t.CurrentTemperature -gt 0){"
+        "$r['cpu']=[math]::Round(($t.CurrentTemperature/10)-273.15,1)"
+        "}}catch{};"
+
+        // GPU: try nvidia-smi at well-known paths, then PATH
+        "$nvp=@("
+        "'C:\\Program Files\\NVIDIA Corporation\\NVSMI\\nvidia-smi.exe',"
+        "'C:\\Windows\\System32\\nvidia-smi.exe',"
+        "'nvidia-smi');"
+        "foreach($p in $nvp){"
+        "try{"
+        "$o=&$p --query-gpu=temperature.gpu "
+        "--format=csv,noheader,nounits 2>$null;"
+        "if($LASTEXITCODE -eq 0 -and $o){"
+        "$r['gpu']=[double]$o.Trim().Split(\"`n\")[0].Trim();"
+        "break"
+        "}}catch{}};"
+
+        // Disk temps via StorageReliabilityCounter (admin required)
+        "try{"
+        "Get-PhysicalDisk -ErrorAction Stop|ForEach-Object{"
+        "$c=$_|Get-StorageReliabilityCounter "
+        "-ErrorAction SilentlyContinue;"
+        "if($c -and $c.Temperature -gt 0){"
+        "$r[\"disk$($_.DeviceId)\"]=$c.Temperature"
+        "}}}catch{};"
+
+        // Output key=value pairs
+        "$r.GetEnumerator()|ForEach-Object{"
+        "\"$($_.Key)=$($_.Value)\""
+        "}");
+}
+
+QVector<ThermalReading> ThermalMonitor::parseThermalOutput(const QString& output) {
+    QVector<ThermalReading> readings;
+    const QDateTime now = QDateTime::currentDateTime();
+
+    const auto lines = output.split('\n', Qt::SkipEmptyParts);
+    for (const auto& line : lines) {
+        const auto trimmed = line.trimmed();
+        const int eq_pos = trimmed.indexOf('=');
+        if (eq_pos <= 0) {
+            continue;
+        }
+
+        const auto key = trimmed.left(eq_pos).toLower();
+        bool ok = false;
+        const double temp = trimmed.mid(eq_pos + 1).toDouble(&ok);
+        if (!ok || temp <= 0) {
+            continue;
+        }
+
+        if (key == QLatin1String("cpu")) {
+            readings.append({"CPU Package", temp, now});
+        } else if (key == QLatin1String("gpu")) {
+            readings.append({"GPU", temp, now});
+        } else if (key.startsWith(QLatin1String("disk"))) {
+            readings.append({QString("Disk %1").arg(key.mid(4)), temp, now});
+        }
+    }
+    return readings;
+}
+
+// ============================================================================
+// Process Readings (history, thresholds, signals)
+// ============================================================================
+
+void ThermalMonitor::processReadings(const QVector<ThermalReading>& readings) {
+    m_history.append(readings);
+    if (m_history.size() > kMaxHistoryEntries) {
+        m_history.remove(0, m_history.size() - kMaxHistoryEntries);
+    }
+
+    for (const auto& reading : readings) {
+        const double temp = reading.temperature_celsius;
+        if (reading.component == "CPU Package" && temp >= kCpuWarningThreshold) {
+            Q_EMIT temperatureWarning(reading.component, temp);
+        } else if (reading.component == "GPU" && temp >= kGpuWarningThreshold) {
+            Q_EMIT temperatureWarning(reading.component, temp);
+        } else if (reading.component.startsWith("Disk") && temp >= kDiskWarningThreshold) {
+            Q_EMIT temperatureWarning(reading.component, temp);
+        }
+    }
+
+    Q_EMIT readingsUpdated(readings);
+}
+
+// ============================================================================
+// Standalone CPU Query (used by StressTestWorker)
 // ============================================================================
 
 double ThermalMonitor::queryCpuTemperature() {
@@ -128,14 +215,17 @@ double ThermalMonitor::queryCpuTemperature() {
              {"-NoProfile",
               "-NoLogo",
               "-Command",
-              "Get-CimInstance -Namespace root/WMI -ClassName MSAcpi_ThermalZoneTemperature "
-              "| Select-Object -First 1 -ExpandProperty CurrentTemperature"});
+              "Get-CimInstance -Namespace root/WMI "
+              "-ClassName MSAcpi_ThermalZoneTemperature "
+              "| Select-Object -First 1 "
+              "-ExpandProperty CurrentTemperature"});
 
     if (!ps.waitForStarted(sak::kTimeoutProcessStartMs)) {
         return -1.0;
     }
     if (!ps.waitForFinished(sak::kTimeoutProcessShortMs)) {
         ps.kill();
+        ps.waitForFinished(sak::kTimeoutProcessStartMs);
         return -1.0;
     }
 
@@ -152,28 +242,6 @@ double ThermalMonitor::queryCpuTemperature() {
 
     // WMI returns temperature in tenths of Kelvin
     return (raw_value / 10.0) - 273.15;
-}
-
-double ThermalMonitor::queryGpuTemperature() {
-    // Try NVIDIA first via nvidia-smi (commonly available on NVIDIA systems)
-    QProcess nv;
-    nv.setProcessChannelMode(QProcess::MergedChannels);
-    nv.start("nvidia-smi", {"--query-gpu=temperature.gpu", "--format=csv,noheader,nounits"});
-
-    if (!nv.waitForStarted(sak::kTimeoutProcessStartMs)) {
-        // nvidia-smi not available -- fall through to fallback
-    } else if (nv.waitForFinished(sak::kTimeoutThermalQueryMs) && nv.exitCode() == 0) {
-        const QString output = QString::fromUtf8(nv.readAllStandardOutput()).trimmed();
-        bool ok = false;
-        const double temp = output.split('\n').first().trimmed().toDouble(&ok);
-        if (ok && temp > 0) {
-            return temp;
-        }
-    }
-
-    // Fallback: WMI Win32_VideoController doesn't have temperature
-    // For AMD, we'd need radeon-profile or similar -- not universally available
-    return -1.0;
 }
 
 }  // namespace sak

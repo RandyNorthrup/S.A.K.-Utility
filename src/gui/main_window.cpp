@@ -12,6 +12,7 @@
 #include "sak/config_manager.h"
 #include "sak/detachable_log_window.h"
 #include "sak/diagnostic_benchmark_panel.h"
+#include "sak/email_inspector_panel.h"
 #include "sak/image_flasher_panel.h"
 #include "sak/layout_constants.h"
 #include "sak/network_diagnostic_panel.h"
@@ -48,6 +49,7 @@
 #include <QToolButton>
 #include <QUrl>
 #include <QVBoxLayout>
+#include <QWheelEvent>
 
 namespace sak {
 
@@ -113,6 +115,16 @@ Built with modern C++23 and Qt 6 for Windows 10/11 x64.</div>
         <li><b>Linux ISO Download</b> &mdash; Built-in distro catalog (Ubuntu, Mint, Kali, SystemRescue, Clonezilla, and more)</li>
         <li><b>File Management</b> &mdash; Organize files by type with preview mode, and find duplicate files with content-based hashing</li>
         <li><b>WiFi Manager</b> &mdash; QR code generation, network scanning, bulk export, and connection scripts</li>
+    </ul>
+</div>
+
+<div class="section">
+    <div class="section-title">Email &amp; Data Forensics</div>
+    <ul>
+        <li><b>PST/OST/MBOX Email Tool</b> &mdash; Offline forensic inspection of Outlook and Thunderbird email archives without client installation</li>
+        <li><b>Email Search &amp; Export</b> &mdash; Full-text search across thousands of items with export to EML, ICS, VCF, and CSV formats</li>
+        <li><b>Email Profile Manager</b> &mdash; Backup and restore profiles for Outlook, Thunderbird, and Windows Mail</li>
+        <li><b>Orphaned File Discovery</b> &mdash; Scan drives for orphaned PST, OST, and MBOX files not linked to active profiles</li>
     </ul>
 </div>
 
@@ -222,6 +234,8 @@ constexpr char kTooltipImageFlasher[] = "Flash ISO images to USB drives (Ctrl+6)
 constexpr char kTooltipDiagnostics[] = "System diagnostics, benchmarks, and stress tests (Ctrl+7)";
 constexpr char kTooltipNetworkManagement[] =
     "Network diagnostics, WiFi management, and connectivity tools (Ctrl+8)";
+constexpr char kTooltipEmailTool[] =
+    "Inspect PST, OST, and MBOX email files — search, export, and manage profiles (Ctrl+9)";
 
 const QString kDiscordBtnStyle = QStringLiteral(
     "QPushButton {"
@@ -335,6 +349,9 @@ void MainWindow::setupUi() {
         QTimer::singleShot(0, this, &MainWindow::applyTabBarChevrons);
     });
 
+    // Enable mouse-wheel tab switching on the tab bar
+    m_tab_widget->tabBar()->installEventFilter(this);
+
     updateStatus("Ready", 0);
 }
 
@@ -427,6 +444,14 @@ void MainWindow::createSimplePanels() {
                       "Benchmark and Diagnostics",
                       kTooltipDiagnostics,
                       ":/icons/icons/panel_diagnostic.svg");
+
+    // -- 7. Email Tool ----------------------------------------------------
+    m_email_inspector_panel = std::make_unique<EmailInspectorPanel>(this);
+    AddTabWithTooltip(m_tab_widget,
+                      m_email_inspector_panel.get(),
+                      "Email Tool",
+                      kTooltipEmailTool,
+                      ":/icons/icons/panel_email.svg");
 }
 
 void MainWindow::createAppManagementPanel() {
@@ -504,14 +529,28 @@ void MainWindow::createNetworkManagementPanel() {
         netMgmtWrapper,
         QStringLiteral(":/icons/icons/panel_network.svg"),
         tr("Network Diagnostics & Troubleshooting"),
-        tr("Comprehensive network analysis -- adapter inspection, connectivity testing, "
-           "DNS diagnostics, port scanning, bandwidth, WiFi analysis, firewall auditing, and more"),
+        tr("Comprehensive network analysis -- connectivity testing, DNS diagnostics, "
+           "port scanning, bandwidth, WiFi analysis, firewall auditing, and more"),
         netMgmtLayout);
 
     auto* netTabs = new QTabWidget(netMgmtWrapper);
     netTabs->addTab(m_network_diagnostic_panel.get(), tr("Network Diagnostics"));
+    netTabs->addTab(m_network_diagnostic_panel->adapterWidget(), tr("Network Adapters"));
     netTabs->addTab(m_wifi_manager_panel.get(), tr("WiFi Manager"));
     netMgmtLayout->addWidget(netTabs, 1);
+
+    // Connect adapter-tab log toggle to the shared log window
+    auto* adapterToggle = m_network_diagnostic_panel->adapterLogToggle();
+    if (adapterToggle && m_logWindow) {
+        connect(adapterToggle,
+                &LogToggleSwitch::toggled,
+                m_logWindow,
+                &DetachableLogWindow::setLogVisible);
+        connect(m_logWindow,
+                &DetachableLogWindow::visibilityChanged,
+                adapterToggle,
+                &LogToggleSwitch::setChecked);
+    }
 
     connect(netTabs, &QTabWidget::currentChanged, this, [netHdr](int index) {
         struct TabMeta {
@@ -523,10 +562,13 @@ void MainWindow::createNetworkManagementPanel() {
             {":/icons/icons/panel_network.svg",
              "Network Diagnostics & Troubleshooting",
              "Comprehensive network analysis "
-             "\xe2\x80\x94 adapter inspection, "
-             "connectivity testing, DNS diagnostics, "
+             "\xe2\x80\x94 connectivity testing, DNS diagnostics, "
              "port scanning, bandwidth, WiFi analysis, "
              "firewall auditing, and more"},
+            {":/icons/icons/icons8-network-card.svg",
+             "Network Adapters",
+             "View and manage network adapter configurations, "
+             "backup and restore Ethernet settings"},
             {":/icons/icons/panel_wifi.svg",
              "WiFi Manager",
              "Manage, share, and deploy Wi-Fi network profiles"},
@@ -993,6 +1035,17 @@ void MainWindow::connectRemainingPanelSignals() {
             &NetworkDiagnosticPanel::progressUpdate,
             this,
             &MainWindow::updateProgress);
+
+    connect(m_email_inspector_panel.get(),
+            &EmailInspectorPanel::statusMessage,
+            this,
+            [this](const QString& msg, int timeout_ms) {
+                updateStatus(msg, timeout_ms > 0 ? timeout_ms : 5000);
+            });
+    connect(m_email_inspector_panel.get(),
+            &EmailInspectorPanel::progressUpdate,
+            this,
+            &MainWindow::updateProgress);
 }
 
 int MainWindow::findPanelTabIndex(QWidget* panel) const {
@@ -1053,6 +1106,7 @@ void MainWindow::connectPanelLogs() {
     connectLog(m_advanced_search_panel.get());
     connectLog(m_advanced_uninstall_panel.get());
     connectLog(m_network_diagnostic_panel.get());
+    connectLog(m_email_inspector_panel.get());
 
     if (m_wifi_manager_panel) {
         connectLog(m_wifi_manager_panel.get());
@@ -1096,7 +1150,10 @@ void MainWindow::updateProgress(int current, int maximum) {
     m_progress_bar->setValue(current);
 
     // Auto-show when work starts, auto-hide when complete
-    if (current >= maximum && maximum > 0) {
+    if (current == 0 && maximum == 0) {
+        // Indeterminate progress (busy indicator)
+        m_progress_bar->setVisible(true);
+    } else if (current >= maximum && maximum > 0) {
         // Hide after a brief delay so the user sees 100%
         QTimer::singleShot(sak::kTimerSplashMs, this, &MainWindow::hideProgressBarIfComplete);
     } else if (maximum > 0) {
@@ -1264,6 +1321,27 @@ void MainWindow::applyTabBarChevrons() {
         }
         btn->setToolButtonStyle(Qt::ToolButtonTextOnly);
     }
+}
+
+bool MainWindow::eventFilter(QObject* obj, QEvent* event) {
+    if (obj == m_tab_widget->tabBar() && event->type() == QEvent::Wheel) {
+        auto* wheel = static_cast<QWheelEvent*>(event);
+        const int raw_y = wheel->angleDelta().y();
+        const int raw_x = wheel->angleDelta().x();
+        const int delta = raw_y != 0 ? raw_y : raw_x;
+        if (delta == 0) {
+            return QMainWindow::eventFilter(obj, event);
+        }
+        const int current = m_tab_widget->currentIndex();
+        const int count = m_tab_widget->count();
+        // Scroll up/right = previous tab, scroll down/left = next tab
+        const int next = delta > 0 ? qMax(0, current - 1) : qMin(count - 1, current + 1);
+        if (next != current) {
+            m_tab_widget->setCurrentIndex(next);
+        }
+        return true;
+    }
+    return QMainWindow::eventFilter(obj, event);
 }
 
 }  // namespace sak

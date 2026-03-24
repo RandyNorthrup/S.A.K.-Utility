@@ -191,12 +191,14 @@ private:
     QLabel* m_disk_rand_label{nullptr};
     QLabel* m_disk_latency_label{nullptr};
     QLabel* m_disk_score_label{nullptr};
+    QProgressBar* m_disk_score_bar{nullptr};
     QPushButton* m_disk_benchmark_button{nullptr};
 
     // -- Memory Benchmark Widgets --------------------------------
     QLabel* m_mem_bandwidth_label{nullptr};
     QLabel* m_mem_latency_label{nullptr};
     QLabel* m_mem_score_label{nullptr};
+    QProgressBar* m_mem_score_bar{nullptr};
     QPushButton* m_mem_benchmark_button{nullptr};
 
     // -- Stress Test Widgets -------------------------------------

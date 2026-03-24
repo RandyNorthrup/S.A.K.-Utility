@@ -10,6 +10,7 @@
 #include "sak/config_manager.h"
 #include "sak/logger.h"
 
+#include <QMetaType>
 #include <QtGlobal>
 
 #include <algorithm>
@@ -20,6 +21,7 @@ namespace sak {
 
 AdvancedSearchController::AdvancedSearchController(QObject* parent)
     : QObject(parent), m_pattern_library(std::make_unique<RegexPatternLibrary>(nullptr)) {
+    qRegisterMetaType<QVector<sak::SearchMatch>>("QVector<sak::SearchMatch>");
     loadPreferences();
     logInfo("AdvancedSearchController initialized");
 }

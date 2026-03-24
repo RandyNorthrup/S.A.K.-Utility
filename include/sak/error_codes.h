@@ -113,6 +113,27 @@ enum class error_code {
     assertion_failed = 903,
     invalid_operation = 904,
     partial_failure = 905,
+
+    // Email / PST parser errors (1000-1099)
+    pst_invalid_header = 1000,
+    pst_unsupported_encryption = 1001,
+    pst_corrupted_btree = 1002,
+    pst_node_not_found = 1003,
+    pst_block_not_found = 1004,
+    pst_invalid_heap = 1005,
+    pst_property_context_error = 1006,
+    pst_table_context_error = 1007,
+    pst_folder_traversal_error = 1008,
+    pst_item_read_error = 1009,
+    pst_attachment_error = 1010,
+    pst_decompression_failed = 1018,
+    mbox_invalid_format = 1011,
+    mbox_message_parse_error = 1012,
+    email_search_failed = 1013,
+    email_export_failed = 1014,
+    email_profile_discovery_failed = 1015,
+    email_backup_failed = 1016,
+    email_restore_failed = 1017,
 };
 
 /// @brief Convert error code to human-readable message
@@ -197,6 +218,25 @@ enum class error_code {
         {error_code::assertion_failed, "Assertion failed"},
         {error_code::invalid_operation, "Invalid operation"},
         {error_code::partial_failure, "Partial failure"},
+        {error_code::pst_invalid_header, "Invalid file header"},
+        {error_code::pst_unsupported_encryption, "Unsupported encryption"},
+        {error_code::pst_corrupted_btree, "Corrupted BTree structure"},
+        {error_code::pst_node_not_found, "Node not found"},
+        {error_code::pst_block_not_found, "Block not found"},
+        {error_code::pst_invalid_heap, "Invalid heap structure"},
+        {error_code::pst_property_context_error, "Property context error"},
+        {error_code::pst_table_context_error, "Table context error"},
+        {error_code::pst_folder_traversal_error, "Folder traversal error"},
+        {error_code::pst_item_read_error, "Item read error"},
+        {error_code::pst_attachment_error, "Attachment read error"},
+        {error_code::pst_decompression_failed, "Block decompression failed"},
+        {error_code::mbox_invalid_format, "MBOX invalid format"},
+        {error_code::mbox_message_parse_error, "MBOX message parse error"},
+        {error_code::email_search_failed, "Email search failed"},
+        {error_code::email_export_failed, "Email export failed"},
+        {error_code::email_profile_discovery_failed, "Email profile discovery failed"},
+        {error_code::email_backup_failed, "Email backup failed"},
+        {error_code::email_restore_failed, "Email restore failed"},
     };
     const auto it = std::find_if(std::begin(kTable), std::end(kTable), [ec](const auto& entry) {
         return entry.code == ec;

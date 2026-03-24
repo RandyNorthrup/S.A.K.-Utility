@@ -10,6 +10,7 @@
 
 #pragma once
 
+#include <QMetaType>
 #include <QSet>
 #include <QString>
 #include <QStringList>
@@ -93,7 +94,7 @@ struct SearchPreferences {
 
 /// @brief Image file extensions supporting metadata extraction
 inline const QSet<QString> kImageExtensions = {
-    "jpg", "jpeg", "png", "tiff", "tif", "gif", "bmp", "webp"};
+    "jpg", "jpeg", "png", "tiff", "tif", "gif", "bmp", "webp", "heic", "heif"};
 
 /// @brief File extensions supporting metadata extraction
 inline const QSet<QString> kFileMetadataExtensions = {
@@ -168,3 +169,6 @@ static_assert(std::is_copy_constructible_v<SearchPreferences>,
               "SearchPreferences must be copy-constructible for signal/slot.");
 
 }  // namespace sak
+
+Q_DECLARE_METATYPE(sak::SearchMatch)
+Q_DECLARE_METATYPE(QVector<sak::SearchMatch>)

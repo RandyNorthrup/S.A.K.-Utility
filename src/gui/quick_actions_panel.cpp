@@ -170,20 +170,21 @@ void QuickActionsPanel::setupUi() {
     backupLocRow->addWidget(m_browse_button);
     main_layout->addLayout(backupLocRow);
 
-    // Initialize hidden settings checkboxes (managed via Settings modal)
-    m_confirm_checkbox = new QCheckBox("Confirm before executing actions");
+    // Hidden settings state checkboxes (managed via Settings modal).
+    // Parented to 'this' so they are not top-level windows.
+    m_confirm_checkbox = new QCheckBox("Confirm before executing actions", this);
     m_confirm_checkbox->setChecked(true);
     m_confirm_checkbox->setAccessibleName(QStringLiteral("Confirm Before Executing"));
     m_confirm_checkbox->hide();
-    m_notifications_checkbox = new QCheckBox("Show completion notifications");
+    m_notifications_checkbox = new QCheckBox("Show completion notifications", this);
     m_notifications_checkbox->setChecked(true);
     m_notifications_checkbox->setAccessibleName(QStringLiteral("Show Completion Notifications"));
     m_notifications_checkbox->hide();
-    m_logging_checkbox = new QCheckBox("Enable detailed logging");
+    m_logging_checkbox = new QCheckBox("Enable detailed logging", this);
     m_logging_checkbox->setChecked(true);
     m_logging_checkbox->setAccessibleName(QStringLiteral("Enable Detailed Logging"));
     m_logging_checkbox->hide();
-    m_compression_checkbox = new QCheckBox("Compress backups (saves space)");
+    m_compression_checkbox = new QCheckBox("Compress backups (saves space)", this);
     m_compression_checkbox->setChecked(true);
     m_compression_checkbox->setAccessibleName(QStringLiteral("Compress Backups"));
     m_compression_checkbox->hide();
@@ -284,6 +285,7 @@ QFrame* QuickActionsPanel::createCategoryCard(QuickAction::ActionCategory catego
     card->setCursor(Qt::PointingHandCursor);
     card->setMinimumHeight(120);
     card->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+
     card->setStyleSheet(QString("QFrame#categoryCard {"
                                 "  background-color: %1;"
                                 "  border: 1px solid %2;"

@@ -39,10 +39,10 @@ set(UNIT_TESTS
 
 foreach(test_name ${UNIT_TESTS})
     # Find source files for test
-    file(GLOB test_sources 
+    file(GLOB test_sources
         "${CMAKE_CURRENT_SOURCE_DIR}/unit/${test_name}.cpp"
     )
-    
+
     # Find corresponding implementation files
     string(REPLACE "test_" "" component_name "${test_name}")
     file(GLOB impl_sources
@@ -181,15 +181,15 @@ foreach(test_name ${UNIT_TESTS})
     endif()
 
 
-    
+
     if(test_sources)
         add_executable(${test_name} ${test_sources} ${impl_sources})
-        
+
         set_target_properties(${test_name} PROPERTIES
             AUTOMOC ON
             RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
         )
-        
+
         set(extra_unit_libs "")
         if(test_name STREQUAL "test_network_connection"
             OR test_name STREQUAL "test_peer_discovery"
@@ -203,7 +203,7 @@ foreach(test_name ${UNIT_TESTS})
             OR test_name STREQUAL "test_linux_iso_downloader")
             list(APPEND extra_unit_libs Qt6::Network)
         endif()
-        
+
         # ISO downloader needs Qt Widgets
         if(test_name STREQUAL "test_windows_iso_downloader")
             list(APPEND extra_unit_libs Qt6::Widgets)
@@ -220,16 +220,16 @@ foreach(test_name ${UNIT_TESTS})
             ${extra_unit_libs}
             ${PLATFORM_LIBS}
         )
-        
+
         target_include_directories(${test_name} PRIVATE
             ${CMAKE_CURRENT_SOURCE_DIR}/../include
         )
-        
+
         # Add to CTest
-        add_test(NAME ${test_name} 
+        add_test(NAME ${test_name}
                  COMMAND ${test_name}
                  WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-        
+
         message(STATUS "Added unit test: ${test_name}")
     endif()
 endforeach()
@@ -388,7 +388,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_thermal_monitor.cpp")
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
     )
     target_link_libraries(test_thermal_monitor PRIVATE
-        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+        Qt6::Core Qt6::Concurrent Qt6::Test ${PLATFORM_LIBS}
     )
     target_include_directories(test_thermal_monitor PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
@@ -419,6 +419,112 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_diagnostic_report_generator.cpp
     add_test(NAME test_diagnostic_report_generator COMMAND test_diagnostic_report_generator
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_diagnostic_report_generator")
+endif()
+
+# test_cpu_benchmark_worker — construction, result defaults, signal types
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_cpu_benchmark_worker.cpp")
+    add_executable(test_cpu_benchmark_worker
+        unit/test_cpu_benchmark_worker.cpp
+        ../src/core/cpu_benchmark_worker.cpp
+        ../include/sak/cpu_benchmark_worker.h
+        ../src/threading/worker_base.cpp
+        ../include/sak/worker_base.h
+        ../src/core/logger.cpp
+    )
+    set_target_properties(test_cpu_benchmark_worker PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+    )
+    target_link_libraries(test_cpu_benchmark_worker PRIVATE
+        Qt6::Core Qt6::Concurrent Qt6::Test ZLIB::ZLIB ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_cpu_benchmark_worker PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_cpu_benchmark_worker COMMAND test_cpu_benchmark_worker
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_cpu_benchmark_worker")
+endif()
+
+# test_disk_benchmark_worker — construction, config, result defaults
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_disk_benchmark_worker.cpp")
+    add_executable(test_disk_benchmark_worker
+        unit/test_disk_benchmark_worker.cpp
+        ../src/core/disk_benchmark_worker.cpp
+        ../include/sak/disk_benchmark_worker.h
+        ../src/core/keep_awake.cpp
+        ../include/sak/keep_awake.h
+        ../src/threading/worker_base.cpp
+        ../include/sak/worker_base.h
+        ../src/core/logger.cpp
+    )
+    set_target_properties(test_disk_benchmark_worker PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+    )
+    target_link_libraries(test_disk_benchmark_worker PRIVATE
+        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_disk_benchmark_worker PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_disk_benchmark_worker COMMAND test_disk_benchmark_worker
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_disk_benchmark_worker")
+endif()
+
+# test_memory_benchmark_worker — construction, result defaults
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_memory_benchmark_worker.cpp")
+    add_executable(test_memory_benchmark_worker
+        unit/test_memory_benchmark_worker.cpp
+        ../src/core/memory_benchmark_worker.cpp
+        ../include/sak/memory_benchmark_worker.h
+        ../src/threading/worker_base.cpp
+        ../include/sak/worker_base.h
+        ../src/core/logger.cpp
+    )
+    set_target_properties(test_memory_benchmark_worker PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+    )
+    target_link_libraries(test_memory_benchmark_worker PRIVATE
+        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_memory_benchmark_worker PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_memory_benchmark_worker COMMAND test_memory_benchmark_worker
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_memory_benchmark_worker")
+endif()
+
+# test_stress_test_worker — construction, config, result defaults
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_stress_test_worker.cpp")
+    add_executable(test_stress_test_worker
+        unit/test_stress_test_worker.cpp
+        ../src/core/stress_test_worker.cpp
+        ../include/sak/stress_test_worker.h
+        ../src/core/thermal_monitor.cpp
+        ../include/sak/thermal_monitor.h
+        ../src/core/keep_awake.cpp
+        ../include/sak/keep_awake.h
+        ../src/threading/worker_base.cpp
+        ../include/sak/worker_base.h
+        ../src/core/logger.cpp
+    )
+    set_target_properties(test_stress_test_worker PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+    )
+    target_link_libraries(test_stress_test_worker PRIVATE
+        Qt6::Core Qt6::Concurrent Qt6::Test ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_stress_test_worker PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_stress_test_worker COMMAND test_stress_test_worker
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_stress_test_worker")
 endif()
 
 # ============================================================================
@@ -2149,6 +2255,199 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_network_transfer_report.cpp")
              COMMAND test_network_transfer_report
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_network_transfer_report")
+endif()
+
+# ============================================================================
+# Unit Tests - Email & PST/OST Inspector Panel
+# ============================================================================
+
+# test_email_types — struct defaults, enum values, constants validation
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_email_types.cpp")
+    add_executable(test_email_types
+        unit/test_email_types.cpp
+    )
+    set_target_properties(test_email_types PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+    )
+    target_link_libraries(test_email_types PRIVATE
+        Qt6::Core Qt6::Test
+    )
+    target_include_directories(test_email_types PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_email_types COMMAND test_email_types
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_email_types")
+endif()
+
+# test_pst_parser — header validation, magic, encryption, lifecycle
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_pst_parser.cpp")
+    add_executable(test_pst_parser
+        unit/test_pst_parser.cpp
+        ../src/core/pst_parser.cpp
+        ../src/core/logger.cpp
+        ../include/sak/pst_parser.h
+    )
+    set_target_properties(test_pst_parser PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+    )
+    target_link_libraries(test_pst_parser PRIVATE
+        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_pst_parser PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_pst_parser COMMAND test_pst_parser
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_pst_parser")
+endif()
+
+# test_ost_integration — opens a real OST file and exercises full parse pipeline
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/integration/test_ost_integration.cpp")
+    add_executable(test_ost_integration
+        integration/test_ost_integration.cpp
+        ../src/core/pst_parser.cpp
+        ../src/core/logger.cpp
+        ../include/sak/pst_parser.h
+    )
+    set_target_properties(test_ost_integration PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+    )
+    target_link_libraries(test_ost_integration PRIVATE
+        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_ost_integration PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_ost_integration COMMAND test_ost_integration
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added integration test: test_ost_integration")
+endif()
+
+# test_mbox_parser — indexing, message loading, From line detection
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_mbox_parser.cpp")
+    add_executable(test_mbox_parser
+        unit/test_mbox_parser.cpp
+        ../src/core/mbox_parser.cpp
+        ../src/core/logger.cpp
+        ../include/sak/mbox_parser.h
+    )
+    set_target_properties(test_mbox_parser PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+    )
+    target_link_libraries(test_mbox_parser PRIVATE
+        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_mbox_parser PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_mbox_parser COMMAND test_mbox_parser
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_mbox_parser")
+endif()
+
+# test_email_search_worker — criteria, cancel, search hit structure
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_email_search_worker.cpp")
+    add_executable(test_email_search_worker
+        unit/test_email_search_worker.cpp
+        ../src/core/email_search_worker.cpp
+        ../src/core/pst_parser.cpp
+        ../src/core/mbox_parser.cpp
+        ../src/core/logger.cpp
+        ../include/sak/email_search_worker.h
+        ../include/sak/pst_parser.h
+        ../include/sak/mbox_parser.h
+    )
+    set_target_properties(test_email_search_worker PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+    )
+    target_link_libraries(test_email_search_worker PRIVATE
+        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_email_search_worker PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_email_search_worker COMMAND test_email_search_worker
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_email_search_worker")
+endif()
+
+# test_email_export_worker — config, result, format coverage
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_email_export_worker.cpp")
+    add_executable(test_email_export_worker
+        unit/test_email_export_worker.cpp
+        ../src/core/email_export_worker.cpp
+        ../src/core/pst_parser.cpp
+        ../src/core/mbox_parser.cpp
+        ../src/core/logger.cpp
+        ../include/sak/email_export_worker.h
+        ../include/sak/pst_parser.h
+        ../include/sak/mbox_parser.h
+    )
+    set_target_properties(test_email_export_worker PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+    )
+    target_link_libraries(test_email_export_worker PRIVATE
+        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_email_export_worker PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_email_export_worker COMMAND test_email_export_worker
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_email_export_worker")
+endif()
+
+# test_email_profile_manager — discovery, backup/restore, linked files
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_email_profile_manager.cpp")
+    add_executable(test_email_profile_manager
+        unit/test_email_profile_manager.cpp
+        ../src/core/email_profile_manager.cpp
+        ../src/core/logger.cpp
+        ../include/sak/email_profile_manager.h
+    )
+    set_target_properties(test_email_profile_manager PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+    )
+    target_link_libraries(test_email_profile_manager PRIVATE
+        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_email_profile_manager PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_email_profile_manager COMMAND test_email_profile_manager
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_email_profile_manager")
+endif()
+
+# test_email_report_generator — HTML, JSON, CSV output validation
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_email_report_generator.cpp")
+    add_executable(test_email_report_generator
+        unit/test_email_report_generator.cpp
+        ../src/core/email_report_generator.cpp
+        ../src/core/logger.cpp
+        ../include/sak/email_report_generator.h
+    )
+    set_target_properties(test_email_report_generator PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+    )
+    target_link_libraries(test_email_report_generator PRIVATE
+        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_email_report_generator PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_email_report_generator COMMAND test_email_report_generator
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_email_report_generator")
 endif()
 
 # ============================================================================

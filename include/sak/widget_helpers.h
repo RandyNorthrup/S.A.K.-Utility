@@ -98,8 +98,7 @@ inline void createPanelHeader(QWidget* parent,
     subtitle_label->setAccessibleName(subtitle);
     titleLayout->addWidget(subtitle_label);
 
-    headerRow->addLayout(titleLayout);
-    headerRow->addStretch();
+    headerRow->addLayout(titleLayout, 1);
     layout->addLayout(headerRow);
 }
 
@@ -146,8 +145,7 @@ struct PanelHeaderWidgets {
     subtitle_label->setAccessibleName(subtitle);
     titleLayout->addWidget(subtitle_label);
 
-    headerRow->addLayout(titleLayout);
-    headerRow->addStretch();
+    headerRow->addLayout(titleLayout, 1);
     layout->addLayout(headerRow);
 
     return {iconLabel, title_label, subtitle_label};

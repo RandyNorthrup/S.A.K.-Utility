@@ -143,6 +143,41 @@ constexpr auto kPrimaryButtonStyle =
     "  border: 1px solid rgba(203, 213, 225, 0.6);"
     "}";
 
+/// Primary QToolButton variant -- identical to kPrimaryButtonStyle but uses
+/// QToolButton selectors (needed for dropdown buttons).
+/// Apply via `toolButton->setStyleSheet(sak::ui::kPrimaryToolButtonStyle);`
+constexpr auto kPrimaryToolButtonStyle =
+    "QToolButton {"
+    "  background: qlineargradient(x1:0, y1:0, x2:0, y2:1,"
+    "    stop:0 rgba(79, 142, 252, 0.92),"
+    "    stop:0.5 rgba(59, 130, 246, 0.90),"
+    "    stop:1 rgba(37, 99, 235, 0.88));"
+    "  color: white; font-weight: 600;"
+    "  padding: 8px 20px; border-radius: 10px;"
+    "  border: 1px solid rgba(29, 78, 216, 0.7);"
+    "}"
+    "QToolButton:hover {"
+    "  background: qlineargradient(x1:0, y1:0, x2:0, y2:1,"
+    "    stop:0 rgba(96, 155, 253, 0.95),"
+    "    stop:0.5 rgba(79, 142, 252, 0.93),"
+    "    stop:1 rgba(59, 130, 246, 0.90));"
+    "}"
+    "QToolButton:pressed {"
+    "  background: qlineargradient(x1:0, y1:0, x2:0, y2:1,"
+    "    stop:0 rgba(37, 99, 235, 0.95),"
+    "    stop:0.5 rgba(29, 78, 216, 0.93),"
+    "    stop:1 rgba(21, 61, 178, 0.92));"
+    "}"
+    "QToolButton:disabled {"
+    "  background: rgba(203, 213, 225, 0.75); color: #64748b;"
+    "  border: 1px solid rgba(203, 213, 225, 0.6);"
+    "}"
+    "QToolButton::menu-indicator {"
+    "  subcontrol-position: right center;"
+    "  subcontrol-origin: padding;"
+    "  left: -4px;"
+    "}";
+
 /// Secondary action button -- subtle slate gradient for non-primary actions.
 /// Apply via `button->setStyleSheet(sak::ui::kSecondaryButtonStyle);`
 constexpr auto kSecondaryButtonStyle =
@@ -152,7 +187,7 @@ constexpr auto kSecondaryButtonStyle =
     "    stop:0.5 rgba(71, 85, 105, 0.90),"
     "    stop:1 rgba(51, 65, 85, 0.88));"
     "  color: white; font-weight: 600;"
-    "  padding: 8px 14px; border-radius: 10px;"
+    "  padding: 8px 20px; border-radius: 10px;"
     "  border: 1px solid rgba(51, 65, 85, 0.7);"
     "}"
     "QPushButton:hover {"
@@ -181,7 +216,7 @@ constexpr auto kSuccessButtonStyle =
     "    stop:0.5 rgba(56, 142, 60, 0.90),"
     "    stop:1 rgba(46, 125, 50, 0.88));"
     "  color: white; font-weight: 600;"
-    "  padding: 8px 14px; border-radius: 10px;"
+    "  padding: 8px 20px; border-radius: 10px;"
     "  border: 1px solid rgba(46, 125, 50, 0.7);"
     "}"
     "QPushButton:hover {"
@@ -210,7 +245,7 @@ constexpr auto kDangerButtonStyle =
     "    stop:0.5 rgba(211, 47, 47, 0.90),"
     "    stop:1 rgba(198, 40, 40, 0.88));"
     "  color: white; font-weight: 600;"
-    "  padding: 8px 14px; border-radius: 10px;"
+    "  padding: 8px 20px; border-radius: 10px;"
     "  border: 1px solid rgba(198, 40, 40, 0.7);"
     "}"
     "QPushButton:hover {"
@@ -239,7 +274,7 @@ constexpr auto kPauseButtonStyle =
     "    stop:0.5 rgba(251, 140, 0, 0.90),"
     "    stop:1 rgba(245, 124, 0, 0.88));"
     "  color: white;"
-    "  padding: 8px 14px; border-radius: 10px;"
+    "  padding: 8px 20px; border-radius: 10px;"
     "  border: 1px solid rgba(245, 124, 0, 0.7);"
     "}"
     "QPushButton:hover {"

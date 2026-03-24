@@ -28,14 +28,24 @@
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QHeaderView>
+#include <QImageReader>
+#include <QProcess>
 #include <QScrollArea>
 #include <QSpinBox>
 #include <QStorageInfo>
 #include <QTextBlock>
+#include <QTreeWidget>
 #include <QUrl>
 #include <QVBoxLayout>
 
 #include <algorithm>
+
+#include <windows.h>
+
+#include <shellapi.h>
+#undef emit
+#undef signals
+#undef slots
 
 namespace sak {
 
@@ -336,6 +346,149 @@ void populateSortedResultsTree(QTreeWidget* tree,
             matchItem->setData(0, Qt::UserRole, entry.path);
             matchItem->setData(0, Qt::UserRole + 1, i);  // Match index
         }
+    }
+}
+
+// -- Metadata dialog helpers -------------------------------------------------
+
+QString formatMetadataSize(qint64 bytes) {
+    constexpr qint64 kKB = 1024;
+    constexpr qint64 kMB = 1024 * 1024;
+    constexpr qint64 kGB = 1024 * 1024 * 1024;
+    if (bytes >= kGB) {
+        return QString("%1 GB").arg(static_cast<double>(bytes) / kGB, 0, 'f', 2);
+    }
+    if (bytes >= kMB) {
+        return QString("%1 MB").arg(static_cast<double>(bytes) / kMB, 0, 'f', 2);
+    }
+    if (bytes >= kKB) {
+        return QString("%1 KB").arg(static_cast<double>(bytes) / kKB, 0, 'f', 1);
+    }
+    return QString("%1 bytes").arg(bytes);
+}
+
+QMap<QString, QString> parseMetadataFromMatches(const QVector<SearchMatch>& matches) {
+    QMap<QString, QString> metadata;
+    const QLatin1String prefix("[Metadata] ");
+    for (const auto& match : matches) {
+        QString line = match.line_content;
+        if (line.startsWith(prefix)) {
+            line = line.mid(prefix.size());
+        }
+        const int colon = line.indexOf(QLatin1String(": "));
+        if (colon > 0) {
+            metadata.insert(line.left(colon).trimmed(), line.mid(colon + 2).trimmed());
+        }
+    }
+    return metadata;
+}
+
+struct MetadataField {
+    const char* key;
+    const char* display;
+};
+
+struct MetadataCategory {
+    const char* name;
+    const MetadataField* fields;
+    int count;
+};
+
+constexpr MetadataField kFileFields[] = {{"FileName", "Name"},
+                                         {"FileSize", "Size"},
+                                         {"FileType", "Type"},
+                                         {"Created", "Created"},
+                                         {"LastModified", "Modified"}};
+
+constexpr MetadataField kImageFields[] = {{"Width", "Width"},
+                                          {"Height", "Height"},
+                                          {"Dimensions", "Dimensions"},
+                                          {"Format", "Format"},
+                                          {"ColorDepth", "Color Depth"}};
+
+constexpr MetadataField kCameraFields[] = {{"CameraMake", "Make"},
+                                           {"CameraModel", "Model"},
+                                           {"ExposureTime", "Exposure"},
+                                           {"FNumber", "Aperture"},
+                                           {"ISOSpeed", "ISO"},
+                                           {"FocalLength", "Focal Length"},
+                                           {"FocalLengthIn35mm", "Focal Length (35mm)"},
+                                           {"Flash", "Flash"},
+                                           {"MeteringMode", "Metering"},
+                                           {"WhiteBalance", "White Balance"},
+                                           {"DateTimeOriginal", "Date Taken"},
+                                           {"DateTimeDigitized", "Date Digitized"},
+                                           {"Software", "Software"},
+                                           {"Artist", "Artist"},
+                                           {"Copyright", "Copyright"},
+                                           {"Orientation", "Orientation"},
+                                           {"ImageDescription", "Description"},
+                                           {"LensMake", "Lens Make"},
+                                           {"LensModel", "Lens Model"}};
+
+constexpr MetadataField kGpsFields[] = {{"GPSLatitude", "Latitude"},
+                                        {"GPSLatitudeRef", "Lat Ref"},
+                                        {"GPSLongitude", "Longitude"},
+                                        {"GPSLongitudeRef", "Lon Ref"},
+                                        {"GPSAltitude", "Altitude"},
+                                        {"GPSAltitudeRef", "Alt Ref"},
+                                        {"GPSDateStamp", "Date Stamp"},
+                                        {"GPSTimeStamp", "Time Stamp"}};
+
+constexpr MetadataField kDocFields[] = {{"Title", "Title"},
+                                        {"Author", "Author"},
+                                        {"Subject", "Subject"},
+                                        {"Keywords", "Keywords"},
+                                        {"Creator", "Creator"},
+                                        {"Producer", "Producer"},
+                                        {"Company", "Company"},
+                                        {"Version", "Version"},
+                                        {"CreationDate", "Created"},
+                                        {"ModDate", "Modified"}};
+
+constexpr MetadataField kAudioFields[] = {{"Title", "Title"},
+                                          {"Artist", "Artist"},
+                                          {"Album", "Album"},
+                                          {"Year", "Year"},
+                                          {"Genre", "Genre"},
+                                          {"Track", "Track"},
+                                          {"Comment", "Comment"},
+                                          {"AlbumArtist", "Album Artist"},
+                                          {"Composer", "Composer"},
+                                          {"Publisher", "Publisher"},
+                                          {"Copyright", "Copyright"}};
+
+constexpr MetadataCategory kMetadataCategories[] = {
+    {"File Information", kFileFields, std::size(kFileFields)},
+    {"Image Properties", kImageFields, std::size(kImageFields)},
+    {"Camera / EXIF", kCameraFields, std::size(kCameraFields)},
+    {"GPS Location", kGpsFields, std::size(kGpsFields)},
+    {"Document Properties", kDocFields, std::size(kDocFields)},
+    {"Audio Tags", kAudioFields, std::size(kAudioFields)}};
+
+void populateMetadataTree(QTreeWidget* tree, const QMap<QString, QString>& metadata) {
+    const QString dash = QStringLiteral("\u2014");
+    for (const auto& category : kMetadataCategories) {
+        auto* catItem = new QTreeWidgetItem(tree);
+        catItem->setText(0, QString::fromUtf8(category.name));
+        catItem->setFlags(catItem->flags() & ~Qt::ItemIsSelectable);
+        QFont bold = catItem->font(0);
+        bold.setBold(true);
+        catItem->setFont(0, bold);
+
+        int populated = 0;
+        for (int i = 0; i < category.count; ++i) {
+            const auto& field = category.fields[i];
+            auto* fieldItem = new QTreeWidgetItem(catItem);
+            fieldItem->setText(0, QString::fromUtf8(field.display));
+            const QString value = metadata.value(QString::fromUtf8(field.key), dash);
+            fieldItem->setText(1, value);
+            if (value != dash) {
+                ++populated;
+            }
+        }
+        catItem->setText(1, QString("(%1/%2)").arg(populated).arg(category.count));
+        catItem->setExpanded(populated > 0);
     }
 }
 
@@ -919,6 +1072,7 @@ SearchConfig AdvancedSearchPanel::buildSearchConfig() const {
 void AdvancedSearchPanel::onSearchStarted(const QString& pattern) {
     setSearchRunning(true);
     Q_EMIT statusMessage(tr("Searching for: %1").arg(pattern), 0);
+    Q_EMIT progressUpdate(0, 0);
     logMessage(tr("Search started: %1").arg(pattern));
 
     // Update search combo history
@@ -927,55 +1081,47 @@ void AdvancedSearchPanel::onSearchStarted(const QString& pattern) {
     }
 }
 
+QTreeWidgetItem* AdvancedSearchPanel::findOrCreateFileItem(
+    const QString& filePath, const QVector<SearchMatch>& fileMatches) {
+    for (int i = 0; i < m_results_tree->topLevelItemCount(); ++i) {
+        auto* item = m_results_tree->topLevelItem(i);
+        if (item->data(0, Qt::UserRole).toString() == filePath) {
+            while (item->childCount() > 0) {
+                delete item->takeChild(0);
+            }
+            item->setText(0, QString("%1  (%2)").arg(filePath).arg(fileMatches.size()));
+            return item;
+        }
+    }
+    auto* file_item = new QTreeWidgetItem(m_results_tree);
+    file_item->setText(0, QString("%1  (%2)").arg(filePath).arg(fileMatches.size()));
+    file_item->setData(0, Qt::UserRole, filePath);
+    file_item->setData(0, Qt::UserRole + 1, -1);
+    file_item->setIcon(0, style()->standardIcon(QStyle::SP_FileIcon));
+    return file_item;
+}
+
 void AdvancedSearchPanel::onResultsReceived(QVector<sak::SearchMatch> matches) {
-    Q_ASSERT(!matches.isEmpty());
-    Q_ASSERT(m_results_tree);
-    // Group new matches by file and incrementally update the tree
-    // instead of rebuilding the entire tree on every batch
+    if (matches.isEmpty() || !m_results_tree) {
+        return;
+    }
+
     for (const auto& match : matches) {
         m_all_results[match.file_path].append(match);
     }
 
-    // Build a set of affected file paths for incremental update
     QSet<QString> affectedFiles;
     for (const auto& match : matches) {
         affectedFiles.insert(match.file_path);
     }
 
-    // Update or add tree items for affected files only
     for (const auto& filePath : affectedFiles) {
         const auto& fileMatches = m_all_results[filePath];
+        auto* fileItem = findOrCreateFileItem(filePath, fileMatches);
 
-        // Find existing top-level item for this file
-        QTreeWidgetItem* fileItem = nullptr;
-        for (int i = 0; i < m_results_tree->topLevelItemCount(); ++i) {
-            auto* item = m_results_tree->topLevelItem(i);
-            if (item->data(0, Qt::UserRole).toString() == filePath) {
-                fileItem = item;
-                break;
-            }
-        }
-
-        if (fileItem) {
-            // Update existing item -- remove old children and re-add
-            while (fileItem->childCount() > 0) {
-                delete fileItem->takeChild(0);
-            }
-            fileItem->setText(0, QString("%1  (%2)").arg(filePath).arg(fileMatches.size()));
-        } else {
-            // New file -- add top-level item
-            fileItem = new QTreeWidgetItem(m_results_tree);
-            fileItem->setText(0, QString("%1  (%2)").arg(filePath).arg(fileMatches.size()));
-            fileItem->setData(0, Qt::UserRole, filePath);
-            fileItem->setData(0, Qt::UserRole + 1, -1);
-            fileItem->setIcon(0, style()->standardIcon(QStyle::SP_FileIcon));
-        }
-
-        // Add match sub-items
         for (int i = 0; i < fileMatches.size(); ++i) {
             const auto& m = fileMatches[i];
             auto* matchItem = new QTreeWidgetItem(fileItem);
-
             const QString truncated = m.line_content.left(80).trimmed();
             matchItem->setText(0, QString("Line %1: %2").arg(m.line_number).arg(truncated));
             matchItem->setData(0, Qt::UserRole, filePath);
@@ -1061,7 +1207,6 @@ void AdvancedSearchPanel::onFileExplorerContextMenu(const QPoint& pos) {
 // -- Results Tree Handlers ---------------------------------------------------
 
 void AdvancedSearchPanel::onResultItemClicked(QTreeWidgetItem* item, int /*column*/) {
-    Q_ASSERT(item);
     if (!item) {
         return;
     }
@@ -1112,8 +1257,31 @@ void AdvancedSearchPanel::onResultContextMenu(const QPoint& pos) {
 
     auto* openDirAction = menu.addAction(tr("Open Directory"));
     connect(openDirAction, &QAction::triggered, this, [filePath]() {
-        QDesktopServices::openUrl(QUrl::fromLocalFile(QFileInfo(filePath).absolutePath()));
+        const QString native = QDir::toNativeSeparators(filePath);
+        QProcess::startDetached(QStringLiteral("explorer.exe"),
+                                {QStringLiteral("/select,") + native});
     });
+
+    menu.addSeparator();
+
+    auto* viewMetaAction = menu.addAction(tr("View Metadata"));
+    connect(viewMetaAction, &QAction::triggered, this, [this, filePath]() {
+        showMetadataDialog(filePath);
+    });
+
+    auto* viewPropsAction = menu.addAction(tr("View Properties"));
+    connect(viewPropsAction, &QAction::triggered, this, [filePath]() {
+        const QString native = QDir::toNativeSeparators(filePath);
+        SHELLEXECUTEINFOW sei = {};
+        sei.cbSize = sizeof(SHELLEXECUTEINFOW);
+        sei.fMask = SEE_MASK_INVOKEIDLIST;
+        sei.lpVerb = L"properties";
+        sei.lpFile = reinterpret_cast<LPCWSTR>(native.utf16());
+        sei.nShow = SW_SHOW;
+        ShellExecuteExW(&sei);
+    });
+
+    menu.addSeparator();
 
     auto* copyPathAction = menu.addAction(tr("Copy Path"));
     connect(copyPathAction, &QAction::triggered, this, [filePath]() {
@@ -1161,10 +1329,20 @@ void AdvancedSearchPanel::showFilePreview(const QString& filePath,
     m_current_matches = matches;
     m_current_match_index = matches.isEmpty() ? -1 : 0;
 
-    // Build preview header
     m_preview_header_label->setText(tr("Preview:"));
 
-    // Load the file content
+    // Detect metadata-only results (e.g., image EXIF data)
+    const bool all_metadata = !matches.isEmpty() &&
+                              std::all_of(matches.begin(), matches.end(), [](const SearchMatch& m) {
+                                  return m.line_content.startsWith(QLatin1String("[Metadata]"));
+                              });
+
+    if (all_metadata) {
+        showMetadataPreview(filePath, matches);
+        return;
+    }
+
+    // Load the file content for text preview
     QFile file(filePath);
     if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
         m_preview_edit->setPlainText(tr("Unable to open file: %1").arg(filePath));
@@ -1223,10 +1401,104 @@ void AdvancedSearchPanel::showFilePreview(const QString& filePath,
     }
 }
 
+void AdvancedSearchPanel::showMetadataDialog(const QString& filePath) {
+    const QFileInfo fi(filePath);
+    if (!fi.exists()) {
+        return;
+    }
+
+    // Collect metadata from QFileInfo
+    QMap<QString, QString> metadata;
+    metadata[QStringLiteral("FileName")] = fi.fileName();
+    metadata[QStringLiteral("FileSize")] = formatMetadataSize(fi.size());
+    metadata[QStringLiteral("FileType")] = fi.suffix().toUpper();
+    metadata[QStringLiteral("Created")] = fi.birthTime().toString(Qt::ISODate);
+    metadata[QStringLiteral("LastModified")] = fi.lastModified().toString(Qt::ISODate);
+
+    // Image properties from QImageReader
+    QImageReader reader(filePath);
+    if (reader.canRead()) {
+        const QSize size = reader.size();
+        if (size.isValid()) {
+            metadata[QStringLiteral("Width")] = QString::number(size.width()) +
+                                                QStringLiteral(" px");
+            metadata[QStringLiteral("Height")] = QString::number(size.height()) +
+                                                 QStringLiteral(" px");
+            metadata[QStringLiteral("Dimensions")] =
+                QString("%1 x %2").arg(size.width()).arg(size.height());
+        }
+        const auto format = QString::fromUtf8(reader.format()).toUpper();
+        if (!format.isEmpty()) {
+            metadata[QStringLiteral("Format")] = format;
+        }
+    }
+
+    // Merge metadata from search results (if available)
+    if (m_all_results.contains(filePath)) {
+        const auto parsed = parseMetadataFromMatches(m_all_results.value(filePath));
+        for (auto it = parsed.cbegin(); it != parsed.cend(); ++it) {
+            if (!metadata.contains(it.key())) {
+                metadata.insert(it.key(), it.value());
+            }
+        }
+    }
+
+    // Build dialog with categorized tree
+    QDialog dialog(this);
+    dialog.setWindowTitle(tr("Metadata \u2014 %1").arg(fi.fileName()));
+    dialog.resize(560, 480);
+
+    auto* layout = new QVBoxLayout(&dialog);
+
+    auto* tree = new QTreeWidget(&dialog);
+    tree->setHeaderLabels({tr("Property"), tr("Value")});
+    tree->setColumnWidth(0, 200);
+    tree->setAlternatingRowColors(true);
+    tree->setRootIsDecorated(true);
+    populateMetadataTree(tree, metadata);
+    layout->addWidget(tree);
+
+    auto* close_btn = new QPushButton(tr("Close"), &dialog);
+    connect(close_btn, &QPushButton::clicked, &dialog, &QDialog::accept);
+    auto* btn_layout = new QHBoxLayout();
+    btn_layout->addStretch();
+    btn_layout->addWidget(close_btn);
+    layout->addLayout(btn_layout);
+
+    dialog.exec();
+}
+
 void AdvancedSearchPanel::showMetadataPreview(const QString& filePath,
                                               const QVector<SearchMatch>& matches) {
-    // For now, use the same text preview -- metadata results display as key: value
-    showFilePreview(filePath, matches);
+    m_current_preview_file = filePath;
+    m_current_matches = matches;
+    m_current_match_index = matches.isEmpty() ? -1 : 0;
+
+    m_preview_header_label->setText(tr("Preview:"));
+
+    // Build a clean metadata listing instead of reading the binary file
+    QString previewText;
+    previewText += tr("File: %1\n").arg(filePath);
+    previewText += tr("Metadata matches: %1\n").arg(matches.size());
+    previewText += QString(50, QChar(0x2550)) + "\n\n";
+
+    for (const auto& match : matches) {
+        previewText += match.line_content + "\n";
+    }
+
+    m_preview_edit->setPlainText(previewText);
+
+    // Highlight matches within the metadata lines
+    highlightMetadataMatches();
+    updateMatchCounter();
+
+    const bool has_matches = !matches.isEmpty();
+    m_prev_match_button->setEnabled(has_matches);
+    m_next_match_button->setEnabled(has_matches);
+
+    if (has_matches) {
+        navigateToMatch(0);
+    }
 }
 
 void AdvancedSearchPanel::highlightMatches() {
@@ -1280,6 +1552,52 @@ void AdvancedSearchPanel::highlightMatches() {
     }
 }
 
+void AdvancedSearchPanel::highlightMetadataMatches() {
+    Q_ASSERT(m_preview_edit);
+    if (m_current_matches.isEmpty()) {
+        return;
+    }
+
+    QTextDocument* doc = m_preview_edit->document();
+    QTextCursor cursor(doc);
+
+    // Header: "File:", "Metadata matches:", separator, blank => 4 lines
+    constexpr int kHeaderLines = 4;
+
+    for (int i = 0; i < m_current_matches.size(); ++i) {
+        const auto& match = m_current_matches[i];
+        // Each metadata match is on its own line after the header
+        const int preview_line = kHeaderLines + i;
+
+        QTextBlock block = doc->findBlockByLineNumber(preview_line);
+        if (!block.isValid()) {
+            continue;
+        }
+
+        const int highlight_start = match.match_start;
+        const int highlight_len = match.match_end - match.match_start;
+        if (highlight_len <= 0) {
+            continue;
+        }
+
+        const int abs_pos = block.position() + highlight_start;
+        if (abs_pos + highlight_len > doc->characterCount()) {
+            continue;
+        }
+
+        cursor.setPosition(abs_pos);
+        cursor.movePosition(QTextCursor::Right, QTextCursor::KeepAnchor, highlight_len);
+
+        QTextCharFormat fmt;
+        if (i == m_current_match_index) {
+            fmt.setBackground(QColor(255, 165, 0));
+        } else {
+            fmt.setBackground(QColor(255, 255, 0));
+        }
+        cursor.setCharFormat(fmt);
+    }
+}
+
 void AdvancedSearchPanel::navigateToMatch(int matchIndex) {
     Q_ASSERT(m_preview_edit);
     if (matchIndex < 0 || matchIndex >= m_current_matches.size()) {
@@ -1288,22 +1606,34 @@ void AdvancedSearchPanel::navigateToMatch(int matchIndex) {
 
     m_current_match_index = matchIndex;
 
-    // Re-highlight all matches (to update current vs. other colors)
-    // First, reset all formatting
+    // Reset all formatting
     QTextCursor resetCursor(m_preview_edit->document());
     resetCursor.select(QTextCursor::Document);
     QTextCharFormat defaultFmt;
     resetCursor.setCharFormat(defaultFmt);
 
-    // Re-apply highlighting
-    highlightMatches();
+    // Detect metadata mode and apply appropriate highlighting
+    const bool metadata_mode =
+        !m_current_matches.isEmpty() &&
+        m_current_matches[0].line_content.startsWith(QLatin1String("[Metadata]"));
+
+    if (metadata_mode) {
+        highlightMetadataMatches();
+    } else {
+        highlightMatches();
+    }
 
     // Scroll to the current match line
     constexpr int kHeaderLines = 4;
     const auto& match = m_current_matches[matchIndex];
-    const int previewLine = match.line_number + kHeaderLines - 1;
+    int preview_line;
+    if (metadata_mode) {
+        preview_line = kHeaderLines + matchIndex;
+    } else {
+        preview_line = match.line_number + kHeaderLines - 1;
+    }
 
-    QTextBlock block = m_preview_edit->document()->findBlockByLineNumber(previewLine);
+    QTextBlock block = m_preview_edit->document()->findBlockByLineNumber(preview_line);
     if (block.isValid()) {
         QTextCursor scrollCursor(block);
         m_preview_edit->setTextCursor(scrollCursor);

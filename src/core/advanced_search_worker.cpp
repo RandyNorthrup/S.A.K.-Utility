@@ -334,7 +334,7 @@ bool shouldSearchText(const QString& ext, bool handled_as_special) {
         return false;
     }
     static const QSet<QString> kBinaryImageExts = {
-        "jpg", "jpeg", "png", "tiff", "tif", "gif", "bmp", "webp"};
+        "jpg", "jpeg", "png", "tiff", "tif", "gif", "bmp", "webp", "heic", "heif"};
     return !kBinaryImageExts.contains(ext);
 }
 
@@ -486,15 +486,87 @@ namespace {
         const char* name;
     };
     static constexpr TagEntry kTags[] = {
-        {0x010E, "ImageDescription"}, {0x010F, "CameraMake"},        {0x0110, "CameraModel"},
-        {0x0112, "Orientation"},      {0x011A, "XResolution"},       {0x011B, "YResolution"},
-        {0x0128, "ResolutionUnit"},   {0x0131, "Software"},          {0x0132, "DateTime"},
-        {0x013B, "Artist"},           {0x0213, "YCbCrPositioning"},  {0x8298, "Copyright"},
-        {0x8769, "ExifOffset"},       {0x8825, "GPSInfo"},           {0x829A, "ExposureTime"},
-        {0x829D, "FNumber"},          {0x8827, "ISOSpeed"},          {0x9000, "ExifVersion"},
-        {0x9003, "DateTimeOriginal"}, {0x9004, "DateTimeDigitized"}, {0x9209, "Flash"},
-        {0x920A, "FocalLength"},      {0xA001, "ColorSpace"},        {0xA002, "PixelXDimension"},
-        {0xA003, "PixelYDimension"},  {0xA405, "FocalLengthIn35mm"}, {0xA420, "ImageUniqueID"},
+        // IFD0 / IFD1 tags
+        {0x010E, "ImageDescription"},
+        {0x010F, "CameraMake"},
+        {0x0110, "CameraModel"},
+        {0x0112, "Orientation"},
+        {0x011A, "XResolution"},
+        {0x011B, "YResolution"},
+        {0x0128, "ResolutionUnit"},
+        {0x0131, "Software"},
+        {0x0132, "DateTime"},
+        {0x013B, "Artist"},
+        {0x0213, "YCbCrPositioning"},
+        {0x8298, "Copyright"},
+        // Sub-IFD pointers
+        {0x8769, "ExifOffset"},
+        {0x8825, "GPSInfo"},
+        // Exif sub-IFD tags
+        {0x829A, "ExposureTime"},
+        {0x829D, "FNumber"},
+        {0x8827, "ISOSpeed"},
+        {0x9000, "ExifVersion"},
+        {0x9003, "DateTimeOriginal"},
+        {0x9004, "DateTimeDigitized"},
+        {0x9101, "ComponentsConfig"},
+        {0x9102, "CompressedBitsPerPixel"},
+        {0x9201, "ShutterSpeed"},
+        {0x9202, "Aperture"},
+        {0x9203, "Brightness"},
+        {0x9204, "ExposureBias"},
+        {0x9205, "MaxAperture"},
+        {0x9206, "SubjectDistance"},
+        {0x9207, "MeteringMode"},
+        {0x9208, "LightSource"},
+        {0x9209, "Flash"},
+        {0x920A, "FocalLength"},
+        {0x9286, "UserComment"},
+        {0x927C, "MakerNote"},
+        {0xA001, "ColorSpace"},
+        {0xA002, "PixelXDimension"},
+        {0xA003, "PixelYDimension"},
+        {0xA005, "InteropOffset"},
+        {0xA210, "FocalPlaneResUnit"},
+        {0xA217, "SensingMethod"},
+        {0xA300, "FileSource"},
+        {0xA301, "SceneType"},
+        {0xA401, "CustomRendered"},
+        {0xA402, "ExposureMode"},
+        {0xA403, "WhiteBalance"},
+        {0xA404, "DigitalZoomRatio"},
+        {0xA405, "FocalLengthIn35mm"},
+        {0xA406, "SceneCaptureType"},
+        {0xA407, "GainControl"},
+        {0xA408, "Contrast"},
+        {0xA409, "Saturation"},
+        {0xA40A, "Sharpness"},
+        {0xA420, "ImageUniqueID"},
+        {0xA432, "LensInfo"},
+        {0xA433, "LensMake"},
+        {0xA434, "LensModel"},
+        {0xA435, "LensSerialNumber"},
+        // GPS sub-IFD tags
+        {0x0000, "GPSVersionID"},
+        {0x0001, "GPSLatitudeRef"},
+        {0x0002, "GPSLatitude"},
+        {0x0003, "GPSLongitudeRef"},
+        {0x0004, "GPSLongitude"},
+        {0x0005, "GPSAltitudeRef"},
+        {0x0006, "GPSAltitude"},
+        {0x0007, "GPSTimeStamp"},
+        {0x0008, "GPSSatellites"},
+        {0x0009, "GPSStatus"},
+        {0x000A, "GPSMeasureMode"},
+        {0x000B, "GPSDOP"},
+        {0x000C, "GPSSpeedRef"},
+        {0x000D, "GPSSpeed"},
+        {0x000E, "GPSTrackRef"},
+        {0x000F, "GPSTrack"},
+        {0x0010, "GPSImgDirRef"},
+        {0x0011, "GPSImgDirection"},
+        {0x0012, "GPSMapDatum"},
+        {0x001D, "GPSDateStamp"},
     };
 
     auto it = std::find_if(std::begin(kTags), std::end(kTags), [tag](const auto& entry) {
@@ -544,27 +616,55 @@ constexpr uint16_t kExifTypeShort = 3;
 constexpr uint16_t kExifTypeLong = 4;
 constexpr uint16_t kExifTypeRational = 5;
 constexpr uint16_t kExifTypeUndefined = 7;
-constexpr uint32_t kMaxUndefinedLen = 8;
+constexpr uint32_t kMaxUndefinedLen = 64;
+constexpr uint32_t kMaxMultiValues = 8;
+
+template <typename ReadFn>
+QString formatExifMultiValues(int type_size, uint32_t count, const char* valuePtr, ReadFn reader) {
+    if (count == 0) {
+        return {};
+    }
+    const uint32_t limit = std::min(count, kMaxMultiValues);
+    QStringList parts;
+    for (uint32_t idx = 0; idx < limit; ++idx) {
+        parts.append(QString::number(reader(valuePtr + idx * type_size)));
+    }
+    return parts.join(QStringLiteral(", "));
+}
+
+QString formatExifRationals(uint32_t count, const char* valuePtr, bool littleEndian) {
+    if (count == 0) {
+        return {};
+    }
+    constexpr int kRationalSize = 8;
+    const uint32_t limit = std::min(count, kMaxMultiValues);
+    QStringList parts;
+    for (uint32_t idx = 0; idx < limit; ++idx) {
+        const QString rat = extractExifRational(valuePtr + idx * kRationalSize, littleEndian);
+        if (!rat.isEmpty()) {
+            parts.append(rat);
+        }
+    }
+    return parts.join(QStringLiteral(", "));
+}
 
 QString extractExifValue(uint16_t type, uint32_t count, const char* valuePtr, bool littleEndian) {
     switch (type) {
     case kExifTypeAscii:
-        return QString::fromLatin1(valuePtr, static_cast<int>(count - 1)).trimmed();
+        if (count > 0) {
+            return QString::fromLatin1(valuePtr, static_cast<int>(count - 1)).trimmed();
+        }
+        return {};
     case kExifTypeShort:
-        if (count == 1) {
-            return QString::number(readU16(valuePtr, littleEndian));
-        }
-        break;
+        return formatExifMultiValues(2, count, valuePtr, [littleEndian](const char* p) {
+            return readU16(p, littleEndian);
+        });
     case kExifTypeLong:
-        if (count == 1) {
-            return QString::number(readU32(valuePtr, littleEndian));
-        }
-        break;
+        return formatExifMultiValues(4, count, valuePtr, [littleEndian](const char* p) {
+            return readU32(p, littleEndian);
+        });
     case kExifTypeRational:
-        if (count == 1) {
-            return extractExifRational(valuePtr, littleEndian);
-        }
-        break;
+        return formatExifRationals(count, valuePtr, littleEndian);
     case kExifTypeUndefined:
         if (count <= kMaxUndefinedLen) {
             return QString::fromLatin1(valuePtr, static_cast<int>(count)).trimmed();
@@ -662,12 +762,21 @@ void processApp1Segment(const QByteArray& file_data,
                         QMap<QString, QString>& metadata) {
     constexpr int kExifHeaderSize = 6;
     constexpr int kMinTiffSize = 8;
+    constexpr int kSegLenFieldSize = 2;
     const int exif_start = offset + 4;
     if (file_data.mid(exif_start, kExifHeaderSize) != QByteArray("Exif\0\0", kExifHeaderSize)) {
         return;
     }
+
+    // JPEG APP1 seg_len includes the 2-byte length field itself,
+    // then "Exif\0\0" (6 bytes), then the TIFF payload.
+    if (seg_len <= kSegLenFieldSize + kExifHeaderSize) {
+        return;
+    }
+
     const int tiff_start = exif_start + kExifHeaderSize;
-    const QByteArray tiff_data = file_data.mid(tiff_start, seg_len - kMinTiffSize);
+    const int tiff_len = static_cast<int>(seg_len) - kSegLenFieldSize - kExifHeaderSize;
+    const QByteArray tiff_data = file_data.mid(tiff_start, tiff_len);
     if (tiff_data.size() < kMinTiffSize) {
         return;
     }
@@ -703,7 +812,6 @@ void processApp1Segment(const QByteArray& file_data,
 
         if (marker == kMarkerApp1 && seg_len > kMinApp1Len) {
             processApp1Segment(fileData, offset, seg_len, metadata);
-            break;
         }
 
         offset += 2 + seg_len;
@@ -829,10 +937,29 @@ bool collectFieldMatches(const MetadataMatchContext& ctx,
             return true;
         }
     }
+
     return false;
 }
 
 }  // anonymous namespace
+
+/// @brief Extract TIFF metadata (IFD tags) from a raw TIFF file.
+///        TIFF files use the same IFD structure as JPEG EXIF.
+[[nodiscard]] QMap<QString, QString> extractTiffMetadata(const QByteArray& fileData) {
+    QMap<QString, QString> metadata;
+    constexpr int kMinTiffSize = 8;
+    if (fileData.size() < kMinTiffSize) {
+        return metadata;
+    }
+    const bool little_endian = (fileData[0] == 'I' && fileData[1] == 'I');
+    const bool big_endian = (fileData[0] == 'M' && fileData[1] == 'M');
+    if (!little_endian && !big_endian) {
+        return metadata;
+    }
+    const uint32_t ifd0_offset = readU32(fileData.constData() + 4, little_endian);
+    parseExifIFD(fileData, ifd0_offset, little_endian, metadata);
+    return metadata;
+}
 
 void gatherFormatMetadata(const QByteArray& file_data,
                           const QString& ext,
@@ -841,6 +968,8 @@ void gatherFormatMetadata(const QByteArray& file_data,
         metadata = extractJpegExif(file_data);
     } else if (ext == "png") {
         metadata = extractPngMetadata(file_data);
+    } else if (ext == "tiff" || ext == "tif") {
+        metadata = extractTiffMetadata(file_data);
     }
 }
 
@@ -860,13 +989,6 @@ void supplementWithImageReader(const QString& file_path, QMap<QString, QString>&
         metadata.insert("Dimensions",
                         QString("%1x%2").arg(img_size.width()).arg(img_size.height()));
     }
-}
-
-void addFileInfoMetadata(const QString& file_path, QMap<QString, QString>& metadata) {
-    const QFileInfo info(file_path);
-    metadata.insert("FileName", info.fileName());
-    metadata.insert("FileSize", QString("%1 bytes").arg(info.size()));
-    metadata.insert("LastModified", info.lastModified().toString(Qt::ISODate));
 }
 
 QVector<SearchMatch> AdvancedSearchWorker::searchImageMetadata(const QString& filePath,
@@ -890,7 +1012,6 @@ QVector<SearchMatch> AdvancedSearchWorker::searchImageMetadata(const QString& fi
     QMap<QString, QString> metadata;
     gatherFormatMetadata(fileData, ext, metadata);
     supplementWithImageReader(filePath, metadata);
-    addFileInfoMetadata(filePath, metadata);
 
     // cppcheck-suppress knownConditionTrueFalse ; atomic stop flag checked across threads
     if (checkStop()) {
@@ -1216,24 +1337,8 @@ QVector<SearchMatch> AdvancedSearchWorker::searchFileMetadata(const QString& fil
         const QString& value = it.value();
         const MetadataMatchContext ctx{filePath, it.key(), value, fieldIndex};
 
-        auto matchIter = regex.globalMatch(value);
-        while (matchIter.hasNext()) {
-            auto regexMatch = matchIter.next();
-            matches.append(makeMetadataMatch(ctx, regexMatch));
-
-            if (m_config.max_results > 0 && matches.size() >= m_config.max_results) {
-                return matches;
-            }
-        }
-
-        auto keyMatchIter = regex.globalMatch(it.key());
-        while (keyMatchIter.hasNext()) {
-            auto regexMatch = keyMatchIter.next();
-            matches.append(makeMetadataMatch(ctx, regexMatch, true));
-
-            if (m_config.max_results > 0 && matches.size() >= m_config.max_results) {
-                return matches;
-            }
+        if (collectFieldMatches(ctx, regex, m_config.max_results, matches)) {
+            return matches;
         }
 
         ++fieldIndex;

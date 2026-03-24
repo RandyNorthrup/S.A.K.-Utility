@@ -39,6 +39,8 @@ private Q_SLOTS:
 private:
     WindowsISODownloader* downloader = nullptr;
     UupDumpApi* api = nullptr;
+
+    void validateFileEntry(const UupDumpApi::FileInfo& entry);
 };
 
 void WindowsISODownloaderTests::initTestCase() {
@@ -222,27 +224,27 @@ void WindowsISODownloaderTests::testFileUrlsAreValid() {
         QSKIP("No files returned - skipping");
     }
 
-    for (const auto& f : files) {
-        // Filename must not contain path traversal
-        QVERIFY2(!f.fileName.contains(".."),
-                 qPrintable("Path traversal in filename: " + f.fileName));
-        QVERIFY2(!f.fileName.contains('/') && !f.fileName.contains('\\'),
-                 qPrintable("Directory separator in filename: " + f.fileName));
-
-        // URL must be valid
-        QUrl url(f.url);
-        QVERIFY2(url.isValid(), qPrintable("Invalid URL for: " + f.fileName));
-
-        // URL must be HTTP or HTTPS
-        QString scheme = url.scheme().toLower();
-        QVERIFY2(scheme == "http" || scheme == "https",
-                 qPrintable("Unexpected scheme " + scheme + " for: " + f.fileName));
-
-        // SHA-1 checksum must be present
-        QVERIFY2(!f.sha1.isEmpty(), qPrintable("Missing SHA-1 for: " + f.fileName));
+    for (const auto& file_entry : files) {
+        validateFileEntry(file_entry);
     }
 
     qInfo() << "Validated" << files.size() << "file URLs successfully";
+}
+
+void WindowsISODownloaderTests::validateFileEntry(const UupDumpApi::FileInfo& entry) {
+    QVERIFY2(!entry.fileName.contains(".."),
+             qPrintable("Path traversal in filename: " + entry.fileName));
+    QVERIFY2(!entry.fileName.contains('/') && !entry.fileName.contains('\\'),
+             qPrintable("Directory separator in filename: " + entry.fileName));
+
+    QUrl url(entry.url);
+    QVERIFY2(url.isValid(), qPrintable("Invalid URL for: " + entry.fileName));
+
+    QString scheme = url.scheme().toLower();
+    QVERIFY2(scheme == "http" || scheme == "https",
+             qPrintable("Unexpected scheme " + scheme + " for: " + entry.fileName));
+
+    QVERIFY2(!entry.sha1.isEmpty(), qPrintable("Missing SHA-1 for: " + entry.fileName));
 }
 
 #include <QApplication>

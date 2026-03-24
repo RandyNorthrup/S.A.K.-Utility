@@ -376,6 +376,16 @@ QGroupBox* DiagnosticBenchmarkPanel::createDiskBenchmarkGroup() {
         QString("font-weight: 600; color: %1;").arg(sak::ui::kColorPrimaryDark));
     disk_layout->addWidget(m_disk_score_label);
 
+    m_disk_score_bar = new QProgressBar(this);
+    m_disk_score_bar->setRange(0, 2000);
+    m_disk_score_bar->setValue(0);
+    m_disk_score_bar->setTextVisible(true);
+    m_disk_score_bar->setFormat("Score: %v / 2000 (baseline 980 PRO = 1000)");
+    m_disk_score_bar->setAccessibleName(QStringLiteral("Disk Benchmark Score"));
+    m_disk_score_bar->setToolTip(
+        QStringLiteral("Disk benchmark score relative to a Samsung 980 PRO baseline"));
+    disk_layout->addWidget(m_disk_score_bar);
+
     auto* disk_btn_layout = new QHBoxLayout();
     disk_btn_layout->addStretch();
     m_disk_benchmark_button = new QPushButton("Run Disk Benchmark", this);
@@ -405,6 +415,16 @@ QGroupBox* DiagnosticBenchmarkPanel::createMemoryBenchmarkGroup() {
     m_mem_score_label->setStyleSheet(
         QString("font-weight: 600; color: %1;").arg(sak::ui::kColorPrimaryDark));
     mem_layout->addWidget(m_mem_score_label);
+
+    m_mem_score_bar = new QProgressBar(this);
+    m_mem_score_bar->setRange(0, 2000);
+    m_mem_score_bar->setValue(0);
+    m_mem_score_bar->setTextVisible(true);
+    m_mem_score_bar->setFormat("Score: %v / 2000 (baseline DDR4-3200 = 1000)");
+    m_mem_score_bar->setAccessibleName(QStringLiteral("Memory Benchmark Score"));
+    m_mem_score_bar->setToolTip(
+        QStringLiteral("Memory benchmark score relative to a DDR4-3200 baseline"));
+    mem_layout->addWidget(m_mem_score_bar);
 
     auto* mem_btn_layout = new QHBoxLayout();
     mem_btn_layout->addStretch();

@@ -9,22 +9,22 @@
 #include "sak/diagnostic_types.h"
 #include "sak/layout_constants.h"
 
+#include <QFutureWatcher>
 #include <QObject>
 #include <QTimer>
 #include <QVector>
-
-#include <atomic>
 
 namespace sak {
 
 /// @brief Polls system thermal sensors at a configurable interval
 ///
-/// Queries CPU temperature via WMI MSAcpi_ThermalZoneTemperature and
-/// disk temperatures from SMART data. Emits readings at each poll
-/// interval for UI display and thermal history tracking.
+/// Uses a single PowerShell process per poll cycle to query CPU (WMI ACPI
+/// thermal zone), GPU (nvidia-smi / AMD WMI), and disk (Storage Reliability
+/// Counter) temperatures. Polling runs on a thread-pool thread via
+/// QtConcurrent so the UI thread is never blocked.
 ///
-/// Note: MSAcpi_ThermalZoneTemperature requires administrator privileges
-/// and is not available on all systems. Unavailable sensors report -1.0 degC.
+/// Note: MSAcpi_ThermalZoneTemperature and StorageReliabilityCounter require
+/// administrator privileges. Unavailable sensors are omitted from readings.
 ///
 /// Usage:
 /// @code
@@ -60,9 +60,10 @@ public:
     /// @return true if the timer is running
     [[nodiscard]] bool isRunning() const;
 
-    /// @brief Perform a single poll and return current readings
+    /// @brief Perform a single synchronous poll and return current readings
     /// @return Vector of thermal readings for all available sensors
-    [[nodiscard]] QVector<ThermalReading> pollOnce();
+    /// @note Thread-safe -- creates only local objects
+    [[nodiscard]] static QVector<ThermalReading> pollOnce();
 
     /// @brief Get the history of all readings since monitoring started
     /// @return All accumulated thermal readings
@@ -87,22 +88,35 @@ Q_SIGNALS:
     void temperatureWarning(const QString& component, double temperature);
 
 private Q_SLOTS:
-    /// @brief Timer callback -- performs a poll and emits signals
+    /// @brief Timer callback -- launches async poll
     void onTimerTick();
 
+    /// @brief Async poll finished -- processes results on main thread
+    void onPollComplete();
+
 private:
-    /// @brief Query GPU temperature from WMI
-    /// @return Temperature in Celsius, or -1.0 if unavailable
-    [[nodiscard]] double queryGpuTemperature();
+    /// @brief Build the combined PowerShell script that queries all sensors
+    /// @return PowerShell script string
+    [[nodiscard]] static QString buildCombinedThermalScript();
+
+    /// @brief Parse key=value output from the combined thermal script
+    /// @param output Raw stdout from PowerShell
+    /// @return Parsed thermal readings
+    [[nodiscard]] static QVector<ThermalReading> parseThermalOutput(const QString& output);
+
+    /// @brief Process completed readings: history, thresholds, signals
+    void processReadings(const QVector<ThermalReading>& readings);
 
     QTimer m_timer;
+    QFutureWatcher<QVector<ThermalReading>> m_poll_watcher;
     int m_interval_ms{sak::kTimerBroadcastMs};  ///< Configured poll interval
     QVector<ThermalReading> m_history;
 
     /// Warning thresholds (Celsius)
-    double m_cpu_warning_threshold{85.0};
-    double m_gpu_warning_threshold{90.0};
-    double m_disk_warning_threshold{55.0};
+    static constexpr double kCpuWarningThreshold = 85.0;
+    static constexpr double kGpuWarningThreshold = 90.0;
+    static constexpr double kDiskWarningThreshold = 55.0;
+    static constexpr int kMaxHistoryEntries = 1800;
 };
 
 }  // namespace sak

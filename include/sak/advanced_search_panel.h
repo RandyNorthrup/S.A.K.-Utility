@@ -112,11 +112,15 @@ private:
     // -- Results Helpers --
     void clearResults();
     void sortResults();
+    QTreeWidgetItem* findOrCreateFileItem(const QString& filePath,
+                                          const QVector<SearchMatch>& fileMatches);
 
     // -- Preview Helpers --
     void showFilePreview(const QString& filePath, const QVector<SearchMatch>& matches);
     void showMetadataPreview(const QString& filePath, const QVector<SearchMatch>& matches);
+    void showMetadataDialog(const QString& filePath);
     void highlightMatches();
+    void highlightMetadataMatches();
     void navigateToMatch(int matchIndex);
     void updateMatchCounter();
 

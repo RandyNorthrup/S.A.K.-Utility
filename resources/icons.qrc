@@ -25,11 +25,29 @@
         <file>icons/panel_uninstall.svg</file>
         <file>icons/panel_wifi.svg</file>
         <file>icons/panel_about.svg</file>
+        <file>icons/panel_email.svg</file>
         <file>icons/icons8-benchmark.svg</file>
         <file>icons/icons8-duplicate.svg</file>
         <file>icons/icons8-settings_help.svg</file>
         <file>icons/icons8-source.svg</file>
         <file>icons/icons8-destination.svg</file>
         <file>icons/icons8-orchestrator.svg</file>
+        <file>icons/icons8-network-card.svg</file>
+        <file>icons/icons8-address-book.svg</file>
+        <file>icons/icons8-attachment.svg</file>
+        <file>icons/icons8-calendar.svg</file>
+        <file>icons/icons8-search.svg</file>
+        <file>icons/icons8-opened-folder.svg</file>
+        <file>icons/icons8-close-window.svg</file>
+        <file>icons/icons8-export.svg</file>
+        <file>icons/icons8-radar.svg</file>
+        <file>icons/icons8-inbox.svg</file>
+        <file>icons/icons8-sent.svg</file>
+        <file>icons/icons8-edit-file.svg</file>
+        <file>icons/icons8-trash.svg</file>
+        <file>icons/icons8-spam.svg</file>
+        <file>icons/icons8-star.svg</file>
+        <file>icons/icons8-folder.svg</file>
+        <file>icons/icons8-clock.svg</file>
     </qresource>
 </RCC>

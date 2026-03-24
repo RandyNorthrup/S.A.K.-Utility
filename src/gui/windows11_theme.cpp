@@ -123,7 +123,9 @@ void applyShadow(QWidget* widget) {
         shadow->setBlurRadius(22.0);
         shadow->setColor(QColor(15, 23, 42, 38));
         shadow->setOffset(0.0, 6.0);
+        shadow->setEnabled(true);
         widget->setGraphicsEffect(shadow);
+        widget->setAutoFillBackground(true);
     }
 }
 
@@ -333,6 +335,7 @@ QString themeInputAndIndicatorStyles() {
         QCheckBox::indicator:checked {
             background: #3b82f6;
             border: 1px solid #2563eb;
+            image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><path d='M6.5 12.5l-4-4 1.4-1.4 2.6 2.6 5.6-5.6 1.4 1.4z' fill='white'/></svg>");
         }
 
         QRadioButton::indicator {

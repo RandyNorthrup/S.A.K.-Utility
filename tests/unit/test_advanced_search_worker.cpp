@@ -11,6 +11,7 @@
 
 #include <QDir>
 #include <QFile>
+#include <QImage>
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QtTest/QtTest>
@@ -74,10 +75,19 @@ private Q_SLOTS:
     void hexSearch_exclusiveMode();
 
     // ── Image Metadata Search ──
-    void imageMetadataSearch_findsFileInfo();
+    void imageMetadataSearch_findsEmbeddedMetadata();
+    void imageMetadataSearch_matchesByTagName();
+    void imageMetadataSearch_matchesDimensions();
+    void imageMetadataSearch_noMatchReturnsEmpty();
+    void imageMetadataSearch_jpegExifExtraction();
+    void imageMetadataSearch_directorySearch();
+
+    // ── Diagnostic: Real directory ──
+    void imageMetadataSearch_realDirectory();
 
     // ── File Metadata Search ──
     void fileMetadataSearch_findsFileInfo();
+    void fileMetadataSearch_hasMetadataFormat();
 
     // ── Archive Search ──
     void archiveSearch_validZip();
@@ -105,6 +115,9 @@ private:
 
     /// @brief Run a worker synchronously and return results
     QVector<SearchMatch> runWorker(const SearchConfig& config);
+
+    /// @brief Build a minimal JPEG with embedded EXIF metadata
+    static QByteArray buildExifJpeg();
 
     QTemporaryDir m_temp_dir;
 };
@@ -159,8 +172,23 @@ void AdvancedSearchWorkerTests::initTestCase() {
                    "And parens: func(arg)\n"
                    "Plus stars: rating***\n");
 
-    // Create a small PNG-like file (just for metadata testing with filesystem info)
-    createTestFile("test.png", "Not a real PNG but has the extension");
+    // Create a valid PNG with embedded text metadata
+    {
+        QImage image(32, 24, QImage::Format_ARGB32);
+        image.fill(Qt::darkGreen);
+        image.setText("Comment", "CameraTrip");
+        QVERIFY(image.save(m_temp_dir.path() + "/test.png", "PNG"));
+    }
+
+    // Create a synthetic JPEG with real EXIF metadata
+    // (bypasses Qt JPEG plugin which may not be available in tests)
+    {
+        const QByteArray exif_jpeg = buildExifJpeg();
+        QFile file(m_temp_dir.path() + "/exif_test.jpg");
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        file.write(exif_jpeg);
+        file.close();
+    }
 
     // Create a minimal valid ZIP file
     QByteArray zipEntry = "Hello from inside ZIP!";
@@ -377,6 +405,57 @@ QVector<SearchMatch> AdvancedSearchWorkerTests::runWorker(const SearchConfig& co
     }
 
     return allMatches;
+}
+
+QByteArray AdvancedSearchWorkerTests::buildExifJpeg() {
+    // Construct a minimal valid JPEG with an APP1 EXIF segment containing:
+    //   Software  = "TestCamera"
+    //   DateTime  = "2025:01:15 10:30:00"
+    // This bypasses the Qt JPEG image plugin entirely.
+
+    // -- TIFF body (little-endian) --
+    QByteArray tiff;
+    tiff.append("II", 2);                // Byte order mark
+    tiff.append("\x2A\x00", 2);          // TIFF magic (42 LE)
+    tiff.append("\x08\x00\x00\x00", 4);  // IFD0 offset = 8
+
+    // IFD0: 2 entries
+    tiff.append("\x02\x00", 2);  // Entry count
+
+    // Entry 0 — Software (tag 0x0131), ASCII, 11 bytes at offset 38
+    tiff.append("\x31\x01", 2);          // Tag
+    tiff.append("\x02\x00", 2);          // Type (ASCII)
+    tiff.append("\x0B\x00\x00\x00", 4);  // Count = 11
+    tiff.append("\x26\x00\x00\x00", 4);  // Offset = 38
+
+    // Entry 1 — DateTime (tag 0x0132), ASCII, 20 bytes at offset 49
+    tiff.append("\x32\x01", 2);          // Tag
+    tiff.append("\x02\x00", 2);          // Type (ASCII)
+    tiff.append("\x14\x00\x00\x00", 4);  // Count = 20
+    tiff.append("\x31\x00\x00\x00", 4);  // Offset = 49
+
+    // No next IFD
+    tiff.append("\x00\x00\x00\x00", 4);
+
+    // String data (offsets 38 and 49 within TIFF)
+    tiff.append("TestCamera\0", 11);           // Offset 38
+    tiff.append("2025:01:15 10:30:00\0", 20);  // Offset 49
+
+    // -- Wrap as JPEG APP1 --
+    const auto app1_len = static_cast<uint16_t>(2 + 6 + tiff.size());
+
+    QByteArray jpeg;
+    jpeg.append("\xFF\xD8", 2);  // SOI
+    jpeg.append("\xFF\xE1", 2);  // APP1 marker
+    jpeg.append(static_cast<char>((app1_len >> 8) & 0xFF));
+    jpeg.append(static_cast<char>(app1_len & 0xFF));
+    jpeg.append("Exif\0\0", 6);  // EXIF header
+    jpeg.append(tiff);
+    jpeg.append("\xFF\xDA", 2);  // SOS (terminates scan)
+    jpeg.append("\x00\x02", 2);  // Minimal SOS length
+    jpeg.append("\xFF\xD9", 2);  // EOI
+
+    return jpeg;
 }
 
 // ============================================================================
@@ -743,15 +822,15 @@ void AdvancedSearchWorkerTests::hexSearch_exclusiveMode() {
 // Image Metadata Search Tests
 // ============================================================================
 
-void AdvancedSearchWorkerTests::imageMetadataSearch_findsFileInfo() {
+void AdvancedSearchWorkerTests::imageMetadataSearch_findsEmbeddedMetadata() {
     SearchConfig config;
     config.root_path = m_temp_dir.path() + "/test.png";
-    config.pattern = "png";  // Should match FileName or FileType metadata
+    config.pattern = "CameraTrip";
     config.search_image_metadata = true;
     config.exclude_patterns.clear();
 
     auto matches = runWorker(config);
-    // Should find at least file info metadata (FileName, etc.)
+    // Should find the embedded image metadata value.
     QVERIFY(matches.size() >= 1);
 
     // Verify metadata format
@@ -763,6 +842,171 @@ void AdvancedSearchWorkerTests::imageMetadataSearch_findsFileInfo() {
         }
     }
     QVERIFY2(hasMetadataLine, "Image metadata results should have [Metadata] prefix");
+
+    // Image metadata mode should not rely on generic filesystem fields.
+    for (const auto& m : matches) {
+        QVERIFY2(!m.line_content.contains("FileName:"),
+                 "Image metadata matches should not come from FileName field");
+    }
+}
+
+void AdvancedSearchWorkerTests::imageMetadataSearch_matchesByTagName() {
+    SearchConfig config;
+    config.root_path = m_temp_dir.path() + "/test.png";
+    config.pattern = "Comment";
+    config.search_image_metadata = true;
+    config.exclude_patterns.clear();
+
+    auto matches = runWorker(config);
+    // "Comment" is a metadata key name — key matching should find it
+    QVERIFY2(matches.size() >= 1, "Searching by metadata tag name should produce matches");
+
+    bool found_key_match = false;
+    for (const auto& m : matches) {
+        if (m.line_content.startsWith("[Metadata]") && m.line_content.contains("Comment")) {
+            found_key_match = true;
+            break;
+        }
+    }
+    QVERIFY2(found_key_match, "Should match the metadata key name 'Comment'");
+}
+
+void AdvancedSearchWorkerTests::imageMetadataSearch_matchesDimensions() {
+    SearchConfig config;
+    config.root_path = m_temp_dir.path() + "/test.png";
+    config.pattern = "32x24";
+    config.search_image_metadata = true;
+    config.exclude_patterns.clear();
+
+    auto matches = runWorker(config);
+    // supplementWithImageReader adds Dimensions = "32x24"
+    QVERIFY2(matches.size() >= 1, "Image metadata should include dimensions from QImageReader");
+
+    bool found_dimensions = false;
+    for (const auto& m : matches) {
+        if (m.line_content.contains("Dimensions") && m.line_content.contains("32x24")) {
+            found_dimensions = true;
+            break;
+        }
+    }
+    QVERIFY2(found_dimensions, "Should find Dimensions metadata field");
+}
+
+void AdvancedSearchWorkerTests::imageMetadataSearch_noMatchReturnsEmpty() {
+    SearchConfig config;
+    config.root_path = m_temp_dir.path() + "/test.png";
+    config.pattern = "TotallyNonexistentMetadataValue12345";
+    config.search_image_metadata = true;
+    config.exclude_patterns.clear();
+
+    auto matches = runWorker(config);
+    QCOMPARE(matches.size(), 0);
+}
+
+void AdvancedSearchWorkerTests::imageMetadataSearch_jpegExifExtraction() {
+    // Search by EXIF Software tag value
+    {
+        SearchConfig config;
+        config.root_path = m_temp_dir.path() + "/exif_test.jpg";
+        config.pattern = "TestCamera";
+        config.search_image_metadata = true;
+        config.exclude_patterns.clear();
+
+        auto matches = runWorker(config);
+        QVERIFY2(matches.size() >= 1, "JPEG EXIF Software tag should be searchable");
+
+        bool found_software = false;
+        for (const auto& m : matches) {
+            if (m.line_content.contains("Software") && m.line_content.contains("TestCamera")) {
+                found_software = true;
+                break;
+            }
+        }
+        QVERIFY2(found_software, "Should find Software value in JPEG EXIF metadata");
+    }
+
+    // Search by EXIF DateTime value (year portion)
+    {
+        SearchConfig config;
+        config.root_path = m_temp_dir.path() + "/exif_test.jpg";
+        config.pattern = "2025";
+        config.search_image_metadata = true;
+        config.exclude_patterns.clear();
+
+        auto matches = runWorker(config);
+        QVERIFY2(matches.size() >= 1, "JPEG EXIF DateTime should be searchable by year");
+
+        bool found_date = false;
+        for (const auto& m : matches) {
+            if (m.line_content.contains("DateTime") && m.line_content.contains("2025")) {
+                found_date = true;
+                break;
+            }
+        }
+        QVERIFY2(found_date, "Should find DateTime value in JPEG EXIF metadata");
+    }
+
+    // Search by EXIF tag name
+    {
+        SearchConfig config;
+        config.root_path = m_temp_dir.path() + "/exif_test.jpg";
+        config.pattern = "DateTime";
+        config.search_image_metadata = true;
+        config.exclude_patterns.clear();
+
+        auto matches = runWorker(config);
+        QVERIFY2(matches.size() >= 1, "JPEG EXIF tag names should be searchable");
+    }
+}
+
+void AdvancedSearchWorkerTests::imageMetadataSearch_directorySearch() {
+    // Search the entire temp directory for EXIF metadata value
+    // This verifies that directory iteration dispatches to image
+    // metadata search correctly for image files
+    SearchConfig config;
+    config.root_path = m_temp_dir.path();
+    config.pattern = "TestCamera";
+    config.search_image_metadata = true;
+    config.exclude_patterns.clear();
+
+    auto matches = runWorker(config);
+    QVERIFY2(matches.size() >= 1, "Directory search should find EXIF metadata in JPEG files");
+
+    // Verify the match came from the JPEG file
+    bool from_jpeg = false;
+    for (const auto& m : matches) {
+        if (m.file_path.endsWith(".jpg") && m.line_content.contains("TestCamera")) {
+            from_jpeg = true;
+            break;
+        }
+    }
+    QVERIFY2(from_jpeg, "Directory search should find metadata in JPEG files");
+}
+
+void AdvancedSearchWorkerTests::imageMetadataSearch_realDirectory() {
+    // Diagnostic test: verify EXIF metadata search works on real JPEGs.
+    // Requires exif-samples-master at the path below; QSKIP if absent.
+    const QString real_dir = "C:/Users/Randy/Pictures/exif-samples-master";
+    if (!QDir(real_dir).exists()) {
+        QSKIP("exif-samples-master test directory not available");
+    }
+
+    SearchConfig config;
+    config.root_path = real_dir;
+    config.pattern = "Canon";
+    config.search_image_metadata = true;
+    config.exclude_patterns.clear();
+    config.max_results = 0;
+
+    auto matches = runWorker(config);
+
+    int metadata_count = 0;
+    for (const auto& match : matches) {
+        if (match.line_content.startsWith("[Metadata]")) {
+            ++metadata_count;
+        }
+    }
+    QVERIFY2(metadata_count >= 1, "Should find [Metadata] EXIF matches in Canon JPEG files");
 }
 
 // ============================================================================
@@ -782,6 +1026,29 @@ void AdvancedSearchWorkerTests::fileMetadataSearch_findsFileInfo() {
     auto matches = runWorker(config);
     // Should find filesystem metadata
     QVERIFY(matches.size() >= 1);
+}
+
+void AdvancedSearchWorkerTests::fileMetadataSearch_hasMetadataFormat() {
+    createTestFile("format_check.json", R"({"data": 123})");
+
+    SearchConfig config;
+    config.root_path = m_temp_dir.path() + "/format_check.json";
+    config.pattern = "FileType";
+    config.search_file_metadata = true;
+    config.exclude_patterns.clear();
+
+    auto matches = runWorker(config);
+    QVERIFY2(matches.size() >= 1, "Searching by metadata key name should find FileType field");
+
+    // Verify the metadata output format uses [Metadata] prefix
+    bool has_metadata_prefix = false;
+    for (const auto& m : matches) {
+        if (m.line_content.startsWith("[Metadata]")) {
+            has_metadata_prefix = true;
+            break;
+        }
+    }
+    QVERIFY2(has_metadata_prefix, "File metadata results should use [Metadata] prefix format");
 }
 
 // ============================================================================
