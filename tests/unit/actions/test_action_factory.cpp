@@ -104,7 +104,6 @@ void TestActionFactory::testAllCategoriesValid() {
     for (const auto& action : m_actions) {
         const auto cat = action->category();
         QVERIFY2(cat == QuickAction::ActionCategory::SystemOptimization ||
-                     cat == QuickAction::ActionCategory::QuickBackup ||
                      cat == QuickAction::ActionCategory::Maintenance ||
                      cat == QuickAction::ActionCategory::Troubleshooting ||
                      cat == QuickAction::ActionCategory::EmergencyRecovery,
@@ -141,7 +140,6 @@ void TestActionFactory::testAllCategoriesPopulated() {
     // No hardcoded counts — the factory is the source of truth.
     const std::vector<QuickAction::ActionCategory> categories = {
         QuickAction::ActionCategory::SystemOptimization,
-        QuickAction::ActionCategory::QuickBackup,
         QuickAction::ActionCategory::Maintenance,
         QuickAction::ActionCategory::Troubleshooting,
         QuickAction::ActionCategory::EmergencyRecovery,

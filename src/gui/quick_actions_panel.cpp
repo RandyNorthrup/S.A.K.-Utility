@@ -21,13 +21,11 @@
 #include <QDesktopServices>
 #include <QDialog>
 #include <QDialogButtonBox>
-#include <QFileDialog>
 #include <QFileInfo>
 #include <QGridLayout>
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QLabel>
-#include <QLineEdit>
 #include <QMessageBox>
 #include <QProgressBar>
 #include <QPushButton>
@@ -154,22 +152,6 @@ void QuickActionsPanel::setupUi() {
                            tr("One-click technician tools for common maintenance tasks"),
                            main_layout);
 
-    // Backup Location row at the top
-    auto* backupLocRow = new QHBoxLayout();
-    backupLocRow->addWidget(new QLabel(tr("Quick Backup Location:"), this));
-    m_backup_location_edit = new QLineEdit(this);
-    m_backup_location_edit->setPlaceholderText(tr("C:\\SAK_Backups"));
-    m_backup_location_edit->setAccessibleName(QStringLiteral("Backup Location Path"));
-    m_backup_location_edit->setToolTip(QStringLiteral("Directory where backups will be saved"));
-    backupLocRow->addWidget(m_backup_location_edit, 1);
-    m_browse_button = new QPushButton(tr("Browse..."), this);
-    m_browse_button->setAccessibleName(QStringLiteral("Browse Backup Folder"));
-    m_browse_button->setToolTip(QStringLiteral("Browse for a backup output directory"));
-    connect(
-        m_browse_button, &QPushButton::clicked, this, &QuickActionsPanel::onBrowseBackupLocation);
-    backupLocRow->addWidget(m_browse_button);
-    main_layout->addLayout(backupLocRow);
-
     // Hidden settings state checkboxes (managed via Settings modal).
     // Parented to 'this' so they are not top-level windows.
     m_confirm_checkbox = new QCheckBox("Confirm before executing actions", this);
@@ -204,22 +186,16 @@ void QuickActionsPanel::setupUi() {
 
     setupUi_statusSection(main_layout);
     setupUi_bottomRow(main_layout);
-
-    Q_ASSERT(m_backup_location_edit);
 }
 
 void QuickActionsPanel::createActions() {
-    Q_ASSERT(m_backup_location_edit);
     Q_ASSERT(m_controller);
-    QString backup_location = m_backup_location_edit->text();
-    if (backup_location.isEmpty()) {
-        backup_location = "C:/SAK_Backups";
-    }
+    constexpr auto kDefaultBackupPath = "C:/SAK_Backups";
 
-    m_controller->setBackupLocation(backup_location);
+    m_controller->setBackupLocation(QString::fromLatin1(kDefaultBackupPath));
 
     // Create all actions using factory
-    auto actions = ActionFactory::createAllActions(backup_location);
+    auto actions = ActionFactory::createAllActions(QString::fromLatin1(kDefaultBackupPath));
     for (auto& action : actions) {
         m_controller->registerAction(std::move(action));
     }
@@ -240,9 +216,6 @@ void QuickActionsPanel::createCategorySections() {
         {QuickAction::ActionCategory::SystemOptimization,
          tr("System Optimization"),
          tr("Clean temporary files, optimize performance, and manage startup programs")},
-        {QuickAction::ActionCategory::QuickBackup,
-         tr("Quick Backups"),
-         tr("Fast backup of critical user data including browsers, email, and game saves")},
         {QuickAction::ActionCategory::Maintenance,
          tr("Maintenance"),
          tr("Regular health checks, disk repair, updates, and system file verification")},
@@ -708,23 +681,6 @@ void QuickActionsPanel::onActionError(QuickAction* action, const QString& error_
     updateActionButton(action);
 }
 
-void QuickActionsPanel::onBrowseBackupLocation() {
-    Q_ASSERT(m_backup_location_edit);
-    Q_ASSERT(m_controller);
-    QString dir = QFileDialog::getExistingDirectory(this,
-                                                    "Select Backup Location",
-                                                    m_backup_location_edit->text(),
-                                                    QFileDialog::ShowDirsOnly |
-                                                        QFileDialog::DontResolveSymlinks);
-
-    if (!dir.isEmpty()) {
-        m_backup_location_edit->setText(dir);
-        m_backup_location = dir;
-        m_controller->setBackupLocation(m_backup_location);
-        saveSettings();
-    }
-}
-
 void QuickActionsPanel::refreshAllScans() {
     Q_ASSERT(m_controller);
     Q_EMIT statusMessage("Refreshing all action scans...", sak::kTimerServiceDelayMs);
@@ -732,13 +688,8 @@ void QuickActionsPanel::refreshAllScans() {
 }
 
 void QuickActionsPanel::loadSettings() {
-    Q_ASSERT(m_backup_location_edit);
     Q_ASSERT(m_controller);
     QSettings settings("SAK", "QuickActions");
-
-    m_backup_location = settings.value("backup_location", "C:\\SAK_Backups").toString();
-    m_backup_location_edit->setText(m_backup_location);
-    m_controller->setBackupLocation(m_backup_location);
 
     m_confirm_before_execute = settings.value("confirm_before_execute", true).toBool();
     m_confirm_checkbox->setChecked(m_confirm_before_execute);
@@ -755,24 +706,20 @@ void QuickActionsPanel::loadSettings() {
 }
 
 void QuickActionsPanel::saveSettings() {
-    Q_ASSERT(m_backup_location_edit);
     Q_ASSERT(m_controller);
     QSettings settings("SAK", "QuickActions");
 
-    m_backup_location = m_backup_location_edit->text();
     m_confirm_before_execute = m_confirm_checkbox->isChecked();
     m_show_notifications = m_notifications_checkbox->isChecked();
     m_enable_logging = m_logging_checkbox->isChecked();
     m_compress_backups = m_compression_checkbox->isChecked();
 
-    settings.setValue("backup_location", m_backup_location);
     settings.setValue("confirm_before_execute", m_confirm_before_execute);
     settings.setValue("show_notifications", m_show_notifications);
     settings.setValue("enable_logging", m_enable_logging);
     settings.setValue("compress_backups", m_compress_backups);
 
     m_controller->setLoggingEnabled(m_enable_logging);
-    m_controller->setBackupLocation(m_backup_location);
 }
 
 void QuickActionsPanel::appendLog(const QString& message) {
@@ -795,10 +742,6 @@ QString QuickActionsPanel::formatDuration(qint64 seconds) {
     } else {
         return QString("%1h %2m").arg(seconds / 3600).arg((seconds % 3600) / 60);
     }
-}
-
-void QuickActionsPanel::onBackupLocationChanged() {
-    saveSettings();
 }
 
 void QuickActionsPanel::onOpenBackupFolder() {

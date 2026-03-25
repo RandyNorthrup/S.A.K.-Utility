@@ -573,27 +573,11 @@ set(QUICK_ACTIONS_SOURCES
     # System Optimization
     src/actions/disk_cleanup_action.cpp
     src/actions/clear_browser_cache_action.cpp
-    src/actions/defragment_drives_action.cpp
     src/actions/clear_windows_update_cache_action.cpp
-    src/actions/disable_startup_programs_action.cpp
     src/actions/clear_event_logs_action.cpp
     src/actions/optimize_power_settings_action.cpp
-    src/actions/disable_visual_effects_action.cpp
-
-    # Quick Backups
-    src/actions/quickbooks_backup_action.cpp
-    src/actions/browser_profile_backup_action.cpp
-    src/actions/outlook_backup_action.cpp
-    src/actions/sticky_notes_backup_action.cpp
-    src/actions/saved_game_data_backup_action.cpp
-    src/actions/tax_software_backup_action.cpp
-    src/actions/photo_management_backup_action.cpp
-    src/actions/development_configs_backup_action.cpp
-    src/actions/backup_known_networks_action.cpp
 
     # Maintenance
-    src/actions/update_all_apps_action.cpp
-    src/actions/windows_update_action.cpp
     src/actions/verify_system_files_action.cpp
     src/actions/check_disk_errors_action.cpp
     src/actions/rebuild_icon_cache_action.cpp
@@ -603,39 +587,19 @@ set(QUICK_ACTIONS_SOURCES
     # Troubleshooting
     src/actions/generate_system_report_action.cpp
     src/actions/check_bloatware_action.cpp
-    src/actions/test_network_speed_action.cpp
-    src/actions/scan_malware_action.cpp
     src/actions/repair_windows_store_action.cpp
     src/actions/fix_audio_issues_action.cpp
 
     # Emergency Recovery
-    src/actions/create_restore_point_action.cpp
-    src/actions/export_registry_keys_action.cpp
     src/actions/screenshot_settings_action.cpp
-    src/actions/backup_desktop_wallpaper_action.cpp
-    src/actions/backup_printer_settings_action.cpp
     src/actions/backup_bitlocker_keys_action.cpp
 
     # Headers for all actions
     include/sak/actions/disk_cleanup_action.h
     include/sak/actions/clear_browser_cache_action.h
-    include/sak/actions/defragment_drives_action.h
     include/sak/actions/clear_windows_update_cache_action.h
-    include/sak/actions/disable_startup_programs_action.h
     include/sak/actions/clear_event_logs_action.h
     include/sak/actions/optimize_power_settings_action.h
-    include/sak/actions/disable_visual_effects_action.h
-    include/sak/actions/quickbooks_backup_action.h
-    include/sak/actions/browser_profile_backup_action.h
-    include/sak/actions/outlook_backup_action.h
-    include/sak/actions/sticky_notes_backup_action.h
-    include/sak/actions/saved_game_data_backup_action.h
-    include/sak/actions/tax_software_backup_action.h
-    include/sak/actions/photo_management_backup_action.h
-    include/sak/actions/development_configs_backup_action.h
-    include/sak/actions/backup_known_networks_action.h
-    include/sak/actions/update_all_apps_action.h
-    include/sak/actions/windows_update_action.h
     include/sak/actions/verify_system_files_action.h
     include/sak/actions/check_disk_errors_action.h
     include/sak/actions/rebuild_icon_cache_action.h
@@ -643,15 +607,9 @@ set(QUICK_ACTIONS_SOURCES
     include/sak/actions/clear_print_spooler_action.h
     include/sak/actions/generate_system_report_action.h
     include/sak/actions/check_bloatware_action.h
-    include/sak/actions/test_network_speed_action.h
-    include/sak/actions/scan_malware_action.h
     include/sak/actions/repair_windows_store_action.h
     include/sak/actions/fix_audio_issues_action.h
-    include/sak/actions/create_restore_point_action.h
-    include/sak/actions/export_registry_keys_action.h
     include/sak/actions/screenshot_settings_action.h
-    include/sak/actions/backup_desktop_wallpaper_action.h
-    include/sak/actions/backup_printer_settings_action.h
     include/sak/actions/backup_bitlocker_keys_action.h
 )
 

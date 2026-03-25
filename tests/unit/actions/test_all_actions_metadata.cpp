@@ -29,27 +29,10 @@ private Q_SLOTS:
     // ── Metadata — exact expected values ────────────────────
     void testDiskCleanup();
     void testClearBrowserCache();
-    void testDefragmentDrives();
     void testClearWindowsUpdateCache();
-    void testDisableStartupPrograms();
     void testClearEventLogs();
     void testOptimizePowerSettings();
-    void testDisableVisualEffects();
 
-    void testQuickBooksBackup();
-    void testBrowserProfileBackup();
-    void testOutlookBackup();
-    void testStickyNotesBackup();
-    void testSavedGameDataBackup();
-    void testTaxSoftwareBackup();
-    void testPhotoManagementBackup();
-    void testDevelopmentConfigsBackup();
-    void testBackupKnownNetworks();
-    void testBackupDesktopWallpaper();
-    void testBackupPrinterSettings();
-
-    void testUpdateAllApps();
-    void testWindowsUpdate();
     void testVerifySystemFiles();
     void testCheckDiskErrors();
     void testRebuildIconCache();
@@ -58,13 +41,9 @@ private Q_SLOTS:
 
     void testGenerateSystemReport();
     void testCheckBloatware();
-    void testTestNetworkSpeed();
-    void testScanMalware();
     void testRepairWindowsStore();
     void testFixAudioIssues();
 
-    void testCreateRestorePoint();
-    void testExportRegistryKeys();
     void testScreenshotSettings();
     void testBackupBitlockerKeys();
 
@@ -118,7 +97,7 @@ void TestAllActionsMetadata::verifyAction(const QString& expectedName,
 }
 
 // ============================================================================
-// System Optimization (8)
+// System Optimization (5)
 // ============================================================================
 
 void TestAllActionsMetadata::testDiskCleanup() {
@@ -131,22 +110,11 @@ void TestAllActionsMetadata::testClearBrowserCache() {
         "Clear Browser Cache", "cache", QuickAction::ActionCategory::SystemOptimization, false);
 }
 
-void TestAllActionsMetadata::testDefragmentDrives() {
-    verifyAction("Defragment Drives", "HDD", QuickAction::ActionCategory::SystemOptimization, true);
-}
-
 void TestAllActionsMetadata::testClearWindowsUpdateCache() {
     verifyAction("Clear Windows Update Cache",
                  "Windows Update",
                  QuickAction::ActionCategory::SystemOptimization,
                  true);
-}
-
-void TestAllActionsMetadata::testDisableStartupPrograms() {
-    verifyAction("Disable Startup Programs",
-                 "startup",
-                 QuickAction::ActionCategory::SystemOptimization,
-                 false);
 }
 
 void TestAllActionsMetadata::testClearEventLogs() {
@@ -159,82 +127,9 @@ void TestAllActionsMetadata::testOptimizePowerSettings() {
         "Optimize Power Settings", "power", QuickAction::ActionCategory::SystemOptimization, false);
 }
 
-void TestAllActionsMetadata::testDisableVisualEffects() {
-    verifyAction("Disable Visual Effects",
-                 "animation",
-                 QuickAction::ActionCategory::SystemOptimization,
-                 false);
-}
-
 // ============================================================================
-// Quick Backup (11)
+// Maintenance (5)
 // ============================================================================
-
-void TestAllActionsMetadata::testQuickBooksBackup() {
-    verifyAction(
-        "QuickBooks Backup", "QuickBooks", QuickAction::ActionCategory::QuickBackup, false);
-}
-
-void TestAllActionsMetadata::testBrowserProfileBackup() {
-    verifyAction(
-        "Browser Profile Backup", "browser", QuickAction::ActionCategory::QuickBackup, false);
-}
-
-void TestAllActionsMetadata::testOutlookBackup() {
-    verifyAction(
-        "Outlook Email Backup", "Outlook", QuickAction::ActionCategory::QuickBackup, false);
-}
-
-void TestAllActionsMetadata::testStickyNotesBackup() {
-    verifyAction(
-        "Sticky Notes Backup", "Sticky Notes", QuickAction::ActionCategory::QuickBackup, false);
-}
-
-void TestAllActionsMetadata::testSavedGameDataBackup() {
-    verifyAction("Saved Game Data Backup", "game", QuickAction::ActionCategory::QuickBackup, false);
-}
-
-void TestAllActionsMetadata::testTaxSoftwareBackup() {
-    verifyAction(
-        "Tax Software Data Backup", "Tax", QuickAction::ActionCategory::QuickBackup, false);
-}
-
-void TestAllActionsMetadata::testPhotoManagementBackup() {
-    verifyAction(
-        "Photo Management Backup", "Lightroom", QuickAction::ActionCategory::QuickBackup, false);
-}
-
-void TestAllActionsMetadata::testDevelopmentConfigsBackup() {
-    verifyAction(
-        "Development Configs Backup", "Git", QuickAction::ActionCategory::QuickBackup, false);
-}
-
-void TestAllActionsMetadata::testBackupKnownNetworks() {
-    verifyAction("Backup Known Networks", "WiFi", QuickAction::ActionCategory::QuickBackup, false);
-}
-
-void TestAllActionsMetadata::testBackupDesktopWallpaper() {
-    verifyAction(
-        "Desktop Wallpaper Backup", "wallpaper", QuickAction::ActionCategory::QuickBackup, false);
-}
-
-void TestAllActionsMetadata::testBackupPrinterSettings() {
-    verifyAction(
-        "Printer Settings Backup", "printer", QuickAction::ActionCategory::QuickBackup, true);
-}
-
-// ============================================================================
-// Maintenance (7)
-// ============================================================================
-
-void TestAllActionsMetadata::testUpdateAllApps() {
-    verifyAction("Update All Apps", "Chocolatey", QuickAction::ActionCategory::Maintenance, true);
-}
-
-void TestAllActionsMetadata::testWindowsUpdate() {
-    verifyAction(
-        "Windows Update", "Windows Update", QuickAction::ActionCategory::Maintenance, true);
-}
 
 void TestAllActionsMetadata::testVerifySystemFiles() {
     verifyAction("Verify System Files", "SFC", QuickAction::ActionCategory::Maintenance, true);
@@ -258,7 +153,7 @@ void TestAllActionsMetadata::testClearPrintSpooler() {
 }
 
 // ============================================================================
-// Troubleshooting (6)
+// Troubleshooting (4)
 // ============================================================================
 
 void TestAllActionsMetadata::testGenerateSystemReport() {
@@ -273,16 +168,6 @@ void TestAllActionsMetadata::testCheckBloatware() {
         "Check for Bloatware", "bloatware", QuickAction::ActionCategory::Troubleshooting, true);
 }
 
-void TestAllActionsMetadata::testTestNetworkSpeed() {
-    verifyAction(
-        "Test Network Speed", "speed", QuickAction::ActionCategory::Troubleshooting, false);
-}
-
-void TestAllActionsMetadata::testScanMalware() {
-    verifyAction(
-        "Scan for Malware", "Defender", QuickAction::ActionCategory::Troubleshooting, true);
-}
-
 void TestAllActionsMetadata::testRepairWindowsStore() {
     verifyAction(
         "Repair Windows Store", "Store", QuickAction::ActionCategory::Troubleshooting, false);
@@ -293,18 +178,8 @@ void TestAllActionsMetadata::testFixAudioIssues() {
 }
 
 // ============================================================================
-// Emergency Recovery (4)
+// Emergency Recovery (2)
 // ============================================================================
-
-void TestAllActionsMetadata::testCreateRestorePoint() {
-    verifyAction(
-        "Create Restore Point", "Restore", QuickAction::ActionCategory::EmergencyRecovery, true);
-}
-
-void TestAllActionsMetadata::testExportRegistryKeys() {
-    verifyAction(
-        "Export Registry Keys", "registry", QuickAction::ActionCategory::EmergencyRecovery, false);
-}
 
 void TestAllActionsMetadata::testScreenshotSettings() {
     verifyAction(

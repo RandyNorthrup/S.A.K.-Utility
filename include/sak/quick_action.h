@@ -36,7 +36,6 @@ public:
      */
     enum class ActionCategory {
         SystemOptimization,
-        QuickBackup,
         Maintenance,
         Troubleshooting,
         EmergencyRecovery

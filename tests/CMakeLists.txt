@@ -959,44 +959,14 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/actions/test_action_factory.cpp")
         ../include/sak/actions/disk_cleanup_action.h
         ../src/actions/clear_browser_cache_action.cpp
         ../include/sak/actions/clear_browser_cache_action.h
-        ../src/actions/defragment_drives_action.cpp
-        ../include/sak/actions/defragment_drives_action.h
         ../src/actions/clear_windows_update_cache_action.cpp
         ../include/sak/actions/clear_windows_update_cache_action.h
-        ../src/actions/disable_startup_programs_action.cpp
-        ../include/sak/actions/disable_startup_programs_action.h
         ../src/actions/clear_event_logs_action.cpp
         ../include/sak/actions/clear_event_logs_action.h
         ../src/actions/optimize_power_settings_action.cpp
         ../include/sak/actions/optimize_power_settings_action.h
-        ../src/actions/disable_visual_effects_action.cpp
-        ../include/sak/actions/disable_visual_effects_action.h
-
-        # Quick Backup actions
-        ../src/actions/quickbooks_backup_action.cpp
-        ../include/sak/actions/quickbooks_backup_action.h
-        ../src/actions/browser_profile_backup_action.cpp
-        ../include/sak/actions/browser_profile_backup_action.h
-        ../src/actions/outlook_backup_action.cpp
-        ../include/sak/actions/outlook_backup_action.h
-        ../src/actions/sticky_notes_backup_action.cpp
-        ../include/sak/actions/sticky_notes_backup_action.h
-        ../src/actions/saved_game_data_backup_action.cpp
-        ../include/sak/actions/saved_game_data_backup_action.h
-        ../src/actions/tax_software_backup_action.cpp
-        ../include/sak/actions/tax_software_backup_action.h
-        ../src/actions/photo_management_backup_action.cpp
-        ../include/sak/actions/photo_management_backup_action.h
-        ../src/actions/development_configs_backup_action.cpp
-        ../include/sak/actions/development_configs_backup_action.h
-        ../src/actions/backup_known_networks_action.cpp
-        ../include/sak/actions/backup_known_networks_action.h
 
         # Maintenance actions
-        ../src/actions/update_all_apps_action.cpp
-        ../include/sak/actions/update_all_apps_action.h
-        ../src/actions/windows_update_action.cpp
-        ../include/sak/actions/windows_update_action.h
         ../src/actions/verify_system_files_action.cpp
         ../include/sak/actions/verify_system_files_action.h
         ../src/actions/check_disk_errors_action.cpp
@@ -1013,26 +983,14 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/actions/test_action_factory.cpp")
         ../include/sak/actions/generate_system_report_action.h
         ../src/actions/check_bloatware_action.cpp
         ../include/sak/actions/check_bloatware_action.h
-        ../src/actions/test_network_speed_action.cpp
-        ../include/sak/actions/test_network_speed_action.h
-        ../src/actions/scan_malware_action.cpp
-        ../include/sak/actions/scan_malware_action.h
         ../src/actions/repair_windows_store_action.cpp
         ../include/sak/actions/repair_windows_store_action.h
         ../src/actions/fix_audio_issues_action.cpp
         ../include/sak/actions/fix_audio_issues_action.h
 
         # Emergency Recovery actions
-        ../src/actions/create_restore_point_action.cpp
-        ../include/sak/actions/create_restore_point_action.h
-        ../src/actions/export_registry_keys_action.cpp
-        ../include/sak/actions/export_registry_keys_action.h
         ../src/actions/screenshot_settings_action.cpp
         ../include/sak/actions/screenshot_settings_action.h
-        ../src/actions/backup_desktop_wallpaper_action.cpp
-        ../include/sak/actions/backup_desktop_wallpaper_action.h
-        ../src/actions/backup_printer_settings_action.cpp
-        ../include/sak/actions/backup_printer_settings_action.h
         ../src/actions/backup_bitlocker_keys_action.cpp
         ../include/sak/actions/backup_bitlocker_keys_action.h
     )
@@ -1589,44 +1547,14 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/actions/test_all_actions_metadata.cp
         ../include/sak/actions/disk_cleanup_action.h
         ../src/actions/clear_browser_cache_action.cpp
         ../include/sak/actions/clear_browser_cache_action.h
-        ../src/actions/defragment_drives_action.cpp
-        ../include/sak/actions/defragment_drives_action.h
         ../src/actions/clear_windows_update_cache_action.cpp
         ../include/sak/actions/clear_windows_update_cache_action.h
-        ../src/actions/disable_startup_programs_action.cpp
-        ../include/sak/actions/disable_startup_programs_action.h
         ../src/actions/clear_event_logs_action.cpp
         ../include/sak/actions/clear_event_logs_action.h
         ../src/actions/optimize_power_settings_action.cpp
         ../include/sak/actions/optimize_power_settings_action.h
-        ../src/actions/disable_visual_effects_action.cpp
-        ../include/sak/actions/disable_visual_effects_action.h
-
-        # Quick Backup actions
-        ../src/actions/quickbooks_backup_action.cpp
-        ../include/sak/actions/quickbooks_backup_action.h
-        ../src/actions/browser_profile_backup_action.cpp
-        ../include/sak/actions/browser_profile_backup_action.h
-        ../src/actions/outlook_backup_action.cpp
-        ../include/sak/actions/outlook_backup_action.h
-        ../src/actions/sticky_notes_backup_action.cpp
-        ../include/sak/actions/sticky_notes_backup_action.h
-        ../src/actions/saved_game_data_backup_action.cpp
-        ../include/sak/actions/saved_game_data_backup_action.h
-        ../src/actions/tax_software_backup_action.cpp
-        ../include/sak/actions/tax_software_backup_action.h
-        ../src/actions/photo_management_backup_action.cpp
-        ../include/sak/actions/photo_management_backup_action.h
-        ../src/actions/development_configs_backup_action.cpp
-        ../include/sak/actions/development_configs_backup_action.h
-        ../src/actions/backup_known_networks_action.cpp
-        ../include/sak/actions/backup_known_networks_action.h
 
         # Maintenance actions
-        ../src/actions/update_all_apps_action.cpp
-        ../include/sak/actions/update_all_apps_action.h
-        ../src/actions/windows_update_action.cpp
-        ../include/sak/actions/windows_update_action.h
         ../src/actions/verify_system_files_action.cpp
         ../include/sak/actions/verify_system_files_action.h
         ../src/actions/check_disk_errors_action.cpp
@@ -1643,26 +1571,14 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/actions/test_all_actions_metadata.cp
         ../include/sak/actions/generate_system_report_action.h
         ../src/actions/check_bloatware_action.cpp
         ../include/sak/actions/check_bloatware_action.h
-        ../src/actions/test_network_speed_action.cpp
-        ../include/sak/actions/test_network_speed_action.h
-        ../src/actions/scan_malware_action.cpp
-        ../include/sak/actions/scan_malware_action.h
         ../src/actions/repair_windows_store_action.cpp
         ../include/sak/actions/repair_windows_store_action.h
         ../src/actions/fix_audio_issues_action.cpp
         ../include/sak/actions/fix_audio_issues_action.h
 
         # Emergency Recovery actions
-        ../src/actions/create_restore_point_action.cpp
-        ../include/sak/actions/create_restore_point_action.h
-        ../src/actions/export_registry_keys_action.cpp
-        ../include/sak/actions/export_registry_keys_action.h
         ../src/actions/screenshot_settings_action.cpp
         ../include/sak/actions/screenshot_settings_action.h
-        ../src/actions/backup_desktop_wallpaper_action.cpp
-        ../include/sak/actions/backup_desktop_wallpaper_action.h
-        ../src/actions/backup_printer_settings_action.cpp
-        ../include/sak/actions/backup_printer_settings_action.h
         ../src/actions/backup_bitlocker_keys_action.cpp
         ../include/sak/actions/backup_bitlocker_keys_action.h
     )

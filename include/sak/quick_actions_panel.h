@@ -11,7 +11,6 @@
 #include <QGroupBox>
 #include <QHash>
 #include <QLabel>
-#include <QLineEdit>
 #include <QPushButton>
 #include <QScrollArea>
 #include <QTextEdit>
@@ -36,7 +35,6 @@ class LogToggleSwitch;
  *
  * Features:
  * - System Optimization (cleanup, startup management, performance)
- * - Quick Backups (QuickBooks, browsers, email, game saves)
  * - Maintenance Tasks (disk health, updates, system repair)
  * - Troubleshooting (reports, bloatware detection, diagnostics)
  * - Emergency Recovery (rapid backup, restore points, license export)
@@ -105,16 +103,6 @@ private Q_SLOTS:
      * @param error_message Error description
      */
     void onActionError(QuickAction* action, const QString& error_message);
-
-    /**
-     * @brief Handle browse button for backup location
-     */
-    void onBrowseBackupLocation();
-
-    /**
-     * @brief Handle backup location changed
-     */
-    void onBackupLocationChanged();
 
     /**
      * @brief Handle open backup folder button
@@ -261,8 +249,6 @@ private:
     QHash<QuickAction*, QPushButton*> m_action_buttons;
 
     // UI Components - Settings
-    QLineEdit* m_backup_location_edit{nullptr};
-    QPushButton* m_browse_button{nullptr};
     QCheckBox* m_confirm_checkbox{nullptr};
     QCheckBox* m_notifications_checkbox{nullptr};
     QCheckBox* m_logging_checkbox{nullptr};
@@ -282,7 +268,6 @@ private:
     LogToggleSwitch* m_logToggle{nullptr};
 
     // State
-    QString m_backup_location;
     bool m_confirm_before_execute{true};
     bool m_show_notifications{true};
     bool m_enable_logging{true};

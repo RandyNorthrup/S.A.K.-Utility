@@ -128,15 +128,15 @@ void TestQuickActionController::testGetByCategory() {
     m_ctrl->registerAction(
         std::make_unique<ControllerStubAction>("Maint1", QuickAction::ActionCategory::Maintenance));
     m_ctrl->registerAction(std::make_unique<ControllerStubAction>(
-        "Backup1", QuickAction::ActionCategory::QuickBackup));
+        "Recovery1", QuickAction::ActionCategory::EmergencyRecovery));
     m_ctrl->registerAction(
         std::make_unique<ControllerStubAction>("Maint2", QuickAction::ActionCategory::Maintenance));
 
     auto maint = m_ctrl->getActionsByCategory(QuickAction::ActionCategory::Maintenance);
     QCOMPARE(static_cast<int>(maint.size()), 2);
 
-    auto backup = m_ctrl->getActionsByCategory(QuickAction::ActionCategory::QuickBackup);
-    QCOMPARE(static_cast<int>(backup.size()), 1);
+    auto recovery = m_ctrl->getActionsByCategory(QuickAction::ActionCategory::EmergencyRecovery);
+    QCOMPARE(static_cast<int>(recovery.size()), 1);
 }
 
 void TestQuickActionController::testGetByCategoryEmpty() {
