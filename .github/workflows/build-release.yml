@@ -466,53 +466,51 @@ jobs:
         body: |
           # S.A.K. Utility v${{ steps.version.outputs.version }}
 
-          **Windows System Administration Kit — Swiss Army Knife Utility**
+          **Swiss Army Knife Utility** — a portable Windows toolkit for PC technicians, IT pros, and sysadmins. Single EXE, no installer, no runtime dependencies. Drop it on a USB stick and go.
 
-          ## Highlights
-          - Quick Actions for common admin tasks
-          - Diagnostics & Benchmarking (CPU, disk, memory, stress tests, SMART health)
-          - BitLocker recovery key backup
-          - Network peer-to-peer file transfer
-          - Windows & Linux ISO downloader with USB flasher
-          - Application migration with embedded Chocolatey
-          - User profile backup & restore with AES-256 encryption
-          - Streaming compression (gzip, bzip2, xz)
+          ### Quick Actions
+          One-click admin tasks organized by category: system optimization, quick backups, maintenance, troubleshooting, and emergency recovery. Each action runs silently with progress feedback and logging.
 
-          ## Core Features
-          - Diagnostics & Benchmarking with SMART analysis, stress testing, and report export
-          - Application Migration with embedded Chocolatey
-          - User Profile Backup & Restore wizards with encryption
-          - Image Flasher with ISO downloader
-          - Directory Organizer
-          - Duplicate File Finder
-          - License Key Scanner
-          - Quick Actions panel (one-click admin tasks)
-          - Windows Maintenance tools
+          ### Backup and Restore
+          Step-by-step user profile backup and restore wizards. Smart category filtering (Documents, Desktop, AppData, browser profiles, etc.), AES-256 encryption, NTFS permission and timestamp preservation, and compressed ZIP output.
 
-          ## Installation
-          1. Download `SAK-Utility-v${{ steps.version.outputs.version }}-Windows-x64.zip`
-          2. Extract to your preferred location
-          3. Run `sak_utility.exe`
-          4. `portable.ini` is included for portable operation
+          ### Application Management
+          **App Installation** — Scan installed programs on the current machine, match them to Chocolatey packages, and bulk-install on a new PC with a single click. Export/import application lists as JSON.
+          **Advanced Uninstall** — Deep application removal for Win32, UWP, and provisioned apps. Three-level leftover scanner (safe/moderate/advanced), registry snapshot engine for pre/post uninstall diffs, batch uninstall queue, and Recycle Bin support with locked-file reboot scheduling.
 
-          ### Code Signing
-          This release is digitally signed via Azure Trusted Signing.
-          Windows SmartScreen and Defender should recognize the signature automatically.
+          ### Network Transfer
+          Peer-to-peer encrypted LAN file transfer using AES-256-GCM. Automatic discovery via UDP broadcast, transfer resume on interruption, and multi-PC orchestrator mode for one-to-many migrations.
 
-          You can verify the signature by right-clicking `sak_utility.exe` → Properties → Digital Signatures.
+          ### Benchmark and Diagnostics
+          **Diagnostics** — SMART disk health analysis, system info collection, and HTML/JSON/CSV report export with technician metadata.
+          **Benchmarks** — CPU, disk (sequential and random I/O), and memory throughput benchmarks. Stress testing with thermal monitoring, configurable duration, and per-core thread control.
 
-          100% open source, built via GitHub Actions, no telemetry.
+          ### Image Flasher
+          Flash ISO/IMG files to USB drives with partition-level writing. Built-in Windows ISO downloader (via UUP Dump API with UUP-to-ISO conversion pipeline) and Linux distro catalog with direct download links.
 
-          ## Requirements
-          - Windows 10/11 x64
-          - Administrator privileges (for admin tasks, migration, etc.)
+          ### File Management
+          **File Organizer** — Sort files into folders by extension using customizable category rules. Collision handling (skip, rename, overwrite), undo support, and dry-run preview.
+          **Duplicate Finder** — Parallel file hashing (MD5/SHA-256) with size pre-filter. Group duplicates by hash, select which to keep, and delete or move the rest.
+          **Advanced Search** — Grep-style content search with regex, glob filters, and file metadata constraints (size, date, attributes). Binary/hex mode, archive search (ZIP/EPUB/DOCX/XLSX), preview pane with match highlighting, and search history.
 
-          ## Build Info
-          - Commit: `${{ github.sha }}`
-          - Built with: C++23, Qt ${{ env.QT_VERSION }}, MSVC 2022
-          - All dependencies included
+          ### Network Management
+          **Network Diagnostics** — 10-tool suite: Ping, Traceroute, MTR, DNS Lookup, Port Scanner, Bandwidth (iPerf3 + HTTP), WiFi Analyzer, Active Connections, Firewall Auditor, and Network Share Browser. HTML and JSON report generation.
+          **Network Adapters** — Adapter inspector with full IPv4/IPv6 config, DHCP, DNS, driver info, and traffic stats. Ethernet settings backup/restore to portable JSON for cross-machine portability.
+          **WiFi Manager** — WiFi credential manager with QR code generation for phone/tablet connection. Batch QR export (PNG/PDF/JPG/BMP), Windows `.cmd` script generation, macOS `.mobileconfig` profile export, and Windows known-profile scanning.
 
-          See [README](https://github.com/${{ github.repository }}/blob/main/README.md) for full documentation.
+          ### Email Tool
+          Browse, search, and export data from Outlook PST/OST and MBOX archives — no Outlook or MAPI required. Folder tree navigation, sortable item list, HTML/plain-text preview, MAPI property inspector. Contacts dialog with VCF/CSV export, calendar dialog (month/week/day views) with ICS/CSV export, and attachments browser with batch extraction. Full-text search across subjects, bodies, senders, recipients, and attachment names.
+
+          ### Settings
+          Configurable default backup location, Quick Actions backup preferences (location, confirmations, notifications, logging, compression).
+
+          ---
+
+          100% portable. Open source. No telemetry.
+
+          **Requirements:** Windows 10/11 x64 · Administrator privileges recommended
+
+          See the [README](https://github.com/${{ github.repository }}/blob/main/README.md) for detailed documentation and screenshots.
         draft: false
         prerelease: false
       env:

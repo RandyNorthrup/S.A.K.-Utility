@@ -9,7 +9,7 @@
 [![Qt 6.5+](https://img.shields.io/badge/Qt-6.5%2B-41cd52.svg)](https://www.qt.io/)
 [![Windows 10/11](https://img.shields.io/badge/Windows-10%20%7C%2011-0078d4.svg)](https://www.microsoft.com/windows)
 [![Build](https://github.com/RandyNorthrup/S.A.K.-Utility/actions/workflows/build-release.yml/badge.svg)](https://github.com/RandyNorthrup/S.A.K.-Utility/actions)
-[![Version](https://img.shields.io/badge/Version-0.9.0.4-orange.svg)](VERSION)
+[![Version](https://img.shields.io/badge/Version-0.9.0.5-orange.svg)](VERSION)
 
 Migration · Maintenance · Recovery · Imaging · Deployment — one portable EXE.
 
@@ -17,13 +17,20 @@ Migration · Maintenance · Recovery · Imaging · Deployment — one portable E
 
 ---
 
-## What's New in v0.9.0.4
+## What's New in v0.9.0.5
 
-- **Email Inspector panel** — Full-featured PST/OST/MBOX email browser with folder tree navigation, item list, HTML/plain-text preview, MAPI property inspector, and attachment viewer. File scanner auto-discovers email archives in common locations. Export to EML, CSV, VCF, ICS, and bulk attachment extraction. Contacts dialog, calendar dialog with event highlighting, and full-text search across all item fields — no Outlook or MAPI libraries required.
+- **Documentation overhaul** — Complete rewrite of README feature sections to match actual panel organization: Application Management (App Installation + Advanced Uninstall), File Management (File Organizer + Duplicate Finder + Advanced Search), Network Management (Network Diagnostics + Network Adapters + WiFi Manager), Email Tool. Removed stale License Key Scanner references. Fixed Settings section (single Backup tab, not four). Corrected Quick Actions category assignments.
+- **In-app About tab rewrite** — About tab HTML updated to reflect all current features: Migration & Backup, Quick Actions, Diagnostics & Benchmarking, File Management, Application Management, Imaging, Network Management, and Email & Data Forensics.
+- **Release notes modernization** — GitHub release body rewritten with full per-feature descriptions instead of bullet summaries. Removed stale code signing and installation sections.
+- **Build quality** — Clean MSVC `/W4 /WX` build, 91 automated tests (all passing), 186 source files, 151 headers.
+
+### v0.9.0.4
+
+- **Email Inspector panel** — Full-featured PST/OST/MBOX email browser with folder tree navigation, item list, HTML/plain-text preview, MAPI property inspector, and attachment viewer. File scanner auto-discovers email archives in common locations. Export to EML, CSV, VCF, ICS, and bulk attachment extraction. Attachments browser dialog scans all emails and presents every attachment in a searchable, filterable list with context menu (save, view containing email, copy filename). Contacts dialog with sortable address book. Calendar dialog with month, week, and day views including event highlighting, half-hour grid lines, and column separators. Full-text search across all item fields — no Outlook or MAPI libraries required.
 - **Modern email client layout** — Ribbon toolbar with Icons8 Windows 11 Filled icons, side-by-side splitter layout (folder tree | item list | preview), typed folder icons (Inbox, Sent, Drafts, Deleted, Junk, Starred), and responsive preview pane sizing.
 - **PST/OST parser improvements** — Fixed 8-byte property types (PT_SYSTIME, PT_INT64, PT_FLOAT64) truncated to 4 bytes, fixed HTML body display for PT_BINARY properties, added ~50 MAPI property name mappings.
-- **Documentation overhaul** — README updated with Email Inspector feature section, corrected test counts (91), modernized CONTRIBUTING.md (Qt Test examples, CTest commands, corrected naming conventions and include order), updated THIRD_PARTY_LICENSES.md with full Icons8 icon inventory.
-- **Build quality** — Clean MSVC `/W4 /WX` build, 91 automated tests (all passing).
+- **Modal dialog isolation** — Calendar, contacts, and attachments browser dialogs are fully isolated from the main panel via signal disconnect/reconnect. No cross-talk between modal operations and the main window.
+- **Build quality** — Clean MSVC `/W4 /WX` build, 91 automated tests (all passing), 186 source files, 151 headers.
 
 ### v0.9.0.3
 
@@ -121,17 +128,14 @@ Migration · Maintenance · Recovery · Imaging · Deployment — one portable E
 |---|---|
 | **100 % Portable** | No installer. Drop on a USB stick and go. |
 | **Quick Actions** | One-click system optimization, backups, maintenance, troubleshooting, and recovery. |
-| **User Profile Backup & Restore** | Step-by-step wizards with smart filtering, AES-256 encryption, and NTFS permission handling. |
-| **Application Migration** | Scan installed apps, match to Chocolatey packages, bulk-install on a new PC. |
-| **Diagnostics & Benchmarking** | SMART disk health, CPU/disk/memory benchmarks, stress testing, thermal monitoring, HTML/JSON/CSV reports. |
+| **Backup and Restore** | Step-by-step wizards with smart filtering, AES-256 encryption, and NTFS permission handling. |
 | **Network Transfer** | Peer-to-peer LAN migration with AES-256-GCM, resume, and multi-PC orchestrator mode. |
+| **Diagnostics & Benchmarking** | SMART disk health, CPU/disk/memory benchmarks, stress testing, thermal monitoring, HTML/JSON/CSV reports. |
 | **Image Flasher** | Flash ISOs/IMGs to USB. Download Windows and Linux ISOs directly. |
-| **Advanced Search** | Grep-style file content search with regex, metadata, archive, and binary/hex modes across directory trees. |
-| **Directory Organizer** | Organize files by extension with duplicate detection, parallel hashing, category validation, and cross-operation safety. |
-| **Advanced Uninstall** | Deep application removal with leftover scanning, recycle bin support, locked-file reboot scheduling, and registry snapshot diffs. |
-| **Network Diagnostics** | 10-tool diagnostic suite (ping, traceroute, MTR, DNS, port scan, bandwidth, WiFi, connections, firewall, shares) with ethernet backup/restore and report export. |
-| **Email Inspector** | Browse PST, OST, and MBOX email archives. Search, export (EML/CSV/VCF/ICS), view contacts, calendar, attachments — no Outlook required. |
-| **BitLocker Key Backup** | Export recovery keys from all encrypted volumes with restricted-permission files. |
+| **File Management** | Organize files by extension, find duplicates with parallel hashing, and grep-style content search with regex, metadata, archive, and binary/hex modes. |
+| **Application Management** | Scan installed apps, match to Chocolatey packages, bulk-install on a new PC. Deep application removal with leftover scanning and registry snapshot diffs. |
+| **Network Management** | Diagnostic suite (ping, traceroute, MTR, DNS, port scan, bandwidth, WiFi, connections, firewall, shares), adapter inspector with ethernet backup/restore, WiFi QR code manager. |
+| **Email Tool** | Browse PST, OST, and MBOX email archives. Search, export (EML/CSV/VCF/ICS), contacts, calendar (month/week/day), attachments browser — no Outlook required. |
 | **Modern UI** | Windows 11-style rounded corners, custom splash screen, and responsive layouts. |
 
 ---
@@ -142,17 +146,14 @@ Migration · Maintenance · Recovery · Imaging · Deployment — one portable E
 - [Quick Start](#quick-start)
 - [Features](#features)
   - [Quick Actions](#quick-actions)
-  - [User Profile Backup & Restore](#user-profile-backup--restore)
-  - [Application Migration](#application-migration)
+  - [Backup and Restore](#backup-and-restore)
+  - [Application Management](#application-management)
   - [Network Transfer](#network-transfer)
-  - [Diagnostics & Benchmarking](#diagnostics--benchmarking)
+  - [Benchmark and Diagnostics](#benchmark-and-diagnostics)
   - [Image Flasher](#image-flasher)
-  - [Directory Organizer & Duplicate Finder](#directory-organizer--duplicate-finder)
-  - [WiFi Manager](#wifi-manager)
-  - [Advanced Search](#advanced-search)
-  - [Advanced Uninstall](#advanced-uninstall)
-  - [Network Diagnostics](#network-diagnostics)
-  - [Email Inspector](#email-inspector)
+  - [File Management](#file-management)
+  - [Network Management](#network-management)
+  - [Email Tool](#email-tool)
   - [Settings](#settings)
 - [Security](#security)
 - [Building from Source](#building-from-source)
@@ -194,7 +195,7 @@ Migration · Maintenance · Recovery · Imaging · Deployment — one portable E
 
 ### Quick Actions
 
-One-click operations organized into five categories with real-time progress and detailed logging.
+One-click operations organized by category with real-time progress and detailed logging.
 
 <details>
 <summary><strong>System Optimization</strong></summary>
@@ -226,8 +227,6 @@ One-click operations organized into five categories with real-time progress and 
 | Photo Management Backup | Lightroom catalogs, Photoshop preferences |
 | Dev Configs Backup | VS Code settings, Git config, SSH keys, env vars |
 | Backup Known Networks | Saved WiFi profiles exported via `netsh wlan export` |
-| Backup Desktop Wallpaper | Saves current wallpaper and theme files |
-| Backup Printer Settings | Printer drivers, queues, and port configurations |
 
 </details>
 
@@ -268,13 +267,15 @@ One-click operations organized into five categories with real-time progress and 
 | Create Restore Point | System Restore checkpoint via WMI |
 | Export Registry Keys | Critical registry hives (HKLM\Software, HKCU, etc.) |
 | Screenshot Settings | Captures screenshots of Windows Settings panels |
+| Desktop Wallpaper Backup | Saves current wallpaper and theme files |
 | Backup BitLocker Keys | Recovery keys for all encrypted volumes (restricted permissions) |
+| Backup Printer Settings | Printer drivers, queues, and port configurations |
 
 </details>
 
 ---
 
-### User Profile Backup & Restore
+### Backup and Restore
 
 Guided wizards for comprehensive user-profile migration with smart filtering, AES-256 encryption, and NTFS permission handling.
 
@@ -284,7 +285,11 @@ Guided wizards for comprehensive user-profile migration with smart filtering, AE
 
 ---
 
-### Application Migration
+### Application Management
+
+Two subtabs — **App Installation** and **Advanced Uninstall** — under one panel.
+
+#### App Installation
 
 Scan installed apps, match them to Chocolatey packages, and bulk-install on a new PC.
 
@@ -294,6 +299,48 @@ Scan installed apps, match them to Chocolatey packages, and bulk-install on a ne
 4. **Export** — JSON migration report portable to the target machine.
 5. **Install** — Embedded Chocolatey with retry logic and exponential backoff.
 6. **Restore** — `UserProfileRestoreWizard` maps source paths to target paths and restores data.
+
+#### Advanced Uninstall
+
+Deep application removal with leftover scanning, cleanup, and system protection.
+
+**Program Enumeration**
+- Win32 apps (HKLM, HKLM\WOW6432Node, HKCU Uninstall registry keys)
+- UWP / Microsoft Store apps
+- Windows provisioned apps
+- View filters: All, Win32 Only, UWP Only, Bloatware Only, Orphaned Only
+
+**Uninstall Modes**
+
+| Mode | Description |
+|---|---|
+| **Standard** | Runs the native uninstaller with optional auto-cleanup of detected leftovers |
+| **Forced** | Bypasses the native uninstaller — removes registry entries and leftover artifacts directly |
+| **Batch** | Queue multiple programs and process sequentially with full logging |
+
+**Leftover Scanner**
+- Three depth levels: **Safe** (common paths/registry), **Moderate** (broader pattern matching), **Advanced** (deep scan with registry diff)
+- Detects: files, folders, registry keys/values, services, scheduled tasks, firewall rules, startup entries, shell extensions
+- Risk-level color coding: Safe (green), Review (yellow), Risky (red)
+- Registry Snapshot Engine — captures pre/post uninstall diffs to detect leftover changes
+
+**Cleanup & Deletion**
+- Select All, Select Safe Only, Deselect All, or manual per-item selection
+- Recycle Bin support — files routed via `SHFileOperationW` with `FOF_ALLOWUNDO` (registry and service entries are always permanent)
+- Locked file handling — files that cannot be removed are automatically scheduled for deletion on reboot via `MoveFileExW` with `MOVEFILE_DELAY_UNTIL_REBOOT`
+- User notification of reboot-pending items
+
+**Uninstall Settings**
+
+| Group | Options |
+|---|---|
+| **Leftover Selection** | Select all leftovers by default vs. safe only |
+| **Deletion Behavior** | Send deleted files to Recycle Bin (toggle) |
+| **System Protection** | Auto-create restore point before uninstall |
+| **Default Scan Level** | Safe / Moderate / Advanced |
+| **Display** | Show system components in the program list |
+
+**Context Menu** — Uninstall, Forced Uninstall, Add to Queue, Open Install Location, Copy Program Name, Copy Uninstall Command, Show Properties, Remove Registry Entry
 
 ---
 
@@ -313,7 +360,7 @@ Secure peer-to-peer LAN transfer with three modes.
 
 ---
 
-### Diagnostics & Benchmarking
+### Benchmark and Diagnostics
 
 Comprehensive hardware diagnostics, performance benchmarking, and stability testing with bundled [smartmontools](https://www.smartmontools.org/) for SMART analysis.
 
@@ -374,11 +421,14 @@ Create bootable USB drives from disk images.
 
 ---
 
-### Directory Organizer & Duplicate Finder
+### File Management
 
-Unified panel for organizing files by extension and detecting duplicates via MD5 hashing.
+Three subtabs — **File Organizer**, **Duplicate Finder**, and **Advanced Search** — under one panel.
 
-**File Organization**
+#### File Organizer
+
+Organize files by extension into configurable categories.
+
 - Default categories: Images, Documents, Audio, Video, Archives, Code — fully customizable with user-defined extensions
 - Collision handling: rename, skip, or overwrite
 - Preview mode — see what would happen without moving anything
@@ -386,7 +436,10 @@ Unified panel for organizing files by extension and detecting duplicates via MD5
 - Category validation — detects empty mappings and duplicate category names
 - Reset to Defaults — one-click restore of built-in category mappings
 
-**Duplicate Detection**
+#### Duplicate Finder
+
+Detect duplicate files via content-based hashing.
+
 - MD5 hash-based duplicate detection with configurable minimum-size filtering
 - Multi-directory recursive scan with duplicate directory prevention
 - Parallel hashing with configurable thread count (auto-detects ideal thread count)
@@ -396,23 +449,7 @@ Unified panel for organizing files by extension and detecting duplicates via MD5
 - Organizer and duplicate finder share mutual locking — running one disables the other to prevent conflicts
 - Cancel support for both operations
 
----
-
-### WiFi Manager
-
-Generate and manage WiFi network QR codes and network configuration scripts.
-
-- Enter one or more networks (SSID, password, security type, hidden flag)
-- **QR code generation** via bundled qrcodegen library — scannable WIFI: URI payload
-- **Bulk network table** — save/load multiple networks as JSON
-- **Export** — Windows netsh `.cmd` script (per network or bulk), macOS `.mobileconfig` plist
-- **Scan networks** — detect nearby SSIDs and pre-fill the form
-- **Connect with phone** — display full-screen QR for easy mobile scanning
-- High error correction level for reliable scanning even with partial occlusion
-
----
-
-### Advanced Search
+#### Advanced Search
 
 Enterprise-grade grep-style file content search with a three-panel interface: file explorer, results tree, and preview pane.
 
@@ -430,66 +467,13 @@ Enterprise-grade grep-style file content search with a three-panel interface: fi
 
 ---
 
-### Advanced Uninstall
+### Network Management
 
-Deep application removal with leftover scanning, cleanup, and system protection.
+Three-tab network panel covering diagnostics, adapter configuration, and WiFi credential management.
 
-**Program Enumeration**
-- Win32 apps (HKLM, HKLM\WOW6432Node, HKCU Uninstall registry keys)
-- UWP / Microsoft Store apps
-- Windows provisioned apps
-- View filters: All, Win32 Only, UWP Only, Bloatware Only, Orphaned Only
+#### Network Diagnostics
 
-**Uninstall Modes**
-
-| Mode | Description |
-|---|---|
-| **Standard** | Runs the native uninstaller with optional auto-cleanup of detected leftovers |
-| **Forced** | Bypasses the native uninstaller — removes registry entries and leftover artifacts directly |
-| **Batch** | Queue multiple programs and process sequentially with full logging |
-
-**Leftover Scanner**
-- Three depth levels: **Safe** (common paths/registry), **Moderate** (broader pattern matching), **Advanced** (deep scan with registry diff)
-- Detects: files, folders, registry keys/values, services, scheduled tasks, firewall rules, startup entries, shell extensions
-- Risk-level color coding: Safe (green), Review (yellow), Risky (red)
-- Registry Snapshot Engine — captures pre/post uninstall diffs to detect leftover changes
-
-**Cleanup & Deletion**
-- Select All, Select Safe Only, Deselect All, or manual per-item selection
-- Recycle Bin support — files routed via `SHFileOperationW` with `FOF_ALLOWUNDO` (registry and service entries are always permanent)
-- Locked file handling — files that cannot be removed are automatically scheduled for deletion on reboot via `MoveFileExW` with `MOVEFILE_DELAY_UNTIL_REBOOT`
-- User notification of reboot-pending items
-
-**Settings Modal**
-
-| Group | Options |
-|---|---|
-| **Leftover Selection** | Select all leftovers by default vs. safe only |
-| **Deletion Behavior** | Send deleted files to Recycle Bin (toggle) |
-| **System Protection** | Auto-create restore point before uninstall |
-| **Default Scan Level** | Safe / Moderate / Advanced |
-| **Display** | Show system components in the program list |
-
-**Context Menu** — Uninstall, Forced Uninstall, Add to Queue, Open Install Location, Copy Program Name, Copy Uninstall Command, Show Properties, Remove Registry Entry
-
----
-
-### Network Diagnostics
-
-10-tool network diagnostic suite with adapter inspector, ethernet backup/restore, and report generation.
-
-**Adapter Inspector**
-- Enumerates all network adapters (Ethernet, WiFi, Virtual)
-- Full configuration display: IPv4/IPv6 addresses, subnet masks, gateways, DHCP status, DNS servers, MAC address, driver info, link speed, traffic statistics
-- Copy adapter configuration to clipboard
-
-**Ethernet Backup & Restore**
-- Capture adapter IP/DNS/gateway settings to a portable JSON file
-- Restore settings to the same or a different adapter on any machine via `netsh` commands
-- Supports DHCP and static configurations, primary and secondary DNS servers
-- Cross-machine portability — back up on one PC, restore on another
-
-**Diagnostic Tools**
+10-tool diagnostic suite with report generation.
 
 | Tool | Capabilities |
 |---|---|
@@ -509,9 +493,41 @@ Deep application removal with leftover scanning, cleanup, and system protection.
 - **JSON** — Machine-readable structured data
 - Technician name, ticket number, and notes metadata fields
 
+#### Network Adapters
+
+Adapter inspector with ethernet backup and restore.
+
+- Enumerates all network adapters (Ethernet, WiFi, Virtual)
+- Full configuration display: IPv4/IPv6 addresses, subnet masks, gateways, DHCP status, DNS servers, MAC address, driver info, link speed, traffic statistics
+- Copy adapter configuration to clipboard
+- Capture adapter IP/DNS/gateway settings to a portable JSON file
+- Restore settings to the same or a different adapter on any machine via `netsh` commands
+- Supports DHCP and static configurations, primary and secondary DNS servers
+- Cross-machine portability — back up on one PC, restore on another
+
+#### WiFi Manager
+
+WiFi credential manager with QR code generator and cross-platform network profile export.
+
+**Network Details** — Enter Location label, SSID, Password (show/hide toggle), Security type (WPA/WPA2/WPA3, WEP, Open), and Hidden network flag.
+
+**Saved Networks Table** — Store multiple WiFi configs with search/filter, inline editing, and tri-state select-all. Save/load entire table to/from JSON.
+
+**QR Code Generation**
+- Single-network QR for immediate phone/tablet connection
+- Batch QR export wizard (PNG/PDF/JPG/BMP) with optional location header banner
+- WiFi QR payload format with HIGH error correction (30%)
+
+**Script & Profile Export**
+- Generate Windows `.cmd` batch scripts using `netsh` (single or batch)
+- Add selected networks directly to Windows known WiFi profiles via netsh WLAN profile XML
+- Generate macOS `.mobileconfig` plist files (single or multiple networks per profile)
+
+**Windows Integration** — Scan existing Windows known profiles and import them into the table for backup/management.
+
 ---
 
-### Email Inspector
+### Email Tool
 
 Browse, search, and export data from Outlook PST/OST archives and MBOX mailboxes — no Outlook or MAPI libraries required.
 
@@ -537,9 +553,11 @@ Browse, search, and export data from Outlook PST/OST archives and MBOX mailboxes
 
 **Search** — Full-text search across subjects, bodies, senders, recipients, and attachment names. Filter by item type, date range, has-attachment, and folder scope.
 
-**Contacts Dialog** — Searchable address book with sortable columns and export to VCF or CSV.
+**Contacts Dialog** — Searchable address book with sortable columns (name, email, company, phone) and export to VCF or CSV.
 
-**Calendar Dialog** — Calendar widget with event highlighting, date-based event list, and export to ICS or CSV.
+**Calendar Dialog** — Three view modes (month, week, day) with event highlighting, half-hour grid lines, and column separators. Navigate by date, click events to view details, and export to ICS or CSV.
+
+**Attachments Browser** — Scans all emails in the mail file and presents every attachment in a searchable, filterable list. Type filter (images, documents, archives, etc.), filename search, and right-click context menu with Save Attachment, View Containing Email (navigates to the source message), and Copy Filename.
 
 **Export Formats**
 
@@ -560,10 +578,7 @@ Global application settings accessible from the **Edit → Settings** menu (`Ctr
 
 | Tab | Options |
 |---|---|
-| **General** | Theme, startup behavior, logging preferences |
 | **Backup** | Default backup location, Quick Actions backup settings (location, confirmations, notifications, logging, compression) |
-| **Organizer** | Default minimum file size for dedup, recursive scan defaults, parallel hashing |
-| **Advanced** | Network Transfer toggle, experimental features |
 
 ---
 
@@ -653,7 +668,7 @@ Full license texts: [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md)
 cmake --build build --config Release --target RUN_TESTS
 ```
 
-91 unit and integration tests covering Advanced Search, Advanced Uninstall (types, controller, leftover scanner, registry snapshot engine), Network Diagnostics (types, utils, report generation), Email Inspector (PST/OST parsing, MBOX parsing, email types, search, export, profile manager, report generator), network transfer, orchestration, diagnostics, security, encryption, configuration, ISO download, and quick action factory validation.
+91 unit and integration tests across 117 test files covering Advanced Search, Advanced Uninstall (types, controller, leftover scanner, registry snapshot engine), Network Diagnostics (types, utils, report generation), Email Inspector (PST/OST parsing, MBOX parsing, email types, search, export, profile manager, report generator), network transfer, orchestration, diagnostics, security, encryption, configuration, ISO download, and quick action factory validation.
 
 ---
 

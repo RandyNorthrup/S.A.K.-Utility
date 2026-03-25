@@ -7,6 +7,7 @@
 #include "sak/email_inspector_panel.h"
 
 #include "sak/detachable_log_window.h"
+#include "sak/email_attachments_browser_dialog.h"
 #include "sak/email_calendar_dialog.h"
 #include "sak/email_constants.h"
 #include "sak/email_contacts_dialog.h"
@@ -256,7 +257,7 @@ QWidget* EmailInspectorPanel::createRibbon() {
 
     m_attachments_button = makeRibbonButton(tr("Attachments"),
                                             QStringLiteral(":/icons/icons/icons8-attachment.svg"),
-                                            tr("Extract all attachments from selected items"),
+                                            tr("Browse all attachments in this mailbox"),
                                             ribbon);
     m_attachments_button->setEnabled(false);
     connect(m_attachments_button,
@@ -459,6 +460,56 @@ QWidget* EmailInspectorPanel::createAttachmentsTab() {
 }
 
 // ============================================================================
+// Dialog Signal Isolation
+// ============================================================================
+
+void EmailInspectorPanel::disconnectDialogSignals() {
+    disconnect(m_controller.get(),
+               &EmailInspectorController::folderItemsLoaded,
+               this,
+               &EmailInspectorPanel::onFolderItemsLoaded);
+    disconnect(m_controller.get(),
+               &EmailInspectorController::itemDetailLoaded,
+               this,
+               &EmailInspectorPanel::onItemDetailLoaded);
+    disconnect(m_controller.get(),
+               &EmailInspectorController::itemPropertiesLoaded,
+               this,
+               &EmailInspectorPanel::onItemPropertiesLoaded);
+    disconnect(m_controller.get(),
+               &EmailInspectorController::attachmentContentReady,
+               this,
+               &EmailInspectorPanel::onAttachmentContentReady);
+    disconnect(m_controller.get(),
+               &EmailInspectorController::stateChanged,
+               this,
+               &EmailInspectorPanel::onStateChanged);
+}
+
+void EmailInspectorPanel::reconnectDialogSignals() {
+    connect(m_controller.get(),
+            &EmailInspectorController::folderItemsLoaded,
+            this,
+            &EmailInspectorPanel::onFolderItemsLoaded);
+    connect(m_controller.get(),
+            &EmailInspectorController::itemDetailLoaded,
+            this,
+            &EmailInspectorPanel::onItemDetailLoaded);
+    connect(m_controller.get(),
+            &EmailInspectorController::itemPropertiesLoaded,
+            this,
+            &EmailInspectorPanel::onItemPropertiesLoaded);
+    connect(m_controller.get(),
+            &EmailInspectorController::attachmentContentReady,
+            this,
+            &EmailInspectorPanel::onAttachmentContentReady);
+    connect(m_controller.get(),
+            &EmailInspectorController::stateChanged,
+            this,
+            &EmailInspectorPanel::onStateChanged);
+}
+
+// ============================================================================
 // Controller Connections
 // ============================================================================
 
@@ -540,6 +591,9 @@ void EmailInspectorPanel::connectController() {
             &EmailInspectorController::progressUpdated,
             this,
             [this](int percent, QString status) {
+                if (m_dialog_active) {
+                    return;
+                }
                 m_progress_bar->setValue(percent);
                 updateStatusBar(status);
             });
@@ -619,7 +673,7 @@ void EmailInspectorPanel::onItemListContextMenu(const QPoint& pos) {
     });
     menu.addSeparator();
     menu.addAction(tr("Export as EML..."), this, [this] { onExportClicked(); });
-    menu.addAction(tr("Extract Attachments..."), this, [this] { onExportAttachmentsClicked(); });
+    menu.addAction(tr("Browse Attachments..."), this, [this] { onExportAttachmentsClicked(); });
     menu.addSeparator();
     menu.addAction(tr("Copy Subject"), this, [this] {
         int row = m_item_list->currentRow();
@@ -646,9 +700,7 @@ void EmailInspectorPanel::onFolderTreeContextMenu(const QPoint& pos) {
     menu.addAction(tr("Export Folder as EML..."), this, [this] { onExportClicked(); });
     menu.addAction(tr("Export Folder as CSV..."), this, [this] { onExportClicked(); });
     menu.addSeparator();
-    menu.addAction(tr("Extract All Attachments..."), this, [this] {
-        onExportAttachmentsClicked();
-    });
+    menu.addAction(tr("Browse Attachments..."), this, [this] { onExportAttachmentsClicked(); });
     menu.addSeparator();
     menu.addAction(tr("Search in This Folder..."), this, [this] { m_search_edit->setFocus(); });
     menu.addSeparator();
@@ -707,17 +759,22 @@ void EmailInspectorPanel::onExportAttachmentsClicked() {
     if (!m_controller->isFileOpen()) {
         return;
     }
-    QString dir_path = QFileDialog::getExistingDirectory(this,
-                                                         tr("Select Attachment Output Directory"));
-    if (dir_path.isEmpty()) {
-        return;
+    m_dialog_active = true;
+    disconnectDialogSignals();
+    EmailAttachmentsBrowserDialog dialog(m_controller.get(), m_cached_folder_tree, this);
+    const auto result = dialog.exec();
+    reconnectDialogSignals();
+    m_dialog_active = false;
+    if (result == QDialog::Accepted) {
+        uint64_t folder_id = dialog.navigateFolderId();
+        uint64_t message_id = dialog.navigateMessageId();
+        if (folder_id != 0 && message_id != 0) {
+            m_current_folder_id = folder_id;
+            m_controller->loadFolderItems(folder_id, 0, email::kMaxItemsPerLoad);
+            m_controller->loadItemDetail(message_id);
+            m_controller->loadItemProperties(message_id);
+        }
     }
-
-    sak::EmailExportConfig config;
-    config.format = sak::ExportFormat::Attachments;
-    config.output_path = dir_path;
-    config.folder_id = m_current_folder_id;
-    m_controller->exportItems(config);
 }
 
 // ============================================================================
@@ -757,6 +814,9 @@ void EmailInspectorPanel::onSaveAllAttachmentsClicked() {
 // ============================================================================
 
 void EmailInspectorPanel::onStateChanged(EmailInspectorController::State state) {
+    if (m_dialog_active) {
+        return;
+    }
     bool idle = (state == EmailInspectorController::State::Idle);
     setOperationRunning(!idle);
 }
@@ -773,6 +833,7 @@ void EmailInspectorPanel::onFileOpened(sak::PstFileInfo info) {
 }
 
 void EmailInspectorPanel::onFolderTreeLoaded(sak::PstFolderTree tree) {
+    m_cached_folder_tree = tree;
     populateFolderTree(tree);
 }
 
@@ -790,6 +851,7 @@ void EmailInspectorPanel::onFileClosed() {
     m_current_item_id = 0;
     m_contact_folder_ids.clear();
     m_calendar_folder_ids.clear();
+    m_cached_folder_tree.clear();
 
     m_close_button->setEnabled(false);
     m_search_edit->setEnabled(false);
@@ -807,12 +869,18 @@ void EmailInspectorPanel::onFileClosed() {
 void EmailInspectorPanel::onFolderItemsLoaded(uint64_t /*folder_id*/,
                                               QVector<sak::PstItemSummary> items,
                                               int total) {
+    if (m_dialog_active) {
+        return;
+    }
     m_current_items = items;
     populateItemList(items);
     m_item_count_label->setText(tr("%1 items (showing %2)").arg(total).arg(items.size()));
 }
 
 void EmailInspectorPanel::onItemDetailLoaded(sak::PstItemDetail detail) {
+    if (m_dialog_active) {
+        return;
+    }
     m_current_detail = detail;
     displayItemDetail(detail);
     displayAttachments(detail.attachments);
@@ -821,6 +889,9 @@ void EmailInspectorPanel::onItemDetailLoaded(sak::PstItemDetail detail) {
 
 void EmailInspectorPanel::onItemPropertiesLoaded(uint64_t /*item_id*/,
                                                  QVector<sak::MapiProperty> properties) {
+    if (m_dialog_active) {
+        return;
+    }
     displayProperties(properties);
 }
 
@@ -828,6 +899,9 @@ void EmailInspectorPanel::onAttachmentContentReady(uint64_t /*message_id*/,
                                                    int /*index*/,
                                                    QByteArray attachment_data,
                                                    QString filename) {
+    if (m_dialog_active) {
+        return;
+    }
     QString save_path = QFileDialog::getSaveFileName(this, tr("Save Attachment"), filename);
     if (save_path.isEmpty()) {
         return;
@@ -1149,8 +1223,12 @@ void EmailInspectorPanel::onContactsClicked() {
                                  tr("No contact folders were found in this file."));
         return;
     }
+    m_dialog_active = true;
+    disconnectDialogSignals();
     EmailContactsDialog dialog(m_controller.get(), m_contact_folder_ids, this);
     dialog.exec();
+    reconnectDialogSignals();
+    m_dialog_active = false;
 }
 
 void EmailInspectorPanel::onCalendarClicked() {
@@ -1160,8 +1238,12 @@ void EmailInspectorPanel::onCalendarClicked() {
                                  tr("No calendar folders were found in this file."));
         return;
     }
+    m_dialog_active = true;
+    disconnectDialogSignals();
     EmailCalendarDialog dialog(m_controller.get(), m_calendar_folder_ids, this);
     dialog.exec();
+    reconnectDialogSignals();
+    m_dialog_active = false;
 }
 
 void EmailInspectorPanel::populateItemList(const QVector<sak::PstItemSummary>& items) {

@@ -15,7 +15,7 @@ endif()
 
 # Project definition
 project(SAK_Utility
-    VERSION 0.9.0.4
+    VERSION 0.9.0.5
     DESCRIPTION "Swiss Army Knife Utility - PC technician's toolkit for Windows migration and maintenance"
     LANGUAGES CXX
 )# C++23 Standard - Strict compliance required
@@ -592,6 +592,8 @@ set(GUI_SOURCES
     include/sak/email_contacts_dialog.h
     src/gui/email_calendar_dialog.cpp
     include/sak/email_calendar_dialog.h
+    src/gui/email_attachments_browser_dialog.cpp
+    include/sak/email_attachments_browser_dialog.h
 )
 
 # Quick Actions

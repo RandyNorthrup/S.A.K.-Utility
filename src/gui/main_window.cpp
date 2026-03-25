@@ -80,7 +80,6 @@ Built with modern C++23 and Qt 6 for Windows 10/11 x64.</div>
     <div class="section-title">Migration &amp; Backup</div>
     <ul>
         <li><b>User Profile Backup &amp; Restore</b> &mdash; Step-by-step wizards with smart filtering, per-user customization, AES-256 encryption, and NTFS permission handling</li>
-        <li><b>Application Migration</b> &mdash; Scan installed apps, match to Chocolatey packages, export/import, and bulk-install on a new PC</li>
         <li><b>Network Transfer</b> &mdash; Peer-to-peer encrypted LAN migration with resume, multi-PC orchestrator mode, and AES-256-GCM per chunk</li>
     </ul>
 </div>
@@ -89,10 +88,10 @@ Built with modern C++23 and Qt 6 for Windows 10/11 x64.</div>
     <div class="section-title">Quick Actions</div>
     <ul>
         <li><b>System Optimization</b> &mdash; Disk cleanup, browser cache, defragment, startup programs, power settings, visual effects</li>
-        <li><b>Quick Backups</b> &mdash; QuickBooks, browser profiles, Outlook, Sticky Notes, saved games, tax software, photo tools, dev configs, WiFi networks, wallpaper, printers</li>
+        <li><b>Quick Backups</b> &mdash; QuickBooks, browser profiles, Outlook, Sticky Notes, saved games, tax software, photo tools, dev configs, WiFi networks</li>
         <li><b>Maintenance</b> &mdash; App updates, Windows Update, system file verification, disk checks, icon cache, network reset, print spooler</li>
         <li><b>Troubleshooting</b> &mdash; System reports, bloatware scan, network speed test, malware scan, Windows Store repair, audio fixes</li>
-        <li><b>Emergency Recovery</b> &mdash; Restore points, registry export, settings screenshots, BitLocker key backup</li>
+        <li><b>Emergency Recovery</b> &mdash; Restore points, registry export, settings screenshots, wallpaper backup, BitLocker key backup, printer settings backup</li>
     </ul>
 </div>
 
@@ -108,12 +107,36 @@ Built with modern C++23 and Qt 6 for Windows 10/11 x64.</div>
 </div>
 
 <div class="section">
-    <div class="section-title">Imaging &amp; File Tools</div>
+    <div class="section-title">File Management</div>
+    <ul>
+        <li><b>File Organizer</b> &mdash; Organize files by type with preview mode, customizable categories, and collision handling</li>
+        <li><b>Duplicate Finder</b> &mdash; Content-based hash detection with parallel hashing and configurable minimum-size filtering</li>
+        <li><b>Advanced Search</b> &mdash; Grep-style file content search with regex, binary/hex, image metadata, archive, and file metadata modes</li>
+    </ul>
+</div>
+
+<div class="section">
+    <div class="section-title">Application Management</div>
+    <ul>
+        <li><b>App Installation</b> &mdash; Scan installed apps, match to Chocolatey packages, export/import, and bulk-install on a new PC</li>
+        <li><b>Advanced Uninstall</b> &mdash; Deep application removal with leftover scanning, registry snapshot diffs, recycle bin support, and locked-file reboot scheduling</li>
+    </ul>
+</div>
+
+<div class="section">
+    <div class="section-title">Imaging</div>
     <ul>
         <li><b>Image Flasher</b> &mdash; Flash ISOs/IMGs to USB with streaming decompression and system-drive protection</li>
         <li><b>Windows ISO Download</b> &mdash; Download directly from Microsoft via UUP Dump API</li>
         <li><b>Linux ISO Download</b> &mdash; Built-in distro catalog (Ubuntu, Mint, Kali, SystemRescue, Clonezilla, and more)</li>
-        <li><b>File Management</b> &mdash; Organize files by type with preview mode, and find duplicate files with content-based hashing</li>
+    </ul>
+</div>
+
+<div class="section">
+    <div class="section-title">Network Management</div>
+    <ul>
+        <li><b>Network Diagnostics</b> &mdash; Ping, traceroute, MTR, DNS lookup, port scan, bandwidth test, WiFi analyzer, active connections, firewall auditor, and network share browser</li>
+        <li><b>Network Adapters</b> &mdash; Adapter inspector with ethernet configuration backup and restore across machines</li>
         <li><b>WiFi Manager</b> &mdash; QR code generation, network scanning, bulk export, and connection scripts</li>
     </ul>
 </div>
@@ -123,6 +146,9 @@ Built with modern C++23 and Qt 6 for Windows 10/11 x64.</div>
     <ul>
         <li><b>PST/OST/MBOX Email Tool</b> &mdash; Offline forensic inspection of Outlook and Thunderbird email archives without client installation</li>
         <li><b>Email Search &amp; Export</b> &mdash; Full-text search across thousands of items with export to EML, ICS, VCF, and CSV formats</li>
+        <li><b>Contacts Browser</b> &mdash; Searchable address book with sortable columns and export to VCF or CSV</li>
+        <li><b>Calendar Viewer</b> &mdash; Month, week, and day views with event details and export to ICS or CSV</li>
+        <li><b>Attachments Browser</b> &mdash; Scan all emails for attachments with type filtering, search, and batch extraction</li>
         <li><b>Email Profile Manager</b> &mdash; Backup and restore profiles for Outlook, Thunderbird, and Windows Mail</li>
         <li><b>Orphaned File Discovery</b> &mdash; Scan drives for orphaned PST, OST, and MBOX files not linked to active profiles</li>
     </ul>

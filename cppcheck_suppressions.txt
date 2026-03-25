@@ -14,3 +14,9 @@ unmatchedSuppression
 
 // cppcheck does not understand Qt macros even with -D defines.
 unknownMacro
+
+// Q_EMIT signal(...) is misidentified as a variable shadowing the signal decl.
+shadowFunction
+
+// Style suggestion to use STL algorithms; Qt-idiomatic loops are preferred.
+useStlAlgorithm

@@ -212,7 +212,6 @@ ctest --test-dir build -C Release --output-on-failure
 Every PR must:
 - [ ] Build with zero warnings (`/W4 /WX`)
 - [ ] Pass all tests (100% pass rate)
-- [ ] Follow TigerStyle limits (function length, nesting, line length)
 - [ ] Include tests for new features
 - [ ] Have no `TODO`, `FIXME`, `HACK`, or commented-out code
 
@@ -223,12 +222,15 @@ Every PR must:
 ### Directory Structure
 
 ```
-include/sak/          — Public headers (one .h per class)
-src/core/             — Core business logic (no Qt GUI)
-src/gui/              — Qt widget panels and dialogs
-src/actions/          — Quick action workers (one file per action)
-src/threading/        — Thread workers (backup, scan, hash, etc.)
-tests/                — Qt Test files (test_*.cpp)
+include/sak/          — Public headers (one .h per class, 151 headers)
+src/core/             — Core business logic, workers, parsers, managers (104 files)
+src/gui/              — Qt widget panels, dialogs, and themes (39 files)
+src/actions/          — Quick action workers (one file per action, 37 files)
+src/threading/        — Thread workers (backup, scan, hash, flash, 4 files)
+src/third_party/      — Bundled third-party source (qrcodegen)
+tests/unit/           — Qt Test unit tests (112 files)
+tests/unit/actions/   — Action factory tests (2 files)
+tests/integration/    — End-to-end workflow tests (3 files)
 resources/            — QRC files, icons, themes
 scripts/              — Build/lint/utility scripts
 docs/                 — Project documentation
@@ -241,6 +243,10 @@ cmake/                — CMake modules and build config
   `FooPanel` (UI) → `FooController` (logic). Keep panels thin.
 - **Worker threads** — Long operations use `WorkerBase` subclasses moved to
   `QThread`. Communicate via signals/slots only. Never touch GUI from a worker.
+- **Modal dialog isolation** — Modal dialogs that share a controller with the
+  parent panel must disconnect overlapping signals before `dialog.exec()` and
+  reconnect after. Use `disconnectDialogSignals()` / `reconnectDialogSignals()`
+  helpers plus a `m_dialog_active` guard flag for lambdas.
 - **Action system** — Quick actions inherit `QuickAction` and implement `execute()`.
   Factory pattern via `ActionFactory`.
 - **Logging** — `sak::logInfo`, `sak::logWarning`, `sak::logError` write to
@@ -274,11 +280,3 @@ cmake/                — CMake modules and build config
 - Do not use `emit` — use `Q_EMIT` (project uses `QT_NO_KEYWORDS`).
 
 ---
-
-## Reference Documents
-
-- [TIGERSTYLE_COMPLIANCE_PLAN.md](../docs/TIGERSTYLE_COMPLIANCE_PLAN.md) — Full
-  principle-by-principle analysis and compliance status.
-- [CONTRIBUTING.md](../CONTRIBUTING.md) — Contributor setup and PR process.
-- [ENTERPRISE_HARDENING_TRACKER.md](../docs/ENTERPRISE_HARDENING_TRACKER.md) —
-  Security hardening checklist.

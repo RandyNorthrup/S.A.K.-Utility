@@ -279,7 +279,7 @@ cmake --build build --config Release
 ctest --test-dir build -C Release --output-on-failure
 
 # Run a single test directly
-.\build\Release\Release\test_email_types.exe
+.\build\Release\test_email_types.exe
 ```
 
 ### Writing Tests

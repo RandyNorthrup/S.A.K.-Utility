@@ -286,4 +286,108 @@ constexpr int kAttachByReference = 2;
 constexpr int kAttachEmbeddedMessage = 5;
 constexpr int kAttachOle = 6;
 
+// ============================================================================
+// Calendar View Constants
+// ============================================================================
+
+/// Maximum events to load per calendar folder
+constexpr int kCalendarMaxEventsPerFolder = 5000;
+
+/// Maximum visible event bars per day cell in month view
+constexpr int kCalendarMaxVisibleBars = 4;
+
+/// Height of each event bar in month view (pixels)
+constexpr int kCalendarEventBarHeight = 20;
+
+/// Minimum cell height in month view (pixels)
+constexpr int kCalendarCellMinHeight = 100;
+
+/// Day number label height in month view cells (pixels)
+constexpr int kCalendarDayLabelHeight = 22;
+
+/// Height per hour in week/day time grid (pixels)
+constexpr int kCalendarHourHeight = 60;
+
+/// Width of the time-axis column in week/day views (pixels)
+constexpr int kCalendarTimeColumnWidth = 64;
+
+/// Height of the all-day event header row (pixels)
+constexpr int kCalendarAllDayRowHeight = 26;
+
+/// Height of the day header row in week view (pixels)
+constexpr int kCalendarDayHeaderHeight = 32;
+
+/// First visible hour in time grid (inclusive)
+constexpr int kCalendarDayStartHour = 0;
+
+/// Last visible hour in time grid (exclusive)
+constexpr int kCalendarDayEndHour = 24;
+
+/// Working hours start (for visual highlight)
+constexpr int kCalendarWorkStartHour = 8;
+
+/// Working hours end (for visual highlight)
+constexpr int kCalendarWorkEndHour = 18;
+
+/// Search debounce delay (milliseconds)
+constexpr int kCalendarSearchDebounceMs = 250;
+
+/// Rounded corner radius for event bars (pixels)
+constexpr int kCalendarBarCornerRadius = 3;
+
+/// Left border width on event bars (pixels)
+constexpr int kCalendarBarBorderWidth = 3;
+
+/// Padding inside month day cells (pixels)
+constexpr int kCalendarCellPadding = 2;
+
+/// Minimum gap between event bars (pixels)
+constexpr int kCalendarBarGap = 1;
+
+// ============================================================================
+// Calendar Busy-Status Colors (fill / border pairs)
+// ============================================================================
+
+/// Free — green tones
+constexpr auto kCalColorFreeFill = "#bbf7d0";
+constexpr auto kCalColorFreeBorder = "#16a34a";
+
+/// Tentative — amber tones
+constexpr auto kCalColorTentativeFill = "#fde68a";
+constexpr auto kCalColorTentativeBorder = "#d97706";
+
+/// Busy — blue tones
+constexpr auto kCalColorBusyFill = "#bfdbfe";
+constexpr auto kCalColorBusyBorder = "#2563eb";
+
+/// Out of Office — violet tones
+constexpr auto kCalColorOofFill = "#ddd6fe";
+constexpr auto kCalColorOofBorder = "#7c3aed";
+
+/// Default / unknown — slate-blue
+constexpr auto kCalColorDefaultFill = "#bfdbfe";
+constexpr auto kCalColorDefaultBorder = "#3b82f6";
+
+/// Meeting request — purple tones
+constexpr auto kCalColorMeetingFill = "#e9d5ff";
+constexpr auto kCalColorMeetingBorder = "#9333ea";
+
+/// Today cell highlight background
+constexpr auto kCalColorTodayBg = "#eff6ff";
+
+/// Weekend cell background (subtle)
+constexpr auto kCalColorWeekendBg = "#f8fafc";
+
+/// Outside-month day cell background
+constexpr auto kCalColorOutsideMonthBg = "#f1f5f9";
+
+/// Work-hours background highlight in week/day view
+constexpr auto kCalColorWorkHoursBg = "#ffffff";
+
+/// Non-work-hours background in week/day view
+constexpr auto kCalColorOffHoursBg = "#f8fafc";
+
+/// Busy-status count (Free, Tentative, Busy, OOF)
+constexpr int kCalBusyStatusCount = 4;
+
 }  // namespace sak::email

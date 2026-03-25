@@ -135,6 +135,8 @@ private:
     QWidget* createAttachmentsTab();
 
     // -- Helpers ---------------------------------------------------------
+    void disconnectDialogSignals();
+    void reconnectDialogSignals();
     void setOperationRunning(bool running);
     void populateFolderTree(const sak::PstFolderTree& tree);
     void addFolderToTree(QTreeWidgetItem* parent, const sak::PstFolder& folder);
@@ -204,6 +206,7 @@ private:
     LogToggleSwitch* m_log_toggle{nullptr};
 
     // -- State -----------------------------------------------------------
+    bool m_dialog_active{false};
     uint64_t m_current_folder_id{0};
     uint64_t m_current_item_id{0};
     sak::PstItemDetail m_current_detail;
@@ -212,6 +215,7 @@ private:
     // Cached folder IDs for modals
     QVector<uint64_t> m_contact_folder_ids;
     QVector<uint64_t> m_calendar_folder_ids;
+    sak::PstFolderTree m_cached_folder_tree;
 
     // -- Item List Columns -----------------------------------------------
     enum ItemColumn {
