@@ -31,7 +31,6 @@ ConfigManager::ConfigManager(QObject* parent)
 void ConfigManager::initializeDefaults() {
     initializeBackupAndOrganizerDefaults();
     initializeFlasherDefaults();
-    initializeNetworkDefaults();
     initializeUiDefaults();
 }
 
@@ -78,31 +77,6 @@ void ConfigManager::initializeFlasherDefaults() {
     }
     if (!contains("image_flasher/enable_notifications")) {
         setValue("image_flasher/enable_notifications", true);
-    }
-}
-
-void ConfigManager::initializeNetworkDefaults() {
-    struct DefaultEntry {
-        const char* key;
-        QVariant value;
-    };
-    const DefaultEntry kDefaults[] = {
-        {"network_transfer/enabled", true},
-        {"network_transfer/discovery_port", static_cast<int>(sak::kPortDiscovery)},
-        {"network_transfer/control_port", static_cast<int>(sak::kPortControl)},
-        {"network_transfer/data_port", static_cast<int>(sak::kPortData)},
-        {"network_transfer/encryption", true},
-        {"network_transfer/compression", true},
-        {"network_transfer/resume", true},
-        {"network_transfer/max_bandwidth", 0},
-        {"network_transfer/auto_discovery", true},
-        {"network_transfer/chunk_size", static_cast<int>(sak::kBufferChunkDefault)},
-        {"network_transfer/relay_server", QString()},
-    };
-    for (const auto& entry : kDefaults) {
-        if (!contains(entry.key)) {
-            setValue(entry.key, entry.value);
-        }
     }
 }
 
@@ -269,108 +243,6 @@ bool ConfigManager::getImageFlasherEnableNotifications() const {
 
 void ConfigManager::setImageFlasherEnableNotifications(bool enable) {
     setValue("image_flasher/enable_notifications", enable);
-}
-
-bool ConfigManager::getNetworkTransferEnabled() const {
-    return getValue("network_transfer/enabled", true).toBool();
-}
-
-void ConfigManager::setNetworkTransferEnabled(bool enabled) {
-    setValue("network_transfer/enabled", enabled);
-}
-
-int ConfigManager::getNetworkTransferDiscoveryPort() const {
-    return getValue("network_transfer/discovery_port", sak::kPortDiscovery).toInt();
-}
-
-void ConfigManager::setNetworkTransferDiscoveryPort(int port) {
-    Q_ASSERT_X(port > 0 && port <= sak::kPortRangeMax,
-               "setNetworkTransferDiscoveryPort",
-               "port must be in range [1, 65535]");
-    setValue("network_transfer/discovery_port", port);
-}
-
-int ConfigManager::getNetworkTransferControlPort() const {
-    return getValue("network_transfer/control_port", sak::kPortControl).toInt();
-}
-
-void ConfigManager::setNetworkTransferControlPort(int port) {
-    Q_ASSERT_X(port > 0 && port <= sak::kPortRangeMax,
-               "setNetworkTransferControlPort",
-               "port must be in range [1, 65535]");
-    setValue("network_transfer/control_port", port);
-}
-
-int ConfigManager::getNetworkTransferDataPort() const {
-    return getValue("network_transfer/data_port", sak::kPortData).toInt();
-}
-
-void ConfigManager::setNetworkTransferDataPort(int port) {
-    Q_ASSERT_X(port > 0 && port <= sak::kPortRangeMax,
-               "setNetworkTransferDataPort",
-               "port must be in range [1, 65535]");
-    setValue("network_transfer/data_port", port);
-}
-
-bool ConfigManager::getNetworkTransferEncryptionEnabled() const {
-    return getValue("network_transfer/encryption", true).toBool();
-}
-
-void ConfigManager::setNetworkTransferEncryptionEnabled(bool enabled) {
-    setValue("network_transfer/encryption", enabled);
-}
-
-bool ConfigManager::getNetworkTransferCompressionEnabled() const {
-    return getValue("network_transfer/compression", true).toBool();
-}
-
-void ConfigManager::setNetworkTransferCompressionEnabled(bool enabled) {
-    setValue("network_transfer/compression", enabled);
-}
-
-bool ConfigManager::getNetworkTransferResumeEnabled() const {
-    return getValue("network_transfer/resume", true).toBool();
-}
-
-void ConfigManager::setNetworkTransferResumeEnabled(bool enabled) {
-    setValue("network_transfer/resume", enabled);
-}
-
-int ConfigManager::getNetworkTransferMaxBandwidth() const {
-    return getValue("network_transfer/max_bandwidth", 0).toInt();
-}
-
-void ConfigManager::setNetworkTransferMaxBandwidth(int bandwidth) {
-    Q_ASSERT_X(bandwidth >= 0,
-               "setNetworkTransferMaxBandwidth",
-               "bandwidth must be non-negative (0 = unlimited)");
-    setValue("network_transfer/max_bandwidth", bandwidth);
-}
-
-bool ConfigManager::getNetworkTransferAutoDiscoveryEnabled() const {
-    return getValue("network_transfer/auto_discovery", true).toBool();
-}
-
-void ConfigManager::setNetworkTransferAutoDiscoveryEnabled(bool enabled) {
-    setValue("network_transfer/auto_discovery", enabled);
-}
-
-int ConfigManager::getNetworkTransferChunkSize() const {
-    return getValue("network_transfer/chunk_size", static_cast<int>(sak::kBufferChunkDefault))
-        .toInt();
-}
-
-void ConfigManager::setNetworkTransferChunkSize(int size) {
-    Q_ASSERT_X(size > 0, "setNetworkTransferChunkSize", "size must be positive");
-    setValue("network_transfer/chunk_size", size);
-}
-
-QString ConfigManager::getNetworkTransferRelayServer() const {
-    return getValue("network_transfer/relay_server", QString()).toString();
-}
-
-void ConfigManager::setNetworkTransferRelayServer(const QString& server) {
-    setValue("network_transfer/relay_server", server);
 }
 
 // UI settings

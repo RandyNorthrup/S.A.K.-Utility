@@ -61,7 +61,7 @@ enum class ConflictResolution {
 };
 
 /**
- * @brief Installed app entry for backup/restore and network transfer
+ * @brief Installed app entry for backup/restore
  */
 struct InstalledAppInfo {
     QString name;

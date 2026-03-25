@@ -201,7 +201,6 @@ static_assert(std::is_base_of_v<QObject, WorkerBase>, "WorkerBase must inherit Q
 
 | File | Function | Lines | Decomposition Strategy |
 |---|---|---|---|
-| `network_transfer_panel.cpp` | `setupUi()` | 577 | Split into `setupHeaderSection()`, `setupSendTab()`, `setupReceiveTab()`, `setupHistoryTab()`, `setupProfileTab()`, `setupSettingsSection()` |
 | `windows_usb_creator_extract.cpp` | `copyISOContents()` | 403 | Split into `prepareDestination()`, `handleLargeFile()`, `copyStandardFiles()`, `verifyIntegrity()` |
 | `wifi_manager_panel.cpp` | `onGenerateQrClicked()` | 329 | Split into `buildQrDialog()`, `setupQrControls()`, `buildQrCodeImage()`, `setupQrExportActions()` |
 | `windows11_theme.cpp` | `windows11ThemeStyleSheet()` | 292 | Split into `buttonStyles()`, `tabBarStyles()`, `tableStyles()`, `inputStyles()`, `scrollbarStyles()` |
@@ -211,7 +210,6 @@ static_assert(std::is_base_of_v<QObject, WorkerBase>, "WorkerBase must inherit Q
 | `backup_bitlocker_keys_action.cpp` | `execute()` | 215 | Split into `discoverVolumes()`, `extractKeyForVolume()`, `writeKeyFile()`, `generateReport()` |
 | `clear_event_logs_action.cpp` | `execute()` | 195 | Split into `enumerateLogs()`, `clearLogChannel()`, `buildReport()` |
 | `disable_startup_programs_action.cpp` | `execute()` | 195 | Split into `scanRegistryStartup()`, `scanTaskScheduler()`, `disableEntries()`, `buildReport()` |
-| `network_transfer_panel.cpp` | `setupConnections()` | 194 | Split into `connectSendSignals()`, `connectReceiveSignals()`, `connectProfileSignals()` |
 | `check_disk_errors_action.cpp` | `execute()` | 188 | Split into `enumerateVolumes()`, `runChkdsk()`, `parseChkdskOutput()`, `buildReport()` |
 | `diagnostic_report_generator.cpp` | `generateJson()` | 184 | Split into `serializeCpuSection()`, `serializeMemorySection()`, `serializeStorageSection()`, etc. |
 | `app_installation_panel.cpp` | `setupUi()` | 179 | Split into `setupSearchBar()`, `setupPackageTable()`, `setupQueueSection()`, `setupBottomBar()` |
@@ -564,10 +562,7 @@ namespace Columns {
 | File | Instances | Max Depth | Strategy |
 |---|---|---|---|
 | `file_scanner.cpp` | 19 | 5 | Extract `processEntry()` + early returns |
-| `network_transfer_controller.cpp` | 14 | 5 | Extract `handleReceivedChunk()` + early returns |
 | `wifi_manager_panel.cpp` | 12 | 5 | Extract `parseNetworkEntry()` + early returns |
-| `network_transfer_panel.cpp` | 11 | 5 | Extract `validateTransferTarget()` + early returns |
-| `network_transfer_panel_transfer.cpp` | 11 | 5 | Extract `processTransferBlock()` + early returns |
 | `duplicate_finder_worker.cpp` | 8 | 5 | Extract `compareFilePair()` + early returns |
 | `user_profile_restore_worker.cpp` | 7 | 5 | Extract `restoreSingleItem()` + early returns |
 | `windows_usb_creator_extract.cpp` | 7 | 5 | Extract `extractSingleFile()` + early returns |
@@ -774,7 +769,6 @@ TigerStyle compliance does not require any changes to the project's class hierar
 - `src/core/linux_distro_catalog.cpp` — ~6 assertions
 - `src/core/linux_iso_downloader.cpp` — ~10 assertions
 - `src/core/migration_report.cpp` — ~8 assertions
-- `src/core/network_transfer_controller.cpp` — ~14 assertions
 - `src/core/windows_usb_creator.cpp` — ~10 assertions
 - `src/core/windows_usb_creator_extract.cpp` — ~8 assertions
 - `src/core/uup_iso_builder.cpp` — ~8 assertions
@@ -804,8 +798,7 @@ TigerStyle compliance does not require any changes to the project's class hierar
 - Each extracted helper ≤70 lines
 
 **Tasks**:
-1. Split `NetworkTransferPanel::setupUi()` (577 → 6 methods of ~65 lines each)
-2. Split `WindowsUSBCreator::copyISOContents()` (403 → 4 methods)
+1. Split `WindowsUSBCreator::copyISOContents()` (403 → 4 methods)
 3. Split `WifiManagerPanel::onGenerateQrClicked()` (329 → 4 methods)
 4. Split `windows11ThemeStyleSheet()` (292 → 5 methods)
 5. Split `WindowsUSBCreator::createBootableUSB()` (224 → 5 methods)
@@ -866,7 +859,6 @@ TigerStyle compliance does not require any changes to the project's class hierar
 | `windows11_theme.cpp` | 119 | Layout px, border-radius, padding |
 | `wifi_manager_panel.cpp` | 114 | Column indices, dialog sizes, timeouts |
 | `uup_iso_builder.cpp` | 110 | Buffer sizes, timeouts, progress % |
-| `network_transfer_panel.cpp` | 93 | Column indices, sizes, timeouts |
 | `error_codes.h` | 71 | Error code values (acceptable — they ARE named constants) |
 | `test_network_speed_action.cpp` | 55 | Timeouts, thresholds |
 | `windows_usb_creator_extract.cpp` | 52 | Buffer sizes, thresholds |
@@ -893,11 +885,8 @@ TigerStyle compliance does not require any changes to the project's class hierar
 
 **Tasks**:
 1. Flatten `file_scanner.cpp` — 19 instances, extract `processDirectoryEntry()`, add guard clauses
-2. Flatten `network_transfer_controller.cpp` — 14 instances, extract `handleReceivedChunk()`
-3. Flatten `wifi_manager_panel.cpp` — 12 instances, extract `parseNetshEntry()`, `buildNetworkRow()`
-4. Flatten `network_transfer_panel.cpp` — 11 instances, extract `validateTarget()`
-5. Flatten `network_transfer_panel_transfer.cpp` — 11 instances, extract `processBlock()`
-6. Flatten `duplicate_finder_worker.cpp` — 8 instances, extract `compareFilePair()`
+2. Flatten `wifi_manager_panel.cpp` — 12 instances, extract `parseNetshEntry()`, `buildNetworkRow()`
+3. Flatten `duplicate_finder_worker.cpp` — 8 instances, extract `compareFilePair()`
 7. Flatten `user_profile_restore_worker.cpp` — 7 instances, extract `restoreSingleItem()`
 8. Flatten `windows_usb_creator_extract.cpp` — 7 instances, extract `extractSingleFile()`
 9. Flatten `development_configs_backup_action.cpp` — 6 instances (deepest: 6 levels!)

@@ -2,7 +2,7 @@
 
 ## Overview
 
-Comprehensive test suite for SAK Utility using the **Qt Test** framework with **91 registered CTest tests** across **117 test files**. Tests cover core utilities, security, networking, orchestration, diagnostics, ISO pipelines, deployment, email inspection, and quick action validation.
+Comprehensive test suite for SAK Utility using the **Qt Test** framework with **91 registered CTest tests** across **117 test files**. Tests cover core utilities, security, diagnostics, ISO pipelines, deployment, email inspection, and quick action validation.
 
 ## Structure
 
@@ -20,7 +20,6 @@ tests/
 │   ├── test_advanced_uninstall_types.cpp
 │   ├── test_app_installation_worker.cpp
 │   ├── test_app_scanner.cpp
-│   ├── test_assignment_queue_store.cpp
 │   ├── test_bandwidth_tester.cpp
 │   ├── test_bundled_tools_manager.cpp
 │   ├── test_chocolatey_manager.cpp
@@ -29,10 +28,6 @@ tests/
 │   ├── test_connectivity_tester.cpp
 │   ├── test_cpu_benchmark_worker.cpp
 │   ├── test_decompressor_factory.cpp
-│   ├── test_deployment_history.cpp
-│   ├── test_deployment_manager.cpp
-│   ├── test_deployment_summary_report.cpp
-│   ├── test_destination_registry.cpp
 │   ├── test_diagnostic_controller.cpp
 │   ├── test_diagnostic_report_generator.cpp
 │   ├── test_diagnostic_types.cpp
@@ -65,32 +60,18 @@ tests/
 │   ├── test_linux_distro_catalog.cpp
 │   ├── test_linux_iso_downloader.cpp
 │   ├── test_logger.cpp
-│   ├── test_mapping_engine.cpp
 │   ├── test_mbox_parser.cpp
 │   ├── test_memory_benchmark_worker.cpp
-│   ├── test_migration_orchestrator.cpp
 │   ├── test_migration_report.cpp
 │   ├── test_network_adapter_inspector.cpp
-│   ├── test_network_connection.cpp
 │   ├── test_network_diagnostic_controller.cpp
 │   ├── test_network_diagnostic_report.cpp
 │   ├── test_network_diagnostic_types.cpp
 │   ├── test_network_diagnostic_utils.cpp
 │   ├── test_network_share_browser.cpp
-│   ├── test_network_transfer_controller.cpp
-│   ├── test_network_transfer_report.cpp
-│   ├── test_network_transfer_worker.cpp
-│   ├── test_orchestration_client.cpp
-│   ├── test_orchestration_discovery_service.cpp
-│   ├── test_orchestration_protocol.cpp
-│   ├── test_orchestration_server.cpp
-│   ├── test_orchestration_types.cpp
 │   ├── test_organizer_worker.cpp
 │   ├── test_package_matcher.cpp
-│   ├── test_parallel_transfer_manager.cpp
-│   ├── test_parallel_transfer_manager_stress.cpp
 │   ├── test_path_utils.cpp
-│   ├── test_peer_discovery.cpp
 │   ├── test_permission_manager.cpp
 │   ├── test_port_scanner.cpp
 │   ├── test_process_runner.cpp
@@ -108,9 +89,6 @@ tests/
 │   ├── test_streaming_decompressor.cpp
 │   ├── test_stress_test_worker.cpp
 │   ├── test_thermal_monitor.cpp
-│   ├── test_transfer_protocol.cpp
-│   ├── test_transfer_security.cpp
-│   ├── test_transfer_types.cpp
 │   ├── test_uninstall_worker.cpp
 │   ├── test_user_data_manager.cpp
 │   ├── test_user_profile_backup_worker.cpp
@@ -124,8 +102,7 @@ tests/
 │   ├── test_windows_usb_creator.cpp
 │   ├── test_windows_user_scanner.cpp
 │   └── test_worker_base.cpp
-├── integration/                           # End-to-end workflow tests (3 files)
-│   ├── test_network_transfer_workflow.cpp
+├── integration/                           # End-to-end workflow tests (2 files)
 │   ├── test_ost_integration.cpp
 │   └── test_uup_conversion_pipeline.cpp
 ├── CMakeLists.txt                         # Test build configuration
@@ -196,37 +173,10 @@ cmake --build build --target run_integration_tests
 |---|---|---|
 | test_encryption | `encryption` | AES-256-CBC encrypt/decrypt, wrong password, Unicode, file encryption, IV randomness |
 | test_secure_memory | `secure_memory` | SecureString/SecureBuffer zeroing, VirtualLock, random generation |
-| test_transfer_security | `network_transfer_security` | AES-256-GCM per-chunk, PBKDF2 key derivation, challenge/response auth |
-
-### Network Transfer & Orchestration
-| Test | Module Under Test | Coverage |
-|---|---|---|
-| test_transfer_types | `network_transfer_types` | Transfer state, file metadata, chunk structures |
-| test_transfer_protocol | `network_transfer_protocol` | Protocol message serialization, versioning, handshake |
-| test_peer_discovery | `peer_discovery_service` | UDP broadcast, peer registration, timeout expiry |
-| test_network_connection | `network_connection_manager` | Connection lifecycle, reconnection, error handling |
-| test_network_transfer_controller | `network_transfer_controller` | Transfer orchestration, state machine, error recovery |
-| test_network_transfer_worker | `network_transfer_worker` | File chunking, send/receive, integrity verification |
-| test_network_transfer_report | `network_transfer_report` | Transfer report generation, statistics formatting |
-| test_parallel_transfer_manager | `parallel_transfer_manager` | Concurrent transfers, queue management, bandwidth limits |
-| test_parallel_transfer_manager_stress | `parallel_transfer_manager` | High-concurrency stress, thread safety under load |
-| test_orchestration_types | `orchestration_types` | Job state, assignment, deployment plan structures |
-| test_orchestration_protocol | `orchestration_protocol` | Multi-PC protocol messages, serialization roundtrip |
-| test_orchestration_client | `orchestration_client` | Client connection, job acceptance, status reporting |
-| test_orchestration_server | `orchestration_server` | Server lifecycle, client management, job dispatch |
-| test_orchestration_discovery_service | `orchestration_discovery_service` | Orchestrator advertisement, client discovery |
-| test_connectivity_tester | `connectivity_tester` | Network reachability, timeout handling |
 
 ### Deployment & Migration
 | Test | Module Under Test | Coverage |
 |---|---|---|
-| test_destination_registry | `destination_registry` | PC registration, capacity tracking, availability |
-| test_deployment_manager | `deployment_manager` | Job creation, assignment, progress tracking |
-| test_deployment_history | `deployment_history` | History persistence, query, cleanup |
-| test_deployment_summary_report | `deployment_summary_report` | Deployment report generation, formatting |
-| test_assignment_queue_store | `assignment_queue_store` | Queue serialization, ordering, deduplication |
-| test_mapping_engine | `mapping_engine` | Source→destination path mapping, conflict resolution |
-| test_migration_orchestrator | `migration_orchestrator` | End-to-end migration planning, rollback |
 | test_migration_report | `migration_report` | Migration report generation |
 | test_package_matcher | `package_matcher` | App-to-Chocolatey matching, confidence scoring |
 | test_chocolatey_manager | `chocolatey_manager` | Package install, update, version queries |
@@ -340,7 +290,6 @@ cmake --build build --target run_integration_tests
 ### Integration Tests
 | Test | Workflow | Coverage |
 |---|---|---|
-| test_network_transfer_workflow | Network Transfer | End-to-end peer discovery → connect → transfer → verify |
 | test_ost_integration | Email Inspector | OST file opening, folder tree, item loading |
 | test_uup_conversion_pipeline | UUP-to-ISO | UUPMediaConverter exe existence, process attachment (no fork), help output, missing UUP dir, empty UUP dir |
 

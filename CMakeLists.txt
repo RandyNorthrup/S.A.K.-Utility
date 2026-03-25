@@ -15,7 +15,7 @@ endif()
 
 # Project definition
 project(SAK_Utility
-    VERSION 0.9.0.5
+    VERSION 0.9.0.6
     DESCRIPTION "Swiss Army Knife Utility - PC technician's toolkit for Windows migration and maintenance"
     LANGUAGES CXX
 )# C++23 Standard - Strict compliance required
@@ -224,6 +224,7 @@ find_package(Qt6 6.5 REQUIRED COMPONENTS
     Widgets
     Concurrent
     Network
+    Xml
 )
 
 # Threads - Standard library threading
@@ -302,27 +303,6 @@ set(CORE_SOURCES
     src/core/permission_manager.cpp
     src/core/user_profile_backup_worker.cpp
     src/core/user_profile_restore_worker.cpp
-    src/core/network_transfer_types.cpp
-    src/core/network_transfer_protocol.cpp
-    src/core/network_transfer_security.cpp
-    src/core/peer_discovery_service.cpp
-    src/core/network_connection_manager.cpp
-    src/core/network_transfer_worker.cpp
-    src/core/network_transfer_controller.cpp
-    src/core/network_transfer_report.cpp
-    src/core/orchestration_types.cpp
-    src/core/destination_registry.cpp
-    src/core/deployment_manager.cpp
-    src/core/migration_orchestrator.cpp
-    src/core/mapping_engine.cpp
-    src/core/parallel_transfer_manager.cpp
-    src/core/deployment_history.cpp
-    src/core/deployment_summary_report.cpp
-    src/core/assignment_queue_store.cpp
-    src/core/orchestration_protocol.cpp
-    src/core/orchestration_server.cpp
-    src/core/orchestration_client.cpp
-    src/core/orchestration_discovery_service.cpp
     src/core/drive_scanner.cpp
     src/core/image_source.cpp
     src/core/iso_analyzer.cpp
@@ -394,28 +374,6 @@ set(CORE_SOURCES
     include/sak/permission_manager.h
     include/sak/user_profile_backup_worker.h
     include/sak/user_profile_restore_worker.h
-    include/sak/network_transfer_types.h
-    include/sak/network_transfer_protocol.h
-    include/sak/network_transfer_security.h
-    include/sak/peer_discovery_service.h
-    include/sak/network_connection_manager.h
-    include/sak/network_transfer_worker.h
-    include/sak/network_transfer_controller.h
-    include/sak/network_transfer_report.h
-    include/sak/orchestration_types.h
-    include/sak/destination_registry.h
-    include/sak/deployment_manager.h
-    include/sak/migration_orchestrator.h
-    include/sak/mapping_engine.h
-    include/sak/parallel_transfer_manager.h
-    include/sak/deployment_history.h
-    include/sak/deployment_summary_report.h
-    include/sak/assignment_queue_store.h
-    include/sak/orchestration_protocol.h
-    include/sak/orchestration_server.h
-    include/sak/orchestration_server_interface.h
-    include/sak/orchestration_client.h
-    include/sak/orchestration_discovery_service.h
     include/sak/diagnostic_types.h
     include/sak/hardware_inventory_scanner.h
     include/sak/smart_disk_analyzer.h
@@ -498,6 +456,20 @@ set(CORE_SOURCES
     include/sak/email_profile_manager.h
     include/sak/email_report_generator.h
     include/sak/email_inspector_controller.h
+    # Offline Deployment (Chocolatey internalization)
+    src/core/nuget_api_client.cpp
+    src/core/install_script_parser.cpp
+    src/core/script_rewriter.cpp
+    src/core/package_internalization_engine.cpp
+    src/core/offline_deployment_worker.cpp
+    src/core/package_list_manager.cpp
+    include/sak/offline_deployment_constants.h
+    include/sak/nuget_api_client.h
+    include/sak/install_script_parser.h
+    include/sak/script_rewriter.h
+    include/sak/package_internalization_engine.h
+    include/sak/offline_deployment_worker.h
+    include/sak/package_list_manager.h
 )
 
 # Threading infrastructure
@@ -548,10 +520,6 @@ set(GUI_SOURCES
     include/sak/image_flasher_settings_dialog.h
     src/gui/quick_actions_panel.cpp
     include/sak/quick_actions_panel.h
-    src/gui/network_transfer_panel.cpp
-    src/gui/network_transfer_panel_transfer.cpp
-    src/gui/network_transfer_panel_orchestrator.cpp
-    include/sak/network_transfer_panel.h
     src/gui/detachable_log_window.cpp
     include/sak/detachable_log_window.h
     src/gui/windows11_theme.cpp
@@ -737,6 +705,7 @@ target_link_libraries(sak_utility PRIVATE
     Qt6::Widgets
     Qt6::Concurrent
     Qt6::Network
+    Qt6::Xml
     Threads::Threads
     ZLIB::ZLIB
     BZip2::BZip2

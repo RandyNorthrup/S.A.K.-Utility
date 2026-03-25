@@ -478,9 +478,6 @@ jobs:
           **App Installation** — Scan installed programs on the current machine, match them to Chocolatey packages, and bulk-install on a new PC with a single click. Export/import application lists as JSON.
           **Advanced Uninstall** — Deep application removal for Win32, UWP, and provisioned apps. Three-level leftover scanner (safe/moderate/advanced), registry snapshot engine for pre/post uninstall diffs, batch uninstall queue, and Recycle Bin support with locked-file reboot scheduling.
 
-          ### Network Transfer
-          Peer-to-peer encrypted LAN file transfer using AES-256-GCM. Automatic discovery via UDP broadcast, transfer resume on interruption, and multi-PC orchestrator mode for one-to-many migrations.
-
           ### Benchmark and Diagnostics
           **Diagnostics** — SMART disk health analysis, system info collection, and HTML/JSON/CSV report export with technician metadata.
           **Benchmarks** — CPU, disk (sequential and random I/O), and memory throughput benchmarks. Stress testing with thermal monitoring, configurable duration, and per-core thread control.

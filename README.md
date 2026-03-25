@@ -9,7 +9,7 @@
 [![Qt 6.5+](https://img.shields.io/badge/Qt-6.5%2B-41cd52.svg)](https://www.qt.io/)
 [![Windows 10/11](https://img.shields.io/badge/Windows-10%20%7C%2011-0078d4.svg)](https://www.microsoft.com/windows)
 [![Build](https://github.com/RandyNorthrup/S.A.K.-Utility/actions/workflows/build-release.yml/badge.svg)](https://github.com/RandyNorthrup/S.A.K.-Utility/actions)
-[![Version](https://img.shields.io/badge/Version-0.9.0.5-orange.svg)](VERSION)
+[![Version](https://img.shields.io/badge/Version-0.9.0.6-orange.svg)](VERSION)
 
 Migration · Maintenance · Recovery · Imaging · Deployment — one portable EXE.
 
@@ -17,7 +17,13 @@ Migration · Maintenance · Recovery · Imaging · Deployment — one portable E
 
 ---
 
-## What's New in v0.9.0.5
+## What's New in v0.9.0.6
+
+- **Network Transfer panel removed** — Removed the entire Network Transfer feature from the codebase. All source files, tests, and documentation references have been cleaned. Code archived for potential future reuse.
+- **Offline deployment enhancement** — Application Management panel now supports offline deployment via exported JSON application lists.
+- **Build quality** — Clean MSVC `/W4 /WX` build, 74 automated tests (all passing), zero network transfer references outside archive.
+
+### v0.9.0.5
 
 - **Documentation overhaul** — Complete rewrite of README feature sections to match actual panel organization: Application Management (App Installation + Advanced Uninstall), File Management (File Organizer + Duplicate Finder + Advanced Search), Network Management (Network Diagnostics + Network Adapters + WiFi Manager), Email Tool. Removed stale License Key Scanner references. Fixed Settings section (single Backup tab, not four). Corrected Quick Actions category assignments.
 - **In-app About tab rewrite** — About tab HTML updated to reflect all current features: Migration & Backup, Quick Actions, Diagnostics & Benchmarking, File Management, Application Management, Imaging, Network Management, and Email & Data Forensics.
@@ -54,9 +60,7 @@ Migration · Maintenance · Recovery · Imaging · Deployment — one portable E
 
 - **ISO 9660 analyzer** — New `IsoAnalyzer` class parses ISO Primary Volume Descriptors for volume label, publisher, preparer, application, dates, and file count. Automatic Linux distro identification across 74 patterns (Ubuntu, Fedora, Arch, Manjaro, Kali, Pop!_OS, Proxmox, Clonezilla, GParted, Ventoy, FreeBSD, SteamOS, and more) with desktop environment detection. Searches volume label, publisher, preparer, and application metadata fields to maximize detection across different mastering workflows.
 - **Tabbed diagnostics panel** — Diagnostic & Benchmark panel restructured into tabbed interface for better organization and navigation.
-- **Network transfer mode cards** — Replaced mode combo box with visual portrait-style card selector (Source, Destination, Orchestrator) with dedicated SVG icons matching the backup/restore panel pattern.
 - **Image flasher ISO info** — Unified ISO information display with size and format rows integrated into the ISO info group box. Info panel always shown when an image is selected.
-- **Network settings simplified** — Removed redundant "Enabled" master switch from network transfer settings dialog.
 - **Icons8 SVG icons** — Added 6 new SVG icons (benchmark, duplicate, settings help, source, destination, orchestrator) for improved visual consistency across panels.
 - **Build quality** — Clean MSVC `/W4 /WX` build, 91 automated tests (all passing).
 
@@ -69,8 +73,7 @@ Migration · Maintenance · Recovery · Imaging · Deployment — one portable E
 
 ### v0.8.8
 
-- **Network transfer reliability fix** — Fixed `sendFrame()` using `socket->flush()` instead of `waitForBytesWritten()`, causing spurious transfer failures under TCP backpressure during unthrottled resume transfers. Added stop-request guard to sender retry loop to prevent pointless retries on cancelled transfers.
-- **Error handling hardening** — Added `sak::logError()` to transfer report write failures, clarified best-effort banner probe in port scanner.
+- **Error handling hardening** — Clarified best-effort banner probe in port scanner.
 - **Magic number elimination** — Extracted `kTimeoutThreadShutdownMs`, `kTimeoutThreadTerminateMs`, `kTimeoutWorkerResetMs` for worker lifecycle, and `kFlashBufferSize`, `kVerifySampleMax`, `kVerifyBlockSize` for flash operations. All bare numeric literals replaced with named constants.
 - **Build quality** — Clean MSVC `/W4 /WX` build, 91 automated tests (all passing).
 
@@ -79,7 +82,7 @@ Migration · Maintenance · Recovery · Imaging · Deployment — one portable E
 - **Enterprise-grade Directory Organizer** — Merged duplicate finder into the organizer panel. Added confirmation dialogs before destructive operations (file count + collision strategy warning), category validation (empty mapping / duplicate name detection), Reset to Defaults button, cross-operation locking (disables organizer widgets during dedup and vice versa), duplicate directory prevention, and scrollable results dialogs for large output.
 - **Parallel duplicate hashing** — Dedup settings now expose parallel hashing toggle and thread count spinner with auto-detected ideal thread count display.
 - **Codebase security hardening** — 20+ files fixed: `findChild` null checks, hardcoded paths replaced with environment variables (`%SystemRoot%`, `%ProgramFiles(x86)%`), `QProcess::waitForStarted` timeout checks, insecure temp files migrated to `QTemporaryFile`, thread-safe `setError()` in USB creator (29 assignments migrated), `SetFilePointer` → `SetFilePointerEx` for large-disk correctness.
-- **UI robustness** — Network Transfer panel re-enabled, `setFixedSize` → `setMinimumSize` across 3 dialogs for DPI scaling, centralized style constants (`style_constants.h`), tooltip event filter parent fix, dead lambda cleanup in network settings.
+- **UI robustness** — `setFixedSize` → `setMinimumSize` across 3 dialogs for DPI scaling, centralized style constants (`style_constants.h`), tooltip event filter parent fix.
 - **Build quality** — Clean MSVC `/W4 /WX` build, 76 automated tests (all passing).
 
 ### v0.8.1
@@ -118,7 +121,7 @@ Migration · Maintenance · Recovery · Imaging · Deployment — one portable E
 - **Fixed Windows ISO downloads** — Microsoft's UUP CDN serves HTTP-only URLs; the strict HTTPS-only validation was rejecting every download file. HTTP is now allowed for `*.microsoft.com` origins (files are SHA-1 integrity-verified).
 - **Fixed Linux ISO downloads** — Added proper User-Agent headers to aria2c and HTTP requests to resolve 403 errors from SourceForge/CDN mirrors. Updated SystemRescue and Clonezilla download URLs.
 - **Bundled aria2c** — aria2c 1.37.0 is now included in local builds and CI so ISO downloads work out of the box.
-- **Expanded test suite** — Tests covering network transfer, orchestration, diagnostics, security, and ISO download pipelines.
+- **Expanded test suite** — Tests covering diagnostics, security, and ISO download pipelines.
 
 ---
 
@@ -129,7 +132,6 @@ Migration · Maintenance · Recovery · Imaging · Deployment — one portable E
 | **100 % Portable** | No installer. Drop on a USB stick and go. |
 | **Quick Actions** | One-click system optimization, backups, maintenance, troubleshooting, and recovery. |
 | **Backup and Restore** | Step-by-step wizards with smart filtering, AES-256 encryption, and NTFS permission handling. |
-| **Network Transfer** | Peer-to-peer LAN migration with AES-256-GCM, resume, and multi-PC orchestrator mode. |
 | **Diagnostics & Benchmarking** | SMART disk health, CPU/disk/memory benchmarks, stress testing, thermal monitoring, HTML/JSON/CSV reports. |
 | **Image Flasher** | Flash ISOs/IMGs to USB. Download Windows and Linux ISOs directly. |
 | **File Management** | Organize files by extension, find duplicates with parallel hashing, and grep-style content search with regex, metadata, archive, and binary/hex modes. |
@@ -148,7 +150,6 @@ Migration · Maintenance · Recovery · Imaging · Deployment — one portable E
   - [Quick Actions](#quick-actions)
   - [Backup and Restore](#backup-and-restore)
   - [Application Management](#application-management)
-  - [Network Transfer](#network-transfer)
   - [Benchmark and Diagnostics](#benchmark-and-diagnostics)
   - [Image Flasher](#image-flasher)
   - [File Management](#file-management)
@@ -172,7 +173,6 @@ Migration · Maintenance · Recovery · Imaging · Deployment — one portable E
 | **CPU** | x64 Intel or AMD |
 | **RAM** | 4 GB |
 | **Disk** | ~500 MB + working space |
-| **Network** | Ethernet / Wi-Fi (for Network Transfer) |
 | **Privileges** | Administrator (most features) |
 
 ---
@@ -341,22 +341,6 @@ Deep application removal with leftover scanning, cleanup, and system protection.
 | **Display** | Show system components in the program list |
 
 **Context Menu** — Uninstall, Forced Uninstall, Add to Queue, Open Install Location, Copy Program Name, Copy Uninstall Command, Show Properties, Remove Registry Entry
-
----
-
-### Network Transfer
-
-Secure peer-to-peer LAN transfer with three modes.
-
-| Mode | Description |
-|---|---|
-| **Source** | Scan users, discover peers via UDP broadcast, connect, send encrypted data |
-| **Destination** | Listen for incoming transfers, approve/reject, receive + restore |
-| **Orchestrator** | Centralized multi-PC deployment — mapping strategies, concurrency, job queues |
-
-**Security:** AES-256-GCM encryption per chunk, PBKDF2 key derivation, challenge/response authentication, SHA-256 integrity verification per file.
-
-**Resume:** Periodic checkpointing, partial-file tracking, integrity validation before resume.
 
 ---
 
@@ -668,7 +652,7 @@ Full license texts: [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md)
 cmake --build build --config Release --target RUN_TESTS
 ```
 
-91 unit and integration tests across 117 test files covering Advanced Search, Advanced Uninstall (types, controller, leftover scanner, registry snapshot engine), Network Diagnostics (types, utils, report generation), Email Inspector (PST/OST parsing, MBOX parsing, email types, search, export, profile manager, report generator), network transfer, orchestration, diagnostics, security, encryption, configuration, ISO download, and quick action factory validation.
+91 unit and integration tests across 117 test files covering Advanced Search, Advanced Uninstall (types, controller, leftover scanner, registry snapshot engine), Network Diagnostics (types, utils, report generation), Email Inspector (PST/OST parsing, MBOX parsing, email types, search, export, profile manager, report generator), diagnostics, security, encryption, configuration, ISO download, and quick action factory validation.
 
 ---
 
@@ -681,12 +665,6 @@ Settings are stored at `%APPDATA%\SAK\Utility\` in INI format.
 ```ini
 [QuickActions]
 backup_location=C:/SAK_Backups
-
-[NetworkTransfer]
-discovery_port=54321
-control_port=54322
-data_port=54323
-encryption_enabled=true
 ```
 
 ---

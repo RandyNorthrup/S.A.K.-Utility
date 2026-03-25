@@ -119,8 +119,6 @@
 | File | Line | Field |
 |------|------|-------|
 | `include/sak/linux_iso_downloader.h` | 163 | `bool m_cancelled` |
-| `include/sak/peer_discovery_service.h` | 44 | `bool m_running` |
-| `include/sak/orchestration_discovery_service.h` | 52 | `bool m_running` |
 
 - **Fix:** Change to `std::atomic<bool>` for consistency with `WorkerBase` pattern
 
@@ -200,11 +198,7 @@
 - **Issue:** Functions accept parameters but cast them all to `(void)` — likely stub implementations that were never completed
 - **Fix:** Implement properly or document why they're intentionally empty
 
-### MD-08: Q_UNUSED in MappingEngine::selectDestination
-- [x] **Status:** COMPLETED — Documented as reserved for future assignment-aware routing
-- **File:** `src/core/mapping_engine.cpp` (line 289)
-- **Issue:** `Q_UNUSED(assignment)` — parameter accepted but never used
-- **Fix:** Either use the assignment parameter in destination selection logic or remove from signature
+### MD-08: Removed (file no longer exists)
 
 ### MD-09: Latency Test Timeout Too Short
 - [x] **Status:** COMPLETED — Increased to 30000ms via kLatencyTimeoutMs constant
@@ -315,11 +309,7 @@
 - **Issue:** `m_pendingReplies` list of `QNetworkReply*` — verify cleanup on destruction
 - **Fix:** Audit destructor to ensure all pending replies are aborted and deleted
 
-### LO-12: Non-Functional Cross-Platform Stubs in NetworkTransferSecurity
-- [ ] **Status:** DEFERRED — Windows-only project; documented limitation
-- **File:** `src/core/network_transfer_security.cpp` (lines 32, 74-77, 171-173, 262-264)
-- **Issue:** 8+ `Q_UNUSED` macros in `#else` (non-Windows) branches that return `not_implemented`
-- **Fix:** Document as Windows-only limitation or implement cross-platform alternatives
+### LO-12: Removed
 
 ### LO-13: Action Individual Unit Tests Missing
 - [ ] **Status:** DEFERRED — Requires ProcessRunner mock infrastructure
@@ -369,29 +359,8 @@
 | 21 | `permission_manager.cpp` | ✅ | `test_permission_manager.cpp` |
 | 22 | `user_profile_backup_worker.cpp` | ❌ | — |
 | 23 | `user_profile_restore_worker.cpp` | ❌ | — |
-| 24 | `network_transfer_types.cpp` | ✅ | `test_transfer_types.cpp` |
-| 25 | `network_transfer_protocol.cpp` | ✅ | `test_transfer_protocol.cpp` |
-| 26 | `network_transfer_security.cpp` | ✅ | `test_transfer_security.cpp` |
-| 27 | `peer_discovery_service.cpp` | ✅ | `test_peer_discovery.cpp` |
-| 28 | `network_connection_manager.cpp` | ✅ | `test_network_connection.cpp` |
-| 29 | `network_transfer_worker.cpp` | 🔶 | (integration test) |
-| 30 | `network_transfer_controller.cpp` | 🔶 | (integration test) |
-| 31 | `network_transfer_report.cpp` | ❌ | — |
-| 32 | `orchestration_types.cpp` | ✅ | `test_orchestration_types.cpp` |
-| 33 | `destination_registry.cpp` | ✅ | `test_destination_registry.cpp` |
-| 34 | `deployment_manager.cpp` | ✅ | `test_deployment_manager.cpp` |
-| 35 | `migration_orchestrator.cpp` | ✅ | `test_migration_orchestrator.cpp` |
-| 36 | `mapping_engine.cpp` | ✅ | `test_mapping_engine.cpp` |
-| 37 | `parallel_transfer_manager.cpp` | ✅ | `test_parallel_transfer_manager.cpp` + `_stress.cpp` |
-| 38 | `deployment_history.cpp` | ✅ | `test_deployment_history.cpp` |
-| 39 | `deployment_summary_report.cpp` | ❌ | — |
-| 40 | `assignment_queue_store.cpp` | ✅ | `test_assignment_queue_store.cpp` |
-| 41 | `orchestration_protocol.cpp` | ✅ | `test_orchestration_protocol.cpp` |
-| 42 | `orchestration_server.cpp` | 🔶 | (dep of test_migration_orchestrator) |
-| 43 | `orchestration_client.cpp` | ✅ | `test_orchestration_client.cpp` |
-| 44 | `orchestration_discovery_service.cpp` | ✅ | `test_orchestration_discovery_service.cpp` |
-| 45 | `drive_scanner.cpp` | ✅ | `test_drive_scanner.cpp` |
-| 46 | `image_source.cpp` | ❌ | — |
+| 24 | `drive_scanner.cpp` | ✅ | `test_drive_scanner.cpp` |
+| 25 | `image_source.cpp` | ❌ | — |
 | 47 | `flash_coordinator.cpp` | ❌ | — |
 | 48 | `uup_dump_api.cpp` | 🔶 | (dep of test_windows_iso_downloader) |
 | 49 | `uup_iso_builder.cpp` | 🔶 | (dep of test_uup_conversion_pipeline) |
@@ -451,7 +420,6 @@ All GUI files have ❌ No test coverage (expected for Qt desktop without UI test
 
 | Test File | Covers |
 |-----------|--------|
-| `test_network_transfer_workflow.cpp` | controller → worker → connection → peer discovery → protocol → security |
 | `test_uup_conversion_pipeline.cpp` | UUP ISO download → build pipeline |
 
 ### Coverage Summary
@@ -473,7 +441,6 @@ All GUI files have ❌ No test coverage (expected for Qt desktop without UI test
 4. `user_profile_backup_worker.cpp` / `user_profile_restore_worker.cpp`
 5. `migration_report.cpp`
 6. `image_source.cpp` / `flash_coordinator.cpp`
-7. `network_transfer_report.cpp` / `deployment_summary_report.cpp`
 
 **Tier 2 — System-Level (harder to mock):**
 8. `keep_awake.cpp`
@@ -525,13 +492,8 @@ Items that are already enterprise-grade:
 - Replaced 10 duplicate implementations across the codebase
 - All class methods now delegate to `sak::formatBytes()` (preserving API compatibility)
 - Anonymous namespace duplicates fully removed
-- **Files modified:** quick_action.cpp, linux_iso_downloader.cpp, image_flasher_panel.cpp, linux_iso_download_dialog.cpp, quick_actions_panel.cpp, network_transfer_panel.cpp, network_transfer_panel_transfer.cpp, network_transfer_panel_orchestrator.cpp, diagnostic_benchmark_panel.cpp, diagnostic_report_generator.cpp
+- **Files modified:** quick_action.cpp, linux_iso_downloader.cpp, image_flasher_panel.cpp, linux_iso_download_dialog.cpp, quick_actions_panel.cpp, diagnostic_benchmark_panel.cpp, diagnostic_report_generator.cpp
 - **Lines eliminated:** ~120 lines of duplicate formatting logic
-
-### DUP-02: Centralized Widget Helpers — COMPLETED
-- Created `include/sak/widget_helpers.h` with `sak::statusColor()`, `sak::progressColor()`, `sak::applyStatusColors()`
-- Removed identical implementations from network_transfer_panel.cpp and network_transfer_panel_orchestrator.cpp
-- **Lines eliminated:** ~35 lines of copy-pasted UI helper code
 
 ### DUP-06: ProcessResult::succeeded() Method — COMPLETED
 - Added `[[nodiscard]] bool succeeded() const noexcept` to `ProcessResult` struct in `process_runner.h`

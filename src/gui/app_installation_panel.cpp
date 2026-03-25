@@ -11,6 +11,8 @@
 #include "sak/detachable_log_window.h"
 #include "sak/logger.h"
 #include "sak/migration_report.h"
+#include "sak/offline_deployment_worker.h"
+#include "sak/package_list_manager.h"
 #include "sak/style_constants.h"
 #include "sak/widget_helpers.h"
 
@@ -21,6 +23,7 @@
 #include <QScrollArea>
 #include <QSplitter>
 #include <QStyle>
+#include <QTabWidget>
 #include <QVBoxLayout>
 
 #include <memory>
@@ -44,7 +47,9 @@ enum ResultColumn {
 AppInstallationPanel::AppInstallationPanel(QWidget* parent)
     : QWidget(parent)
     , m_choco_manager(std::make_shared<ChocolateyManager>())
-    , m_worker(std::make_shared<AppInstallationWorker>(m_choco_manager)) {
+    , m_worker(std::make_shared<AppInstallationWorker>(m_choco_manager))
+    , m_list_manager(std::make_unique<PackageListManager>())
+    , m_offline_worker(std::make_unique<OfflineDeploymentWorker>()) {
     setupUi();
     setupConnections();
 
@@ -69,6 +74,9 @@ AppInstallationPanel::~AppInstallationPanel() {
     if (m_worker && m_worker->isRunning()) {
         m_worker->cancel();
     }
+    if (m_offline_worker && m_offline_worker->isRunning()) {
+        m_offline_worker->cancel();
+    }
 }
 
 void AppInstallationPanel::setupUi() {
@@ -91,9 +99,17 @@ void AppInstallationPanel::setupUi() {
     scrollArea->setWidget(contentWidget);
     rootLayout->addWidget(scrollArea);
 
-    setupUi_searchBar(mainLayout);
+    // === Tab Widget: Online Install | Offline Deploy ===
+    m_tabWidget = new QTabWidget(this);
 
-    // === Splitter: Results table | Queue panel ===
+    // --- Tab 0: Online Install ---
+    auto* onlineTab = new QWidget(this);
+    auto* onlineLayout = new QVBoxLayout(onlineTab);
+    onlineLayout->setContentsMargins(0, sak::ui::kMarginSmall, 0, 0);
+    onlineLayout->setSpacing(sak::ui::kSpacingDefault);
+
+    setupUi_searchBar(onlineLayout);
+
     auto* splitter = new QSplitter(Qt::Horizontal, this);
     setupUi_packageTable(splitter);
     setupUi_queueSection(splitter);
@@ -101,7 +117,14 @@ void AppInstallationPanel::setupUi() {
     splitter->setHandleWidth(6);
     splitter->setStretchFactor(0, 65);
     splitter->setStretchFactor(1, 35);
-    mainLayout->addWidget(splitter, 1);
+    onlineLayout->addWidget(splitter, 1);
+
+    m_tabWidget->addTab(onlineTab, tr("Online Install"));
+
+    // --- Tab 1: Offline Deploy ---
+    setupUi_offlineTab(m_tabWidget);
+
+    mainLayout->addWidget(m_tabWidget, 1);
 
     setupUi_bottomBar(mainLayout);
 }
@@ -277,6 +300,7 @@ void AppInstallationPanel::setupUi_bottomBar(QVBoxLayout* mainLayout) {
 void AppInstallationPanel::setupConnections() {
     setupSearchAndQueueConnections();
     setupWorkerConnections();
+    setupOfflineConnections();
 }
 
 void AppInstallationPanel::setupSearchAndQueueConnections() {
@@ -399,5 +423,275 @@ void AppInstallationPanel::setupWorkerConnections() {
                 m_cancelButton->setEnabled(false);
                 m_installButton->setVisible(true);
                 enableControls(true);
+            });
+}
+
+// ============================================================================
+// Offline Deployment Tab
+// ============================================================================
+
+void AppInstallationPanel::setupUi_offlineTab(QTabWidget* tabs) {
+    auto* offlineTab = new QWidget(this);
+    auto* offlineLayout = new QVBoxLayout(offlineTab);
+    offlineLayout->setContentsMargins(0, sak::ui::kMarginSmall, 0, 0);
+    offlineLayout->setSpacing(sak::ui::kSpacingDefault);
+
+    // --- Preset selection ---
+    auto* presetGroup = new QGroupBox(tr("Package List"), this);
+    auto* presetLayout = new QVBoxLayout(presetGroup);
+
+    auto* presetRow = new QHBoxLayout();
+    auto* presetLabel = new QLabel(tr("Preset:"), this);
+    presetRow->addWidget(presetLabel);
+
+    m_presetCombo = new QComboBox(this);
+    m_presetCombo->addItem(tr("-- Select Preset --"));
+    for (const auto& name : m_list_manager->presetNames()) {
+        m_presetCombo->addItem(name);
+    }
+    m_presetCombo->setAccessibleName(QStringLiteral("Preset Package List"));
+    m_presetCombo->setToolTip(tr("Select a preset package list to populate"));
+    presetRow->addWidget(m_presetCombo, 1);
+    presetLayout->addLayout(presetRow);
+
+    // Add single package
+    auto* addRow = new QHBoxLayout();
+    m_offlinePackageEdit = new QLineEdit(this);
+    m_offlinePackageEdit->setPlaceholderText(tr("Add package by ID (e.g., googlechrome)"));
+    m_offlinePackageEdit->setClearButtonEnabled(true);
+    m_offlinePackageEdit->setAccessibleName(QStringLiteral("Package ID Input"));
+    addRow->addWidget(m_offlinePackageEdit, 1);
+
+    m_offlineAddButton = new QPushButton(tr("Add"), this);
+    m_offlineAddButton->setAccessibleName(QStringLiteral("Add Package to List"));
+    m_offlineAddButton->setToolTip(tr("Add this package to the offline deployment list"));
+    addRow->addWidget(m_offlineAddButton);
+    presetLayout->addLayout(addRow);
+
+    offlineLayout->addWidget(presetGroup);
+
+    // --- Package list ---
+    auto* listGroup = new QGroupBox(tr("Packages to Deploy"), this);
+    auto* listLayout = new QVBoxLayout(listGroup);
+
+    m_offlineListWidget = new QListWidget(this);
+    m_offlineListWidget->setAlternatingRowColors(true);
+    m_offlineListWidget->setSelectionMode(QAbstractItemView::ExtendedSelection);
+    m_offlineListWidget->setAccessibleName(QStringLiteral("Offline Package List"));
+    m_offlineListWidget->setToolTip(tr("Packages that will be included in the deployment bundle"));
+    listLayout->addWidget(m_offlineListWidget, 1);
+
+    auto* listBtnRow = new QHBoxLayout();
+    m_offlineRemoveButton = new QPushButton(tr("Remove"), this);
+    m_offlineRemoveButton->setEnabled(false);
+    m_offlineRemoveButton->setAccessibleName(QStringLiteral("Remove from List"));
+    listBtnRow->addWidget(m_offlineRemoveButton);
+
+    m_offlineClearButton = new QPushButton(tr("Clear All"), this);
+    m_offlineClearButton->setEnabled(false);
+    m_offlineClearButton->setAccessibleName(QStringLiteral("Clear Offline List"));
+    listBtnRow->addWidget(m_offlineClearButton);
+
+    listBtnRow->addStretch();
+
+    m_saveOfflineListButton = new QPushButton(tr("Save List"), this);
+    m_saveOfflineListButton->setAccessibleName(QStringLiteral("Save Offline List"));
+    m_saveOfflineListButton->setToolTip(tr("Save the offline package list to a JSON file"));
+    m_saveOfflineListButton->setEnabled(false);
+    listBtnRow->addWidget(m_saveOfflineListButton);
+
+    m_loadOfflineListButton = new QPushButton(tr("Load List"), this);
+    m_loadOfflineListButton->setAccessibleName(QStringLiteral("Load Offline List"));
+    m_loadOfflineListButton->setToolTip(tr("Load a package list from a JSON file"));
+    listBtnRow->addWidget(m_loadOfflineListButton);
+
+    listLayout->addLayout(listBtnRow);
+    offlineLayout->addWidget(listGroup, 1);
+
+    // --- Actions ---
+    auto* actionsGroup = new QGroupBox(tr("Deployment Actions"), this);
+    auto* actionsLayout = new QVBoxLayout(actionsGroup);
+
+    auto* actionBtnRow = new QHBoxLayout();
+
+    m_buildBundleButton = new QPushButton(tr("Build Offline Bundle"), this);
+    m_buildBundleButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
+    m_buildBundleButton->setEnabled(false);
+    m_buildBundleButton->setAccessibleName(QStringLiteral("Build Offline Bundle"));
+    m_buildBundleButton->setToolTip(
+        tr("Download and internalize all listed packages into a portable bundle"));
+    actionBtnRow->addWidget(m_buildBundleButton);
+
+    m_directDownloadButton = new QPushButton(tr("Direct Download"), this);
+    m_directDownloadButton->setStyleSheet(sak::ui::kSecondaryButtonStyle);
+    m_directDownloadButton->setEnabled(false);
+    m_directDownloadButton->setAccessibleName(QStringLiteral("Direct Download"));
+    m_directDownloadButton->setToolTip(tr("Download .nupkg files without internalization"));
+    actionBtnRow->addWidget(m_directDownloadButton);
+
+    m_installFromBundleButton = new QPushButton(tr("Install from Bundle"), this);
+    m_installFromBundleButton->setStyleSheet(sak::ui::kSuccessButtonStyle);
+    m_installFromBundleButton->setAccessibleName(QStringLiteral("Install from Bundle"));
+    m_installFromBundleButton->setToolTip(
+        tr("Install packages from a previously built offline bundle"));
+    actionBtnRow->addWidget(m_installFromBundleButton);
+
+    actionsLayout->addLayout(actionBtnRow);
+
+    // Progress
+    m_offlineProgressLabel = new QLabel(this);
+    m_offlineProgressLabel->setVisible(false);
+    actionsLayout->addWidget(m_offlineProgressLabel);
+
+    m_offlineProgressBar = new QProgressBar(this);
+    m_offlineProgressBar->setVisible(false);
+    m_offlineProgressBar->setTextVisible(true);
+    m_offlineProgressBar->setFormat("%v / %m");
+    actionsLayout->addWidget(m_offlineProgressBar);
+
+    m_offlineStatusLabel = new QLabel(this);
+    m_offlineStatusLabel->setVisible(false);
+    m_offlineStatusLabel->setStyleSheet(QString("color: %1;").arg(sak::ui::kColorTextMuted));
+    actionsLayout->addWidget(m_offlineStatusLabel);
+
+    m_cancelOfflineButton = new QPushButton(tr("Cancel"), this);
+    m_cancelOfflineButton->setStyleSheet(sak::ui::kDangerButtonStyle);
+    m_cancelOfflineButton->setVisible(false);
+    m_cancelOfflineButton->setAccessibleName(QStringLiteral("Cancel Offline Operation"));
+    actionsLayout->addWidget(m_cancelOfflineButton);
+
+    offlineLayout->addWidget(actionsGroup);
+
+    tabs->addTab(offlineTab, tr("Offline Deploy"));
+}
+
+// ============================================================================
+// Offline Deployment Connections
+// ============================================================================
+
+void AppInstallationPanel::setupOfflineConnections() {
+    connect(m_presetCombo,
+            QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this,
+            &AppInstallationPanel::onPresetSelected);
+
+    connect(
+        m_offlineAddButton, &QPushButton::clicked, this, &AppInstallationPanel::onAddToOfflineList);
+    connect(m_offlinePackageEdit,
+            &QLineEdit::returnPressed,
+            this,
+            &AppInstallationPanel::onAddToOfflineList);
+
+    connect(m_offlineRemoveButton,
+            &QPushButton::clicked,
+            this,
+            &AppInstallationPanel::onRemoveFromOfflineList);
+    connect(m_offlineClearButton,
+            &QPushButton::clicked,
+            this,
+            &AppInstallationPanel::onClearOfflineList);
+
+    connect(m_buildBundleButton, &QPushButton::clicked, this, &AppInstallationPanel::onBuildBundle);
+    connect(m_directDownloadButton,
+            &QPushButton::clicked,
+            this,
+            &AppInstallationPanel::onDirectDownload);
+    connect(m_installFromBundleButton,
+            &QPushButton::clicked,
+            this,
+            &AppInstallationPanel::onInstallFromBundle);
+    connect(m_cancelOfflineButton,
+            &QPushButton::clicked,
+            this,
+            &AppInstallationPanel::onCancelOfflineOperation);
+
+    connect(m_saveOfflineListButton,
+            &QPushButton::clicked,
+            this,
+            &AppInstallationPanel::onSaveOfflineList);
+    connect(m_loadOfflineListButton,
+            &QPushButton::clicked,
+            this,
+            &AppInstallationPanel::onLoadOfflineList);
+
+    connect(m_offlineListWidget, &QListWidget::itemSelectionChanged, this, [this]() {
+        m_offlineRemoveButton->setEnabled(!m_offlineListWidget->selectedItems().isEmpty() &&
+                                          !m_offline_in_progress);
+    });
+
+    // Worker signals
+    connect(m_offline_worker.get(),
+            &OfflineDeploymentWorker::operationStarted,
+            this,
+            [this](int total) {
+                m_offlineProgressBar->setRange(0, total);
+                m_offlineProgressBar->setValue(0);
+                m_offlineProgressBar->setVisible(true);
+                m_offlineProgressLabel->setText(tr("Processing 0 of %1...").arg(total));
+                m_offlineProgressLabel->setVisible(true);
+                m_cancelOfflineButton->setVisible(true);
+                Q_EMIT progressUpdated(0, total);
+            });
+
+    connect(m_offline_worker.get(),
+            &OfflineDeploymentWorker::batchProgress,
+            this,
+            [this](int completed, int total, const QString& current) {
+                m_offlineProgressBar->setValue(completed);
+                m_offlineProgressLabel->setText(
+                    tr("Processing %1 of %2: %3").arg(completed).arg(total).arg(current));
+                Q_EMIT progressUpdated(completed, total);
+            });
+
+    connect(m_offline_worker.get(),
+            &OfflineDeploymentWorker::packageProgress,
+            this,
+            [this](const QString& pkg_id, bool success, const QString& msg) {
+                QString log_line = success ? QString("[OK] %1: %2").arg(pkg_id, msg)
+                                           : QString("[FAIL] %1: %2").arg(pkg_id, msg);
+                Q_EMIT logOutput(log_line);
+            });
+
+    connect(m_offline_worker.get(),
+            &OfflineDeploymentWorker::logMessage,
+            this,
+            [this](const QString& msg) { Q_EMIT logOutput(msg); });
+
+    connect(m_offline_worker.get(),
+            &OfflineDeploymentWorker::operationCompleted,
+            this,
+            [this](const BatchStats& stats) {
+                m_offlineProgressBar->setVisible(false);
+                m_offlineProgressLabel->setVisible(false);
+                m_cancelOfflineButton->setVisible(false);
+
+                m_offlineStatusLabel->setText(
+                    tr("Complete: %1 succeeded, %2 failed").arg(stats.completed).arg(stats.failed));
+                m_offlineStatusLabel->setVisible(true);
+
+                m_offline_in_progress = false;
+                enableOfflineControls(true);
+
+                Q_EMIT statusMessage(tr("Offline operation complete: %1 succeeded, %2 failed")
+                                         .arg(stats.completed)
+                                         .arg(stats.failed),
+                                     5000);
+            });
+
+    connect(m_offline_worker.get(),
+            &OfflineDeploymentWorker::operationError,
+            this,
+            [this](const QString& error) {
+                sak::logError("[AppInstallationPanel] Offline error: {}", error.toStdString());
+                Q_EMIT logOutput(QString("ERROR: %1").arg(error));
+                m_offline_in_progress = false;
+                enableOfflineControls(true);
+            });
+
+    connect(m_offline_worker.get(),
+            &OfflineDeploymentWorker::manifestWritten,
+            this,
+            [this](const QString& path) {
+                Q_EMIT logOutput(QString("Manifest written: %1").arg(path));
             });
 }

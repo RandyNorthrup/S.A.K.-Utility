@@ -48,10 +48,6 @@ private Q_SLOTS:
     void imageFlasherValidationMode_setGet();
     void imageFlasherBufferSize_setGet();
 
-    // Typed accessors â€” network transfer
-    void networkTransferEnabled_setGet();
-    void networkTransferDiscoveryPort_setGet();
-    void networkTransferEncryption_setGet();
 
     // Clear
     void clear_removesAllKeys();
@@ -208,28 +204,6 @@ void ConfigManagerTests::imageFlasherBufferSize_setGet() {
     auto& mgr = sak::ConfigManager::instance();
     mgr.setImageFlasherBufferSize(2048);
     QCOMPARE(mgr.getImageFlasherBufferSize(), 2048);
-}
-
-// ============================================================================
-// Typed Accessors â€” Network
-// ============================================================================
-
-void ConfigManagerTests::networkTransferEnabled_setGet() {
-    auto& mgr = sak::ConfigManager::instance();
-    mgr.setNetworkTransferEnabled(true);
-    QVERIFY(mgr.getNetworkTransferEnabled());
-}
-
-void ConfigManagerTests::networkTransferDiscoveryPort_setGet() {
-    auto& mgr = sak::ConfigManager::instance();
-    mgr.setNetworkTransferDiscoveryPort(9999);
-    QCOMPARE(mgr.getNetworkTransferDiscoveryPort(), 9999);
-}
-
-void ConfigManagerTests::networkTransferEncryption_setGet() {
-    auto& mgr = sak::ConfigManager::instance();
-    mgr.setNetworkTransferEncryptionEnabled(true);
-    QVERIFY(mgr.getNetworkTransferEncryptionEnabled());
 }
 
 // ============================================================================

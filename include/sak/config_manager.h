@@ -130,40 +130,6 @@ public:
     [[nodiscard]] bool getImageFlasherEnableNotifications() const;
     void setImageFlasherEnableNotifications(bool enable);
 
-    // Network Transfer settings
-    [[nodiscard]] bool getNetworkTransferEnabled() const;
-    void setNetworkTransferEnabled(bool enabled);
-
-    [[nodiscard]] int getNetworkTransferDiscoveryPort() const;
-    void setNetworkTransferDiscoveryPort(int port);
-
-    [[nodiscard]] int getNetworkTransferControlPort() const;
-    void setNetworkTransferControlPort(int port);
-
-    [[nodiscard]] int getNetworkTransferDataPort() const;
-    void setNetworkTransferDataPort(int port);
-
-    [[nodiscard]] bool getNetworkTransferEncryptionEnabled() const;
-    void setNetworkTransferEncryptionEnabled(bool enabled);
-
-    [[nodiscard]] bool getNetworkTransferCompressionEnabled() const;
-    void setNetworkTransferCompressionEnabled(bool enabled);
-
-    [[nodiscard]] bool getNetworkTransferResumeEnabled() const;
-    void setNetworkTransferResumeEnabled(bool enabled);
-
-    [[nodiscard]] int getNetworkTransferMaxBandwidth() const;
-    void setNetworkTransferMaxBandwidth(int bandwidth);
-
-    [[nodiscard]] bool getNetworkTransferAutoDiscoveryEnabled() const;
-    void setNetworkTransferAutoDiscoveryEnabled(bool enabled);
-
-    [[nodiscard]] int getNetworkTransferChunkSize() const;
-    void setNetworkTransferChunkSize(int size);
-
-    [[nodiscard]] QString getNetworkTransferRelayServer() const;
-    void setNetworkTransferRelayServer(const QString& server);
-
     // UI settings
     [[nodiscard]] bool getRestoreWindowGeometry() const;
     void setRestoreWindowGeometry(bool restore);
@@ -189,7 +155,6 @@ private:
     void initializeDefaults();
     void initializeBackupAndOrganizerDefaults();
     void initializeFlasherDefaults();
-    void initializeNetworkDefaults();
     void initializeUiDefaults();
 
     std::unique_ptr<QSettings> m_settings;

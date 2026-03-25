@@ -16,7 +16,6 @@
 #include "sak/image_flasher_panel.h"
 #include "sak/layout_constants.h"
 #include "sak/network_diagnostic_panel.h"
-#include "sak/network_transfer_panel.h"
 #include "sak/organizer_panel.h"
 #include "sak/quick_actions_panel.h"
 #include "sak/style_constants.h"
@@ -80,7 +79,6 @@ Built with modern C++23 and Qt 6 for Windows 10/11 x64.</div>
     <div class="section-title">Migration &amp; Backup</div>
     <ul>
         <li><b>User Profile Backup &amp; Restore</b> &mdash; Step-by-step wizards with smart filtering, per-user customization, AES-256 encryption, and NTFS permission handling</li>
-        <li><b>Network Transfer</b> &mdash; Peer-to-peer encrypted LAN migration with resume, multi-PC orchestrator mode, and AES-256-GCM per chunk</li>
     </ul>
 </div>
 
@@ -255,13 +253,12 @@ constexpr char kTooltipUserMigration[] = "Backup and restore user profiles (Ctrl
 constexpr char kTooltipOrganizer[] =
     "Organize files, find duplicates, and advanced search (Ctrl+3)";
 constexpr char kTooltipAppManagement[] = "Install, uninstall, and manage applications (Ctrl+4)";
-constexpr char kTooltipNetworkTransfer[] = "Transfer user profiles across the network (Ctrl+5)";
-constexpr char kTooltipImageFlasher[] = "Flash ISO images to USB drives (Ctrl+6)";
-constexpr char kTooltipDiagnostics[] = "System diagnostics, benchmarks, and stress tests (Ctrl+7)";
+constexpr char kTooltipImageFlasher[] = "Flash ISO images to USB drives (Ctrl+5)";
+constexpr char kTooltipDiagnostics[] = "System diagnostics, benchmarks, and stress tests (Ctrl+6)";
 constexpr char kTooltipNetworkManagement[] =
-    "Network diagnostics, WiFi management, and connectivity tools (Ctrl+8)";
+    "Network diagnostics, WiFi management, and connectivity tools (Ctrl+7)";
 constexpr char kTooltipEmailTool[] =
-    "Inspect PST, OST, and MBOX email files — search, export, and manage profiles (Ctrl+9)";
+    "Inspect PST, OST, and MBOX email files — search, export, and manage profiles (Ctrl+8)";
 
 const QString kDiscordBtnStyle = QStringLiteral(
     "QPushButton {"
@@ -445,17 +442,7 @@ void MainWindow::createSimplePanels() {
                       kTooltipOrganizer,
                       ":/icons/icons/panel_organizer.svg");
 
-    // -- 4. Network Transfer (conditional) -------------------------------
-    if (ConfigManager::instance().getNetworkTransferEnabled()) {
-        m_network_transfer_panel = std::make_unique<NetworkTransferPanel>(this);
-        AddTabWithTooltip(m_tab_widget,
-                          m_network_transfer_panel.get(),
-                          "Network Transfer",
-                          kTooltipNetworkTransfer,
-                          ":/icons/icons/panel_network_transfer.svg");
-    }
-
-    // -- 5. Image Flasher ------------------------------------------------
+    // -- 4. Image Flasher ------------------------------------------------
     m_image_flasher_panel = std::make_unique<ImageFlasherPanel>(this);
     AddTabWithTooltip(m_tab_widget,
                       m_image_flasher_panel.get(),
@@ -463,7 +450,7 @@ void MainWindow::createSimplePanels() {
                       kTooltipImageFlasher,
                       ":/icons/icons/panel_image_flasher.svg");
 
-    // -- 6. Benchmark and Diagnostics ------------------------------------
+    // -- 5. Benchmark and Diagnostics ------------------------------------
     m_diagnostic_benchmark_panel = std::make_unique<DiagnosticBenchmarkPanel>(this);
     AddTabWithTooltip(m_tab_widget,
                       m_diagnostic_benchmark_panel.get(),
@@ -471,7 +458,7 @@ void MainWindow::createSimplePanels() {
                       kTooltipDiagnostics,
                       ":/icons/icons/panel_diagnostic.svg");
 
-    // -- 7. Email Tool ----------------------------------------------------
+    // -- 6. Email Tool ----------------------------------------------------
     m_email_inspector_panel = std::make_unique<EmailInspectorPanel>(this);
     AddTabWithTooltip(m_tab_widget,
                       m_email_inspector_panel.get(),
@@ -1007,17 +994,6 @@ void MainWindow::connectRemainingPanelSignals() {
     Q_ASSERT(m_network_diagnostic_panel);
     Q_ASSERT(m_diagnostic_benchmark_panel);
 
-    if (m_network_transfer_panel) {
-        connect(m_network_transfer_panel.get(),
-                &NetworkTransferPanel::statusMessage,
-                this,
-                [this](const QString& msg) { updateStatus(msg, 5000); });
-        connect(m_network_transfer_panel.get(),
-                &NetworkTransferPanel::progressUpdate,
-                this,
-                &MainWindow::updateProgress);
-    }
-
     connect(m_diagnostic_benchmark_panel.get(),
             &DiagnosticBenchmarkPanel::statusMessage,
             this,
@@ -1136,10 +1112,6 @@ void MainWindow::connectPanelLogs() {
 
     if (m_wifi_manager_panel) {
         connectLog(m_wifi_manager_panel.get());
-    }
-
-    if (m_network_transfer_panel) {
-        connectLog(m_network_transfer_panel.get());
     }
 
     // Switch log content when tabs change

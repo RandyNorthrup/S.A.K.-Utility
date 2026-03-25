@@ -47,11 +47,8 @@ The codebase contains **11 distinct categories** of actionable code duplication,
 | 3 | [image_flasher_panel.cpp](../src/gui/image_flasher_panel.cpp#L817) | `ImageFlasherPanel::formatFileSize` | `QString(qint64) const` | Identical to #2 |
 | 4 | [linux_iso_download_dialog.cpp](../src/gui/linux_iso_download_dialog.cpp#L509) | `LinuxISODownloadDialog::formatSize` | `QString(qint64)` | Like #2 but adds `<=0` → "Unknown" |
 | 5 | [quick_actions_panel.cpp](../src/gui/quick_actions_panel.cpp#L512) | `QuickActionsPanel::formatBytes` | `QString(qint64)` | Uses named constants (`kb`, `mb`, `gb`), KB shows no decimals |
-| 6 | [network_transfer_panel.cpp](../src/gui/network_transfer_panel.cpp#L80) | `formatBytes` (anon namespace) | `QString(qint64)` | Compact, no "bytes" case |
-| 7 | [network_transfer_panel_transfer.cpp](../src/gui/network_transfer_panel_transfer.cpp#L73) | `formatBytes` (anon namespace) | `QString(qint64)` | **Exact copy** of #6 |
-| 8 | [network_transfer_panel_orchestrator.cpp](../src/gui/network_transfer_panel_orchestrator.cpp#L63) | `formatBytes` (anon namespace) | `QString(qint64)` | **Exact copy** of #6 |
-| 9 | [diagnostic_benchmark_panel.cpp](../src/gui/diagnostic_benchmark_panel.cpp#L656) | `DiagnosticBenchmarkPanel::formatBytes` | `QString(uint64_t)` | Uses loop + array approach, handles TB |
-| 10 | [diagnostic_report_generator.cpp](../src/core/diagnostic_report_generator.cpp#L724) | `DiagnosticReportGenerator::formatBytes` | `QString(uint64_t)` | Linear if-chain, handles TB |
+| 6 | [diagnostic_benchmark_panel.cpp](../src/gui/diagnostic_benchmark_panel.cpp#L656) | `DiagnosticBenchmarkPanel::formatBytes` | `QString(uint64_t)` | Uses loop + array approach, handles TB |
+| 7 | [diagnostic_report_generator.cpp](../src/core/diagnostic_report_generator.cpp#L724) | `DiagnosticReportGenerator::formatBytes` | `QString(uint64_t)` | Linear if-chain, handles TB |
 
 ### Recommendation
 
@@ -64,28 +61,7 @@ QString formatBytes(uint64_t bytes);     // for hardware sizes (TB support)
 }
 ```
 
-All 10 call sites would replace their local implementation with `sak::formatBytes()`. The `QuickAction::formatFileSize` base class method can become a thin inline wrapper or be deprecated in favor of the free function.
-
----
-
-## DUP-02: statusColor / progressColor / applyStatusColors {#dup-02-status-color-helpers}
-
-**Severity:** HIGH — Exact copy-paste across 2 files (3 functions each)  
-**Type:** Exact duplicate  
-**Estimated duplicate lines:** ~40 lines
-
-### Instances
-
-| # | Location | Functions |
-|---|----------|-----------|
-| 1 | [network_transfer_panel.cpp](../src/gui/network_transfer_panel.cpp#L89-L121) | `statusColor()`, `progressColor()`, `applyStatusColors()` |
-| 2 | [network_transfer_panel_orchestrator.cpp](../src/gui/network_transfer_panel_orchestrator.cpp#L72-L104) | `statusColor()`, `progressColor()`, `applyStatusColors()` — **identical** |
-
-Both are in anonymous namespaces. The function bodies, color values (`QColor(56,142,60)`, `QColor(198,40,40)`, `QColor(245,124,0)`, `QColor(97,97,97)`), string matching logic, and signatures are character-for-character identical.
-
-### Recommendation
-
-Move to a shared header (e.g., `sak/gui_utils.h` or `sak/network_transfer_panel.h`) as `inline` functions, or into a `gui_utils.cpp` compilation unit. These three functions are tightly coupled and should live together.
+All 7 call sites would replace their local implementation with `sak::formatBytes()`. The `QuickAction::formatFileSize` base class method can become a thin inline wrapper or be deprecated in favor of the free function.
 
 ---
 

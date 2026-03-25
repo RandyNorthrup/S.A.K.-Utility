@@ -46,7 +46,7 @@ repos:
         language: system
         types_or: [c, c++]
         files: \.(cpp|h|hpp|cxx|cc|hxx)$
-        exclude: (third_party|3rdparty|external)/
+        exclude: (third_party|3rdparty|external|_archived)/
 
       # -------------------------------------------------------------------
       # 2. Lizard — Cyclomatic complexity & function metrics
@@ -59,7 +59,7 @@ repos:
         language: system
         types_or: [c, c++]
         files: \.(cpp|h|hpp|cxx|cc|hxx)$
-        exclude: (third_party|3rdparty|external)/
+        exclude: (third_party|3rdparty|external|_archived)/
 
       # -------------------------------------------------------------------
       # 3. cppcheck — Deep static analysis
@@ -73,4 +73,4 @@ repos:
         language: system
         types_or: [c, c++]
         files: \.(cpp|h|hpp|cxx|cc|hxx)$
-        exclude: (third_party|3rdparty|external)/
+        exclude: (third_party|3rdparty|external|_archived)/

@@ -6,8 +6,11 @@
 #include "sak/chocolatey_manager.h"
 #include "sak/logger.h"
 #include "sak/migration_report.h"
+#include "sak/offline_deployment_worker.h"
+#include "sak/package_list_manager.h"
 
 #include <QApplication>
+#include <QFileDialog>
 #include <QMessageBox>
 #include <QtConcurrent>
 
@@ -275,4 +278,336 @@ void AppInstallationPanel::onCancelInstall() {
         m_worker->cancel();
         Q_EMIT logOutput("Installation cancelled by user");
     }
+}
+
+// ============================================================================
+// Offline Deployment Actions
+// ============================================================================
+
+void AppInstallationPanel::onPresetSelected(int index) {
+    if (index <= 0) {
+        return;
+    }
+
+    QStringList names = m_list_manager->presetNames();
+    int preset_index = index - 1;
+    if (preset_index < 0 || preset_index >= names.size()) {
+        return;
+    }
+
+    auto preset = m_list_manager->preset(names[preset_index]);
+
+    // Add preset entries to the offline list widget
+    int added = 0;
+    for (const auto& entry : preset.entries) {
+        // Check for duplicates
+        bool exists = false;
+        for (int row = 0; row < m_offlineListWidget->count(); ++row) {
+            QString item_data = m_offlineListWidget->item(row)->data(Qt::UserRole).toString();
+            if (item_data.compare(entry.package_id, Qt::CaseInsensitive) == 0) {
+                exists = true;
+                break;
+            }
+        }
+
+        if (!exists) {
+            auto* item =
+                new QListWidgetItem(QString("%1  (%2)").arg(entry.package_id, entry.notes));
+            item->setData(Qt::UserRole, entry.package_id);
+            item->setData(Qt::UserRole + 1, entry.version);
+            m_offlineListWidget->addItem(item);
+            added++;
+        }
+    }
+
+    bool has_items = m_offlineListWidget->count() > 0;
+    m_offlineClearButton->setEnabled(has_items);
+    m_buildBundleButton->setEnabled(has_items);
+    m_directDownloadButton->setEnabled(has_items);
+    m_saveOfflineListButton->setEnabled(has_items);
+
+    Q_EMIT logOutput(QString("Loaded preset '%1': %2 packages added").arg(preset.name).arg(added));
+
+    m_presetCombo->setCurrentIndex(0);
+}
+
+void AppInstallationPanel::onAddToOfflineList() {
+    QString package_id = m_offlinePackageEdit->text().trimmed();
+    if (package_id.isEmpty()) {
+        return;
+    }
+
+    // Check for duplicates
+    for (int row = 0; row < m_offlineListWidget->count(); ++row) {
+        QString item_data = m_offlineListWidget->item(row)->data(Qt::UserRole).toString();
+        if (item_data.compare(package_id, Qt::CaseInsensitive) == 0) {
+            Q_EMIT logOutput(QString("Package '%1' already in list").arg(package_id));
+            return;
+        }
+    }
+
+    auto* item = new QListWidgetItem(package_id);
+    item->setData(Qt::UserRole, package_id);
+    item->setData(Qt::UserRole + 1, QString());  // latest version
+    m_offlineListWidget->addItem(item);
+
+    m_offlinePackageEdit->clear();
+
+    bool has_items = m_offlineListWidget->count() > 0;
+    m_offlineClearButton->setEnabled(has_items);
+    m_buildBundleButton->setEnabled(has_items);
+    m_directDownloadButton->setEnabled(has_items);
+    m_saveOfflineListButton->setEnabled(has_items);
+
+    Q_EMIT logOutput(QString("Added to offline list: %1").arg(package_id));
+}
+
+void AppInstallationPanel::onRemoveFromOfflineList() {
+    auto selected = m_offlineListWidget->selectedItems();
+    if (selected.isEmpty()) {
+        return;
+    }
+
+    for (auto* item : selected) {
+        Q_EMIT logOutput(
+            QString("Removed from offline list: %1").arg(item->data(Qt::UserRole).toString()));
+        delete m_offlineListWidget->takeItem(m_offlineListWidget->row(item));
+    }
+
+    bool has_items = m_offlineListWidget->count() > 0;
+    m_offlineClearButton->setEnabled(has_items);
+    m_buildBundleButton->setEnabled(has_items);
+    m_directDownloadButton->setEnabled(has_items);
+    m_saveOfflineListButton->setEnabled(has_items);
+}
+
+void AppInstallationPanel::onClearOfflineList() {
+    if (m_offlineListWidget->count() == 0) {
+        return;
+    }
+
+    m_offlineListWidget->clear();
+    m_offlineClearButton->setEnabled(false);
+    m_buildBundleButton->setEnabled(false);
+    m_directDownloadButton->setEnabled(false);
+    m_saveOfflineListButton->setEnabled(false);
+
+    Q_EMIT logOutput("Offline package list cleared");
+}
+
+void AppInstallationPanel::onBuildBundle() {
+    if (m_offlineListWidget->count() == 0) {
+        QMessageBox::information(this,
+                                 tr("Empty List"),
+                                 tr("Add packages to the list before building a bundle."));
+        return;
+    }
+
+    if (m_offline_worker->isRunning()) {
+        QMessageBox::information(this,
+                                 tr("Operation In Progress"),
+                                 tr("An offline deployment operation is already running."));
+        return;
+    }
+
+    QString output_dir = QFileDialog::getExistingDirectory(
+        this, tr("Select Output Directory for Deployment Bundle"));
+
+    if (output_dir.isEmpty()) {
+        return;
+    }
+
+    // Collect packages from list
+    QVector<QPair<QString, QString>> packages;
+    for (int row = 0; row < m_offlineListWidget->count(); ++row) {
+        auto* item = m_offlineListWidget->item(row);
+        QString pkg_id = item->data(Qt::UserRole).toString();
+        QString version = item->data(Qt::UserRole + 1).toString();
+        packages.append({pkg_id, version});
+    }
+
+    Q_EMIT logOutput(
+        QString("=== Building Offline Bundle: %1 package(s) ===").arg(packages.size()));
+
+    m_offline_in_progress = true;
+    enableOfflineControls(false);
+
+    m_offline_worker->buildDeploymentBundle(packages,
+                                            output_dir,
+                                            tr("S.A.K. Utility offline deployment bundle"));
+}
+
+void AppInstallationPanel::onInstallFromBundle() {
+    if (m_offline_worker->isRunning()) {
+        QMessageBox::information(this,
+                                 tr("Operation In Progress"),
+                                 tr("An offline deployment operation is already running."));
+        return;
+    }
+
+    QString manifest_path = QFileDialog::getOpenFileName(
+        this, tr("Select Deployment Manifest"), QString(), tr("JSON Files (*.json)"));
+
+    if (manifest_path.isEmpty()) {
+        return;
+    }
+
+    // The packages directory is alongside the manifest
+    QFileInfo manifest_info(manifest_path);
+    QString packages_dir = manifest_info.dir().absolutePath() + "/packages";
+
+    if (!QDir(packages_dir).exists()) {
+        QMessageBox::warning(this,
+                             tr("Missing Packages"),
+                             tr("The 'packages' directory was not found alongside the manifest."));
+        return;
+    }
+
+    Q_EMIT logOutput(QString("=== Installing from Bundle: %1 ===").arg(manifest_path));
+
+    m_offline_in_progress = true;
+    enableOfflineControls(false);
+
+    m_offline_worker->installFromBundle(manifest_path, packages_dir);
+}
+
+void AppInstallationPanel::onDirectDownload() {
+    if (m_offlineListWidget->count() == 0) {
+        QMessageBox::information(this, tr("Empty List"), tr("Add packages before downloading."));
+        return;
+    }
+
+    if (m_offline_worker->isRunning()) {
+        QMessageBox::information(this,
+                                 tr("Operation In Progress"),
+                                 tr("An offline deployment operation is already running."));
+        return;
+    }
+
+    QString output_dir = QFileDialog::getExistingDirectory(this, tr("Select Download Directory"));
+
+    if (output_dir.isEmpty()) {
+        return;
+    }
+
+    QVector<QPair<QString, QString>> packages;
+    for (int row = 0; row < m_offlineListWidget->count(); ++row) {
+        auto* item = m_offlineListWidget->item(row);
+        QString pkg_id = item->data(Qt::UserRole).toString();
+        QString version = item->data(Qt::UserRole + 1).toString();
+        if (version.isEmpty()) {
+            version = "latest";
+        }
+        packages.append({pkg_id, version});
+    }
+
+    Q_EMIT logOutput(QString("=== Direct Download: %1 package(s) ===").arg(packages.size()));
+
+    m_offline_in_progress = true;
+    enableOfflineControls(false);
+
+    m_offline_worker->directDownload(packages, output_dir);
+}
+
+void AppInstallationPanel::onCancelOfflineOperation() {
+    if (m_offline_worker && m_offline_worker->isRunning()) {
+        m_offline_worker->cancel();
+        Q_EMIT logOutput("Offline operation cancelled by user");
+    }
+}
+
+void AppInstallationPanel::onSaveOfflineList() {
+    if (m_offlineListWidget->count() == 0) {
+        return;
+    }
+
+    QString file_path = QFileDialog::getSaveFileName(
+        this, tr("Save Package List"), "package_list.json", tr("JSON Files (*.json)"));
+
+    if (file_path.isEmpty()) {
+        return;
+    }
+
+    auto list = PackageListManager::createList("Custom List", "User-created package list");
+    for (int row = 0; row < m_offlineListWidget->count(); ++row) {
+        auto* item = m_offlineListWidget->item(row);
+        PackageListManager::addPackage(list,
+                                       item->data(Qt::UserRole).toString(),
+                                       item->data(Qt::UserRole + 1).toString());
+    }
+
+    if (PackageListManager::saveToFile(list, file_path)) {
+        Q_EMIT logOutput(QString("Package list saved: %1").arg(file_path));
+    } else {
+        sak::logError("[AppInstallationPanel] Failed to save package list");
+        QMessageBox::warning(this, tr("Save Failed"), tr("Could not save the package list."));
+    }
+}
+
+void AppInstallationPanel::onLoadOfflineList() {
+    QString file_path = QFileDialog::getOpenFileName(
+        this, tr("Load Package List"), QString(), tr("JSON Files (*.json)"));
+
+    if (file_path.isEmpty()) {
+        return;
+    }
+
+    auto list = PackageListManager::loadFromFile(file_path);
+    if (list.entries.isEmpty()) {
+        QMessageBox::warning(this,
+                             tr("Load Failed"),
+                             tr("The selected file contains no packages or is invalid."));
+        return;
+    }
+
+    int added = 0;
+    for (const auto& entry : list.entries) {
+        bool exists = false;
+        for (int row = 0; row < m_offlineListWidget->count(); ++row) {
+            QString item_data = m_offlineListWidget->item(row)->data(Qt::UserRole).toString();
+            if (item_data.compare(entry.package_id, Qt::CaseInsensitive) == 0) {
+                exists = true;
+                break;
+            }
+        }
+        if (!exists) {
+            QString label = entry.notes.isEmpty()
+                                ? entry.package_id
+                                : QString("%1  (%2)").arg(entry.package_id, entry.notes);
+            auto* item = new QListWidgetItem(label);
+            item->setData(Qt::UserRole, entry.package_id);
+            item->setData(Qt::UserRole + 1, entry.version);
+            m_offlineListWidget->addItem(item);
+            added++;
+        }
+    }
+
+    bool has_items = m_offlineListWidget->count() > 0;
+    m_offlineClearButton->setEnabled(has_items);
+    m_buildBundleButton->setEnabled(has_items);
+    m_directDownloadButton->setEnabled(has_items);
+    m_saveOfflineListButton->setEnabled(has_items);
+
+    Q_EMIT logOutput(QString("Loaded list '%1': %2 packages added").arg(list.name).arg(added));
+}
+
+// ============================================================================
+// Offline Deployment Helpers
+// ============================================================================
+
+void AppInstallationPanel::updateOfflineListDisplay() {
+    // Already managed inline — list widget items track their own data
+}
+
+void AppInstallationPanel::enableOfflineControls(bool enabled) {
+    m_presetCombo->setEnabled(enabled);
+    m_offlinePackageEdit->setEnabled(enabled);
+    m_offlineAddButton->setEnabled(enabled);
+    m_offlineRemoveButton->setEnabled(enabled && !m_offlineListWidget->selectedItems().isEmpty());
+    m_offlineClearButton->setEnabled(enabled && m_offlineListWidget->count() > 0);
+    m_buildBundleButton->setEnabled(enabled && m_offlineListWidget->count() > 0);
+    m_directDownloadButton->setEnabled(enabled && m_offlineListWidget->count() > 0);
+    m_installFromBundleButton->setEnabled(enabled);
+    m_saveOfflineListButton->setEnabled(enabled && m_offlineListWidget->count() > 0);
+    m_loadOfflineListButton->setEnabled(enabled);
 }

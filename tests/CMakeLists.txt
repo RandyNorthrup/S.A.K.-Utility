@@ -18,21 +18,6 @@ file(MAKE_DIRECTORY "${TEST_OUTPUT_DIR}")
 # ============================================================================
 
 set(UNIT_TESTS
-    test_transfer_protocol
-    test_transfer_types
-    test_transfer_security
-    test_network_connection
-    test_peer_discovery
-    test_destination_registry
-    test_orchestration_protocol
-    test_migration_orchestrator
-    test_orchestration_types
-    test_orchestration_client
-    test_orchestration_discovery_service
-    test_mapping_engine
-    test_parallel_transfer_manager
-    test_deployment_history
-    test_assignment_queue_store
     test_windows_iso_downloader
     test_linux_iso_downloader
 )
@@ -53,104 +38,6 @@ foreach(test_name ${UNIT_TESTS})
         "${CMAKE_CURRENT_SOURCE_DIR}/../src/core/logger.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/../include/sak/logger.h"
     )
-
-    if(test_name STREQUAL "test_transfer_protocol")
-        list(APPEND impl_sources
-            "${CMAKE_CURRENT_SOURCE_DIR}/../src/core/network_transfer_protocol.cpp"
-            "${CMAKE_CURRENT_SOURCE_DIR}/../include/sak/network_transfer_protocol.h"
-        )
-    endif()
-
-    if(test_name STREQUAL "test_transfer_types")
-        list(APPEND impl_sources
-            "${CMAKE_CURRENT_SOURCE_DIR}/../src/core/network_transfer_types.cpp"
-            "${CMAKE_CURRENT_SOURCE_DIR}/../include/sak/network_transfer_types.h"
-            "${CMAKE_CURRENT_SOURCE_DIR}/../src/core/user_profile_types.cpp"
-            "${CMAKE_CURRENT_SOURCE_DIR}/../include/sak/user_profile_types.h"
-        )
-    endif()
-
-    if(test_name STREQUAL "test_transfer_security")
-        list(APPEND impl_sources
-            "${CMAKE_CURRENT_SOURCE_DIR}/../src/core/network_transfer_security.cpp"
-            "${CMAKE_CURRENT_SOURCE_DIR}/../include/sak/network_transfer_security.h"
-        )
-    endif()
-
-    if(test_name STREQUAL "test_network_connection")
-        list(APPEND impl_sources
-            "${CMAKE_CURRENT_SOURCE_DIR}/../src/core/network_connection_manager.cpp"
-            "${CMAKE_CURRENT_SOURCE_DIR}/../include/sak/network_connection_manager.h"
-        )
-    endif()
-
-    if(test_name STREQUAL "test_peer_discovery")
-        list(APPEND impl_sources
-            "${CMAKE_CURRENT_SOURCE_DIR}/../src/core/peer_discovery_service.cpp"
-            "${CMAKE_CURRENT_SOURCE_DIR}/../include/sak/peer_discovery_service.h"
-            "${CMAKE_CURRENT_SOURCE_DIR}/../src/core/network_transfer_types.cpp"
-            "${CMAKE_CURRENT_SOURCE_DIR}/../include/sak/network_transfer_types.h"
-            "${CMAKE_CURRENT_SOURCE_DIR}/../src/core/user_profile_types.cpp"
-            "${CMAKE_CURRENT_SOURCE_DIR}/../include/sak/user_profile_types.h"
-        )
-    endif()
-
-    if(test_name STREQUAL "test_assignment_queue_store")
-        list(APPEND impl_sources
-            "${CMAKE_CURRENT_SOURCE_DIR}/../src/core/orchestration_types.cpp"
-        )
-    endif()
-
-    if(test_name STREQUAL "test_mapping_engine")
-        list(APPEND impl_sources
-            "${CMAKE_CURRENT_SOURCE_DIR}/../src/core/destination_registry.cpp"
-            "${CMAKE_CURRENT_SOURCE_DIR}/../src/core/orchestration_types.cpp"
-            "${CMAKE_CURRENT_SOURCE_DIR}/../include/sak/destination_registry.h"
-        )
-    endif()
-
-    if(test_name STREQUAL "test_migration_orchestrator")
-        list(APPEND impl_sources
-            "${CMAKE_CURRENT_SOURCE_DIR}/../src/core/deployment_manager.cpp"
-            "${CMAKE_CURRENT_SOURCE_DIR}/../src/core/destination_registry.cpp"
-            "${CMAKE_CURRENT_SOURCE_DIR}/../src/core/mapping_engine.cpp"
-            "${CMAKE_CURRENT_SOURCE_DIR}/../src/core/orchestration_protocol.cpp"
-            "${CMAKE_CURRENT_SOURCE_DIR}/../src/core/orchestration_types.cpp"
-            "${CMAKE_CURRENT_SOURCE_DIR}/../src/core/orchestration_server.cpp"
-            "${CMAKE_CURRENT_SOURCE_DIR}/../src/core/orchestration_discovery_service.cpp"
-            "${CMAKE_CURRENT_SOURCE_DIR}/../include/sak/deployment_manager.h"
-            "${CMAKE_CURRENT_SOURCE_DIR}/../include/sak/destination_registry.h"
-            "${CMAKE_CURRENT_SOURCE_DIR}/../include/sak/mapping_engine.h"
-            "${CMAKE_CURRENT_SOURCE_DIR}/../include/sak/orchestration_server_interface.h"
-            "${CMAKE_CURRENT_SOURCE_DIR}/../include/sak/orchestration_server.h"
-            "${CMAKE_CURRENT_SOURCE_DIR}/../include/sak/orchestration_discovery_service.h"
-        )
-    endif()
-
-    if(test_name STREQUAL "test_orchestration_protocol")
-        list(APPEND impl_sources
-            "${CMAKE_CURRENT_SOURCE_DIR}/../src/core/orchestration_protocol.cpp"
-            "${CMAKE_CURRENT_SOURCE_DIR}/../include/sak/orchestration_protocol.h"
-            "${CMAKE_CURRENT_SOURCE_DIR}/../src/core/orchestration_types.cpp"
-            "${CMAKE_CURRENT_SOURCE_DIR}/../include/sak/orchestration_types.h"
-        )
-    endif()
-
-    if(test_name STREQUAL "test_orchestration_client")
-        list(APPEND impl_sources
-            "${CMAKE_CURRENT_SOURCE_DIR}/../src/core/orchestration_protocol.cpp"
-            "${CMAKE_CURRENT_SOURCE_DIR}/../src/core/orchestration_types.cpp"
-            "${CMAKE_CURRENT_SOURCE_DIR}/../include/sak/orchestration_protocol.h"
-            "${CMAKE_CURRENT_SOURCE_DIR}/../include/sak/orchestration_types.h"
-        )
-    endif()
-
-    if(test_name STREQUAL "test_orchestration_discovery_service")
-        list(APPEND impl_sources
-            "${CMAKE_CURRENT_SOURCE_DIR}/../src/core/orchestration_types.cpp"
-            "${CMAKE_CURRENT_SOURCE_DIR}/../include/sak/orchestration_types.h"
-        )
-    endif()
 
     if(test_name STREQUAL "test_windows_iso_downloader")
         list(APPEND impl_sources
@@ -191,15 +78,7 @@ foreach(test_name ${UNIT_TESTS})
         )
 
         set(extra_unit_libs "")
-        if(test_name STREQUAL "test_network_connection"
-            OR test_name STREQUAL "test_peer_discovery"
-            OR test_name STREQUAL "test_orchestration_discovery_service"
-            OR test_name STREQUAL "test_orchestration_client"
-            OR test_name STREQUAL "test_orchestration_protocol"
-            OR test_name STREQUAL "test_migration_orchestrator"
-            OR test_name STREQUAL "test_transfer_protocol"
-            OR test_name STREQUAL "test_transfer_types"
-            OR test_name STREQUAL "test_windows_iso_downloader"
+        if(test_name STREQUAL "test_windows_iso_downloader"
             OR test_name STREQUAL "test_linux_iso_downloader")
             list(APPEND extra_unit_libs Qt6::Network)
         endif()
@@ -233,36 +112,6 @@ foreach(test_name ${UNIT_TESTS})
         message(STATUS "Added unit test: ${test_name}")
     endif()
 endforeach()
-
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_parallel_transfer_manager_stress.cpp")
-    add_executable(test_parallel_transfer_manager_stress
-        unit/test_parallel_transfer_manager_stress.cpp
-        ../src/core/parallel_transfer_manager.cpp
-        ../src/core/logger.cpp
-        ../include/sak/parallel_transfer_manager.h
-    )
-
-    set_target_properties(test_parallel_transfer_manager_stress PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
-    )
-
-    target_link_libraries(test_parallel_transfer_manager_stress PRIVATE
-        Qt6::Core
-        Qt6::Test
-        ${PLATFORM_LIBS}
-    )
-
-    target_include_directories(test_parallel_transfer_manager_stress PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-
-    add_test(NAME test_parallel_transfer_manager_stress
-             COMMAND test_parallel_transfer_manager_stress
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-
-    message(STATUS "Added unit test: test_parallel_transfer_manager_stress")
-endif()
 
 # ============================================================================
 # Unit Tests - Diagnostic & Benchmarking Panel
@@ -819,30 +668,6 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_package_matcher.cpp")
     message(STATUS "Added unit test: test_package_matcher")
 endif()
 
-# test_deployment_manager — FIFO queue, signals, readiness check
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_deployment_manager.cpp")
-    add_executable(test_deployment_manager
-        unit/test_deployment_manager.cpp
-        ../src/core/deployment_manager.cpp
-        ../src/core/orchestration_types.cpp
-        ../src/core/logger.cpp
-        ../include/sak/deployment_manager.h
-    )
-    set_target_properties(test_deployment_manager PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
-    )
-    target_link_libraries(test_deployment_manager PRIVATE
-        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_deployment_manager PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_deployment_manager COMMAND test_deployment_manager
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_deployment_manager")
-endif()
-
 # --- Tier 3: Hardware & System ---
 
 # test_drive_scanner — DriveInfo struct, getDrives, lifecycle
@@ -966,66 +791,106 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_logger.cpp")
 endif()
 
 # ============================================================================
-# Integration Tests
+# Unit Tests - Offline Deployment
 # ============================================================================
 
-# Integration test: Network Transfer Workflow
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/integration/test_network_transfer_workflow.cpp")
-    add_executable(test_network_transfer_workflow
-        integration/test_network_transfer_workflow.cpp
-        ../src/core/network_transfer_controller.cpp
-        ../src/core/network_transfer_worker.cpp
-        ../src/core/network_connection_manager.cpp
-        ../src/core/peer_discovery_service.cpp
-        ../src/core/orchestration_client.cpp
-        ../src/core/orchestration_discovery_service.cpp
-        ../src/core/orchestration_protocol.cpp
-        ../src/core/orchestration_types.cpp
-        ../src/core/network_transfer_protocol.cpp
-        ../src/core/network_transfer_types.cpp
-        ../src/core/network_transfer_security.cpp
-        ../src/core/user_profile_types.cpp
-        ../src/core/permission_manager.cpp
-        ../src/core/file_hash.cpp
-        ../src/core/path_utils.cpp
+# test_install_script_parser — PowerShell install script parsing
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_install_script_parser.cpp")
+    add_executable(test_install_script_parser
+        unit/test_install_script_parser.cpp
+        ../src/core/install_script_parser.cpp
+        ../include/sak/install_script_parser.h
         ../src/core/logger.cpp
-        ../include/sak/network_transfer_controller.h
-        ../include/sak/network_transfer_worker.h
-        ../include/sak/network_connection_manager.h
-        ../include/sak/peer_discovery_service.h
-        ../include/sak/orchestration_client.h
-        ../include/sak/orchestration_discovery_service.h
-        ../include/sak/orchestration_protocol.h
-        ../include/sak/orchestration_types.h
-        ../include/sak/network_transfer_protocol.h
-        ../include/sak/network_transfer_types.h
-        ../include/sak/network_transfer_security.h
-        ../include/sak/user_profile_types.h
     )
-
-    set_target_properties(test_network_transfer_workflow PROPERTIES
+    set_target_properties(test_install_script_parser PROPERTIES
         AUTOMOC ON
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
     )
-
-    target_link_libraries(test_network_transfer_workflow PRIVATE
-        Qt6::Core
-        Qt6::Network
-        Qt6::Test
-        Qt6::Concurrent
-        ${PLATFORM_LIBS}
+    target_link_libraries(test_install_script_parser PRIVATE
+        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
     )
-
-    target_include_directories(test_network_transfer_workflow PRIVATE
+    target_include_directories(test_install_script_parser PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
-
-    add_test(NAME test_network_transfer_workflow
-             COMMAND test_network_transfer_workflow
+    add_test(NAME test_install_script_parser COMMAND test_install_script_parser
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-
-    message(STATUS "Added integration test: test_network_transfer_workflow")
+    message(STATUS "Added unit test: test_install_script_parser")
 endif()
+
+# test_script_rewriter — URL replacement for offline deployment
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_script_rewriter.cpp")
+    add_executable(test_script_rewriter
+        unit/test_script_rewriter.cpp
+        ../src/core/script_rewriter.cpp
+        ../src/core/install_script_parser.cpp
+        ../include/sak/script_rewriter.h
+        ../include/sak/install_script_parser.h
+        ../src/core/logger.cpp
+    )
+    set_target_properties(test_script_rewriter PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+    )
+    target_link_libraries(test_script_rewriter PRIVATE
+        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_script_rewriter PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_script_rewriter COMMAND test_script_rewriter
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_script_rewriter")
+endif()
+
+# test_package_list_manager — curated package lists and presets
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_package_list_manager.cpp")
+    add_executable(test_package_list_manager
+        unit/test_package_list_manager.cpp
+        ../src/core/package_list_manager.cpp
+        ../include/sak/package_list_manager.h
+        ../src/core/logger.cpp
+    )
+    set_target_properties(test_package_list_manager PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+    )
+    target_link_libraries(test_package_list_manager PRIVATE
+        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_package_list_manager PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_package_list_manager COMMAND test_package_list_manager
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_package_list_manager")
+endif()
+
+# test_nuget_api_client — OData XML parsing, construction, metadata structs
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_nuget_api_client.cpp")
+    add_executable(test_nuget_api_client
+        unit/test_nuget_api_client.cpp
+        ../src/core/nuget_api_client.cpp
+        ../include/sak/nuget_api_client.h
+        ../src/core/logger.cpp
+    )
+    set_target_properties(test_nuget_api_client PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+    )
+    target_link_libraries(test_nuget_api_client PRIVATE
+        Qt6::Core Qt6::Test Qt6::Network Qt6::Xml ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_nuget_api_client PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_nuget_api_client COMMAND test_nuget_api_client
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_nuget_api_client")
+endif()
+
+# ============================================================================
+# Integration Tests
+# ============================================================================
 
 # Integration test: UUP Conversion Pipeline
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/integration/test_uup_conversion_pipeline.cpp")
@@ -1431,54 +1296,6 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_windows_usb_creator.cpp")
     message(STATUS "Added unit test: test_windows_usb_creator")
 endif()
 
-# test_network_transfer_controller — Config, mode transitions, pause/resume/cancel, signals (TST-08)
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_network_transfer_controller.cpp")
-    add_executable(test_network_transfer_controller
-        unit/test_network_transfer_controller.cpp
-        ../src/core/network_transfer_controller.cpp
-        ../src/core/network_transfer_worker.cpp
-        ../src/core/network_connection_manager.cpp
-        ../src/core/peer_discovery_service.cpp
-        ../src/core/orchestration_client.cpp
-        ../src/core/orchestration_discovery_service.cpp
-        ../src/core/orchestration_protocol.cpp
-        ../src/core/orchestration_types.cpp
-        ../src/core/network_transfer_protocol.cpp
-        ../src/core/network_transfer_types.cpp
-        ../src/core/network_transfer_security.cpp
-        ../src/core/user_profile_types.cpp
-        ../src/core/permission_manager.cpp
-        ../src/core/file_hash.cpp
-        ../src/core/path_utils.cpp
-        ../src/core/logger.cpp
-        ../include/sak/network_transfer_controller.h
-        ../include/sak/network_transfer_worker.h
-        ../include/sak/network_connection_manager.h
-        ../include/sak/peer_discovery_service.h
-        ../include/sak/orchestration_client.h
-        ../include/sak/orchestration_discovery_service.h
-        ../include/sak/orchestration_protocol.h
-        ../include/sak/orchestration_types.h
-        ../include/sak/network_transfer_protocol.h
-        ../include/sak/network_transfer_types.h
-        ../include/sak/network_transfer_security.h
-        ../include/sak/user_profile_types.h
-    )
-    set_target_properties(test_network_transfer_controller PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
-    )
-    target_link_libraries(test_network_transfer_controller PRIVATE
-        Qt6::Core Qt6::Network Qt6::Test Qt6::Concurrent ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_network_transfer_controller PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_network_transfer_controller COMMAND test_network_transfer_controller
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_network_transfer_controller")
-endif()
-
 # test_flash_worker — Structs, validation, early-exit paths, cancellation (TST-09)
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_flash_worker.cpp")
     add_executable(test_flash_worker
@@ -1519,39 +1336,6 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_flash_worker.cpp")
     add_test(NAME test_flash_worker COMMAND test_flash_worker
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_flash_worker")
-endif()
-
-# test_network_transfer_worker — DataOptions, stop/bandwidth, protocol validation via loopback (TST-01)
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_network_transfer_worker.cpp")
-    add_executable(test_network_transfer_worker
-        unit/test_network_transfer_worker.cpp
-        ../src/core/network_transfer_worker.cpp
-        ../src/core/network_transfer_types.cpp
-        ../src/core/network_transfer_security.cpp
-        ../src/core/user_profile_types.cpp
-        ../src/core/permission_manager.cpp
-        ../src/core/file_hash.cpp
-        ../src/core/path_utils.cpp
-        ../src/core/logger.cpp
-        ../include/sak/network_transfer_worker.h
-        ../include/sak/network_transfer_types.h
-        ../include/sak/network_transfer_security.h
-        ../include/sak/user_profile_types.h
-        ../include/sak/permission_manager.h
-    )
-    set_target_properties(test_network_transfer_worker PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
-    )
-    target_link_libraries(test_network_transfer_worker PRIVATE
-        Qt6::Core Qt6::Network Qt6::Test ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_network_transfer_worker PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_network_transfer_worker COMMAND test_network_transfer_worker
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_network_transfer_worker")
 endif()
 
 # ============================================================================
@@ -2232,31 +2016,6 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_wifi_profile_scanner.cpp")
     message(STATUS "Added unit test: test_wifi_profile_scanner")
 endif()
 
-# test_network_transfer_report — TransferReport toJson serialization
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_network_transfer_report.cpp")
-    add_executable(test_network_transfer_report
-        unit/test_network_transfer_report.cpp
-        ../src/core/network_transfer_report.cpp
-        ../src/core/network_transfer_types.cpp
-        ../src/core/user_profile_types.cpp
-        ../src/core/logger.cpp
-    )
-    set_target_properties(test_network_transfer_report PROPERTIES
-        AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
-    )
-    target_link_libraries(test_network_transfer_report PRIVATE
-        Qt6::Core Qt6::Network Qt6::Test ${PLATFORM_LIBS}
-    )
-    target_include_directories(test_network_transfer_report PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    )
-    add_test(NAME test_network_transfer_report
-             COMMAND test_network_transfer_report
-             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-    message(STATUS "Added unit test: test_network_transfer_report")
-endif()
-
 # ============================================================================
 # Unit Tests - Email & PST/OST Inspector Panel
 # ============================================================================
@@ -2470,7 +2229,7 @@ add_custom_target(run_unit_tests
 
 # Run integration tests only
 add_custom_target(run_integration_tests
-    COMMAND ${CMAKE_CTEST_COMMAND} -R "test_(backup|migration|network_transfer)_workflow" --output-on-failure
+    COMMAND ${CMAKE_CTEST_COMMAND} -R "test_(backup|migration)_workflow|test_uup_conversion_pipeline|test_ost_integration" --output-on-failure
     WORKING_DIRECTORY "${CMAKE_BINARY_DIR}"
     COMMENT "Running integration tests..."
 )

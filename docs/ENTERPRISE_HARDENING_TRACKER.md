@@ -59,46 +59,31 @@ A comprehensive deep scan of the entire S.A.K. Utility codebase (148 `.cpp`, 105
 
 | ID | File | Line(s) | Finding | Status |
 |----|------|---------|---------|--------|
-| BUG-01 | `src/core/network_transfer_worker.cpp` | 791, 809 | **Raw `QFile*` pointer** — `state.current_file = new QFile(tempPath)` without RAII. Leak on error paths. Double-delete risk if `processFileEnd` entered twice. No null check in `processDataChunk`. | ✅ |
-| BUG-02 | `src/core/network_transfer_worker.cpp` | 267–290 | **Unbounded memory allocation from network** — `readExact(socket, header.payload_size)` uses caller-controlled `payload_size` with no maximum. Malicious peer can send 4GB payload_size → OOM DoS. | ✅ |
-| BUG-03 | `src/core/flash_coordinator.cpp` | 24+ | **Race condition on `m_progress` struct** — `completedDrives++`, `activeDrives--`, `failedDrives++` are non-atomic, non-mutex-protected. Read from UI thread, written from worker callbacks. | ✅ |
-| BUG-04 | `src/core/elevation_manager.cpp` | 63, 87, 134 | **ANSI encoding for paths** — `GetModuleFileNameA` + `ShellExecuteExA` will fail/corrupt paths with non-ASCII characters. Must use wide-char (`W`) variants. | ✅ |
-| BUG-05 | `src/threading/flash_worker.cpp` | 382 | **Off-by-one / underflow in `verifySample()`** — `maxOffset = (m_totalBytes / blockSize) - 1`. If `m_totalBytes < blockSize`, underflows to `LLONG_MAX`. `QRandomGenerator::bounded(maxOffset)` receives invalid bound. If `m_totalBytes == 0`, division result is 0, `-1` causes UB. | ✅ |
+| BUG-01 | `src/core/flash_coordinator.cpp` | 24+ | **Race condition on `m_progress` struct** — `completedDrives++`, `activeDrives--`, `failedDrives++` are non-atomic, non-mutex-protected. Read from UI thread, written from worker callbacks. | ✅ |
+| BUG-02 | `src/core/elevation_manager.cpp` | 63, 87, 134 | **ANSI encoding for paths** — `GetModuleFileNameA` + `ShellExecuteExA` will fail/corrupt paths with non-ASCII characters. Must use wide-char (`W`) variants. | ✅ |
+| BUG-03 | `src/threading/flash_worker.cpp` | 382 | **Off-by-one / underflow in `verifySample()`** — `maxOffset = (m_totalBytes / blockSize) - 1`. If `m_totalBytes < blockSize`, underflows to `LLONG_MAX`. `QRandomGenerator::bounded(maxOffset)` receives invalid bound. If `m_totalBytes == 0`, division result is 0, `-1` causes UB. | ✅ |
 
 ### 🟠 P1 — High
 
 | ID | File | Line(s) | Finding | Status |
 |----|------|---------|---------|--------|
-| BUG-06 | `src/core/peer_discovery_service.cpp` | 99 | **No input validation on UDP datagrams** — Network JSON parsed without size limit or field validation. Attacker can inject arbitrary peer entries on LAN. | ✅ |
-| BUG-07 | `src/core/orchestration_server.cpp` | 117, 124 | **Insufficient message validation** — TCP messages deserialized with type checking but no payload size/field validation. Dangling pointer risk from `sender()` in `onSocketReadyRead`. | ✅ |
-| BUG-08 | `src/core/network_connection_manager.cpp` | 38, 80 | **Socket replacement without cleanup** — If second connection arrives, old socket replaced without disconnecting signals. Error lambda captures `this` and reads `m_socket` which may have changed. | ✅ |
-| BUG-09 | `src/core/windows_usb_creator.cpp` | 41 | **Unvalidated `diskNumber` in shell commands** — Passed directly to diskpart scripts and PowerShell without sanitization. Command injection vector. | ✅ |
-| BUG-10 | `src/core/drive_scanner.cpp` | 14 | **Non-atomic `m_isScanning` flag** — Plain `bool` used as reentrancy guard. Static `s_instance` pointer has no thread safety. | ✅ |
+| BUG-04 | `src/core/windows_usb_creator.cpp` | 41 | **Unvalidated `diskNumber` in shell commands** — Passed directly to diskpart scripts and PowerShell without sanitization. Command injection vector. | ✅ |
+| BUG-05 | `src/core/drive_scanner.cpp` | 14 | **Non-atomic `m_isScanning` flag** — Plain `bool` used as reentrancy guard. Static `s_instance` pointer has no thread safety. | ✅ |
 
 ### 🟡 P2 — Medium
 
 | ID | File | Line(s) | Finding | Status |
 |----|------|---------|---------|--------|
-| BUG-11 | `src/core/network_transfer_security.cpp` | 17–23 | **No bounds check on `size` parameter** — `generateRandomBytes(int size)` passes `int` to `BCryptGenRandom(ULONG)`. Negative values would wrap. | ✅ |
-| BUG-12 | `src/core/encryption.cpp` | 27 | **Same issue** — `generate_random_bytes(int size)` casts `int` to `ULONG` for BCrypt. | ✅ |
-| BUG-13 | `src/core/process_runner.cpp` | 14 | **No `waitForStarted()` check** — `QProcess::start()` followed directly by `waitForFinished()`. If binary doesn't exist, may wait indefinitely. | ✅ |
-| BUG-14 | `src/core/flash_coordinator.cpp` | 24 | **`m_state`/`m_result` not synchronized** — `m_isCancelled` is atomic but `m_state` and `m_result` are accessed cross-thread without protection. | ✅ |
-| BUG-15 | `src/core/windows_usb_creator.cpp` | 25, 179 | **`m_lastError` thread safety** — `m_cancelled` is atomic but `m_lastError` (QString) written from worker, read from UI thread without sync. `QTemporaryFile` flush not checked. | ✅ |
-| BUG-16 | `src/core/network_transfer_worker.cpp` | 290 | **`qint64` to `int` truncation** — `data.size()` returns `int` but compared against `qint64 size`. For payloads >2GB, infinite read loop. | ✅ |
-| BUG-17 | `src/threading/flash_worker.cpp` | 297 | **Unchecked `FlushFileBuffers`** — Return value ignored. Data loss if flush fails. | ✅ |
-| BUG-18 | `src/threading/flash_worker.cpp` | 514 | **Unchecked DWORD cast** — `static_cast<DWORD>(toRead)` without guard (safe in practice with 64MB buffer). | ✅ |
-| BUG-19 | `src/core/migration_orchestrator.cpp` | 129 | **`setServer()` leaks old server** — Old `m_server` (allocated with `new`) not deleted on replacement. | ✅ |
-| BUG-20 | `src/core/network_transfer_worker.cpp` | 667 | **Unchecked `sendFrame` for resume info** — Resume frame sent without verifying write succeeded. | ✅ |
-
-### 🟢 P3 — Low
-
-| ID | File | Line(s) | Finding | Status |
-|----|------|---------|---------|--------|
-| BUG-21 | `src/actions/generate_system_report_action.cpp` | 306 | **C-style cast** — `(double)storage.bytesFree()` should be `static_cast<double>()`. | ✅ |
-| BUG-22 | `src/main.cpp` | 116 | **Hardcoded fallback path** — `"C:/SAK_Backups"` with no validation for writability/space. | ✅ |
-| BUG-23 | `src/core/config_manager.cpp` | 80 | **Hardcoded port numbers** — 54321, 54322, 54323 as defaults (not a bug, but should be configurable/documented). | ✅ Documented |
-| BUG-24 | `src/core/flash_coordinator.cpp` | 203 | **Inconsistent sender() cast checking** — `qobject_cast` result checked in `onWorkerCompleted`/`Failed` but not in `onWorkerProgress`. | ✅ |
-| BUG-25 | `src/core/permission_manager.cpp` | 165 | **Missing `default:` in switch** — `switch(mode)` with all cases returning but no `default:` to catch future enum additions. | ✅ |
+| BUG-06 | `src/core/encryption.cpp` | 27 | **Same issue** — `generate_random_bytes(int size)` casts `int` to `ULONG` for BCrypt. | ✅ |
+| BUG-07 | `src/core/process_runner.cpp` | 14 | **No `waitForStarted()` check** — `QProcess::start()` followed directly by `waitForFinished()`. If binary doesn't exist, may wait indefinitely. | ✅ |
+| BUG-08 | `src/core/flash_coordinator.cpp` | 24 | **`m_state`/`m_result` not synchronized** — `m_isCancelled` is atomic but `m_state` and `m_result` are accessed cross-thread without protection. | ✅ |
+| BUG-09 | `src/core/windows_usb_creator.cpp` | 25, 179 | **`m_lastError` thread safety** — `m_cancelled` is atomic but `m_lastError` (QString) written from worker, read from UI thread without sync. `QTemporaryFile` flush not checked. | ✅ |
+| BUG-10 | `src/threading/flash_worker.cpp` | 297 | **Unchecked `FlushFileBuffers`** — Return value ignored. Data loss if flush fails. | ✅ |
+| BUG-11 | `src/threading/flash_worker.cpp` | 514 | **Unchecked DWORD cast** — `static_cast<DWORD>(toRead)` without guard (safe in practice with 64MB buffer). | ✅ |
+| BUG-12 | `src/actions/generate_system_report_action.cpp` | 306 | **C-style cast** — `(double)storage.bytesFree()` should be `static_cast<double>()`. | ✅ |
+| BUG-13 | `src/main.cpp` | 116 | **Hardcoded fallback path** — `"C:/SAK_Backups"` with no validation for writability/space. | ✅ |
+| BUG-14 | `src/core/flash_coordinator.cpp` | 203 | **Inconsistent sender() cast checking** — `qobject_cast` result checked in `onWorkerCompleted`/`Failed` but not in `onWorkerProgress`. | ✅ |
+| BUG-15 | `src/core/permission_manager.cpp` | 165 | **Missing `default:` in switch** — `switch(mode)` with all cases returning but no `default:` to catch future enum additions. | ✅ |
 
 ---
 
@@ -109,7 +94,7 @@ A comprehensive deep scan of the entire S.A.K. Utility codebase (148 `.cpp`, 105
 | ID | Scope | Count | Finding | Status |
 |----|-------|-------|---------|--------|
 | LOG-01 | 6 core files | 23 | **Residual `qWarning()` calls** — Should use `sak::logWarning()`. Files: `user_data_manager.cpp` (7), `chocolatey_manager.cpp` (5), `migration_report.cpp` (5), `app_scanner.cpp` (3), `app_migration_worker.cpp` (2), `package_matcher.cpp` (1). | ✅ |
-| LOG-02 | 15 GUI files | ~70+ | **`QMessageBox` without internal logging** — User-facing error/warning dialogs fire but errors are NOT recorded in log files. Key files: `wifi_manager_panel.cpp` (9), `network_transfer_panel_orchestrator.cpp` (12), `network_transfer_panel_transfer.cpp` (8), `image_flasher_panel.cpp` (7), `app_migration_panel_table.cpp` (4), `windows_iso_download_dialog.cpp` (4), +9 more files. | ✅ |
+| LOG-02 | 12 GUI files | ~50+ | **`QMessageBox` without internal logging** — User-facing error/warning dialogs fire but errors are NOT recorded in log files. Key files: `wifi_manager_panel.cpp` (9), `image_flasher_panel.cpp` (7), `app_migration_panel_table.cpp` (4), `windows_iso_download_dialog.cpp` (4), +8 more files. | ✅ |
 | LOG-03 | 2 files | 3 | **Silent catch blocks** — `input_validator.cpp:202,433` (`catch(...)` with no log), `wifi_manager_panel.cpp:1387` (`catch(std::exception&)` with `Q_UNUSED`). | ✅ |
 
 ### 🟡 P2 — Medium
@@ -140,8 +125,8 @@ A comprehensive deep scan of the entire S.A.K. Utility codebase (148 `.cpp`, 105
 
 | ID | Scope | Finding | Status |
 |----|-------|---------|--------|
-| A11Y-03 | 6 panels | **Color-only status indicators** — Phase states in ISO dialogs (blue/green/amber/red), network transfer pills (green/amber), diagnostic labels all use color alone. No text/icon fallback for colorblind users. Files: `windows_iso_download_dialog.cpp:417-429`, `linux_iso_download_dialog.cpp:379-394`, `network_transfer_panel.cpp:504-506`. | ✅ |
-| A11Y-04 | 5 panels | **Missing tooltips on interactive widgets** — `OrganizerPanel` (0 tooltips on 6 buttons), `DiagnosticBenchmarkPanel` (0 on ~15 buttons), `NetworkTransferPanel` (1 of 15+ buttons), `ImageFlasherPanel` (0 on ~5 buttons), `QuickActionsPanel` (Browse/Settings lacking). | ✅ |
+| A11Y-03 | 4 panels | **Color-only status indicators** — Phase states in ISO dialogs (blue/green/amber/red), diagnostic labels all use color alone. No text/icon fallback for colorblind users. Files: `windows_iso_download_dialog.cpp:417-429`, `linux_iso_download_dialog.cpp:379-394`. | ✅ |
+| A11Y-04 | 4 panels | **Missing tooltips on interactive widgets** — `OrganizerPanel` (0 tooltips on 6 buttons), `DiagnosticBenchmarkPanel` (0 on ~15 buttons), `ImageFlasherPanel` (0 on ~5 buttons), `QuickActionsPanel` (Browse/Settings lacking). | ✅ |
 | A11Y-05 | Multiple files | **Icons/images without alt text** — WiFi eye toggle buttons, QR code previews, about panel icon, wizard icons, splash screen — none have accessible text. | ✅ |
 
 ### 🟡 P2 — Medium
@@ -165,19 +150,19 @@ A comprehensive deep scan of the entire S.A.K. Utility codebase (148 `.cpp`, 105
 
 | ID | Finding | Status |
 |----|---------|--------|
-| VIS-01 | **Only 4/9 panels have title headers** — `QuickActionsPanel` (HTML `<h2>`), `UserMigrationPanel` (HTML `<h2>`), `ImageFlasherPanel` (QFont 16pt bold), `WifiManagerPanel` (styled `<b>` 13pt). Missing on: `OrganizerPanel`, `DuplicateFinderPanel`, `AppMigrationPanel`, `NetworkTransferPanel`, `DiagnosticBenchmarkPanel`. The 4 that exist use **3 different mechanisms** and **3+ different font sizes**. | ✅ |
+| VIS-01 | **Only 4/8 panels have title headers** — `QuickActionsPanel` (HTML `<h2>`), `UserMigrationPanel` (HTML `<h2>`), `ImageFlasherPanel` (QFont 16pt bold), `WifiManagerPanel` (styled `<b>` 13pt). Missing on: `OrganizerPanel`, `DuplicateFinderPanel`, `AppMigrationPanel`, `DiagnosticBenchmarkPanel`. The 4 that exist use **3 different mechanisms** and **3+ different font sizes**. | ✅ |
 | VIS-02 | **50+ hardcoded color hex values** across 15+ files — Tailwind-style tokens (`#64748b`, `#2563eb`, `#16a34a`, `#dc2626`, `#d97706`, etc.) spelled out as raw hex in every file. WiFi panel uses non-standard `#666`/`#555`. No centralized color constants. Dark mode impossible without touching every file. | ✅ |
 
 ### 🟡 P2 — Medium
 
 | ID | Finding | Status |
 |----|---------|--------|
-| VIS-03 | **Three different content margin values** — 8px (`AppMigration`, `NetworkTransfer`, `WiFi`), 12px (`QuickActions`, `UserMigration`, `DuplicateFinder`, `Diagnostic`, `ImageFlasher`), 16px (`Organizer`). | ✅ |
-| VIS-04 | **Four different spacing values** — 6px (`WiFi`), 8px (`AppMigration`, `NetworkTransfer`, `ImageFlasher`), 10px (`QuickActions`, `UserMigration`, `DuplicateFinder`, `Diagnostic`), 12px (`Organizer`). | ✅ |
+| VIS-03 | **Three different content margin values** — 8px (`AppMigration`, `WiFi`), 12px (`QuickActions`, `UserMigration`, `DuplicateFinder`, `Diagnostic`, `ImageFlasher`), 16px (`Organizer`). | ✅ |
+| VIS-04 | **Four different spacing values** — 6px (`WiFi`), 8px (`AppMigration`, `ImageFlasher`), 10px (`QuickActions`, `UserMigration`, `DuplicateFinder`, `Diagnostic`), 12px (`Organizer`). | ✅ |
 | VIS-05 | **Mixed font-size units** — `pt` used in most files, `px` used in `quick_actions_panel.cpp` and `diagnostic_benchmark_panel.cpp`. 8+ different size values (8pt through 18pt). | ✅ |
 | VIS-06 | **Subtitle patterns inconsistent** — 3 panels have subtitles with 3 different `margin-bottom` values (0, 5px, 10px). 6 panels have no subtitle. | ✅ |
 | VIS-07 | **Inconsistent scroll area usage** — 6 panels wrapped in `QScrollArea`, 3 are not (`AppMigration`, `ImageFlasher`, `WiFi`). | ✅ |
-| VIS-08 | **No consistent status indicator pattern** — ISO dialogs use colored phase labels; network uses colored pills; diagnostic uses bold styled text; quick actions uses grid + progress bar; suite steps use emoji (⏳) prefix. | ✅ Status indicator color constants centralized in `style_constants.h` |
+| VIS-08 | **No consistent status indicator pattern** — ISO dialogs use colored phase labels; diagnostic uses bold styled text; quick actions uses grid + progress bar; suite steps use emoji (⏳) prefix. | ✅ Status indicator color constants centralized in `style_constants.h` |
 
 ### 🟢 P3 — Low
 
@@ -202,8 +187,8 @@ A comprehensive deep scan of the entire S.A.K. Utility codebase (148 `.cpp`, 105
 | ID | Finding | Status |
 |----|---------|--------|
 | NAM-02 | **`setupUI()` vs `setupUi()` inconsistency** — 10 classes use `setupUi()` (lowercase i), 5 use `setupUI()` (uppercase I). Pick one and standardize. | ✅ |
-| NAM-03 | **Namespace inconsistency** — 5 panels in `sak::` namespace (`QuickActions`, `AppMigration`, `NetworkTransfer`, `DiagnosticBenchmark`, `WiFiManager`), 4 panels + `MainWindow` in global namespace (`UserMigration`, `Organizer`, `DuplicateFinder`, `ImageFlasher`). | ✅ All 9 panels + `MainWindow` now in `namespace sak`. Headers wrapped, .cpp files wrapped, `sak::` qualifiers cleaned, `main.cpp` qualified. |
-| NAM-04 | **Local variable naming inconsistency** — Older panels use `snake_case` for locals (`main_layout`, `scroll_area`), newer panels use `camelCase` (`mainLayout`, `searchGroup`). `AppInstallationPanel` and `NetworkTransferPanel` are fully camelCase. | ✅ Standardized `organizer_panel.cpp` (20 renames) to camelCase. Headers updated to match. |
+| NAM-03 | **Namespace inconsistency** — 5 panels in `sak::` namespace (`QuickActions`, `AppMigration`, `DiagnosticBenchmark`, `WiFiManager`), 4 panels + `MainWindow` in global namespace (`UserMigration`, `Organizer`, `DuplicateFinder`, `ImageFlasher`). | ✅ All 9 panels + `MainWindow` now in `namespace sak`. Headers wrapped, .cpp files wrapped, `sak::` qualifiers cleaned, `main.cpp` qualified. |
+| NAM-04 | **Local variable naming inconsistency** — Older panels use `snake_case` for locals (`main_layout`, `scroll_area`), newer panels use `camelCase` (`mainLayout`, `searchGroup`). `AppInstallationPanel` is fully camelCase. | ✅ Standardized `organizer_panel.cpp` (20 renames) to camelCase. Headers updated to match. |
 | NAM-05 | **`m_chocoManager` camelCase member** in `AppInstallationPanel` — Breaks `m_snake_case` convention used everywhere else. Also `m_searchInProgress`, `m_installInProgress`. | ✅ |
 
 ### 🟢 P3 — Low
@@ -230,7 +215,7 @@ A comprehensive deep scan of the entire S.A.K. Utility codebase (148 `.cpp`, 105
 | ID | Finding | Status |
 |----|---------|--------|
 | DOC-03 | **Complex logic lacks inline comments** — `wifi_manager_panel.cpp:1370-1400` QR code rendering, `linux_iso_downloader.cpp:405-420` speed parsing, `user_data_manager.cpp:420-500` archive extraction. | ✅ |
-| DOC-04 | **Partial method docs in some headers** — `app_migration_panel.h`, `network_transfer_panel.h`, `image_flasher_panel.h` have classes documented but some private slots/helpers lack `@brief`. | ✅ |
+| DOC-04 | **Partial method docs in some headers** — `app_migration_panel.h`, `image_flasher_panel.h` have classes documented but some private slots/helpers lack `@brief`. | ✅ |
 | DOC-05 | **Copyright headers** — 147/148 `.cpp` files have proper headers. `qrcodegen.cpp` uses its own MIT header (correct for third-party). Class-level docs in headers are at ~99% coverage. **Strength maintained.** | ✅ |
 
 ---
@@ -243,28 +228,26 @@ A comprehensive deep scan of the entire S.A.K. Utility codebase (148 `.cpp`, 105
 
 | ID | Source File | Why Critical | Status |
 |----|-------------|-------------|--------|
-| TST-01 | `network_transfer_worker.cpp` | Raw pointer bugs, no payload size limits, encryption/decryption error paths. No tests for error recovery (connection drop mid-transfer, resume after crash). | ✅ 10 tests — DataOptions defaults/assignment, constructor, stop/bandwidth safety, sender connection refused, receiver listen-port conflict, receiver stop-before-connection, invalid magic resilience, oversized payload rejection |
-| TST-02 | `flash_coordinator.cpp` | Race conditions on progress/state, multi-threaded worker coordination. Off-by-one feeds into this from `flash_worker.cpp`. | ✅ FlashProgress/FlashResult types |
-| TST-03 | `app_migration_worker.cpp` | Handles user data migration. Data integrity at stake. Logic-heavy, testable. | ✅ 10 tests passing. Also fixed destructor crash bug (use-after-free in `~QObject`). |
+| TST-01 | `flash_coordinator.cpp` | Race conditions on progress/state, multi-threaded worker coordination. Off-by-one feeds into this from `flash_worker.cpp`. | ✅ FlashProgress/FlashResult types |
+| TST-02 | `app_migration_worker.cpp` | Handles user data migration. Data integrity at stake. Logic-heavy, testable. | ✅ 10 tests passing. Also fixed destructor crash bug (use-after-free in `~QObject`). |
 
 ### 🟠 P1 — High
 
 | ID | Source File | Why Important | Status |
 |----|-------------|---------------|--------|
-| TST-04 | `user_data_manager.cpp` | Backup/restore user data with archive operations. Testable file I/O logic. | ✅ |
-| TST-05 | `user_profile_backup_worker.cpp` | Complex user profile backup logic, permission handling. | ✅ user_profile_types |
-| TST-06 | `user_profile_restore_worker.cpp` | Complex restore logic with profile type handling. | ✅ 16 tests — validation, conflict resolution (5 modes), cancellation, signals |
-| TST-07 | `windows_usb_creator.cpp` | Creates bootable USBs. Shell injection risk (BUG-09). Hard to fully test but validation logic can be extracted and tested. | ✅ 32 tests — disk-number regex (BUG-09 injection vectors), ISO validation, cancel/lastError, signal emission, validation ordering |
-| TST-08 | `network_transfer_controller.cpp` | Orchestrates transfer workflow. Testable orchestration logic. | ✅ 21 tests — config round-trip, mode transitions, stop/pause/resume/cancel state machine, bandwidth clamping, startDestination integration, signal emissions |
+| TST-03 | `user_data_manager.cpp` | Backup/restore user data with archive operations. Testable file I/O logic. | ✅ |
+| TST-04 | `user_profile_backup_worker.cpp` | Complex user profile backup logic, permission handling. | ✅ user_profile_types |
+| TST-05 | `user_profile_restore_worker.cpp` | Complex restore logic with profile type handling. | ✅ 16 tests — validation, conflict resolution (5 modes), cancellation, signals |
+| TST-06 | `windows_usb_creator.cpp` | Creates bootable USBs. Shell injection risk (BUG-04). Hard to fully test but validation logic can be extracted and tested. | ✅ 32 tests — disk-number regex (BUG-04 injection vectors), ISO validation, cancel/lastError, signal emission, validation ordering |
 
 ### 🟡 P2 — Medium
 
 | ID | Source File | Notes | Status |
 |----|-------------|-------|--------|
-| TST-09 | `flash_worker.cpp` | Raw disk writes. Off-by-one bug (BUG-05). Hard to test fully but verification logic is testable. | ✅ 21 tests — ValidationResult/ValidationMode/ImageMetadata structs, constructor/getters/setters, mock ImageSource early failures, cancellation propagation |
-| TST-10 | `quick_action.cpp` + `quick_action_controller.cpp` | Action execution framework. 36 individual actions untested (system-command wrappers, harder to unit test). | ✅ |
-| TST-11 | `duplicate_finder_worker.cpp` + `organizer_worker.cpp` | File operation workers with testable logic. | ✅ |
-| TST-12 | `test_encryption.cpp:79` | **Existing test gap** — Empty data round-trip test uses `Q_UNUSED(decrypted)` instead of verifying result. | ✅ |
+| TST-07 | `flash_worker.cpp` | Raw disk writes. Off-by-one bug (BUG-03). Hard to test fully but verification logic is testable. | ✅ 21 tests — ValidationResult/ValidationMode/ImageMetadata structs, constructor/getters/setters, mock ImageSource early failures, cancellation propagation |
+| TST-08 | `quick_action.cpp` + `quick_action_controller.cpp` | Action execution framework. 36 individual actions untested (system-command wrappers, harder to unit test). | ✅ |
+| TST-09 | `duplicate_finder_worker.cpp` + `organizer_worker.cpp` | File operation workers with testable logic. | ✅ |
+| TST-10 | `test_encryption.cpp:79` | **Existing test gap** — Empty data round-trip test uses `Q_UNUSED(decrypted)` instead of verifying result. | ✅ |
 
 ---
 
@@ -297,7 +280,7 @@ A comprehensive deep scan of the entire S.A.K. Utility codebase (148 `.cpp`, 105
 | **Cache invalidation: no variable duplication** | Minimize aliasing | ✅ Generally good. `ProcessResult::succeeded()` centralized a common check. | **B** | — |
 | **Order matters (important things first)** | Main function first, fields before methods | 🟡 `main()` is in `main.cpp` (good). Class layout generally follows Qt conventions (signals, slots, members). Not strictly TigerStyle order. | **B-** | Low |
 | **Hard line length limit (100 cols)** | Column ruler enforcement | 🟡 No max line length enforced. Some lines exceed 120 characters. | **C** | Medium |
-| **Performance: back-of-envelope sketches** | Documented perf considerations | 🟡 Buffer sizes documented (256MB flash, 64MB checksum). Network transfer batching exists. No formal perf documentation. | **C** | Low |
+| **Performance: back-of-envelope sketches** | Documented perf considerations | 🟡 Buffer sizes documented (256MB flash, 64MB checksum). No formal perf documentation. | **C** | Low |
 
 ### Overall TigerStyle Grade: **C** (Partial Compliance)
 
@@ -398,7 +381,6 @@ All findings from the original `CODEBASE_AUDIT_TRACKER.md` (37 issues) remain re
 2. Add tests for P2 untested files (TST-09 through TST-11)
 3. Fix existing test gap (TST-12)
 4. Add integration test for full flash workflow
-5. Add integration test for full network transfer data path
 
 ### Sprint 8 — TigerStyle Hardening (Optional, Estimated: 40-60 hours)
 1. Add precondition assertions to critical functions
