@@ -6,10 +6,14 @@
 
 #include "sak/user_migration_panel.h"
 
+#include "sak/actions/backup_bitlocker_keys_action.h"
+#include "sak/actions/screenshot_settings_action.h"
 #include "sak/config_manager.h"
 #include "sak/detachable_log_window.h"
 #include "sak/info_button.h"
 #include "sak/layout_constants.h"
+#include "sak/logger.h"
+#include "sak/quick_action_controller.h"
 #include "sak/style_constants.h"
 #include "sak/user_data_manager.h"
 #include "sak/user_profile_backup_wizard.h"
@@ -24,9 +28,11 @@
 #include <QFormLayout>
 #include <QFrame>
 #include <QGridLayout>
+#include <QGroupBox>
 #include <QHBoxLayout>
 #include <QIcon>
 #include <QMessageBox>
+#include <QProgressBar>
 #include <QScrollArea>
 #include <QSpinBox>
 #include <QVBoxLayout>
@@ -37,6 +43,7 @@ UserMigrationPanel::UserMigrationPanel(QWidget* parent)
     : QWidget(parent), m_dataManager(std::make_shared<UserDataManager>()) {
     setupUi();
     setupConnections();
+    createQuickActions();
 
     appendLog("User Migration Panel initialized");
     appendLog("Click 'Backup User Profiles...' to start the migration wizard");
@@ -72,6 +79,7 @@ void UserMigrationPanel::setupUi() {
                            mainLayout);
 
     createMigrationCards(contentWidget, mainLayout);
+    mainLayout->addWidget(createQuickToolsSection(contentWidget));
 
     mainLayout->addStretch();
 
@@ -242,6 +250,146 @@ void UserMigrationPanel::onRestoreBackup() {
 void UserMigrationPanel::appendLog(const QString& message) {
     Q_ASSERT(!message.isEmpty());
     Q_EMIT logOutput(message);
+}
+
+// ============================================================================
+// Quick Tools Section
+// ============================================================================
+
+QGroupBox* UserMigrationPanel::createQuickToolsSection(QWidget* parent) {
+    auto* group = new QGroupBox(tr("Quick Tools"), parent);
+    auto* layout = new QVBoxLayout(group);
+    layout->setSpacing(sak::ui::kSpacingDefault);
+
+    auto* desc = new QLabel(tr("One-click system protection and documentation tools"), group);
+    desc->setStyleSheet(QString("color: %1; font-size: %2pt;")
+                            .arg(sak::ui::kColorTextSecondary)
+                            .arg(sak::ui::kFontSizeBody));
+    desc->setWordWrap(true);
+    layout->addWidget(desc);
+
+    auto* btn_layout = new QHBoxLayout();
+    btn_layout->setSpacing(sak::ui::kSpacingDefault);
+
+    auto make_action_button = [&](const QString& text, const QString& tooltip, const QString& key) {
+        auto* btn = new QPushButton(text, group);
+        btn->setMinimumHeight(sak::kButtonHeightTall);
+        btn->setToolTip(tooltip);
+        btn->setAccessibleName(text);
+        m_action_buttons.insert(key, btn);
+        btn_layout->addWidget(btn);
+        return btn;
+    };
+
+    make_action_button(tr("Screenshot Settings"),
+                       tr("Capture screenshots of all Windows Settings pages"),
+                       QStringLiteral("Screenshot Settings"));
+
+    make_action_button(tr("BitLocker Key Backup"),
+                       tr("Backup BitLocker recovery keys (requires admin)"),
+                       QStringLiteral("BitLocker Key Backup"));
+
+    btn_layout->addStretch();
+    layout->addLayout(btn_layout);
+
+    // Status + progress
+    m_action_status_label = new QLabel(tr("Ready"), group);
+    m_action_status_label->setStyleSheet(QString("color: %1;").arg(sak::ui::kColorTextSecondary));
+    layout->addWidget(m_action_status_label);
+
+    m_action_progress_bar = new QProgressBar(group);
+    m_action_progress_bar->setRange(0, 100);
+    m_action_progress_bar->setValue(0);
+    m_action_progress_bar->setVisible(false);
+    layout->addWidget(m_action_progress_bar);
+
+    return group;
+}
+
+void UserMigrationPanel::createQuickActions() {
+    constexpr auto kDefaultBackupPath = "C:/SAK_Backups";
+    const auto backup_path = QString::fromLatin1(kDefaultBackupPath);
+
+    m_action_controller = new QuickActionController(this);
+    m_action_controller->setBackupLocation(backup_path);
+
+    m_action_controller->registerAction(std::make_unique<ScreenshotSettingsAction>(backup_path));
+    m_action_controller->registerAction(std::make_unique<BackupBitlockerKeysAction>(backup_path));
+
+    // Connect controller signals
+    connect(m_action_controller,
+            &QuickActionController::actionExecutionProgress,
+            this,
+            &UserMigrationPanel::onQuickActionProgress,
+            Qt::QueuedConnection);
+    connect(m_action_controller,
+            &QuickActionController::actionExecutionComplete,
+            this,
+            &UserMigrationPanel::onQuickActionComplete,
+            Qt::QueuedConnection);
+    connect(m_action_controller,
+            &QuickActionController::actionError,
+            this,
+            &UserMigrationPanel::onQuickActionError,
+            Qt::QueuedConnection);
+    connect(
+        m_action_controller,
+        &QuickActionController::logMessage,
+        this,
+        [this](const QString& msg) { appendLog(msg); },
+        Qt::QueuedConnection);
+
+    // Connect buttons to actions
+    for (auto it = m_action_buttons.constBegin(); it != m_action_buttons.constEnd(); ++it) {
+        const QString action_name = it.key();
+        QPushButton* btn = it.value();
+        QuickAction* action = m_action_controller->getAction(action_name);
+        if (action) {
+            connect(btn, &QPushButton::clicked, this, [this, action]() {
+                onQuickActionClicked(action);
+            });
+        }
+    }
+}
+
+void UserMigrationPanel::onQuickActionClicked(QuickAction* action) {
+    Q_ASSERT(action);
+    appendLog(QString("Executing: %1").arg(action->name()));
+    m_action_status_label->setText(QString("Running: %1...").arg(action->name()));
+    m_action_progress_bar->setValue(0);
+    m_action_progress_bar->setVisible(true);
+    m_action_controller->executeAction(action->name(), false);
+}
+
+void UserMigrationPanel::onQuickActionProgress(QuickAction* action,
+                                               const QString& message,
+                                               int progress) {
+    Q_ASSERT(action);
+    m_action_status_label->setText(message);
+    m_action_progress_bar->setValue(progress);
+}
+
+void UserMigrationPanel::onQuickActionComplete(QuickAction* action) {
+    Q_ASSERT(action);
+    const auto& result = action->lastExecutionResult();
+    const QString status = result.success
+                               ? QString("Completed: %1").arg(action->name())
+                               : QString("Failed: %1 - %2").arg(action->name(), result.message);
+    m_action_status_label->setText(status);
+    m_action_progress_bar->setVisible(false);
+    appendLog(status);
+    Q_EMIT statusMessage(status, sak::kTimerStatusDefaultMs);
+}
+
+void UserMigrationPanel::onQuickActionError(QuickAction* action, const QString& error_message) {
+    Q_ASSERT(action);
+    const QString status = QString("Error: %1 - %2").arg(action->name(), error_message);
+    m_action_status_label->setText(status);
+    m_action_progress_bar->setVisible(false);
+    appendLog(status);
+    sak::logError("Quick action error: {} - {}",
+                  action->name().toStdString(),
+                  error_message.toStdString());
 }
 
 void UserMigrationPanel::onSettingsClicked() {

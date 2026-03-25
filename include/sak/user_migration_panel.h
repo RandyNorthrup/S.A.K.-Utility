@@ -19,10 +19,14 @@
 #include <vector>
 
 class QFrame;
+class QGroupBox;
+class QProgressBar;
 
 namespace sak {
 class UserDataManager;
 class LogToggleSwitch;
+class QuickAction;
+class QuickActionController;
 
 /**
  * @brief Windows User Migration Panel
@@ -70,6 +74,12 @@ private Q_SLOTS:
     void onRestoreBackup();
     void onSettingsClicked();
 
+    // Quick action slots
+    void onQuickActionClicked(QuickAction* action);
+    void onQuickActionProgress(QuickAction* action, const QString& message, int progress);
+    void onQuickActionComplete(QuickAction* action);
+    void onQuickActionError(QuickAction* action, const QString& error_message);
+
 private:
     /// @brief Configuration for a migration card widget
     struct MigrationCardConfig {
@@ -88,6 +98,8 @@ private:
     QFrame* createMigrationCard(QWidget* parent,
                                 const MigrationCardConfig& config,
                                 QPushButton*& btn);
+    QGroupBox* createQuickToolsSection(QWidget* parent);
+    void createQuickActions();
     void setupConnections();
     void appendLog(const QString& message);
 
@@ -95,6 +107,12 @@ private:
     QPushButton* m_backupButton{nullptr};
     QPushButton* m_restoreButton{nullptr};
     LogToggleSwitch* m_logToggle{nullptr};
+
+    // Quick action components
+    QuickActionController* m_action_controller{nullptr};
+    QHash<QString, QPushButton*> m_action_buttons;
+    QLabel* m_action_status_label{nullptr};
+    QProgressBar* m_action_progress_bar{nullptr};
 
     // Data
     std::shared_ptr<UserDataManager> m_dataManager;

@@ -2,13 +2,13 @@
 
 ## Overview
 
-Comprehensive test suite for SAK Utility using the **Qt Test** framework with **91 registered CTest tests** across **117 test files**. Tests cover core utilities, security, diagnostics, ISO pipelines, deployment, email inspection, and quick action validation.
+Comprehensive test suite for SAK Utility using the **Qt Test** framework with **74 registered CTest tests** across **98 test files**. Tests cover core utilities, security, diagnostics, ISO pipelines, deployment, email inspection, and quick action validation.
 
 ## Structure
 
 ```
 tests/
-├── unit/                                  # Unit tests (112 files)
+├── unit/                                  # Unit tests (96 files)
 │   ├── actions/                           # Quick action validation tests
 │   │   ├── test_action_factory.cpp
 │   │   └── test_all_actions_metadata.cpp
@@ -54,8 +54,7 @@ tests/
 │   ├── test_format_utils.cpp
 │   ├── test_hardware_inventory_scanner.cpp
 │   ├── test_image_source.cpp
-│   ├── test_input_validator.cpp
-│   ├── test_keep_awake.cpp
+│   ├── test_input_validator.cpp    ├── test_install_script_parser.cpp│   ├── test_keep_awake.cpp
 │   ├── test_leftover_scanner.cpp
 │   ├── test_linux_distro_catalog.cpp
 │   ├── test_linux_iso_downloader.cpp
@@ -69,7 +68,9 @@ tests/
 │   ├── test_network_diagnostic_types.cpp
 │   ├── test_network_diagnostic_utils.cpp
 │   ├── test_network_share_browser.cpp
-│   ├── test_organizer_worker.cpp
+    ├── test_nuget_api_client.cpp
+    ├── test_organizer_worker.cpp
+    ├── test_package_list_manager.cpp
 │   ├── test_package_matcher.cpp
 │   ├── test_path_utils.cpp
 │   ├── test_permission_manager.cpp
@@ -82,8 +83,7 @@ tests/
 │   ├── test_quick_action_result_io.cpp
 │   ├── test_regex_pattern_library.cpp
 │   ├── test_registry_snapshot_engine.cpp
-│   ├── test_restore_point_manager.cpp
-│   ├── test_secure_memory.cpp
+│   ├── test_restore_point_manager.cpp    ├── test_script_rewriter.cpp│   ├── test_secure_memory.cpp
 │   ├── test_smart_disk_analyzer.cpp
 │   ├── test_smart_file_filter.cpp
 │   ├── test_streaming_decompressor.cpp
@@ -167,6 +167,7 @@ cmake --build build --target run_integration_tests
 | test_format_utils | `format_utils` | Number/size/duration formatting helpers |
 | test_bundled_tools_manager | `bundled_tools_manager` | Tool detection, path resolution, version checks |
 | test_keep_awake | `keep_awake` | System sleep prevention, cleanup on destruction |
+| test_connectivity_tester | `connectivity_tester` | Network connectivity detection, ping, unreachable hosts |
 
 ### Security & Encryption
 | Test | Module Under Test | Coverage |
@@ -192,6 +193,10 @@ cmake --build build --target run_integration_tests
 | test_windows_user_scanner | `windows_user_scanner` | Windows user profile enumeration |
 | test_cleanup_worker | `cleanup_worker` | Temp file cleanup, cache clearing |
 | test_restore_point_manager | `restore_point_manager` | System restore point creation |
+| test_package_list_manager | `package_list_manager` | Curated package list management, list generation |
+| test_install_script_parser | `install_script_parser` | Installation script parsing and validation |
+| test_nuget_api_client | `nuget_api_client` | NuGet API queries, package metadata retrieval |
+| test_script_rewriter | `script_rewriter` | Script modification and rewriting logic |
 
 ### Diagnostics & Benchmarking
 | Test | Module Under Test | Coverage |
@@ -281,8 +286,8 @@ cmake --build build --target run_integration_tests
 ### Quick Actions
 | Test | Module Under Test | Coverage |
 |---|---|---|
-| test_action_factory | `action_factory` | Factory completeness, metadata validity (name, description, category), initial state, no duplicates, all categories populated |
-| test_all_actions_metadata | `action_factory` | Validates every registered action has complete metadata |
+| test_action_factory | `quick_action` | Action creation completeness, metadata validity (name, description, category), initial state, no duplicates, all categories populated |
+| test_all_actions_metadata | `quick_action` | Validates every registered action has complete metadata |
 | test_quick_action | `quick_action` | Base action interface, state transitions |
 | test_quick_action_controller | `quick_action_controller` | Action execution, progress, cancellation |
 | test_quick_action_result_io | `quick_action_result_io` | Result serialization, history persistence |
@@ -360,6 +365,6 @@ QCOMPARE(spy.count(), 1);
 ---
 
 **Test Framework:** Qt Test
-**Registered Tests:** 91 (CTest)
-**Test Files:** 117 (112 unit + 2 action + 3 integration)
+**Registered Tests:** 74 (CTest)
+**Test Files:** 98 (94 unit + 2 action + 2 integration)
 **Platform:** Windows 10/11

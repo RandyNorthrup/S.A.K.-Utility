@@ -32,6 +32,8 @@ namespace sak {
 
 class NetworkDiagnosticController;
 class LogToggleSwitch;
+class QuickAction;
+class QuickActionController;
 
 /// @brief Network Diagnostics & Troubleshooting Panel
 ///
@@ -165,6 +167,11 @@ private Q_SLOTS:
     void onStateChanged(int newState);
     void onError(QString error);
 
+    // Quick Action
+    void onResetNetworkClicked();
+    void onResetNetworkComplete(QuickAction* action);
+    void onResetNetworkError(QuickAction* action, const QString& error);
+
 private:
     // -- UI Setup --
     void setupUi();
@@ -220,6 +227,7 @@ private:
     void connectControllerWifiConnectionsFirewallSharesSignals();
     void connectReportAndEthernetSignals();
     void connectFirewallFilterSignals();
+    void createResetNetworkAction();
 
     // -- Adapter detail formatting --
     [[nodiscard]] QString formatAdapterIdentity(const sak::NetworkAdapterInfo& adapter) const;
@@ -252,6 +260,7 @@ private:
 
     // -- Controller --
     std::unique_ptr<NetworkDiagnosticController> m_controller;
+    QuickActionController* m_qa_controller{nullptr};
     LogToggleSwitch* m_logToggle = nullptr;         ///< Owned by layout hierarchy
     LogToggleSwitch* m_adapterLogToggle = nullptr;  ///< Log toggle on adapter tab
 
@@ -269,6 +278,7 @@ private:
     QPushButton* m_copyConfigBtn = nullptr;
     QPushButton* m_backupEthernetBtn = nullptr;
     QPushButton* m_restoreEthernetBtn = nullptr;
+    QPushButton* m_resetNetworkBtn = nullptr;
 
     // -- Tool Tabs --
     QTabWidget* m_toolTabs = nullptr;

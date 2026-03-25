@@ -222,15 +222,15 @@ Every PR must:
 ### Directory Structure
 
 ```
-include/sak/          — Public headers (one .h per class, 151 headers)
-src/core/             — Core business logic, workers, parsers, managers (104 files)
-src/gui/              — Qt widget panels, dialogs, and themes (39 files)
-src/actions/          — Quick action workers (one file per action, 37 files)
+include/sak/          — Public headers (one .h per class, 134 headers)
+src/core/             — Core business logic, workers, parsers, managers (89 files)
+src/gui/              — Qt widget panels, dialogs, and themes (35 files)
+src/actions/          — Quick action workers (one file per action, 7 files)
 src/threading/        — Thread workers (backup, scan, hash, flash, 4 files)
 src/third_party/      — Bundled third-party source (qrcodegen)
-tests/unit/           — Qt Test unit tests (112 files)
-tests/unit/actions/   — Action factory tests (2 files)
-tests/integration/    — End-to-end workflow tests (3 files)
+tests/unit/           — Qt Test unit tests (96 files)
+tests/unit/actions/   — Action validation tests (2 files)
+tests/integration/    — End-to-end workflow tests (2 files)
 resources/            — QRC files, icons, themes
 scripts/              — Build/lint/utility scripts
 docs/                 — Project documentation
@@ -248,7 +248,7 @@ cmake/                — CMake modules and build config
   reconnect after. Use `disconnectDialogSignals()` / `reconnectDialogSignals()`
   helpers plus a `m_dialog_active` guard flag for lambdas.
 - **Action system** — Quick actions inherit `QuickAction` and implement `execute()`.
-  Factory pattern via `ActionFactory`.
+  Actions are registered with `QuickActionController` in the panels that host them.
 - **Logging** — `sak::logInfo`, `sak::logWarning`, `sak::logError` write to
   `_logs/` with rotation. Uses `std::vformat` — all args must be `std::string`.
 

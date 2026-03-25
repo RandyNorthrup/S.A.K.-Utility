@@ -4,7 +4,13 @@
 /// @file main.cpp
 /// @brief SAK Utility main entry point
 
-#include "sak/actions/action_factory.h"
+#include "sak/actions/backup_bitlocker_keys_action.h"
+#include "sak/actions/check_disk_errors_action.h"
+#include "sak/actions/generate_system_report_action.h"
+#include "sak/actions/optimize_power_settings_action.h"
+#include "sak/actions/reset_network_action.h"
+#include "sak/actions/screenshot_settings_action.h"
+#include "sak/actions/verify_system_files_action.h"
 #include "sak/error_codes.h"
 #include "sak/logger.h"
 #include "sak/main_window.h"
@@ -81,7 +87,14 @@ int runElevatedQuickAction(QApplication& app,
                      &sak::QuickActionController::logMessage,
                      [](const QString& message) { sak::logInfo("{}", message.toStdString()); });
 
-    auto actions = sak::ActionFactory::createAllActions(backup_location);
+    auto actions = std::vector<std::unique_ptr<sak::QuickAction>>{};
+    actions.push_back(std::make_unique<sak::BackupBitlockerKeysAction>(backup_location));
+    actions.push_back(std::make_unique<sak::CheckDiskErrorsAction>());
+    actions.push_back(std::make_unique<sak::GenerateSystemReportAction>(backup_location));
+    actions.push_back(std::make_unique<sak::OptimizePowerSettingsAction>());
+    actions.push_back(std::make_unique<sak::ResetNetworkAction>());
+    actions.push_back(std::make_unique<sak::ScreenshotSettingsAction>(backup_location));
+    actions.push_back(std::make_unique<sak::VerifySystemFilesAction>());
     for (auto& action : actions) {
         controller.registerAction(std::move(action));
     }

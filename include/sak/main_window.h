@@ -27,7 +27,6 @@ class UserMigrationPanel;
 class OrganizerPanel;
 class ImageFlasherPanel;
 class AppInstallationPanel;
-class QuickActionsPanel;
 class DiagnosticBenchmarkPanel;
 class DetachableLogWindow;
 class LogToggleSwitch;
@@ -205,7 +204,6 @@ private:
     std::unique_ptr<OrganizerPanel> m_organizer_panel;
     std::unique_ptr<AppInstallationPanel> m_app_installation_panel;
     std::unique_ptr<ImageFlasherPanel> m_image_flasher_panel;
-    std::unique_ptr<QuickActionsPanel> m_quick_actions_panel;
     std::unique_ptr<DiagnosticBenchmarkPanel> m_diagnostic_benchmark_panel;
     std::unique_ptr<WifiManagerPanel> m_wifi_manager_panel;
     std::unique_ptr<AdvancedSearchPanel> m_advanced_search_panel;

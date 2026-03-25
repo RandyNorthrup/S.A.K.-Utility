@@ -1,7 +1,13 @@
 // Copyright (c) 2025-2026 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-#include "sak/actions/action_factory.h"
+#include "sak/actions/backup_bitlocker_keys_action.h"
+#include "sak/actions/check_disk_errors_action.h"
+#include "sak/actions/generate_system_report_action.h"
+#include "sak/actions/optimize_power_settings_action.h"
+#include "sak/actions/reset_network_action.h"
+#include "sak/actions/screenshot_settings_action.h"
+#include "sak/actions/verify_system_files_action.h"
 #include "sak/quick_action.h"
 
 #include <QSet>
@@ -10,11 +16,10 @@
 using namespace sak;
 
 /**
- * @brief Unit tests for ActionFactory and all QuickAction metadata
+ * @brief Unit tests for all QuickAction metadata
  *
- * Validates that every action registered by the factory has correct
- * metadata (name, description, category, icon, admin flag) and that
- * the factory produces actions with no duplicates.
+ * Validates that every action has correct metadata (name, description,
+ * category, icon, admin flag) and proper initial state.
  * These tests require no admin privileges.
  */
 class TestActionFactory : public QObject {
@@ -24,7 +29,7 @@ private Q_SLOTS:
     void initTestCase();
 
     // Factory completeness
-    void testFactoryCreatesActions();
+    void testActionsExist();
     void testNoNullActions();
     void testNoDuplicateNames();
 
@@ -51,17 +56,23 @@ private:
 };
 
 void TestActionFactory::initTestCase() {
-    m_actions = ActionFactory::createAllActions(QStringLiteral("C:/SAK_Test_Backups"));
+    const auto backup = QStringLiteral("C:/SAK_Test_Backups");
+    m_actions.push_back(std::make_unique<BackupBitlockerKeysAction>(backup));
+    m_actions.push_back(std::make_unique<CheckDiskErrorsAction>());
+    m_actions.push_back(std::make_unique<GenerateSystemReportAction>(backup));
+    m_actions.push_back(std::make_unique<OptimizePowerSettingsAction>());
+    m_actions.push_back(std::make_unique<ResetNetworkAction>());
+    m_actions.push_back(std::make_unique<ScreenshotSettingsAction>(backup));
+    m_actions.push_back(std::make_unique<VerifySystemFilesAction>());
 }
 
 // ============================================================================
 // Factory completeness
 // ============================================================================
 
-void TestActionFactory::testFactoryCreatesActions() {
-    // Factory must produce a non-trivial set of actions
-    QVERIFY2(!m_actions.empty(), "ActionFactory returned zero actions");
-    QVERIFY2(m_actions.size() > 10, "ActionFactory returned suspiciously few actions");
+void TestActionFactory::testActionsExist() {
+    QVERIFY2(!m_actions.empty(), "No actions created");
+    QCOMPARE(static_cast<int>(m_actions.size()), 7);
 }
 
 void TestActionFactory::testNoNullActions() {
@@ -114,7 +125,6 @@ void TestActionFactory::testAllCategoriesValid() {
 }
 
 void TestActionFactory::testRequiresAdminIsBool() {
-    // Ensure every action returns a definitive bool (no crash / UB)
     for (const auto& action : m_actions) {
         const bool val = action->requiresAdmin();
         QVERIFY(val == true || val == false);
@@ -136,8 +146,6 @@ int TestActionFactory::countByCategory(QuickAction::ActionCategory cat) const {
 }
 
 void TestActionFactory::testAllCategoriesPopulated() {
-    // Every defined category must have at least one registered action.
-    // No hardcoded counts — the factory is the source of truth.
     const std::vector<QuickAction::ActionCategory> categories = {
         QuickAction::ActionCategory::SystemOptimization,
         QuickAction::ActionCategory::Maintenance,
@@ -154,7 +162,6 @@ void TestActionFactory::testAllCategoriesPopulated() {
         categorized_total += n;
     }
 
-    // Every action must belong to exactly one category — no strays
     QCOMPARE(categorized_total, static_cast<int>(m_actions.size()));
 }
 

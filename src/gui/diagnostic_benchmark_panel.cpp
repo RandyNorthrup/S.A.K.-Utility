@@ -6,11 +6,16 @@
 
 #include "sak/diagnostic_benchmark_panel.h"
 
+#include "sak/actions/check_disk_errors_action.h"
+#include "sak/actions/generate_system_report_action.h"
+#include "sak/actions/optimize_power_settings_action.h"
+#include "sak/actions/verify_system_files_action.h"
 #include "sak/detachable_log_window.h"
 #include "sak/diagnostic_controller.h"
 #include "sak/format_utils.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
+#include "sak/quick_action_controller.h"
 #include "sak/style_constants.h"
 #include "sak/widget_helpers.h"
 
@@ -46,6 +51,7 @@ DiagnosticBenchmarkPanel::DiagnosticBenchmarkPanel(QWidget* parent)
     : QWidget(parent), m_controller(std::make_unique<DiagnosticController>(this)) {
     setupUi();
     connectController();
+    createQuickActions();
 
     // Start thermal monitoring on panel creation
     m_controller->startThermalMonitoring(2000);
@@ -132,6 +138,7 @@ QWidget* DiagnosticBenchmarkPanel::createDiagnosticsTab() {
     layout->addWidget(createHardwareSection());
     layout->addWidget(createSmartSection());
     layout->addWidget(createThermalSection());
+    layout->addWidget(createSystemMaintenanceSection());
     layout->addStretch();
 
     scroll_area->setWidget(content_widget);
@@ -897,6 +904,150 @@ QString DiagnosticBenchmarkPanel::formatUptime(uint64_t seconds) {
         return QString("%1 hour%2, %3 min").arg(hours).arg(hours != 1 ? "s" : "").arg(minutes);
     }
     return QString("%1 min").arg(minutes);
+}
+
+// ============================================================================
+// Quick Actions — System Maintenance Section
+// ============================================================================
+
+QGroupBox* DiagnosticBenchmarkPanel::createSystemMaintenanceSection() {
+    auto* group = new QGroupBox(tr("System Maintenance"), this);
+    auto* layout = new QVBoxLayout(group);
+    layout->setSpacing(sak::ui::kSpacingDefault);
+
+    auto* desc = new QLabel(tr("One-click system verification and optimization tools"), group);
+    desc->setStyleSheet(QString("color: %1; font-size: %2pt;")
+                            .arg(sak::ui::kColorTextSecondary)
+                            .arg(sak::ui::kFontSizeBody));
+    desc->setWordWrap(true);
+    layout->addWidget(desc);
+
+    auto* btn_layout = new QHBoxLayout();
+    btn_layout->setSpacing(sak::ui::kSpacingDefault);
+
+    auto make_button = [&](const QString& text, const QString& tooltip, const QString& key) {
+        auto* btn = new QPushButton(text, group);
+        btn->setMinimumHeight(sak::kButtonHeightTall);
+        btn->setToolTip(tooltip);
+        btn->setAccessibleName(text);
+        m_qa_buttons.insert(key, btn);
+        btn_layout->addWidget(btn);
+    };
+
+    make_button(tr("Optimize Power"),
+                tr("Apply high-performance power settings"),
+                QStringLiteral("Optimize Power Settings"));
+    make_button(tr("Verify System Files"),
+                tr("Run SFC scan to verify system integrity (requires admin)"),
+                QStringLiteral("Verify System Files"));
+    make_button(tr("Check Disk Errors"),
+                tr("Scan disk for filesystem errors (requires admin)"),
+                QStringLiteral("Check Disk Errors"));
+    make_button(tr("Generate Report"),
+                tr("Generate comprehensive system diagnostic report"),
+                QStringLiteral("Generate System Report"));
+
+    btn_layout->addStretch();
+    layout->addLayout(btn_layout);
+
+    m_qa_status_label = new QLabel(tr("Ready"), group);
+    m_qa_status_label->setStyleSheet(QString("color: %1;").arg(sak::ui::kColorTextSecondary));
+    layout->addWidget(m_qa_status_label);
+
+    m_qa_progress_bar = new QProgressBar(group);
+    m_qa_progress_bar->setRange(0, 100);
+    m_qa_progress_bar->setValue(0);
+    m_qa_progress_bar->setVisible(false);
+    layout->addWidget(m_qa_progress_bar);
+
+    return group;
+}
+
+void DiagnosticBenchmarkPanel::createQuickActions() {
+    constexpr auto kDefaultBackupPath = "C:/SAK_Backups";
+    const auto backup_path = QString::fromLatin1(kDefaultBackupPath);
+
+    m_qa_controller = new QuickActionController(this);
+    m_qa_controller->setBackupLocation(backup_path);
+
+    m_qa_controller->registerAction(std::make_unique<OptimizePowerSettingsAction>());
+    m_qa_controller->registerAction(std::make_unique<VerifySystemFilesAction>());
+    m_qa_controller->registerAction(std::make_unique<CheckDiskErrorsAction>());
+    m_qa_controller->registerAction(std::make_unique<GenerateSystemReportAction>(backup_path));
+
+    connect(m_qa_controller,
+            &QuickActionController::actionExecutionProgress,
+            this,
+            &DiagnosticBenchmarkPanel::onQuickActionProgress,
+            Qt::QueuedConnection);
+    connect(m_qa_controller,
+            &QuickActionController::actionExecutionComplete,
+            this,
+            &DiagnosticBenchmarkPanel::onQuickActionComplete,
+            Qt::QueuedConnection);
+    connect(m_qa_controller,
+            &QuickActionController::actionError,
+            this,
+            &DiagnosticBenchmarkPanel::onQuickActionError,
+            Qt::QueuedConnection);
+    connect(
+        m_qa_controller,
+        &QuickActionController::logMessage,
+        this,
+        [this](const QString& msg) { logMessage(msg); },
+        Qt::QueuedConnection);
+
+    for (auto it = m_qa_buttons.constBegin(); it != m_qa_buttons.constEnd(); ++it) {
+        const QString action_name = it.key();
+        QPushButton* btn = it.value();
+        QuickAction* action = m_qa_controller->getAction(action_name);
+        if (action) {
+            connect(btn, &QPushButton::clicked, this, [this, action]() {
+                onQuickActionClicked(action);
+            });
+        }
+    }
+}
+
+void DiagnosticBenchmarkPanel::onQuickActionClicked(QuickAction* action) {
+    Q_ASSERT(action);
+    logMessage(QString("Executing: %1").arg(action->name()));
+    m_qa_status_label->setText(QString("Running: %1...").arg(action->name()));
+    m_qa_progress_bar->setValue(0);
+    m_qa_progress_bar->setVisible(true);
+    m_qa_controller->executeAction(action->name(), false);
+}
+
+void DiagnosticBenchmarkPanel::onQuickActionProgress(QuickAction* action,
+                                                     const QString& message,
+                                                     int progress) {
+    Q_ASSERT(action);
+    m_qa_status_label->setText(message);
+    m_qa_progress_bar->setValue(progress);
+}
+
+void DiagnosticBenchmarkPanel::onQuickActionComplete(QuickAction* action) {
+    Q_ASSERT(action);
+    const auto& result = action->lastExecutionResult();
+    const QString status = result.success
+                               ? QString("Completed: %1").arg(action->name())
+                               : QString("Failed: %1 - %2").arg(action->name(), result.message);
+    m_qa_status_label->setText(status);
+    m_qa_progress_bar->setVisible(false);
+    logMessage(status);
+    Q_EMIT statusMessage(status, sak::kTimerStatusDefaultMs);
+}
+
+void DiagnosticBenchmarkPanel::onQuickActionError(QuickAction* action,
+                                                  const QString& error_message) {
+    Q_ASSERT(action);
+    const QString status = QString("Error: %1 - %2").arg(action->name(), error_message);
+    m_qa_status_label->setText(status);
+    m_qa_progress_bar->setVisible(false);
+    logMessage(status);
+    sak::logError("Quick action error: {} - {}",
+                  action->name().toStdString(),
+                  error_message.toStdString());
 }
 
 }  // namespace sak

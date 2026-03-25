@@ -15,7 +15,7 @@ endif()
 
 # Project definition
 project(SAK_Utility
-    VERSION 0.9.0.6
+    VERSION 0.9.0.7
     DESCRIPTION "Swiss Army Knife Utility - PC technician's toolkit for Windows migration and maintenance"
     LANGUAGES CXX
 )# C++23 Standard - Strict compliance required
@@ -518,8 +518,6 @@ set(GUI_SOURCES
     include/sak/linux_iso_download_dialog.h
     src/gui/image_flasher_settings_dialog.cpp
     include/sak/image_flasher_settings_dialog.h
-    src/gui/quick_actions_panel.cpp
-    include/sak/quick_actions_panel.h
     src/gui/detachable_log_window.cpp
     include/sak/detachable_log_window.h
     src/gui/windows11_theme.cpp
@@ -566,49 +564,27 @@ set(GUI_SOURCES
 
 # Quick Actions
 set(QUICK_ACTIONS_SOURCES
-    # Factory
-    src/actions/action_factory.cpp
-    include/sak/actions/action_factory.h
-
     # System Optimization
-    src/actions/disk_cleanup_action.cpp
-    src/actions/clear_browser_cache_action.cpp
-    src/actions/clear_windows_update_cache_action.cpp
-    src/actions/clear_event_logs_action.cpp
     src/actions/optimize_power_settings_action.cpp
 
     # Maintenance
     src/actions/verify_system_files_action.cpp
     src/actions/check_disk_errors_action.cpp
-    src/actions/rebuild_icon_cache_action.cpp
     src/actions/reset_network_action.cpp
-    src/actions/clear_print_spooler_action.cpp
 
     # Troubleshooting
     src/actions/generate_system_report_action.cpp
-    src/actions/check_bloatware_action.cpp
-    src/actions/repair_windows_store_action.cpp
-    src/actions/fix_audio_issues_action.cpp
 
     # Emergency Recovery
     src/actions/screenshot_settings_action.cpp
     src/actions/backup_bitlocker_keys_action.cpp
 
     # Headers for all actions
-    include/sak/actions/disk_cleanup_action.h
-    include/sak/actions/clear_browser_cache_action.h
-    include/sak/actions/clear_windows_update_cache_action.h
-    include/sak/actions/clear_event_logs_action.h
     include/sak/actions/optimize_power_settings_action.h
     include/sak/actions/verify_system_files_action.h
     include/sak/actions/check_disk_errors_action.h
-    include/sak/actions/rebuild_icon_cache_action.h
     include/sak/actions/reset_network_action.h
-    include/sak/actions/clear_print_spooler_action.h
     include/sak/actions/generate_system_report_action.h
-    include/sak/actions/check_bloatware_action.h
-    include/sak/actions/repair_windows_store_action.h
-    include/sak/actions/fix_audio_issues_action.h
     include/sak/actions/screenshot_settings_action.h
     include/sak/actions/backup_bitlocker_keys_action.h
 )

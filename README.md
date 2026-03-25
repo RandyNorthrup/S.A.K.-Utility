@@ -9,7 +9,7 @@
 [![Qt 6.5+](https://img.shields.io/badge/Qt-6.5%2B-41cd52.svg)](https://www.qt.io/)
 [![Windows 10/11](https://img.shields.io/badge/Windows-10%20%7C%2011-0078d4.svg)](https://www.microsoft.com/windows)
 [![Build](https://github.com/RandyNorthrup/S.A.K.-Utility/actions/workflows/build-release.yml/badge.svg)](https://github.com/RandyNorthrup/S.A.K.-Utility/actions)
-[![Version](https://img.shields.io/badge/Version-0.9.0.6-orange.svg)](VERSION)
+[![Version](https://img.shields.io/badge/Version-0.9.0.7-orange.svg)](VERSION)
 
 Migration · Maintenance · Recovery · Imaging · Deployment — one portable EXE.
 
@@ -17,11 +17,20 @@ Migration · Maintenance · Recovery · Imaging · Deployment — one portable E
 
 ---
 
-## What's New in v0.9.0.6
+## What's New in v0.9.0.7
 
+- **File Converter tab plan** — Comprehensive implementation plan for universal offline file conversion (documents, images, audio, video, spreadsheets, PDFs) with batch processing. New tab planned for the File Management panel.
+- **System Tools tab plan** — Comprehensive implementation plan for a centralized launcher of 48+ built-in Windows admin/diagnostic utilities with categorized grid, search, favorites, and availability detection. New tab planned for the Benchmark & Diagnostics panel.
+- **OST Converter tab plan** — Comprehensive implementation plan for multi-threaded bulk OST/PST conversion to PST, EML, MSG, MBOX, and DBX formats with IMAP cloud upload, deleted/corrupt item recovery, metadata preservation, and PST splitting. New tab planned for the Email Tool panel.
+- **Documentation accuracy audit** — Corrected header count (134), test file count (96), removed stale Network encryption security claim (feature was removed in v0.9.0.6), updated roadmap with planned features.
+- **Build quality** — Clean MSVC `/W4 /WX` build, 74 automated tests (all passing), 137 source files, 134 headers.
+
+### v0.9.0.6
+
+- **Quick Actions panel removed** — Distributed 7 quick actions into their destination panels: Screenshot Settings and BitLocker Key Backup moved to Backup and Restore, Optimize Power Settings / Verify System Files / Check Disk Errors / Generate System Report moved to Benchmark and Diagnostics, Reset Network Settings moved to Network Management. Removed the standalone Quick Actions panel, ActionFactory, and 5 unused actions. All quick actions are now accessible directly from the panel where they are most relevant.
 - **Network Transfer panel removed** — Removed the entire Network Transfer feature from the codebase. All source files, tests, and documentation references have been cleaned. Code archived for potential future reuse.
 - **Offline deployment enhancement** — Application Management panel now supports offline deployment via exported JSON application lists.
-- **Build quality** — Clean MSVC `/W4 /WX` build, 74 automated tests (all passing), zero network transfer references outside archive.
+- **Build quality** — Clean MSVC `/W4 /WX` build, 74 automated tests (all passing), 137 source files, 134 headers.
 
 ### v0.9.0.5
 
@@ -31,12 +40,6 @@ Migration · Maintenance · Recovery · Imaging · Deployment — one portable E
 - **Build quality** — Clean MSVC `/W4 /WX` build, 91 automated tests (all passing), 186 source files, 151 headers.
 
 ### v0.9.0.4
-
-- **Email Inspector panel** — Full-featured PST/OST/MBOX email browser with folder tree navigation, item list, HTML/plain-text preview, MAPI property inspector, and attachment viewer. File scanner auto-discovers email archives in common locations. Export to EML, CSV, VCF, ICS, and bulk attachment extraction. Attachments browser dialog scans all emails and presents every attachment in a searchable, filterable list with context menu (save, view containing email, copy filename). Contacts dialog with sortable address book. Calendar dialog with month, week, and day views including event highlighting, half-hour grid lines, and column separators. Full-text search across all item fields — no Outlook or MAPI libraries required.
-- **Modern email client layout** — Ribbon toolbar with Icons8 Windows 11 Filled icons, side-by-side splitter layout (folder tree | item list | preview), typed folder icons (Inbox, Sent, Drafts, Deleted, Junk, Starred), and responsive preview pane sizing.
-- **PST/OST parser improvements** — Fixed 8-byte property types (PT_SYSTIME, PT_INT64, PT_FLOAT64) truncated to 4 bytes, fixed HTML body display for PT_BINARY properties, added ~50 MAPI property name mappings.
-- **Modal dialog isolation** — Calendar, contacts, and attachments browser dialogs are fully isolated from the main panel via signal disconnect/reconnect. No cross-talk between modal operations and the main window.
-- **Build quality** — Clean MSVC `/W4 /WX` build, 91 automated tests (all passing), 186 source files, 151 headers.
 
 ### v0.9.0.3
 
@@ -130,13 +133,12 @@ Migration · Maintenance · Recovery · Imaging · Deployment — one portable E
 | | |
 |---|---|
 | **100 % Portable** | No installer. Drop on a USB stick and go. |
-| **Quick Actions** | One-click system optimization, backups, maintenance, troubleshooting, and recovery. |
-| **Backup and Restore** | Step-by-step wizards with smart filtering, AES-256 encryption, and NTFS permission handling. |
-| **Diagnostics & Benchmarking** | SMART disk health, CPU/disk/memory benchmarks, stress testing, thermal monitoring, HTML/JSON/CSV reports. |
+| **Backup and Restore** | Step-by-step wizards with smart filtering, AES-256 encryption, NTFS permission handling, plus integrated screenshot settings and BitLocker key backup. |
+| **Diagnostics & Benchmarking** | SMART disk health, CPU/disk/memory benchmarks, stress testing, thermal monitoring, system maintenance tools, HTML/JSON/CSV reports. |
 | **Image Flasher** | Flash ISOs/IMGs to USB. Download Windows and Linux ISOs directly. |
 | **File Management** | Organize files by extension, find duplicates with parallel hashing, and grep-style content search with regex, metadata, archive, and binary/hex modes. |
 | **Application Management** | Scan installed apps, match to Chocolatey packages, bulk-install on a new PC. Deep application removal with leftover scanning and registry snapshot diffs. |
-| **Network Management** | Diagnostic suite (ping, traceroute, MTR, DNS, port scan, bandwidth, WiFi, connections, firewall, shares), adapter inspector with ethernet backup/restore, WiFi QR code manager. |
+| **Network Management** | Diagnostic suite (ping, traceroute, MTR, DNS, port scan, bandwidth, WiFi, connections, firewall, shares), adapter inspector with ethernet backup/restore and network reset, WiFi QR code manager. |
 | **Email Tool** | Browse PST, OST, and MBOX email archives. Search, export (EML/CSV/VCF/ICS), contacts, calendar (month/week/day), attachments browser — no Outlook required. |
 | **Modern UI** | Windows 11-style rounded corners, custom splash screen, and responsive layouts. |
 
@@ -147,7 +149,6 @@ Migration · Maintenance · Recovery · Imaging · Deployment — one portable E
 - [System Requirements](#system-requirements)
 - [Quick Start](#quick-start)
 - [Features](#features)
-  - [Quick Actions](#quick-actions)
   - [Backup and Restore](#backup-and-restore)
   - [Application Management](#application-management)
   - [Benchmark and Diagnostics](#benchmark-and-diagnostics)
@@ -193,88 +194,6 @@ Migration · Maintenance · Recovery · Imaging · Deployment — one portable E
 
 ## Features
 
-### Quick Actions
-
-One-click operations organized by category with real-time progress and detailed logging.
-
-<details>
-<summary><strong>System Optimization</strong></summary>
-
-| Action | Description |
-|---|---|
-| Disk Cleanup | Temp files, browser caches, recycle bin, thumbnails |
-| Clear Browser Cache | Chrome, Edge, Firefox, Brave, Vivaldi, Opera — all profiles |
-| Defragment Drives | HDD optimization and SSD TRIM via `defrag.exe` |
-| Clear Windows Update Cache | Stops WU service, clears `SoftwareDistribution`, restarts |
-| Disable Startup Programs | Identifies and disables unnecessary startup items |
-| Clear Event Logs | Archives and clears Application, System, Security, Setup logs |
-| Optimize Power Settings | Applies High Performance / Ultimate Performance plan |
-| Disable Visual Effects | Reduces animations for snappier UX on older hardware |
-
-</details>
-
-<details>
-<summary><strong>Quick Backups</strong></summary>
-
-| Action | Description |
-|---|---|
-| QuickBooks Backup | .QBW, .QBB, .TLG, .ND files from common locations |
-| Browser Profile Backup | Bookmarks, passwords (encrypted), history, extensions |
-| Outlook Backup | .PST/.OST, signatures, rules, contacts |
-| Sticky Notes Backup | `plum.sqlite` database |
-| Saved Game Data | Steam, Epic, Origin, Xbox Game Pass save files |
-| Tax Software Backup | TurboTax, H&R Block, TaxAct data |
-| Photo Management Backup | Lightroom catalogs, Photoshop preferences |
-| Dev Configs Backup | VS Code settings, Git config, SSH keys, env vars |
-| Backup Known Networks | Saved WiFi profiles exported via `netsh wlan export` |
-
-</details>
-
-<details>
-<summary><strong>Maintenance</strong></summary>
-
-| Action | Description |
-|---|---|
-| Update All Apps | Runs WinGet + Chocolatey updates with reporting |
-| Windows Update | Triggers via UsoClient |
-| Verify System Files | `sfc /scannow` + `DISM /RestoreHealth` |
-| Check Disk Errors | `chkdsk` with bad-sector scan |
-| Rebuild Icon Cache | Deletes `IconCache.db`, restarts Explorer |
-| Reset Network | Flushes DNS, resets TCP/IP, Winsock, firewall, adapters |
-| Clear Print Spooler | Stops spooler, deletes stuck jobs, restarts |
-
-</details>
-
-<details>
-<summary><strong>Troubleshooting</strong></summary>
-
-| Action | Description |
-|---|---|
-| Generate System Report | Comprehensive report: OS, hardware, storage, network, drivers, event logs, installed programs (HTML) |
-| Check for Bloatware | Scans for known bloatware and OEM software |
-| Test Network Speed | Download/upload speed and latency |
-| Scan for Malware | Windows Defender quick scan via `Start-MpScan` |
-| Repair Windows Store | `WSReset.exe` + re-register Store apps |
-| Fix Audio Issues | Restarts Windows Audio service, rebuilds device enumeration |
-
-</details>
-
-<details>
-<summary><strong>Emergency Recovery</strong></summary>
-
-| Action | Description |
-|---|---|
-| Create Restore Point | System Restore checkpoint via WMI |
-| Export Registry Keys | Critical registry hives (HKLM\Software, HKCU, etc.) |
-| Screenshot Settings | Captures screenshots of Windows Settings panels |
-| Desktop Wallpaper Backup | Saves current wallpaper and theme files |
-| Backup BitLocker Keys | Recovery keys for all encrypted volumes (restricted permissions) |
-| Backup Printer Settings | Printer drivers, queues, and port configurations |
-
-</details>
-
----
-
 ### Backup and Restore
 
 Guided wizards for comprehensive user-profile migration with smart filtering, AES-256 encryption, and NTFS permission handling.
@@ -282,6 +201,13 @@ Guided wizards for comprehensive user-profile migration with smart filtering, AE
 **Backup Wizard** — Scan and select user profiles, customize per-user data categories (Desktop, Documents, AppData, browsers, email, and more), configure filters, compression, and encryption, then execute with real-time progress and cancellation support.
 
 **Restore Wizard** — Map source users to destination users (auto-map or manual), configure merge behavior, select data categories, handle NTFS permissions, and restore with detailed logging.
+
+**Quick Tools** — Integrated one-click actions:
+
+| Tool | Description |
+|---|---|
+| Screenshot Settings | Captures screenshots of Windows Settings panels for documentation |
+| BitLocker Key Backup | Exports BitLocker recovery keys for all encrypted volumes |
 
 ---
 
@@ -376,6 +302,15 @@ Comprehensive hardware diagnostics, performance benchmarking, and stability test
 - Disk stress (sustained sequential I/O with direct writes)
 - Real-time thermal monitoring with auto-abort at configurable limit
 - Error-count abort thresholds
+
+**System Maintenance** — Integrated one-click actions:
+
+| Tool | Description |
+|---|---|
+| Optimize Power Settings | Applies High Performance / Ultimate Performance plan |
+| Verify System Files | `sfc /scannow` + `DISM /RestoreHealth` |
+| Check Disk Errors | `chkdsk` with bad-sector scan |
+| Generate System Report | Comprehensive report: OS, hardware, storage, network, drivers, event logs, installed programs (HTML) |
 
 **Full Suite Mode**
 - One-click sequential run: Hardware Scan → SMART Analysis → CPU Benchmark → Disk Benchmark → Memory Benchmark → Stress Test → Report Generation
@@ -479,7 +414,7 @@ Three-tab network panel covering diagnostics, adapter configuration, and WiFi cr
 
 #### Network Adapters
 
-Adapter inspector with ethernet backup and restore.
+Adapter inspector with ethernet backup, restore, and network reset.
 
 - Enumerates all network adapters (Ethernet, WiFi, Virtual)
 - Full configuration display: IPv4/IPv6 addresses, subnet masks, gateways, DHCP status, DNS servers, MAC address, driver info, link speed, traffic statistics
@@ -488,6 +423,7 @@ Adapter inspector with ethernet backup and restore.
 - Restore settings to the same or a different adapter on any machine via `netsh` commands
 - Supports DHCP and static configurations, primary and secondary DNS servers
 - Cross-machine portability — back up on one PC, restore on another
+- **Reset Network Settings** — One-click reset: flushes DNS, resets TCP/IP stack, Winsock, firewall, and adapters
 
 #### WiFi Manager
 
@@ -562,7 +498,7 @@ Global application settings accessible from the **Edit → Settings** menu (`Ctr
 
 | Tab | Options |
 |---|---|
-| **Backup** | Default backup location, Quick Actions backup settings (location, confirmations, notifications, logging, compression) |
+| **Backup** | Default backup location, confirmation prompts, notification preferences, logging, compression |
 
 ---
 
@@ -571,7 +507,6 @@ Global application settings accessible from the **Edit → Settings** menu (`Ctr
 | Layer | Implementation |
 |---|---|
 | **File encryption** | AES-256-CBC via Windows BCrypt with PBKDF2 key derivation |
-| **Network encryption** | AES-256-GCM via Windows BCrypt with PBKDF2 key derivation, per-chunk authentication tags |
 | **Secure memory** | `SecureString` / `SecureBuffer` — zero-fill on destruction, page locking via `VirtualLock` |
 | **Input validation** | Path sanitization, IP/port validation, Chocolatey name format checks |
 | **Elevation** | UAC manifest (`requireAdministrator`), runtime privilege verification |
@@ -652,7 +587,7 @@ Full license texts: [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md)
 cmake --build build --config Release --target RUN_TESTS
 ```
 
-91 unit and integration tests across 117 test files covering Advanced Search, Advanced Uninstall (types, controller, leftover scanner, registry snapshot engine), Network Diagnostics (types, utils, report generation), Email Inspector (PST/OST parsing, MBOX parsing, email types, search, export, profile manager, report generator), diagnostics, security, encryption, configuration, ISO download, and quick action factory validation.
+74 unit and integration tests across 98 test files covering Advanced Search, Advanced Uninstall (types, controller, leftover scanner, registry snapshot engine), Network Diagnostics (types, utils, report generation), Email Inspector (PST/OST parsing, MBOX parsing, email types, search, export, profile manager, report generator), diagnostics, security, encryption, configuration, ISO download, and quick action validation.
 
 ---
 
@@ -684,14 +619,11 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for coding standards, commit conventions,
 
 ## Roadmap
 
-- [ ] PXE boot server for network imaging
-- [ ] WinPE bootable environment creation
-- [ ] Cloud backup integration (Azure, AWS S3, Google Cloud)
-- [ ] Active Directory user migration
-- [ ] Group Policy backup/restore
-- [ ] Driver backup/restore
-- [ ] Registry comparison and merge
-- [ ] Multi-language support (i18n)
+### Planned Features (detailed plans in `docs/`)
+
+- **File Converter Tab** — Universal offline file conversion for documents, images, audio, video, spreadsheets, and PDFs with batch processing and quality controls. Adds a new tab to the File Management panel. See [FILE_CONVERTER_TAB_PLAN.md](docs/FILE_CONVERTER_TAB_PLAN.md).
+- **System Tools Tab** — Centralized launcher for 48+ built-in Windows administrative and diagnostic utilities, organized into searchable categories with one-click launch, favorites, and availability detection. Adds a new tab to the Benchmark & Diagnostics panel. See [SYSTEM_TOOLS_TAB_PLAN.md](docs/SYSTEM_TOOLS_TAB_PLAN.md).
+- **OST Converter Tab** — Multi-threaded bulk OST/PST conversion to PST, EML, MSG, MBOX, and DBX formats with IMAP cloud upload (Office 365, Gmail, Yahoo), deleted/corrupt item recovery, metadata preservation, and PST splitting. Adds a new tab to the Email Tool panel. See [OST_CONVERTER_TAB_PLAN.md](docs/OST_CONVERTER_TAB_PLAN.md).
 
 ---
 

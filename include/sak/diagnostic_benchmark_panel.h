@@ -31,6 +31,8 @@ class QVBoxLayout;
 namespace sak {
 
 class LogToggleSwitch;
+class QuickAction;
+class QuickActionController;
 
 /// @brief Diagnostic & Benchmarking panel providing hardware inventory,
 ///        SMART health, CPU/disk/memory benchmarks, stress testing,
@@ -105,6 +107,12 @@ private Q_SLOTS:
     void onOperationProgress(int percent, const QString& message);
     void onErrorOccurred(const QString& message);
 
+    // -- Quick Actions --------------------------------------------
+    void onQuickActionClicked(QuickAction* action);
+    void onQuickActionProgress(QuickAction* action, const QString& message, int progress);
+    void onQuickActionComplete(QuickAction* action);
+    void onQuickActionError(QuickAction* action, const QString& error_message);
+
 private:
     /// @brief Build the complete UI layout
     void setupUi();
@@ -137,6 +145,9 @@ private:
     QGroupBox* createThermalSection();
     QGroupBox* createSuiteSection();
     QGroupBox* createReportSection();
+
+    QGroupBox* createSystemMaintenanceSection();
+    void createQuickActions();
 
     /// @brief Build technician/ticket/notes input fields for report section
     void createReportInfoFields(QVBoxLayout* layout);
@@ -241,6 +252,12 @@ private:
 
     // -- Common Widgets ------------------------------------------
     LogToggleSwitch* m_logToggle{nullptr};
+
+    // -- Quick Action Widgets ------------------------------------
+    QuickActionController* m_qa_controller{nullptr};
+    QHash<QString, QPushButton*> m_qa_buttons;
+    QLabel* m_qa_status_label{nullptr};
+    QProgressBar* m_qa_progress_bar{nullptr};
 
     // -- State ---------------------------------------------------
     bool m_operation_running{false};

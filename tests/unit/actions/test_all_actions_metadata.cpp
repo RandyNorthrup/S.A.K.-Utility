@@ -1,7 +1,13 @@
 // Copyright (c) 2025-2026 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-#include "sak/actions/action_factory.h"
+#include "sak/actions/backup_bitlocker_keys_action.h"
+#include "sak/actions/check_disk_errors_action.h"
+#include "sak/actions/generate_system_report_action.h"
+#include "sak/actions/optimize_power_settings_action.h"
+#include "sak/actions/reset_network_action.h"
+#include "sak/actions/screenshot_settings_action.h"
+#include "sak/actions/verify_system_files_action.h"
 #include "sak/quick_action.h"
 
 #include <QMap>
@@ -16,9 +22,6 @@ using namespace sak;
  * Validates that every action returns the exact expected
  * name, category, and admin flag. Also exercises cancel
  * behavior and status transitions for all actions.
- *
- * Complements test_action_factory (which validates generic
- * constraints) with concrete expected-value assertions.
  */
 class TestAllActionsMetadata : public QObject {
     Q_OBJECT
@@ -26,31 +29,22 @@ class TestAllActionsMetadata : public QObject {
 private Q_SLOTS:
     void initTestCase();
 
-    // ── Metadata — exact expected values ────────────────────
-    void testDiskCleanup();
-    void testClearBrowserCache();
-    void testClearWindowsUpdateCache();
-    void testClearEventLogs();
+    // -- Metadata -- exact expected values ----------------------
     void testOptimizePowerSettings();
 
     void testVerifySystemFiles();
     void testCheckDiskErrors();
-    void testRebuildIconCache();
     void testResetNetwork();
-    void testClearPrintSpooler();
 
     void testGenerateSystemReport();
-    void testCheckBloatware();
-    void testRepairWindowsStore();
-    void testFixAudioIssues();
 
     void testScreenshotSettings();
     void testBackupBitlockerKeys();
 
-    // ── Cancel behavior for all actions ─────────────────────
+    // -- Cancel behavior for all actions ------------------------
     void testCancelAllActionsWhenIdle();
 
-    // ── Status remains Idle after cancel ────────────────────
+    // -- Status remains Idle after cancel -----------------------
     void testStatusAfterCancel();
 
     void cleanupTestCase();
@@ -64,10 +58,25 @@ private:
                       const QString& descSubstring,
                       QuickAction::ActionCategory expectedCat,
                       bool expectedAdmin);
+
+    std::vector<std::unique_ptr<QuickAction>> createAllActions() const;
 };
 
+std::vector<std::unique_ptr<QuickAction>> TestAllActionsMetadata::createAllActions() const {
+    const auto backup = QStringLiteral("C:/SAK_Test_Backups");
+    std::vector<std::unique_ptr<QuickAction>> actions;
+    actions.push_back(std::make_unique<BackupBitlockerKeysAction>(backup));
+    actions.push_back(std::make_unique<CheckDiskErrorsAction>());
+    actions.push_back(std::make_unique<GenerateSystemReportAction>(backup));
+    actions.push_back(std::make_unique<OptimizePowerSettingsAction>());
+    actions.push_back(std::make_unique<ResetNetworkAction>());
+    actions.push_back(std::make_unique<ScreenshotSettingsAction>(backup));
+    actions.push_back(std::make_unique<VerifySystemFilesAction>());
+    return actions;
+}
+
 void TestAllActionsMetadata::initTestCase() {
-    m_actions = ActionFactory::createAllActions(QStringLiteral("C:/SAK_Test_Backups"));
+    m_actions = createAllActions();
     QVERIFY(!m_actions.empty());
 }
 
@@ -97,30 +106,8 @@ void TestAllActionsMetadata::verifyAction(const QString& expectedName,
 }
 
 // ============================================================================
-// System Optimization (5)
+// System Optimization (1)
 // ============================================================================
-
-void TestAllActionsMetadata::testDiskCleanup() {
-    verifyAction(
-        "Disk Cleanup", "temporary", QuickAction::ActionCategory::SystemOptimization, true);
-}
-
-void TestAllActionsMetadata::testClearBrowserCache() {
-    verifyAction(
-        "Clear Browser Cache", "cache", QuickAction::ActionCategory::SystemOptimization, false);
-}
-
-void TestAllActionsMetadata::testClearWindowsUpdateCache() {
-    verifyAction("Clear Windows Update Cache",
-                 "Windows Update",
-                 QuickAction::ActionCategory::SystemOptimization,
-                 true);
-}
-
-void TestAllActionsMetadata::testClearEventLogs() {
-    verifyAction(
-        "Clear Event Logs", "Event Log", QuickAction::ActionCategory::SystemOptimization, true);
-}
 
 void TestAllActionsMetadata::testOptimizePowerSettings() {
     verifyAction(
@@ -128,7 +115,7 @@ void TestAllActionsMetadata::testOptimizePowerSettings() {
 }
 
 // ============================================================================
-// Maintenance (5)
+// Maintenance (3)
 // ============================================================================
 
 void TestAllActionsMetadata::testVerifySystemFiles() {
@@ -139,21 +126,13 @@ void TestAllActionsMetadata::testCheckDiskErrors() {
     verifyAction("Check Disk Errors", "CHKDSK", QuickAction::ActionCategory::Maintenance, true);
 }
 
-void TestAllActionsMetadata::testRebuildIconCache() {
-    verifyAction("Rebuild Icon Cache", "icon", QuickAction::ActionCategory::Maintenance, false);
-}
-
 void TestAllActionsMetadata::testResetNetwork() {
     verifyAction(
         "Reset Network Settings", "TCP/IP", QuickAction::ActionCategory::Maintenance, true);
 }
 
-void TestAllActionsMetadata::testClearPrintSpooler() {
-    verifyAction("Clear Print Spooler", "print", QuickAction::ActionCategory::Maintenance, true);
-}
-
 // ============================================================================
-// Troubleshooting (4)
+// Troubleshooting (1)
 // ============================================================================
 
 void TestAllActionsMetadata::testGenerateSystemReport() {
@@ -161,20 +140,6 @@ void TestAllActionsMetadata::testGenerateSystemReport() {
                  "system report",
                  QuickAction::ActionCategory::Troubleshooting,
                  false);
-}
-
-void TestAllActionsMetadata::testCheckBloatware() {
-    verifyAction(
-        "Check for Bloatware", "bloatware", QuickAction::ActionCategory::Troubleshooting, true);
-}
-
-void TestAllActionsMetadata::testRepairWindowsStore() {
-    verifyAction(
-        "Repair Windows Store", "Store", QuickAction::ActionCategory::Troubleshooting, false);
-}
-
-void TestAllActionsMetadata::testFixAudioIssues() {
-    verifyAction("Fix Audio Issues", "audio", QuickAction::ActionCategory::Troubleshooting, true);
 }
 
 // ============================================================================
@@ -197,7 +162,6 @@ void TestAllActionsMetadata::testBackupBitlockerKeys() {
 
 void TestAllActionsMetadata::testCancelAllActionsWhenIdle() {
     for (const auto& action : m_actions) {
-        // Cancel when idle should not crash or change state
         action->cancel();
         QVERIFY2(action->status() == QuickAction::ActionStatus::Idle ||
                      action->status() == QuickAction::ActionStatus::Cancelled,
@@ -206,8 +170,7 @@ void TestAllActionsMetadata::testCancelAllActionsWhenIdle() {
 }
 
 void TestAllActionsMetadata::testStatusAfterCancel() {
-    // Fresh set of actions for clean state
-    auto fresh = ActionFactory::createAllActions(QStringLiteral("C:/SAK_Test_Backups"));
+    auto fresh = createAllActions();
 
     for (const auto& action : fresh) {
         QCOMPARE(action->status(), QuickAction::ActionStatus::Idle);

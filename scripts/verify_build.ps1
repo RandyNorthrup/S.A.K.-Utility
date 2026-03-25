@@ -41,46 +41,16 @@ if (-not $AllFilesExist) {
 }
 
 Write-Host ""
-Write-Host "[2/7] Verifying all 37 action source files..." -ForegroundColor Yellow
+Write-Host "[2/7] Verifying all 7 action source files..." -ForegroundColor Yellow
 
 $ActionFiles = @(
-    "src/actions/disk_cleanup_action.cpp",
-    "src/actions/clear_browser_cache_action.cpp",
-    "src/actions/defragment_drives_action.cpp",
-    "src/actions/clear_windows_update_cache_action.cpp",
-    "src/actions/disable_startup_programs_action.cpp",
-    "src/actions/clear_event_logs_action.cpp",
     "src/actions/optimize_power_settings_action.cpp",
-    "src/actions/disable_visual_effects_action.cpp",
-    "src/actions/quickbooks_backup_action.cpp",
-    "src/actions/browser_profile_backup_action.cpp",
-    "src/actions/outlook_backup_action.cpp",
-    "src/actions/sticky_notes_backup_action.cpp",
-    "src/actions/saved_game_data_backup_action.cpp",
-    "src/actions/tax_software_backup_action.cpp",
-    "src/actions/photo_management_backup_action.cpp",
-    "src/actions/development_configs_backup_action.cpp",
-    "src/actions/backup_known_networks_action.cpp",
-    "src/actions/update_all_apps_action.cpp",
-    "src/actions/windows_update_action.cpp",
     "src/actions/verify_system_files_action.cpp",
     "src/actions/check_disk_errors_action.cpp",
-    "src/actions/rebuild_icon_cache_action.cpp",
     "src/actions/reset_network_action.cpp",
-    "src/actions/clear_print_spooler_action.cpp",
     "src/actions/generate_system_report_action.cpp",
-    "src/actions/check_bloatware_action.cpp",
-    "src/actions/test_network_speed_action.cpp",
-    "src/actions/scan_malware_action.cpp",
-    "src/actions/repair_windows_store_action.cpp",
-    "src/actions/fix_audio_issues_action.cpp",
-    "src/actions/create_restore_point_action.cpp",
-    "src/actions/export_registry_keys_action.cpp",
     "src/actions/screenshot_settings_action.cpp",
-    "src/actions/backup_desktop_wallpaper_action.cpp",
-    "src/actions/backup_printer_settings_action.cpp",
-    "src/actions/backup_bitlocker_keys_action.cpp",
-    "src/actions/action_factory.cpp"
+    "src/actions/backup_bitlocker_keys_action.cpp"
 )
 
 $ActionCount = 0
@@ -169,7 +139,7 @@ Write-Host "Verification Complete" -ForegroundColor Cyan
 Write-Host "===========================================================================" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "[OK] All required files present" -ForegroundColor Green
-Write-Host "[OK] All 37 action files verified" -ForegroundColor Green
+Write-Host "[OK] All 7 action files verified" -ForegroundColor Green
 Write-Host "[OK] CMakeLists.txt properly configured" -ForegroundColor Green
 Write-Host "[OK] Build configuration validated" -ForegroundColor Green
 Write-Host ""

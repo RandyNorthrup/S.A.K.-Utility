@@ -925,14 +925,10 @@ endif()
 # Unit Tests - Quick Actions
 # ============================================================================
 
-# test_action_factory — Factory completeness, metadata, category distribution, initial state
+# test_action_factory — Action metadata, category distribution, initial state
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/actions/test_action_factory.cpp")
     add_executable(test_action_factory
         unit/actions/test_action_factory.cpp
-
-        # Factory
-        ../src/actions/action_factory.cpp
-        ../include/sak/actions/action_factory.h
 
         # Base class
         ../src/core/quick_action.cpp
@@ -955,14 +951,6 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/actions/test_action_factory.cpp")
         ../include/sak/chocolatey_manager.h
 
         # System Optimization actions
-        ../src/actions/disk_cleanup_action.cpp
-        ../include/sak/actions/disk_cleanup_action.h
-        ../src/actions/clear_browser_cache_action.cpp
-        ../include/sak/actions/clear_browser_cache_action.h
-        ../src/actions/clear_windows_update_cache_action.cpp
-        ../include/sak/actions/clear_windows_update_cache_action.h
-        ../src/actions/clear_event_logs_action.cpp
-        ../include/sak/actions/clear_event_logs_action.h
         ../src/actions/optimize_power_settings_action.cpp
         ../include/sak/actions/optimize_power_settings_action.h
 
@@ -971,22 +959,12 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/actions/test_action_factory.cpp")
         ../include/sak/actions/verify_system_files_action.h
         ../src/actions/check_disk_errors_action.cpp
         ../include/sak/actions/check_disk_errors_action.h
-        ../src/actions/rebuild_icon_cache_action.cpp
-        ../include/sak/actions/rebuild_icon_cache_action.h
         ../src/actions/reset_network_action.cpp
         ../include/sak/actions/reset_network_action.h
-        ../src/actions/clear_print_spooler_action.cpp
-        ../include/sak/actions/clear_print_spooler_action.h
 
         # Troubleshooting actions
         ../src/actions/generate_system_report_action.cpp
         ../include/sak/actions/generate_system_report_action.h
-        ../src/actions/check_bloatware_action.cpp
-        ../include/sak/actions/check_bloatware_action.h
-        ../src/actions/repair_windows_store_action.cpp
-        ../include/sak/actions/repair_windows_store_action.h
-        ../src/actions/fix_audio_issues_action.cpp
-        ../include/sak/actions/fix_audio_issues_action.h
 
         # Emergency Recovery actions
         ../src/actions/screenshot_settings_action.cpp
@@ -1518,10 +1496,6 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/actions/test_all_actions_metadata.cp
     add_executable(test_all_actions_metadata
         unit/actions/test_all_actions_metadata.cpp
 
-        # Factory
-        ../src/actions/action_factory.cpp
-        ../include/sak/actions/action_factory.h
-
         # Base class
         ../src/core/quick_action.cpp
         ../include/sak/quick_action.h
@@ -1543,14 +1517,6 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/actions/test_all_actions_metadata.cp
         ../include/sak/chocolatey_manager.h
 
         # System Optimization actions
-        ../src/actions/disk_cleanup_action.cpp
-        ../include/sak/actions/disk_cleanup_action.h
-        ../src/actions/clear_browser_cache_action.cpp
-        ../include/sak/actions/clear_browser_cache_action.h
-        ../src/actions/clear_windows_update_cache_action.cpp
-        ../include/sak/actions/clear_windows_update_cache_action.h
-        ../src/actions/clear_event_logs_action.cpp
-        ../include/sak/actions/clear_event_logs_action.h
         ../src/actions/optimize_power_settings_action.cpp
         ../include/sak/actions/optimize_power_settings_action.h
 
@@ -1559,22 +1525,12 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/actions/test_all_actions_metadata.cp
         ../include/sak/actions/verify_system_files_action.h
         ../src/actions/check_disk_errors_action.cpp
         ../include/sak/actions/check_disk_errors_action.h
-        ../src/actions/rebuild_icon_cache_action.cpp
-        ../include/sak/actions/rebuild_icon_cache_action.h
         ../src/actions/reset_network_action.cpp
         ../include/sak/actions/reset_network_action.h
-        ../src/actions/clear_print_spooler_action.cpp
-        ../include/sak/actions/clear_print_spooler_action.h
 
         # Troubleshooting actions
         ../src/actions/generate_system_report_action.cpp
         ../include/sak/actions/generate_system_report_action.h
-        ../src/actions/check_bloatware_action.cpp
-        ../include/sak/actions/check_bloatware_action.h
-        ../src/actions/repair_windows_store_action.cpp
-        ../include/sak/actions/repair_windows_store_action.h
-        ../src/actions/fix_audio_issues_action.cpp
-        ../include/sak/actions/fix_audio_issues_action.h
 
         # Emergency Recovery actions
         ../src/actions/screenshot_settings_action.cpp

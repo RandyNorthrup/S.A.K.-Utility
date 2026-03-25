@@ -17,7 +17,6 @@
 #include "sak/layout_constants.h"
 #include "sak/network_diagnostic_panel.h"
 #include "sak/organizer_panel.h"
-#include "sak/quick_actions_panel.h"
 #include "sak/style_constants.h"
 #include "sak/user_migration_panel.h"
 #include "sak/version.h"
@@ -79,17 +78,7 @@ Built with modern C++23 and Qt 6 for Windows 10/11 x64.</div>
     <div class="section-title">Migration &amp; Backup</div>
     <ul>
         <li><b>User Profile Backup &amp; Restore</b> &mdash; Step-by-step wizards with smart filtering, per-user customization, AES-256 encryption, and NTFS permission handling</li>
-    </ul>
-</div>
-
-<div class="section">
-    <div class="section-title">Quick Actions</div>
-    <ul>
-        <li><b>System Optimization</b> &mdash; Disk cleanup, browser cache, defragment, startup programs, power settings, visual effects</li>
-        <li><b>Quick Backups</b> &mdash; QuickBooks, browser profiles, Outlook, Sticky Notes, saved games, tax software, photo tools, dev configs, WiFi networks</li>
-        <li><b>Maintenance</b> &mdash; App updates, Windows Update, system file verification, disk checks, icon cache, network reset, print spooler</li>
-        <li><b>Troubleshooting</b> &mdash; System reports, bloatware scan, network speed test, malware scan, Windows Store repair, audio fixes</li>
-        <li><b>Emergency Recovery</b> &mdash; Restore points, registry export, settings screenshots, wallpaper backup, BitLocker key backup, printer settings backup</li>
+        <li><b>Quick Tools</b> &mdash; One-click Screenshot Settings capture and BitLocker Key Backup integrated directly into the panel</li>
     </ul>
 </div>
 
@@ -100,6 +89,7 @@ Built with modern C++23 and Qt 6 for Windows 10/11 x64.</div>
         <li><b>SMART Disk Health</b> &mdash; Drive health, temperature, power-on hours, and attribute monitoring via bundled smartmontools</li>
         <li><b>Benchmarks</b> &mdash; CPU (single/multi-thread), disk (sequential &amp; random I/O), memory (bandwidth &amp; latency)</li>
         <li><b>Stress Testing</b> &mdash; CPU, memory, and disk stress with real-time thermal monitoring and configurable auto-abort</li>
+        <li><b>System Maintenance</b> &mdash; Optimize Power Settings, Verify System Files, Check Disk Errors, and Generate System Report</li>
         <li><b>Report Export</b> &mdash; HTML, JSON, and CSV reports</li>
     </ul>
 </div>
@@ -134,7 +124,7 @@ Built with modern C++23 and Qt 6 for Windows 10/11 x64.</div>
     <div class="section-title">Network Management</div>
     <ul>
         <li><b>Network Diagnostics</b> &mdash; Ping, traceroute, MTR, DNS lookup, port scan, bandwidth test, WiFi analyzer, active connections, firewall auditor, and network share browser</li>
-        <li><b>Network Adapters</b> &mdash; Adapter inspector with ethernet configuration backup and restore across machines</li>
+        <li><b>Network Adapters</b> &mdash; Adapter inspector with ethernet configuration backup and restore across machines, plus one-click Reset Network Settings</li>
         <li><b>WiFi Manager</b> &mdash; QR code generation, network scanning, bulk export, and connection scripts</li>
     </ul>
 </div>
@@ -248,17 +238,16 @@ constexpr char kCreditsTabHtml[] = R"SAKCREDITS(
 <p>To Microsoft for Windows API documentation, PowerShell, Windows SDK, and ADK tools.</p>
 )SAKCREDITS";
 
-constexpr char kTooltipQuickActions[] = "Common system utilities and Quick Actions (Ctrl+1)";
-constexpr char kTooltipUserMigration[] = "Backup and restore user profiles (Ctrl+2)";
+constexpr char kTooltipUserMigration[] = "Backup and restore user profiles (Ctrl+1)";
 constexpr char kTooltipOrganizer[] =
-    "Organize files, find duplicates, and advanced search (Ctrl+3)";
-constexpr char kTooltipAppManagement[] = "Install, uninstall, and manage applications (Ctrl+4)";
-constexpr char kTooltipImageFlasher[] = "Flash ISO images to USB drives (Ctrl+5)";
-constexpr char kTooltipDiagnostics[] = "System diagnostics, benchmarks, and stress tests (Ctrl+6)";
+    "Organize files, find duplicates, and advanced search (Ctrl+2)";
+constexpr char kTooltipAppManagement[] = "Install, uninstall, and manage applications (Ctrl+3)";
+constexpr char kTooltipImageFlasher[] = "Flash ISO images to USB drives (Ctrl+4)";
+constexpr char kTooltipDiagnostics[] = "System diagnostics, benchmarks, and stress tests (Ctrl+5)";
 constexpr char kTooltipNetworkManagement[] =
-    "Network diagnostics, WiFi management, and connectivity tools (Ctrl+7)";
+    "Network diagnostics, WiFi management, and connectivity tools (Ctrl+6)";
 constexpr char kTooltipEmailTool[] =
-    "Inspect PST, OST, and MBOX email files — search, export, and manage profiles (Ctrl+8)";
+    "Inspect PST, OST, and MBOX email files — search, export, and manage profiles (Ctrl+7)";
 
 const QString kDiscordBtnStyle = QStringLiteral(
     "QPushButton {"
@@ -416,15 +405,7 @@ void MainWindow::createToolPanels() {
 
 void MainWindow::createSimplePanels() {
     Q_ASSERT(m_tab_widget);
-    // -- 1. Quick Actions ------------------------------------------------
-    m_quick_actions_panel = std::make_unique<QuickActionsPanel>(this);
-    AddTabWithTooltip(m_tab_widget,
-                      m_quick_actions_panel.get(),
-                      "Quick Actions",
-                      kTooltipQuickActions,
-                      ":/icons/icons/panel_quick_actions.svg");
-
-    // -- 2. Backup and Restore -------------------------------------------
+    // -- 1. Backup and Restore -------------------------------------------
     m_user_migration_panel = std::make_unique<UserMigrationPanel>(this);
     AddTabWithTooltip(m_tab_widget,
                       m_user_migration_panel.get(),
@@ -432,7 +413,7 @@ void MainWindow::createSimplePanels() {
                       kTooltipUserMigration,
                       ":/icons/icons/panel_backup_restore.svg");
 
-    // -- 3. File Management (Organizer + Duplicate Finder + Advanced Search)
+    // -- 2. File Management (Organizer + Duplicate Finder + Advanced Search)
     m_organizer_panel = std::make_unique<OrganizerPanel>(this);
     m_advanced_search_panel = std::make_unique<AdvancedSearchPanel>(this);
     m_organizer_panel->tabWidget()->addTab(m_advanced_search_panel.get(), tr("Advanced Search"));
@@ -442,7 +423,7 @@ void MainWindow::createSimplePanels() {
                       kTooltipOrganizer,
                       ":/icons/icons/panel_organizer.svg");
 
-    // -- 4. Image Flasher ------------------------------------------------
+    // -- 3. Image Flasher ------------------------------------------------
     m_image_flasher_panel = std::make_unique<ImageFlasherPanel>(this);
     AddTabWithTooltip(m_tab_widget,
                       m_image_flasher_panel.get(),
@@ -450,7 +431,7 @@ void MainWindow::createSimplePanels() {
                       kTooltipImageFlasher,
                       ":/icons/icons/panel_image_flasher.svg");
 
-    // -- 5. Benchmark and Diagnostics ------------------------------------
+    // -- 4. Benchmark and Diagnostics ------------------------------------
     m_diagnostic_benchmark_panel = std::make_unique<DiagnosticBenchmarkPanel>(this);
     AddTabWithTooltip(m_tab_widget,
                       m_diagnostic_benchmark_panel.get(),
@@ -458,7 +439,7 @@ void MainWindow::createSimplePanels() {
                       kTooltipDiagnostics,
                       ":/icons/icons/panel_diagnostic.svg");
 
-    // -- 6. Email Tool ----------------------------------------------------
+    // -- 5. Email Tool ----------------------------------------------------
     m_email_inspector_panel = std::make_unique<EmailInspectorPanel>(this);
     AddTabWithTooltip(m_tab_widget,
                       m_email_inspector_panel.get(),
@@ -939,18 +920,8 @@ QFrame* MainWindow::createCommunityCard(QWidget* parent,
 }
 
 void MainWindow::connectPanelSignals() {
-    Q_ASSERT(m_quick_actions_panel);
     Q_ASSERT(m_user_migration_panel);
     // Connect panel signals to main window status bar
-    connect(m_quick_actions_panel.get(),
-            &QuickActionsPanel::statusMessage,
-            this,
-            [this](const QString& msg, int timeout_ms) { updateStatus(msg, timeout_ms); });
-    connect(m_quick_actions_panel.get(),
-            &QuickActionsPanel::progressUpdate,
-            this,
-            &MainWindow::updateProgress);
-
     connect(m_user_migration_panel.get(),
             &UserMigrationPanel::statusMessage,
             this,
@@ -1099,7 +1070,6 @@ void MainWindow::connectPanelLogs() {
         }
     };
 
-    connectLog(m_quick_actions_panel.get());
     connectLog(m_user_migration_panel.get());
     connectLog(m_organizer_panel.get());
     connectLog(m_app_installation_panel.get());
