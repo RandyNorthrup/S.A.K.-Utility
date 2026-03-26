@@ -282,12 +282,12 @@ void LinuxDistroCatalog::addUtilityDistros() {
                /*.downloadUrl =*/{},  // Resolved via GitHub Releases API
                /*.checksumUrl =*/{},  // SHA256 in release assets
                /*.checksumType =*/"sha256",
-               /*.fileName =*/{},     // Resolved from GitHub asset name
+               /*.fileName =*/"memtest86plus-{version}.iso.gz",
                /*.approximateSize =*/static_cast<qint64>(25LL * 1024 * 1024),  // ~25 MB
                /*.homepage =*/"https://memtest.org",
                /*.githubOwner =*/"memtest86plus",
                /*.githubRepo =*/"memtest86plus",
-               /*.githubAssetPattern =*/R"(memtest86plus-.*\.iso\.gz$)"});
+               /*.githubAssetPattern =*/R"(memtest86plus-.*\.(iso|img)\.(gz|zip)$)"});
 }
 
 void LinuxDistroCatalog::addDistro(const DistroInfo& distro) {
@@ -523,6 +523,24 @@ bool LinuxDistroCatalog::resolveGitHubAsset(const QString& distroId,
         }
     }
 
+    // Fallback: if primary pattern fails, try matching any bootable image asset
+    if (matchedUrl.isEmpty()) {
+        QRegularExpression fallbackRegex(QStringLiteral(R"(\.(iso|img)(\.gz|\.zip|\.xz)?$)"),
+                                         QRegularExpression::CaseInsensitiveOption);
+        for (const auto& assetVal : assets) {
+            QJsonObject asset = assetVal.toObject();
+            QString name = asset["name"].toString();
+            if (fallbackRegex.match(name).hasMatch()) {
+                matchedUrl = asset["browser_download_url"].toString();
+                matchedSize = asset["size"].toInteger();
+                matchedName = name;
+                sak::logInfo("Using fallback asset match for " + distroId.toStdString() + ": " +
+                             name.toStdString());
+                break;
+            }
+        }
+    }
+
     if (matchedUrl.isEmpty()) {
         return false;
     }
@@ -535,6 +553,14 @@ bool LinuxDistroCatalog::resolveGitHubAsset(const QString& distroId,
     }
 
     // Look for checksum sidecar (e.g., .sha256, .sha1)
+    cacheChecksumSidecar(distroId, matchedName, assets);
+
+    return true;
+}
+
+void LinuxDistroCatalog::cacheChecksumSidecar(const QString& distroId,
+                                              const QString& matchedName,
+                                              const QJsonArray& assets) {
     for (const auto& assetVal : assets) {
         QJsonObject asset = assetVal.toObject();
         QString name = asset["name"].toString();
@@ -543,8 +569,6 @@ bool LinuxDistroCatalog::resolveGitHubAsset(const QString& distroId,
             break;
         }
     }
-
-    return true;
 }
 
 // ============================================================================

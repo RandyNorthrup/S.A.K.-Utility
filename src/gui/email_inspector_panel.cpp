@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 /// @file email_inspector_panel.cpp
-/// @brief UI construction and signal/slot handlers for the Email Tool
+/// @brief UI construction and signal/slot handlers for the Email Tools
 
 #include "sak/email_inspector_panel.h"
 
@@ -25,6 +25,7 @@
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QHeaderView>
+#include <QImage>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMenu>
@@ -36,6 +37,7 @@
 #include <QTableWidget>
 #include <QTabWidget>
 #include <QTextBrowser>
+#include <QTextDocument>
 #include <QToolButton>
 #include <QTreeWidget>
 #include <QVBoxLayout>
@@ -71,7 +73,7 @@ void EmailInspectorPanel::setupUi() {
     m_header_widgets =
         createDynamicPanelHeader(this,
                                  QStringLiteral(":/icons/icons/panel_email.svg"),
-                                 tr("Email Tool"),
+                                 tr("Email Tools"),
                                  tr("Browse and export emails, contacts, calendar "
                                     "items, tasks, and notes from PST/OST/MBOX files"),
                                  root_layout);
@@ -337,7 +339,20 @@ QWidget* EmailInspectorPanel::createItemListPanel() {
 
     m_item_count_label = new QLabel(group);
     m_item_count_label->setStyleSheet(QStringLiteral("color: %1;").arg(ui::kColorTextMuted));
-    layout->addWidget(m_item_count_label);
+
+    // Page size dropdown
+    m_page_size_combo = new QComboBox(group);
+    m_page_size_combo->addItems({tr("10"), tr("20"), tr("50"), tr("100"), tr("500")});
+    m_page_size_combo->setCurrentIndex(4);  // Default 500
+    m_page_size_combo->setToolTip(tr("Maximum items to display"));
+    m_page_size_combo->setFixedWidth(70);
+    connect(m_page_size_combo, &QComboBox::currentIndexChanged, this, [this] { applyPageSize(); });
+
+    auto* filter_row = new QHBoxLayout();
+    filter_row->addWidget(m_item_count_label, 1);
+    filter_row->addWidget(new QLabel(tr("Show:"), group));
+    filter_row->addWidget(m_page_size_combo);
+    layout->addLayout(filter_row);
 
     m_item_list = new QTableWidget(group);
     m_item_list->setColumnCount(ColCount);
@@ -352,10 +367,11 @@ QWidget* EmailInspectorPanel::createItemListPanel() {
     m_item_list->horizontalHeader()->setStretchLastSection(true);
     m_item_list->horizontalHeader()->setSectionResizeMode(ColAttachment, QHeaderView::Fixed);
     m_item_list->setColumnWidth(ColAttachment, 30);
-    m_item_list->setColumnWidth(ColSubject, 300);
+    m_item_list->setColumnWidth(ColSubject, 260);
     m_item_list->setColumnWidth(ColFrom, 180);
     m_item_list->setColumnWidth(ColDate, 150);
     m_item_list->setColumnWidth(ColSize, 80);
+    m_item_list->setColumnWidth(ColType, 90);
     m_item_list->verticalHeader()->setVisible(false);
 
     connect(
@@ -388,11 +404,37 @@ QWidget* EmailInspectorPanel::createDetailPanel() {
 }
 
 QWidget* EmailInspectorPanel::createContentTab() {
+    auto* container = new QWidget(this);
+    auto* layout = new QVBoxLayout(container);
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->setSpacing(ui::kSpacingTight);
+
+    // Toolbar with HTML/plain text toggle
+    auto* toolbar = new QHBoxLayout();
+    m_html_toggle_button = new QPushButton(tr("View Plain Text"), this);
+    m_html_toggle_button->setToolTip(tr("Toggle between HTML and plain text view"));
+    m_html_toggle_button->setStyleSheet(ui::kSecondaryButtonStyle);
+    m_html_toggle_button->setCheckable(true);
+    connect(m_html_toggle_button, &QPushButton::toggled, this, [this](bool plain_text) {
+        m_show_html = !plain_text;
+        m_html_toggle_button->setText(plain_text ? tr("View HTML") : tr("View Plain Text"));
+        displayItemDetail(m_current_detail);
+    });
+    toolbar->addWidget(m_html_toggle_button);
+    toolbar->addStretch();
+    layout->addLayout(toolbar);
+
     m_content_browser = new QTextBrowser(this);
     m_content_browser->setOpenExternalLinks(false);
     m_content_browser->setReadOnly(true);
     m_content_browser->setAccessibleName(QStringLiteral("Email Content"));
-    return m_content_browser;
+    m_content_browser->setStyleSheet(
+        QStringLiteral("QTextBrowser { font-family: 'Segoe UI', sans-serif;"
+                       " font-size: 13px; padding: 8px;"
+                       " background: white; }"));
+    layout->addWidget(m_content_browser, 1);
+
+    return container;
 }
 
 QWidget* EmailInspectorPanel::createHeadersTab() {
@@ -650,14 +692,23 @@ void EmailInspectorPanel::onFolderTreeItemClicked(QTreeWidgetItem* item, int /*c
         return;
     }
     m_current_folder_id = folder_id;
-    m_controller->loadFolderItems(folder_id, 0, email::kMaxItemsPerLoad);
+    const int page_size = m_page_size_combo->currentText().toInt();
+    m_controller->loadFolderItems(folder_id, 0, page_size);
 }
 
 void EmailInspectorPanel::onItemListCellClicked(int row, int /*column*/) {
-    if (row < 0 || row >= m_current_items.size()) {
+    if (row < 0 || row >= m_item_list->rowCount()) {
         return;
     }
-    uint64_t item_id = m_current_items.at(row).node_id;
+    auto* subject_item = m_item_list->item(row, ColSubject);
+    if (!subject_item) {
+        return;
+    }
+    bool ok = false;
+    uint64_t item_id = subject_item->data(Qt::UserRole).toULongLong(&ok);
+    if (!ok) {
+        return;
+    }
     m_current_item_id = item_id;
     m_controller->loadItemDetail(item_id);
     m_controller->loadItemProperties(item_id);
@@ -667,8 +718,12 @@ void EmailInspectorPanel::onItemListContextMenu(const QPoint& pos) {
     QMenu menu(this);
     menu.addAction(tr("Open in Detail Panel"), this, [this] {
         int row = m_item_list->currentRow();
-        if (row >= 0 && row < m_current_items.size()) {
-            m_controller->loadItemDetail(m_current_items.at(row).node_id);
+        if (row >= 0) {
+            auto* subject_item = m_item_list->item(row, ColSubject);
+            if (subject_item) {
+                uint64_t nid = subject_item->data(Qt::UserRole).toULongLong();
+                m_controller->loadItemDetail(nid);
+            }
         }
     });
     menu.addSeparator();
@@ -677,15 +732,22 @@ void EmailInspectorPanel::onItemListContextMenu(const QPoint& pos) {
     menu.addSeparator();
     menu.addAction(tr("Copy Subject"), this, [this] {
         int row = m_item_list->currentRow();
-        if (row >= 0 && row < m_current_items.size()) {
-            QApplication::clipboard()->setText(m_current_items.at(row).subject);
+        if (row >= 0) {
+            auto* subject_item = m_item_list->item(row, ColSubject);
+            if (subject_item) {
+                QApplication::clipboard()->setText(subject_item->text());
+            }
         }
     });
     menu.addAction(tr("View MAPI Properties"), this, [this] {
         int row = m_item_list->currentRow();
-        if (row >= 0 && row < m_current_items.size()) {
-            m_controller->loadItemProperties(m_current_items.at(row).node_id);
-            m_detail_tabs->setCurrentIndex(2);
+        if (row >= 0) {
+            auto* subject_item = m_item_list->item(row, ColSubject);
+            if (subject_item) {
+                uint64_t nid = subject_item->data(Qt::UserRole).toULongLong();
+                m_controller->loadItemProperties(nid);
+                m_detail_tabs->setCurrentIndex(2);
+            }
         }
     });
     menu.exec(m_item_list->viewport()->mapToGlobal(pos));
@@ -770,7 +832,7 @@ void EmailInspectorPanel::onExportAttachmentsClicked() {
         uint64_t message_id = dialog.navigateMessageId();
         if (folder_id != 0 && message_id != 0) {
             m_current_folder_id = folder_id;
-            m_controller->loadFolderItems(folder_id, 0, email::kMaxItemsPerLoad);
+            m_controller->loadFolderItems(folder_id, 0, m_page_size_combo->currentText().toInt());
             m_controller->loadItemDetail(message_id);
             m_controller->loadItemProperties(message_id);
         }
@@ -874,7 +936,13 @@ void EmailInspectorPanel::onFolderItemsLoaded(uint64_t /*folder_id*/,
     }
     m_current_items = items;
     populateItemList(items);
-    m_item_count_label->setText(tr("%1 items (showing %2)").arg(total).arg(items.size()));
+    const int visible = m_item_list->rowCount();
+    int filtered = items.size() - visible;
+    QString label = tr("%1 items (showing %2)").arg(total).arg(visible);
+    if (filtered > 0) {
+        label += tr("  [%1 blank filtered]").arg(filtered);
+    }
+    m_item_count_label->setText(label);
 }
 
 void EmailInspectorPanel::onItemDetailLoaded(sak::PstItemDetail detail) {
@@ -885,6 +953,15 @@ void EmailInspectorPanel::onItemDetailLoaded(sak::PstItemDetail detail) {
     displayItemDetail(detail);
     displayAttachments(detail.attachments);
     m_save_all_attachments_button->setEnabled(!detail.attachments.isEmpty());
+
+    // Request inline image attachments for HTML rendering
+    if (m_show_html && !detail.body_html.isEmpty()) {
+        for (const auto& attachment : detail.attachments) {
+            if (!attachment.content_id.isEmpty()) {
+                m_controller->loadAttachmentContent(detail.node_id, attachment.index);
+            }
+        }
+    }
 }
 
 void EmailInspectorPanel::onItemPropertiesLoaded(uint64_t /*item_id*/,
@@ -896,12 +973,30 @@ void EmailInspectorPanel::onItemPropertiesLoaded(uint64_t /*item_id*/,
 }
 
 void EmailInspectorPanel::onAttachmentContentReady(uint64_t /*message_id*/,
-                                                   int /*index*/,
+                                                   int index,
                                                    QByteArray attachment_data,
                                                    QString filename) {
     if (m_dialog_active) {
         return;
     }
+
+    // Check if this is an inline image (CID) that should be added to the
+    // content browser rather than prompting a save dialog.
+    for (const auto& att : m_current_detail.attachments) {
+        if (att.index == index && !att.content_id.isEmpty()) {
+            QUrl cid_url(QStringLiteral("cid:%1").arg(att.content_id));
+            QImage image;
+            if (image.loadFromData(attachment_data)) {
+                m_content_browser->document()->addResource(QTextDocument::ImageResource,
+                                                           cid_url,
+                                                           image);
+                // Re-render the current HTML to show the newly resolved image
+                displayItemDetail(m_current_detail);
+            }
+            return;
+        }
+    }
+
     QString save_path = QFileDialog::getSaveFileName(this, tr("Save Attachment"), filename);
     if (save_path.isEmpty()) {
         return;
@@ -949,7 +1044,7 @@ void EmailInspectorPanel::onExportComplete(sak::EmailExportResult result) {
 void EmailInspectorPanel::onErrorOccurred(QString message) {
     m_status_label->setStyleSheet(QStringLiteral("color: %1;").arg(ui::kColorError));
     updateStatusBar(tr("Error: %1").arg(message));
-    sak::logError("Email Tool: {}", message.toStdString());
+    sak::logError("Email Tools: {}", message.toStdString());
     Q_EMIT logOutput(tr("Error: %1").arg(message));
 }
 
@@ -974,30 +1069,66 @@ void EmailInspectorPanel::onMboxOpened(int message_count) {
 }
 
 void EmailInspectorPanel::onMboxMessagesLoaded(QVector<sak::MboxMessage> messages, int total) {
-    m_item_list->setRowCount(0);
     m_item_list->setSortingEnabled(false);
-    for (const auto& msg : messages) {
-        int row = m_item_list->rowCount();
-        m_item_list->insertRow(row);
+    m_item_list->setUpdatesEnabled(false);
+    const QSignalBlocker blocker(m_item_list);
 
+    // Filter blank messages
+    QVector<int> visible_indices;
+    visible_indices.reserve(messages.size());
+    for (int idx = 0; idx < messages.size(); ++idx) {
+        const auto& msg = messages.at(idx);
+        if (!msg.subject.trimmed().isEmpty() || !msg.from.trimmed().isEmpty()) {
+            visible_indices.append(idx);
+        }
+    }
+
+    const int count = visible_indices.size();
+    m_item_list->setRowCount(count);
+    for (int row = 0; row < count; ++row) {
+        const auto& msg = messages.at(visible_indices.at(row));
         QString att_icon = msg.has_attachments ? QStringLiteral("\xF0\x9F\x93\x8E") : QString();
         m_item_list->setItem(row, ColAttachment, new QTableWidgetItem(att_icon));
-        m_item_list->setItem(row, ColSubject, new QTableWidgetItem(msg.subject));
+
+        auto* subject_cell = new QTableWidgetItem(msg.subject);
+        subject_cell->setIcon(itemTypeQIcon(sak::EmailItemType::Email));
+        subject_cell->setData(Qt::UserRole, QVariant::fromValue<uint64_t>(visible_indices.at(row)));
+        m_item_list->setItem(row, ColSubject, subject_cell);
+
         m_item_list->setItem(row, ColFrom, new QTableWidgetItem(msg.from));
         m_item_list->setItem(row, ColDate, new QTableWidgetItem(msg.date.toString(Qt::ISODate)));
         m_item_list->setItem(row, ColSize, new QTableWidgetItem(formatBytes(msg.message_size)));
         m_item_list->setItem(row, ColType, new QTableWidgetItem(tr("Email")));
     }
+    m_item_list->setUpdatesEnabled(true);
     m_item_list->setSortingEnabled(true);
-    m_item_count_label->setText(tr("%1 messages (showing %2)").arg(total).arg(messages.size()));
+    int filtered = total - count;
+    QString label = tr("%1 messages (showing %2)").arg(total).arg(count);
+    if (filtered > 0) {
+        label += tr("  [%1 blank filtered]").arg(filtered);
+    }
+    m_item_count_label->setText(label);
 }
 
 void EmailInspectorPanel::onMboxMessageDetailLoaded(sak::MboxMessageDetail detail) {
-    // Display in content tab
-    if (!detail.body_html.isEmpty()) {
+    // Display in content tab respecting HTML/plain text toggle
+    if (m_show_html && !detail.body_html.isEmpty()) {
+        QString wrapped = QStringLiteral(
+                              "<html><head>"
+                              "<meta charset=\"utf-8\">"
+                              "<style>body { font-family: 'Segoe UI', sans-serif;"
+                              " font-size: 13px; margin: 0; padding: 8px;"
+                              " word-wrap: break-word; }"
+                              " img { max-width: 100%%; height: auto; }</style>"
+                              "</head><body>%1</body></html>")
+                              .arg(detail.body_html);
+        m_content_browser->setHtml(wrapped);
+    } else if (!detail.body_plain.isEmpty()) {
+        m_content_browser->setPlainText(detail.body_plain);
+    } else if (!detail.body_html.isEmpty()) {
         m_content_browser->setHtml(detail.body_html);
     } else {
-        m_content_browser->setPlainText(detail.body_plain);
+        m_content_browser->clear();
     }
 
     // Display headers
@@ -1248,19 +1379,36 @@ void EmailInspectorPanel::onCalendarClicked() {
 
 void EmailInspectorPanel::populateItemList(const QVector<sak::PstItemSummary>& items) {
     m_item_list->setSortingEnabled(false);
-    m_item_list->setRowCount(0);
-    for (const auto& item : items) {
-        int row = m_item_list->rowCount();
-        m_item_list->insertRow(row);
+    m_item_list->setUpdatesEnabled(false);
+    const QSignalBlocker blocker(m_item_list);
 
+    // Filter out blank/unknown items (no subject AND unknown type)
+    QVector<const sak::PstItemSummary*> visible;
+    visible.reserve(items.size());
+    for (const auto& item : items) {
+        if (!isBlankItem(item)) {
+            visible.append(&item);
+        }
+    }
+
+    const int count = visible.size();
+    m_item_list->setRowCount(count);
+    for (int row = 0; row < count; ++row) {
+        const auto& item = *visible.at(row);
         QString att_icon = item.has_attachments ? QStringLiteral("\xF0\x9F\x93\x8E") : QString();
         m_item_list->setItem(row, ColAttachment, new QTableWidgetItem(att_icon));
-        m_item_list->setItem(row, ColSubject, new QTableWidgetItem(item.subject));
+
+        auto* subject_cell = new QTableWidgetItem(item.subject);
+        subject_cell->setIcon(itemTypeQIcon(item.item_type));
+        subject_cell->setData(Qt::UserRole, QVariant::fromValue(item.node_id));
+        m_item_list->setItem(row, ColSubject, subject_cell);
+
         m_item_list->setItem(row, ColFrom, new QTableWidgetItem(item.sender_name));
         m_item_list->setItem(row, ColDate, new QTableWidgetItem(item.date.toString(Qt::ISODate)));
         m_item_list->setItem(row, ColSize, new QTableWidgetItem(formatBytes(item.size_bytes)));
-        m_item_list->setItem(row, ColType, new QTableWidgetItem(itemTypeIcon(item.item_type)));
+        m_item_list->setItem(row, ColType, new QTableWidgetItem(itemTypeLabel(item.item_type)));
     }
+    m_item_list->setUpdatesEnabled(true);
     m_item_list->setSortingEnabled(true);
 }
 
@@ -1339,10 +1487,23 @@ void EmailInspectorPanel::displayItemDetail(const sak::PstItemDetail& detail) {
     }
 
     // Default: email / journal / RSS / conversation history
-    if (!detail.body_html.isEmpty()) {
-        m_content_browser->setHtml(detail.body_html);
+    if (m_show_html && !detail.body_html.isEmpty()) {
+        // Wrap with charset declaration so QTextBrowser decodes correctly
+        QString wrapped = QStringLiteral(
+                              "<html><head>"
+                              "<meta charset=\"utf-8\">"
+                              "<style>body { font-family: 'Segoe UI', sans-serif;"
+                              " font-size: 13px; margin: 0; padding: 8px;"
+                              " word-wrap: break-word; }"
+                              " img { max-width: 100%%; height: auto; }</style>"
+                              "</head><body>%1</body></html>")
+                              .arg(detail.body_html);
+        m_content_browser->setHtml(wrapped);
     } else if (!detail.body_plain.isEmpty()) {
         m_content_browser->setPlainText(detail.body_plain);
+    } else if (!detail.body_html.isEmpty()) {
+        // No plain text available — show HTML even when plain text preferred
+        m_content_browser->setHtml(detail.body_html);
     } else {
         m_content_browser->clear();
     }
@@ -1356,28 +1517,35 @@ void EmailInspectorPanel::displayItemDetail(const sak::PstItemDetail& detail) {
 
 void EmailInspectorPanel::displayProperties(const QVector<sak::MapiProperty>& props) {
     m_properties_table->setSortingEnabled(false);
-    m_properties_table->setRowCount(0);
-    for (const auto& prop : props) {
-        int row = m_properties_table->rowCount();
-        m_properties_table->insertRow(row);
+    m_properties_table->setUpdatesEnabled(false);
+    const QSignalBlocker blocker(m_properties_table);
+    const int count = props.size();
+    m_properties_table->setRowCount(count);
+    for (int row = 0; row < count; ++row) {
+        const auto& prop = props.at(row);
         m_properties_table->setItem(row, 0, new QTableWidgetItem(prop.property_name));
         m_properties_table->setItem(row, 1, new QTableWidgetItem(prop.display_value));
     }
+    m_properties_table->setUpdatesEnabled(true);
     m_properties_table->setSortingEnabled(true);
 }
 
 void EmailInspectorPanel::displayAttachments(const QVector<sak::PstAttachmentInfo>& attachments) {
-    m_attachments_table->setRowCount(0);
-    for (const auto& att : attachments) {
-        int row = m_attachments_table->rowCount();
-        m_attachments_table->insertRow(row);
-
+    m_attachments_table->setSortingEnabled(false);
+    m_attachments_table->setUpdatesEnabled(false);
+    const QSignalBlocker blocker(m_attachments_table);
+    const int count = attachments.size();
+    m_attachments_table->setRowCount(count);
+    for (int row = 0; row < count; ++row) {
+        const auto& att = attachments.at(row);
         QString name = att.long_filename.isEmpty() ? att.filename : att.long_filename;
         m_attachments_table->setItem(row, 0, new QTableWidgetItem(name));
         m_attachments_table->setItem(row, 1, new QTableWidgetItem(formatBytes(att.size_bytes)));
         m_attachments_table->setItem(row, 2, new QTableWidgetItem(att.mime_type));
         m_attachments_table->setItem(row, 3, new QTableWidgetItem(att.content_id));
     }
+    m_attachments_table->setUpdatesEnabled(true);
+    m_attachments_table->setSortingEnabled(true);
     m_save_attachment_button->setEnabled(!attachments.isEmpty());
     m_save_all_attachments_button->setEnabled(!attachments.isEmpty());
 }
@@ -1399,7 +1567,30 @@ void EmailInspectorPanel::logMessage(const QString& message) {
     Q_EMIT logOutput(message);
 }
 
-QString EmailInspectorPanel::itemTypeIcon(sak::EmailItemType type) const {
+QIcon EmailInspectorPanel::itemTypeQIcon(sak::EmailItemType type) {
+    switch (type) {
+    case sak::EmailItemType::Email:
+        return QIcon(QStringLiteral(":/icons/icons/icons8-sent.svg"));
+    case sak::EmailItemType::Contact:
+        return QIcon(QStringLiteral(":/icons/icons/icons8-address-book.svg"));
+    case sak::EmailItemType::Calendar:
+        return QIcon(QStringLiteral(":/icons/icons/icons8-calendar.svg"));
+    case sak::EmailItemType::Task:
+        return QIcon(QStringLiteral(":/icons/icons/icons8-edit-file.svg"));
+    case sak::EmailItemType::StickyNote:
+        return QIcon(QStringLiteral(":/icons/icons/icons8-star.svg"));
+    case sak::EmailItemType::JournalEntry:
+        return QIcon(QStringLiteral(":/icons/icons/icons8-source.svg"));
+    case sak::EmailItemType::DistList:
+        return QIcon(QStringLiteral(":/icons/icons/icons8-address-book.svg"));
+    case sak::EmailItemType::MeetingRequest:
+        return QIcon(QStringLiteral(":/icons/icons/icons8-calendar.svg"));
+    default:
+        return QIcon(QStringLiteral(":/icons/icons/icons8-folder.svg"));
+    }
+}
+
+QString EmailInspectorPanel::itemTypeLabel(sak::EmailItemType type) {
     switch (type) {
     case sak::EmailItemType::Email:
         return tr("Email");
@@ -1420,6 +1611,28 @@ QString EmailInspectorPanel::itemTypeIcon(sak::EmailItemType type) const {
     default:
         return tr("Unknown");
     }
+}
+
+bool EmailInspectorPanel::isBlankItem(const sak::PstItemSummary& item) {
+    // Filter FAI (Folder Associated Information) messages — system/hidden
+    // items that Outlook never shows. MSGFLAG_ASSOCIATED = 0x40.
+    constexpr uint32_t kMsgFlagAssociated = 0x40;
+    if ((item.message_flags & kMsgFlagAssociated) != 0) {
+        return true;
+    }
+    // Also filter items with no subject AND no sender
+    bool blank_subject = item.subject.trimmed().isEmpty();
+    bool blank_sender = item.sender_name.trimmed().isEmpty() &&
+                        item.sender_email.trimmed().isEmpty();
+    return blank_subject && blank_sender;
+}
+
+void EmailInspectorPanel::applyPageSize() {
+    if (m_current_folder_id == 0) {
+        return;
+    }
+    const int page_size = m_page_size_combo->currentText().toInt();
+    m_controller->loadFolderItems(m_current_folder_id, 0, page_size);
 }
 
 QString EmailInspectorPanel::formatBytes(qint64 bytes) {

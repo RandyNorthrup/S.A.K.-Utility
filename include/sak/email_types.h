@@ -166,7 +166,8 @@ struct PstItemSummary {
     qint64 size_bytes = 0;
     bool has_attachments = false;
     bool is_read = false;
-    int importance = 1;  ///< 0=Low, 1=Normal, 2=High
+    int importance = 1;          ///< 0=Low, 1=Normal, 2=High
+    uint32_t message_flags = 0;  ///< PR_MESSAGE_FLAGS (0x0E07)
 };
 
 // ============================================================================

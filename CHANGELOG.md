@@ -6,6 +6,14 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+## v0.9.0.8
+
+- **Offline deployment — Direct Download mode** — Downloads the actual installer binary (EXE/MSI) for each package instead of just the .nupkg wrapper. Supports three package patterns: URL-based downloads (`Install-ChocolateyPackage`), embedded-binary packages (`Install-ChocolateyInstallPackage` with EXE/MSI files inside the nupkg's `tools/` directory), and meta-packages (follows `.install` dependency chain via nuspec parsing). Primary installer selection ensures only the main resource is downloaded per package, avoiding patches and secondary resources. Tested with Office PC preset (10 packages, all succeeding).
+- **Install script parser improvements** — Splatting regex now matches any variable name (not just `$packageArgs`) with line-anchored closing brace to handle `${variable}` syntax in URLs. `extractHashtableValue` uses two-pass parsing (quoted first, unquoted fallback). `resolveVariables` handles both `$varName` and `${varName}` references.
+- **TigerStyle reframed** — Updated copilot-instructions.md to position TigerStyle as a guiding philosophy and best-practice target rather than a hard blocker. Release hooks (zero build warnings, zero build errors, all tests passing) are the hard gates.
+- **Documentation accuracy audit** — Corrected file counts across all documentation (135 headers, 138 source files, 99 test files, 75 CTest tests), updated CONTRIBUTING.md TigerStyle section, refreshed tests/README.md structure.
+- **Build quality** — Clean MSVC `/W4 /WX` build, 75 automated tests (all passing), 138 source files, 135 headers.
+
 ## v0.9.0.7
 
 - **File Converter tab plan** — Comprehensive implementation plan for universal offline file conversion (documents, images, audio, video, spreadsheets, PDFs) with batch processing. New tab planned for the File Management panel.

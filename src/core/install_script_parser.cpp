@@ -184,47 +184,49 @@ void InstallScriptParser::parseGetChocolateyWebFile(const QString& script,
 
 void InstallScriptParser::parseSplattingPattern(const QString& script,
                                                 ParsedInstallScript& result) const {
-    // Match: $packageArgs = @{ ... }
-    static const QRegularExpression pattern(R"re(\$packageArgs\s*=\s*@\{(.*?)\})re",
+    // Match: $anyVariable = @{ ... } where closing } is on its own line.
+    // Using \n\s*\} avoids stopping at } inside ${varName} mid-line.
+    static const QRegularExpression pattern(R"re(\$(\w+)\s*=\s*@\{(.*?)\n\s*\})re",
                                             QRegularExpression::CaseInsensitiveOption |
                                                 QRegularExpression::DotMatchesEverythingOption);
 
-    auto match = pattern.match(script);
-    if (!match.hasMatch()) {
-        return;
-    }
+    auto matches = pattern.globalMatch(script);
+    while (matches.hasNext()) {
+        auto match = matches.next();
+        QString block = match.captured(2);
+        int pos = match.capturedStart();
 
-    result.uses_splatting = true;
-    QString block = match.captured(1);
-    int pos = match.capturedStart();
+        DownloadResource resource;
+        resource.source_function = QString("splatting (@%1)").arg(match.captured(1));
+        resource.line_number = lineNumberAt(script, pos);
 
-    DownloadResource resource;
-    resource.source_function = "splatting (@packageArgs)";
-    resource.line_number = lineNumberAt(script, pos);
+        resource.url = resolveVariables(extractHashtableValue(block, "url"), script);
+        QString url64 = extractHashtableValue(block, "url64bit");
+        if (url64.isEmpty()) {
+            url64 = extractHashtableValue(block, "url64");
+        }
+        resource.url_64bit = resolveVariables(url64, script);
 
-    resource.url = resolveVariables(extractHashtableValue(block, "url"), script);
-    QString url64 = extractHashtableValue(block, "url64bit");
-    if (url64.isEmpty()) {
-        url64 = extractHashtableValue(block, "url64");
-    }
-    resource.url_64bit = resolveVariables(url64, script);
+        resource.checksum = resolveVariables(extractHashtableValue(block, "checksum"), script);
+        resource.checksum_type = resolveVariables(extractHashtableValue(block, "checksumType"),
+                                                  script);
+        resource.file_name = resolveVariables(extractHashtableValue(block, "fileName"), script);
 
-    resource.checksum = resolveVariables(extractHashtableValue(block, "checksum"), script);
-    resource.checksum_type = resolveVariables(extractHashtableValue(block, "checksumType"), script);
-    resource.file_name = resolveVariables(extractHashtableValue(block, "fileName"), script);
+        QString file_type = extractHashtableValue(block, "fileType");
+        if (!file_type.isEmpty()) {
+            result.package_type = resolveVariables(file_type, script);
+        }
 
-    QString file_type = extractHashtableValue(block, "fileType");
-    if (!file_type.isEmpty()) {
-        result.package_type = resolveVariables(file_type, script);
-    }
+        QString silent = extractHashtableValue(block, "silentArgs");
+        if (!silent.isEmpty()) {
+            result.silent_args = resolveVariables(silent, script);
+        }
 
-    QString silent = extractHashtableValue(block, "silentArgs");
-    if (!silent.isEmpty()) {
-        result.silent_args = resolveVariables(silent, script);
-    }
+        if (resource.url.isEmpty() && resource.url_64bit.isEmpty()) {
+            continue;
+        }
 
-    if (!resource.url.isEmpty() || !resource.url_64bit.isEmpty()) {
-        // Avoid duplicate if same URL was already found via function call
+        // Avoid duplicate if same URL was already found
         bool duplicate = false;
         for (const auto& existing : result.resources) {
             if (existing.url == resource.url && existing.url_64bit == resource.url_64bit) {
@@ -234,6 +236,7 @@ void InstallScriptParser::parseSplattingPattern(const QString& script,
         }
         if (!duplicate) {
             result.resources.append(resource);
+            result.uses_splatting = true;
         }
     }
 }
@@ -247,8 +250,8 @@ QString InstallScriptParser::resolveVariables(const QString& value, const QStrin
         return value;
     }
 
-    // Match $variableName references
-    static const QRegularExpression var_pattern(R"(\$(\w+))");
+    // Match $variableName or ${variableName} references
+    static const QRegularExpression var_pattern(R"(\$\{(\w+)\}|\$(\w+))");
 
     QString resolved = value;
     int iterations = 0;
@@ -260,7 +263,8 @@ QString InstallScriptParser::resolveVariables(const QString& value, const QStrin
             break;
         }
 
-        QString var_name = match.captured(1);
+        // Group 1 = ${name}, group 2 = $name
+        QString var_name = match.captured(1).isEmpty() ? match.captured(2) : match.captured(1);
 
         // Skip well-known PS variables
         if (var_name == "toolsDir" || var_name == "toolsPath" || var_name == "env" ||
@@ -299,7 +303,7 @@ QString InstallScriptParser::resolveVariables(const QString& value, const QStrin
 QString InstallScriptParser::extractParameter(const QString& call_text,
                                               const QString& param_name) const {
     // Match: -paramName 'value' or -paramName "value" or -paramName $var
-    QRegularExpression pattern(QString(R"(-%1\s+['"]?([^'"}\s]+(?:\s[^'"}\s-]+)*)['"]?)")
+    QRegularExpression pattern(QString(R"(-%1\s+['\"']?([^'\"\s]+(?:\s[^'\"\s-]+)*)['\"']?)")
                                    .arg(QRegularExpression::escape(param_name)),
                                QRegularExpression::CaseInsensitiveOption);
 
@@ -324,17 +328,27 @@ QString InstallScriptParser::extractParameter(const QString& call_text,
 }
 
 QString InstallScriptParser::extractHashtableValue(const QString& block, const QString& key) const {
-    // Match: 'key' = 'value' or key = "value" or key = $var
-    QRegularExpression pattern(QString(R"(['"]?%1['"]?\s*=\s*['"]?([^'";}\n]+)['"]?)")
-                                   .arg(QRegularExpression::escape(key)),
-                               QRegularExpression::CaseInsensitiveOption);
+    // Quoted values first — handles URLs containing ${var} or special chars
+    QRegularExpression quoted_pattern(
+        QString(R"(['"]?%1['"]?\s*=\s*['"]([^'"]*?)['"])").arg(QRegularExpression::escape(key)),
+        QRegularExpression::CaseInsensitiveOption);
 
-    auto match = pattern.match(block);
-    if (!match.hasMatch()) {
-        return {};
+    auto match = quoted_pattern.match(block);
+    if (match.hasMatch()) {
+        return match.captured(1).trimmed();
     }
 
-    return match.captured(1).trimmed();
+    // Fallback: unquoted values (variable references like $varName)
+    QRegularExpression unquoted_pattern(
+        QString(R"(['"]?%1['"]?\s*=\s*([^\s;,\n]+))").arg(QRegularExpression::escape(key)),
+        QRegularExpression::CaseInsensitiveOption);
+
+    match = unquoted_pattern.match(block);
+    if (match.hasMatch()) {
+        return match.captured(1).trimmed();
+    }
+
+    return {};
 }
 
 int InstallScriptParser::lineNumberAt(const QString& script, int position) const {

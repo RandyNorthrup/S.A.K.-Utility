@@ -2081,6 +2081,38 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_email_report_generator.cpp")
     message(STATUS "Added unit test: test_email_report_generator")
 endif()
 
+# test_offline_package_builder — builds the Office PC offline deployment bundle
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/integration/test_offline_package_builder.cpp")
+    add_executable(test_offline_package_builder
+        integration/test_offline_package_builder.cpp
+        ../src/core/offline_deployment_worker.cpp
+        ../src/core/package_internalization_engine.cpp
+        ../src/core/install_script_parser.cpp
+        ../src/core/script_rewriter.cpp
+        ../src/core/nuget_api_client.cpp
+        ../src/core/logger.cpp
+        ../include/sak/offline_deployment_worker.h
+        ../include/sak/package_internalization_engine.h
+        ../include/sak/install_script_parser.h
+        ../include/sak/script_rewriter.h
+        ../include/sak/nuget_api_client.h
+    )
+    set_target_properties(test_offline_package_builder PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+    )
+    target_link_libraries(test_offline_package_builder PRIVATE
+        Qt6::Core Qt6::Test Qt6::Network Qt6::Xml Qt6::Concurrent ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_offline_package_builder PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_offline_package_builder
+             COMMAND test_offline_package_builder
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added integration test: test_offline_package_builder")
+endif()
+
 # ============================================================================
 # Test Targets
 # ============================================================================
@@ -2101,7 +2133,7 @@ add_custom_target(run_unit_tests
 
 # Run integration tests only
 add_custom_target(run_integration_tests
-    COMMAND ${CMAKE_CTEST_COMMAND} -R "test_(backup|migration)_workflow|test_uup_conversion_pipeline|test_ost_integration" --output-on-failure
+    COMMAND ${CMAKE_CTEST_COMMAND} -R "test_(backup|migration)_workflow|test_uup_conversion_pipeline|test_ost_integration|test_offline_package_builder" --output-on-failure
     WORKING_DIRECTORY "${CMAKE_BINARY_DIR}"
     COMMENT "Running integration tests..."
 )

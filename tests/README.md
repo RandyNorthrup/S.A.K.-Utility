@@ -2,13 +2,13 @@
 
 ## Overview
 
-Comprehensive test suite for SAK Utility using the **Qt Test** framework with **74 registered CTest tests** across **98 test files**. Tests cover core utilities, security, diagnostics, ISO pipelines, deployment, email inspection, and quick action validation.
+Comprehensive test suite for SAK Utility using the **Qt Test** framework with **75 registered CTest tests** across **99 test files**. Tests cover core utilities, security, diagnostics, ISO pipelines, deployment, email inspection, and quick action validation.
 
 ## Structure
 
 ```
 tests/
-├── unit/                                  # Unit tests (96 files)
+├── unit/                                  # Unit tests (94 files)
 │   ├── actions/                           # Quick action validation tests
 │   │   ├── test_action_factory.cpp
 │   │   └── test_all_actions_metadata.cpp
@@ -102,7 +102,8 @@ tests/
 │   ├── test_windows_usb_creator.cpp
 │   ├── test_windows_user_scanner.cpp
 │   └── test_worker_base.cpp
-├── integration/                           # End-to-end workflow tests (2 files)
+├── integration/                           # End-to-end workflow tests (3 files)
+│   ├── test_offline_package_builder.cpp
 │   ├── test_ost_integration.cpp
 │   └── test_uup_conversion_pipeline.cpp
 ├── CMakeLists.txt                         # Test build configuration

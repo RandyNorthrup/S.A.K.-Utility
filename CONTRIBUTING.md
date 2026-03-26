@@ -226,18 +226,18 @@ QVector<int> values;
 auto* widget = new QWidget(this);  // 'this' manages lifetime
 ```
 
-### TigerStyle Compliance
+### TigerStyle Best Practices
 
-This project follows [TigerStyle](https://github.com/tigerbeetle/tigerbeetle/blob/main/docs/TIGER_STYLE.md) coding discipline as a philosophy. All new code **must** comply with these rules:
+This project follows [TigerStyle](https://github.com/tigerbeetle/tigerbeetle/blob/main/docs/TIGER_STYLE.md) coding discipline as a guiding philosophy. These are best-practice targets to strive for — they do not block a PR that passes the release hooks (zero build warnings, zero build errors, all tests passing).
 
-| Rule | Limit | Enforced By |
+| Rule | Target | Enforced By |
 |---|---|---|
 | Function length | ≤70 lines | Lizard, code review |
 | Nesting depth | ≤3 levels | Lizard, code review |
 | Line length | ≤100 columns | `.clang-format` |
 | Assertions | Meaningful preconditions/postconditions | Code review |
-| `catch(...)` | Must have explanatory comment | Code review |
-| Magic numbers | Use named `constexpr` constants | Code review |
+| `catch(...)` | Should have explanatory comment | Code review |
+| Magic numbers | Prefer named `constexpr` constants | Code review |
 | Naming | No abbreviations, no single-letter vars | Code review |
 
 **Pre-submit checklist**:

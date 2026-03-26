@@ -106,7 +106,7 @@ Built with modern C++23 and Qt 6 for Windows 10/11 x64.</div>
 <div class="section">
     <div class="section-title">Application Management</div>
     <ul>
-        <li><b>App Installation</b> &mdash; Scan installed apps, match to Chocolatey packages, export/import, and bulk-install on a new PC</li>
+        <li><b>App Installation</b> &mdash; Scan installed apps, match to Chocolatey packages, export/import, bulk-install on a new PC, and offline deployment with direct installer downloads</li>
         <li><b>Advanced Uninstall</b> &mdash; Deep application removal with leftover scanning, registry snapshot diffs, recycle bin support, and locked-file reboot scheduling</li>
     </ul>
 </div>
@@ -443,7 +443,7 @@ void MainWindow::createSimplePanels() {
     m_email_inspector_panel = std::make_unique<EmailInspectorPanel>(this);
     AddTabWithTooltip(m_tab_widget,
                       m_email_inspector_panel.get(),
-                      "Email Tool",
+                      "Email Tools",
                       kTooltipEmailTool,
                       ":/icons/icons/panel_email.svg");
 }

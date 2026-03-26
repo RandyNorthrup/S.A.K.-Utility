@@ -12,6 +12,8 @@
 #include <QCryptographicHash>
 #include <QDir>
 #include <QDirIterator>
+#include <QDomDocument>
+#include <QDomElement>
 #include <QEventLoop>
 #include <QFile>
 #include <QFileInfo>
@@ -19,7 +21,12 @@
 #include <QNetworkReply>
 #include <QNetworkRequest>
 #include <QProcess>
+#include <QThread>
 #include <QTimer>
+#include <QUrl>
+#include <QUrlQuery>
+
+#include <cstring>
 
 namespace sak {
 
@@ -28,7 +35,9 @@ namespace sak {
 // ============================================================================
 
 PackageInternalizationEngine::PackageInternalizationEngine(QObject* parent)
-    : QObject(parent), m_network_manager(new QNetworkAccessManager(this)) {}
+    : QObject(parent), m_network_manager(new QNetworkAccessManager(this)) {
+    m_network_manager->setRedirectPolicy(QNetworkRequest::NoLessSafeRedirectPolicy);
+}
 
 PackageInternalizationEngine::~PackageInternalizationEngine() {
     cancel();
@@ -53,34 +62,48 @@ void PackageInternalizationEngine::internalizePackage(const QString& package_id,
     m_current_progress.package_id = package_id;
     m_current_progress.version = version;
 
+    // Resolve latest version if none was specified
+    QString resolved_version = resolveAndLogVersion(package_id, version);
+    if (resolved_version.isEmpty()) {
+        InternalizationResult err_result;
+        err_result.package_id = package_id;
+        finishWithError(err_result, "Could not resolve latest version for " + package_id);
+        return;
+    }
+    m_current_progress.version = resolved_version;
+
     sak::logInfo("[InternalizationEngine] Starting: {} v{}",
                  package_id.toStdString(),
-                 version.toStdString());
+                 resolved_version.toStdString());
 
     InternalizationResult result;
     result.package_id = package_id;
-    result.version = version;
+    result.version = resolved_version;
 
     // Ensure work and output directories exist
     QDir(work_dir).mkpath(".");
     QDir(output_dir).mkpath(".");
 
-    QString extract_dir = work_dir + "/" + package_id + "." + version;
+    QString extract_dir = work_dir + "/" + package_id + "." + resolved_version;
     QDir(extract_dir).mkpath(".");
 
     // Step 1: Download the .nupkg
-    QString nupkg_path = work_dir + "/" + package_id + "." + version + ".nupkg";
-    if (!downloadNupkg(package_id, version, nupkg_path, result)) {
+    QString nupkg_path = work_dir + "/" + package_id + "." + resolved_version + ".nupkg";
+    if (!downloadNupkg(package_id, resolved_version, nupkg_path, result)) {
         m_busy = false;
         return;
     }
 
     result.original_size = QFileInfo(nupkg_path).size();
+    sak::logInfo("[InternalizationEngine] Downloaded {} bytes: {}",
+                 result.original_size,
+                 nupkg_path.toStdString());
 
     // Step 2: Extract the nupkg
     emitProgress(InternalizationStatus::Extracting, "Extracting package...");
-    if (!extractNupkg(nupkg_path, extract_dir)) {
-        finishWithError(result, "Failed to extract .nupkg archive");
+    QString extract_error;
+    if (!extractNupkg(nupkg_path, extract_dir, extract_error)) {
+        finishWithError(result, "Extraction failed: " + extract_error);
         return;
     }
 
@@ -132,6 +155,21 @@ void PackageInternalizationEngine::internalizePackage(const QString& package_id,
     repackAndFinish(result, extract_dir, output_dir, "Repacking .nupkg...");
 }
 
+QString PackageInternalizationEngine::resolveAndLogVersion(const QString& package_id,
+                                                           const QString& version) {
+    if (!version.isEmpty()) {
+        return version;
+    }
+    emitProgress(InternalizationStatus::DownloadingNupkg, "Resolving latest version...");
+    QString resolved = resolveLatestVersion(package_id);
+    if (!resolved.isEmpty()) {
+        sak::logInfo("[InternalizationEngine] Resolved {} -> v{}",
+                     package_id.toStdString(),
+                     resolved.toStdString());
+    }
+    return resolved;
+}
+
 // ============================================================================
 // Internalization Helpers
 // ============================================================================
@@ -142,9 +180,17 @@ bool PackageInternalizationEngine::downloadNupkg(const QString& package_id,
                                                  InternalizationResult& result) {
     emitProgress(InternalizationStatus::DownloadingNupkg, "Downloading .nupkg...");
 
-    QString nupkg_url =
-        QString("%1%2%3/%4")
-            .arg(offline::kNuGetBaseUrl, offline::kNuGetPackagePath, package_id, version);
+    QString nupkg_url;
+    if (version.isEmpty()) {
+        nupkg_url =
+            QString("%1%2%3").arg(offline::kNuGetBaseUrl, offline::kNuGetPackagePath, package_id);
+    } else {
+        nupkg_url =
+            QString("%1%2%3/%4")
+                .arg(offline::kNuGetBaseUrl, offline::kNuGetPackagePath, package_id, version);
+    }
+
+    sak::logInfo("[InternalizationEngine] Download URL: {}", nupkg_url.toStdString());
 
     QEventLoop loop;
     bool download_ok = false;
@@ -163,17 +209,41 @@ bool PackageInternalizationEngine::downloadNupkg(const QString& package_id,
     });
 
     connect(reply, &QNetworkReply::finished, &loop, [&]() {
-        if (reply->error() == QNetworkReply::NoError) {
-            QFile file(nupkg_path);
-            if (file.open(QIODevice::WriteOnly)) {
-                file.write(reply->readAll());
-                file.close();
-                download_ok = true;
-            } else {
-                download_error = "Cannot write nupkg file";
-            }
-        } else {
+        if (reply->error() != QNetworkReply::NoError) {
             download_error = reply->errorString();
+            int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+            sak::logError("[InternalizationEngine] Download HTTP {}: {}",
+                          status,
+                          download_error.toStdString());
+            reply->deleteLater();
+            loop.quit();
+            return;
+        }
+
+        int http_status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+        if (http_status < 200 || http_status >= 300) {
+            download_error = QString("HTTP %1").arg(http_status);
+            sak::logError("[InternalizationEngine] Unexpected HTTP status: {}", http_status);
+            reply->deleteLater();
+            loop.quit();
+            return;
+        }
+
+        QByteArray data = reply->readAll();
+        if (data.isEmpty()) {
+            download_error = "Empty response body";
+            reply->deleteLater();
+            loop.quit();
+            return;
+        }
+
+        QFile file(nupkg_path);
+        if (file.open(QIODevice::WriteOnly)) {
+            file.write(data);
+            file.close();
+            download_ok = true;
+        } else {
+            download_error = "Cannot write nupkg file";
         }
         reply->deleteLater();
         loop.quit();
@@ -191,6 +261,142 @@ bool PackageInternalizationEngine::downloadNupkg(const QString& package_id,
     }
 
     return true;
+}
+
+// ============================================================================
+// Version Resolution
+// ============================================================================
+
+QString PackageInternalizationEngine::resolveLatestVersion(const QString& package_id) {
+    QString url_str = QString("%1%2").arg(offline::kNuGetBaseUrl, offline::kNuGetFindByIdPath);
+    QUrl url(url_str);
+    QUrlQuery query;
+    query.addQueryItem("id", QString("'%1'").arg(package_id));
+    url.setQuery(query);
+
+    sak::logInfo("[InternalizationEngine] Resolving version: {}", url.toString().toStdString());
+
+    QString resolved_version;
+
+    for (int attempt = 0; attempt < offline::kApiMaxRetries; ++attempt) {
+        if (m_cancelled) {
+            return {};
+        }
+        if (attempt > 0) {
+            int delay = offline::kApiRetryDelayBaseMs * attempt;
+            sak::logInfo("[InternalizationEngine] Retry {}/{} for {} (wait {}ms)",
+                         attempt + 1,
+                         offline::kApiMaxRetries,
+                         package_id.toStdString(),
+                         delay);
+            QThread::msleep(static_cast<unsigned long>(delay));
+        }
+
+        QNetworkRequest request(url);
+        request.setHeader(QNetworkRequest::UserAgentHeader, "SAK-Utility/1.0");
+        request.setRawHeader("Accept", "application/atom+xml");
+        request.setTransferTimeout(offline::kApiRequestTimeoutMs);
+
+        QEventLoop loop;
+        bool request_ok = false;
+
+        auto* reply = m_network_manager->get(request);
+        connect(reply, &QNetworkReply::finished, &loop, [&]() {
+            reply->deleteLater();
+
+            if (reply->error() != QNetworkReply::NoError) {
+                int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+                sak::logWarning(
+                    "[InternalizationEngine] HTTP {} for "
+                    "{} (attempt {}): {}",
+                    status,
+                    package_id.toStdString(),
+                    attempt + 1,
+                    reply->errorString().toStdString());
+                loop.quit();
+                return;
+            }
+
+            QByteArray data = reply->readAll();
+            resolved_version = parseLatestVersionFromOData(data);
+
+            if (resolved_version.isEmpty()) {
+                sak::logWarning(
+                    "[InternalizationEngine] No version "
+                    "found for {} ({} bytes)",
+                    package_id.toStdString(),
+                    static_cast<int>(data.size()));
+            } else {
+                sak::logInfo(
+                    "[InternalizationEngine] Resolved "
+                    "{} -> v{}",
+                    package_id.toStdString(),
+                    resolved_version.toStdString());
+            }
+            request_ok = true;
+            loop.quit();
+        });
+
+        loop.exec();
+
+        if (!resolved_version.isEmpty()) {
+            return resolved_version;
+        }
+        if (request_ok) {
+            break;
+        }
+    }
+
+    return resolved_version;
+}
+
+QString PackageInternalizationEngine::parseLatestVersionFromOData(const QByteArray& data) {
+    QDomDocument doc;
+    if (!doc.setContent(data)) {
+        sak::logError(
+            "[InternalizationEngine] XML parse failed "
+            "({} bytes)",
+            static_cast<int>(data.size()));
+        return {};
+    }
+
+    QDomElement root = doc.documentElement();
+    QDomNodeList entries = root.elementsByTagName("entry");
+    QString fallback_version;
+
+    for (int idx = 0; idx < entries.count(); ++idx) {
+        QDomElement entry = entries.at(idx).toElement();
+
+        QDomNodeList prop_nodes = entry.elementsByTagName("m:properties");
+        if (prop_nodes.isEmpty()) {
+            prop_nodes = entry.elementsByTagName("properties");
+        }
+        if (prop_nodes.isEmpty()) {
+            continue;
+        }
+
+        QDomElement props = prop_nodes.at(0).toElement();
+        QDomElement version_elem = props.firstChildElement("d:Version");
+        if (version_elem.isNull()) {
+            version_elem = props.firstChildElement("Version");
+        }
+        if (version_elem.isNull()) {
+            continue;
+        }
+
+        QString ver = version_elem.text().trimmed();
+        fallback_version = ver;
+
+        QDomElement latest_elem = props.firstChildElement("d:IsLatestVersion");
+        if (latest_elem.isNull()) {
+            latest_elem = props.firstChildElement("IsLatestVersion");
+        }
+        if (!latest_elem.isNull() && latest_elem.text().trimmed().toLower() == "true") {
+            return ver;
+        }
+    }
+
+    return fallback_version;
 }
 
 void PackageInternalizationEngine::repackAndFinish(InternalizationResult& result,
@@ -329,31 +535,63 @@ bool PackageInternalizationEngine::isBusy() const {
 // ============================================================================
 
 bool PackageInternalizationEngine::extractNupkg(const QString& nupkg_path,
-                                                const QString& extract_dir) {
-    // .nupkg files are ZIP archives — use PowerShell Expand-Archive
+                                                const QString& extract_dir,
+                                                QString& error_out) {
+    // Validate the file starts with the ZIP magic bytes (PK\x03\x04)
+    constexpr int kZipMagicSize = 4;
+    constexpr char kZipMagic[] = {'\x50', '\x4B', '\x03', '\x04'};
+    QFile nupkg_file(nupkg_path);
+    if (!nupkg_file.open(QIODevice::ReadOnly)) {
+        error_out = "Cannot open nupkg file: " + nupkg_path;
+        sak::logError("[InternalizationEngine] {}", error_out.toStdString());
+        return false;
+    }
+    QByteArray header = nupkg_file.read(kZipMagicSize);
+    qint64 file_size = nupkg_file.size();
+    nupkg_file.close();
+    if (header.size() < kZipMagicSize ||
+        std::memcmp(header.constData(), kZipMagic, kZipMagicSize) != 0) {
+        error_out = QString("Not a valid ZIP archive (%1 bytes)").arg(file_size);
+        sak::logError("[InternalizationEngine] {}: {}",
+                      error_out.toStdString(),
+                      nupkg_path.toStdString());
+        return false;
+    }
+
+    // Use .NET ZipFile for reliable extraction with native path separators
+    QString native_nupkg = QDir::toNativeSeparators(nupkg_path);
+    QString native_extract = QDir::toNativeSeparators(extract_dir);
+    QString ps_command = QString(
+                             "Add-Type -AssemblyName System.IO.Compression.FileSystem; "
+                             "[System.IO.Compression.ZipFile]::ExtractToDirectory('%1', '%2')")
+                             .arg(native_nupkg, native_extract);
+
     QProcess process;
     process.setProgram("powershell.exe");
-    process.setArguments({"-NoProfile",
-                          "-NonInteractive",
-                          "-Command",
-                          QString("Expand-Archive -Path '%1' -DestinationPath '%2' -Force")
-                              .arg(nupkg_path, extract_dir)});
+    process.setArguments({"-NoProfile", "-NonInteractive", "-Command", ps_command});
 
     process.start();
     if (!process.waitForStarted(offline::kPackTimeoutMs)) {
-        sak::logError("[InternalizationEngine] Extract process failed to start");
+        error_out = "PowerShell failed to start";
+        sak::logError("[InternalizationEngine] {}", error_out.toStdString());
         return false;
     }
 
     if (!process.waitForFinished(offline::kPackTimeoutMs)) {
         process.kill();
-        sak::logError("[InternalizationEngine] Extract timed out");
+        error_out = "Extraction timed out";
+        sak::logError("[InternalizationEngine] {}", error_out.toStdString());
         return false;
     }
 
     if (process.exitCode() != 0) {
-        QString err = process.readAllStandardError();
-        sak::logError("[InternalizationEngine] Extract failed: {}", err.toStdString());
+        QString stderr_text = process.readAllStandardError().trimmed();
+        error_out = stderr_text.isEmpty()
+                        ? QString("PowerShell exit code %1").arg(process.exitCode())
+                        : stderr_text;
+        sak::logError("[InternalizationEngine] Extract failed (exit {}): {}",
+                      process.exitCode(),
+                      error_out.toStdString());
         return false;
     }
 
@@ -469,14 +707,17 @@ void PackageInternalizationEngine::cleanNugetArtifacts(const QString& extract_di
 
 bool PackageInternalizationEngine::repackNupkg(const QString& source_dir,
                                                const QString& output_path) {
-    // Use PowerShell Compress-Archive to create the ZIP/.nupkg
+    // Use .NET ZipFile to create the archive (Compress-Archive rejects .nupkg)
+    QString native_src = QDir::toNativeSeparators(source_dir);
+    QString native_out = QDir::toNativeSeparators(output_path);
+    QString ps_command = QString(
+                             "Add-Type -AssemblyName System.IO.Compression.FileSystem; "
+                             "[System.IO.Compression.ZipFile]::CreateFromDirectory('%1', '%2')")
+                             .arg(native_src, native_out);
+
     QProcess process;
     process.setProgram("powershell.exe");
-    process.setArguments({"-NoProfile",
-                          "-NonInteractive",
-                          "-Command",
-                          QString("Compress-Archive -Path '%1/*' -DestinationPath '%2' -Force")
-                              .arg(source_dir, output_path)});
+    process.setArguments({"-NoProfile", "-NonInteractive", "-Command", ps_command});
 
     process.start();
     if (!process.waitForStarted(offline::kPackTimeoutMs)) {

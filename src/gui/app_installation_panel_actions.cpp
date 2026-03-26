@@ -495,9 +495,6 @@ void AppInstallationPanel::onDirectDownload() {
         auto* item = m_offlineListWidget->item(row);
         QString pkg_id = item->data(Qt::UserRole).toString();
         QString version = item->data(Qt::UserRole + 1).toString();
-        if (version.isEmpty()) {
-            version = "latest";
-        }
         packages.append({pkg_id, version});
     }
 

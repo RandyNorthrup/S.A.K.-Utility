@@ -39,7 +39,7 @@ namespace sak {
 
 class LogToggleSwitch;
 
-/// @brief Email Tool panel providing offline email forensics
+/// @brief Email Tools panel providing offline email forensics
 ///        and data extraction.
 ///
 /// Modern email client layout with a ribbon toolbar at the top,
@@ -155,7 +155,10 @@ private:
     void updateFileInfoBar(const sak::PstFileInfo& info);
     void updateStatusBar(const QString& message);
     void logMessage(const QString& message);
-    [[nodiscard]] QString itemTypeIcon(sak::EmailItemType type) const;
+    [[nodiscard]] static QIcon itemTypeQIcon(sak::EmailItemType type);
+    [[nodiscard]] static QString itemTypeLabel(sak::EmailItemType type);
+    [[nodiscard]] static bool isBlankItem(const sak::PstItemSummary& item);
+    void applyPageSize();
     [[nodiscard]] static QString formatBytes(qint64 bytes);
 
     // -- Controller ------------------------------------------------------
@@ -181,10 +184,13 @@ private:
     // Item List
     QTableWidget* m_item_list{nullptr};
     QLabel* m_item_count_label{nullptr};
+    QComboBox* m_page_size_combo{nullptr};
 
     // Detail Panel
     QTabWidget* m_detail_tabs{nullptr};
     QTextBrowser* m_content_browser{nullptr};
+    QPushButton* m_html_toggle_button{nullptr};
+    bool m_show_html{true};
     QTextBrowser* m_headers_browser{nullptr};
     QTableWidget* m_properties_table{nullptr};
     QTableWidget* m_attachments_table{nullptr};

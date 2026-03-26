@@ -181,6 +181,11 @@ private:
                             const QJsonArray& assets,
                             QString& matchedName);
 
+    /// @brief Cache checksum sidecar URL (.sha256/.sha1) if present in assets
+    void cacheChecksumSidecar(const QString& distroId,
+                              const QString& matchedName,
+                              const QJsonArray& assets);
+
     QList<DistroInfo> m_distros;
     QMap<QString, int> m_distroIndex;          ///< Maps distro ID to index in m_distros
     QMap<QString, QString> m_githubAssetUrls;  ///< Cached GitHub asset URLs

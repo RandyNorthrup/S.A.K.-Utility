@@ -15,7 +15,7 @@ endif()
 
 # Project definition
 project(SAK_Utility
-    VERSION 0.9.0.7
+    VERSION 0.9.0.8
     DESCRIPTION "Swiss Army Knife Utility - PC technician's toolkit for Windows migration and maintenance"
     LANGUAGES CXX
 )# C++23 Standard - Strict compliance required
@@ -518,6 +518,8 @@ set(GUI_SOURCES
     include/sak/linux_iso_download_dialog.h
     src/gui/image_flasher_settings_dialog.cpp
     include/sak/image_flasher_settings_dialog.h
+    src/gui/install_summary_dialog.cpp
+    include/sak/install_summary_dialog.h
     src/gui/detachable_log_window.cpp
     include/sak/detachable_log_window.h
     src/gui/windows11_theme.cpp

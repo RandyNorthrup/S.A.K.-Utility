@@ -118,6 +118,18 @@ Q_SIGNALS:
     /// @brief An error occurred during internalization
     void errorOccurred(const QString& package_id, const QString& error);
 
+public:
+    /// @brief Resolve the latest version from the NuGet v2 OData API
+    [[nodiscard]] QString resolveLatestVersion(const QString& package_id);
+
+    /// @brief Extract a .nupkg (ZIP) to a directory
+    [[nodiscard]] bool extractNupkg(const QString& nupkg_path,
+                                    const QString& extract_dir,
+                                    QString& error_out);
+
+    /// @brief Find the chocolateyInstall.ps1 within extracted package
+    [[nodiscard]] QString findInstallScript(const QString& extract_dir) const;
+
 private:
     /// @brief Download the .nupkg file from the NuGet feed
     [[nodiscard]] bool downloadNupkg(const QString& package_id,
@@ -139,18 +151,16 @@ private:
                                            const QString& tools_dir,
                                            InternalizationResult& result);
 
+    /// @brief Resolve version, using latest from NuGet API if empty
+    /// @return Resolved version string, or empty on failure
+    [[nodiscard]] QString resolveAndLogVersion(const QString& package_id, const QString& version);
+
     /// @brief Collect unique binary URLs from parsed install script resources
     [[nodiscard]] QStringList collectBinaryUrls(const ParsedInstallScript& parsed) const;
 
     /// @brief Build URL-to-local-filename map from parsed resources
     [[nodiscard]] QHash<QString, QString> buildLocalFilenameMap(
         const ParsedInstallScript& parsed) const;
-
-    /// @brief Extract a .nupkg (ZIP) to a directory
-    [[nodiscard]] bool extractNupkg(const QString& nupkg_path, const QString& extract_dir);
-
-    /// @brief Find the chocolateyInstall.ps1 within extracted package
-    [[nodiscard]] QString findInstallScript(const QString& extract_dir) const;
 
     /// @brief Download a single binary file from a URL
     void downloadBinary(const QString& url,
@@ -165,6 +175,9 @@ private:
 
     /// @brief Compute SHA-256 checksum of a file
     [[nodiscard]] QString computeChecksum(const QString& file_path) const;
+
+    /// @brief Parse OData XML to extract the latest version string
+    [[nodiscard]] static QString parseLatestVersionFromOData(const QByteArray& data);
 
     /// @brief Update and emit progress
     void emitProgress(InternalizationStatus status, const QString& message);

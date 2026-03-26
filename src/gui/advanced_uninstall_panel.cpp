@@ -1091,6 +1091,8 @@ void AdvancedUninstallPanel::contextRemoveRegistryEntry() {
 
 void AdvancedUninstallPanel::populateProgramTable(const QVector<ProgramInfo>& programs) {
     m_program_table->setSortingEnabled(false);
+    m_program_table->setUpdatesEnabled(false);
+    const QSignalBlocker blocker(m_program_table);
     m_program_table->setRowCount(0);
     m_program_table->setRowCount(programs.size());
 
@@ -1149,6 +1151,7 @@ void AdvancedUninstallPanel::populateProgramTable(const QVector<ProgramInfo>& pr
         m_program_table->setItem(row, kColDate, dateItem);
     }
 
+    m_program_table->setUpdatesEnabled(true);
     m_program_table->setSortingEnabled(true);
     m_program_table->sortByColumn(kColName, Qt::AscendingOrder);
 
@@ -1157,6 +1160,8 @@ void AdvancedUninstallPanel::populateProgramTable(const QVector<ProgramInfo>& pr
 
 void AdvancedUninstallPanel::populateLeftoverTable(const QVector<LeftoverItem>& leftovers) {
     m_leftover_table->setSortingEnabled(false);
+    m_leftover_table->setUpdatesEnabled(false);
+    const QSignalBlocker leftover_blocker(m_leftover_table);
     m_leftover_table->setRowCount(0);
     m_leftover_table->setRowCount(leftovers.size());
 
@@ -1164,6 +1169,7 @@ void AdvancedUninstallPanel::populateLeftoverTable(const QVector<LeftoverItem>& 
         populateLeftoverRow(row, leftovers[row]);
     }
 
+    m_leftover_table->setUpdatesEnabled(true);
     m_leftover_table->setSortingEnabled(true);
 
     int safeCount = 0;

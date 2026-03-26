@@ -15,11 +15,16 @@ runtime dependencies on the target machine.
 
 ---
 
-## TigerStyle — The Quality Philosophy
+## TigerStyle — Best-Practice Philosophy
 
-This project follows **TigerStyle**, a coding discipline from
+This project aspires to **TigerStyle**, a coding discipline from
 [TigerBeetle](https://github.com/tigerbeetle/tigerbeetle/blob/main/docs/TIGER_STYLE.md)
 that prioritizes **safety → performance → developer experience**, in that order.
+
+TigerStyle is a **guiding philosophy, not a blocker**. Strive to follow these
+guidelines, but never let them prevent code from shipping when the release
+hooks pass. The hard gates are: **zero build warnings, zero build errors,
+and all tests passing** (see *Build & CI Requirements* below).
 
 > "The design is not just what it looks like and feels like.
 > The design is how it works." — Steve Jobs
@@ -44,21 +49,25 @@ that prioritizes **safety → performance → developer experience**, in that or
    swallow errors. Every user-visible error must also be logged via `sak::logError`
    or `sak::logWarning`.
 
-### TigerStyle Hard Limits
+### TigerStyle Best-Practice Targets
 
-| Rule | Limit | Enforcement |
+These are goals to strive for. Violations are acceptable when pragmatically
+necessary — they should be improved over time, not block a commit that passes
+the release hooks.
+
+| Guideline | Target | Notes |
 |---|---|---|
-| Function body length | ≤70 lines | Code review, Lizard |
-| Nesting depth | ≤3 levels | Early returns, helper extraction |
-| Line length | ≤100 columns | `.clang-format`, code review |
-| Assertions | Meaningful preconditions/postconditions | Code review |
-| `catch(...)` | Must have explanatory comment | Only in logger (exempt) |
-| Magic numbers | Named `constexpr` constants | Only 0, 1, −1 are acceptable bare literals |
-| Single-letter variables | Forbidden | Except tiny lambda predicates (`c` in `\[\](QChar c)`) |
-| `else` after `return` | Forbidden | Use early-return guard clauses |
-| Nested ternary | Forbidden | Use `if`/`else` or helper function |
-| TODO / FIXME / HACK in code | Forbidden | Track in issue tracker instead |
-| Commented-out code | Forbidden | Delete it; Git has the history |
+| Function body length | ≤70 lines | Data-only initializers may exceed if splitting hurts readability |
+| Nesting depth | ≤3 levels | Prefer early returns and helper extraction |
+| Line length | ≤100 columns | Enforced by `.clang-format` |
+| Assertions | Meaningful preconditions/postconditions | Every assertion should catch a real bug |
+| `catch(...)` | Should have explanatory comment | Only in logger (exempt) |
+| Magic numbers | Prefer named `constexpr` constants | 0, 1, −1 are acceptable bare literals |
+| Single-letter variables | Avoid | Except tiny lambda predicates (`c` in `\[\](QChar c)`) |
+| `else` after `return` | Avoid | Prefer early-return guard clauses |
+| Nested ternary | Avoid | Prefer `if`/`else` or helper function |
+| TODO / FIXME / HACK in code | Avoid in committed code | Track in issue tracker instead |
+| Commented-out code | Avoid | Delete it; Git has the history |
 
 ### TigerStyle Adaptations for C++/Qt
 
@@ -75,13 +84,13 @@ that prioritizes **safety → performance → developer experience**, in that or
 
 ## Coding Standards
 
-### Compiler Strictness
+### Compiler Strictness (Hard Gate)
 
-All code must compile cleanly under:
+All code **must** compile cleanly under:
 ```
 /W4 /WX /permissive- /utf-8 /std:c++latest
 ```
-Zero warnings. Zero errors. No exceptions.
+Zero warnings. Zero errors. **This is a release hook — it must always pass.**
 
 ### Naming Conventions
 
@@ -132,12 +141,12 @@ QString local_variable;              // Local variables are snake_case
 - Colors → `style_constants.h` or `windows11_theme.cpp`
 - Acceptable bare literals: `0`, `1`, `-1`, `nullptr`, `true`, `false`
 
-### Code Shape
+### Code Shape (Best Practice)
 
-- **≤70 lines per function.** Data-only initializers (e.g., distro catalog entries)
-  may be slightly over if splitting harms readability, but logic functions must not
-  exceed 70 lines.
-- **≤3 levels of nesting.** Use early returns (guard clauses) to flatten.
+- **Aim for ≤70 lines per function.** Data-only initializers (e.g., distro catalog
+  entries) may exceed if splitting harms readability. Slightly exceeding 70 lines
+  is acceptable — refactor when practical, but don't let it block a commit.
+- **Aim for ≤3 levels of nesting.** Use early returns (guard clauses) to flatten.
 - **≤100 characters per line.** Break long strings, connect calls, and signatures.
 - **One declaration per line.** No `int a, b, c;`.
 
@@ -181,7 +190,8 @@ cmake --build build --config Release
 ctest --test-dir build -C Release --output-on-failure
 ```
 
-All tests must pass before any commit. No exceptions.
+All tests must pass before any commit. **This is a release hook — it must
+always pass.**
 
 ### Test Coverage Expectations
 
@@ -207,13 +217,16 @@ cmake --build build --config Release
 ctest --test-dir build -C Release --output-on-failure
 ```
 
-### CI Gate
+### CI Gate (Release Hooks — Must Always Pass)
 
-Every PR must:
-- [ ] Build with zero warnings (`/W4 /WX`)
-- [ ] Pass all tests (100% pass rate)
+These are the **hard requirements**. Every PR must pass these gates:
+- [ ] **Build with zero warnings** (`/W4 /WX`) — non-negotiable
+- [ ] **Pass all tests** (100% pass rate) — non-negotiable
 - [ ] Include tests for new features
-- [ ] Have no `TODO`, `FIXME`, `HACK`, or commented-out code
+
+TigerStyle guidelines (function length, nesting depth, naming, etc.) are
+best practices to strive for but do **not** block a PR that passes the
+release hooks above.
 
 ---
 
@@ -222,15 +235,15 @@ Every PR must:
 ### Directory Structure
 
 ```
-include/sak/          — Public headers (one .h per class, 134 headers)
+include/sak/          — Public headers (one .h per class, 135 headers)
 src/core/             — Core business logic, workers, parsers, managers (89 files)
-src/gui/              — Qt widget panels, dialogs, and themes (35 files)
+src/gui/              — Qt widget panels, dialogs, and themes (36 files)
 src/actions/          — Quick action workers (one file per action, 7 files)
 src/threading/        — Thread workers (backup, scan, hash, flash, 4 files)
 src/third_party/      — Bundled third-party source (qrcodegen)
-tests/unit/           — Qt Test unit tests (96 files)
+tests/unit/           — Qt Test unit tests (94 files)
 tests/unit/actions/   — Action validation tests (2 files)
-tests/integration/    — End-to-end workflow tests (2 files)
+tests/integration/    — End-to-end workflow tests (3 files)
 resources/            — QRC files, icons, themes
 scripts/              — Build/lint/utility scripts
 docs/                 — Project documentation
@@ -266,17 +279,24 @@ cmake/                — CMake modules and build config
 
 ## What NOT To Do
 
-- Do not add features without tests.
-- Do not silence errors or swallow exceptions.
-- Do not use `catch(...)` without a justifying comment.
-- Do not leave `TODO`/`FIXME` in committed code — file an issue instead.
-- Do not commit commented-out code — Git preserves history.
-- Do not use abbreviated or single-letter variable names.
-- Do not introduce functions longer than 70 lines.
-- Do not nest logic deeper than 3 levels.
-- Do not use magic numbers — extract to named constants.
+### Hard Rules (will break release hooks)
+
+- Do not introduce build warnings — the build **must** pass `/W4 /WX`.
+- Do not break existing tests — all tests **must** pass.
 - Do not bypass build warnings with pragmas or casts.
-- Do not use legacy C-style casts — use `static_cast`, `dynamic_cast`, etc.
+- Do not silence errors or swallow exceptions.
 - Do not use `emit` — use `Q_EMIT` (project uses `QT_NO_KEYWORDS`).
+
+### Best Practices (strive for, but not blockers)
+
+- Avoid adding features without tests.
+- Avoid `catch(...)` without a justifying comment.
+- Avoid leaving `TODO`/`FIXME` in committed code — file an issue instead.
+- Avoid committed commented-out code — Git preserves history.
+- Avoid abbreviated or single-letter variable names.
+- Aim to keep functions under 70 lines.
+- Aim to keep nesting to ≤3 levels.
+- Prefer named constants over magic numbers.
+- Prefer `static_cast`, `dynamic_cast` over C-style casts.
 
 ---

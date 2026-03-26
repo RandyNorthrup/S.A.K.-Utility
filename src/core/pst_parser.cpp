@@ -408,7 +408,8 @@ static const QHash<uint16_t, SummarySetter>& summarySetters() {
          }},
         {sak::email::kPropIdMessageFlags,
          [](sak::PstItemSummary& item, const sak::MapiProperty& col) {
-             item.is_read = (col.display_value.toInt() & 0x01) != 0;
+             item.message_flags = col.display_value.toUInt();
+             item.is_read = (item.message_flags & 0x01) != 0;
          }},
         {sak::email::kPropIdImportance,
          [](sak::PstItemSummary& item, const sak::MapiProperty& col) {

@@ -9,7 +9,7 @@
 [![Qt 6.5+](https://img.shields.io/badge/Qt-6.5%2B-41cd52.svg)](https://www.qt.io/)
 [![Windows 10/11](https://img.shields.io/badge/Windows-10%20%7C%2011-0078d4.svg)](https://www.microsoft.com/windows)
 [![Build](https://github.com/RandyNorthrup/S.A.K.-Utility/actions/workflows/build-release.yml/badge.svg)](https://github.com/RandyNorthrup/S.A.K.-Utility/actions)
-[![Version](https://img.shields.io/badge/Version-0.9.0.7-orange.svg)](VERSION)
+[![Version](https://img.shields.io/badge/Version-0.9.0.8-orange.svg)](VERSION)
 
 Migration · Maintenance · Recovery · Imaging · Deployment — one portable EXE.
 
@@ -21,7 +21,7 @@ Migration · Maintenance · Recovery · Imaging · Deployment — one portable E
 
 See [CHANGELOG.md](CHANGELOG.md) for the full version history.
 
-**Latest: v0.9.0.7** — Feature planning phase (File Converter, System Tools, OST Converter tab plans), documentation accuracy audit, build quality improvements.
+**Latest: v0.9.0.8** — Offline deployment Direct Download mode with embedded-binary package support, install script parser improvements, meta-package dependency resolution, documentation audit.
 
 ---
 
@@ -34,7 +34,7 @@ See [CHANGELOG.md](CHANGELOG.md) for the full version history.
 | **Diagnostics & Benchmarking** | SMART disk health, CPU/disk/memory benchmarks, stress testing, thermal monitoring, system maintenance tools, HTML/JSON/CSV reports. |
 | **Image Flasher** | Flash ISOs/IMGs to USB. Download Windows and Linux ISOs directly. |
 | **File Management** | Organize files by extension, find duplicates with parallel hashing, and grep-style content search with regex, metadata, archive, and binary/hex modes. |
-| **Application Management** | Scan installed apps, match to Chocolatey packages, bulk-install on a new PC. Deep application removal with leftover scanning and registry snapshot diffs. |
+| **Application Management** | Scan installed apps, match to Chocolatey packages, bulk-install on a new PC. Offline deployment with direct installer downloads. Deep application removal with leftover scanning and registry snapshot diffs. |
 | **Network Management** | Diagnostic suite (ping, traceroute, MTR, DNS, port scan, bandwidth, WiFi, connections, firewall, shares), adapter inspector with ethernet backup/restore and network reset, WiFi QR code manager. |
 | **Email Tool** | Browse PST, OST, and MBOX email archives. Search, export (EML/CSV/VCF/ICS), contacts, calendar (month/week/day), attachments browser — no Outlook required. |
 | **Modern UI** | Windows 11-style rounded corners, custom splash screen, and responsive layouts. |
@@ -122,6 +122,15 @@ Scan installed apps, match them to Chocolatey packages, and bulk-install on a ne
 4. **Export** — JSON migration report portable to the target machine.
 5. **Install** — Embedded Chocolatey with retry logic and exponential backoff.
 6. **Restore** — `UserProfileRestoreWizard` maps source paths to target paths and restores data.
+
+**Offline Deploy** — Build deployment bundles for air-gapped or bandwidth-limited environments:
+
+| Mode | Description |
+|---|---|
+| **Build Bundle** | Downloads .nupkg packages with internalized dependencies for offline Chocolatey install |
+| **Direct Download** | Downloads the actual installer binaries (EXE/MSI) directly — supports URL-based, embedded-binary, and meta-package patterns |
+
+Includes preset package lists (Office PC, Developer, Media, etc.) and curated package catalogs with search.
 
 #### Advanced Uninstall
 
@@ -484,7 +493,7 @@ Full license texts: [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md)
 cmake --build build --config Release --target RUN_TESTS
 ```
 
-74 unit and integration tests across 98 test files covering Advanced Search, Advanced Uninstall (types, controller, leftover scanner, registry snapshot engine), Network Diagnostics (types, utils, report generation), Email Inspector (PST/OST parsing, MBOX parsing, email types, search, export, profile manager, report generator), diagnostics, security, encryption, configuration, ISO download, and quick action validation.
+75 unit and integration tests across 99 test files covering Advanced Search, Advanced Uninstall (types, controller, leftover scanner, registry snapshot engine), Network Diagnostics (types, utils, report generation), Email Inspector (PST/OST parsing, MBOX parsing, email types, search, export, profile manager, report generator), Offline Deployment (install script parsing, NuGet API, script rewriting, package builder), diagnostics, security, encryption, configuration, ISO download, and quick action validation.
 
 ---
 

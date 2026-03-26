@@ -12,6 +12,7 @@
 #include <QCoreApplication>
 #include <QDateTime>
 #include <QDir>
+#include <QDirIterator>
 #include <QEventLoop>
 #include <QFile>
 #include <QJsonArray>
@@ -23,8 +24,51 @@
 #include <QNetworkRequest>
 #include <QtConcurrent>
 #include <QTextStream>
+#include <QUrl>
+#include <QXmlStreamReader>
 
 namespace sak {
+
+// ============================================================================
+// Helpers
+// ============================================================================
+
+/// @brief Parse .nuspec in extract_dir for the first dependency package ID.
+/// Prefers dependencies ending in ".install" (e.g. 7zip → 7zip.install).
+static QString findNuspecDependencyId(const QString& extract_dir) {
+    QDirIterator iter(extract_dir, {"*.nuspec"}, QDir::Files);
+    if (!iter.hasNext()) {
+        return {};
+    }
+
+    QFile file(iter.next());
+    if (!file.open(QIODevice::ReadOnly)) {
+        return {};
+    }
+
+    QXmlStreamReader xml(&file);
+    QString preferred;
+    QString first;
+
+    while (!xml.atEnd()) {
+        xml.readNext();
+        if (xml.isStartElement() && xml.name() == QStringLiteral("dependency")) {
+            QString id = xml.attributes().value("id").toString();
+            if (id.isEmpty()) {
+                continue;
+            }
+            if (first.isEmpty()) {
+                first = id;
+            }
+            if (id.endsWith(".install")) {
+                preferred = id;
+                break;
+            }
+        }
+    }
+
+    return preferred.isEmpty() ? first : preferred;
+}
 
 // ============================================================================
 // Construction / Destruction
@@ -389,83 +433,312 @@ void OfflineDeploymentWorker::directDownload(const QVector<QPair<QString, QStrin
     Q_EMIT operationStarted(packages.size());
     Q_EMIT logMessage(QString("Direct download: %1 package(s)").arg(packages.size()));
 
-    m_operation_future = QtConcurrent::run([this, packages, output_dir]() {
-        QDir(output_dir).mkpath(".");
-        QNetworkAccessManager nam;
+    m_operation_future = QtConcurrent::run(
+        [this, packages, output_dir]() { executeDirectDownload(packages, output_dir); });
+}
 
-        int completed = 0;
-        int failed = 0;
-        int total = packages.size();
+void OfflineDeploymentWorker::executeDirectDownload(
+    const QVector<QPair<QString, QString>>& packages, const QString& output_dir) {
+    QDir(output_dir).mkpath(".");
+    QNetworkAccessManager nam;
+    nam.setRedirectPolicy(QNetworkRequest::NoLessSafeRedirectPolicy);
 
-        for (const auto& [pkg_id, version] : packages) {
-            if (m_cancelled) {
-                break;
-            }
+    PackageInternalizationEngine resolver;
+    int completed = 0;
+    int failed = 0;
+    int total = packages.size();
 
-            QMetaObject::invokeMethod(
-                this,
-                [this, completed, total, pkg_id]() {
-                    Q_EMIT batchProgress(completed, total, pkg_id);
-                    Q_EMIT logMessage(QString("Downloading: %1 v%2").arg(pkg_id));
-                },
-                Qt::QueuedConnection);
-
-            QString url =
-                QString("%1%2%3/%4")
-                    .arg(offline::kNuGetBaseUrl, offline::kNuGetPackagePath, pkg_id, version);
-
-            QString output_path = output_dir + "/" + pkg_id + "." + version + ".nupkg";
-
-            QEventLoop loop;
-            bool download_ok = false;
-
-            QNetworkRequest request{QUrl(url)};
-            request.setHeader(QNetworkRequest::UserAgentHeader, "SAK-Utility/1.0");
-            request.setTransferTimeout(offline::kDownloadTimeoutMs);
-
-            auto* reply = nam.get(request);
-
-            QObject::connect(reply, &QNetworkReply::finished, &loop, [&]() {
-                if (reply->error() == QNetworkReply::NoError) {
-                    QFile file(output_path);
-                    if (file.open(QIODevice::WriteOnly)) {
-                        file.write(reply->readAll());
-                        file.close();
-                        download_ok = true;
-                    }
-                }
-                reply->deleteLater();
-                loop.quit();
-            });
-
-            loop.exec();
-
-            if (download_ok) {
-                completed++;
-            } else {
-                failed++;
-            }
-
-            QMetaObject::invokeMethod(
-                this,
-                [this, pkg_id, download_ok]() {
-                    Q_EMIT packageProgress(pkg_id,
-                                           download_ok,
-                                           download_ok ? "Downloaded" : "Download failed");
-                },
-                Qt::QueuedConnection);
+    for (const auto& [pkg_id, version] : packages) {
+        if (m_cancelled) {
+            break;
         }
 
-        BatchStats stats;
-        stats.total = total;
-        stats.completed = completed;
-        stats.failed = failed;
-
-        m_running = false;
+        QString resolved_version = version;
+        if (resolved_version.isEmpty() || resolved_version == "latest") {
+            resolved_version = resolver.resolveLatestVersion(pkg_id);
+            if (resolved_version.isEmpty()) {
+                ++failed;
+                sak::logError("[DirectDownload] Version resolve failed: {}", pkg_id.toStdString());
+                QMetaObject::invokeMethod(
+                    this,
+                    [this, pkg_id]() {
+                        Q_EMIT packageProgress(pkg_id, false, "Version resolution failed");
+                    },
+                    Qt::QueuedConnection);
+                continue;
+            }
+        }
 
         QMetaObject::invokeMethod(
-            this, [this, stats]() { Q_EMIT operationCompleted(stats); }, Qt::QueuedConnection);
+            this,
+            [this, completed, total, pkg_id, resolved_version]() {
+                Q_EMIT batchProgress(completed, total, pkg_id);
+                Q_EMIT logMessage(
+                    QString("Downloading installers: %1 v%2").arg(pkg_id, resolved_version));
+            },
+            Qt::QueuedConnection);
+
+        int files = downloadOnePackageInstallers(pkg_id, resolved_version, output_dir, nam);
+
+        bool ok = (files > 0);
+        if (ok) {
+            ++completed;
+        } else {
+            ++failed;
+        }
+
+        QString msg = ok ? QString("Downloaded %1 file(s)").arg(files)
+                         : QString("No installers found");
+        QMetaObject::invokeMethod(
+            this,
+            [this, pkg_id, ok, msg]() { Q_EMIT packageProgress(pkg_id, ok, msg); },
+            Qt::QueuedConnection);
+    }
+
+    BatchStats stats;
+    stats.total = total;
+    stats.completed = completed;
+    stats.failed = failed;
+    m_running = false;
+
+    QMetaObject::invokeMethod(
+        this, [this, stats]() { Q_EMIT operationCompleted(stats); }, Qt::QueuedConnection);
+}
+
+// ============================================================================
+// Direct Download Helpers
+// ============================================================================
+
+void OfflineDeploymentWorker::emitLog(const QString& message) {
+    QMetaObject::invokeMethod(
+        this, [this, message]() { Q_EMIT logMessage(message); }, Qt::QueuedConnection);
+}
+
+int OfflineDeploymentWorker::downloadOnePackageInstallers(const QString& pkg_id,
+                                                          const QString& resolved_version,
+                                                          const QString& output_dir,
+                                                          QNetworkAccessManager& nam) {
+    QString temp_dir = output_dir + "/_sak_temp_" + pkg_id;
+    QDir(temp_dir).mkpath(".");
+
+    // Steps 1-2: Download and extract the nupkg
+    QString extract_dir = downloadAndExtractNupkg(pkg_id, resolved_version, temp_dir, nam);
+    if (extract_dir.isEmpty()) {
+        QDir(temp_dir).removeRecursively();
+        return 0;
+    }
+
+    // Step 3: Find install script (or resolve meta-package dependency)
+    InstallScriptParser parser;
+    PackageInternalizationEngine engine;
+    QString script_path = engine.findInstallScript(extract_dir);
+    QString pkg_extract_dir = extract_dir;
+
+    if (script_path.isEmpty()) {
+        auto [dep_script,
+              dep_extract] = resolveMetaPackageDependency(pkg_id, extract_dir, temp_dir, nam);
+        if (dep_script.isEmpty()) {
+            QDir(temp_dir).removeRecursively();
+            return 0;
+        }
+        script_path = dep_script;
+        pkg_extract_dir = dep_extract;
+    }
+
+    // Parse for download URLs (primary installer only)
+    auto parsed = parser.parseFile(script_path);
+    QStringList urls = collectPrimaryUrls(parsed);
+
+    // Embedded installer fallback, then URL download
+    int result = 0;
+    if (urls.isEmpty()) {
+        result = copyEmbeddedInstallers(pkg_id, pkg_extract_dir, output_dir);
+        if (result == 0) {
+            emitLog(QString("[%1] No download URLs or embedded files").arg(pkg_id));
+        }
+    } else {
+        result = downloadUrlsToDir(pkg_id, urls, output_dir, nam);
+    }
+
+    QDir(temp_dir).removeRecursively();
+    return result;
+}
+
+QString OfflineDeploymentWorker::downloadAndExtractNupkg(const QString& pkg_id,
+                                                         const QString& resolved_version,
+                                                         const QString& temp_dir,
+                                                         QNetworkAccessManager& nam) {
+    QString nupkg_url =
+        QString("%1%2%3/%4")
+            .arg(offline::kNuGetBaseUrl, offline::kNuGetPackagePath, pkg_id, resolved_version);
+    QString nupkg_path = temp_dir + "/" + pkg_id + ".nupkg";
+
+    if (!downloadFileFromUrl(nupkg_url, nupkg_path, nam)) {
+        emitLog(QString("[%1] nupkg download failed").arg(pkg_id));
+        return {};
+    }
+
+    QString extract_dir = temp_dir + "/extracted";
+    QString extract_error;
+    PackageInternalizationEngine engine;
+    if (!engine.extractNupkg(nupkg_path, extract_dir, extract_error)) {
+        emitLog(QString("[%1] Extract failed: %2").arg(pkg_id, extract_error));
+        return {};
+    }
+
+    return extract_dir;
+}
+
+QPair<QString, QString> OfflineDeploymentWorker::resolveMetaPackageDependency(
+    const QString& pkg_id,
+    const QString& extract_dir,
+    const QString& temp_dir,
+    QNetworkAccessManager& nam) {
+    QString dep_id = findNuspecDependencyId(extract_dir);
+    if (dep_id.isEmpty()) {
+        emitLog(QString("[%1] No chocolateyInstall.ps1 found").arg(pkg_id));
+        return {};
+    }
+
+    emitLog(QString("[%1] Meta-package → resolving %2").arg(pkg_id, dep_id));
+
+    PackageInternalizationEngine dep_engine;
+    QString dep_version = dep_engine.resolveLatestVersion(dep_id);
+    if (dep_version.isEmpty()) {
+        emitLog(QString("[%1] Version resolve failed for %2").arg(pkg_id, dep_id));
+        return {};
+    }
+
+    QString dep_nupkg_url =
+        QString("%1%2%3/%4")
+            .arg(offline::kNuGetBaseUrl, offline::kNuGetPackagePath, dep_id, dep_version);
+    QString dep_nupkg_path = temp_dir + "/" + dep_id + ".nupkg";
+    if (!downloadFileFromUrl(dep_nupkg_url, dep_nupkg_path, nam)) {
+        emitLog(QString("[%1] Dependency nupkg download failed").arg(dep_id));
+        return {};
+    }
+
+    QString dep_extract = temp_dir + "/dep_extracted";
+    QString dep_error;
+    PackageInternalizationEngine engine;
+    if (!engine.extractNupkg(dep_nupkg_path, dep_extract, dep_error)) {
+        emitLog(QString("[%1] Dependency extract failed: %2").arg(dep_id, dep_error));
+        return {};
+    }
+
+    QString script_path = engine.findInstallScript(dep_extract);
+    if (script_path.isEmpty()) {
+        emitLog(QString("[%1] Dependency %2 also has no script").arg(pkg_id, dep_id));
+        return {};
+    }
+
+    return {script_path, dep_extract};
+}
+
+int OfflineDeploymentWorker::copyEmbeddedInstallers(const QString& pkg_id,
+                                                    const QString& pkg_extract_dir,
+                                                    const QString& output_dir) {
+    QDir tools_dir(pkg_extract_dir + "/tools");
+    if (!tools_dir.exists()) {
+        return 0;
+    }
+
+    QStringList embedded = tools_dir.entryList({"*.exe", "*.msi"}, QDir::Files);
+    if (embedded.isEmpty()) {
+        return 0;
+    }
+
+    emitLog(QString("[%1] Found %2 embedded installer(s)").arg(pkg_id).arg(embedded.size()));
+    int copied = 0;
+    for (const auto& name : embedded) {
+        QString src = tools_dir.filePath(name);
+        QString dest = output_dir + "/" + name;
+        if (QFile::copy(src, dest)) {
+            ++copied;
+            sak::logInfo("[DirectDownload] Embedded: {}", name.toStdString());
+        } else {
+            emitLog(QString("[%1] Copy failed: %2").arg(pkg_id, name));
+        }
+    }
+    return copied;
+}
+
+QStringList OfflineDeploymentWorker::collectPrimaryUrls(const ParsedInstallScript& parsed) {
+    QStringList urls;
+    if (parsed.resources.isEmpty()) {
+        return urls;
+    }
+    const auto& primary = parsed.resources.first();
+    if (!primary.url.isEmpty()) {
+        urls.append(primary.url);
+    }
+    if (!primary.url_64bit.isEmpty()) {
+        urls.append(primary.url_64bit);
+    }
+    return urls;
+}
+
+int OfflineDeploymentWorker::downloadUrlsToDir(const QString& pkg_id,
+                                               const QStringList& urls,
+                                               const QString& output_dir,
+                                               QNetworkAccessManager& nam) {
+    int downloaded = 0;
+    for (const auto& url : urls) {
+        if (m_cancelled) {
+            break;
+        }
+        QString filename = QUrl(url).fileName();
+        if (filename.isEmpty()) {
+            filename = QString("%1_installer_%2").arg(pkg_id).arg(downloaded + 1);
+        }
+        QString dest = output_dir + "/" + filename;
+        if (downloadFileFromUrl(url, dest, nam)) {
+            ++downloaded;
+            sak::logInfo("[DirectDownload] Saved: {}", filename.toStdString());
+        } else {
+            emitLog(QString("[%1] Download failed: %2").arg(pkg_id, url));
+        }
+    }
+
+    if (downloaded == 0 && !urls.isEmpty()) {
+        emitLog(
+            QString("[%1] Found %2 URL(s) but all downloads failed").arg(pkg_id).arg(urls.size()));
+    }
+    return downloaded;
+}
+
+bool OfflineDeploymentWorker::downloadFileFromUrl(const QString& url,
+                                                  const QString& output_path,
+                                                  QNetworkAccessManager& nam) {
+    QNetworkRequest request{QUrl(url)};
+    request.setHeader(QNetworkRequest::UserAgentHeader, "SAK-Utility/1.0");
+    request.setTransferTimeout(offline::kDownloadTimeoutMs);
+
+    QEventLoop loop;
+    bool ok = false;
+
+    auto* reply = nam.get(request);
+    QObject::connect(reply, &QNetworkReply::finished, &loop, [&]() {
+        if (reply->error() == QNetworkReply::NoError) {
+            QFile file(output_path);
+            if (file.open(QIODevice::WriteOnly)) {
+                file.write(reply->readAll());
+                file.close();
+                ok = true;
+            }
+        } else {
+            int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+            sak::logError("[DirectDownload] HTTP {} for {}: {}",
+                          status,
+                          url.toStdString(),
+                          reply->errorString().toStdString());
+        }
+        reply->deleteLater();
+        loop.quit();
     });
+
+    loop.exec();
+    return ok;
 }
 
 // ============================================================================

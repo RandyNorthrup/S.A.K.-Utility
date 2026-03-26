@@ -79,7 +79,7 @@ struct BuildBundleContext {
 /// Supports three modes of operation:
 ///   1. **Build**: Internalize multiple packages into a deployment bundle
 ///   2. **Install**: Install packages from a local deployment bundle
-///   3. **Direct Download**: Download .nupkg files without internalization
+///   3. **Direct Download**: Download installer binaries for manual use
 ///
 /// Runs long-running operations on a background thread via QtConcurrent.
 /// Communicates progress and results to the UI thread via signals.
@@ -108,7 +108,7 @@ public:
 
     /// @brief Download .nupkg files directly (no internalization)
     /// @param packages List of (package_id, version) pairs
-    /// @param output_dir Directory to save .nupkg files
+    /// @param output_dir Directory to save downloaded installer files
     void directDownload(const QVector<QPair<QString, QString>>& packages,
                         const QString& output_dir);
 
@@ -156,6 +156,10 @@ private:
     /// @brief Execute the build bundle operation on a background thread
     void executeBuildBundle(const QString& output_dir, const QString& description);
 
+    /// @brief Execute direct download on a background thread
+    void executeDirectDownload(const QVector<QPair<QString, QString>>& packages,
+                               const QString& output_dir);
+
     /// @brief Internalize a single package within the batch loop
     [[nodiscard]] bool internalizeOnePackage(int idx,
                                              const BuildBundleContext& ctx,
@@ -163,6 +167,51 @@ private:
 
     /// @brief Finalize the bundle: write manifest, clean up, emit completion
     void finalizeBundle(const DeploymentManifest& manifest, const BuildBundleContext& ctx);
+
+    /// @brief Download installer binaries for a single package
+    /// @return Number of files successfully downloaded (0 on failure)
+    [[nodiscard]] int downloadOnePackageInstallers(const QString& pkg_id,
+                                                   const QString& resolved_version,
+                                                   const QString& output_dir,
+                                                   QNetworkAccessManager& nam);
+
+    /// @brief Download and extract a .nupkg into a temp directory
+    /// @return Path to the extracted directory, empty on failure
+    [[nodiscard]] QString downloadAndExtractNupkg(const QString& pkg_id,
+                                                  const QString& resolved_version,
+                                                  const QString& temp_dir,
+                                                  QNetworkAccessManager& nam);
+
+    /// @brief Resolve a meta-package's dependency and extract it
+    /// @return Pair of (script_path, extract_dir), both empty on failure
+    [[nodiscard]] QPair<QString, QString> resolveMetaPackageDependency(const QString& pkg_id,
+                                                                       const QString& extract_dir,
+                                                                       const QString& temp_dir,
+                                                                       QNetworkAccessManager& nam);
+
+    /// @brief Copy embedded installer files from the nupkg tools/ directory
+    /// @return Number of files successfully copied
+    [[nodiscard]] int copyEmbeddedInstallers(const QString& pkg_id,
+                                             const QString& pkg_extract_dir,
+                                             const QString& output_dir);
+
+    /// @brief Collect primary installer URLs from parsed install script
+    [[nodiscard]] static QStringList collectPrimaryUrls(const ParsedInstallScript& parsed);
+
+    /// @brief Download a list of URLs to a directory
+    /// @return Number of files successfully downloaded
+    [[nodiscard]] int downloadUrlsToDir(const QString& pkg_id,
+                                        const QStringList& urls,
+                                        const QString& output_dir,
+                                        QNetworkAccessManager& nam);
+
+    /// @brief Download a single file from a URL to disk
+    [[nodiscard]] bool downloadFileFromUrl(const QString& url,
+                                           const QString& output_path,
+                                           QNetworkAccessManager& nam);
+
+    /// @brief Emit a log message to the UI from a background thread
+    void emitLog(const QString& message);
 
     PackageInternalizationEngine m_engine;
     QVector<BatchInternalizationJob> m_jobs;

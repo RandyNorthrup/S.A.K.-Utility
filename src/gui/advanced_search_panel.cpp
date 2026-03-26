@@ -118,7 +118,7 @@ SearchBarRow2Ui buildSearchBarRow2(AdvancedSearchPanel* panel,
     setAccessible(ui.context_lines_combo, QObject::tr("Context lines"));
     row->addWidget(ui.context_lines_combo);
 
-    ui.regex_patterns_button = new QPushButton(QObject::tr("Regex Patterns"), panel);
+    ui.regex_patterns_button = new QPushButton(QObject::tr("Regex Patterns \u25BE"), panel);
     ui.regex_patterns_button->setToolTip(QObject::tr("Select built-in or custom regex patterns"));
     setAccessible(ui.regex_patterns_button, QObject::tr("Regex pattern library"));
     row->addWidget(ui.regex_patterns_button);
@@ -330,6 +330,7 @@ QVector<FileSortEntry> buildSortedFileEntries(const QMap<QString, QVector<Search
 void populateSortedResultsTree(QTreeWidget* tree,
                                QWidget* iconSource,
                                const QVector<FileSortEntry>& sortedFiles) {
+    tree->setUpdatesEnabled(false);
     for (const auto& entry : sortedFiles) {
         auto* fileItem = new QTreeWidgetItem(tree);
         fileItem->setText(0, QString("%1  (%2)").arg(entry.path).arg(entry.matches.size()));
@@ -347,6 +348,7 @@ void populateSortedResultsTree(QTreeWidget* tree,
             matchItem->setData(0, Qt::UserRole + 1, i);  // Match index
         }
     }
+    tree->setUpdatesEnabled(true);
 }
 
 // -- Metadata dialog helpers -------------------------------------------------
@@ -1115,6 +1117,7 @@ void AdvancedSearchPanel::onResultsReceived(QVector<sak::SearchMatch> matches) {
         affectedFiles.insert(match.file_path);
     }
 
+    m_results_tree->setUpdatesEnabled(false);
     for (const auto& filePath : affectedFiles) {
         const auto& fileMatches = m_all_results[filePath];
         auto* fileItem = findOrCreateFileItem(filePath, fileMatches);
@@ -1128,6 +1131,7 @@ void AdvancedSearchPanel::onResultsReceived(QVector<sak::SearchMatch> matches) {
             matchItem->setData(0, Qt::UserRole + 1, i);
         }
     }
+    m_results_tree->setUpdatesEnabled(true);
 }
 
 void AdvancedSearchPanel::onSearchFinished(int totalMatches, int totalFiles) {
@@ -1705,9 +1709,9 @@ void AdvancedSearchPanel::logMessage(const QString& message) {
 void AdvancedSearchPanel::updateRegexPatternsButton() {
     const int count = m_controller->patternLibrary()->activeCount();
     if (count > 0) {
-        m_regex_patterns_button->setText(tr("Regex Patterns (%1)").arg(count));
+        m_regex_patterns_button->setText(tr("Regex Patterns (%1) \u25BE").arg(count));
     } else {
-        m_regex_patterns_button->setText(tr("Regex Patterns"));
+        m_regex_patterns_button->setText(tr("Regex Patterns \u25BE"));
     }
 }
 
