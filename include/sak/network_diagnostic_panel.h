@@ -258,6 +258,24 @@ private:
                          const QString& primary,
                          const QString& secondary);
 
+    // -- Result table context menus --
+    void showPingContextMenu(const QPoint& pos);
+    void showTracerouteContextMenu(const QPoint& pos);
+    void showMtrContextMenu(const QPoint& pos);
+    void showDnsContextMenu(const QPoint& pos);
+    void showPortScanContextMenu(const QPoint& pos);
+    void showWiFiContextMenu(const QPoint& pos);
+    void showConnectionsContextMenu(const QPoint& pos);
+    void showFirewallContextMenu(const QPoint& pos);
+    void showSharesContextMenu(const QPoint& pos);
+    void copyFirewallPorts();
+    void copyFirewallRuleDetails();
+    void addCommonTableActions(QMenu& menu, QTableWidget* table, const QString& export_name);
+    void copySelectedRows(QTableWidget* table);
+    void copyAllRows(QTableWidget* table);
+    void exportTableToCsv(QTableWidget* table, const QString& default_name);
+    void copyTableCellValue(QTableWidget* table, int column);
+
     // -- Controller --
     std::unique_ptr<NetworkDiagnosticController> m_controller;
     QuickActionController* m_qa_controller{nullptr};

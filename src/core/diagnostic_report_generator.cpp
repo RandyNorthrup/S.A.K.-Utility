@@ -17,6 +17,7 @@
 #include <QJsonObject>
 #include <QTextStream>
 #include <QtGlobal>
+
 #include <algorithm>
 
 namespace sak {
@@ -247,9 +248,13 @@ QJsonArray DiagnosticReportGenerator::serializeSmartSection() const {
         s["device"] = report.device_path;
         s["model"] = report.model;
         s["serial"] = report.serial_number;
+        s["interface_type"] = report.interface_type;
         s["status"] = healthStatusText(report.overall_health);
         s["temp_c"] = report.temperature_celsius;
         s["power_on_hours"] = static_cast<qint64>(report.power_on_hours);
+        if (report.nvme_health.has_value()) {
+            s["wear_percent"] = report.nvme_health->percentage_used;
+        }
 
         QJsonArray warnings;
         for (const auto& warning : report.warnings) {
@@ -370,11 +375,16 @@ void DiagnosticReportGenerator::writeCsvHardwareSummary(QTextStream& out) const 
 
 void DiagnosticReportGenerator::writeCsvSmartHealth(QTextStream& out) const {
     out << "\nSMART Health\n";
-    out << "Device,Model,Status,Temperature (C),Power-On Hours\n";
+    out << "Device,Model,Serial,Type,Status,Temperature (C),Power-On Hours,Wear\n";
     for (const auto& report : m_data.smart_reports) {
+        const QString wear_text =
+            report.nvme_health.has_value()
+                ? QStringLiteral("%1%").arg(report.nvme_health->percentage_used, 0, 'f', 1)
+                : QStringLiteral("--");
         out << csvEscape(report.device_path) << "," << csvEscape(report.model) << ","
+            << csvEscape(report.serial_number) << "," << csvEscape(report.interface_type) << ","
             << healthStatusText(report.overall_health) << "," << report.temperature_celsius << ","
-            << report.power_on_hours << "\n";
+            << report.power_on_hours << "," << wear_text << "\n";
     }
 }
 
@@ -536,34 +546,31 @@ QString DiagnosticReportGenerator::buildHardwareSection() const {
                 .arg(inv.memory.slots_used)
                 .arg(inv.memory.slots_total);
 
-    std::for_each(inv.memory.modules.begin(), inv.memory.modules.end(),
-        [&html](const auto& mod) {
-            html += QString("<tr><td>Slot %1</td><td>%2 %3 %4 @ %5 MHz</td></tr>\n")
-                        .arg(mod.slot)
-                        .arg(mod.manufacturer.toHtmlEscaped())
-                        .arg(formatBytes(mod.capacity_bytes))
-                        .arg(mod.memory_type)
-                        .arg(mod.speed_mhz);
-        });
+    std::for_each(inv.memory.modules.begin(), inv.memory.modules.end(), [&html](const auto& mod) {
+        html += QString("<tr><td>Slot %1</td><td>%2 %3 %4 @ %5 MHz</td></tr>\n")
+                    .arg(mod.slot)
+                    .arg(mod.manufacturer.toHtmlEscaped())
+                    .arg(formatBytes(mod.capacity_bytes))
+                    .arg(mod.memory_type)
+                    .arg(mod.speed_mhz);
+    });
 
     html += "<tr><th colspan=\"2\">Storage</th></tr>\n";
-    std::for_each(inv.storage.begin(), inv.storage.end(),
-        [&html](const auto& dev) {
-            html += QString("<tr><td>%1</td><td>%2 (%3, %4)</td></tr>\n")
-                        .arg(dev.model.toHtmlEscaped())
-                        .arg(formatBytes(dev.size_bytes))
-                        .arg(dev.interface_type)
-                        .arg(dev.media_type);
-        });
+    std::for_each(inv.storage.begin(), inv.storage.end(), [&html](const auto& dev) {
+        html += QString("<tr><td>%1</td><td>%2 (%3, %4)</td></tr>\n")
+                    .arg(dev.model.toHtmlEscaped())
+                    .arg(formatBytes(dev.size_bytes))
+                    .arg(dev.interface_type)
+                    .arg(dev.media_type);
+    });
 
     html += "<tr><th colspan=\"2\">GPU</th></tr>\n";
-    std::for_each(inv.gpus.begin(), inv.gpus.end(),
-        [&html](const auto& gpu) {
-            html += QString("<tr><td>%1</td><td>%2 VRAM, Driver %3</td></tr>\n")
-                        .arg(gpu.name.toHtmlEscaped())
-                        .arg(formatBytes(gpu.vram_bytes))
-                        .arg(gpu.driver_version);
-        });
+    std::for_each(inv.gpus.begin(), inv.gpus.end(), [&html](const auto& gpu) {
+        html += QString("<tr><td>%1</td><td>%2 VRAM, Driver %3</td></tr>\n")
+                    .arg(gpu.name.toHtmlEscaped())
+                    .arg(formatBytes(gpu.vram_bytes))
+                    .arg(gpu.driver_version);
+    });
 
     html += "<tr><th colspan=\"2\">System</th></tr>\n";
     html += QString("<tr><td>OS</td><td>%1 (Build %2)</td></tr>\n")
@@ -585,20 +592,29 @@ QString DiagnosticReportGenerator::buildSmartSection() const {
     QString html;
     html += "<h2>Disk Health (SMART)</h2>\n";
     html += "<table>\n";
-    html += "<tr><th>Drive</th><th>Model</th><th>Health</th><th>Temp</th><th>Power-On</th></tr>\n";
+    html +=
+        "<tr><th>Drive</th><th>Model</th><th>Serial</th><th>Type</th>"
+        "<th>Health</th><th>Temp</th><th>Power-On</th><th>Wear</th></tr>\n";
 
     for (const auto& report : m_data.smart_reports) {
         const QString badge_class = "badge " + healthStatusCssClass(report.overall_health);
+        const QString wear_text =
+            report.nvme_health.has_value()
+                ? QStringLiteral("%1%").arg(report.nvme_health->percentage_used, 0, 'f', 1)
+                : QStringLiteral("--");
         html += QString(
-                    "<tr><td>%1</td><td>%2</td>"
-                    "<td><span class=\"%3\">%4</span></td>"
-                    "<td>%5 degC</td><td>%6 hrs</td></tr>\n")
+                    "<tr><td>%1</td><td>%2</td><td>%3</td><td>%4</td>"
+                    "<td><span class=\"%5\">%6</span></td>"
+                    "<td>%7 degC</td><td>%8 hrs</td><td>%9</td></tr>\n")
                     .arg(report.device_path.toHtmlEscaped())
                     .arg(report.model.toHtmlEscaped())
+                    .arg(report.serial_number.toHtmlEscaped())
+                    .arg(report.interface_type.toHtmlEscaped())
                     .arg(badge_class)
                     .arg(healthStatusText(report.overall_health))
                     .arg(report.temperature_celsius, 0, 'f', 0)
-                    .arg(report.power_on_hours);
+                    .arg(report.power_on_hours)
+                    .arg(wear_text);
     }
 
     html += "</table>\n";
@@ -608,10 +624,11 @@ QString DiagnosticReportGenerator::buildSmartSection() const {
         if (!report.warnings.isEmpty()) {
             html +=
                 QString("<p><strong>%1:</strong></p>\n<ul>\n").arg(report.model.toHtmlEscaped());
-            std::for_each(report.warnings.begin(), report.warnings.end(),
-                [&html](const QString& warning) {
-                    html += QString("<li>%1</li>\n").arg(warning.toHtmlEscaped());
-                });
+            std::for_each(report.warnings.begin(),
+                          report.warnings.end(),
+                          [&html](const QString& warning) {
+                              html += QString("<li>%1</li>\n").arg(warning.toHtmlEscaped());
+                          });
             html += "</ul>\n";
         }
     }
@@ -728,30 +745,31 @@ QString DiagnosticReportGenerator::buildRecommendationsSection() const {
 
     if (!m_data.critical_issues.isEmpty()) {
         html += "<h3>Critical Issues</h3>\n<ul class=\"rec-list\">\n";
-        std::for_each(m_data.critical_issues.begin(), m_data.critical_issues.end(),
+        std::for_each(
+            m_data.critical_issues.begin(),
+            m_data.critical_issues.end(),
             [&html](const QString& issue) {
-                html += QString("<li class=\"rec-critical\">%1</li>\n")
-                            .arg(issue.toHtmlEscaped());
+                html += QString("<li class=\"rec-critical\">%1</li>\n").arg(issue.toHtmlEscaped());
             });
         html += "</ul>\n";
     }
 
     if (!m_data.warnings.isEmpty()) {
         html += "<h3>Warnings</h3>\n<ul class=\"rec-list\">\n";
-        std::for_each(m_data.warnings.begin(), m_data.warnings.end(),
-            [&html](const QString& warning) {
-                html += QString("<li class=\"rec-warning\">%1</li>\n")
-                            .arg(warning.toHtmlEscaped());
+        std::for_each(
+            m_data.warnings.begin(), m_data.warnings.end(), [&html](const QString& warning) {
+                html += QString("<li class=\"rec-warning\">%1</li>\n").arg(warning.toHtmlEscaped());
             });
         html += "</ul>\n";
     }
 
     if (!m_data.recommendations.isEmpty()) {
         html += "<h3>Recommendations</h3>\n<ul class=\"rec-list\">\n";
-        std::for_each(m_data.recommendations.begin(), m_data.recommendations.end(),
-            [&html](const QString& rec) {
-                html += QString("<li>%1</li>\n").arg(rec.toHtmlEscaped());
-            });
+        std::for_each(m_data.recommendations.begin(),
+                      m_data.recommendations.end(),
+                      [&html](const QString& rec) {
+                          html += QString("<li>%1</li>\n").arg(rec.toHtmlEscaped());
+                      });
         html += "</ul>\n";
     }
 

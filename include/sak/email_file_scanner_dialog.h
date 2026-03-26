@@ -32,6 +32,7 @@ public:
 private Q_SLOTS:
     void onScanClicked();
     void onOpenClicked();
+    void onOpenContainingFolderClicked();
     void onFileDoubleClicked(int row, int column);
 
 private:
@@ -44,6 +45,7 @@ private:
     QTableWidget* m_results_table{nullptr};
     QPushButton* m_scan_button{nullptr};
     QPushButton* m_open_button{nullptr};
+    QPushButton* m_open_folder_button{nullptr};
     QPushButton* m_cancel_button{nullptr};
     QLabel* m_status_label{nullptr};
     QProgressBar* m_progress_bar{nullptr};

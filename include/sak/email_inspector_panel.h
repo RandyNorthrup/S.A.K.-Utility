@@ -189,7 +189,7 @@ private:
     // Detail Panel
     QTabWidget* m_detail_tabs{nullptr};
     QTextBrowser* m_content_browser{nullptr};
-    QPushButton* m_html_toggle_button{nullptr};
+    LogToggleSwitch* m_html_toggle_switch{nullptr};
     bool m_show_html{true};
     QTextBrowser* m_headers_browser{nullptr};
     QTableWidget* m_properties_table{nullptr};

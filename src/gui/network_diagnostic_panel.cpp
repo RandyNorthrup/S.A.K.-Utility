@@ -22,6 +22,7 @@
 #include <QClipboard>
 #include <QDialog>
 #include <QDialogButtonBox>
+#include <QFile>
 #include <QFileDialog>
 #include <QFont>
 #include <QGroupBox>
@@ -35,6 +36,7 @@
 #include <QRegularExpressionValidator>
 #include <QScrollArea>
 #include <QShortcut>
+#include <QTextStream>
 #include <QTimer>
 #include <QTreeWidget>
 #include <QVBoxLayout>
@@ -378,6 +380,7 @@ void NetworkDiagnosticPanel::setupPingResults(QWidget* widget, QVBoxLayout* layo
     pingHeader->resizeSection(4, 60);
 
     setAccessible(m_pingTable, tr("Ping results"));
+    m_pingTable->setContextMenuPolicy(Qt::CustomContextMenu);
     layout->addWidget(m_pingTable, 1);
 }
 
@@ -465,6 +468,7 @@ void NetworkDiagnosticPanel::setupTracerouteResults(QWidget* widget, QVBoxLayout
     }
 
     setAccessible(m_traceTable, tr("Traceroute results"));
+    m_traceTable->setContextMenuPolicy(Qt::CustomContextMenu);
     layout->addWidget(m_traceTable, 1);
 }
 
@@ -553,6 +557,7 @@ void NetworkDiagnosticPanel::setupMtrResults(QWidget* widget, QVBoxLayout* layou
     }
 
     setAccessible(m_mtrTable, tr("MTR results"));
+    m_mtrTable->setContextMenuPolicy(Qt::CustomContextMenu);
     layout->addWidget(m_mtrTable, 1);
 }
 
@@ -676,6 +681,7 @@ void NetworkDiagnosticPanel::setupDnsResults(QWidget* widget, QVBoxLayout* layou
     dnsHeader->setSectionResizeMode(4, QHeaderView::Stretch);
 
     setAccessible(m_dnsTable, tr("DNS results"));
+    m_dnsTable->setContextMenuPolicy(Qt::CustomContextMenu);
     layout->addWidget(m_dnsTable, 1);
 }
 
@@ -818,6 +824,7 @@ void NetworkDiagnosticPanel::setupPortScanResults(QWidget* widget, QVBoxLayout* 
     portHeader->setSectionResizeMode(4, QHeaderView::Stretch);
 
     setAccessible(m_portTable, tr("Port scan results"));
+    m_portTable->setContextMenuPolicy(Qt::CustomContextMenu);
     layout->addWidget(m_portTable, 1);
 }
 
@@ -1023,6 +1030,7 @@ QWidget* NetworkDiagnosticPanel::createWiFiTab() {
     wifiHeader->resizeSection(7, 100);
 
     setAccessible(m_wifiTable, tr("WiFi networks"));
+    m_wifiTable->setContextMenuPolicy(Qt::CustomContextMenu);
     layout->addWidget(m_wifiTable, 1);
 
     // Channel utilization label
@@ -1141,6 +1149,7 @@ void NetworkDiagnosticPanel::setupConnectionsTable(QWidget* widget, QVBoxLayout*
     connHeader->setSectionResizeMode(6, QHeaderView::Stretch);
 
     setAccessible(m_connTable, tr("Active connections"));
+    m_connTable->setContextMenuPolicy(Qt::CustomContextMenu);
     layout->addWidget(m_connTable, 1);
 }
 
@@ -1238,6 +1247,7 @@ void NetworkDiagnosticPanel::setupFirewallRuleTable(QWidget* widget, QVBoxLayout
     fwHeader->resizeSection(7, 150);
 
     setAccessible(m_fwRuleTable, tr("Firewall rules"));
+    m_fwRuleTable->setContextMenuPolicy(Qt::CustomContextMenu);
     layout->addWidget(m_fwRuleTable, 2);
 }
 
@@ -1313,6 +1323,7 @@ QWidget* NetworkDiagnosticPanel::createSharesTab() {
     shareHeader->setSectionResizeMode(4, QHeaderView::Stretch);
 
     setAccessible(m_shareTable, tr("Network shares"));
+    m_shareTable->setContextMenuPolicy(Qt::CustomContextMenu);
     layout->addWidget(m_shareTable, 1);
 
     return widget;
@@ -1488,19 +1499,35 @@ void NetworkDiagnosticPanel::connectUiSignals() {
     // -- Ping --
     connect(m_pingStartBtn, &QPushButton::clicked, this, &NetworkDiagnosticPanel::onStartPing);
     connect(m_pingStopBtn, &QPushButton::clicked, this, &NetworkDiagnosticPanel::onStopPing);
+    connect(m_pingTable,
+            &QTableWidget::customContextMenuRequested,
+            this,
+            &NetworkDiagnosticPanel::showPingContextMenu);
 
     // -- Traceroute --
     connect(
         m_traceStartBtn, &QPushButton::clicked, this, &NetworkDiagnosticPanel::onStartTraceroute);
     connect(m_traceStopBtn, &QPushButton::clicked, this, &NetworkDiagnosticPanel::onStopTraceroute);
+    connect(m_traceTable,
+            &QTableWidget::customContextMenuRequested,
+            this,
+            &NetworkDiagnosticPanel::showTracerouteContextMenu);
 
     // -- MTR --
     connect(m_mtrStartBtn, &QPushButton::clicked, this, &NetworkDiagnosticPanel::onStartMtr);
     connect(m_mtrStopBtn, &QPushButton::clicked, this, &NetworkDiagnosticPanel::onStopMtr);
+    connect(m_mtrTable,
+            &QTableWidget::customContextMenuRequested,
+            this,
+            &NetworkDiagnosticPanel::showMtrContextMenu);
 
     // -- Port Scanner --
     connect(m_portStartBtn, &QPushButton::clicked, this, &NetworkDiagnosticPanel::onStartPortScan);
     connect(m_portStopBtn, &QPushButton::clicked, this, &NetworkDiagnosticPanel::onStopPortScan);
+    connect(m_portTable,
+            &QTableWidget::customContextMenuRequested,
+            this,
+            &NetworkDiagnosticPanel::showPortScanContextMenu);
 
     // -- Bandwidth --
     connect(
@@ -1518,6 +1545,10 @@ void NetworkDiagnosticPanel::connectUiSignals() {
         m_wifiContBtn, &QPushButton::clicked, this, &NetworkDiagnosticPanel::onStartContinuousWiFi);
     connect(
         m_wifiStopBtn, &QPushButton::clicked, this, &NetworkDiagnosticPanel::onStopContinuousWiFi);
+    connect(m_wifiTable,
+            &QTableWidget::customContextMenuRequested,
+            this,
+            &NetworkDiagnosticPanel::showWiFiContextMenu);
 
     // -- Connections --
     connect(m_connStartBtn,
@@ -1528,6 +1559,28 @@ void NetworkDiagnosticPanel::connectUiSignals() {
             &QPushButton::clicked,
             this,
             &NetworkDiagnosticPanel::onStopConnectionMonitor);
+    connect(m_connTable,
+            &QTableWidget::customContextMenuRequested,
+            this,
+            &NetworkDiagnosticPanel::showConnectionsContextMenu);
+
+    // -- DNS context menu --
+    connect(m_dnsTable,
+            &QTableWidget::customContextMenuRequested,
+            this,
+            &NetworkDiagnosticPanel::showDnsContextMenu);
+
+    // -- Firewall context menu --
+    connect(m_fwRuleTable,
+            &QTableWidget::customContextMenuRequested,
+            this,
+            &NetworkDiagnosticPanel::showFirewallContextMenu);
+
+    // -- Shares context menu --
+    connect(m_shareTable,
+            &QTableWidget::customContextMenuRequested,
+            this,
+            &NetworkDiagnosticPanel::showSharesContextMenu);
 }
 
 void NetworkDiagnosticPanel::connectControllerCoreSignals() {
@@ -4173,6 +4226,456 @@ void NetworkDiagnosticPanel::onResetNetworkError(QuickAction* action, const QStr
     Q_EMIT statusMessage(QString("Reset Network failed: %1").arg(error),
                          sak::kTimerStatusDefaultMs);
     sak::logError("Reset network error: {}", error.toStdString());
+}
+
+// ===================================================================
+// Result Table Context Menus
+// ===================================================================
+
+void NetworkDiagnosticPanel::copySelectedRows(QTableWidget* table) {
+    Q_ASSERT(table);
+    const auto rows = table->selectionModel()->selectedRows();
+    if (rows.isEmpty()) {
+        return;
+    }
+
+    QString text;
+    for (const auto& idx : rows) {
+        QStringList cells;
+        for (int col = 0; col < table->columnCount(); ++col) {
+            auto* item = table->item(idx.row(), col);
+            cells << (item ? item->text() : QString());
+        }
+        text += cells.join(QLatin1Char('\t')) + QLatin1Char('\n');
+    }
+    QApplication::clipboard()->setText(text.trimmed());
+    Q_EMIT statusMessage(tr("Copied %1 row(s) to clipboard").arg(rows.size()), 2000);
+}
+
+void NetworkDiagnosticPanel::copyAllRows(QTableWidget* table) {
+    Q_ASSERT(table);
+    if (table->rowCount() == 0) {
+        return;
+    }
+
+    QString text;
+    // Header row
+    QStringList headers;
+    for (int col = 0; col < table->columnCount(); ++col) {
+        auto* item = table->horizontalHeaderItem(col);
+        headers << (item ? item->text() : QString());
+    }
+    text += headers.join(QLatin1Char('\t')) + QLatin1Char('\n');
+
+    // Data rows
+    for (int row = 0; row < table->rowCount(); ++row) {
+        QStringList cells;
+        for (int col = 0; col < table->columnCount(); ++col) {
+            auto* item = table->item(row, col);
+            cells << (item ? item->text() : QString());
+        }
+        text += cells.join(QLatin1Char('\t')) + QLatin1Char('\n');
+    }
+    QApplication::clipboard()->setText(text.trimmed());
+    Q_EMIT statusMessage(tr("Copied %1 row(s) to clipboard").arg(table->rowCount()), 2000);
+}
+
+void NetworkDiagnosticPanel::exportTableToCsv(QTableWidget* table, const QString& default_name) {
+    Q_ASSERT(table);
+    const QString path = QFileDialog::getSaveFileName(
+        this, tr("Export to CSV"), default_name, tr("CSV Files (*.csv)"));
+    if (path.isEmpty()) {
+        return;
+    }
+
+    QFile file(path);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        Q_EMIT statusMessage(tr("Failed to open file for writing"), 3000);
+        return;
+    }
+
+    QTextStream out(&file);
+    // Header
+    QStringList headers;
+    for (int col = 0; col < table->columnCount(); ++col) {
+        auto* item = table->horizontalHeaderItem(col);
+        headers << QStringLiteral("\"%1\"").arg(item ? item->text() : QString());
+    }
+    out << headers.join(QLatin1Char(',')) << "\n";
+
+    // Data
+    for (int row = 0; row < table->rowCount(); ++row) {
+        QStringList cells;
+        for (int col = 0; col < table->columnCount(); ++col) {
+            auto* item = table->item(row, col);
+            QString cell_text = item ? item->text() : QString();
+            cell_text.replace(QLatin1Char('"'), QStringLiteral("\"\""));
+            cells << QStringLiteral("\"%1\"").arg(cell_text);
+        }
+        out << cells.join(QLatin1Char(',')) << "\n";
+    }
+
+    Q_EMIT statusMessage(tr("Exported %1 rows to %2").arg(table->rowCount()).arg(path), 3000);
+    Q_EMIT logOutput(QStringLiteral("Exported results to %1").arg(path));
+}
+
+void NetworkDiagnosticPanel::copyTableCellValue(QTableWidget* table, int column) {
+    Q_ASSERT(table);
+    const int row = table->currentRow();
+    if (row < 0) {
+        return;
+    }
+    auto* item = table->item(row, column);
+    if (item && !item->text().isEmpty()) {
+        QApplication::clipboard()->setText(item->text());
+        Q_EMIT statusMessage(tr("Copied: %1").arg(item->text()), 2000);
+    }
+}
+
+void NetworkDiagnosticPanel::addCommonTableActions(QMenu& menu,
+                                                   QTableWidget* table,
+                                                   const QString& export_name) {
+    menu.addSeparator();
+    menu.addAction(tr("Copy Selected Row(s)"), this, [this, table]() { copySelectedRows(table); });
+    menu.addAction(tr("Copy All Results"), this, [this, table]() { copyAllRows(table); });
+    menu.addAction(tr("Export to CSV..."), this, [this, table, export_name]() {
+        exportTableToCsv(table, export_name);
+    });
+    menu.addSeparator();
+    menu.addAction(tr("Clear Results"), this, [table]() { table->setRowCount(0); });
+}
+
+void NetworkDiagnosticPanel::showPingContextMenu(const QPoint& pos) {
+    if (m_pingTable->rowCount() == 0) {
+        return;
+    }
+
+    QMenu menu(this);
+
+    if (m_pingTable->currentRow() >= 0) {
+        menu.addAction(tr("Copy IP Address"), this, [this]() {
+            copyTableCellValue(m_pingTable, 1);
+        });
+        menu.addAction(tr("Copy RTT"), this, [this]() { copyTableCellValue(m_pingTable, 3); });
+        menu.addSeparator();
+        menu.addAction(tr("Traceroute to Target"), this, [this]() {
+            const QString target = m_pingTarget->text().trimmed();
+            if (!target.isEmpty()) {
+                m_traceTarget->setText(target);
+                m_toolTabs->setCurrentIndex(1);
+                onStartTraceroute();
+            }
+        });
+    }
+
+    addCommonTableActions(menu, m_pingTable, QStringLiteral("ping_results.csv"));
+    menu.exec(m_pingTable->viewport()->mapToGlobal(pos));
+}
+
+void NetworkDiagnosticPanel::showTracerouteContextMenu(const QPoint& pos) {
+    if (m_traceTable->rowCount() == 0) {
+        return;
+    }
+
+    QMenu menu(this);
+
+    if (m_traceTable->currentRow() >= 0) {
+        menu.addAction(tr("Copy IP Address"), this, [this]() {
+            copyTableCellValue(m_traceTable, 1);
+        });
+        menu.addAction(tr("Copy Hostname"), this, [this]() {
+            copyTableCellValue(m_traceTable, 2);
+        });
+        menu.addSeparator();
+
+        auto* ip_item = m_traceTable->item(m_traceTable->currentRow(), 1);
+        if (ip_item && !ip_item->text().isEmpty() && ip_item->text() != QStringLiteral("*")) {
+            menu.addAction(tr("Ping this Hop"), this, [this, ip_item]() {
+                m_pingTarget->setText(ip_item->text());
+                m_toolTabs->setCurrentIndex(0);
+                onStartPing();
+            });
+        }
+    }
+
+    addCommonTableActions(menu, m_traceTable, QStringLiteral("traceroute_results.csv"));
+    menu.exec(m_traceTable->viewport()->mapToGlobal(pos));
+}
+
+void NetworkDiagnosticPanel::showMtrContextMenu(const QPoint& pos) {
+    if (m_mtrTable->rowCount() == 0) {
+        return;
+    }
+
+    QMenu menu(this);
+
+    if (m_mtrTable->currentRow() >= 0) {
+        menu.addAction(tr("Copy IP/Hostname"), this, [this]() {
+            copyTableCellValue(m_mtrTable, 1);
+        });
+        menu.addAction(tr("Copy Loss %"), this, [this]() { copyTableCellValue(m_mtrTable, 2); });
+        menu.addSeparator();
+
+        auto* ip_item = m_mtrTable->item(m_mtrTable->currentRow(), 1);
+        if (ip_item && !ip_item->text().isEmpty() && ip_item->text() != QStringLiteral("*")) {
+            menu.addAction(tr("Ping this Hop"), this, [this, ip_item]() {
+                m_pingTarget->setText(ip_item->text());
+                m_toolTabs->setCurrentIndex(0);
+                onStartPing();
+            });
+            menu.addAction(tr("Traceroute to Hop"), this, [this, ip_item]() {
+                m_traceTarget->setText(ip_item->text());
+                m_toolTabs->setCurrentIndex(1);
+                onStartTraceroute();
+            });
+        }
+    }
+
+    addCommonTableActions(menu, m_mtrTable, QStringLiteral("mtr_results.csv"));
+    menu.exec(m_mtrTable->viewport()->mapToGlobal(pos));
+}
+
+void NetworkDiagnosticPanel::showDnsContextMenu(const QPoint& pos) {
+    if (m_dnsTable->rowCount() == 0) {
+        return;
+    }
+
+    QMenu menu(this);
+
+    if (m_dnsTable->currentRow() >= 0) {
+        menu.addAction(tr("Copy Query"), this, [this]() { copyTableCellValue(m_dnsTable, 0); });
+        menu.addAction(tr("Copy Answers"), this, [this]() { copyTableCellValue(m_dnsTable, 4); });
+        menu.addAction(tr("Copy Server"), this, [this]() { copyTableCellValue(m_dnsTable, 2); });
+        menu.addSeparator();
+
+        auto* answer_item = m_dnsTable->item(m_dnsTable->currentRow(), 4);
+        if (answer_item && !answer_item->text().isEmpty()) {
+            menu.addAction(tr("Ping First Answer"), this, [this, answer_item]() {
+                const QString first_answer =
+                    answer_item->text().split(QLatin1Char(',')).first().trimmed();
+                if (!first_answer.isEmpty()) {
+                    m_pingTarget->setText(first_answer);
+                    m_toolTabs->setCurrentIndex(0);
+                    onStartPing();
+                }
+            });
+        }
+    }
+
+    addCommonTableActions(menu, m_dnsTable, QStringLiteral("dns_results.csv"));
+    menu.exec(m_dnsTable->viewport()->mapToGlobal(pos));
+}
+
+void NetworkDiagnosticPanel::showPortScanContextMenu(const QPoint& pos) {
+    if (m_portTable->rowCount() == 0) {
+        return;
+    }
+
+    QMenu menu(this);
+
+    if (m_portTable->currentRow() >= 0) {
+        menu.addAction(tr("Copy Port"), this, [this]() { copyTableCellValue(m_portTable, 0); });
+        menu.addAction(tr("Copy Service"), this, [this]() { copyTableCellValue(m_portTable, 2); });
+        menu.addAction(tr("Copy Banner"), this, [this]() { copyTableCellValue(m_portTable, 4); });
+        menu.addSeparator();
+        menu.addAction(tr("Copy Port:Service"), this, [this]() {
+            int row = m_portTable->currentRow();
+            auto* port_item = m_portTable->item(row, 0);
+            auto* svc_item = m_portTable->item(row, 2);
+            if (port_item) {
+                QString text = port_item->text();
+                if (svc_item && !svc_item->text().isEmpty()) {
+                    text += QStringLiteral(" (%1)").arg(svc_item->text());
+                }
+                QApplication::clipboard()->setText(text);
+                Q_EMIT statusMessage(tr("Copied: %1").arg(text), 2000);
+            }
+        });
+    }
+
+    addCommonTableActions(menu, m_portTable, QStringLiteral("port_scan_results.csv"));
+    menu.exec(m_portTable->viewport()->mapToGlobal(pos));
+}
+
+void NetworkDiagnosticPanel::showWiFiContextMenu(const QPoint& pos) {
+    if (m_wifiTable->rowCount() == 0) {
+        return;
+    }
+
+    QMenu menu(this);
+
+    if (m_wifiTable->currentRow() >= 0) {
+        menu.addAction(tr("Copy SSID"), this, [this]() { copyTableCellValue(m_wifiTable, 0); });
+        menu.addAction(tr("Copy BSSID"), this, [this]() { copyTableCellValue(m_wifiTable, 1); });
+        menu.addAction(tr("Copy Signal/Quality"), this, [this]() {
+            int row = m_wifiTable->currentRow();
+            auto* sig = m_wifiTable->item(row, 2);
+            auto* qual = m_wifiTable->item(row, 3);
+            QString text;
+            if (sig) {
+                text = sig->text();
+            }
+            if (qual) {
+                text += QStringLiteral(" (%1)").arg(qual->text());
+            }
+            QApplication::clipboard()->setText(text);
+        });
+        menu.addSeparator();
+        menu.addAction(tr("Copy Channel/Band"), this, [this]() {
+            int row = m_wifiTable->currentRow();
+            auto* ch = m_wifiTable->item(row, 4);
+            auto* band = m_wifiTable->item(row, 5);
+            QString text;
+            if (ch) {
+                text = QStringLiteral("Ch %1").arg(ch->text());
+            }
+            if (band) {
+                text += QStringLiteral(" (%1)").arg(band->text());
+            }
+            QApplication::clipboard()->setText(text);
+        });
+    }
+
+    addCommonTableActions(menu, m_wifiTable, QStringLiteral("wifi_scan_results.csv"));
+    menu.exec(m_wifiTable->viewport()->mapToGlobal(pos));
+}
+
+void NetworkDiagnosticPanel::showConnectionsContextMenu(const QPoint& pos) {
+    if (m_connTable->rowCount() == 0) {
+        return;
+    }
+
+    QMenu menu(this);
+
+    if (m_connTable->currentRow() >= 0) {
+        menu.addAction(tr("Copy Remote Address"), this, [this]() {
+            copyTableCellValue(m_connTable, 3);
+        });
+        menu.addAction(tr("Copy Remote Address:Port"), this, [this]() {
+            int row = m_connTable->currentRow();
+            auto* addr = m_connTable->item(row, 3);
+            auto* port = m_connTable->item(row, 4);
+            if (addr) {
+                QString text = addr->text();
+                if (port && !port->text().isEmpty()) {
+                    text += QLatin1Char(':') + port->text();
+                }
+                QApplication::clipboard()->setText(text);
+                Q_EMIT statusMessage(tr("Copied: %1").arg(text), 2000);
+            }
+        });
+        menu.addAction(tr("Copy Process"), this, [this]() { copyTableCellValue(m_connTable, 6); });
+        menu.addSeparator();
+
+        auto* remote_item = m_connTable->item(m_connTable->currentRow(), 3);
+        if (remote_item && !remote_item->text().isEmpty() &&
+            remote_item->text() != QStringLiteral("0.0.0.0") &&
+            remote_item->text() != QStringLiteral("::")) {
+            menu.addAction(tr("Ping Remote Address"), this, [this, remote_item]() {
+                m_pingTarget->setText(remote_item->text());
+                m_toolTabs->setCurrentIndex(0);
+                onStartPing();
+            });
+            menu.addAction(tr("Traceroute to Remote"), this, [this, remote_item]() {
+                m_traceTarget->setText(remote_item->text());
+                m_toolTabs->setCurrentIndex(1);
+                onStartTraceroute();
+            });
+            menu.addAction(tr("DNS Reverse Lookup"), this, [this, remote_item]() {
+                m_dnsHostname->setText(remote_item->text());
+                m_toolTabs->setCurrentIndex(3);
+                onDnsReverseLookup();
+            });
+        }
+    }
+
+    addCommonTableActions(menu, m_connTable, QStringLiteral("connections_results.csv"));
+    menu.exec(m_connTable->viewport()->mapToGlobal(pos));
+}
+
+void NetworkDiagnosticPanel::copyFirewallPorts() {
+    int row = m_fwRuleTable->currentRow();
+    auto* local = m_fwRuleTable->item(row, 5);
+    auto* remote = m_fwRuleTable->item(row, 6);
+    QStringList parts;
+    if (local && !local->text().isEmpty()) {
+        parts << QStringLiteral("Local: %1").arg(local->text());
+    }
+    if (remote && !remote->text().isEmpty()) {
+        parts << QStringLiteral("Remote: %1").arg(remote->text());
+    }
+    if (!parts.isEmpty()) {
+        QApplication::clipboard()->setText(parts.join(QStringLiteral(", ")));
+    }
+}
+
+void NetworkDiagnosticPanel::copyFirewallRuleDetails() {
+    int row = m_fwRuleTable->currentRow();
+    QStringList details;
+    for (int col = 0; col < m_fwRuleTable->columnCount(); ++col) {
+        auto* header = m_fwRuleTable->horizontalHeaderItem(col);
+        auto* item = m_fwRuleTable->item(row, col);
+        if (header && item) {
+            details << QStringLiteral("%1: %2").arg(header->text(), item->text());
+        }
+    }
+    QApplication::clipboard()->setText(details.join(QLatin1Char('\n')));
+    Q_EMIT statusMessage(tr("Copied full rule details"), 2000);
+}
+
+void NetworkDiagnosticPanel::showFirewallContextMenu(const QPoint& pos) {
+    if (m_fwRuleTable->rowCount() == 0) {
+        return;
+    }
+
+    QMenu menu(this);
+
+    if (m_fwRuleTable->currentRow() >= 0) {
+        menu.addAction(tr("Copy Rule Name"), this, [this]() {
+            copyTableCellValue(m_fwRuleTable, 1);
+        });
+        menu.addAction(tr("Copy Application"), this, [this]() {
+            copyTableCellValue(m_fwRuleTable, 7);
+        });
+        menu.addAction(tr("Copy Ports"), this, [this]() { copyFirewallPorts(); });
+        menu.addSeparator();
+        menu.addAction(tr("Copy Full Rule Details"), this, [this]() { copyFirewallRuleDetails(); });
+    }
+
+    addCommonTableActions(menu, m_fwRuleTable, QStringLiteral("firewall_rules.csv"));
+    menu.exec(m_fwRuleTable->viewport()->mapToGlobal(pos));
+}
+
+void NetworkDiagnosticPanel::showSharesContextMenu(const QPoint& pos) {
+    if (m_shareTable->rowCount() == 0) {
+        return;
+    }
+
+    QMenu menu(this);
+
+    if (m_shareTable->currentRow() >= 0) {
+        menu.addAction(tr("Copy Share Name"), this, [this]() {
+            copyTableCellValue(m_shareTable, 0);
+        });
+
+        auto* share_item = m_shareTable->item(m_shareTable->currentRow(), 0);
+        const QString host = m_shareHostname->text().trimmed();
+        if (share_item && !host.isEmpty()) {
+            const QString unc_path = QStringLiteral("\\\\%1\\%2").arg(host, share_item->text());
+            menu.addAction(tr("Copy UNC Path"), this, [this, unc_path]() {
+                QApplication::clipboard()->setText(unc_path);
+                Q_EMIT statusMessage(tr("Copied: %1").arg(unc_path), 2000);
+            });
+            menu.addAction(tr("Open in Explorer"), this, [unc_path]() {
+                QProcess::startDetached(QStringLiteral("explorer.exe"), {unc_path});
+            });
+        }
+
+        menu.addAction(tr("Copy Remark"), this, [this]() { copyTableCellValue(m_shareTable, 4); });
+    }
+
+    addCommonTableActions(menu, m_shareTable, QStringLiteral("network_shares.csv"));
+    menu.exec(m_shareTable->viewport()->mapToGlobal(pos));
 }
 
 }  // namespace sak

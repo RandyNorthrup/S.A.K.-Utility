@@ -104,11 +104,18 @@ void EmailInspectorPanel::setupUi() {
     status_row->addWidget(m_progress_bar);
     root_layout->addLayout(status_row);
 
-    // Log Toggle
+    // Log Toggle (left) + HTML/Plain Text Toggle (right)
     m_log_toggle = new LogToggleSwitch(tr("Log"), this);
+    m_html_toggle_switch = new LogToggleSwitch(tr("Plain Text"), this);
+    m_html_toggle_switch->setToolTip(tr("Toggle between HTML and plain text view"));
+    connect(m_html_toggle_switch, &LogToggleSwitch::toggled, this, [this](bool plain_text) {
+        m_show_html = !plain_text;
+        displayItemDetail(m_current_detail);
+    });
     auto* log_toggle_layout = new QHBoxLayout();
     log_toggle_layout->addWidget(m_log_toggle);
     log_toggle_layout->addStretch();
+    log_toggle_layout->addWidget(m_html_toggle_switch);
     root_layout->addLayout(log_toggle_layout);
 }
 
@@ -409,20 +416,6 @@ QWidget* EmailInspectorPanel::createContentTab() {
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(ui::kSpacingTight);
 
-    // Toolbar with HTML/plain text toggle
-    auto* toolbar = new QHBoxLayout();
-    m_html_toggle_button = new QPushButton(tr("View Plain Text"), this);
-    m_html_toggle_button->setToolTip(tr("Toggle between HTML and plain text view"));
-    m_html_toggle_button->setStyleSheet(ui::kSecondaryButtonStyle);
-    m_html_toggle_button->setCheckable(true);
-    connect(m_html_toggle_button, &QPushButton::toggled, this, [this](bool plain_text) {
-        m_show_html = !plain_text;
-        m_html_toggle_button->setText(plain_text ? tr("View HTML") : tr("View Plain Text"));
-        displayItemDetail(m_current_detail);
-    });
-    toolbar->addWidget(m_html_toggle_button);
-    toolbar->addStretch();
-    layout->addLayout(toolbar);
 
     m_content_browser = new QTextBrowser(this);
     m_content_browser->setOpenExternalLinks(false);

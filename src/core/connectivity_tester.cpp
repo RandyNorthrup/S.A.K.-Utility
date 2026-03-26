@@ -136,7 +136,14 @@ void populateMtrResult(MtrResult& result,
 }
 }  // namespace
 
-ConnectivityTester::ConnectivityTester(QObject* parent) : QObject(parent) {}
+ConnectivityTester::ConnectivityTester(QObject* parent) : QObject(parent) {
+    WSADATA wsa_data{};
+    WSAStartup(MAKEWORD(2, 2), &wsa_data);
+}
+
+ConnectivityTester::~ConnectivityTester() {
+    WSACleanup();
+}
 
 void ConnectivityTester::cancel() {
     m_cancelled.store(true);

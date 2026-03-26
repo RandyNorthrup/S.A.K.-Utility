@@ -9,7 +9,7 @@
 [![Qt 6.5+](https://img.shields.io/badge/Qt-6.5%2B-41cd52.svg)](https://www.qt.io/)
 [![Windows 10/11](https://img.shields.io/badge/Windows-10%20%7C%2011-0078d4.svg)](https://www.microsoft.com/windows)
 [![Build](https://github.com/RandyNorthrup/S.A.K.-Utility/actions/workflows/build-release.yml/badge.svg)](https://github.com/RandyNorthrup/S.A.K.-Utility/actions)
-[![Version](https://img.shields.io/badge/Version-0.9.0.8-orange.svg)](VERSION)
+[![Version](https://img.shields.io/badge/Version-0.9.0.9-orange.svg)](VERSION)
 
 Migration · Maintenance · Recovery · Imaging · Deployment — one portable EXE.
 
@@ -21,7 +21,7 @@ Migration · Maintenance · Recovery · Imaging · Deployment — one portable E
 
 See [CHANGELOG.md](CHANGELOG.md) for the full version history.
 
-**Latest: v0.9.0.8** — Offline deployment Direct Download mode with embedded-binary package support, install script parser improvements, meta-package dependency resolution, documentation audit.
+**Latest: v0.9.0.9** — Email inspector HTML/text slider toggle, open containing folder in file scanner, network diagnostics right-click context menus, ping DNS resolution fix, SMART report discrepancy fixes, documentation audit.
 
 ---
 
@@ -36,7 +36,7 @@ See [CHANGELOG.md](CHANGELOG.md) for the full version history.
 | **File Management** | Organize files by extension, find duplicates with parallel hashing, and grep-style content search with regex, metadata, archive, and binary/hex modes. |
 | **Application Management** | Scan installed apps, match to Chocolatey packages, bulk-install on a new PC. Offline deployment with direct installer downloads. Deep application removal with leftover scanning and registry snapshot diffs. |
 | **Network Management** | Diagnostic suite (ping, traceroute, MTR, DNS, port scan, bandwidth, WiFi, connections, firewall, shares), adapter inspector with ethernet backup/restore and network reset, WiFi QR code manager. |
-| **Email Tool** | Browse PST, OST, and MBOX email archives. Search, export (EML/CSV/VCF/ICS), contacts, calendar (month/week/day), attachments browser — no Outlook required. |
+| **Email Tools** | Browse PST, OST, and MBOX email archives. Search, export (EML/CSV/VCF/ICS), contacts, calendar (month/week/day), attachments browser — no Outlook required. |
 | **Modern UI** | Windows 11-style rounded corners, custom splash screen, and responsive layouts. |
 
 ---
@@ -52,7 +52,7 @@ See [CHANGELOG.md](CHANGELOG.md) for the full version history.
   - [Image Flasher](#image-flasher)
   - [File Management](#file-management)
   - [Network Management](#network-management)
-  - [Email Tool](#email-tool)
+  - [Email Tools](#email-tools)
   - [Settings](#settings)
 - [Security](#security)
 - [Building from Source](#building-from-source)
@@ -353,7 +353,7 @@ WiFi credential manager with QR code generator and cross-platform network profil
 
 ---
 
-### Email Tool
+### Email Tools
 
 Browse, search, and export data from Outlook PST/OST archives and MBOX mailboxes — no Outlook or MAPI libraries required.
 
@@ -400,11 +400,13 @@ Browse, search, and export data from Outlook PST/OST archives and MBOX mailboxes
 
 ### Settings
 
-Global application settings accessible from the **Edit → Settings** menu (`Ctrl+,`):
+Settings are configured per-panel — each panel that needs configuration provides its own settings dialog or inline controls.
 
-| Tab | Options |
+| Panel | Settings |
 |---|---|
-| **Backup** | Default backup location, confirmation prompts, notification preferences, logging, compression |
+| **Backup and Restore** | Default backup location, confirmation prompts, notification preferences, logging, compression |
+| **Advanced Uninstall** | Leftover selection defaults, deletion behavior, system protection (restore points), scan level, system component visibility |
+| **Image Flasher** | Flash settings, verification options |
 
 ---
 
@@ -529,7 +531,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for coding standards, commit conventions,
 
 - **File Converter Tab** — Universal offline file conversion for documents, images, audio, video, spreadsheets, and PDFs with batch processing and quality controls. Adds a new tab to the File Management panel. See [FILE_CONVERTER_TAB_PLAN.md](docs/FILE_CONVERTER_TAB_PLAN.md).
 - **System Tools Tab** — Centralized launcher for 48+ built-in Windows administrative and diagnostic utilities, organized into searchable categories with one-click launch, favorites, and availability detection. Adds a new tab to the Benchmark & Diagnostics panel. See [SYSTEM_TOOLS_TAB_PLAN.md](docs/SYSTEM_TOOLS_TAB_PLAN.md).
-- **OST Converter Tab** — Multi-threaded bulk OST/PST conversion to PST, EML, MSG, MBOX, and DBX formats with IMAP cloud upload (Office 365, Gmail, Yahoo), deleted/corrupt item recovery, metadata preservation, and PST splitting. Adds a new tab to the Email Tool panel. See [OST_CONVERTER_TAB_PLAN.md](docs/OST_CONVERTER_TAB_PLAN.md).
+- **OST Converter Tab** — Multi-threaded bulk OST/PST conversion to PST, EML, MSG, MBOX, and DBX formats with IMAP cloud upload (Office 365, Gmail, Yahoo), deleted/corrupt item recovery, metadata preservation, and PST splitting. Adds a new tab to the Email Tools panel. See [OST_CONVERTER_TAB_PLAN.md](docs/OST_CONVERTER_TAB_PLAN.md).
 
 ---
 

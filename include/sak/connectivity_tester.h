@@ -50,7 +50,7 @@ public:
     };
 
     explicit ConnectivityTester(QObject* parent = nullptr);
-    ~ConnectivityTester() override = default;
+    ~ConnectivityTester() override;
 
     ConnectivityTester(const ConnectivityTester&) = delete;
     ConnectivityTester& operator=(const ConnectivityTester&) = delete;

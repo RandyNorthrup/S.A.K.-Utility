@@ -10,6 +10,7 @@
 #include "sak/style_constants.h"
 
 #include <QApplication>
+#include <QDesktopServices>
 #include <QDir>
 #include <QFileInfo>
 #include <QHBoxLayout>
@@ -84,6 +85,11 @@ void EmailFileScannerDialog::setupUi() {
             &QTableWidget::cellDoubleClicked,
             this,
             &EmailFileScannerDialog::onFileDoubleClicked);
+    connect(m_results_table, &QTableWidget::currentCellChanged, this, [this](int row) {
+        const bool has_selection = (row >= 0);
+        m_open_button->setEnabled(has_selection);
+        m_open_folder_button->setEnabled(has_selection);
+    });
     layout->addWidget(m_results_table, 1);
 
     // Status + progress
@@ -105,6 +111,16 @@ void EmailFileScannerDialog::setupUi() {
     m_scan_button->setStyleSheet(ui::kPrimaryButtonStyle);
     connect(m_scan_button, &QPushButton::clicked, this, &EmailFileScannerDialog::onScanClicked);
     button_row->addWidget(m_scan_button);
+
+    m_open_folder_button = new QPushButton(tr("Open Containing Folder"), this);
+    m_open_folder_button->setEnabled(false);
+    m_open_folder_button->setStyleSheet(ui::kSecondaryButtonStyle);
+    m_open_folder_button->setToolTip(tr("Open the folder containing the selected file"));
+    connect(m_open_folder_button,
+            &QPushButton::clicked,
+            this,
+            &EmailFileScannerDialog::onOpenContainingFolderClicked);
+    button_row->addWidget(m_open_folder_button);
 
     button_row->addStretch();
 
@@ -148,6 +164,7 @@ void EmailFileScannerDialog::onScanClicked() {
     m_progress_bar->setVisible(false);
     m_scan_button->setEnabled(true);
     m_open_button->setEnabled(m_results_table->rowCount() > 0);
+    m_open_folder_button->setEnabled(m_results_table->rowCount() > 0);
     m_status_label->setText(tr("Found %1 email files").arg(m_files_found));
 }
 
@@ -171,6 +188,19 @@ void EmailFileScannerDialog::onFileDoubleClicked(int row, int /*column*/) {
     }
     m_selected_path = item->text();
     accept();
+}
+
+void EmailFileScannerDialog::onOpenContainingFolderClicked() {
+    int row = m_results_table->currentRow();
+    if (row < 0) {
+        return;
+    }
+    auto* item = m_results_table->item(row, 0);
+    if (item == nullptr) {
+        return;
+    }
+    QFileInfo file_info(item->text());
+    QDesktopServices::openUrl(QUrl::fromLocalFile(file_info.absolutePath()));
 }
 
 // ============================================================================

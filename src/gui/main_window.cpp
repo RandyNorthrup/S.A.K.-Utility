@@ -132,7 +132,7 @@ Built with modern C++23 and Qt 6 for Windows 10/11 x64.</div>
 <div class="section">
     <div class="section-title">Email &amp; Data Forensics</div>
     <ul>
-        <li><b>PST/OST/MBOX Email Tool</b> &mdash; Offline forensic inspection of Outlook and Thunderbird email archives without client installation</li>
+        <li><b>PST/OST/MBOX Email Tools</b> &mdash; Offline forensic inspection of Outlook and Thunderbird email archives without client installation</li>
         <li><b>Email Search &amp; Export</b> &mdash; Full-text search across thousands of items with export to EML, ICS, VCF, and CSV formats</li>
         <li><b>Contacts Browser</b> &mdash; Searchable address book with sortable columns and export to VCF or CSV</li>
         <li><b>Calendar Viewer</b> &mdash; Month, week, and day views with event details and export to ICS or CSV</li>
@@ -439,7 +439,7 @@ void MainWindow::createSimplePanels() {
                       kTooltipDiagnostics,
                       ":/icons/icons/panel_diagnostic.svg");
 
-    // -- 5. Email Tool ----------------------------------------------------
+    // -- 5. Email Tools ---------------------------------------------------
     m_email_inspector_panel = std::make_unique<EmailInspectorPanel>(this);
     AddTabWithTooltip(m_tab_widget,
                       m_email_inspector_panel.get(),

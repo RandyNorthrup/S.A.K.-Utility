@@ -6,6 +6,18 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+## v0.9.0.9
+
+- **Email inspector HTML/text slider toggle** — Replaced the plain-text/HTML toggle button with a `LogToggleSwitch` slider, repositioned to the bottom row alongside the log toggle for a cleaner layout.
+- **Open containing folder in file scanner** — Added "Open Containing Folder" button to the email file scanner dialog, enabling quick navigation to the directory of any discovered mailbox file.
+- **Network diagnostics right-click context menus** — Added extensive context menus to all 9 tables (Ping, Traceroute, MTR, DNS, Port Scan, WiFi, Connections, Firewall, Shares) with tab-specific actions (copy IP, traceroute to hop, ping remote, open share in Explorer) and common actions (copy selected/all rows, export CSV, clear).
+- **Ping DNS resolution fix** — Added `WSAStartup`/`WSACleanup` to `ConnectivityTester` — `getaddrinfo()` requires Winsock initialization, which was missing. IP-based pings worked but domain name resolution silently failed.
+- **SMART report discrepancy fixes** — Updated HTML, JSON, and CSV diagnostic reports to include Serial Number, Interface Type, and NVMe Wear Level columns, matching the data shown in the SMART panel.
+- **Documentation audit** — Renamed "Email Tool" to "Email Tools" across all docs (README, About HTML, CHANGELOG, OST Converter plan), corrected Settings section (per-panel settings, not global menu), updated file counts.
+- **Build quality** — Clean MSVC `/W4 /WX` build, 74 automated tests (all passing), 138 source files, 135 headers.
+
+---
+
 ## v0.9.0.8
 
 - **Offline deployment — Direct Download mode** — Downloads the actual installer binary (EXE/MSI) for each package instead of just the .nupkg wrapper. Supports three package patterns: URL-based downloads (`Install-ChocolateyPackage`), embedded-binary packages (`Install-ChocolateyInstallPackage` with EXE/MSI files inside the nupkg's `tools/` directory), and meta-packages (follows `.install` dependency chain via nuspec parsing). Primary installer selection ensures only the main resource is downloaded per package, avoiding patches and secondary resources. Tested with Office PC preset (10 packages, all succeeding).
@@ -18,7 +30,7 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 
 - **File Converter tab plan** — Comprehensive implementation plan for universal offline file conversion (documents, images, audio, video, spreadsheets, PDFs) with batch processing. New tab planned for the File Management panel.
 - **System Tools tab plan** — Comprehensive implementation plan for a centralized launcher of 48+ built-in Windows admin/diagnostic utilities with categorized grid, search, favorites, and availability detection. New tab planned for the Benchmark & Diagnostics panel.
-- **OST Converter tab plan** — Comprehensive implementation plan for multi-threaded bulk OST/PST conversion to PST, EML, MSG, MBOX, and DBX formats with IMAP cloud upload, deleted/corrupt item recovery, metadata preservation, and PST splitting. New tab planned for the Email Tool panel.
+- **OST Converter tab plan** — Comprehensive implementation plan for multi-threaded bulk OST/PST conversion to PST, EML, MSG, MBOX, and DBX formats with IMAP cloud upload, deleted/corrupt item recovery, metadata preservation, and PST splitting. New tab planned for the Email Tools panel.
 - **Documentation accuracy audit** — Corrected header count (134), test file count (96), removed stale Network encryption security claim (feature was removed in v0.9.0.6), updated roadmap with planned features.
 - **Build quality** — Clean MSVC `/W4 /WX` build, 74 automated tests (all passing), 137 source files, 134 headers.
 
@@ -31,7 +43,7 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## v0.9.0.5
 
-- **Documentation overhaul** — Complete rewrite of README feature sections to match actual panel organization: Application Management (App Installation + Advanced Uninstall), File Management (File Organizer + Duplicate Finder + Advanced Search), Network Management (Network Diagnostics + Network Adapters + WiFi Manager), Email Tool. Removed stale License Key Scanner references. Fixed Settings section (single Backup tab, not four). Corrected Quick Actions category assignments.
+- **Documentation overhaul** — Complete rewrite of README feature sections to match actual panel organization: Application Management (App Installation + Advanced Uninstall), File Management (File Organizer + Duplicate Finder + Advanced Search), Network Management (Network Diagnostics + Network Adapters + WiFi Manager), Email Tools. Removed stale License Key Scanner references. Fixed Settings section (single Backup tab, not four). Corrected Quick Actions category assignments.
 - **In-app About tab rewrite** — About tab HTML updated to reflect all current features: Migration & Backup, Quick Actions, Diagnostics & Benchmarking, File Management, Application Management, Imaging, Network Management, and Email & Data Forensics.
 - **Release notes modernization** — GitHub release body rewritten with full per-feature descriptions instead of bullet summaries. Removed stale code signing and installation sections.
 - **Build quality** — Clean MSVC `/W4 /WX` build, 91 automated tests (all passing), 186 source files, 151 headers.
