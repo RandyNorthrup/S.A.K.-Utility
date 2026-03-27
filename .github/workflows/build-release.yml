@@ -103,6 +103,13 @@ jobs:
         # UUPMediaConverter binaries are checked into the repo (patched build).
         & scripts/bundle_uup_tools.ps1
 
+    - name: Bundle iPerf3
+      shell: pwsh
+      run: |
+        # Download iperf3.exe and cygwin1.dll for LAN bandwidth testing.
+        # The script is idempotent — skips if iperf3.exe is already present.
+        & scripts/bundle_iperf3.ps1
+
     - name: Configure CMake
       run: |
         cmake -B build -G "Visual Studio 17 2022" -A x64 `
