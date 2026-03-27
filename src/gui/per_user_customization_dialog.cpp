@@ -11,6 +11,7 @@
 #include <QDir>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QGroupBox>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QMessageBox>
@@ -35,26 +36,17 @@ PerUserCustomizationDialog::PerUserCustomizationDialog(UserProfile& profile, QWi
 void PerUserCustomizationDialog::setupUi() {
     Q_ASSERT(layout() == nullptr);  // setupUi not called twice
     auto* mainLayout = new QVBoxLayout(this);
-    mainLayout->setSpacing(10);
+    mainLayout->setSpacing(6);
     mainLayout->setContentsMargins(
         sak::ui::kMarginLarge, sak::ui::kMarginLarge, sak::ui::kMarginLarge, sak::ui::kMarginLarge);
 
-    // User info header
-    auto* headerLayout = new QVBoxLayout();
-    m_usernameLabel = new QLabel(QString("<h3>User: %1</h3>").arg(m_profile.username));
-    headerLayout->addWidget(m_usernameLabel);
+    // User info header (compact)
+    m_usernameLabel = new QLabel(QString("<b>User: %1</b>").arg(m_profile.username));
+    mainLayout->addWidget(m_usernameLabel);
 
     m_profilePathLabel = new QLabel(QString("Profile Path: %1").arg(m_profile.profile_path));
     m_profilePathLabel->setStyleSheet(QString("color: %1;").arg(sak::ui::kColorTextMuted));
-    headerLayout->addWidget(m_profilePathLabel);
-
-    mainLayout->addLayout(headerLayout);
-
-    // Separator
-    auto* separator1 = new QFrame();
-    separator1->setFrameShape(QFrame::HLine);
-    separator1->setFrameShadow(QFrame::Sunken);
-    mainLayout->addWidget(separator1);
+    mainLayout->addWidget(m_profilePathLabel);
 
     setupUi_foldersSection(mainLayout);
     setupUi_appDataSection(mainLayout);
@@ -67,6 +59,7 @@ void PerUserCustomizationDialog::setupUi_foldersSection(QVBoxLayout* mainLayout)
     // Standard folders section
     auto* foldersGroup = new QGroupBox("Standard Folders");
     auto* foldersLayout = new QVBoxLayout(foldersGroup);
+    foldersLayout->setSpacing(4);
 
     // Selection buttons
     auto* selectionLayout = new QHBoxLayout();
@@ -84,78 +77,54 @@ void PerUserCustomizationDialog::setupUi_foldersSection(QVBoxLayout* mainLayout)
 
     // Folder tree
     m_folderTree = new QTreeWidget();
-    m_folderTree->setColumnCount(3);  // Reduce to 3 columns: Folder (with checkbox), Size, Files
+    m_folderTree->setColumnCount(3);
     m_folderTree->setHeaderLabels({"Folder", "Size", "Files"});
-    m_folderTree->setColumnWidth(0, 500);  // Folder name - includes checkbox via Qt
-    m_folderTree->setColumnWidth(1, 100);  // Size
-    m_folderTree->setColumnWidth(2, 80);   // File count
+    m_folderTree->setColumnWidth(0, 500);
+    m_folderTree->setColumnWidth(1, 100);
+    m_folderTree->setColumnWidth(2, 80);
     m_folderTree->setAlternatingRowColors(true);
     m_folderTree->setSelectionMode(QAbstractItemView::NoSelection);
-    m_folderTree->setRootIsDecorated(true);  // Show expand/collapse arrows
-    m_folderTree->setIndentation(20);        // Normal indentation
+    m_folderTree->setRootIsDecorated(true);
+    m_folderTree->setIndentation(20);
     m_folderTree->header()->setStretchLastSection(false);
     m_folderTree->header()->setSectionResizeMode(0, QHeaderView::Stretch);
 
-    foldersLayout->addWidget(m_folderTree);
+    foldersLayout->addWidget(m_folderTree, 1);
 
-    // Expand/collapse buttons
-    auto* treeButtonsLayout = new QHBoxLayout();
+    // All action buttons in one row: left pair + stretch + right pair
+    auto* actionButtonsLayout = new QHBoxLayout();
     auto* expandAllBtn = new QPushButton("Expand All");
     auto* collapseAllBtn = new QPushButton("Collapse All");
     connect(expandAllBtn, &QPushButton::clicked, this, &PerUserCustomizationDialog::onExpandAll);
     connect(
         collapseAllBtn, &QPushButton::clicked, this, &PerUserCustomizationDialog::onCollapseAll);
-    treeButtonsLayout->addWidget(expandAllBtn);
-    treeButtonsLayout->addWidget(collapseAllBtn);
-    treeButtonsLayout->addStretch();
-    foldersLayout->addLayout(treeButtonsLayout);
 
-    // Custom folder buttons
-    auto* customLayout = new QHBoxLayout();
     m_addCustomButton = new QPushButton("Add Custom Folder...");
     m_removeButton = new QPushButton("Remove Selected");
     m_removeButton->setEnabled(false);
 
-    customLayout->addWidget(m_addCustomButton);
-    customLayout->addWidget(m_removeButton);
-    customLayout->addStretch();
+    actionButtonsLayout->addWidget(expandAllBtn);
+    actionButtonsLayout->addWidget(collapseAllBtn);
+    actionButtonsLayout->addStretch();
+    actionButtonsLayout->addWidget(m_addCustomButton);
+    actionButtonsLayout->addWidget(m_removeButton);
 
-    foldersLayout->addLayout(customLayout);
+    foldersLayout->addLayout(actionButtonsLayout);
 
-    mainLayout->addWidget(foldersGroup);
+    mainLayout->addWidget(foldersGroup, 1);
 }
 
 void PerUserCustomizationDialog::setupUi_appDataSection(QVBoxLayout* mainLayout) {
-    // Application data section
-    m_appDataGroup = new QGroupBox("Application Data (Selective)");
-    auto* appDataLayout = new QVBoxLayout(m_appDataGroup);
-
-    m_browserBookmarksCheck = new QCheckBox("Browser Bookmarks (Chrome, Edge, Firefox)");
-    m_browserBookmarksCheck->setToolTip("Backs up bookmarks only -- no cache, cookies, or history");
-    appDataLayout->addWidget(m_browserBookmarksCheck);
-
-    m_emailSignaturesCheck = new QCheckBox("Email Signatures (Outlook)");
-    appDataLayout->addWidget(m_emailSignaturesCheck);
-
-    m_officeTemplatesCheck = new QCheckBox("Office Templates");
-    appDataLayout->addWidget(m_officeTemplatesCheck);
-
-    m_vsCodeSettingsCheck = new QCheckBox("VS Code Settings");
-    m_vsCodeSettingsCheck->setToolTip(
-        "Includes settings.json, keybindings.json, and snippets (no "
-        "extensions)");
-    appDataLayout->addWidget(m_vsCodeSettingsCheck);
-
+    // Warning about AppData — selection is handled on the wizard's App Data page
     auto* warningLabel = new QLabel(
         "(!) Warning: Full AppData backup is NOT recommended. "
-        "It contains machine-specific files that can corrupt profiles.");
+        "It contains machine-specific files that can corrupt profiles. "
+        "Application data is selected on the <b>Application Data</b> wizard step.");
     warningLabel->setWordWrap(true);
     warningLabel->setStyleSheet(QString("color: %1; padding: 8px; background-color: %2; "
                                         "border-radius: 10px;")
                                     .arg(sak::ui::kColorErrorText, sak::ui::kColorBgErrorPanel));
-    appDataLayout->addWidget(warningLabel);
-
-    mainLayout->addWidget(m_appDataGroup);
+    mainLayout->addWidget(warningLabel);
 
     // Summary
     m_summaryLabel = new QLabel();
@@ -208,23 +177,6 @@ void PerUserCustomizationDialog::setupUi_dialogButtons(QVBoxLayout* mainLayout) 
             &QTreeWidget::itemChanged,
             this,
             &PerUserCustomizationDialog::onTreeItemChanged);
-
-    connect(m_browserBookmarksCheck,
-            &QCheckBox::stateChanged,
-            this,
-            &PerUserCustomizationDialog::updateSummary);
-    connect(m_emailSignaturesCheck,
-            &QCheckBox::stateChanged,
-            this,
-            &PerUserCustomizationDialog::updateSummary);
-    connect(m_officeTemplatesCheck,
-            &QCheckBox::stateChanged,
-            this,
-            &PerUserCustomizationDialog::updateSummary);
-    connect(m_vsCodeSettingsCheck,
-            &QCheckBox::stateChanged,
-            this,
-            &PerUserCustomizationDialog::updateSummary);
 
     connect(m_okButton, &QPushButton::clicked, this, &QDialog::accept);
     connect(m_cancelButton, &QPushButton::clicked, this, &QDialog::reject);
@@ -735,34 +687,13 @@ void PerUserCustomizationDialog::updateFolderCheckStates(QTreeWidgetItem* item) 
 }
 
 void PerUserCustomizationDialog::updateSummary() {
-    Q_ASSERT(m_browserBookmarksCheck);
-    Q_ASSERT(m_emailSignaturesCheck);
     qint64 totalSize = calculateTotalSize();
     int selectedCount =
         static_cast<int>(std::count_if(m_profile.folder_selections.begin(),
                                        m_profile.folder_selections.end(),
                                        [](const auto& sel) { return sel.selected; }));
 
-    // Add app data items
-    int appDataItems = 0;
-    if (m_browserBookmarksCheck->isChecked()) {
-        appDataItems++;
-    }
-    if (m_emailSignaturesCheck->isChecked()) {
-        appDataItems++;
-    }
-    if (m_officeTemplatesCheck->isChecked()) {
-        appDataItems++;
-    }
-    if (m_vsCodeSettingsCheck->isChecked()) {
-        appDataItems++;
-    }
-
     QString summary = QString("<b>Backup Summary:</b> %1 folders selected").arg(selectedCount);
-
-    if (appDataItems > 0) {
-        summary += QString(" + %1 app data item(s)").arg(appDataItems);
-    }
 
     if (totalSize > 0) {
         double sizeGB = totalSize / sak::kBytesPerGBf;
@@ -782,60 +713,9 @@ qint64 PerUserCustomizationDialog::calculateTotalSize() const {
 }
 
 QVector<FolderSelection> PerUserCustomizationDialog::getFolderSelections() const {
-    Q_ASSERT(m_browserBookmarksCheck);
-    Q_ASSERT(m_emailSignaturesCheck);
     // Return updated selections from tree
-    QVector<FolderSelection> selections = m_profile.folder_selections;
-
     // Note: selections are already updated in onTreeItemChanged
-    // No need to re-sync from tree widget
-
-    // Add app data selections as special folder entries
-    if (m_browserBookmarksCheck && m_browserBookmarksCheck->isChecked()) {
-        FolderSelection bookmarks;
-        bookmarks.type = FolderType::AppData_Roaming;
-        bookmarks.display_name = "Browser Bookmarks";
-        bookmarks.relative_path = "AppData\\Roaming";
-        bookmarks.selected = true;
-        bookmarks.include_patterns = QStringList{"*/Google/Chrome/User Data/*/Bookmarks",
-                                                 "*/Microsoft/Edge/User Data/*/Bookmarks",
-                                                 "*/Mozilla/Firefox/Profiles/*/places.sqlite"};
-        selections.append(bookmarks);
-    }
-
-    if (m_emailSignaturesCheck && m_emailSignaturesCheck->isChecked()) {
-        FolderSelection signatures;
-        signatures.type = FolderType::AppData_Roaming;
-        signatures.display_name = "Email Signatures";
-        signatures.relative_path = "AppData\\Roaming";
-        signatures.selected = true;
-        signatures.include_patterns = QStringList{"*/Microsoft/Signatures/*"};
-        selections.append(signatures);
-    }
-
-    if (m_officeTemplatesCheck && m_officeTemplatesCheck->isChecked()) {
-        FolderSelection templates;
-        templates.type = FolderType::AppData_Roaming;
-        templates.display_name = "Office Templates";
-        templates.relative_path = "AppData\\Roaming";
-        templates.selected = true;
-        templates.include_patterns = QStringList{"*/Microsoft/Templates/*"};
-        selections.append(templates);
-    }
-
-    if (m_vsCodeSettingsCheck && m_vsCodeSettingsCheck->isChecked()) {
-        FolderSelection vscode;
-        vscode.type = FolderType::AppData_Roaming;
-        vscode.display_name = "VS Code Settings";
-        vscode.relative_path = "AppData\\Roaming";
-        vscode.selected = true;
-        vscode.include_patterns = QStringList{"*/Code/User/settings.json",
-                                              "*/Code/User/keybindings.json",
-                                              "*/Code/User/snippets/*"};
-        selections.append(vscode);
-    }
-
-    return selections;
+    return m_profile.folder_selections;
 }
 
 }  // namespace sak

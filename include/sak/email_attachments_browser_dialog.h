@@ -69,6 +69,7 @@ private Q_SLOTS:
                                   int index,
                                   QByteArray content,
                                   QString filename);
+    void onErrorOccurred(const QString& message);
 
 private:
     void setupUi();
@@ -92,6 +93,7 @@ private:
     // Scan state
     QVector<uint64_t> m_all_folder_ids;
     int m_folders_scanned{0};
+    int m_current_folder_offset{0};
     QVector<uint64_t> m_pending_detail_ids;
     int m_details_loaded{0};
     int m_details_total{0};

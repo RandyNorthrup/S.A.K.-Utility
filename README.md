@@ -9,7 +9,7 @@
 [![Qt 6.5+](https://img.shields.io/badge/Qt-6.5%2B-41cd52.svg)](https://www.qt.io/)
 [![Windows 10/11](https://img.shields.io/badge/Windows-10%20%7C%2011-0078d4.svg)](https://www.microsoft.com/windows)
 [![Build](https://github.com/RandyNorthrup/S.A.K.-Utility/actions/workflows/build-release.yml/badge.svg)](https://github.com/RandyNorthrup/S.A.K.-Utility/actions)
-[![Version](https://img.shields.io/badge/Version-0.9.0.9-orange.svg)](VERSION)
+[![Version](https://img.shields.io/badge/Version-0.9.1.0-orange.svg)](VERSION)
 
 Migration · Maintenance · Recovery · Imaging · Deployment — one portable EXE.
 
@@ -21,7 +21,7 @@ Migration · Maintenance · Recovery · Imaging · Deployment — one portable E
 
 See [CHANGELOG.md](CHANGELOG.md) for the full version history.
 
-**Latest: v0.9.0.9** — Email inspector HTML/text slider toggle, open containing folder in file scanner, network diagnostics right-click context menus, ping DNS resolution fix, SMART report discrepancy fixes, documentation audit.
+**Latest: v0.9.1.0** — Comprehensive documentation accuracy audit across all in-app text, README, CHANGELOG, and build scripts. Version bump to 0.9.1.0 release milestone. Corrected header count (142) and test count references. No false claims found in feature descriptions.
 
 ---
 

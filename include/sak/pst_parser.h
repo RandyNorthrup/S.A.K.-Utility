@@ -344,6 +344,29 @@ private:
     [[nodiscard]] std::pair<QString, QString> extractSenderFromLeaf(const BthLeafResult& bth,
                                                                     const HeapContext& ctx);
 
+    /// Load heap context (data tree + subnodes) for a node
+    [[nodiscard]] bool loadNodeHeapContext(const sak::PstNode& entry, HeapContext& ctx);
+
+    /// Read a single BTH record's property value as a formatted string
+    [[nodiscard]] QString readBthRecordValue(const BthLeafResult& bth,
+                                             const HeapContext& ctx,
+                                             int rec_offset);
+
+    /// Scan BTH leaf records for subject and/or message class properties
+    void scanBthForSubjectAndClass(const BthLeafResult& bth,
+                                   const HeapContext& ctx,
+                                   sak::PstItemSummary& item,
+                                   bool need_subject,
+                                   bool need_class);
+
+    /// Enrich a single item's sender, subject, and class from BTH data
+    void enrichItemFromBth(sak::PstItemSummary& item,
+                           const BthLeafResult& bth,
+                           const HeapContext& ctx);
+
+    /// Enrich a single item's properties from its node data
+    void enrichSingleItemProps(sak::PstItemSummary& item);
+
     /// Enrich item summaries with sender names from their PCs
     void enrichItemSenders(QVector<sak::PstItemSummary>& items);
 

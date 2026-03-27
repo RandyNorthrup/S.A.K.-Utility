@@ -236,6 +236,7 @@ release hooks above.
 
 ```
 include/sak/          — Public headers (one .h per class, 135 headers)
+include/sak/actions/  — Action headers (7 files, 142 headers total)
 src/core/             — Core business logic, workers, parsers, managers (89 files)
 src/gui/              — Qt widget panels, dialogs, and themes (36 files)
 src/actions/          — Quick action workers (one file per action, 7 files)

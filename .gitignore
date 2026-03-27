@@ -129,6 +129,8 @@ bld/
 !tools/chocolatey/choco.exe
 !tools/smartmontools/smartctl.exe
 !tools/uup/aria2c.exe
+!tools/iperf3/iperf3.exe
+!tools/iperf3/cygwin1.dll
 
 # Linker files
 *.ilk

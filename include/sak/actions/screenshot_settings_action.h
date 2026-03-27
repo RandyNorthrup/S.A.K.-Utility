@@ -58,10 +58,10 @@ private:
                              const QString& timestamp);
     /// @brief Kill SystemSettings.exe and log any warning
     void closeSettingsApp();
-    /// @brief Capture screenshots from all monitors into output_dir
-    bool captureAllScreens(const QDir& output_dir,
-                           const QString& page_name,
-                           const QString& timestamp);
+    /// @brief Capture only the Settings window (not entire screen)
+    bool captureSettingsWindow(const QDir& output_dir,
+                               const QString& page_name,
+                               const QString& timestamp);
     void generateReport(const QString& output_dir_path,
                         const QString& timestamp,
                         int monitor_count,

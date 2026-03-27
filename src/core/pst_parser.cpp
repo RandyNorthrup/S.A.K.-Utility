@@ -11,6 +11,7 @@
 
 #include <QDataStream>
 #include <QFileInfo>
+#include <qt_windows.h>
 #include <QtEndian>
 
 #include <algorithm>
@@ -195,11 +196,43 @@ static QString formatFloat64Value(const QByteArray& raw) {
 }
 
 static QString formatString8Value(const QByteArray& raw) {
+    // PT_STRING8 properties can be encoded in various codepages.
+    // Try UTF-8 first (most modern systems).
+    auto utf8_result = QString::fromUtf8(raw);
+    if (!utf8_result.contains(QChar::ReplacementCharacter)) {
+        return utf8_result;
+    }
+
+    // Fall back to the system ANSI codepage (e.g., CP1252 on
+    // Western Windows systems, CP932 on Japanese, etc.).
+    int needed =
+        MultiByteToWideChar(CP_ACP, MB_PRECOMPOSED, raw.constData(), raw.size(), nullptr, 0);
+    if (needed > 0) {
+        QString result;
+        result.resize(needed);
+        MultiByteToWideChar(CP_ACP,
+                            MB_PRECOMPOSED,
+                            raw.constData(),
+                            raw.size(),
+                            reinterpret_cast<wchar_t*>(result.data()),
+                            needed);
+        return result;
+    }
+
     return QString::fromLatin1(raw);
 }
 
 static QString formatUnicodeValue(const QByteArray& raw) {
-    return QString::fromUtf16(reinterpret_cast<const char16_t*>(raw.constData()), raw.size() / 2);
+    if (raw.size() < 2) {
+        return QString();
+    }
+    auto result = QString::fromUtf16(reinterpret_cast<const char16_t*>(raw.constData()),
+                                     raw.size() / 2);
+    // Strip null terminators that PST files sometimes include
+    while (!result.isEmpty() && result.back().isNull()) {
+        result.chop(1);
+    }
+    return result;
 }
 
 static QString formatSysTimeValue(const QByteArray& raw) {
@@ -404,12 +437,18 @@ static const QHash<uint16_t, SummarySetter>& summarySetters() {
          }},
         {sak::email::kPropIdHasAttachments,
          [](sak::PstItemSummary& item, const sak::MapiProperty& col) {
-             item.has_attachments = (col.display_value == QLatin1String("true"));
+             if (col.display_value == QLatin1String("true")) {
+                 item.has_attachments = true;
+             }
          }},
         {sak::email::kPropIdMessageFlags,
          [](sak::PstItemSummary& item, const sak::MapiProperty& col) {
              item.message_flags = col.display_value.toUInt();
              item.is_read = (item.message_flags & 0x01) != 0;
+             constexpr uint32_t kMsgFlagHasAttach = 0x10;
+             if ((item.message_flags & kMsgFlagHasAttach) != 0) {
+                 item.has_attachments = true;
+             }
          }},
         {sak::email::kPropIdImportance,
          [](sak::PstItemSummary& item, const sak::MapiProperty& col) {
@@ -1833,7 +1872,7 @@ std::expected<QHash<uint64_t, sak::PstNode>, error_code> PstParser::readSubNodeI
 
 QString PstParser::formatPropertyValue(uint16_t prop_type, const QByteArray& raw_value) const {
     if (raw_value.isEmpty()) {
-        return QStringLiteral("<empty>");
+        return QString();
     }
 
     const auto& formatters = propFormatters();
@@ -2183,25 +2222,129 @@ std::pair<QString, QString> PstParser::readSenderFromPC(uint64_t message_nid) {
     return extractSenderFromLeaf(*bth, ctx);
 }
 
-void PstParser::enrichItemSenders(QVector<sak::PstItemSummary>& items) {
-    for (auto& item : items) {
-        if (m_cancelled.load(std::memory_order_relaxed)) {
-            return;
-        }
-        if (!item.sender_name.isEmpty()) {
-            continue;
-        }
-        if (item.node_id == 0) {
-            continue;
-        }
+bool PstParser::loadNodeHeapContext(const sak::PstNode& entry, HeapContext& ctx) {
+    auto data_result = readDataTree(entry.data_bid, &ctx.block_offsets);
+    if (!data_result) {
+        return false;
+    }
+    ctx.heap_data = std::move(*data_result);
 
-        auto [name, email] = readSenderFromPC(item.node_id);
+    if (entry.subnode_bid != 0) {
+        auto sn_result = readSubNodeBTree(entry.subnode_bid);
+        if (sn_result) {
+            ctx.subnode_map = std::move(*sn_result);
+        }
+    }
+    return true;
+}
+
+QString PstParser::readBthRecordValue(const BthLeafResult& bth,
+                                      const HeapContext& ctx,
+                                      int rec_offset) {
+    uint16_t prop_type = readLE<uint16_t>(bth.leaf_data, rec_offset + bth.key_size);
+    uint32_t value_ref = readLE<uint32_t>(bth.leaf_data, rec_offset + bth.key_size + 2);
+    QByteArray raw_value;
+    if (isPcVariableType(prop_type)) {
+        auto resolved = resolveHnid(value_ref, ctx.heap_data, ctx.block_offsets, ctx.subnode_map);
+        if (resolved) {
+            raw_value = std::move(*resolved);
+        }
+    } else {
+        raw_value.resize(4);
+        std::memcpy(raw_value.data(), &value_ref, 4);
+    }
+    return formatPropertyValue(prop_type, raw_value);
+}
+
+void PstParser::scanBthForSubjectAndClass(const BthLeafResult& bth,
+                                          const HeapContext& ctx,
+                                          sak::PstItemSummary& item,
+                                          bool need_subject,
+                                          bool need_class) {
+    int record_size = bth.key_size + bth.data_size;
+    if (record_size == 0) {
+        return;
+    }
+    int record_count = bth.leaf_data.size() / record_size;
+    for (int rec_idx = 0; rec_idx < record_count; ++rec_idx) {
+        int rec_offset = rec_idx * record_size;
+        if (rec_offset + record_size > bth.leaf_data.size()) {
+            break;
+        }
+        uint16_t prop_id = readLE<uint16_t>(bth.leaf_data, rec_offset);
+        if (need_subject && prop_id == sak::email::kPropIdSubject) {
+            item.subject = stripSubjectPrefix(readBthRecordValue(bth, ctx, rec_offset));
+            need_subject = false;
+        }
+        if (need_class && prop_id == sak::email::kPropIdMessageClass) {
+            item.item_type = classifyMessageClass(readBthRecordValue(bth, ctx, rec_offset));
+            need_class = false;
+        }
+        if (!need_subject && !need_class) {
+            break;
+        }
+    }
+}
+
+void PstParser::enrichItemFromBth(sak::PstItemSummary& item,
+                                  const BthLeafResult& bth,
+                                  const HeapContext& ctx) {
+    if (item.sender_name.isEmpty()) {
+        auto [name, email] = extractSenderFromLeaf(bth, ctx);
         if (!name.isEmpty()) {
             item.sender_name = name;
         }
         if (item.sender_email.isEmpty() && !email.isEmpty()) {
             item.sender_email = email;
         }
+    }
+
+    bool need_subject = item.subject.isEmpty();
+    bool need_class = (item.item_type == sak::EmailItemType::Unknown);
+    if (need_subject || need_class) {
+        scanBthForSubjectAndClass(bth, ctx, item, need_subject, need_class);
+    }
+}
+
+void PstParser::enrichSingleItemProps(sak::PstItemSummary& item) {
+    if (item.node_id == 0) {
+        return;
+    }
+
+    bool need_sender = item.sender_name.isEmpty();
+    bool need_subject = item.subject.isEmpty();
+    bool need_class = (item.item_type == sak::EmailItemType::Unknown);
+    if (!need_sender && !need_subject && !need_class) {
+        return;
+    }
+
+    auto node_it = m_nbt_cache.find(item.node_id);
+    if (node_it == m_nbt_cache.end()) {
+        return;
+    }
+    if (node_it->data_bid == 0) {
+        return;
+    }
+
+    HeapContext ctx;
+    if (!loadNodeHeapContext(*node_it, ctx)) {
+        return;
+    }
+
+    auto bth = collectBthLeafData(ctx, kPcSignature);
+    if (!bth) {
+        return;
+    }
+
+    enrichItemFromBth(item, *bth, ctx);
+}
+
+void PstParser::enrichItemSenders(QVector<sak::PstItemSummary>& items) {
+    for (auto& item : items) {
+        if (m_cancelled.load(std::memory_order_relaxed)) {
+            return;
+        }
+        enrichSingleItemProps(item);
     }
 }
 
@@ -2316,29 +2459,32 @@ std::expected<QVector<sak::PstAttachmentInfo>, error_code> PstParser::readAttach
 // ============================================================================
 
 sak::EmailItemType PstParser::classifyMessageClass(const QString& message_class) {
-    if (message_class.startsWith(QLatin1String("IPM.Note"), Qt::CaseInsensitive)) {
+    if (message_class.isEmpty() || message_class == QLatin1String("<empty>")) {
         return sak::EmailItemType::Email;
     }
-    if (message_class.startsWith(QLatin1String("IPM.Contact"), Qt::CaseInsensitive)) {
-        return sak::EmailItemType::Contact;
-    }
-    if (message_class.startsWith(QLatin1String("IPM.Appointment"), Qt::CaseInsensitive)) {
-        return sak::EmailItemType::Calendar;
-    }
-    if (message_class.startsWith(QLatin1String("IPM.Task"), Qt::CaseInsensitive)) {
-        return sak::EmailItemType::Task;
-    }
-    if (message_class.startsWith(QLatin1String("IPM.StickyNote"), Qt::CaseInsensitive)) {
-        return sak::EmailItemType::StickyNote;
-    }
-    if (message_class.startsWith(QLatin1String("IPM.Activity"), Qt::CaseInsensitive)) {
-        return sak::EmailItemType::JournalEntry;
-    }
-    if (message_class.startsWith(QLatin1String("IPM.DistList"), Qt::CaseInsensitive)) {
-        return sak::EmailItemType::DistList;
-    }
-    if (message_class.startsWith(QLatin1String("IPM.Schedule.Meeting"), Qt::CaseInsensitive)) {
-        return sak::EmailItemType::MeetingRequest;
+
+    struct Mapping {
+        const char* prefix;
+        sak::EmailItemType type;
+    };
+    static constexpr Mapping kMappings[] = {
+        {"IPM.Note", sak::EmailItemType::Email},
+        {"IPM.Post", sak::EmailItemType::Email},
+        {"IPM.Report", sak::EmailItemType::Email},
+        {"IPM.Contact", sak::EmailItemType::Contact},
+        {"IPM.Appointment", sak::EmailItemType::Calendar},
+        {"IPM.Task", sak::EmailItemType::Task},
+        {"IPM.StickyNote", sak::EmailItemType::StickyNote},
+        {"IPM.Activity", sak::EmailItemType::JournalEntry},
+        {"IPM.DistList", sak::EmailItemType::DistList},
+        {"IPM.Schedule.Meeting", sak::EmailItemType::MeetingRequest},
+        {"IPM", sak::EmailItemType::Email},
+    };
+
+    for (const auto& m : kMappings) {
+        if (message_class.startsWith(QLatin1String(m.prefix), Qt::CaseInsensitive)) {
+            return m.type;
+        }
     }
     return sak::EmailItemType::Unknown;
 }

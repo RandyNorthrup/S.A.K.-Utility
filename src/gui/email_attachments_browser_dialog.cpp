@@ -68,7 +68,7 @@ EmailAttachmentsBrowserDialog::EmailAttachmentsBrowserDialog(::EmailInspectorCon
     resize(kWizardLargeWidth + 100, kWizardLargeHeight);
     setupUi();
     collectFolderIds(folder_tree);
-    startScan();
+    QTimer::singleShot(0, this, &EmailAttachmentsBrowserDialog::startScan);
 }
 
 EmailAttachmentsBrowserDialog::~EmailAttachmentsBrowserDialog() = default;
@@ -235,6 +235,10 @@ void EmailAttachmentsBrowserDialog::startScan() {
             &::EmailInspectorController::attachmentContentReady,
             this,
             &EmailAttachmentsBrowserDialog::onAttachmentContentReady);
+    connect(m_controller,
+            &::EmailInspectorController::errorOccurred,
+            this,
+            &EmailAttachmentsBrowserDialog::onErrorOccurred);
 
     scanNextFolder();
 }
@@ -253,9 +257,11 @@ void EmailAttachmentsBrowserDialog::scanNextFolder() {
         m_progress_bar->setRange(0, m_details_total);
         m_progress_bar->setValue(0);
         m_progress_bar->setFormat(tr("Loading attachment details... %p%"));
-        requestNextDetail();
+        m_status_label->setText(tr("Loading details for %1 items...").arg(m_details_total));
+        QTimer::singleShot(0, this, &EmailAttachmentsBrowserDialog::requestNextDetail);
         return;
     }
+    m_current_folder_offset = 0;
     uint64_t folder_id = m_all_folder_ids[m_folders_scanned];
     m_controller->loadFolderItems(folder_id, 0, email::kMaxItemsPerLoad);
 }
@@ -278,20 +284,37 @@ void EmailAttachmentsBrowserDialog::requestNextDetail() {
 
 void EmailAttachmentsBrowserDialog::onFolderItemsLoaded(uint64_t /*folder_id*/,
                                                         QVector<sak::PstItemSummary> items,
-                                                        int /*total*/) {
+                                                        int total) {
     for (const auto& item : items) {
         if (item.has_attachments) {
             m_pending_detail_ids.append(item.node_id);
             m_message_folder_map.insert(item.node_id, m_all_folder_ids[m_folders_scanned]);
         }
     }
+
+    m_current_folder_offset += static_cast<int>(items.size());
+
+    // If this folder has more items, load the next page
+    if (m_current_folder_offset < total && !items.isEmpty()) {
+        QTimer::singleShot(0, this, [this]() {
+            if (m_folders_scanned < m_all_folder_ids.size()) {
+                uint64_t fid = m_all_folder_ids[m_folders_scanned];
+                m_controller->loadFolderItems(fid,
+                                              m_current_folder_offset,
+                                              email::kMaxItemsPerLoad);
+            }
+        });
+        return;
+    }
+
     ++m_folders_scanned;
+    m_current_folder_offset = 0;
     m_progress_bar->setValue(m_folders_scanned);
     m_status_label->setText(tr("Scanning folder %1 of %2... (%3 items with attachments)")
                                 .arg(m_folders_scanned)
                                 .arg(m_all_folder_ids.size())
                                 .arg(m_pending_detail_ids.size()));
-    scanNextFolder();
+    QTimer::singleShot(0, this, &EmailAttachmentsBrowserDialog::scanNextFolder);
 }
 
 void EmailAttachmentsBrowserDialog::onItemDetailLoaded(sak::PstItemDetail detail) {
@@ -323,7 +346,7 @@ void EmailAttachmentsBrowserDialog::onItemDetailLoaded(sak::PstItemDetail detail
         updateStatusLabel();
     }
 
-    requestNextDetail();
+    QTimer::singleShot(0, this, &EmailAttachmentsBrowserDialog::requestNextDetail);
 }
 
 // ============================================================================
@@ -550,6 +573,23 @@ void EmailAttachmentsBrowserDialog::onAttachmentContentReady(uint64_t /*message_
     QFile file(file_path);
     if (file.open(QIODevice::WriteOnly)) {
         file.write(content);
+    }
+}
+
+void EmailAttachmentsBrowserDialog::onErrorOccurred(const QString& /*message*/) {
+    // During detail loading — skip this item and continue
+    if (!m_scan_complete && m_details_total > 0) {
+        ++m_details_loaded;
+        m_progress_bar->setValue(m_details_loaded);
+        QTimer::singleShot(0, this, &EmailAttachmentsBrowserDialog::requestNextDetail);
+        return;
+    }
+    // During folder scanning — skip this folder and continue
+    if (m_folders_scanned < m_all_folder_ids.size()) {
+        ++m_folders_scanned;
+        m_current_folder_offset = 0;
+        m_progress_bar->setValue(m_folders_scanned);
+        QTimer::singleShot(0, this, &EmailAttachmentsBrowserDialog::scanNextFolder);
     }
 }
 

@@ -17,6 +17,8 @@
 #include <QScreen>
 #include <QThread>
 
+#include <Windows.h>
+
 namespace sak {
 
 ScreenshotSettingsAction::ScreenshotSettingsAction(const QString& output_location, QObject* parent)
@@ -183,30 +185,57 @@ void ScreenshotSettingsAction::closeSettingsApp() {
     }
 }
 
-bool ScreenshotSettingsAction::captureAllScreens(const QDir& output_dir,
-                                                 const QString& page_name,
-                                                 const QString& timestamp) {
-    QList<QScreen*> screens = QGuiApplication::screens();
-    if (screens.size() <= 1) {
-        QScreen* screen = QGuiApplication::primaryScreen();
-        if (!screen) {
-            return false;
-        }
-        QPixmap screenshot = screen->grabWindow(0);
-        QString filepath = output_dir.filePath(QString("%1_%2.png").arg(page_name, timestamp));
-        return screenshot.save(filepath, "PNG");
+bool ScreenshotSettingsAction::captureSettingsWindow(const QDir& output_dir,
+                                                     const QString& page_name,
+                                                     const QString& timestamp) {
+    // Find the Settings window by enumerating top-level windows
+    HWND settings_hwnd = nullptr;
+    EnumWindows(
+        [](HWND hwnd, LPARAM lparam) -> BOOL {
+            if (!IsWindowVisible(hwnd)) {
+                return TRUE;
+            }
+            DWORD pid = 0;
+            GetWindowThreadProcessId(hwnd, &pid);
+            HANDLE proc = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+            if (!proc) {
+                return TRUE;
+            }
+            wchar_t exe_path[MAX_PATH] = {};
+            DWORD path_size = MAX_PATH;
+            bool found = false;
+            if (QueryFullProcessImageNameW(proc, 0, exe_path, &path_size)) {
+                found = (wcsstr(exe_path, L"SystemSettings") != nullptr);
+            }
+            CloseHandle(proc);
+            if (found) {
+                *reinterpret_cast<HWND*>(lparam) = hwnd;
+                return FALSE;
+            }
+            return TRUE;
+        },
+        reinterpret_cast<LPARAM>(&settings_hwnd));
+
+    if (!settings_hwnd) {
+        // Fallback: capture the foreground window
+        settings_hwnd = GetForegroundWindow();
+    }
+    if (!settings_hwnd) {
+        return false;
     }
 
-    bool captured = false;
-    for (int i = 0; i < screens.size(); i++) {
-        QPixmap screenshot = screens[i]->grabWindow(0);
-        QString filepath = output_dir.filePath(
-            QString("%1_Monitor%2_%3.png").arg(page_name).arg(i + 1).arg(timestamp));
-        if (screenshot.save(filepath, "PNG")) {
-            captured = true;
-        }
+    QScreen* screen = QGuiApplication::primaryScreen();
+    if (!screen) {
+        return false;
     }
-    return captured;
+
+    QPixmap screenshot = screen->grabWindow(reinterpret_cast<WId>(settings_hwnd));
+    if (screenshot.isNull()) {
+        return false;
+    }
+
+    QString filepath = output_dir.filePath(QString("%1_%2.png").arg(page_name, timestamp));
+    return screenshot.save(filepath, "PNG");
 }
 
 bool ScreenshotSettingsAction::captureSettingsPage(const QString& ms_uri,
@@ -227,7 +256,7 @@ bool ScreenshotSettingsAction::captureSettingsPage(const QString& ms_uri,
             continue;
         }
 
-        bool captured = captureAllScreens(output_dir, page_name, timestamp);
+        bool captured = captureSettingsWindow(output_dir, page_name, timestamp);
         closeSettingsApp();
         QThread::msleep(sak::kTimerRetryBaseMs);
 

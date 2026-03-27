@@ -15,7 +15,7 @@ endif()
 
 # Project definition
 project(SAK_Utility
-    VERSION 0.9.0.9
+    VERSION 0.9.1.0
     DESCRIPTION "Swiss Army Knife Utility - PC technician's toolkit for Windows migration and maintenance"
     LANGUAGES CXX
 )# C++23 Standard - Strict compliance required
@@ -671,18 +671,28 @@ target_include_directories(sak_utility PRIVATE
 
 # Check for bundled smartmontools (required for SMART diagnostics)
 if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/smartmontools/smartctl.exe")
-    message(WARNING "smartmontools not found! SMART disk diagnostics will be unavailable.\n"
-                    "Run 'powershell -File scripts/bundle_smartmontools.ps1' to bundle smartctl.exe.")
+    message(FATAL_ERROR "smartmontools not found! SMART disk diagnostics will be unavailable.\n"
+                        "Run 'powershell -File scripts/bundle_smartmontools.ps1' to bundle smartctl.exe.")
 endif()
 
 if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/uup/aria2c.exe")
-    message(WARNING "aria2c not found! ISO downloads will be unavailable.\n"
-                    "Run 'powershell -File scripts/bundle_uup_tools.ps1' to bundle UUP tools.")
+    message(FATAL_ERROR "aria2c not found! ISO downloads will be unavailable.\n"
+                        "Run 'powershell -File scripts/bundle_uup_tools.ps1' to bundle UUP tools.")
 endif()
 
 if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/uup/uupmc/UUPMediaConverter.exe")
-    message(WARNING "UUP Media Creator not found! UUP-to-ISO conversion will be unavailable.\n"
-                    "Run 'powershell -File scripts/bundle_uup_tools.ps1' to bundle UUP tools.")
+    message(FATAL_ERROR "UUP Media Creator not found! UUP-to-ISO conversion will be unavailable.\n"
+                        "Run 'powershell -File scripts/bundle_uup_tools.ps1' to bundle UUP tools.")
+endif()
+
+if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/iperf3/iperf3.exe")
+    message(FATAL_ERROR "iPerf3 not found! LAN bandwidth testing will be unavailable.\n"
+                        "Run 'powershell -File scripts/bundle_iperf3.ps1' to bundle iperf3.exe.")
+endif()
+
+if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/chocolatey/choco.exe")
+    message(FATAL_ERROR "Chocolatey not found! App installation features will be unavailable.\n"
+                        "Run 'powershell -File scripts/bundle_chocolatey.ps1' to bundle choco.exe.")
 endif()
 
 # Copy embedded tools directory to output

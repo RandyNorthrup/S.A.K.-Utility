@@ -5,9 +5,7 @@
 
 #include "sak/user_profile_types.h"
 
-#include <QCheckBox>
 #include <QDialog>
-#include <QGroupBox>
 #include <QLabel>
 #include <QPushButton>
 #include <QTreeWidget>
@@ -98,12 +96,6 @@ private:
     QPushButton* m_addCustomButton{nullptr};
     QPushButton* m_removeButton{nullptr};
     QPushButton* m_customizeButton{nullptr};
-
-    QGroupBox* m_appDataGroup{nullptr};
-    QCheckBox* m_browserBookmarksCheck{nullptr};
-    QCheckBox* m_emailSignaturesCheck{nullptr};
-    QCheckBox* m_officeTemplatesCheck{nullptr};
-    QCheckBox* m_vsCodeSettingsCheck{nullptr};
 
     QPushButton* m_okButton{nullptr};
     QPushButton* m_cancelButton{nullptr};

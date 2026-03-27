@@ -13,6 +13,28 @@ find_package(Qt6 REQUIRED COMPONENTS Test Network Concurrent)
 set(TEST_OUTPUT_DIR "${CMAKE_BINARY_DIR}/test_results")
 file(MAKE_DIRECTORY "${TEST_OUTPUT_DIR}")
 
+# Put test executables next to sak_utility.exe so they share deployed DLLs.
+# MSVC multi-config generators append the config name to RUNTIME_OUTPUT_DIRECTORY,
+# which would put tests in build/Release/Release/ — away from the DLLs that
+# windeployqt placed in build/Release/.  Using the config-specific property
+# (RUNTIME_OUTPUT_DIRECTORY_RELEASE) avoids the extra subdirectory.
+set(SAK_MAIN_OUTPUT_DIR "${CMAKE_BINARY_DIR}/Release")
+
+# windeployqt only analyses sak_utility.exe, which does not link Qt6::Test.
+# Copy Qt6Test.dll so the test executables can actually load at runtime.
+if(WIN32)
+    get_target_property(_qt_test_dll Qt6::Test IMPORTED_LOCATION_RELEASE)
+    if(NOT _qt_test_dll)
+        get_target_property(_qt_test_dll Qt6::Test IMPORTED_LOCATION)
+    endif()
+    if(_qt_test_dll AND EXISTS "${_qt_test_dll}")
+        file(COPY "${_qt_test_dll}" DESTINATION "${SAK_MAIN_OUTPUT_DIR}")
+        message(STATUS "Deployed ${_qt_test_dll} → ${SAK_MAIN_OUTPUT_DIR}")
+    else()
+        message(FATAL_ERROR "Qt6Test.dll not found — tests cannot run without it")
+    endif()
+endif()
+
 # ============================================================================
 # Unit Tests - Core Components
 # ============================================================================
@@ -74,7 +96,7 @@ foreach(test_name ${UNIT_TESTS})
 
         set_target_properties(${test_name} PROPERTIES
             AUTOMOC ON
-            RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+            RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
         )
 
         set(extra_unit_libs "")
@@ -127,7 +149,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_worker_base.cpp")
     )
     set_target_properties(test_worker_base PROPERTIES
         AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
     )
     target_link_libraries(test_worker_base PRIVATE
         Qt6::Core Qt6::Test ${PLATFORM_LIBS}
@@ -147,7 +169,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_error_codes.cpp")
     )
     set_target_properties(test_error_codes PROPERTIES
         AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
     )
     target_link_libraries(test_error_codes PRIVATE
         Qt6::Core Qt6::Test
@@ -167,7 +189,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_diagnostic_types.cpp")
     )
     set_target_properties(test_diagnostic_types PROPERTIES
         AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
     )
     target_link_libraries(test_diagnostic_types PRIVATE
         Qt6::Core Qt6::Test
@@ -211,7 +233,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_diagnostic_controller.cpp")
     )
     set_target_properties(test_diagnostic_controller PROPERTIES
         AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
     )
     target_link_libraries(test_diagnostic_controller PRIVATE
         Qt6::Core Qt6::Test Qt6::Concurrent ZLIB::ZLIB ${PLATFORM_LIBS}
@@ -234,7 +256,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_thermal_monitor.cpp")
     )
     set_target_properties(test_thermal_monitor PROPERTIES
         AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
     )
     target_link_libraries(test_thermal_monitor PRIVATE
         Qt6::Core Qt6::Concurrent Qt6::Test ${PLATFORM_LIBS}
@@ -257,7 +279,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_diagnostic_report_generator.cpp
     )
     set_target_properties(test_diagnostic_report_generator PROPERTIES
         AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
     )
     target_link_libraries(test_diagnostic_report_generator PRIVATE
         Qt6::Core Qt6::Test ${PLATFORM_LIBS}
@@ -282,7 +304,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_cpu_benchmark_worker.cpp")
     )
     set_target_properties(test_cpu_benchmark_worker PROPERTIES
         AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
     )
     target_link_libraries(test_cpu_benchmark_worker PRIVATE
         Qt6::Core Qt6::Concurrent Qt6::Test ZLIB::ZLIB ${PLATFORM_LIBS}
@@ -309,7 +331,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_disk_benchmark_worker.cpp")
     )
     set_target_properties(test_disk_benchmark_worker PROPERTIES
         AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
     )
     target_link_libraries(test_disk_benchmark_worker PRIVATE
         Qt6::Core Qt6::Test ${PLATFORM_LIBS}
@@ -334,7 +356,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_memory_benchmark_worker.cpp")
     )
     set_target_properties(test_memory_benchmark_worker PROPERTIES
         AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
     )
     target_link_libraries(test_memory_benchmark_worker PRIVATE
         Qt6::Core Qt6::Test ${PLATFORM_LIBS}
@@ -363,7 +385,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_stress_test_worker.cpp")
     )
     set_target_properties(test_stress_test_worker PROPERTIES
         AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
     )
     target_link_libraries(test_stress_test_worker PRIVATE
         Qt6::Core Qt6::Concurrent Qt6::Test ${PLATFORM_LIBS}
@@ -392,7 +414,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_encryption.cpp")
     )
     set_target_properties(test_encryption PROPERTIES
         AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
     )
     target_link_libraries(test_encryption PRIVATE
         Qt6::Core Qt6::Test ${PLATFORM_LIBS}
@@ -414,7 +436,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_file_hash.cpp")
     )
     set_target_properties(test_file_hash PROPERTIES
         AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
     )
     target_link_libraries(test_file_hash PRIVATE
         Qt6::Core Qt6::Test ${PLATFORM_LIBS}
@@ -436,7 +458,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_path_utils.cpp")
     )
     set_target_properties(test_path_utils PROPERTIES
         AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
     )
     target_link_libraries(test_path_utils PRIVATE
         Qt6::Core Qt6::Test ${PLATFORM_LIBS}
@@ -458,7 +480,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_secure_memory.cpp")
     )
     set_target_properties(test_secure_memory PROPERTIES
         AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
     )
     target_link_libraries(test_secure_memory PRIVATE
         Qt6::Core Qt6::Test ${PLATFORM_LIBS}
@@ -480,7 +502,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_input_validator.cpp")
     )
     set_target_properties(test_input_validator PROPERTIES
         AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
     )
     target_link_libraries(test_input_validator PRIVATE
         Qt6::Core Qt6::Test ${PLATFORM_LIBS}
@@ -512,7 +534,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_decompressor_factory.cpp")
     )
     set_target_properties(test_decompressor_factory PROPERTIES
         AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
     )
     target_link_libraries(test_decompressor_factory PRIVATE
         Qt6::Core Qt6::Test ZLIB::ZLIB BZip2::BZip2 LibLZMA::LibLZMA ${PLATFORM_LIBS}
@@ -535,7 +557,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_config_manager.cpp")
     )
     set_target_properties(test_config_manager PROPERTIES
         AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
     )
     target_link_libraries(test_config_manager PRIVATE
         Qt6::Core Qt6::Test ${PLATFORM_LIBS}
@@ -558,7 +580,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_smart_file_filter.cpp")
     )
     set_target_properties(test_smart_file_filter PROPERTIES
         AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
     )
     target_link_libraries(test_smart_file_filter PRIVATE
         Qt6::Core Qt6::Test ${PLATFORM_LIBS}
@@ -581,7 +603,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_file_scanner.cpp")
     )
     set_target_properties(test_file_scanner PROPERTIES
         AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
     )
     target_link_libraries(test_file_scanner PRIVATE
         Qt6::Core Qt6::Test ${PLATFORM_LIBS}
@@ -603,7 +625,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_process_runner.cpp")
     )
     set_target_properties(test_process_runner PROPERTIES
         AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
     )
     target_link_libraries(test_process_runner PRIVATE
         Qt6::Core Qt6::Test ${PLATFORM_LIBS}
@@ -628,7 +650,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_smart_disk_analyzer.cpp")
     )
     set_target_properties(test_smart_disk_analyzer PROPERTIES
         AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
     )
     target_link_libraries(test_smart_disk_analyzer PRIVATE
         Qt6::Core Qt6::Test ${PLATFORM_LIBS}
@@ -655,7 +677,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_package_matcher.cpp")
     )
     set_target_properties(test_package_matcher PROPERTIES
         AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
     )
     target_link_libraries(test_package_matcher PRIVATE
         Qt6::Core Qt6::Test Qt6::Concurrent ${PLATFORM_LIBS}
@@ -680,7 +702,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_drive_scanner.cpp")
     )
     set_target_properties(test_drive_scanner PROPERTIES
         AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
     )
     target_link_libraries(test_drive_scanner PRIVATE
         Qt6::Core Qt6::Test ${PLATFORM_LIBS}
@@ -702,7 +724,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_permission_manager.cpp")
     )
     set_target_properties(test_permission_manager PROPERTIES
         AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
     )
     target_link_libraries(test_permission_manager PRIVATE
         Qt6::Core Qt6::Test ${PLATFORM_LIBS}
@@ -724,7 +746,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_elevation_manager.cpp")
     )
     set_target_properties(test_elevation_manager PROPERTIES
         AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
     )
     target_link_libraries(test_elevation_manager PRIVATE
         Qt6::Core Qt6::Test ${PLATFORM_LIBS}
@@ -756,7 +778,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_streaming_decompressor.cpp")
     )
     set_target_properties(test_streaming_decompressor PROPERTIES
         AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
     )
     target_link_libraries(test_streaming_decompressor PRIVATE
         Qt6::Core Qt6::Test ZLIB::ZLIB BZip2::BZip2 LibLZMA::LibLZMA ${PLATFORM_LIBS}
@@ -777,7 +799,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_logger.cpp")
     )
     set_target_properties(test_logger PROPERTIES
         AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
     )
     target_link_libraries(test_logger PRIVATE
         Qt6::Core Qt6::Test ${PLATFORM_LIBS}
@@ -804,7 +826,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_install_script_parser.cpp")
     )
     set_target_properties(test_install_script_parser PROPERTIES
         AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
     )
     target_link_libraries(test_install_script_parser PRIVATE
         Qt6::Core Qt6::Test ${PLATFORM_LIBS}
@@ -829,7 +851,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_script_rewriter.cpp")
     )
     set_target_properties(test_script_rewriter PROPERTIES
         AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
     )
     target_link_libraries(test_script_rewriter PRIVATE
         Qt6::Core Qt6::Test ${PLATFORM_LIBS}
@@ -852,7 +874,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_package_list_manager.cpp")
     )
     set_target_properties(test_package_list_manager PROPERTIES
         AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
     )
     target_link_libraries(test_package_list_manager PRIVATE
         Qt6::Core Qt6::Test ${PLATFORM_LIBS}
@@ -875,7 +897,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_nuget_api_client.cpp")
     )
     set_target_properties(test_nuget_api_client PROPERTIES
         AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
     )
     target_link_libraries(test_nuget_api_client PRIVATE
         Qt6::Core Qt6::Test Qt6::Network Qt6::Xml ${PLATFORM_LIBS}
@@ -900,7 +922,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/integration/test_uup_conversion_pipeline.
 
     set_target_properties(test_uup_conversion_pipeline PROPERTIES
         AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
     )
 
     target_link_libraries(test_uup_conversion_pipeline PRIVATE
@@ -975,7 +997,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/actions/test_action_factory.cpp")
 
     set_target_properties(test_action_factory PROPERTIES
         AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
     )
 
     target_link_libraries(test_action_factory PRIVATE
@@ -1007,7 +1029,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_flash_types.cpp")
     )
     set_target_properties(test_flash_types PROPERTIES
         AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
     )
     target_link_libraries(test_flash_types PRIVATE
         Qt6::Core Qt6::Test
@@ -1030,7 +1052,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_quick_action.cpp")
     )
     set_target_properties(test_quick_action PROPERTIES
         AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
     )
     target_link_libraries(test_quick_action PRIVATE
         Qt6::Core Qt6::Gui Qt6::Test ${PLATFORM_LIBS}
@@ -1052,7 +1074,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_user_profile_types.cpp")
     )
     set_target_properties(test_user_profile_types PROPERTIES
         AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
     )
     target_link_libraries(test_user_profile_types PRIVATE
         Qt6::Core Qt6::Test ${PLATFORM_LIBS}
@@ -1077,7 +1099,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_user_data_manager.cpp")
     )
     set_target_properties(test_user_data_manager PROPERTIES
         AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
     )
     target_link_libraries(test_user_data_manager PRIVATE
         Qt6::Core Qt6::Test ${PLATFORM_LIBS}
@@ -1104,7 +1126,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_duplicate_finder_worker.cpp")
     )
     set_target_properties(test_duplicate_finder_worker PROPERTIES
         AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
     )
     target_link_libraries(test_duplicate_finder_worker PRIVATE
         Qt6::Core Qt6::Test Qt6::Concurrent ${PLATFORM_LIBS}
@@ -1130,7 +1152,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_organizer_worker.cpp")
     )
     set_target_properties(test_organizer_worker PROPERTIES
         AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
     )
     target_link_libraries(test_organizer_worker PRIVATE
         Qt6::Core Qt6::Test Qt6::Concurrent ${PLATFORM_LIBS}
@@ -1162,7 +1184,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_app_installation_worker.cpp")
     )
     set_target_properties(test_app_installation_worker PROPERTIES
         AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
     )
     target_link_libraries(test_app_installation_worker PRIVATE
         Qt6::Core Qt6::Test Qt6::Concurrent Qt6::Network ${PLATFORM_LIBS}
@@ -1195,7 +1217,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_user_profile_restore_worker.cpp
     )
     set_target_properties(test_user_profile_restore_worker PROPERTIES
         AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
     )
     target_link_libraries(test_user_profile_restore_worker PRIVATE
         Qt6::Core Qt6::Test ${PLATFORM_LIBS}
@@ -1219,7 +1241,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_windows_usb_creator.cpp")
     )
     set_target_properties(test_windows_usb_creator PROPERTIES
         AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
     )
     target_link_libraries(test_windows_usb_creator PRIVATE
         Qt6::Core Qt6::Test ${PLATFORM_LIBS}
@@ -1258,7 +1280,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_flash_worker.cpp")
     )
     set_target_properties(test_flash_worker PROPERTIES
         AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
     )
     target_link_libraries(test_flash_worker PRIVATE
         Qt6::Core Qt6::Test ZLIB::ZLIB BZip2::BZip2 LibLZMA::LibLZMA ${PLATFORM_LIBS}
@@ -1290,7 +1312,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_quick_action_result_io.cpp")
     )
     set_target_properties(test_quick_action_result_io PROPERTIES
         AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
     )
     target_link_libraries(test_quick_action_result_io PRIVATE
         Qt6::Core Qt6::Gui Qt6::Test ${PLATFORM_LIBS}
@@ -1320,7 +1342,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_quick_action_controller.cpp")
     )
     set_target_properties(test_quick_action_controller PROPERTIES
         AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
     )
     target_link_libraries(test_quick_action_controller PRIVATE
         Qt6::Core Qt6::Gui Qt6::Test ${PLATFORM_LIBS}
@@ -1350,7 +1372,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_migration_report.cpp")
     )
     set_target_properties(test_migration_report PROPERTIES
         AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
     )
     target_link_libraries(test_migration_report PRIVATE
         Qt6::Core Qt6::Test Qt6::Concurrent Qt6::Network ${PLATFORM_LIBS}
@@ -1373,7 +1395,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_linux_distro_catalog.cpp")
     )
     set_target_properties(test_linux_distro_catalog PROPERTIES
         AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
     )
     target_link_libraries(test_linux_distro_catalog PRIVATE
         Qt6::Core Qt6::Test Qt6::Network ${PLATFORM_LIBS}
@@ -1418,7 +1440,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_flash_coordinator.cpp")
     )
     set_target_properties(test_flash_coordinator PROPERTIES
         AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
     )
     target_link_libraries(test_flash_coordinator PRIVATE
         Qt6::Core Qt6::Test ZLIB::ZLIB BZip2::BZip2 LibLZMA::LibLZMA ${PLATFORM_LIBS}
@@ -1451,7 +1473,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_user_profile_backup_worker.cpp"
     )
     set_target_properties(test_user_profile_backup_worker PROPERTIES
         AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
     )
     target_link_libraries(test_user_profile_backup_worker PRIVATE
         Qt6::Core Qt6::Test ${PLATFORM_LIBS}
@@ -1478,7 +1500,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_uup_iso_builder.cpp")
     )
     set_target_properties(test_uup_iso_builder PROPERTIES
         AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
     )
     target_link_libraries(test_uup_iso_builder PRIVATE
         Qt6::Core Qt6::Test Qt6::Network ${PLATFORM_LIBS}
@@ -1541,7 +1563,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/actions/test_all_actions_metadata.cp
 
     set_target_properties(test_all_actions_metadata PROPERTIES
         AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
     )
     target_link_libraries(test_all_actions_metadata PRIVATE
         Qt6::Core Qt6::Test Qt6::Widgets ${PLATFORM_LIBS}
@@ -1565,7 +1587,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_advanced_search_types.cpp")
     )
     set_target_properties(test_advanced_search_types PROPERTIES
         AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
     )
     target_link_libraries(test_advanced_search_types PRIVATE
         Qt6::Core Qt6::Test
@@ -1588,7 +1610,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_regex_pattern_library.cpp")
     )
     set_target_properties(test_regex_pattern_library PROPERTIES
         AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
     )
     target_link_libraries(test_regex_pattern_library PRIVATE
         Qt6::Core Qt6::Test
@@ -1613,7 +1635,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_advanced_search_worker.cpp")
     )
     set_target_properties(test_advanced_search_worker PROPERTIES
         AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
     )
     target_link_libraries(test_advanced_search_worker PRIVATE
         Qt6::Core Qt6::Gui Qt6::Test ZLIB::ZLIB
@@ -1644,7 +1666,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_advanced_search_controller.cpp"
     )
     set_target_properties(test_advanced_search_controller PROPERTIES
         AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
     )
     target_link_libraries(test_advanced_search_controller PRIVATE
         Qt6::Core Qt6::Gui Qt6::Test ZLIB::ZLIB
@@ -1668,7 +1690,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_advanced_uninstall_types.cpp")
     )
     set_target_properties(test_advanced_uninstall_types PROPERTIES
         AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
     )
     target_link_libraries(test_advanced_uninstall_types PRIVATE
         Qt6::Core Qt6::Gui Qt6::Test
@@ -1708,7 +1730,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_advanced_uninstall_controller.c
     )
     set_target_properties(test_advanced_uninstall_controller PROPERTIES
         AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
     )
     target_link_libraries(test_advanced_uninstall_controller PRIVATE
         Qt6::Core Qt6::Gui Qt6::Test ${PLATFORM_LIBS}
@@ -1733,7 +1755,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_leftover_scanner.cpp")
     )
     set_target_properties(test_leftover_scanner PROPERTIES
         AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
     )
     target_link_libraries(test_leftover_scanner PRIVATE
         Qt6::Core Qt6::Gui Qt6::Test ${PLATFORM_LIBS}
@@ -1756,7 +1778,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_registry_snapshot_engine.cpp")
     )
     set_target_properties(test_registry_snapshot_engine PROPERTIES
         AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
     )
     target_link_libraries(test_registry_snapshot_engine PRIVATE
         Qt6::Core Qt6::Gui Qt6::Test ${PLATFORM_LIBS}
@@ -1780,7 +1802,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_network_diagnostic_types.cpp")
     )
     set_target_properties(test_network_diagnostic_types PROPERTIES
         AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
     )
     target_link_libraries(test_network_diagnostic_types PRIVATE
         Qt6::Core Qt6::Test
@@ -1806,7 +1828,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_network_diagnostic_utils.cpp")
     )
     set_target_properties(test_network_diagnostic_utils PROPERTIES
         AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
     )
     target_link_libraries(test_network_diagnostic_utils PRIVATE
         Qt6::Core Qt6::Network Qt6::Test ${PLATFORM_LIBS}
@@ -1828,7 +1850,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_network_diagnostic_report.cpp")
     )
     set_target_properties(test_network_diagnostic_report PROPERTIES
         AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
     )
     target_link_libraries(test_network_diagnostic_report PRIVATE
         Qt6::Core Qt6::Test
@@ -1852,7 +1874,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_format_utils.cpp")
     )
     set_target_properties(test_format_utils PROPERTIES
         AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
     )
     target_link_libraries(test_format_utils PRIVATE
         Qt6::Core Qt6::Test
@@ -1875,7 +1897,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_wifi_profile_scanner.cpp")
     )
     set_target_properties(test_wifi_profile_scanner PROPERTIES
         AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
     )
     target_link_libraries(test_wifi_profile_scanner PRIVATE
         Qt6::Core Qt6::Test ${PLATFORM_LIBS}
@@ -1899,7 +1921,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_email_types.cpp")
     )
     set_target_properties(test_email_types PROPERTIES
         AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
     )
     target_link_libraries(test_email_types PRIVATE
         Qt6::Core Qt6::Test
@@ -1922,7 +1944,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_pst_parser.cpp")
     )
     set_target_properties(test_pst_parser PROPERTIES
         AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
     )
     target_link_libraries(test_pst_parser PRIVATE
         Qt6::Core Qt6::Test ${PLATFORM_LIBS}
@@ -1945,7 +1967,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/integration/test_ost_integration.cpp")
     )
     set_target_properties(test_ost_integration PROPERTIES
         AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
     )
     target_link_libraries(test_ost_integration PRIVATE
         Qt6::Core Qt6::Test ${PLATFORM_LIBS}
@@ -1968,7 +1990,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_mbox_parser.cpp")
     )
     set_target_properties(test_mbox_parser PROPERTIES
         AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
     )
     target_link_libraries(test_mbox_parser PRIVATE
         Qt6::Core Qt6::Test ${PLATFORM_LIBS}
@@ -1995,7 +2017,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_email_search_worker.cpp")
     )
     set_target_properties(test_email_search_worker PROPERTIES
         AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
     )
     target_link_libraries(test_email_search_worker PRIVATE
         Qt6::Core Qt6::Test ${PLATFORM_LIBS}
@@ -2022,7 +2044,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_email_export_worker.cpp")
     )
     set_target_properties(test_email_export_worker PROPERTIES
         AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
     )
     target_link_libraries(test_email_export_worker PRIVATE
         Qt6::Core Qt6::Test ${PLATFORM_LIBS}
@@ -2045,7 +2067,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_email_profile_manager.cpp")
     )
     set_target_properties(test_email_profile_manager PROPERTIES
         AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
     )
     target_link_libraries(test_email_profile_manager PRIVATE
         Qt6::Core Qt6::Test ${PLATFORM_LIBS}
@@ -2068,7 +2090,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_email_report_generator.cpp")
     )
     set_target_properties(test_email_report_generator PROPERTIES
         AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
     )
     target_link_libraries(test_email_report_generator PRIVATE
         Qt6::Core Qt6::Test ${PLATFORM_LIBS}
@@ -2099,7 +2121,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/integration/test_offline_package_builder.
     )
     set_target_properties(test_offline_package_builder PROPERTIES
         AUTOMOC ON
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
     )
     target_link_libraries(test_offline_package_builder PRIVATE
         Qt6::Core Qt6::Test Qt6::Network Qt6::Xml Qt6::Concurrent ${PLATFORM_LIBS}

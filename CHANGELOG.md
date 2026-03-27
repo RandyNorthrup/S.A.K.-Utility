@@ -6,6 +6,14 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+## v0.9.1.0
+
+- **Comprehensive documentation accuracy audit** — Verified all in-app About panel feature descriptions, wizard welcome pages, README highlights, CHANGELOG entries, and build script claims against the actual codebase. All feature descriptions confirmed accurate. Corrected header file count (142 headers including action headers), corrected README test count reference (74 automated tests).
+- **Version bump** — Release milestone v0.9.1.0.
+- **Build quality** — Clean MSVC `/W4 /WX` build, 75 automated tests (all passing), 138 source files, 142 headers.
+
+---
+
 ## v0.9.0.9
 
 - **Email inspector HTML/text slider toggle** — Replaced the plain-text/HTML toggle button with a `LogToggleSwitch` slider, repositioned to the bottom row alongside the log toggle for a cleaner layout.
