@@ -83,6 +83,15 @@ void ThermalMonitor::clearHistory() {
     m_history.clear();
 }
 
+bool ThermalMonitor::hasCpuTemperature() const {
+    for (const auto& reading : m_history) {
+        if (reading.component == QLatin1String("CPU Package")) {
+            return true;
+        }
+    }
+    return false;
+}
+
 // ============================================================================
 // Timer Callback (main thread)
 // ============================================================================

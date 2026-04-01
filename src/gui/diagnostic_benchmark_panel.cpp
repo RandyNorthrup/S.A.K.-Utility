@@ -947,6 +947,7 @@ QGroupBox* DiagnosticBenchmarkPanel::createSystemMaintenanceSection() {
                 tr("Generate comprehensive system diagnostic report"),
                 QStringLiteral("Generate System Report"));
 
+
     btn_layout->addStretch();
     layout->addLayout(btn_layout);
 

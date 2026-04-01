@@ -4,6 +4,7 @@
 #include "sak/uup_iso_builder.h"
 
 #include "sak/bundled_tools_manager.h"
+#include "sak/elevation_manager.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
 #include "sak/network_constants.h"
@@ -1083,29 +1084,7 @@ void UupIsoBuilder::onConverterFinished(int exitCode, QProcess::ExitStatus exitS
 // ============================================================================
 
 bool UupIsoBuilder::isRunningAsAdmin() {
-#ifdef Q_OS_WIN
-    BOOL isAdmin = FALSE;
-    PSID adminGroup = nullptr;
-    SID_IDENTIFIER_AUTHORITY ntAuthority = SECURITY_NT_AUTHORITY;
-
-    if (AllocateAndInitializeSid(&ntAuthority,
-                                 2,
-                                 SECURITY_BUILTIN_DOMAIN_RID,
-                                 DOMAIN_ALIAS_RID_ADMINS,
-                                 0,
-                                 0,
-                                 0,
-                                 0,
-                                 0,
-                                 0,
-                                 &adminGroup)) {
-        CheckTokenMembership(nullptr, adminGroup, &isAdmin);
-        FreeSid(adminGroup);
-    }
-    return isAdmin != FALSE;
-#else
-    return geteuid() == 0;
-#endif
+    return sak::ElevationManager::isElevated();
 }
 
 void UupIsoBuilder::cleanupWorkDir() {

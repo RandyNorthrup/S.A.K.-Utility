@@ -15,6 +15,8 @@
 
 namespace sak {
 
+class ElevationBroker;
+
 /**
  * @brief Controls quick action execution and threading
  *
@@ -80,13 +82,6 @@ public:
      * @return True if running as administrator
      */
     static bool hasAdminPrivileges();
-
-    /**
-     * @brief Request admin elevation
-     * @param reason Reason for elevation (shown to user)
-     * @return True if elevation successful
-     */
-    static bool requestAdminElevation(const QString& reason);
 
     /**
      * @brief Set backup location for elevated runs
@@ -239,6 +234,9 @@ private:
 
     // Backup location
     QString m_backup_location;
+
+    // Elevation broker (lazy-initialized on first elevated task)
+    ElevationBroker* m_broker{nullptr};
 };
 
 }  // namespace sak

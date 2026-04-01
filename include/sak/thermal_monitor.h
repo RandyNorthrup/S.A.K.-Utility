@@ -77,6 +77,10 @@ public:
     /// @note Shared utility -- also used by StressTestWorker
     [[nodiscard]] static double queryCpuTemperature();
 
+    /// @brief Check if the last poll included CPU temperature data
+    /// @return true if the most recent readings contain a CPU sensor
+    [[nodiscard]] bool hasCpuTemperature() const;
+
 Q_SIGNALS:
     /// @brief Emitted at each poll interval with current readings
     /// @param readings Current temperature for all detected sensors

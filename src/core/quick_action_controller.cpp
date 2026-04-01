@@ -3,6 +3,7 @@
 
 #include "sak/quick_action_controller.h"
 
+#include "sak/elevation_broker.h"
 #include "sak/elevation_manager.h"
 #include "sak/logger.h"
 #include "sak/quick_action_result_io.h"
@@ -13,13 +14,6 @@
 #include <QFile>
 #include <QStandardPaths>
 #include <QTextStream>
-#include <QUuid>
-
-#ifdef _WIN32
-#include <windows.h>
-
-#include <shellapi.h>
-#endif
 
 namespace sak {
 
@@ -141,40 +135,6 @@ bool QuickActionController::hasAdminPrivileges() {
     return ElevationManager::isElevated();
 }
 
-bool QuickActionController::requestAdminElevation(const QString& reason) {
-    Q_ASSERT(!reason.isEmpty());
-#ifdef _WIN32
-    // Show elevation prompt with reason
-    QString app_path = QCoreApplication::applicationFilePath();
-    QString params = QString("--elevated --reason \"%1\"").arg(reason);
-
-    SHELLEXECUTEINFOW sei = {};
-    sei.cbSize = sizeof(SHELLEXECUTEINFOW);
-    sei.fMask = SEE_MASK_NOCLOSEPROCESS;
-    sei.lpVerb = L"runas";
-    sei.lpFile = reinterpret_cast<LPCWSTR>(app_path.utf16());
-    sei.lpParameters = reinterpret_cast<LPCWSTR>(params.utf16());
-    sei.nShow = SW_SHOWNORMAL;
-
-    if (ShellExecuteExW(&sei)) {
-        if (sei.hProcess) {
-            WaitForSingleObject(sei.hProcess, INFINITE);
-            DWORD exit_code = 0;
-            GetExitCodeProcess(sei.hProcess, &exit_code);
-            CloseHandle(sei.hProcess);
-            return exit_code == 0;
-        }
-        return true;
-    }
-    sak::logError("ShellExecuteExW failed for elevation request: GetLastError={}",
-                  static_cast<unsigned long>(GetLastError()));
-    return false;
-#else
-    Q_UNUSED(reason)
-    return false;
-#endif
-}
-
 void QuickActionController::scanAction(const QString& action_name) {
     Q_ASSERT(!action_name.isEmpty());
     QuickAction* action = getAction(action_name);
@@ -241,56 +201,56 @@ void QuickActionController::executeElevatedAction(QuickAction* action, const QSt
     Q_EMIT actionExecutionStarted(action);
     action->updateStatus(QuickAction::ActionStatus::Running);
     Q_EMIT actionExecutionProgress(action, "Requesting administrator approval...", 5);
-    logOperation(action, "Requesting administrator elevation");
+    logOperation(action, "Requesting administrator elevation via helper");
 
-    QString temp_dir = QStandardPaths::writableLocation(QStandardPaths::TempLocation);
-    if (!QDir().mkpath(temp_dir)) {
-        sak::logWarning("Failed to create temp directory: {}", temp_dir.toStdString());
-    }
-    QString safe_name = action->name();
-    safe_name.replace(' ', '_');
-    QString result_file =
-        QDir(temp_dir).filePath(QString("sak_quick_action_%1_%2.json")
-                                    .arg(safe_name, QUuid::createUuid().toString(QUuid::Id128)));
-
-    QString backup_location = m_backup_location.isEmpty() ? "C:/SAK_Backups" : m_backup_location;
-
-    QStringList args;
-    args << "--run-quick-action" << action->name() << "--backup-location" << backup_location
-         << "--result-file" << result_file;
-
-    QString arg_string;
-    for (const auto& arg : args) {
-        if (!arg_string.isEmpty()) {
-            arg_string += ' ';
-        }
-        QString escaped = arg;
-        escaped.replace('"', "\\\"");
-        arg_string += escaped.contains(' ') ? QString("\"%1\"").arg(escaped) : escaped;
+    // Lazy-initialize the elevation broker
+    if (!m_broker) {
+        m_broker = new ElevationBroker(this);
+        connect(m_broker,
+                &ElevationBroker::progressUpdated,
+                this,
+                [this](int percent, const QString& status) {
+                    if (m_current_execution_action) {
+                        Q_EMIT actionExecutionProgress(m_current_execution_action, status, percent);
+                    }
+                });
     }
 
-    const QString exe_path = QCoreApplication::applicationFilePath();
-    auto elevation_result =
-        ElevationManager::executeElevated(exe_path.toStdWString(), arg_string.toStdWString(), true);
+    // Build task payload
+    QJsonObject payload;
+    if (action_name == "Backup BitLocker Keys") {
+        QString backup_location = m_backup_location.isEmpty() ? "C:/SAK_Backups"
+                                                              : m_backup_location;
+        payload["backup_location"] = backup_location;
+    }
+
+    auto broker_result = m_broker->executeTask(action_name, action_name, payload);
 
     QuickAction::ExecutionResult result;
     QuickAction::ActionStatus status = QuickAction::ActionStatus::Failed;
 
-    if (!elevation_result) {
-        result.success = false;
-        result.message = "Administrator privileges required but not granted";
-        result.log = "Elevation request failed or was cancelled";
+    if (broker_result) {
+        result.success = broker_result->success;
+        result.message = broker_result->data["message"].toString();
+        result.log = broker_result->data["log"].toString();
+        status = static_cast<QuickAction::ActionStatus>(broker_result->data["status"].toInt(
+            static_cast<int>(QuickAction::ActionStatus::Failed)));
+        if (!broker_result->success && result.message.isEmpty()) {
+            result.message = broker_result->error_message;
+        }
     } else {
-        QString error_message;
-        if (!readExecutionResultFile(result_file, &result, &status, &error_message)) {
-            result.success = false;
-            result.message = "Failed to read elevated action result";
-            result.log = error_message;
-            status = QuickAction::ActionStatus::Failed;
+        result.success = false;
+        auto error = broker_result.error();
+        if (error == sak::error_code::elevation_denied) {
+            result.message = "Administrator privileges required but not granted";
+            result.log = "User cancelled the UAC prompt";
+        } else {
+            result.message = QString("Elevated helper error: %1")
+                                 .arg(QString::fromStdString(std::string(sak::to_string(error))));
+            result.log = result.message;
         }
     }
 
-    QFile::remove(result_file);
     action->applyExecutionResult(result, status);
     onExecutionComplete();
 }

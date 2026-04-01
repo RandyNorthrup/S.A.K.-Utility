@@ -9,6 +9,7 @@
 #include "sak/app_installation_worker.h"
 #include "sak/chocolatey_manager.h"
 #include "sak/detachable_log_window.h"
+#include "sak/elevation_banner.h"
 #include "sak/install_summary_dialog.h"
 #include "sak/logger.h"
 #include "sak/migration_report.h"
@@ -99,6 +100,11 @@ void AppInstallationPanel::setupUi() {
 
     scrollArea->setWidget(contentWidget);
     rootLayout->addWidget(scrollArea);
+
+    // Elevation info banner (hidden when already admin)
+    if (auto* banner = sak::createElevationBanner(contentWidget)) {
+        mainLayout->addWidget(banner);
+    }
 
     // === Tab Widget: Online Install | Offline Deploy ===
     m_tabWidget = new QTabWidget(this);

@@ -12,9 +12,11 @@
 #include "sak/config_manager.h"
 #include "sak/detachable_log_window.h"
 #include "sak/diagnostic_benchmark_panel.h"
+#include "sak/elevation_manager.h"
 #include "sak/email_inspector_panel.h"
 #include "sak/image_flasher_panel.h"
 #include "sak/layout_constants.h"
+#include "sak/logger.h"
 #include "sak/network_diagnostic_panel.h"
 #include "sak/organizer_panel.h"
 #include "sak/style_constants.h"
@@ -386,6 +388,58 @@ void MainWindow::createStatusBar() {
     m_progress_bar->setTextVisible(true);
     m_progress_bar->setVisible(false);
     statusBar()->addPermanentWidget(m_progress_bar);
+
+    // Elevation status indicator
+    m_elevation_label = new QWidget(this);
+    auto* elev_layout = new QHBoxLayout(m_elevation_label);
+    elev_layout->setContentsMargins(6, 0, 6, 0);
+    elev_layout->setSpacing(4);
+    auto* elev_icon = new QLabel(m_elevation_label);
+    auto* elev_text = new QLabel(m_elevation_label);
+    if (ElevationManager::isElevated()) {
+        elev_icon->setPixmap(
+            QIcon(QStringLiteral(":/icons/icons/icons8-keyhole-shield.svg")).pixmap(16, 16));
+        elev_text->setText(tr("Administrator"));
+        m_elevation_label->setToolTip(tr("Running with administrator privileges"));
+    } else {
+        elev_icon->setPixmap(QIcon(QStringLiteral(":/icons/icons/icons8-lock.svg")).pixmap(16, 16));
+        elev_text->setText(tr("Standard"));
+        m_elevation_label->setToolTip(
+            tr("Running as standard user. Some features will prompt "
+               "for elevation."));
+    }
+    elev_layout->addWidget(elev_icon);
+    elev_layout->addWidget(elev_text);
+    statusBar()->addPermanentWidget(m_elevation_label);
+
+    // "Restart as Administrator" button (only when not already elevated)
+    if (!ElevationManager::isElevated()) {
+        auto* elevate_btn = new QPushButton(this);
+        elevate_btn->setText(tr("Run as Admin"));
+        elevate_btn->setToolTip(tr("Restart S.A.K. Utility with administrator privileges"));
+        elevate_btn->setFlat(true);
+        elevate_btn->setCursor(Qt::PointingHandCursor);
+        elevate_btn->setStyleSheet(
+            QStringLiteral("QPushButton { border: none; padding: 2px 6px; "
+                           "color: black; font-size: %1pt; }"
+                           "QPushButton:hover { text-decoration: underline; }")
+                .arg(sak::ui::kFontSizeBody));
+        connect(elevate_btn, &QPushButton::clicked, this, [this]() {
+            auto result = ElevationManager::restartElevated();
+            if (result) {
+                QCoreApplication::quit();
+            } else {
+                sak::logError("Failed to restart elevated from status bar: {}",
+                              to_string(result.error()));
+                QMessageBox::critical(this,
+                                      tr("Elevation Failed"),
+                                      tr("Failed to restart with administrator privileges.\n\n"
+                                         "Try right-clicking the application and selecting "
+                                         "\"Run as administrator\"."));
+            }
+        });
+        statusBar()->addPermanentWidget(elevate_btn);
+    }
 }
 
 void MainWindow::createPanels() {

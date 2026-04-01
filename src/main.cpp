@@ -4,18 +4,9 @@
 /// @file main.cpp
 /// @brief SAK Utility main entry point
 
-#include "sak/actions/backup_bitlocker_keys_action.h"
-#include "sak/actions/check_disk_errors_action.h"
-#include "sak/actions/generate_system_report_action.h"
-#include "sak/actions/optimize_power_settings_action.h"
-#include "sak/actions/reset_network_action.h"
-#include "sak/actions/screenshot_settings_action.h"
-#include "sak/actions/verify_system_files_action.h"
 #include "sak/error_codes.h"
 #include "sak/logger.h"
 #include "sak/main_window.h"
-#include "sak/quick_action_controller.h"
-#include "sak/quick_action_result_io.h"
 #include "sak/splash_screen.h"
 #include "sak/version.h"
 #include "sak/windows11_theme.h"
@@ -25,7 +16,6 @@
 #include <QFileInfo>
 #include <QIcon>
 #include <QMessageBox>
-#include <QStandardPaths>
 
 #include <algorithm>
 #include <filesystem>
@@ -58,73 +48,6 @@ QString findIconPath() {
         return QFileInfo::exists(p);
     });
     return it != candidates.end() ? *it : QString{};
-}
-
-/// @brief Write an execution result file if a result file path was provided.
-void writeResultIfNeeded(const QString& result_file,
-                         const sak::QuickAction::ExecutionResult& result,
-                         sak::QuickAction::ActionStatus status) {
-    if (result_file.isEmpty()) {
-        return;
-    }
-    QString error_message;
-    if (!sak::writeExecutionResultFile(result_file, result, status, &error_message)) {
-        sak::logWarning("Failed to write result file: {}", error_message.toStdString());
-    }
-}
-
-/// @brief Run a quick action in headless/elevated mode and return exit code.
-int runElevatedQuickAction(QApplication& app,
-                           const QString& action_to_run,
-                           const QString& backup_location,
-                           const QString& result_file) {
-    sak::logInfo("Running elevated quick action: {}", action_to_run.toStdString());
-
-    sak::QuickActionController controller;
-    controller.setBackupLocation(backup_location);
-
-    QObject::connect(&controller,
-                     &sak::QuickActionController::logMessage,
-                     [](const QString& message) { sak::logInfo("{}", message.toStdString()); });
-
-    auto actions = std::vector<std::unique_ptr<sak::QuickAction>>{};
-    actions.push_back(std::make_unique<sak::BackupBitlockerKeysAction>(backup_location));
-    actions.push_back(std::make_unique<sak::CheckDiskErrorsAction>());
-    actions.push_back(std::make_unique<sak::GenerateSystemReportAction>(backup_location));
-    actions.push_back(std::make_unique<sak::OptimizePowerSettingsAction>());
-    actions.push_back(std::make_unique<sak::ResetNetworkAction>());
-    actions.push_back(std::make_unique<sak::ScreenshotSettingsAction>(backup_location));
-    actions.push_back(std::make_unique<sak::VerifySystemFilesAction>());
-    for (auto& action : actions) {
-        controller.registerAction(std::move(action));
-    }
-
-    sak::QuickAction* action = controller.getAction(action_to_run);
-    if (!action) {
-        sak::QuickAction::ExecutionResult result;
-        result.success = false;
-        result.message = "Action not found";
-        result.log = QString("No action registered with name: %1").arg(action_to_run);
-        writeResultIfNeeded(result_file, result, sak::QuickAction::ActionStatus::Failed);
-        return 1;
-    }
-
-    QObject::connect(
-        &controller,
-        &sak::QuickActionController::actionExecutionComplete,
-        &app,
-        [&app, action, result_file](sak::QuickAction* completed) {
-            if (completed != action) {
-                return;
-            }
-            writeResultIfNeeded(result_file, action->lastExecutionResult(), action->status());
-            const int exit_code = action->lastExecutionResult().success ? 0 : 2;
-            app.exit(exit_code);
-        },
-        Qt::QueuedConnection);
-
-    controller.executeAction(action->name(), false);
-    return app.exec();
 }
 
 /// @brief Initialize the Qt application and apply theming.
@@ -181,30 +104,6 @@ void logStartupBanner() {
     sak::logInfo("===========================================");
 }
 
-/// @brief Parsed command-line arguments.
-struct CommandLineArgs {
-    QString action_to_run;
-    QString backup_location = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) +
-                              QStringLiteral("/SAK_Backups");
-    QString result_file;
-};
-
-/// @brief Parse command-line arguments.
-CommandLineArgs parseCommandLine(int argc, char* argv[]) {
-    CommandLineArgs args;
-    for (int i = 1; i < argc; ++i) {
-        const QString arg = QString::fromLocal8Bit(argv[i]);
-        if (arg == "--run-quick-action" && i + 1 < argc) {
-            args.action_to_run = QString::fromLocal8Bit(argv[++i]);
-        } else if (arg == "--backup-location" && i + 1 < argc) {
-            args.backup_location = QString::fromLocal8Bit(argv[++i]);
-        } else if (arg == "--result-file" && i + 1 < argc) {
-            args.result_file = QString::fromLocal8Bit(argv[++i]);
-        }
-    }
-    return args;
-}
-
 /// @brief Show splash screen and launch the main window.
 int showMainWindow(QApplication& app) {
     std::unique_ptr<sak::ui::SplashScreen> splash;
@@ -251,13 +150,6 @@ int main(int argc, char* argv[]) {
         }
 
         logStartupBanner();
-
-        CommandLineArgs cli = parseCommandLine(argc, argv);
-
-        if (!cli.action_to_run.isEmpty()) {
-            return runElevatedQuickAction(
-                app, cli.action_to_run, cli.backup_location, cli.result_file);
-        }
 
         return showMainWindow(app);
 

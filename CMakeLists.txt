@@ -340,6 +340,15 @@ set(CORE_SOURCES
     include/sak/encryption.h
     include/sak/keep_awake.h
     include/sak/elevation_manager.h
+    include/sak/elevation_gate.h
+    include/sak/elevation_tier.h
+    include/sak/elevated_pipe_protocol.h
+    include/sak/elevation_broker.h
+    src/core/elevation_broker.cpp
+    include/sak/elevated_pipe_server.h
+    src/core/elevated_pipe_server.cpp
+    include/sak/elevated_task_dispatcher.h
+    src/core/elevated_task_dispatcher.cpp
     include/sak/bundled_tools_manager.h
     include/sak/error_codes.h
     include/sak/aligned_buffer.h
@@ -668,6 +677,99 @@ target_include_directories(sak_utility PRIVATE
     ${CMAKE_CURRENT_BINARY_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/src/third_party/qrcodegen
 )
+
+# ============================================================================
+# Elevated Helper Executable (Phase 2 — per-task elevation)
+# ============================================================================
+
+if(PLATFORM_WINDOWS)
+    # Helper sources: action implementations + IPC layer + entry point
+    set(HELPER_SOURCES
+        src/elevated/elevated_helper_main.cpp
+        src/core/elevated_pipe_server.cpp
+        src/core/elevated_task_dispatcher.cpp
+        src/core/logger.cpp
+        src/core/quick_action.cpp
+        src/core/process_runner.cpp
+        src/core/permission_manager.cpp
+        src/core/elevation_manager.cpp
+        src/actions/verify_system_files_action.cpp
+        src/actions/check_disk_errors_action.cpp
+        src/actions/reset_network_action.cpp
+        src/actions/backup_bitlocker_keys_action.cpp
+        include/sak/elevated_pipe_protocol.h
+        include/sak/elevated_pipe_server.h
+        include/sak/elevated_task_dispatcher.h
+        include/sak/permission_manager.h
+        include/sak/quick_action.h
+        include/sak/actions/verify_system_files_action.h
+        include/sak/actions/check_disk_errors_action.h
+        include/sak/actions/reset_network_action.h
+        include/sak/actions/backup_bitlocker_keys_action.h
+    )
+
+    # Resource file for embedding the requireAdministrator manifest
+    configure_file(
+        "${CMAKE_CURRENT_SOURCE_DIR}/resources/sak_elevated_helper.manifest"
+        "${CMAKE_CURRENT_BINARY_DIR}/sak_elevated_helper.manifest"
+        COPYONLY
+    )
+
+    # Generate a minimal .rc that embeds the manifest
+    file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/sak_elevated_helper.rc"
+        "#include <winuser.h>\nCREATEPROCESS_MANIFEST_RESOURCE_ID RT_MANIFEST \"sak_elevated_helper.manifest\"\n"
+    )
+
+    add_executable(sak_elevated_helper
+        ${HELPER_SOURCES}
+        "${CMAKE_CURRENT_BINARY_DIR}/sak_elevated_helper.rc"
+    )
+
+    set_target_properties(sak_elevated_helper PROPERTIES
+        AUTOMOC ON
+        WIN32_EXECUTABLE FALSE
+    )
+
+    target_include_directories(sak_elevated_helper PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_BINARY_DIR}/include
+    )
+
+    target_link_libraries(sak_elevated_helper PRIVATE
+        Qt6::Core
+        Qt6::Gui
+        Threads::Threads
+        ${PLATFORM_LIBS}
+    )
+
+    target_compile_definitions(sak_elevated_helper PRIVATE
+        QT_NO_KEYWORDS
+        QT_DEPRECATED_WARNINGS
+        QT_DISABLE_DEPRECATED_BEFORE=0x060000
+    )
+
+    # Suppress linker-generated manifest — we embed via RC
+    if(MSVC)
+        set_target_properties(sak_elevated_helper PROPERTIES
+            LINK_FLAGS "/MANIFEST:NO"
+        )
+        string(FIND "${CMAKE_MSVC_RUNTIME_LIBRARY}" "DLL" _sak_helper_crt_pos)
+        if(_sak_helper_crt_pos EQUAL -1)
+            target_link_options(sak_elevated_helper PRIVATE
+                /NODEFAULTLIB:MSVCRT
+                /NODEFAULTLIB:MSVCRTD
+            )
+        endif()
+    endif()
+
+    # Copy helper to main output directory so they sit side-by-side
+    add_custom_command(TARGET sak_elevated_helper POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_FILE:sak_elevated_helper>
+            $<TARGET_FILE_DIR:sak_utility>/sak_elevated_helper.exe
+        COMMENT "Copying elevated helper next to sak_utility"
+    )
+endif()
 
 # Check for bundled smartmontools (required for SMART diagnostics)
 if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/smartmontools/smartctl.exe")

@@ -3,10 +3,13 @@
 
 #pragma once
 
+#include "sak/error_codes.h"
 #include "sak/user_profile_types.h"
 
 #include <QFileInfo>
 #include <QString>
+
+#include <expected>
 
 #ifdef Q_OS_WIN
 #include <windows.h>
@@ -89,6 +92,22 @@ public:
      * @return true if applied
      */
     bool setSecurityDescriptorSddl(const QString& path, const QString& sddl);
+
+    // ======================================================================
+    // Elevation-Aware Overloads (std::expected)
+    // ======================================================================
+
+    /// @brief Strip permissions, returning error_code::elevation_required on access denied
+    [[nodiscard]] auto tryStripPermissions(const QString& path)
+        -> std::expected<void, sak::error_code>;
+
+    /// @brief Take ownership, returning error_code::elevation_required on access denied
+    [[nodiscard]] auto tryTakeOwnership(const QString& path, const QString& userSID)
+        -> std::expected<void, sak::error_code>;
+
+    /// @brief Set standard user permissions, returning error_code on failure
+    [[nodiscard]] auto trySetStandardUserPermissions(const QString& path, const QString& userSID)
+        -> std::expected<void, sak::error_code>;
 
     /**
      * @brief Check if running with administrator privileges

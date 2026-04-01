@@ -4,6 +4,7 @@
 #include "sak/app_installation_panel.h"
 #include "sak/app_installation_worker.h"
 #include "sak/chocolatey_manager.h"
+#include "sak/elevation_gate.h"
 #include "sak/logger.h"
 #include "sak/migration_report.h"
 #include "sak/offline_deployment_worker.h"
@@ -209,6 +210,15 @@ void AppInstallationPanel::onInstallAll() {
             this,
             tr("Empty Queue"),
             tr("No packages in the install queue. Search for packages and add them first."));
+        return;
+    }
+
+    // Tier 2: Chocolatey installation modifies system directories
+    auto gate = sak::showElevationGate(
+        this,
+        tr("Package Installation"),
+        tr("Installing packages via Chocolatey requires administrator privileges."));
+    if (gate != sak::ElevationGateResult::AlreadyElevated) {
         return;
     }
 

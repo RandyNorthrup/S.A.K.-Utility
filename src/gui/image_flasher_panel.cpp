@@ -8,6 +8,8 @@
 
 #include "sak/detachable_log_window.h"
 #include "sak/drive_scanner.h"
+#include "sak/elevation_banner.h"
+#include "sak/elevation_gate.h"
 #include "sak/flash_coordinator.h"
 #include "sak/format_utils.h"
 #include "sak/image_flasher_settings_dialog.h"
@@ -120,6 +122,11 @@ void ImageFlasherPanel::setupUi() {
     titleRow->addWidget(headerWidget);
     titleRow->addStretch();
     mainLayout->addLayout(titleRow);
+
+    // Elevation info banner (hidden when already admin)
+    if (auto* banner = sak::createElevationBanner(contentWidget)) {
+        mainLayout->addWidget(banner);
+    }
 
     mainLayout->addSpacing(10);
 
@@ -733,6 +740,13 @@ void ImageFlasherPanel::onDriveSelectionChanged() {
 }
 
 void ImageFlasherPanel::onFlashClicked() {
+    // Tier 2: raw disk I/O requires administrator privileges
+    auto gate = sak::showElevationGate(
+        this, tr("USB Flash"), tr("Writing to USB drives requires administrator privileges."));
+    if (gate != sak::ElevationGateResult::AlreadyElevated) {
+        return;
+    }
+
     // Show confirmation dialog
     showConfirmationDialog();
 }

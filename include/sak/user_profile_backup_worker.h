@@ -59,6 +59,9 @@ public:
      */
     bool isRunning() const { return m_running; }
 
+    /// @brief Check if current process can read the given path
+    [[nodiscard]] static bool canReadPath(const QString& path);
+
 Q_SIGNALS:
     /**
      * @brief Overall backup progress
@@ -89,6 +92,13 @@ Q_SIGNALS:
      * @param isWarning true if warning, false for info
      */
     void logMessage(const QString& message, bool isWarning = false);
+
+    /**
+     * @brief A file or folder was skipped because it requires elevation
+     * @param path The inaccessible path
+     * @param owner Owner of the file/folder (if determinable)
+     */
+    void elevationSkipped(const QString& path, const QString& owner);
 
     /**
      * @brief Backup completed (success or failure)
@@ -155,6 +165,7 @@ private:
     int m_filesCopied{0};
     int m_filesSkipped{0};
     int m_filesErrored{0};
+    int m_filesElevationSkipped{0};
 
     // Instances for operations
     SmartFileFilter* m_fileFilter{nullptr};

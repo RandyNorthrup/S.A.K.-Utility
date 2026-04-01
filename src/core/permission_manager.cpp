@@ -6,6 +6,8 @@
 
 #include "sak/permission_manager.h"
 
+#include "sak/elevation_manager.h"
+#include "sak/error_codes.h"
 #include "sak/logger.h"
 
 #include <QFile>
@@ -20,10 +22,13 @@ namespace sak {
 
 PermissionManager::PermissionManager() {
 #ifdef Q_OS_WIN
-    // Try to enable SE_BACKUP_NAME and SE_RESTORE_NAME privileges
-    enablePrivilege(SE_BACKUP_NAME);
-    enablePrivilege(SE_RESTORE_NAME);
-    enablePrivilege(SE_TAKE_OWNERSHIP_NAME);
+    // Enable privileges lazily — only succeeds when running elevated.
+    // Non-elevated callers will get clear errors from methods that need them.
+    if (ElevationManager::isElevated()) {
+        enablePrivilege(SE_BACKUP_NAME);
+        enablePrivilege(SE_RESTORE_NAME);
+        enablePrivilege(SE_TAKE_OWNERSHIP_NAME);
+    }
 #endif
 }
 
@@ -322,31 +327,141 @@ bool PermissionManager::setSecurityDescriptorSddl(const QString& path, const QSt
 #endif
 }
 
-bool PermissionManager::isRunningAsAdmin() {
-#ifdef Q_OS_WIN
-    BOOL isAdmin = FALSE;
-    PSID adminGroup = nullptr;
-    SID_IDENTIFIER_AUTHORITY ntAuthority = SECURITY_NT_AUTHORITY;
+// ============================================================================
+// Elevation-Aware Overloads
+// ============================================================================
 
-    if (AllocateAndInitializeSid(&ntAuthority,
-                                 2,
-                                 SECURITY_BUILTIN_DOMAIN_RID,
-                                 DOMAIN_ALIAS_RID_ADMINS,
-                                 0,
-                                 0,
-                                 0,
-                                 0,
-                                 0,
-                                 0,
-                                 &adminGroup)) {
-        CheckTokenMembership(nullptr, adminGroup, &isAdmin);
-        FreeSid(adminGroup);
+auto PermissionManager::tryStripPermissions(const QString& path)
+    -> std::expected<void, sak::error_code> {
+    Q_ASSERT(!path.isEmpty());
+#ifdef Q_OS_WIN
+    QFileInfo fileInfo(path);
+    if (!fileInfo.exists()) {
+        m_lastError = "File does not exist";
+        return std::unexpected(sak::error_code::file_not_found);
     }
 
-    return isAdmin == TRUE;
+    DWORD result =
+        SetNamedSecurityInfoW(const_cast<LPWSTR>(path.toStdWString().c_str()),
+                              SE_FILE_OBJECT,
+                              DACL_SECURITY_INFORMATION | UNPROTECTED_DACL_SECURITY_INFORMATION,
+                              nullptr,
+                              nullptr,
+                              nullptr,
+                              nullptr);
+
+    if (result == ERROR_ACCESS_DENIED) {
+        m_lastError = "Access denied — administrator privileges required";
+        return std::unexpected(sak::error_code::elevation_required);
+    }
+    if (result != ERROR_SUCCESS) {
+        m_lastError = QString("Failed to strip permissions: %1").arg(result);
+        return std::unexpected(sak::error_code::permission_update_failed);
+    }
+    return {};
 #else
-    return false;
+    m_lastError = "Permission management only supported on Windows";
+    return std::unexpected(sak::error_code::platform_not_supported);
 #endif
+}
+
+auto PermissionManager::tryTakeOwnership(const QString& path, const QString& userSID)
+    -> std::expected<void, sak::error_code> {
+    Q_ASSERT(!path.isEmpty());
+    Q_ASSERT(!userSID.isEmpty());
+#ifdef Q_OS_WIN
+    if (!isRunningAsAdmin()) {
+        m_lastError = "Administrator privileges required to take ownership";
+        return std::unexpected(sak::error_code::elevation_required);
+    }
+
+    PSID pSid = nullptr;
+    if (!ConvertStringSidToSidW(const_cast<LPWSTR>(userSID.toStdWString().c_str()), &pSid)) {
+        m_lastError = QString("Invalid SID: %1").arg(GetLastError());
+        return std::unexpected(sak::error_code::invalid_argument);
+    }
+
+    DWORD result = SetNamedSecurityInfoW(const_cast<LPWSTR>(path.toStdWString().c_str()),
+                                         SE_FILE_OBJECT,
+                                         OWNER_SECURITY_INFORMATION,
+                                         pSid,
+                                         nullptr,
+                                         nullptr,
+                                         nullptr);
+
+    LocalFree(pSid);
+
+    if (result == ERROR_ACCESS_DENIED) {
+        m_lastError = "Access denied — administrator privileges required";
+        return std::unexpected(sak::error_code::elevation_required);
+    }
+    if (result != ERROR_SUCCESS) {
+        m_lastError = QString("Failed to take ownership: %1").arg(result);
+        return std::unexpected(sak::error_code::permission_update_failed);
+    }
+    return {};
+#else
+    m_lastError = "Permission management only supported on Windows";
+    return std::unexpected(sak::error_code::platform_not_supported);
+#endif
+}
+
+auto PermissionManager::trySetStandardUserPermissions(const QString& path, const QString& userSID)
+    -> std::expected<void, sak::error_code> {
+    Q_ASSERT(!path.isEmpty());
+    Q_ASSERT(!userSID.isEmpty());
+#ifdef Q_OS_WIN
+    PSID pSid = nullptr;
+    if (!ConvertStringSidToSidW(const_cast<LPWSTR>(userSID.toStdWString().c_str()), &pSid)) {
+        m_lastError = QString("Invalid SID: %1").arg(GetLastError());
+        return std::unexpected(sak::error_code::invalid_argument);
+    }
+
+    EXPLICIT_ACCESSW ea;
+    ZeroMemory(&ea, sizeof(EXPLICIT_ACCESSW));
+    ea.grfAccessPermissions = GENERIC_ALL;
+    ea.grfAccessMode = SET_ACCESS;
+    ea.grfInheritance = SUB_CONTAINERS_AND_OBJECTS_INHERIT;
+    ea.Trustee.TrusteeForm = TRUSTEE_IS_SID;
+    ea.Trustee.ptstrName = reinterpret_cast<LPWSTR>(pSid);
+
+    PACL pNewAcl = nullptr;
+    DWORD result = SetEntriesInAclW(1, &ea, nullptr, &pNewAcl);
+
+    if (result != ERROR_SUCCESS) {
+        LocalFree(pSid);
+        m_lastError = QString("Failed to create ACL: %1").arg(result);
+        return std::unexpected(sak::error_code::permission_update_failed);
+    }
+
+    result = SetNamedSecurityInfoW(const_cast<LPWSTR>(path.toStdWString().c_str()),
+                                   SE_FILE_OBJECT,
+                                   DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+                                   nullptr,
+                                   nullptr,
+                                   pNewAcl,
+                                   nullptr);
+
+    LocalFree(pNewAcl);
+    LocalFree(pSid);
+
+    if (result == ERROR_ACCESS_DENIED) {
+        m_lastError = "Access denied — administrator privileges required";
+        return std::unexpected(sak::error_code::elevation_required);
+    }
+    if (result != ERROR_SUCCESS) {
+        m_lastError = QString("Failed to set permissions: %1").arg(result);
+        return std::unexpected(sak::error_code::permission_update_failed);
+    }
+    return {};
+#else
+    m_lastError = "Permission management only supported on Windows";
+    return std::unexpected(sak::error_code::platform_not_supported);
+#endif
+}
+
+bool PermissionManager::isRunningAsAdmin() {
+    return ElevationManager::isElevated();
 }
 
 #ifdef Q_OS_WIN

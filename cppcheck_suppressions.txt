@@ -20,3 +20,9 @@ shadowFunction
 
 // Style suggestion to use STL algorithms; Qt-idiomatic loops are preferred.
 useStlAlgorithm
+
+// Qt Test slots are invoked by the meta-object system and cannot be static.
+functionStatic
+
+// Test assertions intentionally verify enum distinctness with known values.
+knownConditionTrueFalse

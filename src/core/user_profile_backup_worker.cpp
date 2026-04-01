@@ -3,6 +3,7 @@
 
 #include "sak/user_profile_backup_worker.h"
 
+#include "sak/elevation_manager.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
 
@@ -14,6 +15,10 @@
 #include <QJsonDocument>
 #include <QStorageInfo>
 #include <QtGlobal>
+
+#ifdef Q_OS_WIN
+#include <windows.h>
+#endif
 
 namespace sak {
 
@@ -60,6 +65,7 @@ void UserProfileBackupWorker::startBackup(const BackupManifest& manifest,
     m_filesCopied = 0;
     m_filesSkipped = 0;
     m_filesErrored = 0;
+    m_filesElevationSkipped = 0;
 
     // Apply filter settings
     m_fileFilter->setRules(smartFilter);
@@ -156,10 +162,12 @@ void UserProfileBackupWorker::emitBackupSummary() {
     }
 
     // Complete
-    QString summary = tr("Backup complete!\nFiles copied: %1\nFiles skipped: %2\nErrors: %3\nTotal "
-                         "size: %4 MB")
+    QString summary = tr("Backup complete!\nFiles copied: %1\nFiles skipped: %2\n"
+                         "Skipped (elevation required): %3\nErrors: %4\nTotal "
+                         "size: %5 MB")
                           .arg(m_filesCopied)
                           .arg(m_filesSkipped)
+                          .arg(m_filesElevationSkipped)
                           .arg(m_filesErrored)
                           .arg(m_bytesCopied / sak::kBytesPerMBf, 0, 'f', 1);
 
@@ -240,6 +248,14 @@ bool UserProfileBackupWorker::copyDirectory(const QString& sourceDir,
         return true;  // Not an error, just skipped
     }
 
+    // Check if directory is accessible (cross-user folders may need elevation)
+    if (!canReadPath(sourceDir)) {
+        Q_EMIT logMessage(tr("Skipping folder (requires elevation): %1").arg(sourceDir), true);
+        Q_EMIT elevationSkipped(sourceDir, QString());
+        m_filesElevationSkipped++;
+        return true;
+    }
+
     // Create destination directory
     if (!createDirectory(destDir)) {
         return false;
@@ -294,6 +310,19 @@ bool UserProfileBackupWorker::copyFileWithFiltering(const QString& sourcePath,
                               .arg(fileSize / sak::kBytesPerMBf, 0, 'f', 1),
                           true);
         m_filesSkipped++;
+        return true;
+    }
+
+    // Check if file is accessible (cross-user files may require elevation)
+    if (!canReadPath(sourcePath)) {
+        QString owner;
+        if (!ElevationManager::isElevated()) {
+            owner = m_permissionManager->getOwner(sourcePath);
+        }
+        Q_EMIT logMessage(tr("Skipping file (requires elevation): %1").arg(sourceInfo.fileName()),
+                          true);
+        Q_EMIT elevationSkipped(sourcePath, owner);
+        m_filesElevationSkipped++;
         return true;
     }
 
@@ -457,6 +486,31 @@ bool UserProfileBackupWorker::createDirectory(const QString& path) {
         return false;
     }
     return true;
+}
+
+bool UserProfileBackupWorker::canReadPath(const QString& path) {
+#ifdef Q_OS_WIN
+    DWORD attrs = GetFileAttributesW(path.toStdWString().c_str());
+    if (attrs == INVALID_FILE_ATTRIBUTES) {
+        DWORD err = GetLastError();
+        return err != ERROR_ACCESS_DENIED && err != ERROR_SHARING_VIOLATION;
+    }
+    // Try opening for read access to confirm
+    HANDLE handle = CreateFileW(path.toStdWString().c_str(),
+                                GENERIC_READ,
+                                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                                nullptr,
+                                OPEN_EXISTING,
+                                (attrs & FILE_ATTRIBUTE_DIRECTORY) ? FILE_FLAG_BACKUP_SEMANTICS : 0,
+                                nullptr);
+    if (handle == INVALID_HANDLE_VALUE) {
+        return GetLastError() != ERROR_ACCESS_DENIED;
+    }
+    CloseHandle(handle);
+    return true;
+#else
+    return QFileInfo(path).isReadable();
+#endif
 }
 
 bool UserProfileBackupWorker::validateSourcePaths() {

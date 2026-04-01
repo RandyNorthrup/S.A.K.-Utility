@@ -48,5 +48,7 @@
         <file>icons/icons8-star.svg</file>
         <file>icons/icons8-folder.svg</file>
         <file>icons/icons8-clock.svg</file>
+        <file>icons/icons8-keyhole-shield.svg</file>
+        <file>icons/icons8-lock.svg</file>
     </qresource>
 </RCC>

@@ -213,6 +213,7 @@ private:
 
     // Status bar components
     QLabel* m_status_label{nullptr};
+    QWidget* m_elevation_label{nullptr};
     QProgressBar* m_progress_bar{nullptr};
 
     // Shared log window

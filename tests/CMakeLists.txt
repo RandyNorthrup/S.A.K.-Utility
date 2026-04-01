@@ -71,6 +71,8 @@ foreach(test_name ${UNIT_TESTS})
             "${CMAKE_CURRENT_SOURCE_DIR}/../include/sak/windows_iso_downloader.h"
             "${CMAKE_CURRENT_SOURCE_DIR}/../src/core/bundled_tools_manager.cpp"
             "${CMAKE_CURRENT_SOURCE_DIR}/../include/sak/bundled_tools_manager.h"
+            "${CMAKE_CURRENT_SOURCE_DIR}/../src/core/elevation_manager.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/../include/sak/elevation_manager.h"
             "${CMAKE_CURRENT_SOURCE_DIR}/../src/core/logger.cpp"
             "${CMAKE_CURRENT_SOURCE_DIR}/../include/sak/logger.h"
         )
@@ -720,6 +722,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_permission_manager.cpp")
     add_executable(test_permission_manager
         unit/test_permission_manager.cpp
         ../src/core/permission_manager.cpp
+        ../src/core/elevation_manager.cpp
         ../src/core/logger.cpp
     )
     set_target_properties(test_permission_manager PROPERTIES
@@ -757,6 +760,157 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_elevation_manager.cpp")
     add_test(NAME test_elevation_manager COMMAND test_elevation_manager
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_elevation_manager")
+endif()
+
+# test_elevation_tier — tier classification, feature lookup, table integrity
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_elevation_tier.cpp")
+    add_executable(test_elevation_tier
+        unit/test_elevation_tier.cpp
+    )
+    set_target_properties(test_elevation_tier PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_elevation_tier PRIVATE
+        Qt6::Core Qt6::Test
+    )
+    target_include_directories(test_elevation_tier PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_elevation_tier COMMAND test_elevation_tier
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_elevation_tier")
+endif()
+
+# test_elevated_pipe_protocol — wire protocol framing, parsing, pipe name generation
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_elevated_pipe_protocol.cpp")
+    add_executable(test_elevated_pipe_protocol
+        unit/test_elevated_pipe_protocol.cpp
+    )
+    set_target_properties(test_elevated_pipe_protocol PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_elevated_pipe_protocol PRIVATE
+        Qt6::Core Qt6::Test
+    )
+    target_include_directories(test_elevated_pipe_protocol PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_elevated_pipe_protocol COMMAND test_elevated_pipe_protocol
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_elevated_pipe_protocol")
+endif()
+
+# test_elevated_task_dispatcher — allowlist, dispatch, exception safety, callbacks
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_elevated_task_dispatcher.cpp")
+    add_executable(test_elevated_task_dispatcher
+        unit/test_elevated_task_dispatcher.cpp
+        ../src/core/elevated_task_dispatcher.cpp
+        ../include/sak/elevated_task_dispatcher.h
+        ../src/core/logger.cpp
+        ../include/sak/logger.h
+    )
+    set_target_properties(test_elevated_task_dispatcher PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_elevated_task_dispatcher PRIVATE
+        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_elevated_task_dispatcher PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_elevated_task_dispatcher COMMAND test_elevated_task_dispatcher
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_elevated_task_dispatcher")
+endif()
+
+# test_mixed_tier_operations — Phase 3 mixed-tier elevation: PermissionManager
+# expected overloads, canReadPath, backup worker signal, task handlers, thermal
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_mixed_tier_operations.cpp")
+    add_executable(test_mixed_tier_operations
+        unit/test_mixed_tier_operations.cpp
+        ../src/core/elevated_task_dispatcher.cpp
+        ../src/core/thermal_monitor.cpp
+        ../src/core/permission_manager.cpp
+        ../src/core/elevation_manager.cpp
+        ../src/core/user_profile_backup_worker.cpp
+        ../src/core/user_profile_types.cpp
+        ../src/core/smart_file_filter.cpp
+        ../src/core/path_utils.cpp
+        ../src/core/logger.cpp
+        ../include/sak/elevated_task_dispatcher.h
+        ../include/sak/thermal_monitor.h
+        ../include/sak/permission_manager.h
+        ../include/sak/user_profile_backup_worker.h
+        ../include/sak/user_profile_types.h
+    )
+    set_target_properties(test_mixed_tier_operations PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_mixed_tier_operations PRIVATE
+        Qt6::Core Qt6::Concurrent Qt6::Test ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_mixed_tier_operations PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_mixed_tier_operations COMMAND test_mixed_tier_operations
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_mixed_tier_operations")
+endif()
+
+# test_elevation_ux — Phase 4 shield icon extraction, elevation banner, style tokens
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_elevation_ux.cpp")
+    add_executable(test_elevation_ux
+        unit/test_elevation_ux.cpp
+        ../src/core/elevation_manager.cpp
+        ../src/core/logger.cpp
+        ../include/sak/elevation_manager.h
+        ../include/sak/shield_icon.h
+        ../include/sak/elevation_banner.h
+    )
+    set_target_properties(test_elevation_ux PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_elevation_ux PRIVATE
+        Qt6::Core Qt6::Widgets Qt6::Test ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_elevation_ux PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_elevation_ux COMMAND test_elevation_ux
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_elevation_ux")
+endif()
+
+# test_elevation_hardening — Phase 5 legacy removal, tier coverage, gate, allowlist, IPC
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_elevation_hardening.cpp")
+    add_executable(test_elevation_hardening
+        unit/test_elevation_hardening.cpp
+        ../src/core/elevation_manager.cpp
+        ../src/core/elevated_task_dispatcher.cpp
+        ../src/core/logger.cpp
+        ../include/sak/elevation_tier.h
+        ../include/sak/elevation_gate.h
+        ../include/sak/elevated_pipe_protocol.h
+        ../include/sak/elevated_task_dispatcher.h
+    )
+    set_target_properties(test_elevation_hardening PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_elevation_hardening PRIVATE
+        Qt6::Core Qt6::Widgets Qt6::Test ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_elevation_hardening PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_elevation_hardening COMMAND test_elevation_hardening
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_elevation_hardening")
 endif()
 
 # --- Tier 4: Streaming/IO ---
@@ -1209,6 +1363,8 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_user_profile_restore_worker.cpp
         ../include/sak/smart_file_filter.h
         ../src/core/permission_manager.cpp
         ../include/sak/permission_manager.h
+        ../src/core/elevation_manager.cpp
+        ../include/sak/elevation_manager.h
         ../src/core/windows_user_scanner.cpp
         ../include/sak/windows_user_scanner.h
         ../src/core/path_utils.cpp
@@ -1337,6 +1493,12 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_quick_action_controller.cpp")
         ../include/sak/quick_action_result_io.h
         ../src/core/elevation_manager.cpp
         ../include/sak/elevation_manager.h
+        ../src/core/elevation_broker.cpp
+        ../include/sak/elevation_broker.h
+        ../src/core/elevated_pipe_server.cpp
+        ../include/sak/elevated_pipe_server.h
+        ../src/core/elevated_task_dispatcher.cpp
+        ../include/sak/elevated_task_dispatcher.h
         ../src/core/logger.cpp
         ../include/sak/logger.h
     )
@@ -1468,6 +1630,8 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_user_profile_backup_worker.cpp"
         ../include/sak/smart_file_filter.h
         ../src/core/permission_manager.cpp
         ../include/sak/permission_manager.h
+        ../src/core/elevation_manager.cpp
+        ../include/sak/elevation_manager.h
         ../src/core/path_utils.cpp
         ../src/core/logger.cpp
     )
@@ -1496,6 +1660,8 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_uup_iso_builder.cpp")
         ../include/sak/uup_dump_api.h
         ../src/core/bundled_tools_manager.cpp
         ../include/sak/bundled_tools_manager.h
+        ../src/core/elevation_manager.cpp
+        ../include/sak/elevation_manager.h
         ../src/core/logger.cpp
     )
     set_target_properties(test_uup_iso_builder PROPERTIES

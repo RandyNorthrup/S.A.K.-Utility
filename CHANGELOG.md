@@ -8,9 +8,19 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## v0.9.1.0
 
+- **Per-task elevation** — Replaced the global `requireAdministrator` manifest with `asInvoker`. The app now runs as a standard user and elevates only for specific tasks that require it, via an elevated helper process communicating over Named Pipes IPC. Tasks drop back to standard privileges once complete.
+- **Elevation tier system** — Introduced `ElevationTier` (Standard/Elevated/Mixed) and `FeatureId` enums classifying 40+ features. Consolidated three duplicate `isRunningAsAdmin()` implementations into `ElevationManager::isElevated()`.
+- **Elevated helper process** — New `sak_elevated_helper.exe` with `requireAdministrator` manifest, connected via Named Pipes with a custom framed protocol (`[4-byte LE length][1-byte type][UTF-8 JSON]`). Security: random nonce in pipe name, parent PID validation, DACL restrictions, task allowlist, single connection.
+- **Elevation broker** — `ElevationBroker` client manages launching the helper, sending task requests, receiving results, and handling cancellation/timeout. Integrated into `QuickActionController` for seamless elevated action execution.
+- **Elevation gates** — Reusable `showElevationGate()` dialog prompts users before elevated operations (Image Flasher, UUP ISO, App Installation). Users can restart elevated or decline.
+- **Mixed-tier operations** — Backup worker path-access detection (`canReadPath()`), `PermissionManager` `std::expected` overloads, 5 new helper task handlers (TakeOwnership, StripPermissions, SetStandardPermissions, BackupFile, ReadThermalData), `ThermalMonitor::hasCpuTemperature()`.
+- **Status bar elevation indicator** — Icons8 Flat Color SVG icons (shield for admin, lock for standard user) with text label and tooltip. "Run as Admin" button to restart elevated when needed.
+- **Elevation info banners** — Informational banner on Image Flasher and App Installation panels indicating that some operations may prompt for elevation.
+- **Legacy cleanup** — Removed `runElevatedQuickAction()`, `requestAdminElevation()`, CLI argument parsing (`--run-quick-action`), and associated Win32 headers. No more ShellExecuteEx-based self-re-launch.
+- **New error codes** — `elevation_required`, `elevation_failed`, `elevation_denied`, `elevation_timeout`, `helper_connection_failed`, `helper_crashed`, `task_not_allowed`.
+- **New tests** — 6 new test files with 139 test methods covering elevation tiers, IPC protocol, task dispatcher, mixed-tier operations, UX components, and hardening verification.
 - **Comprehensive documentation accuracy audit** — Verified all in-app About panel feature descriptions, wizard welcome pages, README highlights, CHANGELOG entries, and build script claims against the actual codebase. All feature descriptions confirmed accurate. Corrected header file count (142 headers including action headers), corrected README test count reference (74 automated tests).
-- **Version bump** — Release milestone v0.9.1.0.
-- **Build quality** — Clean MSVC `/W4 /WX` build, 75 automated tests (all passing), 138 source files, 142 headers.
+- **Build quality** — Clean MSVC `/W4 /WX` build, 81 automated tests (all passing), 142 source files, 150 headers.
 
 ---
 

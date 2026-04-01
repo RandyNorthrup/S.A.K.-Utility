@@ -21,7 +21,7 @@ Migration · Maintenance · Recovery · Imaging · Deployment — one portable E
 
 See [CHANGELOG.md](CHANGELOG.md) for the full version history.
 
-**Latest: v0.9.1.0** — Comprehensive documentation accuracy audit across all in-app text, README, CHANGELOG, and build scripts. Version bump to 0.9.1.0 release milestone. Corrected header count (142) and test count references. No false claims found in feature descriptions.
+**Latest: v0.9.1.0** — Per-task elevation: the app now runs as a standard user and only elevates for specific tasks via an elevated helper process with Named Pipes IPC. Includes elevation tier system, elevation gates, status bar indicator, info banners, and 139 new test methods across 6 test files.
 
 ---
 
@@ -71,7 +71,7 @@ See [CHANGELOG.md](CHANGELOG.md) for the full version history.
 | **CPU** | x64 Intel or AMD |
 | **RAM** | 4 GB |
 | **Disk** | ~500 MB + working space |
-| **Privileges** | Administrator (most features) |
+| **Privileges** | Standard user; elevates per-task via UAC when needed |
 
 ---
 
@@ -80,7 +80,7 @@ See [CHANGELOG.md](CHANGELOG.md) for the full version history.
 ```text
 1. Download the latest ZIP from Releases.
 2. Extract anywhere (USB drive, desktop, network share).
-3. Run sak_utility.exe and accept the UAC prompt.
+3. Run sak_utility.exe — runs as a standard user; individual features prompt for elevation when needed.
 ```
 
 > **Code Signed:** Releases are digitally signed via [Azure Trusted Signing](https://learn.microsoft.com/en-us/azure/trusted-signing/).
@@ -417,7 +417,7 @@ Settings are configured per-panel — each panel that needs configuration provid
 | **File encryption** | AES-256-CBC via Windows BCrypt with PBKDF2 key derivation |
 | **Secure memory** | `SecureString` / `SecureBuffer` — zero-fill on destruction, page locking via `VirtualLock` |
 | **Input validation** | Path sanitization, IP/port validation, Chocolatey name format checks |
-| **Elevation** | UAC manifest (`requireAdministrator`), runtime privilege verification |
+| **Elevation** | Per-task elevation via elevated helper process with Named Pipes IPC; `asInvoker` manifest with on-demand UAC prompts |
 
 All crypto uses the **Windows BCrypt API** (FIPS 140-2 validated provider).
 
@@ -495,7 +495,7 @@ Full license texts: [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md)
 cmake --build build --config Release --target RUN_TESTS
 ```
 
-75 unit and integration tests across 99 test files covering Advanced Search, Advanced Uninstall (types, controller, leftover scanner, registry snapshot engine), Network Diagnostics (types, utils, report generation), Email Inspector (PST/OST parsing, MBOX parsing, email types, search, export, profile manager, report generator), Offline Deployment (install script parsing, NuGet API, script rewriting, package builder), diagnostics, security, encryption, configuration, ISO download, and quick action validation.
+81 unit and integration tests across 105 test files covering Advanced Search, Advanced Uninstall (types, controller, leftover scanner, registry snapshot engine), Network Diagnostics (types, utils, report generation), Email Inspector (PST/OST parsing, MBOX parsing, email types, search, export, profile manager, report generator), Offline Deployment (install script parsing, NuGet API, script rewriting, package builder), Elevation (tier classification, IPC protocol, task dispatcher, mixed-tier operations, UX components, hardening), diagnostics, security, encryption, configuration, ISO download, and quick action validation.
 
 ---
 

@@ -3,6 +3,7 @@
 
 #include "sak/windows_iso_download_dialog.h"
 
+#include "sak/elevation_gate.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
 #include "sak/style_constants.h"
@@ -420,6 +421,16 @@ void WindowsISODownloadDialog::onStartDownload() {
     Q_ASSERT(m_startButton);
     Q_ASSERT(m_languageCombo);
     Q_ASSERT(m_editionCombo);
+
+    // Tier 2: UUP ISO conversion uses DISM which requires admin
+    auto gate = sak::showElevationGate(
+        this,
+        tr("Windows ISO Download"),
+        tr("Creating a Windows ISO with DISM requires administrator privileges."));
+    if (gate != sak::ElevationGateResult::AlreadyElevated) {
+        return;
+    }
+
     if (m_selectedUpdateId.isEmpty()) {
         sak::logWarning("No Build Selected: Please select a build first.");
         QMessageBox::warning(this, "No Build Selected", "Please select a build first.");
