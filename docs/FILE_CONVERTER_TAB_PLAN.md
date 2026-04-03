@@ -13,12 +13,12 @@
 The File Converter tab adds universal file conversion capabilities to the File Management panel. Technicians can convert between common document, image, audio, video, spreadsheet, text, and PDF formats through a drag-and-drop interface with batch processing. The converter runs entirely offline using bundled libraries — no cloud APIs, no file uploads, no internet required.
 
 ### Key Objectives
-- **Document Conversion** — DOCX → PDF/HTML/RTF/TXT, RTF → PDF/HTML/DOCX/TXT, ODT → PDF/HTML/RTF/TXT, TXT → PDF/HTML/RTF/DOCX
+- **Document Conversion** — DOCX → PDF/HTML/RTF/TXT, RTF → PDF/HTML/DOCX/TXT, ODT → PDF/HTML/RTF/TXT, TXT → PDF/HTML/RTF/DOCX, EML → PDF
 - **Image Conversion** — PNG, JPEG, BMP, TIFF, GIF, WebP, ICO, SVG (raster export)
 - **Audio Conversion** — MP3, WAV, FLAC, OGG, AAC, WMA, M4A
 - **Video Conversion** — MP4, AVI, MKV, MOV, WMV, WebM, GIF (animated)
 - **Spreadsheet Conversion** — CSV ↔ XLSX, TSV ↔ CSV, CSV ↔ JSON
-- **PDF Operations** — Images → PDF, PDF → Images, Merge PDFs, Split PDF
+- **PDF Operations** — Images → PDF, TIFF/TIF → PDF (single & multi-page), PDF → Images, Merge PDFs, Split PDF
 - **Text/Data Conversion** — JSON ↔ YAML, JSON ↔ XML, Markdown → HTML, TXT encoding conversion
 - **Batch Processing** — Convert multiple files in a single operation with progress tracking
 - **Quality/Compression Controls** — Per-format options (JPEG quality, audio bitrate, video codec, PDF DPI)
@@ -154,6 +154,55 @@ The File Converter tab adds universal file conversion capabilities to the File M
 
 ---
 
+### 7. **TIFF/TIF → PDF Conversion**
+**Scenario**: Scanning department produces multi-page TIFF files (one per scanned document). Customer needs PDFs for email/archival.
+
+**Workflow**:
+1. Open File Converter
+2. Drag multi-page TIFF files onto the input area
+3. Select output format: PDF
+4. Options appear: "One PDF per TIFF" or "Combine all into single PDF"
+5. Click Convert — each multi-page TIFF becomes a properly paginated PDF
+
+**Capabilities**:
+- **Single-page TIFF → single-page PDF** — straightforward image-to-PDF
+- **Multi-page TIFF → multi-page PDF** — each TIFF frame becomes a PDF page, preserving page order
+- **Multiple TIFFs → single PDF** — batch-combine multiple TIFF files (single or multi-page) into one PDF document
+- Supports both `.tiff` and `.tif` extensions
+- Configurable output DPI (default 300)
+
+**Benefits**:
+- Handles the common scanner workflow (scanners often produce multi-page TIFF)
+- No need for Adobe Acrobat or other PDF tools
+- Preserves original image quality at configurable DPI
+
+---
+
+### 8. **EML → PDF for Email Archival**
+**Scenario**: Customer has hundreds of saved `.eml` email files from a migration and needs searchable PDF copies for legal/archival purposes.
+
+**Workflow**:
+1. Open File Converter
+2. Drag `.eml` files (or a folder of `.eml` files) onto the input area
+3. Select output format: PDF
+4. Options: include/exclude attachments list, include full headers
+5. Click Convert — each EML becomes a formatted PDF with email headers + body
+
+**Capabilities**:
+- **RFC 5322 MIME parsing** — Reads standard `.eml` files (From, To, CC, Date, Subject, Message-ID)
+- **HTML body rendering** — HTML email bodies rendered faithfully via QTextDocument
+- **Plain text fallback** — Plain-text-only emails formatted with monospace font
+- **Attachment listing** — Attachment filenames and sizes listed at the bottom of the PDF
+- **Batch processing** — Convert hundreds of EML files to PDF in a single operation
+- Reuses the existing `PdfEmailWriter` rendering pipeline from the Email Inspector panel
+
+**Benefits**:
+- Common requirement for legal discovery, compliance archival, and migration workflows
+- No email client needed — works from raw `.eml` files on disk
+- Entirely offline — no cloud APIs, no email server access
+
+---
+
 ## 🏗️ Architecture Overview
 
 ### Component Hierarchy
@@ -229,6 +278,8 @@ The `FileConverterWidget` is self-contained: it owns its worker thread and all U
 | YAML | yaml-cpp | vcpkg | Compiled in | MIT |
 | Markdown → HTML | cmark | vcpkg | Compiled in | BSD-2-Clause |
 | XML | Qt XML (QDomDocument) | Qt 6.5.3 | Compiled in | LGPL-3.0 |
+| EML read | In-tree EmlReader (RFC 5322 MIME parser) | In-tree | Compiled in | N/A |
+| EML → PDF | PdfEmailWriter (QTextDocument → QPdfWriter) | In-tree (reused from Email Inspector) | Compiled in | N/A |
 
 > **Portable deployment rule**: Every conversion engine is either statically linked into
 > the SAK executable (vcpkg/Qt libraries) or ships as a companion binary in `tools/`
@@ -469,6 +520,9 @@ footnotes), while the QTextDocument Hub handles simple RTF/TXT conversions and P
 | **RTF**  | ✅² | ✅² | ✅²  | —   | ✅³  |
 | **ODT**  | ✅¹ | ✅¹ | ✅¹  | ✅¹ | ✅³  |
 | **TXT**  | ✅⁴ | —   | ✅⁴  | ✅⁴ | ✅³  |
+| **EML**  | ✅⁵ | —   | —    | —   | —    |
+
+⁵ In-tree `EmlReader` parses RFC 5322 MIME headers + body → renders to PDF via `PdfEmailWriter` (QTextDocument → QPdfWriter). Reuses the rendering pipeline from the Email Inspector's existing `PdfEmailWriter` class. Includes formatted header block (From, To, CC, Date, Subject) + HTML or plain-text body + attachment listing.
 
 ¹ **Pandoc** (primary, high fidelity): Calls `pandoc.exe` to convert DOCX/ODT directly to HTML/RTF/TXT. Preserves embedded images, tracked changes, footnotes, and advanced table formatting. For PDF output: Pandoc generates HTML → loaded into `QTextDocument` → rendered to PDF via `QPdfWriter`. **QTextDocument Hub** (fallback): In-tree DocxReader/OdtReader parse ZIP + XML into HTML → `QTextDocument` → export. Used when Pandoc is unavailable or for simpler documents.  
 ² Qt `QTextDocument` natively loads RTF and renders to PDF, plain text, or HTML. Preserves the same formatting subset as above.  
@@ -499,12 +553,15 @@ footnotes), while the QTextDocument Hub handles simple RTF/TXT conversions and P
 | Operation | Description |
 |-----------|-------------|
 | Images → PDF | Combine multiple images into a single multi-page PDF |
+| TIFF → PDF (single-page) | Convert a single-page TIFF/TIF to a single-page PDF |
+| TIFF → PDF (multi-page) | Convert a multi-page TIFF/TIF to a multi-page PDF (one page per frame) |
+| TIFFs → PDF (combined) | Combine multiple TIFF/TIF files (single or multi-page) into one PDF |
 | PDF → Images | Extract each page as a PNG/JPEG at configurable DPI |
 | Merge PDFs | Combine multiple PDFs into one (preserves bookmarks) |
 | Split PDF | Split a PDF into individual pages or page ranges |
 | PDF → Text | Extract text content from PDF pages |
 
-**Engine**: QPdfDocument for reading, QPdfWriter for writing images→PDF, qpdf for merge/split.
+**Engine**: QPdfDocument for reading, QPdfWriter + QPainter for writing images/TIFF→PDF, qpdf for merge/split. Multi-page TIFF frames read via `QImageReader::imageCount()` + `QImageReader::jumpToImage(n)` (Qt's built-in TIFF plugin supports multi-frame reading).
 
 #### Text/Data Conversions
 
@@ -545,6 +602,7 @@ enum class FileFormatCategory {
     Spreadsheet,
     Pdf,
     TextData,
+    Email,       // EML files (RFC 5322 MIME)
     Unknown
 };
 
@@ -584,15 +642,20 @@ struct ConversionOptions {
     bool video_strip_audio{false};
 
     // PDF options
-    int pdf_dpi{300};                 // For PDF→Image extraction
+    int pdf_dpi{300};                 // For PDF→Image extraction and TIFF→PDF output
     QString pdf_image_format{"png"};  // Output format for PDF→Image
     QVector<int> pdf_page_range;      // Empty = all pages
+    bool tiff_combine_into_single_pdf{false}; // true = merge multiple TIFFs into one PDF
 
     // Spreadsheet options
     QChar csv_delimiter{','};
     QChar csv_quote{'"'};
     bool csv_has_headers{true};
     QString csv_encoding{"UTF-8"};
+
+    // EML → PDF options
+    bool eml_include_full_headers{false};     // Include all RFC 5322 headers (not just From/To/Date/Subject)
+    bool eml_include_attachment_list{true};   // List attachment names/sizes at bottom of PDF
 
     // Text encoding options
     QString source_encoding;          // Empty = auto-detect
@@ -1238,28 +1301,37 @@ If a bundled binary is missing (corrupted distribution), the affected category d
 
 ---
 
-### Phase 2: PDF Operations (Week 4-5)
+### Phase 2: PDF Operations + TIFF → PDF (Week 4-5)
 
 **Goals**:
 - PDF → Images (page extraction at configurable DPI)
 - Images → PDF (multi-page PDF creation)
+- TIFF/TIF → PDF (single-page, multi-page, and combined)
 - PDF merge and split via qpdf
 - PDF → Text extraction
 
 **Tasks**:
 1. Implement `pdfToImages()` using QPdfDocument + QImage rendering
 2. Implement `imagesToPdf()` using QPdfWriter + QPainter
-3. Bundle qpdf: create `scripts/bundle_qpdf.ps1`
-4. Implement `mergePdfs()` via qpdf CLI wrapper
-5. Implement `splitPdf()` via qpdf CLI wrapper
-6. Implement `pdfToText()` using QPdfDocument text extraction
-7. Add PDF options panel to UI (operation type, DPI, page range)
-8. Add reorder-by-drag for PDF merge file list
-9. Write unit tests
+3. Implement `tiffToPdf()` — single-page TIFF to single-page PDF
+4. Implement multi-page TIFF → multi-page PDF using `QImageReader::imageCount()` + `jumpToImage(n)` to iterate frames, rendering each as a PDF page via QPainter
+5. Implement combined mode — multiple TIFF files (single or multi-page) merged into one PDF, respecting file order and frame order within each file
+6. Add TIFF-specific UI options: "One PDF per TIFF" vs "Combine all into single PDF" toggle
+7. Bundle qpdf: create `scripts/bundle_qpdf.ps1`
+8. Implement `mergePdfs()` via qpdf CLI wrapper
+9. Implement `splitPdf()` via qpdf CLI wrapper
+10. Implement `pdfToText()` using QPdfDocument text extraction
+11. Add PDF options panel to UI (operation type, DPI, page range)
+12. Add reorder-by-drag for PDF merge file list
+13. Write unit tests
 
 **Acceptance Criteria**:
 - ✅ PDF → PNG at 300 DPI produces high-quality page images
 - ✅ 50 images → single PDF in correct order
+- ✅ Single-page TIFF → single-page PDF with correct DPI and dimensions
+- ✅ Multi-page TIFF (10 frames) → 10-page PDF with all frames in order
+- ✅ 5 multi-page TIFFs combined → single PDF with correct total page count
+- ✅ Both `.tiff` and `.tif` extensions handled identically
 - ✅ PDF merge preserves page content and bookmarks
 - ✅ Split PDF by page range produces correct individual files
 - ✅ Text extraction handles multi-column and multi-page PDFs
@@ -1331,17 +1403,18 @@ If a bundled binary is missing (corrupted distribution), the affected category d
 
 ---
 
-### Phase 5: Document Engine — Pandoc Integration + In-Tree Readers (Week 11-13)
+### Phase 5: Document Engine — Pandoc Integration + In-Tree Readers + EML → PDF (Week 11-13)
 
 **Goals**:
 - Bundle Pandoc as `tools/pandoc.exe` for high-fidelity DOCX/ODT conversions
 - Implement `PandocRunner` wrapper (argument building, format detection, timeout, cancellation)
 - In-tree DOCX reader: parse OOXML → HTML → QTextDocument (fallback engine)
 - In-tree ODT reader: parse ODF → HTML → QTextDocument (fallback engine)
+- In-tree EML reader: parse RFC 5322 MIME → render to PDF via QTextDocument + QPdfWriter
 - RTF/TXT loading via QTextDocument (Qt native)
 - Export from QTextDocument to PDF/HTML/RTF/TXT
 - Engine selection logic: Pandoc (primary) vs QTextDocument Hub (fallback)
-- Full document conversion matrix operational
+- Full document conversion matrix operational (including EML → PDF)
 
 **Tasks**:
 1. Create `scripts/bundle_pandoc.ps1` (download, verify SHA-256, extract to `tools/`)
@@ -1358,7 +1431,10 @@ If a bundled binary is missing (corrupted distribution), the affected category d
 12. Implement `OdtReader` (fallback): open ODT ZIP, extract `content.xml` + `styles.xml`
 13. OdtReader XML→HTML: map ODF elements (`<text:p>`, `<text:span>`, `<text:list>`, `<table:table>`) to HTML
 14. Implement engine selection logic in `FileConverterWorker::convertDocument()`
-15. Implement RTF loading via `QTextDocument` (Qt handles natively)
+15. Implement `EmlReader`: parse RFC 5322 headers (From, To, CC, Date, Subject, Message-ID) + MIME body (text/plain and text/html parts) + attachment metadata (filename, size, MIME type)
+16. Implement EML → PDF: build styled HTML from EML data (header block + body + attachment list), render via `QTextDocument` → `QPdfWriter` — reuse `PdfEmailWriter` rendering approach from Email Inspector
+17. Add EML options to UI: checkbox for "Include full headers" and "List attachments"
+18. Implement RTF loading via `QTextDocument` (Qt handles natively)
 16. Implement TXT loading via `QTextDocument::setPlainText()`
 17. Implement PDF export: `QTextDocument` → `QPdfWriter` + `QTextDocument::print()`
 18. Implement HTML export: `QTextDocument::toHtml()`
@@ -1375,6 +1451,10 @@ If a bundled binary is missing (corrupted distribution), the affected category d
 - ✅ ODT → HTML/DOCX/RTF/TXT via Pandoc matches DOCX quality
 - ✅ RTF → PDF/HTML/DOCX/TXT works via QTextDocument's native RTF support
 - ✅ Engine fallback works: if Pandoc missing, QTextDocument Hub produces basic output
+- ✅ EML → PDF renders header block (From, To, Date, Subject) + HTML body + attachment list
+- ✅ EML with plain-text-only body produces readable monospace PDF
+- ✅ EML with multipart/alternative (HTML + plain text) uses HTML for PDF rendering
+- ✅ Batch EML → PDF conversion handles 100+ files without errors
 - ✅ All document conversions work fully offline — zero external dependencies beyond bundled tools
 
 ---
@@ -1432,6 +1512,7 @@ include/sak/
     docx_reader.h
     odt_reader.h
     docx_writer.h
+    eml_reader.h
 
 src/gui/
     file_converter_widget.cpp
@@ -1444,6 +1525,7 @@ src/core/
     docx_reader.cpp
     odt_reader.cpp
     docx_writer.cpp
+    eml_reader.cpp
 
 scripts/
     bundle_ffmpeg.ps1
@@ -1458,6 +1540,7 @@ tests/unit/
     test_docx_reader.cpp
     test_odt_reader.cpp
     test_docx_writer.cpp
+    test_eml_reader.cpp
 ```
 
 ### Modified Files
@@ -1484,30 +1567,300 @@ THIRD_PARTY_LICENSES.md            — Add FFmpeg, qpdf, Pandoc, QXlsx, QuaZip, 
 
 ---
 
+## ✅ Code Quality Gates & Pre-Commit Requirements
+
+All new code in this feature **must** pass every quality gate on the first commit
+attempt. This section documents the exact requirements so implementation gets it
+right the first time — no rework loops.
+
+### Hard Gates (Block Commits — Zero Tolerance)
+
+| Gate | Tool | Threshold | How It's Enforced |
+|------|------|-----------|-------------------|
+| **Build warnings** | MSVC (`/W4 /WX /permissive- /sdl`) | **0 warnings** | Compiler rejects build |
+| **Code formatting** | clang-format (`--dry-run -Werror`) | 100-col limit, Google style | Pre-commit hook |
+| **Cyclomatic complexity** | Lizard | **CCN ≤ 10** per function | Pre-commit hook blocks |
+| **Function parameters** | Lizard | **≤ 5 parameters** per function | Pre-commit hook blocks |
+| **Static analysis** | cppcheck (`--enable=all --check-level=exhaustive --std=c++23`) | All findings resolved or suppressed | Pre-commit hook blocks |
+| **All tests pass** | CTest (Qt Test) | **100% pass rate** | CI gate + pre-commit |
+| **Trailing whitespace** | pre-commit built-in | None allowed | Pre-commit hook |
+| **End-of-file newline** | pre-commit built-in | Required | Pre-commit hook |
+| **Large files** | pre-commit built-in | **< 4 KB** per added file | Pre-commit hook |
+
+### Soft Guidelines (Advisory — Strive For, Don't Block)
+
+| Guideline | Threshold | Notes |
+|-----------|-----------|-------|
+| Function length | ≤ 70 lines | Lizard prints warning, does NOT block |
+| Nesting depth | ≤ 3 levels | TigerStyle best practice |
+| Named constants | No magic numbers | 0, 1, −1 are acceptable bare literals |
+| Single-letter variables | Avoid | Except tiny lambda predicates |
+
+### Pre-Commit Hook Pipeline (`.pre-commit-config.yaml`)
+
+Runs with `fail_fast: true` — stops on first failure. All 10 hooks:
+
+1. `trailing-whitespace` — strip trailing spaces
+2. `end-of-file-fixer` — ensure newline at EOF
+3. `check-yaml` — valid YAML syntax
+4. `check-json` — valid JSON syntax
+5. `check-added-large-files` — reject files > 4 KB
+6. `check-merge-conflict` — detect `<<<<<<<` markers
+7. `check-case-conflict` — filename case collisions
+8. `clang-format` — `clang-format.exe --dry-run -Werror` on all `.cpp`/`.h` files
+9. `lizard-complexity` — `python scripts/run_lizard.py` (CCN ≤ 10, params ≤ 5)
+10. `cppcheck` — `powershell scripts/run_cppcheck.ps1` (exhaustive analysis)
+
+### Coding Constraints for Implementation
+
+Every function in new source files must be written to satisfy these constraints
+from the start. Key design implications:
+
+**CCN ≤ 10 (cyclomatic complexity)**:
+- `DocxReader` XML→HTML mapping must NOT be a single monolithic function. Each
+  OOXML element category should be a separate helper: `mapRunProperties()`,
+  `mapParagraphProperties()`, `mapTableElement()`, `mapListItem()` — each ≤ CCN 10.
+- `OdtReader` follows the same decomposition pattern for ODF elements.
+- `DocxWriter` must split QTextDocument traversal into per-block-type handlers:
+  `writeTextBlock()`, `writeTable()`, `writeList()`, `writeCharFormat()`.
+- `FfmpegRunner::buildAudioArgs()` / `buildVideoArgs()` must use lookup tables
+  or codec-specific helpers, not giant `switch` statements.
+- `PandocRunner` argument building should use a builder pattern or format-specific
+  methods instead of a single large function.
+- `FileFormatRegistry` format detection — use a static lookup table, not a cascade
+  of `if/else` for magic bytes.
+- `FileConverterWorker::run()` must dispatch to format-specific `convert*()` methods,
+  not have all conversion logic in one function.
+- Pattern: if a function has > 3 `if/else` branches or a `switch` with > 8 cases,
+  extract a helper or use a lookup table.
+
+**≤ 5 parameters per function**:
+- Use `ConversionOptions` struct (already in plan) instead of per-parameter passing.
+- `convertImage()`, `convertAudio()`, `convertVideo()` each take a `ConversionJob`
+  struct + options struct, not raw parameters.
+- FFmpeg argument builders take a codec config struct, not individual quality/bitrate/etc.
+- If a helper needs more context, pass a struct or `this` pointer.
+
+**100-character line limit**:
+- Break long string literals with `QStringLiteral()` concatenation.
+- Break long FFmpeg argument chains across lines.
+- Use `const auto&` for long type names.
+- Conversion matrix tables in code use helper functions, not inline chains.
+
+**clang-format include ordering**:
+```cpp
+// 1. Corresponding header
+#include "sak/docx_reader.h"
+// 2. Project headers
+#include "sak/file_converter_constants.h"
+// 3. Qt headers
+#include <QFile>
+#include <QXmlStreamReader>
+// 4. C++ STL headers
+#include <array>
+#include <cstdint>
+// 5. Windows headers (if needed)
+#include <windows.h>
+```
+
+**cppcheck compliance**:
+- Use `Q_ASSERT()` for debug-mode preconditions, not raw `assert()`.
+- Use `static_cast<>` not C-style casts (especially for image sizes, audio bitrates).
+- Initialize all member variables in constructors or class declaration.
+- Check all `QProcess::waitFor*()` return values (FFmpeg, qpdf, Pandoc).
+- Every `QFile::open()` and QuaZip operation result must be checked.
+- Use `QScopedPointer` or RAII for temp file cleanup.
+
+**MSVC `/W4 /WX` compliance**:
+- No unused variables or parameters — use `[[maybe_unused]]` if needed.
+- No signed/unsigned comparison — use explicit casts or matching types
+  (common with QImage dimensions, file sizes).
+- No unreachable code after `return`.
+- No implicit narrowing conversions — use `static_cast` or `gsl::narrow_cast`.
+- No missing `default:` in `switch` on enums (especially format/category enums).
+
+### clang-tidy Checks (Optional but Recommended)
+
+If `ENABLE_CLANG_TIDY=ON` is set, all warnings become errors. Key checks:
+- `bugprone-*` — dangling references, incorrect round-of-half, etc.
+- `modernize-*` — use `auto`, range-for, `nullptr`, `override`
+- `performance-*` — move semantics, unnecessary copies (watch for large QImage copies)
+- `readability-*` — naming conventions, redundant control flow
+- `concurrency-*` — thread safety (worker thread crosses)
+- 10 checks disabled for Qt compatibility (e.g., `modernize-use-trailing-return-type`)
+
+---
+
 ## 🧪 Testing Strategy
 
-### Unit Tests
+### Unit Test Inventory
 
-| Test File | Coverage |
-|-----------|----------|
-| `test_file_format_registry.cpp` | Format detection, category mapping, compatible format lookup, magic byte detection |
-| `test_file_converter_worker.cpp` | Image conversion (all format pairs), CSV/TSV parsing, JSON/YAML/XML round-trips, encoding detection, path collision resolution |
-| `test_ffmpeg_runner.cpp` | Argument building for audio/video, progress line parsing, timeout handling, probe output parsing |
-| `test_pandoc_runner.cpp` | Argument building for document conversions, format detection, track-changes option handling, extract-media path building, timeout handling, fallback logic |
-| `test_docx_reader.cpp` | DOCX→QTextDocument loading, bold/italic/font/color preservation, heading detection, table parsing, malformed ZIP handling |
-| `test_odt_reader.cpp` | ODT→QTextDocument loading, formatting preservation, list parsing, table parsing, malformed ZIP handling |
-| `test_docx_writer.cpp` | QTextDocument→DOCX output, OOXML structure validation, formatting round-trip (DOCX→QTextDocument→DOCX), opens in external readers |
+| Test File | Tests | Phase |
+|-----------|-------|-------|
+| `test_file_format_registry.cpp` | 8 tests | Phase 1 |
+| `test_file_converter_worker.cpp` | 16 tests | Phase 1–3 |
+| `test_ffmpeg_runner.cpp` | 8 tests | Phase 4 |
+| `test_pandoc_runner.cpp` | 8 tests | Phase 5 |
+| `test_docx_reader.cpp` | 8 tests | Phase 5 |
+| `test_odt_reader.cpp` | 7 tests | Phase 5 |
+| `test_docx_writer.cpp` | 7 tests | Phase 6 |
+| `test_eml_reader.cpp` | 8 tests | Phase 5 |
+| **Total** | **70 tests** | |
+
+### Detailed Test Signatures
+
+**`test_file_format_registry.cpp`** (Phase 1):
+```cpp
+class TestFileFormatRegistry : public QObject {
+    Q_OBJECT
+private Q_SLOTS:
+    void testDetectFormatByExtension();     // .png → Image/PNG, .docx → Document/DOCX, .eml → Email/EML
+    void testDetectFormatByMagicBytes();     // PNG header, JPEG SOI, ZIP PK signature
+    void testCategoryMapping();              // PNG → Image, MP3 → Audio, DOCX → Document
+    void testCompatibleFormatLookup();       // PNG → [JPEG, BMP, TIFF, GIF, WebP, ICO]
+    void testUnknownExtension();             // .xyz → Unknown category, empty compatible list
+    void testCaseInsensitiveExtension();     // .PNG, .Png, .pNg → same result
+    void testDoubleExtension();              // .tar.gz, .img.xz → correct detection
+    void testFormatRequiresTool();           // MP3 → requires FFmpeg, CSV → no tool needed
+};
+```
+
+**`test_file_converter_worker.cpp`** (Phase 1–3):
+```cpp
+class TestFileConverterWorker : public QObject {
+    Q_OBJECT
+private Q_SLOTS:
+    // Image conversion (Phase 1)
+    void testImagePngToJpeg();              // PNG → JPEG, verify output is valid JPEG
+    void testImageQualitySetting();          // JPEG quality 10 vs 95 → size difference
+    void testImageResizeOnConvert();         // Resize during conversion, verify dimensions
+    void testImageSvgToPng();               // SVG rasterization at specified DPI
+
+    // Spreadsheet/text (Phase 3)
+    void testCsvParsing();                   // Commas, quotes, newlines in fields
+    void testCsvToXlsx();                    // CSV → XLSX, verify typed columns
+    void testJsonToYamlRoundTrip();          // JSON → YAML → JSON, data preserved
+    void testJsonToXmlRoundTrip();           // JSON → XML → JSON, data preserved
+    void testMarkdownToHtml();               // Headers, lists, code blocks → valid HTML
+    void testEncodingDetection();            // UTF-8, UTF-16, Latin-1 auto-detection
+    void testPathCollisionRename();          // Output file exists → renamed with suffix
+    void testCancelDuringBatch();            // Cancel mid-batch → partial output, clean state
+
+    // TIFF → PDF (Phase 2)
+    void testSinglePageTiffToPdf();          // 1-frame TIFF → 1-page PDF, correct dimensions
+    void testMultiPageTiffToPdf();           // 10-frame TIFF → 10-page PDF, all frames present
+    void testMultipleTiffsCombinedPdf();     // 3 multi-page TIFFs → single PDF, total page count correct
+    void testTifExtensionHandled();          // .tif treated identically to .tiff
+};
+```
+
+**`test_ffmpeg_runner.cpp`** (Phase 4):
+```cpp
+class TestFfmpegRunner : public QObject {
+    Q_OBJECT
+private Q_SLOTS:
+    void testBuildAudioArgs();               // MP3→FLAC → correct -codec:a, -ar, etc.
+    void testBuildVideoArgs();               // AVI→MP4 → correct -codec:v, -crf, etc.
+    void testBuildGifArgs();                 // Video→GIF → palette generation two-pass
+    void testParseProgressLine();            // "time=00:01:23.45 speed=2.1x" → parsed
+    void testParseProbeOutput();             // JSON probe → duration, codec, resolution
+    void testTimeoutHandling();              // Process exceeds timeout → killed, error
+    void testMissingFfmpeg();                // FFmpeg not found → clear error message
+    void testCancelKillsProcess();           // Cancel → QProcess killed, partial cleaned
+};
+```
+
+**`test_pandoc_runner.cpp`** (Phase 5):
+```cpp
+class TestPandocRunner : public QObject {
+    Q_OBJECT
+private Q_SLOTS:
+    void testBuildDocxToHtmlArgs();          // DOCX→HTML → --standalone, --extract-media
+    void testBuildDocxToRtfArgs();           // DOCX→RTF → correct -f/-t flags
+    void testTrackChangesOption();           // accept/reject/all → correct --track-changes
+    void testExtractMediaPath();             // --extract-media=<temp_dir> built correctly
+    void testSandboxFlag();                  // --sandbox always included
+    void testTimeoutHandling();              // Process exceeds timeout → killed, error
+    void testMissingPandoc();                // Pandoc not found → fallback engine used
+    void testFallbackEngineSelection();      // Pandoc missing → QTextDocument Hub selected
+};
+```
+
+**`test_eml_reader.cpp`** (Phase 5):
+```cpp
+class TestEmlReader : public QObject {
+    Q_OBJECT
+private Q_SLOTS:
+    void testParseSimplePlainText();         // Plain-text-only EML → headers + body extracted
+    void testParseHtmlBody();                // HTML body EML → HTML content extracted
+    void testParseMultipartAlternative();    // multipart/alternative → prefers HTML part
+    void testParseAttachmentMetadata();      // Attachments → filenames, sizes, MIME types
+    void testRenderToPdf();                  // Parsed EML → PDF via QTextDocument, valid output
+    void testFullHeadersOption();            // Include full RFC 5322 headers in PDF
+    void testMalformedEml();                 // Incomplete/corrupt EML → error, no crash
+    void testEncodingHandling();             // UTF-8, ISO-8859-1, base64, quoted-printable
+};
+```
+
+**`test_docx_reader.cpp`** (Phase 5):
+```cpp
+class TestDocxReader : public QObject {
+    Q_OBJECT
+private Q_SLOTS:
+    void testLoadValidDocx();                // Valid DOCX → QTextDocument, no errors
+    void testBoldItalicPreservation();       // <w:b>, <w:i> → bold/italic in QTextDocument
+    void testFontAndColorPreservation();     // <w:rFonts>, <w:color> → correct font/color
+    void testHeadingDetection();             // <w:pStyle> Heading1-6 → correct heading levels
+    void testTableParsing();                 // <w:tbl> → QTextTable with correct rows/cols
+    void testListParsing();                  // <w:numPr> → ordered/unordered QTextList
+    void testMalformedZipHandling();         // Corrupt ZIP → error returned, no crash
+    void testMissingDocumentXml();           // ZIP without word/document.xml → error
+};
+```
+
+**`test_odt_reader.cpp`** (Phase 5):
+```cpp
+class TestOdtReader : public QObject {
+    Q_OBJECT
+private Q_SLOTS:
+    void testLoadValidOdt();                 // Valid ODT → QTextDocument, no errors
+    void testFormattingPreservation();        // Bold/italic/font → preserved in QTextDocument
+    void testHeadingDetection();             // <text:h> → correct heading levels
+    void testTableParsing();                 // <table:table> → QTextTable correct structure
+    void testListParsing();                  // <text:list> → ordered/unordered QTextList
+    void testMalformedZipHandling();         // Corrupt ZIP → error returned, no crash
+    void testMissingContentXml();            // ZIP without content.xml → error
+};
+```
+
+**`test_docx_writer.cpp`** (Phase 6):
+```cpp
+class TestDocxWriter : public QObject {
+    Q_OBJECT
+private Q_SLOTS:
+    void testWriteValidDocx();               // QTextDocument → .docx, opens without errors
+    void testOoxmlStructure();               // Output ZIP contains required files
+    void testFormattingRoundTrip();          // DOCX→QTextDocument→DOCX, formatting preserved
+    void testTableOutput();                  // QTextTable → <w:tbl> with rows/cells/borders
+    void testHeadingOutput();                // Heading blocks → <w:pStyle> heading styles
+    void testEmptyDocument();                // Empty QTextDocument → valid but empty DOCX
+    void testSpecialCharacters();            // Unicode, emoji, RTL text → correct encoding
+};
+```
 
 ### Integration Tests
 
 | Test | Description |
 |------|-------------|
 | Batch image conversion | Convert 20 mixed-format images to WebP, verify output count, sizes, format |
+| Multi-page TIFF → PDF | Convert 5 multi-page TIFFs to individual PDFs, verify page counts match frame counts |
+| TIFFs → combined PDF | Combine 3 TIFFs (mix of single and multi-page) into one PDF, verify total pages and order |
 | CSV → XLSX round-trip | CSV → XLSX → CSV, verify data integrity |
 | PDF merge + split | Merge 5 PDFs → split back → verify page count matches |
 | Text encoding round-trip | UTF-8 → UTF-16 → UTF-8, verify byte-for-byte match |
 | DOCX → PDF → (manual) | Convert sample DOCX to PDF, verify formatting preserved visually |
 | Document round-trip | DOCX → RTF → DOCX, verify formatting survives two conversions |
+| EML batch → PDF | Convert 50 EML files (mix of plain text, HTML, with attachments) to PDF, verify all output |
 
 ### Manual Test Matrix
 
@@ -1532,9 +1885,45 @@ THIRD_PARTY_LICENSES.md            — Add FFmpeg, qpdf, Pandoc, QXlsx, QuaZip, 
 | JSON | YAML, XML, CSV | ☐ |
 | YAML | JSON, XML | ☐ |
 | Markdown | HTML | ☐ |
+| EML (plain text) | PDF | ☐ |
+| EML (HTML body) | PDF | ☐ |
+| EML (with attachments) | PDF (attachment list) | ☐ |
+| EML (batch, 50 files) | PDF | ☐ |
 | Images | PDF (multi-page) | ☐ |
+| TIFF (single-page) | PDF | ☐ |
+| TIFF (multi-page) | PDF (multi-page) | ☐ |
+| TIFFs (multiple) | PDF (combined) | ☐ |
+| TIF (alternate ext) | PDF | ☐ |
 | PDF | Images (per-page) | ☐ |
 | PDFs | Merged PDF | ☐ |
+
+### Test Compliance with Quality Gates
+
+All test files must also pass pre-commit hooks:
+- Test functions themselves must have CCN ≤ 10
+- Data-driven tests use `_data()` / `QFETCH` pattern to avoid large test functions
+- Test helper functions keep parameter count ≤ 5
+- Synthetic test data creation (e.g., building a minimal DOCX ZIP, creating a test
+  QTextDocument with known formatting) extracted into helper functions
+- All tests formatted with clang-format before commit
+- `QCOMPARE`, `QVERIFY`, `QVERIFY2` preferred over raw assertions
+- Test temp files cleaned up via `QTemporaryDir` RAII (no manual cleanup)
+
+### Running Tests
+
+```powershell
+# Build
+cmake --build build --config Release
+
+# Run all tests (existing + new)
+ctest --test-dir build -C Release --output-on-failure
+
+# Run only file converter tests
+ctest --test-dir build -C Release -R "file_converter|file_format|ffmpeg|pandoc|docx|odt" --output-on-failure
+
+# Run single test with verbose output
+.\build\Release\test_file_format_registry.exe -v2
+```
 
 ---
 

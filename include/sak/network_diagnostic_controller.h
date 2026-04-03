@@ -9,8 +9,10 @@
 #include "sak/network_diagnostic_report_generator.h"
 #include "sak/network_diagnostic_types.h"
 
+#include <QHash>
 #include <QObject>
 #include <QPair>
+#include <QSet>
 #include <QStringList>
 #include <QThread>
 
@@ -57,6 +59,7 @@ public:
         MonitoringConnections,
         AuditingFirewall,
         BrowsingShares,
+        RunningLanTransfer,
         GeneratingReport
     };
 
@@ -68,8 +71,14 @@ public:
     NetworkDiagnosticController(NetworkDiagnosticController&&) = delete;
     NetworkDiagnosticController& operator=(NetworkDiagnosticController&&) = delete;
 
-    /// @brief Get current controller state
+    /// @brief Get current controller state (first active, or Idle)
     [[nodiscard]] State currentState() const;
+
+    /// @brief Check if a specific operation is currently active
+    [[nodiscard]] bool isOperationActive(State op) const;
+
+    /// @brief Check if any operation is running
+    [[nodiscard]] bool hasActiveOperations() const;
 
     // -- Adapter Inspection --
     void scanAdapters();
@@ -182,6 +191,8 @@ public:
 
 Q_SIGNALS:
     void stateChanged(int newState);
+    void operationStarted(int operationState);
+    void operationFinished(int operationState);
     void statusMessage(QString message, int timeout);
     void progressUpdated(int percent, QString status);
 
@@ -227,7 +238,8 @@ private:
     void populateBasicReportSections(QSet<NetworkDiagnosticReportGenerator::Section>& sections);
     void populateAdvancedReportSections(QSet<NetworkDiagnosticReportGenerator::Section>& sections);
 
-    State m_state = State::Idle;
+    State m_state = State::Idle;  ///< Legacy: first active op or Idle
+    QSet<State> m_activeOps;      ///< Currently running operations
 
     std::unique_ptr<NetworkAdapterInspector> m_adapterInspector;
     std::unique_ptr<ConnectivityTester> m_connectivityTester;
@@ -241,7 +253,7 @@ private:
     std::unique_ptr<NetworkDiagnosticReportGenerator> m_reportGenerator;
     std::unique_ptr<EthernetConfigManager> m_ethernetConfigManager;
 
-    QThread* m_workerThread = nullptr;  ///< Owned; uses deleteLater via QThread::finished
+    QHash<State, QThread*> m_workerThreads;  ///< Per-operation threads
 
     // LAN transfer server state
     QTcpServer* m_lanTransferServer = nullptr;
@@ -262,8 +274,12 @@ private:
     QVector<NetworkShareInfo> m_cachedShares;
 
     void setState(State s);
+    void addOperation(State op);
+    void removeOperation(State op);
+    bool isWorkerGroupBusy(State op) const;
     void runOnThread(std::function<void()> work, State operationState);
-    void cleanupThread();
+    void cleanupThread(State op);
+    void cleanupAllThreads();
     void connectWorkerSignals();
 
     /// @brief Handle an incoming LAN transfer client connection

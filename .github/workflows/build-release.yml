@@ -159,7 +159,7 @@ jobs:
         }
 
         # Qt DLLs
-        $requiredDlls = @("Qt6Core.dll", "Qt6Gui.dll", "Qt6Widgets.dll", "Qt6Network.dll", "Qt6Concurrent.dll")
+        $requiredDlls = @("Qt6Core.dll", "Qt6Gui.dll", "Qt6Widgets.dll", "Qt6Network.dll", "Qt6Concurrent.dll", "Qt6Xml.dll")
         foreach ($dll in $requiredDlls) {
           if (!(Test-Path $dll)) {
             Write-Error "FATAL: $dll not found"
@@ -214,6 +214,13 @@ jobs:
           exit 1
         } else {
           Write-Host "OK  tools/uup/uupmc/UUPDownload.exe"
+        }
+
+        # iperf3.exe (bundled for LAN bandwidth testing)
+        if (!(Test-Path "tools/iperf3/iperf3.exe")) {
+          Write-Warning "tools/iperf3/iperf3.exe not found — LAN bandwidth testing unavailable"
+        } else {
+          Write-Host "OK  tools/iperf3/iperf3.exe"
         }
 
         Write-Host ""
@@ -475,11 +482,8 @@ jobs:
 
           **Swiss Army Knife Utility** — a portable Windows toolkit for PC technicians, IT pros, and sysadmins. Single EXE, no installer, no runtime dependencies. Drop it on a USB stick and go.
 
-          ### Quick Actions
-          One-click admin tasks organized by category: system optimization, quick backups, maintenance, troubleshooting, and emergency recovery. Each action runs silently with progress feedback and logging.
-
           ### Backup and Restore
-          Step-by-step user profile backup and restore wizards. Smart category filtering (Documents, Desktop, AppData, browser profiles, etc.), AES-256 encryption, NTFS permission and timestamp preservation, and compressed ZIP output.
+          Step-by-step user profile backup and restore wizards. Smart category filtering (Documents, Desktop, AppData, browser profiles, etc.), AES-256 encryption, NTFS permission and timestamp preservation, and compressed ZIP output. Integrated quick tools: Screenshot Settings capture and BitLocker Key Backup.
 
           ### Application Management
           **App Installation** — Scan installed programs on the current machine, match them to Chocolatey packages, and bulk-install on a new PC with a single click. Export/import application lists as JSON.
@@ -502,17 +506,18 @@ jobs:
           **Network Adapters** — Adapter inspector with full IPv4/IPv6 config, DHCP, DNS, driver info, and traffic stats. Ethernet settings backup/restore to portable JSON for cross-machine portability.
           **WiFi Manager** — WiFi credential manager with QR code generation for phone/tablet connection. Batch QR export (PNG/PDF/JPG/BMP), Windows `.cmd` script generation, macOS `.mobileconfig` profile export, and Windows known-profile scanning.
 
-          ### Email Tool
-          Browse, search, and export data from Outlook PST/OST and MBOX archives — no Outlook or MAPI required. Folder tree navigation, sortable item list, HTML/plain-text preview, MAPI property inspector. Contacts dialog with VCF/CSV export, calendar dialog (month/week/day views) with ICS/CSV export, and attachments browser with batch extraction. Full-text search across subjects, bodies, senders, recipients, and attachment names.
+          ### Email Tools
+          **Email Inspector** — Browse, search, and export data from Outlook PST/OST and MBOX archives — no Outlook or MAPI required. Folder tree navigation, sortable item list, HTML/plain-text preview, MAPI property inspector. Contacts dialog with VCF/CSV export, calendar dialog (month/week/day views) with ICS/CSV export, and attachments browser with batch extraction. Full-text search across subjects, bodies, senders, recipients, and attachment names. Email profile manager with orphaned file discovery.
+          **OST Converter** — Multi-threaded bulk OST/PST conversion to 8 output formats (PST, EML, MSG, MBOX, DBX, HTML, PDF, IMAP Upload) with deleted item recovery, PST splitting, IMAP cloud upload, and advanced filtering.
 
           ### Settings
-          Configurable default backup location, Quick Actions backup preferences (location, confirmations, notifications, logging, compression).
+          Per-panel settings — each panel provides its own configuration (backup location, uninstall defaults, scan levels, flash options, etc.).
 
           ---
 
           100% portable. Open source. No telemetry.
 
-          **Requirements:** Windows 10/11 x64 · Administrator privileges recommended
+          **Requirements:** Windows 10/11 x64 · Runs as standard user; elevates per-task via UAC when needed
 
           See the [README](https://github.com/${{ github.repository }}/blob/main/README.md) for detailed documentation and screenshots.
         draft: false

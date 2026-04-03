@@ -7,7 +7,7 @@ technicians, IT pros, and sysadmins. Single-EXE deployment — no installer, no
 runtime dependencies on the target machine.
 
 - **Language**: C++23 (MSVC 19.44+, `/std:c++latest`)
-- **Framework**: Qt 6.5.3 (Core, Widgets, Concurrent, Network)
+- **Framework**: Qt 6.5.3 (Core, Widgets, Concurrent, Network, Xml)
 - **Build**: CMake 3.28+, Visual Studio 2022 generator
 - **Target**: Windows 10/11 x64
 - **Package Manager**: vcpkg (for non-Qt dependencies)
@@ -235,14 +235,14 @@ release hooks above.
 ### Directory Structure
 
 ```
-include/sak/          — Public headers (one .h per class, 135 headers)
-include/sak/actions/  — Action headers (7 files, 142 headers total)
-src/core/             — Core business logic, workers, parsers, managers (89 files)
-src/gui/              — Qt widget panels, dialogs, and themes (36 files)
+include/sak/          — Public headers (one .h per class, 160 headers)
+include/sak/actions/  — Action headers (7 files, 167 headers total)
+src/core/             — Core business logic, workers, parsers, managers (106 files)
+src/gui/              — Qt widget panels, dialogs, and themes (37 files)
 src/actions/          — Quick action workers (one file per action, 7 files)
 src/threading/        — Thread workers (backup, scan, hash, flash, 4 files)
 src/third_party/      — Bundled third-party source (qrcodegen)
-tests/unit/           — Qt Test unit tests (94 files)
+tests/unit/           — Qt Test unit tests (112 files)
 tests/unit/actions/   — Action validation tests (2 files)
 tests/integration/    — End-to-end workflow tests (3 files)
 resources/            — QRC files, icons, themes

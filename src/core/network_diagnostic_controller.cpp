@@ -46,7 +46,7 @@ NetworkDiagnosticController::NetworkDiagnosticController(QObject* parent) : QObj
 
 NetworkDiagnosticController::~NetworkDiagnosticController() {
     cancel();
-    cleanupThread();
+    cleanupAllThreads();
 
     // Ensure workers with timers are stopped
     m_connectionMonitor->stopMonitoring();
@@ -54,59 +54,120 @@ NetworkDiagnosticController::~NetworkDiagnosticController() {
 }
 
 NetworkDiagnosticController::State NetworkDiagnosticController::currentState() const {
-    return m_state;
+    if (m_activeOps.isEmpty()) {
+        return State::Idle;
+    }
+    return *m_activeOps.constBegin();
+}
+
+bool NetworkDiagnosticController::isOperationActive(State op) const {
+    return m_activeOps.contains(op);
+}
+
+bool NetworkDiagnosticController::hasActiveOperations() const {
+    return !m_activeOps.isEmpty();
 }
 
 void NetworkDiagnosticController::setState(State s) {
-    if (m_state != s) {
-        m_state = s;
-        Q_EMIT stateChanged(static_cast<int>(s));
+    // Legacy compat: Idle means remove all ops, else add the op
+    if (s == State::Idle) {
+        auto ops = m_activeOps;
+        for (auto op : ops) {
+            removeOperation(op);
+        }
+    } else {
+        addOperation(s);
+    }
+}
+
+void NetworkDiagnosticController::addOperation(State op) {
+    if (op == State::Idle) {
+        return;
+    }
+    m_activeOps.insert(op);
+    m_state = op;
+    Q_EMIT operationStarted(static_cast<int>(op));
+    Q_EMIT stateChanged(static_cast<int>(op));
+}
+
+void NetworkDiagnosticController::removeOperation(State op) {
+    if (!m_activeOps.remove(op)) {
+        return;  // Already removed (e.g., by both completion signal and QThread::finished)
+    }
+    Q_EMIT operationFinished(static_cast<int>(op));
+    if (m_activeOps.isEmpty()) {
+        m_state = State::Idle;
+        Q_EMIT stateChanged(static_cast<int>(State::Idle));
+    } else {
+        m_state = *m_activeOps.constBegin();
+    }
+}
+
+bool NetworkDiagnosticController::isWorkerGroupBusy(State op) const {
+    // Operations sharing a worker instance cannot run concurrently
+    // because they share a cancel flag and internal state.
+    switch (op) {
+    case State::RunningPing:
+    case State::RunningTraceroute:
+    case State::RunningMtr:
+        return m_activeOps.contains(State::RunningPing) ||
+               m_activeOps.contains(State::RunningTraceroute) ||
+               m_activeOps.contains(State::RunningMtr);
+    default:
+        return m_activeOps.contains(op);
     }
 }
 
 void NetworkDiagnosticController::runOnThread(std::function<void()> work, State operationState) {
-    Q_ASSERT(m_workerThread);
-    if (m_state != State::Idle && m_state != State::MonitoringConnections) {
-        Q_EMIT errorOccurred(QStringLiteral("Another operation is in progress"));
+    if (isWorkerGroupBusy(operationState)) {
+        Q_EMIT errorOccurred(QStringLiteral("That operation is already in progress"));
         return;
     }
 
-    cleanupThread();
-    setState(operationState);
+    cleanupThread(operationState);
+    addOperation(operationState);
 
-    m_workerThread = new QThread(this);
+    auto* thread = new QThread(this);
+    m_workerThreads.insert(operationState, thread);
 
-    // Move the actual work to a lambda that runs on the new thread.
     // NOTE: No context object -> DirectConnection -> runs in emitting thread (worker).
     // Capture thread pointer locally to avoid racing with cleanupThread().
-    QThread* workerThread = m_workerThread;
-    QObject::connect(m_workerThread, &QThread::started, [workerThread, work]() {
+    QObject::connect(thread, &QThread::started, [thread, work]() {
         work();
-        workerThread->quit();  // Exit event loop so thread finishes
+        thread->quit();  // Exit event loop so thread finishes
     });
 
     // Auto-cleanup when thread finishes
-    QObject::connect(m_workerThread, &QThread::finished, this, [this]() {
-        if (m_state != State::MonitoringConnections) {
-            setState(State::Idle);
-        }
+    QObject::connect(thread, &QThread::finished, this, [this, operationState]() {
+        removeOperation(operationState);
     });
 
-    m_workerThread->start();
+    thread->start();
 }
 
-void NetworkDiagnosticController::cleanupThread() {
-    Q_ASSERT(m_workerThread);
-    if (m_workerThread) {
-        if (m_workerThread->isRunning()) {
-            m_workerThread->quit();
-            if (!m_workerThread->wait(5000)) {
-                m_workerThread->terminate();
-                m_workerThread->wait(2000);
-            }
+void NetworkDiagnosticController::cleanupThread(State op) {
+    auto it = m_workerThreads.find(op);
+    if (it == m_workerThreads.end()) {
+        return;
+    }
+    QThread* thread = it.value();
+    if (thread->isRunning()) {
+        thread->quit();
+        constexpr int kThreadQuitTimeoutMs = 5000;
+        if (!thread->wait(kThreadQuitTimeoutMs)) {
+            thread->terminate();
+            constexpr int kThreadTermTimeoutMs = 2000;
+            thread->wait(kThreadTermTimeoutMs);
         }
-        m_workerThread->deleteLater();
-        m_workerThread = nullptr;
+    }
+    thread->deleteLater();
+    m_workerThreads.erase(it);
+}
+
+void NetworkDiagnosticController::cleanupAllThreads() {
+    const auto states = m_workerThreads.keys();
+    for (auto op : states) {
+        cleanupThread(op);
     }
 }
 
@@ -135,7 +196,7 @@ void NetworkDiagnosticController::connectAdapterInspectorSignals() {
             Q_EMIT adaptersScanComplete(adapters);
             Q_EMIT logOutput(
                 QStringLiteral("Adapter scan complete: %1 adapters found").arg(adapters.size()));
-            setState(State::Idle);
+            removeOperation(State::ScanningAdapters);
         });
     connect(m_adapterInspector.get(),
             &NetworkAdapterInspector::errorOccurred,
@@ -159,7 +220,7 @@ void NetworkDiagnosticController::connectConnectivityTesterSignals() {
                                      .arg(result.received)
                                      .arg(result.sent)
                                      .arg(result.avgRtt, 0, 'f', 1));
-                setState(State::Idle);
+                removeOperation(State::RunningPing);
             });
 
     connect(m_connectivityTester.get(),
@@ -175,7 +236,7 @@ void NetworkDiagnosticController::connectConnectivityTesterSignals() {
                 Q_EMIT logOutput(QStringLiteral("Traceroute to %1 complete: %2 hops")
                                      .arg(result.target)
                                      .arg(result.hops.size()));
-                setState(State::Idle);
+                removeOperation(State::RunningTraceroute);
             });
 
     connect(m_connectivityTester.get(),
@@ -190,7 +251,7 @@ void NetworkDiagnosticController::connectConnectivityTesterSignals() {
                 Q_EMIT logOutput(QStringLiteral("MTR to %1 complete: %2 cycles")
                                      .arg(result.target)
                                      .arg(result.totalCycles));
-                setState(State::Idle);
+                removeOperation(State::RunningMtr);
             });
 
     connect(m_connectivityTester.get(),
@@ -201,7 +262,6 @@ void NetworkDiagnosticController::connectConnectivityTesterSignals() {
 
 void NetworkDiagnosticController::connectDnsToolSignals() {
     Q_ASSERT(m_dnsTool);
-    Q_ASSERT(!m_cachedDns.isEmpty());
     connect(
         m_dnsTool.get(), &DnsDiagnosticTool::queryComplete, this, [this](DnsQueryResult result) {
             m_cachedDns.append(result);
@@ -210,7 +270,7 @@ void NetworkDiagnosticController::connectDnsToolSignals() {
                                  .arg(result.queryName, result.recordType)
                                  .arg(result.answers.size())
                                  .arg(result.responseTimeMs, 0, 'f', 1));
-            setState(State::Idle);
+            removeOperation(State::RunningDnsQuery);
         });
     connect(m_dnsTool.get(),
             &DnsDiagnosticTool::comparisonComplete,
@@ -222,7 +282,7 @@ void NetworkDiagnosticController::connectDnsToolSignals() {
                                    "agreement: %2")
                         .arg(comparison.results.size())
                         .arg(comparison.allAgree ? QStringLiteral("YES") : QStringLiteral("NO")));
-                setState(State::Idle);
+                removeOperation(State::RunningDnsQuery);
             });
     connect(m_dnsTool.get(),
             &DnsDiagnosticTool::dnsCacheResults,
@@ -263,7 +323,7 @@ void NetworkDiagnosticController::connectPortScannerSignals() {
                 Q_EMIT logOutput(QStringLiteral("Port scan complete: %1 ports scanned, %2 open")
                                      .arg(results.size())
                                      .arg(openCount));
-                setState(State::Idle);
+                removeOperation(State::ScanningPorts);
             });
     connect(m_portScanner.get(),
             &PortScanner::errorOccurred,
@@ -294,7 +354,7 @@ void NetworkDiagnosticController::connectBandwidthTesterSignals() {
                 Q_EMIT logOutput(QStringLiteral("Bandwidth test: DL %1 Mbps, UL %2 Mbps")
                                      .arg(result.downloadMbps, 0, 'f', 2)
                                      .arg(result.uploadMbps, 0, 'f', 2));
-                setState(State::Idle);
+                removeOperation(State::RunningBandwidthTest);
             });
     connect(m_bandwidthTester.get(),
             &BandwidthTester::httpSpeedTestComplete,
@@ -306,7 +366,7 @@ void NetworkDiagnosticController::connectBandwidthTesterSignals() {
                                      .arg(dl, 0, 'f', 2)
                                      .arg(ul, 0, 'f', 2)
                                      .arg(latency, 0, 'f', 1));
-                setState(State::Idle);
+                removeOperation(State::RunningBandwidthTest);
             });
     connect(m_bandwidthTester.get(),
             &BandwidthTester::errorOccurred,
@@ -328,9 +388,7 @@ void NetworkDiagnosticController::connectWifiAnalyzerSignals() {
 
                 Q_EMIT logOutput(
                     QStringLiteral("WiFi scan complete: %1 networks found").arg(networks.size()));
-                if (m_state == State::ScanningWiFi) {
-                    setState(State::Idle);
-                }
+                removeOperation(State::ScanningWiFi);
             });
     connect(m_wifiAnalyzer.get(),
             &WiFiAnalyzer::errorOccurred,
@@ -368,7 +426,7 @@ void NetworkDiagnosticController::connectFirewallAuditorSignals() {
                                      .arg(rules.size())
                                      .arg(conflicts.size())
                                      .arg(gaps.size()));
-                setState(State::Idle);
+                removeOperation(State::AuditingFirewall);
             });
     connect(m_firewallAuditor.get(),
             &FirewallRuleAuditor::errorOccurred,
@@ -386,7 +444,7 @@ void NetworkDiagnosticController::connectShareBrowserSignals() {
                 Q_EMIT sharesDiscovered(shares);
                 Q_EMIT logOutput(
                     QStringLiteral("Share discovery: %1 shares found").arg(shares.size()));
-                setState(State::Idle);
+                removeOperation(State::BrowsingShares);
             });
     connect(m_shareBrowser.get(),
             &NetworkShareBrowser::errorOccurred,
@@ -401,7 +459,7 @@ void NetworkDiagnosticController::connectReportGeneratorSignals() {
             [this](QString path) {
                 Q_EMIT reportGenerated(path);
                 Q_EMIT logOutput(QStringLiteral("Report generated: %1").arg(path));
-                setState(State::Idle);
+                removeOperation(State::GeneratingReport);
             });
     connect(m_reportGenerator.get(),
             &NetworkDiagnosticReportGenerator::errorOccurred,
@@ -659,7 +717,7 @@ void NetworkDiagnosticController::startConnectionMonitor(
 void NetworkDiagnosticController::stopConnectionMonitor() {
     m_connectionMonitor->stopMonitoring();
     Q_EMIT logOutput(QStringLiteral("Connection monitor stopped"));
-    setState(State::Idle);
+    removeOperation(State::MonitoringConnections);
 }
 
 void NetworkDiagnosticController::auditFirewall() {
@@ -670,7 +728,6 @@ void NetworkDiagnosticController::auditFirewall() {
 }
 
 void NetworkDiagnosticController::discoverShares(const QString& hostname) {
-    Q_ASSERT(!hostname.isEmpty());
     Q_ASSERT(m_shareBrowser);
     if (hostname.trimmed().isEmpty()) {
         Q_EMIT errorOccurred(QStringLiteral("Share discovery hostname cannot be empty"));
@@ -687,7 +744,6 @@ void NetworkDiagnosticController::discoverShares(const QString& hostname) {
 // -- LAN File Transfer Speed Test --------------------------------------------
 
 void NetworkDiagnosticController::startLanTransferServer(uint16_t port) {
-    Q_ASSERT(m_lanTransferServer);
     if (m_lanTransferServerRunning.load(std::memory_order_acquire)) {
         Q_EMIT errorOccurred(QStringLiteral("LAN transfer server is already running"));
         return;
@@ -912,7 +968,7 @@ void NetworkDiagnosticController::runLanTransferTest(const QString& targetAddr,
             finalizeLanTransfer(
                 socket, {targetAddr, port, totalSent, timer.elapsed(), peakMbps, speedSamples});
         },
-        State::Idle);
+        State::RunningLanTransfer);
 }
 
 QSet<NetworkDiagnosticReportGenerator::Section>
@@ -1082,10 +1138,13 @@ void NetworkDiagnosticController::cancel() {
         stopLanTransferServer();
     }
 
-    // If no worker thread is running (continuous monitors, etc.),
-    // transition state to Idle directly since QThread::finished won't fire.
-    if (!m_workerThread || !m_workerThread->isRunning()) {
-        setState(State::Idle);
+    // Clear operations that have no worker thread (monitors, etc.)
+    // Worker threads will removeOperation via QThread::finished.
+    auto ops = m_activeOps;
+    for (auto op : ops) {
+        if (!m_workerThreads.contains(op) || !m_workerThreads.value(op)->isRunning()) {
+            removeOperation(op);
+        }
     }
 
     Q_EMIT logOutput(QStringLiteral("Operation cancelled"));

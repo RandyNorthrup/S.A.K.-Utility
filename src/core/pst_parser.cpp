@@ -610,7 +610,10 @@ static std::expected<PstParser::TcInfo, error_code> parseTcInfo(const QByteArray
 static sak::PstNode readNodeLeafEntry(const QByteArray& data, int off, bool is_unicode) {
     sak::PstNode node;
     if (is_unicode) {
-        node.node_id = localReadLE<uint64_t>(data, off);
+        // MS-PST §2.2.2.7.7.4: NBTENTRY nid field is 8 bytes in Unicode
+        // files but only the lower 32 bits are the actual NID.  OST files
+        // may have non-zero upper bits, so mask to 32 bits.
+        node.node_id = localReadLE<uint64_t>(data, off) & 0xFF'FF'FF'FF;
         node.data_bid = localReadLE<uint64_t>(data, off + 8);
         node.subnode_bid = localReadLE<uint64_t>(data, off + 16);
         node.parent_node_id = localReadLE<uint32_t>(data, off + 24);
@@ -888,6 +891,35 @@ std::expected<QVector<sak::MapiProperty>, error_code> PstParser::readItemPropert
     return readPropertyContext(item_node_id);
 }
 
+std::expected<QByteArray, error_code> PstParser::extractAttachmentFromSubnode(
+    const sak::PstNode& subnode) {
+    HeapContext ctx;
+    auto data_result = readDataTree(subnode.data_bid, &ctx.block_offsets);
+    if (!data_result) {
+        return std::unexpected(data_result.error());
+    }
+    ctx.heap_data = std::move(*data_result);
+
+    if (subnode.subnode_bid != 0) {
+        auto sn = readSubNodeBTree(subnode.subnode_bid);
+        if (sn) {
+            ctx.subnode_map = std::move(*sn);
+        }
+    }
+
+    auto bth = collectBthLeafData(ctx, kPcSignature);
+    if (!bth) {
+        return std::unexpected(bth.error());
+    }
+
+    auto att_props = parsePropertyRecords(*bth, ctx);
+    auto* data = findPropertyById(att_props, sak::email::kPropIdAttachData);
+    if (data) {
+        return *data;
+    }
+    return std::unexpected(error_code::pst_attachment_error);
+}
+
 std::expected<QByteArray, error_code> PstParser::readAttachmentData(uint64_t message_node_id,
                                                                     int attachment_index) {
     if (!m_is_open) {
@@ -896,6 +928,9 @@ std::expected<QByteArray, error_code> PstParser::readAttachmentData(uint64_t mes
 
     auto msg_it = m_nbt_cache.find(message_node_id);
     if (msg_it == m_nbt_cache.end()) {
+        sak::logWarning("PstParser: attachment NID 0x{:08X} not found in NBT cache ({} entries)",
+                        static_cast<uint32_t>(message_node_id),
+                        m_nbt_cache.size());
         return std::unexpected(error_code::pst_node_not_found);
     }
 
@@ -918,16 +953,7 @@ std::expected<QByteArray, error_code> PstParser::readAttachmentData(uint64_t mes
             ++found_count;
             continue;
         }
-
-        auto att_props = readPropertyContext(sub_it.key());
-        if (!att_props) {
-            return std::unexpected(att_props.error());
-        }
-        auto* data = findPropertyById(*att_props, sak::email::kPropIdAttachData);
-        if (data) {
-            return *data;
-        }
-        return std::unexpected(error_code::pst_attachment_error);
+        return extractAttachmentFromSubnode(sub_it.value());
     }
 
     return std::unexpected(error_code::pst_attachment_error);
@@ -1509,6 +1535,9 @@ QVector<sak::MapiProperty> PstParser::parsePropertyRecords(const BthLeafResult& 
 std::expected<QVector<sak::MapiProperty>, error_code> PstParser::readPropertyContext(uint64_t nid) {
     auto node_it = m_nbt_cache.find(nid);
     if (node_it == m_nbt_cache.end()) {
+        sak::logWarning("PstParser: NID 0x{:08X} not found in NBT cache ({} entries)",
+                        static_cast<uint32_t>(nid),
+                        m_nbt_cache.size());
         return std::unexpected(error_code::pst_node_not_found);
     }
 
@@ -2491,6 +2520,10 @@ sak::EmailItemType PstParser::classifyMessageClass(const QString& message_class)
 
 sak::PstNodeType PstParser::nodeType(uint64_t nid) {
     return static_cast<sak::PstNodeType>(nid & 0x1F);
+}
+
+QVector<uint64_t> PstParser::allNodeIds() const {
+    return m_nbt_cache.keys();
 }
 
 std::expected<QByteArray, error_code> PstParser::readBytes(qint64 offset, qint64 count) {

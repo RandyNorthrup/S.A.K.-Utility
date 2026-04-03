@@ -1590,6 +1590,10 @@ void NetworkDiagnosticPanel::connectControllerCoreSignals() {
             this,
             &NetworkDiagnosticPanel::onStateChanged);
     connect(m_controller.get(),
+            &NetworkDiagnosticController::operationFinished,
+            this,
+            &NetworkDiagnosticPanel::onOperationFinished);
+    connect(m_controller.get(),
             &NetworkDiagnosticController::errorOccurred,
             this,
             &NetworkDiagnosticPanel::onError);
@@ -4120,37 +4124,85 @@ void NetworkDiagnosticPanel::onLanTransferComplete(LanTransferResult result) {
 // -- Controller State --
 
 void NetworkDiagnosticPanel::onStateChanged(int newState) {
-    Q_ASSERT(m_refreshBtn);
-    Q_ASSERT(m_pingStartBtn);
-    const auto state = static_cast<NetworkDiagnosticController::State>(newState);
-    const bool idle = (state == NetworkDiagnosticController::State::Idle);
+    Q_UNUSED(newState);
+    // With concurrent operations, per-operation button management is handled
+    // by operationFinished and the individual completion signal handlers.
+    // This slot is kept for backward compatibility but does not re-enable
+    // all buttons globally — that would interfere with other running ops.
+}
 
-    // Re-enable buttons when idle
-    if (idle) {
+void NetworkDiagnosticPanel::resetDiagnosticButtons(int finishedState) {
+    using S = NetworkDiagnosticController::State;
+    const auto state = static_cast<S>(finishedState);
+
+    switch (state) {
+    case S::ScanningAdapters:
         m_refreshBtn->setEnabled(true);
+        break;
+    case S::RunningPing:
         m_pingStartBtn->setEnabled(true);
         m_pingStopBtn->setEnabled(false);
+        break;
+    case S::RunningTraceroute:
         m_traceStartBtn->setEnabled(true);
         m_traceStopBtn->setEnabled(false);
+        break;
+    case S::RunningMtr:
         m_mtrStartBtn->setEnabled(true);
         m_mtrStopBtn->setEnabled(false);
-        m_portStartBtn->setEnabled(true);
-        m_portStopBtn->setEnabled(false);
-        m_bwTestBtn->setEnabled(true);
-        m_wifiScanBtn->setEnabled(true);
-        m_wifiContBtn->setEnabled(true);
-        m_wifiStopBtn->setEnabled(false);
-        m_connStartBtn->setEnabled(true);
-        m_connStopBtn->setEnabled(false);
+        break;
+    case S::RunningDnsQuery:
         m_dnsQueryBtn->setEnabled(true);
         m_dnsReverseBtn->setEnabled(true);
         m_dnsCompareBtn->setEnabled(true);
         m_dnsFlushBtn->setEnabled(true);
-        m_httpSpeedBtn->setEnabled(true);
-        m_fwAuditBtn->setEnabled(true);
-        m_shareDiscoverBtn->setEnabled(true);
-        m_lanTestBtn->setEnabled(true);
+        break;
+    case S::ScanningPorts:
+        m_portStartBtn->setEnabled(true);
+        m_portStopBtn->setEnabled(false);
+        break;
+    default:
+        break;
     }
+}
+
+void NetworkDiagnosticPanel::resetToolButtons(int finishedState) {
+    using S = NetworkDiagnosticController::State;
+    const auto state = static_cast<S>(finishedState);
+
+    switch (state) {
+    case S::RunningBandwidthTest:
+        m_bwTestBtn->setEnabled(true);
+        m_httpSpeedBtn->setEnabled(true);
+        m_bwResultLabel->clear();
+        m_httpSpeedLabel->clear();
+        break;
+    case S::ScanningWiFi:
+        m_wifiScanBtn->setEnabled(true);
+        m_wifiContBtn->setEnabled(true);
+        m_wifiStopBtn->setEnabled(false);
+        break;
+    case S::MonitoringConnections:
+        m_connStartBtn->setEnabled(true);
+        m_connStopBtn->setEnabled(false);
+        break;
+    case S::AuditingFirewall:
+        m_fwAuditBtn->setEnabled(true);
+        break;
+    case S::BrowsingShares:
+        m_shareDiscoverBtn->setEnabled(true);
+        break;
+    case S::RunningLanTransfer:
+        m_lanTestBtn->setEnabled(true);
+        break;
+    default:
+        break;
+    }
+}
+
+void NetworkDiagnosticPanel::onOperationFinished(int finishedState) {
+    resetDiagnosticButtons(finishedState);
+    resetToolButtons(finishedState);
 }
 
 void NetworkDiagnosticPanel::onError(QString error) {
@@ -4159,13 +4211,9 @@ void NetworkDiagnosticPanel::onError(QString error) {
     Q_EMIT logOutput(QStringLiteral("[ERROR] %1").arg(error));
     Q_EMIT statusMessage(error, 5000);
 
-    // Defensively re-enable all controls in case the controller doesn't
-    // transition back to Idle after an error
-    onStateChanged(static_cast<int>(NetworkDiagnosticController::State::Idle));
-
-    // Clear any "Running..." labels stuck by incomplete operations
-    m_bwResultLabel->clear();
-    m_httpSpeedLabel->clear();
+    // Errors from workers with missing completion signals will still
+    // get cleaned up by QThread::finished -> removeOperation -> operationFinished.
+    // No need to force-reset all buttons here.
 }
 
 // ===================================================================

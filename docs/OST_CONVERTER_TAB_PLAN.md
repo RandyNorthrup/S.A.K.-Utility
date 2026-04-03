@@ -1,41 +1,41 @@
-﻿# OST Converter Tab â€” Comprehensive Implementation Plan
+﻿# OST Converter Tab -- Comprehensive Implementation Plan
 
-**Version**: 1.0  
-**Date**: March 25, 2026  
-**Status**: ðŸ“‹ Planned  
-**Parent Panel**: Email Tools (EmailInspectorPanel)  
+**Version**: 1.0
+**Date**: March 25, 2026
+**Status**: Planned
+**Parent Panel**: Email Tools (EmailInspectorPanel)
 **Tab Position**: Top-level tab alongside the existing Email Inspector view
 
 ---
 
-## ðŸŽ¯ Executive Summary
+## Executive Summary
 
 The OST Converter tab adds bulk, multi-threaded OST/PST file conversion capabilities
 to the Email Tools panel. Technicians can convert complete Outlook OST and PST files
-into industry-standard formats â€” PST, EML, MSG, MBOX, DBX â€” with full preservation
+into industry-standard formats -- PST, EML, MSG, MBOX, DBX -- with full preservation
 of folder hierarchy, email metadata, read/unread status, and rich text formatting. The
 converter also supports direct migration to cloud email platforms (Office 365, Exchange
 Server, Gmail, Yahoo) via IMAP upload, recovery of deleted and corrupt items from
 damaged OST files, and intelligent splitting of large resultant PST files into
 manageable parts (2 GB, 5 GB, 10 GB). All parsing leverages the existing
-in-tree `PstParser` engine â€” no Outlook installation required.
+in-tree `PstParser` engine -- no Outlook installation required.
 
 ### Key Objectives
 
-- **Multi-Threaded Bulk Conversion** â€” Process multiple OST/PST files concurrently with configurable thread count for maximum throughput on multi-core machines
-- **Complete Format Support** â€” Convert to PST, EML, MSG, MBOX, DBX, HTML, and PDF formats with 100% data fidelity
-- **Cloud Migration (IMAP Upload)** â€” Upload converted mailbox directly to Office 365, Exchange Server, Gmail, Yahoo, or any IMAP-capable server
-- **Deleted Item Recovery** â€” Scan the OST file's "Recoverable Items" and orphaned nodes to recover soft-deleted and hard-deleted messages
-- **Corrupt File Repair** â€” Detect and skip corrupt blocks during parsing; salvage maximum data from damaged OST files with detailed error reporting
-- **Folder & Metadata Preservation** â€” Maintain original folder tree, read/unread status, importance flags, categories, sent/received timestamps, and all MAPI properties
-- **Rich Content Preservation** â€” Preserve HTML bodies, embedded images, inline attachments, RTF formatting, and plain-text fallbacks
-- **PST Splitting** â€” Split large output PST files into smaller volumes (2 GB, 5 GB, 10 GB, or custom size) for compatibility with legacy Outlook versions and easier transport
-- **Selective Conversion** â€” Convert entire mailbox, specific folders, date ranges, or filtered subsets
-- **Detailed Logging & Reports** â€” Per-item conversion status, error log, and professional summary report
+- **Multi-Threaded Bulk Conversion** -- Process multiple OST/PST files concurrently with configurable thread count for maximum throughput on multi-core machines
+- **Complete Format Support** -- Convert to PST, EML, MSG, MBOX, DBX, HTML, and PDF formats with 100% data fidelity
+- **Cloud Migration (IMAP Upload)** -- Upload converted mailbox directly to Office 365, Exchange Server, Gmail, Yahoo, or any IMAP-capable server
+- **Deleted Item Recovery** -- Scan the OST file's "Recoverable Items" and orphaned nodes to recover soft-deleted and hard-deleted messages
+- **Corrupt File Repair** -- Detect and skip corrupt blocks during parsing; salvage maximum data from damaged OST files with detailed error reporting
+- **Folder & Metadata Preservation** -- Maintain original folder tree, read/unread status, importance flags, categories, sent/received timestamps, and all MAPI properties
+- **Rich Content Preservation** -- Preserve HTML bodies, embedded images, inline attachments, RTF formatting, and plain-text fallbacks
+- **PST Splitting** -- Split large output PST files into smaller volumes (2 GB, 5 GB, 10 GB, or custom size) for compatibility with legacy Outlook versions and easier transport
+- **Selective Conversion** -- Convert entire mailbox, specific folders, date ranges, or filtered subsets
+- **Detailed Logging & Reports** -- Per-item conversion status, error log, and professional summary report
 
 ---
 
-## ðŸ“Š Project Scope
+## Project Scope
 
 ### What is OST Conversion?
 
@@ -43,7 +43,7 @@ in-tree `PstParser` engine â€” no Outlook installation required.
 mailboxes. Unlike PST files, OST files are tightly bound to their originating Outlook
 profile and cannot be opened by any other Outlook instance or email client. When a
 user's Exchange server is decommissioned, their account is migrated, or their Outlook
-profile is deleted, the OST file becomes an orphan â€” a potentially valuable mailbox
+profile is deleted, the OST file becomes an orphan -- a potentially valuable mailbox
 archive that is inaccessible through normal means.
 
 **OST Conversion** is the process of reading the binary OST file (which uses the same
@@ -58,7 +58,7 @@ universally accessible format. This is a critical operation for:
 
 **Technical Background**:
 
-OST and PST files share the same three-layer binary format (NDB â†’ LTP â†’ Messaging)
+OST and PST files share the same three-layer binary format (NDB -> LTP -> Messaging)
 documented in [MS-PST]. The key differences are:
 
 | Aspect | PST | OST |
@@ -74,62 +74,62 @@ documented in [MS-PST]. The key differences are:
 **Conversion Pipeline**:
 
 ```
-Input OST/PST â†’ PstParser (NDB/LTP/Messaging)
-    â†’ Folder Tree Enumeration
-    â†’ Per-Message Item Loading (multi-threaded)
-    â†’ Format Writer (PST/EML/MSG/MBOX/DBX/IMAP)
-    â†’ Output File(s) + Conversion Report
+Input OST/PST -> PstParser (NDB/LTP/Messaging)
+    -> Folder Tree Enumeration
+    -> Per-Message Item Loading (multi-threaded)
+    -> Format Writer (PST/EML/MSG/MBOX/DBX/IMAP)
+    -> Output File(s) + Conversion Report
 ```
 
 **Key Data Sources**:
-- **Existing PstParser** â€” In-tree binary parser handles NDB/LTP/Messaging layers for both PST and OST
-- **Recoverable Items Folder** â€” NID `0x0301` in the hierarchy contains soft-deleted items
-- **Orphaned Nodes** â€” Nodes not reachable from the folder hierarchy may contain hard-deleted items
-- **MAPI Properties** â€” All 300+ property types preserved through conversion
+- **Existing PstParser** -- In-tree binary parser handles NDB/LTP/Messaging layers for both PST and OST
+- **Recoverable Items Folder** -- NID `0x0301` in the hierarchy contains soft-deleted items
+- **Orphaned Nodes** -- Nodes not reachable from the folder hierarchy may contain hard-deleted items
+- **MAPI Properties** -- All 300+ property types preserved through conversion
 
 ---
 
-## ðŸŽ¯ Use Cases
+## Use Cases
 
-### 1. **Exchange Server Decommission â€” Bulk OST Extraction**
+### 1. Exchange Server Decommission -- Bulk OST Extraction
 
 **Scenario**: Company is migrating from on-premises Exchange 2016 to Microsoft 365. The
 Exchange server is being decommissioned. 50 users have local OST files that contain
 emails not yet synced to the cloud.
 
 **Workflow**:
-1. Open Email Tools â†’ OST Converter tab
-2. Click **Add Files** â†’ browse to each user's `AppData\Local\Microsoft\Outlook\` directory
+1. Open Email Tools -> OST Converter tab
+2. Click **Add Files** -> browse to each user's `AppData\Local\Microsoft\Outlook\` directory
 3. All 50 OST files appear in the conversion queue with size and folder count
 4. Select output format: **PST** (for import into Outlook/365)
 5. Enable **Split PST at 5 GB** (for easier upload to 365)
 6. Set thread count to 4 (match CPU cores)
-7. Click **Convert All** â†’ multi-threaded conversion begins
+7. Click **Convert All** -> multi-threaded conversion begins
 8. Progress dashboard shows per-file status, items converted, ETA
 9. After completion: 50 PST files (some split into parts) ready for import
 
 **Benefits**:
-- Batch processing â€” 50 files queued and converted unattended
-- Multi-threaded â€” 4Ã— faster than sequential conversion
+- Batch processing -- 50 files queued and converted unattended
+- Multi-threaded -- 4x faster than sequential conversion
 - PST splitting prevents "file too large" errors during Microsoft 365 import
 - No Outlook or Exchange connectivity needed
 
 ---
 
-### 2. **Orphaned OST Recovery â€” Profile Deleted**
+### 2. Orphaned OST Recovery -- Profile Deleted
 
 **Scenario**: A user accidentally deleted their Outlook profile. The OST file
 still exists on disk but Outlook refuses to open it ("The file is not an Outlook
 data file"). The user needs their sent emails from the last 3 months.
 
 **Workflow**:
-1. Open Email Tools â†’ OST Converter tab
-2. Click **Add Files** â†’ browse to the orphaned OST file
+1. Open Email Tools -> OST Converter tab
+2. Click **Add Files** -> browse to the orphaned OST file
 3. Enable **Recover Deleted Items** checkbox
 4. Enable **Date Filter**: last 3 months only
 5. Select folder filter: **Sent Items** only
 6. Select output format: **EML** (for easy drag-and-drop into any email client)
-7. Click **Convert** â†’ converter extracts all Sent Items from the last 3 months
+7. Click **Convert** -> converter extracts all Sent Items from the last 3 months
 8. 347 EML files exported to the output directory
 9. User drags EML files into their new Outlook profile's Sent Items folder
 
@@ -141,41 +141,41 @@ data file"). The user needs their sent emails from the last 3 months.
 
 ---
 
-### 3. **Cross-Platform Migration â€” Outlook to Thunderbird**
+### 3. Cross-Platform Migration -- Outlook to Thunderbird
 
 **Scenario**: Customer is switching from Microsoft Outlook to Mozilla Thunderbird.
 They have a 12 GB PST archive and want all emails migrated.
 
 **Workflow**:
-1. Open Email Tools â†’ OST Converter tab
-2. Click **Add Files** â†’ select the 12 GB PST file
+1. Open Email Tools -> OST Converter tab
+2. Click **Add Files** -> select the 12 GB PST file
 3. Select output format: **MBOX** (Thunderbird's native format)
 4. Enable **Preserve Folder Structure** (creates one MBOX file per folder)
-5. Click **Convert** â†’ multi-threaded conversion processes all folders
+5. Click **Convert** -> multi-threaded conversion processes all folders
 6. Output: a directory tree of MBOX files mirroring the PST folder hierarchy
-7. Copy the MBOX directory into Thunderbird's profile â†’ emails appear
+7. Copy the MBOX directory into Thunderbird's profile -> emails appear
 
 **Benefits**:
 - Direct PST-to-MBOX conversion without intermediate steps
-- Folder structure preserved â€” Inbox, Sent, Drafts, custom folders all maintained
+- Folder structure preserved -- Inbox, Sent, Drafts, custom folders all maintained
 - Thunderbird reads MBOX natively; no import plugin needed
 - 12 GB file converted in under 10 minutes with multi-threading
 
 ---
 
-### 4. **Cloud Migration â€” Upload to Gmail**
+### 4. Cloud Migration -- Upload to Gmail
 
 **Scenario**: Small business owner is moving from Outlook desktop to Gmail. They
 want all historical emails from their OST file uploaded to Gmail.
 
 **Workflow**:
-1. Open Email Tools â†’ OST Converter tab
-2. Click **Add Files** â†’ select the OST file
+1. Open Email Tools -> OST Converter tab
+2. Click **Add Files** -> select the OST file
 3. Select output target: **IMAP Upload**
 4. Enter IMAP settings: `imap.gmail.com`, port 993, SSL
 5. Authenticate with Gmail App Password
-6. Map PST folders to Gmail labels (Inbox â†’ INBOX, Sent â†’ [Gmail]/Sent Mail)
-7. Click **Upload** â†’ converter reads items and uploads via IMAP APPEND
+6. Map PST folders to Gmail labels (Inbox -> INBOX, Sent -> [Gmail]/Sent Mail)
+7. Click **Upload** -> converter reads items and uploads via IMAP APPEND
 8. Progress shows: items uploaded, bandwidth used, errors (e.g., size limit)
 9. After completion: all emails appear in Gmail with correct folders/labels
 
@@ -187,19 +187,19 @@ want all historical emails from their OST file uploaded to Gmail.
 
 ---
 
-### 5. **Damaged OST Repair â€” Corrupt Data Recovery**
+### 5. Damaged OST Repair -- Corrupt Data Recovery
 
 **Scenario**: Customer's laptop crashed during an Outlook sync. The OST file is
 8 GB but Outlook says "Errors have been detected in the file" and the built-in
 repair tool (scanpst.exe) cannot fix it.
 
 **Workflow**:
-1. Open Email Tools â†’ OST Converter tab
-2. Click **Add Files** â†’ select the corrupt OST file
-3. Converter detects corruption during header/BBT parse â†’ shows warning
+1. Open Email Tools -> OST Converter tab
+2. Click **Add Files** -> select the corrupt OST file
+3. Converter detects corruption during header/BBT parse -> shows warning
 4. Enable **Recovery Mode** (attempts to read all accessible blocks, skips corrupt ones)
 5. Select output format: **PST** (to create a clean, repaired copy)
-6. Click **Convert** â†’ converter processes the file, logging each corrupt block
+6. Click **Convert** -> converter processes the file, logging each corrupt block
 7. Results: 7,842 of 8,100 items recovered (97%), 258 items in corrupt blocks
 8. Recovery report shows which folders/items were affected
 9. Clean PST file opens normally in Outlook
@@ -208,24 +208,24 @@ repair tool (scanpst.exe) cannot fix it.
 - Recovers data that scanpst.exe cannot fix
 - Skip-and-log approach maximizes data recovery
 - Per-item error tracking shows exactly what was lost
-- Output PST is structurally clean â€” no inherited corruption
+- Output PST is structurally clean -- no inherited corruption
 
 ---
 
-### 6. **Legal Hold â€” Selective Export with Metadata**
+### 6. Legal Hold -- Selective Export with Metadata
 
 **Scenario**: Legal department needs all emails between two specific parties during
 a 6-month window, with full headers and MAPI properties preserved.
 
 **Workflow**:
-1. Open Email Tools â†’ OST Converter tab
-2. Click **Add Files** â†’ select the custodian's PST/OST file
+1. Open Email Tools -> OST Converter tab
+2. Click **Add Files** -> select the custodian's PST/OST file
 3. Configure filters:
    - Date range: Jan 1 - Jun 30, 2025
    - Sender/recipient filter: `alice@company.com` AND `bob@vendor.com`
 4. Select output format: **MSG** (preserves all MAPI properties)
 5. Enable **Include Properties Manifest** (CSV with all MAPI property values per item)
-6. Click **Convert** â†’ filtered conversion finds 127 matching messages
+6. Click **Convert** -> filtered conversion finds 127 matching messages
 7. Output: 127 MSG files + `properties_manifest.csv` + `conversion_report.html`
 
 **Benefits**:
@@ -236,72 +236,72 @@ a 6-month window, with full headers and MAPI properties preserved.
 
 ---
 
-## ðŸ—ï¸ Architecture Overview
+## Architecture Overview
 
 ### Component Hierarchy
 
 ```
-EmailInspectorPanel (existing â€” becomes top-level tab container)
-â”‚
-â”œâ”€ Tab 0: Email Inspector (existing EmailInspectorPanel content)
-â”‚  â”œâ”€ Ribbon toolbar, folder tree, item list, detail panel
-â”‚  â””â”€ (unchanged â€” all existing functionality preserved)
-â”‚
-â””â”€ Tab 1: OST Converter (NEW)
-   â”‚
-   â”œâ”€ OstConverterWidget (QWidget) [Main UI]
-   â”‚  â”œâ”€ File Queue: Table showing added OST/PST files with metadata
-   â”‚  â”œâ”€ Output Settings: Format selector, destination, split options
-   â”‚  â”œâ”€ Filter Panel: Date range, folder selection, sender/recipient
-   â”‚  â”œâ”€ Recovery Options: Deleted items, corrupt block handling
-   â”‚  â”œâ”€ IMAP Settings: Server, port, SSL, credentials, folder mapping
-   â”‚  â”œâ”€ Progress Dashboard: Per-file progress bars, ETA, item counts
-   â”‚  â””â”€ Convert / Cancel buttons
-   â”‚
-   â”œâ”€ OstConverterController (QObject) [Orchestration]
-   â”‚  â”œâ”€ Manages the conversion queue
-   â”‚  â”œâ”€ Creates and manages worker threads
-   â”‚  â”œâ”€ Aggregates progress from all workers
-   â”‚  â”œâ”€ Generates conversion report
-   â”‚  â””â”€ Signals: conversionStarted, fileProgress, fileComplete,
-   â”‚              allComplete, errorOccurred
-   â”‚
-   â”œâ”€ OstConversionWorker (QObject) [Worker Thread â€” one per file]
-   â”‚  â”œâ”€ Owns a PstParser instance for reading the source file
-   â”‚  â”œâ”€ Iterates folder tree â†’ loads items â†’ writes to format writer
-   â”‚  â”œâ”€ Handles deleted item recovery (Recoverable Items folder scan)
-   â”‚  â”œâ”€ Handles corrupt block skip-and-log
-   â”‚  â”œâ”€ Reports per-item progress
-   â”‚  â””â”€ Supports cancellation via atomic flag
-   â”‚
-   â”œâ”€ Format Writers (one per output format)
-   â”‚  â”œâ”€ PstWriter â€” Creates a new PST file (NDB/LTP/Messaging layers)
-   â”‚  â”‚   â””â”€ PstSplitter â€” Monitors output size, rotates to new volume
-   â”‚  â”œâ”€ EmlWriter â€” Writes RFC 5322 .eml files (reuses EmailExportWorker logic)
-   â”‚  â”œâ”€ MsgWriter â€” Writes MS-OXMSG compound files (.msg)
-   â”‚  â”œâ”€ MboxWriter â€” Writes Unix mstrstrstrbox format (one per folder)
-   â”‚  â”œâ”€ DbxWriter â€” Writes Outlook Express DBX format
-   â”‚  â”œâ”€ HtmlWriter â€” Writes HTML pages with embedded images
-   â”‚  â””â”€ PdfWriter â€” Writes PDF via QTextDocument â†’ QPdfWriter
-   â”‚
-   â”œâ”€ ImapUploader (QObject) [Worker Thread]
-   â”‚  â”œâ”€ Connects to IMAP server via QSslSocket
-   â”‚  â”œâ”€ Authenticates (PLAIN, LOGIN, XOAUTH2 for Gmail/365)
-   â”‚  â”œâ”€ Creates folder hierarchy on server
-   â”‚  â”œâ”€ Uploads messages via IMAP APPEND with flags and dates
-   â”‚  â””â”€ Reports per-message progress
-   â”‚
-   â”œâ”€ DeletedItemScanner (utility)
-   â”‚  â”œâ”€ Scans Recoverable Items folder (NID 0x0301)
-   â”‚  â”œâ”€ Walks orphaned NBT nodes not in hierarchy
-   â”‚  â”œâ”€ Attempts to read each orphaned node as a message
-   â”‚  â””â”€ Returns recovered items as PstItemDetail vector
-   â”‚
-   â””â”€ ConversionReportGenerator (utility)
-      â”œâ”€ Tracks per-file, per-folder, per-item status
-      â”œâ”€ Generates HTML report with statistics
-      â”œâ”€ Generates CSV properties manifest (for MSG exports)
-      â””â”€ Includes source file checksums (SHA-256) for chain of custody
+EmailInspectorPanel (existing -- becomes top-level tab container)
+|
++-- Tab 0: Email Inspector (existing EmailInspectorPanel content)
+|   +-- Ribbon toolbar, folder tree, item list, detail panel
+|   +-- (unchanged -- all existing functionality preserved)
+|
++-- Tab 1: OST Converter (NEW)
+    |
+    +-- OstConverterWidget (QWidget) [Main UI]
+    |   +-- File Queue: Table showing added OST/PST files with metadata
+    |   +-- Output Settings: Format selector, destination, split options
+    |   +-- Filter Panel: Date range, folder selection, sender/recipient
+    |   +-- Recovery Options: Deleted items, corrupt block handling
+    |   +-- IMAP Settings: Server, port, SSL, credentials, folder mapping
+    |   +-- Progress Dashboard: Per-file progress bars, ETA, item counts
+    |   +-- Convert / Cancel buttons
+    |
+    +-- OstConverterController (QObject) [Orchestration]
+    |   +-- Manages the conversion queue
+    |   +-- Creates and manages worker threads
+    |   +-- Aggregates progress from all workers
+    |   +-- Generates conversion report
+    |   +-- Signals: conversionStarted, fileProgress, fileComplete,
+    |               allComplete, errorOccurred
+    |
+    +-- OstConversionWorker (QObject) [Worker Thread -- one per file]
+    |   +-- Owns a PstParser instance for reading the source file
+    |   +-- Iterates folder tree -> loads items -> writes to format writer
+    |   +-- Handles deleted item recovery (Recoverable Items folder scan)
+    |   +-- Handles corrupt block skip-and-log
+    |   +-- Reports per-item progress
+    |   +-- Supports cancellation via atomic flag
+    |
+    +-- Format Writers (one per output format)
+    |   +-- PstWriter -- Creates a new PST file (NDB/LTP/Messaging layers)
+    |   |   +-- PstSplitter -- Monitors output size, rotates to new volume
+    |   +-- EmlWriter -- Writes RFC 5322 .eml files (reuses EmailExportWorker logic)
+    |   +-- MsgWriter -- Writes MS-OXMSG compound files (.msg)
+    |   +-- MboxWriter -- Writes Unix mbox format (one per folder)
+    |   +-- DbxWriter -- Writes Outlook Express DBX format
+    |   +-- HtmlWriter -- Writes HTML pages with embedded images
+    |   +-- PdfWriter -- Writes PDF via QTextDocument -> QPdfWriter
+    |
+    +-- ImapUploader (QObject) [Worker Thread]
+    |   +-- Connects to IMAP server via QSslSocket
+    |   +-- Authenticates (PLAIN, LOGIN, XOAUTH2 for Gmail/365)
+    |   +-- Creates folder hierarchy on server
+    |   +-- Uploads messages via IMAP APPEND with flags and dates
+    |   +-- Reports per-message progress
+    |
+    +-- DeletedItemScanner (utility)
+    |   +-- Scans Recoverable Items folder (NID 0x0301)
+    |   +-- Walks orphaned NBT nodes not in hierarchy
+    |   +-- Attempts to read each orphaned node as a message
+    |   +-- Returns recovered items as PstItemDetail vector
+    |
+    +-- ConversionReportGenerator (utility)
+        +-- Tracks per-file, per-folder, per-item status
+        +-- Generates HTML report with statistics
+        +-- Generates CSV properties manifest (for MSG exports)
+        +-- Includes source file checksums (SHA-256) for chain of custody
 ```
 
 ### Integration with EmailInspectorPanel
@@ -311,7 +311,7 @@ widget to a top-level tab container. The existing email inspector content become
 "Tab 0: Email Inspector" and the new converter becomes "Tab 1: OST Converter":
 
 ```cpp
-// In main_window.cpp â€” createEmailToolSection() (modified)
+// In main_window.cpp -- createEmailToolSection() (modified)
 // The EmailInspectorPanel itself becomes a tab container.
 // Internally, setupUi() wraps existing content in Tab 0.
 // OstConverterWidget is added as Tab 1.
@@ -323,11 +323,11 @@ m_top_tabs->addTab(createOstConverterTab(), tr("OST Converter"));
 ```
 
 Alternatively, `main_window.cpp` can wrap both as separate panels inside a
-`QTabWidget` at the "Email Tools" level â€” similar to how Benchmark & Diagnostics
+`QTabWidget` at the "Email Tools" level -- similar to how Benchmark & Diagnostics
 hosts multiple tabs. This avoids modifying `EmailInspectorPanel` internals:
 
 ```cpp
-// Option B (preferred â€” cleaner separation):
+// Option B (preferred -- cleaner separation):
 auto* email_tabs = new QTabWidget(email_wrapper);
 email_tabs->addTab(m_email_inspector_panel.get(), tr("Email Inspector"));
 email_tabs->addTab(m_ost_converter_widget.get(), tr("OST Converter"));
@@ -337,13 +337,13 @@ The `OstConverterWidget` is self-contained: it creates its own `PstParser` insta
 per conversion job, owns its worker threads, and manages its own UI state. The only
 integration points are:
 
-1. **statusMessage** signal â†’ MainWindow status bar
-2. **progressUpdate** signal â†’ MainWindow progress bar
-3. **logOutput** signal â†’ MainWindow log panel
+1. **statusMessage** signal -> MainWindow status bar
+2. **progressUpdate** signal -> MainWindow progress bar
+3. **logOutput** signal -> MainWindow log panel
 
 ---
 
-## ðŸ› ï¸ Technical Specifications
+## Technical Specifications
 
 ### Data Structures
 
@@ -366,7 +366,7 @@ enum class OstOutputFormat {
 
 /// @brief Recovery mode for damaged files
 enum class RecoveryMode {
-    Normal,          ///< Standard parsing â€” stop on critical errors
+    Normal,          ///< Standard parsing -- stop on critical errors
     SkipCorrupt,     ///< Skip corrupt blocks, log errors, continue
     DeepRecovery     ///< Scan all NBT nodes including orphaned ones
 };
@@ -624,8 +624,8 @@ compatibility with all Outlook versions from 2003 onward. The file structure:
 4. **Messaging Layer**: Folder hierarchy (contents tables, hierarchy tables),
    message nodes with MAPI properties, attachment sub-nodes
 
-**Reference**: [MS-PST] Â§2.6 (NDB Layer Constraints), Â§2.4 (LTP Layer),
-Â§2.5 (Messaging Layer)
+**Reference**: [MS-PST] S2.6 (NDB Layer Constraints), S2.4 (LTP Layer),
+S2.5 (Messaging Layer)
 
 #### PST Splitter
 
@@ -635,7 +635,7 @@ class PstSplitter {
 public:
     PstSplitter(const QString& base_path, qint64 max_size_bytes);
 
-    /// Write a message â€” automatically rotates to next volume if needed
+    /// Write a message -- automatically rotates to next volume if needed
     [[nodiscard]] std::expected<void, sak::error_code> writeMessage(
         uint64_t folder_nid,
         const sak::PstItemDetail& item,
@@ -690,7 +690,7 @@ private:
 };
 ```
 
-Produces RFC 5322â€“compliant MIME messages with:
+Produces RFC 5322-compliant MIME messages with:
 - `From`, `To`, `Cc`, `Bcc`, `Subject`, `Date`, `Message-ID` headers
 - `Content-Type: multipart/mixed` with text/html and text/plain parts
 - Attachment MIME parts with `Content-Disposition: attachment`
@@ -731,10 +731,10 @@ private:
 
 MSG files use the OLE2 Compound Binary File format ([MS-CFB]) with MAPI property
 streams ([MS-OXMSG]). Each .msg file contains:
-- `__properties_version1.0` stream â€” fixed-length MAPI properties
-- `__substg1.0_<TAG>` streams â€” variable-length property values (subject, body, etc.)
-- `__attach_version1.0_#<N>` storages â€” one per attachment
-- `__recip_version1.0_#<N>` storages â€” one per recipient
+- `__properties_version1.0` stream -- fixed-length MAPI properties
+- `__substg1.0_<TAG>` streams -- variable-length property values (subject, body, etc.)
+- `__attach_version1.0_#<N>` storages -- one per attachment
+- `__recip_version1.0_#<N>` storages -- one per recipient
 
 #### MBOX Writer
 
@@ -750,7 +750,7 @@ public:
         const QVector<QPair<QString, QByteArray>>& attachment_data,
         const QString& folder_path);
 
-    /// Finalize â€” close all open file handles
+    /// Finalize -- close all open file handles
     void finalize();
 
 private:
@@ -892,7 +892,7 @@ Q_SIGNALS:
     void recoveryProgress(int items_found, int nodes_scanned);
 
 private:
-    PstParser* m_parser;  ///< Non-owning â€” caller manages lifetime
+    PstParser* m_parser;  ///< Non-owning -- caller manages lifetime
 
     /// Test if an NID is reachable from the folder hierarchy
     [[nodiscard]] bool isNodeInHierarchy(uint64_t nid) const;
@@ -912,7 +912,7 @@ private:
 1. Build a set of all NIDs reachable from the folder hierarchy
 2. Walk the entire NBT cache
 3. For each NID with type `NormalMessage` (0x04) not in the reachable set:
-   - Attempt `readMessage(nid)` â†’ if successful, it's a recoverable item
+   - Attempt `readMessage(nid)` -> if successful, it's a recoverable item
    - Log if the node is corrupt or unreadable
 
 ### Conversion Report Generator
@@ -942,98 +942,98 @@ public:
 
 ---
 
-## ðŸŽ¨ User Interface Design
+## User Interface Design
 
 ### OST Converter Tab Layout
 
 ```
-â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”
-â”‚  Email Tools                                                              â”‚
-â”‚  [Email Inspector] [OST Converter]                           â† tab bar  â”‚
-â”œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”¤
-â”‚                                                                          â”‚
-â”‚  â”Œâ”€â”€ ðŸ“‚ SOURCE FILES â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”    â”‚
-â”‚  â”‚                                                                  â”‚    â”‚
-â”‚  â”‚  [+ Add Files]  [+ Add Folder]  [âœ• Remove]  [Clear All]        â”‚    â”‚
-â”‚  â”‚                                                                  â”‚    â”‚
-â”‚  â”‚  â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”   â”‚    â”‚
-â”‚  â”‚  â”‚ File                 | Size    | Items  | Status         â”‚   â”‚    â”‚
-â”‚  â”‚  â”‚â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”‚   â”‚    â”‚
-â”‚  â”‚  â”‚ john@company.com.ost | 4.2 GB  | ~12400 | â³ Queued     â”‚   â”‚    â”‚
-â”‚  â”‚  â”‚ archive-2024.pst     | 1.8 GB  | ~5200  | â³ Queued     â”‚   â”‚    â”‚
-â”‚  â”‚  â”‚ mary.smith.ost       | 8.1 GB  | ~24000 | â³ Queued     â”‚   â”‚    â”‚
-â”‚  â”‚  â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜   â”‚    â”‚
-â”‚  â”‚                                                                  â”‚    â”‚
-â”‚  â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜    â”‚
-â”‚                                                                          â”‚
-â”‚  â”Œâ”€â”€ âš™ï¸ OUTPUT SETTINGS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”    â”‚
-â”‚  â”‚                                                                  â”‚    â”‚
-â”‚  â”‚  Format: [PST â–¼]  Destination: [C:\Output\________] [Browse]    â”‚    â”‚
-â”‚  â”‚                                                                  â”‚    â”‚
-â”‚  â”‚  â˜ Split PST files:  [5 GB â–¼]  (2 GB / 5 GB / 10 GB / Custom) â”‚    â”‚
-â”‚  â”‚  â˜‘ Preserve folder structure                                    â”‚    â”‚
-â”‚  â”‚  â˜‘ Prefix filenames with date  (EML/MSG only)                   â”‚    â”‚
-â”‚  â”‚  Threads: [2 â–²â–¼]  (1â€“8, default = CPU cores / 2)              â”‚    â”‚
-â”‚  â”‚                                                                  â”‚    â”‚
-â”‚  â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜    â”‚
-â”‚                                                                          â”‚
-â”‚  â”Œâ”€â”€ ðŸ” FILTERS (optional) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”    â”‚
-â”‚  â”‚                                                                  â”‚    â”‚
-â”‚  â”‚  Date range: [__________] to [__________]    (calendar pickers) â”‚    â”‚
-â”‚  â”‚  Folders:    [Include: ____________]  [Exclude: ____________]   â”‚    â”‚
-â”‚  â”‚  Sender:     [_______________________]                          â”‚    â”‚
-â”‚  â”‚  Recipient:  [_______________________]                          â”‚    â”‚
-â”‚  â”‚                                                                  â”‚    â”‚
-â”‚  â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜    â”‚
-â”‚                                                                          â”‚
-â”‚  â”Œâ”€â”€ ðŸ”§ RECOVERY OPTIONS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”    â”‚
-â”‚  â”‚                                                                  â”‚    â”‚
-â”‚  â”‚  â˜ Recover deleted items (scan Recoverable Items folder)        â”‚    â”‚
-â”‚  â”‚  â˜ Deep recovery (scan orphaned nodes â€” slow, thorough)         â”‚    â”‚
-â”‚  â”‚  â˜ Skip corrupt blocks (continue on errors, log skipped items)  â”‚    â”‚
-â”‚  â”‚                                                                  â”‚    â”‚
-â”‚  â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜    â”‚
-â”‚                                                                          â”‚
-â”‚  â”Œâ”€â”€ â˜ï¸ IMAP UPLOAD (when format = IMAP) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”    â”‚
-â”‚  â”‚                                                                  â”‚    â”‚
-â”‚  â”‚  Server: [imap.gmail.com____]  Port: [993]  â˜‘ SSL              â”‚    â”‚
-â”‚  â”‚  Auth:   [PLAIN â–¼]                                              â”‚    â”‚
-â”‚  â”‚  User:   [user@gmail.com____]  Password: [â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢] [ðŸ‘]        â”‚    â”‚
-â”‚  â”‚                                                                  â”‚    â”‚
-â”‚  â”‚  Folder Mapping:                                                â”‚    â”‚
-â”‚  â”‚  â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”   â”‚    â”‚
-â”‚  â”‚  â”‚ Source (PST)           | Target (IMAP)        | Skip    â”‚   â”‚    â”‚
-â”‚  â”‚  â”‚â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€  â”‚   â”‚    â”‚
-â”‚  â”‚  â”‚ Inbox                  | INBOX                | â˜       â”‚   â”‚    â”‚
-â”‚  â”‚  â”‚ Sent Items             | [Gmail]/Sent Mail    | â˜       â”‚   â”‚    â”‚
-â”‚  â”‚  â”‚ Drafts                 | [Gmail]/Drafts       | â˜       â”‚   â”‚    â”‚
-â”‚  â”‚  â”‚ Deleted Items          | [Gmail]/Trash        | â˜‘       â”‚   â”‚    â”‚
-â”‚  â”‚  â”‚ Custom Folder 1        | Custom Folder 1      | â˜       â”‚   â”‚    â”‚
-â”‚  â”‚  â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜   â”‚    â”‚
-â”‚  â”‚                                                                  â”‚    â”‚
-â”‚  â”‚  [Test Connection]                                              â”‚    â”‚
-â”‚  â”‚                                                                  â”‚    â”‚
-â”‚  â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜    â”‚
-â”‚                                                                          â”‚
-â”‚  â”Œâ”€â”€ ðŸ“Š PROGRESS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”    â”‚
-â”‚  â”‚                                                                  â”‚    â”‚
-â”‚  â”‚  Overall: [â–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–‘â–‘â–‘â–‘â–‘â–‘â–‘â–‘â–‘â–‘â–‘â–‘â–‘â–‘] 52%   ETA: ~4 min     â”‚    â”‚
-â”‚  â”‚                                                                  â”‚    â”‚
-â”‚  â”‚  File 1: john@company.com.ost                                   â”‚    â”‚
-â”‚  â”‚   [â–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆ] 100%  âœ… 12,400 items     â”‚    â”‚
-â”‚  â”‚                                                                  â”‚    â”‚
-â”‚  â”‚  File 2: archive-2024.pst                                       â”‚    â”‚
-â”‚  â”‚   [â–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–‘â–‘â–‘â–‘â–‘â–‘â–‘â–‘â–‘â–‘â–‘â–‘â–‘â–‘â–‘â–‘â–‘â–‘â–‘â–‘] 32%   ðŸ“ Sent Items        â”‚    â”‚
-â”‚  â”‚   Items: 1,664 / 5,200  |  Written: 423 MB  |  Recovered: 12   â”‚    â”‚
-â”‚  â”‚                                                                  â”‚    â”‚
-â”‚  â”‚  File 3: mary.smith.ost                                         â”‚    â”‚
-â”‚  â”‚   â³ Queued                                                     â”‚    â”‚
-â”‚  â”‚                                                                  â”‚    â”‚
-â”‚  â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜    â”‚
-â”‚                                                                          â”‚
-â”‚  [â–¶ Convert All]  [â¹ Cancel]  [ðŸ“„ View Report]                        â”‚
-â”‚                                                                          â”‚
-â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜
++--------------------------------------------------------------------------+
+|  Email Tools                                                              |
+|  [Email Inspector] [OST Converter]                           <-- tab bar |
++--------------------------------------------------------------------------+
+|                                                                          |
+|  +-- SOURCE FILES ------------------------------------------------+    |
+|  |                                                                  |    |
+|  |  [+ Add Files]  [+ Add Folder]  [x Remove]  [Clear All]        |    |
+|  |                                                                  |    |
+|  |  +----------------------------------------------------------+   |    |
+|  |  | File                 | Size    | Items  | Status         |   |    |
+|  |  |----------------------------------------------------------|   |    |
+|  |  | john@company.com.ost | 4.2 GB  | ~12400 | Queued         |   |    |
+|  |  | archive-2024.pst     | 1.8 GB  | ~5200  | Queued         |   |    |
+|  |  | mary.smith.ost       | 8.1 GB  | ~24000 | Queued         |   |    |
+|  |  +----------------------------------------------------------+   |    |
+|  |                                                                  |    |
+|  +------------------------------------------------------------------+    |
+|                                                                          |
+|  +-- OUTPUT SETTINGS ---------------------------------------------+    |
+|  |                                                                  |    |
+|  |  Format: [PST v]  Destination: [C:\Output\________] [Browse]    |    |
+|  |                                                                  |    |
+|  |  [ ] Split PST files:  [5 GB v]  (2 GB / 5 GB / 10 GB / Custom)|    |
+|  |  [x] Preserve folder structure                                    |    |
+|  |  [x] Prefix filenames with date  (EML/MSG only)                   |    |
+|  |  Threads: [2 ^v]  (1-8, default = CPU cores / 2)              |    |
+|  |                                                                  |    |
+|  +------------------------------------------------------------------+    |
+|                                                                          |
+|  +-- FILTERS (optional) ------------------------------------------+    |
+|  |                                                                  |    |
+|  |  Date range: [__________] to [__________]    (calendar pickers) |    |
+|  |  Folders:    [Include: ____________]  [Exclude: ____________]   |    |
+|  |  Sender:     [_______________________]                          |    |
+|  |  Recipient:  [_______________________]                          |    |
+|  |                                                                  |    |
+|  +------------------------------------------------------------------+    |
+|                                                                          |
+|  +-- RECOVERY OPTIONS --------------------------------------------+    |
+|  |                                                                  |    |
+|  |  [ ] Recover deleted items (scan Recoverable Items folder)        |    |
+|  |  [ ] Deep recovery (scan orphaned nodes -- slow, thorough)         |    |
+|  |  [ ] Skip corrupt blocks (continue on errors, log skipped items)  |    |
+|  |                                                                  |    |
+|  +------------------------------------------------------------------+    |
+|                                                                          |
+|  +-- IMAP UPLOAD (when format = IMAP) ----------------------------+    |
+|  |                                                                  |    |
+|  |  Server: [imap.gmail.com____]  Port: [993]  [x] SSL              |    |
+|  |  Auth:   [PLAIN v]                                              |    |
+|  |  User:   [user@gmail.com____]  Password: [********] [show]        |    |
+|  |                                                                  |    |
+|  |  Folder Mapping:                                                |    |
+|  |  +----------------------------------------------------------+   |    |
+|  |  | Source (PST)           | Target (IMAP)        | Skip    |   |    |
+|  |  |----------------------------------------------------------|   |    |
+|  |  | Inbox                  | INBOX                | [ ]       |   |    |
+|  |  | Sent Items             | [Gmail]/Sent Mail    | [ ]       |   |    |
+|  |  | Drafts                 | [Gmail]/Drafts       | [ ]       |   |    |
+|  |  | Deleted Items          | [Gmail]/Trash        | [x]       |   |    |
+|  |  | Custom Folder 1        | Custom Folder 1      | [ ]       |   |    |
+|  |  +----------------------------------------------------------+   |    |
+|  |                                                                  |    |
+|  |  [Test Connection]                                              |    |
+|  |                                                                  |    |
+|  +------------------------------------------------------------------+    |
+|                                                                          |
+|  +-- PROGRESS ----------------------------------------------------+    |
+|  |                                                                  |    |
+|  |  Overall: [==============..............] 52%   ETA: ~4 min     |    |
+|  |                                                                  |    |
+|  |  File 1: john@company.com.ost                                   |    |
+|  |   [================================] 100%  DONE 12,400 items     |    |
+|  |                                                                  |    |
+|  |  File 2: archive-2024.pst                                       |    |
+|  |   [==========....................] 32%   Sent Items               |    |
+|  |   Items: 1,664 / 5,200  |  Written: 423 MB  |  Recovered: 12   |    |
+|  |                                                                  |    |
+|  |  File 3: mary.smith.ost                                         |    |
+|  |   Queued                                                         |    |
+|  |                                                                  |    |
+|  +------------------------------------------------------------------+    |
+|                                                                          |
+|  [> Convert All]  [Stop Cancel]  [View Report]                        |
+|                                                                          |
++--------------------------------------------------------------------------+
 ```
 
 ### IMAP Section Visibility
@@ -1046,12 +1046,12 @@ selected in the format dropdown. All other format options hide this section.
 - **Overall progress bar**: weighted by total item count across all files
 - **Per-file progress**: shows current folder name, items done/total, bytes written
 - **Recovery count**: shows deleted items found (if recovery enabled)
-- **ETA**: calculated from elapsed time Ã— (remaining / done)
-- **Status icons**: â³ Queued, ðŸ”„ Converting, âœ… Complete, âŒ Failed, â›” Cancelled
+- **ETA**: calculated from elapsed time x (remaining / done)
+- **Status labels**: Queued, Converting, Complete, Failed, Cancelled
 
 ---
 
-## ðŸ“‚ File Structure
+## File Structure
 
 ### New Files to Create
 
@@ -1112,7 +1112,7 @@ test_ost_converter_controller.cpp  # Queue management, multi-thread orchestratio
 
 ---
 
-## ðŸ”§ Third-Party Dependencies
+## Third-Party Dependencies
 
 | Component | Engine | Source | License | Purpose |
 |-----------|--------|--------|---------|---------|
@@ -1130,34 +1130,34 @@ test_ost_converter_controller.cpp  # Queue management, multi-thread orchestratio
 
 > **No new external dependencies.** The entire converter is built on the existing
 > PstParser, Qt libraries (already linked), and new in-tree format writers. The
-> MSG writer implements the OLE2 compound file format directly â€” no COM dependency.
+> MSG writer implements the OLE2 compound file format directly -- no COM dependency.
 
 ---
 
-## ðŸ”§ Implementation Phases
+## Implementation Phases
 
 ### Phase 1: Core Pipeline + PST Output (4 weeks)
 
-**Goal**: End-to-end OST â†’ PST conversion with correct data fidelity.
+**Goal**: End-to-end OST -> PST conversion with correct data fidelity.
 
 **Tasks**:
 1. Create `ost_converter_types.h` with all data structures
 2. Create `ost_converter_constants.h` with named constants
-3. Implement `PstWriter` â€” NDB layer (header, NBT, BBT), LTP layer (PC, TC),
+3. Implement `PstWriter` -- NDB layer (header, NBT, BBT), LTP layer (PC, TC),
    Messaging layer (folder hierarchy, messages, attachments)
 4. Implement `PstSplitter` wrapping PstWriter with volume rotation
-5. Implement `OstConversionWorker` â€” single-threaded per-file conversion pipeline:
-   open source â†’ enumerate folders â†’ iterate items â†’ write to PstWriter
-6. Implement `OstConverterController` â€” queue management, single-worker execution
-7. Create `OstConverterWidget` â€” minimal UI: file list, format selector (PST only),
+5. Implement `OstConversionWorker` -- single-threaded per-file conversion pipeline:
+   open source -> enumerate folders -> iterate items -> write to PstWriter
+6. Implement `OstConverterController` -- queue management, single-worker execution
+7. Create `OstConverterWidget` -- minimal UI: file list, format selector (PST only),
    destination, Convert/Cancel buttons, progress bar
 8. Add tab to EmailInspectorPanel or main_window.cpp
-9. Write `test_pst_writer.cpp` â€” round-trip: write PST â†’ read back with PstParser
-10. Write `test_ost_converter_controller.cpp` â€” queue and single-file conversion
+9. Write `test_pst_writer.cpp` -- round-trip: write PST -> read back with PstParser
+10. Write `test_ost_converter_controller.cpp` -- queue and single-file conversion
 
 **Acceptance Criteria**:
 - [ ] Convert a test OST file to PST
-- [ ] Open the output PST in the Email Inspector â†’ all folders/items visible
+- [ ] Open the output PST in the Email Inspector -> all folders/items visible
 - [ ] PST splitting at 2 GB produces correct multi-volume output
 - [ ] All unit tests pass
 
@@ -1166,12 +1166,12 @@ test_ost_converter_controller.cpp  # Queue management, multi-thread orchestratio
 **Goal**: EML, MSG, MBOX, DBX, HTML, PDF output formats.
 
 **Tasks**:
-1. Implement `EmlWriter` â€” extend existing `buildEmlContent()` logic
-2. Implement `MsgWriter` â€” OLE2 compound file with MAPI property streams
-3. Implement `MboxWriter` â€” folder-per-file mbox with From_ escaping
-4. Implement `DbxWriter` â€” legacy Outlook Express format
-5. Implement `HtmlEmailWriter` â€” styled HTML pages with embedded images
-6. Implement `PdfEmailWriter` â€” QTextDocument â†’ QPdfWriter pipeline
+1. Implement `EmlWriter` -- extend existing `buildEmlContent()` logic
+2. Implement `MsgWriter` -- OLE2 compound file with MAPI property streams
+3. Implement `MboxWriter` -- folder-per-file mbox with From_ escaping
+4. Implement `DbxWriter` -- legacy Outlook Express format
+5. Implement `HtmlEmailWriter` -- styled HTML pages with embedded images
+6. Implement `PdfEmailWriter` -- QTextDocument -> QPdfWriter pipeline
 7. Update `OstConverterWidget` format dropdown with all formats
 8. Write tests for each writer
 
@@ -1189,7 +1189,7 @@ test_ost_converter_controller.cpp  # Queue management, multi-thread orchestratio
 **Tasks**:
 1. Upgrade `OstConverterController` to manage N worker threads via QThread
 2. Implement thread-safe progress aggregation (atomic counters, queued signals)
-3. Implement `DeletedItemScanner` â€” Recoverable Items folder + orphaned nodes
+3. Implement `DeletedItemScanner` -- Recoverable Items folder + orphaned nodes
 4. Add recovery options to UI (checkboxes, recovery mode selector)
 5. Implement `RecoveryMode::SkipCorrupt` in `OstConversionWorker`
 6. Implement `RecoveryMode::DeepRecovery` with full NBT walk
@@ -1207,12 +1207,12 @@ test_ost_converter_controller.cpp  # Queue management, multi-thread orchestratio
 **Goal**: Direct upload to IMAP servers (Gmail, 365, Exchange, Yahoo).
 
 **Tasks**:
-1. Implement `ImapUploader` â€” QSslSocket IMAP client
+1. Implement `ImapUploader` -- QSslSocket IMAP client
 2. Implement PLAIN and LOGIN authentication
 3. Implement XOAUTH2 for Gmail and Microsoft 365
 4. Implement folder creation (IMAP CREATE)
 5. Implement message upload (IMAP APPEND with flags and date)
-6. Implement folder mapping UI (source PST folder â†’ target IMAP folder)
+6. Implement folder mapping UI (source PST folder -> target IMAP folder)
 7. Add "Test Connection" button
 8. Write tests for IMAP command/response parsing
 
@@ -1231,7 +1231,7 @@ test_ost_converter_controller.cpp  # Queue management, multi-thread orchestratio
 1. Implement date range filter in `OstConversionWorker`
 2. Implement folder include/exclude filter
 3. Implement sender/recipient text filter
-4. Implement `ConversionReportGenerator` â€” HTML report + CSV manifest
+4. Implement `ConversionReportGenerator` -- HTML report + CSV manifest
 5. Add "View Report" button that opens the HTML report in default browser
 6. Add SHA-256 checksums of source files to the report
 7. Implement QSettings persistence for last-used settings
@@ -1248,7 +1248,7 @@ test_ost_converter_controller.cpp  # Queue management, multi-thread orchestratio
 
 ---
 
-## ðŸ“‹ CMakeLists.txt Changes
+## CMakeLists.txt Changes
 
 ### New Source Files
 
@@ -1316,14 +1316,14 @@ sak_add_test(test_ost_converter_controller tests/unit/test_ost_converter_control
 ### Link Dependencies
 
 No new library dependencies. Uses:
-- **Qt Core** (QThread, QProcess, QFile, QSettings, QCryptographicHash) â€” already linked
-- **Qt Widgets** (UI components) â€” already linked
-- **Qt Network** (QSslSocket for IMAP) â€” already linked
-- **Qt Concurrent** (thread pool) â€” already linked
+- **Qt Core** (QThread, QProcess, QFile, QSettings, QCryptographicHash) -- already linked
+- **Qt Widgets** (UI components) -- already linked
+- **Qt Network** (QSslSocket for IMAP) -- already linked
+- **Qt Concurrent** (thread pool) -- already linked
 
 ---
 
-## ðŸ“‹ Configuration & Settings
+## Configuration & Settings
 
 ### QSettings Keys
 
@@ -1340,7 +1340,7 @@ OstConverter/skipCorrupt            = bool        # Default: false
 OstConverter/generateReport         = bool        # Default: true
 OstConverter/includeChecksums       = bool        # Default: true
 
-# IMAP (non-sensitive â€” password is NOT persisted)
+# IMAP (non-sensitive -- password is NOT persisted)
 OstConverter/imapHost               = QString
 OstConverter/imapPort               = int
 OstConverter/imapUseSsl             = bool
@@ -1398,7 +1398,7 @@ constexpr int kDbxHeaderSize = 0x24BC;
 
 ---
 
-## ðŸ§ª Testing Strategy
+## Testing Strategy
 
 ### Unit Tests
 
@@ -1408,13 +1408,13 @@ constexpr int kDbxHeaderSize = 0x24BC;
 - Enum values cover all expected formats
 - OstConversionJob::Status transitions are valid
 
-**test_pst_writer.cpp** (critical â€” most complex component):
-- Create empty PST â†’ valid header, empty BTrees
-- Create folder â†’ folder appears in hierarchy
-- Write message with subject/body/date â†’ read back matches
-- Write message with attachments â†’ attachments readable
-- Write message with HTML body + embedded images â†’ preserved
-- Round-trip: write 100 messages â†’ read with PstParser â†’ compare
+**test_pst_writer.cpp** (critical -- most complex component):
+- Create empty PST -> valid header, empty BTrees
+- Create folder -> folder appears in hierarchy
+- Write message with subject/body/date -> read back matches
+- Write message with attachments -> attachments readable
+- Write message with HTML body + embedded images -> preserved
+- Round-trip: write 100 messages -> read with PstParser -> compare
 - Unicode string handling (CJK, emoji, RTL)
 - Large message body (>32 KB, multi-block)
 - Empty folder handling
@@ -1425,7 +1425,7 @@ constexpr int kDbxHeaderSize = 0x24BC;
 - Folder hierarchy duplicated in each volume
 - Messages distributed across volumes correctly
 - Volume naming: `base_part01.pst`, `base_part02.pst`
-- Single message larger than split size â†’ written to its own volume
+- Single message larger than split size -> written to its own volume
 
 **test_eml_writer.cpp**:
 - RFC 5322 Date header format
@@ -1455,7 +1455,7 @@ constexpr int kDbxHeaderSize = 0x24BC;
 **test_imap_uploader.cpp**:
 - IMAP command formatting
 - Response parsing (OK, NO, BAD, tagged, untagged)
-- Flag mapping: read â†’ `\Seen`, importance â†’ `\Flagged`
+- Flag mapping: read -> `\Seen`, importance -> `\Flagged`
 - APPEND command with literal size
 - Date formatting for IMAP internal date
 - XOAUTH2 token formatting
@@ -1476,19 +1476,19 @@ constexpr int kDbxHeaderSize = 0x24BC;
 - CSV manifest correctly escapes commas/quotes
 
 **test_ost_converter_controller.cpp**:
-- Add file to queue â†’ signal emitted
-- Remove file from queue â†’ signal emitted
-- Clear queue â†’ all files removed
-- Start conversion â†’ workers created
-- Cancel conversion â†’ workers stopped
+- Add file to queue -> signal emitted
+- Remove file from queue -> signal emitted
+- Clear queue -> all files removed
+- Start conversion -> workers created
+- Cancel conversion -> workers stopped
 - Queue maximum enforced (100 files)
 
 ### Integration Tests
 
 **test_ost_converter_integration.cpp** (manual, requires sample files):
-- Convert sample OST â†’ PST â†’ verify round-trip in Email Inspector
-- Convert sample PST â†’ EML â†’ verify EML content and structure
-- Convert sample PST â†’ MBOX â†’ verify MBOX structure
+- Convert sample OST -> PST -> verify round-trip in Email Inspector
+- Convert sample PST -> EML -> verify EML content and structure
+- Convert sample PST -> MBOX -> verify MBOX structure
 - Multi-file batch conversion (3 files, 2 threads)
 - Recovery mode on a deliberately corrupted test file
 - PST splitting with small threshold (1 MB) for testing
@@ -1497,12 +1497,12 @@ constexpr int kDbxHeaderSize = 0x24BC;
 
 | Test Case | Input | Output | Verification |
 |-----------|-------|--------|-------------|
-| OST â†’ PST | Normal OST file | Single PST | Open in Outlook, verify folders/items |
-| OST â†’ PST split | Large OST (>5 GB) | Multiple PSTs | All parts open, combined content matches |
-| OST â†’ EML | OST with 100 items | 100 EML files | Open in Thunderbird, verify headers |
-| OST â†’ MSG | OST with attachments | MSG files | Open in Outlook, verify MAPI props |
-| PST â†’ MBOX | PST archive | MBOX files | Import in Thunderbird, verify content |
-| OST â†’ IMAP | OST file | Gmail inbox | Verify emails + flags in Gmail web |
+| OST -> PST | Normal OST file | Single PST | Open in Outlook, verify folders/items |
+| OST -> PST split | Large OST (>5 GB) | Multiple PSTs | All parts open, combined content matches |
+| OST -> EML | OST with 100 items | 100 EML files | Open in Thunderbird, verify headers |
+| OST -> MSG | OST with attachments | MSG files | Open in Outlook, verify MAPI props |
+| PST -> MBOX | PST archive | MBOX files | Import in Thunderbird, verify content |
+| OST -> IMAP | OST file | Gmail inbox | Verify emails + flags in Gmail web |
 | Corrupt OST | Damaged file | PST + report | Maximum recovery, error report accurate |
 | Date filter | 1 year of emails | Filtered output | Only date-range items in output |
 | Folder filter | Multi-folder PST | Inbox only | Only Inbox contents in output |
@@ -1510,43 +1510,43 @@ constexpr int kDbxHeaderSize = 0x24BC;
 
 ---
 
-## ðŸš§ Limitations & Challenges
+## Limitations & Challenges
 
 ### Technical Limitations
 
 **PST Writer Complexity**:
-- âš ï¸ Writing a valid PST file requires constructing NDB/LTP/Messaging layers from scratch
-- âš ï¸ B-tree balancing for large mailboxes (>50,000 items) needs careful implementation
-- âš ï¸ MAPI property encoding varies by type (PT_UNICODE, PT_BINARY, PT_SYSTIME, etc.)
+- Writing a valid PST file requires constructing NDB/LTP/Messaging layers from scratch
+- B-tree balancing for large mailboxes (>50,000 items) needs careful implementation
+- MAPI property encoding varies by type (PT_UNICODE, PT_BINARY, PT_SYSTIME, etc.)
 - **Mitigation**: Start with a simplified writer that produces valid but unoptimized PST files. Optimize B-tree layout in a later pass. Verify with PstParser round-trip testing.
 
 **MSG OLE2 Format**:
-- âš ï¸ OLE2 compound file format is complex (FAT sectors, directory entries, mini-stream)
-- âš ï¸ No Qt or vcpkg library for OLE2 writing â€” must implement from [MS-CFB] specification
+- OLE2 compound file format is complex (FAT sectors, directory entries, mini-stream)
+- No Qt or vcpkg library for OLE2 writing -- must implement from [MS-CFB] specification
 - **Mitigation**: Implement a minimal OLE2 writer that handles the subset needed for MSG files. The compound file only needs property streams and attachment storages.
 
 **IMAP Upload Reliability**:
-- âš ï¸ IMAP APPEND is not idempotent â€” duplicate uploads create duplicate messages
-- âš ï¸ Gmail has a 25 MB per-message size limit
-- âš ï¸ Some IMAP servers throttle rapid APPEND commands
-- âš ï¸ XOAUTH2 tokens expire and need refresh
+- IMAP APPEND is not idempotent -- duplicate uploads create duplicate messages
+- Gmail has a 25 MB per-message size limit
+- Some IMAP servers throttle rapid APPEND commands
+- XOAUTH2 tokens expire and need refresh
 - **Mitigation**: Track uploaded message IDs (Message-ID header) to detect duplicates. Skip oversized messages with warning. Implement rate limiting with configurable delay. For XOAUTH2, prompt for new token on expiry.
 
 **Deleted Item Recovery Accuracy**:
-- âš ï¸ Hard-deleted items may have partially overwritten blocks
-- âš ï¸ Orphaned nodes may be from a previous mailbox sync, not the current user
-- âš ï¸ Recovery scanning reads every node in the NBT â€” slow for large files
+- Hard-deleted items may have partially overwritten blocks
+- Orphaned nodes may be from a previous mailbox sync, not the current user
+- Recovery scanning reads every node in the NBT -- slow for large files
 - **Mitigation**: Deep recovery is opt-in only. Log recovered item metadata for user review. Show clear warning that recovered items may include stale/irrelevant data.
 
 **DBX Format (Legacy)**:
-- âš ï¸ DBX format documentation is incomplete (reverse-engineered)
-- âš ï¸ Outlook Express is discontinued â€” very few migration targets
+- DBX format documentation is incomplete (reverse-engineered)
+- Outlook Express is discontinued -- very few migration targets
 - **Mitigation**: Implement basic DBX support as a best-effort feature. Prioritize PST/EML/MBOX/MSG which cover 99% of use cases.
 
 **Unicode4K Block Compression**:
-- âš ï¸ OST files with 4K pages may have zlib-compressed blocks
-- âœ… PstParser already handles decompression (verified in repo memory)
-- **Mitigation**: No additional work needed â€” existing parser handles this transparently.
+- OST files with 4K pages may have zlib-compressed blocks
+- PstParser already handles decompression (verified in repo memory)
+- **Mitigation**: No additional work needed -- existing parser handles this transparently.
 
 ### Workarounds
 
@@ -1558,7 +1558,7 @@ for (const auto& folder : folder_tree) {
     for (const auto& item : items.value()) {
         auto detail = parser.readItemDetail(item.node_id);
         writer.writeMessage(folder_nid, detail.value(), attachments);
-        // Detail goes out of scope â†’ memory freed
+        // Detail goes out of scope -> memory freed
     }
 }
 ```
@@ -1574,7 +1574,7 @@ connect(worker, &OstConversionWorker::itemProgress,
 
 ---
 
-## ðŸŽ¯ Success Metrics
+## Success Metrics
 
 | Metric | Target | Importance |
 |--------|--------|------------|
@@ -1593,10 +1593,10 @@ connect(worker, &OstConversionWorker::itemProgress,
 
 ---
 
-## ðŸ”’ Security Considerations
+## Security Considerations
 
 ### Credential Handling (IMAP)
-- IMAP passwords are **never persisted to disk** â€” only held in memory during upload
+- IMAP passwords are **never persisted to disk** -- only held in memory during upload
 - Password field uses `QLineEdit::Password` echo mode
 - XOAUTH2 tokens are obtained via the platform's OAuth flow, not stored by SAK
 - SSL/TLS is required by default; plain-text IMAP is disabled
@@ -1620,14 +1620,14 @@ connect(worker, &OstConversionWorker::itemProgress,
 - Sector allocation is bounds-checked to prevent buffer overflows
 
 ### IMAP Protocol Safety
-- IMAP literal data uses the `{size}` synchronization mechanism â€” no injection possible
-- Folder names are escaped per IMAP RFC 3501 Â§ 5.1 (modified UTF-7)
+- IMAP literal data uses the `{size}` synchronization mechanism -- no injection possible
+- Folder names are escaped per IMAP RFC 3501 S5.1 (modified UTF-7)
 - Connection timeouts prevent hanging on unresponsive servers
 - Maximum message size enforced before APPEND attempt
 
 ---
 
-## ðŸ’¡ Future Enhancements (Post-v1.0)
+## Future Enhancements (Post-v1.0)
 
 ### v1.1 - Advanced Features
 - **Incremental Conversion**: Track which items were already converted; only convert new/changed items on re-run
@@ -1646,7 +1646,7 @@ connect(worker, &OstConversionWorker::itemProgress,
 
 ---
 
-## ðŸ“š Resources
+## Resources
 
 ### Microsoft Open Specifications
 - [[MS-PST]: Outlook Personal Folders File Format](https://learn.microsoft.com/openspecs/office_file_formats/ms-pst/)
@@ -1671,23 +1671,23 @@ connect(worker, &OstConversionWorker::itemProgress,
 - [OLE2 Compound File Visualization](https://github.com/richardlehane/mscfb)
 
 ### Existing Codebase References
-- `include/sak/pst_parser.h` â€” NDB/LTP/Messaging reader (reuse for all input)
-- `include/sak/email_export_worker.h` â€” EML/VCF/ICS/CSV writers (extend for EML)
-- `include/sak/email_types.h` â€” All data structures (PstItemDetail, PstFolder, etc.)
-- `include/sak/email_constants.h` â€” MAPI property IDs, node types, format constants
-- `src/core/pst_parser.cpp` â€” 4,000+ lines of verified PST/OST parsing logic
+- `include/sak/pst_parser.h` -- NDB/LTP/Messaging reader (reuse for all input)
+- `include/sak/email_export_worker.h` -- EML/VCF/ICS/CSV writers (extend for EML)
+- `include/sak/email_types.h` -- All data structures (PstItemDetail, PstFolder, etc.)
+- `include/sak/email_constants.h` -- MAPI property IDs, node types, format constants
+- `src/core/pst_parser.cpp` -- 4,000+ lines of verified PST/OST parsing logic
 
 ---
 
-## ðŸ“ž Support
+## Support
 
-**Questions?** Open a GitHub Discussion  
-**Found a Bug?** Open a GitHub Issue  
+**Questions?** Open a GitHub Discussion
+**Found a Bug?** Open a GitHub Issue
 **Want to Contribute?** See [CONTRIBUTING.md](../CONTRIBUTING.md)
 
 ---
 
-**Document Version**: 1.0  
-**Last Updated**: March 25, 2026  
-**Author**: Randy Northrup  
-**Status**: ðŸ“‹ Planned â€” Ready for Implementation
+**Document Version**: 1.0
+**Last Updated**: March 25, 2026
+**Author**: Randy Northrup
+**Status**: ✅ Implemented

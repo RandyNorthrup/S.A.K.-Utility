@@ -6,6 +6,7 @@
 
 #pragma once
 
+#include "sak/email_attachment_saver.h"
 #include "sak/email_inspector_controller.h"
 #include "sak/email_types.h"
 #include "sak/widget_helpers.h"
@@ -215,8 +216,12 @@ private:
     bool m_dialog_active{false};
     uint64_t m_current_folder_id{0};
     uint64_t m_current_item_id{0};
+    uint64_t m_pending_item_id{0};
     sak::PstItemDetail m_current_detail;
     QVector<sak::PstItemSummary> m_current_items;
+
+    // Save state — shared batch saver
+    sak::AttachmentBatchSave m_batch_save;
 
     // Cached folder IDs for modals
     QVector<uint64_t> m_contact_folder_ids;

@@ -7,6 +7,7 @@
 #include "sak/elevation_gate.h"
 #include "sak/logger.h"
 #include "sak/migration_report.h"
+#include "sak/offline_deployment_constants.h"
 #include "sak/offline_deployment_worker.h"
 #include "sak/package_list_manager.h"
 
@@ -24,10 +25,9 @@ using sak::MigrationJob;
 using sak::MigrationReport;
 using sak::MigrationStatus;
 
-// Results table columns (must match app_installation_panel.cpp)
+// Results table columns (shared by online and offline)
 enum ResultColumn {
-    RColCheck = 0,
-    RColPackage,
+    RColPackage = 0,
     RColVersion,
     RColPublisher,
     RColCount
@@ -59,6 +59,15 @@ void AppInstallationPanel::onSearch() {
 
     m_search_in_progress = true;
     m_searchButton->setEnabled(false);
+    m_addToQueueButton->setEnabled(false);
+
+    // Show "searching..." indicator in the results table
+    m_onlineResultsModel->setRowCount(0);
+    m_onlineResultsModel->setRowCount(1);
+    auto* searching_item = new QStandardItem(tr("Searching for \"%1\"...").arg(query));
+    searching_item->setEnabled(false);
+    m_onlineResultsModel->setItem(0, RColPackage, searching_item);
+
     Q_EMIT statusMessage(tr("Searching for \"%1\"...").arg(query), 0);
     Q_EMIT logOutput(QString("Searching Chocolatey for: %1").arg(query));
 
@@ -87,31 +96,46 @@ void AppInstallationPanel::onSearchCompleted(bool success,
         updateResultsFromSearch(output);
         return;
     }
+
+    // Show failure in the results table
+    m_onlineResultsModel->setRowCount(0);
+    m_onlineResultsModel->setRowCount(1);
+    auto* item = new QStandardItem(tr("Search failed: %1").arg(errorMessage));
+    item->setEnabled(false);
+    m_onlineResultsModel->setItem(0, RColPackage, item);
+
     sak::logWarning("[AppInstallationPanel] Search failed: {}", errorMessage.toStdString());
     Q_EMIT logOutput(QString("Search failed: %1").arg(errorMessage));
     Q_EMIT statusMessage(tr("Search failed"), 3000);
 }
 
-void AppInstallationPanel::onCategoryChanged(int index) {
-    if (index < 0) {
+void AppInstallationPanel::onOnlinePresetSelected(int index) {
+    if (index <= 0) {
         return;
     }
-    // Map category index to search term
-    static const char* const categoryQueries[] = {
-        "",           // All
-        "browser",    // Browsers
-        "developer",  // Development
-        "media",      // Media
-        "utility",    // Utilities
-        "security",   // Security
-        "office",     // Productivity
-        "chat"        // Communication
-    };
 
-    if (index > 0 && index < static_cast<int>(std::size(categoryQueries))) {
-        m_searchEdit->setText(QString::fromLatin1(categoryQueries[index]));
-        onSearch();
+    QStringList names = m_list_manager->presetNames();
+    int preset_index = index - 1;
+    if (preset_index < 0 || preset_index >= names.size()) {
+        return;
     }
+
+    auto preset = m_list_manager->preset(names[preset_index]);
+
+    // Replace queue contents with the selected preset
+    m_installQueue.clear();
+
+    for (const auto& entry : preset.entries) {
+        QueueEntry queue_entry;
+        queue_entry.package_id = entry.package_id;
+        queue_entry.version = entry.version;
+        m_installQueue.append(queue_entry);
+    }
+
+    updateQueueDisplay();
+
+    Q_EMIT logOutput(
+        QString("Loaded preset '%1': %2 packages").arg(preset.name).arg(preset.entries.size()));
 }
 
 // ============================================================================
@@ -119,52 +143,46 @@ void AppInstallationPanel::onCategoryChanged(int index) {
 // ============================================================================
 
 void AppInstallationPanel::onAddToQueue() {
-    int added = 0;
-    for (int i = 0; i < m_resultsModel->rowCount(); ++i) {
-        auto* checkItem = m_resultsModel->item(i, RColCheck);
-        if (!checkItem || checkItem->checkState() != Qt::Checked) {
-            continue;
-        }
-
-        auto* packageItem = m_resultsModel->item(i, RColPackage);
-        auto* versionItem = m_resultsModel->item(i, RColVersion);
-        if (!packageItem) {
-            continue;
-        }
-
-        QString packageId = packageItem->text();
-        QString version = versionItem ? versionItem->text() : QString();
-
-        // Check for duplicates
-        bool duplicate = std::any_of(m_installQueue.cbegin(),
-                                     m_installQueue.cend(),
-                                     [&packageId](const QueueEntry& entry) {
-                                         return entry.package_id == packageId;
-                                     });
-
-        if (!duplicate) {
-            auto* publisherItem = m_resultsModel->item(i, RColPublisher);
-            QueueEntry entry;
-            entry.package_id = packageId;
-            entry.version = version;
-            entry.publisher = publisherItem ? publisherItem->text() : QString();
-            m_installQueue.append(entry);
-            added++;
-        }
-
-        // Uncheck after adding
-        checkItem->setCheckState(Qt::Unchecked);
+    auto indexes = m_onlineResultsTable->selectionModel()->selectedRows();
+    if (indexes.isEmpty()) {
+        return;
     }
 
-    if (added > 0) {
-        updateQueueDisplay();
-        Q_EMIT logOutput(QString("Added %1 package(s) to install queue").arg(added));
-        Q_EMIT statusMessage(QString("%1 package(s) added to queue").arg(added), 3000);
-    } else {
-        Q_EMIT logOutput("No new packages added (already in queue or none selected)");
+    int row = indexes.first().row();
+    auto* pkgItem = m_onlineResultsModel->item(row, RColPackage);
+    if (!pkgItem || !pkgItem->isEnabled()) {
+        return;
     }
 
-    m_addToQueueButton->setEnabled(false);
+    QString packageId = pkgItem->text();
+    if (packageId.isEmpty()) {
+        return;
+    }
+
+    // Check for duplicates
+    bool duplicate = std::any_of(m_installQueue.cbegin(),
+                                 m_installQueue.cend(),
+                                 [&packageId](const QueueEntry& entry) {
+                                     return entry.package_id == packageId;
+                                 });
+
+    if (duplicate) {
+        Q_EMIT logOutput(QString("Package '%1' already in queue").arg(packageId));
+        return;
+    }
+
+    auto* versionItem = m_onlineResultsModel->item(row, RColVersion);
+    auto* publisherItem = m_onlineResultsModel->item(row, RColPublisher);
+
+    QueueEntry entry;
+    entry.package_id = packageId;
+    entry.version = versionItem ? versionItem->text() : QString();
+    entry.publisher = publisherItem ? publisherItem->text() : QString();
+    m_installQueue.append(entry);
+
+    updateQueueDisplay();
+    Q_EMIT logOutput(QString("Added '%1' to install queue").arg(packageId));
+    Q_EMIT statusMessage(tr("Added %1 to queue").arg(packageId), 3000);
 }
 
 void AppInstallationPanel::onRemoveFromQueue() {
@@ -307,27 +325,14 @@ void AppInstallationPanel::onPresetSelected(int index) {
 
     auto preset = m_list_manager->preset(names[preset_index]);
 
-    // Add preset entries to the offline list widget
-    int added = 0;
-    for (const auto& entry : preset.entries) {
-        // Check for duplicates
-        bool exists = false;
-        for (int row = 0; row < m_offlineListWidget->count(); ++row) {
-            QString item_data = m_offlineListWidget->item(row)->data(Qt::UserRole).toString();
-            if (item_data.compare(entry.package_id, Qt::CaseInsensitive) == 0) {
-                exists = true;
-                break;
-            }
-        }
+    // Replace list contents with the selected preset
+    m_offlineListWidget->clear();
 
-        if (!exists) {
-            auto* item =
-                new QListWidgetItem(QString("%1  (%2)").arg(entry.package_id, entry.notes));
-            item->setData(Qt::UserRole, entry.package_id);
-            item->setData(Qt::UserRole + 1, entry.version);
-            m_offlineListWidget->addItem(item);
-            added++;
-        }
+    for (const auto& entry : preset.entries) {
+        auto* item = new QListWidgetItem(QString("%1  (%2)").arg(entry.package_id, entry.notes));
+        item->setData(Qt::UserRole, entry.package_id);
+        item->setData(Qt::UserRole + 1, entry.version);
+        m_offlineListWidget->addItem(item);
     }
 
     bool has_items = m_offlineListWidget->count() > 0;
@@ -336,32 +341,133 @@ void AppInstallationPanel::onPresetSelected(int index) {
     m_directDownloadButton->setEnabled(has_items);
     m_saveOfflineListButton->setEnabled(has_items);
 
-    Q_EMIT logOutput(QString("Loaded preset '%1': %2 packages added").arg(preset.name).arg(added));
+    Q_EMIT logOutput(
+        QString("Loaded preset '%1': %2 packages").arg(preset.name).arg(preset.entries.size()));
+}
 
-    m_presetCombo->setCurrentIndex(0);
+void AppInstallationPanel::onOfflineSearch() {
+    QString query = m_offlinePackageEdit->text().trimmed();
+    if (query.isEmpty()) {
+        return;
+    }
+
+    if (!m_choco_manager->isInitialized()) {
+        sak::logWarning("Offline search attempted but Chocolatey is not initialized");
+        QMessageBox::warning(this,
+                             tr("Chocolatey Not Available"),
+                             tr("Chocolatey is not initialized. Search is unavailable."));
+        return;
+    }
+
+    if (m_offline_search_in_progress) {
+        Q_EMIT logOutput("Package search already in progress...");
+        return;
+    }
+
+    m_offline_search_in_progress = true;
+    m_offlineSearchButton->setEnabled(false);
+    m_offlineResultsModel->setRowCount(0);
+    m_offlineAddButton->setEnabled(false);
+
+    m_offlineResultsModel->setRowCount(1);
+    auto* searching_item = new QStandardItem(tr("Searching for \"%1\"...").arg(query));
+    searching_item->setEnabled(false);
+    m_offlineResultsModel->setItem(0, RColPackage, searching_item);
+    Q_EMIT logOutput(QString("Searching Chocolatey repository for: %1").arg(query));
+
+    m_offlineSearchFuture = QtConcurrent::run([this, query]() {
+        auto result = m_choco_manager->searchPackage(query, offline::kSearchResultsDefault);
+
+        QMetaObject::invokeMethod(
+            this,
+            [this, result]() {
+                onOfflineSearchCompleted(result.success, result.output, result.error_message);
+            },
+            Qt::QueuedConnection);
+    });
+}
+
+void AppInstallationPanel::onOfflineSearchCompleted(bool success,
+                                                    const QString& output,
+                                                    const QString& error_message) {
+    m_offline_search_in_progress = false;
+    m_offlineSearchButton->setEnabled(true);
+    m_offlineResultsModel->setRowCount(0);
+
+    if (!success) {
+        sak::logWarning("[AppInstallationPanel] Offline search failed: {}",
+                        error_message.toStdString());
+        m_offlineResultsModel->setRowCount(1);
+        auto* item = new QStandardItem(tr("Search failed: %1").arg(error_message));
+        item->setEnabled(false);
+        m_offlineResultsModel->setItem(0, RColPackage, item);
+        Q_EMIT logOutput(QString("Search failed: %1").arg(error_message));
+        return;
+    }
+
+    auto packages = m_choco_manager->parseSearchResults(output);
+
+    if (packages.empty()) {
+        m_offlineResultsModel->setRowCount(1);
+        auto* item = new QStandardItem(tr("No packages found"));
+        item->setEnabled(false);
+        m_offlineResultsModel->setItem(0, RColPackage, item);
+        Q_EMIT logOutput("Package search returned no results");
+        return;
+    }
+
+    m_offlineResultsModel->setRowCount(static_cast<int>(packages.size()));
+    int row = 0;
+    for (const auto& pkg : packages) {
+        auto* pkgItem = new QStandardItem(pkg.package_id);
+        pkgItem->setIcon(publisherIcon(pkg.package_id));
+        m_offlineResultsModel->setItem(row, RColPackage, pkgItem);
+
+        m_offlineResultsModel->setItem(row, RColVersion, new QStandardItem(pkg.version));
+
+        QString pub = lookupPublisher(pkg.package_id);
+        m_offlineResultsModel->setItem(row, RColPublisher, new QStandardItem(pub));
+
+        row++;
+    }
+
+    m_offlineResultsTable->scrollToTop();
+    Q_EMIT logOutput(QString("Found %1 package(s)").arg(packages.size()));
 }
 
 void AppInstallationPanel::onAddToOfflineList() {
-    QString package_id = m_offlinePackageEdit->text().trimmed();
+    auto indexes = m_offlineResultsTable->selectionModel()->selectedRows();
+    if (indexes.isEmpty()) {
+        return;
+    }
+
+    int row = indexes.first().row();
+    auto* pkgItem = m_offlineResultsModel->item(row, RColPackage);
+    if (!pkgItem || !pkgItem->isEnabled()) {
+        return;
+    }
+
+    QString package_id = pkgItem->text();
     if (package_id.isEmpty()) {
         return;
     }
 
     // Check for duplicates
-    for (int row = 0; row < m_offlineListWidget->count(); ++row) {
-        QString item_data = m_offlineListWidget->item(row)->data(Qt::UserRole).toString();
+    for (int i = 0; i < m_offlineListWidget->count(); ++i) {
+        QString item_data = m_offlineListWidget->item(i)->data(Qt::UserRole).toString();
         if (item_data.compare(package_id, Qt::CaseInsensitive) == 0) {
             Q_EMIT logOutput(QString("Package '%1' already in list").arg(package_id));
             return;
         }
     }
 
-    auto* item = new QListWidgetItem(package_id);
-    item->setData(Qt::UserRole, package_id);
-    item->setData(Qt::UserRole + 1, QString());  // latest version
-    m_offlineListWidget->addItem(item);
+    auto* versionItem = m_offlineResultsModel->item(row, RColVersion);
+    QString version = versionItem ? versionItem->text() : QString();
 
-    m_offlinePackageEdit->clear();
+    auto* item = new QListWidgetItem(QString("%1  (v%2)").arg(package_id, version));
+    item->setData(Qt::UserRole, package_id);
+    item->setData(Qt::UserRole + 1, version);
+    m_offlineListWidget->addItem(item);
 
     bool has_items = m_offlineListWidget->count() > 0;
     m_offlineClearButton->setEnabled(has_items);
@@ -369,7 +475,7 @@ void AppInstallationPanel::onAddToOfflineList() {
     m_directDownloadButton->setEnabled(has_items);
     m_saveOfflineListButton->setEnabled(has_items);
 
-    Q_EMIT logOutput(QString("Added to offline list: %1").arg(package_id));
+    Q_EMIT logOutput(QString("Added to offline list: %1 (v%2)").arg(package_id, version));
 }
 
 void AppInstallationPanel::onRemoveFromOfflineList() {
@@ -401,6 +507,11 @@ void AppInstallationPanel::onClearOfflineList() {
     m_buildBundleButton->setEnabled(false);
     m_directDownloadButton->setEnabled(false);
     m_saveOfflineListButton->setEnabled(false);
+
+    // Reset preset selection to match the now-empty list
+    m_presetCombo->blockSignals(true);
+    m_presetCombo->setCurrentIndex(0);
+    m_presetCombo->blockSignals(false);
 
     Q_EMIT logOutput("Offline package list cleared");
 }
@@ -609,7 +720,9 @@ void AppInstallationPanel::updateOfflineListDisplay() {
 void AppInstallationPanel::enableOfflineControls(bool enabled) {
     m_presetCombo->setEnabled(enabled);
     m_offlinePackageEdit->setEnabled(enabled);
-    m_offlineAddButton->setEnabled(enabled);
+    m_offlineSearchButton->setEnabled(enabled);
+    m_offlineAddButton->setEnabled(enabled &&
+                                   m_offlineResultsTable->selectionModel()->hasSelection());
     m_offlineRemoveButton->setEnabled(enabled && !m_offlineListWidget->selectedItems().isEmpty());
     m_offlineClearButton->setEnabled(enabled && m_offlineListWidget->count() > 0);
     m_buildBundleButton->setEnabled(enabled && m_offlineListWidget->count() > 0);

@@ -17,6 +17,7 @@ private Q_SLOTS:
     void construction_default();
     void construction_nonCopyable();
     void initialState_idle();
+    void initialState_noActiveOps();
     void cancel_doesNotCrash();
     void iperfServer_notRunningInitially();
     void lanTransferServer_notRunningInitially();
@@ -35,6 +36,12 @@ void TestNetworkDiagnosticController::construction_nonCopyable() {
 void TestNetworkDiagnosticController::initialState_idle() {
     NetworkDiagnosticController controller;
     QCOMPARE(controller.currentState(), NetworkDiagnosticController::State::Idle);
+}
+
+void TestNetworkDiagnosticController::initialState_noActiveOps() {
+    NetworkDiagnosticController controller;
+    QVERIFY(!controller.hasActiveOperations());
+    QVERIFY(!controller.isOperationActive(NetworkDiagnosticController::State::RunningPing));
 }
 
 void TestNetworkDiagnosticController::cancel_doesNotCrash() {

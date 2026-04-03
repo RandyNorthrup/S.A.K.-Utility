@@ -344,6 +344,7 @@ void ConnectivityTester::ping(const PingConfig& config) {
 
     const QString targetIP = resolveTargetIpOrEmitError(config.target, "Ping");
     if (targetIP.isEmpty()) {
+        Q_EMIT pingComplete({});
         return;
     }
 
@@ -436,6 +437,7 @@ void ConnectivityTester::traceroute(const TracerouteConfig& config) {
 
     const QString targetIP = resolveTargetIpOrEmitError(config.target, "Traceroute");
     if (targetIP.isEmpty()) {
+        Q_EMIT tracerouteComplete({});
         return;
     }
 
@@ -469,6 +471,7 @@ void ConnectivityTester::mtr(const MtrConfig& config) {
 
     const QString targetIP = resolveTargetIpOrEmitError(config.target, "MTR");
     if (targetIP.isEmpty()) {
+        Q_EMIT mtrComplete({});
         return;
     }
 

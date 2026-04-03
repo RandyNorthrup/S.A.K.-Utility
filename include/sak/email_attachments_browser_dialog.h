@@ -6,6 +6,7 @@
 
 #pragma once
 
+#include "sak/email_attachment_saver.h"
 #include "sak/email_inspector_controller.h"
 #include "sak/email_types.h"
 
@@ -116,8 +117,8 @@ private:
     // Search state
     QString m_search_text;
 
-    // Save state — path for batch save-all
-    QString m_save_dir;
+    // Save state — shared batch saver
+    sak::AttachmentBatchSave m_batch_save;
 
     // Navigation state — set when user chooses "View Containing Email"
     uint64_t m_navigate_folder_id{0};

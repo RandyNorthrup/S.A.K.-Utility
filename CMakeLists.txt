@@ -15,7 +15,7 @@ endif()
 
 # Project definition
 project(SAK_Utility
-    VERSION 0.9.1.0
+    VERSION 0.9.1.1
     DESCRIPTION "Swiss Army Knife Utility - PC technician's toolkit for Windows migration and maintenance"
     LANGUAGES CXX
 )# C++23 Standard - Strict compliance required
@@ -453,6 +453,7 @@ set(CORE_SOURCES
     src/core/mbox_parser.cpp
     src/core/email_search_worker.cpp
     src/core/email_export_worker.cpp
+    src/core/email_attachment_saver.cpp
     src/core/email_profile_manager.cpp
     src/core/email_report_generator.cpp
     src/core/email_inspector_controller.cpp
@@ -462,9 +463,39 @@ set(CORE_SOURCES
     include/sak/mbox_parser.h
     include/sak/email_search_worker.h
     include/sak/email_export_worker.h
+    include/sak/email_attachment_saver.h
     include/sak/email_profile_manager.h
     include/sak/email_report_generator.h
     include/sak/email_inspector_controller.h
+    # OST/PST Converter
+    src/core/ost_converter_controller.cpp
+    src/core/ost_conversion_worker.cpp
+    src/core/eml_writer.cpp
+    src/core/pst_writer.cpp
+    src/core/pst_splitter.cpp
+    src/core/msg_writer.cpp
+    src/core/mbox_writer.cpp
+    src/core/dbx_writer.cpp
+    src/core/html_email_writer.cpp
+    src/core/pdf_email_writer.cpp
+    src/core/deleted_item_scanner.cpp
+    src/core/imap_uploader.cpp
+    src/core/conversion_report_generator.cpp
+    include/sak/ost_converter_types.h
+    include/sak/ost_converter_constants.h
+    include/sak/ost_converter_controller.h
+    include/sak/ost_conversion_worker.h
+    include/sak/eml_writer.h
+    include/sak/pst_writer.h
+    include/sak/pst_splitter.h
+    include/sak/msg_writer.h
+    include/sak/mbox_writer.h
+    include/sak/dbx_writer.h
+    include/sak/html_email_writer.h
+    include/sak/pdf_email_writer.h
+    include/sak/deleted_item_scanner.h
+    include/sak/imap_uploader.h
+    include/sak/conversion_report_generator.h
     # Offline Deployment (Chocolatey internalization)
     src/core/nuget_api_client.cpp
     src/core/install_script_parser.cpp
@@ -571,6 +602,9 @@ set(GUI_SOURCES
     include/sak/email_calendar_dialog.h
     src/gui/email_attachments_browser_dialog.cpp
     include/sak/email_attachments_browser_dialog.h
+    # OST/PST Converter panel
+    src/gui/ost_converter_widget.cpp
+    include/sak/ost_converter_widget.h
 )
 
 # Quick Actions
@@ -658,15 +692,20 @@ target_link_libraries(sak_utility PRIVATE
     ${PLATFORM_LIBS}
 )
 
-# Suppress MSVCRT defaultlib conflicts when linking static runtime with Qt libs
-# Only needed when static CRT (/MT) is used — suppressing MSVCRT with dynamic CRT causes LNK2001
+# Suppress CRT defaultlib conflicts from mixed static/dynamic CRT libraries
 if(MSVC)
     string(FIND "${CMAKE_MSVC_RUNTIME_LIBRARY}" "DLL" _sak_crt_dll_pos)
     if(_sak_crt_dll_pos EQUAL -1)
-        # Static CRT: suppress conflicting dynamic CRT default libs
+        # Static CRT (/MT): suppress conflicting dynamic CRT default libs
         target_link_options(sak_utility PRIVATE
             /NODEFAULTLIB:MSVCRT
             /NODEFAULTLIB:MSVCRTD
+        )
+    else()
+        # Dynamic CRT (/MD): suppress conflicting static CRT default libs
+        target_link_options(sak_utility PRIVATE
+            /NODEFAULTLIB:LIBCMT
+            /NODEFAULTLIB:LIBCMTD
         )
     endif()
 endif()

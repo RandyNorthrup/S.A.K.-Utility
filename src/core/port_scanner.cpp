@@ -129,6 +129,7 @@ void PortScanner::scan(const ScanConfig& config) {
 
     if (config.target.isEmpty()) {
         Q_EMIT errorOccurred(QStringLiteral("Target cannot be empty"));
+        Q_EMIT scanComplete({});
         return;
     }
 
@@ -145,6 +146,7 @@ void PortScanner::scan(const ScanConfig& config) {
 
     if (ports.isEmpty()) {
         Q_EMIT errorOccurred(QStringLiteral("No ports specified for scanning"));
+        Q_EMIT scanComplete({});
         return;
     }
 

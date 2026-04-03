@@ -1064,6 +1064,31 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_nuget_api_client.cpp")
     message(STATUS "Added unit test: test_nuget_api_client")
 endif()
 
+# test_offline_package_search — offline deploy search workflow, dedup, data flow
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_offline_package_search.cpp")
+    add_executable(test_offline_package_search
+        unit/test_offline_package_search.cpp
+        ../src/core/chocolatey_manager.cpp
+        ../include/sak/chocolatey_manager.h
+        ../src/core/package_list_manager.cpp
+        ../include/sak/package_list_manager.h
+        ../src/core/logger.cpp
+    )
+    set_target_properties(test_offline_package_search PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_offline_package_search PRIVATE
+        Qt6::Core Qt6::Test Qt6::Network Qt6::Xml Qt6::Widgets ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_offline_package_search PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_offline_package_search COMMAND test_offline_package_search
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_offline_package_search")
+endif()
+
 # ============================================================================
 # Integration Tests
 # ============================================================================
@@ -2299,6 +2324,292 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/integration/test_offline_package_builder.
              COMMAND test_offline_package_builder
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added integration test: test_offline_package_builder")
+endif()
+
+# test_ost_converter_types — type defaults, constants, enum coverage
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ost_converter_types.cpp")
+    add_executable(test_ost_converter_types
+        unit/test_ost_converter_types.cpp
+        ../include/sak/ost_converter_types.h
+        ../include/sak/ost_converter_constants.h
+    )
+    set_target_properties(test_ost_converter_types PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_ost_converter_types PRIVATE
+        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_ost_converter_types PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_ost_converter_types COMMAND test_ost_converter_types
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_ost_converter_types")
+endif()
+
+# test_eml_writer — RFC 5322 output, filename sanitization, collision handling
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_eml_writer.cpp")
+    add_executable(test_eml_writer
+        unit/test_eml_writer.cpp
+        ../src/core/eml_writer.cpp
+        ../src/core/logger.cpp
+        ../include/sak/eml_writer.h
+        ../include/sak/email_types.h
+    )
+    set_target_properties(test_eml_writer PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_eml_writer PRIVATE
+        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_eml_writer PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_eml_writer COMMAND test_eml_writer
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_eml_writer")
+endif()
+
+# test_ost_converter_controller — queue management, duplicate detection
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ost_converter_controller.cpp")
+    add_executable(test_ost_converter_controller
+        unit/test_ost_converter_controller.cpp
+        ../src/core/ost_converter_controller.cpp
+        ../src/core/ost_conversion_worker.cpp
+        ../src/core/eml_writer.cpp
+        ../src/core/pst_writer.cpp
+        ../src/core/pst_splitter.cpp
+        ../src/core/msg_writer.cpp
+        ../src/core/mbox_writer.cpp
+        ../src/core/dbx_writer.cpp
+        ../src/core/html_email_writer.cpp
+        ../src/core/pdf_email_writer.cpp
+        ../src/core/deleted_item_scanner.cpp
+        ../src/core/imap_uploader.cpp
+        ../src/core/conversion_report_generator.cpp
+        ../src/core/pst_parser.cpp
+        ../src/core/logger.cpp
+        ../include/sak/ost_converter_controller.h
+        ../include/sak/ost_conversion_worker.h
+        ../include/sak/eml_writer.h
+        ../include/sak/deleted_item_scanner.h
+        ../include/sak/imap_uploader.h
+        ../include/sak/pst_parser.h
+    )
+    set_target_properties(test_ost_converter_controller PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_ost_converter_controller PRIVATE
+        Qt6::Core Qt6::Gui Qt6::Network Qt6::Test ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_ost_converter_controller PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_ost_converter_controller COMMAND test_ost_converter_controller
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_ost_converter_controller")
+endif()
+
+# test_pst_writer — PST binary creation, folder hierarchy, magic bytes
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_pst_writer.cpp")
+    add_executable(test_pst_writer
+        unit/test_pst_writer.cpp
+        ../src/core/pst_writer.cpp
+        ../src/core/logger.cpp
+        ../include/sak/pst_writer.h
+        ../include/sak/email_types.h
+    )
+    set_target_properties(test_pst_writer PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_pst_writer PRIVATE
+        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_pst_writer PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_pst_writer COMMAND test_pst_writer
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_pst_writer")
+endif()
+
+# test_pst_splitter — volume rotation, single volume, error cases
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_pst_splitter.cpp")
+    add_executable(test_pst_splitter
+        unit/test_pst_splitter.cpp
+        ../src/core/pst_splitter.cpp
+        ../src/core/pst_writer.cpp
+        ../src/core/logger.cpp
+        ../include/sak/pst_splitter.h
+        ../include/sak/pst_writer.h
+        ../include/sak/email_types.h
+    )
+    set_target_properties(test_pst_splitter PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_pst_splitter PRIVATE
+        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_pst_splitter PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_pst_splitter COMMAND test_pst_splitter
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_pst_splitter")
+endif()
+
+# test_msg_writer — OLE2 compound file, MAPI properties, magic bytes
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_msg_writer.cpp")
+    add_executable(test_msg_writer
+        unit/test_msg_writer.cpp
+        ../src/core/msg_writer.cpp
+        ../src/core/logger.cpp
+        ../include/sak/msg_writer.h
+        ../include/sak/email_types.h
+    )
+    set_target_properties(test_msg_writer PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_msg_writer PRIVATE
+        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_msg_writer PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_msg_writer COMMAND test_msg_writer
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_msg_writer")
+endif()
+
+# test_mbox_writer — Unix mbox format, From_ escaping, per-folder
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_mbox_writer.cpp")
+    add_executable(test_mbox_writer
+        unit/test_mbox_writer.cpp
+        ../src/core/mbox_writer.cpp
+        ../src/core/eml_writer.cpp
+        ../src/core/logger.cpp
+        ../include/sak/mbox_writer.h
+        ../include/sak/eml_writer.h
+        ../include/sak/email_types.h
+    )
+    set_target_properties(test_mbox_writer PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_mbox_writer PRIVATE
+        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_mbox_writer PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_mbox_writer COMMAND test_mbox_writer
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_mbox_writer")
+endif()
+
+# test_dbx_writer — Outlook Express DBX, folder magic bytes
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_dbx_writer.cpp")
+    add_executable(test_dbx_writer
+        unit/test_dbx_writer.cpp
+        ../src/core/dbx_writer.cpp
+        ../src/core/eml_writer.cpp
+        ../src/core/logger.cpp
+        ../include/sak/dbx_writer.h
+        ../include/sak/eml_writer.h
+        ../include/sak/email_types.h
+    )
+    set_target_properties(test_dbx_writer PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_dbx_writer PRIVATE
+        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_dbx_writer PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_dbx_writer COMMAND test_dbx_writer
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_dbx_writer")
+endif()
+
+# test_html_email_writer — styled HTML output, data URIs
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_html_email_writer.cpp")
+    add_executable(test_html_email_writer
+        unit/test_html_email_writer.cpp
+        ../src/core/html_email_writer.cpp
+        ../src/core/logger.cpp
+        ../include/sak/html_email_writer.h
+        ../include/sak/email_types.h
+    )
+    set_target_properties(test_html_email_writer PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_html_email_writer PRIVATE
+        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_html_email_writer PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_html_email_writer COMMAND test_html_email_writer
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_html_email_writer")
+endif()
+
+# test_pdf_email_writer — QPdfWriter output, PDF header
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_pdf_email_writer.cpp")
+    add_executable(test_pdf_email_writer
+        unit/test_pdf_email_writer.cpp
+        ../src/core/pdf_email_writer.cpp
+        ../src/core/logger.cpp
+        ../include/sak/pdf_email_writer.h
+        ../include/sak/email_types.h
+    )
+    set_target_properties(test_pdf_email_writer PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_pdf_email_writer PRIVATE
+        Qt6::Core Qt6::Gui Qt6::Test ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_pdf_email_writer PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_pdf_email_writer COMMAND test_pdf_email_writer
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_pdf_email_writer")
+endif()
+
+# test_conversion_report_generator — HTML report, CSV manifest
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_conversion_report_generator.cpp")
+    add_executable(test_conversion_report_generator
+        unit/test_conversion_report_generator.cpp
+        ../src/core/conversion_report_generator.cpp
+        ../src/core/logger.cpp
+        ../include/sak/conversion_report_generator.h
+        ../include/sak/ost_converter_types.h
+        ../include/sak/email_types.h
+    )
+    set_target_properties(test_conversion_report_generator PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_conversion_report_generator PRIVATE
+        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_conversion_report_generator PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_conversion_report_generator COMMAND test_conversion_report_generator
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_conversion_report_generator")
 endif()
 
 # ============================================================================

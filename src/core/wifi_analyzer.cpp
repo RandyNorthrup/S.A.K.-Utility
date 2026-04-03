@@ -335,6 +335,7 @@ bool WiFiAnalyzer::isWiFiAvailable() const {
 void WiFiAnalyzer::scan() {
     if (!m_wlanInitialized.load()) {
         Q_EMIT errorOccurred(QStringLiteral("WiFi adapter not available"));
+        Q_EMIT scanComplete({});
         return;
     }
 

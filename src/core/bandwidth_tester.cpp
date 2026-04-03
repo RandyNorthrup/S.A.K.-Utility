@@ -314,11 +314,13 @@ void BandwidthTester::runIperfTest(const IperfConfig& config) {
 
     if (!isIperf3Available()) {
         Q_EMIT errorOccurred(QStringLiteral("iPerf3 not found. Place iperf3.exe in tools/iperf3/"));
+        Q_EMIT testComplete({});
         return;
     }
 
     if (config.serverAddress.isEmpty()) {
         Q_EMIT errorOccurred(QStringLiteral("Server address cannot be empty"));
+        Q_EMIT testComplete({});
         return;
     }
 
@@ -334,10 +336,12 @@ void BandwidthTester::runIperfTest(const IperfConfig& config) {
     if (!proc.waitForStarted(kServerStartTimeout)) {
         Q_EMIT errorOccurred(
             QStringLiteral("Failed to start iPerf3 client: %1").arg(proc.errorString()));
+        Q_EMIT testComplete({});
         return;
     }
 
     if (!waitForIperfWithProgress(proc, m_cancelled, config.durationSec, this)) {
+        Q_EMIT testComplete({});
         return;
     }
 
@@ -346,6 +350,7 @@ void BandwidthTester::runIperfTest(const IperfConfig& config) {
         proc.kill();
         proc.waitForFinished(2000);
         Q_EMIT errorOccurred(QStringLiteral("iPerf3 process timed out"));
+        Q_EMIT testComplete({});
         return;
     }
 
@@ -356,6 +361,7 @@ void BandwidthTester::runIperfTest(const IperfConfig& config) {
         Q_EMIT errorOccurred(QStringLiteral("iPerf3 failed (exit %1): %2")
                                  .arg(proc.exitCode())
                                  .arg(QString::fromUtf8(errOutput)));
+        Q_EMIT testComplete({});
         return;
     }
 
@@ -435,6 +441,7 @@ void BandwidthTester::runHttpSpeedTest() {
         QStringLiteral("https://speed.cloudflare.com/__down?bytes=0"), 5000);
 
     if (m_cancelled.load()) {
+        Q_EMIT httpSpeedTestComplete(0.0, 0.0, 0.0);
         return;
     }
 
@@ -444,12 +451,14 @@ void BandwidthTester::runHttpSpeedTest() {
         return {sample.bytes, sample.timeMs};
     });
     if (!downloadMbps.has_value()) {
+        Q_EMIT httpSpeedTestComplete(0.0, 0.0, 0.0);
         return;
     }
 
     Q_EMIT httpSpeedTestProgress(*downloadMbps, 0.0);
 
     if (m_cancelled.load()) {
+        Q_EMIT httpSpeedTestComplete(0.0, 0.0, 0.0);
         return;
     }
 
@@ -458,6 +467,7 @@ void BandwidthTester::runHttpSpeedTest() {
         return {sample.bytes, sample.timeMs};
     });
     if (!uploadMbps.has_value()) {
+        Q_EMIT httpSpeedTestComplete(0.0, 0.0, 0.0);
         return;
     }
 
@@ -465,6 +475,7 @@ void BandwidthTester::runHttpSpeedTest() {
         Q_EMIT httpSpeedTestComplete(*downloadMbps, *uploadMbps, latencyMs);
     } else {
         Q_EMIT errorOccurred(QStringLiteral("HTTP speed test failed: no data transferred"));
+        Q_EMIT httpSpeedTestComplete(0.0, 0.0, 0.0);
     }
 }
 

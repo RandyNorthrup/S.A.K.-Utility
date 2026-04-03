@@ -96,6 +96,9 @@ public:
     /// Classify an item by its PR_MESSAGE_CLASS value
     [[nodiscard]] static sak::EmailItemType classifyMessageClass(const QString& message_class);
 
+    /// Get all cached NBT node IDs (for deleted-item / orphan scanning)
+    [[nodiscard]] QVector<uint64_t> allNodeIds() const;
+
     /// Table Context column descriptor (§2.3.4.2)
     struct TcColDesc {
         uint16_t prop_type = 0;
@@ -213,6 +216,10 @@ private:
     /// Read a multi-block data tree (XBLOCK/XXBLOCK)
     [[nodiscard]] std::expected<QByteArray, sak::error_code> readDataTree(
         uint64_t bid, QVector<int>* block_offsets = nullptr);
+
+    /// Extract attachment data bytes from a resolved subnode
+    [[nodiscard]] std::expected<QByteArray, sak::error_code> extractAttachmentFromSubnode(
+        const sak::PstNode& subnode);
 
     /// Read child blocks from an XBLOCK
     [[nodiscard]] std::expected<void, sak::error_code> readXblockChildren(

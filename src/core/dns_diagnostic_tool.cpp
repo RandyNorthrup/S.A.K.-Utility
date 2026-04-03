@@ -217,6 +217,7 @@ void DnsDiagnosticTool::query(const QString& hostname,
 
     if (hostname.isEmpty()) {
         Q_EMIT errorOccurred(QStringLiteral("Hostname cannot be empty"));
+        Q_EMIT queryComplete({});
         return;
     }
 
@@ -226,11 +227,11 @@ void DnsDiagnosticTool::query(const QString& hostname,
 
 void DnsDiagnosticTool::reverseLookup(const QString& ipAddress, const QString& dnsServer) {
     Q_ASSERT(!ipAddress.isEmpty());
-    Q_ASSERT(!dnsServer.isEmpty());
     m_cancelled.store(false);
 
     if (ipAddress.isEmpty()) {
         Q_EMIT errorOccurred(QStringLiteral("IP address cannot be empty"));
+        Q_EMIT queryComplete({});
         return;
     }
 
@@ -238,6 +239,7 @@ void DnsDiagnosticTool::reverseLookup(const QString& ipAddress, const QString& d
     const auto parts = ipAddress.split(QLatin1Char('.'));
     if (parts.size() != 4) {
         Q_EMIT errorOccurred(QStringLiteral("Invalid IPv4 address format"));
+        Q_EMIT queryComplete({});
         return;
     }
 
@@ -279,6 +281,7 @@ void DnsDiagnosticTool::compareServers(const QString& hostname,
 
     if (hostname.isEmpty()) {
         Q_EMIT errorOccurred(QStringLiteral("Hostname cannot be empty"));
+        Q_EMIT comparisonComplete({});
         return;
     }
 
@@ -349,6 +352,7 @@ void DnsDiagnosticTool::flushDnsCache() {
     proc.start(QStringLiteral("ipconfig"), {QStringLiteral("/flushdns")});
     if (!proc.waitForStarted(5000) || !proc.waitForFinished(10'000) || proc.exitCode() != 0) {
         Q_EMIT errorOccurred(QStringLiteral("Failed to flush DNS cache."));
+        Q_EMIT dnsCacheFlushed();
         return;
     }
 

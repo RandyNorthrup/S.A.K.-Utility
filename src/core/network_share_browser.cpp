@@ -59,6 +59,7 @@ void NetworkShareBrowser::discoverShares(const QString& hostname) {
 
     if (hostname.isEmpty()) {
         Q_EMIT errorOccurred(QStringLiteral("Hostname cannot be empty"));
+        Q_EMIT discoveryComplete({});
         return;
     }
 

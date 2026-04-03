@@ -17,7 +17,6 @@
 #include <QNetworkReply>
 #include <QNetworkRequest>
 #include <QUrl>
-#include <QUrlQuery>
 
 namespace sak {
 
@@ -26,11 +25,14 @@ namespace sak {
 // ============================================================================
 
 NuGetApiClient::NuGetApiClient(QObject* parent)
-    : QObject(parent), m_network_manager(new QNetworkAccessManager(this)), m_owns_nam(true) {}
+    : QObject(parent), m_network_manager(new QNetworkAccessManager(this)), m_owns_nam(true) {
+    m_network_manager->setRedirectPolicy(QNetworkRequest::NoLessSafeRedirectPolicy);
+}
 
 NuGetApiClient::NuGetApiClient(QNetworkAccessManager* shared_nam, QObject* parent)
     : QObject(parent), m_network_manager(shared_nam), m_owns_nam(false) {
     Q_ASSERT(shared_nam);
+    m_network_manager->setRedirectPolicy(QNetworkRequest::NoLessSafeRedirectPolicy);
 }
 
 NuGetApiClient::~NuGetApiClient() {
@@ -46,21 +48,33 @@ void NuGetApiClient::searchPackages(const QString& query, int max_results) {
         return;
     }
 
-    QString url_str = QString("%1%2").arg(offline::kNuGetBaseUrl, offline::kNuGetSearchPath);
+    // Build OData URL manually — QUrlQuery double-encodes $-prefixed params
+    // and single quotes that the NuGet v2 API requires.
+    // Encode search term + single quotes (%27) for OData string literals.
+    // Use QUrl::fromEncoded() so Qt does not re-interpret our percent-encoding.
+    QString encoded_query = QString(QUrl::toPercentEncoding(query));
+    QString url_str = QString(
+                          "%1%2?$filter=IsLatestVersion&searchTerm=%27%3%27"
+                          "&targetFramework=%27%27&includePrerelease=false"
+                          "&$top=%4&$orderby=DownloadCount%20desc")
+                          .arg(offline::kNuGetBaseUrl,
+                               offline::kNuGetSearchPath,
+                               encoded_query,
+                               QString::number(max_results));
 
-    QUrl url(url_str);
-    QUrlQuery url_query;
-    url_query.addQueryItem("$filter", "IsLatestVersion");
-    url_query.addQueryItem("searchTerm", QString("'%1'").arg(query));
-    url_query.addQueryItem("targetFramework", "''");
-    url_query.addQueryItem("includePrerelease", "false");
-    url_query.addQueryItem("$top", QString::number(max_results));
-    url_query.addQueryItem("$orderby", "DownloadCount desc");
-    url.setQuery(url_query);
+    sak::logInfo("[NuGetApiClient] Search: {}", url_str.toStdString());
 
-    sak::logInfo("[NuGetApiClient] Search: {}", url.toString().toStdString());
+    QUrl parsed_url = QUrl::fromEncoded(url_str.toUtf8());
+    sak::logInfo("[NuGetApiClient] Wire URL: {}",
+                 QString::fromUtf8(parsed_url.toEncoded()).toStdString());
 
-    auto request = buildRequest(url.toString());
+    QNetworkRequest request{parsed_url};
+    request.setHeader(QNetworkRequest::UserAgentHeader, "SAK-Utility/1.0");
+    request.setRawHeader("Accept", "application/xml");
+    request.setTransferTimeout(offline::kApiRequestTimeoutMs);
+    request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
+                         QNetworkRequest::NoLessSafeRedirectPolicy);
+
     auto* reply = m_network_manager->get(request);
     m_pending_ops++;
 
@@ -74,11 +88,11 @@ void NuGetApiClient::getPackageMetadata(const QString& package_id, const QString
 
     QString url_str;
     if (version.isEmpty()) {
-        url_str = QString("%1%2(Id='%3',Version='')")
+        url_str = QString("%1%2(Id=%27%3%27,Version=%27%27)")
                       .arg(offline::kNuGetBaseUrl, offline::kNuGetPackagesPath, package_id);
     } else {
         url_str =
-            QString("%1%2(Id='%3',Version='%4')")
+            QString("%1%2(Id=%27%3%27,Version=%27%4%27)")
                 .arg(offline::kNuGetBaseUrl, offline::kNuGetPackagesPath, package_id, version);
     }
 
@@ -96,16 +110,14 @@ void NuGetApiClient::getPackageVersions(const QString& package_id) {
         return;
     }
 
-    QString url_str = QString("%1%2").arg(offline::kNuGetBaseUrl, offline::kNuGetFindByIdPath);
+    // Build FindPackagesById URL manually — QUrlQuery double-encodes OData quotes.
+    QString encoded_id = QString(QUrl::toPercentEncoding(package_id));
+    QString url_str = QString("%1%2?id=%27%3%27")
+                          .arg(offline::kNuGetBaseUrl, offline::kNuGetFindByIdPath, encoded_id);
 
-    QUrl url(url_str);
-    QUrlQuery url_query;
-    url_query.addQueryItem("id", QString("'%1'").arg(package_id));
-    url.setQuery(url_query);
+    sak::logInfo("[NuGetApiClient] Versions: {}", url_str.toStdString());
 
-    sak::logInfo("[NuGetApiClient] Versions: {}", url.toString().toStdString());
-
-    auto request = buildRequest(url.toString());
+    auto request = buildRequest(url_str);
     auto* reply = m_network_manager->get(request);
     m_pending_ops++;
 
@@ -189,9 +201,22 @@ void NuGetApiClient::handleSearchReply(QNetworkReply* reply) {
     }
 
     if (reply->error() != QNetworkReply::NoError) {
-        QString error_msg = reply->errorString();
-        sak::logWarning("[NuGetApiClient] Search error: {}", error_msg.toStdString());
-        Q_EMIT errorOccurred("search", error_msg);
+        int status_code = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+        QString reason = reply->attribute(QNetworkRequest::HttpReasonPhraseAttribute).toString();
+        QByteArray body = reply->readAll();
+        QString wire_url = QString::fromUtf8(reply->url().toEncoded());
+
+        sak::logWarning("[NuGetApiClient] Search error: HTTP {} {} | {} | URL: {}",
+                        status_code,
+                        reason.toStdString(),
+                        reply->errorString().toStdString(),
+                        wire_url.toStdString());
+        if (!body.isEmpty()) {
+            sak::logWarning("[NuGetApiClient] Response body (first 500 chars): {}",
+                            body.left(500).toStdString());
+        }
+
+        Q_EMIT errorOccurred("search", reply->errorString());
         return;
     }
 
@@ -341,17 +366,16 @@ void NuGetApiClient::resolveNextDependency() {
     QString next_id = m_deps_to_resolve.takeFirst();
     m_dependency_depth++;
 
-    QString url_str = QString("%1%2").arg(offline::kNuGetBaseUrl, offline::kNuGetSearchPath);
+    // Build OData URL manually — QUrlQuery double-encodes OData quotes and $ params.
+    QString encoded_id = QString(QUrl::toPercentEncoding(next_id));
+    QString url_str =
+        QString(
+            "%1%2?$filter=IsLatestVersion%20and%20Id%20eq%20%27%3%27"
+            "&searchTerm=%27%4%27&targetFramework=%27%27"
+            "&includePrerelease=false")
+            .arg(offline::kNuGetBaseUrl, offline::kNuGetSearchPath, encoded_id, encoded_id);
 
-    QUrl url(url_str);
-    QUrlQuery query;
-    query.addQueryItem("$filter", QString("IsLatestVersion and Id eq '%1'").arg(next_id));
-    query.addQueryItem("searchTerm", QString("'%1'").arg(next_id));
-    query.addQueryItem("targetFramework", "''");
-    query.addQueryItem("includePrerelease", "false");
-    url.setQuery(query);
-
-    auto request = buildRequest(url.toString());
+    auto request = buildRequest(url_str);
     auto* reply = m_network_manager->get(request);
     m_pending_ops++;
 
@@ -417,7 +441,7 @@ QVector<ChocoPackageMetadata> NuGetApiClient::parseODataFeed(const QByteArray& x
     return results;
 }
 
-ChocoPackageMetadata NuGetApiClient::parseODataEntry(const QDomElement& entry) {
+ChocoPackageMetadata NuGetApiClient::parseODataEntry(const QDomElement& entry) const {
     ChocoPackageMetadata meta;
 
     // Extract content src (download URL)
@@ -544,10 +568,12 @@ QStringList NuGetApiClient::parseDependencyString(const QString& dep_string) con
 }
 
 QNetworkRequest NuGetApiClient::buildRequest(const QString& url) const {
-    QNetworkRequest request{QUrl(url)};
+    QNetworkRequest request{QUrl::fromEncoded(url.toUtf8())};
     request.setHeader(QNetworkRequest::UserAgentHeader, "SAK-Utility/1.0");
     request.setRawHeader("Accept", "application/xml");
     request.setTransferTimeout(offline::kApiRequestTimeoutMs);
+    request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
+                         QNetworkRequest::NoLessSafeRedirectPolicy);
     return request;
 }
 

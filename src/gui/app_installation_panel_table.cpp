@@ -19,10 +19,9 @@
 using sak::AppInstallationPanel;
 using sak::ChocolateyManager;
 
-// Results table columns (must match app_installation_panel.cpp)
+// Results table columns (shared by online and offline)
 enum ResultColumn {
-    RColCheck = 0,
-    RColPackage,
+    RColPackage = 0,
     RColVersion,
     RColPublisher,
     RColCount
@@ -133,12 +132,12 @@ QIcon AppInstallationPanel::publisherIcon(const QString& packageId) const {
     return QApplication::style()->standardIcon(QStyle::SP_FileIcon);
 }
 
-static QString lookupPublisher(const QString& packageId, const QHash<QString, QString>& map) {
+QString AppInstallationPanel::lookupPublisher(const QString& packageId) {
     QString lower = packageId.toLower();
-    if (map.contains(lower)) {
-        return map[lower];
+    if (s_publisherMap.contains(lower)) {
+        return s_publisherMap[lower];
     }
-    for (auto it = map.constBegin(); it != map.constEnd(); ++it) {
+    for (auto it = s_publisherMap.constBegin(); it != s_publisherMap.constEnd(); ++it) {
         if (lower.startsWith(it.key())) {
             return it.value();
         }
@@ -153,48 +152,23 @@ static QString lookupPublisher(const QString& packageId, const QHash<QString, QS
 void AppInstallationPanel::updateResultsFromSearch(const QString& output) {
     auto packages = m_choco_manager->parseSearchResults(output);
 
-    // Disable sorting during population
-    const bool wasSortingEnabled = m_resultsTable->isSortingEnabled();
-    if (wasSortingEnabled) {
-        m_resultsTable->setSortingEnabled(false);
+    m_onlineResultsModel->setRowCount(static_cast<int>(packages.size()));
+
+    int row = 0;
+    for (const auto& pkg : packages) {
+        auto* pkgItem = new QStandardItem(pkg.package_id);
+        pkgItem->setIcon(publisherIcon(pkg.package_id));
+        m_onlineResultsModel->setItem(row, RColPackage, pkgItem);
+
+        m_onlineResultsModel->setItem(row, RColVersion, new QStandardItem(pkg.version));
+
+        QString pub = lookupPublisher(pkg.package_id);
+        m_onlineResultsModel->setItem(row, RColPublisher, new QStandardItem(pub));
+
+        row++;
     }
 
-    {
-        QSignalBlocker blocker(m_resultsModel);
-        m_resultsModel->setRowCount(0);
-        m_resultsModel->setRowCount(static_cast<int>(packages.size()));
-
-        int row = 0;
-        for (const auto& pkg : packages) {
-            // Checkbox
-            auto* checkItem = new QStandardItem();
-            checkItem->setCheckable(true);
-            checkItem->setCheckState(Qt::Unchecked);
-            m_resultsModel->setItem(row, RColCheck, checkItem);
-
-            // Package ID with publisher-aware icon
-            auto* pkgItem = new QStandardItem(pkg.package_id);
-            pkgItem->setIcon(publisherIcon(pkg.package_id));
-            m_resultsModel->setItem(row, RColPackage, pkgItem);
-
-            // Version
-            m_resultsModel->setItem(row, RColVersion, new QStandardItem(pkg.version));
-
-            // Publisher
-            QString pub = lookupPublisher(pkg.package_id, s_publisherMap);
-            m_resultsModel->setItem(row, RColPublisher, new QStandardItem(pub));
-
-            row++;
-        }
-    }
-
-    if (wasSortingEnabled) {
-        m_resultsTable->setSortingEnabled(true);
-    }
-
-    // Force update
-    m_resultsTable->viewport()->update();
-    m_resultsTable->scrollToTop();
+    m_onlineResultsTable->scrollToTop();
 
     int count = static_cast<int>(packages.size());
     Q_EMIT logOutput(QString("Search returned %1 result(s)").arg(count));
@@ -234,8 +208,8 @@ void AppInstallationPanel::updateQueueDisplay() {
 void AppInstallationPanel::enableControls(bool enabled) {
     m_searchButton->setEnabled(enabled);
     m_searchEdit->setEnabled(enabled);
-    m_categoryCombo->setEnabled(enabled);
-    m_addToQueueButton->setEnabled(false);  // Re-enabled on checkbox state change
+    m_onlinePresetCombo->setEnabled(enabled);
+    m_addToQueueButton->setEnabled(false);  // Re-enabled on selection change
     m_removeFromQueueButton->setEnabled(false);
     m_clearQueueButton->setEnabled(enabled && !m_installQueue.isEmpty());
     m_installButton->setEnabled(enabled && !m_installQueue.isEmpty());

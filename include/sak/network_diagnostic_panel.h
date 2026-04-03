@@ -165,7 +165,12 @@ private Q_SLOTS:
 
     // Controller
     void onStateChanged(int newState);
+    void onOperationFinished(int finishedState);
     void onError(QString error);
+
+    // Button reset helpers for onOperationFinished
+    void resetDiagnosticButtons(int finishedState);
+    void resetToolButtons(int finishedState);
 
     // Quick Action
     void onResetNetworkClicked();

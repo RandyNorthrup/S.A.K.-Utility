@@ -6,6 +6,17 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+## v0.9.1.1
+
+- **Comprehensive documentation accuracy audit** — Verified all documentation, in-app About dialog, GitHub Actions workflow, and third-party license files against the actual codebase. Corrected stale file counts (167 headers, 157 source files, 93 CTest tests across 117 test files), updated Qt modules (added Xml), and refreshed all feature descriptions.
+- **OST Converter documented** — Added full OST Converter feature section to README (8 output formats, multi-threaded conversion, deleted item recovery, PST splitting, IMAP upload). Updated About dialog, workflow release body, and plan doc status to reflect implementation.
+- **Stale references cleaned** — Removed 7-Zip from About dialog credits and license tab (removed in v0.9.0). Removed scrapped System Tools tab plan from Roadmap. Removed Quick Actions standalone section from release body (panel removed in v0.9.0.6).
+- **Missing credits added** — Added iPerf3 (BSD 3-Clause) and Icons8 to About dialog credits. Added iPerf3 full license to THIRD_PARTY_LICENSES.md. Added iPerf3 to README dependencies table and acknowledgments.
+- **Workflow hardened** — Added Qt6Xml.dll to required DLL verification. Added iPerf3 presence check to build verification step. Updated release body with current feature descriptions, per-task elevation language, and per-panel settings.
+- **Build quality** — Clean MSVC `/W4 /WX` build, 93 automated tests (all passing), 157 source files, 167 headers.
+
+---
+
 ## v0.9.1.0
 
 - **Per-task elevation** — Replaced the global `requireAdministrator` manifest with `asInvoker`. The app now runs as a standard user and elevates only for specific tasks that require it, via an elevated helper process communicating over Named Pipes IPC. Tasks drop back to standard privileges once complete.
@@ -20,7 +31,7 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 - **New error codes** — `elevation_required`, `elevation_failed`, `elevation_denied`, `elevation_timeout`, `helper_connection_failed`, `helper_crashed`, `task_not_allowed`.
 - **New tests** — 6 new test files with 139 test methods covering elevation tiers, IPC protocol, task dispatcher, mixed-tier operations, UX components, and hardening verification.
 - **Comprehensive documentation accuracy audit** — Verified all in-app About panel feature descriptions, wizard welcome pages, README highlights, CHANGELOG entries, and build script claims against the actual codebase. All feature descriptions confirmed accurate. Corrected header file count (142 headers including action headers), corrected README test count reference (74 automated tests).
-- **Build quality** — Clean MSVC `/W4 /WX` build, 81 automated tests (all passing), 142 source files, 150 headers.
+- **Build quality** — Clean MSVC `/W4 /WX` build, 93 automated tests (all passing), 157 source files, 167 headers.
 
 ---
 
@@ -47,8 +58,8 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 ## v0.9.0.7
 
 - **File Converter tab plan** — Comprehensive implementation plan for universal offline file conversion (documents, images, audio, video, spreadsheets, PDFs) with batch processing. New tab planned for the File Management panel.
-- **System Tools tab plan** — Comprehensive implementation plan for a centralized launcher of 48+ built-in Windows admin/diagnostic utilities with categorized grid, search, favorites, and availability detection. New tab planned for the Benchmark & Diagnostics panel.
-- **OST Converter tab plan** — Comprehensive implementation plan for multi-threaded bulk OST/PST conversion to PST, EML, MSG, MBOX, and DBX formats with IMAP cloud upload, deleted/corrupt item recovery, metadata preservation, and PST splitting. New tab planned for the Email Tools panel.
+- **System Tools tab plan** — Comprehensive implementation plan for a centralized launcher of 48+ built-in Windows admin/diagnostic utilities with categorized grid, search, favorites, and availability detection. New tab planned for the Benchmark & Diagnostics panel. *(Later scrapped — plan removed.)*
+- **OST Converter tab plan** — Comprehensive implementation plan for multi-threaded bulk OST/PST conversion to PST, EML, MSG, MBOX, and DBX formats with IMAP cloud upload, deleted/corrupt item recovery, metadata preservation, and PST splitting. New tab planned for the Email Tools panel. *(Fully implemented — see OST Converter in Email Tools.)*
 - **Documentation accuracy audit** — Corrected header count (134), test file count (96), removed stale Network encryption security claim (feature was removed in v0.9.0.6), updated roadmap with planned features.
 - **Build quality** — Clean MSVC `/W4 /WX` build, 74 automated tests (all passing), 137 source files, 134 headers.
 

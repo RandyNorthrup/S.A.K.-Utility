@@ -7,6 +7,7 @@
 #include "sak/email_inspector_panel.h"
 
 #include "sak/detachable_log_window.h"
+#include "sak/email_attachment_saver.h"
 #include "sak/email_attachments_browser_dialog.h"
 #include "sak/email_calendar_dialog.h"
 #include "sak/email_constants.h"
@@ -22,6 +23,7 @@
 #include <QComboBox>
 #include <QDateTime>
 #include <QFileDialog>
+#include <QFileInfo>
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QHeaderView>
@@ -519,6 +521,10 @@ void EmailInspectorPanel::disconnectDialogSignals() {
                &EmailInspectorController::stateChanged,
                this,
                &EmailInspectorPanel::onStateChanged);
+    disconnect(m_controller.get(),
+               &EmailInspectorController::errorOccurred,
+               this,
+               &EmailInspectorPanel::onErrorOccurred);
 }
 
 void EmailInspectorPanel::reconnectDialogSignals() {
@@ -542,6 +548,10 @@ void EmailInspectorPanel::reconnectDialogSignals() {
             &EmailInspectorController::stateChanged,
             this,
             &EmailInspectorPanel::onStateChanged);
+    connect(m_controller.get(),
+            &EmailInspectorController::errorOccurred,
+            this,
+            &EmailInspectorPanel::onErrorOccurred);
 }
 
 // ============================================================================
@@ -701,7 +711,7 @@ void EmailInspectorPanel::onItemListCellClicked(int row, int /*column*/) {
     if (!ok) {
         return;
     }
-    m_current_item_id = item_id;
+    m_pending_item_id = item_id;
     m_controller->loadItemDetail(item_id);
     m_controller->loadItemProperties(item_id);
 }
@@ -714,6 +724,7 @@ void EmailInspectorPanel::onItemListContextMenu(const QPoint& pos) {
             auto* subject_item = m_item_list->item(row, ColSubject);
             if (subject_item) {
                 uint64_t nid = subject_item->data(Qt::UserRole).toULongLong();
+                m_pending_item_id = nid;
                 m_controller->loadItemDetail(nid);
             }
         }
@@ -825,6 +836,7 @@ void EmailInspectorPanel::onExportAttachmentsClicked() {
         if (folder_id != 0 && message_id != 0) {
             m_current_folder_id = folder_id;
             m_controller->loadFolderItems(folder_id, 0, m_page_size_combo->currentText().toInt());
+            m_pending_item_id = message_id;
             m_controller->loadItemDetail(message_id);
             m_controller->loadItemProperties(message_id);
         }
@@ -840,13 +852,13 @@ void EmailInspectorPanel::onSaveAttachmentClicked() {
     if (row < 0 || row >= m_current_detail.attachments.size()) {
         return;
     }
-    const auto& attachment = m_current_detail.attachments.at(row);
-    QString filename = attachment.long_filename.isEmpty() ? attachment.filename
-                                                          : attachment.long_filename;
-    QString save_path = QFileDialog::getSaveFileName(this, tr("Save Attachment"), filename);
-    if (save_path.isEmpty()) {
+    QString dir = QFileDialog::getExistingDirectory(this, tr("Save Attachment"));
+    if (dir.isEmpty()) {
         return;
     }
+    m_batch_save.begin(dir, 1);
+    const auto& attachment = m_current_detail.attachments.at(row);
+    updateStatusBar(tr("Saving attachment..."));
     m_controller->loadAttachmentContent(m_current_item_id, attachment.index);
 }
 
@@ -854,13 +866,16 @@ void EmailInspectorPanel::onSaveAllAttachmentsClicked() {
     if (m_current_detail.attachments.isEmpty()) {
         return;
     }
-    QString dir_path = QFileDialog::getExistingDirectory(this, tr("Save All Attachments"));
-    if (dir_path.isEmpty()) {
+    QString dir = QFileDialog::getExistingDirectory(this, tr("Save All Attachments"));
+    if (dir.isEmpty()) {
         return;
     }
+    int count = m_current_detail.attachments.size();
+    m_batch_save.begin(dir, count);
     for (const auto& attachment : m_current_detail.attachments) {
         m_controller->loadAttachmentContent(m_current_item_id, attachment.index);
     }
+    updateStatusBar(tr("Saving %1 attachments...").arg(count));
 }
 
 // ============================================================================
@@ -906,6 +921,7 @@ void EmailInspectorPanel::onFileClosed() {
     m_contact_folder_ids.clear();
     m_calendar_folder_ids.clear();
     m_cached_folder_tree.clear();
+    m_batch_save.reset();
 
     m_close_button->setEnabled(false);
     m_search_edit->setEnabled(false);
@@ -941,6 +957,8 @@ void EmailInspectorPanel::onItemDetailLoaded(sak::PstItemDetail detail) {
     if (m_dialog_active) {
         return;
     }
+    // Commit the pending item ID now that the load succeeded
+    m_current_item_id = m_pending_item_id;
     m_current_detail = detail;
     displayItemDetail(detail);
     displayAttachments(detail.attachments);
@@ -972,8 +990,17 @@ void EmailInspectorPanel::onAttachmentContentReady(uint64_t /*message_id*/,
         return;
     }
 
-    // Check if this is an inline image (CID) that should be added to the
-    // content browser rather than prompting a save dialog.
+    // Save operation — delegate entirely to shared batch saver
+    if (m_batch_save.isActive()) {
+        m_batch_save.recordOne(filename, attachment_data);
+        if (m_batch_save.isComplete()) {
+            updateStatusBar(m_batch_save.summaryText());
+            m_batch_save.reset();
+        }
+        return;
+    }
+
+    // Not a save — check for inline CID image
     for (const auto& att : m_current_detail.attachments) {
         if (att.index == index && !att.content_id.isEmpty()) {
             QUrl cid_url(QStringLiteral("cid:%1").arg(att.content_id));
@@ -982,25 +1009,10 @@ void EmailInspectorPanel::onAttachmentContentReady(uint64_t /*message_id*/,
                 m_content_browser->document()->addResource(QTextDocument::ImageResource,
                                                            cid_url,
                                                            image);
-                // Re-render the current HTML to show the newly resolved image
                 displayItemDetail(m_current_detail);
             }
             return;
         }
-    }
-
-    QString save_path = QFileDialog::getSaveFileName(this, tr("Save Attachment"), filename);
-    if (save_path.isEmpty()) {
-        return;
-    }
-    QFile file(save_path);
-    if (file.open(QIODevice::WriteOnly)) {
-        file.write(attachment_data);
-        file.close();
-        updateStatusBar(tr("Saved: %1").arg(filename));
-    } else {
-        sak::logError("Failed to save attachment: {}", save_path.toStdString());
-        Q_EMIT logOutput(tr("Failed to save attachment: %1").arg(filename));
     }
 }
 

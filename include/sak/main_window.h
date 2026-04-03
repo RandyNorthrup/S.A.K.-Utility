@@ -35,6 +35,7 @@ class AdvancedSearchPanel;
 class AdvancedUninstallPanel;
 class NetworkDiagnosticPanel;
 class EmailInspectorPanel;
+class OstConverterWidget;
 
 /**
  * @brief Main application window for S.A.K. Utility
@@ -210,6 +211,7 @@ private:
     std::unique_ptr<AdvancedUninstallPanel> m_advanced_uninstall_panel;
     std::unique_ptr<NetworkDiagnosticPanel> m_network_diagnostic_panel;
     std::unique_ptr<EmailInspectorPanel> m_email_inspector_panel;
+    std::unique_ptr<OstConverterWidget> m_ost_converter_widget;
 
     // Status bar components
     QLabel* m_status_label{nullptr};

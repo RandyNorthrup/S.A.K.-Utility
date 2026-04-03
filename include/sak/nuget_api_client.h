@@ -99,7 +99,7 @@ private:
     void resolveNextDependency();
 
     [[nodiscard]] QVector<ChocoPackageMetadata> parseODataFeed(const QByteArray& xml);
-    [[nodiscard]] ChocoPackageMetadata parseODataEntry(const QDomElement& entry);
+    [[nodiscard]] ChocoPackageMetadata parseODataEntry(const QDomElement& entry) const;
     [[nodiscard]] QDomElement findPropertiesElement(const QDomElement& entry) const;
     void populateBasicProperties(ChocoPackageMetadata& meta, const QDomElement& properties) const;
     void populateConvertedProperties(ChocoPackageMetadata& meta,

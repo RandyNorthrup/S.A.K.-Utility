@@ -6,15 +6,16 @@
 
 #include "sak/email_attachments_browser_dialog.h"
 
+#include "sak/email_attachment_saver.h"
 #include "sak/email_constants.h"
 #include "sak/email_inspector_controller.h"
 #include "sak/layout_constants.h"
+#include "sak/logger.h"
 #include "sak/style_constants.h"
 
 #include <QApplication>
 #include <QClipboard>
 #include <QComboBox>
-#include <QFile>
 #include <QFileDialog>
 #include <QHash>
 #include <QHBoxLayout>
@@ -491,7 +492,8 @@ void EmailAttachmentsBrowserDialog::saveOneAttachment(const AttachmentEntry& ent
     if (dir.isEmpty()) {
         return;
     }
-    m_save_dir = dir;
+    m_batch_save.begin(dir, 1);
+    m_status_label->setText(tr("Saving attachment..."));
     m_controller->loadAttachmentContent(entry.message_node_id, entry.attachment_index);
 }
 
@@ -505,8 +507,9 @@ void EmailAttachmentsBrowserDialog::onSaveSelectedClicked() {
     if (dir.isEmpty()) {
         return;
     }
-    m_save_dir = dir;
 
+    int count = 0;
+    QVector<std::pair<uint64_t, int>> to_save;
     for (const auto& index : selected_rows) {
         auto* item = m_table->item(index.row(), ColFilename);
         if (item == nullptr) {
@@ -517,7 +520,16 @@ void EmailAttachmentsBrowserDialog::onSaveSelectedClicked() {
             continue;
         }
         const auto& entry = m_all_attachments[att_idx];
-        m_controller->loadAttachmentContent(entry.message_node_id, entry.attachment_index);
+        to_save.append({entry.message_node_id, entry.attachment_index});
+        ++count;
+    }
+    if (count == 0) {
+        return;
+    }
+    m_batch_save.begin(dir, count);
+    m_status_label->setText(tr("Saving %1 attachments...").arg(count));
+    for (const auto& [node_id, att_index] : to_save) {
+        m_controller->loadAttachmentContent(node_id, att_index);
     }
 }
 
@@ -530,8 +542,9 @@ void EmailAttachmentsBrowserDialog::onSaveAllVisibleClicked() {
     if (dir.isEmpty()) {
         return;
     }
-    m_save_dir = dir;
 
+    int count = 0;
+    QVector<std::pair<uint64_t, int>> to_save;
     for (int row = 0; row < m_table->rowCount(); ++row) {
         auto* item = m_table->item(row, ColFilename);
         if (item == nullptr) {
@@ -542,7 +555,16 @@ void EmailAttachmentsBrowserDialog::onSaveAllVisibleClicked() {
             continue;
         }
         const auto& entry = m_all_attachments[att_idx];
-        m_controller->loadAttachmentContent(entry.message_node_id, entry.attachment_index);
+        to_save.append({entry.message_node_id, entry.attachment_index});
+        ++count;
+    }
+    if (count == 0) {
+        return;
+    }
+    m_batch_save.begin(dir, count);
+    m_status_label->setText(tr("Saving %1 attachments...").arg(count));
+    for (const auto& [node_id, att_index] : to_save) {
+        m_controller->loadAttachmentContent(node_id, att_index);
     }
 }
 
@@ -550,33 +572,18 @@ void EmailAttachmentsBrowserDialog::onAttachmentContentReady(uint64_t /*message_
                                                              int /*index*/,
                                                              QByteArray content,
                                                              QString filename) {
-    if (m_save_dir.isEmpty()) {
+    if (!m_batch_save.isActive()) {
         return;
     }
 
-    QString file_path = m_save_dir + QStringLiteral("/") + filename;
-
-    // Avoid overwriting — if file exists, add number suffix
-    if (QFile::exists(file_path)) {
-        int dot = filename.lastIndexOf(QLatin1Char('.'));
-        QString base = (dot > 0) ? filename.left(dot) : filename;
-        QString ext = (dot > 0) ? filename.mid(dot) : QString();
-        int counter = 1;
-        constexpr int kMaxDedupeAttempts = 999;
-        do {
-            file_path =
-                QStringLiteral("%1/%2_%3%4").arg(m_save_dir, base, QString::number(counter), ext);
-            ++counter;
-        } while (QFile::exists(file_path) && counter <= kMaxDedupeAttempts);
-    }
-
-    QFile file(file_path);
-    if (file.open(QIODevice::WriteOnly)) {
-        file.write(content);
+    m_batch_save.recordOne(filename, content);
+    if (m_batch_save.isComplete()) {
+        m_status_label->setText(m_batch_save.summaryText());
+        m_batch_save.reset();
     }
 }
 
-void EmailAttachmentsBrowserDialog::onErrorOccurred(const QString& /*message*/) {
+void EmailAttachmentsBrowserDialog::onErrorOccurred(const QString& message) {
     // During detail loading — skip this item and continue
     if (!m_scan_complete && m_details_total > 0) {
         ++m_details_loaded;
@@ -590,6 +597,16 @@ void EmailAttachmentsBrowserDialog::onErrorOccurred(const QString& /*message*/) 
         m_current_folder_offset = 0;
         m_progress_bar->setValue(m_folders_scanned);
         QTimer::singleShot(0, this, &EmailAttachmentsBrowserDialog::scanNextFolder);
+        return;
+    }
+    // During save — count as failure and update status
+    if (m_batch_save.isActive()) {
+        m_batch_save.recordError();
+        sak::logWarning("Attachment save error: {}", message.toStdString());
+        if (m_batch_save.isComplete()) {
+            m_status_label->setText(m_batch_save.summaryText());
+            m_batch_save.reset();
+        }
     }
 }
 

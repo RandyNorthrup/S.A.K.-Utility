@@ -19,6 +19,7 @@
 #include "sak/logger.h"
 #include "sak/network_diagnostic_panel.h"
 #include "sak/organizer_panel.h"
+#include "sak/ost_converter_widget.h"
 #include "sak/style_constants.h"
 #include "sak/user_migration_panel.h"
 #include "sak/version.h"
@@ -141,6 +142,7 @@ Built with modern C++23 and Qt 6 for Windows 10/11 x64.</div>
         <li><b>Attachments Browser</b> &mdash; Scan all emails for attachments with type filtering, search, and batch extraction</li>
         <li><b>Email Profile Manager</b> &mdash; Backup and restore profiles for Outlook, Thunderbird, and Windows Mail</li>
         <li><b>Orphaned File Discovery</b> &mdash; Scan drives for orphaned PST, OST, and MBOX files not linked to active profiles</li>
+        <li><b>OST/PST Converter</b> &mdash; Multi-threaded bulk conversion to 8 output formats (PST, EML, MSG, MBOX, DBX, HTML, PDF, IMAP Upload) with deleted item recovery, PST splitting, and cloud upload</li>
     </ul>
 </div>
 
@@ -165,7 +167,7 @@ GNU Affero General Public License for more details.</p>
 along with this program. If not, see
 <a href="https://www.gnu.org/licenses/">https://www.gnu.org/licenses/</a>.</p>
 <p><b>Note:</b> This application uses Qt Framework (LGPL v3), Chocolatey (Apache 2.0),
-smartmontools (GPLv2), aria2 (GPLv2), UUPMediaCreator (MIT), 7-Zip (LGPL v2.1),
+smartmontools (GPLv2), aria2 (GPLv2), UUPMediaCreator (MIT), iPerf3 (BSD 3-Clause),
 qrcodegen (MIT), and additional open-source libraries. See the Credits tab
 for the full list.</p>
 )SAKLICENSE";
@@ -215,8 +217,12 @@ constexpr char kCreditsTabHtml[] = R"SAKCREDITS(
     <span class="desc">WIM image library (bundled with UUPMediaConverter)</span>
 </div>
 <div class="dep">
-    <b><a href="https://www.7-zip.org/">7-Zip</a></b> &mdash; LGPL v2.1 (Igor Pavlov)<br/>
-    <span class="desc">Archive tool for ISO extraction and compression</span>
+    <b><a href="https://iperf.fr/">iPerf3</a></b> &mdash; BSD 3-Clause<br/>
+    <span class="desc">LAN bandwidth testing (bundled iperf3.exe)</span>
+</div>
+<div class="dep">
+    <b><a href="https://icons8.com/">Icons8</a></b> &mdash; Icons8 Free License<br/>
+    <span class="desc">Windows 11 Filled (Fluent) SVG icons with attribution</span>
 </div>
 <div class="dep">
     <b><a href="https://www.zlib.net/">zlib</a></b> &mdash; zlib License<br/>
@@ -495,8 +501,63 @@ void MainWindow::createSimplePanels() {
 
     // -- 5. Email Tools ---------------------------------------------------
     m_email_inspector_panel = std::make_unique<EmailInspectorPanel>(this);
+    m_ost_converter_widget = std::make_unique<OstConverterWidget>(this);
+
+    auto* emailWrapper = new QWidget(this);
+    auto* emailLayout = new QVBoxLayout(emailWrapper);
+    emailLayout->setContentsMargins(
+        ui::kMarginMedium, ui::kMarginMedium, ui::kMarginMedium, ui::kMarginMedium);
+    emailLayout->setSpacing(ui::kSpacingDefault);
+
+    auto emailHdr = sak::createDynamicPanelHeader(
+        emailWrapper,
+        QStringLiteral(":/icons/icons/panel_email.svg"),
+        tr("Email Tools"),
+        tr("Offline email forensics, data extraction, and OST/PST conversion"),
+        emailLayout);
+
+    auto* emailTabs = new QTabWidget(emailWrapper);
+    emailTabs->addTab(m_email_inspector_panel.get(), tr("Email Inspector"));
+    emailTabs->addTab(m_ost_converter_widget.get(), tr("OST Converter"));
+    emailLayout->addWidget(emailTabs, 1);
+
+    connect(emailTabs, &QTabWidget::currentChanged, this, [emailHdr](int index) {
+        struct TabMeta {
+            const char* icon;
+            const char* title;
+            const char* subtitle;
+        };
+        static constexpr TabMeta kTabs[] = {
+            {":/icons/icons/panel_email.svg",
+             "Email Inspector",
+             "Offline email forensics and data extraction "
+             "\xe2\x80\x94 inspect PST, OST, and MBOX files"},
+            {":/icons/icons/panel_email.svg",
+             "OST Converter",
+             "Bulk OST/PST file conversion to EML, MSG, MBOX, and more"},
+        };
+        if (index >= 0 && index < static_cast<int>(std::size(kTabs))) {
+            const auto& m = kTabs[index];
+            sak::updatePanelHeader(emailHdr,
+                                   QString::fromUtf8(m.icon),
+                                   QCoreApplication::translate("MainWindow", m.title),
+                                   QCoreApplication::translate("MainWindow", m.subtitle));
+        }
+    });
+
+    connect(m_ost_converter_widget.get(),
+            &OstConverterWidget::statusMessage,
+            this,
+            [this](const QString& msg, int timeout_ms) {
+                updateStatus(msg, timeout_ms > 0 ? timeout_ms : 5000);
+            });
+    connect(m_ost_converter_widget.get(),
+            &OstConverterWidget::progressUpdate,
+            this,
+            &MainWindow::updateProgress);
+
     AddTabWithTooltip(m_tab_widget,
-                      m_email_inspector_panel.get(),
+                      emailWrapper,
                       "Email Tools",
                       kTooltipEmailTool,
                       ":/icons/icons/panel_email.svg");

@@ -9,7 +9,8 @@
 [![Qt 6.5+](https://img.shields.io/badge/Qt-6.5%2B-41cd52.svg)](https://www.qt.io/)
 [![Windows 10/11](https://img.shields.io/badge/Windows-10%20%7C%2011-0078d4.svg)](https://www.microsoft.com/windows)
 [![Build](https://github.com/RandyNorthrup/S.A.K.-Utility/actions/workflows/build-release.yml/badge.svg)](https://github.com/RandyNorthrup/S.A.K.-Utility/actions)
-[![Version](https://img.shields.io/badge/Version-0.9.1.0-orange.svg)](VERSION)
+[![Version](https://img.shields.io/badge/Version-0.9.1.1-orange.svg)](VERSION)
+[![Tests](https://img.shields.io/badge/Tests-93%20passing-brightgreen.svg)](tests/)
 
 Migration · Maintenance · Recovery · Imaging · Deployment — one portable EXE.
 
@@ -21,7 +22,7 @@ Migration · Maintenance · Recovery · Imaging · Deployment — one portable E
 
 See [CHANGELOG.md](CHANGELOG.md) for the full version history.
 
-**Latest: v0.9.1.0** — Per-task elevation: the app now runs as a standard user and only elevates for specific tasks via an elevated helper process with Named Pipes IPC. Includes elevation tier system, elevation gates, status bar indicator, info banners, and 139 new test methods across 6 test files.
+**Latest: v0.9.1.1** — Comprehensive documentation accuracy audit: updated all docs, About dialog, workflow, and THIRD_PARTY_LICENSES to reflect current codebase (OST Converter implemented, 7-Zip removed, iPerf3/Icons8 credited, file counts corrected, stale references cleaned up).
 
 ---
 
@@ -36,7 +37,7 @@ See [CHANGELOG.md](CHANGELOG.md) for the full version history.
 | **File Management** | Organize files by extension, find duplicates with parallel hashing, and grep-style content search with regex, metadata, archive, and binary/hex modes. |
 | **Application Management** | Scan installed apps, match to Chocolatey packages, bulk-install on a new PC. Offline deployment with direct installer downloads. Deep application removal with leftover scanning and registry snapshot diffs. |
 | **Network Management** | Diagnostic suite (ping, traceroute, MTR, DNS, port scan, bandwidth, WiFi, connections, firewall, shares), adapter inspector with ethernet backup/restore and network reset, WiFi QR code manager. |
-| **Email Tools** | Browse PST, OST, and MBOX email archives. Search, export (EML/CSV/VCF/ICS), contacts, calendar (month/week/day), attachments browser — no Outlook required. |
+| **Email Tools** | Browse PST, OST, and MBOX email archives. Search, export (EML/CSV/VCF/ICS), contacts, calendar (month/week/day), attachments browser — no Outlook required. Multi-threaded OST/PST converter with 8 output formats including IMAP cloud upload. |
 | **Modern UI** | Windows 11-style rounded corners, custom splash screen, and responsive layouts. |
 
 ---
@@ -53,6 +54,7 @@ See [CHANGELOG.md](CHANGELOG.md) for the full version history.
   - [File Management](#file-management)
   - [Network Management](#network-management)
   - [Email Tools](#email-tools)
+  - [OST Converter](#ost-converter)
   - [Settings](#settings)
 - [Security](#security)
 - [Building from Source](#building-from-source)
@@ -398,6 +400,35 @@ Browse, search, and export data from Outlook PST/OST archives and MBOX mailboxes
 
 ---
 
+### OST Converter
+
+Multi-threaded bulk OST/PST conversion engine integrated as a second tab in the Email Tools panel.
+
+**Supported Output Formats**
+
+| Format | Description |
+|---|---|
+| **PST** | Outlook Personal Storage (Unicode) |
+| **EML** | RFC 5322 email files |
+| **MSG** | Outlook message files |
+| **MBOX** | Unix mailbox format |
+| **DBX** | Outlook Express format |
+| **HTML** | Styled HTML email archives |
+| **PDF** | PDF email archives |
+| **IMAP Upload** | Direct upload to IMAP servers (Office 365, Gmail, Yahoo) |
+
+**Key Features**
+- Multi-threaded conversion with configurable worker count (1–8 threads)
+- Deleted item recovery (soft and hard delete scanning)
+- PST splitting for large archives with configurable size limits
+- IMAP cloud upload with PLAIN, LOGIN, and XOAUTH2 authentication
+- Advanced filtering by date range, folder, sender, and subject
+- Corruption handling with automatic recovery
+- Metadata preservation across all output formats
+- Detailed conversion reporting
+
+---
+
 ### Settings
 
 Settings are configured per-panel — each panel that needs configuration provides its own settings dialog or inline controls.
@@ -478,12 +509,13 @@ Requires Azure CLI and access to the Azure Trusted Signing account. CI builds (G
 
 | Library | License | Purpose |
 |---|---|---|
-| [Qt 6.5+](https://www.qt.io/) | LGPL v3 | UI framework (Core, Widgets, Concurrent, Network; Gui linked transitively via Widgets) |
+| [Qt 6.5+](https://www.qt.io/) | LGPL v3 | UI framework (Core, Widgets, Concurrent, Network, Xml; Gui linked transitively via Widgets) |
 | [zlib](https://www.zlib.net/) | zlib License | Compression and ZIP archive decompression (deflate) |
 | [bzip2](https://sourceware.org/bzip2/) | BSD-style | bzip2 compression |
 | [liblzma](https://tukaani.org/xz/) | 0BSD / Public Domain | xz/LZMA compression |
 | [qrcodegen](https://www.nayuki.io/page/qr-code-generator-library) | MIT | QR code generation (bundled source) |
 | [smartmontools](https://www.smartmontools.org/) | GPLv2 | SMART disk health analysis (bundled `smartctl.exe`) |
+| [iPerf3](https://iperf.fr/) | BSD 3-Clause | LAN bandwidth testing (bundled `iperf3.exe`) |
 | [Chocolatey](https://chocolatey.org/) | Apache 2.0 | Embedded package manager |
 | Windows BCrypt | OS component | AES-256, PBKDF2, SHA-256 |
 
@@ -495,7 +527,7 @@ Full license texts: [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md)
 cmake --build build --config Release --target RUN_TESTS
 ```
 
-81 unit and integration tests across 105 test files covering Advanced Search, Advanced Uninstall (types, controller, leftover scanner, registry snapshot engine), Network Diagnostics (types, utils, report generation), Email Inspector (PST/OST parsing, MBOX parsing, email types, search, export, profile manager, report generator), Offline Deployment (install script parsing, NuGet API, script rewriting, package builder), Elevation (tier classification, IPC protocol, task dispatcher, mixed-tier operations, UX components, hardening), diagnostics, security, encryption, configuration, ISO download, and quick action validation.
+93 automated tests across 117 test files covering Advanced Search, Advanced Uninstall (types, controller, leftover scanner, registry snapshot engine), Network Diagnostics (types, utils, report generation), Email Inspector (PST/OST parsing, MBOX parsing, email types, search, export, profile manager, report generator), OST Converter (types, controller, PST splitter, integration), Offline Deployment (install script parsing, NuGet API, script rewriting, package builder), Elevation (tier classification, IPC protocol, task dispatcher, mixed-tier operations, UX components, hardening), diagnostics, security, encryption, configuration, ISO download, and quick action validation.
 
 ---
 
@@ -530,8 +562,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for coding standards, commit conventions,
 ### Planned Features (detailed plans in `docs/`)
 
 - **File Converter Tab** — Universal offline file conversion for documents, images, audio, video, spreadsheets, and PDFs with batch processing and quality controls. Adds a new tab to the File Management panel. See [FILE_CONVERTER_TAB_PLAN.md](docs/FILE_CONVERTER_TAB_PLAN.md).
-- **System Tools Tab** — Centralized launcher for 48+ built-in Windows administrative and diagnostic utilities, organized into searchable categories with one-click launch, favorites, and availability detection. Adds a new tab to the Benchmark & Diagnostics panel. See [SYSTEM_TOOLS_TAB_PLAN.md](docs/SYSTEM_TOOLS_TAB_PLAN.md).
-- **OST Converter Tab** — Multi-threaded bulk OST/PST conversion to PST, EML, MSG, MBOX, and DBX formats with IMAP cloud upload (Office 365, Gmail, Yahoo), deleted/corrupt item recovery, metadata preservation, and PST splitting. Adds a new tab to the Email Tools panel. See [OST_CONVERTER_TAB_PLAN.md](docs/OST_CONVERTER_TAB_PLAN.md).
+- **macOS Bootable USB** — Create macOS bootable USB drives from macOS installer images. See [MACOS_BOOTABLE_USB_PLAN.md](docs/MACOS_BOOTABLE_USB_PLAN.md).
 
 ---
 
@@ -551,6 +582,7 @@ Third-party dependency licenses are documented in [THIRD_PARTY_LICENSES.md](THIR
 - [**UUPMediaCreator**](https://github.com/OSTooling/UUPMediaCreator) — UUP-to-ISO converter by OSTooling (MIT)
 - [**wimlib / libwim**](https://wimlib.net/) — WIM image library by Eric Biggers (LGPL v3, bundled with UUPMediaConverter)
 - [**smartmontools**](https://www.smartmontools.org/) — SMART disk diagnostics (GPLv2)
+- [**iPerf3**](https://iperf.fr/) — LAN bandwidth testing (BSD 3-Clause)
 - [**Icons8**](https://icons8.com/) — UI icons (Icons8 Free License with attribution)
 - [**Chocolatey**](https://chocolatey.org/) — Windows package manager (Apache 2.0)
 - [**zlib**](https://www.zlib.net/) — Compression library (zlib License)

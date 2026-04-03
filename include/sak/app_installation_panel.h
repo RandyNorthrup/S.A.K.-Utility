@@ -7,13 +7,14 @@
 #include <QFuture>
 #include <QGroupBox>
 #include <QHash>
+#include <QHBoxLayout>
+#include <QHeaderView>
 #include <QIcon>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
 #include <QProgressBar>
 #include <QPushButton>
-#include <QSplitter>
 #include <QStandardItemModel>
 #include <QTableView>
 #include <QTabWidget>
@@ -99,14 +100,16 @@ private Q_SLOTS:
     void onInstallAll();
     /** @brief Abort the running installation sequence */
     void onCancelInstall();
-    /** @brief Filter search results by the selected category */
-    void onCategoryChanged(int index);
+    /** @brief Load a preset package list into the online install queue */
+    void onOnlinePresetSelected(int index);
 
     // ------ Offline Deployment Slots ------
 
     /** @brief Load a preset package list into the offline deploy list */
     void onPresetSelected(int index);
-    /** @brief Add a single package to the offline deploy list */
+    /** @brief Search Chocolatey packages for the offline deploy list */
+    void onOfflineSearch();
+    /** @brief Add selected search result to the offline deploy list */
     void onAddToOfflineList();
     /** @brief Remove selected packages from the offline deploy list */
     void onRemoveFromOfflineList();
@@ -131,9 +134,11 @@ private:
     /** @brief Build the search bar section */
     void setupUi_searchBar(QVBoxLayout* layout);
     /** @brief Build the package results table panel */
-    void setupUi_packageTable(QSplitter* splitter);
+    void setupUi_packageTable(QHBoxLayout* sideBySide);
     /** @brief Build the install queue section panel */
-    void setupUi_queueSection(QSplitter* splitter);
+    void setupUi_queueSection(QHBoxLayout* sideBySide);
+    /** @brief Build the installation actions section */
+    void setupUi_installActions(QVBoxLayout* layout);
     /** @brief Build the bottom bar with log toggle */
     void setupUi_bottomBar(QVBoxLayout* layout);
     /** @brief Build the offline deployment tab content */
@@ -146,6 +151,10 @@ private:
     void setupWorkerConnections();
     /** @brief Connect offline deployment signals */
     void setupOfflineConnections();
+    /** @brief Handle NuGet search completion on the main thread */
+    void onOfflineSearchCompleted(bool success,
+                                  const QString& output,
+                                  const QString& error_message);
     /** @brief Parse Chocolatey search output into the results model */
     void updateResultsFromSearch(const QString& output);
     /** @brief Handle search completion on the main thread */
@@ -161,6 +170,7 @@ private:
     bool parseQueueFile(const QString& filePath, QJsonArray& out_array);
     void importQueueEntries(const QJsonArray& arr, int& added, int& skipped);
     QIcon publisherIcon(const QString& packageId) const;
+    static QString lookupPublisher(const QString& packageId);
 
     /** @brief Refresh the offline deploy list widget from m_offlineList */
     void updateOfflineListDisplay();
@@ -172,12 +182,12 @@ private:
 
     // Search section
     QLineEdit* m_searchEdit{nullptr};
-    QComboBox* m_categoryCombo{nullptr};
+    QComboBox* m_onlinePresetCombo{nullptr};
     QPushButton* m_searchButton{nullptr};
 
     // Results table
-    QTableView* m_resultsTable{nullptr};
-    QStandardItemModel* m_resultsModel{nullptr};
+    QTableView* m_onlineResultsTable{nullptr};
+    QStandardItemModel* m_onlineResultsModel{nullptr};
 
     // Queue section
     QListWidget* m_queueList{nullptr};
@@ -202,6 +212,9 @@ private:
     QComboBox* m_presetCombo{nullptr};
     QListWidget* m_offlineListWidget{nullptr};
     QLineEdit* m_offlinePackageEdit{nullptr};
+    QPushButton* m_offlineSearchButton{nullptr};
+    QTableView* m_offlineResultsTable{nullptr};
+    QStandardItemModel* m_offlineResultsModel{nullptr};
     QPushButton* m_offlineAddButton{nullptr};
     QPushButton* m_offlineRemoveButton{nullptr};
     QPushButton* m_offlineClearButton{nullptr};
@@ -228,7 +241,9 @@ private:
 
     // Async
     QFuture<void> m_searchFuture;
+    QFuture<void> m_offlineSearchFuture;
     std::atomic<bool> m_search_in_progress{false};
+    std::atomic<bool> m_offline_search_in_progress{false};
     bool m_install_in_progress{false};
     bool m_offline_in_progress{false};
 
