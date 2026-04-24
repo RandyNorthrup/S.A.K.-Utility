@@ -352,12 +352,9 @@ QMap<QString, QString> MboxParser::parseHeaders(const QByteArray& raw_message) {
 
     // Find the header/body boundary
     int header_end = raw_message.indexOf("\r\n\r\n");
-    int body_start_skip = 4;
     if (header_end < 0) {
         header_end = raw_message.indexOf("\n\n");
-        body_start_skip = 2;
     }
-    Q_UNUSED(body_start_skip);
 
     QByteArray header_block = (header_end >= 0) ? raw_message.left(header_end) : raw_message;
 

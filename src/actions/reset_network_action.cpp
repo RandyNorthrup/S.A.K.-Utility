@@ -72,7 +72,6 @@ void ResetNetworkAction::resetFirewall() {
 
 void ResetNetworkAction::scan() {
     setStatus(ActionStatus::Scanning);
-    Q_ASSERT(status() == ActionStatus::Scanning);
 
     QString ps_cmd =
         "try { "
@@ -98,8 +97,6 @@ void ResetNetworkAction::scan() {
         result.warning = "Network reset may not be applicable without active adapters";
     }
 
-    Q_ASSERT(!result.summary.isEmpty());
-
     setScanResult(result);
     setStatus(ActionStatus::Ready);
     Q_EMIT scanComplete(result);
@@ -111,7 +108,6 @@ void ResetNetworkAction::execute() {
         return;
     }
     setStatus(ActionStatus::Running);
-    Q_ASSERT(status() == ActionStatus::Running);
     QDateTime start_time = QDateTime::currentDateTime();
     m_requires_reboot = false;
     QStringList errors;

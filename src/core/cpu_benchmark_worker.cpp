@@ -191,7 +191,6 @@ double CpuBenchmarkWorker::runPrimeSieve(uint64_t limit) {
 }
 
 double CpuBenchmarkWorker::runMatrixMultiply(int size) {
-    Q_ASSERT(size >= 0);
     Q_ASSERT_X(size > 0, "runMatrixMultiply", "matrix size must be positive");
     // Dense matrix multiply C = A x B -- stresses FP pipeline + cache
     const int element_count = size;
@@ -233,7 +232,6 @@ double CpuBenchmarkWorker::runMatrixMultiply(int size) {
 }
 
 double CpuBenchmarkWorker::runZlibCompression(int data_size_mb) {
-    Q_ASSERT(data_size_mb >= 0);
     Q_ASSERT_X(data_size_mb > 0, "runZlibCompression", "data_size_mb must be positive");
     const size_t data_size = static_cast<size_t>(data_size_mb) * sak::kBytesPerMB;
 
@@ -282,7 +280,6 @@ double CpuBenchmarkWorker::runZlibCompression(int data_size_mb) {
 }
 
 double CpuBenchmarkWorker::runAesEncryption(int data_size_mb) {
-    Q_ASSERT(data_size_mb >= 0);
     Q_ASSERT_X(data_size_mb > 0, "runAesEncryption", "data_size_mb must be positive");
     const size_t data_size = static_cast<size_t>(data_size_mb) * sak::kBytesPerMB;
 
@@ -295,21 +292,21 @@ double CpuBenchmarkWorker::runAesEncryption(int data_size_mb) {
 
     // Fixed key schedule (16 bytes for AES-128)
     alignas(16) const uint8_t key[16] = {0x2b,
-                                   0x7e,
-                                   0x15,
-                                   0x16,
-                                   0x28,
-                                   0xae,
-                                   0xd2,
-                                   0xa6,
-                                   0xab,
-                                   0xf7,
-                                   0x15,
-                                   0x88,
-                                   0x09,
-                                   0xcf,
-                                   0x4f,
-                                   0x3c};
+                                         0x7e,
+                                         0x15,
+                                         0x16,
+                                         0x28,
+                                         0xae,
+                                         0xd2,
+                                         0xa6,
+                                         0xab,
+                                         0xf7,
+                                         0x15,
+                                         0x88,
+                                         0x09,
+                                         0xcf,
+                                         0x4f,
+                                         0x3c};
 
     QElapsedTimer timer;
     timer.start();

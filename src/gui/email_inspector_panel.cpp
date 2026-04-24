@@ -18,6 +18,7 @@
 #include "sak/style_constants.h"
 
 #include <QApplication>
+#include <QBuffer>
 #include <QCheckBox>
 #include <QClipboard>
 #include <QComboBox>
@@ -27,24 +28,68 @@
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QHeaderView>
-#include <QImage>
+#include <QImageReader>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMenu>
 #include <QMessageBox>
+#include <QNetworkAccessManager>
+#include <QNetworkReply>
+#include <QNetworkRequest>
 #include <QProgressBar>
 #include <QPushButton>
+#include <QRegularExpression>
 #include <QSplitter>
 #include <QStorageInfo>
 #include <QTableWidget>
 #include <QTabWidget>
 #include <QTextBrowser>
-#include <QTextDocument>
+#include <QTimer>
 #include <QToolButton>
 #include <QTreeWidget>
 #include <QVBoxLayout>
 
 namespace sak {
+
+namespace {
+
+/// Detect an image MIME type from raw bytes using `QImageReader`.
+/// Returns the IANA name (e.g. `image/png`) or an empty `QByteArray` if the
+/// format is not recognised.
+QByteArray detectImageMime(const QByteArray& data) {
+    QBuffer buffer;
+    buffer.setData(data);
+    if (!buffer.open(QIODevice::ReadOnly)) {
+        return {};
+    }
+    const QByteArray fmt = QImageReader::imageFormat(&buffer).toLower();
+    if (fmt.isEmpty()) {
+        return {};
+    }
+    // Qt returns "jpeg" for JPEG; map everything else as "image/<fmt>".
+    if (fmt == "jpg" || fmt == "jpeg") {
+        return QByteArrayLiteral("image/jpeg");
+    }
+    return QByteArrayLiteral("image/") + fmt;
+}
+
+/// Neutralise remote image/resource references in an HTML body so that
+/// `QTextBrowser` cannot reach out to the network.  `cid:` and `data:`
+/// references are preserved.
+QString stripRemoteContent(QString html) {
+    static const QRegularExpression kRemoteAttr(
+        QStringLiteral(R"((\bsrc|\bbackground|\bposter)\s*=\s*["'](?:https?:|//)[^"']*["'])"),
+        QRegularExpression::CaseInsensitiveOption);
+    html.replace(kRemoteAttr, QStringLiteral("\\1=\"\""));
+
+    static const QRegularExpression kCssRemoteUrl(
+        QStringLiteral(R"(url\(\s*['"]?(?:https?:|//)[^)'"]*['"]?\s*\))"),
+        QRegularExpression::CaseInsensitiveOption);
+    html.replace(kCssRemoteUrl, QStringLiteral("none"));
+    return html;
+}
+
+}  // namespace
 
 // ============================================================================
 // Construction / Destruction
@@ -52,6 +97,19 @@ namespace sak {
 
 EmailInspectorPanel::EmailInspectorPanel(QWidget* parent)
     : QWidget(parent), m_controller(std::make_unique<EmailInspectorController>(this)) {
+    // Coalesce rapid-fire redraws caused by inline/remote image arrivals
+    // into a single `setHtml` call.  A 50 ms debounce is short enough to
+    // feel instantaneous while still absorbing dozens of completions.
+    constexpr int kRedrawDebounceMs = 50;
+    m_redraw_timer = new QTimer(this);
+    m_redraw_timer->setSingleShot(true);
+    m_redraw_timer->setInterval(kRedrawDebounceMs);
+    connect(m_redraw_timer, &QTimer::timeout, this, [this] {
+        if (!m_dialog_active) {
+            displayItemDetail(m_current_detail);
+        }
+    });
+
     setupUi();
     connectController();
 }
@@ -106,17 +164,30 @@ void EmailInspectorPanel::setupUi() {
     status_row->addWidget(m_progress_bar);
     root_layout->addLayout(status_row);
 
-    // Log Toggle (left) + HTML/Plain Text Toggle (right)
+    // Log Toggle (left) + Images + HTML/Plain Text Toggle (right)
     m_log_toggle = new LogToggleSwitch(tr("Log"), this);
-    m_html_toggle_switch = new LogToggleSwitch(tr("Plain Text"), this);
-    m_html_toggle_switch->setToolTip(tr("Toggle between HTML and plain text view"));
-    connect(m_html_toggle_switch, &LogToggleSwitch::toggled, this, [this](bool plain_text) {
-        m_show_html = !plain_text;
+    m_images_toggle_switch = new LogToggleSwitch(tr("Images"), this);
+    m_images_toggle_switch->setToolTip(
+        tr("Load images and remote content in the preview (off by default for security)"));
+    connect(m_images_toggle_switch, &LogToggleSwitch::toggled, this, [this](bool on) {
+        m_show_images = on;
+        if (on && !m_current_detail.body_html.isEmpty()) {
+            fetchRemoteImages(m_current_detail.body_html);
+        }
+        displayItemDetail(m_current_detail);
+    });
+    m_html_toggle_switch = new LogToggleSwitch(tr("HTML"), this);
+    m_html_toggle_switch->setToolTip(tr("Render HTML body (off shows plain text)"));
+    m_html_toggle_switch->setChecked(true);
+    connect(m_html_toggle_switch, &LogToggleSwitch::toggled, this, [this](bool on) {
+        m_show_html = on;
         displayItemDetail(m_current_detail);
     });
     auto* log_toggle_layout = new QHBoxLayout();
     log_toggle_layout->addWidget(m_log_toggle);
     log_toggle_layout->addStretch();
+    log_toggle_layout->addWidget(m_images_toggle_switch);
+    log_toggle_layout->addSpacing(12);
     log_toggle_layout->addWidget(m_html_toggle_switch);
     root_layout->addLayout(log_toggle_layout);
 }
@@ -351,15 +422,48 @@ QWidget* EmailInspectorPanel::createItemListPanel() {
 
     // Page size dropdown
     m_page_size_combo = new QComboBox(group);
-    m_page_size_combo->addItems({tr("10"), tr("20"), tr("50"), tr("100"), tr("500")});
-    m_page_size_combo->setCurrentIndex(4);  // Default 500
-    m_page_size_combo->setToolTip(tr("Maximum items to display"));
-    m_page_size_combo->setFixedWidth(70);
+    m_page_size_combo->addItems(
+        {tr("50"), tr("100"), tr("250"), tr("500"), tr("1000"), tr("5000")});
+    m_page_size_combo->setCurrentIndex(1);  // Default 100
+    m_page_size_combo->setToolTip(tr("Items per page"));
+    m_page_size_combo->setFixedWidth(80);
     connect(m_page_size_combo, &QComboBox::currentIndexChanged, this, [this] { applyPageSize(); });
+
+    m_prev_page_button = new QToolButton(group);
+    m_prev_page_button->setText(QStringLiteral("\u25C0"));
+    m_prev_page_button->setToolTip(tr("Previous page"));
+    m_prev_page_button->setEnabled(false);
+    connect(m_prev_page_button, &QToolButton::clicked, this, [this] {
+        if (m_current_page > 0) {
+            --m_current_page;
+            reloadCurrentPage();
+        }
+    });
+
+    m_page_label = new QLabel(group);
+    m_page_label->setMinimumWidth(110);
+    m_page_label->setAlignment(Qt::AlignCenter);
+
+    m_next_page_button = new QToolButton(group);
+    m_next_page_button->setText(QStringLiteral("\u25B6"));
+    m_next_page_button->setToolTip(tr("Next page"));
+    m_next_page_button->setEnabled(false);
+    connect(m_next_page_button, &QToolButton::clicked, this, [this] {
+        const int page_size = currentPageSize();
+        const int max_page = (m_current_total > 0) ? (m_current_total - 1) / page_size : 0;
+        if (m_current_page < max_page) {
+            ++m_current_page;
+            reloadCurrentPage();
+        }
+    });
 
     auto* filter_row = new QHBoxLayout();
     filter_row->addWidget(m_item_count_label, 1);
-    filter_row->addWidget(new QLabel(tr("Show:"), group));
+    filter_row->addWidget(m_prev_page_button);
+    filter_row->addWidget(m_page_label);
+    filter_row->addWidget(m_next_page_button);
+    filter_row->addSpacing(8);
+    filter_row->addWidget(new QLabel(tr("Per page:"), group));
     filter_row->addWidget(m_page_size_combo);
     layout->addLayout(filter_row);
 
@@ -695,7 +799,9 @@ void EmailInspectorPanel::onFolderTreeItemClicked(QTreeWidgetItem* item, int /*c
         return;
     }
     m_current_folder_id = folder_id;
-    m_controller->loadFolderItems(folder_id, 0, email::kMaxItemsPerLoad);
+    m_current_page = 0;
+    m_current_total = 0;
+    reloadCurrentPage();
 }
 
 void EmailInspectorPanel::onItemListCellClicked(int row, int /*column*/) {
@@ -835,7 +941,9 @@ void EmailInspectorPanel::onExportAttachmentsClicked() {
         uint64_t message_id = dialog.navigateMessageId();
         if (folder_id != 0 && message_id != 0) {
             m_current_folder_id = folder_id;
-            m_controller->loadFolderItems(folder_id, 0, m_page_size_combo->currentText().toInt());
+            m_current_page = 0;
+            m_current_total = 0;
+            reloadCurrentPage();
             m_pending_item_id = message_id;
             m_controller->loadItemDetail(message_id);
             m_controller->loadItemProperties(message_id);
@@ -918,6 +1026,8 @@ void EmailInspectorPanel::onFileClosed() {
     m_current_items.clear();
     m_current_folder_id = 0;
     m_current_item_id = 0;
+    m_current_page = 0;
+    m_current_total = 0;
     m_contact_folder_ids.clear();
     m_calendar_folder_ids.clear();
     m_cached_folder_tree.clear();
@@ -943,20 +1053,29 @@ void EmailInspectorPanel::onFolderItemsLoaded(uint64_t /*folder_id*/,
         return;
     }
     m_current_items = items;
+    m_current_total = total;
     populateItemList(items);
-    const int visible = m_item_list->rowCount();
-    int filtered = items.size() - visible;
-    QString label = tr("%1 items (showing %2)").arg(total).arg(visible);
-    if (filtered > 0) {
-        label += tr("  [%1 blank filtered]").arg(filtered);
+
+    const int page_size = currentPageSize();
+    const int first = (items.isEmpty()) ? 0 : (m_current_page * page_size + 1);
+    const int last = m_current_page * page_size + static_cast<int>(items.size());
+    if (total > items.size()) {
+        m_item_count_label->setText(tr("Showing %1\u2013%2 of %3").arg(first).arg(last).arg(total));
+    } else {
+        m_item_count_label->setText(tr("%1 items").arg(total));
     }
-    m_item_count_label->setText(label);
+    updatePageControls();
 }
 
 void EmailInspectorPanel::onItemDetailLoaded(sak::PstItemDetail detail) {
     if (m_dialog_active) {
         return;
     }
+    // New item — the per-message inline-image cache is invalid.
+    m_inline_images.clear();
+    m_remote_images.clear();
+    m_redraw_timer->stop();
+
     // Commit the pending item ID now that the load succeeded
     m_current_item_id = m_pending_item_id;
     m_current_detail = detail;
@@ -964,12 +1083,17 @@ void EmailInspectorPanel::onItemDetailLoaded(sak::PstItemDetail detail) {
     displayAttachments(detail.attachments);
     m_save_all_attachments_button->setEnabled(!detail.attachments.isEmpty());
 
-    // Request inline image attachments for HTML rendering
-    if (m_show_html && !detail.body_html.isEmpty()) {
+    // Request inline image attachments so they can be rendered once data
+    // arrives.  Always requested regardless of the HTML toggle: flipping the
+    // toggle later must not require a round-trip to the parser.
+    if (!detail.body_html.isEmpty()) {
         for (const auto& attachment : detail.attachments) {
             if (!attachment.content_id.isEmpty()) {
                 m_controller->loadAttachmentContent(detail.node_id, attachment.index);
             }
+        }
+        if (m_show_images) {
+            fetchRemoteImages(detail.body_html);
         }
     }
 }
@@ -1003,14 +1127,12 @@ void EmailInspectorPanel::onAttachmentContentReady(uint64_t /*message_id*/,
     // Not a save — check for inline CID image
     for (const auto& att : m_current_detail.attachments) {
         if (att.index == index && !att.content_id.isEmpty()) {
-            QUrl cid_url(QStringLiteral("cid:%1").arg(att.content_id));
-            QImage image;
-            if (image.loadFromData(attachment_data)) {
-                m_content_browser->document()->addResource(QTextDocument::ImageResource,
-                                                           cid_url,
-                                                           image);
-                displayItemDetail(m_current_detail);
-            }
+            // Cache by Content-Id so the HTML builder can inline as data URI.
+            m_inline_images.insert(att.content_id, attachment_data);
+            // Coalesce: multiple inline images commonly arrive in rapid
+            // succession — debounce the full-HTML repaint so we only
+            // re-parse once per burst.
+            m_redraw_timer->start();
             return;
         }
     }
@@ -1117,24 +1239,30 @@ void EmailInspectorPanel::onMboxMessagesLoaded(QVector<sak::MboxMessage> message
 }
 
 void EmailInspectorPanel::onMboxMessageDetailLoaded(sak::MboxMessageDetail detail) {
-    // Display in content tab respecting HTML/plain text toggle
-    if (m_show_html && !detail.body_html.isEmpty()) {
-        QString wrapped = QStringLiteral(
-                              "<html><head>"
-                              "<meta charset=\"utf-8\">"
-                              "<style>body { font-family: 'Segoe UI', sans-serif;"
-                              " font-size: 13px; margin: 0; padding: 8px;"
-                              " word-wrap: break-word; }"
-                              " img { max-width: 100%%; height: auto; }</style>"
-                              "</head><body>%1</body></html>")
-                              .arg(detail.body_html);
-        m_content_browser->setHtml(wrapped);
-    } else if (!detail.body_plain.isEmpty()) {
-        m_content_browser->setPlainText(detail.body_plain);
-    } else if (!detail.body_html.isEmpty()) {
-        m_content_browser->setHtml(detail.body_html);
+    // Display in content tab respecting HTML/plain text toggle.
+    // No cross-format fallback: if the requested format is absent, the pane
+    // is cleared so the missing data is visible rather than hidden.
+    if (m_show_html) {
+        if (detail.body_html.isEmpty()) {
+            m_content_browser->clear();
+        } else {
+            QString wrapped = QStringLiteral(
+                                  "<html><head>"
+                                  "<meta charset=\"utf-8\">"
+                                  "<style>body { font-family: 'Segoe UI', sans-serif;"
+                                  " font-size: 13px; margin: 0; padding: 8px;"
+                                  " word-wrap: break-word; }"
+                                  " img { max-width: 100%%; height: auto; }</style>"
+                                  "</head><body>%1</body></html>")
+                                  .arg(buildPreviewHtml(detail.body_html));
+            m_content_browser->setHtml(wrapped);
+        }
     } else {
-        m_content_browser->clear();
+        if (detail.body_plain.isEmpty()) {
+            m_content_browser->clear();
+        } else {
+            m_content_browser->setPlainText(detail.body_plain);
+        }
     }
 
     // Display headers
@@ -1406,24 +1534,10 @@ void EmailInspectorPanel::populateItemList(const QVector<sak::PstItemSummary>& i
     m_item_list->setUpdatesEnabled(false);
     const QSignalBlocker blocker(m_item_list);
 
-    const int page_size = m_page_size_combo->currentText().toInt();
-
-    // Filter out blank/unknown items, limited to page_size
-    QVector<const sak::PstItemSummary*> visible;
-    visible.reserve(page_size);
-    for (const auto& item : items) {
-        if (!isBlankItem(item)) {
-            visible.append(&item);
-            if (visible.size() >= page_size) {
-                break;
-            }
-        }
-    }
-
-    const int count = visible.size();
+    const int count = static_cast<int>(items.size());
     m_item_list->setRowCount(count);
     for (int row = 0; row < count; ++row) {
-        const auto& item = *visible.at(row);
+        const auto& item = items.at(row);
 
         // Column 0 — type icon + attachment indicator
         auto* icon_cell = new QTableWidgetItem();
@@ -1511,6 +1625,127 @@ void EmailInspectorPanel::displayNoteDetail(const sak::PstItemDetail& detail) {
     m_headers_browser->setPlainText(tr("No transport headers available"));
 }
 
+QString EmailInspectorPanel::buildPreviewHtml(const QString& body_html) const {
+    // Inline every image `src` we can resolve offline — both `cid:`
+    // attachment references and any already-downloaded http(s) URLs.  The
+    // result is self-contained HTML that `QTextBrowser` can render without
+    // a network stack.  Anything we cannot resolve gets blanked out so the
+    // browser never attempts a fetch (tracking-pixel + privacy defence).
+    static const QRegularExpression kImgSrc(QStringLiteral(R"((src\s*=\s*)(["'])([^"']+)\2)"),
+                                            QRegularExpression::CaseInsensitiveOption);
+
+    QString out;
+    out.reserve(body_html.size());
+    int pos = 0;
+    auto it = kImgSrc.globalMatch(body_html);
+    while (it.hasNext()) {
+        const QRegularExpressionMatch m = it.next();
+        out.append(body_html.mid(pos, m.capturedStart() - pos));
+        pos = m.capturedEnd();
+
+        const QString src = m.captured(3).trimmed();
+        const QString lower = src.toLower();
+        QByteArray image_data;
+
+        if (lower.startsWith(QStringLiteral("cid:"))) {
+            const QString cid = src.mid(4).trimmed();
+            image_data = m_inline_images.value(cid);
+        } else if (lower.startsWith(QStringLiteral("data:"))) {
+            // Already self-contained — pass through unchanged.
+            out.append(m.captured(0));
+            continue;
+        } else if (m_show_images && (lower.startsWith(QStringLiteral("http://")) ||
+                                     lower.startsWith(QStringLiteral("https://")) ||
+                                     lower.startsWith(QStringLiteral("//")))) {
+            QString key = src;
+            if (key.startsWith(QStringLiteral("//"))) {
+                key = QStringLiteral("https:") + key;
+            }
+            image_data = m_remote_images.value(key);
+        }
+
+        if (!image_data.isEmpty()) {
+            QByteArray mime = detectImageMime(image_data);
+            if (mime.isEmpty()) {
+                mime = QByteArrayLiteral("application/octet-stream");
+            }
+            out.append(m.captured(1));
+            out.append(m.captured(2));
+            out.append(QStringLiteral("data:"));
+            out.append(QString::fromLatin1(mime));
+            out.append(QStringLiteral(";base64,"));
+            out.append(QString::fromLatin1(image_data.toBase64()));
+            out.append(m.captured(2));
+        } else {
+            // Unknown scheme, or data not yet loaded, or images disabled.
+            out.append(m.captured(1));
+            out.append(m.captured(2));
+            out.append(m.captured(2));
+        }
+    }
+    out.append(body_html.mid(pos));
+
+    // Neutralise any lingering remote refs that are not `src=...` attributes
+    // (CSS url(...), background/poster attributes) when images are off.
+    if (!m_show_images) {
+        out = stripRemoteContent(out);
+    }
+    return out;
+}
+
+void EmailInspectorPanel::fetchRemoteImages(const QString& body_html) {
+    if (!m_remote_image_nam) {
+        m_remote_image_nam = new QNetworkAccessManager(this);
+    }
+
+    static const QRegularExpression kImgSrc(QStringLiteral(R"((src\s*=\s*)(["'])([^"']+)\2)"),
+                                            QRegularExpression::CaseInsensitiveOption);
+
+    auto it = kImgSrc.globalMatch(body_html);
+    while (it.hasNext()) {
+        const QRegularExpressionMatch m = it.next();
+        QString src = m.captured(3).trimmed();
+        const QString lower = src.toLower();
+        if (lower.startsWith(QStringLiteral("//"))) {
+            src = QStringLiteral("https:") + src;
+        } else if (!lower.startsWith(QStringLiteral("http://")) &&
+                   !lower.startsWith(QStringLiteral("https://"))) {
+            continue;
+        }
+        if (m_remote_images.contains(src)) {
+            continue;
+        }
+        // Reserve the slot so duplicate `src` references in the body only
+        // dispatch one request per URL.
+        m_remote_images.insert(src, {});
+
+        const uint64_t message_id = m_current_detail.node_id;
+        QNetworkRequest request{QUrl(src)};
+        request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
+                             QNetworkRequest::NoLessSafeRedirectPolicy);
+        QNetworkReply* reply = m_remote_image_nam->get(request);
+        connect(reply, &QNetworkReply::finished, this, [this, reply, src, message_id]() {
+            reply->deleteLater();
+            // Drop stale results when the user has already moved on.
+            if (m_current_detail.node_id != message_id) {
+                m_remote_images.remove(src);
+                return;
+            }
+            if (reply->error() != QNetworkReply::NoError) {
+                m_remote_images.remove(src);
+                return;
+            }
+            const QByteArray payload = reply->readAll();
+            if (payload.isEmpty()) {
+                m_remote_images.remove(src);
+                return;
+            }
+            m_remote_images.insert(src, payload);
+            m_redraw_timer->start();
+        });
+    }
+}
+
 void EmailInspectorPanel::displayItemDetail(const sak::PstItemDetail& detail) {
     if (detail.item_type == sak::EmailItemType::Task) {
         displayTaskDetail(detail);
@@ -1522,26 +1757,29 @@ void EmailInspectorPanel::displayItemDetail(const sak::PstItemDetail& detail) {
         return;
     }
 
-    // Default: email / journal / RSS / conversation history
-    if (m_show_html && !detail.body_html.isEmpty()) {
-        // Wrap with charset declaration so QTextBrowser decodes correctly
-        QString wrapped = QStringLiteral(
-                              "<html><head>"
-                              "<meta charset=\"utf-8\">"
-                              "<style>body { font-family: 'Segoe UI', sans-serif;"
-                              " font-size: 13px; margin: 0; padding: 8px;"
-                              " word-wrap: break-word; }"
-                              " img { max-width: 100%%; height: auto; }</style>"
-                              "</head><body>%1</body></html>")
-                              .arg(detail.body_html);
-        m_content_browser->setHtml(wrapped);
-    } else if (!detail.body_plain.isEmpty()) {
-        m_content_browser->setPlainText(detail.body_plain);
-    } else if (!detail.body_html.isEmpty()) {
-        // No plain text available — show HTML even when plain text preferred
-        m_content_browser->setHtml(detail.body_html);
+    // Default: email / journal / RSS / conversation history.
+    // No cross-format fallback: the toggle is authoritative.
+    if (m_show_html) {
+        if (detail.body_html.isEmpty()) {
+            m_content_browser->clear();
+        } else {
+            QString wrapped = QStringLiteral(
+                                  "<html><head>"
+                                  "<meta charset=\"utf-8\">"
+                                  "<style>body { font-family: 'Segoe UI', sans-serif;"
+                                  " font-size: 13px; margin: 0; padding: 8px;"
+                                  " word-wrap: break-word; }"
+                                  " img { max-width: 100%%; height: auto; }</style>"
+                                  "</head><body>%1</body></html>")
+                                  .arg(buildPreviewHtml(detail.body_html));
+            m_content_browser->setHtml(wrapped);
+        }
     } else {
-        m_content_browser->clear();
+        if (detail.body_plain.isEmpty()) {
+            m_content_browser->clear();
+        } else {
+            m_content_browser->setPlainText(detail.body_plain);
+        }
     }
 
     if (!detail.transport_headers.isEmpty()) {
@@ -1651,28 +1889,46 @@ QString EmailInspectorPanel::itemTypeLabel(sak::EmailItemType type) {
     }
 }
 
-bool EmailInspectorPanel::isBlankItem(const sak::PstItemSummary& item) {
-    // Filter FAI (Folder Associated Information) messages — system/hidden
-    // items that Outlook never shows. MSGFLAG_ASSOCIATED = 0x40.
-    constexpr uint32_t kMsgFlagAssociated = 0x40;
-    if ((item.message_flags & kMsgFlagAssociated) != 0) {
-        return true;
-    }
-    // Also filter items with no subject AND no sender
-    bool blank_subject = item.subject.trimmed().isEmpty();
-    bool blank_sender = item.sender_name.trimmed().isEmpty() &&
-                        item.sender_email.trimmed().isEmpty();
-    return blank_subject && blank_sender;
+bool EmailInspectorPanel::isBlankItem(const sak::PstItemSummary& /*item*/) {
+    // Retained as a non-filtering stub for API compatibility.  Row filtering
+    // is no longer needed: the PST parser now enumerates only live rows from
+    // the TCROWID BTH (MS-PST §2.3.4.3.1), so stale/deleted/padding slots
+    // never reach the GUI in the first place.
+    return false;
 }
 
 void EmailInspectorPanel::applyPageSize() {
-    if (m_current_folder_id == 0 || m_current_items.isEmpty()) {
+    if (m_current_folder_id == 0) {
         return;
     }
-    populateItemList(m_current_items);
-    const int visible = m_item_list->rowCount();
-    const int total = m_current_items.size();
-    m_item_count_label->setText(tr("%1 items (showing %2)").arg(total).arg(visible));
+    m_current_page = 0;
+    reloadCurrentPage();
+}
+
+void EmailInspectorPanel::reloadCurrentPage() {
+    if (m_current_folder_id == 0) {
+        return;
+    }
+    const int page_size = currentPageSize();
+    m_controller->loadFolderItems(m_current_folder_id, m_current_page * page_size, page_size);
+}
+
+int EmailInspectorPanel::currentPageSize() const {
+    const int raw = m_page_size_combo->currentText().toInt();
+    return (raw > 0) ? raw : email::kMaxItemsPerLoad;
+}
+
+void EmailInspectorPanel::updatePageControls() {
+    const int page_size = currentPageSize();
+    const int max_page = (m_current_total > 0) ? (m_current_total - 1) / page_size : 0;
+    const int total_pages = max_page + 1;
+    m_prev_page_button->setEnabled(m_current_page > 0);
+    m_next_page_button->setEnabled(m_current_page < max_page);
+    if (m_current_total <= page_size) {
+        m_page_label->setText(QString());
+    } else {
+        m_page_label->setText(tr("Page %1 of %2").arg(m_current_page + 1).arg(total_pages));
+    }
 }
 
 QString EmailInspectorPanel::formatBytes(qint64 bytes) {

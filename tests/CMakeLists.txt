@@ -2013,6 +2013,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_network_diagnostic_utils.cpp")
         ../src/core/wifi_analyzer.cpp
         ../src/core/port_scanner.cpp
         ../src/core/dns_diagnostic_tool.cpp
+        ../src/core/logger.cpp
         ../include/sak/wifi_analyzer.h
         ../include/sak/port_scanner.h
         ../include/sak/dns_diagnostic_tool.h
@@ -2138,7 +2139,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_pst_parser.cpp")
         RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
     )
     target_link_libraries(test_pst_parser PRIVATE
-        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+        Qt6::Core Qt6::Gui Qt6::Test ${PLATFORM_LIBS}
     )
     target_include_directories(test_pst_parser PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
@@ -2161,7 +2162,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/integration/test_ost_integration.cpp")
         RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
     )
     target_link_libraries(test_ost_integration PRIVATE
-        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+        Qt6::Core Qt6::Gui Qt6::Test ${PLATFORM_LIBS}
     )
     target_include_directories(test_ost_integration PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
@@ -2211,7 +2212,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_email_search_worker.cpp")
         RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
     )
     target_link_libraries(test_email_search_worker PRIVATE
-        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+        Qt6::Core Qt6::Gui Qt6::Test ${PLATFORM_LIBS}
     )
     target_include_directories(test_email_search_worker PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
@@ -2238,7 +2239,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_email_export_worker.cpp")
         RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
     )
     target_link_libraries(test_email_export_worker PRIVATE
-        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+        Qt6::Core Qt6::Gui Qt6::Test ${PLATFORM_LIBS}
     )
     target_include_directories(test_email_export_worker PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/../include

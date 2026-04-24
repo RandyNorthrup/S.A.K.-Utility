@@ -121,11 +121,9 @@ void VerifySystemFilesAction::runDISM() {
 
 void VerifySystemFilesAction::scan() {
     setStatus(ActionStatus::Scanning);
-    Q_ASSERT(status() == ActionStatus::Scanning);
     ScanResult result;
     result.applicable = true;
     result.summary = "Ready to verify system files";
-    Q_ASSERT(!result.summary.isEmpty());
     setScanResult(result);
     setStatus(ActionStatus::Ready);
     Q_EMIT scanComplete(result);
@@ -147,7 +145,6 @@ void VerifySystemFilesAction::execute() {
         return;
     }
     setStatus(ActionStatus::Running);
-    Q_ASSERT(status() == ActionStatus::Running);
     QDateTime start_time = QDateTime::currentDateTime();
     m_sfc_found_issues = false;
     m_sfc_repaired = false;
@@ -180,7 +177,6 @@ VerifySystemFilesAction::ExecutionResult VerifySystemFilesAction::buildVerificat
                                       : "DISM found no issues.";
 
     ExecutionResult result;
-    Q_ASSERT(!result.success);
     result.success = verificationSucceeded();
     result.message = message;
     result.duration_ms = start_time.msecsTo(QDateTime::currentDateTime());

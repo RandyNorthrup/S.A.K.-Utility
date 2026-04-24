@@ -17,6 +17,7 @@ class QPushButton;
 class QSplitter;
 class QTableWidget;
 class QTextBrowser;
+class QTimer;
 class QVBoxLayout;
 
 namespace sak {
@@ -61,6 +62,11 @@ private:
     QPushButton* m_export_csv_button{nullptr};
     QPushButton* m_close_button{nullptr};
     QLabel* m_status_label{nullptr};
+
+    // Debounce timer so rapid keystrokes coalesce into a single
+    // O(N) refilter pass instead of one per character.
+    QTimer* m_search_timer{nullptr};
+    QString m_pending_search_text;
 
     // Data
     QVector<sak::PstItemSummary> m_all_contacts;

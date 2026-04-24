@@ -9,6 +9,8 @@
 #endif
 #include "sak/wifi_analyzer.h"
 
+#include "sak/logger.h"
+
 #include <QCoreApplication>
 #include <QDir>
 #include <QFile>
@@ -349,8 +351,11 @@ void WiFiAnalyzer::scan() {
 }
 
 void WiFiAnalyzer::startContinuousScan(int intervalMs) {
-    Q_ASSERT(m_scanTimer);
-    Q_ASSERT(intervalMs >= 0);
+    if (intervalMs < 0) {
+        sak::logWarning("WiFiAnalyzer::startContinuousScan: ignoring negative interval {}",
+                        intervalMs);
+        return;
+    }
     stopContinuousScan();
 
     m_scanTimer = new QTimer(this);

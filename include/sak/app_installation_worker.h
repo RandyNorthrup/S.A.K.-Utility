@@ -103,12 +103,12 @@ public:
     /**
      * @brief Check if migration is running
      */
-    bool isRunning() const;
+    [[nodiscard]] bool isRunning() const;
 
     /**
      * @brief Check if migration is paused
      */
-    bool isPaused() const;
+    [[nodiscard]] bool isPaused() const;
 
     /**
      * @brief Get current job statistics

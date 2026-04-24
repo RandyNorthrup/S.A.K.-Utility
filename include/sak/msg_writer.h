@@ -57,15 +57,14 @@ private:
         const QVector<MapiProperty>& properties,
         const QVector<QPair<QString, QByteArray>>& attachments);
 
-    [[nodiscard]] QByteArray buildCompoundFileHeader(int total_sectors) const;
+    [[nodiscard]] QByteArray buildCompoundFileHeader() const;
     [[nodiscard]] QByteArray buildFatSector(const QVector<int32_t>& fat_entries) const;
     [[nodiscard]] QByteArray buildDirectoryEntry(const QString& name,
                                                  uint8_t type,
                                                  uint32_t start_sector,
                                                  uint32_t size,
                                                  const DirEntryLinks& links) const;
-    [[nodiscard]] QByteArray buildPropertyStream(const PstItemDetail& item,
-                                                 const QVector<MapiProperty>& properties) const;
+    [[nodiscard]] QByteArray buildPropertyStream(const QVector<MapiProperty>& properties) const;
 
     [[nodiscard]] QString sanitizeFilename(const QString& subject, const QDateTime& date) const;
 

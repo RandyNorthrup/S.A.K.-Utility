@@ -72,7 +72,7 @@ public:
 
     // Initialization
     bool initialize(const QString& choco_portable_path);
-    bool isInitialized() const;
+    [[nodiscard]] bool isInitialized() const;
     bool verifyIntegrity();
     QString getChocoPath() const;
     QString getChocoVersion();

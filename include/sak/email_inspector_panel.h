@@ -11,6 +11,7 @@
 #include "sak/email_types.h"
 #include "sak/widget_helpers.h"
 
+#include <QHash>
 #include <QIcon>
 #include <QWidget>
 
@@ -25,12 +26,14 @@ class QHeaderView;
 class QLabel;
 class QLineEdit;
 class QMenu;
+class QNetworkAccessManager;
 class QProgressBar;
 class QPushButton;
 class QSplitter;
 class QTabWidget;
 class QTableWidget;
 class QTextBrowser;
+class QTimer;
 class QToolButton;
 class QTreeWidget;
 class QTreeWidgetItem;
@@ -151,6 +154,11 @@ private:
     void displayItemDetail(const sak::PstItemDetail& detail);
     void displayTaskDetail(const sak::PstItemDetail& detail);
     void displayNoteDetail(const sak::PstItemDetail& detail);
+    [[nodiscard]] QString buildPreviewHtml(const QString& body_html) const;
+    /// Collect absolute http(s) image URLs referenced by the current body
+    /// HTML and kick off asynchronous downloads for any not already cached.
+    /// Re-renders the preview as each download completes.
+    void fetchRemoteImages(const QString& body_html);
     void displayProperties(const QVector<sak::MapiProperty>& props);
     void displayAttachments(const QVector<sak::PstAttachmentInfo>& attachments);
     void updateFileInfoBar(const sak::PstFileInfo& info);
@@ -160,6 +168,9 @@ private:
     [[nodiscard]] static QString itemTypeLabel(sak::EmailItemType type);
     [[nodiscard]] static bool isBlankItem(const sak::PstItemSummary& item);
     void applyPageSize();
+    void reloadCurrentPage();
+    void updatePageControls();
+    [[nodiscard]] int currentPageSize() const;
     [[nodiscard]] static QString formatBytes(qint64 bytes);
 
     // -- Controller ------------------------------------------------------
@@ -186,12 +197,17 @@ private:
     QTableWidget* m_item_list{nullptr};
     QLabel* m_item_count_label{nullptr};
     QComboBox* m_page_size_combo{nullptr};
+    QToolButton* m_prev_page_button{nullptr};
+    QToolButton* m_next_page_button{nullptr};
+    QLabel* m_page_label{nullptr};
 
     // Detail Panel
     QTabWidget* m_detail_tabs{nullptr};
     QTextBrowser* m_content_browser{nullptr};
     LogToggleSwitch* m_html_toggle_switch{nullptr};
     bool m_show_html{true};
+    LogToggleSwitch* m_images_toggle_switch{nullptr};
+    bool m_show_images{false};
     QTextBrowser* m_headers_browser{nullptr};
     QTableWidget* m_properties_table{nullptr};
     QTableWidget* m_attachments_table{nullptr};
@@ -217,8 +233,30 @@ private:
     uint64_t m_current_folder_id{0};
     uint64_t m_current_item_id{0};
     uint64_t m_pending_item_id{0};
+    int m_current_page{0};
+    int m_current_total{0};
     sak::PstItemDetail m_current_detail;
     QVector<sak::PstItemSummary> m_current_items;
+
+    // Inline image cache keyed by Content-Id for the currently displayed
+    // message.  Populated asynchronously as attachments arrive; consumed by
+    // `displayItemDetail` to inline `cid:` references as `data:` URIs so the
+    // preview renders correctly without relying on `QTextDocument`'s resource
+    // cache (which `setHtml` clears on every call).
+    QHash<QString, QByteArray> m_inline_images;
+
+    // Remote (http/https) image cache keyed by absolute URL for the current
+    // message.  Only populated when the Images toggle is on; consumed the
+    // same way as `m_inline_images` — inlined as `data:` URIs so that
+    // `QTextBrowser` (which has no network stack) can render them.
+    QHash<QString, QByteArray> m_remote_images;
+    class QNetworkAccessManager* m_remote_image_nam{nullptr};
+
+    // Debounce timer that coalesces multiple asynchronous image-arrival
+    // events (inline CID attachments + remote HTTP downloads) into a
+    // single `displayItemDetail` repaint.  Without this, a message with
+    // N remote images triggers N full `QTextBrowser::setHtml` parses.
+    QTimer* m_redraw_timer{nullptr};
 
     // Save state — shared batch saver
     sak::AttachmentBatchSave m_batch_save;

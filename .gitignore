@@ -379,6 +379,16 @@ local_config.json
 # Local build configuration (contains machine-specific paths)
 cmake/SAK_BuildConfig.cmake
 
+# Archived/legacy code (kept locally but not version-controlled)
+/_archived/
+
+# cppcheck output (generated)
+cppcheck_errors.txt
+
+# Outlook/email test fixtures (large binary, kept locally)
+*.ost
+*.pst
+
 # Database files (if any)
 *.db
 *.sqlite

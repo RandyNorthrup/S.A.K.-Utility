@@ -372,23 +372,22 @@ QByteArray PstWriter::buildPropertyContext(const QVector<QPair<uint16_t, QByteAr
 }
 
 QByteArray PstWriter::buildHeapOnNode(const QByteArray& data) {
-    // Simplified Heap-on-Node wrapper
+    // Simplified Heap-on-Node wrapper (MS-PST §2.3.1)
     QByteArray result;
     QDataStream ds(&result, QIODevice::WriteOnly);
     ds.setByteOrder(QDataStream::LittleEndian);
 
     // HNHeader
-    constexpr uint16_t kHnSignature = 0x0002;
-    ds << static_cast<uint16_t>(0);    // ibHnpm
-    ds << static_cast<uint8_t>(0xEC);  // bSig = HN
-    ds << static_cast<uint8_t>(0);     // bClientSig
-    ds << static_cast<uint32_t>(0);    // hidUserRoot
-    ds << static_cast<uint32_t>(0);    // rgbFillLevel
+    constexpr uint8_t kHnSignature = 0xEC;  // bSig per MS-PST §2.3.1.2
+    ds << static_cast<uint16_t>(0);         // ibHnpm
+    ds << kHnSignature;                     // bSig = HN
+    ds << static_cast<uint8_t>(0);          // bClientSig
+    ds << static_cast<uint32_t>(0);         // hidUserRoot
+    ds << static_cast<uint32_t>(0);         // rgbFillLevel
 
     // Append raw data
     result.append(data);
 
-    Q_UNUSED(kHnSignature);
     return result;
 }
 

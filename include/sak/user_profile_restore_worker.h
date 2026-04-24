@@ -137,7 +137,7 @@ private:
     qint64 calculateTotalSize();
     void updateProgress(qint64 bytesAdded);
     bool verifyFile(const QString& filePath);
-    QString resolveConflict(const QString& sourcePath, const QString& destPath);
+    QString resolveConflict(const QString& destPath);
     bool copyDirectory(const QString& sourceDir,
                        const QString& destDir,
                        const FolderSelection& folderConfig);

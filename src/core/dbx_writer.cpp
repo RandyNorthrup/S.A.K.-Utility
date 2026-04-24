@@ -12,7 +12,10 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QMimeDatabase>
+#include <QMimeType>
 #include <QRegularExpression>
+#include <QUuid>
 
 namespace sak {
 
@@ -25,6 +28,41 @@ QString sanitizeName(const QString& name) {
     safe.replace(kInvalid, QStringLiteral("_"));
     if (safe.isEmpty()) {
         safe = QStringLiteral("folder");
+    }
+    return safe;
+}
+
+/// Encode bytes as base64, wrapped to RFC 2045 76-column lines.
+QByteArray encodeBase64Wrapped(const QByteArray& data) {
+    QByteArray b64 = data.toBase64();
+    QByteArray wrapped;
+    wrapped.reserve(b64.size() + (b64.size() / 76) + 4);
+    constexpr int kLineLen = 76;
+    for (int i = 0; i < b64.size(); i += kLineLen) {
+        wrapped.append(b64.mid(i, kLineLen));
+        wrapped.append("\r\n");
+    }
+    return wrapped;
+}
+
+/// RFC 2047 encode a header value if it contains non-ASCII characters.
+QByteArray encodeHeaderValue(const QString& value) {
+    bool needs_encoding =
+        std::any_of(value.cbegin(), value.cend(), [](QChar c) { return c.unicode() > 0x7F; });
+    if (!needs_encoding) {
+        return value.toUtf8();
+    }
+    return "=?UTF-8?B?" + value.toUtf8().toBase64() + "?=";
+}
+
+/// Sanitize an attachment filename for inclusion in a Content-Disposition header.
+QString sanitizeAttachmentFilename(const QString& name) {
+    QString safe = name;
+    safe.replace(QChar('"'), QChar('_'));
+    safe.replace(QChar('\r'), QChar('_'));
+    safe.replace(QChar('\n'), QChar('_'));
+    if (safe.isEmpty()) {
+        safe = QStringLiteral("attachment");
     }
     return safe;
 }
@@ -138,14 +176,16 @@ void DbxWriter::writeDbxHeader(QFile& file, const QString& folder_name) {
 
 QByteArray DbxWriter::buildDbxMessageEntry(const PstItemDetail& item,
                                            const QVector<QPair<QString, QByteArray>>& attachments) {
-    // Build a simplified DBX message entry
-    // Format: 4-byte size + RFC 5322 message content
+    // DBX (Outlook Express 5/6) stores each message as length-prefixed RFC 5322
+    // content. We emit a proper multipart/mixed message when attachments are
+    // present so receiving readers (or anything that reads the raw .dbx) can
+    // recover both the body and any attached files.
     QByteArray message;
 
-    // RFC 5322 header
+    // RFC 5322 headers
     message.append("From: ");
     if (!item.sender_name.isEmpty()) {
-        message.append(item.sender_name.toUtf8());
+        message.append(encodeHeaderValue(item.sender_name));
         message.append(" <");
         message.append(item.sender_email.toUtf8());
         message.append(">");
@@ -155,22 +195,93 @@ QByteArray DbxWriter::buildDbxMessageEntry(const PstItemDetail& item,
     message.append("\r\n");
 
     if (!item.display_to.isEmpty()) {
-        message.append("To: " + item.display_to.toUtf8() + "\r\n");
+        message.append("To: ");
+        message.append(encodeHeaderValue(item.display_to));
+        message.append("\r\n");
+    }
+    if (!item.display_cc.isEmpty()) {
+        message.append("Cc: ");
+        message.append(encodeHeaderValue(item.display_cc));
+        message.append("\r\n");
     }
     if (!item.subject.isEmpty()) {
-        message.append("Subject: " + item.subject.toUtf8() + "\r\n");
+        message.append("Subject: ");
+        message.append(encodeHeaderValue(item.subject));
+        message.append("\r\n");
     }
     if (item.date.isValid()) {
         message.append("Date: " + item.date.toString(Qt::RFC2822Date).toUtf8() + "\r\n");
     }
+    if (!item.message_id.isEmpty()) {
+        message.append("Message-ID: " + item.message_id.toUtf8() + "\r\n");
+    }
+    message.append("MIME-Version: 1.0\r\n");
 
-    // Body
-    message.append("Content-Type: text/plain; charset=utf-8\r\n");
-    message.append("\r\n");
-    message.append(item.body_plain.toUtf8());
-    message.append("\r\n");
+    if (attachments.isEmpty()) {
+        // Single-part body
+        const bool has_html = !item.body_html.isEmpty();
+        if (has_html) {
+            message.append("Content-Type: text/html; charset=utf-8\r\n");
+            message.append("Content-Transfer-Encoding: 8bit\r\n");
+            message.append("\r\n");
+            message.append(item.body_html.toUtf8());
+        } else {
+            message.append("Content-Type: text/plain; charset=utf-8\r\n");
+            message.append("Content-Transfer-Encoding: 8bit\r\n");
+            message.append("\r\n");
+            message.append(item.body_plain.toUtf8());
+        }
+        message.append("\r\n");
+    } else {
+        // Multipart message: text body + each attachment as base64 part.
+        const QByteArray boundary = "----=_SAK_DBX_" +
+                                    QUuid::createUuid().toByteArray(QUuid::WithoutBraces);
+        message.append("Content-Type: multipart/mixed; boundary=\"");
+        message.append(boundary);
+        message.append("\"\r\n\r\n");
 
-    Q_UNUSED(attachments);
+        // Body part
+        message.append("--");
+        message.append(boundary);
+        message.append("\r\n");
+        const bool has_html = !item.body_html.isEmpty();
+        if (has_html) {
+            message.append("Content-Type: text/html; charset=utf-8\r\n");
+        } else {
+            message.append("Content-Type: text/plain; charset=utf-8\r\n");
+        }
+        message.append("Content-Transfer-Encoding: 8bit\r\n\r\n");
+        message.append((has_html ? item.body_html : item.body_plain).toUtf8());
+        message.append("\r\n");
+
+        // Attachment parts
+        QMimeDatabase mime_db;
+        for (const auto& [att_name, att_data] : attachments) {
+            const QString safe_name = sanitizeAttachmentFilename(att_name);
+            QMimeType mime = mime_db.mimeTypeForFileNameAndData(safe_name, att_data);
+            const QByteArray content_type = mime.isValid() ? mime.name().toUtf8()
+                                                           : QByteArray("application/octet-stream");
+
+            message.append("--");
+            message.append(boundary);
+            message.append("\r\n");
+            message.append("Content-Type: ");
+            message.append(content_type);
+            message.append("; name=\"");
+            message.append(encodeHeaderValue(safe_name));
+            message.append("\"\r\n");
+            message.append("Content-Transfer-Encoding: base64\r\n");
+            message.append("Content-Disposition: attachment; filename=\"");
+            message.append(encodeHeaderValue(safe_name));
+            message.append("\"\r\n\r\n");
+            message.append(encodeBase64Wrapped(att_data));
+        }
+
+        // Closing boundary
+        message.append("--");
+        message.append(boundary);
+        message.append("--\r\n");
+    }
 
     // DBX entry: 4-byte LE size prefix + message
     QByteArray entry;

@@ -63,7 +63,10 @@ void FlashWorker::setValidationMode(sak::ValidationMode mode) {
 }
 
 void FlashWorker::setBufferSize(qint64 sizeBytes) {
-    Q_ASSERT_X(sizeBytes > 0, "setBufferSize", "sizeBytes must be positive");
+    if (sizeBytes <= 0) {
+        sak::logWarning("FlashWorker::setBufferSize: ignoring non-positive size {}", sizeBytes);
+        return;
+    }
     m_bufferSize = sizeBytes;
 }
 

@@ -64,9 +64,6 @@ private:
                                                 const QString& query,
                                                 int context_chars) const;
 
-    /// Build folder path string from folder hierarchy
-    [[nodiscard]] QString buildFolderPath(PstParser* parser, uint64_t folder_nid) const;
-
     /// Check if a PST item passes pre-match filters
     [[nodiscard]] bool passesItemFilters(const sak::PstItemSummary& item,
                                          const sak::EmailSearchCriteria& criteria) const;

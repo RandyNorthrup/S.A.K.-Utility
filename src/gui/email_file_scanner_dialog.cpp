@@ -13,6 +13,7 @@
 #include <QDesktopServices>
 #include <QDir>
 #include <QFileInfo>
+#include <QFutureWatcher>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QLabel>
@@ -21,9 +22,63 @@
 #include <QStandardPaths>
 #include <QStorageInfo>
 #include <QTableWidget>
+#include <QtConcurrent/QtConcurrent>
 #include <QVBoxLayout>
 
 namespace sak {
+
+namespace {
+
+// Result of scanning a single directory off the GUI thread.
+struct ScannedFile {
+    QString path;
+    qint64 size_bytes{0};
+    QString type;
+};
+
+QString classifySuffix(const QString& suffix) {
+    if (suffix == QLatin1String("pst")) {
+        return QStringLiteral("PST");
+    }
+    if (suffix == QLatin1String("ost")) {
+        return QStringLiteral("OST");
+    }
+    return QStringLiteral("MBOX");
+}
+
+QVector<ScannedFile> scanPathsWorker(const QStringList& paths) {
+    static const QStringList kFilters = {
+        QStringLiteral("*.pst"),
+        QStringLiteral("*.ost"),
+        QStringLiteral("*.mbox"),
+    };
+    QVector<ScannedFile> results;
+    results.reserve(64);
+
+    auto harvest = [&](const QDir& dir) {
+        const auto entries = dir.entryInfoList(kFilters, QDir::Files | QDir::Readable);
+        for (const auto& entry : entries) {
+            results.append(ScannedFile{
+                entry.absoluteFilePath(), entry.size(), classifySuffix(entry.suffix().toLower())});
+        }
+    };
+
+    for (const auto& path : paths) {
+        QDir dir(path);
+        if (!dir.exists()) {
+            continue;
+        }
+        harvest(dir);
+        // Recurse one level.
+        const auto subdirs = dir.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot | QDir::Readable);
+        for (const auto& subdir : subdirs) {
+            harvest(QDir(subdir.absoluteFilePath()));
+        }
+    }
+    return results;
+}
+
+}  // namespace
 
 // ============================================================================
 // Construction
@@ -146,26 +201,57 @@ void EmailFileScannerDialog::onScanClicked() {
     m_results_table->setRowCount(0);
     m_files_found = 0;
     m_progress_bar->setVisible(true);
-    m_progress_bar->setRange(0, 0);
+    m_progress_bar->setRange(0, 0);  // indeterminate while scanning
     m_scan_button->setEnabled(false);
+    m_open_button->setEnabled(false);
+    m_open_folder_button->setEnabled(false);
     m_status_label->setText(tr("Scanning..."));
-    QApplication::processEvents();
 
-    const auto paths = commonScanPaths();
-    m_progress_bar->setRange(0, paths.size());
+    // Run the actual filesystem traversal off the GUI thread.  The previous
+    // implementation paired synchronous `QDir::entryInfoList` calls with
+    // `QApplication::processEvents()` to keep the UI "responsive", which
+    // re-entered the event loop from a slot and could crash when a fresh
+    // rescan was triggered mid-loop.  `QtConcurrent::run` + `QFutureWatcher`
+    // is the idiomatic, crash-free replacement.
+    auto* watcher = new QFutureWatcher<QVector<ScannedFile>>(this);
+    connect(watcher, &QFutureWatcher<QVector<ScannedFile>>::finished, this, [this, watcher] {
+        const auto results = watcher->result();
+        watcher->deleteLater();
 
-    for (int idx = 0; idx < paths.size(); ++idx) {
-        m_progress_bar->setValue(idx);
-        m_status_label->setText(tr("Scanning: %1").arg(paths.at(idx)));
-        QApplication::processEvents();
-        scanDirectory(paths.at(idx));
-    }
+        // Batch-populate the table in a single pass so sort/repaint only run
+        // once regardless of how many hits we found.
+        m_results_table->setUpdatesEnabled(false);
+        m_results_table->setSortingEnabled(false);
+        m_results_table->setRowCount(results.size());
+        for (int row = 0; row < results.size(); ++row) {
+            const auto& r = results.at(row);
+            m_results_table->setItem(row, 0, new QTableWidgetItem(r.path));
+            m_results_table->setItem(row, 1, new QTableWidgetItem(r.type));
+            QString size_str;
+            if (r.size_bytes >= kBytesPerGB) {
+                size_str = QStringLiteral("%1 GB").arg(
+                    static_cast<double>(r.size_bytes) / kBytesPerGBf, 0, 'f', 2);
+            } else if (r.size_bytes >= kBytesPerMB) {
+                size_str = QStringLiteral("%1 MB").arg(
+                    static_cast<double>(r.size_bytes) / kBytesPerMBf, 0, 'f', 1);
+            } else {
+                size_str = QStringLiteral("%1 KB").arg(
+                    static_cast<double>(r.size_bytes) / kBytesPerKBf, 0, 'f', 0);
+            }
+            m_results_table->setItem(row, 2, new QTableWidgetItem(size_str));
+        }
+        m_results_table->setSortingEnabled(true);
+        m_results_table->setUpdatesEnabled(true);
+        m_files_found = results.size();
 
-    m_progress_bar->setVisible(false);
-    m_scan_button->setEnabled(true);
-    m_open_button->setEnabled(m_results_table->rowCount() > 0);
-    m_open_folder_button->setEnabled(m_results_table->rowCount() > 0);
-    m_status_label->setText(tr("Found %1 email files").arg(m_files_found));
+        m_progress_bar->setVisible(false);
+        m_scan_button->setEnabled(true);
+        const bool has_rows = (m_results_table->rowCount() > 0);
+        m_open_button->setEnabled(has_rows);
+        m_open_folder_button->setEnabled(has_rows);
+        m_status_label->setText(tr("Found %1 email files").arg(m_files_found));
+    });
+    watcher->setFuture(QtConcurrent::run(scanPathsWorker, commonScanPaths()));
 }
 
 void EmailFileScannerDialog::onOpenClicked() {
@@ -206,76 +292,6 @@ void EmailFileScannerDialog::onOpenContainingFolderClicked() {
 // ============================================================================
 // Helpers
 // ============================================================================
-
-void EmailFileScannerDialog::addFoundFile(const QString& path,
-                                          qint64 size_bytes,
-                                          const QString& type) {
-    int row = m_results_table->rowCount();
-    m_results_table->insertRow(row);
-    m_results_table->setItem(row, 0, new QTableWidgetItem(path));
-    m_results_table->setItem(row, 1, new QTableWidgetItem(type));
-
-    QString size_str;
-    if (size_bytes >= kBytesPerGB) {
-        size_str =
-            QStringLiteral("%1 GB").arg(static_cast<double>(size_bytes) / kBytesPerGBf, 0, 'f', 2);
-    } else if (size_bytes >= kBytesPerMB) {
-        size_str =
-            QStringLiteral("%1 MB").arg(static_cast<double>(size_bytes) / kBytesPerMBf, 0, 'f', 1);
-    } else {
-        size_str =
-            QStringLiteral("%1 KB").arg(static_cast<double>(size_bytes) / kBytesPerKBf, 0, 'f', 0);
-    }
-    m_results_table->setItem(row, 2, new QTableWidgetItem(size_str));
-    ++m_files_found;
-}
-
-void EmailFileScannerDialog::scanDirectory(const QString& dir_path) {
-    QDir dir(dir_path);
-    if (!dir.exists()) {
-        return;
-    }
-
-    static const QStringList kFilters = {
-        QStringLiteral("*.pst"),
-        QStringLiteral("*.ost"),
-        QStringLiteral("*.mbox"),
-    };
-
-    // Scan immediate directory
-    const auto entries = dir.entryInfoList(kFilters, QDir::Files | QDir::Readable);
-    for (const auto& entry : entries) {
-        QString suffix = entry.suffix().toLower();
-        QString type;
-        if (suffix == QLatin1String("pst")) {
-            type = QStringLiteral("PST");
-        } else if (suffix == QLatin1String("ost")) {
-            type = QStringLiteral("OST");
-        } else {
-            type = QStringLiteral("MBOX");
-        }
-        addFoundFile(entry.absoluteFilePath(), entry.size(), type);
-    }
-
-    // Recurse one level into subdirectories
-    const auto subdirs = dir.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot | QDir::Readable);
-    for (const auto& subdir : subdirs) {
-        QDir sub(subdir.absoluteFilePath());
-        const auto sub_entries = sub.entryInfoList(kFilters, QDir::Files | QDir::Readable);
-        for (const auto& entry : sub_entries) {
-            QString suffix = entry.suffix().toLower();
-            QString type;
-            if (suffix == QLatin1String("pst")) {
-                type = QStringLiteral("PST");
-            } else if (suffix == QLatin1String("ost")) {
-                type = QStringLiteral("OST");
-            } else {
-                type = QStringLiteral("MBOX");
-            }
-            addFoundFile(entry.absoluteFilePath(), entry.size(), type);
-        }
-    }
-}
 
 // static
 QStringList EmailFileScannerDialog::commonScanPaths() {

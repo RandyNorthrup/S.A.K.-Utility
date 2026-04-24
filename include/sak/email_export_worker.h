@@ -72,6 +72,9 @@ private:
                                          const QString& output_dir,
                                          const sak::EmailExportConfig& config);
 
+    // Early-failure helper: emits an exportComplete result carrying a single error.
+    void emitEarlyFailure(const QString& error_message);
+
     // Export format helpers
     [[nodiscard]] static QString formatDisplayName(sak::ExportFormat format);
     void exportPerItemFormats(PstParser* parser,

@@ -228,15 +228,20 @@ EmailExportWorker::EmailExportWorker(QObject* parent) : QObject(parent) {}
 // PST Export
 // ============================================================================
 
-void EmailExportWorker::exportItems(PstParser* parser, const sak::EmailExportConfig& config) {
-    Q_ASSERT(parser);
-    Q_ASSERT(!config.output_path.isEmpty());
+void EmailExportWorker::emitEarlyFailure(const QString& error_message) {
+    sak::EmailExportResult result;
+    result.errors.append(error_message);
+    result.finished = QDateTime::currentDateTime();
+    Q_EMIT exportComplete(result);
+}
 
+void EmailExportWorker::exportItems(PstParser* parser, const sak::EmailExportConfig& config) {
     if (!parser) {
-        sak::EmailExportResult result;
-        result.errors.append(QStringLiteral("No PST file open for export"));
-        result.finished = QDateTime::currentDateTime();
-        Q_EMIT exportComplete(result);
+        emitEarlyFailure(QStringLiteral("No PST file open for export"));
+        return;
+    }
+    if (config.output_path.isEmpty()) {
+        emitEarlyFailure(QStringLiteral("Export output path is empty"));
         return;
     }
 
@@ -249,9 +254,7 @@ void EmailExportWorker::exportItems(PstParser* parser, const sak::EmailExportCon
 
     QDir output_dir(config.output_path);
     if (!output_dir.mkpath(QStringLiteral("."))) {
-        result.errors.append(QStringLiteral("Failed to create output directory"));
-        result.finished = QDateTime::currentDateTime();
-        Q_EMIT exportComplete(result);
+        emitEarlyFailure(QStringLiteral("Failed to create output directory"));
         return;
     }
 
@@ -268,9 +271,7 @@ void EmailExportWorker::exportItems(PstParser* parser, const sak::EmailExportCon
     }
 
     if (item_ids.isEmpty()) {
-        result.errors.append(QStringLiteral("No items to export"));
-        result.finished = QDateTime::currentDateTime();
-        Q_EMIT exportComplete(result);
+        emitEarlyFailure(QStringLiteral("No items to export"));
         return;
     }
 
@@ -434,12 +435,16 @@ void EmailExportWorker::exportCsvFormat(PstParser* parser,
 // ============================================================================
 
 void EmailExportWorker::exportMboxItems(MboxParser* parser, const sak::EmailExportConfig& config) {
-    Q_ASSERT(parser);
-    Q_ASSERT(!config.output_path.isEmpty());
-
     if (!parser) {
         sak::EmailExportResult result;
         result.errors.append(QStringLiteral("No MBOX file open for export"));
+        result.finished = QDateTime::currentDateTime();
+        Q_EMIT exportComplete(result);
+        return;
+    }
+    if (config.output_path.isEmpty()) {
+        sak::EmailExportResult result;
+        result.errors.append(QStringLiteral("Export output path is empty"));
         result.finished = QDateTime::currentDateTime();
         Q_EMIT exportComplete(result);
         return;

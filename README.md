@@ -9,7 +9,7 @@
 [![Qt 6.5+](https://img.shields.io/badge/Qt-6.5%2B-41cd52.svg)](https://www.qt.io/)
 [![Windows 10/11](https://img.shields.io/badge/Windows-10%20%7C%2011-0078d4.svg)](https://www.microsoft.com/windows)
 [![Build](https://github.com/RandyNorthrup/S.A.K.-Utility/actions/workflows/build-release.yml/badge.svg)](https://github.com/RandyNorthrup/S.A.K.-Utility/actions)
-[![Version](https://img.shields.io/badge/Version-0.9.1.1-orange.svg)](VERSION)
+[![Version](https://img.shields.io/badge/Version-0.9.1.2-orange.svg)](VERSION)
 [![Tests](https://img.shields.io/badge/Tests-93%20passing-brightgreen.svg)](tests/)
 
 Migration · Maintenance · Recovery · Imaging · Deployment — one portable EXE.
@@ -22,7 +22,7 @@ Migration · Maintenance · Recovery · Imaging · Deployment — one portable E
 
 See [CHANGELOG.md](CHANGELOG.md) for the full version history.
 
-**Latest: v0.9.1.1** — Comprehensive documentation accuracy audit: updated all docs, About dialog, workflow, and THIRD_PARTY_LICENSES to reflect current codebase (OST Converter implemented, 7-Zip removed, iPerf3/Icons8 credited, file counts corrected, stale references cleaned up).
+**Latest: v0.9.1.2** — Email panel performance & stability: moved the file scanner's filesystem traversal off the GUI thread (QtConcurrent + QFutureWatcher) and removed `processEvents()` reentrancy, batched table population in the scanner/attachments/contacts dialogs, and debounced the inspector preview so inline+remote images coalesce into a single `setHtml` repaint. Plus the prior code-quality pass: corrected misplaced and tautological assertions across core workers and quick actions, hardened public-API guards (config_manager, bandwidth_tester, wifi_analyzer), removed duplicate `.empty()`/`.isEmpty()` checks, added `[[nodiscard]]` to pure query getters, and cleaned up `_archived/` from version control.
 
 ---
 

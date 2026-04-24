@@ -52,8 +52,6 @@ void flattenFolderTree(const sak::PstFolderTree& tree,
 // ============================================================================
 
 void EmailSearchWorker::search(PstParser* parser, const sak::EmailSearchCriteria& criteria) {
-    Q_ASSERT(parser);
-
     if (!parser || !parser->isOpen()) {
         Q_EMIT errorOccurred(QStringLiteral("No PST file open for search"));
         Q_EMIT searchComplete(0, 0);
@@ -134,8 +132,6 @@ void EmailSearchWorker::searchSingleFolder(PstParser* parser,
 // ============================================================================
 
 void EmailSearchWorker::searchMbox(MboxParser* parser, const sak::EmailSearchCriteria& criteria) {
-    Q_ASSERT(parser);
-
     if (!parser || !parser->isOpen()) {
         Q_EMIT errorOccurred(QStringLiteral("No MBOX file open for search"));
         Q_EMIT searchComplete(0, 0);
@@ -240,12 +236,6 @@ QString EmailSearchWorker::extractContextSnippet(const QString& text,
     }
 
     return snippet;
-}
-
-QString EmailSearchWorker::buildFolderPath(PstParser* parser, uint64_t folder_nid) const {
-    Q_UNUSED(parser);
-    Q_UNUSED(folder_nid);
-    return {};
 }
 
 // ============================================================================

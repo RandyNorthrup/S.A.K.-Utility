@@ -365,7 +365,6 @@ BackupBitlockerKeysAction::parseKeyProtectorResponse(const QString& output) {
 
 void BackupBitlockerKeysAction::scan() {
     setStatus(ActionStatus::Scanning);
-    Q_ASSERT(status() == ActionStatus::Scanning);
     Q_EMIT scanProgress("Detecting BitLocker-encrypted volumes...");
 
     m_volumes = detectEncryptedVolumes();
@@ -400,8 +399,6 @@ void BackupBitlockerKeysAction::scan() {
         result.warning = "Recovery keys are sensitive -- store the backup securely";
     }
 
-    Q_ASSERT(!result.summary.isEmpty());
-
     setScanResult(result);
     setStatus(ActionStatus::Ready);
     Q_EMIT scanComplete(result);
@@ -418,7 +415,6 @@ void BackupBitlockerKeysAction::execute() {
     }
 
     setStatus(ActionStatus::Running);
-    Q_ASSERT(status() == ActionStatus::Running);
     QDateTime start_time = QDateTime::currentDateTime();
     int total_keys_found = 0;
     int total_recovery_passwords = 0;
@@ -473,7 +469,7 @@ bool BackupBitlockerKeysAction::executeExtractKeys(const QDateTime& start_time,
                                                    int& total_recovery_passwords) {
     Q_EMIT executionProgress("Retrieving recovery keys...", 15);
 
-    for (int i = 0; i < m_volumes.size(); ++i) {
+    for (qsizetype i = 0; i < m_volumes.size(); ++i) {
         if (isCancelled()) {
             emitCancelledResult("BitLocker key backup cancelled", start_time);
             return false;
@@ -644,6 +640,7 @@ void BackupBitlockerKeysAction::executeBuildReport(const QDateTime& start_time,
                          .arg(m_volumes.size());
 
     QStringList log_lines;
+    log_lines.reserve(14);
     log_lines.append("=== BitLocker Recovery Key Backup Summary ===");
     log_lines.append(QString("Computer: %1").arg(QSysInfo::machineHostName()));
     log_lines.append(QString("Date: %1").arg(QDateTime::currentDateTime().toString(Qt::ISODate)));

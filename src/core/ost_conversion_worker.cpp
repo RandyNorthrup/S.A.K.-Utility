@@ -531,7 +531,11 @@ void OstConversionWorker::writeItemMbox(const PstItemDetail& item,
                                         const OstConversionConfig& config,
                                         OstConversionResult& result) {
     Q_UNUSED(config);
-    Q_ASSERT(m_mbox_writer);
+    if (!m_mbox_writer) {
+        ++result.items_failed;
+        result.errors.append("MBOX writer not initialized for: " + item.subject);
+        return;
+    }
     auto attachment_data = collectAttachments(item, parser);
 
     auto write_result = m_mbox_writer->writeMessage(item, attachment_data, folder_path);
@@ -550,7 +554,11 @@ void OstConversionWorker::writeItemDbx(const PstItemDetail& item,
                                        const OstConversionConfig& config,
                                        OstConversionResult& result) {
     Q_UNUSED(config);
-    Q_ASSERT(m_dbx_writer);
+    if (!m_dbx_writer) {
+        ++result.items_failed;
+        result.errors.append("DBX writer not initialized for: " + item.subject);
+        return;
+    }
     auto attachment_data = collectAttachments(item, parser);
 
     auto write_result = m_dbx_writer->writeMessage(item, attachment_data, folder_path);

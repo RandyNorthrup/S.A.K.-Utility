@@ -93,7 +93,7 @@ public:
     /**
      * @brief Check if a download/build is currently running
      */
-    bool isDownloading() const;
+    [[nodiscard]] bool isDownloading() const;
 
     /**
      * @brief Get the UUP dump API client (for direct access if needed)

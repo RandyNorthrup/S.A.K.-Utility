@@ -38,8 +38,6 @@ private Q_SLOTS:
 private:
     void setupUi();
     void showEvent(QShowEvent* event) override;
-    void addFoundFile(const QString& path, qint64 size_bytes, const QString& type);
-    void scanDirectory(const QString& dir_path);
     [[nodiscard]] static QStringList commonScanPaths();
 
     QTableWidget* m_results_table{nullptr};

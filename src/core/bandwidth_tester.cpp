@@ -217,7 +217,6 @@ QString BandwidthTester::findIperf3Path() const {
 }
 
 void BandwidthTester::startIperfServer(uint16_t port) {
-    Q_ASSERT(m_serverProcess);
     if (!isIperf3Available()) {
         Q_EMIT errorOccurred(QStringLiteral("iPerf3 not found. Place iperf3.exe in tools/iperf3/"));
         return;
@@ -268,7 +267,6 @@ void BandwidthTester::startIperfServer(uint16_t port) {
 }
 
 void BandwidthTester::stopIperfServer() {
-    Q_ASSERT(m_serverProcess);
     if (m_serverProcess == nullptr) {
         return;
     }

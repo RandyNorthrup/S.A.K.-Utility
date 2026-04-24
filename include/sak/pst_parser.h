@@ -111,7 +111,8 @@ public:
     /// Parsed TCINFO header with column list and row HNID
     struct TcInfo {
         QVector<TcColDesc> columns;
-        uint32_t hnid_rows = 0;
+        uint32_t hnid_rows = 0;      ///< HNID of row matrix (raw cell storage)
+        uint32_t hid_row_index = 0;  ///< HID of TCROWID BTH (live-row enumerator)
         uint16_t rgib_tci_1b = 0;
         uint16_t rgib_tci_bm = 0;
     };
@@ -255,8 +256,16 @@ private:
     [[nodiscard]] std::expected<QVector<QVector<sak::MapiProperty>>, sak::error_code>
     readTableContext(uint64_t nid);
 
+    /// Row matrix payload with per-block end offsets (MS-PST §2.3.4.4.1).
+    /// When the row matrix is stored as a sub-node, each data block ends with
+    /// padding bytes that must be skipped when addressing rows by index.
+    struct TcRowMatrix {
+        QByteArray data;
+        QVector<int> block_ends;  ///< Cumulative end offset of each block in data
+    };
+
     /// Build rows from TC row data using parsed column descriptors
-    [[nodiscard]] QVector<QVector<sak::MapiProperty>> buildTcRows(const QByteArray& row_data,
+    [[nodiscard]] QVector<QVector<sak::MapiProperty>> buildTcRows(const TcRowMatrix& matrix,
                                                                   const TcInfo& tc,
                                                                   const HeapContext& ctx);
 
@@ -271,9 +280,9 @@ private:
         const QByteArray& heap_data);
 
     /// Load row data for a Table Context from HID or sub-node
-    [[nodiscard]] QByteArray loadTcRowData(const TcInfo& tc,
-                                           const sak::PstNode& node,
-                                           HeapContext& ctx);
+    [[nodiscard]] TcRowMatrix loadTcRowData(const TcInfo& tc,
+                                            const sak::PstNode& node,
+                                            HeapContext& ctx);
 
     /// Validate HN/BTH headers and collect all leaf records from a PC/TC heap
     [[nodiscard]] std::expected<BthLeafResult, sak::error_code> collectBthLeafData(

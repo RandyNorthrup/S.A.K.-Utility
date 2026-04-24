@@ -24,14 +24,11 @@ GenerateSystemReportAction::GenerateSystemReportAction(const QString& output_loc
 
 void GenerateSystemReportAction::scan() {
     setStatus(ActionStatus::Scanning);
-    Q_ASSERT(status() == ActionStatus::Scanning);
 
     ScanResult result;
     result.applicable = true;
     result.summary = "System report will gather OS, hardware, storage, and drivers";
     result.details = "Output saved to reports folder";
-
-    Q_ASSERT(!result.summary.isEmpty());
 
     setScanResult(result);
     setStatus(ActionStatus::Ready);
@@ -45,7 +42,6 @@ void GenerateSystemReportAction::execute() {
     }
 
     setStatus(ActionStatus::Running);
-    Q_ASSERT(status() == ActionStatus::Running);
     QDateTime start_time = QDateTime::currentDateTime();
     Q_EMIT executionProgress("Gathering comprehensive system information...", 5);
 

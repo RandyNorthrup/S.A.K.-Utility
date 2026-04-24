@@ -78,7 +78,7 @@ public:
     /**
      * @brief Check if encryption is enabled
      */
-    bool isEncryptionEnabled() const;
+    [[nodiscard]] bool isEncryptionEnabled() const;
 
     /**
      * @brief Get encryption password

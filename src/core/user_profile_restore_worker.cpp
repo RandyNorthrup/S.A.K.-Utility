@@ -87,7 +87,6 @@ void UserProfileRestoreWorker::cancel() {
 }
 
 void UserProfileRestoreWorker::run() {
-    Q_ASSERT(!m_mappings.empty());
     Q_ASSERT(!m_mappings.isEmpty());
     m_running = true;
 
@@ -451,7 +450,7 @@ bool UserProfileRestoreWorker::resolveFileConflict(const QString& source,
     }
 
     case ConflictResolution::PromptUser:
-        finalDestPath = resolveConflict(source, finalDestPath);
+        finalDestPath = resolveConflict(finalDestPath);
         Q_EMIT logMessage(tr("File exists, auto-renamed: %1 -> %2")
                               .arg(destInfo.fileName(), QFileInfo(finalDestPath).fileName()),
                           false);
@@ -641,10 +640,7 @@ bool UserProfileRestoreWorker::verifyFile(const QString& filePath) {
     return true;
 }
 
-QString UserProfileRestoreWorker::resolveConflict(const QString& sourcePath,
-                                                  const QString& destPath) {
-    Q_UNUSED(sourcePath);
-
+QString UserProfileRestoreWorker::resolveConflict(const QString& destPath) {
     // Generate unique filename by adding suffix
     QFileInfo destInfo(destPath);
     QString baseName = destInfo.completeBaseName();

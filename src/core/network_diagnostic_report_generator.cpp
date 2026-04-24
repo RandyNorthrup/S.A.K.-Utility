@@ -118,8 +118,6 @@ void NetworkDiagnosticReportGenerator::generateJson(const QString& outputPath) {
 }
 
 QString NetworkDiagnosticReportGenerator::toHtml() const {
-    Q_ASSERT(!m_sections.empty());
-    Q_ASSERT(!m_sections.isEmpty());
     QString html;
     html += buildHtmlHeader();
 
@@ -130,8 +128,6 @@ QString NetworkDiagnosticReportGenerator::toHtml() const {
 }
 
 QString NetworkDiagnosticReportGenerator::buildHtmlHeader() const {
-    Q_ASSERT(!m_technicianName.isEmpty());
-    Q_ASSERT(!m_ticketNumber.isEmpty());
     QString html;
     html += QStringLiteral(
                 "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n"
@@ -210,7 +206,8 @@ QString NetworkDiagnosticReportGenerator::buildAdapterSection() const {
 
 QString NetworkDiagnosticReportGenerator::buildPingSection() const {
     QString html;
-    html += QStringLiteral("<h2>Ping Results -- %1</h2>\n").arg(m_pingResult.target.toHtmlEscaped());
+    html +=
+        QStringLiteral("<h2>Ping Results -- %1</h2>\n").arg(m_pingResult.target.toHtmlEscaped());
 
     const auto lossClass = m_pingResult.lossPercent > 5.0
                                ? QStringLiteral("error")
@@ -238,8 +235,8 @@ QString NetworkDiagnosticReportGenerator::buildPingSection() const {
 
 QString NetworkDiagnosticReportGenerator::buildTracerouteSection() const {
     QString html;
-    html +=
-        QStringLiteral("<h2>Traceroute -- %1</h2>\n").arg(m_tracerouteResult.target.toHtmlEscaped());
+    html += QStringLiteral("<h2>Traceroute -- %1</h2>\n")
+                .arg(m_tracerouteResult.target.toHtmlEscaped());
 
     html += QStringLiteral(
         "<table>\n<tr><th>Hop</th><th>IP</th><th>Hostname</th>"
@@ -399,8 +396,6 @@ QString NetworkDiagnosticReportGenerator::buildWiFiSection() const {
 }
 
 QString NetworkDiagnosticReportGenerator::buildFirewallSection() const {
-    Q_ASSERT(!m_firewallRules.isEmpty());
-    Q_ASSERT(!m_firewallConflicts.isEmpty());
     QString html;
     html += QStringLiteral("<h2>Firewall Audit</h2>\n");
 
@@ -455,8 +450,6 @@ QString NetworkDiagnosticReportGenerator::buildFirewallSection() const {
 }
 
 QString NetworkDiagnosticReportGenerator::buildConnectionSection() const {
-    Q_ASSERT(!m_connections.empty());
-    Q_ASSERT(!m_connections.isEmpty());
     QString html;
     html += QStringLiteral("<h2>Active Connections</h2>\n");
 

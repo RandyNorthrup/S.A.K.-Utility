@@ -148,7 +148,7 @@ public:
      * @brief Check if flash is in progress
      * @return true if currently flashing
      */
-    bool isFlashing() const;
+    [[nodiscard]] bool isFlashing() const;
 
     /**
      * @brief Get current state
@@ -172,7 +172,7 @@ public:
      * @brief Get verification setting
      * @return true if verification is enabled
      */
-    bool isVerificationEnabled() const;
+    [[nodiscard]] bool isVerificationEnabled() const;
 
     /**
      * @brief Set buffer size for reading/writing

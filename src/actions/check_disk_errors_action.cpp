@@ -13,14 +13,13 @@
 
 namespace sak {
 
-CheckDiskErrorsAction::CheckDiskErrorsAction(QObject* parent) : QuickAction(parent) {}
+namespace {
 
-void CheckDiskErrorsAction::scan() {
-    setStatus(ActionStatus::Scanning);
-    Q_ASSERT(status() == ActionStatus::Scanning);
-
+QVector<QChar> enumerateWritableDriveLetters() {
     QVector<QChar> drives;
-    for (const QStorageInfo& storage : QStorageInfo::mountedVolumes()) {
+    const auto volumes = QStorageInfo::mountedVolumes();
+    drives.reserve(volumes.size());
+    for (const QStorageInfo& storage : volumes) {
         if (!storage.isValid() || storage.isReadOnly() || storage.rootPath().length() < 2) {
             continue;
         }
@@ -29,14 +28,23 @@ void CheckDiskErrorsAction::scan() {
             drives.append(drive);
         }
     }
+    return drives;
+}
+
+}  // namespace
+
+CheckDiskErrorsAction::CheckDiskErrorsAction(QObject* parent) : QuickAction(parent) {}
+
+void CheckDiskErrorsAction::scan() {
+    setStatus(ActionStatus::Scanning);
+
+    const QVector<QChar> drives = enumerateWritableDriveLetters();
 
     ScanResult result;
     result.applicable = !drives.isEmpty();
     result.summary = result.applicable ? QString("Drives detected: %1").arg(drives.count())
                                        : "No writable drives detected";
     result.details = "Full scan will schedule repair if corruption is detected";
-
-    Q_ASSERT(!result.summary.isEmpty());
 
     setScanResult(result);
     setStatus(ActionStatus::Ready);
@@ -50,7 +58,6 @@ void CheckDiskErrorsAction::execute() {
     }
 
     setStatus(ActionStatus::Running);
-    Q_ASSERT(status() == ActionStatus::Running);
     QDateTime start_time = QDateTime::currentDateTime();
     QVector<QChar> drives;
     QString report;
@@ -71,16 +78,7 @@ bool CheckDiskErrorsAction::executeEnumerateVolumes(const QDateTime& start_time,
                                                     QString& report) {
     Q_EMIT executionProgress("Detecting disk drives...", 5);
 
-    // Get all drives
-    for (const QStorageInfo& storage : QStorageInfo::mountedVolumes()) {
-        if (!storage.isValid() || storage.isReadOnly() || storage.rootPath().length() < 2) {
-            continue;
-        }
-        QChar drive = storage.rootPath().at(0);
-        if (drive.isLetter()) {
-            drives.append(drive);
-        }
-    }
+    drives = enumerateWritableDriveLetters();
 
     if (drives.isEmpty()) {
         ExecutionResult result;

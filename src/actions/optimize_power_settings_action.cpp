@@ -131,7 +131,6 @@ QString OptimizePowerSettingsAction::getStandardPowerPlanGuid(const QString& pla
 
 void OptimizePowerSettingsAction::scan() {
     setStatus(ActionStatus::Scanning);
-    Q_ASSERT(status() == ActionStatus::Scanning);
 
     PowerPlan current_plan = getActivePowerPlan();
 
@@ -141,8 +140,6 @@ void OptimizePowerSettingsAction::scan() {
                          ? "Power plan detected"
                          : QString("Active plan: %1").arg(current_plan.name);
     result.details = "Optimization will switch to High Performance if available";
-
-    Q_ASSERT(!result.summary.isEmpty());
 
     setScanResult(result);
     setStatus(ActionStatus::Ready);
@@ -255,7 +252,6 @@ void OptimizePowerSettingsAction::execute() {
     }
 
     setStatus(ActionStatus::Running);
-    Q_ASSERT(status() == ActionStatus::Running);
     QDateTime start_time = QDateTime::currentDateTime();
     Q_EMIT executionProgress("Enumerating power plans...", 10);
     PowerPlan current_plan = getActivePowerPlan();

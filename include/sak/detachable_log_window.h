@@ -35,7 +35,7 @@ public:
 
     /** Toggle visibility. */
     void setLogVisible(bool visible);
-    bool isLogVisible() const;
+    [[nodiscard]] bool isLogVisible() const;
 
     /** Re-snap to main window (called when main window moves/resizes). */
     void repositionIfAnchored();

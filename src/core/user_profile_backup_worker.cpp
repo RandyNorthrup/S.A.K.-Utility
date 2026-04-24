@@ -79,7 +79,6 @@ void UserProfileBackupWorker::cancel() {
 }
 
 void UserProfileBackupWorker::run() {
-    Q_ASSERT(!m_users.empty());
     Q_ASSERT(!m_users.isEmpty());
     m_running = true;
 
@@ -125,7 +124,6 @@ void UserProfileBackupWorker::run() {
 }
 
 void UserProfileBackupWorker::backupAllUsers() {
-    Q_ASSERT(!m_users.empty());
     Q_ASSERT(!m_users.isEmpty());
     int userIndex = 0;
     for (const auto& user : m_users) {

@@ -120,19 +120,28 @@ bool ElevatedPipeServer::start() {
 }
 
 void ElevatedPipeServer::sendProgress(int percent, const QString& status) {
-    (void)sendRaw(buildProgressUpdate(percent, status));
+    if (!sendRaw(buildProgressUpdate(percent, status))) {
+        sak::logWarning("ElevatedPipeServer: sendProgress({}) failed; pipe may be broken", percent);
+    }
 }
 
 void ElevatedPipeServer::sendResult(bool success, const QJsonObject& data) {
-    (void)sendRaw(buildTaskResult(success, data));
+    if (!sendRaw(buildTaskResult(success, data))) {
+        sak::logWarning("ElevatedPipeServer: sendResult(success={}) failed; pipe may be broken",
+                        success);
+    }
 }
 
 void ElevatedPipeServer::sendError(int code, const QString& message) {
-    (void)sendRaw(buildTaskError(code, message));
+    if (!sendRaw(buildTaskError(code, message))) {
+        sak::logWarning("ElevatedPipeServer: sendError(code={}) failed; pipe may be broken", code);
+    }
 }
 
 void ElevatedPipeServer::sendReady() {
-    (void)sendRaw(buildReady());
+    if (!sendRaw(buildReady())) {
+        sak::logWarning("ElevatedPipeServer: sendReady() failed; pipe may be broken");
+    }
 }
 
 auto ElevatedPipeServer::readMessage() -> std::expected<PipeMessage, sak::error_code> {

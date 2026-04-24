@@ -148,16 +148,23 @@ void ElevationBroker::cancelCurrentTask() {
     }
 
     QByteArray cancel = buildCancelRequest(m_current_task_id);
-    (void)sendRaw(cancel);
-    sak::logInfo("ElevationBroker: cancel requested for '{}'", m_current_task_id.toStdString());
+    if (!sendRaw(cancel)) {
+        sak::logWarning("ElevationBroker: cancel send failed for '{}'",
+                        m_current_task_id.toStdString());
+    } else {
+        sak::logInfo("ElevationBroker: cancel requested for '{}'", m_current_task_id.toStdString());
+    }
 }
 
 void ElevationBroker::shutdown() {
 #ifdef _WIN32
     if (isConnected()) {
         QByteArray msg = buildShutdown();
-        (void)sendRaw(msg);
-        sak::logInfo("ElevationBroker: shutdown sent to helper");
+        if (!sendRaw(msg)) {
+            sak::logWarning("ElevationBroker: shutdown send failed; tearing down anyway");
+        } else {
+            sak::logInfo("ElevationBroker: shutdown sent to helper");
+        }
     }
     cleanup();
 #endif

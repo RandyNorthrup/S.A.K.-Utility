@@ -355,17 +355,24 @@ void EmailAttachmentsBrowserDialog::onItemDetailLoaded(sak::PstItemDetail detail
 // ============================================================================
 
 void EmailAttachmentsBrowserDialog::rebuildTable() {
-    m_table->setSortingEnabled(false);
-    m_table->setRowCount(0);
-
+    // Batch-filter matching rows first so we can size the table once and
+    // skip the O(N) cost of per-row `insertRow`/re-sort/repaint cycles.
+    QVector<int> matching;
+    matching.reserve(m_all_attachments.size());
     for (int idx = 0; idx < m_all_attachments.size(); ++idx) {
-        const auto& entry = m_all_attachments[idx];
-        if (!matchesFilters(entry)) {
-            continue;
+        if (matchesFilters(m_all_attachments[idx])) {
+            matching.append(idx);
         }
+    }
 
-        int row = m_table->rowCount();
-        m_table->insertRow(row);
+    m_table->setUpdatesEnabled(false);
+    const QSignalBlocker blocker(m_table);
+    m_table->setSortingEnabled(false);
+    m_table->setRowCount(matching.size());
+
+    for (int row = 0; row < matching.size(); ++row) {
+        const int idx = matching.at(row);
+        const auto& entry = m_all_attachments[idx];
 
         auto* name_item = new QTableWidgetItem(entry.filename);
         name_item->setData(Qt::UserRole, idx);
@@ -390,6 +397,7 @@ void EmailAttachmentsBrowserDialog::rebuildTable() {
     }
 
     m_table->setSortingEnabled(true);
+    m_table->setUpdatesEnabled(true);
     m_save_all_button->setEnabled(m_table->rowCount() > 0);
 }
 

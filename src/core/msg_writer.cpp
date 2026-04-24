@@ -107,7 +107,7 @@ void MsgWriter::collectMessageStreams(const PstItemDetail& item,
                                       const QVector<QPair<QString, QByteArray>>& attachments,
                                       QVector<QByteArray>& streams,
                                       QStringList& stream_names) {
-    QByteArray prop_stream = buildPropertyStream(item, properties);
+    QByteArray prop_stream = buildPropertyStream(properties);
     streams.append(prop_stream);
     stream_names.append(QStringLiteral("__properties_version1.0"));
 
@@ -223,7 +223,7 @@ std::expected<void, error_code> MsgWriter::createCompoundFile(
     fat_entries[sector_idx] = static_cast<int32_t>(kFatSector);
 
     // Write header
-    QByteArray header = buildCompoundFileHeader(total_sectors);
+    QByteArray header = buildCompoundFileHeader();
     {
         QDataStream hs(&header, QIODevice::ReadWrite);
         hs.setByteOrder(QDataStream::LittleEndian);
@@ -258,7 +258,7 @@ std::expected<void, error_code> MsgWriter::createCompoundFile(
     return {};
 }
 
-QByteArray MsgWriter::buildCompoundFileHeader(int total_sectors) const {
+QByteArray MsgWriter::buildCompoundFileHeader() const {
     QByteArray header(kSectorSize, '\0');
     QDataStream ds(&header, QIODevice::WriteOnly);
     ds.setByteOrder(QDataStream::LittleEndian);
@@ -304,7 +304,6 @@ QByteArray MsgWriter::buildCompoundFileHeader(int total_sectors) const {
         ds << static_cast<int32_t>(kFreeSector);
     }
 
-    Q_UNUSED(total_sectors);
     return header;
 }
 
@@ -372,8 +371,7 @@ QByteArray MsgWriter::buildDirectoryEntry(const QString& name,
     return entry;
 }
 
-QByteArray MsgWriter::buildPropertyStream(const PstItemDetail& item,
-                                          const QVector<MapiProperty>& properties) const {
+QByteArray MsgWriter::buildPropertyStream(const QVector<MapiProperty>& properties) const {
     // Build the __properties_version1.0 stream
     // Format: 8-byte header + 16-byte property entries (fixed-size props)
     QByteArray stream;
@@ -404,7 +402,6 @@ QByteArray MsgWriter::buildPropertyStream(const PstItemDetail& item,
         }
     }
 
-    Q_UNUSED(item);
     return stream;
 }
 

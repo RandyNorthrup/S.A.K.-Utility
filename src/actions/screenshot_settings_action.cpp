@@ -35,8 +35,10 @@ void ScreenshotSettingsAction::captureScreen(const QString& filename) {
 }
 
 void ScreenshotSettingsAction::openSettingsAndCapture(const QString& uri, const QString& name) {
-    Q_ASSERT(!uri.isEmpty());
-    Q_ASSERT(!name.isEmpty());
+    if (uri.isEmpty() || name.isEmpty()) {
+        sak::logWarning("openSettingsAndCapture: empty uri or name; skipping");
+        return;
+    }
     // Open Windows Settings
     QProcess::startDetached("explorer.exe", QStringList() << QString("ms-settings:%1").arg(uri));
 
@@ -52,14 +54,11 @@ void ScreenshotSettingsAction::openSettingsAndCapture(const QString& uri, const 
 
 void ScreenshotSettingsAction::scan() {
     setStatus(ActionStatus::Scanning);
-    Q_ASSERT(status() == ActionStatus::Scanning);
 
     ScanResult result;
     result.applicable = true;
     result.summary = "Settings screenshots will open and capture key pages";
     result.details = "Requires interactive desktop session";
-
-    Q_ASSERT(!result.summary.isEmpty());
 
     setScanResult(result);
     setStatus(ActionStatus::Ready);
@@ -72,7 +71,6 @@ void ScreenshotSettingsAction::execute() {
         return;
     }
     setStatus(ActionStatus::Running);
-    Q_ASSERT(status() == ActionStatus::Running);
     QDateTime start_time = QDateTime::currentDateTime();
     Q_EMIT executionProgress("Detecting monitor configuration...", 3);
     int monitor_count = detectMonitorCount();
@@ -217,10 +215,10 @@ bool ScreenshotSettingsAction::captureSettingsWindow(const QDir& output_dir,
         reinterpret_cast<LPARAM>(&settings_hwnd));
 
     if (!settings_hwnd) {
-        // Fallback: capture the foreground window
-        settings_hwnd = GetForegroundWindow();
-    }
-    if (!settings_hwnd) {
+        // Refuse to capture an arbitrary foreground window — the caller
+        // asked for Settings, not "whatever happens to be on top".
+        sak::logWarning("ScreenshotSettingsAction: Settings window not found for page {}",
+                        page_name.toStdString());
         return false;
     }
 
@@ -344,7 +342,10 @@ int ScreenshotSettingsAction::detectMonitorCount() {
 
 // Helper method: Check if a process is currently running
 bool ScreenshotSettingsAction::isProcessRunning(const QString& process_name) {
-    Q_ASSERT(!process_name.isEmpty());
+    if (process_name.isEmpty()) {
+        sak::logWarning("isProcessRunning: empty process_name");
+        return false;
+    }
     QProcess tasklist;
     tasklist.start("tasklist",
                    QStringList() << "/FI" << QString("IMAGENAME eq %1").arg(process_name));

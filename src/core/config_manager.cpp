@@ -23,7 +23,7 @@ ConfigManager::ConfigManager(QObject* parent)
     : QObject(parent)
     , m_settings(std::make_unique<QSettings>(
           QSettings::IniFormat, QSettings::UserScope, "SAK", "Utility")) {
-    Q_ASSERT(m_settings != nullptr);
+    // make_unique throws on allocation failure, so m_settings is always valid here.
     logInfo("ConfigManager initialized: {}", m_settings->fileName().toStdString());
     initializeDefaults();
 }
@@ -87,23 +87,35 @@ void ConfigManager::initializeUiDefaults() {
 }
 
 QVariant ConfigManager::getValue(const QString& key, const QVariant& default_value) const {
-    Q_ASSERT_X(!key.isEmpty(), "ConfigManager::getValue", "key must not be empty");
+    if (key.isEmpty()) {
+        logWarning("ConfigManager::getValue called with empty key");
+        return default_value;
+    }
     return m_settings->value(key, default_value);
 }
 
 void ConfigManager::setValue(const QString& key, const QVariant& value) {
-    Q_ASSERT_X(!key.isEmpty(), "ConfigManager::setValue", "key must not be empty");
+    if (key.isEmpty()) {
+        logWarning("ConfigManager::setValue called with empty key");
+        return;
+    }
     m_settings->setValue(key, value);
     Q_EMIT settingChanged(key, value);
 }
 
 bool ConfigManager::contains(const QString& key) const {
-    Q_ASSERT_X(!key.isEmpty(), "ConfigManager::contains", "key must not be empty");
+    if (key.isEmpty()) {
+        logWarning("ConfigManager::contains called with empty key");
+        return false;
+    }
     return m_settings->contains(key);
 }
 
 void ConfigManager::remove(const QString& key) {
-    Q_ASSERT_X(!key.isEmpty(), "ConfigManager::remove", "key must not be empty");
+    if (key.isEmpty()) {
+        logWarning("ConfigManager::remove called with empty key");
+        return;
+    }
     m_settings->remove(key);
 }
 
@@ -128,7 +140,10 @@ int ConfigManager::getBackupThreadCount() const {
 }
 
 void ConfigManager::setBackupThreadCount(int count) {
-    Q_ASSERT_X(count > 0, "setBackupThreadCount", "count must be positive");
+    if (count <= 0) {
+        logWarning("setBackupThreadCount: ignoring non-positive count {}", count);
+        return;
+    }
     setValue("backup/thread_count", count);
 }
 
@@ -163,7 +178,10 @@ qint64 ConfigManager::getDuplicateMinimumFileSize() const {
 }
 
 void ConfigManager::setDuplicateMinimumFileSize(qint64 size) {
-    Q_ASSERT_X(size >= 0, "setDuplicateMinimumFileSize", "size must be non-negative");
+    if (size < 0) {
+        logWarning("setDuplicateMinimumFileSize: ignoring negative size {}", size);
+        return;
+    }
     setValue("duplicate/minimum_file_size", size);
 }
 
@@ -172,7 +190,10 @@ QString ConfigManager::getDuplicateKeepStrategy() const {
 }
 
 void ConfigManager::setDuplicateKeepStrategy(const QString& strategy) {
-    Q_ASSERT_X(!strategy.isEmpty(), "setDuplicateKeepStrategy", "strategy must not be empty");
+    if (strategy.isEmpty()) {
+        logWarning("setDuplicateKeepStrategy: ignoring empty strategy");
+        return;
+    }
     setValue("duplicate/keep_strategy", strategy);
 }
 
@@ -182,7 +203,10 @@ QString ConfigManager::getImageFlasherValidationMode() const {
 }
 
 void ConfigManager::setImageFlasherValidationMode(const QString& mode) {
-    Q_ASSERT_X(!mode.isEmpty(), "setImageFlasherValidationMode", "mode must not be empty");
+    if (mode.isEmpty()) {
+        logWarning("setImageFlasherValidationMode: ignoring empty mode");
+        return;
+    }
     setValue("image_flasher/validation_mode", mode);
 }
 
@@ -191,7 +215,10 @@ int ConfigManager::getImageFlasherBufferSize() const {
 }
 
 void ConfigManager::setImageFlasherBufferSize(int size) {
-    Q_ASSERT_X(size > 0, "setImageFlasherBufferSize", "size must be positive");
+    if (size <= 0) {
+        logWarning("setImageFlasherBufferSize: ignoring non-positive size {}", size);
+        return;
+    }
     setValue("image_flasher/buffer_size", size);
 }
 
@@ -224,7 +251,11 @@ int ConfigManager::getImageFlasherLargeDriveThreshold() const {
 }
 
 void ConfigManager::setImageFlasherLargeDriveThreshold(int threshold) {
-    Q_ASSERT_X(threshold > 0, "setImageFlasherLargeDriveThreshold", "threshold must be positive");
+    if (threshold <= 0) {
+        logWarning("setImageFlasherLargeDriveThreshold: ignoring non-positive threshold {}",
+                   threshold);
+        return;
+    }
     setValue("image_flasher/large_drive_threshold", threshold);
 }
 
@@ -233,7 +264,10 @@ int ConfigManager::getImageFlasherMaxConcurrentWrites() const {
 }
 
 void ConfigManager::setImageFlasherMaxConcurrentWrites(int max) {
-    Q_ASSERT_X(max > 0, "setImageFlasherMaxConcurrentWrites", "max must be positive");
+    if (max <= 0) {
+        logWarning("setImageFlasherMaxConcurrentWrites: ignoring non-positive max {}", max);
+        return;
+    }
     setValue("image_flasher/max_concurrent_writes", max);
 }
 

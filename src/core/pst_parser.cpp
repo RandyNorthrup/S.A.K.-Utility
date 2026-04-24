@@ -13,10 +13,12 @@
 #include <QFileInfo>
 #include <qt_windows.h>
 #include <QtEndian>
+#include <QTextDocument>
 
 #include <algorithm>
 #include <array>
 #include <cstring>
+#include <format>
 
 using sak::error_code;
 
@@ -583,6 +585,7 @@ static std::expected<PstParser::TcInfo, error_code> parseTcInfo(const QByteArray
     uint8_t col_count = static_cast<uint8_t>(tc_raw[1]);
     info.rgib_tci_1b = localReadLE<uint16_t>(tc_raw, 6);
     info.rgib_tci_bm = localReadLE<uint16_t>(tc_raw, 8);
+    info.hid_row_index = localReadLE<uint32_t>(tc_raw, 10);
     info.hnid_rows = localReadLE<uint32_t>(tc_raw, 14);
 
     constexpr int kTcinfoHeaderSize = 22;
@@ -1306,13 +1309,20 @@ std::expected<void, error_code> PstParser::readXblockChildren(const QByteArray& 
         int offset = 8 + (idx * bid_size);
         uint64_t child_bid = m_is_unicode ? readLE<uint64_t>(data, offset)
                                           : readLE<uint32_t>(data, offset);
-        auto child_data = readBlock(child_bid);
+        // Recurse through readDataTree so nested internal (XBLOCK/XXBLOCK) children
+        // are properly expanded. Required because some PST/OST files build non-spec
+        // nesting where an XBLOCK entry itself carries the internal bid flag (0x02).
+        int base_offset = result.size();
+        QVector<int> child_offsets;
+        auto child_data = readDataTree(child_bid, block_offsets ? &child_offsets : nullptr);
         if (!child_data) {
             return std::unexpected(child_data.error());
         }
         result.append(*child_data);
         if (block_offsets) {
-            block_offsets->append(result.size());
+            for (int child_off : child_offsets) {
+                block_offsets->append(base_offset + child_off);
+            }
         }
     }
     return {};
@@ -1612,12 +1622,12 @@ std::expected<QVector<QVector<sak::MapiProperty>>, error_code> PstParser::readTa
         return QVector<QVector<sak::MapiProperty>>{};
     }
 
-    QByteArray row_data = loadTcRowData(*tc, node, ctx);
-    if (row_data.isEmpty()) {
+    TcRowMatrix matrix = loadTcRowData(*tc, node, ctx);
+    if (matrix.data.isEmpty()) {
         return QVector<QVector<sak::MapiProperty>>{};
     }
 
-    return buildTcRows(row_data, *tc, ctx);
+    return buildTcRows(matrix, *tc, ctx);
 }
 
 std::expected<void, sak::error_code> PstParser::validateHeapForTc(const QByteArray& heap_data) {
@@ -1633,27 +1643,13 @@ std::expected<void, sak::error_code> PstParser::validateHeapForTc(const QByteArr
     return {};
 }
 
-QByteArray PstParser::loadTcRowData(const TcInfo& tc, const sak::PstNode& node, HeapContext& ctx) {
-    QByteArray row_data;
-    if ((tc.hnid_rows & 0x1F) == 0) {
-        auto heap_r = readHeapOnNode(ctx.heap_data, tc.hnid_rows, ctx.block_offsets);
-        if (heap_r) {
-            row_data = std::move(*heap_r);
-        }
-    } else if (node.subnode_bid != 0) {
-        auto subs = readSubNodeBTree(node.subnode_bid);
-        if (subs) {
-            auto sub = subs->find(tc.hnid_rows);
-            if (sub != subs->end()) {
-                auto sub_data = readDataTree(sub->data_bid);
-                if (sub_data) {
-                    row_data = std::move(*sub_data);
-                }
-            }
-        }
-    }
+PstParser::TcRowMatrix PstParser::loadTcRowData(const TcInfo& tc,
+                                                const sak::PstNode& node,
+                                                HeapContext& ctx) {
+    TcRowMatrix matrix;
 
-    // Load subnodes for HNID resolution in cells
+    // Load the subnode map once (used for both row-matrix lookup and per-cell
+    // HNID resolution).  The old code walked the subnode BTree twice.
     if (node.subnode_bid != 0) {
         auto sn_result = readSubNodeBTree(node.subnode_bid);
         if (sn_result) {
@@ -1661,24 +1657,115 @@ QByteArray PstParser::loadTcRowData(const TcInfo& tc, const sak::PstNode& node, 
         }
     }
 
-    return row_data;
+    if ((tc.hnid_rows & 0x1F) == 0) {
+        // Heap-stored: single allocation, no inter-block padding.
+        auto heap_r = readHeapOnNode(ctx.heap_data, tc.hnid_rows, ctx.block_offsets);
+        if (heap_r) {
+            matrix.data = std::move(*heap_r);
+            matrix.block_ends.append(matrix.data.size());
+        }
+    } else {
+        // Subnode-stored: row matrix spans multiple data blocks with per-
+        // block tail padding (MS-PST §2.3.4.4.1).  Capture block boundaries.
+        auto sub = ctx.subnode_map.find(tc.hnid_rows);
+        if (sub != ctx.subnode_map.end()) {
+            auto sub_data = readDataTree(sub->data_bid, &matrix.block_ends);
+            if (sub_data) {
+                matrix.data = std::move(*sub_data);
+            }
+        }
+    }
+
+    return matrix;
 }
 
-QVector<QVector<sak::MapiProperty>> PstParser::buildTcRows(const QByteArray& row_data,
+QVector<QVector<sak::MapiProperty>> PstParser::buildTcRows(const TcRowMatrix& matrix,
                                                            const TcInfo& tc,
                                                            const HeapContext& ctx) {
-    int row_size = tc.rgib_tci_bm;
-    if (row_size == 0) {
+    const int row_size = tc.rgib_tci_bm;
+    if (row_size == 0 || matrix.data.isEmpty() || matrix.block_ends.isEmpty()) {
         return {};
     }
-    int row_count = row_data.size() / row_size;
-    QVector<QVector<sak::MapiProperty>> rows;
-    rows.reserve(row_count);
 
-    for (int row_idx = 0; row_idx < row_count; ++row_idx) {
-        int row_off = row_idx * row_size;
-        if (row_off + row_size > row_data.size()) {
-            break;
+    // Per MS-PST §2.3.4.4.1, when the row matrix is stored as a sub-node,
+    // each data block contains floor(block_bytes / row_size) rows followed
+    // by padding.  dwRowIndex from TCROWID is a *logical* row number across
+    // all blocks, so we must convert it to (block_i, row_in_block) and skip
+    // the padding of prior blocks.
+    const int block_count = matrix.block_ends.size();
+    const int first_block_bytes = matrix.block_ends.first();
+    const int rows_per_block = (block_count > 1) ? (first_block_bytes / row_size)
+                                                 : (matrix.data.size() / row_size);
+
+    const auto row_offset_for_index = [&](uint32_t row_index) -> int {
+        if (rows_per_block <= 0) {
+            return -1;
+        }
+        const int block_i = static_cast<int>(row_index) / rows_per_block;
+        const int row_in_block = static_cast<int>(row_index) % rows_per_block;
+        if (block_i >= block_count) {
+            return -1;
+        }
+        const int block_start = (block_i == 0) ? 0 : matrix.block_ends[block_i - 1];
+        const int block_end = matrix.block_ends[block_i];
+        const int off = block_start + row_in_block * row_size;
+        if (off < 0 || off + row_size > block_end) {
+            return -1;
+        }
+        return off;
+    };
+
+    // MS-PST §2.3.4.3.1 — TCROWID BTH is the authoritative list of live rows.
+    // The row matrix often contains stale/deleted/padding slots that are NOT
+    // valid rows; iterating the matrix directly yields garbled subjects and
+    // inflated counts.  Walk the row-index BTH and materialize only the rows
+    // it references (in their natural order).
+    QVector<uint32_t> live_row_indices;
+    if (tc.hid_row_index != 0) {
+        auto bth_header = readHeapOnNode(ctx.heap_data, tc.hid_row_index, ctx.block_offsets);
+        if (bth_header && bth_header->size() >= 8 &&
+            static_cast<uint8_t>((*bth_header)[0]) == kBthSignature) {
+            const uint8_t key_size = static_cast<uint8_t>((*bth_header)[1]);
+            const uint8_t data_size = static_cast<uint8_t>((*bth_header)[2]);
+            const uint8_t idx_levels = static_cast<uint8_t>((*bth_header)[3]);
+            const uint32_t root_hid = readLE<uint32_t>(*bth_header, 4);
+            // TCROWID record layout: dwRowID (key, 4 bytes) + dwRowIndex (data, 4 bytes).
+            if (key_size == 4 && data_size == 4 && root_hid != 0) {
+                auto leaf =
+                    (idx_levels == 0)
+                        ? readHeapOnNode(ctx.heap_data, root_hid, ctx.block_offsets)
+                        : readBthLeafData(
+                              ctx.heap_data, root_hid, key_size, idx_levels, ctx.block_offsets);
+                if (leaf) {
+                    constexpr int kTcRowIdRecordSize = 8;
+                    const int record_count = leaf->size() / kTcRowIdRecordSize;
+                    live_row_indices.reserve(record_count);
+                    for (int rec = 0; rec < record_count; ++rec) {
+                        const uint32_t row_index = readLE<uint32_t>(*leaf,
+                                                                    rec * kTcRowIdRecordSize + 4);
+                        live_row_indices.append(row_index);
+                    }
+                }
+            }
+        }
+    }
+
+    // Fallback for malformed files: iterate the valid positions in each block.
+    if (live_row_indices.isEmpty()) {
+        for (int b = 0; b < block_count; ++b) {
+            for (int r = 0; r < rows_per_block; ++r) {
+                live_row_indices.append(static_cast<uint32_t>(b * rows_per_block + r));
+            }
+        }
+    }
+
+    QVector<QVector<sak::MapiProperty>> rows;
+    rows.reserve(live_row_indices.size());
+
+    for (uint32_t row_index : live_row_indices) {
+        const int row_off = row_offset_for_index(row_index);
+        if (row_off < 0) {
+            continue;
         }
 
         QVector<sak::MapiProperty> row_props;
@@ -1686,7 +1773,7 @@ QVector<QVector<sak::MapiProperty>> PstParser::buildTcRows(const QByteArray& row
         TcRowView row_view{row_off, row_size, row_off + tc.rgib_tci_1b};
 
         for (const auto& col : tc.columns) {
-            auto prop = buildTcCell(row_data, row_view, col, ctx);
+            auto prop = buildTcCell(matrix.data, row_view, col, ctx);
             row_props.append(std::move(prop));
         }
         rows.append(std::move(row_props));
@@ -1736,8 +1823,13 @@ std::expected<QByteArray, error_code> PstParser::readHeapOnNode(const QByteArray
         return QByteArray{};
     }
 
-    uint16_t hid_index = static_cast<uint16_t>((hn_id >> 5) & 0x7FF);
-    uint16_t hid_block_index = static_cast<uint16_t>((hn_id >> 16) & 0xFFFF);
+    // 64-bit 4K-page PFF files use a 5/14/13 bit layout for HID references
+    // (type / hid_index / hid_block_index) instead of the standard 5/11/16.
+    // Ref: libpff "64-bit 4k page table value reference".
+    uint16_t hid_index = m_is_4k ? static_cast<uint16_t>((hn_id >> 5) & 0x3FFF)
+                                 : static_cast<uint16_t>((hn_id >> 5) & 0x7FF);
+    uint16_t hid_block_index = m_is_4k ? static_cast<uint16_t>((hn_id >> 19) & 0x1FFF)
+                                       : static_cast<uint16_t>((hn_id >> 16) & 0xFFFF);
 
     auto block_off = resolveHnBlockOffset(hid_block_index, block_offsets, heap_data.size());
     if (!block_off) {
@@ -1827,15 +1919,6 @@ std::expected<QHash<uint64_t, sak::PstNode>, error_code> PstParser::readSubNodeB
     uint8_t level = static_cast<uint8_t>(data[1]);
     uint16_t entry_count = readLE<uint16_t>(data, 2);
     constexpr int kSubnodeHeaderSize = 8;
-
-    sak::logInfo(
-        "PstParser: readSubNodeBTree(0x{:X}) sig=0x{:02X}, "
-        "level={}, entries={}, data_size={}",
-        subnode_bid,
-        static_cast<uint8_t>(data[0]),
-        level,
-        entry_count,
-        data.size());
 
     if (level == 0) {
         return readSubNodeLeafEntries(data, kSubnodeHeaderSize, entry_count);
@@ -2161,6 +2244,16 @@ std::expected<sak::PstItemDetail, error_code> PstParser::readMessage(uint64_t me
         detail.attachments = std::move(*att_result);
     }
 
+    // Ensure both body representations are always populated when the message
+    // has any body at all.  Many PST messages store only PR_HTML (no PR_BODY);
+    // downstream consumers (the Plain Text view, search indexers, exporters)
+    // must not have to re-implement HTML→text conversion.
+    if (detail.body_plain.isEmpty() && !detail.body_html.isEmpty()) {
+        QTextDocument doc;
+        doc.setHtml(detail.body_html);
+        detail.body_plain = doc.toPlainText();
+    }
+
     return detail;
 }
 
@@ -2328,10 +2421,10 @@ void PstParser::enrichItemFromBth(sak::PstItemSummary& item,
         }
     }
 
-    bool need_subject = item.subject.isEmpty();
     bool need_class = (item.item_type == sak::EmailItemType::Unknown);
-    if (need_subject || need_class) {
-        scanBthForSubjectAndClass(bth, ctx, item, need_subject, need_class);
+    if (need_class) {
+        bool dont_touch_subject = false;
+        scanBthForSubjectAndClass(bth, ctx, item, dont_touch_subject, need_class);
     }
 }
 
@@ -2341,9 +2434,8 @@ void PstParser::enrichSingleItemProps(sak::PstItemSummary& item) {
     }
 
     bool need_sender = item.sender_name.isEmpty();
-    bool need_subject = item.subject.isEmpty();
     bool need_class = (item.item_type == sak::EmailItemType::Unknown);
-    if (!need_sender && !need_subject && !need_class) {
+    if (!need_sender && !need_class) {
         return;
     }
 

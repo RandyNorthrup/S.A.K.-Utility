@@ -19,6 +19,7 @@
 #include <QSplitter>
 #include <QTableWidget>
 #include <QTextBrowser>
+#include <QTimer>
 #include <QVBoxLayout>
 
 namespace sak {
@@ -46,6 +47,17 @@ EmailContactsDialog::EmailContactsDialog(::EmailInspectorController* controller,
     setWindowTitle(tr("Address Book — Contacts"));
     setModal(true);
     resize(kWizardLargeWidth, kWizardLargeHeight);
+
+    // Debounce search input — refilter at most once every 150 ms while
+    // the user is typing to avoid O(N) scans on every keystroke.
+    constexpr int kSearchDebounceMs = 150;
+    m_search_timer = new QTimer(this);
+    m_search_timer->setSingleShot(true);
+    m_search_timer->setInterval(kSearchDebounceMs);
+    connect(m_search_timer, &QTimer::timeout, this, [this] {
+        filterContacts(m_pending_search_text);
+    });
+
     setupUi();
     loadContacts();
 }
@@ -179,7 +191,8 @@ void EmailContactsDialog::loadContacts() {
 // ============================================================================
 
 void EmailContactsDialog::onSearchTextChanged(const QString& text) {
-    filterContacts(text);
+    m_pending_search_text = text;
+    m_search_timer->start();
 }
 
 void EmailContactsDialog::onContactSelected(int row, int /*column*/) {
@@ -256,11 +269,18 @@ void EmailContactsDialog::onDetailLoaded(sak::PstItemDetail detail) {
 // ============================================================================
 
 void EmailContactsDialog::filterContacts(const QString& text) {
+    m_contact_table->setUpdatesEnabled(false);
+    const QSignalBlocker blocker(m_contact_table);
     m_contact_table->setSortingEnabled(false);
     m_contact_table->setRowCount(0);
     QString filter = text.trimmed().toLower();
 
-    for (const auto& contact : m_all_contacts) {
+    // Pre-filter into indices so the table can be sized in a single call
+    // instead of paying per-row `insertRow` cost.
+    QVector<int> matching;
+    matching.reserve(m_all_contacts.size());
+    for (int idx = 0; idx < m_all_contacts.size(); ++idx) {
+        const auto& contact = m_all_contacts.at(idx);
         if (!filter.isEmpty()) {
             bool match = contact.subject.toLower().contains(filter) ||
                          contact.sender_name.toLower().contains(filter) ||
@@ -269,8 +289,11 @@ void EmailContactsDialog::filterContacts(const QString& text) {
                 continue;
             }
         }
-        int row = m_contact_table->rowCount();
-        m_contact_table->insertRow(row);
+        matching.append(idx);
+    }
+    m_contact_table->setRowCount(matching.size());
+    for (int row = 0; row < matching.size(); ++row) {
+        const auto& contact = m_all_contacts.at(matching.at(row));
 
         auto* name_item = new QTableWidgetItem(contact.subject);
         name_item->setData(Qt::UserRole, QVariant::fromValue(contact.node_id));
@@ -280,6 +303,7 @@ void EmailContactsDialog::filterContacts(const QString& text) {
         m_contact_table->setItem(row, ColPhone, new QTableWidgetItem());
     }
     m_contact_table->setSortingEnabled(true);
+    m_contact_table->setUpdatesEnabled(true);
 }
 
 void EmailContactsDialog::displayContactDetail(const sak::PstItemDetail& detail) {
