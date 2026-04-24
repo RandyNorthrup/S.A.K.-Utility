@@ -1645,43 +1645,15 @@ QString EmailInspectorPanel::buildPreviewHtml(const QString& body_html) const {
 
         const QString src = m.captured(3).trimmed();
         const QString lower = src.toLower();
-        QByteArray image_data;
 
-        if (lower.startsWith(QStringLiteral("cid:"))) {
-            const QString cid = src.mid(4).trimmed();
-            image_data = m_inline_images.value(cid);
-        } else if (lower.startsWith(QStringLiteral("data:"))) {
+        if (lower.startsWith(QStringLiteral("data:"))) {
             // Already self-contained — pass through unchanged.
             out.append(m.captured(0));
             continue;
-        } else if (m_show_images && (lower.startsWith(QStringLiteral("http://")) ||
-                                     lower.startsWith(QStringLiteral("https://")) ||
-                                     lower.startsWith(QStringLiteral("//")))) {
-            QString key = src;
-            if (key.startsWith(QStringLiteral("//"))) {
-                key = QStringLiteral("https:") + key;
-            }
-            image_data = m_remote_images.value(key);
         }
 
-        if (!image_data.isEmpty()) {
-            QByteArray mime = detectImageMime(image_data);
-            if (mime.isEmpty()) {
-                mime = QByteArrayLiteral("application/octet-stream");
-            }
-            out.append(m.captured(1));
-            out.append(m.captured(2));
-            out.append(QStringLiteral("data:"));
-            out.append(QString::fromLatin1(mime));
-            out.append(QStringLiteral(";base64,"));
-            out.append(QString::fromLatin1(image_data.toBase64()));
-            out.append(m.captured(2));
-        } else {
-            // Unknown scheme, or data not yet loaded, or images disabled.
-            out.append(m.captured(1));
-            out.append(m.captured(2));
-            out.append(m.captured(2));
-        }
+        const QByteArray image_data = resolveInlineImageData(src, lower);
+        appendInlineImageAttr(out, m, image_data);
     }
     out.append(body_html.mid(pos));
 
@@ -1691,6 +1663,49 @@ QString EmailInspectorPanel::buildPreviewHtml(const QString& body_html) const {
         out = stripRemoteContent(out);
     }
     return out;
+}
+
+QByteArray EmailInspectorPanel::resolveInlineImageData(const QString& src,
+                                                       const QString& lower_src) const {
+    if (lower_src.startsWith(QStringLiteral("cid:"))) {
+        const QString cid = src.mid(4).trimmed();
+        return m_inline_images.value(cid);
+    }
+    if (!m_show_images) {
+        return {};
+    }
+    const bool is_remote = lower_src.startsWith(QStringLiteral("http://")) ||
+                           lower_src.startsWith(QStringLiteral("https://")) ||
+                           lower_src.startsWith(QStringLiteral("//"));
+    if (!is_remote) {
+        return {};
+    }
+    QString key = src;
+    if (key.startsWith(QStringLiteral("//"))) {
+        key = QStringLiteral("https:") + key;
+    }
+    return m_remote_images.value(key);
+}
+
+void EmailInspectorPanel::appendInlineImageAttr(QString& out,
+                                                const QRegularExpressionMatch& m,
+                                                const QByteArray& image_data) {
+    out.append(m.captured(1));
+    out.append(m.captured(2));
+    if (image_data.isEmpty()) {
+        // Unknown scheme, or data not yet loaded, or images disabled.
+        out.append(m.captured(2));
+        return;
+    }
+    QByteArray mime = detectImageMime(image_data);
+    if (mime.isEmpty()) {
+        mime = QByteArrayLiteral("application/octet-stream");
+    }
+    out.append(QStringLiteral("data:"));
+    out.append(QString::fromLatin1(mime));
+    out.append(QStringLiteral(";base64,"));
+    out.append(QString::fromLatin1(image_data.toBase64()));
+    out.append(m.captured(2));
 }
 
 void EmailInspectorPanel::fetchRemoteImages(const QString& body_html) {

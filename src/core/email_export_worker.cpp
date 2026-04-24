@@ -258,26 +258,36 @@ void EmailExportWorker::exportItems(PstParser* parser, const sak::EmailExportCon
         return;
     }
 
-    // Collect item IDs to export
-    QVector<uint64_t> item_ids = config.item_ids;
-    if (item_ids.isEmpty() && config.folder_id != 0) {
-        auto items_result =
-            parser->readFolderItems(config.folder_id, 0, sak::email::kMaxItemsPerLoad);
-        if (items_result.has_value()) {
-            for (const auto& item : items_result.value()) {
-                item_ids.append(item.node_id);
-            }
-        }
-    }
-
+    QVector<uint64_t> item_ids = collectItemIds(parser, config);
     if (item_ids.isEmpty()) {
         emitEarlyFailure(QStringLiteral("No items to export"));
         return;
     }
 
     Q_EMIT exportStarted(item_ids.size());
+    dispatchExportFormat(parser, item_ids, config, result);
+}
 
-    // Single-file formats delegate to dedicated helpers
+QVector<uint64_t> EmailExportWorker::collectItemIds(PstParser* parser,
+                                                    const sak::EmailExportConfig& config) {
+    QVector<uint64_t> item_ids = config.item_ids;
+    if (!item_ids.isEmpty() || config.folder_id == 0) {
+        return item_ids;
+    }
+    auto items_result = parser->readFolderItems(config.folder_id, 0, sak::email::kMaxItemsPerLoad);
+    if (!items_result.has_value()) {
+        return item_ids;
+    }
+    for (const auto& item : items_result.value()) {
+        item_ids.append(item.node_id);
+    }
+    return item_ids;
+}
+
+void EmailExportWorker::dispatchExportFormat(PstParser* parser,
+                                             const QVector<uint64_t>& item_ids,
+                                             const sak::EmailExportConfig& config,
+                                             sak::EmailExportResult& result) {
     if (config.format == sak::ExportFormat::Ics) {
         exportIcsFormat(parser, item_ids, config, result);
         return;
@@ -286,7 +296,6 @@ void EmailExportWorker::exportItems(PstParser* parser, const sak::EmailExportCon
         exportCsvFormat(parser, item_ids, config, result);
         return;
     }
-
     exportPerItemFormats(parser, item_ids, config, result);
 }
 

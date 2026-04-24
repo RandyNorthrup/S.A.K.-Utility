@@ -13,6 +13,7 @@
 
 #include <QHash>
 #include <QIcon>
+#include <QRegularExpression>
 #include <QWidget>
 
 #include <memory>
@@ -155,6 +156,13 @@ private:
     void displayTaskDetail(const sak::PstItemDetail& detail);
     void displayNoteDetail(const sak::PstItemDetail& detail);
     [[nodiscard]] QString buildPreviewHtml(const QString& body_html) const;
+    // Resolve image bytes for a `src` value (cid: lookup or cached remote).
+    [[nodiscard]] QByteArray resolveInlineImageData(const QString& src,
+                                                    const QString& lower_src) const;
+    // Emit the rewritten `src=` attribute (data URI on success, empty on miss).
+    static void appendInlineImageAttr(QString& out,
+                                      const QRegularExpressionMatch& m,
+                                      const QByteArray& image_data);
     /// Collect absolute http(s) image URLs referenced by the current body
     /// HTML and kick off asynchronous downloads for any not already cached.
     /// Re-renders the preview as each download completes.

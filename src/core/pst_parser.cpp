@@ -1697,88 +1697,112 @@ QVector<QVector<sak::MapiProperty>> PstParser::buildTcRows(const TcRowMatrix& ma
     const int rows_per_block = (block_count > 1) ? (first_block_bytes / row_size)
                                                  : (matrix.data.size() / row_size);
 
-    const auto row_offset_for_index = [&](uint32_t row_index) -> int {
-        if (rows_per_block <= 0) {
-            return -1;
-        }
-        const int block_i = static_cast<int>(row_index) / rows_per_block;
-        const int row_in_block = static_cast<int>(row_index) % rows_per_block;
-        if (block_i >= block_count) {
-            return -1;
-        }
-        const int block_start = (block_i == 0) ? 0 : matrix.block_ends[block_i - 1];
-        const int block_end = matrix.block_ends[block_i];
-        const int off = block_start + row_in_block * row_size;
-        if (off < 0 || off + row_size > block_end) {
-            return -1;
-        }
-        return off;
-    };
-
     // MS-PST §2.3.4.3.1 — TCROWID BTH is the authoritative list of live rows.
     // The row matrix often contains stale/deleted/padding slots that are NOT
     // valid rows; iterating the matrix directly yields garbled subjects and
     // inflated counts.  Walk the row-index BTH and materialize only the rows
     // it references (in their natural order).
-    QVector<uint32_t> live_row_indices;
-    if (tc.hid_row_index != 0) {
-        auto bth_header = readHeapOnNode(ctx.heap_data, tc.hid_row_index, ctx.block_offsets);
-        if (bth_header && bth_header->size() >= 8 &&
-            static_cast<uint8_t>((*bth_header)[0]) == kBthSignature) {
-            const uint8_t key_size = static_cast<uint8_t>((*bth_header)[1]);
-            const uint8_t data_size = static_cast<uint8_t>((*bth_header)[2]);
-            const uint8_t idx_levels = static_cast<uint8_t>((*bth_header)[3]);
-            const uint32_t root_hid = readLE<uint32_t>(*bth_header, 4);
-            // TCROWID record layout: dwRowID (key, 4 bytes) + dwRowIndex (data, 4 bytes).
-            if (key_size == 4 && data_size == 4 && root_hid != 0) {
-                auto leaf =
-                    (idx_levels == 0)
-                        ? readHeapOnNode(ctx.heap_data, root_hid, ctx.block_offsets)
-                        : readBthLeafData(
-                              ctx.heap_data, root_hid, key_size, idx_levels, ctx.block_offsets);
-                if (leaf) {
-                    constexpr int kTcRowIdRecordSize = 8;
-                    const int record_count = leaf->size() / kTcRowIdRecordSize;
-                    live_row_indices.reserve(record_count);
-                    for (int rec = 0; rec < record_count; ++rec) {
-                        const uint32_t row_index = readLE<uint32_t>(*leaf,
-                                                                    rec * kTcRowIdRecordSize + 4);
-                        live_row_indices.append(row_index);
-                    }
-                }
-            }
-        }
-    }
-
-    // Fallback for malformed files: iterate the valid positions in each block.
+    QVector<uint32_t> live_row_indices = collectTcLiveRowIndices(tc, ctx);
     if (live_row_indices.isEmpty()) {
-        for (int b = 0; b < block_count; ++b) {
-            for (int r = 0; r < rows_per_block; ++r) {
-                live_row_indices.append(static_cast<uint32_t>(b * rows_per_block + r));
-            }
-        }
+        live_row_indices = fallbackTcRowIndices(block_count, rows_per_block);
     }
 
     QVector<QVector<sak::MapiProperty>> rows;
     rows.reserve(live_row_indices.size());
-
     for (uint32_t row_index : live_row_indices) {
-        const int row_off = row_offset_for_index(row_index);
+        const int row_off = tcRowOffset(matrix, row_index, row_size, rows_per_block, block_count);
         if (row_off < 0) {
             continue;
         }
-
-        QVector<sak::MapiProperty> row_props;
-        row_props.reserve(tc.columns.size());
-        TcRowView row_view{row_off, row_size, row_off + tc.rgib_tci_1b};
-
-        for (const auto& col : tc.columns) {
-            auto prop = buildTcCell(matrix.data, row_view, col, ctx);
-            row_props.append(std::move(prop));
-        }
-        rows.append(std::move(row_props));
+        rows.append(materializeTcRow(matrix.data, row_off, row_size, tc, ctx));
     }
     return rows;
+}
+
+QVector<uint32_t> PstParser::fallbackTcRowIndices(int block_count, int rows_per_block) {
+    QVector<uint32_t> indices;
+    indices.reserve(block_count * rows_per_block);
+    for (int b = 0; b < block_count; ++b) {
+        for (int r = 0; r < rows_per_block; ++r) {
+            indices.append(static_cast<uint32_t>(b * rows_per_block + r));
+        }
+    }
+    return indices;
+}
+
+QVector<sak::MapiProperty> PstParser::materializeTcRow(const QByteArray& row_data,
+                                                       int row_off,
+                                                       int row_size,
+                                                       const TcInfo& tc,
+                                                       const HeapContext& ctx) {
+    QVector<sak::MapiProperty> row_props;
+    row_props.reserve(tc.columns.size());
+    const TcRowView row_view{row_off, row_size, row_off + tc.rgib_tci_1b};
+    for (const auto& col : tc.columns) {
+        row_props.append(buildTcCell(row_data, row_view, col, ctx));
+    }
+    return row_props;
+}
+
+int PstParser::tcRowOffset(const TcRowMatrix& matrix,
+                           uint32_t row_index,
+                           int row_size,
+                           int rows_per_block,
+                           int block_count) {
+    if (rows_per_block <= 0) {
+        return -1;
+    }
+    const int block_i = static_cast<int>(row_index) / rows_per_block;
+    const int row_in_block = static_cast<int>(row_index) % rows_per_block;
+    if (block_i >= block_count) {
+        return -1;
+    }
+    const int block_start = (block_i == 0) ? 0 : matrix.block_ends[block_i - 1];
+    const int block_end = matrix.block_ends[block_i];
+    const int off = block_start + row_in_block * row_size;
+    if (off < 0 || off + row_size > block_end) {
+        return -1;
+    }
+    return off;
+}
+
+QVector<uint32_t> PstParser::collectTcLiveRowIndices(const TcInfo& tc, const HeapContext& ctx) {
+    QVector<uint32_t> live_row_indices;
+    if (tc.hid_row_index == 0) {
+        return live_row_indices;
+    }
+    auto bth_header = readHeapOnNode(ctx.heap_data, tc.hid_row_index, ctx.block_offsets);
+    if (!bth_header || bth_header->size() < 8 ||
+        static_cast<uint8_t>((*bth_header)[0]) != kBthSignature) {
+        return live_row_indices;
+    }
+    const uint8_t key_size = static_cast<uint8_t>((*bth_header)[1]);
+    const uint8_t data_size = static_cast<uint8_t>((*bth_header)[2]);
+    const uint8_t idx_levels = static_cast<uint8_t>((*bth_header)[3]);
+    const uint32_t root_hid = readLE<uint32_t>(*bth_header, 4);
+    // TCROWID record layout: dwRowID (key, 4 bytes) + dwRowIndex (data, 4 bytes).
+    if (key_size != 4 || data_size != 4 || root_hid == 0) {
+        return live_row_indices;
+    }
+    auto leaf =
+        (idx_levels == 0)
+            ? readHeapOnNode(ctx.heap_data, root_hid, ctx.block_offsets)
+            : readBthLeafData(ctx.heap_data, root_hid, key_size, idx_levels, ctx.block_offsets);
+    if (!leaf) {
+        return live_row_indices;
+    }
+    return extractTcRowIndicesFromLeaf(*leaf);
+}
+
+QVector<uint32_t> PstParser::extractTcRowIndicesFromLeaf(const QByteArray& leaf) {
+    constexpr int kTcRowIdRecordSize = 8;
+    QVector<uint32_t> live_row_indices;
+    const int record_count = leaf.size() / kTcRowIdRecordSize;
+    live_row_indices.reserve(record_count);
+    for (int rec = 0; rec < record_count; ++rec) {
+        live_row_indices.append(readLE<uint32_t>(leaf, rec * kTcRowIdRecordSize + 4));
+    }
+    return live_row_indices;
 }
 
 sak::MapiProperty PstParser::buildTcCell(const QByteArray& row_data,
@@ -1823,13 +1847,7 @@ std::expected<QByteArray, error_code> PstParser::readHeapOnNode(const QByteArray
         return QByteArray{};
     }
 
-    // 64-bit 4K-page PFF files use a 5/14/13 bit layout for HID references
-    // (type / hid_index / hid_block_index) instead of the standard 5/11/16.
-    // Ref: libpff "64-bit 4k page table value reference".
-    uint16_t hid_index = m_is_4k ? static_cast<uint16_t>((hn_id >> 5) & 0x3FFF)
-                                 : static_cast<uint16_t>((hn_id >> 5) & 0x7FF);
-    uint16_t hid_block_index = m_is_4k ? static_cast<uint16_t>((hn_id >> 19) & 0x1FFF)
-                                       : static_cast<uint16_t>((hn_id >> 16) & 0xFFFF);
+    const auto [hid_index, hid_block_index] = unpackHid(hn_id);
 
     auto block_off = resolveHnBlockOffset(hid_block_index, block_offsets, heap_data.size());
     if (!block_off) {
@@ -1867,6 +1885,18 @@ std::expected<QByteArray, error_code> PstParser::readHeapOnNode(const QByteArray
     }
 
     return heap_data.mid(abs_start, abs_end - abs_start);
+}
+
+PstParser::HidParts PstParser::unpackHid(uint32_t hn_id) const {
+    // 64-bit 4K-page PFF files use a 5/14/13 bit layout for HID references
+    // (type / hid_index / hid_block_index) instead of the standard 5/11/16.
+    // Ref: libpff "64-bit 4k page table value reference".
+    HidParts parts;
+    parts.hid_index = m_is_4k ? static_cast<uint16_t>((hn_id >> 5) & 0x3FFF)
+                              : static_cast<uint16_t>((hn_id >> 5) & 0x7FF);
+    parts.hid_block_index = m_is_4k ? static_cast<uint16_t>((hn_id >> 19) & 0x1FFF)
+                                    : static_cast<uint16_t>((hn_id >> 16) & 0xFFFF);
+    return parts;
 }
 
 // ============================================================================

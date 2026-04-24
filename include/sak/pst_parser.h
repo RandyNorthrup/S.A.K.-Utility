@@ -269,6 +269,34 @@ private:
                                                                   const TcInfo& tc,
                                                                   const HeapContext& ctx);
 
+    /// Compute the byte offset of a logical row inside the TC row matrix,
+    /// accounting for per-block padding.  Returns -1 for out-of-range indices.
+    [[nodiscard]] static int tcRowOffset(const TcRowMatrix& matrix,
+                                         uint32_t row_index,
+                                         int row_size,
+                                         int rows_per_block,
+                                         int block_count);
+
+    /// Walk the TCROWID BTH to collect authoritative live row indices.
+    /// Returns an empty vector when the BTH is absent or malformed.
+    [[nodiscard]] QVector<uint32_t> collectTcLiveRowIndices(const TcInfo& tc,
+                                                            const HeapContext& ctx);
+
+    /// Extract dwRowIndex values from a TCROWID leaf buffer.
+    [[nodiscard]] static QVector<uint32_t> extractTcRowIndicesFromLeaf(const QByteArray& leaf);
+
+    /// Build the contiguous [0..block_count*rows_per_block) fallback index list
+    /// used when the TCROWID BTH is absent.
+    [[nodiscard]] static QVector<uint32_t> fallbackTcRowIndices(int block_count,
+                                                                int rows_per_block);
+
+    /// Materialize a single TC row at the given byte offset into a property vector.
+    [[nodiscard]] QVector<sak::MapiProperty> materializeTcRow(const QByteArray& row_data,
+                                                              int row_off,
+                                                              int row_size,
+                                                              const TcInfo& tc,
+                                                              const HeapContext& ctx);
+
     /// Build a single cell from a TC row
     [[nodiscard]] sak::MapiProperty buildTcCell(const QByteArray& row_data,
                                                 const TcRowView& row_view,
@@ -295,6 +323,15 @@ private:
     /// Read data from a Heap-on-Node (HN) allocation
     [[nodiscard]] std::expected<QByteArray, sak::error_code> readHeapOnNode(
         const QByteArray& heap_data, uint32_t hn_id, const QVector<int>& block_offsets = {});
+
+    /// Unpacked HID reference fields (hid_index + hid_block_index).
+    struct HidParts {
+        uint16_t hid_index{0};
+        uint16_t hid_block_index{0};
+    };
+
+    /// Unpack a 32-bit HID/HNID reference, honoring the 64-bit 4K-page layout.
+    [[nodiscard]] HidParts unpackHid(uint32_t hn_id) const;
 
     /// Resolve an HNID: subnode map → NID check → HID heap lookup
     [[nodiscard]] std::expected<QByteArray, sak::error_code> resolveHnid(

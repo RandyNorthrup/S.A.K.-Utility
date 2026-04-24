@@ -75,6 +75,16 @@ private:
     // Early-failure helper: emits an exportComplete result carrying a single error.
     void emitEarlyFailure(const QString& error_message);
 
+    // Resolve effective item-id list (explicit ids or derived from folder).
+    [[nodiscard]] static QVector<uint64_t> collectItemIds(PstParser* parser,
+                                                          const sak::EmailExportConfig& config);
+
+    // Dispatch to ICS / CSV / per-item export helpers based on config.format.
+    void dispatchExportFormat(PstParser* parser,
+                              const QVector<uint64_t>& item_ids,
+                              const sak::EmailExportConfig& config,
+                              sak::EmailExportResult& result);
+
     // Export format helpers
     [[nodiscard]] static QString formatDisplayName(sak::ExportFormat format);
     void exportPerItemFormats(PstParser* parser,
