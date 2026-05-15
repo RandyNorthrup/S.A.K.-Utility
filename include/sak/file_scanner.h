@@ -122,13 +122,13 @@ private:
                                                  std::size_t current_depth) noexcept;
 
     [[nodiscard]] static bool passesDepthAndVisibility(const std::filesystem::path& path,
-                                                const scan_options& options,
-                                                std::size_t current_depth);
+                                                       const scan_options& options,
+                                                       std::size_t current_depth);
 
     /// @brief Check file-specific filters (patterns, size limits)
     [[nodiscard]] static bool shouldIncludeFile(const std::filesystem::directory_entry& entry,
-                                         const std::filesystem::path& path,
-                                         const scan_options& options) noexcept;
+                                                const std::filesystem::path& path,
+                                                const scan_options& options) noexcept;
 
     /// @brief Update stats counters and progress for a file entry
     void updateFileStats(const std::filesystem::directory_entry& entry,

@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "id": "windows_update_repair",
+  "title": "Windows Update Repair",
+  "role": "Windows Repair",
+  "category": "Repair",
+  "description": "Diagnose and repair Windows Update failures with staged safety gates.",
+  "starter_prompt": "Diagnose and repair Windows Update. Start with read-only checks and verify with an update scan.",
+  "required_inputs": [
+    {"id": "error_code", "label": "Update error code", "type": "string", "required": false}
+  ],
+  "required_software": [
+    {"id": "run_powershell", "kind": "sak_tool", "required": true, "install_policy": "built_in_only"},
+    {"id": "dism", "kind": "windows_component", "required": true, "install_policy": "already_available"}
+  ],
+  "instructions": ["instructions/windows_repair_safety.md", "instructions/evidence_policy.md", "instructions/reporting_standard.md"],
+  "skills": ["skills/windows-update-repair.md", "skills/artifact-verification.md", "skills/customer-handoff-report.md", "skills/cleanup-after-job.md"],
+  "agents": [
+    {"id": "diagnostic_agent", "model_policy": "fast_reasoning", "tool_policy": "read_only_pc", "token_budget": 9000},
+    {"id": "repair_agent", "model_policy": "deep_reasoning", "tool_policy": "mutating_requires_lease", "token_budget": 9000},
+    {"id": "critic_agent", "model_policy": "fast_reasoning", "tool_policy": "no_local_execution", "token_budget": 4000}
+  ],
+  "phases": [
+    {"id": "collect_update_evidence", "type": "tool_action", "tool": "run_powershell", "operation": "diagnose", "arguments": {"command": "$ErrorActionPreference='Continue'; Write-Output '== Update services =='; Get-Service wuauserv,bits,cryptsvc,trustedinstaller | Format-Table Name,Status,StartType -AutoSize; Write-Output '== Pending reboot markers =='; $paths='HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Component Based Servicing\\RebootPending','HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\WindowsUpdate\\Auto Update\\RebootRequired','HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Session Manager'; foreach ($p in $paths) { Write-Output $p; Test-Path $p }; Write-Output '== Update history =='; Get-HotFix | Sort-Object InstalledOn -Descending | Select-Object -First 20 HotFixID,Description,InstalledOn | Format-Table -AutoSize; Write-Output '== Windows Update events =='; Get-WinEvent -FilterHashtable @{LogName='System'; ProviderName='Microsoft-Windows-WindowsUpdateClient'; StartTime=(Get-Date).AddDays(-30)} -MaxEvents 120 -ErrorAction SilentlyContinue | Select-Object TimeCreated,Id,LevelDisplayName,Message | Format-List; Write-Output '== DISM CheckHealth =='; DISM /Online /Cleanup-Image /CheckHealth; Write-Output '== Proxy =='; netsh winhttp show proxy", "timeout_seconds": 240, "requires_admin": false, "max_output_bytes": 1048576}, "prompt": "Collect read-only Windows Update services, pending reboot state, update history, event logs, DISM CheckHealth, and proxy clues.", "risk": "read_only", "completion": "Failure evidence is captured."},
+    {"id": "analyze_update_evidence", "type": "delegate", "agent": "diagnostic_agent", "prompt": "Analyze collected Windows Update services, pending reboot state, update history, WindowsUpdateClient events, CBS/DISM signals, network/proxy clues, and exact error code.", "expected_output": "update_evidence", "risk": "read_only", "completion": "Failure evidence is gathered."},
+    {"id": "repair_plan", "type": "delegate", "agent": "repair_agent", "prompt": "Propose staged repair from least-risk to higher-risk. Do not reset components or run DISM repair without overseer lease.", "expected_output": "repair_plan", "risk": "system_change", "completion": "Repair plan has steps, risk, rollback, and verification."},
+    {"id": "approval_gate", "type": "overseer", "prompt": "Ask human or apply access-mode policy before system-changing repair. Offer restore point when needed.", "risk": "system_change", "completion": "Risk gate is resolved."},
+    {"id": "execute_repair", "type": "tool_action", "tool": "run_powershell", "operation": "repair", "arguments": {"command": "$ErrorActionPreference='Continue'; Write-Output '== Windows Update services before repair =='; Get-Service wuauserv,bits,cryptsvc,trustedinstaller | Format-Table Name,Status,StartType -AutoSize; Write-Output '== DISM ScanHealth =='; DISM /Online /Cleanup-Image /ScanHealth; Write-Output '== DISM RestoreHealth =='; DISM /Online /Cleanup-Image /RestoreHealth; Write-Output '== SFC scan =='; sfc /scannow; Write-Output '== Ensure update services running =='; Start-Service bits,wuauserv,cryptsvc -ErrorAction SilentlyContinue; Get-Service wuauserv,bits,cryptsvc,trustedinstaller | Format-Table Name,Status,StartType -AutoSize; Write-Output 'Repair commands finished. Reboot may be required before update scan verification.'", "timeout_seconds": 5400, "requires_admin": true, "max_output_bytes": 1048576}, "prompt": "Execute only approved Windows Update repair steps and capture full output.", "risk": "system_change", "completion": "Repair command result is captured."},
+    {"id": "verify", "type": "tool_action", "tool": "run_powershell", "operation": "verify", "condition": "execute_repair_succeeded", "arguments": {"command": "$ErrorActionPreference='Continue'; Write-Output '== Update services after repair =='; Get-Service wuauserv,bits,cryptsvc,trustedinstaller | Format-Table Name,Status,StartType -AutoSize; Write-Output '== DISM CheckHealth after repair =='; DISM /Online /Cleanup-Image /CheckHealth; Write-Output '== Pending reboot markers =='; $paths='HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Component Based Servicing\\RebootPending','HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\WindowsUpdate\\Auto Update\\RebootRequired','HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Session Manager'; foreach ($p in $paths) { Write-Output $p; Test-Path $p }; Write-Output '== Recent Windows Update events =='; Get-WinEvent -FilterHashtable @{LogName='System'; ProviderName='Microsoft-Windows-WindowsUpdateClient'; StartTime=(Get-Date).AddDays(-2)} -MaxEvents 60 -ErrorAction SilentlyContinue | Select-Object TimeCreated,Id,LevelDisplayName,Message | Format-List; Write-Output '== Recent hotfixes =='; Get-HotFix | Sort-Object InstalledOn -Descending | Select-Object -First 10 HotFixID,Description,InstalledOn | Format-Table -AutoSize", "timeout_seconds": 240, "requires_admin": false, "max_output_bytes": 1048576}, "prompt": "Verify component health, update service state, pending reboot state, and recent update events after approved repair.", "risk": "read_only", "completion": "Original symptom is verified or remaining error is captured."},
+    {"id": "critic", "type": "delegate", "agent": "critic_agent", "prompt": "Check whether repair matched evidence and whether verification is sufficient.", "expected_output": "quality_review", "risk": "none", "completion": "Review passes or gaps are listed."},
+    {"id": "report", "type": "overseer", "prompt": "Create a technician-readable Windows Update repair report with evidence, repair actions/tools used, command output, verification result, logs/artifacts, cleanup status, residual risk, reboot needs, and follow-up.", "completion": "User understands result and follow-up."},
+    {"id": "cleanup", "type": "cleanup", "prompt": "Preserve CBS/DISM/update logs, command output, and reports; remove only temporary scratch files created by this workflow.", "completion": "Cleanup status is recorded."}
+  ],
+  "acceptance_criteria": [
+    "Read-only evidence was collected before repair.",
+    "Repair action matched evidence.",
+    "Restore-point prompt occurred before risky repair.",
+    "Final answer includes verification result and remaining risk."
+  ],
+  "cancel_policy": {"cancel_children": true, "cancel_tools": true, "preserve_partial_artifacts": true, "report_partial_state": true}
+}

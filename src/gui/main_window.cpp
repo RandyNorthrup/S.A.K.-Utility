@@ -6,6 +6,9 @@
 
 #include "sak/main_window.h"
 
+#if defined(SAK_ENABLE_AI_ASSISTANT) && SAK_ENABLE_AI_ASSISTANT
+#include "sak/ai_assistant_panel.h"
+#endif
 #include "sak/advanced_search_panel.h"
 #include "sak/advanced_uninstall_panel.h"
 #include "sak/app_installation_panel.h"
@@ -76,6 +79,19 @@ constexpr char kAboutTabHtml[] = R"SAKABOUT(
 <h2>Swiss Army Knife (S.A.K.) Utility</h2>
 <div class="subtitle">A portable Windows toolkit for PC technicians, IT pros, and sysadmins.<br/>
 Built with modern C++23 and Qt 6 for Windows 10/11 x64.</div>
+
+<div class="section">
+    <div class="section-title">AI Assistant</div>
+    <ul>
+        <li><b>Codex-style Technician Chat</b> &mdash; Prompt/result transcript, session picker, rename/new chat controls, prompt history, context chips, and expandable run details</li>
+        <li><b>OpenAI Integration</b> &mdash; User-supplied API key with encrypted app-local storage, model selection, Responses API conversation state, web citations, and token usage tracking</li>
+        <li><b>Context &amp; Instructions</b> &mdash; Attach screenshots, documents, and Markdown instruction files to the active session without cross-session artifact pollution</li>
+        <li><b>PC Actions</b> &mdash; PowerShell, cmd.exe, direct process launch, screenshots, HTTPS downloads, package-manager actions, and offline downloader actions with approval gates and cancellation</li>
+        <li><b>Multi-Agent Workflows</b> &mdash; Overseer-led workflow execution with specialized subagents, shared session memory, progress tracking, recovery policy, verification, cleanup, and human handoff</li>
+        <li><b>Technician Workflow Library</b> &mdash; Health checks, drive diagnostics, Windows Update repair, network repair, BSOD triage, printer troubleshooting, startup triage, malware removal, cleanup, bloatware/adware removal, offline installers, deployment bundles, clean uninstall, and service reports</li>
+        <li><b>Reports &amp; Artifacts</b> &mdash; Manual HTML/Markdown/text reports generated from the actual session transcript, findings, actions, evidence, verification, and remaining recommendations</li>
+    </ul>
+</div>
 
 <div class="section">
     <div class="section-title">Migration &amp; Backup</div>
@@ -257,6 +273,11 @@ constexpr char kTooltipNetworkManagement[] =
 constexpr char kTooltipEmailTool[] =
     "Inspect PST, OST, and MBOX email files — search, export, and manage profiles (Ctrl+7)";
 
+#if defined(SAK_ENABLE_AI_ASSISTANT) && SAK_ENABLE_AI_ASSISTANT
+constexpr char kTooltipAiAssistant[] =
+    "AI-assisted research, reports, and full-access PC repair workflows";
+#endif
+
 const QString kDiscordBtnStyle = QStringLiteral(
     "QPushButton {"
     "  background: qlineargradient(x1:0, y1:0, x2:0, y2:1,"
@@ -395,6 +416,17 @@ void MainWindow::createStatusBar() {
     m_progress_bar->setVisible(false);
     statusBar()->addPermanentWidget(m_progress_bar);
 
+#if defined(SAK_ENABLE_AI_ASSISTANT) && SAK_ENABLE_AI_ASSISTANT
+    m_ai_status_label = new QLabel(this);
+    m_ai_status_label->setContentsMargins(8, 0, 8, 0);
+    m_ai_status_label->setStyleSheet(
+        QStringLiteral("color: %1; font-weight: 600;").arg(sak::ui::kColorTextSecondary));
+    m_ai_status_label->setMinimumWidth(280);
+    m_ai_status_label->setMaximumWidth(760);
+    m_ai_status_label->setVisible(false);
+    statusBar()->addPermanentWidget(m_ai_status_label);
+#endif
+
     // Elevation status indicator
     m_elevation_label = new QWidget(this);
     auto* elev_layout = new QHBoxLayout(m_elevation_label);
@@ -458,6 +490,15 @@ void MainWindow::createPanels() {
 
 void MainWindow::createToolPanels() {
     Q_ASSERT(m_tab_widget);
+#if defined(SAK_ENABLE_AI_ASSISTANT) && SAK_ENABLE_AI_ASSISTANT
+    // -- 1. AI Assistant -------------------------------------------------
+    m_ai_assistant_panel = std::make_unique<AiAssistantPanel>(this);
+    AddTabWithTooltip(m_tab_widget,
+                      m_ai_assistant_panel.get(),
+                      "AI Assistant",
+                      kTooltipAiAssistant,
+                      ":/icons/icons/panel_ai.svg");
+#endif
     createSimplePanels();
     createAppManagementPanel();
     createNetworkManagementPanel();
@@ -465,7 +506,7 @@ void MainWindow::createToolPanels() {
 
 void MainWindow::createSimplePanels() {
     Q_ASSERT(m_tab_widget);
-    // -- 1. Backup and Restore -------------------------------------------
+    // -- Backup and Restore ----------------------------------------------
     m_user_migration_panel = std::make_unique<UserMigrationPanel>(this);
     AddTabWithTooltip(m_tab_widget,
                       m_user_migration_panel.get(),
@@ -473,7 +514,7 @@ void MainWindow::createSimplePanels() {
                       kTooltipUserMigration,
                       ":/icons/icons/panel_backup_restore.svg");
 
-    // -- 2. File Management (Organizer + Duplicate Finder + Advanced Search)
+    // -- File Management (Organizer + Duplicate Finder + Advanced Search) -
     m_organizer_panel = std::make_unique<OrganizerPanel>(this);
     m_advanced_search_panel = std::make_unique<AdvancedSearchPanel>(this);
     m_organizer_panel->tabWidget()->addTab(m_advanced_search_panel.get(), tr("Advanced Search"));
@@ -483,7 +524,7 @@ void MainWindow::createSimplePanels() {
                       kTooltipOrganizer,
                       ":/icons/icons/panel_organizer.svg");
 
-    // -- 3. Image Flasher ------------------------------------------------
+    // -- Image Flasher ---------------------------------------------------
     m_image_flasher_panel = std::make_unique<ImageFlasherPanel>(this);
     AddTabWithTooltip(m_tab_widget,
                       m_image_flasher_panel.get(),
@@ -491,7 +532,7 @@ void MainWindow::createSimplePanels() {
                       kTooltipImageFlasher,
                       ":/icons/icons/panel_image_flasher.svg");
 
-    // -- 4. Benchmark and Diagnostics ------------------------------------
+    // -- Benchmark and Diagnostics ---------------------------------------
     m_diagnostic_benchmark_panel = std::make_unique<DiagnosticBenchmarkPanel>(this);
     AddTabWithTooltip(m_tab_widget,
                       m_diagnostic_benchmark_panel.get(),
@@ -499,7 +540,7 @@ void MainWindow::createSimplePanels() {
                       kTooltipDiagnostics,
                       ":/icons/icons/panel_diagnostic.svg");
 
-    // -- 5. Email Tools ---------------------------------------------------
+    // -- Email Tools ------------------------------------------------------
     m_email_inspector_panel = std::make_unique<EmailInspectorPanel>(this);
     m_ost_converter_widget = std::make_unique<OstConverterWidget>(this);
 
@@ -1134,7 +1175,47 @@ void MainWindow::connectRemainingPanelSignals() {
             &EmailInspectorPanel::progressUpdate,
             this,
             &MainWindow::updateProgress);
+
+#if defined(SAK_ENABLE_AI_ASSISTANT) && SAK_ENABLE_AI_ASSISTANT
+    connectAiAssistantSignals();
+#endif
 }
+
+#if defined(SAK_ENABLE_AI_ASSISTANT) && SAK_ENABLE_AI_ASSISTANT
+void MainWindow::connectAiAssistantSignals() {
+    if (!m_ai_assistant_panel) {
+        return;
+    }
+
+    connect(m_ai_assistant_panel.get(),
+            &AiAssistantPanel::statusMessage,
+            this,
+            [this](const QString& msg, int timeout_ms) {
+                updateStatus(msg, timeout_ms > 0 ? timeout_ms : 5000);
+            });
+    connect(m_ai_assistant_panel.get(),
+            &AiAssistantPanel::progressUpdate,
+            this,
+            &MainWindow::updateProgress);
+    connect(m_ai_assistant_panel.get(),
+            &AiAssistantPanel::statusDetailsChanged,
+            this,
+            [this](const QString& details) {
+                if (!m_ai_status_label) {
+                    return;
+                }
+                m_ai_status_label->setText(details);
+                m_ai_status_label->setToolTip(details);
+                m_ai_status_label->setVisible(!details.isEmpty());
+            });
+    if (m_ai_status_label) {
+        const QString details = m_ai_assistant_panel->statusDetails();
+        m_ai_status_label->setText(details);
+        m_ai_status_label->setToolTip(details);
+        m_ai_status_label->setVisible(!details.isEmpty());
+    }
+}
+#endif
 
 int MainWindow::findPanelTabIndex(QWidget* panel) const {
     Q_ASSERT(m_tab_widget);
@@ -1194,6 +1275,11 @@ void MainWindow::connectPanelLogs() {
     connectLog(m_advanced_uninstall_panel.get());
     connectLog(m_network_diagnostic_panel.get());
     connectLog(m_email_inspector_panel.get());
+#if defined(SAK_ENABLE_AI_ASSISTANT) && SAK_ENABLE_AI_ASSISTANT
+    if (m_ai_assistant_panel) {
+        connectLog(m_ai_assistant_panel.get());
+    }
+#endif
 
     if (m_wifi_manager_panel) {
         connectLog(m_wifi_manager_panel.get());
@@ -1352,7 +1438,7 @@ void MainWindow::loadWindowState() {
         restoreState(config.getWindowState());
     }
 
-    // Always start on Quick Actions tab (index 0)
+    // Always start on the first registered panel. With AI enabled this is AI Assistant.
     m_tab_widget->setCurrentIndex(0);
 }
 

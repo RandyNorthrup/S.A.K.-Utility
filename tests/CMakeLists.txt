@@ -641,6 +641,449 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_process_runner.cpp")
 endif()
 
 # test_smart_disk_analyzer — SmartReport parsing, health assessment
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_token_usage_tracker.cpp")
+    add_executable(test_ai_token_usage_tracker
+        unit/test_ai_token_usage_tracker.cpp
+        ../src/ai/ai_token_usage_tracker.cpp
+        ../include/sak/ai/ai_token_usage_tracker.h
+    )
+    set_target_properties(test_ai_token_usage_tracker PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_ai_token_usage_tracker PRIVATE
+        Qt6::Core Qt6::Test
+    )
+    target_include_directories(test_ai_token_usage_tracker PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_ai_token_usage_tracker COMMAND test_ai_token_usage_tracker
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_ai_token_usage_tracker")
+endif()
+
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_openai_responses_client.cpp")
+    add_executable(test_openai_responses_client
+        unit/test_openai_responses_client.cpp
+        ../src/ai/openai_responses_client.cpp
+        ../src/ai/ai_token_usage_tracker.cpp
+        ../src/ai/ai_credential_store.cpp
+        ../src/core/secure_memory.cpp
+        ../src/core/logger.cpp
+        ../include/sak/ai/openai_responses_client.h
+        ../include/sak/ai/ai_token_usage_tracker.h
+        ../include/sak/ai/ai_credential_store.h
+        ../include/sak/secure_memory.h
+    )
+    set_target_properties(test_openai_responses_client PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_openai_responses_client PRIVATE
+        Qt6::Core Qt6::Test Qt6::Network ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_openai_responses_client PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_openai_responses_client COMMAND test_openai_responses_client
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_openai_responses_client")
+endif()
+
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_conversation_store.cpp")
+    add_executable(test_ai_conversation_store
+        unit/test_ai_conversation_store.cpp
+        ../src/ai/ai_conversation_store.cpp
+        ../src/ai/ai_token_usage_tracker.cpp
+        ../include/sak/ai/ai_conversation_store.h
+        ../include/sak/ai/ai_token_usage_tracker.h
+    )
+    set_target_properties(test_ai_conversation_store PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_ai_conversation_store PRIVATE
+        Qt6::Core Qt6::Test
+    )
+    target_include_directories(test_ai_conversation_store PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_ai_conversation_store COMMAND test_ai_conversation_store
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_ai_conversation_store")
+endif()
+
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_execution_broker.cpp")
+    add_executable(test_ai_execution_broker
+        unit/test_ai_execution_broker.cpp
+        ../src/ai/ai_execution_broker.cpp
+        ../src/ai/ai_credential_store.cpp
+        ../src/core/secure_memory.cpp
+        ../include/sak/ai/ai_execution_broker.h
+        ../include/sak/ai/ai_credential_store.h
+        ../include/sak/secure_memory.h
+    )
+    set_target_properties(test_ai_execution_broker PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_ai_execution_broker PRIVATE
+        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_ai_execution_broker PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_ai_execution_broker COMMAND test_ai_execution_broker
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_ai_execution_broker")
+endif()
+
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_cancellation_token.cpp")
+    add_executable(test_ai_cancellation_token
+        unit/test_ai_cancellation_token.cpp
+        ../src/ai/ai_cancellation_token.cpp
+        ../include/sak/ai/ai_cancellation_token.h
+    )
+    set_target_properties(test_ai_cancellation_token PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_ai_cancellation_token PRIVATE
+        Qt6::Core Qt6::Test
+    )
+    target_include_directories(test_ai_cancellation_token PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_ai_cancellation_token COMMAND test_ai_cancellation_token
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_ai_cancellation_token")
+endif()
+
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_run_state.cpp")
+    add_executable(test_ai_run_state
+        unit/test_ai_run_state.cpp
+        ../src/ai/ai_human_gate.cpp
+        ../src/ai/ai_run_state.cpp
+        ../include/sak/ai/ai_human_gate.h
+        ../include/sak/ai/ai_run_state.h
+    )
+    set_target_properties(test_ai_run_state PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_ai_run_state PRIVATE
+        Qt6::Core Qt6::Test
+    )
+    target_include_directories(test_ai_run_state PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_ai_run_state COMMAND test_ai_run_state
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_ai_run_state")
+endif()
+
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_human_gate_store.cpp")
+    add_executable(test_ai_human_gate_store
+        unit/test_ai_human_gate_store.cpp
+        ../src/ai/ai_human_gate.cpp
+        ../src/ai/ai_human_gate_store.cpp
+        ../include/sak/ai/ai_human_gate.h
+        ../include/sak/ai/ai_human_gate_store.h
+    )
+    set_target_properties(test_ai_human_gate_store PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_ai_human_gate_store PRIVATE
+        Qt6::Core Qt6::Test
+    )
+    target_include_directories(test_ai_human_gate_store PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_ai_human_gate_store COMMAND test_ai_human_gate_store
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_ai_human_gate_store")
+endif()
+
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_recovery_policy.cpp")
+    add_executable(test_ai_recovery_policy
+        unit/test_ai_recovery_policy.cpp
+        ../src/ai/ai_recovery_policy.cpp
+        ../include/sak/ai/ai_recovery_policy.h
+    )
+    set_target_properties(test_ai_recovery_policy PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_ai_recovery_policy PRIVATE
+        Qt6::Core Qt6::Test
+    )
+    target_include_directories(test_ai_recovery_policy PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_ai_recovery_policy COMMAND test_ai_recovery_policy
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_ai_recovery_policy")
+endif()
+
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_package_selection.cpp")
+    add_executable(test_ai_package_selection
+        unit/test_ai_package_selection.cpp
+        ../src/ai/ai_package_selection.cpp
+        ../include/sak/ai/ai_package_selection.h
+    )
+    set_target_properties(test_ai_package_selection PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_ai_package_selection PRIVATE
+        Qt6::Core Qt6::Test
+    )
+    target_include_directories(test_ai_package_selection PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_ai_package_selection COMMAND test_ai_package_selection
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_ai_package_selection")
+endif()
+
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_workflow_clarifier.cpp")
+    add_executable(test_ai_workflow_clarifier
+        unit/test_ai_workflow_clarifier.cpp
+        ../src/ai/ai_workflow_clarifier.cpp
+        ../src/ai/ai_workflow_template.cpp
+    )
+    set_target_properties(test_ai_workflow_clarifier PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_ai_workflow_clarifier PRIVATE
+        Qt6::Core Qt6::Test
+    )
+    target_include_directories(test_ai_workflow_clarifier PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_ai_workflow_clarifier COMMAND test_ai_workflow_clarifier
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_ai_workflow_clarifier")
+endif()
+
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_trace_store.cpp")
+    add_executable(test_ai_trace_store
+        unit/test_ai_trace_store.cpp
+        ../src/ai/ai_trace_store.cpp
+        ../src/ai/ai_token_usage_tracker.cpp
+        ../include/sak/ai/ai_trace_store.h
+        ../include/sak/ai/ai_token_usage_tracker.h
+    )
+    set_target_properties(test_ai_trace_store PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_ai_trace_store PRIVATE
+        Qt6::Core Qt6::Test
+    )
+    target_include_directories(test_ai_trace_store PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_ai_trace_store COMMAND test_ai_trace_store
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_ai_trace_store")
+endif()
+
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_tool_policy.cpp")
+    add_executable(test_ai_tool_policy
+        unit/test_ai_tool_policy.cpp
+        ../src/ai/ai_tool_policy.cpp
+        ../include/sak/ai/ai_tool_policy.h
+    )
+    set_target_properties(test_ai_tool_policy PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_ai_tool_policy PRIVATE
+        Qt6::Core Qt6::Test
+    )
+    target_include_directories(test_ai_tool_policy PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_ai_tool_policy COMMAND test_ai_tool_policy
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_ai_tool_policy")
+endif()
+
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_tool_dispatcher.cpp")
+    add_executable(test_ai_tool_dispatcher
+        unit/test_ai_tool_dispatcher.cpp
+        ../src/ai/ai_lease_manager.cpp
+        ../src/ai/ai_tool_dispatcher.cpp
+        ../src/ai/ai_tool_policy.cpp
+        ../include/sak/ai/ai_lease_manager.h
+        ../include/sak/ai/ai_tool_dispatcher.h
+        ../include/sak/ai/ai_tool_policy.h
+    )
+    set_target_properties(test_ai_tool_dispatcher PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_ai_tool_dispatcher PRIVATE
+        Qt6::Core Qt6::Test
+    )
+    target_include_directories(test_ai_tool_dispatcher PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_ai_tool_dispatcher COMMAND test_ai_tool_dispatcher
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_ai_tool_dispatcher")
+endif()
+
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_run_state_store.cpp")
+    add_executable(test_ai_run_state_store
+        unit/test_ai_run_state_store.cpp
+        ../src/ai/ai_human_gate.cpp
+        ../src/ai/ai_run_state.cpp
+        ../src/ai/ai_run_state_store.cpp
+        ../include/sak/ai/ai_human_gate.h
+        ../include/sak/ai/ai_run_state.h
+        ../include/sak/ai/ai_run_state_store.h
+    )
+    set_target_properties(test_ai_run_state_store PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_ai_run_state_store PRIVATE
+        Qt6::Core Qt6::Test
+    )
+    target_include_directories(test_ai_run_state_store PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_ai_run_state_store COMMAND test_ai_run_state_store
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_ai_run_state_store")
+endif()
+
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_subagent_runner.cpp")
+    add_executable(test_ai_subagent_runner
+        unit/test_ai_subagent_runner.cpp
+        ../src/ai/ai_cancellation_token.cpp
+        ../src/ai/ai_subagent_runner.cpp
+        ../src/ai/ai_token_usage_tracker.cpp
+        ../src/ai/ai_tool_policy.cpp
+        ../include/sak/ai/ai_cancellation_token.h
+        ../include/sak/ai/ai_subagent_runner.h
+        ../include/sak/ai/ai_token_usage_tracker.h
+        ../include/sak/ai/ai_tool_policy.h
+    )
+    set_target_properties(test_ai_subagent_runner PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_ai_subagent_runner PRIVATE
+        Qt6::Core Qt6::Test
+    )
+    target_include_directories(test_ai_subagent_runner PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_ai_subagent_runner COMMAND test_ai_subagent_runner
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_ai_subagent_runner")
+endif()
+
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_orchestrator.cpp")
+    add_executable(test_ai_orchestrator
+        unit/test_ai_orchestrator.cpp
+        ../src/ai/ai_cancellation_token.cpp
+        ../src/ai/ai_human_gate.cpp
+        ../src/ai/ai_orchestrator.cpp
+        ../src/ai/ai_recovery_policy.cpp
+        ../src/ai/ai_run_state.cpp
+        ../src/ai/ai_subagent_runner.cpp
+        ../src/ai/ai_token_usage_tracker.cpp
+        ../src/ai/ai_tool_policy.cpp
+        ../src/ai/ai_workflow_template.cpp
+        ../include/sak/ai/ai_cancellation_token.h
+        ../include/sak/ai/ai_human_gate.h
+        ../include/sak/ai/ai_orchestrator.h
+        ../include/sak/ai/ai_recovery_policy.h
+        ../include/sak/ai/ai_run_state.h
+        ../include/sak/ai/ai_subagent_runner.h
+        ../include/sak/ai/ai_token_usage_tracker.h
+        ../include/sak/ai/ai_tool_policy.h
+        ../include/sak/ai/ai_workflow_template.h
+    )
+
+    add_executable(test_ai_workflow_evals
+        unit/test_ai_workflow_evals.cpp
+        ../src/ai/ai_cancellation_token.cpp
+        ../src/ai/ai_human_gate.cpp
+        ../src/ai/ai_orchestrator.cpp
+        ../src/ai/ai_recovery_policy.cpp
+        ../src/ai/ai_run_state.cpp
+        ../src/ai/ai_subagent_runner.cpp
+        ../src/ai/ai_token_usage_tracker.cpp
+        ../src/ai/ai_tool_policy.cpp
+        ../src/ai/ai_workflow_template.cpp
+        ../include/sak/ai/ai_cancellation_token.h
+        ../include/sak/ai/ai_human_gate.h
+        ../include/sak/ai/ai_orchestrator.h
+        ../include/sak/ai/ai_recovery_policy.h
+        ../include/sak/ai/ai_run_state.h
+        ../include/sak/ai/ai_subagent_runner.h
+        ../include/sak/ai/ai_token_usage_tracker.h
+        ../include/sak/ai/ai_tool_policy.h
+        ../include/sak/ai/ai_workflow_template.h
+    )
+    set_target_properties(test_ai_workflow_evals PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_ai_workflow_evals PRIVATE Qt6::Core Qt6::Test)
+    target_include_directories(test_ai_workflow_evals PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_ai_workflow_evals COMMAND test_ai_workflow_evals
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_ai_workflow_evals")
+    set_target_properties(test_ai_orchestrator PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_ai_orchestrator PRIVATE
+        Qt6::Core Qt6::Test
+    )
+    target_include_directories(test_ai_orchestrator PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_ai_orchestrator COMMAND test_ai_orchestrator
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_ai_orchestrator")
+endif()
+
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_workflow_store.cpp")
+    add_executable(test_ai_workflow_store
+        unit/test_ai_workflow_store.cpp
+        ../src/ai/ai_workflow_store.cpp
+        ../src/ai/ai_workflow_template.cpp
+        ../include/sak/ai/ai_workflow_store.h
+        ../include/sak/ai/ai_workflow_template.h
+        ../resources/ai.qrc
+    )
+    set_target_properties(test_ai_workflow_store PROPERTIES
+        AUTOMOC ON
+        AUTORCC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_ai_workflow_store PRIVATE
+        Qt6::Core Qt6::Test
+    )
+    target_include_directories(test_ai_workflow_store PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_ai_workflow_store COMMAND test_ai_workflow_store
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_ai_workflow_store")
+endif()
+
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_smart_disk_analyzer.cpp")
     add_executable(test_smart_disk_analyzer
         unit/test_smart_disk_analyzer.cpp
@@ -2324,6 +2767,10 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/integration/test_offline_package_builder.
     add_test(NAME test_offline_package_builder
              COMMAND test_offline_package_builder
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    # This integration test intentionally downloads and repacks real package
+    # assets, so the default 300s CTest timeout creates false failures when
+    # upstream package/CDN latency spikes.
+    set_tests_properties(test_offline_package_builder PROPERTIES TIMEOUT 900)
     message(STATUS "Added integration test: test_offline_package_builder")
 endif()
 

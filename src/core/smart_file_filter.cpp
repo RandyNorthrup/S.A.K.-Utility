@@ -4,6 +4,7 @@
 #include "sak/smart_file_filter.h"
 
 #include <QDir>
+
 #include <algorithm>
 
 namespace sak {
@@ -118,10 +119,11 @@ bool SmartFileFilter::isDangerousFile(const QString& fileName) const {
 }
 
 bool SmartFileFilter::matchesPattern(const QString& fileName) const {
-    return std::any_of(m_compiledPatterns.begin(), m_compiledPatterns.end(),
-        [&fileName](const QRegularExpression& regex) {
-            return regex.match(fileName).hasMatch();
-        });
+    return std::any_of(m_compiledPatterns.begin(),
+                       m_compiledPatterns.end(),
+                       [&fileName](const QRegularExpression& regex) {
+                           return regex.match(fileName).hasMatch();
+                       });
 }
 
 bool SmartFileFilter::isInExcludedFolder(const QString& relativePath) const {
@@ -130,10 +132,9 @@ bool SmartFileFilter::isInExcludedFolder(const QString& relativePath) const {
     QStringList components = relativePath.split('/', Qt::SkipEmptyParts);
     components.append(relativePath.split('\\', Qt::SkipEmptyParts));
 
-    return std::any_of(components.begin(), components.end(),
-        [this](const QString& component) {
-            return m_excludeFoldersSet.contains(component.toLower());
-        });
+    return std::any_of(components.begin(), components.end(), [this](const QString& component) {
+        return m_excludeFoldersSet.contains(component.toLower());
+    });
 }
 
 bool SmartFileFilter::isInCacheDirectory(const QString& path) {
@@ -156,10 +157,11 @@ bool SmartFileFilter::isInCacheDirectory(const QString& path) {
                                  "/service worker/",
                                  "/session storage/"};
 
-    return std::any_of(cachePatterns.begin(), cachePatterns.end(),
-        [&lowerPath](const QString& pattern) {
-            return lowerPath.contains(pattern);
-        });
+    return std::any_of(cachePatterns.begin(),
+                       cachePatterns.end(),
+                       [&lowerPath](const QString& pattern) {
+                           return lowerPath.contains(pattern);
+                       });
 }
 
 QString SmartFileFilter::getExclusionReason(const QFileInfo& fileInfo) const {

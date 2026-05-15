@@ -84,7 +84,7 @@ int AppInstallationWorker::startMigration(std::shared_ptr<MigrationReport> repor
         }
 
         m_report = report;
-        m_maxConcurrent = qMax(1, maxConcurrent);
+        m_maxConcurrent = qMax(0, maxConcurrent);
         m_running = true;
         m_paused = false;
         m_cancelled = false;
@@ -250,8 +250,17 @@ void AppInstallationWorker::processQueue() {
             m_activeJobs++;
         }
 
-        MigrationJob& job = m_jobs[jobIndex];
-        bool success = installPackage(job);
+        MigrationJob job;
+        {
+            QMutexLocker locker(&m_mutex);
+            if (jobIndex < 0 || jobIndex >= m_jobs.size()) {
+                m_activeJobs--;
+                continue;
+            }
+            job = m_jobs[jobIndex];
+        }
+
+        bool success = installPackage(jobIndex, job);
 
         QMutexLocker locker(&m_mutex);
         m_activeJobs--;
@@ -262,6 +271,9 @@ void AppInstallationWorker::processQueue() {
 
             QMutexLocker retryLocker(&m_mutex);
             job.retryCount++;
+            if (jobIndex >= 0 && jobIndex < m_jobs.size()) {
+                m_jobs[jobIndex] = job;
+            }
             m_jobQueue.enqueue(jobIndex);
         }
     }
@@ -298,7 +310,7 @@ AppInstallationWorker::QueueAction AppInstallationWorker::checkQueueState() {
     return QueueAction::Proceed;
 }
 
-bool AppInstallationWorker::installPackage(MigrationJob& job) {
+bool AppInstallationWorker::installPackage(int jobIndex, MigrationJob& job) {
     // Check if a newer or equal version is already installed
     QString installed_version;
     if (isNewerVersionInstalled(job, installed_version)) {
@@ -308,6 +320,7 @@ bool AppInstallationWorker::installPackage(MigrationJob& job) {
         QString message = QString("Skipped %1 — newer version %2 already installed")
                               .arg(job.appName, installed_version);
         job.errorMessage = message;
+        storeJobSnapshot(jobIndex, job);
         Q_EMIT jobProgress(job.entryIndex, message);
         Q_EMIT jobStatusChanged(job.entryIndex, job);
         sak::logInfo("[AppInstallationWorker] {}", message.toStdString());
@@ -317,6 +330,7 @@ bool AppInstallationWorker::installPackage(MigrationJob& job) {
     // Update status to installing
     job.status = MigrationStatus::Installing;
     job.startTime = QDateTime::currentDateTime();
+    storeJobSnapshot(jobIndex, job);
     Q_EMIT jobStatusChanged(job.entryIndex, job);
     Q_EMIT jobProgress(job.entryIndex, "Installing " + job.packageId + "...");
 
@@ -362,6 +376,7 @@ bool AppInstallationWorker::installPackage(MigrationJob& job) {
                         job.errorMessage.toStdString());
     }
 
+    storeJobSnapshot(jobIndex, job);
     Q_EMIT jobStatusChanged(job.entryIndex, job);
 
     return success;
@@ -473,6 +488,16 @@ void AppInstallationWorker::updateJobStatus(int index,
         job_copy = m_jobs[index];
     }
     Q_EMIT jobStatusChanged(job_copy.entryIndex, job_copy);
+}
+
+void AppInstallationWorker::storeJobSnapshot(int index, const MigrationJob& job) {
+    QMutexLocker locker(&m_mutex);
+
+    if (index < 0 || index >= m_jobs.size()) {
+        return;
+    }
+
+    m_jobs[index] = job;
 }
 
 bool AppInstallationWorker::shouldRetry(const MigrationJob& job) const {

@@ -363,6 +363,7 @@ python_archive/**/*.egg-info/
 *.json
 !package_mappings.json
 !compile_commands.json
+!resources/ai/workflows/*.json
 
 # User data (if any)
 user_data/

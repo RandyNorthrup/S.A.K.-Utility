@@ -1,0 +1,11 @@
+title = "S.A.K. Utility secret scanning"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Repository-wide allowlist for non-secret placeholders"
+regexes = [
+  '''\$\{\{\s*secrets\.[A-Z0-9_]+\s*\}\}''',
+  '''<apiKeys\s*/>''',
+]

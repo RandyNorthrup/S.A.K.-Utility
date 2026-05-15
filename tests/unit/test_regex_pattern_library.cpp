@@ -6,8 +6,8 @@
 
 #include "sak/regex_pattern_library.h"
 
+#include <QDir>
 #include <QSignalSpy>
-#include <QStandardPaths>
 #include <QTemporaryDir>
 #include <QtTest/QtTest>
 
@@ -76,9 +76,7 @@ void RegexPatternLibraryTests::init() {
     // that RegexPatternLibrary's constructor uses.
     const QString appDir = QCoreApplication::applicationDirPath();
     QFile::remove(appDir + "/custom_regex_patterns.json");
-
-    const QString dataDir = QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation);
-    QFile::remove(dataDir + "/custom_regex_patterns.json");
+    QFile::remove(QDir(appDir).filePath(QStringLiteral("data/config/custom_regex_patterns.json")));
 }
 
 // ── Built-in Patterns ───────────────────────────────────────────────────────

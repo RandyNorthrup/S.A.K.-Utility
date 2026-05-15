@@ -123,8 +123,8 @@ private:
      * @param files Files with their hashes
      * @return Map of hash to file paths
      */
-    auto groupByHash(const std::vector<std::pair<std::filesystem::path, std::string>>& files)
-        const -> std::unordered_map<std::string, std::vector<std::filesystem::path>>;
+    auto groupByHash(const std::vector<std::pair<std::filesystem::path, std::string>>& files) const
+        -> std::unordered_map<std::string, std::vector<std::filesystem::path>>;
 
     /**
      * @brief Generate results summary text

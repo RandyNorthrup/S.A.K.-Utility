@@ -16,7 +16,6 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QRegularExpression>
-#include <QStandardPaths>
 #include <QTextStream>
 
 #ifdef Q_OS_WIN
@@ -228,7 +227,9 @@ void UupIsoBuilder::prepareWorkspace() {
     // ---- Create work directory (deterministic name for resume support) ----
     Q_EMIT progressUpdated(1, "Creating work directory...");
 
-    QString tempBase = QStandardPaths::writableLocation(QStandardPaths::TempLocation);
+    const QString tempBase =
+        QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("data/temp"));
+    QDir().mkpath(tempBase);
     if (!m_updateId.isEmpty()) {
         const QString resumeKey = m_updateId + "|" + m_lang + "|" + m_edition.toLower();
         const QString shortHash = QString::fromLatin1(

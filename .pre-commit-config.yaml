@@ -1,5 +1,5 @@
 # =============================================================================
-# S.A.K. Utility — Pre-commit Hook Configuration
+# S.A.K. Utility - Pre-commit Hook Configuration
 # Strictest settings: every check must pass, zero tolerance for violations.
 #
 # Install:  pre-commit install --install-hooks
@@ -31,12 +31,34 @@ repos:
       - id: check-case-conflict
 
   # =========================================================================
-  # Local hooks — C++ static analysis (strictest settings)
+  # Local hooks - security and C++ static analysis (strictest settings)
   # =========================================================================
   - repo: local
     hooks:
       # -------------------------------------------------------------------
-      # 1. clang-format — Zero formatting deviations allowed
+      # 1. Secret/path scan - no key-shaped literals or developer paths
+      # -------------------------------------------------------------------
+      - id: secret-path-scan
+        name: "Secret/path scan"
+        description: "Reject key-shaped literals and hardcoded developer-machine paths"
+        entry: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
+          -File scripts/scan_secrets.ps1 -SkipExternalTools
+        language: system
+        pass_filenames: false
+
+      # -------------------------------------------------------------------
+      # 2. Qt resource manifest check - every qrc file path must exist
+      # -------------------------------------------------------------------
+      - id: qrc-resource-check
+        name: "Qt resource manifest check"
+        description: "Reject .qrc manifests that reference missing files"
+        entry: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
+          -File scripts/check_qrc_resources.ps1
+        language: system
+        pass_filenames: false
+
+      # -------------------------------------------------------------------
+      # 3. clang-format - zero formatting deviations allowed
       # -------------------------------------------------------------------
       - id: clang-format
         name: "clang-format (strict)"
@@ -49,12 +71,12 @@ repos:
         exclude: (third_party|3rdparty|external|_archived)/
 
       # -------------------------------------------------------------------
-      # 2. Lizard — Cyclomatic complexity & function metrics
-      #    CCN ≤ 10, length ≤ 70, params ≤ 5
+      # 4. Lizard - cyclomatic complexity and function metrics
+      #    CCN <= 10, length <= 70, params <= 5
       # -------------------------------------------------------------------
       - id: lizard-complexity
         name: "Lizard complexity (strict)"
-        description: "CCN ≤10, function length ≤70, parameters ≤5"
+        description: "CCN <=10, function length <=70, parameters <=5"
         entry: python scripts/run_lizard.py
         language: system
         types_or: [c, c++]
@@ -62,7 +84,7 @@ repos:
         exclude: (third_party|3rdparty|external|_archived)/
 
       # -------------------------------------------------------------------
-      # 3. cppcheck — Deep static analysis
+      # 5. cppcheck - deep static analysis
       #    All checks, exhaustive level, inconclusive, C++23
       # -------------------------------------------------------------------
       - id: cppcheck

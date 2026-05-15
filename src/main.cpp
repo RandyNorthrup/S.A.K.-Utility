@@ -12,7 +12,9 @@
 #include "sak/windows11_theme.h"
 
 #include <QApplication>
+#include <QByteArray>
 #include <QCoreApplication>
+#include <QDir>
 #include <QFileInfo>
 #include <QIcon>
 #include <QMessageBox>
@@ -72,7 +74,9 @@ QApplication& initializeApp(int argc, char* argv[]) {
 /// @brief Initialize the logger subsystem.
 /// @return true on success, false on failure (with user-visible error shown).
 bool initializeLogger() {
-    auto log_dir = std::filesystem::current_path() / "_logs";
+    const QString log_path =
+        QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("data/logs"));
+    auto log_dir = std::filesystem::path(log_path.toStdWString());
     auto& logger = sak::logger::instance();
 
     if (auto result = logger.initialize(log_dir); !result) {
@@ -85,6 +89,16 @@ bool initializeLogger() {
     }
 
     return true;
+}
+
+void configurePortableRuntimeDirs() {
+    const QString app_dir = QCoreApplication::applicationDirPath();
+    const QString data_dir = QDir(app_dir).filePath(QStringLiteral("data"));
+    const QString temp_dir = QDir(data_dir).filePath(QStringLiteral("temp"));
+    QDir().mkpath(temp_dir);
+    const QByteArray native_temp = QDir::toNativeSeparators(temp_dir).toLocal8Bit();
+    qputenv("TMP", native_temp);
+    qputenv("TEMP", native_temp);
 }
 
 /// @brief Log startup banner with version and platform info.
@@ -144,6 +158,7 @@ int showMainWindow(QApplication& app) {
 int main(int argc, char* argv[]) {
     try {
         QApplication& app = initializeApp(argc, argv);
+        configurePortableRuntimeDirs();
 
         if (!initializeLogger()) {
             return 1;

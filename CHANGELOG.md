@@ -6,6 +6,22 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+## v0.9.1.3
+
+- **AI Assistant Panel v1** - First-tab Codex-style technician workspace with prompt/result chat bubbles, session picker, custom chat names, prompt history, context/instruction chips, workflow details, artifacts button, report generation, and global status-bar integration.
+- **Encrypted app-local OpenAI key storage** - User-supplied OpenAI API keys are saved under `<app>/data/credentials/` with Windows DPAPI encryption and owner-only file permissions. No Windows Credential Manager dependency.
+- **Local conversation store** - Each session has its own folder under `<app>/data/ai_sessions/` with manifest, transcript, usage, memory, run state, trace data, and session-specific artifacts so context and outputs do not pollute other sessions.
+- **OpenAI Responses client** - HTTPS client with selectable model, usage parsing (input, cached input, output, reasoning, total), function-tool calls, web search citations, conversation state via `previous_response_id`, strict-schema local tools, and a versioned SAK user-agent.
+- **Local PC action tools** - `run_powershell` with optional SAK elevation, non-admin `run_cmd`, non-admin `run_process`, `take_screenshot`, `download_file`, `sak_package_manager`, and `sak_offline_downloader`. Package/offline requests prefer SAK built-ins before raw shell or web commands.
+- **Approval, safety, and cancellation** - Assisted mode shows command approval prompts with full command text; risky/destructive operations can offer restore points; Stop/cancel propagates across model calls, local tools, workflow phases, and subagents.
+- **Multi-agent workflow engine** - Main overseer coordinates specialized subagents, shared working memory, phase progress, required inputs, recovery policy, verification, cleanup, artifacts, and human handoff.
+- **Workflow library** - Built-in technician workflows for full PC health checks, drive health, Windows Update repair, network repair, BSOD investigation, printer troubleshooting, startup performance, security advisory review, malware/virus removal, PC cleanup, bloatware/adware removal, clean uninstall, app install, offline installer download, offline deployment bundles, tool-assisted tasks, and service reports.
+- **Reports and artifacts** - Manual reports can be generated as HTML, Markdown, or plain text to a user-selected location after reportable results exist. Reports evaluate the session transcript, evidence, findings, actions, verification, risks, and remaining recommendations.
+- **Redaction** - `CredentialStore::redactSecrets` covers OpenAI keys, bearer tokens, GitHub tokens (`ghp_/gho_/ghu_/ghs_/ghr_`), AWS access keys (`AKIA/ASIA`), Google API keys, Slack tokens, Stripe live/test keys, and `password=`/`secret=`/`token=`/`api_key=` style assignments across model-bound output, JSONL, logs, and reports.
+- **Tests** - Added focused AI coverage for token usage, OpenAI response parsing, conversation store, execution broker, cancellation, run state, human gates, recovery policy, package selection, workflow clarification/evals/store, trace store, tool policy/dispatch, subagent runner, and orchestrator behavior. Current suite: 111 registered CTest tests.
+
+---
+
 ## v0.9.1.2
 
 - **Email panel performance & stability** — Eliminated GUI freezes and a rescan-mid-loop crash class in the email file scanner by moving its synchronous filesystem traversal off the GUI thread onto `QtConcurrent::run`/`QFutureWatcher`; removed both `QApplication::processEvents()` reentrancy band-aids. Batched row population in the file scanner, attachments browser, and contacts dialog under `setUpdatesEnabled(false)` + `setSortingEnabled(false)` + `QSignalBlocker` to cut per-row repaint cost on large mailboxes. Added a 150 ms debounce timer to the contacts search line-edit and a 50 ms debounce timer to the inspector preview so that CID attachment arrivals and remote-image downloads coalesce into a single `QTextBrowser::setHtml()` call instead of one parse per image. Linked `Qt6::Gui` into `test_pst_parser`, `test_ost_integration`, `test_email_search_worker`, and `test_email_export_worker` to match the parser's `QTextDocument` dependency.

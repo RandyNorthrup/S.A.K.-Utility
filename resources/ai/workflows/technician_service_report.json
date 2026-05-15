@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "id": "technician_service_report",
+  "title": "Technician Service Report",
+  "role": "Report Writer",
+  "category": "Reporting",
+  "description": "Create a technician/customer report from current session evidence.",
+  "starter_prompt": "Create a technician service report from this AI session.",
+  "required_inputs": [],
+  "required_software": [
+    {"id": "report_button", "kind": "sak_tool", "required": true, "install_policy": "built_in_only"}
+  ],
+  "instructions": ["instructions/reporting_standard.md", "instructions/evidence_policy.md"],
+  "skills": ["skills/customer-handoff-report.md", "skills/artifact-verification.md", "skills/cleanup-after-job.md"],
+  "agents": [
+    {"id": "report_agent", "model_policy": "writer", "tool_policy": "no_local_execution", "token_budget": 8000},
+    {"id": "critic_agent", "model_policy": "fast_reasoning", "tool_policy": "no_local_execution", "token_budget": 4000}
+  ],
+  "phases": [
+    {"id": "collect_session", "type": "overseer", "prompt": "Collect session transcript, commands, artifacts, citations, token/tool summary, and user goal.", "completion": "Session evidence is ready."},
+    {"id": "draft_report", "type": "delegate", "agent": "report_agent", "prompt": "Draft a technician-readable service report with issue, context, evidence, actions/tools used, verification, artifacts, cleanup status, residual risk, and follow-up.", "expected_output": "service_report", "risk": "none", "completion": "Report draft is complete."},
+    {"id": "redaction_review", "type": "delegate", "agent": "critic_agent", "prompt": "Check for secrets, personal data, unsupported claims, missing evidence, and unclear next steps.", "expected_output": "report_review", "risk": "none", "completion": "Report is safe to share or gaps are listed."},
+    {"id": "finalize", "type": "overseer", "prompt": "Finalize report and add it to artifacts.", "completion": "Report artifact exists and is referenced."},
+    {"id": "cleanup", "type": "cleanup", "prompt": "Preserve final report and supporting evidence; remove only temporary draft scratch files created by this workflow.", "completion": "Cleanup status is recorded."}
+  ],
+  "acceptance_criteria": [
+    "Report includes evidence and actions.",
+    "Secrets and unnecessary personal data are removed.",
+    "Verification and residual risk are included.",
+    "Generated report is saved as artifact."
+  ],
+  "cancel_policy": {"cancel_children": true, "cancel_tools": true, "preserve_partial_artifacts": true, "report_partial_state": true}
+}

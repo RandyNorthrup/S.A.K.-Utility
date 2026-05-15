@@ -19,15 +19,15 @@ namespace sak {
  * @brief Information about a physical drive
  */
 struct DriveInfo {
-    QString devicePath;   // e.g., "\\.\PhysicalDrive1"
-    QString name;         // e.g., "Generic USB Flash Disk"
-    QString description;  // Additional info
-    qint64 size;          // Size in bytes
-    quint32 blockSize;    // Block size in bytes (usually 512 or 4096)
-    bool isSystem;        // True if contains Windows installation
-    bool isRemovable;     // True if removable media
-    bool isReadOnly;      // True if write-protected
-    QString busType;      // USB, SATA, NVMe, SD, etc.
+    QString devicePath;       // e.g., "\\.\PhysicalDrive1"
+    QString name;             // e.g., "Generic USB Flash Disk"
+    QString description;      // Additional info
+    qint64 size{0};           // Size in bytes
+    quint32 blockSize{0};     // Block size in bytes (usually 512 or 4096)
+    bool isSystem{false};     // True if contains Windows installation
+    bool isRemovable{false};  // True if removable media
+    bool isReadOnly{false};   // True if write-protected
+    QString busType;          // USB, SATA, NVMe, SD, etc.
 
     // Volume information (if mounted)
     QStringList mountPoints;  // e.g., ["E:\\", "F:\\"]

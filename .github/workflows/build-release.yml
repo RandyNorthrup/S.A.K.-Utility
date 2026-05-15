@@ -110,6 +110,11 @@ jobs:
         # The script is idempotent — skips if iperf3.exe is already present.
         & scripts/bundle_iperf3.ps1
 
+    - name: Verify Qt resource manifests
+      shell: pwsh
+      run: |
+        & scripts/check_qrc_resources.ps1
+
     - name: Configure CMake
       run: |
         cmake -B build -G "Visual Studio 17 2022" -A x64 `
@@ -481,6 +486,13 @@ jobs:
           # S.A.K. Utility v${{ steps.version.outputs.version }}
 
           **Swiss Army Knife Utility** — a portable Windows toolkit for PC technicians, IT pros, and sysadmins. Single EXE, no installer, no runtime dependencies. Drop it on a USB stick and go.
+
+          ### AI Assistant
+          Codex-style technician chat workspace with prompt/result transcript, custom chat sessions, prompt history, context chips, Markdown instruction attachments, token usage status, and generated reports. Uses a user-supplied OpenAI API key stored encrypted under the portable app data directory.
+
+          **Local PC actions** - PowerShell, cmd.exe, direct process launch, screenshots, HTTPS downloads, SAK package manager actions, and SAK offline downloader actions. Risky or destructive operations use approval gates and restore-point prompts when rollback may be needed.
+
+          **Multi-agent workflows** - Overseer-led workflow execution with specialized subagents, shared session memory, phase progress, cancellation, recovery policy, verification, cleanup, artifacts, and human handoff. Built-in workflows cover full PC health checks, drive diagnostics, Windows Update repair, network repair, BSOD investigation, printer troubleshooting, startup performance triage, malware and virus removal, bloatware/adware cleanup, clean uninstall, app install, offline installer download, offline deployment bundles, technician tool-assisted tasks, and service reports.
 
           ### Backup and Restore
           Step-by-step user profile backup and restore wizards. Smart category filtering (Documents, Desktop, AppData, browser profiles, etc.), AES-256 encryption, NTFS permission and timestamp preservation, and compressed ZIP output. Integrated quick tools: Screenshot Settings capture and BitLocker Key Backup.

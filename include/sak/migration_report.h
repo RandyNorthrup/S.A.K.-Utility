@@ -138,8 +138,8 @@ private:
     QString formatHtmlReport() const;
     static MigrationEntry parseEntryFromJson(const QJsonObject& obj);
     static void populateMatchFields(MigrationEntry& entry,
-                             const QMap<QString, PackageMatcher::MatchResult>& match_map,
-                             const QString& app_name);
+                                    const QMap<QString, PackageMatcher::MatchResult>& match_map,
+                                    const QString& app_name);
     static QString buildHtmlStyles();
     void buildHtmlEntryRows(QTextStream& out) const;
 

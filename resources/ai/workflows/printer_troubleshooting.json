@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "id": "printer_troubleshooting",
+  "title": "Printer Troubleshooting",
+  "role": "PC Technician",
+  "category": "Devices",
+  "description": "Diagnose Windows printer issues with spooler, driver, queue, and connectivity checks.",
+  "starter_prompt": "Troubleshoot this printer problem. Start with read-only checks and ask before clearing queues or restarting services.",
+  "required_inputs": [
+    {"id": "printer_name", "label": "Printer name or symptom", "type": "string", "required": true}
+  ],
+  "required_software": [
+    {"id": "powershell", "kind": "system_tool", "required": true, "install_policy": "already_available"}
+  ],
+  "instructions": ["instructions/windows_repair_safety.md", "instructions/evidence_policy.md", "instructions/reporting_standard.md"],
+  "skills": ["skills/artifact-verification.md", "skills/customer-handoff-report.md", "skills/cleanup-after-job.md"],
+  "agents": [
+    {"id": "diagnostic_agent", "model_policy": "fast_reasoning", "tool_policy": "read_only_pc", "token_budget": 8000},
+    {"id": "repair_agent", "model_policy": "careful_reasoning", "tool_policy": "mutating_requires_lease", "token_budget": 8000},
+    {"id": "report_agent", "model_policy": "writer", "tool_policy": "no_local_execution", "token_budget": 4000}
+  ],
+  "phases": [
+    {"id": "clarify", "type": "overseer", "prompt": "Confirm printer name, USB/network connection, error message, affected apps, and whether other users can print.", "completion": "Printer scope is clear."},
+    {"id": "collect_printer_state", "type": "tool_action", "tool": "run_powershell", "operation": "diagnose", "arguments": {"command": "$ErrorActionPreference='Continue'; Write-Output '== Printers =='; Get-Printer | Select-Object Name,PrinterStatus,Default,DriverName,PortName,Shared | Format-Table -AutoSize; Write-Output '== Print queues =='; Get-PrintJob -ErrorAction SilentlyContinue | Select-Object PrinterName,ID,JobStatus,SubmittedTime,DocumentName | Format-Table -AutoSize; Write-Output '== Spooler service =='; Get-Service Spooler | Format-List Name,Status,StartType; Write-Output '== Drivers =='; Get-PrinterDriver | Select-Object Name,Manufacturer,DriverVersion | Format-Table -AutoSize; Write-Output '== Ports =='; Get-PrinterPort | Select-Object Name,PrinterHostAddress,PortNumber,Protocol | Format-Table -AutoSize; Write-Output '== Recent print events =='; Get-WinEvent -LogName Microsoft-Windows-PrintService/Operational -MaxEvents 80 -ErrorAction SilentlyContinue | Select-Object TimeCreated,Id,LevelDisplayName,Message | Format-List", "timeout_seconds": 120, "requires_admin": false, "max_output_bytes": 524288}, "prompt": "Collect read-only printer list, default printer, queue state, spooler service status, print event logs, drivers, and ports.", "risk": "read_only", "completion": "Printer evidence is captured."},
+    {"id": "analyze", "type": "delegate", "agent": "diagnostic_agent", "prompt": "Identify whether issue is queue, spooler, driver, port, network, or application-specific. Recommend safest fix.", "expected_output": "printer_diagnosis", "risk": "read_only", "completion": "Likely cause and repair choice are documented."},
+    {"id": "repair", "type": "tool_action", "tool": "run_powershell", "operation": "repair", "arguments": {"command": "$ErrorActionPreference='Continue'; Write-Output '== Restart print spooler =='; Restart-Service Spooler -Force; Start-Sleep -Seconds 2; Get-Service Spooler | Format-List Name,Status,StartType; Write-Output 'Spooler restart complete. Queue clearing and test print are intentionally not automatic.'", "timeout_seconds": 120, "requires_admin": true, "max_output_bytes": 262144}, "prompt": "After approval/restore gate, perform only targeted repair: restart the print spooler. Do not clear queues or print a test page automatically.", "risk": "system_change", "completion": "Approved printer repair completed or skipped."},
+    {"id": "verify", "type": "tool_action", "tool": "run_powershell", "operation": "verify", "condition": "repair_succeeded", "arguments": {"command": "$ErrorActionPreference='Continue'; Write-Output '== Printer state =='; Get-Printer | Select-Object Name,PrinterStatus,Default,DriverName,PortName | Format-Table -AutoSize; Write-Output '== Queue state =='; Get-PrintJob -ErrorAction SilentlyContinue | Select-Object PrinterName,ID,JobStatus,SubmittedTime,DocumentName | Format-Table -AutoSize; Write-Output '== Spooler =='; Get-Service Spooler | Format-List Name,Status,StartType", "timeout_seconds": 90, "requires_admin": false, "max_output_bytes": 262144}, "prompt": "Verify printer exists, spooler is running, queue is healthy, and port/driver status is readable. Do not print test page automatically unless requested.", "risk": "read_only", "completion": "Post-repair state is verified."},
+    {"id": "report", "type": "delegate", "agent": "report_agent", "prompt": "Create a technician-readable printer troubleshooting report with issue, evidence, actions/tools used, repair result, verification result, logs/artifacts, cleanup status, residual risk, and any manual test-page/user action needed.", "expected_output": "printer_report", "risk": "none", "completion": "User has a printer troubleshooting report."},
+    {"id": "cleanup", "type": "cleanup", "prompt": "Preserve logs and report; remove only workflow-owned temporary scratch files.", "completion": "Cleanup status is recorded."}
+  ],
+  "acceptance_criteria": [
+    "Printer state and event logs were captured first.",
+    "Queue clear or service restart required approval.",
+    "Driver/port/spooler status is included in report.",
+    "No test page was printed unless user requested it."
+  ],
+  "cancel_policy": {"cancel_children": true, "cancel_tools": true, "preserve_partial_artifacts": true, "report_partial_state": true}
+}

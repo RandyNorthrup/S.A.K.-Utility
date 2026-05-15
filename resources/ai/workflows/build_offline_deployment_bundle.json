@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "id": "build_offline_deployment_bundle",
+  "title": "Build Offline Deployment Bundle",
+  "role": "Software Installer",
+  "category": "Software",
+  "description": "Create an internalized offline Chocolatey deployment bundle.",
+  "starter_prompt": "Build an offline deployment bundle for the requested apps using SAK offline downloader.",
+  "required_inputs": [
+    {"id": "app_list", "label": "Applications", "type": "list", "required": true},
+    {"id": "output_dir", "label": "Output directory", "type": "path", "required": false}
+  ],
+  "required_software": [
+    {"id": "sak_offline_downloader", "kind": "sak_tool", "required": true, "install_policy": "built_in_only"},
+    {"id": "chocolatey_portable", "kind": "bundled_tool", "required": true, "install_policy": "already_bundled"}
+  ],
+  "instructions": ["instructions/offline_downloader_priority.md", "instructions/software_install_policy.md", "instructions/reporting_standard.md"],
+  "skills": ["skills/package-selection.md", "skills/artifact-verification.md", "skills/cleanup-after-job.md", "skills/customer-handoff-report.md"],
+  "agents": [
+    {"id": "package_agent", "model_policy": "fast_reasoning", "tool_policy": "package_tools_only", "token_budget": 10000},
+    {"id": "report_agent", "model_policy": "writer", "tool_policy": "no_local_execution", "token_budget": 5000}
+  ],
+  "phases": [
+    {"id": "map_packages", "type": "tool_action", "tool": "sak_offline_downloader", "operation": "search", "prompt": "Search the built-in SAK offline downloader/package catalog for every requested app before building the bundle.", "risk": "read_only", "completion": "Built-in package candidates are captured or ambiguity is reported."},
+    {"id": "build_bundle", "type": "tool_action", "tool": "sak_offline_downloader", "operation": "build_bundle", "prompt": "Build offline bundle with internalized packages and manifest.", "risk": "download_and_package", "completion": "Bundle manifest and package files are created."},
+    {"id": "verify_bundle", "type": "overseer", "prompt": "Check manifest, package count, failed packages, sizes, and hashes.", "completion": "Bundle success/failure is clear."},
+    {"id": "report", "type": "delegate", "agent": "report_agent", "prompt": "Create a technician-readable deployment handoff report with evidence, manifest path, packages, actions/tools used, failures, verification status, hashes/artifacts, cleanup status, residual risk, and install instructions.", "expected_output": "bundle_report", "risk": "none", "completion": "Deployment notes are ready."},
+    {"id": "cleanup", "type": "cleanup", "prompt": "Remove work folders, keep bundle files and logs.", "completion": "Cleanup state is recorded."}
+  ],
+  "acceptance_criteria": [
+    "SAK offline bundle builder was used.",
+    "Manifest path is reported.",
+    "Failed packages are not hidden.",
+    "Install-from-bundle instructions are included."
+  ],
+  "cancel_policy": {"cancel_children": true, "cancel_tools": true, "preserve_partial_artifacts": true, "report_partial_state": true}
+}

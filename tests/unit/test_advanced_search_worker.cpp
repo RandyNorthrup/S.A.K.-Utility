@@ -985,8 +985,11 @@ void AdvancedSearchWorkerTests::imageMetadataSearch_directorySearch() {
 
 void AdvancedSearchWorkerTests::imageMetadataSearch_realDirectory() {
     // Diagnostic test: verify EXIF metadata search works on real JPEGs.
-    // Requires exif-samples-master at the path below; QSKIP if absent.
-    const QString real_dir = "C:/Users/Randy/Pictures/exif-samples-master";
+    // Requires SAK_EXIF_SAMPLE_DIR to point to an EXIF sample directory.
+    const QString real_dir = qEnvironmentVariable("SAK_EXIF_SAMPLE_DIR").trimmed();
+    if (real_dir.isEmpty()) {
+        QSKIP("Set SAK_EXIF_SAMPLE_DIR to run this diagnostic test");
+    }
     if (!QDir(real_dir).exists()) {
         QSKIP("exif-samples-master test directory not available");
     }

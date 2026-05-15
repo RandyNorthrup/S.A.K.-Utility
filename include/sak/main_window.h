@@ -36,6 +36,9 @@ class AdvancedUninstallPanel;
 class NetworkDiagnosticPanel;
 class EmailInspectorPanel;
 class OstConverterWidget;
+#if defined(SAK_ENABLE_AI_ASSISTANT) && SAK_ENABLE_AI_ASSISTANT
+class AiAssistantPanel;
+#endif
 
 /**
  * @brief Main application window for S.A.K. Utility
@@ -160,6 +163,11 @@ private:
     /// @brief Connect remaining panel status/progress signals
     void connectRemainingPanelSignals();
 
+#if defined(SAK_ENABLE_AI_ASSISTANT) && SAK_ENABLE_AI_ASSISTANT
+    /// @brief Connect AI assistant status/progress signals
+    void connectAiAssistantSignals();
+#endif
+
     /// @brief Connect panel log signals to the shared log window
     void connectPanelLogs();
 
@@ -212,9 +220,15 @@ private:
     std::unique_ptr<NetworkDiagnosticPanel> m_network_diagnostic_panel;
     std::unique_ptr<EmailInspectorPanel> m_email_inspector_panel;
     std::unique_ptr<OstConverterWidget> m_ost_converter_widget;
+#if defined(SAK_ENABLE_AI_ASSISTANT) && SAK_ENABLE_AI_ASSISTANT
+    std::unique_ptr<AiAssistantPanel> m_ai_assistant_panel;
+#endif
 
     // Status bar components
     QLabel* m_status_label{nullptr};
+#if defined(SAK_ENABLE_AI_ASSISTANT) && SAK_ENABLE_AI_ASSISTANT
+    QLabel* m_ai_status_label{nullptr};
+#endif
     QWidget* m_elevation_label{nullptr};
     QProgressBar* m_progress_bar{nullptr};
 

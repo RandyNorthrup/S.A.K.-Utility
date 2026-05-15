@@ -70,7 +70,7 @@ public:
     constexpr secure_allocator(const secure_allocator&) noexcept = default;
 
     template <typename U>
-    constexpr secure_allocator(const secure_allocator<U>&) noexcept {}
+    explicit constexpr secure_allocator(const secure_allocator<U>&) noexcept {}
 
     [[nodiscard]] static T* allocate(std::size_t n) {
         if (n > std::numeric_limits<std::size_t>::max() / sizeof(T)) {

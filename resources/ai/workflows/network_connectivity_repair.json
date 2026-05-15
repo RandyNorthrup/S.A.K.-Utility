@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "id": "network_connectivity_repair",
+  "title": "Network Connectivity Repair",
+  "role": "Windows Repair",
+  "category": "Network",
+  "description": "Diagnose and repair common Windows network connectivity issues with read-only checks before any reset.",
+  "starter_prompt": "Diagnose this PC's network connectivity problem. Start read-only and ask before resets.",
+  "required_inputs": [
+    {"id": "symptom", "label": "Network symptom", "type": "string", "required": true}
+  ],
+  "required_software": [
+    {"id": "powershell", "kind": "system_tool", "required": true, "install_policy": "already_available"}
+  ],
+  "instructions": ["instructions/windows_repair_safety.md", "instructions/evidence_policy.md", "instructions/reporting_standard.md"],
+  "skills": ["skills/artifact-verification.md", "skills/customer-handoff-report.md", "skills/cleanup-after-job.md"],
+  "agents": [
+    {"id": "diagnostic_agent", "model_policy": "fast_reasoning", "tool_policy": "read_only_pc", "token_budget": 8000},
+    {"id": "repair_agent", "model_policy": "careful_reasoning", "tool_policy": "mutating_requires_lease", "token_budget": 9000},
+    {"id": "report_agent", "model_policy": "writer", "tool_policy": "no_local_execution", "token_budget": 4000}
+  ],
+  "phases": [
+    {"id": "clarify", "type": "overseer", "prompt": "Confirm symptom, affected network, wired/wireless, VPN/proxy use, and when it started.", "completion": "Network scope is clear."},
+    {"id": "collect_state", "type": "tool_action", "tool": "run_powershell", "operation": "diagnose", "arguments": {"command": "$ErrorActionPreference='Continue'; Write-Output '== Get-NetAdapter =='; Get-NetAdapter | Format-List Name,Status,InterfaceDescription,LinkSpeed,MacAddress; Write-Output '== Get-NetIPConfiguration =='; Get-NetIPConfiguration | Format-List; Write-Output '== DNS Servers =='; Get-DnsClientServerAddress | Format-Table -AutoSize; Write-Output '== ipconfig /all =='; ipconfig /all; Write-Output '== route print =='; route print; Write-Output '== Recent network events =='; Get-WinEvent -LogName System -MaxEvents 200 | Where-Object { $_.ProviderName -match 'Tcpip|Dhcp|DNS Client Events|Netwtw|NetBT|WLAN-AutoConfig|NlaSvc' } | Select-Object TimeCreated,ProviderName,Id,LevelDisplayName,Message -First 40 | Format-List", "timeout_seconds": 90, "requires_admin": false, "max_output_bytes": 262144}, "prompt": "Run read-only commands: Get-NetAdapter, Get-NetIPConfiguration, Get-DnsClientServerAddress, ipconfig /all, route print, and recent network event logs.", "risk": "read_only", "completion": "Network state and logs are captured."},
+    {"id": "analyze", "type": "delegate", "agent": "diagnostic_agent", "prompt": "Analyze adapter, DNS, gateway, DHCP, proxy, VPN, and event evidence. Identify likely cause and safest repair.", "expected_output": "network_diagnosis", "risk": "read_only", "completion": "Root-cause hypothesis is documented."},
+    {"id": "repair", "type": "tool_action", "tool": "run_powershell", "operation": "repair", "arguments": {"command": "$ErrorActionPreference='Continue'; Write-Output '== Flush DNS client cache =='; Clear-DnsClientCache; Write-Output '== Renew DHCP leases =='; ipconfig /renew; Write-Output 'Targeted network repair completed. A reboot may still be required if Winsock/VPN/filter drivers are involved.'", "timeout_seconds": 180, "requires_admin": false, "max_output_bytes": 262144}, "prompt": "After approval/restore gate if needed, run only targeted low-risk network repair commands: DNS cache flush and DHCP renew. Do not run Winsock reset or adapter disable automatically.", "risk": "system_change", "completion": "Targeted repair completed or skipped with reason."},
+    {"id": "verify", "type": "tool_action", "tool": "run_powershell", "operation": "verify", "condition": "repair_succeeded", "arguments": {"command": "$ErrorActionPreference='Continue'; Write-Output '== Adapter status =='; Get-NetAdapter | Format-Table Name,Status,LinkSpeed -AutoSize; Write-Output '== Gateway ping =='; $gw=(Get-NetIPConfiguration | Where-Object { $_.IPv4DefaultGateway } | Select-Object -First 1 -ExpandProperty IPv4DefaultGateway).NextHop; if ($gw) { Test-Connection -ComputerName $gw -Count 2 } else { Write-Output 'No IPv4 gateway detected' }; Write-Output '== DNS resolve =='; Resolve-DnsName microsoft.com -ErrorAction SilentlyContinue | Select-Object -First 5 | Format-List; Write-Output '== HTTPS reachability =='; Test-NetConnection www.microsoft.com -Port 443", "timeout_seconds": 90, "requires_admin": false, "max_output_bytes": 262144}, "prompt": "Verify adapter up, gateway reachable, DNS resolves, and internet endpoint reachable.", "risk": "read_only", "completion": "Connectivity is verified or remaining failure is captured."},
+    {"id": "report", "type": "delegate", "agent": "report_agent", "prompt": "Create a technician-readable network repair report with symptom, evidence, actions/tools used, repair steps, verification result, logs/artifacts, cleanup status, residual risk, rollback notes, and follow-up.", "expected_output": "network_repair_report", "risk": "none", "completion": "User has a clear handoff report."},
+    {"id": "cleanup", "type": "cleanup", "prompt": "Preserve logs and report; remove only workflow-owned temporary scratch files.", "completion": "Cleanup status is recorded."}
+  ],
+  "acceptance_criteria": [
+    "Read-only diagnostics were captured before repair.",
+    "Risky reset commands were approved before running.",
+    "Verification includes adapter, gateway, DNS, and endpoint checks.",
+    "Report lists commands run and rollback/follow-up guidance."
+  ],
+  "cancel_policy": {"cancel_children": true, "cancel_tools": true, "preserve_partial_artifacts": true, "report_partial_state": true}
+}

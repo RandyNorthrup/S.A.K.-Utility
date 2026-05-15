@@ -14,7 +14,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
-#include <QStandardPaths>
+
 #include <algorithm>
 
 namespace sak {
@@ -24,22 +24,12 @@ namespace sak {
 RegexPatternLibrary::RegexPatternLibrary(QObject* parent) : QObject(parent) {
     initBuiltinPatterns();
 
-    // Determine storage file location
     const QString appDir = QCoreApplication::applicationDirPath();
-    const QString portableIni = appDir + "/portable.ini";
-
-    if (QFile::exists(portableIni)) {
-        // Portable mode: store alongside the executable
-        m_storage_file = appDir + "/custom_regex_patterns.json";
-    } else {
-        // Installed mode: use standard app data location
-        const QString dataDir =
-            QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation);
-        if (!QDir().mkpath(dataDir)) {
-            sak::logWarning("Failed to create app data directory: {}", dataDir.toStdString());
-        }
-        m_storage_file = dataDir + "/custom_regex_patterns.json";
+    const QString dataDir = QDir(appDir).filePath(QStringLiteral("data/config"));
+    if (!QDir().mkpath(dataDir)) {
+        sak::logWarning("Failed to create app config directory: {}", dataDir.toStdString());
     }
+    m_storage_file = QDir(dataDir).filePath(QStringLiteral("custom_regex_patterns.json"));
 
     loadCustomPatterns();
 }
@@ -88,14 +78,16 @@ void RegexPatternLibrary::addCustomPattern(const QString& key,
                                            const QString& label,
                                            const QString& pattern) {
     // Check for duplicate keys in both built-in and custom patterns
-    if (std::any_of(m_builtin_patterns.begin(), m_builtin_patterns.end(),
-            [&key](const auto& p) { return p.key == key; })) {
+    if (std::any_of(m_builtin_patterns.begin(), m_builtin_patterns.end(), [&key](const auto& p) {
+            return p.key == key;
+        })) {
         logWarning("RegexPatternLibrary: key '{}' conflicts with built-in pattern, rejected",
                    key.toStdString());
         return;
     }
-    if (std::any_of(m_custom_patterns.begin(), m_custom_patterns.end(),
-            [&key](const auto& p) { return p.key == key; })) {
+    if (std::any_of(m_custom_patterns.begin(), m_custom_patterns.end(), [&key](const auto& p) {
+            return p.key == key;
+        })) {
         logWarning("RegexPatternLibrary: key '{}' already exists in custom patterns, rejected",
                    key.toStdString());
         return;
@@ -145,8 +137,9 @@ void RegexPatternLibrary::updateCustomPattern(const QString& key,
         return;
     }
 
-    auto it = std::find_if(m_custom_patterns.begin(), m_custom_patterns.end(),
-        [&key](const auto& p) { return p.key == key; });
+    auto it = std::find_if(m_custom_patterns.begin(),
+                           m_custom_patterns.end(),
+                           [&key](const auto& p) { return p.key == key; });
     if (it != m_custom_patterns.end()) {
         it->label = label;
         it->pattern = pattern;
@@ -162,8 +155,8 @@ void RegexPatternLibrary::setPatternEnabled(const QString& key, bool enabled) {
     Q_ASSERT(!key.isEmpty());
     // Check built-in patterns first
     auto builtin_it = std::find_if(m_builtin_patterns.begin(),
-        m_builtin_patterns.end(),
-        [&key](const auto& p) { return p.key == key; });
+                                   m_builtin_patterns.end(),
+                                   [&key](const auto& p) { return p.key == key; });
     if (builtin_it != m_builtin_patterns.end()) {
         builtin_it->enabled = enabled;
         Q_EMIT patternsChanged();
@@ -172,8 +165,8 @@ void RegexPatternLibrary::setPatternEnabled(const QString& key, bool enabled) {
 
     // Then check custom patterns
     auto custom_it = std::find_if(m_custom_patterns.begin(),
-        m_custom_patterns.end(),
-        [&key](const auto& p) { return p.key == key; });
+                                  m_custom_patterns.end(),
+                                  [&key](const auto& p) { return p.key == key; });
     if (custom_it != m_custom_patterns.end()) {
         custom_it->enabled = enabled;
         Q_EMIT patternsChanged();
@@ -200,10 +193,12 @@ QString RegexPatternLibrary::combinedPattern() const {
 }
 
 int RegexPatternLibrary::activeCount() const {
-    return std::count_if(m_builtin_patterns.begin(), m_builtin_patterns.end(),
-               [](const auto& p) { return p.enabled; }) +
-           std::count_if(m_custom_patterns.begin(), m_custom_patterns.end(),
-               [](const auto& p) { return p.enabled; });
+    return std::count_if(m_builtin_patterns.begin(),
+                         m_builtin_patterns.end(),
+                         [](const auto& p) { return p.enabled; }) +
+           std::count_if(m_custom_patterns.begin(), m_custom_patterns.end(), [](const auto& p) {
+               return p.enabled;
+           });
 }
 
 void RegexPatternLibrary::clearAll() {

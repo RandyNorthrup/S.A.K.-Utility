@@ -10,11 +10,14 @@
 #include <QCoreApplication>
 #include <QDebug>
 #include <QFileInfo>
+#include <QProcessEnvironment>
 #include <QtTest/QtTest>
 
-static const QString kOstPath = QStringLiteral(
-    "C:/Users/Randy/AppData/Local/Microsoft/Outlook/"
-    "randy.northrup@outlook.com.ost");
+static QString configuredOstPath() {
+    return QProcessEnvironment::systemEnvironment()
+        .value(QStringLiteral("SAK_TEST_OST_PATH"))
+        .trimmed();
+}
 
 // ================================================================
 // Helpers: tree printing and folder item verification
@@ -115,11 +118,15 @@ class TestOstIntegration : public QObject {
 private Q_SLOTS:
 
     void openRealOstFile() {
-        QFileInfo fi(kOstPath);
+        const QString ost_path = configuredOstPath();
+        if (ost_path.isEmpty()) {
+            QSKIP("Set SAK_TEST_OST_PATH to run this integration test");
+        }
+        QFileInfo fi(ost_path);
         if (!fi.exists()) {
             QSKIP("OST file not found — skipping integration test");
         }
-        qDebug() << "OST file:" << kOstPath;
+        qDebug() << "OST file:" << ost_path;
         qDebug() << "Size:" << fi.size() << "bytes";
 
         PstParser parser;
@@ -154,7 +161,7 @@ private Q_SLOTS:
         });
 
         // Attempt open
-        parser.open(kOstPath);
+        parser.open(ost_path);
 
         if (!errors.isEmpty()) {
             qDebug() << "\n=== PARSE ERRORS ===";

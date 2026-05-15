@@ -89,7 +89,7 @@ bool WindowsUSBCreator::createBootableUSB(const QString& isoPath, const QString&
 bool WindowsUSBCreator::validateUSBInputs(const QString& isoPath, const QString& diskNumber) {
     Q_ASSERT(!isoPath.isEmpty());
     Q_ASSERT(!diskNumber.isEmpty());
-    // Validate diskNumber is a pure integer to prevent command injection (BUG-09).
+    // Validate diskNumber is a pure integer to prevent command injection.
     static const QRegularExpression diskNumRegex(QStringLiteral("^\\d{1,3}$"));
     if (!diskNumRegex.match(diskNumber).hasMatch()) {
         setError(QString("Invalid disk number format: %1").arg(diskNumber));

@@ -19,17 +19,26 @@
 #include "sak/logger.h"
 #include "sak/permission_manager.h"
 
+#include <QByteArray>
 #include <QCoreApplication>
+#include <QDir>
+#include <QElapsedTimer>
 #include <QFile>
 #include <QJsonObject>
 #include <QProcess>
 #include <QString>
+#include <QStringList>
 #include <QTimer>
 
+#include <algorithm>
 #include <expected>
 #include <filesystem>
 #include <functional>
 #include <memory>
+
+#ifdef _WIN32
+#include <windows.h>
+#endif
 
 namespace {
 
@@ -53,6 +62,16 @@ HelperArgs parseArgs(int argc, char* argv[]) {
         }
     }
     return args;
+}
+
+void configurePortableRuntimeDirs() {
+    const QString app_dir = QCoreApplication::applicationDirPath();
+    const QString data_dir = QDir(app_dir).filePath(QStringLiteral("data"));
+    const QString temp_dir = QDir(data_dir).filePath(QStringLiteral("temp"));
+    QDir().mkpath(temp_dir);
+    const QByteArray native_temp = QDir::toNativeSeparators(temp_dir).toLocal8Bit();
+    qputenv("TMP", native_temp);
+    qputenv("TEMP", native_temp);
 }
 
 // ======================================================================
@@ -133,6 +152,261 @@ sak::TaskHandlerResult runPermissionTask(
     }
     progress(100, action_label + QStringLiteral("done"));
     return {true, {}, {}};
+}
+
+QString cappedTaskOutput(const QString& value, int max_bytes) {
+    if (max_bytes <= 0) {
+        return {};
+    }
+
+    const QByteArray bytes = value.toUtf8();
+    if (bytes.size() <= max_bytes) {
+        return value;
+    }
+
+    return QString::fromUtf8(bytes.left(max_bytes)) +
+           QStringLiteral("\n...[output truncated to %1 bytes]").arg(max_bytes);
+}
+
+#ifdef _WIN32
+struct ElevatedJobGuard {
+    HANDLE job{nullptr};
+    ~ElevatedJobGuard() {
+        if (job) {
+            ::CloseHandle(job);  // KILL_ON_JOB_CLOSE reaps survivors
+        }
+    }
+    void assign(qint64 pid) {
+        if (!job) {
+            job = ::CreateJobObjectW(nullptr, nullptr);
+            if (!job) {
+                return;
+            }
+            JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
+            limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+            ::SetInformationJobObject(
+                job, JobObjectExtendedLimitInformation, &limits, sizeof(limits));
+        }
+        if (pid <= 0) {
+            return;
+        }
+        const HANDLE handle =
+            ::OpenProcess(PROCESS_SET_QUOTA | PROCESS_TERMINATE, FALSE, static_cast<DWORD>(pid));
+        if (!handle) {
+            return;
+        }
+        ::AssignProcessToJobObject(job, handle);
+        ::CloseHandle(handle);
+    }
+    void terminate() const {
+        if (job) {
+            ::TerminateJobObject(job, 1);
+        }
+    }
+};
+#endif
+
+QJsonObject baseElevatedPowerShellData() {
+    QJsonObject data;
+    data[QStringLiteral("started")] = false;
+    data[QStringLiteral("cancelled")] = false;
+    data[QStringLiteral("timed_out")] = false;
+    data[QStringLiteral("elevated")] = true;
+    data[QStringLiteral("exit_code")] = -1;
+    data[QStringLiteral("exit_status")] = 0;
+    data[QStringLiteral("duration_ms")] = 0.0;
+    return data;
+}
+
+sak::TaskHandlerResult elevatedPowerShellFailure(QJsonObject data,
+                                                 const QString& message,
+                                                 qint64 duration_ms = 0) {
+    sak::TaskHandlerResult task;
+    task.success = false;
+    task.error_message = message;
+    data[QStringLiteral("duration_ms")] = static_cast<double>(duration_ms);
+    data[QStringLiteral("error_message")] = message;
+    task.data = data;
+    return task;
+}
+
+void drainPowerShellOutput(QProcess& ps,
+                           sak::ProgressCallback progress,
+                           QString& stdout_accumulator,
+                           QString& stderr_accumulator) {
+    const QByteArray new_stdout = ps.readAllStandardOutput();
+    const QByteArray new_stderr = ps.readAllStandardError();
+    if (!new_stdout.isEmpty()) {
+        const QString chunk = QString::fromUtf8(new_stdout);
+        stdout_accumulator.append(chunk);
+        progress(50, QStringLiteral("STDOUT|") + chunk);
+    }
+    if (!new_stderr.isEmpty()) {
+        const QString chunk = QString::fromUtf8(new_stderr);
+        stderr_accumulator.append(chunk);
+        progress(50, QStringLiteral("STDERR|") + chunk);
+    }
+}
+
+void stopElevatedPowerShell(QProcess& ps
+#ifdef _WIN32
+                            ,
+                            const ElevatedJobGuard& job
+#endif
+) {
+#ifdef _WIN32
+    job.terminate();
+#endif
+    ps.kill();
+    ps.waitForFinished(2000);
+}
+
+struct ElevatedPowerShellLoopResult {
+    bool cancelled{false};
+    bool timed_out{false};
+};
+
+struct ElevatedPowerShellLoopContext {
+    QProcess* ps{nullptr};
+    const QElapsedTimer* timer{nullptr};
+    int timeout_ms{0};
+    sak::ProgressCallback progress;
+    sak::CancelCheck is_cancelled;
+    QString* stdout_accumulator{nullptr};
+    QString* stderr_accumulator{nullptr};
+#ifdef _WIN32
+    const ElevatedJobGuard* job{nullptr};
+#endif
+};
+
+ElevatedPowerShellLoopResult waitForElevatedPowerShell(
+    const ElevatedPowerShellLoopContext& context) {
+    ElevatedPowerShellLoopResult result;
+    while (true) {
+        const bool finished = context.ps->waitForFinished(250);
+        drainPowerShellOutput(*context.ps,
+                              context.progress,
+                              *context.stdout_accumulator,
+                              *context.stderr_accumulator);
+        if (finished) {
+            break;
+        }
+        if (context.is_cancelled && context.is_cancelled()) {
+            result.cancelled = true;
+            stopElevatedPowerShell(*context.ps
+#ifdef _WIN32
+                                   ,
+                                   *context.job
+#endif
+            );
+            drainPowerShellOutput(*context.ps,
+                                  context.progress,
+                                  *context.stdout_accumulator,
+                                  *context.stderr_accumulator);
+            break;
+        }
+        if (context.timer->elapsed() >= context.timeout_ms) {
+            result.timed_out = true;
+            stopElevatedPowerShell(*context.ps
+#ifdef _WIN32
+                                   ,
+                                   *context.job
+#endif
+            );
+            drainPowerShellOutput(*context.ps,
+                                  context.progress,
+                                  *context.stdout_accumulator,
+                                  *context.stderr_accumulator);
+            break;
+        }
+    }
+    return result;
+}
+
+sak::TaskHandlerResult runElevatedPowerShellTask(const QJsonObject& payload,
+                                                 sak::ProgressCallback progress,
+                                                 sak::CancelCheck is_cancelled) {
+    QJsonObject data = baseElevatedPowerShellData();
+
+    const QString command = payload[QStringLiteral("command")].toString();
+    if (command.trimmed().isEmpty()) {
+        return elevatedPowerShellFailure(data, QStringLiteral("PowerShell command is empty"));
+    }
+
+    const int timeout_ms =
+        std::clamp(payload[QStringLiteral("timeout_seconds")].toInt(120), 5, 3600) * 1000;
+    const int output_cap = std::clamp(payload[QStringLiteral("max_output_bytes")].toInt(262'144),
+                                      4096,
+                                      4 * 1024 * 1024);
+    const int half_cap = std::max(output_cap / 2, 1024);
+
+    QProcess ps;
+    ps.setProcessChannelMode(QProcess::SeparateChannels);
+    QElapsedTimer timer;
+    timer.start();
+
+    progress(0, QStringLiteral("Starting elevated PowerShell"));
+    ps.start(QStringLiteral("powershell.exe"),
+             QStringList{QStringLiteral("-NoProfile"),
+                         QStringLiteral("-ExecutionPolicy"),
+                         QStringLiteral("Bypass"),
+                         QStringLiteral("-Command"),
+                         command});
+
+    if (!ps.waitForStarted(5000)) {
+        return elevatedPowerShellFailure(
+            data,
+            QStringLiteral("Failed to start elevated PowerShell: %1").arg(ps.errorString()),
+            timer.elapsed());
+    }
+
+#ifdef _WIN32
+    ElevatedJobGuard job;
+    job.assign(ps.processId());
+#endif
+
+    data[QStringLiteral("started")] = true;
+    progress(5, QStringLiteral("Elevated PowerShell running"));
+
+    QString stdout_accumulator;
+    QString stderr_accumulator;
+    ElevatedPowerShellLoopContext loop_context;
+    loop_context.ps = &ps;
+    loop_context.timer = &timer;
+    loop_context.timeout_ms = timeout_ms;
+    loop_context.progress = progress;
+    loop_context.is_cancelled = is_cancelled;
+    loop_context.stdout_accumulator = &stdout_accumulator;
+    loop_context.stderr_accumulator = &stderr_accumulator;
+#ifdef _WIN32
+    loop_context.job = &job;
+#endif
+    const ElevatedPowerShellLoopResult loop_result = waitForElevatedPowerShell(loop_context);
+
+    data[QStringLiteral("cancelled")] = loop_result.cancelled;
+    data[QStringLiteral("timed_out")] = loop_result.timed_out;
+    data[QStringLiteral("exit_code")] = ps.exitCode();
+    data[QStringLiteral("exit_status")] = static_cast<int>(ps.exitStatus());
+    data[QStringLiteral("duration_ms")] = static_cast<double>(timer.elapsed());
+    data[QStringLiteral("stdout")] = cappedTaskOutput(stdout_accumulator, half_cap);
+    data[QStringLiteral("stderr")] = cappedTaskOutput(stderr_accumulator, half_cap);
+    data[QStringLiteral("stdout_full_bytes")] =
+        static_cast<double>(stdout_accumulator.toUtf8().size());
+    data[QStringLiteral("stderr_full_bytes")] =
+        static_cast<double>(stderr_accumulator.toUtf8().size());
+    if (loop_result.timed_out) {
+        data[QStringLiteral("error_message")] = QStringLiteral("Command timed out");
+    } else if (loop_result.cancelled) {
+        data[QStringLiteral("error_message")] = QStringLiteral("Command cancelled");
+    } else {
+        data[QStringLiteral("error_message")] = QString();
+    }
+
+    progress(100, QStringLiteral("Elevated PowerShell finished"));
+    sak::TaskHandlerResult task;
+    task.success = true;
+    task.data = data;
+    return task;
 }
 
 void registerQuickActionTasks(sak::ElevatedTaskDispatcher& dispatcher) {
@@ -277,10 +551,15 @@ void registerFileTasks(sak::ElevatedTaskDispatcher& dispatcher) {
         });
 }
 
+void registerAiTasks(sak::ElevatedTaskDispatcher& dispatcher) {
+    dispatcher.registerHandler(QStringLiteral("RunPowerShell"), runElevatedPowerShellTask);
+}
+
 void registerAllTasks(sak::ElevatedTaskDispatcher& dispatcher) {
     registerQuickActionTasks(dispatcher);
     registerPermissionTasks(dispatcher);
     registerFileTasks(dispatcher);
+    registerAiTasks(dispatcher);
 }
 
 // ======================================================================
@@ -350,9 +629,12 @@ int runHelper(sak::ElevatedPipeServer& server, sak::ElevatedTaskDispatcher& disp
 int main(int argc, char* argv[]) {
     QCoreApplication app(argc, argv);
     app.setApplicationName("SAK Elevated Helper");
+    configurePortableRuntimeDirs();
 
     // Initialize logger
-    auto log_dir = std::filesystem::current_path() / "_logs";
+    const QString log_path =
+        QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("data/logs"));
+    auto log_dir = std::filesystem::path(log_path.toStdWString());
     auto& logger = sak::logger::instance();
     if (auto result = logger.initialize(log_dir); !result) {
         return 1;

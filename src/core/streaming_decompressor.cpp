@@ -5,6 +5,7 @@
 
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
+
 #include <QtGlobal>
 
 namespace sak {

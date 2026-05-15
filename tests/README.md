@@ -2,7 +2,7 @@
 
 ## Overview
 
-Comprehensive test suite for SAK Utility using the **Qt Test** framework with **81 registered CTest tests** across **105 test files**. Tests cover core utilities, security, elevation (tier classification, IPC protocol, task dispatcher, mixed-tier operations, UX, hardening), diagnostics, ISO pipelines, deployment, email inspection, and quick action validation.
+Comprehensive test suite for SAK Utility using the **Qt Test** framework with **111 registered CTest tests** across **135 test files**. Tests cover AI assistant clients, workflow orchestration, tool execution, cancellation, run state, trace storage, core utilities, security, elevation (tier classification, IPC protocol, task dispatcher, mixed-tier operations, UX, hardening), diagnostics, ISO pipelines, deployment, email inspection, and quick action validation.
 
 ## Structure
 

@@ -15,10 +15,11 @@
 #include <algorithm>
 
 #ifdef Q_OS_WIN
+#include <iterator>
+
 #include <windows.h>
 
 #include <lmcons.h>
-#include <iterator>
 #endif
 
 namespace sak {
@@ -319,9 +320,10 @@ bool MigrationReport::importFromJson(const QString& file_path) {
     m_entries.clear();
     if (root.contains("entries")) {
         QJsonArray entries = root["entries"].toArray();
-        std::transform(entries.begin(), entries.end(),
-            std::back_inserter(m_entries),
-            [](const QJsonValue& val) { return parseEntryFromJson(val.toObject()); });
+        std::transform(entries.begin(),
+                       entries.end(),
+                       std::back_inserter(m_entries),
+                       [](const QJsonValue& val) { return parseEntryFromJson(val.toObject()); });
     }
 
     return true;

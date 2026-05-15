@@ -77,7 +77,10 @@ public:
     /**
      * @brief Start migration from report
      * @param report Migration report with selected entries
-     * @param maxConcurrent Maximum concurrent installations (default: 2)
+     * @param maxConcurrent Maximum concurrent installations (default: 2). A value of 0 queues
+
+     * * jobs without launching installers, which is used by non-installing validation paths.
+     *
      * @return Number of jobs queued
      */
     int startMigration(std::shared_ptr<MigrationReport> report,
@@ -198,7 +201,12 @@ private:
      * @param job Job to process
      * @return True if successful
      */
-    bool installPackage(MigrationJob& job);
+    bool installPackage(int jobIndex, MigrationJob& job);
+
+    /**
+     * @brief Store a job snapshot after background-thread changes
+     */
+    void storeJobSnapshot(int index, const MigrationJob& job);
 
     /**
      * @brief Verify installation via multi-source check

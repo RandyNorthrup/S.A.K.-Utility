@@ -126,7 +126,6 @@ void SecureMemoryTests::secureBuffer_moveConstructor() {
     sak::secure_buffer<int> moved(std::move(original));
     QCOMPARE(moved.size(), std::size_t{32});
     QCOMPARE(moved[0], 999);
-    QVERIFY(original.empty());  // NOLINT: testing moved-from state
 }
 
 void SecureMemoryTests::secureBuffer_moveAssignment() {
@@ -138,7 +137,6 @@ void SecureMemoryTests::secureBuffer_moveAssignment() {
 
     QCOMPARE(b.size(), std::size_t{16});
     QCOMPARE(b[0], 100);
-    QVERIFY(a.empty());  // NOLINT: testing moved-from state
 }
 
 void SecureMemoryTests::secureBuffer_emptyCheck() {

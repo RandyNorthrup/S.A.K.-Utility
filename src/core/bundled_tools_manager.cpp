@@ -12,8 +12,7 @@ BundledToolsManager& BundledToolsManager::instance() {
     return instance;
 }
 
-BundledToolsManager::BundledToolsManager()
-    : m_base_path(QCoreApplication::applicationDirPath()) {}
+BundledToolsManager::BundledToolsManager() : m_base_path(QCoreApplication::applicationDirPath()) {}
 
 QString BundledToolsManager::toolsPath() const {
     return m_base_path + "/tools";

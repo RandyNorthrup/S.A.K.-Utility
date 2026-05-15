@@ -10,6 +10,7 @@
 #include "sak/network_constants.h"
 #include "sak/style_constants.h"
 
+#include <QCoreApplication>
 #include <QDialogButtonBox>
 #include <QDir>
 #include <QDirIterator>
@@ -19,7 +20,6 @@
 #include <QLabel>
 #include <QMessageBox>
 #include <QPushButton>
-#include <QStandardPaths>
 #include <QVBoxLayout>
 
 ImageFlasherSettingsDialog::ImageFlasherSettingsDialog(QWidget* parent) : QDialog(parent) {
@@ -294,7 +294,8 @@ void ImageFlasherSettingsDialog::onResetDefaults() {
 
 QStringList ImageFlasherSettingsDialog::findCacheDirectories() {
     QStringList dirs;
-    QString tempBase = QStandardPaths::writableLocation(QStandardPaths::TempLocation);
+    const QString tempBase =
+        QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("data/temp"));
     QDir tempDir(tempBase);
 
     for (const auto& entry : tempDir.entryList(QStringList{"sak_uup_*"}, QDir::Dirs)) {

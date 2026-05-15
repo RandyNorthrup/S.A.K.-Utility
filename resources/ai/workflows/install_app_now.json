@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "id": "install_app_now",
+  "title": "Install App Now",
+  "role": "Software Installer",
+  "category": "Software",
+  "description": "Install an application using SAK package manager first, then verify.",
+  "starter_prompt": "Install the requested application. Use SAK package manager before raw shell commands.",
+  "required_inputs": [
+    {"id": "app_name", "label": "Application name", "type": "string", "required": true}
+  ],
+  "required_software": [
+    {"id": "sak_package_manager", "kind": "sak_tool", "required": true, "install_policy": "built_in_only"},
+    {"id": "chocolatey_portable", "kind": "bundled_tool", "required": true, "install_policy": "already_bundled"}
+  ],
+  "instructions": ["instructions/software_install_policy.md", "instructions/reporting_standard.md"],
+  "skills": ["skills/package-selection.md", "skills/artifact-verification.md", "skills/customer-handoff-report.md", "skills/cleanup-after-job.md"],
+  "agents": [
+    {"id": "package_agent", "model_policy": "fast_reasoning", "tool_policy": "package_tools_only", "token_budget": 7000},
+    {"id": "research_agent", "model_policy": "web_research", "tool_policy": "web_read_only", "token_budget": 10000},
+    {"id": "report_agent", "model_policy": "writer", "tool_policy": "no_local_execution", "token_budget": 4000}
+  ],
+  "phases": [
+    {"id": "identify_package", "type": "tool_action", "tool": "sak_package_manager", "operation": "search", "prompt": "Search the built-in SAK package manager for candidate packages before install or web fallback.", "risk": "read_only", "completion": "Built-in package candidates are captured or ambiguity is reported."},
+    {"id": "precheck", "type": "tool_action", "tool": "sak_package_manager", "operation": "is_installed", "prompt": "Check whether selected package is already installed.", "risk": "read_only", "completion": "Installed state is known."},
+    {"id": "fallback_research", "type": "delegate", "agent": "research_agent", "condition": "precheck_failed", "prompt": "SAK package lookup failed before installation. Find official vendor installer sources, silent install guidance, checksum/signature guidance, and risks. Do not install from the web automatically.", "expected_output": "official_install_sources", "risk": "web_read_only", "completion": "Official fallback install source and next safe action are identified or unavailable."},
+    {"id": "install", "type": "tool_action", "tool": "sak_package_manager", "operation": "install", "condition": "precheck_succeeded", "prompt": "Install selected package after approval/restore-point gate if needed.", "risk": "system_change", "completion": "Installer exits and output is captured."},
+    {"id": "verify", "type": "tool_action", "tool": "sak_package_manager", "operation": "installed_version", "condition": "install_succeeded", "prompt": "Verify installed package and version.", "risk": "read_only", "completion": "Installed state is verified."},
+    {"id": "report", "type": "delegate", "agent": "report_agent", "prompt": "Create a technician-readable install report with evidence, package/source selection, actions/tools used, install result, verification status, logs/artifacts, cleanup status, residual risk, and follow-up.", "expected_output": "install_report", "risk": "none", "completion": "User understands result."},
+    {"id": "cleanup", "type": "cleanup", "prompt": "Preserve install logs and report artifacts; remove only temporary scratch files created by this workflow.", "completion": "Cleanup status is recorded."}
+  ],
+  "acceptance_criteria": [
+    "SAK package manager was tried before raw choco/winget.",
+    "Install was approved according to access mode.",
+    "Installed version or failure reason is reported.",
+    "Output logs are preserved."
+  ],
+  "cancel_policy": {"cancel_children": true, "cancel_tools": true, "preserve_partial_artifacts": true, "report_partial_state": true}
+}

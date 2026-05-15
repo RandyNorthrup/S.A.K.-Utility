@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "id": "startup_performance_triage",
+  "title": "Startup Performance Triage",
+  "role": "PC Technician",
+  "category": "Performance",
+  "description": "Investigate slow startup and login performance without disabling items until reviewed.",
+  "starter_prompt": "Find why startup or login is slow. Collect evidence first and do not disable anything without approval.",
+  "required_inputs": [
+    {"id": "symptom", "label": "Startup symptom", "type": "string", "required": true}
+  ],
+  "required_software": [
+    {"id": "powershell", "kind": "system_tool", "required": true, "install_policy": "already_available"}
+  ],
+  "instructions": ["instructions/evidence_policy.md", "instructions/reporting_standard.md"],
+  "skills": ["skills/artifact-verification.md", "skills/customer-handoff-report.md", "skills/cleanup-after-job.md"],
+  "agents": [
+    {"id": "diagnostic_agent", "model_policy": "fast_reasoning", "tool_policy": "read_only_pc", "token_budget": 8000},
+    {"id": "repair_agent", "model_policy": "careful_reasoning", "tool_policy": "mutating_requires_lease", "token_budget": 8000},
+    {"id": "report_agent", "model_policy": "writer", "tool_policy": "no_local_execution", "token_budget": 4000}
+  ],
+  "phases": [
+    {"id": "clarify", "type": "overseer", "prompt": "Confirm whether slowdown is boot, login, first app launch, or recurring after sleep.", "completion": "Performance scope is clear."},
+    {"id": "collect_startup_state", "type": "tool_action", "tool": "run_powershell", "operation": "diagnose", "arguments": {"command": "$ErrorActionPreference='Continue'; Write-Output '== Startup commands =='; Get-CimInstance Win32_StartupCommand | Select-Object Name,Command,Location,User | Format-List; Write-Output '== Enabled scheduled tasks =='; Get-ScheduledTask | Where-Object { $_.State -ne 'Disabled' } | Select-Object TaskName,TaskPath,State | Sort-Object TaskPath,TaskName | Select-Object -First 200 | Format-Table -AutoSize; Write-Output '== Auto services =='; Get-CimInstance Win32_Service | Where-Object { $_.StartMode -eq 'Auto' } | Select-Object Name,DisplayName,State,StartName | Sort-Object DisplayName | Format-Table -AutoSize; Write-Output '== Disk free space =='; Get-Volume | Select-Object DriveLetter,FileSystemLabel,SizeRemaining,Size | Format-Table -AutoSize; Write-Output '== Boot performance events =='; Get-WinEvent -FilterHashtable @{LogName='Microsoft-Windows-Diagnostics-Performance/Operational'; Id=100,101,102,103,106,200,201; StartTime=(Get-Date).AddDays(-14)} -MaxEvents 100 | Select-Object TimeCreated,Id,LevelDisplayName,Message | Format-List", "timeout_seconds": 120, "requires_admin": false, "max_output_bytes": 524288}, "prompt": "Collect read-only startup items, scheduled tasks, services auto-start state, recent boot events, disk free space, and top startup impact evidence.", "risk": "read_only", "completion": "Startup evidence is captured."},
+    {"id": "analyze", "type": "delegate", "agent": "diagnostic_agent", "prompt": "Identify likely startup bottlenecks and rank safe remediation candidates. Do not recommend disabling security or driver services without evidence.", "expected_output": "startup_triage", "risk": "read_only", "completion": "Likely causes and safe candidates are listed."},
+    {"id": "apply_safe_changes", "type": "delegate", "agent": "repair_agent", "prompt": "Prepare exact low-risk startup change commands only for items clearly tied to the evidence. Do not disable security, driver, backup, remote access, or vendor update services blindly. Mark every proposed change as requires human approval.", "expected_output": "startup_change_plan", "risk": "system_change", "completion": "Approved change plan is ready or changes are skipped with reason."},
+    {"id": "verify", "type": "tool_action", "tool": "run_powershell", "operation": "verify", "condition": "apply_safe_changes_succeeded", "arguments": {"command": "$ErrorActionPreference='Continue'; Write-Output '== Current startup commands =='; Get-CimInstance Win32_StartupCommand | Select-Object Name,Command,Location,User | Format-List; Write-Output '== Current enabled scheduled tasks sample =='; Get-ScheduledTask | Where-Object { $_.State -ne 'Disabled' } | Select-Object TaskName,TaskPath,State | Sort-Object TaskPath,TaskName | Select-Object -First 100 | Format-Table -AutoSize", "timeout_seconds": 90, "requires_admin": false, "max_output_bytes": 262144}, "prompt": "Verify current startup state after the reviewed plan. Do not force reboot automatically.", "risk": "read_only", "completion": "Post-review state is captured."},
+    {"id": "report", "type": "delegate", "agent": "report_agent", "prompt": "Create a technician-readable startup triage report with findings, evidence, actions/tools used, skipped candidates, verification status, logs/artifacts, cleanup status, residual risk, reboot recommendation, rollback steps, and follow-up.", "expected_output": "startup_report", "risk": "none", "completion": "User has a startup triage report."},
+    {"id": "cleanup", "type": "cleanup", "prompt": "Preserve evidence and report; remove only workflow-owned temporary scratch files.", "completion": "Cleanup status is recorded."}
+  ],
+  "acceptance_criteria": [
+    "Read-only evidence was collected before changes.",
+    "Security/driver services were not blindly disabled.",
+    "Any change has approval and rollback notes.",
+    "Report identifies reboot/manual follow-up if needed."
+  ],
+  "cancel_policy": {"cancel_children": true, "cancel_tools": true, "preserve_partial_artifacts": true, "report_partial_state": true}
+}

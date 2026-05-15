@@ -9,8 +9,8 @@
 [![Qt 6.5+](https://img.shields.io/badge/Qt-6.5%2B-41cd52.svg)](https://www.qt.io/)
 [![Windows 10/11](https://img.shields.io/badge/Windows-10%20%7C%2011-0078d4.svg)](https://www.microsoft.com/windows)
 [![Build](https://github.com/RandyNorthrup/S.A.K.-Utility/actions/workflows/build-release.yml/badge.svg)](https://github.com/RandyNorthrup/S.A.K.-Utility/actions)
-[![Version](https://img.shields.io/badge/Version-0.9.1.2-orange.svg)](VERSION)
-[![Tests](https://img.shields.io/badge/Tests-93%20passing-brightgreen.svg)](tests/)
+[![Version](https://img.shields.io/badge/Version-0.9.1.3-orange.svg)](VERSION)
+[![Tests](https://img.shields.io/badge/Tests-111%20passing-brightgreen.svg)](tests/)
 
 Migration · Maintenance · Recovery · Imaging · Deployment — one portable EXE.
 
@@ -22,7 +22,7 @@ Migration · Maintenance · Recovery · Imaging · Deployment — one portable E
 
 See [CHANGELOG.md](CHANGELOG.md) for the full version history.
 
-**Latest: v0.9.1.2** — Email panel performance & stability: moved the file scanner's filesystem traversal off the GUI thread (QtConcurrent + QFutureWatcher) and removed `processEvents()` reentrancy, batched table population in the scanner/attachments/contacts dialogs, and debounced the inspector preview so inline+remote images coalesce into a single `setHtml` repaint. Plus the prior code-quality pass: corrected misplaced and tautological assertions across core workers and quick actions, hardened public-API guards (config_manager, bandwidth_tester, wifi_analyzer), removed duplicate `.empty()`/`.isEmpty()` checks, added `[[nodiscard]]` to pure query getters, and cleaned up `_archived/` from version control.
+**Latest: v0.9.1.3** — AI Assistant Panel v1: Codex-style chat, encrypted app-local OpenAI key storage, model and role selection, context/instruction attachments, token usage status, local PowerShell/tool execution with approvals, multi-agent workflow orchestration, built-in technician workflows, session memory, artifacts, and generated reports.
 
 ---
 
@@ -31,6 +31,7 @@ See [CHANGELOG.md](CHANGELOG.md) for the full version history.
 | | |
 |---|---|
 | **100 % Portable** | No installer. Drop on a USB stick and go. |
+| **AI Assistant** | Codex-style AI workspace for technician chat, PC actions, multi-agent workflows, context attachments, reports, and artifacts. |
 | **Backup and Restore** | Step-by-step wizards with smart filtering, AES-256 encryption, NTFS permission handling, plus integrated screenshot settings and BitLocker key backup. |
 | **Diagnostics & Benchmarking** | SMART disk health, CPU/disk/memory benchmarks, stress testing, thermal monitoring, system maintenance tools, HTML/JSON/CSV reports. |
 | **Image Flasher** | Flash ISOs/IMGs to USB. Download Windows and Linux ISOs directly. |
@@ -47,6 +48,7 @@ See [CHANGELOG.md](CHANGELOG.md) for the full version history.
 - [System Requirements](#system-requirements)
 - [Quick Start](#quick-start)
 - [Features](#features)
+  - [AI Assistant](#ai-assistant)
   - [Backup and Restore](#backup-and-restore)
   - [Application Management](#application-management)
   - [Benchmark and Diagnostics](#benchmark-and-diagnostics)
@@ -92,6 +94,80 @@ See [CHANGELOG.md](CHANGELOG.md) for the full version history.
 ---
 
 ## Features
+
+### AI Assistant
+
+The AI Assistant panel is the first tab in S.A.K. Utility when `SAK_ENABLE_AI_ASSISTANT` is enabled. It provides a Codex-style technician workspace that can explain SAK capabilities, recommend workflows, collect evidence, run approved PC actions, and produce readable handoff reports.
+
+**Chat Workspace**
+- Modern chat layout with right-aligned prompt bubbles and left-aligned assistant results
+- Expand/collapse support for long results and tool output
+- Prompt history navigation with Up/Down in the input box
+- Session picker with new chat and rename controls
+- Status bar integration for API key state, access mode, activity, workflow progress, and token usage
+- Details panel for active workflow/run state; artifacts button opens the current session artifact directory when content exists
+
+**OpenAI Integration**
+- User-supplied OpenAI API key with encrypted app-local storage under the portable `data/credentials/` directory
+- Load/clear key workflow with visible loaded/not-loaded status
+- Model list retrieval and selectable chat model
+- OpenAI Responses API client with conversation state, usage parsing, strict function-tool schemas, and citation parsing
+- Token usage meter for input, cached input, output, reasoning, and total token counts
+- Secret redaction for API keys, bearer tokens, GitHub tokens, AWS keys, Google keys, Slack tokens, Stripe keys, and common `password=`/`secret=`/`token=` assignments
+
+**Context and Instructions**
+- Attach screenshots, documents, and other files as session context
+- Add Markdown instruction files as explicit instruction context
+- Color-coded context and instruction chips with remove controls
+- Per-session memory and transcript persistence under the portable `data/ai_sessions/` directory
+- Session-specific artifact directories so logs, downloads, screenshots, and reports do not pollute other sessions
+
+**Local Tools and PC Actions**
+- `run_powershell` for Windows automation, with optional elevation through SAK's existing per-task UAC helper
+- `run_cmd` for non-admin cmd.exe tasks
+- `run_process` for non-admin direct executable launches with explicit arguments
+- `take_screenshot` to capture the primary display into session artifacts
+- `download_file` for HTTPS downloads with SHA-256 evidence
+- Built-in `sak_package_manager` tool for app search, install, uninstall, upgrade, installed-version checks, and outdated-package checks before raw package-manager or vendor-web commands
+- Built-in `sak_offline_downloader` tool for offline installer downloads, direct installer retrieval, offline Chocolatey bundle creation, and offline bundle installation
+- Human approval prompts for risky or destructive actions, with restore-point offers when rollback may be needed
+- Stop/cancel handling across model calls, local tools, workflows, and subagents
+
+**Agent Roles and Workflows**
+- Role-aware prompt/workflow library with technician-focused roles such as General Technician, Security Technician, System Cleanup, Deployment Technician, Network Technician, Printer Technician, and Reporting Technician
+- The assistant is aware of the workflow catalog and can describe what each workflow does, when to use it, required inputs, risk level, verification, reporting, cleanup, and expected artifacts
+- Multi-agent workflow orchestration with a main overseer, specialized subagents, shared session memory, phase tracking, cancellation, recovery policy, and human handoff when needed
+- Workflow resources can include prompts, instruction files, skills, required software, tool phases, troubleshooting guidance, verification steps, cleanup, and reporting requirements
+
+**Built-in Technician Workflows**
+
+| Workflow | Purpose |
+|---|---|
+| Full PC Health Check | Collects system, storage, security, performance, and event-log evidence and summarizes device health |
+| Drive Health Deep Check | Performs read-only drive/volume/SMART-style diagnostics with fallback Windows storage evidence when counters are unavailable |
+| Windows Update Repair | Diagnoses update failures, checks services/logs/component store state, applies approved repairs, and verifies update health |
+| Network Connectivity Repair | Collects adapter/DNS/route/connectivity evidence, applies safe network repairs, and verifies connectivity |
+| BSOD Investigation | Collects crash, driver, event-log, and system evidence for stop-code analysis |
+| Printer Troubleshooting | Checks spooler, printer queue, driver, port, and connectivity state |
+| Startup Performance Triage | Reviews startup apps, services, boot symptoms, and high-impact processes |
+| Security Advisory Check | Reviews security posture and relevant advisories without making destructive changes |
+| Malware and Virus Removal | Runs a technician-guided malware triage/removal flow with evidence capture, approvals, verification, and cleanup |
+| PC Cleanup, Bloatware, and Adware Removal | Identifies unwanted software/startup clutter, removes approved items, verifies system state, and reports changes |
+| Approved Bloatware/Adware Removal | Removes a user-approved list with explicit verification and rollback-aware reporting |
+| Clean Uninstall | Uses SAK uninstall capabilities and leftover review for deeper application removal |
+| Install App Now | Uses SAK package management first, then verifies installation |
+| Download Offline Installer | Uses SAK offline downloader first and records installer paths/checksums |
+| Build Offline Deployment Bundle | Builds offline Chocolatey/deployment bundles with evidence and manifest output |
+| Technician Tool-Assisted Task | Structured workflow for using downloaded or bundled tools, then cleaning up after the job |
+| Technician Service Report | Converts session findings, evidence, actions, and verification into an easy-to-read customer/technician report |
+
+**Reports and Artifacts**
+- Report generation is manual and enabled only after reportable actions/results exist
+- User can choose report output location and format: HTML, Markdown, or plain text
+- Reports evaluate the session transcript, evidence, workflow results, tool outputs, findings, risks, actions taken, verification status, and remaining recommendations
+- Reports include a link to the containing artifact directory when possible
+
+---
 
 ### Backup and Restore
 
@@ -449,6 +525,8 @@ Settings are configured per-panel — each panel that needs configuration provid
 | **Secure memory** | `SecureString` / `SecureBuffer` — zero-fill on destruction, page locking via `VirtualLock` |
 | **Input validation** | Path sanitization, IP/port validation, Chocolatey name format checks |
 | **Elevation** | Per-task elevation via elevated helper process with Named Pipes IPC; `asInvoker` manifest with on-demand UAC prompts |
+| **AI credential storage** | OpenAI API key encrypted with Windows DPAPI and stored in the portable app `data/credentials/` directory with owner-only file permissions |
+| **AI evidence safety** | AI session data, transcripts, logs, downloads, screenshots, reports, and artifacts stay under portable app `data/ai_sessions/`; model-bound command output is capped and secrets are redacted |
 
 All crypto uses the **Windows BCrypt API** (FIPS 140-2 validated provider).
 
@@ -474,6 +552,9 @@ cd S.A.K.-Utility
 # Configure
 cmake -B build -G "Visual Studio 17 2022" -A x64 `
   -DCMAKE_PREFIX_PATH="C:/Qt/6.5.3/msvc2019_64"
+
+# Optional: explicitly toggle the AI Assistant panel
+# -DSAK_ENABLE_AI_ASSISTANT=ON  # default
 
 # Build
 cmake --build build --config Release --parallel
@@ -527,13 +608,21 @@ Full license texts: [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md)
 cmake --build build --config Release --target RUN_TESTS
 ```
 
-93 automated tests across 117 test files covering Advanced Search, Advanced Uninstall (types, controller, leftover scanner, registry snapshot engine), Network Diagnostics (types, utils, report generation), Email Inspector (PST/OST parsing, MBOX parsing, email types, search, export, profile manager, report generator), OST Converter (types, controller, PST splitter, integration), Offline Deployment (install script parsing, NuGet API, script rewriting, package builder), Elevation (tier classification, IPC protocol, task dispatcher, mixed-tier operations, UX components, hardening), diagnostics, security, encryption, configuration, ISO download, and quick action validation.
+111 automated tests across 135 test files covering AI assistant clients, workflow store/evals, orchestration, subagents, tool policy/dispatch, execution broker, cancellation, run state, trace store, credential redaction, Advanced Search, Advanced Uninstall (types, controller, leftover scanner, registry snapshot engine), Network Diagnostics (types, utils, report generation), Email Inspector (PST/OST parsing, MBOX parsing, email types, search, export, profile manager, report generator), OST Converter (types, controller, PST splitter, integration), Offline Deployment (install script parsing, NuGet API, script rewriting, package builder), Elevation (tier classification, IPC protocol, task dispatcher, mixed-tier operations, UX components, hardening), diagnostics, security, encryption, configuration, ISO download, and quick action validation.
 
 ---
 
 ## Configuration
 
 Settings are stored at `%APPDATA%\SAK\Utility\` in INI format.
+
+AI Assistant sessions and credentials are intentionally portable-app local:
+
+| Path | Purpose |
+|---|---|
+| `<app>/data/credentials/openai_api_key.dpapi.json` | Encrypted OpenAI API key |
+| `<app>/data/ai_sessions/` | Session manifests, transcripts, usage, memory, run state, artifacts, downloads, screenshots, and reports |
+| `<app>/data/ai/workflows/` | User-added workflow templates |
 
 ### Key Settings
 

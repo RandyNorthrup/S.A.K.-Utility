@@ -11,14 +11,15 @@
 #ifdef Q_OS_WIN
 #include "sak/logger.h"
 
+#include <algorithm>
+#include <numeric>
+
 #include <windows.h>
 
 #include <lm.h>
 #include <sddl.h>
 #include <userenv.h>
 #include <wtsapi32.h>
-#include <algorithm>
-#include <numeric>
 #pragma comment(lib, "netapi32.lib")
 #pragma comment(lib, "userenv.lib")
 #pragma comment(lib, "wtsapi32.lib")
@@ -382,16 +383,17 @@ qint64 WindowsUserScanner::quickSizeEstimate(const QString& path, int maxDepth) 
 
     // Get files in current directory
     QFileInfoList files = dir.entryInfoList(QDir::Files | QDir::NoDotAndDotDot);
-    size_bytes += std::accumulate(files.begin(), files.end(), qint64{0},
-        [](qint64 sum, const QFileInfo& file) { return sum + file.size(); });
+    size_bytes += std::accumulate(
+        files.begin(), files.end(), qint64{0}, [](qint64 sum, const QFileInfo& file) {
+            return sum + file.size();
+        });
 
     // Recurse into subdirectories (limited depth)
     if (maxDepth > 1) {
         QFileInfoList dirs = dir.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot);
-        std::for_each(dirs.begin(), dirs.end(),
-            [&](const QFileInfo& subdir) {
-                size_bytes += quickSizeEstimate(subdir.absoluteFilePath(), maxDepth - 1);
-            });
+        std::for_each(dirs.begin(), dirs.end(), [&](const QFileInfo& subdir) {
+            size_bytes += quickSizeEstimate(subdir.absoluteFilePath(), maxDepth - 1);
+        });
     }
 
     return size_bytes;

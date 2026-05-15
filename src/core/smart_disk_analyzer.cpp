@@ -19,8 +19,9 @@
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
-#include <Windows.h>
 #include <algorithm>
+
+#include <Windows.h>
 #endif
 
 namespace sak {
@@ -40,13 +41,13 @@ struct SmartThreshold {
 
 /// Key SATA attributes monitored for health assessment
 constexpr SmartThreshold kSataThresholds[] = {
-    {5, 1, 50},    // Reallocated_Sector_Ct
-    {10, 1, 10},   // Spin_Retry_Count
-    {187, 1, 10},  // Reported_Uncorrect
-    {188, 5, 50},  // Command_Timeout
-    {196, 1, 50},  // Reallocated_Event_Count
-    {197, 1, 10},  // Current_Pending_Sector
-    {198, 1, 10},  // Offline_Uncorrectable
+    {5, 1, 50},      // Reallocated_Sector_Ct
+    {10, 1, 10},     // Spin_Retry_Count
+    {187, 1, 10},    // Reported_Uncorrect
+    {188, 5, 50},    // Command_Timeout
+    {196, 1, 50},    // Reallocated_Event_Count
+    {197, 1, 10},    // Current_Pending_Sector
+    {198, 1, 10},    // Offline_Uncorrectable
     {199, 10, 100},  // UDMA_CRC_Error_Count
 };
 
@@ -380,8 +381,9 @@ void SmartDiskAnalyzer::assessHealth(SmartReport& report) {
         return;
     }
 
-    if (std::any_of(report.attributes.begin(), report.attributes.end(),
-            [](const auto& attr) { return attr.failing; })) {
+    if (std::any_of(report.attributes.begin(), report.attributes.end(), [](const auto& attr) {
+            return attr.failing;
+        })) {
         report.overall_health = SmartHealthStatus::Critical;
         return;
     }
@@ -459,8 +461,8 @@ void SmartDiskAnalyzer::generateNvmeRecommendations(SmartReport& report) {
     const auto& nvme = report.nvme_health.value();
 
     if (nvme.percentage_used >= kNvmeWearCriticalPercent) {
-        report.warnings.append(
-            QString("NVMe drive endurance at %1% -- nearing end of life").arg(nvme.percentage_used));
+        report.warnings.append(QString("NVMe drive endurance at %1% -- nearing end of life")
+                                   .arg(nvme.percentage_used));
         report.recommendations.append(
             "CRITICAL: Plan drive replacement -- SSD endurance nearly exhausted");
     } else if (nvme.percentage_used >= kNvmeWearWarningPercent) {

@@ -15,7 +15,7 @@ endif()
 
 # Project definition
 project(SAK_Utility
-    VERSION 0.9.1.2
+    VERSION 0.9.1.3
     DESCRIPTION "Swiss Army Knife Utility - PC technician's toolkit for Windows migration and maintenance"
     LANGUAGES CXX
 )# C++23 Standard - Strict compliance required
@@ -83,16 +83,23 @@ if(MSVC)
         # Static runtime is set via CMAKE_MSVC_RUNTIME_LIBRARY in cmake/SAK_BuildConfig.cmake
     )
 
-    # Release optimizations
-    if(CMAKE_BUILD_TYPE STREQUAL "Release")
-        add_compile_options(/O2 /Ob2 /Oi /Ot /GL)
-        add_link_options(/LTCG /OPT:REF /OPT:ICF)
-    endif()
-
-    # Debug settings
-    if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-        add_compile_options(/Od /Zi /RTC1)
-    endif()
+    # Config-specific flags. Use generator expressions so Visual Studio
+    # multi-config builds do not leak Release optimization flags into Debug.
+    add_compile_options(
+        $<$<CONFIG:Release>:/O2>
+        $<$<CONFIG:Release>:/Ob2>
+        $<$<CONFIG:Release>:/Oi>
+        $<$<CONFIG:Release>:/Ot>
+        $<$<CONFIG:Release>:/GL>
+        $<$<CONFIG:Debug>:/Od>
+        $<$<CONFIG:Debug>:/Zi>
+        $<$<CONFIG:Debug>:/RTC1>
+    )
+    add_link_options(
+        $<$<CONFIG:Release>:/LTCG>
+        $<$<CONFIG:Release>:/OPT:REF>
+        $<$<CONFIG:Release>:/OPT:ICF>
+    )
 
     # Security features
     add_compile_options(/guard:cf)  # Control Flow Guard
@@ -119,16 +126,15 @@ elseif(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
         -Wformat=2              # Format string vulnerabilities
     )
 
-    # Release optimizations
-    if(CMAKE_BUILD_TYPE STREQUAL "Release")
-        add_compile_options(-O3 -march=native -flto)
-        add_link_options(-flto)
-    endif()
-
-    # Debug settings
-    if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-        add_compile_options(-O0 -g3)
-    endif()
+    # Config-specific flags.
+    add_compile_options(
+        $<$<CONFIG:Release>:-O3>
+        $<$<CONFIG:Release>:-march=native>
+        $<$<CONFIG:Release>:-flto>
+        $<$<CONFIG:Debug>:-O0>
+        $<$<CONFIG:Debug>:-g3>
+    )
+    add_link_options($<$<CONFIG:Release>:-flto>)
 
     # Security features
     add_compile_options(-fstack-protector-strong -D_FORTIFY_SOURCE=2)
@@ -239,7 +245,7 @@ find_package(LibLZMA REQUIRED)
 if(PLATFORM_WINDOWS)
     # Windows-specific: Registry access, WMI, DXGI, performance counters,
     # networking (IP Helper, Winsock, DNS, WLAN, NetBIOS), COM (Firewall)
-    set(PLATFORM_LIBS advapi32 shell32 user32 dxgi pdh
+    set(PLATFORM_LIBS advapi32 crypt32 shell32 user32 dxgi pdh
         iphlpapi ws2_32 dnsapi wlanapi netapi32 ole32 oleaut32)
 elseif(PLATFORM_MACOS)
     # macOS-specific: CoreFoundation, IOKit
@@ -259,6 +265,8 @@ if(CMAKE_BUILD_TYPE)
 else()
     set(SAK_RESOLVED_BUILD_TYPE "Release")
 endif()
+
+option(SAK_ENABLE_AI_ASSISTANT "Build the AI Assistant panel" ON)
 
 # Version header generation
 configure_file(
@@ -607,6 +615,57 @@ set(GUI_SOURCES
     include/sak/ost_converter_widget.h
 )
 
+set(AI_SOURCES)
+if(SAK_ENABLE_AI_ASSISTANT)
+    list(APPEND AI_SOURCES
+        src/ai/ai_credential_store.cpp
+        src/ai/ai_cancellation_token.cpp
+        src/ai/ai_conversation_store.cpp
+        src/ai/ai_execution_broker.cpp
+        src/ai/ai_human_gate.cpp
+        src/ai/ai_human_gate_store.cpp
+        src/ai/ai_lease_manager.cpp
+        src/ai/ai_openai_model_client.cpp
+        src/ai/ai_orchestrator.cpp
+        src/ai/ai_package_selection.cpp
+        src/ai/ai_recovery_policy.cpp
+        src/ai/ai_run_state.cpp
+        src/ai/ai_run_state_store.cpp
+        src/ai/ai_subagent_runner.cpp
+        src/ai/ai_token_usage_tracker.cpp
+        src/ai/ai_tool_dispatcher.cpp
+        src/ai/ai_tool_policy.cpp
+        src/ai/ai_trace_store.cpp
+        src/ai/ai_workflow_clarifier.cpp
+        src/ai/ai_workflow_store.cpp
+        src/ai/ai_workflow_template.cpp
+        src/ai/openai_responses_client.cpp
+        include/sak/ai/ai_credential_store.h
+        include/sak/ai/ai_cancellation_token.h
+        include/sak/ai/ai_conversation_store.h
+        include/sak/ai/ai_execution_broker.h
+        include/sak/ai/ai_human_gate.h
+        include/sak/ai/ai_human_gate_store.h
+        include/sak/ai/ai_lease_manager.h
+        include/sak/ai/ai_openai_model_client.h
+        include/sak/ai/ai_orchestrator.h
+        include/sak/ai/ai_package_selection.h
+        include/sak/ai/ai_recovery_policy.h
+        include/sak/ai/ai_run_state.h
+        include/sak/ai/ai_run_state_store.h
+        include/sak/ai/ai_subagent_runner.h
+        include/sak/ai/ai_token_usage_tracker.h
+        include/sak/ai/ai_tool_dispatcher.h
+        include/sak/ai/ai_tool_policy.h
+        include/sak/ai/ai_trace_store.h
+        include/sak/ai/ai_workflow_store.h
+        include/sak/ai/ai_workflow_template.h
+        include/sak/ai/openai_responses_client.h
+        src/gui/ai_assistant_panel.cpp
+        include/sak/ai_assistant_panel.h
+    )
+endif()
+
 # Quick Actions
 set(QUICK_ACTIONS_SOURCES
     # System Optimization
@@ -654,12 +713,16 @@ endif()
 
 # Qt icon resources (processed by AUTORCC)
 list(APPEND RESOURCE_FILES "${CMAKE_CURRENT_SOURCE_DIR}/resources/icons.qrc")
+if(SAK_ENABLE_AI_ASSISTANT)
+    list(APPEND RESOURCE_FILES "${CMAKE_CURRENT_SOURCE_DIR}/resources/ai.qrc")
+endif()
 
 # Combine all sources
 set(ALL_SOURCES
     ${CORE_SOURCES}
     ${THREADING_SOURCES}
     ${GUI_SOURCES}
+    ${AI_SOURCES}
     ${QUICK_ACTIONS_SOURCES}
     ${MAIN_SOURCE}
     ${RESOURCE_FILES}
@@ -676,6 +739,10 @@ set_target_properties(sak_utility PROPERTIES
     AUTOMOC ON
     AUTOUIC ON
     AUTORCC ON
+)
+
+target_compile_definitions(sak_utility PRIVATE
+    SAK_ENABLE_AI_ASSISTANT=$<BOOL:${SAK_ENABLE_AI_ASSISTANT}>
 )
 
 # Link libraries
@@ -808,6 +875,7 @@ if(PLATFORM_WINDOWS)
             $<TARGET_FILE_DIR:sak_utility>/sak_elevated_helper.exe
         COMMENT "Copying elevated helper next to sak_utility"
     )
+    add_dependencies(sak_utility sak_elevated_helper)
 endif()
 
 # Check for bundled smartmontools (required for SMART diagnostics)

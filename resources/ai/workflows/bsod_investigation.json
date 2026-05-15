@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "id": "bsod_investigation",
+  "title": "BSOD Investigation",
+  "role": "Windows Repair",
+  "category": "Diagnostics",
+  "description": "Investigate bugchecks, dump metadata, likely drivers, and next safe tests.",
+  "starter_prompt": "Investigate recent blue screens. Collect evidence and recommend next diagnostics.",
+  "required_inputs": [],
+  "required_software": [
+    {"id": "run_powershell", "kind": "sak_tool", "required": true, "install_policy": "built_in_only"}
+  ],
+  "instructions": ["instructions/windows_repair_safety.md", "instructions/evidence_policy.md", "instructions/reporting_standard.md"],
+  "skills": ["skills/drive-health-diagnostics.md", "skills/artifact-verification.md", "skills/customer-handoff-report.md", "skills/cleanup-after-job.md"],
+  "agents": [
+    {"id": "diagnostic_agent", "model_policy": "fast_reasoning", "tool_policy": "read_only_pc", "token_budget": 10000},
+    {"id": "research_agent", "model_policy": "web_research", "tool_policy": "web_read_only", "token_budget": 10000},
+    {"id": "critic_agent", "model_policy": "fast_reasoning", "tool_policy": "no_local_execution", "token_budget": 4000}
+  ],
+  "phases": [
+    {"id": "bugcheck_events", "type": "tool_action", "tool": "run_powershell", "operation": "diagnose", "arguments": {"command": "$ErrorActionPreference='Continue'; Write-Output '== BugCheck/WHEA/Kernel events =='; Get-WinEvent -FilterHashtable @{LogName='System'; Id=41,1001,6008,18,19,47; StartTime=(Get-Date).AddDays(-30)} -MaxEvents 120 -ErrorAction SilentlyContinue | Select-Object TimeCreated,ProviderName,Id,LevelDisplayName,Message | Format-List; Write-Output '== Disk/driver/update related errors =='; Get-WinEvent -FilterHashtable @{LogName='System'; Level=1,2,3; StartTime=(Get-Date).AddDays(-30)} -MaxEvents 160 -ErrorAction SilentlyContinue | Where-Object { $_.ProviderName -match 'disk|ntfs|stor|whea|display|nvlddmkm|amdkmdag|driver|windowsupdate' } | Select-Object TimeCreated,ProviderName,Id,LevelDisplayName,Message | Format-List; Write-Output '== Minidumps =='; Get-ChildItem $env:SystemRoot\\Minidump -Filter *.dmp -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 10 FullName,Length,LastWriteTime | Format-Table -AutoSize", "timeout_seconds": 180, "requires_admin": false, "max_output_bytes": 1048576}, "prompt": "Collect recent BugCheck, Kernel-Power, WHEA, disk, driver, update events, and minidump paths.", "risk": "read_only", "completion": "Recent crash evidence is captured."},
+    {"id": "analyze_bugcheck_events", "type": "delegate", "agent": "diagnostic_agent", "prompt": "Analyze collected BugCheck, Kernel-Power, WHEA, disk, driver, update, and minidump evidence. Identify likely cause categories and missing evidence.", "expected_output": "bsod_evidence", "risk": "read_only", "completion": "Recent crash evidence is gathered."},
+    {"id": "correlate", "type": "overseer", "prompt": "Correlate crash times with updates, drivers, storage, memory, and thermal evidence.", "completion": "Likely cause categories are ranked."},
+    {"id": "research_modules", "type": "delegate", "agent": "research_agent", "condition": "driver_or_code_identified", "prompt": "Research official guidance for identified stop code, driver, hardware, or vendor advisory.", "expected_output": "official_guidance", "risk": "web_read_only", "completion": "Official guidance is cited or unavailable."},
+    {"id": "next_tests", "type": "delegate", "agent": "critic_agent", "prompt": "Review whether recommended next tests are safe, relevant, and ordered by risk.", "expected_output": "test_review", "risk": "none", "completion": "Next tests have safety order."},
+    {"id": "report", "type": "overseer", "prompt": "Create a technician-readable BSOD report with crash timeline, evidence, likely causes, actions/tools used, verification status, artifacts/logs, cleanup status, confidence, residual risk, and next diagnostic steps.", "completion": "User has a safe next-step plan."},
+    {"id": "cleanup", "type": "cleanup", "prompt": "Preserve crash evidence and reports; remove only temporary scratch files created by this workflow.", "completion": "Cleanup status is recorded."}
+  ],
+  "acceptance_criteria": [
+    "Bugcheck evidence and timeline were collected.",
+    "Storage/hardware indicators were considered.",
+    "Driver advice uses official sources when possible.",
+    "No blind driver removal or reset is recommended."
+  ],
+  "cancel_policy": {"cancel_children": true, "cancel_tools": true, "preserve_partial_artifacts": true, "report_partial_state": true}
+}

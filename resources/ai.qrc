@@ -1,0 +1,36 @@
+<!DOCTYPE RCC>
+<RCC version="1.0">
+    <qresource prefix="/ai">
+        <file alias="workflows/full_pc_health_check.json">ai/workflows/full_pc_health_check.json</file>
+        <file alias="workflows/drive_health_deep_check.json">ai/workflows/drive_health_deep_check.json</file>
+        <file alias="workflows/download_offline_installer.json">ai/workflows/download_offline_installer.json</file>
+        <file alias="workflows/install_app_now.json">ai/workflows/install_app_now.json</file>
+        <file alias="workflows/build_offline_deployment_bundle.json">ai/workflows/build_offline_deployment_bundle.json</file>
+        <file alias="workflows/windows_update_repair.json">ai/workflows/windows_update_repair.json</file>
+        <file alias="workflows/bsod_investigation.json">ai/workflows/bsod_investigation.json</file>
+        <file alias="workflows/security_advisory_check.json">ai/workflows/security_advisory_check.json</file>
+        <file alias="workflows/clean_uninstall.json">ai/workflows/clean_uninstall.json</file>
+        <file alias="workflows/technician_service_report.json">ai/workflows/technician_service_report.json</file>
+        <file alias="workflows/network_connectivity_repair.json">ai/workflows/network_connectivity_repair.json</file>
+        <file alias="workflows/startup_performance_triage.json">ai/workflows/startup_performance_triage.json</file>
+        <file alias="workflows/printer_troubleshooting.json">ai/workflows/printer_troubleshooting.json</file>
+        <file alias="workflows/technician_tool_assisted_task.json">ai/workflows/technician_tool_assisted_task.json</file>
+        <file alias="workflows/malware_virus_removal.json">ai/workflows/malware_virus_removal.json</file>
+        <file alias="workflows/pc_cleanup_bloatware_adware.json">ai/workflows/pc_cleanup_bloatware_adware.json</file>
+        <file alias="workflows/approved_bloatware_adware_removal.json">ai/workflows/approved_bloatware_adware_removal.json</file>
+        <file alias="instructions/evidence_policy.md">ai/instructions/evidence_policy.md</file>
+        <file alias="instructions/offline_downloader_priority.md">ai/instructions/offline_downloader_priority.md</file>
+        <file alias="instructions/software_install_policy.md">ai/instructions/software_install_policy.md</file>
+        <file alias="instructions/windows_repair_safety.md">ai/instructions/windows_repair_safety.md</file>
+        <file alias="instructions/security_cleanup_safety.md">ai/instructions/security_cleanup_safety.md</file>
+        <file alias="instructions/reporting_standard.md">ai/instructions/reporting_standard.md</file>
+        <file alias="skills/artifact-verification.md">ai/skills/artifact-verification.md</file>
+        <file alias="skills/cleanup-after-job.md">ai/skills/cleanup-after-job.md</file>
+        <file alias="skills/customer-handoff-report.md">ai/skills/customer-handoff-report.md</file>
+        <file alias="skills/drive-health-diagnostics.md">ai/skills/drive-health-diagnostics.md</file>
+        <file alias="skills/package-selection.md">ai/skills/package-selection.md</file>
+        <file alias="skills/windows-update-repair.md">ai/skills/windows-update-repair.md</file>
+        <file alias="skills/malware-removal-triage.md">ai/skills/malware-removal-triage.md</file>
+        <file alias="skills/system-cleanup-bloatware-adware.md">ai/skills/system-cleanup-bloatware-adware.md</file>
+    </qresource>
+</RCC>

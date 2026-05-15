@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "id": "technician_tool_assisted_task",
+  "title": "Technician Tool Assisted Task",
+  "role": "PC Technician",
+  "category": "Diagnostics",
+  "description": "Download an official technician tool, verify it, run it for a bounded task, verify the result, then remove the downloaded tool.",
+  "starter_prompt": "Use an official technician tool to complete the requested task. Download it to session artifacts, verify it, run it only after approval, verify the result, then remove the downloaded tool.",
+  "required_inputs": [
+    {"id": "task_goal", "label": "Task goal", "type": "string", "required": true},
+    {"id": "tool_name", "label": "Tool name", "type": "string", "required": true},
+    {"id": "tool_url", "label": "Official HTTPS tool URL", "type": "string", "required": true},
+    {"id": "tool_arguments", "label": "Tool arguments", "type": "string", "required": false}
+  ],
+  "required_software": [
+    {"id": "download_file", "kind": "sak_tool", "required": true, "install_policy": "built_in_only"},
+    {"id": "run_powershell", "kind": "sak_tool", "required": true, "install_policy": "built_in_only"}
+  ],
+  "instructions": ["instructions/evidence_policy.md", "instructions/windows_repair_safety.md", "instructions/reporting_standard.md"],
+  "skills": ["skills/artifact-verification.md", "skills/cleanup-after-job.md", "skills/customer-handoff-report.md"],
+  "agents": [
+    {"id": "research_agent", "model_policy": "web_research", "tool_policy": "web_read_only", "token_budget": 8000},
+    {"id": "download_agent", "model_policy": "fast_reasoning", "tool_policy": "download_only", "token_budget": 3000},
+    {"id": "diagnostic_agent", "model_policy": "fast_reasoning", "tool_policy": "read_only_pc", "token_budget": 7000},
+    {"id": "report_agent", "model_policy": "writer", "tool_policy": "no_local_execution", "token_budget": 5000}
+  ],
+  "phases": [
+    {"id": "scope", "type": "overseer", "prompt": "Confirm the task goal, official tool source, expected output, and any risk before download.", "completion": "Tool use scope is clear."},
+    {"id": "source_review", "type": "delegate", "agent": "research_agent", "prompt": "Review the supplied official HTTPS URL for ${tool_name}. Identify vendor, expected signature/checksum guidance, license/safety notes, and whether the tool fits this task goal: ${task_goal}. Do not execute anything.", "expected_output": "tool_source_review", "risk": "web_read_only", "completion": "Official source and safety notes are documented."},
+    {"id": "download_tool", "type": "tool_action", "agent": "download_agent", "tool": "download_file", "operation": "download", "arguments": {"url": "${tool_url}", "filename": ""}, "prompt": "Download the official technician tool into the session artifacts/downloads folder.", "risk": "download_only", "completion": "Downloaded tool path, size, SHA-256, and source URL are captured."},
+    {"id": "verify_download", "type": "tool_action", "tool": "run_powershell", "operation": "verify", "arguments": {"command": "$ErrorActionPreference='Stop'; $tool='${result_download_tool_path}'; Write-Output '== Downloaded tool =='; if ([string]::IsNullOrWhiteSpace($tool) -or -not (Test-Path -LiteralPath $tool)) { throw 'Downloaded tool path missing' }; Get-Item -LiteralPath $tool | Select-Object FullName,Length,LastWriteTime | Format-List; Write-Output '== SHA256 =='; Get-FileHash -Algorithm SHA256 -LiteralPath $tool | Format-List; Write-Output 'Download phase SHA256: ${result_download_tool_sha256}'; Write-Output 'Source URL: ${result_download_tool_source_url}'", "timeout_seconds": 60, "requires_admin": false, "max_output_bytes": 262144}, "prompt": "Verify downloaded tool path, size, SHA-256, and source before execution.", "risk": "read_only", "completion": "Downloaded tool integrity evidence is captured."},
+    {"id": "approval_gate", "type": "overseer", "prompt": "Ask human or apply access-mode policy before running the downloaded tool. Offer restore point when needed.", "risk": "system_change", "completion": "Risk gate is resolved."},
+    {"id": "run_tool", "type": "tool_action", "tool": "run_powershell", "operation": "repair", "arguments": {"command": "$ErrorActionPreference='Continue'; $tool='${result_download_tool_path}'; if ([string]::IsNullOrWhiteSpace($tool) -or -not (Test-Path -LiteralPath $tool)) { throw 'Downloaded tool path missing' }; Write-Output '== Running downloaded technician tool =='; Write-Output ('Tool: ' + $tool); Write-Output 'Task goal: ${task_goal}'; & $tool ${tool_arguments}; $exit=$LASTEXITCODE; if ($null -eq $exit) { $exit=0 }; Write-Output ('tool-exit-code=' + $exit); exit $exit", "timeout_seconds": 1800, "requires_admin": false, "max_output_bytes": 1048576}, "prompt": "Run the downloaded tool with the supplied arguments only after approval. Capture stdout/stderr and exit code.", "risk": "system_change", "completion": "Tool run result and logs are captured."},
+    {"id": "verify_result", "type": "tool_action", "tool": "run_powershell", "operation": "verify", "condition": "run_tool_succeeded", "arguments": {"command": "$ErrorActionPreference='Continue'; Write-Output '== Tool run verification =='; Write-Output 'Task goal: ${task_goal}'; Write-Output 'Tool exit code from run phase: ${result_run_tool_exit_code}'; $tool='${result_download_tool_path}'; if (Test-Path -LiteralPath $tool) { Get-Item -LiteralPath $tool | Select-Object FullName,Length,LastWriteTime | Format-List; Get-FileHash -Algorithm SHA256 -LiteralPath $tool | Format-List } else { Write-Output 'Downloaded tool already absent' }", "timeout_seconds": 120, "requires_admin": false, "max_output_bytes": 262144}, "prompt": "Verify the tool run result, exit code, and remaining artifact state.", "risk": "read_only", "completion": "Post-run evidence is captured."},
+    {"id": "verify_analysis", "type": "delegate", "agent": "diagnostic_agent", "prompt": "Analyze source review, download verification, tool run output, exit code, and post-run verification. Decide whether the task goal was met and what evidence proves it.", "expected_output": "tool_task_verification", "risk": "read_only", "completion": "Task completion confidence and evidence are documented."},
+    {"id": "report", "type": "delegate", "agent": "report_agent", "prompt": "Create a technician handoff report with task goal, official source, downloaded artifact hash, command/tools used, actions taken, verification evidence, cleanup status, residual risk, artifacts, and follow-up.", "expected_output": "tool_task_report", "risk": "none", "completion": "User has a clear technician report."},
+    {"id": "cleanup", "type": "cleanup", "tool": "run_powershell", "operation": "cleanup", "arguments": {"command": "$ErrorActionPreference='Continue'; $tool='${result_download_tool_path}'; Write-Output '== Cleanup downloaded technician tool =='; if (-not [string]::IsNullOrWhiteSpace($tool) -and (Test-Path -LiteralPath $tool)) { Remove-Item -LiteralPath $tool -Force; Write-Output ('Removed downloaded tool: ' + $tool) } else { Write-Output 'No downloaded tool file to remove' }; Write-Output 'Logs, reports, hashes, and command output are preserved in session artifacts.'", "timeout_seconds": 120, "requires_admin": false, "max_output_bytes": 262144}, "prompt": "Remove the downloaded technician tool from artifacts after preserving logs, hash, source URL, and report evidence.", "risk": "artifact_cleanup", "completion": "Downloaded tool is removed or cleanup debt is recorded."}
+  ],
+  "acceptance_criteria": [
+    "Tool source is HTTPS and official or explicitly rejected.",
+    "Downloaded file path, size, SHA-256, and source URL are captured before execution.",
+    "Tool execution is approved according to access mode and logs are preserved.",
+    "Post-run verification determines whether the task goal was met.",
+    "Downloaded tool is removed after completion while reports and logs remain."
+  ],
+  "cancel_policy": {"cancel_children": true, "cancel_tools": true, "preserve_partial_artifacts": true, "report_partial_state": true}
+}

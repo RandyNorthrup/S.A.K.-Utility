@@ -12,14 +12,14 @@
 #include <QDateTime>
 #include <QDir>
 #include <QFile>
-#include <QStandardPaths>
 #include <QTextStream>
 
 namespace sak {
 
 QuickActionController::QuickActionController(QObject* parent) : QObject(parent) {
     // Setup log file path
-    QString log_dir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+    QString log_dir =
+        QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("data/logs"));
     if (!QDir().mkpath(log_dir)) {
         sak::logWarning("Failed to create quick actions log directory: {}", log_dir.toStdString());
     }

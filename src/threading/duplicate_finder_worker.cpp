@@ -14,9 +14,9 @@
 #include <QtGlobal>
 #include <QThreadPool>
 
-#include <thread>
 #include <algorithm>
 #include <iterator>
+#include <thread>
 
 DuplicateFinderWorker::DuplicateFinderWorker(const Config& config, QObject* parent)
     : WorkerBase(parent), m_config(config), m_hasher(sak::hash_algorithm::md5) {
@@ -207,8 +207,8 @@ auto DuplicateFinderWorker::calculateFileHash(const std::filesystem::path& file_
 }
 
 auto DuplicateFinderWorker::groupByHash(
-    const std::vector<std::pair<std::filesystem::path, std::string>>& files)
-    const -> std::unordered_map<std::string, std::vector<std::filesystem::path>> {
+    const std::vector<std::pair<std::filesystem::path, std::string>>& files) const
+    -> std::unordered_map<std::string, std::vector<std::filesystem::path>> {
     std::unordered_map<std::string, std::vector<std::filesystem::path>> groups;
 
     for (const auto& [path, hash] : files) {
@@ -357,9 +357,8 @@ DuplicateFinderWorker::filterValidResults(
     std::vector<std::pair<std::filesystem::path, std::string>> valid;
     valid.reserve(results.size());
 
-    std::copy_if(results.begin(), results.end(), std::back_inserter(valid),
-        [](const auto& result) {
-            return !result.first.empty() && !result.second.empty();
-        });
+    std::copy_if(results.begin(), results.end(), std::back_inserter(valid), [](const auto& result) {
+        return !result.first.empty() && !result.second.empty();
+    });
     return valid;
 }

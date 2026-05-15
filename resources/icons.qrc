@@ -25,6 +25,7 @@
         <file>icons/panel_wifi.svg</file>
         <file>icons/panel_about.svg</file>
         <file>icons/panel_email.svg</file>
+        <file>icons/panel_ai.svg</file>
         <file>icons/icons8-benchmark.svg</file>
         <file>icons/icons8-duplicate.svg</file>
         <file>icons/icons8-settings_help.svg</file>
@@ -42,7 +43,12 @@
         <file>icons/icons8-radar.svg</file>
         <file>icons/icons8-inbox.svg</file>
         <file>icons/icons8-sent.svg</file>
+        <file>icons/icons8-send.svg</file>
         <file>icons/icons8-edit-file.svg</file>
+        <file>icons/icons8-instructions.svg</file>
+        <file>icons/icons8-add-to-chat.svg</file>
+        <file>icons/icons8-new-chat.svg</file>
+        <file>icons/icons8-rename.svg</file>
         <file>icons/icons8-trash.svg</file>
         <file>icons/icons8-spam.svg</file>
         <file>icons/icons8-star.svg</file>

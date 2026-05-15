@@ -1,0 +1,112 @@
+{
+  "schema_version": 1,
+  "id": "drive_health_deep_check",
+  "title": "Drive Health Deep Check",
+  "role": "PC Technician",
+  "category": "Diagnostics",
+  "description": "Inspect drive health with SMART/storage/event evidence before any repair.",
+  "starter_prompt": "Check my drive health deeply. Use read-only checks first and explain any repair risk.",
+  "required_inputs": [
+    {"id": "drive_hint", "label": "Drive letter or disk number", "type": "string", "required": false}
+  ],
+  "required_software": [
+    {"id": "run_powershell", "kind": "sak_tool", "required": true, "install_policy": "built_in_only"},
+    {"id": "smartctl", "kind": "bundled_tool", "required": false, "install_policy": "already_bundled"}
+  ],
+  "instructions": ["instructions/evidence_policy.md", "instructions/windows_repair_safety.md", "instructions/reporting_standard.md"],
+  "skills": ["skills/drive-health-diagnostics.md", "skills/artifact-verification.md", "skills/customer-handoff-report.md", "skills/cleanup-after-job.md"],
+  "agents": [
+    {"id": "diagnostic_agent", "model_policy": "fast_reasoning", "tool_policy": "read_only_pc", "token_budget": 9000},
+    {"id": "repair_agent", "model_policy": "deep_reasoning", "tool_policy": "mutating_requires_lease", "token_budget": 7000}
+  ],
+  "phases": [
+    {
+      "id": "identify_drives",
+      "type": "tool_action",
+      "tool": "run_powershell",
+      "operation": "diagnose",
+      "arguments": {
+        "command": "$ErrorActionPreference='Continue'; Write-Output '== Physical disks =='; Get-PhysicalDisk | Select-Object FriendlyName,SerialNumber,MediaType,HealthStatus,OperationalStatus,Size | Format-List; Write-Output '== Disk drives =='; Get-CimInstance Win32_DiskDrive | Select-Object Model,SerialNumber,MediaType,Status,Size,InterfaceType | Format-List; Write-Output '== Volumes =='; Get-Volume | Select-Object DriveLetter,FileSystemLabel,FileSystem,HealthStatus,OperationalStatus,SizeRemaining,Size | Format-List; Write-Output '== Partitions =='; Get-Partition | Select-Object DiskNumber,PartitionNumber,DriveLetter,Type,Size | Format-List",
+        "timeout_seconds": 120,
+        "requires_admin": false,
+        "max_output_bytes": 524288
+      },
+      "prompt": "Collect read-only physical disk, drive, volume, and partition inventory.",
+      "risk": "read_only",
+      "completion": "Target drive inventory is captured or ambiguity is visible."
+    },
+    {
+      "id": "collect_health",
+      "type": "tool_action",
+      "tool": "run_powershell",
+      "operation": "diagnose",
+      "arguments": {
+        "command": "$ErrorActionPreference='Continue'; function Section($n){ Write-Output ('== ' + $n + ' ==') }; function TrySection($n,[scriptblock]$b){ Section $n; try { & $b } catch { Write-Output ('[warning] ' + $n + ' unavailable: ' + $_.Exception.Message) } }; TrySection 'Storage reliability counters' { try { $counters=Get-PhysicalDisk -ErrorAction Stop | Get-StorageReliabilityCounter -ErrorAction Stop; if($counters){ $counters | Select-Object DeviceId,Temperature,ReadErrorsTotal,WriteErrorsTotal,ReadErrorsUncorrected,WriteErrorsUncorrected,Wear,PowerOnHours,PowerCycleCount | Format-List } else { Write-Output '[warning] No storage reliability counters returned.' } } catch { Write-Output ('[warning] Storage reliability counters unavailable without administrator/storage CIM access: ' + $_.Exception.Message); Write-Output 'Fallback checks below are still valid but less complete than storage reliability counters.' } }; TrySection 'SMART predictive status fallback' { Get-CimInstance -Namespace root\\wmi -ClassName MSStorageDriver_FailurePredictStatus -ErrorAction Stop | Select-Object InstanceName,PredictFailure,Reason | Format-List }; TrySection 'Disk fallback status' { Get-PhysicalDisk | Select-Object FriendlyName,SerialNumber,MediaType,HealthStatus,OperationalStatus,Size | Format-List; Get-CimInstance Win32_DiskDrive | Select-Object Model,SerialNumber,Status,Size,InterfaceType | Format-List; Get-Disk -ErrorAction SilentlyContinue | Select-Object Number,FriendlyName,HealthStatus,OperationalStatus,PartitionStyle,Size,IsBoot,IsSystem | Format-List }; TrySection 'Recent disk/storage event summary' { $events=Get-WinEvent -FilterHashtable @{LogName='System'; StartTime=(Get-Date).AddDays(-30)} -MaxEvents 300 -ErrorAction SilentlyContinue | Where-Object { $_.ProviderName -match '^(disk|Disk|Ntfs|storahci|stornvme)$' }; if($events){ $events | Group-Object ProviderName,Id,LevelDisplayName | Sort-Object Count -Descending | Select-Object Count,Name | Format-Table -AutoSize; Write-Output '== Recent disk/storage event details =='; $events | Select-Object -First 80 TimeCreated,ProviderName,Id,LevelDisplayName,Message | Format-List } else { Write-Output 'No disk/Ntfs/storahci/stornvme events found in the last 30 days.' } }; TrySection 'File system scan state' { $drives=Get-CimInstance Win32_LogicalDisk -Filter 'DriveType=3' | Select-Object -ExpandProperty DeviceID; foreach($drive in $drives){ Write-Output ('fsutil dirty query ' + $drive); fsutil dirty query $drive 2>&1 }; Write-Output '== Volume free space =='; Get-Volume | Select-Object DriveLetter,FileSystemLabel,HealthStatus,SizeRemaining,Size | Format-List }",
+        "timeout_seconds": 180,
+        "requires_admin": false,
+        "max_output_bytes": 1048576
+      },
+      "prompt": "Collect read-only SMART/storage reliability counters when accessible, fallback disk health/status, disk/Ntfs/storage events, free space, and file-system scan indicators. Treat any '[warning]' lines as missing evidence that must be disclosed.",
+      "risk": "read_only",
+      "completion": "Hardware and file-system evidence is captured and missing admin-only evidence is explicit."
+    },
+    {
+      "id": "analyze_health",
+      "type": "delegate",
+      "agent": "diagnostic_agent",
+      "prompt": "Analyze collected drive inventory and health evidence. Separate hardware risk from file-system risk, call out missing storage reliability counters when permission-limited, and do not treat fallback-only evidence as a complete SMART pass.",
+      "expected_output": "drive_evidence",
+      "risk": "read_only",
+      "completion": "Evidence covers hardware and file-system signals."
+    },
+    {
+      "id": "risk_assessment",
+      "type": "overseer",
+      "prompt": "Classify drive risk and decide whether repairs, backups, vendor diagnostics, or elevated re-run are appropriate.",
+      "completion": "Risk and recommendation are clear."
+    },
+    {
+      "id": "repair_plan",
+      "type": "delegate",
+      "agent": "repair_agent",
+      "prompt": "If repair is needed, propose least-risk commands and rollback notes. Do not execute without overseer lease.",
+      "expected_output": "repair_plan",
+      "risk": "system_change",
+      "completion": "Plan separates read-only verification from repair."
+    },
+    {
+      "id": "approval_gate",
+      "type": "overseer",
+      "prompt": "If any repair command is recommended, ask human or apply access-mode policy and offer restore point before execution.",
+      "risk": "system_change",
+      "completion": "Risk gate is resolved or repair remains recommendation-only."
+    },
+    {
+      "id": "verify_evidence",
+      "type": "overseer",
+      "prompt": "Check whether drive identity, hardware health, file-system evidence, and repair risk have enough support for the recommendation. Verify missing admin-only storage counters are disclosed if present.",
+      "completion": "Evidence gaps or confidence are clear."
+    },
+    {
+      "id": "report",
+      "type": "overseer",
+      "prompt": "Create a technician-readable drive report with drive identity, evidence, actions/tools used, verification status, artifacts/logs, cleanup status, residual risk, and safe next actions. Include missing-evidence warnings when any command section reported '[warning]'.",
+      "completion": "User can decide next step."
+    },
+    {
+      "id": "cleanup",
+      "type": "cleanup",
+      "always_run": true,
+      "prompt": "Preserve diagnostic logs and reports; remove only temporary scratch files created by this workflow.",
+      "completion": "Cleanup status is recorded."
+    }
+  ],
+  "acceptance_criteria": [
+    "No write repair command runs before approval.",
+    "Hardware health and file-system health are separated.",
+    "Warnings cite event IDs or command evidence when available.",
+    "Permission-denied or missing storage reliability counters are explicitly disclosed.",
+    "Backup advice is included when failure risk is non-trivial."
+  ],
+  "cancel_policy": {"cancel_children": true, "cancel_tools": true, "preserve_partial_artifacts": true, "report_partial_state": true}
+}

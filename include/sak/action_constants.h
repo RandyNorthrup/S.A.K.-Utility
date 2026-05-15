@@ -44,7 +44,7 @@ constexpr int kChocoMaxPackageBatch = 10;      ///< Max packages in batch instal
 // Progress step helpers
 // ============================================================================
 
-/// Standard progress milestones for multi-step actions.
+/// Standard progress markers for multi-step actions.
 /// Instead of hardcoding percentages, actions can use these to indicate
 /// logical phases of their workflow.
 namespace progress {

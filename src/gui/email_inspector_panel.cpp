@@ -1905,9 +1905,9 @@ QString EmailInspectorPanel::itemTypeLabel(sak::EmailItemType type) {
 }
 
 bool EmailInspectorPanel::isBlankItem(const sak::PstItemSummary& /*item*/) {
-    // Retained as a non-filtering stub for API compatibility.  Row filtering
+    // Retained as a non-filtering hook for API compatibility. Row filtering
     // is no longer needed: the PST parser now enumerates only live rows from
-    // the TCROWID BTH (MS-PST §2.3.4.3.1), so stale/deleted/padding slots
+    // the TCROWID BTH (MS-PST section 2.3.4.3.1), so stale/deleted/padding slots
     // never reach the GUI in the first place.
     return false;
 }

@@ -3,7 +3,7 @@
   <assemblyIdentity
     type="win32"
     name="SAK.Utility"
-    version="@PROJECT_VERSION_MAJOR@.@PROJECT_VERSION_MINOR@.@PROJECT_VERSION_PATCH@.0"
+    version="@PROJECT_VERSION_MAJOR@.@PROJECT_VERSION_MINOR@.@PROJECT_VERSION_PATCH@.@PROJECT_VERSION_TWEAK@"
     processorArchitecture="amd64"
   />
   <description>S.A.K. Utility - Swiss Army Knife Utility</description>

@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "id": "clean_uninstall",
+  "title": "Clean Uninstall",
+  "role": "Software Installer",
+  "category": "Software",
+  "description": "Uninstall software safely, preserving user data unless explicitly approved.",
+  "starter_prompt": "Uninstall the requested application cleanly. Preserve user data unless I explicitly ask otherwise.",
+  "required_inputs": [
+    {"id": "app_name", "label": "Application name", "type": "string", "required": true}
+  ],
+  "required_software": [
+    {"id": "sak_package_manager", "kind": "sak_tool", "required": false, "install_policy": "built_in_only"},
+    {"id": "run_powershell", "kind": "sak_tool", "required": true, "install_policy": "built_in_only"}
+  ],
+  "instructions": ["instructions/software_install_policy.md", "instructions/windows_repair_safety.md", "instructions/reporting_standard.md"],
+  "skills": ["skills/package-selection.md", "skills/artifact-verification.md", "skills/cleanup-after-job.md", "skills/customer-handoff-report.md"],
+  "agents": [
+    {"id": "diagnostic_agent", "model_policy": "fast_reasoning", "tool_policy": "read_only_pc", "token_budget": 7000},
+    {"id": "package_agent", "model_policy": "fast_reasoning", "tool_policy": "package_tools_only", "token_budget": 6000},
+    {"id": "cleanup_agent", "model_policy": "fast_reasoning", "tool_policy": "mutating_requires_lease", "token_budget": 7000}
+  ],
+  "phases": [
+    {"id": "identify_install", "type": "tool_action", "tool": "run_powershell", "operation": "diagnose", "arguments": {"command": "$ErrorActionPreference='Continue'; $name='${app_name}'; Write-Output '== Installed apps: registry uninstall keys =='; Get-ItemProperty HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*,HKLM:\\Software\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*,HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\* -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -like \"*$name*\" } | Select-Object DisplayName,DisplayVersion,Publisher,InstallLocation,UninstallString,QuietUninstallString,PSChildName | Format-List; Write-Output '== Matching packages =='; Get-Package -ErrorAction SilentlyContinue | Where-Object { $_.Name -like \"*$name*\" } | Select-Object Name,Version,ProviderName,Source | Format-Table -AutoSize; Write-Output '== Matching services =='; Get-Service | Where-Object { $_.Name -like \"*$name*\" -or $_.DisplayName -like \"*$name*\" } | Select-Object Name,DisplayName,Status,StartType | Format-Table -AutoSize; Write-Output '== Matching scheduled tasks =='; Get-ScheduledTask | Where-Object { $_.TaskName -like \"*$name*\" -or $_.TaskPath -like \"*$name*\" } | Select-Object TaskPath,TaskName,State | Format-Table -AutoSize", "timeout_seconds": 180, "requires_admin": false, "max_output_bytes": 1048576}, "prompt": "Collect read-only installed app entries, package ownership, install path, services, tasks, and uninstall strings.", "risk": "read_only", "completion": "App install evidence is captured."},
+    {"id": "analyze_install", "type": "delegate", "agent": "diagnostic_agent", "prompt": "Analyze collected installed app evidence, package manager ownership, install path, services, tasks, uninstall strings, and likely user data locations.", "expected_output": "installed_app_evidence", "risk": "read_only", "completion": "App identity and ownership are known."},
+    {"id": "uninstall_plan", "type": "delegate", "agent": "package_agent", "prompt": "Choose uninstall route: SAK package manager if owned by package, native uninstaller otherwise. Do not remove user data.", "expected_output": "uninstall_plan", "risk": "system_change", "completion": "Uninstall plan is ready."},
+    {"id": "approval_gate", "type": "overseer", "prompt": "Ask human or apply access-mode policy before uninstall. Offer restore point when needed.", "risk": "system_change", "completion": "Risk gate is resolved."},
+    {"id": "execute_uninstall", "type": "tool_action", "tool": "sak_package_manager", "operation": "uninstall", "prompt": "Run selected uninstall method and capture result.", "risk": "system_change", "completion": "Uninstall result is captured."},
+    {"id": "leftover_review", "type": "delegate", "agent": "cleanup_agent", "prompt": "Review leftovers after uninstall. Propose cleanup, but do not delete user data without approval.", "expected_output": "leftover_report", "risk": "system_change", "completion": "Leftovers and cleanup options are listed."},
+    {"id": "verify_report", "type": "overseer", "prompt": "Verify removal and create a technician-readable uninstall report with app identity, evidence, actions/tools used, uninstall result, verification status, leftovers/artifacts, cleanup status, user-data preservation, residual risk, and follow-up.", "completion": "User gets uninstall result and follow-up."},
+    {"id": "cleanup", "type": "cleanup", "prompt": "Preserve uninstall logs, leftover evidence, and report artifacts; remove only temporary scratch files created by this workflow.", "completion": "Cleanup status is recorded."}
+  ],
+  "acceptance_criteria": [
+    "Native/package ownership is checked.",
+    "Restore-point prompt occurs before risky uninstall.",
+    "User data is preserved unless explicitly approved.",
+    "Leftovers are reported separately from removed items."
+  ],
+  "cancel_policy": {"cancel_children": true, "cancel_tools": true, "preserve_partial_artifacts": true, "report_partial_state": true}
+}
