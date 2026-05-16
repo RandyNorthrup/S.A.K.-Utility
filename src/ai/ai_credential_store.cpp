@@ -3,10 +3,10 @@
 
 #include "sak/ai/ai_credential_store.h"
 
+#include "sak/ai/ai_paths.h"
 #include "sak/secure_memory.h"
 
 #include <QByteArray>
-#include <QCoreApplication>
 #include <QDateTime>
 #include <QDir>
 #include <QFile>
@@ -40,18 +40,6 @@ constexpr char kDpapiEntropy[] = "SAK Utility/OpenAI API Key/v1";
     return QStringLiteral("Windows error %1").arg(static_cast<qulonglong>(code));
 }
 #endif
-
-[[nodiscard]] QString portableDataRoot() {
-    QString app_dir = QCoreApplication::applicationDirPath();
-    if (app_dir.trimmed().isEmpty()) {
-        app_dir = QDir::currentPath();
-    }
-    return QDir(app_dir).filePath(QStringLiteral("data"));
-}
-
-[[nodiscard]] QString credentialDirectory() {
-    return QDir(portableDataRoot()).filePath(QStringLiteral("credentials"));
-}
 
 void setError(QString* error_message, const QString& message) {
     if (error_message) {

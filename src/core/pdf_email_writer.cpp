@@ -1,4 +1,4 @@
-﻿// Copyright (c) 2025-2026 Randy Northrup. All rights reserved.
+// Copyright (c) 2025-2026 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 /// @file pdf_email_writer.cpp
@@ -155,7 +155,7 @@ QString PdfEmailWriter::buildHtmlForPdf(
                 QStringLiteral("</pre>");
     }
 
-    // Attachment list (names only â€” not embedded in PDF)
+    // Attachment list (names only -- not embedded in PDF)
     if (!attachments.isEmpty()) {
         html += QStringLiteral("<div class='att'><b>Attachments:</b><ul>");
         for (const auto& att : attachments) {

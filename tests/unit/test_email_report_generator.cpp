@@ -310,7 +310,7 @@ EmailReportGenerator::ReportData TestEmailReportGenerator::createSampleData() {
     data.report_date = QDateTime::currentDateTime();
 
     // File info
-    data.file_info.file_path = QStringLiteral("C:/Users/Test/Documents/Outlook.pst");
+    data.file_info.file_path = QStringLiteral("X:/Profiles/Test/Documents/Outlook.pst");
     data.file_info.display_name = QStringLiteral("Personal Folders");
     data.file_info.file_size_bytes = 1024LL * 1024 * 500;
     data.file_info.is_unicode = true;

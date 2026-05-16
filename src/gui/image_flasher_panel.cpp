@@ -92,7 +92,6 @@ ImageFlasherPanel::~ImageFlasherPanel() {
 }
 
 void ImageFlasherPanel::setupUi() {
-    Q_ASSERT(m_stackedWidget);
     Q_ASSERT(layout() == nullptr);  // setupUi not called twice
     auto* rootLayout = new QVBoxLayout(this);
     rootLayout->setContentsMargins(0, 0, 0, 0);

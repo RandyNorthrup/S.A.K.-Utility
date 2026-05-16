@@ -63,6 +63,8 @@ foreach(test_name ${UNIT_TESTS})
 
     if(test_name STREQUAL "test_windows_iso_downloader")
         list(APPEND impl_sources
+            "${CMAKE_CURRENT_SOURCE_DIR}/../src/core/app_paths.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/../include/sak/app_paths.h"
             "${CMAKE_CURRENT_SOURCE_DIR}/../src/core/uup_dump_api.cpp"
             "${CMAKE_CURRENT_SOURCE_DIR}/../include/sak/uup_dump_api.h"
             "${CMAKE_CURRENT_SOURCE_DIR}/../src/core/uup_iso_builder.cpp"
@@ -666,13 +668,17 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_openai_responses_client.cpp")
     add_executable(test_openai_responses_client
         unit/test_openai_responses_client.cpp
         ../src/ai/openai_responses_client.cpp
+        ../src/core/app_paths.cpp
         ../src/ai/ai_token_usage_tracker.cpp
         ../src/ai/ai_credential_store.cpp
+        ../src/ai/ai_paths.cpp
         ../src/core/secure_memory.cpp
         ../src/core/logger.cpp
         ../include/sak/ai/openai_responses_client.h
+        ../include/sak/app_paths.h
         ../include/sak/ai/ai_token_usage_tracker.h
         ../include/sak/ai/ai_credential_store.h
+        ../include/sak/ai/ai_paths.h
         ../include/sak/secure_memory.h
     )
     set_target_properties(test_openai_responses_client PROPERTIES
@@ -693,9 +699,13 @@ endif()
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_conversation_store.cpp")
     add_executable(test_ai_conversation_store
         unit/test_ai_conversation_store.cpp
+        ../src/core/app_paths.cpp
         ../src/ai/ai_conversation_store.cpp
+        ../src/ai/ai_paths.cpp
         ../src/ai/ai_token_usage_tracker.cpp
         ../include/sak/ai/ai_conversation_store.h
+        ../include/sak/app_paths.h
+        ../include/sak/ai/ai_paths.h
         ../include/sak/ai/ai_token_usage_tracker.h
     )
     set_target_properties(test_ai_conversation_store PROPERTIES
@@ -716,11 +726,15 @@ endif()
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_execution_broker.cpp")
     add_executable(test_ai_execution_broker
         unit/test_ai_execution_broker.cpp
+        ../src/core/app_paths.cpp
         ../src/ai/ai_execution_broker.cpp
         ../src/ai/ai_credential_store.cpp
+        ../src/ai/ai_paths.cpp
         ../src/core/secure_memory.cpp
         ../include/sak/ai/ai_execution_broker.h
+        ../include/sak/app_paths.h
         ../include/sak/ai/ai_credential_store.h
+        ../include/sak/ai/ai_paths.h
         ../include/sak/secure_memory.h
     )
     set_target_properties(test_ai_execution_broker PROPERTIES
@@ -1062,8 +1076,12 @@ endif()
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_workflow_store.cpp")
     add_executable(test_ai_workflow_store
         unit/test_ai_workflow_store.cpp
+        ../src/core/app_paths.cpp
+        ../src/ai/ai_paths.cpp
         ../src/ai/ai_workflow_store.cpp
         ../src/ai/ai_workflow_template.cpp
+        ../include/sak/ai/ai_paths.h
+        ../include/sak/app_paths.h
         ../include/sak/ai/ai_workflow_store.h
         ../include/sak/ai/ai_workflow_template.h
         ../resources/ai.qrc
@@ -1953,7 +1971,9 @@ endif()
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_quick_action_controller.cpp")
     add_executable(test_quick_action_controller
         unit/test_quick_action_controller.cpp
+        ../src/core/app_paths.cpp
         ../src/core/quick_action_controller.cpp
+        ../include/sak/app_paths.h
         ../include/sak/quick_action_controller.h
         ../src/core/quick_action.cpp
         ../include/sak/quick_action.h
@@ -2122,7 +2142,9 @@ endif()
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_uup_iso_builder.cpp")
     add_executable(test_uup_iso_builder
         unit/test_uup_iso_builder.cpp
+        ../src/core/app_paths.cpp
         ../src/core/uup_iso_builder.cpp
+        ../include/sak/app_paths.h
         ../include/sak/uup_iso_builder.h
         ../src/core/uup_dump_api.cpp
         ../include/sak/uup_dump_api.h

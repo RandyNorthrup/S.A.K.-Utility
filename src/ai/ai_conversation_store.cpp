@@ -3,7 +3,8 @@
 
 #include "sak/ai/ai_conversation_store.h"
 
-#include <QCoreApplication>
+#include "sak/ai/ai_paths.h"
+
 #include <QDir>
 #include <QDirIterator>
 #include <QFile>
@@ -160,14 +161,6 @@ QString uniqueDestinationPath(const QString& path) {
         }
     }
     return path;
-}
-
-QString portableDataRoot() {
-    QString app_dir = QCoreApplication::applicationDirPath();
-    if (app_dir.trimmed().isEmpty()) {
-        app_dir = QDir::currentPath();
-    }
-    return QDir(app_dir).filePath(QStringLiteral("data"));
 }
 
 void setError(QString* error_message, const QString& message) {
@@ -437,7 +430,7 @@ AiSessionInfo ConversationStore::currentSessionInfo() const {
 }
 
 QString ConversationStore::defaultRootDirectory() {
-    return QDir(portableDataRoot()).filePath(QStringLiteral("ai_sessions"));
+    return sessionRootDirectory();
 }
 
 bool ConversationStore::ensureRoot(QString* error_message) const {

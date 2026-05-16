@@ -1,4 +1,4 @@
-﻿// Copyright (c) 2025-2026 Randy Northrup. All rights reserved.
+// Copyright (c) 2025-2026 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 /// @file test_conversion_report_generator.cpp
@@ -19,7 +19,7 @@ class TestConversionReportGenerator : public QObject {
 private Q_SLOTS:
 
     // ====================================================================
-    // Happy Path â€” Generate HTML report
+    // Happy Path -- Generate HTML report
     // ====================================================================
 
     void testGenerateHtmlReport() {

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 /// @file test_diagnostic_types.cpp
-/// @brief Unit tests for diagnostic data structures â€” defaults, construction, value semantics
+/// @brief Unit tests for diagnostic data structures -- defaults, construction, value semantics
 
 #include "sak/diagnostic_types.h"
 

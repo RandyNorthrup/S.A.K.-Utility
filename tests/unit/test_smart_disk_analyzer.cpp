@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 /// @file test_smart_disk_analyzer.cpp
-/// @brief Unit tests for SMART disk health analysis â€” JSON parsing and assessment
+/// @brief Unit tests for SMART disk health analysis -- JSON parsing and assessment
 
 #include "sak/diagnostic_types.h"
 #include "sak/smart_disk_analyzer.h"
@@ -53,14 +53,14 @@ void SmartDiskAnalyzerTests::constructor_defaults() {
 
 void SmartDiskAnalyzerTests::isSmartctlAvailable_returnsBoolean() {
     sak::SmartDiskAnalyzer analyzer;
-    // Just verify it doesn't crash â€” result depends on bundled tools
+    // Just verify it doesn't crash -- result depends on bundled tools
     bool available = analyzer.isSmartctlAvailable();
     Q_UNUSED(available);
     QVERIFY(true);
 }
 
 // ============================================================================
-// Parse Output Tests â€” we use the private parseSmartctlOutput indirectly
+// Parse Output Tests -- we use the private parseSmartctlOutput indirectly
 // by testing through the public API where possible, or verifying report
 // structure from known JSON formats
 // ============================================================================
@@ -167,7 +167,7 @@ void SmartDiskAnalyzerTests::healthAssessment_critical() {
 
 void SmartDiskAnalyzerTests::cancel_stopsAnalysis() {
     sak::SmartDiskAnalyzer analyzer;
-    // Cancel before starting â€” should be safe
+    // Cancel before starting -- should be safe
     analyzer.cancel();
     QVERIFY(analyzer.reports().isEmpty());
 }

@@ -275,7 +275,7 @@ void SmartFileFilterTests::shouldExcludeFile_patternMatch() {
     sak::SmartFilter rules;
     rules.exclude_patterns = {".*\\.dat$"};
     rules.dangerous_files.clear();  // Don't catch .dat via dangerous list
-    // Do NOT call initializeDefaults() â€” it would overwrite our custom rules
+    // Do NOT call initializeDefaults() -- it would overwrite our custom rules
 
     sak::SmartFileFilter filter(rules);
     // The pattern should catch .dat files

@@ -218,7 +218,7 @@ UserProfileBackupSmartFiltersPage::UserProfileBackupSmartFiltersPage(SmartFilter
 }
 
 void UserProfileBackupSmartFiltersPage::setupUi() {
-    Q_ASSERT(m_summaryLabel);
+    Q_ASSERT(layout() == nullptr);  // setupUi not called twice
     auto* layout = new QVBoxLayout(this);
 
     // Instructions
@@ -242,8 +242,7 @@ void UserProfileBackupSmartFiltersPage::setupUi() {
 }
 
 void UserProfileBackupSmartFiltersPage::setupUi_filterSettings(QVBoxLayout* layout) {
-    Q_ASSERT(m_maxFileSizeSpinBox);
-    Q_ASSERT(m_maxFolderSizeSpinBox);
+    Q_ASSERT(layout);
     auto* gridLayout = new QGridLayout();
     int row = 0;
 
@@ -289,7 +288,6 @@ void UserProfileBackupSmartFiltersPage::setupUi_filterSettings(QVBoxLayout* layo
 }
 
 void UserProfileBackupSmartFiltersPage::setupUi_exclusionsAndControls(QVBoxLayout* layout) {
-    Q_ASSERT(m_resetButton);
     Q_ASSERT(layout);
     // Automatic exclusions
     auto* exclusionsGroup = new QWidget(this);
@@ -510,8 +508,7 @@ UserProfileBackupSettingsPage::UserProfileBackupSettingsPage(BackupManifest& man
 }
 
 void UserProfileBackupSettingsPage::setupUi_destinationAndCompression(QVBoxLayout* layout) {
-    Q_ASSERT(m_destinationEdit);
-    Q_ASSERT(m_compressionCombo);
+    Q_ASSERT(layout);
     // Destination path
     auto* destLayout = new QHBoxLayout();
     destLayout->addWidget(new QLabel(tr("Backup destination:"), this));
@@ -548,8 +545,7 @@ void UserProfileBackupSettingsPage::setupUi_destinationAndCompression(QVBoxLayou
 }
 
 void UserProfileBackupSettingsPage::setupUi_encryptionAndPermissions(QVBoxLayout* layout) {
-    Q_ASSERT(m_encryptionCheck);
-    Q_ASSERT(m_passwordEdit);
+    Q_ASSERT(layout);
     // Encryption
     auto* encryptionLayout = new QHBoxLayout();
     m_encryptionCheck = new QCheckBox(tr("Encrypt backup"), this);
@@ -784,8 +780,7 @@ UserProfileBackupInstalledAppsPage::UserProfileBackupInstalledAppsPage(QWidget* 
 }
 
 void UserProfileBackupInstalledAppsPage::setupUi() {
-    Q_ASSERT(m_scanButton);
-    Q_ASSERT(m_scanProgress);
+    Q_ASSERT(layout() == nullptr);  // setupUi not called twice
     auto* layout = new QVBoxLayout(this);
 
     // Instructions
@@ -1425,8 +1420,7 @@ UserProfileBackupAppDataPage::UserProfileBackupAppDataPage(QVector<UserProfile>&
 }
 
 void UserProfileBackupAppDataPage::setupUi() {
-    Q_ASSERT(m_scanProgress);
-    Q_ASSERT(m_appDataTree);
+    Q_ASSERT(layout() == nullptr);  // setupUi not called twice
     auto* layout = new QVBoxLayout(this);
 
     auto* instructionLabel = new QLabel(
@@ -1735,8 +1729,7 @@ UserProfileBackupKnownNetworksPage::UserProfileBackupKnownNetworksPage(QWidget* 
 }
 
 void UserProfileBackupKnownNetworksPage::setupUi() {
-    Q_ASSERT(m_scanProgress);
-    Q_ASSERT(m_networkTree);
+    Q_ASSERT(layout() == nullptr);  // setupUi not called twice
     auto* layout = new QVBoxLayout(this);
 
     auto* instructionLabel =
@@ -1951,8 +1944,7 @@ UserProfileBackupEthernetSettingsPage::UserProfileBackupEthernetSettingsPage(QWi
 }
 
 void UserProfileBackupEthernetSettingsPage::setupUi() {
-    Q_ASSERT(m_scanProgress);
-    Q_ASSERT(m_ethernetTable);
+    Q_ASSERT(layout() == nullptr);  // setupUi not called twice
     auto* layout = new QVBoxLayout(this);
 
     auto* instructionLabel =

@@ -3,7 +3,8 @@
 
 #include "sak/ai/ai_workflow_store.h"
 
-#include <QCoreApplication>
+#include "sak/ai/ai_paths.h"
+
 #include <QDir>
 #include <QFile>
 #include <QSet>
@@ -30,14 +31,6 @@ bool loadWorkflowFile(const QString& path, WorkflowTemplate* workflow, QStringLi
         return false;
     }
     return workflow->isValid(errors);
-}
-
-QString portableDataRoot() {
-    QString app_dir = QCoreApplication::applicationDirPath();
-    if (app_dir.trimmed().isEmpty()) {
-        app_dir = QDir::currentPath();
-    }
-    return QDir(app_dir).filePath(QStringLiteral("data"));
 }
 
 }  // namespace
@@ -136,7 +129,7 @@ QString WorkflowStore::builtInResourceRoot() {
 }
 
 QString WorkflowStore::defaultUserWorkflowDirectory() {
-    return QDir(portableDataRoot()).filePath(QStringLiteral("ai/workflows"));
+    return workflowLibraryDirectory();
 }
 
 void WorkflowStore::rebuildIndex() {

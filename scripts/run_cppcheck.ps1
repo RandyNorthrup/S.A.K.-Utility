@@ -28,14 +28,31 @@ $ErrorActionPreference = "Stop"
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
-$CppcheckExe = "C:\Program Files\Cppcheck\cppcheck.exe"
 $ProjectRoot = Split-Path -Parent (Split-Path -Parent $PSCommandPath)
 $SuppressionsFile = Join-Path $ProjectRoot "cppcheck_suppressions.txt"
 
-if (-not (Test-Path $CppcheckExe)) {
-    Write-Error "cppcheck not found at $CppcheckExe. Install from https://cppcheck.sourceforge.io/"
-    exit 1
+function Find-Cppcheck {
+    $fromPath = Get-Command cppcheck.exe -ErrorAction SilentlyContinue
+    if ($fromPath) {
+        return $fromPath.Source
+    }
+
+    $candidatePaths = @(
+        "$env:ProgramFiles\Cppcheck\cppcheck.exe",
+        "${env:ProgramFiles(x86)}\Cppcheck\cppcheck.exe"
+    )
+
+    foreach ($candidate in $candidatePaths) {
+        if (-not [string]::IsNullOrWhiteSpace($candidate) -and
+            (Test-Path -LiteralPath $candidate -PathType Leaf)) {
+            return $candidate
+        }
+    }
+
+    throw "cppcheck.exe was not found. Install from https://cppcheck.sourceforge.io/"
 }
+
+$CppcheckExe = Find-Cppcheck
 
 # ---------------------------------------------------------------------------
 # Build command arguments — STRICTEST settings

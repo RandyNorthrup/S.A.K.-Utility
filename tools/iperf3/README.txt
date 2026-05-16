@@ -1,8 +1,8 @@
-﻿iPerf3 v3.20
+iPerf3 v3.20
 =================
 Bundled for S.A.K. Utility network diagnostic panel.
 
-License: BSD 3-Clause â€” see LICENSE
+License: BSD 3-Clause -- see LICENSE
 Source:  https://github.com/esnet/iperf
 Builds:  https://github.com/ar51an/iperf3-win-builds
 

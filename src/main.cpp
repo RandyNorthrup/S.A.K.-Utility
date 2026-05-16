@@ -4,6 +4,7 @@
 /// @file main.cpp
 /// @brief SAK Utility main entry point
 
+#include "sak/app_paths.h"
 #include "sak/error_codes.h"
 #include "sak/logger.h"
 #include "sak/main_window.h"
@@ -74,8 +75,7 @@ QApplication& initializeApp(int argc, char* argv[]) {
 /// @brief Initialize the logger subsystem.
 /// @return true on success, false on failure (with user-visible error shown).
 bool initializeLogger() {
-    const QString log_path =
-        QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("data/logs"));
+    const QString log_path = sak::app_paths::logsDirectory();
     auto log_dir = std::filesystem::path(log_path.toStdWString());
     auto& logger = sak::logger::instance();
 
@@ -92,10 +92,11 @@ bool initializeLogger() {
 }
 
 void configurePortableRuntimeDirs() {
-    const QString app_dir = QCoreApplication::applicationDirPath();
-    const QString data_dir = QDir(app_dir).filePath(QStringLiteral("data"));
-    const QString temp_dir = QDir(data_dir).filePath(QStringLiteral("temp"));
-    QDir().mkpath(temp_dir);
+    const QString temp_dir = sak::app_paths::tempDirectory();
+    if (!sak::app_paths::ensureDirectory(temp_dir)) {
+        std::cerr << "Warning: failed to create portable temp directory: " << temp_dir.toStdString()
+                  << '\n';
+    }
     const QByteArray native_temp = QDir::toNativeSeparators(temp_dir).toLocal8Bit();
     qputenv("TMP", native_temp);
     qputenv("TEMP", native_temp);

@@ -16,6 +16,7 @@ env:
   CMAKE_VERSION: '3.28.0'
   BUILD_TYPE: Release
   Qt6_DIR: ''  # Populated by install-qt-action at runtime
+  VCPKG_ROOT: C:/vcpkg
 
 jobs:
   build-windows:
@@ -58,9 +59,9 @@ jobs:
       uses: actions/cache@v4
       with:
         path: |
-          C:/vcpkg/installed
-          C:/vcpkg/packages
-          C:/vcpkg/buildtrees
+          ${{ env.VCPKG_ROOT }}/installed
+          ${{ env.VCPKG_ROOT }}/packages
+          ${{ env.VCPKG_ROOT }}/buildtrees
         key: ${{ runner.os }}-vcpkg-${{ hashFiles('**/CMakeLists.txt') }}
         restore-keys: |
           ${{ runner.os }}-vcpkg-
@@ -120,7 +121,7 @@ jobs:
         cmake -B build -G "Visual Studio 17 2022" -A x64 `
           -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} `
           -DCMAKE_PREFIX_PATH="${{ env.Qt6_DIR }}" `
-          -DCMAKE_TOOLCHAIN_FILE="C:/vcpkg/scripts/buildsystems/vcpkg.cmake"
+          -DCMAKE_TOOLCHAIN_FILE="${{ env.VCPKG_ROOT }}/scripts/buildsystems/vcpkg.cmake"
 
     - name: Build
       run: cmake --build build --config ${{ env.BUILD_TYPE }} --parallel

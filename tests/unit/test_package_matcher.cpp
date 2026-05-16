@@ -27,7 +27,7 @@ private Q_SLOTS:
     // Mapping export/import
     void exportImport_roundTrip();
 
-    // Fuzzy matching internal â€” via findMatch
+    // Fuzzy matching internal -- via findMatch
     void findMatch_exactMapping();
     void findMatch_noResult();
 

@@ -69,13 +69,13 @@ private:
 };
 
 // ============================================================================
-// Setup â€” single initialization for the entire test run
+// Setup -- single initialization for the entire test run
 // ============================================================================
 
 void LoggerTests::initTestCase() {
     QVERIFY(m_logDir.isValid());
 
-    // Use a subdirectory that doesn't exist yet â€” verifies initialize creates it
+    // Use a subdirectory that doesn't exist yet -- verifies initialize creates it
     m_logSubDir = std::filesystem::path(m_logDir.path().toStdWString()) / "log_subdir";
     QVERIFY(!std::filesystem::exists(m_logSubDir));
 

@@ -3,13 +3,13 @@
 
 #include "sak/uup_iso_builder.h"
 
+#include "sak/app_paths.h"
 #include "sak/bundled_tools_manager.h"
 #include "sak/elevation_manager.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
 #include "sak/network_constants.h"
 
-#include <QCoreApplication>
 #include <QCryptographicHash>
 #include <QDateTime>
 #include <QDirIterator>
@@ -227,9 +227,12 @@ void UupIsoBuilder::prepareWorkspace() {
     // ---- Create work directory (deterministic name for resume support) ----
     Q_EMIT progressUpdated(1, "Creating work directory...");
 
-    const QString tempBase =
-        QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("data/temp"));
-    QDir().mkpath(tempBase);
+    const QString tempBase = sak::app_paths::tempDirectory();
+    if (!sak::app_paths::ensureDirectory(tempBase)) {
+        m_phase = Phase::Failed;
+        Q_EMIT buildError(QString("Failed to create temp directory: %1").arg(tempBase));
+        return;
+    }
     if (!m_updateId.isEmpty()) {
         const QString resumeKey = m_updateId + "|" + m_lang + "|" + m_edition.toLower();
         const QString shortHash = QString::fromLatin1(

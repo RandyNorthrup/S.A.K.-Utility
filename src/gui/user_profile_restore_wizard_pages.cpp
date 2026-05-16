@@ -295,8 +295,7 @@ UserProfileRestoreMergeConfigPage::UserProfileRestoreMergeConfigPage(QWidget* pa
 }
 
 void UserProfileRestoreMergeConfigPage::setupUi() {
-    Q_ASSERT(m_mergeTable);
-    Q_ASSERT(m_summaryLabel);
+    Q_ASSERT(layout() == nullptr);  // setupUi not called twice
     auto* layout = new QVBoxLayout(this);
 
     // Instructions
@@ -454,8 +453,7 @@ UserProfileRestoreFolderSelectionPage::UserProfileRestoreFolderSelectionPage(QWi
 }
 
 void UserProfileRestoreFolderSelectionPage::setupUi() {
-    Q_ASSERT(m_folderTable);
-    Q_ASSERT(m_summaryLabel);
+    Q_ASSERT(layout() == nullptr);  // setupUi not called twice
     auto* layout = new QVBoxLayout(this);
 
     // Instructions
@@ -649,8 +647,7 @@ UserProfileRestoreAppDataPage::UserProfileRestoreAppDataPage(QWidget* parent)
 }
 
 void UserProfileRestoreAppDataPage::setupUi() {
-    Q_ASSERT(m_appDataTree);
-    Q_ASSERT(m_selectAllButton);
+    Q_ASSERT(layout() == nullptr);  // setupUi not called twice
     auto* layout = new QVBoxLayout(this);
 
     auto* instructionLabel =
@@ -912,8 +909,7 @@ UserProfileRestoreNetworksPage::UserProfileRestoreNetworksPage(QWidget* parent)
 }
 
 void UserProfileRestoreNetworksPage::setupUi() {
-    Q_ASSERT(m_networkTree);
-    Q_ASSERT(m_selectAllButton);
+    Q_ASSERT(layout() == nullptr);  // setupUi not called twice
     auto* layout = new QVBoxLayout(this);
 
     auto* instructionLabel = new QLabel(tr("The backup contains saved WiFi network profiles. "
@@ -1103,8 +1099,7 @@ UserProfileRestoreEthernetPage::UserProfileRestoreEthernetPage(QWidget* parent)
 }
 
 void UserProfileRestoreEthernetPage::setupUi() {
-    Q_ASSERT(m_ethernetTable);
-    Q_ASSERT(m_selectAllButton);
+    Q_ASSERT(layout() == nullptr);  // setupUi not called twice
     auto* layout = new QVBoxLayout(this);
 
     auto* instructionLabel =
@@ -1301,8 +1296,7 @@ UserProfileRestorePermissionSettingsPage::UserProfileRestorePermissionSettingsPa
 }
 
 void UserProfileRestorePermissionSettingsPage::setupUi() {
-    Q_ASSERT(m_permissionModeCombo);
-    Q_ASSERT(m_conflictResolutionCombo);
+    Q_ASSERT(layout() == nullptr);  // setupUi not called twice
     auto* layout = new QVBoxLayout(this);
 
     // Permission mode
@@ -1348,8 +1342,7 @@ void UserProfileRestorePermissionSettingsPage::setupUi() {
 }
 
 void UserProfileRestorePermissionSettingsPage::setupUi_optionsAndConnections(QVBoxLayout* layout) {
-    Q_ASSERT(m_verifyCheckBox);
-    Q_ASSERT(m_createBackupCheckBox);
+    Q_ASSERT(layout);
     layout->addSpacing(20);
 
     // Options
@@ -1467,8 +1460,7 @@ UserProfileRestoreAppRestorePage::UserProfileRestoreAppRestorePage(QWidget* pare
 }
 
 void UserProfileRestoreAppRestorePage::setupUi() {
-    Q_ASSERT(m_appTree);
-    Q_ASSERT(m_selectAllButton);
+    Q_ASSERT(layout() == nullptr);  // setupUi not called twice
     auto* layout = new QVBoxLayout(this);
 
     // Instructions

@@ -70,7 +70,7 @@ private Q_SLOTS:
         UserProfile profile;
         profile.username = "TestUser";
         profile.sid = "S-1-5-21-123456789";
-        profile.profile_path = "C:\\Users\\TestUser";
+        profile.profile_path = "X:\\Profiles\\TestUser";
         profile.is_current_user = true;
 
         QJsonObject json = profile.toJson();
@@ -154,7 +154,7 @@ private Q_SLOTS:
         BackupUserData data;
         data.username = "John";
         data.sid = "S-1-5-21-999";
-        data.profile_path = "C:\\Users\\John";
+        data.profile_path = "X:\\Profiles\\John";
 
         QJsonObject json = data.toJson();
         BackupUserData restored = BackupUserData::fromJson(json);

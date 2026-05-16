@@ -154,7 +154,7 @@ void WorkerBaseTests::exceptionSafety_stdException() {
     worker.start();
     QVERIFY(worker.wait(5000));
 
-    // Must NOT crash â€” exception caught, failed() emitted
+    // Must NOT crash -- exception caught, failed() emitted
     QCOMPARE(failed_spy.count(), 1);
 
     const auto args = failed_spy.first();

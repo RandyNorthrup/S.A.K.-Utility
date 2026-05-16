@@ -12,6 +12,7 @@
 #include "sak/actions/check_disk_errors_action.h"
 #include "sak/actions/reset_network_action.h"
 #include "sak/actions/verify_system_files_action.h"
+#include "sak/app_paths.h"
 #include "sak/elevated_pipe_protocol.h"
 #include "sak/elevated_pipe_server.h"
 #include "sak/elevated_task_dispatcher.h"
@@ -65,10 +66,10 @@ HelperArgs parseArgs(int argc, char* argv[]) {
 }
 
 void configurePortableRuntimeDirs() {
-    const QString app_dir = QCoreApplication::applicationDirPath();
-    const QString data_dir = QDir(app_dir).filePath(QStringLiteral("data"));
-    const QString temp_dir = QDir(data_dir).filePath(QStringLiteral("temp"));
-    QDir().mkpath(temp_dir);
+    const QString temp_dir = sak::app_paths::tempDirectory();
+    if (!sak::app_paths::ensureDirectory(temp_dir)) {
+        return;
+    }
     const QByteArray native_temp = QDir::toNativeSeparators(temp_dir).toLocal8Bit();
     qputenv("TMP", native_temp);
     qputenv("TEMP", native_temp);
@@ -632,8 +633,7 @@ int main(int argc, char* argv[]) {
     configurePortableRuntimeDirs();
 
     // Initialize logger
-    const QString log_path =
-        QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("data/logs"));
+    const QString log_path = sak::app_paths::logsDirectory();
     auto log_dir = std::filesystem::path(log_path.toStdWString());
     auto& logger = sak::logger::instance();
     if (auto result = logger.initialize(log_dir); !result) {

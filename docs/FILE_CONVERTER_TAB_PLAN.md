@@ -1172,7 +1172,7 @@ enum FileTableColumn {
 │  │  └─────────────────────────────────────────────────┘  │   │
 │  └───────────────────────────────────────────────────────┘   │
 │                                                             │
-│  Output: [C:/Users/Tech/Desktop/Converted ][Browse]         │
+│  Output: [X:/Profiles/Tech/Desktop/Converted ][Browse]      │
 │  ☐ Preserve directory structure   Conflicts: [Rename ▼]    │
 │                                                             │
 │  [▶ Convert]  [✕ Cancel]                                    │

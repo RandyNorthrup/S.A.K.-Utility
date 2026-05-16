@@ -289,6 +289,7 @@ include_directories(
 # Core utility modules
 set(CORE_SOURCES
     src/core/logger.cpp
+    src/core/app_paths.cpp
     src/core/file_hash.cpp
     src/core/file_scanner.cpp
     src/core/path_utils.cpp
@@ -340,6 +341,7 @@ set(CORE_SOURCES
     src/core/diagnostic_report_generator.cpp
     src/core/diagnostic_controller.cpp
     include/sak/logger.h
+    include/sak/app_paths.h
     include/sak/file_hash.h
     include/sak/file_scanner.h
     include/sak/path_utils.h
@@ -628,6 +630,7 @@ if(SAK_ENABLE_AI_ASSISTANT)
         src/ai/ai_openai_model_client.cpp
         src/ai/ai_orchestrator.cpp
         src/ai/ai_package_selection.cpp
+        src/ai/ai_paths.cpp
         src/ai/ai_recovery_policy.cpp
         src/ai/ai_run_state.cpp
         src/ai/ai_run_state_store.cpp
@@ -650,6 +653,7 @@ if(SAK_ENABLE_AI_ASSISTANT)
         include/sak/ai/ai_openai_model_client.h
         include/sak/ai/ai_orchestrator.h
         include/sak/ai/ai_package_selection.h
+        include/sak/ai/ai_paths.h
         include/sak/ai/ai_recovery_policy.h
         include/sak/ai/ai_run_state.h
         include/sak/ai/ai_run_state_store.h
@@ -792,6 +796,7 @@ if(PLATFORM_WINDOWS)
     # Helper sources: action implementations + IPC layer + entry point
     set(HELPER_SOURCES
         src/elevated/elevated_helper_main.cpp
+        src/core/app_paths.cpp
         src/core/elevated_pipe_server.cpp
         src/core/elevated_task_dispatcher.cpp
         src/core/logger.cpp
@@ -804,6 +809,7 @@ if(PLATFORM_WINDOWS)
         src/actions/reset_network_action.cpp
         src/actions/backup_bitlocker_keys_action.cpp
         include/sak/elevated_pipe_protocol.h
+        include/sak/app_paths.h
         include/sak/elevated_pipe_server.h
         include/sak/elevated_task_dispatcher.h
         include/sak/permission_manager.h
@@ -1055,18 +1061,25 @@ if(PLATFORM_WINDOWS)
             )
         endforeach()
     else()
-        # Fallback: manually locate MSVC runtime DLLs
-        set(MSVC_REDIST_DIR "C:/Program Files/Microsoft Visual Studio/2022/Preview/VC/Redist/MSVC")
-        file(GLOB MSVC_VERSIONS "${MSVC_REDIST_DIR}/*")
+        # Fallback: manually locate MSVC runtime DLLs across installed VS editions.
+        file(GLOB MSVC_VERSIONS
+            "C:/Program Files/Microsoft Visual Studio/2022/*/VC/Redist/MSVC/*"
+            "C:/Program Files (x86)/Microsoft Visual Studio/2022/*/VC/Redist/MSVC/*"
+        )
         list(SORT MSVC_VERSIONS)
         list(REVERSE MSVC_VERSIONS)
-        list(GET MSVC_VERSIONS 0 LATEST_MSVC)
 
-        set(MSVC_DLLS
-            "${LATEST_MSVC}/x64/Microsoft.VC143.CRT/msvcp140.dll"
-            "${LATEST_MSVC}/x64/Microsoft.VC143.CRT/vcruntime140.dll"
-            "${LATEST_MSVC}/x64/Microsoft.VC143.CRT/vcruntime140_1.dll"
-        )
+        if(MSVC_VERSIONS)
+            list(GET MSVC_VERSIONS 0 LATEST_MSVC)
+            set(MSVC_DLLS
+                "${LATEST_MSVC}/x64/Microsoft.VC143.CRT/msvcp140.dll"
+                "${LATEST_MSVC}/x64/Microsoft.VC143.CRT/vcruntime140.dll"
+                "${LATEST_MSVC}/x64/Microsoft.VC143.CRT/vcruntime140_1.dll"
+            )
+        else()
+            set(MSVC_DLLS)
+            message(WARNING "MSVC redistributable directory not found; packaged app may need VC runtime installed.")
+        endif()
 
         foreach(dll ${MSVC_DLLS})
             if(EXISTS "${dll}")

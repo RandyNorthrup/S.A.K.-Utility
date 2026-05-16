@@ -1,4 +1,4 @@
-﻿// Copyright (c) 2025-2026 Randy Northrup. All rights reserved.
+// Copyright (c) 2025-2026 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 /// @file imap_uploader.cpp
@@ -263,7 +263,7 @@ std::expected<void, error_code> ImapUploader::createFolder(const QString& folder
         return std::unexpected(result.error());
     }
 
-    // CREATE may fail with NO if folder exists â€” that's ok
+    // CREATE may fail with NO if folder exists -- that's ok
     if (result.value().contains(QStringLiteral("OK"))) {
         Q_EMIT folderCreated(folder_path);
     }

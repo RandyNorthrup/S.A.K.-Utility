@@ -16,8 +16,7 @@ $ErrorActionPreference = "Stop"
 $ProjectRoot = Split-Path -Parent (Split-Path -Parent $PSCommandPath)
 Set-Location $ProjectRoot
 
-$WindowsDeveloperPath = "C:" + "\\Users\\" + "Randy"
-$PosixDeveloperPath = "C:" + "/Users/" + "Randy"
+$WindowsUserPathRegex = "C:[\\/]+Users[\\/]+(?!Username\b|Public\b|Default\b|All Users\b)[^\\/\s""']+"
 
 $Patterns = @(
     @{ Name = "OpenAI/API key"; Regex = "sk-(proj-)?[A-Za-z0-9_-]{20,}" },
@@ -30,7 +29,7 @@ $Patterns = @(
     @{ Name = "Private key block"; Regex = "-----BEGIN [A-Z ]*PRIVATE KEY-----" },
     @{ Name = "JWT"; Regex = "eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}" },
     @{ Name = "Bearer token"; Regex = "Bearer\s+[A-Za-z0-9._~+/-]{20,}" },
-    @{ Name = "Developer user path"; Regex = [regex]::Escape($WindowsDeveloperPath) + "|" + [regex]::Escape($PosixDeveloperPath) }
+    @{ Name = "Developer user path"; Regex = $WindowsUserPathRegex }
 )
 
 $ExcludedPrefixes = @(

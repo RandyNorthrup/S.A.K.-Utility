@@ -203,7 +203,7 @@ void TestEmailProfileManager::profilePopulation() {
     profile.total_size_bytes = 1024 * 1024 * 500;
 
     sak::EmailDataFile pst_file;
-    pst_file.path = QStringLiteral("C:/Users/Test/Documents/Outlook.pst");
+    pst_file.path = QStringLiteral("X:/Profiles/Test/Documents/Outlook.pst");
     pst_file.type = QStringLiteral("PST");
     pst_file.size_bytes = 1024 * 1024 * 300;
     pst_file.is_linked = true;

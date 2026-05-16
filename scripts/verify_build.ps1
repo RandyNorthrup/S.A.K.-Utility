@@ -79,19 +79,29 @@ if ($MissingCount -eq 0) {
 Write-Host ""
 Write-Host "[4/7] Verifying vcpkg configuration..." -ForegroundColor Yellow
 
-if (Test-Path 'C:\vcpkg') {
+$VcpkgRoot = $env:VCPKG_ROOT
+if ([string]::IsNullOrWhiteSpace($VcpkgRoot)) {
+    $VcpkgRoot = 'C:\vcpkg'
+}
+
+if (Test-Path -LiteralPath $VcpkgRoot -PathType Container) {
     Write-Host "  [OK] vcpkg found" -ForegroundColor Green
 } else {
-    Write-Host "  [X] vcpkg not found" -ForegroundColor Red
+    Write-Host "  [X] vcpkg not found at $VcpkgRoot" -ForegroundColor Red
 }
 
 Write-Host ""
 Write-Host "[5/7] Verifying Qt installation..." -ForegroundColor Yellow
 
-if (Test-Path 'C:\Qt\6.5.3\msvc2019_64') {
+$QtRoot = $env:Qt6_DIR
+if ([string]::IsNullOrWhiteSpace($QtRoot)) {
+    $QtRoot = 'C:\Qt\6.5.3\msvc2019_64'
+}
+
+if (Test-Path -LiteralPath $QtRoot -PathType Container) {
     Write-Host "  [OK] Qt found" -ForegroundColor Green
 } else {
-    Write-Host "  [X] Qt not found" -ForegroundColor Red
+    Write-Host "  [X] Qt not found at $QtRoot" -ForegroundColor Red
 }
 
 if ($FullClean) {

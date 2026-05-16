@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 /// @file test_config_manager.cpp
-/// @brief Unit tests for ConfigManager singleton â€” load, save, defaults, signals
+/// @brief Unit tests for ConfigManager singleton -- load, save, defaults, signals
 
 #include "sak/config_manager.h"
 
@@ -32,19 +32,19 @@ private Q_SLOTS:
     // Signal emission
     void setValue_emitsSignal();
 
-    // Typed accessors â€” backup
+    // Typed accessors -- backup
     void backupThreadCount_setGet();
     void backupVerifyMD5_setGet();
     void lastBackupLocation_setGet();
 
-    // Typed accessors â€” organizer
+    // Typed accessors -- organizer
     void organizerPreviewMode_setGet();
 
-    // Typed accessors â€” duplicate finder
+    // Typed accessors -- duplicate finder
     void duplicateMinFileSize_setGet();
     void duplicateKeepStrategy_setGet();
 
-    // Typed accessors â€” image flasher
+    // Typed accessors -- image flasher
     void imageFlasherValidationMode_setGet();
     void imageFlasherBufferSize_setGet();
 
@@ -141,7 +141,7 @@ void ConfigManagerTests::setValue_emitsSignal() {
 }
 
 // ============================================================================
-// Typed Accessors â€” Backup
+// Typed Accessors -- Backup
 // ============================================================================
 
 void ConfigManagerTests::backupThreadCount_setGet() {
@@ -165,7 +165,7 @@ void ConfigManagerTests::lastBackupLocation_setGet() {
 }
 
 // ============================================================================
-// Typed Accessors â€” Organizer
+// Typed Accessors -- Organizer
 // ============================================================================
 
 void ConfigManagerTests::organizerPreviewMode_setGet() {
@@ -175,7 +175,7 @@ void ConfigManagerTests::organizerPreviewMode_setGet() {
 }
 
 // ============================================================================
-// Typed Accessors â€” Duplicate Finder
+// Typed Accessors -- Duplicate Finder
 // ============================================================================
 
 void ConfigManagerTests::duplicateMinFileSize_setGet() {
@@ -191,7 +191,7 @@ void ConfigManagerTests::duplicateKeepStrategy_setGet() {
 }
 
 // ============================================================================
-// Typed Accessors â€” Image Flasher
+// Typed Accessors -- Image Flasher
 // ============================================================================
 
 void ConfigManagerTests::imageFlasherValidationMode_setGet() {

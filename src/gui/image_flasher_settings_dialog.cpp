@@ -3,6 +3,7 @@
 
 #include "sak/image_flasher_settings_dialog.h"
 
+#include "sak/app_paths.h"
 #include "sak/config_manager.h"
 #include "sak/info_button.h"
 #include "sak/layout_constants.h"
@@ -10,7 +11,6 @@
 #include "sak/network_constants.h"
 #include "sak/style_constants.h"
 
-#include <QCoreApplication>
 #include <QDialogButtonBox>
 #include <QDir>
 #include <QDirIterator>
@@ -294,8 +294,7 @@ void ImageFlasherSettingsDialog::onResetDefaults() {
 
 QStringList ImageFlasherSettingsDialog::findCacheDirectories() {
     QStringList dirs;
-    const QString tempBase =
-        QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("data/temp"));
+    const QString tempBase = sak::app_paths::tempDirectory();
     QDir tempDir(tempBase);
 
     for (const auto& entry : tempDir.entryList(QStringList{"sak_uup_*"}, QDir::Dirs)) {

@@ -126,7 +126,7 @@ void EncryptionTests::wrongPassword_failsDecrypt() {
     QVERIFY(encrypted.has_value());
 
     auto decrypted = sak::decryptData(encrypted.value(), wrongPassword);
-    // Wrong password should fail â€” either returns error or garbage data
+    // Wrong password should fail -- either returns error or garbage data
     // BCrypt may return decrypt_failed or the padding check fails
     if (decrypted.has_value()) {
         // If it doesn't error, at least the data should differ

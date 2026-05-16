@@ -84,8 +84,8 @@ private Q_SLOTS:
     // --- sanitizePathForBackup ---
 
     void sanitizeSimplePath() {
-        QCOMPARE(StubAction::sanitizePathForBackup("C:\\Users\\Test"),
-                 QStringLiteral("C__Users_Test"));
+        QCOMPARE(StubAction::sanitizePathForBackup("X:\\Profiles\\Test"),
+                 QStringLiteral("X__Profiles_Test"));
     }
 
     void sanitizeForwardSlashes() {

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 /// @file test_elevation_manager.cpp
-/// @brief Unit tests for ElevationManager â€” non-UAC-triggering operations only
+/// @brief Unit tests for ElevationManager -- non-UAC-triggering operations only
 
 #include "sak/elevation_manager.h"
 

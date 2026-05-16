@@ -153,8 +153,7 @@ UserProfileBackupSelectUsersPage::UserProfileBackupSelectUsersPage(QVector<UserP
 }
 
 void UserProfileBackupSelectUsersPage::setupUi() {
-    Q_ASSERT(m_scanButton);
-    Q_ASSERT(m_scanProgress);
+    Q_ASSERT(layout() == nullptr);  // setupUi not called twice
     auto* layout = new QVBoxLayout(this);
     // Instructions
     auto* instructionLabel = new QLabel(

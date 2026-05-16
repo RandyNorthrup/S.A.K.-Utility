@@ -3,6 +3,7 @@
 
 #include "sak/quick_action_controller.h"
 
+#include "sak/app_paths.h"
 #include "sak/elevation_broker.h"
 #include "sak/elevation_manager.h"
 #include "sak/logger.h"
@@ -18,9 +19,8 @@ namespace sak {
 
 QuickActionController::QuickActionController(QObject* parent) : QObject(parent) {
     // Setup log file path
-    QString log_dir =
-        QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("data/logs"));
-    if (!QDir().mkpath(log_dir)) {
+    QString log_dir = sak::app_paths::logsDirectory();
+    if (!sak::app_paths::ensureDirectory(log_dir)) {
         sak::logWarning("Failed to create quick actions log directory: {}", log_dir.toStdString());
     }
     m_log_file_path = log_dir + "/quick_actions.log";
