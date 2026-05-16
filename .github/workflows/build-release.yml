@@ -241,38 +241,6 @@ jobs:
         Write-Host ""
         Write-Host "=== Verification complete ==="
 
-    - name: Sign Executable
-      if: github.event_name != 'pull_request'
-      uses: azure/artifact-signing-action@v1
-      with:
-        azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-        azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
-        azure-client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
-        endpoint: https://wus.codesigning.azure.net/
-        signing-account-name: scnetsolutions
-        certificate-profile-name: SAKUtility
-        files-folder: build/Release
-        files-folder-filter: exe
-        file-digest: SHA256
-        timestamp-rfc3161: http://timestamp.acs.microsoft.com
-        timestamp-digest: SHA256
-
-    - name: Verify Code Signature
-      if: github.event_name != 'pull_request'
-      shell: pwsh
-      run: |
-        $sig = Get-AuthenticodeSignature "build/Release/sak_utility.exe"
-        Write-Host "Signature status: $($sig.Status)"
-        Write-Host "Signer: $($sig.SignerCertificate.Subject)"
-        Write-Host "Issuer: $($sig.SignerCertificate.Issuer)"
-        Write-Host "Timestamp: $($sig.TimeStamperCertificate.Subject)"
-        if ($sig.Status -ne 'Valid') {
-          Write-Error "Code signing verification FAILED -- signature status: $($sig.Status)"
-          Write-Error "Check Azure Trusted Signing secrets (AZURE_TENANT_ID, AZURE_CLIENT_ID, AZURE_CLIENT_SECRET) and account configuration."
-          exit 1
-        }
-        Write-Host "Code signature verified successfully." -ForegroundColor Green
-
     - name: Run Tests
       working-directory: build/Release/Release
       run: |
@@ -330,6 +298,7 @@ jobs:
 
         # ── Executable ──────────────────────────────────────────────
         Copy-Item "sak_utility.exe" "$pkgName/"
+        Copy-Item "sak_elevated_helper.exe" "$pkgName/"
 
         # ── Splash screen & icon (copied to build dir by CMake POST_BUILD) ──
         if (Test-Path "sak_splash.png") {
@@ -457,7 +426,7 @@ jobs:
         "@ | Out-File "SHA256SUMS.txt" -Encoding UTF8
 
         # ── Final sanity checks ──────────────────────────────────────
-        $critical = @("sak_utility.exe", "sak_splash.png", "Qt6Core.dll",
+        $critical = @("sak_utility.exe", "sak_elevated_helper.exe", "sak_splash.png", "Qt6Core.dll",
                       "Qt6Widgets.dll", "platforms/qwindows.dll")
         $missing = $critical | Where-Object { !(Test-Path "$pkgName/$_") }
         if ($missing) {
@@ -470,6 +439,47 @@ jobs:
 
         Write-Host ""
         Write-Host "Package created successfully: $zipName"
+
+    - name: Create signing catalog
+      if: github.event_name != 'pull_request'
+      working-directory: build/Release
+      shell: pwsh
+      run: |
+        $pkgName = "SAK-Utility-v$env:APP_VERSION"
+        & "../../scripts/create_signing_catalog.ps1" `
+          -RootDir $pkgName `
+          -OutputPath "$pkgName/signing-catalog.txt"
+
+    - name: Sign Packaged Binaries
+      if: github.event_name != 'pull_request'
+      uses: azure/artifact-signing-action@v1
+      with:
+        azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+        azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+        azure-client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+        endpoint: https://wus.codesigning.azure.net/
+        signing-account-name: scnetsolutions
+        certificate-profile-name: SAKUtility
+        files-catalog: build/Release/SAK-Utility-v${{ steps.version.outputs.version }}/signing-catalog.txt
+        file-digest: SHA256
+        timestamp-rfc3161: http://timestamp.acs.microsoft.com
+        timestamp-digest: SHA256
+        timeout: 900
+        batch-size: 0
+
+    - name: Verify Packaged Signatures
+      if: github.event_name != 'pull_request'
+      shell: pwsh
+      run: |
+        & scripts/verify_authenticode_signatures.ps1 `
+          -RootDir "build/Release/SAK-Utility-v${{ steps.version.outputs.version }}"
+
+    - name: Rebuild signed release archive
+      working-directory: build/Release
+      shell: pwsh
+      run: |
+        $pkgName = "SAK-Utility-v$env:APP_VERSION"
+        & "../../scripts/create_release_archive.ps1" -BuildDir . -PackageName $pkgName
 
     - name: Upload ZIP artifact
       uses: actions/upload-artifact@v4
