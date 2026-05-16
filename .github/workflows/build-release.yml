@@ -125,6 +125,12 @@ jobs:
     - name: Build
       run: cmake --build build --config ${{ env.BUILD_TYPE }} --parallel
 
+    - name: Bundle vcpkg runtime DLLs
+      working-directory: build/Release
+      shell: pwsh
+      run: |
+        & ../../scripts/bundle_vcpkg_runtime.ps1 -DestinationPath .
+
     - name: Verify build output
       working-directory: build/Release
       shell: pwsh
@@ -227,6 +233,9 @@ jobs:
         } else {
           Write-Host "OK  tools/iperf3/iperf3.exe"
         }
+
+        # Imported non-system DLLs must exist in the build output.
+        & ../../scripts/verify_windows_runtime_dependencies.ps1 -RootDir . -PrimaryExe "sak_utility.exe"
 
         Write-Host ""
         Write-Host "=== Verification complete ==="
@@ -388,18 +397,7 @@ jobs:
         }
 
         # ── vcpkg DLLs (zlib, bzip2, liblzma) ───────────────────────
-        $vcpkgBin = "C:\vcpkg\installed\x64-windows\bin"
-        if (Test-Path $vcpkgBin) {
-          foreach ($dll in @("zlib1.dll", "bz2.dll", "liblzma.dll")) {
-            $path = Join-Path $vcpkgBin $dll
-            if (Test-Path $path) {
-              Copy-Item $path "$pkgName/"
-              Write-Host "  Bundled: $dll (vcpkg)"
-            } else {
-              Write-Warning "vcpkg DLL not found: $dll"
-            }
-          }
-        }
+        & "../../scripts/bundle_vcpkg_runtime.ps1" -DestinationPath $pkgName
 
         # ── Embedded tools (Chocolatey, UUP) ─────────────────────────
         if (Test-Path "tools") {
@@ -465,6 +463,10 @@ jobs:
           Write-Error "FATAL: Critical files missing from package: $($missing -join ', ')"
           exit 1
         }
+
+        # Imported non-system DLLs must exist before the ZIP is published.
+        & "../../scripts/verify_windows_runtime_dependencies.ps1" -RootDir $pkgName -PrimaryExe "sak_utility.exe"
+
         Write-Host ""
         Write-Host "Package created successfully: $zipName"
 

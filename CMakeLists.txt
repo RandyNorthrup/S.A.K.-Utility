@@ -1015,6 +1015,31 @@ if(PLATFORM_WINDOWS)
         )
     endif()
 
+    # Bundle dynamic vcpkg runtime DLLs when using the x64-windows triplet.
+    # Static triplets do not have these DLLs, so missing aliases are ignored.
+    set(SAK_VCPKG_RUNTIME_DLLS
+        z.dll
+        zlib1.dll
+        bz2.dll
+        libbz2.dll
+        liblzma.dll
+        lzma.dll
+    )
+    if(DEFINED VCPKG_INSTALLED_DIR AND DEFINED VCPKG_TARGET_TRIPLET)
+        set(SAK_VCPKG_BIN "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin")
+        foreach(dll ${SAK_VCPKG_RUNTIME_DLLS})
+            set(runtime_dll "${SAK_VCPKG_BIN}/${dll}")
+            if(EXISTS "${runtime_dll}")
+                add_custom_command(TARGET sak_utility POST_BUILD
+                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                        "${runtime_dll}"
+                        "$<TARGET_FILE_DIR:sak_utility>"
+                    COMMENT "Bundling ${dll} from vcpkg..."
+                )
+            endif()
+        endforeach()
+    endif()
+
     # Bundle MSVC runtime DLLs (required by Qt DLLs)
     # Find and copy the runtime DLLs to the output directory
     set(CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS_SKIP TRUE)
