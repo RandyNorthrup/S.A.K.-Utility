@@ -19,6 +19,7 @@
 #include "sak/error_codes.h"
 #include "sak/logger.h"
 #include "sak/permission_manager.h"
+#include "sak/process_runner.h"
 
 #include <QByteArray>
 #include <QCoreApplication>
@@ -26,7 +27,6 @@
 #include <QElapsedTimer>
 #include <QFile>
 #include <QJsonObject>
-#include <QProcess>
 #include <QString>
 #include <QStringList>
 #include <QTimer>
@@ -231,97 +231,40 @@ sak::TaskHandlerResult elevatedPowerShellFailure(QJsonObject data,
     return task;
 }
 
-void drainPowerShellOutput(QProcess& ps,
-                           sak::ProgressCallback progress,
-                           QString& stdout_accumulator,
-                           QString& stderr_accumulator) {
-    const QByteArray new_stdout = ps.readAllStandardOutput();
-    const QByteArray new_stderr = ps.readAllStandardError();
-    if (!new_stdout.isEmpty()) {
-        const QString chunk = QString::fromUtf8(new_stdout);
-        stdout_accumulator.append(chunk);
-        progress(50, QStringLiteral("STDOUT|") + chunk);
+QString elevatedPowerShellStartError(const sak::ProcessResult& result) {
+    QString message = QStringLiteral("Failed to start elevated PowerShell");
+    if (!result.std_err.isEmpty()) {
+        message += QStringLiteral(": ") + result.std_err.trimmed();
     }
-    if (!new_stderr.isEmpty()) {
-        const QString chunk = QString::fromUtf8(new_stderr);
-        stderr_accumulator.append(chunk);
-        progress(50, QStringLiteral("STDERR|") + chunk);
-    }
+    return message;
 }
 
-void stopElevatedPowerShell(QProcess& ps
-#ifdef _WIN32
-                            ,
-                            const ElevatedJobGuard& job
-#endif
-) {
-#ifdef _WIN32
-    job.terminate();
-#endif
-    ps.kill();
-    ps.waitForFinished(2000);
+void fillElevatedPowerShellResult(QJsonObject* data,
+                                  const sak::ProcessResult& result,
+                                  qint64 duration_ms,
+                                  int half_cap) {
+    (*data)[QStringLiteral("started")] = true;
+    (*data)[QStringLiteral("cancelled")] = result.cancelled;
+    (*data)[QStringLiteral("timed_out")] = result.timed_out;
+    (*data)[QStringLiteral("exit_code")] = result.exit_code;
+    (*data)[QStringLiteral("exit_status")] = result.exit_status;
+    (*data)[QStringLiteral("duration_ms")] = static_cast<double>(duration_ms);
+    (*data)[QStringLiteral("stdout")] = cappedTaskOutput(result.std_out, half_cap);
+    (*data)[QStringLiteral("stderr")] = cappedTaskOutput(result.std_err, half_cap);
+    (*data)[QStringLiteral("stdout_full_bytes")] =
+        static_cast<double>(result.std_out.toUtf8().size());
+    (*data)[QStringLiteral("stderr_full_bytes")] =
+        static_cast<double>(result.std_err.toUtf8().size());
 }
 
-struct ElevatedPowerShellLoopResult {
-    bool cancelled{false};
-    bool timed_out{false};
-};
-
-struct ElevatedPowerShellLoopContext {
-    QProcess* ps{nullptr};
-    const QElapsedTimer* timer{nullptr};
-    int timeout_ms{0};
-    sak::ProgressCallback progress;
-    sak::CancelCheck is_cancelled;
-    QString* stdout_accumulator{nullptr};
-    QString* stderr_accumulator{nullptr};
-#ifdef _WIN32
-    const ElevatedJobGuard* job{nullptr};
-#endif
-};
-
-ElevatedPowerShellLoopResult waitForElevatedPowerShell(
-    const ElevatedPowerShellLoopContext& context) {
-    ElevatedPowerShellLoopResult result;
-    while (true) {
-        const bool finished = context.ps->waitForFinished(250);
-        drainPowerShellOutput(*context.ps,
-                              context.progress,
-                              *context.stdout_accumulator,
-                              *context.stderr_accumulator);
-        if (finished) {
-            break;
-        }
-        if (context.is_cancelled && context.is_cancelled()) {
-            result.cancelled = true;
-            stopElevatedPowerShell(*context.ps
-#ifdef _WIN32
-                                   ,
-                                   *context.job
-#endif
-            );
-            drainPowerShellOutput(*context.ps,
-                                  context.progress,
-                                  *context.stdout_accumulator,
-                                  *context.stderr_accumulator);
-            break;
-        }
-        if (context.timer->elapsed() >= context.timeout_ms) {
-            result.timed_out = true;
-            stopElevatedPowerShell(*context.ps
-#ifdef _WIN32
-                                   ,
-                                   *context.job
-#endif
-            );
-            drainPowerShellOutput(*context.ps,
-                                  context.progress,
-                                  *context.stdout_accumulator,
-                                  *context.stderr_accumulator);
-            break;
-        }
+QString elevatedPowerShellResultError(const sak::ProcessResult& result) {
+    if (result.timed_out) {
+        return QStringLiteral("Command timed out");
     }
-    return result;
+    if (result.cancelled) {
+        return QStringLiteral("Command cancelled");
+    }
+    return {};
 }
 
 sak::TaskHandlerResult runElevatedPowerShellTask(const QJsonObject& payload,
@@ -341,67 +284,61 @@ sak::TaskHandlerResult runElevatedPowerShellTask(const QJsonObject& payload,
                                       4 * 1024 * 1024);
     const int half_cap = std::max(output_cap / 2, 1024);
 
-    QProcess ps;
-    ps.setProcessChannelMode(QProcess::SeparateChannels);
     QElapsedTimer timer;
     timer.start();
 
     progress(0, QStringLiteral("Starting elevated PowerShell"));
-    ps.start(QStringLiteral("powershell.exe"),
-             QStringList{QStringLiteral("-NoProfile"),
-                         QStringLiteral("-ExecutionPolicy"),
-                         QStringLiteral("Bypass"),
-                         QStringLiteral("-Command"),
-                         command});
-
-    if (!ps.waitForStarted(5000)) {
-        return elevatedPowerShellFailure(
-            data,
-            QStringLiteral("Failed to start elevated PowerShell: %1").arg(ps.errorString()),
-            timer.elapsed());
-    }
 
 #ifdef _WIN32
     ElevatedJobGuard job;
-    job.assign(ps.processId());
 #endif
 
-    data[QStringLiteral("started")] = true;
-    progress(5, QStringLiteral("Elevated PowerShell running"));
-
-    QString stdout_accumulator;
-    QString stderr_accumulator;
-    ElevatedPowerShellLoopContext loop_context;
-    loop_context.ps = &ps;
-    loop_context.timer = &timer;
-    loop_context.timeout_ms = timeout_ms;
-    loop_context.progress = progress;
-    loop_context.is_cancelled = is_cancelled;
-    loop_context.stdout_accumulator = &stdout_accumulator;
-    loop_context.stderr_accumulator = &stderr_accumulator;
+    bool started = false;
+    const QStringList args{QStringLiteral("-NoProfile"),
+                           QStringLiteral("-ExecutionPolicy"),
+                           QStringLiteral("Bypass"),
+                           QStringLiteral("-Command"),
+                           command};
+    sak::ProcessStreamingRequest request;
+    request.program = QStringLiteral("powershell.exe");
+    request.args = args;
+    request.timeout_ms = timeout_ms;
+    request.on_output = [&progress](const QString& chunk, bool is_stderr) {
+        progress(50, (is_stderr ? QStringLiteral("STDERR|") : QStringLiteral("STDOUT|")) + chunk);
+    };
+    request.on_started = [&started,
+                          &progress
 #ifdef _WIN32
-    loop_context.job = &job;
+                          ,
+                          &job
 #endif
-    const ElevatedPowerShellLoopResult loop_result = waitForElevatedPowerShell(loop_context);
+    ](qint64 process_id) {
+        started = true;
+#ifdef _WIN32
+        job.assign(process_id);
+#endif
+        progress(5, QStringLiteral("Elevated PowerShell running"));
+    };
+    request.on_terminate = [
+#ifdef _WIN32
+                               &job
+#endif
+    ]() {
+#ifdef _WIN32
+        job.terminate();
+#endif
+    };
+    request.should_cancel = std::move(is_cancelled);
+    const auto result = sak::runProcessStreaming(request);
 
-    data[QStringLiteral("cancelled")] = loop_result.cancelled;
-    data[QStringLiteral("timed_out")] = loop_result.timed_out;
-    data[QStringLiteral("exit_code")] = ps.exitCode();
-    data[QStringLiteral("exit_status")] = static_cast<int>(ps.exitStatus());
-    data[QStringLiteral("duration_ms")] = static_cast<double>(timer.elapsed());
-    data[QStringLiteral("stdout")] = cappedTaskOutput(stdout_accumulator, half_cap);
-    data[QStringLiteral("stderr")] = cappedTaskOutput(stderr_accumulator, half_cap);
-    data[QStringLiteral("stdout_full_bytes")] =
-        static_cast<double>(stdout_accumulator.toUtf8().size());
-    data[QStringLiteral("stderr_full_bytes")] =
-        static_cast<double>(stderr_accumulator.toUtf8().size());
-    if (loop_result.timed_out) {
-        data[QStringLiteral("error_message")] = QStringLiteral("Command timed out");
-    } else if (loop_result.cancelled) {
-        data[QStringLiteral("error_message")] = QStringLiteral("Command cancelled");
-    } else {
-        data[QStringLiteral("error_message")] = QString();
+    if (!started) {
+        return elevatedPowerShellFailure(data,
+                                         elevatedPowerShellStartError(result),
+                                         timer.elapsed());
     }
+
+    fillElevatedPowerShellResult(&data, result, timer.elapsed(), half_cap);
+    data[QStringLiteral("error_message")] = elevatedPowerShellResultError(result);
 
     progress(100, QStringLiteral("Elevated PowerShell finished"));
     sak::TaskHandlerResult task;
@@ -519,8 +456,6 @@ void registerFileTasks(sak::ElevatedTaskDispatcher& dispatcher) {
            sak::CancelCheck /*is_cancelled*/) -> sak::TaskHandlerResult {
             progress(0, QStringLiteral("Querying thermal sensors..."));
 
-            QProcess ps;
-            ps.setProcessChannelMode(QProcess::MergedChannels);
             QString script = QStringLiteral(
                 "try{"
                 "$t=Get-CimInstance -Namespace root/WMI "
@@ -530,15 +465,18 @@ void registerFileTasks(sak::ElevatedTaskDispatcher& dispatcher) {
                 "Write-Output ([math]::Round(($t.CurrentTemperature/10)-273.15,1))"
                 "}else{Write-Output '-1'}"
                 "}catch{Write-Output '-1'}");
-            ps.start("powershell.exe", {"-NoProfile", "-NoLogo", "-Command", script});
 
-            if (!ps.waitForStarted(5000) || !ps.waitForFinished(10'000)) {
-                ps.kill();
-                ps.waitForFinished(2000);
+            const auto result = sak::runProcess(QStringLiteral("powershell.exe"),
+                                                {QStringLiteral("-NoProfile"),
+                                                 QStringLiteral("-NoLogo"),
+                                                 QStringLiteral("-Command"),
+                                                 script},
+                                                10'000);
+            if (!result.succeeded()) {
                 return {false, {}, "Thermal query timed out"};
             }
 
-            QString output = QString::fromUtf8(ps.readAllStandardOutput()).trimmed();
+            QString output = result.std_out.trimmed();
             bool ok = false;
             double temp = output.toDouble(&ok);
             if (!ok || temp <= 0) {

@@ -207,38 +207,68 @@ void LinuxISODownloader::startAria2cDownload(const QString& url,
         return;
     }
 
-    // Find aria2c
-    QString aria2Path = findAria2c();
-    if (aria2Path.isEmpty()) {
+    QString aria2Path;
+    if (!prepareAria2cDownload(url, fileName, &aria2Path)) {
+        return;
+    }
+
+    QFileInfo saveInfo(savePath);
+    QString outDir = saveInfo.absolutePath();
+    QString outFile = saveInfo.fileName();
+
+    if (!QDir().mkpath(outDir)) {
+        sak::logWarning("Failed to create ISO download directory: {}", outDir.toStdString());
+    }
+
+    resetAria2cProcess();
+    connect(m_aria2cProcess,
+            QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+            this,
+            &LinuxISODownloader::onAria2cFinished);
+    connect(m_aria2cProcess, &QProcess::started, this, [this]() {
+        if (!m_cancelled && m_phase == Phase::Downloading) {
+            m_progressTimer->start();
+        }
+    });
+    connect(m_aria2cProcess, &QProcess::errorOccurred, this, [this](QProcess::ProcessError error) {
+        if (error == QProcess::FailedToStart && m_phase == Phase::Downloading) {
+            setPhase(Phase::Failed, "Failed to start aria2c");
+            Q_EMIT downloadError("Failed to start aria2c: " + m_aria2cProcess->errorString());
+        }
+    });
+
+    QStringList args = buildAria2cArguments(url, outDir, outFile);
+
+    sak::logInfo("Starting aria2c: " + aria2Path.toStdString() + " -> " + savePath.toStdString());
+
+    m_aria2cProcess->start(aria2Path, args);
+}
+
+bool LinuxISODownloader::prepareAria2cDownload(const QString& url,
+                                               const QString& fileName,
+                                               QString* aria2Path) {
+    *aria2Path = findAria2c();
+    if (aria2Path->isEmpty()) {
         setPhase(Phase::Failed, "aria2c not found");
         Q_EMIT downloadError(
             "aria2c.exe not found in bundled tools. "
             "Run scripts/bundle_uup_tools.ps1 and rebuild the application.");
-        return;
+        return false;
     }
 
     setPhase(Phase::Downloading, "Downloading ISO...");
     Q_EMIT statusMessage(QString("Downloading %1...").arg(fileName));
 
-    // Validate download URL scheme -- only allow HTTPS for the initial request.
-    QUrl downloadUrl(url);
-    if (!downloadUrl.isValid() || downloadUrl.scheme().toLower() != "https") {
-        setPhase(Phase::Failed, "Invalid download URL");
-        Q_EMIT downloadError("Rejected non-HTTPS download URL: " + url);
-        return;
+    const QUrl downloadUrl(url);
+    if (downloadUrl.isValid() && downloadUrl.scheme().toLower() == "https") {
+        return true;
     }
+    setPhase(Phase::Failed, "Invalid download URL");
+    Q_EMIT downloadError("Rejected non-HTTPS download URL: " + url);
+    return false;
+}
 
-    // Determine output directory and filename
-    QFileInfo saveInfo(savePath);
-    QString outDir = saveInfo.absolutePath();
-    QString outFile = saveInfo.fileName();
-
-    // Create output directory if needed
-    if (!QDir().mkpath(outDir)) {
-        sak::logWarning("Failed to create ISO download directory: {}", outDir.toStdString());
-    }
-
-    // Clean up any previous QProcess to prevent leaks
+void LinuxISODownloader::resetAria2cProcess() {
     if (m_aria2cProcess) {
         m_aria2cProcess->disconnect();
         m_aria2cProcess->deleteLater();
@@ -246,26 +276,6 @@ void LinuxISODownloader::startAria2cDownload(const QString& url,
     }
     m_aria2cProcess = new QProcess(this);
     m_aria2cProcess->setProcessChannelMode(QProcess::MergedChannels);
-
-    connect(m_aria2cProcess,
-            QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
-            this,
-            &LinuxISODownloader::onAria2cFinished);
-
-    QStringList args = buildAria2cArguments(url, outDir, outFile);
-
-    sak::logInfo("Starting aria2c: " + aria2Path.toStdString() + " -> " + savePath.toStdString());
-
-    m_aria2cProcess->start(aria2Path, args);
-
-    if (!m_aria2cProcess->waitForStarted(sak::kTimeoutProcessMediumMs)) {
-        setPhase(Phase::Failed, "Failed to start aria2c");
-        Q_EMIT downloadError("Failed to start aria2c: " + m_aria2cProcess->errorString());
-        return;
-    }
-
-    // Start progress polling
-    m_progressTimer->start();
 }
 
 QStringList LinuxISODownloader::buildAria2cArguments(const QString& url,
@@ -635,7 +645,6 @@ void LinuxISODownloader::cancel() {
 
     if (m_aria2cProcess && m_aria2cProcess->state() != QProcess::NotRunning) {
         m_aria2cProcess->kill();
-        m_aria2cProcess->waitForFinished(sak::kTimeoutProcessShortMs);
     }
 
     setPhase(Phase::Idle, "Cancelled");

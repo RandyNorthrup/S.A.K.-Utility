@@ -7,22 +7,18 @@
 #include "sak/package_internalization_engine.h"
 
 #include "sak/logger.h"
+#include "sak/network_transfer_runner.h"
 #include "sak/offline_deployment_constants.h"
+#include "sak/process_runner.h"
 
 #include <QCryptographicHash>
 #include <QDir>
 #include <QDirIterator>
 #include <QDomDocument>
 #include <QDomElement>
-#include <QEventLoop>
 #include <QFile>
 #include <QFileInfo>
-#include <QNetworkAccessManager>
-#include <QNetworkReply>
-#include <QNetworkRequest>
-#include <QProcess>
 #include <QThread>
-#include <QTimer>
 #include <QUrl>
 #include <QUrlQuery>
 
@@ -34,10 +30,7 @@ namespace sak {
 // Construction / Destruction
 // ============================================================================
 
-PackageInternalizationEngine::PackageInternalizationEngine(QObject* parent)
-    : QObject(parent), m_network_manager(new QNetworkAccessManager(this)) {
-    m_network_manager->setRedirectPolicy(QNetworkRequest::NoLessSafeRedirectPolicy);
-}
+PackageInternalizationEngine::PackageInternalizationEngine(QObject* parent) : QObject(parent) {}
 
 PackageInternalizationEngine::~PackageInternalizationEngine() {
     cancel();
@@ -192,73 +185,38 @@ bool PackageInternalizationEngine::downloadNupkg(const QString& package_id,
 
     sak::logInfo("[InternalizationEngine] Download URL: {}", nupkg_url.toStdString());
 
-    QEventLoop loop;
-    bool download_ok = false;
-    QString download_error;
-
-    QNetworkRequest request{QUrl(nupkg_url)};
-    request.setHeader(QNetworkRequest::UserAgentHeader, "SAK-Utility/1.0");
-    request.setTransferTimeout(offline::kDownloadTimeoutMs);
-
-    auto* reply = m_network_manager->get(request);
-
-    connect(reply, &QNetworkReply::downloadProgress, this, [this](qint64 received, qint64 total) {
-        m_current_progress.bytes_downloaded = received;
-        m_current_progress.bytes_total = total;
-        emitProgress(InternalizationStatus::DownloadingNupkg, "Downloading .nupkg...");
-    });
-
-    connect(reply, &QNetworkReply::finished, &loop, [&]() {
-        if (reply->error() != QNetworkReply::NoError) {
-            download_error = reply->errorString();
-            int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
-            sak::logError("[InternalizationEngine] Download HTTP {}: {}",
-                          status,
-                          download_error.toStdString());
-            reply->deleteLater();
-            loop.quit();
-            return;
-        }
-
-        int http_status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
-        if (http_status < 200 || http_status >= 300) {
-            download_error = QString("HTTP %1").arg(http_status);
-            sak::logError("[InternalizationEngine] Unexpected HTTP status: {}", http_status);
-            reply->deleteLater();
-            loop.quit();
-            return;
-        }
-
-        QByteArray data = reply->readAll();
-        if (data.isEmpty()) {
-            download_error = "Empty response body";
-            reply->deleteLater();
-            loop.quit();
-            return;
-        }
-
-        QFile file(nupkg_path);
-        if (file.open(QIODevice::WriteOnly)) {
-            file.write(data);
-            file.close();
-            download_ok = true;
-        } else {
-            download_error = "Cannot write nupkg file";
-        }
-        reply->deleteLater();
-        loop.quit();
-    });
-
-    loop.exec();
-
     if (m_cancelled) {
         return false;
     }
 
-    if (!download_ok) {
-        finishWithError(result, "Nupkg download failed: " + download_error);
+    NetworkTransferRequest request;
+    request.url = QUrl(nupkg_url);
+    request.timeout_ms = offline::kDownloadTimeoutMs;
+    request.raw_headers.append(QPair<QByteArray, QByteArray>{QByteArrayLiteral("User-Agent"),
+                                                             QByteArrayLiteral("SAK-Utility/1.0")});
+
+    const auto transfer = runNetworkTransfer(request, [this]() { return m_cancelled.load(); });
+    if (transfer.cancelled) {
         return false;
     }
+    if (!transfer.success || transfer.body.isEmpty()) {
+        const auto error = transfer.error_message.isEmpty()
+                               ? QStringLiteral("HTTP %1").arg(transfer.http_status)
+                               : transfer.error_message;
+        sak::logError("[InternalizationEngine] Download HTTP {}: {}",
+                      transfer.http_status,
+                      error.toStdString());
+        finishWithError(result, "Nupkg download failed: " + error);
+        return false;
+    }
+
+    QFile file(nupkg_path);
+    if (!file.open(QIODevice::WriteOnly)) {
+        finishWithError(result, "Nupkg download failed: Cannot write nupkg file");
+        return false;
+    }
+    file.write(transfer.body);
+    file.close();
 
     return true;
 }
@@ -292,40 +250,36 @@ QString PackageInternalizationEngine::resolveLatestVersion(const QString& packag
             QThread::msleep(static_cast<unsigned long>(delay));
         }
 
-        QNetworkRequest request(url);
-        request.setHeader(QNetworkRequest::UserAgentHeader, "SAK-Utility/1.0");
-        request.setRawHeader("Accept", "application/atom+xml");
-        request.setTransferTimeout(offline::kApiRequestTimeoutMs);
+        NetworkTransferRequest request;
+        request.url = url;
+        request.timeout_ms = offline::kApiRequestTimeoutMs;
+        request.raw_headers.append(QPair<QByteArray, QByteArray>{
+            QByteArrayLiteral("User-Agent"), QByteArrayLiteral("SAK-Utility/1.0")});
+        request.raw_headers.append(QPair<QByteArray, QByteArray>{
+            QByteArrayLiteral("Accept"), QByteArrayLiteral("application/atom+xml")});
 
-        QEventLoop loop;
         bool request_ok = false;
-
-        auto* reply = m_network_manager->get(request);
-        connect(reply, &QNetworkReply::finished, &loop, [&]() {
-            reply->deleteLater();
-
-            if (reply->error() != QNetworkReply::NoError) {
-                int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
-                sak::logWarning(
-                    "[InternalizationEngine] HTTP {} for "
-                    "{} (attempt {}): {}",
-                    status,
-                    package_id.toStdString(),
-                    attempt + 1,
-                    reply->errorString().toStdString());
-                loop.quit();
-                return;
-            }
-
-            QByteArray data = reply->readAll();
-            resolved_version = parseLatestVersionFromOData(data);
+        const auto transfer = runNetworkTransfer(request, [this]() { return m_cancelled.load(); });
+        if (transfer.cancelled) {
+            return {};
+        }
+        if (!transfer.success) {
+            sak::logWarning(
+                "[InternalizationEngine] HTTP {} for "
+                "{} (attempt {}): {}",
+                transfer.http_status,
+                package_id.toStdString(),
+                attempt + 1,
+                transfer.error_message.toStdString());
+        } else {
+            resolved_version = parseLatestVersionFromOData(transfer.body);
 
             if (resolved_version.isEmpty()) {
                 sak::logWarning(
                     "[InternalizationEngine] No version "
                     "found for {} ({} bytes)",
                     package_id.toStdString(),
-                    static_cast<int>(data.size()));
+                    static_cast<int>(transfer.body.size()));
             } else {
                 sak::logInfo(
                     "[InternalizationEngine] Resolved "
@@ -334,10 +288,7 @@ QString PackageInternalizationEngine::resolveLatestVersion(const QString& packag
                     resolved_version.toStdString());
             }
             request_ok = true;
-            loop.quit();
-        });
-
-        loop.exec();
+        }
 
         if (!resolved_version.isEmpty()) {
             return resolved_version;
@@ -466,17 +417,36 @@ bool PackageInternalizationEngine::downloadAllBinaries(const ParsedInstallScript
 
         QString output_path = tools_dir + "/" + filename;
 
-        QEventLoop loop;
-        bool ok = false;
-        QString error;
+        NetworkTransferRequest request;
+        request.url = parsed_url;
+        request.timeout_ms = offline::kDownloadTimeoutMs;
+        request.raw_headers.append(QPair<QByteArray, QByteArray>{
+            QByteArrayLiteral("User-Agent"), QByteArrayLiteral("SAK-Utility/1.0")});
 
-        downloadBinary(url, output_path, [&](bool success, const QString& err) {
-            ok = success;
-            error = err;
-            loop.quit();
-        });
+        const auto transfer = runNetworkTransfer(
+            request,
+            [this]() { return m_cancelled.load(); },
+            [this](qint64 received, qint64 total) {
+                m_current_progress.bytes_downloaded = received;
+                m_current_progress.bytes_total = total;
+                Q_EMIT progressChanged(m_current_progress);
+            });
+        if (transfer.cancelled) {
+            return false;
+        }
 
-        loop.exec();
+        bool ok = transfer.success && !transfer.body.isEmpty();
+        QString error = transfer.error_message;
+        if (ok) {
+            QFile file(output_path);
+            if (!file.open(QIODevice::WriteOnly)) {
+                ok = false;
+                error = "Cannot write file: " + output_path;
+            } else {
+                file.write(transfer.body);
+                file.close();
+            }
+        }
 
         if (!ok) {
             sak::logWarning("[InternalizationEngine] Binary download failed: {} - {}",
@@ -566,31 +536,26 @@ bool PackageInternalizationEngine::extractNupkg(const QString& nupkg_path,
                              "[System.IO.Compression.ZipFile]::ExtractToDirectory('%1', '%2')")
                              .arg(native_nupkg, native_extract);
 
-    QProcess process;
-    process.setProgram("powershell.exe");
-    process.setArguments({"-NoProfile", "-NonInteractive", "-Command", ps_command});
-
-    process.start();
-    if (!process.waitForStarted(offline::kPackTimeoutMs)) {
-        error_out = "PowerShell failed to start";
-        sak::logError("[InternalizationEngine] {}", error_out.toStdString());
-        return false;
-    }
-
-    if (!process.waitForFinished(offline::kPackTimeoutMs)) {
-        process.kill();
+    const auto process = runPowerShell(ps_command, offline::kPackTimeoutMs, true, false, [this]() {
+        return m_cancelled.load();
+    });
+    if (process.timed_out) {
         error_out = "Extraction timed out";
         sak::logError("[InternalizationEngine] {}", error_out.toStdString());
         return false;
     }
+    if (process.cancelled) {
+        error_out = "Extraction cancelled";
+        return false;
+    }
 
-    if (process.exitCode() != 0) {
-        QString stderr_text = process.readAllStandardError().trimmed();
+    if (process.exit_code != 0) {
+        QString stderr_text = process.std_err.trimmed();
         error_out = stderr_text.isEmpty()
-                        ? QString("PowerShell exit code %1").arg(process.exitCode())
+                        ? QString("PowerShell exit code %1").arg(process.exit_code)
                         : stderr_text;
         sak::logError("[InternalizationEngine] Extract failed (exit {}): {}",
-                      process.exitCode(),
+                      process.exit_code,
                       error_out.toStdString());
         return false;
     }
@@ -618,52 +583,6 @@ QString PackageInternalizationEngine::findInstallScript(const QString& extract_d
     }
 
     return {};
-}
-
-// ============================================================================
-// Binary Download
-// ============================================================================
-
-void PackageInternalizationEngine::downloadBinary(
-    const QString& url,
-    const QString& output_path,
-    std::function<void(bool, const QString&)> callback) {
-    QNetworkRequest request{QUrl(url)};
-    request.setHeader(QNetworkRequest::UserAgentHeader, "SAK-Utility/1.0");
-    request.setTransferTimeout(offline::kDownloadTimeoutMs);
-
-    auto* reply = m_network_manager->get(request);
-
-    connect(reply, &QNetworkReply::downloadProgress, this, [this](qint64 received, qint64 total) {
-        m_current_progress.bytes_downloaded = received;
-        m_current_progress.bytes_total = total;
-        Q_EMIT progressChanged(m_current_progress);
-    });
-
-    connect(reply, &QNetworkReply::finished, this, [reply, output_path, callback]() {
-        reply->deleteLater();
-
-        if (reply->error() != QNetworkReply::NoError) {
-            callback(false, reply->errorString());
-            return;
-        }
-
-        QByteArray data = reply->readAll();
-        if (data.isEmpty()) {
-            callback(false, "Empty response");
-            return;
-        }
-
-        QFile file(output_path);
-        if (!file.open(QIODevice::WriteOnly)) {
-            callback(false, "Cannot write file: " + output_path);
-            return;
-        }
-
-        file.write(data);
-        file.close();
-        callback(true, {});
-    });
 }
 
 // ============================================================================
@@ -715,24 +634,20 @@ bool PackageInternalizationEngine::repackNupkg(const QString& source_dir,
                              "[System.IO.Compression.ZipFile]::CreateFromDirectory('%1', '%2')")
                              .arg(native_src, native_out);
 
-    QProcess process;
-    process.setProgram("powershell.exe");
-    process.setArguments({"-NoProfile", "-NonInteractive", "-Command", ps_command});
-
-    process.start();
-    if (!process.waitForStarted(offline::kPackTimeoutMs)) {
-        sak::logError("[InternalizationEngine] Repack process failed to start");
-        return false;
-    }
-
-    if (!process.waitForFinished(offline::kPackTimeoutMs)) {
-        process.kill();
+    const auto process = runPowerShell(ps_command, offline::kPackTimeoutMs, true, false, [this]() {
+        return m_cancelled.load();
+    });
+    if (process.timed_out) {
         sak::logError("[InternalizationEngine] Repack timed out");
         return false;
     }
+    if (process.cancelled) {
+        sak::logError("[InternalizationEngine] Repack cancelled");
+        return false;
+    }
 
-    if (process.exitCode() != 0) {
-        QString err = process.readAllStandardError();
+    if (process.exit_code != 0) {
+        QString err = process.std_err;
         sak::logError("[InternalizationEngine] Repack failed: {}", err.toStdString());
         return false;
     }

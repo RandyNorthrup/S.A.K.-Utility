@@ -168,26 +168,32 @@ private:
     /// @brief Finalize the bundle: write manifest, clean up, emit completion
     void finalizeBundle(const DeploymentManifest& manifest, const BuildBundleContext& ctx);
 
+    /// @brief Execute bundle installation on a background thread
+    void executeInstallFromBundle(DeploymentManifest manifest, QString choco_source_dir);
+
+    /// @brief Install one package from an offline bundle
+    [[nodiscard]] bool installBundlePackage(const DeploymentManifestEntry& entry,
+                                            int completed,
+                                            int total,
+                                            const QString& choco_source_dir);
+
     /// @brief Download installer binaries for a single package
     /// @return Number of files successfully downloaded (0 on failure)
     [[nodiscard]] int downloadOnePackageInstallers(const QString& pkg_id,
                                                    const QString& resolved_version,
-                                                   const QString& output_dir,
-                                                   QNetworkAccessManager& nam);
+                                                   const QString& output_dir);
 
     /// @brief Download and extract a .nupkg into a temp directory
     /// @return Path to the extracted directory, empty on failure
     [[nodiscard]] QString downloadAndExtractNupkg(const QString& pkg_id,
                                                   const QString& resolved_version,
-                                                  const QString& temp_dir,
-                                                  QNetworkAccessManager& nam);
+                                                  const QString& temp_dir);
 
     /// @brief Resolve a meta-package's dependency and extract it
     /// @return Pair of (script_path, extract_dir), both empty on failure
     [[nodiscard]] QPair<QString, QString> resolveMetaPackageDependency(const QString& pkg_id,
                                                                        const QString& extract_dir,
-                                                                       const QString& temp_dir,
-                                                                       QNetworkAccessManager& nam);
+                                                                       const QString& temp_dir);
 
     /// @brief Copy embedded installer files from the nupkg tools/ directory
     /// @return Number of files successfully copied
@@ -202,13 +208,10 @@ private:
     /// @return Number of files successfully downloaded
     [[nodiscard]] int downloadUrlsToDir(const QString& pkg_id,
                                         const QStringList& urls,
-                                        const QString& output_dir,
-                                        QNetworkAccessManager& nam);
+                                        const QString& output_dir);
 
     /// @brief Download a single file from a URL to disk
-    [[nodiscard]] bool downloadFileFromUrl(const QString& url,
-                                           const QString& output_path,
-                                           QNetworkAccessManager& nam);
+    [[nodiscard]] bool downloadFileFromUrl(const QString& url, const QString& output_path);
 
     /// @brief Emit a log message to the UI from a background thread
     void emitLog(const QString& message);

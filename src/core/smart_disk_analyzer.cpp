@@ -9,11 +9,11 @@
 #include "sak/bundled_tools_manager.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
+#include "sak/process_runner.h"
 
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
-#include <QProcess>
 
 #ifdef SAK_PLATFORM_WINDOWS
 #ifndef NOMINMAX
@@ -144,12 +144,11 @@ bool SmartDiskAnalyzer::isSmartctlAvailable() const {
         return false;
     }
 
-    QProcess proc;
-    proc.start(path, {"--version"});
-    if (!proc.waitForStarted(sak::kTimeoutProcessStartMs)) {
-        return false;
-    }
-    return proc.waitForFinished(sak::kTimeoutSmartQueryMs) && proc.exitCode() == 0;
+    const auto result =
+        sak::runProcess(path, {QStringLiteral("--version")}, sak::kTimeoutSmartQueryMs, [this]() {
+            return m_cancelled.load(std::memory_order_relaxed);
+        });
+    return result.succeeded();
 }
 
 // ============================================================================
@@ -181,21 +180,16 @@ QByteArray SmartDiskAnalyzer::runSmartctl(uint32_t disk_number) {
 
     const QString device_path = QString("/dev/pd%1").arg(disk_number);
 
-    // Request all SMART info in JSON format
-    QProcess proc;
-    proc.setProcessChannelMode(QProcess::SeparateChannels);
-    proc.start(smartctl_path,
-               {"-a",        // All SMART info
-                "--json=c",  // Compact JSON output
-                device_path});
+    const auto result =
+        sak::runProcess(smartctl_path,
+                        {QStringLiteral("-a"),        // All SMART info
+                         QStringLiteral("--json=c"),  // Compact JSON output
+                         device_path},
+                        kSmartctlTimeoutMs,
+                        [this]() { return m_cancelled.load(std::memory_order_relaxed); });
 
-    if (!proc.waitForStarted(sak::kTimeoutProcessStartMs)) {
-        logError("smartctl failed to start for drive {}", disk_number);
-        return {};
-    }
-    if (!proc.waitForFinished(kSmartctlTimeoutMs)) {
+    if (result.timed_out) {
         logError("smartctl timed out for drive {}", disk_number);
-        proc.kill();
         return {};
     }
 
@@ -209,9 +203,9 @@ QByteArray SmartDiskAnalyzer::runSmartctl(uint32_t disk_number) {
     //   Bit 6: Error log has errors
     //   Bit 7: Self-test log has errors
     // Bits 3-7 are informational; only bits 0-2 are true failures
-    const int exit_code = proc.exitCode();
+    const int exit_code = result.exit_code;
     if (exit_code & 0x07) {
-        const QString stderr_text = QString::fromUtf8(proc.readAllStandardError());
+        const QString stderr_text = result.std_err;
         logError("smartctl failed for drive {} (exit {}): {}",
                  disk_number,
                  exit_code,
@@ -219,7 +213,7 @@ QByteArray SmartDiskAnalyzer::runSmartctl(uint32_t disk_number) {
         return {};
     }
 
-    return proc.readAllStandardOutput();
+    return result.std_out.toUtf8();
 }
 
 void SmartDiskAnalyzer::parseSmartctlDeviceFields(const QJsonObject& root, SmartReport& report) {

@@ -3,6 +3,7 @@
 
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
+#include "sak/process_runner.h"
 #include "sak/windows_usb_creator.h"
 
 #include <QCoreApplication>
@@ -10,7 +11,6 @@
 #include <QDirIterator>
 #include <QFile>
 #include <QFileInfo>
-#include <QProcess>
 #include <QRegularExpression>
 #include <QStorageInfo>
 #include <QTemporaryFile>
@@ -90,20 +90,19 @@ QString WindowsUSBCreator::parseVolumeLabelFromOutput(const QString& output) {
 
 void WindowsUSBCreator::copyISO_extractVolumeLabel(const QString& sevenZipPath,
                                                    const QString& sourcePath) {
-    QProcess labelExtract;
     QStringList labelArgs;
     labelArgs << "l" << "-slt" << sourcePath;  // List with technical info
 
-    labelExtract.start(sevenZipPath, labelArgs);
-    if (!labelExtract.waitForStarted(sak::kTimeoutProcessStartMs)) {
-        sak::logWarning("7z process failed to start for label extraction");
-    } else if (!labelExtract.waitForFinished(sak::kTimeoutProcessMediumMs)) {
+    const auto label_result =
+        sak::runProcess(sevenZipPath, labelArgs, sak::kTimeoutProcessMediumMs, [this]() {
+            return m_cancelled.load();
+        });
+    if (!label_result.succeeded()) {
         sak::logWarning(
-            "7z label extraction timed out after 10s \xe2\x80\x94 will use default "
+            "7z label extraction failed/timed out after 10s -- will use default "
             "label");
-        labelExtract.kill();
     } else {
-        m_volumeLabel = parseVolumeLabelFromOutput(labelExtract.readAllStandardOutput());
+        m_volumeLabel = parseVolumeLabelFromOutput(label_result.std_out);
     }
 
     // Default to WINDOWS if label not found
@@ -178,7 +177,6 @@ bool WindowsUSBCreator::copyISO_runExtraction(const QString& sevenZipPath,
     Q_EMIT statusChanged("Extracting Windows installation files...");
 
     // 7z x = extract with full paths, -aoa = overwrite all, -bsp2 = detailed progress to stdout
-    QProcess extract;
     QStringList args;
     args << "x";                             // Extract with full paths
     args << "-aoa";                          // Overwrite all existing files
@@ -189,60 +187,52 @@ bool WindowsUSBCreator::copyISO_runExtraction(const QString& sevenZipPath,
 
     sak::logInfo(QString("7z command: %1 %2").arg(sevenZipPath, args.join(" ")).toStdString());
     sak::logInfo(QString("Extracting to absolute path: %1").arg(cleanDest).toStdString());
-    extract.start(sevenZipPath, args);
-
-    if (!extract.waitForStarted(sak::kTimeoutProcessStartMs)) {
-        m_lastError = QString("Failed to start 7z.exe at: %1").arg(sevenZipPath);
-        sak::logError(m_lastError.toStdString());
-        return false;
-    }
-
-    sak::logInfo("7z process started, extracting ISO (this may take several minutes)...");
-    Q_EMIT statusChanged("Extracting Windows files...");
-
-    if (!copyISO_monitorExtraction(extract)) {
-        return false;
-    }
-    return copyISO_logExtractionResult(extract);
-}
-
-bool WindowsUSBCreator::copyISO_monitorExtraction(QProcess& extract) {
-    const int checkIntervalMs = 200;  // Check every 200ms for smoother progress
-    const int maxWaitMs = 900'000;    // 15 minutes total
-    int totalWaitedMs = 0;
     int lastProgressPercent = 15;
     qint64 totalBytes = 0;
     qint64 processedBytes = 0;
+    bool started = false;
 
-    while (extract.state() == QProcess::Running && totalWaitedMs < maxWaitMs) {
-        if (m_cancelled) {
-            sak::logInfo("Extraction cancelled by user, terminating 7z...");
-            extract.kill();
-            extract.waitForFinished(sak::kTimeoutProcessShortMs);
-            m_lastError = "Extraction cancelled by user";
-            return false;
-        }
+    const auto result = sak::runProcessStreaming(
+        {.program = sevenZipPath,
+         .args = args,
+         .timeout_ms = 900'000,
+         .on_output =
+             [this, &totalBytes, &processedBytes, &lastProgressPercent](const QString& chunk,
+                                                                        bool is_stderr) {
+                 if (!is_stderr) {
+                     copyISO_parseExtractionProgress(
+                         chunk, totalBytes, processedBytes, lastProgressPercent);
+                 }
+             },
+         .on_started =
+             [this, &started]([[maybe_unused]] qint64 process_id) {
+                 started = true;
+                 sak::logInfo(
+                     "7z process started, extracting ISO (this may take several minutes)...");
+                 Q_EMIT statusChanged("Extracting Windows files...");
+             },
+         .should_cancel = [this]() { return m_cancelled.load(); }});
 
-        // Read any new output from 7z
-        if (extract.waitForReadyRead(checkIntervalMs)) {
-            QString newOutput = QString::fromLocal8Bit(extract.readAllStandardOutput());
-            copyISO_parseExtractionProgress(
-                newOutput, totalBytes, processedBytes, lastProgressPercent);
-            totalWaitedMs += checkIntervalMs;
-        } else {
-            totalWaitedMs += checkIntervalMs;
+    if (!started) {
+        m_lastError = QString("Failed to start 7z.exe at: %1").arg(sevenZipPath);
+        if (!result.std_err.isEmpty()) {
+            m_lastError += QStringLiteral(": ") + result.std_err.trimmed();
         }
+        sak::logError(m_lastError.toStdString());
+        return false;
     }
-
-    if (extract.state() == QProcess::Running) {
+    if (result.cancelled) {
+        m_lastError = "Extraction cancelled by user";
+        sak::logInfo(m_lastError.toStdString());
+        return false;
+    }
+    if (result.timed_out) {
         m_lastError = "ISO extraction timed out after 15 minutes";
         sak::logError(m_lastError.toStdString());
-        extract.kill();
-        extract.waitForFinished(sak::kTimeoutProcessShortMs);
         return false;
     }
 
-    return true;
+    return copyISO_logExtractionResult(result);
 }
 
 void WindowsUSBCreator::copyISO_parseExtractionProgress(const QString& output,
@@ -309,10 +299,10 @@ void WindowsUSBCreator::copyISO_parseExtractionProgress(const QString& output,
                      .toStdString());
 }
 
-bool WindowsUSBCreator::copyISO_logExtractionResult(QProcess& extract) {
-    int exitCode = extract.exitCode();
-    QString output = extract.readAllStandardOutput();
-    QString errors = extract.readAllStandardError();
+bool WindowsUSBCreator::copyISO_logExtractionResult(const sak::ProcessResult& result) {
+    int exitCode = result.exit_code;
+    const QString output = result.std_out;
+    const QString errors = result.std_err;
 
     sak::logInfo(QString("7z extraction completed with exit code: %1").arg(exitCode).toStdString());
 
@@ -481,23 +471,21 @@ void WindowsUSBCreator::copyISO_setVolumeLabel(const QString& cleanDest) {
         return;
     }
 
-    QProcess labelProcess;
     QString labelCmd = QString("Set-Volume -DriveLetter %1 -NewFileSystemLabel '%2'")
                            .arg(driveLetter, m_volumeLabel);
-    labelProcess.start("powershell.exe", QStringList() << "-NoProfile" << "-Command" << labelCmd);
-    if (!labelProcess.waitForStarted(sak::kTimeoutProcessStartMs)) {
-        sak::logWarning("PowerShell failed to start for volume label command");
-        return;
-    }
-    if (!labelProcess.waitForFinished(sak::kTimeoutProcessMediumMs)) {
+    const auto label_result =
+        sak::runPowerShell(labelCmd, sak::kTimeoutProcessMediumMs, true, false, [this]() {
+            return m_cancelled.load();
+        });
+    if (label_result.timed_out || label_result.cancelled) {
         sak::logWarning("Volume label command timed out");
         return;
     }
 
-    if (labelProcess.exitCode() == 0) {
+    if (label_result.exit_code == 0) {
         sak::logInfo("Volume label set successfully");
     } else {
-        QString labelErrors = QString(labelProcess.readAllStandardError()).trimmed();
+        QString labelErrors = label_result.std_err.trimmed();
         sak::logWarning(QString("Failed to set volume label: %1").arg(labelErrors).toStdString());
     }
 }
@@ -546,36 +534,29 @@ bool WindowsUSBCreator::makeBootable(const QString& driveLetter) {
 bool WindowsUSBCreator::runBcdboot(const QString& bcdbootPath, const QString& cleanDrive) {
     Q_ASSERT(!bcdbootPath.isEmpty());
     Q_ASSERT(!cleanDrive.isEmpty());
-    // Run bcdboot to configure boot files
-    QProcess bcdboot;
     QStringList args;
     args << QString("%1:\\").arg(cleanDrive);
     args << "/s" << QString("%1:").arg(cleanDrive);
     args << "/f" << "BIOS";  // Standard BIOS boot
 
-    bcdboot.start(bcdbootPath, args);
+    const auto bcdboot_result = sak::runProcess(
+        bcdbootPath, args, sak::kTimeoutProcessLongMs, [this]() { return m_cancelled.load(); });
 
-    if (!bcdboot.waitForStarted()) {
-        sak::logWarning("Failed to start bcdboot - boot may still work via extracted files");
-        return true;  // Not critical
-    }
-
-    if (!bcdboot.waitForFinished(sak::kTimeoutProcessLongMs)) {
+    if (bcdboot_result.timed_out || bcdboot_result.cancelled) {
         sak::logWarning("bcdboot timed out - boot may still work");
-        bcdboot.kill();
         return true;  // Not critical
     }
 
-    QString output = bcdboot.readAllStandardOutput();
-    QString errors = bcdboot.readAllStandardError();
+    QString output = bcdboot_result.std_out;
+    QString errors = bcdboot_result.std_err;
 
     if (!output.isEmpty()) {
         sak::logInfo(QString("bcdboot output: %1").arg(output).toStdString());
     }
 
-    if (bcdboot.exitCode() != 0) {
+    if (bcdboot_result.exit_code != 0) {
         sak::logWarning(QString("bcdboot returned code %1 - boot may still work: %2")
-                            .arg(bcdboot.exitCode())
+                            .arg(bcdboot_result.exit_code)
                             .arg(errors)
                             .toStdString());
         return true;  // Not critical
@@ -607,21 +588,19 @@ bool WindowsUSBCreator::checkPartitionActive(const QString& diskNumber) {
     }
     scriptFile.flush();
 
-    QProcess diskpart;
-    diskpart.start("cmd.exe", QStringList() << "/c" << "diskpart" << "/s" << scriptFile.fileName());
-
-    if (!diskpart.waitForStarted(sak::kTimeoutProcessStartMs)) {
-        sak::logError("Failed to start diskpart for verification");
-        return false;
-    }
-
-    if (!diskpart.waitForFinished(sak::kTimeoutProcessLongMs)) {
-        diskpart.kill();
+    const auto diskpart_result = sak::runProcess(QStringLiteral("cmd.exe"),
+                                                 {QStringLiteral("/c"),
+                                                  QStringLiteral("diskpart"),
+                                                  QStringLiteral("/s"),
+                                                  scriptFile.fileName()},
+                                                 sak::kTimeoutProcessLongMs,
+                                                 [this]() { return m_cancelled.load(); });
+    if (!diskpart_result.succeeded()) {
         sak::logError("diskpart verification timed out");
         return false;
     }
 
-    QString output = diskpart.readAllStandardOutput();
+    QString output = diskpart_result.std_out;
     sak::logInfo(QString("Diskpart detail output: %1").arg(output).toStdString());
 
     // Check if partition is marked as Active
@@ -661,16 +640,18 @@ bool WindowsUSBCreator::verifyBootableFlag(const QString& driveLetter) {
 
     cleanDrive = cleanDrive.toUpper();
 
-    QProcess getDisk;
     QString diskCmd = QString("(Get-Partition -DriveLetter %1).DiskNumber").arg(cleanDrive);
-    getDisk.start("powershell.exe", QStringList() << "-NoProfile" << "-Command" << diskCmd);
+    const auto disk_result =
+        sak::runPowerShell(diskCmd, sak::kTimeoutProcessMediumMs, true, false, [this]() {
+            return m_cancelled.load();
+        });
 
-    if (!getDisk.waitForFinished(sak::kTimeoutProcessMediumMs)) {
+    if (!disk_result.succeeded()) {
         sak::logWarning("Could not get disk number for verification");
         return true;  // Not critical
     }
 
-    QString diskNumber = QString(getDisk.readAllStandardOutput()).trimmed();
+    QString diskNumber = disk_result.std_out.trimmed();
     if (diskNumber.isEmpty()) {
         sak::logWarning("Could not determine disk number");
         return true;  // Not critical
@@ -686,18 +667,20 @@ bool WindowsUSBCreator::verifyExtractionIntegrity(const QString& isoPath,
     Q_EMIT statusChanged("Verifying extraction integrity...");
 
     // Get detailed file list from ISO with sizes
-    QProcess listISO;
     QStringList listArgs;
     listArgs << "l" << "-slt" << isoPath;  // List with technical info
 
-    listISO.start(sevenZipPath, listArgs);
-    if (!listISO.waitForFinished(sak::kTimeoutProcessVeryLongMs)) {  // 1 minute timeout
+    const auto list_result = sak::runProcess(sevenZipPath,
+                                             listArgs,
+                                             sak::kTimeoutProcessVeryLongMs,  // 1 minute timeout
+                                             [this]() { return m_cancelled.load(); });
+    if (!list_result.succeeded()) {
         m_lastError = "Verification failed: Could not list ISO contents";
         sak::logError(m_lastError.toStdString());
         return false;
     }
 
-    QString isoListing = listISO.readAllStandardOutput();
+    QString isoListing = list_result.std_out;
     QStringList lines = isoListing.split("\n");
 
     auto criticalFiles = parseIsoCriticalFiles(lines);

@@ -1,0 +1,56 @@
+{
+  "schema_version": 1,
+  "id": "windows_defender",
+  "display_name": "Microsoft Defender Antivirus",
+  "providers": [
+    "microsoft_docs",
+    "filesystem",
+    "package_metadata"
+  ],
+  "detect": {
+    "commands": [
+      "Get-MpComputerStatus",
+      "Get-Command MpCmdRun.exe"
+    ],
+    "process_names": [
+      "MsMpEng.exe"
+    ]
+  },
+  "actions": {
+    "quick_scan": {
+      "supported": true,
+      "method": "powershell",
+      "requires_admin": true,
+      "command": "Start-MpScan -ScanType QuickScan",
+      "timeout_seconds": 7200,
+      "evidence": [
+        "process_exit_code",
+        "Get-MpThreatDetection",
+        "Get-MpComputerStatus"
+      ]
+    },
+    "full_scan": {
+      "supported": true,
+      "method": "powershell",
+      "requires_admin": true,
+      "command": "Start-MpScan -ScanType FullScan",
+      "timeout_seconds": 14400,
+      "evidence": [
+        "process_exit_code",
+        "Get-MpThreatDetection",
+        "Get-MpComputerStatus"
+      ]
+    },
+    "definition_update": {
+      "supported": true,
+      "method": "powershell",
+      "requires_admin": true,
+      "command": "Update-MpSignature",
+      "timeout_seconds": 1800,
+      "evidence": [
+        "AntivirusSignatureLastUpdated",
+        "AntispywareSignatureLastUpdated"
+      ]
+    }
+  }
+}

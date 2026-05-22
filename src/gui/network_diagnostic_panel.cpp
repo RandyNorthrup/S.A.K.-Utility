@@ -13,6 +13,7 @@
 #include "sak/logger.h"
 #include "sak/network_diagnostic_controller.h"
 #include "sak/port_scanner.h"
+#include "sak/process_runner.h"
 #include "sak/quick_action_controller.h"
 #include "sak/style_constants.h"
 #include "sak/widget_helpers.h"
@@ -25,6 +26,7 @@
 #include <QFile>
 #include <QFileDialog>
 #include <QFont>
+#include <QFutureWatcher>
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QHeaderView>
@@ -36,6 +38,7 @@
 #include <QRegularExpressionValidator>
 #include <QScrollArea>
 #include <QShortcut>
+#include <QtConcurrent>
 #include <QTextStream>
 #include <QTimer>
 #include <QTreeWidget>
@@ -2140,34 +2143,46 @@ QVector<const NetworkAdapterInfo*> NetworkDiagnosticPanel::selectedAdapters() co
 }
 
 bool NetworkDiagnosticPanel::runNetshCommand(const QStringList& args, QString* output) {
-    QProcess process;
-    process.setProgram(QStringLiteral("netsh"));
-    process.setArguments(args);
-    process.start();
-
-    constexpr int kStartTimeoutMs = 5000;
     constexpr int kFinishTimeoutMs = 15'000;
+    const auto process = runProcess(QStringLiteral("netsh"), args, kFinishTimeoutMs);
 
-    if (!process.waitForStarted(kStartTimeoutMs)) {
-        if (output) {
-            *output = tr("Failed to start netsh process");
-        }
-        return false;
-    }
-    if (!process.waitForFinished(kFinishTimeoutMs)) {
-        process.kill();
+    if (process.timed_out) {
         if (output) {
             *output = tr("netsh command timed out");
         }
         return false;
     }
 
-    const QString stdout_text = QString::fromLocal8Bit(process.readAllStandardOutput());
-    const QString stderr_text = QString::fromLocal8Bit(process.readAllStandardError());
     if (output) {
-        *output = stdout_text.isEmpty() ? stderr_text : stdout_text;
+        *output = process.std_out.isEmpty() ? process.std_err : process.std_out;
     }
-    return process.exitCode() == 0;
+    return process.exit_code == 0;
+}
+
+void NetworkDiagnosticPanel::runCommandAsync(
+    const QString& program,
+    const QStringList& args,
+    int timeout_ms,
+    std::function<void(bool success, QString output)> callback) {
+    auto* watcher = new QFutureWatcher<QPair<bool, QString>>(this);
+    connect(watcher, &QFutureWatcher<QPair<bool, QString>>::finished, this, [watcher, callback]() {
+        const auto [success, output] = watcher->result();
+        watcher->deleteLater();
+        callback(success, output);
+    });
+    watcher->setFuture(QtConcurrent::run([program, args, timeout_ms]() -> QPair<bool, QString> {
+        const auto process = runProcess(program, args, timeout_ms);
+        const QString output = process.std_out.isEmpty() ? process.std_err : process.std_out;
+        if (process.timed_out) {
+            return {false, QStringLiteral("%1 command timed out").arg(program)};
+        }
+        return {process.exit_code == 0, output};
+    }));
+}
+
+void NetworkDiagnosticPanel::runNetshCommandAsync(
+    const QStringList& args, std::function<void(bool success, QString output)> callback) {
+    runCommandAsync(QStringLiteral("netsh"), args, 15'000, std::move(callback));
 }
 
 namespace {
@@ -2469,31 +2484,32 @@ void NetworkDiagnosticPanel::onAdapterEnable() {
 
     Q_EMIT logOutput(tr("Enabling adapter '%1'...").arg(adapter->name));
 
-    QString output;
     QStringList args = {QStringLiteral("interface"),
                         QStringLiteral("set"),
                         QStringLiteral("interface"),
                         adapter->name,
                         QStringLiteral("admin=ENABLED")};
+    const QString adapter_name = adapter->name;
+    runNetshCommandAsync(args, [this, adapter_name](bool success, const QString& output) {
+        if (success) {
+            Q_EMIT statusMessage(tr("Adapter '%1' enabled").arg(adapter_name), 3000);
+            Q_EMIT logOutput(tr("Adapter '%1' enabled successfully").arg(adapter_name));
+            sak::logInfo("Enabled adapter: {}", adapter_name.toStdString());
+        } else {
+            sak::logError("Failed to enable adapter {}: {}",
+                          adapter_name.toStdString(),
+                          output.toStdString());
+            Q_EMIT logOutput(tr("[ERROR] Failed to enable '%1': %2").arg(adapter_name, output));
+            QMessageBox::warning(this,
+                                 tr("Enable Failed"),
+                                 tr("Failed to enable adapter.\n\n"
+                                    "Administrator privileges may be required.\n\n%1")
+                                     .arg(output));
+        }
 
-    if (runNetshCommand(args, &output)) {
-        Q_EMIT statusMessage(tr("Adapter '%1' enabled").arg(adapter->name), 3000);
-        Q_EMIT logOutput(tr("Adapter '%1' enabled successfully").arg(adapter->name));
-        sak::logInfo("Enabled adapter: {}", adapter->name.toStdString());
-    } else {
-        sak::logError("Failed to enable adapter {}: {}",
-                      adapter->name.toStdString(),
-                      output.toStdString());
-        Q_EMIT logOutput(tr("[ERROR] Failed to enable '%1': %2").arg(adapter->name, output));
-        QMessageBox::warning(this,
-                             tr("Enable Failed"),
-                             tr("Failed to enable adapter.\n\n"
-                                "Administrator privileges may be required.\n\n%1")
-                                 .arg(output));
-    }
-
-    constexpr int kRefreshDelayMs = 2000;
-    QTimer::singleShot(kRefreshDelayMs, this, &NetworkDiagnosticPanel::onRefreshAdapters);
+        constexpr int kRefreshDelayMs = 2000;
+        QTimer::singleShot(kRefreshDelayMs, this, &NetworkDiagnosticPanel::onRefreshAdapters);
+    });
 }
 
 void NetworkDiagnosticPanel::onAdapterDisable() {
@@ -2515,31 +2531,32 @@ void NetworkDiagnosticPanel::onAdapterDisable() {
 
     Q_EMIT logOutput(tr("Disabling adapter '%1'...").arg(adapter->name));
 
-    QString output;
     QStringList args = {QStringLiteral("interface"),
                         QStringLiteral("set"),
                         QStringLiteral("interface"),
                         adapter->name,
                         QStringLiteral("admin=DISABLED")};
+    const QString adapter_name = adapter->name;
+    runNetshCommandAsync(args, [this, adapter_name](bool success, const QString& output) {
+        if (success) {
+            Q_EMIT statusMessage(tr("Adapter '%1' disabled").arg(adapter_name), 3000);
+            Q_EMIT logOutput(tr("Adapter '%1' disabled successfully").arg(adapter_name));
+            sak::logInfo("Disabled adapter: {}", adapter_name.toStdString());
+        } else {
+            sak::logError("Failed to disable adapter {}: {}",
+                          adapter_name.toStdString(),
+                          output.toStdString());
+            Q_EMIT logOutput(tr("[ERROR] Failed to disable '%1': %2").arg(adapter_name, output));
+            QMessageBox::warning(this,
+                                 tr("Disable Failed"),
+                                 tr("Failed to disable adapter.\n\n"
+                                    "Administrator privileges may be required.\n\n%1")
+                                     .arg(output));
+        }
 
-    if (runNetshCommand(args, &output)) {
-        Q_EMIT statusMessage(tr("Adapter '%1' disabled").arg(adapter->name), 3000);
-        Q_EMIT logOutput(tr("Adapter '%1' disabled successfully").arg(adapter->name));
-        sak::logInfo("Disabled adapter: {}", adapter->name.toStdString());
-    } else {
-        sak::logError("Failed to disable adapter {}: {}",
-                      adapter->name.toStdString(),
-                      output.toStdString());
-        Q_EMIT logOutput(tr("[ERROR] Failed to disable '%1': %2").arg(adapter->name, output));
-        QMessageBox::warning(this,
-                             tr("Disable Failed"),
-                             tr("Failed to disable adapter.\n\n"
-                                "Administrator privileges may be required.\n\n%1")
-                                 .arg(output));
-    }
-
-    constexpr int kRefreshDelayMs = 2000;
-    QTimer::singleShot(kRefreshDelayMs, this, &NetworkDiagnosticPanel::onRefreshAdapters);
+        constexpr int kRefreshDelayMs = 2000;
+        QTimer::singleShot(kRefreshDelayMs, this, &NetworkDiagnosticPanel::onRefreshAdapters);
+    });
 }
 
 void NetworkDiagnosticPanel::onAdapterDiagnose() {
@@ -2605,29 +2622,30 @@ void NetworkDiagnosticPanel::onAdapterRename() {
 
     Q_EMIT logOutput(tr("Renaming adapter '%1' to '%2'...").arg(adapter->name, new_name));
 
-    QString output;
     QStringList args = {QStringLiteral("interface"),
                         QStringLiteral("set"),
                         QStringLiteral("interface"),
                         adapter->name,
                         QStringLiteral("newname=") + new_name};
-
-    if (runNetshCommand(args, &output)) {
-        Q_EMIT statusMessage(tr("Adapter renamed to '%1'").arg(new_name), 3000);
-        Q_EMIT logOutput(tr("Adapter renamed to '%1'").arg(new_name));
-        sak::logInfo("Renamed adapter '{}' to '{}'",
-                     adapter->name.toStdString(),
-                     new_name.toStdString());
-        onRefreshAdapters();
-    } else {
-        sak::logError("Failed to rename adapter: {}", output.toStdString());
-        Q_EMIT logOutput(tr("[ERROR] Failed to rename: %1").arg(output));
-        QMessageBox::warning(this,
-                             tr("Rename Failed"),
-                             tr("Failed to rename adapter.\n\n"
-                                "Administrator privileges may be required.\n\n%1")
-                                 .arg(output));
-    }
+    const QString old_name = adapter->name;
+    runNetshCommandAsync(args, [this, old_name, new_name](bool success, const QString& output) {
+        if (success) {
+            Q_EMIT statusMessage(tr("Adapter renamed to '%1'").arg(new_name), 3000);
+            Q_EMIT logOutput(tr("Adapter renamed to '%1'").arg(new_name));
+            sak::logInfo("Renamed adapter '{}' to '{}'",
+                         old_name.toStdString(),
+                         new_name.toStdString());
+            onRefreshAdapters();
+        } else {
+            sak::logError("Failed to rename adapter: {}", output.toStdString());
+            Q_EMIT logOutput(tr("[ERROR] Failed to rename: %1").arg(output));
+            QMessageBox::warning(this,
+                                 tr("Rename Failed"),
+                                 tr("Failed to rename adapter.\n\n"
+                                    "Administrator privileges may be required.\n\n%1")
+                                     .arg(output));
+        }
+    });
 }
 
 void NetworkDiagnosticPanel::onOpenAdapterSettings() {
@@ -2771,7 +2789,6 @@ void NetworkDiagnosticPanel::applyStaticIp(const QString& adapter_name,
                                            const QString& ip,
                                            const QString& mask,
                                            const QString& gateway) {
-    QString output;
     QStringList args = {QStringLiteral("interface"),
                         QStringLiteral("ipv4"),
                         QStringLiteral("set"),
@@ -2787,24 +2804,27 @@ void NetworkDiagnosticPanel::applyStaticIp(const QString& adapter_name,
     Q_EMIT logOutput(
         tr("Setting static IP on '%1': %2 / %3 gw %4").arg(adapter_name, ip, mask, gateway));
 
-    if (runNetshCommand(args, &output)) {
-        Q_EMIT statusMessage(tr("Static IP configured on '%1'").arg(adapter_name), 3000);
-        Q_EMIT logOutput(tr("Static IP configured on '%1'").arg(adapter_name));
-        sak::logInfo("Static IP set on {}: {} / {} gw {}",
-                     adapter_name.toStdString(),
-                     ip.toStdString(),
-                     mask.toStdString(),
-                     gateway.toStdString());
-        onRefreshAdapters();
-    } else {
-        sak::logError("Failed to set static IP: {}", output.toStdString());
-        Q_EMIT logOutput(tr("[ERROR] Failed to set static IP: %1").arg(output));
-        QMessageBox::warning(this,
-                             tr("Failed to Set IP"),
-                             tr("Failed to configure static IP.\n\n"
-                                "Administrator privileges may be required.\n\n%1")
-                                 .arg(output));
-    }
+    runNetshCommandAsync(
+        args, [this, adapter_name, ip, mask, gateway](bool success, const QString& output) {
+            if (success) {
+                Q_EMIT statusMessage(tr("Static IP configured on '%1'").arg(adapter_name), 3000);
+                Q_EMIT logOutput(tr("Static IP configured on '%1'").arg(adapter_name));
+                sak::logInfo("Static IP set on {}: {} / {} gw {}",
+                             adapter_name.toStdString(),
+                             ip.toStdString(),
+                             mask.toStdString(),
+                             gateway.toStdString());
+                onRefreshAdapters();
+            } else {
+                sak::logError("Failed to set static IP: {}", output.toStdString());
+                Q_EMIT logOutput(tr("[ERROR] Failed to set static IP: %1").arg(output));
+                QMessageBox::warning(this,
+                                     tr("Failed to Set IP"),
+                                     tr("Failed to configure static IP.\n\n"
+                                        "Administrator privileges may be required.\n\n%1")
+                                         .arg(output));
+            }
+        });
 }
 
 void NetworkDiagnosticPanel::onSetDnsServers() {
@@ -2874,8 +2894,6 @@ void NetworkDiagnosticPanel::onSetDnsServers() {
 void NetworkDiagnosticPanel::applyDnsServers(const QString& adapter_name,
                                              const QString& primary,
                                              const QString& secondary) {
-    QString output;
-
     // Set primary DNS
     QStringList args = {QStringLiteral("interface"),
                         QStringLiteral("ipv4"),
@@ -2888,39 +2906,51 @@ void NetworkDiagnosticPanel::applyDnsServers(const QString& adapter_name,
     Q_EMIT logOutput(
         tr("Setting DNS on '%1': primary=%2 secondary=%3").arg(adapter_name, primary, secondary));
 
-    if (!runNetshCommand(args, &output)) {
-        sak::logError("Failed to set primary DNS: {}", output.toStdString());
-        Q_EMIT logOutput(tr("[ERROR] Failed to set primary DNS: %1").arg(output));
-        QMessageBox::warning(this,
-                             tr("DNS Configuration Failed"),
-                             tr("Failed to set primary DNS server.\n\n"
-                                "Administrator privileges may be required.\n\n%1")
-                                 .arg(output));
-        return;
-    }
+    runNetshCommandAsync(
+        args, [this, adapter_name, primary, secondary](bool success, const QString& output) {
+            if (!success) {
+                sak::logError("Failed to set primary DNS: {}", output.toStdString());
+                Q_EMIT logOutput(tr("[ERROR] Failed to set primary DNS: %1").arg(output));
+                QMessageBox::warning(this,
+                                     tr("DNS Configuration Failed"),
+                                     tr("Failed to set primary DNS server.\n\n"
+                                        "Administrator privileges may be required.\n\n%1")
+                                         .arg(output));
+                return;
+            }
 
-    // Add secondary DNS if provided
-    if (!secondary.isEmpty()) {
-        QStringList add_args = {QStringLiteral("interface"),
-                                QStringLiteral("ipv4"),
-                                QStringLiteral("add"),
-                                QStringLiteral("dns"),
-                                adapter_name,
-                                secondary,
-                                QStringLiteral("index=2")};
+            auto finish_success = [this, adapter_name, primary, secondary]() {
+                Q_EMIT statusMessage(tr("DNS servers configured on '%1'").arg(adapter_name), 3000);
+                Q_EMIT logOutput(tr("DNS configured on '%1'").arg(adapter_name));
+                sak::logInfo("DNS set on {}: primary={} secondary={}",
+                             adapter_name.toStdString(),
+                             primary.toStdString(),
+                             secondary.toStdString());
+                onRefreshAdapters();
+            };
 
-        if (!runNetshCommand(add_args, &output)) {
-            sak::logWarning("Failed to set secondary DNS: {}", output.toStdString());
-        }
-    }
+            if (secondary.isEmpty()) {
+                finish_success();
+                return;
+            }
 
-    Q_EMIT statusMessage(tr("DNS servers configured on '%1'").arg(adapter_name), 3000);
-    Q_EMIT logOutput(tr("DNS configured on '%1'").arg(adapter_name));
-    sak::logInfo("DNS set on {}: primary={} secondary={}",
-                 adapter_name.toStdString(),
-                 primary.toStdString(),
-                 secondary.toStdString());
-    onRefreshAdapters();
+            QStringList add_args = {QStringLiteral("interface"),
+                                    QStringLiteral("ipv4"),
+                                    QStringLiteral("add"),
+                                    QStringLiteral("dns"),
+                                    adapter_name,
+                                    secondary,
+                                    QStringLiteral("index=2")};
+            runNetshCommandAsync(add_args,
+                                 [finish_success](bool secondary_success,
+                                                  const QString& secondary_output) {
+                                     if (!secondary_success) {
+                                         sak::logWarning("Failed to set secondary DNS: {}",
+                                                         secondary_output.toStdString());
+                                     }
+                                     finish_success();
+                                 });
+        });
 }
 
 void NetworkDiagnosticPanel::onEnableDhcp() {
@@ -2942,37 +2972,38 @@ void NetworkDiagnosticPanel::onEnableDhcp() {
 
     Q_EMIT logOutput(tr("Enabling DHCP on '%1'...").arg(adapter->name));
 
-    QString output;
     QStringList args = {QStringLiteral("interface"),
                         QStringLiteral("ipv4"),
                         QStringLiteral("set"),
                         QStringLiteral("address"),
                         adapter->name,
                         QStringLiteral("dhcp")};
+    const QString adapter_name = adapter->name;
+    runNetshCommandAsync(args, [this, adapter_name](bool success, const QString& output) {
+        if (!success) {
+            sak::logError("Failed to enable DHCP: {}", output.toStdString());
+            Q_EMIT logOutput(tr("[ERROR] Failed to enable DHCP: %1").arg(output));
+            QMessageBox::warning(this,
+                                 tr("DHCP Failed"),
+                                 tr("Failed to enable DHCP.\n\n"
+                                    "Administrator privileges may be required.\n\n%1")
+                                     .arg(output));
+            return;
+        }
 
-    if (runNetshCommand(args, &output)) {
-        // Also set DNS to DHCP
         QStringList dns_args = {QStringLiteral("interface"),
                                 QStringLiteral("ipv4"),
                                 QStringLiteral("set"),
                                 QStringLiteral("dns"),
-                                adapter->name,
+                                adapter_name,
                                 QStringLiteral("dhcp")};
-        runNetshCommand(dns_args);
-
-        Q_EMIT statusMessage(tr("DHCP enabled on '%1'").arg(adapter->name), 3000);
-        Q_EMIT logOutput(tr("DHCP enabled on '%1'").arg(adapter->name));
-        sak::logInfo("DHCP enabled on: {}", adapter->name.toStdString());
-        onRefreshAdapters();
-    } else {
-        sak::logError("Failed to enable DHCP: {}", output.toStdString());
-        Q_EMIT logOutput(tr("[ERROR] Failed to enable DHCP: %1").arg(output));
-        QMessageBox::warning(this,
-                             tr("DHCP Failed"),
-                             tr("Failed to enable DHCP.\n\n"
-                                "Administrator privileges may be required.\n\n%1")
-                                 .arg(output));
-    }
+        runNetshCommandAsync(dns_args, [this, adapter_name](bool, const QString&) {
+            Q_EMIT statusMessage(tr("DHCP enabled on '%1'").arg(adapter_name), 3000);
+            Q_EMIT logOutput(tr("DHCP enabled on '%1'").arg(adapter_name));
+            sak::logInfo("DHCP enabled on: {}", adapter_name.toStdString());
+            onRefreshAdapters();
+        });
+    });
 }
 
 void NetworkDiagnosticPanel::onReleaseDhcpLease() {
@@ -2983,28 +3014,25 @@ void NetworkDiagnosticPanel::onReleaseDhcpLease() {
 
     Q_EMIT logOutput(tr("Releasing DHCP lease on '%1'...").arg(adapter->name));
 
-    QString output;
-    QStringList args = {QStringLiteral("/release"), adapter->name};
-
-    QProcess process;
-    process.setProgram(QStringLiteral("ipconfig"));
-    process.setArguments(args);
-    process.start();
-
     constexpr int kIpconfigTimeoutMs = 10'000;
-    process.waitForFinished(kIpconfigTimeoutMs);
-    output = QString::fromLocal8Bit(process.readAllStandardOutput());
+    const QString adapter_name = adapter->name;
+    runCommandAsync(
+        QStringLiteral("ipconfig"),
+        {QStringLiteral("/release"), adapter_name},
+        kIpconfigTimeoutMs,
+        [this, adapter_name](bool success, const QString& output) {
+            if (success) {
+                Q_EMIT statusMessage(tr("DHCP lease released on '%1'").arg(adapter_name), 3000);
+                Q_EMIT logOutput(tr("DHCP lease released on '%1'").arg(adapter_name));
+                sak::logInfo("DHCP lease released: {}", adapter_name.toStdString());
+            } else {
+                sak::logWarning("DHCP release may have failed: {}", output.toStdString());
+                Q_EMIT logOutput(
+                    tr("[WARN] DHCP release may have failed on '%1'").arg(adapter_name));
+            }
 
-    if (process.exitCode() == 0) {
-        Q_EMIT statusMessage(tr("DHCP lease released on '%1'").arg(adapter->name), 3000);
-        Q_EMIT logOutput(tr("DHCP lease released on '%1'").arg(adapter->name));
-        sak::logInfo("DHCP lease released: {}", adapter->name.toStdString());
-    } else {
-        sak::logWarning("DHCP release may have failed: {}", output.toStdString());
-        Q_EMIT logOutput(tr("[WARN] DHCP release may have failed on '%1'").arg(adapter->name));
-    }
-
-    onRefreshAdapters();
+            onRefreshAdapters();
+        });
 }
 
 void NetworkDiagnosticPanel::onRenewDhcpLease() {
@@ -3016,28 +3044,24 @@ void NetworkDiagnosticPanel::onRenewDhcpLease() {
     Q_EMIT statusMessage(tr("Renewing DHCP lease on '%1'...").arg(adapter->name), 0);
     Q_EMIT logOutput(tr("Renewing DHCP lease on '%1'...").arg(adapter->name));
 
-    QString output;
-    QStringList args = {QStringLiteral("/renew"), adapter->name};
-
-    QProcess process;
-    process.setProgram(QStringLiteral("ipconfig"));
-    process.setArguments(args);
-    process.start();
-
     constexpr int kIpconfigTimeoutMs = 30'000;
-    process.waitForFinished(kIpconfigTimeoutMs);
-    output = QString::fromLocal8Bit(process.readAllStandardOutput());
+    const QString adapter_name = adapter->name;
+    runCommandAsync(
+        QStringLiteral("ipconfig"),
+        {QStringLiteral("/renew"), adapter_name},
+        kIpconfigTimeoutMs,
+        [this, adapter_name](bool success, const QString& output) {
+            if (success) {
+                Q_EMIT statusMessage(tr("DHCP lease renewed on '%1'").arg(adapter_name), 3000);
+                Q_EMIT logOutput(tr("DHCP lease renewed on '%1'").arg(adapter_name));
+                sak::logInfo("DHCP lease renewed: {}", adapter_name.toStdString());
+            } else {
+                sak::logWarning("DHCP renew may have failed: {}", output.toStdString());
+                Q_EMIT logOutput(tr("[WARN] DHCP renew may have failed on '%1'").arg(adapter_name));
+            }
 
-    if (process.exitCode() == 0) {
-        Q_EMIT statusMessage(tr("DHCP lease renewed on '%1'").arg(adapter->name), 3000);
-        Q_EMIT logOutput(tr("DHCP lease renewed on '%1'").arg(adapter->name));
-        sak::logInfo("DHCP lease renewed: {}", adapter->name.toStdString());
-    } else {
-        sak::logWarning("DHCP renew may have failed: {}", output.toStdString());
-        Q_EMIT logOutput(tr("[WARN] DHCP renew may have failed on '%1'").arg(adapter->name));
-    }
-
-    onRefreshAdapters();
+            onRefreshAdapters();
+        });
 }
 
 // -- Ping --

@@ -507,14 +507,17 @@ void MainWindow::createToolPanels() {
 void MainWindow::createSimplePanels() {
     Q_ASSERT(m_tab_widget);
     // -- Backup and Restore ----------------------------------------------
+    logInfo("MainWindow: creating Backup and Restore panel");
     m_user_migration_panel = std::make_unique<UserMigrationPanel>(this);
     AddTabWithTooltip(m_tab_widget,
                       m_user_migration_panel.get(),
                       "Backup and Restore",
                       kTooltipUserMigration,
                       ":/icons/icons/panel_backup_restore.svg");
+    logInfo("MainWindow: Backup and Restore panel initialized");
 
     // -- File Management (Organizer + Duplicate Finder + Advanced Search) -
+    logInfo("MainWindow: creating File Management panels");
     m_organizer_panel = std::make_unique<OrganizerPanel>(this);
     m_advanced_search_panel = std::make_unique<AdvancedSearchPanel>(this);
     m_organizer_panel->tabWidget()->addTab(m_advanced_search_panel.get(), tr("Advanced Search"));
@@ -523,24 +526,30 @@ void MainWindow::createSimplePanels() {
                       "File Management",
                       kTooltipOrganizer,
                       ":/icons/icons/panel_organizer.svg");
+    logInfo("MainWindow: File Management panels initialized");
 
     // -- Image Flasher ---------------------------------------------------
+    logInfo("MainWindow: creating Image Flasher panel");
     m_image_flasher_panel = std::make_unique<ImageFlasherPanel>(this);
     AddTabWithTooltip(m_tab_widget,
                       m_image_flasher_panel.get(),
                       "Image Flasher",
                       kTooltipImageFlasher,
                       ":/icons/icons/panel_image_flasher.svg");
+    logInfo("MainWindow: Image Flasher panel initialized");
 
     // -- Benchmark and Diagnostics ---------------------------------------
+    logInfo("MainWindow: creating Benchmark and Diagnostics panel");
     m_diagnostic_benchmark_panel = std::make_unique<DiagnosticBenchmarkPanel>(this);
     AddTabWithTooltip(m_tab_widget,
                       m_diagnostic_benchmark_panel.get(),
                       "Benchmark and Diagnostics",
                       kTooltipDiagnostics,
                       ":/icons/icons/panel_diagnostic.svg");
+    logInfo("MainWindow: Benchmark and Diagnostics panel initialized");
 
     // -- Email Tools ------------------------------------------------------
+    logInfo("MainWindow: creating Email Tools panels");
     m_email_inspector_panel = std::make_unique<EmailInspectorPanel>(this);
     m_ost_converter_widget = std::make_unique<OstConverterWidget>(this);
 
@@ -602,14 +611,21 @@ void MainWindow::createSimplePanels() {
                       "Email Tools",
                       kTooltipEmailTool,
                       ":/icons/icons/panel_email.svg");
+    logInfo("MainWindow: Email Tools panels initialized");
 }
 
 void MainWindow::createAppManagementPanel() {
     Q_ASSERT(m_tab_widget);
     Q_ASSERT(!m_app_installation_panel);
+    logInfo("MainWindow: creating Application Management panels");
+    logInfo("MainWindow: creating App Installation panel");
     m_app_installation_panel = std::make_unique<AppInstallationPanel>(this);
+    logInfo("MainWindow: App Installation panel initialized");
+    logInfo("MainWindow: creating Advanced Uninstall panel");
     m_advanced_uninstall_panel = std::make_unique<AdvancedUninstallPanel>(this);
+    logInfo("MainWindow: Advanced Uninstall panel initialized");
 
+    logInfo("MainWindow: creating Application Management wrapper");
     auto* appMgmtWrapper = new QWidget(this);
     auto* appMgmtLayout = new QVBoxLayout(appMgmtWrapper);
     appMgmtLayout->setContentsMargins(
@@ -657,6 +673,7 @@ void MainWindow::createAppManagementPanel() {
                       "Application Management",
                       kTooltipAppManagement,
                       ":/icons/icons/panel_app_install.svg");
+    logInfo("MainWindow: Application Management panels initialized");
 }
 
 void MainWindow::createNetworkManagementPanel() {
@@ -1182,6 +1199,32 @@ void MainWindow::connectRemainingPanelSignals() {
 }
 
 #if defined(SAK_ENABLE_AI_ASSISTANT) && SAK_ENABLE_AI_ASSISTANT
+bool MainWindow::isAiAssistantPanelActive() const {
+    return m_tab_widget && m_ai_assistant_panel &&
+           m_tab_widget->currentIndex() == findPanelTabIndex(m_ai_assistant_panel.get());
+}
+
+void MainWindow::updateAiStatusBarVisibility() {
+    if (!m_ai_status_label || !m_ai_assistant_panel) {
+        return;
+    }
+
+    const QString details = m_ai_assistant_panel->statusDetails();
+    m_ai_status_label->setText(details);
+    m_ai_status_label->setToolTip(details);
+    m_ai_status_label->setVisible(isAiAssistantPanelActive() && !details.isEmpty());
+
+    if (isAiAssistantPanelActive()) {
+        if (m_ai_progress_active) {
+            updateProgress(m_ai_progress_current, m_ai_progress_maximum);
+            m_progress_owner_is_ai = true;
+        }
+    } else if (m_progress_owner_is_ai) {
+        setProgressVisible(false);
+        m_progress_owner_is_ai = false;
+    }
+}
+
 void MainWindow::connectAiAssistantSignals() {
     if (!m_ai_assistant_panel) {
         return;
@@ -1191,29 +1234,28 @@ void MainWindow::connectAiAssistantSignals() {
             &AiAssistantPanel::statusMessage,
             this,
             [this](const QString& msg, int timeout_ms) {
-                updateStatus(msg, timeout_ms > 0 ? timeout_ms : 5000);
+                if (isAiAssistantPanelActive()) {
+                    updateStatus(msg, timeout_ms > 0 ? timeout_ms : 5000);
+                }
             });
     connect(m_ai_assistant_panel.get(),
             &AiAssistantPanel::progressUpdate,
             this,
-            &MainWindow::updateProgress);
+            [this](int current, int maximum) {
+                m_ai_progress_current = current;
+                m_ai_progress_maximum = maximum;
+                m_ai_progress_active = (current == 0 && maximum == 0) ||
+                                       (maximum > 0 && current < maximum);
+                if (isAiAssistantPanelActive()) {
+                    updateProgress(current, maximum);
+                    m_progress_owner_is_ai = true;
+                }
+            });
     connect(m_ai_assistant_panel.get(),
             &AiAssistantPanel::statusDetailsChanged,
             this,
-            [this](const QString& details) {
-                if (!m_ai_status_label) {
-                    return;
-                }
-                m_ai_status_label->setText(details);
-                m_ai_status_label->setToolTip(details);
-                m_ai_status_label->setVisible(!details.isEmpty());
-            });
-    if (m_ai_status_label) {
-        const QString details = m_ai_assistant_panel->statusDetails();
-        m_ai_status_label->setText(details);
-        m_ai_status_label->setToolTip(details);
-        m_ai_status_label->setVisible(!details.isEmpty());
-    }
+            [this](const QString&) { updateAiStatusBarVisibility(); });
+    updateAiStatusBarVisibility();
 }
 #endif
 
@@ -1310,6 +1352,9 @@ void MainWindow::updateStatus(const QString& message, int timeout_ms) {
 void MainWindow::updateProgress(int current, int maximum) {
     Q_ASSERT(maximum >= 0);
     Q_ASSERT(current >= 0);
+#if defined(SAK_ENABLE_AI_ASSISTANT) && SAK_ENABLE_AI_ASSISTANT
+    m_progress_owner_is_ai = false;
+#endif
     Q_ASSERT(m_progress_bar);
     if (!m_progress_bar) {
         return;
@@ -1354,6 +1399,9 @@ void MainWindow::setProgressVisible(bool visible) {
 void MainWindow::onTabChanged(int index) {
     Q_ASSERT(m_tab_widget);
     Q_ASSERT(index >= -1 && index < m_tab_widget->count());
+#if defined(SAK_ENABLE_AI_ASSISTANT) && SAK_ENABLE_AI_ASSISTANT
+    updateAiStatusBarVisibility();
+#endif
     if (!m_logWindow) {
         return;
     }

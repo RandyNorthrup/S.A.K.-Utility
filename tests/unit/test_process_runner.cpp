@@ -6,6 +6,7 @@
 
 #include "sak/process_runner.h"
 
+#include <QRegularExpression>
 #include <QtTest/QtTest>
 
 class ProcessRunnerTests : public QObject {
@@ -18,6 +19,7 @@ private Q_SLOTS:
     void runProcess_stderrCapture();
     void runProcess_nonExistentProgram();
     void runProcess_timeout();
+    void runProcess_timeoutKillsChildTree();
     void runProcess_cancellation();
 
     // runPowerShell
@@ -67,6 +69,38 @@ void ProcessRunnerTests::runProcess_timeout() {
     auto result = sak::runProcess("cmd.exe", {"/C", "ping -n 3 127.0.0.1"}, 1000);
 
     QVERIFY(result.timed_out);
+}
+
+void ProcessRunnerTests::runProcess_timeoutKillsChildTree() {
+#ifndef Q_OS_WIN
+    QSKIP("Process tree termination is Windows-specific");
+#else
+    const QString script =
+        "Set-StrictMode -Version Latest; "
+        "$child = Start-Process powershell.exe "
+        "-WindowStyle Hidden "
+        "-ArgumentList @('-NoProfile','-Command','Start-Sleep -Seconds 30') "
+        "-PassThru; "
+        "Write-Output $child.Id; "
+        "Start-Sleep -Seconds 30";
+
+    auto result = sak::runPowerShell(script, 1500);
+    QVERIFY(result.timed_out);
+
+    const QRegularExpression pidRegex(QStringLiteral("\\b(\\d+)\\b"));
+    const auto match = pidRegex.match(result.std_out);
+    QVERIFY2(match.hasMatch(),
+             qPrintable(QStringLiteral("Child PID missing from stdout: %1").arg(result.std_out)));
+    const QString childPid = match.captured(1);
+
+    QTest::qWait(750);
+    const auto tasklist = sak::runProcess(
+        "cmd.exe", {"/C", QStringLiteral("tasklist /FI \"PID eq %1\"").arg(childPid)}, 5000);
+    QVERIFY2(
+        !tasklist.std_out.contains(childPid),
+        qPrintable(
+            QStringLiteral("Timed-out child process still running: %1").arg(tasklist.std_out)));
+#endif
 }
 
 void ProcessRunnerTests::runProcess_cancellation() {

@@ -6,15 +6,116 @@
 
 #include "sak/port_scanner.h"
 
+#include <QElapsedTimer>
+#include <QSemaphore>
 #include <QTcpSocket>
-
-#include <chrono>
+#include <QThread>
+#include <QTimer>
 
 namespace sak {
 
 namespace {
 constexpr int kBannerGrabTimeout = netdiag::kBannerGrabTimeoutMs;
 constexpr int kBannerMaxRead = netdiag::kBannerMaxBytes;
+
+struct TcpProbeResult {
+    bool connected{false};
+    bool timed_out{false};
+    QString error_message;
+    QByteArray banner;
+    double response_time_ms{0.0};
+};
+
+TcpProbeResult runTcpProbe(const QString& target,
+                           uint16_t port,
+                           int connectTimeoutMs,
+                           bool grabBanner,
+                           int bannerTimeoutMs) {
+    TcpProbeResult result;
+    QThread thread;
+    QSemaphore done;
+    auto* context = new QObject();
+    context->moveToThread(&thread);
+
+    QObject::connect(&thread, &QThread::started, context, [&]() {
+        auto* socket = new QTcpSocket(context);
+        auto* connectTimer = new QTimer(context);
+        connectTimer->setSingleShot(true);
+        auto* bannerTimer = new QTimer(context);
+        bannerTimer->setSingleShot(true);
+        auto* probeTimer = new QTimer(context);
+        probeTimer->setSingleShot(true);
+        QElapsedTimer elapsed;
+        bool finished = false;
+        bool probeSent = false;
+
+        auto finish = [&]() {
+            if (finished) {
+                return;
+            }
+            finished = true;
+            result.response_time_ms = elapsed.elapsed();
+            socket->disconnectFromHost();
+            socket->deleteLater();
+            context->deleteLater();
+            thread.quit();
+            done.release();
+        };
+
+        QObject::connect(connectTimer, &QTimer::timeout, context, [&]() {
+            result.timed_out = true;
+            result.error_message = QStringLiteral("Connection timed out");
+            socket->abort();
+            finish();
+        });
+        QObject::connect(bannerTimer, &QTimer::timeout, context, [&]() { finish(); });
+        QObject::connect(probeTimer, &QTimer::timeout, context, [&]() {
+            if (probeSent) {
+                return;
+            }
+            probeSent = true;
+            socket->write("HEAD / HTTP/1.0\r\nHost: " + target.toLatin1() + "\r\n\r\n");
+            socket->flush();
+            bannerTimer->start(bannerTimeoutMs);
+        });
+        QObject::connect(socket, &QTcpSocket::connected, context, [&]() {
+            connectTimer->stop();
+            result.connected = true;
+            result.response_time_ms = elapsed.elapsed();
+            if (!grabBanner) {
+                finish();
+                return;
+            }
+            probeTimer->start(bannerTimeoutMs);
+        });
+        QObject::connect(socket, &QTcpSocket::readyRead, context, [&]() {
+            result.banner += socket->read(kBannerMaxRead);
+            finish();
+        });
+        QObject::connect(socket, &QTcpSocket::disconnected, context, [&]() {
+            if (result.connected) {
+                finish();
+            }
+        });
+        QObject::connect(
+            socket, &QTcpSocket::errorOccurred, context, [&](QAbstractSocket::SocketError error) {
+                if (finished || error == QAbstractSocket::RemoteHostClosedError) {
+                    return;
+                }
+                result.error_message = socket->errorString();
+                finish();
+            });
+
+        elapsed.start();
+        connectTimer->start(connectTimeoutMs);
+        socket->connectToHost(target, port);
+    });
+
+    thread.start();
+    done.acquire();
+    thread.wait();
+    return result;
+}
 
 const QHash<uint16_t, QString> kServiceDatabase = {
     {7, QStringLiteral("Echo")},
@@ -178,36 +279,26 @@ PortScanResult PortScanner::scanPort(const QString& target,
     result.port = port;
     result.scanTimestamp = QDateTime::currentDateTime();
 
-    QTcpSocket socket;
-    socket.connectToHost(target, port);
+    const TcpProbeResult probe =
+        runTcpProbe(target, port, timeoutMs, grabBanner, kBannerGrabTimeout);
 
-    const auto start = std::chrono::high_resolution_clock::now();
-    const bool connected = socket.waitForConnected(timeoutMs);
-    const auto end = std::chrono::high_resolution_clock::now();
+    result.responseTimeMs = probe.response_time_ms;
 
-    result.responseTimeMs = std::chrono::duration<double, std::milli>(end - start).count();
-
-    if (connected) {
+    if (probe.connected) {
         result.state = PortScanResult::State::Open;
         result.serviceName = getServiceName(port);
 
         if (grabBanner) {
-            result.banner = grabBannerData(target, port, kBannerGrabTimeout);
+            result.banner = QString::fromUtf8(probe.banner).trimmed();
+            result.banner.remove(QLatin1Char('\0'));
         }
-
-        socket.disconnectFromHost();
-        if (socket.state() != QAbstractSocket::UnconnectedState) {
-            socket.waitForDisconnected(1000);
-        }
+    } else if (probe.error_message.contains(QStringLiteral("refused"), Qt::CaseInsensitive)) {
+        result.state = PortScanResult::State::Closed;
+    } else if (probe.timed_out) {
+        result.state = PortScanResult::State::Filtered;
     } else {
-        if (socket.error() == QAbstractSocket::ConnectionRefusedError) {
-            result.state = PortScanResult::State::Closed;
-        } else if (socket.error() == QAbstractSocket::SocketTimeoutError) {
-            result.state = PortScanResult::State::Filtered;
-        } else {
-            result.state = PortScanResult::State::Error;
-            result.errorMessage = socket.errorString();
-        }
+        result.state = PortScanResult::State::Error;
+        result.errorMessage = probe.error_message;
     }
 
     return result;
@@ -216,30 +307,13 @@ PortScanResult PortScanner::scanPort(const QString& target,
 QString PortScanner::grabBannerData(const QString& target, uint16_t port, int timeoutMs) {
     Q_ASSERT(!target.isEmpty());
     Q_ASSERT(timeoutMs >= 0);
-    QTcpSocket socket;
-    socket.connectToHost(target, port);
-    if (!socket.waitForConnected(timeoutMs)) {
-        return {};
-    }
-
-    // Some services send a banner immediately, others need a nudge
-    if (!socket.waitForReadyRead(timeoutMs)) {
-        // Best-effort HTTP probe -- failure is non-critical since
-        // we fall back to whatever the server sends on connect.
-        socket.write("HEAD / HTTP/1.0\r\nHost: " + target.toLatin1() + "\r\n\r\n");
-        socket.flush();
-        socket.waitForReadyRead(timeoutMs);
-    }
-
-    const QByteArray data = socket.read(kBannerMaxRead);
-    socket.disconnectFromHost();
-
-    if (data.isEmpty()) {
+    const TcpProbeResult probe = runTcpProbe(target, port, timeoutMs, true, timeoutMs);
+    if (probe.banner.isEmpty()) {
         return {};
     }
 
     // Clean up non-printable characters
-    QString banner = QString::fromUtf8(data).trimmed();
+    QString banner = QString::fromUtf8(probe.banner).trimmed();
     banner.remove(QLatin1Char('\0'));
     return banner;
 }

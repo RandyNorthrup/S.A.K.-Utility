@@ -22,7 +22,7 @@
   ],
   "phases": [
     {"id": "clarify", "type": "overseer", "prompt": "Confirm app name, edition, architecture, and offline use case if missing.", "completion": "Required inputs are known."},
-    {"id": "package_search", "type": "tool_action", "tool": "sak_offline_downloader", "operation": "search", "prompt": "Search the built-in SAK offline downloader/package catalog for candidate packages before any web fallback.", "risk": "read_only", "completion": "Built-in package candidates are captured or ambiguity is reported."},
+    {"id": "package_search", "type": "tool_action", "tool": "sak_offline_downloader", "operation": "search", "prompt": "Search the built-in SAK offline downloader/package catalog before any external source research.", "risk": "read_only", "completion": "Built-in package candidates are captured or ambiguity is reported."},
     {"id": "direct_download", "type": "tool_action", "tool": "sak_offline_downloader", "operation": "direct_download", "prompt": "Download primary installer binaries using built-in offline downloader.", "risk": "download_only", "completion": "Installer artifacts are saved with paths and hashes."},
     {"id": "fallback_research", "type": "delegate", "agent": "research_agent", "condition": "direct_download_failed", "prompt": "Find official vendor offline installer sources and checksum guidance.", "expected_output": "official_download_sources", "risk": "web_read_only", "completion": "Official fallback sources are identified or unavailable."},
     {"id": "verify_artifacts", "type": "overseer", "prompt": "Verify downloaded artifact paths, sizes, package/source identity, and checksum availability before reporting.", "completion": "Download artifacts are verified or gaps are listed."},
@@ -30,9 +30,9 @@
     {"id": "cleanup", "type": "cleanup", "prompt": "Remove temp extraction folders, keep requested installer artifacts.", "completion": "Cleanup status is recorded."}
   ],
   "acceptance_criteria": [
-    "SAK offline downloader was tried before web fallback.",
+    "SAK offline downloader was tried before external source research.",
     "Artifacts include path, size, and SHA-256 when available.",
-    "Fallback source is official or clearly marked as not official.",
+    "Any alternate source is official or clearly marked as not official.",
     "Final response states exact artifact location."
   ],
   "cancel_policy": {"cancel_children": true, "cancel_tools": true, "preserve_partial_artifacts": true, "report_partial_state": true}

@@ -370,7 +370,12 @@ QJsonObject packageTool() {
                                        "manager. Use this before web search, raw choco/winget "
                                        "commands, or vendor downloads for app search, install, "
                                        "uninstall, upgrade, installed-version checks, and "
-                                       "outdated-package checks."),
+                                       "outdated-package checks. Do not use install/upgrade/"
+                                       "uninstall as a substitute for running an installed app's "
+                                       "scan/action. For scan requests, first check installed "
+                                       "status and app capabilities through sak_provider_gateway; "
+                                       "only install when the user explicitly asks to install, "
+                                       "repair-install, or upgrade software."),
                         properties,
                         QJsonArray{QStringLiteral("operation"),
                                    QStringLiteral("query"),
@@ -435,6 +440,75 @@ QJsonObject offlineTool() {
                                    QStringLiteral("packages")});
 }
 
+QJsonObject providerGatewayTool() {
+    QJsonObject operation = stringParameter(QStringLiteral(
+        "Operation to run: providers, provider_status, docs_query, win32_mcp_call, app_manifest, "
+        "app_capabilities, app_run_action_plan, app_run_action."));
+    operation[QStringLiteral("enum")] = QJsonArray{QStringLiteral("providers"),
+                                                   QStringLiteral("provider_status"),
+                                                   QStringLiteral("docs_query"),
+                                                   QStringLiteral("win32_mcp_call"),
+                                                   QStringLiteral("app_manifest"),
+                                                   QStringLiteral("app_capabilities"),
+                                                   QStringLiteral("app_run_action_plan"),
+                                                   QStringLiteral("app_run_action")};
+
+    QJsonObject arguments;
+    arguments[QStringLiteral("type")] = QStringLiteral("object");
+    arguments[QStringLiteral("description")] = QStringLiteral(
+        "Structured provider arguments. For win32_mcp_call use "
+        "{tool_name, tool_arguments, timeout_ms}. For Context7 docs_query use "
+        "{libraryId} after resolving a library id.");
+    arguments[QStringLiteral("additionalProperties")] = true;
+
+    QJsonObject properties;
+    properties[QStringLiteral("operation")] = operation;
+    properties[QStringLiteral("provider_id")] =
+        stringParameter(QStringLiteral("Provider id, e.g. microsoft_docs, context7, win32_mcp."));
+    properties[QStringLiteral("app_id")] = stringParameter(
+        QStringLiteral("App manifest id, e.g. windows_defender, superantispyware, windows_sfc."));
+    properties[QStringLiteral("action")] =
+        stringParameter(QStringLiteral("Requested app action, e.g. quick_scan or verify_only."));
+    properties[QStringLiteral("query")] =
+        stringParameter(QStringLiteral("Documentation or provider query; empty when unused."));
+    properties[QStringLiteral("arguments")] = arguments;
+
+    return functionTool(QStringLiteral("sak_provider_gateway"),
+                        QStringLiteral("Use S.A.K. Utility's bundled provider/app-control "
+                                       "registry. Use this before raw shell probing when checking "
+                                       "MCP providers, app manifests, or whether an app action is "
+                                       "supported. Use operation=docs_query for Microsoft Learn "
+                                       "MCP or Context7 public documentation lookup. Use "
+                                       "operation=win32_mcp_call for bundled Win32 MCP desktop "
+                                       "automation when local tools are enabled. Use "
+                                       "operation=app_run_action only for supported app manifest "
+                                       "actions. Access mode and tool risk determine "
+                                       "confirmation/security profile."),
+                        properties,
+                        QJsonArray{QStringLiteral("operation"),
+                                   QStringLiteral("provider_id"),
+                                   QStringLiteral("app_id"),
+                                   QStringLiteral("action"),
+                                   QStringLiteral("query"),
+                                   QStringLiteral("arguments")});
+}
+
+QJsonObject sessionSearchTool() {
+    QJsonObject properties;
+    properties[QStringLiteral("query")] = stringParameter(QStringLiteral(
+        "Text to search across saved AI session titles, transcript, and command records."));
+    properties[QStringLiteral("max_results")] =
+        integerParameter(QStringLiteral("Maximum hits to return, from 1 to 100."), 1, 100);
+
+    return functionTool(QStringLiteral("sak_session_search"),
+                        QStringLiteral("Search saved S.A.K. AI session transcript and command "
+                                       "indexes. Use this when debugging prior runs, finding QA "
+                                       "failures, locating tool-loop evidence, or comparing a "
+                                       "current issue against earlier sessions."),
+                        properties,
+                        QJsonArray{QStringLiteral("query"), QStringLiteral("max_results")});
+}
+
 QJsonArray localToolDefinitions() {
     QJsonArray tools;
     tools.append(shellTool(
@@ -458,6 +532,8 @@ QJsonArray localToolDefinitions() {
     tools.append(downloadTool());
     tools.append(packageTool());
     tools.append(offlineTool());
+    tools.append(providerGatewayTool());
+    tools.append(sessionSearchTool());
     return tools;
 }
 

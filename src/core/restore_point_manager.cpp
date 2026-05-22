@@ -7,11 +7,11 @@
 #include "sak/restore_point_manager.h"
 
 #include "sak/elevation_manager.h"
+#include "sak/process_runner.h"
 
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
-#include <QProcess>
 
 #ifdef Q_OS_WIN
 #include <windows.h>
@@ -22,33 +22,32 @@ namespace sak {
 RestorePointManager::RestorePointManager(QObject* parent) : QObject(parent) {}
 
 bool RestorePointManager::isSystemRestoreEnabled() const {
-    QProcess ps;
-    ps.setProgram("powershell.exe");
-    ps.setArguments({"-NoProfile",
-                     "-NonInteractive",
-                     "-Command",
-                     "try { "
-                     "  $status = Get-ComputerRestorePoint -ErrorAction Stop; "
-                     "  Write-Output 'ENABLED'; "
-                     "} catch { "
-                     "  try { "
-                     "    $vss = Get-Service -Name VSS -ErrorAction Stop; "
-                     "    if ($vss.Status -eq 'Running' -or $vss.StartType -ne 'Disabled') { "
-                     "      Write-Output 'ENABLED'; "
-                     "    } else { "
-                     "      Write-Output 'DISABLED'; "
-                     "    } "
-                     "  } catch { "
-                     "    Write-Output 'DISABLED'; "
-                     "  } "
-                     "}"});
-    ps.start();
-
-    if (!ps.waitForStarted(kCheckTimeoutMs) || !ps.waitForFinished(kCheckTimeoutMs)) {
+    const auto result = sak::runProcess(
+        QStringLiteral("powershell.exe"),
+        {QStringLiteral("-NoProfile"),
+         QStringLiteral("-NonInteractive"),
+         QStringLiteral("-Command"),
+         QStringLiteral("try { "
+                        "  $status = Get-ComputerRestorePoint -ErrorAction Stop; "
+                        "  Write-Output 'ENABLED'; "
+                        "} catch { "
+                        "  try { "
+                        "    $vss = Get-Service -Name VSS -ErrorAction Stop; "
+                        "    if ($vss.Status -eq 'Running' -or $vss.StartType -ne 'Disabled') { "
+                        "      Write-Output 'ENABLED'; "
+                        "    } else { "
+                        "      Write-Output 'DISABLED'; "
+                        "    } "
+                        "  } catch { "
+                        "    Write-Output 'DISABLED'; "
+                        "  } "
+                        "}")},
+        kCheckTimeoutMs);
+    if (!result.succeeded()) {
         return false;
     }
 
-    QString output = QString::fromUtf8(ps.readAllStandardOutput()).trimmed();
+    QString output = result.std_out.trimmed();
     return output.contains("ENABLED");
 }
 
@@ -65,37 +64,31 @@ bool RestorePointManager::createRestorePoint(const QString& description) {
     // Escape single quotes in description
     safe_desc.replace("'", "''");
 
-    QProcess ps;
-    ps.setProgram("powershell.exe");
-    ps.setArguments({"-NoProfile",
-                     "-NonInteractive",
-                     "-Command",
-                     QString("try { "
-                             "  Checkpoint-Computer -Description '%1' "
-                             "    -RestorePointType 'APPLICATION_UNINSTALL' "
-                             "    -ErrorAction Stop; "
-                             "  Write-Output 'SUCCESS'; "
-                             "} catch { "
-                             "  Write-Error $_.Exception.Message; "
-                             "  exit 1; "
-                             "}")
-                         .arg(safe_desc)});
-    ps.start();
+    const auto result = sak::runProcess(QStringLiteral("powershell.exe"),
+                                        {QStringLiteral("-NoProfile"),
+                                         QStringLiteral("-NonInteractive"),
+                                         QStringLiteral("-Command"),
+                                         QString("try { "
+                                                 "  Checkpoint-Computer -Description '%1' "
+                                                 "    -RestorePointType 'APPLICATION_UNINSTALL' "
+                                                 "    -ErrorAction Stop; "
+                                                 "  Write-Output 'SUCCESS'; "
+                                                 "} catch { "
+                                                 "  Write-Error $_.Exception.Message; "
+                                                 "  exit 1; "
+                                                 "}")
+                                             .arg(safe_desc)},
+                                        kCreateTimeoutMs);
 
-    if (!ps.waitForStarted(kCreateTimeoutMs)) {
-        Q_EMIT restorePointFailed("Failed to start PowerShell for restore point creation.");
-        return false;
-    }
-
-    if (!ps.waitForFinished(kCreateTimeoutMs)) {
+    if (result.timed_out) {
         Q_EMIT restorePointFailed("Timeout creating restore point (exceeded 2 minutes).");
         return false;
     }
 
-    if (ps.exitCode() != 0) {
-        QString err = QString::fromUtf8(ps.readAllStandardError()).trimmed();
+    if (result.exit_code != 0) {
+        QString err = result.std_err.trimmed();
         if (err.isEmpty()) {
-            err = QString::fromUtf8(ps.readAllStandardOutput()).trimmed();
+            err = result.std_out.trimmed();
         }
 
         // Check for throttle (Windows only allows one per 24h in some configs)
@@ -133,27 +126,23 @@ QDateTime parseRestorePointDate(const QString& date_str) {
 QVector<QPair<QDateTime, QString>> RestorePointManager::listRestorePoints() const {
     QVector<QPair<QDateTime, QString>> points;
 
-    QProcess ps;
-    ps.setProgram("powershell.exe");
-    ps.setArguments({"-NoProfile",
-                     "-NonInteractive",
-                     "-Command",
-                     "Get-ComputerRestorePoint -ErrorAction SilentlyContinue | "
-                     "Select-Object @{N='Date';E={$_.ConvertToDateTime($_.CreationTime)}}, "
-                     "Description | "
-                     "Sort-Object Date -Descending | "
-                     "ConvertTo-Json -Compress"});
-    ps.start();
+    const auto result = sak::runProcess(
+        QStringLiteral("powershell.exe"),
+        {QStringLiteral("-NoProfile"),
+         QStringLiteral("-NonInteractive"),
+         QStringLiteral("-Command"),
+         QStringLiteral("Get-ComputerRestorePoint -ErrorAction SilentlyContinue | "
+                        "Select-Object @{N='Date';E={$_.ConvertToDateTime($_.CreationTime)}}, "
+                        "Description | "
+                        "Sort-Object Date -Descending | "
+                        "ConvertTo-Json -Compress")},
+        kCheckTimeoutMs);
 
-    if (!ps.waitForStarted(kCheckTimeoutMs) || !ps.waitForFinished(kCheckTimeoutMs)) {
+    if (!result.succeeded()) {
         return points;
     }
 
-    if (ps.exitCode() != 0) {
-        return points;
-    }
-
-    QByteArray output = ps.readAllStandardOutput();
+    QByteArray output = result.std_out.toUtf8();
     QJsonParseError error;
     QJsonDocument doc = QJsonDocument::fromJson(output, &error);
     if (error.error != QJsonParseError::NoError) {

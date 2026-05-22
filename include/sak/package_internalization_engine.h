@@ -22,10 +22,6 @@
 #include <QVector>
 
 #include <atomic>
-#include <functional>
-
-class QNetworkAccessManager;
-
 namespace sak {
 
 /// @brief Status of a single package internalization job
@@ -162,11 +158,6 @@ private:
     [[nodiscard]] QHash<QString, QString> buildLocalFilenameMap(
         const ParsedInstallScript& parsed) const;
 
-    /// @brief Download a single binary file from a URL
-    void downloadBinary(const QString& url,
-                        const QString& output_path,
-                        std::function<void(bool success, const QString& error)> callback);
-
     /// @brief Remove NuGet-specific metadata files from extracted package
     void cleanNugetArtifacts(const QString& extract_dir) const;
 
@@ -182,7 +173,6 @@ private:
     /// @brief Update and emit progress
     void emitProgress(InternalizationStatus status, const QString& message);
 
-    QNetworkAccessManager* m_network_manager{nullptr};
     InstallScriptParser m_parser;
     ScriptRewriter m_rewriter;
 

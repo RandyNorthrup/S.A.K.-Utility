@@ -203,19 +203,6 @@ void QuickActionController::executeElevatedAction(QuickAction* action, const QSt
     Q_EMIT actionExecutionProgress(action, "Requesting administrator approval...", 5);
     logOperation(action, "Requesting administrator elevation via helper");
 
-    // Lazy-initialize the elevation broker
-    if (!m_broker) {
-        m_broker = new ElevationBroker(this);
-        connect(m_broker,
-                &ElevationBroker::progressUpdated,
-                this,
-                [this](int percent, const QString& status) {
-                    if (m_current_execution_action) {
-                        Q_EMIT actionExecutionProgress(m_current_execution_action, status, percent);
-                    }
-                });
-    }
-
     // Build task payload
     QJsonObject payload;
     if (action_name == "Backup BitLocker Keys") {
@@ -224,35 +211,66 @@ void QuickActionController::executeElevatedAction(QuickAction* action, const QSt
         payload["backup_location"] = backup_location;
     }
 
-    auto broker_result = m_broker->executeTask(action_name, action_name, payload);
+    m_execution_thread = new QThread(this);
+    auto* thread = m_execution_thread;
+    auto* context = new QObject();
+    context->moveToThread(thread);
+    connect(
+        thread,
+        &QThread::started,
+        context,
+        [this, thread, context, action, action_name, payload]() {
+            ElevationBroker broker;
+            connect(
+                &broker,
+                &ElevationBroker::progressUpdated,
+                this,
+                [this](int percent, const QString& status) {
+                    if (m_current_execution_action) {
+                        Q_EMIT actionExecutionProgress(m_current_execution_action, status, percent);
+                    }
+                },
+                Qt::QueuedConnection);
 
-    QuickAction::ExecutionResult result;
-    QuickAction::ActionStatus status = QuickAction::ActionStatus::Failed;
+            auto broker_result = broker.executeTask(action_name, action_name, payload);
 
-    if (broker_result) {
-        result.success = broker_result->success;
-        result.message = broker_result->data["message"].toString();
-        result.log = broker_result->data["log"].toString();
-        status = static_cast<QuickAction::ActionStatus>(broker_result->data["status"].toInt(
-            static_cast<int>(QuickAction::ActionStatus::Failed)));
-        if (!broker_result->success && result.message.isEmpty()) {
-            result.message = broker_result->error_message;
-        }
-    } else {
-        result.success = false;
-        auto error = broker_result.error();
-        if (error == sak::error_code::elevation_denied) {
-            result.message = "Administrator privileges required but not granted";
-            result.log = "User cancelled the UAC prompt";
-        } else {
-            result.message = QString("Elevated helper error: %1")
-                                 .arg(QString::fromStdString(std::string(sak::to_string(error))));
-            result.log = result.message;
-        }
-    }
+            QuickAction::ExecutionResult result;
+            QuickAction::ActionStatus status = QuickAction::ActionStatus::Failed;
 
-    action->applyExecutionResult(result, status);
-    onExecutionComplete();
+            if (broker_result) {
+                result.success = broker_result->success;
+                result.message = broker_result->data["message"].toString();
+                result.log = broker_result->data["log"].toString();
+                status = static_cast<QuickAction::ActionStatus>(broker_result->data["status"].toInt(
+                    static_cast<int>(QuickAction::ActionStatus::Failed)));
+                if (!broker_result->success && result.message.isEmpty()) {
+                    result.message = broker_result->error_message;
+                }
+            } else {
+                result.success = false;
+                auto error = broker_result.error();
+                if (error == sak::error_code::elevation_denied) {
+                    result.message = "Administrator privileges required but not granted";
+                    result.log = "User cancelled the UAC prompt";
+                } else {
+                    result.message =
+                        QString("Elevated helper error: %1")
+                            .arg(QString::fromStdString(std::string(sak::to_string(error))));
+                    result.log = result.message;
+                }
+            }
+
+            QMetaObject::invokeMethod(
+                this,
+                [this, action, result, status]() {
+                    action->applyExecutionResult(result, status);
+                    onExecutionComplete();
+                },
+                Qt::QueuedConnection);
+            context->deleteLater();
+            thread->quit();
+        });
+    thread->start();
 }
 
 void QuickActionController::scanAllActions() {

@@ -8,9 +8,9 @@
 
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
+#include "sak/process_runner.h"
 
 #include <QDateTime>
-#include <QProcess>
 #include <QtConcurrent>
 
 namespace sak {
@@ -63,20 +63,17 @@ bool ThermalMonitor::isRunning() const {
 }
 
 QVector<ThermalReading> ThermalMonitor::pollOnce() {
-    QProcess ps;
-    ps.setProcessChannelMode(QProcess::MergedChannels);
-    ps.start("powershell.exe", {"-NoProfile", "-NoLogo", "-Command", buildCombinedThermalScript()});
-
-    if (!ps.waitForStarted(sak::kTimeoutProcessStartMs)) {
-        return {};
-    }
-    if (!ps.waitForFinished(sak::kTimeoutThermalQueryMs)) {
-        ps.kill();
-        ps.waitForFinished(sak::kTimeoutProcessStartMs);
+    const auto result = sak::runProcess(QStringLiteral("powershell.exe"),
+                                        {QStringLiteral("-NoProfile"),
+                                         QStringLiteral("-NoLogo"),
+                                         QStringLiteral("-Command"),
+                                         buildCombinedThermalScript()},
+                                        sak::kTimeoutThermalQueryMs);
+    if (!result.succeeded()) {
         return {};
     }
 
-    return parseThermalOutput(QString::fromUtf8(ps.readAllStandardOutput()));
+    return parseThermalOutput(result.std_out);
 }
 
 void ThermalMonitor::clearHistory() {
@@ -218,31 +215,21 @@ void ThermalMonitor::processReadings(const QVector<ThermalReading>& readings) {
 // ============================================================================
 
 double ThermalMonitor::queryCpuTemperature() {
-    QProcess ps;
-    ps.setProcessChannelMode(QProcess::MergedChannels);
-    ps.start("powershell.exe",
-             {"-NoProfile",
-              "-NoLogo",
-              "-Command",
-              "Get-CimInstance -Namespace root/WMI "
-              "-ClassName MSAcpi_ThermalZoneTemperature "
-              "| Select-Object -First 1 "
-              "-ExpandProperty CurrentTemperature"});
+    const auto result = sak::runProcess(QStringLiteral("powershell.exe"),
+                                        {QStringLiteral("-NoProfile"),
+                                         QStringLiteral("-NoLogo"),
+                                         QStringLiteral("-Command"),
+                                         QStringLiteral("Get-CimInstance -Namespace root/WMI "
+                                                        "-ClassName MSAcpi_ThermalZoneTemperature "
+                                                        "| Select-Object -First 1 "
+                                                        "-ExpandProperty CurrentTemperature")},
+                                        sak::kTimeoutProcessShortMs);
 
-    if (!ps.waitForStarted(sak::kTimeoutProcessStartMs)) {
-        return -1.0;
-    }
-    if (!ps.waitForFinished(sak::kTimeoutProcessShortMs)) {
-        ps.kill();
-        ps.waitForFinished(sak::kTimeoutProcessStartMs);
+    if (!result.succeeded()) {
         return -1.0;
     }
 
-    if (ps.exitCode() != 0) {
-        return -1.0;
-    }
-
-    const QString output = QString::fromUtf8(ps.readAllStandardOutput()).trimmed();
+    const QString output = result.std_out.trimmed();
     bool ok = false;
     const double raw_value = output.toDouble(&ok);
     if (!ok || raw_value <= 0) {

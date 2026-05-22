@@ -346,28 +346,23 @@ bool ScreenshotSettingsAction::isProcessRunning(const QString& process_name) {
         sak::logWarning("isProcessRunning: empty process_name");
         return false;
     }
-    QProcess tasklist;
-    tasklist.start("tasklist",
-                   QStringList() << "/FI" << QString("IMAGENAME eq %1").arg(process_name));
-    if (!tasklist.waitForStarted(sak::kTimerServiceDelayMs)) {
-        sak::logWarning("tasklist failed to start for process: {}", process_name.toStdString());
-        return false;
-    }
-    if (!tasklist.waitForFinished(sak::kTimerServiceDelayMs)) {
+    const auto result = sak::runProcess(QStringLiteral("tasklist"),
+                                        {QStringLiteral("/FI"),
+                                         QStringLiteral("IMAGENAME eq %1").arg(process_name)},
+                                        sak::kTimerServiceDelayMs);
+    if (result.timed_out) {
         sak::logWarning("tasklist timed out checking for process: {}", process_name.toStdString());
-        tasklist.kill();
         return false;
     }
 
-    if (tasklist.exitCode() != 0) {
+    if (result.exit_code != 0) {
         sak::logDebug("tasklist returned exit code {} for process: {}",
-                      tasklist.exitCode(),
+                      result.exit_code,
                       process_name.toStdString());
         return false;
     }
 
-    QString output = tasklist.readAllStandardOutput();
-    return output.contains(process_name, Qt::CaseInsensitive);
+    return result.std_out.contains(process_name, Qt::CaseInsensitive);
 }
 
 }  // namespace sak

@@ -12,6 +12,15 @@ cmake -S . -B build
 cmake --build build --config Release --target sak_utility
 ctest --test-dir build -C Release -R "test_ai_|test_openai_responses_client" --output-on-failure
 ctest --test-dir build -C Release --output-on-failure
+$version = (Get-Content VERSION -Raw).Trim()
+$packageName = "SAK-Utility-v$version"
+powershell -ExecutionPolicy Bypass -File scripts/stage_portable_release.ps1 -BuildDir build\Release -PackageName $packageName
+powershell -ExecutionPolicy Bypass -File scripts/create_release_archive.ps1 -BuildDir build\Release -PackageName $packageName
+$extract = "build\Release\clean-readiness-extract"
+Remove-Item -Recurse -Force $extract -ErrorAction SilentlyContinue
+New-Item -ItemType Directory -Force -Path $extract | Out-Null
+Expand-Archive -LiteralPath "build\Release\$packageName-Windows-x64.zip" -DestinationPath $extract -Force
+powershell -ExecutionPolicy Bypass -File scripts/check_release_readiness.ps1 -PackageRoot $extract
 ```
 
 ## Live Model Smoke
@@ -92,6 +101,7 @@ Expected:
 ## Release Gate
 
 - Full suite passes.
+- Secret, license, blocking-pattern, and release-readiness gates pass.
 - Manual gate resume cases pass.
 - Live model smoke passes or is explicitly skipped due to no key.
 - Package/offline smoke uses built-in SAK tools first.

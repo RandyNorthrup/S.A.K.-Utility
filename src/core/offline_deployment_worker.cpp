@@ -7,21 +7,19 @@
 #include "sak/offline_deployment_worker.h"
 
 #include "sak/logger.h"
+#include "sak/network_transfer_runner.h"
 #include "sak/offline_deployment_constants.h"
+#include "sak/process_runner.h"
 
 #include <QCoreApplication>
 #include <QDateTime>
 #include <QDir>
 #include <QDirIterator>
-#include <QEventLoop>
 #include <QFile>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QMetaObject>
-#include <QNetworkAccessManager>
-#include <QNetworkReply>
-#include <QNetworkRequest>
 #include <QtConcurrent>
 #include <QTextStream>
 #include <QUrl>
@@ -182,19 +180,15 @@ bool OfflineDeploymentWorker::internalizeOnePackage(int idx,
         },
         Qt::QueuedConnection);
 
-    // Run internalization synchronously via event loop
-    QEventLoop loop;
     InternalizationResult result;
     bool got_result = false;
 
     PackageInternalizationEngine engine;
     connect(&engine,
             &PackageInternalizationEngine::packageComplete,
-            &loop,
             [&](const InternalizationResult& res) {
                 result = res;
                 got_result = true;
-                loop.quit();
             });
 
     connect(&engine,
@@ -212,7 +206,9 @@ bool OfflineDeploymentWorker::internalizeOnePackage(int idx,
     engine.internalizePackage(pkg_id, version, ctx.packages_dir, ctx.work_dir);
 
     if (!got_result) {
-        loop.exec();
+        result.package_id = pkg_id;
+        result.version = version;
+        result.error_message = QStringLiteral("Internalization finished without a result");
     }
 
     lock.relock();
@@ -322,93 +318,69 @@ void OfflineDeploymentWorker::installFromBundle(const QString& manifest_path,
         QString("Installing from bundle: %1 package(s)").arg(manifest.packages.size()));
 
     m_operation_future = QtConcurrent::run([this, manifest, choco_source_dir]() {
-        int completed = 0;
-        int failed = 0;
-        int total = manifest.packages.size();
-
-        for (const auto& entry : manifest.packages) {
-            if (m_cancelled) {
-                break;
-            }
-
-            QMetaObject::invokeMethod(
-                this,
-                [this, completed, total, entry]() {
-                    Q_EMIT batchProgress(completed, total, entry.package_id);
-                    Q_EMIT logMessage(
-                        QString("Installing: %1 v%2").arg(entry.package_id, entry.version));
-                },
-                Qt::QueuedConnection);
-
-            // Install via choco install from local source
-            QProcess process;
-            process.setProgram("choco");
-            process.setArguments({"install",
-                                  entry.package_id,
-                                  "--version",
-                                  entry.version,
-                                  "--source",
-                                  choco_source_dir,
-                                  "--yes",
-                                  "--no-progress",
-                                  "--force"});
-
-            process.start();
-            bool started = process.waitForStarted(offline::kInstallTimeoutPerPackageMs);
-
-            if (!started) {
-                failed++;
-                QMetaObject::invokeMethod(
-                    this,
-                    [this, entry]() {
-                        Q_EMIT packageProgress(entry.package_id, false, "Process failed to start");
-                    },
-                    Qt::QueuedConnection);
-                continue;
-            }
-
-            bool finished = process.waitForFinished(offline::kInstallTimeoutPerPackageMs);
-
-            if (!finished) {
-                process.kill();
-                failed++;
-                QMetaObject::invokeMethod(
-                    this,
-                    [this, entry]() {
-                        Q_EMIT packageProgress(entry.package_id, false, "Installation timed out");
-                    },
-                    Qt::QueuedConnection);
-                continue;
-            }
-
-            bool success = (process.exitCode() == 0);
-            if (success) {
-                completed++;
-            } else {
-                failed++;
-            }
-
-            QString output = process.readAllStandardOutput();
-            QMetaObject::invokeMethod(
-                this,
-                [this, entry, success, output]() {
-                    Q_EMIT packageProgress(entry.package_id,
-                                           success,
-                                           success ? "Installed" : output.left(200));
-                },
-                Qt::QueuedConnection);
-        }
-
-        BatchStats stats;
-        stats.total = total;
-        stats.completed = completed;
-        stats.failed = failed;
-
-        m_running = false;
-
-        QMetaObject::invokeMethod(
-            this, [this, stats]() { Q_EMIT operationCompleted(stats); }, Qt::QueuedConnection);
+        executeInstallFromBundle(manifest, choco_source_dir);
     });
+}
+
+void OfflineDeploymentWorker::executeInstallFromBundle(DeploymentManifest manifest,
+                                                       QString choco_source_dir) {
+    BatchStats stats;
+    stats.total = manifest.packages.size();
+
+    for (const auto& entry : manifest.packages) {
+        if (m_cancelled) {
+            break;
+        }
+        if (installBundlePackage(entry, stats.completed, stats.total, choco_source_dir)) {
+            ++stats.completed;
+        } else {
+            ++stats.failed;
+        }
+    }
+
+    m_running = false;
+    QMetaObject::invokeMethod(
+        this, [this, stats]() { Q_EMIT operationCompleted(stats); }, Qt::QueuedConnection);
+}
+
+bool OfflineDeploymentWorker::installBundlePackage(const DeploymentManifestEntry& entry,
+                                                   int completed,
+                                                   int total,
+                                                   const QString& choco_source_dir) {
+    QMetaObject::invokeMethod(
+        this,
+        [this, completed, total, entry]() {
+            Q_EMIT batchProgress(completed, total, entry.package_id);
+            Q_EMIT logMessage(QString("Installing: %1 v%2").arg(entry.package_id, entry.version));
+        },
+        Qt::QueuedConnection);
+
+    const auto process = runProcess(QStringLiteral("choco"),
+                                    {QStringLiteral("install"),
+                                     entry.package_id,
+                                     QStringLiteral("--version"),
+                                     entry.version,
+                                     QStringLiteral("--source"),
+                                     choco_source_dir,
+                                     QStringLiteral("--yes"),
+                                     QStringLiteral("--no-progress"),
+                                     QStringLiteral("--force")},
+                                    offline::kInstallTimeoutPerPackageMs,
+                                    [this]() { return m_cancelled.load(); });
+
+    const bool success = !process.timed_out && !process.cancelled && process.exit_code == 0;
+    const QString output =
+        process.cancelled   ? QStringLiteral("Installation cancelled")
+        : process.timed_out ? QStringLiteral("Installation timed out")
+        : success ? QStringLiteral("Installed")
+                  : (process.std_out.isEmpty() ? process.std_err : process.std_out).left(200);
+    QMetaObject::invokeMethod(
+        this,
+        [this, entry, success, output]() {
+            Q_EMIT packageProgress(entry.package_id, success, output);
+        },
+        Qt::QueuedConnection);
+    return success;
 }
 
 // ============================================================================
@@ -440,8 +412,6 @@ void OfflineDeploymentWorker::directDownload(const QVector<QPair<QString, QStrin
 void OfflineDeploymentWorker::executeDirectDownload(
     const QVector<QPair<QString, QString>>& packages, const QString& output_dir) {
     QDir(output_dir).mkpath(".");
-    QNetworkAccessManager nam;
-    nam.setRedirectPolicy(QNetworkRequest::NoLessSafeRedirectPolicy);
 
     PackageInternalizationEngine resolver;
     int completed = 0;
@@ -478,7 +448,7 @@ void OfflineDeploymentWorker::executeDirectDownload(
             },
             Qt::QueuedConnection);
 
-        int files = downloadOnePackageInstallers(pkg_id, resolved_version, output_dir, nam);
+        int files = downloadOnePackageInstallers(pkg_id, resolved_version, output_dir);
 
         bool ok = (files > 0);
         if (ok) {
@@ -516,13 +486,12 @@ void OfflineDeploymentWorker::emitLog(const QString& message) {
 
 int OfflineDeploymentWorker::downloadOnePackageInstallers(const QString& pkg_id,
                                                           const QString& resolved_version,
-                                                          const QString& output_dir,
-                                                          QNetworkAccessManager& nam) {
+                                                          const QString& output_dir) {
     QString temp_dir = output_dir + "/_sak_temp_" + pkg_id;
     QDir(temp_dir).mkpath(".");
 
     // Steps 1-2: Download and extract the nupkg
-    QString extract_dir = downloadAndExtractNupkg(pkg_id, resolved_version, temp_dir, nam);
+    QString extract_dir = downloadAndExtractNupkg(pkg_id, resolved_version, temp_dir);
     if (extract_dir.isEmpty()) {
         QDir(temp_dir).removeRecursively();
         return 0;
@@ -536,7 +505,7 @@ int OfflineDeploymentWorker::downloadOnePackageInstallers(const QString& pkg_id,
 
     if (script_path.isEmpty()) {
         auto [dep_script,
-              dep_extract] = resolveMetaPackageDependency(pkg_id, extract_dir, temp_dir, nam);
+              dep_extract] = resolveMetaPackageDependency(pkg_id, extract_dir, temp_dir);
         if (dep_script.isEmpty()) {
             QDir(temp_dir).removeRecursively();
             return 0;
@@ -557,7 +526,7 @@ int OfflineDeploymentWorker::downloadOnePackageInstallers(const QString& pkg_id,
             emitLog(QString("[%1] No download URLs or embedded files").arg(pkg_id));
         }
     } else {
-        result = downloadUrlsToDir(pkg_id, urls, output_dir, nam);
+        result = downloadUrlsToDir(pkg_id, urls, output_dir);
     }
 
     QDir(temp_dir).removeRecursively();
@@ -566,14 +535,13 @@ int OfflineDeploymentWorker::downloadOnePackageInstallers(const QString& pkg_id,
 
 QString OfflineDeploymentWorker::downloadAndExtractNupkg(const QString& pkg_id,
                                                          const QString& resolved_version,
-                                                         const QString& temp_dir,
-                                                         QNetworkAccessManager& nam) {
+                                                         const QString& temp_dir) {
     QString nupkg_url =
         QString("%1%2%3/%4")
             .arg(offline::kNuGetBaseUrl, offline::kNuGetPackagePath, pkg_id, resolved_version);
     QString nupkg_path = temp_dir + "/" + pkg_id + ".nupkg";
 
-    if (!downloadFileFromUrl(nupkg_url, nupkg_path, nam)) {
+    if (!downloadFileFromUrl(nupkg_url, nupkg_path)) {
         emitLog(QString("[%1] nupkg download failed").arg(pkg_id));
         return {};
     }
@@ -590,10 +558,7 @@ QString OfflineDeploymentWorker::downloadAndExtractNupkg(const QString& pkg_id,
 }
 
 QPair<QString, QString> OfflineDeploymentWorker::resolveMetaPackageDependency(
-    const QString& pkg_id,
-    const QString& extract_dir,
-    const QString& temp_dir,
-    QNetworkAccessManager& nam) {
+    const QString& pkg_id, const QString& extract_dir, const QString& temp_dir) {
     QString dep_id = findNuspecDependencyId(extract_dir);
     if (dep_id.isEmpty()) {
         emitLog(QString("[%1] No chocolateyInstall.ps1 found").arg(pkg_id));
@@ -613,7 +578,7 @@ QPair<QString, QString> OfflineDeploymentWorker::resolveMetaPackageDependency(
         QString("%1%2%3/%4")
             .arg(offline::kNuGetBaseUrl, offline::kNuGetPackagePath, dep_id, dep_version);
     QString dep_nupkg_path = temp_dir + "/" + dep_id + ".nupkg";
-    if (!downloadFileFromUrl(dep_nupkg_url, dep_nupkg_path, nam)) {
+    if (!downloadFileFromUrl(dep_nupkg_url, dep_nupkg_path)) {
         emitLog(QString("[%1] Dependency nupkg download failed").arg(dep_id));
         return {};
     }
@@ -680,8 +645,7 @@ QStringList OfflineDeploymentWorker::collectPrimaryUrls(const ParsedInstallScrip
 
 int OfflineDeploymentWorker::downloadUrlsToDir(const QString& pkg_id,
                                                const QStringList& urls,
-                                               const QString& output_dir,
-                                               QNetworkAccessManager& nam) {
+                                               const QString& output_dir) {
     int downloaded = 0;
     for (const auto& url : urls) {
         if (m_cancelled) {
@@ -692,7 +656,7 @@ int OfflineDeploymentWorker::downloadUrlsToDir(const QString& pkg_id,
             filename = QString("%1_installer_%2").arg(pkg_id).arg(downloaded + 1);
         }
         QString dest = output_dir + "/" + filename;
-        if (downloadFileFromUrl(url, dest, nam)) {
+        if (downloadFileFromUrl(url, dest)) {
             ++downloaded;
             sak::logInfo("[DirectDownload] Saved: {}", filename.toStdString());
         } else {
@@ -707,38 +671,30 @@ int OfflineDeploymentWorker::downloadUrlsToDir(const QString& pkg_id,
     return downloaded;
 }
 
-bool OfflineDeploymentWorker::downloadFileFromUrl(const QString& url,
-                                                  const QString& output_path,
-                                                  QNetworkAccessManager& nam) {
-    QNetworkRequest request{QUrl(url)};
-    request.setHeader(QNetworkRequest::UserAgentHeader, "SAK-Utility/1.0");
-    request.setTransferTimeout(offline::kDownloadTimeoutMs);
+bool OfflineDeploymentWorker::downloadFileFromUrl(const QString& url, const QString& output_path) {
+    NetworkTransferRequest request;
+    request.url = QUrl(url);
+    request.timeout_ms = offline::kDownloadTimeoutMs;
+    request.raw_headers.append(QPair<QByteArray, QByteArray>{QByteArrayLiteral("User-Agent"),
+                                                             QByteArrayLiteral("SAK-Utility/1.0")});
 
-    QEventLoop loop;
-    bool ok = false;
+    const auto transfer = runNetworkTransfer(request, [this]() { return m_cancelled.load(); });
+    if (!transfer.success || transfer.body.isEmpty()) {
+        sak::logError("[DirectDownload] HTTP {} for {}: {}",
+                      transfer.http_status,
+                      url.toStdString(),
+                      transfer.error_message.toStdString());
+        return false;
+    }
 
-    auto* reply = nam.get(request);
-    QObject::connect(reply, &QNetworkReply::finished, &loop, [&]() {
-        if (reply->error() == QNetworkReply::NoError) {
-            QFile file(output_path);
-            if (file.open(QIODevice::WriteOnly)) {
-                file.write(reply->readAll());
-                file.close();
-                ok = true;
-            }
-        } else {
-            int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
-            sak::logError("[DirectDownload] HTTP {} for {}: {}",
-                          status,
-                          url.toStdString(),
-                          reply->errorString().toStdString());
-        }
-        reply->deleteLater();
-        loop.quit();
-    });
-
-    loop.exec();
-    return ok;
+    QFile file(output_path);
+    if (!file.open(QIODevice::WriteOnly)) {
+        sak::logError("[DirectDownload] Cannot write {}", output_path.toStdString());
+        return false;
+    }
+    file.write(transfer.body);
+    file.close();
+    return true;
 }
 
 // ============================================================================

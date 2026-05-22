@@ -21,6 +21,14 @@ struct AiSessionInfo {
     QDateTime updated_at;
 };
 
+struct AiSessionSearchResult {
+    AiSessionInfo session;
+    QString source;
+    QString snippet;
+    int score{0};
+    QDateTime timestamp_utc;
+};
+
 class ConversationStore {
 public:
     explicit ConversationStore(QString root_dir = {});
@@ -33,11 +41,15 @@ public:
 
     [[nodiscard]] bool ensureRoot(QString* error_message = nullptr) const;
     [[nodiscard]] QVector<AiSessionInfo> listSessions() const;
+    [[nodiscard]] QVector<AiSessionInfo> listPromptedSessions() const;
     [[nodiscard]] QStringList loadTranscriptLines(const QString& session_id,
                                                   QString* error_message = nullptr) const;
+    [[nodiscard]] QVector<AiSessionSearchResult> searchSessions(
+        const QString& query, int max_results = 50, QString* error_message = nullptr) const;
 
     [[nodiscard]] bool startSession(const QString& title, QString* error_message = nullptr);
     [[nodiscard]] bool openSession(const QString& session_id, QString* error_message = nullptr);
+    void clearCurrentSession();
     [[nodiscard]] bool renameCurrentSession(const QString& title, QString* error_message = nullptr);
 
     [[nodiscard]] bool appendTranscript(const QString& role,
@@ -89,6 +101,8 @@ private:
     [[nodiscard]] bool appendJsonLine(const QString& filename,
                                       QJsonObject object,
                                       QString* error_message = nullptr) const;
+    [[nodiscard]] bool appendSearchIndexRecord(QJsonObject object,
+                                               QString* error_message = nullptr) const;
     [[nodiscard]] static AiSessionInfo readManifest(const QString& session_path);
     [[nodiscard]] static QJsonObject usageToJson(const TokenUsage& usage);
     [[nodiscard]] static QString safeArtifactDirectoryName(const QString& title,

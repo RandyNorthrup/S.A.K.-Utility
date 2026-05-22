@@ -19,6 +19,8 @@
 #include <QFileInfo>
 #include <QIcon>
 #include <QMessageBox>
+#include <QStringList>
+#include <QTimer>
 
 #include <algorithm>
 #include <filesystem>
@@ -51,6 +53,11 @@ QString findIconPath() {
         return QFileInfo::exists(p);
     });
     return it != candidates.end() ? *it : QString{};
+}
+
+bool hasArgument(const QString& name) {
+    const QStringList args = QCoreApplication::arguments();
+    return std::find(args.begin(), args.end(), name) != args.end();
 }
 
 /// @brief Initialize the Qt application and apply theming.
@@ -120,21 +127,25 @@ void logStartupBanner() {
 }
 
 /// @brief Show splash screen and launch the main window.
-int showMainWindow(QApplication& app) {
+int showMainWindow(QApplication& app, bool startup_smoke_test, bool show_splash) {
     std::unique_ptr<sak::ui::SplashScreen> splash;
     const QString splash_path = findSplashPath();
-    if (!splash_path.isEmpty()) {
+    if (show_splash && !splash_path.isEmpty()) {
         QPixmap splash_pixmap(splash_path);
         if (!splash_pixmap.isNull()) {
             splash = std::make_unique<sak::ui::SplashScreen>(splash_pixmap);
             splash->showCentered();
-            app.processEvents();
         }
     }
 
     sak::logInfo("Creating main window...");
     sak::MainWindow main_window;
     main_window.show();
+
+    if (startup_smoke_test) {
+        sak::logInfo("Startup smoke test mode active; closing automatically");
+        QTimer::singleShot(1000, &app, &QCoreApplication::quit);
+    }
 
     if (splash) {
         splash->finish();
@@ -146,6 +157,10 @@ int showMainWindow(QApplication& app) {
 
     sak::logInfo("Application shutting down with exit code: {}", result);
     sak::logger::instance().flush();
+
+    if (startup_smoke_test && result == 0) {
+        std::println("SAK_STARTUP_SMOKE_OK");
+    }
 
     return result;
 }
@@ -161,13 +176,20 @@ int main(int argc, char* argv[]) {
         QApplication& app = initializeApp(argc, argv);
         configurePortableRuntimeDirs();
 
+        const bool startup_smoke_test = hasArgument(QStringLiteral("--smoke-test")) ||
+                                        hasArgument(QStringLiteral("--startup-smoke-test"));
         if (!initializeLogger()) {
             return 1;
+        }
+        if (startup_smoke_test) {
+            sak::logger::instance().setConsoleOutput(false);
         }
 
         logStartupBanner();
 
-        return showMainWindow(app);
+        const bool show_splash = !hasArgument(QStringLiteral("--no-splash")) && !startup_smoke_test;
+
+        return showMainWindow(app, startup_smoke_test, show_splash);
 
     } catch (const std::exception& e) {
         sak::logError("Fatal error: {}", e.what());

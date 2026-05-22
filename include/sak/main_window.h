@@ -166,6 +166,12 @@ private:
 #if defined(SAK_ENABLE_AI_ASSISTANT) && SAK_ENABLE_AI_ASSISTANT
     /// @brief Connect AI assistant status/progress signals
     void connectAiAssistantSignals();
+
+    /// @brief True when the AI Assistant panel is the selected main tab.
+    [[nodiscard]] bool isAiAssistantPanelActive() const;
+
+    /// @brief Show AI status details only while the AI Assistant panel is active.
+    void updateAiStatusBarVisibility();
 #endif
 
     /// @brief Connect panel log signals to the shared log window
@@ -228,6 +234,10 @@ private:
     QLabel* m_status_label{nullptr};
 #if defined(SAK_ENABLE_AI_ASSISTANT) && SAK_ENABLE_AI_ASSISTANT
     QLabel* m_ai_status_label{nullptr};
+    bool m_progress_owner_is_ai{false};
+    bool m_ai_progress_active{false};
+    int m_ai_progress_current{1};
+    int m_ai_progress_maximum{1};
 #endif
     QWidget* m_elevation_label{nullptr};
     QProgressBar* m_progress_bar{nullptr};

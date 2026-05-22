@@ -55,6 +55,12 @@ jobs:
       with:
         vs-version: '17'
 
+    - name: Setup Python for MCP bundles
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+        cache: 'pip'
+
     - name: Cache vcpkg
       uses: actions/cache@v4
       with:
@@ -87,7 +93,7 @@ jobs:
       shell: pwsh
       run: |
         # Download and extract smartctl.exe for SMART disk diagnostics.
-        # The script is idempotent — skips if smartctl.exe is already present
+        # The script is idempotent - skips if smartctl.exe is already present
         # (e.g. checked into the repo via the .gitignore exception).
         & scripts/bundle_smartmontools.ps1
 
@@ -108,13 +114,35 @@ jobs:
       shell: pwsh
       run: |
         # Download iperf3.exe and cygwin1.dll for LAN bandwidth testing.
-        # The script is idempotent — skips if iperf3.exe is already present.
+        # The script is idempotent - skips if iperf3.exe is already present.
         & scripts/bundle_iperf3.ps1
+
+    - name: Bundle MCP servers
+      shell: pwsh
+      run: |
+        # Build portable MCP servers before CMake config so the app output and
+        # packaged ZIP get the same bundled tools layout as local releases.
+        & scripts/bundle_mcp_servers.ps1 -BuildWin32 -Python python
 
     - name: Verify Qt resource manifests
       shell: pwsh
       run: |
         & scripts/check_qrc_resources.ps1
+
+    - name: Scan for committed secrets
+      shell: pwsh
+      run: |
+        & scripts/scan_secrets.ps1 -SkipExternalTools
+
+    - name: Check third-party licenses
+      shell: pwsh
+      run: |
+        & scripts/check_third_party_licenses.ps1
+
+    - name: Check blocking patterns
+      shell: pwsh
+      run: |
+        & scripts/check_blocking_patterns.ps1
 
     - name: Configure CMake
       run: |
@@ -147,7 +175,7 @@ jobs:
 
         # Splash screen must exist (copied by CMake POST_BUILD)
         if (!(Test-Path "sak_splash.png")) {
-          Write-Error "FATAL: sak_splash.png not found — CMake POST_BUILD copy failed"
+          Write-Error "FATAL: sak_splash.png not found - CMake POST_BUILD copy failed"
           exit 1
         }
         Write-Host "OK  sak_splash.png"
@@ -163,7 +191,7 @@ jobs:
         $requiredDirs = @("platforms", "styles", "imageformats", "iconengines", "tls")
         foreach ($dir in $requiredDirs) {
           if (!(Test-Path $dir)) {
-            Write-Error "FATAL: Qt plugin directory '$dir' not found — windeployqt may have failed"
+            Write-Error "FATAL: Qt plugin directory '$dir' not found - windeployqt may have failed"
             exit 1
           }
           $count = (Get-ChildItem $dir -Filter "*.dll" | Measure-Object).Count
@@ -199,7 +227,7 @@ jobs:
 
         # smartctl.exe (bundled for SMART diagnostics)
         if (!(Test-Path "tools/smartmontools/smartctl.exe")) {
-          Write-Warning "tools/smartmontools/smartctl.exe not found — SMART diagnostics unavailable"
+          Write-Warning "tools/smartmontools/smartctl.exe not found - SMART diagnostics unavailable"
         } else {
           $smartVer = & .\tools\smartmontools\smartctl.exe --version 2>&1 | Select-Object -First 1
           Write-Host "OK  tools/smartmontools/smartctl.exe ($smartVer)"
@@ -207,7 +235,7 @@ jobs:
 
         # aria2c.exe (bundled for ISO downloads)
         if (!(Test-Path "tools/uup/aria2c.exe")) {
-          Write-Error "FATAL: tools/uup/aria2c.exe not found — ISO downloads will be broken"
+          Write-Error "FATAL: tools/uup/aria2c.exe not found - ISO downloads will be broken"
           exit 1
         } else {
           $aria2Ver = & .\tools\uup\aria2c.exe --version 2>&1 | Select-Object -First 1
@@ -216,13 +244,13 @@ jobs:
 
         # UUP Media Creator (bundled for UUP-to-ISO conversion)
         if (!(Test-Path "tools/uup/uupmc/UUPMediaConverter.exe")) {
-          Write-Error "FATAL: tools/uup/uupmc/UUPMediaConverter.exe not found — UUP conversion will be broken"
+          Write-Error "FATAL: tools/uup/uupmc/UUPMediaConverter.exe not found - UUP conversion will be broken"
           exit 1
         } else {
           Write-Host "OK  tools/uup/uupmc/UUPMediaConverter.exe"
         }
         if (!(Test-Path "tools/uup/uupmc/UUPDownload.exe")) {
-          Write-Error "FATAL: tools/uup/uupmc/UUPDownload.exe not found — UUP downloads will be broken"
+          Write-Error "FATAL: tools/uup/uupmc/UUPDownload.exe not found - UUP downloads will be broken"
           exit 1
         } else {
           Write-Host "OK  tools/uup/uupmc/UUPDownload.exe"
@@ -230,9 +258,40 @@ jobs:
 
         # iperf3.exe (bundled for LAN bandwidth testing)
         if (!(Test-Path "tools/iperf3/iperf3.exe")) {
-          Write-Warning "tools/iperf3/iperf3.exe not found — LAN bandwidth testing unavailable"
+          Write-Warning "tools/iperf3/iperf3.exe not found - LAN bandwidth testing unavailable"
         } else {
           Write-Host "OK  tools/iperf3/iperf3.exe"
+        }
+
+        # Win32 MCP server (bundled for manifest-gated desktop automation)
+        if (!(Test-Path "tools/mcp/win32-mcp-server/win32-mcp-server.exe")) {
+          Write-Error "FATAL: tools/mcp/win32-mcp-server/win32-mcp-server.exe not found - app-control MCP automation unavailable"
+          exit 1
+        } else {
+          $win32McpVer = & .\tools\mcp\win32-mcp-server\win32-mcp-server.exe --version 2>&1 | Select-Object -First 1
+          Write-Host "OK  tools/mcp/win32-mcp-server/win32-mcp-server.exe ($win32McpVer)"
+        }
+        if (Test-Path "tools/mcp/_build") {
+          Write-Error "FATAL: tools/mcp/_build leaked into release output"
+          exit 1
+        }
+
+        # Portable provider/app manifests
+        if (!(Test-Path "data/ai/providers/providers.json")) {
+          Write-Error "FATAL: data/ai/providers/providers.json not found"
+          exit 1
+        }
+        if (!(Test-Path "data/ai/app_manifests/superantispyware.json")) {
+          Write-Error "FATAL: data/ai/app_manifests/superantispyware.json not found"
+          exit 1
+        }
+        if (!(Test-Path "data/ai/app_manifests/windows_sfc.json")) {
+          Write-Error "FATAL: data/ai/app_manifests/windows_sfc.json not found"
+          exit 1
+        }
+        if (Get-ChildItem "data/ai/providers" -Recurse -Filter "*.local.json" -ErrorAction SilentlyContinue) {
+          Write-Error "FATAL: local provider config present in CI build output"
+          exit 1
         }
 
         # Imported non-system DLLs must exist in the build output.
@@ -242,203 +301,50 @@ jobs:
         Write-Host "=== Verification complete ==="
 
     - name: Run Tests
-      working-directory: build/Release/Release
+      shell: pwsh
       run: |
-        # Skip GUI tests in CI (they require user interaction)
-        $guiTests = @(
-          "test_app_installation_panel.exe",
-          "test_backup_wizard.exe",
-          "test_restore_wizard.exe"
-        )
-
-        # Run non-GUI tests only
-        $tests = Get-ChildItem -Filter "test_*.exe" | Where-Object {
-          $guiTests -notcontains $_.Name
-        }
-
-        $passed = 0
-        $failed = 0
-        foreach ($test in $tests) {
-          Write-Host "Running $($test.Name)..."
-          & ".\$($test.Name)"
-          if ($LASTEXITCODE -ne 0) {
-            Write-Warning "FAIL: $($test.Name) (exit code $LASTEXITCODE)"
-            $failed++
-          } else {
-            $passed++
-          }
-        }
-
-        Write-Host ""
-        Write-Host "=== Test Summary ==="
-        Write-Host "Passed: $passed"
-        Write-Host "Failed: $failed"
-        Write-Host "Skipped (GUI): $($guiTests.Count)"
-
-        if ($failed -gt 0) {
-          Write-Warning "$failed test(s) failed"
-        }
-      continue-on-error: true
+        ctest --test-dir build -C $env:BUILD_TYPE --output-on-failure
 
     - name: Package Application
+      shell: pwsh
+      run: |
+        $pkgName = "SAK-Utility-v$env:APP_VERSION"
+        & scripts/stage_portable_release.ps1 `
+          -BuildDir "build/Release" `
+          -PackageName $pkgName
+        & scripts/create_release_archive.ps1 `
+          -BuildDir "build/Release" `
+          -PackageName $pkgName
+
+    - name: Smoke test clean portable package
       working-directory: build/Release
       shell: pwsh
       run: |
-        $version = $env:APP_VERSION
-        $pkgName = "SAK-Utility-v$version"
+        $pkgName = "SAK-Utility-v$env:APP_VERSION"
         $zipName = "$pkgName-Windows-x64.zip"
+        $extract = Join-Path (Get-Location) "clean-smoke-extract"
+        Remove-Item -Recurse -Force $extract -ErrorAction SilentlyContinue
+        New-Item -ItemType Directory -Force -Path $extract | Out-Null
+        Expand-Archive -LiteralPath $zipName -DestinationPath $extract -Force
+        & "../../scripts/verify_portable_release_smoke.ps1" `
+          -PackageRoot $extract `
+          -RepoRoot (Resolve-Path "../..").Path
 
-        Write-Host "Packaging $pkgName ..."
+    - name: Startup E2E smoke from clean extracted package
+      shell: pwsh
+      run: |
+        & scripts/run_portable_e2e_smoke.ps1 -PackageRoot "build/Release/clean-smoke-extract"
 
-        # Clean any previous packaging artifacts
-        if (Test-Path $pkgName) { Remove-Item -Recurse -Force $pkgName }
-        if (Test-Path $zipName) { Remove-Item -Force $zipName }
-        if (Test-Path "SHA256SUMS.txt") { Remove-Item -Force "SHA256SUMS.txt" }
-        New-Item -ItemType Directory -Force -Path $pkgName | Out-Null
-
-        # ── Executable ──────────────────────────────────────────────
-        Copy-Item "sak_utility.exe" "$pkgName/"
-        Copy-Item "sak_elevated_helper.exe" "$pkgName/"
-
-        # ── Splash screen & icon (copied to build dir by CMake POST_BUILD) ──
-        if (Test-Path "sak_splash.png") {
-          Copy-Item "sak_splash.png" "$pkgName/"
-          Write-Host "  Bundled: sak_splash.png"
-        } else {
-          Write-Error "sak_splash.png missing — splash screen will not display!"
-        }
-        if (Test-Path "icon.ico") {
-          Copy-Item "icon.ico" "$pkgName/"
-          Write-Host "  Bundled: icon.ico"
-        }
-
-        # ── Qt plugin directories (deployed by windeployqt POST_BUILD) ──
-        # Copy ALL plugin dirs that windeployqt placed here instead of
-        # maintaining a fragile hardcoded list.
-        $pluginDirs = @(
-          "platforms",
-          "styles",
-          "imageformats",
-          "iconengines",
-          "tls",
-          "networkinformation",
-          "generic"
-        )
-        foreach ($dir in $pluginDirs) {
-          if (Test-Path $dir) {
-            Copy-Item -Recurse $dir "$pkgName/"
-            $count = (Get-ChildItem "$dir" -Filter "*.dll" -Recurse | Measure-Object).Count
-            Write-Host "  Bundled: $dir/ ($count plugins)"
-          }
-        }
-
-        # ── Qt runtime DLLs ─────────────────────────────────────────
-        $qtDlls = Get-ChildItem -Filter "Qt6*.dll" -ErrorAction SilentlyContinue
-        foreach ($dll in $qtDlls) {
-          # Skip debug DLLs (end with 'd.dll' before the extension pattern)
-          if ($dll.Name -match 'd\.dll$' -and $dll.Name -ne 'Qt6Widgets.dll') {
-            # More precise: check if non-d version exists
-            $releaseVersion = $dll.Name -replace 'd\.dll$', '.dll'
-            if (Test-Path $releaseVersion) {
-              Write-Host "  Skipped debug DLL: $($dll.Name)"
-              continue
-            }
-          }
-          Copy-Item $dll.FullName "$pkgName/"
-        }
-        Write-Host "  Bundled: $($qtDlls.Count) Qt DLL(s)"
-
-        # ── OpenGL / D3D DLLs ────────────────────────────────────────
-        foreach ($dll in @("opengl32sw.dll", "D3Dcompiler_47.dll")) {
-          if (Test-Path $dll) {
-            Copy-Item $dll "$pkgName/"
-            Write-Host "  Bundled: $dll"
-          }
-        }
-
-        # ── MSVC runtime DLLs (vcruntime, msvcp, concrt) ────────────
-        $msvcPatterns = @("vcruntime*.dll", "msvcp*.dll", "concrt*.dll")
-        foreach ($pattern in $msvcPatterns) {
-          $dlls = Get-ChildItem -Filter $pattern -ErrorAction SilentlyContinue
-          foreach ($dll in $dlls) {
-            Copy-Item $dll.FullName "$pkgName/"
-            Write-Host "  Bundled: $($dll.Name)"
-          }
-        }
-
-        # ── vcpkg DLLs (zlib, bzip2, liblzma) ───────────────────────
-        & "../../scripts/bundle_vcpkg_runtime.ps1" -DestinationPath $pkgName
-
-        # ── Embedded tools (Chocolatey, UUP) ─────────────────────────
-        if (Test-Path "tools") {
-          Copy-Item -Recurse "tools" "$pkgName/"
-          # Ensure Chocolatey scaffolding directories exist
-          $chocoPath = "$pkgName/tools/chocolatey"
-          if (Test-Path $chocoPath) {
-            foreach ($sub in @("lib", ".chocolatey", "logs")) {
-              New-Item -ItemType Directory -Force -Path "$chocoPath/$sub" | Out-Null
-            }
-            Write-Host "  Bundled: tools/chocolatey/ (with scaffolding)"
-          }
-        }
-
-        # ── Documentation & portable marker ──────────────────────────
-        Copy-Item "../../README.md" "$pkgName/"
-        Copy-Item "../../LICENSE" "$pkgName/"
-        if (Test-Path "../../CONTRIBUTING.md") {
-          Copy-Item "../../CONTRIBUTING.md" "$pkgName/"
-        }
-        if (Test-Path "../../THIRD_PARTY_LICENSES.md") {
-          Copy-Item "../../THIRD_PARTY_LICENSES.md" "$pkgName/"
-        }
-        New-Item -ItemType File -Path "$pkgName/portable.ini" -Force | Out-Null
-
-        # ── Manifest: list everything we packaged ────────────────────
-        Write-Host ""
-        Write-Host "=== Package Contents ==="
-        $files = Get-ChildItem -Path $pkgName -Recurse -File
-        $totalSize = ($files | Measure-Object -Property Length -Sum).Sum
-        $files | Sort-Object FullName | ForEach-Object {
-          $rel = $_.FullName.Substring((Resolve-Path $pkgName).Path.Length + 1)
-          $sizeMB = [math]::Round($_.Length / 1MB, 2)
-          Write-Host "  $rel ($sizeMB MB)"
-        }
-        Write-Host ""
-        Write-Host "Total files: $($files.Count)"
-        Write-Host "Total size:  $([math]::Round($totalSize / 1MB, 1)) MB"
-
-        # ── Create ZIP ───────────────────────────────────────────────
-        Compress-Archive -Path "$pkgName\*" -DestinationPath $zipName -Force
-
-        # ── SHA256 checksums ─────────────────────────────────────────
-        $exeHash = (Get-FileHash "$pkgName\sak_utility.exe" -Algorithm SHA256).Hash
-        $zipHash = (Get-FileHash $zipName -Algorithm SHA256).Hash
-        Write-Host ""
-        Write-Host "=== SHA256 Checksums ==="
-        Write-Host "sak_utility.exe : $exeHash"
-        Write-Host "ZIP             : $zipHash"
-
-        @"
-        SHA256 Checksums
-        ================
-        sak_utility.exe:  $exeHash
-        $($zipName):  $zipHash
-        "@ | Out-File "SHA256SUMS.txt" -Encoding UTF8
-
-        # ── Final sanity checks ──────────────────────────────────────
-        $critical = @("sak_utility.exe", "sak_elevated_helper.exe", "sak_splash.png", "Qt6Core.dll",
-                      "Qt6Widgets.dll", "platforms/qwindows.dll")
-        $missing = $critical | Where-Object { !(Test-Path "$pkgName/$_") }
-        if ($missing) {
-          Write-Error "FATAL: Critical files missing from package: $($missing -join ', ')"
-          exit 1
-        }
-
-        # Imported non-system DLLs must exist before the ZIP is published.
-        & "../../scripts/verify_windows_runtime_dependencies.ps1" -RootDir $pkgName -PrimaryExe "sak_utility.exe"
-
-        Write-Host ""
-        Write-Host "Package created successfully: $zipName"
+    - name: Release readiness gate from clean extracted package
+      shell: pwsh
+      run: |
+        $pkgName = "SAK-Utility-v$env:APP_VERSION"
+        $zipName = "$pkgName-Windows-x64.zip"
+        $extract = "build/Release/clean-readiness-extract"
+        Remove-Item -Recurse -Force $extract -ErrorAction SilentlyContinue
+        New-Item -ItemType Directory -Force -Path $extract | Out-Null
+        Expand-Archive -LiteralPath "build/Release/$zipName" -DestinationPath $extract -Force
+        & scripts/check_release_readiness.ps1 -PackageRoot $extract
 
     - name: Create signing catalog
       if: github.event_name != 'pull_request'
@@ -474,6 +380,14 @@ jobs:
         & scripts/verify_authenticode_signatures.ps1 `
           -RootDir "build/Release/SAK-Utility-v${{ steps.version.outputs.version }}"
 
+    - name: Signed release readiness gate
+      if: github.event_name != 'pull_request'
+      shell: pwsh
+      run: |
+        & scripts/check_release_readiness.ps1 `
+          -PackageRoot "build/Release/SAK-Utility-v${{ steps.version.outputs.version }}" `
+          -RequireSignedPackage
+
     - name: Rebuild signed release archive
       working-directory: build/Release
       shell: pwsh
@@ -498,7 +412,7 @@ jobs:
         body: |
           # S.A.K. Utility v${{ steps.version.outputs.version }}
 
-          **Swiss Army Knife Utility** — a portable Windows toolkit for PC technicians, IT pros, and sysadmins. Single EXE, no installer, no runtime dependencies. Drop it on a USB stick and go.
+          **Swiss Army Knife Utility** - a portable Windows toolkit for PC technicians, IT pros, and sysadmins. Single EXE, no installer, no runtime dependencies. Drop it on a USB stick and go.
 
           ### AI Assistant
           Codex-style technician chat workspace with prompt/result transcript, custom chat sessions, prompt history, context chips, Markdown instruction attachments, token usage status, and generated reports. Uses a user-supplied OpenAI API key stored encrypted under the portable app data directory.
@@ -511,38 +425,38 @@ jobs:
           Step-by-step user profile backup and restore wizards. Smart category filtering (Documents, Desktop, AppData, browser profiles, etc.), AES-256 encryption, NTFS permission and timestamp preservation, and compressed ZIP output. Integrated quick tools: Screenshot Settings capture and BitLocker Key Backup.
 
           ### Application Management
-          **App Installation** — Scan installed programs on the current machine, match them to Chocolatey packages, and bulk-install on a new PC with a single click. Export/import application lists as JSON.
-          **Advanced Uninstall** — Deep application removal for Win32, UWP, and provisioned apps. Three-level leftover scanner (safe/moderate/advanced), registry snapshot engine for pre/post uninstall diffs, batch uninstall queue, and Recycle Bin support with locked-file reboot scheduling.
+          **App Installation** - Scan installed programs on the current machine, match them to Chocolatey packages, and bulk-install on a new PC with a single click. Export/import application lists as JSON.
+          **Advanced Uninstall** - Deep application removal for Win32, UWP, and provisioned apps. Three-level leftover scanner (safe/moderate/advanced), registry snapshot engine for pre/post uninstall diffs, batch uninstall queue, and Recycle Bin support with locked-file reboot scheduling.
 
           ### Benchmark and Diagnostics
-          **Diagnostics** — SMART disk health analysis, system info collection, and HTML/JSON/CSV report export with technician metadata.
-          **Benchmarks** — CPU, disk (sequential and random I/O), and memory throughput benchmarks. Stress testing with thermal monitoring, configurable duration, and per-core thread control.
+          **Diagnostics** - SMART disk health analysis, system info collection, and HTML/JSON/CSV report export with technician metadata.
+          **Benchmarks** - CPU, disk (sequential and random I/O), and memory throughput benchmarks. Stress testing with thermal monitoring, configurable duration, and per-core thread control.
 
           ### Image Flasher
           Flash ISO/IMG files to USB drives with partition-level writing. Built-in Windows ISO downloader (via UUP Dump API with UUP-to-ISO conversion pipeline) and Linux distro catalog with direct download links.
 
           ### File Management
-          **File Organizer** — Sort files into folders by extension using customizable category rules. Collision handling (skip, rename, overwrite), undo support, and dry-run preview.
-          **Duplicate Finder** — Parallel file hashing (MD5/SHA-256) with size pre-filter. Group duplicates by hash, select which to keep, and delete or move the rest.
-          **Advanced Search** — Grep-style content search with regex, glob filters, and file metadata constraints (size, date, attributes). Binary/hex mode, archive search (ZIP/EPUB/DOCX/XLSX), preview pane with match highlighting, and search history.
+          **File Organizer** - Sort files into folders by extension using customizable category rules. Collision handling (skip, rename, overwrite), undo support, and dry-run preview.
+          **Duplicate Finder** - Parallel file hashing (MD5/SHA-256) with size pre-filter. Group duplicates by hash, select which to keep, and delete or move the rest.
+          **Advanced Search** - Grep-style content search with regex, glob filters, and file metadata constraints (size, date, attributes). Binary/hex mode, archive search (ZIP/EPUB/DOCX/XLSX), preview pane with match highlighting, and search history.
 
           ### Network Management
-          **Network Diagnostics** — 10-tool suite: Ping, Traceroute, MTR, DNS Lookup, Port Scanner, Bandwidth (iPerf3 + HTTP), WiFi Analyzer, Active Connections, Firewall Auditor, and Network Share Browser. HTML and JSON report generation.
-          **Network Adapters** — Adapter inspector with full IPv4/IPv6 config, DHCP, DNS, driver info, and traffic stats. Ethernet settings backup/restore to portable JSON for cross-machine portability.
-          **WiFi Manager** — WiFi credential manager with QR code generation for phone/tablet connection. Batch QR export (PNG/PDF/JPG/BMP), Windows `.cmd` script generation, macOS `.mobileconfig` profile export, and Windows known-profile scanning.
+          **Network Diagnostics** - 10-tool suite: Ping, Traceroute, MTR, DNS Lookup, Port Scanner, Bandwidth (iPerf3 + HTTP), WiFi Analyzer, Active Connections, Firewall Auditor, and Network Share Browser. HTML and JSON report generation.
+          **Network Adapters** - Adapter inspector with full IPv4/IPv6 config, DHCP, DNS, driver info, and traffic stats. Ethernet settings backup/restore to portable JSON for cross-machine portability.
+          **WiFi Manager** - WiFi credential manager with QR code generation for phone/tablet connection. Batch QR export (PNG/PDF/JPG/BMP), Windows `.cmd` script generation, macOS `.mobileconfig` profile export, and Windows known-profile scanning.
 
           ### Email Tools
-          **Email Inspector** — Browse, search, and export data from Outlook PST/OST and MBOX archives — no Outlook or MAPI required. Folder tree navigation, sortable item list, HTML/plain-text preview, MAPI property inspector. Contacts dialog with VCF/CSV export, calendar dialog (month/week/day views) with ICS/CSV export, and attachments browser with batch extraction. Full-text search across subjects, bodies, senders, recipients, and attachment names. Email profile manager with orphaned file discovery.
-          **OST Converter** — Multi-threaded bulk OST/PST conversion to 8 output formats (PST, EML, MSG, MBOX, DBX, HTML, PDF, IMAP Upload) with deleted item recovery, PST splitting, IMAP cloud upload, and advanced filtering.
+          **Email Inspector** - Browse, search, and export data from Outlook PST/OST and MBOX archives - no Outlook or MAPI required. Folder tree navigation, sortable item list, HTML/plain-text preview, MAPI property inspector. Contacts dialog with VCF/CSV export, calendar dialog (month/week/day views) with ICS/CSV export, and attachments browser with batch extraction. Full-text search across subjects, bodies, senders, recipients, and attachment names. Email profile manager with orphaned file discovery.
+          **OST Converter** - Multi-threaded bulk OST/PST conversion to 8 output formats (PST, EML, MSG, MBOX, DBX, HTML, PDF, IMAP Upload) with deleted item recovery, PST splitting, IMAP cloud upload, and advanced filtering.
 
           ### Settings
-          Per-panel settings — each panel provides its own configuration (backup location, uninstall defaults, scan levels, flash options, etc.).
+          Per-panel settings - each panel provides its own configuration (backup location, uninstall defaults, scan levels, flash options, etc.).
 
           ---
 
           100% portable. Open source. No telemetry.
 
-          **Requirements:** Windows 10/11 x64 · Runs as standard user; elevates per-task via UAC when needed
+          **Requirements:** Windows 10/11 x64 - Runs as standard user; elevates per-task via UAC when needed
 
           See the [README](https://github.com/${{ github.repository }}/blob/main/README.md) for detailed documentation and screenshots.
         draft: false

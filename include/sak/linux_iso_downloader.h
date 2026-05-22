@@ -143,6 +143,8 @@ private Q_SLOTS:
 private:
     void setPhase(Phase phase, const QString& description);
     void startAria2cDownload(const QString& url, const QString& savePath, const QString& fileName);
+    bool prepareAria2cDownload(const QString& url, const QString& fileName, QString* aria2Path);
+    void resetAria2cProcess();
     static QString aria2cExitCodeMessage(int exit_code);
     QStringList buildAria2cArguments(const QString& url,
                                      const QString& outDir,

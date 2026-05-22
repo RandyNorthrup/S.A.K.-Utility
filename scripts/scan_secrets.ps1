@@ -20,6 +20,7 @@ $WindowsUserPathRegex = "C:[\\/]+Users[\\/]+(?!Username\b|Public\b|Default\b|All
 
 $Patterns = @(
     @{ Name = "OpenAI/API key"; Regex = "sk-(proj-)?[A-Za-z0-9_-]{20,}" },
+    @{ Name = "Context7 API key"; Regex = "ctx7sk-[A-Za-z0-9-]{20,}" },
     @{ Name = "GitHub token"; Regex = "gh[pousr]_[A-Za-z0-9_]{30,}" },
     @{ Name = "AWS access key"; Regex = "(AKIA|ASIA)[0-9A-Z]{16}" },
     @{ Name = "Google API key"; Regex = "AIza[0-9A-Za-z_-]{35}" },

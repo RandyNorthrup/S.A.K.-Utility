@@ -7,10 +7,10 @@
 #include "sak/uninstall_worker.h"
 
 #include "sak/leftover_scanner.h"
+#include "sak/process_runner.h"
 #include "sak/registry_snapshot_engine.h"
 #include "sak/restore_point_manager.h"
 
-#include <QProcess>
 #include <QRegularExpression>
 #include <QThread>
 
@@ -21,9 +21,6 @@
 namespace sak {
 
 namespace {
-constexpr int kProcessStartTimeoutMs = 10'000;
-constexpr int kCancellationPollMs = 1000;
-constexpr int kProcessKillWaitMs = 5000;
 constexpr int kUwpRemovalTimeoutMs = 60'000;
 constexpr int kMsiRebootRequiredCode = 3010;
 
@@ -230,29 +227,17 @@ bool UninstallWorker::runNativeUninstaller() {
         cmd = buildMsiUninstallCommand();
     }
 
-    QProcess proc;
-
     const auto parsed = parseUninstallCommand(cmd);
-    proc.setProgram(parsed.exe);
-    proc.setArguments(parsed.args);
-    proc.start();
-
-    if (!proc.waitForStarted(kProcessStartTimeoutMs)) {
+    if (parsed.exe.isEmpty()) {
         return false;
     }
 
-    // Wait indefinitely for uninstaller -- user may need to interact with it
-    // Check for cancellation periodically
-    while (!proc.waitForFinished(kCancellationPollMs)) {
-        if (stopRequested()) {
-            proc.kill();
-            proc.waitForFinished(kProcessKillWaitMs);
-            return false;
-        }
-    }
+    // Wait indefinitely for uninstaller -- user may need to interact with it.
+    const auto result =
+        sak::runProcess(parsed.exe, parsed.args, 0, [this]() { return stopRequested(); });
 
-    return proc.exitStatus() == QProcess::NormalExit &&
-           (proc.exitCode() == 0 || proc.exitCode() == kMsiRebootRequiredCode);
+    return !result.cancelled && result.exit_status == 0 &&
+           (result.exit_code == 0 || result.exit_code == kMsiRebootRequiredCode);
 }
 
 QVector<LeftoverItem> UninstallWorker::scanLeftovers() {
@@ -273,36 +258,23 @@ bool UninstallWorker::removeUwpPackage() {
         return false;
     }
 
-    QProcess ps;
-    ps.setProgram("powershell.exe");
-
+    QString script;
     if (m_program.source == ProgramInfo::Source::Provisioned) {
         // Remove provisioned package (all-users)
-        ps.setArguments({"-NoProfile",
-                         "-NonInteractive",
-                         "-Command",
-                         QString("Remove-AppxProvisionedPackage -Online "
-                                 "-PackageName '%1' -ErrorAction Stop")
-                             .arg(m_program.packageFullName)});
+        script = QString(
+                     "Remove-AppxProvisionedPackage -Online "
+                     "-PackageName '%1' -ErrorAction Stop")
+                     .arg(m_program.packageFullName);
     } else {
         // Remove per-user package
-        ps.setArguments({"-NoProfile",
-                         "-NonInteractive",
-                         "-Command",
-                         QString("Remove-AppxPackage -Package '%1' -ErrorAction Stop")
-                             .arg(m_program.packageFullName)});
+        script = QString("Remove-AppxPackage -Package '%1' -ErrorAction Stop")
+                     .arg(m_program.packageFullName);
     }
 
-    ps.start();
-
-    if (!ps.waitForStarted(kProcessStartTimeoutMs)) {
-        return false;
-    }
-    if (!ps.waitForFinished(kUwpRemovalTimeoutMs)) {
-        return false;
-    }
-
-    return ps.exitCode() == 0;
+    const auto result = sak::runPowerShell(script, kUwpRemovalTimeoutMs, true, false, [this]() {
+        return stopRequested();
+    });
+    return result.succeeded();
 }
 
 bool UninstallWorker::removeRegistryEntry() {

@@ -295,6 +295,10 @@ QString CredentialStore::redactSecrets(const QString& text) {
                                                QRegularExpression::UseUnicodePropertiesOption);
     result.replace(kOpenAiKey, QStringLiteral("sk-...[redacted]"));
 
+    static const QRegularExpression kContext7Key(QStringLiteral(R"(\bctx7sk-[A-Za-z0-9\-]{12,}\b)"),
+                                                 QRegularExpression::CaseInsensitiveOption);
+    result.replace(kContext7Key, QStringLiteral("[redacted-context7-key]"));
+
     static const QRegularExpression kBearer(QStringLiteral(R"((Bearer\s+)[A-Za-z0-9_\-\.]{12,})"),
                                             QRegularExpression::CaseInsensitiveOption);
     result.replace(kBearer, QStringLiteral("\\1[redacted]"));

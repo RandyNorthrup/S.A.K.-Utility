@@ -13,11 +13,11 @@ namespace sak::ai {
 
 /// @brief IAiModelClient adapter over OpenAIResponsesClient.
 ///
-/// Wraps the signal-based responses client in a synchronous invoke() that
-/// blocks the calling thread on a local QEventLoop until either the
-/// responseReady/requestFailed signal fires or the supplied cancellation
-/// token is tripped. Suitable for subagent runners scheduled on worker
-/// threads from the orchestrator.
+/// Wraps the signal-based responses client in a synchronous invoke() backed by
+/// a short-lived worker thread. The caller waits for completion while Qt
+/// network work stays on the worker event loop instead of a nested caller loop.
+/// Suitable for subagent runners scheduled on worker threads from the
+/// orchestrator.
 class OpenAIResponsesModelClient
     : public QObject
     , public IAiModelClient {
@@ -33,7 +33,6 @@ public:
     [[nodiscard]] Response invoke(const Request& request, const CancellationToken& token) override;
 
 private:
-    OpenAIResponsesClient m_client;
     bool m_enable_web_search{false};
 };
 

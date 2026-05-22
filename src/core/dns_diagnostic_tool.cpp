@@ -9,7 +9,7 @@
 #endif
 #include "sak/dns_diagnostic_tool.h"
 
-#include <QProcess>
+#include "sak/process_runner.h"
 
 #include <chrono>
 
@@ -311,15 +311,16 @@ void DnsDiagnosticTool::compareServers(const QString& hostname,
 void DnsDiagnosticTool::inspectDnsCache() {
     m_cancelled.store(false);
 
-    QProcess proc;
-    proc.start(QStringLiteral("ipconfig"), {QStringLiteral("/displaydns")});
-    if (!proc.waitForStarted(5000) || !proc.waitForFinished(10'000)) {
+    const auto result = sak::runProcess(QStringLiteral("ipconfig"),
+                                        {QStringLiteral("/displaydns")},
+                                        10'000,
+                                        [this]() { return m_cancelled.load(); });
+    if (!result.succeeded()) {
         Q_EMIT dnsCacheResults({});
         return;
     }
 
-    const auto output = proc.readAllStandardOutput();
-    const auto lines = QString::fromLocal8Bit(output).split(QLatin1Char('\n'));
+    const auto lines = result.std_out.split(QLatin1Char('\n'));
 
     QVector<QPair<QString, QString>> entries;
     QString currentName;
@@ -348,9 +349,11 @@ void DnsDiagnosticTool::inspectDnsCache() {
 void DnsDiagnosticTool::flushDnsCache() {
     m_cancelled.store(false);
 
-    QProcess proc;
-    proc.start(QStringLiteral("ipconfig"), {QStringLiteral("/flushdns")});
-    if (!proc.waitForStarted(5000) || !proc.waitForFinished(10'000) || proc.exitCode() != 0) {
+    const auto result = sak::runProcess(QStringLiteral("ipconfig"),
+                                        {QStringLiteral("/flushdns")},
+                                        10'000,
+                                        [this]() { return m_cancelled.load(); });
+    if (!result.succeeded()) {
         Q_EMIT errorOccurred(QStringLiteral("Failed to flush DNS cache."));
         Q_EMIT dnsCacheFlushed();
         return;

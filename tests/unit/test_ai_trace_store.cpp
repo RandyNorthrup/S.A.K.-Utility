@@ -19,6 +19,7 @@ private Q_SLOTS:
     void loadActivityEvents_skipsInvalidLines();
     void traceEvent_roundTripsTokenUsageAndMetadata();
     void activityEvent_roundTripsContractFields();
+    void appendReplayEvent_writesCompactReplayJsonl();
 };
 
 void AiTraceStoreTests::appendEvent_writesTraceJsonl() {
@@ -173,6 +174,52 @@ void AiTraceStoreTests::activityEvent_roundTripsContractFields() {
     QCOMPARE(loaded.token_usage.total_tokens, 42);
     QCOMPARE(loaded.artifact_refs.size(), 1);
     QCOMPARE(loaded.evidence_refs.size(), 1);
+}
+
+void AiTraceStoreTests::appendReplayEvent_writesCompactReplayJsonl() {
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+
+    sak::ai::TraceStore store(temp.path());
+    QJsonObject metadata;
+    metadata[QStringLiteral("prompt_sha256")] = QStringLiteral("abc123");
+    metadata[QStringLiteral("model")] = QStringLiteral("gpt-5.5");
+    metadata[QStringLiteral("tool_name")] = QStringLiteral("sak_provider_gateway");
+    metadata[QStringLiteral("failure_class")] = QStringLiteral("health_backoff");
+    metadata[QStringLiteral("api_key")] = QStringLiteral("ctx7") + QStringLiteral("s") +
+                                          QStringLiteral("k-fc513191-580d-40c0-b244-17ea71f182b9");
+    metadata[QStringLiteral("authorization")] = QStringLiteral("Bearer ") +
+                                                QStringLiteral("abcdef") +
+                                                QStringLiteral("ghijklmnopqrstuvwxyz");
+
+    QString error;
+    QVERIFY2(store.appendReplayEvent(QStringLiteral("run_4"),
+                                     QStringLiteral("tool_call:sak_provider_gateway"),
+                                     QStringLiteral("health_suppressed"),
+                                     metadata,
+                                     &error),
+             qPrintable(error));
+
+    QFile file(store.replayPath());
+    QVERIFY(file.open(QIODevice::ReadOnly | QIODevice::Text));
+    const auto doc = QJsonDocument::fromJson(file.readLine().trimmed());
+    QVERIFY(doc.isObject());
+    const auto obj = doc.object();
+    QCOMPARE(obj.value(QStringLiteral("run_id")).toString(), QStringLiteral("run_4"));
+    QCOMPARE(obj.value(QStringLiteral("prompt_sha256")).toString(), QStringLiteral("abc123"));
+    QCOMPARE(obj.value(QStringLiteral("model")).toString(), QStringLiteral("gpt-5.5"));
+    QCOMPARE(obj.value(QStringLiteral("tool_name")).toString(),
+             QStringLiteral("sak_provider_gateway"));
+    QCOMPARE(obj.value(QStringLiteral("status")).toString(), QStringLiteral("health_suppressed"));
+    QCOMPARE(obj.value(QStringLiteral("schema_version")).toInt(), 1);
+    const QJsonObject stored_metadata = obj.value(QStringLiteral("metadata")).toObject();
+    QCOMPARE(stored_metadata.value(QStringLiteral("api_key")).toString(),
+             QStringLiteral("[redacted]"));
+    QCOMPARE(stored_metadata.value(QStringLiteral("authorization")).toString(),
+             QStringLiteral("[redacted]"));
+    const QString line = QString::fromUtf8(QJsonDocument(obj).toJson(QJsonDocument::Compact));
+    QVERIFY(!line.contains(QStringLiteral("ctx7") + QStringLiteral("sk-")));
+    QVERIFY(!line.contains(QStringLiteral("abcdefghijklmnopqrstuvwxyz")));
 }
 
 QTEST_GUILESS_MAIN(AiTraceStoreTests)

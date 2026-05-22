@@ -69,13 +69,10 @@ auto ElevationBroker::executeTask(const QString& task_id,
         return std::unexpected(sak::error_code::helper_connection_failed);
     }
 
-    // Read messages until we get a result or error. Process events between
-    // reads so long-running elevated tasks don't freeze the UI and so a
-    // user-initiated cancel can route through cancelCurrentTask while we
-    // are waiting on the pipe. Caller is expected to disable any UI that
-    // would re-enter this function.
+    // Read messages until we get a result or error. This method is deliberately
+    // synchronous and does not spin a nested Qt event loop; callers that need UI
+    // responsiveness must dispatch it from a worker thread.
     while (true) {
-        QCoreApplication::processEvents(QEventLoop::AllEvents, 25);
         auto msg = readMessage();
         if (!msg) {
             sak::logError("ElevationBroker: lost connection during task");

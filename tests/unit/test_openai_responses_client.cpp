@@ -23,6 +23,7 @@ private Q_SLOTS:
     void redactSecrets_redactsAssignmentStyleSecrets();
     void buildPayload_chatModeOmitsLocalTools();
     void buildPayload_assistedOrUnattendedAdvertisesLocalTools();
+    void buildPayload_packageToolWarnsAgainstScanInstalls();
     void realModelSmokeTest_optIn();
 };
 
@@ -43,6 +44,17 @@ namespace {
         }
     }
     return false;
+}
+
+[[nodiscard]] QJsonObject functionToolByName(const QJsonArray& tools, const QString& name) {
+    for (const auto& value : tools) {
+        const QJsonObject tool = value.toObject();
+        if (tool.value(QStringLiteral("type")).toString() == QLatin1String("function") &&
+            tool.value(QStringLiteral("name")).toString() == name) {
+            return tool;
+        }
+    }
+    return {};
 }
 
 [[nodiscard]] QString firstEnvironmentValue(const QStringList& names) {
@@ -238,15 +250,22 @@ void OpenAIResponsesClientTests::parseModelsList_extractsIds() {
 }
 
 void OpenAIResponsesClientTests::redactSecrets_redactsOpenAiAndBearerTokens() {
-    const QString openai_redaction_sample = QStringLiteral("sk-") +
-                                            QStringLiteral("abcdefghijklmnopqrstuvwxyz");
+    const QString openai_redaction_sample = QStringLiteral("sk") + QStringLiteral("-") +
+                                            QStringLiteral("abcdef") +
+                                            QStringLiteral("ghijklmnopqrstuvwxyz");
+    const QString context7_redaction_sample =
+        QStringLiteral("ctx7") + QStringLiteral("s") +
+        QStringLiteral("k-fc513191-580d-40c0-b244-17ea71f182b9");
     const QString bearer_redaction_sample = QStringLiteral("abcdefghijklmnop");
-    const QString input = QStringLiteral("key=%1 bearer Bearer %2")
-                              .arg(openai_redaction_sample, bearer_redaction_sample);
+    const QString input =
+        QStringLiteral("key=%1 ctx %2 bearer Bearer %3")
+            .arg(openai_redaction_sample, context7_redaction_sample, bearer_redaction_sample);
     const QString redacted = sak::ai::CredentialStore::redactSecrets(input);
     QVERIFY(!redacted.contains(openai_redaction_sample));
+    QVERIFY(!redacted.contains(context7_redaction_sample));
     QVERIFY(!redacted.contains(bearer_redaction_sample));
     QVERIFY(redacted.contains(QStringLiteral("[redacted]")));
+    QVERIFY(redacted.contains(QStringLiteral("[redacted-context7-key]")));
 }
 
 void OpenAIResponsesClientTests::redactSecrets_redactsGitHubAndCloudTokens() {
@@ -306,6 +325,8 @@ void OpenAIResponsesClientTests::buildPayload_chatModeOmitsLocalTools() {
     QVERIFY(!hasFunctionTool(tools, QStringLiteral("download_file")));
     QVERIFY(!hasFunctionTool(tools, QStringLiteral("sak_package_manager")));
     QVERIFY(!hasFunctionTool(tools, QStringLiteral("sak_offline_downloader")));
+    QVERIFY(!hasFunctionTool(tools, QStringLiteral("sak_provider_gateway")));
+    QVERIFY(!hasFunctionTool(tools, QStringLiteral("sak_session_search")));
 }
 
 void OpenAIResponsesClientTests::buildPayload_assistedOrUnattendedAdvertisesLocalTools() {
@@ -325,7 +346,37 @@ void OpenAIResponsesClientTests::buildPayload_assistedOrUnattendedAdvertisesLoca
     QVERIFY(hasFunctionTool(tools, QStringLiteral("download_file")));
     QVERIFY(hasFunctionTool(tools, QStringLiteral("sak_package_manager")));
     QVERIFY(hasFunctionTool(tools, QStringLiteral("sak_offline_downloader")));
+    QVERIFY(hasFunctionTool(tools, QStringLiteral("sak_provider_gateway")));
+    QVERIFY(hasFunctionTool(tools, QStringLiteral("sak_session_search")));
+    const QJsonObject gateway = functionToolByName(tools, QStringLiteral("sak_provider_gateway"));
+    const QJsonArray operations = gateway.value(QStringLiteral("parameters"))
+                                      .toObject()
+                                      .value(QStringLiteral("properties"))
+                                      .toObject()
+                                      .value(QStringLiteral("operation"))
+                                      .toObject()
+                                      .value(QStringLiteral("enum"))
+                                      .toArray();
+    QVERIFY(operations.contains(QStringLiteral("docs_query")));
+    QVERIFY(operations.contains(QStringLiteral("win32_mcp_call")));
+    QVERIFY(operations.contains(QStringLiteral("app_run_action")));
     QCOMPARE(root.value(QStringLiteral("parallel_tool_calls")).toBool(true), false);
+}
+
+void OpenAIResponsesClientTests::buildPayload_packageToolWarnsAgainstScanInstalls() {
+    sak::ai::OpenAIResponseRequest request;
+    request.model = QStringLiteral("gpt-5.5");
+    request.input = QStringLiteral("run a SUPERAntiSpyware scan");
+    request.enable_local_tools = true;
+
+    const QJsonObject root = payloadObject(request);
+    const QJsonObject package = functionToolByName(root.value(QStringLiteral("tools")).toArray(),
+                                                   QStringLiteral("sak_package_manager"));
+    const QString description = package.value(QStringLiteral("description")).toString();
+
+    QVERIFY(description.contains(QStringLiteral("Do not use install/upgrade/uninstall")));
+    QVERIFY(description.contains(QStringLiteral("scan/action")));
+    QVERIFY(description.contains(QStringLiteral("sak_provider_gateway")));
 }
 
 void OpenAIResponsesClientTests::realModelSmokeTest_optIn() {

@@ -29,10 +29,15 @@ constexpr auto kManifestFile = "manifest.json";
 constexpr auto kTranscriptFile = "transcript.jsonl";
 constexpr auto kCommandsFile = "commands.jsonl";
 constexpr auto kContextFile = "context.jsonl";
+constexpr auto kSearchIndexFile = "search_index.jsonl";
 constexpr auto kUsageFile = "usage.json";
 constexpr auto kMemoryFile = "memory.md";
+constexpr int kSessionArtifactSchemaVersion = 1;
 constexpr qint64 kMaxMemoryBytes = 256LL * 1024LL;
 constexpr qint64 kTrimmedMemoryBytes = 192LL * 1024LL;
+constexpr qint64 kMaxSearchIndexBytes = 10LL * 1024LL * 1024LL;
+constexpr qint64 kMaxSearchRawFileBytes = 2LL * 1024LL * 1024LL;
+constexpr int kMaxSearchSessionsScanned = 250;
 
 QString nowIso() {
     return QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs);
@@ -412,6 +417,174 @@ std::optional<QString> transcriptDisplayLine(const QByteArray& raw_line) {
     return QStringLiteral("\n[%1]\n%2").arg(transcriptHeading(role), text);
 }
 
+bool transcriptLineIsUserPrompt(const QByteArray& raw_line) {
+    QJsonParseError parse_error;
+    const auto doc = QJsonDocument::fromJson(raw_line.trimmed(), &parse_error);
+    if (parse_error.error != QJsonParseError::NoError || !doc.isObject()) {
+        return false;
+    }
+    const QJsonObject obj = doc.object();
+    const QString role = obj.value(QStringLiteral("role")).toString().trimmed().toLower();
+    const QString text = obj.value(QStringLiteral("text")).toString().trimmed();
+    return !text.isEmpty() && (role == QLatin1String("you") || role == QLatin1String("user"));
+}
+
+bool sessionHasUserPrompt(const QString& session_path) {
+    QFile file(QDir(session_path).filePath(QString::fromLatin1(kTranscriptFile)));
+    if (!file.exists() || !file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        return false;
+    }
+    while (!file.atEnd()) {
+        if (transcriptLineIsUserPrompt(file.readLine())) {
+            return true;
+        }
+    }
+    return false;
+}
+
+QDateTime objectTimestamp(const QJsonObject& object) {
+    return QDateTime::fromString(object.value(QStringLiteral("timestamp")).toString(),
+                                 Qt::ISODateWithMs);
+}
+
+QString snippetAround(const QString& text, const QString& query, qsizetype max_chars = 220) {
+    const QString simplified = text.simplified();
+    const qsizetype pos = simplified.indexOf(query, 0, Qt::CaseInsensitive);
+    if (pos < 0 || simplified.size() <= max_chars) {
+        return simplified.left(max_chars);
+    }
+    const qsizetype start = std::max<qsizetype>(0, pos - (max_chars / 3));
+    QString snippet = simplified.mid(start, max_chars);
+    if (start > 0) {
+        snippet.prepend(QStringLiteral("..."));
+    }
+    if (start + max_chars < simplified.size()) {
+        snippet.append(QStringLiteral("..."));
+    }
+    return snippet;
+}
+
+int matchScore(const QString& haystack, const QString& query) {
+    if (query.isEmpty()) {
+        return 0;
+    }
+    int score = 0;
+    qsizetype offset = 0;
+    while ((offset = haystack.indexOf(query, offset, Qt::CaseInsensitive)) >= 0) {
+        ++score;
+        offset += query.size();
+    }
+    return score;
+}
+
+std::optional<QJsonObject> parseJsonLineObject(const QByteArray& raw_line) {
+    QJsonParseError parse_error;
+    const auto doc = QJsonDocument::fromJson(raw_line.trimmed(), &parse_error);
+    if (parse_error.error != QJsonParseError::NoError || !doc.isObject()) {
+        return std::nullopt;
+    }
+    return doc.object();
+}
+
+struct SearchHitCandidate {
+    QString source;
+    QString text;
+    QString query;
+    QDateTime timestamp;
+};
+
+void appendSearchHit(QVector<AiSessionSearchResult>* results,
+                     const AiSessionInfo& session,
+                     const SearchHitCandidate& candidate) {
+    const int score = matchScore(candidate.text, candidate.query);
+    if (score <= 0) {
+        return;
+    }
+    AiSessionSearchResult hit;
+    hit.session = session;
+    hit.source = candidate.source;
+    hit.score = score;
+    hit.snippet = snippetAround(candidate.text, candidate.query);
+    hit.timestamp_utc = candidate.timestamp;
+    results->append(hit);
+}
+
+bool searchIndexFile(const AiSessionInfo& session,
+                     const QString& query,
+                     QVector<AiSessionSearchResult>* results) {
+    const QString path = QDir(session.path).filePath(QString::fromLatin1(kSearchIndexFile));
+    QFileInfo info(path);
+    if (!info.exists() || info.size() > kMaxSearchIndexBytes) {
+        return false;
+    }
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        return false;
+    }
+    while (!file.atEnd()) {
+        const auto obj = parseJsonLineObject(file.readLine());
+        if (!obj.has_value()) {
+            continue;
+        }
+        const QString text = obj->value(QStringLiteral("text")).toString();
+        const QString source = obj->value(QStringLiteral("source")).toString();
+        appendSearchHit(
+            results,
+            session,
+            {.source = source, .text = text, .query = query, .timestamp = objectTimestamp(*obj)});
+    }
+    return true;
+}
+
+void searchRawSessionFiles(const AiSessionInfo& session,
+                           const QString& query,
+                           QVector<AiSessionSearchResult>* results) {
+    const QString transcript_path =
+        QDir(session.path).filePath(QString::fromLatin1(kTranscriptFile));
+    QFile transcript(transcript_path);
+    if (QFileInfo(transcript_path).size() <= kMaxSearchRawFileBytes &&
+        transcript.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        while (!transcript.atEnd()) {
+            const auto obj = parseJsonLineObject(transcript.readLine());
+            if (!obj.has_value()) {
+                continue;
+            }
+            const QString text =
+                QStringLiteral("%1 %2").arg(obj->value(QStringLiteral("role")).toString(),
+                                            obj->value(QStringLiteral("text")).toString());
+            appendSearchHit(results,
+                            session,
+                            {.source = QStringLiteral("transcript"),
+                             .text = text,
+                             .query = query,
+                             .timestamp = objectTimestamp(*obj)});
+        }
+    }
+
+    const QString commands_path = QDir(session.path).filePath(QString::fromLatin1(kCommandsFile));
+    QFile commands(commands_path);
+    if (QFileInfo(commands_path).size() <= kMaxSearchRawFileBytes &&
+        commands.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        while (!commands.atEnd()) {
+            const auto obj = parseJsonLineObject(commands.readLine());
+            if (!obj.has_value()) {
+                continue;
+            }
+            const QString result_text =
+                QString::fromUtf8(QJsonDocument(obj->value(QStringLiteral("result")).toObject())
+                                      .toJson(QJsonDocument::Compact));
+            const QString text = QStringLiteral("%1 %2").arg(
+                obj->value(QStringLiteral("command")).toString(), result_text);
+            appendSearchHit(results,
+                            session,
+                            {.source = QStringLiteral("command"),
+                             .text = text,
+                             .query = query,
+                             .timestamp = objectTimestamp(*obj)});
+        }
+    }
+}
+
 }  // namespace
 
 ConversationStore::ConversationStore(QString root_dir)
@@ -465,6 +638,16 @@ QVector<AiSessionInfo> ConversationStore::listSessions() const {
     return sessions;
 }
 
+QVector<AiSessionInfo> ConversationStore::listPromptedSessions() const {
+    QVector<AiSessionInfo> sessions;
+    for (const auto& session : listSessions()) {
+        if (sessionHasUserPrompt(session.path)) {
+            sessions.append(session);
+        }
+    }
+    return sessions;
+}
+
 QStringList ConversationStore::loadTranscriptLines(const QString& session_id,
                                                    QString* error_message) const {
     QStringList lines;
@@ -487,6 +670,48 @@ QStringList ConversationStore::loadTranscriptLines(const QString& session_id,
         }
     }
     return lines;
+}
+
+QVector<AiSessionSearchResult> ConversationStore::searchSessions(const QString& query,
+                                                                 int max_results,
+                                                                 QString* error_message) const {
+    QVector<AiSessionSearchResult> results;
+    const QString term = query.trimmed();
+    if (term.isEmpty()) {
+        if (error_message) {
+            *error_message = QStringLiteral("Search query is empty");
+        }
+        return results;
+    }
+    const QVector<AiSessionInfo> sessions = listSessions();
+    const int session_count = std::min(static_cast<int>(sessions.size()),
+                                       kMaxSearchSessionsScanned);
+    const int bounded_max_results = max_results > 0 ? std::clamp(max_results, 1, 100) : 100;
+    for (int i = 0; i < session_count; ++i) {
+        const auto& session = sessions.at(i);
+        appendSearchHit(&results,
+                        session,
+                        {.source = QStringLiteral("manifest"),
+                         .text = session.title,
+                         .query = term,
+                         .timestamp = session.updated_at});
+        if (!searchIndexFile(session, term, &results)) {
+            searchRawSessionFiles(session, term, &results);
+        }
+    }
+    std::sort(results.begin(), results.end(), [](const auto& lhs, const auto& rhs) {
+        if (lhs.score != rhs.score) {
+            return lhs.score > rhs.score;
+        }
+        return lhs.timestamp_utc > rhs.timestamp_utc;
+    });
+    if (results.size() > bounded_max_results) {
+        results.resize(bounded_max_results);
+    }
+    if (error_message) {
+        error_message->clear();
+    }
+    return results;
 }
 
 bool ConversationStore::startSession(const QString& title, QString* error_message) {
@@ -534,6 +759,10 @@ bool ConversationStore::openSession(const QString& session_id, QString* error_me
     return true;
 }
 
+void ConversationStore::clearCurrentSession() {
+    m_current_session = {};
+}
+
 bool ConversationStore::renameCurrentSession(const QString& title, QString* error_message) {
     const QString trimmed = fallbackTitle(title);
     if (m_current_session.id.isEmpty()) {
@@ -578,6 +807,11 @@ bool ConversationStore::appendTranscript(const QString& role,
     if (!appendJsonLine(QString::fromLatin1(kTranscriptFile), obj, error_message)) {
         return false;
     }
+    QJsonObject index;
+    index[QStringLiteral("source")] = QStringLiteral("transcript");
+    index[QStringLiteral("role")] = role;
+    index[QStringLiteral("text")] = QStringLiteral("%1 %2").arg(role, text);
+    (void)appendSearchIndexRecord(index, nullptr);
     m_current_session.updated_at = QDateTime::currentDateTimeUtc();
     return writeManifest(error_message);
 }
@@ -591,6 +825,11 @@ bool ConversationStore::appendCommand(const QString& command,
     if (!appendJsonLine(QString::fromLatin1(kCommandsFile), obj, error_message)) {
         return false;
     }
+    QJsonObject index;
+    index[QStringLiteral("source")] = QStringLiteral("command");
+    index[QStringLiteral("text")] = QStringLiteral("%1 %2").arg(
+        command, QString::fromUtf8(QJsonDocument(result).toJson(QJsonDocument::Compact)));
+    (void)appendSearchIndexRecord(index, nullptr);
     m_current_session.updated_at = QDateTime::currentDateTimeUtc();
     return writeManifest(error_message);
 }
@@ -837,6 +1076,7 @@ bool ConversationStore::appendJsonLine(const QString& filename,
     }
 
     object[QStringLiteral("timestamp")] = nowIso();
+    object[QStringLiteral("schema_version")] = kSessionArtifactSchemaVersion;
     QFile file(QDir(currentSessionPath()).filePath(filename));
     if (!file.open(QIODevice::Append | QIODevice::Text)) {
         if (error_message) {
@@ -848,6 +1088,23 @@ bool ConversationStore::appendJsonLine(const QString& filename,
     file.write(QJsonDocument(object).toJson(QJsonDocument::Compact));
     file.write("\n");
     return true;
+}
+
+bool ConversationStore::appendSearchIndexRecord(QJsonObject object, QString* error_message) const {
+    const QString path = QDir(currentSessionPath()).filePath(QString::fromLatin1(kSearchIndexFile));
+    const QFileInfo info(path);
+    if (info.exists() && info.size() >= kMaxSearchIndexBytes) {
+        if (error_message) {
+            *error_message =
+                QStringLiteral("AI session search index exceeded max size cap (%1 bytes): %2")
+                    .arg(kMaxSearchIndexBytes)
+                    .arg(path);
+        }
+        return false;
+    }
+    object[QStringLiteral("schema_version")] = kSessionArtifactSchemaVersion;
+    object[QStringLiteral("indexed_at")] = nowIso();
+    return appendJsonLine(QString::fromLatin1(kSearchIndexFile), std::move(object), error_message);
 }
 
 AiSessionInfo ConversationStore::readManifest(const QString& session_path) {

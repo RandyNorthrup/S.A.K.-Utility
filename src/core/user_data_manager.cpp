@@ -6,6 +6,7 @@
 #include "sak/encryption.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
+#include "sak/process_runner.h"
 
 #include <QDir>
 #include <QDirIterator>
@@ -14,7 +15,6 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
-#include <QProcess>
 #include <QStandardPaths>
 #include <QTemporaryFile>
 #include <QtGlobal>
@@ -461,23 +461,17 @@ bool UserDataManager::createArchive(const QStringList& source_paths,
 
     args << command;
 
-    QProcess process;
-    process.start("powershell.exe", args);
-
-    if (!process.waitForStarted()) {
-        sak::logError("Failed to start PowerShell for archive compression");
-        return false;
-    }
-
-    if (!process.waitForFinished(sak::kTimeoutArchiveMs)) {  // 5 minute timeout
+    const auto result = sak::runProcess(QStringLiteral("powershell.exe"),
+                                        args,
+                                        sak::kTimeoutArchiveMs);  // 5 minute timeout
+    if (result.timed_out) {
         sak::logError("Archive compression timed out after 5 minutes -- killing process");
-        process.kill();
         return false;
     }
 
-    if (process.exitCode() != 0 || !QFile::exists(archive_path)) {
+    if (result.exit_code != 0 || !QFile::exists(archive_path)) {
         sak::logError("Archive compression failed: exit code {}, archive exists: {}",
-                      process.exitCode(),
+                      result.exit_code,
                       QFile::exists(archive_path));
         return false;
     }
@@ -567,19 +561,10 @@ bool UserDataManager::extractArchive(const QString& archive_path,
 
     args << command;
 
-    QProcess process;
-    process.start("powershell.exe", args);
-
-    if (!process.waitForStarted()) {
-        // Ensure decrypted plaintext never lingers on disk after failure.
-        if (!temp_decrypted.isEmpty()) {
-            QFile::remove(temp_decrypted);
-        }
-        return false;
-    }
-
-    if (!process.waitForFinished(sak::kTimeoutArchiveMs)) {  // 5 minute timeout
-        process.kill();
+    const auto result = sak::runProcess(QStringLiteral("powershell.exe"),
+                                        args,
+                                        sak::kTimeoutArchiveMs);  // 5 minute timeout
+    if (result.timed_out) {
         if (!temp_decrypted.isEmpty()) {
             QFile::remove(temp_decrypted);
         }
@@ -591,7 +576,7 @@ bool UserDataManager::extractArchive(const QString& archive_path,
         QFile::remove(temp_decrypted);
     }
 
-    return process.exitCode() == 0;
+    return result.succeeded();
 }
 
 bool UserDataManager::isExcluded(const QString& path, const QStringList& patterns) const {

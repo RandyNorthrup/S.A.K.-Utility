@@ -52,24 +52,30 @@ AppInstallationPanel::AppInstallationPanel(QWidget* parent)
     , m_worker(std::make_shared<AppInstallationWorker>(m_choco_manager))
     , m_list_manager(std::make_unique<PackageListManager>())
     , m_offline_worker(std::make_unique<OfflineDeploymentWorker>()) {
+    sak::logInfo("[AppInstallationPanel] constructing");
+    sak::logInfo("[AppInstallationPanel] setupUi start");
     setupUi();
+    sak::logInfo("[AppInstallationPanel] setupUi complete");
+    sak::logInfo("[AppInstallationPanel] setupConnections start");
     setupConnections();
+    sak::logInfo("[AppInstallationPanel] setupConnections complete");
 
     // Initialize Chocolatey on startup
     QString chocoPath = QApplication::applicationDirPath() + "/tools/chocolatey";
     sak::logInfo("[AppInstallationPanel] Initializing Chocolatey from: {}",
                  chocoPath.toStdString());
     bool init_success = m_choco_manager->initialize(chocoPath);
+    sak::logInfo("[AppInstallationPanel] Chocolatey initialize returned");
     if (!init_success) {
         sak::logWarning("[AppInstallationPanel] Chocolatey initialization failed");
         Q_EMIT logOutput(QString("WARNING: Chocolatey initialization failed"));
         Q_EMIT logOutput("Package installation will not be available.");
     } else {
-        sak::logInfo("[AppInstallationPanel] Chocolatey initialized successfully (version: {})",
-                     m_choco_manager->getChocoVersion().toStdString());
+        sak::logInfo("[AppInstallationPanel] Chocolatey initialized successfully");
         Q_EMIT logOutput("Chocolatey initialized successfully");
         Q_EMIT logOutput("Use the search bar to find packages or select a category.");
     }
+    sak::logInfo("[AppInstallationPanel] constructed");
 }
 
 AppInstallationPanel::~AppInstallationPanel() {

@@ -8,12 +8,12 @@
 #include "sak/leftover_scanner.h"
 
 #include "sak/layout_constants.h"
+#include "sak/process_runner.h"
 #include "sak/registry_snapshot_engine.h"
 
 #include <QDir>
 #include <QDirIterator>
 #include <QFileInfo>
-#include <QProcess>
 #include <QRegularExpression>
 #include <QStandardPaths>
 
@@ -482,17 +482,19 @@ QVector<LeftoverItem> LeftoverScanner::scanKnownRegistryPaths(
 QVector<LeftoverItem> LeftoverScanner::scanServices(const std::atomic<bool>& stopRequested) {
     QVector<LeftoverItem> items;
 
-    QProcess proc;
-    proc.setProgram("sc.exe");
-    proc.setArguments({"query", "type=", "service", "state=", "all"});
-    proc.start();
-
-    if (!proc.waitForStarted(sak::kTimeoutProcessStartMs) ||
-        !proc.waitForFinished(kPowerShellTimeoutMs)) {
+    const auto result = sak::runProcess(QStringLiteral("sc.exe"),
+                                        {QStringLiteral("query"),
+                                         QStringLiteral("type="),
+                                         QStringLiteral("service"),
+                                         QStringLiteral("state="),
+                                         QStringLiteral("all")},
+                                        kPowerShellTimeoutMs,
+                                        [&stopRequested]() { return stopRequested.load(); });
+    if (!result.succeeded()) {
         return items;
     }
 
-    QString output = QString::fromLocal8Bit(proc.readAllStandardOutput());
+    QString output = result.std_out;
     QStringList lines = output.split('\n');
 
     QString current_service;
@@ -527,17 +529,18 @@ QVector<LeftoverItem> LeftoverScanner::scanServices(const std::atomic<bool>& sto
 QVector<LeftoverItem> LeftoverScanner::scanScheduledTasks(const std::atomic<bool>& stopRequested) {
     QVector<LeftoverItem> items;
 
-    QProcess proc;
-    proc.setProgram("schtasks.exe");
-    proc.setArguments({"/query", "/fo", "CSV", "/nh"});
-    proc.start();
-
-    if (!proc.waitForStarted(sak::kTimeoutProcessStartMs) ||
-        !proc.waitForFinished(kPowerShellTimeoutMs)) {
+    const auto result = sak::runProcess(QStringLiteral("schtasks.exe"),
+                                        {QStringLiteral("/query"),
+                                         QStringLiteral("/fo"),
+                                         QStringLiteral("CSV"),
+                                         QStringLiteral("/nh")},
+                                        kPowerShellTimeoutMs,
+                                        [&stopRequested]() { return stopRequested.load(); });
+    if (!result.succeeded()) {
         return items;
     }
 
-    QString output = QString::fromLocal8Bit(proc.readAllStandardOutput());
+    QString output = result.std_out;
     QStringList lines = output.split('\n');
 
     for (const auto& line : lines) {
@@ -576,17 +579,15 @@ void LeftoverScanner::scanFirewallDirection(const QStringList& netsh_args,
                                             const QString& description,
                                             const std::atomic<bool>& stopRequested,
                                             QVector<LeftoverItem>& items) {
-    QProcess proc;
-    proc.setProgram("netsh.exe");
-    proc.setArguments(netsh_args);
-    proc.start();
-
-    if (!proc.waitForStarted(sak::kTimeoutProcessStartMs) ||
-        !proc.waitForFinished(kPowerShellTimeoutMs)) {
+    const auto result = sak::runProcess(QStringLiteral("netsh.exe"),
+                                        netsh_args,
+                                        kPowerShellTimeoutMs,
+                                        [&stopRequested]() { return stopRequested.load(); });
+    if (!result.succeeded()) {
         return;
     }
 
-    const QString output = QString::fromLocal8Bit(proc.readAllStandardOutput());
+    const QString output = result.std_out;
     const QStringList lines = output.split('\n');
 
     for (const auto& line : lines) {

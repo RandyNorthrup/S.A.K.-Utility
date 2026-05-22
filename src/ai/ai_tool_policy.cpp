@@ -26,6 +26,35 @@ bool isPackageTool(const QString& tool_name) {
            name == QLatin1String("sak_offline_downloader");
 }
 
+bool isProviderGatewayTool(const QString& tool_name) {
+    return norm(tool_name) == QLatin1String("sak_provider_gateway");
+}
+
+bool isSessionSearchTool(const QString& tool_name) {
+    return norm(tool_name) == QLatin1String("sak_session_search");
+}
+
+bool isReadOnlyProviderOperation(const AiToolCallRequest& request) {
+    if (!isProviderGatewayTool(request.tool_name)) {
+        return false;
+    }
+    const QString operation = norm(request.operation);
+    return operation == QLatin1String("providers") ||
+           operation == QLatin1String("provider_status") ||
+           operation == QLatin1String("docs_query") || operation == QLatin1String("app_manifest") ||
+           operation == QLatin1String("app_capabilities") ||
+           operation == QLatin1String("app_run_action_plan");
+}
+
+bool isMutatingProviderOperation(const AiToolCallRequest& request) {
+    if (!isProviderGatewayTool(request.tool_name)) {
+        return false;
+    }
+    const QString operation = norm(request.operation);
+    return operation == QLatin1String("app_run_action") ||
+           operation == QLatin1String("win32_mcp_call");
+}
+
 bool isDownloadTool(const AiToolCallRequest& request) {
     const QString name = norm(request.tool_name);
     const QString operation = norm(request.operation);
@@ -35,9 +64,88 @@ bool isDownloadTool(const AiToolCallRequest& request) {
              operation == QLatin1String("direct_download")));
 }
 
+bool textMatchesAny(const QString& text, const QStringList& needles) {
+    for (const auto& needle : needles) {
+        if (text.contains(needle, Qt::CaseInsensitive)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool hasScanIntent(const QString& user_message) {
+    const QString text = norm(user_message);
+    if (text.isEmpty()) {
+        return false;
+    }
+    return textMatchesAny(text,
+                          {QStringLiteral("quick scan"),
+                           QStringLiteral("full scan"),
+                           QStringLiteral("malware scan"),
+                           QStringLiteral("virus scan"),
+                           QStringLiteral("spyware scan"),
+                           QStringLiteral("defender scan"),
+                           QStringLiteral("run a scan"),
+                           QStringLiteral("do a scan"),
+                           QStringLiteral("start a scan"),
+                           QStringLiteral("scan my"),
+                           QStringLiteral("scan with"),
+                           QStringLiteral("scan using")});
+}
+
+bool hasExplicitPackageMutationIntent(const AiToolCallRequest& request) {
+    const QString text = norm(request.user_message);
+    if (text.isEmpty()) {
+        return false;
+    }
+    const QString op = norm(request.operation);
+    if (op == QLatin1String("install") || op == QLatin1String("install_bundle")) {
+        return textMatchesAny(text,
+                              {QStringLiteral("install "),
+                               QStringLiteral(" install"),
+                               QStringLiteral("reinstall"),
+                               QStringLiteral("set up"),
+                               QStringLiteral("setup "),
+                               QStringLiteral("repair install")});
+    }
+    if (op == QLatin1String("upgrade")) {
+        return textMatchesAny(text,
+                              {QStringLiteral("upgrade"),
+                               QStringLiteral(" update "),
+                               QStringLiteral("update "),
+                               QStringLiteral("bring up to date")});
+    }
+    if (op == QLatin1String("uninstall")) {
+        return textMatchesAny(text,
+                              {QStringLiteral("uninstall"),
+                               QStringLiteral("remove "),
+                               QStringLiteral(" remove"),
+                               QStringLiteral("delete app"),
+                               QStringLiteral("get rid of")});
+    }
+    if (op == QLatin1String("build_bundle")) {
+        return textMatchesAny(text,
+                              {QStringLiteral("build bundle"),
+                               QStringLiteral("create bundle"),
+                               QStringLiteral("offline bundle")});
+    }
+    return false;
+}
+
+bool packageMutationContradictsScanRequest(const AiToolCallRequest& request) {
+    return isPackageTool(request.tool_name) && isMutatingPackageOperation(request.operation) &&
+           hasScanIntent(request.user_message) && !hasExplicitPackageMutationIntent(request);
+}
+
+bool packageMutationMissingExplicitIntent(const AiToolCallRequest& request) {
+    return isPackageTool(request.tool_name) && isMutatingPackageOperation(request.operation) &&
+           !hasExplicitPackageMutationIntent(request);
+}
+
 struct ToolPolicyContext {
     bool shell{false};
     bool package_tool{false};
+    bool provider_gateway{false};
     bool mutating_package{false};
     bool risky{false};
 };
@@ -46,11 +154,12 @@ ToolPolicyContext policyContext(const AiToolCallRequest& request) {
     ToolPolicyContext context;
     context.shell = isShellTool(request.tool_name);
     context.package_tool = isPackageTool(request.tool_name);
+    context.provider_gateway = isReadOnlyProviderOperation(request);
     context.mutating_package = context.package_tool &&
                                isMutatingPackageOperation(request.operation);
     context.risky = request.requires_admin ||
                     (context.shell && commandLooksRiskyChange(request.command_preview)) ||
-                    context.mutating_package;
+                    context.mutating_package || isMutatingProviderOperation(request);
     return context;
 }
 
@@ -69,15 +178,18 @@ AiToolPolicyDecision allow(const QString& reason) {
 
 AiToolPolicyDecision evaluateReadOnlyPolicy(const AiToolCallRequest& request,
                                             bool shell,
+                                            bool provider_gateway,
                                             bool risky) {
-    if (!shell && norm(request.tool_name) != QLatin1String("take_screenshot")) {
-        return block(
-            QStringLiteral("Read-only PC policy only allows shell diagnostics and screenshots"));
-    }
     if (risky) {
         auto decision = block(QStringLiteral("Read-only PC policy blocked mutating command"));
         decision.risky_change = true;
         return decision;
+    }
+    if (!shell && !provider_gateway && !isSessionSearchTool(request.tool_name) &&
+        norm(request.tool_name) != QLatin1String("take_screenshot")) {
+        return block(
+            QStringLiteral("Read-only PC policy only allows shell diagnostics, screenshots, and "
+                           "provider status/capability checks, and AI session search"));
     }
     return allow(QStringLiteral("Read-only tool allowed"));
 }
@@ -118,7 +230,8 @@ AiToolPolicyDecision evaluateKnownPolicy(AiToolPolicy policy,
     case AiToolPolicy::NoLocalExecution:
         return block(QStringLiteral("Local execution disabled by tool policy"));
     case AiToolPolicy::ReadOnlyPc:
-        return evaluateReadOnlyPolicy(request, context.shell, context.risky);
+        return evaluateReadOnlyPolicy(
+            request, context.shell, context.provider_gateway, context.risky);
     case AiToolPolicy::PackageToolsOnly:
         return evaluatePackageOnlyPolicy(context.package_tool, context.mutating_package);
     case AiToolPolicy::DownloadOnly:
@@ -174,7 +287,8 @@ QString toolPolicyToString(AiToolPolicy policy) {
 bool isKnownLocalTool(const QString& tool_name) {
     const QString name = norm(tool_name);
     return isShellTool(name) || name == QLatin1String("take_screenshot") ||
-           name == QLatin1String("download_file") || isPackageTool(name);
+           name == QLatin1String("download_file") || isPackageTool(name) ||
+           isProviderGatewayTool(name) || isSessionSearchTool(name);
 }
 
 bool isMutatingPackageOperation(const QString& operation) {
@@ -195,6 +309,22 @@ bool commandLooksRiskyChange(const QString& preview) {
 AiToolPolicyDecision evaluateToolPolicy(AiToolPolicy policy, const AiToolCallRequest& request) {
     if (!isKnownLocalTool(request.tool_name)) {
         return block(QStringLiteral("Unknown local tool"));
+    }
+    if (packageMutationContradictsScanRequest(request)) {
+        auto decision =
+            block(QStringLiteral("Package install/upgrade/uninstall blocked because the user asked "
+                                 "to scan, not install"));
+        decision.risky_change = true;
+        decision.requires_lease = true;
+        return decision;
+    }
+    if (packageMutationMissingExplicitIntent(request)) {
+        auto decision =
+            block(QStringLiteral("Package install/upgrade/uninstall blocked because the user did "
+                                 "not explicitly request package mutation"));
+        decision.risky_change = true;
+        decision.requires_lease = true;
+        return decision;
     }
 
     return evaluateKnownPolicy(policy, request, policyContext(request));

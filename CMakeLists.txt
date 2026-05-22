@@ -15,7 +15,7 @@ endif()
 
 # Project definition
 project(SAK_Utility
-    VERSION 0.9.1.3
+    VERSION 0.9.1.4
     DESCRIPTION "Swiss Army Knife Utility - PC technician's toolkit for Windows migration and maintenance"
     LANGUAGES CXX
 )# C++23 Standard - Strict compliance required
@@ -572,6 +572,8 @@ set(GUI_SOURCES
     include/sak/install_summary_dialog.h
     src/gui/detachable_log_window.cpp
     include/sak/detachable_log_window.h
+    src/gui/follow_scroll_controller.cpp
+    include/sak/follow_scroll_controller.h
     src/gui/windows11_theme.cpp
     include/sak/windows11_theme.h
     src/gui/splash_screen.cpp
@@ -582,6 +584,8 @@ set(GUI_SOURCES
     include/sak/quick_action_result_io.h
     src/core/process_runner.cpp
     include/sak/process_runner.h
+    src/core/network_transfer_runner.cpp
+    include/sak/network_transfer_runner.h
     src/gui/diagnostic_benchmark_panel.cpp
     src/gui/diagnostic_benchmark_panel_slots.cpp
     include/sak/diagnostic_benchmark_panel.h
@@ -620,53 +624,88 @@ set(GUI_SOURCES
 set(AI_SOURCES)
 if(SAK_ENABLE_AI_ASSISTANT)
     list(APPEND AI_SOURCES
+        src/ai/ai_app_action_planner.cpp
         src/ai/ai_credential_store.cpp
         src/ai/ai_cancellation_token.cpp
+        src/ai/ai_command_guard.cpp
+        src/ai/ai_command_tool_planner.cpp
         src/ai/ai_conversation_store.cpp
         src/ai/ai_execution_broker.cpp
         src/ai/ai_human_gate.cpp
         src/ai/ai_human_gate_store.cpp
         src/ai/ai_lease_manager.cpp
+        src/ai/ai_mcp_http_client.cpp
+        src/ai/ai_mcp_stdio_client.cpp
         src/ai/ai_openai_model_client.cpp
         src/ai/ai_orchestrator.cpp
+        src/ai/ai_offline_downloader_tool_runner.cpp
+        src/ai/ai_package_tool_planner.cpp
         src/ai/ai_package_selection.cpp
         src/ai/ai_paths.cpp
+        src/ai/ai_prompt_assembler.cpp
+        src/ai/ai_provider_gateway.cpp
+        src/ai/ai_provider_gateway_tool_runner.cpp
+        src/ai/ai_provider_registry.cpp
         src/ai/ai_recovery_policy.cpp
         src/ai/ai_run_state.cpp
         src/ai/ai_run_state_store.cpp
         src/ai/ai_subagent_runner.cpp
         src/ai/ai_token_usage_tracker.cpp
+        src/ai/ai_tool_call_router.cpp
         src/ai/ai_tool_dispatcher.cpp
+        src/ai/ai_tool_health_ledger.cpp
         src/ai/ai_tool_policy.cpp
+        src/ai/ai_tool_result_recorder.cpp
+        src/ai/ai_tool_turn.cpp
         src/ai/ai_trace_store.cpp
+        src/ai/ai_workflow_powershell_tool_runner.cpp
         src/ai/ai_workflow_clarifier.cpp
         src/ai/ai_workflow_store.cpp
         src/ai/ai_workflow_template.cpp
         src/ai/openai_responses_client.cpp
+        src/gui/ai_transcript_view.cpp
+        include/sak/ai/ai_app_action_planner.h
         include/sak/ai/ai_credential_store.h
         include/sak/ai/ai_cancellation_token.h
+        include/sak/ai/ai_command_guard.h
+        include/sak/ai/ai_command_tool_planner.h
         include/sak/ai/ai_conversation_store.h
         include/sak/ai/ai_execution_broker.h
         include/sak/ai/ai_human_gate.h
         include/sak/ai/ai_human_gate_store.h
         include/sak/ai/ai_lease_manager.h
+        include/sak/ai/ai_mcp_http_client.h
+        include/sak/ai/ai_mcp_stdio_client.h
         include/sak/ai/ai_openai_model_client.h
         include/sak/ai/ai_orchestrator.h
+        include/sak/ai/ai_offline_downloader_tool_runner.h
+        include/sak/ai/ai_package_tool_planner.h
         include/sak/ai/ai_package_selection.h
         include/sak/ai/ai_paths.h
+        include/sak/ai/ai_prompt_assembler.h
+        include/sak/ai/ai_provider_gateway.h
+        include/sak/ai/ai_provider_gateway_tool_runner.h
+        include/sak/ai/ai_provider_registry.h
         include/sak/ai/ai_recovery_policy.h
         include/sak/ai/ai_run_state.h
         include/sak/ai/ai_run_state_store.h
         include/sak/ai/ai_subagent_runner.h
         include/sak/ai/ai_token_usage_tracker.h
+        include/sak/ai/ai_tool_call_router.h
         include/sak/ai/ai_tool_dispatcher.h
+        include/sak/ai/ai_tool_health_ledger.h
         include/sak/ai/ai_tool_policy.h
+        include/sak/ai/ai_tool_result_recorder.h
+        include/sak/ai/ai_tool_turn.h
         include/sak/ai/ai_trace_store.h
+        include/sak/ai/ai_workflow_powershell_tool_runner.h
         include/sak/ai/ai_workflow_store.h
         include/sak/ai/ai_workflow_template.h
+        include/sak/ai/openai_response_types.h
         include/sak/ai/openai_responses_client.h
         src/gui/ai_assistant_panel.cpp
         include/sak/ai_assistant_panel.h
+        include/sak/ai_transcript_view.h
     )
 endif()
 
@@ -910,13 +949,47 @@ if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/chocolatey/choco.exe")
                         "Run 'powershell -File scripts/bundle_chocolatey.ps1' to bundle choco.exe.")
 endif()
 
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/mcp/_build")
+    message(FATAL_ERROR "Temporary MCP build files found under tools/mcp/_build. "
+                        "Remove that directory before building so release packages stay portable.")
+endif()
+
+if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/mcp/win32-mcp-server/win32-mcp-server.exe")
+    message(FATAL_ERROR "win32-mcp-server.exe not bundled. Run "
+                        "'powershell -File scripts/bundle_mcp_servers.ps1 -BuildWin32' "
+                        "before configuring/building so SAK ships with portable MCP automation.")
+endif()
+
 # Copy embedded tools directory to output
 add_custom_command(TARGET sak_utility POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         ${CMAKE_CURRENT_SOURCE_DIR}/tools
         $<TARGET_FILE_DIR:sak_utility>/tools
+    COMMAND ${CMAKE_COMMAND} -E rm -rf
+        $<TARGET_FILE_DIR:sak_utility>/tools/mcp/_build
     COMMENT "Copying bundled tools to output directory"
 )
+
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/resources/ai/providers")
+    add_custom_command(TARGET sak_utility POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${CMAKE_CURRENT_SOURCE_DIR}/resources/ai/providers"
+            "$<TARGET_FILE_DIR:sak_utility>/data/ai/providers"
+        COMMAND ${CMAKE_COMMAND} -E rm -f
+            "$<TARGET_FILE_DIR:sak_utility>/data/ai/providers/provider_secrets.example.json"
+            "$<TARGET_FILE_DIR:sak_utility>/data/ai/providers/provider_secrets.local.json"
+        COMMENT "Copying bundled AI provider manifests to output directory"
+    )
+endif()
+
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/resources/ai/app_manifests")
+    add_custom_command(TARGET sak_utility POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${CMAKE_CURRENT_SOURCE_DIR}/resources/ai/app_manifests"
+            "$<TARGET_FILE_DIR:sak_utility>/data/ai/app_manifests"
+        COMMENT "Copying bundled AI app manifests to output directory"
+    )
+endif()
 
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/resources/sak_splash.png")
     add_custom_command(TARGET sak_utility POST_BUILD

@@ -9,8 +9,8 @@
 [![Qt 6.5+](https://img.shields.io/badge/Qt-6.5%2B-41cd52.svg)](https://www.qt.io/)
 [![Windows 10/11](https://img.shields.io/badge/Windows-10%20%7C%2011-0078d4.svg)](https://www.microsoft.com/windows)
 [![Build](https://github.com/RandyNorthrup/S.A.K.-Utility/actions/workflows/build-release.yml/badge.svg)](https://github.com/RandyNorthrup/S.A.K.-Utility/actions)
-[![Version](https://img.shields.io/badge/Version-0.9.1.3-orange.svg)](VERSION)
-[![Tests](https://img.shields.io/badge/Tests-111%20passing-brightgreen.svg)](tests/)
+[![Version](https://img.shields.io/badge/Version-0.9.1.4-orange.svg)](VERSION)
+[![Tests](https://img.shields.io/badge/Tests-128%20passing-brightgreen.svg)](tests/)
 
 Migration · Maintenance · Recovery · Imaging · Deployment — one portable EXE.
 
@@ -22,7 +22,7 @@ Migration · Maintenance · Recovery · Imaging · Deployment — one portable E
 
 See [CHANGELOG.md](CHANGELOG.md) for the full version history.
 
-**Latest: v0.9.1.3** — AI Assistant Panel v1: Codex-style chat, encrypted app-local OpenAI key storage, model and role selection, context/instruction attachments, token usage status, local PowerShell/tool execution with approvals, multi-agent workflow orchestration, built-in technician workflows, session memory, artifacts, and generated reports.
+**Latest: v0.9.1.4** - AI assistant production hardening, portable MCP/provider bundling, manifest-gated app-control workflows, release readiness gates, clean-extract startup smoke checks, async/tooling cleanup, and portable runtime-state protections.
 
 ---
 
@@ -87,7 +87,7 @@ See [CHANGELOG.md](CHANGELOG.md) for the full version history.
 3. Run sak_utility.exe — runs as a standard user; individual features prompt for elevation when needed.
 ```
 
-> **Code Signed:** Releases are digitally signed via [Azure Trusted Signing](https://learn.microsoft.com/en-us/azure/trusted-signing/).
+> **Code Signing:** Official release artifacts should be signed by the release workflow when Azure Trusted Signing credentials are available. Local and manual builds may be unsigned.
 > Windows SmartScreen and Defender should recognize the signature automatically.
 > Right-click `sak_utility.exe` → Properties → Digital Signatures to verify.
 
@@ -584,7 +584,37 @@ cmake -B build -G "Visual Studio 17 2022" -A x64 `
 cmake --build build --config Release
 ```
 
-Requires Azure CLI and access to the Azure Trusted Signing account. CI builds (GitHub Actions) are signed automatically.
+Requires Azure CLI and access to the Azure Trusted Signing account. CI builds sign release artifacts only when the signing credentials are configured.
+
+### Release Readiness Gates
+
+Release candidates must pass the aggregate readiness gate before publication:
+
+```powershell
+$version = (Get-Content VERSION -Raw).Trim()
+$packageName = "SAK-Utility-v$version"
+powershell -ExecutionPolicy Bypass -File scripts/stage_portable_release.ps1 `
+  -BuildDir build\Release `
+  -PackageName $packageName
+powershell -ExecutionPolicy Bypass -File scripts/create_release_archive.ps1 `
+  -BuildDir build\Release `
+  -PackageName $packageName
+$extract = "build\Release\clean-readiness-extract"
+Remove-Item -Recurse -Force $extract -ErrorAction SilentlyContinue
+New-Item -ItemType Directory -Force -Path $extract | Out-Null
+Expand-Archive -LiteralPath "build\Release\$packageName-Windows-x64.zip" -DestinationPath $extract -Force
+powershell -ExecutionPolicy Bypass -File scripts/check_release_readiness.ps1 `
+  -PackageRoot $extract `
+  -RequireSignedPackage
+```
+
+For unsigned local preflight builds, omit `-RequireSignedPackage`; signed package validation remains required before publication.
+
+This verifies secret scanning, blocking-pattern rules, third-party license
+documentation, Qt resource manifests, portable package contents, startup E2E
+smoke, and Authenticode signatures. See
+[docs/RELEASE_READINESS.md](docs/RELEASE_READINESS.md) and
+[docs/SECURITY_THREAT_MODEL.md](docs/SECURITY_THREAT_MODEL.md).
 
 ### Dependencies
 
@@ -595,6 +625,9 @@ Requires Azure CLI and access to the Azure Trusted Signing account. CI builds (G
 | [bzip2](https://sourceware.org/bzip2/) | BSD-style | bzip2 compression |
 | [liblzma](https://tukaani.org/xz/) | 0BSD / Public Domain | xz/LZMA compression |
 | [qrcodegen](https://www.nayuki.io/page/qr-code-generator-library) | MIT | QR code generation (bundled source) |
+| [win32-mcp-server](https://github.com/RandyNorthrup/win32-mcp-server) | MIT | Bundled portable MCP server for manifest-gated Windows desktop observation/automation |
+| [Context7 MCP](https://github.com/upstash/context7) | MIT | Remote documentation MCP provider; no bundled code; no app API key |
+| [Microsoft Learn MCP](https://learn.microsoft.com/en-us/training/support/mcp) | Microsoft Learn Terms | Remote Microsoft documentation MCP provider; no bundled code; no app API key |
 | [smartmontools](https://www.smartmontools.org/) | GPLv2 | SMART disk health analysis (bundled `smartctl.exe`) |
 | [iPerf3](https://iperf.fr/) | BSD 3-Clause | LAN bandwidth testing (bundled `iperf3.exe`) |
 | [Chocolatey](https://chocolatey.org/) | Apache 2.0 | Embedded package manager |
@@ -608,7 +641,7 @@ Full license texts: [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md)
 cmake --build build --config Release --target RUN_TESTS
 ```
 
-111 automated tests across 135 test files covering AI assistant clients, workflow store/evals, orchestration, subagents, tool policy/dispatch, execution broker, cancellation, run state, trace store, credential redaction, Advanced Search, Advanced Uninstall (types, controller, leftover scanner, registry snapshot engine), Network Diagnostics (types, utils, report generation), Email Inspector (PST/OST parsing, MBOX parsing, email types, search, export, profile manager, report generator), OST Converter (types, controller, PST splitter, integration), Offline Deployment (install script parsing, NuGet API, script rewriting, package builder), Elevation (tier classification, IPC protocol, task dispatcher, mixed-tier operations, UX components, hardening), diagnostics, security, encryption, configuration, ISO download, and quick action validation.
+Automated tests cover AI assistant clients, MCP HTTP parsing, provider registry, workflow store/evals, orchestration, subagents, tool policy/dispatch, execution broker, cancellation, run state, trace store, credential redaction, Advanced Search, Advanced Uninstall (types, controller, leftover scanner, registry snapshot engine), Network Diagnostics (types, utils, report generation), Email Inspector (PST/OST parsing, MBOX parsing, email types, search, export, profile manager, report generator), OST Converter (types, controller, PST splitter, integration), Offline Deployment (install script parsing, NuGet API, script rewriting, package builder), Elevation (tier classification, IPC protocol, task dispatcher, mixed-tier operations, UX components, hardening), diagnostics, security, encryption, configuration, ISO download, and quick action validation.
 
 ---
 
@@ -622,7 +655,19 @@ AI Assistant sessions and credentials are intentionally portable-app local:
 |---|---|
 | `<app>/data/credentials/openai_api_key.dpapi.json` | Encrypted OpenAI API key |
 | `<app>/data/ai_sessions/` | Session manifests, transcripts, usage, memory, run state, artifacts, downloads, screenshots, and reports |
+| `<app>/data/ai/providers/` | Portable AI provider registry overrides |
+| `<app>/data/ai/app_manifests/` | Portable app-control manifests for scanner/tool workflows |
 | `<app>/data/ai/workflows/` | User-added workflow templates |
+
+The provider gateway exposes Microsoft Learn and Context7 public documentation
+lookups through HTTP MCP, plus bundled Win32 MCP calls through the portable
+`tools/mcp/win32-mcp-server/win32-mcp-server.exe`. Win32 MCP access follows the
+selected AI access mode: observation tools are read-only, interactive tools use
+the interactive profile, and high-risk tools require the existing high-risk
+handling path. Supported app-manifest actions can run through the same gateway;
+for example, the Microsoft Defender manifest exposes quick/full scan and
+definition update actions while SUPERAntiSpyware scan actions remain manual
+until a validated non-interactive workflow exists.
 
 ### Key Settings
 
@@ -667,6 +712,9 @@ Third-party dependency licenses are documented in [THIRD_PARTY_LICENSES.md](THIR
 
 - [**Qt**](https://www.qt.io/) — Cross-platform UI framework (LGPL v3)
 - [**qrcodegen**](https://www.nayuki.io/page/qr-code-generator-library) — QR code generator by Project Nayuki (MIT)
+- [**win32-mcp-server**](https://github.com/RandyNorthrup/win32-mcp-server) — Portable Windows automation MCP server (MIT)
+- [**Context7 MCP**](https://github.com/upstash/context7) — Remote code documentation MCP provider (MIT source; no app API key required)
+- [**Microsoft Learn MCP**](https://learn.microsoft.com/en-us/training/support/mcp) — Remote Microsoft documentation MCP provider
 - [**aria2**](https://aria2.github.io/) — Multi-connection download manager (GPLv2)
 - [**UUPMediaCreator**](https://github.com/OSTooling/UUPMediaCreator) — UUP-to-ISO converter by OSTooling (MIT)
 - [**wimlib / libwim**](https://wimlib.net/) — WIM image library by Eric Biggers (LGPL v3, bundled with UUPMediaConverter)

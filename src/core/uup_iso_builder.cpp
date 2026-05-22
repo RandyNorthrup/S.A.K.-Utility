@@ -105,11 +105,9 @@ void UupIsoBuilder::cancel() {
 
     if (m_aria2Process && m_aria2Process->state() != QProcess::NotRunning) {
         m_aria2Process->kill();
-        m_aria2Process->waitForFinished(sak::kTimeoutProcessShortMs);
     }
     if (m_converterProcess && m_converterProcess->state() != QProcess::NotRunning) {
         m_converterProcess->kill();
-        m_converterProcess->waitForFinished(sak::kTimeoutProcessShortMs);
     }
 
     if (m_phase != Phase::Idle && m_phase != Phase::Completed) {
@@ -465,20 +463,23 @@ void UupIsoBuilder::executeDownload() {
             QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
             this,
             &UupIsoBuilder::onAria2Finished);
+    connect(m_aria2Process.get(), &QProcess::started, this, [this]() {
+        if (!m_cancelled && m_phase == Phase::DownloadingFiles) {
+            m_progressPollTimer->start();
+        }
+    });
+    connect(
+        m_aria2Process.get(), &QProcess::errorOccurred, this, [this](QProcess::ProcessError error) {
+            if (error == QProcess::FailedToStart && m_phase == Phase::DownloadingFiles) {
+                m_phase = Phase::Failed;
+                Q_EMIT buildError("Failed to start aria2c: " + m_aria2Process->errorString());
+            }
+        });
 
     QStringList args = buildAria2Arguments(inputFile, downloadDir);
 
     sak::logInfo("Starting aria2c download: " + aria2Path.toStdString());
     m_aria2Process->start(aria2Path, args);
-
-    if (!m_aria2Process->waitForStarted(sak::kTimeoutProcessMediumMs)) {
-        m_phase = Phase::Failed;
-        Q_EMIT buildError("Failed to start aria2c: " + m_aria2Process->errorString());
-        return;
-    }
-
-    // Start periodic progress polling (scans download directory for file sizes)
-    m_progressPollTimer->start();
 }
 
 QStringList UupIsoBuilder::buildAria2Arguments(const QString& inputFile,
@@ -790,6 +791,7 @@ void UupIsoBuilder::connectConverterSignals() {
         sak::logInfo("UUPMediaConverter process started");
         Q_EMIT progressUpdated(PHASE_PREPARE_WEIGHT + PHASE_DOWNLOAD_WEIGHT + 1,
                                "UUP conversion started...");
+        m_progressPollTimer->start();
     });
     connect(m_converterProcess.get(),
             &QProcess::errorOccurred,
@@ -866,15 +868,6 @@ void UupIsoBuilder::executeConversion() {
                  " desktop-convert -u \"" + uupsDir.toStdString() + "\" -i \"" +
                  outputIsoPath.toStdString() + "\" -l " + m_lang.toStdString());
     m_converterProcess->start(uupMediaConverter, args);
-
-    if (!m_converterProcess->waitForStarted(sak::kTimeoutProcessMediumMs)) {
-        m_phase = Phase::Failed;
-        Q_EMIT buildError("Failed to start converter: " + m_converterProcess->errorString());
-        return;
-    }
-
-    // Resume progress polling to track ISO file creation
-    m_progressPollTimer->start();
 }
 
 void UupIsoBuilder::onConverterReadyRead() {

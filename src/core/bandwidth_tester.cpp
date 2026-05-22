@@ -8,21 +8,21 @@
 
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
+#include "sak/network_transfer_runner.h"
+#include "sak/process_runner.h"
 
 #include <QCoreApplication>
 #include <QDir>
-#include <QEventLoop>
 #include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
-#include <QNetworkAccessManager>
-#include <QNetworkReply>
-#include <QNetworkRequest>
 #include <QProcess>
 #include <QTimer>
 
 #include <chrono>
+#include <memory>
+#include <thread>
 
 namespace sak {
 
@@ -55,108 +55,119 @@ QStringList extractAcceptedClientLines(const QString& rawText) {
     return acceptedLines;
 }
 
-bool waitForIperfWithProgress(QProcess& proc,
-                              std::atomic<bool>& cancelled,
-                              int durationSec,
-                              BandwidthTester* tester) {
-    auto elapsed = 0.0;
-    while (proc.state() == QProcess::Running && !cancelled.load()) {
-        proc.waitForReadyRead(500);
-        elapsed += 0.5;
-        Q_EMIT tester->testProgress(0.0, elapsed, static_cast<double>(durationSec));
-    }
-
-    if (!cancelled.load()) {
-        return true;
-    }
-
-    proc.terminate();
-    if (!proc.waitForFinished(2000)) {
-        proc.kill();
-        proc.waitForFinished(1000);
-    }
-    return false;
-}
-
 struct HttpSample {
     double bytes = 0.0;
     double timeMs = 0.0;
 };
 
-HttpSample downloadHttpSample(const QString& url) {
-    Q_ASSERT(!url.isEmpty());
-    QNetworkAccessManager manager;
-    QNetworkRequest request{QUrl(url)};
-    request.setTransferTimeout(kSpeedTestDurationMs);
+struct IperfProcessResult {
+    bool started = false;
+    bool timed_out = false;
+    bool cancelled = false;
+    int exit_code = -1;
+    QByteArray std_out;
+    QByteArray std_err;
+    QString error_message;
+};
 
-    const auto start = std::chrono::high_resolution_clock::now();
-    QNetworkReply* reply = manager.get(request);
+IperfProcessResult runIperfClientProcess(const QString& program,
+                                         const QStringList& args,
+                                         std::atomic<bool>& cancelled,
+                                         int durationSec,
+                                         BandwidthTester* tester) {
+    IperfProcessResult result;
+    std::atomic_bool done{false};
+    std::atomic_bool started{false};
 
-    QEventLoop loop;
-    QObject::connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
-    QTimer::singleShot(kSpeedTestDurationMs, &loop, &QEventLoop::quit);
-    loop.exec();
-    const auto end = std::chrono::high_resolution_clock::now();
+    std::thread progress_thread([tester, durationSec, &done, &started]() {
+        qint64 elapsed_ms = 0;
+        while (!done.load()) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(500));
+            if (!started.load() || done.load()) {
+                continue;
+            }
+            elapsed_ms += 500;
+            QMetaObject::invokeMethod(
+                tester,
+                [tester, durationSec, elapsed_ms]() {
+                    Q_EMIT tester->testProgress(0.0,
+                                                elapsed_ms / 1000.0,
+                                                static_cast<double>(durationSec));
+                },
+                Qt::QueuedConnection);
+        }
+    });
 
-    HttpSample sample;
-    if (reply->error() == QNetworkReply::NoError) {
-        const auto data = reply->readAll();
-        sample.bytes = static_cast<double>(data.size());
-        sample.timeMs = std::chrono::duration<double, std::milli>(end - start).count();
+    const ProcessResult process =
+        runProcessStreaming({.program = program,
+                             .args = args,
+                             .timeout_ms = kProcessTimeout,
+                             .on_started = [&](qint64) { started = true; },
+                             .should_cancel = [&cancelled]() { return cancelled.load(); }});
+
+    done = true;
+    if (progress_thread.joinable()) {
+        progress_thread.join();
     }
 
-    reply->deleteLater();
+    result.started = started.load();
+    result.timed_out = process.timed_out;
+    result.cancelled = process.cancelled;
+    result.exit_code = process.exit_code;
+    result.std_out = process.std_out.toLocal8Bit();
+    result.std_err = process.std_err.toLocal8Bit();
+    if (process.timed_out) {
+        result.error_message = QStringLiteral("iPerf3 process timed out");
+    } else if (!process.std_err.isEmpty() && process.exit_code != 0) {
+        result.error_message = process.std_err.trimmed();
+    }
+    return result;
+}
+
+HttpSample downloadHttpSample(const QString& url) {
+    Q_ASSERT(!url.isEmpty());
+    HttpSample sample;
+    NetworkTransferRequest request;
+    request.url = QUrl(url);
+    request.timeout_ms = kSpeedTestDurationMs;
+    const auto transfer = runNetworkTransfer(request);
+    if (transfer.success) {
+        sample.bytes = static_cast<double>(transfer.body.size());
+        sample.timeMs = static_cast<double>(transfer.elapsed_ms);
+    }
     return sample;
 }
 
 HttpSample uploadHttpSample(const QString& url, int payloadBytes) {
     Q_ASSERT(!url.isEmpty());
     Q_ASSERT(payloadBytes >= 0);
-    QNetworkAccessManager manager;
-    QNetworkRequest request{QUrl(url)};
-    request.setTransferTimeout(kSpeedTestDurationMs);
-    request.setHeader(QNetworkRequest::ContentTypeHeader,
-                      QStringLiteral("application/octet-stream"));
 
     const QByteArray payload(payloadBytes, '\0');
-
-    const auto start = std::chrono::high_resolution_clock::now();
-    QNetworkReply* reply = manager.post(request, payload);
-
-    QEventLoop loop;
-    QObject::connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
-    QTimer::singleShot(kSpeedTestDurationMs, &loop, &QEventLoop::quit);
-    loop.exec();
-    const auto end = std::chrono::high_resolution_clock::now();
-
+    NetworkTransferRequest request;
+    request.url = QUrl(url);
+    request.method = NetworkTransferMethod::Post;
+    request.body = payload;
+    request.timeout_ms = kSpeedTestDurationMs;
+    request.raw_headers.append(QPair<QByteArray, QByteArray>{
+        QByteArrayLiteral("Content-Type"), QByteArrayLiteral("application/octet-stream")});
+    const auto transfer = runNetworkTransfer(request);
     HttpSample sample;
-    if (reply->error() == QNetworkReply::NoError) {
+    if (transfer.success) {
         sample.bytes = static_cast<double>(payloadBytes);
-        sample.timeMs = std::chrono::duration<double, std::milli>(end - start).count();
+        sample.timeMs = static_cast<double>(transfer.elapsed_ms);
     }
-
-    reply->deleteLater();
     return sample;
 }
 
 double measureHttpHeadLatencyMs(const QString& url, int timeoutMs) {
     Q_ASSERT(!url.isEmpty());
     Q_ASSERT(timeoutMs >= 0);
-    QNetworkAccessManager manager;
-    QNetworkRequest request{QUrl(url)};
-    request.setTransferTimeout(timeoutMs);
-
-    const auto start = std::chrono::high_resolution_clock::now();
-    QNetworkReply* reply = manager.head(request);
-
-    QEventLoop loop;
-    QObject::connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
-    QTimer::singleShot(timeoutMs, &loop, &QEventLoop::quit);
-    loop.exec();
-
-    const auto end = std::chrono::high_resolution_clock::now();
-    reply->deleteLater();
-    return std::chrono::duration<double, std::milli>(end - start).count();
+    NetworkTransferRequest request;
+    request.url = QUrl(url);
+    request.method = NetworkTransferMethod::Head;
+    request.timeout_ms = timeoutMs;
+    const auto transfer = runNetworkTransfer(request);
+    return static_cast<double>(transfer.elapsed_ms);
 }
 }  // namespace
 
@@ -250,20 +261,30 @@ void BandwidthTester::startIperfServer(uint16_t port) {
             QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
             this,
             [this]([[maybe_unused]] int exitCode, [[maybe_unused]] QProcess::ExitStatus status) {
+                auto* process = qobject_cast<QProcess*>(sender());
+                if (process != nullptr && m_serverProcess == process) {
+                    m_serverProcess = nullptr;
+                    process->deleteLater();
+                }
                 removeFirewallRule();
                 Q_EMIT serverStopped();
             });
 
-    m_serverProcess->start();
-    if (!m_serverProcess->waitForStarted(kServerStartTimeout)) {
+    connect(m_serverProcess, &QProcess::started, this, [this, port]() {
+        Q_EMIT serverStarted(port);
+    });
+
+    connect(m_serverProcess, &QProcess::errorOccurred, this, [this](QProcess::ProcessError error) {
+        if (error != QProcess::FailedToStart || m_serverProcess == nullptr) {
+            return;
+        }
         Q_EMIT errorOccurred(QStringLiteral("Failed to start iPerf3 server: %1")
                                  .arg(m_serverProcess->errorString()));
-        delete m_serverProcess;
+        m_serverProcess->deleteLater();
         m_serverProcess = nullptr;
-        return;
-    }
+    });
 
-    Q_EMIT serverStarted(port);
+    m_serverProcess->start();
 }
 
 void BandwidthTester::stopIperfServer() {
@@ -273,14 +294,15 @@ void BandwidthTester::stopIperfServer() {
 
     if (m_serverProcess->state() == QProcess::Running) {
         m_serverProcess->terminate();
-        if (!m_serverProcess->waitForFinished(3000)) {
-            m_serverProcess->kill();
-            m_serverProcess->waitForFinished(2000);
-        }
+        QTimer::singleShot(3000, m_serverProcess, [process = m_serverProcess]() {
+            if (process->state() != QProcess::NotRunning) {
+                process->kill();
+            }
+        });
     }
 
     removeFirewallRule();
-    delete m_serverProcess;
+    m_serverProcess->deleteLater();
     m_serverProcess = nullptr;
 }
 
@@ -326,38 +348,34 @@ void BandwidthTester::runIperfTest(const IperfConfig& config) {
 
     QStringList args = buildIperfClientArgs(config);
 
-    QProcess proc;
-    proc.setProgram(m_iperf3Path);
-    proc.setArguments(args);
-    proc.start();
+    const auto process =
+        runIperfClientProcess(m_iperf3Path, args, m_cancelled, config.durationSec, this);
 
-    if (!proc.waitForStarted(kServerStartTimeout)) {
+    if (!process.started) {
         Q_EMIT errorOccurred(
-            QStringLiteral("Failed to start iPerf3 client: %1").arg(proc.errorString()));
+            QStringLiteral("Failed to start iPerf3 client: %1").arg(process.error_message));
         Q_EMIT testComplete({});
         return;
     }
 
-    if (!waitForIperfWithProgress(proc, m_cancelled, config.durationSec, this)) {
+    if (process.cancelled) {
         Q_EMIT testComplete({});
         return;
     }
 
-    if (!proc.waitForFinished(kProcessTimeout)) {
-        sak::logError("iPerf3 process timed out after test completion");
-        proc.kill();
-        proc.waitForFinished(2000);
+    if (process.timed_out) {
+        sak::logError("iPerf3 process timed out");
         Q_EMIT errorOccurred(QStringLiteral("iPerf3 process timed out"));
         Q_EMIT testComplete({});
         return;
     }
 
-    const QByteArray output = proc.readAllStandardOutput();
-    const QByteArray errOutput = proc.readAllStandardError();
+    const QByteArray output = process.std_out;
+    const QByteArray errOutput = process.std_err;
 
-    if (proc.exitCode() != 0) {
+    if (process.exit_code != 0) {
         Q_EMIT errorOccurred(QStringLiteral("iPerf3 failed (exit %1): %2")
-                                 .arg(proc.exitCode())
+                                 .arg(process.exit_code)
                                  .arg(QString::fromUtf8(errOutput)));
         Q_EMIT testComplete({});
         return;
@@ -478,51 +496,63 @@ void BandwidthTester::runHttpSpeedTest() {
 }
 
 void BandwidthTester::createFirewallRule(uint16_t port) {
-    QProcess proc;
-    proc.start(QStringLiteral("netsh"),
-               {QStringLiteral("advfirewall"),
-                QStringLiteral("firewall"),
-                QStringLiteral("add"),
-                QStringLiteral("rule"),
-                QStringLiteral("name=%1").arg(kFirewallRuleName),
-                QStringLiteral("dir=in"),
-                QStringLiteral("action=allow"),
-                QStringLiteral("protocol=tcp"),
-                QStringLiteral("localport=%1").arg(port)});
-    if (!proc.waitForStarted(sak::kTimeoutProcessStartMs)) {
-        sak::logWarning("Failed to start netsh for firewall rule on port {}", port);
-        return;
-    }
-    if (!proc.waitForFinished(5000)) {
-        sak::logWarning("Timed out adding firewall rule for port {}", port);
-        proc.kill();
-        proc.waitForFinished(2000);
-    } else if (proc.exitCode() != 0) {
-        sak::logWarning("Failed to add firewall rule: {}",
-                        QString::fromUtf8(proc.readAllStandardError()).toStdString());
-    }
+    auto* proc = new QProcess(this);
+    connect(proc, &QProcess::errorOccurred, proc, [port, proc](QProcess::ProcessError error) {
+        if (error == QProcess::FailedToStart) {
+            sak::logWarning("Failed to start netsh for firewall rule on port {}: {}",
+                            port,
+                            proc->errorString().toStdString());
+            proc->deleteLater();
+        }
+    });
+    connect(proc,
+            QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+            proc,
+            [port, proc](int exitCode, [[maybe_unused]] QProcess::ExitStatus status) {
+                if (exitCode != 0) {
+                    sak::logWarning("Failed to add firewall rule for port {}: {}",
+                                    port,
+                                    QString::fromUtf8(proc->readAllStandardError()).toStdString());
+                }
+                proc->deleteLater();
+            });
+    proc->start(QStringLiteral("netsh"),
+                {QStringLiteral("advfirewall"),
+                 QStringLiteral("firewall"),
+                 QStringLiteral("add"),
+                 QStringLiteral("rule"),
+                 QStringLiteral("name=%1").arg(kFirewallRuleName),
+                 QStringLiteral("dir=in"),
+                 QStringLiteral("action=allow"),
+                 QStringLiteral("protocol=tcp"),
+                 QStringLiteral("localport=%1").arg(port)});
 }
 
 void BandwidthTester::removeFirewallRule() {
-    QProcess proc;
-    proc.start(QStringLiteral("netsh"),
-               {QStringLiteral("advfirewall"),
-                QStringLiteral("firewall"),
-                QStringLiteral("delete"),
-                QStringLiteral("rule"),
-                QStringLiteral("name=%1").arg(kFirewallRuleName)});
-    if (!proc.waitForStarted(sak::kTimeoutProcessStartMs)) {
-        sak::logWarning("Failed to start netsh for firewall rule removal");
-        return;
-    }
-    if (!proc.waitForFinished(5000)) {
-        sak::logWarning("Timed out removing firewall rule");
-        proc.kill();
-        proc.waitForFinished(2000);
-    } else if (proc.exitCode() != 0) {
-        sak::logWarning("Failed to remove firewall rule: {}",
-                        QString::fromUtf8(proc.readAllStandardError()).toStdString());
-    }
+    auto* proc = new QProcess(this);
+    connect(proc, &QProcess::errorOccurred, proc, [proc](QProcess::ProcessError error) {
+        if (error == QProcess::FailedToStart) {
+            sak::logWarning("Failed to start netsh for firewall rule removal: {}",
+                            proc->errorString().toStdString());
+            proc->deleteLater();
+        }
+    });
+    connect(proc,
+            QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+            proc,
+            [proc](int exitCode, [[maybe_unused]] QProcess::ExitStatus status) {
+                if (exitCode != 0) {
+                    sak::logWarning("Failed to remove firewall rule: {}",
+                                    QString::fromUtf8(proc->readAllStandardError()).toStdString());
+                }
+                proc->deleteLater();
+            });
+    proc->start(QStringLiteral("netsh"),
+                {QStringLiteral("advfirewall"),
+                 QStringLiteral("firewall"),
+                 QStringLiteral("delete"),
+                 QStringLiteral("rule"),
+                 QStringLiteral("name=%1").arg(kFirewallRuleName)});
 }
 
 }  // namespace sak

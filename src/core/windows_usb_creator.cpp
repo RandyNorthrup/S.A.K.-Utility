@@ -8,13 +8,13 @@
 
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
+#include "sak/process_runner.h"
 
 #include <QCoreApplication>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
 #include <QMutexLocker>
-#include <QProcess>
 #include <QRegularExpression>
 #include <QStorageInfo>
 #include <QTemporaryFile>
@@ -168,22 +168,12 @@ bool WindowsUSBCreator::verifyNtfsFilesystem(const QString& driveLetter) {
     Q_ASSERT(!driveLetter.isEmpty());
     Q_ASSERT(driveLetter.length() == 1);
 
-    QProcess checkFS;
     QString checkCmd = QString("(Get-Volume -DriveLetter %1).FileSystem").arg(driveLetter);
-    checkFS.start("powershell",
-                  QStringList() << "-NoProfile"
-                                << "-Command" << checkCmd);
-    if (!checkFS.waitForStarted(sak::kTimeoutProcessStartMs)) {
-        setError(
-            QStringLiteral("STEP 1 VERIFICATION FAILED: "
-                           "PowerShell failed to start for "
-                           "filesystem check"));
-        sak::logError(lastError().toStdString());
-        Q_EMIT failed(lastError());
-        return false;
-    }
-    if (!checkFS.waitForFinished(sak::kTimeoutProcessShortMs)) {
-        checkFS.kill();
+    const auto check_result =
+        sak::runPowerShell(checkCmd, sak::kTimeoutProcessShortMs, true, false, [this]() {
+            return m_cancelled.load();
+        });
+    if (check_result.timed_out || check_result.cancelled) {
         setError(QString("STEP 1 VERIFICATION FAILED: "
                          "Filesystem check timed out for drive %1")
                      .arg(driveLetter));
@@ -192,7 +182,7 @@ bool WindowsUSBCreator::verifyNtfsFilesystem(const QString& driveLetter) {
         return false;
     }
 
-    QString fs = QString(checkFS.readAllStandardOutput()).trimmed();
+    QString fs = check_result.std_out.trimmed();
     if (fs != "NTFS") {
         setError(QString("STEP 1 VERIFICATION FAILED: "
                          "Drive is %1, expected NTFS")
@@ -285,13 +275,14 @@ bool WindowsUSBCreator::setAndVerifyBootFlag(const QString& diskNumber,
     }
     scriptFile.flush();
 
-    QProcess diskpart;
-    diskpart.start("cmd.exe",
-                   QStringList() << "/c" << "diskpart"
-                                 << "/s" << scriptFile.fileName());
-
-    if (!diskpart.waitForStarted(sak::kTimeoutProcessStartMs) ||
-        !diskpart.waitForFinished(sak::kTimeoutProcessLongMs)) {
+    const auto diskpart_result = sak::runProcess(QStringLiteral("cmd.exe"),
+                                                 {QStringLiteral("/c"),
+                                                  QStringLiteral("diskpart"),
+                                                  QStringLiteral("/s"),
+                                                  scriptFile.fileName()},
+                                                 sak::kTimeoutProcessLongMs,
+                                                 [this]() { return m_cancelled.load(); });
+    if (!diskpart_result.succeeded()) {
         setError("STEP 4 FAILED: Diskpart failed to set active flag");
         sak::logError(lastError().toStdString());
         Q_EMIT failed(lastError());
@@ -378,42 +369,33 @@ bool WindowsUSBCreator::cleanAndPartitionDisk(const QString& diskNumber) {
     sak::logInfo(QString("Running diskpart script:\n%1").arg(diskpartScript).toStdString());
 
     // Diskpart requires Administrator privileges
-    QProcess diskpart;
-    diskpart.start("cmd.exe", QStringList() << "/c" << "diskpart" << "/s" << scriptFile.fileName());
+    const auto diskpart_result = sak::runProcess(QStringLiteral("cmd.exe"),
+                                                 {QStringLiteral("/c"),
+                                                  QStringLiteral("diskpart"),
+                                                  QStringLiteral("/s"),
+                                                  scriptFile.fileName()},
+                                                 sak::kTimeoutProcessLongMs,
+                                                 [this]() { return m_cancelled.load(); });
 
-    if (!diskpart.waitForStarted(sak::kTimeoutProcessStartMs)) {
-        setError("Failed to start diskpart - ensure application is running as Administrator");
-        sak::logError(lastError().toStdString());
-        return false;
-    }
-
-    if (!diskpart.waitForFinished(sak::kTimeoutProcessLongMs)) {
+    if (diskpart_result.timed_out || diskpart_result.cancelled) {
         setError("Diskpart timed out");
         sak::logError(lastError().toStdString());
-        diskpart.kill();
         return false;
     }
 
-    QString output = diskpart.readAllStandardOutput();
-    QString errors = diskpart.readAllStandardError();
+    QString output = diskpart_result.std_out;
+    QString errors = diskpart_result.std_err;
     sak::logInfo(QString("Diskpart output:\n%1").arg(output).toStdString());
     if (!errors.isEmpty()) {
         sak::logError(QString("Diskpart errors:\n%1").arg(errors).toStdString());
     }
 
-    if (diskpart.exitCode() != 0) {
+    if (diskpart_result.exit_code != 0) {
         setError(QString("Diskpart failed with exit code %1. Ensure you are running as "
                          "Administrator.")
-                     .arg(diskpart.exitCode()));
+                     .arg(diskpart_result.exit_code));
         sak::logError(lastError().toStdString());
         return false;
-    }
-
-    // Ensure process fully terminated
-    if (diskpart.state() == QProcess::Running) {
-        sak::logWarning("Diskpart still running after waitForFinished, forcing termination");
-        diskpart.kill();
-        diskpart.waitForFinished(sak::kTimerServiceDelayMs);
     }
 
     return true;
@@ -450,32 +432,29 @@ bool WindowsUSBCreator::formatPartitionNTFS(const QString& diskNumber) {
 
     sak::logInfo(QString("Running format script:\n%1").arg(formatScript).toStdString());
 
-    QProcess format;
-    format.start("cmd.exe",
-                 QStringList() << "/c" << "diskpart" << "/s" << formatScriptFile.fileName());
+    const auto format_result = sak::runProcess(QStringLiteral("cmd.exe"),
+                                               {QStringLiteral("/c"),
+                                                QStringLiteral("diskpart"),
+                                                QStringLiteral("/s"),
+                                                formatScriptFile.fileName()},
+                                               sak::kTimeoutProcessVeryLongMs,
+                                               [this]() { return m_cancelled.load(); });
 
-    if (!format.waitForStarted(sak::kTimeoutProcessStartMs)) {
-        setError("Failed to start format");
-        sak::logError(lastError().toStdString());
-        return false;
-    }
-
-    if (!format.waitForFinished(sak::kTimeoutProcessVeryLongMs)) {
+    if (format_result.timed_out || format_result.cancelled) {
         setError("Format timed out");
         sak::logError(lastError().toStdString());
-        format.kill();
         return false;
     }
 
-    QString formatOutput = format.readAllStandardOutput();
-    QString formatErrors = format.readAllStandardError();
+    QString formatOutput = format_result.std_out;
+    QString formatErrors = format_result.std_err;
     sak::logInfo(QString("Format output:\n%1").arg(formatOutput).toStdString());
     if (!formatErrors.isEmpty()) {
         sak::logError(QString("Format errors:\n%1").arg(formatErrors).toStdString());
     }
 
-    if (format.exitCode() != 0) {
-        setError(QString("Format failed with exit code %1").arg(format.exitCode()));
+    if (format_result.exit_code != 0) {
+        setError(QString("Format failed with exit code %1").arg(format_result.exit_code));
         sak::logError(lastError().toStdString());
         return false;
     }
@@ -528,34 +507,27 @@ QString WindowsUSBCreator::getDriveLetterFromDiskNumber() {
 
     sak::logInfo(QString("Querying drive letter for disk %1").arg(m_diskNumber).toStdString());
 
-    QProcess getDrive;
     QString cmd = QString(
                       "(Get-Partition -DiskNumber %1 | Get-Volume | Where-Object "
                       "{$_.DriveLetter -ne $null} | Select-Object -First 1).DriveLetter")
                       .arg(m_diskNumber);
-    getDrive.start("powershell", QStringList() << "-NoProfile" << "-Command" << cmd);
+    const auto drive_result = sak::runPowerShell(
+        cmd, sak::kTimeoutProcessMediumMs, true, false, [this]() { return m_cancelled.load(); });
 
-    if (!getDrive.waitForStarted(sak::kTimeoutProcessStartMs)) {
-        setError(QString("PowerShell failed to start for drive letter "
-                         "query on disk %1")
-                     .arg(m_diskNumber));
-        sak::logError(lastError().toStdString());
-        return QString();
-    }
-    if (!getDrive.waitForFinished(sak::kTimeoutProcessMediumMs)) {
+    if (drive_result.timed_out || drive_result.cancelled) {
         setError(QString("Timeout querying drive letter for disk %1").arg(m_diskNumber));
         sak::logError(lastError().toStdString());
         return QString();
     }
 
-    if (getDrive.exitCode() != 0) {
-        QString errors = QString(getDrive.readAllStandardError()).trimmed();
+    if (drive_result.exit_code != 0) {
+        QString errors = drive_result.std_err.trimmed();
         setError(QString("PowerShell query failed for disk %1: %2").arg(m_diskNumber, errors));
         sak::logError(lastError().toStdString());
         return QString();
     }
 
-    QString driveLetter = validateDriveLetter(QString(getDrive.readAllStandardOutput()).trimmed());
+    QString driveLetter = validateDriveLetter(drive_result.std_out.trimmed());
     if (driveLetter.isEmpty()) {
         return {};
     }

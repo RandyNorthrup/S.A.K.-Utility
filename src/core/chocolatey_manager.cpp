@@ -6,6 +6,7 @@
 #include "sak/action_constants.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
+#include "sak/process_runner.h"
 
 #include <QDir>
 #include <QFile>
@@ -21,15 +22,9 @@ ChocolateyManager::ChocolateyManager(QObject* parent)
     : QObject(parent)
     , m_initialized(false)
     , m_default_timeout_seconds(kChocoTimeoutDefaultSec)
-    , m_auto_confirm(true)
-    , m_current_process(nullptr) {}
+    , m_auto_confirm(true) {}
 
-ChocolateyManager::~ChocolateyManager() {
-    if (m_current_process && m_current_process->state() != QProcess::NotRunning) {
-        m_current_process->kill();
-        m_current_process->waitForFinished(sak::kTimeoutWifiProfileMs);
-    }
-}
+ChocolateyManager::~ChocolateyManager() = default;
 
 bool ChocolateyManager::initialize(const QString& choco_portable_path) {
     if (choco_portable_path.isEmpty()) {
@@ -56,13 +51,8 @@ bool ChocolateyManager::initialize(const QString& choco_portable_path) {
         return false;
     }
 
-    // Verify Chocolatey works
-    QString version = getChocoVersion();
-    if (version.isEmpty()) {
-        sak::logWarning("[ChocolateyManager] Failed to get Chocolatey version");
-        return false;
-    }
-
+    // Startup initialization must not execute external tools on the UI path.
+    // Commands verify Chocolatey health when a package operation explicitly runs.
     m_initialized = true;
 
     return true;
@@ -394,45 +384,27 @@ ChocolateyManager::Result ChocolateyManager::executeChoco(const QStringList& arg
     if (timeout_ms < 0) {
         timeout_ms = 0;
     }
-    QProcess process;
-
     // Set up environment
     QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
     env.insert("ChocolateyInstall", m_choco_dir);
-    process.setProcessEnvironment(env);
 
     // Build command
     QString program = m_choco_path;
+    const int effective_timeout_ms = timeout_ms > 0 ? timeout_ms
+                                                    : sak::kChocoTimeoutExtendedSec * 1000;
+    const auto process_result =
+        sak::runProcessWithEnvironment(program, args, effective_timeout_ms, env);
 
-    // Start process
-    process.start(program, args);
-
-    if (!process.waitForStarted(sak::kTimeoutProcessStartMs)) {
-        return {false, "", "Failed to start choco.exe", -1};
-    }
-
-    // Wait for finish with timeout
-    bool finished = false;
-    if (timeout_ms > 0) {
-        finished = process.waitForFinished(timeout_ms);
-    } else {
-        // Use extended timeout instead of infinite wait to prevent hangs
-        constexpr int kMaxChocoWaitMs = sak::kChocoTimeoutExtendedSec * 1000;
-        finished = process.waitForFinished(kMaxChocoWaitMs);
-    }
-
-    if (!finished) {
-        process.kill();
-        process.waitForFinished(sak::kTimeoutWifiProfileMs);
+    if (process_result.timed_out) {
         return {false, "", "Command timed out", -1};
     }
 
     // Get output
-    QString stdout_output = QString::fromUtf8(process.readAllStandardOutput());
-    QString stderr_output = QString::fromUtf8(process.readAllStandardError());
+    QString stdout_output = process_result.std_out;
+    QString stderr_output = process_result.std_err;
     QString combined_output = stdout_output + "\n" + stderr_output;
 
-    int exit_code = process.exitCode();
+    int exit_code = process_result.exit_code;
     bool success = parseExitCode(exit_code);
 
     QString error_msg;

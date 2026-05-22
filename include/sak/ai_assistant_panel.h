@@ -7,7 +7,9 @@
 #include "sak/ai/ai_execution_broker.h"
 #include "sak/ai/ai_orchestrator.h"
 #include "sak/ai/ai_run_state.h"
+#include "sak/ai/ai_tool_call_router.h"
 #include "sak/ai/ai_tool_policy.h"
+#include "sak/ai/ai_tool_turn.h"
 #include "sak/ai/ai_trace_store.h"
 #include "sak/ai/openai_responses_client.h"
 #include "sak/offline_deployment_worker.h"
@@ -34,7 +36,6 @@ class QListWidget;
 class QPlainTextEdit;
 class QProgressBar;
 class QPushButton;
-class QScrollArea;
 class QSplitter;
 class QTextBrowser;
 class QTimer;
@@ -44,6 +45,7 @@ namespace sak {
 
 class ChocolateyManager;
 class ElevationBroker;
+class AiTranscriptView;
 class LogToggleSwitch;
 class OfflineDeploymentWorker;
 class PackageListManager;
@@ -51,6 +53,7 @@ class PackageListManager;
 namespace ai {
 struct AiCommandRequest;
 struct AiCommandResult;
+struct AiCommandToolPlan;
 struct WorkflowTemplate;
 class CredentialStore;
 class ConversationStore;
@@ -61,6 +64,7 @@ class TraceStore;
 class WorkflowStore;
 class AiRunStateStore;
 class AiToolDispatcher;
+class AiToolHealthLedger;
 class AiLeaseManager;
 }  // namespace ai
 
@@ -147,16 +151,6 @@ private:
         Handled,
     };
 
-    enum class ToolCallKind {
-        Unknown,
-        Shell,
-        Process,
-        Screenshot,
-        Download,
-        PackageManager,
-        OfflineDownloader,
-    };
-
     struct ContextItem {
         enum class Type {
             Workflow,
@@ -182,26 +176,10 @@ private:
         QString text_color;
     };
 
-    struct TranscriptMessage {
-        QString id;
-        QString role;
-        QString text;
-        bool expanded{false};
-    };
-
     struct PendingToolCallContext {
         const ai::OpenAIFunctionCall* call{nullptr};
-        ToolCallKind kind{ToolCallKind::Unknown};
+        ai::AiToolCallKind kind{ai::AiToolCallKind::Unknown};
         QJsonObject metadata;
-    };
-
-    struct CommandToolPlan {
-        ai::AiCommandRequest request;
-        ai::AiToolCallRequest policy_request;
-        ai::AiToolPolicyDecision policy_decision;
-        QString shell_label;
-        QString preview;
-        bool risky_change{false};
     };
 
     struct OfflineToolRunResult {
@@ -249,6 +227,7 @@ private:
     [[nodiscard]] ContextChipPalette contextChipPalette(ContextItem::Type type) const;
     void reloadSessionPicker();
     void startNewPersistentSession(const QString& title);
+    [[nodiscard]] bool ensurePersistentSession(const QString& title);
     void loadSessionTranscript(const QString& session_id);
     [[nodiscard]] bool isAiBusy() const;
     void setUiBusy(bool busy);
@@ -256,13 +235,12 @@ private:
     void updateActivityIndicatorFrame();
     void appendTranscriptMessage(const QString& role, const QString& text, bool expanded = false);
     void appendLoadedTranscriptLine(const QString& line);
-    void clearTranscriptLayout();
-    [[nodiscard]] QString transcriptMessageBody(const TranscriptMessage& message,
-                                                bool* long_text) const;
-    [[nodiscard]] QWidget* createTranscriptRow(const TranscriptMessage& message,
-                                               int bubble_max_width);
-    void toggleTranscriptMessageExpanded(const QString& message_id);
-    void scrollTranscriptToBottomLater();
+    void scrollTranscriptToBottomLater(bool force = false);
+    void restoreTranscriptScrollPositionLater(int value);
+    [[nodiscard]] bool isTranscriptScrolledToBottom() const;
+    void setTranscriptAutoScroll(bool enabled);
+    void updateJumpToNewestButton();
+    void jumpTranscriptToNewest();
     void renderTranscriptMessages(bool scroll_to_bottom = true);
     void recordPromptHistory(const QString& prompt);
     [[nodiscard]] bool cyclePromptHistory(int direction);
@@ -279,25 +257,20 @@ private:
     [[nodiscard]] QVector<ai::OpenAIInputAttachment> buildContextAttachments() const;
     void beginToolTurn(const ai::OpenAIResponseResult& response);
     void dispatchNextToolCall();
-    [[nodiscard]] ToolCallKind toolCallKind(const QString& name) const;
     [[nodiscard]] bool preparePendingToolCall(const ai::OpenAIFunctionCall& call,
                                               PendingToolCallContext* context,
-                                              ai::OpenAIFunctionOutput* output);
-    [[nodiscard]] bool parseToolCallArguments(const ai::OpenAIFunctionCall& call,
-                                              QJsonObject* args,
                                               ai::OpenAIFunctionOutput* output);
     [[nodiscard]] bool dispatchBuiltInToolCall(const PendingToolCallContext& context,
                                                const QJsonObject& args,
                                                ai::OpenAIFunctionOutput* output);
-    [[nodiscard]] CommandToolPlan commandToolPlan(const PendingToolCallContext& context,
-                                                  const QJsonObject& args) const;
     [[nodiscard]] bool authorizeCommandToolCall(const PendingToolCallContext& context,
-                                                const CommandToolPlan& plan,
+                                                const ai::AiCommandToolPlan& plan,
                                                 ai::OpenAIFunctionOutput* output);
     [[nodiscard]] bool acquireCommandToolLease(const PendingToolCallContext& context,
-                                               const CommandToolPlan& plan,
+                                               const ai::AiCommandToolPlan& plan,
                                                ai::OpenAIFunctionOutput* output);
-    void startCommandToolCall(const PendingToolCallContext& context, const CommandToolPlan& plan);
+    void startCommandToolCall(const PendingToolCallContext& context,
+                              const ai::AiCommandToolPlan& plan);
     [[nodiscard]] bool dispatchCommandToolCall(const PendingToolCallContext& context,
                                                const QJsonObject& args,
                                                ai::OpenAIFunctionOutput* output);
@@ -307,10 +280,6 @@ private:
     [[nodiscard]] QString currentPendingToolCallId() const;
     [[nodiscard]] QJsonObject pendingToolTurnState() const;
     [[nodiscard]] bool restorePendingToolTurnState(const QJsonObject& state);
-    [[nodiscard]] bool decodePendingCalls(const QJsonArray& calls_json,
-                                          QVector<ai::OpenAIFunctionCall>* calls) const;
-    [[nodiscard]] QVector<ai::OpenAIFunctionOutput> decodePendingOutputs(
-        const QJsonArray& outputs_json) const;
     void restorePendingRunIdentity(const QString& run_id, const QString& response_id);
     [[nodiscard]] bool completeResumedToolGateWithOutput(const ai::AiHumanGate& gate,
                                                          const QJsonObject& output_json);
@@ -333,8 +302,6 @@ private:
     void restoreRunStatusAfterHumanDecision(ai::AiRunStatus previous_status,
                                             const QString& message);
     [[nodiscard]] bool createRestorePoint();
-    [[nodiscard]] static bool isPotentiallyDestructiveCommand(const ai::AiCommandRequest& request,
-                                                              const QString& preview);
     [[nodiscard]] QString allocateCommandId();
     void appendCitationsToList(const QVector<ai::OpenAIUrlCitation>& citations);
     [[nodiscard]] QJsonObject runScreenshotTool(const QString& reason);
@@ -343,15 +310,9 @@ private:
                                                         const QString& command_preview);
     [[nodiscard]] ai::AiCommandResult executeWorkflowPowerShellRequest(
         const ai::AiCommandRequest& request, const QString& command_id);
-    [[nodiscard]] QJsonObject workflowPowerShellResultJson(const ai::AiCommandRequest& request,
-                                                           const QString& command_id,
-                                                           const QString& preview,
-                                                           const ai::AiCommandResult& result) const;
-    void recordWorkflowPowerShellResult(const QString& command_id,
-                                        const QString& preview,
-                                        const ai::AiCommandResult& result,
-                                        const QJsonObject& result_json);
     [[nodiscard]] QJsonObject runPackageManagerTool(const QJsonObject& args);
+    [[nodiscard]] QJsonObject runProviderGatewayTool(const QJsonObject& args);
+    [[nodiscard]] QJsonObject runSessionSearchTool(const QJsonObject& args) const;
     [[nodiscard]] QJsonObject packageManagerQueryOperation(const QJsonObject& args,
                                                            const QString& operation,
                                                            const QString& query);
@@ -359,6 +320,19 @@ private:
                                                              const QString& package_id,
                                                              const QString& version,
                                                              int timeout_seconds);
+    [[nodiscard]] QJsonObject packageManagerPackagePreflight(const QString& operation,
+                                                             const QString& package_id,
+                                                             const QString& version);
+    [[nodiscard]] QJsonObject authorizePackageManagerChange(const QString& preview);
+    [[nodiscard]] QJsonObject executePackageManagerPackageChange(const QString& operation,
+                                                                 const QString& package_id,
+                                                                 const QString& version,
+                                                                 int timeout_seconds,
+                                                                 const QString& preview);
+    [[nodiscard]] QJsonObject packageAlreadyInstalledResult(const QString& operation,
+                                                            const QString& package_id,
+                                                            const QString& version,
+                                                            const QString& installed_version);
     [[nodiscard]] QJsonObject packageManagerVersionResult() const;
     [[nodiscard]] QJsonObject packageManagerSearchResult(const QJsonObject& args,
                                                          const QString& query);
@@ -372,9 +346,6 @@ private:
                                                       const QString& version,
                                                       int timeout_seconds);
     [[nodiscard]] QJsonObject runOfflineDownloaderTool(const QJsonObject& args);
-    [[nodiscard]] QJsonObject offlineImmediateResult(const QJsonObject& args,
-                                                     const QString& operation,
-                                                     const QString& query);
     [[nodiscard]] QJsonObject offlineRunOperation(const QJsonObject& args,
                                                   const QString& operation);
     [[nodiscard]] QJsonObject offlinePresetsResult() const;
@@ -470,11 +441,23 @@ private:
     void appendHumanGateRecord(const ai::AiHumanGate& gate);
     void clearPendingGateIfResolved(const ai::AiHumanGate& gate);
     void registerToolDispatcherHandlers();
+    [[nodiscard]] bool ensureToolDispatcherReady();
+    void registerToolAvailabilityCheckers();
+    void registerDownloadFileAvailabilityChecker();
+    void registerPackageManagerAvailabilityChecker();
+    void registerOfflineDownloaderAvailabilityChecker();
+    void registerProviderGatewayAvailabilityChecker();
+    void registerSessionSearchAvailabilityChecker();
+    void registerToolHandlers();
     void rebuildWorkflowDetailsView();
     [[nodiscard]] QString runDetailsText() const;
     [[nodiscard]] QStringList runDetailsSummaryLines() const;
     [[nodiscard]] QStringList runDetailsPhaseLines() const;
     [[nodiscard]] QStringList runDetailsActivityLines() const;
+    [[nodiscard]] QStringList runDetailsHealthLines() const;
+    [[nodiscard]] QStringList runDetailsToolHealthLines() const;
+    [[nodiscard]] QStringList runDetailsProviderHealthLines() const;
+    [[nodiscard]] QString runDetailsHealthRecordLine(const QJsonObject& record) const;
     [[nodiscard]] QVector<ai::AiActivityEvent> filteredRunDetailsActivities() const;
     [[nodiscard]] QString runDetailsActivityLine(const ai::AiActivityEvent& activity) const;
     [[nodiscard]] QString runDetailsHtml() const;
@@ -586,6 +569,8 @@ private:
                                  const QJsonObject& response_metadata);
     void handleAssistantResponse(const ai::OpenAIResponseResult& result,
                                  const QJsonObject& response_metadata);
+    void recordToolLoopObservation(const QString& tool_name, const QJsonObject& result = {});
+    [[nodiscard]] QString toolLoopCapSummary() const;
 
     PanelHeaderWidgets m_headerWidgets{};
     LogToggleSwitch* m_logToggle{nullptr};
@@ -602,10 +587,7 @@ private:
     QLabel* m_connectionStatusIconLabel{nullptr};
     QLabel* m_accessStatusLabel{nullptr};
 
-    QScrollArea* m_transcriptScroll{nullptr};
-    QWidget* m_transcriptContent{nullptr};
-    QVBoxLayout* m_transcriptLayout{nullptr};
-    QLabel* m_activityLabel{nullptr};
+    AiTranscriptView* m_transcriptView{nullptr};
     QProgressBar* m_workflowProgressBar{nullptr};
     QListWidget* m_contextList{nullptr};
     QPushButton* m_artifactsButton{nullptr};
@@ -632,6 +614,7 @@ private:
     std::unique_ptr<ai::TraceStore> m_traceStore;
     std::unique_ptr<ai::AiRunStateStore> m_runStateStore;
     std::unique_ptr<ai::AiLeaseManager> m_leaseManager;
+    std::unique_ptr<ai::AiToolHealthLedger> m_toolHealthLedger;
     std::unique_ptr<ai::AiToolDispatcher> m_toolDispatcher;
     std::unique_ptr<ai::WorkflowStore> m_workflowStore;
     std::unique_ptr<ChocolateyManager> m_chocoManager;
@@ -643,6 +626,8 @@ private:
     QString m_previousResponseId;
     QString m_currentRunId;
     QString m_pendingWorkflowRunId;
+    QString m_pendingSessionTitle;
+    QString m_activeUserMessage;
     QString m_activeWorkflowUserMessage;
     QJsonObject m_activeWorkflowInputValues;
     QVector<ai::AiPhaseExecution> m_workflowPhaseHistory;
@@ -663,15 +648,9 @@ private:
     QStringList m_resumedApprovedToolCallIds;
     QStringList m_resumedRestoreToolCallIds;
     QVector<ai::OpenAIUrlCitation> m_citations;
-    QVector<TranscriptMessage> m_transcriptMessages;
-    int m_transcriptMessageSequence{0};
     bool m_dispatchingQueuedPrompt{false};
 
-    QString m_pendingResponseId;
-    QVector<ai::OpenAIFunctionCall> m_pendingCalls;
-    QVector<ai::OpenAIFunctionOutput> m_pendingOutputs;
-    int m_pendingCallIndex{0};
-    bool m_pendingTurnActive{false};
+    ai::AiToolTurn m_toolTurn;
     ai::CancellationToken m_pendingTurnToken;
     ai::CancellationToken m_pendingCallToken;
     QFrame* m_workflowDetailsPanel{nullptr};
@@ -682,8 +661,6 @@ private:
     QFutureWatcher<ai::AiOrchestratorResult>* m_workflowRunWatcher{nullptr};
     bool m_workflowRunActive{false};
     QTimer* m_activityTimer{nullptr};
-    QString m_activityBaseText;
-    int m_activityStep{0};
     QString m_currentCommandId;
     QString m_currentCommandLeaseId;
     QString m_currentCommandPreview;
@@ -692,8 +669,10 @@ private:
     int m_nextCommandSequence{1};
     int m_toolTurnIterations{0};
     int m_toolCallsThisSession{0};
+    QHash<QString, int> m_toolNamesThisMessage;
+    QHash<QString, int> m_toolFailureClassesThisMessage;
 
-    static constexpr int kMaxToolTurnsPerUserMessage = 20;
+    static constexpr int kMaxToolTurnsPerUserMessage = 12;
 };
 
 }  // namespace sak

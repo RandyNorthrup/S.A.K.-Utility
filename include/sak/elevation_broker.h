@@ -35,7 +35,8 @@ struct ElevatedTaskResult {
 /// connects over a named pipe, dispatches tasks, and relays progress.
 /// The helper auto-exits after an inactivity timeout.
 ///
-/// Thread-Safety: Must be used from the main (GUI) thread only.
+/// Thread-safety: use one broker instance from one thread at a time.
+/// Long-running calls should be dispatched from a worker thread by callers.
 class ElevationBroker : public QObject {
     Q_OBJECT
 

@@ -49,12 +49,21 @@ namespace sak {
 
 DiagnosticBenchmarkPanel::DiagnosticBenchmarkPanel(QWidget* parent)
     : QWidget(parent), m_controller(std::make_unique<DiagnosticController>(this)) {
+    logInfo("DiagnosticBenchmarkPanel: constructing");
+    logInfo("DiagnosticBenchmarkPanel: setupUi start");
     setupUi();
+    logInfo("DiagnosticBenchmarkPanel: setupUi complete");
+    logInfo("DiagnosticBenchmarkPanel: connectController start");
     connectController();
+    logInfo("DiagnosticBenchmarkPanel: connectController complete");
+    logInfo("DiagnosticBenchmarkPanel: createQuickActions start");
     createQuickActions();
+    logInfo("DiagnosticBenchmarkPanel: createQuickActions complete");
 
     // Start thermal monitoring on panel creation
+    logInfo("DiagnosticBenchmarkPanel: startThermalMonitoring start");
     m_controller->startThermalMonitoring(2000);
+    logInfo("DiagnosticBenchmarkPanel: constructed");
 }
 
 DiagnosticBenchmarkPanel::~DiagnosticBenchmarkPanel() {

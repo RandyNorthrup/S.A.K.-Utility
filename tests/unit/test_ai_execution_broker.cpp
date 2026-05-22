@@ -26,6 +26,7 @@ private Q_SLOTS:
     void startCmd_capturesStdoutFromCmd();
     void startCmd_rejectsElevation();
     void startProcess_launchesProgramDirectly();
+    void startProcess_reportsInvalidProgramAsAsyncFailure();
     void startProcess_rejectsEmptyProgram();
     void processRequestFromJson_parsesArguments();
     void toJson_redactsSecretsInStdoutAndStderr();
@@ -281,6 +282,24 @@ void AiExecutionBrokerTests::startProcess_launchesProgramDirectly() {
     QVERIFY(result.started);
     QCOMPARE(result.exit_code, 0);
     QVERIFY(result.stdout_text.contains(QStringLiteral("proc-marker")));
+}
+
+void AiExecutionBrokerTests::startProcess_reportsInvalidProgramAsAsyncFailure() {
+    sak::ai::ExecutionBroker broker;
+    QSignalSpy finished_spy(&broker, &sak::ai::ExecutionBroker::finished);
+    QSignalSpy started_spy(&broker, &sak::ai::ExecutionBroker::started);
+
+    sak::ai::AiCommandRequest request;
+    request.program = QStringLiteral("C:/definitely-not-a-real-sak-test-binary.exe");
+    request.timeout_seconds = 10;
+
+    QVERIFY(broker.startProcess(request, QStringLiteral("cmd_bad_proc")));
+    QVERIFY(waitForFinish(finished_spy));
+    QCOMPARE(started_spy.count(), 0);
+
+    const auto result = resultFromSpy(finished_spy);
+    QVERIFY(!result.started);
+    QVERIFY(result.error_message.contains(QStringLiteral("Process start error")));
 }
 
 void AiExecutionBrokerTests::startProcess_rejectsEmptyProgram() {

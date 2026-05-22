@@ -3,8 +3,12 @@
 
 #include "sak/ai/ai_openai_model_client.h"
 
-#include <QEventLoop>
+#include <QSemaphore>
+#include <QThread>
 #include <QTimer>
+
+#include <atomic>
+#include <memory>
 
 namespace sak::ai {
 
@@ -76,8 +80,7 @@ IAiModelClient::Response modelResponseFromState(const ModelInvokeState& state,
 
 }  // namespace
 
-OpenAIResponsesModelClient::OpenAIResponsesModelClient(QObject* parent)
-    : QObject(parent), m_client(this) {}
+OpenAIResponsesModelClient::OpenAIResponsesModelClient(QObject* parent) : QObject(parent) {}
 
 OpenAIResponsesModelClient::~OpenAIResponsesModelClient() = default;
 
@@ -94,51 +97,62 @@ IAiModelClient::Response OpenAIResponsesModelClient::invoke(const Request& reque
     }
 
     const OpenAIResponseRequest req = openAiRequestFromModelRequest(request, m_enable_web_search);
-    QEventLoop loop;
     ModelInvokeState state;
-
-    const auto on_ready = QObject::connect(&m_client,
-                                           &OpenAIResponsesClient::responseReady,
-                                           &loop,
-                                           [&](const OpenAIResponseResult& result) {
-                                               state.result = result;
-                                               state.got_response = true;
-                                               loop.quit();
-                                           });
-    const auto on_failed = QObject::connect(
-        &m_client, &OpenAIResponsesClient::requestFailed, &loop, [&](const QString& error_message) {
-            state.error = error_message;
-            state.got_failure = true;
-            loop.quit();
+    QSemaphore done;
+    QThread network_thread;
+    QObject* worker = new QObject;
+    worker->moveToThread(&network_thread);
+    QObject::connect(&network_thread, &QThread::finished, worker, &QObject::deleteLater);
+    QObject::connect(&network_thread, &QThread::started, worker, [&, worker, req]() {
+        auto* client = new OpenAIResponsesClient(worker);
+        auto* cancel_timer = new QTimer(worker);
+        auto* timeout_timer = new QTimer(worker);
+        cancel_timer->setInterval(100);
+        timeout_timer->setSingleShot(true);
+        const auto completed = std::make_shared<std::atomic_bool>(false);
+        const auto finish = [&, client, completed]() {
+            bool expected = false;
+            if (!completed->compare_exchange_strong(expected, true)) {
+                return;
+            }
+            client->cancel();
+            done.release();
+            network_thread.quit();
+        };
+        QObject::connect(client,
+                         &OpenAIResponsesClient::responseReady,
+                         worker,
+                         [&, finish](const OpenAIResponseResult& result) {
+                             state.result = result;
+                             state.got_response = true;
+                             finish();
+                         });
+        QObject::connect(client,
+                         &OpenAIResponsesClient::requestFailed,
+                         worker,
+                         [&, finish](const QString& error_message) {
+                             state.error = error_message;
+                             state.got_failure = true;
+                             finish();
+                         });
+        QObject::connect(cancel_timer, &QTimer::timeout, worker, [&, finish]() {
+            if (tokenCancelled(token)) {
+                state.error = token.cancelReason();
+                finish();
+            }
         });
-
-    QTimer cancel_timer;
-    cancel_timer.setInterval(100);
-    QObject::connect(&cancel_timer, &QTimer::timeout, &loop, [&]() {
-        if (tokenCancelled(token)) {
-            m_client.cancel();
-            loop.quit();
-        }
+        QObject::connect(timeout_timer, &QTimer::timeout, worker, [&, finish]() {
+            state.timed_out = true;
+            finish();
+        });
+        cancel_timer->start();
+        timeout_timer->start(kModelInvokeTimeoutMs);
+        client->createResponse(req);
     });
-    cancel_timer.start();
-
-    QTimer timeout_timer;
-    timeout_timer.setSingleShot(true);
-    QObject::connect(&timeout_timer, &QTimer::timeout, &loop, [&]() {
-        state.timed_out = true;
-        m_client.cancel();
-        loop.quit();
-    });
-    timeout_timer.start(kModelInvokeTimeoutMs);
-
-    m_client.createResponse(req);
-    if (!state.got_response && !state.got_failure && !state.timed_out && !tokenCancelled(token)) {
-        loop.exec();
-    }
-    cancel_timer.stop();
-    timeout_timer.stop();
-    QObject::disconnect(on_ready);
-    QObject::disconnect(on_failed);
+    network_thread.start();
+    done.acquire();
+    network_thread.quit();
+    network_thread.wait();
 
     return modelResponseFromState(state, token);
 }

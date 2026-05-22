@@ -7,6 +7,7 @@
 #include "sak/program_enumerator.h"
 
 #include "sak/layout_constants.h"
+#include "sak/process_runner.h"
 
 #include <QDir>
 #include <QDirIterator>
@@ -14,7 +15,6 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
-#include <QProcess>
 #include <QSet>
 #include <QTimer>
 
@@ -472,23 +472,17 @@ void ProgramEnumerator::parseUwpPackage(const QJsonObject& obj, QVector<ProgramI
 QVector<ProgramInfo> ProgramEnumerator::scanUwpPackages() {
     QVector<ProgramInfo> results;
 
-    QProcess ps;
-    ps.setProgram("powershell.exe");
-    ps.setArguments({"-NoProfile", "-NonInteractive", "-Command", kUwpPackagesCommand});
-    ps.start();
-
-    if (!ps.waitForStarted(sak::kTimeoutProcessStartMs)) {
-        return results;
-    }
-    if (!ps.waitForFinished(30'000)) {
-        return results;
-    }
-
-    if (ps.exitCode() != 0) {
+    const auto result = sak::runProcess(QStringLiteral("powershell.exe"),
+                                        {QStringLiteral("-NoProfile"),
+                                         QStringLiteral("-NonInteractive"),
+                                         QStringLiteral("-Command"),
+                                         kUwpPackagesCommand},
+                                        30'000);
+    if (!result.succeeded()) {
         return results;
     }
 
-    QByteArray output = ps.readAllStandardOutput();
+    QByteArray output = result.std_out.toUtf8();
     QJsonParseError error;
     QJsonDocument doc = QJsonDocument::fromJson(output, &error);
     if (error.error != QJsonParseError::NoError) {
@@ -506,28 +500,20 @@ QVector<ProgramInfo> ProgramEnumerator::scanUwpPackages() {
 QVector<ProgramInfo> ProgramEnumerator::scanProvisionedPackages() {
     QVector<ProgramInfo> results;
 
-    QProcess ps;
-    ps.setProgram("powershell.exe");
-    ps.setArguments({"-NoProfile",
-                     "-NonInteractive",
-                     "-Command",
-                     "Get-AppxProvisionedPackage -Online -ErrorAction SilentlyContinue | "
-                     "Select-Object DisplayName, PackageName, Version | "
-                     "ConvertTo-Json -Compress"});
-    ps.start();
-
-    if (!ps.waitForStarted(sak::kTimeoutProcessStartMs)) {
-        return results;
-    }
-    if (!ps.waitForFinished(30'000)) {
+    const auto result = sak::runProcess(
+        QStringLiteral("powershell.exe"),
+        {QStringLiteral("-NoProfile"),
+         QStringLiteral("-NonInteractive"),
+         QStringLiteral("-Command"),
+         QStringLiteral("Get-AppxProvisionedPackage -Online -ErrorAction SilentlyContinue | "
+                        "Select-Object DisplayName, PackageName, Version | "
+                        "ConvertTo-Json -Compress")},
+        30'000);
+    if (!result.succeeded()) {
         return results;
     }
 
-    if (ps.exitCode() != 0) {
-        return results;
-    }
-
-    QByteArray output = ps.readAllStandardOutput();
+    QByteArray output = result.std_out.toUtf8();
     QJsonParseError error;
     QJsonDocument doc = QJsonDocument::fromJson(output, &error);
     if (error.error != QJsonParseError::NoError) {

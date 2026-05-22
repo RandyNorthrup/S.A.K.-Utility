@@ -3,6 +3,7 @@
 
 #include "sak/detachable_log_window.h"
 
+#include "sak/follow_scroll_controller.h"
 #include "sak/layout_constants.h"
 #include "sak/style_constants.h"
 
@@ -41,13 +42,22 @@ DetachableLogWindow::DetachableLogWindow(const QString& title, QWidget* parent)
     m_logEdit->setReadOnly(true);
     m_logEdit->setPlaceholderText(tr("Operation log will appear here..."));
     layout->addWidget(m_logEdit);
+    m_logScrollController = new FollowScrollController(m_logEdit, this);
 
-    // Bottom row: clear button
     auto* bottomRow = new QHBoxLayout();
     auto* clearBtn = new QPushButton(tr("Clear"), this);
     connect(clearBtn, &QPushButton::clicked, this, &DetachableLogWindow::clearLog);
     bottomRow->addWidget(clearBtn);
     bottomRow->addStretch();
+    m_jumpToNewestButton = new QPushButton(tr("Jump to newest"), this);
+    m_jumpToNewestButton->setToolTip(tr("Scroll to the latest log line and resume auto-scroll"));
+    m_jumpToNewestButton->hide();
+    m_logScrollController->setJumpToNewestButton(m_jumpToNewestButton);
+    connect(m_jumpToNewestButton,
+            &QPushButton::clicked,
+            m_logScrollController,
+            &FollowScrollController::jumpToNewest);
+    bottomRow->addWidget(m_jumpToNewestButton);
     layout->addLayout(bottomRow);
 
     m_snapTimer = new QTimer(this);
@@ -60,10 +70,24 @@ DetachableLogWindow::~DetachableLogWindow() = default;
 
 void DetachableLogWindow::appendLog(const QString& message) {
     const QString timestamp = QDateTime::currentDateTime().toString("[HH:mm:ss] ");
+    const int previous_value = m_logScrollController ? m_logScrollController->scrollValue() : 0;
+    const bool follow_newest = !m_logScrollController ||
+                               m_logScrollController->shouldFollowNewestForAppend();
     m_logEdit->append(timestamp + message);
+    if (!m_logScrollController) {
+        return;
+    }
+    if (follow_newest) {
+        m_logScrollController->scrollToBottomLater();
+    } else {
+        m_logScrollController->restoreScrollPositionLater(previous_value);
+    }
 }
 
 void DetachableLogWindow::clearLog() {
+    if (m_logScrollController) {
+        m_logScrollController->setAutoScroll(true);
+    }
     m_logEdit->clear();
 }
 
@@ -82,6 +106,10 @@ void DetachableLogWindow::setLogVisible(bool visible) {
 
 bool DetachableLogWindow::isLogVisible() const {
     return isVisible();
+}
+
+bool DetachableLogWindow::eventFilter(QObject* watched, QEvent* event) {
+    return QWidget::eventFilter(watched, event);
 }
 
 void DetachableLogWindow::repositionIfAnchored() {

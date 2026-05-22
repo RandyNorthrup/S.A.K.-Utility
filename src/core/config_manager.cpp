@@ -6,11 +6,14 @@
 
 #include "sak/config_manager.h"
 
+#include "sak/app_paths.h"
 #include "sak/logger.h"
 #include "sak/network_constants.h"
 
 #include <QCoreApplication>
 #include <QtGlobal>
+
+#include <stdexcept>
 
 namespace sak {
 
@@ -19,10 +22,16 @@ ConfigManager& ConfigManager::instance() {
     return instance;
 }
 
-ConfigManager::ConfigManager(QObject* parent)
-    : QObject(parent)
-    , m_settings(std::make_unique<QSettings>(
-          QSettings::IniFormat, QSettings::UserScope, "SAK", "Utility")) {
+ConfigManager::ConfigManager(QObject* parent) : QObject(parent) {
+    const QString config_dir = sak::app_paths::configDirectory();
+    if (!sak::app_paths::ensureDirectory(config_dir)) {
+        logError("ConfigManager failed to create portable config directory: {}",
+                 config_dir.toStdString());
+        throw std::runtime_error("Failed to create portable config directory");
+    }
+
+    m_settings = std::make_unique<QSettings>(sak::app_paths::configFilePath(),
+                                             QSettings::IniFormat);
     // make_unique throws on allocation failure, so m_settings is always valid here.
     logInfo("ConfigManager initialized: {}", m_settings->fileName().toStdString());
     initializeDefaults();

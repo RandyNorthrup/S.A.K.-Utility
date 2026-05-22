@@ -81,6 +81,7 @@ public:
     [[nodiscard]] QString sessionDirectory() const;
     [[nodiscard]] QString tracePath() const;
     [[nodiscard]] QString activityPath() const;
+    [[nodiscard]] QString replayPath() const;
 
     [[nodiscard]] bool appendEvent(AiTraceEvent event, QString* error_message = nullptr) const;
     [[nodiscard]] QVector<AiTraceEvent> loadEvents(QString* error_message = nullptr) const;
@@ -88,6 +89,11 @@ public:
                                            QString* error_message = nullptr) const;
     [[nodiscard]] QVector<AiActivityEvent> loadActivityEvents(
         QString* error_message = nullptr) const;
+    [[nodiscard]] bool appendReplayEvent(const QString& run_id,
+                                         const QString& event_type,
+                                         const QString& status,
+                                         QJsonObject metadata = {},
+                                         QString* error_message = nullptr) const;
 
     [[nodiscard]] static AiTraceEvent event(const AiTraceEventSeed& seed);
     [[nodiscard]] static AiActivityEvent activityEvent(const AiActivityEventSeed& seed);

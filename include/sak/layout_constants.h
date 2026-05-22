@@ -53,12 +53,13 @@ constexpr int kTimerHealthPollMs = 10'000;    ///< Migration health check
 // Process timeouts (milliseconds)
 // ============================================================================
 
-constexpr int kTimeoutProcessStartMs = 5000;       ///< waitForStarted
+constexpr int kTimeoutProcessStartMs = 5000;       ///< Process startup timeout
 constexpr int kTimeoutProcessShortMs = 5000;       ///< Quick process finish
 constexpr int kTimeoutProcessMediumMs = 10'000;    ///< Medium process (aria2c start, app scan)
 constexpr int kTimeoutProcessLongMs = 30'000;      ///< Long process (diskpart, bcdboot)
 constexpr int kTimeoutProcessVeryLongMs = 60'000;  ///< Very long process (format, listISO)
 constexpr int kTimeoutProcessResetMs = 20'000;     ///< WSReset / audio reset
+constexpr int kTimeoutProcessTerminateMs = 5000;   ///< Grace period after process termination
 constexpr int kTimeoutStoreReinstallMs = 45'000;   ///< Windows Store reinstall
 constexpr int kTimeoutRestorePointMs = 90'000;     ///< System restore point creation
 constexpr int kTimeoutDismCheckMs = 120'000;       ///< DISM CheckHealth / update install
@@ -68,7 +69,7 @@ constexpr int kTimeoutDismScanMs = 600'000;        ///< DISM ScanHealth (10 min)
 constexpr int kTimeoutMalwareScanMs = 900'000;     ///< Malware scan (15 min)
 constexpr int kTimeoutSystemRepairMs = 1'800'000;  ///< SFC / DISM RestoreHealth (30 min)
 constexpr int kTimeoutDefragMs = 3'600'000;        ///< Disk defragmentation (60 min)
-constexpr int kTimeoutNetworkReadMs = 15'000;      ///< waitForReadyRead
+constexpr int kTimeoutNetworkReadMs = 15'000;      ///< Network read timeout
 constexpr int kTimeoutChocoListMs = 15'000;        ///< Chocolatey list packages
 constexpr int kTimeoutThermalQueryMs = 10'000;     ///< Combined thermal sensor query
 constexpr int kTimeoutSmartQueryMs = 5000;         ///< SMART disk query

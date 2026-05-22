@@ -27,7 +27,10 @@ repos:
       - id: check-json
       - id: check-toml
       - id: check-added-large-files
-        args: [--maxkb=4096]
+        # The portable release vendors win32-mcp-server.exe so GitHub builds do
+        # not depend on PyPI, parent repos, or developer machines. Keep this cap
+        # just above that intentional release asset rather than bypassing hooks.
+        args: [--maxkb=51200]
       - id: check-merge-conflict
       - id: check-case-conflict
 

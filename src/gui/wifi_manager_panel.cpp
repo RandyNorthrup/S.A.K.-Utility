@@ -9,6 +9,7 @@
 #include "sak/detachable_log_window.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
+#include "sak/process_runner.h"
 #include "sak/style_constants.h"
 #include "sak/widget_helpers.h"
 
@@ -22,6 +23,7 @@
 #include <QDir>
 #include <QFileDialog>
 #include <QFormLayout>
+#include <QFutureWatcher>
 #include <QGridLayout>
 #include <QGroupBox>
 #include <QHBoxLayout>
@@ -39,7 +41,7 @@
 #include <QPainter>
 #include <QPainterPath>
 #include <QPdfWriter>
-#include <QProcess>
+#include <QPointer>
 #include <QPushButton>
 #include <QRegularExpression>
 #include <QScrollArea>
@@ -49,6 +51,7 @@
 #include <QStandardPaths>
 #include <QStyleOptionButton>
 #include <QTableWidgetItem>
+#include <QtConcurrent>
 #include <QTemporaryFile>
 #include <QTextStream>
 #include <QToolButton>
@@ -1426,36 +1429,62 @@ void WifiManagerPanel::onScanNetworksClicked() {
                          sak::kTimerStatusWarnMs);
     return;
 #else
-    QStringList profileNames = scanWindowsProfileNames();
+    m_scan_networks_btn->setEnabled(false);
+    Q_EMIT statusMessage("Scanning known Windows WiFi profiles...", 0);
 
-    if (profileNames.isEmpty()) {
-        Q_EMIT statusMessage("No known WiFi profiles found.", sak::kTimerStatusMessageMs);
-        return;
-    }
+    auto* watcher = new QFutureWatcher<QList<WifiConfig>>(this);
+    QPointer<WifiManagerPanel> panel(this);
+    connect(watcher, &QFutureWatcher<QList<WifiConfig>>::finished, this, [watcher, panel]() {
+        watcher->deleteLater();
+        if (!panel) {
+            return;
+        }
 
-    int added = 0;
-    for (const QString& name : profileNames) {
-        WifiConfig cfg = parseWindowsWifiProfile(name);
-        addRowToTable(cfg);
-        ++added;
-    }
+        panel->m_scan_networks_btn->setEnabled(true);
+        const QList<WifiConfig> configs = watcher->result();
+        if (configs.isEmpty()) {
+            Q_EMIT panel->statusMessage("No known WiFi profiles found.",
+                                        sak::kTimerStatusMessageMs);
+            return;
+        }
 
-    Q_EMIT statusMessage(QString("Added %1 known network(s) to table.").arg(added),
-                         sak::kTimerStatusDefaultMs);
+        int added = 0;
+        for (const WifiConfig& cfg : configs) {
+            if (cfg.ssid.isEmpty()) {
+                continue;
+            }
+            panel->addRowToTable(cfg);
+            ++added;
+        }
+
+        Q_EMIT panel->statusMessage(QString("Added %1 known network(s) to table.").arg(added),
+                                    sak::kTimerStatusDefaultMs);
+    });
+
+    watcher->setFuture(QtConcurrent::run([]() {
+        QList<WifiConfig> configs;
+        const QStringList profile_names = scanWindowsProfileNames();
+        configs.reserve(profile_names.size());
+        for (const QString& name : profile_names) {
+            WifiConfig cfg = parseWindowsWifiProfile(name);
+            if (!cfg.ssid.isEmpty()) {
+                configs.append(cfg);
+            }
+        }
+        return configs;
+    }));
 #endif
 }
 
-QStringList WifiManagerPanel::scanWindowsProfileNames() const {
-    QProcess proc;
-    proc.start("netsh", QStringList{"wlan", "show", "profiles"});
-    if (!proc.waitForStarted(sak::kTimeoutProcessStartMs)) {
+QStringList WifiManagerPanel::scanWindowsProfileNames() {
+    const auto result = sak::runProcess(
+        QStringLiteral("netsh"),
+        {QStringLiteral("wlan"), QStringLiteral("show"), QStringLiteral("profiles")},
+        sak::kTimerNetshWaitMs);
+    if (!result.succeeded()) {
         return {};
     }
-    if (!proc.waitForFinished(sak::kTimerNetshWaitMs)) {
-        return {};
-    }
-
-    const QString output = QString::fromLocal8Bit(proc.readAllStandardOutput());
+    const QString output = result.std_out;
     QStringList profileNames;
     const QRegularExpression nameRe(R"(:\s+(.+)$)");
     for (const QString& line : output.split('\n')) {
@@ -1476,21 +1505,20 @@ QStringList WifiManagerPanel::scanWindowsProfileNames() const {
     return profileNames;
 }
 
-WifiManagerPanel::WifiConfig WifiManagerPanel::parseWindowsWifiProfile(
-    const QString& profileName) const {
+WifiManagerPanel::WifiConfig WifiManagerPanel::parseWindowsWifiProfile(const QString& profileName) {
     Q_ASSERT(!profileName.isEmpty());
-    QProcess p2;
-    p2.start("netsh", QStringList{"wlan", "show", "profile", "name=" + profileName, "key=clear"});
-    if (!p2.waitForStarted(sak::kTimeoutProcessStartMs)) {
-        return {};
-    }
-    if (!p2.waitForFinished(sak::kTimeoutProcessShortMs)) {
+    const auto result = sak::runProcess(QStringLiteral("netsh"),
+                                        {QStringLiteral("wlan"),
+                                         QStringLiteral("show"),
+                                         QStringLiteral("profile"),
+                                         QStringLiteral("name=") + profileName,
+                                         QStringLiteral("key=clear")},
+                                        sak::kTimeoutProcessShortMs);
+    if (!result.succeeded()) {
         sak::logWarning("Timed out parsing WiFi profile: {}", profileName.toStdString());
-        p2.kill();
-        p2.waitForFinished(2000);
         return {};
     }
-    const QString detail = QString::fromLocal8Bit(p2.readAllStandardOutput());
+    const QString detail = result.std_out;
 
     QString password;
     QString security = "WPA/WPA2/WPA3";
@@ -1608,7 +1636,23 @@ void WifiManagerPanel::onAddToWindowsClicked() {
     Q_EMIT statusMessage("Add to Windows is only supported on Windows.", sak::kTimerStatusWarnMs);
     return;
 #else
-    // Collect checked rows
+    const QList<int> checkedRows = checkedWifiRows();
+    if (checkedRows.isEmpty()) {
+        Q_EMIT statusMessage("Check at least one network row first.", sak::kTimerStatusMessageMs);
+        return;
+    }
+
+    const QList<WifiConfig> configs = configsFromRows(checkedRows);
+    if (configs.isEmpty()) {
+        Q_EMIT statusMessage("Checked rows do not contain any SSIDs.", sak::kTimerStatusMessageMs);
+        return;
+    }
+
+    startAddToWindowsProfiles(configs);
+#endif
+}
+
+QList<int> WifiManagerPanel::checkedWifiRows() const {
     QList<int> checkedRows;
     for (int row_index = 0; row_index < m_network_table->rowCount(); ++row_index) {
         auto* item = m_network_table->item(row_index, COL_SELECT);
@@ -1616,37 +1660,63 @@ void WifiManagerPanel::onAddToWindowsClicked() {
             checkedRows.append(row_index);
         }
     }
-    if (checkedRows.isEmpty()) {
-        Q_EMIT statusMessage("Check at least one network row first.", sak::kTimerStatusMessageMs);
-        return;
-    }
+    return checkedRows;
+}
 
-    int added = 0, failed = 0;
-    for (int row : checkedRows) {
+QList<WifiManagerPanel::WifiConfig> WifiManagerPanel::configsFromRows(
+    const QList<int>& rows) const {
+    QList<WifiConfig> configs;
+    configs.reserve(rows.size());
+    for (int row : rows) {
         const WifiConfig cfg = configFromRow(row);
-        if (cfg.ssid.isEmpty()) {
-            continue;
+        if (!cfg.ssid.isEmpty()) {
+            configs.append(cfg);
         }
+    }
+    return configs;
+}
 
-        const QString xml = buildWlanProfileXml(cfg);
-        if (installWlanProfile(xml, row)) {
+void WifiManagerPanel::startAddToWindowsProfiles(const QList<WifiConfig>& configs) {
+    m_add_to_windows_btn->setEnabled(false);
+    Q_EMIT statusMessage("Adding selected network(s) to Windows WiFi profiles...", 0);
+
+    auto* watcher = new QFutureWatcher<QPair<int, int>>(this);
+    QPointer<WifiManagerPanel> panel(this);
+    connect(watcher, &QFutureWatcher<QPair<int, int>>::finished, this, [watcher, panel]() {
+        watcher->deleteLater();
+        if (!panel) {
+            return;
+        }
+        panel->m_add_to_windows_btn->setEnabled(true);
+        const auto [added, failed] = watcher->result();
+        if (failed == 0) {
+            Q_EMIT panel->statusMessage(
+                QString("Added %1 network(s) to Windows WiFi profiles.").arg(added), 5000);
+        } else {
+            Q_EMIT panel->statusMessage(QString("Added %1 network(s); %2 failed"
+                                                " (try running as Administrator).")
+                                            .arg(added)
+                                            .arg(failed),
+                                        6000);
+        }
+    });
+
+    watcher->setFuture(
+        QtConcurrent::run([configs]() { return WifiManagerPanel::installWlanProfiles(configs); }));
+}
+
+QPair<int, int> WifiManagerPanel::installWlanProfiles(const QList<WifiConfig>& configs) {
+    int added = 0;
+    int failed = 0;
+    for (int index = 0; index < configs.size(); ++index) {
+        const QString xml = WifiManagerPanel::buildWlanProfileXml(configs.at(index));
+        if (WifiManagerPanel::installWlanProfile(xml, index)) {
             ++added;
         } else {
             ++failed;
         }
     }
-
-    if (failed == 0) {
-        Q_EMIT statusMessage(QString("Added %1 network(s) to Windows WiFi profiles.").arg(added),
-                             5000);
-    } else {
-        Q_EMIT statusMessage(QString("Added %1 network(s); %2 failed"
-                                     " (try running as Administrator).")
-                                 .arg(added)
-                                 .arg(failed),
-                             6000);
-    }
-#endif
+    return QPair<int, int>{added, failed};
 }
 
 QString WifiManagerPanel::buildWlanProfileXml(const WifiConfig& cfg) {
@@ -1712,18 +1782,18 @@ bool WifiManagerPanel::installWlanProfile(const QString& xml, int row) {
 
     const QString tmpPath = tmpFile.fileName();
 
-    QProcess proc;
-    proc.start("netsh", QStringList{"wlan", "add", "profile", "filename=" + tmpPath, "user=all"});
-    if (!proc.waitForStarted(sak::kTimeoutProcessStartMs)) {
-        return false;
-    }
-    if (!proc.waitForFinished(sak::kTimerNetshWaitMs)) {
+    const auto result = sak::runProcess(QStringLiteral("netsh"),
+                                        {QStringLiteral("wlan"),
+                                         QStringLiteral("add"),
+                                         QStringLiteral("profile"),
+                                         QStringLiteral("filename=") + tmpPath,
+                                         QStringLiteral("user=all")},
+                                        sak::kTimerNetshWaitMs);
+    if (result.timed_out) {
         sak::logError("Timed out installing WLAN profile");
-        proc.kill();
-        proc.waitForFinished(2000);
         return false;
     }
-    return proc.exitCode() == 0;
+    return result.succeeded();
 }
 
 // -----------------------------------------------------------------------------

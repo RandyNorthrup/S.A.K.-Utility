@@ -9,6 +9,8 @@ namespace sak::app_paths {
 
 [[nodiscard]] QString applicationDirectory();
 [[nodiscard]] QString dataRoot();
+[[nodiscard]] QString configDirectory();
+[[nodiscard]] QString configFilePath();
 [[nodiscard]] QString logsDirectory();
 [[nodiscard]] QString tempDirectory();
 [[nodiscard]] bool ensureDirectory(const QString& path);

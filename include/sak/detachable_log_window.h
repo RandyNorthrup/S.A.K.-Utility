@@ -6,9 +6,13 @@
 #include <QTextEdit>
 #include <QWidget>
 
+class QEvent;
+class QPushButton;
 class QTimer;
 
 namespace sak {
+
+class FollowScrollController;
 
 /**
  * @brief A shared log window that snaps to the main window's right edge.
@@ -41,6 +45,7 @@ public:
     void repositionIfAnchored();
 
 protected:
+    bool eventFilter(QObject* watched, QEvent* event) override;
     void showEvent(QShowEvent* event) override;
     void closeEvent(QCloseEvent* event) override;
     void moveEvent(QMoveEvent* event) override;
@@ -53,6 +58,8 @@ private:
     QWidget* findMainWindow() const;
 
     QTextEdit* m_logEdit{nullptr};
+    QPushButton* m_jumpToNewestButton{nullptr};
+    FollowScrollController* m_logScrollController{nullptr};
     bool m_anchored{true};
     bool m_programmaticMove{false};
     QTimer* m_snapTimer{nullptr};

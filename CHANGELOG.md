@@ -6,6 +6,18 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+## v0.9.1.4
+
+- **AI assistant hardening** - Split prompt assembly, provider gateway/tool routing, package/offline/workflow runners, transcript UI, health tracking, trace recording, and policy checks into focused units with explicit error reporting.
+- **MCP/provider bundling** - Added portable provider manifests and bundled MCP assets for Win32 app control, Context7 public docs, and Microsoft Docs, with runtime allowlists, availability checks, health/backoff tracking, and release bundle validation.
+- **App-control policy** - Added manifest-gated app actions and explicit rules that unsupported app automation fails loudly. Package/app flows now require installed-before-install checks and explicit install intent.
+- **Replay, diagnostics, and search** - Added redacted replay traces, provider/tool health diagnostics, capped session search artifacts, and tests for trace redaction, MCP policy, package intent, and tool availability failures.
+- **Portable release readiness** - Added clean-extract staging, archive, startup smoke, release readiness, blocking-pattern, third-party license, and portable runtime-state checks. Release documentation now separates unsigned local preflight from signed publication gates.
+- **Async and runtime cleanup** - Removed remaining AI-surface blocking wait patterns and hardened broader app process/network execution paths with centralized runner behavior, timeout handling, startup smoke mode, and portable config/log state.
+- **Tests** - Current suite: 128 registered CTest tests.
+
+---
+
 ## v0.9.1.3
 
 - **AI Assistant Panel v1** - First-tab Codex-style technician workspace with prompt/result chat bubbles, session picker, custom chat names, prompt history, context/instruction chips, workflow details, artifacts button, report generation, and global status-bar integration.

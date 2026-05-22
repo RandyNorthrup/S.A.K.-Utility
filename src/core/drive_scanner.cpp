@@ -8,8 +8,11 @@
 
 #include <QDir>
 #include <QtGlobal>
+#include <QVector>
 
 #include <algorithm>
+#include <cwchar>
+#include <vector>
 
 #include <cfgmgr32.h>
 #include <dbt.h>
@@ -25,6 +28,47 @@ bool containsDevicePath(const QList<sak::DriveInfo>& drives, const QString& devi
     return std::any_of(drives.begin(), drives.end(), [&devicePath](const auto& drive) {
         return drive.devicePath == devicePath;
     });
+}
+
+QVector<int> enumeratePhysicalDriveNumbers() {
+    QVector<int> drive_numbers;
+    std::vector<wchar_t> buffer(32'768);
+
+    for (int attempt = 0; attempt < 3; ++attempt) {
+        const DWORD chars =
+            QueryDosDeviceW(nullptr, buffer.data(), static_cast<DWORD>(buffer.size()));
+        if (chars != 0) {
+            const wchar_t* current = buffer.data();
+            while (*current != L'\0') {
+                const QString name = QString::fromWCharArray(current);
+                const QString prefix = QStringLiteral("PhysicalDrive");
+                if (name.startsWith(prefix, Qt::CaseInsensitive)) {
+                    bool ok = false;
+                    const int number = name.mid(prefix.size()).toInt(&ok);
+                    if (ok && number >= 0) {
+                        drive_numbers.append(number);
+                    }
+                }
+                current += std::wcslen(current) + 1;
+            }
+            break;
+        }
+
+        if (GetLastError() != ERROR_INSUFFICIENT_BUFFER) {
+            break;
+        }
+        buffer.resize(buffer.size() * 2);
+    }
+
+    std::sort(drive_numbers.begin(), drive_numbers.end());
+    drive_numbers.erase(std::unique(drive_numbers.begin(), drive_numbers.end()),
+                        drive_numbers.end());
+
+    if (drive_numbers.isEmpty()) {
+        drive_numbers.append(0);
+    }
+
+    return drive_numbers;
 }
 }  // anonymous namespace
 
@@ -113,8 +157,8 @@ void DriveScanner::scanDrives() {
     m_isScanning = true;
     QList<sak::DriveInfo> newDrives;
 
-    // Enumerate physical drives (0-99 should be more than enough)
-    for (int driveNumber = 0; driveNumber < 100; ++driveNumber) {
+    const QVector<int> drive_numbers = enumeratePhysicalDriveNumbers();
+    for (const int driveNumber : drive_numbers) {
         sak::DriveInfo info = queryDriveInfo(driveNumber);
         if (info.isValid()) {
             newDrives.append(info);

@@ -4,8 +4,11 @@
 /// @file test_config_manager.cpp
 /// @brief Unit tests for ConfigManager singleton -- load, save, defaults, signals
 
+#include "sak/app_paths.h"
 #include "sak/config_manager.h"
 
+#include <QCoreApplication>
+#include <QDir>
 #include <QSignalSpy>
 #include <QtTest/QtTest>
 #include <QVariant>
@@ -18,6 +21,7 @@ private Q_SLOTS:
 
     // Singleton
     void instance_returnsSameObject();
+    void configPath_isPortableAppLocal();
 
     // Basic get/set
     void setValue_getValue();
@@ -66,6 +70,15 @@ void ConfigManagerTests::instance_returnsSameObject() {
     auto& a = sak::ConfigManager::instance();
     auto& b = sak::ConfigManager::instance();
     QCOMPARE(&a, &b);
+}
+
+void ConfigManagerTests::configPath_isPortableAppLocal() {
+    const QString appDir = QDir::cleanPath(QCoreApplication::applicationDirPath());
+    const QString configPath = QDir::cleanPath(sak::app_paths::configFilePath());
+    QVERIFY2(configPath.startsWith(appDir + QLatin1Char('/')),
+             qPrintable(QStringLiteral("Config path is not app-local: %1").arg(configPath)));
+    QVERIFY2(configPath.endsWith(QStringLiteral("/data/config/Utility.ini")),
+             qPrintable(QStringLiteral("Unexpected config path: %1").arg(configPath)));
 }
 
 // ============================================================================

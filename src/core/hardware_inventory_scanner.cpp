@@ -8,11 +8,11 @@
 
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
+#include "sak/process_runner.h"
 
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
-#include <QProcess>
 #include <QStorageInfo>
 
 #ifdef SAK_PLATFORM_WINDOWS
@@ -187,28 +187,28 @@ QVector<QVariantMap> HardwareInventoryScanner::wmiQuery(const QString& wmi_class
                                    "ConvertTo-Json -Compress")
                                    .arg(wmi_class, prop_list);
 
-    QProcess ps;
-    ps.setProcessChannelMode(QProcess::MergedChannels);
-    ps.start("powershell.exe", {"-NoProfile", "-NoLogo", "-Command", ps_command});
+    const auto result =
+        sak::runProcess(QStringLiteral("powershell.exe"),
+                        {QStringLiteral("-NoProfile"),
+                         QStringLiteral("-NoLogo"),
+                         QStringLiteral("-Command"),
+                         ps_command},
+                        timeout_ms,
+                        [this]() { return m_cancelled.load(std::memory_order_relaxed); });
 
-    if (!ps.waitForStarted(sak::kTimeoutProcessStartMs)) {
-        logError("PowerShell failed to start for WMI query on class {}", wmi_class.toStdString());
-        return {};
-    }
-    if (!ps.waitForFinished(timeout_ms)) {
+    if (result.timed_out) {
         logError("WMI query timed out for class {}", wmi_class.toStdString());
-        ps.kill();
         return {};
     }
 
-    if (ps.exitCode() != 0) {
+    if (result.exit_code != 0 || result.cancelled) {
         logError("WMI query failed for class {} (exit code {})",
                  wmi_class.toStdString(),
-                 ps.exitCode());
+                 result.exit_code);
         return {};
     }
 
-    const QByteArray output = ps.readAllStandardOutput().trimmed();
+    const QByteArray output = result.std_out.toUtf8().trimmed();
     if (output.isEmpty()) {
         return {};
     }

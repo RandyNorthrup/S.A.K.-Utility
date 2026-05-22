@@ -6,12 +6,13 @@
 
 #include "sak/ethernet_config_manager.h"
 
+#include "sak/process_runner.h"
+
 #include <QDateTime>
 #include <QFile>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
-#include <QProcess>
 #include <QRegularExpression>
 #include <QSysInfo>
 #include <QTextStream>
@@ -322,29 +323,21 @@ QStringList EthernetConfigManager::listEthernetAdapters() {
 
 QString EthernetConfigManager::runNetsh(const QStringList& args) {
     Q_ASSERT(!args.isEmpty());
-    QProcess proc;
-    proc.setProgram("netsh.exe");
-    proc.setArguments(args);
-    proc.start();
 
-    if (!proc.waitForStarted(5000)) {
-        Q_EMIT errorOccurred(QString("Failed to start netsh: netsh %1").arg(args.join(' ')));
-        return {};
-    }
-
-    if (!proc.waitForFinished(10'000)) {
+    const auto result = sak::runProcess(QStringLiteral("netsh.exe"), args, 10'000);
+    if (result.timed_out) {
         Q_EMIT errorOccurred(QString("netsh command timed out: netsh %1").arg(args.join(' ')));
         return {};
     }
 
-    if (proc.exitCode() != 0) {
-        QString errOutput = QString::fromLocal8Bit(proc.readAllStandardError()).trimmed();
+    if (result.exit_code != 0) {
+        QString errOutput = result.std_err.trimmed();
         if (!errOutput.isEmpty()) {
             Q_EMIT errorOccurred(QString("netsh error: %1").arg(errOutput));
         }
     }
 
-    return QString::fromLocal8Bit(proc.readAllStandardOutput());
+    return result.std_out;
 }
 
 EthernetConfigSnapshot EthernetConfigManager::parseNetshConfig(const QString& output,

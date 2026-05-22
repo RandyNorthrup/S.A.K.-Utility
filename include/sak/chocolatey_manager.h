@@ -5,7 +5,6 @@
 
 #include <QMap>
 #include <QObject>
-#include <QProcess>
 #include <QString>
 #include <QStringList>
 
@@ -133,8 +132,6 @@ private:
     bool m_initialized;
     int m_default_timeout_seconds;
     bool m_auto_confirm;
-
-    QProcess* m_current_process;  // Active process (for cancellation)
 };
 
 }  // namespace sak

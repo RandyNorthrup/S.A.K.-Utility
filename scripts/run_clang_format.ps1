@@ -17,6 +17,10 @@ $ErrorActionPreference = "Stop"
 $ProjectRoot = Split-Path -Parent (Split-Path -Parent $PSCommandPath)
 Set-Location $ProjectRoot
 
+if ($args.Count -gt 0) {
+    $Files += $args
+}
+
 function Find-ClangFormat {
     $fromPath = Get-Command clang-format.exe -ErrorAction SilentlyContinue
     if ($fromPath) {

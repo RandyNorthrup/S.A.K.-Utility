@@ -6,11 +6,11 @@
 #include "sak/bundled_tools_manager.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
+#include "sak/process_runner.h"
 
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
-#include <QProcess>
 #include <QStandardPaths>
 
 #ifdef _WIN32
@@ -189,25 +189,19 @@ bool AppScanner::isSystemComponent(const QString& name) {
 std::vector<AppScanner::AppInfo> AppScanner::scanAppX() {
     std::vector<AppInfo> apps;
 
-    // Use PowerShell to enumerate AppX packages
-    QProcess process;
-    process.setProgram("powershell.exe");
-    process.setArguments({"-NoProfile",
-                          "-Command",
-                          "Get-AppxPackage | Select-Object Name,Version,Publisher,InstallLocation "
-                          "| ConvertTo-Json"});
-
-    process.start();
-    if (!process.waitForStarted(sak::kTimeoutProcessStartMs)) {
-        sak::logWarning("AppScanner: PowerShell failed to start for AppX scan");
-        return apps;
-    }
-    if (!process.waitForFinished(sak::kTimeoutProcessLongMs)) {
-        sak::logWarning("AppScanner: PowerShell timeout while scanning AppX packages");
+    const auto result = sak::runProcess(
+        QStringLiteral("powershell.exe"),
+        {QStringLiteral("-NoProfile"),
+         QStringLiteral("-Command"),
+         QStringLiteral("Get-AppxPackage | Select-Object Name,Version,Publisher,InstallLocation "
+                        "| ConvertTo-Json")},
+        sak::kTimeoutProcessLongMs);
+    if (!result.succeeded()) {
+        sak::logWarning("AppScanner: PowerShell failed/timed out while scanning AppX packages");
         return apps;
     }
 
-    QString output = QString::fromUtf8(process.readAllStandardOutput());
+    QString output = result.std_out;
 
     QJsonParseError error{};
     QJsonDocument doc = QJsonDocument::fromJson(output.toUtf8(), &error);
@@ -260,24 +254,18 @@ std::vector<AppScanner::AppInfo> AppScanner::scanChocolatey() {
         }
     }
 
-    QProcess process;
-    process.setProgram(choco_path);
-    process.setArguments({"list", "--local-only", "--limit-output"});
-
-    process.start();
-    if (!process.waitForStarted(sak::kTimeoutProcessStartMs)) {
-        sak::logWarning("AppScanner: Chocolatey process failed to start");
-        return apps;
-    }
-    if (!process.waitForFinished(sak::kTimeoutProcessMediumMs)) {
+    const auto result = sak::runProcess(
+        choco_path,
+        {QStringLiteral("list"), QStringLiteral("--local-only"), QStringLiteral("--limit-output")},
+        sak::kTimeoutProcessMediumMs);
+    if (!result.succeeded()) {
         sak::logWarning(
-            "Chocolatey package scan timed out after 10s -- choco may not be installed "
+            "Chocolatey package scan failed/timed out after 10s -- choco may not be installed "
             "or is unresponsive");
-        process.kill();
         return apps;
     }
 
-    QString output = QString::fromUtf8(process.readAllStandardOutput());
+    QString output = result.std_out;
 
     QStringList lines = output.split('\n', Qt::SkipEmptyParts);
     for (const auto& line : lines) {

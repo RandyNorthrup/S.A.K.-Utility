@@ -10,6 +10,7 @@
 #include <QLineEdit>
 #include <QList>
 #include <QModelIndex>
+#include <QPair>
 #include <QPushButton>
 #include <QString>
 #include <QTableWidget>
@@ -244,9 +245,9 @@ private:
     /** Returns true if any visible column in the given row matches @p text */
     bool rowMatchesSearch(int row, const QString& text) const;
     /** Scan Windows known WiFi profile names via netsh */
-    QStringList scanWindowsProfileNames() const;
+    static QStringList scanWindowsProfileNames();
     /** Parse a single Windows WiFi profile and return its config */
-    WifiConfig parseWindowsWifiProfile(const QString& profileName) const;
+    static WifiConfig parseWindowsWifiProfile(const QString& profileName);
 
     // -------------------------------------------------------------------------
     // Windows WiFi profile helpers
@@ -256,6 +257,10 @@ private:
 
     /** Write XML to a temp file and install via netsh; returns true on success */
     static bool installWlanProfile(const QString& xml, int row);
+    QList<int> checkedWifiRows() const;
+    QList<WifiConfig> configsFromRows(const QList<int>& rows) const;
+    void startAddToWindowsProfiles(const QList<WifiConfig>& configs);
+    static QPair<int, int> installWlanProfiles(const QList<WifiConfig>& configs);
 
     // -------------------------------------------------------------------------
     // Persistence

@@ -19,6 +19,7 @@
 #include <QTextEdit>
 #include <QWidget>
 
+#include <functional>
 #include <memory>
 #include <type_traits>
 
@@ -244,6 +245,12 @@ private:
     [[nodiscard]] const NetworkAdapterInfo* selectedAdapter() const;
     [[nodiscard]] QVector<const NetworkAdapterInfo*> selectedAdapters() const;
     bool runNetshCommand(const QStringList& args, QString* output = nullptr);
+    void runCommandAsync(const QString& program,
+                         const QStringList& args,
+                         int timeout_ms,
+                         std::function<void(bool success, QString output)> callback);
+    void runNetshCommandAsync(const QStringList& args,
+                              std::function<void(bool success, QString output)> callback);
     void addTypeSpecificMenuItems(QMenu& menu,
                                   const NetworkAdapterInfo& adapter,
                                   const QVector<const NetworkAdapterInfo*>& selected);

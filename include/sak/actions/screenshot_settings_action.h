@@ -49,7 +49,6 @@ private:
     void captureScreen(const QString& filename);
     void openSettings(const QString& page);
     void captureScreen();
-    void waitForWindow(int ms);
 
     static QMap<QString, QString> buildSettingsPageMap();
     bool captureSettingsPage(const QString& ms_uri,

@@ -6,7 +6,7 @@ Use this when starting hands-on testing of the AI Assistant panel.
 
 - App: `build\Release\sak_utility.exe`
 - Helper: `build\Release\sak_elevated_helper.exe`
-- Automated baseline: passed `111/111` tests on May 14, 2026.
+- Automated baseline: passed `128/128` tests on May 20, 2026.
 - Smoke script: `scripts\ai_smoke_checklist.ps1 -RunAutomated -RunLiveOpenAI`
   passed on May 14, 2026.
 
@@ -43,8 +43,9 @@ Expected:
 - Chips fit and remove cleanly.
 - Artifacts are stored under a folder named after the chat session.
 - `memory.md`, `activity.jsonl`, `trace.jsonl`, and `run_state.json` update.
+- `turn_replay.jsonl` updates with compact run/tool replay records.
 
-## Pass 2: Local Diagnostic Tooling
+## Pass 2: Local Diagnostic Toolings
 
 Prompt:
 
@@ -101,6 +102,142 @@ Expected:
 - Post-run verification records exit code and task evidence.
 - Cleanup removes the downloaded tool file after preserving logs, hashes,
   source URL, and generated reports.
+
+## Pass 3B: Provider Gateway and App Control
+
+Prompt:
+
+```text
+show provider status for the bundled MCP and documentation providers
+```
+
+Expected:
+
+- `sak_provider_gateway` runs before raw shell probing.
+- Microsoft Learn MCP and Context7 show as HTTP providers requiring network.
+- Microsoft Learn MCP reports no auth required.
+- Context7 reports no auth required and is used for public docs lookup.
+- `docs_query` can search Microsoft Learn and resolve Context7 library ids
+  through public Streamable HTTP MCP without any bundled API key.
+- `win32_mcp` shows available only when
+  `tools\mcp\win32-mcp-server\win32-mcp-server.exe` is bundled.
+- `tools\mcp\win32-mcp-server\THIRD_PARTY_LICENSES.txt` is present in bundled
+  builds and should be reviewed when updating Win32 MCP dependencies.
+- Planned providers such as browser/GitHub report planned or disabled instead
+  of pretending they are ready.
+- `operation=win32_mcp_call` can call bundled Win32 MCP tools when local tools
+  are enabled. Read-only tools use the Win32 MCP `read_only` profile; interactive
+  tools follow the selected AI access mode.
+- Repeated provider/tool failures become visible as structured
+  `failure_class` values. After repeated failures, the tool result should report
+  `health_suppressed` instead of retrying variants of the same broken path.
+- Unsupported or missing provider/app-control paths fail before execution with
+  `availability_denied`, not after speculative shell probing.
+
+Prompt:
+
+```text
+use Microsoft docs to look up Win32 UI Automation InvokePattern, then use
+Context7 to resolve Qt docs
+```
+
+Expected:
+
+- The assistant uses `sak_provider_gateway` with `operation=docs_query`.
+- Microsoft Learn returns documentation search results with content URLs.
+- Context7 returns candidate library ids such as Qt documentation ids.
+- No Context7 API key is requested, read, logged, or bundled.
+
+Prompt:
+
+```text
+use Win32 MCP to list visible windows matching SAK
+```
+
+Expected:
+
+- The assistant uses `sak_provider_gateway` with
+  `operation=win32_mcp_call`, `tool_name=list_windows`, and a text filter.
+- The result includes visible window metadata.
+- No GUI mutation is performed for this read-only observation.
+
+Prompt:
+
+```text
+can you run a SUPERAntiSpyware quick scan?
+```
+
+Expected:
+
+- The assistant checks the `superantispyware` app manifest before launching
+  executables.
+- It reports that quick/full/update actions are not yet validated for
+  non-interactive execution.
+- It does not reinstall SUPERAntiSpyware, brute-force helper EXEs, or exhaust
+  tool iterations.
+- If the model asks `sak_package_manager` to install/upgrade/uninstall during
+  this scan request, tool policy blocks the call and reports the scan/install
+  intent mismatch.
+- It offers a manual GUI path or another scanner with a supported manifest,
+  such as Microsoft Defender.
+
+## Pass 3C: Session Search and Replay Trace
+
+Prompt:
+
+```text
+search previous AI sessions for SUPERAntiSpyware checksum mismatch
+```
+
+Expected:
+
+- Session search finds transcript and command-index hits when prior sessions
+  contain matching text.
+- The assistant uses `sak_session_search`; it does not grep binary artifacts or
+  broad filesystem trees.
+- Hits identify session title, source (`manifest`, `transcript`, or `command`),
+  and a compact snippet.
+- No raw binary logs are dumped during search.
+
+After any AI run, inspect session files:
+
+- `turn_replay.jsonl` contains compact records with `run_id`, `event_type`,
+  `status`, prompt hash, model when known, tool name when known, and metadata.
+- `trace.jsonl` remains the full trace; `turn_replay.jsonl` is the replayable
+  summary used for QA reproduction.
+
+Prompt:
+
+```text
+run a Microsoft Defender quick scan
+```
+
+Expected:
+
+- The assistant checks the `windows_defender` app manifest.
+- Because `quick_scan` is manifest-supported, it uses
+  `sak_provider_gateway` with `operation=app_run_action`.
+- The action runs `Start-MpScan -ScanType QuickScan` through the app action
+  execution path.
+- Assisted mode asks before execution. Unattended mode proceeds under the
+  existing access policy.
+- Result records command id, exit code, stdout/stderr, requested action, and
+  evidence hints.
+
+Prompt:
+
+```text
+run Windows System File Checker verify-only
+```
+
+Expected:
+
+- The assistant checks the `windows_sfc` app manifest.
+- Because `verify_only` is manifest-supported, it uses
+  `sak_provider_gateway` with `operation=app_run_action`.
+- The action runs `sfc.exe /verifyonly`; it does not run repair mode.
+- `scan_repair` is reported unsupported until an explicit repair workflow with
+  restore-point handling is selected.
 
 ## Pass 4: Workflow Input Gates
 
@@ -210,11 +347,28 @@ For each issue, record:
 - Relevant artifact/report path.
 - Whether Stop/Resume/Report still worked afterward.
 
+## Failure Triage
+
+| Failure class | Meaning | First check |
+| --- | --- | --- |
+| `policy_denied` | Tool request violated active access/package policy. | Confirm prompt intent and selected access mode. Scan requests must not install. |
+| `availability_denied` | Tool preflight failed before execution. | Open Run Details and check provider/app manifest, missing binary, unsupported action, or invalid args. |
+| `health_suppressed` | Tool/provider is in health-ledger backoff after repeated failures. | Run Details shows disabled-until, last failure class, latency, and last error. |
+| `handler_missing` | Model requested a known tool without a registered runner. | Treat as app bug; tool dispatcher registration is incomplete. |
+| `timeout` | Tool/provider transport did not complete in time. | Check process tree cleanup, provider health, and artifact logs. |
+| `checksum_mismatch` | Package/download integrity check failed. | Do not bypass checksums or run cached installers. Report expected/actual hashes and stop. |
+
 ## Ready Criteria
 
 Manual QA can proceed when:
 
 - App launches from `build\Release\sak_utility.exe`.
+- Release package creation refuses missing MCP/provider/app-control files:
+  `win32-mcp-server.exe`, its `THIRD_PARTY_LICENSES.txt`, `providers.json`,
+  `windows_defender.json`, `superantispyware.json`, and `windows_sfc.json`.
+- Clean extracted release folder has no `*.local.json`, no `tools\mcp\_build`,
+  and no Chocolatey runtime state under `tools\chocolatey\lib-bad`, `cache`, or
+  `temp`.
 - API key status shows loaded without displaying the key.
 - A simple chat turn works.
 - A read-only local tool turn works.

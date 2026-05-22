@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "id": "windows_sfc",
+  "display_name": "Windows System File Checker",
+  "providers": [
+    "microsoft_docs",
+    "filesystem"
+  ],
+  "detect": {
+    "commands": [
+      "Get-Command sfc.exe"
+    ],
+    "process_names": [
+      "sfc.exe"
+    ]
+  },
+  "actions": {
+    "verify_only": {
+      "supported": true,
+      "method": "powershell",
+      "requires_admin": true,
+      "command": "sfc.exe /verifyonly",
+      "timeout_seconds": 7200,
+      "evidence": [
+        "process_exit_code",
+        "%windir%\\Logs\\CBS\\CBS.log"
+      ]
+    },
+    "scan_repair": {
+      "supported": false,
+      "method": "manual_approval_required",
+      "reason": "SFC repair mutates protected system files. Use only through an explicit repair workflow with restore-point handling and technician approval."
+    }
+  }
+}

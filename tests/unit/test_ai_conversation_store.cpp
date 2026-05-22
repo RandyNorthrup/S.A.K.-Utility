@@ -10,12 +10,16 @@
 #include <QTemporaryDir>
 #include <QtTest/QtTest>
 
+#include <algorithm>
+
 class AiConversationStoreTests : public QObject {
     Q_OBJECT
 
 private Q_SLOTS:
     void startSession_writesManifestAndListsSession();
     void appendTranscript_loadsDisplayLines();
+    void listPromptedSessions_filtersUnpromptedSessions();
+    void clearCurrentSession_preventsAccidentalWrites();
     void writeUsage_persistsUsageJson();
     void commandLogPath_createsLogsDirectoryAndReturnsPath();
     void artifactPath_createsSubdirectoryAndReturnsPath();
@@ -23,6 +27,7 @@ private Q_SLOTS:
     void memoryFile_appendsEntries();
     void memoryFile_initializesStructuredSections();
     void memoryFile_trimPreservesStructuredSections();
+    void searchSessions_findsTranscriptAndCommandIndex();
 };
 
 void AiConversationStoreTests::startSession_writesManifestAndListsSession() {
@@ -55,6 +60,39 @@ void AiConversationStoreTests::appendTranscript_loadsDisplayLines() {
     QCOMPARE(lines.size(), 2);
     QCOMPARE(lines[0], QStringLiteral("\n[USER REQUEST]\ncheck disk"));
     QCOMPARE(lines[1], QStringLiteral("\n[ASSISTANT RESULT]\ndisk ok"));
+}
+
+void AiConversationStoreTests::listPromptedSessions_filtersUnpromptedSessions() {
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    sak::ai::ConversationStore store(temp.path());
+    QString error;
+    QVERIFY(store.startSession(QStringLiteral("Empty"), &error));
+    const QString empty_id = store.currentSessionId();
+    QVERIFY(!empty_id.isEmpty());
+
+    QVERIFY(store.startSession(QStringLiteral("Prompted"), &error));
+    const QString prompted_id = store.currentSessionId();
+    QVERIFY(store.appendTranscript(QStringLiteral("You"), QStringLiteral("run scan"), {}, &error));
+
+    const auto sessions = store.listPromptedSessions();
+    QCOMPARE(sessions.size(), 1);
+    QCOMPARE(sessions.first().id, prompted_id);
+    QVERIFY(sessions.first().id != empty_id);
+}
+
+void AiConversationStoreTests::clearCurrentSession_preventsAccidentalWrites() {
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    sak::ai::ConversationStore store(temp.path());
+    QString error;
+    QVERIFY(store.startSession(QStringLiteral("Current"), &error));
+    store.clearCurrentSession();
+
+    QVERIFY(store.currentSessionId().isEmpty());
+    QVERIFY(
+        !store.appendTranscript(QStringLiteral("System"), QStringLiteral("not saved"), {}, &error));
+    QCOMPARE(error, QStringLiteral("No active AI session"));
 }
 
 void AiConversationStoreTests::writeUsage_persistsUsageJson() {
@@ -245,6 +283,39 @@ void AiConversationStoreTests::memoryFile_trimPreservesStructuredSections() {
             text.contains(QStringLiteral("older section content compacted by SAK")));
     QVERIFY(text.contains(QStringLiteral("Latest preserved finding")));
     QVERIFY(QFileInfo(file.fileName()).size() <= 256 * 1024);
+}
+
+void AiConversationStoreTests::searchSessions_findsTranscriptAndCommandIndex() {
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+
+    sak::ai::ConversationStore store(temp.path());
+    QString error;
+    QVERIFY(store.startSession(QStringLiteral("Spyware scan QA"), &error));
+    QVERIFY(store.appendTranscript(
+        QStringLiteral("You"), QStringLiteral("Run SUPERAntiSpyware scan"), {}, &error));
+    QVERIFY(store.appendCommand(QStringLiteral("Get-Process SUPERAntiSpyware"),
+                                QJsonObject{{QStringLiteral("success"), false},
+                                            {QStringLiteral("error_message"),
+                                             QStringLiteral("health_suppressed")}},
+                                &error));
+
+    const auto results = store.searchSessions(QStringLiteral("SUPERAntiSpyware"), 10, &error);
+    QVERIFY2(error.isEmpty(), qPrintable(error));
+    QVERIFY(results.size() >= 2);
+    QFile index_file(store.currentSessionInfo().path + QStringLiteral("/search_index.jsonl"));
+    QVERIFY(index_file.open(QIODevice::ReadOnly | QIODevice::Text));
+    const QJsonObject index_line =
+        QJsonDocument::fromJson(index_file.readLine().trimmed()).object();
+    QCOMPARE(index_line.value(QStringLiteral("schema_version")).toInt(), 1);
+    QVERIFY(std::any_of(results.cbegin(), results.cend(), [](const auto& hit) {
+        return hit.source == QStringLiteral("transcript") &&
+               hit.snippet.contains(QStringLiteral("SUPERAntiSpyware"));
+    }));
+    QVERIFY(std::any_of(results.cbegin(), results.cend(), [](const auto& hit) {
+        return hit.source == QStringLiteral("command") &&
+               hit.snippet.contains(QStringLiteral("SUPERAntiSpyware"));
+    }));
 }
 
 QTEST_GUILESS_MAIN(AiConversationStoreTests)

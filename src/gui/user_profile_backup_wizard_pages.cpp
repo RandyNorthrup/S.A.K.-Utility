@@ -5,6 +5,7 @@
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
 #include "sak/per_user_customization_dialog.h"
+#include "sak/process_runner.h"
 #include "sak/style_constants.h"
 #include "sak/user_profile_backup_wizard.h"
 #include "sak/wifi_profile_scanner.h"
@@ -2037,38 +2038,48 @@ void UserProfileBackupEthernetSettingsPage::onScanEthernet() {
     m_scanProgress->setRange(0, 0);
     m_ethernetTable->setRowCount(0);
 
-    QProcess process;
-    process.start("netsh", {"interface", "ipv4", "show", "config"});
-    if (!process.waitForStarted(sak::kTimeoutProcessStartMs)) {
-        sak::logError("netsh failed to start for ethernet adapter scan");
+    auto* watcher = new QFutureWatcher<QPair<bool, QString>>(this);
+    connect(watcher, &QFutureWatcher<QPair<bool, QString>>::finished, this, [this, watcher]() {
+        const auto [success, output] = watcher->result();
+        watcher->deleteLater();
+
         m_scanButton->setEnabled(true);
         m_scanProgress->setVisible(false);
-        m_statusLabel->setText(tr("Failed to start ethernet scan"));
-        return;
-    }
-    if (!process.waitForFinished(sak::kTimeoutNetworkReadMs)) {
-        sak::logError("Timed out scanning ethernet adapters for backup");
-        process.kill();
-        process.waitForFinished(2000);
-        m_scanButton->setEnabled(true);
-        m_scanProgress->setVisible(false);
-        m_statusLabel->setText(tr("Ethernet scan timed out"));
-        return;
-    }
 
-    QString output = QString::fromLocal8Bit(process.readAllStandardOutput());
-    auto configs = parseNetshEthernetOutput(output);
+        if (!success) {
+            m_statusLabel->setText(output);
+            return;
+        }
 
-    m_scanned = true;
-    m_scanButton->setEnabled(true);
-    m_selectAllButton->setEnabled(true);
-    m_selectNoneButton->setEnabled(true);
-    m_ethernetTable->setEnabled(true);
-    m_scanProgress->setVisible(false);
+        auto configs = parseNetshEthernetOutput(output);
+        m_scanned = true;
+        m_selectAllButton->setEnabled(true);
+        m_selectNoneButton->setEnabled(true);
+        m_ethernetTable->setEnabled(true);
 
-    m_statusLabel->setText(tr("Found %1 ethernet adapter(s)").arg(configs.size()));
-    populateTable(configs);
-    updateNextButtonText();
+        m_statusLabel->setText(tr("Found %1 ethernet adapter(s)").arg(configs.size()));
+        populateTable(configs);
+        updateNextButtonText();
+    });
+
+    watcher->setFuture(QtConcurrent::run([]() -> QPair<bool, QString> {
+        const auto process = runProcess(QStringLiteral("netsh"),
+                                        {QStringLiteral("interface"),
+                                         QStringLiteral("ipv4"),
+                                         QStringLiteral("show"),
+                                         QStringLiteral("config")},
+                                        sak::kTimeoutNetworkReadMs);
+        if (process.timed_out) {
+            sak::logError("Timed out scanning ethernet adapters for backup");
+            return {false, QStringLiteral("Ethernet scan timed out")};
+        }
+        if (process.exit_code != 0) {
+            sak::logError("netsh failed for ethernet adapter scan: {}",
+                          process.std_err.toStdString());
+            return {false, QStringLiteral("Failed to scan ethernet adapters")};
+        }
+        return {true, process.std_out};
+    }));
 }
 
 void UserProfileBackupEthernetSettingsPage::populateTable(

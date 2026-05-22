@@ -8,9 +8,14 @@
 
 #include "sak/logger.h"
 
+#include <QSemaphore>
 #include <QSslSocket>
+#include <QThread>
+#include <QTimer>
 
+#include <functional>
 #include <tuple>
+#include <utility>
 
 namespace sak {
 
@@ -18,6 +23,401 @@ namespace {
 constexpr int kImapDefaultTimeoutMs = 30'000;
 constexpr int kImapReadBufferSize = 8192;
 constexpr int kImapMaxMessageSize = 25 * 1024 * 1024;  // 25 MB
+
+struct ImapSessionResult {
+    bool success{false};
+    int uploaded{0};
+    int failed{0};
+    error_code error{error_code::success};
+    QString error_message;
+};
+
+QString formatImapDateForAppend(const QDateTime& date) {
+    static const char* kMonths[] = {
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
+
+    const QDateTime utc = date.toUTC();
+    return QStringLiteral("%1-%2-%3 %4:%5:%6 +0000")
+        .arg(utc.date().day(), 2, 10, QChar('0'))
+        .arg(QLatin1String(kMonths[utc.date().month() - 1]))
+        .arg(utc.date().year())
+        .arg(utc.time().hour(), 2, 10, QChar('0'))
+        .arg(utc.time().minute(), 2, 10, QChar('0'))
+        .arg(utc.time().second(), 2, 10, QChar('0'));
+}
+
+struct ImapSessionRequest {
+    const ImapServerConfig* config{nullptr};
+    bool upload_mode{false};
+    QString target_folder;
+    const QVector<QByteArray>* eml_contents{nullptr};
+    const QVector<QStringList>* flags_list{nullptr};
+    const QVector<QDateTime>* dates{nullptr};
+    const std::atomic<bool>* cancelled{nullptr};
+    std::function<void(int)> upload_started;
+    std::function<void(int, int, qint64)> upload_progress;
+    std::function<void(const QString&)> folder_created;
+};
+
+struct ImapSessionSinks {
+    ImapSessionResult* result{nullptr};
+    QSemaphore* done{nullptr};
+    QThread* owner_thread{nullptr};
+};
+
+class ImapSessionWorker final : public QObject {
+public:
+    ImapSessionWorker(ImapSessionRequest request, ImapSessionSinks sinks)
+        : m_request(std::move(request)), m_sinks(sinks) {}
+
+    void start() {
+        m_socket = new QSslSocket(this);
+        m_timeoutTimer = new QTimer(this);
+        m_timeoutTimer->setSingleShot(true);
+        m_cancelTimer = new QTimer(this);
+        m_cancelTimer->setInterval(100);
+        connectSignals();
+        m_cancelTimer->start();
+        resetTimeout();
+        startSocket();
+    }
+
+private:
+    const ImapServerConfig& config() const { return *m_request.config; }
+    const QVector<QByteArray>& messages() const { return *m_request.eml_contents; }
+    const QVector<QStringList>& flags() const { return *m_request.flags_list; }
+    const QVector<QDateTime>& dates() const { return *m_request.dates; }
+
+    int timeoutMs() const {
+        return config().timeout_seconds > 0 ? config().timeout_seconds * 1000
+                                            : kImapDefaultTimeoutMs;
+    }
+
+    void finish(bool success, error_code code = error_code::success, const QString& message = {}) {
+        if (m_finished) {
+            return;
+        }
+        m_finished = true;
+        m_timeoutTimer->stop();
+        m_cancelTimer->stop();
+        m_sinks.result->success = success;
+        m_sinks.result->error = code;
+        m_sinks.result->error_message = message;
+        m_socket->disconnectFromHost();
+        m_socket->deleteLater();
+        m_sinks.owner_thread->quit();
+        m_sinks.done->release();
+    }
+
+    void failConnection(const QString& message) {
+        logError("IMAP: {}", message.toStdString());
+        finish(false, error_code::connection_failed, message);
+    }
+
+    void resetTimeout() { m_timeoutTimer->start(timeoutMs()); }
+
+    void sendCommand(const QString& command, std::function<void(const QString&)> callback) {
+        ++m_tagCounter;
+        m_currentTag = QStringLiteral("A%1").arg(m_tagCounter, 4, 10, QChar('0'));
+        m_taggedCallback = std::move(callback);
+        m_waitingContinuation = false;
+        m_buffer.clear();
+        const QString full = m_currentTag + QStringLiteral(" ") + command + QStringLiteral("\r\n");
+        if (m_socket->write(full.toUtf8()) < 0) {
+            failConnection(m_socket->errorString());
+            return;
+        }
+        resetTimeout();
+    }
+
+    void appendNext() {
+        if (m_request.cancelled->load()) {
+            finish(false, error_code::operation_cancelled, QStringLiteral("Upload cancelled"));
+            return;
+        }
+        if (m_currentIndex >= messages().size()) {
+            finish(true);
+            return;
+        }
+        if (skipOversizedMessage()) {
+            appendNext();
+            return;
+        }
+        sendAppendCommand();
+    }
+
+    bool skipOversizedMessage() {
+        if (messages().at(m_currentIndex).size() <= kImapMaxMessageSize) {
+            return false;
+        }
+        logWarning("IMAP: message {} exceeds size limit, skipping", std::to_string(m_currentIndex));
+        ++m_sinks.result->failed;
+        ++m_currentIndex;
+        notifyUploadProgress();
+        return true;
+    }
+
+    void sendAppendCommand() {
+        ++m_tagCounter;
+        m_currentTag = QStringLiteral("A%1").arg(m_tagCounter, 4, 10, QChar('0'));
+        const QString command = m_currentTag + QStringLiteral(" APPEND \"%1\" %2%3{%4}\r\n")
+                                                   .arg(m_request.target_folder,
+                                                        flagsForCurrentMessage(),
+                                                        dateForCurrentMessage())
+                                                   .arg(messages().at(m_currentIndex).size());
+        m_pendingLiteral = messages().at(m_currentIndex) + "\r\n";
+        m_buffer.clear();
+        m_waitingContinuation = true;
+        m_taggedCallback = [this](const QString& response) {
+            handleAppendResponse(response);
+        };
+        if (m_socket->write(command.toUtf8()) < 0) {
+            failConnection(m_socket->errorString());
+            return;
+        }
+        resetTimeout();
+    }
+
+    QString flagsForCurrentMessage() const {
+        if (flags().at(m_currentIndex).isEmpty()) {
+            return {};
+        }
+        return QStringLiteral("(") + flags().at(m_currentIndex).join(QStringLiteral(" ")) +
+               QStringLiteral(") ");
+    }
+
+    QString dateForCurrentMessage() const {
+        if (!dates().at(m_currentIndex).isValid()) {
+            return {};
+        }
+        return QStringLiteral("\"") + formatImapDateForAppend(dates().at(m_currentIndex)) +
+               QStringLiteral("\" ");
+    }
+
+    void handleAppendResponse(const QString& response) {
+        if (response.contains(m_currentTag + QStringLiteral(" OK"))) {
+            ++m_sinks.result->uploaded;
+            m_bytesSent += messages().at(m_currentIndex).size();
+        } else {
+            ++m_sinks.result->failed;
+            logWarning("IMAP: failed to upload message {}", std::to_string(m_currentIndex));
+        }
+        ++m_currentIndex;
+        notifyUploadProgress();
+        appendNext();
+    }
+
+    void notifyUploadProgress() {
+        if (m_request.upload_progress) {
+            m_request.upload_progress(m_sinks.result->uploaded + m_sinks.result->failed,
+                                      messages().size(),
+                                      m_bytesSent);
+        }
+    }
+
+    void authenticate() {
+        const auto auth_done = [this](const QString& response) {
+            handleAuthResponse(response);
+        };
+        switch (config().auth_method) {
+        case ImapAuthMethod::Plain:
+            sendCommand(plainAuthCommand(), auth_done);
+            break;
+        case ImapAuthMethod::Login:
+            sendCommand(
+                QStringLiteral("LOGIN \"%1\" \"%2\"").arg(config().username, config().password),
+                auth_done);
+            break;
+        case ImapAuthMethod::XOAuth2:
+            sendCommand(xoauth2AuthCommand(), auth_done);
+            break;
+        }
+    }
+
+    QString plainAuthCommand() const {
+        QByteArray plain_data;
+        plain_data.append('\0');
+        plain_data.append(config().username.toUtf8());
+        plain_data.append('\0');
+        plain_data.append(config().password.toUtf8());
+        return QStringLiteral("AUTHENTICATE PLAIN ") + QString::fromUtf8(plain_data.toBase64());
+    }
+
+    QString xoauth2AuthCommand() const {
+        QByteArray xoauth2;
+        xoauth2.append("user=");
+        xoauth2.append(config().username.toUtf8());
+        xoauth2.append('\x01');
+        xoauth2.append("auth=Bearer ");
+        xoauth2.append(config().password.toUtf8());
+        xoauth2.append('\x01');
+        xoauth2.append('\x01');
+        return QStringLiteral("AUTHENTICATE XOAUTH2 ") + QString::fromUtf8(xoauth2.toBase64());
+    }
+
+    void handleAuthResponse(const QString& response) {
+        if (!response.contains(QStringLiteral("OK"))) {
+            finish(false,
+                   error_code::authentication_failed,
+                   QStringLiteral("Authentication failed"));
+            return;
+        }
+        logInfo("IMAP: authenticated as {}", config().username.toStdString());
+        continueAfterAuth();
+    }
+
+    void continueAfterAuth() {
+        if (!m_request.upload_mode) {
+            sendCommand(QStringLiteral("NOOP"),
+                        [this](const QString& response) { handleNoopResponse(response); });
+            return;
+        }
+        if (m_request.upload_started) {
+            m_request.upload_started(messages().size());
+        }
+        sendCommand(QStringLiteral("CREATE \"%1\"").arg(m_request.target_folder),
+                    [this](const QString& response) { handleCreateResponse(response); });
+    }
+
+    void handleNoopResponse(const QString& response) {
+        if (!response.contains(QStringLiteral("OK"))) {
+            failConnection(QStringLiteral("NOOP failed"));
+            return;
+        }
+        finish(true);
+    }
+
+    void handleCreateResponse(const QString& response) {
+        if (response.contains(QStringLiteral("OK")) && m_request.folder_created) {
+            m_request.folder_created(m_request.target_folder);
+        }
+        appendNext();
+    }
+
+    void handleReadable() {
+        m_buffer += QString::fromUtf8(m_socket->readAll());
+        if (handleGreeting()) {
+            return;
+        }
+        if (handleContinuation()) {
+            return;
+        }
+        handleTaggedResponse();
+    }
+
+    bool handleGreeting() {
+        if (!m_waitingGreeting) {
+            return false;
+        }
+        if (!m_buffer.contains(QStringLiteral("OK"))) {
+            failConnection(QStringLiteral("Bad server greeting: ") + m_buffer.left(200));
+            return true;
+        }
+        m_waitingGreeting = false;
+        m_buffer.clear();
+        authenticate();
+        return true;
+    }
+
+    bool handleContinuation() {
+        if (!m_waitingContinuation || !m_buffer.contains(QStringLiteral("+"))) {
+            return m_waitingContinuation;
+        }
+        m_waitingContinuation = false;
+        m_buffer.clear();
+        if (m_socket->write(m_pendingLiteral) < 0) {
+            failConnection(m_socket->errorString());
+            return true;
+        }
+        resetTimeout();
+        return true;
+    }
+
+    void handleTaggedResponse() {
+        if (m_currentTag.isEmpty() || !m_taggedCallback || !m_buffer.contains(m_currentTag)) {
+            return;
+        }
+        const QString response = m_buffer;
+        m_buffer.clear();
+        auto callback = std::move(m_taggedCallback);
+        m_taggedCallback = {};
+        m_timeoutTimer->stop();
+        callback(response);
+    }
+
+    void connectSignals() {
+        QObject::connect(m_timeoutTimer, &QTimer::timeout, this, [this]() {
+            failConnection(QStringLiteral("IMAP operation timed out"));
+        });
+        QObject::connect(m_cancelTimer, &QTimer::timeout, this, [this]() {
+            if (m_request.cancelled->load()) {
+                finish(false, error_code::operation_cancelled, QStringLiteral("Upload cancelled"));
+            }
+        });
+        QObject::connect(m_socket, &QSslSocket::encrypted, this, [this]() { beginGreetingWait(); });
+        QObject::connect(m_socket, &QTcpSocket::connected, this, [this]() {
+            if (!config().use_ssl) {
+                beginGreetingWait();
+            }
+        });
+        QObject::connect(m_socket, &QTcpSocket::readyRead, this, [this]() { handleReadable(); });
+        QObject::connect(m_socket,
+                         &QTcpSocket::errorOccurred,
+                         this,
+                         [this](QAbstractSocket::SocketError error) { handleSocketError(error); });
+    }
+
+    void beginGreetingWait() {
+        m_waitingGreeting = true;
+        resetTimeout();
+    }
+
+    void handleSocketError(QAbstractSocket::SocketError error) {
+        if (m_finished || error == QAbstractSocket::RemoteHostClosedError) {
+            return;
+        }
+        failConnection(m_socket->errorString());
+    }
+
+    void startSocket() {
+        if (config().use_ssl) {
+            m_socket->connectToHostEncrypted(config().host, config().port);
+        } else {
+            m_socket->connectToHost(config().host, config().port);
+        }
+    }
+
+    ImapSessionRequest m_request;
+    ImapSessionSinks m_sinks;
+    QSslSocket* m_socket{nullptr};
+    QTimer* m_timeoutTimer{nullptr};
+    QTimer* m_cancelTimer{nullptr};
+    int m_tagCounter{0};
+    int m_currentIndex{0};
+    qint64 m_bytesSent{0};
+    QString m_currentTag;
+    QString m_buffer;
+    bool m_finished{false};
+    bool m_waitingGreeting{false};
+    bool m_waitingContinuation{false};
+    std::function<void(const QString&)> m_taggedCallback;
+    QByteArray m_pendingLiteral;
+};
+
+ImapSessionResult runImapSession(const ImapSessionRequest& request) {
+    ImapSessionResult result;
+    QThread thread;
+    QSemaphore done;
+    auto* worker =
+        new ImapSessionWorker(request, {.result = &result, .done = &done, .owner_thread = &thread});
+    worker->moveToThread(&thread);
+    QObject::connect(&thread, &QThread::finished, worker, &QObject::deleteLater);
+    QObject::connect(&thread, &QThread::started, worker, [worker]() { worker->start(); });
+    thread.start();
+    done.acquire();
+    thread.wait();
+    return result;
+}
 }  // namespace
 
 // ======================================================================
@@ -35,17 +435,18 @@ ImapUploader::~ImapUploader() {
 // ======================================================================
 
 std::expected<void, error_code> ImapUploader::testConnection(const ImapServerConfig& config) {
-    auto connect_result = connectAndAuth(config);
-    if (!connect_result.has_value()) {
-        return std::unexpected(connect_result.error());
-    }
-
-    // Send NOOP to verify
-    auto noop_result = sendCommand(QStringLiteral("NOOP"), config.timeout_seconds * 1000);
-    disconnectFromServer();
-
-    if (!noop_result.has_value()) {
-        return std::unexpected(noop_result.error());
+    const QVector<QByteArray> messages;
+    const QVector<QStringList> flags;
+    const QVector<QDateTime> dates;
+    const ImapSessionResult result = runImapSession({.config = &config,
+                                                     .upload_mode = false,
+                                                     .eml_contents = &messages,
+                                                     .flags_list = &flags,
+                                                     .dates = &dates,
+                                                     .cancelled = &m_cancelled});
+    if (!result.success) {
+        Q_EMIT errorOccurred(result.error_message);
+        return std::unexpected(result.error);
     }
     return {};
 }
@@ -58,47 +459,29 @@ std::expected<int, error_code> ImapUploader::uploadFolder(const ImapServerConfig
     Q_ASSERT(eml_contents.size() == flags_list.size());
     Q_ASSERT(eml_contents.size() == dates.size());
 
-    auto connect_result = connectAndAuth(config);
-    if (!connect_result.has_value()) {
-        return std::unexpected(connect_result.error());
+    const ImapSessionResult result = runImapSession(
+        {.config = &config,
+         .upload_mode = true,
+         .target_folder = target_folder,
+         .eml_contents = &eml_contents,
+         .flags_list = &flags_list,
+         .dates = &dates,
+         .cancelled = &m_cancelled,
+         .upload_started = [this](int total) { Q_EMIT uploadStarted(total); },
+         .upload_progress =
+             [this](int done, int total, qint64 bytes_sent) {
+                 m_bytes_sent = bytes_sent;
+                 Q_EMIT uploadProgress(done, total, bytes_sent);
+             },
+         .folder_created = [this](const QString& folder) { Q_EMIT folderCreated(folder); }});
+
+    Q_EMIT uploadComplete(result.uploaded, result.failed);
+    if (!result.success && result.error != error_code::operation_cancelled) {
+        Q_EMIT errorOccurred(result.error_message);
+        return std::unexpected(result.error);
     }
 
-    // Create the target folder (ignore error if already exists)
-    std::ignore = createFolder(target_folder);
-
-    int uploaded = 0;
-    int failed = 0;
-    int total = eml_contents.size();
-
-    Q_EMIT uploadStarted(total);
-
-    for (int i = 0; i < total; ++i) {
-        if (m_cancelled.load()) {
-            break;
-        }
-
-        if (eml_contents[i].size() > kImapMaxMessageSize) {
-            logWarning("IMAP: message {} exceeds size limit, skipping", std::to_string(i));
-            ++failed;
-            continue;
-        }
-
-        auto append_result = appendMessage(target_folder, eml_contents[i], flags_list[i], dates[i]);
-
-        if (append_result.has_value()) {
-            ++uploaded;
-        } else {
-            ++failed;
-            logWarning("IMAP: failed to upload message {}", std::to_string(i));
-        }
-
-        Q_EMIT uploadProgress(uploaded + failed, total, m_bytes_sent);
-    }
-
-    disconnectFromServer();
-    Q_EMIT uploadComplete(uploaded, failed);
-
-    return uploaded;
+    return result.uploaded;
 }
 
 void ImapUploader::cancel() {
@@ -110,48 +493,19 @@ void ImapUploader::cancel() {
 // ======================================================================
 
 std::expected<void, error_code> ImapUploader::connectAndAuth(const ImapServerConfig& config) {
-    disconnectFromServer();
-
-    m_socket = new QSslSocket(this);
-    m_tag_counter = 0;
-    m_bytes_sent = 0;
-
-    int timeout = config.timeout_seconds * 1000;
-    if (timeout <= 0) {
-        timeout = kImapDefaultTimeoutMs;
+    const QVector<QByteArray> messages;
+    const QVector<QStringList> flags;
+    const QVector<QDateTime> dates;
+    const ImapSessionResult result = runImapSession({.config = &config,
+                                                     .upload_mode = false,
+                                                     .eml_contents = &messages,
+                                                     .flags_list = &flags,
+                                                     .dates = &dates,
+                                                     .cancelled = &m_cancelled});
+    if (!result.success) {
+        return std::unexpected(result.error);
     }
-
-    if (config.use_ssl) {
-        m_socket->connectToHostEncrypted(config.host, config.port);
-        if (!m_socket->waitForEncrypted(timeout)) {
-            QString err = QStringLiteral("SSL handshake failed: ") + m_socket->errorString();
-            logError("IMAP: {}", err.toStdString());
-            disconnectFromServer();
-            return std::unexpected(error_code::connection_failed);
-        }
-    } else {
-        m_socket->connectToHost(config.host, config.port);
-        if (!m_socket->waitForConnected(timeout)) {
-            QString err = QStringLiteral("Connection failed: ") + m_socket->errorString();
-            logError("IMAP: {}", err.toStdString());
-            disconnectFromServer();
-            return std::unexpected(error_code::connection_failed);
-        }
-    }
-
-    // Read server greeting
-    if (!m_socket->waitForReadyRead(timeout)) {
-        disconnectFromServer();
-        return std::unexpected(error_code::connection_failed);
-    }
-    QByteArray greeting = m_socket->readAll();
-    if (!greeting.contains("OK")) {
-        logError("IMAP: bad greeting: {}", greeting.toStdString());
-        disconnectFromServer();
-        return std::unexpected(error_code::connection_failed);
-    }
-
-    return authenticate(config);
+    return {};
 }
 
 std::expected<void, error_code> ImapUploader::validateAuthResponse(
@@ -225,35 +579,9 @@ std::expected<void, error_code> ImapUploader::authenticate(const ImapServerConfi
 
 std::expected<QString, error_code> ImapUploader::sendCommand(const QString& command,
                                                              int timeout_ms) {
-    if (!m_socket || m_socket->state() != QAbstractSocket::ConnectedState) {
-        return std::unexpected(error_code::connection_failed);
-    }
-
-    ++m_tag_counter;
-    QString tag = QStringLiteral("A%1").arg(m_tag_counter, 4, 10, QChar('0'));
-    QString full_cmd = tag + QStringLiteral(" ") + command + QStringLiteral("\r\n");
-
-    m_socket->write(full_cmd.toUtf8());
-    if (!m_socket->waitForBytesWritten(timeout_ms)) {
-        return std::unexpected(error_code::connection_failed);
-    }
-
-    // Read response until we get the tagged response line
-    QString response;
-    QByteArray tag_bytes = tag.toUtf8();
-    while (m_socket->waitForReadyRead(timeout_ms)) {
-        QByteArray data = m_socket->readAll();
-        response += QString::fromUtf8(data);
-        if (response.contains(tag)) {
-            break;
-        }
-    }
-
-    if (!response.contains(tag)) {
-        return std::unexpected(error_code::connection_failed);
-    }
-
-    return response;
+    Q_UNUSED(command)
+    Q_UNUSED(timeout_ms)
+    return std::unexpected(error_code::connection_failed);
 }
 
 std::expected<void, error_code> ImapUploader::createFolder(const QString& folder_path) {
@@ -275,86 +603,20 @@ std::expected<void, error_code> ImapUploader::appendMessage(const QString& folde
                                                             const QByteArray& eml_content,
                                                             const QStringList& flags,
                                                             const QDateTime& internal_date) {
-    if (!m_socket || m_socket->state() != QAbstractSocket::ConnectedState) {
-        return std::unexpected(error_code::connection_failed);
-    }
-
-    ++m_tag_counter;
-    QString tag = QStringLiteral("A%1").arg(m_tag_counter, 4, 10, QChar('0'));
-
-    // Build APPEND command
-    QString flags_str;
-    if (!flags.isEmpty()) {
-        flags_str = QStringLiteral("(") + flags.join(QStringLiteral(" ")) + QStringLiteral(") ");
-    }
-
-    QString date_str;
-    if (internal_date.isValid()) {
-        date_str = QStringLiteral("\"") + formatImapDate(internal_date) + QStringLiteral("\" ");
-    }
-
-    QString cmd = tag + QStringLiteral(" APPEND \"%1\" %2%3{%4}\r\n")
-                            .arg(folder)
-                            .arg(flags_str)
-                            .arg(date_str)
-                            .arg(eml_content.size());
-
-    // Send the command (server responds with + continuation)
-    m_socket->write(cmd.toUtf8());
-    if (!m_socket->waitForBytesWritten(kImapDefaultTimeoutMs)) {
-        return std::unexpected(error_code::connection_failed);
-    }
-
-    // Wait for continuation response (+)
-    if (!m_socket->waitForReadyRead(kImapDefaultTimeoutMs)) {
-        return std::unexpected(error_code::connection_failed);
-    }
-    QByteArray continuation = m_socket->readAll();
-    if (!continuation.contains("+")) {
-        return std::unexpected(error_code::connection_failed);
-    }
-
-    // Send the literal message data
-    m_socket->write(eml_content);
-    m_socket->write("\r\n");
-    if (!m_socket->waitForBytesWritten(kImapDefaultTimeoutMs)) {
-        return std::unexpected(error_code::connection_failed);
-    }
-
-    m_bytes_sent += eml_content.size();
-
-    auto response_result = awaitTaggedResponse(tag);
-    if (!response_result.has_value()) {
-        return std::unexpected(error_code::connection_failed);
-    }
-
-    return {};
+    Q_UNUSED(folder)
+    Q_UNUSED(eml_content)
+    Q_UNUSED(flags)
+    Q_UNUSED(internal_date)
+    return std::unexpected(error_code::connection_failed);
 }
 
 std::expected<QString, error_code> ImapUploader::awaitTaggedResponse(const QString& tag) {
-    QString response;
-    while (m_socket->waitForReadyRead(kImapDefaultTimeoutMs)) {
-        QByteArray data = m_socket->readAll();
-        response += QString::fromUtf8(data);
-        if (response.contains(tag)) {
-            break;
-        }
-    }
-
-    if (!response.contains(tag + QStringLiteral(" OK"))) {
-        return std::unexpected(error_code::connection_failed);
-    }
-
-    return response;
+    Q_UNUSED(tag)
+    return std::unexpected(error_code::connection_failed);
 }
 
 void ImapUploader::disconnectFromServer() {
     if (m_socket) {
-        if (m_socket->state() == QAbstractSocket::ConnectedState) {
-            // Send LOGOUT (best-effort)
-            m_socket->write("A9999 LOGOUT\r\n");
-            m_socket->waitForBytesWritten(2000);
-        }
         m_socket->disconnectFromHost();
         m_socket->deleteLater();
         m_socket = nullptr;

@@ -121,7 +121,7 @@ private:
     void onReadyReadStdout();
     void onReadyReadStderr();
     void onProcessFinished(int exit_code, int exit_status);
-    void onProcessError();
+    void onProcessError(int error);
     void onTimeoutTick();
     void appendCapped(QString& target, const QString& chunk) const;
 

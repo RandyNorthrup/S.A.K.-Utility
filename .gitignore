@@ -131,6 +131,10 @@ bld/
 !tools/uup/aria2c.exe
 !tools/iperf3/iperf3.exe
 !tools/iperf3/cygwin1.dll
+!tools/mcp/
+!tools/mcp/**
+tools/mcp/_build/
+tools/mcp/**/*.spec
 
 # Linker files
 *.ilk
@@ -364,6 +368,8 @@ python_archive/**/*.egg-info/
 !package_mappings.json
 !compile_commands.json
 !resources/ai/workflows/*.json
+!resources/ai/providers/*.json
+!resources/ai/app_manifests/*.json
 
 # User data (if any)
 user_data/

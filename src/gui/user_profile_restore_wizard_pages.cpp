@@ -10,12 +10,15 @@
 
 #include <QApplication>
 #include <QFile>
+#include <QFutureWatcher>
 #include <QGridLayout>
 #include <QHBoxLayout>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QMessageBox>
+#include <QPointer>
+#include <QtConcurrent>
 #include <QVBoxLayout>
 
 #include <algorithm>
@@ -1823,24 +1826,34 @@ void UserProfileRestoreAppRestorePage::onInstallApps() {
     m_progressBar->setRange(0, selectedApps.size());
     m_progressBar->setValue(0);
 
-    // Initialize Chocolatey and install
-    auto [installed, failed] = installAppsSequentially(selectedApps);
+    auto* watcher = new QFutureWatcher<QPair<int, int>>(this);
+    connect(watcher, &QFutureWatcher<QPair<int, int>>::finished, this, [this, watcher]() {
+        const auto [installed, failed] = watcher->result();
+        watcher->deleteLater();
 
-    // Done
-    m_installing = false;
-    m_installButton->setEnabled(true);
-    m_selectAllButton->setEnabled(true);
-    m_selectNoneButton->setEnabled(true);
-    m_appTree->setEnabled(true);
-    Q_EMIT completeChanged();
+        m_installing = false;
+        m_installButton->setEnabled(true);
+        m_selectAllButton->setEnabled(true);
+        m_selectNoneButton->setEnabled(true);
+        m_appTree->setEnabled(true);
+        Q_EMIT completeChanged();
 
-    m_statusLabel->setText(
-        tr("Installation complete: %1 succeeded, %2 failed").arg(installed).arg(failed));
-    m_summaryLabel->setText(
-        tr("App installation finished -- %1 installed, %2 failed. Click Next to "
-           "continue.")
-            .arg(installed)
-            .arg(failed));
+        m_statusLabel->setText(
+            tr("Installation complete: %1 succeeded, %2 failed").arg(installed).arg(failed));
+        m_summaryLabel->setText(
+            tr("App installation finished -- %1 installed, %2 failed. Click Next to "
+               "continue.")
+                .arg(installed)
+                .arg(failed));
+    });
+
+    QPointer<UserProfileRestoreAppRestorePage> self(this);
+    watcher->setFuture(QtConcurrent::run([self, selectedApps]() -> QPair<int, int> {
+        if (!self) {
+            return {0, selectedApps.size()};
+        }
+        return self->installAppsSequentially(selectedApps);
+    }));
 }
 
 QVector<RestoreAppInfo> UserProfileRestoreAppRestorePage::collectSelectedApps() const {
@@ -1873,9 +1886,17 @@ QPair<int, int> UserProfileRestoreAppRestorePage::installAppsSequentially(
 
     for (int i = 0; i < apps.size(); ++i) {
         const auto& app = apps[i];
-        m_statusLabel->setText(
-            tr("Installing %1 (%2/%3)...").arg(app.name).arg(i + 1).arg(apps.size()));
-        QApplication::processEvents();
+        QPointer<UserProfileRestoreAppRestorePage> self(this);
+        QMetaObject::invokeMethod(
+            this,
+            [self, app, i, total = apps.size()]() {
+                if (!self) {
+                    return;
+                }
+                self->m_statusLabel->setText(
+                    self->tr("Installing %1 (%2/%3)...").arg(app.name).arg(i + 1).arg(total));
+            },
+            Qt::QueuedConnection);
 
         ChocolateyManager::InstallConfig config;
         config.package_name = app.choco_package;
@@ -1888,8 +1909,14 @@ QPair<int, int> UserProfileRestoreAppRestorePage::installAppsSequentially(
             failed++;
         }
 
-        m_progressBar->setValue(i + 1);
-        QApplication::processEvents();
+        QMetaObject::invokeMethod(
+            this,
+            [self, value = i + 1]() {
+                if (self) {
+                    self->m_progressBar->setValue(value);
+                }
+            },
+            Qt::QueuedConnection);
     }
 
     return {installed, failed};

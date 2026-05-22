@@ -69,7 +69,6 @@ ExecutionBroker::~ExecutionBroker() {
             terminateProcessTree();
 #endif
             m_process->kill();
-            m_process->waitForFinished(500);
         }
     }
 #ifdef _WIN32
@@ -280,32 +279,22 @@ bool ExecutionBroker::launchProcess(const ProcessLaunchRequest& request) {
             [this](int code, QProcess::ExitStatus status) {
                 onProcessFinished(code, static_cast<int>(status));
             });
-    connect(m_process.get(), &QProcess::errorOccurred, this, [this](QProcess::ProcessError) {
-        onProcessError();
+    connect(m_process.get(), &QProcess::started, this, [this]() {
+#ifdef _WIN32
+        assignProcessToJob();
+#endif
+        Q_EMIT started(m_command_id);
+        if (m_timeout_ms > 0) {
+            QTimer::singleShot(kTimeoutTickMs, this, &ExecutionBroker::onTimeoutTick);
+        }
+    });
+    connect(m_process.get(), &QProcess::errorOccurred, this, [this](QProcess::ProcessError error) {
+        onProcessError(static_cast<int>(error));
     });
 
     m_running = true;
     m_timer.start();
     m_process->start(request.program, request.arguments);
-
-    if (!m_process->waitForStarted(2000)) {
-        AiCommandResult fail;
-        fail.error_message =
-            QStringLiteral("Failed to start %1: %2").arg(request.program, m_process->errorString());
-        m_process->disconnect(this);
-        m_process.reset();
-        completeWith(std::move(fail));
-        return false;
-    }
-
-#ifdef _WIN32
-    assignProcessToJob();
-#endif
-    Q_EMIT started(m_command_id);
-
-    if (m_timeout_ms > 0) {
-        QTimer::singleShot(kTimeoutTickMs, this, &ExecutionBroker::onTimeoutTick);
-    }
     return true;
 }
 
@@ -372,13 +361,14 @@ void ExecutionBroker::onProcessFinished(int exit_code, int exit_status) {
     completeWith(std::move(result));
 }
 
-void ExecutionBroker::onProcessError() {
+void ExecutionBroker::onProcessError(int error) {
     if (!m_process || m_finished_emitted) {
         return;
     }
-    if (m_process->state() == QProcess::Starting) {
+    if (static_cast<QProcess::ProcessError>(error) == QProcess::FailedToStart) {
         AiCommandResult result;
-        result.error_message = QStringLiteral("PowerShell error: %1").arg(m_process->errorString());
+        result.error_message =
+            QStringLiteral("Process start error: %1").arg(m_process->errorString());
         completeWith(std::move(result));
     }
 }
@@ -429,7 +419,6 @@ void ExecutionBroker::completeWith(AiCommandResult result) {
             terminateProcessTree();
 #endif
             m_process->kill();
-            m_process->waitForFinished(500);
         }
         m_process.reset();
     }

@@ -20,6 +20,14 @@ QString dataRoot() {
     return QDir(applicationDirectory()).filePath(QStringLiteral("data"));
 }
 
+QString configDirectory() {
+    return QDir(dataRoot()).filePath(QStringLiteral("config"));
+}
+
+QString configFilePath() {
+    return QDir(configDirectory()).filePath(QStringLiteral("Utility.ini"));
+}
+
 QString logsDirectory() {
     return QDir(dataRoot()).filePath(QStringLiteral("logs"));
 }

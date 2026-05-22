@@ -10,7 +10,9 @@
 
 #include <atomic>
 
-class QProcess;
+namespace sak {
+struct ProcessResult;
+}
 
 /**
  * @brief Creates bootable Windows USB drives from ISO files
@@ -158,15 +160,9 @@ private:
                                const QString& cleanDest);
 
     /**
-     * @brief Monitor a running 7z extraction process for progress and cancellation
-     * @param extract Running QProcess reference
-     * @return true if process finished normally (not timed out or cancelled)
-     */
-    bool copyISO_monitorExtraction(QProcess& extract);
-
-    /**
      * @brief Parse 7z output and emit progress signals
-     * @param output Raw 7z stdout output string
+     * @param output Raw 7z stdout
+     * output string
      * @param totalBytes [in/out] Total bytes reported by 7z
      * @param processedBytes [in/out] Processed bytes reported by 7z
      * @param lastProgressPercent [in/out] Last emitted progress percentage
@@ -178,10 +174,11 @@ private:
 
     /**
      * @brief Log 7z extraction result and check exit code
-     * @param extract Finished QProcess reference
+     * @param result Finished
+     * process result
      * @return true if exit code is 0
      */
-    bool copyISO_logExtractionResult(QProcess& extract);
+    bool copyISO_logExtractionResult(const sak::ProcessResult& result);
 
     /**
      * @brief Verify destination directory contents after extraction

@@ -20,9 +20,13 @@
 
 #include <QElapsedTimer>
 #include <QMetaObject>
+#include <QSemaphore>
 #include <QTcpServer>
 #include <QTcpSocket>
+#include <QThread>
 #include <QTimer>
+
+#include <utility>
 
 namespace sak {
 
@@ -858,16 +862,178 @@ static QByteArray createPatternBuffer(int blockSizeKB) {
     return buffer;
 }
 
-void NetworkDiagnosticController::finalizeLanTransfer(QTcpSocket& socket,
-                                                      const LanTransferData& data) {
+struct LanUploadOutcome {
+    bool success{false};
+    QString error;
+    qint64 total_sent{0};
+    qint64 elapsed_ms{0};
+    double peak_mbps{0.0};
+    QVector<double> speed_samples;
+};
+
+struct LanUploadRequest {
+    QString target_addr;
+    uint16_t port{0};
+    int duration_sec{0};
+    int block_size_kb{0};
+    std::function<void(double, double, qint64)> progress;
+};
+
+struct LanUploadSinks {
+    LanUploadOutcome* outcome{nullptr};
+    QSemaphore* done{nullptr};
+    QThread* owner_thread{nullptr};
+};
+
+class LanUploadWorker final : public QObject {
+public:
+    LanUploadWorker(LanUploadRequest request, LanUploadSinks sinks)
+        : m_request(std::move(request))
+        , m_sinks(sinks)
+        , m_sendBuffer(createPatternBuffer(m_request.block_size_kb))
+        , m_blockSize(m_request.block_size_kb * 1024) {}
+
+    void start() {
+        m_socket = new QTcpSocket(this);
+        m_connectTimer = new QTimer(this);
+        m_connectTimer->setSingleShot(true);
+        m_durationTimer = new QTimer(this);
+        m_durationTimer->setSingleShot(true);
+        m_pumpTimer = new QTimer(this);
+        m_pumpTimer->setInterval(20);
+        connectSignals();
+        m_connectTimer->start(5000);
+        m_socket->connectToHost(m_request.target_addr, m_request.port);
+    }
+
+private:
+    void finish(bool success, const QString& error = {}) {
+        if (m_finished) {
+            return;
+        }
+        m_finished = true;
+        m_sinks.outcome->success = success;
+        m_sinks.outcome->error = error;
+        m_sinks.outcome->total_sent = m_totalSent;
+        m_sinks.outcome->elapsed_ms = m_timer.isValid() ? m_timer.elapsed() : 0;
+        m_sinks.outcome->peak_mbps = m_peakMbps;
+        m_sinks.outcome->speed_samples = m_speedSamples;
+        m_socket->disconnectFromHost();
+        m_socket->deleteLater();
+        m_sinks.owner_thread->quit();
+        m_sinks.done->release();
+    }
+
+    void report() {
+        const qint64 elapsed = m_timer.elapsed();
+        if (elapsed - m_lastReportTime < 1000) {
+            return;
+        }
+        const qint64 deltaBytes = m_totalSent - m_lastReportBytes;
+        const double deltaSec = (elapsed - m_lastReportTime) / 1000.0;
+        const double currentMbps = deltaSec > 0 ? (deltaBytes * 8.0 / (deltaSec * 1e6)) : 0.0;
+        m_peakMbps = std::max(m_peakMbps, currentMbps);
+        m_speedSamples.append(currentMbps);
+        m_lastReportTime = elapsed;
+        m_lastReportBytes = m_totalSent;
+        if (m_request.progress) {
+            m_request.progress(currentMbps, elapsed / 1000.0, m_totalSent);
+        }
+    }
+
+    void pump() {
+        if (m_finished || m_socket->state() != QAbstractSocket::ConnectedState) {
+            return;
+        }
+        while (m_socket->bytesToWrite() < m_blockSize * 64) {
+            const qint64 written = m_socket->write(m_sendBuffer);
+            if (written < 0) {
+                finish(false,
+                       QStringLiteral("LAN transfer write error: %1").arg(m_socket->errorString()));
+                return;
+            }
+            m_totalSent += written;
+            report();
+        }
+    }
+
+    void connectSignals() {
+        QObject::connect(m_connectTimer, &QTimer::timeout, this, [this]() {
+            finish(false,
+                   QStringLiteral("Failed to connect to %1:%2 -- connection timed out. Ensure the "
+                                  "remote device is running the LAN Transfer server.")
+                       .arg(m_request.target_addr)
+                       .arg(m_request.port));
+        });
+        QObject::connect(m_durationTimer, &QTimer::timeout, this, [this]() { finish(true); });
+        QObject::connect(m_pumpTimer, &QTimer::timeout, this, [this]() { pump(); });
+        QObject::connect(m_socket, &QTcpSocket::bytesWritten, this, [this](qint64) { pump(); });
+        QObject::connect(m_socket, &QTcpSocket::connected, this, [this]() { onConnected(); });
+        QObject::connect(m_socket,
+                         &QTcpSocket::errorOccurred,
+                         this,
+                         [this](QAbstractSocket::SocketError error) { onSocketError(error); });
+    }
+
+    void onConnected() {
+        m_connectTimer->stop();
+        m_timer.start();
+        m_durationTimer->start(m_request.duration_sec * 1000);
+        m_pumpTimer->start();
+        pump();
+    }
+
+    void onSocketError(QAbstractSocket::SocketError error) {
+        if (m_finished || error == QAbstractSocket::RemoteHostClosedError) {
+            return;
+        }
+        finish(false, m_socket->errorString());
+    }
+
+    LanUploadRequest m_request;
+    LanUploadSinks m_sinks;
+    QTcpSocket* m_socket{nullptr};
+    QTimer* m_connectTimer{nullptr};
+    QTimer* m_durationTimer{nullptr};
+    QTimer* m_pumpTimer{nullptr};
+    QElapsedTimer m_timer;
+    QByteArray m_sendBuffer;
+    int m_blockSize{0};
+    qint64 m_totalSent{0};
+    double m_peakMbps{0.0};
+    qint64 m_lastReportTime{0};
+    qint64 m_lastReportBytes{0};
+    QVector<double> m_speedSamples;
+    bool m_finished{false};
+};
+
+LanUploadOutcome runLanUpload(const QString& targetAddr,
+                              uint16_t port,
+                              int durationSec,
+                              int blockSizeKB,
+                              const std::function<void(double, double, qint64)>& progress) {
+    LanUploadOutcome outcome;
+    QThread thread;
+    QSemaphore done;
+    auto* worker =
+        new LanUploadWorker({.target_addr = targetAddr,
+                             .port = port,
+                             .duration_sec = durationSec,
+                             .block_size_kb = blockSizeKB,
+                             .progress = progress},
+                            {.outcome = &outcome, .done = &done, .owner_thread = &thread});
+    worker->moveToThread(&thread);
+    QObject::connect(&thread, &QThread::finished, worker, &QObject::deleteLater);
+    QObject::connect(&thread, &QThread::started, worker, [worker]() { worker->start(); });
+    thread.start();
+    done.acquire();
+    thread.wait();
+    return outcome;
+}
+
+void NetworkDiagnosticController::finalizeLanTransfer(const LanTransferData& data) {
     Q_ASSERT(data.total_sent >= 0);
     Q_ASSERT(!data.target_addr.isEmpty());
-
-    socket.waitForBytesWritten(3000);
-    socket.disconnectFromHost();
-    if (socket.state() != QAbstractSocket::UnconnectedState) {
-        socket.waitForDisconnected(3000);
-    }
 
     double elapsed_sec = data.elapsed_ms / 1000.0;
 
@@ -915,58 +1081,24 @@ void NetworkDiagnosticController::runLanTransferTest(const QString& targetAddr,
 
     runOnThread(
         [this, targetAddr, port, durationSec, blockSizeKB]() {
-            QTcpSocket socket;
-            socket.connectToHost(targetAddr, port);
-
-            if (!socket.waitForConnected(5000)) {
-                Q_EMIT errorOccurred(QStringLiteral("Failed to connect to %1:%2 -- %3. "
-                                                    "Ensure the remote device is running "
-                                                    "the LAN Transfer server.")
-                                         .arg(targetAddr)
-                                         .arg(port)
-                                         .arg(socket.errorString()));
+            const LanUploadOutcome outcome =
+                runLanUpload(targetAddr,
+                             port,
+                             durationSec,
+                             blockSizeKB,
+                             [this](double currentMbps, double elapsedSec, qint64 bytes) {
+                                 Q_EMIT lanTransferProgress(currentMbps, elapsedSec, bytes);
+                             });
+            if (!outcome.success) {
+                Q_EMIT errorOccurred(outcome.error);
                 return;
             }
-
-            QByteArray sendBuffer = createPatternBuffer(blockSizeKB);
-            const int blockSize = blockSizeKB * 1024;
-            QElapsedTimer timer;
-            timer.start();
-            qint64 totalSent = 0;
-            double peakMbps = 0.0;
-            qint64 lastReportTime = 0;
-            qint64 lastReportBytes = 0;
-            QVector<double> speedSamples;
-            const qint64 durationMs = static_cast<qint64>(durationSec) * 1000;
-
-            while (timer.elapsed() < durationMs) {
-                qint64 written = socket.write(sendBuffer);
-                if (written < 0) {
-                    Q_EMIT errorOccurred(
-                        QStringLiteral("LAN transfer write error: %1").arg(socket.errorString()));
-                    break;
-                }
-                totalSent += written;
-
-                if ((totalSent % (blockSize * 16)) == 0) {
-                    socket.waitForBytesWritten(100);
-                }
-
-                qint64 elapsed = timer.elapsed();
-                if (elapsed - lastReportTime >= 1000) {
-                    qint64 deltaBytes = totalSent - lastReportBytes;
-                    double deltaSec = (elapsed - lastReportTime) / 1000.0;
-                    double currentMbps = deltaSec > 0 ? (deltaBytes * 8.0 / (deltaSec * 1e6)) : 0.0;
-                    peakMbps = std::max(peakMbps, currentMbps);
-                    speedSamples.append(currentMbps);
-                    lastReportTime = elapsed;
-                    lastReportBytes = totalSent;
-                    Q_EMIT lanTransferProgress(currentMbps, elapsed / 1000.0, totalSent);
-                }
-            }
-
-            finalizeLanTransfer(
-                socket, {targetAddr, port, totalSent, timer.elapsed(), peakMbps, speedSamples});
+            finalizeLanTransfer({targetAddr,
+                                 port,
+                                 outcome.total_sent,
+                                 outcome.elapsed_ms,
+                                 outcome.peak_mbps,
+                                 outcome.speed_samples});
         },
         State::RunningLanTransfer);
 }

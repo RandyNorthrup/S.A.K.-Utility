@@ -207,12 +207,10 @@ void EmailFileScannerDialog::onScanClicked() {
     m_open_folder_button->setEnabled(false);
     m_status_label->setText(tr("Scanning..."));
 
-    // Run the actual filesystem traversal off the GUI thread.  The previous
-    // implementation paired synchronous `QDir::entryInfoList` calls with
-    // `QApplication::processEvents()` to keep the UI "responsive", which
-    // re-entered the event loop from a slot and could crash when a fresh
-    // rescan was triggered mid-loop.  `QtConcurrent::run` + `QFutureWatcher`
-    // is the idiomatic, crash-free replacement.
+    // Run the actual filesystem traversal off the GUI thread. The previous
+    // implementation manually pumped UI events from this slot, which re-entered
+    // the event loop and could crash when a fresh rescan was triggered mid-loop.
+    // `QtConcurrent::run` + `QFutureWatcher` is the idiomatic replacement.
     auto* watcher = new QFutureWatcher<QVector<ScannedFile>>(this);
     connect(watcher, &QFutureWatcher<QVector<ScannedFile>>::finished, this, [this, watcher] {
         const auto results = watcher->result();

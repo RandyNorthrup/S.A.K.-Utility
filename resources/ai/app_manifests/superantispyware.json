@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "id": "superantispyware",
+  "display_name": "SUPERAntiSpyware",
+  "providers": [
+    "win32_mcp",
+    "vendor_docs",
+    "filesystem",
+    "package_metadata"
+  ],
+  "detect": {
+    "registry_display_name": "SUPERAntiSpyware",
+    "publisher": "RealDefense",
+    "default_executable": "C:\\Program Files\\SUPERAntiSpyware\\SUPERAntiSpyware.exe",
+    "process_names": [
+      "SUPERAntiSpyware.exe",
+      "SASCore64.exe"
+    ]
+  },
+  "actions": {
+    "quick_scan": {
+      "supported": false,
+      "method": "manual_gui_required",
+      "reason": "No documented, validated non-interactive scan interface is bundled yet. Win32 MCP may observe or drive a manifest-gated GUI workflow only after a tested workflow is added.",
+      "allowed_discovery": [
+        "detect install/version",
+        "verify signature",
+        "collect logs",
+        "open visible GUI for user"
+      ],
+      "blocked_discovery": [
+        "brute-force helper EXEs",
+        "try undocumented scan switches",
+        "click arbitrary OCR text without tested workflow"
+      ]
+    },
+    "full_scan": {
+      "supported": false,
+      "method": "manual_gui_required",
+      "reason": "No documented, validated non-interactive scan interface is bundled yet."
+    },
+    "definition_update": {
+      "supported": false,
+      "method": "manual_gui_required",
+      "reason": "No documented, validated non-interactive update interface is bundled yet."
+    }
+  }
+}

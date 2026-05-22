@@ -308,8 +308,8 @@ private:
         QVector<double> speed_samples;
     };
 
-    /// @brief Finalize LAN transfer: disconnect socket, emit results
-    void finalizeLanTransfer(QTcpSocket& socket, const LanTransferData& data);
+    /// @brief Finalize LAN transfer and emit results
+    void finalizeLanTransfer(const LanTransferData& data);
 
     void connectAdapterInspectorSignals();
     void connectConnectivityTesterSignals();

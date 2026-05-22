@@ -1,0 +1,185 @@
+{
+  "schema_version": 1,
+  "providers": [
+    {
+      "id": "microsoft_docs",
+      "name": "Microsoft Learn MCP",
+      "kind": "docs",
+      "transport": "http",
+      "endpoint": "https://learn.microsoft.com/api/mcp",
+      "enabled": true,
+      "portable_config": true,
+      "requires_network": true,
+      "requires_local_bundle": false,
+      "requires_auth": false,
+      "terms_url": "https://learn.microsoft.com/en-us/legal/termsofuse",
+      "tools": [
+        "microsoft_docs_search",
+        "microsoft_docs_fetch",
+        "microsoft_code_sample_search"
+      ],
+      "capabilities": [
+        "docs_search",
+        "docs_fetch",
+        "code_sample_search"
+      ],
+      "policy": "read_only"
+    },
+    {
+      "id": "context7",
+      "name": "Context7 MCP",
+      "kind": "docs",
+      "transport": "http",
+      "endpoint": "https://mcp.context7.com/mcp",
+      "enabled": true,
+      "portable_config": true,
+      "requires_network": true,
+      "requires_local_bundle": false,
+      "requires_auth": false,
+      "auth_mode": "none",
+      "license": "MIT",
+      "source_url": "https://github.com/upstash/context7",
+      "tools": [
+        "resolve-library-id",
+        "query-docs"
+      ],
+      "capabilities": [
+        "library_resolution",
+        "versioned_docs"
+      ],
+      "policy": "read_only"
+    },
+    {
+      "id": "win32_mcp",
+      "name": "Win32 MCP Server",
+      "kind": "desktop_automation",
+      "transport": "stdio",
+      "command": "tools/mcp/win32-mcp-server/win32-mcp-server.exe",
+      "enabled": true,
+      "portable_config": true,
+      "requires_network": false,
+      "requires_local_bundle": true,
+      "license": "MIT",
+      "source_url": "https://github.com/RandyNorthrup/win32-mcp-server",
+      "tools": [
+        "health_check",
+        "list_windows",
+        "get_window_snapshot",
+        "uia_inspect_window",
+        "uia_find_control",
+        "uia_click_control",
+        "click_text",
+        "wait_for_text",
+        "start_process",
+        "list_processes"
+      ],
+      "capabilities": [
+        "window_observation",
+        "uia",
+        "ocr",
+        "mouse_keyboard",
+        "process_control"
+      ],
+      "policy": "manifest_gated_mutation",
+      "environment": {
+        "WIN32_MCP_SECURITY_PROFILE": "interactive",
+        "WIN32_MCP_RESULT_ENVELOPE": "true",
+        "WIN32_MCP_REDACT_SENSITIVE_OUTPUT": "true"
+      }
+    },
+    {
+      "id": "github",
+      "name": "GitHub Provider",
+      "kind": "source_research",
+      "transport": "planned",
+      "enabled": false,
+      "portable_config": true,
+      "requires_network": true,
+      "requires_local_bundle": false,
+      "capabilities": [
+        "release_notes",
+        "issues",
+        "repository_files"
+      ],
+      "policy": "read_only_default"
+    },
+    {
+      "id": "filesystem",
+      "name": "SAK Filesystem Provider",
+      "kind": "local_evidence",
+      "transport": "native",
+      "enabled": true,
+      "portable_config": true,
+      "requires_network": false,
+      "requires_local_bundle": false,
+      "capabilities": [
+        "bounded_read",
+        "bounded_search",
+        "artifact_collection"
+      ],
+      "policy": "workspace_or_artifact_scoped"
+    },
+    {
+      "id": "browser",
+      "name": "Browser Automation Provider",
+      "kind": "web_automation",
+      "transport": "planned",
+      "enabled": false,
+      "portable_config": true,
+      "requires_network": true,
+      "requires_local_bundle": true,
+      "capabilities": [
+        "vendor_portal_navigation",
+        "js_docs_capture"
+      ],
+      "policy": "evidence_gated_mutation"
+    },
+    {
+      "id": "vendor_docs",
+      "name": "Vendor Documentation Provider",
+      "kind": "docs",
+      "transport": "native",
+      "enabled": true,
+      "portable_config": true,
+      "requires_network": true,
+      "requires_local_bundle": false,
+      "capabilities": [
+        "vendor_doc_search",
+        "control_method_evidence"
+      ],
+      "policy": "read_only"
+    },
+    {
+      "id": "package_metadata",
+      "name": "Package Metadata Provider",
+      "kind": "package_research",
+      "transport": "native",
+      "enabled": true,
+      "portable_config": true,
+      "requires_network": true,
+      "requires_local_bundle": false,
+      "capabilities": [
+        "chocolatey",
+        "winget",
+        "github_releases",
+        "checksum_evidence"
+      ],
+      "policy": "read_only_default"
+    },
+    {
+      "id": "security_reputation",
+      "name": "Security Reputation Provider",
+      "kind": "file_reputation",
+      "transport": "planned",
+      "enabled": false,
+      "portable_config": true,
+      "requires_network": true,
+      "requires_local_bundle": false,
+      "capabilities": [
+        "hash_reputation",
+        "signature_evidence"
+      ],
+      "policy": "privacy_gated"
+    }
+  ]
+}

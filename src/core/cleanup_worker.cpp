@@ -8,11 +8,11 @@
 
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
+#include "sak/process_runner.h"
 
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
-#include <QProcess>
 
 #ifdef Q_OS_WIN
 #include <windows.h>
@@ -292,60 +292,38 @@ bool CleanupWorker::deleteRegistryValue(const QString& keyPath, const QString& v
 bool CleanupWorker::removeService(const QString& serviceName) {
     Q_ASSERT(!serviceName.isEmpty());
     // Stop the service first
-    QProcess stop_proc;
-    stop_proc.setProgram("sc.exe");
-    stop_proc.setArguments({"stop", serviceName});
-    stop_proc.start();
-    if (stop_proc.waitForStarted(sak::kTimeoutProcessStartMs)) {
-        if (!stop_proc.waitForFinished(10'000)) {
-            sak::logWarning("Service stop timed out for: {}", serviceName.toStdString());
-            stop_proc.kill();
-            stop_proc.waitForFinished(2000);
-        }
+    const auto stop_result =
+        sak::runProcess(QStringLiteral("sc.exe"), {QStringLiteral("stop"), serviceName}, 10'000);
+    if (stop_result.timed_out) {
+        sak::logWarning("Service stop timed out for: {}", serviceName.toStdString());
     }
 
     // Wait a moment for it to stop
     QThread::msleep(1000);
 
     // Delete the service
-    QProcess del_proc;
-    del_proc.setProgram("sc.exe");
-    del_proc.setArguments({"delete", serviceName});
-    del_proc.start();
-
-    if (!del_proc.waitForStarted(sak::kTimeoutProcessStartMs) ||
-        !del_proc.waitForFinished(10'000)) {
-        return false;
-    }
-
-    return del_proc.exitCode() == 0;
+    const auto del_result =
+        sak::runProcess(QStringLiteral("sc.exe"), {QStringLiteral("delete"), serviceName}, 10'000);
+    return del_result.succeeded();
 }
 
 bool CleanupWorker::removeScheduledTask(const QString& taskName) {
-    QProcess proc;
-    proc.setProgram("schtasks.exe");
-    proc.setArguments({"/delete", "/tn", taskName, "/f"});
-    proc.start();
-
-    if (!proc.waitForStarted(sak::kTimeoutProcessStartMs) || !proc.waitForFinished(10'000)) {
-        return false;
-    }
-
-    return proc.exitCode() == 0;
+    const auto result = sak::runProcess(
+        QStringLiteral("schtasks.exe"),
+        {QStringLiteral("/delete"), QStringLiteral("/tn"), taskName, QStringLiteral("/f")},
+        10'000);
+    return result.succeeded();
 }
 
 bool CleanupWorker::removeFirewallRule(const QString& ruleName) {
-    QProcess proc;
-    proc.setProgram("netsh.exe");
-    proc.setArguments(
-        {"advfirewall", "firewall", "delete", "rule", QString("name=%1").arg(ruleName)});
-    proc.start();
-
-    if (!proc.waitForStarted(sak::kTimeoutProcessStartMs) || !proc.waitForFinished(10'000)) {
-        return false;
-    }
-
-    return proc.exitCode() == 0;
+    const auto result = sak::runProcess(QStringLiteral("netsh.exe"),
+                                        {QStringLiteral("advfirewall"),
+                                         QStringLiteral("firewall"),
+                                         QStringLiteral("delete"),
+                                         QStringLiteral("rule"),
+                                         QStringLiteral("name=%1").arg(ruleName)},
+                                        10'000);
+    return result.succeeded();
 }
 
 }  // namespace sak

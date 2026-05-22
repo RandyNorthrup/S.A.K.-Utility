@@ -8,6 +8,7 @@
 
 #include "sak/email_constants.h"
 #include "sak/logger.h"
+#include "sak/process_runner.h"
 
 #include <QDir>
 #include <QFile>
@@ -15,7 +16,6 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
-#include <QProcess>
 #include <QSettings>
 #include <QStandardPaths>
 #include <QTextStream>
@@ -572,37 +572,18 @@ QVector<sak::EmailClientProfile> EmailProfileManager::discoverWindowsMailProfile
 // ============================================================================
 
 bool EmailProfileManager::exportRegistryKey(const QString& key_path, const QString& output_file) {
-    QProcess process;
-    process.setProgram(QStringLiteral("reg.exe"));
-    process.setArguments({QStringLiteral("export"), key_path, output_file, QStringLiteral("/y")});
-    process.start();
-
-    if (!process.waitForStarted(kRegExportTimeoutMs)) {
-        return false;
-    }
-    if (!process.waitForFinished(kRegExportTimeoutMs)) {
-        process.kill();
-        process.waitForFinished(kRegExportTimeoutMs);
-        return false;
-    }
-    return process.exitCode() == 0;
+    const auto result =
+        sak::runProcess(QStringLiteral("reg.exe"),
+                        {QStringLiteral("export"), key_path, output_file, QStringLiteral("/y")},
+                        kRegExportTimeoutMs);
+    return result.succeeded();
 }
 
 bool EmailProfileManager::importRegistryKey(const QString& reg_file) {
-    QProcess process;
-    process.setProgram(QStringLiteral("reg.exe"));
-    process.setArguments({QStringLiteral("import"), reg_file});
-    process.start();
-
-    if (!process.waitForStarted(kRegImportTimeoutMs)) {
-        return false;
-    }
-    if (!process.waitForFinished(kRegImportTimeoutMs)) {
-        process.kill();
-        process.waitForFinished(kRegImportTimeoutMs);
-        return false;
-    }
-    return process.exitCode() == 0;
+    const auto result = sak::runProcess(QStringLiteral("reg.exe"),
+                                        {QStringLiteral("import"), reg_file},
+                                        kRegImportTimeoutMs);
+    return result.succeeded();
 }
 
 // ============================================================================

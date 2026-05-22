@@ -20,6 +20,7 @@ struct AiToolCallRequest {
     QString tool_name;
     QString operation;
     QString command_preview;
+    QString user_message;
     bool requires_admin{false};
 };
 

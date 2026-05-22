@@ -8,38 +8,26 @@
 
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
-
-#include <QProcess>
+#include "sak/process_runner.h"
 
 namespace sak {
 
 namespace {
 
-constexpr int kKillWaitMs = 2000;
-
 /// @brief Run a netsh command with timeout, returning its stdout
 QString runNetsh(const QStringList& args, int timeout_ms, const WifiScanLogger& logger) {
     Q_ASSERT(!args.isEmpty());
     Q_ASSERT(timeout_ms >= 0);
-    QProcess process;
-    process.start("netsh", args);
-    if (!process.waitForStarted(sak::kTimeoutProcessStartMs)) {
-        sak::logError("netsh failed to start: {}", args.join(' ').toStdString());
-        if (logger) {
-            logger(QStringLiteral("Failed to start netsh"));
-        }
-        return {};
-    }
-    if (!process.waitForFinished(timeout_ms)) {
-        sak::logWarning("netsh timed out: {}", args.join(' ').toStdString());
-        process.kill();
-        process.waitForFinished(kKillWaitMs);
+
+    const auto result = sak::runProcess(QStringLiteral("netsh"), args, timeout_ms);
+    if (!result.succeeded()) {
+        sak::logWarning("netsh failed/timed out: {}", args.join(' ').toStdString());
         if (logger) {
             logger(QStringLiteral("netsh timed out"));
         }
         return {};
     }
-    return QString::fromLocal8Bit(process.readAllStandardOutput());
+    return result.std_out;
 }
 
 }  // namespace
