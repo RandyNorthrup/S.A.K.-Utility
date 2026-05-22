@@ -1466,9 +1466,12 @@ struct PanelReportData {
     QVector<ai::AiHumanGate> gates;
     QVector<ai::AiPhaseExecution> phases;
     QStringList transcript;
+    QStringList summaries;
     QStringList actions;
     QStringList next_steps;
     QStringList evidence_notes;
+    QStringList evidence_snapshot;
+    QStringList risks;
     QVector<PanelReportFinding> findings;
     QString memory_warning;
     QString activity_warning;
@@ -1516,6 +1519,14 @@ QString cleanReportText(const QString& value, int max_chars = 700) {
     return text;
 }
 
+QString normalizedReportKey(QString value) {
+    value = cleanReportText(value, 0).toLower();
+    value.remove(QRegularExpression(QStringLiteral(
+        R"(\b(low|medium|high|critical|info|informational|unknown|review|risk|issue)\s*:)")));
+    value.replace(QRegularExpression(QStringLiteral(R"([^a-z0-9]+)")), QStringLiteral(" "));
+    return value.simplified().left(160);
+}
+
 void appendUniqueReportLine(QStringList* lines, const QString& value, int max_items) {
     if (!lines) {
         return;
@@ -1527,6 +1538,14 @@ void appendUniqueReportLine(QStringList* lines, const QString& value, int max_it
     lines->append(text);
 }
 
+bool reportLineLooksOperationalNoise(const QString& value) {
+    const QString text = value.trimmed().toLower();
+    return text.contains(QStringLiteral("subagent exceeded advisory token budget")) ||
+           text.contains(QStringLiteral("did not run local commands")) ||
+           text.contains(QStringLiteral("reviewed the available workflow context only")) ||
+           text.contains(QStringLiteral("checked whether each stated diagnostic conclusion"));
+}
+
 void appendReportFinding(QVector<PanelReportFinding>* findings,
                          const QString& severity,
                          const QString& title,
@@ -1535,15 +1554,23 @@ void appendReportFinding(QVector<PanelReportFinding>* findings,
         return;
     }
     const QString clean_title = cleanReportText(title, 260);
-    if (clean_title.isEmpty()) {
+    if (clean_title.isEmpty() || reportLineLooksOperationalNoise(clean_title)) {
         return;
     }
+    const QString key = normalizedReportKey(clean_title);
     for (const auto& existing : *findings) {
-        if (existing.title.compare(clean_title, Qt::CaseInsensitive) == 0) {
+        if (normalizedReportKey(existing.title) == key) {
             return;
         }
     }
     findings->append({cleanReportText(severity, 80), clean_title, cleanReportText(detail, 500)});
+}
+
+void appendReportRisk(PanelReportData* data, const QString& risk) {
+    if (!data || reportLineLooksOperationalNoise(risk)) {
+        return;
+    }
+    appendUniqueReportLine(&data->risks, risk, 12);
 }
 
 QVector<PanelReportArtifact> collectReportArtifacts(const QString& artifact_root_path,
@@ -1598,22 +1625,119 @@ QStringList cleanTranscriptLines(const QStringList& raw_lines) {
     return transcript;
 }
 
+void appendStructuredFinding(const QJsonObject& finding, PanelReportData* data) {
+    if (!data || finding.isEmpty()) {
+        return;
+    }
+    QString severity = finding.value(QStringLiteral("severity")).toString().trimmed();
+    QString title = finding.value(QStringLiteral("title")).toString().trimmed();
+    const QString recommendation =
+        finding.value(QStringLiteral("recommendation")).toString().trimmed();
+    const QStringList evidence_refs =
+        jsonStringList(finding.value(QStringLiteral("evidence_refs")));
+
+    if (severity.isEmpty()) {
+        severity = QStringLiteral("Review");
+    }
+    if (title.isEmpty()) {
+        title = recommendation;
+    }
+
+    QStringList detail_parts;
+    if (!recommendation.isEmpty() && recommendation.compare(title, Qt::CaseInsensitive) != 0) {
+        detail_parts << QStringLiteral("Recommendation: %1").arg(recommendation);
+    }
+    if (!evidence_refs.isEmpty()) {
+        detail_parts
+            << QStringLiteral("Evidence: %1").arg(evidence_refs.join(QStringLiteral(", ")));
+    }
+    appendReportFinding(&data->findings, severity, title, detail_parts.join(QStringLiteral(" ")));
+}
+
 void appendSubagentReportData(const QJsonObject& result, PanelReportData* data) {
     if (!data || result.isEmpty()) {
         return;
     }
-    for (const auto& finding : findingSummaries(result.value(QStringLiteral("findings")), 10)) {
-        appendReportFinding(&data->findings, QStringLiteral("Review"), finding, {});
+    appendUniqueReportLine(&data->summaries, result.value(QStringLiteral("summary")).toString(), 3);
+    const auto findings = result.value(QStringLiteral("findings")).toArray();
+    for (const auto& entry : findings) {
+        if (entry.isObject()) {
+            appendStructuredFinding(entry.toObject(), data);
+        }
     }
     for (const auto& action : jsonStringList(result.value(QStringLiteral("actions_taken")))) {
-        appendUniqueReportLine(&data->actions, action, 18);
+        if (!reportLineLooksOperationalNoise(action)) {
+            appendUniqueReportLine(&data->actions, action, 14);
+        }
     }
     for (const auto& step :
          jsonStringList(result.value(QStringLiteral("recommended_next_steps")))) {
-        appendUniqueReportLine(&data->next_steps, step, 18);
+        appendUniqueReportLine(&data->next_steps, step, 12);
     }
     for (const auto& risk : jsonStringList(result.value(QStringLiteral("risks")))) {
-        appendReportFinding(&data->findings, QStringLiteral("Risk"), risk, {});
+        appendReportRisk(data, risk);
+    }
+}
+
+bool isUsefulEvidenceLine(const QString& line) {
+    const QString text = line.trimmed();
+    if (text.isEmpty() || text.startsWith(QStringLiteral("=="))) {
+        return false;
+    }
+    static const QStringList labels{
+        QStringLiteral("OsName"),
+        QStringLiteral("OsBuildNumber"),
+        QStringLiteral("WindowsVersion"),
+        QStringLiteral("CsManufacturer"),
+        QStringLiteral("CsModel"),
+        QStringLiteral("CsTotalPhysicalMemory"),
+        QStringLiteral("LastBootUpTime"),
+        QStringLiteral("LocalDateTime"),
+        QStringLiteral("DriveLetter"),
+        QStringLiteral("FileSystemLabel"),
+        QStringLiteral("HealthStatus"),
+        QStringLiteral("OperationalStatus"),
+        QStringLiteral("SizeRemaining"),
+        QStringLiteral("FriendlyName"),
+        QStringLiteral("Model"),
+        QStringLiteral("Status"),
+        QStringLiteral("InterfaceType"),
+        QStringLiteral("AMServiceEnabled"),
+        QStringLiteral("AntivirusEnabled"),
+        QStringLiteral("RealTimeProtectionEnabled"),
+        QStringLiteral("AntivirusSignatureLastUpdated"),
+    };
+    for (const auto& label : labels) {
+        if (text.startsWith(label + QStringLiteral(" "))) {
+            return true;
+        }
+    }
+    return text.startsWith(QStringLiteral("[warning]")) ||
+           text.contains(QStringLiteral("Microsoft-Windows-TPM-WMI")) ||
+           text.contains(QStringLiteral("Service Control Manager")) ||
+           text.contains(QStringLiteral("WindowsUpdateClient")) ||
+           text.contains(QStringLiteral("DistributedCOM"));
+}
+
+void appendToolEvidenceSnapshot(const QJsonObject& tool_result, PanelReportData* data) {
+    if (!data || tool_result.isEmpty()) {
+        return;
+    }
+    const QString stdout_text = tool_result.value(QStringLiteral("stdout")).toString();
+    const auto lines = stdout_text.split(QRegularExpression(QStringLiteral(R"(\r?\n)")));
+    for (const auto& line : lines) {
+        if (data->evidence_snapshot.size() >= 24) {
+            break;
+        }
+        if (isUsefulEvidenceLine(line)) {
+            appendUniqueReportLine(&data->evidence_snapshot, line, 24);
+        }
+    }
+    const QString stderr_text = tool_result.value(QStringLiteral("stderr")).toString().trimmed();
+    if (!stderr_text.isEmpty()) {
+        appendUniqueReportLine(&data->evidence_notes,
+                               QStringLiteral("Command stderr: %1").arg(stderr_text),
+                               18);
     }
 }
 
@@ -1631,6 +1755,7 @@ void appendPhaseReportData(const ai::AiPhaseExecution& phase, PanelReportData* d
     appendSubagentReportData(phase.metadata.value(QStringLiteral("result")).toObject(), data);
     appendSubagentReportData(phase.metadata.value(QStringLiteral("subagent_result")).toObject(),
                              data);
+    appendToolEvidenceSnapshot(phase.tool_result, data);
 }
 
 void appendActivityReportData(const ai::AiActivityEvent& activity, PanelReportData* data) {
@@ -1659,9 +1784,15 @@ void appendActivityReportData(const ai::AiActivityEvent& activity, PanelReportDa
 QString overallReportStatus(const PanelReportData& data) {
     for (const auto& finding : data.findings) {
         if (finding.severity.compare(QStringLiteral("Issue"), Qt::CaseInsensitive) == 0 ||
-            finding.severity.compare(QStringLiteral("Risk"), Qt::CaseInsensitive) == 0) {
+            finding.severity.compare(QStringLiteral("Risk"), Qt::CaseInsensitive) == 0 ||
+            finding.severity.compare(QStringLiteral("High"), Qt::CaseInsensitive) == 0 ||
+            finding.severity.compare(QStringLiteral("Critical"), Qt::CaseInsensitive) == 0 ||
+            finding.severity.compare(QStringLiteral("Medium"), Qt::CaseInsensitive) == 0) {
             return QStringLiteral("Attention recommended");
         }
+    }
+    if (!data.risks.isEmpty()) {
+        return QStringLiteral("Evidence incomplete");
     }
     return data.activities.isEmpty() && data.phases.isEmpty()
                ? QStringLiteral("No completed work recorded")
@@ -1690,14 +1821,21 @@ void appendFindingSection(QStringList* lines, const QVector<PanelReportFinding>&
     if (findings.isEmpty()) {
         lines->append(QStringLiteral("- No issues were identified in the recorded evidence."));
     } else {
+        int emitted = 0;
         for (const auto& finding : findings) {
+            if (emitted >= 12) {
+                lines->append(QStringLiteral(
+                    "- Additional lower-priority findings are retained in the session trace."));
+                break;
+            }
             lines->append(
                 QStringLiteral("- **%1:** %2")
                     .arg(finding.severity.isEmpty() ? QStringLiteral("Review") : finding.severity,
                          finding.title));
             if (!finding.detail.isEmpty()) {
-                lines->append(QStringLiteral("  - Evidence: %1").arg(finding.detail));
+                lines->append(QStringLiteral("  - %1").arg(finding.detail));
             }
+            ++emitted;
         }
     }
     lines->append(QString());
@@ -1723,12 +1861,12 @@ void appendArtifactSection(QStringList* lines,
 }
 
 void appendActivitySection(QStringList* lines, const QVector<ai::AiActivityEvent>& activities) {
-    lines->append(QStringLiteral("## Activity Summary"));
+    lines->append(QStringLiteral("## Workflow Timeline"));
     lines->append(QString());
     if (activities.isEmpty()) {
         lines->append(QStringLiteral("- No activity events were recorded."));
     } else {
-        const int start = std::max(0, static_cast<int>(activities.size()) - 30);
+        const int start = std::max(0, static_cast<int>(activities.size()) - 18);
         for (int i = start; i < activities.size(); ++i) {
             const auto& activity = activities.at(i);
             const QString when = activity.timestamp_utc.isValid()
@@ -1744,12 +1882,49 @@ void appendActivitySection(QStringList* lines, const QVector<ai::AiActivityEvent
     lines->append(QString());
 }
 
+QString reportGeneratedAtUtc() {
+    return QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs);
+}
+
+QString phaseStatusLabel(const ai::AiPhaseExecution& phase) {
+    if (phase.skipped) {
+        return QStringLiteral("Skipped");
+    }
+    return phase.success ? QStringLiteral("Completed") : QStringLiteral("Needs attention");
+}
+
+QString phaseSummary(const ai::AiPhaseExecution& phase) {
+    const QJsonObject result = phase.metadata.value(QStringLiteral("result")).toObject();
+    QString summary = result.value(QStringLiteral("summary")).toString().trimmed();
+    if (summary.isEmpty()) {
+        summary = phase.metadata.value(QStringLiteral("summary")).toString().trimmed();
+    }
+    if (summary.isEmpty() && !phase.error_message.trimmed().isEmpty()) {
+        summary = phase.error_message.trimmed();
+    }
+    if (summary.isEmpty() && !phase.skip_reason.trimmed().isEmpty()) {
+        summary = phase.skip_reason.trimmed();
+    }
+    return cleanReportText(summary.isEmpty() ? phase.phase_id : summary, 420);
+}
+
+QString durationText(qint64 duration_ms) {
+    if (duration_ms <= 0) {
+        return QStringLiteral("<1 sec");
+    }
+    if (duration_ms < 1000) {
+        return QStringLiteral("%1 ms").arg(duration_ms);
+    }
+    return QStringLiteral("%1 sec").arg(QString::number(duration_ms / 1000.0, 'f', 1));
+}
+
 QString renderReportMarkdown(const PanelReportData& data, const QString& report_path) {
     QStringList lines;
     const QString session_url = QUrl::fromLocalFile(data.session.path).toString();
     const QString report_dir = QFileInfo(report_path).absolutePath();
-    lines << QStringLiteral("# AI Assistant Report") << QString();
+    lines << QStringLiteral("# PC Health Report") << QString();
     lines << QStringLiteral("- Status: **%1**").arg(overallReportStatus(data));
+    lines << QStringLiteral("- Generated: %1 UTC").arg(reportGeneratedAtUtc());
     lines << QStringLiteral("- Session: `%1`").arg(data.session.id);
     lines << QStringLiteral("- Chat name: %1").arg(cleanReportText(data.session.title, 240));
     lines << QStringLiteral("- Report directory: [%1](%2)")
@@ -1762,18 +1937,31 @@ QString renderReportMarkdown(const PanelReportData& data, const QString& report_
     lines << QStringLiteral("- Total tokens: %1").arg(data.tokens.total_tokens);
     lines << QString();
 
+    appendListSection(&lines,
+                      QStringLiteral("Executive Summary"),
+                      data.summaries,
+                      QStringLiteral(
+                          "The workflow completed, but no narrative summary was recorded."));
     appendFindingSection(&lines, data.findings);
     appendListSection(&lines,
-                      QStringLiteral("Actions Taken"),
-                      data.actions,
-                      QStringLiteral("No change actions were recorded."));
+                      QStringLiteral("Evidence Snapshot"),
+                      data.evidence_snapshot,
+                      QStringLiteral("No structured evidence snapshot was available."));
     appendListSection(&lines,
                       QStringLiteral("Recommended Next Steps"),
                       data.next_steps,
                       data.findings.isEmpty()
                           ? QStringLiteral("Continue normal monitoring.")
                           : QStringLiteral(
-                                "Review the findings and rerun any incomplete checks if needed."));
+                                "Review the findings and rerun incomplete checks as needed."));
+    appendListSection(&lines,
+                      QStringLiteral("Evidence Limits and Risks"),
+                      data.risks,
+                      QStringLiteral("No evidence limitations were recorded."));
+    appendListSection(&lines,
+                      QStringLiteral("Work Performed"),
+                      data.actions,
+                      QStringLiteral("No change actions were recorded."));
     appendListSection(&lines,
                       QStringLiteral("Evidence Notes"),
                       data.evidence_notes,
@@ -1782,12 +1970,16 @@ QString renderReportMarkdown(const PanelReportData& data, const QString& report_
     appendArtifactSection(&lines, QStringLiteral("Evidence Artifacts"), data.artifacts);
     appendArtifactSection(&lines, QStringLiteral("Sources"), data.sources);
 
-    lines << QStringLiteral("## Conversation Transcript") << QString();
+    lines << QStringLiteral("## Appendix: Raw Transcript Excerpts") << QString();
     if (data.transcript.isEmpty()) {
         lines << QStringLiteral("- No transcript entries were recorded.");
     } else {
-        for (const auto& entry : data.transcript.mid(0, 80)) {
-            lines << QStringLiteral("- %1").arg(cleanReportText(entry, 1200));
+        lines << QStringLiteral(
+            "These excerpts are for audit/debugging. The sections above are the technician "
+            "report.");
+        lines << QString();
+        for (const auto& entry : data.transcript.mid(0, 25)) {
+            lines << QStringLiteral("- %1").arg(cleanReportText(entry, 900));
         }
     }
     lines << QString();
@@ -1813,6 +2005,268 @@ QString markdownReportToPlainText(const QString& markdown) {
         plain_lines << line;
     }
     return plain_lines.join(QLatin1Char('\n'));
+}
+
+QString htmlText(const QString& value, int max_chars = 0) {
+    return cleanReportText(value, max_chars).toHtmlEscaped();
+}
+
+QString htmlList(const QStringList& items, const QString& empty_text, int max_items = 12) {
+    QStringList lines;
+    if (items.isEmpty()) {
+        return QStringLiteral("<p class=\"empty\">%1</p>").arg(htmlText(empty_text));
+    }
+    const int limit = std::min(max_items, static_cast<int>(items.size()));
+    lines << QStringLiteral("<ul>");
+    for (int i = 0; i < limit; ++i) {
+        lines << QStringLiteral("<li>%1</li>").arg(htmlText(items.at(i), 900));
+    }
+    if (items.size() > limit) {
+        lines << QStringLiteral("<li>%1 more item(s) retained in the session trace.</li>")
+                     .arg(items.size() - limit);
+    }
+    lines << QStringLiteral("</ul>");
+    return lines.join(QString());
+}
+
+QString htmlSeverityClass(const QString& severity) {
+    const QString value = severity.trimmed().toLower();
+    if (value.contains(QStringLiteral("critical")) || value.contains(QStringLiteral("high")) ||
+        value.contains(QStringLiteral("issue"))) {
+        return QStringLiteral("sev-high");
+    }
+    if (value.contains(QStringLiteral("medium")) || value.contains(QStringLiteral("risk"))) {
+        return QStringLiteral("sev-med");
+    }
+    if (value.contains(QStringLiteral("low")) || value.contains(QStringLiteral("info"))) {
+        return QStringLiteral("sev-low");
+    }
+    return QStringLiteral("sev-review");
+}
+
+QString htmlFindingCards(const QVector<PanelReportFinding>& findings) {
+    if (findings.isEmpty()) {
+        return QStringLiteral(
+            "<p class=\"empty\">No issues were identified in the recorded evidence.</p>");
+    }
+    QStringList cards;
+    cards << QStringLiteral("<div class=\"finding-grid\">");
+    const int limit = std::min(12, static_cast<int>(findings.size()));
+    for (int i = 0; i < limit; ++i) {
+        const auto& finding = findings.at(i);
+        const QString severity = finding.severity.isEmpty() ? QStringLiteral("Review")
+                                                            : finding.severity;
+        cards << QStringLiteral(
+                     "<article class=\"finding %1\"><div class=\"severity\">%2</div>"
+                     "<h3>%3</h3>")
+                     .arg(htmlSeverityClass(severity),
+                          htmlText(severity, 80),
+                          htmlText(finding.title, 300));
+        if (!finding.detail.isEmpty()) {
+            cards << QStringLiteral("<p>%1</p>").arg(htmlText(finding.detail, 700));
+        }
+        cards << QStringLiteral("</article>");
+    }
+    if (findings.size() > limit) {
+        cards << QStringLiteral(
+                     "<p class=\"note\">%1 additional lower-priority finding(s) are retained in "
+                     "the session trace.</p>")
+                     .arg(findings.size() - limit);
+    }
+    cards << QStringLiteral("</div>");
+    return cards.join(QString());
+}
+
+QString htmlArtifactList(const QVector<PanelReportArtifact>& artifacts) {
+    if (artifacts.isEmpty()) {
+        return QStringLiteral("<p class=\"empty\">None recorded.</p>");
+    }
+    QStringList lines;
+    lines << QStringLiteral("<ul>");
+    for (const auto& artifact : artifacts) {
+        const QString target = artifact.type == QLatin1String("url")
+                                   ? ai::CredentialStore::redactSecrets(artifact.target)
+                                   : QUrl::fromLocalFile(artifact.target).toString();
+        lines << QStringLiteral("<li><a href=\"%1\">%2</a></li>")
+                     .arg(target.toHtmlEscaped(), htmlText(artifact.label, 260));
+    }
+    lines << QStringLiteral("</ul>");
+    return lines.join(QString());
+}
+
+QString htmlWorkflowTimeline(const QVector<ai::AiPhaseExecution>& phases,
+                             const QVector<ai::AiActivityEvent>& activities) {
+    QStringList rows;
+    if (!phases.isEmpty()) {
+        rows << QStringLiteral(
+            "<table><thead><tr><th>Phase</th><th>Status</th><th>Duration</th><th>Summary</th></"
+            "tr></thead><tbody>");
+        for (const auto& phase : phases) {
+            rows << QStringLiteral("<tr><td>%1</td><td>%2</td><td>%3</td><td>%4</td></tr>")
+                        .arg(htmlText(phase.phase_id, 120),
+                             htmlText(phaseStatusLabel(phase), 80),
+                             htmlText(durationText(phase.duration_ms), 40),
+                             htmlText(phaseSummary(phase), 500));
+        }
+        rows << QStringLiteral("</tbody></table>");
+        return rows.join(QString());
+    }
+    if (activities.isEmpty()) {
+        return QStringLiteral("<p class=\"empty\">No workflow timeline was recorded.</p>");
+    }
+    rows << QStringLiteral("<ul>");
+    const int start = std::max(0, static_cast<int>(activities.size()) - 18);
+    for (int i = start; i < activities.size(); ++i) {
+        const auto& activity = activities.at(i);
+        const QString when = activity.timestamp_utc.isValid()
+                                 ? activity.timestamp_utc.toString(Qt::ISODateWithMs)
+                                 : QStringLiteral("unknown-time");
+        rows << QStringLiteral("<li><span class=\"mono\">%1</span> %2: %3</li>")
+                    .arg(htmlText(when, 80),
+                         htmlText(activity.kind, 80),
+                         htmlText(activity.summary, 600));
+    }
+    rows << QStringLiteral("</ul>");
+    return rows.join(QString());
+}
+
+QString htmlTranscriptAppendix(const QStringList& transcript) {
+    if (transcript.isEmpty()) {
+        return QStringLiteral("<p class=\"empty\">No transcript entries were recorded.</p>");
+    }
+    QStringList lines;
+    lines << QStringLiteral(
+        "<details><summary>Raw transcript excerpts for audit/debugging</summary>");
+    lines << QStringLiteral(
+        "<p class=\"note\">The sections above are the technician report. "
+        "This appendix is intentionally abridged.</p><ol>");
+    for (const auto& entry : transcript.mid(0, 25)) {
+        lines << QStringLiteral("<li>%1</li>").arg(htmlText(entry, 900));
+    }
+    lines << QStringLiteral("</ol></details>");
+    return lines.join(QString());
+}
+
+QString renderReportHtml(const PanelReportData& data, const QString& report_path) {
+    const QString report_dir = QFileInfo(report_path).absolutePath();
+    const int completed_phases =
+        std::count_if(data.phases.cbegin(), data.phases.cend(), [](const auto& phase) {
+            return phase.ran && phase.success && !phase.skipped;
+        });
+    QStringList html;
+    html << QStringLiteral(
+        "<!doctype html><html><head><meta charset=\"utf-8\">"
+        "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
+        "<title>PC Health Report</title><style>"
+        ":root{--text:#172033;--muted:#5b6475;--line:#d7dde8;--bg:#f5f7fb;--panel:#fff;"
+        "--high:#b42318;--med:#b54708;--low:#166534;--blue:#175cd3;}"
+        "body{margin:0;background:var(--bg);color:var(--text);font-family:'Segoe "
+        "UI',Arial,sans-serif;"
+        "font-size:14px;line-height:1.5;}main{max-width:1080px;margin:0 auto;padding:28px 28px "
+        "42px;}"
+        ".hero{background:linear-gradient(135deg,#172033,#274060);color:#fff;border-radius:8px;"
+        "padding:28px 30px;margin-bottom:18px;}.hero h1{margin:0 0 8px;font-size:30px;}"
+        ".hero "
+        "p{margin:0;color:#dbe5f5}.badge{display:inline-block;border-radius:999px;padding:4px 10px;"
+        "font-weight:700;background:#fff;color:#172033;margin-bottom:14px}.grid{display:grid;"
+        "grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px;margin:16px 0 22px;}"
+        ".card,section{background:var(--panel);border:1px solid var(--line);border-radius:8px;"
+        "box-shadow:0 1px 2px rgba(16,24,40,.05)}.card{padding:14px}.label{color:var(--muted);"
+        "font-size:12px;text-transform:uppercase;letter-spacing:.04em}.value{font-size:18px;"
+        "font-weight:750;margin-top:3px}section{padding:20px;margin:14px 0}h2{font-size:19px;"
+        "margin:0 0 12px}h3{font-size:15px;margin:6px 0}.finding-grid{display:grid;"
+        "grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px}.finding{border-left:"
+        "4px solid var(--blue);"
+        "padding:12px "
+        "14px;background:#fbfcff;border-radius:6px}.severity{font-size:12px;font-weight:800;"
+        "text-transform:uppercase;color:var(--blue)}.sev-high{border-left-color:var(--high)}"
+        ".sev-high .severity{color:var(--high)}.sev-med{border-left-color:var(--med)}"
+        ".sev-med .severity{color:var(--med)}.sev-low{border-left-color:var(--low)}"
+        ".sev-low .severity{color:var(--low)}ul{padding-left:20px;margin:6px 0}li{margin:5px 0}"
+        ".empty,.note{color:var(--muted)}table{width:100%;border-collapse:collapse;font-size:13px}"
+        "th,td{border-bottom:1px solid var(--line);padding:8px;text-align:left;vertical-align:top}"
+        "th{color:var(--muted);font-size:12px;text-transform:uppercase}.mono{font-family:Consolas,'"
+        "Cascadia Mono',monospace}"
+        "a{color:#0969da}details{background:#fff;border:1px solid "
+        "var(--line);border-radius:8px;padding:14px}"
+        "summary{cursor:pointer;font-weight:700}@media "
+        "print{body{background:#fff}main{padding:0}.hero{border-radius:0}}"
+        "</style></head><body><main>");
+    html << QStringLiteral(
+                "<div class=\"hero\"><span class=\"badge\">%1</span><h1>PC Health Report</h1>"
+                "<p>Generated %2 UTC from S.A.K. Utility AI workflow evidence.</p></div>")
+                .arg(htmlText(overallReportStatus(data)), htmlText(reportGeneratedAtUtc()));
+    html << QStringLiteral("<div class=\"grid\">");
+    html << QStringLiteral(
+                "<div class=\"card\"><div class=\"label\">Session</div><div class=\"value "
+                "mono\">%1</div></div>")
+                .arg(htmlText(data.session.id, 80));
+    html << QStringLiteral(
+                "<div class=\"card\"><div class=\"label\">Workflow Phases</div><div "
+                "class=\"value\">%1/%2 completed</div></div>")
+                .arg(completed_phases)
+                .arg(data.phases.size());
+    html << QStringLiteral(
+                "<div class=\"card\"><div class=\"label\">Findings</div><div "
+                "class=\"value\">%1</div></div>")
+                .arg(data.findings.size());
+    html << QStringLiteral(
+                "<div class=\"card\"><div class=\"label\">Artifacts</div><div "
+                "class=\"value\">%1</div></div>")
+                .arg(data.artifacts.size());
+    html << QStringLiteral("</div>");
+
+    html << QStringLiteral("<section><h2>Executive Summary</h2>%1</section>")
+                .arg(htmlList(data.summaries,
+                              QStringLiteral(
+                                  "The workflow completed, but no narrative summary was recorded."),
+                              3));
+    html << QStringLiteral("<section><h2>Key Findings</h2>%1</section>")
+                .arg(htmlFindingCards(data.findings));
+    html << QStringLiteral("<section><h2>Evidence Snapshot</h2>%1</section>")
+                .arg(htmlList(data.evidence_snapshot,
+                              QStringLiteral("No structured evidence snapshot was available."),
+                              18));
+    html << QStringLiteral("<section><h2>Recommended Next Steps</h2>%1</section>")
+                .arg(htmlList(data.next_steps,
+                              data.findings.isEmpty()
+                                  ? QStringLiteral("Continue normal monitoring.")
+                                  : QStringLiteral(
+                                        "Review findings and rerun incomplete checks as needed."),
+                              10));
+    html << QStringLiteral("<section><h2>Evidence Limits and Risks</h2>%1</section>")
+                .arg(htmlList(
+                    data.risks, QStringLiteral("No evidence limitations were recorded."), 10));
+    html << QStringLiteral("<section><h2>Work Performed</h2>%1</section>")
+                .arg(
+                    htmlList(data.actions, QStringLiteral("No change actions were recorded."), 10));
+    html << QStringLiteral("<section><h2>Evidence Notes</h2>%1</section>")
+                .arg(htmlList(data.evidence_notes,
+                              QStringLiteral("No extra evidence notes were recorded."),
+                              8));
+    html << QStringLiteral("<section><h2>Workflow Timeline</h2>%1</section>")
+                .arg(htmlWorkflowTimeline(data.phases, data.activities));
+    html << QStringLiteral("<section><h2>Evidence Artifacts</h2>%1</section>")
+                .arg(htmlArtifactList(data.artifacts));
+    html << QStringLiteral("<section><h2>Sources</h2>%1</section>")
+                .arg(htmlArtifactList(data.sources));
+    html << QStringLiteral(
+                "<section><h2>Report Paths</h2><ul>"
+                "<li>Report directory: <span class=\"mono\">%1</span></li>"
+                "<li>Session directory: <span class=\"mono\">%2</span></li></ul></section>")
+                .arg(htmlText(QDir::toNativeSeparators(report_dir), 700),
+                     htmlText(QDir::toNativeSeparators(data.session.path), 700));
+    html << QStringLiteral("<section><h2>Appendix</h2>%1</section>")
+                .arg(htmlTranscriptAppendix(data.transcript));
+    if (!data.activity_warning.isEmpty() || !data.memory_warning.isEmpty()) {
+        QStringList warnings;
+        appendUniqueReportLine(&warnings, data.activity_warning, 3);
+        appendUniqueReportLine(&warnings, data.memory_warning, 3);
+        html << QStringLiteral("<section><h2>Report Generation Warnings</h2>%1</section>")
+                    .arg(htmlList(warnings, QStringLiteral("No report generation warnings."), 3));
+    }
+    html << QStringLiteral("</main></body></html>");
+    return html.join(QString());
 }
 
 QString markdownReportToHtml(const QString& markdown) {
@@ -1968,7 +2422,7 @@ QString renderPanelReport(const PanelReportData& data,
         return markdownReportToPlainText(markdown);
     }
     if (format == PanelReportFormat::Html) {
-        return markdownReportToHtml(markdown);
+        return renderReportHtml(data, report_path);
     }
     return markdown;
 }

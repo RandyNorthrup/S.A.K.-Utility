@@ -319,8 +319,10 @@ Expected:
 - PowerShell log output should keep the command id prefix on every multiline
   output line.
 - Run Details opens in the chat area under the header, not inside the side rail.
-- Reports generate with transcript, activity, artifacts, and memory.
-- Reports generate a readable HTML handoff plus markdown source.
+- Reports generate as readable technician/customer handoffs, not raw chat dumps.
+- HTML reports lead with executive summary, evidence snapshot, prioritized
+  findings, risks/evidence gaps, next steps, work performed, and timeline.
+- Raw transcript excerpts are present only as an appendix for audit/debugging.
 - Cleanup preserves evidence and records cleanup status.
 - Stop cancels active model/tool/workflow work and preserves partial artifacts.
 

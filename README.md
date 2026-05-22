@@ -164,6 +164,7 @@ The AI Assistant panel is the first tab in S.A.K. Utility when `SAK_ENABLE_AI_AS
 **Reports and Artifacts**
 - Report generation is manual and enabled only after reportable actions/results exist
 - User can choose report output location and format: HTML, Markdown, or plain text
+- Reports are technician handoffs: styled HTML leads with an executive summary, evidence snapshot, prioritized findings, risks/evidence gaps, and next steps; raw transcript excerpts are kept in an appendix
 - Reports evaluate the session transcript, evidence, workflow results, tool outputs, findings, risks, actions taken, verification status, and remaining recommendations
 - Reports include a link to the containing artifact directory when possible
 
