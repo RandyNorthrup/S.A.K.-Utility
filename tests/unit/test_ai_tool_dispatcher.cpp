@@ -83,6 +83,7 @@ void AiToolDispatcherTests::packageInstallReportsLeaseRequirement() {
     sak::ai::AiToolCallRequest request;
     request.tool_name = QStringLiteral("sak_package_manager");
     request.operation = QStringLiteral("install");
+    request.user_message = QStringLiteral("Install the selected package");
 
     const auto outcome = dispatcher.dispatch(sak::ai::AiToolPolicy::PackageToolsOnly, request, {});
     QVERIFY(outcome.dispatched);
@@ -171,6 +172,7 @@ void AiToolDispatcherTests::leaseReleasedAfterDispatch() {
     sak::ai::AiToolCallRequest request;
     request.tool_name = QStringLiteral("sak_package_manager");
     request.operation = QStringLiteral("install");
+    request.user_message = QStringLiteral("Install the selected package");
 
     const auto outcome = dispatcher.dispatch(
         sak::ai::AiToolPolicy::PackageToolsOnly, request, {}, QStringLiteral("package_agent"));

@@ -20,6 +20,19 @@ file(MAKE_DIRECTORY "${TEST_OUTPUT_DIR}")
 # (RUNTIME_OUTPUT_DIRECTORY_RELEASE) avoids the extra subdirectory.
 set(SAK_MAIN_OUTPUT_DIR "${CMAKE_BINARY_DIR}/Release")
 
+set(SAK_APP_PATHS_SOURCES
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src/core/app_paths.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../include/sak/app_paths.h"
+)
+set(SAK_PROCESS_RUNNER_SOURCES
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src/core/process_runner.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../include/sak/process_runner.h"
+)
+set(SAK_NETWORK_TRANSFER_RUNNER_SOURCES
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src/core/network_transfer_runner.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../include/sak/network_transfer_runner.h"
+)
+
 # windeployqt only analyses sak_utility.exe, which does not link Qt6::Test.
 # Copy Qt6Test.dll so the test executables can actually load at runtime.
 if(WIN32)
@@ -220,6 +233,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_diagnostic_controller.cpp")
         ../src/core/thermal_monitor.cpp
         ../src/core/diagnostic_report_generator.cpp
         ../src/core/bundled_tools_manager.cpp
+        ${SAK_PROCESS_RUNNER_SOURCES}
         ../src/threading/worker_base.cpp
         ../src/core/keep_awake.cpp
         ../src/core/logger.cpp
@@ -255,6 +269,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_thermal_monitor.cpp")
     add_executable(test_thermal_monitor
         unit/test_thermal_monitor.cpp
         ../src/core/thermal_monitor.cpp
+        ${SAK_PROCESS_RUNNER_SOURCES}
         ../include/sak/thermal_monitor.h
         ../src/core/logger.cpp
     )
@@ -380,6 +395,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_stress_test_worker.cpp")
         ../src/core/stress_test_worker.cpp
         ../include/sak/stress_test_worker.h
         ../src/core/thermal_monitor.cpp
+        ${SAK_PROCESS_RUNNER_SOURCES}
         ../include/sak/thermal_monitor.h
         ../src/core/keep_awake.cpp
         ../include/sak/keep_awake.h
@@ -1539,6 +1555,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_smart_disk_analyzer.cpp")
         unit/test_smart_disk_analyzer.cpp
         ../src/core/smart_disk_analyzer.cpp
         ../src/core/bundled_tools_manager.cpp
+        ${SAK_PROCESS_RUNNER_SOURCES}
         ../src/core/logger.cpp
         ../include/sak/smart_disk_analyzer.h
         ../include/sak/bundled_tools_manager.h
@@ -1566,6 +1583,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_package_matcher.cpp")
         ../src/core/app_scanner.cpp
         ../src/core/bundled_tools_manager.cpp
         ../src/core/chocolatey_manager.cpp
+        ${SAK_PROCESS_RUNNER_SOURCES}
         ../src/core/logger.cpp
         ../include/sak/package_matcher.h
         ../include/sak/chocolatey_manager.h
@@ -1732,6 +1750,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_mixed_tier_operations.cpp")
         ../src/core/user_profile_types.cpp
         ../src/core/smart_file_filter.cpp
         ../src/core/path_utils.cpp
+        ${SAK_PROCESS_RUNNER_SOURCES}
         ../src/core/logger.cpp
         ../include/sak/elevated_task_dispatcher.h
         ../include/sak/thermal_monitor.h
@@ -1965,6 +1984,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_offline_package_search.cpp")
         ../include/sak/chocolatey_manager.h
         ../src/core/package_list_manager.cpp
         ../include/sak/package_list_manager.h
+        ${SAK_PROCESS_RUNNER_SOURCES}
         ../src/core/logger.cpp
     )
     set_target_properties(test_offline_package_search PROPERTIES
@@ -2167,6 +2187,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_user_data_manager.cpp")
         ../include/sak/user_data_manager.h
         ../src/core/encryption.cpp
         ../src/core/secure_memory.cpp
+        ${SAK_PROCESS_RUNNER_SOURCES}
         ../src/core/logger.cpp
     )
     set_target_properties(test_user_data_manager PROPERTIES
@@ -2252,6 +2273,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_app_installation_worker.cpp")
         ../src/core/bundled_tools_manager.cpp
         ../src/core/package_matcher.cpp
         ../include/sak/package_matcher.h
+        ${SAK_PROCESS_RUNNER_SOURCES}
         ../src/core/logger.cpp
     )
     set_target_properties(test_app_installation_worker PROPERTIES
@@ -2311,6 +2333,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_windows_usb_creator.cpp")
         ../src/core/windows_usb_creator.cpp
         ../src/core/windows_usb_creator_extract.cpp
         ../include/sak/windows_usb_creator.h
+        ${SAK_PROCESS_RUNNER_SOURCES}
         ../src/core/logger.cpp
     )
     set_target_properties(test_windows_usb_creator PROPERTIES
@@ -2450,6 +2473,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_migration_report.cpp")
         ../include/sak/package_matcher.h
         ../src/core/chocolatey_manager.cpp
         ../include/sak/chocolatey_manager.h
+        ${SAK_PROCESS_RUNNER_SOURCES}
         ../src/core/logger.cpp
     )
     set_target_properties(test_migration_report PROPERTIES
@@ -2744,6 +2768,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_advanced_search_controller.cpp"
         ../src/core/advanced_search_worker.cpp
         ../src/core/regex_pattern_library.cpp
         ../src/core/config_manager.cpp
+        ${SAK_APP_PATHS_SOURCES}
         ../src/threading/worker_base.cpp
         ../src/core/logger.cpp
         ../include/sak/advanced_search_controller.h
@@ -2804,6 +2829,8 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_advanced_uninstall_controller.c
         ../src/core/restore_point_manager.cpp
         ../src/core/elevation_manager.cpp
         ../src/core/config_manager.cpp
+        ${SAK_APP_PATHS_SOURCES}
+        ${SAK_PROCESS_RUNNER_SOURCES}
         ../src/threading/worker_base.cpp
         ../src/core/logger.cpp
         ../include/sak/advanced_uninstall_controller.h
@@ -2837,6 +2864,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_leftover_scanner.cpp")
         unit/test_leftover_scanner.cpp
         ../src/core/leftover_scanner.cpp
         ../src/core/registry_snapshot_engine.cpp
+        ${SAK_PROCESS_RUNNER_SOURCES}
         ../src/core/logger.cpp
         ../include/sak/leftover_scanner.h
         ../include/sak/registry_snapshot_engine.h
@@ -2910,6 +2938,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_network_diagnostic_utils.cpp")
         ../src/core/wifi_analyzer.cpp
         ../src/core/port_scanner.cpp
         ../src/core/dns_diagnostic_tool.cpp
+        ${SAK_PROCESS_RUNNER_SOURCES}
         ../src/core/logger.cpp
         ../include/sak/wifi_analyzer.h
         ../include/sak/port_scanner.h
@@ -2982,6 +3011,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_wifi_profile_scanner.cpp")
         unit/test_wifi_profile_scanner.cpp
         ../src/core/wifi_profile_scanner.cpp
         ../src/core/user_profile_types.cpp
+        ${SAK_PROCESS_RUNNER_SOURCES}
         ../src/core/logger.cpp
     )
     set_target_properties(test_wifi_profile_scanner PROPERTIES
@@ -3151,6 +3181,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_email_profile_manager.cpp")
     add_executable(test_email_profile_manager
         unit/test_email_profile_manager.cpp
         ../src/core/email_profile_manager.cpp
+        ${SAK_PROCESS_RUNNER_SOURCES}
         ../src/core/logger.cpp
         ../include/sak/email_profile_manager.h
     )
@@ -3201,6 +3232,8 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/integration/test_offline_package_builder.
         ../src/core/install_script_parser.cpp
         ../src/core/script_rewriter.cpp
         ../src/core/nuget_api_client.cpp
+        ${SAK_PROCESS_RUNNER_SOURCES}
+        ${SAK_NETWORK_TRANSFER_RUNNER_SOURCES}
         ../src/core/logger.cpp
         ../include/sak/offline_deployment_worker.h
         ../include/sak/package_internalization_engine.h
