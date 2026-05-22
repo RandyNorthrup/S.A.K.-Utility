@@ -23,6 +23,7 @@
 #include <QTimer>
 
 #include <algorithm>
+#include <cstdlib>
 #include <filesystem>
 #include <iostream>
 #include <memory>
@@ -185,6 +186,10 @@ int showMainWindow(QApplication& app, bool startup_smoke_test, bool show_splash)
 
     if (startup_smoke_test && result == 0) {
         std::println("SAK_STARTUP_SMOKE_OK");
+        if (headless_smoke_test) {
+            std::fflush(stdout);
+            std::_Exit(0);
+        }
     }
 
     return result;

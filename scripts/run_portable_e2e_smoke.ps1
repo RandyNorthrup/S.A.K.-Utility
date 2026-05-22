@@ -6,9 +6,10 @@
     Launches sak_utility.exe with --smoke-test so the real application
     initializes Qt, portable paths, logging, and the full main-window object
     tree, then exits automatically. In CI, the app skips showing the native
-    window after construction to avoid runner desktop instability while still
-    catching missing Qt plugins, bundle issues, and startup regressions that
-    static package checks cannot see.
+    window and exits immediately after the clean startup/shutdown marker to
+    avoid hosted-runner Qt/widget teardown false negatives while still catching
+    missing Qt plugins, bundle issues, and startup regressions that static
+    package checks cannot see.
 #>
 
 param(
@@ -110,7 +111,7 @@ try {
         throw "Startup smoke did not create portable log directory: $logsDir"
     }
 
-    $recentLog = Get-ChildItem -LiteralPath $logsDir -File -ErrorAction SilentlyContinue |
+    $recentLog = Get-ChildItem -LiteralPath $logsDir -Filter "sak_*.log" -File -ErrorAction SilentlyContinue |
         Where-Object { $_.LastWriteTime -ge $startedAt.AddSeconds(-5) } |
         Sort-Object LastWriteTime -Descending |
         Select-Object -First 1
