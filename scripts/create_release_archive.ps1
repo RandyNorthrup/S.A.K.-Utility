@@ -7,7 +7,9 @@ param(
     [string]$BuildDir = "build\Release",
 
     [Parameter(Mandatory = $true)]
-    [string]$PackageName
+    [string]$PackageName,
+
+    [switch]$CleanMutableRuntimeData
 )
 
 $ErrorActionPreference = "Stop"
@@ -59,9 +61,15 @@ if (Test-Path -LiteralPath $mcpBuildLeak) {
     throw "Refusing to archive package with temporary MCP build artifacts: $mcpBuildLeak"
 }
 
-foreach ($relativePath in @("data/ai_sessions", "data/temp", "data/logs", "data/config", "_logs")) {
+$mutableRuntimePaths = @("data/ai_sessions", "data/temp", "data/logs", "data/config", "_logs")
+foreach ($relativePath in $mutableRuntimePaths) {
     $mutablePath = Join-Path $packageDir $relativePath
     if (Test-Path -LiteralPath $mutablePath) {
+        if ($CleanMutableRuntimeData) {
+            Remove-Item -LiteralPath $mutablePath -Recurse -Force
+            Write-Host "Removed mutable runtime data before archiving: $relativePath"
+            continue
+        }
         throw "Refusing to archive package with mutable runtime data: $relativePath"
     }
 }
@@ -71,6 +79,11 @@ if (Test-Path -LiteralPath $chocoPath -PathType Container) {
     foreach ($relativePath in @("lib-bad", "cache", "temp")) {
         $mutablePath = Join-Path $chocoPath $relativePath
         if (Test-Path -LiteralPath $mutablePath) {
+            if ($CleanMutableRuntimeData) {
+                Remove-Item -LiteralPath $mutablePath -Recurse -Force
+                Write-Host "Removed Chocolatey runtime state before archiving: tools/chocolatey/$relativePath"
+                continue
+            }
             throw "Refusing to archive package with Chocolatey runtime state: tools/chocolatey/$relativePath"
         }
     }

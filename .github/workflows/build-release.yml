@@ -392,7 +392,10 @@ jobs:
       shell: pwsh
       run: |
         $pkgName = "SAK-Utility-v$env:APP_VERSION"
-        & "../../scripts/create_release_archive.ps1" -BuildDir . -PackageName $pkgName
+        & "../../scripts/create_release_archive.ps1" `
+          -BuildDir . `
+          -PackageName $pkgName `
+          -CleanMutableRuntimeData
 
     - name: Upload ZIP artifact
       uses: actions/upload-artifact@v4
