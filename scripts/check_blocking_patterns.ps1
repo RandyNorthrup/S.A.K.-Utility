@@ -79,6 +79,9 @@ try {
     $allowed = @(
         '^src[\\/]threading[\\/]worker_base\.cpp:\d+:',
         '^src[\\/]core[\\/]process_runner\.cpp:\d+:',
+        '^src[\\/]core[\\/]elevated_pipe_server\.cpp:\d+:',
+        '^src[\\/]core[\\/]elevation_broker\.cpp:\d+:',
+        '^src[\\/]core[\\/]elevation_manager\.cpp:\d+:',
         '^src[\\/]core[\\/]app_installation_worker\.cpp:\d+:',
         '^src[\\/]core[\\/]diagnostic_controller\.cpp:\d+:',
         '^src[\\/]core[\\/]thermal_monitor\.cpp:\d+:',

@@ -3529,17 +3529,7 @@ void AiAssistantPanel::addWorkflowContextChip(const ai::WorkflowTemplate& workfl
     item.original_size = text.toUtf8().size();
     m_contextItems.append(item);
     refreshContextList();
-    if (m_conversationStore) {
-        QString error;
-        (void)m_conversationStore->appendContext(contextItemKindLabel(item.type),
-                                                 contextItemLabel(item),
-                                                 item.path,
-                                                 item.original_size,
-                                                 &error);
-        if (!error.isEmpty()) {
-            appendLocalEvent(tr("Context log failed: %1").arg(error));
-        }
-    }
+    persistContextItem(item);
 }
 
 void AiAssistantPanel::addWorkflowResourceContext(const QString& resource_path,
@@ -3583,17 +3573,7 @@ void AiAssistantPanel::addWorkflowResourceContext(const QString& resource_path,
     item.original_size = bytes.size();
     m_contextItems.append(item);
     refreshContextList();
-    if (m_conversationStore) {
-        QString error;
-        (void)m_conversationStore->appendContext(contextItemKindLabel(item.type),
-                                                 contextItemLabel(item),
-                                                 item.path,
-                                                 item.original_size,
-                                                 &error);
-        if (!error.isEmpty()) {
-            appendLocalEvent(tr("Context log failed: %1").arg(error));
-        }
-    }
+    persistContextItem(item);
     appendLocalEvent(tr("Added workflow resource: %1").arg(item.display_name));
 }
 
@@ -6078,7 +6058,8 @@ void AiAssistantPanel::appendLocalEvent(const QString& message) {
 void AiAssistantPanel::appendSessionMemory(const QString& kind,
                                            const QString& title,
                                            const QString& text) {
-    if (!m_conversationStore || text.trimmed().isEmpty()) {
+    if (!m_conversationStore || m_conversationStore->currentSessionId().isEmpty() ||
+        text.trimmed().isEmpty()) {
         return;
     }
     QString error;
