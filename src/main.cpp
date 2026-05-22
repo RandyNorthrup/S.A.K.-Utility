@@ -60,6 +60,30 @@ bool hasArgument(const QString& name) {
     return std::find(args.begin(), args.end(), name) != args.end();
 }
 
+bool ciStartupSmokeMode() {
+    return !qEnvironmentVariableIsEmpty("SAK_STARTUP_SMOKE_HEADLESS") ||
+           !qEnvironmentVariableIsEmpty("SAK_STARTUP_SMOKE_CI_HEADLESS");
+}
+
+void prepareMainWindowForStartup(sak::MainWindow& main_window, bool headless_smoke_test) {
+    if (headless_smoke_test) {
+        sak::logInfo(
+            "Startup smoke CI headless mode active; main window constructed but not shown");
+        return;
+    }
+
+    main_window.show();
+}
+
+void logMainWindowReady(bool headless_smoke_test) {
+    if (headless_smoke_test) {
+        sak::logInfo("Main window initialized - application ready");
+        return;
+    }
+
+    sak::logInfo("Main window displayed - application ready");
+}
+
 /// @brief Initialize the Qt application and apply theming.
 QApplication& initializeApp(int argc, char* argv[]) {
     static QApplication app(argc, argv);
@@ -140,7 +164,8 @@ int showMainWindow(QApplication& app, bool startup_smoke_test, bool show_splash)
 
     sak::logInfo("Creating main window...");
     sak::MainWindow main_window;
-    main_window.show();
+    const bool headless_smoke_test = startup_smoke_test && ciStartupSmokeMode();
+    prepareMainWindowForStartup(main_window, headless_smoke_test);
 
     if (startup_smoke_test) {
         sak::logInfo("Startup smoke test mode active; closing automatically");
@@ -151,7 +176,7 @@ int showMainWindow(QApplication& app, bool startup_smoke_test, bool show_splash)
         splash->finish();
     }
 
-    sak::logInfo("Main window displayed - application ready");
+    logMainWindowReady(headless_smoke_test);
 
     int result = app.exec();
 

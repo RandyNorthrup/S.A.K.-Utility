@@ -4,8 +4,10 @@
 
 .DESCRIPTION
     Launches sak_utility.exe with --smoke-test so the real application
-    initializes Qt, portable paths, logging, and the main window, then exits
-    automatically. This catches missing Qt plugins and startup regressions that
+    initializes Qt, portable paths, logging, and the full main-window object
+    tree, then exits automatically. In CI, the app skips showing the native
+    window after construction to avoid runner desktop instability while still
+    catching missing Qt plugins, bundle issues, and startup regressions that
     static package checks cannot see.
 #>
 
@@ -32,7 +34,47 @@ foreach ($relativePath in $runtimeRelativePaths) {
 $stdout = Join-Path $env:TEMP ("sak_startup_smoke_{0}.out.txt" -f [guid]::NewGuid().ToString("N"))
 $stderr = Join-Path $env:TEMP ("sak_startup_smoke_{0}.err.txt" -f [guid]::NewGuid().ToString("N"))
 
+function Get-RecentSmokeLogText {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$RootPath,
+        [Parameter(Mandatory = $true)]
+        [datetime]$StartedAt
+    )
+
+    $logsDir = Join-Path $RootPath "data\logs"
+    if (-not (Test-Path -LiteralPath $logsDir -PathType Container)) {
+        return "No portable log directory found: $logsDir"
+    }
+
+    $recentLogs = Get-ChildItem -LiteralPath $logsDir -File -ErrorAction SilentlyContinue |
+        Where-Object { $_.LastWriteTime -ge $StartedAt.AddSeconds(-10) } |
+        Sort-Object LastWriteTime -Descending |
+        Select-Object -First 3
+    if (-not $recentLogs) {
+        return "No recent portable logs found under $logsDir"
+    }
+
+    $chunks = foreach ($log in $recentLogs) {
+        $text = Get-Content -LiteralPath $log.FullName -Tail 120 -ErrorAction SilentlyContinue |
+            Out-String
+        "=== $($log.FullName) ===`n$text"
+    }
+    return ($chunks -join "`n")
+}
+
 try {
+    $childEnvironment = @{
+        "SAK_STARTUP_SMOKE_HEADLESS" = if ($env:GITHUB_ACTIONS -eq "true" -or $env:CI -eq "true") { "1" } else { $null }
+    }
+    $previousEnvironment = @{}
+    foreach ($entry in $childEnvironment.GetEnumerator()) {
+        $previousEnvironment[$entry.Key] = [Environment]::GetEnvironmentVariable($entry.Key, "Process")
+        if ($null -ne $entry.Value) {
+            [Environment]::SetEnvironmentVariable($entry.Key, $entry.Value, "Process")
+        }
+    }
+
     $process = Start-Process `
         -FilePath $exe `
         -ArgumentList @("--smoke-test", "--no-splash") `
@@ -48,7 +90,8 @@ try {
         } else {
             Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
         }
-        throw "Startup smoke timed out after $TimeoutSeconds seconds"
+        $recentLogText = Get-RecentSmokeLogText -RootPath $root.Path -StartedAt $startedAt
+        throw "Startup smoke timed out after $TimeoutSeconds seconds`nRECENT LOGS:`n$recentLogText"
     }
 
     # Ensure redirected output drains and refresh best-effort exit metadata.
@@ -58,7 +101,8 @@ try {
     $outText = if (Test-Path -LiteralPath $stdout) { Get-Content -LiteralPath $stdout -Raw } else { "" }
     $errText = if (Test-Path -LiteralPath $stderr) { Get-Content -LiteralPath $stderr -Raw } else { "" }
     if ($null -ne $process.ExitCode -and $process.ExitCode -ne 0) {
-        throw "Startup smoke failed with exit code $($process.ExitCode)`nSTDOUT:`n$outText`nSTDERR:`n$errText"
+        $recentLogText = Get-RecentSmokeLogText -RootPath $root.Path -StartedAt $startedAt
+        throw "Startup smoke failed with exit code $($process.ExitCode)`nSTDOUT:`n$outText`nSTDERR:`n$errText`nRECENT LOGS:`n$recentLogText"
     }
 
     $logsDir = Join-Path $root.Path "data\logs"
@@ -88,5 +132,10 @@ try {
     Write-Host "Portable startup E2E smoke passed: $($root.Path)"
 }
 finally {
+    if ($previousEnvironment) {
+        foreach ($entry in $previousEnvironment.GetEnumerator()) {
+            [Environment]::SetEnvironmentVariable($entry.Key, $entry.Value, "Process")
+        }
+    }
     Remove-Item -LiteralPath $stdout, $stderr -Force -ErrorAction SilentlyContinue
 }
