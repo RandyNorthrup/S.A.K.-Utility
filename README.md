@@ -36,7 +36,7 @@ See [CHANGELOG.md](CHANGELOG.md) for the full version history.
 | **Diagnostics & Benchmarking** | SMART disk health, CPU/disk/memory benchmarks, stress testing, thermal monitoring, system maintenance tools, HTML/JSON/CSV reports. |
 | **Image Flasher** | Flash ISOs/IMGs to USB. Download Windows and Linux ISOs directly. |
 | **File Management** | Organize files by extension, find duplicates with parallel hashing, and grep-style content search with regex, metadata, archive, and binary/hex modes. |
-| **Application Management** | Scan installed apps, match to Chocolatey packages, bulk-install on a new PC. Offline deployment with direct installer downloads. Deep application removal with leftover scanning and registry snapshot diffs. |
+| **Application Management** | Scan installed apps, match to Chocolatey packages, bulk-install on a new PC. Offline deployment with direct installer downloads. Deep application removal and vulnerability checks across CISA KEV, NVD, GitHub Advisories, and OSV. |
 | **Network Management** | Diagnostic suite (ping, traceroute, MTR, DNS, port scan, bandwidth, WiFi, connections, firewall, shares), adapter inspector with ethernet backup/restore and network reset, WiFi QR code manager. |
 | **Email Tools** | Browse PST, OST, and MBOX email archives. Search, export (EML/CSV/VCF/ICS), contacts, calendar (month/week/day), attachments browser — no Outlook required. Multi-threaded OST/PST converter with 8 output formats including IMAP cloud upload. |
 | **Modern UI** | Windows 11-style rounded corners, custom splash screen, and responsive layouts. |
@@ -189,7 +189,7 @@ Guided wizards for comprehensive user-profile migration with smart filtering, AE
 
 ### Application Management
 
-Two subtabs — **App Installation** and **Advanced Uninstall** — under one panel.
+Three subtabs — **App Installation**, **Advanced Uninstall**, and **Vulnerabilities** — under one panel.
 
 #### App Installation
 
@@ -210,6 +210,19 @@ Scan installed apps, match them to Chocolatey packages, and bulk-install on a ne
 | **Direct Download** | Downloads the actual installer binaries (EXE/MSI) directly — supports URL-based, embedded-binary, and meta-package patterns |
 
 Includes preset package lists (Office PC, Developer, Media, etc.) and curated package catalogs with search.
+
+#### Vulnerabilities
+
+Checks installed software and packages against current vulnerability intelligence sources.
+
+| Source | Role |
+|---|---|
+| **CISA KEV** | First-pass exploited-vulnerability matching for installed software |
+| **NVD** | CVE detail enrichment, CVSS severity, affected CPE/product evidence, and broader priority-app lookup |
+| **GitHub Security Advisories** | Reviewed open-source package advisories by package/ecosystem |
+| **OSV** | Open-source vulnerability lookup across npm, PyPI, Maven, NuGet, Go, crates.io, Packagist, and RubyGems |
+
+Findings show critical status, active exploitation, affected products, installed app/version, patch recommendation, published date, confidence, details, references, and CSV/JSON export.
 
 #### Advanced Uninstall
 

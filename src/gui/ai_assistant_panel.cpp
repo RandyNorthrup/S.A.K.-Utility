@@ -34,6 +34,7 @@
 #include "sak/ai/ai_workflow_store.h"
 #include "sak/ai/openai_responses_client.h"
 #include "sak/ai_transcript_view.h"
+#include "sak/app_paths.h"
 #include "sak/chocolatey_manager.h"
 #include "sak/detachable_log_window.h"
 #include "sak/elevation_broker.h"
@@ -2659,8 +2660,8 @@ AiAssistantPanel::AiAssistantPanel(QWidget* parent)
     const bool workflows_loaded = m_workflowStore->loadDefaults(&workflow_errors);
     QString health_ledger_error;
     if (m_toolHealthLedger) {
-        const QString path = QDir(QApplication::applicationDirPath())
-                                 .filePath(QStringLiteral("data/ai/tool_health_ledger.json"));
+        const QString path =
+            QDir(sak::app_paths::dataRoot()).filePath(QStringLiteral("ai/tool_health_ledger.json"));
         m_toolHealthLedger->setPersistencePath(path, 24);
         (void)m_toolHealthLedger->load(&health_ledger_error);
     }

@@ -8,6 +8,7 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## v0.9.1.4
 
+- **Application vulnerability intelligence** - Added an Application Management > Vulnerabilities tab for installed-app and package checks against CISA KEV first, NVD CVE/CVSS details, GitHub Security Advisories, and OSV, with active-exploitation flags, affected products, patch recommendations, published dates, confidence scoring, details, and CSV/JSON export.
 - **AI assistant hardening** - Split prompt assembly, provider gateway/tool routing, package/offline/workflow runners, transcript UI, health tracking, trace recording, and policy checks into focused units with explicit error reporting.
 - **MCP/provider bundling** - Added portable provider manifests and bundled MCP assets for Win32 app control, Context7 public docs, and Microsoft Docs, with runtime allowlists, availability checks, health/backoff tracking, and release bundle validation.
 - **App-control policy** - Added manifest-gated app actions and explicit rules that unsupported app automation fails loudly. Package/app flows now require installed-before-install checks and explicit install intent.

@@ -1953,6 +1953,31 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_package_list_manager.cpp")
     message(STATUS "Added unit test: test_package_list_manager")
 endif()
 
+# test_vulnerability_scanner - vulnerability source parsing and product matching
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_vulnerability_scanner.cpp")
+    add_executable(test_vulnerability_scanner
+        unit/test_vulnerability_scanner.cpp
+        ../src/core/vulnerability_scanner.cpp
+        ../src/core/app_paths.cpp
+        ../include/sak/vulnerability_scanner.h
+        ../include/sak/app_paths.h
+        ${SAK_NETWORK_TRANSFER_RUNNER_SOURCES}
+    )
+    set_target_properties(test_vulnerability_scanner PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_vulnerability_scanner PRIVATE
+        Qt6::Core Qt6::Gui Qt6::Test Qt6::Network ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_vulnerability_scanner PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_vulnerability_scanner COMMAND test_vulnerability_scanner
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_vulnerability_scanner")
+endif()
+
 # test_nuget_api_client — OData XML parsing, construction, metadata structs
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_nuget_api_client.cpp")
     add_executable(test_nuget_api_client
@@ -2717,7 +2742,9 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_regex_pattern_library.cpp")
     add_executable(test_regex_pattern_library
         unit/test_regex_pattern_library.cpp
         ../src/core/regex_pattern_library.cpp
+        ../src/core/app_paths.cpp
         ../src/core/logger.cpp
+        ../include/sak/app_paths.h
         ../include/sak/regex_pattern_library.h
     )
     set_target_properties(test_regex_pattern_library PROPERTIES
@@ -2725,7 +2752,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_regex_pattern_library.cpp")
         RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
     )
     target_link_libraries(test_regex_pattern_library PRIVATE
-        Qt6::Core Qt6::Test
+        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
     )
     target_include_directories(test_regex_pattern_library PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/../include

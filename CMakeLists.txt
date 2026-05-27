@@ -302,6 +302,7 @@ set(CORE_SOURCES
     src/core/bundled_tools_manager.cpp
     src/core/app_scanner.cpp
     src/core/chocolatey_manager.cpp
+    src/core/vulnerability_scanner.cpp
     src/core/package_matcher.cpp
     src/core/migration_report.cpp
     src/core/app_installation_worker.cpp
@@ -383,6 +384,7 @@ set(CORE_SOURCES
     include/sak/xz_decompressor.h
     include/sak/decompressor_factory.h
     include/sak/chocolatey_manager.h
+    include/sak/vulnerability_scanner.h
     include/sak/package_matcher.h
     include/sak/migration_report.h
     include/sak/app_installation_worker.h
@@ -550,6 +552,8 @@ set(GUI_SOURCES
     src/gui/app_installation_panel_actions.cpp
     src/gui/app_installation_panel_table.cpp
     include/sak/app_installation_panel.h
+    src/gui/vulnerability_panel.cpp
+    include/sak/vulnerability_panel.h
     src/gui/per_user_customization_dialog.cpp
     include/sak/per_user_customization_dialog.h
     src/gui/user_profile_backup_wizard.cpp

@@ -36,6 +36,7 @@ class AdvancedUninstallPanel;
 class NetworkDiagnosticPanel;
 class EmailInspectorPanel;
 class OstConverterWidget;
+class VulnerabilityPanel;
 #if defined(SAK_ENABLE_AI_ASSISTANT) && SAK_ENABLE_AI_ASSISTANT
 class AiAssistantPanel;
 #endif
@@ -218,6 +219,7 @@ private:
     std::unique_ptr<UserMigrationPanel> m_user_migration_panel;
     std::unique_ptr<OrganizerPanel> m_organizer_panel;
     std::unique_ptr<AppInstallationPanel> m_app_installation_panel;
+    std::unique_ptr<VulnerabilityPanel> m_vulnerability_panel;
     std::unique_ptr<ImageFlasherPanel> m_image_flasher_panel;
     std::unique_ptr<DiagnosticBenchmarkPanel> m_diagnostic_benchmark_panel;
     std::unique_ptr<WifiManagerPanel> m_wifi_manager_panel;

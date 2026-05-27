@@ -6,9 +6,9 @@
 
 #include "sak/regex_pattern_library.h"
 
+#include "sak/app_paths.h"
 #include "sak/logger.h"
 
-#include <QCoreApplication>
 #include <QDir>
 #include <QFile>
 #include <QJsonArray>
@@ -24,8 +24,7 @@ namespace sak {
 RegexPatternLibrary::RegexPatternLibrary(QObject* parent) : QObject(parent) {
     initBuiltinPatterns();
 
-    const QString appDir = QCoreApplication::applicationDirPath();
-    const QString dataDir = QDir(appDir).filePath(QStringLiteral("data/config"));
+    const QString dataDir = sak::app_paths::configDirectory();
     if (!QDir().mkpath(dataDir)) {
         sak::logWarning("Failed to create app config directory: {}", dataDir.toStdString());
     }

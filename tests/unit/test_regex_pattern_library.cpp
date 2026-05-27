@@ -4,6 +4,7 @@
 /// @file test_regex_pattern_library.cpp
 /// @brief Unit tests for RegexPatternLibrary built-in and custom pattern management
 
+#include "sak/app_paths.h"
 #include "sak/regex_pattern_library.h"
 
 #include <QDir>
@@ -77,6 +78,8 @@ void RegexPatternLibraryTests::init() {
     const QString appDir = QCoreApplication::applicationDirPath();
     QFile::remove(appDir + "/custom_regex_patterns.json");
     QFile::remove(QDir(appDir).filePath(QStringLiteral("data/config/custom_regex_patterns.json")));
+    QFile::remove(QDir(sak::app_paths::configDirectory())
+                      .filePath(QStringLiteral("custom_regex_patterns.json")));
 }
 
 // ── Built-in Patterns ───────────────────────────────────────────────────────

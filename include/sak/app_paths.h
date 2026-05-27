@@ -8,6 +8,7 @@
 namespace sak::app_paths {
 
 [[nodiscard]] QString applicationDirectory();
+[[nodiscard]] bool isPackaged();
 [[nodiscard]] QString dataRoot();
 [[nodiscard]] QString configDirectory();
 [[nodiscard]] QString configFilePath();
