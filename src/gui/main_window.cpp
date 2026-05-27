@@ -128,7 +128,7 @@ Built with modern C++23 and Qt 6 for Windows 10/11 x64.</div>
     <ul>
         <li><b>App Installation</b> &mdash; Scan installed apps, match to Chocolatey packages, export/import, bulk-install on a new PC, and offline deployment with direct installer downloads</li>
         <li><b>Advanced Uninstall</b> &mdash; Deep application removal with leftover scanning, registry snapshot diffs, recycle bin support, and locked-file reboot scheduling</li>
-        <li><b>Vulnerabilities</b> &mdash; Check installed apps and packages against CISA KEV, NVD, GitHub Security Advisories, and OSV with patch guidance and CSV/JSON export</li>
+        <li><b>Vulnerability Scanner</b> &mdash; Check installed apps and packages against CISA KEV, NVD, GitHub Security Advisories, and OSV with patch guidance and CSV/JSON export</li>
     </ul>
 </div>
 
@@ -626,9 +626,9 @@ void MainWindow::createAppManagementPanel() {
     logInfo("MainWindow: creating Advanced Uninstall panel");
     m_advanced_uninstall_panel = std::make_unique<AdvancedUninstallPanel>(this);
     logInfo("MainWindow: Advanced Uninstall panel initialized");
-    logInfo("MainWindow: creating Vulnerabilities panel");
+    logInfo("MainWindow: creating Vulnerability Scanner panel");
     m_vulnerability_panel = std::make_unique<VulnerabilityPanel>(this);
-    logInfo("MainWindow: Vulnerabilities panel initialized");
+    logInfo("MainWindow: Vulnerability Scanner panel initialized");
 
     logInfo("MainWindow: creating Application Management wrapper");
     auto* appMgmtWrapper = new QWidget(this);
@@ -647,7 +647,7 @@ void MainWindow::createAppManagementPanel() {
     auto* appTabs = new QTabWidget(appMgmtWrapper);
     appTabs->addTab(m_app_installation_panel.get(), tr("App Installation"));
     appTabs->addTab(m_advanced_uninstall_panel.get(), tr("Advanced Uninstall"));
-    appTabs->addTab(m_vulnerability_panel.get(), tr("Vulnerabilities"));
+    appTabs->addTab(m_vulnerability_panel.get(), tr("Vulnerability Scanner"));
     appMgmtLayout->addWidget(appTabs, 1);
 
     connect(appTabs, &QTabWidget::currentChanged, this, [appHdr](int index) {
@@ -664,8 +664,8 @@ void MainWindow::createAppManagementPanel() {
              "Advanced Uninstall",
              "Deep application removal with registry cleanup, leftover scanning, "
              "and batch uninstall support"},
-            {":/icons/icons/icons8-keyhole-shield.svg",
-             "Vulnerabilities",
+            {":/icons/icons/icons8-warning-shield.svg",
+             "Vulnerability Scanner",
              "Check installed software and packages against CISA KEV, NVD, GitHub Advisories, "
              "and OSV"},
         };
@@ -1187,10 +1187,6 @@ void MainWindow::connectRemainingPanelSignals() {
             [this](const QString& msg, int timeout_ms) {
                 updateStatus(msg, timeout_ms > 0 ? timeout_ms : 5000);
             });
-    connect(m_vulnerability_panel.get(),
-            &VulnerabilityPanel::progressUpdate,
-            this,
-            &MainWindow::updateProgress);
 
     connect(m_network_diagnostic_panel.get(),
             &NetworkDiagnosticPanel::statusMessage,

@@ -189,7 +189,7 @@ Guided wizards for comprehensive user-profile migration with smart filtering, AE
 
 ### Application Management
 
-Three subtabs — **App Installation**, **Advanced Uninstall**, and **Vulnerabilities** — under one panel.
+Three subtabs — **App Installation**, **Advanced Uninstall**, and **Vulnerability Scanner** — under one panel.
 
 #### App Installation
 
@@ -211,7 +211,7 @@ Scan installed apps, match them to Chocolatey packages, and bulk-install on a ne
 
 Includes preset package lists (Office PC, Developer, Media, etc.) and curated package catalogs with search.
 
-#### Vulnerabilities
+#### Vulnerability Scanner
 
 Checks installed software and packages against current vulnerability intelligence sources.
 
