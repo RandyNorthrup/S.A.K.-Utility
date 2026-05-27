@@ -390,6 +390,7 @@ void MainWindow::setupUi() {
     QTimer::singleShot(0, this, &MainWindow::applyTabBarChevrons);
     connect(m_tab_widget, &QTabWidget::currentChanged, this, [this](int) {
         QTimer::singleShot(0, this, &MainWindow::applyTabBarChevrons);
+        updateVulnerabilityStatusBarVisibility();
     });
 
     // Enable mouse-wheel tab switching on the tab bar
@@ -410,6 +411,13 @@ void MainWindow::createStatusBar() {
     m_status_label->setContentsMargins(6, 0, 6, 0);
     statusBar()->addWidget(m_status_label, 1);
 
+    m_vulnerability_summary_label = new QLabel(this);
+    m_vulnerability_summary_label->setContentsMargins(10, 0, 10, 0);
+    m_vulnerability_summary_label->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    m_vulnerability_summary_label->setStyleSheet(
+        QStringLiteral("color: %1; font-weight: 600;").arg(sak::ui::kColorTextSecondary));
+    m_vulnerability_summary_label->setVisible(false);
+
     // Progress bar (hidden by default, fixed size to prevent resizing)
     m_progress_bar = new QProgressBar(this);
     m_progress_bar->setFixedWidth(sak::kProgressBarMaxW);
@@ -428,6 +436,8 @@ void MainWindow::createStatusBar() {
     m_ai_status_label->setVisible(false);
     statusBar()->addPermanentWidget(m_ai_status_label);
 #endif
+
+    statusBar()->addPermanentWidget(m_vulnerability_summary_label);
 
     // Elevation status indicator
     m_elevation_label = new QWidget(this);
@@ -645,12 +655,13 @@ void MainWindow::createAppManagementPanel() {
         appMgmtLayout);
 
     auto* appTabs = new QTabWidget(appMgmtWrapper);
+    m_application_tabs = appTabs;
     appTabs->addTab(m_app_installation_panel.get(), tr("App Installation"));
     appTabs->addTab(m_advanced_uninstall_panel.get(), tr("Advanced Uninstall"));
     appTabs->addTab(m_vulnerability_panel.get(), tr("Vulnerability Scanner"));
     appMgmtLayout->addWidget(appTabs, 1);
 
-    connect(appTabs, &QTabWidget::currentChanged, this, [appHdr](int index) {
+    connect(appTabs, &QTabWidget::currentChanged, this, [this, appHdr](int index) {
         struct TabMeta {
             const char* icon;
             const char* title;
@@ -676,6 +687,7 @@ void MainWindow::createAppManagementPanel() {
                                    QCoreApplication::translate("MainWindow", m.title),
                                    QCoreApplication::translate("MainWindow", m.subtitle));
         }
+        updateVulnerabilityStatusBarVisibility();
     });
 
     AddTabWithTooltip(m_tab_widget,
@@ -683,6 +695,7 @@ void MainWindow::createAppManagementPanel() {
                       "Application Management",
                       kTooltipAppManagement,
                       ":/icons/icons/panel_app_install.svg");
+    updateVulnerabilityStatusBarVisibility();
     logInfo("MainWindow: Application Management panels initialized");
 }
 
@@ -1187,6 +1200,17 @@ void MainWindow::connectRemainingPanelSignals() {
             [this](const QString& msg, int timeout_ms) {
                 updateStatus(msg, timeout_ms > 0 ? timeout_ms : 5000);
             });
+    connect(m_vulnerability_panel.get(),
+            &VulnerabilityPanel::summaryStatusChanged,
+            this,
+            [this](const QString& summary) {
+                if (m_vulnerability_summary_label) {
+                    m_vulnerability_summary_label->setText(summary);
+                    m_vulnerability_summary_label->setToolTip(summary);
+                }
+                updateVulnerabilityStatusBarVisibility();
+            });
+    updateVulnerabilityStatusBarVisibility();
 
     connect(m_network_diagnostic_panel.get(),
             &NetworkDiagnosticPanel::statusMessage,
@@ -1213,6 +1237,27 @@ void MainWindow::connectRemainingPanelSignals() {
 #if defined(SAK_ENABLE_AI_ASSISTANT) && SAK_ENABLE_AI_ASSISTANT
     connectAiAssistantSignals();
 #endif
+}
+
+bool MainWindow::isVulnerabilityPanelActive() const {
+    return m_tab_widget && m_application_tabs && m_vulnerability_panel &&
+           m_tab_widget->currentIndex() == findPanelTabIndex(m_vulnerability_panel.get()) &&
+           m_application_tabs->currentWidget() == m_vulnerability_panel.get();
+}
+
+void MainWindow::updateVulnerabilityStatusBarVisibility() {
+    if (!m_vulnerability_summary_label) {
+        return;
+    }
+
+    const bool active = isVulnerabilityPanelActive();
+    if (active && m_vulnerability_panel) {
+        const QString summary = m_vulnerability_panel->statusSummary();
+        m_vulnerability_summary_label->setText(summary);
+        m_vulnerability_summary_label->setToolTip(summary);
+    }
+    m_vulnerability_summary_label->setVisible(active &&
+                                              !m_vulnerability_summary_label->text().isEmpty());
 }
 
 #if defined(SAK_ENABLE_AI_ASSISTANT) && SAK_ENABLE_AI_ASSISTANT

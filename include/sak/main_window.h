@@ -175,6 +175,12 @@ private:
     void updateAiStatusBarVisibility();
 #endif
 
+    /// @brief True when the Vulnerability Scanner sub-tab is selected.
+    [[nodiscard]] bool isVulnerabilityPanelActive() const;
+
+    /// @brief Show vulnerability scan summary only while its panel is active.
+    void updateVulnerabilityStatusBarVisibility();
+
     /// @brief Connect panel log signals to the shared log window
     void connectPanelLogs();
 
@@ -214,6 +220,7 @@ protected:
 private:
     // Central widget - tab container
     QTabWidget* m_tab_widget{nullptr};
+    QTabWidget* m_application_tabs{nullptr};
 
     // Feature panels
     std::unique_ptr<UserMigrationPanel> m_user_migration_panel;
@@ -234,6 +241,7 @@ private:
 
     // Status bar components
     QLabel* m_status_label{nullptr};
+    QLabel* m_vulnerability_summary_label{nullptr};
 #if defined(SAK_ENABLE_AI_ASSISTANT) && SAK_ENABLE_AI_ASSISTANT
     QLabel* m_ai_status_label{nullptr};
     bool m_progress_owner_is_ai{false};
