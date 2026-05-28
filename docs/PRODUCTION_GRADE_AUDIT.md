@@ -90,6 +90,7 @@ This document only makes claims backed by code inspection or passing automated c
 - Disabled vcpkg's implicit MSBuild app-local post-build copy in release CI; runtime DLL copying now stays in the explicit bundle step and CMake's named runtime copy commands.
 - Made the CMake bundled-tools output copy deterministic by clearing the stale build output tools directory before copying the verified source `tools/` tree.
 - Removed the release workflow CMake build-output cache so release packages are built from current checked-out sources and freshly bundled tools instead of stale `build/Release` state.
+- Installed pinned `lizard` 1.21.2 in release CI so package-root readiness runs the same complexity gate used by local and pre-commit checks.
 
 ### Named Constants And Magic Numbers
 

@@ -114,7 +114,9 @@ jobs:
       shell: pwsh
       run: |
         choco install ripgrep -y --no-progress
+        python -m pip install --disable-pip-version-check lizard==1.21.2
         rg --version
+        lizard --version
 
     - name: Verify Qt resource manifests
       shell: pwsh
