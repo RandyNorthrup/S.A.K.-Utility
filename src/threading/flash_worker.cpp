@@ -10,6 +10,7 @@
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
 
+#include <QByteArrayView>
 #include <QCryptographicHash>
 #include <QDateTime>
 #include <QElapsedTimer>
@@ -551,7 +552,7 @@ QString FlashWorker::calculateChecksum(HANDLE handle, qint64 size) {
             break;
         }
 
-        hash.addData(buffer.data(), bytesRead);
+        hash.addData(QByteArrayView(buffer.data(), static_cast<qsizetype>(bytesRead)));
         totalRead += bytesRead;
 
         updateVerificationProgress(totalRead, size);

@@ -9,6 +9,7 @@
 #include "sak/email_types.h"
 
 #include <QSignalSpy>
+#include <QTimeZone>
 #include <QtTest/QtTest>
 
 class TestEmailSearchWorker : public QObject {
@@ -90,8 +91,8 @@ void TestEmailSearchWorker::criteriaDateRange() {
     QVERIFY(!criteria.date_from.isValid());
     QVERIFY(!criteria.date_to.isValid());
 
-    criteria.date_from = QDateTime(QDate(2024, 1, 1), QTime(0, 0, 0), Qt::UTC);
-    criteria.date_to = QDateTime(QDate(2024, 12, 31), QTime(23, 59, 59), Qt::UTC);
+    criteria.date_from = QDateTime(QDate(2024, 1, 1), QTime(0, 0, 0), QTimeZone::UTC);
+    criteria.date_to = QDateTime(QDate(2024, 12, 31), QTime(23, 59, 59), QTimeZone::UTC);
 
     QVERIFY(criteria.date_from.isValid());
     QVERIFY(criteria.date_to.isValid());

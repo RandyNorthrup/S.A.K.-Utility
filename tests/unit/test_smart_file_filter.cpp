@@ -172,7 +172,7 @@ void SmartFileFilterTests::excludePattern_matchesRegex() {
     QFileInfo tmpFile(m_tempDir.filePath("temp.tmp"));
     // Create the file so QFileInfo can report on it
     QFile f(tmpFile.filePath());
-    f.open(QIODevice::WriteOnly);
+    QVERIFY(f.open(QIODevice::WriteOnly));
     f.write("temp");
     f.close();
 
@@ -280,7 +280,7 @@ void SmartFileFilterTests::shouldExcludeFile_patternMatch() {
     sak::SmartFileFilter filter(rules);
     // The pattern should catch .dat files
     QFile f(m_tempDir.filePath("test.dat"));
-    f.open(QIODevice::WriteOnly);
+    QVERIFY(f.open(QIODevice::WriteOnly));
     f.write("data");
     f.close();
 

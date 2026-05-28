@@ -393,7 +393,8 @@ void DiagnosticReportGenerator::writeCsvSmartHealth(QTextStream& out) const {
     for (const auto& report : m_data.smart_reports) {
         const QString wear_text =
             report.nvme_health.has_value()
-                ? QStringLiteral("%1%").arg(report.nvme_health->percentage_used, 0, 'f', 1)
+                ? QStringLiteral("%1%").arg(QString::number(
+                      static_cast<double>(report.nvme_health->percentage_used), 'f', 1))
                 : QStringLiteral("--");
         out << csvEscape(report.device_path) << "," << csvEscape(report.model) << ","
             << csvEscape(report.serial_number) << "," << csvEscape(report.interface_type) << ","
@@ -589,7 +590,8 @@ QString DiagnosticReportGenerator::buildSmartSection() const {
         const QString badge_class = "badge " + healthStatusCssClass(report.overall_health);
         const QString wear_text =
             report.nvme_health.has_value()
-                ? QStringLiteral("%1%").arg(report.nvme_health->percentage_used, 0, 'f', 1)
+                ? QStringLiteral("%1%").arg(QString::number(
+                      static_cast<double>(report.nvme_health->percentage_used), 'f', 1))
                 : QStringLiteral("--");
         html += QString(
                     "<tr><td>%1</td><td>%2</td><td>%3</td><td>%4</td>"

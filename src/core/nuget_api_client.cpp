@@ -250,10 +250,11 @@ void NuGetApiClient::handleMetadataReply(QNetworkReply* reply) {
 
     QByteArray data = reply->readAll();
     QDomDocument doc;
-    QString parse_error;
-    if (!doc.setContent(data, &parse_error)) {
-        sak::logWarning("[NuGetApiClient] XML parse error: {}", parse_error.toStdString());
-        Q_EMIT errorOccurred("metadata", "XML parse error: " + parse_error);
+    const QDomDocument::ParseResult parse_result = doc.setContent(data);
+    if (!parse_result) {
+        sak::logWarning("[NuGetApiClient] XML parse error: {}",
+                        parse_result.errorMessage.toStdString());
+        Q_EMIT errorOccurred("metadata", "XML parse error: " + parse_result.errorMessage);
         return;
     }
 
@@ -428,9 +429,10 @@ QVector<ChocoPackageMetadata> NuGetApiClient::parseODataFeed(const QByteArray& x
     QVector<ChocoPackageMetadata> results;
 
     QDomDocument doc;
-    QString parse_error;
-    if (!doc.setContent(xml, &parse_error)) {
-        sak::logWarning("[NuGetApiClient] OData parse error: {}", parse_error.toStdString());
+    const QDomDocument::ParseResult parse_result = doc.setContent(xml);
+    if (!parse_result) {
+        sak::logWarning("[NuGetApiClient] OData parse error: {}",
+                        parse_result.errorMessage.toStdString());
         return results;
     }
 

@@ -85,6 +85,7 @@ This document only makes claims backed by code inspection or passing automated c
 - Updated release CI from Qt 6.5.3/MSVC 2019 Qt package to Qt 6.10.3/MSVC 2022 Qt package after checking aqt-installable Windows desktop packages; Qt 6.11.x exists in the release index but the current CI installer metadata did not expose an installable Windows package during verification.
 - Removed the stale fixed CMake version from workflow summaries; the workflow now prints the runner's actual `cmake --version` output.
 - Added explicit CI installation for ripgrep so strict release gates run with their required scanner instead of relying on runner image contents.
+- Fixed Qt 6.10/MSVC strict-build compatibility issues: deprecated Qt overloads, explicit parse-result handling, QByteArrayView hashing, and nodiscard test assertions.
 
 ### Named Constants And Magic Numbers
 

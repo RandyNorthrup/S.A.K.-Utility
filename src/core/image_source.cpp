@@ -9,6 +9,7 @@
 #include "sak/logger.h"
 #include "sak/streaming_decompressor.h"
 
+#include <QByteArrayView>
 #include <QCryptographicHash>
 #include <QFile>
 #include <QFileInfo>
@@ -145,7 +146,7 @@ QString FileImageSource::calculateChecksum() {
             return QString();
         }
 
-        hash.addData(buffer.data(), bytesRead);
+        hash.addData(QByteArrayView(buffer.data(), static_cast<qsizetype>(bytesRead)));
         totalRead += bytesRead;
 
         int percentage = static_cast<int>((totalRead * sak::kPercentMax) / size());
@@ -377,7 +378,7 @@ QString CompressedImageSource::calculateChecksum() {
             return QString();
         }
         if (bytesRead > 0) {
-            hash.addData(buffer.data(), bytesRead);
+            hash.addData(QByteArrayView(buffer.data(), static_cast<qsizetype>(bytesRead)));
         }
     }
 

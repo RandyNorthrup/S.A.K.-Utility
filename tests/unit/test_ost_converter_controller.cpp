@@ -17,7 +17,9 @@
 static QString createTempFile(QTemporaryDir& dir, const QString& name) {
     QString path = dir.path() + "/" + name;
     QFile file(path);
-    file.open(QIODevice::WriteOnly);
+    if (!file.open(QIODevice::WriteOnly)) {
+        qFatal("Failed to create temporary OST test file");
+    }
     file.write("dummy ost content");
     file.close();
     return path;

@@ -14,6 +14,7 @@
 #include <qt_windows.h>
 #include <QtEndian>
 #include <QTextDocument>
+#include <QTimeZone>
 
 #include <algorithm>
 #include <array>
@@ -350,7 +351,7 @@ static QString formatSysTimeValue(const QByteArray& raw) {
     }
     int64_t ft = localReadLE<int64_t>(raw, 0);
     int64_t unix_ms = (ft - kFileTimeEpochDiff) / kFileTimeTicksPerMillisecond;
-    return QDateTime::fromMSecsSinceEpoch(unix_ms, Qt::UTC).toString(Qt::ISODate);
+    return QDateTime::fromMSecsSinceEpoch(unix_ms, QTimeZone::UTC).toString(Qt::ISODate);
 }
 
 static QString formatBinaryValue(const QByteArray& raw) {
