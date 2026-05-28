@@ -101,21 +101,19 @@ void SettingsDialog::createBackupTab() {
             QOverload<int>::of(&QSpinBox::valueChanged),
             this,
             &SettingsDialog::onSettingChanged);
-    connect(m_backupVerifyMD5, &QCheckBox::stateChanged, this, &SettingsDialog::onSettingChanged);
+    constexpr auto checkBoxChangedSignal = &QCheckBox::toggled;
+    connect(m_backupVerifyMD5, checkBoxChangedSignal, this, &SettingsDialog::onSettingChanged);
     connect(m_quickActionsBackupLocation,
             &QLineEdit::textChanged,
             this,
             &SettingsDialog::onSettingChanged);
-    connect(
-        m_quickActionsConfirm, &QCheckBox::stateChanged, this, &SettingsDialog::onSettingChanged);
+    connect(m_quickActionsConfirm, checkBoxChangedSignal, this, &SettingsDialog::onSettingChanged);
     connect(m_quickActionsNotifications,
-            &QCheckBox::stateChanged,
+            checkBoxChangedSignal,
             this,
             &SettingsDialog::onSettingChanged);
-    connect(
-        m_quickActionsLogging, &QCheckBox::stateChanged, this, &SettingsDialog::onSettingChanged);
-    connect(
-        m_quickActionsCompress, &QCheckBox::stateChanged, this, &SettingsDialog::onSettingChanged);
+    connect(m_quickActionsLogging, checkBoxChangedSignal, this, &SettingsDialog::onSettingChanged);
+    connect(m_quickActionsCompress, checkBoxChangedSignal, this, &SettingsDialog::onSettingChanged);
 }
 
 QGroupBox* SettingsDialog::createBackupSettingsGroup(QWidget* parent) {

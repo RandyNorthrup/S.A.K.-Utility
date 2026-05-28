@@ -86,6 +86,7 @@ This document only makes claims backed by code inspection or passing automated c
 - Removed the stale fixed CMake version from workflow summaries; the workflow now prints the runner's actual `cmake --version` output.
 - Added explicit CI installation for ripgrep so strict release gates run with their required scanner instead of relying on runner image contents.
 - Fixed Qt 6.10/MSVC strict-build compatibility issues: deprecated Qt overloads, explicit parse-result handling, QByteArrayView hashing, and nodiscard test assertions.
+- Replaced deprecated checkbox `stateChanged` connections with `toggled` signal wiring so strict Qt 6.10 builds do not depend on deprecated API or version fallbacks.
 
 ### Named Constants And Magic Numbers
 

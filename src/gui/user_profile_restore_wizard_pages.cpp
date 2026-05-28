@@ -1422,12 +1422,13 @@ void UserProfileRestorePermissionSettingsPage::setupUi_optionsAndConnections(QVB
             QOverload<int>::of(&QComboBox::currentIndexChanged),
             this,
             &UserProfileRestorePermissionSettingsPage::onSettingsChanged);
+    constexpr auto checkBoxChangedSignal = &QCheckBox::toggled;
     connect(m_verifyCheckBox,
-            &QCheckBox::stateChanged,
+            checkBoxChangedSignal,
             this,
             &UserProfileRestorePermissionSettingsPage::onSettingsChanged);
     connect(m_createBackupCheckBox,
-            &QCheckBox::stateChanged,
+            checkBoxChangedSignal,
             this,
             &UserProfileRestorePermissionSettingsPage::onSettingsChanged);
 
